@@ -1,24 +1,27 @@
+interface WorkerCtx {
+  postMessage(msg: unknown): void;
+  onmessage: ((ev: MessageEvent) => void) | null;
+  close(): void;
+}
+
+const ctx = self as unknown as WorkerCtx;
+
 interface ExecuteMessage {
   type: "execute";
   id: number;
   code: string;
-  timeoutMs: number;
-}
-
-interface ShutdownMessage {
-  type: "shutdown";
 }
 
 function reply(msg: Record<string, unknown>) {
-  self.postMessage(msg);
+  ctx.postMessage(msg);
 }
 
-self.onmessage = async (ev: MessageEvent) => {
+ctx.onmessage = async (ev: MessageEvent) => {
   const msg = ev.data as Record<string, unknown>;
 
   switch (msg.type) {
     case "execute": {
-      const { id, code, timeoutMs } = msg as unknown as ExecuteMessage;
+      const { id, code } = msg as unknown as ExecuteMessage;
       const captured = { stdout: "", stderr: "" };
 
       const origLog = console.log;
@@ -31,30 +34,16 @@ self.onmessage = async (ev: MessageEvent) => {
       };
 
       try {
-        let timedOut = false;
-        let result: unknown;
-
-        if (timeoutMs > 0) {
-          const timeoutPromise = new Promise<never>((_, reject) =>
-            setTimeout(() => {
-              timedOut = true;
-              reject(new Error("timeout"));
-            }, timeoutMs)
-          );
-          const fn = new Function(code) as () => unknown;
-          result = await Promise.race([Promise.resolve(fn()), timeoutPromise]);
-        } else {
-          const fn = new Function(code) as () => unknown;
-          result = await Promise.resolve(fn());
-        }
+        const wrapped = `return (async () => { ${code} })()`;
+        const fn = new Function(wrapped) as () => Promise<unknown>;
+        const result = await fn();
 
         reply({
           type: "result",
           id,
           stdout: captured.stdout,
-          stderr: "",
+          stderr: captured.stderr,
           exitCode: 0,
-          timedOut: false,
           result,
         });
       } catch (err) {
@@ -65,7 +54,6 @@ self.onmessage = async (ev: MessageEvent) => {
           stdout: captured.stdout,
           stderr: captured.stderr + errMsg,
           exitCode: 1,
-          timedOut: errMsg === "timeout",
         });
       } finally {
         console.log = origLog;
@@ -76,7 +64,7 @@ self.onmessage = async (ev: MessageEvent) => {
 
     case "shutdown": {
       reply({ type: "stopped" });
-      self.close();
+      ctx.close();
       break;
     }
   }

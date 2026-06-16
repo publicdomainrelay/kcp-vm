@@ -1,4 +1,9 @@
-import type { Sandbox, SandboxRequest, SandboxResponse, SandboxPermissions } from "@publicdomainrelay/sandbox-abc";
+import type {
+  Sandbox,
+  SandboxPermissions,
+  SandboxRequest,
+  SandboxResponse,
+} from "@publicdomainrelay/sandbox-abc";
 
 export function createDenoSandbox(permissions?: SandboxPermissions): Sandbox {
   const workerUrl = new URL("./worker.ts", import.meta.url);
@@ -10,65 +15,118 @@ export function createDenoSandbox(permissions?: SandboxPermissions): Sandbox {
   if (permissions?.env) denoPerms.env = permissions.env;
   if (permissions?.run) denoPerms.run = permissions.run;
 
-  const worker = new Worker(workerUrl, {
-    type: "module",
-    deno: {
-      permissions: denoPerms,
-    },
-  });
-
+  let worker = createWorker(workerUrl, denoPerms);
   let nextId = 1;
-  const pending = new Map<number, (res: SandboxResponse) => void>();
+  const pending = new Map<
+    number,
+    { resolve: (res: SandboxResponse) => void; timer?: ReturnType<typeof setTimeout> }
+  >();
+  let dead = false;
 
-  worker.onmessage = (ev: MessageEvent) => {
-    const m = ev.data as Record<string, unknown>;
-    if (m.type === "result") {
-      const id = m.id as number;
-      const resolve = pending.get(id);
-      pending.delete(id);
-      if (resolve) {
-        resolve({
-          stdout: (m.stdout as string) ?? "",
-          stderr: (m.stderr as string) ?? "",
-          exitCode: (m.exitCode as number) ?? 1,
-          timedOut: (m.timedOut as boolean) ?? false,
-          result: m.result,
-        });
+  function createWorker(url: URL, perms: Record<string, unknown>): Worker {
+    const w = new Worker(url, {
+      type: "module",
+      deno: { permissions: perms },
+    });
+
+    w.onmessage = (ev: MessageEvent) => {
+      const m = ev.data as Record<string, unknown>;
+      if (m.type === "result") {
+        const id = m.id as number;
+        const entry = pending.get(id);
+        pending.delete(id);
+        if (entry) {
+          if (entry.timer !== undefined) clearTimeout(entry.timer);
+          entry.resolve({
+            stdout: (m.stdout as string) ?? "",
+            stderr: (m.stderr as string) ?? "",
+            exitCode: (m.exitCode as number) ?? 1,
+            timedOut: false,
+            result: m.result,
+          });
+        }
       }
-    }
-  };
+    };
 
-  worker.onerror = (err) => {
-    for (const [id, resolve] of pending) {
-      resolve({
-        stdout: "",
-        stderr: `worker error: ${err.message}`,
-        exitCode: 1,
-        timedOut: false,
-      });
-      pending.delete(id);
-    }
-  };
+    w.onerror = (err) => {
+      for (const [id, entry] of pending) {
+        if (entry.timer !== undefined) clearTimeout(entry.timer);
+        entry.resolve({
+          stdout: "",
+          stderr: `worker error: ${err.message}`,
+          exitCode: 1,
+          timedOut: false,
+        });
+        pending.delete(id);
+      }
+    };
+
+    return w;
+  }
+
+  function killWorker() {
+    try {
+      worker.terminate();
+    } catch { /* already dead */ }
+  }
 
   return {
     async execute(request: SandboxRequest): Promise<SandboxResponse> {
+      if (dead) {
+        return { stdout: "", stderr: "sandbox shut down", exitCode: 1, timedOut: false };
+      }
+
       const id = nextId++;
       worker.postMessage({
         type: "execute",
         id,
         code: request.code,
-        timeoutMs: request.timeoutMs ?? 0,
       });
 
       return new Promise((resolve) => {
-        pending.set(id, resolve);
+        const entry: {
+          resolve: (res: SandboxResponse) => void;
+          timer?: ReturnType<typeof setTimeout>;
+        } = { resolve };
+
+        if (request.timeoutMs && request.timeoutMs > 0) {
+          entry.timer = setTimeout(() => {
+            pending.delete(id);
+            killWorker();
+            worker = createWorker(workerUrl, denoPerms);
+
+            for (const [otherId, otherEntry] of pending) {
+              if (otherEntry.timer !== undefined) clearTimeout(otherEntry.timer);
+              otherEntry.resolve({
+                stdout: "",
+                stderr: "worker terminated due to timeout on request " + id,
+                exitCode: 1,
+                timedOut: true,
+              });
+              pending.delete(otherId);
+            }
+
+            resolve({
+              stdout: "",
+              stderr: "execution timed out",
+              exitCode: 1,
+              timedOut: true,
+            });
+          }, request.timeoutMs);
+        }
+
+        pending.set(id, entry);
       });
     },
 
     async shutdown(): Promise<void> {
-      worker.postMessage({ type: "shutdown" });
-      await new Promise((resolve) => setTimeout(resolve, 200));
-      worker.terminate();
+      dead = true;
+      for (const [id, entry] of pending) {
+        if (entry.timer !== undefined) clearTimeout(entry.timer);
+        entry.resolve({ stdout: "", stderr: "shutdown", exitCode: 1, timedOut: false });
+        pending.delete(id);
+      }
+      killWorker();
     },
   };
 }
