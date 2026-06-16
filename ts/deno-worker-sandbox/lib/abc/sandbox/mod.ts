@@ -5,6 +5,17 @@ export interface Sandbox {
 
 export interface Bundler {
   bundle(request: BundleRequest): Promise<BundleResponse>;
+  bundleTar(request: BundleTarRequest): Promise<BundleTarResponse>;
+}
+
+export interface BundleTarRequest {
+  tarBase64: string;
+}
+
+export interface BundleTarResponse {
+  bundleJs: string;
+  stdout: string;
+  stderr: string;
 }
 
 export interface SandboxRequest {
