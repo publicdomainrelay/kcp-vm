@@ -130,3 +130,5 @@ export function createDenoSandbox(permissions?: SandboxPermissions): Sandbox {
     },
   };
 }
+
+export { createDenoBundler } from "./bundler.ts";

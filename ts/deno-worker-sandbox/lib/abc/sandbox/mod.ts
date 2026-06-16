@@ -3,6 +3,10 @@ export interface Sandbox {
   shutdown(): Promise<void>;
 }
 
+export interface Bundler {
+  bundle(request: BundleRequest): Promise<BundleResponse>;
+}
+
 export interface SandboxRequest {
   code: string;
   timeoutMs?: number;
@@ -14,6 +18,25 @@ export interface SandboxResponse {
   exitCode: number;
   timedOut: boolean;
   result?: unknown;
+}
+
+export interface BundleRequest {
+  denoJson: string;
+  denoLock?: string;
+  source: string;
+}
+
+export interface BundleResponse {
+  bundleJs: string;
+  stdout: string;
+  stderr: string;
+}
+
+export interface ExecRequest {
+  bundleJs: string;
+  denoJson?: string;
+  denoLock?: string;
+  timeoutMs?: number;
 }
 
 export interface SandboxPermissions {
