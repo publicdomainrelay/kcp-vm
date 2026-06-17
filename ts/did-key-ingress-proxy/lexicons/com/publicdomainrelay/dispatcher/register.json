@@ -1,6 +1,6 @@
 {
   "lexicon": 1,
-  "id": "com.example.dispatcher.register",
+  "id": "com.publicdomainrelay.dispatcher.register",
   "defs": {
     "main": {
       "type": "procedure",

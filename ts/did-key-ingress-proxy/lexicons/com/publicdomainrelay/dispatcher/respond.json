@@ -1,10 +1,10 @@
 {
   "lexicon": 1,
-  "id": "com.example.dispatcher.respond",
+  "id": "com.publicdomainrelay.dispatcher.respond",
   "defs": {
     "main": {
       "type": "procedure",
-      "description": "Submit the result of an XRPC task assigned via com.example.dispatcher.subscribe. Call via PDS proxying so the server can verify the caller's DID.",
+      "description": "Submit the result of an XRPC task assigned via com.publicdomainrelay.dispatcher.subscribe. Call via PDS proxying so the server can verify the caller's DID.",
       "input": {
         "encoding": "application/json",
         "schema": {

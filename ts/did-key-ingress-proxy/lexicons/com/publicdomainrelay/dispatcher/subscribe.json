@@ -1,6 +1,6 @@
 {
   "lexicon": 1,
-  "id": "com.example.dispatcher.subscribe",
+  "id": "com.publicdomainrelay.dispatcher.subscribe",
   "defs": {
     "main": {
       "type": "subscription",
