@@ -1,0 +1,8 @@
+{
+  "name": "@publicdomainrelay/hono-factory-static-files-fs",
+  "version": "0.1.0",
+  "exports": "./mod.ts",
+  "imports": {
+    "@hono/hono": "jsr:@hono/hono@^4"
+  }
+}
