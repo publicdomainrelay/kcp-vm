@@ -38,10 +38,10 @@ export class Command {
     const cliVals = await this.#parseCliArgs(this.#argsEnv, this.#args);
 
     for (const [key, def] of Object.entries(this.#argsEnv.options)) {
-      const cliVal = cliVals[key];
+      const camelKey = toCamelCase(key);
+      const cliVal = cliVals[camelKey];
       const envVal = def.env ? Deno.env.get(def.env) : undefined;
       const configVal = runtimeConfig?.[key];
-      const camelKey = toCamelCase(key);
 
       if (cliVal !== undefined) {
         this.options[camelKey] = cliVal;
