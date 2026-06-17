@@ -3,5 +3,5 @@
  */
 
 export * as 'delete' from './vm/delete.ts'
-export * as onNetwork from './vm/onNetwork.ts'
 export * as started from './vm/started.ts'
+export * as onNetwork from './vm/onNetwork.ts'

@@ -16,36 +16,29 @@
       "output": {
         "encoding": "application/json",
         "schema": {
-          "type": "ref",
-          "ref": "com.publicdomainrelay.temp.market.listBidders#bidderEntry"
+          "type": "object",
+          "required": ["bidders"],
+          "properties": {
+            "bidders": {
+              "type": "array",
+              "items": { "type": "ref", "ref": "#bidderItem" }
+            },
+            "cursor": { "type": "string" }
+          }
         }
-      }
-    },
-    "bidderEntry": {
-      "type": "record",
-      "record": {
-        "type": "object",
-        "required": ["bidders"],
-        "properties": {
-          "bidders": {
-            "type": "array",
-            "items": { "type": "ref", "ref": "com.publicdomainrelay.temp.market.listBidders#bidderItem" }
-          },
-          "cursor": { "type": "string" }
-        }
-      }
+      },
+      "errors": [
+        { "name": "InvalidRequest" }
+      ]
     },
     "bidderItem": {
-      "type": "record",
-      "record": {
-        "type": "object",
-        "required": ["bidderDid", "appliesTo"],
-        "properties": {
-          "bidderDid": { "type": "string", "format": "did" },
-          "appliesTo": {
-            "type": "array",
-            "items": { "type": "string" }
-          }
+      "type": "object",
+      "required": ["bidderDid", "appliesTo"],
+      "properties": {
+        "bidderDid": { "type": "string", "format": "did" },
+        "appliesTo": {
+          "type": "array",
+          "items": { "type": "string" }
         }
       }
     }

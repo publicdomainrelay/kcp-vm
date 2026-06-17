@@ -3,8 +3,8 @@
  */
 
 import { l } from '@atproto/lex'
-import * as RepoStrongRef from '../../com/atproto/repo/strongRef.defs.ts'
 import * as AttestedSignature from './signature.defs.ts'
+import * as RepoStrongRef from '../../com/atproto/repo/strongRef.defs.ts'
 
 const $nsid = 'network.attested.proof'
 
