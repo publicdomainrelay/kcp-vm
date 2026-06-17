@@ -1,6 +1,4 @@
-import type { Hono } from "@hono/hono";
 import type { ContentfulStatusCode } from "@hono/hono/utils/http-status";
-import { HTTPError } from "@publicdomainrelay/http-error";
 import type { LoggerInterface } from "@publicdomainrelay/logger";
 
 function httpStatusOf(err: unknown): number | undefined {
@@ -8,13 +6,14 @@ function httpStatusOf(err: unknown): number | undefined {
   return typeof status === "number" && status >= 400 && status < 600 ? status : undefined;
 }
 
-export function registerErrorMiddleware(app: Hono, logger?: LoggerInterface): void {
-  app.onError((err, c) => {
-    if (err instanceof HTTPError) {
-      return c.json(
-        { error: "http_error", code: err.status, detail: err.detail },
-        err.status as ContentfulStatusCode,
-      );
+export function registerErrorMiddleware(
+  app: { onError(handler: (err: unknown, c: { json(data: unknown, status?: number): unknown }) => unknown): void },
+  logger: LoggerInterface,
+): void {
+  app.onError((err: unknown, c) => {
+    const toJson = (err as { toJSON?: () => Record<string, unknown> }).toJSON;
+    if (typeof toJson === "function") {
+      return c.json(toJson.call(err), ((err as { status?: number }).status ?? 500) as ContentfulStatusCode);
     }
     const status = httpStatusOf(err);
     if (status !== undefined) {
@@ -23,11 +22,7 @@ export function registerErrorMiddleware(app: Hono, logger?: LoggerInterface): vo
         status as ContentfulStatusCode,
       );
     }
-    if (logger) {
-      logger.error((err as Error).stack ?? String(err), { component: "error-middleware" });
-    } else {
-      console.error("[err]", (err as Error).stack ?? err);
-    }
+    logger.error((err as Error).stack ?? String(err), { component: "error-middleware" });
     return c.json({ error: "internal", detail: (err as Error).message }, 500);
   });
 }
