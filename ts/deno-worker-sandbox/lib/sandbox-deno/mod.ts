@@ -3,7 +3,7 @@ import type {
   SandboxPermissions,
   SandboxRequest,
   SandboxResponse,
-} from "@publicdomainrelay/sandbox-abc";
+} from "jsr:@publicdomainrelay/sandbox-abc@0.0.0";
 
 export function createDenoSandbox(permissions?: SandboxPermissions): Sandbox {
   const workerUrl = new URL("./worker.ts", import.meta.url);

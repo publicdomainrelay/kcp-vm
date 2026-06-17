@@ -4,7 +4,7 @@ import type {
   BundleResponse,
   BundleTarRequest,
   BundleTarResponse,
-} from "@publicdomainrelay/sandbox-abc";
+} from "jsr:@publicdomainrelay/sandbox-abc@0.0.0";
 
 async function tmpDir(): Promise<string> {
   return await Deno.makeTempDir({ prefix: "sandbox-bundle-" });
