@@ -90,7 +90,7 @@ export class Command {
   }
 }
 
-function cliffyFlag(key: string, type: string): string {
+export function cliffyFlag(key: string, type: string): string {
   switch (type) {
     case "boolean":
       return `--${key}`;
@@ -101,11 +101,11 @@ function cliffyFlag(key: string, type: string): string {
   }
 }
 
-function toCamelCase(kebab: string): string {
+export function toCamelCase(kebab: string): string {
   return kebab.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
 }
 
-function coerce(val: string, type: string): unknown {
+export function coerce(val: string, type: string): unknown {
   switch (type) {
     case "number":
       return Number(val);

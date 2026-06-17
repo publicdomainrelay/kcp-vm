@@ -1,7 +1,7 @@
 import type { ContentfulStatusCode } from "@hono/hono/utils/http-status";
 import type { LoggerInterface } from "@publicdomainrelay/logger";
 
-function httpStatusOf(err: unknown): number | undefined {
+export function httpStatusOf(err: unknown): number | undefined {
   const status = (err as { status?: unknown })?.status;
   return typeof status === "number" && status >= 400 && status < 600 ? status : undefined;
 }
