@@ -4,54 +4,50 @@
   "defs": {
     "main": {
       "type": "query",
-      "description": "List active bidders indexed by the market registry. RFP makers call this to discover bidders that can handle a given payload NSID. The registry periodically verifies liveness by polling each bidder's bidderDiscovery record.",
+      "description": "List active bidders indexed by the market registry.",
       "parameters": {
         "type": "params",
         "properties": {
-          "payloadNsid": {
-            "type": "string",
-            "format": "nsid",
-            "description": "Filter bidders by the payload NSID they handle (e.g. com.publicdomainrelay.temp.compute.vm)."
-          },
-          "maxResults": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 200,
-            "default": 50
-          },
-          "cursor": {
-            "type": "string",
-            "description": "Pagination cursor from a previous response."
-          }
+          "payloadNsid": { "type": "string", "format": "nsid" },
+          "maxResults": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50 },
+          "cursor": { "type": "string" }
         }
       },
       "output": {
         "encoding": "application/json",
         "schema": {
-          "type": "object",
-          "required": ["bidders"],
-          "properties": {
-            "bidders": {
-              "type": "array",
-              "items": {
-                "type": "object",
-                "required": ["bidderDid", "appliesTo"],
-                "properties": {
-                  "bidderDid": { "type": "string", "format": "did" },
-                  "appliesTo": {
-                    "type": "array",
-                    "items": { "type": "string" }
-                  }
-                }
-              }
-            },
-            "cursor": { "type": "string" }
+          "type": "ref",
+          "ref": "com.publicdomainrelay.temp.market.listBidders#bidderEntry"
+        }
+      }
+    },
+    "bidderEntry": {
+      "type": "record",
+      "record": {
+        "type": "object",
+        "required": ["bidders"],
+        "properties": {
+          "bidders": {
+            "type": "array",
+            "items": { "type": "ref", "ref": "com.publicdomainrelay.temp.market.listBidders#bidderItem" }
+          },
+          "cursor": { "type": "string" }
+        }
+      }
+    },
+    "bidderItem": {
+      "type": "record",
+      "record": {
+        "type": "object",
+        "required": ["bidderDid", "appliesTo"],
+        "properties": {
+          "bidderDid": { "type": "string", "format": "did" },
+          "appliesTo": {
+            "type": "array",
+            "items": { "type": "string" }
           }
         }
-      },
-      "errors": [
-        { "name": "InvalidRequest" }
-      ]
+      }
     }
   }
 }
