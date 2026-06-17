@@ -57,3 +57,9 @@ export interface SandboxPermissions {
   env?: string[];
   run?: string[];
 }
+
+export interface PersistentWorker {
+  postMessage(message: unknown): void;
+  onMessage(handler: (message: unknown) => void): void;
+  shutdown(): Promise<void>;
+}
