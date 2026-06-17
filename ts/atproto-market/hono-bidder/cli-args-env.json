@@ -1,0 +1,61 @@
+{
+  "name": "bidder",
+  "description": "Compute bidder for market contract testing",
+  "options": {
+    "port": {
+      "type": "number",
+      "description": "Port to listen on (0 = random)",
+      "env": "PORT",
+      "default": 0
+    },
+    "private-key-hex": {
+      "type": "string",
+      "description": "Secp256k1 private key hex for the bidder DID",
+      "env": "REPO_PRIVATE_KEY_HEX"
+    },
+    "plc-directory-url": {
+      "type": "string",
+      "description": "PLC directory URL for DID registration",
+      "env": "PLC_DIRECTORY_URL",
+      "default": "https://plc.directory"
+    },
+    "dispatcher-host": {
+      "type": "string",
+      "description": "XRPC relay dispatcher host",
+      "env": "DISPATCHER_HOST",
+      "default": "xrpc.fedproxy.com"
+    },
+    "label": {
+      "type": "string",
+      "description": "Label for log and relay identification",
+      "env": "BIDDER_LABEL",
+      "default": "bidder"
+    },
+    "compute-provider": {
+      "type": "string",
+      "description": "Compute provider mode: local or digitalocean",
+      "env": "COMPUTE_PROVIDER"
+    },
+    "compute-provider-token": {
+      "type": "string",
+      "description": "DigitalOcean API token",
+      "env": "COMPUTE_PROVIDER_TOKEN"
+    },
+    "compute-provider-base-url": {
+      "type": "string",
+      "description": "DigitalOcean API base URL",
+      "env": "COMPUTE_PROVIDER_BASE_URL"
+    },
+    "registry-endpoint": {
+      "type": "string",
+      "description": "Market registry endpoint for bidder registration",
+      "env": "REGISTRY_ENDPOINT"
+    },
+    "heartbeat-interval-ms": {
+      "type": "number",
+      "description": "Discovery record heartbeat interval in ms",
+      "env": "HEARTBEAT_INTERVAL_MS",
+      "default": 60000
+    }
+  }
+}

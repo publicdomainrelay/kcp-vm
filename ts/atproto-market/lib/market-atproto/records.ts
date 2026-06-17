@@ -1,16 +1,8 @@
-// Small atproto repo helpers shared by market producers.
-//
-// Resolving referenced records is the receiver's job (see ./resolve.ts); these
-// are the *write* side that producers (the spindle, the bidder) need to mint and
-// retract the market.* records they author. They were duplicated verbatim in
-// both reference services before living here. Each takes an authenticated
-// `Agent` (or session-backed agent) — the library never logs you in for you.
-
 import type { Agent } from "@atproto/api";
 import { getPdsEndpoint } from "@atproto/common-web";
 import type { IdResolver } from "@atproto/identity";
-import { parseAtUri, type RecordRef } from "@publicdomainrelay/market-abc";
-import { strongRef, OFFERING_NSID, RECEIPT_NSID, type Logger, type StrongRef } from "@publicdomainrelay/market-common";
+import { parseAtUri, type RecordRef, type RecordResolver } from "@publicdomainrelay/market-abc";
+import { strongRef, OFFERING_NSID, RECEIPT_NSID, type Logger, type Resolved, type StrongRef } from "@publicdomainrelay/market-common";
 import { createRemoteProofRecord, type RecordSigner } from "./signing.ts";
 
 /**
@@ -183,4 +175,21 @@ export async function ensureOfferingRecord(
   log("info", "offering record created", {
     ref: { $type: "com.atproto.repo.strongRef", uri: res.data.uri, cid: res.data.cid },
   });
+}
+
+export function createRecordResolver(idResolver: IdResolver): RecordResolver {
+  return {
+    async resolve<T>(ref: RecordRef): Promise<Resolved<T>> {
+      const { repo, collection, rkey } = parseAtUri(ref.uri);
+      const doc = await idResolver.did.resolve(repo);
+      if (!doc) throw new Error(`could not resolve did ${repo}`);
+      const pds = getPdsEndpoint(doc);
+      if (!pds) throw new Error(`no pds endpoint for ${repo}`);
+      const url = `${pds}/xrpc/com.atproto.repo.getRecord?repo=${repo}&collection=${collection}&rkey=${rkey}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`getRecord failed: ${res.status}`);
+      const data = await res.json() as { uri: string; cid?: string; value: T };
+      return { ...data.value, _uri: data.uri, _cid: data.cid ?? ref.cid } as Resolved<T>;
+    },
+  };
 }
