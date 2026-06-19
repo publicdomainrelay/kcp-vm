@@ -1,5 +1,11 @@
 import { DenoComputeError } from "@publicdomainrelay/compute-deno-common";
 import type { SigningKey } from "@publicdomainrelay/compute-deno-abc";
+import { Secp256k1Keypair } from "@atproto/crypto";
+
+export async function signerFromPrivateKeyHex(hex: string): Promise<SigningKey> {
+  const kp = await Secp256k1Keypair.import(hex);
+  return { did: () => kp.did(), sign: (bytes: Uint8Array) => kp.sign(bytes) };
+}
 
 export interface InlineAttestation {
   $type: "network.attested.signature";

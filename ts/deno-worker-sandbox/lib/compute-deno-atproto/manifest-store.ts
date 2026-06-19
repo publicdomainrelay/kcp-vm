@@ -1,7 +1,7 @@
 import type { WorkerManifestStore, SigningKey } from "@publicdomainrelay/compute-deno-abc";
 import type { WorkerManifestRecord } from "@publicdomainrelay/compute-deno-common";
 import type { StrongRef } from "@publicdomainrelay/compute-deno-common";
-import { WORKER_MANIFEST_NSID, DenoComputeError } from "@publicdomainrelay/compute-deno-common";
+import { WORKER_MANIFEST_NSID, DenoComputeError, parseAtUri } from "@publicdomainrelay/compute-deno-common";
 import { createInlineAttestationForRecord, signatureToBase64Url } from "./signing.ts";
 
 export type { SigningKey };
@@ -86,8 +86,3 @@ export function createDenoComputeManifestStore(
   };
 }
 
-function parseAtUri(uri: string): { did: string; collection: string; rkey: string } | null {
-  const m = /^at:\/\/([^/]+)\/([^/]+)\/(.+)$/.exec(uri);
-  if (!m) return null;
-  return { did: m[1], collection: m[2], rkey: m[3] };
-}

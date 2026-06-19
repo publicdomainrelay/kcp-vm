@@ -1,7 +1,7 @@
 import type { WorkerInstanceStore, SigningKey } from "@publicdomainrelay/compute-deno-abc";
 import type { WorkerInstanceRecord } from "@publicdomainrelay/compute-deno-common";
 import type { StrongRef } from "@publicdomainrelay/compute-deno-common";
-import { WORKER_INSTANCE_NSID, DenoComputeError } from "@publicdomainrelay/compute-deno-common";
+import { WORKER_INSTANCE_NSID, DenoComputeError, parseAtUri } from "@publicdomainrelay/compute-deno-common";
 import type { PdsClient } from "./manifest-store.ts";
 import { createInlineAttestationForRecord, signatureToBase64Url } from "./signing.ts";
 
@@ -45,9 +45,9 @@ export function createDenoComputeInstanceStore(
     },
 
     async get(uri: string): Promise<WorkerInstanceRecord | null> {
-      const m = /^at:\/\/([^/]+)\/([^/]+)\/(.+)$/.exec(uri);
-      if (!m) return null;
-      const result = await pds.getRecord(m[1], m[2], m[3]);
+      const parsed = parseAtUri(uri);
+      if (!parsed) return null;
+      const result = await pds.getRecord(parsed.did, parsed.collection, parsed.rkey);
       if (!result) return null;
       const v = result.value;
       return {
@@ -56,8 +56,6 @@ export function createDenoComputeInstanceStore(
       };
     },
 
-    async delete(_uri: string): Promise<void> {
-      // no-op: record deletion not supported in this transport
-    },
+    async delete(_uri: string): Promise<void> {},
   };
 }

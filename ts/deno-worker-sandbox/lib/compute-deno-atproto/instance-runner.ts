@@ -45,16 +45,24 @@ export function createDenoComputeInstanceRunner(opts: RunnerOptions): WorkerInst
         throw new DenoComputeError("Instance not running", 404, "InstanceNotRunning");
       }
 
+      const timeoutMs = opts.timeoutMs ?? 30_000;
+
       return new Promise((resolve, reject) => {
-        const timer = opts.timeoutMs
-          ? setTimeout(() => {
-            reject(new DenoComputeError("Worker timeout", 504, "WorkerTimeout"));
-          }, opts.timeoutMs)
-          : undefined;
+        const timer = setTimeout(() => {
+          reject(new DenoComputeError("Worker timeout", 504, "WorkerTimeout"));
+        }, timeoutMs);
 
         worker.onMessage((msg: unknown) => {
-          if (timer) clearTimeout(timer);
+          clearTimeout(timer);
           const m = msg as Record<string, unknown>;
+          if (m.type === "error") {
+            reject(new DenoComputeError(
+              `Worker error: ${m.message as string}`,
+              500,
+              "WorkerError",
+            ));
+            return;
+          }
           resolve({
             status: (m.status as number) ?? 200,
             headers: (m.headers as Record<string, string>) ?? {},
@@ -71,6 +79,12 @@ export function createDenoComputeInstanceRunner(opts: RunnerOptions): WorkerInst
       if (!worker) return;
       workers.delete(instanceRef.uri);
       await worker.shutdown();
+    },
+
+    async stopAll(): Promise<void> {
+      const promises = Array.from(workers.entries()).map(([_uri, w]) => w.shutdown());
+      await Promise.allSettled(promises);
+      workers.clear();
     },
 
     isRunning(instanceRef: StrongRef): boolean {

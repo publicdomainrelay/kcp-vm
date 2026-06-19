@@ -17,3 +17,4 @@ export type {
 } from "./types.ts";
 
 export { DenoComputeError } from "./errors.ts";
+export { parseAtUri } from "./utils.ts";

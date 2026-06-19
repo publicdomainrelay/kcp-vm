@@ -20,5 +20,6 @@ export interface WorkerInstanceRunner {
   start(instanceRef: StrongRef, manifestRef: StrongRef): Promise<void>;
   execute(instanceRef: StrongRef, request: WorkerRequest): Promise<WorkerResponse>;
   stop(instanceRef: StrongRef): Promise<void>;
+  stopAll(): Promise<void>;
   isRunning(instanceRef: StrongRef): boolean;
 }
