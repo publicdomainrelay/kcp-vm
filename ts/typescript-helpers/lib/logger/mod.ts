@@ -44,9 +44,7 @@ export interface StructuredLoggerInterface {
 
 export function rawStructuredLogger(prefix?: string, minLevel?: LogLevel): Logger {
   const p = prefix ?? "";
-  const resolvedMinLevel = minLevel ??
-    (globalThis.Deno?.env.get("MIN_LOG_LEVEL") as LogLevel | undefined) ??
-    "info";
+  const resolvedMinLevel = minLevel ?? "info";
   const minRank = LEVEL_ORDER[resolvedMinLevel] ?? 1;
   return (level, message, meta) => {
     const lvl = level as LogLevel;
@@ -84,3 +82,11 @@ export const noopLoggerInterface: LoggerInterface = {
   error: () => {},
   debug: () => {},
 };
+
+/** Read MIN_LOG_LEVEL env var, returning valid LogLevel or "info" default.
+ * CLIs call this to propagate env config into createStructuredLogger. */
+export function getMinLogLevelFromEnv(): LogLevel {
+  const raw = globalThis.Deno?.env?.get("MIN_LOG_LEVEL");
+  if (raw === "debug" || raw === "info" || raw === "warn" || raw === "error") return raw;
+  return "info";
+}
