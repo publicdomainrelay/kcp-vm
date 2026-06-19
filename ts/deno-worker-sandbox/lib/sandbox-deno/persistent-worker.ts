@@ -1,4 +1,4 @@
-import type { PersistentWorker, SandboxPermissions } from "jsr:@publicdomainrelay/sandbox-abc@0.0.0";
+import type { PersistentWorker, SandboxPermissions } from "@publicdomainrelay/sandbox-abc";
 
 export function createPersistentDenoWorker(
   workerUrl: string | URL,

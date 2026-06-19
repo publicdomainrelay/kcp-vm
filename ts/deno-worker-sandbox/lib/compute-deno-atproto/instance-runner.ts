@@ -1,8 +1,7 @@
 import type { WorkerInstanceRunner } from "@publicdomainrelay/compute-deno-abc";
 import type { WorkerRequest, WorkerResponse, StrongRef } from "@publicdomainrelay/compute-deno-common";
 import { DenoComputeError } from "@publicdomainrelay/compute-deno-common";
-import type { PersistentWorker, Bundler } from "@publicdomainrelay/sandbox-abc";
-import { createPersistentDenoWorker } from "@publicdomainrelay/sandbox-deno";
+import type { PersistentWorker, Bundler } from "@publicdomainrelay/sandbox-common";
 import type { WorkerManifestStore, WorkerInstanceStore } from "@publicdomainrelay/compute-deno-abc";
 
 export interface RunnerOptions {
@@ -10,6 +9,7 @@ export interface RunnerOptions {
   instanceStore: WorkerInstanceStore;
   bundler: Bundler;
   timeoutMs?: number;
+  createWorker?: (url: string) => PersistentWorker;
 }
 
 export function createDenoComputeInstanceRunner(opts: RunnerOptions): WorkerInstanceRunner {
@@ -22,9 +22,12 @@ export function createDenoComputeInstanceRunner(opts: RunnerOptions): WorkerInst
 
       const workerUrl = `data:application/javascript;base64,${btoa(manifest.bundle)}`;
 
+      const createWorkerFn = opts.createWorker ?? ((_url: string) => {
+        throw new DenoComputeError("No worker factory configured", 500, "WorkerConfigError");
+      });
       let worker: PersistentWorker;
       try {
-        worker = createPersistentDenoWorker(workerUrl);
+        worker = createWorkerFn(workerUrl);
       } catch (err) {
         throw new DenoComputeError(
           `Worker start failed: ${String(err)}`,

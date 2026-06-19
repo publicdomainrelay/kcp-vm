@@ -3,7 +3,7 @@ import type {
   SandboxPermissions,
   SandboxRequest,
   SandboxResponse,
-} from "jsr:@publicdomainrelay/sandbox-abc@0.0.0";
+} from "@publicdomainrelay/sandbox-abc";
 
 function buildWorkerCode(code: string): string {
   return [
