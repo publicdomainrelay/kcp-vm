@@ -1,0 +1,53 @@
+{
+  "lexicon": 1,
+  "id": "com.publicdomainrelay.temp.compute.deno.registerWorkerManifest",
+  "defs": {
+    "main": {
+      "type": "procedure",
+      "description": "Register a worker manifest. The server bundles the provided source against the given deno.json, creates a signed com.publicdomainrelay.temp.compute.deno.workerManifest record on the configured PDS, and returns a strongRef to it together with the generated bundle.",
+      "input": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": ["source", "denoJson"],
+          "properties": {
+            "source": {
+              "type": "string",
+              "description": "Worker source code (TypeScript)."
+            },
+            "denoJson": {
+              "type": "string",
+              "description": "Contents of deno.json for the worker project."
+            },
+            "denoLock": {
+              "type": "string",
+              "description": "Contents of deno.lock (optional)."
+            }
+          }
+        }
+      },
+      "output": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": ["manifest", "bundle"],
+          "properties": {
+            "manifest": {
+              "type": "ref",
+              "ref": "com.atproto.repo.strongRef",
+              "description": "StrongRef (uri + cid) to the created workerManifest record."
+            },
+            "bundle": {
+              "type": "string",
+              "description": "The generated bundle.js contents."
+            }
+          }
+        }
+      },
+      "errors": [
+        { "name": "BundleFailed", "description": "Source code failed to bundle/validate." },
+        { "name": "Unauthorized", "description": "Missing or invalid service-auth token." }
+      ]
+    }
+  }
+}

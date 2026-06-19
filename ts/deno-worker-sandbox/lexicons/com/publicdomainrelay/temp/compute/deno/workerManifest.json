@@ -1,0 +1,59 @@
+{
+  "lexicon": 1,
+  "id": "com.publicdomainrelay.temp.compute.deno.workerManifest",
+  "defs": {
+    "main": {
+      "type": "record",
+      "description": "A signed manifest for a Deno sandbox worker. Contains the bundled source, dependency files (deno.json, deno.lock), and optional source provenance. The signatures property carries badge.blue attestations over this record.",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["lock", "json", "bundle", "signatures"],
+        "properties": {
+          "source": {
+            "type": "object",
+            "description": "Provenance of the worker source code.",
+            "properties": {
+              "tangled": {
+                "type": "ref",
+                "ref": "sh.tangled.repo",
+                "description": "Strong reference to a Tangled repo record."
+              },
+              "git": {
+                "type": "string",
+                "format": "uri",
+                "description": "Git repository URL."
+              }
+            }
+          },
+          "lock": {
+            "type": "string",
+            "description": "Contents of deno.lock."
+          },
+          "json": {
+            "type": "string",
+            "description": "Contents of deno.json."
+          },
+          "bundle": {
+            "type": "string",
+            "description": "Contents of bundle.js produced by the bundler."
+          },
+          "config": {
+            "type": "string",
+            "description": "Contents of config.json (optional inline configuration)."
+          },
+          "configref": {
+            "type": "ref",
+            "ref": "com.publicdomainrelay.temp.compute.deno.workerConfig",
+            "description": "Strong reference to a com.publicdomainrelay.temp.compute.deno.workerConfig record."
+          },
+          "signatures": {
+            "type": "ref",
+            "ref": "network.attested.signature#signatures",
+            "description": "badge.blue attestations over this manifest. Must include the service's inline signature, attached at creation; post-hoc third-party attestations use remote network.attested.proof records referenced via com.atproto.repo.strongRef."
+          }
+        }
+      }
+    }
+  }
+}
