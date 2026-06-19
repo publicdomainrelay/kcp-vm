@@ -1,10 +1,6 @@
 {
   "version": "0.0.0",
   "license": "Unlicense",
-  "imports": {
-    "@publicdomainrelay/cli-args-env": "../../typescript-helpers/lib/cli-args-env/mod.ts",
-    "@publicdomainrelay/hono-factory-compute-bidder": "../lib/hono-factory-compute-bidder/mod.ts"
-  },
   "compile": {
     "include": ["cli-args-env.json", "config.json"]
   }
