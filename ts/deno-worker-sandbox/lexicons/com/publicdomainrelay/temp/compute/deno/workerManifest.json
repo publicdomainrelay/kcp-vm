@@ -47,6 +47,24 @@
             "ref": "com.publicdomainrelay.temp.compute.deno.workerConfig",
             "description": "Strong reference to a com.publicdomainrelay.temp.compute.deno.workerConfig record."
           },
+          "persistent": {
+            "type": "boolean",
+            "description": "If true, a worker instance is created and started immediately when this manifest is registered."
+          },
+          "permissions": {
+            "type": "object",
+            "description": "Deno Worker permissions. Each key accepts a boolean (true to allow all of that category) or an array of scoped strings.",
+            "properties": {
+              "net": { "type": ["boolean", "array"], "items": { "type": "string" }, "description": "Network access." },
+              "read": { "type": ["boolean", "array"], "items": { "type": "string" }, "description": "File system read access." },
+              "write": { "type": ["boolean", "array"], "items": { "type": "string" }, "description": "File system write access." },
+              "env": { "type": ["boolean", "array"], "items": { "type": "string" }, "description": "Environment variable access." },
+              "run": { "type": ["boolean", "array"], "items": { "type": "string" }, "description": "Subprocess execution." },
+              "ffi": { "type": ["boolean", "array"], "items": { "type": "string" }, "description": "Foreign function interface." },
+              "sys": { "type": ["boolean", "array"], "items": { "type": "string" }, "description": "System information access." },
+              "import": { "type": ["boolean", "array"], "items": { "type": "string" }, "description": "Remote module import access." }
+            }
+          },
           "signatures": {
             "type": "ref",
             "ref": "network.attested.signature#signatures",

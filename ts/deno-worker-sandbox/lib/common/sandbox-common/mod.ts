@@ -13,37 +13,13 @@ export class SandboxError extends Error {
   }
 }
 
-// Bundler interface and supporting types (moved from sandbox-abc)
-export interface BundleRequest {
-  denoJson: string;
-  denoLock?: string;
-  source: string;
-}
-
-export interface BundleResponse {
-  bundleJs: string;
-  stdout: string;
-  stderr: string;
-}
-
-export interface BundleTarRequest {
-  tarBase64: string;
-}
-
-export interface BundleTarResponse {
-  bundleJs: string;
-  stdout: string;
-  stderr: string;
-}
-
-export interface Bundler {
-  bundle(request: BundleRequest): Promise<BundleResponse>;
-  bundleTar(request: BundleTarRequest): Promise<BundleTarResponse>;
-}
-
-// PersistentWorker interface (moved from sandbox-abc)
-export interface PersistentWorker {
-  postMessage(message: unknown): void;
-  onMessage(handler: (message: unknown) => void): void;
-  shutdown(): Promise<void>;
+export interface SandboxPermissions {
+  net?: boolean | string[];
+  read?: boolean | string[];
+  write?: boolean | string[];
+  env?: boolean | string[];
+  run?: boolean | string[];
+  ffi?: boolean | string[];
+  sys?: boolean | string[];
+  import?: boolean | string[];
 }

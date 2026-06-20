@@ -1,9 +1,9 @@
 import type {
   Sandbox,
-  SandboxPermissions,
   SandboxRequest,
   SandboxResponse,
 } from "@publicdomainrelay/sandbox-abc";
+import type { SandboxPermissions } from "@publicdomainrelay/sandbox-common";
 
 function buildWorkerCode(code: string): string {
   return [
@@ -69,7 +69,7 @@ export function createDenoSandbox(permissions?: SandboxPermissions): Sandbox {
             timedOut: false,
             result: m.result,
           });
-          try { worker.terminate(); } catch { /* already dead */ }
+          try { worker.terminate(); } catch { }
         };
 
         worker.onerror = (err) => {
@@ -82,14 +82,14 @@ export function createDenoSandbox(permissions?: SandboxPermissions): Sandbox {
             exitCode: 1,
             timedOut: false,
           });
-          try { worker.terminate(); } catch { /* already dead */ }
+          try { worker.terminate(); } catch { }
         };
 
         if (request.timeoutMs && request.timeoutMs > 0) {
           timer = setTimeout(() => {
             if (settled) return;
             settled = true;
-            try { worker.terminate(); } catch { /* already dead */ }
+            try { worker.terminate(); } catch { }
             resolve({
               stdout: "",
               stderr: "execution timed out",

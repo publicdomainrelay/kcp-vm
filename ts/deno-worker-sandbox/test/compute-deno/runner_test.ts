@@ -2,6 +2,7 @@ import { assertEquals, assertRejects } from "@std/assert";
 import { createDenoComputeInstanceRunner } from "@publicdomainrelay/compute-deno-atproto";
 import { createDenoComputeManifestStore } from "@publicdomainrelay/compute-deno-atproto";
 import { createDenoComputeInstanceStore } from "@publicdomainrelay/compute-deno-atproto";
+import { createPersistentDenoWorker } from "@publicdomainrelay/sandbox-deno";
 
 Deno.test("execute rejects with WorkerTimeout when worker never responds", async () => {
   const did = "did:plc:timeout";
@@ -34,6 +35,7 @@ Deno.test("execute rejects with WorkerTimeout when worker never responds", async
   const runner = createDenoComputeInstanceRunner({
     manifestStore,
     instanceStore,
+    createWorker: createPersistentDenoWorker,
     bundler: {
       async bundle() {
         const hangScript = "self.onmessage = () => {}; self.onerror = null;";
@@ -94,6 +96,7 @@ Deno.test("execute rejects with WorkerError when worker sends error message", as
   const runner = createDenoComputeInstanceRunner({
     manifestStore,
     instanceStore,
+    createWorker: createPersistentDenoWorker,
     bundler: {
       async bundle() {
         return { bundleJs: "self.onmessage = () => { self.postMessage({ type: 'error', message: 'boom' }); };", stdout: "", stderr: "" };

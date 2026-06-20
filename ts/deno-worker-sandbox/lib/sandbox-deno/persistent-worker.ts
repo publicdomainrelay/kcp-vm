@@ -1,15 +1,16 @@
-import type { PersistentWorker, SandboxPermissions } from "@publicdomainrelay/sandbox-abc";
+import type { PersistentWorker } from "@publicdomainrelay/sandbox-abc";
+import type { SandboxPermissions } from "@publicdomainrelay/sandbox-common";
 
 export function createPersistentDenoWorker(
   workerUrl: string | URL,
   permissions?: SandboxPermissions,
 ): PersistentWorker {
   const denoPerms: Record<string, unknown> = {};
-  if (permissions?.net) denoPerms.net = permissions.net;
-  if (permissions?.read) denoPerms.read = permissions.read;
-  if (permissions?.write) denoPerms.write = permissions.write;
-  if (permissions?.env) denoPerms.env = permissions.env;
-  if (permissions?.run) denoPerms.run = permissions.run;
+  if (permissions) {
+    for (const [key, val] of Object.entries(permissions)) {
+      if (val !== undefined) denoPerms[key] = val;
+    }
+  }
 
   const worker = new Worker(workerUrl, {
     type: "module",
@@ -38,8 +39,7 @@ export function createPersistentDenoWorker(
       try {
         worker.terminate();
       } catch {
-        /* already dead */
-      }
+             }
     },
   };
 }

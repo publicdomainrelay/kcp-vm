@@ -5,3 +5,4 @@ export const WORKER_REQUEST_NSID = "com.publicdomainrelay.temp.compute.deno.work
 export const REGISTER_WORKER_MANIFEST_NSID = "com.publicdomainrelay.temp.compute.deno.registerWorkerManifest";
 export const RUN_PERSISTENT_WORKER_INSTANCE_NSID = "com.publicdomainrelay.temp.compute.deno.runPersistentWorkerInstance";
 export const EXECUTE_WORKER_INSTANCE_NSID = "com.publicdomainrelay.temp.compute.deno.executeWorkerInstance";
+export const GATE_REGISTRY_WORKER_MANIFEST_PERMISSIONS_NSID = "com.publicdomainrelay.temp.compute.deno.gateRegistryWorkerManifestPermissions";

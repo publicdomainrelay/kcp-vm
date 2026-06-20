@@ -46,6 +46,8 @@ export function createDenoComputeManifestStore(
       }
       if (record.config !== undefined) recordObj.config = record.config;
       if (record.configref) recordObj.configref = record.configref;
+      if (record.persistent !== undefined) recordObj.persistent = record.persistent;
+      if (record.permissions) recordObj.permissions = record.permissions;
 
       if (signingKey) {
         const attestation = await createInlineAttestationForRecord(
@@ -81,6 +83,8 @@ export function createDenoComputeManifestStore(
         config: v.config as string | undefined,
         configref: v.configref as StrongRef | undefined,
         signatures: v.signatures as unknown[] | undefined,
+        persistent: v.persistent as boolean | undefined,
+        permissions: v.permissions as import("@publicdomainrelay/sandbox-common").SandboxPermissions | undefined,
       };
     },
   };

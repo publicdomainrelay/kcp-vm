@@ -1,10 +1,23 @@
 import { DenoComputeError } from "@publicdomainrelay/compute-deno-common";
 import type { SigningKey } from "@publicdomainrelay/compute-deno-abc";
 import { Secp256k1Keypair } from "@atproto/crypto";
+import * as dagCbor from "@ipld/dag-cbor";
 
 export async function signerFromPrivateKeyHex(hex: string): Promise<SigningKey> {
   const kp = await Secp256k1Keypair.import(hex);
   return { did: () => kp.did(), sign: (bytes: Uint8Array) => kp.sign(bytes) };
+}
+
+const MULTIBASE_BASE32_PREFIX = "b";
+const CIDV1_VERSION = 0x01;
+const DAG_CBOR_CODEC = 0x71;
+const SHA256_MULTIHASH = 0x12;
+const SHA256_LENGTH = 0x20;
+
+export interface SignAttestationInput {
+  record: Record<string, unknown>;
+  repository: string;
+  issuer?: string;
 }
 
 export interface InlineAttestation {
@@ -16,39 +29,61 @@ export interface InlineAttestation {
   issuedAt?: string;
 }
 
-export interface SignManifestInput {
-  record: Record<string, unknown>;
-  repository: string;
-  issuer?: string;
-}
-
 export async function createInlineAttestationForRecord(
-  input: SignManifestInput,
+  input: SignAttestationInput,
   key: SigningKey,
 ): Promise<InlineAttestation> {
-  const record = { ...input.record };
-  delete record.signatures;
-  const recordBytes = new TextEncoder().encode(JSON.stringify(record));
-  const recordHash = new Uint8Array(
-    await crypto.subtle.digest("SHA-256", recordBytes),
-  );
-  const cidBytes = new Uint8Array(recordHash.length + 4);
-  cidBytes[0] = 0x01;
-  cidBytes[1] = 0x71;
-  cidBytes[2] = 0x12;
-  cidBytes[3] = 0x20;
-  cidBytes.set(recordHash, 4);
-  const cidStr = "b" + base32Encode(cidBytes).toLowerCase();
-  const sig = await key.sign(cidBytes);
+  if (typeof input.record.$type !== "string" || input.record.$type.length === 0) {
+    throw new DenoComputeError("record is missing $type", 400, "InvalidRequest");
+  }
+
+  const metadata: Record<string, unknown> = {
+    $type: "network.attested.signature",
+    key: key.did(),
+    repository: input.repository,
+  };
+  if (input.issuer) metadata.issuer = input.issuer;
+  metadata.issuedAt = new Date().toISOString();
+
+  const preparedRecord: Record<string, unknown> = { ...input.record };
+  delete preparedRecord.signatures;
+  preparedRecord.$sig = metadata;
+
+  const cidStr = await createAttestationCidStr(preparedRecord);
+
+  const sig = await key.sign(cidBytesFromStr(cidStr));
   const lowSSig = normalizeLowS(sig);
+
   return {
     $type: "network.attested.signature",
     key: key.did(),
     cid: cidStr,
     signature: lowSSig,
     issuer: input.issuer,
-    issuedAt: new Date().toISOString(),
+    issuedAt: metadata.issuedAt as string,
   };
+}
+
+async function createAttestationCidStr(obj: Record<string, unknown>): Promise<string> {
+  const encoded = dagCbor.encode(obj);
+  const bytes = new Uint8Array(encoded);
+  const hash = new Uint8Array(
+    await crypto.subtle.digest("SHA-256", bytes.buffer as ArrayBuffer),
+  );
+  const cidBytes = new Uint8Array(4 + hash.length);
+  cidBytes[0] = CIDV1_VERSION;
+  cidBytes[1] = DAG_CBOR_CODEC;
+  cidBytes[2] = SHA256_MULTIHASH;
+  cidBytes[3] = SHA256_LENGTH;
+  cidBytes.set(hash, 4);
+  return MULTIBASE_BASE32_PREFIX + base32Encode(cidBytes).toLowerCase();
+}
+
+function cidBytesFromStr(cidStr: string): Uint8Array {
+  if (cidStr[0] !== MULTIBASE_BASE32_PREFIX) {
+    throw new DenoComputeError("CID missing base32 prefix", 400, "InvalidRequest");
+  }
+  return base32Decode(cidStr.slice(1));
 }
 
 function base32Encode(bytes: Uint8Array): string {
@@ -70,6 +105,26 @@ function base32Encode(bytes: Uint8Array): string {
   return output;
 }
 
+function base32Decode(input: string): Uint8Array {
+  const alphabet = "abcdefghijklmnopqrstuvwxyz234567";
+  const lookup = new Map<string, number>();
+  for (let i = 0; i < alphabet.length; i++) lookup.set(alphabet[i], i);
+  const result: number[] = [];
+  let bits = 0;
+  let value = 0;
+  for (const ch of input.toLowerCase()) {
+    const v = lookup.get(ch);
+    if (v === undefined) throw new DenoComputeError(`Invalid base32 character: ${ch}`, 400, "InvalidRequest");
+    value = (value << 5) | v;
+    bits += 5;
+    if (bits >= 8) {
+      result.push((value >>> (bits - 8)) & 0xff);
+      bits -= 8;
+    }
+  }
+  return new Uint8Array(result);
+}
+
 function normalizeLowS(sig: Uint8Array): Uint8Array {
   if (sig.length < 64) return sig;
   const halfOrder = new Uint8Array([
@@ -85,7 +140,7 @@ function normalizeLowS(sig: Uint8Array): Uint8Array {
       0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
       0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfe,
       0xba, 0xae, 0xdc, 0xe6, 0xaf, 0x48, 0xa0, 0x3b,
-      0xbf, 0xd2, 0x5e, 0x8c, 0xd0, 0x36, 0x41, 0x41
+      0xbf, 0xd2, 0x5e, 0x8c, 0xd0, 0x36, 0x41, 0x41,
     ]);
     const negS = new Uint8Array(32);
     let borrow = 0;

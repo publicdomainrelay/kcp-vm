@@ -105,7 +105,7 @@ export function createDenoBundler(): Bundler {
       } finally {
         try {
           await Deno.remove(dir, { recursive: true });
-        } catch { /* best-effort cleanup */ }
+        } catch { }
       }
     },
 
@@ -148,7 +148,7 @@ export function createDenoBundler(): Bundler {
       } finally {
         try {
           await Deno.remove(dir, { recursive: true });
-        } catch { /* best-effort cleanup */ }
+        } catch { }
       }
     },
   };

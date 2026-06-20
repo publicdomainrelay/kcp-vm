@@ -117,7 +117,13 @@ async function verifyJwtSignature(
 
   let didDoc: Record<string, unknown>;
 
-  if (issuerDid.startsWith("did:web:")) {
+  const alg = header.alg as string | undefined ?? "ES256K";
+  const jwtAlg = alg === "ES256" ? P256_JWT_ALG : SECP256K1_JWT_ALG;
+  let didKey: string;
+
+  if (issuerDid.startsWith("did:key:")) {
+    didKey = issuerDid;
+  } else if (issuerDid.startsWith("did:web:")) {
     const domain = issuerDid.slice("did:web:".length);
     const url = `https://${domain}/.well-known/did.json`;
     try {
@@ -138,6 +144,32 @@ async function verifyJwtSignature(
         "AuthRequired",
       );
     }
+
+    const vmArray = didDoc.verificationMethod as Array<Record<string, unknown>> | undefined;
+    if (!vmArray?.length) {
+      throw new DenoComputeError("no verification methods in DID document", 401, "AuthRequired");
+    }
+
+    const atprotoKey = vmArray.find((vm) =>
+      vm.id === "#atproto" || vm.id === `${issuerDid}#atproto`
+    );
+    if (!atprotoKey) {
+      throw new DenoComputeError("no #atproto verification key in DID document", 401, "AuthRequired");
+    }
+
+    const publicKeyMultibase = atprotoKey.publicKeyMultibase as string | undefined;
+    if (!publicKeyMultibase) {
+      throw new DenoComputeError("unsupported key format, expected Multikey", 401, "AuthRequired");
+    }
+
+    let keyBytes: Uint8Array;
+    try {
+      keyBytes = multibaseToBytes(publicKeyMultibase);
+    } catch {
+      throw new DenoComputeError("invalid multibase key encoding", 401, "AuthRequired");
+    }
+
+    didKey = formatDidKey(jwtAlg, keyBytes);
   } else {
     throw new DenoComputeError(
       `unsupported DID method for signature verification`,
@@ -145,35 +177,6 @@ async function verifyJwtSignature(
       "AuthRequired",
     );
   }
-
-  const vmArray = didDoc.verificationMethod as Array<Record<string, unknown>> | undefined;
-  if (!vmArray?.length) {
-    throw new DenoComputeError("no verification methods in DID document", 401, "AuthRequired");
-  }
-
-  const atprotoKey = vmArray.find((vm) =>
-    vm.id === "#atproto" || vm.id === `${issuerDid}#atproto`
-  );
-  if (!atprotoKey) {
-    throw new DenoComputeError("no #atproto verification key in DID document", 401, "AuthRequired");
-  }
-
-  const publicKeyMultibase = atprotoKey.publicKeyMultibase as string | undefined;
-  if (!publicKeyMultibase) {
-    throw new DenoComputeError("unsupported key format, expected Multikey", 401, "AuthRequired");
-  }
-
-  const alg = header.alg as string | undefined ?? "ES256K";
-
-  let keyBytes: Uint8Array;
-  try {
-    keyBytes = multibaseToBytes(publicKeyMultibase);
-  } catch {
-    throw new DenoComputeError("invalid multibase key encoding", 401, "AuthRequired");
-  }
-
-  const jwtAlg = alg === "ES256" ? P256_JWT_ALG : SECP256K1_JWT_ALG;
-  const didKey = formatDidKey(jwtAlg, keyBytes);
 
   const signingInput = `${headerB64}.${payloadB64}`;
 

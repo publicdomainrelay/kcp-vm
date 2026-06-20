@@ -1,4 +1,4 @@
-import type { StrongRef, WorkerManifestRecord, WorkerInstanceRecord, WorkerRequest, WorkerResponse } from "@publicdomainrelay/compute-deno-common";
+import type { StrongRef, WorkerManifestRecord, WorkerInstanceRecord, WorkerRequest, WorkerResponse, PermissionPolicyResult } from "@publicdomainrelay/compute-deno-common";
 
 export interface SigningKey {
   did(): string;
@@ -22,4 +22,8 @@ export interface WorkerInstanceRunner {
   stop(instanceRef: StrongRef): Promise<void>;
   stopAll(): Promise<void>;
   isRunning(instanceRef: StrongRef): boolean;
+}
+
+export interface PermissionPolicyHandler {
+  evaluate(manifest: WorkerManifestRecord): Promise<PermissionPolicyResult>;
 }

@@ -6,3 +6,7 @@ export type { PdsClient, SigningKey } from "./manifest-store.ts";
 export type { RunnerOptions } from "./instance-runner.ts";
 export { createRemotePdsClient } from "./pds-client.ts";
 export { verifyComputeServiceAuth, signComputeServiceAuth } from "./service-auth.ts";
+export { createAllowNetOnlyPolicyHandler, BUILTIN_HANDLERS } from "./builtin-policy-handlers.ts";
+export { createWorkerPolicyHandler } from "./worker-policy-handler.ts";
+export { createLoopbackPolicyHandler } from "./loopback-policy-handler.ts";
+export { createRemotePermissionPolicyHandler } from "./remote-policy-handler.ts";

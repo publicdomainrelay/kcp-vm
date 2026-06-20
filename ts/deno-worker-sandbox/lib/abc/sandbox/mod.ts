@@ -23,20 +23,35 @@ export interface ExecRequest {
   timeoutMs?: number;
 }
 
-export interface SandboxPermissions {
-  net?: string[];
-  read?: string[];
-  write?: string[];
-  env?: string[];
-  run?: string[];
+export interface BundleRequest {
+  denoJson: string;
+  denoLock?: string;
+  source: string;
 }
 
-// Types moved to sandbox-common, re-exported here for backward compat
-export type {
-  Bundler,
-  BundleRequest,
-  BundleResponse,
-  BundleTarRequest,
-  BundleTarResponse,
-  PersistentWorker,
-} from "@publicdomainrelay/sandbox-common";
+export interface BundleResponse {
+  bundleJs: string;
+  stdout: string;
+  stderr: string;
+}
+
+export interface BundleTarRequest {
+  tarBase64: string;
+}
+
+export interface BundleTarResponse {
+  bundleJs: string;
+  stdout: string;
+  stderr: string;
+}
+
+export interface Bundler {
+  bundle(request: BundleRequest): Promise<BundleResponse>;
+  bundleTar(request: BundleTarRequest): Promise<BundleTarResponse>;
+}
+
+export interface PersistentWorker {
+  postMessage(message: unknown): void;
+  onMessage(handler: (message: unknown) => void): void;
+  shutdown(): Promise<void>;
+}
