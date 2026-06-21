@@ -1,0 +1,24 @@
+{
+  "name": "@publicdomainrelay/requester-xrpc",
+  "version": "0.0.0",
+  "license": "Unlicense",
+  "exports": "./mod.ts",
+  "imports": {
+    "@atproto/common": "npm:@atproto/common@^0.5.0",
+    "@atproto/common-web": "npm:@atproto/common-web@^0.5.0",
+    "@atproto/crypto": "npm:@atproto/crypto@^0.4.4",
+    "@atproto/identity": "npm:@atproto/identity@^0.5.0",
+    "@publicdomainrelay/atproto-repo-abc": "jsr:@publicdomainrelay/atproto-repo-abc@^0",
+    "@publicdomainrelay/atproto-repo-deno": "jsr:@publicdomainrelay/atproto-repo-deno@^0",
+    "@publicdomainrelay/hono-factory-atproto-repo-deno": "jsr:@publicdomainrelay/hono-factory-atproto-repo-deno@^0",
+    "@publicdomainrelay/did-plc": "jsr:@publicdomainrelay/did-plc@^0",
+    "@publicdomainrelay/did-key-relay-subscriber-xrpc": "jsr:@publicdomainrelay/did-key-relay-subscriber-xrpc@^0",
+    "@publicdomainrelay/hono-factory-did-key-relay-subscriber-xrpc": "jsr:@publicdomainrelay/hono-factory-did-key-relay-subscriber-xrpc@^0",
+    "@publicdomainrelay/market-atproto": "jsr:@publicdomainrelay/market-atproto@^0",
+    "@publicdomainrelay/market-abc": "jsr:@publicdomainrelay/market-abc@^0",
+    "@publicdomainrelay/market-common": "jsr:@publicdomainrelay/market-common@^0",
+    "@publicdomainrelay/cloud-init-common": "jsr:@publicdomainrelay/cloud-init-common@^0",
+    "@publicdomainrelay/requester-abc": "jsr:@publicdomainrelay/requester-abc@^0",
+    "@publicdomainrelay/logger": "jsr:@publicdomainrelay/logger@^0"
+  }
+}

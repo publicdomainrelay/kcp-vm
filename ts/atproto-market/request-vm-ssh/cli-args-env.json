@@ -1,0 +1,83 @@
+{
+  "name": "request-vm-ssh",
+  "description": "Compute market requester: create RFPs, collect bids, provision VMs, SSH in",
+  "options": {
+    "port": {
+      "type": "number",
+      "description": "Port to listen on",
+      "env": "PORT",
+      "default": 8080
+    },
+    "private-key-hex": {
+      "type": "string",
+      "description": "Secp256k1 private key hex for the requester DID",
+      "env": "REPO_PRIVATE_KEY_HEX"
+    },
+    "plc-directory-url": {
+      "type": "string",
+      "description": "PLC directory URL for DID registration",
+      "env": "PLC_DIRECTORY_URL",
+      "default": "https://plc.directory"
+    },
+    "dispatcher-host": {
+      "type": "string",
+      "description": "XRPC relay dispatcher host",
+      "env": "DISPATCHER_HOST",
+      "default": "xrpc.fedproxy.com"
+    },
+    "label": {
+      "type": "string",
+      "description": "Label for log and relay identification",
+      "env": "REQUESTER_LABEL",
+      "default": "request-vm-ssh"
+    },
+    "vm-name": {
+      "type": "string",
+      "description": "VM name (default: auto-generated compute-<random hex>)",
+      "env": "VM_NAME"
+    },
+    "bid-window-sec": {
+      "type": "number",
+      "description": "Seconds to wait for bids after submitting RFP",
+      "env": "BID_WINDOW_SEC",
+      "default": 30
+    },
+    "exec": {
+      "type": "string",
+      "description": "Program to run in the VM (for non-TTY sessions)",
+      "env": "EXEC_PROGRAM",
+      "default": "bash"
+    },
+    "vm-ready-timeout-sec": {
+      "type": "number",
+      "description": "Timeout in seconds waiting for VM SSH readiness",
+      "env": "VM_READY_TIMEOUT_SEC",
+      "default": 300
+    },
+    "no-delete": {
+      "type": "boolean",
+      "description": "Skip VM delete event after SSH session",
+      "env": "NO_DELETE"
+    },
+    "skip-ssh": {
+      "type": "boolean",
+      "description": "Skip SSH wait and session (for testing)",
+      "env": "SKIP_SSH"
+    },
+    "bidder-dids": {
+      "type": "string",
+      "description": "Comma-separated bidder DIDs",
+      "env": "BIDDER_DIDS"
+    },
+    "deny-bidder-dids": {
+      "type": "string",
+      "description": "Comma-separated DIDs to exclude from bidding",
+      "env": "DENY_BIDDER_DIDS"
+    },
+    "relay-url": {
+      "type": "string",
+      "description": "Relay URL for bidder discovery via listReposByCollection",
+      "env": "RELAY_URL"
+    }
+  }
+}

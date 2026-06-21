@@ -5,6 +5,4 @@ export * from "./attest.ts";
 export * from "./signing.ts";
 export * from "./records.ts";
 export * from "./contract.ts";
-export * from "./discovery.ts";
-export * from "./registry.ts";
 export * from "./bid.ts";

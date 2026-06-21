@@ -46,16 +46,5 @@
       "description": "DigitalOcean API base URL",
       "env": "COMPUTE_PROVIDER_BASE_URL"
     },
-    "registry-endpoint": {
-      "type": "string",
-      "description": "Market registry endpoint for bidder registration",
-      "env": "REGISTRY_ENDPOINT"
-    },
-    "heartbeat-interval-ms": {
-      "type": "number",
-      "description": "Discovery record heartbeat interval in ms",
-      "env": "HEARTBEAT_INTERVAL_MS",
-      "default": 60000
-    }
   }
 }

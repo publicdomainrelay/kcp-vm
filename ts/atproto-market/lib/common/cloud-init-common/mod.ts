@@ -1,0 +1,194 @@
+// Pure cloud-init YAML generation helpers. Zero I/O.
+
+export interface CloudInitContext {
+  /** VM name / RBAC role; used as the fedproxy SERVICE name. */
+  vmName: string;
+  /** Full DID (did:plc:…). */
+  didPlc: string;
+  /** Bare PLC key (DID without the `did:plc:` prefix). */
+  didPlcKey: string;
+  /** Relay FQDN (e.g. xrpc.fedproxy.com). The fedproxy-client ATPRP_URL is built from this. */
+  relayHost: string;
+  /** Subdomain the relay registered for this requester. */
+  xrpcRelaySubdomain: string;
+  /** OpenSSH public key (single line) added to root's authorized_keys. */
+  sshAuthorizedKey: string;
+}
+
+/** Mirror atprp-ssh-relay's flattenLabel. Must stay in sync with cmd/atprp-ssh-relay/main.go:flattenLabel. */
+export function flattenLabel(s: string): string {
+  return s.replace(/[.:]/g, "-");
+}
+
+/**
+ * Build the default cloud-config for a VM: OpenSSH reachable over WebSocket.
+ *
+ * sshd listens on 127.0.0.1:22 (loopback only). websocat bridges
+ * ws-listen 127.0.0.1:8080 → tcp 127.0.0.1:22, and fedproxy-client fronts
+ * :8080 — so an external SSH client tunnels through the relay over a WebSocket
+ * (`ProxyCommand websocat --binary ws://<service>.fedproxy.com`). Root login is
+ * key-only; the public key is injected by the requester, which holds the matching
+ * private key.
+ */
+export function buildDefaultUserData(ctx: CloudInitContext): string {
+  const { vmName, didPlc, didPlcKey, relayHost, xrpcRelaySubdomain, sshAuthorizedKey } = ctx;
+  const xrpcRelayFqdn = `${xrpcRelaySubdomain}.${relayHost}`;
+  return `#cloud-config
+packages:
+  - openssh-server
+  - jq
+  - curl
+
+# Key-only root login over the websocat tunnel.
+disable_root: false
+ssh_pwauth: false
+
+write_files:
+  - path: /root/.ssh/authorized_keys
+    owner: root:root
+    permissions: '0600'
+    content: |
+      ${sshAuthorizedKey}
+
+  - path: /etc/ssh/sshd_config.d/10-websocat.conf
+    owner: root:root
+    permissions: '0644'
+    content: |
+      # sshd is only reachable through the websocat→fedproxy tunnel.
+      ListenAddress 127.0.0.1
+      PermitRootLogin prohibit-password
+      PasswordAuthentication no
+
+  - path: /usr/local/bin/setup-websocat.sh
+    owner: root:root
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      set -x
+
+      STAMP=/var/lib/setup-websocat.done
+      [ -f "\\\${STAMP}" ] && exit 0
+
+      retry() {
+        n=0
+        delay=5
+        until "$@"; do
+          n=$((n + 1))
+          echo "command failed (attempt $n): $*; retrying in \\\${delay}s" >&2
+          sleep "$delay"
+        done
+      }
+
+      # fedproxy-client (fronts the websocat WebSocket listener).
+      _arch=$(uname -m)
+      case "$_arch" in x86_64|amd64) _arch=amd64 ;; aarch64|arm64) _arch=arm64 ;; esac
+      _os=$(uname -s | tr '[:upper:]' '[:lower:]')
+      retry sh -c "curl -sfL 'https://github.com/publicdomainrelay/atproto-reverse-proxy/releases/download/latest/atproto-reverse-proxy_\\\${_os}_\\\${_arch}.tar.gz' | tar -xvz -C /usr/local/bin"
+
+      # websocat release binary (musl-static; ws ↔ tcp bridge).
+      case "$_arch" in amd64) _ws_arch=x86_64 ;; arm64) _ws_arch=aarch64 ;; esac
+      retry sh -c "curl -sfL 'https://github.com/vi/websocat/releases/download/v1.13.0/websocat.\\\${_ws_arch}-unknown-linux-musl' -o /usr/local/bin/websocat"
+      chmod +x /usr/local/bin/websocat
+
+      systemctl enable websocat.service fedproxy-client.service
+      systemctl start --no-block websocat.service fedproxy-client.service
+
+      touch "\\\${STAMP}"
+
+  - path: /etc/systemd/system/websocat.service
+    owner: root:root
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=websocat ws→sshd bridge (fronted by fedproxy-client)
+      After=network-online.target sshd.service ssh.service
+      Wants=network-online.target
+
+      [Service]
+      Type=simple
+      User=root
+      # WebSocket listener on loopback :8080 → sshd on loopback :22.
+      # fedproxy-client (SERVICE=${vmName}, PORT=8080) forwards external WS here.
+      ExecStart=/usr/local/bin/websocat --binary ws-l:127.0.0.1:8080 tcp:127.0.0.1:22
+      Restart=always
+      RestartSec=5
+      TimeoutStopSec=10
+      StandardOutput=journal
+      StandardError=journal
+
+      [Install]
+      WantedBy=multi-user.target
+
+  - path: /etc/systemd/system/setup-websocat.service
+    owner: root:root
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=First-boot websocat setup (install binaries)
+      After=network-online.target
+      Wants=network-online.target
+      ConditionPathExists=/root/secrets/digitalocean.com/serviceaccount/token
+      ConditionPathExists=!/var/lib/setup-websocat.done
+
+      [Service]
+      Type=oneshot
+      User=root
+      ExecStart=/usr/local/bin/setup-websocat.sh
+      StandardOutput=journal
+      StandardError=journal
+
+      [Install]
+      WantedBy=multi-user.target
+
+  - path: /etc/systemd/system/setup-websocat.path
+    owner: root:root
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=Watch for DO service-account token then run setup-websocat
+
+      [Path]
+      PathExists=/root/secrets/digitalocean.com/serviceaccount/token
+      Unit=setup-websocat.service
+
+      [Install]
+      WantedBy=multi-user.target
+
+  - path: /etc/systemd/system/fedproxy-client.service
+    owner: root:root
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=FedProxy Client Service
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Type=simple
+      User=root
+      WorkingDirectory=/root
+      Environment="SERVICE=${vmName}"
+      # SSH username the relay flattens into the host's handle segment. Pinning
+      # it to the did:plc yields <SERVICE>--did-plc-<key>.fedproxy.com.
+      Environment="HANDLE=${didPlc}"
+      Environment="PORT=8080"
+      Environment="ATPRP_URL=https://${xrpcRelayFqdn}"
+      Environment="AUTH_PLUGIN=oidc"
+      Environment="MARKET_ACCEPT_JSON_PATH=/root/secrets/publicdomainrelay.com/market/accept.json"
+      ExecStart=/usr/local/bin/fedproxy-client
+      Restart=always
+      RestartSec=5
+      TimeoutStopSec=10
+      StandardOutput=journal
+      StandardError=journal
+
+      [Install]
+      WantedBy=multi-user.target
+
+runcmd:
+  - systemctl daemon-reload
+  - systemctl enable --now ssh || systemctl enable --now sshd
+  - systemctl enable setup-websocat.path
+  - systemctl start --no-block setup-websocat.path
+`;
+}

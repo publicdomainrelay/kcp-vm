@@ -23,7 +23,6 @@ import {
   SUBMIT_EVENT_NSID,
   SUBMIT_RFP_NSID,
 } from "@publicdomainrelay/market-common";
-import { LIST_BIDDERS_NSID, REGISTER_BIDDER_NSID } from "@publicdomainrelay/market-lexicons";
 import { loadOrGenerateKeypair } from "./attest.ts";
 import { noopLogger, type Logger, type StrongRef } from "@publicdomainrelay/market-common";
 import { createSignedRecord, type RecordSigner, type SignedRecord } from "./signing.ts";
@@ -40,51 +39,11 @@ const MARKET_LEXICON_STUBS: Array<{
   SUBMIT_BID_NSID,
   SUBMIT_ACCEPT_NSID,
   SUBMIT_EVENT_NSID,
-  REGISTER_BIDDER_NSID,
 ].map((id) => ({
   lexicon: 1 as const,
   id,
   defs: { main: { type: "procedure" as const } },
 }));
-MARKET_LEXICON_STUBS.push({
-  lexicon: 1 as const,
-  id: LIST_BIDDERS_NSID,
-  defs: {
-    main: {
-      type: "query" as const,
-      parameters: {
-        type: "params",
-        properties: {
-          payloadNsid: { type: "string" },
-          maxResults: { type: "integer" },
-          cursor: { type: "string" },
-        },
-      },
-      output: {
-        encoding: "application/json",
-        schema: {
-          type: "object",
-          properties: {
-            bidders: {
-              type: "array",
-              items: {
-                type: "object",
-                properties: {
-                  bidderDid: { type: "string" },
-                  offeringEndpointUrl: { type: "string" },
-                  appliesTo: { type: "array", items: { type: "string" } },
-                  lastHeartbeat: { type: "string" },
-                },
-              },
-            },
-            cursor: { type: "string" },
-          },
-        },
-      },
-    },
-  },
-});
-
 /**
  * What @atproto/xrpc accepts as its first constructor argument: a service URL,
  * a CredentialSession, an Agent, or any fetch handler. Kept loose so callers
@@ -239,23 +198,6 @@ export class MarketClient {
   async submitAccept(target: string, input: { acceptUri: string; acceptCid: string }): Promise<SubmitAcceptResult> {
     const res = await this.xrpc.call(SUBMIT_ACCEPT_NSID, {}, input, { headers: proxyHeaders(target) });
     return res.data as SubmitAcceptResult;
-  }
-
-  /**
-   * List registered bidders from a registry service.
-   * @param target service DID ref to proxy to, e.g. `did:web:HOST#pdr_temp_market`.
-   */
-  async listBidders(
-    target: string,
-    params: { payloadNsid?: string; maxResults?: number; cursor?: string } = {},
-  ): Promise<{
-    bidders: Array<{ bidderDid: string; offeringEndpointUrl: string; appliesTo: string[]; lastHeartbeat: string }>;
-    cursor?: string;
-  }> {
-    const res = await this.xrpc.call(LIST_BIDDERS_NSID, params, undefined, {
-      headers: proxyHeaders(target),
-    });
-    return res.data as any;
   }
 
   /**

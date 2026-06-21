@@ -1,0 +1,17 @@
+{
+  "name": "@publicdomainrelay/request-vm-ssh",
+  "version": "0.0.0",
+  "license": "Unlicense",
+  "exports": "./mod.ts",
+  "imports": {
+    "@publicdomainrelay/cli-args-env": "jsr:@publicdomainrelay/cli-args-env@^0",
+    "@publicdomainrelay/logger": "jsr:@publicdomainrelay/logger@^0",
+    "@publicdomainrelay/requester-xrpc": "jsr:@publicdomainrelay/requester-xrpc@^0",
+    "@publicdomainrelay/hono-factory-requester-xrpc": "jsr:@publicdomainrelay/hono-factory-requester-xrpc@^0",
+    "@publicdomainrelay/requester-abc": "jsr:@publicdomainrelay/requester-abc@^0",
+    "@atproto/identity": "npm:@atproto/identity@^0.5.0"
+  },
+  "compile": {
+    "include": ["cli-args-env.json", "config.json"]
+  }
+}

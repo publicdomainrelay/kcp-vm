@@ -5,6 +5,10 @@ export { $nsid as RECEIPT_NSID } from "../market-lexicons/com/publicdomainrelay/
 export { $nsid as RFP_NSID } from "../market-lexicons/com/publicdomainrelay/temp/market/rfp.ts";
 export { $nsid as OFFERING_NSID } from "../market-lexicons/com/publicdomainrelay/temp/market/offering.ts";
 
+export { $nsid as COMPUTE_VM_NSID } from "../market-lexicons/com/publicdomainrelay/temp/compute/vm.ts";
+export { $nsid as COMPUTE_EVENTS_VM_DELETE_NSID } from "../market-lexicons/com/publicdomainrelay/temp/compute/events/vm/delete.ts";
+export const VOUCH_NSID = "sh.tangled.graph.vouch";
+
 export { $nsid as BIDS_FREE_NSID } from "../market-lexicons/com/publicdomainrelay/temp/market/bids/free.ts";
 export { $nsid as ACCEPTS_FREE_NSID } from "../market-lexicons/com/publicdomainrelay/temp/market/accepts/free.ts";
 export { $nsid as RECEIPTS_FREE_NSID } from "../market-lexicons/com/publicdomainrelay/temp/market/receipts/free.ts";
