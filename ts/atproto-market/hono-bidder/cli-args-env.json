@@ -2,11 +2,11 @@
   "name": "bidder",
   "description": "Compute bidder for market contract testing",
   "options": {
-    "port": {
-      "type": "number",
-      "description": "Port to listen on (0 = random)",
-      "env": "PORT",
-      "default": 0
+    "service-name": {
+      "type": "string",
+      "description": "Service name for logging",
+      "env": "SERVICE_NAME",
+      "default": "bidder"
     },
     "private-key-hex": {
       "type": "string",
@@ -19,32 +19,86 @@
       "env": "PLC_DIRECTORY_URL",
       "default": "https://plc.directory"
     },
-    "dispatcher-host": {
+    "relay-dispatcher-host": {
       "type": "string",
       "description": "XRPC relay dispatcher host",
-      "env": "DISPATCHER_HOST",
+      "env": "RELAY_DISPATCHER_HOST",
       "default": "xrpc.fedproxy.com"
     },
-    "label": {
+    "atproto-handle": {
       "type": "string",
-      "description": "Label for log and relay identification",
-      "env": "BIDDER_LABEL",
-      "default": "bidder"
+      "description": "AT Protocol handle for remote PDS login",
+      "env": "ATP_HANDLE"
     },
-    "compute-provider": {
+    "atproto-password": {
       "type": "string",
-      "description": "Compute provider mode: local or digitalocean",
-      "env": "COMPUTE_PROVIDER"
+      "description": "AT Protocol password for remote PDS login",
+      "env": "ATP_PASSWORD"
     },
-    "compute-provider-token": {
+    "atproto-pds-url": {
+      "type": "string",
+      "description": "AT Protocol PDS URL for remote login",
+      "env": "ATP_PDS_URL",
+      "default": "https://bsky.social"
+    },
+    "compute-provider-digitalocean-token": {
       "type": "string",
       "description": "DigitalOcean API token",
-      "env": "COMPUTE_PROVIDER_TOKEN"
+      "env": "COMPUTE_PROVIDER_DO_TOKEN"
     },
-    "compute-provider-base-url": {
+    "compute-provider-digitalocean-base-url": {
       "type": "string",
       "description": "DigitalOcean API base URL",
-      "env": "COMPUTE_PROVIDER_BASE_URL"
+      "env": "COMPUTE_PROVIDER_DO_BASE_URL"
     },
+    "compute-provider-local": {
+      "type": "boolean",
+      "description": "Enable local compute provider"
+    },
+    "compute-provider-local-container-mode": {
+      "type": "string",
+      "description": "Local provider mode: vm or container",
+      "env": "COMPUTE_PROVIDER_LOCAL_CONTAINER_MODE"
+    },
+    "compute-provider-local-vm-image": {
+      "type": "string",
+      "description": "Local provider VM image",
+      "env": "COMPUTE_PROVIDER_LOCAL_VM_IMAGE"
+    },
+    "compute-provider-local-container-image": {
+      "type": "string",
+      "description": "Local provider container image",
+      "env": "COMPUTE_PROVIDER_LOCAL_CONTAINER_IMAGE"
+    },
+    "compute-provider-local-cache-dir": {
+      "type": "string",
+      "description": "Local provider cache directory",
+      "env": "COMPUTE_PROVIDER_LOCAL_CACHE_DIR"
+    },
+    "compute-provider-deno-worker": {
+      "type": "boolean",
+      "description": "Enable Deno worker compute provider"
+    },
+    "no-xrpc-relay": {
+      "type": "boolean",
+      "description": "Disable XRPC relay on main serve"
+    },
+    "serve-addr": {
+      "type": "string",
+      "description": "Address to serve on",
+      "env": "SERVE_ADDR",
+      "default": "0.0.0.0"
+    },
+    "serve-port": {
+      "type": "number",
+      "description": "Port to listen on (0 = random)",
+      "env": "SERVE_PORT",
+      "default": 0
+    },
+    "serve-unix": {
+      "type": "string",
+      "description": "Unix socket path",
+      "env": "SERVE_UNIX"
+    }
   }
 }

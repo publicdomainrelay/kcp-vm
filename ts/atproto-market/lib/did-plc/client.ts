@@ -336,3 +336,7 @@ export class PlcClient {
 
 /** Shared default client pointing at the public PLC directory. */
 export const defaultPlcClient = new PlcClient();
+
+export function createPlcDirectoryClient(opts: { plcDirectoryUrl: string }): PlcClient {
+  return new PlcClient({ baseUrl: opts.plcDirectoryUrl });
+}

@@ -22,6 +22,10 @@ import {
   strongRef,
   type Logger,
 } from "@publicdomainrelay/market-common";
+import { createDenoComputeManifestStore, createDenoComputeInstanceStore, createDenoComputeInstanceRunner } from "@publicdomainrelay/compute-deno-atproto";
+import { createDenoBundler, createPersistentDenoWorker } from "@publicdomainrelay/sandbox-deno";
+import type { ATProto } from "@publicdomainrelay/atproto-helpers";
+import type { StructuredLoggerInterface } from "@publicdomainrelay/logger";
 
 export interface ActiveContract {
   providerIdPromise?: Promise<string | number | undefined>;
@@ -39,7 +43,7 @@ export interface WorkerBidderDeps {
   log: Logger;
   activeContracts: Map<string, ActiveContract>;
   createRepoRecord: (collection: string, record: Record<string, unknown>) => Promise<{ uri: string; cid: string }>;
-  createSignedRepoRecord: (collection: string, record: Record<string, unknown>, issuer?: string) => Promise<{ uri: string; cid: string }>;
+  createSignedRepoRecord: (collection: string, record: Record<string, unknown>, issuer?: string) => Promise<{ uri: string; cid: string; record: Record<string, unknown> }>;
   callService: (endpointUrl: string, nsid: string, lxm: string, body: Record<string, unknown>) => Promise<{ status: number; ok: boolean; body: unknown }>;
   resolve: RecordResolver;
 }
@@ -72,10 +76,10 @@ export function createWorkerBidderCallbacks(deps: WorkerBidderDeps): {
       $type: BID_NSID,
       rfp: strongRef(rfpUri, rfpCid),
       payload: strongRef(payloadUri, payloadCid),
-      submitAccept: `${did}#pdr_temp_market`,
+      submitAccept: relay.proxyRef.replace(/^did:web:/, "https://"),
       createdAt: nowIso,
     };
-    const { uri: bidUri, cid: bidCid } = await createSignedRepoRecord(
+    const { uri: bidUri, cid: bidCid, record: signedBid } = await createSignedRepoRecord(
       BID_NSID, bidRecord, relay.proxyRef,
     );
 
@@ -85,7 +89,7 @@ export function createWorkerBidderCallbacks(deps: WorkerBidderDeps): {
     if (submitBidUrl) {
       try {
         const res = await callService(submitBidUrl, SUBMIT_BID_NSID, SUBMIT_BID_LXM, {
-          uri: bidUri, cid: bidCid,
+          uri: bidUri, cid: bidCid, record: signedBid,
         });
         cbLog("info", "bidder submitted bid to requester", { status: res.status, ok: res.ok });
       } catch (err) {
@@ -197,5 +201,48 @@ export function createWorkerBidderCallbacks(deps: WorkerBidderDeps): {
       pdr_temp_market: { [WORKER_MANIFEST_NSID]: onRfp },
     },
     accept: onAccept,
+  };
+}
+
+export interface CreateComputeProviderDenoWorkerOpts {
+  logger: StructuredLoggerInterface;
+  atproto: ATProto;
+}
+
+export interface WorkerProvider {
+  kind: "worker";
+  workerManifestStore: WorkerManifestStore;
+  workerRunner: WorkerInstanceRunner;
+  setup?(): Promise<void>;
+  teardown?(): Promise<void>;
+}
+
+export async function createComputeProviderDenoWorker(
+  opts: CreateComputeProviderDenoWorkerOpts,
+): Promise<WorkerProvider> {
+  const { logger, atproto } = opts;
+
+  const sandboxBundler = createDenoBundler();
+  const workerManifestStore = createDenoComputeManifestStore(
+    { createRecord: atproto.createRecord as never, getRecord: atproto.getRecord as never } as never,
+    atproto.did,
+  );
+  const workerInstanceStore = createDenoComputeInstanceStore(
+    { createRecord: atproto.createRecord as never, getRecord: atproto.getRecord as never } as never,
+    atproto.did,
+  );
+  const workerRunner = createDenoComputeInstanceRunner({
+    manifestStore: workerManifestStore,
+    instanceStore: workerInstanceStore,
+    bundler: sandboxBundler,
+    createWorker: createPersistentDenoWorker,
+  });
+
+  logger.info("deno worker provider ready");
+
+  return {
+    kind: "worker",
+    workerManifestStore,
+    workerRunner,
   };
 }

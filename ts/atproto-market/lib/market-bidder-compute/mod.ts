@@ -45,7 +45,7 @@ export interface VmBidderDeps {
   log: Logger;
   activeContracts: Map<string, ActiveContract>;
   createRepoRecord: (collection: string, record: Record<string, unknown>) => Promise<{ uri: string; cid: string }>;
-  createSignedRepoRecord: (collection: string, record: Record<string, unknown>, issuer?: string) => Promise<{ uri: string; cid: string }>;
+  createSignedRepoRecord: (collection: string, record: Record<string, unknown>, issuer?: string) => Promise<{ uri: string; cid: string; record: Record<string, unknown> }>;
   callService: (endpointUrl: string, nsid: string, lxm: string, body: Record<string, unknown>) => Promise<{ status: number; ok: boolean; body: unknown }>;
   resolve: RecordResolver;
 }
@@ -84,10 +84,10 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
       rfp: strongRef(rfpUri, rfpCid),
       payload: strongRef(payloadUri, payloadCid),
       bidConfig: strongRef(bidConfigRef.uri, bidConfigRef.cid),
-      submitAccept: `${did}#pdr_temp_market`,
+      submitAccept: relay.proxyRef.replace(/^did:web:/, "https://"),
       createdAt: nowIso,
     };
-    const { uri: bidUri, cid: bidCid } = await createSignedRepoRecord(
+    const { uri: bidUri, cid: bidCid, record: signedBid } = await createSignedRepoRecord(
       BID_NSID, bidRecord, relay.proxyRef,
     );
 
@@ -97,7 +97,7 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
     if (submitBidUrl) {
       try {
         const res = await callService(submitBidUrl, SUBMIT_BID_NSID, SUBMIT_BID_LXM, {
-          uri: bidUri, cid: bidCid,
+          uri: bidUri, cid: bidCid, record: signedBid,
         });
         cbLog("info", "bidder submitted bid to requester", { status: res.status, ok: res.ok });
       } catch (err) {

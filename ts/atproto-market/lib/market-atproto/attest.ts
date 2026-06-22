@@ -113,6 +113,10 @@ export async function loadOrGenerateKeypair(privKeyHex?: string): Promise<Attest
   return { did: () => did, privateKey };
 }
 
+export async function createBadgeBlueSigner(opts: { privateKeyHex: string }): Promise<AttestationKeypair> {
+  return loadOrGenerateKeypair(opts.privateKeyHex);
+}
+
 /** Build an @atiproto Attestation signer from a keypair (+ optional issuer DID). */
 export function attestationFor(keypair: AttestationKeypair, issuer?: string): Attestation {
   return new Attestation({ privateKey: keypair.privateKey, issuer });

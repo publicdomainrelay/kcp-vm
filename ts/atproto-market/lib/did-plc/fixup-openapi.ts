@@ -55,7 +55,7 @@ function ensure(obj: Record<string, unknown>, key: string, fallback: () => unkno
 // ── apply patches ─────────────────────────────────────────────────────
 
 function patch(spec: Record<string, unknown>): void {
-  const schemas = spec.components?.schemas as Record<
+  const schemas = (spec.components as Record<string, unknown> | undefined)?.schemas as Record<
     string,
     Record<string, unknown>
   >;

@@ -125,6 +125,7 @@ export async function createRequesterPDS(
 
   const plc = new PlcClient({ baseUrl: plcDirectoryUrl });
   const signingKeyDid = keypair.did();
+  const epHost = dispatcherHost.replace(/:\d+$/, "");
 
   const { did, op } = await createGenesisOp({
     rotationKeys: [signingKeyDid],
@@ -133,20 +134,20 @@ export async function createRequesterPDS(
       attestation: attestationKp.did(),
     },
     alsoKnownAs: [
-      `at://${signingKeyDid.replace(/:/g, "-").toLowerCase()}.${dispatcherHost}`,
+      `at://${signingKeyDid.replace(/:/g, "-").toLowerCase()}.${epHost}`,
     ],
     services: {
       atproto_pds: {
         type: "AtprotoPersonalDataServer",
-        endpoint: `https://${signingKeyDid.replace(/:/g, "-").toLowerCase()}.${dispatcherHost}`,
+        endpoint: `https://${signingKeyDid.replace(/:/g, "-").toLowerCase()}.${epHost}`,
       },
       pdr_temp_market: {
         type: "PDRTempMarket",
-        endpoint: `https://${signingKeyDid.replace(/:/g, "-").toLowerCase()}.${dispatcherHost}`,
+        endpoint: `https://${signingKeyDid.replace(/:/g, "-").toLowerCase()}.${epHost}`,
       },
       pdr_temp_compute_event: {
         type: "PDRTempComputeEvent",
-        endpoint: `https://${signingKeyDid.replace(/:/g, "-").toLowerCase()}.${dispatcherHost}`,
+        endpoint: `https://${signingKeyDid.replace(/:/g, "-").toLowerCase()}.${epHost}`,
       },
     },
     sign: (bytes) => keypair.sign(bytes),
@@ -240,7 +241,7 @@ export async function createRequesterPDS(
 
   // ── relay subscriber ─────────────────────────────────────────────────
 
-  const dispatcherDid = `did:web:${dispatcherHost}`;
+  const dispatcherDid = `did:web:${dispatcherHost.replace(/:\d+$/, "")}`;
   const { handleRequest } = createSubscriberFactory({ app });
 
   async function getServiceAuthToken(lxm: string): Promise<string> {
