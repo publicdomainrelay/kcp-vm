@@ -11,7 +11,15 @@ export interface LoggerInterface {
   debug: (message: string, meta?: Record<string, unknown>) => void;
 }
 
-export function createLogger(prefix?: string): LoggerInterface {
+export function createLogger(prefix?: string): LoggerInterface;
+export function createLogger(opts: { serviceName: string }): StructuredLoggerInterface;
+export function createLogger(
+  arg?: string | { serviceName: string },
+): LoggerInterface | StructuredLoggerInterface {
+  if (arg && typeof arg === "object" && "serviceName" in arg) {
+    return createStructuredLogger(arg.serviceName);
+  }
+  const prefix = arg as string | undefined;
   const p = prefix ? `[${prefix}] ` : "";
   return {
     info: (msg, meta) => console.log(`${p}INFO  ${msg}`, meta ?? ""),
