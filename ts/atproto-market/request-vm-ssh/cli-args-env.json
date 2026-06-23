@@ -77,7 +77,8 @@
     "relay-url": {
       "type": "string",
       "description": "Relay URL for bidder discovery via listReposByCollection",
-      "env": "RELAY_URL"
+      "env": "RELAY_URL",
+      "default": "https://reg.market.fedfork.com"
     }
   }
 }

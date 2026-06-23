@@ -2,6 +2,7 @@ import { Command } from "@publicdomainrelay/cli-args-env";
 import { createLogger } from "@publicdomainrelay/logger";
 import { createServe } from "@publicdomainrelay/serve";
 import { createXrpcRelay } from "@publicdomainrelay/xrpc-relay";
+import { createAtprotoMarketRegistry } from "@publicdomainrelay/market-registry-atproto";
 import { createMarketBidder, createComputeProviderMarketBidderHooks } from "@publicdomainrelay/market-bidder";
 import { createComputeProviderDenoWorker } from "@publicdomainrelay/market-bidder-worker";
 import { createATProto, createLocalPDSAgent, createRemoteAgent } from "@publicdomainrelay/atproto-helpers";
@@ -40,12 +41,15 @@ async function cliCreateXrpcRelay() {
 }
 
 let atprotoAgent;
+let pdsHostname: string | undefined;
 if ((options.atprotoHandle as string | undefined) && (options.atprotoPassword as string | undefined)) {
+  const pdsUrl = (options.atprotoPdsUrl as string) || "https://bsky.social";
   atprotoAgent = await createRemoteAgent({
     handle: options.atprotoHandle as string,
     password: options.atprotoPassword as string,
-    pdsUrl: (options.atprotoPdsUrl as string) || "https://bsky.social",
+    pdsUrl,
   });
+  pdsHostname = new URL(pdsUrl).hostname;
 } else {
   atprotoAgent = await createLocalPDSAgent({
     logger, keypair,
@@ -54,6 +58,28 @@ if ((options.atprotoHandle as string | undefined) && (options.atprotoPassword as
     dispatcherHost,
   });
   await atprotoAgent.beginServe();
+  const proxyRef: string = (atprotoAgent as { relay?: { proxyRef?: string } }).relay?.proxyRef ?? "";
+  if (proxyRef) {
+    pdsHostname = proxyRef.startsWith("did:web:")
+      ? proxyRef.slice("did:web:".length)
+      : proxyRef;
+  }
+}
+
+const registryEndpoint = (options.registryEndpoint as string) || "";
+if (registryEndpoint) {
+  if (pdsHostname) {
+    const registry = createAtprotoMarketRegistry({ registryUrl: registryEndpoint, log: logger });
+    await registry.registerPds(pdsHostname);
+  } else {
+    logger.warn("market_registry_no_hostname", {
+      reason: "could not determine PDS hostname for registry registration",
+    });
+  }
+} else {
+  logger.info("market_registry_skipped", {
+    reason: "registry-endpoint not configured",
+  });
 }
 
 const atproto = await createATProto({

@@ -9,6 +9,7 @@
     "@publicdomainrelay/compute-provider-local": "jsr:@publicdomainrelay/compute-provider-local@^0",
     "@publicdomainrelay/did-plc": "jsr:@publicdomainrelay/did-plc@^0",
     "@publicdomainrelay/logger": "jsr:@publicdomainrelay/logger@^0",
+    "@publicdomainrelay/market-registry-atproto": "jsr:@publicdomainrelay/market-registry-atproto@^0",
     "@publicdomainrelay/market-atproto": "jsr:@publicdomainrelay/market-atproto@^0",
     "@publicdomainrelay/market-bidder": "jsr:@publicdomainrelay/market-bidder@^0",
     "@publicdomainrelay/market-bidder-worker": "jsr:@publicdomainrelay/market-bidder-worker@^0",

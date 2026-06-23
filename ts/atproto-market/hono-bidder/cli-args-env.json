@@ -25,6 +25,12 @@
       "env": "RELAY_DISPATCHER_HOST",
       "default": "xrpc.fedproxy.com"
     },
+    "registry-endpoint": {
+      "type": "string",
+      "description": "AT Protocol relay URL for market registry registration (requestCrawl)",
+      "env": "REGISTRY_ENDPOINT",
+      "default": "https://reg.market.fedfork.com"
+    },
     "atproto-handle": {
       "type": "string",
       "description": "AT Protocol handle for remote PDS login",

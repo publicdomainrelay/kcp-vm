@@ -8,12 +8,10 @@
 // patched to send https://plc.directory + https://*.localhost traffic to the
 // local PLC / dispatcher (the dispatcher routes by Host-header subdomain).
 //
-// Container mode only (no full VM, no deno workers). On macOS the local
-// provider auto-selects the real `container` backend.
-//
-// This launches a real container, so it is opt-in. Run it with:
-//   RUN_BIDDER_INTEGRATION=1 deno test --allow-all \
-//     test/bidder_container_integration_test.ts
+// Container mode only (no full VM, no deno workers). The local provider
+// auto-selects the container backend per OS: macOS `container`, else Docker.
+// Both are assumed always available, so the test runs by default. Run it with:
+//   deno test --allow-all test/bidder_container_integration_test.ts
 
 import { assert } from "@std/assert";
 import { Secp256k1Keypair } from "@atproto/crypto";
@@ -96,7 +94,6 @@ Deno.test({
   name: "[integration] bidder (container mode) wins bid when central default denied",
   sanitizeOps: false,
   sanitizeResources: false,
-  ignore: Deno.build.os !== "darwin" || Deno.env.get("RUN_BIDDER_INTEGRATION") !== "1",
 }, async () => {
   const logger = createLogger({ serviceName: "it" });
 
