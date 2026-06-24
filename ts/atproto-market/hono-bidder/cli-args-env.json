@@ -105,6 +105,23 @@
       "type": "string",
       "description": "Unix socket path",
       "env": "SERVE_UNIX"
+    },
+    "rfp-firehose-mode": {
+      "type": "string",
+      "description": "Firehose to watch for new RFP records: subscriberepos, jetstream, or off",
+      "env": "RFP_FIREHOSE_MODE",
+      "default": "off"
+    },
+    "rfp-firehose-url": {
+      "type": "string",
+      "description": "Firehose websocket URL to watch for RFP records (relay subscribeRepos base, or jetstream subscribe base)",
+      "env": "RFP_FIREHOSE_URL"
+    },
+    "offering-refresh-sec": {
+      "type": "number",
+      "description": "Seconds between offering record re-commits to stay discoverable (0 to disable)",
+      "env": "OFFERING_REFRESH_SEC",
+      "default": 300
     }
   }
 }

@@ -80,6 +80,8 @@ if (import.meta.main) {
   const bidderDidsStr = options.bidderDids as string | undefined;
   const denyBidderDidsStr = options.denyBidderDids as string | undefined;
   const relayUrl = options.relayUrl as string | undefined;
+  const offeringFirehoseMode = (options.offeringFirehoseMode as string) || "off";
+  const offeringFirehoseUrl = options.offeringFirehoseUrl as string | undefined;
 
   const extraBidderDids = bidderDidsStr
     ? bidderDidsStr.split(",").map((s) => s.trim()).filter(Boolean)
@@ -135,6 +137,24 @@ if (import.meta.main) {
   (pds as RequesterPDSImpl).proxyRef = proxyRef;
   (pds as RequesterPDSImpl).relaySubdomain = subdomain;
 
+  // ── live offering firehose watch (complements relay listReposByCollection) ──
+
+  const offeringDids = new Set<string>();
+  let offeringWatcher: { close(): void } | undefined;
+  if (offeringFirehoseMode !== "off" && offeringFirehoseUrl) {
+    const { OFFERING_NSID } = await import("@publicdomainrelay/market-common");
+    const { createFirehoseWatcher } = offeringFirehoseMode === "jetstream"
+      ? await import("@publicdomainrelay/firehose-watcher-jetstream")
+      : await import("@publicdomainrelay/firehose-watcher-subscriberepos");
+    offeringWatcher = createFirehoseWatcher({
+      url: offeringFirehoseUrl,
+      wantedCollections: [OFFERING_NSID],
+      onRecord: (e) => { if (e.operation !== "delete") offeringDids.add(e.did); },
+      log,
+    });
+    log.info("offering_firehose_watch_started", { mode: offeringFirehoseMode });
+  }
+
   // ── console buffer (for interactive SSH) ─────────────────────────────
 
   const _origLog = console.log.bind(console);
@@ -179,6 +199,7 @@ if (import.meta.main) {
     extraBidderDids,
     denyBidderDids,
     relayUrl,
+    offeringWatcherDids: () => [...offeringDids],
     sshProvider,
     onSshStart: () => pauseConsole(),
     onSshEnd: () => resumeConsole(),
@@ -197,6 +218,7 @@ if (import.meta.main) {
   );
 
   function stop(): void {
+    offeringWatcher?.close();
     pds.stop();
     log.info("shutting_down");
     Deno.exit();

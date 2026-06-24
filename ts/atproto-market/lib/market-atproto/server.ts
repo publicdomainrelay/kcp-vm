@@ -23,6 +23,32 @@ import { Agent } from "@atproto/api";
 import { getPdsEndpoint } from "@atproto/common-web";
 import { verifyMarketServiceAuth } from "./auth.ts";
 import { atUriAuthority, nsidFromUri, parseAtUri, stripResolved, type RecordResolver } from "@publicdomainrelay/market-abc";
+import type {
+  EventCallback,
+  EventCallbacks,
+  EventDispatchContext,
+  HandlerResult,
+  RfpCallbacks,
+  SubmitAcceptCallback,
+  SubmitAcceptContext,
+  SubmitBidCallback,
+  SubmitBidContext,
+  SubmitRfpCallback,
+  SubmitRfpContext,
+} from "@publicdomainrelay/market-abc";
+export type {
+  EventCallback,
+  EventCallbacks,
+  EventDispatchContext,
+  HandlerResult,
+  RfpCallbacks,
+  SubmitAcceptCallback,
+  SubmitAcceptContext,
+  SubmitBidCallback,
+  SubmitBidContext,
+  SubmitRfpCallback,
+  SubmitRfpContext,
+};
 import { verifyRecordSignatures } from "./signing.ts";
 import {
   createDidKeyResolver,
@@ -79,13 +105,6 @@ export interface MarketServerDeps {
   /** Optional structured logger. Defaults to a no-op. */
   log?: Logger;
 }
-
-/**
- * What a callback may return to shape the HTTP response. Returning nothing (or
- * neither field) yields `200 { ok: true }`. Throwing propagates to the host
- * framework's error handler unchanged.
- */
-export type HandlerResult = { status?: number; body?: unknown } | void;
 
 type Handler = (req: Request) => Promise<Response>;
 
@@ -194,24 +213,6 @@ async function verifyAuthored(
 // submitRfp
 // ---------------------------------------------------------------------------
 
-export interface SubmitRfpContext {
-  rfpUri: string;
-  rfpCid: string;
-  rfp: Resolved<RFP & { $type?: string }>;
-  /** NSID of the RFP's payload record (its collection). */
-  payloadNsid: string;
-  issuerDid: string;
-  resolve: RecordResolver;
-  log: Logger;
-  /** The original inbound request, for callbacks that need its url/headers. */
-  req: Request;
-}
-
-export type SubmitRfpCallback = (ctx: SubmitRfpContext) => Promise<HandlerResult> | HandlerResult;
-
-/** callbacks[serviceId][payloadNsid] -> handler for that RFP type. */
-export type RfpCallbacks = Record<string, Record<string, SubmitRfpCallback>>;
-
 export interface SubmitRfpHandlerConfig {
   deps: MarketServerDeps;
   /** Routing table: outer key = service id, inner key = payload NSID. */
@@ -223,11 +224,60 @@ export interface SubmitRfpHandlerConfig {
  * routes it to `callbacks[serviceId][payloadNsid]`. Unknown pairs are ignored
  * with `200 { ok: true }`.
  */
-export function createSubmitRfpHandler(cfg: SubmitRfpHandlerConfig): Handler {
+/** Input for {@link createRfpDispatcher}; `req` is present only on the HTTP path. */
+export interface DispatchRfpInput {
+  rfpUri: string;
+  rfpCid: string;
+  issuerDid: string;
+  serviceId?: string;
+  req?: Request;
+}
+
+/**
+ * Core RFP processing shared by the submitRfp HTTP handler (push) and the
+ * firehose watcher (pull): resolve the RFP, verify its attestations, and route
+ * to `callbacks[serviceId][payloadNsid]`. Returns a Response so either caller
+ * can forward it; the pull path may ignore it. Verification rests on the RFP's
+ * own attestations, never on a caller JWT, so it is sound without an inbound
+ * request.
+ */
+export function createRfpDispatcher(cfg: SubmitRfpHandlerConfig): (input: DispatchRfpInput) => Promise<Response> {
   const { deps, callbacks } = cfg;
   const log = deps.log ?? noopLogger;
   const serviceIds = Object.keys(callbacks);
   const keysForDid = keysForDidFrom(deps);
+
+  return async ({ rfpUri, rfpCid, issuerDid, serviceId, req }) => {
+    const rfp = await deps.resolve.resolve<RFP & { $type?: string }>({ uri: rfpUri, cid: rfpCid });
+    const sigErr = await verifyAuthored(deps, stripResolved(rfp) as Record<string, unknown>, rfpUri, keysForDid, log, "submitRfp");
+    if (sigErr) return sigErr;
+    const payloadNsid = rfp.payload ? nsidFromUri(rfp.payload.uri) : "";
+
+    const bucketId = serviceId ?? (serviceIds.length === 1 ? serviceIds[0] : undefined);
+    const cb = bucketId ? callbacks[bucketId]?.[payloadNsid] : undefined;
+    if (!cb) {
+      log("info", "submitRfp: ignoring unknown rfp", { serviceId: bucketId, payloadNsid });
+      return json({ ok: true });
+    }
+
+    return finish(await cb({
+      rfpUri,
+      rfpCid,
+      rfp,
+      payloadNsid,
+      issuerDid,
+      resolve: deps.resolve,
+      log,
+      req,
+    }));
+  };
+}
+
+export function createSubmitRfpHandler(cfg: SubmitRfpHandlerConfig): Handler {
+  const { deps, callbacks } = cfg;
+  const log = deps.log ?? noopLogger;
+  const serviceIds = Object.keys(callbacks);
+  const dispatch = createRfpDispatcher(cfg);
 
   return async (req) => {
     const body = await readJson<{ rfpUri?: string; rfpCid?: string }>(req);
@@ -240,48 +290,13 @@ export function createSubmitRfpHandler(cfg: SubmitRfpHandlerConfig): Handler {
 
     log("info", "submitRfp received", { rfpUri, rfpCid });
 
-    const rfp = await deps.resolve.resolve<RFP & { $type?: string }>({ uri: rfpUri, cid: rfpCid });
-    const sigErr = await verifyAuthored(deps, stripResolved(rfp) as Record<string, unknown>, rfpUri, keysForDid, log, "submitRfp");
-    if (sigErr) return sigErr;
-    const payloadNsid = rfp.payload ? nsidFromUri(rfp.payload.uri) : "";
-
-    const bucketId = auth.serviceId ?? (serviceIds.length === 1 ? serviceIds[0] : undefined);
-    const cb = bucketId ? callbacks[bucketId]?.[payloadNsid] : undefined;
-    if (!cb) {
-      log("info", "submitRfp: ignoring unknown rfp", { serviceId: bucketId, payloadNsid });
-      return json({ ok: true });
-    }
-
-    return finish(await cb({
-      rfpUri,
-      rfpCid,
-      rfp,
-      payloadNsid,
-      issuerDid: auth.issuerDid,
-      resolve: deps.resolve,
-      log,
-      req,
-    }));
+    return dispatch({ rfpUri, rfpCid, issuerDid: auth.issuerDid, serviceId: auth.serviceId, req });
   };
 }
 
 // ---------------------------------------------------------------------------
 // submitBid
 // ---------------------------------------------------------------------------
-
-export interface SubmitBidContext {
-  uri: string;
-  cid: string;
-  /** The bid record as sent inline in the request body. */
-  record: Bid & { $type?: string };
-  issuerDid: string;
-  resolve: RecordResolver;
-  log: Logger;
-  /** The original inbound request, for callbacks that need its url/headers. */
-  req: Request;
-}
-
-export type SubmitBidCallback = (ctx: SubmitBidContext) => Promise<HandlerResult> | HandlerResult;
 
 export interface SubmitBidHandlerConfig {
   deps: MarketServerDeps;
@@ -326,19 +341,6 @@ export function createSubmitBidHandler(cfg: SubmitBidHandlerConfig): Handler {
 // ---------------------------------------------------------------------------
 // submitAccept
 // ---------------------------------------------------------------------------
-
-export interface SubmitAcceptContext {
-  acceptUri: string;
-  acceptCid: string;
-  accept: Resolved<Accept & { $type?: string }>;
-  issuerDid: string;
-  resolve: RecordResolver;
-  log: Logger;
-  /** The original inbound request, for callbacks that need its url/headers. */
-  req: Request;
-}
-
-export type SubmitAcceptCallback = (ctx: SubmitAcceptContext) => Promise<HandlerResult> | HandlerResult;
 
 export interface SubmitAcceptHandlerConfig {
   deps: MarketServerDeps;
@@ -385,26 +387,6 @@ export function createSubmitAcceptHandler(cfg: SubmitAcceptHandlerConfig): Handl
 // ---------------------------------------------------------------------------
 // submitEvent — dispatches by serviceId -> payload NSID
 // ---------------------------------------------------------------------------
-
-export interface EventDispatchContext {
-  uri: string;
-  cid: string;
-  event: Resolved<MarketEvent & { $type?: string }>;
-  /** NSID of the event's payload record (its collection). */
-  payloadNsid: string;
-  issuerDid: string;
-  /** Which configured service-id the token's `aud` matched (if any). */
-  serviceId?: string;
-  resolve: RecordResolver;
-  log: Logger;
-  /** The original inbound request, for callbacks that need its url/headers. */
-  req: Request;
-}
-
-export type EventCallback = (ctx: EventDispatchContext) => Promise<HandlerResult> | HandlerResult;
-
-/** callbacks[serviceId][payloadNsid] -> handler for that event type. */
-export type EventCallbacks = Record<string, Record<string, EventCallback>>;
 
 export interface SubmitEventHandlerConfig {
   deps: MarketServerDeps;

@@ -22,7 +22,8 @@ import { createXrpcRelay } from "@publicdomainrelay/xrpc-relay";
 import { createATProto, createLocalPDSAgent } from "@publicdomainrelay/atproto-helpers";
 import { createBadgeBlueSigner } from "@publicdomainrelay/market-atproto";
 import { createPlcDirectoryClient } from "@publicdomainrelay/did-plc";
-import { createMarketBidder, createComputeProviderMarketBidderHooks } from "@publicdomainrelay/market-bidder";
+import { createMarketBidder } from "@publicdomainrelay/market-bidder";
+import { createComputeProviderHooks } from "@publicdomainrelay/market-bidder-compute";
 import { createLocalComputeProvider } from "@publicdomainrelay/compute-provider-local";
 import type { ComputeAtproto } from "@publicdomainrelay/compute-provider-abc";
 import { createRelayFactory } from "@publicdomainrelay/hono-factory-did-key-relay-relayer-xrpc";
@@ -171,7 +172,7 @@ Deno.test({
     // local compute provider (container mode) on its own relay/serve
     const providerRelay = await makeRelay();
     const providerServe = createServe({ logger, relays: [providerRelay] });
-    const provider = createComputeProviderMarketBidderHooks({
+    const provider = createComputeProviderHooks({
       provider: createLocalComputeProvider({
         logger,
         atproto: atproto as unknown as ComputeAtproto,

@@ -25,6 +25,8 @@ import {
   type KeyResolver,
 } from "@atiproto/key-resolver";
 
+import type { AttestationKeypair } from "@publicdomainrelay/market-abc";
+export type { AttestationKeypair };
 export type { InlineAttestation, KeyData, KeyResolver };
 
 // ---------------------------------------------------------------------------
@@ -75,18 +77,6 @@ export function toStorableEntry(entry: InlineAttestation): Record<string, unknow
 // ---------------------------------------------------------------------------
 // keypairs + signer identity
 // ---------------------------------------------------------------------------
-
-/**
- * A signing identity: a secp256k1 (k256) private key plus the did:key that
- * verifies it. Constructed from a hex private key (stable identity) or freshly
- * generated (ephemeral — does not survive restarts and is not in any DID doc).
- */
-export interface AttestationKeypair {
-  /** did:key public-key reference for the verification side. */
-  did(): string;
-  /** Private key material handed to @atiproto's Attestation. */
-  privateKey: KeyData;
-}
 
 /**
  * Load a k256 keypair from a hex-encoded private key (e.g.

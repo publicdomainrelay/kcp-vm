@@ -177,6 +177,29 @@ export async function ensureOfferingRecord(
   });
 }
 
+export interface OfferingRefreshHandle {
+  stop(): void;
+}
+
+/**
+ * Periodically re-commit a record (timer owned here, in the impl layer). The
+ * caller's `refresh` should rewrite the offering with a bumped timestamp so the
+ * record bytes change and the PDS emits a fresh `#commit`, keeping the offering
+ * live in relay/collectiondir indexes and the firehose connection warm.
+ */
+export function startOfferingRefresh(opts: {
+  intervalMs: number;
+  refresh: () => Promise<void>;
+  log?: Logger;
+}): OfferingRefreshHandle {
+  const { intervalMs, refresh, log } = opts;
+  const timer = setInterval(() => {
+    refresh().catch((err) => log?.("warn", "offering refresh failed", { err: String(err) }));
+  }, intervalMs);
+  (Deno as { unrefTimer?: (id: number) => void }).unrefTimer?.(timer as unknown as number);
+  return { stop: () => clearInterval(timer) };
+}
+
 export function createRecordResolver(idResolver: IdResolver): RecordResolver {
   return {
     async resolve<T>(ref: RecordRef): Promise<Resolved<T>> {

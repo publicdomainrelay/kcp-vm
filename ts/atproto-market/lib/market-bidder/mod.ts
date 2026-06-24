@@ -2,61 +2,39 @@
 // Does NOT own I/O (no Deno.serve, signals, WS connect). Takes atproto + serve +
 // providers; wires everything in beginServe().
 
-import { IdResolver } from "@atproto/identity";
 import { TID } from "@atproto/common";
 import type { RepoApi } from "@publicdomainrelay/atproto-repo-abc";
-import type { AttestationKeypair } from "@publicdomainrelay/market-atproto";
-import { createRecordResolver } from "@publicdomainrelay/market-atproto";
+import { createRecordResolver, createRfpDispatcher, startOfferingRefresh } from "@publicdomainrelay/market-atproto";
+import type { MarketServerDeps, OfferingRefreshHandle } from "@publicdomainrelay/market-atproto";
 import { createMarketFactory } from "@publicdomainrelay/hono-factory-market-atproto";
+import { RFP_NSID } from "@publicdomainrelay/market-common";
 import type {
-  RfpCallbacks,
-  SubmitAcceptCallback,
-  EventCallbacks,
-} from "@publicdomainrelay/market-atproto";
-import type { Logger, StrongRef } from "@publicdomainrelay/market-common";
+  FirehoseRecordEvent,
+  FirehoseWatcher,
+} from "@publicdomainrelay/firehose-watcher-abc";
+import type { Logger } from "@publicdomainrelay/market-common";
 import {
   DEFAULT_MARKET_SERVICE_ID,
 } from "@publicdomainrelay/market-common";
 import type { StructuredLoggerInterface } from "@publicdomainrelay/logger";
 import type { RelayRef, ServeHandle } from "@publicdomainrelay/serve";
 import type { ATProto } from "@publicdomainrelay/atproto-helpers";
-import type { ComputeProvider } from "@publicdomainrelay/compute-provider-abc";
-import { createVmBidderCallbacks } from "@publicdomainrelay/market-bidder-compute";
-import { createWorkerBidderCallbacks, type WorkerProvider } from "@publicdomainrelay/market-bidder-worker";
+import type {
+  ActiveContract,
+  CallbackFactoryDeps,
+  CallbackSet,
+  MarketBidderProviderRef,
+} from "@publicdomainrelay/market-bidder-abc";
+export type {
+  ActiveContract,
+  CallbackFactoryDeps,
+  CallbackSet,
+  MarketBidderProviderRef,
+};
 
 // ---------------------------------------------------------------------------
 // Config types
 // ---------------------------------------------------------------------------
-
-export interface ActiveContract {
-  providerIdPromise?: Promise<string | number | undefined>;
-  acceptAuthor: string;
-}
-
-export interface CallbackSet {
-  rfpCallbacks?: RfpCallbacks;
-  onAccept?: SubmitAcceptCallback;
-  eventCallbacks?: EventCallbacks;
-  eventBackground?: boolean;
-}
-
-export interface CallbackFactoryDeps {
-  did: string;
-  repoApi: RepoApi;
-  signer: { did(): string; sign(bytes: Uint8Array): Promise<Uint8Array> };
-  attestationKp: AttestationKeypair;
-  idResolver: IdResolver;
-  relay: { proxyRef: string };
-  dispatcherHost: string;
-  log: Logger;
-  activeContracts: Map<string, ActiveContract>;
-  createRecord: (collection: string, record: Record<string, unknown>) => Promise<StrongRef>;
-  createRepoRecord: (collection: string, record: Record<string, unknown>) => Promise<{ uri: string; cid: string }>;
-  createSignedRepoRecord: (collection: string, record: Record<string, unknown>, issuer?: string) => Promise<{ uri: string; cid: string; record: Record<string, unknown> }>;
-  deleteRecord: (collection: string, rkey: string) => Promise<void>;
-  callService: (endpointUrl: string, nsid: string, lxm: string, body: Record<string, unknown>) => Promise<{ status: number; ok: boolean; body: unknown }>;
-  resolve: ReturnType<typeof createRecordResolver>;
-}
 
 export interface MarketBidderConfig {
   logger: StructuredLoggerInterface;
@@ -67,6 +45,20 @@ export interface MarketBidderConfig {
   setup?(): Promise<void>;
   teardown?(): Promise<void>;
   callbackFactory?: (deps: CallbackFactoryDeps) => CallbackSet | Promise<CallbackSet>;
+  /**
+   * Builds a firehose watcher bound to `onRecord`. The CLI selects the transport
+   * (subscribeRepos or jetstream) and owns the WebSocket; the bidder supplies
+   * `onRecord`. When set, new RFP records are self-discovered and bid on (pull
+   * mode), no inbound submitRfp required.
+   */
+  rfpWatcherFactory?: (onRecord: (e: FirehoseRecordEvent) => void) => FirehoseWatcher;
+  /** Period for re-committing the offering record to stay discoverable. */
+  offeringRefreshMs?: number;
+  /**
+   * RFP NSIDs to advertise in the offering record. Overrides the union of
+   * provider `appliesTo`. Set for callbackFactory-only bidders with no providers.
+   */
+  appliesTo?: string[];
 }
 
 export interface MarketBidder {
@@ -89,10 +81,12 @@ function didWebHost(s: string): string {
 }
 
 export async function createMarketBidder(config: MarketBidderConfig): Promise<MarketBidder> {
-  const { logger, serve, atproto, relay, providers, setup, teardown, callbackFactory } = config;
+  const { logger, serve, atproto, relay, providers, setup, teardown, callbackFactory, rfpWatcherFactory, offeringRefreshMs } = config;
   const log = logAdapter(logger);
   const activeContracts = new Map<string, ActiveContract>();
   const idResolver = atproto.idResolver;
+  let rfpWatcher: FirehoseWatcher | null = null;
+  let offeringRefresher: OfferingRefreshHandle | null = null;
 
   const ALLOWLIST_NSID = "com.publicdomainrelay.temp.auth.allowlist.rbacDid";
   const OFFERING_NSID = "com.publicdomainrelay.temp.market.offering";
@@ -125,23 +119,33 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
     log("info", "bidder allowlist created", { uri: `at://${atproto.did}/${ALLOWLIST_NSID}/${rkey}`, service });
   }
 
-  async function ensureOffering(): Promise<void> {
+  function buildOffering(createdAt: string): Record<string, unknown> {
+    const appliesTo = config.appliesTo ??
+      [...new Set((providers ?? []).flatMap((p) => p.appliesTo))];
+    return {
+      $type: OFFERING_NSID,
+      endpointUrl: relay?.proxyRef ? didWebToHttps(relay.proxyRef) : `${atproto.did}#pdr_temp_market`,
+      appliesTo,
+      createdAt,
+      refreshedAt: new Date().toISOString(),
+    };
+  }
+
+  async function ensureOffering(): Promise<{ rkey: string; createdAt: string }> {
     const existing = await atproto.listRecords(atproto.did, OFFERING_NSID, { limit: 1 });
     if (existing?.records?.length) {
-      log("info", "bidder offering exists", { uri: existing.records[0].uri });
-      return;
+      const rec = existing.records[0];
+      const createdAt = (rec.value.createdAt as string | undefined) ?? new Date().toISOString();
+      log("info", "bidder offering exists", { uri: rec.uri });
+      return { rkey: rec.uri.split("/").pop() ?? "", createdAt };
     }
     const rkey = TID.next().toString();
+    const createdAt = new Date().toISOString();
     await atproto.applyWrites(atproto.did, [{
-      action: "create", collection: OFFERING_NSID, rkey,
-      record: {
-        $type: OFFERING_NSID,
-        endpointUrl: relay?.proxyRef ? didWebToHttps(relay.proxyRef) : `${atproto.did}#pdr_temp_market`,
-        appliesTo: ["com.publicdomainrelay.temp.compute.vm", "com.publicdomainrelay.temp.compute.deno.workerManifest"],
-        createdAt: new Date().toISOString(),
-      },
+      action: "create", collection: OFFERING_NSID, rkey, record: buildOffering(createdAt),
     }]);
     log("info", "bidder offering created", { uri: `at://${atproto.did}/${OFFERING_NSID}/${rkey}` });
+    return { rkey, createdAt };
   }
 
   async function beginServe(): Promise<void> {
@@ -191,36 +195,65 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
       if (cb.eventCallbacks) merged.eventCallbacks = { ...(merged.eventCallbacks ?? {}), ...cb.eventCallbacks };
     }
 
+    const marketDeps: MarketServerDeps = {
+      hostname: () => relay?.proxyRef ? didWebHost(relay.proxyRef) : "",
+      idResolver,
+      resolve: recordResolver,
+      log,
+    };
+
     if (merged.rfpCallbacks || merged.onAccept || merged.eventCallbacks) {
-      const factory = createMarketFactory(
-        {
-          hostname: () => relay?.proxyRef ? didWebHost(relay.proxyRef) : "",
-          idResolver,
-          resolve: recordResolver,
-          log,
-        },
-        {
-          rfp: merged.rfpCallbacks,
-          accept: merged.onAccept
-            ? { serviceIds: [DEFAULT_MARKET_SERVICE_ID], onAccept: merged.onAccept }
-            : undefined,
-          event: merged.eventCallbacks
-            ? { callbacks: merged.eventCallbacks, background: merged.eventBackground ?? true }
-            : undefined,
-        },
-      );
+      const factory = createMarketFactory(marketDeps, {
+        rfp: merged.rfpCallbacks,
+        accept: merged.onAccept
+          ? { serviceIds: [DEFAULT_MARKET_SERVICE_ID], onAccept: merged.onAccept }
+          : undefined,
+        event: merged.eventCallbacks
+          ? { callbacks: merged.eventCallbacks, background: merged.eventBackground ?? true }
+          : undefined,
+      });
       serve.app.route("/", factory.createApp() as never);
+    }
+
+    if (merged.rfpCallbacks && rfpWatcherFactory) {
+      const dispatch = createRfpDispatcher({ deps: marketDeps, callbacks: merged.rfpCallbacks });
+      const seen = new Set<string>();
+      rfpWatcher = rfpWatcherFactory((e) => {
+        if (e.collection !== RFP_NSID) return;
+        if (e.operation !== "create" && e.operation !== "update") return;
+        if (seen.has(e.uri)) return;
+        seen.add(e.uri);
+        log("info", "rfp watch discovered", { rfpUri: e.uri });
+        dispatch({ rfpUri: e.uri, rfpCid: e.cid, issuerDid: e.did })
+          .catch((err) => log("error", "rfp watch dispatch failed", { rfpUri: e.uri, err: String(err) }));
+      });
+      logger.info("bidder rfp firehose watch started");
     }
 
     logger.info("bidder starting serve");
     await serve.beginServe();
 
     await ensureOperatorAllowlist("");
-    await ensureOffering();
+    const { rkey: offeringRkey, createdAt: offeringCreatedAt } = await ensureOffering();
+    if (offeringRefreshMs && offeringRkey) {
+      offeringRefresher = startOfferingRefresh({
+        intervalMs: offeringRefreshMs,
+        log,
+        refresh: async () => {
+          await atproto.applyWrites(atproto.did, [{
+            action: "update", collection: OFFERING_NSID, rkey: offeringRkey, record: buildOffering(offeringCreatedAt),
+          }]);
+          log("info", "bidder offering refreshed", { rkey: offeringRkey });
+        },
+      });
+      logger.info("bidder offering refresh started", { intervalMs: offeringRefreshMs });
+    }
     logger.info("bidder ready", { did: atproto.did });
   }
 
   function shutdown(): void {
+    rfpWatcher?.close();
+    offeringRefresher?.stop();
     for (const p of providers ?? []) {
       p.teardown?.().catch(() => {});
     }
@@ -229,70 +262,4 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
   }
 
   return { beginServe, shutdown };
-}
-
-export interface MarketBidderProviderRef {
-  serviceId: string;
-  setup?(): Promise<void>;
-  teardown?(): Promise<void>;
-  buildCallbacks(deps: CallbackFactoryDeps): CallbackSet;
-}
-
-export function isWorkerProvider(p: ComputeProvider | WorkerProvider): p is WorkerProvider {
-  return "kind" in p && p.kind === "worker";
-}
-
-export function createComputeProviderMarketBidderHooks(opts: {
-  provider: ComputeProvider | WorkerProvider;
-}): MarketBidderProviderRef {
-  const { provider } = opts;
-
-  if (isWorkerProvider(provider)) {
-    return {
-      serviceId: "pdr_temp_market",
-      setup: provider.setup,
-      teardown: provider.teardown,
-      buildCallbacks(deps: CallbackFactoryDeps): CallbackSet {
-        const w = createWorkerBidderCallbacks({
-          did: deps.did,
-          attestationKp: deps.attestationKp,
-          signer: deps.signer,
-          idResolver: deps.idResolver,
-          relay: deps.relay,
-          workerManifestStore: provider.workerManifestStore,
-          workerRunner: provider.workerRunner,
-          log: deps.log,
-          activeContracts: deps.activeContracts,
-          createRepoRecord: deps.createRepoRecord,
-          createSignedRepoRecord: deps.createSignedRepoRecord,
-          callService: deps.callService,
-          resolve: deps.resolve,
-        });
-        return { rfpCallbacks: w.rfp, onAccept: w.accept };
-      },
-    };
-  }
-
-  return {
-    serviceId: "pdr_temp_market",
-    setup: provider.setup,
-    teardown: provider.teardown,
-    buildCallbacks(deps: CallbackFactoryDeps): CallbackSet {
-      const vm = createVmBidderCallbacks({
-        did: deps.did,
-        attestationKp: deps.attestationKp,
-        signer: deps.signer,
-        idResolver: deps.idResolver,
-        relay: deps.relay,
-        computeProvider: provider,
-        log: deps.log,
-        activeContracts: deps.activeContracts,
-        createRepoRecord: deps.createRepoRecord,
-        createSignedRepoRecord: deps.createSignedRepoRecord,
-        callService: deps.callService,
-        resolve: deps.resolve,
-      });
-      return { rfpCallbacks: vm.rfp, onAccept: vm.accept, eventCallbacks: vm.event };
-    },
-  };
 }

@@ -19,6 +19,11 @@ import {
   type EventDispatchContext,
 } from "@publicdomainrelay/market-atproto";
 import type { RecordResolver } from "@publicdomainrelay/market-abc";
+import type {
+  CallbackFactoryDeps,
+  CallbackSet,
+  MarketBidderProviderRef,
+} from "@publicdomainrelay/market-bidder-abc";
 import {
   BID_NSID,
   RECEIPT_NSID,
@@ -268,6 +273,35 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
     accept: onAccept,
     event: {
       pdr_temp_compute_event: { [COMPUTE_EVENTS_VM_DELETE_NSID]: onVmDelete },
+    },
+  };
+}
+
+export function createComputeProviderHooks(opts: {
+  provider: ComputeProvider;
+}): MarketBidderProviderRef {
+  const { provider } = opts;
+  return {
+    serviceId: "pdr_temp_market",
+    appliesTo: ["com.publicdomainrelay.temp.compute.vm"],
+    setup: provider.setup,
+    teardown: provider.teardown,
+    buildCallbacks(deps: CallbackFactoryDeps): CallbackSet {
+      const vm = createVmBidderCallbacks({
+        did: deps.did,
+        attestationKp: deps.attestationKp,
+        signer: deps.signer,
+        idResolver: deps.idResolver,
+        relay: deps.relay,
+        computeProvider: provider,
+        log: deps.log,
+        activeContracts: deps.activeContracts,
+        createRepoRecord: deps.createRepoRecord,
+        createSignedRepoRecord: deps.createSignedRepoRecord,
+        callService: deps.callService,
+        resolve: deps.resolve,
+      });
+      return { rfpCallbacks: vm.rfp, onAccept: vm.accept, eventCallbacks: vm.event };
     },
   };
 }

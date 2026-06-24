@@ -3,10 +3,16 @@ import { createLogger } from "@publicdomainrelay/logger";
 import { createServe } from "@publicdomainrelay/serve";
 import { createXrpcRelay } from "@publicdomainrelay/xrpc-relay";
 import { createAtprotoMarketRegistry } from "@publicdomainrelay/market-registry-atproto";
-import { createMarketBidder, createComputeProviderMarketBidderHooks } from "@publicdomainrelay/market-bidder";
-import { createComputeProviderDenoWorker } from "@publicdomainrelay/market-bidder-worker";
+import { createMarketBidder } from "@publicdomainrelay/market-bidder";
+import type { MarketBidderProviderRef } from "@publicdomainrelay/market-bidder-abc";
+import { createComputeProviderHooks } from "@publicdomainrelay/market-bidder-compute";
+import { createComputeProviderDenoWorker, createWorkerProviderHooks } from "@publicdomainrelay/market-bidder-worker";
 import { createATProto, createLocalPDSAgent, createRemoteAgent } from "@publicdomainrelay/atproto-helpers";
 import { createBadgeBlueSigner } from "@publicdomainrelay/market-atproto";
+import { RFP_NSID } from "@publicdomainrelay/market-common";
+import { createFirehoseWatcher as createSubscribeReposWatcher } from "@publicdomainrelay/firehose-watcher-subscriberepos";
+import { createFirehoseWatcher as createJetstreamWatcher } from "@publicdomainrelay/firehose-watcher-jetstream";
+import type { FirehoseRecordEvent } from "@publicdomainrelay/firehose-watcher-abc";
 import { createPlcDirectoryClient } from "@publicdomainrelay/did-plc";
 import { createDigitalOceanComputeProvider } from "@publicdomainrelay/compute-provider-digitalocean";
 import { createLocalComputeProvider } from "@publicdomainrelay/compute-provider-local";
@@ -89,14 +95,14 @@ const atproto = await createATProto({
   agent: atprotoAgent,
 });
 
-const providers: ReturnType<typeof createComputeProviderMarketBidderHooks>[] = [];
+const providers: MarketBidderProviderRef[] = [];
 const serves: ReturnType<typeof createServe>[] = [];
 
 if (options.computeProviderDigitaloceanToken) {
   const relay = await cliCreateXrpcRelay();
   const serve = createServe({ logger, relays: [relay] });
   serves.push(serve);
-  providers.push(createComputeProviderMarketBidderHooks({
+  providers.push(createComputeProviderHooks({
     provider: createDigitalOceanComputeProvider({
       logger, atproto: atproto as import("@publicdomainrelay/compute-provider-abc").ComputeAtproto, serve,
       getIssuerUrl: () => didWebToHttps(relay.proxyRef),
@@ -111,7 +117,7 @@ if (options.computeProviderLocal) {
   const relay = await cliCreateXrpcRelay();
   const serve = createServe({ logger, relays: [relay] });
   serves.push(serve);
-  providers.push(createComputeProviderMarketBidderHooks({
+  providers.push(createComputeProviderHooks({
     provider: createLocalComputeProvider({
       logger, atproto: atproto as import("@publicdomainrelay/compute-provider-abc").ComputeAtproto, serve,
       getIssuerUrl: () => didWebToHttps(relay.proxyRef),
@@ -125,15 +131,28 @@ if (options.computeProviderLocal) {
 }
 
 if (options.computeProviderDenoWorker) {
-  providers.push(createComputeProviderMarketBidderHooks({
+  providers.push(createWorkerProviderHooks({
     provider: await createComputeProviderDenoWorker({ logger, atproto }),
   }));
 }
+
+const rfpFirehoseMode = (options.rfpFirehoseMode as string) || "off";
+const rfpFirehoseUrl = options.rfpFirehoseUrl as string | undefined;
+const offeringRefreshSec = (options.offeringRefreshSec as number) ?? 300;
+
+const rfpWatcherFactory = rfpFirehoseMode !== "off" && rfpFirehoseUrl
+  ? (onRecord: (e: FirehoseRecordEvent) => void) => {
+    const make = rfpFirehoseMode === "jetstream" ? createJetstreamWatcher : createSubscribeReposWatcher;
+    return make({ url: rfpFirehoseUrl, wantedCollections: [RFP_NSID], onRecord, log: logger });
+  }
+  : undefined;
 
 // Market factory gets its own relay/serve (own keypair -> own subdomain/FQDN).
 const bidderRelay = options.noXrpcRelay ? undefined : await cliCreateXrpcRelay();
 const bidder = await createMarketBidder({
   logger, atproto, providers, relay: bidderRelay,
+  rfpWatcherFactory,
+  offeringRefreshMs: offeringRefreshSec > 0 ? offeringRefreshSec * 1000 : undefined,
   serve: createServe({
     logger,
     tcp: { addr: (options.serveAddr as string) || "0.0.0.0", port: (options.servePort as number) ?? 0 },

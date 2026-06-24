@@ -502,6 +502,7 @@ export async function runComputeContract(
     sshProvider?: SshSessionProvider;
     relayUrl?: string;
     signer?: Signer;
+    offeringWatcherDids?: () => string[];
   } = {},
 ): Promise<ContractFlowResult> {
   const vmName = opts.vmName ?? `compute-${randomHex8()}`;
@@ -608,10 +609,15 @@ runcmd:
     if (relayDids.length > 0) log("relay_discovery", { count: relayDids.length });
   }
 
-  const bidderDids = Array.from(new Set([...relayDids, ...vouchedDids, ...extraBidderDids]));
+  // 3c. Live firehose offering watch (complements the relay index; catches
+  // offerings the relay lagged or missed during this run).
+  const watcherDids = opts.offeringWatcherDids?.() ?? [];
+  if (watcherDids.length > 0) log("offering_watch_discovery", { count: watcherDids.length });
+
+  const bidderDids = Array.from(new Set([...relayDids, ...watcherDids, ...vouchedDids, ...extraBidderDids]));
   const deniedSet = new Set(denyBidderDids);
   const filteredBidderDids = bidderDids.filter((d) => !deniedSet.has(d));
-  log("bidder_discovery", { total: filteredBidderDids.length, relay: relayDids.length, vouched: vouchedDids.length, extra: extraBidderDids.length, denied: bidderDids.length - filteredBidderDids.length });
+  log("bidder_discovery", { total: filteredBidderDids.length, relay: relayDids.length, watch: watcherDids.length, vouched: vouchedDids.length, extra: extraBidderDids.length, denied: bidderDids.length - filteredBidderDids.length });
 
   // 4. Submit RFP to each bidder.
   for (const bidderDid of filteredBidderDids) {

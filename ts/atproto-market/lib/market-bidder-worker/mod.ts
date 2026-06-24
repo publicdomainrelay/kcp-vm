@@ -14,6 +14,11 @@ import type {
   SubmitAcceptCallback,
 } from "@publicdomainrelay/market-atproto";
 import type { RecordResolver } from "@publicdomainrelay/market-abc";
+import type {
+  CallbackFactoryDeps,
+  CallbackSet,
+  MarketBidderProviderRef,
+} from "@publicdomainrelay/market-bidder-abc";
 import {
   BID_NSID,
   RECEIPT_NSID,
@@ -244,5 +249,35 @@ export async function createComputeProviderDenoWorker(
     kind: "worker",
     workerManifestStore,
     workerRunner,
+  };
+}
+
+export function createWorkerProviderHooks(opts: {
+  provider: WorkerProvider;
+}): MarketBidderProviderRef {
+  const { provider } = opts;
+  return {
+    serviceId: "pdr_temp_market",
+    appliesTo: ["com.publicdomainrelay.temp.compute.deno.workerManifest"],
+    setup: provider.setup,
+    teardown: provider.teardown,
+    buildCallbacks(deps: CallbackFactoryDeps): CallbackSet {
+      const w = createWorkerBidderCallbacks({
+        did: deps.did,
+        attestationKp: deps.attestationKp,
+        signer: deps.signer,
+        idResolver: deps.idResolver,
+        relay: deps.relay,
+        workerManifestStore: provider.workerManifestStore,
+        workerRunner: provider.workerRunner,
+        log: deps.log,
+        activeContracts: deps.activeContracts,
+        createRepoRecord: deps.createRepoRecord,
+        createSignedRepoRecord: deps.createSignedRepoRecord,
+        callService: deps.callService,
+        resolve: deps.resolve,
+      });
+      return { rfpCallbacks: w.rfp, onAccept: w.accept };
+    },
   };
 }

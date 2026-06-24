@@ -79,6 +79,17 @@
       "description": "Relay URL for bidder discovery via listReposByCollection",
       "env": "RELAY_URL",
       "default": "https://reg.market.fedfork.com"
+    },
+    "offering-firehose-mode": {
+      "type": "string",
+      "description": "Firehose to live-watch for offering records: subscriberepos, jetstream, or off",
+      "env": "OFFERING_FIREHOSE_MODE",
+      "default": "off"
+    },
+    "offering-firehose-url": {
+      "type": "string",
+      "description": "Firehose websocket URL to watch for offering records (relay subscribeRepos base, or jetstream subscribe base)",
+      "env": "OFFERING_FIREHOSE_URL"
     }
   }
 }

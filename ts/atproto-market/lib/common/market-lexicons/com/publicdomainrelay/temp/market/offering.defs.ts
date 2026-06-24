@@ -22,6 +22,11 @@ type Main = {
    */
   appliesTo: l.NsidString[]
   createdAt: l.DatetimeString
+
+  /**
+   * Last time the bidder re-committed this offering to stay discoverable. Bumped on each periodic refresh; absent on never-refreshed records.
+   */
+  refreshedAt?: l.DatetimeString
 }
 
 export type { Main }
@@ -37,6 +42,9 @@ const main = /*#__PURE__*/ l.record<'tid', Main>(
       { minLength: 1 },
     ),
     createdAt: /*#__PURE__*/ l.string({ format: 'datetime' }),
+    refreshedAt: /*#__PURE__*/ l.optional(
+      /*#__PURE__*/ l.string({ format: 'datetime' }),
+    ),
   }),
 )
 
