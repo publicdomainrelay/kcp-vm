@@ -2,5 +2,9 @@
   "name": "@publicdomainrelay/requester-abc",
   "version": "0.0.0",
   "license": "Unlicense",
-  "exports": "./mod.ts"
+  "exports": "./mod.ts",
+  "imports": {
+    "@publicdomainrelay/logger": "jsr:@publicdomainrelay/logger@^0",
+    "@publicdomainrelay/serve": "jsr:@publicdomainrelay/serve@^0"
+  }
 }

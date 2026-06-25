@@ -90,6 +90,17 @@
       "type": "string",
       "description": "Firehose websocket URL to watch for offering records (relay subscribeRepos base, or jetstream subscribe base)",
       "env": "OFFERING_FIREHOSE_URL"
+    },
+    "serve-addr": {
+      "type": "string",
+      "description": "TCP address to bind the requester PDS",
+      "env": "SERVE_ADDR",
+      "default": "0.0.0.0"
+    },
+    "serve-unix": {
+      "type": "string",
+      "description": "Unix socket path to serve on (optional, in addition to TCP)",
+      "env": "SERVE_UNIX"
     }
   }
 }

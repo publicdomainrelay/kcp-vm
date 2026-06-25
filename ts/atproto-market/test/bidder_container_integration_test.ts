@@ -193,10 +193,12 @@ Deno.test({
     cleanups.push(() => bidder.shutdown());
 
     // ── requester (wires its own submitBid -> pendingBids handler) ────────
+    const requesterServe = createServe({ logger, tcp: { addr: "127.0.0.1", port: 0 } });
     const requester = await createRequesterPDS({
-      port: allocatePort(),
+      logger, serve: requesterServe,
       plcDirectoryUrl, dispatcherHost, label: "requester",
     });
+    cleanups.push(() => requesterServe.shutdown());
 
     // runComputeContract deletes pendingBids[rfpUri] after collecting, so spy
     // on inserts to capture every bid the requester received.
@@ -207,11 +209,13 @@ Deno.test({
       return origSet(k, v as never);
     }) as typeof requester.pendingBids.set;
 
-    await requester.relayReady;
+    await requester.beginServe();
 
     // ── run the contract: deny the central default, include our bidder ────
     let contractErr: unknown;
     const contract = runComputeContract(requester, {
+      logger,
+      dispatcherHost,
       skipSsh: true,
       noDelete: true,
       bidWindowSec: 8,

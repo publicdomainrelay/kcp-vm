@@ -1,5 +1,8 @@
 // Pure interfaces for the compute requester. Zero I/O, no Deno.*, no fetch, no crypto.
-// Depends on market-common types only (type-level imports).
+// Depends on market-common + serve/logger types only (type-level imports).
+
+import type { StructuredLoggerInterface } from "@publicdomainrelay/logger";
+import type { RelayRef, ServeHandle } from "@publicdomainrelay/serve";
 
 export interface CollectedBid {
   did: string;
@@ -21,10 +24,13 @@ export interface ContractFlowOptions {
   vmReadyTimeoutSec?: number;
   onSshStart?: () => void;
   onSshEnd?: () => void | Promise<void>;
+  /** Dispatcher host for the relay (used to derive the VM FQDN). */
+  dispatcherHost?: string;
 }
 
 export interface PDSOptions {
-  port?: number;
+  logger: StructuredLoggerInterface;
+  serve: ServeHandle;
   privateKeyHex?: string;
   plcDirectoryUrl?: string;
   dispatcherHost?: string;
@@ -33,11 +39,14 @@ export interface PDSOptions {
 
 export interface RequesterPDS {
   did: string;
+  serve: ServeHandle;
+  relay: RelayRef;
+  /** Valid only after beginServe(); reads lazily off the relay. */
   proxyRef: string;
+  /** Valid only after beginServe(). */
   relaySubdomain: string;
-  relayReady: Promise<{ subdomain: string; proxyRef: string }>;
+  beginServe(): Promise<void>;
   pendingBids: Map<string, CollectedBid[]>;
-  stop: () => void;
   createRepoRecord(collection: string, record: Record<string, unknown>): Promise<{ uri: string; cid: string }>;
   createSignedRepoRecord(
     collection: string,

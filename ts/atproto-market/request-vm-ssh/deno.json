@@ -1,19 +1,14 @@
 {
-  "name": "@publicdomainrelay/request-vm-ssh",
   "version": "0.0.0",
   "license": "Unlicense",
-  "exports": "./mod.ts",
   "imports": {
     "@publicdomainrelay/cli-args-env": "jsr:@publicdomainrelay/cli-args-env@^0",
     "@publicdomainrelay/logger": "jsr:@publicdomainrelay/logger@^0",
+    "@publicdomainrelay/serve": "jsr:@publicdomainrelay/serve@^0",
     "@publicdomainrelay/requester-xrpc": "jsr:@publicdomainrelay/requester-xrpc@^0",
-    "@publicdomainrelay/hono-factory-requester-xrpc": "jsr:@publicdomainrelay/hono-factory-requester-xrpc@^0",
-    "@publicdomainrelay/requester-abc": "jsr:@publicdomainrelay/requester-abc@^0",
     "@publicdomainrelay/market-common": "jsr:@publicdomainrelay/market-common@^0",
-    "@publicdomainrelay/firehose-watcher-abc": "jsr:@publicdomainrelay/firehose-watcher-abc@^0",
     "@publicdomainrelay/firehose-watcher-subscriberepos": "jsr:@publicdomainrelay/firehose-watcher-subscriberepos@^0",
-    "@publicdomainrelay/firehose-watcher-jetstream": "jsr:@publicdomainrelay/firehose-watcher-jetstream@^0",
-    "@atproto/identity": "npm:@atproto/identity@^0.5.0"
+    "@publicdomainrelay/firehose-watcher-jetstream": "jsr:@publicdomainrelay/firehose-watcher-jetstream@^0"
   },
   "compile": {
     "include": ["cli-args-env.json", "config.json"]

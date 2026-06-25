@@ -11,8 +11,7 @@ import { MemoryStorage, signServiceAuth } from "@publicdomainrelay/atproto-repo-
 import type { Signer } from "@publicdomainrelay/atproto-repo-abc";
 import type { RepoApi } from "@publicdomainrelay/atproto-repo-abc";
 import { PlcClient, createGenesisOp } from "@publicdomainrelay/did-plc";
-import { createSubscriber } from "@publicdomainrelay/did-key-relay-subscriber-xrpc";
-import { createSubscriberFactory } from "@publicdomainrelay/hono-factory-did-key-relay-subscriber-xrpc";
+import { createXrpcRelay } from "@publicdomainrelay/xrpc-relay";
 import {
   loadOrGenerateKeypair,
   attestationFor,
@@ -50,7 +49,7 @@ import type {
   ContractFlowResult,
   SshSessionProvider,
 } from "@publicdomainrelay/requester-abc";
-import type { LoggerInterface } from "@publicdomainrelay/logger";
+import type { LoggerInterface, StructuredLoggerInterface } from "@publicdomainrelay/logger";
 
 // ---------------------------------------------------------------------------
 // Extended types (impl details beyond the abc contract)
@@ -101,12 +100,12 @@ export async function discoverBiddersFromRelay(opts: {
 export async function createRequesterPDS(
   opts: PDSOptions,
 ): Promise<RequesterPDSImpl> {
-  const port = opts.port ?? 8080;
+  const logger: StructuredLoggerInterface = opts.logger;
+  const serve = opts.serve;
   const privateKeyHex = opts.privateKeyHex ?? "";
   const plcDirectoryUrl = opts.plcDirectoryUrl ?? "https://plc.directory";
   const dispatcherHost = opts.dispatcherHost ?? "xrpc.fedproxy.com";
   const label = opts.label ?? "requester";
-  const baseOrigin = `http://localhost:${port}`;
 
   // ── keypair ──────────────────────────────────────────────────────────
 
@@ -153,9 +152,9 @@ export async function createRequesterPDS(
     sign: (bytes) => keypair.sign(bytes),
   });
 
-  console.log(JSON.stringify({ event: "did_plc_registering", did, label }));
+  logger.info("did_plc_registering", { did, label });
   await plc.submitOp(did, op);
-  console.log(JSON.stringify({ event: "did_plc_registered", did, label }));
+  logger.info("did_plc_registered", { did, label });
 
   // ── signer ───────────────────────────────────────────────────────────
 
@@ -164,20 +163,13 @@ export async function createRequesterPDS(
     sign: (bytes) => keypair.sign(bytes),
   };
 
-  // ── relay ready promise ──────────────────────────────────────────────
-
-  const relayBox: { resolve?: (info: { subdomain: string; proxyRef: string }) => void } = {};
-  const relayReady = new Promise<{ subdomain: string; proxyRef: string }>((resolve) => {
-    relayBox.resolve = resolve;
-  });
-  let relaySubdomain = "";
-  let relayProxyRef = "";
-
   // ── pending bids ─────────────────────────────────────────────────────
 
   const pendingBids: Map<string, CollectedBid[]> = new Map();
 
   // ── repo factory ─────────────────────────────────────────────────────
+
+  const baseOrigin = `https://${keypair.did().replace(/:/g, "-").toLowerCase()}.${dispatcherHost}`;
 
   const { app, api } = createRepoFactory({
     storage: new MemoryStorage(),
@@ -199,8 +191,16 @@ export async function createRequesterPDS(
     const status = c.res.status;
     const durationMs = Date.now() - start;
     const event = status >= 400 ? "response_error" : "response";
-    console.log(JSON.stringify({ event, method, path, status, durationMs, label }));
+    logger.info(event, { method, path, status, durationMs, label });
   });
+
+  // ── relay (WS connect deferred to serve.beginServe -> relay.onServe) ──
+
+  const relay = createXrpcRelay({ logger, dispatcherHost, signer, keypair, label });
+  const relayFqdn = (): string => {
+    const ref = relay.proxyRef;
+    return ref.startsWith("did:web:") ? ref.slice("did:web:".length) : ref;
+  };
 
   // ── submitBid handler ────────────────────────────────────────────────
 
@@ -212,16 +212,14 @@ export async function createRequesterPDS(
     const queue = pendingBids.get(rfpUri) ?? [];
     queue.push({ did: issuerDid ?? "unknown", uri, cid, record: record as unknown as Record<string, unknown> });
     pendingBids.set(rfpUri, queue);
-    console.log(JSON.stringify({ event: "submitBid_queued", callerDid: issuerDid, uri, rfpUri, label }));
+    logger.info("submitBid_queued", { callerDid: issuerDid, uri, rfpUri, label });
   };
 
   const bidHandler = createSubmitBidHandler({
     deps: {
       hostname: (req: Request) => {
         const host = req.headers.get("host") ?? req.headers.get("x-forwarded-host");
-        return host ? host.split(":")[0] : relaySubdomain
-          ? `${relaySubdomain}.${dispatcherHost}`
-          : dispatcherHost;
+        return host ? host.split(":")[0] : (relayFqdn() || dispatcherHost);
       },
       idResolver,
       resolve: createRecordResolver(idResolver),
@@ -232,41 +230,10 @@ export async function createRequesterPDS(
   });
   app.post(`/xrpc/${SUBMIT_BID_NSID}`, (c: { req: { raw: Request } }) => bidHandler(c.req.raw));
 
-  // ── HTTP server ──────────────────────────────────────────────────────
+  // ── mount the repo app + relay on the shared serve handle ────────────
 
-  const serverController = new AbortController();
-  Deno.serve({ port, signal: serverController.signal }, app.fetch);
-
-  console.log(JSON.stringify({ event: "listening", port, did, baseOrigin, label }));
-
-  // ── relay subscriber ─────────────────────────────────────────────────
-
-  const dispatcherDid = `did:web:${dispatcherHost.replace(/:\d+$/, "")}`;
-  const { handleRequest } = createSubscriberFactory({ app });
-
-  async function getServiceAuthToken(lxm: string): Promise<string> {
-    return await signServiceAuth(signer, { aud: dispatcherDid, lxm });
-  }
-
-  console.log(JSON.stringify({ event: "relay_connecting", dispatcherHost, label }));
-
-  const handle = await createSubscriber({
-    label,
-    keypair,
-    getServiceAuthToken,
-    dispatcherHost,
-    handleRequest,
-  });
-
-  relaySubdomain = handle.subdomain;
-  relayProxyRef = handle.proxyRef;
-  console.log(JSON.stringify({
-    event: "relay_registered",
-    subdomain: handle.subdomain,
-    proxyRef: handle.proxyRef,
-    label,
-  }));
-  relayBox.resolve?.({ subdomain: handle.subdomain, proxyRef: handle.proxyRef });
+  serve.app.route("/", app as never);
+  serve.addRelay(relay);
 
   // ── helpers ──────────────────────────────────────────────────────────
 
@@ -344,14 +311,12 @@ export async function createRequesterPDS(
     signer,
     keypair,
     api,
-    proxyRef: relayProxyRef,
-    relaySubdomain,
-    relayReady,
+    serve,
+    relay,
+    get proxyRef(): string { return relay.proxyRef; },
+    get relaySubdomain(): string { return relayFqdn(); },
+    beginServe: () => serve.beginServe(),
     pendingBids,
-    stop: () => {
-      handle.ws.close();
-      serverController.abort();
-    },
     createRepoRecord,
     createSignedRepoRecord,
     resolveBidderEndpoint,
@@ -376,7 +341,9 @@ function sshTunnelArgs(privateKeyPath: string, fqdn: string): string[] {
   ];
 }
 
-export function createSshSessionProvider(): SshSessionProvider {
+export function createSshSessionProvider(logger?: StructuredLoggerInterface): SshSessionProvider {
+  const log = (event: string, extra: Record<string, unknown> = {}) =>
+    logger ? logger.info(event, extra) : console.log(JSON.stringify({ event, ...extra }));
   async function generateKeypair(
     vmName: string,
   ): Promise<{ publicKey: string; privateKeyPath: string }> {
@@ -417,13 +384,13 @@ export function createSshSessionProvider(): SshSessionProvider {
       });
       const { code, stderr } = await cmd.output();
       if (code === 0) {
-        console.log(JSON.stringify({ event: "vm_ssh_ready", fqdn, attempt }));
+        log("vm_ssh_ready", { fqdn, attempt });
         return true;
       }
-      console.log(JSON.stringify({ event: "vm_ssh_poll", fqdn, attempt, code, error: new TextDecoder().decode(stderr).trim().slice(0, 200) }));
+      log("vm_ssh_poll", { fqdn, attempt, code, error: new TextDecoder().decode(stderr).trim().slice(0, 200) });
       await new Promise((r) => setTimeout(r, 5000));
     }
-    console.log(JSON.stringify({ event: "vm_ssh_timeout", fqdn, timeoutMs }));
+    log("vm_ssh_timeout", { fqdn, timeoutMs });
     return false;
   }
 
@@ -452,10 +419,12 @@ export function createSshSessionProvider(): SshSessionProvider {
 // websocat bootstrap
 // ---------------------------------------------------------------------------
 
-export async function ensureWebsocat(): Promise<void> {
+export async function ensureWebsocat(logger?: StructuredLoggerInterface): Promise<void> {
+  const log = (event: string, extra: Record<string, unknown> = {}) =>
+    logger ? logger.info(event, extra) : console.log(JSON.stringify({ event, ...extra }));
   const which = new Deno.Command("which", { args: ["websocat"], stdout: "null", stderr: "null" });
   if ((await which.output()).code === 0) {
-    console.log(JSON.stringify({ event: "websocat_found", source: "system" }));
+    log("websocat_found", { source: "system" });
     return;
   }
 
@@ -467,7 +436,7 @@ export async function ensureWebsocat(): Promise<void> {
   };
   const target = triple[plat]?.[arch];
   if (!target) {
-    console.log(JSON.stringify({ event: "websocat_unsupported", plat, arch }));
+    log("websocat_unsupported", { plat, arch });
     return;
   }
 
@@ -476,20 +445,20 @@ export async function ensureWebsocat(): Promise<void> {
 
   const dir = await Deno.makeTempDir({ prefix: "websocat-" });
   const binPath = `${dir}/websocat`;
-  console.log(JSON.stringify({ event: "websocat_downloading", url }));
+  log("websocat_downloading", { url });
 
   const resp = await fetch(url);
   if (!resp.ok || !resp.body) {
-    console.log(JSON.stringify({ event: "websocat_download_failed", status: resp.status }));
+    log("websocat_download_failed", { status: resp.status });
     return;
   }
 
   const file = await Deno.open(binPath, { write: true, create: true, mode: 0o755 });
   await resp.body.pipeTo(file.writable);
-  console.log(JSON.stringify({ event: "websocat_downloaded", path: binPath }));
+  log("websocat_downloaded", { path: binPath });
 
   Deno.env.set("PATH", `${dir}:${Deno.env.get("PATH") ?? ""}`);
-  console.log(JSON.stringify({ event: "websocat_path_updated", dir }));
+  log("websocat_path_updated", { dir });
 }
 
 // ---------------------------------------------------------------------------
@@ -503,6 +472,7 @@ export async function runComputeContract(
     relayUrl?: string;
     signer?: Signer;
     offeringWatcherDids?: () => string[];
+    logger?: StructuredLoggerInterface;
   } = {},
 ): Promise<ContractFlowResult> {
   const vmName = opts.vmName ?? `compute-${randomHex8()}`;
@@ -517,12 +487,19 @@ export async function runComputeContract(
   const relayUrl = opts.relayUrl;
   const signer = opts.signer;
 
-  const { proxyRef, subdomain: relaySubdomain } = await pds.relayReady;
-  (pds as { proxyRef: string; relaySubdomain: string }).proxyRef = proxyRef;
-  (pds as { proxyRef: string; relaySubdomain: string }).relaySubdomain = relaySubdomain;
-
+  const logger = opts.logger;
   const log = (event: string, extra: Record<string, unknown> = {}) =>
-    console.log(JSON.stringify({ event, ...extra }));
+    logger ? logger.info(event, extra) : console.log(JSON.stringify({ event, ...extra }));
+
+  // Relay WS connect happens in serve.beginServe(); proxyRef is set by then.
+  const proxyRef = pds.relay.proxyRef;
+  const dispatcherHost = opts.dispatcherHost ??
+    (pds.relaySubdomain.includes(".")
+      ? pds.relaySubdomain.substring(pds.relaySubdomain.indexOf(".") + 1)
+      : "xrpc.fedproxy.com");
+  const relaySubdomain = pds.relaySubdomain.endsWith("." + dispatcherHost)
+    ? pds.relaySubdomain.slice(0, pds.relaySubdomain.length - dispatcherHost.length - 1)
+    : pds.relaySubdomain.split(".")[0];
 
   log("relay_ready_for_rfp", { proxyRef });
 
@@ -531,9 +508,6 @@ export async function runComputeContract(
   let vmFqdn = "";
 
   if (!skipSsh) {
-    const dispatcherHost = relaySubdomain.includes(".")
-      ? relaySubdomain.substring(relaySubdomain.indexOf(".") + 1)
-      : "xrpc.fedproxy.com";
     vmFqdn = `${flattenLabel(vmName)}--${flattenLabel(pds.did)}.${dispatcherHost}`;
     const ssh = await sshProvider.generateKeypair(vmName);
     privateKeyPath = ssh.privateKeyPath;
