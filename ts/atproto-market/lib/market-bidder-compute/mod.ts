@@ -187,7 +187,7 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
       bid: bidRef ? strongRef(bidRef.uri, bidRef.cid) : null,
       accept: strongRef(acceptUri, acceptCid),
       payload: null,
-      submitEvent: `${did}#pdr_temp_compute_event`,
+      submitEvent: `https://${relay.proxyRef.replace("did:web:", "")}`,
       createdAt: nowIso,
     };
     const bindCid = createAttestationCid(
@@ -211,7 +211,7 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
     return {
       body: {
         id: rkey, uri: receiptUri, cid: receiptCid,
-        submitEvent: `${did}#pdr_temp_compute_event`,
+        submitEvent: `https://${relay.proxyRef.replace("did:web:", "")}`,
       },
     };
   };

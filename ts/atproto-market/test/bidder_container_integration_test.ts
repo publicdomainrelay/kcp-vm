@@ -29,13 +29,6 @@ import type { ComputeAtproto } from "@publicdomainrelay/compute-provider-abc";
 import { createRelayFactory } from "@publicdomainrelay/hono-factory-did-key-relay-relayer-xrpc";
 import { createRequesterPDS, runComputeContract } from "@publicdomainrelay/requester-xrpc";
 
-function allocatePort(): number {
-  const l = Deno.listen({ port: 0 });
-  const p = (l.addr as Deno.NetAddr).port;
-  l.close();
-  return p;
-}
-
 function didWebToHttps(s: string): string {
   return s.startsWith("did:web:") ? "https://" + s.slice("did:web:".length) : s;
 }
@@ -98,9 +91,30 @@ Deno.test({
 }, async () => {
   const logger = createLogger({ serviceName: "it" });
 
-  const dispPort = allocatePort();
-  const plcPort = allocatePort();
+  const cleanups: Array<() => void> = [];
+
+  // ── dispatcher (real did-key-relay relayer) ──────────────────────────
+  const dispatcherApp = createRelayFactory({ hostname: "localhost" }).createApp();
+  const dispatcherCtl = new AbortController();
+  const { promise: dispPortReady, resolve: resolveDispPort } = Promise.withResolvers<number>();
+  Deno.serve(
+    { port: 0, hostname: "127.0.0.1", signal: dispatcherCtl.signal, onListen: (addr) => resolveDispPort((addr as Deno.NetAddr).port) },
+    dispatcherApp.fetch,
+  );
+  const dispPort = await dispPortReady;
+  cleanups.push(() => dispatcherCtl.abort());
   const dispatcherHost = `localhost:${dispPort}`;
+
+  // ── fake PLC ─────────────────────────────────────────────────────────
+  const plc = createFakePlc();
+  const plcCtl = new AbortController();
+  const { promise: plcPortReady, resolve: resolvePlcPort } = Promise.withResolvers<number>();
+  Deno.serve(
+    { port: 0, hostname: "127.0.0.1", signal: plcCtl.signal, onListen: (addr) => resolvePlcPort((addr as Deno.NetAddr).port) },
+    plc.app.fetch,
+  );
+  const plcPort = await plcPortReady;
+  cleanups.push(() => plcCtl.abort());
   const plcDirectoryUrl = `http://localhost:${plcPort}`;
 
   // ── fetch interception: plc.directory -> local PLC; https://*.localhost ->
@@ -122,28 +136,9 @@ Deno.test({
     }
     return realFetch(input as string | URL | Request, init);
   }) as typeof fetch;
-
-  const cleanups: Array<() => void> = [];
   cleanups.push(() => { globalThis.fetch = realFetch; });
 
   try {
-    // ── dispatcher (real did-key-relay relayer) ──────────────────────────
-    const dispatcherApp = createRelayFactory({ hostname: "localhost" }).createApp();
-    const dispatcherCtl = new AbortController();
-    const dispatcherServer = Deno.serve(
-      { port: dispPort, hostname: "127.0.0.1", signal: dispatcherCtl.signal, onListen: () => {} },
-      dispatcherApp.fetch,
-    );
-    cleanups.push(() => dispatcherCtl.abort());
-
-    // ── fake PLC ─────────────────────────────────────────────────────────
-    const plc = createFakePlc();
-    const plcCtl = new AbortController();
-    const plcServer = Deno.serve(
-      { port: plcPort, hostname: "127.0.0.1", signal: plcCtl.signal, onListen: () => {} },
-      plc.app.fetch,
-    );
-    cleanups.push(() => plcCtl.abort());
 
     // ── bidder ───────────────────────────────────────────────────────────
     const bidderKeypair = await Secp256k1Keypair.create({ exportable: true });

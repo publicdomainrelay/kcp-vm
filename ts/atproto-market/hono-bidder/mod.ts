@@ -37,6 +37,25 @@ const keypair = (options.privateKeyHex as string | undefined)
 const privateKeyHex = (options.privateKeyHex as string) ?? "";
 
 const dispatcherHost = (options.relayDispatcherHost as string) || "xrpc.fedproxy.com";
+
+// Auto-detect local dev: *.localhost isn't in DNS.  If the dispatcher is
+// reachable at a local host, patch fetch so the bidder can resolve the
+// requester's PDS endpoints (also on *.localhost) through the relay.
+if (dispatcherHost.includes("localhost") || dispatcherHost.startsWith("127.")) {
+  const patchPort = dispatcherHost.includes(":") ? dispatcherHost.split(":").pop()! : "80";
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
+    let url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    const m = url.match(/^https:\/\/([^/]+)(\/.*)?$/);
+    if (m && m[1].endsWith(".localhost")) {
+      let host = m[1];
+      if (!host.includes(":")) host = `${host}:${patchPort}`;
+      url = `http://${host}${m[2] ?? ""}`;
+      return realFetch(url, init);
+    }
+    return realFetch(input as string | URL | Request, init);
+  }) as typeof fetch;
+}
 const plcDirectoryUrl = (options.plcDirectoryUrl as string) || "https://plc.directory";
 
 // Each relay gets its own keypair so subscribers never share a subdomain/FQDN
@@ -48,6 +67,8 @@ async function cliCreateXrpcRelay() {
 
 let atprotoAgent;
 let pdsHostname: string | undefined;
+const _deferredRelayUrls: string[] = [];
+let _deferredPdsPort = 0;
 if ((options.atprotoHandle as string | undefined) && (options.atprotoPassword as string | undefined)) {
   const pdsUrl = (options.atprotoPdsUrl as string) || "https://bsky.social";
   atprotoAgent = await createRemoteAgent({
@@ -57,13 +78,17 @@ if ((options.atprotoHandle as string | undefined) && (options.atprotoPassword as
   });
   pdsHostname = new URL(pdsUrl).hostname;
 } else {
+  // TCP port 0 so the local atproto-relay can crawl this PDS directly
+  // (the did-key-relay subscription protocol wraps firehose frames).
+  const pdsServe = createServe({ logger, tcp: { port: 0 } });
   atprotoAgent = await createLocalPDSAgent({
     logger, keypair,
-    serve: createServe({ logger }),
+    serve: pdsServe,
     plcDirectoryUrl,
     dispatcherHost,
   });
   await atprotoAgent.beginServe();
+  _deferredPdsPort = pdsServe.tcpPort;
   const proxyRef: string = (atprotoAgent as { relay?: { proxyRef?: string } }).relay?.proxyRef ?? "";
   if (proxyRef) {
     pdsHostname = proxyRef.startsWith("did:web:")
@@ -72,19 +97,31 @@ if ((options.atprotoHandle as string | undefined) && (options.atprotoPassword as
   }
 }
 
+const DEFAULT_RELAY_URLS = [
+  "https://reg.market.fedfork.com",
+  "https://bsky.network",
+];
+
 const registryEndpoint = (options.registryEndpoint as string) || "";
-if (registryEndpoint) {
-  if (pdsHostname) {
-    const registry = createAtprotoMarketRegistry({ registryUrl: registryEndpoint, log: logger });
-    await registry.registerPds(pdsHostname);
-  } else {
-    logger.warn("market_registry_no_hostname", {
-      reason: "could not determine PDS hostname for registry registration",
-    });
+const relayUrls = registryEndpoint
+  ? [...new Set([...DEFAULT_RELAY_URLS, registryEndpoint])]
+  : DEFAULT_RELAY_URLS;
+
+// Collect local relay URLs for deferred registration after serve starts.
+for (const url of relayUrls) {
+  if (url.startsWith("http://127.0.0.1:") || url.startsWith("http://localhost:")) {
+    _deferredRelayUrls.push(url);
   }
-} else {
-  logger.info("market_registry_skipped", {
-    reason: "registry-endpoint not configured",
+}
+
+if (pdsHostname) {
+  for (const url of relayUrls) {
+    const registry = createAtprotoMarketRegistry({ registryUrl: url, log: logger });
+    await registry.registerPds(pdsHostname);
+  }
+} else if (registryEndpoint) {
+  logger.warn("market_registry_no_hostname", {
+    reason: "could not determine PDS hostname for registry registration",
   });
 }
 
@@ -149,16 +186,17 @@ const rfpWatcherFactory = rfpFirehoseMode !== "off" && rfpFirehoseUrl
 
 // Market factory gets its own relay/serve (own keypair -> own subdomain/FQDN).
 const bidderRelay = options.noXrpcRelay ? undefined : await cliCreateXrpcRelay();
+const bidderServe = createServe({
+  logger,
+  tcp: { addr: (options.serveAddr as string) || "0.0.0.0", port: (options.servePort as number) ?? 0 },
+  unix: (options.serveUnix as string | undefined) ? { socketPath: options.serveUnix as string } : undefined,
+  relays: bidderRelay ? [bidderRelay] : [],
+});
 const bidder = await createMarketBidder({
   logger, atproto, providers, relay: bidderRelay,
   rfpWatcherFactory,
   offeringRefreshMs: offeringRefreshSec > 0 ? offeringRefreshSec * 1000 : undefined,
-  serve: createServe({
-    logger,
-    tcp: { addr: (options.serveAddr as string) || "0.0.0.0", port: (options.servePort as number) ?? 0 },
-    unix: (options.serveUnix as string | undefined) ? { socketPath: options.serveUnix as string } : undefined,
-    relays: bidderRelay ? [bidderRelay] : [],
-  }),
+  serve: bidderServe,
 });
 
 function shutdown() {
@@ -168,4 +206,22 @@ function shutdown() {
 }
 Deno.addSignalListener("SIGINT", shutdown);
 Deno.addSignalListener("SIGTERM", shutdown);
+
 await bidder.beginServe();
+
+// Re-register with local relays using the direct serve port.
+// Needed so local atproto-relays can connect to subscribeRepos
+// without going through the did-key-relay subscription protocol.
+const _localServePort = _deferredPdsPort || bidderServe.tcpPort;
+if (_deferredRelayUrls.length > 0 && _localServePort > 0) {
+  const localHostname = `127.0.0.1:${_localServePort}`;
+  for (const url of _deferredRelayUrls) {
+    try {
+      const registry = createAtprotoMarketRegistry({ registryUrl: url, log: logger });
+      await registry.registerPds(localHostname);
+      logger.info("market_registry_local_reregistered", { registry: url, hostname: localHostname });
+    } catch (err) {
+      logger.warn("market_registry_local_reregister_failed", { registry: url, error: String(err) });
+    }
+  }
+}

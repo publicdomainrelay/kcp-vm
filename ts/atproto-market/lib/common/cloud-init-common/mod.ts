@@ -192,3 +192,87 @@ runcmd:
   - systemctl start --no-block setup-websocat.path
 `;
 }
+
+export interface TunnelCloudInitContext {
+  /** host:port the guest dials outbound to reach the relay dispatcher. */
+  dispatcherHost: string;
+  /** Relay hostname used as the service-auth `aud` (did:web:<audHost>). */
+  audHost: string;
+  /** secp256k1 private key hex; the relay verifies the registration nonce sig. */
+  privateKeyHex: string;
+  /** host:port of the local hono-jsr registry; emitted as Deno's JSR_URL. */
+  jsrUrl: string;
+  /** OpenSSH public key (single line) added to root's authorized_keys. */
+  sshAuthorizedKey: string;
+  /** Local TCP port the subscriber bridges relay tunnel bytes to. Default 22. */
+  targetPort?: number;
+}
+
+/**
+ * Sibling of buildDefaultUserData that replaces the fedproxy-client transport
+ * with the did-key-relay xrpc tunnel-subscriber. sshd listens on :22; the
+ * subscriber dials the relay outbound, registers its DID subdomain, and bridges
+ * raw relay tunnel bytes straight to sshd (no guest websocat — the subscriber
+ * speaks raw TCP). The agent is pulled at boot via `deno run jsr:` from the
+ * local hono-jsr registry (Deno's JSR_URL override); `deno` is already on the
+ * compute-provider runner image PATH.
+ */
+export function buildTunnelUserData(ctx: TunnelCloudInitContext): string {
+  const { dispatcherHost, audHost, privateKeyHex, jsrUrl, sshAuthorizedKey } = ctx;
+  const targetPort = ctx.targetPort ?? 22;
+  return `#cloud-config
+packages:
+  - openssh-server
+  - jq
+  - curl
+  - unzip
+
+disable_root: false
+ssh_pwauth: false
+
+write_files:
+  - path: /root/.ssh/authorized_keys
+    owner: root:root
+    permissions: '0600'
+    content: |
+      ${sshAuthorizedKey}
+
+  - path: /etc/ssh/sshd_config.d/10-tunnel.conf
+    owner: root:root
+    permissions: '0644'
+    content: |
+      # Key-only root login; reached through the xrpc relay tunnel (the
+      # compute-provider harness also TCP-probes :22 directly for readiness).
+      PermitRootLogin prohibit-password
+      PasswordAuthentication no
+
+  - path: /etc/systemd/system/tunnel-subscriber.service
+    owner: root:root
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=did-key-relay xrpc tunnel subscriber (ssh-over-relay)
+      After=network-online.target sshd.service ssh.service
+      Wants=network-online.target
+
+      [Service]
+      Type=simple
+      User=root
+      Environment="JSR_URL=http://${jsrUrl}/"
+      Environment="DENO_DIR=/var/lib/deno"
+      ExecStart=deno run -A jsr:@publicdomainrelay/hono-did-key-relay-tunnel-subscriber --dispatcher-host ${dispatcherHost} --aud-host ${audHost} --private-key-hex ${privateKeyHex} --target-host 127.0.0.1 --target-port ${targetPort}
+      Restart=always
+      RestartSec=5
+      TimeoutStopSec=10
+      StandardOutput=journal
+      StandardError=journal
+
+      [Install]
+      WantedBy=multi-user.target
+
+runcmd:
+  - systemctl daemon-reload
+  - systemctl enable --now ssh || systemctl enable --now sshd
+  - systemctl enable --now tunnel-subscriber.service
+`;
+}

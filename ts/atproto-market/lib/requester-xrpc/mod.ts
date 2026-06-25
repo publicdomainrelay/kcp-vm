@@ -38,6 +38,7 @@ import {
   SUBMIT_ACCEPT_LXM,
   SUBMIT_EVENT_LXM,
   VOUCH_NSID,
+  RELAYS_NSID,
 } from "@publicdomainrelay/market-common";
 import type { StrongRef } from "@publicdomainrelay/market-common";
 import { buildDefaultUserData, flattenLabel, type CloudInitContext } from "@publicdomainrelay/cloud-init-common";
@@ -73,22 +74,88 @@ export async function discoverBiddersFromRelay(opts: {
   relayUrl: string;
   collection: string;
   log?: LoggerInterface;
+  timeoutMs?: number;
 }): Promise<string[]> {
-  const { relayUrl, collection, log } = opts;
+  const { relayUrl, collection, log, timeoutMs } = opts;
   try {
     const url = `${relayUrl.replace(/\/+$/, "")}/xrpc/com.atproto.sync.listReposByCollection?collection=${encodeURIComponent(collection)}`;
     log?.info("relay_discovery_query", { url, collection });
-    const res = await fetch(url);
+    const res = await fetch(url, { signal: timeoutMs ? AbortSignal.timeout(timeoutMs) : undefined });
     if (!res.ok) {
-      log?.warn("relay_discovery_http_error", { status: res.status, collection });
+      log?.warn("relay_discovery_http_error", { relayUrl, status: res.status, collection });
       return [];
     }
     const data = await res.json() as { repos?: Array<{ did: string }> };
     const dids = [...new Set((data.repos ?? []).map((r) => r.did).filter(Boolean))];
-    log?.info("relay_discovery_result", { collection, count: dids.length });
+    log?.info("relay_discovery_result", { relayUrl, collection, count: dids.length });
     return dids;
   } catch (err) {
-    log?.warn("relay_discovery_error", { collection, error: String(err) });
+    log?.warn("relay_discovery_error", { relayUrl, collection, error: String(err) });
+    return [];
+  }
+}
+
+/**
+ * Query multiple atproto relays for bidders. Each relay failure is logged but
+ * non-blocking — results from all successful relays are unioned.
+ */
+export async function discoverBiddersFromRelays(opts: {
+  relayUrls: string[];
+  collection: string;
+  log?: LoggerInterface;
+  timeoutMs?: number;
+}): Promise<string[]> {
+  const { relayUrls, collection, log, timeoutMs } = opts;
+  if (relayUrls.length === 0) return [];
+  const results = await Promise.all(
+    relayUrls.map((url) => discoverBiddersFromRelay({ relayUrl: url, collection, log, timeoutMs })),
+  );
+  const all = results.flat();
+  return [...new Set(all)];
+}
+
+/**
+ * Auto-discover relay URLs from $ATPROTO_DID's repo records. Reads
+ * com.publicdomainrelay.temp.market.relays records, extracts the `relays`
+ * string arrays, deduplicates them, and returns the union.
+ * Falls back to an empty array if $ATPROTO_DID is unset, the DID can't be
+ * resolved, or no relay records exist.
+ */
+export async function autoDiscoverRelayUrls(opts: {
+  atprotoDid?: string;
+  log?: LoggerInterface;
+}): Promise<string[]> {
+  const did = opts.atprotoDid ?? Deno.env.get("ATPROTO_DID");
+  if (!did) return [];
+  const log = opts.log;
+  log?.info("relay_autodiscover_lookup", { did });
+  try {
+    const resolver = new IdResolver();
+    const doc = await resolver.did.resolve(did);
+    if (!doc) {
+      log?.warn("relay_autodiscover_did_unresolvable", { did });
+      return [];
+    }
+    const pdsUrl = getPdsEndpoint(doc);
+    if (!pdsUrl) {
+      log?.warn("relay_autodiscover_no_pds", { did });
+      return [];
+    }
+    const records = await listRecordsAll(pdsUrl, did, RELAYS_NSID);
+    const urls: string[] = [];
+    for (const r of records) {
+      const relays = (r.value as Record<string, unknown>).relays;
+      if (Array.isArray(relays)) {
+        for (const item of relays) {
+          if (typeof item === "string" && item.trim() && (item.startsWith("https://") || item.startsWith("http://"))) urls.push(item.trim());
+        }
+      }
+    }
+    const deduped = [...new Set(urls)];
+    log?.info("relay_autodiscover_result", { did, sources: records.length, urls: deduped.length });
+    return deduped;
+  } catch (err) {
+    log?.warn("relay_autodiscover_error", { did, error: String(err) });
     return [];
   }
 }
@@ -295,13 +362,17 @@ export async function createRequesterPDS(
     body: Record<string, unknown>,
   ): Promise<{ status: number; ok: boolean; body: unknown }> {
     const token = await signServiceAuth(signer, { aud: audDid, lxm });
-    const res = await fetch(`${targetBase}/${nsid}`, {
+    const url = `${targetBase}/${nsid}`;
+    const fetchBody = JSON.stringify(body);
+    console.log(JSON.stringify({ event: "callBidder_pre", url, bodyType: typeof fetchBody, bodyLen: fetchBody.length, tokenLen: token.length }));
+    const res = await fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-      body: JSON.stringify(body),
+      body: fetchBody,
     });
+    const resText = await res.text();
     let resBody: unknown;
-    try { resBody = await res.json(); } catch { resBody = await res.text(); }
+    try { resBody = JSON.parse(resText); } catch { resBody = resText; }
     return { status: res.status, ok: res.ok, body: resBody };
   }
 
@@ -330,9 +401,13 @@ export async function createRequesterPDS(
 // SSH session provider
 // ---------------------------------------------------------------------------
 
-function sshTunnelArgs(privateKeyPath: string, fqdn: string): string[] {
+function sshTunnelArgs(
+  privateKeyPath: string,
+  fqdn: string,
+  proxyCmdOverride?: string,
+): string[] {
   return [
-    "-o", `ProxyCommand=websocat --binary wss://${fqdn}`,
+    "-o", `ProxyCommand=${proxyCmdOverride ?? `websocat --binary wss://${fqdn}`}`,
     "-o", `IdentityFile=${privateKeyPath}`,
     "-o", "IdentitiesOnly=yes",
     "-o", "StrictHostKeyChecking=no",
@@ -341,7 +416,10 @@ function sshTunnelArgs(privateKeyPath: string, fqdn: string): string[] {
   ];
 }
 
-export function createSshSessionProvider(logger?: StructuredLoggerInterface): SshSessionProvider {
+export function createSshSessionProvider(
+  logger?: StructuredLoggerInterface,
+  opts?: { proxyCommandFn?: (fqdn: string) => string },
+): SshSessionProvider {
   const log = (event: string, extra: Record<string, unknown> = {}) =>
     logger ? logger.info(event, extra) : console.log(JSON.stringify({ event, ...extra }));
   async function generateKeypair(
@@ -367,13 +445,14 @@ export function createSshSessionProvider(logger?: StructuredLoggerInterface): Ss
     fqdn: string,
     timeoutMs: number,
   ): Promise<boolean> {
+    const proxyCmd = opts?.proxyCommandFn?.(fqdn);
     const deadline = Date.now() + timeoutMs;
     let attempt = 0;
     while (Date.now() < deadline) {
       attempt++;
       const cmd = new Deno.Command("ssh", {
         args: [
-          ...sshTunnelArgs(privateKeyPath, fqdn),
+          ...sshTunnelArgs(privateKeyPath, fqdn, proxyCmd),
           "-o", "BatchMode=yes",
           "-o", "ConnectTimeout=10",
           `root@${fqdn}`,
@@ -399,8 +478,9 @@ export function createSshSessionProvider(logger?: StructuredLoggerInterface): Ss
     fqdn: string,
     program: string,
   ): Promise<number> {
+    const proxyCmd = opts?.proxyCommandFn?.(fqdn);
     const interactive = Deno.stdin.isTerminal();
-    const args = [...sshTunnelArgs(privateKeyPath, fqdn)];
+    const args = [...sshTunnelArgs(privateKeyPath, fqdn, proxyCmd)];
     if (interactive) {
       args.push("-tt", `root@${fqdn}`);
     } else {
@@ -469,7 +549,8 @@ export async function runComputeContract(
   pds: RequesterPDS,
   opts: ContractFlowOptions & {
     sshProvider?: SshSessionProvider;
-    relayUrl?: string;
+    relayUrls?: string[];
+    relayUrl?: string; // deprecated: use relayUrls
     signer?: Signer;
     offeringWatcherDids?: () => string[];
     logger?: StructuredLoggerInterface;
@@ -485,6 +566,7 @@ export async function runComputeContract(
   const denyBidderDids = opts.denyBidderDids ?? [];
   const sshProvider = opts.sshProvider ?? createSshSessionProvider();
   const relayUrl = opts.relayUrl;
+  const relayUrls = opts.relayUrls ?? (relayUrl ? [relayUrl] : []);
   const signer = opts.signer;
 
   const logger = opts.logger;
@@ -530,6 +612,11 @@ export async function runComputeContract(
       sshAuthorizedKey: ssh.publicKey,
     };
     cloudInit = buildDefaultUserData(ctx);
+    if (opts.userDataFactory) {
+      // userDataFactory replaces the default cloud-init — caller builds the
+      // guest transport (e.g. did-key-relay tunnel-subscriber replacing fedproxy).
+      cloudInit = opts.userDataFactory(ssh.publicKey);
+    }
   } else {
     cloudInit = `#cloud-config
 packages:
@@ -577,10 +664,14 @@ runcmd:
   }
 
   // 3b. Relay-based discovery (PRIMARY — relay IS the registry).
+  // Merge configured relayUrls + auto-discovered from $ATPROTO_DID.
+  const autoRelayUrls = await autoDiscoverRelayUrls({ log: logger });
+  const allRelayUrls = [...new Set([...relayUrls, ...autoRelayUrls])];
   let relayDids: string[] = [];
-  if (relayUrl) {
-    relayDids = await discoverBiddersFromRelay({ relayUrl, collection: OFFERING_NSID });
-    if (relayDids.length > 0) log("relay_discovery", { count: relayDids.length });
+  if (allRelayUrls.length > 0) {
+    relayDids = await discoverBiddersFromRelays({ relayUrls: allRelayUrls, collection: OFFERING_NSID, log: logger, timeoutMs: 15_000 });
+    if (relayDids.length > 0) log("relay_discovery", { count: relayDids.length, relays: allRelayUrls.length, configured: relayUrls.length, autodiscovered: autoRelayUrls.length });
+    else log("relay_discovery_empty", { relays: allRelayUrls.length, configured: relayUrls.length, autodiscovered: autoRelayUrls.length });
   }
 
   // 3c. Live firehose offering watch (complements the relay index; catches

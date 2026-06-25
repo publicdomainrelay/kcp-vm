@@ -20,6 +20,24 @@ const label = (options.label as string) ?? "request-vm-ssh";
 const logger = createLogger({ serviceName: label });
 
 const dispatcherHost = (options.dispatcherHost as string) || "xrpc.fedproxy.com";
+
+// Auto-detect local dev: *.localhost isn't in DNS.  Patch fetch so the
+// requester can reach the bidder's PDS endpoints (also on *.localhost).
+if (dispatcherHost.includes("localhost") || dispatcherHost.startsWith("127.")) {
+  const patchPort = dispatcherHost.includes(":") ? dispatcherHost.split(":").pop()! : "80";
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
+    let url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    const m = url.match(/^https:\/\/([^/]+)(\/.*)?$/);
+    if (m && m[1].endsWith(".localhost")) {
+      let host = m[1];
+      if (!host.includes(":")) host = `${host}:${patchPort}`;
+      url = `http://${host}${m[2] ?? ""}`;
+      return realFetch(url, init);
+    }
+    return realFetch(input as string | URL | Request, init);
+  }) as typeof fetch;
+}
 const relayUrl = options.relayUrl as string | undefined;
 
 const splitDids = (s: string | undefined): string[] =>

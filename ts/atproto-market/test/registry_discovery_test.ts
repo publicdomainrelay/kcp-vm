@@ -20,13 +20,6 @@ import { createRelayFactory } from "@publicdomainrelay/hono-factory-atproto-rela
 import { createAtprotoMarketRegistry } from "@publicdomainrelay/market-registry-atproto";
 import { OFFERING_NSID } from "@publicdomainrelay/market-common";
 
-function allocatePort(): number {
-  const l = Deno.listen({ port: 0 });
-  const p = (l.addr as Deno.NetAddr).port;
-  l.close();
-  return p;
-}
-
 Deno.test({
   name: "[integration] bidder PDS becomes discoverable after registry requestCrawl",
   sanitizeOps: false,
@@ -34,11 +27,59 @@ Deno.test({
 }, async () => {
   const logger = createLogger({ serviceName: "it-registry" });
 
-  const relayPort = allocatePort();
-  const pdsPort = allocatePort();
   const relayHost = "reg.localhost";
   const pdsHost = "pds.localhost";
   const bidderDid = "did:plc:registrytestbidder000";
+
+  const cleanups: Array<() => void> = [];
+
+  // ── real atproto-relay (the market registry) on in-memory KV ──────────
+  const kv = await Deno.openKv(":memory:");
+  cleanups.push(() => kv.close());
+
+  const relay = createRelayFactory({ hostname: relayHost, kv, log: logger });
+  const relayCtl = new AbortController();
+  const { promise: relayPortReady, resolve: resolveRelayPort } = Promise.withResolvers<number>();
+  Deno.serve(
+    { port: 0, hostname: "127.0.0.1", signal: relayCtl.signal, onListen: (addr) => resolveRelayPort((addr as Deno.NetAddr).port) },
+    relay.app.fetch,
+  );
+  const relayPort = await relayPortReady;
+  cleanups.push(() => relayCtl.abort());
+
+  // ── minimal fake PDS: describeServer + subscribeRepos firehose ────────
+  const pds = new Hono();
+  pds.get("/xrpc/com.atproto.server.describeServer", (c) =>
+    c.json({
+      did: bidderDid,
+      version: "0.0.0",
+      availableUserDomains: [],
+      inviteCodeRequired: false,
+    }));
+  pds.get(
+    "/xrpc/com.atproto.sync.subscribeRepos",
+    upgradeWebSocket(() => ({
+      onOpen(_evt, ws) {
+        ws.send(JSON.stringify({
+          seq: 1,
+          repo: bidderDid,
+          rev: "rev1",
+          since: null,
+          blocks: [],
+          ops: [{ action: "create", path: `${OFFERING_NSID}/self`, cid: null, prev: null }],
+          time: new Date().toISOString(),
+        }));
+      },
+    })),
+  );
+  const pdsCtl = new AbortController();
+  const { promise: pdsPortReady, resolve: resolvePdsPort } = Promise.withResolvers<number>();
+  Deno.serve(
+    { port: 0, hostname: "127.0.0.1", signal: pdsCtl.signal, onListen: (addr) => resolvePdsPort((addr as Deno.NetAddr).port) },
+    pds.fetch,
+  );
+  const pdsPort = await pdsPortReady;
+  cleanups.push(() => pdsCtl.abort());
 
   // ── fetch interception: https://reg.localhost -> local relay,
   // https://pds.localhost -> local fake PDS (downgrade scheme + add port).
@@ -54,6 +95,7 @@ Deno.test({
     }
     return realFetch(input as string | URL | Request, init);
   }) as typeof fetch;
+  cleanups.push(() => { globalThis.fetch = realFetch; });
 
   // ── WebSocket interception: wss://pds.localhost -> ws://127.0.0.1:pdsPort.
   const RealWS = globalThis.WebSocket;
@@ -66,55 +108,9 @@ Deno.test({
       super(u, protocols);
     }
   } as typeof WebSocket;
-
-  const kv = await Deno.openKv(":memory:");
-  const cleanups: Array<() => void> = [];
-  cleanups.push(() => { globalThis.fetch = realFetch; });
   cleanups.push(() => { globalThis.WebSocket = RealWS; });
-  cleanups.push(() => kv.close());
 
   try {
-    // ── real atproto-relay (the market registry) on in-memory KV ──────────
-    const relay = createRelayFactory({ hostname: relayHost, kv, log: logger });
-    const relayCtl = new AbortController();
-    Deno.serve(
-      { port: relayPort, hostname: "127.0.0.1", signal: relayCtl.signal, onListen: () => {} },
-      relay.app.fetch,
-    );
-    cleanups.push(() => relayCtl.abort());
-
-    // ── minimal fake PDS: describeServer + subscribeRepos firehose ────────
-    const pds = new Hono();
-    pds.get("/xrpc/com.atproto.server.describeServer", (c) =>
-      c.json({
-        did: bidderDid,
-        version: "0.0.0",
-        availableUserDomains: [],
-        inviteCodeRequired: false,
-      }));
-    pds.get(
-      "/xrpc/com.atproto.sync.subscribeRepos",
-      upgradeWebSocket(() => ({
-        onOpen(_evt, ws) {
-          ws.send(JSON.stringify({
-            seq: 1,
-            repo: bidderDid,
-            rev: "rev1",
-            since: null,
-            blocks: [],
-            ops: [{ action: "create", path: `${OFFERING_NSID}/self`, cid: null, prev: null }],
-            time: new Date().toISOString(),
-          }));
-        },
-      })),
-    );
-    const pdsCtl = new AbortController();
-    Deno.serve(
-      { port: pdsPort, hostname: "127.0.0.1", signal: pdsCtl.signal, onListen: () => {} },
-      pds.fetch,
-    );
-    cleanups.push(() => pdsCtl.abort());
-
     // ── bidder registers its PDS with the registry ───────────────────────
     const registry = createAtprotoMarketRegistry({ registryUrl: `https://${relayHost}`, log: logger });
     const result = await registry.registerPds(pdsHost);

@@ -8,6 +8,7 @@ export { $nsid as OFFERING_NSID } from "../market-lexicons/com/publicdomainrelay
 export { $nsid as COMPUTE_VM_NSID } from "../market-lexicons/com/publicdomainrelay/temp/compute/vm.ts";
 export { $nsid as COMPUTE_EVENTS_VM_DELETE_NSID } from "../market-lexicons/com/publicdomainrelay/temp/compute/events/vm/delete.ts";
 export const VOUCH_NSID = "sh.tangled.graph.vouch";
+export const RELAYS_NSID = "com.publicdomainrelay.temp.market.relays";
 
 export { $nsid as BIDS_FREE_NSID } from "../market-lexicons/com/publicdomainrelay/temp/market/bids/free.ts";
 export { $nsid as ACCEPTS_FREE_NSID } from "../market-lexicons/com/publicdomainrelay/temp/market/accepts/free.ts";

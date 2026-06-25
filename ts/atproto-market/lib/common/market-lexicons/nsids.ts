@@ -39,6 +39,7 @@ export const REGISTER_BIDDER_LXM = REGISTER_BIDDER_NSID;
 export const LIST_BIDDERS_NSID = "com.publicdomainrelay.temp.market.listBidders";
 export const LIST_BIDDERS_LXM = LIST_BIDDERS_NSID;
 export const BIDDER_DISCOVERY_NSID = "com.publicdomainrelay.temp.market.bidderDiscovery";
+export const RELAYS_NSID = "com.publicdomainrelay.temp.market.relays";
 export const PACKAGE_REGISTRY_RESOLVE_NSID = "com.publicdomainrelay.temp.packageRegistry.resolve";
 export const PACKAGE_REGISTRY_PACKAGE_NSID = "com.publicdomainrelay.temp.packageRegistry.package";
 export const PACKAGE_REGISTRY_RELEASE_NSID = "com.publicdomainrelay.temp.packageRegistry.release";

@@ -20,15 +20,7 @@ const DID = "did:plc:firehosetestrequester0";
 const RKEY = "3kabcrfprkey00";
 const CID = "bafyreirfpcidexample00000000000000000000000000000000000";
 
-function allocatePort(): number {
-  const l = Deno.listen({ port: 0 });
-  const p = (l.addr as Deno.NetAddr).port;
-  l.close();
-  return p;
-}
-
-function serveFrames(frames: unknown[]): { port: number; stop: () => void } {
-  const port = allocatePort();
+async function serveFrames(frames: unknown[]): Promise<{ port: number; stop: () => void }> {
   const app = new Hono();
   app.get(
     "/",
@@ -39,7 +31,9 @@ function serveFrames(frames: unknown[]): { port: number; stop: () => void } {
     })),
   );
   const ctl = new AbortController();
-  Deno.serve({ port, hostname: "127.0.0.1", signal: ctl.signal, onListen: () => {} }, app.fetch);
+  const { promise: portReady, resolve: resolvePort } = Promise.withResolvers<number>();
+  Deno.serve({ port: 0, hostname: "127.0.0.1", signal: ctl.signal, onListen: (addr) => resolvePort((addr as Deno.NetAddr).port) }, app.fetch);
+  const port = await portReady;
   return { port, stop: () => ctl.abort() };
 }
 
@@ -95,7 +89,7 @@ const expected: FirehoseRecordEvent = {
 };
 
 Deno.test("subscribeRepos watcher: nested RelayFrame envelope -> event", async () => {
-  const srv = serveFrames([subscribeReposEnvelope(RFP_NSID)]);
+  const srv = await serveFrames([subscribeReposEnvelope(RFP_NSID)]);
   try {
     const events = await collect((push) =>
       createSubscribeReposWatcher({
@@ -111,7 +105,7 @@ Deno.test("subscribeRepos watcher: nested RelayFrame envelope -> event", async (
 });
 
 Deno.test("subscribeRepos watcher: flat PdsFirehoseFrame -> event", async () => {
-  const srv = serveFrames([subscribeReposFlat(RFP_NSID)]);
+  const srv = await serveFrames([subscribeReposFlat(RFP_NSID)]);
   try {
     const events = await collect((push) =>
       createSubscribeReposWatcher({
@@ -127,7 +121,7 @@ Deno.test("subscribeRepos watcher: flat PdsFirehoseFrame -> event", async () => 
 });
 
 Deno.test("subscribeRepos watcher: filters non-wanted collections", async () => {
-  const srv = serveFrames([subscribeReposEnvelope(OTHER_NSID), subscribeReposEnvelope(RFP_NSID)]);
+  const srv = await serveFrames([subscribeReposEnvelope(OTHER_NSID), subscribeReposEnvelope(RFP_NSID)]);
   try {
     const events = await collect((push) =>
       createSubscribeReposWatcher({
@@ -143,7 +137,7 @@ Deno.test("subscribeRepos watcher: filters non-wanted collections", async () => 
 });
 
 Deno.test("jetstream watcher: commit frame -> event", async () => {
-  const srv = serveFrames([jetstreamFrame(OTHER_NSID), jetstreamFrame(RFP_NSID)]);
+  const srv = await serveFrames([jetstreamFrame(OTHER_NSID), jetstreamFrame(RFP_NSID)]);
   try {
     const events = await collect((push) =>
       createJetstreamWatcher({
