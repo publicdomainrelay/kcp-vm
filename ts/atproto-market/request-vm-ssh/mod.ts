@@ -45,6 +45,14 @@ const splitDids = (s: string | undefined): string[] =>
 const extraBidderDids = splitDids(options.bidderDids as string | undefined);
 const denyBidderDids = splitDids(options.denyBidderDids as string | undefined);
 
+const userDataPath = options.userData as string | undefined;
+let baseUserData: string | undefined;
+if (userDataPath) {
+  baseUserData = await Deno.readTextFile(userDataPath);
+  logger.info("user_data_loaded", { userDataPath, bytes: baseUserData.length });
+}
+const rbac = !(options.skipRbac as boolean);
+
 await ensureWebsocat(logger);
 logger.info("requester_starting", { label, dispatcherHost, relayUrl: relayUrl ?? "(none)" });
 
@@ -116,6 +124,7 @@ Deno.addSignalListener("SIGTERM", shutdown);
 const result = await runComputeContract(pds, {
   logger,
   dispatcherHost,
+  fedproxyHost: options.fedproxyHost as string | undefined,
   vmName: options.vmName as string | undefined,
   bidWindowSec: options.bidWindowSec as number,
   skipSsh: options.skipSsh as boolean,
@@ -125,6 +134,8 @@ const result = await runComputeContract(pds, {
   extraBidderDids,
   denyBidderDids,
   relayUrl,
+  baseUserData,
+  rbac,
   offeringWatcherDids: () => [...offeringDids],
   sshProvider: createSshSessionProvider(logger),
   onSshStart: () => pauseConsole(),

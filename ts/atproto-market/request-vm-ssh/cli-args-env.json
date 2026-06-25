@@ -25,6 +25,12 @@
       "env": "DISPATCHER_HOST",
       "default": "xrpc.fedproxy.com"
     },
+    "fedproxy-host": {
+      "type": "string",
+      "description": "FedProxy SSH-tunnel host where the guest publishes itself for SSH (vmName--did-plc-<key>.<fedproxy-host>)",
+      "env": "FEDPROXY_HOST",
+      "default": "fedproxy.com"
+    },
     "label": {
       "type": "string",
       "description": "Label for log and relay identification",
@@ -101,6 +107,16 @@
       "type": "string",
       "description": "Unix socket path to serve on (optional, in addition to TCP)",
       "env": "SERVE_UNIX"
+    },
+    "user-data": {
+      "type": "string",
+      "description": "Path to a base cloud-init file; the default websocat/fedproxy-client provisioning is patched into it before the RFP is sent",
+      "env": "USER_DATA"
+    },
+    "skip-rbac": {
+      "type": "boolean",
+      "description": "Skip writing the com.fedproxy.rbac record that authorizes the VM to register its SSH host key",
+      "env": "SKIP_RBAC"
     }
   }
 }

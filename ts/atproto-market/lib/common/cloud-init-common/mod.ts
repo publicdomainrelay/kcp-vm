@@ -1,5 +1,7 @@
 // Pure cloud-init YAML generation helpers. Zero I/O.
 
+import { parse as yamlParse, stringify as yamlStringify } from "yaml";
+
 export interface CloudInitContext {
   /** VM name / RBAC role; used as the fedproxy SERVICE name. */
   vmName: string;
@@ -83,11 +85,11 @@ write_files:
       _arch=$(uname -m)
       case "$_arch" in x86_64|amd64) _arch=amd64 ;; aarch64|arm64) _arch=arm64 ;; esac
       _os=$(uname -s | tr '[:upper:]' '[:lower:]')
-      retry sh -c "curl -sfL 'https://github.com/publicdomainrelay/atproto-reverse-proxy/releases/download/latest/atproto-reverse-proxy_\\\${_os}_\\\${_arch}.tar.gz' | tar -xvz -C /usr/local/bin"
+      retry sh -c "curl -sfL 'https://github.com/publicdomainrelay/atproto-reverse-proxy/releases/download/latest/atproto-reverse-proxy_\${_os}_\${_arch}.tar.gz' | tar -xvz -C /usr/local/bin"
 
       # websocat release binary (musl-static; ws ↔ tcp bridge).
       case "$_arch" in amd64) _ws_arch=x86_64 ;; arm64) _ws_arch=aarch64 ;; esac
-      retry sh -c "curl -sfL 'https://github.com/vi/websocat/releases/download/v1.13.0/websocat.\\\${_ws_arch}-unknown-linux-musl' -o /usr/local/bin/websocat"
+      retry sh -c "curl -sfL 'https://github.com/vi/websocat/releases/download/v1.13.0/websocat.\${_ws_arch}-unknown-linux-musl' -o /usr/local/bin/websocat"
       chmod +x /usr/local/bin/websocat
 
       systemctl enable websocat.service fedproxy-client.service
@@ -191,6 +193,50 @@ runcmd:
   - systemctl enable setup-websocat.path
   - systemctl start --no-block setup-websocat.path
 `;
+}
+
+function asArray(v: unknown): unknown[] {
+  return Array.isArray(v) ? v : [];
+}
+
+/**
+ * Merge the default websocat/fedproxy-client provisioning into a caller-supplied
+ * cloud-config, instead of generating a fresh one. Same mechanism the
+ * compute-providers use to patch user_data (injectAcceptBundle): parse the base
+ * YAML, append our packages/write_files/runcmd, restringify. buildDefaultUserData
+ * is the single source of truth for what we inject — its output is parsed and its
+ * sections concatenated onto the base. Scalar toggles (disable_root, ssh_pwauth)
+ * are forced to our key-only-root values. The base's own packages, files, and
+ * commands are preserved.
+ */
+export function patchDefaultUserData(
+  baseUserData: string,
+  ctx: CloudInitContext,
+): string {
+  const ours = yamlParse(
+    buildDefaultUserData(ctx).replace(/^#cloud-config\s*/i, ""),
+  ) as Record<string, unknown>;
+
+  let base: Record<string, unknown> = {};
+  try {
+    const parsed = baseUserData
+      ? yamlParse(baseUserData.replace(/^#cloud-config\s*/i, ""))
+      : null;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      base = parsed as Record<string, unknown>;
+    }
+  } catch {
+    /* fall through with empty base */
+  }
+
+  const merged: Record<string, unknown> = { ...base };
+  merged.packages = [...asArray(base.packages), ...asArray(ours.packages)];
+  merged.write_files = [...asArray(base.write_files), ...asArray(ours.write_files)];
+  merged.runcmd = [...asArray(base.runcmd), ...asArray(ours.runcmd)];
+  merged.disable_root = ours.disable_root;
+  merged.ssh_pwauth = ours.ssh_pwauth;
+
+  return "#cloud-config\n" + yamlStringify(merged, { lineWidth: 0 });
 }
 
 export interface TunnelCloudInitContext {

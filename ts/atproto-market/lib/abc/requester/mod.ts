@@ -26,8 +26,20 @@ export interface ContractFlowOptions {
   vmReadyTimeoutSec?: number;
   onSshStart?: () => void;
   onSshEnd?: () => void | Promise<void>;
-  /** Dispatcher host for the relay (used to derive the VM FQDN). */
+  /**
+   * XRPC dispatcher host: the atproto/WS relay plane the requester and guest
+   * subscribe to (e.g. xrpc.fedproxy.com). Carries createRecord/submitRfp.
+   */
   dispatcherHost?: string;
+  /**
+   * FedProxy SSH-tunnel host: the raw ssh/tcp ingress where the guest's
+   * fedproxy-client publishes itself as <vmName>--did-plc-<key>.<fedproxyHost>
+   * (e.g. fedproxy.com). Distinct from dispatcherHost in production; the VM
+   * FQDN polled for SSH is derived from this. Defaults to fedproxy.com. In the
+   * hermetic test a single local relay serves both planes, so it is set to the
+   * test dispatcher host.
+   */
+  fedproxyHost?: string;
   /**
    * When set, replaces the default cloud-init generator
    * (buildDefaultUserData) to allow custom guest-side transport (e.g. the
@@ -36,6 +48,22 @@ export interface ContractFlowOptions {
    * over any additional context. Returns a #cloud-config YAML string.
    */
   userDataFactory?: (sshAuthorizedKey: string) => string;
+  /**
+   * Caller-supplied base cloud-config (e.g. read from a --user-data file). When
+   * set, the default websocat/fedproxy-client provisioning is patched into this
+   * base (patchDefaultUserData) rather than generating a fresh cloud-config —
+   * mirrors how compute-providers patch user_data. Ignored when userDataFactory
+   * is set (that fully replaces the cloud-init).
+   */
+  baseUserData?: string;
+  /**
+   * When true, after the winning bid is selected the requester resolves the
+   * winner's bidConfig (wif.simple) and writes a com.fedproxy.rbac record into
+   * its own repo, authorizing the VM (by wif subject) to createRecord the
+   * com.fedproxy.sshPublicKey record for this VM's service name. Default off so
+   * headless/container tests are unaffected; the CLI enables it by default.
+   */
+  rbac?: boolean;
 }
 
 export interface PDSOptions {

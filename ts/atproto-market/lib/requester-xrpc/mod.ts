@@ -41,7 +41,11 @@ import {
   RELAYS_NSID,
 } from "@publicdomainrelay/market-common";
 import type { StrongRef } from "@publicdomainrelay/market-common";
-import { buildDefaultUserData, flattenLabel, type CloudInitContext } from "@publicdomainrelay/cloud-init-common";
+import { buildDefaultUserData, patchDefaultUserData, flattenLabel, type CloudInitContext } from "@publicdomainrelay/cloud-init-common";
+import {
+  FEDPROXY_RBAC_NSID,
+  buildSshKeyRbacRecord,
+} from "@publicdomainrelay/fedproxy-rbac-common";
 import type {
   RequesterPDS,
   PDSOptions,
@@ -582,6 +586,7 @@ export async function runComputeContract(
   const relaySubdomain = pds.relaySubdomain.endsWith("." + dispatcherHost)
     ? pds.relaySubdomain.slice(0, pds.relaySubdomain.length - dispatcherHost.length - 1)
     : pds.relaySubdomain.split(".")[0];
+  const fedproxyHost = opts.fedproxyHost ?? "fedproxy.com";
 
   log("relay_ready_for_rfp", { proxyRef });
 
@@ -590,7 +595,7 @@ export async function runComputeContract(
   let vmFqdn = "";
 
   if (!skipSsh) {
-    vmFqdn = `${flattenLabel(vmName)}--${flattenLabel(pds.did)}.${dispatcherHost}`;
+    vmFqdn = `${flattenLabel(vmName)}--${flattenLabel(pds.did)}.${fedproxyHost}`;
     const ssh = await sshProvider.generateKeypair(vmName);
     privateKeyPath = ssh.privateKeyPath;
     log("ssh_keypair_generated", {
@@ -611,7 +616,9 @@ export async function runComputeContract(
       xrpcRelaySubdomain: relaySubdomain,
       sshAuthorizedKey: ssh.publicKey,
     };
-    cloudInit = buildDefaultUserData(ctx);
+    cloudInit = opts.baseUserData
+      ? patchDefaultUserData(opts.baseUserData, ctx)
+      : buildDefaultUserData(ctx);
     if (opts.userDataFactory) {
       // userDataFactory replaces the default cloud-init — caller builds the
       // guest transport (e.g. did-key-relay tunnel-subscriber replacing fedproxy).
@@ -735,6 +742,43 @@ runcmd:
     return cost(b) < cost(best) ? b : best;
   }, bids[0]);
   log("winner", { uri: winner.uri, did: winner.did });
+
+  // 6b. Authorize the VM to register its SSH host key. Resolve the winner's
+  // bidConfig (wif.simple), then write a com.fedproxy.rbac record into our own
+  // repo granting the VM (by wif subject) createRecord on com.fedproxy.sshPublicKey
+  // for this VM's service name. The local PDS is served over the xrpc relay, so
+  // the booting VM reaches it through the relay and publishes its host key —
+  // exactly the reference compute-spa flow. Off unless opts.rbac (CLI default-on).
+  if (opts.rbac && !skipSsh) {
+    const bidConfigRef = (winner.record.config ?? winner.record.bidConfig) as { uri?: string; cid?: string } | undefined;
+    if (bidConfigRef?.uri && bidConfigRef?.cid) {
+      try {
+        const resolver = createRecordResolver(idResolver);
+        const cfg = await resolver.resolve({ uri: bidConfigRef.uri, cid: bidConfigRef.cid }) as Record<string, unknown>;
+        const issuerUri = cfg.issuer_uri as string | undefined;
+        const actx = cfg.actx as string | undefined;
+        const subjectTemplate = cfg.subject as string | undefined;
+        if (issuerUri && actx) {
+          const serviceName = vmName.trim() || "compute";
+          const rbacRecord = buildSshKeyRbacRecord({
+            serviceName,
+            issuerUri,
+            actx,
+            requesterDid: pds.did,
+            subjectTemplate,
+          });
+          const { uri: rbacUri } = await pds.createRepoRecord(FEDPROXY_RBAC_NSID, rbacRecord);
+          log("rbac_created", { uri: rbacUri, serviceName, issuerUri });
+        } else {
+          log("rbac_skipped", { reason: "bidConfig missing issuer_uri/actx", bidConfigUri: bidConfigRef.uri });
+        }
+      } catch (err) {
+        log("rbac_skipped", { reason: String(err), bidConfigUri: bidConfigRef.uri });
+      }
+    } else {
+      log("rbac_skipped", { reason: "winner bid has no bidConfig ref" });
+    }
+  }
 
   // 7. Create signed market.accept.
   const { uri: acceptUri, cid: acceptCid } = await pds.createSignedRepoRecord(ACCEPT_NSID, {

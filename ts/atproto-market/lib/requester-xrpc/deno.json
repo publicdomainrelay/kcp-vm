@@ -18,6 +18,7 @@
     "@publicdomainrelay/market-abc": "jsr:@publicdomainrelay/market-abc@^0",
     "@publicdomainrelay/market-common": "jsr:@publicdomainrelay/market-common@^0",
     "@publicdomainrelay/cloud-init-common": "jsr:@publicdomainrelay/cloud-init-common@^0",
+    "@publicdomainrelay/fedproxy-rbac-common": "jsr:@publicdomainrelay/fedproxy-rbac-common@^0",
     "@publicdomainrelay/requester-abc": "jsr:@publicdomainrelay/requester-abc@^0",
     "@publicdomainrelay/logger": "jsr:@publicdomainrelay/logger@^0"
   }
