@@ -20,6 +20,8 @@ export interface ServeHandle {
   onConnected(cb: (proxyRef: string) => void | Promise<void>): void;
   beginServe(): Promise<void>;
   shutdown(): void;
+  /** TCP port resolved during beginServe (0 if port 0 was passed but not yet started, or if no TCP). */
+  readonly tcpPort: number;
 }
 
 export function createServe(opts: CreateServeOpts): ServeHandle {
@@ -28,6 +30,7 @@ export function createServe(opts: CreateServeOpts): ServeHandle {
   const relays: RelayRef[] = [...(opts.relays ?? [])];
   const onConnectedCallbacks: Array<(proxyRef: string) => void | Promise<void>> = [];
   let controller: AbortController | null = null;
+  let _tcpPort = 0;
 
   function addRelay(relay: RelayRef): void {
     relays.push(relay);
@@ -60,6 +63,7 @@ export function createServe(opts: CreateServeOpts): ServeHandle {
           port: port ?? 0,
           signal: controller.signal,
           onListen: ({ hostname, port }) => {
+            _tcpPort = port;
             logger?.info("serve listening", { hostname, port });
           },
         },
@@ -99,5 +103,5 @@ export function createServe(opts: CreateServeOpts): ServeHandle {
     }
   }
 
-  return { app, addRelay, onConnected, beginServe, shutdown };
+  return { app, addRelay, onConnected, beginServe, shutdown, get tcpPort() { return _tcpPort; } };
 }
