@@ -12,7 +12,7 @@ import { createBadgeBlueSigner } from "@publicdomainrelay/market-atproto";
 import { RFP_NSID } from "@publicdomainrelay/market-common";
 import { createFirehoseWatcher as createSubscribeReposWatcher } from "@publicdomainrelay/firehose-watcher-subscriberepos";
 import { createFirehoseWatcher as createJetstreamWatcher } from "@publicdomainrelay/firehose-watcher-jetstream";
-import type { FirehoseRecordEvent } from "@publicdomainrelay/firehose-watcher-abc";
+import type { FirehoseRecordEvent, FirehoseWatcher } from "@publicdomainrelay/firehose-watcher-abc";
 import { createPlcDirectoryClient } from "@publicdomainrelay/did-plc";
 import { createDigitalOceanComputeProvider } from "@publicdomainrelay/compute-provider-digitalocean";
 import { createLocalComputeProvider } from "@publicdomainrelay/compute-provider-local";
@@ -177,12 +177,20 @@ const rfpFirehoseMode = (options.rfpFirehoseMode as string) || "off";
 const rfpFirehoseUrl = options.rfpFirehoseUrl as string | undefined;
 const offeringRefreshSec = (options.offeringRefreshSec as number) ?? 300;
 
-const rfpWatcherFactory = rfpFirehoseMode !== "off" && rfpFirehoseUrl
-  ? (onRecord: (e: FirehoseRecordEvent) => void) => {
-    const make = rfpFirehoseMode === "jetstream" ? createJetstreamWatcher : createSubscribeReposWatcher;
-    return make({ url: rfpFirehoseUrl, wantedCollections: [RFP_NSID], onRecord, log: logger });
+let rfpWatcherFactory: ((onRecord: (e: FirehoseRecordEvent) => void) => FirehoseWatcher) | undefined;
+let rfpWatcherFactories: Array<(onRecord: (e: FirehoseRecordEvent) => void) => FirehoseWatcher> | undefined;
+
+if (rfpFirehoseMode !== "off" && rfpFirehoseUrl) {
+  const urls = rfpFirehoseUrl.split(",").map((s) => s.trim()).filter(Boolean);
+  const make = rfpFirehoseMode === "jetstream" ? createJetstreamWatcher : createSubscribeReposWatcher;
+  const build = (url: string) => (onRecord: (e: FirehoseRecordEvent) => void) =>
+    make({ url, wantedCollections: [RFP_NSID], onRecord, log: logger });
+  if (urls.length > 1) {
+    rfpWatcherFactories = urls.map(build);
+  } else {
+    rfpWatcherFactory = build(urls[0]);
   }
-  : undefined;
+}
 
 // Market factory gets its own relay/serve (own keypair -> own subdomain/FQDN).
 const bidderRelay = options.noXrpcRelay ? undefined : await cliCreateXrpcRelay();
@@ -195,6 +203,7 @@ const bidderServe = createServe({
 const bidder = await createMarketBidder({
   logger, atproto, providers, relay: bidderRelay,
   rfpWatcherFactory,
+  rfpWatcherFactories,
   offeringRefreshMs: offeringRefreshSec > 0 ? offeringRefreshSec * 1000 : undefined,
   serve: bidderServe,
 });

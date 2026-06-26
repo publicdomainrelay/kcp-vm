@@ -52,6 +52,12 @@ export interface MarketBidderConfig {
    * mode), no inbound submitRfp required.
    */
   rfpWatcherFactory?: (onRecord: (e: FirehoseRecordEvent) => void) => FirehoseWatcher;
+  /**
+   * Multiple firehose watcher factories (e.g. bsky + own relay). Each gets its
+   * own WebSocket and the same onRecord dispatch. Prefer this over the singular
+   * rfpWatcherFactory when watching more than one relay.
+   */
+  rfpWatcherFactories?: Array<(onRecord: (e: FirehoseRecordEvent) => void) => FirehoseWatcher>;
   /** Period for re-committing the offering record to stay discoverable. */
   offeringRefreshMs?: number;
   /**
@@ -81,11 +87,11 @@ function didWebHost(s: string): string {
 }
 
 export async function createMarketBidder(config: MarketBidderConfig): Promise<MarketBidder> {
-  const { logger, serve, atproto, relay, providers, setup, teardown, callbackFactory, rfpWatcherFactory, offeringRefreshMs } = config;
+  const { logger, serve, atproto, relay, providers, setup, teardown, callbackFactory, rfpWatcherFactory, rfpWatcherFactories, offeringRefreshMs } = config;
   const log = logAdapter(logger);
   const activeContracts = new Map<string, ActiveContract>();
   const idResolver = atproto.idResolver;
-  let rfpWatcher: FirehoseWatcher | null = null;
+  const rfpWatchers: FirehoseWatcher[] = [];
   let offeringRefresher: OfferingRefreshHandle | null = null;
 
   const ALLOWLIST_NSID = "com.publicdomainrelay.temp.auth.allowlist.rbacDid";
@@ -215,19 +221,23 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
       serve.app.route("/", factory.createApp() as never);
     }
 
-    if (merged.rfpCallbacks && rfpWatcherFactory) {
+    if (merged.rfpCallbacks && (rfpWatcherFactory || rfpWatcherFactories?.length)) {
       const dispatch = createRfpDispatcher({ deps: marketDeps, callbacks: merged.rfpCallbacks });
       const seen = new Set<string>();
-      rfpWatcher = rfpWatcherFactory((e) => {
-        if (e.collection !== RFP_NSID) return;
-        if (e.operation !== "create" && e.operation !== "update") return;
-        if (seen.has(e.uri)) return;
-        seen.add(e.uri);
-        log("info", "rfp watch discovered", { rfpUri: e.uri });
-        dispatch({ rfpUri: e.uri, rfpCid: e.cid, issuerDid: e.did })
-          .catch((err) => log("error", "rfp watch dispatch failed", { rfpUri: e.uri, err: String(err) }));
-      });
-      logger.info("bidder rfp firehose watch started");
+      const factories = rfpWatcherFactories ?? (rfpWatcherFactory ? [rfpWatcherFactory] : []);
+      for (const factory of factories) {
+        const w = factory((e) => {
+          if (e.collection !== RFP_NSID) return;
+          if (e.operation !== "create" && e.operation !== "update") return;
+          if (seen.has(e.uri)) return;
+          seen.add(e.uri);
+          log("info", "rfp watch discovered", { rfpUri: e.uri });
+          dispatch({ rfpUri: e.uri, rfpCid: e.cid, issuerDid: e.did })
+            .catch((err) => log("error", "rfp watch dispatch failed", { rfpUri: e.uri, err: String(err) }));
+        });
+        rfpWatchers.push(w);
+      }
+      logger.info("bidder rfp firehose watches started", { count: rfpWatchers.length });
     }
 
     logger.info("bidder starting serve");
@@ -252,7 +262,7 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
   }
 
   function shutdown(): void {
-    rfpWatcher?.close();
+    for (const w of rfpWatchers) w.close();
     offeringRefresher?.stop();
     for (const p of providers ?? []) {
       p.teardown?.().catch(() => {});
