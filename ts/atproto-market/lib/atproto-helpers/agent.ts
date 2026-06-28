@@ -250,6 +250,7 @@ export async function createLocalPDSAgent(opts: CreateLocalPDSAgentOpts): Promis
     dispatcherHost,
     signer,
     keypair,
+    localWsTarget: () => ({ hostname: "127.0.0.1", port: serve.tcpPort }),
   });
   serve.addRelay(xrpcRelay);
 

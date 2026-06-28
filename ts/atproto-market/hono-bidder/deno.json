@@ -7,6 +7,8 @@
     "@publicdomainrelay/atproto-helpers": "jsr:@publicdomainrelay/atproto-helpers@^0",
     "@publicdomainrelay/compute-provider-digitalocean": "jsr:@publicdomainrelay/compute-provider-digitalocean@^0",
     "@publicdomainrelay/compute-provider-local": "jsr:@publicdomainrelay/compute-provider-local@^0",
+    "@publicdomainrelay/oidc-issuer-hono": "jsr:@publicdomainrelay/oidc-issuer-hono@^0",
+    "@publicdomainrelay/rbac-atproto": "jsr:@publicdomainrelay/rbac-atproto@^0",
     "@publicdomainrelay/did-plc": "jsr:@publicdomainrelay/did-plc@^0",
     "@publicdomainrelay/logger": "jsr:@publicdomainrelay/logger@^0",
     "@publicdomainrelay/market-registry-atproto": "jsr:@publicdomainrelay/market-registry-atproto@^0",

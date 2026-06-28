@@ -16,6 +16,8 @@ import type { FirehoseRecordEvent, FirehoseWatcher } from "@publicdomainrelay/fi
 import { createPlcDirectoryClient } from "@publicdomainrelay/did-plc";
 import { createDigitalOceanComputeProvider } from "@publicdomainrelay/compute-provider-digitalocean";
 import { createLocalComputeProvider } from "@publicdomainrelay/compute-provider-local";
+import { createOidcProvisioningEnricher } from "@publicdomainrelay/oidc-issuer-hono";
+import { createRbacProvisioner } from "@publicdomainrelay/rbac-atproto";
 import { Secp256k1Keypair } from "@atproto/crypto";
 import cliArgsEnv from "./cli-args-env.json" with { type: "json" };
 
@@ -158,6 +160,8 @@ if (options.computeProviderLocal) {
     provider: createLocalComputeProvider({
       logger, atproto: atproto as import("@publicdomainrelay/compute-provider-abc").ComputeAtproto, serve,
       getIssuerUrl: () => didWebToHttps(relay.proxyRef),
+      oidcProvisioner: createOidcProvisioningEnricher(() => didWebToHttps(relay.proxyRef)),
+      rbacProvisioner: createRbacProvisioner(),
       containerMode: options.computeProviderLocalContainerMode as "vm" | "container" | undefined,
       vmImage: options.computeProviderLocalVmImage as string | undefined,
       containerImage: options.computeProviderLocalContainerImage as string | undefined,

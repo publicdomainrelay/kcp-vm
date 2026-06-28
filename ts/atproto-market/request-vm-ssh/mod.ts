@@ -143,3 +143,4 @@ const result = await runComputeContract(pds, {
 });
 
 logger.info("result", result as unknown as Record<string, unknown>);
+shutdown();
