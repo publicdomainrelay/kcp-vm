@@ -140,11 +140,31 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
   }
 
   async function ensureOffering(): Promise<{ rkey: string; createdAt: string }> {
-    const existing = await atproto.listRecords(atproto.did, OFFERING_NSID, { limit: 1 });
+    const wanted = config.appliesTo ??
+      [...new Set((providers ?? []).flatMap((p) => p.appliesTo))];
+    // Check last 20 offerings for one with matching appliesTo — avoids reusing
+    // stale offerings created before providers existed (empty appliesTo).
+    const existing = await atproto.listRecords(atproto.did, OFFERING_NSID, { limit: 20 });
+    for (const rec of (existing?.records ?? [])) {
+      const val = rec.value as Record<string, unknown>;
+      const appliesTo = val.appliesTo as string[] | undefined;
+      const endpointUrl = val.endpointUrl as string | undefined;
+      const wantedStr = [...wanted].sort().join(",");
+      const haveStr = [...(appliesTo ?? [])].sort().join(",");
+      // Prefer the relay endpoint URL (did:web proxy) over bare DID refs.
+      const hasGoodEp = endpointUrl?.startsWith("https://") ?? false;
+      if (haveStr === wantedStr && hasGoodEp) {
+        const createdAt = (val.createdAt as string) ?? new Date().toISOString();
+        log("info", "bidder offering exists (matched)", { uri: rec.uri, appliesTo: haveStr });
+        return { rkey: rec.uri.split("/").pop() ?? "", createdAt };
+      }
+    }
+    // If existing record exists but doesn't match, still pick the first one for
+    // createdAt continuity — a corrected offering will be created next.
     if (existing?.records?.length) {
       const rec = existing.records[0];
-      const createdAt = (rec.value.createdAt as string | undefined) ?? new Date().toISOString();
-      log("info", "bidder offering exists", { uri: rec.uri });
+      const createdAt = (rec.value.createdAt as string) ?? new Date().toISOString();
+      log("info", "bidder offering exists (stale)", { uri: rec.uri });
       return { rkey: rec.uri.split("/").pop() ?? "", createdAt };
     }
     const createdAt = new Date().toISOString();

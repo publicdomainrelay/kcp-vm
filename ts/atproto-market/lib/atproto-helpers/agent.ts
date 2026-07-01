@@ -26,6 +26,7 @@ export interface AtprotoAgentLike {
   applyWrites(did: string, writes: WriteOp[]): Promise<CommitEvent>;
   getRecord(did: string, collection: string, rkey: string): Promise<{ uri: string; cid: string; value: Record<string, unknown> } | null>;
   listRecords(did: string, collection: string, opts?: { limit?: number }): Promise<{ records: Array<{ uri: string; cid: string; value: Record<string, unknown> }> }>;
+  getServiceAuth?(aud: string, lxm?: string): Promise<string>;
 }
 
 export interface CreateATProtoOpts {

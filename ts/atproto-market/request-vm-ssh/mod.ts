@@ -129,7 +129,7 @@ const result = await runComputeContract(pds, {
   bidWindowSec: options.bidWindowSec as number,
   skipSsh: options.skipSsh as boolean,
   execProgram: options.exec as string,
-  noDelete: options.noDelete as boolean,
+  keepVm: options.keepVm as boolean,
   vmReadyTimeoutSec: options.vmReadyTimeoutSec as number,
   extraBidderDids,
   denyBidderDids,

@@ -564,7 +564,7 @@ export async function runComputeContract(
   const bidWindowSec = opts.bidWindowSec ?? 30;
   const skipSsh = opts.skipSsh ?? false;
   const execProgram = opts.execProgram ?? "bash";
-  const noDelete = opts.noDelete ?? false;
+  const keepVm = opts.keepVm ?? false;
   const vmReadyTimeoutSec = opts.vmReadyTimeoutSec ?? 300;
   const extraBidderDids = opts.extraBidderDids ?? [];
   const denyBidderDids = opts.denyBidderDids ?? [];
@@ -870,8 +870,8 @@ runcmd:
   }
 
   // 11. Tear down VM via compute.events.vm.delete (unless --no-delete).
-  if (noDelete) {
-    log("vm_delete_skipped", { reason: "--no-delete" });
+  if (keepVm) {
+    log("vm_delete_skipped", { reason: "--keep-vm" });
   } else if (!receiptUri || !receiptCid || !submitEventRef) {
     log("vm_delete_skipped", { reason: "missing receipt refs", receiptUri, receiptCid, submitEventRef });
   } else {

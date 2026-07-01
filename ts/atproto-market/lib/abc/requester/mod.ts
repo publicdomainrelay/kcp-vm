@@ -22,7 +22,7 @@ export interface ContractFlowOptions {
   denyBidderDids?: string[];
   skipSsh?: boolean;
   execProgram?: string;
-  noDelete?: boolean;
+  keepVm?: boolean;
   vmReadyTimeoutSec?: number;
   onSshStart?: () => void;
   onSshEnd?: () => void | Promise<void>;

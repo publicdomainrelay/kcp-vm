@@ -60,10 +60,10 @@
       "env": "VM_READY_TIMEOUT_SEC",
       "default": 300
     },
-    "no-delete": {
+    "keep-vm": {
       "type": "boolean",
-      "description": "Skip VM delete event after SSH session",
-      "env": "NO_DELETE"
+      "description": "Keep VM after SSH session (skip delete)",
+      "env": "KEEP_VM"
     },
     "skip-ssh": {
       "type": "boolean",
