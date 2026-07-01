@@ -118,17 +118,13 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
         }
       }
     }
-    const rkey = TID.next().toString();
-    await atproto.applyWrites(atproto.did, [{
-      action: "create", collection: ALLOWLIST_NSID, rkey,
-      record: {
-        $type: ALLOWLIST_NSID,
-        protects: { allowSelf: { service, scope: "account.auth" } },
-        allowed: { allowSelf: [atproto.did] },
-        createdAt: new Date().toISOString(),
-      },
-    }]);
-    log("info", "bidder allowlist created", { uri: `at://${atproto.did}/${ALLOWLIST_NSID}/${rkey}`, service });
+    const allowlistRef = await atproto.createRecord(ALLOWLIST_NSID, {
+      $type: ALLOWLIST_NSID,
+      protects: { allowSelf: { service, scope: "account.auth" } },
+      allowed: { allowSelf: [atproto.did] },
+      createdAt: new Date().toISOString(),
+    });
+    log("info", "bidder allowlist created", { uri: allowlistRef.uri, service });
   }
 
   function buildOffering(createdAt: string): Record<string, unknown> {
@@ -151,12 +147,10 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
       log("info", "bidder offering exists", { uri: rec.uri });
       return { rkey: rec.uri.split("/").pop() ?? "", createdAt };
     }
-    const rkey = TID.next().toString();
     const createdAt = new Date().toISOString();
-    await atproto.applyWrites(atproto.did, [{
-      action: "create", collection: OFFERING_NSID, rkey, record: buildOffering(createdAt),
-    }]);
-    log("info", "bidder offering created", { uri: `at://${atproto.did}/${OFFERING_NSID}/${rkey}` });
+    const offeringRef = await atproto.createRecord(OFFERING_NSID, buildOffering(createdAt));
+    const rkey = offeringRef.uri.split("/").pop() ?? "";
+    log("info", "bidder offering created", { uri: offeringRef.uri });
     return { rkey, createdAt };
   }
 
@@ -258,9 +252,9 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
         intervalMs: offeringRefreshMs,
         log,
         refresh: async () => {
-          await atproto.applyWrites(atproto.did, [{
-            action: "update", collection: OFFERING_NSID, rkey: offeringRkey, record: buildOffering(offeringCreatedAt),
-          }]);
+          try {
+            await atproto.createRecord(OFFERING_NSID, buildOffering(offeringCreatedAt));
+          } catch { /* best-effort */ }
           log("info", "bidder offering refreshed", { rkey: offeringRkey });
         },
       });
