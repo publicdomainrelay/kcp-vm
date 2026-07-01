@@ -3,6 +3,7 @@
  */
 
 export * as tangled from './temp/tangled.ts'
+export * as auth from './temp/auth.ts'
 export * as agent from './temp/agent.ts'
 export * as compute from './temp/compute.ts'
 export * as market from './temp/market.ts'

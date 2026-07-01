@@ -3,3 +3,5 @@
  */
 
 export * as temp from './fedproxy/temp.ts'
+export * as rbac from './fedproxy/rbac.ts'
+export * as sshPublicKey from './fedproxy/sshPublicKey.ts'
