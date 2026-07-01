@@ -65,6 +65,12 @@ export interface MarketBidderConfig {
    * provider `appliesTo`. Set for callbackFactory-only bidders with no providers.
    */
   appliesTo?: string[];
+  /**
+   * When true, the caller already started the serve (e.g. a desktop app with its
+   * own HTTP server). Route mounting, offering setup, and firehose watchers still
+   * run — only the serve.beginServe() call is skipped.
+   */
+  skipServeBegin?: boolean;
 }
 
 export interface MarketBidder {
@@ -87,7 +93,7 @@ function didWebHost(s: string): string {
 }
 
 export async function createMarketBidder(config: MarketBidderConfig): Promise<MarketBidder> {
-  const { logger, serve, atproto, relay, providers, setup, teardown, callbackFactory, rfpWatcherFactory, rfpWatcherFactories, offeringRefreshMs } = config;
+  const { logger, serve, atproto, relay, providers, setup, teardown, callbackFactory, rfpWatcherFactory, rfpWatcherFactories, offeringRefreshMs, skipServeBegin } = config;
   const log = logAdapter(logger);
   const activeContracts = new Map<string, ActiveContract>();
   const idResolver = atproto.idResolver;
@@ -240,8 +246,10 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
       logger.info("bidder rfp firehose watches started", { count: rfpWatchers.length });
     }
 
-    logger.info("bidder starting serve");
-    await serve.beginServe();
+    if (!skipServeBegin) {
+      logger.info("bidder starting serve");
+      await serve.beginServe();
+    }
 
     await ensureOperatorAllowlist("");
     const { rkey: offeringRkey, createdAt: offeringCreatedAt } = await ensureOffering();
@@ -264,11 +272,12 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
   function shutdown(): void {
     for (const w of rfpWatchers) w.close();
     offeringRefresher?.stop();
+    activeContracts.clear();
     for (const p of providers ?? []) {
       p.teardown?.().catch(() => {});
     }
     teardown?.().catch(() => {});
-    serve.shutdown();
+    if (!skipServeBegin) serve.shutdown();
   }
 
   return { beginServe, shutdown };
