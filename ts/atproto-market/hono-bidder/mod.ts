@@ -102,6 +102,7 @@ if ((options.atprotoHandle as string | undefined) && (options.atprotoPassword as
 const DEFAULT_RELAY_URLS = [
   "https://reg.market.fedfork.com",
   "https://bsky.network",
+  "https://relay.mini-cloud-0002.chadig.com",
 ];
 
 const registryEndpoint = (options.registryEndpoint as string) || "";
