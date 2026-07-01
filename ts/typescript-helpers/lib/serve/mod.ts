@@ -34,6 +34,13 @@ export function createServe(opts: CreateServeOpts): ServeHandle {
 
   function addRelay(relay: RelayRef): void {
     relays.push(relay);
+    // If serve has already begun, connect the relay immediately.
+    // Otherwise it will be connected during beginServe().
+    if (controller) {
+      relay.onServe(fetchAdapter).catch((err) => {
+        logger?.error?.("relay onServe failed", { error: String(err) });
+      });
+    }
   }
 
   function onConnected(cb: (proxyRef: string) => void | Promise<void>): void {
