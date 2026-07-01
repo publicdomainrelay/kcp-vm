@@ -869,7 +869,7 @@ runcmd:
     }
   }
 
-  // 11. Tear down VM via compute.events.vm.delete (unless --no-delete).
+  // 11. Tear down VM via compute.events.vm.delete (unless --keep-vm).
   if (keepVm) {
     log("vm_delete_skipped", { reason: "--keep-vm" });
   } else if (!receiptUri || !receiptCid || !submitEventRef) {

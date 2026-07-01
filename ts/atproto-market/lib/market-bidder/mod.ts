@@ -139,33 +139,34 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
     };
   }
 
+  // Ensures exactly one offering record per bidder DID (one active service =
+  // one endpoint). The first (oldest) existing record's rkey becomes the
+  // canonical rkey for this bidder's lifetime — every subsequent write
+  // (correction or refresh) updates that same record in place via
+  // atproto.updateRecord rather than creating a new one, so the collection
+  // never grows past one record.
   async function ensureOffering(): Promise<{ rkey: string; createdAt: string }> {
     const wanted = config.appliesTo ??
       [...new Set((providers ?? []).flatMap((p) => p.appliesTo))];
-    // Check last 20 offerings for one with matching appliesTo — avoids reusing
-    // stale offerings created before providers existed (empty appliesTo).
     const existing = await atproto.listRecords(atproto.did, OFFERING_NSID, { limit: 20 });
-    for (const rec of (existing?.records ?? [])) {
+    const records = existing?.records ?? [];
+    if (records.length) {
+      const rec = records[0];
+      const rkey = rec.uri.split("/").pop() ?? "";
+      const createdAt = (rec.value.createdAt as string) ?? new Date().toISOString();
       const val = rec.value as Record<string, unknown>;
-      const appliesTo = val.appliesTo as string[] | undefined;
+      const appliesTo = (val.appliesTo as string[] | undefined) ?? [];
       const endpointUrl = val.endpointUrl as string | undefined;
       const wantedStr = [...wanted].sort().join(",");
-      const haveStr = [...(appliesTo ?? [])].sort().join(",");
-      // Prefer the relay endpoint URL (did:web proxy) over bare DID refs.
+      const haveStr = [...appliesTo].sort().join(",");
       const hasGoodEp = endpointUrl?.startsWith("https://") ?? false;
       if (haveStr === wantedStr && hasGoodEp) {
-        const createdAt = (val.createdAt as string) ?? new Date().toISOString();
         log("info", "bidder offering exists (matched)", { uri: rec.uri, appliesTo: haveStr });
-        return { rkey: rec.uri.split("/").pop() ?? "", createdAt };
+      } else {
+        await atproto.updateRecord(OFFERING_NSID, rkey, buildOffering(createdAt));
+        log("info", "bidder offering corrected", { uri: rec.uri, appliesTo: wantedStr });
       }
-    }
-    // If existing record exists but doesn't match, still pick the first one for
-    // createdAt continuity — a corrected offering will be created next.
-    if (existing?.records?.length) {
-      const rec = existing.records[0];
-      const createdAt = (rec.value.createdAt as string) ?? new Date().toISOString();
-      log("info", "bidder offering exists (stale)", { uri: rec.uri });
-      return { rkey: rec.uri.split("/").pop() ?? "", createdAt };
+      return { rkey, createdAt };
     }
     const createdAt = new Date().toISOString();
     const offeringRef = await atproto.createRecord(OFFERING_NSID, buildOffering(createdAt));
@@ -273,7 +274,7 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
         log,
         refresh: async () => {
           try {
-            await atproto.createRecord(OFFERING_NSID, buildOffering(offeringCreatedAt));
+            await atproto.updateRecord(OFFERING_NSID, offeringRkey, buildOffering(offeringCreatedAt));
           } catch { /* best-effort */ }
           log("info", "bidder offering refreshed", { rkey: offeringRkey });
         },

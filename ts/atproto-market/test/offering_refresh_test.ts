@@ -24,6 +24,7 @@ interface CapturedWrite {
 function fakeServe(): ServeHandle {
   return {
     app: new Hono(),
+    tcpPort: 0,
     addRelay: () => {},
     onConnected: () => {},
     beginServe: () => Promise.resolve(),
@@ -33,6 +34,8 @@ function fakeServe(): ServeHandle {
 
 function fakeAtproto(writes: CapturedWrite[]): ATProto {
   const noop = () => Promise.resolve(undefined as never);
+  let rkeySeq = 0;
+  const nextRkey = () => `rkey${rkeySeq++}`;
   return {
     did: BIDDER_DID,
     getAgentDid: () => BIDDER_DID,
@@ -48,7 +51,15 @@ function fakeAtproto(writes: CapturedWrite[]): ATProto {
       }
       return Promise.resolve({} as never);
     },
-    createRecord: noop,
+    createRecord: (collection: string, record: Record<string, unknown>) => {
+      const rkey = nextRkey();
+      writes.push({ action: "create", collection, rkey, record });
+      return Promise.resolve({ $type: "com.atproto.repo.strongRef", uri: `at://${BIDDER_DID}/${collection}/${rkey}`, cid: "" } as never);
+    },
+    updateRecord: (collection: string, rkey: string, record: Record<string, unknown>) => {
+      writes.push({ action: "update", collection, rkey, record });
+      return Promise.resolve({ $type: "com.atproto.repo.strongRef", uri: `at://${BIDDER_DID}/${collection}/${rkey}`, cid: "" } as never);
+    },
     createRepoRecord: noop,
     createSignedRepoRecord: noop,
     deleteRecord: noop,

@@ -212,7 +212,7 @@ Deno.test({
       logger,
       dispatcherHost,
       skipSsh: true,
-      noDelete: true,
+      keepVm: true,
       bidWindowSec: 8,
       vmReadyTimeoutSec: 1,
       execProgram: "true",

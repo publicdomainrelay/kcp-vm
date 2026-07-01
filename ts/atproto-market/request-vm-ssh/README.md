@@ -64,7 +64,7 @@ BIDDER_HANDLE_0000=<bidder-did-from-step-3> deno run -A mod.ts \
   --registry-port 5556 \
   --bid-window-sec 8 \
   --vm-ready-timeout-sec 300 \
-  --no-delete \
+  --keep-vm \
   --exec "hostname; echo PASS; id -un; exit"
 ```
 
@@ -86,7 +86,7 @@ container ls -a | grep pdr- | awk '{print $1}' | xargs container rm -f
 | `--vm-name` | `compute-<random>` | VM name |
 | `--bid-window-sec` | `30` | Seconds to wait for bids |
 | `--vm-ready-timeout-sec` | `300` | Seconds to wait for SSH |
-| `--no-delete` | false | Keep VM after exit |
+| `--keep-vm` | false | Keep VM after exit |
 | `--exec` | `bash` | Program to run (non-interactive) |
 | `--relay-port` | auto | Relay dispatch port |
 | `--registry-port` | auto | JSR registry port |

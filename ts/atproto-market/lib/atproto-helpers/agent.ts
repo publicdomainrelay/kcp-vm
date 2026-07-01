@@ -27,6 +27,9 @@ export interface AtprotoAgentLike {
   getRecord(did: string, collection: string, rkey: string): Promise<{ uri: string; cid: string; value: Record<string, unknown> } | null>;
   listRecords(did: string, collection: string, opts?: { limit?: number }): Promise<{ records: Array<{ uri: string; cid: string; value: Record<string, unknown> }> }>;
   getServiceAuth?(aud: string, lxm?: string): Promise<string>;
+  /** Bypass applyWrites for Lexicons a PDS rejects unless created via the direct endpoint. */
+  createRecord?(did: string, collection: string, rkey: string, record: Record<string, unknown>): Promise<{ uri: string; cid: string }>;
+  putRecord?(did: string, collection: string, rkey: string, record: Record<string, unknown>): Promise<{ uri: string; cid: string }>;
 }
 
 export interface CreateATProtoOpts {
@@ -47,6 +50,7 @@ export interface ATProto {
   getRecord(did: string, collection: string, rkey: string): Promise<{ uri: string; cid: string; value: Record<string, unknown> } | null>;
   listRecords(did: string, collection: string, opts?: { limit?: number }): Promise<{ records: Array<{ uri: string; cid: string; value: Record<string, unknown> }> }>;
   createRecord(collection: string, record: Record<string, unknown>): Promise<StrongRef>;
+  updateRecord(collection: string, rkey: string, record: Record<string, unknown>): Promise<StrongRef>;
   createRepoRecord(collection: string, record: Record<string, unknown>): Promise<{ uri: string; cid: string }>;
   createSignedRepoRecord(collection: string, record: Record<string, unknown>, issuer?: string): Promise<{ uri: string; cid: string; record: Record<string, unknown> }>;
   deleteRecord(collection: string, rkey: string): Promise<void>;
@@ -74,6 +78,20 @@ export async function createATProto(opts: CreateATProtoOpts): Promise<ATProto> {
   ): Promise<StrongRef> {
     const rkey = TID.next().toString();
     await agent.applyWrites(did, [{ action: "create", collection, rkey, record }]);
+    const rec = await agent.getRecord(did, collection, rkey);
+    return {
+      $type: "com.atproto.repo.strongRef",
+      uri: `at://${did}/${collection}/${rkey}`,
+      cid: rec?.cid ?? "",
+    } as StrongRef;
+  }
+
+  async function updateRecord(
+    collection: string,
+    rkey: string,
+    record: Record<string, unknown>,
+  ): Promise<StrongRef> {
+    await agent.applyWrites(did, [{ action: "update", collection, rkey, record }]);
     const rec = await agent.getRecord(did, collection, rkey);
     return {
       $type: "com.atproto.repo.strongRef",
@@ -159,6 +177,7 @@ export async function createATProto(opts: CreateATProtoOpts): Promise<ATProto> {
     getRecord: (d: string, collection: string, rkey: string) => agent.getRecord(d, collection, rkey),
     listRecords: (d: string, collection: string, opts?: { limit?: number }) => agent.listRecords(d, collection, opts),
     createRecord,
+    updateRecord,
     createRepoRecord,
     createSignedRepoRecord,
     deleteRecord,
