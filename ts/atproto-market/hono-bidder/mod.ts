@@ -40,10 +40,16 @@ const privateKeyHex = (options.privateKeyHex as string) ?? "";
 
 const dispatcherHost = (options.relayDispatcherHost as string) || "xrpc.fedproxy.com";
 
+const plcDirectoryUrl = (options.plcDirectoryUrl as string) || "https://plc.directory";
+
 // Auto-detect local dev: *.localhost isn't in DNS.  If the dispatcher is
 // reachable at a local host, patch fetch so the bidder can resolve the
 // requester's PDS endpoints (also on *.localhost) through the relay.
-if (dispatcherHost.includes("localhost") || dispatcherHost.startsWith("127.")) {
+// Also patches plc.directory → local PLC when plcDirectoryUrl is local.
+const isLocalDev = dispatcherHost.includes("localhost") || dispatcherHost.startsWith("127.");
+const _plcHost = (() => { try { return new URL(plcDirectoryUrl).hostname; } catch { return plcDirectoryUrl; } })();
+const isLocalPlc = _plcHost === "localhost" || _plcHost.startsWith("127.") || _plcHost === "0.0.0.0";
+if (isLocalDev || isLocalPlc) {
   const patchPort = dispatcherHost.includes(":") ? dispatcherHost.split(":").pop()! : "80";
   const realFetch = globalThis.fetch;
   globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
@@ -55,10 +61,13 @@ if (dispatcherHost.includes("localhost") || dispatcherHost.startsWith("127.")) {
       url = `http://${host}${m[2] ?? ""}`;
       return realFetch(url, init);
     }
+    if (isLocalPlc && url.startsWith("https://plc.directory/")) {
+      url = plcDirectoryUrl + url.slice("https://plc.directory".length);
+      return realFetch(url, init);
+    }
     return realFetch(input as string | URL | Request, init);
   }) as typeof fetch;
 }
-const plcDirectoryUrl = (options.plcDirectoryUrl as string) || "https://plc.directory";
 
 // Each relay gets its own keypair so subscribers never share a subdomain/FQDN
 // on the dispatcher (collision would route everyone to the last connector).
@@ -222,6 +231,14 @@ Deno.addSignalListener("SIGINT", shutdown);
 Deno.addSignalListener("SIGTERM", shutdown);
 
 await bidder.beginServe();
+
+// Machine-readable line for test harness subprocess spawn
+console.log(JSON.stringify({
+  event: "bidder_ready",
+  did: atproto.did,
+  proxyRef: bidderRelay?.proxyRef,
+  servePort: bidderServe.tcpPort,
+}));
 
 // Re-register with local relays using the direct serve port.
 // Needed so local atproto-relays can connect to subscribeRepos

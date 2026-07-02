@@ -568,7 +568,10 @@ export async function runComputeContract(
   const vmReadyTimeoutSec = opts.vmReadyTimeoutSec ?? 300;
   const extraBidderDids = opts.extraBidderDids ?? [];
   const denyBidderDids = opts.denyBidderDids ?? [];
-  const sshProvider = opts.sshProvider ?? createSshSessionProvider();
+  const sshProvider = opts.sshProvider ?? createSshSessionProvider(
+    opts.logger,
+    { proxyCommandFn: opts.sshProxyCommandFn },
+  );
   const relayUrl = opts.relayUrl;
   const relayUrls = opts.relayUrls ?? (relayUrl ? [relayUrl] : []);
   const signer = opts.signer;
@@ -859,12 +862,14 @@ runcmd:
   } else {
     log("vm_ssh_waiting", { vmFqdn, timeoutSec: vmReadyTimeoutSec });
     const ready = await sshProvider.pollReady(privateKeyPath, vmFqdn, vmReadyTimeoutSec * 1000);
+    result.sshReady = ready;
     if (!ready) {
       log("vm_ssh_unavailable", { vmFqdn });
     } else {
       opts.onSshStart?.();
       const code = await sshProvider.runSession(privateKeyPath, vmFqdn, execProgram);
       await opts.onSshEnd?.();
+      result.sshExitCode = code;
       log("vm_ssh_session_exit", { vmFqdn, code });
     }
   }

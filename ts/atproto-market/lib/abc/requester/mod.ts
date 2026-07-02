@@ -27,6 +27,12 @@ export interface ContractFlowOptions {
   onSshStart?: () => void;
   onSshEnd?: () => void | Promise<void>;
   /**
+   * Overrides the ssh ProxyCommand per guest FQDN (default:
+   * `websocat --binary wss://<fqdn>`). Lets tests and alternate ingress
+   * topologies rewrite the tunnel endpoint while keeping the RFP flow intact.
+   */
+  sshProxyCommandFn?: (fqdn: string) => string;
+  /**
    * XRPC dispatcher host: the atproto/WS relay plane the requester and guest
    * subscribe to (e.g. xrpc.fedproxy.com). Carries createRecord/submitRfp.
    */
@@ -127,6 +133,8 @@ export interface ContractFlowResult {
   receiptOk?: boolean;
   bids?: number;
   error?: string;
+  sshReady?: boolean;
+  sshExitCode?: number;
 }
 
 export interface ConsoleBuffer {
