@@ -117,26 +117,14 @@ Deno.test({
   cleanups.push(() => plcCtl.abort());
   const plcDirectoryUrl = `http://localhost:${plcPort}`;
 
-  // ── fetch interception: plc.directory -> local PLC; https://*.localhost ->
-  // local dispatcher (downgrade scheme, ensure dispatcher port, preserve Host
-  // subdomain so the dispatcher can route to the right subscriber).
-  const realFetch = globalThis.fetch;
-  globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
-    let url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-    if (url.startsWith("https://plc.directory/")) {
-      url = plcDirectoryUrl + url.slice("https://plc.directory".length);
-      return realFetch(new Request(url, input instanceof Request ? input : init));
-    }
-    const m = url.match(/^https:\/\/([^/]+)(\/.*)?$/);
-    if (m && (m[1].endsWith(".localhost") || m[1] === "localhost" || m[1].includes(".localhost:"))) {
-      let host = m[1];
-      if (!host.includes(":")) host = `${host}:${dispPort}`;
-      url = `http://${host}${m[2] ?? ""}`;
-      return realFetch(new Request(url, input instanceof Request ? input : init));
-    }
-    return realFetch(input as string | URL | Request, init);
-  }) as typeof fetch;
-  cleanups.push(() => { globalThis.fetch = realFetch; });
+  // ── Fetch interception ──────────────────────────────────────────────
+  const { installFetchInterceptor } = await import("./fetch-interceptor.ts");
+  const restoreFetch = installFetchInterceptor({
+    realFetch: globalThis.fetch,
+    plcDirectoryUrl,
+    dispPort,
+  });
+  cleanups.push(restoreFetch);
 
   try {
 
