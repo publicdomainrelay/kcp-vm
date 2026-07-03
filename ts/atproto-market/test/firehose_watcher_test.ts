@@ -153,8 +153,8 @@ Deno.test("jetstream watcher: commit frame -> event", async () => {
 });
 
 Deno.test("parser parity: subscribeRepos and jetstream yield identical events", async () => {
-  const a = serveFrames([subscribeReposEnvelope(RFP_NSID)]);
-  const b = serveFrames([jetstreamFrame(RFP_NSID)]);
+  const a = await serveFrames([subscribeReposEnvelope(RFP_NSID)]);
+  const b = await serveFrames([jetstreamFrame(RFP_NSID)]);
   try {
     const subEvents = await collect((push) =>
       createSubscribeReposWatcher({
