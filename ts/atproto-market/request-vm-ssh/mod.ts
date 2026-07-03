@@ -10,6 +10,8 @@ import {
 import { OFFERING_NSID } from "@publicdomainrelay/market-common";
 import { createFirehoseWatcher as createSubscribeReposWatcher } from "@publicdomainrelay/firehose-watcher-subscriberepos";
 import { createFirehoseWatcher as createJetstreamWatcher } from "@publicdomainrelay/firehose-watcher-jetstream";
+import { qrcode } from "@libs/qrcode";
+import { IdResolver } from "@atproto/identity";
 import cliArgsEnv from "./cli-args-env.json" with { type: "json" };
 
 let runtimeConfig: Record<string, unknown> | null = null;
@@ -58,7 +60,7 @@ logger.info("requester_starting", { label, dispatcherHost, relayUrl: relayUrl ??
 
 const serve = createServe({
   logger,
-  tcp: { addr: (options.serveAddr as string) || "0.0.0.0", port: (options.port as number) ?? 0 },
+  tcp: (options.port != null) ? { addr: (options.serveAddr as string) || "127.0.0.1", port: options.port as number } : undefined,
   unix: (options.serveUnix as string | undefined) ? { socketPath: options.serveUnix as string } : undefined,
 });
 
@@ -88,6 +90,36 @@ if (offeringFirehoseMode !== "off" && offeringFirehoseUrl) {
 
 await pds.beginServe();
 logger.info("requester_ready", { did: pds.did, proxyRef: pds.proxyRef, dispatcherHost });
+
+if (!options.noQr) {
+  const qrUrl = `https://qr.fedfork.com/#plc=${pds.did}`;
+  logger.info("qr_url", { url: qrUrl });
+  const qr = qrcode(qrUrl, { output: "console", ecl: "HIGH" });
+  console.log(qr);
+
+  logger.info("waiting_for_association", {
+    hint: "Scan QR code, then confirm on your phone",
+    requesterDid: pds.did,
+  });
+  const callerDid = await pds.associateCalled;
+
+  let handle = callerDid;
+  try {
+    const idr = new IdResolver();
+    const doc = await idr.did.resolve(callerDid);
+    const aka = (doc as Record<string, unknown>)?.alsoKnownAs as string[] | undefined;
+    if (aka?.[0]) handle = aka[0].replace("at://", "");
+  } catch { /* use DID as fallback */ }
+
+  const answer = prompt(`Associate with ${handle}? [y/N] `);
+  if (!answer || !answer.toLowerCase().startsWith("y")) {
+    logger.info("association_rejected", { callerDid, handle });
+    pds.rejectAssociation(new Error("User rejected association"));
+    Deno.exit(0);
+  }
+  pds.approveAssociation();
+  logger.info("association_confirmed", { callerDid, handle });
+}
 
 const origLog = console.log.bind(console);
 const origErr = console.error.bind(console);

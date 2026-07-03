@@ -108,6 +108,12 @@ export interface RequesterPDS {
   ): Promise<{ status: number; ok: boolean; body: unknown }>;
   attestationKp: { did(): string; privateKey: { bytes: Uint8Array; toBytes?(): Uint8Array } };
   privateKeyHex: string;
+  /** Resolves with caller DID when webapp calls associateConfirm XRPC. */
+  associateCalled: Promise<string>;
+  /** Call after CLI user confirms association. Resolves the pending XRPC response. */
+  approveAssociation(): void;
+  /** Call if CLI user rejects association. Rejects the pending XRPC response. */
+  rejectAssociation(err: Error): void;
 }
 
 export interface SshSessionProvider {

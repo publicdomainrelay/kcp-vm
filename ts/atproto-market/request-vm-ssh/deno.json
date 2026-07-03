@@ -8,7 +8,8 @@
     "@publicdomainrelay/requester-xrpc": "jsr:@publicdomainrelay/requester-xrpc@^0",
     "@publicdomainrelay/market-common": "jsr:@publicdomainrelay/market-common@^0",
     "@publicdomainrelay/firehose-watcher-subscriberepos": "jsr:@publicdomainrelay/firehose-watcher-subscriberepos@^0",
-    "@publicdomainrelay/firehose-watcher-jetstream": "jsr:@publicdomainrelay/firehose-watcher-jetstream@^0"
+    "@publicdomainrelay/firehose-watcher-jetstream": "jsr:@publicdomainrelay/firehose-watcher-jetstream@^0",
+    "@libs/qrcode": "jsr:@libs/qrcode@^2"
   },
   "compile": {
     "include": ["cli-args-env.json", "config.json"]

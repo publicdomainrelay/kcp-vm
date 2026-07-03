@@ -55,6 +55,8 @@ import type {
   SshSessionProvider,
 } from "@publicdomainrelay/requester-abc";
 import type { LoggerInterface, StructuredLoggerInterface } from "@publicdomainrelay/logger";
+import { ASSOCIATE_CONFIRM_NSID } from "@publicdomainrelay/market-lexicons";
+import { verifyServiceAuth } from "@publicdomainrelay/market-atproto";
 
 // ---------------------------------------------------------------------------
 // Extended types (impl details beyond the abc contract)
@@ -219,6 +221,10 @@ export async function createRequesterPDS(
         type: "PDRTempComputeEvent",
         endpoint: `https://${signingKeyDid.replace(/:/g, "-").toLowerCase()}.${epHost}`,
       },
+      requester_associate: {
+        type: "PDRRequesterAssociate",
+        endpoint: `https://${signingKeyDid.replace(/:/g, "-").toLowerCase()}.${epHost}`,
+      },
     },
     sign: (bytes) => keypair.sign(bytes),
   });
@@ -238,6 +244,16 @@ export async function createRequesterPDS(
 
   const pendingBids: Map<string, CollectedBid[]> = new Map();
 
+  // ── association confirmation (webapp calls this before RFP) ─────────
+  let resolveAssociateCalled: ((callerDid: string) => void) | null = null;
+  const associateCalled = new Promise<string>((r) => { resolveAssociateCalled = r; });
+  let resolveAssociationApproved: (() => void) | null = null;
+  let rejectAssociationApproved: ((err: Error) => void) | null = null;
+  const associationApproved = new Promise<void>((resolve, reject) => {
+    resolveAssociationApproved = resolve;
+    rejectAssociationApproved = reject;
+  });
+
   // ── repo factory ─────────────────────────────────────────────────────
 
   const baseOrigin = `https://${keypair.did().replace(/:/g, "-").toLowerCase()}.${dispatcherHost}`;
@@ -249,6 +265,7 @@ export async function createRequesterPDS(
     didWebServices: [
       { id: "pdr_temp_market", type: "PDRTempMarket" },
       { id: "pdr_temp_compute_event", type: "PDRTempComputeEvent" },
+      { id: "requester_associate", type: "PDRRequesterAssociate" },
     ],
   });
 
@@ -300,6 +317,28 @@ export async function createRequesterPDS(
     onBid,
   });
   app.post(`/xrpc/${SUBMIT_BID_NSID}`, (c: { req: { raw: Request } }) => bidHandler(c.req.raw));
+
+  // ── associateConfirm (webapp calls to confirm requester association) ──
+  app.post(`/xrpc/${ASSOCIATE_CONFIRM_NSID}`, async (c) => {
+    const authHeader = c.req.header("Authorization");
+    if (!authHeader) return c.json({ error: "Unauthorized" }, 401);
+    try {
+      const auth = await verifyServiceAuth({
+        authHeader,
+        hostname: relayFqdn() || dispatcherHost,
+        lxm: ASSOCIATE_CONFIRM_NSID,
+        serviceIds: ["requester_associate"],
+        extraAudienceDids: [did],
+        idResolver,
+      });
+      resolveAssociateCalled?.(auth.issuerDid);
+      // Wait for CLI user to approve/reject before responding to webapp
+      await associationApproved;
+      return c.json({ ok: true, requesterDid: did });
+    } catch (err) {
+      return c.json({ error: String(err) }, 401);
+    }
+  });
 
   // ── mount the repo app + relay on the shared serve handle ────────────
 
@@ -398,6 +437,9 @@ export async function createRequesterPDS(
     callBidder,
     attestationKp,
     privateKeyHex: privateKeyHexFinal,
+    associateCalled,
+    approveAssociation: () => { resolveAssociationApproved?.(); },
+    rejectAssociation: (err: Error) => { rejectAssociationApproved?.(err); },
   };
 }
 

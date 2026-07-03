@@ -4,9 +4,8 @@
   "options": {
     "port": {
       "type": "number",
-      "description": "Port to listen on",
-      "env": "PORT",
-      "default": 8080
+      "description": "TCP port to listen on (omit to serve only through xrpc.fedproxy.com relay)",
+      "env": "PORT"
     },
     "private-key-hex": {
       "type": "string",
@@ -99,9 +98,8 @@
     },
     "serve-addr": {
       "type": "string",
-      "description": "TCP address to bind the requester PDS",
-      "env": "SERVE_ADDR",
-      "default": "0.0.0.0"
+      "description": "TCP address to bind the requester PDS (only used when --port is set)",
+      "env": "SERVE_ADDR"
     },
     "serve-unix": {
       "type": "string",
@@ -117,6 +115,10 @@
       "type": "string",
       "description": "Fulfillment policy mode for the RFP: only_me, direct_network, or policy_based. Omit for no policy (open to all bidders)",
       "env": "POLICY_MODE"
+    },
+    "no-qr": {
+      "type": "boolean",
+      "description": "Skip QR code and association confirmation prompt"
     },
     "skip-rbac": {
       "type": "boolean",
