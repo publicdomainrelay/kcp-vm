@@ -1,0 +1,35 @@
+{
+  "lexicon": 1,
+  "id": "com.publicdomainrelay.temp.market.policies.workflow_gha",
+  "defs": {
+    "main": {
+      "type": "record",
+      "description": "Fulfillment policy: runs a GitHub Actions workflow via the policy-engine for maximum configurability. The workflow evaluates whether a bidder satisfies the requester's values and strategic principles. Supports arbitrary admission logic — DID allowlists, trust score thresholds, domain patterns, multi-party approval gates. Carries downstream through subcontracting chains.",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["requesterDid", "workflowRef", "engineUrl", "signatures"],
+        "properties": {
+          "requesterDid": {
+            "type": "string",
+            "description": "ATProto DID of the root requester. Passed as input to the workflow evaluation."
+          },
+          "workflowRef": {
+            "type": "ref",
+            "ref": "com.atproto.repo.strongRef",
+            "description": "Strong reference to a workflow definition record — the GHA workflow that evaluates bidder eligibility."
+          },
+          "engineUrl": {
+            "type": "string",
+            "description": "URL of the policy-engine that executes the workflow (e.g. the requester's spindle policy engine endpoint)."
+          },
+          "signatures": {
+            "type": "ref",
+            "ref": "network.attested.signature#signatures",
+            "description": "badge.blue attestations over this policy. Must include the requester's inline signature, attached at creation."
+          }
+        }
+      }
+    }
+  }
+}

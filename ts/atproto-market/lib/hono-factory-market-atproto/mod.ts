@@ -14,6 +14,7 @@ import {
   createSubmitEventHandler,
   createSubmitRfpHandler,
   createVerifyHandler,
+  type SubmitRfpHandlerConfig,
 } from "@publicdomainrelay/market-atproto";
 import {
   SUBMIT_ACCEPT_NSID,
@@ -33,6 +34,8 @@ export type MarketEnv = {
 
 export interface MarketFactoryHandlers {
   rfp?: RfpCallbacks;
+  /** Optional scope filter for submitRfp push path. */
+  rfpScopeFilter?: SubmitRfpHandlerConfig["acceptScopeFilter"];
   bid?: { serviceIds: string[]; onBid: SubmitBidCallback };
   accept?: { serviceIds: string[]; onAccept: SubmitAcceptCallback };
   event?: { callbacks: EventCallbacks; background?: boolean };
@@ -50,7 +53,10 @@ export function createMarketFactory(
       });
 
       if (handlers?.rfp) {
-        const h = createSubmitRfpHandler({ deps, callbacks: handlers.rfp });
+        const h = createSubmitRfpHandler({
+          deps, callbacks: handlers.rfp,
+          acceptScopeFilter: handlers.rfpScopeFilter,
+        });
         app.post(`/xrpc/${SUBMIT_RFP_NSID}`, (c) => h(c.req.raw));
       }
       if (handlers?.bid) {

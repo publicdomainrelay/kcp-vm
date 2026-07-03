@@ -45,6 +45,8 @@ export interface MarketBidderConfig {
   setup?(): Promise<void>;
   teardown?(): Promise<void>;
   callbackFactory?: (deps: CallbackFactoryDeps) => CallbackSet | Promise<CallbackSet>;
+  /** Accept jobs from scope. Controls which RFPs the bidder responds to. */
+  acceptScope?: "only_me" | "direct_network" | "policy_based" | null;
   /**
    * Builds a firehose watcher bound to `onRecord`. The CLI selects the transport
    * (subscribeRepos or jetstream) and owns the WebSocket; the bidder supplies
@@ -93,7 +95,7 @@ function didWebHost(s: string): string {
 }
 
 export async function createMarketBidder(config: MarketBidderConfig): Promise<MarketBidder> {
-  const { logger, serve, atproto, relay, providers, setup, teardown, callbackFactory, rfpWatcherFactory, rfpWatcherFactories, offeringRefreshMs, skipServeBegin } = config;
+  const { logger, serve, atproto, relay, providers, setup, teardown, callbackFactory, rfpWatcherFactory, rfpWatcherFactories, offeringRefreshMs, skipServeBegin, acceptScope } = config;
   const log = logAdapter(logger);
   const activeContracts = new Map<string, ActiveContract>();
   const idResolver = atproto.idResolver;
@@ -102,6 +104,25 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
 
   const ALLOWLIST_NSID = "com.publicdomainrelay.temp.auth.allowlist.rbacDid";
   const OFFERING_NSID = "com.publicdomainrelay.temp.market.offering";
+
+  // Pre-load vouched DIDs for direct_network scope filter.
+  // Used in the firehose watcher hot path — no network I/O per RFP.
+  let vouchedDids: Set<string> | null = null;
+  if (acceptScope === "direct_network") {
+    vouchedDids = new Set();
+    try {
+      const result = await atproto.listRecords(atproto.did, "sh.tangled.graph.vouch", { limit: 200 });
+      for (const rec of result?.records ?? []) {
+        const v = rec.value as Record<string, unknown>;
+        if (v.kind === "denounce") continue;
+        const rkey = rec.uri.split("/").pop() ?? "";
+        if (rkey.startsWith("did:")) vouchedDids.add(rkey);
+      }
+      logger.info("bidder vouch set loaded", { count: vouchedDids.size });
+    } catch (err) {
+      logger.warn("bidder vouch set load failed, declining all direct_network RFPs", { error: String(err) });
+    }
+  }
 
   async function ensureOperatorAllowlist(service: string): Promise<void> {
     const result = await atproto.listRecords(atproto.did, ALLOWLIST_NSID, { limit: 100 });
@@ -232,6 +253,14 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
     if (merged.rfpCallbacks || merged.onAccept || merged.eventCallbacks) {
       const factory = createMarketFactory(marketDeps, {
         rfp: merged.rfpCallbacks,
+        rfpScopeFilter: acceptScope
+          ? ({ issuerDid }) => {
+              if (acceptScope === "only_me") return issuerDid === atproto.did;
+              if (acceptScope === "direct_network") return issuerDid === atproto.did || (vouchedDids?.has(issuerDid) ?? false);
+              if (acceptScope === "policy_based") return false;
+              return true;
+            }
+          : undefined,
         accept: merged.onAccept
           ? { serviceIds: [DEFAULT_MARKET_SERVICE_ID], onAccept: merged.onAccept }
           : undefined,
@@ -251,6 +280,15 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
           if (e.collection !== RFP_NSID) return;
           if (e.operation !== "create" && e.operation !== "update") return;
           if (seen.has(e.uri)) return;
+
+          // Scope filter — fast path, no record resolution.
+          // e.did is the DID whose repo the RFP was created in (requester DID).
+          if (acceptScope === "only_me" && e.did !== atproto.did) return;
+          if (acceptScope === "direct_network" && e.did !== atproto.did) {
+            if (!vouchedDids?.has(e.did)) return;
+          }
+          if (acceptScope === "policy_based") return; // stub
+
           seen.add(e.uri);
           log("info", "rfp watch discovered", { rfpUri: e.uri });
           dispatch({ rfpUri: e.uri, rfpCid: e.cid, issuerDid: e.did })

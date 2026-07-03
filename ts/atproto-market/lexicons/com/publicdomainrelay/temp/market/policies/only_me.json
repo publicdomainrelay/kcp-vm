@@ -1,0 +1,26 @@
+{
+  "lexicon": 1,
+  "id": "com.publicdomainrelay.temp.market.policies.only_me",
+  "defs": {
+    "main": {
+      "type": "record",
+      "description": "Fulfillment policy: only the requester's own DIDs may bid on and fulfill this RFP. Carries downstream through subcontracting chains — all sub-bidders must also be operated by the root requester.",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["requesterDid", "signatures"],
+        "properties": {
+          "requesterDid": {
+            "type": "string",
+            "description": "ATProto DID of the root requester. Only bidders whose operatorDid matches this value may fulfill."
+          },
+          "signatures": {
+            "type": "ref",
+            "ref": "network.attested.signature#signatures",
+            "description": "badge.blue attestations over this policy. Must include the requester's inline signature, attached at creation."
+          }
+        }
+      }
+    }
+  }
+}

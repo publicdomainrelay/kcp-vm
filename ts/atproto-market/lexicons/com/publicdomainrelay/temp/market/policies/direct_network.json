@@ -1,0 +1,34 @@
+{
+  "lexicon": 1,
+  "id": "com.publicdomainrelay.temp.market.policies.direct_network",
+  "defs": {
+    "main": {
+      "type": "record",
+      "description": "Fulfillment policy: only bidders whose operator DID appears in the requester's direct vouch network may bid. Bidders resolve their operator DID via bidderAssociation, then the vouch graph (sh.tangled.graph.vouch) is traversed from the root requester. Carries downstream through subcontracting chains.",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["requesterDid", "vouchNsid", "maxDepth", "signatures"],
+        "properties": {
+          "requesterDid": {
+            "type": "string",
+            "description": "ATProto DID of the root requester. The vouch graph is traversed starting from this DID."
+          },
+          "vouchNsid": {
+            "type": "string",
+            "description": "NSID of the vouch collection to traverse (e.g. sh.tangled.graph.vouch)."
+          },
+          "maxDepth": {
+            "type": "integer",
+            "description": "Maximum depth of vouch graph traversal. 1 = direct vouches only."
+          },
+          "signatures": {
+            "type": "ref",
+            "ref": "network.attested.signature#signatures",
+            "description": "badge.blue attestations over this policy. Must include the requester's inline signature, attached at creation."
+          }
+        }
+      }
+    }
+  }
+}

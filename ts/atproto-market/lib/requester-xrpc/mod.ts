@@ -558,6 +558,7 @@ export async function runComputeContract(
     signer?: Signer;
     offeringWatcherDids?: () => string[];
     logger?: StructuredLoggerInterface;
+    policyMode?: "only_me" | "direct_network" | "policy_based";
   } = {},
 ): Promise<ContractFlowResult> {
   const vmName = opts.vmName ?? `compute-${randomHex8()}`;
@@ -568,6 +569,7 @@ export async function runComputeContract(
   const vmReadyTimeoutSec = opts.vmReadyTimeoutSec ?? 300;
   const extraBidderDids = opts.extraBidderDids ?? [];
   const denyBidderDids = opts.denyBidderDids ?? [];
+  const policyMode = opts.policyMode;
   const sshProvider = opts.sshProvider ?? createSshSessionProvider(
     opts.logger,
     { proxyCommandFn: opts.sshProxyCommandFn },
@@ -646,14 +648,38 @@ runcmd:
   log("vm_record_created", { uri: vmUri, cid: vmCid });
 
   // 2. Create signed market.rfp.
-  const { uri: rfpUri, cid: rfpCid } = await pds.createSignedRepoRecord(RFP_NSID, {
+  const rfpRecord: Record<string, unknown> = {
     $type: RFP_NSID,
     domain: "compute",
     payload: { $type: "com.atproto.repo.strongRef", uri: vmUri, cid: vmCid },
     submitBid: `${pds.did}#pdr_temp_market`,
     createdAt: new Date().toISOString(),
-  }, pds.attestationKp, pds.did);
-  log("rfp_created", { uri: rfpUri, cid: rfpCid });
+  };
+
+  // Attach fulfillment policy if a policyMode is set.
+  let policyRef: { uri: string; cid: string } | undefined;
+  if (policyMode) {
+    try {
+      const { createPolicy } = await import("@publicdomainrelay/market-policy");
+      const policy = createPolicy(policyMode);
+      if (policy) {
+        policyRef = await pds.createRepoRecord(policy.policyNsid, {
+          $type: policy.policyNsid,
+          requesterDid: pds.did,
+          vouchNsid: policyMode === "direct_network" ? "sh.tangled.graph.vouch" : undefined,
+          maxDepth: policyMode === "direct_network" ? 1 : undefined,
+          createdAt: new Date().toISOString(),
+        });
+        rfpRecord.policy = { $type: "com.atproto.repo.strongRef", uri: policyRef.uri, cid: policyRef.cid };
+        log("policy_attached", { policyMode, policyUri: policyRef.uri });
+      }
+    } catch (err) {
+      log("policy_create_error", { error: String(err) });
+    }
+  }
+
+  const { uri: rfpUri, cid: rfpCid } = await pds.createSignedRepoRecord(RFP_NSID, rfpRecord, pds.attestationKp, pds.did);
+  log("rfp_created", { uri: rfpUri, cid: rfpCid, hasPolicy: !!policyRef });
 
   // 3. Discover bidder DIDs.
   const idResolver = new IdResolver();

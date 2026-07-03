@@ -113,6 +113,11 @@
       "description": "Path to a base cloud-init file; the default websocat/fedproxy-client provisioning is patched into it before the RFP is sent",
       "env": "USER_DATA"
     },
+    "policy-mode": {
+      "type": "string",
+      "description": "Fulfillment policy mode for the RFP: only_me, direct_network, or policy_based. Omit for no policy (open to all bidders)",
+      "env": "POLICY_MODE"
+    },
     "skip-rbac": {
       "type": "boolean",
       "description": "Skip writing the com.fedproxy.rbac record that authorizes the VM to register its SSH host key",

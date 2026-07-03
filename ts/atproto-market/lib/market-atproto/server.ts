@@ -217,6 +217,12 @@ export interface SubmitRfpHandlerConfig {
   deps: MarketServerDeps;
   /** Routing table: outer key = service id, inner key = payload NSID. */
   callbacks: RfpCallbacks;
+  /**
+   * Optional scope filter. Called after RFP resolution and signature
+   * verification, before callback dispatch. Return false to decline the
+   * RFP with a 403. issuerDid is the RFP author's DID.
+   */
+  acceptScopeFilter?: (input: { rfpUri: string; rfpCid: string; issuerDid: string; rfp: Record<string, unknown> }) => boolean;
 }
 
 /**
@@ -242,7 +248,7 @@ export interface DispatchRfpInput {
  * request.
  */
 export function createRfpDispatcher(cfg: SubmitRfpHandlerConfig): (input: DispatchRfpInput) => Promise<Response> {
-  const { deps, callbacks } = cfg;
+  const { deps, callbacks, acceptScopeFilter } = cfg;
   const log = deps.log ?? noopLogger;
   const serviceIds = Object.keys(callbacks);
   const keysForDid = keysForDidFrom(deps);
@@ -251,6 +257,15 @@ export function createRfpDispatcher(cfg: SubmitRfpHandlerConfig): (input: Dispat
     const rfp = await deps.resolve.resolve<RFP & { $type?: string }>({ uri: rfpUri, cid: rfpCid });
     const sigErr = await verifyAuthored(deps, stripResolved(rfp) as Record<string, unknown>, rfpUri, keysForDid, log, "submitRfp");
     if (sigErr) return sigErr;
+
+    if (acceptScopeFilter) {
+      const accepted = acceptScopeFilter({ rfpUri, rfpCid, issuerDid, rfp: stripResolved(rfp) as Record<string, unknown> });
+      if (!accepted) {
+        log("info", "submitRfp: rejected by scope filter", { rfpUri, issuerDid });
+        return json({ ok: false, error: "scope filter declined" }, 403);
+      }
+    }
+
     const payloadNsid = rfp.payload ? nsidFromUri(rfp.payload.uri) : "";
 
     const bucketId = serviceId ?? (serviceIds.length === 1 ? serviceIds[0] : undefined);
