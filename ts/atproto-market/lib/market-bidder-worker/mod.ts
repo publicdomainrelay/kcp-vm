@@ -186,9 +186,6 @@ export function createWorkerBidderCallbacks(deps: WorkerBidderDeps): {
     activeContracts.set(rk, {
       providerIdPromise,
       acceptAuthor: issuerDid,
-      receiptUri,
-      receiptCid,
-      acceptedAt: nowIso,
     });
 
     onContractChange?.({ type: "accepted", key: rk, receiptUri, receiptCid, acceptAuthor: issuerDid, acceptedAt: nowIso });
@@ -211,6 +208,8 @@ export function createWorkerBidderCallbacks(deps: WorkerBidderDeps): {
     };
   };
 
+  // Worker contracts lack a termination path because there is no
+  // worker.delete lexicon yet. This is a known gap — not fixed now.
   return {
     rfp: {
       pdr_temp_market: { [WORKER_MANIFEST_NSID]: onRfp },

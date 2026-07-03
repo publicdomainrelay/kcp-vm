@@ -12,13 +12,13 @@ import type { Logger, StrongRef } from "@publicdomainrelay/market-common";
 export interface ActiveContract {
   providerIdPromise?: Promise<string | number | undefined>;
   acceptAuthor: string;
-  receiptUri: string;
-  receiptCid: string;
-  acceptedAt: string;
+  receiptUri?: string;
+  receiptCid?: string;
+  acceptedAt?: string;
 }
 
 export interface ContractEvent {
-  type: "accepted" | "provisioned" | "provisioning-failed" | "terminated";
+  type: "accepted" | "provisioned" | "provisioning-failed" | "terminated" | "termination-failed";
   key: string;
   receiptUri: string;
   receiptCid: string;

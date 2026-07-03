@@ -123,53 +123,58 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
     let providerIdPromise: Promise<string | number | undefined> = Promise.resolve(undefined);
 
     if (rfpRef) {
-      providerIdPromise = (async (): Promise<string | number | undefined> => {
-        const rfpResolved = await acceptResolve.resolve({ uri: rfpRef.uri, cid: rfpRef.cid });
-        const rfpRecord = rfpResolved as Record<string, unknown> | null;
-        const payloadRef = rfpRecord?.payload as { uri: string; cid: string } | undefined;
-        if (!payloadRef) return undefined;
-        const payload = await acceptResolve.resolve({ uri: payloadRef.uri, cid: payloadRef.cid });
-        if (!payload) return undefined;
+      providerIdPromise = Promise.race([
+        (async (): Promise<string | number | undefined> => {
+          const rfpResolved = await acceptResolve.resolve({ uri: rfpRef.uri, cid: rfpRef.cid });
+          const rfpRecord = rfpResolved as Record<string, unknown> | null;
+          const payloadRef = rfpRecord?.payload as { uri: string; cid: string } | undefined;
+          if (!payloadRef) return undefined;
+          const payload = await acceptResolve.resolve({ uri: payloadRef.uri, cid: payloadRef.cid });
+          if (!payload) return undefined;
 
-        const vm = payload as Record<string, unknown> | null;
-        if (!vm) return undefined;
+          const vm = payload as Record<string, unknown> | null;
+          if (!vm) return undefined;
 
-        let bidConfigResolved: { uri: string; cid: string; value: unknown } | null = null;
-        if (bidRef) {
-          try {
-            const bidResolved = await acceptResolve.resolve({
-              uri: bidRef.uri, cid: bidRef.cid,
-            }) as Record<string, unknown> | null;
-            const cfgRef = bidResolved?.bidConfig as { uri: string; cid: string } | undefined;
-            if (cfgRef) {
-              const cfgValue = await acceptResolve.resolve({ uri: cfgRef.uri, cid: cfgRef.cid });
-              bidConfigResolved = { uri: cfgRef.uri, cid: cfgRef.cid, value: cfgValue };
+          let bidConfigResolved: { uri: string; cid: string; value: unknown } | null = null;
+          if (bidRef) {
+            try {
+              const bidResolved = await acceptResolve.resolve({
+                uri: bidRef.uri, cid: bidRef.cid,
+              }) as Record<string, unknown> | null;
+              const cfgRef = bidResolved?.bidConfig as { uri: string; cid: string } | undefined;
+              if (cfgRef) {
+                const cfgValue = await acceptResolve.resolve({ uri: cfgRef.uri, cid: cfgRef.cid });
+                bidConfigResolved = { uri: cfgRef.uri, cid: cfgRef.cid, value: cfgValue };
+              }
+            } catch (err) {
+              cbLog("warn", "bidder failed to resolve bidConfig", { error: String(err) });
             }
-          } catch (err) {
-            cbLog("warn", "bidder failed to resolve bidConfig", { error: String(err) });
           }
-        }
 
-        const bundle = {
-          $type: "com.publicdomainrelay.temp.market.accept",
-          accept: { uri: acceptUri, cid: acceptCid },
-          rfp: { uri: rfpRef.uri, cid: rfpRef.cid },
-          bid: bidRef ? { uri: bidRef.uri, cid: bidRef.cid } : null,
-          bid_config: bidConfigResolved,
-          vm: { uri: payloadRef.uri, cid: payloadRef.cid, value: vm },
-        };
-        const vmWithBundle = {
-          ...vm,
-          user_data: computeProvider.injectAcceptBundle(
-            (vm.user_data as string) ?? "", bundle,
-          ),
-          _uri: payloadRef.uri,
-          _cid: payloadRef.cid,
-        };
-        const result = await computeProvider.provision(vmWithBundle as Parameters<ComputeProvider["provision"]>[0], issuerDid);
-        cbLog("info", "bidder provisioned VM", { providerId: result.providerId });
-        return result.providerId;
-      })().catch((err) => {
+          const bundle = {
+            $type: "com.publicdomainrelay.temp.market.accept",
+            accept: { uri: acceptUri, cid: acceptCid },
+            rfp: { uri: rfpRef.uri, cid: rfpRef.cid },
+            bid: bidRef ? { uri: bidRef.uri, cid: bidRef.cid } : null,
+            bid_config: bidConfigResolved,
+            vm: { uri: payloadRef.uri, cid: payloadRef.cid, value: vm },
+          };
+          const vmWithBundle = {
+            ...vm,
+            user_data: computeProvider.injectAcceptBundle(
+              (vm.user_data as string) ?? "", bundle,
+            ),
+            _uri: payloadRef.uri,
+            _cid: payloadRef.cid,
+          };
+          const result = await computeProvider.provision(vmWithBundle as Parameters<ComputeProvider["provision"]>[0], issuerDid);
+          cbLog("info", "bidder provisioned VM", { providerId: result.providerId });
+          return result.providerId;
+        })(),
+        new Promise<undefined>((_, reject) =>
+          setTimeout(() => reject(new Error("provisioning timed out after 10 minutes")), 600_000)
+        ),
+      ]).catch((err) => {
         cbLog("error", "bidder failed to provision VM", { error: String(err) });
         return undefined;
       });
@@ -252,17 +257,13 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
 
     const reason = "vm.delete event received";
     const providerId = await contract.providerIdPromise;
-    onContractChange?.({
-      type: "terminated", key: rk,
-      receiptUri: contract.receiptUri, receiptCid: contract.receiptCid,
-      acceptAuthor: contract.acceptAuthor, acceptedAt: contract.acceptedAt,
-      terminatedAt: new Date().toISOString(), providerId,
-    });
 
+    let destroyed = false;
     if (providerId !== undefined) {
       try {
         await computeProvider.destroy(providerId);
         ctx.log("info", "submitEvent: VM destroyed", { providerId, reason });
+        destroyed = true;
       } catch (err) {
         ctx.log("error", "submitEvent: failed to destroy VM", {
           providerId, error: String(err),
@@ -273,6 +274,24 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
           log("info", "bidder_compute_provider_teardown_done", { did }),
         );
       }
+    } else {
+      destroyed = true; // no VM existed, clean by definition
+    }
+
+    if (destroyed) {
+      onContractChange?.({
+        type: "terminated", key: rk,
+        receiptUri: contract.receiptUri!, receiptCid: contract.receiptCid!,
+        acceptAuthor: contract.acceptAuthor, acceptedAt: contract.acceptedAt!,
+        terminatedAt: new Date().toISOString(), providerId,
+      });
+    } else {
+      onContractChange?.({
+        type: "termination-failed", key: rk,
+        receiptUri: contract.receiptUri!, receiptCid: contract.receiptCid!,
+        acceptAuthor: contract.acceptAuthor, acceptedAt: contract.acceptedAt!,
+        terminatedAt: new Date().toISOString(), providerId,
+      });
     }
 
     activeContracts.delete(rk);
