@@ -23,12 +23,14 @@ import type {
   ActiveContract,
   CallbackFactoryDeps,
   CallbackSet,
+  ContractEvent,
   MarketBidderProviderRef,
 } from "@publicdomainrelay/market-bidder-abc";
 export type {
   ActiveContract,
   CallbackFactoryDeps,
   CallbackSet,
+  ContractEvent,
   MarketBidderProviderRef,
 };
 
@@ -45,6 +47,8 @@ export interface MarketBidderConfig {
   setup?(): Promise<void>;
   teardown?(): Promise<void>;
   callbackFactory?: (deps: CallbackFactoryDeps) => CallbackSet | Promise<CallbackSet>;
+  /** Fires on contract lifecycle changes (accepted, provisioned, terminated). */
+  onContractChange?: (event: ContractEvent) => void;
   /** Accept jobs from scope. Controls which RFPs the bidder responds to. */
   acceptScope?: "only_me" | "direct_network" | "policy_based" | null;
   /**
@@ -95,7 +99,7 @@ function didWebHost(s: string): string {
 }
 
 export async function createMarketBidder(config: MarketBidderConfig): Promise<MarketBidder> {
-  const { logger, serve, atproto, relay, providers, setup, teardown, callbackFactory, rfpWatcherFactory, rfpWatcherFactories, offeringRefreshMs, skipServeBegin, acceptScope } = config;
+  const { logger, serve, atproto, relay, providers, setup, teardown, callbackFactory, onContractChange, rfpWatcherFactory, rfpWatcherFactories, offeringRefreshMs, skipServeBegin, acceptScope } = config;
   const log = logAdapter(logger);
   const activeContracts = new Map<string, ActiveContract>();
   const idResolver = atproto.idResolver;
@@ -215,6 +219,7 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
       deleteRecord: atproto.deleteRecord,
       callService: atproto.callService,
       resolve: recordResolver,
+      onContractChange,
     };
 
     for (const p of providers ?? []) {

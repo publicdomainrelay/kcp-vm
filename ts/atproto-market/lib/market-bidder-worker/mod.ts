@@ -15,8 +15,10 @@ import type {
 } from "@publicdomainrelay/market-atproto";
 import type { RecordResolver } from "@publicdomainrelay/market-abc";
 import type {
+  ActiveContract,
   CallbackFactoryDeps,
   CallbackSet,
+  ContractEvent,
   MarketBidderProviderRef,
 } from "@publicdomainrelay/market-bidder-abc";
 import {
@@ -32,11 +34,6 @@ import { createDenoBundler, createPersistentDenoWorker } from "@publicdomainrela
 import type { ATProto } from "@publicdomainrelay/atproto-helpers";
 import type { StructuredLoggerInterface } from "@publicdomainrelay/logger";
 
-export interface ActiveContract {
-  providerIdPromise?: Promise<string | number | undefined>;
-  acceptAuthor: string;
-}
-
 export interface WorkerBidderDeps {
   did: string;
   attestationKp: AttestationKeypair;
@@ -47,6 +44,7 @@ export interface WorkerBidderDeps {
   workerRunner: WorkerInstanceRunner;
   log: Logger;
   activeContracts: Map<string, ActiveContract>;
+  onContractChange?: (event: ContractEvent) => void;
   createRepoRecord: (collection: string, record: Record<string, unknown>) => Promise<{ uri: string; cid: string }>;
   createSignedRepoRecord: (collection: string, record: Record<string, unknown>, issuer?: string) => Promise<{ uri: string; cid: string; record: Record<string, unknown> }>;
   callService: (endpointUrl: string, nsid: string, lxm: string, body: Record<string, unknown>) => Promise<{ status: number; ok: boolean; body: unknown }>;
@@ -63,7 +61,7 @@ export function createWorkerBidderCallbacks(deps: WorkerBidderDeps): {
 } {
   const {
     did, attestationKp, signer, relay,
-    workerManifestStore, workerRunner, log, activeContracts,
+    workerManifestStore, workerRunner, log, activeContracts, onContractChange,
     createRepoRecord, createSignedRepoRecord, callService, resolve,
   } = deps;
 
@@ -184,9 +182,21 @@ export function createWorkerBidderCallbacks(deps: WorkerBidderDeps): {
     );
 
     const rkey = receiptUri.split("/").pop()!;
-    activeContracts.set(refKey({ uri: receiptUri, cid: receiptCid }), {
+    const rk = refKey({ uri: receiptUri, cid: receiptCid });
+    activeContracts.set(rk, {
       providerIdPromise,
       acceptAuthor: issuerDid,
+      receiptUri,
+      receiptCid,
+      acceptedAt: nowIso,
+    });
+
+    onContractChange?.({ type: "accepted", key: rk, receiptUri, receiptCid, acceptAuthor: issuerDid, acceptedAt: nowIso });
+    providerIdPromise.then((providerId) => {
+      onContractChange?.({
+        type: providerId ? "provisioned" : "provisioning-failed",
+        key: rk, receiptUri, receiptCid, acceptAuthor: issuerDid, acceptedAt: nowIso, providerId,
+      });
     });
 
     cbLog("info", "bidder created receipt for worker", {
@@ -272,6 +282,7 @@ export function createWorkerProviderHooks(opts: {
         workerRunner: provider.workerRunner,
         log: deps.log,
         activeContracts: deps.activeContracts,
+        onContractChange: deps.onContractChange,
         createRepoRecord: deps.createRepoRecord,
         createSignedRepoRecord: deps.createSignedRepoRecord,
         callService: deps.callService,

@@ -20,8 +20,10 @@ import {
 } from "@publicdomainrelay/market-atproto";
 import type { RecordResolver } from "@publicdomainrelay/market-abc";
 import type {
+  ActiveContract,
   CallbackFactoryDeps,
   CallbackSet,
+  ContractEvent,
   MarketBidderProviderRef,
 } from "@publicdomainrelay/market-bidder-abc";
 import {
@@ -35,11 +37,6 @@ import {
 } from "@publicdomainrelay/market-common";
 import { COMPUTE_VM_NSID, COMPUTE_EVENTS_VM_DELETE_NSID } from "@publicdomainrelay/market-common";
 
-export interface ActiveContract {
-  providerIdPromise?: Promise<string | number | undefined>;
-  acceptAuthor: string;
-}
-
 export interface VmBidderDeps {
   did: string;
   attestationKp: AttestationKeypair;
@@ -49,6 +46,7 @@ export interface VmBidderDeps {
   computeProvider: ComputeProvider;
   log: Logger;
   activeContracts: Map<string, ActiveContract>;
+  onContractChange?: (event: ContractEvent) => void;
   createRepoRecord: (collection: string, record: Record<string, unknown>) => Promise<{ uri: string; cid: string }>;
   createSignedRepoRecord: (collection: string, record: Record<string, unknown>, issuer?: string) => Promise<{ uri: string; cid: string; record: Record<string, unknown> }>;
   callService: (endpointUrl: string, nsid: string, lxm: string, body: Record<string, unknown>) => Promise<{ status: number; ok: boolean; body: unknown }>;
@@ -66,7 +64,7 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
 } {
   const {
     did, attestationKp, signer, idResolver, relay,
-    computeProvider, log, activeContracts,
+    computeProvider, log, activeContracts, onContractChange,
     createRepoRecord, createSignedRepoRecord, callService, resolve,
   } = deps;
 
@@ -199,9 +197,21 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
     );
 
     const rkey = receiptUri.split("/").pop()!;
-    activeContracts.set(refKey({ uri: receiptUri, cid: receiptCid }), {
+    const rk = refKey({ uri: receiptUri, cid: receiptCid });
+    activeContracts.set(rk, {
       providerIdPromise,
       acceptAuthor: issuerDid,
+      receiptUri,
+      receiptCid,
+      acceptedAt: nowIso,
+    });
+
+    onContractChange?.({ type: "accepted", key: rk, receiptUri, receiptCid, acceptAuthor: issuerDid, acceptedAt: nowIso });
+    providerIdPromise.then((providerId) => {
+      onContractChange?.({
+        type: providerId ? "provisioned" : "provisioning-failed",
+        key: rk, receiptUri, receiptCid, acceptAuthor: issuerDid, acceptedAt: nowIso, providerId,
+      });
     });
 
     cbLog("info", "bidder created receipt for VM", {
@@ -242,6 +252,13 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
 
     const reason = "vm.delete event received";
     const providerId = await contract.providerIdPromise;
+    onContractChange?.({
+      type: "terminated", key: rk,
+      receiptUri: contract.receiptUri, receiptCid: contract.receiptCid,
+      acceptAuthor: contract.acceptAuthor, acceptedAt: contract.acceptedAt,
+      terminatedAt: new Date().toISOString(), providerId,
+    });
+
     if (providerId !== undefined) {
       try {
         await computeProvider.destroy(providerId);
@@ -296,6 +313,7 @@ export function createComputeProviderHooks(opts: {
         computeProvider: provider,
         log: deps.log,
         activeContracts: deps.activeContracts,
+        onContractChange: deps.onContractChange,
         createRepoRecord: deps.createRepoRecord,
         createSignedRepoRecord: deps.createSignedRepoRecord,
         callService: deps.callService,

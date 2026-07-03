@@ -12,6 +12,20 @@ import type { Logger, StrongRef } from "@publicdomainrelay/market-common";
 export interface ActiveContract {
   providerIdPromise?: Promise<string | number | undefined>;
   acceptAuthor: string;
+  receiptUri: string;
+  receiptCid: string;
+  acceptedAt: string;
+}
+
+export interface ContractEvent {
+  type: "accepted" | "provisioned" | "provisioning-failed" | "terminated";
+  key: string;
+  receiptUri: string;
+  receiptCid: string;
+  acceptAuthor: string;
+  acceptedAt: string;
+  terminatedAt?: string;
+  providerId?: string | number;
 }
 
 export interface CallbackSet {
@@ -31,6 +45,7 @@ export interface CallbackFactoryDeps {
   dispatcherHost: string;
   log: Logger;
   activeContracts: Map<string, ActiveContract>;
+  onContractChange?: (event: ContractEvent) => void;
   createRecord: (collection: string, record: Record<string, unknown>) => Promise<StrongRef>;
   createRepoRecord: (collection: string, record: Record<string, unknown>) => Promise<{ uri: string; cid: string }>;
   createSignedRepoRecord: (collection: string, record: Record<string, unknown>, issuer?: string) => Promise<{ uri: string; cid: string; record: Record<string, unknown> }>;
