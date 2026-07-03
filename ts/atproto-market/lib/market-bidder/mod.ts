@@ -109,8 +109,7 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
   const ALLOWLIST_NSID = "com.publicdomainrelay.temp.auth.allowlist.rbacDid";
   const OFFERING_NSID = "com.publicdomainrelay.temp.market.offering";
 
-  // Pre-load vouched DIDs for direct_network scope filter.
-  // Used in the firehose watcher hot path — no network I/O per RFP.
+  // Pre-load vouched DIDs for direct_network scope filter (firehose hot path).
   let vouchedDids: Set<string> | null = null;
   if (acceptScope === "direct_network") {
     vouchedDids = new Set();
@@ -127,6 +126,36 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
       logger.warn("bidder vouch set load failed, declining all direct_network RFPs", { error: String(err) });
     }
   }
+
+  // On-demand check: requester must have a badgeBlueKeys record with
+  // challenge === atproto.did and service === 'requester_associate'.
+  const isRequesterAssociated = async (requesterDid: string): Promise<boolean> => {
+    const BADGE_BLUE_KEYS_NSID = "com.publicdomainrelay.temp.badgeBlueKeys";
+    try {
+      let cursor: string | undefined;
+      let totalChecked = 0;
+      do {
+        const result = await atproto.listRecords(atproto.did, BADGE_BLUE_KEYS_NSID, { limit: 100, cursor } as { limit?: number; cursor?: string });
+        const records = result?.records ?? [];
+        totalChecked += records.length;
+        for (const rec of records) {
+          const v = rec.value as Record<string, unknown>;
+          if (v.challenge === atproto.did && v.service === "requester_associate" && v.keyId === requesterDid) {
+            logger.info("bidder scope check: matched requester association", { requesterDid, keyId: v.keyId });
+            return true;
+          }
+        }
+        cursor = (result as Record<string, unknown>)?.cursor as string | undefined;
+      } while (cursor);
+      logger.warn("bidder scope check: no matching requester association", {
+        requesterDid, bidderDid: atproto.did, recordsChecked: totalChecked,
+      });
+      return false;
+    } catch (err) {
+      logger.warn("bidder scope check: listRecords failed", { requesterDid, error: String(err) });
+      return false;
+    }
+  };
 
   async function ensureOperatorAllowlist(service: string): Promise<void> {
     const result = await atproto.listRecords(atproto.did, ALLOWLIST_NSID, { limit: 100 });
@@ -259,9 +288,9 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
       const factory = createMarketFactory(marketDeps, {
         rfp: merged.rfpCallbacks,
         rfpScopeFilter: acceptScope
-          ? ({ issuerDid }) => {
-              if (acceptScope === "only_me") return issuerDid === atproto.did;
-              if (acceptScope === "direct_network") return issuerDid === atproto.did || (vouchedDids?.has(issuerDid) ?? false);
+          ? async ({ issuerDid }) => {
+              if (acceptScope === "only_me") return isRequesterAssociated(issuerDid);
+              if (acceptScope === "direct_network") return issuerDid === atproto.did || (vouchedDids?.has(issuerDid) ?? false) || isRequesterAssociated(issuerDid);
               if (acceptScope === "policy_based") return false;
               return true;
             }
@@ -288,8 +317,9 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
 
           // Scope filter — fast path, no record resolution.
           // e.did is the DID whose repo the RFP was created in (requester DID).
-          if (acceptScope === "only_me" && e.did !== atproto.did) return;
-          if (acceptScope === "direct_network" && e.did !== atproto.did) {
+          // only_me: no pre-filter, dispatcher does async isRequesterAssociated check.
+          if (acceptScope === "only_me") { /* pass through, dispatch checks */ }
+          else if (acceptScope === "direct_network" && e.did !== atproto.did) {
             if (!vouchedDids?.has(e.did)) return;
           }
           if (acceptScope === "policy_based") return; // stub

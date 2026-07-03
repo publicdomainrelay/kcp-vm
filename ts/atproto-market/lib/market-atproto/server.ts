@@ -222,7 +222,7 @@ export interface SubmitRfpHandlerConfig {
    * verification, before callback dispatch. Return false to decline the
    * RFP with a 403. issuerDid is the RFP author's DID.
    */
-  acceptScopeFilter?: (input: { rfpUri: string; rfpCid: string; issuerDid: string; rfp: Record<string, unknown> }) => boolean;
+  acceptScopeFilter?: (input: { rfpUri: string; rfpCid: string; issuerDid: string; rfp: Record<string, unknown> }) => boolean | Promise<boolean>;
 }
 
 /**
@@ -259,7 +259,7 @@ export function createRfpDispatcher(cfg: SubmitRfpHandlerConfig): (input: Dispat
     if (sigErr) return sigErr;
 
     if (acceptScopeFilter) {
-      const accepted = acceptScopeFilter({ rfpUri, rfpCid, issuerDid, rfp: stripResolved(rfp) as Record<string, unknown> });
+      const accepted = await acceptScopeFilter({ rfpUri, rfpCid, issuerDid, rfp: stripResolved(rfp) as Record<string, unknown> });
       if (!accepted) {
         log("info", "submitRfp: rejected by scope filter", { rfpUri, issuerDid });
         return json({ ok: false, error: "scope filter declined" }, 403);
