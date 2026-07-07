@@ -71,6 +71,23 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
   const onRfp: SubmitRfpCallback = async ({ rfpUri, rfpCid, rfp, issuerDid, log: cbLog }) => {
     cbLog("info", "bidder received VM RFP", { rfpUri, rfpCid, issuerDid });
 
+    if (rfp.policy) {
+      const { evaluateRfpPolicy } = await import("@publicdomainrelay/market-policy");
+      const result = await evaluateRfpPolicy({
+        policyRef: rfp.policy as StrongRef,
+        subjectDid: did,
+        rootRequesterDid: issuerDid,
+        counterpartyDid: issuerDid,
+        resolve: (ref) => resolve.resolve(ref),
+        signer,
+        log: (level, msg, meta) => cbLog(level as "info" | "warn" | "error", msg, meta),
+      });
+      if (!result.allow) {
+        cbLog("warn", "policy rejected bid", { violations: result.violations });
+        return { body: { ok: false, error: "policy rejected", violations: result.violations } };
+      }
+    }
+
     const nowIso = new Date().toISOString();
 
     const configRef = await computeProvider.createBidConfig(nowIso);

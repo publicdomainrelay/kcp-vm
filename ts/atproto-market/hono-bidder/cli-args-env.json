@@ -85,6 +85,11 @@
       "type": "boolean",
       "description": "Enable Deno worker compute provider"
     },
+    "worker-permission-mode": {
+      "type": "string",
+      "description": "Worker permission policy: deny-all (default) or allow-net",
+      "env": "WORKER_PERMISSION_MODE"
+    },
     "no-xrpc-relay": {
       "type": "boolean",
       "description": "Disable XRPC relay on main serve"
@@ -116,6 +121,11 @@
       "type": "string",
       "description": "Firehose websocket URL to watch for RFP records (relay subscribeRepos base, or jetstream subscribe base)",
       "env": "RFP_FIREHOSE_URL"
+    },
+    "accept-scope": {
+      "type": "string",
+      "description": "Accept jobs from scope: only_me, direct_network, policy_based, or open (default)",
+      "env": "ACCEPT_SCOPE"
     },
     "offering-refresh-sec": {
       "type": "number",

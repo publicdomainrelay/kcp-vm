@@ -14,6 +14,7 @@ export interface CollectedBid {
 export interface ContractFlowOptions {
   vmName?: string;
   bidWindowSec?: number;
+  plcUrl?: string;
   /** Atproto relay URLs for bidder discovery via listReposByCollection. */
   relayUrls?: string[];
   /** Additional bidder DIDs beyond those discovered via relay + vouch. */
@@ -71,6 +72,8 @@ export interface ContractFlowOptions {
    */
   rbac?: boolean;
   appliesToNsid?: string;
+  policyMode?: "only_me" | "direct_network" | "policy_based";
+  policyEngineEndpoint?: string;
 }
 
 export interface PDSOptions {
@@ -113,6 +116,7 @@ export interface RequesterPDS {
     body: Record<string, unknown>,
   ): Promise<{ status: number; ok: boolean; body: unknown }>;
   attestationKp: { did(): string; privateKey: { bytes: Uint8Array; toBytes?(): Uint8Array } };
+  signer: { did(): string; sign(bytes: Uint8Array): Promise<Uint8Array> };
   privateKeyHex: string;
   /** Resolves with caller DID when webapp calls associateConfirm XRPC. */
   associateCalled: Promise<string>;

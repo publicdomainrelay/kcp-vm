@@ -121,6 +121,11 @@
       "description": "Fulfillment policy mode for the RFP: only_me, direct_network, or policy_based. Omit for no policy (open to all bidders)",
       "env": "POLICY_MODE"
     },
+    "policy-engine-endpoint": {
+      "type": "string",
+      "description": "Policy engine service DID ref for policy_based mode (e.g. did:web:engine.example.com#market_evaluate_policy or did:plc:xyz#market_evaluate_policy)",
+      "env": "POLICY_ENGINE_ENDPOINT"
+    },
     "pds-state-path": {
       "type": "string",
       "description": "Path to persist PDS state (Deno.Kv SQLite file). If set, PDS state survives restarts and prior associations are remembered",

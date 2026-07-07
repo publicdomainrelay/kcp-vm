@@ -205,6 +205,7 @@ Deno.addSignalListener("SIGTERM", shutdown);
 const policyModeRaw = options.policyMode as string | undefined;
 const policyMode = (policyModeRaw === "only_me" || policyModeRaw === "direct_network" || policyModeRaw === "policy_based")
   ? policyModeRaw : undefined;
+const policyEngineEndpoint = (policyMode === "policy_based") ? options.policyEngineEndpoint as string | undefined : undefined;
 
 const result = await runComputeContract(pds, {
   logger,
@@ -222,6 +223,7 @@ const result = await runComputeContract(pds, {
   baseUserData,
   rbac,
   policyMode,
+  policyEngineEndpoint,
   offeringWatcherDids: () => [...offeringDids],
   sshProvider: createSshSessionProvider(logger),
   onSshStart: () => pauseConsole(),

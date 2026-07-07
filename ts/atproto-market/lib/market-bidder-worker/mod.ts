@@ -5,7 +5,7 @@
 import type { IdResolver } from "@atproto/identity";
 import { createAttestationCid, type RecordMap } from "@atiproto/atproto-attestation";
 import type { RepoApi } from "@publicdomainrelay/atproto-repo-abc";
-import type { WorkerInstanceRunner, WorkerManifestStore } from "@publicdomainrelay/compute-deno-abc";
+import type { WorkerInstanceRunner, WorkerManifestStore, PermissionPolicyHandler } from "@publicdomainrelay/compute-deno-abc";
 import { WORKER_MANIFEST_NSID, WORKER_INSTANCE_NSID } from "@publicdomainrelay/compute-deno-common";
 import type { StrongRef as ComputeStrongRef } from "@publicdomainrelay/compute-deno-common";
 import type {
@@ -28,6 +28,7 @@ import {
   SUBMIT_BID_LXM,
   strongRef,
   type Logger,
+  type StrongRef,
 } from "@publicdomainrelay/market-common";
 import { createDenoComputeManifestStore, createDenoComputeInstanceStore, createDenoComputeInstanceRunner } from "@publicdomainrelay/compute-deno-atproto";
 import { createDenoBundler, createPersistentDenoWorker } from "@publicdomainrelay/sandbox-deno";
@@ -49,6 +50,7 @@ export interface WorkerBidderDeps {
   createSignedRepoRecord: (collection: string, record: Record<string, unknown>, issuer?: string) => Promise<{ uri: string; cid: string; record: Record<string, unknown> }>;
   callService: (endpointUrl: string, nsid: string, lxm: string, body: Record<string, unknown>) => Promise<{ status: number; ok: boolean; body: unknown }>;
   resolve: RecordResolver;
+  permissionPolicyHandler?: PermissionPolicyHandler;
 }
 
 function refKey(ref: { uri: string; cid: string }): string {
@@ -62,11 +64,51 @@ export function createWorkerBidderCallbacks(deps: WorkerBidderDeps): {
   const {
     did, attestationKp, signer, relay,
     workerManifestStore, workerRunner, log, activeContracts, onContractChange,
-    createRepoRecord, createSignedRepoRecord, callService, resolve,
+    createRepoRecord, createSignedRepoRecord, callService, resolve, permissionPolicyHandler,
   } = deps;
 
   const onRfp: SubmitRfpCallback = async ({ rfpUri, rfpCid, rfp, issuerDid, log: cbLog }) => {
     cbLog("info", "bidder received worker RFP", { rfpUri, rfpCid, issuerDid });
+
+    if (rfp.policy) {
+      const { evaluateRfpPolicy } = await import("@publicdomainrelay/market-policy");
+      const result = await evaluateRfpPolicy({
+        policyRef: rfp.policy as StrongRef,
+        subjectDid: did,
+        rootRequesterDid: issuerDid,
+        counterpartyDid: issuerDid,
+        resolve: (ref) => resolve.resolve(ref),
+        signer,
+        log: (level, msg, meta) => cbLog(level as "info" | "warn" | "error", msg, meta),
+      });
+      if (!result.allow) {
+        cbLog("warn", "policy rejected bid", { violations: result.violations });
+        return { body: { ok: false, error: "policy rejected", violations: result.violations } };
+      }
+    }
+
+    if (permissionPolicyHandler) {
+      const payloadRef = rfp.payload as { uri: string; cid: string } | undefined;
+      if (payloadRef?.uri) {
+        try {
+          const manifestRecord = await resolve.resolve(payloadRef) as Record<string, unknown>;
+          const perms = manifestRecord.permissions as Record<string, unknown> | undefined;
+          const permResult = await permissionPolicyHandler.evaluate({
+            lock: (manifestRecord.lock as string) ?? "",
+            json: (manifestRecord.json as string) ?? "",
+            bundle: (manifestRecord.bundle as string) ?? "",
+            permissions: perms as Record<string, boolean | string[]> | undefined,
+          });
+          if (!permResult.allow) {
+            cbLog("warn", "worker permission policy rejected", { violations: permResult.violations });
+            return { body: { ok: false, error: "worker permissions denied", violations: permResult.violations } };
+          }
+        } catch (err) {
+          cbLog("warn", "worker permission check failed", { error: String(err) });
+          return { body: { ok: false, error: "worker permission check failed" } };
+        }
+      }
+    }
 
     const nowIso = new Date().toISOString();
 
@@ -263,8 +305,9 @@ export async function createComputeProviderDenoWorker(
 
 export function createWorkerProviderHooks(opts: {
   provider: WorkerProvider;
+  permissionPolicyHandler?: PermissionPolicyHandler;
 }): MarketBidderProviderRef {
-  const { provider } = opts;
+  const { provider, permissionPolicyHandler } = opts;
   return {
     serviceId: "pdr_temp_market",
     appliesTo: ["com.publicdomainrelay.temp.compute.deno.workerManifest"],
@@ -286,6 +329,7 @@ export function createWorkerProviderHooks(opts: {
         createSignedRepoRecord: deps.createSignedRepoRecord,
         callService: deps.callService,
         resolve: deps.resolve,
+        permissionPolicyHandler,
       });
       return { rfpCallbacks: w.rfp, onAccept: w.accept };
     },

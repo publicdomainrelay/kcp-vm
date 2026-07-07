@@ -294,7 +294,7 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
           ? async ({ issuerDid }) => {
               if (acceptScope === "only_me") return isRequesterAssociated(issuerDid);
               if (acceptScope === "direct_network") return issuerDid === atproto.did || (vouchedDids?.has(issuerDid) ?? false) || isRequesterAssociated(issuerDid);
-              if (acceptScope === "policy_based") return false;
+              if (acceptScope === "policy_based") return true;
               return true;
             }
           : undefined,
@@ -325,8 +325,6 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
           else if (acceptScope === "direct_network" && e.did !== atproto.did) {
             if (!vouchedDids?.has(e.did)) return;
           }
-          if (acceptScope === "policy_based") return; // stub
-
           seen.add(e.uri);
           log("info", "rfp watch discovered", { rfpUri: e.uri });
           dispatch({ rfpUri: e.uri, rfpCid: e.cid, issuerDid: e.did })

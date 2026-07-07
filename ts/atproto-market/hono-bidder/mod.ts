@@ -177,8 +177,15 @@ if (options.computeProviderLocal) {
 }
 
 if (options.computeProviderDenoWorker) {
+  const workerPermMode = (options.workerPermissionMode as string) || "deny-all";
+  let permissionPolicyHandler: import("@publicdomainrelay/compute-deno-abc").PermissionPolicyHandler | undefined;
+  if (workerPermMode === "allow-net") {
+    const { createAllowNetOnlyPolicyHandler } = await import("@publicdomainrelay/compute-deno-atproto");
+    permissionPolicyHandler = createAllowNetOnlyPolicyHandler();
+  }
   providers.push(createWorkerProviderHooks({
     provider: await createComputeProviderDenoWorker({ logger, atproto }),
+    permissionPolicyHandler,
   }));
 }
 
@@ -209,12 +216,17 @@ const bidderServe = createServe({
   unix: (options.serveUnix as string | undefined) ? { socketPath: options.serveUnix as string } : undefined,
   relays: bidderRelay ? [bidderRelay] : [],
 });
+const acceptScopeRaw = options.acceptScope as string | undefined;
+const acceptScope = (acceptScopeRaw === "only_me" || acceptScopeRaw === "direct_network" || acceptScopeRaw === "policy_based")
+  ? acceptScopeRaw : undefined;
+
 const bidder = await createMarketBidder({
   logger, atproto, providers, relay: bidderRelay,
   rfpWatcherFactory,
   rfpWatcherFactories,
   offeringRefreshMs: offeringRefreshSec > 0 ? offeringRefreshSec * 1000 : undefined,
   serve: bidderServe,
+  acceptScope,
 });
 
 function shutdown() {

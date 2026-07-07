@@ -102,7 +102,11 @@ The `--policy-mode` flag controls which bidders may fulfill your RFP. It's a
   after OAuth login) and a `bidderAssociation` record linking the bidder to
   your operator DID.
 - `direct_network` — Bidders operated by DIDs in your vouch graph may bid.
-- `policy_based` — (stub, not yet implemented)
+- `policy_based` — Evaluated by a remote policy engine at the URL passed via
+  `--policy-engine-endpoint` or `POLICY_ENGINE_ENDPOINT`. The engine receives
+  the bidder DID and returns `{ allow, violations }`. Requires
+  `--policy-engine-endpoint did:web:<host>#market_evaluate_policy` (or
+  `did:plc:<id>#market_evaluate_policy`). See [Policy Engines](#policy-engines) below.
 - Omit — Open to all bidders (no policy restriction).
 
 **How `only_me` works end-to-end:**
@@ -145,3 +149,88 @@ The `--policy-mode` flag controls which bidders may fulfill your RFP. It's a
 | `--registry-port` | auto | JSR registry port |
 | `--bidder-dids` | — | Additional bidder DIDs to include (comma-separated) |
 | `--policy-mode` | open | Fulfillment policy: `only_me`, `direct_network`, `policy_based`, or omit |
+| `--policy-engine-endpoint` | — | Policy engine service DID for `policy_based` mode (`did:web:host#serviceId`) |
+
+## Policy Engines
+
+### Market fulfillment policy (`policy_based`)
+
+`policy_based` delegates bid/accept decisions to an external HTTP server. The
+engine implements one XRPC endpoint:
+
+```
+POST /xrpc/com.publicdomainrelay.temp.market.evaluatePolicy
+Authorization: Bearer <serviceAuth JWT>
+Content-Type: application/json
+
+{"subjectDid":"did:plc:bidder","rootRequesterDid":"did:plc:requester",
+ "counterpartyDid":"did:plc:requester","policyRef":{"uri":"at://...","cid":"..."}}
+
+→ {"allow":true,"violations":[]}
+→ {"allow":false,"violations":[{"msg":"reason","policyId":"nsid-or-uri"}]}
+```
+
+Trust is via AT Protocol serviceAuth — the caller signs a JWT with their
+identity key targeting the engine's DID as audience. The engine verifies this
+JWT to confirm the caller's identity before making decisions.
+
+**Example: Minimal engine**
+
+```ts
+Deno.serve({ port: 8080 }, async (req) => {
+  const { subjectDid, rootRequesterDid } = await req.json();
+  const allowed = myCheck(subjectDid, rootRequesterDid);
+  return Response.json({ allow: allowed, violations: allowed ? [] :
+    [{ msg: "not allowed", policyId: "my-policy" }] });
+});
+```
+
+**Running:**
+
+```sh
+# Requester creates RFP with remote policy engine
+request-vm-ssh --policy-mode policy_based \
+  --policy-engine-endpoint did:web:127.0.0.1%3A8080
+
+# Bidder only bids on policy_based RFPs
+hono-bidder --accept-scope policy_based
+```
+
+### Worker permission policy (`allow-net`)
+
+Controls which Deno Worker manifests a bidder will accept. Evaluated in the
+bidder's `onRfp` callback before creating a bid. The bidder resolves the RFP's
+worker manifest, checks its `permissions` field against the configured handler,
+and skips bids for manifests requesting disallowed permissions.
+
+`SandboxPermissions`: `net`, `read`, `write`, `env`, `run`, `ffi`, `sys`,
+`import` — each `boolean | string[]`.
+
+**Built-in: `allow-net`** — allows manifests with no `permissions` field or
+only `permissions: { net: true }`. Any other permission key (`read`, `write`,
+`run`, etc.) is denied.
+
+**CLI:**
+
+```sh
+hono-bidder --compute-provider-deno-worker --worker-permission-mode allow-net
+```
+
+**Desktop:** Tray → toggle "Deno Workers" ON → select "Allow net only" from
+the Worker Permissions dropdown.
+
+**Custom handler:** Implement `PermissionPolicyHandler` interface
+(`evaluate(manifest: WorkerManifestRecord): Promise<PermissionPolicyResult>`).
+Register in `BUILTIN_HANDLERS` (in `deno-worker-sandbox/lib/compute-deno-atproto/builtin-policy-handlers.ts`)
+or run as a remote service via `--policy-handler-service did:web:<host>#gate_registry_worker_manifest_permissions`.
+
+### Two policy layers
+
+| Layer | Interface | When | Where |
+|-------|-----------|------|-------|
+| Market fulfillment | `FulfillmentPolicy` | Bid time + accept time | `lib/market-policy/` |
+| Worker permission | `PermissionPolicyHandler` | Worker manifest registration | `deno-worker-sandbox/` |
+
+Both layers use the same serviceAuth trust model. Both return `{ allow,
+violations }`. Market policy controls **who** can bid. Worker permission
+controls **what** workers they can run.

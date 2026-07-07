@@ -301,7 +301,7 @@ export async function createRequesterPDS(
 
   // ── submitBid handler ────────────────────────────────────────────────
 
-  const idResolver = new IdResolver();
+  const idResolver = new IdResolver({ plcUrl: plcDirectoryUrl });
 
   const onBid: SubmitBidCallback = ({ uri, cid, record, issuerDid }) => {
     const rfpUri = (record.rfp as StrongRef | undefined)?.uri;
@@ -627,8 +627,6 @@ export async function runComputeContract(
     signer?: Signer;
     offeringWatcherDids?: () => string[];
     logger?: StructuredLoggerInterface;
-    policyMode?: "only_me" | "direct_network" | "policy_based";
-    appliesToNsid?: string;
     payloadFactory?: () => Promise<{ uri: string; cid: string }>;
   } = {},
 ): Promise<ContractFlowResult> {
@@ -641,6 +639,7 @@ export async function runComputeContract(
   const extraBidderDids = opts.extraBidderDids ?? [];
   const denyBidderDids = opts.denyBidderDids ?? [];
   const policyMode = opts.policyMode;
+  const policyEngineEndpoint = opts.policyEngineEndpoint;
   const sshProvider = opts.sshProvider ?? createSshSessionProvider(
     opts.logger,
     { proxyCommandFn: opts.sshProxyCommandFn },
@@ -742,7 +741,7 @@ runcmd:
   if (policyMode) {
     try {
       const { createPolicy } = await import("@publicdomainrelay/market-policy");
-      const policy = createPolicy(policyMode);
+      const policy = createPolicy(policyMode, { signer: pds.signer ?? signer });
       if (policy) {
         const policyRecord: Record<string, unknown> = {
           $type: policy.policyNsid,
@@ -752,6 +751,9 @@ runcmd:
         if (policyMode === "direct_network") {
           policyRecord.vouchNsid = "sh.tangled.graph.vouch";
           policyRecord.maxDepth = 1;
+        }
+        if (policyMode === "policy_based" && policyEngineEndpoint) {
+          policyRecord.policyEngine = policyEngineEndpoint;
         }
         policyRef = await pds.createRepoRecord(policy.policyNsid, policyRecord);
         rfpRecord.policy = { $type: "com.atproto.repo.strongRef", uri: policyRef.uri, cid: policyRef.cid };
@@ -766,7 +768,7 @@ runcmd:
   log("rfp_created", { uri: rfpUri, cid: rfpCid, hasPolicy: !!policyRef });
 
   // 3. Discover bidder DIDs.
-  const idResolver = new IdResolver();
+  const idResolver = new IdResolver({ plcUrl: opts.plcUrl });
 
   // 3a. Vouch-based discovery.
   let vouchedDids: string[] = [];
@@ -900,7 +902,33 @@ runcmd:
     }
   }
 
-  // 7. Create signed market.accept.
+  // 7. Evaluate policy against winner before accepting (policy_based only).
+  if (policyRef && policyMode === "policy_based") {
+    const { evaluateRfpPolicy } = await import("@publicdomainrelay/market-policy");
+    const evalResult = await evaluateRfpPolicy({
+      policyRef,
+      subjectDid: winner.did,
+      rootRequesterDid: pds.did,
+      counterpartyDid: winner.did,
+      resolve: async (ref) => {
+        const resolver = createRecordResolver(idResolver);
+        return await resolver.resolve(ref);
+      },
+      signer: pds.signer ?? signer,
+      log: (level, msg, meta) => log(`policy_eval_${level}`, { msg, ...(meta ?? {}) }),
+    });
+    if (!evalResult.allow) {
+      log("policy_rejected", { violations: evalResult.violations, winnerDid: winner.did });
+      const result: ContractFlowResult = {
+        event: "policy_rejected",
+        error: `winner rejected by policy: ${evalResult.violations.map(v => v.msg).join("; ")}`,
+        bids: bids.length,
+      };
+      return result;
+    }
+  }
+
+  // 8. Create signed market.accept.
   const { uri: acceptUri, cid: acceptCid } = await pds.createSignedRepoRecord(ACCEPT_NSID, {
     $type: ACCEPT_NSID,
     rfp: { $type: "com.atproto.repo.strongRef", uri: rfpUri, cid: rfpCid },
