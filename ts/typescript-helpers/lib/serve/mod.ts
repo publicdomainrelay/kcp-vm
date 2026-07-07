@@ -54,6 +54,9 @@ export function createServe(opts: CreateServeOpts): ServeHandle {
   };
 
   async function beginServe(): Promise<void> {
+    // Idempotent: if already begun (controller set), skip.
+    if (controller) return;
+
     const hasTcp = opts.tcp !== undefined;
     const hasUnix = opts.unix !== undefined;
     const hasRelays = relays.length > 0;
