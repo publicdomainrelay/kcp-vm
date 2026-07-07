@@ -298,10 +298,6 @@ export async function createRequesterPDS(
   // ── relay (WS connect deferred to serve.beginServe -> relay.onServe) ──
 
   const relay = createXrpcRelay({ logger, dispatcherHost, signer, keypair, label });
-  const relayFqdn = (): string => {
-    const ref = relay.proxyRef;
-    return ref.startsWith("did:web:") ? ref.slice("did:web:".length) : ref;
-  };
 
   // ── submitBid handler ────────────────────────────────────────────────
 
@@ -320,7 +316,7 @@ export async function createRequesterPDS(
     deps: {
       hostname: (req: Request) => {
         const host = req.headers.get("host") ?? req.headers.get("x-forwarded-host");
-        return host ? host.split(":")[0] : (relayFqdn() || dispatcherHost);
+        return host ? host.split(":")[0] : (relay.proxyHost || dispatcherHost);
       },
       idResolver,
       resolve: createRecordResolver(idResolver),
@@ -338,7 +334,7 @@ export async function createRequesterPDS(
     try {
       const auth = await verifyServiceAuth({
         authHeader,
-        hostname: relayFqdn() || dispatcherHost,
+        hostname: relay.proxyHost || dispatcherHost,
         lxm: ASSOCIATE_CONFIRM_NSID,
         serviceIds: ["requester_associate"],
         extraAudienceDids: [did],
@@ -456,7 +452,9 @@ export async function createRequesterPDS(
     serve,
     relay,
     get proxyRef(): string { return relay.proxyRef; },
-    get relaySubdomain(): string { return relayFqdn(); },
+    get proxyUrl(): string { return relay.proxyUrl; },
+    get proxyHost(): string { return relay.proxyHost; },
+    get relaySubdomain(): string { return relay.proxyHost; },
     beginServe: () => serve.beginServe(),
     pendingBids,
     createRepoRecord,

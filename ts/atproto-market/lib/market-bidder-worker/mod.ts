@@ -39,7 +39,7 @@ export interface WorkerBidderDeps {
   attestationKp: AttestationKeypair;
   signer: { did(): string; sign(bytes: Uint8Array): Promise<Uint8Array> };
   idResolver: IdResolver;
-  relay: { proxyRef: string };
+  relay: { proxyRef: string; proxyUrl: string };
   workerManifestStore: WorkerManifestStore;
   workerRunner: WorkerInstanceRunner;
   log: Logger;
@@ -79,7 +79,7 @@ export function createWorkerBidderCallbacks(deps: WorkerBidderDeps): {
       $type: BID_NSID,
       rfp: strongRef(rfpUri, rfpCid),
       payload: strongRef(payloadUri, payloadCid),
-      submitAccept: relay.proxyRef.replace(/^did:web:/, "https://"),
+      submitAccept: relay.proxyUrl,
       createdAt: nowIso,
     };
     const { uri: bidUri, cid: bidCid, record: signedBid } = await createSignedRepoRecord(

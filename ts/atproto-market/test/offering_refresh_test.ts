@@ -22,12 +22,15 @@ interface CapturedWrite {
 }
 
 function fakeServe(): ServeHandle {
+  const onConnectedCbs: Array<(proxyRef: string) => void | Promise<void>> = [];
   return {
     app: new Hono(),
     tcpPort: 0,
     addRelay: () => {},
-    onConnected: () => {},
-    beginServe: () => Promise.resolve(),
+    onConnected: (cb) => { onConnectedCbs.push(cb as () => void | Promise<void>); },
+    beginServe: async () => {
+      for (const cb of onConnectedCbs) await cb("did:web:test.localhost");
+    },
     shutdown: () => {},
   };
 }

@@ -28,9 +28,6 @@ const { options } = await new Command("CONFIG_PATH_HONO_BIDDER", cliArgsEnv, run
 const serviceName = (options.serviceName as string) ?? "bidder";
 const logger = createLogger({ serviceName });
 
-function didWebToHttps(s: string): string {
-  return s.startsWith("did:web:") ? "https://" + s.slice("did:web:".length) : s;
-}
 
 const keypair = (options.privateKeyHex as string | undefined)
   ? await Secp256k1Keypair.import(options.privateKeyHex as string)
@@ -100,11 +97,9 @@ if ((options.atprotoHandle as string | undefined) && (options.atprotoPassword as
   });
   await atprotoAgent.beginServe();
   _deferredPdsPort = pdsServe.tcpPort;
-  const proxyRef: string = (atprotoAgent as { relay?: { proxyRef?: string } }).relay?.proxyRef ?? "";
-  if (proxyRef) {
-    pdsHostname = proxyRef.startsWith("did:web:")
-      ? proxyRef.slice("did:web:".length)
-      : proxyRef;
+  const relayHost: string = (atprotoAgent as { relay?: { proxyHost?: string } }).relay?.proxyHost ?? "";
+  if (relayHost) {
+    pdsHostname = relayHost;
   }
 }
 
@@ -154,7 +149,7 @@ if (options.computeProviderDigitaloceanToken) {
   providers.push(createComputeProviderHooks({
     provider: createDigitalOceanComputeProvider({
       logger, atproto: atproto as import("@publicdomainrelay/compute-provider-abc").ComputeAtproto, serve,
-      getIssuerUrl: () => didWebToHttps(relay.proxyRef),
+      getIssuerUrl: () => relay.proxyUrl,
       digitaloceanBaseUrl: (options.computeProviderDigitaloceanBaseUrl as string) || "https://api.digitalocean.com",
       doToken: options.computeProviderDigitaloceanToken as string,
     }),
@@ -169,8 +164,8 @@ if (options.computeProviderLocal) {
   providers.push(createComputeProviderHooks({
     provider: createLocalComputeProvider({
       logger, atproto: atproto as import("@publicdomainrelay/compute-provider-abc").ComputeAtproto, serve,
-      getIssuerUrl: () => didWebToHttps(relay.proxyRef),
-      oidcProvisioner: createOidcProvisioningEnricher(() => didWebToHttps(relay.proxyRef)),
+      getIssuerUrl: () => relay.proxyUrl,
+      oidcProvisioner: createOidcProvisioningEnricher(() => relay.proxyUrl),
       rbacProvisioner: createRbacProvisioner(),
       containerMode: options.computeProviderLocalContainerMode as "vm" | "container" | undefined,
       vmImage: options.computeProviderLocalVmImage as string | undefined,

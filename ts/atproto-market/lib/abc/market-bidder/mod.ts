@@ -41,7 +41,7 @@ export interface CallbackFactoryDeps {
   signer: { did(): string; sign(bytes: Uint8Array): Promise<Uint8Array> };
   attestationKp: AttestationKeypair;
   idResolver: IdResolver;
-  relay: { proxyRef: string };
+  relay: { proxyRef: string; proxyUrl: string; proxyHost: string };
   dispatcherHost: string;
   log: Logger;
   activeContracts: Map<string, ActiveContract>;

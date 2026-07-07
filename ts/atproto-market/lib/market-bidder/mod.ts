@@ -4,7 +4,7 @@
 
 import { TID } from "@atproto/common";
 import type { RepoApi } from "@publicdomainrelay/atproto-repo-abc";
-import { createRecordResolver, createRfpDispatcher, startOfferingRefresh } from "@publicdomainrelay/market-atproto";
+import { createRecordResolver, createRfpDispatcher, startOfferingRefresh, listRecordsPublic } from "@publicdomainrelay/market-atproto";
 import type { MarketServerDeps, OfferingRefreshHandle } from "@publicdomainrelay/market-atproto";
 import { createMarketFactory } from "@publicdomainrelay/hono-factory-market-atproto";
 import { RFP_NSID } from "@publicdomainrelay/market-common";
@@ -90,13 +90,6 @@ function logAdapter(logger: StructuredLoggerInterface): Logger {
   };
 }
 
-function didWebToHttps(s: string): string {
-  return s.startsWith("did:web:") ? "https://" + s.slice("did:web:".length) : s;
-}
-
-function didWebHost(s: string): string {
-  return s.startsWith("did:web:") ? s.slice("did:web:".length) : s;
-}
 
 export async function createMarketBidder(config: MarketBidderConfig): Promise<MarketBidder> {
   const { logger, serve, atproto, relay, providers, setup, teardown, callbackFactory, onContractChange, rfpWatcherFactory, rfpWatcherFactories, offeringRefreshMs, skipServeBegin, acceptScope } = config;
@@ -129,32 +122,42 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
 
   // On-demand check: requester must have a badgeBlueKeys record with
   // challenge === atproto.did and service === 'requester_associate'.
+  // Results cached in-memory — badgeBlueKeys records are write-once so TTL is unnecessary.
+  const associationCache = new Map<string, boolean>();
   const isRequesterAssociated = async (requesterDid: string): Promise<boolean> => {
+    logger.info("scope_check_start", { requesterDid });
+    const cached = associationCache.get(requesterDid);
+    if (cached !== undefined) {
+      logger.info("scope_check_cache_hit", { requesterDid, cached });
+      if (cached) logger.info("bidder scope check: matched requester association (cached)", { requesterDid });
+      return cached;
+    }
     const BADGE_BLUE_KEYS_NSID = "com.publicdomainrelay.temp.badgeBlueKeys";
+
+    let allRecords: Array<{ value: Record<string, unknown> }> = [];
     try {
-      let cursor: string | undefined;
-      let totalChecked = 0;
-      do {
-        const result = await atproto.listRecords(atproto.did, BADGE_BLUE_KEYS_NSID, { limit: 100, cursor } as { limit?: number; cursor?: string });
-        const records = result?.records ?? [];
-        totalChecked += records.length;
-        for (const rec of records) {
-          const v = rec.value as Record<string, unknown>;
-          if (v.challenge === atproto.did && v.service === "requester_associate" && v.keyId === requesterDid) {
-            logger.info("bidder scope check: matched requester association", { requesterDid, keyId: v.keyId });
-            return true;
-          }
-        }
-        cursor = (result as Record<string, unknown>)?.cursor as string | undefined;
-      } while (cursor);
-      logger.warn("bidder scope check: no matching requester association", {
-        requesterDid, bidderDid: atproto.did, recordsChecked: totalChecked,
-      });
-      return false;
+      // Use unauthenticated public read — OAuth-authed listRecords hangs in
+      // the desktop runtime (patched Deno fetch with DPoP wrapper never resolves).
+      const listed = await listRecordsPublic(idResolver, atproto.did, BADGE_BLUE_KEYS_NSID);
+      allRecords = listed.map((r) => ({ value: r.value }));
     } catch (err) {
-      logger.warn("bidder scope check: listRecords failed", { requesterDid, error: String(err) });
+      logger.warn("bidder scope check: public listRecords failed", { requesterDid, error: String(err) });
       return false;
     }
+
+    for (const rec of allRecords) {
+      const v = rec.value;
+      if (v.challenge === atproto.did && v.service === "requester_associate" && v.keyId === requesterDid) {
+        associationCache.set(requesterDid, true);
+        logger.info("bidder scope check: matched requester association", { requesterDid, keyId: v.keyId });
+        return true;
+      }
+    }
+    associationCache.set(requesterDid, false);
+    logger.warn("bidder scope check: no matching requester association", {
+      requesterDid, bidderDid: atproto.did, recordsChecked: allRecords.length,
+    });
+    return false;
   };
 
   async function ensureOperatorAllowlist(service: string): Promise<void> {
@@ -186,7 +189,7 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
       [...new Set((providers ?? []).flatMap((p) => p.appliesTo))];
     return {
       $type: OFFERING_NSID,
-      endpointUrl: relay?.proxyRef ? didWebToHttps(relay.proxyRef) : `${atproto.did}#pdr_temp_market`,
+      endpointUrl: relay?.proxyUrl || `${atproto.did}#pdr_temp_market`,
       appliesTo,
       createdAt,
       refreshedAt: new Date().toISOString(),
@@ -238,7 +241,7 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
       signer: atproto.signer,
       attestationKp: atproto.attestationKp,
       idResolver,
-      relay: relay ?? { proxyRef: "" },
+      relay: relay ?? { proxyRef: "", proxyUrl: "", proxyHost: "" },
       dispatcherHost: "",
       log,
       activeContracts,
@@ -278,7 +281,7 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
     }
 
     const marketDeps: MarketServerDeps = {
-      hostname: () => relay?.proxyRef ? didWebHost(relay.proxyRef) : "",
+      hostname: () => relay?.proxyHost || "",
       idResolver,
       resolve: recordResolver,
       log,
@@ -334,26 +337,30 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
       logger.info("bidder rfp firehose watches started", { count: rfpWatchers.length });
     }
 
+    serve.onConnected(async () => {
+      await ensureOperatorAllowlist("");
+      const { rkey: offeringRkey, createdAt: offeringCreatedAt } = await ensureOffering();
+      if (offeringRefreshMs && offeringRkey) {
+        offeringRefresher = startOfferingRefresh({
+          intervalMs: offeringRefreshMs,
+          log,
+          refresh: async () => {
+            try {
+              await atproto.updateRecord(OFFERING_NSID, offeringRkey, buildOffering(offeringCreatedAt));
+            } catch { /* best-effort */ }
+            log("info", "bidder offering refreshed", { rkey: offeringRkey });
+          },
+        });
+        logger.info("bidder offering refresh started", { intervalMs: offeringRefreshMs });
+      }
+    });
+
     if (!skipServeBegin) {
       logger.info("bidder starting serve");
       await serve.beginServe();
+      // offering already created by onConnected callback during serve.beginServe()
     }
 
-    await ensureOperatorAllowlist("");
-    const { rkey: offeringRkey, createdAt: offeringCreatedAt } = await ensureOffering();
-    if (offeringRefreshMs && offeringRkey) {
-      offeringRefresher = startOfferingRefresh({
-        intervalMs: offeringRefreshMs,
-        log,
-        refresh: async () => {
-          try {
-            await atproto.updateRecord(OFFERING_NSID, offeringRkey, buildOffering(offeringCreatedAt));
-          } catch { /* best-effort */ }
-          log("info", "bidder offering refreshed", { rkey: offeringRkey });
-        },
-      });
-      logger.info("bidder offering refresh started", { intervalMs: offeringRefreshMs });
-    }
     logger.info("bidder ready", { did: atproto.did });
   }
 

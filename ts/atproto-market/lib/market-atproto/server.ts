@@ -254,12 +254,16 @@ export function createRfpDispatcher(cfg: SubmitRfpHandlerConfig): (input: Dispat
   const keysForDid = keysForDidFrom(deps);
 
   return async ({ rfpUri, rfpCid, issuerDid, serviceId, req }) => {
+    log("info", "dispatch: resolving rfp", { rfpUri });
     const rfp = await deps.resolve.resolve<RFP & { $type?: string }>({ uri: rfpUri, cid: rfpCid });
+    log("info", "dispatch: rfp resolved", { rfpUri });
     const sigErr = await verifyAuthored(deps, stripResolved(rfp) as Record<string, unknown>, rfpUri, keysForDid, log, "submitRfp");
     if (sigErr) return sigErr;
 
     if (acceptScopeFilter) {
+      log("info", "dispatch: running scope filter", { rfpUri, issuerDid });
       const accepted = await acceptScopeFilter({ rfpUri, rfpCid, issuerDid, rfp: stripResolved(rfp) as Record<string, unknown> });
+      log("info", "dispatch: scope filter done", { rfpUri, accepted });
       if (!accepted) {
         log("info", "submitRfp: rejected by scope filter", { rfpUri, issuerDid });
         return json({ ok: false, error: "scope filter declined" }, 403);
@@ -267,6 +271,7 @@ export function createRfpDispatcher(cfg: SubmitRfpHandlerConfig): (input: Dispat
     }
 
     const payloadNsid = rfp.payload ? nsidFromUri(rfp.payload.uri) : "";
+    log("info", "dispatch: routing to callback", { rfpUri, payloadNsid });
 
     const bucketId = serviceId ?? (serviceIds.length === 1 ? serviceIds[0] : undefined);
     const cb = bucketId ? callbacks[bucketId]?.[payloadNsid] : undefined;
@@ -305,7 +310,12 @@ export function createSubmitRfpHandler(cfg: SubmitRfpHandlerConfig): Handler {
 
     log("info", "submitRfp received", { rfpUri, rfpCid });
 
-    return dispatch({ rfpUri, rfpCid, issuerDid: auth.issuerDid, serviceId: auth.serviceId, req });
+    try {
+      return await dispatch({ rfpUri, rfpCid, issuerDid: auth.issuerDid, serviceId: auth.serviceId, req });
+    } catch (err) {
+      log("error", "submitRfp dispatch failed", { rfpUri, rfpCid, error: String(err) });
+      return json({ ok: false, error: "internal error" }, 500);
+    }
   };
 }
 

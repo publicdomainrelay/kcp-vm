@@ -47,6 +47,11 @@ export function createMarketFactory(
 ) {
   return createFactory<MarketEnv>({
     initApp: (app) => {
+      app.onError((err, c) => {
+        deps.log?.("error", "market route error", { path: c.req.path, method: c.req.method, error: String(err) });
+        return c.json({ ok: false, error: "internal error" }, 500);
+      });
+
       app.use(async (c, next) => {
         c.set("marketDeps", deps);
         await next();

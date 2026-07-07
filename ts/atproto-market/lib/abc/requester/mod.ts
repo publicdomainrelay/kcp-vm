@@ -90,6 +90,10 @@ export interface RequesterPDS {
   proxyRef: string;
   /** Valid only after beginServe(). */
   relaySubdomain: string;
+  /** Valid only after beginServe(). Returns "" before relay connects. */
+  proxyUrl: string;
+  /** Valid only after beginServe(). Returns "" before relay connects. */
+  proxyHost: string;
   beginServe(): Promise<void>;
   pendingBids: Map<string, CollectedBid[]>;
   createRepoRecord(collection: string, record: Record<string, unknown>): Promise<{ uri: string; cid: string }>;

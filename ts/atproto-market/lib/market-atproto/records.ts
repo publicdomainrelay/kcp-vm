@@ -121,6 +121,17 @@ export async function resolvePds(idResolver: IdResolver, did: string): Promise<s
   return pds;
 }
 
+/** Read all records from a repo's collection via plain HTTP (no auth needed for public repos). Resolves DID to PDS, then calls listRecordsAll. */
+export async function listRecordsPublic(
+  idResolver: IdResolver,
+  repo: string,
+  collection: string,
+  opts?: { limit?: number; timeoutMs?: number },
+): Promise<ListedRecord[]> {
+  const pdsUrl = await resolvePds(idResolver, repo);
+  return listRecordsAll(pdsUrl, repo, collection, opts);
+}
+
 export interface OfferingRefreshHandle {
   stop(): void;
 }

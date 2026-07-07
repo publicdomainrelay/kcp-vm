@@ -42,7 +42,7 @@ export interface VmBidderDeps {
   attestationKp: AttestationKeypair;
   signer: { did(): string; sign(bytes: Uint8Array): Promise<Uint8Array> };
   idResolver: IdResolver;
-  relay: { proxyRef: string };
+  relay: { proxyRef: string; proxyUrl: string };
   computeProvider: ComputeProvider;
   log: Logger;
   activeContracts: Map<string, ActiveContract>;
@@ -87,7 +87,7 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
       rfp: strongRef(rfpUri, rfpCid),
       payload: strongRef(payloadUri, payloadCid),
       bidConfig: strongRef(bidConfigRef.uri, bidConfigRef.cid),
-      submitAccept: relay.proxyRef.replace(/^did:web:/, "https://"),
+      submitAccept: relay.proxyUrl,
       createdAt: nowIso,
     };
     const { uri: bidUri, cid: bidCid, record: signedBid } = await createSignedRepoRecord(
@@ -190,7 +190,7 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
       bid: bidRef ? strongRef(bidRef.uri, bidRef.cid) : null,
       accept: strongRef(acceptUri, acceptCid),
       payload: null,
-      submitEvent: `https://${relay.proxyRef.replace("did:web:", "")}`,
+      submitEvent: relay.proxyUrl,
       createdAt: nowIso,
     };
     const bindCid = createAttestationCid(
@@ -226,7 +226,7 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
     return {
       body: {
         id: rkey, uri: receiptUri, cid: receiptCid,
-        submitEvent: `https://${relay.proxyRef.replace("did:web:", "")}`,
+        submitEvent: relay.proxyUrl,
       },
     };
   };
