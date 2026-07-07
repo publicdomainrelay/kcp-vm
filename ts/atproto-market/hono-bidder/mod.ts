@@ -273,7 +273,7 @@ bidderServe.app.post(`/xrpc/${ASSOCIATE_CONFIRM_NSID}`, async (c: { req: { heade
       authHeader,
       hostname: bidderRelay?.proxyHost || dispatcherHost,
       lxm: ASSOCIATE_CONFIRM_NSID,
-      serviceIds: ["pdr_temp_market"],
+      serviceIds: ["requester_associate", "pdr_temp_market"],
       extraAudienceDids: [atproto.did],
       idResolver: assocIdResolver,
     });

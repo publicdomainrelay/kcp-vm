@@ -241,6 +241,10 @@ export async function createLocalPDSAgent(opts: CreateLocalPDSAgentOpts): Promis
         type: "PDRTempComputeEvent",
         endpoint: `https://${signingKeyDid.replace(/:/g, "-").toLowerCase()}.${epHost}`,
       },
+      requester_associate: {
+        type: "PDRRequesterAssociate",
+        endpoint: `https://${signingKeyDid.replace(/:/g, "-").toLowerCase()}.${epHost}`,
+      },
     },
     sign: (bytes) => keypair.sign(bytes),
   });
@@ -261,6 +265,7 @@ export async function createLocalPDSAgent(opts: CreateLocalPDSAgentOpts): Promis
     didWebServices: [
       { id: DEFAULT_MARKET_SERVICE_ID, type: "PDRTempMarket" },
       { id: DEFAULT_COMPUTE_EVENT_SERVICE_ID, type: "PDRTempComputeEvent" },
+      { id: "requester_associate", type: "PDRRequesterAssociate" },
     ],
   });
 
