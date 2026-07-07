@@ -285,6 +285,10 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
         acceptAuthor: contract.acceptAuthor, acceptedAt: contract.acceptedAt!,
         terminatedAt: new Date().toISOString(), providerId,
       });
+      activeContracts.delete(rk);
+      ctx.log("info", "submitEvent: vm deleted", {
+        receiptKey: rk, remaining: activeContracts.size,
+      });
     } else {
       onContractChange?.({
         type: "termination-failed", key: rk,
@@ -292,12 +296,10 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
         acceptAuthor: contract.acceptAuthor, acceptedAt: contract.acceptedAt!,
         terminatedAt: new Date().toISOString(), providerId,
       });
+      ctx.log("warn", "submitEvent: vm not deleted — contract kept for retry", {
+        receiptKey: rk, remaining: activeContracts.size,
+      });
     }
-
-    activeContracts.delete(rk);
-    ctx.log("info", "submitEvent: vm deleted", {
-      receiptKey: rk, remaining: activeContracts.size,
-    });
 
     return { body: { ok: true } };
   };

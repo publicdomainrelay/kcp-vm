@@ -12,6 +12,11 @@
       "description": "Secp256k1 private key hex for the requester DID",
       "env": "REPO_PRIVATE_KEY_HEX"
     },
+    "private-key-hex-path": {
+      "type": "string",
+      "description": "Path to load/save the Secp256k1 private key hex. Creates file with generated key if missing or empty. Overridden by --private-key-hex if both are set.",
+      "env": "REPO_PRIVATE_KEY_HEX_PATH"
+    },
     "plc-directory-url": {
       "type": "string",
       "description": "PLC directory URL for DID registration",

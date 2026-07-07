@@ -64,14 +64,41 @@ const serve = createServe({
   unix: (options.serveUnix as string | undefined) ? { socketPath: options.serveUnix as string } : undefined,
 });
 
+// Resolve privateKeyHex from --private-key-hex-path if --private-key-hex not set.
+const privateKeyHexPath = options.privateKeyHexPath as string | undefined;
+let resolvedPrivateKeyHex = options.privateKeyHex as string | undefined;
+if (privateKeyHexPath && !resolvedPrivateKeyHex) {
+  try {
+    const content = await Deno.readTextFile(privateKeyHexPath).then((s) => s.trim());
+    if (content) {
+      resolvedPrivateKeyHex = content;
+      logger.info("private_key_loaded_from_path", { path: privateKeyHexPath });
+    }
+  } catch { /* file missing — will generate and save below */ }
+}
+
 const pds = await createRequesterPDS({
   logger,
   serve,
-  privateKeyHex: options.privateKeyHex as string | undefined,
+  privateKeyHex: resolvedPrivateKeyHex,
   plcDirectoryUrl: (options.plcDirectoryUrl as string) || "https://plc.directory",
   dispatcherHost,
   label,
 });
+
+// Persist generated key to path for future runs.
+if (privateKeyHexPath) {
+  try {
+    await Deno.writeTextFile(privateKeyHexPath, pds.privateKeyHex);
+    if (resolvedPrivateKeyHex) {
+      // Already had it — rewrite same value (idempotent).
+    } else {
+      logger.info("private_key_generated_and_saved", { path: privateKeyHexPath });
+    }
+  } catch (err) {
+    logger.warn("private_key_save_failed", { path: privateKeyHexPath, error: String(err) });
+  }
+}
 
 const offeringFirehoseMode = (options.offeringFirehoseMode as string) || "off";
 const offeringFirehoseUrl = options.offeringFirehoseUrl as string | undefined;
