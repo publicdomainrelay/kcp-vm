@@ -163,9 +163,11 @@ const atproto = await createATProto({
 // Persist generated key to path for future runs.
 if (privateKeyHexPath) {
   try {
+    const parent = privateKeyHexPath.includes("/") ? privateKeyHexPath.slice(0, privateKeyHexPath.lastIndexOf("/")) : ".";
+    await Deno.mkdir(parent, { recursive: true });
     await Deno.writeTextFile(privateKeyHexPath, privateKeyHex);
     if (resolvedPrivateKeyHex) {
-      // Already had it — rewrite same value (idempotent).
+      logger.info("private_key_rewritten", { path: privateKeyHexPath });
     } else {
       logger.info("private_key_generated_and_saved", { path: privateKeyHexPath });
     }
