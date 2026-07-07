@@ -98,14 +98,27 @@ const l1DenoJson = JSON.stringify({
     "@publicdomainrelay/compute-deno-atproto": "jsr:@publicdomainrelay/compute-deno-atproto@^0",
     "@publicdomainrelay/compute-deno-common": "jsr:@publicdomainrelay/compute-deno-common@^0",
     "@publicdomainrelay/sandbox-deno": "jsr:@publicdomainrelay/sandbox-deno@^0",
+    "@hono/hono": "jsr:@hono/hono@^4",
   },
 });
 
 const l2Source = [
+  `// Route table, same pattern as Hono app.get(path, handler)`,
+  `const routes = new Map();`,
+  `routes.set("/health", () => ({ status: "ok", level: 2 }));`,
+  ``,
   `let count = 0;`,
+  ``,
   `self.onmessage = (e) => {`,
   `  count++;`,
-  `  self.postMessage({ status: 200, headers: {}, body: { status: "ok", level: 2, count } });`,
+  `  const msg = e.data;`,
+  `  const path = msg.path || "/health";`,
+  `  const handler = routes.get(path);`,
+  `  if (handler) {`,
+  `    self.postMessage({ status: 200, headers: {}, body: { ...handler(), count } });`,
+  `  } else {`,
+  `    self.postMessage({ status: 404, headers: {}, body: { error: "not found" } });`,
+  `  }`,
   `};`,
 ].join("\n");
 
@@ -164,6 +177,7 @@ const l1Source = [
   `      lock: "{}",`,
   `      json: body.l2DenoJson || "{}",`,
   `      bundle: body.l2Source || "",`,
+  `      permissions: body.l2Permissions || {},`,
   `    });`,
   `    const instanceRef = await instanceStore.register({ manifest: manifestRef });`,
   `    await runner.start(instanceRef, manifestRef);`,
@@ -213,7 +227,7 @@ Deno.test({
       const regJwt = createFakeJwt("127.0.0.1", REGISTER_NSID);
       const regRes = await fetch(`${base}/xrpc/${REGISTER_NSID}`, {
         method: "POST", headers: { "authorization": `Bearer ${regJwt}`, "content-type": "application/json" },
-        body: JSON.stringify({ source: l1Source, denoJson: l1DenoJson, persistent: true, permissionMode: "allow-all", permissions: { env: true, sys: true, read: true, net: true } }),
+        body: JSON.stringify({ source: l1Source, denoJson: l1DenoJson, persistent: true, permissionMode: "allow-all", permissions: { env: true, sys: true, read: true, write: true, net: true } }),
       });
       if (regRes.status !== 200) throw new Error(`L1 register failed: ${regRes.status} ${await regRes.text()}`);
       const { instance: l1Ref } = await regRes.json() as { instance: { uri: string; cid: string } };
@@ -224,7 +238,7 @@ Deno.test({
         method: "POST", headers: { "authorization": `Bearer ${execJwt}`, "content-type": "application/json" },
         body: JSON.stringify({
           instance: { uri: l1Ref.uri, cid: l1Ref.cid },
-          request: { method: "POST", path: "/", body: { action: "register_l2", l2Source, l2DenoJson } },
+          request: { method: "POST", path: "/", body: { action: "register_l2", l2Source, l2DenoJson, l2Permissions: { net: true, env: true } } },
         }),
       });
       assertEquals(regL2Res.status, 200);
