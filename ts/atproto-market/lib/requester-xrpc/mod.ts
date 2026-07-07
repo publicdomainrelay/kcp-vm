@@ -806,7 +806,7 @@ runcmd:
       for (const offering of offerings) {
         const appliesTo = offering.value.appliesTo as string[] | undefined;
         const endpointUrl = offering.value.endpointUrl as string | undefined;
-        if (!endpointUrl || !Array.isArray(appliesTo) || !appliesTo.includes(COMPUTE_VM_NSID)) continue;
+        if (!endpointUrl || !Array.isArray(appliesTo) || !appliesTo.includes(opts.appliesToNsid ?? COMPUTE_VM_NSID)) continue;
 
         const target = await pds.resolveBidderEndpoint(endpointUrl);
         if (!target) {

@@ -70,6 +70,7 @@ export interface ContractFlowOptions {
    * headless/container tests are unaffected; the CLI enables it by default.
    */
   rbac?: boolean;
+  appliesToNsid?: string;
 }
 
 export interface PDSOptions {
