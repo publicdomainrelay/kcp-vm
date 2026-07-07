@@ -48,7 +48,7 @@ if (privateKeyHexPath && !resolvedPrivateKeyHex) {
 }
 
 const keypair = resolvedPrivateKeyHex
-  ? await Secp256k1Keypair.import(resolvedPrivateKeyHex)
+  ? await Secp256k1Keypair.import(resolvedPrivateKeyHex, { exportable: true })
   : await Secp256k1Keypair.create({ exportable: true });
 
 const privateKeyHex = resolvedPrivateKeyHex ??
