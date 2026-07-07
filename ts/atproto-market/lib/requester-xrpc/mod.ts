@@ -762,13 +762,14 @@ runcmd:
   const filteredBidderDids = bidderDids.filter((d) => !deniedSet.has(d));
   log("bidder_discovery", { total: filteredBidderDids.length, relay: relayDids.length, watch: watcherDids.length, vouched: vouchedDids.length, extra: extraBidderDids.length, denied: bidderDids.length - filteredBidderDids.length });
 
-  // 4. Submit RFP to each bidder.
-  for (const bidderDid of filteredBidderDids) {
+  // 4. Submit RFP to each bidder (parallel across bidders, deduped by endpoint).
+  const seen = new Set<string>();
+  await Promise.allSettled(filteredBidderDids.map(async (bidderDid) => {
     try {
       const doc = await idResolver.did.resolve(bidderDid);
-      if (!doc) continue;
+      if (!doc) return;
       const pdsUrl = getPdsEndpoint(doc);
-      if (!pdsUrl) continue;
+      if (!pdsUrl) return;
 
       // Fetch offering records from bidder's PDS.
       const offerings = await listRecordsAll(pdsUrl, bidderDid, OFFERING_NSID);
@@ -782,6 +783,12 @@ runcmd:
           log("bidder_unknown_endpoint", { endpointUrl });
           continue;
         }
+
+        // Deduplicate: one RFP per (bidderDid, targetUrl) pair.
+        const dedupKey = `${bidderDid}::${target.targetUrl}`;
+        if (seen.has(dedupKey)) continue;
+        seen.add(dedupKey);
+
         log("submitting_rfp", { bidderDid, endpointUrl });
         const r = await pds.callBidder(target.targetUrl, SUBMIT_RFP_NSID, SUBMIT_RFP_LXM, target.audDid, {
           rfpUri, rfpCid,
@@ -791,7 +798,7 @@ runcmd:
     } catch (err) {
       log("bidder_error", { bidderDid, error: String(err) });
     }
-  }
+  }));
 
   // 5. Wait for bids.
   log("waiting_for_bids", { bidWindowSec });
