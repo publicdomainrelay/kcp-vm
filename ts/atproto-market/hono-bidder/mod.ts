@@ -19,6 +19,11 @@ import { createLocalComputeProvider } from "@publicdomainrelay/compute-provider-
 import { createOidcProvisioningEnricher } from "@publicdomainrelay/oidc-issuer-hono";
 import { createRbacProvisioner } from "@publicdomainrelay/rbac-atproto";
 import { Secp256k1Keypair } from "@atproto/crypto";
+import { TID } from "@atproto/common";
+import { IdResolver } from "@atproto/identity";
+import { qrcode } from "@libs/qrcode";
+import { ASSOCIATE_CONFIRM_NSID } from "@publicdomainrelay/market-lexicons";
+import { verifyServiceAuth } from "@publicdomainrelay/market-atproto";
 import cliArgsEnv from "./cli-args-env.json" with { type: "json" };
 
 let runtimeConfig: Record<string, unknown> | null = null;
@@ -29,11 +34,25 @@ const serviceName = (options.serviceName as string) ?? "bidder";
 const logger = createLogger({ serviceName });
 
 
-const keypair = (options.privateKeyHex as string | undefined)
-  ? await Secp256k1Keypair.import(options.privateKeyHex as string)
+// Resolve privateKeyHex: --private-key-hex takes priority, then --private-key-hex-path
+const privateKeyHexPath = options.privateKeyHexPath as string | undefined;
+let resolvedPrivateKeyHex = options.privateKeyHex as string | undefined;
+if (privateKeyHexPath && !resolvedPrivateKeyHex) {
+  try {
+    const content = await Deno.readTextFile(privateKeyHexPath).then((s) => s.trim());
+    if (content) {
+      resolvedPrivateKeyHex = content;
+      logger.info("private_key_loaded_from_path", { path: privateKeyHexPath });
+    }
+  } catch { /* file missing — will generate and save below */ }
+}
+
+const keypair = resolvedPrivateKeyHex
+  ? await Secp256k1Keypair.import(resolvedPrivateKeyHex)
   : await Secp256k1Keypair.create({ exportable: true });
 
-const privateKeyHex = (options.privateKeyHex as string) ?? "";
+const privateKeyHex = resolvedPrivateKeyHex ??
+  Array.from(await keypair.export()).map((b) => b.toString(16).padStart(2, "0")).join("");
 
 const dispatcherHost = (options.relayDispatcherHost as string) || "xrpc.fedproxy.com";
 
@@ -88,12 +107,14 @@ if ((options.atprotoHandle as string | undefined) && (options.atprotoPassword as
 } else {
   // TCP port 0 so the local atproto-relay can crawl this PDS directly
   // (the did-key-relay subscription protocol wraps firehose frames).
+  const pdsStatePath = options.pdsStatePath as string | undefined;
   const pdsServe = createServe({ logger, tcp: { port: 0 } });
   atprotoAgent = await createLocalPDSAgent({
     logger, keypair,
     serve: pdsServe,
     plcDirectoryUrl,
     dispatcherHost,
+    storagePath: pdsStatePath,
   });
   await atprotoAgent.beginServe();
   _deferredPdsPort = pdsServe.tcpPort;
@@ -138,6 +159,20 @@ const atproto = await createATProto({
   plcDirectory: createPlcDirectoryClient({ plcDirectoryUrl }),
   agent: atprotoAgent,
 });
+
+// Persist generated key to path for future runs.
+if (privateKeyHexPath) {
+  try {
+    await Deno.writeTextFile(privateKeyHexPath, privateKeyHex);
+    if (resolvedPrivateKeyHex) {
+      // Already had it — rewrite same value (idempotent).
+    } else {
+      logger.info("private_key_generated_and_saved", { path: privateKeyHexPath });
+    }
+  } catch (err) {
+    logger.warn("private_key_save_failed", { path: privateKeyHexPath, error: String(err) });
+  }
+}
 
 const providers: MarketBidderProviderRef[] = [];
 const serves: ReturnType<typeof createServe>[] = [];
@@ -216,6 +251,51 @@ const bidderServe = createServe({
   unix: (options.serveUnix as string | undefined) ? { socketPath: options.serveUnix as string } : undefined,
   relays: bidderRelay ? [bidderRelay] : [],
 });
+
+// ── association confirmation (webapp calls this when user scans bidder QR) ──
+const assocIdResolver = new IdResolver({ plcUrl: plcDirectoryUrl });
+let resolveAssociateCalled!: (callerDid: string) => void;
+const associateCalled = new Promise<string>((r) => { resolveAssociateCalled = r; });
+let resolveAssociationApproved!: () => void;
+let rejectAssociationApproved!: (err: Error) => void;
+const associationApproved = new Promise<void>((resolve, reject) => {
+  resolveAssociationApproved = resolve;
+  rejectAssociationApproved = reject;
+});
+
+bidderServe.app.post(`/xrpc/${ASSOCIATE_CONFIRM_NSID}`, async (c: { req: { header(name: string): string | undefined }; json(obj: unknown, status?: number): Response }) => {
+  const authHeader = c.req.header("Authorization");
+  if (!authHeader) return c.json({ error: "Unauthorized" }, 401);
+  try {
+    const auth = await verifyServiceAuth({
+      authHeader,
+      hostname: bidderRelay?.proxyHost || dispatcherHost,
+      lxm: ASSOCIATE_CONFIRM_NSID,
+      serviceIds: ["pdr_temp_market"],
+      extraAudienceDids: [atproto.did],
+      idResolver: assocIdResolver,
+    });
+    resolveAssociateCalled(auth.issuerDid);
+    await associationApproved;
+    const BADGE_BLUE_KEYS_NSID = "com.publicdomainrelay.temp.badgeBlueKeys";
+    await atproto.applyWrites(atproto.did, [{
+      action: "create",
+      collection: BADGE_BLUE_KEYS_NSID,
+      rkey: TID.next().toString(),
+      record: {
+        $type: BADGE_BLUE_KEYS_NSID,
+        keyId: auth.issuerDid,
+        challenge: atproto.did,
+        service: "requester_associate",
+        createdAt: new Date().toISOString(),
+      },
+    }]);
+    return c.json({ ok: true, requesterDid: atproto.did });
+  } catch (err) {
+    return c.json({ error: String(err) }, 401);
+  }
+});
+
 const acceptScopeRaw = options.acceptScope as string | undefined;
 const acceptScope = (acceptScopeRaw === "only_me" || acceptScopeRaw === "direct_network" || acceptScopeRaw === "policy_based")
   ? acceptScopeRaw : undefined;
@@ -246,6 +326,56 @@ console.log(JSON.stringify({
   proxyRef: bidderRelay?.proxyRef,
   servePort: bidderServe.tcpPort,
 }));
+
+const BADGE_BLUE_KEYS_NSID = "com.publicdomainrelay.temp.badgeBlueKeys";
+let hasAssociation = false;
+if (!options.noQr) {
+  let cursor: string | undefined;
+  do {
+    const result = await atproto.listRecords(atproto.did, BADGE_BLUE_KEYS_NSID, { limit: 100 });
+    for (const rec of result.records) {
+      const v = rec.value as Record<string, unknown>;
+      if (v.challenge === atproto.did && v.service === "requester_associate") {
+        hasAssociation = true;
+        break;
+      }
+    }
+    cursor = (result as { cursor?: string }).cursor;
+  } while (cursor && !hasAssociation);
+}
+
+if (hasAssociation) {
+  logger.info("existing_association_found", { did: atproto.did, hint: "skipping QR — prior association exists" });
+}
+
+if (!options.noQr && !hasAssociation) {
+  const qrUrl = `https://qr.fedfork.com/#plc=${atproto.did}`;
+  logger.info("qr_url", { url: qrUrl });
+  const qr = qrcode(qrUrl, { output: "console", ecl: "HIGH" });
+  console.log(qr);
+
+  logger.info("waiting_for_association", {
+    hint: "Scan QR code, then confirm on your phone",
+    bidderDid: atproto.did,
+  });
+  const callerDid = await associateCalled;
+
+  let handle = callerDid;
+  try {
+    const doc = await assocIdResolver.did.resolve(callerDid);
+    const aka = (doc as Record<string, unknown>)?.alsoKnownAs as string[] | undefined;
+    if (aka?.[0]) handle = aka[0].replace("at://", "");
+  } catch { /* use DID as fallback */ }
+
+  const answer = prompt(`Associate with ${handle}? [y/N] `);
+  if (!answer || !answer.toLowerCase().startsWith("y")) {
+    logger.info("association_rejected", { callerDid, handle });
+    rejectAssociationApproved(new Error("User rejected association"));
+    Deno.exit(0);
+  }
+  resolveAssociationApproved();
+  logger.info("association_confirmed", { callerDid, handle });
+}
 
 // Re-register with local relays using the direct serve port.
 // Needed so local atproto-relays can connect to subscribeRepos

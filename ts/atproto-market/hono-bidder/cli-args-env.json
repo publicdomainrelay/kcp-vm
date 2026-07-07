@@ -122,6 +122,21 @@
       "description": "Firehose websocket URL to watch for RFP records (relay subscribeRepos base, or jetstream subscribe base)",
       "env": "RFP_FIREHOSE_URL"
     },
+    "no-qr": {
+      "type": "boolean",
+      "description": "Skip QR code display and association prompt",
+      "env": "NO_QR"
+    },
+    "private-key-hex-path": {
+      "type": "string",
+      "description": "Path to load/save the Secp256k1 private key hex. Creates file with generated key if missing. Overridden by --private-key-hex if both set.",
+      "env": "REPO_PRIVATE_KEY_HEX_PATH"
+    },
+    "pds-state-path": {
+      "type": "string",
+      "description": "Path for PDS state persistence (Deno.Kv SQLite). Makes badgeBlueKeys associations survive restarts.",
+      "env": "PDS_STATE_PATH"
+    },
     "accept-scope": {
       "type": "string",
       "description": "Accept jobs from scope: only_me, direct_network, policy_based, or open (default)",

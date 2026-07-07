@@ -6,7 +6,7 @@ import type { StructuredLoggerInterface } from "@publicdomainrelay/logger";
 import type { RepoApi, WriteOp } from "@publicdomainrelay/atproto-repo-abc";
 import type { CommitEvent } from "@publicdomainrelay/atproto-repo-abc";
 import { createRepoFactory } from "@publicdomainrelay/hono-factory-atproto-repo-deno";
-import { MemoryStorage, signServiceAuth } from "@publicdomainrelay/atproto-repo-deno";
+import { MemoryStorage, DenoKvStorage, signServiceAuth } from "@publicdomainrelay/atproto-repo-deno";
 import { PlcClient, createGenesisOp } from "@publicdomainrelay/did-plc";
 import type { AttestationKeypair, InlineAttestation } from "@publicdomainrelay/market-atproto";
 import { attestationFor, toStorableEntry, createRecordResolver } from "@publicdomainrelay/market-atproto";
@@ -192,6 +192,7 @@ export interface CreateLocalPDSAgentOpts {
   serve: ServeHandle;
   plcDirectoryUrl: string;
   dispatcherHost: string;
+  storagePath?: string;
 }
 
 export interface LocalPDSAgent extends AtprotoAgentLike {
@@ -203,7 +204,7 @@ export interface LocalPDSAgent extends AtprotoAgentLike {
 }
 
 export async function createLocalPDSAgent(opts: CreateLocalPDSAgentOpts): Promise<LocalPDSAgent> {
-  const { logger, keypair, serve, plcDirectoryUrl, dispatcherHost } = opts;
+  const { logger, keypair, serve, plcDirectoryUrl, dispatcherHost, storagePath } = opts;
   const signingKeyDid = keypair.did();
   // DID-doc service endpoints advertise the canonical host without any internal
   // port (production has none); the relay subdomain alone routes via dispatcher.
@@ -254,7 +255,7 @@ export async function createLocalPDSAgent(opts: CreateLocalPDSAgentOpts): Promis
   };
 
   const { app, api } = createRepoFactory({
-    storage: new MemoryStorage(),
+    storage: storagePath ? await DenoKvStorage.create(storagePath) : new MemoryStorage(),
     signer,
     baseOrigin: `https://${keypair.did().replace(/:/g, "-").toLowerCase()}.${dispatcherHost}`,
     didWebServices: [
