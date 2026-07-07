@@ -35,6 +35,21 @@ export type {
 };
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function deepMergeCallbacks<T>(
+  a: Record<string, Record<string, T>>,
+  b: Record<string, Record<string, T>>,
+): Record<string, Record<string, T>> {
+  const result: Record<string, Record<string, T>> = {};
+  for (const key of new Set([...Object.keys(a), ...Object.keys(b)])) {
+    result[key] = { ...(a[key] ?? {}), ...(b[key] ?? {}) };
+  }
+  return result;
+}
+
+// ---------------------------------------------------------------------------
 // Config types
 // ---------------------------------------------------------------------------
 
@@ -263,21 +278,21 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
     for (const p of providers ?? []) {
       const cb = p.buildCallbacks(deps);
       if (cb.rfpCallbacks) {
-        merged.rfpCallbacks = { ...(merged.rfpCallbacks ?? {}), ...cb.rfpCallbacks };
+        merged.rfpCallbacks = deepMergeCallbacks(merged.rfpCallbacks ?? {}, cb.rfpCallbacks);
       }
       if (cb.onAccept) {
         merged.onAccept = merged.onAccept ?? cb.onAccept;
       }
       if (cb.eventCallbacks) {
-        merged.eventCallbacks = { ...(merged.eventCallbacks ?? {}), ...cb.eventCallbacks };
+        merged.eventCallbacks = deepMergeCallbacks(merged.eventCallbacks ?? {}, cb.eventCallbacks);
       }
     }
 
     if (callbackFactory) {
       const cb = await callbackFactory(deps);
-      if (cb.rfpCallbacks) merged.rfpCallbacks = { ...(merged.rfpCallbacks ?? {}), ...cb.rfpCallbacks };
+      if (cb.rfpCallbacks) merged.rfpCallbacks = deepMergeCallbacks(merged.rfpCallbacks ?? {}, cb.rfpCallbacks);
       if (cb.onAccept) merged.onAccept = merged.onAccept ?? cb.onAccept;
-      if (cb.eventCallbacks) merged.eventCallbacks = { ...(merged.eventCallbacks ?? {}), ...cb.eventCallbacks };
+      if (cb.eventCallbacks) merged.eventCallbacks = deepMergeCallbacks(merged.eventCallbacks ?? {}, cb.eventCallbacks);
     }
 
     const marketDeps: MarketServerDeps = {
