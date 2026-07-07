@@ -121,6 +121,11 @@
       "description": "Fulfillment policy mode for the RFP: only_me, direct_network, or policy_based. Omit for no policy (open to all bidders)",
       "env": "POLICY_MODE"
     },
+    "pds-state-path": {
+      "type": "string",
+      "description": "Path to persist PDS state (Deno.Kv SQLite file). If set, PDS state survives restarts and prior associations are remembered",
+      "env": "PDS_STATE_PATH"
+    },
     "no-qr": {
       "type": "boolean",
       "description": "Skip QR code and association confirmation prompt"

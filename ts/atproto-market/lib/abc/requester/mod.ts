@@ -79,6 +79,7 @@ export interface PDSOptions {
   plcDirectoryUrl?: string;
   dispatcherHost?: string;
   label?: string;
+  storagePath?: string;
 }
 
 export interface RequesterPDS {
@@ -114,6 +115,8 @@ export interface RequesterPDS {
   approveAssociation(): void;
   /** Call if CLI user rejects association. Rejects the pending XRPC response. */
   rejectAssociation(err: Error): void;
+  /** Release storage resources (close Deno.Kv if using DenoKvStorage). */
+  dispose(): Promise<void>;
 }
 
 export interface SshSessionProvider {

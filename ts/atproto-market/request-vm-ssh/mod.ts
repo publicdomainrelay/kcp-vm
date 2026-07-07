@@ -84,6 +84,7 @@ const pds = await createRequesterPDS({
   plcDirectoryUrl: (options.plcDirectoryUrl as string) || "https://plc.directory",
   dispatcherHost,
   label,
+  storagePath: options.pdsStatePath as string | undefined,
 });
 
 // Persist generated key to path for future runs.
@@ -118,7 +119,28 @@ if (offeringFirehoseMode !== "off" && offeringFirehoseUrl) {
 await pds.beginServe();
 logger.info("requester_ready", { did: pds.did, proxyRef: pds.proxyRef, dispatcherHost });
 
+const BADGE_BLUE_KEYS_NSID = "com.publicdomainrelay.temp.badgeBlueKeys";
+let hasAssociation = false;
 if (!options.noQr) {
+  let cursor: string | undefined;
+  do {
+    const result = await pds.api.listRecords(pds.did, BADGE_BLUE_KEYS_NSID, { limit: 100, cursor });
+    for (const rec of result.records) {
+      const v = rec.value as Record<string, unknown>;
+      if (v.challenge === pds.did && v.service === "requester_associate") {
+        hasAssociation = true;
+        break;
+      }
+    }
+    cursor = result.cursor;
+  } while (cursor && !hasAssociation);
+}
+
+if (hasAssociation) {
+  logger.info("existing_association_found", { did: pds.did, hint: "skipping QR — prior association exists" });
+}
+
+if (!options.noQr && !hasAssociation) {
   const qrUrl = `https://qr.fedfork.com/#plc=${pds.did}`;
   logger.info("qr_url", { url: qrUrl });
   const qr = qrcode(qrUrl, { output: "console", ecl: "HIGH" });
@@ -207,4 +229,5 @@ const result = await runComputeContract(pds, {
 });
 
 logger.info("result", result as unknown as Record<string, unknown>);
+await pds.dispose();
 shutdown();

@@ -7,10 +7,10 @@ import { IdResolver } from "@atproto/identity";
 import { TID } from "@atproto/common";
 import { getPdsEndpoint } from "@atproto/common-web";
 import { createRepoFactory } from "@publicdomainrelay/hono-factory-atproto-repo-deno";
-import { MemoryStorage, signServiceAuth } from "@publicdomainrelay/atproto-repo-deno";
+import { MemoryStorage, DenoKvStorage, signServiceAuth } from "@publicdomainrelay/atproto-repo-deno";
 import type { Signer } from "@publicdomainrelay/atproto-repo-abc";
 import type { RepoApi } from "@publicdomainrelay/atproto-repo-abc";
-import { PlcClient, createGenesisOp } from "@publicdomainrelay/did-plc";
+import { PlcClient, createGenesisOp, PlcNotFoundError } from "@publicdomainrelay/did-plc";
 import { createXrpcRelay } from "@publicdomainrelay/xrpc-relay";
 import {
   loadOrGenerateKeypair,
@@ -229,9 +229,18 @@ export async function createRequesterPDS(
     sign: (bytes) => keypair.sign(bytes),
   });
 
-  logger.info("did_plc_registering", { did, label });
-  await plc.submitOp(did, op);
-  logger.info("did_plc_registered", { did, label });
+  try {
+    await plc.resolve(did);
+    logger.info("did_plc_already_registered", { did, label });
+  } catch (err) {
+    if (err instanceof PlcNotFoundError) {
+      logger.info("did_plc_registering", { did, label });
+      await plc.submitOp(did, op);
+      logger.info("did_plc_registered", { did, label });
+    } else {
+      throw err;
+    }
+  }
 
   // ── signer ───────────────────────────────────────────────────────────
 
@@ -258,8 +267,12 @@ export async function createRequesterPDS(
 
   const baseOrigin = `https://${keypair.did().replace(/:/g, "-").toLowerCase()}.${dispatcherHost}`;
 
+  const store = opts.storagePath
+    ? await DenoKvStorage.create(opts.storagePath)
+    : new MemoryStorage();
+
   const { app, api } = createRepoFactory({
-    storage: new MemoryStorage(),
+    storage: store,
     signer,
     baseOrigin,
     didWebServices: [
@@ -334,6 +347,21 @@ export async function createRequesterPDS(
       resolveAssociateCalled?.(auth.issuerDid);
       // Wait for CLI user to approve/reject before responding to webapp
       await associationApproved;
+      // Persist association in our own repo so it survives restarts
+      // (mirrors bidder pattern: badgeBlueKeys with challenge=self, keyId=caller)
+      const BADGE_BLUE_KEYS_NSID = "com.publicdomainrelay.temp.badgeBlueKeys";
+      await api.applyWrites(did, [{
+        action: "create",
+        collection: BADGE_BLUE_KEYS_NSID,
+        rkey: TID.next().toString(),
+        record: {
+          $type: BADGE_BLUE_KEYS_NSID,
+          keyId: auth.issuerDid,
+          challenge: did,
+          service: "requester_associate",
+          createdAt: new Date().toISOString(),
+        },
+      }]);
       return c.json({ ok: true, requesterDid: did });
     } catch (err) {
       return c.json({ error: String(err) }, 401);
@@ -440,6 +468,7 @@ export async function createRequesterPDS(
     associateCalled,
     approveAssociation: () => { resolveAssociationApproved?.(); },
     rejectAssociation: (err: Error) => { rejectAssociationApproved?.(err); },
+    dispose: async () => { store.close(); },
   };
 }
 
@@ -705,13 +734,16 @@ runcmd:
       const { createPolicy } = await import("@publicdomainrelay/market-policy");
       const policy = createPolicy(policyMode);
       if (policy) {
-        policyRef = await pds.createRepoRecord(policy.policyNsid, {
+        const policyRecord: Record<string, unknown> = {
           $type: policy.policyNsid,
           requesterDid: pds.did,
-          vouchNsid: policyMode === "direct_network" ? "sh.tangled.graph.vouch" : undefined,
-          maxDepth: policyMode === "direct_network" ? 1 : undefined,
           createdAt: new Date().toISOString(),
-        });
+        };
+        if (policyMode === "direct_network") {
+          policyRecord.vouchNsid = "sh.tangled.graph.vouch";
+          policyRecord.maxDepth = 1;
+        }
+        policyRef = await pds.createRepoRecord(policy.policyNsid, policyRecord);
         rfpRecord.policy = { $type: "com.atproto.repo.strongRef", uri: policyRef.uri, cid: policyRef.cid };
         log("policy_attached", { policyMode, policyUri: policyRef.uri });
       }
