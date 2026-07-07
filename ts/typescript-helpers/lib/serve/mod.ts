@@ -3,6 +3,8 @@ import type { StructuredLoggerInterface } from "@publicdomainrelay/logger";
 
 export interface RelayRef {
   proxyRef: string;
+  readonly proxyUrl: string;
+  readonly proxyHost: string;
   onServe(fetch: (req: Request) => Promise<Response>): Promise<void>;
   close(): void;
 }
