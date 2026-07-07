@@ -6,3 +6,5 @@ export const REGISTER_WORKER_MANIFEST_NSID = "com.publicdomainrelay.temp.compute
 export const RUN_PERSISTENT_WORKER_INSTANCE_NSID = "com.publicdomainrelay.temp.compute.deno.runPersistentWorkerInstance";
 export const EXECUTE_WORKER_INSTANCE_NSID = "com.publicdomainrelay.temp.compute.deno.executeWorkerInstance";
 export const GATE_REGISTRY_WORKER_MANIFEST_PERMISSIONS_NSID = "com.publicdomainrelay.temp.compute.deno.gateRegistryWorkerManifestPermissions";
+export const MARKET_EVALUATE_POLICY_NSID = "com.publicdomainrelay.temp.market.evaluatePolicy";
+export const MARKET_EVALUATE_POLICY_LXM = MARKET_EVALUATE_POLICY_NSID;
