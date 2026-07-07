@@ -628,6 +628,8 @@ export async function runComputeContract(
     offeringWatcherDids?: () => string[];
     logger?: StructuredLoggerInterface;
     policyMode?: "only_me" | "direct_network" | "policy_based";
+    appliesToNsid?: string;
+    payloadFactory?: () => Promise<{ uri: string; cid: string }>;
   } = {},
 ): Promise<ContractFlowResult> {
   const vmName = opts.vmName ?? `compute-${randomHex8()}`;
@@ -707,13 +709,23 @@ runcmd:
 `;
   }
 
-  // 1. Create compute.vm record.
-  const { uri: vmUri, cid: vmCid } = await pds.createRepoRecord(COMPUTE_VM_NSID, {
-    $type: COMPUTE_VM_NSID,
-    role: vmName.trim() || "compute",
-    user_data: cloudInit,
-    createdAt: new Date().toISOString(),
-  });
+  // 1. Create payload record (compute.vm by default, or via payloadFactory).
+  let vmUri: string;
+  let vmCid: string;
+  if (opts.payloadFactory) {
+    const ref = await opts.payloadFactory();
+    vmUri = ref.uri;
+    vmCid = ref.cid;
+  } else {
+    const ref = await pds.createRepoRecord(COMPUTE_VM_NSID, {
+      $type: COMPUTE_VM_NSID,
+      role: vmName.trim() || "compute",
+      user_data: cloudInit,
+      createdAt: new Date().toISOString(),
+    });
+    vmUri = ref.uri;
+    vmCid = ref.cid;
+  }
   log("vm_record_created", { uri: vmUri, cid: vmCid });
 
   // 2. Create signed market.rfp.
