@@ -61,10 +61,10 @@
       "type": "boolean",
       "description": "Enable local compute provider"
     },
-    "compute-provider-local-container-mode": {
+    "compute-provider-local-mode": {
       "type": "string",
-      "description": "Local provider mode: vm or container",
-      "env": "COMPUTE_PROVIDER_LOCAL_CONTAINER_MODE"
+      "description": "Local provider mode: container or vm (default: container)",
+      "env": "COMPUTE_PROVIDER_LOCAL_MODE"
     },
     "compute-provider-local-vm-image": {
       "type": "string",

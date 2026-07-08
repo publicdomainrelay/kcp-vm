@@ -7,7 +7,7 @@ import {
   createSshSessionProvider,
   ensureWebsocat,
 } from "@publicdomainrelay/requester-xrpc";
-import { OFFERING_NSID } from "@publicdomainrelay/market-common";
+import { DEFAULT_RELAY_URLS, OFFERING_NSID } from "@publicdomainrelay/market-common";
 import { createFirehoseWatcher as createSubscribeReposWatcher } from "@publicdomainrelay/firehose-watcher-subscriberepos";
 import { createFirehoseWatcher as createJetstreamWatcher } from "@publicdomainrelay/firehose-watcher-jetstream";
 import { qrcode } from "@libs/qrcode";
@@ -40,7 +40,10 @@ if (dispatcherHost.includes("localhost") || dispatcherHost.startsWith("127.")) {
     return realFetch(input as string | URL | Request, init);
   }) as typeof fetch;
 }
-const relayUrl = options.relayUrl as string | undefined;
+const cliRelayUrl = options.relayUrl as string | undefined;
+const relayUrls = cliRelayUrl
+  ? [...new Set([...DEFAULT_RELAY_URLS, cliRelayUrl])]
+  : DEFAULT_RELAY_URLS;
 
 const splitDids = (s: string | undefined): string[] =>
   s ? s.split(",").map((d) => d.trim()).filter(Boolean) : [];
@@ -56,7 +59,7 @@ if (userDataPath) {
 const rbac = !(options.skipRbac as boolean);
 
 await ensureWebsocat(logger);
-logger.info("requester_starting", { label, dispatcherHost, relayUrl: relayUrl ?? "(none)" });
+logger.info("requester_starting", { label, dispatcherHost, relayUrls });
 
 const serve = createServe({
   logger,
@@ -219,7 +222,7 @@ const result = await runComputeContract(pds, {
   vmReadyTimeoutSec: options.vmReadyTimeoutSec as number,
   extraBidderDids,
   denyBidderDids,
-  relayUrl,
+  relayUrls,
   baseUserData,
   rbac,
   policyMode,

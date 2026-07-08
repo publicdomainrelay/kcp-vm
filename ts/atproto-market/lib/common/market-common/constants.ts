@@ -32,3 +32,9 @@ export const DEFAULT_COMPUTE_EVENT_SERVICE_ID = "pdr_temp_compute_event";
 
 export const REGISTRY_ENDPOINTS_ENV = "MARKET_REGISTRY_ENDPOINTS";
 export const DEFAULT_REGISTRY_ENDPOINTS = "";
+
+export const DEFAULT_RELAY_URLS = [
+  "https://reg.market.fedfork.com",
+  "https://bsky.network",
+  "https://relay.mini-cloud-0002.chadig.com",
+];

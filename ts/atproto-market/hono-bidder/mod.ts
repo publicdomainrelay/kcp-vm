@@ -10,7 +10,7 @@ import { createComputeProviderDenoWorker, createWorkerProviderHooks } from "@pub
 import { createATProto, createLocalPDSAgent, createRemoteAgent } from "@publicdomainrelay/atproto-helpers";
 import type { LocalPDSAgent } from "@publicdomainrelay/atproto-helpers";
 import { createBadgeBlueSigner } from "@publicdomainrelay/market-atproto";
-import { RFP_NSID } from "@publicdomainrelay/market-common";
+import { DEFAULT_RELAY_URLS, RFP_NSID } from "@publicdomainrelay/market-common";
 import { createFirehoseWatcher as createSubscribeReposWatcher } from "@publicdomainrelay/firehose-watcher-subscriberepos";
 import { createFirehoseWatcher as createJetstreamWatcher } from "@publicdomainrelay/firehose-watcher-jetstream";
 import type { FirehoseRecordEvent, FirehoseWatcher } from "@publicdomainrelay/firehose-watcher-abc";
@@ -126,12 +126,6 @@ if ((options.atprotoHandle as string | undefined) && (options.atprotoPassword as
   }
 }
 
-const DEFAULT_RELAY_URLS = [
-  "https://reg.market.fedfork.com",
-  "https://bsky.network",
-  "https://relay.mini-cloud-0002.chadig.com",
-];
-
 const registryEndpoint = (options.registryEndpoint as string) || "";
 const relayUrls = registryEndpoint
   ? [...new Set([...DEFAULT_RELAY_URLS, registryEndpoint])]
@@ -180,6 +174,7 @@ if (privateKeyHexPath) {
 
 const providers: MarketBidderProviderRef[] = [];
 const serves: ReturnType<typeof createServe>[] = [];
+let localProviderEnsureImage: (() => Promise<void>) | undefined;
 
 if (options.computeProviderDigitaloceanToken) {
   const relay = await cliCreateXrpcRelay();
@@ -200,17 +195,19 @@ if (options.computeProviderLocal) {
   const relay = await cliCreateXrpcRelay();
   const serve = createServe({ logger, relays: [relay] });
   serves.push(serve);
+  const localProvider = createLocalComputeProvider({
+    logger, atproto: atproto as import("@publicdomainrelay/compute-provider-abc").ComputeAtproto, serve,
+    getIssuerUrl: () => relay.proxyUrl,
+    oidcProvisioner: createOidcProvisioningEnricher(() => relay.proxyUrl),
+    rbacProvisioner: createRbacProvisioner(),
+    containerMode: options.computeProviderLocalMode as "vm" | "container" | undefined,
+    vmImage: options.computeProviderLocalVmImage as string | undefined,
+    containerImage: options.computeProviderLocalContainerImage as string | undefined,
+    cacheDir: options.computeProviderLocalCacheDir as string | undefined,
+  });
+  localProviderEnsureImage = () => (localProvider as { ensureImage?(): Promise<void> }).ensureImage?.() ?? Promise.resolve();
   providers.push(createComputeProviderHooks({
-    provider: createLocalComputeProvider({
-      logger, atproto: atproto as import("@publicdomainrelay/compute-provider-abc").ComputeAtproto, serve,
-      getIssuerUrl: () => relay.proxyUrl,
-      oidcProvisioner: createOidcProvisioningEnricher(() => relay.proxyUrl),
-      rbacProvisioner: createRbacProvisioner(),
-      containerMode: options.computeProviderLocalContainerMode as "vm" | "container" | undefined,
-      vmImage: options.computeProviderLocalVmImage as string | undefined,
-      containerImage: options.computeProviderLocalContainerImage as string | undefined,
-      cacheDir: options.computeProviderLocalCacheDir as string | undefined,
-    }),
+    provider: localProvider,
   }));
   await serve.beginServe();
 }
@@ -343,6 +340,13 @@ if (!options.noQr && !hasAssociation) {
     localAgent.approveAssociation();
     logger.info("association_confirmed", { callerDid, handle });
   }
+}
+
+// Pre-build container image after association so first provision is fast.
+if (localProviderEnsureImage) {
+  logger.info("ensuring container image", {});
+  await localProviderEnsureImage();
+  logger.info("container image ready", {});
 }
 
 // Re-register with local relays using the direct serve port.

@@ -135,10 +135,53 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
     }
   }
 
-  // On-demand check: requester must have a badgeBlueKeys record with
-  // challenge === atproto.did and service === 'requester_associate'.
+  // On-demand check: requester must be associated with the operator (parent)
+  // DID that owns this bidder. Two paths:
+  //   1. Bidder DID == operator DID (desktop bidder): check requester_associate
+  //      records directly on the bidder's repo.
+  //   2. Bidder DID != operator DID (hono-bidder): discover operator DID from
+  //      bidder_associate records on this repo, then check requester_associate
+  //      records on the operator's repo.
   // Results cached in-memory — badgeBlueKeys records are write-once so TTL is unnecessary.
   const associationCache = new Map<string, boolean>();
+  const BADGE_BLUE_KEYS_NSID = "com.publicdomainrelay.temp.badgeBlueKeys";
+  const operatorDidCache = new Map<string, string[]>(); // bidderDid → [operatorDids]
+
+  async function discoverOperatorDids(): Promise<string[]> {
+    const cached = operatorDidCache.get(atproto.did);
+    if (cached) return cached;
+    const dids: string[] = [];
+    try {
+      const ownRecords = await atproto.listRecords(atproto.did, BADGE_BLUE_KEYS_NSID, { limit: 200 });
+      for (const rec of ownRecords?.records ?? []) {
+        const v = rec.value as Record<string, unknown>;
+        if (v.challenge === atproto.did && v.service === "bidder_associate") {
+          const keyId = v.keyId as string | undefined;
+          if (keyId && keyId.startsWith("did:")) dids.push(keyId);
+        }
+      }
+    } catch {
+      // fall through to public read below
+    }
+    if (dids.length === 0) {
+      try {
+        const publicRecords = await listRecordsPublic(idResolver, atproto.did, BADGE_BLUE_KEYS_NSID);
+        for (const r of publicRecords) {
+          const v = r.value as Record<string, unknown>;
+          if (v.challenge === atproto.did && v.service === "bidder_associate") {
+            const keyId = v.keyId as string | undefined;
+            if (keyId && keyId.startsWith("did:")) dids.push(keyId);
+          }
+        }
+      } catch {
+        // non-critical
+      }
+    }
+    operatorDidCache.set(atproto.did, dids);
+    if (dids.length > 0) logger.info("bidder scope check: discovered operator DIDs", { bidderDid: atproto.did, operatorDids: dids });
+    return dids;
+  }
+
   const isRequesterAssociated = async (requesterDid: string): Promise<boolean> => {
     logger.info("scope_check_start", { requesterDid });
     const cached = associationCache.get(requesterDid);
@@ -147,30 +190,64 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
       if (cached) logger.info("bidder scope check: matched requester association (cached)", { requesterDid });
       return cached;
     }
-    const BADGE_BLUE_KEYS_NSID = "com.publicdomainrelay.temp.badgeBlueKeys";
 
-    let allRecords: Array<{ value: Record<string, unknown> }> = [];
+    // Path 1: bidder's own repo (works when bidder DID == operator DID).
     try {
-      // Use unauthenticated public read — OAuth-authed listRecords hangs in
-      // the desktop runtime (patched Deno fetch with DPoP wrapper never resolves).
-      const listed = await listRecordsPublic(idResolver, atproto.did, BADGE_BLUE_KEYS_NSID);
-      allRecords = listed.map((r) => ({ value: r.value }));
+      const ownRecords = await atproto.listRecords(atproto.did, BADGE_BLUE_KEYS_NSID, { limit: 200 });
+      for (const rec of ownRecords?.records ?? []) {
+        const v = rec.value as Record<string, unknown>;
+        if (v.challenge === requesterDid && v.service === "requester_associate") {
+          associationCache.set(requesterDid, true);
+          logger.info("bidder scope check: matched requester association on own repo", { requesterDid });
+          return true;
+        }
+      }
     } catch (err) {
-      logger.warn("bidder scope check: public listRecords failed", { requesterDid, error: String(err) });
-      return false;
+      logger.warn("bidder scope check: own repo listRecords failed", { requesterDid, error: String(err) });
     }
 
-    for (const rec of allRecords) {
-      const v = rec.value;
-      if (v.challenge === atproto.did && v.service === "requester_associate" && v.keyId === requesterDid) {
-        associationCache.set(requesterDid, true);
-        logger.info("bidder scope check: matched requester association", { requesterDid, keyId: v.keyId });
-        return true;
+    // Path 2: check requester's repo for requester_associate records
+    // where keyId matches a discovered operator DID. The requester
+    // creates badgeBlueKeys on its own LocalPDS repo during QR flow:
+    //   keyId = operator DID (who scanned the QR)
+    //   challenge = requester DID (the PDS's own DID)
+    //   service = "requester_associate"
+    const operatorDids = await discoverOperatorDids();
+    if (operatorDids.length > 0) {
+      const operatorSet = new Set(operatorDids);
+      try {
+        const reqRecords = await listRecordsPublic(idResolver, requesterDid, BADGE_BLUE_KEYS_NSID);
+        for (const r of reqRecords) {
+          const v = r.value as Record<string, unknown>;
+          if (v.service === "requester_associate" && operatorSet.has(v.keyId as string)) {
+            associationCache.set(requesterDid, true);
+            logger.info("bidder scope check: matched requester association via operator", { requesterDid, operatorDid: v.keyId });
+            return true;
+          }
+        }
+      } catch (err) {
+        logger.warn("bidder scope check: requester repo listRecords failed", { requesterDid, error: String(err) });
       }
     }
+
+    // Path 3: legacy check — public read on own repo (desktop bidder fallback).
+    try {
+      const listed = await listRecordsPublic(idResolver, atproto.did, BADGE_BLUE_KEYS_NSID);
+      for (const r of listed) {
+        const v = r.value;
+        if (v.challenge === atproto.did && v.service === "requester_associate" && v.keyId === requesterDid) {
+          associationCache.set(requesterDid, true);
+          logger.info("bidder scope check: matched requester association (legacy public read)", { requesterDid, keyId: v.keyId });
+          return true;
+        }
+      }
+    } catch (err) {
+      logger.warn("bidder scope check: public listRecords failed", { requesterDid, error: String(err) });
+    }
+
     associationCache.set(requesterDid, false);
     logger.warn("bidder scope check: no matching requester association", {
-      requesterDid, bidderDid: atproto.did, recordsChecked: allRecords.length,
+      requesterDid, bidderDid: atproto.did, operatorDids,
     });
     return false;
   };
@@ -232,11 +309,13 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
       const wantedStr = [...wanted].sort().join(",");
       const haveStr = [...appliesTo].sort().join(",");
       const hasGoodEp = endpointUrl?.startsWith("https://") ?? false;
-      if (haveStr === wantedStr && hasGoodEp) {
-        log("info", "bidder offering exists (matched)", { uri: rec.uri, appliesTo: haveStr });
+      const wantedEp = relay?.proxyUrl || `${atproto.did}#pdr_temp_market`;
+      const epSame = endpointUrl === wantedEp;
+      if (haveStr === wantedStr && hasGoodEp && epSame) {
+        log("info", "bidder offering exists (matched)", { uri: rec.uri, appliesTo: haveStr, endpointUrl });
       } else {
         await atproto.updateRecord(OFFERING_NSID, rkey, buildOffering(createdAt));
-        log("info", "bidder offering corrected", { uri: rec.uri, appliesTo: wantedStr });
+        log("info", "bidder offering corrected", { uri: rec.uri, appliesTo: wantedStr, endpointUrl: wantedEp, reason: haveStr === wantedStr ? (hasGoodEp ? "endpoint_changed" : "bad_endpoint") : "appliesTo_mismatch" });
       }
       return { rkey, createdAt };
     }
