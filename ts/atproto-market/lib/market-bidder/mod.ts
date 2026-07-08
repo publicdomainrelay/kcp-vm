@@ -245,7 +245,9 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
       logger.warn("bidder scope check: public listRecords failed", { requesterDid, error: String(err) });
     }
 
-    associationCache.set(requesterDid, false);
+    // Negative results are never cached: the requester's association record
+    // may not exist yet at first-RFP time and appear moments later (e.g. the
+    // self-attested requester_associate write racing the RFP submit).
     logger.warn("bidder scope check: no matching requester association", {
       requesterDid, bidderDid: atproto.did, operatorDids,
     });
