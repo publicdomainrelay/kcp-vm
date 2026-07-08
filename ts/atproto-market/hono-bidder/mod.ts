@@ -30,6 +30,7 @@ const { options } = await new Command("CONFIG_PATH_HONO_BIDDER", cliArgsEnv, run
 
 const serviceName = (options.serviceName as string) ?? "bidder";
 const logger = createLogger({ serviceName });
+const BIDDER_ASSOC_SERVICE = "bidder_associate";
 
 
 // Resolve privateKeyHex: --private-key-hex takes priority, then --private-key-hex-path
@@ -114,6 +115,7 @@ if ((options.atprotoHandle as string | undefined) && (options.atprotoPassword as
     plcDirectoryUrl,
     dispatcherHost,
     storagePath: pdsStatePath,
+    associateServiceId: BIDDER_ASSOC_SERVICE,
   });
   await atprotoAgent.beginServe();
   _deferredPdsPort = pdsServe.tcpPort;
@@ -293,7 +295,7 @@ if (!options.noQr) {
     const result = await atproto.listRecords(atproto.did, BADGE_BLUE_KEYS_NSID, { limit: 100 });
     for (const rec of result.records) {
       const v = rec.value as Record<string, unknown>;
-      if (v.challenge === atproto.did && v.service === "requester_associate") {
+      if (v.challenge === atproto.did && v.service === BIDDER_ASSOC_SERVICE) {
         hasAssociation = true;
         break;
       }
@@ -312,7 +314,7 @@ if (!options.noQr && !hasAssociation) {
       hint: "QR association only works with a local PDS (no --atproto-handle). Use --no-qr to skip.",
     });
   } else {
-    const qrUrl = `https://qr.fedfork.com/#plc=${atproto.did}`;
+    const qrUrl = `https://qr.fedfork.com/#bdr=${atproto.did}`;
     logger.info("qr_url", { url: qrUrl });
     const qr = qrcode(qrUrl, { output: "console", ecl: "HIGH" });
     console.log(qr);

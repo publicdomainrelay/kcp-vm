@@ -195,6 +195,8 @@ export interface CreateLocalPDSAgentOpts {
   plcDirectoryUrl: string;
   dispatcherHost: string;
   storagePath?: string;
+  /** Service ID for associateConfirm route + DID doc. Default: "requester_associate". */
+  associateServiceId?: string;
 }
 
 export interface LocalPDSAgent extends AtprotoAgentLike {
@@ -213,6 +215,7 @@ export interface LocalPDSAgent extends AtprotoAgentLike {
 
 export async function createLocalPDSAgent(opts: CreateLocalPDSAgentOpts): Promise<LocalPDSAgent> {
   const { logger, keypair, serve, plcDirectoryUrl, dispatcherHost, storagePath } = opts;
+  const associateServiceId = opts.associateServiceId ?? "requester_associate";
   const signingKeyDid = keypair.did();
   // DID-doc service endpoints advertise the canonical host without any internal
   // port (production has none); the relay subdomain alone routes via dispatcher.
@@ -249,7 +252,7 @@ export async function createLocalPDSAgent(opts: CreateLocalPDSAgentOpts): Promis
         type: "PDRTempComputeEvent",
         endpoint: `https://${signingKeyDid.replace(/:/g, "-").toLowerCase()}.${epHost}`,
       },
-      requester_associate: {
+      [associateServiceId]: {
         type: "PDRRequesterAssociate",
         endpoint: `https://${signingKeyDid.replace(/:/g, "-").toLowerCase()}.${epHost}`,
       },
@@ -282,7 +285,7 @@ export async function createLocalPDSAgent(opts: CreateLocalPDSAgentOpts): Promis
     didWebServices: [
       { id: DEFAULT_MARKET_SERVICE_ID, type: "PDRTempMarket" },
       { id: DEFAULT_COMPUTE_EVENT_SERVICE_ID, type: "PDRTempComputeEvent" },
-      { id: "requester_associate", type: "PDRRequesterAssociate" },
+      { id: associateServiceId, type: "PDRRequesterAssociate" },
     ],
   });
 
@@ -317,7 +320,7 @@ export async function createLocalPDSAgent(opts: CreateLocalPDSAgentOpts): Promis
         authHeader,
         hostname: relayHost || dispatcherHost,
         lxm: ASSOCIATE_CONFIRM_NSID,
-        serviceIds: ["requester_associate", "pdr_temp_market"],
+        serviceIds: [associateServiceId, "pdr_temp_market"],
         extraAudienceDids: [did],
         idResolver,
       });
@@ -332,7 +335,7 @@ export async function createLocalPDSAgent(opts: CreateLocalPDSAgentOpts): Promis
           $type: BADGE_BLUE_KEYS_NSID,
           keyId: auth.issuerDid,
           challenge: did,
-          service: "requester_associate",
+          service: associateServiceId,
           createdAt: new Date().toISOString(),
         },
       }]);

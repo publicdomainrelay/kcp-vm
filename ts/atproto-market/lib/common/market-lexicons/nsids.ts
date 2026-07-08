@@ -51,6 +51,7 @@ export const BIDDER_ASSOCIATION_NSID = "com.publicdomainrelay.temp.market.bidder
 export const ASSOCIATE_CONFIRM_NSID = "com.publicdomainrelay.temp.requester.associateConfirm";
 export const ASSOCIATE_CONFIRM_LXM = ASSOCIATE_CONFIRM_NSID;
 export const DEFAULT_REQUESTER_ASSOCIATE_SERVICE_ID = "requester_associate";
+export const DEFAULT_BIDDER_ASSOCIATE_SERVICE_ID = "bidder_associate";
 export const PACKAGE_REGISTRY_RESOLVE_NSID = "com.publicdomainrelay.temp.packageRegistry.resolve";
 export const PACKAGE_REGISTRY_PACKAGE_NSID = "com.publicdomainrelay.temp.packageRegistry.package";
 export const PACKAGE_REGISTRY_RELEASE_NSID = "com.publicdomainrelay.temp.packageRegistry.release";
