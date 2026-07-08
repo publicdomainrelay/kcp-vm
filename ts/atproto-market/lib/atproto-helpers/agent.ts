@@ -19,6 +19,8 @@ import {
   DEFAULT_COMPUTE_EVENT_SERVICE_ID,
 } from "@publicdomainrelay/market-common";
 import type { RecordMap } from "@atiproto/atproto-attestation";
+import { ASSOCIATE_CONFIRM_NSID } from "@publicdomainrelay/market-lexicons";
+import { verifyServiceAuth } from "@publicdomainrelay/market-atproto";
 
 export interface AtprotoAgentLike {
   did: string;
@@ -201,6 +203,12 @@ export interface LocalPDSAgent extends AtprotoAgentLike {
   relay: RelayRef;
   beginServe(): Promise<void>;
   stop(): void;
+  /** Resolves with the caller's DID when the webapp calls associateConfirm. */
+  readonly associateCalled: Promise<string>;
+  /** CLI calls this to approve the association and respond to the webapp. */
+  approveAssociation(): void;
+  /** CLI calls this to reject the association. */
+  rejectAssociation(err: Error): void;
 }
 
 export async function createLocalPDSAgent(opts: CreateLocalPDSAgentOpts): Promise<LocalPDSAgent> {
@@ -280,6 +288,51 @@ export async function createLocalPDSAgent(opts: CreateLocalPDSAgentOpts): Promis
   });
   serve.addRelay(xrpcRelay);
 
+  // ── association confirmation (webapp calls this when user scans QR) ──
+  const idResolver = new IdResolver({ plcUrl: plcDirectoryUrl });
+  let resolveAssociateCalled!: (callerDid: string) => void;
+  const associateCalled = new Promise<string>((r) => { resolveAssociateCalled = r; });
+  let resolveAssociationApproved!: () => void;
+  let rejectAssociationApproved!: (err: Error) => void;
+  const associationApproved = new Promise<void>((resolve, reject) => {
+    resolveAssociationApproved = resolve;
+    rejectAssociationApproved = reject;
+  });
+
+  serve.app.post(`/xrpc/${ASSOCIATE_CONFIRM_NSID}`, async (c: { req: { header(name: string): string | undefined }; json(obj: unknown, status?: number): Response }) => {
+    const authHeader = c.req.header("Authorization");
+    if (!authHeader) return c.json({ error: "Unauthorized" }, 401);
+    try {
+      const relayHost = xrpcRelay.proxyHost;
+      const auth = await verifyServiceAuth({
+        authHeader,
+        hostname: relayHost || dispatcherHost,
+        lxm: ASSOCIATE_CONFIRM_NSID,
+        serviceIds: ["requester_associate", "pdr_temp_market"],
+        extraAudienceDids: [did],
+        idResolver,
+      });
+      resolveAssociateCalled(auth.issuerDid);
+      await associationApproved;
+      const BADGE_BLUE_KEYS_NSID = "com.publicdomainrelay.temp.badgeBlueKeys";
+      await api.applyWrites(did, [{
+        action: "create",
+        collection: BADGE_BLUE_KEYS_NSID,
+        rkey: TID.next().toString(),
+        record: {
+          $type: BADGE_BLUE_KEYS_NSID,
+          keyId: auth.issuerDid,
+          challenge: did,
+          service: "requester_associate",
+          createdAt: new Date().toISOString(),
+        },
+      }]);
+      return c.json({ ok: true, requesterDid: did });
+    } catch (err) {
+      return c.json({ error: String(err) }, 401);
+    }
+  });
+
   return {
     did,
     signer,
@@ -291,6 +344,9 @@ export async function createLocalPDSAgent(opts: CreateLocalPDSAgentOpts): Promis
     listRecords: (d: string, collection: string, opts?: { limit?: number }) => api.listRecords(d, collection, opts) as Promise<{ records: Array<{ uri: string; cid: string; value: Record<string, unknown> }> }>,
     beginServe: () => serve.beginServe(),
     stop: () => serve.shutdown(),
+    associateCalled,
+    approveAssociation: () => { resolveAssociationApproved(); },
+    rejectAssociation: (err: Error) => { rejectAssociationApproved(err); },
   };
 }
 

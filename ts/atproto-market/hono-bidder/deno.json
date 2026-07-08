@@ -21,9 +21,7 @@
     "@publicdomainrelay/firehose-watcher-jetstream": "jsr:@publicdomainrelay/firehose-watcher-jetstream@^0",
     "@publicdomainrelay/serve": "jsr:@publicdomainrelay/serve@^0",
     "@publicdomainrelay/xrpc-relay": "jsr:@publicdomainrelay/xrpc-relay@^0",
-    "@publicdomainrelay/market-lexicons": "jsr:@publicdomainrelay/market-lexicons@^0",
     "@atproto/identity": "npm:@atproto/identity@^0.5.0",
-    "@atproto/common": "npm:@atproto/common@^0.5.0",
     "@libs/qrcode": "jsr:@libs/qrcode@^2"
   },
   "compile": {

@@ -8,6 +8,7 @@ import type { MarketBidderProviderRef } from "@publicdomainrelay/market-bidder-a
 import { createComputeProviderHooks } from "@publicdomainrelay/market-bidder-compute";
 import { createComputeProviderDenoWorker, createWorkerProviderHooks } from "@publicdomainrelay/market-bidder-worker";
 import { createATProto, createLocalPDSAgent, createRemoteAgent } from "@publicdomainrelay/atproto-helpers";
+import type { LocalPDSAgent } from "@publicdomainrelay/atproto-helpers";
 import { createBadgeBlueSigner } from "@publicdomainrelay/market-atproto";
 import { RFP_NSID } from "@publicdomainrelay/market-common";
 import { createFirehoseWatcher as createSubscribeReposWatcher } from "@publicdomainrelay/firehose-watcher-subscriberepos";
@@ -19,11 +20,8 @@ import { createLocalComputeProvider } from "@publicdomainrelay/compute-provider-
 import { createOidcProvisioningEnricher } from "@publicdomainrelay/oidc-issuer-hono";
 import { createRbacProvisioner } from "@publicdomainrelay/rbac-atproto";
 import { Secp256k1Keypair } from "@atproto/crypto";
-import { TID } from "@atproto/common";
 import { IdResolver } from "@atproto/identity";
 import { qrcode } from "@libs/qrcode";
-import { ASSOCIATE_CONFIRM_NSID } from "@publicdomainrelay/market-lexicons";
-import { verifyServiceAuth } from "@publicdomainrelay/market-atproto";
 import cliArgsEnv from "./cli-args-env.json" with { type: "json" };
 
 let runtimeConfig: Record<string, unknown> | null = null;
@@ -94,6 +92,7 @@ async function cliCreateXrpcRelay() {
 
 let atprotoAgent;
 let pdsHostname: string | undefined;
+let isLocal = false;
 const _deferredRelayUrls: string[] = [];
 let _deferredPdsPort = 0;
 if ((options.atprotoHandle as string | undefined) && (options.atprotoPassword as string | undefined)) {
@@ -118,6 +117,7 @@ if ((options.atprotoHandle as string | undefined) && (options.atprotoPassword as
   });
   await atprotoAgent.beginServe();
   _deferredPdsPort = pdsServe.tcpPort;
+  isLocal = true;
   const relayHost: string = (atprotoAgent as { relay?: { proxyHost?: string } }).relay?.proxyHost ?? "";
   if (relayHost) {
     pdsHostname = relayHost;
@@ -254,50 +254,6 @@ const bidderServe = createServe({
   relays: bidderRelay ? [bidderRelay] : [],
 });
 
-// ── association confirmation (webapp calls this when user scans bidder QR) ──
-const assocIdResolver = new IdResolver({ plcUrl: plcDirectoryUrl });
-let resolveAssociateCalled!: (callerDid: string) => void;
-const associateCalled = new Promise<string>((r) => { resolveAssociateCalled = r; });
-let resolveAssociationApproved!: () => void;
-let rejectAssociationApproved!: (err: Error) => void;
-const associationApproved = new Promise<void>((resolve, reject) => {
-  resolveAssociationApproved = resolve;
-  rejectAssociationApproved = reject;
-});
-
-bidderServe.app.post(`/xrpc/${ASSOCIATE_CONFIRM_NSID}`, async (c: { req: { header(name: string): string | undefined }; json(obj: unknown, status?: number): Response }) => {
-  const authHeader = c.req.header("Authorization");
-  if (!authHeader) return c.json({ error: "Unauthorized" }, 401);
-  try {
-    const auth = await verifyServiceAuth({
-      authHeader,
-      hostname: bidderRelay?.proxyHost || dispatcherHost,
-      lxm: ASSOCIATE_CONFIRM_NSID,
-      serviceIds: ["requester_associate", "pdr_temp_market"],
-      extraAudienceDids: [atproto.did],
-      idResolver: assocIdResolver,
-    });
-    resolveAssociateCalled(auth.issuerDid);
-    await associationApproved;
-    const BADGE_BLUE_KEYS_NSID = "com.publicdomainrelay.temp.badgeBlueKeys";
-    await atproto.applyWrites(atproto.did, [{
-      action: "create",
-      collection: BADGE_BLUE_KEYS_NSID,
-      rkey: TID.next().toString(),
-      record: {
-        $type: BADGE_BLUE_KEYS_NSID,
-        keyId: auth.issuerDid,
-        challenge: atproto.did,
-        service: "requester_associate",
-        createdAt: new Date().toISOString(),
-      },
-    }]);
-    return c.json({ ok: true, requesterDid: atproto.did });
-  } catch (err) {
-    return c.json({ error: String(err) }, 401);
-  }
-});
-
 const acceptScopeRaw = options.acceptScope as string | undefined;
 const acceptScope = (acceptScopeRaw === "only_me" || acceptScopeRaw === "direct_network" || acceptScopeRaw === "policy_based")
   ? acceptScopeRaw : undefined;
@@ -351,32 +307,40 @@ if (hasAssociation) {
 }
 
 if (!options.noQr && !hasAssociation) {
-  const qrUrl = `https://qr.fedfork.com/#plc=${atproto.did}`;
-  logger.info("qr_url", { url: qrUrl });
-  const qr = qrcode(qrUrl, { output: "console", ecl: "HIGH" });
-  console.log(qr);
+  if (!isLocal) {
+    logger.warn("qr_association_requires_local_pds", {
+      hint: "QR association only works with a local PDS (no --atproto-handle). Use --no-qr to skip.",
+    });
+  } else {
+    const qrUrl = `https://qr.fedfork.com/#plc=${atproto.did}`;
+    logger.info("qr_url", { url: qrUrl });
+    const qr = qrcode(qrUrl, { output: "console", ecl: "HIGH" });
+    console.log(qr);
 
-  logger.info("waiting_for_association", {
-    hint: "Scan QR code, then confirm on your phone",
-    bidderDid: atproto.did,
-  });
-  const callerDid = await associateCalled;
+    logger.info("waiting_for_association", {
+      hint: "Scan QR code, then confirm on your phone",
+      bidderDid: atproto.did,
+    });
+    const localAgent = atprotoAgent as LocalPDSAgent;
+    const callerDid = await localAgent.associateCalled;
 
-  let handle = callerDid;
-  try {
-    const doc = await assocIdResolver.did.resolve(callerDid);
-    const aka = (doc as Record<string, unknown>)?.alsoKnownAs as string[] | undefined;
-    if (aka?.[0]) handle = aka[0].replace("at://", "");
-  } catch { /* use DID as fallback */ }
+    const assocIdResolver = new IdResolver({ plcUrl: plcDirectoryUrl });
+    let handle = callerDid;
+    try {
+      const doc = await assocIdResolver.did.resolve(callerDid);
+      const aka = (doc as Record<string, unknown>)?.alsoKnownAs as string[] | undefined;
+      if (aka?.[0]) handle = aka[0].replace("at://", "");
+    } catch { /* use DID as fallback */ }
 
-  const answer = prompt(`Associate with ${handle}? [y/N] `);
-  if (!answer || !answer.toLowerCase().startsWith("y")) {
-    logger.info("association_rejected", { callerDid, handle });
-    rejectAssociationApproved(new Error("User rejected association"));
-    Deno.exit(0);
+    const answer = prompt(`Associate with ${handle}? [y/N] `);
+    if (!answer || !answer.toLowerCase().startsWith("y")) {
+      logger.info("association_rejected", { callerDid, handle });
+      localAgent.rejectAssociation(new Error("User rejected association"));
+      Deno.exit(0);
+    }
+    localAgent.approveAssociation();
+    logger.info("association_confirmed", { callerDid, handle });
   }
-  resolveAssociationApproved();
-  logger.info("association_confirmed", { callerDid, handle });
 }
 
 // Re-register with local relays using the direct serve port.
