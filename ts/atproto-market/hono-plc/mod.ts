@@ -14,7 +14,7 @@ const { options } = await new Command(
 
 const logger = createLogger({ serviceName: "hono-plc" });
 const store = new MemoryPlcStore();
-const factory = createPlcDirectoryFactory({ store, log: logger });
+const factory = createPlcDirectoryFactory({ store });
 
 const port = options.port as number;
 const hostname = (options.hostname as string) || "127.0.0.1";
