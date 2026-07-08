@@ -7,7 +7,7 @@ import type { RepoApi, WriteOp } from "@publicdomainrelay/atproto-repo-abc";
 import type { CommitEvent } from "@publicdomainrelay/atproto-repo-abc";
 import { createRepoFactory } from "@publicdomainrelay/hono-factory-atproto-repo-deno";
 import { MemoryStorage, DenoKvStorage, signServiceAuth } from "@publicdomainrelay/atproto-repo-deno";
-import { PlcClient, createGenesisOp } from "@publicdomainrelay/did-plc";
+import { PlcClient, PlcNotFoundError, createGenesisOp } from "@publicdomainrelay/did-plc";
 import type { AttestationKeypair, InlineAttestation } from "@publicdomainrelay/market-atproto";
 import { attestationFor, toStorableEntry, createRecordResolver } from "@publicdomainrelay/market-atproto";
 import type { RecordResolver } from "@publicdomainrelay/market-abc";
@@ -258,8 +258,17 @@ export async function createLocalPDSAgent(opts: CreateLocalPDSAgentOpts): Promis
   });
 
   logger.info("localPDS plc registering", { did });
-  await plc.submitOp(did, op);
-  logger.info("localPDS plc registered", { did });
+  try {
+    await plc.resolve(did);
+    logger.info("localPDS plc already registered", { did });
+  } catch (err) {
+    if (err instanceof PlcNotFoundError) {
+      await plc.submitOp(did, op);
+      logger.info("localPDS plc registered", { did });
+    } else {
+      throw err;
+    }
+  }
 
   const signer = {
     did: () => did,
