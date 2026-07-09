@@ -33,6 +33,7 @@ export function createServe(opts: CreateServeOpts): ServeHandle {
   const onConnectedCallbacks: Array<(proxyRef: string) => void | Promise<void>> = [];
   let controller: AbortController | null = null;
   let _tcpPort = 0;
+  let _httpServer: Deno.HttpServer | null = null;
 
   function addRelay(relay: RelayRef): void {
     relays.push(relay);
@@ -69,7 +70,7 @@ export function createServe(opts: CreateServeOpts): ServeHandle {
 
     if (hasTcp) {
       const { addr, port } = opts.tcp!;
-      Deno.serve(
+      _httpServer = Deno.serve(
         {
           hostname: addr ?? "0.0.0.0",
           port: port ?? 0,
@@ -81,12 +82,15 @@ export function createServe(opts: CreateServeOpts): ServeHandle {
         },
         app.fetch,
       );
+      _httpServer.finished.catch((err) => {
+        logger?.error?.("serve finished with error", { error: String(err) });
+      });
     } else if (hasUnix) {
       const { socketPath } = opts.unix!;
       try {
         await Deno.remove(socketPath);
       } catch { /* stale socket may not exist */ }
-      Deno.serve(
+      _httpServer = Deno.serve(
         {
           path: socketPath,
           signal: controller.signal,
@@ -96,6 +100,9 @@ export function createServe(opts: CreateServeOpts): ServeHandle {
         },
         app.fetch,
       );
+      _httpServer.finished.catch((err) => {
+        logger?.error?.("serve finished with error", { error: String(err) });
+      });
     }
 
     for (const relay of relays) {
