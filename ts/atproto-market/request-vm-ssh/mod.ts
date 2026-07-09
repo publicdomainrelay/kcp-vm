@@ -7,7 +7,7 @@ import {
   createSshSessionProvider,
   ensureWebsocat,
 } from "@publicdomainrelay/requester-xrpc";
-import { DEFAULT_RELAY_URLS, OFFERING_NSID } from "@publicdomainrelay/market-common";
+import { DEFAULT_RELAY_URLS, EVENT_NSID, OFFERING_NSID } from "@publicdomainrelay/market-common";
 import { createFirehoseWatcher as createSubscribeReposWatcher } from "@publicdomainrelay/firehose-watcher-subscriberepos";
 import { createFirehoseWatcher as createJetstreamWatcher } from "@publicdomainrelay/firehose-watcher-jetstream";
 import { qrcode } from "@libs/qrcode";
@@ -119,6 +119,23 @@ if (offeringFirehoseMode !== "off" && offeringFirehoseUrl) {
   logger.info("offering_firehose_watch_started", { mode: offeringFirehoseMode });
 }
 
+// Watch own PDS for compute events (vm.onNetwork, vm.registerIdentity)
+const ownEventDids = new Set<string>();
+let ownEventWatcher: { close(): void } | undefined = undefined;
+if (offeringFirehoseUrl) {
+  const make2 = offeringFirehoseMode === "jetstream" ? createJetstreamWatcher : createSubscribeReposWatcher;
+  ownEventWatcher = make2({
+    url: offeringFirehoseUrl,
+    wantedCollections: [EVENT_NSID],
+    onRecord: (e) => {
+      if (e.did !== pds.did) return;
+      if (e.operation === "delete") return;
+      logger.info("own_event_watcher", { collection: e.collection, rkey: e.rkey });
+    },
+    log: logger,
+  });
+}
+
 await pds.beginServe();
 logger.info("requester_ready", { did: pds.did, proxyRef: pds.proxyRef, dispatcherHost });
 
@@ -199,6 +216,7 @@ async function resumeConsole(): Promise<void> {
 
 function shutdown(): void {
   offeringWatcher?.close();
+  ownEventWatcher?.close();
   serve.shutdown();
   Deno.exit();
 }

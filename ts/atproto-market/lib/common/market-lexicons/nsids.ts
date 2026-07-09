@@ -55,3 +55,6 @@ export const DEFAULT_BIDDER_ASSOCIATE_SERVICE_ID = "bidder_associate";
 export const PACKAGE_REGISTRY_RESOLVE_NSID = "com.publicdomainrelay.temp.packageRegistry.resolve";
 export const PACKAGE_REGISTRY_PACKAGE_NSID = "com.publicdomainrelay.temp.packageRegistry.package";
 export const PACKAGE_REGISTRY_RELEASE_NSID = "com.publicdomainrelay.temp.packageRegistry.release";
+export const REGISTER_IDENTITY_NSID = "com.publicdomainrelay.temp.market.registerIdentity";
+export const COMPUTE_EVENTS_VM_ONNETWORK_NSID = "com.publicdomainrelay.temp.compute.events.vm.onNetwork";
+export const COMPUTE_EVENTS_VM_STARTED_NSID = "com.publicdomainrelay.temp.compute.events.vm.started";

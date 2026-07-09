@@ -30,6 +30,10 @@ export const SUBMIT_EVENT_LXM = "com.publicdomainrelay.temp.market.submitEvent";
 export const DEFAULT_MARKET_SERVICE_ID = "pdr_temp_market";
 export const DEFAULT_COMPUTE_EVENT_SERVICE_ID = "pdr_temp_compute_event";
 
+export { $nsid as COMPUTE_EVENTS_VM_ONNETWORK_NSID } from "../market-lexicons/com/publicdomainrelay/temp/compute/events/vm/onNetwork.ts";
+export { $nsid as COMPUTE_EVENTS_VM_STARTED_NSID } from "../market-lexicons/com/publicdomainrelay/temp/compute/events/vm/started.ts";
+export const REGISTER_IDENTITY_NSID = "com.publicdomainrelay.temp.market.registerIdentity";
+
 export const REGISTRY_ENDPOINTS_ENV = "MARKET_REGISTRY_ENDPOINTS";
 export const DEFAULT_REGISTRY_ENDPOINTS = "";
 

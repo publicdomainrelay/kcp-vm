@@ -17,6 +17,7 @@ import {
   attestationFor,
   toStorableEntry,
   createSubmitBidHandler,
+  createSubmitEventHandler,
   createRecordResolver,
   verifyRecordSignatures,
   verifyRemoteProof,
@@ -253,6 +254,17 @@ export async function createRequesterPDS(
 
   const pendingBids: Map<string, CollectedBid[]> = new Map();
 
+  // ── contract state (vm identity tracking) ───────────────────────────
+
+  interface ContractState {
+    receiptUri: string;
+    receiptCid: string;
+    winnerDid: string;
+    identities: string[];  // active compute identities (did:key)
+    revoked: string[];     // previously active, now revoked
+  }
+  const activeContracts = new Map<string, ContractState>();
+
   // ── association confirmation (webapp calls this before RFP) ─────────
   let resolveAssociateCalled: ((callerDid: string) => void) | null = null;
   const associateCalled = new Promise<string>((r) => { resolveAssociateCalled = r; });
@@ -326,6 +338,49 @@ export async function createRequesterPDS(
     onBid,
   });
   app.post(`/xrpc/${SUBMIT_BID_NSID}`, (c: { req: { raw: Request } }) => bidHandler(c.req.raw));
+
+  // ── submitEvent handler ──────────────────────────────────────────────
+
+  const submitEventHandler = createSubmitEventHandler({
+    deps: {
+      hostname: (req) => relay.proxyHost || dispatcherHost,
+      idResolver,
+      resolve: createRecordResolver(idResolver),
+      audienceDids: [did],
+      log: ((level: string, message: string, meta?: Record<string, unknown>) => {
+        const l = level as "info" | "warn" | "error" | "debug";
+        logger[l]?.(message, meta ?? {});
+      }) as unknown as (level: string, message: string, meta?: Record<string, unknown>) => void,
+    },
+    callbacks: {
+      pdr_temp_compute_event: {
+        // Handle vm.registerIdentity events
+        "com.publicdomainrelay.temp.compute.events.vm.registerIdentity": async (ctx) => {
+          const evt = ctx.event as any;
+          const receiptKey = `${evt.receipt.uri}#${evt.receipt.cid}`;
+          const identity = evt.payload?.computeIdentity;
+          if (!identity) return;
+
+          let state = activeContracts.get(receiptKey);
+          if (!state) {
+            state = { receiptUri: evt.receipt.uri, receiptCid: evt.receipt.cid, winnerDid: ctx.issuerDid, identities: [], revoked: [] };
+            activeContracts.set(receiptKey, state);
+          }
+          // Rotate: old identities become revoked, new becomes active
+          if (state.identities.length > 0) state.revoked.push(...state.identities);
+          state.identities = [identity];
+          logger.info("registerIdentity: updated contract state", { receiptKey, identity });
+        },
+        // Handle vm.onNetwork events
+        "com.publicdomainrelay.temp.compute.events.vm.onNetwork": async (ctx) => {
+          const evt = ctx.event as any;
+          logger.info("vm.onNetwork received", { receiptKey: `${evt.receipt.uri}#${evt.receipt.cid}` });
+        },
+      },
+    },
+    background: true,
+  });
+  app.post(`/xrpc/${SUBMIT_EVENT_NSID}`, (c) => submitEventHandler(c.req.raw));
 
   // ── associateConfirm (webapp calls to confirm requester association) ──
   app.post(`/xrpc/${ASSOCIATE_CONFIRM_NSID}`, async (c) => {
@@ -436,6 +491,7 @@ export async function createRequesterPDS(
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
       body: fetchBody,
+      signal: AbortSignal.timeout(10_000),
     });
     const resText = await res.text();
     let resBody: unknown;

@@ -124,6 +124,7 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
   const BADGE_BLUE_KEYS_NSID = "com.publicdomainrelay.temp.badgeBlueKeys";
   const operatorDidCache = new Map<string, string[]>(); // bidderDid → [operatorDids]
   let vouchedDids: Set<string> | null = null;
+  let transitiveVouchedDids: Set<string> | null = null;
   if (acceptScope === "direct_network") {
     vouchedDids = new Set();
     // Load vouches from the bidder's own repo (desktop-bidder path).
@@ -141,21 +142,32 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
     // Load vouches from operator repos (hono-bidder worker path).
     try {
       const opDids = await discoverOperatorDids();
-      logger.info("bidder vouch: discovered operator DIDs", { count: opDids.length, opDids });
-      for (const opDid of opDids) {
-        try {
-          const result = await listRecordsPublic(idResolver, opDid, "sh.tangled.graph.vouch");
-          logger.info("bidder vouch: operator records", { opDid, recordCount: result.length });
-          for (const r of result) {
-            const v = r.value as Record<string, unknown>;
-            if (v.kind === "denounce") continue;
-            const rkey = r.uri.split("/").pop() ?? "";
-            if (rkey.startsWith("did:")) vouchedDids.add(rkey);
-          }
-        } catch (err) { logger.warn("bidder vouch: operator PDS query failed", { opDid, error: String(err) }); }
+      const opResults = await Promise.all(opDids.map(opDid =>
+        listRecordsPublic(idResolver, opDid, "sh.tangled.graph.vouch").catch(() => [])
+      ));
+      for (const result of opResults) {
+        for (const r of result) {
+          const v = r.value as Record<string, unknown>;
+          if (v.kind === "denounce") continue;
+          const rkey = r.uri.split("/").pop() ?? "";
+          if (rkey.startsWith("did:")) vouchedDids.add(rkey);
+        }
       }
-    } catch (err) { logger.warn("bidder vouch: operator discovery failed", { error: String(err) }); }
+    } catch {}
+
     logger.info("bidder vouch set loaded", { count: vouchedDids.size });
+    // Build transitive vouch set: DIDs that created requester_associate
+    // badgeBlueKeys records on our repo with a vouched keyId.
+    transitiveVouchedDids = new Set();
+    try {
+      const ownBadge = await atproto.listRecords(atproto.did, BADGE_BLUE_KEYS_NSID, { limit: 200 });
+      for (const rec of ownBadge?.records ?? []) {
+        const v = rec.value as Record<string, unknown>;
+        if (v.service === "requester_associate" && typeof v.challenge === "string" && v.challenge.startsWith("did:") && typeof v.keyId === "string" && vouchedDids.has(v.keyId)) {
+          transitiveVouchedDids.add(v.challenge);
+        }
+      }
+    } catch {}
   }
 
   // On-demand check: requester must be associated with the operator (parent)
@@ -440,7 +452,7 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
           // only_me: no pre-filter, dispatcher does async isRequesterAssociated check.
           if (acceptScope === "only_me") { /* pass through, dispatch checks */ }
           else if (acceptScope === "direct_network" && e.did !== atproto.did) {
-            if (!vouchedDids?.has(e.did)) return;
+            if (!vouchedDids?.has(e.did) && !transitiveVouchedDids?.has(e.did)) return;
           }
           seen.add(e.uri);
           log("info", "rfp watch discovered", { rfpUri: e.uri });

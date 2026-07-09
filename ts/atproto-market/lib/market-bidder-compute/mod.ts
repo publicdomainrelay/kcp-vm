@@ -31,11 +31,14 @@ import {
   RECEIPT_NSID,
   SUBMIT_BID_NSID,
   SUBMIT_BID_LXM,
+  EVENT_NSID,
+  SUBMIT_EVENT_NSID,
+  SUBMIT_EVENT_LXM,
   strongRef,
   type Logger,
   type StrongRef,
 } from "@publicdomainrelay/market-common";
-import { COMPUTE_VM_NSID, COMPUTE_EVENTS_VM_DELETE_NSID } from "@publicdomainrelay/market-common";
+import { COMPUTE_VM_NSID, COMPUTE_EVENTS_VM_DELETE_NSID, COMPUTE_EVENTS_VM_ONNETWORK_NSID } from "@publicdomainrelay/market-common";
 
 export interface VmBidderDeps {
   did: string;
@@ -67,6 +70,8 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
     computeProvider, log, activeContracts, onContractChange,
     createRepoRecord, createSignedRepoRecord, callService, resolve,
   } = deps;
+
+  const registered = new Set<string>();
 
   const onRfp: SubmitRfpCallback = async ({ rfpUri, rfpCid, rfp, issuerDid, log: cbLog }) => {
     cbLog("info", "bidder received VM RFP", { rfpUri, rfpCid, issuerDid });
@@ -234,6 +239,35 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
         type: providerId ? "provisioned" : "provisioning-failed",
         key: rk, receiptUri, receiptCid, acceptAuthor: issuerDid, acceptedAt: nowIso, providerId,
       });
+
+      // Push vm.onNetwork event back to requester when provision succeeds
+      if (providerId && !registered.has(rk)) {
+        registered.add(rk);
+        const submitEventUrl = (accept as { submitEvent?: string }).submitEvent;
+        if (submitEventUrl) {
+          const nowIso = new Date().toISOString();
+          createRepoRecord(COMPUTE_EVENTS_VM_ONNETWORK_NSID, {
+            $type: COMPUTE_EVENTS_VM_ONNETWORK_NSID,
+            createdAt: nowIso,
+          }).then(({ uri: vmOnNetworkUri, cid: vmOnNetworkCid }) => {
+            return createSignedRepoRecord(EVENT_NSID, {
+              $type: EVENT_NSID,
+              receipt: strongRef(receiptUri, receiptCid),
+              payload: strongRef(vmOnNetworkUri, vmOnNetworkCid),
+            }, relay.proxyRef);
+          }).then(({ uri: eventUri, cid: eventCid, record: eventRecord }) => {
+            callService(submitEventUrl, SUBMIT_EVENT_NSID, SUBMIT_EVENT_LXM, {
+              uri: eventUri, cid: eventCid, record: eventRecord,
+            }).then(() => {
+              cbLog("info", "vm.onNetwork event submitted to requester", { receiptKey: rk });
+            }).catch((err: unknown) => {
+              cbLog("error", "failed to submit vm.onNetwork event", { receiptKey: rk, error: String(err) });
+            });
+          }).catch((err: unknown) => {
+            cbLog("error", "vm.onNetwork record creation failed", { receiptKey: rk, error: String(err) });
+          });
+        }
+      }
     });
 
     cbLog("info", "bidder created receipt for VM", {

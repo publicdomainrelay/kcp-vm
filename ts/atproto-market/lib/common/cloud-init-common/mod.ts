@@ -322,3 +322,49 @@ runcmd:
   - systemctl enable --now tunnel-subscriber.service
 `;
 }
+
+export function buildIrohUserData(ctx: TunnelCloudInitContext): string {
+  const sshAuthorizedKey = ctx.sshAuthorizedKey ?? "";
+  return `#cloud-config
+packages:
+  - openssh-server
+  - jq
+  - curl
+
+disable_root: false
+ssh_pwauth: false
+
+write_files:
+  - path: /root/.ssh/authorized_keys
+    owner: root:root
+    permissions: '0600'
+    content: |
+      ${sshAuthorizedKey}
+
+  - path: /etc/ssh/sshd_config.d/10-iroh.conf
+    owner: root:root
+    permissions: '0644'
+    content: |
+      PermitRootLogin prohibit-password
+      PasswordAuthentication no
+
+  - path: /etc/systemd/system/iroh.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=iroh P2P endpoint
+      After=network-online.target sshd.service
+      [Service]
+      Type=simple
+      ExecStart=/usr/local/bin/iroh endpoint --bind 0.0.0.0:9876
+      Restart=always
+      RestartSec=5
+      [Install]
+      WantedBy=multi-user.target
+
+runcmd:
+  - systemctl daemon-reload
+  - systemctl enable --now ssh
+  - systemctl enable --now iroh.service
+`;
+}
