@@ -108,7 +108,10 @@ if ((options.atprotoHandle as string | undefined) && (options.atprotoPassword as
   // TCP port 0 so the local atproto-relay can crawl this PDS directly
   // (the did-key-relay subscription protocol wraps firehose frames).
   const pdsStatePath = options.pdsStatePath as string | undefined;
-  const pdsServe = createServe({ logger, tcp: { port: 0 } });
+  // Relay-only: no TCP listener. associateConfirm arrives via relay →
+  // app.fetch programmatic. subscribeRepos firehose is wired via
+  // directSubscriptionHandler (in-process callback, no loopback WS).
+  const pdsServe = createServe({ logger });
   atprotoAgent = await createLocalPDSAgent({
     logger, keypair,
     serve: pdsServe,

@@ -117,10 +117,16 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
   const ALLOWLIST_NSID = "com.publicdomainrelay.temp.auth.allowlist.rbacDid";
   const OFFERING_NSID = "com.publicdomainrelay.temp.market.offering";
 
-  // Pre-load vouched DIDs for direct_network scope filter (firehose hot path).
+  // Pre-load vouched DIDs for direct_network scope filter.
+  // Reads vouches from operator repos (discovered via bidder_associate records)
+  // and from the bidder's own repo (for desktop-bidder where worker == operator).
+  // Must precede operatorDidCache and discoverOperatorDids usage below.
+  const BADGE_BLUE_KEYS_NSID = "com.publicdomainrelay.temp.badgeBlueKeys";
+  const operatorDidCache = new Map<string, string[]>(); // bidderDid → [operatorDids]
   let vouchedDids: Set<string> | null = null;
   if (acceptScope === "direct_network") {
     vouchedDids = new Set();
+    // Load vouches from the bidder's own repo (desktop-bidder path).
     try {
       const result = await atproto.listRecords(atproto.did, "sh.tangled.graph.vouch", { limit: 200 });
       for (const rec of result?.records ?? []) {
@@ -129,10 +135,27 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
         const rkey = rec.uri.split("/").pop() ?? "";
         if (rkey.startsWith("did:")) vouchedDids.add(rkey);
       }
-      logger.info("bidder vouch set loaded", { count: vouchedDids.size });
     } catch (err) {
-      logger.warn("bidder vouch set load failed, declining all direct_network RFPs", { error: String(err) });
+      logger.warn("bidder vouch set load from own repo failed", { error: String(err) });
     }
+    // Load vouches from operator repos (hono-bidder worker path).
+    try {
+      const opDids = await discoverOperatorDids();
+      logger.info("bidder vouch: discovered operator DIDs", { count: opDids.length, opDids });
+      for (const opDid of opDids) {
+        try {
+          const result = await listRecordsPublic(idResolver, opDid, "sh.tangled.graph.vouch");
+          logger.info("bidder vouch: operator records", { opDid, recordCount: result.length });
+          for (const r of result) {
+            const v = r.value as Record<string, unknown>;
+            if (v.kind === "denounce") continue;
+            const rkey = r.uri.split("/").pop() ?? "";
+            if (rkey.startsWith("did:")) vouchedDids.add(rkey);
+          }
+        } catch (err) { logger.warn("bidder vouch: operator PDS query failed", { opDid, error: String(err) }); }
+      }
+    } catch (err) { logger.warn("bidder vouch: operator discovery failed", { error: String(err) }); }
+    logger.info("bidder vouch set loaded", { count: vouchedDids.size });
   }
 
   // On-demand check: requester must be associated with the operator (parent)
@@ -144,8 +167,6 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
   //      records on the operator's repo.
   // Results cached in-memory — badgeBlueKeys records are write-once so TTL is unnecessary.
   const associationCache = new Map<string, boolean>();
-  const BADGE_BLUE_KEYS_NSID = "com.publicdomainrelay.temp.badgeBlueKeys";
-  const operatorDidCache = new Map<string, string[]>(); // bidderDid → [operatorDids]
 
   async function discoverOperatorDids(): Promise<string[]> {
     const cached = operatorDidCache.get(atproto.did);
@@ -219,7 +240,7 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
         const reqRecords = await listRecordsPublic(idResolver, requesterDid, BADGE_BLUE_KEYS_NSID);
         for (const r of reqRecords) {
           const v = r.value as Record<string, unknown>;
-          if (v.service === "requester_associate" && operatorSet.has(v.keyId as string)) {
+          if (v.service === "requester_associate" && (operatorSet.has(v.keyId as string) || (vouchedDids?.has(v.keyId as string) ?? false))) {
             associationCache.set(requesterDid, true);
             logger.info("bidder scope check: matched requester association via operator", { requesterDid, operatorDid: v.keyId });
             return true;

@@ -278,7 +278,7 @@ export async function createLocalPDSAgent(opts: CreateLocalPDSAgentOpts): Promis
     sign: (bytes: Uint8Array) => keypair.sign(bytes),
   };
 
-  const { app, api } = createRepoFactory({
+  const { app, api, subscribe } = createRepoFactory({
     storage: storagePath ? await DenoKvStorage.create(storagePath) : new MemoryStorage(),
     signer,
     baseOrigin: `https://${keypair.did().replace(/:/g, "-").toLowerCase()}.${dispatcherHost}`,
@@ -296,7 +296,14 @@ export async function createLocalPDSAgent(opts: CreateLocalPDSAgentOpts): Promis
     dispatcherHost,
     signer,
     keypair,
-    localWsTarget: () => ({ hostname: "127.0.0.1", port: serve.tcpPort }),
+    directSubscriptionHandler: (subscriptionId, nsid, params, onEvent, _onData) => {
+      const unsub = subscribe({ nsid, params }, (frame) => {
+        try {
+          onEvent(frame);
+        } catch { /* relay closed */ }
+      });
+      return () => unsub?.();
+    },
   });
   serve.addRelay(xrpcRelay);
 
