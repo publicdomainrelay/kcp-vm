@@ -30,6 +30,10 @@ export default {
       type: "boolean" as const,
       description: "Use ATProto OAuth login instead of local PDS. Requires --atproto-handle.",
     },
+    "atproto-oauth-qr": {
+      type: "boolean" as const,
+      description: "Use QR-based ATProto OAuth (scan with phone, session transferred via qr.fedfork.com). Alternative to --atproto-oauth loopback for headless environments.",
+    },
     "atproto-handle": {
       type: "string" as const,
       description: "AT Protocol handle for OAuth login",
@@ -118,7 +122,6 @@ export default {
       type: "string" as const,
       description: "Relay URL for bidder discovery via listReposByCollection",
       env: "RELAY_URL",
-      default: "https://reg.market.fedfork.com",
     },
     "firehose-mode": {
       type: "string" as const,

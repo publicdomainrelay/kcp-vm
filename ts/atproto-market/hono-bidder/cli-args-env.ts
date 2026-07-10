@@ -25,6 +25,10 @@ export default {
       type: "boolean" as const,
       description: "Use ATProto OAuth login instead of local PDS. Requires --atproto-handle.",
     },
+    "atproto-oauth-qr": {
+      type: "boolean" as const,
+      description: "Use QR-based ATProto OAuth (scan with phone, session transferred via qr.fedfork.com). Alternative to --atproto-oauth loopback for headless environments.",
+    },
     "oauth-client-id": {
       type: "string" as const,
       description: "OAuth client ID URL for client metadata. Defaults to loopback http://localhost per ATProto CLI OAuth pattern.",
@@ -53,7 +57,6 @@ export default {
       type: "string" as const,
       description: "AT Protocol relay URL for requestCrawl registration and bidder discovery",
       env: "RELAY_URL",
-      default: "https://reg.market.fedfork.com",
     },
     "atproto-handle": {
       type: "string" as const,

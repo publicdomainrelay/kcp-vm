@@ -34,16 +34,3 @@ export { $nsid as COMPUTE_EVENTS_VM_ONNETWORK_NSID } from "../market-lexicons/co
 export { $nsid as COMPUTE_EVENTS_VM_STARTED_NSID } from "../market-lexicons/com/publicdomainrelay/temp/compute/events/vm/started.ts";
 export const REGISTER_IDENTITY_NSID = "com.publicdomainrelay.temp.market.registerIdentity";
 
-export const DEFAULT_RELAY_URLS = [
-  "https://relay1.us-east.bsky.network",
-  "https://relay1.us-west.bsky.network",
-  "https://relay.mini-cloud-0002.chadig.com",
-];
-
-export function relayUrlsToFirehoseUrls(relayUrls: string[]): string[] {
-  return relayUrls.map((u) => {
-    if (u.startsWith("wss://") || u.startsWith("ws://")) return u;
-    const base = u.replace(/^https?:\/\//, "wss://").replace(/\/+$/, "");
-    return `${base}/xrpc/com.atproto.sync.subscribeRepos`;
-  });
-}

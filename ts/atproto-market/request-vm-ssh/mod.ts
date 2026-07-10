@@ -9,13 +9,15 @@ import {
   createSshSessionProvider,
   ensureWebsocat,
 } from "@publicdomainrelay/requester-xrpc";
+import { pollForOAuthSession, createOAuthAgentFromSession, tryRestoreOAuthQRSession, saveOAuthQRSession } from "@publicdomainrelay/atproto-helpers";
 import { startLoopbackCallbackServer } from "@publicdomainrelay/atproto-oauth-helpers";
+import { createPlcDirectoryClient, createGenesisOp, PlcClient, PlcNotFoundError } from "@publicdomainrelay/did-plc";
 import type { RequesterPDS } from "@publicdomainrelay/requester-abc";
-import { DEFAULT_RELAY_URLS, EVENT_NSID, OFFERING_NSID, relayUrlsToFirehoseUrls } from "@publicdomainrelay/market-common";
-import { createFirehoseWatcher as createSubscribeReposWatcher } from "@publicdomainrelay/firehose-watcher-subscriberepos";
-import { createFirehoseWatcher as createJetstreamWatcher } from "@publicdomainrelay/firehose-watcher-jetstream";
+import { EVENT_NSID, OFFERING_NSID } from "@publicdomainrelay/market-common";
+import { createDefaultATProtoEventStreamsClient } from "@publicdomainrelay/atproto-event-streams-client";
 import { qrcode } from "@libs/qrcode";
 import { IdResolver } from "@atproto/identity";
+import { Secp256k1Keypair } from "@atproto/crypto";
 import cliArgsEnv from "./cli-args-env.ts";
 
 let runtimeConfig: Record<string, unknown> | null = null;
@@ -45,9 +47,12 @@ if (ingressProxyHost.includes("localhost") || ingressProxyHost.startsWith("127."
   }) as typeof fetch;
 }
 const cliRelayUrl = options.relayUrl as string | undefined;
-const relayUrls = cliRelayUrl
-  ? [...new Set([...DEFAULT_RELAY_URLS, cliRelayUrl])]
-  : DEFAULT_RELAY_URLS;
+
+const eventStreams = createDefaultATProtoEventStreamsClient({
+  additionalRelays: cliRelayUrl ? [cliRelayUrl] : [],
+  log: logger,
+});
+const relayUrls = eventStreams.relays.map((r) => r.url);
 
 const splitDids = (s: string | undefined): string[] =>
   s ? s.split(",").map((d) => d.trim()).filter(Boolean) : [];
@@ -101,7 +106,7 @@ const OAUTH_SCOPE_FULL = [
 ];
 
 // Temporary scope for loopback http://localhost client.
-const OAUTH_SCOPE = ["atproto", "transition:generic"].join(" ");
+const OAUTH_SCOPE = "atproto"; // bsky.social rejects transition:generic for loopback clients. Use OAUTH_SCOPE_FULL with registered client_id.
 
 let pds: RequesterPDS;
 let isOAuth = false;
@@ -144,6 +149,113 @@ if ((options.atprotoOauth as boolean) && (options.atprotoHandle as string | unde
   }
   pds = oauthHandle.pds;
   isOAuth = true;
+} else if ((options.atprotoOauthQr as boolean)) {
+  // QR-based OAuth — scan with phone, session transferred via qr.fedfork.com
+  const kp = resolvedPrivateKeyHex
+    ? await Secp256k1Keypair.import(resolvedPrivateKeyHex, { exportable: true })
+    : await Secp256k1Keypair.create({ exportable: true });
+  // Register DID on PLC (needed for service auth JWT verification)
+  const plcClient = createPlcDirectoryClient({ plcDirectoryUrl: (options.plcDirectoryUrl as string) || "https://plc.directory" });
+  const genesisOp = await createGenesisOp({
+    rotationKeys: [kp.did()],
+    verificationMethods: { atproto: kp.did() },
+    sign: (bytes: Uint8Array) => kp.sign(bytes),
+  });
+  const plcDid = genesisOp.did;
+  const pollSigner = { did: () => plcDid, sign: (bytes: Uint8Array) => kp.sign(bytes) };
+  try {
+    await plcClient.resolve(plcDid);
+    logger.info("oauth_qr_did_resolved", { did: plcDid });
+  } catch (err) {
+    if (err instanceof PlcNotFoundError) {
+      await plcClient.submitOp(plcDid, genesisOp.op);
+      logger.info("oauth_qr_did_registered", { did: plcDid });
+    } else {
+      throw err;
+    }
+  }
+
+  // Persist key for future runs
+  if (privateKeyHexPath) {
+    const hex = Array.from(await kp.export()).map((b: number) => b.toString(16).padStart(2, "0")).join("");
+    await Deno.writeTextFile(privateKeyHexPath, hex);
+  }
+
+  // Try restoring saved OAuth QR session
+  let _restoredOAuthAgent: any = null;
+  let _session: any = null;
+  const _restoredAgent = await tryRestoreOAuthQRSession({ logger });
+  if (_restoredAgent) {
+    _restoredOAuthAgent = _restoredAgent;
+    isOAuth = true;
+  } else {
+    // Generate nonce for defense-in-depth POST auth
+    const oauthNonce = Array.from(crypto.getRandomValues(new Uint8Array(16)),
+      (b) => b.toString(16).padStart(2, "0")).join("");
+
+    // Show QR
+    const qrUrl = `https://qr.fedfork.com/#oauth=${encodeURIComponent(plcDid)}&n=${oauthNonce}`;
+    process.stdout.write("\n" + "=".repeat(60) + "\n");
+    process.stdout.write("  Scan this QR code with your phone to authenticate:\n\n");
+    qrcode(qrUrl, { output: "console", ecl: "HIGH" });
+    process.stdout.write("\n  Or open this URL:\n  " + qrUrl + "\n");
+    process.stdout.write("=".repeat(60) + "\n\n");
+
+    logger.info("oauth_qr_awaiting_session", { did: plcDid });
+
+    // Poll for session
+    _session = await pollForOAuthSession({
+      cliDid: plcDid,
+      signer: pollSigner,
+      qrFedforkOrigin: "https://qr.fedfork.com",
+      logger,
+    });
+  }
+
+  // Create requester PDS for market handler infrastructure, but use OAuth agent
+  pds = await createRequesterPDS({
+    logger,
+    serve,
+    privateKeyHex: resolvedPrivateKeyHex,
+    plcDirectoryUrl: (options.plcDirectoryUrl as string) || "https://plc.directory",
+    ingressProxyHost,
+    label,
+    storagePath: options.pdsStatePath as string | undefined,
+  });
+
+  // Set OAuth agent on PDS
+  if (_restoredOAuthAgent) {
+    (pds as unknown as Record<string, unknown>).oauthAgent = _restoredOAuthAgent;
+    (pds as unknown as Record<string, unknown>).oauthSession = _restoredOAuthAgent.sessionData;
+    logger.info("oauth_qr_session_restored", { userDid: _restoredOAuthAgent.sessionData?.userDid });
+  } else {
+    const oauthAgent = await createOAuthAgentFromSession(_session, { logger });
+    (pds as unknown as Record<string, unknown>).oauthAgent = oauthAgent;
+    (pds as unknown as Record<string, unknown>).oauthSession = _session;
+    await saveOAuthQRSession(_session);
+    logger.info("oauth_qr_session_ready", { userDid: _session.userDid, handle: _session.handle });
+  }
+
+  // Override record creation to use user's Bluesky PDS (firehose-visible).
+  const _userAgent = (pds as unknown as Record<string, unknown>).oauthAgent as import("@publicdomainrelay/atproto-helpers").AtprotoAgentLike & { sessionData: { userDid: string } } | undefined;
+  if (_userAgent) {
+    pds.createRepoRecord = async (collection: string, record: Record<string, unknown>) => {
+      const rkey = (await import("@atproto/common-web")).TID.next().toString();
+      const { uri, cid } = await _userAgent.createRecord!(_userAgent.sessionData.userDid, collection, rkey, record);
+      return { uri, cid };
+    };
+    pds.createSignedRepoRecord = async (collection: string, record: Record<string, unknown>, aKp?: { did(): string; privateKey: { bytes: Uint8Array } }, issuer?: string) => {
+      const { attestationFor, toStorableEntry } = await import("@publicdomainrelay/market-atproto");
+      const rkey = (await import("@atproto/common-web")).TID.next().toString();
+      const att = attestationFor(aKp as import("@publicdomainrelay/market-atproto").AttestationKeypair, issuer);
+      const entry = await att.sign({ record: record as Record<string, unknown>, repository: _userAgent.sessionData.userDid }) as import("@publicdomainrelay/market-atproto").InlineAttestation;
+      const signed = { ...record, signatures: [toStorableEntry(entry)] };
+      const { uri, cid } = await _userAgent.createRecord!(_userAgent.sessionData.userDid, collection, rkey, signed);
+      return { uri, cid };
+    };
+  }
+
+  isOAuth = true;
 } else {
   pds = await createRequesterPDS({
     logger,
@@ -169,38 +281,23 @@ if ((options.atprotoOauth as boolean) && (options.atprotoHandle as string | unde
   }
 }
 
-const firehoseMode = (options.firehoseMode as string) || "off";
-const firehoseUrlOverride = options.firehoseUrl as string | undefined;
-const derivedFirehoseUrls = firehoseMode !== "off" ? relayUrlsToFirehoseUrls(relayUrls) : [];
-const firehoseUrl = firehoseUrlOverride || derivedFirehoseUrls[0] || "";
 const offeringDids = new Set<string>();
-let offeringWatcher: { close(): void } | undefined;
-if (firehoseMode !== "off" && firehoseUrl) {
-  const make = firehoseMode === "jetstream" ? createJetstreamWatcher : createSubscribeReposWatcher;
-  offeringWatcher = make({
-    url: firehoseUrl,
-    wantedCollections: [OFFERING_NSID],
-    onRecord: (e) => { if (e.operation !== "delete") offeringDids.add(e.did); },
-    log: logger,
-  });
-  logger.info("offering_firehose_watch_started", { mode: firehoseMode, url: firehoseUrl });
-}
+const offeringWatcher = eventStreams.watch({
+  wantedCollections: [OFFERING_NSID],
+  onEvent: (e) => { if (e.operation !== "delete") offeringDids.add(e.did); },
+  log: logger,
+});
+logger.info("offering_firehose_watch_started", { relayCount: eventStreams.relays.length, jetstreamCount: eventStreams.jetstreams.length });
 
 // Watch own PDS for compute events (vm.onNetwork, vm.registerIdentity)
-const ownEventDids = new Set<string>();
-let ownEventWatcher: { close(): void } | undefined = undefined;
-if (firehoseUrl) {
-  const make2 = firehoseMode === "jetstream" ? createJetstreamWatcher : createSubscribeReposWatcher;
-  ownEventWatcher = make2({
-    url: firehoseUrl,
-    wantedCollections: [EVENT_NSID],
-    onRecord: (e) => {
-      if (e.operation === "delete") return;
-      logger.info("event_watcher", { collection: e.collection, did: e.did, rkey: e.rkey });
-    },
-    log: logger,
-  });
-}
+const ownEventWatcher = eventStreams.watch({
+  wantedCollections: [EVENT_NSID],
+  onEvent: (e) => {
+    if (e.operation === "delete") return;
+    logger.info("event_watcher", { collection: e.collection, did: e.did, rkey: e.rkey });
+  },
+  log: logger,
+});
 
 if (!isOAuth) {
   await pds.beginServe();
@@ -209,19 +306,35 @@ logger.info("requester_ready", { did: pds.did, ingressRef: isOAuth ? "(oauth)" :
 
 const BADGE_BLUE_KEYS_NSID = "com.publicdomainrelay.temp.badgeBlueKeys";
 let hasAssociation = false;
-if (!options.noQr && !isOAuth) {
-  let cursor: string | undefined;
-  do {
-    const result = await (pds as unknown as { api: { listRecords(did: string, coll: string, opts: { limit: number; cursor?: string }): Promise<{ records: Array<{ value: Record<string, unknown> }>; cursor?: string }> } }).api.listRecords(pds.did, BADGE_BLUE_KEYS_NSID, { limit: 100, cursor });
-    for (const rec of result.records) {
-      const v = rec.value as Record<string, unknown>;
-      if (v.challenge === pds.did && v.service === "requester_associate") {
-        hasAssociation = true;
-        break;
+if (!options.noQr) {
+  if (isOAuth) {
+    // OAuth mode: check badgeBlueKeys on user's PDS via OAuth agent.
+    const oa = (pds as unknown as { oauthAgent?: { listRecords(did: string, coll: string, opts?: { limit?: number }): Promise<{ records: Array<{ value: Record<string, unknown> }> }> } }).oauthAgent;
+    const userDid = (pds as unknown as { oauthSession?: { userDid: string } }).oauthSession?.userDid;
+    if (oa && userDid) {
+      const result = await oa.listRecords(userDid, BADGE_BLUE_KEYS_NSID, { limit: 100 });
+      for (const rec of result.records) {
+        const v = rec.value as Record<string, unknown>;
+        if (v.challenge === userDid && v.service === "requester_associate" && v.keyId === pds.did) {
+          hasAssociation = true;
+          break;
+        }
       }
     }
-    cursor = result.cursor;
-  } while (cursor && !hasAssociation);
+  } else {
+    let cursor: string | undefined;
+    do {
+      const result = await (pds as unknown as { api: { listRecords(did: string, coll: string, opts: { limit: number; cursor?: string }): Promise<{ records: Array<{ value: Record<string, unknown> }>; cursor?: string }> } }).api.listRecords(pds.did, BADGE_BLUE_KEYS_NSID, { limit: 100, cursor });
+      for (const rec of result.records) {
+        const v = rec.value as Record<string, unknown>;
+        if (v.challenge === pds.did && v.service === "requester_associate") {
+          hasAssociation = true;
+          break;
+        }
+      }
+      cursor = result.cursor;
+    } while (cursor && !hasAssociation);
+  }
 }
 
 if (hasAssociation) {
@@ -283,8 +396,7 @@ async function resumeConsole(): Promise<void> {
 }
 
 function shutdown(): void {
-  offeringWatcher?.close();
-  ownEventWatcher?.close();
+  eventStreams.close();
   serve.shutdown();
   Deno.exit();
 }
@@ -313,8 +425,7 @@ const result = await runComputeContract(pds, {
   policyMode,
   policyEngineEndpoint,
   offeringWatcherDids: () => [...offeringDids],
-  firehoseUrl: firehoseUrl || undefined,
-  firehoseMode: firehoseMode !== "off" ? (firehoseMode as "jetstream" | "subscriberepos") : undefined,
+  eventStreams,
   sshProvider: createSshSessionProvider(logger),
   onSshStart: () => pauseConsole(),
   onSshEnd: () => resumeConsole(),

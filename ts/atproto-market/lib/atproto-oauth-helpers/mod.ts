@@ -60,7 +60,7 @@ export function oauthClientMetadata(opts: {
 }): Record<string, unknown> {
   return {
     client_id: opts.clientId ?? "http://localhost",
-    application_type: "native",
+    application_type: "web",
     dpop_bound_access_tokens: true,
     redirect_uris: [opts.redirectUri ?? "http://127.0.0.1:0/callback"],
     grant_types: ["authorization_code", "refresh_token"],

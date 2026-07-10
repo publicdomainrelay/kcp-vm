@@ -7,16 +7,14 @@ import { createMarketBidder } from "@publicdomainrelay/market-bidder";
 import type { MarketBidderProviderRef } from "@publicdomainrelay/market-bidder-abc";
 import { createComputeProviderHooks } from "@publicdomainrelay/market-bidder-compute";
 import { createComputeProviderDenoWorker, createWorkerProviderHooks } from "@publicdomainrelay/market-bidder-worker";
-import { createATProto, createLocalPDSAgent, createRemoteAgent, createOAuthAgent } from "@publicdomainrelay/atproto-helpers";
+import { createATProto, createLocalPDSAgent, createRemoteAgent, createOAuthAgent, createOAuthAgentFromSession, pollForOAuthSession, tryRestoreOAuthQRSession, saveOAuthQRSession } from "@publicdomainrelay/atproto-helpers";
 import type { LocalPDSAgent } from "@publicdomainrelay/atproto-helpers";
 import { startLoopbackCallbackServer, oauthClientMetadata } from "@publicdomainrelay/atproto-oauth-helpers";
 import { createBadgeBlueSigner } from "@publicdomainrelay/market-atproto";
-import { ACCEPT_NSID, DEFAULT_RELAY_URLS, EVENT_NSID, OFFERING_NSID, RFP_NSID, relayUrlsToFirehoseUrls } from "@publicdomainrelay/market-common";
+import { ACCEPT_NSID, EVENT_NSID, OFFERING_NSID, RFP_NSID } from "@publicdomainrelay/market-common";
 import { verifyRelayVisibility } from "@publicdomainrelay/requester-xrpc";
-import { createFirehoseWatcher as createSubscribeReposWatcher } from "@publicdomainrelay/firehose-watcher-subscriberepos";
-import { createFirehoseWatcher as createJetstreamWatcher } from "@publicdomainrelay/firehose-watcher-jetstream";
-import type { FirehoseRecordEvent, FirehoseWatcher } from "@publicdomainrelay/firehose-watcher-abc";
-import { createPlcDirectoryClient } from "@publicdomainrelay/did-plc";
+import { createDefaultATProtoEventStreamsClient } from "@publicdomainrelay/atproto-event-streams-client";
+import { createPlcDirectoryClient, createGenesisOp, PlcClient, PlcNotFoundError } from "@publicdomainrelay/did-plc";
 import { createDigitalOceanComputeProvider } from "@publicdomainrelay/compute-provider-digitalocean";
 import { createLocalComputeProvider } from "@publicdomainrelay/compute-provider-local";
 import { createOidcProvisioningEnricher } from "@publicdomainrelay/oidc-issuer-hono";
@@ -54,6 +52,8 @@ const privateKeyHex = resolvedPrivateKeyHex ??
   Array.from(await keypair.export()).map((b) => b.toString(16).padStart(2, "0")).join("");
 
 const ingressProxyHost = (options.ingressProxyHost as string) || "xrpc.fedproxy.com";
+// Set in OAuth QR path — bidder's did:plc (owns local keypair).
+let oauthPlcDid: string | undefined;
 
 const plcDirectoryUrl = (options.plcDirectoryUrl as string) || "https://plc.directory";
 
@@ -88,7 +88,14 @@ if (isLocalDev || isLocalPlc) {
 // on the dispatcher (collision would route everyone to the last connector).
 async function cliCreateIngress() {
   const relayKeypair = await Secp256k1Keypair.create({ exportable: true });
-  return createIngress({ logger, ingressProxyHost, signer: atproto.signer, keypair: relayKeypair });
+  // Service auth JWTs use the local keypair (owns bidder's did:plc).
+  // OAuth QR mode: atproto.did is the user's Bluesky DID — use oauthPlcDid instead.
+  const bidderDid = oauthPlcDid ?? atproto.did;
+  const localSigner = {
+    did: () => bidderDid,
+    sign: async (bytes: Uint8Array) => keypair.sign(bytes),
+  };
+  return createIngress({ logger, ingressProxyHost, signer: localSigner, keypair: relayKeypair });
 }
 
 // Full OAuth scope for registered client (requires hosted client metadata).
@@ -110,7 +117,7 @@ const OAUTH_SCOPE_FULL = [
 // Temporary scope for loopback http://localhost client.
 // bsky.social rejects custom repo:/rpc: scopes for unregistered loopback
 // clients. Switch to OAUTH_SCOPE_FULL when using a registered client_id.
-const OAUTH_SCOPE = ["atproto", "transition:generic"].join(" "); // Use OAUTH_SCOPE_FULL when client is registered
+const OAUTH_SCOPE = "atproto"; // bsky.social rejects transition:generic for loopback clients. Use OAUTH_SCOPE_FULL with registered client_id.
 
 let atprotoAgent;
 let pdsHostname: string | undefined;
@@ -165,6 +172,71 @@ if ((options.atprotoOauth as boolean)) {
   isOAuth = true;
   // In OAuth mode, the PDS hostname is the PDS from the session (not used for requestCrawl)
   pdsHostname = undefined;
+} else if ((options.atprotoOauthQr as boolean)) {
+  // QR-based OAuth — scan with phone, session transferred via qr.fedfork.com
+  // Register DID on PLC (needed for service auth JWT verification)
+  const plcClient = createPlcDirectoryClient({ plcDirectoryUrl });
+  const genesisOp = await createGenesisOp({
+    rotationKeys: [keypair.did()],
+    verificationMethods: { atproto: keypair.did() },
+    sign: (bytes: Uint8Array) => keypair.sign(bytes),
+  });
+  const plcDid = genesisOp.did;
+  oauthPlcDid = plcDid;
+  const qrSigner = { did: () => plcDid, sign: (bytes: Uint8Array) => keypair.sign(bytes) };
+  try {
+    await plcClient.resolve(plcDid);
+    logger.info("oauth_qr_did_resolved", { did: plcDid });
+  } catch (err) {
+    if (err instanceof PlcNotFoundError) {
+      await plcClient.submitOp(plcDid, genesisOp.op);
+      logger.info("oauth_qr_did_registered", { did: plcDid });
+    } else {
+      throw err;
+    }
+  }
+
+  // Try restoring saved OAuth QR session
+  const _restoredAgent = await tryRestoreOAuthQRSession({ logger });
+  if (_restoredAgent) {
+    atprotoAgent = _restoredAgent;
+    isOAuth = true;
+    pdsHostname = undefined;
+    logger.info("oauth_qr_session_restored", { userDid: _restoredAgent.sessionData?.userDid });
+  } else {
+    // Generate nonce for defense-in-depth POST auth
+    const oauthNonce = Array.from(crypto.getRandomValues(new Uint8Array(16)),
+      (b) => b.toString(16).padStart(2, "0")).join("");
+
+    // Show QR
+    const qrUrl = `https://qr.fedfork.com/#oauth=${encodeURIComponent(plcDid)}&n=${oauthNonce}`;
+    process.stdout.write("\n" + "=".repeat(60) + "\n");
+    process.stdout.write("  Scan this QR code with your phone to authenticate:\n\n");
+    qrcode(qrUrl, { output: "console", ecl: "HIGH" });
+    process.stdout.write("\n  Or open this URL:\n  " + qrUrl + "\n");
+    process.stdout.write("=".repeat(60) + "\n\n");
+
+    logger.info("oauth_qr_awaiting_session", { did: plcDid });
+
+    // Poll for session
+    const session = await pollForOAuthSession({
+      cliDid: plcDid,
+      signer: qrSigner,
+      qrFedforkOrigin: "https://qr.fedfork.com",
+      logger,
+    });
+
+    // Create OAuth agent from transferred session
+    const oauthAgent = await createOAuthAgentFromSession(session, { logger });
+    atprotoAgent = oauthAgent;
+
+    // Persist session for future restarts
+    await saveOAuthQRSession(session);
+
+    isOAuth = true;
+    pdsHostname = undefined;
+    logger.info("oauth_qr_session_ready", { userDid: session.userDid, handle: session.handle });
+  }
 } else if ((options.atprotoHandle as string | undefined) && (options.atprotoPassword as string | undefined)) {
   const pdsStatePath = options.pdsStatePath as string | undefined;
   // Relay-only: no TCP listener. associateConfirm arrives via relay →
@@ -200,9 +272,14 @@ const atproto = await createATProto({
 });
 
 const cliRelayUrl = (options.relayUrl as string) || "";
-const relayUrls = cliRelayUrl
-  ? [...new Set([...DEFAULT_RELAY_URLS, cliRelayUrl])]
-  : DEFAULT_RELAY_URLS;
+
+const eventStreams = createDefaultATProtoEventStreamsClient({
+  additionalRelays: cliRelayUrl ? [cliRelayUrl] : [],
+  log: logger,
+});
+
+// Collect relay URLs for PDS registration.
+const relayUrls = eventStreams.relays.map((r) => r.url);
 
 // Collect local relay URLs for deferred registration after serve starts.
 for (const url of relayUrls) {
@@ -293,45 +370,7 @@ if (options.computeProviderDenoWorker) {
   }));
 }
 
-const firehoseMode = (options.firehoseMode as string) || "off";
-const firehoseUrlOverride = options.firehoseUrl as string | undefined;
 const offeringRefreshSec = (options.offeringRefreshSec as number) ?? 300;
-
-let rfpWatcherFactory: ((onRecord: (e: FirehoseRecordEvent) => void) => FirehoseWatcher) | undefined;
-let rfpWatcherFactories: Array<(onRecord: (e: FirehoseRecordEvent) => void) => FirehoseWatcher> | undefined;
-
-if (firehoseMode !== "off") {
-  const firehoseUrls = firehoseUrlOverride
-    ? firehoseUrlOverride.split(",").map((s) => s.trim()).filter(Boolean)
-    : relayUrlsToFirehoseUrls(relayUrls);
-  if (firehoseUrls.length > 0) {
-    const make = firehoseMode === "jetstream" ? createJetstreamWatcher : createSubscribeReposWatcher;
-    const build = (url: string) => (onRecord: (e: FirehoseRecordEvent) => void) =>
-      make({ url, wantedCollections: [RFP_NSID], onRecord, log: logger });
-    if (firehoseUrls.length > 1) {
-      rfpWatcherFactories = firehoseUrls.map(build);
-    } else {
-      rfpWatcherFactory = build(firehoseUrls[0]);
-    }
-  }
-}
-
-// Firehose watchers for ACCEPT_NSID and EVENT_NSID — fallbacks when submit*
-// service endpoint properties are absent on records.
-let acceptWatcherFactory: typeof rfpWatcherFactory | undefined;
-let eventWatcherFactory: typeof rfpWatcherFactory | undefined;
-if (firehoseMode !== "off") {
-  const firehoseUrls = firehoseUrlOverride
-    ? firehoseUrlOverride.split(",").map((s: string) => s.trim()).filter(Boolean)
-    : relayUrlsToFirehoseUrls(relayUrls);
-  if (firehoseUrls.length > 0) {
-    const make = firehoseMode === "jetstream" ? createJetstreamWatcher : createSubscribeReposWatcher;
-    acceptWatcherFactory = (onRecord) =>
-      make({ url: firehoseUrls[0], wantedCollections: [ACCEPT_NSID], onRecord, log: logger });
-    eventWatcherFactory = (onRecord) =>
-      make({ url: firehoseUrls[0], wantedCollections: [EVENT_NSID], onRecord, log: logger });
-  }
-}
 
 // Market factory gets its own relay/serve (own keypair -> own subdomain/FQDN).
 // Skip ingress in OAuth mode — PDS is remote, no relay subscriber needed.
@@ -358,10 +397,7 @@ const policyMode = isValidPolicyMode(policyModeRaw) ? policyModeRaw : undefined;
 
 const bidder = await createMarketBidder({
   logger, atproto, providers, relay: bidderIngress,
-  rfpWatcherFactory,
-  rfpWatcherFactories,
-  acceptWatcherFactory,
-  eventWatcherFactory,
+  eventStreams,
   offeringRefreshMs: offeringRefreshSec > 0 ? offeringRefreshSec * 1000 : undefined,
   serve: bidderServe,
   policyMode,

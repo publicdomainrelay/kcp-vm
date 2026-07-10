@@ -3,7 +3,6 @@ import { IdResolver } from "@atproto/identity";
 import { Secp256k1Keypair } from "@atproto/crypto";
 import { Agent, CredentialSession } from "@atproto/api";
 import { OAuthClient } from "@atproto/oauth-client";
-import type { Key } from "@atproto/oauth-client";
 import { webCryptoRuntime, memoryStateStore, jsonSessionStore } from "@publicdomainrelay/atproto-oauth-helpers";
 import type { StructuredLoggerInterface } from "@publicdomainrelay/logger";
 import type { RepoApi, WriteOp } from "@publicdomainrelay/atproto-repo-abc";
@@ -86,6 +85,10 @@ export async function createATProto(opts: CreateATProtoOpts): Promise<ATProto> {
     record: Record<string, unknown>,
   ): Promise<StrongRef> {
     const rkey = TID.next().toString();
+    if (agent.createRecord) {
+      const { uri, cid } = await agent.createRecord(did, collection, rkey, record);
+      return { $type: "com.atproto.repo.strongRef", uri, cid } as StrongRef;
+    }
     await agent.applyWrites(did, [{ action: "create", collection, rkey, record }]);
     const rec = await agent.getRecord(did, collection, rkey);
     return {
@@ -100,6 +103,10 @@ export async function createATProto(opts: CreateATProtoOpts): Promise<ATProto> {
     rkey: string,
     record: Record<string, unknown>,
   ): Promise<StrongRef> {
+    if (agent.putRecord) {
+      const { uri, cid } = await agent.putRecord(did, collection, rkey, record);
+      return { $type: "com.atproto.repo.strongRef", uri, cid } as StrongRef;
+    }
     await agent.applyWrites(did, [{ action: "update", collection, rkey, record }]);
     const rec = await agent.getRecord(did, collection, rkey);
     return {
@@ -114,6 +121,10 @@ export async function createATProto(opts: CreateATProtoOpts): Promise<ATProto> {
     record: Record<string, unknown>,
   ): Promise<{ uri: string; cid: string }> {
     const rkey = TID.next().toString();
+    if (agent.createRecord) {
+      const { uri, cid } = await agent.createRecord(did, collection, rkey, record);
+      return { uri, cid };
+    }
     await agent.applyWrites(did, [{ action: "create", collection, rkey, record }]);
     const rec = await agent.getRecord(did, collection, rkey);
     return { uri: `at://${did}/${collection}/${rkey}`, cid: rec?.cid ?? "" };
@@ -128,6 +139,10 @@ export async function createATProto(opts: CreateATProtoOpts): Promise<ATProto> {
     const att = attestationFor(badgeBlueSigner, issuer);
     const entry = await att.sign({ record: record as RecordMap, repository: did }) as InlineAttestation;
     const signed = { ...record, signatures: [toStorableEntry(entry)] };
+    if (agent.createRecord) {
+      const { uri, cid } = await agent.createRecord(did, collection, rkey, signed);
+      return { uri, cid, record: signed };
+    }
     await agent.applyWrites(did, [{ action: "create", collection, rkey, record: signed }]);
     const rec = await agent.getRecord(did, collection, rkey);
     return { uri: `at://${did}/${collection}/${rkey}`, cid: rec?.cid ?? "", record: signed };
@@ -507,7 +522,7 @@ export async function createOAuthAgent(opts: CreateOAuthAgentOpts): Promise<OAut
     responseMode: "query",
     clientMetadata: {
       client_id: clientId,
-      application_type: "native",
+      application_type: "web",
       dpop_bound_access_tokens: true,
       redirect_uris: [redirectUri],
       grant_types: ["authorization_code", "refresh_token"],
@@ -635,6 +650,418 @@ export async function createOAuthAgent(opts: CreateOAuthAgentOpts): Promise<OAut
         const res = await s.fetchHandler(
           `${s.server.issuer}/xrpc/com.atproto.repo.listRecords?${params.toString()}`,
         );
+        if (!res.ok) break;
+        const data = await res.json() as { records: Array<{ uri: string; cid?: string; value: unknown }>; cursor?: string };
+        for (const r of data.records) {
+          all.push({ uri: r.uri, cid: r.cid ?? "", value: r.value as Record<string, unknown> });
+        }
+        cursor = data.cursor;
+      } while (cursor);
+      return { records: all.slice(0, limit) };
+    },
+  };
+
+  return agent;
+}
+
+// ── QR-based OAuth: session transferred from browser ──────────────────────
+
+/**
+ * OAuth session data returned by qr.fedfork.com after browser completes OAuth
+ * and the CLI polls the XRPC endpoint.
+ */
+export interface OAuthSessionData {
+  accessJwt: string;
+  refreshJwt: string;
+  userDid: string;
+  handle: string;
+  pds: string;
+  dpopPublicJwk: Record<string, string>;
+  dpopPrivateJwk: Record<string, string>;
+}
+
+/**
+ * Poll qr.fedfork.com for an OAuth session transferred from a browser.
+ * Signs a service auth JWT with the CLI's private key to prove DID ownership.
+ */
+export async function pollForOAuthSession(opts: {
+  cliDid: string;
+  signer: { did(): string; sign(bytes: Uint8Array): Promise<Uint8Array> };
+  qrFedforkOrigin: string;
+  pollIntervalMs?: number;
+  timeoutMs?: number;
+  logger?: StructuredLoggerInterface;
+}): Promise<OAuthSessionData> {
+  const origin = opts.qrFedforkOrigin.replace(/\/+$/, "");
+  const pollIntervalMs = opts.pollIntervalMs ?? 3_000;
+  const timeoutMs = opts.timeoutMs ?? 5 * 60 * 1_000;
+  const log = opts.logger;
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const token = await signServiceAuth(opts.signer, {
+      aud: `did:web:${new URL(origin).host}`,
+      lxm: "com.fedfork.atprotoOauthQR",
+      expiresInSec: 60,
+    });
+
+    const res = await fetch(`${origin}/xrpc/com.fedfork.atprotoOauthQR`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    if (res.ok) {
+      const data = await res.json() as OAuthSessionData;
+      log?.info?.("oauth_qr_session_received", {
+        userDid: data.userDid,
+        handle: data.handle,
+      });
+      return data;
+    }
+
+    if (res.status === 404 || res.status === 401) {
+      // Not ready yet (404: no session stored; 401: session not yet posted, backend
+      // can't verify the service auth JWT because no entry exists for this DID)
+      log?.debug?.("oauth_qr_poll", { status: res.status });
+      await new Promise((r) => setTimeout(r, pollIntervalMs));
+      continue;
+    }
+
+    // Unexpected error
+    const body = await res.text().catch(() => "");
+    throw new Error(`oauth-qr poll failed: ${res.status} ${body}`);
+  }
+
+  throw new Error("oauth-qr poll timed out waiting for session transfer");
+}
+
+// ── DPoP utilities (inline, same pattern as market-bidder-agent) ──────────
+
+interface DpopKey {
+  bareJwk: Record<string, string>;
+  algorithms?: string[];
+  createJwt(header: Record<string, unknown>, payload: Record<string, unknown>): Promise<string>;
+}
+
+interface DpopNonceStore {
+  get(key: string): Promise<string | undefined>;
+  set(key: string, value: string): Promise<void>;
+  del(key: string): Promise<void>;
+}
+
+function b64url(bytes: Uint8Array): string {
+  return btoa(String.fromCharCode(...bytes))
+    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function buildHtu_(url: string): string {
+  const i = url.indexOf("?");
+  const j = url.indexOf("#");
+  const end = i === -1 ? j : j === -1 ? i : Math.min(i, j);
+  return end === -1 ? url : url.slice(0, end);
+}
+
+async function sha256_(input: string): Promise<string> {
+  const bytes = new TextEncoder().encode(input);
+  const hash = await crypto.subtle.digest("SHA-256", bytes);
+  return b64url(new Uint8Array(hash));
+}
+
+function createDpopNonceStore_(): DpopNonceStore {
+  const map = new Map<string, string>();
+  return {
+    get: async (k) => map.get(k),
+    set: async (k, v) => { map.set(k, v); },
+    del: async (k) => { map.delete(k); },
+  };
+}
+
+async function createDpopKey_(jwk: Record<string, string>, logger?: StructuredLoggerInterface): Promise<DpopKey> {
+  // Strip browser-specific fields (key_ops, ext, use) that cause "Invalid key usage"
+  const cleanJwk: Record<string, string> = {
+    kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y,
+  };
+  if (jwk.d) cleanJwk.d = jwk.d;
+
+  logger?.debug?.("dpop_key_import", {
+    jwkKeys: Object.keys(jwk),
+    cleanKeys: Object.keys(cleanJwk),
+    jwkAlg: jwk.alg,
+    jwkKty: jwk.kty,
+    jwkCrv: jwk.crv,
+    hasD: !!jwk.d,
+    hasKeyOps: !!jwk.key_ops,
+    hasExt: "ext" in jwk,
+    hasUse: !!jwk.use,
+  });
+
+  const privateKey = await crypto.subtle.importKey(
+    "jwk", cleanJwk, { name: "ECDSA", namedCurve: "P-256" }, false, ["sign"],
+  );
+  const bareJwk: Record<string, string> = { kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y };
+  if (jwk.kid) bareJwk.kid = jwk.kid;
+  return {
+    bareJwk,
+    async createJwt(header, payload) {
+      const headerB64 = b64url(new TextEncoder().encode(JSON.stringify(header)));
+      const payloadB64 = b64url(new TextEncoder().encode(JSON.stringify(payload)));
+      const signingInput = `${headerB64}.${payloadB64}`;
+      const sig = await crypto.subtle.sign(
+        { name: "ECDSA", hash: "SHA-256" },
+        privateKey,
+        new TextEncoder().encode(signingInput),
+      );
+      return `${signingInput}.${b64url(new Uint8Array(sig))}`;
+    },
+  };
+}
+
+function createDpopFetch_(opts: {
+  key: DpopKey;
+  nonces: DpopNonceStore;
+  fetch?: typeof globalThis.fetch;
+}): (url: string, init: RequestInit) => Promise<Response> {
+  const { key, nonces } = opts;
+  const fetcher = opts.fetch ?? globalThis.fetch;
+
+  return async function dpopFetch(url: string, init: RequestInit): Promise<Response> {
+    const authHdr = (init.headers as Record<string, string> | undefined)?.["Authorization"] ?? "";
+    const ath = authHdr.startsWith("DPoP ")
+      ? await sha256_(authHdr.slice(5))
+      : undefined;
+
+    const htm = init.method ?? "GET";
+    const htu = buildHtu_(url);
+    const origin = new URL(url).origin;
+
+    let nonce: string | undefined;
+    try { nonce = await nonces.get(origin); } catch { /* ignore */ }
+
+    const proof = await key.createJwt(
+      { typ: "dpop+jwt", alg: "ES256", jwk: key.bareJwk },
+      { jti: crypto.randomUUID(), htm, htu, iat: Math.floor(Date.now() / 1000), ...(nonce ? { nonce } : {}), ...(ath ? { ath } : {}) },
+    );
+
+    const req = new Request(url, init);
+    req.headers.set("DPoP", proof);
+
+    let res = await fetcher(req);
+
+    const nextNonce = res.headers.get("DPoP-Nonce");
+    if (nextNonce && nextNonce !== nonce) {
+      try { await nonces.set(origin, nextNonce); } catch { /* ignore */ }
+      // Retry on use_dpop_nonce error
+      if (res.status === 400 || res.status === 401) {
+        try {
+          const errBody = await res.clone().json().catch(() => null);
+          if (errBody?.error === "use_dpop_nonce") {
+            try { res.body?.cancel(); } catch { /* ignore */ }
+            const retryProof = await key.createJwt(
+              { typ: "dpop+jwt", alg: "ES256", jwk: key.bareJwk },
+              { jti: crypto.randomUUID(), htm, htu, iat: Math.floor(Date.now() / 1000), nonce: nextNonce, ...(ath ? { ath } : {}) },
+            );
+            const retryReq = new Request(url, init);
+            retryReq.headers.set("DPoP", retryProof);
+            res = await fetcher(retryReq);
+            const retryNonce = res.headers.get("DPoP-Nonce");
+            if (retryNonce && retryNonce !== nextNonce) {
+              try { await nonces.set(origin, retryNonce); } catch { /* ignore */ }
+            }
+          }
+        } catch { /* clone failed, continue */ }
+      }
+    }
+
+    return res;
+  };
+}
+
+function createTokenRefreshLock_() {
+  let pending: Promise<unknown> | null = null;
+  return function runLocked(fn: () => Promise<void>): Promise<void> {
+    if (pending) return pending.then(() => runLocked(fn));
+    pending = fn().finally(() => { pending = null; });
+    return pending as Promise<void>;
+  };
+}
+
+/**
+ * Create an AtprotoAgentLike from a session transferred via QR code OAuth.
+ * The DPoP private key (P-256) is imported from JWK. All PDS requests use
+ * DPoP-bound access tokens. Token refresh is handled transparently.
+ */
+export async function createOAuthAgentFromSession(
+  sessionData: OAuthSessionData,
+  opts?: { logger?: StructuredLoggerInterface },
+): Promise<AtprotoAgentLike & { sessionData: OAuthSessionData }> {
+  const log = opts?.logger;
+  const nonces = createDpopNonceStore_();
+  const key = await createDpopKey_(sessionData.dpopPrivateJwk, log);
+
+  let accessJwt = sessionData.accessJwt;
+  let refreshJwt = sessionData.refreshJwt;
+  let dpopFetch = createDpopFetch_({ key, nonces });
+  const refreshLock = createTokenRefreshLock_();
+
+  async function refreshTokens(): Promise<void> {
+    // Resolve PDS → auth server for token endpoint
+    const pdsUrl = sessionData.pds.replace(/\/+$/, "");
+    const protRes = await fetch(`${pdsUrl}/.well-known/oauth-protected-resource`);
+    if (!protRes.ok) throw new Error(`failed to fetch oauth-protected-resource: ${protRes.status}`);
+    const protMeta = await protRes.json() as { authorization_servers?: string[] };
+    const authServer = protMeta.authorization_servers?.[0];
+    if (!authServer) throw new Error("no authorization server in protected resource metadata");
+
+    // Fetch auth server metadata to get the actual token_endpoint URL.
+    const authMetaRes = await fetch(`${authServer.replace(/\/+$/, "")}/.well-known/oauth-authorization-server`);
+    const authMeta = await authMetaRes.json() as { token_endpoint?: string };
+    const tokenUrl = authMeta.token_endpoint ?? `${authServer.replace(/\/+$/, "")}/token`;
+    if (!authMeta.token_endpoint) log?.warn?.("token_endpoint_missing_from_auth_metadata", { authServer });
+
+    const refreshDpopFetch = createDpopFetch_({ key, nonces });
+    const body = new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token: refreshJwt,
+      client_id: "https://qr.fedfork.com/oauth-client-metadata.json",
+    });
+
+    const res = await refreshDpopFetch(tokenUrl, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: body.toString(),
+    });
+
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "");
+      throw new Error(`token refresh failed: ${res.status} ${errText}`);
+    }
+
+    const data = await res.json() as { access_token: string; refresh_token?: string };
+    accessJwt = data.access_token;
+    if (data.refresh_token) refreshJwt = data.refresh_token;
+
+    // Rebuild dpopFetch with new key material (nonces reset)
+    dpopFetch = createDpopFetch_({ key, nonces });
+    log?.info?.("oauth_qr_tokens_refreshed", {});
+  }
+
+  const _signer = {
+    did: () => sessionData.userDid,
+    sign: async () => { throw new Error("OAuth QR agent uses getServiceAuth, not local signing"); },
+  };
+
+  const agent: AtprotoAgentLike & { sessionData: OAuthSessionData } = {
+    sessionData,
+    get did() { return sessionData.userDid; },
+    signer: _signer,
+
+    async getServiceAuth(aud: string, lxm?: string): Promise<string> {
+      const res = await dpopFetch(
+        `${sessionData.pds.replace(/\/+$/, "")}/xrpc/com.atproto.server.getServiceAuth`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            Authorization: `DPoP ${accessJwt}`,
+          },
+          body: JSON.stringify({ aud, lxm: lxm ?? aud }),
+        },
+      );
+      if (!res.ok) throw new Error(`getServiceAuth failed: ${res.status}`);
+      const data = await res.json() as { token: string };
+      return data.token;
+    },
+
+    async applyWrites(repo: string, writes: Parameters<AtprotoAgentLike["applyWrites"]>[1]) {
+      const doCall = async (): Promise<Response> => {
+        const res = await dpopFetch(
+          `${sessionData.pds.replace(/\/+$/, "")}/xrpc/com.atproto.repo.applyWrites`,
+          {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              Authorization: `DPoP ${accessJwt}`,
+            },
+            body: JSON.stringify({ repo, writes: writes.map((w) => {
+              const base: Record<string, unknown> = {
+                action: w.action, collection: w.collection, rkey: w.rkey,
+              };
+              if (w.action !== "delete") (base as Record<string, unknown>).value = (w as { record: unknown }).record;
+              return base;
+            }) }),
+          },
+        );
+        return res;
+      };
+
+      let res = await doCall();
+      if (res.status === 401) {
+        await refreshLock(() => refreshTokens());
+        res = await doCall();
+      }
+      if (!res.ok) throw new Error(`applyWrites failed: ${res.status} ${await res.text()}`);
+      const data = await res.json() as { commit?: { rev?: string } };
+      const rev = data.commit?.rev ?? "";
+      return { repo, commit: rev, rev, since: null, blocks: new Uint8Array(), ops: [] } as unknown as CommitEvent;
+    },
+
+    async getRecord(repo: string, collection: string, rkey: string) {
+      const params = new URLSearchParams({ repo, collection, rkey });
+      const doCall = async (): Promise<Response> => dpopFetch(
+        `${sessionData.pds.replace(/\/+$/, "")}/xrpc/com.atproto.repo.getRecord?${params.toString()}`,
+        { headers: { Authorization: `DPoP ${accessJwt}` } },
+      );
+      let res = await doCall();
+      if (res.status === 401) {
+        await refreshLock(() => refreshTokens());
+        res = await doCall();
+      }
+      if (!res.ok) return null;
+      const data = await res.json() as { uri: string; cid?: string; value: Record<string, unknown> };
+      return { uri: data.uri, cid: data.cid ?? "", value: data.value };
+    },
+
+    // Direct record CRUD — bypasses applyWrites Lexicon validation on
+    // remote PDSes that don't know our custom Lexicons.
+    async createRecord(repo: string, collection: string, rkey: string, record: Record<string, unknown>) {
+      const doCall = async (): Promise<Response> => dpopFetch(
+        `${sessionData.pds.replace(/\/+$/, "")}/xrpc/com.atproto.repo.createRecord`,
+        { method: "POST", headers: { "content-type": "application/json", Authorization: `DPoP ${accessJwt}` }, body: JSON.stringify({ repo, collection, rkey, record }) },
+      );
+      let res = await doCall();
+      if (res.status === 401) { await refreshLock(() => refreshTokens()); res = await doCall(); }
+      if (!res.ok) throw new Error(`createRecord failed: ${res.status} ${await res.text()}`);
+      const data = await res.json() as { uri: string; cid: string };
+      return { uri: data.uri, cid: data.cid ?? "" };
+    },
+
+    async putRecord(repo: string, collection: string, rkey: string, record: Record<string, unknown>) {
+      const doCall = async (): Promise<Response> => dpopFetch(
+        `${sessionData.pds.replace(/\/+$/, "")}/xrpc/com.atproto.repo.putRecord`,
+        { method: "POST", headers: { "content-type": "application/json", Authorization: `DPoP ${accessJwt}` }, body: JSON.stringify({ repo, collection, rkey, record }) },
+      );
+      let res = await doCall();
+      if (res.status === 401) { await refreshLock(() => refreshTokens()); res = await doCall(); }
+      if (!res.ok) throw new Error(`putRecord failed: ${res.status} ${await res.text()}`);
+      const data = await res.json() as { uri: string; cid: string };
+      return { uri: data.uri, cid: data.cid ?? "" };
+    },
+
+    async listRecords(repo: string, collection: string, opts?: { limit?: number }) {
+      const all: Array<{ uri: string; cid: string; value: Record<string, unknown> }> = [];
+      let cursor: string | undefined;
+      const limit = opts?.limit ?? 100;
+      do {
+        const params = new URLSearchParams({ repo, collection, limit: String(limit) });
+        if (cursor) params.set("cursor", cursor);
+        const doCall = async (): Promise<Response> => dpopFetch(
+          `${sessionData.pds.replace(/\/+$/, "")}/xrpc/com.atproto.repo.listRecords?${params.toString()}`,
+          { headers: { Authorization: `DPoP ${accessJwt}` } },
+        );
+        let res = await doCall();
+        if (res.status === 401) {
+          await refreshLock(() => refreshTokens());
+          res = await doCall();
+        }
         if (!res.ok) break;
         const data = await res.json() as { records: Array<{ uri: string; cid?: string; value: unknown }>; cursor?: string };
         for (const r of data.records) {
