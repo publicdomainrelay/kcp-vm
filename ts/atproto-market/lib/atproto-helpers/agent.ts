@@ -11,8 +11,8 @@ import { PlcClient, PlcNotFoundError, createGenesisOp } from "@publicdomainrelay
 import type { AttestationKeypair, InlineAttestation } from "@publicdomainrelay/market-atproto";
 import { attestationFor, toStorableEntry, createRecordResolver } from "@publicdomainrelay/market-atproto";
 import type { RecordResolver } from "@publicdomainrelay/market-abc";
-import { createXrpcRelay } from "@publicdomainrelay/xrpc-relay";
-import type { RelayRef, ServeHandle } from "@publicdomainrelay/serve";
+import { createIngress } from "@publicdomainrelay/did-key-ingress-proxy";
+import type { IngressRef, ServeHandle } from "@publicdomainrelay/serve";
 import type { Logger, StrongRef } from "@publicdomainrelay/market-common";
 import {
   DEFAULT_MARKET_SERVICE_ID,
@@ -193,7 +193,7 @@ export interface CreateLocalPDSAgentOpts {
   keypair: Secp256k1Keypair;
   serve: ServeHandle;
   plcDirectoryUrl: string;
-  dispatcherHost: string;
+  ingressProxyHost: string;
   storagePath?: string;
   /** Service ID for associateConfirm route + DID doc. Default: "requester_associate". */
   associateServiceId?: string;
@@ -202,7 +202,7 @@ export interface CreateLocalPDSAgentOpts {
 export interface LocalPDSAgent extends AtprotoAgentLike {
   repoApi: RepoApi;
   serve: ServeHandle;
-  relay: RelayRef;
+  relay: IngressRef;
   beginServe(): Promise<void>;
   stop(): void;
   /** Resolves with the caller's DID when the webapp calls associateConfirm. */
@@ -214,12 +214,12 @@ export interface LocalPDSAgent extends AtprotoAgentLike {
 }
 
 export async function createLocalPDSAgent(opts: CreateLocalPDSAgentOpts): Promise<LocalPDSAgent> {
-  const { logger, keypair, serve, plcDirectoryUrl, dispatcherHost, storagePath } = opts;
+  const { logger, keypair, serve, plcDirectoryUrl, ingressProxyHost, storagePath } = opts;
   const associateServiceId = opts.associateServiceId ?? "requester_associate";
   const signingKeyDid = keypair.did();
   // DID-doc service endpoints advertise the canonical host without any internal
   // port (production has none); the relay subdomain alone routes via dispatcher.
-  const epHost = dispatcherHost.replace(/:\d+$/, "");
+  const epHost = ingressProxyHost.replace(/:\d+$/, "");
 
   const plc = new PlcClient({ baseUrl: plcDirectoryUrl });
 
@@ -281,7 +281,7 @@ export async function createLocalPDSAgent(opts: CreateLocalPDSAgentOpts): Promis
   const { app, api, subscribe } = createRepoFactory({
     storage: storagePath ? await DenoKvStorage.create(storagePath) : new MemoryStorage(),
     signer,
-    baseOrigin: `https://${keypair.did().replace(/:/g, "-").toLowerCase()}.${dispatcherHost}`,
+    baseOrigin: `https://${keypair.did().replace(/:/g, "-").toLowerCase()}.${ingressProxyHost}`,
     didWebServices: [
       { id: DEFAULT_MARKET_SERVICE_ID, type: "PDRTempMarket" },
       { id: DEFAULT_COMPUTE_EVENT_SERVICE_ID, type: "PDRTempComputeEvent" },
@@ -291,9 +291,9 @@ export async function createLocalPDSAgent(opts: CreateLocalPDSAgentOpts): Promis
 
   serve.app.route("/", app as never);
 
-  const xrpcRelay = createXrpcRelay({
+  const xrpcRelay = createIngress({
     logger,
-    dispatcherHost,
+    ingressProxyHost,
     signer,
     keypair,
     directSubscriptionHandler: (subscriptionId, nsid, params, onEvent, _onData) => {
@@ -322,10 +322,10 @@ export async function createLocalPDSAgent(opts: CreateLocalPDSAgentOpts): Promis
     const authHeader = c.req.header("Authorization");
     if (!authHeader) return c.json({ error: "Unauthorized" }, 401);
     try {
-      const relayHost = xrpcRelay.proxyHost;
+      const relayHost = xrpcRelay.ingressHost;
       const auth = await verifyServiceAuth({
         authHeader,
-        hostname: relayHost || dispatcherHost,
+        hostname: relayHost || ingressProxyHost,
         lxm: ASSOCIATE_CONFIRM_NSID,
         serviceIds: [associateServiceId, "pdr_temp_market"],
         extraAudienceDids: [did],

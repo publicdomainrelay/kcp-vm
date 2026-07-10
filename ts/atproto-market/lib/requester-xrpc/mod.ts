@@ -11,12 +11,13 @@ import { MemoryStorage, DenoKvStorage, signServiceAuth } from "@publicdomainrela
 import type { Signer } from "@publicdomainrelay/atproto-repo-abc";
 import type { RepoApi } from "@publicdomainrelay/atproto-repo-abc";
 import { PlcClient, createGenesisOp, PlcNotFoundError } from "@publicdomainrelay/did-plc";
-import { createXrpcRelay } from "@publicdomainrelay/xrpc-relay";
+import { createIngress } from "@publicdomainrelay/did-key-ingress-proxy";
 import {
   loadOrGenerateKeypair,
   attestationFor,
   toStorableEntry,
   createSubmitBidHandler,
+  listRecordsPublic,
   createSubmitEventHandler,
   createRecordResolver,
   verifyRecordSignatures,
@@ -42,6 +43,7 @@ import {
   RELAYS_NSID,
 } from "@publicdomainrelay/market-common";
 import type { StrongRef } from "@publicdomainrelay/market-common";
+import { DYNAMIC } from "@publicdomainrelay/market-policy-abc";
 import { buildDefaultUserData, patchDefaultUserData, flattenLabel, type CloudInitContext } from "@publicdomainrelay/cloud-init-common";
 import {
   FEDPROXY_RBAC_NSID,
@@ -56,7 +58,9 @@ import type {
   SshSessionProvider,
 } from "@publicdomainrelay/requester-abc";
 import type { LoggerInterface, StructuredLoggerInterface } from "@publicdomainrelay/logger";
-import { ASSOCIATE_CONFIRM_NSID } from "@publicdomainrelay/market-lexicons";
+import { ASSOCIATE_CONFIRM_NSID, BADGE_BLUE_KEYS_NSID } from "@publicdomainrelay/market-lexicons";
+import { createTangledGraphVouchResolver } from "@publicdomainrelay/trust-graph-tangled-graph";
+import { createBadgeBlueKeysDelegatedTrustResolver } from "@publicdomainrelay/delegated-trust-badge-blue-keys";
 import { verifyServiceAuth } from "@publicdomainrelay/market-atproto";
 
 // ---------------------------------------------------------------------------
@@ -178,7 +182,7 @@ export async function createRequesterPDS(
   const serve = opts.serve;
   const privateKeyHex = opts.privateKeyHex ?? "";
   const plcDirectoryUrl = opts.plcDirectoryUrl ?? "https://plc.directory";
-  const dispatcherHost = opts.dispatcherHost ?? "xrpc.fedproxy.com";
+  const ingressProxyHost = opts.ingressProxyHost ?? "xrpc.fedproxy.com";
   const label = opts.label ?? "requester";
 
   // ── keypair ──────────────────────────────────────────────────────────
@@ -198,7 +202,7 @@ export async function createRequesterPDS(
 
   const plc = new PlcClient({ baseUrl: plcDirectoryUrl });
   const signingKeyDid = keypair.did();
-  const epHost = dispatcherHost.replace(/:\d+$/, "");
+  const epHost = ingressProxyHost.replace(/:\d+$/, "");
 
   const { did, op } = await createGenesisOp({
     rotationKeys: [signingKeyDid],
@@ -277,7 +281,7 @@ export async function createRequesterPDS(
 
   // ── repo factory ─────────────────────────────────────────────────────
 
-  const baseOrigin = `https://${keypair.did().replace(/:/g, "-").toLowerCase()}.${dispatcherHost}`;
+  const baseOrigin = `https://${keypair.did().replace(/:/g, "-").toLowerCase()}.${ingressProxyHost}`;
 
   const store = opts.storagePath
     ? await DenoKvStorage.create(opts.storagePath)
@@ -309,7 +313,7 @@ export async function createRequesterPDS(
 
   // ── relay (WS connect deferred to serve.beginServe -> relay.onServe) ──
 
-  const relay = createXrpcRelay({ logger, dispatcherHost, signer, keypair, label });
+  const relay = createIngress({ logger, ingressProxyHost, signer, keypair, label });
 
   // ── submitBid handler ────────────────────────────────────────────────
 
@@ -328,7 +332,7 @@ export async function createRequesterPDS(
     deps: {
       hostname: (req: Request) => {
         const host = req.headers.get("host") ?? req.headers.get("x-forwarded-host");
-        return host ? host.split(":")[0] : (relay.proxyHost || dispatcherHost);
+        return host ? host.split(":")[0] : (relay.ingressHost || ingressProxyHost);
       },
       idResolver,
       resolve: createRecordResolver(idResolver),
@@ -343,7 +347,7 @@ export async function createRequesterPDS(
 
   const submitEventHandler = createSubmitEventHandler({
     deps: {
-      hostname: (req) => relay.proxyHost || dispatcherHost,
+      hostname: (req) => relay.ingressHost || ingressProxyHost,
       idResolver,
       resolve: createRecordResolver(idResolver),
       audienceDids: [did],
@@ -389,7 +393,7 @@ export async function createRequesterPDS(
     try {
       const auth = await verifyServiceAuth({
         authHeader,
-        hostname: relay.proxyHost || dispatcherHost,
+        hostname: relay.ingressHost || ingressProxyHost,
         lxm: ASSOCIATE_CONFIRM_NSID,
         serviceIds: ["requester_associate"],
         extraAudienceDids: [did],
@@ -400,7 +404,6 @@ export async function createRequesterPDS(
       await associationApproved;
       // Persist association in our own repo so it survives restarts
       // (mirrors bidder pattern: badgeBlueKeys with challenge=self, keyId=caller)
-      const BADGE_BLUE_KEYS_NSID = "com.publicdomainrelay.temp.badgeBlueKeys";
       await api.applyWrites(did, [{
         action: "create",
         collection: BADGE_BLUE_KEYS_NSID,
@@ -507,10 +510,10 @@ export async function createRequesterPDS(
     api,
     serve,
     relay,
-    get proxyRef(): string { return relay.proxyRef; },
-    get proxyUrl(): string { return relay.proxyUrl; },
-    get proxyHost(): string { return relay.proxyHost; },
-    get relaySubdomain(): string { return relay.proxyHost; },
+    get ingressRef(): string { return relay.ingressRef; },
+    get ingressUrl(): string { return relay.ingressUrl; },
+    get ingressHost(): string { return relay.ingressHost; },
+    get relaySubdomain(): string { return relay.ingressHost; },
     beginServe: () => serve.beginServe(),
     pendingBids,
     createRepoRecord,
@@ -708,25 +711,25 @@ export async function runComputeContract(
   const log = (event: string, extra: Record<string, unknown> = {}) =>
     logger ? logger.info(event, extra) : console.log(JSON.stringify({ event, ...extra }));
 
-  // Relay WS connect happens in serve.beginServe(); proxyRef is set by then.
-  const proxyRef = pds.relay.proxyRef;
-  const dispatcherHost = opts.dispatcherHost ??
+  // Relay WS connect happens in serve.beginServe(); ingressRef is set by then.
+  const ingressRef = pds.relay.ingressRef;
+  const ingressProxyHost = opts.ingressProxyHost ??
     (pds.relaySubdomain.includes(".")
       ? pds.relaySubdomain.substring(pds.relaySubdomain.indexOf(".") + 1)
       : "xrpc.fedproxy.com");
-  const relaySubdomain = pds.relaySubdomain.endsWith("." + dispatcherHost)
-    ? pds.relaySubdomain.slice(0, pds.relaySubdomain.length - dispatcherHost.length - 1)
+  const relaySubdomain = pds.relaySubdomain.endsWith("." + ingressProxyHost)
+    ? pds.relaySubdomain.slice(0, pds.relaySubdomain.length - ingressProxyHost.length - 1)
     : pds.relaySubdomain.split(".")[0];
-  const fedproxyHost = opts.fedproxyHost ?? "fedproxy.com";
+  const fedingressHost = opts.fedingressHost ?? "fedproxy.com";
 
-  log("relay_ready_for_rfp", { proxyRef });
+  log("relay_ready_for_rfp", { ingressRef });
 
   let cloudInit = "";
   let privateKeyPath = "";
   let vmFqdn = "";
 
   if (!skipSsh) {
-    vmFqdn = `${flattenLabel(vmName)}--${flattenLabel(pds.did)}.${fedproxyHost}`;
+    vmFqdn = `${flattenLabel(vmName)}--${flattenLabel(pds.did)}.${fedingressHost}`;
     const ssh = await sshProvider.generateKeypair(vmName);
     privateKeyPath = ssh.privateKeyPath;
     log("ssh_keypair_generated", {
@@ -743,7 +746,7 @@ export async function runComputeContract(
       vmName,
       didPlc: pds.did,
       didPlcKey,
-      relayHost: dispatcherHost,
+      relayHost: ingressProxyHost,
       xrpcRelaySubdomain: relaySubdomain,
       sshAuthorizedKey: ssh.publicKey,
     };
@@ -752,7 +755,7 @@ export async function runComputeContract(
       : buildDefaultUserData(ctx);
     if (opts.userDataFactory) {
       // userDataFactory replaces the default cloud-init — caller builds the
-      // guest transport (e.g. did-key-relay tunnel-subscriber replacing fedproxy).
+      // guest transport replacement.
       cloudInit = opts.userDataFactory(ssh.publicKey);
     }
   } else {
@@ -799,18 +802,7 @@ runcmd:
       const { createPolicy } = await import("@publicdomainrelay/market-policy");
       const policy = createPolicy(policyMode, { signer: pds.signer ?? signer });
       if (policy) {
-        const policyRecord: Record<string, unknown> = {
-          $type: policy.policyNsid,
-          requesterDid: pds.did,
-          createdAt: new Date().toISOString(),
-        };
-        if (policyMode === "direct_network") {
-          policyRecord.vouchNsid = "sh.tangled.graph.vouch";
-          policyRecord.maxDepth = 1;
-        }
-        if (policyMode === "policy_based" && policyEngineEndpoint) {
-          policyRecord.policyEngine = policyEngineEndpoint;
-        }
+        const policyRecord = policy.buildPolicyRecord(pds.did, policyEngineEndpoint as string | undefined);
         policyRef = await pds.createRepoRecord(policy.policyNsid, policyRecord);
         rfpRecord.policy = { $type: "com.atproto.repo.strongRef", uri: policyRef.uri, cid: policyRef.cid };
         log("policy_attached", { policyMode, policyUri: policyRef.uri });
@@ -826,16 +818,34 @@ runcmd:
   // 3. Discover bidder DIDs.
   const idResolver = new IdResolver({ plcUrl: opts.plcUrl });
 
-  // 3a. Vouch-based discovery.
+  // 3a. Vouch-based discovery via DelegatedTrustResolver.
+  // Reads requester's own badgeBlueKeys for requester_associate records,
+  // resolves each associated DID's vouch records via VouchResolver.
   let vouchedDids: string[] = [];
   try {
-    const vouchRecords = await (pds as RequesterPDSImpl).api.listRecords(pds.did, VOUCH_NSID);
-    vouchedDids = Array.from(new Set(
-      (vouchRecords?.records ?? [])
-        .filter((r) => (r.value as Record<string, unknown>).kind !== "denounce")
-        .map((r) => r.uri.split("/").pop() ?? "")
-        .filter((rkey) => rkey.startsWith("did:"))
-    ));
+    const publicVouchResolver = createTangledGraphVouchResolver({
+      listRecords: (repo, coll) => listRecordsPublic(idResolver, repo, coll),
+    });
+    const localVouchResolver = createTangledGraphVouchResolver({
+      listRecords: async (repo, coll) => {
+        const result = await (pds as RequesterPDSImpl).api.listRecords(repo, coll);
+        return (result?.records as Array<{ uri: string; value: Record<string, unknown> }>) ?? [];
+      },
+    });
+    const delegatedTrust = createBadgeBlueKeysDelegatedTrustResolver({
+      vouchResolver: publicVouchResolver,
+      listOwnRecords: async (collection, _opts) => {
+        const result = await (pds as RequesterPDSImpl).api.listRecords(pds.did, collection);
+        const records = (result?.records as Array<{ uri: string; value: Record<string, unknown> }>) ?? [];
+        for (const r of records) {
+          log("delegated_trust_record", { challenge: r.value.challenge, service: r.value.service, keyId: r.value.keyId, selfDid: pds.did });
+        }
+        log("delegated_trust_badgeBlueKeys", { did: pds.did, collection, count: records.length });
+        return records;
+      },
+    });
+    const vouchedSet = await delegatedTrust.getDelegatedTrustedDids(pds.did);
+    vouchedDids = [...vouchedSet];
     log("vouch_discovery", { count: vouchedDids.length });
   } catch (err) {
     log("vouch_discovery_error", { error: String(err) });
@@ -959,7 +969,7 @@ runcmd:
   }
 
   // 7. Evaluate policy against winner before accepting (policy_based only).
-  if (policyRef && policyMode === "policy_based") {
+  if (policyRef && policyMode === DYNAMIC) {
     const { evaluateRfpPolicy } = await import("@publicdomainrelay/market-policy");
     const evalResult = await evaluateRfpPolicy({
       policyRef,

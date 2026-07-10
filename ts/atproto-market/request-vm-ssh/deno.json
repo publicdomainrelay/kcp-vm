@@ -12,6 +12,8 @@
     "@libs/qrcode": "jsr:@libs/qrcode@^2"
   },
   "compile": {
-    "include": ["cli-args-env.json", "config.json"]
+    "include": [
+      "config.json"
+    ]
   }
 }

@@ -1,5 +1,5 @@
 // Integration: ephemeral market registry (atproto-relay). A bidder registers
-// its PDS via createAtprotoMarketRegistry -> requestCrawl; the relay crawls a
+// its PDS via registerPdsWithRelay -> requestCrawl; the relay crawls a
 // minimal fake PDS firehose, indexes the offering collection, and the bidder
 // then becomes discoverable through listReposByCollection.
 //
@@ -17,7 +17,6 @@ import { Hono } from "@hono/hono";
 import { upgradeWebSocket } from "@hono/hono/deno";
 import { createLogger } from "@publicdomainrelay/logger";
 import { createRelayFactory } from "@publicdomainrelay/hono-factory-atproto-relay-xrpc";
-import { createAtprotoMarketRegistry } from "@publicdomainrelay/market-registry-atproto";
 import { OFFERING_NSID } from "@publicdomainrelay/market-common";
 
 Deno.test({
@@ -111,10 +110,14 @@ Deno.test({
   cleanups.push(() => { globalThis.WebSocket = RealWS; });
 
   try {
-    // ── bidder registers its PDS with the registry ───────────────────────
-    const registry = createAtprotoMarketRegistry({ registryUrl: `https://${relayHost}`, log: logger });
-    const result = await registry.registerPds(pdsHost);
-    assert(result.ok, `registerPds failed: ${result.error}`);
+    // ── bidder registers its PDS with the relay ───────────────────────
+    const relayUrl = `https://${relayHost}`;
+    const res = await fetch(`${relayUrl}/xrpc/com.atproto.sync.requestCrawl`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ hostname: pdsHost }),
+    });
+    assert(res.ok, `requestCrawl failed: HTTP ${res.status}`);
 
     // ── crawl is async: poll until the offering collection indexes the DID ─
     let found = false;

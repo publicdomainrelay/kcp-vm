@@ -1,17 +1,17 @@
 # request-vm-ssh
 
 Request compute VM over RFP market, get SSH session tunneled through
-did-key-relay xrpc relay. Guest born from cloud-init only — no hand-built
+xrpc relay. Guest born from cloud-init only — no hand-built
 provisioning.
 
 Topology:
 
 ```
 ssh -> websocat ProxyCommand -> xrpc-relay -> tunnel-subscriber (guest) -> sshd:22
-       (host)                   (dispatch)     (did-key-relay agent)
+       (host)                   (dispatch)     (xrpc tunnel agent)
 ```
 
-Fedproxy-client replaced by did-key-relay tunnel-subscriber. Guest websocat
+Fedproxy-client replaced by xrpc tunnel-subscriber. Guest websocat
 dropped — subscriber speaks raw TCP to sshd. Host websocat stays (reference
 cli.ts pattern).
 
@@ -22,8 +22,8 @@ cli.ts pattern).
 ### 1. Relay
 
 ```bash
-cd did-key-relay
-deno run -A hono-did-key-relay-relayer/mod.ts \
+cd did-key-ingress-proxy
+deno run -A hono-did-key-ingress-proxy/mod.ts \
   --hostname localhost \
   --port 5555
 ```

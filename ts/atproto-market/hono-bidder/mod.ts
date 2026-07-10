@@ -1,8 +1,27 @@
 import { Command } from "@publicdomainrelay/cli-args-env";
+import { isValidPolicyMode, type PolicyMode } from "@publicdomainrelay/market-policy-abc";
 import { createLogger } from "@publicdomainrelay/logger";
 import { createServe } from "@publicdomainrelay/serve";
-import { createXrpcRelay } from "@publicdomainrelay/xrpc-relay";
-import { createAtprotoMarketRegistry } from "@publicdomainrelay/market-registry-atproto";
+import { createIngress } from "@publicdomainrelay/did-key-ingress-proxy";
+async function registerPdsWithRelay(relayUrl: string, hostname: string, log: ReturnType<typeof createLogger>): Promise<void> {
+  const base = relayUrl.replace(/\/+$/, "");
+  log.info("relay_registering_pds", { hostname, relay: relayUrl });
+  try {
+    const res = await fetch(`${base}/xrpc/com.atproto.sync.requestCrawl`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ hostname }),
+    });
+    if (res.ok) {
+      log.info("relay_registered_pds", { hostname, relay: relayUrl });
+    } else {
+      const text = await res.text().catch(() => "");
+      log.warn("relay_register_pds_failed", { hostname, relay: relayUrl, status: res.status, body: text.slice(0, 200) });
+    }
+  } catch (err) {
+    log.warn("relay_register_pds_error", { hostname, relay: relayUrl, error: String(err) });
+  }
+}
 import { createMarketBidder } from "@publicdomainrelay/market-bidder";
 import type { MarketBidderProviderRef } from "@publicdomainrelay/market-bidder-abc";
 import { createComputeProviderHooks } from "@publicdomainrelay/market-bidder-compute";
@@ -10,7 +29,7 @@ import { createComputeProviderDenoWorker, createWorkerProviderHooks } from "@pub
 import { createATProto, createLocalPDSAgent, createRemoteAgent } from "@publicdomainrelay/atproto-helpers";
 import type { LocalPDSAgent } from "@publicdomainrelay/atproto-helpers";
 import { createBadgeBlueSigner } from "@publicdomainrelay/market-atproto";
-import { DEFAULT_RELAY_URLS, RFP_NSID } from "@publicdomainrelay/market-common";
+import { DEFAULT_RELAY_URLS, RFP_NSID, relayUrlsToFirehoseUrls } from "@publicdomainrelay/market-common";
 import { createFirehoseWatcher as createSubscribeReposWatcher } from "@publicdomainrelay/firehose-watcher-subscriberepos";
 import { createFirehoseWatcher as createJetstreamWatcher } from "@publicdomainrelay/firehose-watcher-jetstream";
 import type { FirehoseRecordEvent, FirehoseWatcher } from "@publicdomainrelay/firehose-watcher-abc";
@@ -22,7 +41,7 @@ import { createRbacProvisioner } from "@publicdomainrelay/rbac-atproto";
 import { Secp256k1Keypair } from "@atproto/crypto";
 import { IdResolver } from "@atproto/identity";
 import { qrcode } from "@libs/qrcode";
-import cliArgsEnv from "./cli-args-env.json" with { type: "json" };
+import cliArgsEnv from "./cli-args-env.ts";
 
 let runtimeConfig: Record<string, unknown> | null = null;
 try { runtimeConfig = (await import("./config.json", { with: { type: "json" } })).default; } catch { /* optional */ }
@@ -31,8 +50,6 @@ const { options } = await new Command("CONFIG_PATH_HONO_BIDDER", cliArgsEnv, run
 const serviceName = (options.serviceName as string) ?? "bidder";
 const logger = createLogger({ serviceName });
 const BIDDER_ASSOC_SERVICE = "bidder_associate";
-
-
 // Resolve privateKeyHex: --private-key-hex takes priority, then --private-key-hex-path
 const privateKeyHexPath = options.privateKeyHexPath as string | undefined;
 let resolvedPrivateKeyHex = options.privateKeyHex as string | undefined;
@@ -53,7 +70,7 @@ const keypair = resolvedPrivateKeyHex
 const privateKeyHex = resolvedPrivateKeyHex ??
   Array.from(await keypair.export()).map((b) => b.toString(16).padStart(2, "0")).join("");
 
-const dispatcherHost = (options.relayDispatcherHost as string) || "xrpc.fedproxy.com";
+const ingressProxyHost = (options.ingressProxyHost as string) || "xrpc.fedproxy.com";
 
 const plcDirectoryUrl = (options.plcDirectoryUrl as string) || "https://plc.directory";
 
@@ -61,11 +78,11 @@ const plcDirectoryUrl = (options.plcDirectoryUrl as string) || "https://plc.dire
 // reachable at a local host, patch fetch so the bidder can resolve the
 // requester's PDS endpoints (also on *.localhost) through the relay.
 // Also patches plc.directory → local PLC when plcDirectoryUrl is local.
-const isLocalDev = dispatcherHost.includes("localhost") || dispatcherHost.startsWith("127.");
+const isLocalDev = ingressProxyHost.includes("localhost") || ingressProxyHost.startsWith("127.");
 const _plcHost = (() => { try { return new URL(plcDirectoryUrl).hostname; } catch { return plcDirectoryUrl; } })();
 const isLocalPlc = _plcHost === "localhost" || _plcHost.startsWith("127.") || _plcHost === "0.0.0.0";
 if (isLocalDev || isLocalPlc) {
-  const patchPort = dispatcherHost.includes(":") ? dispatcherHost.split(":").pop()! : "80";
+  const patchPort = ingressProxyHost.includes(":") ? ingressProxyHost.split(":").pop()! : "80";
   const realFetch = globalThis.fetch;
   globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
     let url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
@@ -86,9 +103,9 @@ if (isLocalDev || isLocalPlc) {
 
 // Each relay gets its own keypair so subscribers never share a subdomain/FQDN
 // on the dispatcher (collision would route everyone to the last connector).
-async function cliCreateXrpcRelay() {
+async function cliCreateIngress() {
   const relayKeypair = await Secp256k1Keypair.create({ exportable: true });
-  return createXrpcRelay({ logger, dispatcherHost, signer: atproto.signer, keypair: relayKeypair });
+  return createIngress({ logger, ingressProxyHost, signer: atproto.signer, keypair: relayKeypair });
 }
 
 let atprotoAgent;
@@ -105,8 +122,6 @@ if ((options.atprotoHandle as string | undefined) && (options.atprotoPassword as
   });
   pdsHostname = new URL(pdsUrl).hostname;
 } else {
-  // TCP port 0 so the local atproto-relay can crawl this PDS directly
-  // (the did-key-relay subscription protocol wraps firehose frames).
   const pdsStatePath = options.pdsStatePath as string | undefined;
   // Relay-only: no TCP listener. associateConfirm arrives via relay →
   // app.fetch programmatic. subscribeRepos firehose is wired via
@@ -116,22 +131,22 @@ if ((options.atprotoHandle as string | undefined) && (options.atprotoPassword as
     logger, keypair,
     serve: pdsServe,
     plcDirectoryUrl,
-    dispatcherHost,
+    ingressProxyHost,
     storagePath: pdsStatePath,
     associateServiceId: BIDDER_ASSOC_SERVICE,
   });
   await atprotoAgent.beginServe();
   _deferredPdsPort = pdsServe.tcpPort;
   isLocal = true;
-  const relayHost: string = (atprotoAgent as { relay?: { proxyHost?: string } }).relay?.proxyHost ?? "";
+  const relayHost: string = (atprotoAgent as { relay?: { ingressHost?: string } }).relay?.ingressHost ?? "";
   if (relayHost) {
     pdsHostname = relayHost;
   }
 }
 
-const registryEndpoint = (options.registryEndpoint as string) || "";
-const relayUrls = registryEndpoint
-  ? [...new Set([...DEFAULT_RELAY_URLS, registryEndpoint])]
+const cliRelayUrl = (options.relayUrl as string) || "";
+const relayUrls = cliRelayUrl
+  ? [...new Set([...DEFAULT_RELAY_URLS, cliRelayUrl])]
   : DEFAULT_RELAY_URLS;
 
 // Collect local relay URLs for deferred registration after serve starts.
@@ -143,12 +158,11 @@ for (const url of relayUrls) {
 
 if (pdsHostname) {
   for (const url of relayUrls) {
-    const registry = createAtprotoMarketRegistry({ registryUrl: url, log: logger });
-    await registry.registerPds(pdsHostname);
+    await registerPdsWithRelay(url, pdsHostname, logger);
   }
-} else if (registryEndpoint) {
-  logger.warn("market_registry_no_hostname", {
-    reason: "could not determine PDS hostname for registry registration",
+} else if (cliRelayUrl) {
+  logger.warn("relay_no_hostname_for_registration", {
+    reason: "could not determine PDS hostname for relay registration",
   });
 }
 
@@ -180,13 +194,13 @@ const serves: ReturnType<typeof createServe>[] = [];
 let localProviderEnsureImage: (() => Promise<void>) | undefined;
 
 if (options.computeProviderDigitaloceanToken) {
-  const relay = await cliCreateXrpcRelay();
+  const relay = await cliCreateIngress();
   const serve = createServe({ logger, relays: [relay] });
   serves.push(serve);
   providers.push(createComputeProviderHooks({
     provider: createDigitalOceanComputeProvider({
       logger, atproto: atproto as import("@publicdomainrelay/compute-provider-abc").ComputeAtproto, serve,
-      getIssuerUrl: () => relay.proxyUrl,
+      getIssuerUrl: () => relay.ingressUrl,
       digitaloceanBaseUrl: (options.computeProviderDigitaloceanBaseUrl as string) || "https://api.digitalocean.com",
       doToken: options.computeProviderDigitaloceanToken as string,
     }),
@@ -195,13 +209,13 @@ if (options.computeProviderDigitaloceanToken) {
 }
 
 if (options.computeProviderLocal) {
-  const relay = await cliCreateXrpcRelay();
+  const relay = await cliCreateIngress();
   const serve = createServe({ logger, relays: [relay] });
   serves.push(serve);
   const localProvider = createLocalComputeProvider({
     logger, atproto: atproto as import("@publicdomainrelay/compute-provider-abc").ComputeAtproto, serve,
-    getIssuerUrl: () => relay.proxyUrl,
-    oidcProvisioner: createOidcProvisioningEnricher(() => relay.proxyUrl),
+    getIssuerUrl: () => relay.ingressUrl,
+    oidcProvisioner: createOidcProvisioningEnricher(() => relay.ingressUrl),
     rbacProvisioner: createRbacProvisioner(),
     containerMode: options.computeProviderLocalMode as "vm" | "container" | undefined,
     vmImage: options.computeProviderLocalVmImage as string | undefined,
@@ -228,45 +242,48 @@ if (options.computeProviderDenoWorker) {
   }));
 }
 
-const rfpFirehoseMode = (options.rfpFirehoseMode as string) || "off";
-const rfpFirehoseUrl = options.rfpFirehoseUrl as string | undefined;
+const firehoseMode = (options.firehoseMode as string) || "off";
+const firehoseUrlOverride = options.firehoseUrl as string | undefined;
 const offeringRefreshSec = (options.offeringRefreshSec as number) ?? 300;
 
 let rfpWatcherFactory: ((onRecord: (e: FirehoseRecordEvent) => void) => FirehoseWatcher) | undefined;
 let rfpWatcherFactories: Array<(onRecord: (e: FirehoseRecordEvent) => void) => FirehoseWatcher> | undefined;
 
-if (rfpFirehoseMode !== "off" && rfpFirehoseUrl) {
-  const urls = rfpFirehoseUrl.split(",").map((s) => s.trim()).filter(Boolean);
-  const make = rfpFirehoseMode === "jetstream" ? createJetstreamWatcher : createSubscribeReposWatcher;
-  const build = (url: string) => (onRecord: (e: FirehoseRecordEvent) => void) =>
-    make({ url, wantedCollections: [RFP_NSID], onRecord, log: logger });
-  if (urls.length > 1) {
-    rfpWatcherFactories = urls.map(build);
-  } else {
-    rfpWatcherFactory = build(urls[0]);
+if (firehoseMode !== "off") {
+  const firehoseUrls = firehoseUrlOverride
+    ? firehoseUrlOverride.split(",").map((s) => s.trim()).filter(Boolean)
+    : relayUrlsToFirehoseUrls(relayUrls);
+  if (firehoseUrls.length > 0) {
+    const make = firehoseMode === "jetstream" ? createJetstreamWatcher : createSubscribeReposWatcher;
+    const build = (url: string) => (onRecord: (e: FirehoseRecordEvent) => void) =>
+      make({ url, wantedCollections: [RFP_NSID], onRecord, log: logger });
+    if (firehoseUrls.length > 1) {
+      rfpWatcherFactories = firehoseUrls.map(build);
+    } else {
+      rfpWatcherFactory = build(firehoseUrls[0]);
+    }
   }
 }
 
 // Market factory gets its own relay/serve (own keypair -> own subdomain/FQDN).
-const bidderRelay = options.noXrpcRelay ? undefined : await cliCreateXrpcRelay();
+const bidderIngress = options.noIngressProxy ? undefined : await cliCreateIngress();
 const bidderServe = createServe({
   logger,
   tcp: { addr: (options.serveAddr as string) || "0.0.0.0", port: (options.servePort as number) ?? 0 },
   unix: (options.serveUnix as string | undefined) ? { socketPath: options.serveUnix as string } : undefined,
-  relays: bidderRelay ? [bidderRelay] : [],
+  relays: bidderIngress ? [bidderIngress] : [],
 });
 
-const acceptScopeRaw = options.acceptScope as string | undefined;
-const acceptScope = (acceptScopeRaw === "only_me" || acceptScopeRaw === "direct_network" || acceptScopeRaw === "policy_based")
-  ? acceptScopeRaw : undefined;
+const policyModeRaw = options.policyMode as string | undefined;
+const policyMode = isValidPolicyMode(policyModeRaw) ? policyModeRaw : undefined;
 
 const bidder = await createMarketBidder({
-  logger, atproto, providers, relay: bidderRelay,
+  logger, atproto, providers, relay: bidderIngress,
   rfpWatcherFactory,
   rfpWatcherFactories,
   offeringRefreshMs: offeringRefreshSec > 0 ? offeringRefreshSec * 1000 : undefined,
   serve: bidderServe,
-  acceptScope,
+  policyMode,
 });
 
 function shutdown() {
@@ -283,7 +300,7 @@ await bidder.beginServe();
 console.log(JSON.stringify({
   event: "bidder_ready",
   did: atproto.did,
-  proxyRef: bidderRelay?.proxyRef,
+  ingressRef: bidderIngress?.ingressRef,
   servePort: bidderServe.tcpPort,
 }));
 
@@ -352,19 +369,15 @@ if (localProviderEnsureImage) {
   logger.info("container image ready", {});
 }
 
-// Re-register with local relays using the direct serve port.
-// Needed so local atproto-relays can connect to subscribeRepos
-// without going through the did-key-relay subscription protocol.
 const _localServePort = _deferredPdsPort || bidderServe.tcpPort;
 if (_deferredRelayUrls.length > 0 && _localServePort > 0) {
   const localHostname = `127.0.0.1:${_localServePort}`;
   for (const url of _deferredRelayUrls) {
     try {
-      const registry = createAtprotoMarketRegistry({ registryUrl: url, log: logger });
-      await registry.registerPds(localHostname);
-      logger.info("market_registry_local_reregistered", { registry: url, hostname: localHostname });
+      await registerPdsWithRelay(url, localHostname, logger);
+      logger.info("relay_local_reregistered", { registry: url, hostname: localHostname });
     } catch (err) {
-      logger.warn("market_registry_local_reregister_failed", { registry: url, error: String(err) });
+      logger.warn("relay_local_reregister_failed", { registry: url, error: String(err) });
     }
   }
 }

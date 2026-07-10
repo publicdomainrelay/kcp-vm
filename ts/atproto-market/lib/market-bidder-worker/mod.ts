@@ -40,7 +40,7 @@ export interface WorkerBidderDeps {
   attestationKp: AttestationKeypair;
   signer: { did(): string; sign(bytes: Uint8Array): Promise<Uint8Array> };
   idResolver: IdResolver;
-  relay: { proxyRef: string; proxyUrl: string };
+  relay: { ingressRef: string; ingressUrl: string };
   workerManifestStore: WorkerManifestStore;
   workerRunner: WorkerInstanceRunner;
   log: Logger;
@@ -121,11 +121,11 @@ export function createWorkerBidderCallbacks(deps: WorkerBidderDeps): {
       $type: BID_NSID,
       rfp: strongRef(rfpUri, rfpCid),
       payload: strongRef(payloadUri, payloadCid),
-      submitAccept: relay.proxyUrl,
+      submitAccept: relay.ingressUrl,
       createdAt: nowIso,
     };
     const { uri: bidUri, cid: bidCid, record: signedBid } = await createSignedRepoRecord(
-      BID_NSID, bidRecord, relay.proxyRef,
+      BID_NSID, bidRecord, relay.ingressRef,
     );
 
     cbLog("info", "bidder created worker bid", { bidUri, bidCid, payloadUri });
@@ -220,7 +220,7 @@ export function createWorkerBidderCallbacks(deps: WorkerBidderDeps): {
     );
     const receiptRecord = { ...receiptMetadata, cid: bindCid.toString() };
     const { uri: receiptUri, cid: receiptCid } = await createSignedRepoRecord(
-      RECEIPT_NSID, receiptRecord, relay.proxyRef,
+      RECEIPT_NSID, receiptRecord, relay.ingressRef,
     );
 
     const rkey = receiptUri.split("/").pop()!;

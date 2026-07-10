@@ -1,5 +1,5 @@
 // Firehose watcher impls (subscribeRepos + jetstream): record extraction,
-// collection filtering, RelayFrame-vs-flat normalization, and parser parity.
+// collection filtering, flat frame normalization, and parser parity.
 //
 // Each test runs a local ws server that emits frames on connect; the watcher
 // connects via the global WebSocket (ws:// url, no interception needed) and
@@ -47,21 +47,6 @@ async function collect(
   return events;
 }
 
-const subscribeReposEnvelope = (collection: string) => ({
-  seq: 7,
-  origin: "pds.localhost",
-  frame: {
-    seq: 7,
-    repo: DID,
-    rev: "rev7",
-    since: null,
-    blocks: [],
-    ops: [{ action: "create", path: `${collection}/${RKEY}`, cid: { $link: CID }, prev: null }],
-    time: new Date().toISOString(),
-  },
-  time: new Date().toISOString(),
-});
-
 const subscribeReposFlat = (collection: string) => ({
   seq: 7,
   repo: DID,
@@ -88,8 +73,8 @@ const expected: FirehoseRecordEvent = {
   uri: `at://${DID}/${RFP_NSID}/${RKEY}`,
 };
 
-Deno.test("subscribeRepos watcher: nested RelayFrame envelope -> event", async () => {
-  const srv = await serveFrames([subscribeReposEnvelope(RFP_NSID)]);
+Deno.test("subscribeRepos watcher: flat frame with relay-assigned seq -> event", async () => {
+  const srv = await serveFrames([subscribeReposFlat(RFP_NSID)]);
   try {
     const events = await collect((push) =>
       createSubscribeReposWatcher({
@@ -99,6 +84,28 @@ Deno.test("subscribeRepos watcher: nested RelayFrame envelope -> event", async (
       })
     );
     assertEquals(events, [expected]);
+  } finally {
+    srv.stop();
+  }
+});
+
+Deno.test("subscribeRepos watcher: legacy envelope frame yields no events", async () => {
+  const legacyEnvelope = {
+    seq: 7,
+    origin: "pds.localhost",
+    frame: subscribeReposFlat(RFP_NSID),
+    time: new Date().toISOString(),
+  };
+  const srv = await serveFrames([legacyEnvelope]);
+  try {
+    const events = await collect((push) =>
+      createSubscribeReposWatcher({
+        url: `ws://127.0.0.1:${srv.port}/`,
+        wantedCollections: [RFP_NSID],
+        onRecord: push,
+      })
+    );
+    assertEquals(events, []);
   } finally {
     srv.stop();
   }
@@ -121,7 +128,7 @@ Deno.test("subscribeRepos watcher: flat PdsFirehoseFrame -> event", async () => 
 });
 
 Deno.test("subscribeRepos watcher: filters non-wanted collections", async () => {
-  const srv = await serveFrames([subscribeReposEnvelope(OTHER_NSID), subscribeReposEnvelope(RFP_NSID)]);
+  const srv = await serveFrames([subscribeReposFlat(OTHER_NSID), subscribeReposFlat(RFP_NSID)]);
   try {
     const events = await collect((push) =>
       createSubscribeReposWatcher({
@@ -153,7 +160,7 @@ Deno.test("jetstream watcher: commit frame -> event", async () => {
 });
 
 Deno.test("parser parity: subscribeRepos and jetstream yield identical events", async () => {
-  const a = await serveFrames([subscribeReposEnvelope(RFP_NSID)]);
+  const a = await serveFrames([subscribeReposFlat(RFP_NSID)]);
   const b = await serveFrames([jetstreamFrame(RFP_NSID)]);
   try {
     const subEvents = await collect((push) =>

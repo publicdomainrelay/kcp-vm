@@ -41,8 +41,8 @@ export interface CallbackFactoryDeps {
   signer: { did(): string; sign(bytes: Uint8Array): Promise<Uint8Array> };
   attestationKp: AttestationKeypair;
   idResolver: IdResolver;
-  relay: { proxyRef: string; proxyUrl: string; proxyHost: string };
-  dispatcherHost: string;
+  relay: { ingressRef: string; ingressUrl: string; ingressHost: string };
+  ingressProxyHost: string;
   log: Logger;
   activeContracts: Map<string, ActiveContract>;
   onContractChange?: (event: ContractEvent) => void;
@@ -61,3 +61,4 @@ export interface MarketBidderProviderRef {
   teardown?(): Promise<void>;
   buildCallbacks(deps: CallbackFactoryDeps): CallbackSet;
 }
+

@@ -45,7 +45,7 @@ export interface VmBidderDeps {
   attestationKp: AttestationKeypair;
   signer: { did(): string; sign(bytes: Uint8Array): Promise<Uint8Array> };
   idResolver: IdResolver;
-  relay: { proxyRef: string; proxyUrl: string };
+  relay: { ingressRef: string; ingressUrl: string };
   computeProvider: ComputeProvider;
   log: Logger;
   activeContracts: Map<string, ActiveContract>;
@@ -109,11 +109,11 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
       rfp: strongRef(rfpUri, rfpCid),
       payload: strongRef(payloadUri, payloadCid),
       bidConfig: strongRef(bidConfigRef.uri, bidConfigRef.cid),
-      submitAccept: relay.proxyUrl,
+      submitAccept: relay.ingressUrl,
       createdAt: nowIso,
     };
     const { uri: bidUri, cid: bidCid, record: signedBid } = await createSignedRepoRecord(
-      BID_NSID, bidRecord, relay.proxyRef,
+      BID_NSID, bidRecord, relay.ingressRef,
     );
 
     cbLog("info", "bidder created VM bid", { bidUri, bidCid, payloadUri });
@@ -212,7 +212,7 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
       bid: bidRef ? strongRef(bidRef.uri, bidRef.cid) : null,
       accept: strongRef(acceptUri, acceptCid),
       payload: null,
-      submitEvent: relay.proxyUrl,
+      submitEvent: relay.ingressUrl,
       createdAt: nowIso,
     };
     const bindCid = createAttestationCid(
@@ -220,7 +220,7 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
     );
     const receiptRecord = { ...receiptMetadata, cid: bindCid.toString() };
     const { uri: receiptUri, cid: receiptCid } = await createSignedRepoRecord(
-      RECEIPT_NSID, receiptRecord, relay.proxyRef,
+      RECEIPT_NSID, receiptRecord, relay.ingressRef,
     );
 
     const rkey = receiptUri.split("/").pop()!;
@@ -254,7 +254,7 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
               $type: EVENT_NSID,
               receipt: strongRef(receiptUri, receiptCid),
               payload: strongRef(vmOnNetworkUri, vmOnNetworkCid),
-            }, relay.proxyRef);
+            }, relay.ingressRef);
           }).then(({ uri: eventUri, cid: eventCid, record: eventRecord }) => {
             callService(submitEventUrl, SUBMIT_EVENT_NSID, SUBMIT_EVENT_LXM, {
               uri: eventUri, cid: eventCid, record: eventRecord,
@@ -277,7 +277,7 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
     return {
       body: {
         id: rkey, uri: receiptUri, cid: receiptCid,
-        submitEvent: relay.proxyUrl,
+        submitEvent: relay.ingressUrl,
       },
     };
   };

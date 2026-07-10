@@ -1,6 +1,6 @@
 // Integration: start a real bidder (container-mode local compute provider) and
 // drive a real requester (request-vm-ssh lib) against it through a real local
-// did-key-relay dispatcher, denying the central/default bidder so the bid must
+// xrpc relay dispatcher, denying the central/default bidder so the bid must
 // come from the locally-started bidder.
 //
 // No external network: a high-fidelity in-process fake PLC directory derives
@@ -18,7 +18,7 @@ import { Secp256k1Keypair } from "@atproto/crypto";
 import { Hono } from "@hono/hono";
 import { createLogger } from "@publicdomainrelay/logger";
 import { createServe } from "@publicdomainrelay/serve";
-import { createXrpcRelay } from "@publicdomainrelay/xrpc-relay";
+import { createIngress } from "@publicdomainrelay/did-key-ingress-proxy";
 import { createATProto, createLocalPDSAgent } from "@publicdomainrelay/atproto-helpers";
 import { createBadgeBlueSigner } from "@publicdomainrelay/market-atproto";
 import { createPlcDirectoryClient } from "@publicdomainrelay/did-plc";
@@ -26,7 +26,7 @@ import { createMarketBidder } from "@publicdomainrelay/market-bidder";
 import { createComputeProviderHooks } from "@publicdomainrelay/market-bidder-compute";
 import { createLocalComputeProvider } from "@publicdomainrelay/compute-provider-local";
 import type { ComputeAtproto } from "@publicdomainrelay/compute-provider-abc";
-import { createRelayFactory } from "@publicdomainrelay/hono-factory-did-key-relay-relayer-xrpc";
+import { createRelayFactory } from "@publicdomainrelay/hono-factory-did-key-ingress-proxy-xrpc";
 import { createRequesterPDS, runComputeContract } from "@publicdomainrelay/requester-xrpc";
 
 function didWebToHttps(s: string): string {
@@ -93,7 +93,6 @@ Deno.test({
 
   const cleanups: Array<() => void> = [];
 
-  // ── dispatcher (real did-key-relay relayer) ──────────────────────────
   const dispatcherApp = createRelayFactory({ hostname: "localhost" }).createApp();
   const dispatcherCtl = new AbortController();
   const { promise: dispPortReady, resolve: resolveDispPort } = Promise.withResolvers<number>();
@@ -103,7 +102,7 @@ Deno.test({
   );
   const dispPort = await dispPortReady;
   cleanups.push(() => dispatcherCtl.abort());
-  const dispatcherHost = `localhost:${dispPort}`;
+  const ingressProxyHost = `localhost:${dispPort}`;
 
   // ── fake PLC ─────────────────────────────────────────────────────────
   const plc = createFakePlc();
@@ -136,7 +135,7 @@ Deno.test({
     const pdsAgent = await createLocalPDSAgent({
       logger, keypair: bidderKeypair,
       serve: createServe({ logger }),
-      plcDirectoryUrl, dispatcherHost,
+      plcDirectoryUrl, ingressProxyHost,
     });
     await pdsAgent.beginServe();
 
@@ -149,7 +148,7 @@ Deno.test({
 
     const makeRelay = async () => {
       const kp = await Secp256k1Keypair.create({ exportable: true });
-      return createXrpcRelay({ logger, dispatcherHost, signer: atproto.signer, keypair: kp });
+      return createIngress({ logger, ingressProxyHost, signer: atproto.signer, keypair: kp });
     };
 
     // local compute provider (container mode) on its own relay/serve
@@ -160,7 +159,7 @@ Deno.test({
         logger,
         atproto: atproto as unknown as ComputeAtproto,
         serve: providerServe,
-        getIssuerUrl: () => didWebToHttps(providerRelay.proxyRef),
+        getIssuerUrl: () => didWebToHttps(providerRelay.ingressRef),
         containerMode: "container",
       }),
     });
@@ -179,7 +178,7 @@ Deno.test({
     const requesterServe = createServe({ logger, tcp: { addr: "127.0.0.1", port: 0 } });
     const requester = await createRequesterPDS({
       logger, serve: requesterServe,
-      plcDirectoryUrl, dispatcherHost, label: "requester",
+      plcDirectoryUrl, ingressProxyHost, label: "requester",
     });
     cleanups.push(() => requesterServe.shutdown());
 
@@ -198,7 +197,7 @@ Deno.test({
     let contractErr: unknown;
     const contract = runComputeContract(requester, {
       logger,
-      dispatcherHost,
+      ingressProxyHost,
       skipSsh: true,
       keepVm: true,
       bidWindowSec: 8,

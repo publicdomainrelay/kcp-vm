@@ -241,7 +241,7 @@ export function patchDefaultUserData(
 
 export interface TunnelCloudInitContext {
   /** host:port the guest dials outbound to reach the relay dispatcher. */
-  dispatcherHost: string;
+  ingressProxyHost: string;
   /** Relay hostname used as the service-auth `aud` (did:web:<audHost>). */
   audHost: string;
   /** secp256k1 private key hex; the relay verifies the registration nonce sig. */
@@ -256,7 +256,7 @@ export interface TunnelCloudInitContext {
 
 /**
  * Sibling of buildDefaultUserData that replaces the fedproxy-client transport
- * with the did-key-relay xrpc tunnel-subscriber. sshd listens on :22; the
+ * with the xrpc tunnel-subscriber. sshd listens on :22; the
  * subscriber dials the relay outbound, registers its DID subdomain, and bridges
  * raw relay tunnel bytes straight to sshd (no guest websocat — the subscriber
  * speaks raw TCP). The agent is pulled at boot via `deno run jsr:` from the
@@ -264,7 +264,7 @@ export interface TunnelCloudInitContext {
  * compute-provider runner image PATH.
  */
 export function buildTunnelUserData(ctx: TunnelCloudInitContext): string {
-  const { dispatcherHost, audHost, privateKeyHex, jsrUrl, sshAuthorizedKey } = ctx;
+  const { ingressProxyHost, audHost, privateKeyHex, jsrUrl, sshAuthorizedKey } = ctx;
   const targetPort = ctx.targetPort ?? 22;
   return `#cloud-config
 packages:
@@ -297,7 +297,7 @@ write_files:
     permissions: '0644'
     content: |
       [Unit]
-      Description=did-key-relay xrpc tunnel subscriber (ssh-over-relay)
+      Description=xrpc tunnel subscriber (ssh-over-relay)
       After=network-online.target sshd.service ssh.service
       Wants=network-online.target
 
@@ -306,7 +306,7 @@ write_files:
       User=root
       Environment="JSR_URL=http://${jsrUrl}/"
       Environment="DENO_DIR=/var/lib/deno"
-      ExecStart=deno run -A jsr:@publicdomainrelay/hono-did-key-relay-tunnel-subscriber --dispatcher-host ${dispatcherHost} --aud-host ${audHost} --private-key-hex ${privateKeyHex} --target-host 127.0.0.1 --target-port ${targetPort}
+      ExecStart=deno run -A jsr:@publicdomainrelay/hono-did-key-ingress-proxy-tunnel-subscriber --ingress-proxy-host ${ingressProxyHost} --aud-host ${audHost} --private-key-hex ${privateKeyHex} --target-host 127.0.0.1 --target-port ${targetPort}
       Restart=always
       RestartSec=5
       TimeoutStopSec=10

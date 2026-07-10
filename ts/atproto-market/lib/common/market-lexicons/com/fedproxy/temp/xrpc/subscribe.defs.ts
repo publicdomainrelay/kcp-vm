@@ -25,7 +25,7 @@ export const $message = /*#__PURE__*/ l.typedUnion(
 
 export type $Message = l.InferOutput<typeof $message>
 
-/** Open a relay channel. The subscriber presents a com.fedproxy.temp.xrpc.registration: a record signed (network.attested.signature) over the nonce previously issued by com.fedproxy.temp.xrpc.getRegistrationNonce. The relay verifies the registration's signatures against the issued nonce and the did:key, then binds the WebSocket to that key. On connect the relay sends a #registered frame with the assigned serviceId/proxyRef; subsequent #request frames carry inbound XRPC calls the subscriber answers with #response frames. */
+/** Open a relay channel. The subscriber presents a com.fedproxy.temp.xrpc.registration: a record signed (network.attested.signature) over the nonce previously issued by com.fedproxy.temp.xrpc.getRegistrationNonce. The relay verifies the registration's signatures against the issued nonce and the did:key, then binds the WebSocket to that key. On connect the relay sends a #registered frame with the assigned serviceId/ingressRef; subsequent #request frames carry inbound XRPC calls the subscriber answers with #response frames. */
 const main = /*#__PURE__*/ l.subscription($nsid, $params, $message, [
   'InvalidRequest',
   'Unauthorized',
@@ -47,7 +47,7 @@ type Registered = {
   /**
    * did:web:HOST#serviceId value callers pass as the atproto-proxy header to route XRPC calls to this subscriber.
    */
-  proxyRef: string
+  ingressRef: string
 }
 
 export type { Registered }
@@ -58,7 +58,7 @@ const registered = /*#__PURE__*/ l.typedObject<Registered>(
   'registered',
   /*#__PURE__*/ l.object({
     serviceId: /*#__PURE__*/ l.string(),
-    proxyRef: /*#__PURE__*/ l.string(),
+    ingressRef: /*#__PURE__*/ l.string(),
   }),
 )
 

@@ -1,4 +1,5 @@
 import { Command } from "@publicdomainrelay/cli-args-env";
+import { isValidPolicyMode, type PolicyMode, DYNAMIC } from "@publicdomainrelay/market-policy-abc";
 import { createLogger } from "@publicdomainrelay/logger";
 import { createServe } from "@publicdomainrelay/serve";
 import {
@@ -7,12 +8,12 @@ import {
   createSshSessionProvider,
   ensureWebsocat,
 } from "@publicdomainrelay/requester-xrpc";
-import { DEFAULT_RELAY_URLS, EVENT_NSID, OFFERING_NSID } from "@publicdomainrelay/market-common";
+import { DEFAULT_RELAY_URLS, EVENT_NSID, OFFERING_NSID, relayUrlsToFirehoseUrls } from "@publicdomainrelay/market-common";
 import { createFirehoseWatcher as createSubscribeReposWatcher } from "@publicdomainrelay/firehose-watcher-subscriberepos";
 import { createFirehoseWatcher as createJetstreamWatcher } from "@publicdomainrelay/firehose-watcher-jetstream";
 import { qrcode } from "@libs/qrcode";
 import { IdResolver } from "@atproto/identity";
-import cliArgsEnv from "./cli-args-env.json" with { type: "json" };
+import cliArgsEnv from "./cli-args-env.ts";
 
 let runtimeConfig: Record<string, unknown> | null = null;
 try { runtimeConfig = (await import("./config.json", { with: { type: "json" } })).default; } catch { /* optional */ }
@@ -21,12 +22,12 @@ const { options } = await new Command("CONFIG_PATH_REQUEST_VM_SSH", cliArgsEnv, 
 const label = (options.label as string) ?? "request-vm-ssh";
 const logger = createLogger({ serviceName: label });
 
-const dispatcherHost = (options.dispatcherHost as string) || "xrpc.fedproxy.com";
+const ingressProxyHost = (options.ingressProxyHost as string) || "xrpc.fedproxy.com";
 
 // Auto-detect local dev: *.localhost isn't in DNS.  Patch fetch so the
 // requester can reach the bidder's PDS endpoints (also on *.localhost).
-if (dispatcherHost.includes("localhost") || dispatcherHost.startsWith("127.")) {
-  const patchPort = dispatcherHost.includes(":") ? dispatcherHost.split(":").pop()! : "80";
+if (ingressProxyHost.includes("localhost") || ingressProxyHost.startsWith("127.")) {
+  const patchPort = ingressProxyHost.includes(":") ? ingressProxyHost.split(":").pop()! : "80";
   const realFetch = globalThis.fetch;
   globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
     let url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
@@ -59,7 +60,7 @@ if (userDataPath) {
 const rbac = !(options.skipRbac as boolean);
 
 await ensureWebsocat(logger);
-logger.info("requester_starting", { label, dispatcherHost, relayUrls });
+logger.info("requester_starting", { label, ingressProxyHost, relayUrls });
 
 const serve = createServe({
   logger,
@@ -85,7 +86,7 @@ const pds = await createRequesterPDS({
   serve,
   privateKeyHex: resolvedPrivateKeyHex,
   plcDirectoryUrl: (options.plcDirectoryUrl as string) || "https://plc.directory",
-  dispatcherHost,
+  ingressProxyHost,
   label,
   storagePath: options.pdsStatePath as string | undefined,
 });
@@ -104,28 +105,30 @@ if (privateKeyHexPath) {
   }
 }
 
-const offeringFirehoseMode = (options.offeringFirehoseMode as string) || "off";
-const offeringFirehoseUrl = options.offeringFirehoseUrl as string | undefined;
+const firehoseMode = (options.firehoseMode as string) || "off";
+const firehoseUrlOverride = options.firehoseUrl as string | undefined;
+const derivedFirehoseUrls = firehoseMode !== "off" ? relayUrlsToFirehoseUrls(relayUrls) : [];
+const firehoseUrl = firehoseUrlOverride || derivedFirehoseUrls[0] || "";
 const offeringDids = new Set<string>();
 let offeringWatcher: { close(): void } | undefined;
-if (offeringFirehoseMode !== "off" && offeringFirehoseUrl) {
-  const make = offeringFirehoseMode === "jetstream" ? createJetstreamWatcher : createSubscribeReposWatcher;
+if (firehoseMode !== "off" && firehoseUrl) {
+  const make = firehoseMode === "jetstream" ? createJetstreamWatcher : createSubscribeReposWatcher;
   offeringWatcher = make({
-    url: offeringFirehoseUrl,
+    url: firehoseUrl,
     wantedCollections: [OFFERING_NSID],
     onRecord: (e) => { if (e.operation !== "delete") offeringDids.add(e.did); },
     log: logger,
   });
-  logger.info("offering_firehose_watch_started", { mode: offeringFirehoseMode });
+  logger.info("offering_firehose_watch_started", { mode: firehoseMode, url: firehoseUrl });
 }
 
 // Watch own PDS for compute events (vm.onNetwork, vm.registerIdentity)
 const ownEventDids = new Set<string>();
 let ownEventWatcher: { close(): void } | undefined = undefined;
-if (offeringFirehoseUrl) {
-  const make2 = offeringFirehoseMode === "jetstream" ? createJetstreamWatcher : createSubscribeReposWatcher;
+if (firehoseUrl) {
+  const make2 = firehoseMode === "jetstream" ? createJetstreamWatcher : createSubscribeReposWatcher;
   ownEventWatcher = make2({
-    url: offeringFirehoseUrl,
+    url: firehoseUrl,
     wantedCollections: [EVENT_NSID],
     onRecord: (e) => {
       if (e.did !== pds.did) return;
@@ -137,7 +140,7 @@ if (offeringFirehoseUrl) {
 }
 
 await pds.beginServe();
-logger.info("requester_ready", { did: pds.did, proxyRef: pds.proxyRef, dispatcherHost });
+logger.info("requester_ready", { did: pds.did, ingressRef: pds.ingressRef, ingressProxyHost });
 
 const BADGE_BLUE_KEYS_NSID = "com.publicdomainrelay.temp.badgeBlueKeys";
 let hasAssociation = false;
@@ -224,14 +227,13 @@ Deno.addSignalListener("SIGINT", shutdown);
 Deno.addSignalListener("SIGTERM", shutdown);
 
 const policyModeRaw = options.policyMode as string | undefined;
-const policyMode = (policyModeRaw === "only_me" || policyModeRaw === "direct_network" || policyModeRaw === "policy_based")
-  ? policyModeRaw : undefined;
-const policyEngineEndpoint = (policyMode === "policy_based") ? options.policyEngineEndpoint as string | undefined : undefined;
+const policyMode = isValidPolicyMode(policyModeRaw) ? policyModeRaw : undefined;
+const policyEngineEndpoint = (policyMode === DYNAMIC) ? options.policyEngineEndpoint as string | undefined : undefined;
 
 const result = await runComputeContract(pds, {
   logger,
-  dispatcherHost,
-  fedproxyHost: options.fedproxyHost as string | undefined,
+  ingressProxyHost,
+  fedingressHost: options.fedingressHost as string | undefined,
   vmName: options.vmName as string | undefined,
   bidWindowSec: options.bidWindowSec as number,
   skipSsh: options.skipSsh as boolean,

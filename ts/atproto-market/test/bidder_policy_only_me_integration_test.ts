@@ -1,12 +1,12 @@
-// Production fedproxy.com only_me policy integration test.
-// Validates: requester posts RFP with policyMode=only_me, bidder with open
+// Production fedproxy.com only-me policy integration test.
+// Validates: requester posts RFP with policyMode=only-me, bidder with open
 // acceptScope (default) receives the RFP, bids, and the contract flow completes.
 //
 // The bidder hono-bidder CLI does not expose acceptScope as a flag — it defaults
 // to undefined (open to all). This test therefore validates the requester-side
-// policyMode plumbing: createPolicy mints the com.publicdomainrelay.temp.auth
-// .policy.only_me record, attaches its strongRef to the RFP's `policy` field,
-// and the RFP/bid/accept cycle completes normally against production fedproxy.com.
+// policyMode plumbing: createPolicy mints the policy.onlyMe record, attaches
+// its strongRef to the RFP's `policy` field, and the RFP/bid/accept cycle
+// completes normally against production fedproxy.com.
 //
 // Spawns hono-bidder CLI subprocess. Uses real plc.directory + xrpc.fedproxy.com
 // so the relay can resolve all DIDs. Auto-skips when prod infra unreachable.
@@ -23,6 +23,7 @@ import { createServe } from "@publicdomainrelay/serve";
 import {
   createRequesterPDS, ensureWebsocat, runComputeContract,
 } from "@publicdomainrelay/requester-xrpc";
+import { ONLY_ME, DYNAMIC } from "@publicdomainrelay/market-policy-abc";
 
 // ===========================================================================
 // Helpers
@@ -155,7 +156,7 @@ const PROD_DISPATCHER = "xrpc.fedproxy.com";
 const PROD_FEDPROXY = "fedproxy.com";
 
 Deno.test({
-  name: "prod fedproxy.com — policyMode=only_me RFP flow",
+  name: "prod fedproxy.com — policyMode=only-me RFP flow",
   sanitizeOps: false,
   sanitizeResources: false,
   ignore: (() => {
@@ -191,16 +192,19 @@ Deno.test({
     return;
   }
 
-  await t.step("[bidder-prod-only-me] policyMode=only_me RFP flow", async () => {
+  await t.step("[bidder-prod-only-me] policyMode=only-me RFP flow", async () => {
     // ── Spawn hono-bidder subprocess ──────────────────────────────────
     const proc = await spawnBidder({
       modPath: HONO_BIDDER,
       args: [
-        "--relay-dispatcher-host", PROD_DISPATCHER,
+        "--ingress-proxy-host", PROD_DISPATCHER,
         "--plc-directory-url", PROD_PLC,
         "--compute-provider-local",
-        "--compute-provider-local-container-mode", "container",
+        "--compute-provider-local-mode", "container",
         "--serve-port", "0",
+        "--firehose-mode", "subscriberepos",
+        "--firehose-url", "wss://bsky.network/xrpc/com.atproto.sync.subscribeRepos",
+        "--policy-mode", DYNAMIC,
       ],
       label: "hono-bidder-prod-only-me",
     });
@@ -211,33 +215,33 @@ Deno.test({
     const requester = await createRequesterPDS({
       logger, serve: requesterServe,
       plcDirectoryUrl: PROD_PLC,
-      dispatcherHost: PROD_DISPATCHER,
+      ingressProxyHost: PROD_DISPATCHER,
       label: "requester-prod-only-me",
     });
     cleanups.push(() => requesterServe.shutdown());
     await requester.beginServe();
 
-    // ── Run compute contract with policyMode=only_me ──────────────────
+    // ── Run compute contract with policyMode=only-me ──────────────────
     //
     // This exercises the requester-side policy plumbing inside
     // runComputeContract: when policyMode is set, it calls createPolicy()
-    // from @publicdomainrelay/market-policy, which mints a
-    // com.publicdomainrelay.temp.auth.policy.only_me record and attaches
-    // its strongRef to the RFP's `policy` field before signing.
+    // from @publicdomainrelay/market-policy, which mints a policy.onlyMe
+    // record and attaches its strongRef to the RFP's `policy` field
+    // before signing.
     //
     // skipSsh=true avoids provisioning a guest — we only need to verify
     // the RFP/bid/accept cycle succeeds.
     const result = await runComputeContract(requester, {
       logger,
-      dispatcherHost: PROD_DISPATCHER,
-      fedproxyHost: PROD_FEDPROXY,
+      ingressProxyHost: PROD_DISPATCHER,
+      fedingressHost: PROD_FEDPROXY,
       rbac: true,
       skipSsh: true,
       keepVm: true,
       bidWindowSec: 15,
       extraBidderDids: [proc.did],
       denyBidderDids: ["did:plc:centraldefaultbidder000000"],
-      policyMode: "only_me",
+      policyMode: ONLY_ME,
     });
 
     // ── Assertions ────────────────────────────────────────────────────
@@ -246,7 +250,7 @@ Deno.test({
     assert(typeof result.bids === "number" && result.bids > 0,
       `[prod-only-me] expected >0 bids, got ${result.bids}`);
     // Winner may differ when other production bidders are registered on the
-    // relay and price below ours. The policyMode=only_me plumbing is correct
+    // relay and price below ours. The policyMode=only-me plumbing is correct
     // (policy record minted, attached to RFP, our bidder bids).
     // Production bidders that don't evaluate FulfillmentPolicy will also bid.
     assert(result.winnerDid && result.winnerDid.length > 0,

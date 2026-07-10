@@ -22,7 +22,7 @@ interface CapturedWrite {
 }
 
 function fakeServe(): ServeHandle {
-  const onConnectedCbs: Array<(proxyRef: string) => void | Promise<void>> = [];
+  const onConnectedCbs: Array<(ingressRef: string) => void | Promise<void>> = [];
   return {
     app: new Hono(),
     tcpPort: 0,
