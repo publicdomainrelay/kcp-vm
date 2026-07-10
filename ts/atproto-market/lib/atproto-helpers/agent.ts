@@ -516,6 +516,7 @@ export async function createOAuthAgent(opts: CreateOAuthAgentOpts): Promise<OAut
     stateStore: memoryStateStore(),
     sessionStore: jsonSessionStore(opts.sessionPath),
     runtimeImplementation: webCryptoRuntime(),
+    plcDirectoryUrl: "https://plc.directory",
     allowHttp: clientId === "http://localhost" || redirectUri.startsWith("http://127.0.0.1") || redirectUri.startsWith("http://localhost"),
   });
 

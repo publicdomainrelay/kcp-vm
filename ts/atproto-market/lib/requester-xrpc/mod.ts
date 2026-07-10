@@ -1392,6 +1392,7 @@ export async function createOAuthRequester(opts: CreateOAuthRequesterOpts): Prom
     stateStore: memoryStateStore(),
     sessionStore: jsonSessionStore(opts.sessionPath),
     runtimeImplementation: webCryptoRuntime(),
+    plcDirectoryUrl: "https://plc.directory",
     allowHttp: clientId === "http://localhost",
   });
 
