@@ -386,7 +386,7 @@ if (_deferredRelayUrls.length > 0 && _localServePort > 0) {
   }
 }
 
-// Re-commit offering so local relays index it immediately
+// Re-commit offering so relays index it immediately
 // rather than waiting for the periodic offering refresh.
 try {
   await bidder.refreshOffering();
@@ -401,6 +401,22 @@ try {
 // Non-blocking on failure — bidder still boots, just warns.
 const _allRelayUrls = [...relayUrls, ..._deferredRelayUrls.map((u) => `http://${u}`)];
 const _visibilityHostname = pdsHostname ?? (_localServePort > 0 ? `127.0.0.1:${_localServePort}` : undefined);
+
+// Re-request crawl on ALL relays now that the offering record is committed.
+// The initial requestCrawl (during atprotoAgent.beginServe) ran before the
+// offering was created/corrected. Production relays need a second ping so they
+// re-subscribe and see the fresh offering commit.
+if (_visibilityHostname) {
+  for (const url of relayUrls) {
+    try {
+      await atproto.requestCrawl(url, _visibilityHostname);
+      logger.info("relay_reregistered_after_offering_refresh", { url, hostname: _visibilityHostname });
+    } catch (err) {
+      logger.warn("relay_reregister_failed", { url, error: String(err) });
+    }
+  }
+}
+
 if (_allRelayUrls.length > 0 && _visibilityHostname) {
   const relayResult = await verifyRelayVisibility({
     relayUrls: _allRelayUrls,
