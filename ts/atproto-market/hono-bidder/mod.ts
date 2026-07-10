@@ -112,7 +112,12 @@ let isLocal = false;
 let isOAuth = false;
 const _deferredRelayUrls: string[] = [];
 let _deferredPdsPort = 0;
-if ((options.atprotoOauth as boolean) && (options.atprotoHandle as string | undefined)) {
+if ((options.atprotoOauth as boolean)) {
+  const handle = options.atprotoHandle as string | undefined;
+  if (!handle) {
+    logger.error("--atproto-oauth requires --atproto-handle");
+    Deno.exit(1);
+  }
   // OAuth flow — use remote PDS via ATProto OAuth
   const sessionPath = options.oauthSessionPath as string;
   const oauthAgent = await createOAuthAgent({
@@ -193,11 +198,15 @@ if ((options.atprotoOauth as boolean) && (options.atprotoHandle as string | unde
   }
 }
 
+if (!atprotoAgent) {
+  logger.error("no atproto agent configured — need --atproto-oauth (with --atproto-handle), --atproto-handle + --atproto-password, or local PDS");
+  Deno.exit(1);
+}
 const atproto = await createATProto({
   logger,
   badgeBlueSigner: await createBadgeBlueSigner({ privateKeyHex }),
   plcDirectory: createPlcDirectoryClient({ plcDirectoryUrl }),
-  agent: atprotoAgent!,
+  agent: atprotoAgent,
 });
 
 const cliRelayUrl = (options.relayUrl as string) || "";
