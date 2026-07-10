@@ -23,6 +23,9 @@ import {
   verifyRecordSignatures,
   verifyRemoteProof,
 } from "@publicdomainrelay/market-atproto";
+import { OAuthClient } from "@atproto/oauth-client";
+import type { RuntimeImplementation, StateStore, SessionStore } from "@atproto/oauth-client";
+import type { Key } from "@atproto/oauth-client";
 import { stripResolved, atUriAuthority } from "@publicdomainrelay/market-abc";
 import type { InlineAttestation, AttestationKeypair, SubmitBidCallback } from "@publicdomainrelay/market-atproto";
 import {
@@ -60,6 +63,7 @@ import type {
   SshSessionProvider,
 } from "@publicdomainrelay/requester-abc";
 import type { LoggerInterface, StructuredLoggerInterface } from "@publicdomainrelay/logger";
+import type { ServeHandle, IngressRef } from "@publicdomainrelay/serve";
 import { ASSOCIATE_CONFIRM_NSID, BADGE_BLUE_KEYS_NSID } from "@publicdomainrelay/market-lexicons";
 import { createTangledGraphVouchResolver } from "@publicdomainrelay/trust-graph-tangled-graph";
 import { createBadgeBlueKeysDelegatedTrustResolver } from "@publicdomainrelay/delegated-trust-badge-blue-keys";
@@ -1345,6 +1349,205 @@ runcmd:
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// OAuth requester — lightweight RequesterPDS backed by OAuth agent
+// ---------------------------------------------------------------------------
+
+function webCryptoRuntime(): RuntimeImplementation {
+  return {
+    async createKey(algs: string[]): Promise<Key> {
+      const alg = algs.find((a) => a === "ES256") ?? algs[0];
+      const key = await crypto.subtle.generateKey(
+        { name: "ECDSA", namedCurve: "P-256" },
+        true, ["sign"],
+      );
+      const jwk = await crypto.subtle.exportKey("jwk", key.privateKey);
+      return { alg, kid: await crypto.randomUUID(), privateJwk: jwk } as unknown as Key;
+    },
+    getRandomValues(length: number): Uint8Array {
+      return crypto.getRandomValues(new Uint8Array(length));
+    },
+    async digest(data: Uint8Array, alg: { name: string }): Promise<Uint8Array> {
+      return new Uint8Array(await crypto.subtle.digest(alg.name, data as BufferSource));
+    },
+  };
+}
+
+function memoryStateStore(): StateStore {
+  const map = new Map<string, unknown>();
+  return {
+    async get(key: string) { return map.get(key) as never; },
+    async set(key: string, value: unknown) { map.set(key, value); },
+    async del(key: string) { map.delete(key); },
+  };
+}
+
+function jsonSessionStore(filePath: string): SessionStore {
+  let cache: Record<string, unknown> | null = null;
+  async function load() { if (cache) return cache; try { cache = JSON.parse(await Deno.readTextFile(filePath)); } catch { cache = {}; } return cache!; }
+  async function save() { await Deno.writeTextFile(filePath, JSON.stringify(cache, null, 2)); }
+  return {
+    async get(key: string) { return (await load())[key] as never; },
+    async set(key: string, value: unknown) { (await load())[key] = value; await save(); },
+    async del(key: string) { delete (await load())[key]; await save(); },
+  };
+}
+
+export interface OAuthRequesterHandle {
+  pds: RequesterPDS;
+  startFlow(): Promise<string>;
+  completeFlow(params: Record<string, string>): Promise<void>;
+  restore(): Promise<boolean>;
+}
+
+export interface CreateOAuthRequesterOpts {
+  handle: string;
+  sessionPath: string;
+  clientId?: string;
+  redirectUri?: string;
+  scope?: string;
+  logger?: StructuredLoggerInterface;
+  attestationKp: AttestationKeypair;
+  privateKeyHex: string;
+}
+
+export async function createOAuthRequester(opts: CreateOAuthRequesterOpts): Promise<OAuthRequesterHandle> {
+  const clientId = opts.clientId ?? "http://localhost";
+  const redirectUri = opts.redirectUri ?? "http://127.0.0.1:0/callback";
+  const scope = opts.scope ?? "atproto";
+  const log = opts.logger;
+
+  const client = new OAuthClient({
+    responseMode: "query",
+    clientMetadata: {
+      client_id: clientId,
+      application_type: "native",
+      dpop_bound_access_tokens: true,
+      redirect_uris: [redirectUri],
+      grant_types: ["authorization_code", "refresh_token"],
+      response_types: ["code"],
+      scope,
+      token_endpoint_auth_method: "none",
+    },
+    stateStore: memoryStateStore(),
+    sessionStore: jsonSessionStore(opts.sessionPath),
+    runtimeImplementation: webCryptoRuntime(),
+    allowHttp: clientId === "http://localhost",
+  });
+
+  let _session: Awaited<ReturnType<typeof client.restore>> | null = null;
+  function getSession() { if (!_session) throw new Error("OAuth session not initialized"); return _session; }
+
+  let _did = "";
+  const idResolver = new IdResolver();
+
+  const pds: RequesterPDS = {
+    get did() { return _did; },
+    serve: { tcpPort: 0, onConnected() {}, beginServe: async () => {}, shutdown() {}, app: { route() {}, fetch: async () => new Response() } } as unknown as ServeHandle,
+    relay: { ingressRef: "", ingressUrl: "", ingressHost: "", close() {}, onServe: async () => {} } as IngressRef,
+    ingressRef: "",
+    relaySubdomain: "",
+    get ingressUrl() { return ""; },
+    get ingressHost() { return ""; },
+    async beginServe() {},
+    pendingBids: new Map(),
+    attestationKp: opts.attestationKp,
+    signer: {
+      did: () => _did,
+      sign: async () => { throw new Error("use getServiceAuth for OAuth requester"); },
+    },
+    privateKeyHex: opts.privateKeyHex,
+    associateCalled: Promise.resolve(""),
+    approveAssociation() {},
+    rejectAssociation(_err: Error) {},
+    async dispose() {},
+
+    async createRepoRecord(collection: string, record: Record<string, unknown>) {
+      const s = getSession();
+      const rkey = TID.next().toString();
+      const res = await s.fetchHandler(`${s.server.issuer}/xrpc/com.atproto.repo.applyWrites`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ repo: _did, writes: [{ action: "create", collection, rkey, record }] }),
+      });
+      if (!res.ok) throw new Error(`applyWrites failed: ${res.status}`);
+      const rec = await s.fetchHandler(`${s.server.issuer}/xrpc/com.atproto.repo.getRecord?repo=${encodeURIComponent(_did)}&collection=${encodeURIComponent(collection)}&rkey=${encodeURIComponent(rkey)}`);
+      if (!rec.ok) throw new Error(`getRecord failed: ${rec.status}`);
+      const data = await rec.json() as { uri: string; cid?: string };
+      return { uri: data.uri, cid: data.cid ?? "" };
+    },
+
+    async createSignedRepoRecord(collection: string, record: Record<string, unknown>, aKp: AttestationKeypair, issuer?: string) {
+      const s = getSession();
+      const rkey = TID.next().toString();
+      const att = attestationFor(aKp, issuer);
+      const entry = await att.sign({ record: record as Record<string, unknown>, repository: _did }) as InlineAttestation;
+      const signed = { ...record, signatures: [toStorableEntry(entry)] };
+      const res = await s.fetchHandler(`${s.server.issuer}/xrpc/com.atproto.repo.applyWrites`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ repo: _did, writes: [{ action: "create", collection, rkey, record: signed }] }),
+      });
+      if (!res.ok) throw new Error(`applyWrites failed: ${res.status}`);
+      const rec = await s.fetchHandler(`${s.server.issuer}/xrpc/com.atproto.repo.getRecord?repo=${encodeURIComponent(_did)}&collection=${encodeURIComponent(collection)}&rkey=${encodeURIComponent(rkey)}`);
+      if (!rec.ok) throw new Error(`getRecord failed: ${rec.status}`);
+      const data = await rec.json() as { uri: string; cid?: string };
+      return { uri: data.uri, cid: data.cid ?? "" };
+    },
+
+    async resolveBidderEndpoint(endpointUrl: string) {
+      if (endpointUrl.startsWith("http://") || endpointUrl.startsWith("https://")) {
+        return { targetUrl: `${endpointUrl.replace(/\/+$/, "")}/xrpc`, audDid: `did:web:${new URL(endpointUrl).host}` };
+      }
+      if (endpointUrl.startsWith("did:")) {
+        const didPart = endpointUrl.split("#")[0];
+        const svcId = endpointUrl.includes("#") ? endpointUrl.split("#")[1] : "pdr_temp_market";
+        const doc = await idResolver.did.resolve(didPart);
+        const svc = doc?.service?.find?.((s: { id: string }) => s.id === `#${svcId}`);
+        if (!svc) return null;
+        const ep = (svc as { serviceEndpoint: string }).serviceEndpoint.replace(/\/+$/, "");
+        return { targetUrl: `${ep}/xrpc`, audDid: `did:web:${new URL(ep).host}` };
+      }
+      return null;
+    },
+
+    async callBidder(targetBase: string, nsid: string, lxm: string, audDid: string, body: Record<string, unknown>) {
+      const s = getSession();
+      const saRes = await s.fetchHandler(`${s.server.issuer}/xrpc/com.atproto.server.getServiceAuth`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ aud: audDid, lxm }),
+      });
+      if (!saRes.ok) throw new Error(`getServiceAuth failed: ${saRes.status}`);
+      const saData = await saRes.json() as { token: string };
+      const res = await fetch(`${targetBase}/${nsid}`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${saData.token}` },
+        body: JSON.stringify(body),
+      });
+      let resBody: unknown;
+      try { resBody = await res.json(); } catch { resBody = await res.text(); }
+      return { status: res.status, ok: res.ok, body: resBody };
+    },
+
+  };
+
+  return {
+    pds,
+    async startFlow(): Promise<string> {
+      const result = await client.authorize(opts.handle, { scope });
+      return String(result);
+    },
+    async completeFlow(params: Record<string, string>): Promise<void> {
+      const result = await client.callback(new URLSearchParams(params));
+      _session = result.session;
+      _did = result.session.did;
+      log?.info("oauth_session_complete", { did: _did });
+    },
+    async restore(): Promise<boolean> {
+      try { _session = await client.restore(opts.handle); _did = _session.did; log?.info("oauth_session_restored", { did: _did }); return true; }
+      catch { return false; }
+    },
+  };
+}
 
 function randomHex8(): string {
   const b = new Uint8Array(4);

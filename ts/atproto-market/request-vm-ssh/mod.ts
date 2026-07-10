@@ -4,10 +4,12 @@ import { createLogger } from "@publicdomainrelay/logger";
 import { createServe } from "@publicdomainrelay/serve";
 import {
   createRequesterPDS,
+  createOAuthRequester,
   runComputeContract,
   createSshSessionProvider,
   ensureWebsocat,
 } from "@publicdomainrelay/requester-xrpc";
+import type { RequesterPDS } from "@publicdomainrelay/requester-abc";
 import { DEFAULT_RELAY_URLS, EVENT_NSID, OFFERING_NSID, relayUrlsToFirehoseUrls } from "@publicdomainrelay/market-common";
 import { createFirehoseWatcher as createSubscribeReposWatcher } from "@publicdomainrelay/firehose-watcher-subscriberepos";
 import { createFirehoseWatcher as createJetstreamWatcher } from "@publicdomainrelay/firehose-watcher-jetstream";
@@ -81,27 +83,94 @@ if (privateKeyHexPath && !resolvedPrivateKeyHex) {
   } catch { /* file missing — will generate and save below */ }
 }
 
-const pds = await createRequesterPDS({
-  logger,
-  serve,
-  privateKeyHex: resolvedPrivateKeyHex,
-  plcDirectoryUrl: (options.plcDirectoryUrl as string) || "https://plc.directory",
-  ingressProxyHost,
-  label,
-  storagePath: options.pdsStatePath as string | undefined,
-});
+// OAuth scope — collections the requester writes + XRPC calls.
+const OAUTH_SCOPE = [
+  "atproto",
+  "repo:com.publicdomainrelay.temp.compute.vm?action=create",
+  "repo:com.publicdomainrelay.temp.market.rfp?action=create",
+  "repo:com.publicdomainrelay.temp.market.accept?action=create",
+  "repo:com.publicdomainrelay.temp.market.event?action=create",
+  "repo:com.publicdomainrelay.temp.compute.events.vm.delete?action=create",
+  "repo:com.publicdomainrelay.temp.badgeBlueKeys?action=create",
+  "repo:com.fedproxy.rbac?action=create",
+  "rpc:com.publicdomainrelay.temp.market.submitRfp?aud=*",
+  "rpc:com.publicdomainrelay.temp.market.submitAccept?aud=*",
+  "rpc:com.publicdomainrelay.temp.market.submitBid?aud=*",
+  "rpc:com.publicdomainrelay.temp.market.submitEvent?aud=*",
+].join(" ");
 
-// Persist generated key to path for future runs.
-if (privateKeyHexPath) {
-  try {
-    await Deno.writeTextFile(privateKeyHexPath, pds.privateKeyHex);
-    if (resolvedPrivateKeyHex) {
-      // Already had it — rewrite same value (idempotent).
-    } else {
-      logger.info("private_key_generated_and_saved", { path: privateKeyHexPath });
+let pds: RequesterPDS;
+let isOAuth = false;
+
+if ((options.atprotoOauth as boolean) && (options.atprotoHandle as string | undefined)) {
+  // OAuth requester — no local PDS, firehose-based discovery
+  const oauthHandle = await createOAuthRequester({
+    handle: options.atprotoHandle as string,
+    sessionPath: (options.oauthSessionPath as string) ||
+      `${Deno.env.get("HOME") ?? "/tmp"}/.cache/pdr-market/requester-oauth-session.json`,
+    clientId: options.oauthClientId as string | undefined,
+    redirectUri: options.oauthRedirectUri as string | undefined,
+    scope: OAUTH_SCOPE,
+    logger,
+    attestationKp: await (async () => {
+      const kp = resolvedPrivateKeyHex
+        ? await (await import("@atproto/crypto")).Secp256k1Keypair.import(resolvedPrivateKeyHex, { exportable: true })
+        : await (await import("@atproto/crypto")).Secp256k1Keypair.create({ exportable: true });
+      const { loadOrGenerateKeypair } = await import("@publicdomainrelay/market-atproto");
+      const hex = Array.from(await kp.export()).map((b: number) => b.toString(16).padStart(2, "0")).join("");
+      return loadOrGenerateKeypair(hex);
+    })(),
+    privateKeyHex: resolvedPrivateKeyHex ?? "",
+  });
+
+  const restored = await oauthHandle.restore();
+  if (!restored) {
+    const authUrl = await oauthHandle.startFlow();
+    const redirectUri = (options.oauthRedirectUri as string) || "http://127.0.0.1:0/callback";
+    const portMatch = redirectUri.match(/:(\d+)/);
+    const port = portMatch ? parseInt(portMatch[1]) : 0;
+    const cmd = Deno.build.os === "darwin" ? "open" : "xdg-open";
+    new Deno.Command(cmd, { args: [authUrl] }).spawn();
+    logger.info("oauth_browser_opened", { authUrl });
+    const { promise, resolve } = Promise.withResolvers<Record<string, string>>();
+    const cbServer = Deno.serve({ hostname: "127.0.0.1", port }, (req) => {
+      const url = new URL(req.url);
+      if (url.pathname === "/callback") {
+        const params: Record<string, string> = {};
+        url.searchParams.forEach((v, k) => { params[k] = v; });
+        resolve(params);
+        return new Response("<h1>Authorized!</h1>", { headers: { "content-type": "text/html" } });
+      }
+      return new Response("Not found", { status: 404 });
+    });
+    const params = await promise;
+    cbServer.shutdown();
+    await oauthHandle.completeFlow(params);
+  }
+  pds = oauthHandle.pds;
+  isOAuth = true;
+} else {
+  pds = await createRequesterPDS({
+    logger,
+    serve,
+    privateKeyHex: resolvedPrivateKeyHex,
+    plcDirectoryUrl: (options.plcDirectoryUrl as string) || "https://plc.directory",
+    ingressProxyHost,
+    label,
+    storagePath: options.pdsStatePath as string | undefined,
+  });
+  // Persist generated key to path for future runs.
+  if (privateKeyHexPath) {
+    try {
+      await Deno.writeTextFile(privateKeyHexPath, pds.privateKeyHex);
+      if (resolvedPrivateKeyHex) {
+        // Already had it — rewrite same value (idempotent).
+      } else {
+        logger.info("private_key_generated_and_saved", { path: privateKeyHexPath });
+      }
+    } catch (err) {
+      logger.warn("private_key_save_failed", { path: privateKeyHexPath, error: String(err) });
     }
-  } catch (err) {
-    logger.warn("private_key_save_failed", { path: privateKeyHexPath, error: String(err) });
   }
 }
 
@@ -138,15 +207,17 @@ if (firehoseUrl) {
   });
 }
 
-await pds.beginServe();
-logger.info("requester_ready", { did: pds.did, ingressRef: pds.ingressRef, ingressProxyHost });
+if (!isOAuth) {
+  await pds.beginServe();
+}
+logger.info("requester_ready", { did: pds.did, ingressRef: isOAuth ? "(oauth)" : pds.ingressRef, ingressProxyHost });
 
 const BADGE_BLUE_KEYS_NSID = "com.publicdomainrelay.temp.badgeBlueKeys";
 let hasAssociation = false;
-if (!options.noQr) {
+if (!options.noQr && !isOAuth) {
   let cursor: string | undefined;
   do {
-    const result = await pds.api.listRecords(pds.did, BADGE_BLUE_KEYS_NSID, { limit: 100, cursor });
+    const result = await (pds as unknown as { api: { listRecords(did: string, coll: string, opts: { limit: number; cursor?: string }): Promise<{ records: Array<{ value: Record<string, unknown> }>; cursor?: string }> } }).api.listRecords(pds.did, BADGE_BLUE_KEYS_NSID, { limit: 100, cursor });
     for (const rec of result.records) {
       const v = rec.value as Record<string, unknown>;
       if (v.challenge === pds.did && v.service === "requester_associate") {

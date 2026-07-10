@@ -26,6 +26,33 @@ export default {
       env: "PLC_DIRECTORY_URL",
       default: "https://plc.directory",
     },
+    "atproto-oauth": {
+      type: "boolean" as const,
+      description: "Use ATProto OAuth login instead of local PDS. Requires --atproto-handle.",
+    },
+    "atproto-handle": {
+      type: "string" as const,
+      description: "AT Protocol handle for OAuth login",
+      env: "ATP_HANDLE",
+    },
+    "oauth-client-id": {
+      type: "string" as const,
+      description: "OAuth client ID URL. Defaults to loopback http://localhost.",
+      env: "OAUTH_CLIENT_ID",
+      default: "http://localhost",
+    },
+    "oauth-redirect-uri": {
+      type: "string" as const,
+      description: "OAuth loopback redirect URI. Port 0 = random.",
+      env: "OAUTH_REDIRECT_URI",
+      default: "http://127.0.0.1:0/callback",
+    },
+    "oauth-session-path": {
+      type: "string" as const,
+      description: "Path to persist the OAuth session JSON",
+      env: "OAUTH_SESSION_PATH",
+      default: `${Deno.env.get("HOME") ?? Deno.env.get("USERPROFILE") ?? "/tmp"}/.cache/pdr-market/requester-oauth-session.json`,
+    },
     "ingress-proxy-host": {
       type: "string" as const,
       description: "XRPC relay dispatcher host",
