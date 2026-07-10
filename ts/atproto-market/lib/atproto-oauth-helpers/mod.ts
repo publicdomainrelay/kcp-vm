@@ -51,6 +51,26 @@ export function jsonSessionStore(filePath: string): SessionStore {
   };
 }
 
+/** Build OAuth client metadata for the well-known endpoint. */
+export function oauthClientMetadata(opts: {
+  clientId?: string;
+  redirectUri?: string;
+  scope: string;
+  clientName?: string;
+}): Record<string, unknown> {
+  return {
+    client_id: opts.clientId ?? "http://localhost",
+    application_type: "native",
+    dpop_bound_access_tokens: true,
+    redirect_uris: [opts.redirectUri ?? "http://127.0.0.1:0/callback"],
+    grant_types: ["authorization_code", "refresh_token"],
+    response_types: ["code"],
+    scope: opts.scope,
+    token_endpoint_auth_method: "none",
+    client_name: opts.clientName ?? "ATProto OAuth Client",
+  };
+}
+
 /** Start a loopback OAuth callback server, returns params from the redirect. */
 export function startLoopbackCallbackServer(port: number): {
   promise: Promise<Record<string, string>>;

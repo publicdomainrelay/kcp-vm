@@ -84,8 +84,8 @@ if (privateKeyHexPath && !resolvedPrivateKeyHex) {
   } catch { /* file missing — will generate and save below */ }
 }
 
-// OAuth scope — collections the requester writes + XRPC calls.
-const OAUTH_SCOPE = [
+// Full OAuth scope for registered client (requires hosted client metadata).
+const OAUTH_SCOPE_FULL = [
   "atproto",
   "repo:com.publicdomainrelay.temp.compute.vm?action=create",
   "repo:com.publicdomainrelay.temp.market.rfp?action=create",
@@ -98,7 +98,10 @@ const OAUTH_SCOPE = [
   "rpc:com.publicdomainrelay.temp.market.submitAccept?aud=*",
   "rpc:com.publicdomainrelay.temp.market.submitBid?aud=*",
   "rpc:com.publicdomainrelay.temp.market.submitEvent?aud=*",
-].join(" ");
+];
+
+// Temporary scope for loopback http://localhost client.
+const OAUTH_SCOPE = ["atproto", "transition:generic"].join(" ");
 
 let pds: RequesterPDS;
 let isOAuth = false;

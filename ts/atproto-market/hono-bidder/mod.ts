@@ -9,7 +9,7 @@ import { createComputeProviderHooks } from "@publicdomainrelay/market-bidder-com
 import { createComputeProviderDenoWorker, createWorkerProviderHooks } from "@publicdomainrelay/market-bidder-worker";
 import { createATProto, createLocalPDSAgent, createRemoteAgent, createOAuthAgent } from "@publicdomainrelay/atproto-helpers";
 import type { LocalPDSAgent } from "@publicdomainrelay/atproto-helpers";
-import { startLoopbackCallbackServer } from "@publicdomainrelay/atproto-oauth-helpers";
+import { startLoopbackCallbackServer, oauthClientMetadata } from "@publicdomainrelay/atproto-oauth-helpers";
 import { createBadgeBlueSigner } from "@publicdomainrelay/market-atproto";
 import { ACCEPT_NSID, DEFAULT_RELAY_URLS, EVENT_NSID, OFFERING_NSID, RFP_NSID, relayUrlsToFirehoseUrls } from "@publicdomainrelay/market-common";
 import { verifyRelayVisibility } from "@publicdomainrelay/requester-xrpc";
@@ -91,8 +91,8 @@ async function cliCreateIngress() {
   return createIngress({ logger, ingressProxyHost, signer: atproto.signer, keypair: relayKeypair });
 }
 
-// OAuth scope — collections the bidder writes to + XRPC calls it makes.
-const OAUTH_SCOPE = [
+// Full OAuth scope for registered client (requires hosted client metadata).
+const OAUTH_SCOPE_FULL = [
   "atproto",
   "repo:com.publicdomainrelay.temp.market.offering?action=create",
   "repo:com.publicdomainrelay.temp.market.offering?action=update",
@@ -105,7 +105,12 @@ const OAUTH_SCOPE = [
   "repo:com.publicdomainrelay.temp.market.bidderAssociation?action=create",
   "rpc:com.publicdomainrelay.temp.market.submitBid?aud=*",
   "rpc:com.publicdomainrelay.temp.market.submitEvent?aud=*",
-].join(" ");
+];
+
+// Temporary scope for loopback http://localhost client.
+// bsky.social rejects custom repo:/rpc: scopes for unregistered loopback
+// clients. Switch to OAUTH_SCOPE_FULL when using a registered client_id.
+const OAUTH_SCOPE = ["atproto", "transition:generic"].join(" "); // Use OAUTH_SCOPE_FULL when client is registered
 
 let atprotoAgent;
 let pdsHostname: string | undefined;
@@ -336,6 +341,16 @@ const bidderServe = createServe({
   tcp: { addr: (options.serveAddr as string) || "0.0.0.0", port: (options.servePort as number) ?? 0 },
   unix: (options.serveUnix as string | undefined) ? { socketPath: options.serveUnix as string } : undefined,
   relays: bidderIngress ? [bidderIngress] : [],
+});
+
+// OAuth client metadata endpoint — serves registered-client metadata.
+bidderServe.app.get("/oauth-client-metadata.json", (_c: { json(obj: Record<string, unknown>): Response }) => {
+  return _c.json(oauthClientMetadata({
+    clientId: options.oauthClientId as string | undefined,
+    redirectUri: options.oauthRedirectUri as string | undefined,
+    scope: OAUTH_SCOPE_FULL.join(" "),
+    clientName: "Compute Provider (hono-bidder)",
+  }));
 });
 
 const policyModeRaw = options.policyMode as string | undefined;
