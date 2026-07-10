@@ -98,9 +98,11 @@ async function cliCreateIngress() {
   return createIngress({ logger, ingressProxyHost, signer: localSigner, keypair: relayKeypair });
 }
 
-// Full OAuth scope for registered client (requires hosted client metadata).
+// Full OAuth scope — single source of truth for registered + loopback clients.
+// Matches did-key-associator/oauth-client-metadata.json canonical list.
 const OAUTH_SCOPE_FULL = [
   "atproto",
+  // Collection writes
   "repo:com.publicdomainrelay.temp.market.offering?action=create",
   "repo:com.publicdomainrelay.temp.market.offering?action=update",
   "repo:com.publicdomainrelay.temp.auth.allowlist.rbacDid?action=create",
@@ -110,14 +112,19 @@ const OAUTH_SCOPE_FULL = [
   "repo:com.publicdomainrelay.temp.market.event?action=create",
   "repo:com.publicdomainrelay.temp.badgeBlueKeys?action=create",
   "repo:com.publicdomainrelay.temp.market.bidderAssociation?action=create",
+  "repo:com.publicdomainrelay.temp.compute.config.wif.simple?action=create",
+  "repo:com.publicdomainrelay.temp.compute.vm?action=create",
+  "repo:com.publicdomainrelay.temp.market.rfp?action=create",
+  "repo:com.publicdomainrelay.temp.market.accept?action=create",
+  "repo:com.publicdomainrelay.temp.compute.events.vm.delete?action=create",
+  "repo:com.publicdomainrelay.temp.compute.events.vm.onNetwork?action=create",
+  "repo:com.fedproxy.rbac?action=create",
+  // RPC endpoints
+  "rpc:com.publicdomainrelay.temp.market.submitRfp?aud=*",
+  "rpc:com.publicdomainrelay.temp.market.submitAccept?aud=*",
   "rpc:com.publicdomainrelay.temp.market.submitBid?aud=*",
   "rpc:com.publicdomainrelay.temp.market.submitEvent?aud=*",
 ];
-
-// Temporary scope for loopback http://localhost client.
-// bsky.social rejects custom repo:/rpc: scopes for unregistered loopback
-// clients. Switch to OAUTH_SCOPE_FULL when using a registered client_id.
-const OAUTH_SCOPE = "atproto"; // bsky.social rejects transition:generic for loopback clients. Use OAUTH_SCOPE_FULL with registered client_id.
 
 let atprotoAgent;
 let pdsHostname: string | undefined;
@@ -138,7 +145,7 @@ if ((options.atprotoOauth as boolean)) {
     sessionPath,
     clientId: options.oauthClientId as string | undefined,
     redirectUri: options.oauthRedirectUri as string | undefined,
-    scope: OAUTH_SCOPE,
+    scope: OAUTH_SCOPE_FULL.join(" "),
     plcDirectoryUrl: plcDirectoryUrl,
     logger,
   });
@@ -197,7 +204,7 @@ if ((options.atprotoOauth as boolean)) {
   }
 
   // Try restoring saved OAuth QR session
-  const _restoredAgent = await tryRestoreOAuthQRSession({ logger });
+  const _restoredAgent = await tryRestoreOAuthQRSession({ logger, label: "bidder" });
   if (_restoredAgent) {
     atprotoAgent = _restoredAgent;
     isOAuth = true;
@@ -231,7 +238,7 @@ if ((options.atprotoOauth as boolean)) {
     atprotoAgent = oauthAgent;
 
     // Persist session for future restarts
-    await saveOAuthQRSession(session);
+    await saveOAuthQRSession(session, { label: "bidder" });
 
     isOAuth = true;
     pdsHostname = undefined;

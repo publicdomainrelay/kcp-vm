@@ -169,8 +169,16 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
                 bidConfigResolved = { uri: cfgRef.uri, cid: cfgRef.cid, value: cfgValue };
               }
             } catch (err) {
-              cbLog("warn", "bidder failed to resolve bidConfig", { error: String(err) });
+              cbLog("error", "bidder failed to resolve bidConfig", { error: String(err) });
             }
+          }
+
+          // Abort if bidConfig could not be resolved — provisioning
+          // would produce an incomplete accept.json that causes
+          // fedproxy-client to fatal-exit inside the guest.
+          if (!bidConfigResolved) {
+            cbLog("error", "aborting provision — bidConfig not resolved");
+            return undefined;
           }
 
           const bundle = {

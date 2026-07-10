@@ -407,7 +407,10 @@ export async function createRequesterPDS(
 
   // ── relay (WS connect deferred to serve.beginServe -> relay.onServe) ──
 
-  const relay = createIngress({ logger, ingressProxyHost, signer, keypair, label });
+  const skipIngress = opts.skipIngress ?? false;
+  const relay = skipIngress
+    ? { ingressRef: "", ingressUrl: "", ingressHost: "", close() {}, onServe: async () => {} } as IngressRef
+    : createIngress({ logger, ingressProxyHost, signer, keypair, label });
 
   // ── submitBid handler ────────────────────────────────────────────────
 

@@ -83,6 +83,7 @@ export interface PDSOptions {
   ingressProxyHost?: string;
   label?: string;
   storagePath?: string;
+  skipIngress?: boolean;
 }
 
 export interface RequesterPDS {

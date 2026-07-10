@@ -63,6 +63,10 @@ export default {
       env: "INGRESS_PROXY_HOST",
       default: "xrpc.fedproxy.com",
     },
+    "no-ingress-proxy": {
+      type: "boolean" as const,
+      description: "Disable XRPC relay (rely on firehose-only for bid/accept/event delivery)",
+    },
     "fedproxy-host": {
       type: "string" as const,
       description: "FedProxy SSH-tunnel host where the guest publishes itself for SSH (vmName--did-plc-<key>.<fedproxy-host>)",

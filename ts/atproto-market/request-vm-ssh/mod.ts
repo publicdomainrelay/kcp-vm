@@ -89,7 +89,9 @@ if (privateKeyHexPath && !resolvedPrivateKeyHex) {
   } catch { /* file missing — will generate and save below */ }
 }
 
-// Full OAuth scope for registered client (requires hosted client metadata).
+// Full OAuth scope — single source of truth for registered + loopback clients.
+// Requester subset: compute.vm, market.rfp/accept/event, compute.events, badgeBlueKeys,
+// fedproxy.rbac, + all four RPC endpoints.
 const OAUTH_SCOPE_FULL = [
   "atproto",
   "repo:com.publicdomainrelay.temp.compute.vm?action=create",
@@ -97,6 +99,7 @@ const OAUTH_SCOPE_FULL = [
   "repo:com.publicdomainrelay.temp.market.accept?action=create",
   "repo:com.publicdomainrelay.temp.market.event?action=create",
   "repo:com.publicdomainrelay.temp.compute.events.vm.delete?action=create",
+  "repo:com.publicdomainrelay.temp.compute.events.vm.onNetwork?action=create",
   "repo:com.publicdomainrelay.temp.badgeBlueKeys?action=create",
   "repo:com.fedproxy.rbac?action=create",
   "rpc:com.publicdomainrelay.temp.market.submitRfp?aud=*",
@@ -104,9 +107,6 @@ const OAUTH_SCOPE_FULL = [
   "rpc:com.publicdomainrelay.temp.market.submitBid?aud=*",
   "rpc:com.publicdomainrelay.temp.market.submitEvent?aud=*",
 ];
-
-// Temporary scope for loopback http://localhost client.
-const OAUTH_SCOPE = "atproto"; // bsky.social rejects transition:generic for loopback clients. Use OAUTH_SCOPE_FULL with registered client_id.
 
 let pds: RequesterPDS;
 let isOAuth = false;
@@ -119,7 +119,7 @@ if ((options.atprotoOauth as boolean) && (options.atprotoHandle as string | unde
       `${Deno.env.get("HOME") ?? "/tmp"}/.cache/pdr-market/requester-oauth-session.json`,
     clientId: options.oauthClientId as string | undefined,
     redirectUri: options.oauthRedirectUri as string | undefined,
-    scope: OAUTH_SCOPE,
+    scope: OAUTH_SCOPE_FULL.join(" "),
     plcDirectoryUrl: (options.plcDirectoryUrl as string) || "https://plc.directory",
     logger,
     attestationKp: await (async () => {
@@ -184,7 +184,7 @@ if ((options.atprotoOauth as boolean) && (options.atprotoHandle as string | unde
   // Try restoring saved OAuth QR session
   let _restoredOAuthAgent: any = null;
   let _session: any = null;
-  const _restoredAgent = await tryRestoreOAuthQRSession({ logger });
+  const _restoredAgent = await tryRestoreOAuthQRSession({ logger, label: "requester" });
   if (_restoredAgent) {
     _restoredOAuthAgent = _restoredAgent;
     isOAuth = true;
@@ -221,6 +221,7 @@ if ((options.atprotoOauth as boolean) && (options.atprotoHandle as string | unde
     ingressProxyHost,
     label,
     storagePath: options.pdsStatePath as string | undefined,
+    skipIngress: !!options.noIngressProxy,
   });
 
   // Set OAuth agent on PDS
@@ -232,7 +233,7 @@ if ((options.atprotoOauth as boolean) && (options.atprotoHandle as string | unde
     const oauthAgent = await createOAuthAgentFromSession(_session, { logger });
     (pds as unknown as Record<string, unknown>).oauthAgent = oauthAgent;
     (pds as unknown as Record<string, unknown>).oauthSession = _session;
-    await saveOAuthQRSession(_session);
+    await saveOAuthQRSession(_session, { label: "requester" });
     logger.info("oauth_qr_session_ready", { userDid: _session.userDid, handle: _session.handle });
   }
 
@@ -265,6 +266,7 @@ if ((options.atprotoOauth as boolean) && (options.atprotoHandle as string | unde
     ingressProxyHost,
     label,
     storagePath: options.pdsStatePath as string | undefined,
+    skipIngress: !!options.noIngressProxy,
   });
   // Persist generated key to path for future runs.
   if (privateKeyHexPath) {
@@ -335,6 +337,12 @@ if (!options.noQr) {
       cursor = result.cursor;
     } while (cursor && !hasAssociation);
   }
+}
+
+// OAuth QR: user logged in as the operator account. The OAuth session
+// IS the association proof — no second QR or badgeBlueKeys record needed.
+if (isOAuth) {
+  hasAssociation = true;
 }
 
 if (hasAssociation) {
