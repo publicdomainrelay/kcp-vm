@@ -29,6 +29,8 @@ import {
   COMPUTE_VM_NSID,
   RFP_NSID,
   ACCEPT_NSID,
+  BID_NSID,
+  RECEIPT_NSID,
   OFFERING_NSID,
   EVENT_NSID,
   COMPUTE_EVENTS_VM_DELETE_NSID,
@@ -776,6 +778,10 @@ export async function runComputeContract(
     offeringWatcherDids?: () => string[];
     logger?: StructuredLoggerInterface;
     payloadFactory?: () => Promise<{ uri: string; cid: string }>;
+    /** Firehose URL for cross-party event discovery fallback (when submit* absent). */
+    firehoseUrl?: string;
+    /** Firehose transport: "jetstream" or "subscriberepos". */
+    firehoseMode?: "jetstream" | "subscriberepos";
   } = {},
 ): Promise<ContractFlowResult> {
   const vmName = opts.vmName ?? `compute-${randomHex8()}`;
@@ -797,6 +803,8 @@ export async function runComputeContract(
   const signer = opts.signer;
 
   const logger = opts.logger;
+  const firehoseUrl = opts.firehoseUrl;
+  const firehoseMode = opts.firehoseMode;
   const log = (event: string, extra: Record<string, unknown> = {}) =>
     logger ? logger.info(event, extra) : console.log(JSON.stringify({ event, ...extra }));
 
@@ -999,12 +1007,67 @@ runcmd:
     }
   }));
 
+  // 4b. Firehose-based bid discovery — fallback when rfp.submitBid absent or
+  // bidder cannot reach requester's submitBid XRPC endpoint.
+  const firehoseDiscoveredBids = new Map<string, CollectedBid[]>();
+  let bidWatcher: { close(): void } | undefined;
+  if (firehoseUrl && firehoseMode) {
+    const makeFirehoseWatcher = firehoseMode === "jetstream"
+      ? (await import("@publicdomainrelay/firehose-watcher-jetstream")).createFirehoseWatcher
+      : (await import("@publicdomainrelay/firehose-watcher-subscriberepos")).createFirehoseWatcher;
+    const seenBids = new Set<string>();
+    bidWatcher = makeFirehoseWatcher({
+      url: firehoseUrl,
+      wantedCollections: [BID_NSID],
+      onRecord: async (e: { did: string; collection: string; rkey: string; cid: string; operation: string; uri: string }) => {
+        if (e.operation !== "create") return;
+        if (seenBids.has(e.uri)) return;
+        seenBids.add(e.uri);
+        try {
+          const doc = await idResolver.did.resolve(e.did);
+          if (!doc) return;
+          const pdsUrl = getPdsEndpoint(doc);
+          if (!pdsUrl) return;
+          const records = await listRecordsAll(pdsUrl, e.did, BID_NSID, { timeoutMs: 10_000 });
+          for (const rec of records) {
+            if (rec.uri !== e.uri) continue;
+            const rfpRef = (rec.value as Record<string, unknown> | undefined)?.rfp as { uri?: string } | undefined;
+            if (rfpRef?.uri !== rfpUri) continue;
+            const queue = firehoseDiscoveredBids.get(rfpUri) ?? [];
+            queue.push({ did: e.did, uri: rec.uri, cid: rec.cid, record: rec.value as Record<string, unknown> });
+            firehoseDiscoveredBids.set(rfpUri, queue);
+            log("firehose_bid_discovered", { bidUri: rec.uri, rfpUri, bidderDid: e.did });
+          }
+        } catch { /* firehose errors best-effort */ }
+      },
+      log: logger,
+    });
+    log("firehose_bid_watch_started", { mode: firehoseMode, url: firehoseUrl });
+  }
+
   // 5. Wait for bids.
   log("waiting_for_bids", { bidWindowSec });
   await new Promise<void>((resolve) => setTimeout(resolve, bidWindowSec * 1000));
 
   const bids = pds.pendingBids.get(rfpUri) ?? [];
   pds.pendingBids.delete(rfpUri);
+
+  // Merge firehose-discovered bids (deduped by URI).
+  const fhBids = firehoseDiscoveredBids.get(rfpUri) ?? [];
+  if (fhBids.length > 0) {
+    const xrpcCount = bids.length;
+    const existingUris = new Set(bids.map((b: CollectedBid) => b.uri));
+    for (const fb of fhBids) {
+      if (!existingUris.has(fb.uri)) {
+        bids.push(fb);
+        existingUris.add(fb.uri);
+      }
+    }
+    log("firehose_bids_merged", { xrpcCount, firehoseNew: bids.length - xrpcCount, totalBids: bids.length });
+  }
+
+  // Clean up bid watcher — bids collected.
+  bidWatcher?.close();
   log("bids_collected", { count: bids.length });
 
   if (bids.length === 0) {
@@ -1113,6 +1176,69 @@ runcmd:
       log("submitAccept_result", { status: r.status, receiptUri, receiptCid, submitEventRef });
     } else {
       log("accept_target_unresolvable", { submitAcceptTarget });
+    }
+  }
+
+  // 8b. If no receipt from submitAccept XRPC, try firehose-based discovery.
+  // Watch RECEIPT_NSID for a receipt whose accept.uri matches ours.
+  if (!receiptUri && firehoseUrl && firehoseMode) {
+    log("receipt_firehose_fallback", { acceptUri });
+    const receiptFromFirehose = await new Promise<{ receiptUri: string; receiptCid: string; submitEventRef?: string } | null>(
+      (resolve) => {
+        const timeoutMs = 30_000;
+        let resolved = false;
+        const timer = setTimeout(() => {
+          if (!resolved) { resolved = true; watcher?.close(); resolve(null); }
+        }, timeoutMs);
+
+        const seenReceipts = new Set<string>();
+        let watcher: { close(): void } | undefined;
+        const makeWatcher = firehoseMode === "jetstream"
+          ? import("@publicdomainrelay/firehose-watcher-jetstream").then((m) => m.createFirehoseWatcher)
+          : import("@publicdomainrelay/firehose-watcher-subscriberepos").then((m) => m.createFirehoseWatcher);
+
+        makeWatcher.then((make) => {
+          if (resolved) return;
+          watcher = make({
+            url: firehoseUrl!,
+            wantedCollections: [RECEIPT_NSID],
+            onRecord: async (e: { did: string; collection: string; rkey: string; cid: string; operation: string; uri: string }) => {
+              if (resolved) return;
+              if (e.operation !== "create") return;
+              if (seenReceipts.has(e.uri)) return;
+              seenReceipts.add(e.uri);
+              try {
+                const doc = await idResolver.did.resolve(e.did);
+                if (!doc) return;
+                const pdsUrl = getPdsEndpoint(doc);
+                if (!pdsUrl) return;
+                const records = await listRecordsAll(pdsUrl, e.did, RECEIPT_NSID, { timeoutMs: 10_000 });
+                for (const rec of records) {
+                  if (rec.uri !== e.uri) continue;
+                  const val = rec.value as Record<string, unknown>;
+                  const acceptRef = val.accept as { uri?: string } | undefined;
+                  if (acceptRef?.uri !== acceptUri) continue;
+                  resolved = true;
+                  clearTimeout(timer);
+                  watcher?.close();
+                  const se = val.submitEvent as string | undefined;
+                  resolve({ receiptUri: rec.uri, receiptCid: rec.cid, submitEventRef: se });
+                  return;
+                }
+              } catch { /* best-effort */ }
+            },
+            log: logger,
+          });
+        });
+      },
+    );
+    if (receiptFromFirehose) {
+      receiptUri = receiptFromFirehose.receiptUri;
+      receiptCid = receiptFromFirehose.receiptCid;
+      submitEventRef = receiptFromFirehose.submitEventRef;
+      log("receipt_from_firehose", { receiptUri, receiptCid, submitEventRef });
+    } else {
+      log("receipt_firehose_timeout", { acceptUri });
     }
   }
 

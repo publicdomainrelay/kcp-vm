@@ -10,7 +10,7 @@ import { createComputeProviderDenoWorker, createWorkerProviderHooks } from "@pub
 import { createATProto, createLocalPDSAgent, createRemoteAgent } from "@publicdomainrelay/atproto-helpers";
 import type { LocalPDSAgent } from "@publicdomainrelay/atproto-helpers";
 import { createBadgeBlueSigner } from "@publicdomainrelay/market-atproto";
-import { DEFAULT_RELAY_URLS, OFFERING_NSID, RFP_NSID, relayUrlsToFirehoseUrls } from "@publicdomainrelay/market-common";
+import { ACCEPT_NSID, DEFAULT_RELAY_URLS, EVENT_NSID, OFFERING_NSID, RFP_NSID, relayUrlsToFirehoseUrls } from "@publicdomainrelay/market-common";
 import { verifyRelayVisibility } from "@publicdomainrelay/requester-xrpc";
 import { createFirehoseWatcher as createSubscribeReposWatcher } from "@publicdomainrelay/firehose-watcher-subscriberepos";
 import { createFirehoseWatcher as createJetstreamWatcher } from "@publicdomainrelay/firehose-watcher-jetstream";
@@ -250,6 +250,23 @@ if (firehoseMode !== "off") {
   }
 }
 
+// Firehose watchers for ACCEPT_NSID and EVENT_NSID — fallbacks when submit*
+// service endpoint properties are absent on records.
+let acceptWatcherFactory: typeof rfpWatcherFactory | undefined;
+let eventWatcherFactory: typeof rfpWatcherFactory | undefined;
+if (firehoseMode !== "off") {
+  const firehoseUrls = firehoseUrlOverride
+    ? firehoseUrlOverride.split(",").map((s: string) => s.trim()).filter(Boolean)
+    : relayUrlsToFirehoseUrls(relayUrls);
+  if (firehoseUrls.length > 0) {
+    const make = firehoseMode === "jetstream" ? createJetstreamWatcher : createSubscribeReposWatcher;
+    acceptWatcherFactory = (onRecord) =>
+      make({ url: firehoseUrls[0], wantedCollections: [ACCEPT_NSID], onRecord, log: logger });
+    eventWatcherFactory = (onRecord) =>
+      make({ url: firehoseUrls[0], wantedCollections: [EVENT_NSID], onRecord, log: logger });
+  }
+}
+
 // Market factory gets its own relay/serve (own keypair -> own subdomain/FQDN).
 const bidderIngress = options.noIngressProxy ? undefined : await cliCreateIngress();
 const bidderServe = createServe({
@@ -266,6 +283,8 @@ const bidder = await createMarketBidder({
   logger, atproto, providers, relay: bidderIngress,
   rfpWatcherFactory,
   rfpWatcherFactories,
+  acceptWatcherFactory,
+  eventWatcherFactory,
   offeringRefreshMs: offeringRefreshSec > 0 ? offeringRefreshSec * 1000 : undefined,
   serve: bidderServe,
   policyMode,

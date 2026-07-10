@@ -131,9 +131,8 @@ if (firehoseUrl) {
     url: firehoseUrl,
     wantedCollections: [EVENT_NSID],
     onRecord: (e) => {
-      if (e.did !== pds.did) return;
       if (e.operation === "delete") return;
-      logger.info("own_event_watcher", { collection: e.collection, rkey: e.rkey });
+      logger.info("event_watcher", { collection: e.collection, did: e.did, rkey: e.rkey });
     },
     log: logger,
   });
@@ -248,6 +247,8 @@ const result = await runComputeContract(pds, {
   policyMode,
   policyEngineEndpoint,
   offeringWatcherDids: () => [...offeringDids],
+  firehoseUrl: firehoseUrl || undefined,
+  firehoseMode: firehoseMode !== "off" ? (firehoseMode as "jetstream" | "subscriberepos") : undefined,
   sshProvider: createSshSessionProvider(logger),
   onSshStart: () => pauseConsole(),
   onSshEnd: () => resumeConsole(),

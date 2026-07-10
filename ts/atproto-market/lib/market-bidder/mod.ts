@@ -3,8 +3,9 @@
 // providers; wires everything in beginServe().
 
 import { TID } from "@atproto/common";
+import { getPdsEndpoint } from "@atproto/common-web";
 import type { RepoApi } from "@publicdomainrelay/atproto-repo-abc";
-import { createRecordResolver, createRfpDispatcher, startOfferingRefresh, listRecordsPublic } from "@publicdomainrelay/market-atproto";
+import { createRecordResolver, createRfpDispatcher, startOfferingRefresh, listRecordsPublic, listRecordsAll } from "@publicdomainrelay/market-atproto";
 import type { MarketServerDeps, OfferingRefreshHandle } from "@publicdomainrelay/market-atproto";
 import { createMarketFactory } from "@publicdomainrelay/hono-factory-market-atproto";
 import { RFP_NSID, VOUCH_NSID } from "@publicdomainrelay/market-common";
@@ -20,6 +21,8 @@ import {
   OFFERING_NSID,
   ALLOWLIST_RBAC_DID_NSID,
   BADGE_BLUE_KEYS_NSID,
+  ACCEPT_NSID,
+  EVENT_NSID,
 } from "@publicdomainrelay/market-lexicons";
 import type { StructuredLoggerInterface } from "@publicdomainrelay/logger";
 import type { IngressRef, ServeHandle } from "@publicdomainrelay/serve";
@@ -27,7 +30,7 @@ import type { VouchResolver, OperatorDiscovery } from "@publicdomainrelay/trust-
 import { createBadgeBlueKeysOperatorDiscovery } from "@publicdomainrelay/operator-discovery-badge-blue-keys";
 import { createTangledGraphVouchResolver } from "@publicdomainrelay/trust-graph-tangled-graph";
 import { PolicyModeFilter, type PolicyMode, TANGLED_VOUCH, MUTUALS } from "@publicdomainrelay/market-policy-abc";
-import type { ATProto } from "@publicdomainrelay/atproto-helpers";
+import { parseAtUri, type ATProto } from "@publicdomainrelay/atproto-helpers";
 import type {
   ActiveContract,
   CallbackFactoryDeps,
@@ -88,6 +91,16 @@ export interface MarketBidderConfig {
    * rfpWatcherFactory when watching more than one relay.
    */
   rfpWatcherFactories?: Array<(onRecord: (e: FirehoseRecordEvent) => void) => FirehoseWatcher>;
+  /**
+   * Builds a firehose watcher for ACCEPT_NSID records. When set, the bidder
+   * discovers accept records via firehose as a fallback for submitAccept XRPC.
+   */
+  acceptWatcherFactory?: (onRecord: (e: FirehoseRecordEvent) => void) => FirehoseWatcher;
+  /**
+   * Builds a firehose watcher for EVENT_NSID records. When set, the bidder
+   * discovers lifecycle events via firehose as a fallback for submitEvent XRPC.
+   */
+  eventWatcherFactory?: (onRecord: (e: FirehoseRecordEvent) => void) => FirehoseWatcher;
   /** Period for re-committing the offering record to stay discoverable. */
   offeringRefreshMs?: number;
   /**
@@ -118,11 +131,13 @@ function logAdapter(logger: StructuredLoggerInterface): Logger {
 
 
 export async function createMarketBidder(config: MarketBidderConfig): Promise<MarketBidder> {
-  const { logger, serve, atproto, relay, providers, setup, teardown, callbackFactory, onContractChange, rfpWatcherFactory, rfpWatcherFactories, offeringRefreshMs, skipServeBegin, policyMode } = config;
+  const { logger, serve, atproto, relay, providers, setup, teardown, callbackFactory, onContractChange, rfpWatcherFactory, rfpWatcherFactories, acceptWatcherFactory, eventWatcherFactory, offeringRefreshMs, skipServeBegin, policyMode } = config;
   const log = logAdapter(logger);
   const activeContracts = new Map<string, ActiveContract>();
   const idResolver = atproto.idResolver;
   const rfpWatchers: FirehoseWatcher[] = [];
+  const acceptWatchers: FirehoseWatcher[] = [];
+  const eventWatchers: FirehoseWatcher[] = [];
   let offeringRefresher: OfferingRefreshHandle | null = null;
 
   const operatorDiscovery: OperatorDiscovery = createBadgeBlueKeysOperatorDiscovery({
@@ -457,6 +472,102 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
       logger.info("bidder rfp firehose watches started", { count: rfpWatchers.length });
     }
 
+    // Firehose watcher for ACCEPT_NSID — fallback when bid.submitAccept is absent.
+    // Discovers accept records referencing our bids, dispatches to merged.onAccept.
+    if (merged.onAccept && acceptWatcherFactory) {
+      const seen = new Set<string>();
+      const preFilter = new PolicyModeFilter(policyMode, atproto.did, vouchedDids ?? undefined);
+      const w = acceptWatcherFactory(async (e) => {
+        if (e.collection !== ACCEPT_NSID) return;
+        if (e.operation !== "create") return;
+        if (seen.has(e.uri)) return;
+        if (!preFilter.preFilter(e.did)) return;
+        seen.add(e.uri);
+        log("info", "accept watch discovered", { acceptUri: e.uri });
+        try {
+          const doc = await idResolver.did.resolve(e.did);
+          if (!doc) return;
+          const pdsUrl = getPdsEndpoint(doc);
+          if (!pdsUrl) return;
+          const records = await listRecordsAll(pdsUrl, e.did, ACCEPT_NSID);
+          const acceptRec = records.find((r) => r.uri === e.uri);
+          if (!acceptRec) return;
+          const value = acceptRec.value as Record<string, unknown>;
+          const bidRef = value.bid as { uri?: string } | undefined;
+          if (!bidRef?.uri) return;
+          // Verify this accept references one of our bids via our repo.
+          try {
+            const { repo, collection, rkey } = parseAtUri(bidRef.uri);
+            const existing = await atproto.getRecord(repo, collection, rkey);
+            if (!existing) return;
+          } catch { return; /* bid not ours or unresolvable */ }
+          log("info", "accept watch matched own bid", { acceptUri: e.uri, bidUri: bidRef.uri });
+          await merged.onAccept!({
+            acceptUri: e.uri,
+            acceptCid: e.cid,
+            accept: value as Parameters<typeof merged.onAccept>[0]["accept"],
+            issuerDid: e.did,
+            resolve: recordResolver,
+            log,
+            req: new Request("https://localhost"),
+          });
+        } catch (err) {
+          log("error", "accept watch dispatch failed", { acceptUri: e.uri, err: String(err) });
+        }
+      });
+      acceptWatchers.push(w);
+      logger.info("bidder accept firehose watch started");
+    }
+
+    // Firehose watcher for EVENT_NSID — fallback when accept.submitEvent is absent.
+    // Routes lifecycle events to merged.eventCallbacks by payload NSID.
+    if (merged.eventCallbacks && eventWatcherFactory) {
+      const seen = new Set<string>();
+      const w = eventWatcherFactory(async (e) => {
+        if (e.collection !== EVENT_NSID) return;
+        if (e.operation !== "create") return;
+        if (seen.has(e.uri)) return;
+        seen.add(e.uri);
+        log("info", "event watch discovered", { eventUri: e.uri });
+        try {
+          const doc = await idResolver.did.resolve(e.did);
+          if (!doc) return;
+          const pdsUrl = getPdsEndpoint(doc);
+          if (!pdsUrl) return;
+          const records = await listRecordsAll(pdsUrl, e.did, EVENT_NSID);
+          const eventRec = records.find((r) => r.uri === e.uri);
+          if (!eventRec) return;
+          const value = eventRec.value as Record<string, unknown>;
+          const payload = value.payload as { $type?: string; uri?: string; cid?: string } | undefined;
+          if (!payload?.$type) return;
+          const payloadNsid = payload.$type;
+          // Route to the callback registered for this payload NSID under pdr_temp_compute_event.
+          const handlers = merged.eventCallbacks!["pdr_temp_compute_event"];
+          if (!handlers) return;
+          const handler = handlers[payloadNsid];
+          if (!handler) return;
+          log("info", "event watch dispatching", { eventUri: e.uri, payloadNsid });
+          // Build a minimal EventDispatchContext — firehose path has no inbound req.
+          const ctx = {
+            uri: eventRec.uri,
+            cid: eventRec.cid,
+            event: value as Parameters<typeof handler>[0]["event"],
+            payloadNsid,
+            issuerDid: e.did,
+            serviceId: "pdr_temp_compute_event",
+            resolve: recordResolver,
+            log,
+            req: new Request("https://localhost"),
+          };
+          await handler(ctx);
+        } catch (err) {
+          log("error", "event watch dispatch failed", { eventUri: e.uri, err: String(err) });
+        }
+      });
+      eventWatchers.push(w);
+      logger.info("bidder event firehose watch started");
+    }
+
     serve.onConnected(async () => {
       await ensureOperatorAllowlist("");
       const { rkey: offeringRkey, createdAt: offeringCreatedAt } = await ensureOffering();
@@ -486,6 +597,8 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
 
   function shutdown(): void {
     for (const w of rfpWatchers) w.close();
+    for (const w of acceptWatchers) w.close();
+    for (const w of eventWatchers) w.close();
     offeringRefresher?.stop();
     activeContracts.clear();
     for (const p of providers ?? []) {
