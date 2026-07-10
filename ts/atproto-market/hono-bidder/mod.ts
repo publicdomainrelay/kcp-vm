@@ -158,7 +158,7 @@ for (const url of relayUrls) {
 
 if (pdsHostname) {
   for (const url of relayUrls) {
-    await registerPdsWithRelay(url, pdsHostname, logger);
+    registerPdsWithRelay(url, pdsHostname, logger);
   }
 } else if (cliRelayUrl) {
   logger.warn("relay_no_hostname_for_registration", {
