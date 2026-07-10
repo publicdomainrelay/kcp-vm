@@ -106,6 +106,8 @@ export interface MarketBidderConfig {
 export interface MarketBidder {
   beginServe(): Promise<void>;
   shutdown(): void;
+  /** Re-commits the offering record so relays re-index it immediately. */
+  refreshOffering(): Promise<void>;
 }
 
 function logAdapter(logger: StructuredLoggerInterface): Logger {
@@ -493,5 +495,6 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
     if (!skipServeBegin) serve.shutdown();
   }
 
-  return { beginServe, shutdown };
+  const refreshOffering = () => ensureOffering().then(() => {});
+  return { beginServe, shutdown, refreshOffering };
 }

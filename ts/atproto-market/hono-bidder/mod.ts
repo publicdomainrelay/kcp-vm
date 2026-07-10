@@ -3,25 +3,6 @@ import { isValidPolicyMode, type PolicyMode } from "@publicdomainrelay/market-po
 import { createLogger } from "@publicdomainrelay/logger";
 import { createServe } from "@publicdomainrelay/serve";
 import { createIngress } from "@publicdomainrelay/did-key-ingress-proxy";
-async function registerPdsWithRelay(relayUrl: string, hostname: string, log: ReturnType<typeof createLogger>): Promise<void> {
-  const base = relayUrl.replace(/\/+$/, "");
-  log.info("relay_registering_pds", { hostname, relay: relayUrl });
-  try {
-    const res = await fetch(`${base}/xrpc/com.atproto.sync.requestCrawl`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ hostname }),
-    });
-    if (res.ok) {
-      log.info("relay_registered_pds", { hostname, relay: relayUrl });
-    } else {
-      const text = await res.text().catch(() => "");
-      log.warn("relay_register_pds_failed", { hostname, relay: relayUrl, status: res.status, body: text.slice(0, 200) });
-    }
-  } catch (err) {
-    log.warn("relay_register_pds_error", { hostname, relay: relayUrl, error: String(err) });
-  }
-}
 import { createMarketBidder } from "@publicdomainrelay/market-bidder";
 import type { MarketBidderProviderRef } from "@publicdomainrelay/market-bidder-abc";
 import { createComputeProviderHooks } from "@publicdomainrelay/market-bidder-compute";
@@ -29,7 +10,8 @@ import { createComputeProviderDenoWorker, createWorkerProviderHooks } from "@pub
 import { createATProto, createLocalPDSAgent, createRemoteAgent } from "@publicdomainrelay/atproto-helpers";
 import type { LocalPDSAgent } from "@publicdomainrelay/atproto-helpers";
 import { createBadgeBlueSigner } from "@publicdomainrelay/market-atproto";
-import { DEFAULT_RELAY_URLS, RFP_NSID, relayUrlsToFirehoseUrls } from "@publicdomainrelay/market-common";
+import { DEFAULT_RELAY_URLS, OFFERING_NSID, RFP_NSID, relayUrlsToFirehoseUrls } from "@publicdomainrelay/market-common";
+import { verifyRelayVisibility } from "@publicdomainrelay/requester-xrpc";
 import { createFirehoseWatcher as createSubscribeReposWatcher } from "@publicdomainrelay/firehose-watcher-subscriberepos";
 import { createFirehoseWatcher as createJetstreamWatcher } from "@publicdomainrelay/firehose-watcher-jetstream";
 import type { FirehoseRecordEvent, FirehoseWatcher } from "@publicdomainrelay/firehose-watcher-abc";
@@ -144,6 +126,13 @@ if ((options.atprotoHandle as string | undefined) && (options.atprotoPassword as
   }
 }
 
+const atproto = await createATProto({
+  logger,
+  badgeBlueSigner: await createBadgeBlueSigner({ privateKeyHex }),
+  plcDirectory: createPlcDirectoryClient({ plcDirectoryUrl }),
+  agent: atprotoAgent,
+});
+
 const cliRelayUrl = (options.relayUrl as string) || "";
 const relayUrls = cliRelayUrl
   ? [...new Set([...DEFAULT_RELAY_URLS, cliRelayUrl])]
@@ -158,20 +147,16 @@ for (const url of relayUrls) {
 
 if (pdsHostname) {
   for (const url of relayUrls) {
-    registerPdsWithRelay(url, pdsHostname, logger);
+    await Promise.race([
+      atproto.requestCrawl(url, pdsHostname),
+      new Promise<void>((r) => setTimeout(r, 5_000)),
+    ]);
   }
 } else if (cliRelayUrl) {
   logger.warn("relay_no_hostname_for_registration", {
     reason: "could not determine PDS hostname for relay registration",
   });
 }
-
-const atproto = await createATProto({
-  logger,
-  badgeBlueSigner: await createBadgeBlueSigner({ privateKeyHex }),
-  plcDirectory: createPlcDirectoryClient({ plcDirectoryUrl }),
-  agent: atprotoAgent,
-});
 
 // Persist generated key to path for future runs.
 if (privateKeyHexPath) {
@@ -374,10 +359,46 @@ if (_deferredRelayUrls.length > 0 && _localServePort > 0) {
   const localHostname = `127.0.0.1:${_localServePort}`;
   for (const url of _deferredRelayUrls) {
     try {
-      await registerPdsWithRelay(url, localHostname, logger);
+      await atproto.requestCrawl(url, localHostname);
       logger.info("relay_local_reregistered", { registry: url, hostname: localHostname });
     } catch (err) {
       logger.warn("relay_local_reregister_failed", { registry: url, error: String(err) });
     }
+  }
+}
+
+// Re-commit offering so local relays index it immediately
+// rather than waiting for the periodic offering refresh.
+try {
+  await bidder.refreshOffering();
+  logger.info("relay_offering_refreshed_after_local_registration", {});
+} catch (err) {
+  logger.warn("relay_offering_refresh_failed", { error: String(err) });
+}
+
+// Verify the offering is discoverable through at least one relay
+// that supports listReposByCollection. Probes each relay, then polls
+// capable ones until the bidder's DID appears or the poll budget expires.
+// Non-blocking on failure — bidder still boots, just warns.
+const _allRelayUrls = [...relayUrls, ..._deferredRelayUrls.map((u) => `http://${u}`)];
+const _visibilityHostname = pdsHostname ?? (_localServePort > 0 ? `127.0.0.1:${_localServePort}` : undefined);
+if (_allRelayUrls.length > 0 && _visibilityHostname) {
+  const relayResult = await verifyRelayVisibility({
+    relayUrls: _allRelayUrls,
+    bidderDid: atproto.did,
+    collection: OFFERING_NSID,
+    log: logger,
+  });
+  if (relayResult.ok) {
+    logger.info("relay_visibility_confirmed", {
+      indexedBy: relayResult.indexedBy,
+      capableRelays: relayResult.capableRelays,
+    });
+  } else {
+    logger.warn("relay_visibility_failed", {
+      capableRelays: relayResult.capableRelays,
+      failures: relayResult.failures,
+      hint: "Requester-side discovery via listReposByCollection will not find this bidder. The periodic offering refresh may eventually fix this.",
+    });
   }
 }

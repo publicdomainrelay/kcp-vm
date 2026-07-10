@@ -36,7 +36,8 @@ export const REGISTER_IDENTITY_NSID = "com.publicdomainrelay.temp.market.registe
 
 export const DEFAULT_RELAY_URLS = [
   "https://reg.market.fedfork.com",
-  "https://bsky.network",
+  "https://relay1.us-east.bsky.network",
+  "https://relay1.us-west.bsky.network",
   "https://relay.mini-cloud-0002.chadig.com",
 ];
 

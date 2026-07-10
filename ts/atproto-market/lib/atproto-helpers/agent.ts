@@ -57,6 +57,10 @@ export interface ATProto {
   createSignedRepoRecord(collection: string, record: Record<string, unknown>, issuer?: string): Promise<{ uri: string; cid: string; record: Record<string, unknown> }>;
   deleteRecord(collection: string, rkey: string): Promise<void>;
   callService(endpointUrl: string, nsid: string, lxm: string, body: Record<string, unknown>): Promise<{ status: number; ok: boolean; body: unknown }>;
+  /** Register PDS hostname with a relay via requestCrawl. */
+  requestCrawl(relayUrl: string, hostname: string): Promise<void>;
+  /** Query a relay for DIDs that have records in the given collection. */
+  listReposByCollection(relayUrl: string, collection: string): Promise<string[]>;
   resolve: ReturnType<typeof createRecordResolver>;
 }
 
@@ -166,6 +170,38 @@ export async function createATProto(opts: CreateATProtoOpts): Promise<ATProto> {
     return { status: res.status, ok: res.ok, body: resBody };
   }
 
+  async function requestCrawl(relayUrl: string, hostname: string): Promise<void> {
+    const base = relayUrl.replace(/\/+$/, "");
+    l("info", "relay_registering_pds", { hostname, relay: relayUrl });
+    try {
+      const res = await fetch(`${base}/xrpc/com.atproto.sync.requestCrawl`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ hostname }),
+      });
+      if (res.ok) {
+        l("info", "relay_registered_pds", { hostname, relay: relayUrl });
+      } else {
+        const text = await res.text().catch(() => "");
+        l("warn", "relay_register_pds_failed", { hostname, relay: relayUrl, status: res.status, body: text.slice(0, 200) });
+      }
+    } catch (err) {
+      l("warn", "relay_register_pds_error", { hostname, relay: relayUrl, error: String(err) });
+    }
+  }
+
+  async function listReposByCollection(relayUrl: string, collection: string): Promise<string[]> {
+    try {
+      const url = `${relayUrl.replace(/\/+$/, "")}/xrpc/com.atproto.sync.listReposByCollection?collection=${encodeURIComponent(collection)}`;
+      const res = await fetch(url);
+      if (!res.ok) return [];
+      const data = await res.json() as { repos?: Array<{ did: string }> };
+      return [...new Set((data.repos ?? []).map((r) => r.did).filter(Boolean))];
+    } catch {
+      return [];
+    }
+  }
+
   const recordResolver = createRecordResolver(idResolver);
 
   return {
@@ -184,6 +220,8 @@ export async function createATProto(opts: CreateATProtoOpts): Promise<ATProto> {
     createSignedRepoRecord,
     deleteRecord,
     callService,
+    requestCrawl,
+    listReposByCollection,
     resolve: recordResolver,
   };
 }
