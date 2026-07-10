@@ -1,10 +1,10 @@
 import { Hono } from "@hono/hono";
 import type { StructuredLoggerInterface } from "@publicdomainrelay/logger";
 
-export interface RelayRef {
-  proxyRef: string;
-  readonly proxyUrl: string;
-  readonly proxyHost: string;
+export interface IngressRef {
+  ingressRef: string;
+  readonly ingressUrl: string;
+  readonly ingressHost: string;
   onServe(fetch: (req: Request) => Promise<Response>): Promise<void>;
   close(): void;
 }
@@ -13,13 +13,13 @@ export interface CreateServeOpts {
   logger?: StructuredLoggerInterface;
   tcp?: { addr?: string; port?: number };
   unix?: { socketPath: string };
-  relays?: RelayRef[];
+  relays?: IngressRef[];
 }
 
 export interface ServeHandle {
   app: Hono;
-  addRelay(relay: RelayRef): void;
-  onConnected(cb: (proxyRef: string) => void | Promise<void>): void;
+  addRelay(relay: IngressRef): void;
+  onConnected(cb: (ingressRef: string) => void | Promise<void>): void;
   beginServe(): Promise<void>;
   shutdown(): void;
   /** TCP port resolved during beginServe (0 if port 0 was passed but not yet started, or if no TCP). */
@@ -29,13 +29,13 @@ export interface ServeHandle {
 export function createServe(opts: CreateServeOpts): ServeHandle {
   const app = new Hono();
   const logger = opts.logger;
-  const relays: RelayRef[] = [...(opts.relays ?? [])];
-  const onConnectedCallbacks: Array<(proxyRef: string) => void | Promise<void>> = [];
+  const relays: IngressRef[] = [...(opts.relays ?? [])];
+  const onConnectedCallbacks: Array<(ingressRef: string) => void | Promise<void>> = [];
   let controller: AbortController | null = null;
   let _tcpPort = 0;
   let _httpServer: Deno.HttpServer | null = null;
 
-  function addRelay(relay: RelayRef): void {
+  function addRelay(relay: IngressRef): void {
     relays.push(relay);
     // If serve has already begun, connect the relay immediately.
     // Otherwise it will be connected during beginServe().
@@ -46,7 +46,7 @@ export function createServe(opts: CreateServeOpts): ServeHandle {
     }
   }
 
-  function onConnected(cb: (proxyRef: string) => void | Promise<void>): void {
+  function onConnected(cb: (ingressRef: string) => void | Promise<void>): void {
     onConnectedCallbacks.push(cb);
   }
 
@@ -109,7 +109,7 @@ export function createServe(opts: CreateServeOpts): ServeHandle {
       await relay.onServe(fetchAdapter);
     }
 
-    const primaryProxyRef = relays[0]?.proxyRef ?? "";
+    const primaryProxyRef = relays[0]?.ingressRef ?? "";
     for (const cb of onConnectedCallbacks) {
       await cb(primaryProxyRef);
     }

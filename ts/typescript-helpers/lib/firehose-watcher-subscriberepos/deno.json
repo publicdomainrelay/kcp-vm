@@ -4,6 +4,7 @@
   "license": "Unlicense",
   "exports": "./mod.ts",
   "imports": {
+    "@publicdomainrelay/firehose-common": "jsr:@publicdomainrelay/firehose-common@^0",
     "@publicdomainrelay/firehose-watcher-abc": "jsr:@publicdomainrelay/firehose-watcher-abc@^0"
   }
 }

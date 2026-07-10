@@ -4,23 +4,8 @@ import type {
   FirehoseWatcher,
   FirehoseWatcherOptions,
 } from "@publicdomainrelay/firehose-watcher-abc";
-
-interface SubscribeReposOp {
-  action?: string;
-  path?: string;
-  cid?: { $link?: string } | null;
-}
-
-interface SubscribeReposFrame {
-  seq?: number;
-  repo?: string;
-  ops?: SubscribeReposOp[];
-}
-
-interface RelayEnvelope {
-  seq?: number;
-  frame?: SubscribeReposFrame;
-}
+import type { SubscribeReposFrame } from "@publicdomainrelay/firehose-common";
+import { splitRecordPath } from "@publicdomainrelay/firehose-common";
 
 const OPERATIONS: Record<string, FirehoseOperation> = {
   create: "create",
@@ -45,28 +30,24 @@ export function createFirehoseWatcher(
     return `${url}${sep}cursor=${cursor}`;
   }
 
-  function emit(frame: SubscribeReposFrame): void {
+  function emit(frame: Partial<SubscribeReposFrame>): void {
     const did = frame.repo;
     if (!did || !Array.isArray(frame.ops)) return;
     for (const op of frame.ops) {
-      const path = op.path;
-      if (!path) continue;
-      const slashIdx = path.indexOf("/");
-      if (slashIdx <= 0) continue;
-      const collection = path.slice(0, slashIdx);
-      if (wanted.size > 0 && !wanted.has(collection)) continue;
+      const parsed = splitRecordPath(op.path ?? "");
+      if (!parsed) continue;
+      if (wanted.size > 0 && !wanted.has(parsed.collection)) continue;
       const operation = OPERATIONS[op.action ?? ""];
       if (!operation) continue;
-      const rkey = path.slice(slashIdx + 1);
       const cid = op.cid?.$link ?? "";
       Promise.resolve(
         onRecord({
           did,
-          collection,
-          rkey,
+          collection: parsed.collection,
+          rkey: parsed.rkey,
           cid,
           operation,
-          uri: `at://${did}/${collection}/${rkey}`,
+          uri: `at://${did}/${parsed.collection}/${parsed.rkey}`,
         } satisfies FirehoseRecordEvent),
       ).catch((err) => log?.error("firehose_onrecord_failed", { err: String(err) }));
     }
@@ -91,10 +72,8 @@ export function createFirehoseWatcher(
       retryCount = 0;
       try {
         if (typeof event.data !== "string") return;
-        const raw = JSON.parse(event.data) as RelayEnvelope & SubscribeReposFrame;
-        const frame = raw.frame ?? raw;
-        const seq = typeof raw.seq === "number" ? raw.seq : frame.seq;
-        if (typeof seq === "number") cursor = seq;
+        const frame = JSON.parse(event.data) as Partial<SubscribeReposFrame>;
+        if (typeof frame.seq === "number") cursor = frame.seq;
         emit(frame);
       } catch {
         // skip malformed frames
