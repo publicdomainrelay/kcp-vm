@@ -112,6 +112,7 @@ if ((options.atprotoOauth as boolean) && (options.atprotoHandle as string | unde
     clientId: options.oauthClientId as string | undefined,
     redirectUri: options.oauthRedirectUri as string | undefined,
     scope: OAUTH_SCOPE,
+    plcDirectoryUrl: (options.plcDirectoryUrl as string) || "https://plc.directory",
     logger,
     attestationKp: await (async () => {
       const kp = resolvedPrivateKeyHex

@@ -1,25 +1,19 @@
 // Shared OAuth helpers for @atproto/oauth-client — runtime, state store, session store.
 // Used by both bidder (createOAuthAgent) and requester (createOAuthRequester).
 
-import type { Key, RuntimeImplementation, StateStore, SessionStore } from "@atproto/oauth-client";
+import { createWebCryptoKey } from "./key.ts";
+import type { RuntimeImplementation, StateStore, SessionStore } from "@atproto/oauth-client";
 
 /** Web Crypto runtime for @atproto/oauth-client. Works in Deno and browsers. */
 export function webCryptoRuntime(): RuntimeImplementation {
   return {
-    async createKey(algs: string[]): Promise<Key> {
-      const alg = algs.find((a) => a === "ES256") ?? algs[0];
-      const key = await crypto.subtle.generateKey(
-        { name: "ECDSA", namedCurve: "P-256" },
-        true, ["sign"],
-      );
-      const jwk = await crypto.subtle.exportKey("jwk", key.privateKey);
-      return { alg, kid: await crypto.randomUUID(), privateJwk: jwk } as unknown as Key;
-    },
+    createKey: createWebCryptoKey,
     getRandomValues(length: number): Uint8Array {
       return crypto.getRandomValues(new Uint8Array(length));
     },
     async digest(data: Uint8Array, alg: { name: string }): Promise<Uint8Array> {
-      return new Uint8Array(await crypto.subtle.digest(alg.name, data as BufferSource));
+      const name = alg.name === "sha256" ? "SHA-256" : alg.name === "sha384" ? "SHA-384" : alg.name === "sha512" ? "SHA-512" : alg.name;
+      return new Uint8Array(await crypto.subtle.digest(name, data as BufferSource));
     },
   };
 }

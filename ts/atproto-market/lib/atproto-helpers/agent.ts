@@ -485,6 +485,8 @@ export interface CreateOAuthAgentOpts {
   clientId?: string;
   redirectUri?: string;
   scope?: string;
+  pdsUrl?: string;
+  plcDirectoryUrl?: string;
   logger?: StructuredLoggerInterface;
 }
 
@@ -516,7 +518,15 @@ export async function createOAuthAgent(opts: CreateOAuthAgentOpts): Promise<OAut
     stateStore: memoryStateStore(),
     sessionStore: jsonSessionStore(opts.sessionPath),
     runtimeImplementation: webCryptoRuntime(),
-    plcDirectoryUrl: "https://plc.directory",
+    identityResolver: {
+      resolve: async (identifier: string) => {
+        const resolver = new IdResolver({ plcUrl: opts.plcDirectoryUrl ?? "https://plc.directory" });
+        const did = identifier.startsWith("did:") ? identifier : (await resolver.handle.resolve(identifier)) ?? identifier;
+        const didDoc = await resolver.did.resolve(did) as Record<string, unknown>;
+        const handle = ((didDoc?.alsoKnownAs as string[] | undefined)?.[0] ?? "").replace("at://", "");
+        return { did, didDoc, handle: handle || "handle.invalid" };
+      },
+    } as never,
     allowHttp: clientId === "http://localhost" || redirectUri.startsWith("http://127.0.0.1") || redirectUri.startsWith("http://localhost"),
   });
 

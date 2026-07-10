@@ -127,6 +127,7 @@ if ((options.atprotoOauth as boolean)) {
     clientId: options.oauthClientId as string | undefined,
     redirectUri: options.oauthRedirectUri as string | undefined,
     scope: OAUTH_SCOPE,
+    plcDirectoryUrl: plcDirectoryUrl,
     logger,
   });
 
