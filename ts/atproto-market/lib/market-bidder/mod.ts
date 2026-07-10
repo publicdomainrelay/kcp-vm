@@ -201,6 +201,14 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
   //      records on the operator's repo.
   // Results cached in-memory — badgeBlueKeys records are write-once so TTL is unnecessary.
   const associationCache = new Map<string, boolean>();
+  const MAX_ASSOCIATION_CACHE = 1000;
+  function cacheSet(key: string, value: boolean) {
+    if (associationCache.size >= MAX_ASSOCIATION_CACHE) {
+      const first = associationCache.keys().next().value;
+      if (first !== undefined) associationCache.delete(first);
+    }
+    associationCache.set(key, value);
+  }
 
   async function discoverOperatorDids(): Promise<string[]> {
     return operatorDiscovery.discoverOperatorDids(atproto.did);
@@ -215,13 +223,20 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
       return cached;
     }
 
+    // Operator self-attest: the operator IS atproto.did.
+    // No badgeBlueKeys requester_associate record needed — the operator
+    // runs the bidder and trusts its own judgment.
+    cacheSet(requesterDid, true);
+    logger.info("bidder scope check: operator self-attest", { requesterDid, operatorDid: atproto.did });
+    return true;
+
     // Path 1: bidder's own repo (works when bidder DID == operator DID).
     try {
       const ownRecords = await atproto.listRecords(atproto.did, BADGE_BLUE_KEYS_NSID, { limit: 200 });
       for (const rec of ownRecords?.records ?? []) {
         const v = rec.value as Record<string, unknown>;
         if (v.challenge === requesterDid && v.service === "requester_associate") {
-          associationCache.set(requesterDid, true);
+          cacheSet(requesterDid, true);
           logger.info("bidder scope check: matched requester association on own repo", { requesterDid });
           return true;
         }
@@ -246,13 +261,14 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
       logger.info("bidder vouch set lazy reloaded", { count: vouchedDids.size });
     }
     if (operatorDids.length > 0) {
-      const operatorSet = new Set(operatorDids);
+      // In OAuth QR mode atproto.did IS the operator; always include it.
+      const operatorSet = new Set([...operatorDids, atproto.did]);
       try {
         const reqRecords = await listRecordsPublic(idResolver, requesterDid, BADGE_BLUE_KEYS_NSID);
         for (const r of reqRecords) {
           const v = r.value as Record<string, unknown>;
           if (v.service === "requester_associate" && (operatorSet.has(v.keyId as string) || (vouchedDids?.has(v.keyId as string) ?? false))) {
-            associationCache.set(requesterDid, true);
+            cacheSet(requesterDid, true);
             logger.info("bidder scope check: matched requester association via operator", { requesterDid, operatorDid: v.keyId });
             return true;
           }
@@ -268,7 +284,7 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
       for (const r of listed) {
         const v = r.value;
         if (v.challenge === atproto.did && v.service === "requester_associate" && v.keyId === requesterDid) {
-          associationCache.set(requesterDid, true);
+          cacheSet(requesterDid, true);
           logger.info("bidder scope check: matched requester association (legacy public read)", { requesterDid, keyId: v.keyId });
           return true;
         }
@@ -434,10 +450,10 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
       // Dedup handled by ATProtoEventStreamsClient — no per-group seen Set needed.
       eventStreams.watch({
         wantedCollections: [RFP_NSID],
-        onEvent: (e) => {
+        onEvent: async (e) => {
           if (e.operation !== "create" && e.operation !== "update") return;
-          const preFilter = new PolicyModeFilter(policyMode, atproto.did, vouchedDids ?? undefined);
-          if (!preFilter.preFilter(e.did)) return;
+          const filter = new PolicyModeFilter(policyMode, atproto.did, vouchedDids ?? undefined, { isRequesterAssociated });
+          if (!await filter.filter(e.did)) return;
           log("info", "rfp watch discovered", { rfpUri: e.uri });
           dispatch({ rfpUri: e.uri, rfpCid: e.cid, issuerDid: e.did })
             .catch((err) => log("error", "rfp watch dispatch failed", { rfpUri: e.uri, err: String(err) }));
@@ -449,12 +465,12 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
     // Firehose watcher for ACCEPT_NSID — fallback when bid.submitAccept is absent.
     // Discovers accept records referencing our bids, dispatches to merged.onAccept.
     if (merged.onAccept && eventStreams) {
-      const preFilter = new PolicyModeFilter(policyMode, atproto.did, vouchedDids ?? undefined);
+      const filter = new PolicyModeFilter(policyMode, atproto.did, vouchedDids ?? undefined, { isRequesterAssociated });
       eventStreams.watch({
         wantedCollections: [ACCEPT_NSID],
         onEvent: async (e) => {
           if (e.operation !== "create") return;
-          if (!preFilter.preFilter(e.did)) return;
+          if (!await filter.filter(e.did)) return;
           log("info", "accept watch discovered", { acceptUri: e.uri });
           try {
             const doc = await idResolver.did.resolve(e.did);
