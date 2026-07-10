@@ -9,6 +9,7 @@ import {
   createSshSessionProvider,
   ensureWebsocat,
 } from "@publicdomainrelay/requester-xrpc";
+import { startLoopbackCallbackServer } from "@publicdomainrelay/atproto-oauth-helpers";
 import type { RequesterPDS } from "@publicdomainrelay/requester-abc";
 import { DEFAULT_RELAY_URLS, EVENT_NSID, OFFERING_NSID, relayUrlsToFirehoseUrls } from "@publicdomainrelay/market-common";
 import { createFirehoseWatcher as createSubscribeReposWatcher } from "@publicdomainrelay/firehose-watcher-subscriberepos";
@@ -132,19 +133,9 @@ if ((options.atprotoOauth as boolean) && (options.atprotoHandle as string | unde
     const cmd = Deno.build.os === "darwin" ? "open" : "xdg-open";
     new Deno.Command(cmd, { args: [authUrl] }).spawn();
     logger.info("oauth_browser_opened", { authUrl });
-    const { promise, resolve } = Promise.withResolvers<Record<string, string>>();
-    const cbServer = Deno.serve({ hostname: "127.0.0.1", port }, (req) => {
-      const url = new URL(req.url);
-      if (url.pathname === "/callback") {
-        const params: Record<string, string> = {};
-        url.searchParams.forEach((v, k) => { params[k] = v; });
-        resolve(params);
-        return new Response("<h1>Authorized!</h1>", { headers: { "content-type": "text/html" } });
-      }
-      return new Response("Not found", { status: 404 });
-    });
+    const { promise, shutdown } = startLoopbackCallbackServer(port);
     const params = await promise;
-    cbServer.shutdown();
+    shutdown();
     await oauthHandle.completeFlow(params);
   }
   pds = oauthHandle.pds;

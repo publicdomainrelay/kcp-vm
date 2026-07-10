@@ -3,8 +3,8 @@ import { IdResolver } from "@atproto/identity";
 import { Secp256k1Keypair } from "@atproto/crypto";
 import { Agent, CredentialSession } from "@atproto/api";
 import { OAuthClient } from "@atproto/oauth-client";
-import type { OAuthClientOptions, StateStore, SessionStore, RuntimeImplementation } from "@atproto/oauth-client";
 import type { Key } from "@atproto/oauth-client";
+import { webCryptoRuntime, memoryStateStore, jsonSessionStore } from "@publicdomainrelay/atproto-oauth-helpers";
 import type { StructuredLoggerInterface } from "@publicdomainrelay/logger";
 import type { RepoApi, WriteOp } from "@publicdomainrelay/atproto-repo-abc";
 import type { CommitEvent } from "@publicdomainrelay/atproto-repo-abc";
@@ -478,76 +478,6 @@ export async function createRemoteAgent(opts: CreateRemoteAgentOpts): Promise<At
 // ---------------------------------------------------------------------------
 // OAuth agent — ATProto OAuth with @atproto/oauth-client
 // ---------------------------------------------------------------------------
-
-/** Web Crypto runtime for @atproto/oauth-client (works in Deno + browsers). */
-function webCryptoRuntime(): RuntimeImplementation {
-  return {
-    async createKey(algs: string[]): Promise<Key> {
-      const alg = algs.find((a) => a === "ES256") ?? algs[0];
-      const key = await crypto.subtle.generateKey(
-        { name: "ECDSA", namedCurve: "P-256" },
-        true, // extractable
-        ["sign"],
-      );
-      const jwk = await crypto.subtle.exportKey("jwk", key.privateKey);
-      return {
-        alg,
-        kid: await crypto.randomUUID(),
-        privateJwk: jwk,
-      } as unknown as Key;
-    },
-    getRandomValues(length: number): Uint8Array {
-      return crypto.getRandomValues(new Uint8Array(length));
-    },
-    async digest(data: Uint8Array, alg: { name: string }): Promise<Uint8Array> {
-      return new Uint8Array(await crypto.subtle.digest(alg.name, data as BufferSource));
-    },
-  };
-}
-
-/** In-memory StateStore for short-lived OAuth state (only needed during auth flow). */
-function memoryStateStore(): StateStore {
-  const map = new Map<string, unknown>();
-  return {
-    async get(key: string) { return map.get(key) as never; },
-    async set(key: string, value: unknown) { map.set(key, value); },
-    async del(key: string) { map.delete(key); },
-  };
-}
-
-/** JSON-file-backed SessionStore for OAuth session persistence. */
-function jsonSessionStore(filePath: string): SessionStore {
-  let cache: Record<string, unknown> | null = null;
-  async function load(): Promise<Record<string, unknown>> {
-    if (cache) return cache;
-    try {
-      const raw = await Deno.readTextFile(filePath);
-      cache = JSON.parse(raw) as Record<string, unknown>;
-    } catch {
-      cache = {};
-    }
-    return cache!;
-  }
-  async function save(): Promise<void> {
-    await Deno.writeTextFile(filePath, JSON.stringify(cache, null, 2));
-  }
-  return {
-    async get(key: string) {
-      const data = await load();
-      return data[key] as never;
-    },
-    async set(key: string, value: unknown) {
-      const data = await load();
-      data[key] = value;
-      await save();
-    },
-    async del(key: string) {
-      const data = await load();
-      delete data[key];
-      await save();
-    },
-  };
-}
 
 export interface CreateOAuthAgentOpts {
   handle: string;

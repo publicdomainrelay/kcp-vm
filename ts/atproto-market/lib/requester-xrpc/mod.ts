@@ -24,8 +24,7 @@ import {
   verifyRemoteProof,
 } from "@publicdomainrelay/market-atproto";
 import { OAuthClient } from "@atproto/oauth-client";
-import type { RuntimeImplementation, StateStore, SessionStore } from "@atproto/oauth-client";
-import type { Key } from "@atproto/oauth-client";
+import { webCryptoRuntime, memoryStateStore, jsonSessionStore } from "@publicdomainrelay/atproto-oauth-helpers";
 import { stripResolved, atUriAuthority } from "@publicdomainrelay/market-abc";
 import type { InlineAttestation, AttestationKeypair, SubmitBidCallback } from "@publicdomainrelay/market-atproto";
 import {
@@ -1353,46 +1352,6 @@ runcmd:
 // ---------------------------------------------------------------------------
 // OAuth requester — lightweight RequesterPDS backed by OAuth agent
 // ---------------------------------------------------------------------------
-
-function webCryptoRuntime(): RuntimeImplementation {
-  return {
-    async createKey(algs: string[]): Promise<Key> {
-      const alg = algs.find((a) => a === "ES256") ?? algs[0];
-      const key = await crypto.subtle.generateKey(
-        { name: "ECDSA", namedCurve: "P-256" },
-        true, ["sign"],
-      );
-      const jwk = await crypto.subtle.exportKey("jwk", key.privateKey);
-      return { alg, kid: await crypto.randomUUID(), privateJwk: jwk } as unknown as Key;
-    },
-    getRandomValues(length: number): Uint8Array {
-      return crypto.getRandomValues(new Uint8Array(length));
-    },
-    async digest(data: Uint8Array, alg: { name: string }): Promise<Uint8Array> {
-      return new Uint8Array(await crypto.subtle.digest(alg.name, data as BufferSource));
-    },
-  };
-}
-
-function memoryStateStore(): StateStore {
-  const map = new Map<string, unknown>();
-  return {
-    async get(key: string) { return map.get(key) as never; },
-    async set(key: string, value: unknown) { map.set(key, value); },
-    async del(key: string) { map.delete(key); },
-  };
-}
-
-function jsonSessionStore(filePath: string): SessionStore {
-  let cache: Record<string, unknown> | null = null;
-  async function load() { if (cache) return cache; try { cache = JSON.parse(await Deno.readTextFile(filePath)); } catch { cache = {}; } return cache!; }
-  async function save() { await Deno.writeTextFile(filePath, JSON.stringify(cache, null, 2)); }
-  return {
-    async get(key: string) { return (await load())[key] as never; },
-    async set(key: string, value: unknown) { (await load())[key] = value; await save(); },
-    async del(key: string) { delete (await load())[key]; await save(); },
-  };
-}
 
 export interface OAuthRequesterHandle {
   pds: RequesterPDS;

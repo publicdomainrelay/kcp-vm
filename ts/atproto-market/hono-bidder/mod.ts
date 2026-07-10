@@ -9,6 +9,7 @@ import { createComputeProviderHooks } from "@publicdomainrelay/market-bidder-com
 import { createComputeProviderDenoWorker, createWorkerProviderHooks } from "@publicdomainrelay/market-bidder-worker";
 import { createATProto, createLocalPDSAgent, createRemoteAgent, createOAuthAgent } from "@publicdomainrelay/atproto-helpers";
 import type { LocalPDSAgent } from "@publicdomainrelay/atproto-helpers";
+import { startLoopbackCallbackServer } from "@publicdomainrelay/atproto-oauth-helpers";
 import { createBadgeBlueSigner } from "@publicdomainrelay/market-atproto";
 import { ACCEPT_NSID, DEFAULT_RELAY_URLS, EVENT_NSID, OFFERING_NSID, RFP_NSID, relayUrlsToFirehoseUrls } from "@publicdomainrelay/market-common";
 import { verifyRelayVisibility } from "@publicdomainrelay/requester-xrpc";
@@ -148,26 +149,9 @@ if ((options.atprotoOauth as boolean)) {
 
     logger.info("oauth_browser_opened", { authUrl });
 
-    // Accept one callback connection using a temporary HTTP server
-    const { promise, resolve } = Promise.withResolvers<Record<string, string>>();
-    const callbackServer = Deno.serve({
-      hostname: "127.0.0.1",
-      port,
-      onListen: () => {},
-    }, (req) => {
-      const url = new URL(req.url);
-      if (url.pathname === "/callback") {
-        const params: Record<string, string> = {};
-        url.searchParams.forEach((v, k) => { params[k] = v; });
-        resolve(params);
-        return new Response("<h1>Authorized! You can close this tab.</h1>", {
-          headers: { "content-type": "text/html" },
-        });
-      }
-      return new Response("Not found", { status: 404 });
-    });
+    const { promise, shutdown } = startLoopbackCallbackServer(port);
     const params = await promise;
-    callbackServer.shutdown();
+    shutdown();
     await oauthAgent.completeFlow(params);
   }
 
