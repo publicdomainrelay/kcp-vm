@@ -1,0 +1,9 @@
+{
+  "hostname": "xrpc.fedproxy.com",
+  "service-id": "xrpc_relay",
+  "port": 8080,
+  "unix-socket": "",
+  "relay-timeout-ms": 30000,
+  "reconnect-grace-ms": 10000,
+  "nonce-ttl-ms": 60000
+}
