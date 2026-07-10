@@ -91,7 +91,7 @@ export async function discoverBiddersFromRelay(opts: {
 }): Promise<string[]> {
   const { relayUrl, collection, log, timeoutMs } = opts;
   try {
-    const url = `${relayUrl.replace(/\/+$/, "")}/xrpc/com.atproto.sync.listReposByCollection?collection=${encodeURIComponent(collection)}`;
+    const url = `${relayUrl.replace(/\/+$/, "")}/xrpc/com.atproto.sync.listReposByCollection?collection=${encodeURIComponent(collection)}&limit=1000`;
     log?.info("relay_discovery_query", { url, collection });
     const res = await fetch(url, { signal: timeoutMs ? AbortSignal.timeout(timeoutMs) : undefined });
     if (!res.ok) {
