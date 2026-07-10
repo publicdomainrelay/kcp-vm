@@ -7,7 +7,7 @@ import { createMarketBidder } from "@publicdomainrelay/market-bidder";
 import type { MarketBidderProviderRef } from "@publicdomainrelay/market-bidder-abc";
 import { createComputeProviderHooks } from "@publicdomainrelay/market-bidder-compute";
 import { createComputeProviderDenoWorker, createWorkerProviderHooks } from "@publicdomainrelay/market-bidder-worker";
-import { createATProto, createLocalPDSAgent, createRemoteAgent } from "@publicdomainrelay/atproto-helpers";
+import { createATProto, createLocalPDSAgent, createRemoteAgent, createOAuthAgent } from "@publicdomainrelay/atproto-helpers";
 import type { LocalPDSAgent } from "@publicdomainrelay/atproto-helpers";
 import { createBadgeBlueSigner } from "@publicdomainrelay/market-atproto";
 import { ACCEPT_NSID, DEFAULT_RELAY_URLS, EVENT_NSID, OFFERING_NSID, RFP_NSID, relayUrlsToFirehoseUrls } from "@publicdomainrelay/market-common";
@@ -90,20 +90,87 @@ async function cliCreateIngress() {
   return createIngress({ logger, ingressProxyHost, signer: atproto.signer, keypair: relayKeypair });
 }
 
+// OAuth scope — collections the bidder writes to + XRPC calls it makes.
+const OAUTH_SCOPE = [
+  "atproto",
+  "repo:com.publicdomainrelay.temp.market.offering?action=create",
+  "repo:com.publicdomainrelay.temp.market.offering?action=update",
+  "repo:com.publicdomainrelay.temp.auth.allowlist.rbacDid?action=create",
+  "repo:com.publicdomainrelay.temp.market.bids.free?action=create",
+  "repo:com.publicdomainrelay.temp.market.bid?action=create",
+  "repo:com.publicdomainrelay.temp.market.receipt?action=create",
+  "repo:com.publicdomainrelay.temp.market.event?action=create",
+  "repo:com.publicdomainrelay.temp.badgeBlueKeys?action=create",
+  "repo:com.publicdomainrelay.temp.market.bidderAssociation?action=create",
+  "rpc:com.publicdomainrelay.temp.market.submitBid?aud=*",
+  "rpc:com.publicdomainrelay.temp.market.submitEvent?aud=*",
+].join(" ");
+
 let atprotoAgent;
 let pdsHostname: string | undefined;
 let isLocal = false;
+let isOAuth = false;
 const _deferredRelayUrls: string[] = [];
 let _deferredPdsPort = 0;
-if ((options.atprotoHandle as string | undefined) && (options.atprotoPassword as string | undefined)) {
-  const pdsUrl = (options.atprotoPdsUrl as string) || "https://bsky.social";
-  atprotoAgent = await createRemoteAgent({
+if ((options.atprotoOauth as boolean) && (options.atprotoHandle as string | undefined)) {
+  // OAuth flow — use remote PDS via ATProto OAuth
+  const sessionPath = options.oauthSessionPath as string;
+  const oauthAgent = await createOAuthAgent({
     handle: options.atprotoHandle as string,
-    password: options.atprotoPassword as string,
-    pdsUrl,
+    sessionPath,
+    clientId: options.oauthClientId as string | undefined,
+    redirectUri: options.oauthRedirectUri as string | undefined,
+    scope: OAUTH_SCOPE,
+    logger,
   });
-  pdsHostname = new URL(pdsUrl).hostname;
-} else {
+
+  // Restore existing session or start new flow
+  const restored = await oauthAgent.restore();
+  if (!restored) {
+    const authUrl = await oauthAgent.startFlow();
+    // Parse redirect URI to find port, then start loopback callback server
+    const redirectUri = (options.oauthRedirectUri as string) || "http://127.0.0.1:0/callback";
+    const portMatch = redirectUri.match(/:(\d+)/);
+    const port = portMatch ? parseInt(portMatch[1]) : 0;
+
+    // Open browser (platform-aware)
+    const cmd = Deno.build.os === "darwin" ? "open" : Deno.build.os === "windows" ? "cmd" : "xdg-open";
+    if (Deno.build.os === "windows") {
+      new Deno.Command(cmd, { args: ["/c", "start", authUrl] }).spawn();
+    } else {
+      new Deno.Command(cmd, { args: [authUrl] }).spawn();
+    }
+
+    logger.info("oauth_browser_opened", { authUrl });
+
+    // Accept one callback connection using a temporary HTTP server
+    const { promise, resolve } = Promise.withResolvers<Record<string, string>>();
+    const callbackServer = Deno.serve({
+      hostname: "127.0.0.1",
+      port,
+      onListen: () => {},
+    }, (req) => {
+      const url = new URL(req.url);
+      if (url.pathname === "/callback") {
+        const params: Record<string, string> = {};
+        url.searchParams.forEach((v, k) => { params[k] = v; });
+        resolve(params);
+        return new Response("<h1>Authorized! You can close this tab.</h1>", {
+          headers: { "content-type": "text/html" },
+        });
+      }
+      return new Response("Not found", { status: 404 });
+    });
+    const params = await promise;
+    callbackServer.shutdown();
+    await oauthAgent.completeFlow(params);
+  }
+
+  atprotoAgent = oauthAgent;
+  isOAuth = true;
+  // In OAuth mode, the PDS hostname is the PDS from the session (not used for requestCrawl)
+  pdsHostname = undefined;
+} else if ((options.atprotoHandle as string | undefined) && (options.atprotoPassword as string | undefined)) {
   const pdsStatePath = options.pdsStatePath as string | undefined;
   // Relay-only: no TCP listener. associateConfirm arrives via relay →
   // app.fetch programmatic. subscribeRepos firehose is wired via
@@ -130,7 +197,7 @@ const atproto = await createATProto({
   logger,
   badgeBlueSigner: await createBadgeBlueSigner({ privateKeyHex }),
   plcDirectory: createPlcDirectoryClient({ plcDirectoryUrl }),
-  agent: atprotoAgent,
+  agent: atprotoAgent!,
 });
 
 const cliRelayUrl = (options.relayUrl as string) || "";
@@ -268,7 +335,8 @@ if (firehoseMode !== "off") {
 }
 
 // Market factory gets its own relay/serve (own keypair -> own subdomain/FQDN).
-const bidderIngress = options.noIngressProxy ? undefined : await cliCreateIngress();
+// Skip ingress in OAuth mode — PDS is remote, no relay subscriber needed.
+const bidderIngress = (options.noIngressProxy || isOAuth) ? undefined : await cliCreateIngress();
 const bidderServe = createServe({
   logger,
   tcp: { addr: (options.serveAddr as string) || "0.0.0.0", port: (options.servePort as number) ?? 0 },

@@ -2,6 +2,9 @@ import { TID } from "@atproto/common";
 import { IdResolver } from "@atproto/identity";
 import { Secp256k1Keypair } from "@atproto/crypto";
 import { Agent, CredentialSession } from "@atproto/api";
+import { OAuthClient } from "@atproto/oauth-client";
+import type { OAuthClientOptions, StateStore, SessionStore, RuntimeImplementation } from "@atproto/oauth-client";
+import type { Key } from "@atproto/oauth-client";
 import type { StructuredLoggerInterface } from "@publicdomainrelay/logger";
 import type { RepoApi, WriteOp } from "@publicdomainrelay/atproto-repo-abc";
 import type { CommitEvent } from "@publicdomainrelay/atproto-repo-abc";
@@ -159,7 +162,9 @@ export async function createATProto(opts: CreateATProtoOpts): Promise<ATProto> {
       throw new Error(`unresolvable endpoint: ${endpointUrl}`);
     }
 
-    const token = await signServiceAuth(signer, { aud: audDid, lxm });
+    const token = agent.getServiceAuth
+      ? await agent.getServiceAuth(audDid, lxm)
+      : await signServiceAuth(signer, { aud: audDid, lxm });
     const res = await fetch(`${targetBase}/${nsid}`, {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
@@ -468,4 +473,237 @@ export async function createRemoteAgent(opts: CreateRemoteAgentOpts): Promise<At
       return { records: all.slice(0, limit) };
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// OAuth agent — ATProto OAuth with @atproto/oauth-client
+// ---------------------------------------------------------------------------
+
+/** Web Crypto runtime for @atproto/oauth-client (works in Deno + browsers). */
+function webCryptoRuntime(): RuntimeImplementation {
+  return {
+    async createKey(algs: string[]): Promise<Key> {
+      const alg = algs.find((a) => a === "ES256") ?? algs[0];
+      const key = await crypto.subtle.generateKey(
+        { name: "ECDSA", namedCurve: "P-256" },
+        true, // extractable
+        ["sign"],
+      );
+      const jwk = await crypto.subtle.exportKey("jwk", key.privateKey);
+      return {
+        alg,
+        kid: await crypto.randomUUID(),
+        privateJwk: jwk,
+      } as unknown as Key;
+    },
+    getRandomValues(length: number): Uint8Array {
+      return crypto.getRandomValues(new Uint8Array(length));
+    },
+    async digest(data: Uint8Array, alg: { name: string }): Promise<Uint8Array> {
+      return new Uint8Array(await crypto.subtle.digest(alg.name, data as BufferSource));
+    },
+  };
+}
+
+/** In-memory StateStore for short-lived OAuth state (only needed during auth flow). */
+function memoryStateStore(): StateStore {
+  const map = new Map<string, unknown>();
+  return {
+    async get(key: string) { return map.get(key) as never; },
+    async set(key: string, value: unknown) { map.set(key, value); },
+    async del(key: string) { map.delete(key); },
+  };
+}
+
+/** JSON-file-backed SessionStore for OAuth session persistence. */
+function jsonSessionStore(filePath: string): SessionStore {
+  let cache: Record<string, unknown> | null = null;
+  async function load(): Promise<Record<string, unknown>> {
+    if (cache) return cache;
+    try {
+      const raw = await Deno.readTextFile(filePath);
+      cache = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      cache = {};
+    }
+    return cache!;
+  }
+  async function save(): Promise<void> {
+    await Deno.writeTextFile(filePath, JSON.stringify(cache, null, 2));
+  }
+  return {
+    async get(key: string) {
+      const data = await load();
+      return data[key] as never;
+    },
+    async set(key: string, value: unknown) {
+      const data = await load();
+      data[key] = value;
+      await save();
+    },
+    async del(key: string) {
+      const data = await load();
+      delete data[key];
+      await save();
+    },
+  };
+}
+
+export interface CreateOAuthAgentOpts {
+  handle: string;
+  sessionPath: string;
+  clientId?: string;
+  redirectUri?: string;
+  scope?: string;
+  logger?: StructuredLoggerInterface;
+}
+
+export interface OAuthAgent extends AtprotoAgentLike {
+  oauthClient: OAuthClient;
+  startFlow(): Promise<string>; // returns auth URL
+  completeFlow(params: Record<string, string>): Promise<void>;
+  restore(): Promise<boolean>;
+}
+
+export async function createOAuthAgent(opts: CreateOAuthAgentOpts): Promise<OAuthAgent> {
+  const clientId = opts.clientId ?? "http://localhost";
+  const redirectUri = opts.redirectUri ?? "http://127.0.0.1:0/callback";
+  const scope = opts.scope ?? "atproto";
+  const log = opts.logger;
+
+  const client = new OAuthClient({
+    responseMode: "query",
+    clientMetadata: {
+      client_id: clientId,
+      application_type: "native",
+      dpop_bound_access_tokens: true,
+      redirect_uris: [redirectUri],
+      grant_types: ["authorization_code", "refresh_token"],
+      response_types: ["code"],
+      scope,
+      token_endpoint_auth_method: "none",
+    },
+    stateStore: memoryStateStore(),
+    sessionStore: jsonSessionStore(opts.sessionPath),
+    runtimeImplementation: webCryptoRuntime(),
+    allowHttp: clientId === "http://localhost" || redirectUri.startsWith("http://127.0.0.1") || redirectUri.startsWith("http://localhost"),
+  });
+
+  let _session: Awaited<ReturnType<typeof client.restore>> | null = null;
+
+  function getSession() {
+    if (!_session) throw new Error("OAuth session not initialized");
+    return _session;
+  }
+
+  let _did = "";
+  const _signer = {
+    did: () => _did,
+    sign: async () => { throw new Error("OAuth agent uses getServiceAuth, not local signing"); },
+  };
+
+  const agent: OAuthAgent = {
+    oauthClient: client,
+    get did() { return _did; },
+    signer: _signer,
+
+    async startFlow(): Promise<string> {
+      const result = await client.authorize(opts.handle, { scope });
+      return String(result);
+    },
+
+    async completeFlow(params: Record<string, string>): Promise<void> {
+      const result = await client.callback(new URLSearchParams(params));
+      _session = result.session;
+      _did = result.session.did;
+      log?.info("oauth_session_complete", { did: _did });
+    },
+
+    async restore(): Promise<boolean> {
+      try {
+        _session = await client.restore(opts.handle);
+        _did = _session.did;
+        log?.info("oauth_session_restored", { did: _did });
+        return true;
+      } catch {
+        return false;
+      }
+    },
+
+    async getServiceAuth(aud: string, lxm?: string): Promise<string> {
+      const s = await getSession();
+      const res = await s.fetchHandler(
+        `${s.server.issuer}/xrpc/com.atproto.server.getServiceAuth`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ aud, lxm: lxm ?? aud }),
+        },
+      );
+      if (!res.ok) {
+        throw new Error(`getServiceAuth failed: ${res.status}`);
+      }
+      const data = await res.json() as { token: string };
+      return data.token;
+    },
+
+    async applyWrites(repo: string, writes: Parameters<AtprotoAgentLike["applyWrites"]>[1]) {
+      const s = await getSession();
+      const res = await s.fetchHandler(
+        `${s.server.issuer}/xrpc/com.atproto.repo.applyWrites`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ repo, writes: writes.map((w) => {
+            const base: Record<string, unknown> = {
+              action: w.action,
+              collection: w.collection,
+              rkey: w.rkey,
+            };
+            if (w.action !== "delete") (base as Record<string, unknown>).value = (w as { record: unknown }).record;
+            return base;
+          }) }),
+        },
+      );
+      if (!res.ok) {
+        throw new Error(`applyWrites failed: ${res.status} ${await res.text()}`);
+      }
+      const data = await res.json() as { commit?: { rev?: string } };
+      const rev = data.commit?.rev ?? "";
+      return { repo, commit: rev, rev, since: null, blocks: new Uint8Array(), ops: [] } as unknown as CommitEvent;
+    },
+
+    async getRecord(repo: string, collection: string, rkey: string) {
+      const s = await getSession();
+      const res = await s.fetchHandler(
+        `${s.server.issuer}/xrpc/com.atproto.repo.getRecord?repo=${encodeURIComponent(repo)}&collection=${encodeURIComponent(collection)}&rkey=${encodeURIComponent(rkey)}`,
+      );
+      if (!res.ok) return null;
+      const data = await res.json() as { uri: string; cid?: string; value: Record<string, unknown> };
+      return { uri: data.uri, cid: data.cid ?? "", value: data.value };
+    },
+
+    async listRecords(repo: string, collection: string, opts?: { limit?: number }) {
+      const s = await getSession();
+      const all: Array<{ uri: string; cid: string; value: Record<string, unknown> }> = [];
+      let cursor: string | undefined;
+      const limit = opts?.limit ?? 100;
+      do {
+        const params = new URLSearchParams({ repo, collection, limit: String(limit) });
+        if (cursor) params.set("cursor", cursor);
+        const res = await s.fetchHandler(
+          `${s.server.issuer}/xrpc/com.atproto.repo.listRecords?${params.toString()}`,
+        );
+        if (!res.ok) break;
+        const data = await res.json() as { records: Array<{ uri: string; cid?: string; value: unknown }>; cursor?: string };
+        for (const r of data.records) {
+          all.push({ uri: r.uri, cid: r.cid ?? "", value: r.value as Record<string, unknown> });
+        }
+        cursor = data.cursor;
+      } while (cursor);
+      return { records: all.slice(0, limit) };
+    },
+  };
+
+  return agent;
 }
