@@ -884,9 +884,9 @@ export async function runComputeContract(
               const payloadRes = await fetch(payloadUrl);
               const payloadData = await payloadRes.json();
               const address = (payloadData.value as Record<string, unknown>)?.address as string | undefined;
-              // Prefer FQDN over IP — guest-side onNetwork arrives later with dispatcher FQDN.
-const isFqdn = address && (address.includes(".xrpc.fedproxy.com") || address.includes(".fedproxy.com"));
-if (address && (!vmFqdn || isFqdn)) {
+              // Only resolve on dispatcher FQDN, not container IP.
+const isDispatcherFqdn = address && (address.includes(".xrpc.fedproxy.com") || address.includes(".fedproxy.com"));
+if (address && isDispatcherFqdn && !vmFqdn) {
                 vmFqdn = address;
                 vmFqdnReady.resolve(address);
                 log("vm_fqdn_discovered", { fqdn: address, eventUri: data.uri });
