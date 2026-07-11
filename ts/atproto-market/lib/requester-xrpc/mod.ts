@@ -1396,11 +1396,11 @@ runcmd:
     log("vm_poll_bailed", { reason: "no valid receipt", receiptUri, receiptCid });
   } else {
       // SSH through fedproxy relay tunnel (websocat ProxyCommand).
-    // Default: dispatcher tunnel ProxyCommand. User override via sshProxyCommandFn wins.
+    // Default: dispatcher tunnel ProxyCommand. Route through bash for PATH.
     const sshTunnel = opts.sshProvider ?? createSshSessionProvider(
       opts.logger,
       { proxyCommandFn: opts.sshProxyCommandFn ??
-        ((fqdn: string) => `websocat --binary wss://${fqdn}/xrpc/com.fedproxy.temp.xrpc.tunnel`) },
+        ((fqdn: string) => `/opt/homebrew/bin/websocat --binary wss://${fqdn}/xrpc/com.fedproxy.temp.xrpc.tunnel`) },
     );
       log("vm_ssh_waiting", { vmFqdn, timeoutSec: vmReadyTimeoutSec });
     const ready = await sshTunnel.pollReady(privateKeyPath, vmFqdn, vmReadyTimeoutSec * 1000);
