@@ -692,12 +692,15 @@ export function createSshSessionProvider(
         stdout: "piped",
         stderr: "piped",
       });
-      const { code, stderr } = await cmd.output();
+      const { code, stdout, stderr } = await cmd.output();
       if (code === 0) {
         log("vm_ssh_ready", { fqdn, attempt });
         return true;
       }
-      log("vm_ssh_poll", { fqdn, attempt, code, error: new TextDecoder().decode(stderr).trim().slice(0, 200) });
+      const errText = new TextDecoder().decode(stderr).trim();
+      const outText = new TextDecoder().decode(stdout).trim();
+      const fullError = (errText + (outText ? " | stdout:" + outText : "")).slice(0, 400);
+      log("vm_ssh_poll", { fqdn, attempt, code, error: errText.slice(0, 200), fullError });
       await new Promise((r) => setTimeout(r, 5000));
     }
     log("vm_ssh_timeout", { fqdn, timeoutMs });
