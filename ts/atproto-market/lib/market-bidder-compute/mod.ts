@@ -54,6 +54,7 @@ export interface VmBidderDeps {
   createSignedRepoRecord: (collection: string, record: Record<string, unknown>, issuer?: string) => Promise<{ uri: string; cid: string; record: Record<string, unknown> }>;
   callService: (endpointUrl: string, nsid: string, lxm: string, body: Record<string, unknown>) => Promise<{ status: number; ok: boolean; body: unknown }>;
   resolve: RecordResolver;
+  acceptToContract?: Map<string, import("@publicdomainrelay/market-bidder-abc").GuestContractEntry>;
 }
 
 function refKey(ref: { uri: string; cid: string }): string {
@@ -242,6 +243,13 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
     });
 
     onContractChange?.({ type: "accepted", key: rk, receiptUri, receiptCid, acceptAuthor: issuerDid, acceptedAt: nowIso });
+    // Populate accept→receipt map for guest event endpoint lookups
+    if (deps.acceptToContract) {
+      deps.acceptToContract.set(refKey({ uri: acceptUri, cid: acceptCid }), {
+        receiptKey: rk, receiptUri, receiptCid,
+        submitEventUrl: (accept as { submitEvent?: string }).submitEvent,
+      });
+    }
     providerIdPromise.then(async (provisionResult) => {
       const providerId = provisionResult?.providerId;
       const provisionIp = (provisionResult?.metadata?.ip) as string | undefined;
@@ -406,6 +414,7 @@ export function createComputeProviderHooks(opts: {
         createSignedRepoRecord: deps.createSignedRepoRecord,
         callService: deps.callService,
         resolve: deps.resolve,
+        acceptToContract: deps.acceptToContract,
       });
       return { rfpCallbacks: vm.rfp, onAccept: vm.accept, eventCallbacks: vm.event };
     },

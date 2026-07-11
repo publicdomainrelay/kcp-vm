@@ -124,6 +124,7 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
   const { logger, serve, atproto, relay, providers, setup, teardown, callbackFactory, onContractChange, eventStreams, offeringRefreshMs, skipServeBegin, policyMode, onSessionExpired } = config;
   const log = logAdapter(logger);
   const activeContracts = new Map<string, ActiveContract>();
+  const acceptToContract = new Map<string, import("@publicdomainrelay/market-bidder-abc").GuestContractEntry>();
   const idResolver = atproto.idResolver;
   let offeringRefresher: OfferingRefreshHandle | null = null;
 
@@ -408,6 +409,7 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
       ingressProxyHost: "",
       log,
       activeContracts,
+      acceptToContract,
       createRecord: atproto.createRecord,
       createRepoRecord: atproto.createRepoRecord,
       createSignedRepoRecord: atproto.createSignedRepoRecord,
@@ -463,33 +465,40 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
       });
       serve.app.route("/", factory.createApp() as never);
 
-      // Guest event endpoint — VM calls back at boot to report onNetwork address.
+      // Guest event endpoint — VM calls back at boot with accept ref from accept.json.
       serve.app.post("/v1/on-network", async (c) => {
-        let body: { address?: string; createdAt?: string };
+        let body: { acceptUri?: string; acceptCid?: string; address?: string; createdAt?: string };
         try { body = await c.req.json(); } catch {
           return c.json({ error: "InvalidRequest" }, 400);
         }
-        // Match to most recently provisioned active contract
-        const contracts = [...activeContracts.entries()];
-        const contract = contracts.sort(([, a], [, b]) =>
-          (b.acceptedAt ?? "").localeCompare(a.acceptedAt ?? ""))[0];
-        if (!contract) {
-          return c.json({ error: "NoActiveContract" }, 404);
+        if (!body.acceptUri || !body.acceptCid) {
+          return c.json({ error: "InvalidRequest", message: "missing acceptUri or acceptCid" }, 400);
         }
-        const [receiptKey, entry] = contract;
+        const acceptKey = `${body.acceptUri}#${body.acceptCid}`;
+        const guestEntry = acceptToContract.get(acceptKey);
+        if (!guestEntry) {
+          log("warn", "guest.onNetwork: unknown accept ref", { acceptKey });
+          return c.json({ error: "UnknownAccept", message: "accept ref not found — VM may have been provisioned before receipt was created" }, 404);
+        }
         const nowIso = body.createdAt ?? new Date().toISOString();
         const { uri, cid } = await atproto.createRepoRecord(
           COMPUTE_EVENTS_VM_ONNETWORK_NSID,
           { $type: COMPUTE_EVENTS_VM_ONNETWORK_NSID, address: body.address, createdAt: nowIso },
         );
-        // Wrap in market.event and submit via firehose + optional XRPC push
+        // Wrap in market.event with proper receipt strongRef
         const { uri: eventUri, cid: eventCid, record: eventRecord } = await atproto.createSignedRepoRecord(
           EVENT_NSID, {
             $type: EVENT_NSID,
-            receipt: { $type: "com.atproto.repo.strongRef", uri: entry.receiptUri, cid: entry.receiptCid },
+            receipt: { $type: "com.atproto.repo.strongRef", uri: guestEntry.receiptUri, cid: guestEntry.receiptCid },
             payload: { $type: "com.atproto.repo.strongRef", uri, cid },
           }, relay?.ingressRef ?? "");
-        log("info", "guest.onNetwork recorded", { receiptKey, uri, address: body.address });
+        log("info", "guest.onNetwork recorded", { receiptKey: guestEntry.receiptKey, uri, address: body.address });
+        // Submit to requester if submitEventUrl exists
+        if (guestEntry.submitEventUrl) {
+          atproto.callService(guestEntry.submitEventUrl, "com.publicdomainrelay.temp.market.submitEvent", "com.publicdomainrelay.temp.market.submitEvent", {
+            uri: eventUri, cid: eventCid, record: eventRecord,
+          }).catch((err: unknown) => log("error", "guest.onNetwork submitEvent failed", { error: String(err) }));
+        }
         return c.json({ ok: true, uri, cid, eventUri, eventCid });
       });
     }

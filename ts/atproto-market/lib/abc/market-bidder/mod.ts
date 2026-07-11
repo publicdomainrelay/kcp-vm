@@ -9,6 +9,13 @@ import type {
 } from "@publicdomainrelay/market-abc";
 import type { Logger, StrongRef } from "@publicdomainrelay/market-common";
 
+export interface GuestContractEntry {
+  receiptKey: string;
+  receiptUri: string;
+  receiptCid: string;
+  submitEventUrl?: string;
+}
+
 export interface ActiveContract {
   providerIdPromise?: Promise<string | number | undefined>;
   acceptAuthor: string;
@@ -52,6 +59,8 @@ export interface CallbackFactoryDeps {
   deleteRecord: (collection: string, rkey: string) => Promise<void>;
   callService: (endpointUrl: string, nsid: string, lxm: string, body: Record<string, unknown>) => Promise<{ status: number; ok: boolean; body: unknown }>;
   resolve: RecordResolver;
+  /** Maps acceptUri#acceptCid → receipt info. Populated at receipt creation. */
+  acceptToContract?: Map<string, GuestContractEntry>;
 }
 
 export interface MarketBidderProviderRef {
