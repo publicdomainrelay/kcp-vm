@@ -302,7 +302,7 @@ write_files:
       [Service]
       Type=simple
       User=root${ctx.jsrUrl ? `\n      Environment="JSR_URL=http://${ctx.jsrUrl}/"` : ""}
-      ExecStart=deno run -A jsr:@publicdomainrelay/hono-did-key-ingress-proxy-tunnel-subscriber --ingress-proxy-host ${ingressProxyHost} --aud-host ${audHost} --private-key-from-sshd-host-key /etc/ssh/ssh_host_ed25519_key --target-host 127.0.0.1 --target-port ${targetPort}
+      ExecStart=deno run -A jsr:@publicdomainrelay/hono-did-key-ingress-proxy-tunnel-subscriber --ingress-proxy-host ${ingressProxyHost} --aud-host ${audHost} --private-key-from-sshd-host-key /etc/ssh/ssh_host_ed25519_key --fqdn-file /run/guest-fqdn --target-host 127.0.0.1 --target-port ${targetPort}
       Restart=always
       RestartSec=5
       TimeoutStopSec=10
