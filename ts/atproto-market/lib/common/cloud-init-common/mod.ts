@@ -303,7 +303,7 @@ write_files:
 
       [Service]
       Type=simple
-      User=root${jsrUrl ? `\n      Environment="JSR_URL=http://${jsrUrl}/"` : ""}
+      User=root${ctx.jsrUrl ? `\n      Environment="JSR_URL=http://${ctx.jsrUrl}/"` : ""}
       ExecStart=deno run -A jsr:@publicdomainrelay/hono-did-key-ingress-proxy-tunnel-subscriber --ingress-proxy-host ${ingressProxyHost} --aud-host ${audHost} --private-key-hex ${privateKeyHex} --target-host 127.0.0.1 --target-port ${targetPort}
       Restart=always
       RestartSec=5
