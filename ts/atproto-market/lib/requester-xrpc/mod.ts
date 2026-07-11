@@ -638,7 +638,7 @@ function sshTunnelArgs(
   proxyCmdOverride?: string,
 ): string[] {
   return [
-    "-o", `ProxyCommand=${proxyCmdOverride ?? `websocat --binary wss://${fqdn}`}`,
+    "-o", `ProxyCommand=${proxyCmdOverride ?? `websocat --binary wss://${fqdn}/xrpc/com.fedproxy.temp.xrpc.tunnel`}`,
     "-o", `IdentityFile=${privateKeyPath}`,
     "-o", "IdentitiesOnly=yes",
     "-o", "StrictHostKeyChecking=no",
