@@ -883,8 +883,10 @@ export async function runComputeContract(
               const payloadRes = await fetch(payloadUrl);
               const payloadData = await payloadRes.json();
               const address = (payloadData.value as Record<string, unknown>)?.address as string | undefined;
-              if (address) {
-                log("vm_ip_discovered", { address, eventUri: data.uri });
+              if (address && !vmFqdn) {
+                vmFqdn = address;
+                vmFqdnReady.resolve(address);
+                log("vm_fqdn_discovered", { fqdn: address, eventUri: data.uri });
               }
             } catch { /* best-effort */ }
           })();

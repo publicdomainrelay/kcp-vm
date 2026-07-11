@@ -195,8 +195,29 @@ if ((options.atprotoOauth as boolean)) {
   isOAuth = true;
   // In OAuth mode, the PDS hostname is the PDS from the session (not used for requestCrawl)
   pdsHostname = undefined;
-} else if ((options.atprotoOauthQr as boolean)) {
-  // QR-based OAuth — scan with phone, session transferred via qr.fedfork.com
+} else if ((options.atprotoHandle as string | undefined) && (options.atprotoPassword as string | undefined)) {
+  const pdsStatePath = options.pdsStatePath as string | undefined;
+  // Relay-only: no TCP listener. associateConfirm arrives via relay →
+  // app.fetch programmatic. subscribeRepos firehose is wired via
+  // directSubscriptionHandler (in-process callback, no loopback WS).
+  const pdsServe = createServe({ logger });
+  atprotoAgent = await createLocalPDSAgent({
+    logger, keypair,
+    serve: pdsServe,
+    plcDirectoryUrl,
+    ingressProxyHost,
+    storagePath: pdsStatePath,
+    associateServiceId: BIDDER_ASSOC_SERVICE,
+  });
+  await atprotoAgent.beginServe();
+  _deferredPdsPort = pdsServe.tcpPort;
+  isLocal = true;
+  const relayHost: string = (atprotoAgent as { relay?: { ingressHost?: string } }).relay?.ingressHost ?? "";
+  if (relayHost) {
+    pdsHostname = relayHost;
+  }
+} else {
+  // QR-based OAuth — default: scan with phone, session transferred via qr.fedfork.com
   // Register DID on PLC (needed for service auth JWT verification)
   const plcClient = createPlcDirectoryClient({ plcDirectoryUrl });
   const genesisOp = await createGenesisOp({
@@ -270,32 +291,6 @@ if ((options.atprotoOauth as boolean)) {
     pdsHostname = undefined;
     logger.info("oauth_qr_session_ready", { userDid: session.userDid, handle: session.handle });
   }
-} else if ((options.atprotoHandle as string | undefined) && (options.atprotoPassword as string | undefined)) {
-  const pdsStatePath = options.pdsStatePath as string | undefined;
-  // Relay-only: no TCP listener. associateConfirm arrives via relay →
-  // app.fetch programmatic. subscribeRepos firehose is wired via
-  // directSubscriptionHandler (in-process callback, no loopback WS).
-  const pdsServe = createServe({ logger });
-  atprotoAgent = await createLocalPDSAgent({
-    logger, keypair,
-    serve: pdsServe,
-    plcDirectoryUrl,
-    ingressProxyHost,
-    storagePath: pdsStatePath,
-    associateServiceId: BIDDER_ASSOC_SERVICE,
-  });
-  await atprotoAgent.beginServe();
-  _deferredPdsPort = pdsServe.tcpPort;
-  isLocal = true;
-  const relayHost: string = (atprotoAgent as { relay?: { ingressHost?: string } }).relay?.ingressHost ?? "";
-  if (relayHost) {
-    pdsHostname = relayHost;
-  }
-}
-
-if (!atprotoAgent) {
-  logger.error("no atproto agent configured — need --atproto-oauth (with --atproto-handle), --atproto-handle + --atproto-password, or local PDS");
-  Deno.exit(1);
 }
 const atproto = await createATProto({
   logger,
