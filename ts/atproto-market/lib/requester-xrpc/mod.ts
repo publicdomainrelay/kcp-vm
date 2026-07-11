@@ -981,9 +981,10 @@ export async function runComputeContract(
       }
     }
 
-    // Compute FQDN from guest's did:plc subdomain
-    const guestDidPlcSubdomain = guestDidPlc.replaceAll(":", "-").toLowerCase();
-    vmFqdn = `${guestDidPlcSubdomain}.${ingressProxyHost}`;
+    // Compute FQDN from guest's did:key subdomain — matches the tunnel subscriber's
+    // dispatcher registration identity (did:key, not did:plc).
+    const guestDidKeySubdomain = guestSigningKeyDid.replaceAll(":", "-").toLowerCase();
+    vmFqdn = `${guestDidKeySubdomain}.${ingressProxyHost}`;
 
     const ssh = await sshProvider.generateKeypair(vmName);
     privateKeyPath = ssh.privateKeyPath;
@@ -992,7 +993,7 @@ export async function runComputeContract(
       publicKey: ssh.publicKey,
       vmFqdn,
       guestDidPlc,
-      hint: `ssh -i ${privateKeyPath} -o ProxyCommand='websocat --binary - ws-c:tcp:${ingressProxyHost}:80 --ws-c-uri=ws://${guestDidPlcSubdomain}.${ingressProxyHost}/xrpc/com.fedproxy.temp.xrpc.tunnel' root@${vmFqdn}`,
+      hint: `ssh -i ${privateKeyPath} -o ProxyCommand='websocat --binary - ws-c:tcp:${ingressProxyHost}:80 --ws-c-uri=ws://${guestDidKeySubdomain}.${ingressProxyHost}/xrpc/com.fedproxy.temp.xrpc.tunnel' root@${vmFqdn}`,
     });
 
     // Always use tunnel-subscriber (did-key-ingress-proxy) — never fedproxy-client.
