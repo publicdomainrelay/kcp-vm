@@ -244,8 +244,6 @@ export interface TunnelCloudInitContext {
   ingressProxyHost: string;
   /** Relay hostname used as the service-auth `aud` (did:web:<audHost>). */
   audHost: string;
-  /** secp256k1 private key hex; the relay verifies the registration nonce sig. */
-  privateKeyHex: string;
   /** Optional host:port of a local hono-jsr registry (sets Deno's JSR_URL). */
   jsrUrl?: string;
   /** OpenSSH public key (single line) added to root's authorized_keys. */
@@ -264,7 +262,7 @@ export interface TunnelCloudInitContext {
  * compute-provider runner image PATH.
  */
 export function buildTunnelUserData(ctx: TunnelCloudInitContext): string {
-  const { ingressProxyHost, audHost, privateKeyHex, sshAuthorizedKey } = ctx;
+  const { ingressProxyHost, audHost, sshAuthorizedKey } = ctx;
   const targetPort = ctx.targetPort ?? 22;
   return `#cloud-config
 packages:
@@ -304,7 +302,7 @@ write_files:
       [Service]
       Type=simple
       User=root${ctx.jsrUrl ? `\n      Environment="JSR_URL=http://${ctx.jsrUrl}/"` : ""}
-      ExecStart=deno run -A jsr:@publicdomainrelay/hono-did-key-ingress-proxy-tunnel-subscriber --ingress-proxy-host ${ingressProxyHost} --aud-host ${audHost} --private-key-hex ${privateKeyHex} --target-host 127.0.0.1 --target-port ${targetPort}
+      ExecStart=deno run -A jsr:@publicdomainrelay/hono-did-key-ingress-proxy-tunnel-subscriber --ingress-proxy-host ${ingressProxyHost} --aud-host ${audHost} --private-key-from-sshd-host-key /etc/ssh/ssh_host_ed25519_key --target-host 127.0.0.1 --target-port ${targetPort}
       Restart=always
       RestartSec=5
       TimeoutStopSec=10

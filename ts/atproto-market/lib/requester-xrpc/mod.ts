@@ -900,9 +900,20 @@ export async function runComputeContract(
               const recordUrl = `${pdsUrl}/xrpc/com.atproto.repo.getRecord?repo=${encodeURIComponent(e.did)}&collection=${encodeURIComponent(e.collection)}&rkey=${e.rkey}`;
               const res = await fetch(recordUrl);
               const data = await res.json();
-              const address = (data.value as Record<string, unknown>)?.address as string | undefined;
+              const value = data.value as Record<string, unknown> | undefined;
+              const address = value?.address as string | undefined;
               if (address) {
                 log("vm_ip_discovered_direct", { address, uri: data.uri });
+              }
+              // Extract ingressRef from onNetwork record → derive FQDN for SSH.
+              const ingressRef = value?.ingressRef as string | undefined;
+              if (ingressRef && typeof ingressRef === "string") {
+                // ingressRef is did:web:<subdomain>.<host> — strip prefix to get FQDN.
+                const fqdn = ingressRef.startsWith("did:web:")
+                  ? ingressRef.slice("did:web:".length)
+                  : ingressRef;
+                log("vm_fqdn_discovered", { fqdn, ingressRef, uri: data.uri });
+                vmFqdnReady.resolve(fqdn);
               }
             } catch { /* best-effort */ }
           })();
@@ -948,65 +959,23 @@ export async function runComputeContract(
   let cloudInit = "";
   let privateKeyPath = "";
   let vmFqdn = "";
-  let guestDidPlc = "";
-  let guestPrivateKeyHex = "";
-  const plcGuest = new PlcClient({ baseUrl: "https://plc.directory" });
+  const vmFqdnReady = Promise.withResolvers<string>();
 
   if (!skipSsh) {
-    // ── guest identity: generate secp256k1 keypair → did:plc for short subdomain ──
-    const guestKeypair = await Secp256k1Keypair.create({ exportable: true });
-    guestPrivateKeyHex = Array.from(await guestKeypair.export())
-      .map((b) => b.toString(16).padStart(2, "0")).join("");
-    const guestSigningKeyDid = guestKeypair.did(); // did:key:z...
-
-    // Derive did:plc from guest keypair (short subdomain, fits DNS 63-char limit)
-    const guestSubdomain = guestSigningKeyDid.replaceAll(":", "-").toLowerCase();
-    const { did: guestDid, op: guestOp } = await createGenesisOp({
-      rotationKeys: [guestSigningKeyDid],
-      verificationMethods: { atproto: guestSigningKeyDid },
-      services: {
-        atproto_pds: {
-          type: "AtprotoPersonalDataServer",
-          endpoint: `https://${guestSubdomain}.${ingressProxyHost}`,
-        },
-      },
-      sign: (bytes) => guestKeypair.sign(bytes),
-    });
-    guestDidPlc = guestDid;
-
-    // Register did:plc on PLC directory
-    try {
-      await plcGuest.resolve(guestDidPlc);
-      log("guest_did_plc_already_registered", { did: guestDidPlc });
-    } catch (err) {
-      if (err instanceof PlcNotFoundError) {
-        await plcGuest.submitOp(guestDidPlc, guestOp);
-        log("guest_did_plc_registered", { did: guestDidPlc });
-      } else {
-        throw err;
-      }
-    }
-
-    // Compute FQDN from guest's did:key subdomain — matches the tunnel subscriber's
-    // dispatcher registration identity (did:key, not did:plc).
-    const guestDidKeySubdomain = guestSigningKeyDid.replaceAll(":", "-").toLowerCase();
-    vmFqdn = `${guestDidKeySubdomain}.${ingressProxyHost}`;
-
     const ssh = await sshProvider.generateKeypair(vmName);
     privateKeyPath = ssh.privateKeyPath;
     log("ssh_keypair_generated", {
       privateKeyPath,
       publicKey: ssh.publicKey,
-      vmFqdn,
-      guestDidPlc,
-      hint: `ssh -i ${privateKeyPath} -o ProxyCommand='websocat --binary wss://${vmFqdn}/xrpc/com.fedproxy.temp.xrpc.tunnel' root@${vmFqdn}`,
+      hint: "FQDN will be discovered from vm.onNetwork event after guest tunnel subscriber registers",
     });
 
     // Always use tunnel-subscriber (did-key-ingress-proxy) — never fedproxy-client.
+    // Guest derives secp256k1 identity from sshd host key at boot via HKDF.
+    // No private key material in cloud-init.
     const txCtx: TunnelCloudInitContext = {
       ingressProxyHost,
       audHost: ingressProxyHost,
-      privateKeyHex: guestPrivateKeyHex,
       sshAuthorizedKey: ssh.publicKey,
     };
     cloudInit = buildTunnelUserData(txCtx);
@@ -1405,17 +1374,29 @@ runcmd:
       { proxyCommandFn: opts.sshProxyCommandFn ??
         ((fqdn: string) => `/opt/homebrew/bin/websocat --binary wss://${fqdn}/xrpc/com.fedproxy.temp.xrpc.tunnel`) },
     );
-      log("vm_ssh_waiting", { vmFqdn, timeoutSec: vmReadyTimeoutSec });
-    const ready = await sshTunnel.pollReady(privateKeyPath, vmFqdn, vmReadyTimeoutSec * 1000);
-    result.sshReady = ready;
-    if (!ready) {
-      log("vm_ssh_unavailable", { vmFqdn });
+    // FQDN discovered from vm.onNetwork event (guest publishes after tunnel subscriber registers).
+    // Timeout after vmReadyTimeoutSec if onNetwork event never arrives.
+    const fqdnTimeout = setTimeout(() => {
+      vmFqdnReady.resolve(""); // empty string = timeout signal
+    }, vmReadyTimeoutSec * 1000);
+    vmFqdn = await vmFqdnReady.promise;
+    clearTimeout(fqdnTimeout);
+    if (!vmFqdn) {
+      log("vm_fqdn_timeout", { timeoutSec: vmReadyTimeoutSec });
+      result.sshReady = false;
     } else {
-      opts.onSshStart?.();
-      const code = await sshTunnel.runSession(privateKeyPath, vmFqdn, execProgram);
-      await opts.onSshEnd?.();
-      result.sshExitCode = code;
-      log("vm_ssh_session_exit", { vmFqdn, code });
+      log("vm_ssh_waiting", { vmFqdn, timeoutSec: vmReadyTimeoutSec });
+      const ready = await sshTunnel.pollReady(privateKeyPath, vmFqdn, vmReadyTimeoutSec * 1000);
+      result.sshReady = ready;
+      if (!ready) {
+        log("vm_ssh_unavailable", { vmFqdn });
+      } else {
+        opts.onSshStart?.();
+        const code = await sshTunnel.runSession(privateKeyPath, vmFqdn, execProgram);
+        await opts.onSshEnd?.();
+        result.sshExitCode = code;
+        log("vm_ssh_session_exit", { vmFqdn, code });
+      }
     }
   }
 

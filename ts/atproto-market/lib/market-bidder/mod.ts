@@ -23,6 +23,7 @@ import {
   BADGE_BLUE_KEYS_NSID,
   ACCEPT_NSID,
   EVENT_NSID,
+  COMPUTE_EVENTS_VM_ONNETWORK_NSID,
 } from "@publicdomainrelay/market-lexicons";
 import type { StructuredLoggerInterface } from "@publicdomainrelay/logger";
 import type { IngressRef, ServeHandle } from "@publicdomainrelay/serve";
@@ -461,6 +462,36 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
           : undefined,
       });
       serve.app.route("/", factory.createApp() as never);
+
+      // Guest event endpoint — VM calls back at boot to report onNetwork address.
+      serve.app.post("/v1/on-network", async (c) => {
+        let body: { address?: string; createdAt?: string };
+        try { body = await c.req.json(); } catch {
+          return c.json({ error: "InvalidRequest" }, 400);
+        }
+        // Match to most recently provisioned active contract
+        const contracts = [...activeContracts.entries()];
+        const contract = contracts.sort(([, a], [, b]) =>
+          (b.acceptedAt ?? "").localeCompare(a.acceptedAt ?? ""))[0];
+        if (!contract) {
+          return c.json({ error: "NoActiveContract" }, 404);
+        }
+        const [receiptKey, entry] = contract;
+        const nowIso = body.createdAt ?? new Date().toISOString();
+        const { uri, cid } = await atproto.createRepoRecord(
+          COMPUTE_EVENTS_VM_ONNETWORK_NSID,
+          { $type: COMPUTE_EVENTS_VM_ONNETWORK_NSID, address: body.address, createdAt: nowIso },
+        );
+        // Wrap in market.event and submit via firehose + optional XRPC push
+        const { uri: eventUri, cid: eventCid, record: eventRecord } = await atproto.createSignedRepoRecord(
+          EVENT_NSID, {
+            $type: EVENT_NSID,
+            receipt: { $type: "com.atproto.repo.strongRef", uri: entry.receiptUri, cid: entry.receiptCid },
+            payload: { $type: "com.atproto.repo.strongRef", uri, cid },
+          }, relay?.ingressRef ?? "");
+        log("info", "guest.onNetwork recorded", { receiptKey, uri, address: body.address });
+        return c.json({ ok: true, uri, cid, eventUri, eventCid });
+      });
     }
 
     if (merged.rfpCallbacks && eventStreams) {
