@@ -689,7 +689,7 @@ export function createSshSessionProvider(
           `root@${fqdn}`,
           "true",
         ],
-        stdout: "null",
+        stdout: "piped",
         stderr: "piped",
       });
       const { code, stderr } = await cmd.output();
