@@ -126,6 +126,10 @@ export interface RequesterPDS {
   rejectAssociation(err: Error): void;
   /** Release storage resources (close Deno.Kv if using DenoKvStorage). */
   dispose(): Promise<void>;
+  /** iroh nodeId promise — resolves when guest publishes its identity via firehose. */
+  irohNodeId?: Promise<string>;
+  /** Resolve the iroh nodeId promise. No-op after first call. */
+  resolveIrohNodeId?(nodeId: string): void;
 }
 
 export interface SshSessionProvider {

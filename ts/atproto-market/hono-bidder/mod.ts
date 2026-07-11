@@ -221,7 +221,7 @@ if ((options.atprotoOauth as boolean)) {
 
   // Try restoring saved OAuth QR session
   const _restoredAgent = await tryRestoreOAuthQRSession({
-    logger, label: "bidder",
+    logger, label: "bidder", handle: options.atprotoHandle as string | undefined,
     autoRefreshThresholdMs: AUTO_REFRESH_THRESHOLD_MS,
     // No onSessionExpired here — restore handles expiry internally
     // (delete file, return null → falls through to QR auth).
@@ -259,12 +259,12 @@ if ((options.atprotoOauth as boolean)) {
       logger,
       autoRefreshThresholdMs: AUTO_REFRESH_THRESHOLD_MS,
       onSessionExpired: createSessionExpiredHandler("bidder"),
-      saveSession: (s) => saveOAuthQRSession(s, { label: "bidder" }),
+      saveSession: (s) => saveOAuthQRSession(s, { label: "bidder", handle: s.handle }),
     });
     atprotoAgent = oauthAgent;
 
     // Persist session for future restarts
-    await saveOAuthQRSession(session, { label: "bidder" });
+    await saveOAuthQRSession(session, { label: "bidder", handle: session.handle });
 
     isOAuth = true;
     pdsHostname = undefined;

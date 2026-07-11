@@ -6,9 +6,17 @@ import { createOAuthAgentFromSession, OAuthSessionExpiredError } from "./agent.t
 export { OAuthSessionExpiredError };
 export type { OAuthSessionData };
 
-function defaultSessionPath(label?: string): string {
+function defaultSessionPath(label?: string, handle?: string): string {
   const home = (() => { try { return Deno.env.get("HOME") || Deno.env.get("USERPROFILE") || "/tmp"; } catch { return "/tmp"; } })();
-  const name = label ? `oauth-qr-session-${label}.json` : "oauth-qr-session.json";
+  const safe = (s: string) => s.replace(/[^a-zA-Z0-9_-]/g, "_");
+  let name: string;
+  if (label && handle) {
+    name = `oauth-qr-session-${safe(label)}-${safe(handle)}.json`;
+  } else if (label) {
+    name = `oauth-qr-session-${label}.json`;
+  } else {
+    name = "oauth-qr-session.json";
+  }
   return `${home}/.cache/pdr-market/${name}`;
 }
 
@@ -17,10 +25,12 @@ export async function tryRestoreOAuthQRSession(opts: {
   logger?: StructuredLoggerInterface;
   sessionPath?: string;
   label?: string;
+  /** AT Protocol handle (e.g. "alice.bsky.social") — keys the cache file per account. */
+  handle?: string;
   autoRefreshThresholdMs?: number;
   onSessionExpired?: (err: OAuthSessionExpiredError) => void;
 }): Promise<(AtprotoAgentLike & { sessionData: OAuthSessionData; dispose(): void; proactiveRefresh(): Promise<void> }) | null> {
-  const path = opts.sessionPath ?? defaultSessionPath(opts.label);
+  const path = opts.sessionPath ?? defaultSessionPath(opts.label, opts.handle);
   let data: OAuthSessionData;
   try { data = JSON.parse(await Deno.readTextFile(path)) as OAuthSessionData; } catch { return null; }
   if (!data?.accessJwt) return null;
@@ -59,9 +69,9 @@ export async function tryRestoreOAuthQRSession(opts: {
 /** Save an OAuth QR session to disk. Called after a successful transfer. */
 export async function saveOAuthQRSession(
   session: OAuthSessionData,
-  opts?: { sessionPath?: string; label?: string },
+  opts?: { sessionPath?: string; label?: string; /** AT Protocol handle — keys the cache file per account. */ handle?: string },
 ): Promise<void> {
-  const path = opts?.sessionPath ?? defaultSessionPath(opts?.label);
+  const path = opts?.sessionPath ?? defaultSessionPath(opts?.label, opts?.handle);
   const dir = path.split("/").slice(0, -1).join("/");
   try { await Deno.mkdir(dir, { recursive: true }); } catch { /* ignore */ }
   await Deno.writeTextFile(path, JSON.stringify(session, null, 2));

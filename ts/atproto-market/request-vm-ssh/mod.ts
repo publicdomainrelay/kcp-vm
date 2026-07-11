@@ -201,7 +201,7 @@ if ((options.atprotoOauth as boolean) && (options.atprotoHandle as string | unde
   let _restoredOAuthAgent: any = null;
   let _session: any = null;
   const _restoredAgent = await tryRestoreOAuthQRSession({
-    logger, label: "requester",
+    logger, label: "requester", handle: options.atprotoHandle as string | undefined,
     autoRefreshThresholdMs: AUTO_REFRESH_THRESHOLD_MS,
     // No onSessionExpired here — restore handles expiry internally
     // (delete file, return null → falls through to QR auth).
@@ -256,12 +256,12 @@ if ((options.atprotoOauth as boolean) && (options.atprotoHandle as string | unde
       logger,
       autoRefreshThresholdMs: AUTO_REFRESH_THRESHOLD_MS,
       onSessionExpired: createSessionExpiredHandler("requester"),
-      saveSession: (s) => saveOAuthQRSession(s, { label: "requester" }),
+      saveSession: (s) => saveOAuthQRSession(s, { label: "requester", handle: s.handle }),
     });
     _oauthAgentForDispose = oauthAgent;
     (pds as unknown as Record<string, unknown>).oauthAgent = oauthAgent;
     (pds as unknown as Record<string, unknown>).oauthSession = _session;
-    await saveOAuthQRSession(_session, { label: "requester" });
+    await saveOAuthQRSession(_session, { label: "requester", handle: _session.handle });
     logger.info("oauth_qr_session_ready", { userDid: _session.userDid, handle: _session.handle });
   }
 

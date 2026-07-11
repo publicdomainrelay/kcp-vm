@@ -198,8 +198,8 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
             _cid: payloadRef.cid,
           };
           const result = await computeProvider.provision(vmWithBundle as Parameters<ComputeProvider["provision"]>[0], issuerDid);
-          cbLog("info", "bidder provisioned VM", { providerId: result.providerId });
-          return result.providerId;
+          cbLog("info", "bidder provisioned VM", { providerId: result.providerId, metadata: result.metadata });
+          return { providerId: result.providerId, metadata: result.metadata };
         })(),
         new Promise<undefined>((_, reject) =>
           setTimeout(() => reject(new Error("provisioning timed out after 10 minutes")), 600_000)
@@ -242,28 +242,44 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
     });
 
     onContractChange?.({ type: "accepted", key: rk, receiptUri, receiptCid, acceptAuthor: issuerDid, acceptedAt: nowIso });
-    providerIdPromise.then((providerId) => {
+    providerIdPromise.then(async (provisionResult) => {
+      const providerId = provisionResult?.providerId;
+      const provisionIp = (provisionResult?.metadata?.ip) as string | undefined;
       onContractChange?.({
         type: providerId ? "provisioned" : "provisioning-failed",
         key: rk, receiptUri, receiptCid, acceptAuthor: issuerDid, acceptedAt: nowIso, providerId,
       });
 
-      // Push vm.onNetwork event back to requester when provision succeeds
+      // Always emit vm.onNetwork via firehose (record on bidder PDS, firehose distributes).
+      // Previously gated on submitEventUrl which is empty with --no-ingress-proxy.
       if (providerId && !registered.has(rk)) {
         registered.add(rk);
-        const submitEventUrl = (accept as { submitEvent?: string }).submitEvent;
-        if (submitEventUrl) {
-          const nowIso = new Date().toISOString();
-          createRepoRecord(COMPUTE_EVENTS_VM_ONNETWORK_NSID, {
-            $type: COMPUTE_EVENTS_VM_ONNETWORK_NSID,
-            createdAt: nowIso,
-          }).then(({ uri: vmOnNetworkUri, cid: vmOnNetworkCid }) => {
-            return createSignedRepoRecord(EVENT_NSID, {
-              $type: EVENT_NSID,
-              receipt: strongRef(receiptUri, receiptCid),
-              payload: strongRef(vmOnNetworkUri, vmOnNetworkCid),
-            }, relay.ingressRef);
-          }).then(({ uri: eventUri, cid: eventCid, record: eventRecord }) => {
+        const nowIso = new Date().toISOString();
+
+        // Write IP to shared file for requester (no-ingress-proxy direct SSH).
+        if (provisionIp) {
+          try {
+            const ipFile = `/tmp/pdr-vm-ip-${receiptUri.split("/").pop()}.txt`;
+            await Deno.writeTextFile(ipFile, provisionIp + "\n");
+            cbLog("info", "vm ip written to shared file", { ipFile, ip: provisionIp });
+          } catch { /* best-effort */ }
+        }
+        createRepoRecord(COMPUTE_EVENTS_VM_ONNETWORK_NSID, {
+          $type: COMPUTE_EVENTS_VM_ONNETWORK_NSID,
+          address: provisionIp,
+          createdAt: nowIso,
+        }).then(({ uri: vmOnNetworkUri, cid: vmOnNetworkCid }) => {
+          return createSignedRepoRecord(EVENT_NSID, {
+            $type: EVENT_NSID,
+            receipt: strongRef(receiptUri, receiptCid),
+            payload: strongRef(vmOnNetworkUri, vmOnNetworkCid),
+          }, relay.ingressRef);
+        }).then(({ uri: eventUri, cid: eventCid, record: eventRecord }) => {
+          cbLog("info", "vm.onNetwork event created on PDS (firehose)", { receiptKey: rk, ip: provisionIp, eventUri });
+
+          // Best-effort: also push via submitEvent XRPC if endpoint available.
+          const submitEventUrl = (accept as { submitEvent?: string }).submitEvent;
+          if (submitEventUrl) {
             callService(submitEventUrl, SUBMIT_EVENT_NSID, SUBMIT_EVENT_LXM, {
               uri: eventUri, cid: eventCid, record: eventRecord,
             }).then(() => {
@@ -271,10 +287,10 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
             }).catch((err: unknown) => {
               cbLog("error", "failed to submit vm.onNetwork event", { receiptKey: rk, error: String(err) });
             });
-          }).catch((err: unknown) => {
-            cbLog("error", "vm.onNetwork record creation failed", { receiptKey: rk, error: String(err) });
-          });
-        }
+          }
+        }).catch((err: unknown) => {
+          cbLog("error", "vm.onNetwork record creation failed", { receiptKey: rk, error: String(err) });
+        });
       }
     });
 

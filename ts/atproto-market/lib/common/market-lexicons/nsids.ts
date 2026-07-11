@@ -60,3 +60,6 @@ export const PACKAGE_REGISTRY_RELEASE_NSID = "com.publicdomainrelay.temp.package
 export const REGISTER_IDENTITY_NSID = "com.publicdomainrelay.temp.market.registerIdentity";
 export const COMPUTE_EVENTS_VM_ONNETWORK_NSID = "com.publicdomainrelay.temp.compute.events.vm.onNetwork";
 export const COMPUTE_EVENTS_VM_STARTED_NSID = "com.publicdomainrelay.temp.compute.events.vm.started";
+export const COMPUTE_EVENTS_VM_REGISTER_IDENTITY_NSID = "com.publicdomainrelay.temp.compute.events.vm.registerIdentity";
+export const GUEST_ONNETWORK_NSID = "com.publicdomainrelay.temp.guest.onNetwork";
+export const GUEST_REGISTER_IDENTITY_NSID = "com.publicdomainrelay.temp.guest.registerIdentity";

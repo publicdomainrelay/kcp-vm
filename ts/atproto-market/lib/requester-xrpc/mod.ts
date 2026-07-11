@@ -36,6 +36,8 @@ import {
   OFFERING_NSID,
   EVENT_NSID,
   COMPUTE_EVENTS_VM_DELETE_NSID,
+  COMPUTE_EVENTS_VM_ONNETWORK_NSID,
+  COMPUTE_EVENTS_VM_REGISTER_IDENTITY_NSID,
   SUBMIT_RFP_NSID,
   SUBMIT_BID_NSID,
   SUBMIT_ACCEPT_NSID,
@@ -48,7 +50,7 @@ import {
 } from "@publicdomainrelay/market-common";
 import type { StrongRef } from "@publicdomainrelay/market-common";
 import { DYNAMIC } from "@publicdomainrelay/market-policy-abc";
-import { buildDefaultUserData, patchDefaultUserData, flattenLabel, type CloudInitContext } from "@publicdomainrelay/cloud-init-common";
+import { buildDefaultUserData, patchDefaultUserData, buildTunnelUserData, flattenLabel, type CloudInitContext, type TunnelCloudInitContext } from "@publicdomainrelay/cloud-init-common";
 import {
   FEDPROXY_RBAC_NSID,
   buildSshKeyRbacRecord,
@@ -725,6 +727,43 @@ export function createSshSessionProvider(
 }
 
 // ---------------------------------------------------------------------------
+// direct SSH (no relay tunnel — used with --no-ingress-proxy)
+// ---------------------------------------------------------------------------
+
+async function pollDirectSsh(host: string, port: number, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const conn = await Deno.connect({ hostname: host, port });
+      conn.close();
+      return true;
+    } catch {
+      await new Promise((r) => setTimeout(r, 5000));
+    }
+  }
+  return false;
+}
+
+async function runDirectSsh(privateKeyPath: string, host: string, program: string): Promise<number> {
+  const args = [
+    "-o", `IdentityFile=${privateKeyPath}`,
+    "-o", "IdentitiesOnly=yes",
+    "-o", "StrictHostKeyChecking=no",
+    "-o", "UserKnownHostsFile=/dev/null",
+    "-o", "LogLevel=ERROR",
+  ];
+  if (Deno.stdin.isTerminal()) {
+    args.push("-tt", `root@${host}`);
+  } else {
+    args.push(`root@${host}`, program);
+  }
+  const cmd = new Deno.Command("ssh", { args, stdin: "inherit", stdout: "inherit", stderr: "inherit" });
+  const child = cmd.spawn();
+  const { code } = await child.status;
+  return code;
+}
+
+// ---------------------------------------------------------------------------
 // websocat bootstrap
 // ---------------------------------------------------------------------------
 
@@ -819,13 +858,14 @@ export async function runComputeContract(
 
   // Start firehose watcher BEFORE RFP creation — watch BID + ACCEPT + RECEIPT.
   if (eventStreams) {
-    const watched = [BID_NSID, ACCEPT_NSID, EVENT_NSID];
+    const watched = [BID_NSID, ACCEPT_NSID, EVENT_NSID, COMPUTE_EVENTS_VM_ONNETWORK_NSID];
     bidWatcher = eventStreams.watch({
       wantedCollections: watched,
       onEvent: (e) => {
         if (e.operation !== "create") return;
         if (!_rfpUri) return;
-        if (e.collection !== BID_NSID) return;
+        // BID_NSID: collect bids referencing our RFP
+        if (e.collection === BID_NSID) {
         (async () => {
           try {
             const doc = await idResolver.did.resolve(e.did);
@@ -845,6 +885,80 @@ export async function runComputeContract(
             log("firehose_bid_discovered", { bidUri: data.uri, rfpUri: _rfpUri, bidderDid: e.did });
           } catch { /* best-effort */ }
         })();
+        }
+        // EVENT_NSID: extract vm.onNetwork IP for direct SSH when ingress proxy unavailable
+        if (e.collection === EVENT_NSID) {
+          (async () => {
+            try {
+              const doc = await idResolver.did.resolve(e.did);
+              if (!doc) return;
+              const pdsUrl = getPdsEndpoint(doc);
+              if (!pdsUrl) return;
+              const recordUrl = `${pdsUrl}/xrpc/com.atproto.repo.getRecord?repo=${encodeURIComponent(e.did)}&collection=${encodeURIComponent(e.collection)}&rkey=${e.rkey}`;
+              const res = await fetch(recordUrl);
+              const data = await res.json();
+              const val = data.value as Record<string, unknown> | undefined;
+              if (!val) return;
+              // Check receipt matches our contract
+              const receiptRef = val.receipt as { uri?: string } | undefined;
+              if (!receiptRef?.uri) return;
+              // Resolve payload to check if it's a vm.onNetwork record
+              const payloadRef = val.payload as { uri?: string } | undefined;
+              if (!payloadRef?.uri) return;
+              const payloadColl = payloadRef.uri.split("/")[3];
+              if (payloadColl !== COMPUTE_EVENTS_VM_ONNETWORK_NSID) return;
+              // Fetch the vm.onNetwork record for the IP
+              const [payloadRepo] = [payloadRef.uri.split("/")[2]];
+              const rkey = payloadRef.uri.split("/").pop()!;
+              const payloadUrl = `${pdsUrl}/xrpc/com.atproto.repo.getRecord?repo=${encodeURIComponent(payloadRepo)}&collection=${encodeURIComponent(payloadColl)}&rkey=${rkey}`;
+              const payloadRes = await fetch(payloadUrl);
+              const payloadData = await payloadRes.json();
+              const address = (payloadData.value as Record<string, unknown>)?.address as string | undefined;
+              if (address) {
+                directVmHost = address;
+                log("vm_ip_discovered", { address, eventUri: data.uri });
+              }
+            } catch { /* best-effort */ }
+          })();
+        }
+        // COMPUTE_EVENTS_VM_ONNETWORK_NSID: direct vm.onNetwork record (no EVENT_NSID wrapper)
+        if (e.collection === COMPUTE_EVENTS_VM_ONNETWORK_NSID) {
+          (async () => {
+            try {
+              const doc = await idResolver.did.resolve(e.did);
+              if (!doc) return;
+              const pdsUrl = getPdsEndpoint(doc);
+              if (!pdsUrl) return;
+              const recordUrl = `${pdsUrl}/xrpc/com.atproto.repo.getRecord?repo=${encodeURIComponent(e.did)}&collection=${encodeURIComponent(e.collection)}&rkey=${e.rkey}`;
+              const res = await fetch(recordUrl);
+              const data = await res.json();
+              const address = (data.value as Record<string, unknown>)?.address as string | undefined;
+              if (address) {
+                directVmHost = address;
+                log("vm_ip_discovered_direct", { address, uri: data.uri });
+              }
+            } catch { /* best-effort */ }
+          })();
+        }
+        // REGISTER_IDENTITY: extract iroh nodeId
+        if (e.collection === COMPUTE_EVENTS_VM_REGISTER_IDENTITY_NSID) {
+          (async () => {
+            try {
+              const doc = await idResolver.did.resolve(e.did);
+              if (!doc) return;
+              const pdsUrl = getPdsEndpoint(doc);
+              if (!pdsUrl) return;
+              const recordUrl = `${pdsUrl}/xrpc/com.atproto.repo.getRecord?repo=${encodeURIComponent(e.did)}&collection=${encodeURIComponent(e.collection)}&rkey=${e.rkey}`;
+              const res = await fetch(recordUrl);
+              const data = await res.json();
+              const identity = (data.value as Record<string, unknown>)?.computeIdentity as Record<string, unknown> | undefined;
+              if (identity?.nodeId) {
+                log("iroh_node_id_firehose", { nodeId: identity.nodeId });
+                pds.resolveIrohNodeId?.(String(identity.nodeId));
+              }
+            } catch { /* best-effort */ }
+          })();
+        }
       },
       log: logger,
     });
@@ -867,35 +981,88 @@ export async function runComputeContract(
   let cloudInit = "";
   let privateKeyPath = "";
   let vmFqdn = "";
+  let directVmHost: string | undefined; // discovered from vm.onNetwork firehose event for direct SSH
+  let guestDidPlc = "";
+  let guestPrivateKeyHex = "";
+  const plcGuest = new PlcClient({ baseUrl: "https://plc.directory" });
 
   if (!skipSsh) {
-    vmFqdn = `${flattenLabel(vmName)}--${flattenLabel(pds.did)}.${fedingressHost}`;
+    // ── guest identity: generate secp256k1 keypair → did:plc for short subdomain ──
+    const guestKeypair = await Secp256k1Keypair.create({ exportable: true });
+    guestPrivateKeyHex = Array.from(await guestKeypair.export())
+      .map((b) => b.toString(16).padStart(2, "0")).join("");
+    const guestSigningKeyDid = guestKeypair.did(); // did:key:z...
+
+    // Derive did:plc from guest keypair (short subdomain, fits DNS 63-char limit)
+    const guestSubdomain = guestSigningKeyDid.replaceAll(":", "-").toLowerCase();
+    const { did: guestDid, op: guestOp } = await createGenesisOp({
+      rotationKeys: [guestSigningKeyDid],
+      verificationMethods: { atproto: guestSigningKeyDid },
+      services: {
+        atproto_pds: {
+          type: "AtprotoPersonalDataServer",
+          endpoint: `https://${guestSubdomain}.${ingressProxyHost}`,
+        },
+      },
+      sign: (bytes) => guestKeypair.sign(bytes),
+    });
+    guestDidPlc = guestDid;
+
+    // Register did:plc on PLC directory
+    try {
+      await plcGuest.resolve(guestDidPlc);
+      log("guest_did_plc_already_registered", { did: guestDidPlc });
+    } catch (err) {
+      if (err instanceof PlcNotFoundError) {
+        await plcGuest.submitOp(guestDidPlc, guestOp);
+        log("guest_did_plc_registered", { did: guestDidPlc });
+      } else {
+        throw err;
+      }
+    }
+
+    // Compute FQDN from guest's did:plc subdomain
+    const guestDidPlcSubdomain = guestDidPlc.replaceAll(":", "-").toLowerCase();
+    vmFqdn = `${guestDidPlcSubdomain}.${ingressProxyHost}`;
+
     const ssh = await sshProvider.generateKeypair(vmName);
     privateKeyPath = ssh.privateKeyPath;
     log("ssh_keypair_generated", {
       privateKeyPath,
       publicKey: ssh.publicKey,
       vmFqdn,
-      hint: `ssh -i ${privateKeyPath} -o ProxyCommand='websocat --binary wss://${vmFqdn}' root@${vmFqdn}`,
+      guestDidPlc,
+      hint: `ssh -i ${privateKeyPath} -o ProxyCommand='websocat --binary - ws-c:tcp:${ingressProxyHost}:80 --ws-c-uri=ws://${guestDidPlcSubdomain}.${ingressProxyHost}/xrpc/com.fedproxy.temp.xrpc.tunnel' root@${vmFqdn}`,
     });
 
-    const didPlcKey = pds.did.startsWith("did:plc:")
-      ? pds.did.slice("did:plc:".length)
-      : pds.did;
-    const ctx: CloudInitContext = {
-      vmName,
-      didPlc: pds.did,
-      didPlcKey,
-      relayHost: ingressProxyHost,
-      xrpcRelaySubdomain: relaySubdomain,
-      sshAuthorizedKey: ssh.publicKey,
-    };
-    cloudInit = opts.baseUserData
-      ? patchDefaultUserData(opts.baseUserData, ctx)
-      : buildDefaultUserData(ctx);
+    // Choose transport: tunnel-subscriber when ingress relay exists, fedproxy-client otherwise
+    const hasIngress = ingressRef && ingressRef.length > 0;
+    if (hasIngress) {
+      const txCtx: TunnelCloudInitContext = {
+        ingressProxyHost,
+        audHost: ingressProxyHost,
+        privateKeyHex: guestPrivateKeyHex,
+        jsrUrl: "http://jsr:5556",
+        sshAuthorizedKey: ssh.publicKey,
+      };
+      cloudInit = buildTunnelUserData(txCtx);
+    } else {
+      const didPlcKey = pds.did.startsWith("did:plc:")
+        ? pds.did.slice("did:plc:".length)
+        : pds.did;
+      const ctx: CloudInitContext = {
+        vmName,
+        didPlc: pds.did,
+        didPlcKey,
+        relayHost: ingressProxyHost,
+        xrpcRelaySubdomain: relaySubdomain,
+        sshAuthorizedKey: ssh.publicKey,
+      };
+      cloudInit = opts.baseUserData
+        ? patchDefaultUserData(opts.baseUserData, ctx)
+        : buildDefaultUserData(ctx);
+    }
     if (opts.userDataFactory) {
-      // userDataFactory replaces the default cloud-init — caller builds the
-      // guest transport replacement.
       cloudInit = opts.userDataFactory(ssh.publicKey);
     }
   } else {
@@ -1253,7 +1420,7 @@ runcmd:
       });
       const bindOk = verifyRemoteProof({
         subjectRecord: stripResolved(accept) as Record<string, unknown>,
-        subjectRepositoryDid: pds.did,
+        subjectRepositoryDid: atUriAuthority(acceptUri),
         proofRecord: receiptBare,
       });
       receiptOk = sigOk && bindOk;
@@ -1283,7 +1450,53 @@ runcmd:
   } else if (!receiptOk) {
     log("vm_poll_bailed", { reason: "no valid receipt", receiptUri, receiptCid });
   } else {
-    log("vm_ssh_waiting", { vmFqdn, timeoutSec: vmReadyTimeoutSec });
+    // Check for shared IP file written by bidder (--no-ingress-proxy direct SSH).
+    if (!directVmHost && receiptUri) {
+      const receiptRkey = receiptUri.split("/").pop()!;
+      const ipFile = `/tmp/pdr-vm-ip-${receiptRkey}.txt`;
+      try {
+        const ipContent = await Deno.readTextFile(ipFile).then(s => s.trim());
+        if (ipContent && /^\d+\.\d+\.\d+\.\d+$/.test(ipContent)) {
+          directVmHost = ipContent;
+          log("vm_ip_from_file", { ipFile, ip: directVmHost });
+        }
+      } catch { /* file not found — not yet provisioned */ }
+    }
+    // If no direct IP yet, poll for the IP file to appear.
+    if (!directVmHost && receiptUri) {
+      const receiptRkey = receiptUri.split("/").pop()!;
+      const ipFile = `/tmp/pdr-vm-ip-${receiptRkey}.txt`;
+      const deadline = Date.now() + 120_000; // 2 min for provisioning
+      while (Date.now() < deadline && !directVmHost) {
+        try {
+          const ipContent = await Deno.readTextFile(ipFile).then(s => s.trim());
+          if (ipContent && /^\d+\.\d+\.\d+\.\d+$/.test(ipContent)) {
+            directVmHost = ipContent;
+            log("vm_ip_from_file_poll", { ipFile, ip: directVmHost });
+            break;
+          }
+        } catch { /* not yet */ }
+        await new Promise(r => setTimeout(r, 2000));
+      }
+    }
+    // Choose SSH transport: direct IP if available, otherwise fedproxy relay.
+    if (directVmHost) {
+      // Direct SSH to container IP (discovered from vm.onNetwork firehose or shared file).
+      log("vm_ssh_waiting_direct", { host: directVmHost, timeoutSec: vmReadyTimeoutSec });
+      const ready = await pollDirectSsh(directVmHost, 22, vmReadyTimeoutSec * 1000);
+      result.sshReady = ready;
+      if (!ready) {
+        log("vm_ssh_unavailable_direct", { host: directVmHost });
+      } else {
+        opts.onSshStart?.();
+        const code = await runDirectSsh(privateKeyPath, directVmHost, execProgram);
+        await opts.onSshEnd?.();
+        result.sshExitCode = code;
+        log("vm_ssh_session_exit_direct", { host: directVmHost, code });
+      }
+    } else {
+      // Standard path: SSH through fedproxy relay tunnel (websocat ProxyCommand).
+      log("vm_ssh_waiting", { vmFqdn, timeoutSec: vmReadyTimeoutSec });
     const ready = await sshProvider.pollReady(privateKeyPath, vmFqdn, vmReadyTimeoutSec * 1000);
     result.sshReady = ready;
     if (!ready) {
@@ -1295,6 +1508,7 @@ runcmd:
       result.sshExitCode = code;
       log("vm_ssh_session_exit", { vmFqdn, code });
     }
+  }
   }
 
   // 11. Tear down VM via compute.events.vm.delete (unless --keep-vm).
