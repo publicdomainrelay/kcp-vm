@@ -993,7 +993,7 @@ export async function runComputeContract(
       publicKey: ssh.publicKey,
       vmFqdn,
       guestDidPlc,
-      hint: `ssh -i ${privateKeyPath} -o ProxyCommand='websocat --binary - ws-c:tcp:${ingressProxyHost}:80 --ws-c-uri=ws://${guestDidKeySubdomain}.${ingressProxyHost}/xrpc/com.fedproxy.temp.xrpc.tunnel' root@${vmFqdn}`,
+      hint: `ssh -i ${privateKeyPath} -o ProxyCommand='websocat --binary wss://${vmFqdn}/xrpc/com.fedproxy.temp.xrpc.tunnel' root@${vmFqdn}`,
     });
 
     // Always use tunnel-subscriber (did-key-ingress-proxy) — never fedproxy-client.
@@ -1397,7 +1397,7 @@ runcmd:
     const sshTunnel = opts.sshProvider ?? createSshSessionProvider(
       opts.logger,
       { proxyCommandFn: opts.sshProxyCommandFn ??
-        ((fqdn: string) => `websocat --binary - ws-c:tcp:${ingressProxyHost}:80 --ws-c-uri=ws://${fqdn}/xrpc/com.fedproxy.temp.xrpc.tunnel`) },
+        ((fqdn: string) => `websocat --binary wss://${fqdn}/xrpc/com.fedproxy.temp.xrpc.tunnel`) },
     );
       log("vm_ssh_waiting", { vmFqdn, timeoutSec: vmReadyTimeoutSec });
     const ready = await sshTunnel.pollReady(privateKeyPath, vmFqdn, vmReadyTimeoutSec * 1000);
