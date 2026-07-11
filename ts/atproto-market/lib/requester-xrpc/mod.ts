@@ -905,15 +905,12 @@ export async function runComputeContract(
               if (address) {
                 log("vm_ip_discovered_direct", { address, uri: data.uri });
               }
-              // Extract ingressRef from onNetwork record → derive FQDN for SSH.
-              const ingressRef = value?.ingressRef as string | undefined;
-              if (ingressRef && typeof ingressRef === "string") {
-                // ingressRef is did:web:<subdomain>.<host> — strip prefix to get FQDN.
-                const fqdn = ingressRef.startsWith("did:web:")
-                  ? ingressRef.slice("did:web:".length)
-                  : ingressRef;
-                log("vm_fqdn_discovered", { fqdn, ingressRef, uri: data.uri });
-                vmFqdnReady.resolve(fqdn);
+              // Extract address from onNetwork record → derive FQDN for SSH.
+              const address = value?.address as string | undefined;
+              if (address && typeof address === "string" && !vmFqdn) {
+                vmFqdn = address;
+                vmFqdnReady.resolve(address);
+                log("vm_fqdn_discovered", { fqdn: address, uri: data.uri });
               }
             } catch { /* best-effort */ }
           })();
