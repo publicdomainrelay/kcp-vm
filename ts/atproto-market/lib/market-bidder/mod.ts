@@ -256,9 +256,9 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
     // discoverOperatorDids returns empty at cold boot (badgeBlueKeys isn't
     // written until did-key-associate completes). When operators appear
     // later, load their vouch records so scope checks see the full chain.
-    if (operatorDids.length > 0 && vouchedDids && vouchedDids.size === 0) {
+    if (operatorDids.length > 0 && vouchedDids && vouchedDids!.size === 0) {
       await reloadVouchedDidsFromOperators(operatorDids);
-      logger.info("bidder vouch set lazy reloaded", { count: vouchedDids.size });
+      logger.info("bidder vouch set lazy reloaded", { count: vouchedDids!.size });
     }
     if (operatorDids.length > 0) {
       // In OAuth QR mode atproto.did IS the operator; always include it.

@@ -1,17 +1,9 @@
 // OAuth QR session persistence — save/reload sessions across CLI restarts.
 import type { StructuredLoggerInterface } from "@publicdomainrelay/logger";
-import type { AtprotoAgentLike } from "./agent.ts";
+import type { AtprotoAgentLike, OAuthSessionData } from "./agent.ts";
 import { createOAuthAgentFromSession } from "./agent.ts";
 
-export interface OAuthSessionData {
-  accessJwt: string;
-  refreshJwt: string;
-  userDid: string;
-  handle: string;
-  pds: string;
-  dpopPublicJwk: Record<string, string>;
-  dpopPrivateJwk: Record<string, string>;
-}
+export type { OAuthSessionData };
 
 function defaultSessionPath(label?: string): string {
   const home = (() => { try { return Deno.env.get("HOME") || Deno.env.get("USERPROFILE") || "/tmp"; } catch { return "/tmp"; } })();
