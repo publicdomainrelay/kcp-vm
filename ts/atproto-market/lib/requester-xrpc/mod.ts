@@ -995,33 +995,14 @@ export async function runComputeContract(
       hint: `ssh -i ${privateKeyPath} -o ProxyCommand='websocat --binary - ws-c:tcp:${ingressProxyHost}:80 --ws-c-uri=ws://${guestDidPlcSubdomain}.${ingressProxyHost}/xrpc/com.fedproxy.temp.xrpc.tunnel' root@${vmFqdn}`,
     });
 
-    // Choose transport: tunnel-subscriber when ingress relay exists, fedproxy-client otherwise
-    const hasIngress = ingressRef && ingressRef.length > 0;
-    if (hasIngress) {
-      const txCtx: TunnelCloudInitContext = {
-        ingressProxyHost,
-        audHost: ingressProxyHost,
-        privateKeyHex: guestPrivateKeyHex,
-        jsrUrl: "http://jsr:5556",
-        sshAuthorizedKey: ssh.publicKey,
-      };
-      cloudInit = buildTunnelUserData(txCtx);
-    } else {
-      const didPlcKey = pds.did.startsWith("did:plc:")
-        ? pds.did.slice("did:plc:".length)
-        : pds.did;
-      const ctx: CloudInitContext = {
-        vmName,
-        didPlc: pds.did,
-        didPlcKey,
-        relayHost: ingressProxyHost,
-        xrpcRelaySubdomain: relaySubdomain,
-        sshAuthorizedKey: ssh.publicKey,
-      };
-      cloudInit = opts.baseUserData
-        ? patchDefaultUserData(opts.baseUserData, ctx)
-        : buildDefaultUserData(ctx);
-    }
+    // Always use tunnel-subscriber (did-key-ingress-proxy) — never fedproxy-client.
+    const txCtx: TunnelCloudInitContext = {
+      ingressProxyHost,
+      audHost: ingressProxyHost,
+      privateKeyHex: guestPrivateKeyHex,
+      sshAuthorizedKey: ssh.publicKey,
+    };
+    cloudInit = buildTunnelUserData(txCtx);
     if (opts.userDataFactory) {
       cloudInit = opts.userDataFactory(ssh.publicKey);
     }
@@ -1411,14 +1392,20 @@ runcmd:
     log("vm_poll_bailed", { reason: "no valid receipt", receiptUri, receiptCid });
   } else {
       // SSH through fedproxy relay tunnel (websocat ProxyCommand).
+    // Default: dispatcher tunnel ProxyCommand. User override via sshProxyCommandFn wins.
+    const sshTunnel = opts.sshProvider ?? createSshSessionProvider(
+      opts.logger,
+      { proxyCommandFn: opts.sshProxyCommandFn ??
+        ((fqdn: string) => `websocat --binary - ws-c:tcp:${ingressProxyHost}:80 --ws-c-uri=ws://${fqdn}/xrpc/com.fedproxy.temp.xrpc.tunnel`) },
+    );
       log("vm_ssh_waiting", { vmFqdn, timeoutSec: vmReadyTimeoutSec });
-    const ready = await sshProvider.pollReady(privateKeyPath, vmFqdn, vmReadyTimeoutSec * 1000);
+    const ready = await sshTunnel.pollReady(privateKeyPath, vmFqdn, vmReadyTimeoutSec * 1000);
     result.sshReady = ready;
     if (!ready) {
       log("vm_ssh_unavailable", { vmFqdn });
     } else {
       opts.onSshStart?.();
-      const code = await sshProvider.runSession(privateKeyPath, vmFqdn, execProgram);
+      const code = await sshTunnel.runSession(privateKeyPath, vmFqdn, execProgram);
       await opts.onSshEnd?.();
       result.sshExitCode = code;
       log("vm_ssh_session_exit", { vmFqdn, code });
