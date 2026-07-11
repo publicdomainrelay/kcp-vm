@@ -901,10 +901,6 @@ export async function runComputeContract(
               const res = await fetch(recordUrl);
               const data = await res.json();
               const value = data.value as Record<string, unknown> | undefined;
-              const address = value?.address as string | undefined;
-              if (address) {
-                log("vm_ip_discovered_direct", { address, uri: data.uri });
-              }
               // Extract address from onNetwork record → derive FQDN for SSH.
               const address = value?.address as string | undefined;
               if (address && typeof address === "string" && !vmFqdn) {
