@@ -677,18 +677,21 @@ export function createSshSessionProvider(
     timeoutMs: number,
   ): Promise<boolean> {
     const proxyCmd = opts?.proxyCommandFn?.(fqdn);
+    log("ssh_poll_start", { fqdn, proxyCmd: proxyCmd?.slice(0, 150), timeoutMs });
     const deadline = Date.now() + timeoutMs;
     let attempt = 0;
     while (Date.now() < deadline) {
       attempt++;
+      const sshArgs = [
+        ...sshTunnelArgs(privateKeyPath, fqdn, proxyCmd),
+        "-o", "BatchMode=yes",
+        "-o", "ConnectTimeout=10",
+        `root@${fqdn}`,
+        "true",
+      ];
+      if (attempt === 1) log("ssh_poll_cmd", { args: sshArgs.slice(0, 6) });
       const cmd = new Deno.Command("ssh", {
-        args: [
-          ...sshTunnelArgs(privateKeyPath, fqdn, proxyCmd),
-          "-o", "BatchMode=yes",
-          "-o", "ConnectTimeout=10",
-          `root@${fqdn}`,
-          "true",
-        ],
+        args: sshArgs,
         stdout: "piped",
         stderr: "piped",
       });
