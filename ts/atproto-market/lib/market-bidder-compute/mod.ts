@@ -256,14 +256,6 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
         registered.add(rk);
         const nowIso = new Date().toISOString();
 
-        // Write IP to shared file for requester (no-ingress-proxy direct SSH).
-        if (provisionIp) {
-          try {
-            const ipFile = `/tmp/pdr-vm-ip-${receiptUri.split("/").pop()}.txt`;
-            await Deno.writeTextFile(ipFile, provisionIp + "\n");
-            cbLog("info", "vm ip written to shared file", { ipFile, ip: provisionIp });
-          } catch { /* best-effort */ }
-        }
         createRepoRecord(COMPUTE_EVENTS_VM_ONNETWORK_NSID, {
           $type: COMPUTE_EVENTS_VM_ONNETWORK_NSID,
           address: provisionIp,

@@ -727,43 +727,6 @@ export function createSshSessionProvider(
 }
 
 // ---------------------------------------------------------------------------
-// direct SSH (no relay tunnel — used with --no-ingress-proxy)
-// ---------------------------------------------------------------------------
-
-async function pollDirectSsh(host: string, port: number, timeoutMs: number): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const conn = await Deno.connect({ hostname: host, port });
-      conn.close();
-      return true;
-    } catch {
-      await new Promise((r) => setTimeout(r, 5000));
-    }
-  }
-  return false;
-}
-
-async function runDirectSsh(privateKeyPath: string, host: string, program: string): Promise<number> {
-  const args = [
-    "-o", `IdentityFile=${privateKeyPath}`,
-    "-o", "IdentitiesOnly=yes",
-    "-o", "StrictHostKeyChecking=no",
-    "-o", "UserKnownHostsFile=/dev/null",
-    "-o", "LogLevel=ERROR",
-  ];
-  if (Deno.stdin.isTerminal()) {
-    args.push("-tt", `root@${host}`);
-  } else {
-    args.push(`root@${host}`, program);
-  }
-  const cmd = new Deno.Command("ssh", { args, stdin: "inherit", stdout: "inherit", stderr: "inherit" });
-  const child = cmd.spawn();
-  const { code } = await child.status;
-  return code;
-}
-
-// ---------------------------------------------------------------------------
 // websocat bootstrap
 // ---------------------------------------------------------------------------
 
@@ -915,7 +878,6 @@ export async function runComputeContract(
               const payloadData = await payloadRes.json();
               const address = (payloadData.value as Record<string, unknown>)?.address as string | undefined;
               if (address) {
-                directVmHost = address;
                 log("vm_ip_discovered", { address, eventUri: data.uri });
               }
             } catch { /* best-effort */ }
@@ -934,7 +896,6 @@ export async function runComputeContract(
               const data = await res.json();
               const address = (data.value as Record<string, unknown>)?.address as string | undefined;
               if (address) {
-                directVmHost = address;
                 log("vm_ip_discovered_direct", { address, uri: data.uri });
               }
             } catch { /* best-effort */ }
@@ -981,7 +942,6 @@ export async function runComputeContract(
   let cloudInit = "";
   let privateKeyPath = "";
   let vmFqdn = "";
-  let directVmHost: string | undefined; // discovered from vm.onNetwork firehose event for direct SSH
   let guestDidPlc = "";
   let guestPrivateKeyHex = "";
   const plcGuest = new PlcClient({ baseUrl: "https://plc.directory" });
@@ -1450,52 +1410,7 @@ runcmd:
   } else if (!receiptOk) {
     log("vm_poll_bailed", { reason: "no valid receipt", receiptUri, receiptCid });
   } else {
-    // Check for shared IP file written by bidder (--no-ingress-proxy direct SSH).
-    if (!directVmHost && receiptUri) {
-      const receiptRkey = receiptUri.split("/").pop()!;
-      const ipFile = `/tmp/pdr-vm-ip-${receiptRkey}.txt`;
-      try {
-        const ipContent = await Deno.readTextFile(ipFile).then(s => s.trim());
-        if (ipContent && /^\d+\.\d+\.\d+\.\d+$/.test(ipContent)) {
-          directVmHost = ipContent;
-          log("vm_ip_from_file", { ipFile, ip: directVmHost });
-        }
-      } catch { /* file not found — not yet provisioned */ }
-    }
-    // If no direct IP yet, poll for the IP file to appear.
-    if (!directVmHost && receiptUri) {
-      const receiptRkey = receiptUri.split("/").pop()!;
-      const ipFile = `/tmp/pdr-vm-ip-${receiptRkey}.txt`;
-      const deadline = Date.now() + 120_000; // 2 min for provisioning
-      while (Date.now() < deadline && !directVmHost) {
-        try {
-          const ipContent = await Deno.readTextFile(ipFile).then(s => s.trim());
-          if (ipContent && /^\d+\.\d+\.\d+\.\d+$/.test(ipContent)) {
-            directVmHost = ipContent;
-            log("vm_ip_from_file_poll", { ipFile, ip: directVmHost });
-            break;
-          }
-        } catch { /* not yet */ }
-        await new Promise(r => setTimeout(r, 2000));
-      }
-    }
-    // Choose SSH transport: direct IP if available, otherwise fedproxy relay.
-    if (directVmHost) {
-      // Direct SSH to container IP (discovered from vm.onNetwork firehose or shared file).
-      log("vm_ssh_waiting_direct", { host: directVmHost, timeoutSec: vmReadyTimeoutSec });
-      const ready = await pollDirectSsh(directVmHost, 22, vmReadyTimeoutSec * 1000);
-      result.sshReady = ready;
-      if (!ready) {
-        log("vm_ssh_unavailable_direct", { host: directVmHost });
-      } else {
-        opts.onSshStart?.();
-        const code = await runDirectSsh(privateKeyPath, directVmHost, execProgram);
-        await opts.onSshEnd?.();
-        result.sshExitCode = code;
-        log("vm_ssh_session_exit_direct", { host: directVmHost, code });
-      }
-    } else {
-      // Standard path: SSH through fedproxy relay tunnel (websocat ProxyCommand).
+      // SSH through fedproxy relay tunnel (websocat ProxyCommand).
       log("vm_ssh_waiting", { vmFqdn, timeoutSec: vmReadyTimeoutSec });
     const ready = await sshProvider.pollReady(privateKeyPath, vmFqdn, vmReadyTimeoutSec * 1000);
     result.sshReady = ready;
@@ -1508,7 +1423,6 @@ runcmd:
       result.sshExitCode = code;
       log("vm_ssh_session_exit", { vmFqdn, code });
     }
-  }
   }
 
   // 11. Tear down VM via compute.events.vm.delete (unless --keep-vm).
