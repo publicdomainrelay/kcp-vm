@@ -16,6 +16,7 @@ import type { Logger } from "@publicdomainrelay/market-common";
 import {
   DEFAULT_MARKET_SERVICE_ID,
 } from "@publicdomainrelay/market-common";
+import { OAuthSessionExpiredError } from "@publicdomainrelay/atproto-helpers";
 import {
   OFFERING_NSID,
   ALLOWLIST_RBAC_DID_NSID,
@@ -97,6 +98,11 @@ export interface MarketBidderConfig {
    * run — only the serve.beginServe() call is skipped.
    */
   skipServeBegin?: boolean;
+  /**
+   * Called when the OAuth session expires (refresh token consumed/revoked).
+   * The session is dead — delete the file and re-authenticate.
+   */
+  onSessionExpired?: (err: OAuthSessionExpiredError) => void;
 }
 
 export interface MarketBidder {
@@ -114,7 +120,7 @@ function logAdapter(logger: StructuredLoggerInterface): Logger {
 
 
 export async function createMarketBidder(config: MarketBidderConfig): Promise<MarketBidder> {
-  const { logger, serve, atproto, relay, providers, setup, teardown, callbackFactory, onContractChange, eventStreams, offeringRefreshMs, skipServeBegin, policyMode } = config;
+  const { logger, serve, atproto, relay, providers, setup, teardown, callbackFactory, onContractChange, eventStreams, offeringRefreshMs, skipServeBegin, policyMode, onSessionExpired } = config;
   const log = logAdapter(logger);
   const activeContracts = new Map<string, ActiveContract>();
   const idResolver = atproto.idResolver;
@@ -344,36 +350,48 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
   // (correction or refresh) updates that same record in place via
   // atproto.updateRecord rather than creating a new one, so the collection
   // never grows past one record.
-  async function ensureOffering(): Promise<{ rkey: string; createdAt: string }> {
-    const wanted = config.appliesTo ??
-      [...new Set((providers ?? []).flatMap((p) => p.appliesTo))];
-    const existing = await atproto.listRecords(atproto.did, OFFERING_NSID, { limit: 20 });
-    const records = existing?.records ?? [];
-    if (records.length) {
-      const rec = records[0];
-      const rkey = rec.uri.split("/").pop() ?? "";
-      const createdAt = (rec.value.createdAt as string) ?? new Date().toISOString();
-      const val = rec.value as Record<string, unknown>;
-      const appliesTo = (val.appliesTo as string[] | undefined) ?? [];
-      const endpointUrl = val.endpointUrl as string | undefined;
-      const wantedStr = [...wanted].sort().join(",");
-      const haveStr = [...appliesTo].sort().join(",");
-      const hasGoodEp = endpointUrl?.startsWith("https://") ?? false;
-      const wantedEp = relay?.ingressUrl || `${atproto.did}#pdr_temp_market`;
-      const epSame = endpointUrl === wantedEp;
-      if (haveStr === wantedStr && hasGoodEp && epSame) {
-        log("info", "bidder offering exists (matched)", { uri: rec.uri, appliesTo: haveStr, endpointUrl });
-      } else {
-        await atproto.updateRecord(OFFERING_NSID, rkey, buildOffering(createdAt));
-        log("info", "bidder offering corrected", { uri: rec.uri, appliesTo: wantedStr, endpointUrl: wantedEp, reason: haveStr === wantedStr ? (hasGoodEp ? "endpoint_changed" : "bad_endpoint") : "appliesTo_mismatch" });
+  async function ensureOffering(): Promise<{ rkey: string; createdAt: string } | null> {
+    try {
+      const wanted = config.appliesTo ??
+        [...new Set((providers ?? []).flatMap((p) => p.appliesTo))];
+      const existing = await atproto.listRecords(atproto.did, OFFERING_NSID, { limit: 20 });
+      const records = existing?.records ?? [];
+      if (records.length) {
+        const rec = records[0];
+        const rkey = rec.uri.split("/").pop() ?? "";
+        const createdAt = (rec.value.createdAt as string) ?? new Date().toISOString();
+        const val = rec.value as Record<string, unknown>;
+        const appliesTo = (val.appliesTo as string[] | undefined) ?? [];
+        const endpointUrl = val.endpointUrl as string | undefined;
+        const wantedStr = [...wanted].sort().join(",");
+        const haveStr = [...appliesTo].sort().join(",");
+        const hasGoodEp = endpointUrl?.startsWith("https://") ?? false;
+        const wantedEp = relay?.ingressUrl || `${atproto.did}#pdr_temp_market`;
+        const epSame = endpointUrl === wantedEp;
+        if (haveStr === wantedStr && hasGoodEp && epSame) {
+          log("info", "bidder offering exists (matched)", { uri: rec.uri, appliesTo: haveStr, endpointUrl });
+        } else {
+          await atproto.updateRecord(OFFERING_NSID, rkey, buildOffering(createdAt));
+          log("info", "bidder offering corrected", { uri: rec.uri, appliesTo: wantedStr, endpointUrl: wantedEp, reason: haveStr === wantedStr ? (hasGoodEp ? "endpoint_changed" : "bad_endpoint") : "appliesTo_mismatch" });
+        }
+        return { rkey, createdAt };
       }
+      const createdAt = new Date().toISOString();
+      const offeringRef = await atproto.createRecord(OFFERING_NSID, buildOffering(createdAt));
+      const rkey = offeringRef.uri.split("/").pop() ?? "";
+      log("info", "bidder offering created", { uri: offeringRef.uri });
       return { rkey, createdAt };
+    } catch (err) {
+      if (err instanceof OAuthSessionExpiredError) {
+        logger.error("bidder oauth session expired", {
+          sessionPath: err.sessionPath,
+          error: err.message,
+        });
+        onSessionExpired?.(err);
+        return null;
+      }
+      throw err;
     }
-    const createdAt = new Date().toISOString();
-    const offeringRef = await atproto.createRecord(OFFERING_NSID, buildOffering(createdAt));
-    const rkey = offeringRef.uri.split("/").pop() ?? "";
-    log("info", "bidder offering created", { uri: offeringRef.uri });
-    return { rkey, createdAt };
   }
 
   async function beginServe(): Promise<void> {
@@ -553,7 +571,12 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
 
     serve.onConnected(async () => {
       await ensureOperatorAllowlist("");
-      const { rkey: offeringRkey, createdAt: offeringCreatedAt } = await ensureOffering();
+      const offeringResult = await ensureOffering();
+      if (!offeringResult) {
+        logger.warn("bidder offering skipped — session expired");
+        return;
+      }
+      const { rkey: offeringRkey, createdAt: offeringCreatedAt } = offeringResult;
       if (offeringRefreshMs && offeringRkey) {
         offeringRefresher = startOfferingRefresh({
           intervalMs: offeringRefreshMs,
@@ -561,7 +584,16 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
           refresh: async () => {
             try {
               await atproto.updateRecord(OFFERING_NSID, offeringRkey, buildOffering(offeringCreatedAt));
-            } catch { /* best-effort */ }
+            } catch (err) {
+              if (err instanceof OAuthSessionExpiredError) {
+                logger.error("bidder offering refresh failed — session expired", {
+                  sessionPath: err.sessionPath,
+                });
+                onSessionExpired?.(err);
+                return;
+              }
+              /* best-effort for other errors */
+            }
             log("info", "bidder offering refreshed", { rkey: offeringRkey });
           },
         });
@@ -589,6 +621,6 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
     if (!skipServeBegin) serve.shutdown();
   }
 
-  const refreshOffering = () => ensureOffering().then(() => {});
+  const refreshOffering = () => ensureOffering().then((r) => { if (!r) logger.warn("bidder refreshOffering skipped — session expired"); });
   return { beginServe, shutdown, refreshOffering };
 }

@@ -1,8 +1,9 @@
 // OAuth QR session persistence — save/reload sessions across CLI restarts.
 import type { StructuredLoggerInterface } from "@publicdomainrelay/logger";
 import type { AtprotoAgentLike, OAuthSessionData } from "./agent.ts";
-import { createOAuthAgentFromSession } from "./agent.ts";
+import { createOAuthAgentFromSession, OAuthSessionExpiredError } from "./agent.ts";
 
+export { OAuthSessionExpiredError };
 export type { OAuthSessionData };
 
 function defaultSessionPath(label?: string): string {
@@ -16,19 +17,39 @@ export async function tryRestoreOAuthQRSession(opts: {
   logger?: StructuredLoggerInterface;
   sessionPath?: string;
   label?: string;
-}): Promise<(AtprotoAgentLike & { sessionData: OAuthSessionData }) | null> {
+  autoRefreshThresholdMs?: number;
+  onSessionExpired?: (err: OAuthSessionExpiredError) => void;
+}): Promise<(AtprotoAgentLike & { sessionData: OAuthSessionData; dispose(): void; proactiveRefresh(): Promise<void> }) | null> {
   const path = opts.sessionPath ?? defaultSessionPath(opts.label);
   let data: OAuthSessionData;
   try { data = JSON.parse(await Deno.readTextFile(path)) as OAuthSessionData; } catch { return null; }
   if (!data?.accessJwt) return null;
   try {
-    const agent = await createOAuthAgentFromSession(data, opts);
+    const agent = await createOAuthAgentFromSession(data, {
+      logger: opts.logger,
+      sessionPath: path,
+      autoRefreshThresholdMs: opts.autoRefreshThresholdMs,
+      onSessionExpired: opts.onSessionExpired,
+      saveSession: async (updatedSession: OAuthSessionData) => {
+        await Deno.writeTextFile(path, JSON.stringify(updatedSession, null, 2));
+      },
+    });
+    // Force a token refresh to verify the refresh token is still valid.
+    // If the refresh token was already consumed (e.g. by a prior process),
+    // this will throw OAuthSessionExpiredError, which we catch below to
+    // delete the stale session file and trigger a fresh QR auth flow.
+    await agent.proactiveRefresh();
     // Validate by calling listRecords on the PDS
     const info = await agent.listRecords(data.userDid, "com.publicdomainrelay.temp.badgeBlueKeys", { limit: 1 });
     if (!info || !("records" in info)) throw new Error("session validation failed");
     opts.logger?.info("oauth_qr_session_restored", { userDid: data.userDid, handle: data.handle });
     return agent;
-  } catch {
+  } catch (err) {
+    if (err instanceof OAuthSessionExpiredError) {
+      opts.logger?.warn("oauth_qr_session_expired_deleting", { path, userDid: data.userDid });
+      try { await Deno.remove(path); } catch { /* ignore */ }
+      return null;
+    }
     opts.logger?.warn("oauth_qr_session_restore_failed", { userDid: data.userDid });
     try { await Deno.remove(path); } catch { /* ignore */ }
     return null;

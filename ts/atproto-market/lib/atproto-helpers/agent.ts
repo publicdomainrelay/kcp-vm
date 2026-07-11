@@ -670,6 +670,13 @@ export async function createOAuthAgent(opts: CreateOAuthAgentOpts): Promise<OAut
  * OAuth session data returned by qr.fedfork.com after browser completes OAuth
  * and the CLI polls the XRPC endpoint.
  */
+export class OAuthSessionExpiredError extends Error {
+  constructor(message: string, public readonly sessionPath?: string) {
+    super(message);
+    this.name = "OAuthSessionExpiredError";
+  }
+}
+
 export interface OAuthSessionData {
   accessJwt: string;
   refreshJwt: string;
@@ -884,16 +891,59 @@ function createTokenRefreshLock_() {
   };
 }
 
+function decodeJwtExp(jwt: string): number | null {
+  try {
+    const parts = jwt.split(".");
+    if (parts.length !== 3) return null;
+    // JWT uses base64url (not standard base64). Convert to base64 for atob.
+    const base64url = parts[1];
+    const base64 = base64url.replace(/-/g, "+").replace(/_/g, "/");
+    const payload = JSON.parse(atob(base64));
+    return typeof payload.exp === "number" ? payload.exp * 1000 : null; // JWT exp is in seconds
+  } catch {
+    return null;
+  }
+}
+
+interface OAuthAgentFromSessionOpts {
+  logger?: StructuredLoggerInterface;
+  /** Persist refreshed tokens back to disk. */
+  saveSession?: (session: OAuthSessionData) => Promise<void>;
+  /** File path to the session JSON (used in error messages). */
+  sessionPath?: string;
+  /**
+   * When set, a background timer proactively refreshes the access token before
+   * it expires. Refresh fires when TTL drops below this threshold (ms).
+   * Default recommendation: 3_600_000 (1 hour).
+   */
+  autoRefreshThresholdMs?: number;
+  /**
+   * Called when the refresh token is rejected (consumed/revoked). The session
+   * is dead — delete the file and re-authenticate.
+   */
+  onSessionExpired?: (err: OAuthSessionExpiredError) => void;
+}
+
 /**
  * Create an AtprotoAgentLike from a session transferred via QR code OAuth.
  * The DPoP private key (P-256) is imported from JWK. All PDS requests use
  * DPoP-bound access tokens. Token refresh is handled transparently.
+ *
+ * Pass saveSession to persist refreshed tokens back to disk so that a
+ * restart does not replay an already-consumed refresh token.
+ *
+ * Pass autoRefreshThresholdMs to start a background keepalive timer that
+ * proactively refreshes the token before it expires (prevents the refresh
+ * token from going stale while the process is alive).
  */
 export async function createOAuthAgentFromSession(
   sessionData: OAuthSessionData,
-  opts?: { logger?: StructuredLoggerInterface },
-): Promise<AtprotoAgentLike & { sessionData: OAuthSessionData }> {
+  opts?: OAuthAgentFromSessionOpts,
+): Promise<AtprotoAgentLike & { sessionData: OAuthSessionData; dispose(): void; proactiveRefresh(): Promise<void> }> {
   const log = opts?.logger;
+  const saveSession = opts?.saveSession;
+  const sessionPath = opts?.sessionPath;
+  const onSessionExpired = opts?.onSessionExpired;
   const nonces = createDpopNonceStore_();
   const key = await createDpopKey_(sessionData.dpopPrivateJwk, log);
 
@@ -901,8 +951,23 @@ export async function createOAuthAgentFromSession(
   let refreshJwt = sessionData.refreshJwt;
   let dpopFetch = createDpopFetch_({ key, nonces });
   const refreshLock = createTokenRefreshLock_();
+  let sessionExpired = false;
+  let keepaliveTimer: ReturnType<typeof setInterval> | null = null;
+
+  function checkSession(): void {
+    if (sessionExpired) {
+      const err = new OAuthSessionExpiredError(
+        `OAuth session expired — refresh token already consumed. Delete session file and re-authenticate: ${sessionPath ?? "unknown path"}`,
+        sessionPath,
+      );
+      onSessionExpired?.(err);
+      throw err;
+    }
+  }
 
   async function refreshTokens(): Promise<void> {
+    checkSession();
+
     // Resolve PDS → auth server for token endpoint
     const pdsUrl = sessionData.pds.replace(/\/+$/, "");
     const protRes = await fetch(`${pdsUrl}/.well-known/oauth-protected-resource`);
@@ -932,6 +997,17 @@ export async function createOAuthAgentFromSession(
 
     if (!res.ok) {
       const errText = await res.text().catch(() => "");
+      const isInvalidGrant = errText.includes("invalid_grant") || errText.includes("Refresh token replayed");
+      if (isInvalidGrant) {
+        sessionExpired = true;
+        log?.error?.("oauth_qr_session_expired", { sessionPath, error: errText });
+        const expiredErr = new OAuthSessionExpiredError(
+          `OAuth session expired — refresh token already consumed. Delete session file and re-authenticate: ${sessionPath ?? "unknown path"}`,
+          sessionPath,
+        );
+        onSessionExpired?.(expiredErr);
+        throw expiredErr;
+      }
       throw new Error(`token refresh failed: ${res.status} ${errText}`);
     }
 
@@ -939,9 +1015,42 @@ export async function createOAuthAgentFromSession(
     accessJwt = data.access_token;
     if (data.refresh_token) refreshJwt = data.refresh_token;
 
+    // Persist updated tokens so a restart won't replay the old refresh token.
+    sessionData.accessJwt = accessJwt;
+    if (data.refresh_token) sessionData.refreshJwt = refreshJwt;
+    if (saveSession) {
+      try { await saveSession(sessionData); } catch (e) { log?.warn?.("oauth_qr_session_save_failed", { error: String(e) }); }
+    }
+
     // Rebuild dpopFetch with new key material (nonces reset)
     dpopFetch = createDpopFetch_({ key, nonces });
     log?.info?.("oauth_qr_tokens_refreshed", {});
+  }
+
+  // ── Background token keepalive ──────────────────────────────────────
+  // Proactively refresh the access token when its TTL drops below the
+  // threshold. This keeps the refresh token fresh and prevents it from
+  // going stale while the process is alive.
+  if (opts?.autoRefreshThresholdMs && opts.autoRefreshThresholdMs > 0) {
+    const thresholdMs = opts.autoRefreshThresholdMs;
+    const CHECK_INTERVAL_MS = 5 * 60 * 1000; // check every 5 minutes
+    keepaliveTimer = setInterval(() => {
+      if (sessionExpired) return;
+      const exp = decodeJwtExp(accessJwt);
+      if (exp === null) return;
+      const remainingMs = exp - Date.now();
+      if (remainingMs < thresholdMs) {
+        log?.info?.("oauth_qr_background_refresh_triggered", {
+          remainingMs: Math.round(remainingMs / 1000),
+          thresholdMs: Math.round(thresholdMs / 1000),
+        });
+        refreshLock(() => refreshTokens()).catch((e) => {
+          if (e instanceof OAuthSessionExpiredError) return; // onSessionExpired already called
+          log?.warn?.("oauth_qr_background_refresh_failed", { error: String(e) });
+        });
+      }
+    }, CHECK_INTERVAL_MS);
+    Deno.unrefTimer?.(keepaliveTimer as unknown as number);
   }
 
   const _signer = {
@@ -949,9 +1058,19 @@ export async function createOAuthAgentFromSession(
     sign: async () => { throw new Error("OAuth QR agent uses getServiceAuth, not local signing"); },
   };
 
-  const agent: AtprotoAgentLike & { sessionData: OAuthSessionData } = {
+  const agent: AtprotoAgentLike & { sessionData: OAuthSessionData; dispose(): void; proactiveRefresh(): Promise<void> } = {
     sessionData,
     get did() { return sessionData.userDid; },
+    dispose() {
+      if (keepaliveTimer !== null) {
+        clearInterval(keepaliveTimer);
+        keepaliveTimer = null;
+      }
+    },
+    /** Force a token refresh to verify the refresh token is still valid. */
+    async proactiveRefresh(): Promise<void> {
+      return refreshLock(() => refreshTokens());
+    },
     signer: _signer,
 
     async getServiceAuth(aud: string, lxm?: string): Promise<string> {

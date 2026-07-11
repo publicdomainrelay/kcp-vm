@@ -9,7 +9,7 @@ import {
   createSshSessionProvider,
   ensureWebsocat,
 } from "@publicdomainrelay/requester-xrpc";
-import { pollForOAuthSession, createOAuthAgentFromSession, tryRestoreOAuthQRSession, saveOAuthQRSession } from "@publicdomainrelay/atproto-helpers";
+import { pollForOAuthSession, createOAuthAgentFromSession, tryRestoreOAuthQRSession, saveOAuthQRSession, OAuthSessionExpiredError } from "@publicdomainrelay/atproto-helpers";
 import { startLoopbackCallbackServer } from "@publicdomainrelay/atproto-oauth-helpers";
 import { createPlcDirectoryClient, createGenesisOp, PlcClient, PlcNotFoundError } from "@publicdomainrelay/did-plc";
 import type { RequesterPDS } from "@publicdomainrelay/requester-abc";
@@ -110,6 +110,22 @@ const OAUTH_SCOPE_FULL = [
 
 let pds: RequesterPDS;
 let isOAuth = false;
+let _oauthAgentForDispose: { dispose(): void } | null = null;
+const AUTO_REFRESH_THRESHOLD_MS = 3_600_000;
+
+function createSessionExpiredHandler(label: string) {
+  return (err: OAuthSessionExpiredError) => {
+    logger.error("oauth_session_expired_shutting_down", {
+      sessionPath: err.sessionPath,
+      label,
+      hint: "Restart the process to re-authenticate via QR code. The stale session file has been deleted.",
+    });
+    if (err.sessionPath) {
+      try { Deno.removeSync(err.sessionPath); } catch { /* ignore */ }
+    }
+    setTimeout(() => Deno.exit(1), 500);
+  };
+}
 
 if ((options.atprotoOauth as boolean) && (options.atprotoHandle as string | undefined)) {
   // OAuth requester — no local PDS, firehose-based discovery
@@ -184,9 +200,15 @@ if ((options.atprotoOauth as boolean) && (options.atprotoHandle as string | unde
   // Try restoring saved OAuth QR session
   let _restoredOAuthAgent: any = null;
   let _session: any = null;
-  const _restoredAgent = await tryRestoreOAuthQRSession({ logger, label: "requester" });
+  const _restoredAgent = await tryRestoreOAuthQRSession({
+    logger, label: "requester",
+    autoRefreshThresholdMs: AUTO_REFRESH_THRESHOLD_MS,
+    // No onSessionExpired here — restore handles expiry internally
+    // (delete file, return null → falls through to QR auth).
+  });
   if (_restoredAgent) {
     _restoredOAuthAgent = _restoredAgent;
+    _oauthAgentForDispose = _restoredAgent;
     isOAuth = true;
   } else {
     // Generate nonce for defense-in-depth POST auth
@@ -230,7 +252,13 @@ if ((options.atprotoOauth as boolean) && (options.atprotoHandle as string | unde
     (pds as unknown as Record<string, unknown>).oauthSession = _restoredOAuthAgent.sessionData;
     logger.info("oauth_qr_session_restored", { userDid: _restoredOAuthAgent.sessionData?.userDid });
   } else {
-    const oauthAgent = await createOAuthAgentFromSession(_session, { logger });
+    const oauthAgent = await createOAuthAgentFromSession(_session, {
+      logger,
+      autoRefreshThresholdMs: AUTO_REFRESH_THRESHOLD_MS,
+      onSessionExpired: createSessionExpiredHandler("requester"),
+      saveSession: (s) => saveOAuthQRSession(s, { label: "requester" }),
+    });
+    _oauthAgentForDispose = oauthAgent;
     (pds as unknown as Record<string, unknown>).oauthAgent = oauthAgent;
     (pds as unknown as Record<string, unknown>).oauthSession = _session;
     await saveOAuthQRSession(_session, { label: "requester" });
@@ -405,6 +433,7 @@ async function resumeConsole(): Promise<void> {
 
 function shutdown(): void {
   eventStreams.close();
+  _oauthAgentForDispose?.dispose();
   serve.shutdown();
   Deno.exit();
 }

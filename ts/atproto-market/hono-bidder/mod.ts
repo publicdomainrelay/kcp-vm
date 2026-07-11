@@ -7,7 +7,7 @@ import { createMarketBidder } from "@publicdomainrelay/market-bidder";
 import type { MarketBidderProviderRef } from "@publicdomainrelay/market-bidder-abc";
 import { createComputeProviderHooks } from "@publicdomainrelay/market-bidder-compute";
 import { createComputeProviderDenoWorker, createWorkerProviderHooks } from "@publicdomainrelay/market-bidder-worker";
-import { createATProto, createLocalPDSAgent, createRemoteAgent, createOAuthAgent, createOAuthAgentFromSession, pollForOAuthSession, tryRestoreOAuthQRSession, saveOAuthQRSession } from "@publicdomainrelay/atproto-helpers";
+import { createATProto, createLocalPDSAgent, createRemoteAgent, createOAuthAgent, createOAuthAgentFromSession, pollForOAuthSession, tryRestoreOAuthQRSession, saveOAuthQRSession, OAuthSessionExpiredError } from "@publicdomainrelay/atproto-helpers";
 import type { LocalPDSAgent } from "@publicdomainrelay/atproto-helpers";
 import { startLoopbackCallbackServer, oauthClientMetadata } from "@publicdomainrelay/atproto-oauth-helpers";
 import { createBadgeBlueSigner } from "@publicdomainrelay/market-atproto";
@@ -130,6 +130,22 @@ let atprotoAgent;
 let pdsHostname: string | undefined;
 let isLocal = false;
 let isOAuth = false;
+const AUTO_REFRESH_THRESHOLD_MS = 3_600_000; // 1 hour — proactively refresh access token before it expires
+
+function createSessionExpiredHandler(label: string) {
+  return (err: OAuthSessionExpiredError) => {
+    logger.error("oauth_session_expired_shutting_down", {
+      sessionPath: err.sessionPath,
+      label,
+      hint: "Restart the process to re-authenticate via QR code. The stale session file has been deleted.",
+    });
+    if (err.sessionPath) {
+      try { Deno.removeSync(err.sessionPath); } catch { /* ignore */ }
+    }
+    // Give the log a moment to flush, then exit so systemd/docker restarts us.
+    setTimeout(() => Deno.exit(1), 500);
+  };
+}
 const _deferredRelayUrls: string[] = [];
 let _deferredPdsPort = 0;
 if ((options.atprotoOauth as boolean)) {
@@ -204,7 +220,12 @@ if ((options.atprotoOauth as boolean)) {
   }
 
   // Try restoring saved OAuth QR session
-  const _restoredAgent = await tryRestoreOAuthQRSession({ logger, label: "bidder" });
+  const _restoredAgent = await tryRestoreOAuthQRSession({
+    logger, label: "bidder",
+    autoRefreshThresholdMs: AUTO_REFRESH_THRESHOLD_MS,
+    // No onSessionExpired here — restore handles expiry internally
+    // (delete file, return null → falls through to QR auth).
+  });
   if (_restoredAgent) {
     atprotoAgent = _restoredAgent;
     isOAuth = true;
@@ -234,7 +255,12 @@ if ((options.atprotoOauth as boolean)) {
     });
 
     // Create OAuth agent from transferred session
-    const oauthAgent = await createOAuthAgentFromSession(session, { logger });
+    const oauthAgent = await createOAuthAgentFromSession(session, {
+      logger,
+      autoRefreshThresholdMs: AUTO_REFRESH_THRESHOLD_MS,
+      onSessionExpired: createSessionExpiredHandler("bidder"),
+      saveSession: (s) => saveOAuthQRSession(s, { label: "bidder" }),
+    });
     atprotoAgent = oauthAgent;
 
     // Persist session for future restarts
@@ -408,10 +434,14 @@ const bidder = await createMarketBidder({
   offeringRefreshMs: offeringRefreshSec > 0 ? offeringRefreshSec * 1000 : undefined,
   serve: bidderServe,
   policyMode,
+  onSessionExpired: isOAuth ? createSessionExpiredHandler("bidder") : undefined,
 });
 
 function shutdown() {
   bidder.shutdown();
+  if (isOAuth && atprotoAgent && typeof (atprotoAgent as Record<string, unknown>).dispose === "function") {
+    ((atprotoAgent as Record<string, unknown>).dispose as () => void)();
+  }
   for (const s of serves) s.shutdown();
   Deno.exit();
 }
