@@ -876,6 +876,7 @@ export async function runComputeContract(
               if (!payloadRef?.uri) return;
               const payloadColl = payloadRef.uri.split("/")[3];
               if (payloadColl !== COMPUTE_EVENTS_VM_ONNETWORK_NSID) return;
+              log("firehose_onnetwork_wrapped", { eventUri: data.uri, payloadUri: payloadRef.uri });
               // Fetch the vm.onNetwork record for the IP
               const [payloadRepo] = [payloadRef.uri.split("/")[2]];
               const rkey = payloadRef.uri.split("/").pop()!;
@@ -893,6 +894,7 @@ export async function runComputeContract(
         }
         // COMPUTE_EVENTS_VM_ONNETWORK_NSID: direct vm.onNetwork record (no EVENT_NSID wrapper)
         if (e.collection === COMPUTE_EVENTS_VM_ONNETWORK_NSID) {
+          log("firehose_onnetwork_raw", { uri: e.uri, did: e.did, rkey: e.rkey });
           (async () => {
             try {
               const doc = await idResolver.did.resolve(e.did);
