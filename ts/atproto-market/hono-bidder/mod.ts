@@ -195,29 +195,8 @@ if ((options.atprotoOauth as boolean)) {
   isOAuth = true;
   // In OAuth mode, the PDS hostname is the PDS from the session (not used for requestCrawl)
   pdsHostname = undefined;
-} else if ((options.atprotoHandle as string | undefined) && (options.atprotoPassword as string | undefined)) {
-  const pdsStatePath = options.pdsStatePath as string | undefined;
-  // Relay-only: no TCP listener. associateConfirm arrives via relay →
-  // app.fetch programmatic. subscribeRepos firehose is wired via
-  // directSubscriptionHandler (in-process callback, no loopback WS).
-  const pdsServe = createServe({ logger });
-  atprotoAgent = await createLocalPDSAgent({
-    logger, keypair,
-    serve: pdsServe,
-    plcDirectoryUrl,
-    ingressProxyHost,
-    storagePath: pdsStatePath,
-    associateServiceId: BIDDER_ASSOC_SERVICE,
-  });
-  await atprotoAgent.beginServe();
-  _deferredPdsPort = pdsServe.tcpPort;
-  isLocal = true;
-  const relayHost: string = (atprotoAgent as { relay?: { ingressHost?: string } }).relay?.ingressHost ?? "";
-  if (relayHost) {
-    pdsHostname = relayHost;
-  }
-} else {
-  // QR-based OAuth — default: scan with phone, session transferred via qr.fedfork.com
+} else if ((options.atprotoOauthQr as boolean)) {
+  // QR-based OAuth — scan with phone, session transferred via qr.fedfork.com
   // Register DID on PLC (needed for service auth JWT verification)
   const plcClient = createPlcDirectoryClient({ plcDirectoryUrl });
   const genesisOp = await createGenesisOp({
@@ -290,6 +269,99 @@ if ((options.atprotoOauth as boolean)) {
     isOAuth = true;
     pdsHostname = undefined;
     logger.info("oauth_qr_session_ready", { userDid: session.userDid, handle: session.handle });
+  }
+} else if ((options.atprotoHandle as string | undefined) && (options.atprotoPassword as string | undefined)) {
+  const pdsStatePath = options.pdsStatePath as string | undefined;
+  // Relay-only: no TCP listener. associateConfirm arrives via relay →
+  // app.fetch programmatic. subscribeRepos firehose is wired via
+  // directSubscriptionHandler (in-process callback, no loopback WS).
+  const pdsServe = createServe({ logger });
+  atprotoAgent = await createLocalPDSAgent({
+    logger, keypair,
+    serve: pdsServe,
+    plcDirectoryUrl,
+    ingressProxyHost,
+    storagePath: pdsStatePath,
+    associateServiceId: BIDDER_ASSOC_SERVICE,
+  });
+  await atprotoAgent.beginServe();
+  _deferredPdsPort = pdsServe.tcpPort;
+  isLocal = true;
+  const relayHost: string = (atprotoAgent as { relay?: { ingressHost?: string } }).relay?.ingressHost ?? "";
+  if (relayHost) {
+    pdsHostname = relayHost;
+  }
+} else {
+  // Default: ephemeral PDS + association QR. Bidder owns its PLC DID;
+  // user links their Bluesky account by scanning the QR code.
+  const pdsStatePath = options.pdsStatePath as string | undefined;
+  const pdsServe = createServe({ logger });
+  atprotoAgent = await createLocalPDSAgent({
+    logger, keypair,
+    serve: pdsServe,
+    plcDirectoryUrl,
+    ingressProxyHost,
+    storagePath: pdsStatePath,
+    associateServiceId: BIDDER_ASSOC_SERVICE,
+  });
+  await atprotoAgent.beginServe();
+  _deferredPdsPort = pdsServe.tcpPort;
+  isLocal = true;
+  const relayHost: string = (atprotoAgent as { relay?: { ingressHost?: string } }).relay?.ingressHost ?? "";
+  if (relayHost) {
+    pdsHostname = relayHost;
+  }
+
+  // Show association QR so user can link their Bluesky account
+  if (!options.noQr) {
+    const BADGE_BLUE_KEYS_NSID = "com.publicdomainrelay.temp.badgeBlueKeys";
+    let hasAssociation = false;
+    let cursor: string | undefined;
+    do {
+      const result = await (atprotoAgent as LocalPDSAgent).repoApi.listRecords(
+        atprotoAgent.did, BADGE_BLUE_KEYS_NSID, { limit: 100, cursor },
+      );
+      for (const rec of result.records) {
+        const v = rec.value as Record<string, unknown>;
+        if (v.challenge === atprotoAgent.did && v.service === BIDDER_ASSOC_SERVICE) {
+          hasAssociation = true;
+          break;
+        }
+      }
+      cursor = result.cursor;
+    } while (cursor && !hasAssociation);
+
+    if (hasAssociation) {
+      logger.info("existing_association_found", { did: atprotoAgent.did, hint: "skipping QR — prior association exists" });
+    } else {
+      const qrUrl = `https://qr.fedfork.com/#plc=${atprotoAgent.did}`;
+      logger.info("qr_url", { url: qrUrl });
+      const qr = qrcode(qrUrl, { output: "console", ecl: "HIGH" });
+      console.log(qr);
+
+      logger.info("waiting_for_association", {
+        hint: "Scan QR code, then confirm on your phone",
+        bidderDid: atprotoAgent.did,
+      });
+      const callerDid = await atprotoAgent.associateCalled;
+
+      let handle = callerDid;
+      try {
+        const idr = new IdResolver();
+        const doc = await idr.did.resolve(callerDid);
+        const aka = (doc as Record<string, unknown>)?.alsoKnownAs as string[] | undefined;
+        if (aka?.[0]) handle = aka[0].replace("at://", "");
+      } catch { /* use DID as fallback */ }
+
+      const answer = prompt(`Associate with ${handle}? [y/N] `);
+      if (!answer || !answer.toLowerCase().startsWith("y")) {
+        logger.info("association_rejected", { callerDid, handle });
+        atprotoAgent.rejectAssociation(new Error("User rejected association"));
+        Deno.exit(0);
+      }
+      atprotoAgent.approveAssociation();
+      logger.info("association_confirmed", { callerDid, handle });
+    }
   }
 }
 const atproto = await createATProto({

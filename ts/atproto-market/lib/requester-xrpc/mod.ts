@@ -1153,8 +1153,6 @@ runcmd:
     log("firehose_bids_merged", { xrpcCount, firehoseNew: bids.length - xrpcCount, totalBids: bids.length });
   }
 
-  // Clean up bid watcher — bids collected.
-  bidWatcher?.close();
   log("bids_collected", { count: bids.length });
 
   if (bids.length === 0) {
@@ -1376,6 +1374,8 @@ runcmd:
     }, vmReadyTimeoutSec * 1000);
     vmFqdn = await vmFqdnReady.promise;
     clearTimeout(fqdnTimeout);
+    // Firehose watcher can close now — FQDN discovered (or timed out).
+    bidWatcher?.close();
     if (!vmFqdn) {
       log("vm_fqdn_timeout", { timeoutSec: vmReadyTimeoutSec });
       result.sshReady = false;
