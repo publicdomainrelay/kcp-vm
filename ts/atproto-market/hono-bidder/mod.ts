@@ -353,6 +353,8 @@ if (privateKeyHexPath) {
 const providers: MarketBidderProviderRef[] = [];
 const serves: ReturnType<typeof createServe>[] = [];
 let localProviderEnsureImage: (() => Promise<void>) | undefined;
+// Shared accept→receipt map — created early so provider guest routes can use it.
+const acceptToContract = new Map<string, { receiptKey: string; receiptUri: string; receiptCid: string; submitEventUrl?: string }>();
 
 if (options.computeProviderDigitaloceanToken) {
   const relay = await cliCreateIngress();
@@ -382,6 +384,9 @@ if (options.computeProviderLocal) {
     vmImage: options.computeProviderLocalVmImage as string | undefined,
     containerImage: options.computeProviderLocalContainerImage as string | undefined,
     cacheDir: options.computeProviderLocalCacheDir as string | undefined,
+    createSignedRepoRecord: atproto.createSignedRepoRecord.bind(atproto),
+    callService: atproto.callService.bind(atproto),
+    acceptToContract,
   });
   localProviderEnsureImage = () => (localProvider as { ensureImage?(): Promise<void> }).ensureImage?.() ?? Promise.resolve();
   providers.push(createComputeProviderHooks({
@@ -435,6 +440,7 @@ const bidder = await createMarketBidder({
   serve: bidderServe,
   policyMode,
   onSessionExpired: isOAuth ? createSessionExpiredHandler("bidder") : undefined,
+  acceptToContract,
 });
 
 function shutdown() {

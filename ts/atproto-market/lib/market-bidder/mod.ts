@@ -104,6 +104,8 @@ export interface MarketBidderConfig {
    * The session is dead — delete the file and re-authenticate.
    */
   onSessionExpired?: (err: OAuthSessionExpiredError) => void;
+  /** Pre-created acceptToContract map — shared with providers for guest event routes. */
+  acceptToContract?: Map<string, import("@publicdomainrelay/market-bidder-abc").GuestContractEntry>;
 }
 
 export interface MarketBidder {
@@ -124,7 +126,7 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
   const { logger, serve, atproto, relay, providers, setup, teardown, callbackFactory, onContractChange, eventStreams, offeringRefreshMs, skipServeBegin, policyMode, onSessionExpired } = config;
   const log = logAdapter(logger);
   const activeContracts = new Map<string, ActiveContract>();
-  const acceptToContract = new Map<string, import("@publicdomainrelay/market-bidder-abc").GuestContractEntry>();
+  const acceptToContract = config.acceptToContract ?? new Map<string, import("@publicdomainrelay/market-bidder-abc").GuestContractEntry>();
   const idResolver = atproto.idResolver;
   let offeringRefresher: OfferingRefreshHandle | null = null;
 
