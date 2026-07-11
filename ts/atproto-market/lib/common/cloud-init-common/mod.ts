@@ -56,8 +56,8 @@ write_files:
     owner: root:root
     permissions: '0644'
     content: |
-      # sshd is only reachable through the websocat→fedproxy tunnel.
-      ListenAddress 127.0.0.1
+      # sshd reachable through websocat→fedproxy tunnel (loopback) and direct TCP.
+      ListenAddress 0.0.0.0
       PermitRootLogin prohibit-password
       PasswordAuthentication no
 
