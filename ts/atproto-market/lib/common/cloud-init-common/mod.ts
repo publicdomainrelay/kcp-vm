@@ -321,6 +321,14 @@ runcmd:
 `;
 }
 
+/** Inject JSR_URL into the tunnel-subscriber systemd unit in an existing cloud-init YAML. */
+export function injectJsrUrl(userData: string, jsrUrl: string): string {
+  return userData.replace(
+    /(ExecStart=deno run .*tunnel-subscriber)/,
+    `Environment="JSR_URL=${jsrUrl}"\n      $1`,
+  );
+}
+
 export function buildIrohUserData(ctx: TunnelCloudInitContext): string {
   const sshAuthorizedKey = ctx.sshAuthorizedKey ?? "";
   return `#cloud-config
