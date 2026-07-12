@@ -907,9 +907,10 @@ export async function runComputeContract(
               const payloadRes = await fetch(payloadUrl);
               const payloadData = await payloadRes.json();
               const address = (payloadData.value as Record<string, unknown>)?.address as string | undefined;
-              // Only resolve on dispatcher FQDN, not container IP.
-const isDispatcherFqdn = address && (address.includes(".xrpc.fedproxy.com") || address.includes(".fedproxy.com"));
-if (address && isDispatcherFqdn && !vmFqdn) {
+                            // Only resolve on dispatcher FQDN, not container IP.
+              // Container IPs (192.168.x.x) contain only digits+dots; FQDNs contain letters.
+              const isFqdn = address && /[a-zA-Z]/.test(address);
+if (address && isFqdn && !vmFqdn) {
                 vmFqdn = address;
                 vmFqdnReady.resolve(address);
                 log("vm_fqdn_discovered", { fqdn: address, eventUri: data.uri });
@@ -932,7 +933,7 @@ if (address && isDispatcherFqdn && !vmFqdn) {
               const value = data.value as Record<string, unknown> | undefined;
               // Extract address from onNetwork record → derive FQDN for SSH.
               const address = value?.address as string | undefined;
-              if (address && typeof address === "string" && address.includes(".xrpc.fedproxy.com") && !vmFqdn) {
+              if (address && typeof address === "string" && /[a-zA-Z]/.test(address) && !vmFqdn) {
                 vmFqdn = address;
                 vmFqdnReady.resolve(address);
                 log("vm_fqdn_discovered", { fqdn: address, uri: data.uri });
@@ -1013,7 +1014,9 @@ if (address && isDispatcherFqdn && !vmFqdn) {
     // No private key material in cloud-init.
     const txCtx: TunnelCloudInitContext = {
       ingressProxyHost,
-      audHost: ingressProxyHost,
+      // audHost is the hostname-only part used for JWT audience matching
+      // (did:web:<hostname>). Strip port if present; gateway IPs include port.
+      audHost: fedingressHost?.replace(/:\d+$/, "") || ingressProxyHost.replace(/:\d+$/, ""),
       sshAuthorizedKey: ssh.publicKey,
     };
     cloudInit = buildTunnelUserData(txCtx);

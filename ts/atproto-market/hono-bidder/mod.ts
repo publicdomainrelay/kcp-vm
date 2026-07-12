@@ -452,6 +452,7 @@ if (options.computeProviderLocal) {
     vmImage: options.computeProviderLocalVmImage as string | undefined,
     containerImage: options.computeProviderLocalContainerImage as string | undefined,
     cacheDir: options.computeProviderLocalCacheDir as string | undefined,
+    ingressProxyHost: options.ingressProxyHost as string,
     createSignedRepoRecord: atproto.createSignedRepoRecord.bind(atproto),
     callService: atproto.callService.bind(atproto),
     acceptToContract,
