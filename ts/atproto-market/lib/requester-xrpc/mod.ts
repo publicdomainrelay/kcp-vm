@@ -909,7 +909,7 @@ if (address && isDispatcherFqdn && !vmFqdn) {
               const value = data.value as Record<string, unknown> | undefined;
               // Extract address from onNetwork record → derive FQDN for SSH.
               const address = value?.address as string | undefined;
-              if (address && typeof address === "string" && !vmFqdn) {
+              if (address && typeof address === "string" && address.includes(".xrpc.fedproxy.com") && !vmFqdn) {
                 vmFqdn = address;
                 vmFqdnReady.resolve(address);
                 log("vm_fqdn_discovered", { fqdn: address, uri: data.uri });
