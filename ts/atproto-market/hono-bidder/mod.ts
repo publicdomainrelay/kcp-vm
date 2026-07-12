@@ -126,7 +126,8 @@ const OAUTH_SCOPE_FULL = [
   "rpc:com.publicdomainrelay.temp.market.submitEvent?aud=*",
 ];
 
-let atprotoAgent;
+// deno-lint-ignore no-explicit-any
+let atprotoAgent: any;
 let pdsHostname: string | undefined;
 let isLocal = false;
 let isOAuth = false;

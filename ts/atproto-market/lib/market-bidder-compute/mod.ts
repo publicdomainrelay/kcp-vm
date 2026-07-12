@@ -144,6 +144,7 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
     const bidRef = accept.bid as { uri: string; cid: string } | undefined;
 
     let providerIdPromise: Promise<string | number | undefined> = Promise.resolve(undefined);
+    let provisionIp: string | undefined;
 
     if (rfpRef) {
       providerIdPromise = Promise.race([
@@ -199,8 +200,9 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
             _cid: payloadRef.cid,
           };
           const result = await computeProvider.provision(vmWithBundle as Parameters<ComputeProvider["provision"]>[0], issuerDid);
+          provisionIp = (result.metadata?.ip) as string | undefined;
           cbLog("info", "bidder provisioned VM", { providerId: result.providerId, metadata: result.metadata });
-          return { providerId: result.providerId, metadata: result.metadata };
+          return result.providerId;
         })(),
         new Promise<undefined>((_, reject) =>
           setTimeout(() => reject(new Error("provisioning timed out after 10 minutes")), 600_000)
@@ -250,9 +252,7 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
         submitEventUrl: (accept as { submitEvent?: string }).submitEvent,
       });
     }
-    providerIdPromise.then(async (provisionResult) => {
-      const providerId = provisionResult?.providerId;
-      const provisionIp = (provisionResult?.metadata?.ip) as string | undefined;
+    providerIdPromise.then(async (providerId) => {
       onContractChange?.({
         type: providerId ? "provisioned" : "provisioning-failed",
         key: rk, receiptUri, receiptCid, acceptAuthor: issuerDid, acceptedAt: nowIso, providerId,
