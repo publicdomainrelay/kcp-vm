@@ -336,7 +336,7 @@ logger.info("requester_ready", { did: pds.did, ingressRef: isOAuth ? "(oauth)" :
 
 const BADGE_BLUE_KEYS_NSID = "com.publicdomainrelay.temp.badgeBlueKeys";
 let hasAssociation = false;
-if (!options.noQr) {
+if (!options.skipQr) {
   if (isOAuth) {
     // OAuth mode: check badgeBlueKeys on user's PDS via OAuth agent.
     const oa = (pds as unknown as { oauthAgent?: { listRecords(did: string, coll: string, opts?: { limit?: number }): Promise<{ records: Array<{ value: Record<string, unknown> }> }> } }).oauthAgent;
@@ -377,7 +377,7 @@ if (hasAssociation) {
   logger.info("existing_association_found", { did: pds.did, hint: "skipping QR — prior association exists" });
 }
 
-if (!options.noQr && !hasAssociation) {
+if (!options.skipQr && !hasAssociation) {
   const qrUrl = `https://qr.fedfork.com/#plc=${pds.did}`;
   logger.info("qr_url", { url: qrUrl });
   const qr = qrcode(qrUrl, { output: "console", ecl: "HIGH" });

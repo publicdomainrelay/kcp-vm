@@ -165,7 +165,7 @@ export default {
       env: "PDS_STATE_PATH",
       default: `${Deno.env.get("HOME") ?? Deno.env.get("USERPROFILE") ?? "/tmp"}/.cache/pdr-market/requester-pds`,
     },
-    "no-qr": {
+    "skip-qr": {
       type: "boolean" as const,
       description: "Skip QR code and association confirmation prompt",
     },
