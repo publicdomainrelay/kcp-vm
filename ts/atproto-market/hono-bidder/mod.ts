@@ -314,7 +314,7 @@ if ((options.atprotoOauth as boolean)) {
   }
 
   // Show association QR so user can link their Bluesky account
-  if (!options.noQr) {
+  if (!options.skipQr) {
     const BADGE_BLUE_KEYS_NSID = "com.publicdomainrelay.temp.badgeBlueKeys";
     let hasAssociation = false;
     let cursor: string | undefined;
@@ -534,7 +534,7 @@ console.log(JSON.stringify({
 
 const BADGE_BLUE_KEYS_NSID = "com.publicdomainrelay.temp.badgeBlueKeys";
 let hasAssociation = false;
-if (!options.noQr) {
+if (!options.skipQr) {
   let cursor: string | undefined;
   do {
     const result = await atproto.listRecords(atproto.did, BADGE_BLUE_KEYS_NSID, { limit: 100 });
@@ -553,10 +553,10 @@ if (hasAssociation) {
   logger.info("existing_association_found", { did: atproto.did, hint: "skipping QR — prior association exists" });
 }
 
-if (!options.noQr && !hasAssociation) {
+if (!options.skipQr && !hasAssociation) {
   if (!isLocal) {
     logger.warn("qr_association_requires_local_pds", {
-      hint: "QR association only works with a local PDS (no --atproto-handle). Use --no-qr to skip.",
+      hint: "QR association only works with a local PDS (no --atproto-handle). Use --skip-qr to skip.",
     });
   } else {
     const qrUrl = `https://qr.fedfork.com/#bdr=${atproto.did}`;

@@ -444,6 +444,10 @@ export async function createRequesterPDS(
 
   // ── submitEvent handler ──────────────────────────────────────────────
 
+  // Mutable callback set by runComputeContract — resolves vmFqdnReady when
+  // guest-side onNetwork event arrives via submitEvent XRPC.
+  let onNetworkResolved: ((address: string) => void) | undefined;
+
   const submitEventHandler = createSubmitEventHandler({
     deps: {
       hostname: (req) => relay.ingressHost || ingressProxyHost,
@@ -478,6 +482,24 @@ export async function createRequesterPDS(
         "com.publicdomainrelay.temp.compute.events.vm.onNetwork": async (ctx) => {
           const evt = ctx.event as any;
           logger.info("vm.onNetwork received", { receiptKey: `${evt.receipt.uri}#${evt.receipt.cid}` });
+          // Resolve the wrapped onNetwork payload to extract the guest's FQDN
+          // for SSH tunnel routing. Container IPs (bidder-side onNetwork) are
+          // skipped — only dispatcher FQDNs are usable as SSH ProxyCommand targets.
+          if (onNetworkResolved) {
+            try {
+              const payloadRef = evt.payload as { uri: string; cid: string } | undefined;
+              if (payloadRef?.uri) {
+                const onNetworkRecord = await ctx.resolve.resolve({ uri: payloadRef.uri, cid: payloadRef.cid ?? "" }) as Record<string, unknown> | null;
+                const address = onNetworkRecord?.address as string | undefined;
+                // submitEvent only fires for guest-side onNetwork (never bidder-side
+                // container IP). Accept any non-empty address; the SSH ProxyCommand
+                // always routes through the relay dispatcher.
+                if (address) {
+                  onNetworkResolved(address);
+                }
+              }
+            } catch { /* best-effort */ }
+          }
         },
       },
     },
@@ -624,6 +646,7 @@ export async function createRequesterPDS(
     associateCalled,
     approveAssociation: () => { resolveAssociationApproved?.(); },
     rejectAssociation: (err: Error) => { rejectAssociationApproved?.(err); },
+    setOnNetworkResolved: (fn: (address: string) => void) => { onNetworkResolved = fn; },
     dispose: async () => { store.close(); },
   };
 }
@@ -959,6 +982,22 @@ if (address && isDispatcherFqdn && !vmFqdn) {
   let privateKeyPath = "";
   let vmFqdn = "";
   const vmFqdnReady = Promise.withResolvers<string>();
+  // Wire guest-side onNetwork events (submitEvent) → vmFqdnReady.
+  if (pds.setOnNetworkResolved) {
+    pds.setOnNetworkResolved((address: string) => {
+      // Bidder-side onNetwork fires first with container IP (e.g. 192.168.x.x),
+      // guest-side fires later with dispatcher FQDN (e.g. subdomain.localhost:port).
+      // Only the FQDN is routable through SSH ProxyCommand. Wait for it.
+      const isFqdn = /[a-zA-Z]/.test(address);
+      if (isFqdn && !vmFqdn) {
+        vmFqdn = address;
+        vmFqdnReady.resolve(address);
+        log("vm_fqdn_discovered", { fqdn: address, source: "submitEvent" });
+      } else if (!isFqdn) {
+        log("vm_onnetwork_ip_skipped", { address, hint: "waiting for guest FQDN via submitEvent" });
+      }
+    });
+  }
 
   if (!skipSsh) {
     const ssh = await sshProvider.generateKeypair(vmName);

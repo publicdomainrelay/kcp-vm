@@ -149,10 +149,10 @@ export default {
       description: "Firehose websocket URL (repeatable, or comma-separated list for multiple relays)",
       env: "FIREHOSE_URL",
     },
-    "no-qr": {
+    "skip-qr": {
       type: "boolean" as const,
       description: "Skip QR code display and association prompt",
-      env: "NO_QR",
+      env: "SKIP_QR",
     },
     "private-key-hex-path": {
       type: "string" as const,

@@ -130,6 +130,8 @@ export interface RequesterPDS {
   irohNodeId?: Promise<string>;
   /** Resolve the iroh nodeId promise. No-op after first call. */
   resolveIrohNodeId?(nodeId: string): void;
+  /** Set callback invoked when guest-side onNetwork event arrives via submitEvent XRPC. */
+  setOnNetworkResolved?(fn: (address: string) => void): void;
 }
 
 export interface SshSessionProvider {
