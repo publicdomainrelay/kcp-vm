@@ -453,6 +453,7 @@ if (options.computeProviderLocal) {
     containerImage: options.computeProviderLocalContainerImage as string | undefined,
     cacheDir: options.computeProviderLocalCacheDir as string | undefined,
     ingressProxyHost: options.ingressProxyHost as string,
+    caCertPem: options.caCertPem as string | undefined,
     createSignedRepoRecord: atproto.createSignedRepoRecord.bind(atproto),
     callService: atproto.callService.bind(atproto),
     acceptToContract,

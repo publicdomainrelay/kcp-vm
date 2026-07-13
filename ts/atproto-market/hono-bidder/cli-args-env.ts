@@ -154,6 +154,11 @@ export default {
       description: "Skip QR code display and association prompt",
       env: "SKIP_QR",
     },
+    "ca-cert-pem": {
+      type: "string" as const,
+      description: "PEM CA certificate to inject into provisioned guest containers (trust store). Used with self-signed *.localhost certs.",
+      env: "CA_CERT_PEM",
+    },
     "private-key-hex-path": {
       type: "string" as const,
       description: "Path to load/save the Secp256k1 private key hex. Creates file with generated key if missing. Overridden by --private-key-hex if both set.",
