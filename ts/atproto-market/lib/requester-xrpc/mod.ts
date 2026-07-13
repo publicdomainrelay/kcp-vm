@@ -1015,8 +1015,10 @@ if (address && isFqdn && !vmFqdn) {
     const txCtx: TunnelCloudInitContext = {
       ingressProxyHost,
       // audHost is the hostname-only part used for JWT audience matching
-      // (did:web:<hostname>). Strip port if present; gateway IPs include port.
-      audHost: fedingressHost?.replace(/:\d+$/, "") || ingressProxyHost.replace(/:\d+$/, ""),
+      // (did:web:<hostname>). Only use fedingressHost when explicitly passed
+      // (local tests); never fall back to the default "fedproxy.com".
+      audHost: (opts.fedingressHost ? opts.fedingressHost.replace(/:\d+$/, "") : undefined)
+        || ingressProxyHost.replace(/:\d+$/, ""),
       sshAuthorizedKey: ssh.publicKey,
     };
     cloudInit = buildTunnelUserData(txCtx);
