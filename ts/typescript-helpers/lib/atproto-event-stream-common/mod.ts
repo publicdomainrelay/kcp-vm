@@ -20,6 +20,7 @@ export function eventKey(event: FirehoseRecordEvent): string {
 /** Public Bluesky relay URLs — standard Lexicons only. Custom Lexicons filtered out. */
 export const DEFAULT_RELAY_URLS: string[] = [
   "https://bsky.network",
+  "https://relay.mini-cloud-0002.chadig.com",
 ];
 
 /** Public Jetstream URLs — all Lexicons pass through. Use for custom collections. */

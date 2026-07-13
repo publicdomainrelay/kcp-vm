@@ -31,7 +31,17 @@ async function exportCryptoKeyPem(key: CryptoKey): Promise<string> {
   return pemBlock("PRIVATE KEY", der);
 }
 
-export async function generateLocalhostTlsCert(): Promise<LocalhostTlsCert> {
+export interface GenerateLocalhostTlsCertOpts {
+  /** Extra IP SANs, e.g. the container gateway IP so guests connecting to
+   * https://<gateway-ip>:port pass cert validation. */
+  extraIpSans?: string[];
+  /** Extra DNS SANs. */
+  extraDnsSans?: string[];
+}
+
+export async function generateLocalhostTlsCert(
+  opts?: GenerateLocalhostTlsCertOpts,
+): Promise<LocalhostTlsCert> {
   // ── CA keypair ──────────────────────────────────────────────────────
   const caKeyPair = await crypto.subtle.generateKey(
     { name: "ECDSA", namedCurve: "P-256" },
@@ -79,6 +89,8 @@ export async function generateLocalhostTlsCert(): Promise<LocalhostTlsCert> {
       new x509.SubjectAlternativeNameExtension([
         { type: "dns", value: "*.localhost" },
         { type: "dns", value: "localhost" },
+        ...(opts?.extraDnsSans ?? []).map((value) => ({ type: "dns" as const, value })),
+        ...(opts?.extraIpSans ?? []).map((value) => ({ type: "ip" as const, value })),
       ]),
     ],
   });
