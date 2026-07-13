@@ -11,7 +11,7 @@ export interface IngressRef {
 
 export interface CreateServeOpts {
   logger?: StructuredLoggerInterface;
-  tcp?: { addr?: string; port?: number };
+  tcp?: { addr?: string; port?: number; cert?: string; key?: string };
   unix?: { socketPath: string };
   relays?: IngressRef[];
 }
@@ -69,7 +69,8 @@ export function createServe(opts: CreateServeOpts): ServeHandle {
     controller = new AbortController();
 
     if (hasTcp) {
-      const { addr, port } = opts.tcp!;
+      const { addr, port, cert, key } = opts.tcp!;
+      const tlsOpts = cert && key ? { cert, key } : {};
       _httpServer = Deno.serve(
         {
           hostname: addr ?? "0.0.0.0",
@@ -77,8 +78,9 @@ export function createServe(opts: CreateServeOpts): ServeHandle {
           signal: controller.signal,
           onListen: ({ hostname, port }) => {
             _tcpPort = port;
-            logger?.info("serve listening", { hostname, port });
+            logger?.info("serve listening", { hostname, port, tls: !!(cert && key) });
           },
+          ...tlsOpts,
         },
         app.fetch,
       );
