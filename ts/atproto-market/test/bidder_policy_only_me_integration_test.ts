@@ -205,6 +205,7 @@ Deno.test({
         "--firehose-mode", "subscriberepos",
         "--firehose-url", "wss://bsky.network/xrpc/com.atproto.sync.subscribeRepos",
         "--policy-mode", DYNAMIC,
+        "--skip-qr",
       ],
       label: "hono-bidder-prod-only-me",
     });
