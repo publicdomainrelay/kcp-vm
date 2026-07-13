@@ -62,10 +62,10 @@ const plcDirectoryUrl = (options.plcDirectoryUrl as string) || "https://plc.dire
 // requester's PDS endpoints (also on *.localhost) through the relay.
 // Also patches plc.directory → local PLC when plcDirectoryUrl is local.
 const isLocalDev = ingressProxyHost.includes("localhost") || ingressProxyHost.startsWith("127.");
+const patchPort = ingressProxyHost.includes(":") ? ingressProxyHost.split(":").pop()! : "80";
 const _plcHost = (() => { try { return new URL(plcDirectoryUrl).hostname; } catch { return plcDirectoryUrl; } })();
 const isLocalPlc = _plcHost === "localhost" || _plcHost.startsWith("127.") || _plcHost === "0.0.0.0";
 if (isLocalDev || isLocalPlc) {
-  const patchPort = ingressProxyHost.includes(":") ? ingressProxyHost.split(":").pop()! : "80";
   const realFetch = globalThis.fetch;
   globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
     let url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
@@ -83,6 +83,10 @@ if (isLocalDev || isLocalPlc) {
     return realFetch(input as string | URL | Request, init);
   }) as typeof fetch;
 }
+
+// --ca-cert-pem / --guest-tls-port are threaded to the compute provider so
+// guests trust and reach the TLS dispatcher listener for OIDC (HTTPS-only).
+// The bidder's own dispatcher traffic stays on the plain listener.
 
 // Each relay gets its own keypair so subscribers never share a subdomain/FQDN
 // on the dispatcher (collision would route everyone to the last connector).
@@ -454,6 +458,8 @@ if (options.computeProviderLocal) {
     cacheDir: options.computeProviderLocalCacheDir as string | undefined,
     ingressProxyHost: options.ingressProxyHost as string,
     caCertPem: options.caCertPem as string | undefined,
+    guestTlsPort: options.guestTlsPort as number | undefined,
+    debugLogContainerOutput: isLocalDev,
     createSignedRepoRecord: atproto.createSignedRepoRecord.bind(atproto),
     callService: atproto.callService.bind(atproto),
     acceptToContract,
@@ -625,7 +631,7 @@ try {
 // that supports listReposByCollection. Probes each relay, then polls
 // capable ones until the bidder's DID appears or the poll budget expires.
 // Non-blocking on failure — bidder still boots, just warns.
-const _allRelayUrls = [...relayUrls, ..._deferredRelayUrls.map((u) => `http://${u}`)];
+const _allRelayUrls = [...relayUrls, ..._deferredRelayUrls];
 const _visibilityHostname = pdsHostname ?? (_localServePort > 0 ? `127.0.0.1:${_localServePort}` : undefined);
 
 // Re-request crawl on ALL relays now that the offering record is committed.

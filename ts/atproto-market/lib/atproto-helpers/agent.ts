@@ -252,6 +252,8 @@ export interface CreateLocalPDSAgentOpts {
   serve: ServeHandle;
   plcDirectoryUrl: string;
   ingressProxyHost: string;
+  /** Dispatcher serves TLS (self-signed trusted via DENO_CERT) — use https/wss. */
+  tls?: boolean;
   storagePath?: string;
   /** Service ID for associateConfirm route + DID doc. Default: "requester_associate". */
   associateServiceId?: string;
@@ -352,6 +354,7 @@ export async function createLocalPDSAgent(opts: CreateLocalPDSAgentOpts): Promis
   const xrpcRelay = createIngress({
     logger,
     ingressProxyHost,
+    tls: opts.tls,
     signer,
     keypair,
     directSubscriptionHandler: (subscriptionId, nsid, params, onEvent, _onData) => {

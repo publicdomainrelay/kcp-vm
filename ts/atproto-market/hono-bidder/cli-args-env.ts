@@ -154,6 +154,11 @@ export default {
       description: "Skip QR code display and association prompt",
       env: "SKIP_QR",
     },
+    "guest-tls-port": {
+      type: "number" as const,
+      description: "TLS listener port of the local dispatcher. Guest OIDC URLs (HTTPS-only) are rewritten to this port; the bidder's own traffic stays on the plain ingress-proxy-host port.",
+      env: "GUEST_TLS_PORT",
+    },
     "ca-cert-pem": {
       type: "string" as const,
       description: "PEM CA certificate to inject into provisioned guest containers (trust store). Used with self-signed *.localhost certs.",

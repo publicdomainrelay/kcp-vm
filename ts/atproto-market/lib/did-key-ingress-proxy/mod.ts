@@ -11,6 +11,9 @@ export interface CreateIngressOpts {
   signer: { did(): string; sign(bytes: Uint8Array): Promise<Uint8Array> };
   keypair: { did(): string; sign(data: Uint8Array): Promise<Uint8Array> };
   label?: string;
+  /** Dispatcher serves TLS (self-signed trusted via DENO_CERT) — use https/wss
+   * even for localhost/hosts-with-port. */
+  tls?: boolean;
   /**
    * Lazily resolves the local serve's TCP address so inbound relay WS
    * subscriptions (e.g. com.atproto.sync.subscribeRepos from a crawling relay)
@@ -59,6 +62,7 @@ export function createIngress(opts: CreateIngressOpts): IngressRef {
         keypair,
         getServiceAuthToken,
         ingressProxyHost,
+        tls: opts.tls,
         handleRequest,
         wsTarget: opts.localWsTarget,
         directSubscriptionHandler: opts.directSubscriptionHandler,
