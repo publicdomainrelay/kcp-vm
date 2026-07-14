@@ -7,7 +7,9 @@ import { createFirehoseWatcher } from "@publicdomainrelay/firehose-watcher-subsc
 import type { LoggerInterface } from "@publicdomainrelay/logger";
 
 function relayUrlToSubscribeReposUrl(relayUrl: string): string {
-  const base = relayUrl.replace(/^https?:\/\//, "wss://").replace(/\/+$/, "");
+  const isHttp = relayUrl.startsWith("http://");
+  const scheme = isHttp ? "ws://" : "wss://";
+  const base = relayUrl.replace(/^https?:\/\//, scheme).replace(/\/+$/, "");
   return `${base}/xrpc/com.atproto.sync.subscribeRepos`;
 }
 
