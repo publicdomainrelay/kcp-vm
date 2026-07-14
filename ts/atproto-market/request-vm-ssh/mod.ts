@@ -48,8 +48,18 @@ if (ingressProxyHost.includes("localhost") || ingressProxyHost.startsWith("127."
 }
 const cliRelayUrl = options.relayUrl as string | undefined;
 
+const firehoseMode = (options.firehoseMode as string) || "off";
+const firehoseUrl = (options.firehoseUrl as string) || "";
+const additionalRelays: string[] = [];
+if (cliRelayUrl) additionalRelays.push(cliRelayUrl);
+if (firehoseMode === "subscriberepos" && firehoseUrl) {
+  for (const u of firehoseUrl.split(",").map((s: string) => s.trim()).filter(Boolean)) {
+    additionalRelays.push(u);
+  }
+}
+
 const eventStreams = createDefaultATProtoEventStreamsClient({
-  additionalRelays: cliRelayUrl ? [cliRelayUrl] : [],
+  additionalRelays,
   log: logger,
 });
 const relayUrls = eventStreams.relays.map((r) => r.url);
@@ -202,6 +212,7 @@ if ((options.atprotoOauth as boolean) && (options.atprotoHandle as string | unde
   let _session: any = null;
   const _restoredAgent = await tryRestoreOAuthQRSession({
     logger, label: "requester", handle: options.atprotoHandle as string | undefined,
+    sessionPath: options.oauthSessionFile as string | undefined,
     autoRefreshThresholdMs: AUTO_REFRESH_THRESHOLD_MS,
     // No onSessionExpired here — restore handles expiry internally
     // (delete file, return null → falls through to QR auth).

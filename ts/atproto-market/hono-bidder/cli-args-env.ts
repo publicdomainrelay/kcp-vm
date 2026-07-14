@@ -149,6 +149,11 @@ export default {
       description: "Firehose websocket URL (repeatable, or comma-separated list for multiple relays)",
       env: "FIREHOSE_URL",
     },
+    "oauth-session-file": {
+      type: "string" as const,
+      description: "Path to OAuth QR session file (overrides default cache path). When set with --atproto-oauth-qr, session is loaded from this file instead of the default ~/.cache/pdr-market/ location.",
+      env: "OAUTH_SESSION_FILE",
+    },
     "skip-qr": {
       type: "boolean" as const,
       description: "Skip QR code display and association prompt",

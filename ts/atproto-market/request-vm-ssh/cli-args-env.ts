@@ -165,6 +165,11 @@ export default {
       env: "PDS_STATE_PATH",
       default: `${Deno.env.get("HOME") ?? Deno.env.get("USERPROFILE") ?? "/tmp"}/.cache/pdr-market/requester-pds`,
     },
+    "oauth-session-file": {
+      type: "string" as const,
+      description: "Path to OAuth QR session file (overrides default cache path). When set with --atproto-oauth-qr, session is loaded from this file instead of the default ~/.cache/pdr-market/ location.",
+      env: "OAUTH_SESSION_FILE",
+    },
     "skip-qr": {
       type: "boolean" as const,
       description: "Skip QR code and association confirmation prompt",

@@ -231,6 +231,7 @@ if ((options.atprotoOauth as boolean)) {
   // Try restoring saved OAuth QR session
   const _restoredAgent = await tryRestoreOAuthQRSession({
     logger, label: "bidder", handle: options.atprotoHandle as string | undefined,
+    sessionPath: options.oauthSessionFile as string | undefined,
     autoRefreshThresholdMs: AUTO_REFRESH_THRESHOLD_MS,
     // No onSessionExpired here — restore handles expiry internally
     // (delete file, return null → falls through to QR auth).
@@ -382,8 +383,18 @@ const atproto = await createATProto({
 
 const cliRelayUrl = (options.relayUrl as string) || "";
 
+const firehoseMode = (options.firehoseMode as string) || "off";
+const firehoseUrl = (options.firehoseUrl as string) || "";
+const additionalRelays: string[] = [];
+if (cliRelayUrl) additionalRelays.push(cliRelayUrl);
+if (firehoseMode === "subscriberepos" && firehoseUrl) {
+  for (const u of firehoseUrl.split(",").map((s: string) => s.trim()).filter(Boolean)) {
+    additionalRelays.push(u);
+  }
+}
+
 const eventStreams = createDefaultATProtoEventStreamsClient({
-  additionalRelays: cliRelayUrl ? [cliRelayUrl] : [],
+  additionalRelays,
   log: logger,
 });
 
@@ -491,8 +502,8 @@ if (options.computeProviderDenoWorker) {
 const offeringRefreshSec = (options.offeringRefreshSec as number) ?? 300;
 
 // Market factory gets its own relay/serve (own keypair -> own subdomain/FQDN).
-// Skip ingress in OAuth mode — PDS is remote, no relay subscriber needed.
-const bidderIngress = (options.noIngressProxy || isOAuth) ? undefined : await cliCreateIngress();
+// Ingress only disabled when explicitly requested via --no-ingress-proxy.
+const bidderIngress = options.noIngressProxy ? undefined : await cliCreateIngress();
 const bidderServe = createServe({
   logger,
   tcp: { addr: (options.serveAddr as string) || "0.0.0.0", port: (options.servePort as number) ?? 0 },
