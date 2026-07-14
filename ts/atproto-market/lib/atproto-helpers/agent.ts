@@ -347,6 +347,8 @@ export async function createLocalPDSAgent(opts: CreateLocalPDSAgentOpts): Promis
       { id: DEFAULT_COMPUTE_EVENT_SERVICE_ID, type: "PDRTempComputeEvent" },
       { id: associateServiceId, type: "PDRRequesterAssociate" },
     ],
+    publicKeyDid: keypair.did(),
+    attestationKeyDid: attestationKp.did(),
   });
 
   serve.app.route("/", app as never);

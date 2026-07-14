@@ -114,7 +114,7 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
       createdAt: nowIso,
     };
     const { uri: bidUri, cid: bidCid, record: signedBid } = await createSignedRepoRecord(
-      BID_NSID, bidRecord, relay.ingressRef,
+      BID_NSID, bidRecord, did,
     );
 
     cbLog("info", "bidder created VM bid", { bidUri, bidCid, payloadUri });
@@ -231,7 +231,7 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
     );
     const receiptRecord = { ...receiptMetadata, cid: bindCid.toString() };
     const { uri: receiptUri, cid: receiptCid } = await createSignedRepoRecord(
-      RECEIPT_NSID, receiptRecord, relay.ingressRef,
+      RECEIPT_NSID, receiptRecord, did,
     );
 
     const rkey = receiptUri.split("/").pop()!;
@@ -273,7 +273,7 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
             $type: EVENT_NSID,
             receipt: strongRef(receiptUri, receiptCid),
             payload: strongRef(vmOnNetworkUri, vmOnNetworkCid),
-          }, relay.ingressRef);
+          }, did);
         }).then(({ uri: eventUri, cid: eventCid, record: eventRecord }) => {
           cbLog("info", "vm.onNetwork event created on PDS (firehose)", { receiptKey: rk, ip: provisionIp, eventUri });
 

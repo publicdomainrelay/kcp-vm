@@ -79,7 +79,7 @@ export function createMarketFactory(
 
       const verify = createVerifyHandler({
         idResolver: deps.idResolver,
-        keysForDid: deps.bindKeys ? createDidKeyResolver() : undefined,
+        keysForDid: createDidKeyResolver(),
         log: deps.log,
       });
       app.get(`/xrpc/${NETWORK_ATTESTED_VERIFY_NSID}`, (c) => verify(c.req.raw));

@@ -125,7 +125,7 @@ export function createWorkerBidderCallbacks(deps: WorkerBidderDeps): {
       createdAt: nowIso,
     };
     const { uri: bidUri, cid: bidCid, record: signedBid } = await createSignedRepoRecord(
-      BID_NSID, bidRecord, relay.ingressRef,
+      BID_NSID, bidRecord, did,
     );
 
     cbLog("info", "bidder created worker bid", { bidUri, bidCid, payloadUri });
@@ -220,7 +220,7 @@ export function createWorkerBidderCallbacks(deps: WorkerBidderDeps): {
     );
     const receiptRecord = { ...receiptMetadata, cid: bindCid.toString() };
     const { uri: receiptUri, cid: receiptCid } = await createSignedRepoRecord(
-      RECEIPT_NSID, receiptRecord, relay.ingressRef,
+      RECEIPT_NSID, receiptRecord, did,
     );
 
     const rkey = receiptUri.split("/").pop()!;

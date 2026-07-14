@@ -10,7 +10,7 @@ import { createComputeProviderDenoWorker, createWorkerProviderHooks } from "@pub
 import { createATProto, createLocalPDSAgent, createRemoteAgent, createOAuthAgent, createOAuthAgentFromSession, pollForOAuthSession, tryRestoreOAuthQRSession, saveOAuthQRSession, OAuthSessionExpiredError } from "@publicdomainrelay/atproto-helpers";
 import type { LocalPDSAgent } from "@publicdomainrelay/atproto-helpers";
 import { startLoopbackCallbackServer, oauthClientMetadata } from "@publicdomainrelay/atproto-oauth-helpers";
-import { createBadgeBlueSigner } from "@publicdomainrelay/market-atproto";
+import { loadOrGenerateKeypair } from "@publicdomainrelay/market-atproto";
 import { ACCEPT_NSID, EVENT_NSID, OFFERING_NSID, RFP_NSID } from "@publicdomainrelay/market-common";
 import { verifyRelayVisibility } from "@publicdomainrelay/requester-xrpc";
 import { createDefaultATProtoEventStreamsClient } from "@publicdomainrelay/atproto-event-streams-client";
@@ -50,6 +50,10 @@ const keypair = resolvedPrivateKeyHex
 
 const privateKeyHex = resolvedPrivateKeyHex ??
   Array.from(await keypair.export()).map((b) => b.toString(16).padStart(2, "0")).join("");
+
+// Pre-compute attestation keypair from the same private key as the rotation key.
+// Must be available before createGenesisOp (OAuth QR path) to publish in PLC DID.
+const attestationKp = await loadOrGenerateKeypair(privateKeyHex);
 
 const ingressProxyHost = (options.ingressProxyHost as string) || "xrpc.fedproxy.com";
 // Set in OAuth QR path — bidder's did:plc (owns local keypair).
@@ -206,7 +210,7 @@ if ((options.atprotoOauth as boolean)) {
   const plcClient = createPlcDirectoryClient({ plcDirectoryUrl });
   const genesisOp = await createGenesisOp({
     rotationKeys: [keypair.did()],
-    verificationMethods: { atproto: keypair.did() },
+    verificationMethods: { atproto: keypair.did(), attestation: attestationKp.did() },
     sign: (bytes: Uint8Array) => keypair.sign(bytes),
   });
   const plcDid = genesisOp.did;
@@ -371,7 +375,7 @@ if ((options.atprotoOauth as boolean)) {
 }
 const atproto = await createATProto({
   logger,
-  badgeBlueSigner: await createBadgeBlueSigner({ privateKeyHex }),
+  badgeBlueSigner: attestationKp,
   plcDirectory: createPlcDirectoryClient({ plcDirectoryUrl }),
   agent: atprotoAgent,
 });

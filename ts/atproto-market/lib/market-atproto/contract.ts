@@ -10,7 +10,7 @@
 
 import { atUriAuthority, refsEqual, stripResolved, type RecordResolver } from "@publicdomainrelay/market-abc";
 import { verifyRecordSignatures } from "./signing.ts";
-import type { KeysForDid } from "./attest.ts";
+import { createDidKeyResolver, type KeysForDid } from "./attest.ts";
 import type { Resolved } from "@publicdomainrelay/market-common";
 import type { Main as Accept } from "../common/market-lexicons/com/publicdomainrelay/temp/market/accept.ts";
 import type { Main as Bid } from "../common/market-lexicons/com/publicdomainrelay/temp/market/bid.ts";
@@ -60,6 +60,7 @@ export async function resolveContractGraph(
   opts: { verifySignatures?: boolean; keysForDid?: KeysForDid } = {},
 ): Promise<ContractGraph> {
   const verify = opts.verifySignatures !== false;
+  const keyResolver = opts.keysForDid ?? createDidKeyResolver();
   const bid = await resolve.resolve<Bid>({ uri: accept.bid.uri, cid: accept.bid.cid });
   if (!refsEqual(bid.rfp, accept.rfp)) {
     throw new ContractGraphError("Accept.rfp does not match Bid.rfp");
@@ -69,13 +70,13 @@ export async function resolveContractGraph(
     const bidOk = await verifyRecordSignatures({
       record: stripResolved(bid) as Record<string, unknown>,
       repositoryDid: atUriAuthority(bid._uri),
-      keysForDid: opts.keysForDid,
+      keysForDid: keyResolver,
     });
     if (!bidOk) throw new ContractGraphError("Bid is missing a valid badge.blue signature");
     const rfpOk = await verifyRecordSignatures({
       record: stripResolved(rfp) as Record<string, unknown>,
       repositoryDid: atUriAuthority(rfp._uri),
-      keysForDid: opts.keysForDid,
+      keysForDid: keyResolver,
     });
     if (!rfpOk) throw new ContractGraphError("RFP is missing a valid badge.blue signature");
   }

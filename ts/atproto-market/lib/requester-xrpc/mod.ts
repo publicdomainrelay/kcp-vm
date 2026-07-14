@@ -392,6 +392,8 @@ export async function createRequesterPDS(
       { id: "pdr_temp_compute_event", type: "PDRTempComputeEvent" },
       { id: "requester_associate", type: "PDRRequesterAssociate" },
     ],
+    publicKeyDid: keypair.did(),
+    attestationKeyDid: attestationKp.did(),
   });
 
   // ── request/response logging middleware ──────────────────────────────

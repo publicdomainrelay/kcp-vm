@@ -493,7 +493,7 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
             $type: EVENT_NSID,
             receipt: { $type: "com.atproto.repo.strongRef", uri: guestEntry.receiptUri, cid: guestEntry.receiptCid },
             payload: { $type: "com.atproto.repo.strongRef", uri, cid },
-          }, relay?.ingressRef ?? "");
+          }, atproto.did);
         log("info", "guest.onNetwork recorded", { receiptKey: guestEntry.receiptKey, uri, address: body.address });
         // Submit to requester if submitEventUrl exists
         if (guestEntry.submitEventUrl) {

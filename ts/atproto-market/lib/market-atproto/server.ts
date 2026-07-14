@@ -86,22 +86,6 @@ export interface MarketServerDeps {
   idResolver: IdResolver;
   /** Strong-ref resolver used to fetch referenced records. */
   resolve: RecordResolver;
-  /**
-   * Verify each inbound record carries a valid inline badge.blue attestation by
-   * its author before dispatching. Defaults to true; set false to disable.
-   */
-  verifySignatures?: boolean;
-  /**
-   * Additionally require the signing did:key to be published by the issuer (or
-   * author) DID document — resolved via @atiproto/key-resolver (did:web/did:plc).
-   * Defaults to **false**: signature validity + repository binding already prove
-   * the record is untampered and bound to its author's repo, which is the
-   * guarantee a keyless producer (no stable, published ATTESTATION_PRIVATE_KEY_HEX)
-   * can offer. Set true only when every producer publishes a stable attestation
-   * key in its DID document (see attestationVerificationMethod); a valid signature
-   * by an unpublished/ephemeral key is then rejected.
-   */
-  bindKeys?: boolean;
   /** Optional structured logger. Defaults to a no-op. */
   log?: Logger;
 }
@@ -173,30 +157,27 @@ async function authorize(
 }
 
 /**
- * Build the key resolver used for `bindKeys` verification (or undefined when not
- * binding). Constructed once per handler factory so DID-doc lookups are cached.
+ * Build the key resolver used for DID-document key binding verification.
+ * Always enabled — every producer must publish its attestation key in its
+ * DID document (PLC or did:web) via verificationMethod entries.
  */
-function keysForDidFrom(deps: MarketServerDeps): KeysForDid | undefined {
-  // Opt-in: only bind the signing did:key to the issuer/author DID document
-  // (fetched via @atiproto/key-resolver) when bindKeys is explicitly enabled.
-  // Off by default so keyless producers (ephemeral signing keys) are not rejected.
-  return deps.bindKeys ? createDidKeyResolver() : undefined;
+function keysForDidFrom(_deps: MarketServerDeps): KeysForDid {
+  return createDidKeyResolver();
 }
 
 /**
  * Verify a record carries a valid inline badge.blue attestation by its author.
- * Returns a ready-to-send 400 Response on failure, or null when ok / disabled.
+ * Returns a ready-to-send 400 Response on failure, or null when ok.
  * `record` must be the bare record value (call stripResolved on resolved ones).
  */
 async function verifyAuthored(
   deps: MarketServerDeps,
   record: Record<string, unknown>,
   recordUri: string,
-  keysForDid: KeysForDid | undefined,
+  keysForDid: KeysForDid,
   log: Logger,
   label: string,
 ): Promise<Response | null> {
-  if (deps.verifySignatures === false) return null;
   const ok = await verifyRecordSignatures({
     record,
     repositoryDid: atUriAuthority(recordUri),
