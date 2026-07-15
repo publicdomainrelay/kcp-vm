@@ -57,7 +57,12 @@ export function createBacklogSequencer<TIn, TFrame extends { seq: number }>(
             lastSeq = f.seq;
             yield f;
           } else {
-            await new Promise<void>((r) => { notify = r; });
+            await new Promise<void>((r) => {
+              notify = r;
+              // If a frame landed between the empty check and notify assignment,
+              // resolve immediately so we don't wait for the next frame.
+              if (queue.length > 0) r();
+            });
             notify = null;
           }
         }
