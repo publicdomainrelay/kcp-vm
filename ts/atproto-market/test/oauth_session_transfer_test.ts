@@ -124,7 +124,17 @@ function createFakePlc() {
     });
   });
 
-  return { app };
+  // Update service endpoint after PDS URL is known.
+  function setPdsEndpoint(did: string, pdsUrl: string) {
+    const entry = ops.get(did);
+    if (!entry) return;
+    const svcs = entry.op.services as Record<string, { type: string; endpoint: string }> | undefined;
+    if (svcs?.atproto_pds) {
+      svcs.atproto_pds.endpoint = pdsUrl;
+    }
+  }
+
+  return { app, setPdsEndpoint };
 }
 
 // ── Vouch helpers ───────────────────────────────────────────────────────────
@@ -134,9 +144,8 @@ const BADGE_BLUE_KEYS_NSID = "com.publicdomainrelay.temp.badgeBlueKeys";
 
 async function createRecordDpop(
   pdsUrl: string, session: { accessJwt: string; dpopPublicJwk: Record<string, string>; dpopPrivateJwk: Record<string, string> },
-  userDid: string, collection: string, record: Record<string, unknown>,
+  userDid: string, collection: string, rkey: string, record: Record<string, unknown>,
 ): Promise<{ uri: string }> {
-  const rkey = crypto.randomUUID().replace(/-/g, "").slice(0, 13);
   // Build DPoP proof
   const enc = new TextEncoder();
   const now = Math.floor(Date.now() / 1000);
@@ -274,10 +283,10 @@ Deno.test({
   const ingressProxyHost = `localhost:${dispPort}`;
   log.info("dispatcher", { port: dispPort });
 
-  // 1b. Fake PLC directory
-  const plc = createFakePlc();
+  // 1b. Fake PLC directory (returns did:plc DIDs, PDS endpoint updated after port known)
+  const { app: plcApp, setPdsEndpoint } = createFakePlc();
   const plcAc = new AbortController();
-  const plcPort = await serveOnPort0(plc.app.fetch, plcAc);
+  const plcPort = await serveOnPort0(plcApp.fetch, plcAc);
   cleanups.push(() => plcAc.abort());
   const plcDirectoryUrl = `http://localhost:${plcPort}`;
   log.info("plc", { port: plcPort });
@@ -328,6 +337,11 @@ Deno.test({
     const requesterAcct = await createAccount(pdsUrl, "requester");
     log.info("accounts", { bidder: bidderAcct.did, requester: requesterAcct.did });
 
+    // Fix PLC service endpoints: factory's createAccount sets endpoint to plcDirectoryUrl;
+    // override with actual PDS URL so DID resolution returns correct PDS endpoint.
+    setPdsEndpoint(bidderAcct.did, pdsUrl);
+    setPdsEndpoint(requesterAcct.did, pdsUrl);
+
     // ── 4. Inject OAuth sessions ───────────────────────────────────────────
     const inj: SessionInjector = pds.sessionInjector!; assert(inj);
 
@@ -340,15 +354,16 @@ Deno.test({
     log.info("injected", { role: "requester", did: requesterAcct.did });
 
     // ── 5. Create tangled-vouch records ────────────────────────────────────
+    // Vouch records use rkey = vouchee DID (required by VouchResolver).
     // Mutual vouch: bidder vouches for requester, requester vouches for bidder.
-    await createRecordDpop(pdsUrl, bidderInj.sessionData, bidderAcct.did, VOUCH_NSID, {
+    await createRecordDpop(pdsUrl, bidderInj.sessionData, bidderAcct.did, VOUCH_NSID, requesterAcct.did, {
       $type: VOUCH_NSID,
       vouchee: requesterAcct.did,
       createdAt: new Date().toISOString(),
     });
     log.info("vouch", { voucher: "bidder", vouchee: "requester" });
 
-    await createRecordDpop(pdsUrl, requesterInj.sessionData, requesterAcct.did, VOUCH_NSID, {
+    await createRecordDpop(pdsUrl, requesterInj.sessionData, requesterAcct.did, VOUCH_NSID, bidderAcct.did, {
       $type: VOUCH_NSID,
       vouchee: bidderAcct.did,
       createdAt: new Date().toISOString(),
@@ -356,7 +371,8 @@ Deno.test({
     log.info("vouch", { voucher: "requester", vouchee: "bidder" });
 
     // Requester badgeBlueKeys: associate bidder as a trusted operator.
-    await createRecordDpop(pdsUrl, requesterInj.sessionData, requesterAcct.did, BADGE_BLUE_KEYS_NSID, {
+    await createRecordDpop(pdsUrl, requesterInj.sessionData, requesterAcct.did, BADGE_BLUE_KEYS_NSID,
+      crypto.randomUUID().replace(/-/g, "").slice(0, 13), {
       $type: BADGE_BLUE_KEYS_NSID,
       keyId: bidderAcct.did,
       challenge: requesterAcct.did,
@@ -450,8 +466,8 @@ Deno.test({
     ]);
     clearTimeout(bidderTimeout);
 
-    // Log bidder output for debugging
-    for (const line of bidderBuffer.slice(-30)) console.error(line);
+    // Log bidder output for debugging (capture all)
+    for (const line of bidderBuffer) console.error(line);
 
     assert(bidderReady, "Bidder should emit bidder_ready event");
     log.info("bidder_ready", { did: bidderDid, ingressRef: bidderIngressRef });
@@ -533,7 +549,7 @@ Deno.test({
     try { requesterChild.kill("SIGTERM"); } catch { /*ok*/ }
 
     // Log requester output
-    for (const line of requesterBuffer.slice(-50)) console.error(line);
+    for (const line of requesterBuffer) console.error(line);
 
     // ── 10. Assert ──────────────────────────────────────────────────────────
     // Check for key contract flow events in output
