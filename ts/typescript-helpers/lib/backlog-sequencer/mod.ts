@@ -34,30 +34,39 @@ export function createBacklogSequencer<TIn, TFrame extends { seq: number }>(
         yield f;
       }
     },
-    async *live() {
+    live(): AsyncIterable<TFrame> {
       const queue: TFrame[] = [];
       let notify: (() => void) | null = null;
+      // Subscribe IMMEDIATELY (not lazily in generator) so frames arriving
+      // between backfill() and the first live .next() are captured.
       const unsub = bus.subscribe((f) => {
         queue.push(f);
         notify?.();
       });
-      try {
-        while (true) {
-          if (queue.length > 0) {
-            yield queue.shift()!;
-          } else {
-            await new Promise<void>((r) => {
-              notify = r;
-              // If a frame landed between the empty check and notify assignment,
-              // resolve immediately so we don't wait for the next frame.
-              if (queue.length > 0) r();
-            });
-            notify = null;
-          }
-        }
-      } finally {
-        unsub();
-      }
+      let done = false;
+      return {
+        [Symbol.asyncIterator]() { return this; },
+        async next(): Promise<IteratorResult<TFrame>> {
+          if (done) return { value: undefined, done: true };
+          if (queue.length > 0) return { value: queue.shift()!, done: false };
+          await new Promise<void>((r) => {
+            notify = r;
+            if (queue.length > 0) r();
+          });
+          notify = null;
+          // The notify promise resolved — a frame is in the queue (or the
+          // immediate resolve above drained it). Re-check.
+          if (queue.length > 0) return { value: queue.shift()!, done: false };
+          // The promise was resolved but queue was already drained by the
+          // immediate check. Loop around.
+          return this.next();
+        },
+        async return(): Promise<IteratorResult<TFrame>> {
+          done = true;
+          unsub();
+          return { value: undefined, done: true };
+        },
+      };
     },
   };
 }
