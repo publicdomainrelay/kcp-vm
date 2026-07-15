@@ -399,13 +399,13 @@ Deno.test({
     log.info("crawl", { status: crawlRes.status, ok: crawlRes.ok });
 
     // ── 8. Spawn bidder subprocess ─────────────────────────────────────────
+    // Single firehose source (relay) — avoid duplicate relayUrl instances.
     const bidderArgs = [
       "run", "-A", "--unstable-kv", `${ORG}/atproto-market/hono-bidder/mod.ts`,
       "--atproto-oauth-qr", "--oauth-session-file", bidderSessionFile,
       "--atproto-handle", "bidder", "--skip-qr",
       "--firehose-mode", "subscriberepos",
       "--firehose-url", relayUrl,
-      "--relay-url", relayUrl,
       "--plc-directory-url", plcDirectoryUrl,
       "--ingress-proxy-host", ingressProxyHost,
       "--compute-provider-local",
