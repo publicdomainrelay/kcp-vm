@@ -36,7 +36,6 @@ export function createBacklogSequencer<TIn, TFrame extends { seq: number }>(
     },
     async *live() {
       const queue: TFrame[] = [];
-      let lastSeq = 0;
       let notify: (() => void) | null = null;
       const unsub = bus.subscribe((f) => {
         queue.push(f);
@@ -44,18 +43,8 @@ export function createBacklogSequencer<TIn, TFrame extends { seq: number }>(
       });
       try {
         while (true) {
-          // Drain backlog frames arrived since last yield — covers gap
-          // between backfill() completion and live() subscription.
-          for (const f of backlog) {
-            if (f.seq > lastSeq) {
-              lastSeq = f.seq;
-              yield f;
-            }
-          }
           if (queue.length > 0) {
-            const f = queue.shift()!;
-            lastSeq = f.seq;
-            yield f;
+            yield queue.shift()!;
           } else {
             await new Promise<void>((r) => {
               notify = r;
