@@ -440,6 +440,9 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
       }
     }
 
+    // Firehose-only mode: initialize empty callbacks so RFP watcher can run
+    if (eventStreams && !merged.rfpCallbacks) merged.rfpCallbacks = {};
+
     if (callbackFactory) {
       const cb = await callbackFactory(deps);
       if (cb.rfpCallbacks) merged.rfpCallbacks = deepMergeCallbacks(merged.rfpCallbacks ?? {}, cb.rfpCallbacks);
@@ -454,7 +457,7 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
       log,
     };
 
-    if (merged.rfpCallbacks || merged.onAccept || merged.eventCallbacks) {
+    if (merged.rfpCallbacks || merged.onAccept || merged.eventCallbacks || eventStreams) {
       const factory = createMarketFactory(marketDeps, {
         rfp: merged.rfpCallbacks,
         rfpScopeFilter: new PolicyModeFilter(policyMode, atproto.did, vouchedDids ?? undefined, { isRequesterAssociated }).toAcceptScopeFilter(),
@@ -505,8 +508,9 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
       });
     }
 
-    if (merged.rfpCallbacks && eventStreams) {
-      const dispatch = createRfpDispatcher({ deps: marketDeps, callbacks: merged.rfpCallbacks });
+    if (eventStreams) {
+      const dispatchCallbacks = merged.rfpCallbacks ?? {};
+      const dispatch = createRfpDispatcher({ deps: marketDeps, callbacks: dispatchCallbacks });
       // Dedup handled by ATProtoEventStreamsClient — no per-group seen Set needed.
       eventStreams.watch({
         wantedCollections: [RFP_NSID],

@@ -14,6 +14,7 @@ import { loadOrGenerateKeypair } from "@publicdomainrelay/market-atproto";
 import { ACCEPT_NSID, EVENT_NSID, OFFERING_NSID, RFP_NSID } from "@publicdomainrelay/market-common";
 import { verifyRelayVisibility } from "@publicdomainrelay/requester-xrpc";
 import { createDefaultATProtoEventStreamsClient } from "@publicdomainrelay/atproto-event-streams-client";
+import { DEFAULT_RELAY_URLS } from "@publicdomainrelay/atproto-event-stream-common";
 import { createPlcDirectoryClient, createGenesisOp, PlcClient, PlcNotFoundError } from "@publicdomainrelay/did-plc";
 import { createDigitalOceanComputeProvider } from "@publicdomainrelay/compute-provider-digitalocean";
 import { createLocalComputeProvider } from "@publicdomainrelay/compute-provider-local";
@@ -395,6 +396,7 @@ if (firehoseMode === "subscriberepos" && firehoseUrl) {
 
 const eventStreams = createDefaultATProtoEventStreamsClient({
   additionalRelays,
+  removeRelays: firehoseUrl ? DEFAULT_RELAY_URLS : undefined,
   log: logger,
 });
 

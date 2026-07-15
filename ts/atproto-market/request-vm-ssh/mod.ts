@@ -15,6 +15,7 @@ import { createPlcDirectoryClient, createGenesisOp, PlcClient, PlcNotFoundError 
 import type { RequesterPDS } from "@publicdomainrelay/requester-abc";
 import { EVENT_NSID, OFFERING_NSID } from "@publicdomainrelay/market-common";
 import { createDefaultATProtoEventStreamsClient } from "@publicdomainrelay/atproto-event-streams-client";
+import { DEFAULT_RELAY_URLS } from "@publicdomainrelay/atproto-event-stream-common";
 import { qrcode } from "@libs/qrcode";
 import { IdResolver } from "@atproto/identity";
 import { Secp256k1Keypair } from "@atproto/crypto";
@@ -60,6 +61,7 @@ if (firehoseMode === "subscriberepos" && firehoseUrl) {
 
 const eventStreams = createDefaultATProtoEventStreamsClient({
   additionalRelays,
+  removeRelays: firehoseUrl ? DEFAULT_RELAY_URLS : undefined,
   log: logger,
 });
 const relayUrls = eventStreams.relays.map((r) => r.url);
