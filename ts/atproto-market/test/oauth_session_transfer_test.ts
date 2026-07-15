@@ -405,7 +405,6 @@ Deno.test({
       "--atproto-handle", "bidder", "--skip-qr",
       "--firehose-mode", "subscriberepos",
       "--firehose-url", relayUrl,
-      "--relay-url", relayUrl,
       "--plc-directory-url", plcDirectoryUrl,
       "--ingress-proxy-host", ingressProxyHost,
       "--compute-provider-local",
