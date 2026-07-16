@@ -583,20 +583,20 @@ export async function createRequesterPDS(
     if (endpointUrl.startsWith("http://") || endpointUrl.startsWith("https://")) {
       return {
         targetUrl: `${endpointUrl.replace(/\/+$/, "")}/xrpc`,
-        audDid: `did:web:${new URL(endpointUrl).host}`,
+        audDid: `did:web:${new URL(endpointUrl).host}#pdr_temp_market`,
       };
     }
     if (endpointUrl.startsWith("did:")) {
       const didPart = endpointUrl.split("#")[0];
-      const svcDoc = await idResolver.did.resolve(didPart);
       const svcId = endpointUrl.includes("#") ? endpointUrl.split("#")[1] : "pdr_temp_market";
+      const svcDoc = await idResolver.did.resolve(didPart);
       const svc = (svcDoc?.service ?? []).find((s: { id: string }) => s.id === `#${svcId}`);
       const svcEndpoint = (svc as { serviceEndpoint?: string } | undefined)?.serviceEndpoint;
       if (!svcEndpoint) return null;
       const svcHost = new URL(svcEndpoint).host;
       return {
         targetUrl: `${svcEndpoint.replace(/\/+$/, "")}/xrpc`,
-        audDid: `did:web:${svcHost}`,
+        audDid: `did:web:${svcHost}#pdr_temp_market`,
       };
     }
     return null;
@@ -657,13 +657,24 @@ export async function createRequesterPDS(
 // SSH session provider
 // ---------------------------------------------------------------------------
 
+/**
+ * Tunnel URL for a guest FQDN. A guest announces `<subdomain>.<ingressProxyHost>`,
+ * so an explicit port means a local dispatcher on plain HTTP; production is
+ * `<subdomain>.fedproxy.com` on 443. Forcing wss:// at a plaintext listener fails
+ * the TLS handshake ("record overflow") rather than falling back.
+ */
+function tunnelWsUrl(fqdn: string): string {
+  const scheme = fqdn.includes(":") ? "ws" : "wss";
+  return `${scheme}://${fqdn}/xrpc/com.fedproxy.temp.xrpc.tunnel`;
+}
+
 function sshTunnelArgs(
   privateKeyPath: string,
   fqdn: string,
   proxyCmdOverride?: string,
 ): string[] {
   return [
-    "-o", `ProxyCommand=${proxyCmdOverride ?? `websocat --binary wss://${fqdn}/xrpc/com.fedproxy.temp.xrpc.tunnel`}`,
+    "-o", `ProxyCommand=${proxyCmdOverride ?? `websocat --binary ${tunnelWsUrl(fqdn)}`}`,
     "-o", `IdentityFile=${privateKeyPath}`,
     "-o", "IdentitiesOnly=yes",
     "-o", "StrictHostKeyChecking=no",
@@ -842,6 +853,7 @@ export async function runComputeContract(
   // Firehose watcher for ALL market collections — starts before RFP creation
   // so we don't miss bids/accepts/events. Active until VM deletion.
   const firehoseDiscoveredBids = new Map<string, CollectedBid[]>();
+  const firehoseDiscoveredReceipts = new Map<string, { receiptUri: string; receiptCid: string; submitEventRef?: string }>();
   let bidWatcher: { close(): void } | undefined;
   let _rfpUri = "";
 
@@ -852,7 +864,7 @@ export async function runComputeContract(
 
   // Start firehose watcher BEFORE RFP creation — watch BID + ACCEPT + RECEIPT.
   if (eventStreams) {
-    const watched = [BID_NSID, ACCEPT_NSID, EVENT_NSID, COMPUTE_EVENTS_VM_ONNETWORK_NSID];
+    const watched = [BID_NSID, EVENT_NSID, COMPUTE_EVENTS_VM_ONNETWORK_NSID, RECEIPT_NSID];
     bidWatcher = eventStreams.watch({
       wantedCollections: watched,
       onEvent: (e) => {
@@ -962,6 +974,31 @@ if (address && isFqdn && !vmFqdn) {
             } catch { /* best-effort */ }
           })();
         }
+        // RECEIPT_NSID: collect receipts for firehose-based discovery when
+        // submitAccept XRPC doesn't return one (push path failed or bidder
+        // doesn't expose receipt in response). Keyed by accept.uri so the
+        // fallback code can find the receipt without opening a second watcher.
+        if (e.collection === RECEIPT_NSID) {
+          (async () => {
+            try {
+              const doc = await idResolver.did.resolve(e.did);
+              if (!doc) return;
+              const pdsUrl = getPdsEndpoint(doc);
+              if (!pdsUrl) return;
+              const records = await listRecordsAll(pdsUrl, e.did, RECEIPT_NSID, { timeoutMs: 10_000 });
+              for (const rec of records) {
+                if (rec.uri !== e.uri) continue;
+                const val = rec.value as Record<string, unknown>;
+                const acceptRef = val.accept as { uri?: string } | undefined;
+                if (!acceptRef?.uri) continue;
+                const se = val.submitEvent as string | undefined;
+                firehoseDiscoveredReceipts.set(acceptRef.uri, {
+                  receiptUri: rec.uri, receiptCid: rec.cid, submitEventRef: se,
+                });
+              }
+            } catch { /* best-effort */ }
+          })();
+        }
       },
       log: logger,
     });
@@ -1022,6 +1059,7 @@ if (address && isFqdn && !vmFqdn) {
       audHost: (opts.fedingressHost ? opts.fedingressHost.replace(/:\d+$/, "") : undefined)
         || ingressProxyHost.replace(/:\d+$/, ""),
       sshAuthorizedKey: ssh.publicKey,
+      hostAliases: opts.guestHostAliases,
     };
     cloudInit = buildTunnelUserData(txCtx);
     if (opts.userDataFactory) {
@@ -1029,8 +1067,6 @@ if (address && isFqdn && !vmFqdn) {
     }
   } else {
     cloudInit = `#cloud-config
-packages:
-  - curl
 runcmd:
   - echo "test VM (no sshd) ready" | tee /tmp/ready
 `;
@@ -1301,65 +1337,43 @@ runcmd:
     const target = await pds.resolveBidderEndpoint(submitAcceptTarget);
     if (target) {
       log("submitting_accept", { target: submitAcceptTarget });
-      const r = await pds.callBidder(target.targetUrl, SUBMIT_ACCEPT_NSID, SUBMIT_ACCEPT_LXM, target.audDid, {
-        acceptUri, acceptCid,
-      });
-      const body = r.body as { id?: string; uri?: string; cid?: string; submitEvent?: string };
-      receiptUri = body.uri;
-      receiptCid = body.cid;
-      submitEventRef = body.submitEvent;
-      log("submitAccept_result", { status: r.status, receiptUri, receiptCid, submitEventRef });
+      try {
+        const r = await pds.callBidder(target.targetUrl, SUBMIT_ACCEPT_NSID, SUBMIT_ACCEPT_LXM, target.audDid, {
+          acceptUri, acceptCid,
+        });
+        const body = r.body as { id?: string; uri?: string; cid?: string; submitEvent?: string };
+        receiptUri = body.uri;
+        receiptCid = body.cid;
+        submitEventRef = body.submitEvent;
+        log("submitAccept_result", { status: r.status, receiptUri, receiptCid, submitEventRef });
+      } catch (err) {
+        log("submitAccept_error", { target: submitAcceptTarget, error: String(err) });
+      }
     } else {
       log("accept_target_unresolvable", { submitAcceptTarget });
     }
   }
 
-  // 8b. If no receipt from submitAccept XRPC, try firehose-based discovery.
-  // Watch RECEIPT_NSID for a receipt whose accept.uri matches ours.
-  if (!receiptUri && eventStreams) {
+  // 8b. If no receipt from submitAccept XRPC, poll the shared firehose
+  // receipt Map (populated by the bidWatcher — same connections, no
+  // dedicated watcher). The bidWatcher already watches RECEIPT_NSID.
+  if (!receiptUri && bidWatcher) {
     log("receipt_firehose_fallback", { acceptUri });
-    const receiptFromFirehose = await new Promise<{ receiptUri: string; receiptCid: string; submitEventRef?: string } | null>(
-      (resolve) => {
-        const timeoutMs = 30_000;
-        let resolved = false;
-        const timer = setTimeout(() => {
-          if (!resolved) { resolved = true; watcher?.close(); resolve(null); }
-        }, timeoutMs);
-
-        let watcher: { close(): void } | undefined;
-        watcher = eventStreams!.watch({
-          wantedCollections: [RECEIPT_NSID],
-          onEvent: async (e) => {
-            if (resolved) return;
-            if (e.operation !== "create") return;
-            try {
-              const doc = await idResolver.did.resolve(e.did);
-              if (!doc) return;
-              const pdsUrl = getPdsEndpoint(doc);
-              if (!pdsUrl) return;
-              const records = await listRecordsAll(pdsUrl, e.did, RECEIPT_NSID, { timeoutMs: 10_000 });
-              for (const rec of records) {
-                if (rec.uri !== e.uri) continue;
-                const val = rec.value as Record<string, unknown>;
-                const acceptRef = val.accept as { uri?: string } | undefined;
-                if (acceptRef?.uri !== acceptUri) continue;
-                resolved = true;
-                clearTimeout(timer);
-                watcher?.close();
-                const se = val.submitEvent as string | undefined;
-                resolve({ receiptUri: rec.uri, receiptCid: rec.cid, submitEventRef: se });
-                return;
-              }
-            } catch { /* best-effort */ }
-          },
-          log: logger,
-        });
-      },
-    );
-    if (receiptFromFirehose) {
-      receiptUri = receiptFromFirehose.receiptUri;
-      receiptCid = receiptFromFirehose.receiptCid;
-      submitEventRef = receiptFromFirehose.submitEventRef;
+    const timeoutMs = 30_000;
+    const deadline = Date.now() + timeoutMs;
+    let fromFirehose: { receiptUri: string; receiptCid: string; submitEventRef?: string } | null = null;
+    while (Date.now() < deadline) {
+      const found = firehoseDiscoveredReceipts.get(acceptUri);
+      if (found) {
+        fromFirehose = found;
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    if (fromFirehose) {
+      receiptUri = fromFirehose.receiptUri;
+      receiptCid = fromFirehose.receiptCid;
+      submitEventRef = fromFirehose.submitEventRef;
       log("receipt_from_firehose", { receiptUri, receiptCid, submitEventRef });
     } else {
       log("receipt_firehose_timeout", { acceptUri });
@@ -1370,7 +1384,7 @@ runcmd:
   let receiptOk = false;
   if (receiptUri && receiptCid) {
     try {
-      const resolver = createRecordResolver(new IdResolver());
+      const resolver = createRecordResolver(idResolver);
       const receipt = await resolver.resolve({ uri: receiptUri, cid: receiptCid });
       const accept = await resolver.resolve({ uri: acceptUri, cid: acceptCid });
       const receiptBare = stripResolved(receipt) as Record<string, unknown>;
@@ -1415,7 +1429,7 @@ runcmd:
     const sshTunnel = opts.sshProvider ?? createSshSessionProvider(
       opts.logger,
       { proxyCommandFn: opts.sshProxyCommandFn ??
-        ((fqdn: string) => `/opt/homebrew/bin/websocat --binary wss://${fqdn}/xrpc/com.fedproxy.temp.xrpc.tunnel`) },
+        ((fqdn: string) => `/opt/homebrew/bin/websocat --binary ${tunnelWsUrl(fqdn)}`) },
     );
     // FQDN discovered from vm.onNetwork event (guest publishes after tunnel subscriber registers).
     // Timeout after vmReadyTimeoutSec if onNetwork event never arrives.
@@ -1608,7 +1622,7 @@ export async function createOAuthRequester(opts: CreateOAuthRequesterOpts): Prom
 
     async resolveBidderEndpoint(endpointUrl: string) {
       if (endpointUrl.startsWith("http://") || endpointUrl.startsWith("https://")) {
-        return { targetUrl: `${endpointUrl.replace(/\/+$/, "")}/xrpc`, audDid: `did:web:${new URL(endpointUrl).host}` };
+        return { targetUrl: `${endpointUrl.replace(/\/+$/, "")}/xrpc`, audDid: `did:web:${new URL(endpointUrl).host}#pdr_temp_market` };
       }
       if (endpointUrl.startsWith("did:")) {
         const didPart = endpointUrl.split("#")[0];
@@ -1617,7 +1631,7 @@ export async function createOAuthRequester(opts: CreateOAuthRequesterOpts): Prom
         const svc = doc?.service?.find?.((s: { id: string }) => s.id === `#${svcId}`);
         if (!svc) return null;
         const ep = (svc as { serviceEndpoint: string }).serviceEndpoint.replace(/\/+$/, "");
-        return { targetUrl: `${ep}/xrpc`, audDid: `did:web:${new URL(ep).host}` };
+        return { targetUrl: `${ep}/xrpc`, audDid: `did:web:${new URL(ep).host}#pdr_temp_market` };
       }
       return null;
     },

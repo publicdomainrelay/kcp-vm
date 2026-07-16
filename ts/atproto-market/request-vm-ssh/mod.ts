@@ -295,6 +295,34 @@ if ((options.atprotoOauth as boolean) && (options.atprotoHandle as string | unde
       const { uri, cid } = await _userAgent.createRecord!(_userAgent.sessionData.userDid, collection, rkey, signed);
       return { uri, cid };
     };
+    // Override callBidder to mint service-auth via the OAuth session (DPoP),
+    // so the token issuer matches the record author. Without this, callBidder
+    // signs with the locally-persisted PLC key → 403 "issuer must author".
+    if (_userAgent.getServiceAuth) {
+      pds.callBidder = async (targetBase: string, nsid: string, lxm: string, audDid: string, body: Record<string, unknown>) => {
+        try {
+          const token = await _userAgent.getServiceAuth!(audDid, lxm);
+          const url = `${targetBase}/${nsid}`;
+          const res = await fetch(url, {
+            method: "POST",
+            headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+            body: JSON.stringify(body),
+            signal: AbortSignal.timeout(10_000),
+          });
+          let resBody: unknown;
+          const resText = await res.text();
+          try { resBody = JSON.parse(resText); } catch { resBody = resText; }
+          return { status: res.status, ok: res.ok, body: resBody };
+        } catch (err) {
+          console.error(JSON.stringify({
+            event: "callBidder_error",
+            nsid, lxm, audDid, targetBase,
+            error: String(err),
+          }));
+          throw err;
+        }
+      };
+    }
   }
 
   isOAuth = true;
@@ -461,6 +489,9 @@ const result = await runComputeContract(pds, {
   logger,
   ingressProxyHost,
   fedingressHost: options.fedingressHost as string | undefined,
+  plcUrl: (options.plcDirectoryUrl as string) || "https://plc.directory",
+  guestHostAliases: ((options.guestHostAliases as string) || "")
+    .split(",").map((s: string) => s.trim()).filter(Boolean),
   vmName: options.vmName as string | undefined,
   bidWindowSec: options.bidWindowSec as number,
   skipSsh: options.skipSsh as boolean,

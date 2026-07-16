@@ -15,6 +15,11 @@ export interface ContractFlowOptions {
   vmName?: string;
   bidWindowSec?: number;
   plcUrl?: string;
+  /**
+   * Extra `/etc/hosts` entries ("<ip> <name>") for the guest, so it can dial the
+   * dispatcher by a name that also resolves for this requester.
+   */
+  guestHostAliases?: string[];
   /** Atproto relay URLs for bidder discovery via listReposByCollection. */
   relayUrls?: string[];
   /** Additional bidder DIDs beyond those discovered via relay + vouch. */

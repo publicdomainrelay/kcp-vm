@@ -20,6 +20,10 @@ import { MemoryStorage, signerFromKeypair } from "@publicdomainrelay/atproto-rep
 import { createRelayFactory as createDispatcherFactory } from "@publicdomainrelay/hono-factory-did-key-ingress-proxy-xrpc";
 import { createRelayFactory as createAtprotoRelayFactory } from "@publicdomainrelay/hono-factory-atproto-relay-xrpc";
 import type { SessionInjector } from "@publicdomainrelay/atproto-oauth-server-abc";
+import type { ContainerBackend } from "@publicdomainrelay/container-backend-abc";
+import { createContainerBackend } from "@publicdomainrelay/container-backend-container";
+import { createDockerBackend } from "@publicdomainrelay/container-backend-docker";
+import { generateLocalhostTlsCert } from "@publicdomainrelay/tls-localhost";
 
 const ORG = new URL("../../", import.meta.url).pathname.replace(/\/$/, "");
 
@@ -29,10 +33,19 @@ function serveOnPort0(
   f: (r: Request) => Response | Promise<Response>,
   ac: AbortController,
   hostname = "127.0.0.1",
+  cert?: string,
+  key?: string,
 ): Promise<number> {
   const { promise, resolve } = Promise.withResolvers<number>();
+  const tlsOpts = cert && key ? { cert, key } : {};
   Deno.serve(
-    { port: 0, hostname, signal: ac.signal, onListen: (a) => resolve((a as Deno.NetAddr).port) },
+    {
+      port: 0,
+      hostname,
+      signal: ac.signal,
+      onListen: (a) => resolve((a as Deno.NetAddr).port),
+      ...tlsOpts,
+    },
     f,
   );
   return promise;
@@ -55,45 +68,18 @@ function createAccount(
 
 // ── Fake PLC ────────────────────────────────────────────────────────────────
 
-function encodeBase32(bytes: Uint8Array): string {
-  const B32 = "abcdefghijklmnopqrstuvwxyz234567";
-  let bits = 0, value = 0;
-  let out = "";
-  for (let i = 0; i < bytes.length; i++) {
-    value = (value << 8) | bytes[i];
-    bits += 8;
-    while (bits >= 5) {
-      out += B32[(value >>> (bits - 5)) & 31];
-      bits -= 5;
-    }
-  }
-  if (bits > 0) out += B32[(value << (5 - bits)) & 31];
-  return out;
-}
-
-async function plcDidFromOp(op: Record<string, unknown>): Promise<string> {
-  const enc = new TextEncoder();
-  const serialized = JSON.stringify(op);
-  const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", enc.encode(serialized)));
-  return `did:plc:${encodeBase32(hash.slice(0, 16))}`;
-}
-
 function createFakePlc() {
   const ops = new Map<string, { op: Record<string, unknown>; did: string }>();
-  const didByRotationKey = new Map<string, string>();
   const app = new Hono();
 
-  // POST /<did> — store genesis op. The URL path is the rotation key (did:key),
-  // NOT the final PLC DID. We derive the PLC DID from the op hash.
+  // POST /<did> — store genesis op under the DID in the URL path.
+  // Both PLC clients in this flow (hono-pds createAccount and did-plc submitOp)
+  // derive did:plc themselves per spec and publish at /<did:plc>; submitOp
+  // ignores the response body entirely. Deriving our own DID here would store
+  // under a key nobody ever resolves.
   app.post("/*", async (c) => {
-    const rotationKey = decodeURIComponent(new URL(c.req.url).pathname.slice(1));
+    const did = decodeURIComponent(new URL(c.req.url).pathname.slice(1));
     const op = await c.req.json().catch(() => ({}));
-    // Look up existing DID for this rotation key, or derive new PLC DID
-    let did = didByRotationKey.get(rotationKey);
-    if (!did) {
-      did = await plcDidFromOp(op);
-      didByRotationKey.set(rotationKey, did);
-    }
     ops.set(did, { op: op as Record<string, unknown>, did });
     return c.json({ did });
   });
@@ -124,17 +110,7 @@ function createFakePlc() {
     });
   });
 
-  // Update service endpoint after PDS URL is known.
-  function setPdsEndpoint(did: string, pdsUrl: string) {
-    const entry = ops.get(did);
-    if (!entry) return;
-    const svcs = entry.op.services as Record<string, { type: string; endpoint: string }> | undefined;
-    if (svcs?.atproto_pds) {
-      svcs.atproto_pds.endpoint = pdsUrl;
-    }
-  }
-
-  return { app, setPdsEndpoint };
+  return { app };
 }
 
 // ── Vouch helpers ───────────────────────────────────────────────────────────
@@ -275,16 +251,50 @@ Deno.test({
 
   // ── 1. Start infrastructure ────────────────────────────────────────────
 
-  // 1a. Dispatcher relay (did-key-ingress-proxy)
-  const dispatcherApp = createDispatcherFactory({ hostname: "localhost" }).createApp();
+  // 1a. Container backend — the guest is provisioned locally, so without a
+  // running runtime there is nothing to SSH into and the test cannot mean
+  // anything. Skip loudly rather than assert against a phantom guest.
+  const backend: ContainerBackend = Deno.build.os === "darwin"
+    ? createContainerBackend()
+    : createDockerBackend();
+  if (!(await backend.ensureRunning())) {
+    console.log(`[SKIP] container backend not available (${Deno.build.os})`);
+    return;
+  }
+  const gateway = await backend.defaultGateway();
+  log.info("container_backend", { type: backend.type, gateway });
+
+  // 1b. Dispatcher relay (did-key-ingress-proxy).
+  // Named relay.localhost, not localhost: the guest announces its FQDN as
+  // <subdomain>.<ingressProxyHost>, so that host must resolve BOTH inside the
+  // container (via the gateway /etc/hosts alias below) and here (*.localhost →
+  // loopback). additionalHosts admits the gateway IP the guest dials.
+  // TLS for the guest: the OIDC prove + onNetwork endpoints are https-only, and
+  // the guest reaches them at <provider-sub>.relay.localhost — so the cert needs a
+  // two-label base (a single-label wildcard like *.localhost is rejected).
+  const { caCertPem, serverCertPem, serverKeyPem } = await generateLocalhostTlsCert({
+    extraDnsSans: ["relay.localhost", "*.relay.localhost"],
+  });
+
+  const dispatcherApp = createDispatcherFactory({
+    hostname: "relay.localhost",
+    additionalHosts: [gateway],
+  }).createApp();
   const dispAc = new AbortController();
-  const dispPort = await serveOnPort0(dispatcherApp.fetch, dispAc);
-  cleanups.push(() => dispAc.abort());
-  const ingressProxyHost = `localhost:${dispPort}`;
-  log.info("dispatcher", { port: dispPort });
+  // Two listeners on one app: plain HTTP for in-process components and the
+  // subprocess CLIs, TLS for the guest (OIDC prove / onNetwork require https).
+  // Both on 0.0.0.0 so the guest can reach them across the container network.
+  const dispPort = await serveOnPort0(dispatcherApp.fetch, dispAc, "0.0.0.0");
+  const dispTlsAc = new AbortController();
+  const dispTlsPort = await serveOnPort0(
+    dispatcherApp.fetch, dispTlsAc, "0.0.0.0", serverCertPem, serverKeyPem,
+  );
+  cleanups.push(() => { dispAc.abort(); dispTlsAc.abort(); });
+  const ingressProxyHost = `relay.localhost:${dispPort}`;
+  log.info("dispatcher", { port: dispPort, tlsPort: dispTlsPort, ingressProxyHost });
 
   // 1b. Fake PLC directory (returns did:plc DIDs, PDS endpoint updated after port known)
-  const { app: plcApp, setPdsEndpoint } = createFakePlc();
+  const { app: plcApp } = createFakePlc();
   const plcAc = new AbortController();
   const plcPort = await serveOnPort0(plcApp.fetch, plcAc);
   cleanups.push(() => plcAc.abort());
@@ -318,29 +328,34 @@ Deno.test({
     const pdsAc = new AbortController();
     cleanups.push(() => pdsAc.abort());
 
-    const pds = createRepoFactory({
+    // publicHostname is read lazily (per request / per write), so we can serve on
+    // port 0 and fill in the real authority once the port is known. The genesis op
+    // written by createAccount and the requestCrawl both depend on it being right.
+    const pdsOpts = {
       storage: new MemoryStorage(),
       signer: signerFromKeypair(pdsKp),
       oauthServer: { enabled: true, issuer: "http://127.0.0.1:0" },
       plcDirectoryUrl,
-      subscribeReposFormat: "json",
-      publicHostname: "127.0.0.1:0", // will be updated after port resolution
+      subscribeReposFormat: "json" as const,
+      publicHostname: undefined as string | undefined,
       crawlers: [relayUrl],
-    });
+    };
+    const pds = createRepoFactory(pdsOpts);
 
     const pdsPort = await serveOnPort0(pds.app.fetch, pdsAc, "0.0.0.0");
     const pdsUrl = `http://127.0.0.1:${pdsPort}`;
+    pdsOpts.publicHostname = `127.0.0.1:${pdsPort}`;
     log.info("pds", { url: pdsUrl });
 
     // ── 3. Create bidder + requester accounts ──────────────────────────────
+    // createAccount derives did:plc per spec and publishes a genesis op whose
+    // atproto_pds endpoint points at this PDS, so DID resolution finds the repo.
     const bidderAcct = await createAccount(pdsUrl, "bidder");
     const requesterAcct = await createAccount(pdsUrl, "requester");
     log.info("accounts", { bidder: bidderAcct.did, requester: requesterAcct.did });
 
-    // Fix PLC service endpoints: factory's createAccount sets endpoint to plcDirectoryUrl;
-    // override with actual PDS URL so DID resolution returns correct PDS endpoint.
-    setPdsEndpoint(bidderAcct.did, pdsUrl);
-    setPdsEndpoint(requesterAcct.did, pdsUrl);
+    assert(bidderAcct.did?.startsWith("did:plc:"), `bidder must get did:plc, got ${bidderAcct.did}`);
+    assert(requesterAcct.did?.startsWith("did:plc:"), `requester must get did:plc, got ${requesterAcct.did}`);
 
     // ── 4. Inject OAuth sessions ───────────────────────────────────────────
     const inj: SessionInjector = pds.sessionInjector!; assert(inj);
@@ -412,27 +427,34 @@ Deno.test({
       "--policy-mode", "tangled-vouch",
       "--no-ingress-proxy",
       "--serve-port", "0",
+      // The guest proves its SSH host key to the provider's OIDC issuer over
+      // https and only then reports onNetwork. Without the TLS port the issuer
+      // URL keeps :443 and the guest's curl gets connection-refused, so no token,
+      // no onNetwork, and the requester never learns the guest FQDN.
+      "--guest-tls-port", String(dispTlsPort),
     ];
     log.info("bidder_cmd", { args: bidderArgs });
 
     const bidderCmd = new Deno.Command("deno", {
       args: bidderArgs,
       stdout: "piped", stderr: "piped",
-      env: { ...Deno.env.toObject(), ATPROTO_DID: "" },
+      // CA_CERT_PEM is injected into the guest's trust store by the provider so
+      // its curl accepts our self-signed dispatcher cert.
+      env: { ...Deno.env.toObject(), ATPROTO_DID: "", CA_CERT_PEM: caCertPem },
     });
     const bidderChild = bidderCmd.spawn();
     const dec = new TextDecoder();
 
     // Parse bidder stdout until bidder_ready
-    let bidderReady = false;
     let bidderDid = "";
     let bidderIngressRef = "";
-    const bidderBuffer: string[] = [];
+    let vmDestroyed = false;
+    const guestContainers = new Set<string>();
+    const bidderReady = Promise.withResolvers<void>();
 
-    const bidderTimeout = setTimeout(() => {
-      try { bidderChild.kill("SIGTERM"); } catch { /*ok*/ }
-    }, 60_000);
-
+    // Stream subprocess output as it arrives — the bidder keeps logging (bids,
+    // provisioning, failures) long after bidder_ready, and buffering to print
+    // later drops exactly the lines that explain a failure.
     const readBidder = async (r: ReadableStreamDefaultReader<Uint8Array>, label: string) => {
       let buf = "";
       while (true) {
@@ -444,32 +466,38 @@ Deno.test({
           const line = buf.slice(0, nl).trim();
           buf = buf.slice(nl + 1);
           if (!line) continue;
-          bidderBuffer.push(`[${label}] ${line}`);
+          console.error(`[${label}] ${line}`);
           try {
             const o = JSON.parse(line);
+            if (typeof o.containerName === "string") guestContainers.add(o.containerName);
+            if (o.message === "submitEvent: VM destroyed") vmDestroyed = true;
             if (o.event === "bidder_ready") {
-              bidderReady = true;
               bidderDid = o.did as string;
               bidderIngressRef = o.ingressRef as string;
+              bidderReady.resolve();
             }
           } catch { /* not JSON */ }
         }
       }
     };
 
-    // Wait for bidder_ready (timeout 45s)
     const bidderStdout = bidderChild.stdout.getReader();
     const bidderStderr = bidderChild.stderr.getReader();
-    await Promise.race([
-      Promise.all([readBidder(bidderStdout, "bidder-out"), readBidder(bidderStderr, "bidder-err")]),
-      new Promise((r) => setTimeout(r, 45_000)),
-    ]);
-    clearTimeout(bidderTimeout);
+    readBidder(bidderStdout, "bidder-out");
+    readBidder(bidderStderr, "bidder-err");
 
-    // Log bidder output for debugging (capture all)
-    for (const line of bidderBuffer) console.error(line);
+    const bidderReadyTimeout = Promise.withResolvers<never>();
+    const bidderReadyTimer = setTimeout(
+      () => bidderReadyTimeout.reject(new Error("bidder did not emit bidder_ready within 60s")),
+      60_000,
+    );
+    try {
+      await Promise.race([bidderReady.promise, bidderReadyTimeout.promise]);
+    } finally {
+      clearTimeout(bidderReadyTimer);
+    }
 
-    assert(bidderReady, "Bidder should emit bidder_ready event");
+    assert(bidderDid.startsWith("did:plc:"), `bidder_ready must carry a did:plc, got ${bidderDid}`);
     log.info("bidder_ready", { did: bidderDid, ingressRef: bidderIngressRef });
 
     // ── 9. Spawn requester subprocess ──────────────────────────────────────
@@ -485,10 +513,17 @@ Deno.test({
       "--policy-mode", "tangled-vouch",
       "--no-ingress-proxy",
       "--skip-rbac",
+      // The guest's "localhost" is its own loopback — point relay.localhost at the
+      // container gateway so the tunnel subscriber can reach this dispatcher.
+      "--guest-host-aliases", `${gateway} relay.localhost`,
       "--exec", "echo SSH_OK && cat /etc/hostname",
-      "--bid-window-sec", "45",
-      "--vm-ready-timeout-sec", "120",
-      "--keep-vm",
+      // Bids arrive over the firehose within milliseconds; the window only has to
+      // cover firehose propagation, not human latency.
+      "--bid-window-sec", "20",
+      "--vm-ready-timeout-sec", "180",
+      // No --keep-vm: teardown is part of the contract. The requester must issue a
+      // signed vm.delete event and the bidder must destroy the guest, otherwise
+      // every run leaks a container and the delete path is never exercised.
     ];
     log.info("requester_cmd", { args: requesterArgs });
 
@@ -501,11 +536,15 @@ Deno.test({
 
     let requesterDone = false;
     let sshOutput = "";
+    let contractResult: Record<string, unknown> | undefined;
+    let sawFirehoseBid = false;
     const requesterBuffer: string[] = [];
 
+    // Must outlast the requester's own budget (bid window + vm-ready timeout),
+    // otherwise we kill it mid-flow and lose the result it was about to print.
     const requesterTimeout = setTimeout(() => {
       try { requesterChild.kill("SIGTERM"); } catch { /*ok*/ }
-    }, 180_000);
+    }, 300_000);
 
     const readRequester = async (r: ReadableStreamDefaultReader<Uint8Array>, label: string) => {
       let buf = "";
@@ -519,19 +558,25 @@ Deno.test({
           buf = buf.slice(nl + 1);
           if (!line) continue;
           requesterBuffer.push(`[${label}] ${line}`);
+          console.error(`[${label}] ${line}`);
 
-          // Check for SSH_OK in raw output
-          if (line.includes("SSH_OK")) sshOutput = line;
+          // SSH_OK only counts as guest shell output — a structured log line that
+          // merely quotes the exec program back at us is not proof of a session.
+          if (line.includes("SSH_OK") && !line.includes('"message":')) sshOutput = line;
 
           try {
             const o = JSON.parse(line);
             // Track key events
             if (o.message === "rfp_created") log.info("rfp_created", { uri: o.uri });
-            if (o.message === "firehose_bid_discovered") log.info("bid_discovered", { bidUri: o.bidUri });
+            if (o.message === "firehose_bid_discovered") {
+              sawFirehoseBid = true;
+              log.info("bid_discovered", { bidUri: o.bidUri });
+            }
             if (o.message === "bid_accepted") log.info("bid_accepted", {});
             if (o.message === "vm_fqdn_discovered") log.info("vm_fqdn", { fqdn: o.fqdn });
             if (o.message === "vm_ssh_ready") log.info("ssh_ready", { fqdn: o.fqdn });
             if (o.message === "result") {
+              contractResult = o as Record<string, unknown>;
               log.info("contract_result", o as unknown as Record<string, unknown>);
             }
           } catch { /* not JSON */ }
@@ -543,34 +588,65 @@ Deno.test({
     const reqStderr = requesterChild.stderr.getReader();
     await Promise.race([
       Promise.all([readRequester(reqStdout, "req-out"), readRequester(reqStderr, "req-err")]),
-      new Promise((r) => setTimeout(r, 160_000)),
+      new Promise((r) => setTimeout(r, 290_000)),
     ]);
     clearTimeout(requesterTimeout);
     try { requesterChild.kill("SIGTERM"); } catch { /*ok*/ }
 
-    // Log requester output
-    for (const line of requesterBuffer) console.error(line);
-
     // ── 10. Assert ──────────────────────────────────────────────────────────
-    // Check for key contract flow events in output
-    const allOutput = requesterBuffer.join("\n");
+    // The point of this test is that the whole contract flow completes over the
+    // firehose and yields a real shell on the guest. None of these are optional:
+    // a run that provisions nothing must fail, not report a partial pass.
+    log.info("assertions", {
+      sawFirehoseBid,
+      sshOutput: sshOutput.includes("SSH_OK"),
+      result: contractResult,
+    });
 
-    // At minimum, verify SSH output or contract flow progressed
-    const hasSshOutput = sshOutput.includes("SSH_OK");
-    const hasRfp = allOutput.includes("rfp_created");
-    const hasBid = allOutput.includes("firehose_bid_discovered") || allOutput.includes("bid_collected");
-    const hasResult = allOutput.includes("result");
+    assert(contractResult, "requester must emit a contract result");
 
-    log.info("assertions", { hasSshOutput, hasRfp, hasBid, hasResult });
+    // Discovery happened over the firehose — the reason this test exists.
+    assert(sawFirehoseBid, "bid must be discovered over the firehose (firehose_bid_discovered)");
+    assert(contractResult.winnerDid === bidderDid, `winner must be the bidder ${bidderDid}, got ${contractResult.winnerDid}`);
 
-    // Primary goal: SSH shell output from guest over relay
-    if (hasSshOutput) {
-      log.info("PASS — SSH_OK from guest VM over relay");
-    } else {
-      // Fallback: at least contract flow completed (RFP + bid)
-      assert(hasRfp || hasResult, "Should have RFP created or contract result");
-      log.info("PASS — contract flow events observed (SSH may need container backend running)");
+    // Contract chain settled.
+    assert(contractResult.receiptOk === true, `receipt must verify, got ${contractResult.receiptOk}`);
+
+    // SSH into the guest over the relay tunnel — the payload of the whole flow.
+    assert(contractResult.sshReady === true, `guest SSH must become ready, got ${contractResult.sshReady}`);
+    assert(contractResult.sshExitCode === 0, `SSH exec must exit 0, got ${contractResult.sshExitCode}`);
+    assert(sshOutput.includes("SSH_OK"), "guest must return SSH_OK shell output over the relay");
+
+    // Teardown is the last leg of the contract: the requester issues a signed
+    // vm.delete event and the bidder must destroy the guest. Give the bidder a
+    // moment — the event is submitted in the background and answered 200 first.
+    const destroyed = await (async () => {
+      const deadline = Date.now() + 60_000;
+      while (Date.now() < deadline) {
+        if (vmDestroyed) return true;
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+      return false;
+    })();
+    assert(destroyed, "bidder must destroy the guest on the requester's vm.delete event");
+
+    // ...and the container must actually be gone, not merely reported gone.
+    // inspectIp only resolves while the container still exists.
+    const stillRunning: string[] = [];
+    for (const name of guestContainers) {
+      try {
+        const ip = await backend.inspectIp(name);
+        if (ip) stillRunning.push(name);
+      } catch { /* gone — what we want */ }
     }
+    assert(
+      stillRunning.length === 0,
+      `guest container(s) still running after vm.delete: ${stillRunning.join(", ")}`,
+    );
+
+    log.info("PASS — SSH_OK from guest VM over relay, discovered via firehose; guest destroyed", {
+      guestContainers: [...guestContainers],
+    });
 
     // Cleanup bidder
     try { bidderChild.kill("SIGTERM"); } catch { /*ok*/ }

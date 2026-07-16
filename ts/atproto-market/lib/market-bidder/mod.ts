@@ -427,6 +427,10 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
     await setup?.();
 
     const merged: CallbackSet = {};
+    // Dedup accept dispatch: push XRPC and firehose watcher both deliver the
+    // same accept record. Once either path processes it, the other must skip.
+    const acceptedUris = new Map<string, number>();
+    let acceptSweepCounter = 0;
     for (const p of providers ?? []) {
       const cb = p.buildCallbacks(deps);
       if (cb.rfpCallbacks) {
@@ -448,6 +452,26 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
       if (cb.rfpCallbacks) merged.rfpCallbacks = deepMergeCallbacks(merged.rfpCallbacks ?? {}, cb.rfpCallbacks);
       if (cb.onAccept) merged.onAccept = merged.onAccept ?? cb.onAccept;
       if (cb.eventCallbacks) merged.eventCallbacks = deepMergeCallbacks(merged.eventCallbacks ?? {}, cb.eventCallbacks);
+    }
+
+    // Wrap merged.onAccept so the same acceptUri is never processed twice —
+    // push XRPC and firehose watcher converge on this single callback.
+    if (merged.onAccept) {
+      const _raw = merged.onAccept;
+      merged.onAccept = async (opts) => {
+        if (acceptedUris.has(opts.acceptUri)) {
+          log("info", "accept already processed, skipping duplicate dispatch", { acceptUri: opts.acceptUri });
+          return { status: 200 };
+        }
+        acceptedUris.set(opts.acceptUri, Date.now());
+        acceptSweepCounter++;
+        if (acceptSweepCounter > 100) {
+          const cutoff = Date.now() - 3_600_000; // 1 hour TTL
+          for (const [k, ts] of acceptedUris) if (ts < cutoff) acceptedUris.delete(k);
+          acceptSweepCounter = 0;
+        }
+        return _raw(opts);
+      };
     }
 
     const marketDeps: MarketServerDeps = {
@@ -588,8 +612,15 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
             if (!eventRec) return;
             const value = eventRec.value as Record<string, unknown>;
             const payload = value.payload as { $type?: string; uri?: string; cid?: string } | undefined;
-            if (!payload?.$type) return;
-            const payloadNsid = payload.$type;
+            if (!payload) return;
+            // market.event.payload is a strongRef, so its $type is the ref type
+            // ("com.atproto.repo.strongRef"), not the payload's NSID — keying the
+            // handlers off it silently matched nothing and dropped every event
+            // (vm.delete included). The NSID is the referenced URI's collection.
+            const payloadNsid = payload.$type && payload.$type !== "com.atproto.repo.strongRef"
+              ? payload.$type
+              : payload.uri?.split("/")[3];
+            if (!payloadNsid) return;
             const handlers = merged.eventCallbacks!["pdr_temp_compute_event"];
             if (!handlers) return;
             const handler = handlers[payloadNsid];

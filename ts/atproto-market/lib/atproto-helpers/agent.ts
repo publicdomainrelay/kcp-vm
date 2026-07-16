@@ -1079,18 +1079,17 @@ export async function createOAuthAgentFromSession(
     signer: _signer,
 
     async getServiceAuth(aud: string, lxm?: string): Promise<string> {
-      const res = await dpopFetch(
-        `${sessionData.pds.replace(/\/+$/, "")}/xrpc/com.atproto.server.getServiceAuth`,
-        {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            Authorization: `DPoP ${accessJwt}`,
-          },
-          body: JSON.stringify({ aud, lxm: lxm ?? aud }),
-        },
-      );
-      if (!res.ok) throw new Error(`getServiceAuth failed: ${res.status}`);
+      const params = new URLSearchParams({ aud });
+      if (lxm) params.set("lxm", lxm);
+      const url = `${sessionData.pds.replace(/\/+$/, "")}/xrpc/com.atproto.server.getServiceAuth?${params}`;
+      const res = await dpopFetch(url, {
+        method: "GET",
+        headers: { Authorization: `DPoP ${accessJwt}` },
+      });
+      if (!res.ok) {
+        const errBody = await res.text().catch(() => "");
+        throw new Error(`getServiceAuth failed: ${res.status} ${errBody}`);
+      }
       const data = await res.json() as { token: string };
       return data.token;
     },

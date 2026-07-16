@@ -317,12 +317,28 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
     const rk = refKey(receiptRef);
     ctx.log("info", "submitEvent vm.delete", { receiptKey: rk, issuerDid: ctx.issuerDid });
 
-    if (!activeContracts.has(rk)) {
+    // Keyed by uri#cid at creation time, but the receipt record is re-written
+    // afterwards (remote proof), so its current CID — the one a requester reads
+    // back off the firehose — no longer matches. The URI identifies the contract;
+    // authority is the acceptAuthor check below, not the CID.
+    let contractKey: string | undefined = activeContracts.has(rk) ? rk : undefined;
+    if (!contractKey) {
+      for (const [key, c] of activeContracts) {
+        if (c.receiptUri === receiptRef.uri) {
+          contractKey = key;
+          ctx.log("info", "submitEvent: receipt matched by uri (cid re-written)", {
+            receiptKey: key, eventCid: receiptRef.cid,
+          });
+          break;
+        }
+      }
+    }
+    if (!contractKey) {
       ctx.log("warn", "submitEvent: unknown receipt", { receiptKey: rk });
       return { status: 400, body: { error: "InvalidRequest", message: "unknown receipt" } };
     }
 
-    const contract = activeContracts.get(rk)!;
+    const contract = activeContracts.get(contractKey)!;
     if (contract.acceptAuthor !== ctx.issuerDid) {
       ctx.log("warn", "submitEvent: issuerDid mismatch", {
         expected: contract.acceptAuthor, got: ctx.issuerDid,
@@ -355,14 +371,14 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
 
     if (destroyed) {
       onContractChange?.({
-        type: "terminated", key: rk,
+        type: "terminated", key: contractKey,
         receiptUri: contract.receiptUri!, receiptCid: contract.receiptCid!,
         acceptAuthor: contract.acceptAuthor, acceptedAt: contract.acceptedAt!,
         terminatedAt: new Date().toISOString(), providerId,
       });
-      activeContracts.delete(rk);
+      activeContracts.delete(contractKey);
       ctx.log("info", "submitEvent: vm deleted", {
-        receiptKey: rk, remaining: activeContracts.size,
+        receiptKey: contractKey, remaining: activeContracts.size,
       });
     } else {
       onContractChange?.({

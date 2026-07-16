@@ -36,10 +36,10 @@ export function buildDefaultUserData(ctx: CloudInitContext): string {
   const { vmName, didPlc, didPlcKey, relayHost, xrpcRelaySubdomain, sshAuthorizedKey } = ctx;
   const xrpcRelayFqdn = `${xrpcRelaySubdomain}.${relayHost}`;
   return `#cloud-config
-packages:
-  - openssh-server
-  - jq
-  - curl
+# Preserve apt sources baked into the image — prevents apt_configure from
+# rewriting sources.list and running apt-get update on every boot.
+apt:
+  preserve_sources_list: true
 
 # Key-only root login over the websocat tunnel.
 disable_root: false
@@ -250,6 +250,14 @@ export interface TunnelCloudInitContext {
   sshAuthorizedKey: string;
   /** Local TCP port the subscriber bridges relay tunnel bytes to. Default 22. */
   targetPort?: number;
+  /**
+   * Extra `/etc/hosts` entries ("<ip> <name>"), applied before the subscriber
+   * starts. Lets the guest dial the dispatcher by a name that also resolves on
+   * the requester's side, so the announced FQDN (`<sub>.<ingressProxyHost>`) is
+   * reachable from both. Without this a host-side dispatcher is only addressable
+   * by an IP the requester cannot resolve as a subdomain.
+   */
+  hostAliases?: string[];
 }
 
 /**
@@ -264,17 +272,23 @@ export interface TunnelCloudInitContext {
 export function buildTunnelUserData(ctx: TunnelCloudInitContext): string {
   const { ingressProxyHost, audHost, sshAuthorizedKey } = ctx;
   const targetPort = ctx.targetPort ?? 22;
+  const aliases = (ctx.hostAliases ?? []).filter((a) => /^[\w.:-]+\s+[\w.-]+$/.test(a));
+  const bootcmd = aliases.length
+    ? `bootcmd:\n${
+      aliases
+        .map((a) => `  - [ sh, -c, "grep -qxF '${a}' /etc/hosts || echo '${a}' >> /etc/hosts" ]`)
+        .join("\n")
+    }\n\n`
+    : "";
   return `#cloud-config
-packages:
-  - openssh-server
-  - jq
-  - curl
-  - unzip
+# Preserve apt sources baked into the image.
+apt:
+  preserve_sources_list: true
 
 disable_root: false
 ssh_pwauth: false
 
-write_files:
+${bootcmd}write_files:
   - path: /root/.ssh/authorized_keys
     owner: root:root
     permissions: '0600'
@@ -330,10 +344,9 @@ export function injectJsrUrl(userData: string, jsrUrl: string): string {
 export function buildIrohUserData(ctx: TunnelCloudInitContext): string {
   const sshAuthorizedKey = ctx.sshAuthorizedKey ?? "";
   return `#cloud-config
-packages:
-  - openssh-server
-  - jq
-  - curl
+# Preserve apt sources baked into the image.
+apt:
+  preserve_sources_list: true
 
 disable_root: false
 ssh_pwauth: false

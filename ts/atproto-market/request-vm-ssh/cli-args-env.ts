@@ -148,6 +148,12 @@ export default {
       description: "Unix socket path to serve on (optional, in addition to TCP)",
       env: "SERVE_UNIX",
     },
+    "guest-host-aliases": {
+      type: "string" as const,
+      description:
+        "Comma-separated /etc/hosts entries for the guest, each '<ip> <name>' (e.g. '192.168.64.1 relay.localhost'). Lets the guest dial a dispatcher whose name also resolves here, so the announced FQDN is reachable from both sides.",
+      env: "GUEST_HOST_ALIASES",
+    },
     "user-data": {
       type: "string" as const,
       description: "Path to a base cloud-init file; the default websocat/fedproxy-client provisioning is patched into it before the RFP is sent",
