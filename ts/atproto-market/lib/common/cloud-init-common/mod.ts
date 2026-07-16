@@ -316,7 +316,7 @@ ${bootcmd}write_files:
       [Service]
       Type=simple
       User=root${ctx.jsrUrl ? `\n      Environment="JSR_URL=http://${ctx.jsrUrl}/"` : ""}
-      ExecStart=deno run -A jsr:@publicdomainrelay/hono-did-key-ingress-proxy-tunnel-subscriber --ingress-proxy-host ${ingressProxyHost} --aud-host ${audHost} --private-key-from-sshd-host-key /etc/ssh/ssh_host_ed25519_key --fqdn-file /run/guest-fqdn --target-host 127.0.0.1 --target-port ${targetPort}
+      ExecStart=/usr/local/bin/deno run -A jsr:@publicdomainrelay/hono-did-key-ingress-proxy-tunnel-subscriber --ingress-proxy-host ${ingressProxyHost} --aud-host ${audHost} --private-key-from-sshd-host-key /etc/ssh/ssh_host_ed25519_key --fqdn-file /run/guest-fqdn --target-host 127.0.0.1 --target-port ${targetPort}
       Restart=always
       RestartSec=5
       TimeoutStopSec=10
@@ -327,6 +327,7 @@ ${bootcmd}write_files:
       WantedBy=multi-user.target
 
 runcmd:
+  - [ sh, -c, "command -v deno || { apt-get update && apt-get install -y curl unzip; curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh; chmod 755 /usr/local/bin/deno; }" ]
   - systemctl daemon-reload
   - systemctl enable --now ssh || systemctl enable --now sshd
   - systemctl enable --now tunnel-subscriber.service
@@ -336,7 +337,7 @@ runcmd:
 /** Inject JSR_URL into the tunnel-subscriber systemd unit in an existing cloud-init YAML. */
 export function injectJsrUrl(userData: string, jsrUrl: string): string {
   return userData.replace(
-    /(ExecStart=deno run .*tunnel-subscriber)/,
+    /(ExecStart=\S*deno run .*tunnel-subscriber)/,
     `Environment="JSR_URL=${jsrUrl}"\n      $1`,
   );
 }
