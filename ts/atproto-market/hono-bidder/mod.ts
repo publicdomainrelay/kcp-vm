@@ -455,6 +455,11 @@ if (options.computeProviderDigitaloceanToken) {
       getIssuerUrl: () => relay.ingressUrl,
       digitaloceanBaseUrl: (options.computeProviderDigitaloceanBaseUrl as string) || "https://api.digitalocean.com",
       doToken: options.computeProviderDigitaloceanToken as string,
+      oidcProvisioner: createOidcProvisioningEnricher(() => relay.ingressUrl),
+      rbacProvisioner: createRbacProvisioner(),
+      acceptToContract,
+      createSignedRepoRecord: atproto.createSignedRepoRecord.bind(atproto),
+      callService: atproto.callService.bind(atproto),
     }),
   }));
   await serve.beginServe();
