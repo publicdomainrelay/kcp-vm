@@ -468,7 +468,7 @@ export async function createRemoteAgent(opts: CreateRemoteAgentOpts): Promise<At
         }),
       });
       const rev = res.data.commit?.rev as string ?? "";
-      return { repo: repo as never, commit: rev as never, rev: rev as never, since: null as never, blocks: new Uint8Array() as never, ops: [] };
+      return { repo: repo as never, commit: rev as never, rev: rev as never, since: null as never, blocks: new Uint8Array() as never, ops: [], prevData: null };
     },
     async getRecord(repo: string, collection: string, rkey: string) {
       try {
