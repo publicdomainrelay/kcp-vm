@@ -142,7 +142,7 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
 
   const selfVouchResolver: VouchResolver = createTangledGraphVouchResolver({
     listRecords: async (_repo, coll) => {
-      const result = await atproto.listRecords(atproto.did, coll, { limit: 200 });
+      const result = await atproto.listRecords(atproto.did, coll, { limit: 100 });
       return (result?.records as Array<{ uri: string; value: Record<string, unknown> }>) ?? [];
     },
     log: (level, msg, meta) => logger[level as "info" | "warn"]?.(msg, meta),
@@ -164,7 +164,7 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
   async function rebuildTransitiveVouchedDids(): Promise<void> {
     if (!vouchedDids) return;
     try {
-      const ownBadge = await atproto.listRecords(atproto.did, BADGE_BLUE_KEYS_NSID, { limit: 200 });
+      const ownBadge = await atproto.listRecords(atproto.did, BADGE_BLUE_KEYS_NSID, { limit: 100 });
       for (const rec of ownBadge?.records ?? []) {
         const v = rec.value as Record<string, unknown>;
         if (v.service === "requester_associate" && typeof v.challenge === "string" && v.challenge.startsWith("did:") && typeof v.keyId === "string" && vouchedDids.has(v.keyId)) {
@@ -233,16 +233,16 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
       return cached;
     }
 
-    // Operator self-attest: the operator IS atproto.did.
-    // No badgeBlueKeys requester_associate record needed — the operator
-    // runs the bidder and trusts its own judgment.
-    cacheSet(requesterDid, true);
-    logger.info("bidder scope check: operator self-attest", { requesterDid, operatorDid: atproto.did });
-    return true;
+    // Self-check: if requester is the bidder itself, always allow
+    if (requesterDid === atproto.did) {
+      cacheSet(requesterDid, true);
+      logger.info("bidder scope check: self", { requesterDid });
+      return true;
+    }
 
     // Path 1: bidder's own repo (works when bidder DID == operator DID).
     try {
-      const ownRecords = await atproto.listRecords(atproto.did, BADGE_BLUE_KEYS_NSID, { limit: 200 });
+      const ownRecords = await atproto.listRecords(atproto.did, BADGE_BLUE_KEYS_NSID, { limit: 100 });
       for (const rec of ownRecords?.records ?? []) {
         const v = rec.value as Record<string, unknown>;
         if (v.challenge === requesterDid && v.service === "requester_associate") {
