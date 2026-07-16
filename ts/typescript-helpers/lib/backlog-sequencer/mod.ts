@@ -45,7 +45,7 @@ export function createBacklogSequencer<TIn, TFrame extends { seq: number }>(
       });
       let done = false;
       return {
-        [Symbol.asyncIterator]() { return this; },
+        [Symbol.asyncIterator]() { return this as unknown as AsyncIterator<TFrame>; },
         async next(): Promise<IteratorResult<TFrame>> {
           if (done) return { value: undefined, done: true };
           if (queue.length > 0) return { value: queue.shift()!, done: false };
@@ -59,14 +59,14 @@ export function createBacklogSequencer<TIn, TFrame extends { seq: number }>(
           if (queue.length > 0) return { value: queue.shift()!, done: false };
           // The promise was resolved but queue was already drained by the
           // immediate check. Loop around.
-          return this.next();
+          return (this as unknown as AsyncIterator<TFrame>).next();
         },
         async return(): Promise<IteratorResult<TFrame>> {
           done = true;
           unsub();
           return { value: undefined, done: true };
         },
-      };
+      } as unknown as AsyncIterable<TFrame>;
     },
   };
 }
