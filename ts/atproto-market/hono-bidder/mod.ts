@@ -458,8 +458,16 @@ if (options.computeProviderDigitaloceanToken) {
       oidcProvisioner: createOidcProvisioningEnricher(() => relay.ingressUrl),
       rbacProvisioner: createRbacProvisioner(),
       acceptToContract,
-      createSignedRepoRecord: atproto.createSignedRepoRecord.bind(atproto),
-      callService: atproto.callService.bind(atproto),
+      createSignedRepoRecord: (collection: string, record: Record<string, unknown>) =>
+        atproto.createSignedRepoRecord(collection, record).then(({ uri, cid }: { uri: string; cid: string }) => ({
+          $type: "com.atproto.repo.strongRef" as const,
+          uri,
+          cid,
+        })),
+      callService: (url: string, body: Record<string, unknown>) =>
+        atproto.callService(url, "", "", body).then((res: { status: number; body: unknown }) =>
+          new Response(JSON.stringify(res.body), { status: res.status }),
+        ),
     }),
   }));
   await serve.beginServe();
