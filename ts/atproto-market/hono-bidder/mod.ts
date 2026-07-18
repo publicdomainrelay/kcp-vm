@@ -345,7 +345,7 @@ if ((options.atprotoOauth as boolean)) {
     if (hasAssociation) {
       logger.info("existing_association_found", { did: atprotoAgent.did, hint: "skipping QR — prior association exists" });
     } else {
-      const qrUrl = `https://qr.fedfork.com/#plc=${atprotoAgent.did}`;
+      const qrUrl = `https://qr.fedfork.com/#bdr=${atprotoAgent.did}`;
       logger.info("qr_url", { url: qrUrl });
       const qr = qrcode(qrUrl, { output: "console", ecl: "HIGH" });
       console.log(qr);
