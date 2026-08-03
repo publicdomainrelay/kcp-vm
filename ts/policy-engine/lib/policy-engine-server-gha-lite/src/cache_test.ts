@@ -2,7 +2,7 @@
 // through the GITHUB_CACHE command file (worker + subprocess), and the
 // accumulated cache returned via PolicyEngineComplete.cache.
 
-import { assertEquals } from "@std/assert";
+import { assertEquals, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
 import { WorkflowExecutor } from "./workflow.ts";
 
@@ -51,6 +51,56 @@ jobs:
   } finally {
     Deno.env.delete("BUNDLED_ACTIONS_DIR");
     await Deno.remove(bundled, { recursive: true });
+  }
+});
+
+Deno.test("WorkflowExecutor: cache persists across separate executions (save then restore)", async () => {
+  const bundledUrl = fromFileUrl(new URL("../bundled-actions", import.meta.url));
+  Deno.env.set("BUNDLED_ACTIONS_DIR", bundledUrl);
+  try {
+    // Execution 1: build files, save them to the cache.
+    const exec1 = new WorkflowExecutor({ sandbox: { netOnly: false } });
+    const status1 = await exec1.executeWorkflow({
+      workflow: `name: t
+on: push
+jobs:
+  j:
+    runs-on: self-hosted
+    steps:
+    - run: mkdir -p dist && printf 'v1' > dist/app.txt
+    - uses: actions/cache/save@v5
+      with:
+        key: build-1
+        path: dist`,
+    });
+    const detail1 = status1.detail as { exit_status: string; cache?: Record<string, unknown> };
+    assertEquals(detail1.exit_status, "success");
+    assertEquals(detail1.cache?.["build-1"], {
+      "dist/app.txt": { data: "v1", encoding: "text" },
+    });
+
+    // Execution 2: seed the cache from execution 1 and restore it into a fresh
+    // workspace, then verify the restored file.
+    const exec2 = new WorkflowExecutor({ sandbox: { netOnly: false } });
+    const status2 = await exec2.executeWorkflow({
+      context: { cache: detail1.cache },
+      workflow: `name: t
+on: push
+jobs:
+  j:
+    runs-on: self-hosted
+    steps:
+    - uses: actions/cache/restore@v5
+      with:
+        key: build-1
+        path: dist
+    - run: test "$(cat dist/app.txt)" = "v1"`,
+    });
+    const detail2 = status2.detail as { exit_status: string };
+    assertEquals(detail2.exit_status, "success");
+    assertStringIncludes(status2.console_output ?? "", "Cache restored from key: build-1");
+  } finally {
+    Deno.env.delete("BUNDLED_ACTIONS_DIR");
   }
 });
 

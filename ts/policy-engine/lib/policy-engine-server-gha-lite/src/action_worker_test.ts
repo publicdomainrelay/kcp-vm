@@ -39,6 +39,24 @@ Deno.writeTextFileSync(path, JSON.stringify(c));
   assertEquals(JSON.parse(res.cache), { meta: { count: 2, step: "one" } });
 });
 
+Deno.test("runActionInWorker: serves GITHUB_EVENT_PATH from the virtual FS", async () => {
+  const source = `
+const ep = Deno.env.get("GITHUB_EVENT_PATH");
+const data = JSON.parse(Deno.readTextFileSync(ep));
+console.log("event-inputs:" + data.inputs.repo);
+`;
+  const lines: string[] = [];
+  const res = await runActionInWorker({
+    source,
+    env: {},
+    allowNet: false,
+    event: JSON.stringify({ inputs: { repo: "x/y" } }),
+    onLine: (l) => lines.push(l),
+  });
+  assertEquals(res.code, 0);
+  assertStringIncludes(lines.join("\n"), "event-inputs:x/y");
+});
+
 Deno.test("runActionInWorker: blocks real filesystem writes (uncaught -> exit 1)", async () => {
   const source = `await Deno.writeTextFile("/tmp/pe_should_not_exist", "x");`;
   const lines: string[] = [];

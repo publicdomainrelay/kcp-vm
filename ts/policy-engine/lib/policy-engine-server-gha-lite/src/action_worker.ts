@@ -34,15 +34,21 @@ const SENTINELS = {
   GITHUB_PATH: "pe-virtual:GITHUB_PATH",
   GITHUB_STATE: "pe-virtual:GITHUB_STATE",
   GITHUB_CACHE: "pe-virtual:GITHUB_CACHE",
+  GITHUB_EVENT: "pe-virtual:GITHUB_EVENT",
 } as const;
 
 /** Build the prelude injected ahead of the action source inside the worker. */
-function buildShim(env: Record<string, string>, cacheJson?: string): string {
+function buildShim(env: Record<string, string>, cacheJson?: string, eventJson?: string): string {
+  // Seed the virtual FS with the incoming cache and event payload so actions
+  // can read them without real filesystem access. Writes to the sentinel
+  // paths replace these values.
+  const seed: Record<string, string> = {
+    [SENTINELS.GITHUB_CACHE]: cacheJson ?? "{}",
+    [SENTINELS.GITHUB_EVENT]: eventJson ?? "{}",
+  };
   return `
 const __pe_env = ${JSON.stringify(env)};
-// Seed the virtual FS with the incoming cache so actions can read it without
-// real filesystem access. Writes to the sentinel path replace this value.
-const __pe_vfs = ${JSON.stringify({ [SENTINELS.GITHUB_CACHE]: cacheJson ?? "{}" })};
+const __pe_vfs = ${JSON.stringify(seed)};
 const __pe_ghPaths = new Set(
   [
     __pe_env.GITHUB_OUTPUT,
@@ -50,6 +56,7 @@ const __pe_ghPaths = new Set(
     __pe_env.GITHUB_PATH,
     __pe_env.GITHUB_STATE,
     __pe_env.GITHUB_CACHE,
+    __pe_env.GITHUB_EVENT_PATH,
   ].filter((v) => typeof v === "string" && v.length > 0),
 );
 
@@ -140,6 +147,8 @@ export function runActionInWorker(opts: {
   allowNet: boolean;
   /** Incoming cache JSON, seeded into the GITHUB_CACHE command file. */
   cache?: string;
+  /** Event payload JSON, served as the GITHUB_EVENT_PATH file. */
+  event?: string;
   onLine?: (line: string) => void;
 }): Promise<ActionRunResult> {
   // Point the GITHUB_* command files at in-memory sentinels.
@@ -150,12 +159,14 @@ export function runActionInWorker(opts: {
     GITHUB_PATH: SENTINELS.GITHUB_PATH,
     GITHUB_STATE: SENTINELS.GITHUB_STATE,
     GITHUB_CACHE: SENTINELS.GITHUB_CACHE,
+    GITHUB_EVENT_PATH: SENTINELS.GITHUB_EVENT,
   };
 
   // @ts-nocheck disables type-checking for the worker module: action code is
   // untrusted and must run as-is (like `deno run`), never gated on type errors.
   const moduleSource =
-    "// @ts-nocheck\n" + buildShim(env, opts.cache) + "\n" + opts.source + "\n" + FOOTER;
+    "// @ts-nocheck\n" + buildShim(env, opts.cache, opts.event) + "\n" + opts.source + "\n" +
+    FOOTER;
   const blobUrl = URL.createObjectURL(
     new Blob([moduleSource], { type: "text/typescript" }),
   );

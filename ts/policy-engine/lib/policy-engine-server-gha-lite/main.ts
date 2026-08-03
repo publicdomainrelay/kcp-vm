@@ -33,6 +33,8 @@ Commands:
                    --workflow <s>   Workflow file path or inline YAML (required)
                    --input k=v      Input pairs (repeatable)
                    --repository <s> org/repo (sets GITHUB_REPOSITORY)
+                   --context <json> Extra request context, e.g. {"cache": ...} to
+                                    seed a cache from a previous run
                    --net-only       See above
                    --fs-api         See above
 `);
@@ -62,7 +64,7 @@ function cmdApi(args: string[]): void {
 
 async function cmdRun(args: string[]): Promise<void> {
   const flags = parseArgs(args, {
-    string: ["workflow", "repository"],
+    string: ["workflow", "repository", "context"],
     boolean: ["net-only", "fs-api"],
     collect: ["input"],
   });
@@ -87,10 +89,20 @@ async function cmdRun(args: string[]): Promise<void> {
   const env: Record<string, unknown> = {};
   if (flags.repository) env["GITHUB_REPOSITORY"] = flags.repository;
 
+  const context: Record<string, unknown> = { config: { env } };
+  if (flags.context) {
+    try {
+      Object.assign(context, JSON.parse(flags.context as string));
+    } catch {
+      console.error(`invalid --context JSON: ${flags.context}`);
+      Deno.exit(2);
+    }
+  }
+
   const request: PolicyEngineRequest = {
     workflow,
     inputs,
-    context: { config: { env } },
+    context,
   };
 
   const executor = new WorkflowExecutor({ sandbox: sandboxFromFlags(flags) });

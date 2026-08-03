@@ -43,6 +43,60 @@ jobs:
 deno run --allow-all --unstable-worker-options main.ts api --bind 0.0.0.0:9090
 ```
 
+## Caching across runs
+
+The bundled `actions/cache/save` and `actions/cache/restore` actions keep the cache in
+memory. It flows in through `PolicyEngineRequest.context.cache` and out through
+`PolicyEngineComplete.cache`, so two `run` invocations can share state: capture the cache
+from the first run's status JSON and feed it back as `--context` on the second.
+
+`save.yml`:
+
+```yaml
+on: push
+jobs:
+  j:
+    runs-on: self-hosted
+    steps:
+    - run: mkdir -p dist && printf 'v1' > dist/app.txt
+    - uses: actions/cache/save@v5
+      with:
+        key: build-1
+        path: dist
+```
+
+`restore.yml`:
+
+```yaml
+on: push
+jobs:
+  j:
+    runs-on: self-hosted
+    steps:
+    - uses: actions/cache/restore@v5
+      with:
+        key: build-1
+        path: dist
+    - run: test "$(cat dist/app.txt)" = "v1"
+```
+
+```bash
+# Run 1 — build the artifact and save it to the cache. The status JSON's
+# .detail.cache holds the saved cache map.
+export BUNDLED_ACTIONS_DIR=bundled-actions
+OUT1=$(deno task run --workflow save.yml)
+echo "$OUT1"
+
+# Run 2 — feed run 1's cache back in and restore it into a fresh workspace.
+CACHE=$(echo "$OUT1" | jq -c '.detail.cache')
+deno task run --workflow restore.yml --context "{\"cache\":$CACHE}"
+```
+
+> The bundled cache actions resolve via `BUNDLED_ACTIONS_DIR=bundled-actions`; `--net-only`
+> refuses `run`/composite steps, so this example uses the default sandbox. The cache is
+> in-memory and per-request — the caller persists it by passing `.detail.cache` back in on
+> the next run.
+
 ## HTTP API
 
 | Method | Path                                 | Description                                                    |

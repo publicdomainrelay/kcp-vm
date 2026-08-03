@@ -98,12 +98,23 @@ export interface PolicyEngineWorkflowJobStep {
   with?: Record<string, unknown>;
   env?: Record<string, unknown>;
   run?: string;
+  "working-directory"?: string;
+  "continue-on-error"?: boolean;
+  "timeout-minutes"?: number;
 }
 
 /** A job in a workflow. */
 export interface PolicyEngineWorkflowJob {
+  if?: unknown;
+  env?: Record<string, unknown>;
+  outputs?: Record<string, unknown>;
+  needs?: string | string[];
+  strategy?: { matrix?: Record<string, unknown>; "fail-fast"?: boolean };
+  defaults?: { run?: { shell?: string; "working-directory"?: string } };
+  concurrency?: unknown;
   "runs-on"?: unknown;
   steps?: PolicyEngineWorkflowJobStep[];
+  "timeout-minutes"?: number;
 }
 
 /** A workflow definition. */
@@ -111,6 +122,17 @@ export interface PolicyEngineWorkflow {
   name?: string;
   on?: unknown;
   jobs?: Record<string, PolicyEngineWorkflowJob>;
+  env?: Record<string, unknown>;
+  defaults?: { run?: { shell?: string } };
+  concurrency?: unknown;
+}
+
+/** Result of one job (possibly a matrix instance) after execution. */
+export interface JobResult {
+  status: "success" | "failure" | "skipped";
+  outputs: Record<string, unknown>;
+  /** Present when the job failed. */
+  error?: Error;
 }
 
 /** A request to the policy engine. */
@@ -242,6 +264,9 @@ export class WorkflowExecutionContext {
   homeDir = ""; // Ephemeral HOME
   cache: Cache = {};
   shell = "bash -xe";
+  vars: Record<string, unknown> = {}; // GHA vars context (repository variables)
+  matrix: Record<string, unknown> = {}; // strategy.matrix context for the current job
+  jobResults: Record<string, JobResult> = {}; // needs context: job name → result
   error: Error | null = null;
   consoleOutput: string[] = [];
 }
