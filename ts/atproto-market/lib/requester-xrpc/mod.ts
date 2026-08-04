@@ -594,7 +594,12 @@ export async function createRequesterPDS(
     if (endpointUrl.startsWith("http://") || endpointUrl.startsWith("https://")) {
       return {
         targetUrl: `${endpointUrl.replace(/\/+$/, "")}/xrpc`,
-        audDid: `did:web:${new URL(endpointUrl).host}#pdr_temp_market`,
+        // Bare did:web aud — every bidder handler (submitRfp/Bid/Accept/Event)
+        // accepts the bare aud in addition to `did:web:HOST#<service>`, and this
+        // endpoint may serve ANY of them (an offering URL is the market service,
+        // a receipt's submitEvent ref is the compute-event service). Pinning one
+        // service id here (e.g. #pdr_temp_market) rejects the others.
+        audDid: `did:web:${new URL(endpointUrl).host}`,
       };
     }
     if (endpointUrl.startsWith("did:")) {
@@ -607,7 +612,7 @@ export async function createRequesterPDS(
       const svcHost = new URL(svcEndpoint).host;
       return {
         targetUrl: `${svcEndpoint.replace(/\/+$/, "")}/xrpc`,
-        audDid: `did:web:${svcHost}#pdr_temp_market`,
+        audDid: `did:web:${svcHost}`,
       };
     }
     return null;
