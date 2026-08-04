@@ -175,8 +175,11 @@ export async function verifyRelayVisibility(opts: {
   const { relayUrls, bidderDid, collection, log, pollTimeoutMs = 15_000, pollIntervalMs = 2_000 } = opts;
   const failures: RelayVisibilityResult["failures"] = [];
 
-  // Phase 1: Probe which relays support listReposByCollection
-  const collectionPath = `/xrpc/com.atproto.sync.listReposByCollection?collection=${encodeURIComponent(collection)}`;
+  // Phase 1: Probe which relays support listReposByCollection.
+  // limit=1000 so a repo whose DID sorts past the default page size (50) is
+  // still returned — a lexicographically-late bidder DID otherwise falls on a
+  // later page and the check never sees it.
+  const collectionPath = `/xrpc/com.atproto.sync.listReposByCollection?collection=${encodeURIComponent(collection)}&limit=1000`;
   const capableRelays: string[] = [];
   for (const url of relayUrls) {
     try {
