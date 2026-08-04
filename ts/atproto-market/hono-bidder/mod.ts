@@ -448,18 +448,11 @@ for (const url of crawlRelayUrls) {
   }
 }
 
-if (pdsHostname) {
-  for (const url of crawlRelayUrls) {
-    await Promise.race([
-      atproto.requestCrawl(url, pdsHostname),
-      new Promise<void>((r) => setTimeout(r, 5_000)),
-    ]);
-  }
-} else if (cliRelayUrl) {
-  logger.warn("relay_no_hostname_for_registration", {
-    reason: "could not determine PDS hostname for relay registration",
-  });
-}
+// PDS registration is deliberately deferred until AFTER the offering exists
+// (see the requestCrawl re-announce below the market bidder setup): a relay
+// crawl that connects before the offering commit misses it in the live-stream
+// gap, leaving the bidder invisible until the next offering refresh. Announcing
+// here (pre-offering) would trigger exactly that useless early crawl.
 
 // Persist generated key to path for future runs.
 if (privateKeyHexPath) {
@@ -718,10 +711,11 @@ try {
 const _allRelayUrls = [...crawlRelayUrls, ..._deferredRelayUrls];
 const _visibilityHostname = pdsHostname ?? (_localServePort > 0 ? `127.0.0.1:${_localServePort}` : undefined);
 
-// Re-request crawl on ALL relays now that the offering record is committed.
-// The initial requestCrawl (during atprotoAgent.beginServe) ran before the
-// offering was created/corrected. Production relays need a second ping so they
-// re-subscribe and see the fresh offering commit.
+// Register the PDS with ALL relays now that the offering record is committed.
+// This is the first (and only) requestCrawl announce — the relay crawls a repo
+// that already contains the offering, so its backfill indexes it immediately
+// (no live-stream gap). The relay treats re-requestCrawl as a full re-crawl, so
+// this announce doubles as the "see the fresh offering commit" ping.
 if (_visibilityHostname) {
   for (const url of crawlRelayUrls) {
     try {
