@@ -867,6 +867,17 @@ export async function runComputeContract(
   const firehoseDiscoveredReceipts = new Map<string, { receiptUri: string; receiptCid: string; submitEventRef?: string }>();
   let bidWatcher: { close(): void } | undefined;
   let _rfpUri = "";
+  // Current contract's receipt URI+CID, so the firehose watcher can reject stale
+  // onNetwork events from a PREVIOUS contract (same or other bidder) replayed on
+  // the firehose — they would otherwise lock vmFqdn to the wrong guest tunnel
+  // and block the correct FQDN via the `!vmFqdn` guard.
+  let _receiptUri = "";
+  let _receiptCid = "";
+  // vm.onNetwork record URIs that belong to the current contract (payloads of
+  // receipt-matched wrapped events). The direct onNetwork path resolves a FQDN
+  // only for these — a stale record from a previous contract replayed on the
+  // firehose never enters the set, so it cannot lock vmFqdn to the wrong tunnel.
+  const _contractOnNetworkUris = new Set<string>();
 
   const logger = opts.logger;
   const eventStreams = opts.eventStreams;
@@ -917,13 +928,20 @@ export async function runComputeContract(
               const val = data.value as Record<string, unknown> | undefined;
               if (!val) return;
               // Check receipt matches our contract
-              const receiptRef = val.receipt as { uri?: string } | undefined;
-              if (!receiptRef?.uri) return;
+              const receiptRef = val.receipt as { uri?: string; cid?: string } | undefined;
+              // Only resolve FQDNs for THIS contract's event — a wrapped
+              // onNetwork event from a previous contract (replayed on the
+              // firehose) carries a different receipt (URI+CID) and a stale
+              // guest FQDN. Match on the receipt strongRef, never on time.
+              if (!receiptRef?.uri || !receiptRef?.cid || receiptRef.uri !== _receiptUri || receiptRef.cid !== _receiptCid) return;
               // Resolve payload to check if it's a vm.onNetwork record
               const payloadRef = val.payload as { uri?: string } | undefined;
               if (!payloadRef?.uri) return;
               const payloadColl = payloadRef.uri.split("/")[3];
               if (payloadColl !== COMPUTE_EVENTS_VM_ONNETWORK_NSID) return;
+              // This onNetwork record belongs to the current contract — record its
+              // URI so the direct path (which carries no receipt link) can resolve it.
+              _contractOnNetworkUris.add(payloadRef.uri);
               log("firehose_onnetwork_wrapped", { eventUri: data.uri, payloadUri: payloadRef.uri });
               // Fetch the vm.onNetwork record for the IP
               const [payloadRepo] = [payloadRef.uri.split("/")[2]];
@@ -943,9 +961,15 @@ if (address && isFqdn && !vmFqdn) {
             } catch { /* best-effort */ }
           })();
         }
-        // COMPUTE_EVENTS_VM_ONNETWORK_NSID: direct vm.onNetwork record (no EVENT_NSID wrapper)
+        // COMPUTE_EVENTS_VM_ONNETWORK_NSID: direct vm.onNetwork record (no EVENT_NSID
+        // wrapper). It carries no receipt link, so it can only be attributed to
+        // the current contract via the payload URI of a receipt-matched wrapped
+        // event. Once we have a receipt, resolve only records in that set — a
+        // stale record from a previous contract replayed on the firehose never
+        // enters it, so it cannot lock vmFqdn to the wrong guest tunnel.
         if (e.collection === COMPUTE_EVENTS_VM_ONNETWORK_NSID) {
           log("firehose_onnetwork_raw", { uri: e.uri, did: e.did, rkey: e.rkey });
+          if (!_receiptUri || !_contractOnNetworkUris.has(e.uri)) return;
           (async () => {
             try {
               const doc = await idResolver.did.resolve(e.did);
@@ -956,7 +980,6 @@ if (address && isFqdn && !vmFqdn) {
               const res = await fetch(recordUrl);
               const data = await res.json();
               const value = data.value as Record<string, unknown> | undefined;
-              // Extract address from onNetwork record -> derive FQDN for SSH.
               const address = value?.address as string | undefined;
               if (address && typeof address === "string" && /[a-zA-Z]/.test(address) && !vmFqdn) {
                 vmFqdn = address;
@@ -1488,6 +1511,8 @@ runcmd:
         const body = r.body as { id?: string; uri?: string; cid?: string; submitEvent?: string };
         receiptUri = body.uri;
         receiptCid = body.cid;
+        _receiptUri = receiptUri ?? "";
+        _receiptCid = receiptCid ?? "";
         submitEventRef = body.submitEvent;
         log("submitAccept_result", { status: r.status, receiptUri, receiptCid, submitEventRef });
       } catch (err) {
@@ -1517,6 +1542,8 @@ runcmd:
     if (fromFirehose) {
       receiptUri = fromFirehose.receiptUri;
       receiptCid = fromFirehose.receiptCid;
+      _receiptUri = receiptUri ?? "";
+      _receiptCid = receiptCid ?? "";
       submitEventRef = fromFirehose.submitEventRef;
       log("receipt_from_firehose", { receiptUri, receiptCid, submitEventRef });
     } else {
