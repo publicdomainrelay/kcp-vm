@@ -1,4 +1,5 @@
 export * from "./server.ts";
+export * from "./badge-blue-keys.ts";
 export * from "./client.ts";
 export * from "./auth.ts";
 export * from "./attest.ts";

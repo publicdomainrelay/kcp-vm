@@ -141,6 +141,15 @@ export interface VerifyRecordSignaturesOptions {
    * document. Build one with {@link createDidKeyResolver}.
    */
   keysForDid?: KeysForDid;
+  /**
+   * Optional badgeBlueKeys binding: when a signature's `key` is NOT in the
+   * author's DID document, this is asked whether the key is bound to the author
+   * via a com.publicdomainrelay.temp.badgeBlueKeys record (deterministic rkey —
+   * see {@link keyBoundByBadgeBlueKey}). Lets an OAuth-author producer that
+   * cannot publish its attestation key in its DID document bind it via a
+   * self-minted record in its own repo.
+   */
+  keyBoundByBadgeBlueKey?: (did: string, key: string) => Promise<boolean>;
   /** Override the public-key resolver (did:key/web/plc). Defaults to a cached fetch resolver. */
   keyResolver?: KeyResolver;
 }
@@ -166,7 +175,10 @@ export async function verifyRecordSignatures(
     if (!ok) continue;
     if (opts.keysForDid) {
       const allowed = await opts.keysForDid(entry.issuer ?? opts.repositoryDid);
-      if (!allowed.includes(entry.key)) continue;
+      if (!allowed.includes(entry.key)) {
+        // Fall back to badgeBlueKeys binding for this exact key.
+        if (!(await opts.keyBoundByBadgeBlueKey?.(opts.repositoryDid, entry.key))) continue;
+      }
     }
     return true;
   }

@@ -50,6 +50,7 @@ export type {
   SubmitRfpContext,
 };
 import { verifyRecordSignatures } from "./signing.ts";
+import { createKeyBoundByBadgeBlueKey } from "./badge-blue-keys.ts";
 import {
   createDidKeyResolver,
   verifyInlineAttestation,
@@ -175,6 +176,7 @@ async function verifyAuthored(
   record: Record<string, unknown>,
   recordUri: string,
   keysForDid: KeysForDid,
+  keyBoundByBadgeBlueKey: (did: string, key: string) => Promise<boolean>,
   log: Logger,
   label: string,
 ): Promise<Response | null> {
@@ -182,6 +184,7 @@ async function verifyAuthored(
     record,
     repositoryDid: atUriAuthority(recordUri),
     keysForDid,
+    keyBoundByBadgeBlueKey,
   });
   if (!ok) {
     log("warn", `${label} rejected: missing or invalid badge.blue signature`, { uri: recordUri });
@@ -233,12 +236,13 @@ export function createRfpDispatcher(cfg: SubmitRfpHandlerConfig): (input: Dispat
   const log = deps.log ?? noopLogger;
   const serviceIds = Object.keys(callbacks);
   const keysForDid = keysForDidFrom(deps);
+  const keyBoundByBadgeBlueKey = createKeyBoundByBadgeBlueKey(deps.idResolver);
 
   return async ({ rfpUri, rfpCid, issuerDid, serviceId, req }) => {
     log("info", "dispatch: resolving rfp", { rfpUri });
     const rfp = await deps.resolve.resolve<RFP & { $type?: string }>({ uri: rfpUri, cid: rfpCid });
     log("info", "dispatch: rfp resolved", { rfpUri });
-    const sigErr = await verifyAuthored(deps, stripResolved(rfp) as Record<string, unknown>, rfpUri, keysForDid, log, "submitRfp");
+    const sigErr = await verifyAuthored(deps, stripResolved(rfp) as Record<string, unknown>, rfpUri, keysForDid, keyBoundByBadgeBlueKey, log, "submitRfp");
     if (sigErr) return sigErr;
 
     if (acceptScopeFilter) {
@@ -318,6 +322,7 @@ export function createSubmitBidHandler(cfg: SubmitBidHandlerConfig): Handler {
   const { deps, serviceIds, onBid } = cfg;
   const log = deps.log ?? noopLogger;
   const keysForDid = keysForDidFrom(deps);
+  const keyBoundByBadgeBlueKey = createKeyBoundByBadgeBlueKey(deps.idResolver);
   return async (req) => {
     const body = await readJson<{ uri?: string; cid?: string; record?: Bid & { $type?: string } }>(req);
     if (!body) return xrpcError("InvalidRequest", "invalid JSON", 400);
@@ -329,7 +334,7 @@ export function createSubmitBidHandler(cfg: SubmitBidHandlerConfig): Handler {
 
     log("info", "submitBid received", { uri, cid });
 
-    const sigErr = await verifyAuthored(deps, record as unknown as Record<string, unknown>, uri, keysForDid, log, "submitBid");
+    const sigErr = await verifyAuthored(deps, record as unknown as Record<string, unknown>, uri, keysForDid, keyBoundByBadgeBlueKey, log, "submitBid");
     if (sigErr) return sigErr;
 
     return finish(await onBid({
@@ -363,6 +368,7 @@ export function createSubmitAcceptHandler(cfg: SubmitAcceptHandlerConfig): Handl
   const { deps, serviceIds, onAccept } = cfg;
   const log = deps.log ?? noopLogger;
   const keysForDid = keysForDidFrom(deps);
+  const keyBoundByBadgeBlueKey = createKeyBoundByBadgeBlueKey(deps.idResolver);
   return async (req) => {
     const body = await readJson<{ acceptUri?: string; acceptCid?: string }>(req);
     if (!body) return xrpcError("InvalidRequest", "invalid JSON", 400);
@@ -375,7 +381,7 @@ export function createSubmitAcceptHandler(cfg: SubmitAcceptHandlerConfig): Handl
     log("info", "submitAccept received", { acceptUri, acceptCid });
 
     const accept = await deps.resolve.resolve<Accept & { $type?: string }>({ uri: acceptUri, cid: acceptCid });
-    const sigErr = await verifyAuthored(deps, stripResolved(accept) as Record<string, unknown>, acceptUri, keysForDid, log, "submitAccept");
+    const sigErr = await verifyAuthored(deps, stripResolved(accept) as Record<string, unknown>, acceptUri, keysForDid, keyBoundByBadgeBlueKey, log, "submitAccept");
     if (sigErr) return sigErr;
 
     return finish(await onAccept({
@@ -417,6 +423,7 @@ export function createSubmitEventHandler(cfg: SubmitEventHandlerConfig): Handler
   const log = deps.log ?? noopLogger;
   const serviceIds = Object.keys(callbacks);
   const keysForDid = keysForDidFrom(deps);
+  const keyBoundByBadgeBlueKey = createKeyBoundByBadgeBlueKey(deps.idResolver);
 
   return async (req) => {
     const body = await readJson<{ uri?: string; cid?: string; record?: { receipt?: unknown; payload?: unknown } }>(req);
@@ -435,7 +442,7 @@ export function createSubmitEventHandler(cfg: SubmitEventHandlerConfig): Handler
     if (event.$type && event.$type !== EVENT_NSID) {
       return xrpcError("InvalidRequest", `expected ${EVENT_NSID}`, 400);
     }
-    const sigErr = await verifyAuthored(deps, stripResolved(event) as Record<string, unknown>, uri, keysForDid, log, "submitEvent");
+    const sigErr = await verifyAuthored(deps, stripResolved(event) as Record<string, unknown>, uri, keysForDid, keyBoundByBadgeBlueKey, log, "submitEvent");
     if (sigErr) return sigErr;
     const payloadNsid = nsidFromUri(event.payload.uri);
 
