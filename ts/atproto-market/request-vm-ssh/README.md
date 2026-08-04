@@ -113,7 +113,7 @@ registry.
 | Key | Default | Meaning |
 |-----|---------|---------|
 | `bidWindowSec` | `30` | Seconds to collect bids |
-| `firstFree` | `false` | Accept the first policy-allowed free bid immediately instead of waiting out the window |
+| `firstFree` | `true` | Accept the first policy-allowed free bid immediately instead of waiting out the window |
 
 ```bash
 request-vm-ssh --policy only-me --policy-args '{"bidWindowSec":10,"firstFree":true}'
