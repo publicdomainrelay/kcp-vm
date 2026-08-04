@@ -21,6 +21,12 @@ inputs:
   cache-key:
     description: Explicit cache key override
     default: ""
+  mode:
+    description: 'Policy lane: full (records + work) or scope (trust-only hot path / checkScope)'
+    default: "full"
+  counterparty-did:
+    description: DID of the other side (required in scope mode)
+    default: ""
 outputs:
   allow:
     description: Policy verdict (true/false)

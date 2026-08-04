@@ -10,8 +10,10 @@
 
 import type {
   DescribedPolicy,
+  PolicyArgs,
   PolicyEvalCtx,
   PolicyEvalRequest,
+  PolicyPerspective,
   PolicyRecord,
   PolicyResult,
   RecordRef,
@@ -20,6 +22,27 @@ import type {
 } from "@publicdomainrelay/policy-common";
 
 export type { PolicyRecord, PolicyResult, PolicyEvalCtx };
+export { POLICY_GHA_LITE_NSID, POLICY_TYPESCRIPT_NSID } from "@publicdomainrelay/policy-common";
+
+/**
+ * Trust-only scope request for the hot path / checkScope.
+ *
+ * The scope lane is the policy's cheap gate: a trust-policy `decide` over a
+ * trust snapshot. It never touches workload records (no demand/offer, no
+ * work-policy evaluation). An executor that cannot answer from the scope lane
+ * returns `undefined` and the caller escalates to `execute()`.
+ */
+export interface ScopeInput {
+  perspective: PolicyPerspective;
+  selfDid: string;
+  counterpartyDid: string;
+  args: PolicyArgs;
+  /** Host resolvers — used by in-process scope (builtin/typescript) to build a
+   *  trust snapshot for decide(). gha-lite scope resolves its own trust data
+   *  inside the workflow action (network + its own cache), so it ignores these. */
+  resolveOperatorDid?: (did: string) => Promise<string | null>;
+  getVouchedDids?: (did: string) => Promise<Set<string>>;
+}
 
 /**
  * The single pluggability point. An executor is bound to a record $type; the
@@ -34,6 +57,14 @@ export interface PolicyEngineExecutor {
     ctx: PolicyEvalCtx;
     permissions?: Record<string, unknown>;
   }): Promise<PolicyResult>;
+  /** Trust-only scope verdict for the hot path / checkScope. `undefined` =
+   *  cannot decide from the scope lane alone; the caller escalates to
+   *  execute(). Optional — an executor without a scope lane is always
+   *  escalated. */
+  scope?(input: {
+    policyRecord: PolicyRecord;
+    scope: ScopeInput;
+  }): Promise<PolicyResult | undefined>;
 }
 
 /** $type → executor dispatch. A new executor = a sibling package + one entry. */

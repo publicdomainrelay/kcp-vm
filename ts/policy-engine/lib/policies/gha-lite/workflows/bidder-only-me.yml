@@ -17,6 +17,13 @@ on:
       policy-args:
         description: JSON policy arguments
         required: false
+      mode:
+        description: 'Policy lane: full (records + work) or scope (trust-only hot path / checkScope)'
+        required: false
+      counterparty-did:
+        description: DID of the other side (required in scope mode)
+        required: false
+
 jobs:
   evaluate:
     runs-on: self-hosted
@@ -29,4 +36,6 @@ jobs:
         bid: ${{ inputs.bid || '' }}
         accept: ${{ inputs.accept || '' }}
         policy-args: ${{ inputs.policy-args || '' }}
+        mode: ${{ inputs.mode || '' }}
+        counterparty-did: ${{ inputs.counterparty-did || '' }}
     - run: echo "allow=${{ steps.policy.outputs.allow }} violations=${{ steps.policy.outputs.violations }}"

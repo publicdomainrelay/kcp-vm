@@ -25,7 +25,7 @@
  * never a branch inside this file.
  */
 
-import type { PolicyEngineExecutor } from "@publicdomainrelay/policy-engine-abc";
+import type { PolicyEngineExecutor, ScopeInput } from "@publicdomainrelay/policy-engine-abc";
 import type {
   PolicyEvalCtx,
   PolicyRecord,
@@ -34,6 +34,8 @@ import type {
   StrongRef,
 } from "@publicdomainrelay/policy-common";
 import { POLICY_TYPESCRIPT_NSID } from "@publicdomainrelay/policy-common";
+import { scopeDecide, type PolicyRegistry } from "@publicdomainrelay/policy-deno-typescript-shared";
+import { createPolicyRegistry } from "@publicdomainrelay/policy-deno-typescript";
 import type { PersistentWorker } from "@publicdomainrelay/sandbox-abc";
 import type { SandboxPermissions } from "@publicdomainrelay/sandbox-common";
 import { createPersistentDenoWorker } from "@publicdomainrelay/sandbox-deno";
@@ -219,6 +221,9 @@ export interface TypescriptExecutorOptions {
     workerUrl: string | URL,
     permissions?: SandboxPermissions,
   ) => PersistentWorker;
+  /** First-party policy registry for the scope lane. Defaults to
+   *  createPolicyRegistry() — the builtin perspective-split set. */
+  registry?: PolicyRegistry;
 }
 
 /**
@@ -233,10 +238,12 @@ export class TypescriptExecutor implements PolicyEngineExecutor {
     workerUrl: string | URL,
     permissions?: SandboxPermissions,
   ) => PersistentWorker;
+  readonly #registry: PolicyRegistry;
 
   constructor(opts: TypescriptExecutorOptions = {}) {
     this.#timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.#spawn = opts.createWorker ?? createPersistentDenoWorker;
+    this.#registry = opts.registry ?? createPolicyRegistry();
   }
 
   async execute(input: {
@@ -296,6 +303,35 @@ export class TypescriptExecutor implements PolicyEngineExecutor {
     );
 
     return await this.#evaluate(bundle, sandboxPerms, ctx);
+  }
+
+  /**
+   * Trust-only scope lane: resolve the record's named policies against the
+   * first-party registry and run each trust policy's decide() over a trust
+   * snapshot built from the host resolvers. No worker is spawned — the scope
+   * lane never executes the bundle. Returns undefined (escalate to execute())
+   * when the record names no registry trust policies or a decide() abstains.
+   */
+  async scope(input: {
+    policyRecord: PolicyRecord;
+    scope: ScopeInput;
+  }): Promise<PolicyResult | undefined> {
+    const { policyRecord, scope } = input;
+    const value = policyRecord.value;
+    if (!value || typeof value !== "object") return undefined;
+
+    const named = (value as { policies?: unknown }).policies;
+    if (!Array.isArray(named) || named.length === 0) return undefined;
+
+    return await scopeDecide({
+      registry: this.#registry,
+      named: named as Array<{ name?: unknown; args?: unknown }>,
+      perspective: scope.perspective,
+      selfDid: scope.selfDid,
+      counterpartyDid: scope.counterpartyDid,
+      resolveOperatorDid: scope.resolveOperatorDid ?? (async () => null),
+      getVouchedDids: scope.getVouchedDids ?? (async () => new Set<string>()),
+    });
   }
 
   /**

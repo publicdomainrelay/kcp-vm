@@ -300,6 +300,14 @@ export interface CreatePolicyCtxInput {
   perspective: PolicyPerspective;
   /** The evaluator's own DID — the one thing no market record names. */
   selfDid: string;
+  /** Explicit subject DID override — wins over record derivation. Set when the
+   *  caller knows the counterparty being evaluated but no record names it
+   *  (e.g. the bidder evaluating an RFP's policy before any bid exists). */
+  subjectDid?: string;
+  /** Explicit root requester DID override — wins over record derivation. */
+  rootRequesterDid?: string;
+  /** Explicit counterparty DID override — defaults to subjectDid. */
+  counterpartyDid?: string;
   /** The market records present at this stage (each optional). */
   rfp?: PolicyRecord | null;
   bid?: PolicyRecord | null;
@@ -381,16 +389,24 @@ export async function createPolicyCtx(input: CreatePolicyCtxInput): Promise<Poli
     log: input.log,
   });
 
+  // Best-effort hydration: a record whose value cannot be resolved (offline
+  // test envs, unreachable PDS) stays {uri,cid} rather than crashing the
+  // evaluation. subject/root/demand are derived from whatever is present.
   const hydrate = async (r?: PolicyRecord | null): Promise<PolicyRecord | undefined> => {
     if (!r) return undefined;
-    return r.value ? r : { ...r, value: await scratch.resolve({ uri: r.uri, cid: r.cid }) };
+    if (r.value) return r;
+    try {
+      return { ...r, value: await scratch.resolve({ uri: r.uri, cid: r.cid }) };
+    } catch {
+      return r;
+    }
   };
   const rfp = await hydrate(input.rfp);
   const bid = await hydrate(input.bid);
   const accept = await hydrate(input.accept);
 
-  const subjectDid = deriveSubject(input.perspective, rfp, bid, accept);
-  const rootRequesterDid = deriveRootRequester(input.perspective, input.selfDid, subjectDid);
+  const subjectDid = input.subjectDid ?? deriveSubject(input.perspective, rfp, bid, accept);
+  const rootRequesterDid = input.rootRequesterDid ?? deriveRootRequester(input.perspective, input.selfDid, subjectDid);
 
   return new PolicyEvalCtxImpl({
     policyName: input.policyName,
@@ -399,7 +415,7 @@ export async function createPolicyCtx(input: CreatePolicyCtxInput): Promise<Poli
     selfDid: input.selfDid,
     subjectDid,
     rootRequesterDid,
-    counterpartyDid: subjectDid,
+    counterpartyDid: input.counterpartyDid ?? subjectDid,
     policyRef: input.policyRef,
     demand: deriveDemand(rfp),
     offer: deriveOffer(bid),

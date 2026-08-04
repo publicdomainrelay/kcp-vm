@@ -6,5 +6,8 @@
   "imports": {
     "@publicdomainrelay/policy-deno-typescript-shared": "jsr:@publicdomainrelay/policy-deno-typescript-shared@^0",
     "@std/cli": "jsr:@std/cli@^1.0.0"
+  },
+  "tasks": {
+    "build-bundle": "deno run -A bundle/build-bundle.ts"
   }
 }

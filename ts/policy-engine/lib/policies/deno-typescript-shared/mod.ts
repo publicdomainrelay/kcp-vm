@@ -6,3 +6,4 @@ export * from "./constants.ts";
 export * from "./cache.ts";
 export * from "./ctx.ts";
 export * from "./evaluate.ts";
+export * from "./scope.ts";

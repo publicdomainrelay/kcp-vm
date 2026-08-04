@@ -12,7 +12,7 @@
  * allows; any failure / error / timeout / non-complete status denies.
  */
 
-import type { PolicyEngineExecutor } from "@publicdomainrelay/policy-engine-abc";
+import type { PolicyEngineExecutor, ScopeInput } from "@publicdomainrelay/policy-engine-abc";
 import {
   POLICY_GHA_LITE_NSID,
   splitAtUri,
@@ -62,6 +62,19 @@ export class GhaLiteExecutor implements PolicyEngineExecutor {
     this.timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.sandbox = opts.sandbox;
     this.denoPath = opts.denoPath;
+    // Default the bundled-actions dir so a policy workflow's `uses:
+    // tangy/policy-*` steps resolve without the caller exporting
+    // BUNDLED_ACTIONS_DIR (the atproto-market bidder/requester tests run the
+    // engine from source and never set it). A caller-set value wins.
+    if (!Deno.env.get("BUNDLED_ACTIONS_DIR")) {
+      const candidate = new URL("../policies/gha-lite/bundled-actions/", import.meta.url);
+      try {
+        Deno.statSync(candidate);
+        Deno.env.set("BUNDLED_ACTIONS_DIR", candidate.pathname);
+      } catch {
+        // packaged / compiled build without the actions dir — leave unset
+      }
+    }
   }
 
   async execute(input: {
@@ -76,7 +89,41 @@ export class GhaLiteExecutor implements PolicyEngineExecutor {
       return deny("gha-lite record has no workflow");
     }
 
-    const request = buildRequest(policyRecord, ctx, permissions, workflow);
+    const trust = await buildTrustInput(ctx, ctx.selfDid, ctx.counterpartyDid);
+    return await this.#run(buildRequest(policyRecord, ctx, permissions, workflow, trust));
+  }
+
+  /**
+   * Trust-only scope lane: run the record's workflow in `mode: scope` with the
+   * counterparty carried as an input, so the action can decide from a trust
+   * snapshot without workload records. The scope lane never hard-denies a
+   * well-formed record — the workflow's scope-mode action falls back to a full
+   * evaluate when decide() abstains — so this returns a verdict, not undefined.
+   */
+  async scope(input: {
+    policyRecord: PolicyRecord;
+    scope: ScopeInput;
+  }): Promise<PolicyResult | undefined> {
+    const { policyRecord, scope } = input;
+
+    const workflow = policyRecord.value?.workflow;
+    if (typeof workflow !== "string" || workflow.trim().length === 0) {
+      return deny("gha-lite record has no workflow");
+    }
+
+    const trust = await buildTrustInput(
+      {
+        resolveOperatorDid: scope.resolveOperatorDid ?? (async () => null),
+        getVouchedDids: scope.getVouchedDids ?? (async () => new Set<string>()),
+      },
+      scope.selfDid,
+      scope.counterpartyDid,
+    );
+    return await this.#run(buildScopeRequest(policyRecord, scope, workflow, trust));
+  }
+
+  /** Run a workflow request through the gha-lite engine and map status → verdict. */
+  async #run(request: PolicyEngineRequest): Promise<PolicyResult> {
     const executor = new WorkflowExecutor({
       ...(this.sandbox !== undefined ? { sandbox: this.sandbox } : {}),
       ...(this.denoPath !== undefined ? { denoPath: this.denoPath } : {}),
@@ -99,11 +146,54 @@ export class GhaLiteExecutor implements PolicyEngineExecutor {
  * `self-did` (required) and the market records (`rfp`/`bid`/`accept`, each
  * optional, firehose shape {uri,cid,value?}) as JSON strings, plus `policy-args`.
  */
+/**
+ * The host-provided trust snapshot: operatorOf / vouchedBy / trustedOperators
+ * for the two sides, pre-resolved through the host's own resolvers so the
+ * workflow action never has to re-read the trust graph over the network (which
+ * fails in local test envs with fake DIDs and is slower in prod).
+ */
+export interface TrustInput {
+  operatorOf: Record<string, string>;
+  vouchedBy: Record<string, string[]>;
+  trustedOperators: string[];
+}
+
+/** Pre-resolve the trust snapshot for the two sides through host resolvers. */
+async function buildTrustInput(
+  resolvers: {
+    resolveOperatorDid?: (did: string) => Promise<string | null>;
+    getVouchedDids?: (did: string) => Promise<Set<string>>;
+  },
+  selfDid: string,
+  counterpartyDid: string,
+): Promise<TrustInput> {
+  const resolveOp = resolvers.resolveOperatorDid ?? (async () => null);
+  const getVouches = resolvers.getVouchedDids ?? (async () => new Set<string>());
+
+  const selfOp = (await resolveOp(selfDid)) ?? selfDid;
+  const coOp = await resolveOp(counterpartyDid);
+
+  const operatorOf: Record<string, string> = { [selfDid]: selfOp };
+  if (coOp) operatorOf[counterpartyDid] = coOp;
+
+  const trustedOperators = [selfDid, selfOp];
+  const vouchedBy: Record<string, string[]> = {};
+  for (const op of trustedOperators) {
+    vouchedBy[op] = [...(await getVouches(op))];
+  }
+  if (coOp && !trustedOperators.includes(coOp)) {
+    vouchedBy[coOp] = [...(await getVouches(coOp))];
+  }
+
+  return { operatorOf, vouchedBy, trustedOperators };
+}
+
 function buildRequest(
   policyRecord: PolicyRecord,
   ctx: PolicyEvalCtx,
   permissions: Record<string, unknown> | undefined,
   workflow: string,
+  trust: TrustInput,
 ): PolicyEngineRequest {
   const inputs: Record<string, unknown> = {
     "self-did": ctx.selfDid,
@@ -112,6 +202,7 @@ function buildRequest(
     "counterparty-did": ctx.counterpartyDid,
     perspective: ctx.perspective,
     "policy-args": JSON.stringify(ctx.args ?? {}),
+    trust: JSON.stringify(trust),
   };
 
   // The record's permissions field, when the workflow references it.
@@ -142,6 +233,45 @@ function buildRequest(
     // keeps them available to a workflow author without changing the engine.
     context["permissions"] = permissions;
   }
+
+  return { workflow, inputs, context };
+}
+
+/**
+ * Build the scope-lane request: `mode: scope` + the two DIDs + policy args.
+ * No workload records — the action derives everything from the counterparty DID
+ * and its own trust snapshot. The optional `permissions` record field still
+ * travels so a workflow that references it works in scope mode.
+ */
+function buildScopeRequest(
+  policyRecord: PolicyRecord,
+  scope: ScopeInput,
+  workflow: string,
+  trust: TrustInput,
+): PolicyEngineRequest {
+  const inputs: Record<string, unknown> = {
+    mode: "scope",
+    "self-did": scope.selfDid,
+    "counterparty-did": scope.counterpartyDid,
+    perspective: scope.perspective,
+    "policy-args": JSON.stringify(scope.args ?? {}),
+    trust: JSON.stringify(trust),
+  };
+
+  const recordPermissions = policyRecord.value?.permissions;
+  if (recordPermissions !== undefined) {
+    inputs["permissions"] = toJson(recordPermissions);
+  }
+
+  const repoId = repoFromUri(policyRecord.uri) ?? scope.selfDid;
+  const context: Record<string, unknown> = {
+    config: {
+      env: {
+        GITHUB_REPOSITORY: repoId,
+        GITHUB_ACTOR: scope.selfDid,
+      },
+    },
+  };
 
   return { workflow, inputs, context };
 }

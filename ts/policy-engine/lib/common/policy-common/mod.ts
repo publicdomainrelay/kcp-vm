@@ -120,6 +120,9 @@ export interface PolicyEvalRequest {
 
 export interface ScopeRequest {
   name: string;
+  /** StrongRef to the policy record being scope-checked. Required — a scope
+   *  check needs a record to run its scope-mode lane against. */
+  policyRef?: StrongRef;
   args?: PolicyArgs;
   perspective?: PolicyPerspective;
   selfDid?: string;

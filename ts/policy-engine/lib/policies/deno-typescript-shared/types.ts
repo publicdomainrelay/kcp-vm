@@ -139,3 +139,25 @@ export interface PolicyRegistry {
   get(name: string): Policy | undefined;
   names(): string[];
 }
+
+/**
+ * Fail loud when a policy is used from the wrong side. Work policies declare
+ * `perspectives[]`; trust policies carry the side in the name
+ * (bidder-* / requester-*; `open` is symmetric). Never silently no-op — a
+ * bidder must not run a requester-only policy.
+ */
+export function assertPolicyPerspective(policy: Policy, perspective: PolicyPerspective): void {
+  if (policy.kind === "work" && !policy.perspectives.includes(perspective)) {
+    throw new Error(
+      `policy "${policy.name}" is not usable from the ${perspective} side (perspectives: ${policy.perspectives.join(", ")})`,
+    );
+  }
+  if (policy.kind === "trust") {
+    if (policy.name.startsWith("bidder-") && perspective !== "bidder") {
+      throw new Error(`policy "${policy.name}" is not usable from the ${perspective} side`);
+    }
+    if (policy.name.startsWith("requester-") && perspective !== "requester") {
+      throw new Error(`policy "${policy.name}" is not usable from the ${perspective} side`);
+    }
+  }
+}

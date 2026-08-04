@@ -2,7 +2,7 @@
   "name": "@publicdomainrelay/policies-gha-lite",
   "version": "0.0.0",
   "license": "Unlicense",
-  "exports": "./action-common.ts",
+  "exports": "./mod.ts",
   "imports": {
     "@publicdomainrelay/policy-deno-typescript-shared": "jsr:@publicdomainrelay/policy-deno-typescript-shared@^0"
   },
