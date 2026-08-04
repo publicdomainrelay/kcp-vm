@@ -9,6 +9,9 @@
     "@publicdomainrelay/market-common": "jsr:@publicdomainrelay/market-common@^0",
     "@publicdomainrelay/firehose-watcher-subscriberepos": "jsr:@publicdomainrelay/firehose-watcher-subscriberepos@^0",
     "@publicdomainrelay/firehose-watcher-jetstream": "jsr:@publicdomainrelay/firehose-watcher-jetstream@^0",
+    "@publicdomainrelay/policy-engine-cli-options": "jsr:@publicdomainrelay/policy-engine-cli-options@^0",
+    "@publicdomainrelay/policy-engine-evaluator": "jsr:@publicdomainrelay/policy-engine-evaluator@^0",
+    "@publicdomainrelay/policy-deno-typescript": "jsr:@publicdomainrelay/policy-deno-typescript@^0",
     "@libs/qrcode": "jsr:@libs/qrcode@^2"
   },
   "compile": {

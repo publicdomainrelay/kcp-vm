@@ -4,7 +4,13 @@
   "license": "Unlicense",
   "exports": "./mod.ts",
   "imports": {
-    "@publicdomainrelay/market-policy-trust-abc": "jsr:@publicdomainrelay/market-policy-trust-abc@^0",
-    "@publicdomainrelay/market-policy-trust-cache": "jsr:@publicdomainrelay/market-policy-trust-cache@^0"
+    "@publicdomainrelay/policy-engine-abc": "../../../policy-engine/lib/abc/policy-engine/mod.ts",
+    "@publicdomainrelay/policy-engine-evaluator": "../../../policy-engine/lib/policy-engine-evaluator/mod.ts",
+    "@publicdomainrelay/policy-engine-scope-cache": "../../../policy-engine/lib/policy-engine-scope-cache/mod.ts",
+    "@publicdomainrelay/policy-engine-executor-gha-lite": "../../../policy-engine/lib/policy-engine-executor-gha-lite/mod.ts",
+    "@publicdomainrelay/policy-engine-executor-typescript": "../../../policy-engine/lib/policy-engine-executor-typescript/mod.ts",
+    "@publicdomainrelay/policy-deno-typescript": "../../../policy-engine/lib/policies/deno-typescript/mod.ts",
+    "@publicdomainrelay/policy-deno-typescript-shared": "../../../policy-engine/lib/policies/deno-typescript-shared/mod.ts",
+    "@publicdomainrelay/policies-gha-lite": "../../../policy-engine/lib/policies/gha-lite/mod.ts"
   }
 }

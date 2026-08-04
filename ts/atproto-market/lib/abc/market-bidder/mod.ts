@@ -8,6 +8,7 @@ import type {
   SubmitAcceptCallback,
 } from "@publicdomainrelay/market-abc";
 import type { Logger, StrongRef } from "@publicdomainrelay/market-common";
+import type { PolicyEvalCtx, PolicyResult } from "@publicdomainrelay/policy-engine-abc";
 
 export interface GuestContractEntry {
   receiptKey: string;
@@ -67,6 +68,13 @@ export interface CallbackFactoryDeps {
   getVouchedDids?: (did: string) => Promise<Set<string>>;
   /** Bidder DID -> operator DID, via bidder_associate records. */
   resolveOperatorDid?: (bidderDid: string) => Promise<string | null>;
+  /** Policy engine evaluator used to evaluate RFP.policies[] refs in onRfp. */
+  evaluator: {
+    evaluatePolicies(input: {
+      refs: Array<{ uri: string; cid: string }>;
+      ctx: PolicyEvalCtx;
+    }): Promise<PolicyResult>;
+  };
 }
 
 export interface PolicyExecOptions {

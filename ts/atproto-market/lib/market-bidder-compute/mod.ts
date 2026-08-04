@@ -20,7 +20,7 @@ import {
 } from "@publicdomainrelay/market-atproto";
 import type { RecordResolver } from "@publicdomainrelay/market-abc";
 import { nsidFromUri } from "@publicdomainrelay/market-abc";
-import { evaluateRfpPolicy } from "@publicdomainrelay/market-policy";
+import type { PolicyEvalCtx, PolicyResult } from "@publicdomainrelay/policy-engine-abc";
 import type {
   ActiveContract,
   CallbackFactoryDeps,
@@ -48,6 +48,13 @@ export interface VmBidderDeps {
   getVouchedDids?: (did: string) => Promise<Set<string>>;
   /** Bidder DID -> operator DID, via bidder_associate records. */
   resolveOperatorDid?: (bidderDid: string) => Promise<string | null>;
+  /** Policy engine evaluator -- evaluates RFP.policies[] refs in onRfp. */
+  evaluator: {
+    evaluatePolicies(input: {
+      refs: Array<{ uri: string; cid: string }>;
+      ctx: PolicyEvalCtx;
+    }): Promise<PolicyResult>;
+  };
   did: string;
   attestationKp: AttestationKeypair;
   signer: { did(): string; sign(bytes: Uint8Array): Promise<Uint8Array> };
@@ -88,26 +95,27 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
     // Absent/empty policies = no restriction -- open to all bidders.
     const policyRefs = rfp.policies ?? [];
     for (const policyRef of policyRefs) {
-      const result = await evaluateRfpPolicy({
-        policyRef,
-        subjectDid: did,
-        rootRequesterDid: issuerDid,
-        counterpartyDid: issuerDid,
-        perspective: "bidder",
-        selfDid: did,
-        demand: (() => {
-          const payloadRef = rfp.payload as { uri: string; cid: string } | undefined;
-          return payloadRef
-            ? { rfpRef: { uri: rfpUri, cid: rfpCid }, payloadRef, payloadNsid: nsidFromUri(payloadRef.uri) }
-            : undefined;
-        })(),
-        resolve: (ref) => resolve.resolve(ref),
-        signer,
-        getVouchedDids: deps.getVouchedDids,
-        resolveOperatorDid: deps.resolveOperatorDid,
-        onlyRemotePolicyExec: deps.policyExec?.onlyRemote,
-        allowUntrustedPolicyExec: deps.policyExec?.allowUntrusted,
-        log: (level, msg, meta) => cbLog(level as "info" | "warn" | "error", msg, meta),
+      const result = await deps.evaluator.evaluatePolicies({
+        refs: [policyRef],
+        ctx: {
+          policyName: "rfp-policy",
+          args: {},
+          perspective: "bidder",
+          selfDid: did,
+          subjectDid: did,
+          rootRequesterDid: issuerDid,
+          counterpartyDid: issuerDid,
+          resolve: (ref) => resolve.resolve(ref),
+          resolveOperatorDid: deps.resolveOperatorDid ?? (async () => null),
+          getVouchedDids: deps.getVouchedDids ?? (async () => new Set<string>()),
+          log: (level, msg, meta) => cbLog(level as "info" | "warn" | "error", msg, meta),
+          demand: (() => {
+            const payloadRef = rfp.payload as { uri: string; cid: string } | undefined;
+            return payloadRef
+              ? { rfpRef: { uri: rfpUri, cid: rfpCid }, payloadRef, payloadNsid: nsidFromUri(payloadRef.uri) }
+              : undefined;
+          })(),
+        },
       });
       if (!result.allow) {
         cbLog("warn", "policy rejected bid", { violations: result.violations });
@@ -455,6 +463,7 @@ export function createComputeProviderHooks(opts: {
         policyExec: deps.policyExec,
         getVouchedDids: deps.getVouchedDids,
         resolveOperatorDid: deps.resolveOperatorDid,
+        evaluator: deps.evaluator,
       });
       return { rfpCallbacks: vm.rfp, onAccept: vm.accept, eventCallbacks: vm.event };
     },

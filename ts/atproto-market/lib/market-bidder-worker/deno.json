@@ -4,6 +4,6 @@
   "license": "Unlicense",
   "exports": "./mod.ts",
   "imports": {
-    "@publicdomainrelay/market-policy": "jsr:@publicdomainrelay/market-policy@^0"
+    "@publicdomainrelay/policy-engine-abc": "../../../policy-engine/lib/abc/policy-engine/mod.ts"
   }
 }

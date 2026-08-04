@@ -5,6 +5,7 @@
   "exports": "./mod.ts",
   "imports": {
     "@publicdomainrelay/logger": "jsr:@publicdomainrelay/logger@^0",
-    "@publicdomainrelay/serve": "jsr:@publicdomainrelay/serve@^0"
+    "@publicdomainrelay/serve": "jsr:@publicdomainrelay/serve@^0",
+    "@publicdomainrelay/policy-common": "jsr:@publicdomainrelay/policy-common@^0"
   }
 }

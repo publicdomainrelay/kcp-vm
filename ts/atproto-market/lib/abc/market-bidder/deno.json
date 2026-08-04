@@ -2,6 +2,8 @@
   "name": "@publicdomainrelay/market-bidder-abc",
   "version": "0.0.0",
   "license": "Unlicense",
-  "imports": {},
+  "imports": {
+    "@publicdomainrelay/policy-engine-abc": "../../../../policy-engine/lib/abc/policy-engine/mod.ts"
+  },
   "exports": "./mod.ts"
 }

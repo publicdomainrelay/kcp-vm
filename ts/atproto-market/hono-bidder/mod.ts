@@ -1,5 +1,5 @@
 import { Command } from "@publicdomainrelay/cli-args-env";
-import { parsePolicyArgs } from "@publicdomainrelay/market-policy-abc";
+import { parsePolicyArgs } from "@publicdomainrelay/policy-engine-cli-options";
 import { createLogger } from "@publicdomainrelay/logger";
 import { createServe } from "@publicdomainrelay/serve";
 import { createIngress } from "@publicdomainrelay/did-key-ingress-proxy";
@@ -579,10 +579,9 @@ let policyArgs: Record<string, unknown> = {};
 try {
   policyArgs = parsePolicyArgs(options.policyArgs);
   if (policy) {
-    const { createPolicyRegistry } = await import("@publicdomainrelay/market-policy-registry");
-    const { assertPolicyPerspective } = await import("@publicdomainrelay/market-policy-abc");
-    const known = createPolicyRegistry().get(policy);
-    if (known) assertPolicyPerspective(known, "bidder");
+    const { createPolicyRegistry } = await import("@publicdomainrelay/policy-deno-typescript");
+    const { resolvePolicyName } = await import("@publicdomainrelay/policy-deno-typescript-shared");
+    resolvePolicyName(createPolicyRegistry(), policy, "bidder"); // throws on unknown / wrong side
   }
 } catch (err) {
   console.error(`invalid --policy: ${err}`);

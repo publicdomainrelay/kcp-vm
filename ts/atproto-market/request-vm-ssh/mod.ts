@@ -1,5 +1,5 @@
 import { Command } from "@publicdomainrelay/cli-args-env";
-import { parsePolicyArgs, type PolicySpec } from "@publicdomainrelay/market-policy-abc";
+import { parsePolicyArgs } from "@publicdomainrelay/policy-engine-cli-options";
 import { createLogger } from "@publicdomainrelay/logger";
 import { createServe } from "@publicdomainrelay/serve";
 import {
@@ -20,6 +20,13 @@ import { qrcode } from "@libs/qrcode";
 import { IdResolver } from "@atproto/identity";
 import { Secp256k1Keypair } from "@atproto/crypto";
 import cliArgsEnv from "./cli-args-env.ts";
+
+/** Structural policy spec; matches @publicdomainrelay/policy-engine PolicySpec. */
+interface PolicySpec {
+  name: string;
+  description?: string;
+  args: Record<string, unknown>;
+}
 
 let runtimeConfig: Record<string, unknown> | null = null;
 try { runtimeConfig = (await import("./config.json", { with: { type: "json" } })).default; } catch { /* optional */ }
@@ -486,10 +493,9 @@ let policy: PolicySpec | undefined;
 if (policyName) {
   try {
     policy = { name: policyName, args: parsePolicyArgs(options.policyArgs) };
-    const { createPolicyRegistry } = await import("@publicdomainrelay/market-policy-registry");
-    const { assertPolicyPerspective } = await import("@publicdomainrelay/market-policy-abc");
-    const known = createPolicyRegistry().get(policyName);
-    if (known) assertPolicyPerspective(known, "requester");
+    const { createPolicyRegistry } = await import("@publicdomainrelay/policy-deno-typescript");
+    const { resolvePolicyName } = await import("@publicdomainrelay/policy-engine-evaluator");
+    resolvePolicyName(createPolicyRegistry(), policyName, "requester");
   } catch (err) {
     console.error(`invalid --policy: ${err}`);
     Deno.exit(2);

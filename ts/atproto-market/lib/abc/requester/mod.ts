@@ -3,6 +3,7 @@
 
 import type { StructuredLoggerInterface } from "@publicdomainrelay/logger";
 import type { IngressRef, ServeHandle } from "@publicdomainrelay/serve";
+import type { PolicySpec } from "@publicdomainrelay/policy-common";
 
 export interface CollectedBid {
   did: string;
@@ -79,7 +80,7 @@ export interface ContractFlowOptions {
    * Fulfillment policy to mint and attach to the RFP. Its args carry the
    * knobs that used to be separate flags -- bidWindowSec, firstFree.
    */
-  policy?: import("@publicdomainrelay/market-policy-abc").PolicySpec;
+  policy?: PolicySpec;
   /** DID of a remote policy engine. Set to mint a policies.service record. */
   policyEngine?: string;
   /** Refuse to evaluate any non-service policy record locally. */

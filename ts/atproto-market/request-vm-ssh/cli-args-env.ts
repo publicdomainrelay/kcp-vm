@@ -3,7 +3,7 @@ import {
   POLICY_ARGS_CLI_OPTION,
   ONLY_REMOTE_POLICY_EXEC_CLI_OPTION,
   ALLOW_UNTRUSTED_POLICY_EXEC_CLI_OPTION,
-} from "@publicdomainrelay/market-policy-abc";
+} from "@publicdomainrelay/policy-engine-cli-options";
 
 export default {
   name: "request-vm-ssh",

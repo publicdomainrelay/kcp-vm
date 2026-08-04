@@ -49,8 +49,13 @@ import {
   RELAYS_NSID,
 } from "@publicdomainrelay/market-common";
 import type { StrongRef } from "@publicdomainrelay/market-common";
-import { bidWindowSecOf, firstFreeOf } from "@publicdomainrelay/market-policy-abc";
-import { buildPolicyRecord, evaluateRfpPolicy } from "@publicdomainrelay/market-policy";
+import { bidWindowSecOf, firstFreeOf } from "@publicdomainrelay/policy-engine-cli-options";
+import { createPolicyEvaluator, resolvePolicyName } from "@publicdomainrelay/policy-engine-evaluator";
+import { WORKFLOWS } from "@publicdomainrelay/policies-gha-lite";
+import { createPolicyRegistry } from "@publicdomainrelay/policy-deno-typescript";
+import { GhaLiteExecutor } from "@publicdomainrelay/policy-engine-executor-gha-lite";
+import { TypescriptExecutor } from "@publicdomainrelay/policy-engine-executor-typescript";
+import { POLICY_GHA_LITE_NSID, POLICY_TYPESCRIPT_NSID, type PolicyResult } from "@publicdomainrelay/policy-engine-abc";
 import { buildDefaultUserData, patchDefaultUserData, buildTunnelUserData, flattenLabel, type CloudInitContext, type TunnelCloudInitContext } from "@publicdomainrelay/cloud-init-common";
 import {
   FEDPROXY_RBAC_NSID,
@@ -846,14 +851,12 @@ export async function runComputeContract(
   const vmReadyTimeoutSec = opts.vmReadyTimeoutSec ?? 300;
   const extraBidderDids = opts.extraBidderDids ?? [];
   const denyBidderDids = opts.denyBidderDids ?? [];
-  const policyEngine = opts.policyEngine;
   const sshProvider = opts.sshProvider ?? createSshSessionProvider(
     opts.logger,
     { proxyCommandFn: opts.sshProxyCommandFn },
   );
   const relayUrl = opts.relayUrl;
   const relayUrls = opts.relayUrls ?? (relayUrl ? [relayUrl] : []);
-  const signer = opts.signer;
 
   // Firehose watcher for ALL market collections -- starts before RFP creation
   // so we don't miss bids/accepts/events. Active until VM deletion.
@@ -1105,14 +1108,47 @@ runcmd:
     createdAt: new Date().toISOString(),
   };
 
+  // Policy engine evaluator -- mints the RFP's policy record (buildPolicyRecord)
+  // and re-checks the winner against it before accepting (evaluatePolicies).
+  // The gha-lite + typescript executors evaluate records locally, replacing the
+  // old market-policy service delegation. onlyRemotePolicyExec / policyEngine
+  // no longer gate this path.
+  const idResolver = new IdResolver({ plcUrl: opts.plcUrl });
+  const resolveRecordForPolicy = async (ref: { uri: string; cid: string }): Promise<Record<string, unknown>> => {
+    const resolver = createRecordResolver(idResolver);
+    return await resolver.resolve(ref as never);
+  };
+  const policyRegistry = createPolicyRegistry();
+  const ghaLiteExecutor = new GhaLiteExecutor();
+  const typescriptExecutor = new TypescriptExecutor();
+  const evaluator = createPolicyEvaluator({
+    registry: {
+      get: ($t: string) =>
+        $t === POLICY_GHA_LITE_NSID ? ghaLiteExecutor : $t === POLICY_TYPESCRIPT_NSID ? typescriptExecutor : undefined,
+      kinds: () => [POLICY_GHA_LITE_NSID, POLICY_TYPESCRIPT_NSID],
+    },
+    resolve: (ref) => resolveRecordForPolicy(ref),
+    resolveOperatorDid: (did) => resolveOperatorDid(did),
+    getVouchedDids: (did) => policyVouchResolver.getVouchedDids(did),
+    policies: policyRegistry,
+    log: (level, msg, meta) => log(`policy_eval_${level}`, { msg, ...(meta ?? {}) }),
+  });
+
   // Attach fulfillment policy if one was requested.
   let policyRef: { uri: string; cid: string } | undefined;
   if (policySpec) {
     try {
-      const { nsid, record } = buildPolicyRecord({
-        spec: policySpec,
+      const canonical = resolvePolicyName(policyRegistry, policySpec.name, "requester");
+      const workflow = WORKFLOWS[canonical];
+      const { nsid, record } = evaluator.buildPolicyRecord({
+        name: policySpec.name,
+        description: policySpec.description,
+        args: policyArgs,
         requesterDid: pds.did,
-        policyEngine,
+        perspective: "requester",
+        kind: workflow ? "gha-lite" : "typescript",
+        workflow,
+        policies: [{ name: canonical, args: policyArgs }],
       });
       policyRef = await pds.createRepoRecord(nsid, record);
       rfpRecord.policies = [{ $type: "com.atproto.repo.strongRef", uri: policyRef.uri, cid: policyRef.cid }];
@@ -1129,7 +1165,6 @@ runcmd:
   log("rfp_created", { uri: rfpUri, cid: rfpCid, hasPolicy: !!policyRef });
 
   // 3. Discover bidder DIDs.
-  const idResolver = new IdResolver({ plcUrl: opts.plcUrl });
 
   // 3a. Vouch-based discovery via DelegatedTrustResolver.
   // Reads requester's own badgeBlueKeys for requester_associate records,
@@ -1280,37 +1315,37 @@ runcmd:
 
   // The bidder is the enforcement point for locally-evaluated policies: it
   // holds the trust data (operator associations, vouch graph) the policy needs
-  // and refuses to bid when the policy denies. The requester re-checks only
-  // when it delegated evaluation to a policy engine, which is the one case
-  // where a second opinion is both meaningful and answerable from here.
-  const evaluateCandidate = async (candidate: CollectedBid) => {
-    if (!policyRef || !policyEngine) return { allow: true, violations: [] as Array<{ msg: string }> };
+  // and refuses to bid when the policy denies. The requester re-checks the
+  // winner against the minted policy record (gha-lite / typescript) through the
+  // local policy engine before accepting.
+  const evaluateCandidate = async (candidate: CollectedBid): Promise<PolicyResult> => {
+    if (!policyRef) return { allow: true, violations: [] };
     const candidateDid = candidate.did;
     const payloadRef = candidate.record.payload as { uri: string; cid: string } | undefined;
-    return await evaluateRfpPolicy({
-      policyRef,
-      subjectDid: candidateDid,
-      rootRequesterDid: pds.did,
-      counterpartyDid: candidateDid,
-      perspective: "requester",
-      selfDid: pds.did,
-      offer: payloadRef
-        ? {
-          bidRef: { uri: candidate.uri, cid: candidate.cid },
-          payloadRef,
-          payloadNsid: bidPayloadNsid(candidate),
-        }
-        : undefined,
-      resolve: async (ref) => {
-        const resolver = createRecordResolver(idResolver);
-        return await resolver.resolve(ref as never);
+    return await evaluator.evaluatePolicies({
+      refs: [policyRef],
+      ctx: {
+        policyName: "requester-recheck",
+        args: policyArgs,
+        perspective: "requester",
+        selfDid: pds.did,
+        subjectDid: candidateDid,
+        rootRequesterDid: pds.did,
+        counterpartyDid: candidateDid,
+        resolve: (ref) => resolveRecordForPolicy(ref),
+        resolveOperatorDid,
+        getVouchedDids: (did) => policyVouchResolver.getVouchedDids(did),
+        log: (level, msg, meta) => log(`policy_eval_${level}`, { msg, ...(meta ?? {}) }),
+        ...(payloadRef
+          ? {
+            offer: {
+              bidRef: { uri: candidate.uri, cid: candidate.cid },
+              payloadRef,
+              payloadNsid: bidPayloadNsid(candidate),
+            },
+          }
+          : {}),
       },
-      resolveOperatorDid,
-      getVouchedDids: (did) => policyVouchResolver.getVouchedDids(did),
-      signer: pds.signer ?? signer,
-      onlyRemotePolicyExec: opts.onlyRemotePolicyExec,
-      allowUntrustedPolicyExec: opts.allowUntrustedPolicyExec,
-      log: (level, msg, meta) => log(`policy_eval_${level}`, { msg, ...(meta ?? {}) }),
     });
   };
 

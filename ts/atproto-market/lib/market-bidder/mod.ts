@@ -30,10 +30,16 @@ import type { StructuredLoggerInterface } from "@publicdomainrelay/logger";
 import type { IngressRef, ServeHandle } from "@publicdomainrelay/serve";
 import type { VouchResolver } from "@publicdomainrelay/trust-graph-abc";
 import { createTangledGraphVouchResolver } from "@publicdomainrelay/trust-graph-tangled-graph";
-import { PolicyScopeFilter, type PolicyArgs } from "@publicdomainrelay/market-policy-abc";
-import { createPolicyRegistry } from "@publicdomainrelay/market-policy-registry";
-import { createTrustSet } from "@publicdomainrelay/market-policy-trust-abc";
-import { createTrustCache } from "@publicdomainrelay/market-policy-trust-cache";
+import { createPolicyEvaluator } from "@publicdomainrelay/policy-engine-evaluator";
+import type { PolicyEvaluator } from "@publicdomainrelay/policy-engine-evaluator";
+import { createScopeCache } from "@publicdomainrelay/policy-engine-scope-cache";
+import { createPolicyRegistry } from "@publicdomainrelay/policy-deno-typescript";
+import { resolvePolicyName } from "@publicdomainrelay/policy-deno-typescript-shared";
+import type { PolicyArgs } from "@publicdomainrelay/policy-deno-typescript-shared";
+import { WORKFLOWS } from "@publicdomainrelay/policies-gha-lite";
+import { GhaLiteExecutor } from "@publicdomainrelay/policy-engine-executor-gha-lite";
+import { TypescriptExecutor } from "@publicdomainrelay/policy-engine-executor-typescript";
+import { POLICY_GHA_LITE_NSID, POLICY_TYPESCRIPT_NSID } from "@publicdomainrelay/policy-engine-abc";
 import { parseAtUri, type ATProto } from "@publicdomainrelay/atproto-helpers";
 import type {
   ActiveContract,
@@ -133,11 +139,37 @@ function logAdapter(logger: StructuredLoggerInterface): Logger {
 export async function createMarketBidder(config: MarketBidderConfig): Promise<MarketBidder> {
   const { logger, serve, atproto, relay, providers, setup, teardown, callbackFactory, onContractChange, eventStreams, offeringRefreshMs, skipServeBegin, onSessionExpired } = config;
   const policyRegistry = createPolicyRegistry();
-  const scopePolicy = config.policy ? policyRegistry.get(config.policy) ?? null : null;
   const policyArgs = config.policyArgs ?? {};
-  if (config.policy && !scopePolicy) {
-    logger.warn("bidder scope policy not found in registry", { policy: config.policy, known: policyRegistry.names() });
+  // Legacy --policy name canonicalized to the bidder-side variant
+  // (only-me -> bidder-only-me). Unknown/wrong-side names warn and fall back to
+  // open (no scope gate), matching the old registry-miss behavior.
+  let canonical: string | undefined;
+  if (config.policy) {
+    try {
+      canonical = resolvePolicyName(policyRegistry, config.policy, "bidder");
+    } catch (err) {
+      logger.warn("bidder scope policy not found in registry", {
+        policy: config.policy,
+        known: policyRegistry.names(),
+        error: String(err),
+      });
+    }
   }
+  // The bidder's own in-memory gha-lite policy record backing the scope gate.
+  // Stable synthetic uri/cid so the scope cache keys predictably per canonical
+  // name + counterparty + args.
+  const scopeRecord = canonical && WORKFLOWS[canonical]
+    ? {
+        uri: `at://${atproto.did}/policy-gha-lite/${canonical}`,
+        cid: canonical,
+        value: {
+          $type: POLICY_GHA_LITE_NSID,
+          name: canonical,
+          workflow: WORKFLOWS[canonical],
+          createdAt: new Date().toISOString(),
+        },
+      }
+    : undefined;
   const log = logAdapter(logger);
   const activeContracts = new Map<string, ActiveContract>();
   const acceptToContract = config.acceptToContract ?? new Map<string, import("@publicdomainrelay/market-bidder-abc").GuestContractEntry>();
@@ -157,70 +189,36 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
     log: (level, msg, meta) => logger[level as "info" | "warn"]?.(msg, meta),
   });
 
-  // -- Trust cache -----------------------------------------------------------
-  // One place holding operators, associations, and vouch sets, replacing the
-  // ad-hoc vouchedDids set, associationCache, and the operator-discovery cache.
-  // Warmed at boot; kept fresh by firehose invalidation (Jetstream) or a TTL
-  // re-poll when the transport filters custom collections.
-  const trustSet = createTrustSet({ selfDid: atproto.did });
-  const trustCache = createTrustCache({
-    set: trustSet,
-    sources: {
-      listOwnRecords: async (collection, opts) => {
-        const result = await atproto.listRecords(atproto.did, collection, opts);
-        return (result?.records as Array<{ uri: string; value: Record<string, unknown> }>) ?? [];
-      },
-      listPublicRecords: (repo, collection) => listRecordsPublic(idResolver, repo, collection),
-      log: (level, msg, meta) => logger[level as "info" | "warn"]?.(msg, meta),
-    },
-  });
-  await trustCache.refresh();
+  // -- Policy engine scope cache ----------------------------------------------
+  // Hot-path verdict cache keyed by (policy identity, counterparty DID, args).
+  // Firehose trust events (badgeBlueKeys / vouch / association) invalidate the
+  // affected DIDs' cached verdicts so a changed operator or vouch cannot leave a
+  // stale "no" (or "yes") behind. Negatives carry a short TTL, positives longer.
+  const scopeCache = createScopeCache();
 
-  // Flat vouch set for the existing PolicyScopeFilter fast path (P2 migrates it
-  // onto TrustQuery directly).
-  let vouchedDids: Set<string> | null = null;
-  if (scopePolicy?.kind === "trust" && scopePolicy.needsVouchSet) {
-    vouchedDids = new Set();
-    for (const op of trustSet.trustedOperators()) {
-      for (const d of trustSet.vouchedBy(op)) vouchedDids.add(d);
-    }
-    logger.info("bidder vouch set loaded", { count: vouchedDids.size });
-  }
-
-  // Bridges a bidder DID to the operator DID that owns it. Self-owned -> itself.
-  // A counterparty not yet in the trust cache is refreshed on demand (its
-  // requester_associate records), so an RFP's attached only-me policy can
-  // resolve the requester's operator even when the scope gate already admitted
-  // the RFP without warming the cache.
+  // Network-based operator discovery: read the subject's badgeBlueKeys records
+  // and return the keyId whose challenge is the subject DID and whose service is
+  // bidder_associate / requester_associate (that keyId is the operator DID).
+  // No local trust snapshot to warm -- the scope cache absorbs per-counterparty
+  // verdicts. Self-owned operators fall through to the evaluator's
+  // `?? selfDid` handling when this returns null.
   const resolveOperatorDid = async (bidderDid: string): Promise<string | null> => {
-    if (bidderDid === atproto.did) {
-      const op = trustSet.operatorOf(atproto.did);
-      return op ?? atproto.did;
+    try {
+      const records = await listRecordsPublic(idResolver, bidderDid, BADGE_BLUE_KEYS_NSID, { limit: 200 });
+      for (const rec of records) {
+        const v = rec.value as Record<string, unknown>;
+        if (v.challenge === bidderDid && (v.service === "bidder_associate" || v.service === "requester_associate")) {
+          const keyId = v.keyId;
+          if (typeof keyId === "string" && keyId.startsWith("did:")) return keyId;
+        }
+      }
+    } catch {
+      // non-critical -- no operator association readable for this did
     }
-    let op = trustSet.operatorOf(bidderDid);
-    if (op === undefined) {
-      await trustCache.refreshFor(bidderDid);
-      op = trustSet.operatorOf(bidderDid);
-    }
-    return op ?? bidderDid;
+    return null;
   };
 
-  // On-demand scope check: is the requester associated with a trusted operator
-  // (including ourself)? Negatives are never cached -- an association record may
-  // appear right after the first RFP.
-  const isRequesterAssociated = async (requesterDid: string): Promise<boolean> => {
-    if (requesterDid === atproto.did) return true;
-    if (trustSet.operatorOf(requesterDid) === undefined) {
-      await trustCache.refreshFor(requesterDid);
-    }
-    const op = trustSet.operatorOf(requesterDid);
-    if (op !== undefined) {
-      logger.info("bidder scope check: matched requester association", { requesterDid, operatorDid: op });
-      return true;
-    }
-    logger.warn("bidder scope check: no matching requester association", { requesterDid, bidderDid: atproto.did });
-    return false;
-  };
+  const getVouchedDids = (did: string): Promise<Set<string>> => publicVouchResolver.getVouchedDids(did);
 
   async function ensureOperatorAllowlist(service: string): Promise<void> {
     const result = await atproto.listRecords(atproto.did, ALLOWLIST_RBAC_DID_NSID, { limit: 100 });
@@ -311,6 +309,39 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
   async function beginServe(): Promise<void> {
     const recordResolver = createRecordResolver(idResolver);
 
+    // Policy engine: registry (record $type -> executor), evaluator, and the
+    // bidder's own scope gate. The scope gate is the hot-path engagement check:
+    // on a scope-cache miss the evaluator runs the scope-mode workflow against
+    // the counterparty DID, otherwise it serves the cached verdict.
+    const ghaLiteExecutor = new GhaLiteExecutor();
+    const typescriptExecutor = new TypescriptExecutor();
+    const engineRegistry = {
+      get: ($type: string) =>
+        $type === POLICY_GHA_LITE_NSID ? ghaLiteExecutor
+          : $type === POLICY_TYPESCRIPT_NSID ? typescriptExecutor
+          : undefined,
+      kinds: () => [POLICY_GHA_LITE_NSID, POLICY_TYPESCRIPT_NSID],
+    };
+    const evaluator: PolicyEvaluator = createPolicyEvaluator({
+      registry: engineRegistry,
+      resolve: (ref) => recordResolver.resolve(ref),
+      resolveOperatorDid,
+      getVouchedDids,
+      scopeCache,
+      log: (level, msg, meta) => logger[level as "info" | "warn" | "error" | "debug"]?.(msg, meta),
+    });
+    const scopeGate = async (counterpartyDid: string): Promise<boolean> => {
+      if (!scopeRecord) return true;
+      const r = await evaluator.scope({
+        policyRecord: scopeRecord,
+        perspective: "bidder",
+        selfDid: atproto.did,
+        counterpartyDid,
+        args: policyArgs,
+      });
+      return r.allow;
+    };
+
     const deps: CallbackFactoryDeps = {
       did: atproto.did,
       repoApi: {} as RepoApi,
@@ -330,8 +361,9 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
       resolve: recordResolver,
       onContractChange,
       policyExec: config.policyExec,
-      getVouchedDids: (did) => publicVouchResolver.getVouchedDids(did),
+      getVouchedDids,
       resolveOperatorDid,
+      evaluator,
     };
 
     for (const p of providers ?? []) {
@@ -397,7 +429,7 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
     if (merged.rfpCallbacks || merged.onAccept || merged.eventCallbacks || eventStreams) {
       const factory = createMarketFactory(marketDeps, {
         rfp: merged.rfpCallbacks,
-        rfpScopeFilter: new PolicyScopeFilter(scopePolicy, policyArgs, atproto.did, vouchedDids ?? undefined, { isRequesterAssociated }, trustSet).toAcceptScopeFilter(),
+        rfpScopeFilter: async ({ issuerDid }) => scopeGate(issuerDid),
         accept: merged.onAccept
           ? { serviceIds: [DEFAULT_MARKET_SERVICE_ID], onAccept: merged.onAccept }
           : undefined,
@@ -446,32 +478,25 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
     }
 
     if (eventStreams) {
-      // Trust invalidation: association/vouch commits refresh the TrustSet in
-      // place. Only Jetstream delivers custom collections; other transports get
-      // the TTL re-poll from TrustSet instead -- silent degradation.
+      // Trust invalidation: association/vouch/badgeBlueKeys commits drop the
+      // scope cache's verdicts for the affected DID, so a changed operator or
+      // vouch cannot leave a stale verdict behind. Only Jetstream delivers custom
+      // collections; other transports get the scope cache's TTL instead.
       eventStreams.watch({
         wantedCollections: [BADGE_BLUE_KEYS_NSID, VOUCH_NSID, BIDDER_ASSOCIATION_NSID],
         onEvent: (e) => {
-          trustSet.applyEvent({
-            did: e.did,
-            collection: e.collection,
-            rkey: e.rkey,
-            operation: e.operation as "create" | "update" | "delete",
-          });
+          scopeCache.applyEvent({ did: e.did, rkey: e.rkey });
         },
       });
 
       const dispatchCallbacks = merged.rfpCallbacks ?? {};
       const dispatch = createRfpDispatcher({ deps: marketDeps, callbacks: dispatchCallbacks });
       // Dedup handled by ATProtoEventStreamsClient -- no per-group seen Set needed.
-      // One shared filter per watch, not a fresh allocation per event: the hot
-      // path is a sync decide() over the trust cache.
-      const rfpScopeFilter = new PolicyScopeFilter(scopePolicy, policyArgs, atproto.did, vouchedDids ?? undefined, { isRequesterAssociated }, trustSet);
       eventStreams.watch({
         wantedCollections: [RFP_NSID],
         onEvent: async (e) => {
           if (e.operation !== "create" && e.operation !== "update") return;
-          if (!await rfpScopeFilter.filter(e.did)) return;
+          if (!await scopeGate(e.did)) return;
           log("info", "rfp watch discovered", { rfpUri: e.uri });
           dispatch({ rfpUri: e.uri, rfpCid: e.cid, issuerDid: e.did })
             .catch((err) => log("error", "rfp watch dispatch failed", { rfpUri: e.uri, err: String(err) }));
@@ -483,12 +508,11 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
     // Firehose watcher for ACCEPT_NSID -- fallback when bid.submitAccept is absent.
     // Discovers accept records referencing our bids, dispatches to merged.onAccept.
     if (merged.onAccept && eventStreams) {
-      const filter = new PolicyScopeFilter(scopePolicy, policyArgs, atproto.did, vouchedDids ?? undefined, { isRequesterAssociated }, trustSet);
       eventStreams.watch({
         wantedCollections: [ACCEPT_NSID],
         onEvent: async (e) => {
           if (e.operation !== "create") return;
-          if (!await filter.filter(e.did)) return;
+          if (!await scopeGate(e.did)) return;
           log("info", "accept watch discovered", { acceptUri: e.uri });
           try {
             const doc = await idResolver.did.resolve(e.did);
