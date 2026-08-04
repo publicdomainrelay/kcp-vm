@@ -1,7 +1,7 @@
 {
-  "name": "policy-engine",
-  "version": "0.1.0",
-  "exports": "./main.ts",
+  "name": "@publicdomainrelay/policy-engine-server-gha-lite",
+  "version": "0.0.0",
+  "exports": "./mod.ts",
   "tasks": {
     "api": "deno run --allow-all --unstable-worker-options main.ts api",
     "run": "deno run --allow-all --unstable-worker-options main.ts run",
