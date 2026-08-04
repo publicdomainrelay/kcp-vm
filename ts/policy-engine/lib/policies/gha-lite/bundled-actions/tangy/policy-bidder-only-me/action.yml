@@ -1,0 +1,33 @@
+name: Tangled Bidder Only-Me Policy
+description: >
+  Only bid on RFPs from a requester that resolves to the bidder's own operator. Evaluates the bidder-only-me policy via deno-typescript-shared and
+  memoizes the verdict in the policy engine's JSON-object cache.
+inputs:
+  self-did:
+    description: DID running this evaluation (the evaluator's own DID)
+    required: true
+  rfp:
+    description: 'JSON RFP record {uri,cid,value?} present at this stage'
+    default: ""
+  bid:
+    description: 'JSON bid record {uri,cid,value?} present at this stage'
+    default: ""
+  accept:
+    description: 'JSON accept record {uri,cid,value?} present at this stage'
+    default: ""
+  policy-args:
+    description: JSON policy arguments
+    default: ""
+  cache-key:
+    description: Explicit cache key override
+    default: ""
+outputs:
+  allow:
+    description: Policy verdict (true/false)
+  violations:
+    description: JSON array of policy violations
+  cache-key:
+    description: Cache key the verdict is memoized under
+runs:
+  using: node20
+  main: dist/index.js

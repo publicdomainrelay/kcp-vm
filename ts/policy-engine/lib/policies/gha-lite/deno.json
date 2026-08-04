@@ -1,0 +1,6 @@
+{
+  "tasks": {
+    "build": "deno run -A scripts/build-actions.ts",
+    "check": "deno check scripts/build-actions.ts bundled-actions/tangy/policy-open/index.ts"
+  }
+}

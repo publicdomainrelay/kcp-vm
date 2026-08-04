@@ -1,0 +1,32 @@
+name: open policy
+on:
+  workflow_dispatch:
+    inputs:
+      self-did:
+        description: DID running this evaluation (the evaluator's own DID)
+        required: true
+      rfp:
+        description: 'JSON RFP record {uri,cid,value?} present at this stage'
+        required: false
+      bid:
+        description: 'JSON bid record {uri,cid,value?} present at this stage'
+        required: false
+      accept:
+        description: 'JSON accept record {uri,cid,value?} present at this stage'
+        required: false
+      policy-args:
+        description: JSON policy arguments
+        required: false
+jobs:
+  evaluate:
+    runs-on: self-hosted
+    steps:
+    - uses: tangy/policy-open@v1
+      id: policy
+      with:
+        self-did: ${{ inputs.self-did || '' }}
+        rfp: ${{ inputs.rfp || '' }}
+        bid: ${{ inputs.bid || '' }}
+        accept: ${{ inputs.accept || '' }}
+        policy-args: ${{ inputs.policy-args || '' }}
+    - run: echo "allow=${{ steps.policy.outputs.allow }} violations=${{ steps.policy.outputs.violations }}"
