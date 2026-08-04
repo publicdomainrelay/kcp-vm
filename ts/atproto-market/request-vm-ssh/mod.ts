@@ -518,6 +518,9 @@ const result = await runComputeContract(pds, {
   denyBidderDids,
   relayUrls,
   baseUserData,
+  userData: (options.userDataTransport as string | undefined)
+    ? { transport: options.userDataTransport as string }
+    : undefined,
   rbac,
   policy,
   policyEngine: options.policyEngine as string | undefined,

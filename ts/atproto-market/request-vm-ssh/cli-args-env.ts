@@ -155,8 +155,13 @@ export default {
     },
     "user-data": {
       type: "string" as const,
-      description: "Path to a base cloud-init file; the default websocat/fedproxy-client provisioning is patched into it before the RFP is sent",
+      description: "Path to a base cloud-init file; the default tunnel provisioning is patched into it before the RFP is sent",
       env: "USER_DATA",
+    },
+    "user-data-transport": {
+      type: "string" as const,
+      description: "Transport module id for the composed cloud-init (default tunnel; see cloud-init-common listUserDataModules)",
+      env: "USER_DATA_TRANSPORT",
     },
     "policy": POLICY_CLI_OPTION,
     "policy-args": POLICY_ARGS_CLI_OPTION,

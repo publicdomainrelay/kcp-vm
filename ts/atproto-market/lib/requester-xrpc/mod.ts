@@ -56,7 +56,7 @@ import { createPolicyRegistry } from "@publicdomainrelay/policy-deno-typescript"
 import { GhaLiteExecutor } from "@publicdomainrelay/policy-engine-executor-gha-lite";
 import { TypescriptExecutor } from "@publicdomainrelay/policy-engine-executor-typescript";
 import { POLICY_GHA_LITE_NSID, POLICY_TYPESCRIPT_NSID, type PolicyResult } from "@publicdomainrelay/policy-engine-abc";
-import { buildDefaultUserData, patchDefaultUserData, buildTunnelUserData, flattenLabel, type CloudInitContext, type TunnelCloudInitContext } from "@publicdomainrelay/cloud-init-common";
+import { buildUserData } from "@publicdomainrelay/cloud-init-common";
 import {
   FEDPROXY_RBAC_NSID,
   buildSshKeyRbacRecord,
@@ -1056,20 +1056,29 @@ if (address && isFqdn && !vmFqdn) {
       hint: "FQDN will be discovered from vm.onNetwork event after guest tunnel subscriber registers",
     });
 
-    // Always use tunnel-subscriber (did-key-ingress-proxy) -- never fedproxy-client.
-    // Guest derives secp256k1 identity from sshd host key at boot via HKDF.
-    // No private key material in cloud-init.
-    const txCtx: TunnelCloudInitContext = {
-      ingressProxyHost,
-      // audHost is the hostname-only part used for JWT audience matching
-      // (did:web:<hostname>). Only use fedingressHost when explicitly passed
-      // (local tests); never fall back to the default "fedproxy.com".
-      audHost: (opts.fedingressHost ? opts.fedingressHost.replace(/:\d+$/, "") : undefined)
-        || ingressProxyHost.replace(/:\d+$/, ""),
-      sshAuthorizedKey: ssh.publicKey,
-      hostAliases: opts.guestHostAliases,
-    };
-    cloudInit = buildTunnelUserData(txCtx);
+    // Compose user_data via the cloud-init-common buildUserData: the caller's
+    // base cloud-config (if any) patched with the transport module (default
+    // "tunnel" = did-key-ingress-proxy tunnel-subscriber, never fedproxy-client;
+    // the guest derives its secp256k1 identity from the sshd host key at boot via
+    // HKDF, so no private key material sits in cloud-init) plus any extra
+    // modules. opts.userDataFactory still fully replaces the result.
+    const ud = opts.userData;
+    cloudInit = buildUserData({
+      ctx: {
+        vmName,
+        sshAuthorizedKey: ssh.publicKey,
+        ingressProxyHost,
+        // audHost is the hostname-only part used for JWT audience matching
+        // (did:web:<hostname>). Only use fedingressHost when explicitly passed
+        // (local tests); never fall back to the default "fedproxy.com".
+        audHost: (opts.fedingressHost ? opts.fedingressHost.replace(/:\d+$/, "") : undefined)
+          || ingressProxyHost.replace(/:\d+$/, ""),
+        hostAliases: opts.guestHostAliases,
+      },
+      base: ud?.base ?? opts.baseUserData,
+      modules: [ud?.transport ?? "tunnel", ...(ud?.modules ?? [])],
+      overrides: ud?.overrides,
+    });
     if (opts.userDataFactory) {
       cloudInit = opts.userDataFactory(ssh.publicKey);
     }
