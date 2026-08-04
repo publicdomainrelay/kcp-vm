@@ -52,5 +52,7 @@ export function bidWindowSecOf(args: PolicyArgs | undefined): number {
 }
 
 export function firstFreeOf(args: PolicyArgs | undefined): boolean {
-  return args?.firstFree === true;
+  // Default true: accept the first policy-allowed free bid immediately instead
+  // of waiting out the window. Explicit false opts back into full-window wait.
+  return args?.firstFree !== false;
 }
