@@ -1,4 +1,4 @@
-// Market bidder factory — lifecycle orchestration, callback merging, route wiring.
+// Market bidder factory -- lifecycle orchestration, callback merging, route wiring.
 // Does NOT own I/O (no Deno.serve, signals, WS connect). Takes atproto + serve +
 // providers; wires everything in beginServe().
 
@@ -24,13 +24,16 @@ import {
   ACCEPT_NSID,
   EVENT_NSID,
   COMPUTE_EVENTS_VM_ONNETWORK_NSID,
+  BIDDER_ASSOCIATION_NSID,
 } from "@publicdomainrelay/market-lexicons";
 import type { StructuredLoggerInterface } from "@publicdomainrelay/logger";
 import type { IngressRef, ServeHandle } from "@publicdomainrelay/serve";
-import type { VouchResolver, OperatorDiscovery } from "@publicdomainrelay/trust-graph-abc";
-import { createBadgeBlueKeysOperatorDiscovery } from "@publicdomainrelay/operator-discovery-badge-blue-keys";
+import type { VouchResolver } from "@publicdomainrelay/trust-graph-abc";
 import { createTangledGraphVouchResolver } from "@publicdomainrelay/trust-graph-tangled-graph";
-import { PolicyModeFilter, type PolicyMode, TANGLED_VOUCH, MUTUALS } from "@publicdomainrelay/market-policy-abc";
+import { PolicyScopeFilter, type PolicyArgs } from "@publicdomainrelay/market-policy-abc";
+import { createPolicyRegistry } from "@publicdomainrelay/market-policy-registry";
+import { createTrustSet } from "@publicdomainrelay/market-policy-trust-abc";
+import { createTrustCache } from "@publicdomainrelay/market-policy-trust-cache";
 import { parseAtUri, type ATProto } from "@publicdomainrelay/atproto-helpers";
 import type {
   ActiveContract,
@@ -38,6 +41,7 @@ import type {
   CallbackSet,
   ContractEvent,
   MarketBidderProviderRef,
+  PolicyExecOptions,
 } from "@publicdomainrelay/market-bidder-abc";
 export type {
   ActiveContract,
@@ -77,8 +81,12 @@ export interface MarketBidderConfig {
   callbackFactory?: (deps: CallbackFactoryDeps) => CallbackSet | Promise<CallbackSet>;
   /** Fires on contract lifecycle changes (accepted, provisioned, terminated). */
   onContractChange?: (event: ContractEvent) => void;
-  /** Accept jobs from scope. Controls which RFPs the bidder responds to. */
-  policyMode?: PolicyMode | null;
+  /** Registry name of the policy gating which RFPs the bidder responds to. */
+  policy?: string | null;
+  /** Arguments handed to that policy. */
+  policyArgs?: PolicyArgs;
+  /** How this bidder is willing to execute an RFP's attached policy. */
+  policyExec?: PolicyExecOptions;
   /**
    * ATProto event streams client for firehose-based record discovery.
    * When set, the bidder self-discovers RFP/ACCEPT/EVENT records via firehose
@@ -96,15 +104,15 @@ export interface MarketBidderConfig {
   /**
    * When true, the caller already started the serve (e.g. a desktop app with its
    * own HTTP server). Route mounting, offering setup, and firehose watchers still
-   * run — only the serve.beginServe() call is skipped.
+   * run -- only the serve.beginServe() call is skipped.
    */
   skipServeBegin?: boolean;
   /**
    * Called when the OAuth session expires (refresh token consumed/revoked).
-   * The session is dead — delete the file and re-authenticate.
+   * The session is dead -- delete the file and re-authenticate.
    */
   onSessionExpired?: (err: OAuthSessionExpiredError) => void;
-  /** Pre-created acceptToContract map — shared with providers for guest event routes. */
+  /** Pre-created acceptToContract map -- shared with providers for guest event routes. */
   acceptToContract?: Map<string, import("@publicdomainrelay/market-bidder-abc").GuestContractEntry>;
 }
 
@@ -123,22 +131,18 @@ function logAdapter(logger: StructuredLoggerInterface): Logger {
 
 
 export async function createMarketBidder(config: MarketBidderConfig): Promise<MarketBidder> {
-  const { logger, serve, atproto, relay, providers, setup, teardown, callbackFactory, onContractChange, eventStreams, offeringRefreshMs, skipServeBegin, policyMode, onSessionExpired } = config;
+  const { logger, serve, atproto, relay, providers, setup, teardown, callbackFactory, onContractChange, eventStreams, offeringRefreshMs, skipServeBegin, onSessionExpired } = config;
+  const policyRegistry = createPolicyRegistry();
+  const scopePolicy = config.policy ? policyRegistry.get(config.policy) ?? null : null;
+  const policyArgs = config.policyArgs ?? {};
+  if (config.policy && !scopePolicy) {
+    logger.warn("bidder scope policy not found in registry", { policy: config.policy, known: policyRegistry.names() });
+  }
   const log = logAdapter(logger);
   const activeContracts = new Map<string, ActiveContract>();
   const acceptToContract = config.acceptToContract ?? new Map<string, import("@publicdomainrelay/market-bidder-abc").GuestContractEntry>();
   const idResolver = atproto.idResolver;
   let offeringRefresher: OfferingRefreshHandle | null = null;
-
-  const operatorDiscovery: OperatorDiscovery = createBadgeBlueKeysOperatorDiscovery({
-    listRecordsOwn: async (collection, opts) => {
-      const result = await atproto.listRecords(atproto.did, collection, opts);
-      return (result?.records as Array<{ uri: string; value: Record<string, unknown> }>) ?? [];
-    },
-    listRecordsPublic: (repo, collection) =>
-      listRecordsPublic(idResolver, repo, collection),
-    log: (level, msg, meta) => logger[level as "info" | "warn"]?.(msg, meta),
-  });
 
   const selfVouchResolver: VouchResolver = createTangledGraphVouchResolver({
     listRecords: async (_repo, coll) => {
@@ -153,162 +157,68 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
     log: (level, msg, meta) => logger[level as "info" | "warn"]?.(msg, meta),
   });
 
-  // Pre-load vouched DIDs for direct_network scope filter.
-  // Reads vouches from operator repos (discovered via bidder_associate records)
-  // and from the bidder's own repo (for desktop-bidder where worker == operator).
-  // Pre-load vouched DIDs for direct_network scope filter.
+  // -- Trust cache -----------------------------------------------------------
+  // One place holding operators, associations, and vouch sets, replacing the
+  // ad-hoc vouchedDids set, associationCache, and the operator-discovery cache.
+  // Warmed at boot; kept fresh by firehose invalidation (Jetstream) or a TTL
+  // re-poll when the transport filters custom collections.
+  const trustSet = createTrustSet({ selfDid: atproto.did });
+  const trustCache = createTrustCache({
+    set: trustSet,
+    sources: {
+      listOwnRecords: async (collection, opts) => {
+        const result = await atproto.listRecords(atproto.did, collection, opts);
+        return (result?.records as Array<{ uri: string; value: Record<string, unknown> }>) ?? [];
+      },
+      listPublicRecords: (repo, collection) => listRecordsPublic(idResolver, repo, collection),
+      log: (level, msg, meta) => logger[level as "info" | "warn"]?.(msg, meta),
+    },
+  });
+  await trustCache.refresh();
+
+  // Flat vouch set for the existing PolicyScopeFilter fast path (P2 migrates it
+  // onto TrustQuery directly).
   let vouchedDids: Set<string> | null = null;
-
-  // Rebuild transitive vouch set from own badgeBlueKeys records
-  // where keyId is in the global vouchedDids set.
-  async function rebuildTransitiveVouchedDids(): Promise<void> {
-    if (!vouchedDids) return;
-    try {
-      const ownBadge = await atproto.listRecords(atproto.did, BADGE_BLUE_KEYS_NSID, { limit: 100 });
-      for (const rec of ownBadge?.records ?? []) {
-        const v = rec.value as Record<string, unknown>;
-        if (v.service === "requester_associate" && typeof v.challenge === "string" && v.challenge.startsWith("did:") && typeof v.keyId === "string" && vouchedDids.has(v.keyId)) {
-          vouchedDids.add(v.challenge);
-        }
-      }
-    } catch {}
-  }
-
-  // Reloads vouchedDids from operator repos using shared VouchResolver.
-  // Called at boot and again lazily when operators become available post-association.
-  async function reloadVouchedDidsFromOperators(opDids: string[]): Promise<void> {
-    if (!vouchedDids) return;
-    const results = await Promise.all(
-      opDids.map(opDid => publicVouchResolver.getVouchedDids(opDid).catch(() => new Set<string>())),
-    );
-    for (const s of results) s.forEach(d => vouchedDids!.add(d));
-    await rebuildTransitiveVouchedDids();
-  }
-
-  if (policyMode === TANGLED_VOUCH || policyMode === MUTUALS) {
+  if (scopePolicy?.kind === "trust" && scopePolicy.needsVouchSet) {
     vouchedDids = new Set();
-    // Load vouches from the bidder's own repo via shared VouchResolver.
-    try {
-      const selfVouched = await selfVouchResolver.getVouchedDids(atproto.did);
-      selfVouched.forEach(d => vouchedDids!.add(d));
-    } catch (err) {
-      logger.warn("bidder vouch set load from own repo failed", { error: String(err) });
+    for (const op of trustSet.trustedOperators()) {
+      for (const d of trustSet.vouchedBy(op)) vouchedDids.add(d);
     }
-    // Load vouches from operator repos (hono-bidder worker path).
-    try {
-      const opDids = await discoverOperatorDids();
-      await reloadVouchedDidsFromOperators(opDids);
-    } catch {}
     logger.info("bidder vouch set loaded", { count: vouchedDids.size });
   }
 
-  // On-demand check: requester must be associated with the operator (parent)
-  // DID that owns this bidder. Two paths:
-  //   1. Bidder DID == operator DID (desktop bidder): check requester_associate
-  //      records directly on the bidder's repo.
-  //   2. Bidder DID != operator DID (hono-bidder): discover operator DID from
-  //      bidder_associate records on this repo, then check requester_associate
-  //      records on the operator's repo.
-  // Results cached in-memory — badgeBlueKeys records are write-once so TTL is unnecessary.
-  const associationCache = new Map<string, boolean>();
-  const MAX_ASSOCIATION_CACHE = 1000;
-  function cacheSet(key: string, value: boolean) {
-    if (associationCache.size >= MAX_ASSOCIATION_CACHE) {
-      const first = associationCache.keys().next().value;
-      if (first !== undefined) associationCache.delete(first);
+  // Bridges a bidder DID to the operator DID that owns it. Self-owned -> itself.
+  // A counterparty not yet in the trust cache is refreshed on demand (its
+  // requester_associate records), so an RFP's attached only-me policy can
+  // resolve the requester's operator even when the scope gate already admitted
+  // the RFP without warming the cache.
+  const resolveOperatorDid = async (bidderDid: string): Promise<string | null> => {
+    if (bidderDid === atproto.did) {
+      const op = trustSet.operatorOf(atproto.did);
+      return op ?? atproto.did;
     }
-    associationCache.set(key, value);
-  }
+    let op = trustSet.operatorOf(bidderDid);
+    if (op === undefined) {
+      await trustCache.refreshFor(bidderDid);
+      op = trustSet.operatorOf(bidderDid);
+    }
+    return op ?? bidderDid;
+  };
 
-  async function discoverOperatorDids(): Promise<string[]> {
-    return operatorDiscovery.discoverOperatorDids(atproto.did);
-  }
-
+  // On-demand scope check: is the requester associated with a trusted operator
+  // (including ourself)? Negatives are never cached -- an association record may
+  // appear right after the first RFP.
   const isRequesterAssociated = async (requesterDid: string): Promise<boolean> => {
-    logger.info("scope_check_start", { requesterDid });
-    const cached = associationCache.get(requesterDid);
-    if (cached !== undefined) {
-      logger.info("scope_check_cache_hit", { requesterDid, cached });
-      if (cached) logger.info("bidder scope check: matched requester association (cached)", { requesterDid });
-      return cached;
+    if (requesterDid === atproto.did) return true;
+    if (trustSet.operatorOf(requesterDid) === undefined) {
+      await trustCache.refreshFor(requesterDid);
     }
-
-    // Self-check: if requester is the bidder itself, always allow
-    if (requesterDid === atproto.did) {
-      cacheSet(requesterDid, true);
-      logger.info("bidder scope check: self", { requesterDid });
+    const op = trustSet.operatorOf(requesterDid);
+    if (op !== undefined) {
+      logger.info("bidder scope check: matched requester association", { requesterDid, operatorDid: op });
       return true;
     }
-
-    // Path 1: bidder's own repo (works when bidder DID == operator DID).
-    try {
-      const ownRecords = await atproto.listRecords(atproto.did, BADGE_BLUE_KEYS_NSID, { limit: 100 });
-      for (const rec of ownRecords?.records ?? []) {
-        const v = rec.value as Record<string, unknown>;
-        if (v.challenge === requesterDid && v.service === "requester_associate") {
-          cacheSet(requesterDid, true);
-          logger.info("bidder scope check: matched requester association on own repo", { requesterDid });
-          return true;
-        }
-      }
-    } catch (err) {
-      logger.warn("bidder scope check: own repo listRecords failed", { requesterDid, error: String(err) });
-    }
-
-    // Path 2: check requester's repo for requester_associate records
-    // where keyId matches a discovered operator DID. The requester
-    // creates badgeBlueKeys on its own LocalPDS repo during QR flow:
-    //   keyId = operator DID (who scanned the QR)
-    //   challenge = requester DID (the PDS's own DID)
-    //   service = "requester_associate"
-    const operatorDids = await discoverOperatorDids();
-    // Lazy-reload vouched DIDs when operators were discovered after boot.
-    // discoverOperatorDids returns empty at cold boot (badgeBlueKeys isn't
-    // written until did-key-associate completes). When operators appear
-    // later, load their vouch records so scope checks see the full chain.
-    if (operatorDids.length > 0 && vouchedDids && vouchedDids!.size === 0) {
-      await reloadVouchedDidsFromOperators(operatorDids);
-      logger.info("bidder vouch set lazy reloaded", { count: vouchedDids!.size });
-    }
-    if (operatorDids.length > 0) {
-      // In OAuth QR mode atproto.did IS the operator; always include it.
-      const operatorSet = new Set([...operatorDids, atproto.did]);
-      try {
-        const reqRecords = await listRecordsPublic(idResolver, requesterDid, BADGE_BLUE_KEYS_NSID);
-        for (const r of reqRecords) {
-          const v = r.value as Record<string, unknown>;
-          if (v.service === "requester_associate" && (operatorSet.has(v.keyId as string) || (vouchedDids?.has(v.keyId as string) ?? false))) {
-            cacheSet(requesterDid, true);
-            logger.info("bidder scope check: matched requester association via operator", { requesterDid, operatorDid: v.keyId });
-            return true;
-          }
-        }
-      } catch (err) {
-        logger.warn("bidder scope check: requester repo listRecords failed", { requesterDid, error: String(err) });
-      }
-    }
-
-    // Path 3: legacy check — public read on own repo (desktop bidder fallback).
-    try {
-      const listed = await listRecordsPublic(idResolver, atproto.did, BADGE_BLUE_KEYS_NSID);
-      for (const r of listed) {
-        const v = r.value;
-        if (v.challenge === atproto.did && v.service === "requester_associate" && v.keyId === requesterDid) {
-          cacheSet(requesterDid, true);
-          logger.info("bidder scope check: matched requester association (legacy public read)", { requesterDid, keyId: v.keyId });
-          return true;
-        }
-      }
-    } catch (err) {
-      logger.warn("bidder scope check: public listRecords failed", { requesterDid, error: String(err) });
-    }
-
-    // Negative results are never cached: the requester's association record
-    // may not exist yet at first-RFP time and appear moments later (e.g. the
-    // self-attested requester_associate write racing the RFP submit).
-    logger.warn("bidder scope check: no matching requester association", {
-      requesterDid, bidderDid: atproto.did, operatorDids,
-    });
+    logger.warn("bidder scope check: no matching requester association", { requesterDid, bidderDid: atproto.did });
     return false;
   };
 
@@ -350,7 +260,7 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
 
   // Ensures exactly one offering record per bidder DID (one active service =
   // one endpoint). The first (oldest) existing record's rkey becomes the
-  // canonical rkey for this bidder's lifetime — every subsequent write
+  // canonical rkey for this bidder's lifetime -- every subsequent write
   // (correction or refresh) updates that same record in place via
   // atproto.updateRecord rather than creating a new one, so the collection
   // never grows past one record.
@@ -419,6 +329,9 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
       callService: atproto.callService,
       resolve: recordResolver,
       onContractChange,
+      policyExec: config.policyExec,
+      getVouchedDids: (did) => publicVouchResolver.getVouchedDids(did),
+      resolveOperatorDid,
     };
 
     for (const p of providers ?? []) {
@@ -454,7 +367,7 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
       if (cb.eventCallbacks) merged.eventCallbacks = deepMergeCallbacks(merged.eventCallbacks ?? {}, cb.eventCallbacks);
     }
 
-    // Wrap merged.onAccept so the same acceptUri is never processed twice —
+    // Wrap merged.onAccept so the same acceptUri is never processed twice --
     // push XRPC and firehose watcher converge on this single callback.
     if (merged.onAccept) {
       const _raw = merged.onAccept;
@@ -484,7 +397,7 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
     if (merged.rfpCallbacks || merged.onAccept || merged.eventCallbacks || eventStreams) {
       const factory = createMarketFactory(marketDeps, {
         rfp: merged.rfpCallbacks,
-        rfpScopeFilter: new PolicyModeFilter(policyMode, atproto.did, vouchedDids ?? undefined, { isRequesterAssociated }).toAcceptScopeFilter(),
+        rfpScopeFilter: new PolicyScopeFilter(scopePolicy, policyArgs, atproto.did, vouchedDids ?? undefined, { isRequesterAssociated }, trustSet).toAcceptScopeFilter(),
         accept: merged.onAccept
           ? { serviceIds: [DEFAULT_MARKET_SERVICE_ID], onAccept: merged.onAccept }
           : undefined,
@@ -494,7 +407,7 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
       });
       serve.app.route("/", factory.createApp() as never);
 
-      // Guest event endpoint — VM calls back at boot with accept ref from accept.json.
+      // Guest event endpoint -- VM calls back at boot with accept ref from accept.json.
       serve.app.post("/v1/on-network", async (c) => {
         let body: { acceptUri?: string; acceptCid?: string; address?: string; createdAt?: string };
         try { body = await c.req.json(); } catch {
@@ -507,7 +420,7 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
         const guestEntry = acceptToContract.get(acceptKey);
         if (!guestEntry) {
           log("warn", "guest.onNetwork: unknown accept ref", { acceptKey });
-          return c.json({ error: "UnknownAccept", message: "accept ref not found — VM may have been provisioned before receipt was created" }, 404);
+          return c.json({ error: "UnknownAccept", message: "accept ref not found -- VM may have been provisioned before receipt was created" }, 404);
         }
         const nowIso = body.createdAt ?? new Date().toISOString();
         const { uri, cid } = await atproto.createRepoRecord(
@@ -533,15 +446,32 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
     }
 
     if (eventStreams) {
+      // Trust invalidation: association/vouch commits refresh the TrustSet in
+      // place. Only Jetstream delivers custom collections; other transports get
+      // the TTL re-poll from TrustSet instead -- silent degradation.
+      eventStreams.watch({
+        wantedCollections: [BADGE_BLUE_KEYS_NSID, VOUCH_NSID, BIDDER_ASSOCIATION_NSID],
+        onEvent: (e) => {
+          trustSet.applyEvent({
+            did: e.did,
+            collection: e.collection,
+            rkey: e.rkey,
+            operation: e.operation as "create" | "update" | "delete",
+          });
+        },
+      });
+
       const dispatchCallbacks = merged.rfpCallbacks ?? {};
       const dispatch = createRfpDispatcher({ deps: marketDeps, callbacks: dispatchCallbacks });
-      // Dedup handled by ATProtoEventStreamsClient — no per-group seen Set needed.
+      // Dedup handled by ATProtoEventStreamsClient -- no per-group seen Set needed.
+      // One shared filter per watch, not a fresh allocation per event: the hot
+      // path is a sync decide() over the trust cache.
+      const rfpScopeFilter = new PolicyScopeFilter(scopePolicy, policyArgs, atproto.did, vouchedDids ?? undefined, { isRequesterAssociated }, trustSet);
       eventStreams.watch({
         wantedCollections: [RFP_NSID],
         onEvent: async (e) => {
           if (e.operation !== "create" && e.operation !== "update") return;
-          const filter = new PolicyModeFilter(policyMode, atproto.did, vouchedDids ?? undefined, { isRequesterAssociated });
-          if (!await filter.filter(e.did)) return;
+          if (!await rfpScopeFilter.filter(e.did)) return;
           log("info", "rfp watch discovered", { rfpUri: e.uri });
           dispatch({ rfpUri: e.uri, rfpCid: e.cid, issuerDid: e.did })
             .catch((err) => log("error", "rfp watch dispatch failed", { rfpUri: e.uri, err: String(err) }));
@@ -550,10 +480,10 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
       logger.info("bidder rfp firehose watches started via eventStreams client");
     }
 
-    // Firehose watcher for ACCEPT_NSID — fallback when bid.submitAccept is absent.
+    // Firehose watcher for ACCEPT_NSID -- fallback when bid.submitAccept is absent.
     // Discovers accept records referencing our bids, dispatches to merged.onAccept.
     if (merged.onAccept && eventStreams) {
-      const filter = new PolicyModeFilter(policyMode, atproto.did, vouchedDids ?? undefined, { isRequesterAssociated });
+      const filter = new PolicyScopeFilter(scopePolicy, policyArgs, atproto.did, vouchedDids ?? undefined, { isRequesterAssociated }, trustSet);
       eventStreams.watch({
         wantedCollections: [ACCEPT_NSID],
         onEvent: async (e) => {
@@ -594,7 +524,7 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
       logger.info("bidder accept firehose watch started via eventStreams client");
     }
 
-    // Firehose watcher for EVENT_NSID — fallback when accept.submitEvent is absent.
+    // Firehose watcher for EVENT_NSID -- fallback when accept.submitEvent is absent.
     // Routes lifecycle events to merged.eventCallbacks by payload NSID.
     if (merged.eventCallbacks && eventStreams) {
       eventStreams.watch({
@@ -614,7 +544,7 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
             const payload = value.payload as { $type?: string; uri?: string; cid?: string } | undefined;
             if (!payload) return;
             // market.event.payload is a strongRef, so its $type is the ref type
-            // ("com.atproto.repo.strongRef"), not the payload's NSID — keying the
+            // ("com.atproto.repo.strongRef"), not the payload's NSID -- keying the
             // handlers off it silently matched nothing and dropped every event
             // (vm.delete included). The NSID is the referenced URI's collection.
             const payloadNsid = payload.$type && payload.$type !== "com.atproto.repo.strongRef"
@@ -650,7 +580,7 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
       await ensureOperatorAllowlist("");
       const offeringResult = await ensureOffering();
       if (!offeringResult) {
-        logger.warn("bidder offering skipped — session expired");
+        logger.warn("bidder offering skipped -- session expired");
         return;
       }
       const { rkey: offeringRkey, createdAt: offeringCreatedAt } = offeringResult;
@@ -663,7 +593,7 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
               await atproto.updateRecord(OFFERING_NSID, offeringRkey, buildOffering(offeringCreatedAt));
             } catch (err) {
               if (err instanceof OAuthSessionExpiredError) {
-                logger.error("bidder offering refresh failed — session expired", {
+                logger.error("bidder offering refresh failed -- session expired", {
                   sessionPath: err.sessionPath,
                 });
                 onSessionExpired?.(err);
@@ -698,6 +628,6 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
     if (!skipServeBegin) serve.shutdown();
   }
 
-  const refreshOffering = () => ensureOffering().then((r) => { if (!r) logger.warn("bidder refreshOffering skipped — session expired"); });
+  const refreshOffering = () => ensureOffering().then((r) => { if (!r) logger.warn("bidder refreshOffering skipped -- session expired"); });
   return { beginServe, shutdown, refreshOffering };
 }

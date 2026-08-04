@@ -10,7 +10,7 @@
 // A client may also be given an `agent` + `signer` (see {@link createMarketClient}).
 // When it is, `submitBid`/`submitEvent` take the *unsigned* record body and the
 // client signs it, writes it to the agent's repo, and forwards the attested copy
-// — the producer never touches the badge.blue machinery and can never forward an
+// -- the producer never touches the badge.blue machinery and can never forward an
 // unsigned body, because there is no longer an API that accepts one.
 
 import { XrpcClient } from "@atproto/xrpc";
@@ -88,7 +88,7 @@ export interface Submission<T extends Record<string, unknown> = Record<string, u
  * A MarketClient given an `agent` can sign records on the caller's behalf. The
  * signing identity is resolved on first use, in priority order: an explicit
  * `signer`; else a keypair from `privateKeyHex`; else a freshly *generated*
- * keypair (ephemeral — it does not survive restarts and is not published in any
+ * keypair (ephemeral -- it does not survive restarts and is not published in any
  * did:web doc, so it only passes signature-validity checks, not key binding).
  */
 export interface MarketClientOptions {
@@ -112,7 +112,7 @@ function proxyHeaders(target: string): Record<string, string> {
  * Wrapper over an authenticated XrpcClient for the market submit procedures.
  * Construct via {@link createMarketClient}. When built with an `agent`,
  * `submitBid`/`submitEvent`/`create` sign on your behalf (the signer is taken
- * from `signer`/`privateKeyHex` or auto-generated — see {@link MarketClientOptions}).
+ * from `signer`/`privateKeyHex` or auto-generated -- see {@link MarketClientOptions}).
  */
 export class MarketClient {
   readonly xrpc: XrpcClient;
@@ -145,7 +145,7 @@ export class MarketClient {
   /**
    * Resolve (and memoise) this client's signing identity, creating one if none
    * was supplied. Exposed so a caller that *also* signs records outside the
-   * client can reuse the exact same identity — pass it to `createSignedRecord`
+   * client can reuse the exact same identity -- pass it to `createSignedRecord`
    * rather than building a second signer that would diverge.
    */
   async ensureSigner(): Promise<RecordSigner> {
@@ -182,7 +182,7 @@ export class MarketClient {
    * *unsigned* bid record: the client signs it, writes it to the agent's repo,
    * and forwards the attested copy. There is no way to forward an unsigned body.
    * The bid is always created (throws only if that write fails); the proxied
-   * notification is best-effort — check {@link Submission.ok}.
+   * notification is best-effort -- check {@link Submission.ok}.
    * @param target service DID ref to proxy to.
    */
   async submitBid<T extends Record<string, unknown>>(target: string, bid: T): Promise<Submission<T>> {
@@ -233,7 +233,7 @@ export class MarketClient {
  *
  * Supply `{ agent }` to make the client sign on your behalf: then `submitBid`/
  * `submitEvent`/`create` take unsigned record bodies and the client mints the
- * badge.blue attestation, deriving its signer from `signer` → `privateKeyHex` →
+ * badge.blue attestation, deriving its signer from `signer` -> `privateKeyHex` ->
  * a generated key. Omit `agent` for a transport-only client that can still call
  * the ref-based `submitRfp`/`submitAccept`.
  */

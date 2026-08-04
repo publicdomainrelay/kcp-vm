@@ -33,7 +33,7 @@ function didWebToHttps(s: string): string {
   return s.startsWith("did:web:") ? "https://" + s.slice("did:web:".length) : s;
 }
 
-// ── high-fidelity fake PLC directory ──────────────────────────────────────
+// -- high-fidelity fake PLC directory --------------------------------------
 // POST /<did>  stores the genesis op.  GET /<did>  derives the DID document
 // (verificationMethod from op.verificationMethods, service from op.services).
 
@@ -104,7 +104,7 @@ Deno.test({
   cleanups.push(() => dispatcherCtl.abort());
   const ingressProxyHost = `localhost:${dispPort}`;
 
-  // ── fake PLC ─────────────────────────────────────────────────────────
+  // -- fake PLC ---------------------------------------------------------
   const plc = createFakePlc();
   const plcCtl = new AbortController();
   const { promise: plcPortReady, resolve: resolvePlcPort } = Promise.withResolvers<number>();
@@ -116,7 +116,7 @@ Deno.test({
   cleanups.push(() => plcCtl.abort());
   const plcDirectoryUrl = `http://localhost:${plcPort}`;
 
-  // ── Fetch interception ──────────────────────────────────────────────
+  // -- Fetch interception ----------------------------------------------
   const { installFetchInterceptor } = await import("./fetch-interceptor.ts");
   const restoreFetch = installFetchInterceptor({
     realFetch: globalThis.fetch,
@@ -127,7 +127,7 @@ Deno.test({
 
   try {
 
-    // ── bidder ───────────────────────────────────────────────────────────
+    // -- bidder -----------------------------------------------------------
     const bidderKeypair = await Secp256k1Keypair.create({ exportable: true });
     const bidderPrivHex = Array.from(await bidderKeypair.export())
       .map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -174,7 +174,7 @@ Deno.test({
     await bidder.beginServe();
     cleanups.push(() => bidder.shutdown());
 
-    // ── requester (wires its own submitBid -> pendingBids handler) ────────
+    // -- requester (wires its own submitBid -> pendingBids handler) --------
     const requesterServe = createServe({ logger, tcp: { addr: "127.0.0.1", port: 0 } });
     const requester = await createRequesterPDS({
       logger, serve: requesterServe,
@@ -193,14 +193,14 @@ Deno.test({
 
     await requester.beginServe();
 
-    // ── run the contract: deny the central default, include our bidder ────
+    // -- run the contract: deny the central default, include our bidder ----
     let contractErr: unknown;
     const contract = runComputeContract(requester, {
       logger,
       ingressProxyHost,
       skipSsh: true,
       keepVm: true,
-      bidWindowSec: 8,
+      policy: { name: "open", args: { bidWindowSec: 8 } },
       vmReadyTimeoutSec: 1,
       execProgram: "true",
       extraBidderDids: [atproto.did],
@@ -213,7 +213,7 @@ Deno.test({
       new Promise((r) => setTimeout(r, 40_000)),
     ]);
 
-    // ── assert: a bid from our locally-started bidder was collected ───────
+    // -- assert: a bid from our locally-started bidder was collected -------
     const ourBids = seenBids.filter((b) => b.did === atproto.did);
     assert(
       ourBids.length > 0,

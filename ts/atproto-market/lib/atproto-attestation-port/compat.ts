@@ -1,5 +1,5 @@
 /**
- * compat.ts — @atiproto/atproto-attestation compatible API surface.
+ * compat.ts -- @atiproto/atproto-attestation compatible API surface.
  *
  * Mirrors the exact signatures and behaviour of @atiproto/atproto-attestation
  * so that consumers (lib/market) can swap the import map with zero code changes.
@@ -18,7 +18,7 @@ import { secp256k1 } from "@noble/curves/secp256k1";
 import { ed25519 } from "@noble/curves/ed25519";
 
 // ---------------------------------------------------------------------------
-// normalizeSignature (compat — translates @atiproto key type strings)
+// normalizeSignature (compat -- translates @atiproto key type strings)
 // ---------------------------------------------------------------------------
 
 /**
@@ -64,7 +64,7 @@ export function normalizeSignature(
     s = (s << 8n) | BigInt(signature[32 + i]);
   }
 
-  // s is already in low-S form — return a copy.
+  // s is already in low-S form -- return a copy.
   if (s <= halfN) {
     return new Uint8Array(signature);
   }
@@ -86,7 +86,7 @@ export function normalizeSignature(
 // Types (compatible with @atiproto/atproto-attestation)
 // ---------------------------------------------------------------------------
 
-/** Generic record map — every AT Protocol record is `Record<string, unknown>`. */
+/** Generic record map -- every AT Protocol record is `Record<string, unknown>`. */
 export type RecordMap = Record<string, unknown>;
 
 /** Key type discriminator used by @atiproto. */
@@ -214,7 +214,7 @@ export function parseDidKey(didKey: string): KeyData {
 /**
  * Format raw key material as a `did:key:…` string.
  *
- * @param key — `{ type, bytes }` where `bytes` is the raw public key (no multicodec prefix).
+ * @param key -- `{ type, bytes }` where `bytes` is the raw public key (no multicodec prefix).
  */
 export function formatDidKey(key: KeyData): string {
   const codec = CODECS.find((c) => c.type === key.type && c.kind === "public");
@@ -257,7 +257,7 @@ export function formatPrivateMultibase(key: KeyData): string {
  * Synchronous DAG-CBOR CIDv1 (SHA-256) computation.
  *
  * Uses @noble/hashes for sync SHA-256 (multiformats' `sha256.digest` is
- * async — it delegates to WebCrypto).
+ * async -- it delegates to WebCrypto).
  */
 export function createDagCborCid(value: unknown): CID {
   const bytes = dagCbor.encode(value);
@@ -276,10 +276,10 @@ export function createDagCborCid(value: unknown): CID {
  *  5. Optionally keep only `fields` (plus `$type` and `$sig`).
  *  6. Compute DAG-CBOR CIDv1 over the resulting object.
  *
- * @param record     — The record being attested.
- * @param metadata   — Attestation metadata (must have `$type`).
- * @param repository — DID of the repository the record lives in.
- * @param fields     — Optional allow-list of record fields to include.
+ * @param record     -- The record being attested.
+ * @param metadata   -- Attestation metadata (must have `$type`).
+ * @param repository -- DID of the repository the record lives in.
+ * @param fields     -- Optional allow-list of record fields to include.
  * @returns A CID object with `.toString()` and `.bytes`.
  */
 export function createAttestationCid(
@@ -387,7 +387,7 @@ export function signBytes(payload: Uint8Array, privateKey: KeyData): Uint8Array 
  * Hashes `payload` with SHA-256, then verifies the ECDSA signature against
  * the digest using the curve indicated by `publicKey.type`.
  *
- * Never throws — returns `false` on any error.
+ * Never throws -- returns `false` on any error.
  */
 export function verifyBytes(
   payload: Uint8Array,
@@ -678,7 +678,7 @@ export interface VerifyEntryResult {
 }
 
 /**
- * Default key resolver — only handles `did:key:` DIDs by parsing them directly.
+ * Default key resolver -- only handles `did:key:` DIDs by parsing them directly.
  */
 export function defaultKeyResolver(did: string): KeyData {
   if (!did.startsWith("did:key:")) {
@@ -690,7 +690,7 @@ export function defaultKeyResolver(did: string): KeyData {
 /**
  * Verify every entry in a record's `signatures` array.
  *
- * Never throws — returns an array of per-entry results.
+ * Never throws -- returns an array of per-entry results.
  */
 export async function verify(
   options: VerifyOptions,

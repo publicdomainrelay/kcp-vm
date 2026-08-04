@@ -1,12 +1,15 @@
 // Production fedproxy.com only-me policy integration test.
-// Validates: requester posts RFP with policyMode=only-me, bidder with open
-// acceptScope (default) receives the RFP, bids, and the contract flow completes.
+// Validates: requester posts RFP with policy=only-me, a bidder whose operator
+// IS the requester receives the RFP, evaluates only-me to allow, bids, and the
+// RFP/bid/accept/receipt cycle completes against production fedproxy.com.
 //
-// The bidder hono-bidder CLI does not expose acceptScope as a flag — it defaults
-// to undefined (open to all). This test therefore validates the requester-side
-// policyMode plumbing: createPolicy mints the policy.onlyMe record, attaches
-// its strongRef to the RFP's `policy` field, and the RFP/bid/accept cycle
-// completes normally against production fedproxy.com.
+// The requester-side plumbing under test: buildPolicyRecord mints a
+// policies.builtin record, attaches its strongRef to the RFP's `policies`
+// field, and the bidder's trust cache resolves operatorOf(bidder)=requester (via a
+// bidder_associate badgeBlueKeys record minted with --associate-with), so the
+// attached only-me policy admits the bid. --policy open on the bidder only
+// opens the bidder's OWN engagement gate -- the RFP's attached only-me policy is
+// still enforced bidder-side in onRfp and is the thing under test.
 //
 // Spawns hono-bidder CLI subprocess. Uses real plc.directory + xrpc.fedproxy.com
 // so the relay can resolve all DIDs. Auto-skips when prod infra unreachable.
@@ -23,7 +26,6 @@ import { createServe } from "@publicdomainrelay/serve";
 import {
   createRequesterPDS, ensureWebsocat, runComputeContract,
 } from "@publicdomainrelay/requester-xrpc";
-import { ONLY_ME, DYNAMIC } from "@publicdomainrelay/market-policy-abc";
 
 // ===========================================================================
 // Helpers
@@ -155,33 +157,35 @@ const PROD_PLC = "https://plc.directory";
 const PROD_DISPATCHER = "xrpc.fedproxy.com";
 const PROD_FEDPROXY = "fedproxy.com";
 
+// Declaration-time reachability probe (top-level await -- runs once at module
+// load). This is a live-prod integration test: it needs the real PLC directory,
+// the fedproxy ingress relay, and fedproxy.com up, and it registers a fresh
+// did:plc per run. When any hard dependency is unreachable the test is
+// `ignore: true` (auto-skip for the RIGHT reason -- a probe fired, not a hard
+// env constant). Set DENO_TEST_PROD=1 to force-run regardless of reachability;
+// the runtime flow then fails loudly with the real error.
+const FORCE_PROD = Deno.env.get("DENO_TEST_PROD") === "1";
+const PROD_PROBE = await Promise.all([
+  probeRtt(`${PROD_PLC}/`),
+  probeRtt(`https://${PROD_DISPATCHER}/.well-known/did.json`),
+  probeRtt(`https://${PROD_FEDPROXY}/`),
+]);
+const PROD_REACHABLE = PROD_PROBE.every((r) => r !== null);
+if (!FORCE_PROD && !PROD_REACHABLE) {
+  const missing = [PROD_PLC, PROD_DISPATCHER, PROD_FEDPROXY]
+    .filter((_, i) => PROD_PROBE[i] === null);
+  console.log(`[SKIP] prod infrastructure unreachable: ${missing.join(", ")}`);
+}
+
 Deno.test({
-  name: "prod fedproxy.com — policyMode=only-me RFP flow",
+  name: "prod fedproxy.com -- policy=only-me RFP flow",
   sanitizeOps: false,
   sanitizeResources: false,
-  ignore: (() => {
-    // Auto-detect reachability at declaration time. When unreachable the test
-    // is `ignore: true`. Set DENO_TEST_PROD=1 to force-enable regardless.
-    if (Deno.env.get("DENO_TEST_PROD") === "1") return false;
-    // Probe at runtime via step skip instead — use ignore as a fallback hint.
-    return false;
-  })(),
+  ignore: !FORCE_PROD && !PROD_REACHABLE,
 }, async (t) => {
-  // ── Reachability probes ───────────────────────────────────────────────
-  const plcRtt = await probeRtt(`${PROD_PLC}/`);
-  const dispRtt = await probeRtt(`https://${PROD_DISPATCHER}/.well-known/did.json`);
-  const fedproxyRtt = await probeRtt(`https://${PROD_FEDPROXY}/`);
-
-  if (plcRtt === null || dispRtt === null || fedproxyRtt === null) {
-    const missing = [];
-    if (plcRtt === null) missing.push(PROD_PLC);
-    if (dispRtt === null) missing.push(PROD_DISPATCHER);
-    if (fedproxyRtt === null) missing.push(PROD_FEDPROXY);
-    console.log(`[SKIP] prod infrastructure unreachable: ${missing.join(", ")}`);
-    console.log(`[RTT] plc=${plcRtt ?? "N/A"}ms disp=${dispRtt ?? "N/A"}ms fedproxy=${fedproxyRtt ?? "N/A"}ms`);
-    return;
-  }
-  console.log(`[RTT] plc=${plcRtt}ms disp=${dispRtt}ms fedproxy=${fedproxyRtt}ms`);
+  console.log(
+    `[RTT] plc=${PROD_PROBE[0] ?? "N/A"}ms disp=${PROD_PROBE[1] ?? "N/A"}ms fedproxy=${PROD_PROBE[2] ?? "N/A"}ms`,
+  );
 
   const logger = createLogger({ serviceName: "prod-only-me" });
   const cleanups: Array<() => void> = [];
@@ -192,26 +196,8 @@ Deno.test({
     return;
   }
 
-  await t.step("[bidder-prod-only-me] policyMode=only-me RFP flow", async () => {
-    // ── Spawn hono-bidder subprocess ──────────────────────────────────
-    const proc = await spawnBidder({
-      modPath: HONO_BIDDER,
-      args: [
-        "--ingress-proxy-host", PROD_DISPATCHER,
-        "--plc-directory-url", PROD_PLC,
-        "--compute-provider-local",
-        "--compute-provider-local-mode", "container",
-        "--serve-port", "0",
-        "--firehose-mode", "subscriberepos",
-        "--firehose-url", "wss://bsky.network/xrpc/com.atproto.sync.subscribeRepos",
-        "--policy-mode", DYNAMIC,
-        "--skip-qr",
-      ],
-      label: "hono-bidder-prod-only-me",
-    });
-    cleanups.push(proc.cleanup);
-
-    // ── Create requester PDS ──────────────────────────────────────────
+  await t.step("[bidder-prod-only-me] policy=only-me RFP flow", async () => {
+    // -- Create requester PDS first -- its DID becomes the only-me operator --
     const requesterServe = createServe({ logger, tcp: { addr: "127.0.0.1", port: 0 } });
     const requester = await createRequesterPDS({
       logger, serve: requesterServe,
@@ -222,15 +208,45 @@ Deno.test({
     cleanups.push(() => requesterServe.shutdown());
     await requester.beginServe();
 
-    // ── Run compute contract with policyMode=only-me ──────────────────
+    // -- Spawn hono-bidder subprocess ----------------------------------
+    // Fresh identity per run: unique temp key + PDS state, so the bidder never
+    // collides with the persisted ~/.cache/pdr-market/bidder-private-key (a
+    // live production bidder DID -- reusing it cross-contaminates the run).
+    // --associate-with mints the bidder_associate badgeBlueKeys record that
+    // makes the boot-time trust-cache refresh resolve operatorOf(bidder)=
+    // requester, which is what the RFP's attached only-me policy checks before
+    // admitting a bid. --policy open keeps the bidder's own engagement gate
+    // from rejecting the fresh requester before the attached policy runs.
+    // No --firehose-* flags: the requester PUSHES the RFP to this bidder, and
+    // passing a wss firehose URL into the relay-registration path breaks PDS
+    // visibility (requestCrawl cannot handle a wss scheme).
+    const tmp = await Deno.makeTempDir({ prefix: "pdr-onlyme-" });
+    const proc = await spawnBidder({
+      modPath: HONO_BIDDER,
+      args: [
+        "--ingress-proxy-host", PROD_DISPATCHER,
+        "--plc-directory-url", PROD_PLC,
+        "--compute-provider-local",
+        "--compute-provider-local-mode", "container",
+        "--serve-port", "0",
+        "--skip-qr",
+        "--policy", "open",
+        "--associate-with", requester.did,
+        "--private-key-hex-path", `${tmp}/bidder-key`,
+        "--pds-state-path", `${tmp}/bidder-pds`,
+      ],
+      label: "hono-bidder-prod-only-me",
+    });
+    cleanups.push(proc.cleanup);
+
+    // -- Run compute contract with policy=only-me ------------------
     //
     // This exercises the requester-side policy plumbing inside
-    // runComputeContract: when policyMode is set, it calls createPolicy()
-    // from @publicdomainrelay/market-policy, which mints a policy.onlyMe
-    // record and attaches its strongRef to the RFP's `policy` field
-    // before signing.
+    // runComputeContract: when a policy is set, buildPolicyRecord mints a
+    // policies.builtin record naming the policy and carrying its args, then
+    // attaches its strongRef to the RFP's `policies` field before signing.
     //
-    // skipSsh=true avoids provisioning a guest — we only need to verify
+    // skipSsh=true avoids provisioning a guest -- we only need to verify
     // the RFP/bid/accept cycle succeeds.
     const result = await runComputeContract(requester, {
       logger,
@@ -239,23 +255,22 @@ Deno.test({
       rbac: true,
       skipSsh: true,
       keepVm: true,
-      bidWindowSec: 15,
       extraBidderDids: [proc.did],
       denyBidderDids: ["did:plc:centraldefaultbidder000000"],
-      policyMode: ONLY_ME,
+      policy: { name: "only-me", args: { bidWindowSec: 15 } },
     });
 
-    // ── Assertions ────────────────────────────────────────────────────
+    // -- Assertions ----------------------------------------------------
     assert(result.event === "compute_request_complete",
       `[prod-only-me] expected compute_request_complete, got ${result.event}: ${result.error ?? ""}`);
     assert(typeof result.bids === "number" && result.bids > 0,
       `[prod-only-me] expected >0 bids, got ${result.bids}`);
-    // Winner may differ when other production bidders are registered on the
-    // relay and price below ours. The policyMode=only-me plumbing is correct
-    // (policy record minted, attached to RFP, our bidder bids).
-    // Production bidders that don't evaluate FulfillmentPolicy will also bid.
-    assert(result.winnerDid && result.winnerDid.length > 0,
-      `[prod-only-me] expected a winner DID`);
+    // Under enforced only-me, no OTHER production bidder can win: their
+    // operator is not the requester, so the attached policy denies them. The
+    // winner must be OUR spawned bidder -- the only bidder whose operator IS the
+    // requester (via the bidder_associate record minted by --associate-with).
+    assert(result.winnerDid === proc.did,
+      `[prod-only-me] expected winner to be the associated bidder ${proc.did}, got ${result.winnerDid}`);
     assert(result.receiptOk === true,
       `[prod-only-me] expected receipt verification to pass`);
   });

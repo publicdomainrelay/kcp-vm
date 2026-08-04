@@ -1,4 +1,9 @@
-import { POLICY_MODE_CLI_OPTION } from "@publicdomainrelay/market-policy-abc";
+import {
+  POLICY_CLI_OPTION,
+  POLICY_ARGS_CLI_OPTION,
+  ONLY_REMOTE_POLICY_EXEC_CLI_OPTION,
+  ALLOW_UNTRUSTED_POLICY_EXEC_CLI_OPTION,
+} from "@publicdomainrelay/market-policy-abc";
 
 export default {
   name: "request-vm-ssh",
@@ -84,12 +89,6 @@ export default {
       description: "VM name (default: auto-generated compute-<random hex>)",
       env: "VM_NAME",
     },
-    "bid-window-sec": {
-      type: "number" as const,
-      description: "Seconds to wait for bids after submitting RFP",
-      env: "BID_WINDOW_SEC",
-      default: 30,
-    },
     "exec": {
       type: "string" as const,
       description: "Program to run in the VM (for non-TTY sessions)",
@@ -159,12 +158,15 @@ export default {
       description: "Path to a base cloud-init file; the default websocat/fedproxy-client provisioning is patched into it before the RFP is sent",
       env: "USER_DATA",
     },
-    "policy-mode": POLICY_MODE_CLI_OPTION,
-    "policy-engine-endpoint": {
+    "policy": POLICY_CLI_OPTION,
+    "policy-args": POLICY_ARGS_CLI_OPTION,
+    "policy-engine": {
       type: "string" as const,
-      description: "Policy engine service DID ref for dynamic mode (e.g. did:web:engine.example.com#market_evaluate_policy or did:plc:xyz#market_evaluate_policy)",
-      env: "POLICY_ENGINE_ENDPOINT",
+      description: "Policy engine DID (e.g. did:web:engine.example.com). When set the minted policy record is a policies.service record evaluated by that engine",
+      env: "POLICY_ENGINE",
     },
+    "only-remote-policy-exec": ONLY_REMOTE_POLICY_EXEC_CLI_OPTION,
+    "allow-untrusted-policy-exec": ALLOW_UNTRUSTED_POLICY_EXEC_CLI_OPTION,
     "pds-state-path": {
       type: "string" as const,
       description: "Path to persist PDS state (Deno.Kv SQLite file). If set, PDS state survives restarts and prior associations are remembered",

@@ -13,12 +13,12 @@ type Main = {
   $type: 'com.publicdomainrelay.temp.auth.allowlist.rbacDid'
 
   /**
-   * Map of label → { service, scope } entries. Labels are arbitrary keys (e.g. 'allowSelf'). Each value has a service id and optional scope that must match for the protection to apply.
+   * Map of label -> { service, scope } entries. Labels are arbitrary keys (e.g. 'allowSelf'). Each value has a service id and optional scope that must match for the protection to apply.
    */
   protects: l.LexMap
 
   /**
-   * Map of label → [did, ...] entries. Lists DIDs authorized under each label.
+   * Map of label -> [did, ...] entries. Lists DIDs authorized under each label.
    */
   allowed: l.LexMap
   createdAt: l.DatetimeString

@@ -1,7 +1,7 @@
 // Resolving the full record graph behind a market.accept.
 //
-// Settling an accept means fetching every record it transitively references —
-// the bid, the rfp, their payloads and config — and confirming they are mutually
+// Settling an accept means fetching every record it transitively references --
+// the bid, the rfp, their payloads and config -- and confirming they are mutually
 // consistent before any resource is provisioned. `resolveContractGraph` is that
 // traversal: it mirrors the relationships in the market.* lexicons
 //   accept -> bid,  accept -> rfp -> payload,  bid -> payload,  bid -> config?

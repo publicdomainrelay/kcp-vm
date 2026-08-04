@@ -28,7 +28,7 @@ export interface ReceiptRefs {
   rfp: RecordRef;
   bid: RecordRef;
   accept: RecordRef;
-  /** Proof-of-settlement record (the bid's payment/grant receipt). Optional — free settlement has no separate receipt. */
+  /** Proof-of-settlement record (the bid's payment/grant receipt). Optional -- free settlement has no separate receipt. */
   payload?: RecordRef;
   /** Service DID reference (did:web:HOST#compute_event) where teardown events are sent. */
   submitEvent: string;
@@ -97,11 +97,14 @@ export async function listRecordsAll(
   const timeoutMs = opts.timeoutMs ?? 10000;
   const out: ListedRecord[] = [];
   let cursor: string | undefined;
+  // PDS caps listRecords at 100/page; a larger requested limit must paginate,
+  // not get sent verbatim (the PDS 400s and the read comes back empty).
+  const pageLimit = Math.min(limit, 100);
   do {
     const url = new URL(`${pdsUrl}/xrpc/com.atproto.repo.listRecords`);
     url.searchParams.set("repo", repo);
     url.searchParams.set("collection", collection);
-    url.searchParams.set("limit", String(limit));
+    url.searchParams.set("limit", String(pageLimit));
     if (cursor) url.searchParams.set("cursor", cursor);
     const res = await fetch(url.toString(), { signal: AbortSignal.timeout(timeoutMs) });
     if (!res.ok) break;

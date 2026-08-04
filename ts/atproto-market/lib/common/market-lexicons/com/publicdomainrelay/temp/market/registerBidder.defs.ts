@@ -34,7 +34,7 @@ export type $OutputBody<B = l.BinaryData> = l.InferPayloadBody<
   B
 >
 
-/** Register a bidder with the market registry. Called by bidders after they publish a bidderDiscovery record in their own repo and connect to the relay. The registry verifies the caller's service-auth JWT issuer matches the bidderDid, then indexes the bidder so it appears in listBidders queries. Liveness is determined by the registry polling the bidder's bidderDiscovery record — there is no separate heartbeat procedure. */
+/** Register a bidder with the market registry. Called by bidders after they publish a bidderDiscovery record in their own repo and connect to the relay. The registry verifies the caller's service-auth JWT issuer matches the bidderDid, then indexes the bidder so it appears in listBidders queries. Liveness is determined by the registry polling the bidder's bidderDiscovery record -- there is no separate heartbeat procedure. */
 const main = /*#__PURE__*/ l.procedure($nsid, $params, $input, $output, [
   'InvalidRequest',
   'Forbidden',

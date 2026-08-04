@@ -1,4 +1,4 @@
-// ── Rust crate mirror API ──────────────────────────────────────────────
+// -- Rust crate mirror API ----------------------------------------------
 export { AttestationError } from "./errors.ts";
 // createDagCborCid (async, WebCrypto) is superseded by the sync compat
 // version below. Import directly from "./cid.ts" if the async variant
@@ -53,12 +53,12 @@ export {
   UnsupportedKeyTypeError,
 } from "./errors.ts";
 
-// ── @atiproto/atproto-attestation compatible API ────────────────────────
+// -- @atiproto/atproto-attestation compatible API ------------------------
 // These match the exact signatures that lib/market (and other consumers of
 // @atiproto/atproto-attestation) expect.  Import-map @atiproto/atproto-attestation
 // to this module and existing code compiles without changes.
 export {
-  // Types (compat shapes — RecordMap, KeyData, etc.)
+  // Types (compat shapes -- RecordMap, KeyData, etc.)
   type RecordMap,
   type KeyData,
   type InlineAttestation,

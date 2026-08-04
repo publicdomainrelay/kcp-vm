@@ -1,4 +1,4 @@
-// Key resolver for did:plc identities — compatible with the KeysForDid type
+// Key resolver for did:plc identities -- compatible with the KeysForDid type
 // exported by lib/market/attest.ts.  Pass the returned function directly to
 // createDidKeyResolver or use it standalone for did:plc-specific resolution.
 //
@@ -11,7 +11,7 @@
 import { PlcClient, type PlcClientOptions } from "./client.ts";
 import type { DidDocument } from "./types.ts";
 
-/** Same signature as KeysForDid in lib/market/attest.ts — intentionally compatible. */
+/** Same signature as KeysForDid in lib/market/attest.ts -- intentionally compatible. */
 export type KeysForDid = (did: string) => Promise<string[]>;
 
 /**
@@ -40,7 +40,7 @@ export interface PlcKeyResolverOptions extends PlcClientOptions {
  * listed in their DID document (as did:key strings). Suitable for use with
  * `verifyInlineAttestation` and `createDidKeyResolver` in attest.ts.
  *
- * Example — verify a market attestation signed by a did:plc identity:
+ * Example -- verify a market attestation signed by a did:plc identity:
  *
  * ```ts
  * import { createPlcKeyResolver } from "@publicdomainrelay/did-plc";

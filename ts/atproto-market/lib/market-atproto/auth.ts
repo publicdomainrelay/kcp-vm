@@ -45,7 +45,7 @@ export type VerifyMarketServiceAuthOptions = {
   serviceIds: string[];
   /**
    * Extra DIDs (beyond the host-derived `did:web:HOST`) this endpoint answers
-   * for. Use when the service is reachable under a second identity — e.g. a
+   * for. Use when the service is reachable under a second identity -- e.g. a
    * relay whose service is advertised in the RFP as a `did:plc#service` ref, so
    * a caller's PDS proxies to that did:plc and mints `aud: did:plc` (or
    * `did:plc#serviceId`), which would never match the bare did:web. Each entry
@@ -77,7 +77,7 @@ export async function verifyMarketServiceAuth(
 
   const payload = await verifyJwt(token, null, lxm, (did: string) => idResolver.did.resolveAtprotoKey(did));
 
-  // Acceptable audiences: the bare service DID, plus one ref per service id —
+  // Acceptable audiences: the bare service DID, plus one ref per service id --
   // and the same matrix for every extra DID this endpoint also answers for.
   const acceptable = new Map<string, string | undefined>();
   for (const did of [serviceDid, ...(extraAudienceDids ?? [])]) {
@@ -96,7 +96,7 @@ export async function verifyMarketServiceAuth(
   return { issuerDid: iss.split("#")[0], audience: aud, serviceId: acceptable.get(aud) };
 }
 
-// The verification above is not actually market-specific — it takes the `lxm`
+// The verification above is not actually market-specific -- it takes the `lxm`
 // and the accepted `serviceIds` as arguments, so it works for ANY atproto
 // inter-service-auth (PDS service-proxying) endpoint. The spindle, for example,
 // reuses it for its `…tangled.spindle.trigger` endpoint. These generic aliases

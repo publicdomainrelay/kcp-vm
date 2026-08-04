@@ -45,7 +45,7 @@ export type {
   TombstoneOp,
 } from "./generated/types.gen.ts";
 
-// ── Hand-tuned additions ──────────────────────────────────────────────
+// -- Hand-tuned additions ----------------------------------------------
 
 /** Service endpoint descriptor used inside a PLC operation. */
 export interface PlcService {

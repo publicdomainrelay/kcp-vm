@@ -8,7 +8,7 @@ const $nsid = 'com.publicdomainrelay.temp.compute.events.vm.delete'
 
 export { $nsid }
 
-/** Requests that the provider delete/tear down a provisioned VM — e.g. because its workflow finished, or because its policy engine never came up. Sent by the requester, since the provider treats the VM as a black box and cannot observe these conditions itself. */
+/** Requests that the provider delete/tear down a provisioned VM -- e.g. because its workflow finished, or because its policy engine never came up. Sent by the requester, since the provider treats the VM as a black box and cannot observe these conditions itself. */
 type Main = {
   $type: 'com.publicdomainrelay.temp.compute.events.vm.delete'
 
@@ -21,7 +21,7 @@ type Main = {
 
 export type { Main }
 
-/** Requests that the provider delete/tear down a provisioned VM — e.g. because its workflow finished, or because its policy engine never came up. Sent by the requester, since the provider treats the VM as a black box and cannot observe these conditions itself. */
+/** Requests that the provider delete/tear down a provisioned VM -- e.g. because its workflow finished, or because its policy engine never came up. Sent by the requester, since the provider treats the VM as a black box and cannot observe these conditions itself. */
 const main = /*#__PURE__*/ l.record<'tid', Main>(
   'tid',
   $nsid,

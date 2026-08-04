@@ -59,8 +59,21 @@ export interface CallbackFactoryDeps {
   deleteRecord: (collection: string, rkey: string) => Promise<void>;
   callService: (endpointUrl: string, nsid: string, lxm: string, body: Record<string, unknown>) => Promise<{ status: number; ok: boolean; body: unknown }>;
   resolve: RecordResolver;
-  /** Maps acceptUri#acceptCid → receipt info. Populated at receipt creation. */
+  /** Maps acceptUri#acceptCid -> receipt info. Populated at receipt creation. */
   acceptToContract?: Map<string, GuestContractEntry>;
+  /** How this bidder is willing to execute an RFP's attached policy. */
+  policyExec?: PolicyExecOptions;
+  /** Vouch/follow set lookup handed to locally executed policies. */
+  getVouchedDids?: (did: string) => Promise<Set<string>>;
+  /** Bidder DID -> operator DID, via bidder_associate records. */
+  resolveOperatorDid?: (bidderDid: string) => Promise<string | null>;
+}
+
+export interface PolicyExecOptions {
+  /** Refuse to evaluate any non-service policy record locally. */
+  onlyRemote?: boolean;
+  /** Permit policies.denoWorker records to run caller-supplied bundles. */
+  allowUntrusted?: boolean;
 }
 
 export interface MarketBidderProviderRef {

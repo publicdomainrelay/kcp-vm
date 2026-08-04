@@ -1,15 +1,15 @@
-// fixup-openapi.ts — download (if missing) and patch the official PLC directory
+// fixup-openapi.ts -- download (if missing) and patch the official PLC directory
 // OpenAPI spec so hey-api generates tighter TypeScript types.
 //
 // Run:  deno run --allow-net --allow-read --allow-write fixup-openapi.ts
 //
 // Patches applied:
-//   1. PlcOp.verificationMethods  → additionalProperties: { type: string }
-//   2. PlcOp.services              → additionalProperties: { $ref: PlcService }
+//   1. PlcOp.verificationMethods  -> additionalProperties: { type: string }
+//   2. PlcOp.services              -> additionalProperties: { $ref: PlcService }
 //   3. Add PlcService schema
-//   4. DidDocument                 → add @context property
-//   5. LogEntry.cid                → fix type: cid → type: string
-//   6. /export 200 response        → content-type json + array schema (was jsonlines)
+//   4. DidDocument                 -> add @context property
+//   5. LogEntry.cid                -> fix type: cid -> type: string
+//   6. /export 200 response        -> content-type json + array schema (was jsonlines)
 
 import { parse, stringify } from "npm:yaml@2";
 
@@ -20,7 +20,7 @@ const OFFICIAL_PATH = new URL("./openapi.official.yaml", import.meta.url)
 const FIXED_PATH = new URL("./openapi.fixed.yaml", import.meta.url)
   .pathname;
 
-// ── download official spec if not on disk ────────────────────────────
+// -- download official spec if not on disk ----------------------------
 
 async function ensureOfficial(): Promise<string> {
   try {
@@ -30,7 +30,7 @@ async function ensureOfficial(): Promise<string> {
       return existing;
     }
   } catch {
-    // not found — download
+    // not found -- download
   }
   console.log(`Downloading ${OFFICIAL_URL} …`);
   const res = await fetch(OFFICIAL_URL);
@@ -45,14 +45,14 @@ async function ensureOfficial(): Promise<string> {
   return text;
 }
 
-// ── patch helpers ─────────────────────────────────────────────────────
+// -- patch helpers -----------------------------------------------------
 
 function ensure(obj: Record<string, unknown>, key: string, fallback: () => unknown) {
   if (!(key in obj)) obj[key] = fallback();
   return obj[key];
 }
 
-// ── apply patches ─────────────────────────────────────────────────────
+// -- apply patches -----------------------------------------------------
 
 function patch(spec: Record<string, unknown>): void {
   const schemas = (spec.components as Record<string, unknown> | undefined)?.schemas as Record<
@@ -61,7 +61,7 @@ function patch(spec: Record<string, unknown>): void {
   >;
   if (!schemas) throw new Error("Missing components.schemas");
 
-  // 1. PlcOp.verificationMethods → additionalProperties: { type: string }
+  // 1. PlcOp.verificationMethods -> additionalProperties: { type: string }
   const plcOp = schemas.PlcOp;
   if (!plcOp?.properties) throw new Error("Missing PlcOp.properties");
   const vmProps = (plcOp.properties as Record<string, Record<string, unknown>>)
@@ -69,7 +69,7 @@ function patch(spec: Record<string, unknown>): void {
   if (!vmProps) throw new Error("Missing PlcOp.properties.verificationMethods");
   vmProps.additionalProperties = { type: "string" };
 
-  // 2. PlcOp.services → additionalProperties: { $ref: '#/components/schemas/PlcService' }
+  // 2. PlcOp.services -> additionalProperties: { $ref: '#/components/schemas/PlcService' }
   const svcProps = (plcOp.properties as Record<string, Record<string, unknown>>)
     .services;
   if (!svcProps) throw new Error("Missing PlcOp.properties.services");
@@ -96,7 +96,7 @@ function patch(spec: Record<string, unknown>): void {
   for (const [k] of Object.keys(schemas)) delete schemas[k];
   for (const [k, v] of entries) schemas[k] = v;
 
-  // 4. DidDocument → add @context
+  // 4. DidDocument -> add @context
   const didDoc = schemas.DidDocument;
   if (!didDoc?.properties) throw new Error("Missing DidDocument.properties");
   (didDoc.properties as Record<string, unknown>)["@context"] = {
@@ -104,14 +104,14 @@ function patch(spec: Record<string, unknown>): void {
     items: { type: "string" },
   };
 
-  // 5. LogEntry.cid → type: string (was type: cid)
+  // 5. LogEntry.cid -> type: string (was type: cid)
   const logEntry = schemas.LogEntry;
   if (!logEntry?.properties) throw new Error("Missing LogEntry.properties");
   const cidProp = (logEntry.properties as Record<string, Record<string, unknown>>).cid;
   if (!cidProp) throw new Error("Missing LogEntry.properties.cid");
   cidProp.type = "string";
 
-  // 6. /export 200 response → application/json + array schema
+  // 6. /export 200 response -> application/json + array schema
   const exportPath = (spec.paths as Record<string, Record<string, unknown>>)["/export"];
   if (!exportPath?.get) throw new Error("Missing /export.get");
   const getOp = exportPath.get as Record<string, unknown>;
@@ -130,7 +130,7 @@ function patch(spec: Record<string, unknown>): void {
   console.log("Patches applied: 6/6");
 }
 
-// ── main ──────────────────────────────────────────────────────────────
+// -- main --------------------------------------------------------------
 
 async function main() {
   const yamlText = await ensureOfficial();

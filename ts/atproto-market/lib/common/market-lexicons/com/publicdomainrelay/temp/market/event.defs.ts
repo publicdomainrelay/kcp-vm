@@ -25,7 +25,7 @@ type Main = {
   payload: RepoStrongRef.Main
 
   /**
-   * badge.blue attestations over this event. Must include the reporting party's inline signature, attached at creation, making the lifecycle claim non-repudiable — events assert facts about resources the counterparty cannot observe itself.
+   * badge.blue attestations over this event. Must include the reporting party's inline signature, attached at creation, making the lifecycle claim non-repudiable -- events assert facts about resources the counterparty cannot observe itself.
    */
   signatures: AttestedSignature.Signatures
 }

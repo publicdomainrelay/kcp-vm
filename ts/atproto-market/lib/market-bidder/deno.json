@@ -2,5 +2,9 @@
   "name": "@publicdomainrelay/market-bidder",
   "version": "0.0.0",
   "license": "Unlicense",
-  "exports": "./mod.ts"
+  "exports": "./mod.ts",
+  "imports": {
+    "@publicdomainrelay/market-policy-trust-abc": "jsr:@publicdomainrelay/market-policy-trust-abc@^0",
+    "@publicdomainrelay/market-policy-trust-cache": "jsr:@publicdomainrelay/market-policy-trust-cache@^0"
+  }
 }

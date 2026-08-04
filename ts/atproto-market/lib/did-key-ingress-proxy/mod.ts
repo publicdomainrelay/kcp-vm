@@ -11,7 +11,7 @@ export interface CreateIngressOpts {
   signer: { did(): string; sign(bytes: Uint8Array): Promise<Uint8Array> };
   keypair: { did(): string; sign(data: Uint8Array): Promise<Uint8Array> };
   label?: string;
-  /** Dispatcher serves TLS (self-signed trusted via DENO_CERT) — use https/wss
+  /** Dispatcher serves TLS (self-signed trusted via DENO_CERT) -- use https/wss
    * even for localhost/hosts-with-port. */
   tls?: boolean;
   /**
@@ -24,7 +24,7 @@ export interface CreateIngressOpts {
   /**
    * When set, inbound relay subscriptions for non-tunnel NSIDs call this
    * handler directly instead of opening a loopback WebSocket to localWsTarget.
-   * Prefer this when the firehose source is in-process — no TCP listener needed.
+   * Prefer this when the firehose source is in-process -- no TCP listener needed.
    */
   directSubscriptionHandler?: (
     subscriptionId: string,

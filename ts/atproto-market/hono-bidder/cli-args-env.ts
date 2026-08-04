@@ -1,4 +1,9 @@
-import { POLICY_MODE_CLI_OPTION } from "@publicdomainrelay/market-policy-abc";
+import {
+  POLICY_CLI_OPTION,
+  POLICY_ARGS_CLI_OPTION,
+  ONLY_REMOTE_POLICY_EXEC_CLI_OPTION,
+  ALLOW_UNTRUSTED_POLICY_EXEC_CLI_OPTION,
+} from "@publicdomainrelay/market-policy-abc";
 
 export default {
   name: "bidder",
@@ -159,6 +164,11 @@ export default {
       description: "Skip QR code display and association prompt",
       env: "SKIP_QR",
     },
+    "associate-with": {
+      type: "string" as const,
+      description: "Operator DID to mint a bidder_associate badgeBlueKeys record for at boot, so the trust cache resolves this bidder's operator to that DID before the only-me scope check runs. Mirrors the QR associate flow for headless/automation.",
+      env: "ASSOCIATE_WITH",
+    },
     "guest-tls-port": {
       type: "number" as const,
       description: "TLS listener port of the local dispatcher. Guest OIDC URLs (HTTPS-only) are rewritten to this port; the bidder's own traffic stays on the plain ingress-proxy-host port.",
@@ -181,7 +191,10 @@ export default {
       env: "PDS_STATE_PATH",
       default: `${Deno.env.get("HOME") ?? Deno.env.get("USERPROFILE") ?? "/tmp"}/.cache/pdr-market/bidder-pds`,
     },
-    "policy-mode": POLICY_MODE_CLI_OPTION,
+    "policy": POLICY_CLI_OPTION,
+    "policy-args": POLICY_ARGS_CLI_OPTION,
+    "only-remote-policy-exec": ONLY_REMOTE_POLICY_EXEC_CLI_OPTION,
+    "allow-untrusted-policy-exec": ALLOW_UNTRUSTED_POLICY_EXEC_CLI_OPTION,
     "offering-refresh-sec": {
       type: "number" as const,
       description: "Seconds between offering record re-commits to stay discoverable (0 to disable)",

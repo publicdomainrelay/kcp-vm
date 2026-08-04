@@ -1,7 +1,7 @@
 // Build and submit a did:plc genesis operation.
 //
 // DID derivation per spec v0.3.0:
-//   sha256( dag-cbor( signed-op ) ) → first 15 bytes → base32lower → did:plc:<suffix>
+//   sha256( dag-cbor( signed-op ) ) -> first 15 bytes -> base32lower -> did:plc:<suffix>
 
 import { encode as cborEncode } from "@ipld/dag-cbor";
 import { base32 } from "multiformats/bases/base32";
@@ -19,7 +19,7 @@ async function sha256(bytes: Uint8Array): Promise<Uint8Array> {
 }
 
 export interface GenesisOptions {
-  /** did:key public key strings — ordered, first has highest priority. */
+  /** did:key public key strings -- ordered, first has highest priority. */
   rotationKeys: string[];
   /** Map of VM/service ids to did:key signing keys. Defaults to empty. */
   verificationMethods?: Record<string, string>;
@@ -31,7 +31,7 @@ export interface GenesisOptions {
    * Pass a function to derive services from the DID (two-pass: first derives
    * a preliminary DID with empty services, then rebuilds with the result).
    * The returned DID will differ slightly from the value passed to the
-   * function — the endpoint URL uses a "close enough" preview DID.
+   * function -- the endpoint URL uses a "close enough" preview DID.
    */
   services?:
     | Record<string, PlcService>
@@ -43,7 +43,7 @@ export interface GenesisOptions {
 export interface GenesisResult {
   /** The derived did:plc identifier. */
   did: string;
-  /** The signed genesis operation — ready to POST to the PLC directory. */
+  /** The signed genesis operation -- ready to POST to the PLC directory. */
   op: Operation;
 }
 

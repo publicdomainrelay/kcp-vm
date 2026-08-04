@@ -8,7 +8,7 @@ const $nsid = 'com.publicdomainrelay.temp.market.badgeBlueKey'
 
 export { $nsid }
 
-/** Publishes the public half of a badge.blue attestation key that this repo signs market.* records with. The record key is the key's did:key, so a verifier can look up a key by did:key directly in the author's PDS repo — a PDS-native key registry complementing DID-document key binding. */
+/** Publishes the public half of a badge.blue attestation key that this repo signs market.* records with. The record key is the key's did:key, so a verifier can look up a key by did:key directly in the author's PDS repo -- a PDS-native key registry complementing DID-document key binding. */
 type Main = {
   $type: 'com.publicdomainrelay.temp.market.badgeBlueKey'
 
@@ -26,7 +26,7 @@ type Main = {
 
 export type { Main }
 
-/** Publishes the public half of a badge.blue attestation key that this repo signs market.* records with. The record key is the key's did:key, so a verifier can look up a key by did:key directly in the author's PDS repo — a PDS-native key registry complementing DID-document key binding. */
+/** Publishes the public half of a badge.blue attestation key that this repo signs market.* records with. The record key is the key's did:key, so a verifier can look up a key by did:key directly in the author's PDS repo -- a PDS-native key registry complementing DID-document key binding. */
 const main = /*#__PURE__*/ l.record<'any', Main>(
   'any',
   $nsid,

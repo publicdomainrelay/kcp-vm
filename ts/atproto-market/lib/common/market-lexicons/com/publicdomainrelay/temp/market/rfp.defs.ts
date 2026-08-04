@@ -20,14 +20,14 @@ type Main = {
   payload: RepoStrongRef.Main
 
   /**
-   * Strong reference to a fulfillment policy record (for example a com.publicdomainrelay.temp.market.policies.direct_network). Declares admission criteria: who may bid on and fulfill this RFP. Omitted/absent means no policy restriction — open to all bidders, backward compatible. Carries downstream through subcontracting chains.
-   */
-  policy?: RepoStrongRef.Main
-
-  /**
    * Service DID reference (did:web:HOST#temp_market) of the RFP issuer's market service. Optional; bypasses the need for bids to be seen in the firehose. The bidder calls com.publicdomainrelay.temp.market.submitBid via PDS service-proxying using this value as the atproto-proxy target.
    */
   submitBid?: string
+
+  /**
+   * Strong references to fulfillment policy records (for example com.publicdomainrelay.temp.market.policies.builtin). Declares admission criteria: who may bid on and fulfill this RFP. Empty/absent means no policy restriction -- open to all bidders, backward compatible. Carries downstream through subcontracting chains.
+   */
+  policies?: RepoStrongRef.Main[]
 
   /**
    * badge.blue attestations over this RFP. Must include the issuer's inline signature, attached at creation (before any bid strongRefs this record); post-hoc third-party attestations use remote network.attested.signature proof records instead, so the RFP's CID stays stable.
@@ -45,10 +45,14 @@ const main = /*#__PURE__*/ l.record<'tid', Main>(
     payload: /*#__PURE__*/ l.ref<RepoStrongRef.Main>(
       (() => RepoStrongRef.main) as any,
     ),
-    policy: /*#__PURE__*/ l.optional(/*#__PURE__*/ l.ref<RepoStrongRef.Main>(
-      (() => RepoStrongRef.main) as any,
-    )),
     submitBid: /*#__PURE__*/ l.optional(/*#__PURE__*/ l.string()),
+    policies: /*#__PURE__*/ l.optional(
+      /*#__PURE__*/ l.array(
+        /*#__PURE__*/ l.ref<RepoStrongRef.Main>(
+          (() => RepoStrongRef.main) as any,
+        ),
+      ),
+    ),
     signatures: /*#__PURE__*/ l.ref<AttestedSignature.Signatures>(
       (() => AttestedSignature.signatures) as any,
     ),

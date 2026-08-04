@@ -13,12 +13,12 @@ type Main = {
   $type: 'com.fedproxy.rbac'
 
   /**
-   * Map of role name → role definition. Each role defines OIDC claim constraints (aud, iss, sub) and references a policy name.
+   * Map of role name -> role definition. Each role defines OIDC claim constraints (aud, iss, sub) and references a policy name.
    */
   roles: l.LexMap
 
   /**
-   * Map of policy name → policy definition. Each policy defines a JSON Schema over com.atproto.repo.createRecord for com.fedproxy.sshPublicKey.
+   * Map of policy name -> policy definition. Each policy defines a JSON Schema over com.atproto.repo.createRecord for com.fedproxy.sshPublicKey.
    */
   policies: l.LexMap
 

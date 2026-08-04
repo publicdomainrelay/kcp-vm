@@ -16,11 +16,6 @@ type Main = {
    * Address (hostname or IP) the VM is reachable at, if known.
    */
   address?: string
-  /**
-   * Relay ingressRef (did:web:...) assigned when the tunnel subscriber
-   * registered. The requester derives the SSH FQDN from this value.
-   */
-  ingressRef?: string
   createdAt: l.DatetimeString
 }
 
@@ -32,7 +27,6 @@ const main = /*#__PURE__*/ l.record<'tid', Main>(
   $nsid,
   /*#__PURE__*/ l.object({
     address: /*#__PURE__*/ l.optional(/*#__PURE__*/ l.string()),
-    ingressRef: /*#__PURE__*/ l.optional(/*#__PURE__*/ l.string()),
     createdAt: /*#__PURE__*/ l.string({ format: 'datetime' }),
   }),
 )

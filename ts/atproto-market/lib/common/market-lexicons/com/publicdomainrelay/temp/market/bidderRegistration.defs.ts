@@ -8,7 +8,7 @@ const $nsid = 'com.publicdomainrelay.temp.market.bidderRegistration'
 
 export { $nsid }
 
-/** An index entry in the market registry's repo tracking a registered bidder. The registry creates one entry per (bidderDid, payloadNsid) pair when a bidder calls registerBidder. Liveness is determined by polling the bidder's own bidderDiscovery record — this index entry carries no heartbeat timestamps. When a bidder goes stale the registry deletes its index entries. */
+/** An index entry in the market registry's repo tracking a registered bidder. The registry creates one entry per (bidderDid, payloadNsid) pair when a bidder calls registerBidder. Liveness is determined by polling the bidder's own bidderDiscovery record -- this index entry carries no heartbeat timestamps. When a bidder goes stale the registry deletes its index entries. */
 type Main = {
   $type: 'com.publicdomainrelay.temp.market.bidderRegistration'
 
@@ -30,7 +30,7 @@ type Main = {
 
 export type { Main }
 
-/** An index entry in the market registry's repo tracking a registered bidder. The registry creates one entry per (bidderDid, payloadNsid) pair when a bidder calls registerBidder. Liveness is determined by polling the bidder's own bidderDiscovery record — this index entry carries no heartbeat timestamps. When a bidder goes stale the registry deletes its index entries. */
+/** An index entry in the market registry's repo tracking a registered bidder. The registry creates one entry per (bidderDid, payloadNsid) pair when a bidder calls registerBidder. Liveness is determined by polling the bidder's own bidderDiscovery record -- this index entry carries no heartbeat timestamps. When a bidder goes stale the registry deletes its index entries. */
 const main = /*#__PURE__*/ l.record<'any', Main>(
   'any',
   $nsid,

@@ -6,7 +6,7 @@
   "imports": {
     "@atproto/common": "npm:@atproto/common@^0.5.0",
     "@atproto/common-web": "npm:@atproto/common-web@^0.5.0",
-    "@atproto/crypto": "npm:@atproto/crypto@^0.4.4",
+    "@atproto/crypto": "npm:@atproto/crypto@^0.5.0",
     "@atproto/identity": "npm:@atproto/identity@^0.5.0",
     "@publicdomainrelay/atproto-repo-abc": "jsr:@publicdomainrelay/atproto-repo-abc@^0",
     "@publicdomainrelay/atproto-repo-deno": "jsr:@publicdomainrelay/atproto-repo-deno@^0",
@@ -22,6 +22,9 @@
     "@publicdomainrelay/requester-abc": "jsr:@publicdomainrelay/requester-abc@^0",
     "@publicdomainrelay/logger": "jsr:@publicdomainrelay/logger@^0",
     "@publicdomainrelay/market-lexicons": "jsr:@publicdomainrelay/market-lexicons@^0",
-    "@publicdomainrelay/trust-graph-tangled-graph": "jsr:@publicdomainrelay/trust-graph-tangled-graph@^0"
+    "@publicdomainrelay/trust-graph-tangled-graph": "jsr:@publicdomainrelay/trust-graph-tangled-graph@^0",
+    "@publicdomainrelay/market-policy": "jsr:@publicdomainrelay/market-policy@^0",
+    "@publicdomainrelay/market-policy-abc": "jsr:@publicdomainrelay/market-policy-abc@^0",
+    "@publicdomainrelay/operator-discovery-badge-blue-keys": "jsr:@publicdomainrelay/operator-discovery-badge-blue-keys@^0"
   }
 }

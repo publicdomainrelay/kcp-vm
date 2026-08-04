@@ -1,16 +1,16 @@
-// Integration test: OAuth session injection → subprocess CLIs → full RFP→bid→accept→SSH.
+// Integration test: OAuth session injection -> subprocess CLIs -> full RFP->bid->accept->SSH.
 // Verifies: firehose-only relay delivery, tangled-vouch policy, container provisioning,
 // tunnel subscriber guest registration, and SSH command execution over the relay.
 //
 // Architecture:
 //   fake PLC + dispatcher relay + atproto-relay + fetch interceptor
-//   → one OAuth-PDS (JSON firehose, PLC support, multi-tenant)
-//   → bidder + requester accounts (created via createAccount)
-//   → OAuth session injection (programmatic tokens)
-//   → tangled-vouch records (mutual vouch + badgeBlueKeys)
-//   → bidder subprocess (firehose-only, compute-provider-local)
-//   → requester subprocess (firehose-only, tangled-vouch)
-//   → SSH shell output from guest VM over relay
+//   -> one OAuth-PDS (JSON firehose, PLC support, multi-tenant)
+//   -> bidder + requester accounts (created via createAccount)
+//   -> OAuth session injection (programmatic tokens)
+//   -> tangled-vouch records (mutual vouch + badgeBlueKeys)
+//   -> bidder subprocess (firehose-only, compute-provider-local)
+//   -> requester subprocess (firehose-only, tangled-vouch)
+//   -> SSH shell output from guest VM over relay
 import { assert } from "@std/assert";
 import { Hono } from "@hono/hono";
 import { Secp256k1Keypair } from "@atproto/crypto";
@@ -27,7 +27,7 @@ import { generateLocalhostTlsCert } from "@publicdomainrelay/tls-localhost";
 
 const ORG = new URL("../../", import.meta.url).pathname.replace(/\/$/, "");
 
-// ── Helpers ────────────────────────────────────────────────────────────────
+// -- Helpers ----------------------------------------------------------------
 
 function serveOnPort0(
   f: (r: Request) => Response | Promise<Response>,
@@ -66,13 +66,13 @@ function createAccount(
   }).then((r) => r.json() as Promise<{ did: string; accessJwt: string; refreshJwt: string }>);
 }
 
-// ── Fake PLC ────────────────────────────────────────────────────────────────
+// -- Fake PLC ----------------------------------------------------------------
 
 function createFakePlc() {
   const ops = new Map<string, { op: Record<string, unknown>; did: string }>();
   const app = new Hono();
 
-  // POST /<did> — store genesis op under the DID in the URL path.
+  // POST /<did> -- store genesis op under the DID in the URL path.
   // Both PLC clients in this flow (hono-pds createAccount and did-plc submitOp)
   // derive did:plc themselves per spec and publish at /<did:plc>; submitOp
   // ignores the response body entirely. Deriving our own DID here would store
@@ -84,7 +84,7 @@ function createFakePlc() {
     return c.json({ did });
   });
 
-  // GET /<did> — resolve DID document
+  // GET /<did> -- resolve DID document
   app.get("/*", (c) => {
     const did = decodeURIComponent(new URL(c.req.url).pathname.slice(1));
     const entry = ops.get(did);
@@ -113,7 +113,7 @@ function createFakePlc() {
   return { app };
 }
 
-// ── Vouch helpers ───────────────────────────────────────────────────────────
+// -- Vouch helpers -----------------------------------------------------------
 
 const VOUCH_NSID = "sh.tangled.graph.vouch";
 const BADGE_BLUE_KEYS_NSID = "com.publicdomainrelay.temp.badgeBlueKeys";
@@ -155,7 +155,7 @@ async function createRecordDpop(
   return res.json() as Promise<{ uri: string }>;
 }
 
-// ── Tests ───────────────────────────────────────────────────────────────────
+// -- Tests -------------------------------------------------------------------
 
 Deno.test("OAuth session restore from CLI subprocess", async () => {
   const log = createLogger({ serviceName: "test" });
@@ -185,7 +185,7 @@ Deno.test("OAuth session restore from CLI subprocess", async () => {
     const path = `${tmp}/session.json`;
     await Deno.writeTextFile(path, JSON.stringify(sess, null, 2));
 
-    // 4. Spawn bidder CLI — verify session restores
+    // 4. Spawn bidder CLI -- verify session restores
     const cmd = new Deno.Command("deno", {
       args: ["run", "-A", "--unstable-kv", `${ORG}/atproto-market/hono-bidder/mod.ts`,
         "--atproto-oauth-qr", "--oauth-session-file", path,
@@ -235,23 +235,23 @@ Deno.test("OAuth session restore from CLI subprocess", async () => {
 
     assert(foundRestored, "Session should be restored from file");
     assert(foundReady, "Bidder should emit bidder_ready");
-    log.info("PASS — CLI subprocess restored OAuth session");
+    log.info("PASS -- CLI subprocess restored OAuth session");
   } finally {
     pdsAc.abort();
   }
 });
 
 Deno.test({
-  name: "[integration] Full RFP→bid→accept→SSH via subprocess CLIs (firehose-only, tangled-vouch)",
+  name: "[integration] Full RFP->bid->accept->SSH via subprocess CLIs (firehose-only, tangled-vouch)",
   sanitizeOps: false,
   sanitizeResources: false,
 }, async () => {
   const log = createLogger({ serviceName: "it" });
   const cleanups: Array<() => void> = [];
 
-  // ── 1. Start infrastructure ────────────────────────────────────────────
+  // -- 1. Start infrastructure --------------------------------------------
 
-  // 1a. Container backend — the guest is provisioned locally, so without a
+  // 1a. Container backend -- the guest is provisioned locally, so without a
   // running runtime there is nothing to SSH into and the test cannot mean
   // anything. Skip loudly rather than assert against a phantom guest.
   const backend: ContainerBackend = Deno.build.os === "darwin"
@@ -267,10 +267,10 @@ Deno.test({
   // 1b. Dispatcher relay (did-key-ingress-proxy).
   // Named relay.localhost, not localhost: the guest announces its FQDN as
   // <subdomain>.<ingressProxyHost>, so that host must resolve BOTH inside the
-  // container (via the gateway /etc/hosts alias below) and here (*.localhost →
+  // container (via the gateway /etc/hosts alias below) and here (*.localhost ->
   // loopback). additionalHosts admits the gateway IP the guest dials.
   // TLS for the guest: the OIDC prove + onNetwork endpoints are https-only, and
-  // the guest reaches them at <provider-sub>.relay.localhost — so the cert needs a
+  // the guest reaches them at <provider-sub>.relay.localhost -- so the cert needs a
   // two-label base (a single-label wildcard like *.localhost is rejected).
   const { caCertPem, serverCertPem, serverKeyPem } = await generateLocalhostTlsCert({
     extraDnsSans: ["relay.localhost", "*.relay.localhost"],
@@ -312,7 +312,7 @@ Deno.test({
   const relayUrl = `http://localhost:${relayPort}`;
   log.info("relay", { port: relayPort });
 
-  // 1d. Fetch interceptor (plc.directory → local PLC, *.localhost → local dispatcher)
+  // 1d. Fetch interceptor (plc.directory -> local PLC, *.localhost -> local dispatcher)
   const { installFetchInterceptor } = await import("./fetch-interceptor.ts");
   const restoreFetch = installFetchInterceptor({
     realFetch: globalThis.fetch,
@@ -322,7 +322,7 @@ Deno.test({
   cleanups.push(restoreFetch);
 
   try {
-    // ── 2. Create OAuth-enabled PDS with PLC support + JSON firehose ──────
+    // -- 2. Create OAuth-enabled PDS with PLC support + JSON firehose ------
     const pdsKp = await Secp256k1Keypair.create({ exportable: true });
     const pdsPortPromise = Promise.withResolvers<number>();
     const pdsAc = new AbortController();
@@ -347,7 +347,7 @@ Deno.test({
     pdsOpts.publicHostname = `127.0.0.1:${pdsPort}`;
     log.info("pds", { url: pdsUrl });
 
-    // ── 3. Create bidder + requester accounts ──────────────────────────────
+    // -- 3. Create bidder + requester accounts ------------------------------
     // createAccount derives did:plc per spec and publishes a genesis op whose
     // atproto_pds endpoint points at this PDS, so DID resolution finds the repo.
     const bidderAcct = await createAccount(pdsUrl, "bidder");
@@ -357,7 +357,7 @@ Deno.test({
     assert(bidderAcct.did?.startsWith("did:plc:"), `bidder must get did:plc, got ${bidderAcct.did}`);
     assert(requesterAcct.did?.startsWith("did:plc:"), `requester must get did:plc, got ${requesterAcct.did}`);
 
-    // ── 4. Inject OAuth sessions ───────────────────────────────────────────
+    // -- 4. Inject OAuth sessions -------------------------------------------
     const inj: SessionInjector = pds.sessionInjector!; assert(inj);
 
     const bidderInj = await inj.injectSession({ userDid: bidderAcct.did, handle: "bidder" });
@@ -368,7 +368,7 @@ Deno.test({
     requesterInj.sessionData.pds = pdsUrl;
     log.info("injected", { role: "requester", did: requesterAcct.did });
 
-    // ── 5. Create tangled-vouch records ────────────────────────────────────
+    // -- 5. Create tangled-vouch records ------------------------------------
     // Vouch records use rkey = vouchee DID (required by VouchResolver).
     // Mutual vouch: bidder vouches for requester, requester vouches for bidder.
     await createRecordDpop(pdsUrl, bidderInj.sessionData, bidderAcct.did, VOUCH_NSID, requesterAcct.did, {
@@ -396,7 +396,7 @@ Deno.test({
     });
     log.info("badgeBlueKeys", { requester: requesterAcct.did, bidder: bidderAcct.did });
 
-    // ── 6. Write session files ─────────────────────────────────────────────
+    // -- 6. Write session files ---------------------------------------------
     const bidderTmp = await Deno.makeTempDir({ prefix: "oas-bidder-" });
     const bidderSessionFile = `${bidderTmp}/session.json`;
     await Deno.writeTextFile(bidderSessionFile, JSON.stringify(bidderInj.sessionData, null, 2));
@@ -405,7 +405,7 @@ Deno.test({
     const requesterSessionFile = `${requesterTmp}/session.json`;
     await Deno.writeTextFile(requesterSessionFile, JSON.stringify(requesterInj.sessionData, null, 2));
 
-    // ── 7. Relay crawls PDS ────────────────────────────────────────────────
+    // -- 7. Relay crawls PDS ------------------------------------------------
     const crawlRes = await fetch(`${relayUrl}/xrpc/com.atproto.sync.requestCrawl`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -413,8 +413,8 @@ Deno.test({
     });
     log.info("crawl", { status: crawlRes.status, ok: crawlRes.ok });
 
-    // ── 8. Spawn bidder subprocess ─────────────────────────────────────────
-    // Single firehose source (relay) — avoid duplicate relayUrl instances.
+    // -- 8. Spawn bidder subprocess -----------------------------------------
+    // Single firehose source (relay) -- avoid duplicate relayUrl instances.
     const bidderArgs = [
       "run", "-A", "--unstable-kv", `${ORG}/atproto-market/hono-bidder/mod.ts`,
       "--atproto-oauth-qr", "--oauth-session-file", bidderSessionFile,
@@ -424,7 +424,7 @@ Deno.test({
       "--plc-directory-url", plcDirectoryUrl,
       "--ingress-proxy-host", ingressProxyHost,
       "--compute-provider-local",
-      "--policy-mode", "tangled-vouch",
+      "--policy", "tangled-vouch",
       "--no-ingress-proxy",
       "--serve-port", "0",
       // The guest proves its SSH host key to the provider's OIDC issuer over
@@ -452,7 +452,7 @@ Deno.test({
     const guestContainers = new Set<string>();
     const bidderReady = Promise.withResolvers<void>();
 
-    // Stream subprocess output as it arrives — the bidder keeps logging (bids,
+    // Stream subprocess output as it arrives -- the bidder keeps logging (bids,
     // provisioning, failures) long after bidder_ready, and buffering to print
     // later drops exactly the lines that explain a failure.
     const readBidder = async (r: ReadableStreamDefaultReader<Uint8Array>, label: string) => {
@@ -500,7 +500,7 @@ Deno.test({
     assert(bidderDid.startsWith("did:plc:"), `bidder_ready must carry a did:plc, got ${bidderDid}`);
     log.info("bidder_ready", { did: bidderDid, ingressRef: bidderIngressRef });
 
-    // ── 9. Spawn requester subprocess ──────────────────────────────────────
+    // -- 9. Spawn requester subprocess --------------------------------------
     const requesterArgs = [
       "run", "-A", "--unstable-kv", `${ORG}/atproto-market/request-vm-ssh/mod.ts`,
       "--atproto-oauth-qr", "--oauth-session-file", requesterSessionFile,
@@ -510,16 +510,16 @@ Deno.test({
       "--relay-url", relayUrl,
       "--plc-directory-url", plcDirectoryUrl,
       "--ingress-proxy-host", ingressProxyHost,
-      "--policy-mode", "tangled-vouch",
+      "--policy", "tangled-vouch",
       "--no-ingress-proxy",
       "--skip-rbac",
-      // The guest's "localhost" is its own loopback — point relay.localhost at the
+      // The guest's "localhost" is its own loopback -- point relay.localhost at the
       // container gateway so the tunnel subscriber can reach this dispatcher.
       "--guest-host-aliases", `${gateway} relay.localhost`,
       "--exec", "echo SSH_OK && cat /etc/hostname",
       // Bids arrive over the firehose within milliseconds; the window only has to
       // cover firehose propagation, not human latency.
-      "--bid-window-sec", "20",
+      "--policy-args", JSON.stringify({ bidWindowSec: 20 }),
       "--vm-ready-timeout-sec", "180",
       // No --keep-vm: teardown is part of the contract. The requester must issue a
       // signed vm.delete event and the bidder must destroy the guest, otherwise
@@ -560,7 +560,7 @@ Deno.test({
           requesterBuffer.push(`[${label}] ${line}`);
           console.error(`[${label}] ${line}`);
 
-          // SSH_OK only counts as guest shell output — a structured log line that
+          // SSH_OK only counts as guest shell output -- a structured log line that
           // merely quotes the exec program back at us is not proof of a session.
           if (line.includes("SSH_OK") && !line.includes('"message":')) sshOutput = line;
 
@@ -593,7 +593,7 @@ Deno.test({
     clearTimeout(requesterTimeout);
     try { requesterChild.kill("SIGTERM"); } catch { /*ok*/ }
 
-    // ── 10. Assert ──────────────────────────────────────────────────────────
+    // -- 10. Assert ----------------------------------------------------------
     // The point of this test is that the whole contract flow completes over the
     // firehose and yields a real shell on the guest. None of these are optional:
     // a run that provisions nothing must fail, not report a partial pass.
@@ -605,21 +605,21 @@ Deno.test({
 
     assert(contractResult, "requester must emit a contract result");
 
-    // Discovery happened over the firehose — the reason this test exists.
+    // Discovery happened over the firehose -- the reason this test exists.
     assert(sawFirehoseBid, "bid must be discovered over the firehose (firehose_bid_discovered)");
     assert(contractResult.winnerDid === bidderDid, `winner must be the bidder ${bidderDid}, got ${contractResult.winnerDid}`);
 
     // Contract chain settled.
     assert(contractResult.receiptOk === true, `receipt must verify, got ${contractResult.receiptOk}`);
 
-    // SSH into the guest over the relay tunnel — the payload of the whole flow.
+    // SSH into the guest over the relay tunnel -- the payload of the whole flow.
     assert(contractResult.sshReady === true, `guest SSH must become ready, got ${contractResult.sshReady}`);
     assert(contractResult.sshExitCode === 0, `SSH exec must exit 0, got ${contractResult.sshExitCode}`);
     assert(sshOutput.includes("SSH_OK"), "guest must return SSH_OK shell output over the relay");
 
     // Teardown is the last leg of the contract: the requester issues a signed
     // vm.delete event and the bidder must destroy the guest. Give the bidder a
-    // moment — the event is submitted in the background and answered 200 first.
+    // moment -- the event is submitted in the background and answered 200 first.
     const destroyed = await (async () => {
       const deadline = Date.now() + 60_000;
       while (Date.now() < deadline) {
@@ -637,14 +637,14 @@ Deno.test({
       try {
         const ip = await backend.inspectIp(name);
         if (ip) stillRunning.push(name);
-      } catch { /* gone — what we want */ }
+      } catch { /* gone -- what we want */ }
     }
     assert(
       stillRunning.length === 0,
       `guest container(s) still running after vm.delete: ${stillRunning.join(", ")}`,
     );
 
-    log.info("PASS — SSH_OK from guest VM over relay, discovered via firehose; guest destroyed", {
+    log.info("PASS -- SSH_OK from guest VM over relay, discovered via firehose; guest destroyed", {
       guestContainers: [...guestContainers],
     });
 

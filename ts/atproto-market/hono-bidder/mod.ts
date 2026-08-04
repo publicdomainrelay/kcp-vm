@@ -1,5 +1,5 @@
 import { Command } from "@publicdomainrelay/cli-args-env";
-import { isValidPolicyMode, type PolicyMode } from "@publicdomainrelay/market-policy-abc";
+import { parsePolicyArgs } from "@publicdomainrelay/market-policy-abc";
 import { createLogger } from "@publicdomainrelay/logger";
 import { createServe } from "@publicdomainrelay/serve";
 import { createIngress } from "@publicdomainrelay/did-key-ingress-proxy";
@@ -42,7 +42,7 @@ if (privateKeyHexPath && !resolvedPrivateKeyHex) {
       resolvedPrivateKeyHex = content;
       logger.info("private_key_loaded_from_path", { path: privateKeyHexPath });
     }
-  } catch { /* file missing — will generate and save below */ }
+  } catch { /* file missing -- will generate and save below */ }
 }
 
 const keypair = resolvedPrivateKeyHex
@@ -57,7 +57,7 @@ const privateKeyHex = resolvedPrivateKeyHex ??
 const attestationKp = await loadOrGenerateKeypair(privateKeyHex);
 
 const ingressProxyHost = (options.ingressProxyHost as string) || "xrpc.fedproxy.com";
-// Set in OAuth QR path — bidder's did:plc (owns local keypair).
+// Set in OAuth QR path -- bidder's did:plc (owns local keypair).
 let oauthPlcDid: string | undefined;
 
 const plcDirectoryUrl = (options.plcDirectoryUrl as string) || "https://plc.directory";
@@ -65,7 +65,7 @@ const plcDirectoryUrl = (options.plcDirectoryUrl as string) || "https://plc.dire
 // Auto-detect local dev: *.localhost isn't in DNS.  If the dispatcher is
 // reachable at a local host, patch fetch so the bidder can resolve the
 // requester's PDS endpoints (also on *.localhost) through the relay.
-// Also patches plc.directory → local PLC when plcDirectoryUrl is local.
+// Also patches plc.directory -> local PLC when plcDirectoryUrl is local.
 const isLocalDev = ingressProxyHost.includes("localhost") || ingressProxyHost.startsWith("127.");
 const patchPort = ingressProxyHost.includes(":") ? ingressProxyHost.split(":").pop()! : "80";
 const _plcHost = (() => { try { return new URL(plcDirectoryUrl).hostname; } catch { return plcDirectoryUrl; } })();
@@ -98,7 +98,7 @@ if (isLocalDev || isLocalPlc) {
 async function cliCreateIngress() {
   const relayKeypair = await Secp256k1Keypair.create({ exportable: true });
   // Service auth JWTs use the local keypair (owns bidder's did:plc).
-  // OAuth QR mode: atproto.did is the user's Bluesky DID — use oauthPlcDid instead.
+  // OAuth QR mode: atproto.did is the user's Bluesky DID -- use oauthPlcDid instead.
   const bidderDid = oauthPlcDid ?? atproto.did;
   const localSigner = {
     did: () => bidderDid,
@@ -107,7 +107,7 @@ async function cliCreateIngress() {
   return createIngress({ logger, ingressProxyHost, signer: localSigner, keypair: relayKeypair });
 }
 
-// Full OAuth scope — single source of truth for registered + loopback clients.
+// Full OAuth scope -- single source of truth for registered + loopback clients.
 // Matches did-key-associator/oauth-client-metadata.json canonical list.
 const OAUTH_SCOPE_FULL = [
   "atproto",
@@ -140,7 +140,7 @@ let atprotoAgent: any;
 let pdsHostname: string | undefined;
 let isLocal = false;
 let isOAuth = false;
-const AUTO_REFRESH_THRESHOLD_MS = 3_600_000; // 1 hour — proactively refresh access token before it expires
+const AUTO_REFRESH_THRESHOLD_MS = 3_600_000; // 1 hour -- proactively refresh access token before it expires
 
 function createSessionExpiredHandler(label: string) {
   return (err: OAuthSessionExpiredError) => {
@@ -164,7 +164,7 @@ if ((options.atprotoOauth as boolean)) {
     logger.error("--atproto-oauth requires --atproto-handle");
     Deno.exit(1);
   }
-  // OAuth flow — use remote PDS via ATProto OAuth
+  // OAuth flow -- use remote PDS via ATProto OAuth
   const sessionPath = options.oauthSessionPath as string;
   const oauthAgent = await createOAuthAgent({
     handle: options.atprotoHandle as string,
@@ -206,7 +206,7 @@ if ((options.atprotoOauth as boolean)) {
   // In OAuth mode, the PDS hostname is the PDS from the session (not used for requestCrawl)
   pdsHostname = undefined;
 } else if ((options.atprotoOauthQr as boolean)) {
-  // QR-based OAuth — scan with phone, session transferred via qr.fedfork.com
+  // QR-based OAuth -- scan with phone, session transferred via qr.fedfork.com
   // Register DID on PLC (needed for service auth JWT verification)
   const plcClient = createPlcDirectoryClient({ plcDirectoryUrl });
   const genesisOp = await createGenesisOp({
@@ -234,8 +234,8 @@ if ((options.atprotoOauth as boolean)) {
     logger, label: "bidder", handle: options.atprotoHandle as string | undefined,
     sessionPath: options.oauthSessionFile as string | undefined,
     autoRefreshThresholdMs: AUTO_REFRESH_THRESHOLD_MS,
-    // No onSessionExpired here — restore handles expiry internally
-    // (delete file, return null → falls through to QR auth).
+    // No onSessionExpired here -- restore handles expiry internally
+    // (delete file, return null -> falls through to QR auth).
   });
   if (_restoredAgent) {
     atprotoAgent = _restoredAgent;
@@ -283,7 +283,7 @@ if ((options.atprotoOauth as boolean)) {
   }
 } else if ((options.atprotoHandle as string | undefined) && (options.atprotoPassword as string | undefined)) {
   const pdsStatePath = options.pdsStatePath as string | undefined;
-  // Relay-only: no TCP listener. associateConfirm arrives via relay →
+  // Relay-only: no TCP listener. associateConfirm arrives via relay ->
   // app.fetch programmatic. subscribeRepos firehose is wired via
   // directSubscriptionHandler (in-process callback, no loopback WS).
   const pdsServe = createServe({ logger });
@@ -343,7 +343,7 @@ if ((options.atprotoOauth as boolean)) {
     } while (cursor && !hasAssociation);
 
     if (hasAssociation) {
-      logger.info("existing_association_found", { did: atprotoAgent.did, hint: "skipping QR — prior association exists" });
+      logger.info("existing_association_found", { did: atprotoAgent.did, hint: "skipping QR -- prior association exists" });
     } else {
       const qrUrl = `https://qr.fedfork.com/#bdr=${atprotoAgent.did}`;
       logger.info("qr_url", { url: qrUrl });
@@ -382,6 +382,29 @@ const atproto = await createATProto({
   agent: atprotoAgent,
 });
 
+// Headless operator association: mint a bidder_associate badgeBlueKeys record
+// mapping this bidder to the operator DID that owns it. Mirrors exactly what
+// the QR associate flow writes (keyId=operator, challenge=self, service
+// "bidder_associate"); doing it before createMarketBidder means the boot-time
+// trust-cache refresh resolves operatorOf(selfDid)=associateWith, which is what
+// a "only-me" policy consults before admitting a bid.
+const associateWith = options.associateWith as string | undefined;
+if (associateWith) {
+  try {
+    const BADGE_BLUE_KEYS_NSID = "com.publicdomainrelay.temp.badgeBlueKeys";
+    await atproto.createRecord(BADGE_BLUE_KEYS_NSID, {
+      $type: BADGE_BLUE_KEYS_NSID,
+      keyId: associateWith,
+      challenge: atproto.did,
+      service: "bidder_associate",
+      createdAt: new Date().toISOString(),
+    });
+    logger.info("bidder_associated_with_operator", { operatorDid: associateWith, bidderDid: atproto.did });
+  } catch (err) {
+    logger.warn("bidder_associate_failed", { operatorDid: associateWith, error: String(err) });
+  }
+}
+
 const cliRelayUrl = (options.relayUrl as string) || "";
 
 const firehoseMode = (options.firehoseMode as string) || "off";
@@ -403,15 +426,30 @@ const eventStreams = createDefaultATProtoEventStreamsClient({
 // Collect relay URLs for PDS registration.
 const relayUrls = eventStreams.relays.map((r) => r.url);
 
+// Only http(s) relay ROOT URLs are valid requestCrawl targets. Firehose URLs
+// (wss://host/xrpc/.../subscribeRepos) added for event streaming are consumed
+// by the event-streams client, not by requestCrawl -- passing them here makes
+// fetch throw "Url scheme 'wss' not supported" and leaves the bidder with no
+// capable relay for PDS registration/visibility.
+const crawlRelayUrls = relayUrls.filter((u) => {
+  try {
+    const url = new URL(u);
+    return (url.protocol === "http:" || url.protocol === "https:") &&
+      (url.pathname === "/" || url.pathname === "");
+  } catch {
+    return false;
+  }
+});
+
 // Collect local relay URLs for deferred registration after serve starts.
-for (const url of relayUrls) {
+for (const url of crawlRelayUrls) {
   if (url.startsWith("http://127.0.0.1:") || url.startsWith("http://localhost:")) {
     _deferredRelayUrls.push(url);
   }
 }
 
 if (pdsHostname) {
-  for (const url of relayUrls) {
+  for (const url of crawlRelayUrls) {
     await Promise.race([
       atproto.requestCrawl(url, pdsHostname),
       new Promise<void>((r) => setTimeout(r, 5_000)),
@@ -442,7 +480,7 @@ if (privateKeyHexPath) {
 const providers: MarketBidderProviderRef[] = [];
 const serves: ReturnType<typeof createServe>[] = [];
 let localProviderEnsureImage: (() => Promise<void>) | undefined;
-// Shared accept→receipt map — created early so provider guest routes can use it.
+// Shared accept->receipt map -- created early so provider guest routes can use it.
 const acceptToContract = new Map<string, { receiptKey: string; receiptUri: string; receiptCid: string; submitEventUrl?: string }>();
 
 if (options.computeProviderDigitaloceanToken) {
@@ -526,7 +564,7 @@ const bidderServe = createServe({
   relays: bidderIngress ? [bidderIngress] : [],
 });
 
-// OAuth client metadata endpoint — serves registered-client metadata.
+// OAuth client metadata endpoint -- serves registered-client metadata.
 bidderServe.app.get("/oauth-client-metadata.json", (_c: { json(obj: Record<string, unknown>): Response }) => {
   return _c.json(oauthClientMetadata({
     clientId: options.oauthClientId as string | undefined,
@@ -536,15 +574,32 @@ bidderServe.app.get("/oauth-client-metadata.json", (_c: { json(obj: Record<strin
   }));
 });
 
-const policyModeRaw = options.policyMode as string | undefined;
-const policyMode = isValidPolicyMode(policyModeRaw) ? policyModeRaw : undefined;
+const policy = options.policy as string | undefined;
+let policyArgs: Record<string, unknown> = {};
+try {
+  policyArgs = parsePolicyArgs(options.policyArgs);
+  if (policy) {
+    const { createPolicyRegistry } = await import("@publicdomainrelay/market-policy-registry");
+    const { assertPolicyPerspective } = await import("@publicdomainrelay/market-policy-abc");
+    const known = createPolicyRegistry().get(policy);
+    if (known) assertPolicyPerspective(known, "bidder");
+  }
+} catch (err) {
+  console.error(`invalid --policy: ${err}`);
+  Deno.exit(2);
+}
 
 const bidder = await createMarketBidder({
   logger, atproto, providers, relay: bidderIngress,
   eventStreams,
   offeringRefreshMs: offeringRefreshSec > 0 ? offeringRefreshSec * 1000 : undefined,
   serve: bidderServe,
-  policyMode,
+  policy,
+  policyArgs,
+  policyExec: {
+    onlyRemote: options.onlyRemotePolicyExec as boolean | undefined,
+    allowUntrusted: options.allowUntrustedPolicyExec as boolean | undefined,
+  },
   onSessionExpired: isOAuth ? createSessionExpiredHandler("bidder") : undefined,
   acceptToContract,
 });
@@ -588,7 +643,7 @@ if (!options.skipQr) {
 }
 
 if (hasAssociation) {
-  logger.info("existing_association_found", { did: atproto.did, hint: "skipping QR — prior association exists" });
+  logger.info("existing_association_found", { did: atproto.did, hint: "skipping QR -- prior association exists" });
 }
 
 if (!options.skipQr && !hasAssociation) {
@@ -660,8 +715,8 @@ try {
 // Verify the offering is discoverable through at least one relay
 // that supports listReposByCollection. Probes each relay, then polls
 // capable ones until the bidder's DID appears or the poll budget expires.
-// Non-blocking on failure — bidder still boots, just warns.
-const _allRelayUrls = [...relayUrls, ..._deferredRelayUrls];
+// Non-blocking on failure -- bidder still boots, just warns.
+const _allRelayUrls = [...crawlRelayUrls, ..._deferredRelayUrls];
 const _visibilityHostname = pdsHostname ?? (_localServePort > 0 ? `127.0.0.1:${_localServePort}` : undefined);
 
 // Re-request crawl on ALL relays now that the offering record is committed.
@@ -669,7 +724,7 @@ const _visibilityHostname = pdsHostname ?? (_localServePort > 0 ? `127.0.0.1:${_
 // offering was created/corrected. Production relays need a second ping so they
 // re-subscribe and see the fresh offering commit.
 if (_visibilityHostname) {
-  for (const url of relayUrls) {
+  for (const url of crawlRelayUrls) {
     try {
       await atproto.requestCrawl(url, _visibilityHostname);
       logger.info("relay_reregistered_after_offering_refresh", { url, hostname: _visibilityHostname });

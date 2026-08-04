@@ -1,5 +1,5 @@
 // Shared fetch interception for local integration tests.
-// Handles plc.directory → local PLC redirect and https://*.localhost →
+// Handles plc.directory -> local PLC redirect and https://*.localhost ->
 // http://*:dispPort downgrade. The *.localhost DNS resolution is handled
 // transparently by the platform (macOS/Linux system resolver) or by
 // container-backend-docker (Windows raw HTTP interceptor).

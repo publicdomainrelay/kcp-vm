@@ -58,7 +58,7 @@ export function createBidFactory(deps: BidFactoryDeps) {
 
     // The signer-bound client signs the bid, writes it to our repo, and (when
     // the RFP carries a submitBid ref) forwards the attested copy. We hand it the
-    // unsigned body — there is no API here that could send an unsigned record.
+    // unsigned body -- there is no API here that could send an unsigned record.
     const market = getMarketClient();
     const submitBidRef = rfpRecord.submitBid;
     let bidRef;

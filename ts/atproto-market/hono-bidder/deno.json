@@ -2,7 +2,7 @@
   "version": "0.0.0",
   "license": "Unlicense",
   "imports": {
-    "@atproto/crypto": "npm:@atproto/crypto@^0.4.4",
+    "@atproto/crypto": "npm:@atproto/crypto@^0.5.0",
     "@publicdomainrelay/cli-args-env": "jsr:@publicdomainrelay/cli-args-env@^0",
     "@publicdomainrelay/atproto-helpers": "jsr:@publicdomainrelay/atproto-helpers@^0",
     "@publicdomainrelay/compute-provider-digitalocean": "jsr:@publicdomainrelay/compute-provider-digitalocean@^0",

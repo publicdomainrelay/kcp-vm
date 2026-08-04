@@ -1,4 +1,4 @@
-// Deno worker sandbox bidder callbacks — extracted from hono-factory-compute-bidder.
+// Deno worker sandbox bidder callbacks -- extracted from hono-factory-compute-bidder.
 // Handles workerManifest RFPs: registers manifest, creates instance, starts
 // worker on accept. No Hono, no route wiring. Separate from VM compute.
 
@@ -14,6 +14,8 @@ import type {
   SubmitAcceptCallback,
 } from "@publicdomainrelay/market-atproto";
 import type { RecordResolver } from "@publicdomainrelay/market-abc";
+import { nsidFromUri } from "@publicdomainrelay/market-abc";
+import { evaluateRfpPolicy } from "@publicdomainrelay/market-policy";
 import type {
   ActiveContract,
   CallbackFactoryDeps,
@@ -28,7 +30,6 @@ import {
   SUBMIT_BID_LXM,
   strongRef,
   type Logger,
-  type StrongRef,
 } from "@publicdomainrelay/market-common";
 import { createDenoComputeManifestStore, createDenoComputeInstanceStore, createDenoComputeInstanceRunner } from "@publicdomainrelay/compute-deno-atproto";
 import { createDenoBundler, createPersistentDenoWorker } from "@publicdomainrelay/sandbox-deno";
@@ -36,6 +37,12 @@ import type { ATProto } from "@publicdomainrelay/atproto-helpers";
 import type { StructuredLoggerInterface } from "@publicdomainrelay/logger";
 
 export interface WorkerBidderDeps {
+  /** How this bidder is willing to execute an RFP's attached policy. */
+  policyExec?: { onlyRemote?: boolean; allowUntrusted?: boolean };
+  /** Vouch/follow set lookup handed to locally executed policies. */
+  getVouchedDids?: (did: string) => Promise<Set<string>>;
+  /** Bidder DID -> operator DID, via bidder_associate records. */
+  resolveOperatorDid?: (bidderDid: string) => Promise<string | null>;
   did: string;
   attestationKp: AttestationKeypair;
   signer: { did(): string; sign(bytes: Uint8Array): Promise<Uint8Array> };
@@ -70,15 +77,29 @@ export function createWorkerBidderCallbacks(deps: WorkerBidderDeps): {
   const onRfp: SubmitRfpCallback = async ({ rfpUri, rfpCid, rfp, issuerDid, log: cbLog }) => {
     cbLog("info", "bidder received worker RFP", { rfpUri, rfpCid, issuerDid });
 
-    if (rfp.policy) {
-      const { evaluateRfpPolicy } = await import("@publicdomainrelay/market-policy");
+    // Evaluate each attached policy strongRef; first deny short-circuits.
+    // Absent/empty policies = no restriction -- open to all bidders.
+    const policyRefs = rfp.policies ?? [];
+    for (const policyRef of policyRefs) {
       const result = await evaluateRfpPolicy({
-        policyRef: rfp.policy as StrongRef,
+        policyRef,
         subjectDid: did,
         rootRequesterDid: issuerDid,
         counterpartyDid: issuerDid,
+        perspective: "bidder",
+        selfDid: did,
+        demand: (() => {
+          const payloadRef = rfp.payload as { uri: string; cid: string } | undefined;
+          return payloadRef
+            ? { rfpRef: { uri: rfpUri, cid: rfpCid }, payloadRef, payloadNsid: nsidFromUri(payloadRef.uri) }
+            : undefined;
+        })(),
         resolve: (ref) => resolve.resolve(ref),
         signer,
+        getVouchedDids: deps.getVouchedDids,
+        resolveOperatorDid: deps.resolveOperatorDid,
+        onlyRemotePolicyExec: deps.policyExec?.onlyRemote,
+        allowUntrustedPolicyExec: deps.policyExec?.allowUntrusted,
         log: (level, msg, meta) => cbLog(level as "info" | "warn" | "error", msg, meta),
       });
       if (!result.allow) {
@@ -251,7 +272,7 @@ export function createWorkerBidderCallbacks(deps: WorkerBidderDeps): {
   };
 
   // Worker contracts lack a termination path because there is no
-  // worker.delete lexicon yet. This is a known gap — not fixed now.
+  // worker.delete lexicon yet. This is a known gap -- not fixed now.
   return {
     rfp: {
       pdr_temp_market: { [WORKER_MANIFEST_NSID]: onRfp },
@@ -330,6 +351,9 @@ export function createWorkerProviderHooks(opts: {
         callService: deps.callService,
         resolve: deps.resolve,
         permissionPolicyHandler,
+        policyExec: deps.policyExec,
+        getVouchedDids: deps.getVouchedDids,
+        resolveOperatorDid: deps.resolveOperatorDid,
       });
       return { rfpCallbacks: w.rfp, onAccept: w.accept };
     },

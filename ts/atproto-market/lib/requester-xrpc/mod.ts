@@ -1,4 +1,4 @@
-// Compute requester implementation — PDS creation, contract flow orchestration,
+// Compute requester implementation -- PDS creation, contract flow orchestration,
 // SSH session management, websocat bootstrapping, relay-based bidder discovery.
 // All I/O lives here: fetch, Deno.Command, Deno.makeTempDir, WebSocket, crypto.
 
@@ -49,7 +49,8 @@ import {
   RELAYS_NSID,
 } from "@publicdomainrelay/market-common";
 import type { StrongRef } from "@publicdomainrelay/market-common";
-import { DYNAMIC } from "@publicdomainrelay/market-policy-abc";
+import { bidWindowSecOf, firstFreeOf } from "@publicdomainrelay/market-policy-abc";
+import { buildPolicyRecord, evaluateRfpPolicy } from "@publicdomainrelay/market-policy";
 import { buildDefaultUserData, patchDefaultUserData, buildTunnelUserData, flattenLabel, type CloudInitContext, type TunnelCloudInitContext } from "@publicdomainrelay/cloud-init-common";
 import {
   FEDPROXY_RBAC_NSID,
@@ -63,11 +64,13 @@ import type {
   ContractFlowResult,
   SshSessionProvider,
 } from "@publicdomainrelay/requester-abc";
+import { BidCollector, selectWinner, bidPayloadNsid } from "@publicdomainrelay/requester-abc";
 import type { LoggerInterface, StructuredLoggerInterface } from "@publicdomainrelay/logger";
 import type { ServeHandle, IngressRef } from "@publicdomainrelay/serve";
-import { ASSOCIATE_CONFIRM_NSID, BADGE_BLUE_KEYS_NSID } from "@publicdomainrelay/market-lexicons";
+import { ASSOCIATE_CONFIRM_NSID, BADGE_BLUE_KEYS_NSID, BIDS_FREE_NSID } from "@publicdomainrelay/market-lexicons";
 import { createTangledGraphVouchResolver } from "@publicdomainrelay/trust-graph-tangled-graph";
 import { createBadgeBlueKeysDelegatedTrustResolver } from "@publicdomainrelay/delegated-trust-badge-blue-keys";
+import { createBadgeBlueKeysOperatorDiscovery } from "@publicdomainrelay/operator-discovery-badge-blue-keys";
 import { verifyServiceAuth } from "@publicdomainrelay/market-atproto";
 
 // ---------------------------------------------------------------------------
@@ -115,7 +118,7 @@ export async function discoverBiddersFromRelay(opts: {
 
 /**
  * Query multiple atproto relays for bidders. Each relay failure is logged but
- * non-blocking — results from all successful relays are unioned.
+ * non-blocking -- results from all successful relays are unioned.
  */
 export async function discoverBiddersFromRelays(opts: {
   relayUrls: string[];
@@ -133,7 +136,7 @@ export async function discoverBiddersFromRelays(opts: {
 }
 
 /**
- * Relay visibility result — whether at least one relay that supports
+ * Relay visibility result -- whether at least one relay that supports
  * listReposByCollection has indexed the bidder's offering.
  */
 export interface RelayVisibilityResult {
@@ -152,7 +155,7 @@ export interface RelayVisibilityResult {
  * (200 = supported, 404 = skip), then polls capable relays until the bidder's
  * DID appears in the collection index or the poll budget expires.
  *
- * Does NOT call requestCrawl — registration is handled by the caller
+ * Does NOT call requestCrawl -- registration is handled by the caller
  * (hono-bidder's registerPdsWithRelay). This function runs after beginServe()
  * when the offering record exists in the PDS repo.
  */
@@ -268,7 +271,7 @@ export async function autoDiscoverRelayUrls(opts: {
 }
 
 // ---------------------------------------------------------------------------
-// createRequesterPDS — adapted from hono-bidder pattern + reference server.ts
+// createRequesterPDS -- adapted from hono-bidder pattern + reference server.ts
 // ---------------------------------------------------------------------------
 
 export async function createRequesterPDS(
@@ -281,7 +284,7 @@ export async function createRequesterPDS(
   const ingressProxyHost = opts.ingressProxyHost ?? "xrpc.fedproxy.com";
   const label = opts.label ?? "requester";
 
-  // ── keypair ──────────────────────────────────────────────────────────
+  // -- keypair ----------------------------------------------------------
 
   const keypair = privateKeyHex
     ? await Secp256k1Keypair.import(privateKeyHex)
@@ -290,11 +293,11 @@ export async function createRequesterPDS(
   const privateKeyHexFinal = privateKeyHex ||
     Array.from(await keypair.export()).map((b) => b.toString(16).padStart(2, "0")).join("");
 
-  // ── attestation keypair ───────────────────────────────────────────────
+  // -- attestation keypair -----------------------------------------------
 
   const attestationKp = await loadOrGenerateKeypair(privateKeyHexFinal);
 
-  // ── did:plc registration ─────────────────────────────────────────────
+  // -- did:plc registration ---------------------------------------------
 
   const plc = new PlcClient({ baseUrl: plcDirectoryUrl });
   const signingKeyDid = keypair.did();
@@ -343,18 +346,18 @@ export async function createRequesterPDS(
     }
   }
 
-  // ── signer ───────────────────────────────────────────────────────────
+  // -- signer -----------------------------------------------------------
 
   const signer: Signer = {
     did: () => did,
     sign: (bytes) => keypair.sign(bytes),
   };
 
-  // ── pending bids ─────────────────────────────────────────────────────
+  // -- pending bids -----------------------------------------------------
 
   const pendingBids: Map<string, CollectedBid[]> = new Map();
 
-  // ── contract state (vm identity tracking) ───────────────────────────
+  // -- contract state (vm identity tracking) ---------------------------
 
   interface ContractState {
     receiptUri: string;
@@ -365,7 +368,7 @@ export async function createRequesterPDS(
   }
   const activeContracts = new Map<string, ContractState>();
 
-  // ── association confirmation (webapp calls this before RFP) ─────────
+  // -- association confirmation (webapp calls this before RFP) ---------
   let resolveAssociateCalled: ((callerDid: string) => void) | null = null;
   const associateCalled = new Promise<string>((r) => { resolveAssociateCalled = r; });
   let resolveAssociationApproved: (() => void) | null = null;
@@ -375,7 +378,7 @@ export async function createRequesterPDS(
     rejectAssociationApproved = reject;
   });
 
-  // ── repo factory ─────────────────────────────────────────────────────
+  // -- repo factory -----------------------------------------------------
 
   const baseOrigin = `https://${keypair.did().replace(/:/g, "-").toLowerCase()}.${ingressProxyHost}`;
 
@@ -396,7 +399,7 @@ export async function createRequesterPDS(
     attestationKeyDid: attestationKp.did(),
   });
 
-  // ── request/response logging middleware ──────────────────────────────
+  // -- request/response logging middleware ------------------------------
 
   app.use("*", async (c: { req: { method: string; url: string }; res: { status: number; clone(): { text(): Promise<string> } } }, next: () => Promise<void>) => {
     const method = c.req.method;
@@ -409,14 +412,14 @@ export async function createRequesterPDS(
     logger.info(event, { method, path, status, durationMs, label });
   });
 
-  // ── relay (WS connect deferred to serve.beginServe -> relay.onServe) ──
+  // -- relay (WS connect deferred to serve.beginServe -> relay.onServe) --
 
   const skipIngress = opts.skipIngress ?? false;
   const relay = skipIngress
     ? { ingressRef: "", ingressUrl: "", ingressHost: "", close() {}, onServe: async () => {} } as IngressRef
     : createIngress({ logger, ingressProxyHost, signer, keypair, label });
 
-  // ── submitBid handler ────────────────────────────────────────────────
+  // -- submitBid handler ------------------------------------------------
 
   const idResolver = new IdResolver({ plcUrl: plcDirectoryUrl });
 
@@ -444,9 +447,9 @@ export async function createRequesterPDS(
   });
   app.post(`/xrpc/${SUBMIT_BID_NSID}`, (c: { req: { raw: Request } }) => bidHandler(c.req.raw));
 
-  // ── submitEvent handler ──────────────────────────────────────────────
+  // -- submitEvent handler ----------------------------------------------
 
-  // Mutable callback set by runComputeContract — resolves vmFqdnReady when
+  // Mutable callback set by runComputeContract -- resolves vmFqdnReady when
   // guest-side onNetwork event arrives via submitEvent XRPC.
   let onNetworkResolved: ((address: string) => void) | undefined;
 
@@ -486,7 +489,7 @@ export async function createRequesterPDS(
           logger.info("vm.onNetwork received", { receiptKey: `${evt.receipt.uri}#${evt.receipt.cid}` });
           // Resolve the wrapped onNetwork payload to extract the guest's FQDN
           // for SSH tunnel routing. Container IPs (bidder-side onNetwork) are
-          // skipped — only dispatcher FQDNs are usable as SSH ProxyCommand targets.
+          // skipped -- only dispatcher FQDNs are usable as SSH ProxyCommand targets.
           if (onNetworkResolved) {
             try {
               const payloadRef = evt.payload as { uri: string; cid: string } | undefined;
@@ -509,7 +512,7 @@ export async function createRequesterPDS(
   });
   app.post(`/xrpc/${SUBMIT_EVENT_NSID}`, (c) => submitEventHandler(c.req.raw));
 
-  // ── associateConfirm (webapp calls to confirm requester association) ──
+  // -- associateConfirm (webapp calls to confirm requester association) --
   app.post(`/xrpc/${ASSOCIATE_CONFIRM_NSID}`, async (c) => {
     const authHeader = c.req.header("Authorization");
     if (!authHeader) return c.json({ error: "Unauthorized" }, 401);
@@ -545,12 +548,12 @@ export async function createRequesterPDS(
     }
   });
 
-  // ── mount the repo app + relay on the shared serve handle ────────────
+  // -- mount the repo app + relay on the shared serve handle ------------
 
   serve.app.route("/", app as never);
   serve.addRelay(relay);
 
-  // ── helpers ──────────────────────────────────────────────────────────
+  // -- helpers ----------------------------------------------------------
 
   async function createRepoRecord(
     collection: string,
@@ -815,7 +818,7 @@ export async function ensureWebsocat(logger?: StructuredLoggerInterface): Promis
 }
 
 // ---------------------------------------------------------------------------
-// runComputeContract — adapted from reference server.ts
+// runComputeContract -- adapted from reference server.ts
 // ---------------------------------------------------------------------------
 
 export async function runComputeContract(
@@ -833,15 +836,17 @@ export async function runComputeContract(
   } = {},
 ): Promise<ContractFlowResult> {
   const vmName = opts.vmName ?? `compute-${randomHex8()}`;
-  const bidWindowSec = opts.bidWindowSec ?? 30;
+  const policySpec = opts.policy;
+  const policyArgs = policySpec?.args ?? {};
+  const bidWindowSec = bidWindowSecOf(policyArgs);
+  const firstFree = firstFreeOf(policyArgs);
   const skipSsh = opts.skipSsh ?? false;
   const execProgram = opts.execProgram ?? "bash";
   const keepVm = opts.keepVm ?? false;
   const vmReadyTimeoutSec = opts.vmReadyTimeoutSec ?? 300;
   const extraBidderDids = opts.extraBidderDids ?? [];
   const denyBidderDids = opts.denyBidderDids ?? [];
-  const policyMode = opts.policyMode;
-  const policyEngineEndpoint = opts.policyEngineEndpoint;
+  const policyEngine = opts.policyEngine;
   const sshProvider = opts.sshProvider ?? createSshSessionProvider(
     opts.logger,
     { proxyCommandFn: opts.sshProxyCommandFn },
@@ -850,7 +855,7 @@ export async function runComputeContract(
   const relayUrls = opts.relayUrls ?? (relayUrl ? [relayUrl] : []);
   const signer = opts.signer;
 
-  // Firehose watcher for ALL market collections — starts before RFP creation
+  // Firehose watcher for ALL market collections -- starts before RFP creation
   // so we don't miss bids/accepts/events. Active until VM deletion.
   const firehoseDiscoveredBids = new Map<string, CollectedBid[]>();
   const firehoseDiscoveredReceipts = new Map<string, { receiptUri: string; receiptCid: string; submitEventRef?: string }>();
@@ -862,7 +867,7 @@ export async function runComputeContract(
   const log = (event: string, extra: Record<string, unknown> = {}) =>
     logger ? logger.info(event, extra) : console.log(JSON.stringify({ event, ...extra }));
 
-  // Start firehose watcher BEFORE RFP creation — watch BID + ACCEPT + RECEIPT.
+  // Start firehose watcher BEFORE RFP creation -- watch BID + ACCEPT + RECEIPT.
   if (eventStreams) {
     const watched = [BID_NSID, EVENT_NSID, COMPUTE_EVENTS_VM_ONNETWORK_NSID, RECEIPT_NSID];
     bidWatcher = eventStreams.watch({
@@ -945,7 +950,7 @@ if (address && isFqdn && !vmFqdn) {
               const res = await fetch(recordUrl);
               const data = await res.json();
               const value = data.value as Record<string, unknown> | undefined;
-              // Extract address from onNetwork record → derive FQDN for SSH.
+              // Extract address from onNetwork record -> derive FQDN for SSH.
               const address = value?.address as string | undefined;
               if (address && typeof address === "string" && /[a-zA-Z]/.test(address) && !vmFqdn) {
                 vmFqdn = address;
@@ -1022,7 +1027,7 @@ if (address && isFqdn && !vmFqdn) {
   let privateKeyPath = "";
   let vmFqdn = "";
   const vmFqdnReady = Promise.withResolvers<string>();
-  // Wire guest-side onNetwork events (submitEvent) → vmFqdnReady.
+  // Wire guest-side onNetwork events (submitEvent) -> vmFqdnReady.
   if (pds.setOnNetworkResolved) {
     pds.setOnNetworkResolved((address: string) => {
       // Bidder-side onNetwork fires first with container IP (e.g. 192.168.x.x),
@@ -1048,7 +1053,7 @@ if (address && isFqdn && !vmFqdn) {
       hint: "FQDN will be discovered from vm.onNetwork event after guest tunnel subscriber registers",
     });
 
-    // Always use tunnel-subscriber (did-key-ingress-proxy) — never fedproxy-client.
+    // Always use tunnel-subscriber (did-key-ingress-proxy) -- never fedproxy-client.
     // Guest derives secp256k1 identity from sshd host key at boot via HKDF.
     // No private key material in cloud-init.
     const txCtx: TunnelCloudInitContext = {
@@ -1100,18 +1105,18 @@ runcmd:
     createdAt: new Date().toISOString(),
   };
 
-  // Attach fulfillment policy if a policyMode is set.
+  // Attach fulfillment policy if one was requested.
   let policyRef: { uri: string; cid: string } | undefined;
-  if (policyMode) {
+  if (policySpec) {
     try {
-      const { createPolicy } = await import("@publicdomainrelay/market-policy");
-      const policy = createPolicy(policyMode, { signer: pds.signer ?? signer });
-      if (policy) {
-        const policyRecord = policy.buildPolicyRecord(pds.did, policyEngineEndpoint as string | undefined);
-        policyRef = await pds.createRepoRecord(policy.policyNsid, policyRecord);
-        rfpRecord.policy = { $type: "com.atproto.repo.strongRef", uri: policyRef.uri, cid: policyRef.cid };
-        log("policy_attached", { policyMode, policyUri: policyRef.uri });
-      }
+      const { nsid, record } = buildPolicyRecord({
+        spec: policySpec,
+        requesterDid: pds.did,
+        policyEngine,
+      });
+      policyRef = await pds.createRepoRecord(nsid, record);
+      rfpRecord.policies = [{ $type: "com.atproto.repo.strongRef", uri: policyRef.uri, cid: policyRef.cid }];
+      log("policy_attached", { policy: policySpec.name, policyNsid: nsid, policyUris: [policyRef.uri] });
     } catch (err) {
       log("policy_create_error", { error: String(err) });
     }
@@ -1159,7 +1164,7 @@ runcmd:
     log("vouch_discovery_error", { error: String(err) });
   }
 
-  // 3b. Relay-based discovery (PRIMARY — relay IS the registry).
+  // 3b. Relay-based discovery (PRIMARY -- relay IS the registry).
   // Merge configured relayUrls + auto-discovered from $ATPROTO_DID.
   const autoRelayUrls = await autoDiscoverRelayUrls({ log: logger });
   const allRelayUrls = [...new Set([...relayUrls, ...autoRelayUrls])];
@@ -1218,28 +1223,134 @@ runcmd:
     }
   }));
 
-  // 5. Wait for bids.
-  log("waiting_for_bids", { bidWindowSec });
-  await new Promise<void>((resolve) => setTimeout(resolve, bidWindowSec * 1000));
+  // Evaluates the RFP's attached policy against one candidate bidder. Used both
+  // on the firstFree early-exit path and on the pre-accept check below, so a
+  // free bid from a policy-rejected bidder can never short circuit the window.
+  // Bridges a bidder DID to the operator DID that owns it by reading the
+  // bidder's own bidder_associate records. A bidder with no separate operator
+  // is its own operator.
+  const operatorDiscovery = createBadgeBlueKeysOperatorDiscovery({
+    listRecordsOwn: (collection) => listRecordsForPolicy(pds.did, collection),
+    listRecordsPublic: (repo, collection) => listRecordsPublic(idResolver, repo, collection),
+    log: (level, msg, meta) => log(`operator_discovery_${level}`, { msg, ...(meta ?? {}) }),
+  });
 
-  const bids = pds.pendingBids.get(rfpUri) ?? [];
-  pds.pendingBids.delete(rfpUri);
+  const resolveOperatorDid = async (bidderDid: string): Promise<string | null> => {
+    try {
+      const opDids = await operatorDiscovery.discoverOperatorDids(bidderDid);
+      if (opDids.length > 0) return opDids[0];
+    } catch (err) {
+      log("operator_did_resolution_failed", { bidderDid, error: String(err) });
+    }
+    return bidderDid;
+  };
 
-  // Merge firehose-discovered bids (deduped by URI).
-  const fhBids = firehoseDiscoveredBids.get(rfpUri) ?? [];
-  if (fhBids.length > 0) {
-    const xrpcCount = bids.length;
-    const existingUris = new Set(bids.map((b: CollectedBid) => b.uri));
-    for (const fb of fhBids) {
-      if (!existingUris.has(fb.uri)) {
-        bids.push(fb);
-        existingUris.add(fb.uri);
+  // Our own vouch records live in this process's PDS, which a public DID->PDS
+  // read cannot reach; anyone else's are read publicly.
+  // Our own records live on the user's real PDS when running under OAuth, and
+  // in this process's ephemeral PDS otherwise; anyone else's are read publicly.
+  const oauthAgent = (pds as unknown as Record<string, unknown>).oauthAgent as
+    | { listRecords(did: string, collection: string, opts?: { limit?: number }): Promise<{ records: Array<{ uri: string; cid: string; value: Record<string, unknown> }> }> }
+    | undefined;
+
+  const listRecordsForPolicy = async (repo: string, coll: string) => {
+    const merged = new Map<string, { uri: string; value: Record<string, unknown> }>();
+    if (repo === pds.did) {
+      for (const read of [
+        async () => (await oauthAgent?.listRecords(repo, coll, { limit: 100 }))?.records,
+        async () => (await (pds as RequesterPDSImpl).api.listRecords(repo, coll))?.records as
+          | Array<{ uri: string; value: Record<string, unknown> }>
+          | undefined,
+      ]) {
+        try {
+          for (const r of (await read()) ?? []) merged.set(r.uri, r);
+        } catch { /* try the next source */ }
       }
     }
-    log("firehose_bids_merged", { xrpcCount, firehoseNew: bids.length - xrpcCount, totalBids: bids.length });
+    try {
+      for (const r of await listRecordsPublic(idResolver, repo, coll)) merged.set(r.uri, r);
+    } catch { /* non-critical */ }
+    return [...merged.values()];
+  };
+
+  const policyVouchResolver = createTangledGraphVouchResolver({
+    listRecords: listRecordsForPolicy,
+    log: (level, msg, meta) => log(`policy_vouch_${level}`, { msg, ...(meta ?? {}) }),
+  });
+
+  // The bidder is the enforcement point for locally-evaluated policies: it
+  // holds the trust data (operator associations, vouch graph) the policy needs
+  // and refuses to bid when the policy denies. The requester re-checks only
+  // when it delegated evaluation to a policy engine, which is the one case
+  // where a second opinion is both meaningful and answerable from here.
+  const evaluateCandidate = async (candidate: CollectedBid) => {
+    if (!policyRef || !policyEngine) return { allow: true, violations: [] as Array<{ msg: string }> };
+    const candidateDid = candidate.did;
+    const payloadRef = candidate.record.payload as { uri: string; cid: string } | undefined;
+    return await evaluateRfpPolicy({
+      policyRef,
+      subjectDid: candidateDid,
+      rootRequesterDid: pds.did,
+      counterpartyDid: candidateDid,
+      perspective: "requester",
+      selfDid: pds.did,
+      offer: payloadRef
+        ? {
+          bidRef: { uri: candidate.uri, cid: candidate.cid },
+          payloadRef,
+          payloadNsid: bidPayloadNsid(candidate),
+        }
+        : undefined,
+      resolve: async (ref) => {
+        const resolver = createRecordResolver(idResolver);
+        return await resolver.resolve(ref as never);
+      },
+      resolveOperatorDid,
+      getVouchedDids: (did) => policyVouchResolver.getVouchedDids(did),
+      signer: pds.signer ?? signer,
+      onlyRemotePolicyExec: opts.onlyRemotePolicyExec,
+      allowUntrustedPolicyExec: opts.allowUntrustedPolicyExec,
+      log: (level, msg, meta) => log(`policy_eval_${level}`, { msg, ...(meta ?? {}) }),
+    });
+  };
+
+  // 5. Wait for bids. A policy carrying firstFree stops waiting as soon as a
+  // policy-allowed free bid lands; otherwise the full window elapses.
+  log("waiting_for_bids", { bidWindowSec, firstFree });
+
+  let earlyWinner: CollectedBid | undefined;
+  const collector = new BidCollector({
+    freeBidNsid: BIDS_FREE_NSID,
+    firstFree,
+    allow: async (bid) => (await evaluateCandidate(bid)).allow,
+    onEarlyWinner: (bid) => {
+      earlyWinner = bid;
+      log("first_free_winner", { uri: bid.uri, did: bid.did });
+    },
+  });
+
+  const collect = () => {
+    collector.addAll(pds.pendingBids.get(rfpUri) ?? []);
+    collector.addAll(firehoseDiscoveredBids.get(rfpUri) ?? []);
+  };
+
+  const windowElapsed = new Promise<void>((resolve) => setTimeout(resolve, bidWindowSec * 1000));
+  if (firstFree) {
+    const poller = setInterval(collect, 250);
+    try {
+      await Promise.race([windowElapsed, collector.earlyWinner.then(() => {})]);
+    } finally {
+      clearInterval(poller);
+    }
+  } else {
+    await windowElapsed;
   }
 
-  log("bids_collected", { count: bids.length });
+  collect();
+  pds.pendingBids.delete(rfpUri);
+  const bids = collector.all();
+
+  log("bids_collected", { count: bids.length, earlyExit: !!earlyWinner });
 
   if (bids.length === 0) {
     const result: ContractFlowResult = { event: "no_bids", error: `no bids received within ${bidWindowSec}s` };
@@ -1247,18 +1358,15 @@ runcmd:
     return result;
   }
 
-  // 6. Pick lowest-cost winner.
-  const winner = bids.reduce((best, b) => {
-    const cost = (n: CollectedBid) => Number((n.record.payload as Record<string, unknown> | undefined)?.cost ?? Infinity);
-    return cost(b) < cost(best) ? b : best;
-  }, bids[0]);
-  log("winner", { uri: winner.uri, did: winner.did });
+  // 6. Winner: the free bid that already cleared policy, else lowest cost.
+  const winner = earlyWinner ?? selectWinner(bids)!;
+  log("winner", { uri: winner.uri, did: winner.did, viaFirstFree: !!earlyWinner });
 
   // 6b. Authorize the VM to register its SSH host key. Resolve the winner's
   // bidConfig (wif.simple), then write a com.fedproxy.rbac record into our own
   // repo granting the VM (by wif subject) createRecord on com.fedproxy.sshPublicKey
   // for this VM's service name. The local PDS is served over the xrpc relay, so
-  // the booting VM reaches it through the relay and publishes its host key —
+  // the booting VM reaches it through the relay and publishes its host key --
   // exactly the reference compute-spa flow. Off unless opts.rbac (CLI default-on).
   if (opts.rbac && !skipSsh) {
     const bidConfigRef = (winner.record.config ?? winner.record.bidConfig) as { uri?: string; cid?: string } | undefined;
@@ -1291,21 +1399,10 @@ runcmd:
     }
   }
 
-  // 7. Evaluate policy against winner before accepting (policy_based only).
-  if (policyRef && policyMode === DYNAMIC) {
-    const { evaluateRfpPolicy } = await import("@publicdomainrelay/market-policy");
-    const evalResult = await evaluateRfpPolicy({
-      policyRef,
-      subjectDid: winner.did,
-      rootRequesterDid: pds.did,
-      counterpartyDid: winner.did,
-      resolve: async (ref) => {
-        const resolver = createRecordResolver(idResolver);
-        return await resolver.resolve(ref);
-      },
-      signer: pds.signer ?? signer,
-      log: (level, msg, meta) => log(`policy_eval_${level}`, { msg, ...(meta ?? {}) }),
-    });
+  // 7. Evaluate policy against the winner before accepting. Skipped when the
+  // winner came off the firstFree path -- it already cleared the same check.
+  if (policyRef && !earlyWinner) {
+    const evalResult = await evaluateCandidate(winner);
     if (!evalResult.allow) {
       log("policy_rejected", { violations: evalResult.violations, winnerDid: winner.did });
       const result: ContractFlowResult = {
@@ -1355,7 +1452,7 @@ runcmd:
   }
 
   // 8b. If no receipt from submitAccept XRPC, poll the shared firehose
-  // receipt Map (populated by the bidWatcher — same connections, no
+  // receipt Map (populated by the bidWatcher -- same connections, no
   // dedicated watcher). The bidWatcher already watches RECEIPT_NSID.
   if (!receiptUri && bidWatcher) {
     log("receipt_firehose_fallback", { acceptUri });
@@ -1438,7 +1535,7 @@ runcmd:
     }, vmReadyTimeoutSec * 1000);
     vmFqdn = await vmFqdnReady.promise;
     clearTimeout(fqdnTimeout);
-    // Firehose watcher can close now — FQDN discovered (or timed out).
+    // Firehose watcher can close now -- FQDN discovered (or timed out).
     bidWatcher?.close();
     if (!vmFqdn) {
       log("vm_fqdn_timeout", { timeoutSec: vmReadyTimeoutSec });
@@ -1506,7 +1603,7 @@ runcmd:
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// OAuth requester — lightweight RequesterPDS backed by OAuth agent
+// OAuth requester -- lightweight RequesterPDS backed by OAuth agent
 // ---------------------------------------------------------------------------
 
 export interface OAuthRequesterHandle {
@@ -1687,7 +1784,7 @@ async function listRecordsAll(
   collection: string,
   opts?: { limit?: number; timeoutMs?: number },
 ): Promise<Array<{ uri: string; cid: string; value: Record<string, unknown> }>> {
-  // Use the market-atproto listRecordsAll helper — import it above
+  // Use the market-atproto listRecordsAll helper -- import it above
   const { listRecordsAll: lra } = await import("@publicdomainrelay/market-atproto");
   return lra(pdsUrl, repo, collection, opts);
 }

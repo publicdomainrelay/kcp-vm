@@ -252,7 +252,7 @@ export interface CreateLocalPDSAgentOpts {
   serve: ServeHandle;
   plcDirectoryUrl: string;
   ingressProxyHost: string;
-  /** Dispatcher serves TLS (self-signed trusted via DENO_CERT) — use https/wss. */
+  /** Dispatcher serves TLS (self-signed trusted via DENO_CERT) -- use https/wss. */
   tls?: boolean;
   storagePath?: string;
   /** Service ID for associateConfirm route + DID doc. Default: "requester_associate". */
@@ -370,7 +370,7 @@ export async function createLocalPDSAgent(opts: CreateLocalPDSAgentOpts): Promis
   });
   serve.addRelay(xrpcRelay);
 
-  // ── association confirmation (webapp calls this when user scans QR) ──
+  // -- association confirmation (webapp calls this when user scans QR) --
   const idResolver = new IdResolver({ plcUrl: plcDirectoryUrl });
   let resolveAssociateCalled!: (callerDid: string) => void;
   const associateCalled = new Promise<string>((r) => { resolveAssociateCalled = r; });
@@ -481,22 +481,27 @@ export async function createRemoteAgent(opts: CreateRemoteAgentOpts): Promise<At
     async listRecords(repo: string, collection: string, opts?: { limit?: number }) {
       const all: Array<{ uri: string; cid: string; value: Record<string, unknown> }> = [];
       let cursor: string | undefined;
-      const limit = opts?.limit ?? 100;
+      // The PDS caps com.atproto.repo.listRecords at 100 per page. A caller may
+      // request more (e.g. limit: 200); send pages of ≤100 and paginate until the
+      // target is collected. Sending limit>100 verbatim makes the PDS 400 and the
+      // whole read silently comes back empty.
+      const target = opts?.limit ?? 100;
+      const pageLimit = Math.min(target, 100);
       do {
-        const res = await agent.com.atproto.repo.listRecords({ repo, collection, limit, cursor });
+        const res = await agent.com.atproto.repo.listRecords({ repo, collection, limit: pageLimit, cursor });
         for (const r of res.data.records) {
           all.push({ uri: r.uri, cid: r.cid ?? "", value: r.value as Record<string, unknown> });
         }
         cursor = res.data.cursor;
-        if (all.length >= limit) break;
+        if (all.length >= target) break;
       } while (cursor);
-      return { records: all.slice(0, limit) };
+      return { records: all.slice(0, target) };
     },
   };
 }
 
 // ---------------------------------------------------------------------------
-// OAuth agent — ATProto OAuth with @atproto/oauth-client
+// OAuth agent -- ATProto OAuth with @atproto/oauth-client
 // ---------------------------------------------------------------------------
 
 export interface CreateOAuthAgentOpts {
@@ -648,9 +653,11 @@ export async function createOAuthAgent(opts: CreateOAuthAgentOpts): Promise<OAut
       const s = await getSession();
       const all: Array<{ uri: string; cid: string; value: Record<string, unknown> }> = [];
       let cursor: string | undefined;
-      const limit = opts?.limit ?? 100;
+      // PDS caps listRecords at 100/page; paginate pages of ≤100 for a larger target.
+      const target = opts?.limit ?? 100;
+      const pageLimit = Math.min(target, 100);
       do {
-        const params = new URLSearchParams({ repo, collection, limit: String(limit) });
+        const params = new URLSearchParams({ repo, collection, limit: String(pageLimit) });
         if (cursor) params.set("cursor", cursor);
         const res = await s.fetchHandler(
           `${s.server.issuer}/xrpc/com.atproto.repo.listRecords?${params.toString()}`,
@@ -661,15 +668,15 @@ export async function createOAuthAgent(opts: CreateOAuthAgentOpts): Promise<OAut
           all.push({ uri: r.uri, cid: r.cid ?? "", value: r.value as Record<string, unknown> });
         }
         cursor = data.cursor;
-      } while (cursor);
-      return { records: all.slice(0, limit) };
+      } while (cursor && all.length < target);
+      return { records: all.slice(0, target) };
     },
   };
 
   return agent;
 }
 
-// ── QR-based OAuth: session transferred from browser ──────────────────────
+// -- QR-based OAuth: session transferred from browser ----------------------
 
 /**
  * OAuth session data returned by qr.fedfork.com after browser completes OAuth
@@ -746,7 +753,7 @@ export async function pollForOAuthSession(opts: {
   throw new Error("oauth-qr poll timed out waiting for session transfer");
 }
 
-// ── DPoP utilities (inline, same pattern as market-bidder-agent) ──────────
+// -- DPoP utilities (inline, same pattern as market-bidder-agent) ----------
 
 interface DpopKey {
   bareJwk: Record<string, string>;
@@ -924,7 +931,7 @@ interface OAuthAgentFromSessionOpts {
   autoRefreshThresholdMs?: number;
   /**
    * Called when the refresh token is rejected (consumed/revoked). The session
-   * is dead — delete the file and re-authenticate.
+   * is dead -- delete the file and re-authenticate.
    */
   onSessionExpired?: (err: OAuthSessionExpiredError) => void;
 }
@@ -962,7 +969,7 @@ export async function createOAuthAgentFromSession(
   function checkSession(): void {
     if (sessionExpired) {
       const err = new OAuthSessionExpiredError(
-        `OAuth session expired — refresh token already consumed. Delete session file and re-authenticate: ${sessionPath ?? "unknown path"}`,
+        `OAuth session expired -- refresh token already consumed. Delete session file and re-authenticate: ${sessionPath ?? "unknown path"}`,
         sessionPath,
       );
       onSessionExpired?.(err);
@@ -973,7 +980,7 @@ export async function createOAuthAgentFromSession(
   async function refreshTokens(): Promise<void> {
     checkSession();
 
-    // Resolve PDS → auth server for token endpoint
+    // Resolve PDS -> auth server for token endpoint
     const pdsUrl = sessionData.pds.replace(/\/+$/, "");
     const protRes = await fetch(`${pdsUrl}/.well-known/oauth-protected-resource`);
     if (!protRes.ok) throw new Error(`failed to fetch oauth-protected-resource: ${protRes.status}`);
@@ -1007,7 +1014,7 @@ export async function createOAuthAgentFromSession(
         sessionExpired = true;
         log?.error?.("oauth_qr_session_expired", { sessionPath, error: errText });
         const expiredErr = new OAuthSessionExpiredError(
-          `OAuth session expired — refresh token already consumed. Delete session file and re-authenticate: ${sessionPath ?? "unknown path"}`,
+          `OAuth session expired -- refresh token already consumed. Delete session file and re-authenticate: ${sessionPath ?? "unknown path"}`,
           sessionPath,
         );
         onSessionExpired?.(expiredErr);
@@ -1032,7 +1039,7 @@ export async function createOAuthAgentFromSession(
     log?.info?.("oauth_qr_tokens_refreshed", {});
   }
 
-  // ── Background token keepalive ──────────────────────────────────────
+  // -- Background token keepalive --------------------------------------
   // Proactively refresh the access token when its TTL drops below the
   // threshold. This keeps the refresh token fresh and prevents it from
   // going stale while the process is alive.
@@ -1143,7 +1150,7 @@ export async function createOAuthAgentFromSession(
       return { uri: data.uri, cid: data.cid ?? "", value: data.value };
     },
 
-    // Direct record CRUD — bypasses applyWrites Lexicon validation on
+    // Direct record CRUD -- bypasses applyWrites Lexicon validation on
     // remote PDSes that don't know our custom Lexicons.
     async createRecord(repo: string, collection: string, rkey: string, record: Record<string, unknown>) {
       const doCall = async (): Promise<Response> => dpopFetch(
@@ -1172,9 +1179,11 @@ export async function createOAuthAgentFromSession(
     async listRecords(repo: string, collection: string, opts?: { limit?: number }) {
       const all: Array<{ uri: string; cid: string; value: Record<string, unknown> }> = [];
       let cursor: string | undefined;
-      const limit = opts?.limit ?? 100;
+      // PDS caps listRecords at 100/page; paginate pages of ≤100 for a larger target.
+      const target = opts?.limit ?? 100;
+      const pageLimit = Math.min(target, 100);
       do {
-        const params = new URLSearchParams({ repo, collection, limit: String(limit) });
+        const params = new URLSearchParams({ repo, collection, limit: String(pageLimit) });
         if (cursor) params.set("cursor", cursor);
         const doCall = async (): Promise<Response> => dpopFetch(
           `${sessionData.pds.replace(/\/+$/, "")}/xrpc/com.atproto.repo.listRecords?${params.toString()}`,
@@ -1191,8 +1200,8 @@ export async function createOAuthAgentFromSession(
           all.push({ uri: r.uri, cid: r.cid ?? "", value: r.value as Record<string, unknown> });
         }
         cursor = data.cursor;
-      } while (cursor);
-      return { records: all.slice(0, limit) };
+      } while (cursor && all.length < target);
+      return { records: all.slice(0, target) };
     },
   };
 

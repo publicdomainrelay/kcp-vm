@@ -30,7 +30,7 @@ export type { AttestationKeypair };
 export type { InlineAttestation, KeyData, KeyResolver };
 
 // ---------------------------------------------------------------------------
-// bytes helpers — atproto stores `bytes` lexicon fields as { "$bytes": base64 };
+// bytes helpers -- atproto stores `bytes` lexicon fields as { "$bytes": base64 };
 // @atiproto signs/verifies over raw Uint8Array. These bridge the two forms.
 // ---------------------------------------------------------------------------
 
@@ -144,7 +144,7 @@ export type KeysForDid = (did: string) => Promise<string[]>;
  * Build a {@link KeysForDid} backed by @atiproto/key-resolver's DID-document
  * fetcher (did:web `/.well-known/did.json`, did:plc via the PLC directory). It
  * lists every verificationMethod's key as a did:key, so a verifier can require
- * an inline signature's `key` to be published by the signing party's DID — the
+ * an inline signature's `key` to be published by the signing party's DID -- the
  * createFetchKeyResolver way, with no PDS-side key registry record.
  */
 export function createDidKeyResolver(opts?: { plcUrl?: string; timeout?: number }): KeysForDid {

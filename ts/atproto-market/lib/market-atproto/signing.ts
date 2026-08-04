@@ -33,7 +33,7 @@ export interface RecordSigner {
   issuer?: string;
 }
 
-// A unique-symbol phantom brand. It exists only in the type system — nothing
+// A unique-symbol phantom brand. It exists only in the type system -- nothing
 // outside this module can name it, so nothing outside can synthesise a
 // Signed<T>. The real runtime guarantee is the `signatures` array (only
 // createSignedRecord attaches it); the brand makes that origin a compile-time fact.
@@ -42,7 +42,7 @@ declare const signedBrand: unique symbol;
 /**
  * A record that provably carries a network.attested inline signature by its
  * author. Obtainable only from {@link createSignedRecord}. Passing an unsigned
- * record where a `Signed<T>` is required is a *compile* error — turning "you
+ * record where a `Signed<T>` is required is a *compile* error -- turning "you
  * can't submit what you didn't sign" into a type-level invariant.
  */
 export type Signed<T extends Record<string, unknown> = Record<string, unknown>> =
@@ -55,7 +55,7 @@ export type Signed<T extends Record<string, unknown> = Record<string, unknown>> 
  * was written to the repo, paired with its `StrongRef`. The `cid` is the CID of
  * *these* bytes and `record` carries the matching `signatures`; they cannot
  * drift apart because one call produces both. Hand this straight to
- * {@link MarketClient.submitBid} / `submitEvent` — never re-assemble a
+ * {@link MarketClient.submitBid} / `submitEvent` -- never re-assemble a
  * `{ uri, cid, record }` triple by hand from a separately-held record.
  */
 export interface SignedRecord<T extends Record<string, unknown> = Record<string, unknown>> extends StrongRef {

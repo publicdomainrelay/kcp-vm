@@ -43,7 +43,7 @@ export function normalizeSignature(
     s = (s << 8n) | BigInt(signature[32 + i]);
   }
 
-  // s is already in low-S form — return a copy.
+  // s is already in low-S form -- return a copy.
   if (s <= halfN) {
     return new Uint8Array(signature);
   }

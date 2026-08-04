@@ -1,4 +1,4 @@
-// VM compute bidder callbacks — extracted from hono-factory-compute-bidder.
+// VM compute bidder callbacks -- extracted from hono-factory-compute-bidder.
 // Handles compute.vm RFPs: creates bid config, provisions VM on accept,
 // destroys VM on vm.delete event. No Hono, no route wiring.
 
@@ -19,6 +19,8 @@ import {
   type EventDispatchContext,
 } from "@publicdomainrelay/market-atproto";
 import type { RecordResolver } from "@publicdomainrelay/market-abc";
+import { nsidFromUri } from "@publicdomainrelay/market-abc";
+import { evaluateRfpPolicy } from "@publicdomainrelay/market-policy";
 import type {
   ActiveContract,
   CallbackFactoryDeps,
@@ -36,11 +38,16 @@ import {
   SUBMIT_EVENT_LXM,
   strongRef,
   type Logger,
-  type StrongRef,
 } from "@publicdomainrelay/market-common";
 import { COMPUTE_VM_NSID, COMPUTE_EVENTS_VM_DELETE_NSID, COMPUTE_EVENTS_VM_ONNETWORK_NSID } from "@publicdomainrelay/market-common";
 
 export interface VmBidderDeps {
+  /** How this bidder is willing to execute an RFP's attached policy. */
+  policyExec?: { onlyRemote?: boolean; allowUntrusted?: boolean };
+  /** Vouch/follow set lookup handed to locally executed policies. */
+  getVouchedDids?: (did: string) => Promise<Set<string>>;
+  /** Bidder DID -> operator DID, via bidder_associate records. */
+  resolveOperatorDid?: (bidderDid: string) => Promise<string | null>;
   did: string;
   attestationKp: AttestationKeypair;
   signer: { did(): string; sign(bytes: Uint8Array): Promise<Uint8Array> };
@@ -77,15 +84,29 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
   const onRfp: SubmitRfpCallback = async ({ rfpUri, rfpCid, rfp, issuerDid, log: cbLog }) => {
     cbLog("info", "bidder received VM RFP", { rfpUri, rfpCid, issuerDid });
 
-    if (rfp.policy) {
-      const { evaluateRfpPolicy } = await import("@publicdomainrelay/market-policy");
+    // Evaluate each attached policy strongRef; first deny short-circuits.
+    // Absent/empty policies = no restriction -- open to all bidders.
+    const policyRefs = rfp.policies ?? [];
+    for (const policyRef of policyRefs) {
       const result = await evaluateRfpPolicy({
-        policyRef: rfp.policy as StrongRef,
+        policyRef,
         subjectDid: did,
         rootRequesterDid: issuerDid,
         counterpartyDid: issuerDid,
+        perspective: "bidder",
+        selfDid: did,
+        demand: (() => {
+          const payloadRef = rfp.payload as { uri: string; cid: string } | undefined;
+          return payloadRef
+            ? { rfpRef: { uri: rfpUri, cid: rfpCid }, payloadRef, payloadNsid: nsidFromUri(payloadRef.uri) }
+            : undefined;
+        })(),
         resolve: (ref) => resolve.resolve(ref),
         signer,
+        getVouchedDids: deps.getVouchedDids,
+        resolveOperatorDid: deps.resolveOperatorDid,
+        onlyRemotePolicyExec: deps.policyExec?.onlyRemote,
+        allowUntrustedPolicyExec: deps.policyExec?.allowUntrusted,
         log: (level, msg, meta) => cbLog(level as "info" | "warn" | "error", msg, meta),
       });
       if (!result.allow) {
@@ -175,11 +196,11 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
             }
           }
 
-          // Abort if bidConfig could not be resolved — provisioning
+          // Abort if bidConfig could not be resolved -- provisioning
           // would produce an incomplete accept.json that causes
           // fedproxy-client to fatal-exit inside the guest.
           if (!bidConfigResolved) {
-            cbLog("error", "aborting provision — bidConfig not resolved");
+            cbLog("error", "aborting provision -- bidConfig not resolved");
             return undefined;
           }
 
@@ -245,7 +266,7 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
     });
 
     onContractChange?.({ type: "accepted", key: rk, receiptUri, receiptCid, acceptAuthor: issuerDid, acceptedAt: nowIso });
-    // Populate accept→receipt map for guest event endpoint lookups
+    // Populate accept->receipt map for guest event endpoint lookups
     if (deps.acceptToContract) {
       deps.acceptToContract.set(refKey({ uri: acceptUri, cid: acceptCid }), {
         receiptKey: rk, receiptUri, receiptCid,
@@ -318,8 +339,8 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
     ctx.log("info", "submitEvent vm.delete", { receiptKey: rk, issuerDid: ctx.issuerDid });
 
     // Keyed by uri#cid at creation time, but the receipt record is re-written
-    // afterwards (remote proof), so its current CID — the one a requester reads
-    // back off the firehose — no longer matches. The URI identifies the contract;
+    // afterwards (remote proof), so its current CID -- the one a requester reads
+    // back off the firehose -- no longer matches. The URI identifies the contract;
     // authority is the acceptAuthor check below, not the CID.
     let contractKey: string | undefined = activeContracts.has(rk) ? rk : undefined;
     if (!contractKey) {
@@ -387,7 +408,7 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
         acceptAuthor: contract.acceptAuthor, acceptedAt: contract.acceptedAt!,
         terminatedAt: new Date().toISOString(), providerId,
       });
-      ctx.log("warn", "submitEvent: vm not deleted — contract kept for retry", {
+      ctx.log("warn", "submitEvent: vm not deleted -- contract kept for retry", {
         receiptKey: rk, remaining: activeContracts.size,
       });
     }
@@ -431,6 +452,9 @@ export function createComputeProviderHooks(opts: {
         callService: deps.callService,
         resolve: deps.resolve,
         acceptToContract: deps.acceptToContract,
+        policyExec: deps.policyExec,
+        getVouchedDids: deps.getVouchedDids,
+        resolveOperatorDid: deps.resolveOperatorDid,
       });
       return { rfpCallbacks: vm.rfp, onAccept: vm.accept, eventCallbacks: vm.event };
     },

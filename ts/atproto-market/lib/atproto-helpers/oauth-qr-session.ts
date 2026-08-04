@@ -1,4 +1,4 @@
-// OAuth QR session persistence — save/reload sessions across CLI restarts.
+// OAuth QR session persistence -- save/reload sessions across CLI restarts.
 import type { StructuredLoggerInterface } from "@publicdomainrelay/logger";
 import type { AtprotoAgentLike, OAuthSessionData } from "./agent.ts";
 import { createOAuthAgentFromSession, OAuthSessionExpiredError } from "./agent.ts";
@@ -25,7 +25,7 @@ export async function tryRestoreOAuthQRSession(opts: {
   logger?: StructuredLoggerInterface;
   sessionPath?: string;
   label?: string;
-  /** AT Protocol handle (e.g. "alice.bsky.social") — keys the cache file per account. */
+  /** AT Protocol handle (e.g. "alice.bsky.social") -- keys the cache file per account. */
   handle?: string;
   autoRefreshThresholdMs?: number;
   onSessionExpired?: (err: OAuthSessionExpiredError) => void;
@@ -69,7 +69,7 @@ export async function tryRestoreOAuthQRSession(opts: {
 /** Save an OAuth QR session to disk. Called after a successful transfer. */
 export async function saveOAuthQRSession(
   session: OAuthSessionData,
-  opts?: { sessionPath?: string; label?: string; /** AT Protocol handle — keys the cache file per account. */ handle?: string },
+  opts?: { sessionPath?: string; label?: string; /** AT Protocol handle -- keys the cache file per account. */ handle?: string },
 ): Promise<void> {
   const path = opts?.sessionPath ?? defaultSessionPath(opts?.label, opts?.handle);
   const dir = path.split("/").slice(0, -1).join("/");

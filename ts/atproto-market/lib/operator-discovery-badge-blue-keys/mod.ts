@@ -16,7 +16,21 @@ export function createBadgeBlueKeysOperatorDiscovery(opts: BadgeBlueKeysOperator
   const { listRecordsOwn, listRecordsPublic, log } = opts;
   const noopLog = () => {};
   const logFn = log ?? noopLog;
-  const cache = new Map<string, string[]>(); // atprotoDid → [operatorDids]
+  const cache = new Map<string, string[]>(); // atprotoDid -> [operatorDids]
+
+  // An operator association is a badgeBlueKeys record whose challenge is the
+  // subject's own DID and whose keyId is the operator. The service tag records
+  // which side minted it: bidders write bidder_associate, requesters write
+  // requester_associate. Both point at the same operator, so either resolves a
+  // subject's operator -- a bidder's operator from its bidder_associate, and a
+  // requester's operator from its requester_associate.
+  const keyIdOf = (v: Record<string, unknown>, subjectDid: string): string | undefined => {
+    if (v.challenge !== subjectDid) return undefined;
+    const service = v.service;
+    if (service !== "bidder_associate" && service !== "requester_associate") return undefined;
+    const keyId = v.keyId;
+    return typeof keyId === "string" && keyId.startsWith("did:") ? keyId : undefined;
+  };
 
   return {
     async discoverOperatorDids(atprotoDid: string): Promise<string[]> {
@@ -26,11 +40,8 @@ export function createBadgeBlueKeysOperatorDiscovery(opts: BadgeBlueKeysOperator
       try {
         const ownRecords = await listRecordsOwn(BADGE_BLUE_KEYS_NSID, { limit: 200 });
         for (const rec of ownRecords) {
-          const v = rec.value;
-          if (v.challenge === atprotoDid && v.service === "bidder_associate") {
-            const keyId = v.keyId as string | undefined;
-            if (keyId && keyId.startsWith("did:")) dids.push(keyId);
-          }
+          const keyId = keyIdOf(rec.value, atprotoDid);
+          if (keyId) dids.push(keyId);
         }
       } catch {
         // fall through to public read below
@@ -39,11 +50,8 @@ export function createBadgeBlueKeysOperatorDiscovery(opts: BadgeBlueKeysOperator
         try {
           const publicRecords = await listRecordsPublic(atprotoDid, BADGE_BLUE_KEYS_NSID);
           for (const r of publicRecords) {
-            const v = r.value;
-            if (v.challenge === atprotoDid && v.service === "bidder_associate") {
-              const keyId = v.keyId as string | undefined;
-              if (keyId && keyId.startsWith("did:")) dids.push(keyId);
-            }
+            const keyId = keyIdOf(r.value, atprotoDid);
+            if (keyId) dids.push(keyId);
           }
         } catch {
           // non-critical

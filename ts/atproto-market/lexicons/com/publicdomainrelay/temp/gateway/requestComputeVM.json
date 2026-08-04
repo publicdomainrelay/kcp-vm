@@ -20,11 +20,6 @@
               "type": "string",
               "description": "OpenSSH public key for root SSH access to the VM."
             },
-            "bidWindowSec": {
-              "type": "integer",
-              "default": 30,
-              "description": "Seconds to wait for bids before picking a winner."
-            },
             "vmReadyTimeoutSec": {
               "type": "integer",
               "description": "Seconds to wait for SSH readiness after provisioning."
@@ -44,10 +39,14 @@
               "default": true,
               "description": "Skip VM teardown after contract completion."
             },
-            "policyMode": {
+            "policy": {
+              "type": "ref",
+              "ref": "#policySpec",
+              "description": "Fulfillment policy to mint and attach to the RFP."
+            },
+            "policyEngine": {
               "type": "string",
-              "enum": ["only_me", "direct_network", "policy_based"],
-              "description": "Fulfillment policy mode for bidder selection."
+              "description": "DID of a remote policy engine. When set, the minted policy record is a com.publicdomainrelay.temp.market.policies.service instead of policies.builtin."
             },
             "extraBidderDids": {
               "type": "array",
@@ -77,14 +76,7 @@
             "rfpCid": { "type": "string", "format": "cid" },
             "bids": {
               "type": "array",
-              "items": {
-                "type": "object",
-                "properties": {
-                  "bidderDid": { "type": "string", "format": "did" },
-                  "bidUri": { "type": "string", "format": "at-uri" },
-                  "cost": { "type": "integer" }
-                }
-              }
+              "items": { "type": "ref", "ref": "#bidSummary" }
             },
             "error": { "type": "string" }
           }
@@ -96,6 +88,32 @@
         { "name": "NoBidders" },
         { "name": "ProvisioningFailed" }
       ]
+    },
+    "policySpec": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Registry name of the policy to run (for example only-me, tangled-vouch, mutuals)."
+        },
+        "description": {
+          "type": "string",
+          "description": "Human-readable description of what this policy admits."
+        },
+        "args": {
+          "type": "unknown",
+          "description": "Arguments passed to the policy. Well-known keys: bidWindowSec, firstFree."
+        }
+      }
+    },
+    "bidSummary": {
+      "type": "object",
+      "properties": {
+        "bidderDid": { "type": "string", "format": "did" },
+        "bidUri": { "type": "string", "format": "at-uri" },
+        "cost": { "type": "integer" }
+      }
     }
   }
 }

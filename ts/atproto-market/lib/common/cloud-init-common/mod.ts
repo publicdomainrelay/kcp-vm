@@ -26,8 +26,8 @@ export function flattenLabel(s: string): string {
  * Build the default cloud-config for a VM: OpenSSH reachable over WebSocket.
  *
  * sshd listens on 127.0.0.1:22 (loopback only). websocat bridges
- * ws-listen 127.0.0.1:8080 → tcp 127.0.0.1:22, and fedproxy-client fronts
- * :8080 — so an external SSH client tunnels through the relay over a WebSocket
+ * ws-listen 127.0.0.1:8080 -> tcp 127.0.0.1:22, and fedproxy-client fronts
+ * :8080 -- so an external SSH client tunnels through the relay over a WebSocket
  * (`ProxyCommand websocat --binary ws://<service>.fedproxy.com`). Root login is
  * key-only; the public key is injected by the requester, which holds the matching
  * private key.
@@ -36,7 +36,7 @@ export function buildDefaultUserData(ctx: CloudInitContext): string {
   const { vmName, didPlc, didPlcKey, relayHost, xrpcRelaySubdomain, sshAuthorizedKey } = ctx;
   const xrpcRelayFqdn = `${xrpcRelaySubdomain}.${relayHost}`;
   return `#cloud-config
-# Preserve apt sources baked into the image — prevents apt_configure from
+# Preserve apt sources baked into the image -- prevents apt_configure from
 # rewriting sources.list and running apt-get update on every boot.
 apt:
   preserve_sources_list: true
@@ -56,7 +56,7 @@ write_files:
     owner: root:root
     permissions: '0644'
     content: |
-      # sshd reachable through websocat→fedproxy tunnel (loopback) and direct TCP.
+      # sshd reachable through websocat->fedproxy tunnel (loopback) and direct TCP.
       ListenAddress 0.0.0.0
       PermitRootLogin prohibit-password
       PasswordAuthentication no
@@ -102,14 +102,14 @@ write_files:
     permissions: '0644'
     content: |
       [Unit]
-      Description=websocat ws→sshd bridge (fronted by fedproxy-client)
+      Description=websocat ws->sshd bridge (fronted by fedproxy-client)
       After=network-online.target sshd.service ssh.service
       Wants=network-online.target
 
       [Service]
       Type=simple
       User=root
-      # WebSocket listener on loopback :8080 → sshd on loopback :22.
+      # WebSocket listener on loopback :8080 -> sshd on loopback :22.
       # fedproxy-client (SERVICE=${vmName}, PORT=8080) forwards external WS here.
       ExecStart=/usr/local/bin/websocat --binary ws-l:127.0.0.1:8080 tcp:127.0.0.1:22
       Restart=always
@@ -204,7 +204,7 @@ function asArray(v: unknown): unknown[] {
  * cloud-config, instead of generating a fresh one. Same mechanism the
  * compute-providers use to patch user_data (injectAcceptBundle): parse the base
  * YAML, append our packages/write_files/runcmd, restringify. buildDefaultUserData
- * is the single source of truth for what we inject — its output is parsed and its
+ * is the single source of truth for what we inject -- its output is parsed and its
  * sections concatenated onto the base. Scalar toggles (disable_root, ssh_pwauth)
  * are forced to our key-only-root values. The base's own packages, files, and
  * commands are preserved.
@@ -264,7 +264,7 @@ export interface TunnelCloudInitContext {
  * Sibling of buildDefaultUserData that replaces the fedproxy-client transport
  * with the xrpc tunnel-subscriber. sshd listens on :22; the
  * subscriber dials the relay outbound, registers its DID subdomain, and bridges
- * raw relay tunnel bytes straight to sshd (no guest websocat — the subscriber
+ * raw relay tunnel bytes straight to sshd (no guest websocat -- the subscriber
  * speaks raw TCP). The agent is pulled at boot via `deno run jsr:` from the
  * local hono-jsr registry (Deno's JSR_URL override); `deno` is already on the
  * compute-provider runner image PATH.

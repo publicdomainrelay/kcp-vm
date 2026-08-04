@@ -10,17 +10,17 @@ const $nsid = 'com.publicdomainrelay.temp.market.bidderAssociation'
 
 export { $nsid }
 
-/** Reverse pointer from a bidder's repo to the operator's badgeBlueKeys record. */
+/** Reverse pointer from a bidder's repo to the operator's badgeBlueKeys record. Bridges the did:key to operator DID gap for vouch graph traversal. The associationProof strongRef MUST point to a valid badgeBlueKeys record where keyId matches this bidder's market did:key. */
 type Main = {
   $type: 'com.publicdomainrelay.temp.market.bidderAssociation'
 
   /**
-   * ATProto DID of the operator who created the badgeBlueKeys record.
+   * ATProto DID of the operator who created the badgeBlueKeys record associating this bidder's did:key with their account.
    */
   operatorDid: string
 
   /**
-   * Strong reference to the operator's badgeBlueKeys record that associates this bidder's did:key with the operator's DID.
+   * Strong reference to the operator's badgeBlueKeys record that associates this bidder's did:key with the operator's DID. The pointed-to record's keyId must match this bidder's market did:key.
    */
   associationProof: RepoStrongRef.Main
 
@@ -32,7 +32,7 @@ type Main = {
 
 export type { Main }
 
-/** Reverse pointer from a bidder's repo to the operator's badgeBlueKeys record. */
+/** Reverse pointer from a bidder's repo to the operator's badgeBlueKeys record. Bridges the did:key to operator DID gap for vouch graph traversal. The associationProof strongRef MUST point to a valid badgeBlueKeys record where keyId matches this bidder's market did:key. */
 const main = /*#__PURE__*/ l.record<'tid', Main>(
   'tid',
   $nsid,

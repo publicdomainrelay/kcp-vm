@@ -15,7 +15,7 @@ export const ACCEPT_NSID = "com.publicdomainrelay.temp.market.accept";
 export const RECEIPT_NSID = "com.publicdomainrelay.temp.market.receipt";
 export const EVENT_NSID = "com.publicdomainrelay.temp.market.event";
 export const OFFERING_NSID = "com.publicdomainrelay.temp.market.offering";
-// network.attested.* — shared attestation vocabulary (replaces the former
+// network.attested.* -- shared attestation vocabulary (replaces the former
 // com.publicdomainrelay.temp.market.attestation record + #inline/#signatures defs).
 export const NETWORK_ATTESTED_SIGNATURE_NSID = "network.attested.signature";
 export const NETWORK_ATTESTED_PROOF_NSID = "network.attested.proof";
@@ -42,11 +42,9 @@ export const BIDDER_DISCOVERY_NSID = "com.publicdomainrelay.temp.market.bidderDi
 export const RELAYS_NSID = "com.publicdomainrelay.temp.market.relays";
 export const ALLOWLIST_RBAC_DID_NSID = "com.publicdomainrelay.temp.auth.allowlist.rbacDid";
 export const BADGE_BLUE_KEYS_NSID = "com.publicdomainrelay.temp.badgeBlueKeys";
-export const POLICIES_ONLY_ME_NSID = "com.publicdomainrelay.temp.market.policies.only_me";
-export const POLICIES_DIRECT_NETWORK_NSID = "com.publicdomainrelay.temp.market.policies.direct_network";
-export const POLICIES_DIRECT_NETWORK_BSKY_MUTUAL_NSID = "com.publicdomainrelay.temp.market.policies.direct_network_bsky_mutual";
-export const POLICIES_WORKFLOW_GHA_NSID = "com.publicdomainrelay.temp.market.policies.workflow_gha";
-export const POLICIES_REMOTE_NSID = "com.publicdomainrelay.temp.market.policies.remote";
+export const POLICIES_BUILTIN_NSID = "com.publicdomainrelay.temp.market.policies.builtin";
+export const POLICIES_SERVICE_NSID = "com.publicdomainrelay.temp.market.policies.service";
+export const POLICIES_DENO_WORKER_NSID = "com.publicdomainrelay.temp.market.policies.denoWorker";
 export const MARKET_EVALUATE_POLICY_NSID = "com.publicdomainrelay.temp.market.evaluatePolicy";
 export const MARKET_EVALUATE_POLICY_LXM = MARKET_EVALUATE_POLICY_NSID;
 export const BIDDER_ASSOCIATION_NSID = "com.publicdomainrelay.temp.market.bidderAssociation";
@@ -63,3 +61,16 @@ export const COMPUTE_EVENTS_VM_STARTED_NSID = "com.publicdomainrelay.temp.comput
 export const COMPUTE_EVENTS_VM_REGISTER_IDENTITY_NSID = "com.publicdomainrelay.temp.compute.events.vm.registerIdentity";
 export const GUEST_ONNETWORK_NSID = "com.publicdomainrelay.temp.guest.onNetwork";
 export const GUEST_REGISTER_IDENTITY_NSID = "com.publicdomainrelay.temp.guest.registerIdentity";
+export const MARKET_POLICY_DESCRIBE_NSID = "com.publicdomainrelay.temp.market.policy.describe";
+export const MARKET_POLICY_DESCRIBE_LXM = MARKET_POLICY_DESCRIBE_NSID;
+
+export const MARKET_POLICY_CHECK_SCOPE_NSID = "com.publicdomainrelay.temp.market.policy.checkScope";
+export const MARKET_POLICY_CHECK_SCOPE_LXM = MARKET_POLICY_CHECK_SCOPE_NSID;
+export const MARKET_POLICY_HOST_RESOLVE_OPERATOR_NSID = "com.publicdomainrelay.temp.market.policy.host.resolveOperator";
+export const MARKET_POLICY_HOST_RESOLVE_OPERATOR_LXM = MARKET_POLICY_HOST_RESOLVE_OPERATOR_NSID;
+export const MARKET_POLICY_HOST_GET_VOUCHED_DIDS_NSID = "com.publicdomainrelay.temp.market.policy.host.getVouchedDids";
+export const MARKET_POLICY_HOST_GET_VOUCHED_DIDS_LXM = MARKET_POLICY_HOST_GET_VOUCHED_DIDS_NSID;
+export const MARKET_POLICY_HOST_GET_TRUST_SET_NSID = "com.publicdomainrelay.temp.market.policy.host.getTrustSet";
+export const MARKET_POLICY_HOST_GET_TRUST_SET_LXM = MARKET_POLICY_HOST_GET_TRUST_SET_NSID;
+export const MARKET_POLICY_HOST_GET_RECORD_NSID = "com.publicdomainrelay.temp.market.policy.host.getRecord";
+export const MARKET_POLICY_HOST_GET_RECORD_LXM = MARKET_POLICY_HOST_GET_RECORD_NSID;

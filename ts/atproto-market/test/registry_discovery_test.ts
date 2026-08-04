@@ -32,7 +32,7 @@ Deno.test({
 
   const cleanups: Array<() => void> = [];
 
-  // ── real atproto-relay (the market registry) on in-memory KV ──────────
+  // -- real atproto-relay (the market registry) on in-memory KV ----------
   const kv = await Deno.openKv(":memory:");
   cleanups.push(() => kv.close());
 
@@ -46,7 +46,7 @@ Deno.test({
   const relayPort = await relayPortReady;
   cleanups.push(() => relayCtl.abort());
 
-  // ── minimal fake PDS: describeServer + subscribeRepos firehose ────────
+  // -- minimal fake PDS: describeServer + subscribeRepos firehose --------
   const pds = new Hono();
   pds.get("/xrpc/com.atproto.server.describeServer", (c) =>
     c.json({
@@ -80,7 +80,7 @@ Deno.test({
   const pdsPort = await pdsPortReady;
   cleanups.push(() => pdsCtl.abort());
 
-  // ── fetch interception: https://reg.localhost -> local relay,
+  // -- fetch interception: https://reg.localhost -> local relay,
   // https://pds.localhost -> local fake PDS (downgrade scheme + add port).
   const realFetch = globalThis.fetch;
   const routes: Array<[string, number]> = [[relayHost, relayPort], [pdsHost, pdsPort]];
@@ -96,7 +96,7 @@ Deno.test({
   }) as typeof fetch;
   cleanups.push(() => { globalThis.fetch = realFetch; });
 
-  // ── WebSocket interception: wss://pds.localhost -> ws://127.0.0.1:pdsPort.
+  // -- WebSocket interception: wss://pds.localhost -> ws://127.0.0.1:pdsPort.
   const RealWS = globalThis.WebSocket;
   globalThis.WebSocket = class extends RealWS {
     constructor(url: string | URL, protocols?: string | string[]) {
@@ -110,7 +110,7 @@ Deno.test({
   cleanups.push(() => { globalThis.WebSocket = RealWS; });
 
   try {
-    // ── bidder registers its PDS with the relay ───────────────────────
+    // -- bidder registers its PDS with the relay -----------------------
     const relayUrl = `https://${relayHost}`;
     const res = await fetch(`${relayUrl}/xrpc/com.atproto.sync.requestCrawl`, {
       method: 'POST',
@@ -119,7 +119,7 @@ Deno.test({
     });
     assert(res.ok, `requestCrawl failed: HTTP ${res.status}`);
 
-    // ── crawl is async: poll until the offering collection indexes the DID ─
+    // -- crawl is async: poll until the offering collection indexes the DID -
     let found = false;
     for (let i = 0; i < 50 && !found; i++) {
       const res = await fetch(

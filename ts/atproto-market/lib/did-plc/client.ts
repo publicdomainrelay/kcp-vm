@@ -1,8 +1,8 @@
-// PLC Directory API client — thin wrapper around the @hey-api/openapi-ts
+// PLC Directory API client -- thin wrapper around the @hey-api/openapi-ts
 // generated HTTP client.
 //
 // In browsers the generated SDK functions (resolveDid, createPlcOp, etc.)
-// work fine — the browser's Request constructor silently ignores unknown
+// work fine -- the browser's Request constructor silently ignores unknown
 // RequestInit fields.
 //
 // In Deno the generated functions break: they spread the `client` option
@@ -10,8 +10,8 @@
 // because it expects a Deno.HttpClient, not an OpenAPI client object.
 //
 // We detect the runtime at module load and take the right path:
-//   Deno    → call this._client.{get,post}() directly (no client leak)
-//   Browser → use the generated SDK functions (full type safety)
+//   Deno    -> call this._client.{get,post}() directly (no client leak)
+//   Browser -> use the generated SDK functions (full type safety)
 
 import { createClient, createConfig } from "./generated/client/index.ts";
 import type { Client } from "./generated/client/index.ts";
@@ -37,7 +37,7 @@ export const PLC_DIRECTORY_URL = "https://plc.directory";
 // Deno exposes a global `Deno` namespace; browsers do not.
 const _isDeno = typeof (globalThis as Record<string, unknown>).Deno !== "undefined";
 
-// ── Error classes ─────────────────────────────────────────────────────
+// -- Error classes -----------------------------------------------------
 
 export class PlcError extends Error {
   constructor(
@@ -115,7 +115,7 @@ async function checkResponse(
   throw new PlcError(res.status, msg);
 }
 
-// ── Client options ─────────────────────────────────────────────────────
+// -- Client options -----------------------------------------------------
 
 export interface PlcClientOptions {
   /** PLC directory base URL. Defaults to https://plc.directory */
@@ -126,7 +126,7 @@ export interface PlcClientOptions {
   fetch?: typeof globalThis.fetch;
 }
 
-// ── Client class ───────────────────────────────────────────────────────
+// -- Client class -------------------------------------------------------
 
 export class PlcClient {
   private readonly baseUrl: string;
@@ -151,7 +151,7 @@ export class PlcClient {
     return this.timeout ? AbortSignal.timeout(this.timeout) : undefined;
   }
 
-  // ── Deno helpers (bypass generated SDK — see module doc) ──────────
+  // -- Deno helpers (bypass generated SDK -- see module doc) ----------
 
   /** GET a path, parse JSON, throw on error. */
   private async _denoGet<T>(path: string, did?: string): Promise<T> {
@@ -176,7 +176,7 @@ export class PlcClient {
     if (result.error) await checkResponse(result.response!, did, result.error);
   }
 
-  // ── public API ────────────────────────────────────────────────────
+  // -- public API ----------------------------------------------------
 
   /** Resolve DID Document for a did:plc identifier. */
   async resolve(did: string): Promise<DidDocument> {
@@ -265,7 +265,7 @@ export class PlcClient {
     if (result.error) await checkResponse(result.response!, did, result.error);
   }
 
-  /** Get server health / version. (Manual fetch — no generated type.) */
+  /** Get server health / version. (Manual fetch -- no generated type.) */
   async health(): Promise<HealthResponse> {
     const url = this.baseUrl + "/health";
     const res = await this._fetch(url, { signal: this.signal() });
@@ -311,7 +311,7 @@ export class PlcClient {
     });
     if (result.error) await checkResponse(result.response!, undefined, result.error);
     // The spec models export as a single LogEntry, but the server returns
-    // JSON Lines — an array of entries. Handle both shapes.
+    // JSON Lines -- an array of entries. Handle both shapes.
     const data = result.data as unknown;
     if (Array.isArray(data)) return data as LogEntry[];
     if (data && typeof data === "object") return [data as LogEntry];

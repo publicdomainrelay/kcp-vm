@@ -13,7 +13,6 @@ export interface CollectedBid {
 
 export interface ContractFlowOptions {
   vmName?: string;
-  bidWindowSec?: number;
   plcUrl?: string;
   /**
    * Extra `/etc/hosts` entries ("<ip> <name>") for the guest, so it can dial the
@@ -62,7 +61,7 @@ export interface ContractFlowOptions {
   /**
    * Caller-supplied base cloud-config (e.g. read from a --user-data file). When
    * set, the default websocat/fedproxy-client provisioning is patched into this
-   * base (patchDefaultUserData) rather than generating a fresh cloud-config —
+   * base (patchDefaultUserData) rather than generating a fresh cloud-config --
    * mirrors how compute-providers patch user_data. Ignored when userDataFactory
    * is set (that fully replaces the cloud-init).
    */
@@ -76,8 +75,17 @@ export interface ContractFlowOptions {
    */
   rbac?: boolean;
   appliesToNsid?: string;
-  policyMode?: import("@publicdomainrelay/market-policy-abc").PolicyMode;
-  policyEngineEndpoint?: string;
+  /**
+   * Fulfillment policy to mint and attach to the RFP. Its args carry the
+   * knobs that used to be separate flags -- bidWindowSec, firstFree.
+   */
+  policy?: import("@publicdomainrelay/market-policy-abc").PolicySpec;
+  /** DID of a remote policy engine. Set to mint a policies.service record. */
+  policyEngine?: string;
+  /** Refuse to evaluate any non-service policy record locally. */
+  onlyRemotePolicyExec?: boolean;
+  /** Permit policies.denoWorker records to run caller-supplied bundles. */
+  allowUntrustedPolicyExec?: boolean;
 }
 
 export interface PDSOptions {
@@ -131,7 +139,7 @@ export interface RequesterPDS {
   rejectAssociation(err: Error): void;
   /** Release storage resources (close Deno.Kv if using DenoKvStorage). */
   dispose(): Promise<void>;
-  /** iroh nodeId promise — resolves when guest publishes its identity via firehose. */
+  /** iroh nodeId promise -- resolves when guest publishes its identity via firehose. */
   irohNodeId?: Promise<string>;
   /** Resolve the iroh nodeId promise. No-op after first call. */
   resolveIrohNodeId?(nodeId: string): void;
@@ -169,4 +177,92 @@ export interface ContractFlowResult {
 export interface ConsoleBuffer {
   pause(): void;
   resume(): Promise<void>;
+}
+
+export function bidPayloadNsid(bid: CollectedBid): string {
+  const payload = bid.record.payload as { $type?: string; uri?: string } | undefined;
+  if (!payload) return "";
+  if (payload.$type && payload.$type !== "com.atproto.repo.strongRef") return payload.$type;
+  return payload.uri?.split("/")[3] ?? "";
+}
+
+export function bidCost(bid: CollectedBid): number {
+  const payload = bid.record.payload as Record<string, unknown> | undefined;
+  return Number(payload?.cost ?? Infinity);
+}
+
+export function selectWinner(bids: CollectedBid[]): CollectedBid | undefined {
+  if (bids.length === 0) return undefined;
+  return bids.reduce((best, b) => (bidCost(b) < bidCost(best) ? b : best), bids[0]);
+}
+
+export interface BidCollectorOptions {
+  /** NSID that marks a bid as free, e.g. com.publicdomainrelay.temp.market.bids.free */
+  freeBidNsid: string;
+  firstFree: boolean;
+  /**
+   * Policy gate for the early-exit path. A free bid only wins immediately if
+   * this resolves true, so a free bid from a rejected bidder never short
+   * circuits the window.
+   */
+  allow: (bid: CollectedBid) => Promise<boolean>;
+  onEarlyWinner?: (bid: CollectedBid) => void;
+}
+
+/**
+ * Pure bid accumulator. Dedupes by URI and, when firstFree is set, resolves
+ * earlyWinner as soon as a policy-allowed free bid arrives so the caller can
+ * stop waiting out the bid window.
+ */
+export class BidCollector {
+  readonly earlyWinner: Promise<CollectedBid>;
+  #resolveEarly!: (bid: CollectedBid) => void;
+  #seen = new Set<string>();
+  #bids: CollectedBid[] = [];
+  #settled = false;
+  #inflight = new Set<Promise<void>>();
+
+  constructor(readonly opts: BidCollectorOptions) {
+    const { promise, resolve } = Promise.withResolvers<CollectedBid>();
+    this.earlyWinner = promise;
+    this.#resolveEarly = resolve;
+  }
+
+  isFree(bid: CollectedBid): boolean {
+    return bidPayloadNsid(bid) === this.opts.freeBidNsid;
+  }
+
+  add(bid: CollectedBid): void {
+    if (this.#seen.has(bid.uri)) return;
+    this.#seen.add(bid.uri);
+    this.#bids.push(bid);
+
+    if (!this.opts.firstFree || this.#settled || !this.isFree(bid)) return;
+
+    const check = this.opts.allow(bid)
+      .then((ok) => {
+        if (!ok || this.#settled) return;
+        this.#settled = true;
+        this.opts.onEarlyWinner?.(bid);
+        this.#resolveEarly(bid);
+      })
+      .catch(() => {});
+    this.#inflight.add(check);
+    check.finally(() => this.#inflight.delete(check));
+  }
+
+  addAll(bids: CollectedBid[]): void {
+    for (const bid of bids) this.add(bid);
+  }
+
+  all(): CollectedBid[] {
+    return this.#bids;
+  }
+
+  /** Wait for any in-flight early-path policy checks to settle. */
+  async drain(): Promise<void> {
+    while (this.#inflight.size > 0) {
+      await Promise.allSettled([...this.#inflight]);
+    }
+  }
 }

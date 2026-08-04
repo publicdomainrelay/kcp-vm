@@ -75,9 +75,7 @@ export const $safeValidate = /*#__PURE__*/ main.safeValidate.bind(main)
 
 /** An attestation signatures array: inline network.attested.signature entries and/or strongRefs to remote network.attested.proof records. Always stripped from the record before attestation-CID computation, so attaching attestations never changes the signing payload. */
 type Signatures = (
-  | l.$Typed<Main>
-  | l.$Typed<RepoStrongRef.Main>
-  | l.Unknown$TypedObject
+  l.$Typed<Main> | l.$Typed<RepoStrongRef.Main> | l.Unknown$TypedObject
 )[]
 
 export type { Signatures }

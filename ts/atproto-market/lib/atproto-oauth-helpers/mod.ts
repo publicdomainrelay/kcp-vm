@@ -1,4 +1,4 @@
-// Shared OAuth helpers for @atproto/oauth-client — runtime, state store, session store.
+// Shared OAuth helpers for @atproto/oauth-client -- runtime, state store, session store.
 // Used by both bidder (createOAuthAgent) and requester (createOAuthRequester).
 
 import { createWebCryptoKey } from "./key.ts";

@@ -20,7 +20,7 @@ type Main = {
   accept: RepoStrongRef.Main
 
   /**
-   * badge.blue attestation CID over the referenced accepts.x402 record, making this receipt a remote attestation proof: computed from the accepts.x402 record (signatures stripped), this receipt's metadata (cid/signatures stripped, repository = requester's repo DID added) as $sig, via DAG-CBOR + SHA-256 + CIDv1. Re-binding the proof-of-payment to a copy of the accepts.x402 in another repository fails verification — badge.blue's replay-attack prevention applied to payment receipts.
+   * badge.blue attestation CID over the referenced accepts.x402 record, making this receipt a remote attestation proof: computed from the accepts.x402 record (signatures stripped), this receipt's metadata (cid/signatures stripped, repository = requester's repo DID added) as $sig, via DAG-CBOR + SHA-256 + CIDv1. Re-binding the proof-of-payment to a copy of the accepts.x402 in another repository fails verification -- badge.blue's replay-attack prevention applied to payment receipts.
    */
   cid: l.CidString
 

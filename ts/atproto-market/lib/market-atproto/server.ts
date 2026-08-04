@@ -1,7 +1,7 @@
 // Server-side handler factories for the market.* submit procedures.
 //
-// Each factory returns a framework-agnostic handler — `(req: Request) =>
-// Promise<Response>` using only web-standard types — so it runs unchanged on
+// Each factory returns a framework-agnostic handler -- `(req: Request) =>
+// Promise<Response>` using only web-standard types -- so it runs unchanged on
 // Deno.serve, Node (node:http via a tiny adapter), Hono, or anything else. The
 // factory owns the boilerplate every receiver shares (parse the JSON body,
 // verify the inter-service auth JWT, require the token issuer to be the author
@@ -70,14 +70,14 @@ export interface MarketServerDeps {
    * This service's public hostname (host of its did:web), used to build the
    * acceptable `aud` values for inbound service-auth tokens. Pass a string when
    * the service answers for a single did:web (the reference bidder). Pass a
-   * function when the host varies per request — e.g. a multi-tenant spindle that
+   * function when the host varies per request -- e.g. a multi-tenant spindle that
    * derives `did:web:<owner-subdomain>` from the inbound `Host` header.
    */
   hostname: string | ((req: Request) => string);
   /**
    * Extra DIDs (beyond the host-derived `did:web:HOST`) inbound tokens may target
    * in their `aud`. Set when this endpoint is advertised under a second identity
-   * — e.g. a relay whose submit* service is referenced in records as a
+   * -- e.g. a relay whose submit* service is referenced in records as a
    * `did:plc#service`, so the caller's PDS proxies to that did:plc and mints
    * `aud: did:plc`. Forwarded to {@link verifyMarketServiceAuth}.
    */
@@ -158,7 +158,7 @@ async function authorize(
 
 /**
  * Build the key resolver used for DID-document key binding verification.
- * Always enabled — every producer must publish its attestation key in its
+ * Always enabled -- every producer must publish its attestation key in its
  * DID document (PLC or did:web) via verificationMethod entries.
  */
 function keysForDidFrom(_deps: MarketServerDeps): KeysForDid {
@@ -391,7 +391,7 @@ export function createSubmitAcceptHandler(cfg: SubmitAcceptHandlerConfig): Handl
 }
 
 // ---------------------------------------------------------------------------
-// submitEvent — dispatches by serviceId -> payload NSID
+// submitEvent -- dispatches by serviceId -> payload NSID
 // ---------------------------------------------------------------------------
 
 export interface SubmitEventHandlerConfig {
@@ -478,7 +478,7 @@ export function createSubmitEventHandler(cfg: SubmitEventHandlerConfig): Handler
 }
 
 // ---------------------------------------------------------------------------
-// network.attested.verify — standard attestation verification endpoint
+// network.attested.verify -- standard attestation verification endpoint
 // ---------------------------------------------------------------------------
 
 /** Dependencies for the network.attested.verify query handler. */

@@ -1,5 +1,5 @@
 /**
- * attestation.ts — Core attestation operations mirroring the Rust
+ * attestation.ts -- Core attestation operations mirroring the Rust
  * `atproto-attestation` crate v0.14.5 API.
  *
  * Provides functions to create, append, and verify inline and remote
@@ -100,8 +100,8 @@ function encodeVarint(value: number): Uint8Array {
 /**
  * Return the multicodec varint prefix for a key type.
  *
- * - P-256 (secp256r1): code 0x1200 → varint [0x80, 0x24]
- * - K-256 (secp256k1): code 0xe701 → varint [0x81, 0xce, 0x03]
+ * - P-256 (secp256r1): code 0x1200 -> varint [0x80, 0x24]
+ * - K-256 (secp256k1): code 0xe701 -> varint [0x81, 0xce, 0x03]
  */
 function multicodecPrefix(keyType: KeyType): Uint8Array {
   switch (keyType) {
@@ -122,7 +122,7 @@ function multicodecPrefix(keyType: KeyType): Uint8Array {
  * Accepts:
  * - 65-byte uncompressed (0x04 || x || y)
  * - 64-byte raw (x || y, no prefix)
- * - 33-byte compressed (0x02/0x03 || x) — returned as-is
+ * - 33-byte compressed (0x02/0x03 || x) -- returned as-is
  *
  * Returns 33 bytes (0x02/0x03 || x).
  */
@@ -209,7 +209,7 @@ function derSignatureToRaw(derBytes: Uint8Array): Uint8Array {
   }
   pos++;
 
-  // Sequence length (short-form only — ECDSA signatures are small).
+  // Sequence length (short-form only -- ECDSA signatures are small).
   const seqLen = derBytes[pos++];
   if (seqLen !== derBytes.length - pos) {
     // Long-form length is vanishingly unlikely for ECDSA; support it anyway.
@@ -564,7 +564,7 @@ function buildSigMetadata(
 // ---------------------------------------------------------------------------
 
 /**
- * Create an inline attestation — sign a record with a private key and embed
+ * Create an inline attestation -- sign a record with a private key and embed
  * the `$sig` metadata directly into the record's `signatures` array.
  *
  * Algorithm:
@@ -632,7 +632,7 @@ export async function createInlineAttestation(
 }
 
 /**
- * Create a remote attestation — produce an attested record and a separate
+ * Create a remote attestation -- produce an attested record and a separate
  * proof record that can be stored at another repository.
  *
  * Algorithm:
@@ -740,7 +740,7 @@ export async function createSignature(
 }
 
 /**
- * Append an inline attestation — verify a `$sig` entry and, if valid, append
+ * Append an inline attestation -- verify a `$sig` entry and, if valid, append
  * it to the record's `signatures` array.
  *
  * Algorithm:
@@ -863,7 +863,7 @@ export async function appendInlineAttestation(
 }
 
 /**
- * Append a remote attestation — validate an existing proof record and append a
+ * Append a remote attestation -- validate an existing proof record and append a
  * `strongRef` to the record's `signatures` array.
  *
  * Algorithm:
@@ -989,7 +989,7 @@ export async function verifyRecord(
 
   const signatures = record.signatures as JsonObject[] | undefined;
   if (!Array.isArray(signatures) || signatures.length === 0) {
-    // No signatures to verify — that is fine.
+    // No signatures to verify -- that is fine.
     return;
   }
 
@@ -1010,7 +1010,7 @@ export async function verifyRecord(
 
       if (hasSig && hasProof) {
         errors.push(
-          `Signature[${idx}]: has both 'sig' and 'proof' — ambiguous`,
+          `Signature[${idx}]: has both 'sig' and 'proof' -- ambiguous`,
         );
         continue;
       }
@@ -1101,7 +1101,7 @@ async function verifyInlineSignature(
 
   if (cidResult.cid !== sigCid) {
     errors.push(
-      `Signature[${idx}]: CID mismatch — expected "${sigCid}", recomputed "${cidResult.cid}"`,
+      `Signature[${idx}]: CID mismatch -- expected "${sigCid}", recomputed "${cidResult.cid}"`,
     );
     return;
   }
@@ -1196,7 +1196,7 @@ async function verifyRemoteSignature(
     const actualCid = proofRecord.cid;
     if (actualCid !== expectedCid) {
       errors.push(
-        `Signature[${idx}]: proof record CID mismatch — ` +
+        `Signature[${idx}]: proof record CID mismatch -- ` +
           `expected "${expectedCid}", got "${actualCid}"`,
       );
     }
@@ -1204,6 +1204,6 @@ async function verifyRemoteSignature(
 
   // If the proof record itself has a 'signatures' array, its signatures
   // would need to be verified recursively.  The Rust crate does *not*
-  // recurse automatically in verify_record — it only checks the proof
+  // recurse automatically in verify_record -- it only checks the proof
   // reference.  We follow the same policy.
 }

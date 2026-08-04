@@ -1,5 +1,5 @@
 import { Command } from "@publicdomainrelay/cli-args-env";
-import { isValidPolicyMode, type PolicyMode, DYNAMIC } from "@publicdomainrelay/market-policy-abc";
+import { parsePolicyArgs, type PolicySpec } from "@publicdomainrelay/market-policy-abc";
 import { createLogger } from "@publicdomainrelay/logger";
 import { createServe } from "@publicdomainrelay/serve";
 import {
@@ -98,10 +98,10 @@ if (privateKeyHexPath && !resolvedPrivateKeyHex) {
       resolvedPrivateKeyHex = content;
       logger.info("private_key_loaded_from_path", { path: privateKeyHexPath });
     }
-  } catch { /* file missing — will generate and save below */ }
+  } catch { /* file missing -- will generate and save below */ }
 }
 
-// Full OAuth scope — single source of truth for registered + loopback clients.
+// Full OAuth scope -- single source of truth for registered + loopback clients.
 // Requester subset: compute.vm, market.rfp/accept/event, compute.events, badgeBlueKeys,
 // fedproxy.rbac, + all four RPC endpoints.
 const OAUTH_SCOPE_FULL = [
@@ -140,7 +140,7 @@ function createSessionExpiredHandler(label: string) {
 }
 
 if ((options.atprotoOauth as boolean) && (options.atprotoHandle as string | undefined)) {
-  // OAuth requester — no local PDS, firehose-based discovery
+  // OAuth requester -- no local PDS, firehose-based discovery
   const oauthHandle = await createOAuthRequester({
     handle: options.atprotoHandle as string,
     sessionPath: (options.oauthSessionPath as string) ||
@@ -178,7 +178,7 @@ if ((options.atprotoOauth as boolean) && (options.atprotoHandle as string | unde
   pds = oauthHandle.pds;
   isOAuth = true;
 } else if ((options.atprotoOauthQr as boolean)) {
-  // QR-based OAuth — scan with phone, session transferred via qr.fedfork.com
+  // QR-based OAuth -- scan with phone, session transferred via qr.fedfork.com
   const kp = resolvedPrivateKeyHex
     ? await Secp256k1Keypair.import(resolvedPrivateKeyHex, { exportable: true })
     : await Secp256k1Keypair.create({ exportable: true });
@@ -216,8 +216,8 @@ if ((options.atprotoOauth as boolean) && (options.atprotoHandle as string | unde
     logger, label: "requester", handle: options.atprotoHandle as string | undefined,
     sessionPath: options.oauthSessionFile as string | undefined,
     autoRefreshThresholdMs: AUTO_REFRESH_THRESHOLD_MS,
-    // No onSessionExpired here — restore handles expiry internally
-    // (delete file, return null → falls through to QR auth).
+    // No onSessionExpired here -- restore handles expiry internally
+    // (delete file, return null -> falls through to QR auth).
   });
   if (_restoredAgent) {
     _restoredOAuthAgent = _restoredAgent;
@@ -297,7 +297,7 @@ if ((options.atprotoOauth as boolean) && (options.atprotoHandle as string | unde
     };
     // Override callBidder to mint service-auth via the OAuth session (DPoP),
     // so the token issuer matches the record author. Without this, callBidder
-    // signs with the locally-persisted PLC key → 403 "issuer must author".
+    // signs with the locally-persisted PLC key -> 403 "issuer must author".
     if (_userAgent.getServiceAuth) {
       pds.callBidder = async (targetBase: string, nsid: string, lxm: string, audDid: string, body: Record<string, unknown>) => {
         try {
@@ -342,7 +342,7 @@ if ((options.atprotoOauth as boolean) && (options.atprotoHandle as string | unde
     try {
       await Deno.writeTextFile(privateKeyHexPath, pds.privateKeyHex);
       if (resolvedPrivateKeyHex) {
-        // Already had it — rewrite same value (idempotent).
+        // Already had it -- rewrite same value (idempotent).
       } else {
         logger.info("private_key_generated_and_saved", { path: privateKeyHexPath });
       }
@@ -409,13 +409,13 @@ if (!options.skipQr) {
 }
 
 // OAuth QR: user logged in as the operator account. The OAuth session
-// IS the association proof — no second QR or badgeBlueKeys record needed.
+// IS the association proof -- no second QR or badgeBlueKeys record needed.
 if (isOAuth) {
   hasAssociation = true;
 }
 
 if (hasAssociation) {
-  logger.info("existing_association_found", { did: pds.did, hint: "skipping QR — prior association exists" });
+  logger.info("existing_association_found", { did: pds.did, hint: "skipping QR -- prior association exists" });
 }
 
 if (!options.skipQr && !hasAssociation) {
@@ -481,9 +481,20 @@ function shutdown(): void {
 Deno.addSignalListener("SIGINT", shutdown);
 Deno.addSignalListener("SIGTERM", shutdown);
 
-const policyModeRaw = options.policyMode as string | undefined;
-const policyMode = isValidPolicyMode(policyModeRaw) ? policyModeRaw : undefined;
-const policyEngineEndpoint = (policyMode === DYNAMIC) ? options.policyEngineEndpoint as string | undefined : undefined;
+const policyName = options.policy as string | undefined;
+let policy: PolicySpec | undefined;
+if (policyName) {
+  try {
+    policy = { name: policyName, args: parsePolicyArgs(options.policyArgs) };
+    const { createPolicyRegistry } = await import("@publicdomainrelay/market-policy-registry");
+    const { assertPolicyPerspective } = await import("@publicdomainrelay/market-policy-abc");
+    const known = createPolicyRegistry().get(policyName);
+    if (known) assertPolicyPerspective(known, "requester");
+  } catch (err) {
+    console.error(`invalid --policy: ${err}`);
+    Deno.exit(2);
+  }
+}
 
 const result = await runComputeContract(pds, {
   logger,
@@ -493,7 +504,6 @@ const result = await runComputeContract(pds, {
   guestHostAliases: ((options.guestHostAliases as string) || "")
     .split(",").map((s: string) => s.trim()).filter(Boolean),
   vmName: options.vmName as string | undefined,
-  bidWindowSec: options.bidWindowSec as number,
   skipSsh: options.skipSsh as boolean,
   execProgram: options.exec as string,
   keepVm: options.keepVm as boolean,
@@ -503,8 +513,10 @@ const result = await runComputeContract(pds, {
   relayUrls,
   baseUserData,
   rbac,
-  policyMode,
-  policyEngineEndpoint,
+  policy,
+  policyEngine: options.policyEngine as string | undefined,
+  onlyRemotePolicyExec: options.onlyRemotePolicyExec as boolean | undefined,
+  allowUntrustedPolicyExec: options.allowUntrustedPolicyExec as boolean | undefined,
   offeringWatcherDids: () => [...offeringDids],
   eventStreams,
   sshProvider: createSshSessionProvider(logger),

@@ -7,7 +7,7 @@ export * from "./resolver.ts";
 export * from "./genesis.ts";
 export * from "./keypair-state.ts";
 
-// Low-level generated SDK — for consumers who want direct access to
+// Low-level generated SDK -- for consumers who want direct access to
 // individual endpoint functions or the underlying fetch client.
 // NOTE: In Deno, the generated request functions spread `client` into
 // RequestInit, which Deno's Request constructor rejects. Use PlcClient
