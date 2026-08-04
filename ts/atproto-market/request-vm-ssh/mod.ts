@@ -16,6 +16,9 @@ import type { RequesterPDS } from "@publicdomainrelay/requester-abc";
 import { EVENT_NSID, OFFERING_NSID } from "@publicdomainrelay/market-common";
 import { createDefaultATProtoEventStreamsClient } from "@publicdomainrelay/atproto-event-streams-client";
 import { DEFAULT_RELAY_URLS } from "@publicdomainrelay/atproto-event-stream-common";
+import { parseSecretsFile } from "@publicdomainrelay/secrets-common";
+import { createSecretsCapability } from "@publicdomainrelay/guest-capability-secrets";
+import type { GuestCapability } from "@publicdomainrelay/guest-capability-abc";
 import { qrcode } from "@libs/qrcode";
 import { IdResolver } from "@atproto/identity";
 import { Secp256k1Keypair } from "@atproto/crypto";
@@ -85,6 +88,18 @@ if (userDataPath) {
   logger.info("user_data_loaded", { userDataPath, bytes: baseUserData.length });
 }
 const rbac = !(options.skipRbac as boolean);
+
+const capabilities: GuestCapability[] = [];
+const secretsPath = options.secrets as string | undefined;
+if (secretsPath) {
+  const secrets = parseSecretsFile(await Deno.readTextFile(secretsPath));
+  capabilities.push(createSecretsCapability({ secrets, logger }));
+  logger.info("secrets_capability_enabled", {
+    secretsPath,
+    count: secrets.length,
+    paths: secrets.map((s) => s.path),
+  });
+}
 
 await ensureWebsocat(logger);
 logger.info("requester_starting", { label, ingressProxyHost, relayUrls });
@@ -522,6 +537,7 @@ const result = await runComputeContract(pds, {
     ? { transport: options.userDataTransport as string }
     : undefined,
   rbac,
+  capabilities,
   policy,
   policyEngine: options.policyEngine as string | undefined,
   onlyRemotePolicyExec: options.onlyRemotePolicyExec as boolean | undefined,

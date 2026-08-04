@@ -91,6 +91,91 @@ container ls -a | grep pdr- | awk '{print $1}' | xargs container rm -f
    registers with relay, bridges relay tunnel to sshd:22
 8. Host opens SSH through `websocat ProxyCommand -> relay -> subscriber -> sshd`
 
+## Secrets (--secrets)
+
+Delivers operator-supplied secrets to the guest without ever putting them in
+cloud-init. `--secrets` takes a JSON file:
+
+```json
+[
+  { "path": "/root/.config/app/token", "value": "s3cr3t-api-token" },
+  { "path": "/etc/app/license.key", "value": "AAAA-BBBB-CCCC" }
+]
+```
+
+Build it from environment variables rather than committing it anywhere:
+
+```bash
+cd request-vm-ssh
+umask 077
+
+jq -n \
+  --arg hf "$HUGGING_FACE_HUB_TOKEN" \
+  --arg npm "$NPM_TOKEN" \
+  '[
+    {path: "/root/.cache/huggingface/token", value: $hf},
+    {path: "/root/.npmrc", value: ("//registry.npmjs.org/:_authToken=" + $npm)}
+  ]' > /tmp/secrets.json
+
+BIDDER_HANDLE_0000=<bidder-did-from-step-3> deno run -A mod.ts \
+  --relay-port 5555 \
+  --registry-port 5556 \
+  --policy-args '{"bidWindowSec":8}' \
+  --secrets /tmp/secrets.json \
+  --exec 'cat /root/.cache/huggingface/token; exit'
+
+rm -f /tmp/secrets.json
+```
+
+Prints the token from inside the guest. It never appears in the `compute.vm`
+record, on the firehose, or in any PDS record -- only the fetch location does.
+
+To take the env var names as arguments instead of naming each one:
+
+```bash
+jq -n --args '[$ARGS.positional[] | {path: ("/root/secrets/" + ascii_downcase), value: env[.]}]' \
+  HUGGING_FACE_HUB_TOKEN NPM_TOKEN > /tmp/secrets.json
+```
+
+### What happens
+
+1. **Before the RFP is sent**, an ephemeral Hono server starts with its own
+   keypair, registering its own subdomain on the ingress proxy. Its URL is baked
+   into the cloud-init the `secrets` user-data module contributes. Nothing is
+   authorized yet, so the server 401s everything.
+2. **A bid wins.** Its `compute.config.wif.simple` record declares the provider's
+   OIDC issuer, `actx`, and subject template. The requester renders the subject
+   the provider will assign this VM and installs an in-memory grant: read, on one
+   route, for that one subject, from that one issuer, under audience
+   `api://ATProto?actx=<requester-did>`. The grant is never written to a PDS.
+3. **The guest boots.** It proves possession of its sshd host key at
+   `/v1/oidc/prove` and receives a workload identity token whose subject the
+   provider assembled from the droplet tags -- the VM cannot choose its own role.
+4. **Token exchange.** `setup-secrets.service` reads the token path, issuer URL,
+   and exchange route out of `bid_config` in the bidder-injected `accept.json`,
+   echoes the subject from its own token, and exchanges it for one audienced at
+   the requester.
+5. **Fetch.** The server verifies that token against the provider's published
+   JWKS and evaluates the grant, then returns the bundle. Each entry is written
+   `0600` under a `0700` parent.
+6. **VM delete event.** The grant is revoked, so the same token stops working
+   even before the server shuts down.
+
+Because every provider-specific path is read from `accept.json` at runtime, the
+cloud-init carries nothing about the winning provider -- which matters, since it
+is written before any bid has been selected.
+
+### Notes
+
+- The fetch fails loud. `setup-secrets.service` retries with backoff and then
+  fails, so units ordered `After=setup-secrets.service` never start with missing
+  secrets. Check `journalctl -u setup-secrets` in the guest.
+- Paths must be absolute and may not traverse (`..`); duplicates are rejected.
+- Secrets stay available for the life of the contract. With `--keep-vm` no delete
+  event is sent, so the grant lives until the requester process exits.
+- A bidder whose bid carries no resolvable `wif.simple` config gets no grant --
+  the run logs `capability_grants_skipped` and the guest's fetch fails.
+
 ## Fulfillment Policy (--policy)
 
 The `--policy` flag names the policy attached to your RFP record, which decides
@@ -180,6 +265,7 @@ reach your bidder, and only your bidder may fulfill your RFPs.
 | `--relay-port` | auto | Relay dispatch port |
 | `--registry-port` | auto | JSR registry port |
 | `--bidder-dids` | -- | Additional bidder DIDs to include (comma-separated) |
+| `--secrets` | -- | Path to `[{"path","value"}]` JSON delivered to the guest over an ephemeral RBAC-gated server ([details](#secrets---secrets)) |
 | `--policy` | `only-me` | Policy name: `only-me`, `tangled-vouch`, `mutuals`, `open`, `bid-payload` |
 | `--policy-args` | `{}` | Policy arguments as JSON, e.g. `{"bidWindowSec":30,"firstFree":true}` |
 | `--policy-engine` | -- | Policy engine DID (`did:web:host`); mints a `policies.service` record |

@@ -61,6 +61,8 @@ import {
   FEDPROXY_RBAC_NSID,
   buildSshKeyRbacRecord,
 } from "@publicdomainrelay/fedproxy-rbac-common";
+import { deriveGrantVars, isWifSimpleConfig } from "@publicdomainrelay/guest-capability-abc";
+import type { WifSimpleConfig } from "@publicdomainrelay/guest-capability-abc";
 import type {
   RequesterPDS,
   PDSOptions,
@@ -859,6 +861,17 @@ export async function runComputeContract(
   const vmReadyTimeoutSec = opts.vmReadyTimeoutSec ?? 300;
   const extraBidderDids = opts.extraBidderDids ?? [];
   const denyBidderDids = opts.denyBidderDids ?? [];
+  const capabilities = opts.capabilities ?? [];
+  // Capabilities that register their own dispatcher subdomain sign service auth
+  // as the requester, exactly as createRequesterPDS does for its own ingress.
+  let capKeypair: Promise<Secp256k1Keypair> | null = null;
+  const capabilitySigner: Signer = {
+    did: () => pds.did,
+    sign: async (bytes: Uint8Array) => {
+      capKeypair ??= Secp256k1Keypair.import(pds.privateKeyHex);
+      return await (await capKeypair).sign(bytes);
+    },
+  };
   const sshProvider = opts.sshProvider ?? createSshSessionProvider(
     opts.logger,
     { proxyCommandFn: opts.sshProxyCommandFn },
@@ -888,6 +901,16 @@ export async function runComputeContract(
   const eventStreams = opts.eventStreams;
   const log = (event: string, extra: Record<string, unknown> = {}) =>
     logger ? logger.info(event, extra) : console.log(JSON.stringify({ event, ...extra }));
+
+  const disposeCapabilities = async (): Promise<void> => {
+    for (const cap of capabilities) {
+      try {
+        await cap.dispose?.();
+      } catch (err) {
+        log("capability_dispose_failed", { capability: cap.id, error: String(err) });
+      }
+    }
+  };
 
   // Start firehose watcher BEFORE RFP creation -- watch BID + ACCEPT + RECEIPT.
   if (eventStreams) {
@@ -1087,6 +1110,22 @@ if (address && isFqdn && !vmFqdn) {
       hint: "FQDN will be discovered from vm.onNetwork event after guest tunnel subscriber registers",
     });
 
+    // Capabilities stand up their resources BEFORE the cloud-config is built:
+    // anything the guest must dial (e.g. an ephemeral secrets server) has to have
+    // its FQDN baked in here, and this cloud-config goes into the compute.vm
+    // record before the RFP is sent.
+    const capCtx: Partial<import("@publicdomainrelay/cloud-init-common").CloudInitContext> = {};
+    for (const cap of capabilities) {
+      const prepared = await cap.prepare?.({
+        vmName,
+        requesterDid: pds.did,
+        ingressProxyHost,
+        signer: capabilitySigner,
+        log: (event, extra) => log(event, extra ?? {}),
+      });
+      Object.assign(capCtx, prepared?.ctx ?? {});
+    }
+
     // Compose user_data via the cloud-init-common buildUserData: the caller's
     // base cloud-config (if any) patched with the transport module (default
     // "tunnel" = did-key-ingress-proxy tunnel-subscriber, never fedproxy-client;
@@ -1105,9 +1144,14 @@ if (address && isFqdn && !vmFqdn) {
         audHost: (opts.fedingressHost ? opts.fedingressHost.replace(/:\d+$/, "") : undefined)
           || ingressProxyHost.replace(/:\d+$/, ""),
         hostAliases: opts.guestHostAliases,
+        ...capCtx,
       },
       base: ud?.base ?? opts.baseUserData,
-      modules: [ud?.transport ?? "tunnel", ...(ud?.modules ?? [])],
+      modules: [
+        ud?.transport ?? "tunnel",
+        ...(ud?.modules ?? []),
+        ...capabilities.flatMap((c) => c.userDataModule ? [c.userDataModule] : []),
+      ],
       overrides: ud?.overrides,
     });
     if (opts.userDataFactory) {
@@ -1430,6 +1474,7 @@ runcmd:
   if (bids.length === 0) {
     const result: ContractFlowResult = { event: "no_bids", error: `no bids received within ${bidWindowSec}s` };
     log("no_bids", result as unknown as Record<string, unknown>);
+    await disposeCapabilities();
     return result;
   }
 
@@ -1437,40 +1482,83 @@ runcmd:
   const winner = earlyWinner ?? selectWinner(bids)!;
   log("winner", { uri: winner.uri, did: winner.did, viaFirstFree: !!earlyWinner });
 
-  // 6b. Authorize the VM to register its SSH host key. Resolve the winner's
-  // bidConfig (wif.simple), then write a com.fedproxy.rbac record into our own
-  // repo granting the VM (by wif subject) createRecord on com.fedproxy.sshPublicKey
-  // for this VM's service name. The local PDS is served over the xrpc relay, so
-  // the booting VM reaches it through the relay and publishes its host key --
-  // exactly the reference compute-spa flow. Off unless opts.rbac (CLI default-on).
-  if (opts.rbac && !skipSsh) {
+  // 6b. Resolve the winner's bidConfig (wif.simple) once. It is the provider
+  // declaring the OIDC issuer, actx, and subject template of the tokens it will
+  // issue to this guest -- the single source both the ssh-host-key grant and
+  // every guest capability derive their authorization from.
+  const serviceName = vmName.trim() || "compute";
+  let wifConfig: WifSimpleConfig | undefined;
+  if ((opts.rbac && !skipSsh) || capabilities.length > 0) {
     const bidConfigRef = (winner.record.config ?? winner.record.bidConfig) as { uri?: string; cid?: string } | undefined;
     if (bidConfigRef?.uri && bidConfigRef?.cid) {
       try {
         const resolver = createRecordResolver(idResolver);
         const cfg = await resolver.resolve({ uri: bidConfigRef.uri, cid: bidConfigRef.cid }) as Record<string, unknown>;
-        const issuerUri = cfg.issuer_uri as string | undefined;
-        const actx = cfg.actx as string | undefined;
-        const subjectTemplate = cfg.subject as string | undefined;
-        if (issuerUri && actx) {
-          const serviceName = vmName.trim() || "compute";
-          const rbacRecord = buildSshKeyRbacRecord({
-            serviceName,
-            issuerUri,
-            actx,
-            requesterDid: pds.did,
-            subjectTemplate,
-          });
-          const { uri: rbacUri } = await pds.createRepoRecord(FEDPROXY_RBAC_NSID, rbacRecord);
-          log("rbac_created", { uri: rbacUri, serviceName, issuerUri });
-        } else {
-          log("rbac_skipped", { reason: "bidConfig missing issuer_uri/actx", bidConfigUri: bidConfigRef.uri });
-        }
+        if (isWifSimpleConfig(cfg)) wifConfig = cfg;
+        else log("bid_config_incomplete", { reason: "missing issuer_uri/actx", bidConfigUri: bidConfigRef.uri });
       } catch (err) {
-        log("rbac_skipped", { reason: String(err), bidConfigUri: bidConfigRef.uri });
+        log("bid_config_resolve_failed", { reason: String(err), bidConfigUri: bidConfigRef.uri });
       }
     } else {
-      log("rbac_skipped", { reason: "winner bid has no bidConfig ref" });
+      log("bid_config_missing", { reason: "winner bid has no bidConfig ref" });
+    }
+  }
+
+  // Authorize the VM to register its SSH host key: write a com.fedproxy.rbac
+  // record into our own repo granting the VM (by wif subject) createRecord on
+  // com.fedproxy.sshPublicKey for this VM's service name. The local PDS is served
+  // over the xrpc relay, so the booting VM reaches it through the relay and
+  // publishes its host key. Off unless opts.rbac (CLI default-on).
+  if (opts.rbac && !skipSsh) {
+    if (wifConfig) {
+      try {
+        const rbacRecord = buildSshKeyRbacRecord({
+          serviceName,
+          issuerUri: wifConfig.issuer_uri,
+          actx: wifConfig.actx,
+          requesterDid: pds.did,
+          subjectTemplate: wifConfig.subject,
+        });
+        const { uri: rbacUri } = await pds.createRepoRecord(FEDPROXY_RBAC_NSID, rbacRecord);
+        log("rbac_created", { uri: rbacUri, serviceName, issuerUri: wifConfig.issuer_uri });
+      } catch (err) {
+        log("rbac_skipped", { reason: String(err) });
+      }
+    } else {
+      log("rbac_skipped", { reason: "no usable bidConfig" });
+    }
+  }
+
+  // Hand every capability the identity this provider will issue to the guest.
+  if (capabilities.length > 0) {
+    if (wifConfig) {
+      // The provider derives the guest's subject from the DID that authored the
+      // market records, which under OAuth is the user's PDS DID rather than this
+      // process's relay DID. The audience is the one baked into cloud-init.
+      const grantVars = deriveGrantVars({
+        cfg: wifConfig,
+        subjectDid: atUriAuthority(rfpUri),
+        audienceDid: pds.did,
+        role: serviceName,
+      });
+      log("capability_grants", {
+        subject: grantVars.subject,
+        issuerUri: grantVars.issuerUri,
+        aud: grantVars.expectedAud,
+        capabilities: capabilities.map((c) => c.id),
+      });
+      for (const cap of capabilities) {
+        try {
+          await cap.onContract?.(grantVars);
+        } catch (err) {
+          log("capability_grant_failed", { capability: cap.id, error: String(err) });
+        }
+      }
+    } else {
+      log("capability_grants_skipped", {
+        reason: "no usable bidConfig",
+        capabilities: capabilities.map((c) => c.id),
+      });
     }
   }
 
@@ -1485,6 +1573,7 @@ runcmd:
         error: `winner rejected by policy: ${evalResult.violations.map(v => v.msg).join("; ")}`,
         bids: bids.length,
       };
+      await disposeCapabilities();
       return result;
     }
   }
@@ -1672,8 +1761,18 @@ runcmd:
     } catch (err) {
       log("vm_delete_error", { error: String(err) });
     }
+    // The VM is being torn down: capabilities lose their grant here, not at
+    // process exit, so a token leaked from the guest stops working immediately.
+    for (const cap of capabilities) {
+      try {
+        await cap.onRevoke?.();
+      } catch (err) {
+        log("capability_revoke_failed", { capability: cap.id, error: String(err) });
+      }
+    }
   }
 
+  await disposeCapabilities();
   return result;
 }
 

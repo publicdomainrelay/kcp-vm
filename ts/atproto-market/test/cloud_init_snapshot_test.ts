@@ -53,6 +53,62 @@ Deno.test("composer snapshots match fixtures", async () => {
   );
 });
 
+const SECRETS_CTX = {
+  ...CTX,
+  secretsUrl: "https://sec-abc.relay.local",
+  secretsRoute: "/xrpc/com.publicdomainrelay.temp.compute.secrets.getSecrets",
+  secretsAud: "api://ATProto?actx=did:plc:requester123",
+  secretsAcceptPath: "/root/secrets/publicdomainrelay.com/market/accept.json",
+};
+
+Deno.test("secrets module composes with the transport", async () => {
+  assertEquals(
+    buildUserData({ ctx: SECRETS_CTX, modules: ["tunnel", "secrets"] }),
+    await fixture("tunnel-secrets.yaml"),
+  );
+});
+
+Deno.test("secrets module discovers provider paths at runtime, not build time", () => {
+  const y = buildUserData({ ctx: SECRETS_CTX, modules: ["secrets"] });
+  // Everything provider-specific comes out of the bidder-injected accept.json,
+  // because this cloud-config is built before a bid has even been selected.
+  // The bidder wraps bid_config as a strongRef ({uri, cid, value}), so the wif
+  // record is under .value; the flat shape stays accepted as a fallback.
+  assert(y.includes(".bid_config.value // .bid_config"), "unwraps the strongRef wrapper");
+  assert(y.includes(".token_path // empty"), "token path read from accept.json");
+  assert(y.includes(".url_path // empty"), "issuer base read from accept.json");
+  assert(y.includes(".url_route //"), "exchange route read from accept.json");
+  assert(!y.includes("/root/secrets/digitalocean.com"), "no provider path baked in");
+});
+
+Deno.test("secrets module echoes the provider-assigned subject", () => {
+  const y = buildUserData({ ctx: SECRETS_CTX, modules: ["secrets"] });
+  assert(y.includes("cut -d. -f2"), "subject read from the token payload");
+  assert(y.includes("jq -r .sub"), "subject taken verbatim from sub");
+  assert(!y.includes("actx:{actx}"), "no client-side subject template rendering");
+});
+
+Deno.test("secrets module fails loud", () => {
+  const y = buildUserData({ ctx: SECRETS_CTX, modules: ["secrets"] });
+  assert(y.includes("set -euo pipefail"), "strict shell");
+  assert(!y.includes("skipping secrets"), "no best-effort skip");
+  assert(y.includes("exit 1"), "non-zero exit on failure");
+  assert(!/secrets fetch failed[^\n]*exit 0/.test(y), "failure must not exit 0");
+});
+
+Deno.test("secrets module writes secrets 0600 under a 0700 parent", () => {
+  const y = buildUserData({ ctx: SECRETS_CTX, modules: ["secrets"] });
+  assert(y.includes("install -d -m 0700 -o root -g root"), "parent dir locked down");
+  assert(y.includes('chmod 0600 "${SECRET_PATH}"'), "secret file locked down");
+  assert(y.includes("umask 077"), "umask before writing");
+});
+
+Deno.test("secrets module carries no secret values", () => {
+  const y = buildUserData({ ctx: SECRETS_CTX, modules: ["secrets"] });
+  assert(!y.includes("secret-value"), "values never enter cloud-init");
+  assert(y.includes(SECRETS_CTX.secretsUrl), "only the fetch location is baked in");
+});
+
 Deno.test("bug fixes baked into fedproxy-ssh", () => {
   const y = buildUserData({ ctx: CTX, modules: ["fedproxy-ssh"] });
   assert(y.includes("ListenAddress 127.0.0.1"), "loopback-only sshd");
@@ -155,6 +211,7 @@ Deno.test("registry: built-ins present, unknown id throws", () => {
   assert(listUserDataModules().includes("fedproxy-ssh"));
   assert(listUserDataModules().includes("fedproxy-web"));
   assert(listUserDataModules().includes("wootty"));
+  assert(listUserDataModules().includes("secrets"));
   assertEquals(getUserDataModules(["tunnel"]).length, 1);
   assertThrows(() => getUserDataModules(["nope"]));
 });

@@ -46,6 +46,16 @@ export interface CloudInitContext {
   listenPort?: number;
   /** Origin serving the wootty-web tarball (e.g. https://ui.fedfork.com). */
   woottyDistUrl?: string;
+
+  // secrets
+  /** Base URL of the requester's ephemeral secrets server (its relay ingress URL). */
+  secretsUrl?: string;
+  /** Route on secretsUrl serving the [{path,value}] bundle. */
+  secretsRoute?: string;
+  /** Audience the guest must request when exchanging its workload identity token. */
+  secretsAud?: string;
+  /** Guest path of the bidder-injected accept.json carrying bid_config. */
+  secretsAcceptPath?: string;
 }
 
 /** Back-compat context for the tunnel-subscriber transport (historical buildTunnelUserData shape). */
@@ -704,10 +714,152 @@ touch "\${STAMP}"
   };
 };
 
+/**
+ * secrets — fetch an operator-supplied secrets bundle from the requester's
+ * ephemeral secrets server and write each entry to disk. Requires ctx.secretsUrl,
+ * ctx.secretsRoute, ctx.secretsAud. Optional: ctx.secretsAcceptPath.
+ *
+ * Provider-specific values (token path, issuer base URL, exchange route) are read
+ * at runtime from bid_config inside the bidder-injected accept.json, so nothing
+ * about the winning provider has to be known when this cloud-config is built --
+ * which happens before the RFP is even sent. The guest echoes back the subject
+ * from its own provisioning token rather than re-rendering a template, so the
+ * exchanged token carries exactly the identity the provider assigned it.
+ *
+ * Fails loud: the unit does not swallow errors, so units ordered After= it do not
+ * start with missing secrets.
+ */
+const secretsModule: UserDataModule = (ctx) => {
+  const acceptPath = ctx.secretsAcceptPath ?? "/root/secrets/publicdomainrelay.com/market/accept.json";
+  return {
+    packages: ["jq", "curl"],
+    write_files: [
+      {
+        path: "/usr/local/bin/setup-secrets.sh",
+        owner: "root:root",
+        permissions: "0700",
+        content: `#!/usr/bin/env bash
+set -euo pipefail
+
+STAMP=/var/lib/setup-secrets.done
+[ -f "\${STAMP}" ] && exit 0
+
+ACCEPT_JSON="${acceptPath}"
+SECRETS_URL="${ctx.secretsUrl ?? ""}"
+SECRETS_ROUTE="${ctx.secretsRoute ?? ""}"
+SECRETS_AUD="${ctx.secretsAud ?? ""}"
+
+if [ -z "\${SECRETS_URL}" ] || [ -z "\${SECRETS_AUD}" ]; then
+  echo "secrets module misconfigured: missing url or aud" >&2
+  exit 1
+fi
+
+for _ in \$(seq 1 60); do
+  [ -f "\${ACCEPT_JSON}" ] && break
+  sleep 2
+done
+[ -f "\${ACCEPT_JSON}" ] || { echo "accept.json never appeared at \${ACCEPT_JSON}" >&2; exit 1; }
+
+# The bidder writes bid_config as a strongRef wrapper ({uri, cid, value}); older
+# bidders inlined the record. Accept either.
+WIF="\$(jq -c '.bid_config.value // .bid_config // {}' "\${ACCEPT_JSON}")"
+TOKEN_PATH="\$(printf '%s' "\${WIF}" | jq -r '.token_path // empty')"
+URL_PATH="\$(printf '%s' "\${WIF}" | jq -r '.url_path // empty')"
+URL_ROUTE="\$(printf '%s' "\${WIF}" | jq -r '.url_route // "/v1/oidc/issue"')"
+[ -n "\${TOKEN_PATH}" ] || { echo "accept.json has no bid_config token_path" >&2; exit 1; }
+[ -n "\${URL_PATH}" ] || { echo "accept.json has no bid_config url_path" >&2; exit 1; }
+
+for _ in \$(seq 1 60); do
+  [ -s "\${TOKEN_PATH}" ] && [ -s "\${URL_PATH}" ] && break
+  sleep 2
+done
+[ -s "\${TOKEN_PATH}" ] || { echo "workload identity token never appeared at \${TOKEN_PATH}" >&2; exit 1; }
+
+WID_TOKEN="\$(cat "\${TOKEN_PATH}")"
+ISSUER_BASE="\$(cat "\${URL_PATH}")"
+
+# The provider assigned this subject at /v1/oidc/prove from the droplet tags.
+# Echo it back verbatim so the exchanged token keeps the same identity.
+SUBJECT="\$(printf '%s' "\${WID_TOKEN}" | cut -d. -f2 \\
+  | tr '_-' '/+' | sed -e 's/\$/==/' | base64 -d 2>/dev/null | jq -r .sub)"
+[ -n "\${SUBJECT}" ] && [ "\${SUBJECT}" != "null" ] || { echo "could not read sub from workload identity token" >&2; exit 1; }
+
+EXCHANGED=""
+for attempt in \$(seq 1 10); do
+  EXCHANGED="\$(curl -sf \\
+    -H "Authorization: Bearer \${WID_TOKEN}" \\
+    -H "Content-Type: application/json" \\
+    -d "\$(jq -nc --arg aud "\${SECRETS_AUD}" --arg sub "\${SUBJECT}" '{aud: \$aud, sub: \$sub, ttl: 300}')" \\
+    "\${ISSUER_BASE}\${URL_ROUTE}" | jq -r '.token // empty')" || true
+  [ -n "\${EXCHANGED}" ] && break
+  echo "token exchange failed (attempt \${attempt}); retrying" >&2
+  sleep 5
+done
+[ -n "\${EXCHANGED}" ] || { echo "token exchange failed against \${ISSUER_BASE}\${URL_ROUTE}" >&2; exit 1; }
+
+BUNDLE=""
+for attempt in \$(seq 1 10); do
+  BUNDLE="\$(curl -sf -H "Authorization: Bearer \${EXCHANGED}" "\${SECRETS_URL}\${SECRETS_ROUTE}")" || true
+  [ -n "\${BUNDLE}" ] && break
+  echo "secrets fetch failed (attempt \${attempt}); retrying" >&2
+  sleep 5
+done
+[ -n "\${BUNDLE}" ] || { echo "secrets fetch failed against \${SECRETS_URL}\${SECRETS_ROUTE}" >&2; exit 1; }
+
+umask 077
+COUNT="\$(printf '%s' "\${BUNDLE}" | jq 'length')"
+i=0
+while [ "\${i}" -lt "\${COUNT}" ]; do
+  SECRET_PATH="\$(printf '%s' "\${BUNDLE}" | jq -r ".[\${i}].path")"
+  install -d -m 0700 -o root -g root "\$(dirname "\${SECRET_PATH}")"
+  printf '%s' "\${BUNDLE}" | jq -j ".[\${i}].value" > "\${SECRET_PATH}"
+  chown root:root "\${SECRET_PATH}"
+  chmod 0600 "\${SECRET_PATH}"
+  i=\$((i + 1))
+done
+
+echo "wrote \${COUNT} secrets"
+touch "\${STAMP}"
+`,
+      },
+      {
+        path: "/etc/systemd/system/setup-secrets.service",
+        owner: "root:root",
+        permissions: "0644",
+        content: [
+          "[Unit]",
+          "Description=Fetch compute contract secrets via workload identity exchange",
+          "After=network-online.target provisioning-token.service",
+          "Wants=network-online.target",
+          "ConditionPathExists=!/var/lib/setup-secrets.done",
+          "",
+          "[Service]",
+          "Type=oneshot",
+          "RemainAfterExit=yes",
+          "User=root",
+          "ExecStart=/usr/local/bin/setup-secrets.sh",
+          "StandardOutput=journal",
+          "StandardError=journal",
+          "",
+          "[Install]",
+          "WantedBy=multi-user.target",
+          "",
+        ].join("\n"),
+      },
+    ],
+    runcmd: [
+      "systemctl daemon-reload",
+      "systemctl enable setup-secrets.service",
+      "systemctl start --no-block setup-secrets.service",
+    ],
+  };
+};
+
 registerUserDataModule("tunnel", tunnelModule);
 registerUserDataModule("fedproxy-ssh", fedproxySshModule);
 registerUserDataModule("fedproxy-web", fedproxyWebModule);
 registerUserDataModule("wootty", woottyModule);
+registerUserDataModule("secrets", secretsModule);
 
 // ---------------------------------------------------------------------------
 // Back-compat wrappers (deprecated)

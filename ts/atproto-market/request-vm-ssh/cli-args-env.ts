@@ -163,6 +163,11 @@ export default {
       description: "Transport module id for the composed cloud-init (default tunnel; see cloud-init-common listUserDataModules)",
       env: "USER_DATA_TRANSPORT",
     },
+    "secrets": {
+      type: "string" as const,
+      description: "Path to a JSON file of [{\"path\": \"/some/path\", \"value\": \"secret-value\"}]. Enables the secrets user-data plugin: an ephemeral server, reachable only through the ingress proxy, serves the bundle to the provisioned VM after it exchanges its workload identity token",
+      env: "SECRETS_FILE",
+    },
     "policy": POLICY_CLI_OPTION,
     "policy-args": POLICY_ARGS_CLI_OPTION,
     "policy-engine": {
