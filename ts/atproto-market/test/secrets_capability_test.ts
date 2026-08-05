@@ -110,11 +110,27 @@ Deno.test("parseSecretsFile rejects malformed input", () => {
     () => parseSecretsFile('[{"path":"/a/../../b","value":"c"}]'),
     InvalidSecretsFileError,
   );
-  assertThrows(() => parseSecretsFile('[{"path":"/a","value":42}]'), InvalidSecretsFileError);
   assertThrows(
     () => parseSecretsFile('[{"path":"/a","value":"x"},{"path":"/a","value":"y"}]'),
     InvalidSecretsFileError,
   );
+});
+
+Deno.test("parseSecretsFile auto-stringifies non-string JSON values", () => {
+  const entries = parseSecretsFile(JSON.stringify([
+    { path: "/a", value: { nested: [1, 2], ok: true } },
+    { path: "/b", value: [1, "two", { three: 3 }] },
+    { path: "/c", value: 42 },
+    { path: "/d", value: true },
+    { path: "/e", value: null },
+  ]));
+  assertEquals(entries, [
+    { path: "/a", value: '{"nested":[1,2],"ok":true}' },
+    { path: "/b", value: '[1,"two",{"three":3}]' },
+    { path: "/c", value: "42" },
+    { path: "/d", value: "true" },
+    { path: "/e", value: "null" },
+  ]);
 });
 
 const WIF = {

@@ -43,6 +43,8 @@ export class InvalidSecretsFileError extends Error {}
 
 /**
  * Parse the --secrets payload: [{"path": "/some/path", "value": "secret-value"}].
+ * `value` may be any JSON value; non-strings (objects, arrays, numbers, booleans,
+ * null) are auto-stringified with JSON.stringify. Strings pass through unchanged.
  * Rejects relative paths and traversal so a malformed file cannot write outside
  * the location the operator named.
  */
@@ -71,15 +73,31 @@ export function parseSecretsFile(text: string): SecretEntry[] {
     if (path.split("/").includes("..")) {
       throw new InvalidSecretsFileError(`secrets[${i}].path must not traverse: ${path}`);
     }
-    if (typeof value !== "string") {
-      throw new InvalidSecretsFileError(`secrets[${i}].value must be a string`);
-    }
+    const valueStr = typeof value === "string"
+      ? value
+      : stringifyValue(value, i);
     if (seen.has(path)) {
       throw new InvalidSecretsFileError(`secrets contains duplicate path: ${path}`);
     }
     seen.add(path);
-    return { path, value };
+    return { path, value: valueStr };
   });
+}
+
+/** Serialize a non-string JSON `value`; rejects un-serializable values. */
+function stringifyValue(value: unknown, i: number): string {
+  try {
+    const serialized = JSON.stringify(value);
+    if (serialized === undefined) {
+      throw new InvalidSecretsFileError(`secrets[${i}].value must be a string or JSON value`);
+    }
+    return serialized;
+  } catch (err) {
+    if (err instanceof InvalidSecretsFileError) throw err;
+    throw new InvalidSecretsFileError(
+      `secrets[${i}].value must be a string or JSON-serializable value`,
+    );
+  }
 }
 
 export interface SecretsRbacContext {

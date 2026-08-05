@@ -165,7 +165,7 @@ export default {
     },
     "secrets": {
       type: "string" as const,
-      description: "Path to a JSON file of [{\"path\": \"/some/path\", \"value\": \"secret-value\"}]. Enables the secrets user-data plugin: an ephemeral server, reachable only through the ingress proxy, serves the bundle to the provisioned VM after it exchanges its workload identity token",
+      description: "Path to a JSON file of [{\"path\": \"/some/path\", \"value\": \"secret-value\"}]. Non-string values (objects, arrays, numbers) are auto-stringified. Enables the secrets user-data plugin: an ephemeral server, reachable only through the ingress proxy, serves the bundle to the provisioned VM after it exchanges its workload identity token",
       env: "SECRETS_FILE",
     },
     "policy": POLICY_CLI_OPTION,

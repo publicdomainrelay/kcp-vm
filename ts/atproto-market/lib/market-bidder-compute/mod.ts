@@ -190,17 +190,25 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
 
           let bidConfigResolved: { uri: string; cid: string; value: unknown } | null = null;
           if (bidRef) {
+            // Which ref failed matters: "getRecord failed: 400" on its own does not
+            // say whether the bid or the config was unresolvable, nor which one.
+            let step = "bid";
+            let stepRef: { uri: string; cid: string } = bidRef;
             try {
               const bidResolved = await acceptResolve.resolve({
                 uri: bidRef.uri, cid: bidRef.cid,
               }) as Record<string, unknown> | null;
               const cfgRef = bidResolved?.bidConfig as { uri: string; cid: string } | undefined;
               if (cfgRef) {
+                step = "config";
+                stepRef = cfgRef;
                 const cfgValue = await acceptResolve.resolve({ uri: cfgRef.uri, cid: cfgRef.cid });
                 bidConfigResolved = { uri: cfgRef.uri, cid: cfgRef.cid, value: cfgValue };
               }
             } catch (err) {
-              cbLog("error", "bidder failed to resolve bidConfig", { error: String(err) });
+              cbLog("error", "bidder failed to resolve bidConfig", {
+                error: String(err), step, uri: stepRef.uri, cid: stepRef.cid,
+              });
             }
           }
 

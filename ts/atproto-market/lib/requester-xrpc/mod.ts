@@ -959,21 +959,17 @@ export async function runComputeContract(
               const receiptRef = val.receipt as { uri?: string; cid?: string } | undefined;
               // Only resolve FQDNs for THIS contract's event — a wrapped
               // onNetwork event from a previous contract (replayed on the
-              // firehose) carries a different receipt URI and a stale guest
-              // FQDN. Match on the receipt URI, never on time: the rkey is a TID
-              // minted per contract, so a stale contract never collides.
-              //
-              // The CID is advisory. The bidder embeds the CID it computed when
-              // it created the receipt, which does not always equal the CID the
-              // PDS serves for the same record, so requiring both to match drops
-              // the event permanently and the guest FQDN is never learned.
-              if (!receiptRef?.uri || !_receiptUri || receiptRef.uri !== _receiptUri) return;
-              if (receiptRef.cid && _receiptCid && receiptRef.cid !== _receiptCid) {
-                log("receipt_cid_mismatch", {
-                  receiptUri: _receiptUri,
-                  eventCid: receiptRef.cid,
-                  contractCid: _receiptCid,
-                });
+              // firehose) carries a different receipt (URI+CID) and a stale
+              // guest FQDN. Match on the receipt strongRef, never on time.
+              if (!receiptRef?.uri || !receiptRef?.cid || receiptRef.uri !== _receiptUri || receiptRef.cid !== _receiptCid) {
+                if (receiptRef?.uri && receiptRef.uri === _receiptUri && receiptRef.cid !== _receiptCid) {
+                  log("receipt_cid_mismatch", {
+                    receiptUri: _receiptUri,
+                    eventCid: receiptRef.cid,
+                    contractCid: _receiptCid,
+                  });
+                }
+                return;
               }
               // Resolve payload to check if it's a vm.onNetwork record
               const payloadRef = val.payload as { uri?: string } | undefined;
