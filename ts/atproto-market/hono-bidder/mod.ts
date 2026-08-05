@@ -128,6 +128,8 @@ const OAUTH_SCOPE_FULL = [
   "repo:com.publicdomainrelay.temp.compute.events.vm.delete?action=create",
   "repo:com.publicdomainrelay.temp.compute.events.vm.onNetwork?action=create",
   "repo:com.fedproxy.rbac?action=create",
+  "repo:computer.socialweb.temp.policy.ghalite?action=create",
+  "repo:computer.socialweb.temp.policy.typescript?action=create",
   // RPC endpoints
   "rpc:com.publicdomainrelay.temp.market.submitRfp?aud=*",
   "rpc:com.publicdomainrelay.temp.market.submitAccept?aud=*",

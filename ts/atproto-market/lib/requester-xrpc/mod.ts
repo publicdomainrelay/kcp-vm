@@ -897,6 +897,18 @@ export async function runComputeContract(
   // firehose never enters the set, so it cannot lock vmFqdn to the wrong tunnel.
   const _contractOnNetworkUris = new Set<string>();
 
+  // OAuth mode: the requester writes every market record (RFP, policy, accept,
+  // vm) through the OAuth session as the session's user (request-vm-ssh
+  // overrides createSignedRepoRecord to write to sessionData.userDid), so the
+  // requester's MARKET identity is the OAuth session user — NOT the ephemeral
+  // PDS keypair identity (pds.did). Every self-reference in the contract flow
+  // (requesterDid fields, policy selfDid, own-graph reads, service endpoints)
+  // must use this identity, or the trust graph (vouch/badgeBlueKeys records
+  // live under the user's DID) won't resolve. Plain mode has no OAuth session,
+  // so marketDid falls back to pds.did.
+  const marketDid = (pds as unknown as { oauthSession?: { userDid?: string } }).oauthSession?.userDid ??
+    pds.did;
+
   const logger = opts.logger;
   const eventStreams = opts.eventStreams;
   const log = (event: string, extra: Record<string, unknown> = {}) =>
@@ -1127,7 +1139,7 @@ if (address && isFqdn && !vmFqdn) {
     for (const cap of capabilities) {
       const prepared = await cap.prepare?.({
         vmName,
-        requesterDid: pds.did,
+        requesterDid: marketDid,
         ingressProxyHost,
         signer: capabilitySigner,
         log: (event, extra) => log(event, extra ?? {}),
@@ -1237,7 +1249,7 @@ runcmd:
         name: policySpec.name,
         description: policySpec.description,
         args: policyArgs,
-        requesterDid: pds.did,
+        requesterDid: marketDid,
         perspective: "requester",
         kind: workflow ? "gha-lite" : "typescript",
         workflow,
@@ -1276,16 +1288,21 @@ runcmd:
     const delegatedTrust = createBadgeBlueKeysDelegatedTrustResolver({
       vouchResolver: publicVouchResolver,
       listOwnRecords: async (collection, _opts) => {
-        const result = await (pds as RequesterPDSImpl).api.listRecords(pds.did, collection);
+        // Own records live under the market identity — the OAuth user's repo in
+        // OAuth mode (read via the session agent), the ephemeral PDS otherwise.
+        const oauthAgent = (pds as unknown as { oauthAgent?: { listRecords(did: string, coll: string, opts?: { limit?: number }): Promise<{ records: Array<{ uri: string; value: Record<string, unknown> }> }> } }).oauthAgent;
+        const result = oauthAgent && marketDid !== pds.did
+          ? await oauthAgent.listRecords(marketDid, collection, { limit: 100 })
+          : await (pds as RequesterPDSImpl).api.listRecords(marketDid, collection);
         const records = (result?.records as Array<{ uri: string; value: Record<string, unknown> }>) ?? [];
         for (const r of records) {
-          log("delegated_trust_record", { challenge: r.value.challenge, service: r.value.service, keyId: r.value.keyId, selfDid: pds.did });
+          log("delegated_trust_record", { challenge: r.value.challenge, service: r.value.service, keyId: r.value.keyId, selfDid: marketDid });
         }
-        log("delegated_trust_badgeBlueKeys", { did: pds.did, collection, count: records.length });
+        log("delegated_trust_badgeBlueKeys", { did: marketDid, collection, count: records.length });
         return records;
       },
     });
-    const vouchedSet = await delegatedTrust.getDelegatedTrustedDids(pds.did);
+    const vouchedSet = await delegatedTrust.getDelegatedTrustedDids(marketDid);
     vouchedDids = [...vouchedSet];
     log("vouch_discovery", { count: vouchedDids.length });
   } catch (err) {
@@ -1358,7 +1375,7 @@ runcmd:
   // bidder's own bidder_associate records. A bidder with no separate operator
   // is its own operator.
   const operatorDiscovery = createBadgeBlueKeysOperatorDiscovery({
-    listRecordsOwn: (collection) => listRecordsForPolicy(pds.did, collection),
+    listRecordsOwn: (collection) => listRecordsForPolicy(marketDid, collection),
     listRecordsPublic: (repo, collection) => listRecordsPublic(idResolver, repo, collection),
     log: (level, msg, meta) => log(`operator_discovery_${level}`, { msg, ...(meta ?? {}) }),
   });
@@ -1383,7 +1400,7 @@ runcmd:
 
   const listRecordsForPolicy = async (repo: string, coll: string) => {
     const merged = new Map<string, { uri: string; value: Record<string, unknown> }>();
-    if (repo === pds.did) {
+    if (repo === marketDid) {
       for (const read of [
         async () => (await oauthAgent?.listRecords(repo, coll, { limit: 100 }))?.records,
         async () => (await (pds as RequesterPDSImpl).api.listRecords(repo, coll))?.records as
@@ -1421,9 +1438,9 @@ runcmd:
         policyName: "requester-recheck",
         args: policyArgs,
         perspective: "requester",
-        selfDid: pds.did,
+        selfDid: marketDid,
         subjectDid: candidateDid,
-        rootRequesterDid: pds.did,
+        rootRequesterDid: marketDid,
         counterpartyDid: candidateDid,
         resolve: (ref) => resolveRecordForPolicy(ref),
         resolveOperatorDid,
@@ -1525,7 +1542,7 @@ runcmd:
           serviceName,
           issuerUri: wifConfig.issuer_uri,
           actx: wifConfig.actx,
-          requesterDid: pds.did,
+          requesterDid: marketDid,
           subjectTemplate: wifConfig.subject,
         });
         const { uri: rbacUri } = await pds.createRepoRecord(FEDPROXY_RBAC_NSID, rbacRecord);
@@ -1547,7 +1564,7 @@ runcmd:
       const grantVars = deriveGrantVars({
         cfg: wifConfig,
         subjectDid: atUriAuthority(rfpUri),
-        audienceDid: pds.did,
+        audienceDid: marketDid,
         role: serviceName,
       });
       log("capability_grants", {

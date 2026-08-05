@@ -136,6 +136,8 @@ const OAUTH_SCOPE_FULL = [
   "repo:com.publicdomainrelay.temp.compute.events.vm.onNetwork?action=create",
   "repo:com.publicdomainrelay.temp.badgeBlueKeys?action=create",
   "repo:com.fedproxy.rbac?action=create",
+  "repo:computer.socialweb.temp.policy.ghalite?action=create",
+  "repo:computer.socialweb.temp.policy.typescript?action=create",
   "rpc:com.publicdomainrelay.temp.market.submitRfp?aud=*",
   "rpc:com.publicdomainrelay.temp.market.submitAccept?aud=*",
   "rpc:com.publicdomainrelay.temp.market.submitBid?aud=*",
@@ -395,7 +397,11 @@ const ownEventWatcher = eventStreams.watch({
 if (!isOAuth) {
   await pds.beginServe();
 }
-logger.info("requester_ready", { did: pds.did, ingressRef: isOAuth ? "(oauth)" : pds.ingressRef, ingressProxyHost });
+// OAuth mode: the requester's market identity is the OAuth session user (every
+// market record is written as that user), NOT the ephemeral PDS keypair DID.
+const marketDid = (pds as unknown as { oauthSession?: { userDid?: string } }).oauthSession?.userDid ??
+  pds.did;
+logger.info("requester_ready", { did: marketDid, ingressRef: isOAuth ? "(oauth)" : pds.ingressRef, ingressProxyHost });
 
 const BADGE_BLUE_KEYS_NSID = "com.publicdomainrelay.temp.badgeBlueKeys";
 let hasAssociation = false;
