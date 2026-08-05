@@ -25,12 +25,11 @@ async function evaluateMutuals(ctx: PolicyEvalCtx): Promise<PolicyResult> {
 
   if (ctx.subjectDid === ctx.selfDid) return { allow: true, violations: [] };
 
-  const operatorDid = await ctx.resolveOperatorDid(ctx.subjectDid);
-  if (!operatorDid) {
-    ctx.log("info", "mutuals: no operator association", { subjectDid: ctx.subjectDid });
-    return { allow: false, violations: [{ msg: "no operator association", policyId: ctx.policyName }] };
-  }
-
+  // A subject with no separate operator IS its own operator (see
+  // resolveOperatorDid in policy-deno-typescript-shared) — fall back to the
+  // subject itself so a directly-vouched subject passes the mutual-follow check
+  // without requiring a proxy operator record.
+  const operatorDid = await ctx.resolveOperatorDid(ctx.subjectDid) ?? ctx.subjectDid;
   if (operatorDid === ctx.selfDid) return { allow: true, violations: [] };
 
   try {

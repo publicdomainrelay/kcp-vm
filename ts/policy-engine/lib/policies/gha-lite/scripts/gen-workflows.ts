@@ -18,7 +18,7 @@ const HEADER = `/**
  *
  * Maps canonical policy name → its gha-lite workflow YAML, so callers
  * (bidder scope gate, seeder, requester minting) can build a
- * computer.socialweb.temp.policy.gha-lite record without reading files.
+ * computer.socialweb.temp.policy.ghalite record without reading files.
  */
 `;
 

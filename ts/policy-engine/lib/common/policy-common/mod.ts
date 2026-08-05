@@ -7,7 +7,7 @@
 // ── NSIDs ────────────────────────────────────────────────────────────────────
 
 /** Pre-defined policy workflow records referenced by RFP.policies[]. */
-export const POLICY_GHA_LITE_NSID = "computer.socialweb.temp.policy.gha-lite";
+export const POLICY_GHA_LITE_NSID = "computer.socialweb.temp.policy.ghalite";
 export const POLICY_TYPESCRIPT_NSID = "computer.socialweb.temp.policy.typescript";
 
 /** Market records a policy operates on / alongside. */

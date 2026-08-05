@@ -28,12 +28,11 @@ async function evaluateTangledVouch(ctx: PolicyEvalCtx): Promise<PolicyResult> {
 
   if (ctx.subjectDid === ctx.selfDid) return { allow: true, violations: [] };
 
-  const operatorDid = await ctx.resolveOperatorDid(ctx.subjectDid);
-  if (!operatorDid) {
-    ctx.log("info", "tangled-vouch: no operator association", { subjectDid: ctx.subjectDid });
-    return { allow: false, violations: [{ msg: "no operator association", policyId: ctx.policyName }] };
-  }
-
+  // A subject with no separate operator IS its own operator (badgeBlueKeys
+  // association absent ⇒ self-operated), so resolveOperatorDid returns null.
+  // Fall back to the subject itself — the vouch-graph check below then admits a
+  // subject the evaluator vouches directly, without a proxy operator.
+  const operatorDid = await ctx.resolveOperatorDid(ctx.subjectDid) ?? ctx.subjectDid;
   if (operatorDid === ctx.selfDid) return { allow: true, violations: [] };
 
   try {

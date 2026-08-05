@@ -23,6 +23,15 @@ on:
       counterparty-did:
         description: DID of the other side (required in scope mode)
         required: false
+      perspective:
+        description: 'Evaluation side: bidder or requester. Overrides the policy-name default when the evaluator is not the policy''s named side (e.g. a bidder running a requester-attached policy before a bid exists).'
+        required: false
+      subject-did:
+        description: 'DID evaluated as the policy subject when no record names it (e.g. the bidder evaluating an RFP''s attached policy before any bid exists).'
+        required: false
+      root-requester-did:
+        description: 'DID of the root requester, when the caller knows it and record derivation would get it wrong.'
+        required: false
 
 jobs:
   evaluate:
@@ -38,5 +47,8 @@ jobs:
         policy-args: ${{ inputs.policy-args || '' }}
         mode: ${{ inputs.mode || '' }}
         counterparty-did: ${{ inputs.counterparty-did || '' }}
+        perspective: ${{ inputs.perspective || '' }}
+        subject-did: ${{ inputs.subject-did || '' }}
+        root-requester-did: ${{ inputs.root-requester-did || '' }}
     - run: echo "allow=${{ steps.policy.outputs.allow }} violations=${{ steps.policy.outputs.violations }}"
     - run: test "${{ steps.policy.outputs.allow }}" = "true"

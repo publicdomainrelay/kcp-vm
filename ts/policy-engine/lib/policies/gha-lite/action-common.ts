@@ -99,16 +99,33 @@ interface TrustInput {
   trustedOperators: string[];
 }
 
-/** Snapshot-backed trust resolvers, or undefined when no `trust` input. */
-function trustResolvers(): {
+/**
+ * Snapshot-backed trust resolvers, or undefined when the host did not seed a
+ * trust snapshot for this counterparty. The engine writes the snapshot into the
+ * request cache under `trust/<counterpartyDid>` (see
+ * policy-engine-executor-gha-lite buildRequest / buildScopeRequest), which the
+ * action reads via createCacheStore — never a workflow input, so the action
+ * does not depend on the workflow forwarding host data.
+ */
+function trustResolvers(
+  store: ReturnType<typeof createCacheStore>,
+  counterpartyDid: string,
+): {
   resolveOperatorDid: (did: string) => Promise<string | null>;
   getVouchedDids: (did: string) => Promise<Set<string>>;
 } | undefined {
-  const trust = inputJson<TrustInput>("trust");
-  if (!trust) return undefined;
+  const entry = store.get(`trust/${counterpartyDid}`);
+  if (!entry) return undefined;
+  const parse = (file: string): unknown => {
+    const f = entry[file];
+    return f ? JSON.parse(f.data) : undefined;
+  };
+  const operatorOf = parse("operatorOf.json") as TrustInput["operatorOf"] | undefined;
+  const vouchedBy = parse("vouchedBy.json") as TrustInput["vouchedBy"] | undefined;
+  if (!operatorOf || !vouchedBy) return undefined;
   return {
-    resolveOperatorDid: async (did) => trust.operatorOf[did] ?? null,
-    getVouchedDids: async (did) => new Set(trust.vouchedBy[did] ?? []),
+    resolveOperatorDid: async (did) => operatorOf[did] ?? null,
+    getVouchedDids: async (did) => new Set(vouchedBy[did] ?? []),
   };
 }
 
@@ -136,7 +153,7 @@ async function evaluateScope(
   const subjectDid = counterpartyDid;
   const rootRequesterDid = perspective === "requester" ? selfDid : counterpartyDid;
 
-  const tr = trustResolvers();
+  const tr = trustResolvers(store, counterpartyDid);
   const ctx = new PolicyEvalCtxImpl({
     policyName: policy.name,
     args,
@@ -185,7 +202,12 @@ export async function evaluatePolicyAction(policy: Policy): Promise<void> {
     Deno.exit(1);
   }
 
-  const perspective = policyPerspective(policy);
+  // The engine's explicit perspective (bidder/requester) wins over the
+  // policy-name default: a requester-named policy evaluated by the bidder (an
+  // RFP's attached policy, pre-bid) runs from the bidder's side, which the name
+  // cannot express. Absent an input, fall back to the name-derived side.
+  const perspective = (input("perspective") as PolicyPerspective | "") ||
+    policyPerspective(policy);
   const store = createCacheStore();
   const args = inputJson<PolicyArgs>("policy-args") ?? {};
 
@@ -194,7 +216,7 @@ export async function evaluatePolicyAction(policy: Policy): Promise<void> {
     return;
   }
 
-  const tr = trustResolvers();
+  const tr = trustResolvers(store, input("counterparty-did") || "");
   const ctx = await createPolicyCtx({
     policyName: policy.name,
     args,

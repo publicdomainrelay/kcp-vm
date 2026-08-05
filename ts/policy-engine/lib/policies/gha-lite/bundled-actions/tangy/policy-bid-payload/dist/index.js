@@ -9787,12 +9787,19 @@ function onePolicyRegistry(policy) {
     ]
   };
 }
-function trustResolvers() {
-  const trust = inputJson("trust");
-  if (!trust) return void 0;
+function trustResolvers(store, counterpartyDid) {
+  const entry = store.get(`trust/${counterpartyDid}`);
+  if (!entry) return void 0;
+  const parse = (file) => {
+    const f = entry[file];
+    return f ? JSON.parse(f.data) : void 0;
+  };
+  const operatorOf = parse("operatorOf.json");
+  const vouchedBy = parse("vouchedBy.json");
+  if (!operatorOf || !vouchedBy) return void 0;
   return {
-    resolveOperatorDid: async (did) => trust.operatorOf[did] ?? null,
-    getVouchedDids: async (did) => new Set(trust.vouchedBy[did] ?? [])
+    resolveOperatorDid: async (did) => operatorOf[did] ?? null,
+    getVouchedDids: async (did) => new Set(vouchedBy[did] ?? [])
   };
 }
 async function evaluateScope(policy, opts) {
@@ -9804,7 +9811,7 @@ async function evaluateScope(policy, opts) {
   }
   const subjectDid = counterpartyDid;
   const rootRequesterDid = perspective === "requester" ? selfDid : counterpartyDid;
-  const tr = trustResolvers();
+  const tr = trustResolvers(store, counterpartyDid);
   const ctx = new PolicyEvalCtxImpl({
     policyName: policy.name,
     args,
@@ -9869,7 +9876,7 @@ async function evaluatePolicyAction(policy) {
     console.error("::error::policy action: self-did is required (the evaluator's own DID)");
     Deno.exit(1);
   }
-  const perspective = policyPerspective(policy);
+  const perspective = input("perspective") || policyPerspective(policy);
   const store = createCacheStore();
   const args = inputJson("policy-args") ?? {};
   if (input("mode") === "scope") {
@@ -9881,7 +9888,7 @@ async function evaluatePolicyAction(policy) {
     });
     return;
   }
-  const tr = trustResolvers();
+  const tr = trustResolvers(store, input("counterparty-did") || "");
   const ctx = await createPolicyCtx({
     policyName: policy.name,
     args,

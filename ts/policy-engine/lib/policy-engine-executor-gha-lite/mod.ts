@@ -1,6 +1,6 @@
 /**
  * policy-engine-executor-gha-lite — a PolicyEngineExecutor that evaluates a
- * `computer.socialweb.temp.policy.gha-lite` record by running its GitHub
+ * `computer.socialweb.temp.policy.ghalite` record by running its GitHub
  * Actions workflow through the existing gha-lite engine and reading the
  * workflow's terminal status as the policy verdict.
  *
@@ -26,6 +26,8 @@ import {
   WorkflowExecutor,
   ExitStatusSuccess,
   StatusComplete,
+  type Cache,
+  type CacheFile,
   type PolicyEngineComplete,
   type PolicyEngineRequest,
   type PolicyEngineStatus,
@@ -158,6 +160,24 @@ export interface TrustInput {
   trustedOperators: string[];
 }
 
+/** Cache entry (a map of workspace-relative path → file) holding a host trust
+ * snapshot. Seeded into the request cache under `trust/<counterpartyDid>` so
+ * the policy action reads it via createCacheStore instead of depending on a
+ * workflow input forwarding host data. */
+function trustCacheEntry(trust: TrustInput): Record<string, CacheFile> {
+  return {
+    "operatorOf.json": { data: JSON.stringify(trust.operatorOf), encoding: "text" },
+    "vouchedBy.json": { data: JSON.stringify(trust.vouchedBy), encoding: "text" },
+    "trustedOperators.json": { data: JSON.stringify(trust.trustedOperators), encoding: "text" },
+  };
+}
+
+/** The `trust/<counterpartyDid>` cache entry for a request, keyed on the side
+ * the snapshot was pre-resolved for. */
+function trustCacheKey(counterpartyDid: string): string {
+  return `trust/${counterpartyDid}`;
+}
+
 /** Pre-resolve the trust snapshot for the two sides through host resolvers. */
 async function buildTrustInput(
   resolvers: {
@@ -202,7 +222,6 @@ function buildRequest(
     "counterparty-did": ctx.counterpartyDid,
     perspective: ctx.perspective,
     "policy-args": JSON.stringify(ctx.args ?? {}),
-    trust: JSON.stringify(trust),
   };
 
   // The record's permissions field, when the workflow references it.
@@ -233,6 +252,10 @@ function buildRequest(
     // keeps them available to a workflow author without changing the engine.
     context["permissions"] = permissions;
   }
+  // Deliver the host trust snapshot through the request cache (read by the
+  // policy action under `trust/<counterpartyDid>`), not a workflow input — the
+  // action never depends on the workflow forwarding host data.
+  context["cache"] = { [trustCacheKey(ctx.counterpartyDid)]: trustCacheEntry(trust) };
 
   return { workflow, inputs, context };
 }
@@ -255,7 +278,6 @@ function buildScopeRequest(
     "counterparty-did": scope.counterpartyDid,
     perspective: scope.perspective,
     "policy-args": JSON.stringify(scope.args ?? {}),
-    trust: JSON.stringify(trust),
   };
 
   const recordPermissions = policyRecord.value?.permissions;
@@ -272,6 +294,9 @@ function buildScopeRequest(
       },
     },
   };
+  // Trust snapshot rides the request cache (see buildRequest) — the scope lane
+  // action reads it under `trust/<counterpartyDid>`.
+  context["cache"] = { [trustCacheKey(scope.counterpartyDid)]: trustCacheEntry(trust) };
 
   return { workflow, inputs, context };
 }

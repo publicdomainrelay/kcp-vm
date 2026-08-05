@@ -2,7 +2,7 @@
  * policy-engine-evaluator — the ONE import callers use to evaluate policies.
  *
  * Dispatches through an EngineRegistry ($type → executor). The only record
- * kinds are `computer.socialweb.temp.policy.gha-lite` (a GitHub Actions
+ * kinds are `computer.socialweb.temp.policy.ghalite` (a GitHub Actions
  * workflow) and `computer.socialweb.temp.policy.typescript` (a workerManifest
  * bundle). Callers — bidder, requester, gateway, hono server — supply `resolve`
  * and the trust resolvers; every policy decision runs through the executors.

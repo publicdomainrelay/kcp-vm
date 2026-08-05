@@ -17,6 +17,9 @@ export {
   StatusComplete,
 } from "./src/models.ts";
 export type {
+  Cache,
+  CacheEntry,
+  CacheFile,
   PolicyEngineComplete,
   PolicyEngineRequest,
   PolicyEngineStatus,
