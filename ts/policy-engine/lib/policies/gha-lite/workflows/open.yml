@@ -39,3 +39,4 @@ jobs:
         mode: ${{ inputs.mode || '' }}
         counterparty-did: ${{ inputs.counterparty-did || '' }}
     - run: echo "allow=${{ steps.policy.outputs.allow }} violations=${{ steps.policy.outputs.violations }}"
+    - run: test "${{ steps.policy.outputs.allow }}" = "true"

@@ -7,7 +7,8 @@
     "@publicdomainrelay/policy-deno-typescript-shared": "jsr:@publicdomainrelay/policy-deno-typescript-shared@^0"
   },
   "tasks": {
-    "build": "deno run -A scripts/build-actions.ts",
-    "check": "deno check scripts/build-actions.ts bundled-actions/tangy/policy-open/index.ts"
+    "gen-workflows": "deno run -A scripts/gen-workflows.ts",
+    "build": "deno run -A scripts/gen-workflows.ts && deno run -A scripts/build-actions.ts",
+    "check": "deno check scripts/gen-workflows.ts scripts/build-actions.ts bundled-actions/tangy/policy-open/index.ts"
   }
 }
