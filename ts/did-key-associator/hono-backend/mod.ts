@@ -212,12 +212,27 @@ app.get(`/xrpc/${OAUTH_QR_NSID}`, async (c) => {
     return c.json({ error: "Unauthorized", message: msg }, 401);
   }
 
-  const entry = await loadEntry(issuerDid);
-  if (!entry || !entry.session) {
+  // Burn-after-read: atomically consume the session so it is never retrievable
+  // twice and is gone from KV the moment a poll succeeds.
+  const k = await getKv();
+  const res = await k.get<StoredEntry>(["oauthQr", issuerDid]);
+  if (!res.value || !res.value.session) {
     return c.json({ error: "notReady" }, 404);
   }
-
-  return c.json(entry.session);
+  if (Date.now() - res.value.createdAt > SESSION_TTL_MS) {
+    await k.delete(res.key);
+    return c.json({ error: "notReady" }, 404);
+  }
+  const consumed = await k.atomic()
+    .check({ key: res.key, versionstamp: res.versionstamp })
+    .delete(res.key)
+    .commit();
+  if (!consumed) {
+    // Entry changed between get and delete (e.g. a concurrent POST replaced
+    // it) — report notReady so the CLI keeps polling for the fresh entry.
+    return c.json({ error: "notReady" }, 404);
+  }
+  return c.json(res.value.session);
 });
 
 // ── Serve ──────────────────────────────────────────────────────────────────
