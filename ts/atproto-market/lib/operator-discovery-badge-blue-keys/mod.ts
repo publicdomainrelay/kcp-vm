@@ -19,17 +19,21 @@ export function createBadgeBlueKeysOperatorDiscovery(opts: BadgeBlueKeysOperator
   const cache = new Map<string, string[]>(); // atprotoDid -> [operatorDids]
 
   // An operator association is a badgeBlueKeys record whose challenge is the
-  // subject's own DID and whose keyId is the operator. The service tag records
-  // which side minted it: bidders write bidder_associate, requesters write
-  // requester_associate. Both point at the same operator, so either resolves a
-  // subject's operator -- a bidder's operator from its bidder_associate, and a
-  // requester's operator from its requester_associate.
-  const keyIdOf = (v: Record<string, unknown>, subjectDid: string): string | undefined => {
-    if (v.challenge !== subjectDid) return undefined;
+  // OPERATOR and whose keyId is the ASSOCIATED party (bidder/requester). This
+  // is the canonical shape -- the operator writes {challenge: operator,
+  // keyId: associated} to acknowledge, and the associated's own repo mirrors
+  // {challenge: operator, keyId: self}. A subject's operator is therefore the
+  // CHALLENGE of an association record whose keyId is the subject. (Older
+  // records used the inverted {challenge: subject, keyId: operator}; those are
+  // the acknowledgment of a DIFFERENT subject and must NOT be read as this
+  // subject's operator -- that inversion mis-resolves operators as self-operated
+  // bidders, e.g. ocnuqjlz -> 5jo53.)
+  const operatorOf = (v: Record<string, unknown>, subjectDid: string): string | undefined => {
+    if (v.keyId !== subjectDid) return undefined;
     const service = v.service;
     if (service !== "bidder_associate" && service !== "requester_associate") return undefined;
-    const keyId = v.keyId;
-    return typeof keyId === "string" && keyId.startsWith("did:") ? keyId : undefined;
+    const challenge = v.challenge;
+    return typeof challenge === "string" && challenge.startsWith("did:") ? challenge : undefined;
   };
 
   return {
@@ -40,8 +44,8 @@ export function createBadgeBlueKeysOperatorDiscovery(opts: BadgeBlueKeysOperator
       try {
         const ownRecords = await listRecordsOwn(BADGE_BLUE_KEYS_NSID, { limit: 200 });
         for (const rec of ownRecords) {
-          const keyId = keyIdOf(rec.value, atprotoDid);
-          if (keyId) dids.push(keyId);
+          const op = operatorOf(rec.value, atprotoDid);
+          if (op) dids.push(op);
         }
       } catch {
         // fall through to public read below
@@ -50,8 +54,8 @@ export function createBadgeBlueKeysOperatorDiscovery(opts: BadgeBlueKeysOperator
         try {
           const publicRecords = await listRecordsPublic(atprotoDid, BADGE_BLUE_KEYS_NSID);
           for (const r of publicRecords) {
-            const keyId = keyIdOf(r.value, atprotoDid);
-            if (keyId) dids.push(keyId);
+            const op = operatorOf(r.value, atprotoDid);
+            if (op) dids.push(op);
           }
         } catch {
           // non-critical

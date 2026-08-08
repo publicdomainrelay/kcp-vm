@@ -106,6 +106,18 @@ export default {
       description: "Keep VM after SSH session (skip delete)",
       env: "KEEP_VM",
     },
+    "hold": {
+      type: "boolean" as const,
+      description:
+        "Provisioning-only mode: after SSH-ready, hold the VM (no --exec session) until SIGTERM/SIGINT, then tear it down via vm.delete. For fleet plugins that run the job over their own SSH session.",
+      env: "HOLD",
+    },
+    "ssh-authorized-key": {
+      type: "string" as const,
+      description:
+        "Extra OpenSSH public key to authorize for root SSH, added alongside the requester's own ephemeral key (repeatable, or comma-separated). Lets a fleet plugin bring its own identity for ConnectInfo.",
+      env: "SSH_AUTHORIZED_KEY",
+    },
     "skip-ssh": {
       type: "boolean" as const,
       description: "Skip SSH wait and session (for testing)",

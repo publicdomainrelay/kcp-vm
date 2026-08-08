@@ -14,6 +14,7 @@ import { startLoopbackCallbackServer } from "@publicdomainrelay/atproto-oauth-he
 import { createPlcDirectoryClient, createGenesisOp, PlcClient, PlcNotFoundError } from "@publicdomainrelay/did-plc";
 import type { RequesterPDS } from "@publicdomainrelay/requester-abc";
 import { EVENT_NSID, OFFERING_NSID } from "@publicdomainrelay/market-common";
+import { REQUESTER_OAUTH_SCOPE } from "@publicdomainrelay/oauth-scope";
 import { createDefaultATProtoEventStreamsClient } from "@publicdomainrelay/atproto-event-streams-client";
 import { DEFAULT_RELAY_URLS } from "@publicdomainrelay/atproto-event-stream-common";
 import { parseSecretsFile } from "@publicdomainrelay/secrets-common";
@@ -123,27 +124,6 @@ if (privateKeyHexPath && !resolvedPrivateKeyHex) {
   } catch { /* file missing -- will generate and save below */ }
 }
 
-// Full OAuth scope -- single source of truth for registered + loopback clients.
-// Requester subset: compute.vm, market.rfp/accept/event, compute.events, badgeBlueKeys,
-// fedproxy.rbac, + all four RPC endpoints.
-const OAUTH_SCOPE_FULL = [
-  "atproto",
-  "repo:com.publicdomainrelay.temp.compute.vm?action=create",
-  "repo:com.publicdomainrelay.temp.market.rfp?action=create",
-  "repo:com.publicdomainrelay.temp.market.accept?action=create",
-  "repo:com.publicdomainrelay.temp.market.event?action=create",
-  "repo:com.publicdomainrelay.temp.compute.events.vm.delete?action=create",
-  "repo:com.publicdomainrelay.temp.compute.events.vm.onNetwork?action=create",
-  "repo:com.publicdomainrelay.temp.badgeBlueKeys?action=create",
-  "repo:com.fedproxy.rbac?action=create",
-  "repo:computer.socialweb.temp.policy.ghalite?action=create",
-  "repo:computer.socialweb.temp.policy.typescript?action=create",
-  "rpc:com.publicdomainrelay.temp.market.submitRfp?aud=*",
-  "rpc:com.publicdomainrelay.temp.market.submitAccept?aud=*",
-  "rpc:com.publicdomainrelay.temp.market.submitBid?aud=*",
-  "rpc:com.publicdomainrelay.temp.market.submitEvent?aud=*",
-];
-
 let pds: RequesterPDS;
 let isOAuth = false;
 let _oauthAgentForDispose: { dispose(): void } | null = null;
@@ -171,7 +151,7 @@ if ((options.atprotoOauth as boolean) && (options.atprotoHandle as string | unde
       `${Deno.env.get("HOME") ?? "/tmp"}/.cache/pdr-market/requester-oauth-session.json`,
     clientId: options.oauthClientId as string | undefined,
     redirectUri: options.oauthRedirectUri as string | undefined,
-    scope: OAUTH_SCOPE_FULL.join(" "),
+    scope: REQUESTER_OAUTH_SCOPE.join(" "),
     plcDirectoryUrl: (options.plcDirectoryUrl as string) || "https://plc.directory",
     logger,
     attestationKp: await (async () => {
@@ -506,8 +486,27 @@ function shutdown(): void {
   serve.shutdown();
   Deno.exit();
 }
-Deno.addSignalListener("SIGINT", shutdown);
-Deno.addSignalListener("SIGTERM", shutdown);
+
+// Provisioning-only hold mode: the first SIGTERM/SIGINT releases the held VM
+// (runComputeContract then submits vm.delete and returns); only a signal after
+// that tears down without teardown. Without --hold the signal kills directly.
+const holdMode = Boolean(options.hold);
+const holdAbort = new AbortController();
+function onSignal(): void {
+  if (holdMode) {
+    logger.info("vm_hold_signal", {});
+    holdAbort.abort();
+  } else {
+    shutdown();
+  }
+}
+Deno.addSignalListener("SIGINT", onSignal);
+Deno.addSignalListener("SIGTERM", onSignal);
+
+if (holdMode && options.skipSsh) {
+  console.error("--hold requires SSH readiness (conflicts with --skip-ssh)");
+  Deno.exit(2);
+}
 
 const policyName = options.policy as string | undefined;
 let policy: PolicySpec | undefined;
@@ -534,6 +533,12 @@ const result = await runComputeContract(pds, {
   skipSsh: options.skipSsh as boolean,
   execProgram: options.exec as string,
   keepVm: options.keepVm as boolean,
+  hold: holdMode,
+  holdAbort: holdAbort.signal,
+  sshAuthorizedKeys: ([] as unknown[])
+    .concat(options.sshAuthorizedKey ?? [])
+    .flatMap((v: string | string[]) => Array.isArray(v) ? v : v.split(","))
+    .map((s: string) => s.trim()).filter(Boolean),
   vmReadyTimeoutSec: options.vmReadyTimeoutSec as number,
   extraBidderDids,
   denyBidderDids,

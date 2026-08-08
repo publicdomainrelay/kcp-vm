@@ -30,6 +30,7 @@ import type { StructuredLoggerInterface } from "@publicdomainrelay/logger";
 import type { IngressRef, ServeHandle } from "@publicdomainrelay/serve";
 import type { VouchResolver } from "@publicdomainrelay/trust-graph-abc";
 import { createTangledGraphVouchResolver } from "@publicdomainrelay/trust-graph-tangled-graph";
+import { createBadgeBlueKeysDelegatedTrustResolver } from "@publicdomainrelay/delegated-trust-badge-blue-keys";
 import { createPolicyEvaluator } from "@publicdomainrelay/policy-engine-evaluator";
 import type { PolicyEvaluator } from "@publicdomainrelay/policy-engine-evaluator";
 import { createScopeCache } from "@publicdomainrelay/policy-engine-scope-cache";
@@ -197,14 +198,32 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
   const scopeCache = createScopeCache();
 
   // Network-based operator discovery: read the subject's badgeBlueKeys records
-  // and return the keyId whose challenge is the subject DID and whose service is
-  // bidder_associate / requester_associate (that keyId is the operator DID).
+  // and return the CHALLENGE whose keyId is the subject DID and whose service is
+  // bidder_associate / requester_associate (that challenge is the operator DID).
+  // Canonical shape is {challenge: operator, keyId: associated} -- the operator
+  // acknowledges the associated bidder/requester. The old inverted shape
+  // {challenge: subject, keyId: operator} is a DIFFERENT subject's
+  // acknowledgment and must not be read as this subject's operator.
   // No local trust snapshot to warm -- the scope cache absorbs per-counterparty
   // verdicts. Self-owned operators fall through to the evaluator's
   // `?? selfDid` handling when this returns null.
   const resolveOperatorDid = async (bidderDid: string): Promise<string | null> => {
     try {
       const records = await listRecordsPublic(idResolver, bidderDid, BADGE_BLUE_KEYS_NSID, { limit: 200 });
+      for (const rec of records) {
+        const v = rec.value as Record<string, unknown>;
+        if (v.service !== "bidder_associate" && v.service !== "requester_associate") continue;
+        // Canonical: {challenge: operator, keyId: associated} -- the subject is
+        // the associated party; the challenge is its operator.
+        if (v.keyId === bidderDid && typeof v.challenge === "string" && v.challenge.startsWith("did:")) {
+          return v.challenge;
+        }
+      }
+      // Legacy inverted shape: {challenge: subject, keyId: operator}. An
+      // ephemeral requester/bidder declares its operator with challenge=self.
+      // (An OPERATOR's own repo has acknowledgments of the same shape -- those
+      // keyIds are its associated DIDs, not its operator -- so this fallback is
+      // only a tiebreak for subjects whose canonical lookup found nothing.)
       for (const rec of records) {
         const v = rec.value as Record<string, unknown>;
         if (v.challenge === bidderDid && (v.service === "bidder_associate" || v.service === "requester_associate")) {
@@ -218,7 +237,20 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
     return null;
   };
 
-  const getVouchedDids = (did: string): Promise<Set<string>> => publicVouchResolver.getVouchedDids(did);
+  // Policy vouch lookups are operator-delegated (same rationale as the
+  // requester side): the ephemeral bidder DID has no vouch records of its own,
+  // so a raw lookup would leave tangled-vouch with an empty set. Resolve self
+  // -> operator via badgeBlueKeys (bidder_associate / requester_associate),
+  // then merge the operator's vouches.
+  const delegatedVouchResolver = createBadgeBlueKeysDelegatedTrustResolver({
+    vouchResolver: publicVouchResolver,
+    listOwnRecords: async (collection, opts) => {
+      const result = await atproto.listRecords(atproto.did, collection, { limit: opts?.limit ?? 100 });
+      return (result?.records as Array<{ uri: string; value: Record<string, unknown> }>) ?? [];
+    },
+    log: (level, msg, meta) => logger[level as "info" | "warn"]?.(msg, meta),
+  });
+  const getVouchedDids = (did: string): Promise<Set<string>> => delegatedVouchResolver.getDelegatedTrustedDids(did);
 
   async function ensureOperatorAllowlist(service: string): Promise<void> {
     const result = await atproto.listRecords(atproto.did, ALLOWLIST_RBAC_DID_NSID, { limit: 100 });

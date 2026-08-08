@@ -10,8 +10,9 @@ import { createComputeProviderDenoWorker, createWorkerProviderHooks } from "@pub
 import { createATProto, createLocalPDSAgent, createRemoteAgent, createOAuthAgent, createOAuthAgentFromSession, pollForOAuthSession, tryRestoreOAuthQRSession, saveOAuthQRSession, OAuthSessionExpiredError } from "@publicdomainrelay/atproto-helpers";
 import type { LocalPDSAgent } from "@publicdomainrelay/atproto-helpers";
 import { startLoopbackCallbackServer, oauthClientMetadata } from "@publicdomainrelay/atproto-oauth-helpers";
-import { loadOrGenerateKeypair } from "@publicdomainrelay/market-atproto";
+import { createBadgeBlueKeysRecord, loadOrGenerateKeypair } from "@publicdomainrelay/market-atproto";
 import { ACCEPT_NSID, EVENT_NSID, OFFERING_NSID, RFP_NSID } from "@publicdomainrelay/market-common";
+import { BIDDER_OAUTH_SCOPE } from "@publicdomainrelay/oauth-scope";
 import { verifyRelayVisibility } from "@publicdomainrelay/requester-xrpc";
 import { createDefaultATProtoEventStreamsClient } from "@publicdomainrelay/atproto-event-streams-client";
 import { DEFAULT_RELAY_URLS } from "@publicdomainrelay/atproto-event-stream-common";
@@ -107,36 +108,6 @@ async function cliCreateIngress() {
   return createIngress({ logger, ingressProxyHost, signer: localSigner, keypair: relayKeypair });
 }
 
-// Full OAuth scope -- single source of truth for registered + loopback clients.
-// Matches did-key-associator/oauth-client-metadata.json canonical list.
-const OAUTH_SCOPE_FULL = [
-  "atproto",
-  // Collection writes
-  "repo:com.publicdomainrelay.temp.market.offering?action=create",
-  "repo:com.publicdomainrelay.temp.market.offering?action=update",
-  "repo:com.publicdomainrelay.temp.auth.allowlist.rbacDid?action=create",
-  "repo:com.publicdomainrelay.temp.market.bids.free?action=create",
-  "repo:com.publicdomainrelay.temp.market.bid?action=create",
-  "repo:com.publicdomainrelay.temp.market.receipt?action=create",
-  "repo:com.publicdomainrelay.temp.market.event?action=create",
-  "repo:com.publicdomainrelay.temp.badgeBlueKeys?action=create",
-  "repo:com.publicdomainrelay.temp.market.bidderAssociation?action=create",
-  "repo:com.publicdomainrelay.temp.compute.config.wif.simple?action=create",
-  "repo:com.publicdomainrelay.temp.compute.vm?action=create",
-  "repo:com.publicdomainrelay.temp.market.rfp?action=create",
-  "repo:com.publicdomainrelay.temp.market.accept?action=create",
-  "repo:com.publicdomainrelay.temp.compute.events.vm.delete?action=create",
-  "repo:com.publicdomainrelay.temp.compute.events.vm.onNetwork?action=create",
-  "repo:com.fedproxy.rbac?action=create",
-  "repo:computer.socialweb.temp.policy.ghalite?action=create",
-  "repo:computer.socialweb.temp.policy.typescript?action=create",
-  // RPC endpoints
-  "rpc:com.publicdomainrelay.temp.market.submitRfp?aud=*",
-  "rpc:com.publicdomainrelay.temp.market.submitAccept?aud=*",
-  "rpc:com.publicdomainrelay.temp.market.submitBid?aud=*",
-  "rpc:com.publicdomainrelay.temp.market.submitEvent?aud=*",
-];
-
 // deno-lint-ignore no-explicit-any
 let atprotoAgent: any;
 let pdsHostname: string | undefined;
@@ -173,7 +144,7 @@ if ((options.atprotoOauth as boolean)) {
     sessionPath,
     clientId: options.oauthClientId as string | undefined,
     redirectUri: options.oauthRedirectUri as string | undefined,
-    scope: OAUTH_SCOPE_FULL.join(" "),
+    scope: BIDDER_OAUTH_SCOPE.join(" "),
     plcDirectoryUrl: plcDirectoryUrl,
     logger,
   });
@@ -384,6 +355,31 @@ const atproto = await createATProto({
   agent: atprotoAgent,
 });
 
+// Bind the ephemeral attestation key to this bidder's DID so remote verifiers
+// accept the inline signatures on records it authors. An OAuth-QR bidder signs
+// with an attestation did:key that is NOT in its DID document (the account key
+// is), and verifyRecordSignatures' fallback keyBoundByBadgeBlueKey requires a
+// badgeBlueKeys record at the deterministic rkey. Local-PDS bidders publish the
+// key in their DID doc, so the binding is redundant-but-harmless. The service
+// is deliberately not bidder_associate/requester_associate so operator
+// resolution (which scans badgeBlueKeys for exactly those services) skips it.
+try {
+  await createBadgeBlueKeysRecord({
+    did: atproto.did,
+    keyId: attestationKp.did(),
+    service: "bidder_attestation",
+    // createRecord (not putRecord): the OAuth session's badgeBlueKeys scope is
+    // action=create only, so putRecord/updateRecord 403s with ScopeMissingError.
+    writeRecord: (repo, collection, rkey, record) =>
+      typeof atprotoAgent.createRecord === "function"
+        ? atprotoAgent.createRecord(repo, collection, rkey, record)
+        : atproto.updateRecord(collection, rkey, record),
+  });
+  logger.info("badge_blue_key_bound", { did: atproto.did, keyId: attestationKp.did(), service: "bidder_attestation" });
+} catch (err) {
+  logger.warn("badge_blue_key_bind_failed", { error: String(err) });
+}
+
 // Headless operator association: mint a bidder_associate badgeBlueKeys record
 // mapping this bidder to the operator DID that owns it. Mirrors exactly what
 // the QR associate flow writes (keyId=operator, challenge=self, service
@@ -394,10 +390,15 @@ const associateWith = options.associateWith as string | undefined;
 if (associateWith) {
   try {
     const BADGE_BLUE_KEYS_NSID = "com.publicdomainrelay.temp.badgeBlueKeys";
+    // Canonical association shape: {challenge: OPERATOR, keyId: ASSOCIATED}.
+    // The operator is the challenge; the associated bidder is the keyId.
+    // (The old shape -- challenge=self, keyId=operator -- inverted the fields
+    // and made operator-discovery mis-read an operator's acknowledgment as its
+    // own operator, e.g. ocnuqjlz -> 5jo53.)
     await atproto.createRecord(BADGE_BLUE_KEYS_NSID, {
       $type: BADGE_BLUE_KEYS_NSID,
-      keyId: associateWith,
-      challenge: atproto.did,
+      challenge: associateWith,
+      keyId: atproto.did,
       service: "bidder_associate",
       createdAt: new Date().toISOString(),
     });
@@ -564,7 +565,7 @@ bidderServe.app.get("/oauth-client-metadata.json", (_c: { json(obj: Record<strin
   return _c.json(oauthClientMetadata({
     clientId: options.oauthClientId as string | undefined,
     redirectUri: options.oauthRedirectUri as string | undefined,
-    scope: OAUTH_SCOPE_FULL.join(" "),
+    scope: BIDDER_OAUTH_SCOPE.join(" "),
     clientName: "Compute Provider (hono-bidder)",
   }));
 });

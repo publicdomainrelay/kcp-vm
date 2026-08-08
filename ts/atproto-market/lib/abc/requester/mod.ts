@@ -29,6 +29,21 @@ export interface ContractFlowOptions {
   skipSsh?: boolean;
   execProgram?: string;
   keepVm?: boolean;
+  /**
+   * Provisioning-only mode: after SSH-ready, do NOT run execProgram. Hold the
+   * VM until `holdAbort` fires, then tear it down (vm.delete). Used by the
+   * GitLab fleeting plugin so the plugin owns the job-over-SSH and VM
+   * lifetime follows the process.
+   */
+  hold?: boolean;
+  /** Abort signal that releases a held VM. Ignored unless hold is set. */
+  holdAbort?: AbortSignal;
+  /**
+   * Extra OpenSSH public keys authorized for root SSH, appended alongside the
+   * requester's own ephemeral key in the guest's /root/.ssh/authorized_keys.
+   * Lets a fleet plugin (GitLab) bring its own identity for ConnectInfo.
+   */
+  sshAuthorizedKeys?: string[];
   vmReadyTimeoutSec?: number;
   onSshStart?: () => void;
   onSshEnd?: () => void | Promise<void>;

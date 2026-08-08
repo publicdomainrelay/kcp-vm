@@ -546,8 +546,12 @@ export async function createRequesterPDS(
         rkey: TID.next().toString(),
         record: {
           $type: BADGE_BLUE_KEYS_NSID,
-          keyId: auth.issuerDid,
-          challenge: did,
+          // Canonical shape: {challenge: OPERATOR, keyId: ASSOCIATED}. auth.issuerDid
+          // is the operator; did is the requester. The old inverted shape
+          // (challenge=self, keyId=operator) mis-resolved an operator's own
+          // acknowledgment as its operator.
+          challenge: auth.issuerDid,
+          keyId: did,
           service: "requester_associate",
           createdAt: new Date().toISOString(),
         },
@@ -835,6 +839,19 @@ export async function ensureWebsocat(logger?: StructuredLoggerInterface): Promis
 // ---------------------------------------------------------------------------
 // runComputeContract -- adapted from reference server.ts
 // ---------------------------------------------------------------------------
+
+// Resolves when the given abort signal fires (immediately if already aborted,
+// or if no signal was provided). Used to release a VM held in provisioning-only
+// mode.
+function waitForAbort(signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (!signal || signal.aborted) {
+      resolve();
+      return;
+    }
+    signal.addEventListener("abort", () => resolve(), { once: true });
+  });
+}
 
 export async function runComputeContract(
   pds: RequesterPDS,
@@ -1165,6 +1182,10 @@ if (address && isFqdn && !vmFqdn) {
         audHost: (opts.fedingressHost ? opts.fedingressHost.replace(/:\d+$/, "") : undefined)
           || ingressProxyHost.replace(/:\d+$/, ""),
         hostAliases: opts.guestHostAliases,
+        // The requester's own ephemeral key plus any fleet-provided keys
+        // (e.g. the GitLab plugin's ConnectInfo identity) share the guest's
+        // /root/.ssh/authorized_keys.
+        sshAuthorizedKey: [ssh.publicKey, ...(opts.sshAuthorizedKeys ?? [])].join("\n"),
         ...capCtx,
       },
       base: ud?.base ?? opts.baseUserData,
@@ -1234,7 +1255,7 @@ runcmd:
     },
     resolve: (ref) => resolveRecordForPolicy(ref),
     resolveOperatorDid: (did) => resolveOperatorDid(did),
-    getVouchedDids: (did) => policyVouchResolver.getVouchedDids(did),
+    getVouchedDids: (did) => policyVouchResolver.getDelegatedTrustedDids(did),
     policies: policyRegistry,
     log: (level, msg, meta) => log(`policy_eval_${level}`, { msg, ...(meta ?? {}) }),
   });
@@ -1418,8 +1439,17 @@ runcmd:
     return [...merged.values()];
   };
 
-  const policyVouchResolver = createTangledGraphVouchResolver({
-    listRecords: listRecordsForPolicy,
+  // Policy vouch lookups are operator-delegated: the ephemeral requester DID has
+  // no vouch records of its own — its trust graph lives on the associated
+  // operator account (badgeBlueKeys requester_associate / bidder_associate). A
+  // raw vouch lookup on the self DID returns empty, so tangled-vouch would
+  // reject every bidder. Resolve self -> operator -> operator's vouches instead.
+  const policyVouchResolver = createBadgeBlueKeysDelegatedTrustResolver({
+    vouchResolver: createTangledGraphVouchResolver({
+      listRecords: listRecordsForPolicy,
+      log: (level, msg, meta) => log(`policy_vouch_${level}`, { msg, ...(meta ?? {}) }),
+    }),
+    listOwnRecords: async (collection, _opts) => listRecordsForPolicy(marketDid, collection),
     log: (level, msg, meta) => log(`policy_vouch_${level}`, { msg, ...(meta ?? {}) }),
   });
 
@@ -1444,7 +1474,7 @@ runcmd:
         counterpartyDid: candidateDid,
         resolve: (ref) => resolveRecordForPolicy(ref),
         resolveOperatorDid,
-        getVouchedDids: (did) => policyVouchResolver.getVouchedDids(did),
+        getVouchedDids: (did) => policyVouchResolver.getDelegatedTrustedDids(did),
         log: (level, msg, meta) => log(`policy_eval_${level}`, { msg, ...(meta ?? {}) }),
         ...(payloadRef
           ? {
@@ -1741,11 +1771,20 @@ runcmd:
       if (!ready) {
         log("vm_ssh_unavailable", { vmFqdn });
       } else {
-        opts.onSshStart?.();
-        const code = await sshTunnel.runSession(privateKeyPath, vmFqdn, execProgram);
-        await opts.onSshEnd?.();
-        result.sshExitCode = code;
-        log("vm_ssh_session_exit", { vmFqdn, code });
+        if (opts.hold && opts.holdAbort) {
+          // Provisioning-only hold: the caller (fleeting plugin) runs the job
+          // over its own SSH session. Wait for the abort signal, then fall
+          // through to step 11, which tears the VM down via vm.delete.
+          log("vm_hold_started", { vmFqdn });
+          await waitForAbort(opts.holdAbort);
+          log("vm_hold_released", { vmFqdn });
+        } else {
+          opts.onSshStart?.();
+          const code = await sshTunnel.runSession(privateKeyPath, vmFqdn, execProgram);
+          await opts.onSshEnd?.();
+          result.sshExitCode = code;
+          log("vm_ssh_session_exit", { vmFqdn, code });
+        }
       }
     }
   }
