@@ -1174,7 +1174,6 @@ if (address && isFqdn && !vmFqdn) {
     cloudInit = buildUserData({
       ctx: {
         vmName,
-        sshAuthorizedKey: ssh.publicKey,
         ingressProxyHost,
         // audHost is the hostname-only part used for JWT audience matching
         // (did:web:<hostname>). Only use fedingressHost when explicitly passed

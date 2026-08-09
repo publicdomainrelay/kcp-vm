@@ -320,8 +320,11 @@ if ((options.atprotoOauth as boolean)) {
     } else {
       const qrUrl = `https://qr.fedfork.com/#bdr=${atprotoAgent.did}`;
       logger.info("qr_url", { url: qrUrl });
-      const qr = qrcode(qrUrl, { output: "console", ecl: "HIGH" });
-      console.log(qr);
+      process.stdout.write("\n" + "=".repeat(60) + "\n");
+      process.stdout.write("  Scan this QR code with your phone to authenticate:\n\n");
+      qrcode(qrUrl, { output: "console", ecl: "HIGH" });
+      process.stdout.write("\n  Or open this URL:\n  " + qrUrl + "\n");
+      process.stdout.write("=".repeat(60) + "\n\n");
 
       logger.info("waiting_for_association", {
         hint: "Scan QR code, then confirm on your phone",
@@ -649,8 +652,11 @@ if (!options.skipQr && !hasAssociation) {
   } else {
     const qrUrl = `https://qr.fedfork.com/#bdr=${atproto.did}`;
     logger.info("qr_url", { url: qrUrl });
-    const qr = qrcode(qrUrl, { output: "console", ecl: "HIGH" });
-    console.log(qr);
+    process.stdout.write("\n" + "=".repeat(60) + "\n");
+    process.stdout.write("  Scan this QR code with your phone to authenticate:\n\n");
+    qrcode(qrUrl, { output: "console", ecl: "HIGH" });
+    process.stdout.write("\n  Or open this URL:\n  " + qrUrl + "\n");
+    process.stdout.write("=".repeat(60) + "\n\n");
 
     logger.info("waiting_for_association", {
       hint: "Scan QR code, then confirm on your phone",

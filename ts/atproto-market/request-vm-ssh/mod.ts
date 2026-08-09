@@ -429,8 +429,11 @@ if (hasAssociation) {
 if (!options.skipQr && !hasAssociation) {
   const qrUrl = `https://qr.fedfork.com/#plc=${pds.did}`;
   logger.info("qr_url", { url: qrUrl });
-  const qr = qrcode(qrUrl, { output: "console", ecl: "HIGH" });
-  console.log(qr);
+  process.stdout.write("\n" + "=".repeat(60) + "\n");
+  process.stdout.write("  Scan this QR code with your phone to authenticate:\n\n");
+  qrcode(qrUrl, { output: "console", ecl: "HIGH" });
+  process.stdout.write("\n  Or open this URL:\n  " + qrUrl + "\n");
+  process.stdout.write("=".repeat(60) + "\n\n");
 
   logger.info("waiting_for_association", {
     hint: "Scan QR code, then confirm on your phone",
@@ -535,8 +538,7 @@ const result = await runComputeContract(pds, {
   keepVm: options.keepVm as boolean,
   hold: holdMode,
   holdAbort: holdAbort.signal,
-  sshAuthorizedKeys: ([] as unknown[])
-    .concat(options.sshAuthorizedKey ?? [])
+  sshAuthorizedKeys: ((options.sshAuthorizedKey ?? []) as (string | string[])[])
     .flatMap((v: string | string[]) => Array.isArray(v) ? v : v.split(","))
     .map((s: string) => s.trim()).filter(Boolean),
   vmReadyTimeoutSec: options.vmReadyTimeoutSec as number,
