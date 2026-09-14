@@ -200,6 +200,12 @@ export default {
       description: "Path to OAuth QR session file (overrides default cache path). When set with --atproto-oauth-qr, session is loaded from this file instead of the default ~/.cache/pdr-market/ location.",
       env: "OAUTH_SESSION_FILE",
     },
+    "oauth-session-client-id": {
+      type: "string" as const,
+      description:
+        "OAuth client_id the session in --oauth-session-file was issued to. A refresh token is bound to the client that obtained it, so a session restored from a file must refresh as that client. Omit for sessions obtained through qr.fedfork.com.",
+      env: "OAUTH_SESSION_CLIENT_ID",
+    },
     "skip-qr": {
       type: "boolean" as const,
       description: "Skip QR code and association confirmation prompt",

@@ -919,6 +919,13 @@ function decodeJwtExp(jwt: string): number | null {
 
 interface OAuthAgentFromSessionOpts {
   logger?: StructuredLoggerInterface;
+  /**
+   * OAuth client_id to refresh as. A refresh token is issued to the client that
+   * obtained it, so a session restored from a file must refresh as that same
+   * client. Defaults to the qr.fedfork.com client that produced the QR sessions
+   * this helper was written for.
+   */
+  clientId?: string;
   /** Persist refreshed tokens back to disk. */
   saveSession?: (session: OAuthSessionData) => Promise<void>;
   /** File path to the session JSON (used in error messages). */
@@ -954,6 +961,7 @@ export async function createOAuthAgentFromSession(
 ): Promise<AtprotoAgentLike & { sessionData: OAuthSessionData; dispose(): void; proactiveRefresh(): Promise<void> }> {
   const log = opts?.logger;
   const saveSession = opts?.saveSession;
+  const clientId = opts?.clientId ?? "https://qr.fedfork.com/oauth-client-metadata.json";
   const sessionPath = opts?.sessionPath;
   const onSessionExpired = opts?.onSessionExpired;
   const nonces = createDpopNonceStore_();
@@ -998,7 +1006,7 @@ export async function createOAuthAgentFromSession(
     const body = new URLSearchParams({
       grant_type: "refresh_token",
       refresh_token: refreshJwt,
-      client_id: "https://qr.fedfork.com/oauth-client-metadata.json",
+      client_id: clientId,
     });
 
     const res = await refreshDpopFetch(tokenUrl, {

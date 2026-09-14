@@ -219,6 +219,7 @@ if ((options.atprotoOauth as boolean) && (options.atprotoHandle as string | unde
   const _restoredAgent = await tryRestoreOAuthQRSession({
     logger, label: "requester", handle: options.atprotoHandle as string | undefined,
     sessionPath: options.oauthSessionFile as string | undefined,
+    clientId: options.oauthSessionClientId as string | undefined,
     autoRefreshThresholdMs: AUTO_REFRESH_THRESHOLD_MS,
     // No onSessionExpired here -- restore handles expiry internally
     // (delete file, return null -> falls through to QR auth).

@@ -28,6 +28,8 @@ export async function tryRestoreOAuthQRSession(opts: {
   /** AT Protocol handle (e.g. "alice.bsky.social") -- keys the cache file per account. */
   handle?: string;
   autoRefreshThresholdMs?: number;
+  /** OAuth client_id the stored session was issued to; refreshes must use it. */
+  clientId?: string;
   onSessionExpired?: (err: OAuthSessionExpiredError) => void;
 }): Promise<(AtprotoAgentLike & { sessionData: OAuthSessionData; dispose(): void; proactiveRefresh(): Promise<void> }) | null> {
   const path = opts.sessionPath ?? defaultSessionPath(opts.label, opts.handle);
@@ -37,6 +39,7 @@ export async function tryRestoreOAuthQRSession(opts: {
   try {
     const agent = await createOAuthAgentFromSession(data, {
       logger: opts.logger,
+      clientId: opts.clientId,
       sessionPath: path,
       autoRefreshThresholdMs: opts.autoRefreshThresholdMs,
       onSessionExpired: opts.onSessionExpired,
