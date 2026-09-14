@@ -199,3 +199,13 @@ export const OAUTH_SCOPE_STRING = OAUTH_SCOPE.join(" ");
 export const OAUTH_SCOPE_LOCALHOST =
   "atproto repo:com.publicdomainrelay.temp.badgeBlueKeys?action=create,update,delete " +
   "rpc:com.publicdomainrelay.temp.requester.associateConfirm?aud=*";
+
+/**
+ * socialweb-computer-ssh: the SSH front door registers an SSH public key as a
+ * `requester_associate` badgeBlueKeys record on the signed-in account, and
+ * removes it again. Nothing else is written.
+ */
+export const SOCIALWEB_COMPUTER_SSH_OAUTH_SCOPE: string[] = dedupeScopes(
+  ["atproto"],
+  [collectionScope(C.BADGE_BLUE_KEYS, ["create", "delete"])],
+);
