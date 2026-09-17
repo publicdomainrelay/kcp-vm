@@ -206,6 +206,12 @@ export default {
         "OAuth client_id the session in --oauth-session-file was issued to. A refresh token is bound to the client that obtained it, so a session restored from a file must refresh as that client. Omit for sessions obtained through qr.fedfork.com.",
       env: "OAUTH_SESSION_CLIENT_ID",
     },
+    "oauth-lease": {
+      type: "boolean" as const,
+      description:
+        "The session in --oauth-session-file is a lease from a process that owns the refresh token. This run must not rotate it (refresh tokens are single-use; a second rotation destroys the session on a production authorization server), and it must not fall back to interactive authentication. A token that expires mid-run fails this run.",
+      env: "OAUTH_LEASE",
+    },
     "skip-qr": {
       type: "boolean" as const,
       description: "Skip QR code and association confirmation prompt",

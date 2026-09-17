@@ -38,6 +38,8 @@ export async function tryRestoreOAuthQRSession(opts: {
    * 401-triggered paths cover it afterwards.
    */
   refreshOnRestore?: boolean;
+  /** Forwarded to the agent; see OAuthAgentFromSessionOpts.localRefresh. */
+  localRefresh?: boolean;
   onSessionExpired?: (err: OAuthSessionExpiredError) => void;
 }): Promise<(AtprotoAgentLike & { sessionData: OAuthSessionData; dispose(): void; proactiveRefresh(): Promise<void> }) | null> {
   const path = opts.sessionPath ?? defaultSessionPath(opts.label, opts.handle);
@@ -48,6 +50,7 @@ export async function tryRestoreOAuthQRSession(opts: {
     const agent = await createOAuthAgentFromSession(data, {
       logger: opts.logger,
       clientId: opts.clientId,
+      localRefresh: opts.localRefresh,
       sessionPath: path,
       autoRefreshThresholdMs: opts.autoRefreshThresholdMs,
       onSessionExpired: opts.onSessionExpired,

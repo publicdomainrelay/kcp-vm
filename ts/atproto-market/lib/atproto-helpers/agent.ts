@@ -682,6 +682,18 @@ export async function createOAuthAgent(opts: CreateOAuthAgentOpts): Promise<OAut
  * OAuth session data returned by qr.fedfork.com after browser completes OAuth
  * and the CLI polls the XRPC endpoint.
  */
+/**
+ * The agent was not allowed to refresh, so a rejected access token cannot be
+ * recovered here. Distinct from OAuthSessionExpiredError on purpose: the
+ * session is fine, this run just outlived its token.
+ */
+export class SessionRefreshNotPermittedError extends Error {
+  constructor(public readonly sessionPath?: string) {
+    super("this agent may not refresh the account's token; the run outlived its access token");
+    this.name = "SessionRefreshNotPermittedError";
+  }
+}
+
 export class OAuthSessionExpiredError extends Error {
   constructor(message: string, public readonly sessionPath?: string) {
     super(message);
@@ -903,7 +915,7 @@ function createTokenRefreshLock_() {
   };
 }
 
-function decodeJwtExp(jwt: string): number | null {
+export function decodeJwtExp(jwt: string): number | null {
   try {
     const parts = jwt.split(".");
     if (parts.length !== 3) return null;
@@ -919,6 +931,17 @@ function decodeJwtExp(jwt: string): number | null {
 
 interface OAuthAgentFromSessionOpts {
   logger?: StructuredLoggerInterface;
+  /**
+   * Whether this agent may rotate the account's refresh token itself.
+   *
+   * Set false when another process owns the session: refresh tokens are
+   * single-use, and on a production authorization server replaying one deletes
+   * the entire session rather than failing. A rejected token then surfaces as
+   * SessionRefreshNotPermittedError, which the caller must treat as fatal for
+   * this run but NOT as "the session is gone".
+   */
+  localRefresh?: boolean;
+
   /**
    * OAuth client_id to refresh as. A refresh token is issued to the client that
    * obtained it, so a session restored from a file must refresh as that same
@@ -962,6 +985,7 @@ export async function createOAuthAgentFromSession(
   const log = opts?.logger;
   const saveSession = opts?.saveSession;
   const clientId = opts?.clientId ?? "https://qr.fedfork.com/oauth-client-metadata.json";
+  const localRefresh = opts?.localRefresh ?? true;
   const sessionPath = opts?.sessionPath;
   const onSessionExpired = opts?.onSessionExpired;
   const nonces = createDpopNonceStore_();
@@ -986,6 +1010,9 @@ export async function createOAuthAgentFromSession(
   }
 
   async function refreshTokens(): Promise<void> {
+    if (!localRefresh) {
+      throw new SessionRefreshNotPermittedError(sessionPath);
+    }
     checkSession();
 
     // Resolve PDS -> auth server for token endpoint
