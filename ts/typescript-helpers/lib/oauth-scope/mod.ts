@@ -69,7 +69,7 @@ const COLLECTIONS: Record<string, readonly string[]> = {
   [C.ACCEPT]: ["create"],
   [C.VM_DELETE]: ["create"],
   [C.VM_ON_NETWORK]: ["create"],
-  [C.BADGE_BLUE_KEYS]: ["create"],
+  [C.BADGE_BLUE_KEYS]: ["create", "delete"],
   [C.FEDPROXY_RBAC]: ["create", "update"],
   [C.FEDPROXY_SSH_PUBLIC_KEY]: ["create"],
   [C.BIDDER_ASSOCIATION]: ["create", "update"],
@@ -111,16 +111,20 @@ export function dedupeScopes(...sets: readonly (readonly string[])[]): string[] 
   return out;
 }
 
-/** requester (request-vm-ssh): collections/RPCs a requester writes — create only. */
+/**
+ * requester (request-vm-ssh): collections/RPCs a requester writes — create only,
+ * except badgeBlueKeys which the front door also deletes when a key is removed.
+ */
 export const REQUESTER_OAUTH_SCOPE: string[] = dedupeScopes(
   ["atproto"],
   collectionScopes(
     [
       C.COMPUTE_VM, C.RFP, C.ACCEPT, C.EVENT, C.VM_DELETE, C.VM_ON_NETWORK,
-      C.BADGE_BLUE_KEYS, C.FEDPROXY_RBAC, C.POLICY_GHA_LITE, C.POLICY_TYPESCRIPT,
+      C.FEDPROXY_RBAC, C.POLICY_GHA_LITE, C.POLICY_TYPESCRIPT,
     ],
     CREATE,
   ),
+  [collectionScope(C.BADGE_BLUE_KEYS, ["create", "delete"])],
   [R.SUBMIT_RFP, R.SUBMIT_ACCEPT, R.SUBMIT_BID, R.SUBMIT_EVENT],
 );
 
@@ -131,12 +135,13 @@ export const BIDDER_OAUTH_SCOPE: string[] = dedupeScopes(
     [
       C.RBAC_DID, C.BID, C.BIDS_FREE, C.RECEIPT, C.EVENT, C.CONFIG_WIF_SIMPLE,
       C.COMPUTE_VM, C.RFP, C.ACCEPT, C.VM_DELETE, C.VM_ON_NETWORK,
-      C.BADGE_BLUE_KEYS, C.FEDPROXY_RBAC, C.BIDDER_ASSOCIATION,
+      C.FEDPROXY_RBAC, C.BIDDER_ASSOCIATION,
       C.POLICY_GHA_LITE, C.POLICY_TYPESCRIPT,
     ],
     CREATE,
   ),
   [collectionScope(C.OFFERING, CREATE_UPDATE)],
+  [collectionScope(C.BADGE_BLUE_KEYS, ["create", "delete"])],
   [R.SUBMIT_RFP, R.SUBMIT_ACCEPT, R.SUBMIT_BID, R.SUBMIT_EVENT],
 );
 
@@ -199,13 +204,3 @@ export const OAUTH_SCOPE_STRING = OAUTH_SCOPE.join(" ");
 export const OAUTH_SCOPE_LOCALHOST =
   "atproto repo:com.publicdomainrelay.temp.badgeBlueKeys?action=create,update,delete " +
   "rpc:com.publicdomainrelay.temp.requester.associateConfirm?aud=*";
-
-/**
- * socialweb-computer-ssh: the SSH front door registers an SSH public key as a
- * `requester_associate` badgeBlueKeys record on the signed-in account, and
- * removes it again. Nothing else is written.
- */
-export const SOCIALWEB_COMPUTER_SSH_OAUTH_SCOPE: string[] = dedupeScopes(
-  ["atproto"],
-  [collectionScope(C.BADGE_BLUE_KEYS, ["create", "delete"])],
-);
