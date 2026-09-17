@@ -1097,10 +1097,21 @@ export async function createOAuthAgentFromSession(
       const params = new URLSearchParams({ aud });
       if (lxm) params.set("lxm", lxm);
       const url = `${sessionData.pds.replace(/\/+$/, "")}/xrpc/com.atproto.server.getServiceAuth?${params}`;
-      const res = await dpopFetch(url, {
-        method: "GET",
-        headers: { Authorization: `DPoP ${accessJwt}` },
-      });
+      const doCall = async (): Promise<Response> => {
+        return await dpopFetch(url, {
+          method: "GET",
+          headers: { Authorization: `DPoP ${accessJwt}` },
+        });
+      };
+      // Same shape as the record ops: a token that expired since the last call
+      // is recoverable, not a failed run. Without this, a token expiring
+      // between the start burst and the accept or event burst fails the run
+      // and skips vm.delete.
+      let res = await doCall();
+      if (res.status === 401) {
+        await refreshLock(() => refreshTokens());
+        res = await doCall();
+      }
       if (!res.ok) {
         const errBody = await res.text().catch(() => "");
         throw new Error(`getServiceAuth failed: ${res.status} ${errBody}`);
