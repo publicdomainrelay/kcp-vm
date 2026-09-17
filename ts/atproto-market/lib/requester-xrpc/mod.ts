@@ -26,6 +26,7 @@ import {
 import { OAuthClient } from "@atproto/oauth-client";
 import { webCryptoRuntime, memoryStateStore, jsonSessionStore } from "@publicdomainrelay/atproto-oauth-helpers";
 import { stripResolved, atUriAuthority } from "@publicdomainrelay/market-abc";
+import type { AtprotoAgentLike } from "@publicdomainrelay/atproto-helpers";
 import type { InlineAttestation, AttestationKeypair, SubmitBidCallback } from "@publicdomainrelay/market-atproto";
 import {
   COMPUTE_VM_NSID,
@@ -1866,6 +1867,74 @@ export interface CreateOAuthRequesterOpts {
   logger?: StructuredLoggerInterface;
   attestationKp: AttestationKeypair;
   privateKeyHex: string;
+}
+
+/**
+ * Point a RequesterPDS at a user's own account.
+ *
+ * In OAuth mode every market record must be authored by the signed-in user, not
+ * by the requester's ephemeral repo: the ephemeral repo is reachable only
+ * through the ingress relay and is invisible to the firehose every bidder
+ * reads. Three things have to line up:
+ *
+ *  - createRepoRecord writes through the user's PDS, so the records are public.
+ *  - createSignedRepoRecord must bind the attestation to the USER's DID as the
+ *    repository. runComputeContract verifies that binding, and a mismatch fails
+ *    the receipt, which skips SSH entirely.
+ *  - callBidder must mint service-auth from the OAuth session, because a bidder
+ *    rejects a token whose issuer is not the record's author.
+ *
+ * Extracted from request-vm-ssh's CLI so a library caller can embed
+ * runComputeContract without reimplementing it.
+ */
+export function applyOAuthAgentToRequesterPDS(
+  pds: RequesterPDS,
+  agent: AtprotoAgentLike & { sessionData: { userDid: string }; getServiceAuth?: (aud: string, lxm?: string) => Promise<string> },
+  opts?: { log?: (event: string, data: Record<string, unknown>) => void },
+): void {
+  const log = opts?.log ?? (() => {});
+  const did = agent.sessionData.userDid;
+
+  pds.createRepoRecord = async (collection: string, record: Record<string, unknown>) => {
+    const rkey = TID.next().toString();
+    const { uri, cid } = await agent.createRecord!(did, collection, rkey, record);
+    return { uri, cid };
+  };
+
+  pds.createSignedRepoRecord = async (
+    collection: string,
+    record: Record<string, unknown>,
+    aKp?: { did(): string; privateKey: { bytes: Uint8Array } },
+    issuer?: string,
+  ) => {
+    const rkey = TID.next().toString();
+    const att = attestationFor(aKp as AttestationKeypair, issuer);
+    const entry = await att.sign({ record, repository: did }) as InlineAttestation;
+    const signed = { ...record, signatures: [toStorableEntry(entry)] };
+    const { uri, cid } = await agent.createRecord!(did, collection, rkey, signed);
+    return { uri, cid };
+  };
+
+  if (agent.getServiceAuth) {
+    pds.callBidder = async (targetBase: string, nsid: string, lxm: string, audDid: string, body: Record<string, unknown>) => {
+      try {
+        const token = await agent.getServiceAuth!(audDid, lxm);
+        const res = await fetch(`${targetBase}/${nsid}`, {
+          method: "POST",
+          headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(10_000),
+        });
+        const text = await res.text();
+        let parsed: unknown;
+        try { parsed = JSON.parse(text); } catch { parsed = text; }
+        return { status: res.status, ok: res.ok, body: parsed };
+      } catch (err) {
+        log("callBidder_error", { nsid, lxm, audDid, targetBase, error: String(err) });
+        throw err;
+      }
+    };
+  }
 }
 
 export async function createOAuthRequester(opts: CreateOAuthRequesterOpts): Promise<OAuthRequesterHandle> {

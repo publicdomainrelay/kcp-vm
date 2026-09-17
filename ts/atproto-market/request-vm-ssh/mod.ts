@@ -283,51 +283,16 @@ if ((options.atprotoOauth as boolean) && (options.atprotoHandle as string | unde
     logger.info("oauth_qr_session_ready", { userDid: _session.userDid, handle: _session.handle });
   }
 
-  // Override record creation to use user's Bluesky PDS (firehose-visible).
-  const _userAgent = (pds as unknown as Record<string, unknown>).oauthAgent as import("@publicdomainrelay/atproto-helpers").AtprotoAgentLike & { sessionData: { userDid: string } } | undefined;
+  // Every market record is authored by the signed-in user, not the ephemeral
+  // repo. Shared with library embedders -- see applyOAuthAgentToRequesterPDS.
+  const _userAgent = (pds as unknown as Record<string, unknown>).oauthAgent as
+    | (import("@publicdomainrelay/atproto-helpers").AtprotoAgentLike & { sessionData: { userDid: string } })
+    | undefined;
   if (_userAgent) {
-    pds.createRepoRecord = async (collection: string, record: Record<string, unknown>) => {
-      const rkey = (await import("@atproto/common-web")).TID.next().toString();
-      const { uri, cid } = await _userAgent.createRecord!(_userAgent.sessionData.userDid, collection, rkey, record);
-      return { uri, cid };
-    };
-    pds.createSignedRepoRecord = async (collection: string, record: Record<string, unknown>, aKp?: { did(): string; privateKey: { bytes: Uint8Array } }, issuer?: string) => {
-      const { attestationFor, toStorableEntry } = await import("@publicdomainrelay/market-atproto");
-      const rkey = (await import("@atproto/common-web")).TID.next().toString();
-      const att = attestationFor(aKp as import("@publicdomainrelay/market-atproto").AttestationKeypair, issuer);
-      const entry = await att.sign({ record: record as Record<string, unknown>, repository: _userAgent.sessionData.userDid }) as import("@publicdomainrelay/market-atproto").InlineAttestation;
-      const signed = { ...record, signatures: [toStorableEntry(entry)] };
-      const { uri, cid } = await _userAgent.createRecord!(_userAgent.sessionData.userDid, collection, rkey, signed);
-      return { uri, cid };
-    };
-    // Override callBidder to mint service-auth via the OAuth session (DPoP),
-    // so the token issuer matches the record author. Without this, callBidder
-    // signs with the locally-persisted PLC key -> 403 "issuer must author".
-    if (_userAgent.getServiceAuth) {
-      pds.callBidder = async (targetBase: string, nsid: string, lxm: string, audDid: string, body: Record<string, unknown>) => {
-        try {
-          const token = await _userAgent.getServiceAuth!(audDid, lxm);
-          const url = `${targetBase}/${nsid}`;
-          const res = await fetch(url, {
-            method: "POST",
-            headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-            body: JSON.stringify(body),
-            signal: AbortSignal.timeout(10_000),
-          });
-          let resBody: unknown;
-          const resText = await res.text();
-          try { resBody = JSON.parse(resText); } catch { resBody = resText; }
-          return { status: res.status, ok: res.ok, body: resBody };
-        } catch (err) {
-          console.error(JSON.stringify({
-            event: "callBidder_error",
-            nsid, lxm, audDid, targetBase,
-            error: String(err),
-          }));
-          throw err;
-        }
-      };
-    }
+    const { applyOAuthAgentToRequesterPDS } = await import("@publicdomainrelay/requester-xrpc");
+    applyOAuthAgentToRequesterPDS(pds, _userAgent, {
+      log: (event, data) => logger.info(event, data),
+    });
   }
 
   isOAuth = true;
