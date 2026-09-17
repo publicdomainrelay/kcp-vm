@@ -223,6 +223,7 @@ if ((options.atprotoOauth as boolean) && (options.atprotoHandle as string | unde
     clientId: options.oauthSessionClientId as string | undefined,
     refreshOnRestore: !oauthLease,
     localRefresh: !oauthLease,
+    leasePath: oauthLease ? (options.oauthSessionFile as string | undefined) : undefined,
     autoRefreshThresholdMs: oauthLease ? undefined : AUTO_REFRESH_THRESHOLD_MS,
     // No onSessionExpired here -- restore handles expiry internally
     // (delete file, return null -> falls through to QR auth).

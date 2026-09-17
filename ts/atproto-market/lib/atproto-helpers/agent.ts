@@ -687,6 +687,8 @@ export async function createOAuthAgent(opts: CreateOAuthAgentOpts): Promise<OAut
  * recovered here. Distinct from OAuthSessionExpiredError on purpose: the
  * session is fine, this run just outlived its token.
  */
+const OWNER_TOKEN_TIMEOUT_MS = 20_000;
+
 export class SessionRefreshNotPermittedError extends Error {
   constructor(public readonly sessionPath?: string) {
     super("this agent may not refresh the account's token; the run outlived its access token");
@@ -941,6 +943,12 @@ interface OAuthAgentFromSessionOpts {
    * this run but NOT as "the session is gone".
    */
   localRefresh?: boolean;
+  /**
+   * Where this session was leased from. With localRefresh false, a rejected
+   * token is re-read from here after asking the owner to refresh it, so a run
+   * that outlives its access token can continue instead of dying.
+   */
+  leasePath?: string;
 
   /**
    * OAuth client_id to refresh as. A refresh token is issued to the client that
@@ -986,6 +994,7 @@ export async function createOAuthAgentFromSession(
   const saveSession = opts?.saveSession;
   const clientId = opts?.clientId ?? "https://qr.fedfork.com/oauth-client-metadata.json";
   const localRefresh = opts?.localRefresh ?? true;
+  const leasePath = opts?.leasePath;
   const sessionPath = opts?.sessionPath;
   const onSessionExpired = opts?.onSessionExpired;
   const nonces = createDpopNonceStore_();
@@ -1009,8 +1018,33 @@ export async function createOAuthAgentFromSession(
     }
   }
 
+  /**
+   * Ask the owner for a current token and wait for it to appear in the lease.
+   * The owner is the only rotator, so this is a request, not a refresh: a file
+   * with the request, then the lease file itself is the reply.
+   */
+  async function awaitOwnerToken(): Promise<void> {
+    const held = accessJwt;
+    const requestPath = `${leasePath}.refresh-request`;
+    await Deno.writeTextFile(requestPath, String(Date.now())).catch(() => {});
+    const deadline = Date.now() + OWNER_TOKEN_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      try {
+        const next = JSON.parse(await Deno.readTextFile(leasePath!)) as OAuthSessionData;
+        if (next.accessJwt && next.accessJwt !== held) {
+          accessJwt = next.accessJwt;
+          log?.info?.("lease_token_renewed", { did: sessionData.userDid });
+          return;
+        }
+      } catch { /* the owner has not written it yet */ }
+    }
+    throw new SessionRefreshNotPermittedError(sessionPath);
+  }
+
   async function refreshTokens(): Promise<void> {
     if (!localRefresh) {
+      if (leasePath) return await awaitOwnerToken();
       throw new SessionRefreshNotPermittedError(sessionPath);
     }
     checkSession();
