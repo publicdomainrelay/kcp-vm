@@ -686,12 +686,12 @@ export async function createRequesterPDS(
  * `<subdomain>.fedproxy.com` on 443. Forcing wss:// at a plaintext listener fails
  * the TLS handshake ("record overflow") rather than falling back.
  */
-function tunnelWsUrl(fqdn: string): string {
+export function tunnelWsUrl(fqdn: string): string {
   const scheme = fqdn.includes(":") ? "ws" : "wss";
   return `${scheme}://${fqdn}/xrpc/com.fedproxy.temp.xrpc.tunnel`;
 }
 
-function sshTunnelArgs(
+export function sshTunnelArgs(
   privateKeyPath: string,
   fqdn: string,
   proxyCmdOverride?: string,
