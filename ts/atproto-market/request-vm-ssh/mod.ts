@@ -216,15 +216,11 @@ if ((options.atprotoOauth as boolean) && (options.atprotoHandle as string | unde
   // Try restoring saved OAuth QR session
   let _restoredOAuthAgent: any = null;
   let _session: any = null;
-  const oauthLease = Boolean(options.oauthLease);
   const _restoredAgent = await tryRestoreOAuthQRSession({
     logger, label: "requester", handle: options.atprotoHandle as string | undefined,
     sessionPath: options.oauthSessionFile as string | undefined,
     clientId: options.oauthSessionClientId as string | undefined,
-    refreshOnRestore: !oauthLease,
-    localRefresh: !oauthLease,
-    leasePath: oauthLease ? (options.oauthSessionFile as string | undefined) : undefined,
-    autoRefreshThresholdMs: oauthLease ? undefined : AUTO_REFRESH_THRESHOLD_MS,
+    autoRefreshThresholdMs: AUTO_REFRESH_THRESHOLD_MS,
     // No onSessionExpired here -- restore handles expiry internally
     // (delete file, return null -> falls through to QR auth).
   });
@@ -232,14 +228,6 @@ if ((options.atprotoOauth as boolean) && (options.atprotoHandle as string | unde
     _restoredOAuthAgent = _restoredAgent;
     _oauthAgentForDispose = _restoredAgent;
     isOAuth = true;
-  } else if (oauthLease) {
-    // A leased run has no path to interactive auth, and must not take one:
-    // printing a QR would block the SSH session for five minutes and then fail
-    // anyway. Fail now, with the reason.
-    throw new Error(
-      "the leased OAuth session could not be restored, and a leased run may not " +
-        "authenticate interactively; re-run the web sign-in and connect again",
-    );
   } else {
     // Generate nonce for defense-in-depth POST auth
     const oauthNonce = Array.from(crypto.getRandomValues(new Uint8Array(16)),

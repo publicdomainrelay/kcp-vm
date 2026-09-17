@@ -682,20 +682,6 @@ export async function createOAuthAgent(opts: CreateOAuthAgentOpts): Promise<OAut
  * OAuth session data returned by qr.fedfork.com after browser completes OAuth
  * and the CLI polls the XRPC endpoint.
  */
-/**
- * The agent was not allowed to refresh, so a rejected access token cannot be
- * recovered here. Distinct from OAuthSessionExpiredError on purpose: the
- * session is fine, this run just outlived its token.
- */
-const OWNER_TOKEN_TIMEOUT_MS = 20_000;
-
-export class SessionRefreshNotPermittedError extends Error {
-  constructor(public readonly sessionPath?: string) {
-    super("this agent may not refresh the account's token; the run outlived its access token");
-    this.name = "SessionRefreshNotPermittedError";
-  }
-}
-
 export class OAuthSessionExpiredError extends Error {
   constructor(message: string, public readonly sessionPath?: string) {
     super(message);
@@ -917,7 +903,7 @@ function createTokenRefreshLock_() {
   };
 }
 
-export function decodeJwtExp(jwt: string): number | null {
+function decodeJwtExp(jwt: string): number | null {
   try {
     const parts = jwt.split(".");
     if (parts.length !== 3) return null;
@@ -933,23 +919,6 @@ export function decodeJwtExp(jwt: string): number | null {
 
 interface OAuthAgentFromSessionOpts {
   logger?: StructuredLoggerInterface;
-  /**
-   * Whether this agent may rotate the account's refresh token itself.
-   *
-   * Set false when another process owns the session: refresh tokens are
-   * single-use, and on a production authorization server replaying one deletes
-   * the entire session rather than failing. A rejected token then surfaces as
-   * SessionRefreshNotPermittedError, which the caller must treat as fatal for
-   * this run but NOT as "the session is gone".
-   */
-  localRefresh?: boolean;
-  /**
-   * Where this session was leased from. With localRefresh false, a rejected
-   * token is re-read from here after asking the owner to refresh it, so a run
-   * that outlives its access token can continue instead of dying.
-   */
-  leasePath?: string;
-
   /**
    * OAuth client_id to refresh as. A refresh token is issued to the client that
    * obtained it, so a session restored from a file must refresh as that same
@@ -993,8 +962,6 @@ export async function createOAuthAgentFromSession(
   const log = opts?.logger;
   const saveSession = opts?.saveSession;
   const clientId = opts?.clientId ?? "https://qr.fedfork.com/oauth-client-metadata.json";
-  const localRefresh = opts?.localRefresh ?? true;
-  const leasePath = opts?.leasePath;
   const sessionPath = opts?.sessionPath;
   const onSessionExpired = opts?.onSessionExpired;
   const nonces = createDpopNonceStore_();
@@ -1018,35 +985,7 @@ export async function createOAuthAgentFromSession(
     }
   }
 
-  /**
-   * Ask the owner for a current token and wait for it to appear in the lease.
-   * The owner is the only rotator, so this is a request, not a refresh: a file
-   * with the request, then the lease file itself is the reply.
-   */
-  async function awaitOwnerToken(): Promise<void> {
-    const held = accessJwt;
-    const requestPath = `${leasePath}.refresh-request`;
-    await Deno.writeTextFile(requestPath, String(Date.now())).catch(() => {});
-    const deadline = Date.now() + OWNER_TOKEN_TIMEOUT_MS;
-    while (Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      try {
-        const next = JSON.parse(await Deno.readTextFile(leasePath!)) as OAuthSessionData;
-        if (next.accessJwt && next.accessJwt !== held) {
-          accessJwt = next.accessJwt;
-          log?.info?.("lease_token_renewed", { did: sessionData.userDid });
-          return;
-        }
-      } catch { /* the owner has not written it yet */ }
-    }
-    throw new SessionRefreshNotPermittedError(sessionPath);
-  }
-
   async function refreshTokens(): Promise<void> {
-    if (!localRefresh) {
-      if (leasePath) return await awaitOwnerToken();
-      throw new SessionRefreshNotPermittedError(sessionPath);
-    }
     checkSession();
 
     // Resolve PDS -> auth server for token endpoint
@@ -1158,19 +1097,10 @@ export async function createOAuthAgentFromSession(
       const params = new URLSearchParams({ aud });
       if (lxm) params.set("lxm", lxm);
       const url = `${sessionData.pds.replace(/\/+$/, "")}/xrpc/com.atproto.server.getServiceAuth?${params}`;
-      const doCall = async (): Promise<Response> => {
-        return await dpopFetch(url, {
-          method: "GET",
-          headers: { Authorization: `DPoP ${accessJwt}` },
-        });
-      };
-      // Same shape as the record ops: a token that expired since the last call
-      // is recoverable, not a failed run.
-      let res = await doCall();
-      if (res.status === 401) {
-        await refreshLock(() => refreshTokens());
-        res = await doCall();
-      }
+      const res = await dpopFetch(url, {
+        method: "GET",
+        headers: { Authorization: `DPoP ${accessJwt}` },
+      });
       if (!res.ok) {
         const errBody = await res.text().catch(() => "");
         throw new Error(`getServiceAuth failed: ${res.status} ${errBody}`);

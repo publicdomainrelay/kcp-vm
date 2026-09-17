@@ -30,18 +30,6 @@ export async function tryRestoreOAuthQRSession(opts: {
   autoRefreshThresholdMs?: number;
   /** OAuth client_id the stored session was issued to; refreshes must use it. */
   clientId?: string;
-  /**
-   * Force a token refresh on restore (default true). Leave false when another
-   * process owns the refresh token: the refresh token is single-use, and on a
-   * production authorization server replaying it destroys the whole session.
-   * The validation read below still proves the access token works, and the
-   * 401-triggered paths cover it afterwards.
-   */
-  refreshOnRestore?: boolean;
-  /** Forwarded to the agent; see OAuthAgentFromSessionOpts.localRefresh. */
-  localRefresh?: boolean;
-  /** Forwarded to the agent; where the owner keeps this lease's file. */
-  leasePath?: string;
   onSessionExpired?: (err: OAuthSessionExpiredError) => void;
 }): Promise<(AtprotoAgentLike & { sessionData: OAuthSessionData; dispose(): void; proactiveRefresh(): Promise<void> }) | null> {
   const path = opts.sessionPath ?? defaultSessionPath(opts.label, opts.handle);
@@ -52,8 +40,6 @@ export async function tryRestoreOAuthQRSession(opts: {
     const agent = await createOAuthAgentFromSession(data, {
       logger: opts.logger,
       clientId: opts.clientId,
-      localRefresh: opts.localRefresh,
-      leasePath: opts.leasePath,
       sessionPath: path,
       autoRefreshThresholdMs: opts.autoRefreshThresholdMs,
       onSessionExpired: opts.onSessionExpired,
@@ -65,7 +51,7 @@ export async function tryRestoreOAuthQRSession(opts: {
     // If the refresh token was already consumed (e.g. by a prior process),
     // this will throw OAuthSessionExpiredError, which we catch below to
     // delete the stale session file and trigger a fresh QR auth flow.
-    if (opts.refreshOnRestore ?? true) await agent.proactiveRefresh();
+    await agent.proactiveRefresh();
     // Validate by calling listRecords on the PDS
     const info = await agent.listRecords(data.userDid, "com.publicdomainrelay.temp.badgeBlueKeys", { limit: 1 });
     if (!info || !("records" in info)) throw new Error("session validation failed");
