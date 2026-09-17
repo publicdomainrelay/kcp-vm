@@ -1895,6 +1895,15 @@ export function applyOAuthAgentToRequesterPDS(
   const log = opts?.log ?? (() => {});
   const did = agent.sessionData.userDid;
 
+  // The market identity is the signed-in user, not the ephemeral repo the
+  // requester PDS was built on. requester-xrpc derives marketDid from this
+  // (mod.ts:927) and every trust lookup -- vouch reads, operator resolution --
+  // keys off it, so leaving it unset makes those read a repo that holds none of
+  // the account's records.
+  const target = pds as unknown as { oauthAgent?: unknown; oauthSession?: unknown };
+  target.oauthAgent = agent;
+  target.oauthSession = { userDid: did };
+
   pds.createRepoRecord = async (collection: string, record: Record<string, unknown>) => {
     const rkey = TID.next().toString();
     const { uri, cid } = await agent.createRecord!(did, collection, rkey, record);
