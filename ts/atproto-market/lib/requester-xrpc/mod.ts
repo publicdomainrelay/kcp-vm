@@ -460,9 +460,15 @@ export async function createRequesterPDS(
 
   // -- submitEvent handler ----------------------------------------------
 
-  // Mutable callback set by runComputeContract -- resolves vmFqdnReady when
-  // guest-side onNetwork event arrives via submitEvent XRPC.
-  let onNetworkResolved: ((address: string) => void) | undefined;
+  // Resolvers keyed by the contract's receipt, set by runComputeContract.
+  //
+  // One requester can serve several contracts at once, so a single slot here
+  // would let whichever run registered last answer for all of them: a guest
+  // authorizes only the key from its own run, so a run pointed at another run's
+  // guest polls until it times out with "All configured authentication methods
+  // failed". The receipt is the only thing in the event that identifies which
+  // contract it belongs to.
+  const onNetworkResolvers = new Map<string, (address: string) => void>();
 
   const submitEventHandler = createSubmitEventHandler({
     deps: {
@@ -497,11 +503,13 @@ export async function createRequesterPDS(
         // Handle vm.onNetwork events
         "com.publicdomainrelay.temp.compute.events.vm.onNetwork": async (ctx) => {
           const evt = ctx.event as any;
-          logger.info("vm.onNetwork received", { receiptKey: `${evt.receipt.uri}#${evt.receipt.cid}` });
+          const receiptKey = `${evt.receipt?.uri ?? ""}#${evt.receipt?.cid ?? ""}`;
+          logger.info("vm.onNetwork received", { receiptKey });
           // Resolve the wrapped onNetwork payload to extract the guest's FQDN
           // for SSH tunnel routing. Container IPs (bidder-side onNetwork) are
           // skipped -- only dispatcher FQDNs are usable as SSH ProxyCommand targets.
-          if (onNetworkResolved) {
+          const resolveFqdn = onNetworkResolvers.get(receiptKey);
+          if (resolveFqdn) {
             try {
               const payloadRef = evt.payload as { uri: string; cid: string } | undefined;
               if (payloadRef?.uri) {
@@ -511,7 +519,7 @@ export async function createRequesterPDS(
                 // container IP). Accept any non-empty address; the SSH ProxyCommand
                 // always routes through the relay dispatcher.
                 if (address) {
-                  onNetworkResolved(address);
+                  resolveFqdn(address);
                 }
               }
             } catch { /* best-effort */ }
@@ -671,7 +679,8 @@ export async function createRequesterPDS(
     associateCalled,
     approveAssociation: () => { resolveAssociationApproved?.(); },
     rejectAssociation: (err: Error) => { rejectAssociationApproved?.(err); },
-    setOnNetworkResolved: (fn: (address: string) => void) => { onNetworkResolved = fn; },
+    setOnNetworkResolved: (key: string, fn: (address: string) => void) => { onNetworkResolvers.set(key, fn); },
+    clearOnNetworkResolved: (key: string) => { onNetworkResolvers.delete(key); },
     dispose: async () => { store.close(); },
   };
 }
@@ -1124,21 +1133,27 @@ if (address && isFqdn && !vmFqdn) {
   let vmFqdn = "";
   const vmFqdnReady = Promise.withResolvers<string>();
   // Wire guest-side onNetwork events (submitEvent) -> vmFqdnReady.
-  if (pds.setOnNetworkResolved) {
-    pds.setOnNetworkResolved((address: string) => {
-      // Bidder-side onNetwork fires first with container IP (e.g. 192.168.x.x),
-      // guest-side fires later with dispatcher FQDN (e.g. subdomain.localhost:port).
-      // Only the FQDN is routable through SSH ProxyCommand. Wait for it.
-      const isFqdn = /[a-zA-Z]/.test(address);
-      if (isFqdn && !vmFqdn) {
-        vmFqdn = address;
-        vmFqdnReady.resolve(address);
-        log("vm_fqdn_discovered", { fqdn: address, source: "submitEvent" });
-      } else if (!isFqdn) {
-        log("vm_onnetwork_ip_skipped", { address, hint: "waiting for guest FQDN via submitEvent" });
-      }
-    });
-  }
+  const onNetworkFromSubmitEvent = (address: string) => {
+    // Bidder-side onNetwork fires first with container IP (e.g. 192.168.x.x),
+    // guest-side fires later with dispatcher FQDN (e.g. subdomain.localhost:port).
+    // Only the FQDN is routable through SSH ProxyCommand. Wait for it.
+    const isFqdn = /[a-zA-Z]/.test(address);
+    if (isFqdn && !vmFqdn) {
+      vmFqdn = address;
+      vmFqdnReady.resolve(address);
+      log("vm_fqdn_discovered", { fqdn: address, source: "submitEvent" });
+    } else if (!isFqdn) {
+      log("vm_onnetwork_ip_skipped", { address, hint: "waiting for guest FQDN via submitEvent" });
+    }
+  };
+  // Registered only once the receipt is known, because the receipt is what keys
+  // this contract's events. Registering before it exists would need a keyless
+  // slot, and several contracts share one requester.
+  const registerOnNetwork = () => {
+    if (!_receiptUri || !_receiptCid) return;
+    pds.setOnNetworkResolved?.(`${_receiptUri}#${_receiptCid}`, onNetworkFromSubmitEvent);
+  };
+  const receiptKey = () => `${_receiptUri}#${_receiptCid}`;
 
   if (!skipSsh) {
     const ssh = await sshProvider.generateKeypair(vmName);
@@ -1663,6 +1678,7 @@ runcmd:
         receiptCid = body.cid;
         _receiptUri = receiptUri ?? "";
         _receiptCid = receiptCid ?? "";
+        registerOnNetwork();
         submitEventRef = body.submitEvent;
         log("submitAccept_result", { status: r.status, receiptUri, receiptCid, submitEventRef });
       } catch (err) {
@@ -1694,6 +1710,7 @@ runcmd:
       receiptCid = fromFirehose.receiptCid;
       _receiptUri = receiptUri ?? "";
       _receiptCid = receiptCid ?? "";
+      registerOnNetwork();
       submitEventRef = fromFirehose.submitEventRef;
       log("receipt_from_firehose", { receiptUri, receiptCid, submitEventRef });
     } else {
@@ -1758,6 +1775,7 @@ runcmd:
       vmFqdnReady.resolve(""); // empty string = timeout signal
     }, vmReadyTimeoutSec * 1000);
     vmFqdn = await vmFqdnReady.promise;
+    pds.clearOnNetworkResolved?.(receiptKey());
     clearTimeout(fqdnTimeout);
     // Firehose watcher can close now -- FQDN discovered (or timed out).
     bidWatcher?.close();

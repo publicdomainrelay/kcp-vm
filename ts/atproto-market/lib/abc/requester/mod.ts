@@ -180,7 +180,13 @@ export interface RequesterPDS {
   /** Resolve the iroh nodeId promise. No-op after first call. */
   resolveIrohNodeId?(nodeId: string): void;
   /** Set callback invoked when guest-side onNetwork event arrives via submitEvent XRPC. */
-  setOnNetworkResolved?(fn: (address: string) => void): void;
+  /**
+   * Register interest in a contract's guest FQDN, keyed by that contract's
+   * receipt. A requester serves many contracts concurrently, so the key is what
+   * keeps one run's onNetwork from resolving another run's wait.
+   */
+  setOnNetworkResolved?(key: string, fn: (address: string) => void): void;
+  clearOnNetworkResolved?(key: string): void;
 }
 
 export interface SshSessionProvider {
