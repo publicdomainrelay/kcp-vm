@@ -1,0 +1,127 @@
+package scaledriver
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"sync"
+	"time"
+
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/scale"
+)
+
+var ErrNoFactory = errors.New(
+	"scaledriver: no Nodes factory; the decision would be made and nothing could perform it, " +
+		"which is the state this package exists to end")
+
+type Factory func(cluster string) (scale.Nodes, error)
+
+type Options struct {
+	Scale scale.Options
+
+	Now func() time.Time
+
+	Log *slog.Logger
+
+	Observe func(ctx context.Context, cluster string) (scale.Observation, int, error)
+}
+
+type Driver struct {
+	factory Factory
+	opts    Options
+
+	mu     sync.Mutex
+	states map[string]scale.State
+}
+
+func New(f Factory, opts Options) (*Driver, error) {
+	if f == nil {
+		return nil, ErrNoFactory
+	}
+	if opts.Now == nil {
+		opts.Now = time.Now
+	}
+	return &Driver{factory: f, opts: opts, states: map[string]scale.State{}}, nil
+}
+
+func (d *Driver) Pass(ctx context.Context, cluster string, o scale.Observation, observedNodes int) (scale.Decision, error) {
+	if cluster == "" {
+		return scale.Decision{}, errors.New("scaledriver: Pass needs a cluster")
+	}
+	log := d.opts.Log
+	if log == nil {
+		log = slog.Default()
+	}
+	now := d.opts.Now()
+
+	d.mu.Lock()
+	st := d.states[cluster]
+	st.Nodes = observedNodes
+	d.mu.Unlock()
+
+	dec := scale.Decide(o, st, now, d.opts.Scale)
+
+	if dec.Action == scale.None {
+		d.advance(cluster, st.Next(dec, now))
+		log.Debug("scaledriver: no change", "cluster", cluster, "nodes", dec.Nodes, "reason", dec.Reason)
+		return dec, nil
+	}
+
+	nodes, err := d.factory(cluster)
+	if err != nil {
+		return dec, fmt.Errorf("scaledriver: building the actuator for %s: %w", cluster, err)
+	}
+
+	switch dec.Action {
+	case scale.Provision:
+		if err := nodes.Provision(ctx); err != nil {
+			return dec, fmt.Errorf("scaledriver: provisioning a node for %s: %w", cluster, err)
+		}
+	case scale.Teardown:
+		if err := nodes.Teardown(ctx); err != nil {
+			return dec, fmt.Errorf("scaledriver: tearing down the node for %s: %w", cluster, err)
+		}
+	default:
+		return dec, fmt.Errorf("scaledriver: scale.Decide returned action %d, which this driver "+
+			"does not know how to perform", dec.Action)
+	}
+
+	d.advance(cluster, st.Next(dec, now))
+	log.Info("scaledriver: node count changed", "cluster", cluster, "action", dec.Action,
+		"nodes", dec.Nodes, "reason", dec.Reason)
+	return dec, nil
+}
+
+var ErrNoObserver = errors.New(
+	"scaledriver: no Observer, so a pass has nothing to decide from -- Pass takes its " +
+		"observation as an argument, and RunPass is the entry that does not")
+
+func (d *Driver) RunPass(ctx context.Context, cluster string) (scale.Decision, error) {
+	if d.opts.Observe == nil {
+		return scale.Decision{}, ErrNoObserver
+	}
+	o, nodes, err := d.opts.Observe(ctx, cluster)
+	if err != nil {
+		return scale.Decision{}, fmt.Errorf("scaledriver: observing %s: %w", cluster, err)
+	}
+	return d.Pass(ctx, cluster, o, nodes)
+}
+
+func (d *Driver) State(cluster string) scale.State {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.states[cluster]
+}
+
+func (d *Driver) Forget(cluster string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	delete(d.states, cluster)
+}
+
+func (d *Driver) advance(cluster string, st scale.State) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.states[cluster] = st
+}

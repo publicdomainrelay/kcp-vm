@@ -1,0 +1,59 @@
+{
+  "components": {
+    "k3s": {
+      "version": "v1.36.4+k3s1",
+      "how": "K3S_VERSION env var to get.k3s.io",
+      "invariant": "MEASURED, not read: a `server --disable-agent` binds *:https-listen-port AND 127.0.0.1:port+1 as a PAIR, and binds NOTHING on --advertise-port in steady state; /cacerts answers 200 on the listen port and 401 on the advertise port, so a node dialing the advertise port loops on 'failed to get CA certs'. Two --disable-agent servers DID run concurrently on one host, each with its own kine and store. The server still runs the agent bootstrap and so needs /etc/rancher/node/password readable and writable -- NOT under --data-dir, no flag moves it -- but its VALUE is never checked, because no node registers through it and the k3s-<node> Secret that would disagree is never created. An AGENT cannot share a host: 127.0.0.1:6444 collides FATALLY, one containerd socket, one flannel.1, one IPAM pool, one set of KUBE-* chains, and it is fatal as a non-root user ('agent requires additional privilege if not run with --rootless')."
+    },
+    "kcp": {
+      "version": "v1.36.0+kcp-v0.33.0",
+      "how": "release binary",
+      "invariant": "MUST run --feature-gates=WorkspaceMounts=true. With the gate off, installWorkspaceMountsScheduler returns early (kcp/pkg/server/controllers.go:733-737) and EVERY TENANT'S MOUNTED API SILENTLY STOPS BEING SERVED -- objects survive, the mount does not."
+    },
+    "kine": {
+      "version": "v0.17.1",
+      "how": "go install github.com/k3s-io/kine@v0.17.1 -- CGO_ENABLED=1",
+      "invariant": "kine IS the store, and k3s must DIAL it rather than consume its bucket: an empty --datastore-endpoint makes k3s start its own sqlite and a BRAND-NEW cluster, silently. It also ships no prebuilt release for every target, so CGO_ENABLED=1 is part of the recipe rather than an optimisation."
+    },
+    "rustfs": {
+      "version": "1.0.0",
+      "how": "release binary",
+      "invariant": "NO writable second instance, ever. t4's fence is an S3 conditional write INSIDE the bucket, so a writable replica is a split brain by construction (ADR 0026 R15)."
+    },
+    "embedded-postgres": {
+      "version": "the host's own binaries: initdb/postgres/psql on PATH, PostgreSQL 18.x",
+      "how": "exec'd directly; the org's ferrugstrange/embedded-postgres launcher is used by an experiment only and is NOT linked into this module",
+      "invariant": "THE PORT IS REQUIRED AND NEVER DEFAULTED: a default is ADR 0026's byte-identical DSN, so PostgresSpec.Port is refused when zero. postgres ALSO refuses to run as root ('initdb: error: cannot be run as root') while a k3s agent requires root, so a host that runs the store cannot run a local-process node -- which is why the node substrate is a VM. The store binds 127.0.0.1 ONLY and its pg_hba admits 127.0.0.1/32: the only client is kine, a child of the same process group."
+    },
+    "openbao": {
+      "version": "v2.6.2",
+      "how": "release binary",
+      "invariant": "2.6.2 has NO DEFAULT secret/ MOUNT, and the ESO SecretStore path is hardcoded to secret. Its config file is generated per cluster by this repo (see clusterstack) rather than shipped: the listener is loopback on the cluster's leased port, because the process group is gateway-side."
+    },
+    "external-secrets": {
+      "version": "v2.11.0",
+      "how": "deploy config: deploy/eso/install.sh applies the pinned upstream external-secrets.yaml bundle, and internal/eso applies the cluster's own ClusterSecretStore and ExternalSecret over the placeholders in deploy/eso",
+      "invariant": "The controller, its 25 CRDs and its webhook are the upstream bundle, PINNED rather than re-authored; the repo's copy is that bundle plus the OpenBao wiring, and nothing authors a secret value in k3s. The store authenticates with OpenBao CERT auth, so the cluster vault's tenant-facing listener is TLS and the client certificate is presented inside the handshake: there is no token, AppRole SecretID or service-account token to leak. The cluster vault listens on loopback for admin and on the cluster's gateway address for the tenant, same leased port, which is the price of a pod reaching it. The tenant cluster can scale to ZERO nodes, and then the ESO controller has no node to run on: it neither refreshes nor reconciles, and the last materialised Secret serves stale data from the store until a node returns."
+    },
+    "apimachinery": {
+      "version": "v0.36.4",
+      "how": "go.mod",
+      "invariant": "the only version pinned in TRACKED CODE, and it is pinned by the module system rather than by this file."
+    },
+    "our-crds": {
+      "version": "socialweb.computer/v1alpha1",
+      "how": "api/v1alpha1/groupversion_info.go",
+      "invariant": "v1alpha1 means NO COMPATIBILITY PROMISE, which is true of the promise and FALSE OF THE COST: in kcp a schema change does not reach existing APIBindings, and identityHash DETERMINES THE ETCD PREFIX -- change it and every stored object reads from an EMPTY PREFIX. MEASURED in addition: APIResourceSchema.spec is IMMUTABLE, so an added enum is a NEW schema revision and the exports must be re-pointed (v1alpha1-1.<plural>.<group>); the identity hash survives a re-point. And `Cluster` and `Node` ride ONE export, `clusters`, because a WorkspaceType's defaultAPIBindings names an export and the test that guards it requires every entry to equal that export's name. A phase written through the main resource is DISCARDED when the schema declares a status subresource -- the node provider's writes must go through /status."
+    },
+    "t4": {
+      "version": null,
+      "how": "compiled into kine",
+      "invariant": "t4 is NOT a separate binary and has NO PINNED VERSION ANYWHERE -- it is a kine backend selected by endpoint scheme, so pinning kine pins t4. Its fence is an S3 CONDITIONAL WRITE INSIDE THE BUCKET, which is why a WRITABLE SECOND rustfs is a split brain by construction and failover must never fail back (ADR 0026 R15). Note single-node t4 NEVER TOUCHES THE LEADER LOCK (node.go:657 -- no peer address means roleSingle), so the multi-node shape is a different exercise."
+    },
+    "one-node-per-host": {
+      "version": null,
+      "how": "a measured constraint, not a component",
+      "invariant": "A k3s AGENT cannot share a host with another: 127.0.0.1:6444 binds FATALLY and the loser is served the other cluster's CA; one /run/k3s/containerd/containerd.sock (hardcoded, --data-dir moves 'root' only, measured cross-contamination: cluster A's containerd served RunPodSandbox for cluster B's pods), one flannel.1 whose NAME is not redirectable and whose reconfiguration panicked agent A (vxlan_network.go:217), one 8472/udp socket, one /run/flannel/subnet.env, one IPAM pool, one set of KUBE-* iptables chains, /var/lib/kubelet/pod-resources. All four candidate fixes were refuted. Control planes have no such limit: N servers per host, ports leased."
+    }
+  }
+}

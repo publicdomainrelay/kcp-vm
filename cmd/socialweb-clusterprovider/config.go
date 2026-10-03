@@ -1,0 +1,518 @@
+package main
+
+import (
+	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostos"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodefirecracker"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodevm"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/portallocator"
+)
+
+func isAre(n int) string {
+	if n == 1 {
+		return "is"
+	}
+	return "are"
+}
+
+const (
+	envKCPHost       = "SOCIALWEB_KCP_HOST"
+	envKCPKubeconfig = "SOCIALWEB_KCP_KUBECONFIG"
+
+	envMintKubeconfigs = "SOCIALWEB_GATEWAY_MINT_KUBECONFIGS"
+
+	envGrant = "SOCIALWEB_CLUSTERPROVIDER_GRANT"
+
+	envLeasePath = "SOCIALWEB_CLUSTERPROVIDER_LEASE_PATH"
+
+	envPortRange = "SOCIALWEB_CLUSTERPROVIDER_PORT_RANGE"
+
+	envJoin = "SOCIALWEB_CLUSTERPROVIDER_JOIN"
+
+	envDatastore = "SOCIALWEB_CLUSTERPROVIDER_DATASTORE"
+
+	envStateDir = "SOCIALWEB_CLUSTERPROVIDER_STATE_DIR"
+
+	envPostgresBinDir  = "SOCIALWEB_CLUSTERPROVIDER_POSTGRES_BIN_DIR"
+	envDatastoreHasRow = "SOCIALWEB_CLUSTERPROVIDER_DATASTORE_HAS_ROW"
+
+	envAdvertiseAddress = "SOCIALWEB_CLUSTERPROVIDER_ADVERTISE_ADDRESS"
+	envStoreEndpoint    = "SOCIALWEB_CLUSTERPROVIDER_STORE_ENDPOINT"
+	envAuditPolicy      = "SOCIALWEB_CLUSTERPROVIDER_AUDIT_POLICY"
+
+	envScaleHold = "SOCIALWEB_CLUSTERPROVIDER_SCALE_HOLD"
+
+	envSubstrate = "SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE"
+	envHost      = "SOCIALWEB_CLUSTERPROVIDER_HOST"
+	envNetwork   = "SOCIALWEB_CLUSTERPROVIDER_NETWORK"
+
+	envImageOutDir = "SOCIALWEB_CLUSTERPROVIDER_IMAGE_OUT_DIR"
+	envImageConfig = "SOCIALWEB_CLUSTERPROVIDER_IMAGE_CONFIG"
+
+	envFirecracker = "SOCIALWEB_CLUSTERPROVIDER_FIRECRACKER"
+	envQEMU        = "SOCIALWEB_CLUSTERPROVIDER_QEMU"
+	envNodeAgent   = "SOCIALWEB_CLUSTERPROVIDER_NODE_AGENT"
+
+	envTokenTimeout = "SOCIALWEB_CLUSTERPROVIDER_TOKEN_TIMEOUT"
+	envLogLevel     = "SOCIALWEB_CLUSTERPROVIDER_LOG_LEVEL"
+
+	envESOManifestDir = "SOCIALWEB_CLUSTERPROVIDER_ESO_MANIFEST_DIR"
+)
+
+const DefaultESOManifestDir = "/opt/socialweb/deploy/eso"
+
+const SubstrateFirecracker = "firecracker"
+
+const SubstrateQEMU = "qemu"
+
+const NetworkPasta = "pasta"
+
+const AgentBinaryName = "kcpagent"
+
+const DefaultGrantPath = "deploy/tenant-grant.yaml"
+
+const DefaultInterval = 2 * time.Second
+
+const DefaultReclaimGrace = 5 * time.Minute
+
+type Config struct {
+	KCPHost string
+
+	KCPKubeconfig string
+
+	MintKubeconfigs string
+
+	GrantPath string
+
+	LeasePath string
+
+	PortRange portallocator.Range
+
+	Join string
+
+	Datastore string
+
+	StateDir string
+
+	PostgresBinDir string
+
+	AdvertiseAddress string
+
+	StoreEndpoint string
+
+	AuditPolicyPath string
+
+	Substrate string
+
+	Host string
+
+	Network string
+
+	ImageOutDir string
+
+	ImageConfig string
+
+	Firecracker string
+
+	QEMU string
+
+	NodeAgent string
+
+	ESOManifestDir string
+
+	DatastoreHasRow bool
+
+	ScaleHold time.Duration
+
+	TokenTimeout time.Duration
+
+	Interval time.Duration
+
+	LogLevel slog.Level
+}
+
+func Load() (Config, error) { return load(os.Getenv) }
+
+func load(get func(string) string) (Config, error) {
+	cfg := Config{
+		KCPHost:          strings.TrimSpace(get(envKCPHost)),
+		KCPKubeconfig:    strings.TrimSpace(get(envKCPKubeconfig)),
+		MintKubeconfigs:  strings.TrimSpace(get(envMintKubeconfigs)),
+		LeasePath:        strings.TrimSpace(get(envLeasePath)),
+		Join:             strings.TrimSpace(get(envJoin)),
+		Datastore:        strings.TrimSpace(get(envDatastore)),
+		StateDir:         strings.TrimSpace(get(envStateDir)),
+		PostgresBinDir:   strings.TrimSpace(get(envPostgresBinDir)),
+		AdvertiseAddress: strings.TrimSpace(get(envAdvertiseAddress)),
+		StoreEndpoint:    strings.TrimSpace(get(envStoreEndpoint)),
+		AuditPolicyPath:  strings.TrimSpace(get(envAuditPolicy)),
+		Substrate:        strings.TrimSpace(get(envSubstrate)),
+		Host:             strings.TrimSpace(get(envHost)),
+		Network:          strings.TrimSpace(get(envNetwork)),
+		ImageOutDir:      strings.TrimSpace(get(envImageOutDir)),
+		ImageConfig:      strings.TrimSpace(get(envImageConfig)),
+		Firecracker:      strings.TrimSpace(get(envFirecracker)),
+		QEMU:             strings.TrimSpace(get(envQEMU)),
+		NodeAgent:        strings.TrimSpace(get(envNodeAgent)),
+		ESOManifestDir:   strings.TrimSpace(get(envESOManifestDir)),
+		GrantPath:        strings.TrimSpace(get(envGrant)),
+		Interval:         DefaultInterval,
+		LogLevel:         slog.LevelInfo,
+	}
+	if cfg.GrantPath == "" {
+		cfg.GrantPath = DefaultGrantPath
+	}
+	if cfg.ESOManifestDir == "" {
+		cfg.ESOManifestDir = DefaultESOManifestDir
+	}
+	if cfg.AdvertiseAddress == "" && !guestSubstrate(cfg.Substrate) {
+		cfg.AdvertiseAddress = portallocator.LoopbackAdvertiseAddress
+	}
+	switch {
+	case cfg.StoreEndpoint != "" && cfg.Datastore != "" && cfg.StoreEndpoint != cfg.Datastore:
+		return Config{}, fmt.Errorf(
+			"%s is %q and %s is %q. They name ONE thing -- the store kine writes this cluster's "+
+				"objects into -- and two answers to one question are not a preference to be "+
+				"resolved silently: whichever lost would be a cluster whose objects went somewhere "+
+				"nobody is looking", envStoreEndpoint, cfg.StoreEndpoint, envDatastore, cfg.Datastore)
+	case cfg.StoreEndpoint == "":
+		cfg.StoreEndpoint = cfg.Datastore
+	}
+	if raw := strings.TrimSpace(get(envPortRange)); raw != "" {
+		rng, err := parsePortRange(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("%s: %w", envPortRange, err)
+		}
+		cfg.PortRange = rng
+	}
+
+	if raw := strings.TrimSpace(get(envScaleHold)); raw != "" {
+		d, err := time.ParseDuration(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("%s is not a duration: %w", envScaleHold, err)
+		}
+		if d < 0 {
+			return Config{}, fmt.Errorf("%s must not be negative", envScaleHold)
+		}
+		cfg.ScaleHold = d
+	}
+
+	for _, req := range []struct{ name, value string }{
+		{envKCPHost, cfg.KCPHost},
+		{envKCPKubeconfig, cfg.KCPKubeconfig},
+		{envLeasePath, cfg.LeasePath},
+	} {
+		if req.value == "" {
+			return Config{}, fmt.Errorf("%s is not set", req.name)
+		}
+	}
+
+	if cfg.Join != "" {
+		if cfg.MintKubeconfigs == "" {
+			return Config{}, fmt.Errorf(
+				"%s is not set, so a join would bootstrap a tenant cluster and write no mint "+
+					"credential: the gateway reads that directory and would fail every mint",
+				envMintKubeconfigs)
+		}
+		raw := strings.TrimSpace(get(envDatastoreHasRow))
+		if raw == "" {
+			return Config{}, fmt.Errorf(
+				"%s is not set. Whether the datastore already holds a bootstrap row is the "+
+					"caller's OBSERVATION and has no default: a wrong \"false\" makes k3s exit "+
+					"at boot with \"bootstrap data already found and encrypted with different "+
+					"token\" (ADR 0023)", envDatastoreHasRow)
+		}
+		has, err := parseBool(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("%s: %w", envDatastoreHasRow, err)
+		}
+		cfg.DatastoreHasRow = has
+
+		if cfg.StateDir == "" {
+			return Config{}, fmt.Errorf(
+				"%s is not set. It holds this cluster's node records, its instance token, its "+
+					"audit log and its identity bundle, and without it a gateway that restarts "+
+					"can neither find nor reap the agent the last one started -- so it is required "+
+					"whether or not %s names an external store", envStateDir, envStoreEndpoint)
+		}
+		if !filepath.IsAbs(cfg.StateDir) {
+			return Config{}, fmt.Errorf(
+				"%s is %q, which is relative. A node's identity IS the absolute socket path under "+
+					"this directory -- that string is what a running VMM is recognised by, what a "+
+					"reap compares against, and what a record written by an earlier gateway names. "+
+					"A relative path makes that identity depend on the working directory the gateway "+
+					"was started from, so the same node started from two directories yields two "+
+					"identities, and the second one is invisible to the check that exists to stop two "+
+					"VMMs running behind one node name", envStateDir, cfg.StateDir)
+		}
+
+		if err := cfg.checkPlacement(); err != nil {
+			return Config{}, err
+		}
+	}
+
+	var err error
+	if cfg.TokenTimeout, err = optionalDuration(get, envTokenTimeout); err != nil {
+		return Config{}, err
+	}
+	if cfg.LogLevel, err = level(get(envLogLevel)); err != nil {
+		return Config{}, err
+	}
+	return cfg, nil
+}
+
+func (c Config) ObserveOnly() bool { return c.Join == "" }
+
+func guestSubstrate(name string) bool {
+	return name == SubstrateFirecracker || name == SubstrateQEMU
+}
+
+func (c Config) checkPlacement() error {
+	switch c.Substrate {
+	case "":
+		return fmt.Errorf(
+			"%s is not set. Where a node runs is a decision this host cannot make for itself: "+
+				"there is no way to observe it and no default to fall back on, because the answer "+
+				"decides what a node's record names, what its teardown stops and what its lease "+
+				"means -- a gateway that guessed would report a placement it is not honouring",
+			envSubstrate)
+	case SubstrateFirecracker:
+		if !hostos.Firecracker() {
+			return fmt.Errorf(
+				"%s is %s and this host is %s. Firecracker is a KVM guest and it exists only on "+
+					"Linux, so a Windows host cannot boot one at all; the name is refused rather "+
+					"than tried, and a Windows host places nodes with %s instead, which runs on "+
+					"both. A gateway that accepted this name would count a node it never booted",
+				envSubstrate, SubstrateFirecracker, hostos.Name(), SubstrateQEMU)
+		}
+		var missing []string
+		for _, req := range []struct{ name, value string }{
+			{envFirecracker, c.Firecracker},
+			{envNodeAgent, c.NodeAgent},
+			{envImageOutDir, c.ImageOutDir},
+			{envImageConfig, c.ImageConfig},
+		} {
+			if req.value == "" {
+				missing = append(missing, req.name)
+			}
+		}
+		if len(missing) > 0 {
+			return fmt.Errorf(
+				"%s is %s and %s %s not set. A node on this substrate is a guest, and the guest is "+
+					"a VMM binary, the agent that both wires its network from the outside and runs "+
+					"inside it, and an image. The image is named by the inputs the builder read "+
+					"rather than by anything an operator writes down, so what is configured is the "+
+					"store that name is looked up in and the builder's own configuration, which is "+
+					"what the name is derived from: neither can be derived from the other, and a "+
+					"gateway that started anyway would report a node it never booted",
+				envSubstrate, SubstrateFirecracker, strings.Join(missing, " and "), isAre(len(missing)))
+		}
+		if err := c.checkImageConfig(SubstrateFirecracker); err != nil {
+			return err
+		}
+	case SubstrateQEMU:
+		var missing []string
+		for _, req := range []struct{ name, value string }{
+			{envQEMU, c.QEMU},
+			{envNodeAgent, c.NodeAgent},
+			{envImageOutDir, c.ImageOutDir},
+			{envImageConfig, c.ImageConfig},
+		} {
+			if req.value == "" {
+				missing = append(missing, req.name)
+			}
+		}
+		if len(missing) > 0 {
+			return fmt.Errorf(
+				"%s is %s and %s %s not set. A node on this substrate is a guest, and the guest is "+
+					"a qemu-system binary, the agent that both wires its network from the outside and "+
+					"runs inside it, and an image. The image is named by the inputs the builder read "+
+					"rather than by anything an operator writes down, so what is configured is the "+
+					"store that name is looked up in and the builder's own configuration, which is "+
+					"what the name is derived from: neither can be derived from the other, and a "+
+					"gateway that started anyway would report a node it never booted",
+				envSubstrate, SubstrateQEMU, strings.Join(missing, " and "), isAre(len(missing)))
+		}
+		if err := c.checkImageConfig(SubstrateQEMU); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf(
+			"%s is %q, and %s and %s are the only substrates implemented today. Another name is "+
+				"refused rather than tried: it would decide what a node's record names, what its "+
+				"teardown stops and what its leases mean, and a gateway running a placement nobody "+
+				"wrote would report a node it never booted, or one it cannot stop",
+			envSubstrate, c.Substrate, SubstrateFirecracker, SubstrateQEMU)
+	}
+
+	if err := c.refuseUnenforceableGuestInputs(); err != nil {
+		return err
+	}
+
+	host, err := os.Hostname()
+	if err != nil {
+		return fmt.Errorf(
+			"%s is %q and this host's own name cannot be read (%w), so the comparison that "+
+				"keeps a gateway from placing nodes on a machine it is not cannot be made. An "+
+				"uncompared host is worse than an absent one: it would be accepted as a match",
+			envHost, c.Host, err)
+	}
+	switch {
+	case c.Host == "":
+		return fmt.Errorf(
+			"%s is not set. A gateway that places nodes has to be told which host it is, so that "+
+				"the answer can be checked against os.Hostname() (%q); nothing here may assume, "+
+				"because the assumption is accepted on the one machine where it is wrong",
+			envHost, host)
+	case c.Host != host:
+		return fmt.Errorf(
+			"%s is %q and this host calls itself %q. The mismatch is refused rather than "+
+				"reconciled: a gateway told it is a host it is not would place nodes on the wrong "+
+				"machine -- the node records and the tenant registrations would both name a "+
+				"cluster running somewhere else, and every later pass would read that "+
+				"other machine's state as its own",
+			envHost, c.Host, host)
+	}
+
+	switch c.Network {
+	case "":
+		return fmt.Errorf(
+			"%s is not set. It names how a node's network namespace is provided, and the answer "+
+				"is not observable from here: a node that comes up with no network is one whose "+
+				"apiserver it cannot dial, which reads as a join that never happens and a cluster "+
+				"stuck at zero nodes with no error that names the cause",
+			envNetwork)
+	case NetworkPasta:
+	default:
+		return fmt.Errorf(
+			"%s is %q, and %s is the only value accepted today: it is what was measured to work "+
+				"rootlessly on this host's kernel. Another name is refused rather than tried, "+
+				"because a node whose network came from something nobody measured is a node whose "+
+				"reachability is unknown at the moment it is counted as up",
+			envNetwork, c.Network, NetworkPasta)
+	}
+	return nil
+}
+
+func (c Config) checkImageConfig(substrate string) error {
+	build, err := nodefirecracker.LoadBuildConfig(c.ImageConfig)
+	if err != nil {
+		return fmt.Errorf("%s is %q and it is not a configuration the image builder wrote, so "+
+			"the image a node of this cluster boots from cannot be named: %w", envImageConfig,
+			c.ImageConfig, err)
+	}
+	vmm, err := nodevm.NormalizeVMM(build.VMM)
+	if err != nil {
+		return fmt.Errorf("%s is %q: %w", envImageConfig, c.ImageConfig, err)
+	}
+	if vmm != substrate {
+		return fmt.Errorf("%s is %q and it is a configuration that builds a %s image, and %s is "+
+			"%s. A node is booted from an image built for the substrate that places it, and the "+
+			"other image is refused rather than booted: both VMMs boot the same kernel and hand "+
+			"the guest the same files, so a cross-substrate boot comes up, joins and reaches "+
+			"Running with no object naming the image that moved. Name a configuration whose vmm "+
+			"is %s, or select %s",
+			envImageConfig, c.ImageConfig, vmm, envSubstrate, c.Substrate, substrate, vmm)
+	}
+	return nil
+}
+
+func (c Config) refuseUnenforceableGuestInputs() error {
+	if c.AdvertiseAddress != "" {
+		return fmt.Errorf(
+			"%s is %q and %s is %s. A node on this substrate is a guest in its own network "+
+				"namespace and its own kernel, and it reaches NONE of this host's addresses: its "+
+				"only path to the host is the gateway its default route names, which is the FIRST "+
+				"USABLE ADDRESS OF THE RANGE ITS CLUSTER HOLDS in the subnet lease file. That "+
+				"range is allocated and not configured -- the pool is a constant in "+
+				"internal/subnetallocator and no flag, no environment variable and no config file "+
+				"can pick a cluster's range, because a range two operators can set differently is "+
+				"the same collision in a tidier place -- so a value here cannot be in force. It is "+
+				"refused rather than accepted and ignored, which is how the address of the machine "+
+				"running the gateway came back as a node's InternalIP: an operator who set a value "+
+				"and saw no complaint would believe it was carrying it",
+			envAdvertiseAddress, c.AdvertiseAddress, envSubstrate, c.Substrate)
+	}
+	name, value := envQEMU, c.QEMU
+	if c.Substrate == SubstrateQEMU {
+		name, value = envFirecracker, c.Firecracker
+	}
+	if value != "" {
+		return fmt.Errorf(
+			"%s is %q and %s is %s. That binary belongs to a different substrate, so it cannot be "+
+				"in force here: a node on this substrate is started by the VMM this substrate names, "+
+				"and the other one is never executed. It is refused rather than accepted and "+
+				"ignored, because an operator who set a value and saw no complaint would believe it "+
+				"was carrying it",
+			name, value, envSubstrate, c.Substrate)
+	}
+	return nil
+}
+
+func parsePortRange(raw string) (portallocator.Range, error) {
+	first, last, ok := strings.Cut(raw, "-")
+	if !ok {
+		return portallocator.Range{}, fmt.Errorf("%q is not a FIRST-LAST port range", raw)
+	}
+	a, err := strconv.Atoi(strings.TrimSpace(first))
+	if err != nil {
+		return portallocator.Range{}, fmt.Errorf("%q is not a FIRST-LAST port range: %q is not a number", raw, strings.TrimSpace(first))
+	}
+	b, err := strconv.Atoi(strings.TrimSpace(last))
+	if err != nil {
+		return portallocator.Range{}, fmt.Errorf("%q is not a FIRST-LAST port range: %q is not a number", raw, strings.TrimSpace(last))
+	}
+	if b < a {
+		return portallocator.Range{}, fmt.Errorf("%q runs backwards, and a backwards range reads as NO range at all: "+
+			"the allocator would resolve it to its default carve and this process would hand out ports it believed "+
+			"it had been told to avoid", raw)
+	}
+	return portallocator.Range{First: a, Last: b}, nil
+}
+
+func parseBool(raw string) (bool, error) {
+	switch strings.ToLower(raw) {
+	case "true", "1", "yes":
+		return true, nil
+	case "false", "0", "no":
+		return false, nil
+	}
+	return false, fmt.Errorf("%q is not one of true, false", raw)
+}
+
+func optionalDuration(get func(string) string, name string) (time.Duration, error) {
+	raw := strings.TrimSpace(get(name))
+	if raw == "" {
+		return 0, nil
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %q is not a duration", name, raw)
+	}
+	if d <= 0 {
+		return 0, fmt.Errorf("%s: %q must be positive", name, raw)
+	}
+	return d, nil
+}
+
+func level(raw string) (slog.Level, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "info":
+		return slog.LevelInfo, nil
+	case "debug":
+		return slog.LevelDebug, nil
+	case "warn", "warning":
+		return slog.LevelWarn, nil
+	case "error":
+		return slog.LevelError, nil
+	default:
+		return 0, fmt.Errorf("%s: %q is not one of debug, info, warn, error", envLogLevel, raw)
+	}
+}

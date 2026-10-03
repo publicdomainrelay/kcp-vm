@@ -1,0 +1,59 @@
+apiVersion: apis.kcp.io/v1alpha1
+kind: APIResourceSchema
+metadata:
+  name: v1alpha1-1.atprotoidentities.socialweb.computer
+spec:
+  group: socialweb.computer
+  names:
+    kind: AtprotoIdentity
+    listKind: AtprotoIdentityList
+    plural: atprotoidentities
+    singular: atprotoidentity
+  scope: Cluster
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      schema:
+        type: object
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            properties:
+              did:
+                type: string
+              scope:
+                type: string
+                enum:
+                  - Account
+                  - Cluster
+              cluster:
+                type: string
+              revoked:
+                type: boolean
+            required:
+              - did
+              - scope
+          status:
+            type: object
+            properties:
+              state:
+                type: string
+                enum:
+                  - Active
+                  - Revoked
+                  - RevocationPending
+                  - ColdDeferred
+              conditions:
+                type: array
+                items:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true

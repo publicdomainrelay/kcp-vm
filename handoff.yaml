@@ -1,0 +1,266 @@
+version: 1
+generated: 2026-09-24
+repo: /home/johnandersen777/src/publicdomainrelay-kcp/socialweb-computer-kcp
+
+objective:
+  one_sentence: >
+    A tenant cluster whose k3s NODES scale to zero while its kcp + `k3s server --disable-agent`
+    control plane stays live.
+  why_disable_agent_matters: >
+    A single-node k3s where the server IS the node can never produce zero nodes. `--disable-agent`
+    is what makes "zero nodes" a real state rather than a contradiction.
+  scope:
+    in: kcp, k3s, k3s-node-in-firecracker, rustfs, kine, openbao, postgres
+    out: >
+      Every other repo. Provisioning guests through the market/RFP flow. The market's SSH door
+      (its report surface is in scope, the door is not). Multi-node per cluster (v1 is 0-or-1).
+
+standing_constraints:
+  - No comments in code, ever. Decisions live in docs/ARCHITECTURE.md. An enforced hard rule.
+  - Always update docs. The doc is the decision record; code carries none.
+  - Launch subagents for all work; the main thread coordinates and verifies.
+  - Node runs as a guest VM (firecracker). Nothing on the L0 host needs root.
+  - Scope subagents so they do not need to talk to each other. When they must, tell them how.
+
+state_at_handoff:
+  branch: refocus-core-process-substrate
+  head: 4db84a9
+  worktree: clean
+  architecture_doc_lines: 2814
+  go_packages: 50
+  tests: >
+    `deploy/check.sh --fast` green (about 9 s); `--local` green (about 75 s, names the 14
+    artifact-gated skips); `--full` needs the live artifacts and exits non-zero naming what is
+    missing without them. `deploy/test-rig/run.sh` derives those inputs and runs the live gate in
+    a privileged container.
+  deployment: >
+    The deployment is ONE container: `deploy/run-container.sh` builds the image and starts it
+    detached as `socialweb`, and `deploy/wait-ready.sh socialweb 300` returns 0 when the cluster
+    reaches `phase: Ready` (about 30 s, as `uid=1000`). Inside it: kcp, the gateway, the
+    credential plugin, the clusterprovider, each cluster's postgres/kine/k3s, a root OpenBao and
+    a per-cluster OpenBao. Nodes are firecracker guests. The host runs only the container runtime.
+  kcp_on_host: >
+    The host systemd units are RETIRED: `deploy/install-kcp.sh` and `deploy/socialweb-gateway.service`
+    are deleted, and kcp now runs inside the container. A stale /etc/systemd/system/kcp.service may
+    still exist on this host from before; it is not the deployment and nothing on the host's 6443 is
+    claimed. A test that needs kcp starts one with its own root directory, as the proofs do.
+
+proven:
+  four_step_proof:
+    test: TestTheFourStepProofRunsThroughTheCompositionRoot
+    location: cmd/socialweb-clusterprovider/live_fourstep_test.go
+    result: PASS 97.65 s
+    transitions:
+      - Cluster CR reached Ready at its leased apiserver port with ZERO nodes
+      - "`kubectl get nodes` empty and staying empty across passes"
+      - a node joined ON DEMAND as liveweb-node1 Ready (Provision, nodes=1)
+      - back to zero with the control plane still Ready and still listing its namespaces
+    timing: INSTANCE_START_TO_READY_S = 9.749 / 9.609 (host-timed, firecracker InstanceStart to Node Ready)
+  control_plane_in_container:
+    image: socialweb-control-plane:local
+    files: deploy/control-plane-container/{Dockerfile,build.sh,validate.sh}
+    result: >
+      TestTheControlPlaneReachesReadyAtZeroNodes PASSES INSIDE the container: 9.50 s, 7.78 s, 7.67 s
+      across runs against a ~6 s host baseline. Runs as USER 1000:1000. NO --privileged,
+      --security-opt, --cap-add, --device, --network host, and no userns remap.
+    honest_verdict_inside: "9 HOLDS, 1 MISSING, 10 MUST BE PASSED IN, exit non-zero (control-plane half only)"
+  mount_gate_question:
+    question: Does a Draining CR shut the mount BEFORE its process group dies?
+    answer: YES, measured against a real kcp started inside a test
+    test: TestTheMountShutsBeforeTheTenantProcessGroupDies
+    location: internal/clusterprovider/live_mount_test.go
+    skip_behaviour: no env gate; skips only if kcp/kine/k3s/postgres are absent, with a skip message saying a skip means the question stays open. Runs in ~27 s, needs no root and no /dev/kvm.
+    three_answers:
+      serving: "401 with the tenant apiserver's own k8s Status body (a REACH, proven by bodies)"
+      group_SIGTERMed: "502 empty body -- the reverse proxy with no backend"
+      CR_Draining: "503 `Not available.` -- kcp's own refusal, backend never contacted"
+    timeline: Draining moves the mount off 401 at +206 ms with the group still serving; reap comes on a LATER pass at +260 ms reading 503; group dies last.
+  host_contract:
+    binary: cmd/socialweb-computer-kcp-check-host
+    host_result: "19 checks, 19 HOLDS, 0 MISSING, exit 0 (verified by running it, not by report)"
+    discrimination: broken module source -> 2 MISSING exit 1; no config -> 5 MISSING exit 1
+    categories: HOLDS / MISSING / MUST BE PASSED IN
+    why_three: >
+      On a host the last two collapse to "this host cannot run this". Inside a container, MISSING
+      means the image is wrong while MUST BE PASSED IN means the container is correctly declaring
+      its edge. One binary, two readings.
+
+how_to_run:
+  deployment: "deploy/run-container.sh ; deploy/wait-ready.sh socialweb 300"
+  gate: "deploy/check.sh --fast   (the loop) ; deploy/check.sh --local   (this host's proofs) ; deploy/check.sh --full   (needs the live artifacts)"
+  live_gate_in_a_container: "deploy/test-rig/run.sh   (derives the live inputs and runs the gate in a privileged container)"
+  all_tests: "deploy/check.sh --fast"
+  control_plane_zero_node_proof:
+    host: "SOCIALWEB_LOCAL=1 go test ./internal/clusterprovider -run TestTheControlPlaneReachesReadyAtZeroNodes -v -count=1"
+    in_container: "deploy/control-plane-container/validate.sh"
+  mount_proof: "SOCIALWEB_LOCAL=1 go test ./internal/clusterprovider -run TestTheMountShutsBeforeTheTenantProcessGroupDies -v -count=1"
+  host_contract: "go run ./cmd/socialweb-computer-kcp-check-host -config /home/johnandersen777/kcp-image/nodeimage.json"
+  four_step_proof_env:
+    note: >
+      These variables gate the four-step proof, and a skip is not a pass. The rig derives them from
+      the image store and the builder's configuration; by hand, they need the BUILDER'S OWN
+      CONFIGURATION, not just a built image directory -- an image is only valid relative to the
+      configuration whose inputs name it.
+    vars:
+      - SOCIALWEB_CLUSTERPROVIDER_LIVE_IMAGE_OUT_DIR
+      - SOCIALWEB_CLUSTERPROVIDER_LIVE_IMAGE_CONFIG
+      - SOCIALWEB_CLUSTERPROVIDER_LIVE_FIRECRACKER
+      - SOCIALWEB_CLUSTERPROVIDER_LIVE_NODE_AGENT
+      - SOCIALWEB_CLUSTERPROVIDER_LIVE_K3S
+      - SOCIALWEB_CLUSTERPROVIDER_LIVE_KUBECTL
+      - SOCIALWEB_CLUSTERPROVIDER_LIVE_TENANT_IMAGE
+    optional: SOCIALWEB_CLUSTERPROVIDER_LIVE_SCALE_HOLD (proof default 1m; scale.DefaultHold is 2m)
+
+live_environment:
+  image_store: /home/johnandersen777/kcp-image/out
+  store_contents: 3 images, 4.0 GiB total (older names kept as rollback)
+  newest_fingerprint: sha256-e3f1e594e7aefb8a7c51e370a6ebd3f5e34f6364ceaf4eb97d7ef0d33f4d24c3
+  builder_config: /home/johnandersen777/kcp-image/nodeimage.json
+  builder_config_notes: >
+    48 modules, 5 images pinned as <tag>@<sha256:...>, agent_go_flags carries -buildvcs=false,
+    firecracker and base_image repointed under artifacts/. This file is OUTSIDE the repo and is the
+    operator's, not the code's.
+  cross_check: >
+    With -buildvcs=false the host's own builder answers "up to date ... nothing built, nothing
+    pulled" for the directory the container's stage produced. Both builders compute one name from
+    one input set; that agreement is the proof the fix worked.
+
+open_work:
+  operator_actions_not_repo_work:
+    - what: The gateway now REFUSES TO START without four device-key settings.
+      where: docs/ARCHITECTURE.md:1766
+      vars: [SOCIALWEB_GATEWAY_DEVICE_KEY_AUDIENCE, SOCIALWEB_GATEWAY_DEVICE_KEY_TTL, SOCIALWEB_GATEWAY_DEVICE_KEY_EXEC_COMMAND, SOCIALWEB_GATEWAY_DEVICE_KEY_EXEC_ENV_NAME]
+      note: >
+        deploy/socialweb-gateway.service needs no edit (it reads EnvironmentFile). The env file is
+        NOT in the repo and is NOT documented anywhere -- only the variable names are.
+        UPDATE 2026-09-24: deploy/socialweb-gateway.env.example now lists every setting (DEV-3), and
+        the unit supplies SOCIALWEB_KCP_KUBECONFIG as a LoadCredential; the env file must NOT set
+        that one key or it overrides the unit.
+    - what: nodeimage.json gained -buildvcs=false; the next build produces a NEW fingerprint once.
+      where: docs/ARCHITECTURE.md:1991 and :1995
+  recorded_in_memory:
+    dir: /home/johnandersen777/.claude/projects/-home-johnandersen777-src-publicdomainrelay-kcp-socialweb-computer-kcp/memory/
+    items:
+      - file: cleanup-backlog-close-each-tick.md
+        line: 53
+        what: >-
+          STALE as of 2026-09-24: the salvage-list numbers ARE in the doc now
+          (docs/ARCHITECTURE.md:728, :731, :735, :736). Closed by DEV-6; do not re-report.
+      - file: cleanup-backlog-close-each-tick.md
+        line: 62
+        what: whether section 7 already carries the auth-paths conclusions; 1107 untracked experiment files were lost and never compared
+  section_14_stated_limits:
+    note: >-
+      UPDATE 2026-09-24 (DEV-8): section 14 no longer claims "no open gaps". It now lists the open
+      items, is the doc-side mirror of NEXT.yaml, and keeps the two stated limits below.
+    entries:
+      - line: 1348
+        what: >
+          The allocator's host-network overlap refusal is a property of the NETNS it runs in -- host
+          sees 15 networks, container 3 -- so a containerized allocator would lease a colliding range
+          without refusing. Bounded because the allocator and the node substrate are ONE PROCESS
+          behind SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE=firecracker, whose validation already demands
+          /dev/kvm and a VMM. Conditional: costs nothing only because this host's LAN/bridges sit
+          outside 10.100.0.0/16, and a collision would land on the HOST. Seam exists:
+          subnetallocator.Config.HostNetworks is injectable.
+      - line: 1368
+        what: >
+          liveports.LockDir() is /var/tmp/socialweb-liveports inside each container's own filesystem,
+          so two proofs in two containers cannot see each other's slots. No production path depends
+          on it -- internal/liveports is imported only by tests and the host-contract probe.
+  not_recorded_anywhere_closed:
+    - what: dangling /run/k3s containerd shm mounts needing root
+      status: >
+        CLOSED and NOT written down. Verified: 0 k3s entries in /proc/self/mountinfo and /run/k3s
+        does not exist. It dated from the refuted local-process substrate. Do not add it to a list.
+
+do_not_rederive:
+  - Cold boot to an init marker is 0.300 s. Boot is NOT the problem; the 10 s goal is met 30x.
+  - >
+    SNAPSHOT RESTORE IS REFUTED as the provisioning primitive. restore-to-Ready 9.974 s against cold
+    9.079 / 9.158 / 10.768 s, so restore buys nothing in time; and a restored guest cannot make a NEW
+    node because restore does not re-run boot-time units, so the identity adoption never runs and a
+    snapshot frozen as one node comes back as that node. Nodes boot COLD from their own rootfs clone.
+  - Kernel 6.18.48 PANICS on this AMD host at restore (Bad FPU state, XRSTOR/AMX). Validate an image by RESTORING it, never by comparing versions.
+  - The reported "332 s boot" was FABRICATED: a literal echo in run/initrd/init. Never trust a guest's self-report; the harness times on the host.
+  - pasta + a tap inside the pasta netns works; an unprivileged tap in the HOST netns fails. The apiserver stays on loopback; --tls-san carries the address the guest dials.
+  - k3s check-config reads the kernel CONFIG file and never checks whether a module is LOADED. It returns 0 over a missing module. This is why the module set is MEASURED, not checked.
+  - iptables-restore is all-or-nothing, which is why the module list is 48 and not 43.
+  - A named build context is mounted READ-ONLY, so a stage cannot write the store through one. /boot cannot even BE a context (/boot/efi is 0700).
+  - The agent binary carries Go's VCS stamp, so a commit changing no agent source still moves every image's name. -buildvcs=false fixes it; agentBinaryDigest still identifies the source by content.
+  - The advertise port and the k3s secure port are ONE lease answering both --apiserver flags, not two.
+
+known_traps:
+  stale_gopls:
+    symptom: >
+      gopls repeatedly reports undefined symbols, unused imports and missing interface methods that
+      the compiler disagrees with. It happened 6+ times in one session, including a large dump
+      claiming a dozen files were missing a method that exists.
+    rule: The COMPILER is the authority. Run `go build ./...` before acting on any diagnostic.
+    root_cause_update: >
+      2026-09-24 (DEV-2): the tools were built with go1.23.7 and could not type-check this go1.26.4
+      module. gopls/staticcheck/govulncheck are now rebuilt with go1.26.4 and staticcheck has no
+      `(compile)` lines. The trap was a stale tool build, not gopls flakiness.
+  subagent_claims:
+    rule: >
+      Verify the artefact, not the summary -- including a subagent's. Read the deployed file rather
+      than the doc's description of it; run the binary rather than its report.
+  fake_registries:
+    rule: >
+      Every test that runs the reconciler substitutes a fake whose MountStatus answers from
+      Spec.Running. A fake that answers the question underneath the question is how a vacuous gate
+      survived a green suite for as long as it did.
+    status_update: >
+      2026-09-24 (REL-6): the three live-proof fakes now answer 401 live / 503 Draining / 502 reaped
+      from host liveness and DeletionTimestamp, not from Spec.Running.
+  validate_sh:
+    rule: >
+      Container names are fixed, so a killed run blocks the next one; each run now removes its own
+      name first. The host-contract step is gated on a POSITIVE assertion (the summary line must be
+      present), not an exit-code allowlist, because check-host exits 2 without printing one.
+    status_update: >
+      2026-09-24 (REL-3): the final `go test` is now also gated on a positive `--- PASS: $TEST` line,
+      because go test exits 0 on SKIP and on `[no tests to run]`.
+  caveman_builder_agent:
+    rule: >
+      caveman:cavecrew-builder has Read/Edit/Write/Grep/Glob ONLY -- no Bash. It cannot compile,
+      test, or commit. Use it only when correctness is established by reading; otherwise dispatch
+      general-purpose or run the verification yourself.
+
+the_recurring_defect:
+  statement: >
+    The dominant failure in this repo is a thing that reads GREEN while being WRONG. Prefer
+    instruments that can fail. When adding a guard, watch it fail before trusting it.
+  instances:
+    - k3s check-config returning 0 over a missing module
+    - pods 1/1 over an incomplete firewall
+    - an advertise port nothing bound
+    - TestEveryVerbIsBound asserting not-404 (presence) while getKubeconfig was permanently dead
+    - check-host printing "holds 212" from free/budget when the store held 2
+    - an EMPTY /etc/rancher/node/password that opens read-write while k3s 400s for ever
+    - validate.sh's `|| true` making the host-contract step unable to fail
+    - the shut gate reading 401 as shut, so a SERVING cluster was reaped
+    - a list outliving its work -- three times in one day
+    - "2026-09-24: the teardown gate reaping on 300/429/500/504 (REL-2); Probe claiming Ready on a 503 (REL-1); the ClientCA pair check hashing openssl's empty stdin so junk compared equal (SEC-5); validate.sh exiting 0 on SKIP (REL-3); the live proofs' fakes answering 200 (REL-6)"
+  practice: >
+    Run the artefact. Watch the guard fail. Report the reading, not the intention. If a claim is
+    greener than the fact, the claim is the bug.
+
+orientation:
+  layout: |
+    api/v1alpha1/          wire types only. No logic, no I/O
+    internal/${concept}/   one package per concern; the interface declared where consumed
+    cmd/${binary}/         the CLI layer; nothing else builds a binary
+    deploy/                install scripts, manifests, audit policy, the control-plane container
+  dependencies: "api <- internal <- cmd, one way. A new substrate or transport is a NEW PACKAGE, not a branch inside an existing one."
+  binaries: [socialweb-clusterprovider, socialweb-gateway, socialweb-credential, socialweb-nodeimage, socialweb-nodeagent, socialweb-computer-kcp-check-host]
+  key_packages:
+    internal/nodefirecracker: the node substrate (cold boot from a per-node rootfs clone)
+    internal/noderecord: pid + start time + cmdline-identity record and reap; reap-never-adopt
+    internal/kernelmodules: the builder's module check, shared by the builder and check-host
+    internal/subnetallocator: pool 10.100.0.0/16 -> /24 per cluster
+    internal/liveports: flock port rendezvous for concurrent proofs
+    internal/materialiser: the reconciler; shut()/reached() gate a teardown
+    internal/kcpclient: kcp client; ServiceAccountName is the DID mapping's one spelling
+    internal/livegate: the SOCIALWEB_REQUIRE_LIVE / -short gate for live tests
+  start_here: docs/ARCHITECTURE.md sections 1 (objective), 3 (zero state), 9 (a node), 11 (teardown and the gate), 12 (code layout), 13 (invariants), 14 (the open list), 15 (settled decisions, with the readings)

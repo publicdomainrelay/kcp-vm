@@ -1,0 +1,323 @@
+//go:build linux
+
+package clusterprovider
+
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
+
+	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
+)
+
+const tenantGrantPath = "../../deploy/tenant-grant.yaml"
+
+func tenantGrantDoc(t *testing.T) []byte {
+	t.Helper()
+	raw, err := os.ReadFile(tenantGrantPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", tenantGrantPath, err)
+	}
+	return raw
+}
+
+func TestGrantObjectsReadsTheRealGrant(t *testing.T) {
+	objs, err := GrantObjects(tenantGrantDoc(t))
+	if err != nil {
+		t.Fatalf("GrantObjects: %v", err)
+	}
+	want := map[string]bool{
+		"ServiceAccount": false, "Role": false, "RoleBinding": false,
+		"ValidatingAdmissionPolicy": false, "ValidatingAdmissionPolicyBinding": false,
+	}
+	for _, o := range objs {
+		if _, ok := want[o.GetKind()]; !ok {
+			t.Fatalf("the grant holds a %s this test does not know about", o.GetKind())
+		}
+		want[o.GetKind()] = true
+		if o.GetName() == "" {
+			t.Errorf("a %s came through with no name", o.GetKind())
+		}
+	}
+	for kind, seen := range want {
+		if !seen {
+			t.Errorf("the grant no longer holds a %s", kind)
+		}
+	}
+	if len(objs) != len(want) {
+		t.Errorf("the grant holds %d objects and %d kinds", len(objs), len(want))
+	}
+}
+
+func TestBootstrapEnsuresTheServiceAccountsTheGrantNames(t *testing.T) {
+	objs, err := GrantObjects(tenantGrantDoc(t))
+	if err != nil {
+		t.Fatalf("GrantObjects: %v", err)
+	}
+	ctx := context.Background()
+	core := fake.NewSimpleClientset()
+	if err := ensureGrantServiceAccounts(ctx, core, objs); err != nil {
+		t.Fatalf("ensureGrantServiceAccounts: %v", err)
+	}
+	const named = "did-mruwiotxmvrduzlymfwxa3dffzrw63i"
+	got, err := core.CoreV1().ServiceAccounts("users").Get(ctx, named, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("the grant's token rule names %s and nothing created it, so the mint can "+
+			"authorize the request and still fail on a missing ServiceAccount: %v", named, err)
+	}
+	if got.Namespace != "users" {
+		t.Fatalf("%s was created in namespace %q, want users", named, got.Namespace)
+	}
+	if err := ensureGrantServiceAccounts(ctx, core, objs); err != nil {
+		t.Fatalf("a second bootstrap must be idempotent: %v", err)
+	}
+}
+
+func TestGrantObjectsRefusesAKindTheBootstrapMustNotApply(t *testing.T) {
+	for _, tc := range []struct{ name, doc, want string }{
+		{"a ClusterRole", "apiVersion: rbac.authorization.k8s.io/v1\nkind: ClusterRole\nmetadata: {name: wider}\n", "ClusterRole"},
+		{"a Namespace", "apiVersion: v1\nkind: Namespace\nmetadata: {name: users}\n", "Namespace"},
+		{"a wrong apiVersion", "apiVersion: rbac.authorization.k8s.io/v1beta1\nkind: Role\nmetadata: {name: r}\n", "v1beta1"},
+		{"no name", "apiVersion: v1\nkind: ServiceAccount\nmetadata: {}\n", "no name"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := GrantObjects([]byte(tc.doc))
+			if err == nil {
+				t.Fatalf("%s was accepted", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("the refusal does not name %q: %v", tc.want, err)
+			}
+		})
+	}
+	if _, err := GrantObjects([]byte("# nothing here\n")); err == nil {
+		t.Fatal("an empty document was accepted, which would report a successful bootstrap " +
+			"that applied nothing")
+	}
+}
+
+func TestTheGrantPolicyCoversBothDoorsAndNotSecretUpdates(t *testing.T) {
+	objs, err := GrantObjects(tenantGrantDoc(t))
+	if err != nil {
+		t.Fatalf("GrantObjects: %v", err)
+	}
+	var vap *unstructured.Unstructured
+	for i := range objs {
+		if objs[i].GetKind() == "ValidatingAdmissionPolicy" {
+			vap = &objs[i]
+		}
+	}
+	if vap == nil {
+		t.Fatal("the grant holds no ValidatingAdmissionPolicy: the mint identity rule is the " +
+			"control that binds system:masters, and it is not optional")
+	}
+
+	rules, ok, err := unstructured.NestedSlice(vap.Object, "spec", "matchConstraints", "resourceRules")
+	if err != nil || !ok {
+		t.Fatalf("the policy has no resourceRules: %v", err)
+	}
+	ops := map[string][]string{}
+	for _, r := range rules {
+		m, _ := r.(map[string]any)
+		var res string
+		switch rs, _ := m["resources"].([]any); len(rs) {
+		case 1:
+			res, _ = rs[0].(string)
+		default:
+			t.Fatalf("a resourceRule names %v; each names ONE resource", m["resources"])
+		}
+		for _, o := range m["operations"].([]any) {
+			op, _ := o.(string)
+			ops[res] = append(ops[res], op)
+		}
+	}
+	if !hasOp(ops["serviceaccounts/token"], "CREATE") {
+		t.Errorf("rule (1) is gone: the policy no longer matches serviceaccounts/token CREATE, "+
+			"so the mint identity rule is unenforced. Got %v", ops)
+	}
+	if !hasOp(ops["secrets"], "CREATE") {
+		t.Errorf("rule (2) is gone: a `create secrets` in the tenant namespace is no longer "+
+			"matched, so any identity holding that verb mints itself a gwmint token around "+
+			"this policy. Got %v", ops)
+	}
+	if hasOp(ops["secrets"], "UPDATE") {
+		t.Errorf("rule (2) matches `secrets` UPDATE. The token controller populates the mint " +
+			"Secret with an UPDATE as system:serviceaccount:kube-system:" +
+			"service-account-token-controller, and the policy admits only the provisioning " +
+			"cluster-admin -- so the Secret would be created, stay EMPTY, and the bootstrap " +
+			"would lock the cluster out. This is measured, not theoretical: " +
+			"see docs/ARCHITECTURE.md, the security register")
+	}
+
+	vals, ok, err := unstructured.NestedSlice(vap.Object, "spec", "validations")
+	if err != nil || !ok {
+		t.Fatalf("the policy has no validations: %v", err)
+	}
+	var who string
+	for _, v := range vals {
+		m, _ := v.(map[string]any)
+		e, _ := m["expression"].(string)
+		if strings.Contains(e, "system:admin") {
+			who = e
+		}
+	}
+	if who == "" {
+		t.Fatal("no validation names the bootstrap principal, so rule (2) refuses EVERY " +
+			"caller -- including the bootstrap the grant exists to let through")
+	}
+	if !strings.Contains(who, "system:masters") {
+		t.Errorf("the carve-out names a username and no group: %q", who)
+	}
+	if !strings.Contains(who, "system:serviceaccount:users:gwmint") {
+		t.Errorf("the carve-out replaced the mint identity rule rather than branching beside "+
+			"it: %q", who)
+	}
+}
+
+func hasOp(list []string, want string) bool {
+	for _, s := range list {
+		if s == want {
+			return true
+		}
+	}
+	return false
+}
+
+func TestWriteMintKubeconfigIsWhatTheGatewayReadsBack(t *testing.T) {
+	dir := t.TempDir()
+	cred := &rest.Config{
+		Host:        "https://10.0.0.1:6443",
+		BearerToken: "a-token",
+		TLSClientConfig: rest.TLSClientConfig{
+			CAData: []byte("-----BEGIN CERTIFICATE-----\nnot really\n-----END CERTIFICATE-----\n"),
+		},
+	}
+	if err := WriteMintKubeconfig(dir, "live", cred); err != nil {
+		t.Fatalf("WriteMintKubeconfig: %v", err)
+	}
+	path := filepath.Join(dir, "live")
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("the credential is not at the path the label names: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Errorf("the mint credential is %04o: it holds a standing bearer token and nothing "+
+			"downstream could detect a world-readable copy", got)
+	}
+	got, err := clientcmd.BuildConfigFromFlags("", path)
+	if err != nil {
+		t.Fatalf("client-go cannot read back what this wrote: %v", err)
+	}
+	if got.Host != cred.Host || got.BearerToken != cred.BearerToken {
+		t.Errorf("read back host=%q token=%q", got.Host, got.BearerToken)
+	}
+	if len(got.TLSClientConfig.CAData) == 0 {
+		t.Error("the CA did not survive the round trip, so the credential could only be used " +
+			"with verification switched off")
+	}
+}
+
+func TestWriteMintKubeconfigRefusesWhatItCannotWriteHonestly(t *testing.T) {
+	dir := t.TempDir()
+	good := &rest.Config{Host: "https://h:6443", BearerToken: "t"}
+	for _, tc := range []struct {
+		name    string
+		cluster string
+		cfg     *rest.Config
+		want    string
+	}{
+		{"a traversal", "../../etc/passwd", good, "DNS-1123"},
+		{"a slash", "a/b", good, "DNS-1123"},
+		{"empty", "", good, "DNS-1123"},
+		{"no server", "live", &rest.Config{BearerToken: "t"}, "server"},
+		{"no token", "live", &rest.Config{Host: "https://h:6443"}, "anonymous"},
+		{"nil", "live", nil, "server"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := WriteMintKubeconfig(dir, tc.cluster, tc.cfg)
+			if err == nil {
+				t.Fatalf("%s was written", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("the refusal does not name %q: %v", tc.want, err)
+			}
+		})
+	}
+	if names, _ := os.ReadDir(dir); len(names) != 0 {
+		t.Fatalf("a refused write left %d files behind", len(names))
+	}
+}
+
+func TestNewRefusesAPartialTenantBootstrap(t *testing.T) {
+	base := func() Options {
+		return Options{Registry: &fakeClusters{}, Decider: decider(t, &fakeHost{})}
+	}
+	tenant := func(o *Options) {
+		o.Tenant = func(context.Context, Ref, *v1alpha1.Cluster) (*rest.Config, error) { return nil, nil }
+	}
+
+	for _, tc := range []struct {
+		name string
+		set  func(*Options)
+	}{
+		{"credential only", tenant},
+		{"grant only", func(o *Options) { o.GrantPath = tenantGrantPath }},
+		{"mint dir only", func(o *Options) { o.MintDir = t.TempDir() }},
+		{"credential and grant", func(o *Options) { tenant(o); o.GrantPath = tenantGrantPath }},
+		{"credential and dir", func(o *Options) { tenant(o); o.MintDir = t.TempDir() }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o := base()
+			tc.set(&o)
+			if _, err := New(o); !errors.Is(err, ErrNoBootstrap) {
+				t.Fatalf("New accepted a partial bootstrap: err=%v", err)
+			}
+		})
+	}
+
+	o := base()
+	tenant(&o)
+	o.GrantPath = tenantGrantPath
+	o.MintDir = t.TempDir()
+	p, err := New(o)
+	if err != nil {
+		t.Fatalf("New with the whole tenant set: %v", err)
+	}
+	if p.opts.OnReady == nil {
+		t.Fatal("all three tenant fields are set and OnReady is still nil, so nothing would " +
+			"ever run the bootstrap")
+	}
+	if p.opts.TokenTimeout != DefaultTokenTimeout {
+		t.Errorf("TokenTimeout defaulted to %v", p.opts.TokenTimeout)
+	}
+
+	mine := errors.New("mine")
+	o.OnReady = func(context.Context, Ref, *v1alpha1.Cluster) error { return mine }
+	o.GrantPath = tenantGrantPath
+	p2, err := New(o)
+	if err != nil {
+		t.Fatalf("New with a caller OnReady: %v", err)
+	}
+	if err := p2.opts.OnReady(context.Background(), Ref{}, nil); !errors.Is(err, mine) {
+		t.Fatalf("the caller's OnReady was replaced by the bootstrap: %v", err)
+	}
+}
+
+func TestBootstrapRefusesWithoutTheWorldItNeeds(t *testing.T) {
+	p, err := New(Options{Registry: &fakeClusters{}, Decider: decider(t, &fakeHost{})})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := p.Bootstrap(context.Background(), Ref{Name: "live"}, nil); !errors.Is(err, ErrNoBootstrap) {
+		t.Fatalf("Bootstrap without a tenant credential: %v", err)
+	}
+}

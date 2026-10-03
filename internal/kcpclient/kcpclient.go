@@ -1,0 +1,736 @@
+package kcpclient
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"sort"
+	"strings"
+	"time"
+
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/runtime/serializer"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/rest"
+
+	corev1alpha1 "github.com/kcp-dev/sdk/apis/core/v1alpha1"
+	kcpv1alpha1 "github.com/kcp-dev/sdk/apis/tenancy/v1alpha1"
+
+	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/gateway"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/revocation"
+)
+
+var (
+	_ gateway.Store   = (*Client)(nil)
+	_ revocation.Deny = (*Client)(nil)
+	_ gateway.Revoker = (*Client)(nil)
+)
+
+var (
+	socialwebResource = v1alpha1.GroupVersion
+	tenancyResource   = kcpv1alpha1.SchemeGroupVersion
+)
+
+type GrantInput struct {
+	Caller gateway.Caller
+
+	Cluster string
+
+	Server string
+}
+
+type DeviceKeyGranter interface {
+	Grant(ctx context.Context, in GrantInput) (string, error)
+}
+
+type Options struct {
+	Host string
+
+	DeviceKeys DeviceKeyGranter
+
+	RestConfig *rest.Config
+
+	Transport http.RoundTripper
+}
+
+type Client struct {
+	cfg        *rest.Config
+	http       *http.Client
+	codecs     runtime.NegotiatedSerializer
+	host       string
+	deviceKeys DeviceKeyGranter
+}
+
+var ErrNoDeviceKey = errors.New(
+	"kcpclient: no device-key granter: getKubeconfig cannot hand out a kubeconfig whose " +
+		"exec.env carries a key bound to nothing, so it hands out nothing")
+
+func New(opts Options) (*Client, error) {
+	if opts.Host == "" {
+		return nil, errors.New("kcpclient: Host is required")
+	}
+	cfg := &rest.Config{}
+	if opts.RestConfig != nil {
+		cfg = rest.CopyConfig(opts.RestConfig)
+	}
+	cfg.Host = strings.TrimSuffix(opts.Host, "/")
+	cfg.ContentType = "application/json"
+	cfg.AcceptContentTypes = "application/json"
+	if opts.Transport != nil {
+		cfg.Transport = opts.Transport
+	}
+	httpClient, err := rest.HTTPClientFor(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("kcpclient: %w", err)
+	}
+	scheme, err := newScheme()
+	if err != nil {
+		return nil, err
+	}
+	codecs := serializer.NewCodecFactory(scheme).WithoutConversion()
+	return &Client{
+		cfg: cfg, http: httpClient, codecs: codecs, host: cfg.Host,
+		deviceKeys: opts.DeviceKeys,
+	}, nil
+}
+
+func newScheme() (*runtime.Scheme, error) {
+	s := runtime.NewScheme()
+	if err := v1alpha1.AddToScheme(s); err != nil {
+		return nil, fmt.Errorf("kcpclient: %w", err)
+	}
+	if err := kcpv1alpha1.AddToScheme(s); err != nil {
+		return nil, fmt.Errorf("kcpclient: %w", err)
+	}
+	metav1.AddToGroupVersion(s, schema.GroupVersion{Version: "v1"})
+	return s, nil
+}
+
+func (c *Client) resource(logicalCluster string, gv schema.GroupVersion) (rest.Interface, error) {
+	return c.bind(logicalCluster, gv, "/apis")
+}
+
+func (c *Client) coreResource(logicalCluster string) (rest.Interface, error) {
+	return c.bind(logicalCluster, corev1.SchemeGroupVersion, "/api")
+}
+
+func (c *Client) bind(logicalCluster string, gv schema.GroupVersion, endpoint string) (rest.Interface, error) {
+	cfg := rest.CopyConfig(c.cfg)
+	cfg.GroupVersion = &gv
+	cfg.APIPath = "/clusters/" + logicalCluster + endpoint
+	cfg.NegotiatedSerializer = c.codecs
+	r, err := rest.RESTClientForConfigAndClient(cfg, c.http)
+	if err != nil {
+		return nil, fmt.Errorf("kcpclient: %s: %w", logicalCluster, err)
+	}
+	return r, nil
+}
+
+var (
+	workspaceReadyTimeout = 30 * time.Second
+	workspaceReadyPoll    = 250 * time.Millisecond
+)
+
+func (c *Client) homePath(caller gateway.Caller, name string) (string, error) {
+	if caller == "" {
+		return "", errors.New("kcpclient: no caller: the identity comes from the verified token and never from a request field")
+	}
+	if name == "" {
+		return "", errors.New("kcpclient: no cluster name")
+	}
+	return HomePath(string(caller), name), nil
+}
+
+func (c *Client) Ensure(ctx context.Context, caller gateway.Caller, name string) error {
+	permit, err := revocation.Admit(ctx, c, string(caller))
+	if err != nil {
+		return err
+	}
+	return c.ensure(ctx, permit, name)
+}
+
+func (c *Client) ensure(ctx context.Context, permit revocation.Permit, name string) error {
+	if name == "" {
+		return errors.New("kcpclient: no cluster name")
+	}
+	did := permit.Admitted()
+	home := HomePath(did, name)
+
+	if err := c.createWorkspace(ctx, RootWorkspace, AccountHash(did), kcpv1alpha1.WorkspaceSpec{
+		Type: &kcpv1alpha1.WorkspaceTypeReference{Name: AccountWorkspaceType, Path: RootWorkspace},
+	}); err != nil {
+		return fmt.Errorf("kcpclient: account workspace %s: %w", AccountHash(did), err)
+	}
+	if err := c.waitForWorkspaceReady(ctx, RootWorkspace, AccountHash(did)); err != nil {
+		return err
+	}
+	if err := c.createGrant(ctx, AccountPath(did), IdentityRecordName(did), did); err != nil {
+		return fmt.Errorf("kcpclient: account identity record %s: %w", IdentityRecordName(did), err)
+	}
+	if err := c.createWorkspace(ctx, AccountPath(did), name, kcpv1alpha1.WorkspaceSpec{
+		Type: &kcpv1alpha1.WorkspaceTypeReference{Name: HomeWorkspaceType, Path: RootWorkspace},
+	}); err != nil {
+		return fmt.Errorf("kcpclient: home workspace %s: %w", home, err)
+	}
+	if err := c.waitForWorkspaceReady(ctx, AccountPath(did), name); err != nil {
+		return err
+	}
+	if err := c.createCluster(ctx, home, name, did); err != nil {
+		return fmt.Errorf("kcpclient: cluster %s: %w", home, err)
+	}
+	child := kcpv1alpha1.WorkspaceSpec{Mount: &kcpv1alpha1.Mount{Reference: kcpv1alpha1.ObjectReference{
+		APIVersion: socialwebResource.String(),
+		Kind:       "Cluster",
+		Name:       name,
+	}}}
+	if err := c.createWorkspace(ctx, home, ChildLabel, child); err != nil {
+		return fmt.Errorf("kcpclient: mounted child %s: %w", MountPath(did, name), err)
+	}
+	return nil
+}
+
+func (c *Client) waitForWorkspaceReady(ctx context.Context, parent, name string) error {
+	path := parent + ":" + name
+	deadline := time.Now().Add(workspaceReadyTimeout)
+	last := "never read"
+	for {
+		ws, err := c.readWorkspace(ctx, parent, name)
+		switch {
+		case err == nil && ws.Status.Phase == corev1alpha1.LogicalClusterPhaseReady:
+			return nil
+		case err == nil:
+			last = "phase " + string(ws.Status.Phase)
+		default:
+			last = err.Error()
+		}
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("kcpclient: workspace %s did not become %s within %s "+
+				"(last read: %s). Nothing may be written into a workspace kcp cannot address, "+
+				"and the create would be refused with `workspaces.tenancy.kcp.io %q not found`",
+				path, corev1alpha1.LogicalClusterPhaseReady, workspaceReadyTimeout, last, path)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(workspaceReadyPoll):
+		}
+	}
+}
+
+func (c *Client) createGrant(ctx context.Context, logicalCluster, name, did string) error {
+	r, err := c.resource(logicalCluster, socialwebResource)
+	if err != nil {
+		return err
+	}
+	rec := v1alpha1.AtprotoIdentity{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: v1alpha1.GroupVersion.String(),
+			Kind:       "AtprotoIdentity",
+		},
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Spec: v1alpha1.AtprotoIdentitySpec{
+			DID:     did,
+			Scope:   v1alpha1.IdentityScopeAccount,
+			Revoked: false,
+		},
+	}
+	body, err := json.Marshal(rec)
+	if err != nil {
+		return fmt.Errorf("kcpclient: grant: marshal: %w", err)
+	}
+	err = r.Post().Resource("atprotoidentities").Body(body).Do(ctx).Error()
+	if apierrors.IsAlreadyExists(err) {
+		return nil
+	}
+	return err
+}
+
+func (c *Client) createWorkspace(ctx context.Context, parent, name string, spec kcpv1alpha1.WorkspaceSpec) error {
+	r, err := c.resource(parent, tenancyResource)
+	if err != nil {
+		return err
+	}
+	obj := &kcpv1alpha1.Workspace{
+		TypeMeta:   metav1.TypeMeta{APIVersion: tenancyResource.String(), Kind: "Workspace"},
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Spec:       spec,
+	}
+	var out kcpv1alpha1.Workspace
+	err = r.Post().Resource("workspaces").Body(obj).Do(ctx).Into(&out)
+	if apierrors.IsAlreadyExists(err) {
+		return nil
+	}
+	return err
+}
+
+func (c *Client) createCluster(ctx context.Context, home, name, did string) error {
+	r, err := c.resource(home, socialwebResource)
+	if err != nil {
+		return err
+	}
+	obj := &v1alpha1.Cluster{
+		TypeMeta:   metav1.TypeMeta{APIVersion: socialwebResource.String(), Kind: "Cluster"},
+		ObjectMeta: metav1.ObjectMeta{Name: name, Finalizers: []string{v1alpha1.FinalizerCluster}},
+		Spec:       v1alpha1.ClusterSpec{Account: did, Running: false},
+	}
+	var out v1alpha1.Cluster
+	err = r.Post().Resource("clusters").Body(obj).Do(ctx).Into(&out)
+	if apierrors.IsAlreadyExists(err) {
+		return nil
+	}
+	return err
+}
+
+func (c *Client) Get(ctx context.Context, caller gateway.Caller, name string) (gateway.ClusterView, bool, error) {
+	home, err := c.homePath(caller, name)
+	if err != nil {
+		return gateway.ClusterView{}, false, err
+	}
+	cl, err := c.readCluster(ctx, home, name)
+	if apierrors.IsNotFound(err) {
+		return gateway.ClusterView{}, false, nil
+	}
+	if err != nil {
+		return gateway.ClusterView{}, false, err
+	}
+	n, err := c.liveNodes(ctx, home, name)
+	if err != nil {
+		return gateway.ClusterView{}, false, err
+	}
+	return viewOf(cl, n), true, nil
+}
+
+func (c *Client) List(ctx context.Context, caller gateway.Caller) ([]gateway.ClusterView, error) {
+	if caller == "" {
+		return nil, errors.New("kcpclient: no caller: the identity comes from the verified token and never from a request field")
+	}
+	names, err := c.clusterLabels(ctx, string(caller))
+	if err != nil {
+		return nil, err
+	}
+	views := make([]gateway.ClusterView, 0, len(names))
+	for _, name := range names {
+		view, ok, err := c.Get(ctx, caller, name)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			views = append(views, view)
+		}
+	}
+	return views, nil
+}
+
+func (c *Client) clusterLabels(ctx context.Context, did string) ([]string, error) {
+	r, err := c.resource(AccountPath(did), tenancyResource)
+	if err != nil {
+		return nil, err
+	}
+	var list kcpv1alpha1.WorkspaceList
+	if err := r.Get().Resource("workspaces").Do(ctx).Into(&list); err != nil {
+		return nil, fmt.Errorf("kcpclient: list clusters for %s: %w", AccountPath(did), err)
+	}
+	names := make([]string, 0, len(list.Items))
+	for _, ws := range list.Items {
+		if ws.Spec.Mount == nil {
+			names = append(names, ws.Name)
+		}
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
+func (c *Client) SetRunning(ctx context.Context, caller gateway.Caller, name string, running bool) (gateway.ClusterView, error) {
+	home, err := c.homePath(caller, name)
+	if err != nil {
+		return gateway.ClusterView{}, err
+	}
+	r, err := c.resource(home, socialwebResource)
+	if err != nil {
+		return gateway.ClusterView{}, err
+	}
+	body, err := json.Marshal(map[string]any{"spec": map[string]any{"running": running}})
+	if err != nil {
+		return gateway.ClusterView{}, fmt.Errorf("kcpclient: set running: %w", err)
+	}
+	var out v1alpha1.Cluster
+	if err := r.Patch(types.MergePatchType).Resource("clusters").Name(name).Body(body).Do(ctx).Into(&out); err != nil {
+		return gateway.ClusterView{}, fmt.Errorf("kcpclient: set running %s: %w", name, err)
+	}
+	n, err := c.liveNodes(ctx, home, name)
+	if err != nil {
+		return gateway.ClusterView{}, err
+	}
+	return viewOf(&out, n), nil
+}
+
+func (c *Client) Delete(ctx context.Context, caller gateway.Caller, name string) (gateway.ClusterView, error) {
+	home, err := c.homePath(caller, name)
+	if err != nil {
+		return gateway.ClusterView{}, err
+	}
+	cl, err := c.readCluster(ctx, home, name)
+	if err != nil {
+		return gateway.ClusterView{}, err
+	}
+	n, err := c.liveNodes(ctx, home, name)
+	if err != nil {
+		return gateway.ClusterView{}, err
+	}
+	r, err := c.resource(home, socialwebResource)
+	if err != nil {
+		return gateway.ClusterView{}, err
+	}
+	if err := r.Delete().Resource("clusters").Name(name).Do(ctx).Error(); err != nil && !apierrors.IsNotFound(err) {
+		return gateway.ClusterView{}, fmt.Errorf("kcpclient: delete %s: %w", name, err)
+	}
+	return viewOf(cl, n), nil
+}
+
+func (c *Client) Kubeconfig(ctx context.Context, caller gateway.Caller, name string) (string, error) {
+	if _, err := c.homePath(caller, name); err != nil {
+		return "", err
+	}
+	if c.deviceKeys == nil {
+		return "", ErrNoDeviceKey
+	}
+	return c.deviceKeys.Grant(ctx, GrantInput{
+		Caller:  caller,
+		Cluster: name,
+		Server:  c.host + "/clusters/" + MountPath(string(caller), name),
+	})
+}
+
+func (c *Client) Lookup(ctx context.Context, did string) (revocation.DenyState, error) {
+	if did == "" {
+		return "", revocation.ErrNoDID
+	}
+	ws, err := c.readWorkspace(ctx, RootWorkspace, AccountHash(did))
+	switch {
+	case apierrors.IsNotFound(err):
+		return revocation.DenyFirstLogin, nil
+	case err != nil:
+		return "", fmt.Errorf("kcpclient: deny: account workspace %s: %w", AccountPath(did), err)
+	case ws.DeletionTimestamp != nil:
+		return "", fmt.Errorf("kcpclient: deny: account workspace %s is terminating", AccountPath(did))
+	}
+	rec, err := c.readIdentity(ctx, AccountPath(did), IdentityRecordName(did))
+	switch {
+	case apierrors.IsNotFound(err):
+		return revocation.DenyRecordMissing, nil
+	case err != nil:
+		return "", fmt.Errorf("kcpclient: deny: %s: %w", IdentityRecordName(did), err)
+	}
+	if rec.Spec.DID != did || rec.Spec.Scope != v1alpha1.IdentityScopeAccount {
+		return revocation.DenyRecordMissing, nil
+	}
+	if rec.Spec.Revoked {
+		return revocation.DenyRevoked, nil
+	}
+	return revocation.DenyGranted, nil
+}
+
+func (c *Client) WriteDeny(ctx context.Context, did string) error {
+	if did == "" {
+		return revocation.ErrNoDID
+	}
+	if _, err := c.readWorkspace(ctx, RootWorkspace, AccountHash(did)); err != nil {
+		return fmt.Errorf("kcpclient: deny: account workspace %s: %w", AccountPath(did), err)
+	}
+	r, err := c.resource(AccountPath(did), socialwebResource)
+	if err != nil {
+		return err
+	}
+
+	name := IdentityRecordName(did)
+	rec, err := c.readIdentity(ctx, AccountPath(did), name)
+	switch {
+	case apierrors.IsNotFound(err):
+		return c.createDeny(ctx, r, name, did)
+	case err != nil:
+		return fmt.Errorf("kcpclient: deny: read %s: %w", name, err)
+	}
+	if rec.Spec.Revoked {
+		return nil
+	}
+
+	body, err := json.Marshal(map[string]any{"spec": map[string]any{"revoked": true}})
+	if err != nil {
+		return fmt.Errorf("kcpclient: deny: marshal: %w", err)
+	}
+	if err := r.Patch(types.MergePatchType).Resource("atprotoidentities").Name(name).
+		Body(body).Do(ctx).Error(); err != nil {
+		return fmt.Errorf("kcpclient: deny: patch %s: %w", name, err)
+	}
+	return nil
+}
+
+func (c *Client) createDeny(ctx context.Context, r rest.Interface, name, did string) error {
+	rec := v1alpha1.AtprotoIdentity{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: v1alpha1.GroupVersion.String(),
+			Kind:       "AtprotoIdentity",
+		},
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Spec: v1alpha1.AtprotoIdentitySpec{
+			DID:     did,
+			Scope:   v1alpha1.IdentityScopeAccount,
+			Revoked: true,
+		},
+	}
+	body, err := json.Marshal(rec)
+	if err != nil {
+		return fmt.Errorf("kcpclient: deny: marshal: %w", err)
+	}
+	if err := r.Post().Resource("atprotoidentities").Body(body).Do(ctx).Error(); err != nil {
+		return fmt.Errorf("kcpclient: deny: create %s: %w", name, err)
+	}
+	return nil
+}
+
+func (c *Client) FanOut(ctx context.Context, did string) ([]revocation.ClusterView, error) {
+	if did == "" {
+		return nil, revocation.ErrNoDID
+	}
+	names, err := c.clusterLabels(ctx, did)
+	if err != nil {
+		return nil, err
+	}
+	views := make([]revocation.ClusterView, 0, len(names))
+	for _, name := range names {
+		view, err := c.observeServiceAccount(ctx, did, name)
+		if err != nil {
+			return nil, err
+		}
+		views = append(views, view)
+	}
+	return views, nil
+}
+
+func (c *Client) observeServiceAccount(ctx context.Context, did, cluster string) (revocation.ClusterView, error) {
+	view := revocation.ClusterView{Name: cluster}
+	r, err := c.coreResource(MountPath(did, cluster))
+	if err != nil {
+		return view, err
+	}
+	err = r.Get().Namespace(TenantNamespace).Resource("serviceaccounts").
+		Name(ServiceAccountName(did)).Do(ctx).Error()
+	switch {
+	case err == nil:
+		view.ServiceAccountPresent = true
+	case apierrors.IsNotFound(err):
+	default:
+		view.Cold = true
+	}
+	return view, nil
+}
+
+func (c *Client) DeleteServiceAccount(ctx context.Context, did, cluster string) error {
+	if did == "" {
+		return revocation.ErrNoDID
+	}
+	r, err := c.coreResource(MountPath(did, cluster))
+	if err != nil {
+		return err
+	}
+	name := ServiceAccountName(did)
+	err = r.Delete().Namespace(TenantNamespace).Resource("serviceaccounts").
+		Name(name).Do(ctx).Error()
+	switch {
+	case err == nil:
+		return nil
+	case apierrors.IsNotFound(err):
+		if found, ok := err.(apierrors.APIStatus); ok {
+			d := found.Status().Details
+			if d != nil && d.Kind == "serviceaccounts" && d.Name == name {
+				return nil
+			}
+		}
+		return fmt.Errorf("kcpclient: %s in %s answered NotFound without naming the "+
+			"ServiceAccount, so the mount did NOT resolve and this is not a completed "+
+			"delete: %w", name, cluster, err)
+	default:
+		return fmt.Errorf("kcpclient: delete the ServiceAccount for %s in %s: %w", did, cluster, err)
+	}
+}
+
+func (c *Client) readWorkspace(ctx context.Context, parent, name string) (*kcpv1alpha1.Workspace, error) {
+	r, err := c.resource(parent, tenancyResource)
+	if err != nil {
+		return nil, err
+	}
+	var out kcpv1alpha1.Workspace
+	if err := r.Get().Resource("workspaces").Name(name).Do(ctx).Into(&out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *Client) readIdentity(ctx context.Context, logicalCluster, name string) (*v1alpha1.AtprotoIdentity, error) {
+	r, err := c.resource(logicalCluster, socialwebResource)
+	if err != nil {
+		return nil, err
+	}
+	var out v1alpha1.AtprotoIdentity
+	if err := r.Get().Resource("atprotoidentities").Name(name).Do(ctx).Into(&out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *Client) readCluster(ctx context.Context, logicalCluster, name string) (*v1alpha1.Cluster, error) {
+	r, err := c.resource(logicalCluster, socialwebResource)
+	if err != nil {
+		return nil, err
+	}
+	var out v1alpha1.Cluster
+	if err := r.Get().Resource("clusters").Name(name).Do(ctx).Into(&out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *Client) liveNodes(ctx context.Context, logicalCluster, cluster string) (int, error) {
+	r, err := c.resource(logicalCluster, socialwebResource)
+	if err != nil {
+		return 0, err
+	}
+	var list v1alpha1.NodeList
+	err = r.Get().Resource("nodes").Do(ctx).Into(&list)
+	if apierrors.IsNotFound(err) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("kcpclient: list nodes in %s: %w", logicalCluster, err)
+	}
+	n := 0
+	for _, node := range list.Items {
+		if node.Spec.Cluster == cluster && node.Status.Phase != v1alpha1.NodeDraining {
+			n++
+		}
+	}
+	return n, nil
+}
+
+func viewOf(cl *v1alpha1.Cluster, nodes int) gateway.ClusterView {
+	return gateway.ClusterView{
+		Name:      cl.Name,
+		Phase:     string(cl.Status.Phase),
+		URL:       cl.Status.URL,
+		Instance:  cl.Status.Instance,
+		Running:   cl.Spec.Running,
+		NodeCount: nodes,
+
+		TeardownBlocked: conditionTrue(cl.Status.Conditions, v1alpha1.ConditionTeardownBlocked),
+	}
+}
+
+func conditionTrue(conds []metav1.Condition, t string) bool {
+	for _, c := range conds {
+		if c.Type == t {
+			return c.Status == metav1.ConditionTrue
+		}
+	}
+	return false
+}
+
+func (c *Client) WriteNode(ctx context.Context, logicalCluster, cluster, nodeName string, status v1alpha1.NodeStatus) error {
+	r, err := c.resource(logicalCluster, socialwebResource)
+	if err != nil {
+		return err
+	}
+	return WriteNodeTo(ctx, r, cluster, nodeName, status)
+}
+
+func WriteNodeTo(ctx context.Context, r rest.Interface, cluster, nodeName string, status v1alpha1.NodeStatus) error {
+	if nodeName == "" {
+		return errors.New("kcpclient: WriteNode needs a node name")
+	}
+	if cluster == "" {
+		return errors.New("kcpclient: WriteNode needs the cluster it belongs to")
+	}
+
+	var existing v1alpha1.Node
+	err := r.Get().Resource("nodes").Name(nodeName).Do(ctx).Into(&existing)
+	switch {
+	case apierrors.IsNotFound(err):
+		return createNode(ctx, r, cluster, nodeName, status)
+	case err != nil:
+		return fmt.Errorf("kcpclient: read node %s: %w", nodeName, err)
+	}
+	if sameNodeStatus(existing.Status, status) {
+		return nil
+	}
+	body, err := nodeStatusPatch(status)
+	if err != nil {
+		return fmt.Errorf("kcpclient: node %s: marshal: %w", nodeName, err)
+	}
+	if err := r.Patch(types.MergePatchType).SubResource("status").Resource("nodes").Name(nodeName).
+		Body(body).Do(ctx).Error(); err != nil {
+		return fmt.Errorf("kcpclient: patch node %s to phase %q: %w", nodeName, status.Phase, err)
+	}
+	return nil
+}
+
+func sameNodeStatus(have, want v1alpha1.NodeStatus) bool {
+	if have.Phase != want.Phase {
+		return false
+	}
+	switch {
+	case have.NodeExpiry == nil && want.NodeExpiry == nil:
+		return true
+	case have.NodeExpiry == nil || want.NodeExpiry == nil:
+		return false
+	}
+	return *have.NodeExpiry == *want.NodeExpiry
+}
+
+func nodeStatusPatch(status v1alpha1.NodeStatus) ([]byte, error) {
+	fields := map[string]any{}
+	if status.Phase != "" {
+		fields["phase"] = string(status.Phase)
+	}
+	if status.NodeExpiry != nil {
+		fields["nodeExpiry"] = *status.NodeExpiry
+	}
+	return json.Marshal(map[string]any{"status": fields})
+}
+
+func createNode(ctx context.Context, r rest.Interface, cluster, nodeName string, status v1alpha1.NodeStatus) error {
+	node := v1alpha1.Node{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: v1alpha1.GroupVersion.String(),
+			Kind:       "Node",
+		},
+		ObjectMeta: metav1.ObjectMeta{Name: nodeName},
+		Spec:       v1alpha1.NodeSpec{Cluster: cluster},
+	}
+	body, err := json.Marshal(node)
+	if err != nil {
+		return fmt.Errorf("kcpclient: node %s: marshal: %w", nodeName, err)
+	}
+	if err := r.Post().Resource("nodes").Body(body).Do(ctx).Error(); err != nil {
+		return fmt.Errorf("kcpclient: create node %s: %w", nodeName, err)
+	}
+	if status.Phase == "" && status.NodeExpiry == nil {
+		return nil
+	}
+	written, err := nodeStatusPatch(status)
+	if err != nil {
+		return fmt.Errorf("kcpclient: node %s: marshal: %w", nodeName, err)
+	}
+	if err := r.Patch(types.MergePatchType).SubResource("status").Resource("nodes").Name(nodeName).
+		Body(written).Do(ctx).Error(); err != nil {
+		return fmt.Errorf("kcpclient: set the status of the node %s it just created: %w -- the "+
+			"schema declares a status subresource, so a status posted inline is DISCARDED and the "+
+			"node exists with neither a phase nor an expiry at all", nodeName, err)
+	}
+	return nil
+}

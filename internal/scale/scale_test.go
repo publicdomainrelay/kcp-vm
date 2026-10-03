@@ -1,0 +1,467 @@
+package scale
+
+import (
+	"context"
+	"fmt"
+	"reflect"
+	"sort"
+	"testing"
+	"time"
+
+	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
+
+const coldStart = 10 * time.Second
+
+var t0 = time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+
+func i32(v int32) *int32           { return &v }
+func b(v bool) *bool               { return &v }
+func at(d time.Duration) time.Time { return t0.Add(d) }
+
+func pod(phase corev1.PodPhase) corev1.Pod {
+	return corev1.Pod{Status: corev1.PodStatus{Phase: phase}}
+}
+
+func TestAnEmptyClusterDecidesZero(t *testing.T) {
+	d := Decide(Observation{}, State{}, t0, Options{})
+	if d.Intent {
+		t.Fatal("an empty cluster reported intent")
+	}
+	if d.Action != None || d.Nodes != 0 {
+		t.Fatalf("empty cluster decided %s/%d, want None/0", d.Action, d.Nodes)
+	}
+}
+
+func TestAPendingDeploymentDecidesOneNode(t *testing.T) {
+	o := Observation{Deployments: []appsv1.Deployment{
+		{ObjectMeta: metav1.ObjectMeta{Name: "web"}, Spec: appsv1.DeploymentSpec{Replicas: i32(1)}},
+	}}
+	if !Intent(o) {
+		t.Fatal("a Deployment with replicas=1 and no pods yet reported no intent; the " +
+			"predicate keys on spec.replicas precisely so this window is not a gap")
+	}
+	d := Decide(o, State{}, t0, Options{})
+	if d.Action != Provision || d.Nodes != 1 {
+		t.Fatalf("decided %s/%d, want Provision/1", d.Action, d.Nodes)
+	}
+}
+
+func TestAPendingPodDecidesOneNode(t *testing.T) {
+	if !Intent(Observation{Pods: []corev1.Pod{pod(corev1.PodPending)}}) {
+		t.Fatal("a Pending pod is not intent")
+	}
+}
+
+func TestARunningPodDecidesOneNode(t *testing.T) {
+	if !Intent(Observation{Pods: []corev1.Pod{pod(corev1.PodRunning)}}) {
+		t.Fatal("a Running pod is not intent")
+	}
+}
+
+func TestARunningPodOnAGoneNodeIsStillIntent(t *testing.T) {
+	o := Observation{Pods: []corev1.Pod{pod(corev1.PodUnknown)}}
+	if !Intent(o) {
+		t.Fatal("a pod in phase Unknown is not intent; its node is gone and the pod still wants one")
+	}
+	if narrowFires(o) {
+		t.Fatal("the narrow trigger fired on a pod that is already scheduled; this case is " +
+			"here to show it does NOT, which is why it cannot re-wake a cluster")
+	}
+}
+
+func TestSucceededAndFailedPodsAreNotIntent(t *testing.T) {
+	for _, p := range []corev1.PodPhase{corev1.PodSucceeded, corev1.PodFailed} {
+		if Intent(Observation{Pods: []corev1.Pod{pod(p)}}) {
+			t.Fatalf("a %s pod is intent; a finished pod must not hold a node open", p)
+		}
+	}
+}
+
+func TestACompletedJobDoesNotPinANodeForever(t *testing.T) {
+	done := metav1.NewTime(at(-time.Minute))
+	o := Observation{
+		Jobs: []batchv1.Job{{
+			ObjectMeta: metav1.ObjectMeta{Name: "migrate"},
+			Status:     batchv1.JobStatus{CompletionTime: &done, Succeeded: 1},
+		}},
+		Pods: []corev1.Pod{pod(corev1.PodSucceeded)},
+	}
+	if Intent(o) {
+		t.Fatal("a completed Job with a Succeeded pod reported intent")
+	}
+
+	st := State{Nodes: 1, IdleSince: at(0)}
+	hold := 2 * time.Minute
+	if d := Decide(o, st, at(time.Minute), Options{Hold: hold}); d.Action != None {
+		t.Fatalf("tore down at 1m with a 2m hold: %s", d.Action)
+	}
+	d := Decide(o, st, at(hold), Options{Hold: hold})
+	if d.Action != Teardown {
+		t.Fatalf("a completed Job pinned the node past the hold: %s", d.Action)
+	}
+	if st.Next(d, at(hold)).Nodes != 0 {
+		t.Fatal("the transition did not clear the node count")
+	}
+}
+
+func TestASuspendedJobIsNotIntent(t *testing.T) {
+	o := Observation{Jobs: []batchv1.Job{{
+		ObjectMeta: metav1.ObjectMeta{Name: "nightly"},
+		Spec:       batchv1.JobSpec{Suspend: b(true)},
+	}}}
+	if Intent(o) {
+		t.Fatal("a suspended Job is intent")
+	}
+	o.Jobs[0].Spec.Suspend = b(false)
+	if !Intent(o) {
+		t.Fatal("an unsuspended Job is not intent")
+	}
+}
+
+func TestARunningStatefulSetDecidesOneNode(t *testing.T) {
+	for _, r := range []*int32{nil, i32(3)} {
+		o := Observation{StatefulSets: []appsv1.StatefulSet{
+			{Spec: appsv1.StatefulSetSpec{Replicas: r}},
+		}}
+		if !Intent(o) {
+			t.Fatalf("a StatefulSet with replicas=%v is not intent", r)
+		}
+	}
+	scaled := Observation{StatefulSets: []appsv1.StatefulSet{
+		{Spec: appsv1.StatefulSetSpec{Replicas: i32(0)}},
+	}}
+	if Intent(scaled) {
+		t.Fatal("a StatefulSet scaled to 0 is intent")
+	}
+}
+
+func TestAnAbsentReplicasMeansOneNotZero(t *testing.T) {
+	o := Observation{Deployments: []appsv1.Deployment{
+		{ObjectMeta: metav1.ObjectMeta{Name: "web"}},
+	}}
+	if !Intent(o) {
+		t.Fatal("a Deployment with spec.replicas ABSENT reported no intent; the API server " +
+			"defaults it to 1, so nil is a running Deployment")
+	}
+	o.Deployments[0].Spec.Replicas = i32(0)
+	if Intent(o) {
+		t.Fatal("a Deployment explicitly scaled to 0 is intent")
+	}
+}
+
+func TestADaemonSetIsInertAtZeroNodesAndHoldsOnceUp(t *testing.T) {
+	zero := Observation{DaemonSets: []appsv1.DaemonSet{
+		{ObjectMeta: metav1.ObjectMeta{Name: "node-exporter"}},
+	}}
+	if Intent(zero) {
+		t.Fatal("a DaemonSet at zero nodes reported intent; desiredNumberScheduled is 0 " +
+			"when there are no nodes to match, so this term cannot wake a cluster")
+	}
+	up := Observation{DaemonSets: []appsv1.DaemonSet{{
+		ObjectMeta: metav1.ObjectMeta{Name: "node-exporter"},
+		Status:     appsv1.DaemonSetStatus{DesiredNumberScheduled: 1},
+	}}}
+	if !Intent(up) {
+		t.Fatal("a DaemonSet with a node to run on reported no intent; this term is the " +
+			"reason a DaemonSet, once a node exists, holds it open")
+	}
+	if narrowFires(zero) || narrowFires(up) {
+		t.Fatal("the narrow trigger fired on a DaemonSet; it should see neither")
+	}
+}
+
+func TestTheObservationRangesOverExactlyThePredicatesKinds(t *testing.T) {
+	t.Run("no-field-for-an-excluded-kind", func(t *testing.T) {
+		want := []string{"DaemonSets", "Deployments", "Jobs", "Pods", "StatefulSets"}
+		var got []string
+		rt := reflect.TypeOf(Observation{})
+		for i := 0; i < rt.NumField(); i++ {
+			got = append(got, rt.Field(i).Name)
+		}
+		sort.Strings(got)
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("Observation ranges over %v, want %v -- a Service, CronJob, HPA or "+
+				"ReplicaSet field is excluded by ADR 0014 and cannot be added here", got, want)
+		}
+	})
+}
+
+func TestABurstOfWritesCollapsesIntoOneProvision(t *testing.T) {
+	o := Observation{Pods: []corev1.Pod{pod(corev1.PodPending)}}
+	st := State{}
+	provisions := 0
+	for i := 0; i < 16; i++ {
+		d := Decide(o, st, at(time.Duration(i)*time.Millisecond), Options{})
+		if d.Action == Provision {
+			provisions++
+		}
+		st = st.Next(d, at(time.Duration(i)*time.Millisecond))
+	}
+	if provisions != 1 {
+		t.Fatalf("16 intent writes during one in-flight provision produced %d provisions; "+
+			"ADR 0014 requires exactly 1", provisions)
+	}
+	if st.Nodes != 1 {
+		t.Fatalf("state holds %d nodes", st.Nodes)
+	}
+}
+
+func TestTheHoldDoesNotDelayScaleUp(t *testing.T) {
+	o := Observation{Pods: []corev1.Pod{pod(corev1.PodPending)}}
+	st := State{Nodes: 0, IdleSince: at(0)}
+	d := Decide(o, st, at(time.Second), Options{Hold: 2 * time.Minute})
+	if d.Action != Provision {
+		t.Fatalf("decided %s: intent arriving mid-hold must provision at once", d.Action)
+	}
+}
+
+func TestTheIdleClockStartsAtTheTransitionNotAtThePass(t *testing.T) {
+	st := State{Nodes: 1}
+	if st = st.Next(Decide(Observation{Pods: []corev1.Pod{pod(corev1.PodRunning)}}, st, at(0), Options{}), at(0)); !st.IdleSince.IsZero() {
+		t.Fatalf("a pass with intent started an idle clock: %s", st.IdleSince)
+	}
+	absent := Observation{}
+	d := Decide(absent, st, at(30*time.Second), Options{})
+	st = st.Next(d, at(30*time.Second))
+	if !st.IdleSince.Equal(at(30 * time.Second)) {
+		t.Fatalf("idle clock started at %s, want the transition at 30s", st.IdleSince)
+	}
+	st = st.Next(Decide(absent, st, at(90*time.Second), Options{}), at(90*time.Second))
+	if !st.IdleSince.Equal(at(30 * time.Second)) {
+		t.Fatalf("a later pass moved the idle clock to %s", st.IdleSince)
+	}
+}
+
+func TestNoIntentAndNoNodeStaysAtZero(t *testing.T) {
+	st := State{}
+	for i := 0; i < 10; i++ {
+		now := at(time.Duration(i) * time.Minute)
+		st = st.Next(Decide(Observation{}, st, now, Options{}), now)
+	}
+	if st.Nodes != 0 || !st.IdleSince.IsZero() {
+		t.Fatalf("an idle empty cluster accumulated state: %+v", st)
+	}
+}
+
+func TestTheHoldKnobResolvesTheWayItIsDocumented(t *testing.T) {
+	st := State{Nodes: 1, IdleSince: at(0)}
+
+	if d := Decide(Observation{}, st, at(time.Second), Options{Hold: -1}); d.Action != Teardown {
+		t.Fatalf("a negative hold did not tear down at once: %s", d.Action)
+	}
+	if got := (Options{}).hold(); got != DefaultHold {
+		t.Fatalf("an unset hold resolved to %s, want the %s default -- zero must not mean "+
+			"'no grace'", got, DefaultHold)
+	}
+	if d := Decide(Observation{}, st, at(time.Second), Options{}); d.Action != None {
+		t.Fatalf("an unset hold tore down after one second: %s", d.Action)
+	}
+}
+
+func TestTheNarrowTriggerCannotScaleToZero(t *testing.T) {
+	cases := []struct {
+		name string
+		o    Observation
+	}{
+		{
+			"a Deployment whose first pod does not exist yet",
+			Observation{Deployments: []appsv1.Deployment{{Spec: appsv1.DeploymentSpec{Replicas: i32(1)}}}},
+		},
+		{
+			"a DaemonSet with a node to run on",
+			Observation{DaemonSets: []appsv1.DaemonSet{{Status: appsv1.DaemonSetStatus{DesiredNumberScheduled: 1}}}},
+		},
+		{
+			"a pod left Unknown by a departed node",
+			Observation{Pods: []corev1.Pod{pod(corev1.PodUnknown)}},
+		},
+	}
+	for _, tc := range cases {
+		if !Intent(tc.o) {
+			t.Errorf("%s: the implemented predicate says no intent, and it must say intent", tc.name)
+		}
+		if narrowFires(tc.o) {
+			t.Errorf("%s: the narrow trigger fired, so this is not a disagreement and the "+
+				"case cannot support the report's claim", tc.name)
+		}
+	}
+
+	idle := Observation{}
+	if Intent(idle) || narrowFires(idle) {
+		t.Fatal("neither predicate may fire on an empty cluster")
+	}
+}
+
+func narrowFires(o Observation) bool {
+	for i := range o.Pods {
+		for _, c := range o.Pods[i].Status.Conditions {
+			if c.Type == corev1.PodScheduled && c.Status == corev1.ConditionFalse {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+type script struct {
+	at     time.Duration
+	intent bool
+}
+
+type tally struct {
+	provisions int
+	teardowns  int
+	idle       time.Duration
+	up         time.Duration
+}
+
+func drive(scripts []script, hold time.Duration, until time.Duration) tally {
+	var tl tally
+	st := State{}
+	next := 0
+	for now := time.Duration(0); now <= until; now += time.Second {
+		for next < len(scripts) && scripts[next].at <= now {
+			next++
+		}
+		intent := next > 0 && scripts[next-1].intent
+		o := Observation{}
+		if intent {
+			o.Pods = []corev1.Pod{pod(corev1.PodPending)}
+		}
+		d := Decide(o, st, at(now), Options{Hold: hold})
+		switch d.Action {
+		case Provision:
+			tl.provisions++
+		case Teardown:
+			tl.teardowns++
+		}
+		if st.Nodes > 0 && !intent {
+			tl.idle += time.Second
+		}
+		if st.Nodes > 0 {
+			tl.up += time.Second
+		}
+		st = st.Next(d, at(now))
+	}
+	return tl
+}
+
+func TestARapidApplyDeleteDoesNotFlap(t *testing.T) {
+	const until = 10 * time.Minute
+	cycle := 35 * time.Second
+	var scripts []script
+	for i := 0; i < 3; i++ {
+		base := time.Duration(i) * cycle
+		scripts = append(scripts,
+			script{at: base, intent: true},
+			script{at: base + 20*time.Second, intent: false},
+		)
+	}
+
+	holds := []time.Duration{-1, 5 * time.Second, 15 * time.Second,
+		60 * time.Second, DefaultHold, 10 * time.Minute}
+
+	t.Logf("3x (20s Job, 15s gap); one node-day = 86400s; one cold start = %s", coldStart)
+	t.Logf("%-10s %-11s %-10s %-11s %s", "hold", "provisions", "teardowns", "idle", "verdict")
+	for _, hold := range holds {
+		tl := drive(scripts, hold, until)
+		name := hold.String()
+		if hold < 0 {
+			name = "none"
+		} else if hold == DefaultHold {
+			name = DefaultHold.String() + "*"
+		}
+		verdict := "no flap"
+		if tl.provisions > 1 || tl.teardowns > 1 {
+			verdict = fmt.Sprintf("FLAPS: %d wasted cold starts", tl.provisions-1)
+		}
+		t.Logf("%-10s %-11d %-10d %-11s %s", name, tl.provisions, tl.teardowns, tl.idle, verdict)
+	}
+
+	raw := drive(scripts, -1, until)
+	if raw.provisions != 3 || raw.teardowns != 3 {
+		t.Fatalf("with no hold the loop did %d provisions / %d teardowns, want 3/3 -- this "+
+			"test's whole point is that the un-debounced trigger flaps, so if it stopped "+
+			"flapping the comparison below is meaningless", raw.provisions, raw.teardowns)
+	}
+
+	dflt := drive(scripts, DefaultHold, until)
+	if dflt.provisions != 1 || dflt.teardowns != 1 {
+		t.Fatalf("at the %s default the loop did %d provisions / %d teardowns, want 1/1",
+			DefaultHold, dflt.provisions, dflt.teardowns)
+	}
+
+	if short := drive(scripts, 5*time.Second, until); short.provisions != 3 || short.teardowns != 3 {
+		t.Fatalf("a 5s hold did %d/%d for a 15s gap, want 3/3: the grace has to be longer "+
+			"than the gap to collapse anything", short.provisions, short.teardowns)
+	}
+	if long := drive(scripts, 60*time.Second, until); long.provisions != 1 || long.teardowns != 1 {
+		t.Fatalf("a 60s hold did %d/%d, want 1/1: a hold longer than the gap must collapse it",
+			long.provisions, long.teardowns)
+	}
+}
+
+func TestTheHoldPaysForItself(t *testing.T) {
+	alwaysOnBeatsTrigger := func(hold time.Duration) bool {
+		return float64(24*time.Hour)/float64(hold) < 100
+	}
+
+	if alwaysOnBeatsTrigger(DefaultHold) {
+		t.Fatalf("at a %s hold an always-on node costs less than the trigger: the research "+
+			"plan's kill criterion has FIRED and the trigger is wrong", DefaultHold)
+	}
+
+	flapsToPay := float64(DefaultHold) / float64(coldStart)
+	if flapsToPay < 2 {
+		t.Fatalf("the %s hold only pays for itself if it prevents %.1f flaps, which is not "+
+			"a margin: a single flap must cost more than the whole grace", DefaultHold, flapsToPay)
+	}
+	t.Logf("%s hold pays for itself by preventing %.0f flaps (%s / %s cold start)",
+		DefaultHold, flapsToPay, DefaultHold, coldStart)
+	t.Logf("the trigger beats an always-on node until %.0f idle events per day; at %s that "+
+		"is %.2f%% of a node-day per idle event",
+		float64(24*time.Hour)/float64(DefaultHold), DefaultHold,
+		100*float64(DefaultHold)/float64(24*time.Hour))
+
+	if !alwaysOnBeatsTrigger(24 * time.Hour) {
+		t.Fatal("the kill criterion does not fire on a 24h hold, so it cannot fire on " +
+			"anything and its passing above means nothing")
+	}
+}
+
+type spy struct {
+	provisions int
+	teardowns  int
+}
+
+func (s *spy) Provision(context.Context) error { s.provisions++; return nil }
+func (s *spy) Teardown(context.Context) error  { s.teardowns++; return nil }
+
+func TestTheSeamIsWhatTheDecisionNeeds(t *testing.T) {
+	var n Nodes = &spy{}
+	o := Observation{Pods: []corev1.Pod{pod(corev1.PodPending)}}
+	st := State{}
+	d := Decide(o, st, t0, Options{})
+	if d.Action != Provision {
+		t.Fatalf("decided %s", d.Action)
+	}
+	if err := n.Provision(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	st = State{Nodes: 1, IdleSince: at(0)}
+	d = Decide(Observation{}, st, at(DefaultHold), Options{})
+	if d.Action != Teardown {
+		t.Fatalf("decided %s", d.Action)
+	}
+	if err := n.Teardown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if sp := n.(*spy); sp.provisions != 1 || sp.teardowns != 1 {
+		t.Fatalf("seam saw %d provisions / %d teardowns", sp.provisions, sp.teardowns)
+	}
+}
