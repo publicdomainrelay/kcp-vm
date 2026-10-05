@@ -1,4 +1,5 @@
 import { assertEquals } from "@std/assert";
+import { signComputeServiceAuth, signerFromPrivateKeyHex } from "@publicdomainrelay/compute-deno-atproto";
 
 const ORG = new URL("../../../", import.meta.url).pathname.replace(/\/$/, "");
 const HONO_JSR = `${ORG}/hono-jsr/hono-package-registry/main.ts`;
@@ -8,21 +9,15 @@ const FIXTURES = new URL("./fixtures/", import.meta.url);
 const REGISTER_NSID = "com.publicdomainrelay.temp.compute.deno.registerWorkerManifest";
 const EXECUTE_NSID = "com.publicdomainrelay.temp.compute.deno.executeWorkerInstance";
 
-function b64urlJson(v: unknown): string {
-  return btoa(JSON.stringify(v)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-
-function createFakeJwt(audHostname: string, lxm: string): string {
-  const header = { typ: "JWT", alg: "ES256K" };
-  const payload = {
-    iss: "did:plc:local",
-    aud: `did:web:${audHostname}`,
-    iat: Math.floor(Date.now() / 1000),
-    exp: Math.floor(Date.now() / 1000) + 300,
-    jti: crypto.randomUUID(),
-    lxm,
-  };
-  return `${b64urlJson(header)}.${b64urlJson(payload)}.fakesig`;
+// The compute service verifies the service-auth signature, and its verifier
+// resolves did:key locally without a network hop. Mint a fresh did:key signer
+// per token and sign for real.
+async function createServiceToken(audHostname: string, lxm: string): Promise<string> {
+  const hex = Array.from(crypto.getRandomValues(new Uint8Array(32)), (b) =>
+    b.toString(16).padStart(2, "0")
+  ).join("");
+  const signer = await signerFromPrivateKeyHex(hex);
+  return await signComputeServiceAuth(signer, `did:web:${audHostname}`, lxm);
 }
 
 interface Subprocess {
@@ -123,7 +118,7 @@ Deno.test({
       const base = `http://127.0.0.1:${l0.port}`;
 
       // Register L1 on L0 (L0 bundler runs deno check on L1 source)
-      const regJwt = createFakeJwt("127.0.0.1", REGISTER_NSID);
+      const regJwt = await createServiceToken("127.0.0.1", REGISTER_NSID);
       const regRes = await fetch(`${base}/xrpc/${REGISTER_NSID}`, {
         method: "POST", headers: { "authorization": `Bearer ${regJwt}`, "content-type": "application/json" },
         body: JSON.stringify({ source: l1Source, denoJson: l1DenoJson, persistent: true, permissionMode: "allow-all", permissions: { env: true, sys: true, read: true, write: true, net: true, import: true } }),
@@ -132,7 +127,7 @@ Deno.test({
       const { instance: l1Ref } = await regRes.json() as { instance: { uri: string; cid: string } };
 
       // Register L2 inside L1 — test sends pre-bundled source, L1 stores + starts
-      const execJwt = createFakeJwt("127.0.0.1", EXECUTE_NSID);
+      const execJwt = await createServiceToken("127.0.0.1", EXECUTE_NSID);
       const regL2Res = await fetch(`${base}/xrpc/${EXECUTE_NSID}`, {
         method: "POST", headers: { "authorization": `Bearer ${execJwt}`, "content-type": "application/json" },
         body: JSON.stringify({
