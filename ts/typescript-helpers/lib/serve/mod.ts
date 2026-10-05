@@ -9,11 +9,45 @@ export interface IngressRef {
   close(): void;
 }
 
+export interface ServeTcpOpts {
+  addr?: string;
+  port?: number;
+  /** PEM certificate, inline. Takes precedence over certFile. */
+  cert?: string;
+  /** PEM private key, inline. Takes precedence over keyFile. */
+  key?: string;
+  /** PEM certificate file, read at beginServe. Requires keyFile. */
+  certFile?: string;
+  /** PEM private key file, read at beginServe. Requires certFile. */
+  keyFile?: string;
+}
+
 export interface CreateServeOpts {
   logger?: StructuredLoggerInterface;
-  tcp?: { addr?: string; port?: number; cert?: string; key?: string };
+  tcp?: ServeTcpOpts;
   unix?: { socketPath: string };
   relays?: IngressRef[];
+  /**
+   * When set, the bound TCP port is written to this file once listening, so a
+   * caller that asked for port 0 can discover the port. Ignored without tcp.
+   */
+  portFile?: string;
+}
+
+/**
+ * Read a certificate/key pair from disk. Both must be given: with either
+ * missing the server stays plain HTTP, so a deployment that does not opt in
+ * is unaffected.
+ */
+export async function readTlsFiles(
+  certFile: unknown,
+  keyFile: unknown,
+): Promise<{ cert?: string; key?: string }> {
+  if (typeof certFile !== "string" || typeof keyFile !== "string" || !certFile || !keyFile) return {};
+  return {
+    cert: await Deno.readTextFile(certFile),
+    key: await Deno.readTextFile(keyFile),
+  };
 }
 
 export interface ServeHandle {
@@ -69,8 +103,9 @@ export function createServe(opts: CreateServeOpts): ServeHandle {
     controller = new AbortController();
 
     if (hasTcp) {
-      const { addr, port, cert, key } = opts.tcp!;
-      const tlsOpts = cert && key ? { cert, key } : {};
+      const { addr, port, cert, key, certFile, keyFile } = opts.tcp!;
+      const tlsOpts = cert && key ? { cert, key } : await readTlsFiles(certFile, keyFile);
+      const tlsEnabled = !!(tlsOpts.cert && tlsOpts.key);
       _httpServer = Deno.serve(
         {
           hostname: addr ?? "0.0.0.0",
@@ -78,12 +113,24 @@ export function createServe(opts: CreateServeOpts): ServeHandle {
           signal: controller.signal,
           onListen: ({ hostname, port }) => {
             _tcpPort = port;
-            logger?.info("serve listening", { hostname, port, tls: !!(cert && key) });
+            logger?.info("serve listening", { hostname, port, tls: tlsEnabled });
           },
           ...tlsOpts,
         },
         app.fetch,
       );
+      // Deno.serve invokes onListen before it returns, so _tcpPort is the port
+      // that was actually bound -- which is the point when port 0 was asked for.
+      // Best effort: the file is a convenience for whoever needs to discover the
+      // port, and a read-only working directory must not take the server down.
+      if (opts.portFile) {
+        try {
+          await Deno.writeTextFile(opts.portFile, String(_tcpPort));
+          logger?.info("port file written", { path: opts.portFile, port: _tcpPort });
+        } catch (err) {
+          logger?.error?.("port file write failed", { path: opts.portFile, error: String(err) });
+        }
+      }
       _httpServer.finished.catch((err) => {
         logger?.error?.("serve finished with error", { error: String(err) });
       });
