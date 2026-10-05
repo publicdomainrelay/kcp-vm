@@ -107,8 +107,9 @@ logger.info("requester_starting", { label, ingressProxyHost, relayUrls });
 
 const serve = createServe({
   logger,
-  tcp: (options.port != null) ? { addr: (options.serveAddr as string) || "127.0.0.1", port: options.port as number } : undefined,
+  tcp: (options.port != null) ? { addr: (options.serveAddr as string) || "127.0.0.1", port: options.port as number, certFile: options.tlsCertFile as string | undefined, keyFile: options.tlsKeyFile as string | undefined } : undefined,
   unix: (options.serveUnix as string | undefined) ? { socketPath: options.serveUnix as string } : undefined,
+  portFile: options.portFile as string | undefined,
 });
 
 // Resolve privateKeyHex from --private-key-hex-path if --private-key-hex not set.

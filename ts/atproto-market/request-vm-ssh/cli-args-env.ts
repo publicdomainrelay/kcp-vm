@@ -159,6 +159,22 @@ export default {
       description: "Unix socket path to serve on (optional, in addition to TCP)",
       env: "SERVE_UNIX",
     },
+    "tls-cert-file": {
+      type: "string" as const,
+      description: "PEM certificate to serve TLS with; requires tls-key-file",
+      env: "TLS_CERT_FILE",
+    },
+    "tls-key-file": {
+      type: "string" as const,
+      description: "PEM private key to serve TLS with; requires tls-cert-file",
+      env: "TLS_KEY_FILE",
+    },
+    "port-file": {
+      type: "string" as const,
+      description: "File the bound TCP port is written to once listening (used with port 0)",
+      env: "PORT_FILE",
+      default: "./port-bound-to",
+    },
     "guest-host-aliases": {
       type: "string" as const,
       description:

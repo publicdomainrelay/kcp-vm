@@ -558,8 +558,14 @@ const offeringRefreshSec = (options.offeringRefreshSec as number) ?? 300;
 const bidderIngress = options.noIngressProxy ? undefined : await cliCreateIngress();
 const bidderServe = createServe({
   logger,
-  tcp: { addr: (options.serveAddr as string) || "0.0.0.0", port: (options.servePort as number) ?? 0 },
+  tcp: {
+    addr: (options.serveAddr as string) || "0.0.0.0",
+    port: (options.servePort as number) ?? 0,
+    certFile: options.tlsCertFile as string | undefined,
+    keyFile: options.tlsKeyFile as string | undefined,
+  },
   unix: (options.serveUnix as string | undefined) ? { socketPath: options.serveUnix as string } : undefined,
+  portFile: options.portFile as string | undefined,
   relays: bidderIngress ? [bidderIngress] : [],
 });
 

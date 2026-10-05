@@ -201,5 +201,21 @@ export default {
       env: "OFFERING_REFRESH_SEC",
       default: 300,
     },
+    "tls-cert-file": {
+      type: "string" as const,
+      description: "PEM certificate to serve TLS with; requires tls-key-file",
+      env: "TLS_CERT_FILE",
+    },
+    "tls-key-file": {
+      type: "string" as const,
+      description: "PEM private key to serve TLS with; requires tls-cert-file",
+      env: "TLS_KEY_FILE",
+    },
+    "port-file": {
+      type: "string" as const,
+      description: "File the bound TCP port is written to once listening (used with port 0)",
+      env: "PORT_FILE",
+      default: "./port-bound-to",
+    },
   },
 };
