@@ -3138,6 +3138,31 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   left in the code as a comment, per the rule that a decision recorded in a comment is deleted the
   next time comments are swept.
 
+- **A real GitLab pipeline runs a job on a tenant cluster. CLOSED 2026-10-05.** Before: every proof
+  in this tree stopped at the Kubernetes API. The GitLab Runner's own API calls were never made by
+  a runner, so "GitLab CI works here" rested on a vendored document and on a Pod shape a test
+  applied by hand. After: `TestAGitLabPipelineRunsOnATenantCluster`
+  (`cmd/socialweb-clusterprovider/live_gitlab_pipeline_test.go`) stands up a tenant cluster at zero
+  nodes, mints a tenant credential from that cluster's own ClientCA, writes the runner's
+  `config.toml` with `executor = "kubernetes"` and the credential as `cert_file`/`key_file`/
+  `ca_file`, starts the real `gitlab-runner` binary against a real GitLab CE, commits a
+  `.gitlab-ci.yml` through the API and triggers a pipeline. MEASURED 2026-10-05: PASS in 34.12 s.
+  The job pod's own `Pending` state drove the scale decision (`intent and no node`), a node joined,
+  GitLab's runner logged `Waiting for pod ... to be running on the node liveweb-node1`, two job
+  pods were observed carrying `spec.nodeName = liveweb-node1`, and the pipeline reported
+  `success`. Three things about this are worth keeping. First, the runner had to be told the
+  apiserver's LOOPBACK address with a client certificate, not the kcp mount with a bearer: the
+  mount is a reverse proxy and the exec/attach paths CI needs are not guaranteed to survive it,
+  which is the same fact `NEXT.yaml` GL-2 records from the other side. Second, the harness drives
+  the scale decision only when a test asks it to, so a pipeline that merely runs while the harness
+  waits leaves its pod Pending for ever - the first attempt failed exactly that way and the fix is
+  in the test, not in the product. Third, a job Pod runs INSIDE a guest, so `CI_REPOSITORY_URL`
+  naming the GitLab host's loopback resolves to the guest's own loopback and the clone fails with
+  `exit code 128` and a `script_failure` that reads like a broken runner; the proof sets
+  `GIT_STRATEGY: none`, and the three ways out are recorded in `docs/gitlab/03-ci-pipeline.md`.
+  NOT closed by this, and still in `NEXT.yaml`: GL-2 (a runner OFF the host still cannot reach a
+  tenant apiserver) and the CLI half of GL-1.
+
 - **The cloud controller manager now runs, and it is IN the process group. CLOSED 2026-10-05.** A
   controller that nothing starts is a design and not an installation, and that was the state:
   `internal/cloudprovider` and `cmd/socialweb-cloud-controller-manager` existed, were unit-tested,

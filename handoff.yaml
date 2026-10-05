@@ -101,6 +101,38 @@ proven:
       unset is argued from Target's ceiling rather than measured. Partial scale-in is not implemented
       (plan 0002 section 4.4), so the target only grows while intent exists and the down direction
       remains the all-or-nothing teardown past the hold.
+  gitlab_pipeline_proof:
+    test: TestAGitLabPipelineRunsOnATenantCluster
+    location: cmd/socialweb-clusterprovider/live_gitlab_pipeline_test.go
+    result: PASS 34.12 s, 2026-10-05, against a real GitLab CE 19.4.1 and a real gitlab-runner 19.4.1
+    requires_these_env: >
+      SOCIALWEB_LIVE_GITLAB_URL, SOCIALWEB_LIVE_GITLAB_TOKEN (a project access token),
+      SOCIALWEB_LIVE_GITLAB_PROJECT (numeric id), SOCIALWEB_LIVE_GITLAB_RUNNER_TOKEN (the project
+      runner authentication token) and SOCIALWEB_LIVE_GITLAB_RUNNER_BIN. Unset, the test SKIPS with
+      the list, which is not a pass.
+    transitions:
+      - a tenant cluster reached Ready with ZERO nodes at its own leased apiserver port
+      - a tenant credential was minted from that cluster's own ClientCA and written as ca.crt, tls.crt, tls.key
+      - config.toml with executor = "kubernetes" was written and the real gitlab-runner started against it
+      - a .gitlab-ci.yml was committed through the GitLab API and a pipeline triggered
+      - "the job pod's own Pending state drove the scale decision (`intent and no node`) and a node joined"
+      - GitLab's runner logged `Waiting for pod ... to be running on the node liveweb-node1`
+      - two job pods were observed carrying spec.nodeName = liveweb-node1
+      - the pipeline reported success and the job's trace carried the marker this test's own .gitlab-ci.yml writes
+    reads: >
+      This is the whole GitLab integration end to end, and it is the strongest reading in this file:
+      GitLab itself scheduled the job, GitLab's own runner created and drove the pod, and the pod ran
+      on a node this cluster provisioned from the job's own Pending state. Three findings are
+      carried in docs/ARCHITECTURE.md section 15 rather than here: the runner must be pointed at the
+      apiserver's LOOPBACK address with a client certificate (the kcp mount carries bearers only and
+      the exec path is not guaranteed to survive it); the live harness drives the scale decision only
+      when a test asks it to, so the first attempt left its pod Pending for ever; and a job Pod runs
+      INSIDE a guest, so CI_REPOSITORY_URL naming the GitLab host's loopback resolves to the guest's
+      own and the clone fails with exit code 128, which the proof avoids with GIT_STRATEGY: none.
+    not_run: >
+      The GitLab container and the tokens are throwaway and live on this host only. A runner OFF the
+      host still cannot reach a tenant apiserver (NEXT.yaml GL-2), and the minting CLI itself has
+      not been run against a real data dir (NEXT.yaml GL-1).
   control_plane_in_container:
     image: socialweb-control-plane:local
     files: deploy/control-plane-container/{Dockerfile,build.sh,validate.sh}

@@ -75,6 +75,14 @@ mocked and nothing is hand-provisioned.
 | --- | --- | --- |
 | The cluster reaches Ready at zero nodes, provisions on demand, and returns to zero | `TestTheFourStepProofRunsThroughTheCompositionRoot` | PASS, 103.10 s. `INSTANCE_START_TO_READY_S=5.430` |
 | A **GitLab Runner job pod** is placed on the provisioned node and the cluster returns to zero | `TestAGitLabJobPodIsPlacedOnAProvisionedNode` | PASS, 84.40 s (a second run of the same test reported 86.16 s; two runs, two leased ports, both green) |
+| **A real GitLab pipeline runs a job on this cluster** | `TestAGitLabPipelineRunsOnATenantCluster` | PASS, 34.12 s. Pipeline **succeeded**, and GitLab's own runner log places its job pod on `liveweb-node1` |
+
+The third one is the whole integration end to end: a real GitLab CE 19.4.1, a real `gitlab-runner`
+19.4.1 with `executor = "kubernetes"`, a real project and a real pipeline, against a tenant cluster
+this repo brought up at zero nodes. The job pod's own `Pending` state drove the scale decision
+(`intent and no node`), a node joined, the runner placed its pod on it, and the job exited 0. The
+only thing the job does not do is clone the repository, for the reason in
+[03](03-ci-pipeline.md#the-job-pod-cannot-reach-your-gitlab-by-default).
 
 Both readings were taken on 2026-10-05 on this host. The port differs between runs - `62002`,
 `62302` - which is the point: the apiserver port is leased per cluster and the documents read it

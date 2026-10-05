@@ -60,18 +60,18 @@ open:
       registry unreachable, passing or skipping with the reason printed.
 
   - id: GL-1
-    title: Nothing exposes a minted tenant credential to an operator, and GL-1 is half closed.
+    title: The minting CLI has not been run against a real cluster's data dir.
     body: >
-      `internal/clusterprovider` can mint a client certificate signed by a cluster's own ClientCA,
-      and `cmd/socialweb-tenantcredential` now writes one with a chosen CommonName and
-      Organizations, because the vault's `tenant-superuser` PKI role pins `system:masters` and a CI
-      runner must not hold cluster-admin. What is NOT yet done is the second half of this item's
-      instrument: the minting command has been run only against a synthetic ClientCA in tests, never
-      against a real cluster's data dir, and no `kubectl` has authenticated with what it wrote.
+      Half of this closed on 2026-10-05 and the rest did not. What is now measured: a credential
+      minted from a REAL cluster's ClientCA, by `clusterprovider.MintTenantCredentialForCluster`
+      inside the pipeline proof, authenticated a real GitLab Runner against a real tenant apiserver -
+      so the minting path itself is proven end to end. What is not: the CLI,
+      `cmd/socialweb-tenantcredential`, has never been run against a real cluster data dir, and its
+      scoped-identity entry point has only seen a synthetic ClientCA in tests. The library call and
+      the CLI share the signer, but sharing a signer is not the same as the CLI having been run.
     instrument: >
-      A run of the minting command against a real cluster data dir that produces three files, each
-      of which a `kubectl` using them authenticates with, and a refusal to overwrite an existing
-      set.
+      A run of `cmd/socialweb-tenantcredential` with a real `STATE_DIR` and `CLUSTER`, producing
+      three files a `kubectl` authenticates with, and a refusal to overwrite an existing set.
 
   - id: GL-2
     title: A GitLab Runner off the kcp host cannot reach a tenant apiserver.
