@@ -97,7 +97,7 @@ export async function verifyComputeServiceAuth(
   }
 
   if (strictAuth) {
-    await verifyJwtSignature(issuerDid, header, headerB64, payloadB64, sigB64, hostname);
+    await verifyJwtSignature(issuerDid, header, headerB64, payloadB64, sigB64);
   }
 
   return { issuerDid };
@@ -109,11 +109,19 @@ async function verifyJwtSignature(
   headerB64: string,
   payloadB64: string,
   sigB64: string,
-  hostname: string,
 ): Promise<void> {
-  if (issuerDid === "did:plc:local" || hostname === "localhost") {
-    return;
-  }
+  // NO BYPASS LIVES HERE ANY MORE, and that is the fix rather than a tidy-up.
+  //
+  // This function used to return early -- before any crypto -- on
+  // `issuerDid === "did:plc:local" || hostname === "localhost"`. Both halves were
+  // caller-chosen: `issuerDid` is payload.iss, and `hostname` arrived as the request's
+  // Host header. So `Host: localhost`, or merely naming that issuer, turned the
+  // signature check off for any token.
+  //
+  // It was also REDUNDANT. The factory already has a development escape at its own
+  // boundary -- `strictAuth: false` (factory.ts:52) returns before this function is
+  // reached -- so nothing legitimate depended on it. A verifier that can be asked not to
+  // verify is not a verifier.
 
   let didDoc: Record<string, unknown>;
 
