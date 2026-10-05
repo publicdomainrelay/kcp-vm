@@ -1,5 +1,9 @@
 import { Hono } from "@hono/hono";
 import { verifySignature } from "@atproto/crypto";
+import { Command } from "@publicdomainrelay/cli-args-env";
+import { createLogger } from "@publicdomainrelay/logger";
+import { createServe } from "@publicdomainrelay/serve";
+import cliArgsEnv from "./cli-args-env.json" with { type: "json" };
 
 const OAUTH_QR_NSID = "com.fedfork.atprotoOauthQR";
 
@@ -237,6 +241,30 @@ app.get(`/xrpc/${OAUTH_QR_NSID}`, async (c) => {
 
 // ── Serve ──────────────────────────────────────────────────────────────────
 
-const port = parseInt(Deno.env.get("PORT") ?? "5557");
-Deno.serve({ port }, app.fetch);
-console.log(`oauth-qr backend listening on :${port}`);
+const { options } = await new Command(
+  "CONFIG_PATH_HONO_BACKEND",
+  cliArgsEnv,
+  null,
+).resolve();
+
+const logger = createLogger({ serviceName: "oauth-qr" });
+const serve = createServe({
+  logger,
+  tcp: {
+    port: options.port as number,
+    certFile: options.tlsCertFile as string | undefined,
+    keyFile: options.tlsKeyFile as string | undefined,
+  },
+  portFile: options.portFile as string | undefined,
+});
+serve.app.route("/", app as never);
+
+function shutdown() {
+  serve.shutdown();
+  Deno.exit(0);
+}
+Deno.addSignalListener("SIGINT", shutdown);
+Deno.addSignalListener("SIGTERM", shutdown);
+
+await serve.beginServe();
+logger.info("oauth-qr backend listening", { port: serve.tcpPort });
