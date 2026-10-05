@@ -104,8 +104,13 @@ export function createServe(opts: CreateServeOpts): ServeHandle {
 
     if (hasTcp) {
       const { addr, port, cert, key, certFile, keyFile } = opts.tcp!;
-      const tlsOpts = cert && key ? { cert, key } : await readTlsFiles(certFile, keyFile);
-      const tlsEnabled = !!(tlsOpts.cert && tlsOpts.key);
+      // Inline PEM wins over the file for the half it supplies, so passing one
+      // inline and one as a path does what it reads like.
+      const fromFiles = await readTlsFiles(certFile, keyFile);
+      const certPem = cert ?? fromFiles.cert;
+      const keyPem = key ?? fromFiles.key;
+      const tlsEnabled = !!(certPem && keyPem);
+      const tlsOpts = tlsEnabled ? { cert: certPem, key: keyPem } : {};
       _httpServer = Deno.serve(
         {
           hostname: addr ?? "0.0.0.0",
