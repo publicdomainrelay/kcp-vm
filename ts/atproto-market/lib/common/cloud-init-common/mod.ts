@@ -245,6 +245,7 @@ const tunnelModule: UserDataModule = (ctx) => {
   const aliases = (ctx.hostAliases ?? []).filter((a) => /^[\w.:-]+\s+[\w.-]+$/.test(a));
   return {
     apt: { preserve_sources_list: true },
+    packages: ["openssh-server"],
     disable_root: false,
     ssh_pwauth: false,
     bootcmd: aliases.map((a) =>
@@ -314,6 +315,7 @@ const fedproxySshModule: UserDataModule = (ctx) => {
   const xrpcRelayFqdn = `${ctx.xrpcRelaySubdomain ?? ""}.${ctx.relayHost ?? ""}`;
   return {
     apt: { preserve_sources_list: true },
+    packages: ["openssh-server"],
     disable_root: false,
     ssh_pwauth: false,
     write_files: [

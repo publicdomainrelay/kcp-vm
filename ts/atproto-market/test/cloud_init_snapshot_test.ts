@@ -125,6 +125,16 @@ Deno.test("tunnel has no ListenAddress (direct-TCP probe)", () => {
   assert(y.includes(`--target-port 22`));
 });
 
+Deno.test("sshd-touching modules install the sshd they configure", () => {
+  // The historical preset declared openssh-server (compute-contract-full-flow
+  // atproto-records.json:74); the registry dropped it while both modules kept
+  // writing /etc/ssh/sshd_config.d/* and enabling ssh/sshd.
+  for (const id of ["tunnel", "fedproxy-ssh"]) {
+    const y = buildUserData({ ctx: CTX, modules: [id] });
+    assert(y.includes("openssh-server"), `${id} installs the sshd it configures`);
+  }
+});
+
 Deno.test("wootty combo carries token handoff + hardening", () => {
   const y = buildUserData({ ctx: CTX, modules: ["fedproxy-web", "wootty"] });
   assert(y.includes("get-ttyd-password-vm-test"));

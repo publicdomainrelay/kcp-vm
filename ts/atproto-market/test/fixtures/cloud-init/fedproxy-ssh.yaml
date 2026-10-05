@@ -1,6 +1,8 @@
 #cloud-config
 apt:
   preserve_sources_list: true
+packages:
+  - openssh-server
 write_files:
   - path: /root/.ssh/authorized_keys
     owner: root:root
