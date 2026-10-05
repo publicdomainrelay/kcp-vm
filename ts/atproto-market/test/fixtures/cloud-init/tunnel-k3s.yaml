@@ -1,0 +1,72 @@
+#cloud-config
+apt:
+  preserve_sources_list: true
+packages:
+  - openssh-server
+write_files:
+  - path: /root/.ssh/authorized_keys
+    owner: root:root
+    permissions: "0600"
+    content: |
+      ssh-ed25519 AAAA test@example
+  - path: /etc/ssh/sshd_config.d/10-tunnel.conf
+    owner: root:root
+    permissions: "0644"
+    content: |
+      # Key-only root login; reached through the xrpc relay tunnel (the
+      # compute-provider harness also TCP-probes :22 directly for readiness).
+      PermitRootLogin prohibit-password
+      PasswordAuthentication no
+  - path: /etc/systemd/system/tunnel-subscriber.service
+    owner: root:root
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=xrpc tunnel subscriber (ssh-over-relay)
+      After=network-online.target sshd.service ssh.service
+      Wants=network-online.target
+
+      [Service]
+      Type=simple
+      User=root
+      ExecStart=/usr/local/bin/deno run -A jsr:@publicdomainrelay/hono-did-key-ingress-proxy-tunnel-subscriber --ingress-proxy-host relay.local:443 --aud-host relay.local --private-key-from-sshd-host-key /etc/ssh/ssh_host_ed25519_key --fqdn-file /run/guest-fqdn --target-host 127.0.0.1 --target-port 22
+      Restart=always
+      RestartSec=5
+      TimeoutStopSec=10
+      StandardOutput=journal
+      StandardError=journal
+
+      [Install]
+      WantedBy=multi-user.target
+  - path: /usr/local/bin/setup-k3s.sh
+    owner: root:root
+    permissions: "0755"
+    content: |
+      #!/bin/bash
+      set -eux -o pipefail
+
+      STAMP=/var/lib/setup-k3s.done
+      [ -f "${STAMP}" ] && exit 0
+
+      command -v curl >/dev/null || { apt-get update && apt-get install -y curl ca-certificates; }
+
+      curl -sfL https://get.k3s.io -o /tmp/k3s-install.sh
+      INSTALL_K3S_VERSION=v1.36.4+k3s1 \
+        INSTALL_K3S_SKIP_START=true \
+        INSTALL_K3S_SKIP_ENABLE=true \
+        sh /tmp/k3s-install.sh
+
+      /usr/local/bin/k3s --version
+
+      touch "${STAMP}"
+bootcmd: []
+runcmd:
+  - - sh
+    - -c
+    - command -v deno || { apt-get update && apt-get install -y curl unzip; curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh; chmod 755 /usr/local/bin/deno; }
+  - systemctl daemon-reload
+  - systemctl enable --now ssh || systemctl enable --now sshd
+  - systemctl enable --now tunnel-subscriber.service
+  - /usr/local/bin/setup-k3s.sh
+disable_root: false
+ssh_pwauth: false

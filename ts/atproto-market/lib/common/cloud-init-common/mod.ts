@@ -857,11 +857,58 @@ touch "\${STAMP}"
   };
 };
 
+/** Pinned k3s release. Measured against `lima/k3s-bench.yaml` and `docs/kcp-notes.md`. */
+const K3S_VERSION = "v1.36.4+k3s1";
+
+/** Deterministic write_files path: the discriminator the provider spec needs, since the composer emits no marker file. */
+const K3S_SETUP_PATH = "/usr/local/bin/setup-k3s.sh";
+
+/**
+ * k3s -- installs the k3s binary at a pinned release so a market-side worker can
+ * join. It does NOT start anything: the agent is the SSH connection's command
+ * (ADR 0003) and `k3s server` runs gateway-side (ADR 0012), so the installer runs
+ * with SKIP_START and SKIP_ENABLE and this module writes no systemd unit.
+ *
+ * It carries neither the instance token nor the node name. Both travel in the
+ * command (ADR 0016 scopes the token per cluster INSTANCE; ADR 0028 forbids a
+ * report surface that would carry it), and cloud-init user_data is readable from
+ * inside the guest via the metadata service -- so the token must not be here.
+ */
+const k3sModule: UserDataModule = () => ({
+  write_files: [
+    {
+      path: K3S_SETUP_PATH,
+      owner: "root:root",
+      permissions: "0755",
+      content: `#!/bin/bash
+set -eux -o pipefail
+
+STAMP=/var/lib/setup-k3s.done
+[ -f "\${STAMP}" ] && exit 0
+
+command -v curl >/dev/null || { apt-get update && apt-get install -y curl ca-certificates; }
+
+curl -sfL https://get.k3s.io -o /tmp/k3s-install.sh
+INSTALL_K3S_VERSION=${K3S_VERSION} \\
+  INSTALL_K3S_SKIP_START=true \\
+  INSTALL_K3S_SKIP_ENABLE=true \\
+  sh /tmp/k3s-install.sh
+
+/usr/local/bin/k3s --version
+
+touch "\${STAMP}"
+`,
+    },
+  ],
+  runcmd: [K3S_SETUP_PATH],
+});
+
 registerUserDataModule("tunnel", tunnelModule);
 registerUserDataModule("fedproxy-ssh", fedproxySshModule);
 registerUserDataModule("fedproxy-web", fedproxyWebModule);
 registerUserDataModule("wootty", woottyModule);
 registerUserDataModule("secrets", secretsModule);
+registerUserDataModule("k3s", k3sModule);
 
 // ---------------------------------------------------------------------------
 // Back-compat wrappers (deprecated)
