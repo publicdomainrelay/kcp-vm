@@ -1,0 +1,24 @@
+stages: [prove]
+
+prove-placement:
+  stage: prove
+  image: busybox:1.36
+  tags: [socialweb-tenant-ci]
+  script:
+    - echo "running on $(hostname)"
+    - echo "namespace $(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)"
+    - nslookup kubernetes.default.svc.cluster.local || true
+
+test-with-postgres:
+  stage: prove
+  image: postgres:16-alpine
+  tags: [socialweb-tenant-ci]
+  services:
+    - name: postgres:16-alpine
+      alias: db
+  variables:
+    POSTGRES_PASSWORD: ci
+    PGHOST: db
+    PGUSER: postgres
+  script:
+    - psql -c 'select 1'

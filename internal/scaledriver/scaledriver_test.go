@@ -237,3 +237,74 @@ func TestAnObservationFailureDoesNotActuate(t *testing.T) {
 			"an unreadable cluster is not an idle one", n.provisions, n.teardowns)
 	}
 }
+
+func runningPods(n int) scale.Observation {
+	o := scale.Observation{Pods: make([]corev1.Pod, n)}
+	for i := range o.Pods {
+		o.Pods[i] = corev1.Pod{Status: corev1.PodStatus{Phase: corev1.PodRunning}}
+	}
+	return o
+}
+
+func TestTheDriverBringsTheCountUpToTheTarget(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	o := runningPods(17)
+
+	n := &fakeNodes{}
+	d, err := New(func(string) (scale.Nodes, error) { return n, nil }, Options{
+		Now:   func() time.Time { return now },
+		Scale: scale.Options{MaxNodes: 3, PodsPerNode: 8},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	dec, err := d.Pass(context.Background(), "liveweb", o, 0)
+	if err != nil {
+		t.Fatalf("Pass: %v", err)
+	}
+	if dec.Action != scale.Provision || dec.Nodes != 3 {
+		t.Fatalf("decided %s/%d, want Provision/3", dec.Action, dec.Nodes)
+	}
+	if n.provisions != 3 {
+		t.Fatalf("Provision calls = %d, want 3: the re-read count must be reconciled UP to the "+
+			"decision's target, not one node for the pass", n.provisions)
+	}
+
+	n = &fakeNodes{}
+	d, err = New(func(string) (scale.Nodes, error) { return n, nil }, Options{
+		Now:   func() time.Time { return now },
+		Scale: scale.Options{MaxNodes: 3, PodsPerNode: 8},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err = d.Pass(context.Background(), "liveweb", o, 1); err != nil {
+		t.Fatalf("Pass: %v", err)
+	}
+	if n.provisions != 2 {
+		t.Fatalf("from one re-read node, Provision calls = %d, want 2: only the difference to "+
+			"the target is provisioned", n.provisions)
+	}
+}
+
+func TestAFailedScaleOutStopsAndDoesNotAdvance(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	n := &fakeNodes{failWith: errors.New("the guest would not boot")}
+	d, err := New(func(string) (scale.Nodes, error) { return n, nil }, Options{
+		Now:   func() time.Time { return now },
+		Scale: scale.Options{MaxNodes: 3, PodsPerNode: 8},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := d.Pass(context.Background(), "liveweb", runningPods(17), 0); err == nil {
+		t.Fatal("a failed scale-out was reported as a completed pass")
+	}
+	if got := d.State("liveweb").Nodes; got != 0 {
+		t.Fatalf("state.Nodes = %d after a FAILED scale-out, want 0 -- the state advances only on "+
+			"success", got)
+	}
+	if n.provisions != 1 {
+		t.Fatalf("Provision calls = %d: the loop kept going after the first failure", n.provisions)
+	}
+}

@@ -9,7 +9,7 @@ per virtual cluster:
   k3s agent(s)                     <- the ONLY nodes. 0 or 1. Provisioned on apply.
 ```
 
-**Everything is in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).** The objective, the architecture, every ADR, the decision register, the security register, the measurements, the lessons, what is built, what is not, and what is blocked. One design document on purpose: it was twenty-six, they drifted out of agreement, and the drift was invisible from a green test suite.
+**Everything is in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).** The objective, the architecture, every ADR, the decision register, the security register, the measurements, the lessons, what is built, what is not, and what is blocked. One design document on purpose: it was twenty-six, they drifted out of agreement, and the drift was invisible from a green test suite. Two directories sit beside it and are deliberately NOT design documents: [`docs/plans/`](docs/plans/) is the numbered plan series for work in flight, and [`docs/gitlab/`](docs/gitlab/) is operator recipes for running GitLab against a tenant cluster. A plan is a work list and is expected to go stale; the architecture document is the thing that must not.
 
 Agents working in this repo should read [`AGENTS.md`](AGENTS.md) first; it points at the one small file that answers each question.
 
@@ -261,6 +261,8 @@ paths and switches them for qemu when that value is set.
 | Rules for a change, and for an agent | [`AGENTS.md`](AGENTS.md) |
 | The live backlog | [`NEXT.yaml`](NEXT.yaml) |
 | The operator handoff | [`handoff.yaml`](handoff.yaml) |
+| The plan series for work in flight | `docs/plans/` |
+| Running GitLab CI against a tenant cluster | [`docs/gitlab/`](docs/gitlab/) |
 | Everything the deployment is | `deploy/`, `deploy/control-plane-container/` |
 
 ## Troubleshooting

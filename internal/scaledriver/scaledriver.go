@@ -75,8 +75,11 @@ func (d *Driver) Pass(ctx context.Context, cluster string, o scale.Observation, 
 
 	switch dec.Action {
 	case scale.Provision:
-		if err := nodes.Provision(ctx); err != nil {
-			return dec, fmt.Errorf("scaledriver: provisioning a node for %s: %w", cluster, err)
+		for counted := observedNodes; counted < dec.Nodes; counted++ {
+			if err := nodes.Provision(ctx); err != nil {
+				return dec, fmt.Errorf("scaledriver: provisioning node %d of %d for %s: %w",
+					counted+1, dec.Nodes, cluster, err)
+			}
 		}
 	case scale.Teardown:
 		if err := nodes.Teardown(ctx); err != nil {

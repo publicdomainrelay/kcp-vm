@@ -13,6 +13,10 @@ import (
 
 const DefaultHold = 2 * time.Minute
 
+const DefaultMaxNodes = 1
+
+const DefaultPodsPerNode = 8
+
 const AddonOwnerAnnotation = "objectset.rio.cattle.io/owner-gvk"
 
 const K3sAddonOwnerGVK = "k3s.cattle.io/v1, Kind=Addon"
@@ -100,6 +104,73 @@ func replicas(r *int32) int32 {
 	return *r
 }
 
+func Demand(o Observation) int {
+	total := 0
+	for i := range o.Pods {
+		p := &o.Pods[i]
+		if AppliedByTheControlPlane(p.ObjectMeta) {
+			continue
+		}
+		switch p.Status.Phase {
+		case corev1.PodPending, corev1.PodRunning, corev1.PodUnknown:
+			total++
+		}
+	}
+	for i := range o.Jobs {
+		j := &o.Jobs[i]
+		if AppliedByTheControlPlane(j.ObjectMeta) {
+			continue
+		}
+		if j.Status.CompletionTime != nil {
+			continue
+		}
+		if j.Spec.Suspend != nil && *j.Spec.Suspend {
+			continue
+		}
+		total += jobStillNeeds(j)
+	}
+	for i := range o.Deployments {
+		d := &o.Deployments[i]
+		if AppliedByTheControlPlane(d.ObjectMeta) {
+			continue
+		}
+		if r := int(replicas(d.Spec.Replicas)); r > 0 {
+			total += r
+		}
+	}
+	for i := range o.StatefulSets {
+		s := &o.StatefulSets[i]
+		if AppliedByTheControlPlane(s.ObjectMeta) {
+			continue
+		}
+		if r := int(replicas(s.Spec.Replicas)); r > 0 {
+			total += r
+		}
+	}
+	for i := range o.DaemonSets {
+		d := &o.DaemonSets[i]
+		if AppliedByTheControlPlane(d.ObjectMeta) {
+			continue
+		}
+		if d.Status.DesiredNumberScheduled > 0 {
+			total += int(d.Status.DesiredNumberScheduled)
+		}
+	}
+	return total
+}
+
+func jobStillNeeds(j *batchv1.Job) int {
+	want := 1
+	if j.Spec.Completions != nil {
+		want = int(*j.Spec.Completions)
+	}
+	needs := want - int(j.Status.Succeeded)
+	if needs < 1 {
+		needs = 1
+	}
+	return needs
+}
+
 type Action int
 
 const (
@@ -142,6 +213,10 @@ type Decision struct {
 
 type Options struct {
 	Hold time.Duration
+
+	MaxNodes int
+
+	PodsPerNode int
 }
 
 func (o Options) hold() time.Duration {
@@ -154,20 +229,69 @@ func (o Options) hold() time.Duration {
 	return o.Hold
 }
 
+func (o Options) maxNodes() int {
+	if o.MaxNodes <= 0 {
+		return DefaultMaxNodes
+	}
+	return o.MaxNodes
+}
+
+func (o Options) podsPerNode() int {
+	if o.PodsPerNode <= 0 {
+		return DefaultPodsPerNode
+	}
+	return o.PodsPerNode
+}
+
+func Target(o Observation, opts Options) int {
+	if !Intent(o) {
+		return 0
+	}
+	per := opts.podsPerNode()
+	ceiling := opts.maxNodes()
+	target := (Demand(o) + per - 1) / per
+	if target < 1 {
+		target = 1
+	}
+	if target > ceiling {
+		target = ceiling
+	}
+	if target < 1 {
+		target = 1
+	}
+	return target
+}
+
 func Decide(o Observation, st State, now time.Time, opts Options) Decision {
 	intent := Intent(o)
 
 	if intent {
-		if st.Nodes > 0 {
+		target := Target(o, opts)
+		switch {
+		case st.Nodes < target:
+			if st.Nodes == 0 {
+				return Decision{
+					Action: Provision, Nodes: target, Intent: true,
+					Reason: "intent and no node",
+				}
+			}
+			return Decision{
+				Action: Provision, Nodes: target, Intent: true,
+				Reason: fmt.Sprintf("intent, and %d nodes are counted for a target of %d", st.Nodes, target),
+			}
+		case st.Nodes > target:
+			return Decision{
+				Action: None, Nodes: st.Nodes, Intent: true,
+				Reason: "intent, and more nodes are counted than the target needs; scaling in is " +
+					"all-or-nothing (plan 0002 section 4.4), so while intent exists the target only " +
+					"grows to the ceiling and the down direction stays the teardown past the hold",
+			}
+		default:
 			return Decision{
 				Action: None, Nodes: st.Nodes, Intent: true,
 				Reason: "intent, and a node is already counted for this cluster; a second " +
 					"provision here is a second node (ADR 0014: idempotency is per-cluster)",
 			}
-		}
-		return Decision{
-			Action: Provision, Nodes: 1, Intent: true,
-			Reason: "intent and no node",
 		}
 	}
 

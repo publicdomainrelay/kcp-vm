@@ -465,3 +465,182 @@ func TestTheSeamIsWhatTheDecisionNeeds(t *testing.T) {
 		t.Fatalf("seam saw %d provisions / %d teardowns", sp.provisions, sp.teardowns)
 	}
 }
+
+func pods(n int) Observation {
+	o := Observation{Pods: make([]corev1.Pod, n)}
+	for i := range o.Pods {
+		o.Pods[i] = pod(corev1.PodPending)
+	}
+	return o
+}
+
+func TestDemandAgreesWithIntentOnEveryIntentFixture(t *testing.T) {
+	ownedPod := pod(corev1.PodPending)
+	StampAppliedByTheControlPlane(&ownedPod.ObjectMeta)
+
+	ownedDeployment := appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "coredns"},
+		Spec:       appsv1.DeploymentSpec{Replicas: i32(3)},
+	}
+	StampAppliedByTheControlPlane(&ownedDeployment.ObjectMeta)
+
+	done := metav1.NewTime(at(-time.Minute))
+
+	cases := []struct {
+		name string
+		o    Observation
+		want bool
+	}{
+		{"an empty cluster", Observation{}, false},
+		{"a Pending pod", Observation{Pods: []corev1.Pod{pod(corev1.PodPending)}}, true},
+		{"a Running pod", Observation{Pods: []corev1.Pod{pod(corev1.PodRunning)}}, true},
+		{"a pod left Unknown by a departed node", Observation{Pods: []corev1.Pod{pod(corev1.PodUnknown)}}, true},
+		{"a Succeeded pod", Observation{Pods: []corev1.Pod{pod(corev1.PodSucceeded)}}, false},
+		{"a Failed pod", Observation{Pods: []corev1.Pod{pod(corev1.PodFailed)}}, false},
+		{"a control-plane-owned Pending pod", Observation{Pods: []corev1.Pod{ownedPod}}, false},
+		{"a Deployment with replicas=1", Observation{Deployments: []appsv1.Deployment{
+			{ObjectMeta: metav1.ObjectMeta{Name: "web"}, Spec: appsv1.DeploymentSpec{Replicas: i32(1)}}}}, true},
+		{"a Deployment with replicas absent", Observation{Deployments: []appsv1.Deployment{
+			{ObjectMeta: metav1.ObjectMeta{Name: "web"}}}}, true},
+		{"a Deployment scaled to 0", Observation{Deployments: []appsv1.Deployment{
+			{Spec: appsv1.DeploymentSpec{Replicas: i32(0)}}}}, false},
+		{"a control-plane-owned Deployment", Observation{Deployments: []appsv1.Deployment{ownedDeployment}}, false},
+		{"a StatefulSet with replicas absent", Observation{StatefulSets: []appsv1.StatefulSet{
+			{Spec: appsv1.StatefulSetSpec{}}}}, true},
+		{"a StatefulSet with replicas=3", Observation{StatefulSets: []appsv1.StatefulSet{
+			{Spec: appsv1.StatefulSetSpec{Replicas: i32(3)}}}}, true},
+		{"a StatefulSet scaled to 0", Observation{StatefulSets: []appsv1.StatefulSet{
+			{Spec: appsv1.StatefulSetSpec{Replicas: i32(0)}}}}, false},
+		{"an unsuspended Job", Observation{Jobs: []batchv1.Job{{
+			ObjectMeta: metav1.ObjectMeta{Name: "nightly"},
+			Spec:       batchv1.JobSpec{Suspend: b(false)}}}}, true},
+		{"a suspended Job", Observation{Jobs: []batchv1.Job{{
+			ObjectMeta: metav1.ObjectMeta{Name: "nightly"},
+			Spec:       batchv1.JobSpec{Suspend: b(true)}}}}, false},
+		{"a completed Job", Observation{
+			Jobs: []batchv1.Job{{
+				ObjectMeta: metav1.ObjectMeta{Name: "migrate"},
+				Status:     batchv1.JobStatus{CompletionTime: &done, Succeeded: 1},
+			}},
+			Pods: []corev1.Pod{pod(corev1.PodSucceeded)}}, false},
+		{"a DaemonSet with no node to match", Observation{DaemonSets: []appsv1.DaemonSet{
+			{ObjectMeta: metav1.ObjectMeta{Name: "node-exporter"}}}}, false},
+		{"a DaemonSet with a node to run on", Observation{DaemonSets: []appsv1.DaemonSet{{
+			ObjectMeta: metav1.ObjectMeta{Name: "node-exporter"},
+			Status:     appsv1.DaemonSetStatus{DesiredNumberScheduled: 1}}}}, true},
+	}
+	for _, tc := range cases {
+		if got := Intent(tc.o); got != tc.want {
+			t.Fatalf("%s: Intent = %v, want %v", tc.name, got, tc.want)
+		}
+		if got := Demand(tc.o) > 0; got != tc.want {
+			t.Fatalf("%s: Demand>0 = %v and Intent = %v; the two definitions of \"is there work\" "+
+				"disagree, and a bug in the count must not be able to make zero unreachable or to "+
+				"leave intent without a demand", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestTheDemandCountsTheWorkNotTheNodes(t *testing.T) {
+	if got := Demand(pods(17)); got != 17 {
+		t.Fatalf("seventeen Pending pods demanded %d, want 17: Demand is the pod work, and Target "+
+			"is what divides it into nodes", got)
+	}
+	o := Observation{Deployments: []appsv1.Deployment{
+		{Spec: appsv1.DeploymentSpec{Replicas: i32(4)}},
+	}}
+	if got := Demand(o); got != 4 {
+		t.Fatalf("a Deployment of four replicas with no pods yet demanded %d, want 4", got)
+	}
+}
+
+func TestTargetReturnsThePlanAcceptance(t *testing.T) {
+	cases := []struct {
+		name string
+		o    Observation
+		opts Options
+		want int
+	}{
+		{"no work is no target", Observation{}, Options{}, 0},
+		{"one pod, eight per node", pods(1), Options{PodsPerNode: 8}, 1},
+		{"seventeen pods, eight per node", pods(17), Options{PodsPerNode: 8, MaxNodes: 3}, 3},
+		{"a hundred pods at a ceiling of four", pods(100), Options{MaxNodes: 4}, 4},
+		{"seventeen pods at a ceiling of two", pods(17), Options{MaxNodes: 2}, 2},
+		{"seventeen pods with no ceiling named", pods(17), Options{}, 1},
+		{"a hundred pods with no ceiling named", pods(100), Options{}, 1},
+		{"a Succeeded pod is no target", Observation{Pods: []corev1.Pod{pod(corev1.PodSucceeded)}}, Options{}, 0},
+	}
+	for _, tc := range cases {
+		if got := Target(tc.o, tc.opts); got != tc.want {
+			t.Fatalf("%s: Target = %d, want %d", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestDecideAtTheDefaultCeilingReproducesToday(t *testing.T) {
+	intent := Observation{Deployments: []appsv1.Deployment{
+		{ObjectMeta: metav1.ObjectMeta{Name: "web"}, Spec: appsv1.DeploymentSpec{Replicas: i32(1)}},
+	}}
+	quiet := Observation{}
+	cases := []struct {
+		name   string
+		o      Observation
+		st     State
+		now    time.Time
+		action Action
+		nodes  int
+	}{
+		{"empty and no node", quiet, State{}, t0, None, 0},
+		{"intent and no node", intent, State{}, t0, Provision, 1},
+		{"intent and a node", intent, State{Nodes: 1}, t0, None, 1},
+		{"no intent and no node", quiet, State{}, t0, None, 0},
+		{"no intent and a node inside the hold", quiet, State{Nodes: 1, IdleSince: at(0)}, at(time.Minute), None, 1},
+		{"no intent and a node past the hold", quiet, State{Nodes: 1, IdleSince: at(0)}, at(DefaultHold), Teardown, 0},
+	}
+	for _, tc := range cases {
+		d := Decide(tc.o, tc.st, tc.now, Options{})
+		if d.Action != tc.action || d.Nodes != tc.nodes || d.Intent != Intent(tc.o) {
+			t.Fatalf("%s: Decide = %s/%d, want %s/%d -- at the default ceiling the decision must "+
+				"reproduce the one-node behaviour byte for byte", tc.name, d.Action, d.Nodes, tc.action, tc.nodes)
+		}
+	}
+	if got := Decide(intent, State{}, t0, Options{}).Reason; got != "intent and no node" {
+		t.Fatalf("the provision reason changed at the default ceiling: %q", got)
+	}
+	steady := "intent, and a node is already counted for this cluster; a second provision here is " +
+		"a second node (ADR 0014: idempotency is per-cluster)"
+	if got := Decide(intent, State{Nodes: 1}, t0, Options{}).Reason; got != steady {
+		t.Fatalf("the steady-state reason changed at the default ceiling: %q", got)
+	}
+}
+
+func TestTheDecisionScalesOutToTheTargetAndNeverPartiallyBack(t *testing.T) {
+	o := pods(17)
+	opts := Options{MaxNodes: 3, PodsPerNode: 8}
+
+	if d := Decide(o, State{}, t0, opts); d.Action != Provision || d.Nodes != 3 {
+		t.Fatalf("from zero with seventeen pods the decision was %s/%d, want Provision/3", d.Action, d.Nodes)
+	}
+	if d := Decide(o, State{Nodes: 1}, t0, opts); d.Action != Provision || d.Nodes != 3 {
+		t.Fatalf("from one node with seventeen pods the decision was %s/%d, want Provision/3: the "+
+			"target is a total, and the driver reconciles the re-read count up to it", d.Action, d.Nodes)
+	}
+	if d := Decide(o, State{Nodes: 3}, t0, opts); d.Action != None || d.Nodes != 3 {
+		t.Fatalf("at the target the decision was %s/%d, want None/3", d.Action, d.Nodes)
+	}
+	if d := Decide(o, State{Nodes: 4}, t0, opts); d.Action != None || d.Nodes != 4 {
+		t.Fatalf("above the target the decision was %s/%d, want None/4: partial scale-in is not "+
+			"implemented (section 4.4), so the count is held rather than reduced", d.Action, d.Nodes)
+	}
+}
+
+func TestATransientlyInflatedObservationIsBoundedByTheCeiling(t *testing.T) {
+	opts := Options{MaxNodes: 4, PodsPerNode: 8}
+	if d := Decide(pods(100), State{}, t0, opts); d.Nodes != 4 {
+		t.Fatalf("a hundred pods at a ceiling of four decided %d nodes", d.Nodes)
+	}
+	if d := Decide(pods(1), State{Nodes: 4}, t0, opts); d.Action != None || d.Nodes != 4 {
+		t.Fatalf("after the inflation passed the decision was %s/%d, want None/4: the target "+
+			"falling while intent remains must not scale the cluster in partially", d.Action, d.Nodes)
+	}
+}

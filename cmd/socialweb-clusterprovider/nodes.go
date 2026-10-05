@@ -317,6 +317,17 @@ type tenantNodes struct {
 	tenant   tenantClient
 
 	log *slog.Logger
+
+	opts nodeHostsOptions
+
+	mu      sync.Mutex
+	started int
+	extra   map[int]heldNode
+}
+
+type heldNode struct {
+	name string
+	host nodeHost
 }
 
 var _ scale.Nodes = (*tenantNodes)(nil)
@@ -326,31 +337,110 @@ const NodeJoinTimeout = 30 * time.Second
 const nodeJoinPoll = 250 * time.Millisecond
 
 func (n *tenantNodes) Provision(ctx context.Context) error {
-	if err := n.host.Provision(ctx); err != nil {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	ordinal := 1
+	if n.started > 0 || n.host == nil {
+		next, err := n.nextOrdinal(ctx)
+		if err != nil {
+			return err
+		}
+		ordinal = next
+	}
+
+	host, name, held := n.hostFor(ordinal)
+	if !held {
+		id := nodeIDFor(ordinal)
+		nodeName, err := nodeprovider.NodeName(n.cluster, id)
+		if err != nil {
+			return err
+		}
+		built, err := newNodeHost(n.opts, n.log, n.cluster, id)
+		if err != nil {
+			return err
+		}
+		host, name = built.host, nodeName
+	}
+
+	if err := host.Provision(ctx); err != nil {
 		return fmt.Errorf("clusterprovider: provisioning node %s of %s: %w -- there is no lease to "+
 			"give back here, because a node holds none of its own: every port its guest binds, its "+
 			"kubelet's included, is bound inside the guest's own network namespace, and the "+
-			"substrate stops whatever it started before it returns", n.nodeName, n.cluster, err)
+			"substrate stops whatever it started before it returns", name, n.cluster, err)
 	}
-	return n.confirmJoined(ctx)
+	if !held {
+		n.retain(ordinal, heldNode{name: name, host: host})
+	}
+	n.started++
+	return n.confirmJoined(ctx, host, name)
 }
 
-func (n *tenantNodes) confirmJoined(ctx context.Context) error {
+func (n *tenantNodes) hostFor(ordinal int) (nodeHost, string, bool) {
+	if ordinal == 1 && n.host != nil {
+		return n.host, n.nodeName, true
+	}
+	if held, ok := n.extra[ordinal]; ok {
+		return held.host, held.name, true
+	}
+	return nil, "", false
+}
+
+func (n *tenantNodes) retain(ordinal int, held heldNode) {
+	if ordinal == 1 {
+		return
+	}
+	if n.extra == nil {
+		n.extra = map[int]heldNode{}
+	}
+	n.extra[ordinal] = held
+}
+
+func (n *tenantNodes) nextOrdinal(ctx context.Context) (int, error) {
+	present := map[int]bool{}
+	if n.tenant != nil {
+		client, err := n.tenant(ctx, n.cluster)
+		if err != nil {
+			return 0, fmt.Errorf("clusterprovider: the tenant client for %s, which says which of "+
+				"its nodes already exist before the next one is named: %w", n.cluster, err)
+		}
+		list, err := client.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+		if err != nil {
+			return 0, fmt.Errorf("clusterprovider: listing the nodes of %s before naming the next "+
+				"one: %w -- a read that failed is not a cluster with no nodes, and naming a node "+
+				"over one that already exists is the collision this list exists to avoid; nothing "+
+				"was provisioned", n.cluster, err)
+		}
+		prefix := strings.ToLower(n.cluster) + "-node"
+		for i := range list.Items {
+			if ordinal, ok := nodeOrdinalInName(prefix, list.Items[i].Name); ok {
+				present[ordinal] = true
+			}
+		}
+	}
+	for ordinal := 1; ; ordinal++ {
+		if !present[ordinal] {
+			return ordinal, nil
+		}
+	}
+}
+
+func (n *tenantNodes) confirmJoined(ctx context.Context, host nodeHost, name string) error {
 	deadline := time.Now().Add(NodeJoinTimeout)
 	for {
-		reported, err := nodeReported(ctx, n.tenant, n.cluster, n.nodeName)
+		reported, err := nodeReported(ctx, n.tenant, n.cluster, name)
 		if err != nil {
 			return err
 		}
 		if reported {
-			return n.host.ConfirmJoined(ctx)
+			return host.ConfirmJoined(ctx)
 		}
-		if fatal := guestFatal(n.host); fatal != "" {
+		if fatal := guestFatal(host); fatal != "" {
 			return fmt.Errorf("clusterprovider: node %s of %s stopped making progress before the "+
 				"tenant cluster reported it: %s -- the guest's own words are returned here rather "+
 				"than waiting out the join timeout, because a host that died at its first step and "+
 				"a host that is merely slow look identical until the clock runs out, and only one "+
-				"of them is fixed by waiting", n.nodeName, n.cluster, fatal)
+				"of them is fixed by waiting", name, n.cluster, fatal)
 		}
 		if time.Now().After(deadline) {
 			n.log.Warn("clusterprovider: the tenant cluster has not reported this node within the "+
@@ -358,7 +448,7 @@ func (n *tenantNodes) confirmJoined(ctx context.Context) error {
 				"the command is up and k3s has not registered it -- and the next pass re-observes "+
 				"and confirms it, because the count the scale decision reads is the tenant "+
 				"cluster's own node list and not this phase",
-				"cluster", n.cluster, "node", n.nodeName, "timeout", NodeJoinTimeout)
+				"cluster", n.cluster, "node", name, "timeout", NodeJoinTimeout)
 			return nil
 		}
 		select {
@@ -374,24 +464,55 @@ func (n *tenantNodes) Teardown(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := n.host.Teardown(ctx); err != nil {
-		return err
-	}
-	if err := client.CoreV1().Nodes().Delete(ctx, n.nodeName, metav1.DeleteOptions{}); err != nil {
-		if apierrors.IsNotFound(err) {
-			n.log.Info("clusterprovider: the tenant cluster holds no Node object for this node",
-				"cluster", n.cluster, "node", n.nodeName)
-			return nil
+	n.mu.Lock()
+	held := n.heldNodesLocked()
+	n.mu.Unlock()
+
+	var problems []error
+	for _, node := range held {
+		if err := node.host.Teardown(ctx); err != nil {
+			problems = append(problems, err)
+			continue
 		}
-		return fmt.Errorf("clusterprovider: deleting the tenant cluster's Node object %s: %w -- "+
-			"the guest is stopped, and this object is the count the scale decision reads: left "+
-			"behind it reads as a node that still exists, so the next pass tears down a node that "+
-			"is already gone and the cluster never reaches the zero state",
-			n.nodeName, err)
+		if err := client.CoreV1().Nodes().Delete(ctx, node.name, metav1.DeleteOptions{}); err != nil {
+			if apierrors.IsNotFound(err) {
+				n.log.Info("clusterprovider: the tenant cluster holds no Node object for this node",
+					"cluster", n.cluster, "node", node.name)
+				continue
+			}
+			problems = append(problems, fmt.Errorf("clusterprovider: deleting the tenant cluster's "+
+				"Node object %s: %w -- the guest is stopped, and this object is the count the scale "+
+				"decision reads: left behind it reads as a node that still exists, so the next pass "+
+				"tears down a node that is already gone and the cluster never reaches the zero state",
+				node.name, err))
+			continue
+		}
+		n.log.Info("clusterprovider: removed the node from the tenant cluster",
+			"cluster", n.cluster, "node", node.name)
 	}
-	n.log.Info("clusterprovider: removed the node from the tenant cluster",
-		"cluster", n.cluster, "node", n.nodeName)
+	if len(problems) > 0 {
+		return errors.Join(problems...)
+	}
+	n.mu.Lock()
+	n.extra = nil
+	n.mu.Unlock()
 	return nil
+}
+
+func (n *tenantNodes) heldNodesLocked() []heldNode {
+	out := make([]heldNode, 0, 1+len(n.extra))
+	if n.host != nil {
+		out = append(out, heldNode{name: n.nodeName, host: n.host})
+	}
+	ordinals := make([]int, 0, len(n.extra))
+	for ordinal := range n.extra {
+		ordinals = append(ordinals, ordinal)
+	}
+	slices.Sort(ordinals)
+	for _, ordinal := range ordinals {
+		out = append(out, n.extra[ordinal])
+	}
+	return out
 }
 
 func (n *tenantNodes) client(ctx context.Context) (kubernetes.Interface, error) {
@@ -450,7 +571,7 @@ func (h *nodeHosts) forCluster(cluster string) (scale.Nodes, error) {
 	if n, ok := h.hosts[cluster]; ok {
 		return n, nil
 	}
-	created, err := newNodeHost(h.opts, h.log, cluster)
+	created, err := newNodeHost(h.opts, h.log, cluster, nodeID)
 	if err != nil {
 		return nil, err
 	}
@@ -485,20 +606,25 @@ func (h *nodeHosts) reap(ctx context.Context) error {
 	var problems []error
 	for _, cluster := range clusters {
 		n := held[cluster]
-		h.log.Info("cluster provider: reaping the node host this gateway booted a guest for",
-			"cluster", cluster, "node", n.nodeName)
-		if err := n.host.Reap(ctx); err != nil {
-			problems = append(problems, fmt.Errorf(
-				"clusterprovider: reaping node %s of %s on shutdown: %w -- the agent outlives this "+
-					"process whichever way it exits, and the record it left is what makes the next "+
-					"gateway's Provision answer ErrAlreadyRunning, so that cluster can never "+
-					"provision a node again", n.nodeName, cluster, err))
+		n.mu.Lock()
+		nodes := n.heldNodesLocked()
+		n.mu.Unlock()
+		for _, node := range nodes {
+			h.log.Info("cluster provider: reaping the node host this gateway booted a guest for",
+				"cluster", cluster, "node", node.name)
+			if err := node.host.Reap(ctx); err != nil {
+				problems = append(problems, fmt.Errorf(
+					"clusterprovider: reaping node %s of %s on shutdown: %w -- the agent outlives this "+
+						"process whichever way it exits, and the record it left is what makes the next "+
+						"gateway's Provision answer ErrAlreadyRunning, so that cluster can never "+
+						"provision a node again", node.name, cluster, err))
+			}
 		}
 	}
 	return errors.Join(problems...)
 }
 
-func newNodeHost(opts nodeHostsOptions, log *slog.Logger, cluster string) (*tenantNodes, error) {
+func newNodeHost(opts nodeHostsOptions, log *slog.Logger, cluster, nodeID string) (*tenantNodes, error) {
 	apiserver, err := opts.Allocator.Allocate(portallocator.Request{
 		Cluster: cluster, Purpose: portallocator.PurposeK3sSecure,
 	})
@@ -547,6 +673,7 @@ func newNodeHost(opts nodeHostsOptions, log *slog.Logger, cluster string) (*tena
 		host:     host,
 		tenant:   opts.Tenant,
 		log:      log,
+		opts:     opts,
 	}, nil
 }
 
@@ -593,6 +720,22 @@ func nodeOrdinal(nodeID string) (int, error) {
 			"to", nodeID, ordinal)
 	}
 	return ordinal, nil
+}
+
+func nodeIDFor(ordinal int) string {
+	return fmt.Sprintf("node%d", ordinal)
+}
+
+func nodeOrdinalInName(prefix, name string) (int, bool) {
+	rest, ok := strings.CutPrefix(strings.ToLower(name), prefix)
+	if !ok || rest == "" {
+		return 0, false
+	}
+	ordinal, err := strconv.Atoi(rest)
+	if err != nil || ordinal < 1 {
+		return 0, false
+	}
+	return ordinal, true
 }
 
 func newNodeHostOf(substrate nodeSubstrate, opts nodeHostsOptions, log *slog.Logger, cluster, name string, apiserverPort int, clusterDir string) (nodeHost, error) {

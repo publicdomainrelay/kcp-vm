@@ -12,6 +12,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -224,42 +225,74 @@ func TestANonHTTPSServerIsRefused(t *testing.T) {
 	}
 }
 
-func TestAMintedIdentityThatIsNotTheOneAskedForIsRefused(t *testing.T) {
-	for _, tc := range []struct {
-		name  string
-		extra map[string]string
-		want  string
-	}{
-		{"a common name the minting path cannot produce",
-			map[string]string{"SOCIALWEB_TENANTCREDENTIAL_COMMON_NAME": "gitlab-runner"}, "gitlab-runner"},
-		{"an organization the minting path cannot produce",
-			map[string]string{"SOCIALWEB_TENANTCREDENTIAL_ORGANIZATIONS": "gitlab-runner"}, "gitlab-runner"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			stateDir := t.TempDir()
-			outDir := filepath.Join(t.TempDir(), "cred")
-			seedClusterTLS(t, stateDir, testCluster)
-			setEnv(t, runEnv(stateDir, outDir, tc.extra))
+func TestTheRequestedIdentityIsTheOneMintedAndTheCheckCanFail(t *testing.T) {
+	stateDir := t.TempDir()
+	outDir := filepath.Join(t.TempDir(), "cred")
+	seedClusterTLS(t, stateDir, testCluster)
+	setEnv(t, runEnv(stateDir, outDir, map[string]string{
+		"SOCIALWEB_TENANTCREDENTIAL_COMMON_NAME":   "gitlab-runner",
+		"SOCIALWEB_TENANTCREDENTIAL_ORGANIZATIONS": "socialweb:runners,system:authenticated",
+	}))
 
-			_, err := captureStdout(t, run)
-			if err == nil {
-				t.Fatal("a credential whose identity is not the one that was asked for was accepted: " +
-					"the operator's RBAC binds the requested identity, so a mismatch is a credential " +
-					"no rule matches")
-			}
-			if !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("the refusal does not name %q, so an operator cannot tell what differs: %v",
-					tc.want, err)
-			}
-			left, readErr := os.ReadDir(outDir)
-			if readErr != nil && !os.IsNotExist(readErr) {
-				t.Fatalf("read %s: %v", outDir, readErr)
-			}
-			if len(left) != 0 {
-				t.Fatalf("a refused run wrote %d file(s): the certificate is the artifact, and a "+
-					"credential that does not match what was asked for must not reach disk", len(left))
-			}
-		})
+	if _, err := captureStdout(t, run); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	leaf, err := parseWritten(t, filepath.Join(outDir, "tls.crt"))
+	if err != nil {
+		t.Fatalf("parse the written leaf: %v", err)
+	}
+	if leaf.Subject.CommonName != "gitlab-runner" {
+		t.Fatalf("the written certificate authenticates as %q and the operator asked for "+
+			"gitlab-runner, so the requested identity did not reach the certificate",
+			leaf.Subject.CommonName)
+	}
+	if !slices.Equal(leaf.Subject.Organization, []string{"socialweb:runners", "system:authenticated"}) {
+		t.Fatalf("the written certificate carries the organizations %v and the operator asked for "+
+			"[socialweb:runners system:authenticated]", leaf.Subject.Organization)
+	}
+
+	if err := checkIdentity(leaf, "someone-else", leaf.Subject.Organization); err == nil {
+		t.Fatal("the mismatch check accepted a credential whose CommonName is not the one asked " +
+			"for, so it can only ever pass")
+	}
+	if err := checkIdentity(leaf, "gitlab-runner", []string{"another-group"}); err == nil {
+		t.Fatal("the mismatch check accepted a credential whose organizations are not the ones " +
+			"asked for, so it can only ever pass")
+	}
+}
+
+func parseWritten(t *testing.T, path string) (*x509.Certificate, error) {
+	t.Helper()
+	block, _ := pem.Decode(readFile(t, path))
+	if block == nil {
+		t.Fatalf("%s holds no PEM block", path)
+	}
+	return x509.ParseCertificate(block.Bytes)
+}
+
+func TestTheValidForKnobReachesTheWrittenCertificate(t *testing.T) {
+	stateDir := t.TempDir()
+	outDir := filepath.Join(t.TempDir(), "cred")
+	seedClusterTLS(t, stateDir, testCluster)
+	validFor := 90 * time.Minute
+	setEnv(t, runEnv(stateDir, outDir, map[string]string{
+		"SOCIALWEB_TENANTCREDENTIAL_VALID_FOR": validFor.String(),
+	}))
+
+	before := time.Now()
+	if _, err := captureStdout(t, run); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	leaf, err := parseWritten(t, filepath.Join(outDir, "tls.crt"))
+	if err != nil {
+		t.Fatalf("parse the written leaf: %v", err)
+	}
+	want := before.Add(validFor)
+	if leaf.NotAfter.Before(want.Add(-5*time.Minute)) || leaf.NotAfter.After(want.Add(5*time.Minute)) {
+		t.Fatalf("the written certificate expires at %s and %s was asked for from %s, so VALID_FOR "+
+			"never reached the mint and the credential silently carried the ten-year default",
+			leaf.NotAfter.UTC(), validFor, before.UTC())
 	}
 }
 

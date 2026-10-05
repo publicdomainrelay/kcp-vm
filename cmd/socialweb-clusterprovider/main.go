@@ -238,8 +238,12 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 	}
 	scaleDriver, err := scaledriver.New(nodeHosts.forCluster, scaledriver.Options{
 		Observe: nodeObserver.Observe,
-		Scale:   scale.Options{Hold: cfg.ScaleHold},
-		Log:     log,
+		Scale: scale.Options{
+			Hold:        cfg.ScaleHold,
+			MaxNodes:    cfg.ScaleMaxNodes,
+			PodsPerNode: cfg.ScalePodsPerNode,
+		},
+		Log: log,
 	})
 	if err != nil {
 		return Deps{}, err

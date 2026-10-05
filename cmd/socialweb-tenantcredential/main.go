@@ -41,8 +41,8 @@ func run() error {
 	if err := refuseExisting(cfg.OutDir); err != nil {
 		return err
 	}
-	restCfg, err := clusterprovider.MintTenantCredentialForCluster(
-		context.Background(), cfg.StateDir, cfg.Cluster, cfg.Server)
+	restCfg, err := clusterprovider.MintTenantCredentialForClusterAs(
+		context.Background(), cfg.StateDir, cfg.Cluster, cfg.Server, cfg.CommonName, cfg.Organizations, cfg.ValidFor)
 	if err != nil {
 		return err
 	}

@@ -4,6 +4,7 @@ package clusterprovider
 
 import (
 	"bytes"
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -20,6 +21,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -646,5 +648,111 @@ func TestTheTenantCredentialCannotReachAUser(t *testing.T) {
 	if err := kubeconfig.AssertClean(device); err != nil {
 		t.Fatalf("AssertClean refused the document the gateway hands a device, so the refusal "+
 			"above is a check that refuses everything rather than a boundary: %v", err)
+	}
+}
+
+func seedClusterTLSAt(t *testing.T, dataDir string, clientCA, serverCA *testCA) {
+	t.Helper()
+	tlsDir := filepath.Join(dataDir, "server", "tls")
+	if err := os.MkdirAll(tlsDir, 0o700); err != nil {
+		t.Fatalf("mkdir %s: %v", tlsDir, err)
+	}
+	for _, f := range []struct {
+		name string
+		data []byte
+	}{
+		{"client-ca.crt", clientCA.certPEM},
+		{"client-ca.key", clientCA.keyPEM},
+		{"server-ca.crt", serverCA.certPEM},
+	} {
+		if err := os.WriteFile(filepath.Join(tlsDir, f.name), f.data, 0o600); err != nil {
+			t.Fatalf("write %s: %v", f.name, err)
+		}
+	}
+}
+
+func TestTheAsEntryPointMintsTheExactIdentityItWasAskedFor(t *testing.T) {
+	clientCA := newTestCA(t, "k3s-client-ca")
+	serverCA := newTestCA(t, "k3s-server-ca")
+	stateDir := t.TempDir()
+	cluster := "tenant-a"
+	dataDir, err := ClusterDataDir(stateDir, cluster)
+	if err != nil {
+		t.Fatalf("ClusterDataDir: %v", err)
+	}
+	seedClusterTLSAt(t, dataDir, clientCA, serverCA)
+
+	commonName := "gitlab-runner"
+	organizations := []string{"socialweb:runners", "system:authenticated"}
+
+	cfg, err := MintTenantCredentialForClusterAs(
+		context.Background(), stateDir, cluster, testTenantServer, commonName, organizations, 0)
+	if err != nil {
+		t.Fatalf("MintTenantCredentialForClusterAs: %v", err)
+	}
+	if len(cfg.TLSClientConfig.CAData) == 0 {
+		t.Fatal("the minted credential carries no CAData, so the apiserver it dials could not be verified")
+	}
+	if len(cfg.TLSClientConfig.CertData) == 0 {
+		t.Fatal("the minted credential carries no CertData, so there is no identity to present")
+	}
+	if len(cfg.TLSClientConfig.KeyData) == 0 {
+		t.Fatal("the minted credential carries no KeyData, so the certificate it carries proves nothing")
+	}
+
+	leaf := leafOf(t, cfg)
+	if leaf.Subject.CommonName != commonName {
+		t.Fatalf("the credential authenticates as %q and %q was asked for: the certificate is the "+
+			"artifact, so an identity read off the input rather than off the certificate is the gap "+
+			"this entry point closes", leaf.Subject.CommonName, commonName)
+	}
+	if !slices.Equal(leaf.Subject.Organization, organizations) {
+		t.Fatalf("the credential carries the organizations %v and %v were asked for",
+			leaf.Subject.Organization, organizations)
+	}
+	if leaf.Subject.CommonName == SuperuserName {
+		t.Fatalf("the credential authenticates as the cluster superuser %q, so the requested "+
+			"identity did not take effect", SuperuserName)
+	}
+	if chains := verifyAgainst(t, clientCA, leaf); len(chains) != 1 {
+		t.Fatalf("the credential verifies through %d chains, not the one ClientCA that signed it", len(chains))
+	}
+	if cfg.Host != testTenantServer {
+		t.Fatalf("the credential dials %q and it was minted for %q", cfg.Host, testTenantServer)
+	}
+}
+
+func TestTheAsEntryPointRefusesAnEmptyCommonNameOrNoOrganizationByName(t *testing.T) {
+	clientCA := newTestCA(t, "k3s-client-ca")
+	serverCA := newTestCA(t, "k3s-server-ca")
+	stateDir := t.TempDir()
+	cluster := "tenant-a"
+
+	for _, tc := range []struct {
+		name          string
+		commonName    string
+		organizations []string
+		want          error
+	}{
+		{"an empty CommonName", "", []string{"socialweb:runners"}, ErrNoCredentialCommonName},
+		{"no organization", "gitlab-runner", nil, ErrNoCredentialOrganization},
+		{"an empty organization", "gitlab-runner", []string{""}, ErrNoCredentialOrganization},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dataDir, err := ClusterDataDir(stateDir, cluster)
+			if err != nil {
+				t.Fatalf("ClusterDataDir: %v", err)
+			}
+			seedClusterTLSAt(t, dataDir, clientCA, serverCA)
+			cfg, err := MintTenantCredentialForClusterAs(
+				context.Background(), stateDir, cluster, testTenantServer, tc.commonName, tc.organizations, 0)
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("the refusal is %v, and the caller reading it cannot tell that the "+
+					"requested identity is malformed", err)
+			}
+			if cfg != nil {
+				t.Fatal("a refused mint returned a credential alongside the error")
+			}
+		})
 	}
 }

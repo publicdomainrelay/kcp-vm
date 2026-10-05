@@ -249,21 +249,23 @@ func fourstepConfig(t *testing.T, bins fourstepBins) Config {
 			"three control-plane ports on this host", err)
 	}
 	env := map[string]string{
-		"SOCIALWEB_KCP_HOST":                          "https://127.0.0.1:6443",
-		"SOCIALWEB_KCP_KUBECONFIG":                    filepath.Join(stateDir, "kcp.yaml"),
-		"SOCIALWEB_CLUSTERPROVIDER_LEASE_PATH":        filepath.Join(stateDir, "leases.json"),
-		"SOCIALWEB_CLUSTERPROVIDER_JOIN":              fourstepCluster,
-		"SOCIALWEB_GATEWAY_MINT_KUBECONFIGS":          mintDir,
-		"SOCIALWEB_CLUSTERPROVIDER_DATASTORE_HAS_ROW": "false",
-		"SOCIALWEB_CLUSTERPROVIDER_STATE_DIR":         stateDir,
-		"SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE":         bins.substrate,
-		"SOCIALWEB_CLUSTERPROVIDER_HOST":              host,
-		"SOCIALWEB_CLUSTERPROVIDER_NETWORK":           NetworkPasta,
-		"SOCIALWEB_CLUSTERPROVIDER_IMAGE_OUT_DIR":     os.Getenv(fourstepImageStoreEnv),
-		"SOCIALWEB_CLUSTERPROVIDER_IMAGE_CONFIG":      bins.imageConfig,
-		"SOCIALWEB_CLUSTERPROVIDER_NODE_AGENT":        os.Getenv(fourstepAgentEnv),
-		"SOCIALWEB_CLUSTERPROVIDER_PORT_RANGE":        liveports.Text(slot),
-		"SOCIALWEB_CLUSTERPROVIDER_SCALE_HOLD":        fourstepHold(),
+		"SOCIALWEB_KCP_HOST":                            "https://127.0.0.1:6443",
+		"SOCIALWEB_KCP_KUBECONFIG":                      filepath.Join(stateDir, "kcp.yaml"),
+		"SOCIALWEB_CLUSTERPROVIDER_LEASE_PATH":          filepath.Join(stateDir, "leases.json"),
+		"SOCIALWEB_CLUSTERPROVIDER_JOIN":                fourstepCluster,
+		"SOCIALWEB_GATEWAY_MINT_KUBECONFIGS":            mintDir,
+		"SOCIALWEB_CLUSTERPROVIDER_DATASTORE_HAS_ROW":   "false",
+		"SOCIALWEB_CLUSTERPROVIDER_STATE_DIR":           stateDir,
+		"SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE":           bins.substrate,
+		"SOCIALWEB_CLUSTERPROVIDER_HOST":                host,
+		"SOCIALWEB_CLUSTERPROVIDER_NETWORK":             NetworkPasta,
+		"SOCIALWEB_CLUSTERPROVIDER_IMAGE_OUT_DIR":       os.Getenv(fourstepImageStoreEnv),
+		"SOCIALWEB_CLUSTERPROVIDER_IMAGE_CONFIG":        bins.imageConfig,
+		"SOCIALWEB_CLUSTERPROVIDER_NODE_AGENT":          os.Getenv(fourstepAgentEnv),
+		"SOCIALWEB_CLUSTERPROVIDER_PORT_RANGE":          liveports.Text(slot),
+		"SOCIALWEB_CLUSTERPROVIDER_SCALE_HOLD":          fourstepHold(),
+		"SOCIALWEB_CLUSTERPROVIDER_SCALE_MAX_NODES":     os.Getenv(envScaleMaxNodes),
+		"SOCIALWEB_CLUSTERPROVIDER_SCALE_PODS_PER_NODE": os.Getenv(envScalePodsPerNode),
 	}
 	if bins.substrate == SubstrateQEMU {
 		env["SOCIALWEB_CLUSTERPROVIDER_QEMU"] = bins.vmmBin
@@ -522,8 +524,12 @@ func fourstepBringUp(t *testing.T, ctx context.Context, cfg Config, bins fourste
 
 	driver, err := scaledriver.New(nodes.forCluster, scaledriver.Options{
 		Observe: clusterprovider.NodeObserver{Client: tenant}.Observe,
-		Scale:   scale.Options{Hold: cfg.ScaleHold},
-		Log:     log,
+		Scale: scale.Options{
+			Hold:        cfg.ScaleHold,
+			MaxNodes:    cfg.ScaleMaxNodes,
+			PodsPerNode: cfg.ScalePodsPerNode,
+		},
+		Log: log,
 	})
 	if err != nil {
 		t.Fatalf("scaledriver.New: %v", err)

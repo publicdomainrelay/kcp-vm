@@ -1266,6 +1266,37 @@ suite.
 `SOCIALWEB_CLUSTERPROVIDER_SCALE_HOLD` is the down-direction grace. It is a parameter rather than a
 constant because the number has not been derived by measurement.
 
+**The decision carries a target total, and the boolean that reaches zero is untouched.** The
+narrow-predicate argument above is not weakened by counting: `Intent` stays a boolean, and a
+SEPARATE `Demand(o)` counts the work as a pod count, so an error in the count cannot make zero
+unreachable - it can only ask for the wrong number of nodes. `Target(o, opts)` is
+`ceil(Demand / PodsPerNode)` clamped into `[1, MaxNodes]` when there is intent, and `0` when there
+is not, which is the only place the ratio is applied. `Decision.Nodes` is therefore a target total
+rather than a delta, and the driver reconciles the cluster's actual count - re-read from the Node
+CRs, never remembered - to it.
+
+**`MaxNodes` defaults to 1, so a cluster configured as before behaves as before.** Named defaults
+are `DefaultMaxNodes = 1` and `DefaultPodsPerNode = 8`, resolved in `Options` the same way
+`hold()` resolves the grace, and settable per cluster as
+`SOCIALWEB_CLUSTERPROVIDER_SCALE_MAX_NODES` and `SOCIALWEB_CLUSTERPROVIDER_SCALE_PODS_PER_NODE`. A
+`MaxNodes` below `DefaultMaxNodes` is REFUSED rather than clamped, because a ceiling under one is
+not a smaller cluster - it is a configuration whose only consistent reading is "never place the work".
+
+**Scale-in is all-or-nothing, and that limit is stated rather than latent.** While there is work
+the target only grows, to the cap; when the work stops the cluster goes to zero, exactly as it
+always did. An intermediate count is not reachable, because scaling three nodes to two needs an
+answer to "which node, and does its work move", and no instrument here measures that yet. The
+branch that would do it reads `None` with a reason naming this paragraph, so a future scale-in has
+one place to change rather than a silent gap. The ceiling also interacts with the cluster's own
+`/24`: every node takes an address from the range `subnetallocator` leased, so a ceiling the range
+cannot address is a boot failure at the third node rather than a scheduling one.
+
+The reading for this is a table case: the same observation that decided `Provision, Nodes: 1`
+before now decides `Provision, Nodes: <target>` with `MaxNodes` raised, and every existing case at
+`MaxNodes == 1` is byte-for-byte what it was. What is NOT yet read is a live cluster holding more
+than one node at once - `NEXT.yaml` AUTO-1 stays open for that, and `docs/plans/0002` names the
+instrument: three concurrent pods, three joined nodes, and a return to zero.
+
 ## 11. Teardown, and the gate
 
 Teardown is gated, because a teardown that races a running job is a lost write, and after rotation
@@ -1616,7 +1647,9 @@ section 15, leaving three: the vault's own store line was the one the design alr
 was implemented rather than left open. VAULT-2 has since closed too: both vaults now speak TLS, and the
 root vault's listener authenticates its clients by certificate. VAULT-1 closed with it, having found
 that its own premise named a file `kcp` does not write. RIG-6 was opened and closed in the same window,
-by a rig run that tested a tree moving under it. One item is left: ESO-2.
+by a rig run that tested a tree moving under it. On 2026-10-05 five more were opened by the GitLab and
+cloud-controller-manager work: ESO-2 remains, and CCM-1, AUTO-1, GL-1 and GL-2 join it. Each was
+written from the code rather than from the request that produced it, and each names its instrument.
 **The live backlog is `NEXT.yaml`, which this section mirrors:
 an item is written here when it is opened and moves to section 15, with its readings, when it is
 closed.** The practice that produced the batch is the one worth keeping: the artefact was run and each
@@ -1634,6 +1667,47 @@ because it bounds a mechanism the rest of this document leans on.
   outside `default` is denied, and the failure reads as a broken ExternalSecret rather than as a grant
   that does not name it. The instrument is an install in another namespace still producing the Secret.
   `NEXT.yaml` ESO-2.
+
+- **The tenant cluster's Node objects carry no cloud identity, and nothing reconciles them.** A guest
+  joins as a Kubernetes Node, but nothing stamps `spec.providerID`, nothing sets the labels an
+  autoscaler would group by, and nothing removes the Node when a guest dies without a teardown. The
+  Node CR in kcp and the Node object in the tenant apiserver are two records of one guest with no link
+  between them. Section 10 gives the scale path a Node delete at teardown, at the composition root;
+  that covers the teardown it performs and not a guest that died on its own, which is the case a
+  controller exists to cover. `internal/cloudprovider` and `cmd/socialweb-cloud-controller-manager`
+  now exist and are unit-tested, and **nothing runs them**: a controller that nothing starts is a
+  design and not an installation, so this item stays open until plan
+  `docs/plans/0003-install-the-ccm-in-the-process-group.md` lands and the instrument below reads.
+  The instrument is a joined guest whose Node object carries a providerID derived from its Node CR,
+  and a Node object that disappears when its CR is removed while the agent is still up.
+  `NEXT.yaml` CCM-1.
+
+- **The scale decision cannot express more than one node.** `internal/scale` decides between zero and
+  one by construction: the intent test is deliberately coarse, which is what makes zero reachable, and
+  it carries no notion of capacity, so one pending pod and fifty pending pods decide identically. Two
+  concurrent CI jobs therefore cannot both be placed and the second waits, which is the wrong silence -
+  a queue is not a failure, but neither is it the state the operator asked for. The instrument is a
+  table case where the observation demands three nodes and the decision returns three, a case at the
+  cap, and the four-step proof still passing with its Deployments replaced by a pod count.
+  `NEXT.yaml` AUTO-1.
+
+- **Nothing exposes a minted tenant credential to an operator.** `internal/clusterprovider` can mint a
+  client certificate signed by a cluster's own ClientCA and valid only against that cluster, and no
+  command writes it anywhere an operator or a CI runner can use. Invariant 20 forbids handing anyone
+  the k3s-written admin kubeconfig, so without this tool every documented recipe for connecting a
+  client either violates an invariant or does not exist. The instrument is a run of the minting command
+  against a real cluster data dir producing three files a `kubectl` authenticates with, and a refusal
+  to overwrite an existing set. `NEXT.yaml` GL-1.
+
+- **A GitLab Runner off the kcp host cannot reach a tenant apiserver.** The apiserver binds loopback.
+  Off-host the only route is the kcp mount, which is a reverse proxy that carries bearers only, so the
+  exec and attach paths a CI runner needs are not guaranteed to traverse it. Making an off-host runner
+  work means publishing an authenticated front for the mount and the credential mint, which widens the
+  trust boundary the gateway (`cmd/socialweb-gateway/config.go:145`) and the container entrypoint keep
+  at loopback on purpose. Recorded rather than implemented, because it is a trust decision and not a
+  bug: the instrument is a runner off the host completing a job whose script requires `pods/exec`, with
+  the front it went through named and a statement of what that front exposes to whom.
+  `NEXT.yaml` GL-2.
 
 - **Whether the node half may ever run inside the control-plane container was answered by reading where
   the refusal lives, and the answer is a STATED LIMIT rather than an open question.** The allocator's
@@ -3019,6 +3093,76 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   byte-identical to `pki/ca/pem`; `admin-token-store` equals `xxd -p .admin-token-store`; deleting that
   file exits 1 naming the path. The correction is the entry: an item is a claim about where a fact
   lives, and this one named a file that `kcp` does not write.
+
+- **The vault's tenant PKI role pins the organization, so the only identity the vault can issue is
+  the superuser's.** `internal/clusterprovider/tenantcredential.go` had one path to a tenant
+  credential and it produced `system:admin` / `system:masters` - the reason being that the
+  vault-backed branch issues through the PKI role named by `VaultPKIRoleTenant`, and that role
+  pins `organization: system:masters` on every certificate it signs, while the non-vault branch
+  hardcoded the same pair. A CI runner or a controller that took that credential would hold
+  cluster-admin on the tenant, which is the "wider credential" `ErrNoClientCA`'s own text refuses
+  to reach for, and it makes any RBAC written against the runner decorative. The vault path
+  cannot be widened either: the PKI role is `pki/roles/tenant-superuser` (written by
+  `writeTenantPKIRole` in `internal/clusterprovider/vault.go`, named by `VaultPKIRoleTenant`) and
+  its role config pins `organization: system:masters`, so every certificate it issues carries that
+  group regardless of what the caller asks for. Closed by adding a second, disk-only entry point -
+  `MintTenantCredentialForClusterAs(ctx, stateDir, cluster, server, commonName, organizations,
+  validFor)` - which signs with the cluster's ClientCA directly and takes no vault path, so an
+  arbitrary CommonName and Organizations are honoured. The superuser entry points are unchanged;
+  the two are now distinguishable by name rather than by argument. Readings: a mint with
+  `COMMON_NAME=gitlab-runner` and `ORGANIZATIONS=socialweb:runners,system:authenticated` yields a
+  certificate whose parsed subject carries exactly those, with a single verified chain to the
+  signing ClientCA; the same test asserts the CommonName is not `system:admin`. A second reading,
+  taken because the CLI parsed a `VALID_FOR` it never used - a knob that looked like it worked and
+  did not - is the certificate's own `NotAfter` at `VALID_FOR=1h30m`: `delta=1h29m59s`, read off
+  the written `tls.crt` rather than off the configuration. The fact is recorded here rather than
+  left in the code as a comment, per the rule that a decision recorded in a comment is deleted the
+  next time comments are swept.
+
+- **The scale decision could not express more than one node. CLOSED 2026-10-05.** Before: `Decide`
+  returned `Provision, Nodes: 1` for any intent, so one pending pod and fifty pending pods decided
+  identically, and a second concurrent CI job waited rather than being placed. After: `Demand(o)` is
+  a separate pod-work COUNT, `Options.MaxNodes` (default 1) and `Options.PodsPerNode` (default 8)
+  bound `Target` at `ceil(Demand / PodsPerNode)` clamped to `[1, MaxNodes]`, and `Decision.Nodes` is
+  that target total. `scaledriver` calls `Provision` once per missing node until the re-read count
+  reaches the target, and each node gets a distinct id (`node1`, `node2`, ...) whose ordinal is read
+  back from the tenant cluster's own Node list rather than remembered. `Intent` stays a boolean and
+  `Demand > 0` agrees with `Intent` on every fixture, so the zero direction is untouched. MEASURED
+  2026-10-05: `TestThreeGitLabJobPodsScaleToThreeNodes` (`live_scalemax_test.go`) PASSES in 95.65 s
+  with `SOCIALWEB_CLUSTERPROVIDER_SCALE_MAX_NODES=3` and `..._SCALE_PODS_PER_NODE=1` - the decision
+  reads `Provision, Nodes: 3` with reason `intent and no node`, `kubectl get nodes` reports three,
+  three GitLab Runner job pods reach `Succeeded`, and past the 1m hold all three are reaped with the
+  control plane still `Ready`. A second, independent run of the same test reported 90.01 s; the two
+  runs used different leased apiserver ports (62102 and 62402), which is the same point the four-step
+  reading makes - the port is not a constant. Unit readings: `Target` is 0 at no demand, 1 at one
+  pod with
+  `PodsPerNode == 8`, 3 at seventeen pods, and 4 at a hundred pods with `MaxNodes == 4`, while the
+  default ceiling pins seventeen and a hundred pods to 1; at the default ceiling every existing
+  `Decide` case reproduces its previous action and count and the two reachable reasons are
+  byte-identical to the old strings; a failed scale-out stops the loop and leaves `State.Nodes` at 0;
+  the demand/`Intent` agreement case covers 20 fixtures. The two prior live proofs were re-run after
+  the harness change and still pass: the GitLab job pod in 84.93 s and the four-step in 100.53 s with
+  `INSTANCE_START_TO_READY_S=5.420`. WHAT THIS DOES NOT SHOW, stated because the numbers read
+  stronger than they are: the test asserts the CLUSTER reached three nodes, not that three guests
+  each hosted work - the scheduler placed all three pods on `liveweb-node1`, which the design permits,
+  so the evidence for three simultaneous guests is three `Provision` calls plus `kubectl get nodes`
+  listing three, together with an independent observation of two firecracker processes during the run.
+  No negative control was run either: that the test would fail with `MaxNodes` unset is argued from
+  `Target`'s ceiling rather than measured. Partial scale-in is deliberately not implemented (plan
+  0002 section 4.4), so the target only grows while intent exists.
+
+- **The live backlog was declared in four places and did not exist.** `AGENTS.md:18`,
+  `README.md:262`, `handoff.yaml:155` and section 14 of this document all name `NEXT.yaml` as the
+  live backlog - section 14 calls itself its mirror and carries the syntax to read it - and
+  `ls NEXT.yaml` answers `No such file or directory`. The file is not gitignored; it is absent.
+  This is the reverse of the defect this document keeps recording: not a list that outlived its
+  work, but a work list that never had a file, so the five references pointed at a page no operator
+  could read while the open items themselves lived only in section 14. Closed by writing the file
+  rather than by striking the references, because section 14 already held the items and the
+  references were the correct design: `NEXT.yaml` now carries ESO-2 and the four items this
+  iteration opened, each with the instrument that would close it. The reading is the two commands
+  that disagree: the four references, and `ls` on the path they name. The class is worth keeping in
+  view because it is the same one a green check is - a pointer with no referent reads as presence.
 
 ## 16. Vocabulary
 

@@ -50,12 +50,57 @@ proven:
     test: TestTheFourStepProofRunsThroughTheCompositionRoot
     location: cmd/socialweb-clusterprovider/live_fourstep_test.go
     result: PASS 97.65 s
+    reverified: >
+      PASS 103.10 s on 2026-10-05, same host, same command, all four steps, nothing deleted by hand.
+      Re-run because the GitLab and cloud-controller-manager work leans on this proof and a reading
+      that names no date cannot be told from a stale one. The 97.65 s entry is kept rather than
+      replaced: the two are different builds, and the newer one is the one that was watched.
     transitions:
       - Cluster CR reached Ready at its leased apiserver port with ZERO nodes
       - "`kubectl get nodes` empty and staying empty across passes"
       - a node joined ON DEMAND as liveweb-node1 Ready (Provision, nodes=1)
       - back to zero with the control plane still Ready and still listing its namespaces
     timing: INSTANCE_START_TO_READY_S = 9.749 / 9.609 (host-timed, firecracker InstanceStart to Node Ready)
+    timing_2026_10_05: INSTANCE_START_TO_READY_S = 5.430 (host-timed from the firecracker VMM's instance record to the Node's Ready condition, resolution 250 ms)
+  gitlab_job_pod_proof:
+    test: TestAGitLabJobPodIsPlacedOnAProvisionedNode
+    location: cmd/socialweb-clusterprovider/live_gitlab_ci_test.go
+    result: PASS 84.40 s (a second run of the same test reported 86.16 s), 2026-10-05
+    transitions:
+      - control plane Ready with zero nodes; `kubectl get nodes` empty
+      - namespace gitlab-runner created
+      - the Pod shape GitLab Runner's kubernetes executor creates is applied: one build container and one helper container in one Pod, RestartPolicy Never, labels job=gitlab-ci and runner.gitlab.com/job-id, no control-plane annotation
+      - the scale decision reads Provision with nodes=1
+      - the node joins on demand and the Pod reaches Succeeded
+      - the Pod's spec.nodeName equals the node the scale decision provisioned (liveweb-node1)
+      - the Pod is deleted; the decision reads Teardown; `kubectl get nodes` is empty again with the control plane still Ready
+    reads: >
+      This is the cluster half of "GitLab CI works here", measured. It is the runner's actual Pod
+      shape, not a Deployment standing in for it. The GitLab instance half - a pipeline going
+      green in GitLab's UI - is documented in docs/gitlab/ and NOT run on this host, because
+      gitlab/gitlab-ce is a multi-gigabyte image the gate never pulls.
+  three_node_scale_proof:
+    test: TestThreeGitLabJobPodsScaleToThreeNodes
+    location: cmd/socialweb-clusterprovider/live_scalemax_test.go
+    result: PASS 90.01 s (an earlier run of the same test reported 95.65 s), 2026-10-05
+    env: SOCIALWEB_CLUSTERPROVIDER_SCALE_MAX_NODES=3, SOCIALWEB_CLUSTERPROVIDER_SCALE_PODS_PER_NODE=1
+    transitions:
+      - control plane Ready with zero nodes at its own leased port; `kubectl get nodes` empty
+      - three GitLab Runner job pod shapes applied at once (each one build + one helper container)
+      - "the scale decision reads `Provision, Nodes: 3` with reason `intent and no node`"
+      - three nodes joined on demand; `kubectl get nodes` reports three
+      - all three job pods reached Succeeded
+      - the pods are deleted; the decision reads Teardown past the 1m hold; `kubectl get nodes` is empty again with the control plane still Ready
+    reads: >
+      Autoscaling to more than one node, measured. What it does NOT show, stated because the numbers
+      read stronger than they are: it asserts the CLUSTER reached three nodes, not that three guests
+      each hosted work. The scheduler placed all three pods on liveweb-node1, which the design
+      permits, so the evidence for three simultaneous guests is three Provision calls plus
+      `kubectl get nodes` listing three, together with an independent observation of two firecracker
+      processes during the run. No negative control was run: that the test would fail with MAX_NODES
+      unset is argued from Target's ceiling rather than measured. Partial scale-in is not implemented
+      (plan 0002 section 4.4), so the target only grows while intent exists and the down direction
+      remains the all-or-nothing teardown past the hold.
   control_plane_in_container:
     image: socialweb-control-plane:local
     files: deploy/control-plane-container/{Dockerfile,build.sh,validate.sh}

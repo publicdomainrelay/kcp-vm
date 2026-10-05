@@ -1,0 +1,88 @@
+version: 1
+generated: 2026-10-05
+repo: /home/johnandersen777/src/publicdomainrelay-kcp/socialweb-computer-kcp
+
+about: >
+  The live backlog. docs/ARCHITECTURE.md section 14 mirrors this file: an item is written here and
+  in section 14 when it is opened, and moves to section 15, with its before-and-after readings,
+  when it is closed. Closed items are NOT kept here, because a backlog that lists its own history
+  reads as complete. An item is a claim about the design, so each one names the instrument that
+  would close it, and an item whose instrument does not exist is not yet an item.
+
+  This file was declared the live backlog by AGENTS.md, README.md, handoff.yaml and section 14 of
+  the architecture document, and it did not exist. Four references to a missing file is the defect
+  class this repo keeps finding in the other direction, so the file is written rather than the
+  references struck: section 14 already held the items, and a mirror that does not exist is a
+  backlog nobody can read.
+
+open:
+  - id: ESO-2
+    title: The tenant grant admits the External Secrets controller by a hardcoded namespace.
+    body: >
+      An install outside `default` is denied, and the failure reads as a broken ExternalSecret
+      rather than as a grant that does not name it.
+    instrument: An install in another namespace still producing the Secret.
+
+  - id: CCM-1
+    title: The tenant cluster's Node objects carry no cloud identity and nothing reconciles them.
+    body: >
+      A guest joins as a Kubernetes Node, but nothing stamps `spec.providerID`, nothing sets the
+      labels an autoscaler would group by, and nothing deletes the Node when a guest dies without
+      a teardown. The Node CR in kcp and the Node object in the tenant apiserver are unlinked.
+      The scale path deletes the Node object from the composition root, which covers the teardown
+      it performs and not a guest that died on its own. A second instance of the same gap: a
+      gateway that restarts while two or more nodes are up holds only the first node in its
+      in-memory set, so the extra Node objects are not deleted by that process - the startup sweep
+      reaps the process records by walking data dirs, and the tenant-side Node objects outlive it.
+      `internal/cloudprovider` and `cmd/socialweb-cloud-controller-manager` now exist and are
+      unit-tested, and nothing runs them: a controller nothing starts is a design, not an
+      installation.
+    instrument: >
+      A joined guest whose Node object carries a providerID derived from its Node CR, and a Node
+      object that disappears when its Node CR is removed while the agent is still up.
+    next_step: docs/plans/0003-install-the-ccm-in-the-process-group.md
+
+  - id: FLAKE-1
+    title: A gate test depends on the network, so --fast can fail for reasons unrelated to a change.
+    body: >
+      `TestAnImageWhoseNameItsRecordDoesNotHashToIsRefusedInBothDirections` in
+      `cmd/socialweb-nodeimage` resolves a live registry tag to a digest. Two agents independently
+      saw it fail in a full `go test ./...` run and then pass in isolation in the same session, with
+      the package otherwise unchanged. A gate whose failure and success depend on a registry being
+      reachable is a gate that will be re-run until it is green, which is the habit that makes a
+      real red invisible.
+    instrument: >
+      The test either does not touch the network, or it names its network dependency the way
+      `internal/livegate` names its artifact ones, so an unreachable registry is a SKIP with a
+      reason and never a FAIL. Closing reading: a full `go test ./... -count=1` run with the
+      registry unreachable, passing or skipping with the reason printed.
+
+  - id: GL-1
+    title: Nothing exposes a minted tenant credential to an operator.
+    body: >
+      `internal/clusterprovider` can mint a client certificate signed by a cluster's own ClientCA,
+      but no command writes it anywhere an operator can use it. Invariant 20 forbids handing
+      anyone the k3s-written admin kubeconfig, so without this tool every documented recipe either
+      violates an invariant or does not exist.
+    instrument: >
+      A run of the minting command against a real cluster data dir that produces three files, each
+      of which a `kubectl` using them authenticates with, and a refusal to overwrite an existing
+      set.
+
+  - id: GL-2
+    title: A GitLab Runner off the kcp host cannot reach a tenant apiserver.
+    body: >
+      The apiserver binds loopback. Off-host the only route is the kcp mount, which is a reverse
+      proxy that carries bearers only, so the exec and attach paths a CI runner needs are not
+      guaranteed to traverse it. Making an off-host runner work means publishing an authenticated
+      front, which widens the trust boundary the gateway and the entrypoint keep at loopback on
+      purpose. Recorded rather than implemented, because it is a trust decision and not a bug.
+    instrument: >
+      A runner off the host completing a job whose script requires `pods/exec`, with the front it
+      went through named, and a statement of what that front exposes to whom.
+
+limits:
+  - title: One node per cluster is the v1 contract.
+    body: >
+      `handoff.yaml` names multi-node per cluster as out of scope for v1. AUTO-1 is the item that
+      changes that; until it closes, a runner must set `concurrent = 1`.

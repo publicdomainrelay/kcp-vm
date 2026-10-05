@@ -13,6 +13,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodefirecracker"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodevm"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/portallocator"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/scale"
 )
 
 func isAre(n int) string {
@@ -48,6 +49,10 @@ const (
 	envAuditPolicy      = "SOCIALWEB_CLUSTERPROVIDER_AUDIT_POLICY"
 
 	envScaleHold = "SOCIALWEB_CLUSTERPROVIDER_SCALE_HOLD"
+
+	envScaleMaxNodes = "SOCIALWEB_CLUSTERPROVIDER_SCALE_MAX_NODES"
+
+	envScalePodsPerNode = "SOCIALWEB_CLUSTERPROVIDER_SCALE_PODS_PER_NODE"
 
 	envSubstrate = "SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE"
 	envHost      = "SOCIALWEB_CLUSTERPROVIDER_HOST"
@@ -131,6 +136,10 @@ type Config struct {
 
 	ScaleHold time.Duration
 
+	ScaleMaxNodes int
+
+	ScalePodsPerNode int
+
 	TokenTimeout time.Duration
 
 	Interval time.Duration
@@ -165,6 +174,8 @@ func load(get func(string) string) (Config, error) {
 		GrantPath:        strings.TrimSpace(get(envGrant)),
 		Interval:         DefaultInterval,
 		LogLevel:         slog.LevelInfo,
+		ScaleMaxNodes:    scale.DefaultMaxNodes,
+		ScalePodsPerNode: scale.DefaultPodsPerNode,
 	}
 	if cfg.GrantPath == "" {
 		cfg.GrantPath = DefaultGrantPath
@@ -202,6 +213,34 @@ func load(get func(string) string) (Config, error) {
 			return Config{}, fmt.Errorf("%s must not be negative", envScaleHold)
 		}
 		cfg.ScaleHold = d
+	}
+
+	if raw := strings.TrimSpace(get(envScaleMaxNodes)); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("%s is not a whole number: %w", envScaleMaxNodes, err)
+		}
+		if n < 1 {
+			return Config{}, fmt.Errorf(
+				"%s is %d, and a ceiling below one node is not a smaller cluster: it is a cluster "+
+					"that can never place the work it has intent for. Leave it unset for the default "+
+					"of %d", envScaleMaxNodes, n, scale.DefaultMaxNodes)
+		}
+		cfg.ScaleMaxNodes = n
+	}
+
+	if raw := strings.TrimSpace(get(envScalePodsPerNode)); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("%s is not a whole number: %w", envScalePodsPerNode, err)
+		}
+		if n < 1 {
+			return Config{}, fmt.Errorf(
+				"%s is %d, and a node that holds fewer than one pod is not a capacity to divide by. "+
+					"Leave it unset for the default of %d", envScalePodsPerNode, n,
+				scale.DefaultPodsPerNode)
+		}
+		cfg.ScalePodsPerNode = n
 	}
 
 	for _, req := range []struct{ name, value string }{

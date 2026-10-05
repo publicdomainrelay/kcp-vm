@@ -222,6 +222,24 @@ func MintTenantCredentialForDataDir(ctx context.Context, dataDir, server string)
 	return MintTenantCredential(o)
 }
 
+func MintTenantCredentialForClusterAs(ctx context.Context, stateDir, cluster, server, commonName string, organizations []string, validFor time.Duration) (*rest.Config, error) {
+	dataDir, err := ClusterDataDir(stateDir, cluster)
+	if err != nil {
+		return nil, err
+	}
+	return MintTenantCredentialForDataDirAs(dataDir, server, commonName, organizations, validFor)
+}
+
+func MintTenantCredentialForDataDirAs(dataDir, server, commonName string, organizations []string, validFor time.Duration) (*rest.Config, error) {
+	return MintTenantCredential(CredentialOptions{
+		DataDir:       dataDir,
+		Server:        server,
+		CommonName:    commonName,
+		Organizations: organizations,
+		ValidFor:      validFor,
+	})
+}
+
 func mintTenantCredentialFromVault(ctx context.Context, o CredentialOptions, port int, token string) (*rest.Config, error) {
 	addr := VaultAddr(port)
 	if o.DataDir == "" {

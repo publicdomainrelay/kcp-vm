@@ -1170,3 +1170,87 @@ func waitGone(t *testing.T, pid int) {
 	t.Fatalf("pid %d is still there: a guest left running keeps naming its node at the cluster's "+
 		"apiserver, and the record it leaves blocks that cluster from ever provisioning again", pid)
 }
+
+func TestTheNodeIDForAnOrdinalRoundTripsThroughItsName(t *testing.T) {
+	if got := nodeIDFor(3); got != "node3" {
+		t.Fatalf("nodeIDFor(3) = %q, want node3", got)
+	}
+	if ordinal, err := nodeOrdinal(nodeIDFor(7)); err != nil || ordinal != 7 {
+		t.Fatalf("nodeOrdinal(%q) = %d, %v, want 7", nodeIDFor(7), ordinal, err)
+	}
+	if ordinal, ok := nodeOrdinalInName("liveweb-node", "liveweb-node3"); !ok || ordinal != 3 {
+		t.Fatalf("nodeOrdinalInName(liveweb-node3) = %d, %v, want 3", ordinal, ok)
+	}
+	for _, bad := range []string{"liveweb-node0", "liveweb-node", "liveweb-nodex", "secondweb-node1", "liveweb-node1-extra"} {
+		if ordinal, ok := nodeOrdinalInName("liveweb-node", bad); ok {
+			t.Fatalf("nodeOrdinalInName(%q) = %d, want not-ok: another cluster's name or a "+
+				"non-ordinal suffix must not be read as this cluster's node", bad, ordinal)
+		}
+	}
+}
+
+func TestTheNextOrdinalComesFromTheTenantClustersOwnNodes(t *testing.T) {
+	cases := []struct {
+		name  string
+		nodes []string
+		want  int
+	}{
+		{"no nodes", nil, 1},
+		{"one node", []string{"liveweb-node1"}, 2},
+		{"two nodes", []string{"liveweb-node1", "liveweb-node2"}, 3},
+		{"a gap is filled", []string{"liveweb-node1", "liveweb-node3"}, 2},
+		{"another cluster's nodes are ignored", []string{"secondweb-node1", "secondweb-node2"}, 1},
+	}
+	for _, tc := range cases {
+		tenant, _ := tenantClientFor(t, tc.nodes...)
+		n := &tenantNodes{cluster: "liveweb", tenant: tenant, log: testLogger()}
+		got, err := n.nextOrdinal(context.Background())
+		if err != nil {
+			t.Fatalf("%s: nextOrdinal: %v", tc.name, err)
+		}
+		if got != tc.want {
+			t.Fatalf("%s: nextOrdinal = %d, want %d", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestTheNextOrdinalRefusesWhenTheTenantClientCannotBeBuilt(t *testing.T) {
+	cause := errors.New("no credential")
+	tenant := func(context.Context, string) (kubernetes.Interface, error) { return nil, cause }
+	n := &tenantNodes{cluster: "liveweb", tenant: tenant, log: testLogger()}
+	if _, err := n.nextOrdinal(context.Background()); !errors.Is(err, cause) {
+		t.Fatalf("nextOrdinal = %v, want the client's own failure wrapped: a read that failed is "+
+			"not a cluster with no nodes, and naming node1 over an existing node1 is the collision "+
+			"this list exists to avoid", err)
+	}
+}
+
+func TestTheNodeTeardownStopsEveryNodeTheActuatorHolds(t *testing.T) {
+	tenant, client := tenantClientFor(t, "liveweb-node1", "liveweb-node2")
+	first := &fakeNodeHost{}
+	second := &fakeNodeHost{}
+	n := &tenantNodes{
+		cluster: "liveweb", nodeName: "liveweb-node1", host: first, tenant: tenant,
+		log: testLogger(),
+		extra: map[int]heldNode{
+			2: {name: "liveweb-node2", host: second},
+		},
+	}
+	if err := n.Teardown(context.Background()); err != nil {
+		t.Fatalf("Teardown: %v", err)
+	}
+	if provisions, teardowns := first.calls(); provisions != 0 || teardowns != 1 {
+		t.Fatalf("node1's host saw %d provisions, %d teardowns", provisions, teardowns)
+	}
+	if provisions, teardowns := second.calls(); provisions != 0 || teardowns != 1 {
+		t.Fatalf("node2's host saw %d provisions, %d teardowns", provisions, teardowns)
+	}
+	if tenantNode(t, client, "liveweb-node1") || tenantNode(t, client, "liveweb-node2") {
+		t.Fatal("the teardown left a node it held in the tenant cluster: the tenant's own node " +
+			"list is the count the scale decision reads, and a node left there is one the cluster " +
+			"can never be observed at zero without")
+	}
+	if len(n.extra) != 0 {
+		t.Fatalf("the teardown left %d held nodes behind, so a later scale-up would reuse a name", len(n.extra))
+	}
+}
