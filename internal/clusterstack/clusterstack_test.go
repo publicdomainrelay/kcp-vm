@@ -43,6 +43,7 @@ func valid() Spec {
 		K3sSchedulerPort:              16448,
 		K3sCloudControllerManagerPort: 16449,
 		TokenFile:                     "/var/lib/socialweb/clusters/a/token",
+		CloudControllerManagerBinary:  "/usr/local/bin/socialweb-cloud-controller-manager",
 		Audit: Audit{
 			PolicyPath: "/etc/socialweb/audit-policy.yaml",
 			LogPath:    "/var/lib/socialweb/clusters/a/audit.log",
@@ -196,6 +197,27 @@ func TestK3sRefusesTheDirectAuditFlags(t *testing.T) {
 				"package emits is a preference rather than a requirement -- and the negative "+
 				"half of TestTheAuditFlagsTravelTogether asserts nothing", direct)
 		}
+	}
+}
+
+func TestTheCloudControllerManagerArgvIsItsBinaryAndNothingElse(t *testing.T) {
+	s := valid()
+	argv, err := s.Argv(procgroup.ComponentCloudControllerManager)
+	if err != nil {
+		t.Fatalf("Argv(%s): %v", procgroup.ComponentCloudControllerManager, err)
+	}
+	if len(argv) != 1 || argv[0] != s.CloudControllerManagerBinary {
+		t.Fatalf("argv = %v, want only the binary %q: the controller's cluster, credential and "+
+			"instance file ride its Env, never argv (invariants 3 and 13)",
+			argv, s.CloudControllerManagerBinary)
+	}
+}
+
+func TestACloudControllerManagerWithNoBinaryIsRefused(t *testing.T) {
+	s := valid()
+	s.CloudControllerManagerBinary = ""
+	if _, err := s.Argv(procgroup.ComponentCloudControllerManager); !errors.Is(err, ErrMissingCloudControllerManagerBinary) {
+		t.Fatalf("a stack naming the cloud controller manager with no binary was accepted: %v", err)
 	}
 }
 

@@ -15,6 +15,11 @@ about: >
   references struck: section 14 already held the items, and a mirror that does not exist is a
   backlog nobody can read.
 
+  Opened and closed on 2026-10-05 and therefore NOT listed below: CCM-1 (the cloud controller
+  manager is now in the process group and stamps a live Node with its provider ID) and AUTO-1 (the
+  scale decision carries a target total and three concurrent pods produce three nodes). Both are in
+  section 15 with their readings.
+
 open:
   - id: ESO-2
     title: The tenant grant admits the External Secrets controller by a hardcoded namespace.
@@ -23,24 +28,21 @@ open:
       rather than as a grant that does not name it.
     instrument: An install in another namespace still producing the Secret.
 
-  - id: CCM-1
-    title: The tenant cluster's Node objects carry no cloud identity and nothing reconciles them.
+  - id: CCM-2
+    title: A portless process-group member is invisible to the startup sweep.
     body: >
-      A guest joins as a Kubernetes Node, but nothing stamps `spec.providerID`, nothing sets the
-      labels an autoscaler would group by, and nothing deletes the Node when a guest dies without
-      a teardown. The Node CR in kcp and the Node object in the tenant apiserver are unlinked.
-      The scale path deletes the Node object from the composition root, which covers the teardown
-      it performs and not a guest that died on its own. A second instance of the same gap: a
-      gateway that restarts while two or more nodes are up holds only the first node in its
-      in-memory set, so the extra Node objects are not deleted by that process - the startup sweep
-      reaps the process records by walking data dirs, and the tenant-side Node objects outlive it.
-      `internal/cloudprovider` and `cmd/socialweb-cloud-controller-manager` now exist and are
-      unit-tested, and nothing runs them: a controller nothing starts is a design, not an
-      installation.
+      The cloud controller manager binds no port, and the sweep that reaps a previous gateway's
+      survivors (`cmd/socialweb-clusterprovider/nodesweep.go`) finds processes by the ports they
+      hold. So a controller left behind by a gateway that died without its reverse-order reap is not
+      discoverable by that sweep. The group's own `Reap` does stop it in the ordinary case
+      (invariant 21), so this is the abnormal path only - which is exactly the path a sweep exists
+      for. Not a regression: the node hosts hold leases and the controller deliberately does not.
     instrument: >
-      A joined guest whose Node object carries a providerID derived from its Node CR, and a Node
-      object that disappears when its Node CR is removed while the agent is still up.
-    next_step: docs/plans/0003-install-the-ccm-in-the-process-group.md
+      Either a second discovery key for a portless member (its own pid record, the way
+      `internal/noderecord` records a VMM), or an explicit statement in section 11 that the sweep
+      covers leased components only and that a portless member's survival is accepted. Closing
+      reading: a gateway killed with SIGKILL and restarted twice, with no controller process left
+      after the second start.
 
   - id: FLAKE-1
     title: A gate test depends on the network, so --fast can fail for reasons unrelated to a change.
@@ -58,12 +60,14 @@ open:
       registry unreachable, passing or skipping with the reason printed.
 
   - id: GL-1
-    title: Nothing exposes a minted tenant credential to an operator.
+    title: Nothing exposes a minted tenant credential to an operator, and GL-1 is half closed.
     body: >
       `internal/clusterprovider` can mint a client certificate signed by a cluster's own ClientCA,
-      but no command writes it anywhere an operator can use it. Invariant 20 forbids handing
-      anyone the k3s-written admin kubeconfig, so without this tool every documented recipe either
-      violates an invariant or does not exist.
+      and `cmd/socialweb-tenantcredential` now writes one with a chosen CommonName and
+      Organizations, because the vault's `tenant-superuser` PKI role pins `system:masters` and a CI
+      runner must not hold cluster-admin. What is NOT yet done is the second half of this item's
+      instrument: the minting command has been run only against a synthetic ClientCA in tests, never
+      against a real cluster's data dir, and no `kubectl` has authenticated with what it wrote.
     instrument: >
       A run of the minting command against a real cluster data dir that produces three files, each
       of which a `kubectl` using them authenticates with, and a refusal to overwrite an existing
@@ -82,7 +86,29 @@ open:
       went through named, and a statement of what that front exposes to whom.
 
 limits:
-  - title: One node per cluster is the v1 contract.
+  - title: One node per cluster is the DEFAULT, not the ceiling.
     body: >
-      `handoff.yaml` names multi-node per cluster as out of scope for v1. AUTO-1 is the item that
-      changes that; until it closes, a runner must set `concurrent = 1`.
+      `SOCIALWEB_CLUSTERPROVIDER_SCALE_MAX_NODES` defaults to 1, so a cluster configured as before
+      behaves as before and a runner should set `concurrent = 1` unless the ceiling is raised
+      deliberately - every node is a booted guest, so the cap changes the cost profile and not only
+      the behaviour. With the cap raised and `SOCIALWEB_CLUSTERPROVIDER_SCALE_PODS_PER_NODE` set
+      from a measured job, the cluster scales out; measured at 3 nodes with three concurrent
+      GitLab-shaped pods in section 15.
+
+  - title: Scale-in is all-or-nothing, and that is a stated limit.
+    body: >
+      While there is work the target only grows, to the cap. When the work stops the cluster goes to
+      ZERO, not to an intermediate count. Scaling three nodes to two needs an answer to "which node,
+      and does its work move", and no instrument here measures that yet, so the branch that would do
+      it is not written rather than written wrong. See `docs/plans/0002` section 4.4.
+
+  - title: The instance snapshot is load-bearing, and absent reads as empty.
+    body: >
+      The cloud controller manager reads the guest set from `<DataDir>/nodes.json`, and its reader
+      answers `(known=false, err=nil)` for an absent file AND for an empty array - so both are the
+      DELETE path. Writing `[]` protects nothing; what protects a live Node is that the snapshot
+      lists it. A snapshot that parses and is wrong is worse than one that is missing, and a
+      snapshot that exists and cannot be parsed is an error that patches nothing (invariant 14).
+      Recorded as a limit rather than an item because the provider writes the file on every
+      provision, teardown and reap and once at startup, so the absent case is not reachable by the
+      ordinary path - only by a state dir that was removed under a running controller.

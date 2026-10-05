@@ -17,6 +17,7 @@ var componentPorts = map[procgroup.Component][]portallocator.Purpose{
 		portallocator.PurposeK3sScheduler,
 		portallocator.PurposeK3sCloudControllerManager,
 	},
+	procgroup.ComponentCloudControllerManager: nil,
 }
 
 var ErrNoPurposeForComponent = fmt.Errorf(

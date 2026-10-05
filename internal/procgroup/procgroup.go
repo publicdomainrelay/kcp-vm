@@ -22,14 +22,16 @@ const (
 	ComponentKine Component = "kine"
 
 	ComponentK3s Component = "k3s-server"
+
+	ComponentCloudControllerManager Component = "socialweb-cloud-controller-manager"
 )
 
 var DefaultOrder = []Component{
-	ComponentPostgres, ComponentKine, ComponentK3s,
+	ComponentPostgres, ComponentKine, ComponentK3s, ComponentCloudControllerManager,
 }
 
 var StackOrder = []Component{
-	ComponentPostgres, ComponentOpenBao, ComponentKine, ComponentK3s,
+	ComponentPostgres, ComponentOpenBao, ComponentKine, ComponentK3s, ComponentCloudControllerManager,
 }
 
 type Step struct {

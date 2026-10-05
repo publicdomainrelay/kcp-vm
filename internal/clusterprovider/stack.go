@@ -84,6 +84,8 @@ type StackConfig struct {
 	ServiceAccountIssuer string
 	APIAudiences         []string
 
+	CloudControllerManager string
+
 	AuditPolicyPath string
 
 	Harvest func(ctx context.Context, cluster string) error
@@ -148,6 +150,7 @@ func StepsFor(cfg StackConfig) materialiser.StepBuilder {
 
 		spec := clusterstack.Spec{
 			DataDir:                       dataDir,
+			Cluster:                       cluster,
 			PostgresPort:                  postgresPort,
 			OpenBaoConfig:                 clusterstack.OpenBaoConfigPath(dataDir),
 			StoreEndpoint:                 store,
@@ -163,6 +166,7 @@ func StepsFor(cfg StackConfig) materialiser.StepBuilder {
 			K3sSchedulerPort:              k3sScheduler,
 			K3sCloudControllerManagerPort: k3sCloudControllerManager,
 			TokenFile:                     TokenPath(dataDir),
+			CloudControllerManagerBinary:  cfg.CloudControllerManager,
 			ServiceAccountIssuer:          cfg.ServiceAccountIssuer,
 			APIAudiences:                  cfg.APIAudiences,
 			Audit: clusterstack.Audit{
@@ -215,7 +219,17 @@ func StepsFor(cfg StackConfig) materialiser.StepBuilder {
 				return nil, err
 			}
 		}
-		return hardenAfterK3s(steps, cfg.Admin, cluster, APIServerURL(k3sSecure))
+		steps, err = hardenAfterK3s(steps, cfg.Admin, cluster, APIServerURL(k3sSecure))
+		if err != nil {
+			return nil, err
+		}
+		if cfg.Stack.Has(procgroup.ComponentCloudControllerManager) {
+			steps, err = prepareCloudControllerManager(steps, cfg, cluster, APIServerURL(k3sSecure))
+			if err != nil {
+				return nil, err
+			}
+		}
+		return steps, nil
 	}
 }
 

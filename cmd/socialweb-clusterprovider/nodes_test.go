@@ -501,7 +501,7 @@ func TestTheNodeTeardownDeletesTheTenantsNodeObject(t *testing.T) {
 	host := &fakeNodeHost{}
 	n := &tenantNodes{
 		cluster: "liveweb", nodeName: "liveweb-node1", host: host, tenant: tenant,
-		log: testLogger(),
+		log: testLogger(), opts: nodeHostsOptions{StateDir: t.TempDir()},
 	}
 	if err := n.Teardown(context.Background()); err != nil {
 		t.Fatalf("Teardown: %v", err)
@@ -520,7 +520,7 @@ func TestTheNodeTeardownToleratesANodeObjectThatIsAlreadyGone(t *testing.T) {
 	tenant, _ := tenantClientFor(t)
 	n := &tenantNodes{
 		cluster: "liveweb", nodeName: "liveweb-node1", host: &fakeNodeHost{},
-		tenant: tenant, log: testLogger(),
+		tenant: tenant, log: testLogger(), opts: nodeHostsOptions{StateDir: t.TempDir()},
 	}
 	if err := n.Teardown(context.Background()); err != nil {
 		t.Fatalf("Teardown with no Node object to delete = %v, want nil: the object is the thing "+
@@ -534,7 +534,7 @@ func TestTheNodeProvisionDeletesNothing(t *testing.T) {
 	host := &fakeNodeHost{}
 	n := &tenantNodes{
 		cluster: "liveweb", nodeName: "liveweb-node1", host: host, tenant: tenant,
-		log: testLogger(),
+		log: testLogger(), opts: nodeHostsOptions{StateDir: t.TempDir()},
 	}
 	if err := n.Provision(context.Background()); err != nil {
 		t.Fatalf("Provision: %v", err)
@@ -575,7 +575,7 @@ func TestTheNodeTeardownRefusesWhenTheTenantClientCannotBeBuilt(t *testing.T) {
 	tenant := func(context.Context, string) (kubernetes.Interface, error) { return nil, cause }
 	n := &tenantNodes{
 		cluster: "liveweb", nodeName: "liveweb-node1", host: &fakeNodeHost{},
-		tenant: tenant, log: testLogger(),
+		tenant: tenant, log: testLogger(), opts: nodeHostsOptions{StateDir: t.TempDir()},
 	}
 	if err := n.Teardown(context.Background()); !errors.Is(err, cause) {
 		t.Fatalf("Teardown = %v, want the client's own failure wrapped", err)
@@ -649,7 +649,7 @@ func TestTheNodeTeardownStopsTheGuestBeforeItDeletesTheNodeObject(t *testing.T) 
 	n := &tenantNodes{
 		cluster: "liveweb", nodeName: "liveweb-node1",
 		host:   &fakeNodeHost{seq: &seq},
-		tenant: tenant, log: testLogger(),
+		tenant: tenant, log: testLogger(), opts: nodeHostsOptions{StateDir: t.TempDir()},
 	}
 	if err := n.Teardown(context.Background()); err != nil {
 		t.Fatalf("Teardown: %v", err)
@@ -1231,7 +1231,7 @@ func TestTheNodeTeardownStopsEveryNodeTheActuatorHolds(t *testing.T) {
 	second := &fakeNodeHost{}
 	n := &tenantNodes{
 		cluster: "liveweb", nodeName: "liveweb-node1", host: first, tenant: tenant,
-		log: testLogger(),
+		log: testLogger(), opts: nodeHostsOptions{StateDir: t.TempDir()},
 		extra: map[int]heldNode{
 			2: {name: "liveweb-node2", host: second},
 		},

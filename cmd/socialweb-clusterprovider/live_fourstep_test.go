@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -20,6 +21,7 @@ import (
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/cloudprovider"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clusterprovider"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostos"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/instance"
@@ -85,6 +87,8 @@ type fourstepBins struct {
 	kubectl string
 
 	tenantImage string
+
+	cloudControllerManager string
 }
 
 type fourstepStack struct {
@@ -158,6 +162,7 @@ func fourstepRequirements(t *testing.T, substrate string) fourstepBins {
 		kubectl:     os.Getenv(fourstepKubectlEnv),
 		tenantImage: os.Getenv(fourstepTenantImageEnv),
 	}
+	bins.cloudControllerManager = fourstepBuildCloudControllerManager(t)
 	for _, req := range []struct{ name, value string }{
 		{imageConfigEnv, bins.imageConfig},
 		{vmmEnv, bins.vmmBin},
@@ -193,6 +198,21 @@ func fourstepRequirements(t *testing.T, substrate string) fourstepBins {
 			"keeps it elsewhere", fourstepNodePasswordPath(), err)
 	}
 	return bins
+}
+
+func fourstepBuildCloudControllerManager(t *testing.T) string {
+	t.Helper()
+	bin := filepath.Join(t.TempDir(), "socialweb-cloud-controller-manager")
+	cmd := exec.Command("go", "build", "-o", bin, "../socialweb-cloud-controller-manager")
+	var out strings.Builder
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("building the cloud controller manager this proof installs into the process "+
+			"group: %v\n%s. The proof builds the binary rather than taking a pre-built one, so its "+
+			"result names the tree it ran against", err, out.String())
+	}
+	return bin
 }
 
 func fourstepNodePasswordPath() string {
@@ -249,23 +269,24 @@ func fourstepConfig(t *testing.T, bins fourstepBins) Config {
 			"three control-plane ports on this host", err)
 	}
 	env := map[string]string{
-		"SOCIALWEB_KCP_HOST":                            "https://127.0.0.1:6443",
-		"SOCIALWEB_KCP_KUBECONFIG":                      filepath.Join(stateDir, "kcp.yaml"),
-		"SOCIALWEB_CLUSTERPROVIDER_LEASE_PATH":          filepath.Join(stateDir, "leases.json"),
-		"SOCIALWEB_CLUSTERPROVIDER_JOIN":                fourstepCluster,
-		"SOCIALWEB_GATEWAY_MINT_KUBECONFIGS":            mintDir,
-		"SOCIALWEB_CLUSTERPROVIDER_DATASTORE_HAS_ROW":   "false",
-		"SOCIALWEB_CLUSTERPROVIDER_STATE_DIR":           stateDir,
-		"SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE":           bins.substrate,
-		"SOCIALWEB_CLUSTERPROVIDER_HOST":                host,
-		"SOCIALWEB_CLUSTERPROVIDER_NETWORK":             NetworkPasta,
-		"SOCIALWEB_CLUSTERPROVIDER_IMAGE_OUT_DIR":       os.Getenv(fourstepImageStoreEnv),
-		"SOCIALWEB_CLUSTERPROVIDER_IMAGE_CONFIG":        bins.imageConfig,
-		"SOCIALWEB_CLUSTERPROVIDER_NODE_AGENT":          os.Getenv(fourstepAgentEnv),
-		"SOCIALWEB_CLUSTERPROVIDER_PORT_RANGE":          liveports.Text(slot),
-		"SOCIALWEB_CLUSTERPROVIDER_SCALE_HOLD":          fourstepHold(),
-		"SOCIALWEB_CLUSTERPROVIDER_SCALE_MAX_NODES":     os.Getenv(envScaleMaxNodes),
-		"SOCIALWEB_CLUSTERPROVIDER_SCALE_PODS_PER_NODE": os.Getenv(envScalePodsPerNode),
+		"SOCIALWEB_KCP_HOST":                                 "https://127.0.0.1:6443",
+		"SOCIALWEB_KCP_KUBECONFIG":                           filepath.Join(stateDir, "kcp.yaml"),
+		"SOCIALWEB_CLUSTERPROVIDER_LEASE_PATH":               filepath.Join(stateDir, "leases.json"),
+		"SOCIALWEB_CLUSTERPROVIDER_JOIN":                     fourstepCluster,
+		"SOCIALWEB_GATEWAY_MINT_KUBECONFIGS":                 mintDir,
+		"SOCIALWEB_CLUSTERPROVIDER_DATASTORE_HAS_ROW":        "false",
+		"SOCIALWEB_CLUSTERPROVIDER_STATE_DIR":                stateDir,
+		"SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE":                bins.substrate,
+		"SOCIALWEB_CLUSTERPROVIDER_HOST":                     host,
+		"SOCIALWEB_CLUSTERPROVIDER_NETWORK":                  NetworkPasta,
+		"SOCIALWEB_CLUSTERPROVIDER_IMAGE_OUT_DIR":            os.Getenv(fourstepImageStoreEnv),
+		"SOCIALWEB_CLUSTERPROVIDER_IMAGE_CONFIG":             bins.imageConfig,
+		"SOCIALWEB_CLUSTERPROVIDER_NODE_AGENT":               os.Getenv(fourstepAgentEnv),
+		"SOCIALWEB_CLUSTERPROVIDER_CLOUD_CONTROLLER_MANAGER": bins.cloudControllerManager,
+		"SOCIALWEB_CLUSTERPROVIDER_PORT_RANGE":               liveports.Text(slot),
+		"SOCIALWEB_CLUSTERPROVIDER_SCALE_HOLD":               fourstepHold(),
+		"SOCIALWEB_CLUSTERPROVIDER_SCALE_MAX_NODES":          os.Getenv(envScaleMaxNodes),
+		"SOCIALWEB_CLUSTERPROVIDER_SCALE_PODS_PER_NODE":      os.Getenv(envScalePodsPerNode),
 	}
 	if bins.substrate == SubstrateQEMU {
 		env["SOCIALWEB_CLUSTERPROVIDER_QEMU"] = bins.vmmBin
@@ -437,14 +458,17 @@ func fourstepBringUp(t *testing.T, ctx context.Context, cfg Config, bins fourste
 	}
 
 	stackCfg := clusterprovider.StackConfig{
-		Stack:           clusterprovider.Stack{procgroup.ComponentKine, procgroup.ComponentK3s},
-		Admin:           adminForCluster(cfg.StateDir),
-		StateDir:        cfg.StateDir,
-		StoreEndpoint:   fourstepStore(pg),
-		GuestDialled:    true,
-		GuestGateway:    guestGateway(nets),
-		BindAddress:     portallocator.LoopbackAdvertiseAddress,
-		AuditPolicyPath: policy,
+		Stack: clusterprovider.Stack{
+			procgroup.ComponentKine, procgroup.ComponentK3s, procgroup.ComponentCloudControllerManager,
+		},
+		Admin:                  adminForCluster(cfg.StateDir),
+		StateDir:               cfg.StateDir,
+		StoreEndpoint:          fourstepStore(pg),
+		GuestDialled:           true,
+		GuestGateway:           guestGateway(nets),
+		BindAddress:            portallocator.LoopbackAdvertiseAddress,
+		AuditPolicyPath:        policy,
+		CloudControllerManager: bins.cloudControllerManager,
 		Harvest: func(_ context.Context, cluster string) error {
 			return clusterprovider.HarvestBundle(cfg.StateDir, cluster)
 		},
@@ -683,6 +707,48 @@ func (s *fourstepStack) waitNodeReady(t *testing.T, ctx context.Context) {
 	}
 }
 
+func (s *fourstepStack) kubectlTemplate(kubeconfig, name, template string) (string, error) {
+	cmd := exec.Command(s.bins.kubectl, "--kubeconfig", kubeconfig, "--request-timeout=15s",
+		"get", "node", name, "-o", template)
+	var out, complained strings.Builder
+	cmd.Stdout = &out
+	cmd.Stderr = &complained
+	if err := cmd.Run(); err != nil {
+		return strings.TrimSpace(out.String() + " " + complained.String()), err
+	}
+	return strings.TrimSpace(out.String()), nil
+}
+
+func (s *fourstepStack) assertCloudIdentity(t *testing.T, kubeconfig string) {
+	t.Helper()
+	name, err := nodeprovider.NodeName(fourstepCluster, nodeID)
+	if err != nil {
+		t.Fatalf("nodeprovider.NodeName: %v", err)
+	}
+	want := cloudprovider.ProviderID(fourstepCluster, name)
+	label := `go-template={{ index .metadata.labels "` + cloudprovider.LabelCluster + `" }}`
+	deadline := time.Now().Add(2 * time.Minute)
+	last := ""
+	for {
+		providerID, pidErr := s.kubectlTemplate(kubeconfig, name, "jsonpath={.spec.providerID}")
+		cluster, labelErr := s.kubectlTemplate(kubeconfig, name, label)
+		if pidErr == nil && labelErr == nil && providerID == want && cluster == fourstepCluster {
+			t.Logf("STEP 3 the cloud controller manager stamped the Node %s: providerID=%s %s=%s",
+				name, providerID, cloudprovider.LabelCluster, cluster)
+			return
+		}
+		last = fmt.Sprintf("providerID=%q (err %v), %s=%q (err %v)",
+			providerID, pidErr, cloudprovider.LabelCluster, cluster, labelErr)
+		if time.Now().After(deadline) {
+			t.Fatalf("the Node %s never carried the cloud identity the controller stamps: want "+
+				"providerID %q and %s=%q; last read %s. A controller that is installed and does "+
+				"nothing reads green here and is the failure this assertion exists to catch",
+				name, want, cloudprovider.LabelCluster, fourstepCluster, last)
+		}
+		time.Sleep(fourstepReadyPoll)
+	}
+}
+
 func (s *fourstepStack) logInstanceStartToReady(t *testing.T, readyAt time.Time) {
 	t.Helper()
 	name, err := nodeprovider.NodeName(fourstepCluster, nodeID)
@@ -901,6 +967,7 @@ func fourstepRun(t *testing.T, substrate string) {
 
 	joined := stack.waitNodes(t, kubeconfig, 1)
 	stack.waitNodeReady(t, ctx)
+	stack.assertCloudIdentity(t, kubeconfig)
 	stack.logInstanceStartToReady(t, time.Now())
 	t.Logf("STEP 3 the node joined on demand; `kubectl get nodes`:\n%s", joined)
 	stack.waitWorkloadRunning(t, ctx)

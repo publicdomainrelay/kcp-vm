@@ -1,6 +1,7 @@
 # 0003 - Install the cloud controller manager into the per-cluster process group
 
-Status: planned
+Status: done. Landed 2026-10-05; `NEXT.yaml` CCM-1 closed to `docs/ARCHITECTURE.md` section 15 with
+its readings. `NEXT.yaml` CCM-2 was split out of it.
 Opened: 2026-10-05
 Depends on: 0001 (the CCM package and binary, built and unit-tested). Closes `NEXT.yaml` CCM-1
 together with the live assertion in its instrument.
@@ -52,11 +53,18 @@ controller manager that nothing runs is a design, not an installation.
   nothing else, and its own credential is what should bound it when RBAC is added.
 - **D4 - The instance source is a file the provider writes, at `<DataDir>/nodes.json`.** The CCM's
   `Instances` port is already file-backed. The provider is the thing that knows the guests, so it
-  writes the snapshot; the CCM re-reads it per call and never caches. A missing file is
-  `known=false, err=nil` - the delete path - so the provider must write an EMPTY ARRAY rather than
-  remove the file when a cluster has no nodes, or every Node is deleted the moment the last guest
-  goes. That asymmetry is the single most dangerous thing in this plan and is stated here because
-  it will not be visible in the code.
+  writes the snapshot; the CCM re-reads it per call and never caches.
+  CORRECTED WHILE IMPLEMENTING, because the original wording named a mechanism that does not exist.
+  It said a missing file is the delete path and therefore the provider must write `[]` rather than
+  remove the file. The first half is true and the second half protects nothing:
+  `internal/cloudprovider/fileinstances.go` answers `(known=false, err=nil)` for an ABSENT file and
+  for an EMPTY array alike, so the two are the same answer - the delete path - and `[]` is not safer
+  than a deleted file. What protects a live Node is that the snapshot LISTS it. The real asymmetry,
+  and the one worth carrying: a snapshot that exists and cannot be PARSED is an error and patches
+  nothing (invariant 14), while an absent one is not - so the file is load-bearing infrastructure
+  rather than a cache, and the ordinary path is what keeps the absent case out of reach, since the
+  provider writes the file before the controller is asked anything. The dangerous reading is kept in
+  `NEXT.yaml`'s limits section rather than deleted along with the wrong mitigation.
 
 ## 4. Acceptance
 

@@ -49,13 +49,14 @@ func placementEnv(t *testing.T) map[string]string {
 func joinEnv(t *testing.T, extra map[string]string) map[string]string {
 	t.Helper()
 	env := map[string]string{
-		"SOCIALWEB_KCP_HOST":                          "https://127.0.0.1:6443",
-		"SOCIALWEB_KCP_KUBECONFIG":                    "/tmp/live-kcp.yaml",
-		"SOCIALWEB_CLUSTERPROVIDER_LEASE_PATH":        "/tmp/ports.json",
-		"SOCIALWEB_CLUSTERPROVIDER_JOIN":              "liveweb",
-		"SOCIALWEB_GATEWAY_MINT_KUBECONFIGS":          t.TempDir(),
-		"SOCIALWEB_CLUSTERPROVIDER_DATASTORE_HAS_ROW": "true",
-		"SOCIALWEB_CLUSTERPROVIDER_STATE_DIR":         t.TempDir(),
+		"SOCIALWEB_KCP_HOST":                                 "https://127.0.0.1:6443",
+		"SOCIALWEB_KCP_KUBECONFIG":                           "/tmp/live-kcp.yaml",
+		"SOCIALWEB_CLUSTERPROVIDER_LEASE_PATH":               "/tmp/ports.json",
+		"SOCIALWEB_CLUSTERPROVIDER_JOIN":                     "liveweb",
+		"SOCIALWEB_GATEWAY_MINT_KUBECONFIGS":                 t.TempDir(),
+		"SOCIALWEB_CLUSTERPROVIDER_DATASTORE_HAS_ROW":        "true",
+		"SOCIALWEB_CLUSTERPROVIDER_STATE_DIR":                t.TempDir(),
+		"SOCIALWEB_CLUSTERPROVIDER_CLOUD_CONTROLLER_MANAGER": "/usr/local/bin/socialweb-cloud-controller-manager",
 	}
 	for k, v := range placementEnv(t) {
 		env[k] = v
@@ -238,6 +239,18 @@ func TestAnImageConfigBuiltForAnotherVMMIsRefusedAtStartup(t *testing.T) {
 			t.Errorf("the refusal does not name %q, so an operator cannot see which setting or "+
 				"VMM it is about: %v", want, err)
 		}
+	}
+}
+
+func TestAJoinWithoutTheCloudControllerManagerBinaryIsRefused(t *testing.T) {
+	_, err := loadJoin(t, map[string]string{"SOCIALWEB_CLUSTERPROVIDER_CLOUD_CONTROLLER_MANAGER": ""})
+	if err == nil {
+		t.Fatal("a join with no cloud controller manager binary was accepted: the process group " +
+			"would lease and spawn every other component and silently drop the one that gives a " +
+			"joined Node its cloud identity")
+	}
+	if !strings.Contains(err.Error(), "SOCIALWEB_CLUSTERPROVIDER_CLOUD_CONTROLLER_MANAGER") {
+		t.Fatalf("the refusal does not name the setting an operator has to supply: %v", err)
 	}
 }
 

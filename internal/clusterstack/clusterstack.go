@@ -21,6 +21,8 @@ var ErrMissingTokenFile = errors.New(
 type Spec struct {
 	DataDir string
 
+	Cluster string
+
 	PostgresPort int
 
 	OpenBaoConfig string
@@ -56,6 +58,8 @@ type Spec struct {
 	K3sCloudControllerManagerPort int
 
 	TokenFile string
+
+	CloudControllerManagerBinary string
 
 	ServiceAccountIssuer string
 	APIAudiences         []string
@@ -137,6 +141,11 @@ var (
 		"component secure ports are required: kube-controller-manager, kube-scheduler and " +
 		"the cloud-controller-manager default to 10257, 10259 and 10258 on 127.0.0.1 -- one " +
 		"set for the whole host")
+	ErrMissingCloudControllerManagerBinary = errors.New("clusterstack: " +
+		"CloudControllerManagerBinary is required: the cloud controller manager is an out-of-cluster " +
+		"controller dialling the apiserver with a minted tenant credential, and nothing on PATH or " +
+		"derived from the data dir names that binary. A cluster that came up without it would have " +
+		"Nodes carrying no providerID and nothing reconciling them")
 )
 
 func (s Spec) Validate() error {
@@ -182,8 +191,17 @@ func (s Spec) Argv(c procgroup.Component) ([]string, error) {
 		return s.KineArgv()
 	case procgroup.ComponentK3s:
 		return s.ServerArgv()
+	case procgroup.ComponentCloudControllerManager:
+		return s.CloudControllerManagerArgv()
 	}
 	return nil, fmt.Errorf("clusterstack: unknown component %q", c)
+}
+
+func (s Spec) CloudControllerManagerArgv() ([]string, error) {
+	if s.CloudControllerManagerBinary == "" {
+		return nil, ErrMissingCloudControllerManagerBinary
+	}
+	return []string{s.CloudControllerManagerBinary}, nil
 }
 
 func (s Spec) ServerArgv() ([]string, error) {
@@ -264,4 +282,16 @@ const AdminKubeconfigName = "admin.kubeconfig"
 
 func AdminKubeconfig(dataDir string) string {
 	return filepath.Join(CredDir(dataDir), AdminKubeconfigName)
+}
+
+const CloudControllerManagerKubeconfigName = "cloud-controller-manager.kubeconfig"
+
+func CloudControllerManagerKubeconfig(dataDir string) string {
+	return filepath.Join(dataDir, CloudControllerManagerKubeconfigName)
+}
+
+const NodeSnapshotName = "nodes.json"
+
+func NodeSnapshotPath(dataDir string) string {
+	return filepath.Join(dataDir, NodeSnapshotName)
 }

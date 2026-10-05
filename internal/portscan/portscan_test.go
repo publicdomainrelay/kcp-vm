@@ -439,6 +439,7 @@ func standInSpec(t *testing.T) clusterstack.Spec {
 		K3sSchedulerPort:              20014,
 		K3sCloudControllerManagerPort: 20015,
 		TokenFile:                     filepath.Join(dir, "token"),
+		CloudControllerManagerBinary:  "/usr/local/bin/socialweb-cloud-controller-manager",
 		Audit: clusterstack.Audit{
 			PolicyPath: filepath.Join(dir, "audit-policy.yaml"),
 			LogPath:    filepath.Join(dir, "audit.log"),
@@ -634,6 +635,7 @@ func TestExpectationsAreTheSpawnArgvWithThePrefix(t *testing.T) {
 	want := [][]string{
 		spawnArgv(t, stack, procgroup.ComponentK3s),
 		spawnArgv(t, stack, procgroup.ComponentKine),
+		spawnArgv(t, stack, procgroup.ComponentCloudControllerManager),
 		spawnArgv(t, stack, procgroup.ComponentOpenBao),
 	}
 	if !reflect.DeepEqual(normalizeVectors(exp["alpha"]), normalizeVectors(want)) {

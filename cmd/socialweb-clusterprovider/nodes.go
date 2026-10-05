@@ -19,7 +19,9 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/cloudprovider"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clusterprovider"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/clusterstack"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostos"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodefirecracker"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodeprovider"
@@ -323,6 +325,7 @@ type tenantNodes struct {
 	mu      sync.Mutex
 	started int
 	extra   map[int]heldNode
+	live    map[string]bool
 }
 
 type heldNode struct {
@@ -372,8 +375,50 @@ func (n *tenantNodes) Provision(ctx context.Context) error {
 	if !held {
 		n.retain(ordinal, heldNode{name: name, host: host})
 	}
+	n.markLive(name)
 	n.started++
+	if err := n.writeSnapshot(); err != nil {
+		return err
+	}
 	return n.confirmJoined(ctx, host, name)
+}
+
+func (n *tenantNodes) markLive(name string) {
+	if n.live == nil {
+		n.live = map[string]bool{}
+	}
+	n.live[name] = true
+}
+
+func (n *tenantNodes) snapshot() []cloudprovider.Instance {
+	names := make([]string, 0, len(n.live))
+	for name := range n.live {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	out := make([]cloudprovider.Instance, 0, len(names))
+	for _, name := range names {
+		out = append(out, cloudprovider.Instance{NodeName: name, Cluster: n.cluster, Exists: true})
+	}
+	return out
+}
+
+func (n *tenantNodes) writeSnapshot() error {
+	if n.opts.StateDir == "" {
+		return fmt.Errorf("clusterprovider: %s's instance snapshot has no state dir to be written "+
+			"under, so the cloud controller manager cannot be told which of its Nodes still have a "+
+			"guest. A snapshot that was never written reads as \"the guest is gone\"", n.cluster)
+	}
+	dir, err := clusterprovider.ClusterDataDir(n.opts.StateDir, n.cluster)
+	if err != nil {
+		return err
+	}
+	if err := cloudprovider.WriteSnapshot(clusterstack.NodeSnapshotPath(dir), n.snapshot()); err != nil {
+		return fmt.Errorf("clusterprovider: writing the instance snapshot for %s: %w. The cloud "+
+			"controller manager reads it per call to decide whether a Node still has a guest, and a "+
+			"write that landed short of the whole set would read as \"the guest is gone\"", n.cluster, err)
+	}
+	return nil
 }
 
 func (n *tenantNodes) hostFor(ordinal int) (nodeHost, string, bool) {
@@ -469,11 +514,13 @@ func (n *tenantNodes) Teardown(ctx context.Context) error {
 	n.mu.Unlock()
 
 	var problems []error
+	gone := make([]string, 0, len(held))
 	for _, node := range held {
 		if err := node.host.Teardown(ctx); err != nil {
 			problems = append(problems, err)
 			continue
 		}
+		gone = append(gone, node.name)
 		if err := client.CoreV1().Nodes().Delete(ctx, node.name, metav1.DeleteOptions{}); err != nil {
 			if apierrors.IsNotFound(err) {
 				n.log.Info("clusterprovider: the tenant cluster holds no Node object for this node",
@@ -489,6 +536,14 @@ func (n *tenantNodes) Teardown(ctx context.Context) error {
 		}
 		n.log.Info("clusterprovider: removed the node from the tenant cluster",
 			"cluster", n.cluster, "node", node.name)
+	}
+	n.mu.Lock()
+	for _, name := range gone {
+		delete(n.live, name)
+	}
+	n.mu.Unlock()
+	if err := n.writeSnapshot(); err != nil {
+		problems = append(problems, err)
 	}
 	if len(problems) > 0 {
 		return errors.Join(problems...)
@@ -590,6 +645,14 @@ func (h *nodeHosts) clusters() []string {
 	return out
 }
 
+func (h *nodeHosts) resetSnapshot(cluster string) error {
+	dir, err := clusterprovider.ClusterDataDir(h.opts.StateDir, cluster)
+	if err != nil {
+		return err
+	}
+	return cloudprovider.WriteSnapshot(clusterstack.NodeSnapshotPath(dir), nil)
+}
+
 func (h *nodeHosts) reap(ctx context.Context) error {
 	h.mu.Lock()
 	held := make(map[string]*tenantNodes, len(h.hosts))
@@ -619,6 +682,12 @@ func (h *nodeHosts) reap(ctx context.Context) error {
 						"gateway's Provision answer ErrAlreadyRunning, so that cluster can never "+
 						"provision a node again", node.name, cluster, err))
 			}
+		}
+		n.mu.Lock()
+		n.live = nil
+		n.mu.Unlock()
+		if err := n.writeSnapshot(); err != nil {
+			problems = append(problems, err)
 		}
 	}
 	return errors.Join(problems...)

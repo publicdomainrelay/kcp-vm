@@ -270,6 +270,7 @@ func TestLoadRefusesAHalfConfiguredJoin(t *testing.T) {
 	}
 
 	env["SOCIALWEB_CLUSTERPROVIDER_STATE_DIR"] = t.TempDir()
+	env["SOCIALWEB_CLUSTERPROVIDER_CLOUD_CONTROLLER_MANAGER"] = "/usr/local/bin/socialweb-cloud-controller-manager"
 	for k, v := range placementEnv(t) {
 		env[k] = v
 	}

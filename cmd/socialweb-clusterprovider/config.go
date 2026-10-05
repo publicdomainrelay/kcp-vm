@@ -65,6 +65,8 @@ const (
 	envQEMU        = "SOCIALWEB_CLUSTERPROVIDER_QEMU"
 	envNodeAgent   = "SOCIALWEB_CLUSTERPROVIDER_NODE_AGENT"
 
+	envCloudControllerManager = "SOCIALWEB_CLUSTERPROVIDER_CLOUD_CONTROLLER_MANAGER"
+
 	envTokenTimeout = "SOCIALWEB_CLUSTERPROVIDER_TOKEN_TIMEOUT"
 	envLogLevel     = "SOCIALWEB_CLUSTERPROVIDER_LOG_LEVEL"
 
@@ -130,6 +132,8 @@ type Config struct {
 
 	NodeAgent string
 
+	CloudControllerManager string
+
 	ESOManifestDir string
 
 	DatastoreHasRow bool
@@ -151,31 +155,32 @@ func Load() (Config, error) { return load(os.Getenv) }
 
 func load(get func(string) string) (Config, error) {
 	cfg := Config{
-		KCPHost:          strings.TrimSpace(get(envKCPHost)),
-		KCPKubeconfig:    strings.TrimSpace(get(envKCPKubeconfig)),
-		MintKubeconfigs:  strings.TrimSpace(get(envMintKubeconfigs)),
-		LeasePath:        strings.TrimSpace(get(envLeasePath)),
-		Join:             strings.TrimSpace(get(envJoin)),
-		Datastore:        strings.TrimSpace(get(envDatastore)),
-		StateDir:         strings.TrimSpace(get(envStateDir)),
-		PostgresBinDir:   strings.TrimSpace(get(envPostgresBinDir)),
-		AdvertiseAddress: strings.TrimSpace(get(envAdvertiseAddress)),
-		StoreEndpoint:    strings.TrimSpace(get(envStoreEndpoint)),
-		AuditPolicyPath:  strings.TrimSpace(get(envAuditPolicy)),
-		Substrate:        strings.TrimSpace(get(envSubstrate)),
-		Host:             strings.TrimSpace(get(envHost)),
-		Network:          strings.TrimSpace(get(envNetwork)),
-		ImageOutDir:      strings.TrimSpace(get(envImageOutDir)),
-		ImageConfig:      strings.TrimSpace(get(envImageConfig)),
-		Firecracker:      strings.TrimSpace(get(envFirecracker)),
-		QEMU:             strings.TrimSpace(get(envQEMU)),
-		NodeAgent:        strings.TrimSpace(get(envNodeAgent)),
-		ESOManifestDir:   strings.TrimSpace(get(envESOManifestDir)),
-		GrantPath:        strings.TrimSpace(get(envGrant)),
-		Interval:         DefaultInterval,
-		LogLevel:         slog.LevelInfo,
-		ScaleMaxNodes:    scale.DefaultMaxNodes,
-		ScalePodsPerNode: scale.DefaultPodsPerNode,
+		KCPHost:                strings.TrimSpace(get(envKCPHost)),
+		KCPKubeconfig:          strings.TrimSpace(get(envKCPKubeconfig)),
+		MintKubeconfigs:        strings.TrimSpace(get(envMintKubeconfigs)),
+		LeasePath:              strings.TrimSpace(get(envLeasePath)),
+		Join:                   strings.TrimSpace(get(envJoin)),
+		Datastore:              strings.TrimSpace(get(envDatastore)),
+		StateDir:               strings.TrimSpace(get(envStateDir)),
+		PostgresBinDir:         strings.TrimSpace(get(envPostgresBinDir)),
+		AdvertiseAddress:       strings.TrimSpace(get(envAdvertiseAddress)),
+		StoreEndpoint:          strings.TrimSpace(get(envStoreEndpoint)),
+		AuditPolicyPath:        strings.TrimSpace(get(envAuditPolicy)),
+		Substrate:              strings.TrimSpace(get(envSubstrate)),
+		Host:                   strings.TrimSpace(get(envHost)),
+		Network:                strings.TrimSpace(get(envNetwork)),
+		ImageOutDir:            strings.TrimSpace(get(envImageOutDir)),
+		ImageConfig:            strings.TrimSpace(get(envImageConfig)),
+		Firecracker:            strings.TrimSpace(get(envFirecracker)),
+		QEMU:                   strings.TrimSpace(get(envQEMU)),
+		NodeAgent:              strings.TrimSpace(get(envNodeAgent)),
+		CloudControllerManager: strings.TrimSpace(get(envCloudControllerManager)),
+		ESOManifestDir:         strings.TrimSpace(get(envESOManifestDir)),
+		GrantPath:              strings.TrimSpace(get(envGrant)),
+		Interval:               DefaultInterval,
+		LogLevel:               slog.LevelInfo,
+		ScaleMaxNodes:          scale.DefaultMaxNodes,
+		ScalePodsPerNode:       scale.DefaultPodsPerNode,
 	}
 	if cfg.GrantPath == "" {
 		cfg.GrantPath = DefaultGrantPath
@@ -294,6 +299,15 @@ func load(get func(string) string) (Config, error) {
 
 		if err := cfg.checkPlacement(); err != nil {
 			return Config{}, err
+		}
+
+		if cfg.CloudControllerManager == "" {
+			return Config{}, fmt.Errorf(
+				"%s is not set. Every joined cluster's process group carries the cloud controller "+
+					"manager, which is what stamps a Node's providerID and the labels an autoscaler "+
+					"groups by, and nothing else names that binary: a join that accepted an empty one "+
+					"would lease, config and spawn everything else and silently drop the component "+
+					"that gives a joined node its cloud identity", envCloudControllerManager)
 		}
 	}
 

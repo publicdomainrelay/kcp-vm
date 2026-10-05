@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -26,6 +27,16 @@ import (
 const GateTimeout = 90 * time.Second
 
 const PollInterval = 250 * time.Millisecond
+
+const (
+	EnvCloudControllerManagerKubeconfig = "SOCIALWEB_CLOUDCONTROLLERMANAGER_TENANT_KUBECONFIG"
+
+	EnvCloudControllerManagerCluster = "SOCIALWEB_CLOUDCONTROLLERMANAGER_CLUSTER"
+
+	EnvCloudControllerManagerInstances = "SOCIALWEB_CLOUDCONTROLLERMANAGER_INSTANCES_FILE"
+)
+
+const cloudControllerManagerReadyMark = `"phase":"Ready"`
 
 var ErrNoLease = errors.New("clusterprovider: the cluster holds no lease for this component")
 
@@ -113,15 +124,26 @@ func StepsFrom(spec clusterstack.Spec, leases materialiser.Leases, stack Stack) 
 		}
 		steps = append(steps, procgroup.Step{
 			Name:  c,
-			Spec:  processrunner.Spec{Argv: argv, Output: log},
+			Spec:  processrunner.Spec{Argv: argv, Env: stepEnv(spec, c), Output: log},
 			Ready: gate(c, spec, bao, api),
 		})
 	}
 	return steps, nil
 }
 
+func stepEnv(spec clusterstack.Spec, c procgroup.Component) []string {
+	if c != procgroup.ComponentCloudControllerManager {
+		return nil
+	}
+	return []string{
+		EnvCloudControllerManagerKubeconfig + "=" + clusterstack.CloudControllerManagerKubeconfig(spec.DataDir),
+		EnvCloudControllerManagerCluster + "=" + spec.Cluster,
+		EnvCloudControllerManagerInstances + "=" + clusterstack.NodeSnapshotPath(spec.DataDir),
+	}
+}
+
 func gate(c procgroup.Component, spec clusterstack.Spec, bao, api portallocator.Lease) func(context.Context, *processrunner.Process) error {
-	return func(ctx context.Context, _ *processrunner.Process) error {
+	return func(ctx context.Context, p *processrunner.Process) error {
 		ctx, cancel := context.WithTimeout(ctx, GateTimeout)
 		defer cancel()
 		switch c {
@@ -151,6 +173,8 @@ func gate(c procgroup.Component, spec clusterstack.Spec, bao, api portallocator.
 				return err
 			}
 			return waitK3sControllers(ctx, spec.DataDir)
+		case procgroup.ComponentCloudControllerManager:
+			return waitCloudControllerManager(ctx, p)
 		}
 		return fmt.Errorf("clusterprovider: no readiness gate for %q", c)
 	}
@@ -275,6 +299,26 @@ func waitK3sControllers(ctx context.Context, dataDir string) error {
 				"controllers' own first write is an addon Deployment in kube-system and that is what " +
 				"this waits for: /v1-k3s/readyz is the endpoint that flips exactly with them, and it " +
 				"takes a node's credentials, which this process does not hold",
+			last: last,
+		}
+	})
+}
+
+func waitCloudControllerManager(ctx context.Context, p *processrunner.Process) error {
+	last := "no output yet"
+	return poll(ctx, func(context.Context) (bool, error) {
+		out := p.Output()
+		if strings.Contains(out, cloudControllerManagerReadyMark) {
+			return true, nil
+		}
+		last = fmt.Sprintf("the process has written %d bytes and no readiness line", len(out))
+		return false, nil
+	}, func() error {
+		return &errNotReady{
+			what: "the cloud controller manager's informer sync. It logs phase Ready once its " +
+				"Node informer has synced, which is the first moment it can act; before that it has " +
+				"observed nothing and would write nothing. It listens on no port, so this line is the " +
+				"only readiness signal there is",
 			last: last,
 		}
 	})

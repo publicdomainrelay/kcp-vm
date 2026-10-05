@@ -170,6 +170,53 @@ func TestReapIsReverseOrder(t *testing.T) {
 	}
 }
 
+func TestTheCloudControllerManagerIsBroughtUpAfterK3sAndReapedFirst(t *testing.T) {
+	at := map[Component]int{}
+	for i, c := range StackOrder {
+		at[c] = i
+	}
+	for _, lower := range []Component{ComponentK3s, ComponentKine, ComponentOpenBao, ComponentPostgres} {
+		if at[ComponentCloudControllerManager] <= at[lower] {
+			t.Fatalf("%s is not after %s in StackOrder (%v): the controller is useless without an "+
+				"apiserver, and a step placed before k3s would move the identity guard's seam",
+				ComponentCloudControllerManager, lower, StackOrder)
+		}
+	}
+	def := map[Component]int{}
+	for i, c := range DefaultOrder {
+		def[c] = i
+	}
+	if def[ComponentCloudControllerManager] <= def[ComponentK3s] {
+		t.Fatalf("DefaultOrder puts the controller at or before k3s (%v)", DefaultOrder)
+	}
+
+	logPath := t.TempDir() + "/order"
+	g, err := Spawn(context.Background(), []Step{
+		step(t, standIn, logPath, readyWhenAnnounced),
+		step(t, ComponentKine, logPath, readyWhenAnnounced),
+		step(t, ComponentK3s, logPath, readyWhenAnnounced),
+		step(t, ComponentCloudControllerManager, logPath, readyWhenAnnounced),
+	}, Options{PostgresUp: postgresUp})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if err := g.Reap(context.Background()); err != nil {
+		t.Fatalf("Reap: %v", err)
+	}
+	got := readOrder(t, logPath)
+	want := []string{"socialweb-cloud-controller-manager", "k3s-server", "kine", "stand-in"}
+	if len(got) != len(want) {
+		t.Fatalf("reap log = %v, want %v -- every started component must be stopped", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("reap order = %v, want %v. The controller is stopped FIRST: a controller that "+
+				"outlives the apiserver it reconciles against loops on connection errors during every "+
+				"teardown", got, want)
+		}
+	}
+}
+
 func TestFailedStepReapsEverythingBeforeIt(t *testing.T) {
 	logPath := t.TempDir() + "/order"
 	boom := errors.New("kine refused to start")

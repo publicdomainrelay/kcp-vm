@@ -140,18 +140,35 @@ so there is nothing to commit).
 ### The per-cluster process group
 
 ```
-embedded-postgres  ->  openbao  ->  kine  ->  k3s server --disable-agent
+embedded-postgres  ->  openbao  ->  kine  ->  k3s server --disable-agent  ->  cloud-controller-manager
 ```
 
 That order is `procgroup.StackOrder` — every component a stack may name, in bring-up order — and
 reap is reverse order. It is deliberately a DIFFERENT list from `procgroup.DefaultOrder`, which is the
-default SET (postgres, kine, k3s). One list was doing both jobs until the vault made them come apart:
+default SET (postgres, kine, k3s, cloud-controller-manager). One list was doing both jobs until the vault made them come apart:
 `StepsFrom` walked `DefaultOrder` as a whitelist, so removing the vault from the default set would
 have made an explicitly opted-in stack lease its port, render its config and **spawn nothing** — a
 vault that is configured, leased and never started. The two lists are pinned against drifting by a
 test asserting every member of `DefaultOrder` appears in `StackOrder`, in order. There is deliberately
 **no
 supervisor process**: the reconcile loop is the supervisor.
+
+The cloud controller manager is the LAST member, and its position is the whole reason it is a member
+at all. It is useless without an apiserver, so it comes after `k3s server`; a step placed before k3s
+would also move the seam `ErrNoGuardSeam` protects, which is why the guard's own rule is that the
+identity check rides a step ahead of k3s and nothing else may be inserted between. Reverse-order reap
+therefore stops the controller FIRST, which is what is wanted: a controller that outlives the
+apiserver it reconciles against is a loop of connection errors during every teardown. It is
+PORTLESS — it dials the apiserver and listens on nothing — so `portallocator` gained no purpose and
+no lease for it, and invariant 8's bookkeeping about who holds one does not grow. Its credential,
+its cluster and its instance-file path ride `Spec.Env` and never argv (invariants 3 and 13), and its
+readiness gate is its own `phase=Ready` log line, taken once its Node informer has synced: it binds
+no port, so that line is the only signal it can offer, and it is a positive marker that can fail.
+
+The cost of a portless member is recorded rather than hidden: the startup sweep
+(`cmd/socialweb-clusterprovider/nodesweep.go`) finds a previous gateway's survivors by the ports they
+hold, so a portless member left behind by a gateway that died WITHOUT its reverse-order reap is not
+discoverable by that sweep. `NEXT.yaml` CCM-2.
 
 Embedded-postgres is a special case: it is a Go **library** that runs the server as a child of
 whoever links it, so there is no argv for a step and `processrunner.Start` refuses the empty argv
@@ -965,7 +982,31 @@ is guest-only; the host's policy is untouched.
 `k3s server` is deliberately NOT a node: it runs gateway-side with `--disable-agent`. Only the worker
 scales to zero.
 
+**A Node's cloud identity is the cloud controller manager's, and it runs on the host.** A guest joins
+as a Kubernetes Node with no cloud identity: an empty `spec.providerID` and no labels for an
+autoscaler to group by. The controller stamps each Node it observes with
+`spec.providerID = socialweb://<cluster>/<node>` and the label
+`node.socialweb.computer/cluster=<cluster>`, and deletes a Node whose instance record is absent -
+the guest is gone. It reads the guest set from `<DataDir>/nodes.json`, which the provider writes
+(atomic temp-plus-rename) on every provision, teardown and reap, and once at startup as `[]`.
+
+Two things about that snapshot are load-bearing and neither is obvious. An UNREADABLE snapshot is an
+error and patches nothing, because invariant 14 applies and deleting a Node out from under its own
+running work is the cost of getting it wrong. But an ABSENT snapshot and an empty array are the same
+answer to the reader - `(known=false, err=nil)`, the delete path - so writing `[]` protects nothing
+on its own; what protects a live Node is that the snapshot LISTS it. The file is infrastructure and
+not a cache, and the ordinary path is what keeps the absent case out of reach: the provider writes it
+before the controller can be asked anything.
+
+The identity is SCOPED, never the superuser, and the provider grants it `get`, `list`, `watch`,
+`patch`, `update` and `delete` on `nodes` once k3s is up. That grant is not decoration: a scoped
+identity with no binding is authenticated-and-denied, so the informer never syncs, the readiness gate
+times out, and the failure reads as a controller that will not start rather than as a missing
+binding.
+
 ### `k3s server` argv
+
+
 
 ```
 --disable-agent                        the keystone
@@ -1648,7 +1689,8 @@ was implemented rather than left open. VAULT-2 has since closed too: both vaults
 root vault's listener authenticates its clients by certificate. VAULT-1 closed with it, having found
 that its own premise named a file `kcp` does not write. RIG-6 was opened and closed in the same window,
 by a rig run that tested a tree moving under it. On 2026-10-05 five more were opened by the GitLab and
-cloud-controller-manager work: ESO-2 remains, and CCM-1, AUTO-1, GL-1 and GL-2 join it. Each was
+cloud-controller-manager work: CCM-1 and AUTO-1 were opened and CLOSED inside the same window and are
+in section 15 with their readings, while ESO-2 remains and GL-1, GL-2 and FLAKE-1 join it. Each was
 written from the code rather than from the request that produced it, and each names its instrument.
 **The live backlog is `NEXT.yaml`, which this section mirrors:
 an item is written here when it is opened and moves to section 15, with its readings, when it is
@@ -1667,29 +1709,6 @@ because it bounds a mechanism the rest of this document leans on.
   outside `default` is denied, and the failure reads as a broken ExternalSecret rather than as a grant
   that does not name it. The instrument is an install in another namespace still producing the Secret.
   `NEXT.yaml` ESO-2.
-
-- **The tenant cluster's Node objects carry no cloud identity, and nothing reconciles them.** A guest
-  joins as a Kubernetes Node, but nothing stamps `spec.providerID`, nothing sets the labels an
-  autoscaler would group by, and nothing removes the Node when a guest dies without a teardown. The
-  Node CR in kcp and the Node object in the tenant apiserver are two records of one guest with no link
-  between them. Section 10 gives the scale path a Node delete at teardown, at the composition root;
-  that covers the teardown it performs and not a guest that died on its own, which is the case a
-  controller exists to cover. `internal/cloudprovider` and `cmd/socialweb-cloud-controller-manager`
-  now exist and are unit-tested, and **nothing runs them**: a controller that nothing starts is a
-  design and not an installation, so this item stays open until plan
-  `docs/plans/0003-install-the-ccm-in-the-process-group.md` lands and the instrument below reads.
-  The instrument is a joined guest whose Node object carries a providerID derived from its Node CR,
-  and a Node object that disappears when its CR is removed while the agent is still up.
-  `NEXT.yaml` CCM-1.
-
-- **The scale decision cannot express more than one node.** `internal/scale` decides between zero and
-  one by construction: the intent test is deliberately coarse, which is what makes zero reachable, and
-  it carries no notion of capacity, so one pending pod and fifty pending pods decide identically. Two
-  concurrent CI jobs therefore cannot both be placed and the second waits, which is the wrong silence -
-  a queue is not a failure, but neither is it the state the operator asked for. The instrument is a
-  table case where the observation demands three nodes and the decision returns three, a case at the
-  cap, and the four-step proof still passing with its Deployments replaced by a pod count.
-  `NEXT.yaml` AUTO-1.
 
 - **Nothing exposes a minted tenant credential to an operator.** `internal/clusterprovider` can mint a
   client certificate signed by a cluster's own ClientCA and valid only against that cluster, and no
@@ -3118,6 +3137,36 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   the written `tls.crt` rather than off the configuration. The fact is recorded here rather than
   left in the code as a comment, per the rule that a decision recorded in a comment is deleted the
   next time comments are swept.
+
+- **The cloud controller manager now runs, and it is IN the process group. CLOSED 2026-10-05.** A
+  controller that nothing starts is a design and not an installation, and that was the state:
+  `internal/cloudprovider` and `cmd/socialweb-cloud-controller-manager` existed, were unit-tested,
+  and nothing ran them. Closed by making the controller the fifth member of a tenant cluster's own
+  process group. `procgroup.ComponentCloudControllerManager` sits after `k3s server` in both
+  `DefaultOrder` and `StackOrder`, so `Reap` stops it first; it is present by default in the
+  composition root. It is PORTLESS - it dials the apiserver and listens on nothing - so
+  `portallocator` gained no purpose and no lease. Its credential is minted scoped, from the cluster's
+  own ClientCA, into `<DataDir>/cloud-controller-manager.kubeconfig` (invariant 20 forbids the k3s
+  admin kubeconfig); its cluster, credential and snapshot paths ride `Spec.Env` and never argv
+  (invariants 3 and 13); and its readiness gate is its own `phase=Ready` log line, taken after the
+  Node informer syncs - it binds no port, so that line is the only signal, and it is a positive
+  marker that can fail (invariant 17). MEASURED 2026-10-05:
+  `TestTheFourStepProofRunsThroughTheCompositionRoot` PASSES in 110.45 s with the fifth component,
+  and its STEP 3 asserts `kubectl get node liveweb-node1 -o jsonpath={.spec.providerID}` reads
+  `socialweb://liveweb/liveweb-node1` with the label `node.socialweb.computer/cluster=liveweb`.
+  TWO DESIGN CLAIMS DID NOT SURVIVE CONTACT WITH THE CODE, and both are recorded because each would
+  have shipped as a plausible sentence. First, RBAC was not a follow-on: a scoped identity with no
+  binding is authenticated-and-denied, so the informer never syncs and the gate times out. The
+  provider now creates the ClusterRole and ClusterRoleBinding for the controller's group once k3s is
+  up, in the same change that introduced the identity. Second, the snapshot's absent-versus-empty
+  distinction does not exist in the reader: `internal/cloudprovider/fileinstances.go` answers
+  `(known=false, err=nil)` for an absent file AND for an empty array, so both are the delete path.
+  Writing `[]` protects nothing; what protects a live Node is that the snapshot LISTS it. The sharp
+  edge is stated rather than smoothed over - the snapshot file is load-bearing infrastructure and not
+  a cache, and a snapshot that reads as absent is read as "every guest is gone". A snapshot that
+  exists and cannot be parsed IS an error and patches nothing (invariant 14); the absent case is not,
+  and that asymmetry is the risk this entry leaves behind. Split out rather than folded in:
+  `NEXT.yaml` CCM-2, the portless member's invisibility to `portscan` across a gateway restart.
 
 - **The scale decision could not express more than one node. CLOSED 2026-10-05.** Before: `Decide`
   returned `Provision, Nodes: 1` for any intent, so one pending pod and fifty pending pods decided

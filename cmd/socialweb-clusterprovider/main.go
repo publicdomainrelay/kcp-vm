@@ -138,7 +138,8 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 	deciderHost := materialiser.NewLocalHost(procgroup.Options{})
 	deciderHost.PostgresUp = postgres.up
 
-	stack := clusterprovider.DesignedStack
+	stack := append(clusterprovider.Stack{}, clusterprovider.DesignedStack...)
+	stack = append(stack, procgroup.ComponentCloudControllerManager)
 	needsPostgres := stack.NeedsLocalPostgres(cfg.StoreEndpoint == "")
 	purposes, err := clusterprovider.PurposesFor(stack, needsPostgres)
 	if err != nil {
@@ -152,16 +153,17 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 
 	minter := instanceMinter()
 	stackCfg := clusterprovider.StackConfig{
-		Stack:            stack,
-		Admin:            adminForCluster(cfg.StateDir),
-		StateDir:         cfg.StateDir,
-		StoreEndpoint:    storeEndpoint(cfg, postgres),
-		VaultStoreDSN:    postgres.vaultDSN,
-		AdvertiseAddress: cfg.AdvertiseAddress,
-		GuestDialled:     substrate.IsGuest(),
-		BindAddress:      portallocator.LoopbackAdvertiseAddress,
-		VaultTLS:         vaultTLSFor(),
-		AuditPolicyPath:  cfg.AuditPolicyPath,
+		Stack:                  stack,
+		Admin:                  adminForCluster(cfg.StateDir),
+		StateDir:               cfg.StateDir,
+		StoreEndpoint:          storeEndpoint(cfg, postgres),
+		VaultStoreDSN:          postgres.vaultDSN,
+		AdvertiseAddress:       cfg.AdvertiseAddress,
+		GuestDialled:           substrate.IsGuest(),
+		BindAddress:            portallocator.LoopbackAdvertiseAddress,
+		VaultTLS:               vaultTLSFor(),
+		AuditPolicyPath:        cfg.AuditPolicyPath,
+		CloudControllerManager: cfg.CloudControllerManager,
 		Harvest: func(ctx context.Context, cluster string) error {
 			if err := clusterprovider.HarvestBundle(cfg.StateDir, cluster); err != nil {
 				return err
@@ -235,6 +237,15 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 	})
 	if err != nil {
 		return Deps{}, err
+	}
+	if !cfg.ObserveOnly() {
+		if err := nodeHosts.resetSnapshot(cfg.Join); err != nil {
+			return Deps{}, fmt.Errorf("clusterprovider: writing the empty instance snapshot for %s "+
+				"before any node exists: %w. The cloud controller manager reads that file to decide "+
+				"which Nodes still have a guest; an absent file and an empty one both read as "+
+				"\"no instance\", so the provider always writes the file rather than leaving its "+
+				"absence to mean something", cfg.Join, err)
+		}
 	}
 	scaleDriver, err := scaledriver.New(nodeHosts.forCluster, scaledriver.Options{
 		Observe: nodeObserver.Observe,
