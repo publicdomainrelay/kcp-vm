@@ -19,9 +19,15 @@ const factory = createPlcDirectoryFactory({ store });
 const port = options.port as number;
 const hostname = (options.hostname as string) || "127.0.0.1";
 
+// TLS is opt-in: with either file missing the server stays plain HTTP.
+async function tlsFromFiles(certFile: unknown, keyFile: unknown): Promise<{ cert?: string; key?: string }> {
+  if (typeof certFile !== "string" || typeof keyFile !== "string" || !certFile || !keyFile) return {};
+  return { cert: await Deno.readTextFile(certFile), key: await Deno.readTextFile(keyFile) };
+}
+
 const serve = createServe({
   logger,
-  tcp: { addr: hostname, port },
+  tcp: { addr: hostname, port, ...(await tlsFromFiles(options.tlsCertFile, options.tlsKeyFile)) },
 });
 serve.app.route("/", factory.app as never);
 
