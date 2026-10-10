@@ -405,3 +405,30 @@ func TestTheBidderStartsWithTheSameKeyEveryTimeBeforeASignIn(t *testing.T) {
 			"bidder's identity", strings.TrimSpace(string(again)), key)
 	}
 }
+
+func TestTheLauncherRunsTheBidderWithoutAV8CodeCache(t *testing.T) {
+	run := runLauncher(t, bidderInstance, sessionLine("oauth_qr_session_restored", bidderInstance)+readyLine, "0")
+	if run.code != 0 {
+		t.Fatalf("the launcher exited %d; output:\n%s", run.code, run.output)
+	}
+	raw, err := os.ReadFile(run.argvFile)
+	if err != nil {
+		t.Fatalf("the fake bidder never ran: %v", err)
+	}
+	argv := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	script := -1
+	cache := -1
+	for i, a := range argv {
+		if strings.HasSuffix(a, "/hono-bidder/mod.ts") && script < 0 {
+			script = i
+		}
+		if a == "--no-code-cache" && cache < 0 {
+			cache = i
+		}
+	}
+	if cache < 0 || script < 0 || cache > script {
+		t.Fatalf("argv %q: --no-code-cache must be a deno flag, before the bidder's module. Measured "+
+			"2026-10-07 on hat-8: a bidder restarted onto new code still wrote the old provider's "+
+			"bid_config and booted the old image until its DENO_DIR's v8_code_cache_v2 was moved aside", argv)
+	}
+}

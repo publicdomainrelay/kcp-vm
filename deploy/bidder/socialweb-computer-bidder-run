@@ -72,7 +72,7 @@ if [ ! -s "${key}" ]; then
 fi
 
 argv=(
-  "${BIDDER_DENO}" run -A --node-modules-dir=none --unstable-kv --unstable-worker-options
+  "${BIDDER_DENO}" run -A --no-code-cache --node-modules-dir=none --unstable-kv --unstable-worker-options
 )
 if [ -n "${BIDDER_PRELOAD:-}" ]; then
   argv+=(--preload "${BIDDER_PRELOAD}")
