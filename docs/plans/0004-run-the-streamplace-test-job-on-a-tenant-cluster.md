@@ -315,6 +315,12 @@ carries, so the Pods repel each other and nothing else. `Demand` counts Pods tha
 Running or Unknown, so five live job Pods are a target of five at one Pod per node, and zero once
 they are gone.
 
+One thing about the harness that costs a run to learn: **the scale decision is DRIVEN, not
+running.** `fourstepStack.pass` calls `prov.Reconcile` and `driver.RunPass` explicitly, so a test
+that stops asking never sees a decision and waits for a teardown no one requested -- which is why
+the other live tests call `stack.choose(t, ctx, scale.Teardown)`. The first version of this test
+waited for the cluster to fall to zero on its own and sat at five nodes until the deadline.
+
 `TestFiveGitLabJobPodsScaleToFiveNodesAndBackToZero` PASS on 2026-10-06, against the real GitLab,
 pipeline 61, nodes of 2 vCPU and 3072 MiB:
 
