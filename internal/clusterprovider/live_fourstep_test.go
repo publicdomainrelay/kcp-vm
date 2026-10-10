@@ -609,7 +609,7 @@ func mustAPIPort(t *testing.T, alloc *portallocator.Allocator, cluster string) i
 
 func tenantClientFor(t *testing.T, ctx context.Context, stateDir, cluster, apiserver string) kubernetes.Interface {
 	t.Helper()
-	cfg, err := MintTenantCredentialForCluster(ctx, stateDir, cluster, apiserver)
+	cfg, err := MintTenantCredentialForCluster(ctx, stateDir, cluster, apiserver, CredentialSourceVaultIfSealed)
 	if err != nil {
 		t.Fatalf("minting the tenant credential: %v", err)
 	}

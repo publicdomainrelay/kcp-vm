@@ -433,12 +433,26 @@ teardown.
 data dir: its server URL and SANs are unverified against the address a node dials, and
 `/etc/rancher/k3s/k3s.yaml` is shared state on a host that runs several clusters.
 
+**Which source mints it follows the SUBSTRATE, and not the mere presence of a seal.** There are two
+sources: the cluster's own `ClientCA` on disk, and the cluster's vault, whose PKI engine issues from a
+copy of that same CA imported into it. The choice is an explicit input to the seam
+(`clusterprovider.CredentialSource`), derived by the caller from where the cluster's nodes are placed.
+For `market` the credential is always signed from `client-ca.{crt,key}` on disk and the vault is never
+consulted: a market node's machine is not this host, the cluster vault in that path exists for the
+guest's custody and wake material rather than for the provider's own credential, and minting from it
+on every pass puts a second TLS dependency between the provider and the tenant apiserver for no gain.
+For `firecracker` and `qemu` nothing changes: the vault issues when the cluster has left unseal
+material beside its data dir, and the ClientCA signs when it has not. A caller that names no source is
+refused (`ErrCredentialSourceUnknown`) rather than defaulted, because the default is the thing this
+seam exists to remove.
+
 **Minting refuses rather than downgrades.** No ClientCA on disk is a refusal, never a fallback to a
 wider credential. A CA key that is not its certificate's key is refused *before* anything is signed,
 because that pair still signs and the failure would otherwise surface as an authentication error at
 the first apply. An empty CN or O is refused, because it authenticates as the empty username or as an
 unprivileged user. A non-https URL is refused, because the URL's host is the name the apiserver's
-certificate must carry.
+certificate must carry. The rule holds ACROSS the two sources as well as within each: a cluster whose
+ClientCA cannot sign is refused with the reason, and the vault is not tried instead.
 
 **The credential never reaches a user.** It is a certificate credential, and the mint kubeconfig the
 gateway reads back carries a token only — `WriteMintKubeconfig` refuses a credential with no bearer
@@ -1816,6 +1830,8 @@ by a rig run that tested a tree moving under it. On 2026-10-05 five more were op
 cloud-controller-manager work: CCM-1 and AUTO-1 were opened and CLOSED inside the same window and are
 in section 15 with their readings, while ESO-2 remains and GL-1, GL-2 and FLAKE-1 join it. Each was
 written from the code rather than from the request that produced it, and each names its instrument.
+On 2026-10-06 MARKET-2 was opened and CLOSED inside the same window, by the k8s door's tenant
+credential work, and is in section 15 with its readings.
 **The live backlog is `NEXT.yaml`, which this section mirrors:
 an item is written here when it is opened and moves to section 15, with its readings, when it is
 closed.** The practice that produced the batch is the one worth keeping: the artefact was run and each
@@ -1913,6 +1929,41 @@ can outlive the work that closed it, and why one whose subject has been deleted 
 questions for hours without anyone stopping on it. The measurements stay with the entries rather than
 being tidied away, because a number without its condition is how the 332-second boot outlived its own
 refutation.
+
+- **A market cluster's tenant credential is signed from its own ClientCA, and the choice of source
+  belongs to the substrate. CLOSED, and it closed the k8s door.** Before, `MintTenantCredentialForDataDir`
+  chose its source from `ReadVaultSeal(dataDir)` alone: a port and a root token meant the vault, and
+  nothing asked where the cluster's nodes ran. A market cluster therefore minted its tenant credential
+  through its own custody vault over TLS on every clusterprovider pass, and the tenant never
+  materialised. MEASURED in production, container `socialweb-k8s` on `root@socialweb.computer`, on
+  every 2 s pass: `cluster provider: the pass failed ... no tenant credential for
+  test-cluster-alice-0001: the tenant credential could not be signed: issuing the tenant credential
+  from the vault at https://127.0.0.1:20001: openbao: transport failure: POST
+  /v1/pki/issue/tenant-superuser: tls: failed to verify certificate: x509: certificate signed by
+  unknown authority (possibly because of "x509: ECDSA verification failure" while trying to verify
+  candidate authority certificate "socialweb-vault-tls-ca")`. The scale driver observes the tenant
+  through this credential, so with the pass failing no tenant was ever observed, a pending pod wrote
+  no NodeClaim, and no node was rented. The material the credential needed was on disk the whole time:
+  `server/tls/{client-ca.crt,client-ca.key,server-ca.crt}` exist for that cluster, and the provider
+  wrote them. After, `CredentialSource` is an explicit argument to `MintTenantCredentialForCluster`
+  and `MintTenantCredentialForDataDir`, `cmd/socialweb-clusterprovider/main.go` derives it from the
+  substrate, and an unnamed source is refused rather than defaulted. `market` signs from the ClientCA
+  and never opens the vault; `firecracker` and `qemu` are unchanged and still reach for the vault when
+  a seal exists. The refusal-not-fallback rule is unchanged on both paths. Instruments, all in
+  `internal/clusterprovider/tenantcredential_test.go` unless named: `TestTheCredentialSourceFollowsTheSubstrate`
+  (`cmd/socialweb-clusterprovider/market_test.go`) reads the derivation for all three substrates;
+  `TestTheMarketSourceSignsFromTheClusterCAAndNeverReachesForTheSeal` seeds a ClientCA beside a seal
+  whose port nothing answers at, and it was watched to FAIL with the production error shape above
+  (`the tenant credential could not be signed: issuing the tenant credential from the vault at
+  https://127.0.0.1:<port>: openbao: transport failure: POST /v1/pki/issue/tenant-superuser: ...
+  connect: connection refused`) when the market source was made to fall through to the vault, so the
+  reading is the change and not the ambient result; `TestTheMarketSourceRefusesWithNoClientCAWhateverTheSealSays`,
+  which refuses a ClientCA-less data dir with the seal present and again with it removed and requires
+  the two refusals to be the same one, so the seal is shown to change nothing; and
+  `TestTheCredentialSourceMustBeNamed`. The guest half is `TestTheVaultIssuedTenantCredentialChainsToTheImportedClientCA`,
+  unchanged in what it proves and now naming `CredentialSourceVaultIfSealed`. NOT VERIFIED against the
+  production deployment: the container was inspected read-only, and this is a source change the owner
+  deploys. `NEXT.yaml` MARKET-2.
 
 - **The live gate now runs end to end in the rig, and it derives the tenant it runs against. CLOSED,
   and the derivation is what closed it.** `deploy/test-rig/inside.sh` used to refuse before the gate

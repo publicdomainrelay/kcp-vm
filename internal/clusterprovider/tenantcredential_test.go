@@ -32,6 +32,7 @@ import (
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kubeconfig"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/vaultcert"
 )
 
 const testTenantServer = "https://tenant-a.localhost:6443"
@@ -275,6 +276,101 @@ func TestNoTwoMintedCredentialsShareAKeyOrASerial(t *testing.T) {
 	}
 	if bytes.Equal(first.TLSClientConfig.CertData, second.TLSClientConfig.CertData) {
 		t.Fatal("two mints produced the same certificate")
+	}
+}
+
+func seedSealedCluster(t *testing.T, clientCA, serverCA *testCA) (string, int) {
+	t.Helper()
+	dataDir := seedClusterTLS(t, clientCA, serverCA)
+	if _, err := vaultcert.EnsureVaultTLSCertificate(dataDir, "127.0.0.1"); err != nil {
+		t.Fatalf("writing the vault's own TLS material: %v", err)
+	}
+	port := freePort(t)
+	if err := writeVaultSeal(dataDir, VaultSeal{
+		Port:      port,
+		Keys:      []string{"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="},
+		RootToken: "hvs.a-root-token-nothing-is-listening-for",
+	}); err != nil {
+		t.Fatalf("writing the unseal material: %v", err)
+	}
+	return dataDir, port
+}
+
+func TestTheMarketSourceSignsFromTheClusterCAAndNeverReachesForTheSeal(t *testing.T) {
+	clientCA := newTestCA(t, "k3s-client-ca")
+	serverCA := newTestCA(t, "k3s-server-ca")
+	dataDir, port := seedSealedCluster(t, clientCA, serverCA)
+	ctx := context.Background()
+
+	cfg, err := MintTenantCredentialForDataDir(ctx, dataDir, testTenantServer, CredentialSourceClusterCA)
+	if err != nil {
+		t.Fatalf("a market cluster's own provider wrote its ClientCA, and this data dir holds one "+
+			"beside a seal nothing answers at, so the credential is signable from disk alone: %v", err)
+	}
+	leaf := leafOf(t, cfg)
+	if leaf.Subject.CommonName != SuperuserName {
+		t.Fatalf("the credential authenticates as %q, want %q", leaf.Subject.CommonName, SuperuserName)
+	}
+	if chains := verifyAgainst(t, clientCA, leaf); len(chains) != 1 {
+		t.Fatalf("the credential verifies through %d chains, not the one ClientCA on disk that signed it", len(chains))
+	}
+	if !bytes.Equal(cfg.TLSClientConfig.CAData, serverCA.certPEM) {
+		t.Fatal("the credential does not carry the cluster's own server CA")
+	}
+
+	_, err = MintTenantCredentialForDataDir(ctx, dataDir, testTenantServer, CredentialSourceVaultIfSealed)
+	if err == nil {
+		t.Fatal("the guest source minted a credential with nothing answering at the seal's port, so " +
+			"this data dir cannot tell the two sources apart and the reading above proves nothing")
+	}
+	if !strings.Contains(err.Error(), VaultAddr(port)) {
+		t.Fatalf("the guest source failed for a reason that does not name the vault at %s it was "+
+			"supposed to consult, so the same data dir may have failed for an unrelated reason: %v",
+			VaultAddr(port), err)
+	}
+}
+
+func TestTheMarketSourceRefusesWithNoClientCAWhateverTheSealSays(t *testing.T) {
+	clientCA := newTestCA(t, "k3s-client-ca")
+	serverCA := newTestCA(t, "k3s-server-ca")
+	sealed, _ := seedSealedCluster(t, clientCA, serverCA)
+	unsealed := seedClusterTLS(t, clientCA, serverCA)
+	for _, dataDir := range []string{sealed, unsealed} {
+		if err := os.Remove(filepath.Join(dataDir, "server", "tls", "client-ca.crt")); err != nil {
+			t.Fatalf("remove client-ca.crt: %v", err)
+		}
+	}
+
+	ctx := context.Background()
+	withSeal, err := MintTenantCredentialForDataDir(ctx, sealed, testTenantServer, CredentialSourceClusterCA)
+	if !errors.Is(err, ErrNoClientCA) {
+		t.Fatalf("the refusal is %v, and a market cluster whose ClientCA is gone must say so rather "+
+			"than mint from the seal that happens to sit beside it", err)
+	}
+	if withSeal != nil {
+		t.Fatal("a refused mint returned a credential alongside the error")
+	}
+	without, err := MintTenantCredentialForDataDir(ctx, unsealed, testTenantServer, CredentialSourceClusterCA)
+	if !errors.Is(err, ErrNoClientCA) {
+		t.Fatalf("the same data dir with the seal removed is refused as %v rather than by the missing "+
+			"ClientCA, so the two readings differ and the seal's presence, not the CA, is what the "+
+			"caller is reading", err)
+	}
+	if without != nil {
+		t.Fatal("a refused mint returned a credential alongside the error")
+	}
+}
+
+func TestTheCredentialSourceMustBeNamed(t *testing.T) {
+	dataDir := seedClusterTLS(t, newTestCA(t, "k3s-client-ca"), newTestCA(t, "k3s-server-ca"))
+
+	cfg, err := MintTenantCredentialForDataDir(context.Background(), dataDir, testTenantServer, "")
+	if !errors.Is(err, ErrCredentialSourceUnknown) {
+		t.Fatalf("an unnamed source is reported as %v, and a caller reading that cannot tell that "+
+			"it left the choice to a default", err)
+	}
+	if cfg != nil {
+		t.Fatal("a refused mint returned a credential alongside the error")
 	}
 }
 

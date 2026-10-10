@@ -97,6 +97,23 @@ var ErrCredentialDoesNotChain = errors.New(
 		"signed with, so the credential is refused here rather than by the apiserver as an " +
 		"authentication error at the first apply")
 
+var ErrCredentialSourceUnknown = errors.New(
+	"clusterprovider: the tenant credential's source is one of cluster-ca, which signs it from " +
+		"the cluster's own ClientCA on disk, or vault-if-sealed, which reaches for the cluster's " +
+		"vault when that cluster has left unseal material beside it. A caller that names neither " +
+		"has left the choice to a default, and the default is what this seam exists to remove: on " +
+		"a market node the vault is not between the provider and the tenant apiserver at all, so " +
+		"the seal's mere presence would put a second TLS dependency on that path and its failure " +
+		"would read as a broken CA rather than as a source nothing should have consulted")
+
+type CredentialSource string
+
+const (
+	CredentialSourceClusterCA CredentialSource = "cluster-ca"
+
+	CredentialSourceVaultIfSealed CredentialSource = "vault-if-sealed"
+)
+
 type CredentialOptions struct {
 	DataDir string
 
@@ -200,26 +217,32 @@ func MintTenantCredential(o CredentialOptions) (*rest.Config, error) {
 	}, nil
 }
 
-func MintTenantCredentialForCluster(ctx context.Context, stateDir, cluster, server string) (*rest.Config, error) {
+func MintTenantCredentialForCluster(ctx context.Context, stateDir, cluster, server string, source CredentialSource) (*rest.Config, error) {
 	dataDir, err := ClusterDataDir(stateDir, cluster)
 	if err != nil {
 		return nil, err
 	}
-	return MintTenantCredentialForDataDir(ctx, dataDir, server)
+	return MintTenantCredentialForDataDir(ctx, dataDir, server, source)
 }
 
-func MintTenantCredentialForDataDir(ctx context.Context, dataDir, server string) (*rest.Config, error) {
+func MintTenantCredentialForDataDir(ctx context.Context, dataDir, server string, source CredentialSource) (*rest.Config, error) {
 	o := CredentialOptions{
 		DataDir:       dataDir,
 		Server:        server,
 		CommonName:    SuperuserName,
 		Organizations: []string{SuperuserOrganization},
 	}
-	seal, err := ReadVaultSeal(dataDir)
-	if err == nil && seal.Port > 0 && seal.RootToken != "" {
-		return mintTenantCredentialFromVault(ctx, o, seal.Port, seal.RootToken)
+	switch source {
+	case CredentialSourceClusterCA:
+		return MintTenantCredential(o)
+	case CredentialSourceVaultIfSealed:
+		seal, err := ReadVaultSeal(dataDir)
+		if err == nil && seal.Port > 0 && seal.RootToken != "" {
+			return mintTenantCredentialFromVault(ctx, o, seal.Port, seal.RootToken)
+		}
+		return MintTenantCredential(o)
 	}
-	return MintTenantCredential(o)
+	return nil, fmt.Errorf("%w (got %q)", ErrCredentialSourceUnknown, source)
 }
 
 func MintTenantCredentialForClusterAs(ctx context.Context, stateDir, cluster, server, commonName string, organizations []string, validFor time.Duration) (*rest.Config, error) {

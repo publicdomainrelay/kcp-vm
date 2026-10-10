@@ -203,7 +203,7 @@ func TestTheVaultIssuedTenantCredentialChainsToTheImportedClientCA(t *testing.T)
 		t.Fatalf("ImportClientCA: %v", err)
 	}
 
-	cfg, err := MintTenantCredentialForDataDir(ctx, dataDir, testTenantServer)
+	cfg, err := MintTenantCredentialForDataDir(ctx, dataDir, testTenantServer, CredentialSourceVaultIfSealed)
 	if err != nil {
 		t.Fatalf("MintTenantCredentialForDataDir from the vault: %v", err)
 	}

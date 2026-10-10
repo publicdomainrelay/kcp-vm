@@ -145,6 +145,27 @@ func TestTheMarketSubstrateNeedsNoBinaryOnThisHost(t *testing.T) {
 	}
 }
 
+func TestTheCredentialSourceFollowsTheSubstrate(t *testing.T) {
+	for _, tc := range []struct {
+		substrate nodeSubstrate
+		want      clusterprovider.CredentialSource
+	}{
+		{nodeSubstrate{Name: SubstrateMarket}, clusterprovider.CredentialSourceClusterCA},
+		{nodeSubstrate{Name: SubstrateFirecracker}, clusterprovider.CredentialSourceVaultIfSealed},
+		{nodeSubstrate{Name: SubstrateQEMU}, clusterprovider.CredentialSourceVaultIfSealed},
+	} {
+		t.Run(tc.substrate.Name, func(t *testing.T) {
+			got := tenantCredentialSource(tc.substrate)
+			if got != tc.want {
+				t.Fatalf("a cluster placed on the %s substrate mints its tenant credential as %q, "+
+					"want %q: a market node's machine is not this host, so the cluster's own "+
+					"ClientCA signs it and the vault is never on the path between this provider "+
+					"and the tenant apiserver", tc.substrate.Name, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestTheMarketSubstrateBuildsAClaimingHost(t *testing.T) {
 	claims := &marketClaims{}
 	sub := nodeSubstrate{Name: SubstrateMarket}

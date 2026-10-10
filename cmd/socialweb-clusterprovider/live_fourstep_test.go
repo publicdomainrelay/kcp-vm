@@ -521,11 +521,11 @@ func fourstepBringUp(t *testing.T, ctx context.Context, cfg Config, bins fourste
 		t.Fatalf("clusterprovider.New: %v", err)
 	}
 
-	tenant := tenantClients(registry, tenantFromClusterCA(alloc, cfg.StateDir))
 	substrate, err := nodeSubstrateFor(cfg)
 	if err != nil {
 		t.Fatalf("the substrate the configuration names: %v", err)
 	}
+	tenant := tenantClients(registry, tenantFromClusterCA(alloc, cfg.StateDir, tenantCredentialSource(substrate)))
 	nodes, err := newNodeHosts(nodeHostsOptions{
 		Allocator:        alloc,
 		Networks:         nets,
@@ -586,7 +586,8 @@ func (s *fourstepStack) kubeconfig(t *testing.T) string {
 		t.Fatalf("no apiserver lease for %s", fourstepCluster)
 	}
 	minted, err := clusterprovider.MintTenantCredentialForCluster(
-		context.Background(), s.cfg.StateDir, fourstepCluster, clusterprovider.APIServerURL(lease.Port))
+		context.Background(), s.cfg.StateDir, fourstepCluster, clusterprovider.APIServerURL(lease.Port),
+		clusterprovider.CredentialSourceVaultIfSealed)
 	if err != nil {
 		t.Fatalf("minting the tenant credential: %v", err)
 	}

@@ -233,7 +233,7 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 		}
 	}
 
-	tenantConfig := tenantFromClusterCA(alloc, cfg.StateDir)
+	tenantConfig := tenantFromClusterCA(alloc, cfg.StateDir, tenantCredentialSource(substrate))
 	tenant := tenantClients(registry, tenantConfig)
 	nodeObserver := clusterprovider.NodeObserver{Client: tenant}
 	claims, err := kcpclient.New(kcpclient.Options{Host: cfg.KCPHost, RestConfig: restCfg})
@@ -474,7 +474,14 @@ func instanceMinter() func() string {
 	}
 }
 
-func tenantFromClusterCA(alloc *portallocator.Allocator, stateDir string) func(context.Context, clusterprovider.Ref, *v1alpha1.Cluster) (*rest.Config, error) {
+func tenantCredentialSource(substrate nodeSubstrate) clusterprovider.CredentialSource {
+	if substrate.Name == SubstrateMarket {
+		return clusterprovider.CredentialSourceClusterCA
+	}
+	return clusterprovider.CredentialSourceVaultIfSealed
+}
+
+func tenantFromClusterCA(alloc *portallocator.Allocator, stateDir string, source clusterprovider.CredentialSource) func(context.Context, clusterprovider.Ref, *v1alpha1.Cluster) (*rest.Config, error) {
 	return func(ctx context.Context, ref clusterprovider.Ref, cl *v1alpha1.Cluster) (*rest.Config, error) {
 		key, err := ref.Key()
 		if err != nil {
@@ -487,6 +494,6 @@ func tenantFromClusterCA(alloc *portallocator.Allocator, stateDir string) func(c
 			return nil, fmt.Errorf("clusterprovider: the apiserver lease for %s, which is the "+
 				"address this cluster's apiserver answers on: %w", cl.Name, err)
 		}
-		return clusterprovider.MintTenantCredentialForCluster(ctx, stateDir, key, clusterprovider.APIServerURL(lease.Port))
+		return clusterprovider.MintTenantCredentialForCluster(ctx, stateDir, key, clusterprovider.APIServerURL(lease.Port), source)
 	}
 }

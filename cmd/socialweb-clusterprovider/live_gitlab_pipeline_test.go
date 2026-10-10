@@ -242,7 +242,8 @@ func gitlabCredentialFiles(t *testing.T, cfg Config, stack *fourstepStack) (stri
 		t.Fatalf("no apiserver lease for %s", fourstepCluster)
 	}
 	minted, err := clusterprovider.MintTenantCredentialForCluster(
-		context.Background(), cfg.StateDir, fourstepCluster, clusterprovider.APIServerURL(lease.Port))
+		context.Background(), cfg.StateDir, fourstepCluster, clusterprovider.APIServerURL(lease.Port),
+		clusterprovider.CredentialSourceVaultIfSealed)
 	if err != nil {
 		t.Fatalf("minting the runner's tenant credential: %v", err)
 	}
