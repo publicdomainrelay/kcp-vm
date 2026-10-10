@@ -3716,6 +3716,38 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   `bao` serving the leaf reads it once. So the cluster vault grows the leaf under a stable CA and the
   root vault rotates both. Neither is the other's bug.
 
+- **The tenant add-ons pass awaited an operator rollout a cluster with zero nodes can never produce,
+  so it stalled 180 s every pass.** Before: the provider ran `deploy/eso/install.sh`, whose last act
+  was `kubectl -n default rollout status deployment/external-secrets --timeout=180s`. That
+  deployment's pods cannot be scheduled until a node exists, and the node is created by the
+  node-scale pass, which runs AFTER the reconcile pass in the same loop
+  (`cmd/socialweb-clusterprovider/wiring.go`: `p.pass(ctx, ref, key)` then
+  `p.scale(ctx, key, ref.Name, true)`), so the wait outlives the very pass that would satisfy it.
+  It is a stall rather than a deadlock - the wait sits inside `if ! ...; then`, so the script exits
+  0 with a warning - but a cluster at zero nodes cannot bring itself up promptly and every pass pays
+  it. Measured in production at zero nodes: `docker exec socialweb-k8s ps -eo pid,etime,args` showed
+  `bash /opt/socialweb/deploy/eso/install.sh` at 01:35 beside
+  `kubectl -n default rollout status deployment/external-secrets --timeout=180s` at 01:32. After:
+  `install.sh` honors `ESO_SKIP_ROLLOUT_WAIT` (default 0, so a human running the installer still
+  gets the rollout diagnostic) and `cmd/socialweb-clusterprovider/eso.go` sets it to 1, so the
+  install returns as soon as the bundle is applied and CRD establishment - which needs no node - is
+  the only thing that must happen before the store is applied. Nothing else in the pass moves: the
+  gate is still the probe that already exists, `eso.Installed` reading one `ClusterSecretStore` with
+  `Limit: 1`, and `InstallOperator` still fails the pass by name with `ErrNoOperator`, naming
+  `external-secrets.io/v1`, when the group does not serve after the install, so an operator whose
+  CRDs never come up is refused rather than passed silently. The change is a flag on the repo's own
+  installer rather than the bundle applied from Go: `install.sh` is a file of this repo (added in
+  `init`), while the pinned upstream bundle is the v2.11.0 `external-secrets.yaml` it fetches at
+  runtime and applies unchanged with its webhooks rewritten to `failurePolicy: Ignore`; that bundle
+  is untouched. Reapplying the manifests from Go would have put the version pin and the webhook
+  rewrite in a second place and left the shipped installer without a caller, which is the shape
+  ESO-3 closed. Watched to fail: with the provider's `ESO_SKIP_ROLLOUT_WAIT=1` removed,
+  `TestTheInstallDoesNotWaitForTheOperatorToRoll` recorded
+  `-n default rollout status deployment/external-secrets --timeout=180s` against the wanted
+  `apply --server-side --force-conflicts -f -`, and
+  `TestAnInstallThatLeavesTheOperatorUnservedFailsThePassByName` pins the refusal by group name.
+  `NEXT.yaml` ESO-4.
+
 ## 16. Vocabulary
 
 | | |

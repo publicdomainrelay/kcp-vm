@@ -174,3 +174,69 @@ func TestAFailedInstallLeavesTheStoreUnapplied(t *testing.T) {
 		t.Fatalf("the store was applied over a cluster with no operator: %v", order)
 	}
 }
+
+func TestTheInstallDoesNotWaitForTheOperatorToRoll(t *testing.T) {
+	dir := t.TempDir()
+	args := filepath.Join(dir, "kubectl-args")
+	stdin := filepath.Join(dir, "kubectl-stdin")
+	fake := filepath.Join(dir, "kubectl")
+	body := "#!/usr/bin/env bash\nset -eu\nprintf '%s\\n' \"$@\" > " + args + "\ncat > " + stdin + "\n"
+	if err := os.WriteFile(fake, []byte(body), 0o755); err != nil {
+		t.Fatalf("writing the fake kubectl: %v", err)
+	}
+	bundle := filepath.Join(dir, "external-secrets.yaml")
+	webhooks := "apiVersion: admissionregistration.k8s.io/v1\n" +
+		"kind: ValidatingWebhookConfiguration\n" +
+		"metadata:\n  name: external-secrets\n" +
+		"webhooks:\n  - name: secretstore\n    failurePolicy: Fail\n"
+	if err := os.WriteFile(bundle, []byte(webhooks), 0o600); err != nil {
+		t.Fatalf("writing the bundle: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("ESO_BUNDLE", bundle)
+	creds := &rest.Config{Host: "https://10.100.0.1:6443", BearerToken: "a-token"}
+	if err := installExternalSecrets(context.Background(), creds, "../../deploy/eso"); err != nil {
+		t.Fatalf("installExternalSecrets: %v", err)
+	}
+	recorded, err := os.ReadFile(args)
+	if err != nil {
+		t.Fatalf("the installer ran no kubectl at all: %v", err)
+	}
+	got := strings.Fields(string(recorded))
+	if len(got) == 0 || got[0] != "apply" {
+		t.Fatalf("the installer's kubectl was %v, want an apply first", got)
+	}
+	for _, a := range got {
+		if a == "rollout" || strings.Contains(a, "--for=condition") {
+			t.Fatalf("the installer waited on %q: a tenant cluster with zero nodes has no pod to "+
+				"roll out, so this is the wait the node-scale pass runs after, and the probe is what "+
+				"decides", a)
+		}
+	}
+	applied, err := os.ReadFile(stdin)
+	if err != nil {
+		t.Fatalf("the installer applied nothing on stdin: %v", err)
+	}
+	if strings.Contains(string(applied), "failurePolicy: Fail") {
+		t.Fatalf("the applied bundle still fails its webhooks closed, so on a cluster with no node "+
+			"the apiserver would reject the store with no endpoints available: %s", applied)
+	}
+	if !strings.Contains(string(applied), "failurePolicy: Ignore") {
+		t.Fatalf("the applied bundle is not the patched one, so the webhook rewrite was lost: %s", applied)
+	}
+}
+
+func TestAnInstallThatLeavesTheOperatorUnservedFailsThePassByName(t *testing.T) {
+	var order []string
+	err := applyTenantAddOns(context.Background(), tenantAddOnDynamic(false, &order),
+		func(context.Context) error { return nil }, tenantAddOnOptions())
+	if !errors.Is(err, eso.ErrNoOperator) {
+		t.Fatalf("an installer that left the operator's CRDs unserved was accepted: %v", err)
+	}
+	if !strings.Contains(err.Error(), eso.OperatorGroupVersion) {
+		t.Fatalf("the refusal does not name %s: %v", eso.OperatorGroupVersion, err)
+	}
+	if len(order) != 0 {
+		t.Fatalf("the store was applied over a cluster with no operator: %v", order)
+	}
+}

@@ -31,6 +31,12 @@ about: >
   in section 15 with its readings, including the production failure it closed and the ordering test
   watched to fail with the sequence inverted.
 
+  Opened and closed on 2026-10-07 and therefore NOT listed below: ESO-4 (the tenant add-ons pass
+  awaited the External Secrets controller rollout, so every pass on a cluster with zero nodes - the
+  normal resting state - stalled 180 s waiting for a pod the node-scale pass, which runs after the
+  pass the wait blocks, is what would schedule). It is in section 15 with its readings, including
+  the production process listing and the test watched to fail without the skip.
+
 open:
   - id: MINT-1
     title: A mint credential is named by the cluster's key, and the migration that renames an existing one runs in a different process from the reader.

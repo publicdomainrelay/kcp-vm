@@ -110,13 +110,13 @@ func installExternalSecrets(ctx context.Context, restCfg *rest.Config, manifestD
 	}
 	env := []string{}
 	for _, kv := range os.Environ() {
-		if strings.HasPrefix(kv, "KUBECONFIG=") {
+		if strings.HasPrefix(kv, "KUBECONFIG=") || strings.HasPrefix(kv, "ESO_SKIP_ROLLOUT_WAIT=") {
 			continue
 		}
 		env = append(env, kv)
 	}
 	cmd := exec.CommandContext(ctx, "bash", script)
-	cmd.Env = append(env, "KUBECONFIG="+kubeconfig)
+	cmd.Env = append(env, "KUBECONFIG="+kubeconfig, "ESO_SKIP_ROLLOUT_WAIT=1")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("clusterprovider: the External Secrets install %s failed: %w: %s",

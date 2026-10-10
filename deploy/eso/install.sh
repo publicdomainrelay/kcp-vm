@@ -12,11 +12,16 @@
 #   KUBECONFIG=/path/to/tenant.kubeconfig ESO_VERSION=v2.11.0 ./deploy/eso/install.sh
 #
 # ESO_BUNDLE=/path/to/external-secrets.yaml uses a local cached copy instead of downloading.
+# ESO_SKIP_ROLLOUT_WAIT=1 applies the bundle and returns without awaiting the controller rollout.
+# The CRDs and webhooks are established by the apply alone, and a caller that decides operator
+# presence by reading a ClusterSecretStore needs nothing a node provides, so a pass that runs
+# before the node-scale pass sets this and does not pay the rollout wait.
 set -euo pipefail
 
 ESO_VERSION="${ESO_VERSION:-v2.11.0}"
 NAMESPACE="${ESO_NAMESPACE:-default}"
 KUBECTL="${KUBECTL:-kubectl}"
+ESO_SKIP_ROLLOUT_WAIT="${ESO_SKIP_ROLLOUT_WAIT:-0}"
 
 bundle="${ESO_BUNDLE:-}"
 tmp=""
@@ -51,11 +56,15 @@ echo "install.sh: applying ${ESO_VERSION} from ${bundle}"
 # plain kubectl apply -f refuses them.
 sed 's/^\( *failurePolicy: \)Fail$/\1Ignore/' "$bundle" | "$KUBECTL" apply --server-side --force-conflicts -f -
 
-echo "install.sh: waiting for the ESO controller to be available"
-if ! "$KUBECTL" -n "$NAMESPACE" rollout status deployment/external-secrets --timeout=180s; then
-  echo "install.sh: the ESO controller is not Running yet. On a tenant cluster with no node there" >&2
-  echo "install.sh: is nowhere to schedule its pod; the CRDs and webhooks are installed and the" >&2
-  echo "install.sh: OpenBao store can be applied now. The controller runs once a node exists." >&2
+if [ "$ESO_SKIP_ROLLOUT_WAIT" = "1" ]; then
+  echo "install.sh: ESO_SKIP_ROLLOUT_WAIT=1, so the controller rollout is not awaited; the CRDs are applied and the caller's own probe decides."
+else
+  echo "install.sh: waiting for the ESO controller to be available"
+  if ! "$KUBECTL" -n "$NAMESPACE" rollout status deployment/external-secrets --timeout=180s; then
+    echo "install.sh: the ESO controller is not Running yet. On a tenant cluster with no node there" >&2
+    echo "install.sh: is nowhere to schedule its pod; the CRDs and webhooks are installed and the" >&2
+    echo "install.sh: OpenBao store can be applied now. The controller runs once a node exists." >&2
+  fi
 fi
 
 echo "install.sh: ESO ${ESO_VERSION} is installed. Apply the OpenBao store with internal/eso after the cluster vault is up."
