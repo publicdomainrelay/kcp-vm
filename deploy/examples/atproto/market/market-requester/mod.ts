@@ -39,13 +39,27 @@ const vmReadyTimeoutSec = options.vmReadyTimeoutSec as number;
 const guestCaFile = options.guestCaFile as string | undefined;
 const guestCaPem = guestCaFile ? (await Deno.readTextFile(guestCaFile)).trim() : "";
 const guestJournalToConsole = options.guestJournalToConsole === true;
+const guestCurlHome = options.guestCurlHome as string | undefined;
 const guestBase: Record<string, unknown> = {};
+const guestBootcmd: string[][] = [];
 if (guestCaPem) guestBase.ca_certs = { trusted: [guestCaPem] };
+if (guestCurlHome) {
+  guestBootcmd.push(["systemctl", "set-environment", `CURL_HOME=${guestCurlHome}`]);
+}
 if (guestJournalToConsole) {
-  guestBase.bootcmd = [[
+  guestBootcmd.push([
     "sh",
     "-c",
     "mkdir -p /etc/systemd/journald.conf.d && printf '[Journal]\\nForwardToConsole=yes\\nMaxLevelConsole=info\\nTTYPath=/dev/ttyS0\\n' > /etc/systemd/journald.conf.d/console.conf && systemctl restart systemd-journald",
+  ]);
+}
+if (guestBootcmd.length > 0) guestBase.bootcmd = guestBootcmd;
+const guestDiagnoseUrl = options.guestDiagnoseUrl as string | undefined;
+if (guestDiagnoseUrl) {
+  guestBase.runcmd = [[
+    "sh",
+    "-c",
+    `systemctl show-environment; cat /root/.curlrc; curl -v --max-time 10 ${guestDiagnoseUrl} 2>&1 | tail -n 25`,
   ]];
 }
 

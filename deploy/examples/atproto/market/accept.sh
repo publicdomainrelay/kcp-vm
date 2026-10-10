@@ -482,7 +482,9 @@ if [ -n "$BIDDER_DID" ] && [ -n "$HOST_IP" ]; then
       --bidder-dids "$BIDDER_DID" \
       --guest-host-aliases "$HOST_IP relay.localhost" \
       --guest-ca-file "$GUEST_TLS_DIR/ca.crt" \
+      --guest-curl-home /root \
       --guest-journal-to-console \
+      --guest-diagnose-url https://relay.localhost:2589/.well-known/did.json \
       --vm-ready-timeout-sec "$VM_READY_SECONDS" \
       --result-file "$MARKET_RESULT") >"$MARKET_LOG" 2>&1 || market_status=$?
   echo "requester exit=$market_status after $(( $(date +%s) - market_started ))s, log $MARKET_LOG"
