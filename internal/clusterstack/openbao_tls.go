@@ -5,10 +5,11 @@ import (
 )
 
 const (
-	openBaoTLSDirName  = "tls"
-	openBaoTLSCertName = "server.crt"
-	openBaoTLSKeyName  = "server.key"
-	openBaoTLSCAName   = "ca.crt"
+	openBaoTLSDirName   = "tls"
+	openBaoTLSCertName  = "server.crt"
+	openBaoTLSKeyName   = "server.key"
+	openBaoTLSCAName    = "ca.crt"
+	openBaoTLSCAKeyName = "ca.key"
 )
 
 func OpenBaoTLSDir(dataDir string) string {
@@ -25,4 +26,8 @@ func OpenBaoTLSKeyPath(dataDir string) string {
 
 func OpenBaoTLSCAPath(dataDir string) string {
 	return filepath.Join(OpenBaoTLSDir(dataDir), openBaoTLSCAName)
+}
+
+func OpenBaoTLSCAKeyPath(dataDir string) string {
+	return filepath.Join(OpenBaoTLSDir(dataDir), openBaoTLSCAKeyName)
 }
