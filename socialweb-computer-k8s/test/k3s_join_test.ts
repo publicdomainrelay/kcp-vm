@@ -1,6 +1,11 @@
 import { assertEquals, assertStringIncludes } from "@std/assert";
 import { createK3sJoinModule, K3S_JOIN_SSHD_DROPIN, renderK3sJoinScript } from "@publicdomainrelay/cloud-init-plugin-k3s-join";
 import {
+  DEFAULT_DNS_GATEWAY,
+  renderResolver,
+  RESOLV_CONF_PATH,
+} from "@publicdomainrelay/cloud-init-plugin-k3s-join";
+import {
   encodeNodeJoinDocument,
   K3S_JOIN_GO,
   K3S_JOIN_PATH,
@@ -110,6 +115,14 @@ Deno.test("the module carries no secret and only allows reverse forwards", () =>
   assertEquals(files[K3S_JOIN_SSHD_DROPIN], "AllowTcpForwarding remote\nGatewayPorts clientspecified\n");
   assertStringIncludes(files[K3S_JOIN_PATH]!, "exec k3s agent");
   assertEquals(JSON.stringify(patch).includes("k10"), false);
+});
+
+Deno.test("the module gives the guest the resolver the provider's network forwards through", () => {
+  const patch = createK3sJoinModule()({});
+  const files = Object.fromEntries((patch.write_files ?? []).map((f) => [f.path, f.content]));
+  assertEquals(files[RESOLV_CONF_PATH], renderResolver([DEFAULT_DNS_GATEWAY]));
+  assertEquals(Boolean(patch.bootcmd?.length), true, "the resolver is written before cloud-init's own stages");
+  assertEquals(renderResolver(["10.0.0.1"]), "nameserver 10.0.0.1\noptions timeout:2 attempts:3\n");
 });
 
 Deno.test("the pinned token names the server CA hash", () => {

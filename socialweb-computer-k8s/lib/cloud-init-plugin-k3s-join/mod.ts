@@ -7,10 +7,15 @@ import {
   NODE_JOIN_KEYS,
 } from "@publicdomainrelay/socialweb-computer-k8s-common";
 
+export const RESOLV_CONF_PATH = "/etc/resolv.conf";
+
+export const DEFAULT_DNS_GATEWAY = "172.30.0.1";
+
 export const K3S_JOIN_SSHD_DROPIN = "/etc/ssh/sshd_config.d/20-socialweb-k3s-join.conf";
 
 export interface K3sJoinModuleOptions {
   setupWaitSec?: number;
+  dnsNameservers?: string[];
   k3sDataDir?: string;
   setupStamp?: string;
   tokenPath?: string;
@@ -54,9 +59,21 @@ exec k3s agent --server "\${V[SERVER_URL]}" --token-file ${tokenPath} --node-nam
 `;
 }
 
+export function renderResolver(nameservers: string[]): string {
+  return `${nameservers.map((n) => `nameserver ${n}`).join("\n")}\noptions timeout:2 attempts:3\n`;
+}
+
 export function createK3sJoinModule(opts: K3sJoinModuleOptions = {}): UserDataModule {
+  const nameservers = opts.dnsNameservers ?? [DEFAULT_DNS_GATEWAY];
+  const resolver = renderResolver(nameservers);
   return (): UserDataPatch => ({
     write_files: [
+      {
+        path: RESOLV_CONF_PATH,
+        owner: "root:root",
+        permissions: "0644",
+        content: resolver,
+      },
       {
         path: K3S_JOIN_SSHD_DROPIN,
         owner: "root:root",
@@ -70,6 +87,12 @@ export function createK3sJoinModule(opts: K3sJoinModuleOptions = {}): UserDataMo
         content: renderK3sJoinScript(opts),
       },
     ],
-    runcmd: ["systemctl reload ssh || systemctl reload sshd || true"],
+    bootcmd: [
+      `printf '%s' '${resolver.replace(/'/g, `'\\''`)}' > ${RESOLV_CONF_PATH}`,
+    ],
+    runcmd: [
+      `printf '%s' '${resolver.replace(/'/g, `'\\''`)}' > ${RESOLV_CONF_PATH}`,
+      "systemctl reload ssh || systemctl reload sshd || true",
+    ],
   });
 }
