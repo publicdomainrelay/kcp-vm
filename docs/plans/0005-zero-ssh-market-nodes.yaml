@@ -111,9 +111,20 @@ items:
     decision: >
       Vendored into this repo (user chose vendoring over building in deno-kcp). The bidder runs
       --compute-provider-firecracker with our nodeimage and nodeboot. Replaces the ad-hoc local
-      dispatcher plus fake PLC harness for live tests.
-    status: todo
-    evidence: []
+      dispatcher plus fake PLC harness for live tests. The bidder and requester use the in-cluster
+      PLC (https://127.0.0.1:2587) and the test bed's own dispatcher (relay.localhost:2588, TLS front
+      for guests on 2589), never plc.directory or xrpc.fedproxy.com; the bidder runs --policy open
+      because every identity is minted per run (decided by Claude, user may veto).
+    status: done
+    evidence:
+      - "commit e997fe6 vendor deno-kcp f5b7c10c (pr-2) schemas, exports, workspace types, scripts and the market example; deploy/denokcp/vendor.json records commit and sha256 per file"
+      - "commit c1451df build-provider.sh builds deno-kcp at the recorded commit against kcp-libs f6911d2 plus kcp-libs-no-default-issuer.patch (OpenBao 2.6/2.7 answer 400 'no default issuer' on an empty PKI mount; kcp-libs read only 404 as no authority)"
+      - "commit fb6da3a firecracker bidder, dispatcher, TLS front, market-requester/mod.ts (runComputeContract, no ssh session), accept.sh market checks, provider --pod-timeout 24h, livegate test"
+      - "commit d4448f2 guest onNetwork end to end (TLS front reads the HTTP/2 authority; requester user_data sets CURL_HOME=/root so units read the bidder's .curlrc)"
+      - "commit 3e1f2c6 guest work root under /var/tmp, apply.sh refuses a work root whose firecracker socket path exceeds 107 bytes"
+      - "tests watched to fail then pass: TestTheVendoredDenoKcpTreeIsExactlyItsRecord, TestTheRecordMatchesTheDenoKcpCommitItNames, TestEveryVendoredManifestDecodesAgainstTheVendoredSchemas (no vendor.json, then pass; a mutated 70-bidder.yaml fails all three); TestTheMarketTestBedRentsAFirecrackerGuestThroughTheRFPFlow (FAIL 964 s at 2026-10-07T20:09:51Z, guest socket path too long; PASS 684 s at 2026-10-07T20:22:12Z)"
+      - "accept.sh on hat-8 2026-10-07: run 1 17:23Z 0/17 (OpenBao 400); run 2 17:30:42Z deno-worker bidder as upstream, accept: pass 17/17 (upstream bidder registered did:plc:lm4cljto7fyrug2xgjvsefh3 in the public plc.directory); run 3 17:45Z firecracker bidder up, RFP 403 scope filter (only-me); run 4 17:53Z bid, accept, receipt verified, guest booted, every DenoPod killed at the 5m pod timeout; runs 5-8 vm.delete 200 and guest gone, guest never got its OIDC token; run 9 19:53:16Z accept: pass 23/23, onNetwork iroh ticket 335 s after the RFP, vm.delete 200, guest container gone 2 s after release"
+      - "deploy/check.sh --fast green 2026-10-07T20:23:04Z on the branch merged with main"
   - id: M1-MARKET-ONLY
     milestone: M1
     title: Retire clusterprovider's local firecracker and qemu substrates

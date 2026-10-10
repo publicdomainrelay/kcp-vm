@@ -1977,6 +1977,96 @@ inventing one. A live boot adds `/dev/kvm`. The rig derives everything else, and
 is what keeps a missing kernel, module tree or base image from becoming an image that silently boots
 the wrong userspace.
 
+### The market test bed (vendored deno-kcp)
+
+**The live market test bed is deno-kcp's AT Protocol market example, vendored into this repository
+and run on kcp, with a firecracker bidder on our nodeimage.** Plan 0005 item M1-TESTBED; the user
+chose vendoring over building in deno-kcp. `deploy/denokcp/` holds deno-kcp's APIResourceSchemas,
+APIExports and WorkspaceTypes (DenoPod, OpenBao and the rest of the `denoruntime` and
+`policyworkflowruns` exports the `denoruntime` workspace type binds) and its kcp, OpenBao and
+install scripts; `deploy/examples/atproto/market/` holds the market example as of deno-kcp PR 2
+(branch `pr-2`, commit `f5b7c10c`), which added bob's PDS and the bidder. `deploy/denokcp/vendor.json`
+records that commit, the kcp-libs commit the provider is built against (`f6911d23`), the upstream
+path and sha256 of every vendored file, why each adapted file differs, and why each file of ours
+lives beside them. `internal/marketbed` checks it offline: every file in the two directories is
+either vendored or ours and recorded, a verbatim file is byte-identical to its recorded upstream,
+every file is ASCII, every manifest decodes strictly into the kcp and Kubernetes types and every
+`deno.computer` object validates against the vendored schema (a field kube would prune is a failure),
+and, when a deno-kcp checkout is found above the repository (or named by `DENO_KCP_DIR`), the record
+matches `git show <commit>:<path>` for every file.
+
+**What runs.** `accept.sh` brings up its own kine, kcp and OpenBao (dev mode) under a throwaway
+`$ACCEPT_ROOT` on kernel-chosen ports, installs the provider's schemas, creates the four workspaces,
+waits for the APIExport endpoints, starts the deno-kcp provider, runs `apply.sh`, and then checks every
+DenoPod, the verifier, each service on its cluster-local name and from the host, and one market
+contract. The provider binary is a test dependency: `deploy/denokcp/build-provider.sh` extracts
+deno-kcp and kcp-libs at the recorded commits with `git archive` (neither checkout is touched),
+applies `kcp-libs-*.patch`, and builds `cmd/deno-kcp-provider`; `DENO_KCP_PROVIDER` names a prebuilt
+one instead. The topology, by workspace:
+
+```
+root:global  plc             hono-plc                       https 127.0.0.1:2587
+root:relay   relay           hono-atproto-relay             https 127.0.0.1:2584
+root:relay   dispatcher      hono-did-key-ingress-proxy     http  0.0.0.0:2588  relay.localhost
+root:relay   dispatcher-tls  TLS front for guests           https 0.0.0.0:2589  *.relay.localhost
+root:alice   pds, verifier   hono-pds                       https 127.0.0.1:2583
+root:bob     pds             hono-pds                       https 127.0.0.1:2585
+root:bob     bidder          hono-bidder, firecracker       http  0.0.0.0:2586
+host         market-requester/mod.ts (runComputeContract)
+```
+
+**Which PLC and which dispatcher (decided by Claude, user may veto).** Upstream pr-2's bidder
+used `plc.directory` and `xrpc.fedproxy.com`, so every run registered a fresh did:plc in the public
+directory (run 2 below registered `did:plc:lm4cljto7fyrug2xgjvsefh3`). The test bed's bidder and
+requester use the in-cluster PLC instead, by the loopback address its OpenBao leaf carries
+(`https://127.0.0.1:2587`), because the requester runs on the host where cluster-local names do not
+resolve, and both trust the market CA through `DENO_CERT`. They share a dispatcher of the test
+bed's own, `35-relay-dispatcher.yaml`, named `relay.localhost:2588`, which is the shape the bidder's
+and requester's local-dev paths already understand (`https://*.localhost` downgraded to the plain
+port). Nothing in a run reaches a public market service. A guest reaches the dispatcher only over
+https, for its OIDC proof and its onNetwork report, so the bidder runs `--guest-tls-port 2589` and
+`36-relay-dispatcher-tls.yaml` terminates TLS there with a leaf for `relay.localhost` and
+`*.relay.localhost` from a CA `apply.sh` generates per run, proxying to the plain dispatcher by name.
+The requester's own user_data, composed through `runComputeContract` and carried by the RFP, makes the
+guest trust that CA (`ca_certs`), names the host for `relay.localhost` (`guestHostAliases`), and sets
+`CURL_HOME=/root` for every unit: curl resolves `*.localhost` to loopback itself unless a
+`--resolve` entry says otherwise, the firecracker provider writes that entry to `/root/.curlrc`, and a
+systemd unit has no `HOME`, so without it the guest's `provisioning-token.service` dialled its own
+loopback (runs 5 to 7). The bidder runs `--policy open`: the default `only-me` refuses an RFP from a
+requester with no operator association (run 3, HTTP 403 `scope filter declined`), and every identity
+in the test bed is minted per run.
+
+**The market contract, with no session to the guest.** `market-requester/mod.ts` creates a
+requester PDS, runs `runComputeContract` against the bidder's DID (read from the bidder's own
+`localPDS plc registered` line), and hands it an SSH provider whose `pollReady` records the address
+the guest reported and returns false, so the flow goes straight to release: no ssh session is ever
+opened. The checks are `market guest onNetwork` (the guest's own report arrived, an iroh ticket),
+`market contract released` (vm.delete accepted) and `market guest gone` (the container named by the
+guest's work directory under this run's own `FC_WORK_ROOT` is not running). The cleanup trap stops
+only containers named under that work root, never another run's guests.
+
+**What the vendored example needed to run here, and what it replaces.** Three defects surfaced:
+OpenBao 2.6 and 2.7 answer `GET pki/cert/ca` on an empty mount with HTTP 400 `no default issuer
+currently configured`, which kcp-libs `f6911d2` reads as an error rather than "no authority yet", so
+no root or intermediate was ever generated (run 1: 0 of 17 checks; carried as
+`kcp-libs-no-default-issuer.patch` until kcp-libs takes it); the provider's `--pod-timeout` (5m
+default) stops every deno process, long-running DenoPods included, so the bidder restarted mid-contract
+and forgot it (run 4); and a provider started before any workspace binds its exports reconciles
+nothing, so `accept.sh` now creates the workspaces before starting it, while the upstream restart
+remains for the race that is left. The test bed replaces the in-process local dispatcher plus fake PLC
+of `socialweb-computer-k8s/test/live_market_node_test.ts` as the market harness for live tests; that
+test still owns the loopback-k3s join through the door's reverse forward until M3 moves the join off
+ssh, and is retired with it. `internal/marketbed`'s
+`TestTheMarketTestBedRentsAFirecrackerGuestThroughTheRFPFlow` drives `accept.sh` behind livegate: it
+skips without `SOCIALWEB_LOCAL`/`SOCIALWEB_REQUIRE_LIVE`, skips under `--local` and fails under
+`--full` when the firecracker inputs (`SOCIALWEB_FIRECRACKER_NODEIMAGE`, `_CONFIG`, `_REPO_DIR`,
+`_RUNNER_IMAGE`), `/dev/kvm`, the org root's real sibling directories or ports 2583 to 2589 are
+missing, and needs `go test -timeout 60m`, which `deploy/check.sh --local`/`--full` now pass. Its guests'
+work root is a short directory under `/var/tmp` (`MARKETBED_WORK_ROOT_BASE`), not the test's temp
+dir: each guest's firecracker API socket lives in its work directory, a unix socket path cannot exceed
+107 bytes, and under `t.TempDir()` the first run's guest died at boot, its work directory was removed,
+and the run read as a bidder that never provisioned. `apply.sh` refuses such a work root up front.
+
 ## 13. Invariants
 
 A change must not break any of these. Each exists because something failed.
