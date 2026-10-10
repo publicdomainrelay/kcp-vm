@@ -1521,9 +1521,15 @@ runcmd:
     },
   });
 
+  // A denied bidder is one this requester will not buy from, and a bidder that
+  // was NOT solicited can still submit - it watches the firehose and posts its
+  // bid to the requester's own endpoint. So the deny has to hold at the door the
+  // bids come in through, or a denied bid wins an auction it was excluded from
+  // and can even end the window early on the firstFree path.
+  const notDenied = (bid: CollectedBid) => !deniedSet.has(bid.did);
   const collect = () => {
-    collector.addAll(pds.pendingBids.get(rfpUri) ?? []);
-    collector.addAll(firehoseDiscoveredBids.get(rfpUri) ?? []);
+    collector.addAll((pds.pendingBids.get(rfpUri) ?? []).filter(notDenied));
+    collector.addAll((firehoseDiscoveredBids.get(rfpUri) ?? []).filter(notDenied));
   };
 
   const windowElapsed = new Promise<void>((resolve) => setTimeout(resolve, bidWindowSec * 1000));
