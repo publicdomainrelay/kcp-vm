@@ -306,8 +306,17 @@ items:
       one role per NodeClaim bound to that guest's workload subject and audience, short token TTL,
       read-only on the claim's path, role deleted on release. Mount and discovery details decided
       by Claude, user may veto.
-    status: todo
-    evidence: []
+    status: doing
+    evidence:
+      - "provider half built 2026-10-07: ff3ca9c (vaultlayout names, openbao client auth/list/delete/LoginJWT, nodemarket secrets + SyncSecrets + revoke, clusterprovider.NodeVault), 9dff4fa (kcpclient.ReadClusterLink, nodes.go wiring, main.go Links + NodeSecrets); ARCHITECTURE section 7 'A market node's secrets live in its cluster's OpenBao, behind a JWT role'"
+      - "names: KV v2 mount socialweb-nodes, secret socialweb-nodes/data/<node> {token (pinned K10<sha256 serverCA>::server:<token>), nodePassword, serverCA, apiserverTicket, advertiseAddress, apiserverPort (int)}; policy node-<node> read socialweb-nodes/data/<node>; auth mount jwt-<sha256(issuer)[:12]> type jwt, oidc_discovery_url = bound_issuer = issuer; role <node>: role_type jwt, bound_subject, bound_audiences [audience], user_claim sub, token_ttl 5m, token_policies [node-<node>]"
+      - "decided by Claude, user may veto: secret held back (claim not) until ClusterLink <clusterKey>-apiserver is Listening with a ticket, filled by a later pass; policy failure fails Provision before the claim; status.grant.role never written by the provider (deterministic, logged); jwt mount kept when its last role goes (delete races a concurrent grant); revoke best-effort, 10 s bound, logged only, after the claim delete is accepted"
+      - "instrument (real OpenBao v2.6.2, bao server -dev, in-test ES256 OIDC issuer over http): internal/clusterprovider TestANodeLogsInWithItsWorkloadTokenAndReadsOnlyItsOwnSecret -- own token logs in and reads its path; other subject and other audience refused; 403 on another node's path; after Revoke role/policy/secret gone and login refused, other node's policy and the mount kept; second Revoke ok"
+      - "fakes: internal/nodemarket TestProvisionWritesTheNodePolicyAndSecretBeforeTheClaim (order policy, secret, claim; exact fields; link read from <workspace>/liveweb-apiserver), TestASecretWaitsForTheApiserverLinkWithoutHoldingTheClaimBack, TestAGrantOnTheClaimBecomesOneJWTRole, TestAReleaseRemovesTheNodesVaultState, TestAPolicyThatCannotBeWrittenRentsNothing, TestSecretsWithoutALinkReaderAreRefused; cmd TestTheConfirmPassWritesTheNodesSecretsAndTurnsAGrantIntoALogin; vaultlayout TestTheNodeJWTNamesAreTheOnesTheContractNames (mount hash checked against sha256sum); kcpclient TestReadClusterLinkCarriesTheTicketAndReportsAbsence"
+      - "watched to fail (scratch mutations, restored): no secrets at Provision -> 3 tests FAIL; no revoke at release -> nodemarket + cmd FAIL; no grant cache -> 2 FAIL; role without bound_subject -> real-bao test FAIL; policy wildcard socialweb-nodes/data/* -> vaultlayout + real-bao FAIL; confirm pass skips SyncSecrets -> cmd FAIL; no KV mount ensure -> real-bao FAIL; ticket dropped -> 2 FAIL"
+      - "green: deploy/check.sh --fast exit 0 (gofmt, build, apigen, vet, staticcheck, go test)"
+      - "not done: the door (claim.json, --secrets delivery, exchange for the audience), the guest units (M3-UNITS), a live login from a market guest; the provider has not been deployed"
+      - "interface for the door/guest: login POST /v1/auth/jwt-<sha256(issuer)[:12]>/login {role: <node>, jwt: <token with sub = grant.subject, aud = grant.audience>}; read GET /v1/socialweb-nodes/data/<node> with X-Vault-Token; the bidder issuer must serve <issuer>/.well-known/openid-configuration and its JWKS to the provider host"
   - id: M3-UNITS
     milestone: M3
     title: user_data installs systemd units for dumbpipe connect-tcp and the k3s agent; no ssh to guests
@@ -321,8 +330,13 @@ items:
     milestone: M3
     title: A Node NotReady for 90s is released and replaced; door or provider restarts never reap
     decision: User chose 90s.
-    status: todo
-    evidence: []
+    status: doing
+    evidence:
+      - "provider half built 2026-10-07 in 9dff4fa: tenantNodes.confirmHeld reads each held market node's tenant Node; Ready False/Unknown with now - lastTransitionTime >= NodeLossGrace (90s) -> teardownHeld (claim deleted, vault state revoked, door releases with vm.delete, tenant Node deleted), reported in confirmOutcome.lost; the scale pass in the same tick claims a replacement if demand remains. ARCHITECTURE section 10 'A market node NotReady for 90 s is released'"
+      - "decided by Claude, user may veto: clock is the Node's lastTransitionTime (survives provider restarts), zero transition time falls back to first-seen in memory; no Node object or no Ready condition is not covered; held nodes only"
+      - "instrument: cmd/socialweb-clusterprovider/nodeloss_test.go TestAMarketNodeNotReadyFor89sIsKeptAndAt90sIsReleased (False and Unknown: 89s keeps claim + Node, 90s deletes both, revokes, reports lost), TestANodeTheClusterNeverReportedIsNotTouchedByTheLossRule (1h on, no Node, claim kept), TestAReadyNodeIsNotLostHoweverOldItsTransition"
+      - "watched to fail (scratch mutations, restored): grace '>' for '>=' -> 90s case FAIL (both subtests); ignore lastTransitionTime -> FAIL; unreported node judged -> never-reported test FAIL"
+      - "not done: door or provider restarts never reap (a market node that outlived a provider restart is not held, so neither confirmed nor lost); a live NotReady release against a real bidder"
   - id: M4-SCALE-IN
     milestone: M4
     title: Per-node scale-in

@@ -737,6 +737,66 @@ the instance token, which is per-instance state.
 REGENERATE those and INVALIDATE every kubeconfig and SA token.** The count is load-bearing; the
 bundle's own test asserts it against the data.
 
+### A market node's secrets live in its cluster's OpenBao, behind a JWT role (plan 0005 M3-JWT)
+
+The provider half of the plan's `m3_contract` (node_secrets, jwt), built 2026-10-07. Names are in
+`internal/vaultlayout/nodejwt.go`, the vault writes in `clusterprovider.NodeVault`
+(`internal/clusterprovider/nodesecrets.go`, root token and CA from the cluster data dir, the same
+`ReadVaultSeal` + `vaultClient` every other cluster-vault write uses), the order in
+`internal/nodemarket/secrets.go`. Only the market substrate wires it (`nodeHostsOptions.NodeSecrets`,
+set in `main.go`); a firecracker or qemu guest keeps its cert-auth path (`node-secret-<node>`,
+`secret/data/k3s/node/<node>`), which is a different policy namespace and a different mount.
+
+| what | name | written | removed |
+|---|---|---|---|
+| KV v2 mount | `socialweb-nodes` | enabled on first use if `sys/mounts` lacks it | never |
+| node secret | `socialweb-nodes/data/<node>` | before the claim, once `ClusterLink <clusterKey>-apiserver` reads `Listening` with a ticket; else by the first later pass that sees one | release (`DELETE socialweb-nodes/metadata/<node>`, every version) |
+| policy | `node-<node>`: `path "socialweb-nodes/data/<node>" { capabilities = ["read"] }` | before the claim, always | release |
+| JWT auth mount | `jwt-<first 12 hex of sha256(issuer)>`, type `jwt`, `oidc_discovery_url` = `bound_issuer` = issuer | when a claim first carries `status.grant` with that issuer | never |
+| JWT role | `<node>` under that mount: `role_type jwt`, `bound_subject` = grant subject, `bound_audiences` = [grant audience], `user_claim sub`, `token_ttl 5m`, `token_policies [node-<node>]` | the first pass after the door writes `status.grant` | release, under every `jwt-<12 hex>` mount |
+
+The secret's fields are `token` (the pinned join token `K10<sha256 hex of serverCA>::server:<k3s
+token file, trimmed>`, byte-for-byte what the door's `pinnedJoinToken` composed for the ssh join, so
+`k3s agent --token` takes it verbatim), `nodePassword` (the per-node password
+`nodevm.MintOrReadNodePassword` minted at Provision, trimmed), `serverCA` (the PEM of
+`<data dir>/server/tls/server-ca.crt`, verbatim), `apiserverTicket` (the link's `status.ticket`),
+`advertiseAddress` and `apiserverPort` (an integer; the claim's own `spec` values). A secret exists
+only when it is whole: the guest may read "present" as "complete".
+
+Decisions, made by Claude, user may veto:
+
+- **The secret waits for the link; the claim does not.** A link that is not `Listening` holds back
+  the secret, never the claim, and never the pass: Provision writes the policy and the claim and
+  returns, and `confirmHeld` calls `SyncSecrets` on every held market node each pass, which writes
+  the secret once a ticket exists (logged once per distinct reason, not per pass). A policy that
+  cannot be written fails the Provision before the claim, so nothing is rented that could never
+  read its join material.
+- **The grant is the door's; the role name is not recorded in status.** The provider never writes
+  `status.grant.role`; the role name is deterministic (the node name), and it is logged with the
+  mount and policy when written. One `EnsureLogin` per distinct grant per host; a pass over an
+  unchanged grant costs nothing. The mount's config is re-written only when its discovery URL or
+  bound issuer differ, because writing it makes OpenBao fetch the issuer's discovery document.
+- **The mount outlives its last role.** Deleting an emptied `jwt-*` mount races a concurrent grant
+  of the same issuer in the same cluster (list empty, role written, mount deleted), and mounts are
+  bounded by the number of distinct bidder issuers, which is small. Kept.
+- **Revocation is best-effort and bounded** (`nodemarket.RevokeTimeout`, 10 s), runs right after the
+  claim delete is accepted and before the wait for the door, and only logs a failure: the machine is
+  what costs, and a leftover role binds one workload subject the released machine no longer runs.
+- **The issuer must answer from this host.** OpenBao fetches `<issuer>/.well-known/openid-configuration`
+  when the config is written and the JWKS at login; a bidder issuer the cluster vault cannot reach
+  is an `EnsureLogin` error in the pass log, retried every pass.
+
+How a guest logs in, which is the door's and the guest's half (`claim.json` carries `jwtMount`,
+`role`, `audience`, `kvMount`, `kvPath`): exchange the workload token for one whose `aud` is the
+grant's audience (`socialweb.computer/node/<clusterKey>/<node>`) and whose `sub` is the grant's
+subject, then `POST /v1/auth/jwt-<12 hex>/login` with `{"role": "<node>", "jwt": "<token>"}`, then
+`GET /v1/socialweb-nodes/data/<node>` with the returned `client_token` in `X-Vault-Token`. The
+instrument is `TestANodeLogsInWithItsWorkloadTokenAndReadsOnlyItsOwnSecret`
+(`internal/clusterprovider/nodesecrets_test.go`) against a real OpenBao v2.6.2 (`bao server -dev`)
+and an in-test ES256 OIDC issuer: the node's own token logs in and reads its path; a token for another
+subject or audience is refused; the node's token gets 403 on another node's path; after `Revoke` the
+role, policy and secret are gone, the login is refused, the other node's policy and the mount remain.
+
 ## 8. Ports
 
 Every per-cluster port is leased from `internal/portallocator`, ADR 0026. Persisted per host.
@@ -1720,6 +1780,35 @@ was given up was not held. Its claim was then never confirmed, never released, n
 flight and never seen ending -- it could not back anything off. `retain` now restores the primary
 slot when it is empty (`TestAFirstNodeClaimedAgainAfterItWasGivenUpIsHeld`).
 
+**A market node NotReady for 90 s is released, and its Node deleted (plan 0005 M3-NODE-LOSS,
+provider half; 90 s is the user's number).** In `tenantNodes.confirmHeld`, after the given-up rule
+and the per-pass `SyncSecrets`, each held market node's tenant Node is read (`readTenantNode`). If
+its `Ready` condition is `False` or `Unknown` and `now - lastTransitionTime >= NodeLossGrace` (90 s),
+the node goes through `teardownHeld`, the same path a scale-down takes: the claim is deleted, its
+vault role, policy and secret are revoked, the door releases the machine with `vm.delete` and drops
+its finalizer, then the tenant Node is deleted so the scheduler stops binding pods to it and evicted
+pods reschedule; the node is reported in `confirmOutcome.lost`, and the scale pass that follows in
+the same tick counts one node fewer and claims a replacement if the work still needs one. Decisions,
+made by Claude, user may veto:
+
+- *The clock is the Node's own `lastTransitionTime`*, written by the tenant cluster's node-lifecycle
+  controller on the same host, so a provider restart does not restart the 90 s. A condition with a
+  zero transition time falls back to the first pass that saw it not Ready, held in memory.
+- *Not covered:* a node the tenant cluster never reported (no Node object) -- the confirm and
+  giving-up rules own it, however long it has been -- and a Node with no `Ready` condition yet (its
+  kubelet has not posted a status). A Ready node is never lost, whatever its transition time.
+- *Held nodes only.* The rule acts on nodes this provider process holds. A market node that outlived
+  a provider restart is not held, so it is neither confirmed nor lost here; that, and "door or
+  provider restarts never reap", is the rest of M3-NODE-LOSS.
+- *It blocks the cluster's pass* for as long as `teardownHeld` waits for the door
+  (`ClaimReleaseTimeout`), exactly as the giving-up rule and the scale-down already do.
+
+The instruments are in `cmd/socialweb-clusterprovider/nodeloss_test.go`:
+`TestAMarketNodeNotReadyFor89sIsKeptAndAt90sIsReleased` (False and Unknown; 89 s keeps claim and
+Node, 90 s deletes both, revokes the vault state and reports the node lost),
+`TestANodeTheClusterNeverReportedIsNotTouchedByTheLossRule` (an hour on, no Node, claim kept) and
+`TestAReadyNodeIsNotLostHoweverOldItsTransition`.
+
 ## 11. Teardown, and the gate
 
 Teardown is gated, because a teardown that races a running job is a lost write, and after rotation
@@ -2067,6 +2156,12 @@ A change must not break any of these. Each exists because something failed.
 11. **Never request-header auth against the mount.** The mount authenticates nothing.
 12. **A revocation needs a consultable deny record**, not just a deleted object.
 13. **Secrets never ride argv or `user_data`.** `user_data` is readable from inside the guest.
+    DRAFT, pending M3 completion (plan 0005 M3-UNITS changes this invariant; it is not in force until
+    the guest units and the door's `--secrets` delivery land): *a market node's join secrets reach it
+    only by OpenBao JWT login over the cluster link* -- the guest exchanges its workload token for the
+    claim's audience, logs in at `auth/jwt-<12 hex>/login` as role `<node>`, and reads
+    `socialweb-nodes/data/<node>`, never through argv, `user_data` or an ssh session's stdin. The
+    provider half (KV, policy, mount, role, revoke at release) is built (section 7).
 14. **A list failure is an error, never an empty observation.**
 15. **The state advances only on success.**
 16. **No comments in code.** Reasoning belongs in this document; `test/nocomments_test.go`'s

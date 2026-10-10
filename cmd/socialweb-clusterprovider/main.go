@@ -22,6 +22,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostos"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpclient"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/materialiser"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodemarket"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/portallocator"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/procgroup"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/scale"
@@ -315,6 +316,10 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 		Tenant:              tenant,
 		Log:                 log,
 		Substrate:           substrate,
+		Links:               claims,
+		NodeSecrets: func(clusterDir string) nodemarket.NodeSecrets {
+			return clusterprovider.NewNodeVault(clusterDir)
+		},
 	})
 	if err != nil {
 		return Deps{}, err
