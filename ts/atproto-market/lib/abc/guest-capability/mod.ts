@@ -26,6 +26,12 @@ export interface GrantVars {
   expectedAud: string;
 }
 
+export interface GuestFetchedEvent {
+  capability: string;
+  subject: string;
+  count: number;
+}
+
 export interface PrepareContext {
   vmName: string;
   requesterDid: string;
@@ -33,6 +39,7 @@ export interface PrepareContext {
   signer: { did(): string; sign(bytes: Uint8Array): Promise<Uint8Array> };
   tls?: boolean;
   log: (event: string, extra?: Record<string, unknown>) => void;
+  onGuestFetched?: (event: GuestFetchedEvent) => void;
 }
 
 export interface CapabilityPrepared {

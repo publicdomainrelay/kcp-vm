@@ -66,6 +66,8 @@ export function createSecretsCapability(
           getSecrets: () => opts.secrets,
           route,
           log: (event, extra) => logger.info(event, extra ?? {}),
+          onServed: ({ sub, count }) =>
+            ctx.onGuestFetched?.({ capability: SECRETS_CAPABILITY_ID, subject: sub, count }),
         }),
       );
       await serve.beginServe();

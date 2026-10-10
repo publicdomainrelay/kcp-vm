@@ -8,6 +8,7 @@ export interface SecretsFactoryOptions {
   getSecrets: () => SecretEntry[];
   route?: string;
   log?: (event: string, extra?: Record<string, unknown>) => void;
+  onServed?: (event: { sub: string; count: number }) => void;
 }
 
 export function extractBearer(authHeader: string | undefined): string {
@@ -27,6 +28,11 @@ export function createSecretsApp(opts: SecretsFactoryOptions): Hono {
       const { sub } = await opts.authorizer.authorize(token, route, c.req.method);
       const secrets = opts.getSecrets();
       log("secrets_served", { sub, count: secrets.length });
+      try {
+        opts.onServed?.({ sub, count: secrets.length });
+      } catch (err) {
+        log("secrets_served_hook_failed", { error: String(err) });
+      }
       return c.json(secrets);
     } catch (err) {
       log("secrets_denied", { error: String(err) });
