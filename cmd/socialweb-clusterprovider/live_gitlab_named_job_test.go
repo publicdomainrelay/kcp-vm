@@ -56,7 +56,9 @@ const (
 
 	gitlabJobPollTimeout = 1800
 
-	gitlabPreBuildScript = "command -v pnpm >/dev/null 2>&1 || corepack enable || npm install -g pnpm@10.11.0"
+	gitlabPreBuildScript = "if ! command -v pnpm >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then npm install -g pnpm@10.11.0; fi; true"
+
+	gitlabPreSourceScript = `if command -v getent >/dev/null 2>&1; then R='getent hosts'; elif command -v nslookup >/dev/null 2>&1; then R=nslookup; fi; i=0; while [ -n "$R" ] && [ $i -lt 180 ]; do $R "$CI_SERVER_HOST" >/dev/null 2>&1 && break; i=$((i+1)); sleep 1; done; echo "kcp dns gate: ${i}s"; true`
 
 	gitlabJobConcurrency = 8
 
@@ -209,6 +211,7 @@ check_interval = 3
   url = %q
   token = %q
   executor = "kubernetes"
+  pre_get_sources_script = %q
   pre_build_script = %q
   output_limit = %d
   [runners.kubernetes]
@@ -236,7 +239,7 @@ check_interval = 3
             [[runners.kubernetes.affinity.pod_anti_affinity.required_during_scheduling_ignored_during_execution.label_selector.match_expressions]]
               key = %q
               operator = "Exists"
-`, gitlabJobConcurrency, url, token, gitlabPreBuildScript, gitlabOutputLimitKB, host,
+`, gitlabJobConcurrency, url, token, gitlabPreSourceScript, gitlabPreBuildScript, gitlabOutputLimitKB, host,
 		filepath.Join(credDir, "tls.crt"), filepath.Join(credDir, "tls.key"),
 		filepath.Join(credDir, "ca.crt"), gitlabNamespace,
 		gitlabJobCPURequest, gitlabJobMemoryRequest, gitlabJobCPULimit, gitlabJobMemoryLimit,
