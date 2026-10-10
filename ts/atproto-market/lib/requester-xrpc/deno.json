@@ -20,6 +20,7 @@
     "@publicdomainrelay/logger": "jsr:@publicdomainrelay/logger@^0",
     "@publicdomainrelay/market-lexicons": "jsr:@publicdomainrelay/market-lexicons@^0",
     "@publicdomainrelay/compute-request-abc": "jsr:@publicdomainrelay/compute-request-abc@^0",
-    "@publicdomainrelay/compute-request-xrpc": "jsr:@publicdomainrelay/compute-request-xrpc@^0"
+    "@publicdomainrelay/compute-request-xrpc": "jsr:@publicdomainrelay/compute-request-xrpc@^0",
+    "@publicdomainrelay/policy-engine-evaluator": "jsr:@publicdomainrelay/policy-engine-evaluator@^0"
   }
 }

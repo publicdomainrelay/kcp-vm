@@ -19,6 +19,7 @@
     "@publicdomainrelay/logger": "jsr:@publicdomainrelay/logger@^0",
     "@publicdomainrelay/trust-graph-tangled-graph": "jsr:@publicdomainrelay/trust-graph-tangled-graph@^0",
     "@publicdomainrelay/operator-discovery-badge-blue-keys": "jsr:@publicdomainrelay/operator-discovery-badge-blue-keys@^0",
+    "@publicdomainrelay/policy-common": "jsr:@publicdomainrelay/policy-common@^0",
     "@publicdomainrelay/policy-engine-abc": "jsr:@publicdomainrelay/policy-engine-abc@^0",
     "@publicdomainrelay/policy-engine-cli-options": "jsr:@publicdomainrelay/policy-engine-cli-options@^0",
     "@publicdomainrelay/policy-engine-evaluator": "jsr:@publicdomainrelay/policy-engine-evaluator@^0",

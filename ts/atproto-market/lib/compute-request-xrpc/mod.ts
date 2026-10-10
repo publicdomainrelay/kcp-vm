@@ -27,12 +27,15 @@ import {
   SUBMIT_EVENT_NSID,
   SUBMIT_RFP_LXM,
   SUBMIT_RFP_NSID,
+  VOUCH_NSID,
 } from "@publicdomainrelay/market-common";
 import { bidWindowSecOf, firstFreeOf } from "@publicdomainrelay/policy-engine-cli-options";
 import {
   createPolicyEvaluator,
   resolvePolicyName,
 } from "@publicdomainrelay/policy-engine-evaluator";
+import type { PolicyEvaluator, ScopeCache } from "@publicdomainrelay/policy-engine-evaluator";
+import type { PolicyArgs, PolicyRecord } from "@publicdomainrelay/policy-common";
 import { WORKFLOWS } from "@publicdomainrelay/policies-gha-lite";
 import { createPolicyRegistry } from "@publicdomainrelay/policy-deno-typescript";
 import { GhaLiteExecutor } from "@publicdomainrelay/policy-engine-executor-gha-lite";
@@ -80,7 +83,11 @@ import type {
   RecordRef,
 } from "@publicdomainrelay/compute-request-abc";
 import type { LoggerInterface, StructuredLoggerInterface } from "@publicdomainrelay/logger";
-import { BIDS_FREE_NSID } from "@publicdomainrelay/market-lexicons";
+import {
+  BADGE_BLUE_KEYS_NSID,
+  BIDS_FREE_NSID,
+  BIDDER_ASSOCIATION_NSID,
+} from "@publicdomainrelay/market-lexicons";
 import { createTangledGraphVouchResolver } from "@publicdomainrelay/trust-graph-tangled-graph";
 import { createBadgeBlueKeysDelegatedTrustResolver } from "@publicdomainrelay/delegated-trust-badge-blue-keys";
 import { createBadgeBlueKeysOperatorDiscovery } from "@publicdomainrelay/operator-discovery-badge-blue-keys";
@@ -210,7 +217,7 @@ export async function withDeadline<T>(
   }
 }
 
-type FlowLog = (event: string, extra?: Record<string, unknown>) => void;
+export type FlowLog = (event: string, extra?: Record<string, unknown>) => void;
 
 function flowLog(logger?: StructuredLoggerInterface): FlowLog {
   return (event, extra = {}) =>
@@ -220,6 +227,62 @@ function flowLog(logger?: StructuredLoggerInterface): FlowLog {
 function bestEffort(work: () => Promise<void>): void {
   work().catch(() => undefined);
 }
+
+export interface CandidateScopeGateOptions {
+  evaluator: PolicyEvaluator;
+  selfDid: string;
+  args: PolicyArgs;
+  policyRecord?: PolicyRecord;
+  ref?: RecordRef;
+  log: FlowLog;
+}
+
+export function createCandidateScopeGate(
+  opts: CandidateScopeGateOptions,
+): (counterpartyDid: string) => Promise<PolicyResult> {
+  const { evaluator, selfDid, args, policyRecord, ref, log } = opts;
+  const target: { policyRecord: PolicyRecord } | { ref: RecordRef } | undefined = policyRecord
+    ? { policyRecord }
+    : ref
+    ? { ref }
+    : undefined;
+  return async (counterpartyDid) => {
+    if (!target) return { allow: true, violations: [] };
+    const startedAt = Date.now();
+    const result = await evaluator.scope({
+      ...target,
+      perspective: "requester",
+      selfDid,
+      counterpartyDid,
+      args,
+    });
+    log("candidate_scope", {
+      bidderDid: counterpartyDid,
+      allow: result.allow,
+      durationMs: Date.now() - startedAt,
+    });
+    return result;
+  };
+}
+
+function wireTrustInvalidation(
+  eventStreams: EventStreamsClient | undefined,
+  scopeCache: ScopeCache | undefined,
+  log: FlowLog,
+): void {
+  if (!eventStreams || !scopeCache) return;
+  if (trustInvalidationWired.has(eventStreams)) return;
+  trustInvalidationWired.add(eventStreams);
+  eventStreams.watch({
+    wantedCollections: [BADGE_BLUE_KEYS_NSID, VOUCH_NSID, BIDDER_ASSOCIATION_NSID],
+    onEvent: (e) => scopeCache.applyEvent({ did: e.did, rkey: e.rkey }),
+  });
+  log("scope_invalidation_wired", {
+    collections: [BADGE_BLUE_KEYS_NSID, VOUCH_NSID, BIDDER_ASSOCIATION_NSID],
+  });
+}
+
+const trustInvalidationWired = new WeakSet<object>();
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -546,6 +609,7 @@ export type ComputeRequestOptions =
     payloadFactory?: () => Promise<{ uri: string; cid: string }>;
     vmDisk?: string;
     eventStreams?: EventStreamsClient;
+    scopeCache?: ScopeCache;
     sshPublicKey?: string;
     receiptVerifier?: ReceiptVerifier;
     recordResolver?: RecordResolver;
@@ -648,6 +712,8 @@ export async function requestCompute(
   const transport = opts.userData?.transport ?? DEFAULT_TRANSPORT_MODULE;
   const logger = opts.logger;
   const log = flowLog(logger);
+  const scopeCache = opts.scopeCache;
+  wireTrustInvalidation(opts.eventStreams, scopeCache, log);
   const idResolver = new IdResolver({ plcUrl: opts.plcUrl });
   const resolveRecord = opts.recordResolver ?? createIdRecordResolver(idResolver);
   const verifyReceipt = opts.receiptVerifier ?? createReceiptVerifier(resolveRecord);
@@ -889,14 +955,28 @@ runcmd:
       resolveOperatorDid: (did) => resolveOperatorDid(did),
       getVouchedDids: (did) => policyVouchResolver.getDelegatedTrustedDids(did),
       policies: policyRegistry,
+      scopeCache,
       log: (level, msg, meta) => log(`policy_eval_${level}`, { msg, ...(meta ?? {}) }),
     });
 
     let policyRef: RecordRef | undefined;
+    let scopeRecord: PolicyRecord | undefined;
     if (policySpec) {
       try {
         const canonical = resolvePolicyName(policyRegistry, policySpec.name, "requester");
         const workflow = WORKFLOWS[canonical];
+        scopeRecord = workflow
+          ? {
+            uri: `at://${marketDid}/policy-gha-lite/${canonical}`,
+            cid: canonical,
+            value: {
+              $type: POLICY_GHA_LITE_NSID,
+              name: canonical,
+              workflow,
+              createdAt: nowIso(),
+            },
+          }
+          : undefined;
         const { nsid, record } = evaluator.buildPolicyRecord({
           name: policySpec.name,
           description: policySpec.description,
@@ -922,6 +1002,15 @@ runcmd:
         log("policy_create_error", { error: String(err) });
       }
     }
+
+    const scopeGate = createCandidateScopeGate({
+      evaluator,
+      selfDid: marketDid,
+      args: policyArgs,
+      ...(scopeRecord ? { policyRecord: scopeRecord } : {}),
+      ...(policyRef ? { ref: policyRef } : {}),
+      log,
+    });
 
     const rfp = await pds.createSignedRepoRecord(RFP_NSID, rfpRecord, pds.attestationKp, pds.did);
     const rfpUri = rfp.uri;
@@ -999,6 +1088,18 @@ runcmd:
       extra: extraBidderDids.length,
       denied: bidderDids.length - filteredBidderDids.length,
     });
+
+    if (scopeCache && filteredBidderDids.length > 0) {
+      const startedAt = Date.now();
+      bestEffort(async () => {
+        await Promise.allSettled(filteredBidderDids.map((did) => scopeGate(did)));
+        log("scope_prewarm", {
+          candidates: filteredBidderDids.length,
+          entries: scopeCache.stats().entries,
+          durationMs: Date.now() - startedAt,
+        });
+      });
+    }
 
     const seen = new Set<string>();
     const rfpDeadlineMs = Math.max(5_000, bidWindowSec * 1_000);
@@ -1129,7 +1230,7 @@ runcmd:
       freeBidNsid: BIDS_FREE_NSID,
       firstFree,
       allow: async (bid) =>
-        (await decideBid(bid)) === "accept" && (await evaluateCandidate(bid)).allow,
+        (await decideBid(bid)) === "accept" && (await scopeGate(bid.did)).allow,
       onEarlyWinner: (bid) => {
         earlyWinner = bid;
         log("first_free_winner", { uri: bid.uri, did: bid.did });

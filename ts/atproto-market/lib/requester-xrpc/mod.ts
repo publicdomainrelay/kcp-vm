@@ -890,6 +890,7 @@ export async function runComputeContract(
     payloadFactory?: () => Promise<{ uri: string; cid: string }>;
     vmDisk?: string;
     eventStreams?: import("@publicdomainrelay/atproto-event-streams-client").ATProtoEventStreamsClient;
+    scopeCache?: import("@publicdomainrelay/policy-engine-evaluator").ScopeCache;
   } = {},
 ): Promise<ContractFlowResult> {
   const vmName = opts.vmName ?? defaultVmName();
