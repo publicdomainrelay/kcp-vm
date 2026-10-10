@@ -3,7 +3,7 @@ import { Server, utils, type Connection } from "ssh2";
 import { Duplex } from "node:stream";
 import { Buffer } from "node:buffer";
 import { assertEquals } from "@std/assert";
-import { type GuestConnector, runNodeSession } from "@publicdomainrelay/socialweb-computer-k8s-node-market";
+import { type GuestConnector, redactTransportLine, runNodeSession } from "@publicdomainrelay/socialweb-computer-k8s-node-market";
 import { Client } from "ssh2";
 import {
   encodeNodeJoinDocument,
@@ -279,4 +279,24 @@ Deno.test({
       await guest.close();
     }
   },
+});
+
+Deno.test("the transport's own endpoint key never reaches the log stream", () => {
+  const key = "7c5a175344b0ca0d8aef15bb93731760cd056f937fc4fb5c57b41692a030c169";
+  assertEquals(
+    redactTransportLine(`using secret key ${key}`),
+    "[redacted: the transport announced its own endpoint key]",
+  );
+  assertEquals(
+    redactTransportLine(`endpoint started with ${key} as its identity`),
+    "endpoint started with [redacted] as its identity",
+  );
+  assertEquals(
+    redactTransportLine("Forwarding incoming requests to '127.0.0.1:22'."),
+    "Forwarding incoming requests to '127.0.0.1:22'.",
+  );
+  assertEquals(
+    redactTransportLine("connect failed: no route to endpoint"),
+    "connect failed: no route to endpoint",
+  );
 });

@@ -25,7 +25,7 @@ import {
   runNodeSession,
 } from "./guest.ts";
 
-export { BoundedTail, runNodeSession } from "./guest.ts";
+export { BoundedTail, redactTransportLine, runNodeSession } from "./guest.ts";
 export type { GuestConnector, NodeSessionOutcome, NodeSessionPlan, NodeSessionRunner } from "./guest.ts";
 
 type ContractRunner = typeof runComputeContract;

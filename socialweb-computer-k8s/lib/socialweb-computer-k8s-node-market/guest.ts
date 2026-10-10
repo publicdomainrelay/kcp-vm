@@ -53,8 +53,19 @@ function dumbpipeStream(ticket: string, dumbpipePath: string, log?: Log): Duplex
     stream.push(null);
   });
   child.stderr.on("data", (chunk: Uint8Array) =>
-    log?.("node_guest_dumbpipe_stderr", { line: new TextDecoder().decode(chunk).trim().slice(0, 200) }));
+    log?.("node_guest_dumbpipe_stderr", { line: redactTransportLine(new TextDecoder().decode(chunk).trim().slice(0, 200)) }));
   return stream;
+}
+
+const ENDPOINT_KEY_ANNOUNCEMENT = /\bsecret key\b/i;
+
+const THIRTY_TWO_BYTES_OF_HEX = /\b[0-9a-f]{64}\b/gi;
+
+export function redactTransportLine(line: string): string {
+  if (ENDPOINT_KEY_ANNOUNCEMENT.test(line)) {
+    return "[redacted: the transport announced its own endpoint key]";
+  }
+  return line.replace(THIRTY_TWO_BYTES_OF_HEX, "[redacted]");
 }
 
 /** Opens one SSH client to a guest's transport address, however that transport is spoken. */

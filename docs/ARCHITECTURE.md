@@ -3825,16 +3825,27 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   provider's churn spent the budget the door's own list needed. After: `nextOrdinal` seeds its
   `present` set with the ordinals this `tenantNodes` already holds (`heldNodesLocked`, reading each
   name's ordinal the same way the tenant branch already does), so a pass at `observed=2`/`target=6`
-  names `node3..node6` and the next pass counts 6 and asks for nothing. The door's own side is a
-  separate change in the sibling Deno tree and is NOT made here: its poll
+  names `node3..node6` and the next pass counts 6 and asks for nothing. The door's own side was
+  originally left as a separate change in the sibling Deno tree; it has since been made, and it was
+  the same defect seen from the other end of the shared credential. The door's poll
   (`socialweb-computer-k8s/lib/socialweb-computer-k8s-node-market/mod.ts:330`,
-  `setInterval(tick, opts.pollIntervalMs ?? 2_000)`) calls `NodeClaimStore.list`, which re-walks every
-  account and home and then LISTs nodeclaims per home on every tick
-  (`socialweb-computer-k8s/lib/socialweb-computer-k8s-nodeclaim-kcp/mod.ts:182`, with `homes()` at
-  :138 re-reading the whole workspace tree), and its `request` (:104) has no `429` handling; the
-  change owed there is to cache the home list between ticks and to honour `Retry-After` on `429`
-  (raising the interval, or a `watch` per home), so the door reads the claims it must act on. The
-  instrument is `TestOneScalePassClaimsEveryNodeTheTargetNeeds` in `cmd/socialweb-clusterprovider`:
+  `setInterval(tick, opts.pollIntervalMs ?? 2_000)`) called `NodeClaimStore.list`, which re-walked
+  every account and home and then LISTed nodeclaims per home on EVERY tick - two tenancy queries per
+  account per 2 s - and its `request` had no `429` handling at all, so the rate limit it earned was
+  paid again on the next tick and the one after that. Both halves are now in the store, where every
+  caller gets them: the account-and-home walk is cached for 30 s (`homesTtlMs`, 0 to disable), and a
+  `429` parks READS until the `Retry-After` it named has elapsed, capped at a minute, five seconds
+  when the header is absent or unparseable. A read arriving inside the window fails immediately
+  without reaching kcp; writes are deliberately not parked, because a claim's own status write is
+  not the traffic that earned the limit and holding it back delays the node the door is bringing up.
+  The poll's default interval moves 2 s to 5 s. The instruments are three tests in
+  `socialweb-computer-k8s/test/nodeclaim_kcp_test.ts`: the walk happening once per ttl rather than
+  once per poll, the walk happening AGAIN past its ttl, and a `429` holding reads back while writes
+  still go through. The first and third were watched to fail with the cache and the park removed; the
+  second cannot fail against the uncached code by construction, so it was watched against a cache
+  that never expires, and the pair pins the cache from both sides.
+  The instrument for the count itself is `TestOneScalePassClaimsEveryNodeTheTargetNeeds` in
+  `cmd/socialweb-clusterprovider`:
   three running pods and one pass, watched to fail against the old `nextOrdinal` with `one pass that
   needs three nodes left 1 claims, want three`, and green with the change, where three distinct claims
   exist and a second pass writes nothing. `NEXT.yaml` MARKET-3.
