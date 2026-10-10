@@ -863,6 +863,39 @@ function waitForAbort(signal?: AbortSignal): Promise<void> {
   });
 }
 
+/**
+ * Await work, but not for ever.
+ *
+ * Every step of offering a bidder its RFP is a network call to a PDS or to the
+ * bidder itself, and none of them carries a timeout of its own. A bidder whose
+ * endpoint resolution or RFP POST never answers used to hold the whole fan-out,
+ * and with it the contract, before the bid window had even opened - the auction
+ * waited on a bidder that was never going to answer, while bidders that DID
+ * answer had their bids sitting unread. A bidder that misses the deadline has
+ * lost the one chance it needed.
+ */
+export async function withDeadline<T>(
+  what: string,
+  ms: number,
+  work: Promise<T>,
+  onExpiry: (what: string, ms: number) => void,
+): Promise<T | undefined> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<undefined>((resolve) => {
+        timer = setTimeout(() => {
+          onExpiry(what, ms);
+          resolve(undefined);
+        }, ms);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 export async function runComputeContract(
   pds: RequesterPDS,
   opts: ContractFlowOptions & {
@@ -1370,7 +1403,11 @@ runcmd:
 
   // 4. Submit RFP to each bidder (parallel across bidders, deduped by endpoint).
   const seen = new Set<string>();
-  await Promise.allSettled(filteredBidderDids.map(async (bidderDid) => {
+  const rfpDeadlineMs = Math.max(5_000, bidWindowSec * 1_000);
+  await Promise.allSettled(filteredBidderDids.map((bidderDid) => withDeadline(
+    bidderDid,
+    rfpDeadlineMs,
+    (async () => {
     try {
       const doc = await idResolver.did.resolve(bidderDid);
       if (!doc) return;
@@ -1404,7 +1441,9 @@ runcmd:
     } catch (err) {
       log("bidder_error", { bidderDid, error: String(err) });
     }
-  }));
+  })(),
+    (what, ms) => log("bidder_deadline_exceeded", { what, ms }),
+  )));
 
   // Evaluates the RFP's attached policy against one candidate bidder. Used both
   // on the firstFree early-exit path and on the pre-accept check below, so a
