@@ -230,6 +230,11 @@ RUN install -d -o kcp -g kcp -m 0755 /opt/deno-dir \
  && install -d -o kcp -g kcp -m 0700 /var/lib/socialweb /var/lib/socialweb/kcp /var/lib/socialweb/mint /var/lib/socialweb/clusterprovider /var/lib/socialweb/door \
  && chmod 0755 /usr/local/bin/container-entrypoint /usr/local/bin/socialweb-gateway /usr/local/bin/socialweb-credential /usr/local/bin/socialweb-clusterprovider /usr/local/bin/socialweb-cloud-controller-manager /usr/local/bin/socialweb-vault /usr/local/bin/socialweb-tenantcredential
 
+COPY --from=meshd --chown=kcp:kcp socialweb-meshd-x86_64 socialweb-meshd-x86_64.sha256 socialweb-meshd-aarch64 socialweb-meshd-aarch64.sha256 /opt/org-root/socialweb-computer-kcp/socialweb-computer-k8s/web/downloads/
+
+RUN cd /opt/org-root/socialweb-computer-kcp/socialweb-computer-k8s/web/downloads \
+ && sha256sum -c socialweb-meshd-x86_64.sha256 socialweb-meshd-aarch64.sha256
+
 USER 1000:1000
 
 RUN --mount=type=cache,id=deno,target=/opt/deno-dir,uid=1000,gid=1000 \
