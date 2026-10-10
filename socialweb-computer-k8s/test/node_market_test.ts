@@ -274,6 +274,7 @@ interface HarnessOptions {
   vmReadyTimeoutSec?: number;
   meshd?: MeshdPin;
   debugSsh?: { authorizedKey: string; onNetwork(claim: string, address: string): void };
+  scopeCache?: unknown;
 }
 
 function harness(o: HarnessOptions = {}) {
@@ -297,6 +298,7 @@ function harness(o: HarnessOptions = {}) {
     vmReadyTimeoutSec: o.vmReadyTimeoutSec ?? 0.05,
     ...(o.meshd ? { meshd: o.meshd } : {}),
     ...(o.debugSsh ? { debugSsh: o.debugSsh } : {}),
+    ...(o.scopeCache ? { scopeCache: o.scopeCache as never } : {}),
     requestCompute: scriptedRequest(o.script ?? "complete", contracts, decisions, store) as never,
   });
   return { store, pds, links, secrets, fulfiller, requested, contracts, decisions };
@@ -783,4 +785,17 @@ Deno.test("a claim's contract round-trips to the requester's saved state and kee
   assertEquals(legacy?.receipt, { uri: "r", cid: "c" });
   assertEquals(legacy?.submitEventRef, "s");
   assertEquals(legacy?.requesterDid, OWNER);
+});
+
+Deno.test("every contract the door starts shares the one host scope cache it was given", async () => {
+  const scopeCache = { marker: "the door's one ScopeCache" };
+  const h = harness({ scopeCache });
+  h.store.put(claim("ci-node1"));
+  h.store.put(claim("ci-node2"));
+  await h.fulfiller.pass();
+  await settle();
+  assertEquals(h.contracts.length, 2);
+  for (const c of h.contracts) {
+    assertEquals(c.scopeCache, scopeCache, "a contract ran without the door's scope cache, so its bidder's trust verdict is computed again from nothing");
+  }
 });

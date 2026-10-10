@@ -39,6 +39,8 @@ import {
 } from "@publicdomainrelay/socialweb-computer-k8s-api";
 
 type ComputeRequester = typeof requestCompute;
+
+type ComputeRequestOptions = NonNullable<Parameters<ComputeRequester>[1]>;
 type ComputeReleaser = typeof releaseCompute;
 
 export type Log = (event: string, data?: Record<string, unknown>) => void;
@@ -64,6 +66,7 @@ export interface MarketNodeFulfillerOptions {
   readText?: (path: string) => Promise<string>;
   meshd?: MeshdPin;
   debugSsh?: DebugNodeSsh;
+  scopeCache?: ComputeRequestOptions["scopeCache"];
   log?: Log;
 }
 
@@ -390,6 +393,7 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
           userData: { modules: ["k3s", joinModule] },
           capabilities: [capability],
           ...(opts.debugSsh ? { sshAuthorizedKeys: [opts.debugSsh.authorizedKey] } : {}),
+          ...(opts.scopeCache ? { scopeCache: opts.scopeCache } : {}),
           denyBidderDids: spec.denyBidderDids ?? [],
           extraBidderDids: opts.extraBidderDids ?? [],
           vmReadyTimeoutSec,

@@ -26,6 +26,7 @@ import {
   type MarketNodeFulfiller,
   meshdPinOf,
 } from "@publicdomainrelay/socialweb-computer-k8s-node-market";
+import { createScopeCache } from "@publicdomainrelay/policy-engine-scope-cache";
 import cliArgsEnv from "./cli-args-env.json" with { type: "json" };
 
 let runtimeConfig: Record<string, unknown> | null = null;
@@ -175,6 +176,7 @@ if (options.kcpKubeconfig) {
     pollIntervalMs: options.nodePollIntervalMs as number,
     ...(meshd ? { meshd } : {}),
     ...(debugSsh ? { debugSsh } : {}),
+    scopeCache: createScopeCache(),
     log,
   });
 }
