@@ -63,7 +63,13 @@ export interface MarketNodeFulfillerOptions {
   eventStreams?: () => { close(): void };
   readText?: (path: string) => Promise<string>;
   meshd?: MeshdPin;
+  debugSsh?: DebugNodeSsh;
   log?: Log;
+}
+
+export interface DebugNodeSsh {
+  authorizedKey: string;
+  onNetwork(claim: string, address: string): void;
 }
 
 export interface MarketNodeFulfiller {
@@ -366,6 +372,7 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
             return grantFailed ? "return" : stopWhenEnded();
           },
           onNetwork: async (event, s) => {
+            opts.debugSsh?.onNetwork(spec.nodeName, event.address);
             await record(s, { fqdn: event.address });
             return stopWhenEnded();
           },
@@ -382,6 +389,7 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
           vmName: spec.nodeName,
           userData: { modules: ["k3s", joinModule] },
           capabilities: [capability],
+          ...(opts.debugSsh ? { sshAuthorizedKeys: [opts.debugSsh.authorizedKey] } : {}),
           denyBidderDids: spec.denyBidderDids ?? [],
           extraBidderDids: opts.extraBidderDids ?? [],
           vmReadyTimeoutSec,

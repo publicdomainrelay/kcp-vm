@@ -273,6 +273,7 @@ interface HarnessOptions {
   links?: FakeLinks;
   vmReadyTimeoutSec?: number;
   meshd?: MeshdPin;
+  debugSsh?: { authorizedKey: string; onNetwork(claim: string, address: string): void };
 }
 
 function harness(o: HarnessOptions = {}) {
@@ -295,6 +296,7 @@ function harness(o: HarnessOptions = {}) {
     secretsCapability: secrets.factory,
     vmReadyTimeoutSec: o.vmReadyTimeoutSec ?? 0.05,
     ...(o.meshd ? { meshd: o.meshd } : {}),
+    ...(o.debugSsh ? { debugSsh: o.debugSsh } : {}),
     requestCompute: scriptedRequest(o.script ?? "complete", contracts, decisions, store) as never,
   });
   return { store, pds, links, secrets, fulfiller, requested, contracts, decisions };
@@ -406,6 +408,20 @@ Deno.test("the door asks for no ssh key and builds no ssh session", async () => 
   for (const ssh of ["createSshSessionProvider", "SshSessionProvider", "ssh2", "runNodeSession", "dumbpipe"]) {
     assertEquals(source.includes(ssh), false, `the fulfiller still names ${ssh}`);
   }
+});
+
+Deno.test("only a door given a debug key puts it in the guest's authorized_keys, and it is told the guest's address", async () => {
+  const seen: [string, string][] = [];
+  const key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDebugDebugDebugDebugDebugDebugDebugDebug debug-node-ssh";
+  const h = harness({ debugSsh: { authorizedKey: key, onNetwork: (claim, address) => seen.push([claim, address]) } });
+  h.store.put(claim("ci-node1"));
+  await h.fulfiller.pass();
+  await settle();
+  const c = h.contracts[0];
+  assertEquals(c.sshAuthorizedKeys, [key]);
+  assertEquals(c.sshPublicKey, undefined);
+  assertEquals(seen.length > 0, true, "the debug hook never heard the guest's network address");
+  assertEquals(seen[0][0], "ci-node1");
 });
 
 Deno.test("the user_data the door asks for renders without any secret value", async () => {
