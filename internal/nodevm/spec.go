@@ -306,6 +306,8 @@ type NamespaceParams struct {
 
 	Console string `json:"console"`
 
+	ConsoleToStdout bool `json:"consoleToStdout,omitempty"`
+
 	Instance string `json:"instance"`
 
 	Vcpu int `json:"vcpu"`

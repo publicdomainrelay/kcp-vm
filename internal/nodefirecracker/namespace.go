@@ -3,6 +3,7 @@ package nodefirecracker
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"time"
@@ -36,7 +37,11 @@ func runVMM(ctx context.Context, params namespaceParams) error {
 	}
 	vmm := exec.CommandContext(ctx, params.VMM)
 	vmm.Args = []string{"firecracker", "--api-sock", params.Socket}
-	vmm.Stdout, vmm.Stderr = console, console
+	var sink io.Writer = console
+	if params.ConsoleToStdout {
+		sink = io.MultiWriter(console, os.Stdout)
+	}
+	vmm.Stdout, vmm.Stderr = sink, sink
 	vmm.SysProcAttr = hostos.DetachProcess()
 	if err := vmm.Start(); err != nil {
 		return fmt.Errorf("nodefirecracker: starting %s: %w", params.VMM, err)

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -293,7 +294,7 @@ func Boot(specPath, resultPath string, foreground bool) error {
 	if err := writeSeed(s, filepath.Join(s.WorkDir, nodevm.RootfsName)); err != nil {
 		return err
 	}
-	paramsPath, err := writeNamespaceParams(s, guest)
+	paramsPath, err := writeNamespaceParams(s, guest, resultPath != "")
 	if err != nil {
 		return err
 	}
@@ -324,9 +325,13 @@ func Boot(specPath, resultPath string, foreground bool) error {
 	if len(s.PastaArgs) > 0 {
 		argv = append(append([]string{argv[0]}, s.PastaArgs...), argv[1:]...)
 	}
+	var output io.Writer = log
+	if resultPath != "" {
+		output = io.MultiWriter(log, os.Stdout)
+	}
 	proc, err := processrunner.Start(ctx, processrunner.Spec{
 		Argv:   argv,
-		Output: log,
+		Output: output,
 	})
 	if err != nil {
 		return fmt.Errorf("starting pasta for guest %s: %w", s.Name, err)
@@ -423,8 +428,6 @@ func readInstance(path string) (int, error) {
 	return rec.PID, nil
 }
 
-const noCloudArgsPrefix = "ds=nocloud-net;s=http://"
-
 func networkConfig(network nodevm.Network) string {
 	lines := []string{
 		"version: 2",
@@ -513,7 +516,7 @@ func debugfsRun(image, command string) error {
 	return nil
 }
 
-func writeNamespaceParams(s guestSpec, guest nodevm.Guest) (string, error) {
+func writeNamespaceParams(s guestSpec, guest nodevm.Guest, consoleToStdout bool) (string, error) {
 	network := s.network()
 	params := nodevm.NamespaceParams{
 		Kind: nodevm.KindFirecracker,
@@ -535,6 +538,8 @@ func writeNamespaceParams(s guestSpec, guest nodevm.Guest) (string, error) {
 		Socket: nodefirecracker.SocketPath(s.WorkDir),
 
 		Console: nodefirecracker.ConsolePath(s.WorkDir),
+
+		ConsoleToStdout: consoleToStdout,
 
 		Instance: nodefirecracker.InstancePath(s.WorkDir),
 
