@@ -455,6 +455,8 @@ func TestBringUpReachesReadyInTheADROrder(t *testing.T) {
 		"verify",
 		"k3s-server-started", "k3s-server-ready",
 		"socialweb-cloud-controller-manager-started", "socialweb-cloud-controller-manager-ready",
+		"external-secrets-webhook-started", "external-secrets-webhook-ready",
+		"external-secrets-started", "external-secrets-ready",
 	}
 	if strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Fatalf("bring-up order =\n  %v\nwant\n  %v", got, want)

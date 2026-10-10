@@ -175,7 +175,6 @@ func Build(cfg Config, d Deps, log *slog.Logger) (*Provider, error) {
 	}
 	if !cfg.ObserveOnly() {
 		opts.Tenant, opts.GrantPath, opts.MintDir = d.Tenant, cfg.GrantPath, cfg.MintKubeconfigs
-		opts.ESONamespace = cfg.ESONamespace
 		opts.InstallTenant = d.InstallTenant
 	}
 	provider, err := clusterprovider.New(opts)

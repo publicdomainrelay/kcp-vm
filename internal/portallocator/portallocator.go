@@ -50,6 +50,12 @@ const (
 	PurposeApiserverLink Purpose = "apiserver-link"
 
 	PurposeOpenBaoLink Purpose = "openbao-link"
+
+	PurposeExternalSecretsHealth Purpose = "external-secrets-health"
+
+	PurposeExternalSecretsWebhook Purpose = "external-secrets-webhook"
+
+	PurposeExternalSecretsWebhookHealth Purpose = "external-secrets-webhook-health"
 )
 
 var datagramPurposes = map[Purpose]bool{
@@ -76,6 +82,10 @@ var purposeWidth = map[Purpose]int{
 	PurposeK3sCloudControllerManager: 1,
 	PurposeApiserverLink:             1,
 	PurposeOpenBaoLink:               1,
+
+	PurposeExternalSecretsHealth:        1,
+	PurposeExternalSecretsWebhook:       1,
+	PurposeExternalSecretsWebhookHealth: 1,
 }
 
 func (p Purpose) Width() int { return purposeWidth[p] }

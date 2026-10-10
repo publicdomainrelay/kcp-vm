@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	kcpv1alpha1 "github.com/kcp-dev/sdk/apis/tenancy/v1alpha1"
-	"k8s.io/apimachinery/pkg/util/validation"
 )
 
 const (
@@ -68,11 +67,13 @@ func ServiceAccountName(did string) string {
 
 const GrantOwnerPlaceholder = "__SOCIALWEB_OWNER_SERVICE_ACCOUNT__"
 
-const GrantESONamespacePlaceholder = "__SOCIALWEB_ESO_NAMESPACE__"
+const GrantESOUserPlaceholder = "__SOCIALWEB_ESO_USER__"
+
+var grantUsername = regexp.MustCompile(`^[a-z0-9]([a-z0-9:.-]*[a-z0-9])?$`)
 
 type GrantScope struct {
-	OwnerDID     string
-	ESONamespace string
+	OwnerDID string
+	ESOUser  string
 }
 
 func RenderTenantGrant(doc string, scope GrantScope) (string, error) {
@@ -81,23 +82,23 @@ func RenderTenantGrant(doc string, scope GrantScope) (string, error) {
 			"kcpclient: the tenant grant needs the owning DID: every name it scopes is derived from it, " +
 				"and a grant rendered without one would be scoped to a name nothing owns")
 	}
-	if scope.ESONamespace == "" {
+	if scope.ESOUser == "" {
 		return "", errors.New(
-			"kcpclient: the tenant grant needs the namespace the External Secrets controller is " +
-				"installed into: the policy admits that controller by its ServiceAccount username, and a " +
-				"grant rendered without the namespace would admit whichever one the file hardcoded -- " +
-				"denying every install elsewhere, which reads as a broken ExternalSecret rather than as " +
-				"a grant that does not name it")
+			"kcpclient: the tenant grant needs the username the External Secrets controller " +
+				"authenticates as: the policy admits that controller, and only it besides the " +
+				"provisioning admin, to write the vault-backed Secrets in the tenant namespace, so a " +
+				"grant rendered without it denies every sync, which reads as a broken ExternalSecret " +
+				"rather than as a grant that does not name it")
 	}
-	if errs := validation.IsDNS1123Label(scope.ESONamespace); len(errs) > 0 {
+	if !grantUsername.MatchString(scope.ESOUser) {
 		return "", fmt.Errorf(
-			"kcpclient: the External Secrets namespace %q is not a DNS-1123 label (%s), so the "+
-				"ServiceAccount username the policy admits can name no namespace and the policy would "+
-				"deny every install", scope.ESONamespace, errs[0])
+			"kcpclient: the External Secrets username %q is not of the form %s, and the policy "+
+				"compares it inside a CEL string literal, where a quote or a backslash would end it",
+			scope.ESOUser, grantUsername)
 	}
 	for _, p := range []struct{ name, placeholder string }{
 		{"the owning DID", GrantOwnerPlaceholder},
-		{"the External Secrets namespace", GrantESONamespacePlaceholder},
+		{"the External Secrets username", GrantESOUserPlaceholder},
 	} {
 		if !strings.Contains(doc, p.placeholder) {
 			return "", fmt.Errorf(
@@ -107,7 +108,7 @@ func RenderTenantGrant(doc string, scope GrantScope) (string, error) {
 		}
 	}
 	rendered := strings.ReplaceAll(doc, GrantOwnerPlaceholder, ServiceAccountName(scope.OwnerDID))
-	return strings.ReplaceAll(rendered, GrantESONamespacePlaceholder, scope.ESONamespace), nil
+	return strings.ReplaceAll(rendered, GrantESOUserPlaceholder, scope.ESOUser), nil
 }
 
 const (
