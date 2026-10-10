@@ -451,7 +451,13 @@ Do not set a 24x7 `idle_count > 0` on a cluster whose nodes are billed.
 
 ## The hop this document cannot prove
 
-**Nothing in this recipe has been run end to end.** The shape is assembled from parts that are each
+**Settled on 2026-10-08: this recipe has now run end to end** ([below](#what-was-measured-on-2026-10-08)).
+GitLab pipelines 77 and 78 ran their jobs through `pods/exec` from the runner on hat-10, through Caddy and
+kcp, into the tenant apiserver behind the mount, and streamed every log line back; `kubectl get nodes`
+over the mount from hat-10 matched the cluster provider's own view at every step. Assumptions 1-3 below
+held. The text below is kept as the reasoning that was checked.
+
+**Before 2026-10-08, nothing in this recipe had been run end to end.** The shape is assembled from parts that are each
 measured, and there is exactly one hop with no reading behind it.
 
 The kubernetes executor does not merely create Pods. It attaches to the build container with an
@@ -598,3 +604,54 @@ answers 404 - the unit fails with `[FAILED] Failed to start guest-onnetwork.serv
 reports the FQDN it already has in `/run/guest-fqdn`, and the requester waits out its whole timeout.
 The firecracker provider now writes that file itself, from the same `guest_onnetwork_url` it extracts
 from the accept bundle.
+
+## What was measured on 2026-10-08
+
+The acceptance run for plan 0005 (ACC-ZERO, ACC-MESH, ACC-NOSSH), on prod, in the final configuration
+(`DEBUG_SOCIALWEB_NODE_SSH_DIR` unset, `SCALE_HOLD=0s`).
+
+**The cluster** was created through the SPA at https://k8s.socialweb.computer by an ordinary atproto
+account (OAuth at bsky.social), and its kubeconfig downloaded with a 7-day device key. From the
+create to `kubectl get ns` answering on hat-10 through `kcp.socialweb.computer`: about 74 s, with no
+operator step (the mount child is written by the cluster provider once the control plane reports its
+URL; before that fix an operator had to create it).
+
+**The runner** is a project runner (tag `kcp-tenant`, `run_untagged = false`) registered through the
+API and run from its own config file, so it never touches runner 1:
+
+```bash
+gitlab-runner run --config ~/.gitlab-runner/acc/config.toml --working-directory ~/.gitlab-runner/acc/work
+# with KUBECONFIG=~/.gitlab-runner/acc/kubeconfig.yaml in the environment
+```
+
+`config.toml` is [the file](#the-file) with `concurrent = 4`, no `pre_build_script`, and the same
+`[runners.kubernetes]` block (namespace `gitlab-runner`, the anti-affinity that makes one job one
+node, `poll_timeout = 3600`). The namespace was created once with that same kubeconfig.
+
+**The pipeline** (`johnandersen777/kcp-ci-probe`, branch `acc-0005`): three jobs, `busybox:1.36`, each
+resolving `kubernetes.default.svc.cluster.local` through the node's resolver and through the kube-dns
+Service `10.43.0.10`, resolving `gitlab.com`, then holding 30 s / 90 s / 150 s so the nodes empty one
+at a time.
+
+| Time (UTC) | Pipeline 78 |
+| --- | --- |
+| 00:11:46 | pipeline created; cluster at 0 nodes |
+| 00:12:08 | cluster provider: Provision, 3 nodes |
+| 00:12:39-46 | the three market nodes fetch their join secrets (no ssh at any step) |
+| jobs | one per node; every DNS check passed; CoreDNS ran on node2, so two jobs crossed nodes to reach it |
+| 00:14:29 / 00:14:32 | first idle node cordoned, drained, released |
+| 00:15:33 / 00:15:36 | second |
+| 00:16:27 | last node released; 0 nodes; control plane Ready |
+
+**Limits this run found:**
+
+- **Jobs here cannot clone.** The GitLab host is `gitlab.dorper-matrix.ts.net`, a tailnet name. Market
+  nodes resolve public names (per-node DNS) but not tailnet ones, so the runner's helper cannot fetch
+  the repository. The probes set `GIT_STRATEGY: none`. A job that needs its sources needs a GitLab URL
+  the market can reach (a public `clone_url`, or the project mirrored somewhere public).
+- **The hold is an operator knob.** `SOCIALWEB_CLUSTERPROVIDER_SCALE_HOLD` (via `SCALE_HOLD` in
+  `scripts/deploy.sh`) was `0s` for this run, so a node went the moment its last job pod did; release
+  then followed each job by the pod's 30 s termination grace. Unset, the hold is 2 minutes.
+- **Every job is a rented node.** `concurrent` and the anti-affinity together are the cost model: three
+  parallel jobs were three nodes for the length of their longest overlap.
+

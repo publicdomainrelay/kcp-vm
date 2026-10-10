@@ -807,8 +807,9 @@ items:
       OpenBao, and invariant 29 and section 9 moved with it. That half was done by M3-JOIN-PATH on
       2026-10-08, because the join path could not be shortened without the invariant saying where the
       apiserver ticket travels. What remains here is docs/gitlab.
-    status: todo
-    evidence: []
+    status: done
+    evidence:
+      - "docs/gitlab/04-spa-cluster-runner.md: 'The hop this document cannot prove' now opens with the 2026-10-08 settlement (pipelines 77/78 exec'd through Caddy->kcp->mount); new section 'What was measured on 2026-10-08' with the SPA create, the runner config and run command, the pipeline, the pipeline-78 timeline and the limits found (no clone from market nodes to the tailnet GitLab, the SCALE_HOLD knob, one job = one rented node); invariant 13 rewritten by M3-JOIN-PATH"
 queued_after_this_plan:
   - docs/plans/0006-socialweb-computer-unified-binary.yaml
   - docs/plans/0007-compute-provider-kcp.yaml
