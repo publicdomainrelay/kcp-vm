@@ -873,6 +873,7 @@ export async function runComputeContract(
     offeringWatcherDids?: () => string[];
     logger?: StructuredLoggerInterface;
     payloadFactory?: () => Promise<{ uri: string; cid: string }>;
+    vmDisk?: string;
     /** ATProto event streams client for cross-party firehose event discovery. */
     eventStreams?: import("@publicdomainrelay/atproto-event-streams-client").ATProtoEventStreamsClient;
   } = {},
@@ -1232,6 +1233,7 @@ runcmd:
     const ref = await pds.createRepoRecord(COMPUTE_VM_NSID, {
       $type: COMPUTE_VM_NSID,
       role: vmName.trim() || "compute",
+      disk: opts.vmDisk ?? DEFAULT_VM_DISK,
       user_data: cloudInit,
       createdAt: new Date().toISOString(),
     });
@@ -2109,6 +2111,8 @@ export async function createOAuthRequester(opts: CreateOAuthRequesterOpts): Prom
     },
   };
 }
+
+const DEFAULT_VM_DISK = "50G";
 
 function randomHex8(): string {
   const b = new Uint8Array(4);

@@ -286,7 +286,13 @@ Deno.test({
     // what provisioning actually did. Asserting only that a bid was collected
     // would pass on a provider that collects bids and then fails to place
     // anything, which is the failure this test exists to catch.
-    const provisions: Array<{ providerId: string | number; ip: unknown; mode: unknown; console: unknown }> = [];
+    const provisions: Array<{
+      providerId: string | number;
+      ip: unknown;
+      mode: unknown;
+      console: unknown;
+      disk: unknown;
+    }> = [];
     const provisionFailures: unknown[] = [];
     const provider = createComputeProviderHooks({
       provider: {
@@ -300,6 +306,7 @@ Deno.test({
               ip: metadata?.ip,
               mode: metadata?.mode,
               console: metadata?.console,
+              disk: (vm as { disk?: unknown }).disk,
             });
             return result;
           } catch (err) {
@@ -400,6 +407,12 @@ Deno.test({
         `${JSON.stringify(placed)}`,
     );
     console.log(`[test] the accept path provisioned ${placed.providerId} at ${placed.ip}`);
+    assert(
+      placed.disk === "50G",
+      `the contract the requester wrote names no 50G disk: it asked for ` +
+        `${JSON.stringify(placed.disk)}, so the guest is placed without the disk the market's ` +
+        `contracts carry`,
+    );
     cleanups.push(() => {
       firecracker.provider.destroy(placed.providerId).catch(() => {});
     });
@@ -462,7 +475,8 @@ Deno.test({
       `    content: "the seed was read by cloud-init\\n"\n` +
       `runcmd:\n` +
       `  - [ sh, -c, "echo ${marker} > /dev/console" ]\n` +
-      `  - [ sh, -c, "cat /root/proof.txt > /dev/console" ]\n`,
+      `  - [ sh, -c, "cat /root/proof.txt > /dev/console" ]\n` +
+      `  - [ sh, -c, "echo rootfs=$(df -B1M / | awk 'NR==2 {{print $2}}')MiB > /dev/console" ]\n`,
   );
 
   const provider = createFirecrackerComputeProvider({
@@ -503,7 +517,7 @@ Deno.test({
     {
       cpus: 2,
       mem: "2G",
-      disk: "2G",
+      disk: "50G",
       network: "default",
       role: "test",
       user_data: await Deno.readTextFile(userDataFile),
@@ -524,31 +538,44 @@ Deno.test({
   assert(typeof consolePath === "string" && consolePath.length > 0, "provision() must report the guest's console");
 
   const deadline = Date.now() + 120_000;
-  let console = "";
+  let guestConsole = "";
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 2000));
     try {
-      console = await Deno.readTextFile(consolePath);
+      guestConsole = await Deno.readTextFile(consolePath);
     } catch {
       continue;
     }
-    if (console.includes(marker)) break;
+    if (guestConsole.includes(marker)) break;
   }
   assert(
-    console.includes(marker),
+    guestConsole.includes(marker),
     `the guest did not run the runcmd from its user_data within 120s, so cloud-init never acted on the ` +
       `seed. provision() reported ip=${metadata.ip}. Last 800 bytes of the guest's console:\n` +
-      console.slice(-800),
+      guestConsole.slice(-800),
   );
   assert(
-    console.includes("the seed was read by cloud-init"),
+    guestConsole.includes("the seed was read by cloud-init"),
     "the file the user_data writes was never read back inside the guest",
   );
+  const sized = /rootfs=(\d+)MiB/.exec(guestConsole);
   assert(
-    /Datasource DataSourceNoCloud/.test(console),
+    sized !== null,
+    `the guest never reported the size of its own root filesystem. Last 800 bytes of its console:\n` +
+      guestConsole.slice(-800),
+  );
+  assert(
+    Number(sized[1]) >= 50_000,
+    `the contract asked for a 50G disk and the guest's root filesystem is ${sized[1]} MiB, so the ` +
+      `guest boots with less than the contract says and fails to write under its own workload with ` +
+      `the reason inside the guest`,
+  );
+  assert(
+    /Datasource DataSourceNoCloud/.test(guestConsole),
     "cloud-init did not report the seed as its datasource; the user_data reached the guest by some " +
       "other path than the one this provider claims to use",
   );
+  console.log(`[test] the guest's root filesystem is ${sized[1]} MiB`);
   await provider.provider.destroy(result.providerId).catch(() => {});
   await Deno.remove(workRoot, { recursive: true }).catch(() => {});
 });
