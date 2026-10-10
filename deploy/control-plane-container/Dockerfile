@@ -2,6 +2,27 @@
 
 ARG FEDORA=registry.fedoraproject.org/fedora:44@sha256:2cdfedd312a3c92e0d9932ee18d9d2dd80b00fa0bb4ebdaa86736195b5eaa974
 
+# The External Secrets controller and its webhook run beside each cluster's control plane, in
+# its process group (NEXT.yaml ESO-4). The binary is the pinned upstream image's own; that image
+# is distroless with /bin -> usr/bin, so the real path is copied. The bundle is the same
+# release's external-secrets.yaml, checked against its sha256; the provider installs its CRDs,
+# ClusterRoles and webhook registration into each tenant and retires everything else in it.
+# internal/versions/versions.json carries the same three values and a test holds them equal.
+ARG EXTERNAL_SECRETS_VERSION=v2.11.0
+ARG EXTERNAL_SECRETS_IMAGE=ghcr.io/external-secrets/external-secrets:v2.11.0@sha256:66fb710878cbf3eba4a927e35c5d75e29a202c9bab238aad64bfb23b786b962b
+ARG EXTERNAL_SECRETS_BUNDLE_SHA256=c427124642886d240af8f28d294714a168d920ef8e5d55db14600e00ed0cfb80
+
+FROM ${EXTERNAL_SECRETS_IMAGE} AS externalsecrets
+
+FROM ${FEDORA} AS esobundle
+
+ARG EXTERNAL_SECRETS_VERSION
+ARG EXTERNAL_SECRETS_BUNDLE_SHA256
+
+RUN mkdir -p /eso \
+ && curl -fsSL "https://github.com/external-secrets/external-secrets/releases/download/${EXTERNAL_SECRETS_VERSION}/external-secrets.yaml" -o /eso/external-secrets.yaml \
+ && echo "${EXTERNAL_SECRETS_BUNDLE_SHA256}  /eso/external-secrets.yaml" | sha256sum -c -
+
 FROM ${FEDORA} AS gobuild
 
 WORKDIR /src
@@ -136,6 +157,10 @@ COPY --from=binaries /kcp /usr/local/bin/kcp
 COPY --from=binaries /kubectl /usr/local/bin/kubectl
 
 COPY --from=binaries /bao /usr/local/bin/bao
+
+COPY --from=externalsecrets /usr/bin/external-secrets /usr/local/bin/external-secrets
+
+COPY --from=esobundle /eso/external-secrets.yaml /opt/socialweb/eso/external-secrets.yaml
 
 ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     HOME=/home/kcp

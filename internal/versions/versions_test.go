@@ -35,6 +35,41 @@ func mustRead(t *testing.T, path string) string {
 	return string(b)
 }
 
+func TestTheImageCarriesTheExternalSecretsThisManifestPins(t *testing.T) {
+	es, err := Get("external-secrets")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(es.Image, ":"+es.Version+"@sha256:") {
+		t.Fatalf("the pinned image %q is not the %s tag held to a digest", es.Image, es.Version)
+	}
+	if len(es.BundleSHA256) != 64 {
+		t.Fatalf("the bundle digest %q is not a sha256", es.BundleSHA256)
+	}
+	dockerfile := mustRead(t, "../../deploy/control-plane-container/Dockerfile")
+	for _, want := range []string{
+		"ARG EXTERNAL_SECRETS_VERSION=" + es.Version + "\n",
+		"ARG EXTERNAL_SECRETS_IMAGE=" + es.Image + "\n",
+		"ARG EXTERNAL_SECRETS_BUNDLE_SHA256=" + es.BundleSHA256 + "\n",
+		"COPY --from=externalsecrets /usr/bin/external-secrets /usr/local/bin/external-secrets\n",
+		"COPY --from=esobundle /eso/external-secrets.yaml /opt/socialweb/eso/external-secrets.yaml\n",
+	} {
+		if !strings.Contains(dockerfile, want) {
+			t.Fatalf("the control-plane Dockerfile does not carry %q: the image would run an External "+
+				"Secrets this manifest does not name", strings.TrimSpace(want))
+		}
+	}
+	entrypoint := mustRead(t, "../../deploy/container-entrypoint.sh")
+	for _, want := range []string{
+		"SOCIALWEB_CLUSTERPROVIDER_EXTERNAL_SECRETS:-/usr/local/bin/external-secrets}",
+		"SOCIALWEB_CLUSTERPROVIDER_ESO_BUNDLE:-/opt/socialweb/eso/external-secrets.yaml}",
+	} {
+		if !strings.Contains(entrypoint, want) {
+			t.Fatalf("the entrypoint does not default %q to where the image puts it", want)
+		}
+	}
+}
+
 func functionalLines(s string) []string {
 	var out []string
 	for _, l := range strings.Split(s, "\n") {
