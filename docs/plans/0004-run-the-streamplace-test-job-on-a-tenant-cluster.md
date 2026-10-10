@@ -131,9 +131,9 @@ included `.ci/dockerfile-hash.yaml`.
   this host runs one node, and every other job in `streamplace/.gitlab-ci.yml` is untagged, so the
   other build jobs would each take the only slot for up to their own 2h timeout and `test` would
   never be reached -- it sorts last in its stage. A branch `kcp-tenant-ci` therefore carries the
-  `test` job verbatim and nothing else, and points `DOCKER_REPO` at the seeded image. The job's
-  own keys -- image, script, timeout, artifacts -- are byte-for-byte what the branch this is
-  measured against has.
+  `test` job verbatim and nothing else, and names the registry this project publishes its builder
+  image to. The job's own keys -- image, script, timeout, artifacts -- are byte-for-byte what the
+  branch this is measured against has.
 - **D6 - the runner gets a scoped credential, not the superuser.** `docs/gitlab/02` is explicit
   that handing a runner `system:admin`/`system:masters` makes every RBAC rule decorative. The
   existing live test mints the superuser credential; the new one mints `gitlab-runner` /
@@ -186,3 +186,24 @@ empty across 10 passes 2 s apart over 20 s; the scale decision read `Provision: 
 node`; the node joined and the cloud controller manager stamped it
 `providerID=socialweb://liveweb/liveweb-node1`; `INSTANCE_START_TO_READY_S=5.504` measured from the
 firecracker VMM's instance record to the Node's `Ready` condition at 250 ms resolution.
+
+## 7. The mkfs measurement, in full
+
+B6 is the reason the job's image is pulled rather than seeded, so it is written down rather than
+summarized. Every line is `mkfs.ext4 -q -F -d <dir> -L <label> <image on an existing sparse
+file>`, on this host, mke2fs 1.47.3, and the reading is the exit status and the message.
+
+| Directory populated | Filesystem | Result |
+| --- | --- | --- |
+| one 3,500,000,000-byte file of zeros | 4,900 MB | accepted, file present at that size |
+| the same file, 4 KiB blocks, 256-byte inodes | 6,553,600,000 bytes | accepted, file present at that size |
+| the 3,336,075,264-byte builder tarball alone | 6,000 MB | `Ext2 file too big while writing file "127.0.0.1-5000-...tar"` |
+| the same tarball alone, 4 KiB blocks, 256-byte inodes | 6,000 MB | same refusal |
+| the same tarball, renamed to `short.tar` | 6,000 MB | same refusal |
+| the whole 3,877 MiB stage directory, as the builder lays it down | 5,377 MiB and 12,000 MB | same refusal |
+| the first 1,000,000,000 bytes of the same tarball | 3,000 MB | accepted |
+
+So the refusal tracks the tarball and not the filesystem size, the block size, the inode size or
+the file's name, and it is not a hard 2 GiB limit on files in general -- a larger file of zeros is
+accepted in a smaller filesystem. What was not pursued is the exact property of that tarball that
+triggers it; the job does not need seeding, and saying so is cheaper than a wrong explanation.
