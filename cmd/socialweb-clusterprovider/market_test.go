@@ -787,3 +787,41 @@ func TestANodeIsNotRemovedWhileItsClaimIsStillRunning(t *testing.T) {
 		t.Fatal("a Node whose claim is still Running was deleted by the reconcile")
 	}
 }
+
+func TestAReleasedClaimWhoseNodeIsAlreadyGoneCostsNoDelete(t *testing.T) {
+	claims := &marketClaims{}
+	key := clusterKey(t, "liveweb")
+	name := key + "-node1"
+	tenant, client := tenantClientFor(t)
+	claims.claims = map[string]v1alpha1.NodeClaim{
+		testHomePrefix + "liveweb/" + name: {
+			ObjectMeta: metav1.ObjectMeta{Name: name},
+			Status: v1alpha1.NodeClaimStatus{
+				Phase:   v1alpha1.NodeClaimReleased,
+				Message: "the door restarted and released this node's VM; a new node will be requested",
+			},
+		},
+	}
+	hosts, err := newNodeHosts(marketOptions(t, claims, tenant))
+	if err != nil {
+		t.Fatalf("newNodeHosts: %v", err)
+	}
+	ctx := context.Background()
+	if err := hosts.reconcile(ctx, key); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	client.ClearActions()
+	if err := hosts.reconcile(ctx, key); err != nil {
+		t.Fatalf("second reconcile: %v", err)
+	}
+	for _, a := range client.Actions() {
+		if a.GetVerb() == "delete" {
+			t.Fatalf("the reconcile issued a delete for a Node that is already gone. A Released "+
+				"claim stays in the workspace for ever as the door's record of what happened, so a "+
+				"reconcile that deletes by name alone spends one write per pass per released claim "+
+				"on a Node that went the first time: MEASURED in production on 2026-10-07, 325 "+
+				"'removed a Node ...' lines in five minutes beside a 429 the shared kcp credential "+
+				"earned. The actions were: %v", client.Actions())
+		}
+	}
+}

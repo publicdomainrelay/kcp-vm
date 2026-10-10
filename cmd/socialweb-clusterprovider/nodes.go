@@ -941,8 +941,23 @@ func (h *nodeHosts) reconcile(ctx context.Context, cluster string) error {
 		return fmt.Errorf("clusterprovider: the tenant client for %s, needed to delete the Nodes "+
 			"whose claims the door confirmed released: %w", cluster, err)
 	}
+	list, err := client.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return fmt.Errorf("clusterprovider: listing the nodes of %s before removing the ones whose "+
+			"claim reads Released: %w -- a claim the door released stays in its workspace as the "+
+			"record of what happened, so the list of names to act on is not the list of Nodes still "+
+			"there, and deleting by name alone spends one write per pass for ever on a Node that went "+
+			"the first time", cluster, err)
+	}
+	present := map[string]bool{}
+	for i := range list.Items {
+		present[list.Items[i].Name] = true
+	}
 	var problems []error
 	for _, name := range gone {
+		if !present[name] {
+			continue
+		}
 		err := client.CoreV1().Nodes().Delete(ctx, name, metav1.DeleteOptions{})
 		if err != nil && !apierrors.IsNotFound(err) {
 			problems = append(problems, fmt.Errorf("clusterprovider: deleting the tenant cluster's "+
