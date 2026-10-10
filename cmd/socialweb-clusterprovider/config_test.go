@@ -7,9 +7,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/eso"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/portallocator"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/scale"
 )
 
 func envFor(extra map[string]string) func(string) string {
@@ -271,5 +273,19 @@ func TestCarveMalformedIsARefusalAndNotADefault(t *testing.T) {
 		if !strings.Contains(err.Error(), "SOCIALWEB_CLUSTERPROVIDER_PORT_RANGE") {
 			t.Errorf("%q: the refusal must name the variable an operator set, got %v", raw, err)
 		}
+	}
+}
+
+func TestAZeroScaleHoldMeansNoHoldNotTheDefault(t *testing.T) {
+	cfg, err := load(envFor(map[string]string{"SOCIALWEB_CLUSTERPROVIDER_SCALE_HOLD": "0s"}))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	now := time.Date(2026, 10, 7, 23, 30, 0, 0, time.UTC)
+	st := scale.State{Nodes: 1, IdleSince: now}
+	if d := scale.Decide(scale.Observation{}, st, now.Add(time.Second), scale.Options{Hold: cfg.ScaleHold}); d.Action != scale.Teardown {
+		t.Fatalf("SCALE_HOLD=0s decided %s %q one second into idleness, want Teardown: scale.Options reads a "+
+			"zero Hold as unset and waits the 2m default, so the operator's 0s silently became 2m "+
+			"(user 2026-10-07: the hold is killing the dev loop)", d.Action, d.Reason)
 	}
 }

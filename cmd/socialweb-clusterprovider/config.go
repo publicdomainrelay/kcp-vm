@@ -234,6 +234,9 @@ func load(get func(string) string) (Config, error) {
 		if d < 0 {
 			return Config{}, fmt.Errorf("%s must not be negative", envScaleHold)
 		}
+		if d == 0 {
+			d = scale.NoHold
+		}
 		cfg.ScaleHold = d
 	}
 
