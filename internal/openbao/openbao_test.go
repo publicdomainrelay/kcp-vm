@@ -28,6 +28,8 @@ func freePort(t *testing.T) int {
 	return l.Addr().(*net.TCPAddr).Port
 }
 
+const baoStartAttempts = 3
+
 func startBao(t *testing.T) (*Client, string) {
 	t.Helper()
 	if _, err := exec.LookPath("bao"); err != nil {
@@ -35,6 +37,23 @@ func startBao(t *testing.T) (*Client, string) {
 			"leaves the OpenBao client unproven. Install OpenBao v2.6.2 to prove it.")
 		return nil, ""
 	}
+	for attempt := 1; ; attempt++ {
+		client, addr, err := startBaoOnce(t)
+		if err == nil {
+			return client, addr
+		}
+		if attempt >= baoStartAttempts {
+			t.Fatalf("%s. Tried %d times with a fresh port each time, which is what this retry is "+
+				"for: `freePort` listens on :0, reads the number and CLOSES the listener before the "+
+				"vault binds it, so between the close and the bind the number is free for anyone -- "+
+				"including a second `go test` of this repo running at the same time. The last "+
+				"attempt's address was %s", err, baoStartAttempts, addr)
+		}
+	}
+}
+
+func startBaoOnce(t *testing.T) (*Client, string, error) {
+	t.Helper()
 	dir := t.TempDir()
 	port := freePort(t)
 	storage := filepath.Join(dir, "data")
@@ -61,20 +80,41 @@ storage "file" {
 		cancel()
 		t.Fatalf("could not start bao server with config %q: %v", cfgPath, err)
 	}
+	exited := make(chan error, 1)
+	go func() { exited <- cmd.Wait() }()
 	t.Cleanup(func() {
 		cancel()
-		_ = cmd.Wait()
+		select {
+		case <-exited:
+		case <-time.After(10 * time.Second):
+		}
 	})
 	addr := fmt.Sprintf("http://127.0.0.1:%d", port)
 	client := New(addr, "")
 	deadline := time.Now().Add(30 * time.Second)
 	for {
+		select {
+		case err := <-exited:
+			cancel()
+			return nil, addr, fmt.Errorf("the vault exited before it answered on %s, and its own "+
+				"stderr is the reason -- the likeliest is that something else already holds the "+
+				"address, because `freePort` gives it back before the vault binds it: %v\n%s",
+				addr, err, stderr.String())
+		default:
+		}
 		_, err := client.Health(context.Background())
 		if err == nil {
-			return client, addr
+			return client, addr, nil
 		}
 		if !errors.Is(err, ErrTransport) {
-			t.Fatalf("the vault answered before it was ready, which this gate did not expect: %v", err)
+			cancel()
+			select {
+			case <-exited:
+			case <-time.After(10 * time.Second):
+			}
+			return nil, addr, fmt.Errorf("the vault answered before it was ready, which this gate "+
+				"did not expect, and the likeliest reason is that the address answered by something "+
+				"else entirely: %w", err)
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("bao never answered on %s within 30s. Its stderr follows:\n%s", addr, stderr.String())

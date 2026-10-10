@@ -129,7 +129,7 @@ func buildAgent(cfg Config) error {
 		return err
 	}
 	args := append([]string{"build", "-trimpath"}, cfg.AgentGoFlags...)
-	args = append(args, "-o", cfg.AgentBinary, ".")
+	args = append(args, "-buildvcs=false", "-o", cfg.AgentBinary, ".")
 	cmd := exec.Command("go", args...)
 	cmd.Dir = packageDir
 	cmd.Env = append(os.Environ(), "GOOS=linux", "GOARCH=amd64", "CGO_ENABLED=0")
@@ -138,7 +138,12 @@ func buildAgent(cfg Config) error {
 		return fmt.Errorf("socialweb-nodeimage: building the guest's agent (%s -> %s): %v: %s -- "+
 			"the guest's half of the agent is a static build for the guest, and the image must carry "+
 			"the binary built from the same source as the host's half, or the two sides disagree "+
-			"about how a guest is talked to", cfg.AgentPackage, cfg.AgentBinary, err,
+			"about how a guest is talked to. The build is always told -buildvcs=false, whatever "+
+			"agent_go_flags say: the agent's bytes are an INPUT of the image's name "+
+			"(internal/nodefirecracker folds the binary's digest in), and `go build` otherwise "+
+			"stamps the state of this git working tree into them -- so an edit anywhere in the "+
+			"repository while a build is running moves the name of an image whose inputs did not "+
+			"change. An image's name must follow its inputs and not the tree around them", cfg.AgentPackage, cfg.AgentBinary, err,
 			strings.TrimSpace(string(raw)))
 	}
 	return nil

@@ -4237,17 +4237,27 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   What this does NOT close is the ExternalSecret's own sync: that needs a store a tenant can reach,
   which is ESO-3, and the two are separate. `NEXT.yaml` ESO-2.
 
-- **FLAKE-3: the OpenBao live gate lends itself a port by listening and closing, so a concurrent run can
-  take it.** `internal/openbao/openbao_test.go`'s `freePort` listens on `127.0.0.1:0`, reads the port,
-  CLOSES the listener, and writes a vault config on that number with `tls_disable = true`. Between the
-  close and the vault binding it, the number is free for anyone -- including a second `go test` of this
-  repo running at the same time. MEASURED on 2026-10-07, with two other test runs in flight:
-  `TestClientAgainstRealBao` failed with `the vault answered before it was ready, which this gate did
-  not expect: openbao: GET /v1/sys/health -> HTTP 400: Client sent an HTTP request to an HTTPS server`
-  -- the gate's plain HTTP probe reached somebody else's TLS listener on the port it had just given
-  back. Run alone three times, the package is green each time. This is the same class as the rule the
-  TypeScript side already carries for exactly this pattern; it was written there and not here.
-  `NEXT.yaml` FLAKE-3.
+- **The OpenBao live gate lent itself a port it had already given back. CLOSED.** `freePort` listens
+  on `127.0.0.1:0`, reads the number, CLOSES the listener, and writes a vault config on that number
+  with `tls_disable = true`. Between the close and the vault binding it, the number is free for anyone
+  -- including a second `go test` of this repo running at the same time. MEASURED on 2026-10-07, with
+  two other test runs in flight: `TestClientAgainstRealBao` failed with `the vault answered before it
+  was ready, which this gate did not expect: openbao: GET /v1/sys/health -> HTTP 400: Client sent an
+  HTTP request to an HTTPS server` -- the gate's plain HTTP probe reached somebody else's TLS listener
+  on the port it had just given back, and the strict assertion that a vault which answers wrongly is a
+  failure was reading a stranger. This is the class the TypeScript side already carries a rule
+  against; it was written there and not here.
+  The start now retries with a FRESH port when either shape of collision is seen, and there are two:
+  something else ANSWERING (an HTTP-level error instead of a transport one, which is what was
+  measured) or something else HOLDING the address so the vault cannot bind and exits (found by trying
+  to force the first shape with a silent listener, which produced the second). The strict assertion
+  stays: three attempts and the failure names the port race, the attempt count, and the address. The
+  vault's exit is now observed through a channel rather than a bare `Wait`, so a vault that died at
+  its first step is reported with its own stderr instead of waiting out the deadline.
+  Closing reading, and it is the item's: TEN concurrent `go test ./internal/openbao/ -count=1` runs,
+  all green. What is NOT shown is the retry firing under a real collision -- forcing one with a
+  listener held on the chosen port produced the bind-failure shape rather than the answering shape,
+  and the retry's firing is therefore still unobserved.
 
 ## 16. Vocabulary
 

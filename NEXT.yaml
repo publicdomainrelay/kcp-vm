@@ -120,27 +120,13 @@ about: >
   render was fixed. Both are closed, and it is in section 15 with the readings, taken in both
   directions.
 
-open:
-  - id: FLAKE-3
-    title: The OpenBao live gate lends itself a port by listening and closing, so a concurrent run can take it.
-    body: >
-      `internal/openbao/openbao_test.go`'s `freePort` does `net.Listen("tcp", "127.0.0.1:0")`, reads the
-      port, CLOSES the listener, and writes a vault config on that number
-      (`listener "tcp" { address = "127.0.0.1:<port>" tls_disable = true }`). Between the close and the
-      vault binding it, the number is free for anyone -- including a second `go test` of this repo
-      running at the same time, which is exactly how it was found.  MEASURED on 2026-10-07: with two
-      other test runs in flight, `TestClientAgainstRealBao` failed with
-      `the vault answered before it was ready, which this gate did not expect: openbao: GET
-      /v1/sys/health -> HTTP 400: Client sent an HTTP request to an HTTPS server` -- the gate's plain
-      HTTP probe reached somebody else's TLS listener on the port it had just given back.  Run alone
-      three times, the package is green each time.  This is the same class as the rule the TypeScript
-      side already carries ("Port-sniffing ... is a TOCTOU race"), written down there and not here.
-    instrument: >
-      A port the vault itself reports rather than one lent to it -- the vault's own log line names the
-      address it bound -- or a bind failure the test retries with a fresh number instead of failing, or
-      a per-process range derived from the process id.  Closing reading: ten concurrent
-      `go test ./internal/openbao/ -count=1` runs, all green.
+  Opened and closed on 2026-10-07 and therefore NOT listed below: FLAKE-3 (the OpenBao live gate lent
+  itself a port by listening on :0 and closing, so a second `go test` of this repo running at the same
+  time could take it, and the gate's plain-HTTP probe then reached somebody else's TLS listener). The
+  start now retries with a fresh port when either the vault cannot bind or something else answers.
+  It is in section 15 with the reading: ten concurrent runs, all green.
 
+open:
   - id: FLAKE-1
     title: A gate test depends on the network, so --fast can fail for reasons unrelated to a change.
     body: >
