@@ -52,6 +52,8 @@ const (
 
 	gitlabJobPollTimeout = 1800
 
+	gitlabPreBuildScript = "command -v pnpm >/dev/null 2>&1 || corepack enable || npm install -g pnpm@10.11.0"
+
 	gitlabRunnerName = "gitlab-runner"
 
 	gitlabRunnerGroup = "gitlab-runner"
@@ -195,6 +197,7 @@ check_interval = 3
   url = %q
   token = %q
   executor = "kubernetes"
+  pre_build_script = [%q]
   [runners.kubernetes]
     host = %q
     cert_file = %q
@@ -210,7 +213,7 @@ check_interval = 3
     helper_memory_limit = %q
     poll_timeout = %d
     cleanup_grace_period_seconds = 30
-`, url, token, host,
+`, url, token, gitlabPreBuildScript, host,
 		filepath.Join(credDir, "tls.crt"), filepath.Join(credDir, "tls.key"),
 		filepath.Join(credDir, "ca.crt"), gitlabNamespace,
 		gitlabJobCPURequest, gitlabJobMemoryRequest, gitlabJobCPULimit, gitlabJobMemoryLimit,
