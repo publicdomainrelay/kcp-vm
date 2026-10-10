@@ -86,6 +86,10 @@ func BuildNodeDisk(path string, doc NodeDocument, sizeMiB int, stage func(string
 	return mkfsExt4(path, fill, NodeDiskLabel)
 }
 
+func MkfsExt4(path, fill, label string) error {
+	return mkfsExt4(path, fill, label)
+}
+
 func mkfsExt4(path, fill, label string) error {
 	if _, err := exec.LookPath("mkfs.ext4"); err != nil {
 		return fmt.Errorf("nodevm: mkfs.ext4 is not on this host's PATH, and it is what populates an "+
