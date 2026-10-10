@@ -10,6 +10,7 @@
     "./lib/abc/socialweb-computer-k8s",
     "./lib/socialweb-computer-oauth-atproto",
     "./lib/socialweb-computer-oauth-session-fs",
+    "./lib/socialweb-computer-session-password",
     "./lib/socialweb-computer-requester-inproc",
     "./lib/socialweb-computer-k8s-request-proof",
     "./lib/socialweb-computer-k8s-gateway-xrpc",

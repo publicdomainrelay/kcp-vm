@@ -118,6 +118,7 @@ export interface AccountRequestersOptions {
   plcDirectoryUrl?: string;
   ingressProxyHost?: string;
   oauthClientId?: string;
+  agentWithoutOAuthFor?: (did: string) => Promise<unknown> | null;
   log?: (event: string, data?: Record<string, unknown>) => void;
 }
 
@@ -197,7 +198,19 @@ export function createAccountRequesters(opts: AccountRequestersOptions): Account
    * session. One long-lived agent per account is also what makes concurrent
    * connections safe: they share one refresh lock instead of racing.
    */
+  const agentsWithoutOAuth = new Map<string, Promise<Agent>>();
+
   function agentFor(did: string): Promise<Agent> {
+    const cachedWithoutOAuth = agentsWithoutOAuth.get(did);
+    if (cachedWithoutOAuth) return cachedWithoutOAuth;
+    const withoutOAuth = opts.agentWithoutOAuthFor?.(did);
+    if (withoutOAuth) {
+      const agent = withoutOAuth as Promise<Agent>;
+      agentsWithoutOAuth.set(did, agent);
+      agent.catch(() => agentsWithoutOAuth.delete(did));
+      log("account_agent_without_oauth", { did });
+      return agent;
+    }
     return (async () => {
       const stored = await opts.sessionStore.get(did);
       if (!stored) throw new Error(`no oauth session stored for ${did}`);
