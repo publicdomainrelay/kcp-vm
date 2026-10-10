@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/eso"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpclient"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/portallocator"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/scale"
 )
@@ -17,6 +18,8 @@ import (
 const (
 	envKCPHost       = "SOCIALWEB_KCP_HOST"
 	envKCPKubeconfig = "SOCIALWEB_KCP_KUBECONFIG"
+
+	envMountContext = "SOCIALWEB_CLUSTERPROVIDER_MOUNT_CONTEXT"
 
 	envMintKubeconfigs = "SOCIALWEB_GATEWAY_MINT_KUBECONFIGS"
 
@@ -101,6 +104,8 @@ type Config struct {
 
 	KCPKubeconfig string
 
+	MountContext string
+
 	MintKubeconfigs string
 
 	GrantPath string
@@ -168,6 +173,7 @@ func load(get func(string) string) (Config, error) {
 	cfg := Config{
 		KCPHost:                strings.TrimSpace(get(envKCPHost)),
 		KCPKubeconfig:          strings.TrimSpace(get(envKCPKubeconfig)),
+		MountContext:           strings.TrimSpace(get(envMountContext)),
 		MintKubeconfigs:        strings.TrimSpace(get(envMintKubeconfigs)),
 		LeasePath:              strings.TrimSpace(get(envLeasePath)),
 		Join:                   strings.TrimSpace(get(envJoin)),
@@ -194,6 +200,9 @@ func load(get func(string) string) (Config, error) {
 	}
 	if cfg.GrantPath == "" {
 		cfg.GrantPath = DefaultGrantPath
+	}
+	if cfg.MountContext == "" {
+		cfg.MountContext = kcpclient.ShardAdminContext
 	}
 	if cfg.ESOManifestDir == "" {
 		cfg.ESOManifestDir = DefaultESOManifestDir

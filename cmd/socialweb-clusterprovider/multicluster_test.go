@@ -455,6 +455,7 @@ func allClustersDeps(t *testing.T, registry clusterprovider.Clusters, host mater
 		Host:           host,
 		PostgresNeeded: false,
 		NewInstance:    func() string { return "gen-test-1" },
+		MountChild:     fakeMountChild{},
 		Tenant: func(context.Context, clusterprovider.Ref, *v1alpha1.Cluster) (*rest.Config, error) {
 			return &rest.Config{Host: "https://127.0.0.1:16445"}, nil
 		},

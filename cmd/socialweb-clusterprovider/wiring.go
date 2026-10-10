@@ -39,8 +39,16 @@ type Deps struct {
 
 	InstallTenant func(ctx context.Context, cluster string, cfg *rest.Config) error
 
+	MountChild clusterprovider.MountChildWriter
+
 	Links *linkRecorder
 }
+
+var ErrNoMountChild = errors.New(
+	"no mount-child writer was supplied, so this pass would bring a cluster up and leave its " +
+		"kubeconfig pointing at a workspace that proxies kcp itself. The child carries spec.URL, " +
+		"which kcp accepts only from a system privileged identity, so it is written by a client " +
+		"of its own and never by the identity that runs the tree")
 
 var ErrNoTenant = errors.New(
 	"no tenant credential seam was supplied, so the bootstrap cannot reach a cluster it " +
@@ -152,6 +160,9 @@ func Build(cfg Config, d Deps, log *slog.Logger) (*Provider, error) {
 		if d.NewInstance == nil {
 			return nil, errors.New("clusterprovider: Deps.NewInstance is required; status.instance is the only durable discriminator there is")
 		}
+		if d.MountChild == nil {
+			return nil, ErrNoMountChild
+		}
 	}
 	if log == nil {
 		log = slog.Default()
@@ -164,6 +175,8 @@ func Build(cfg Config, d Deps, log *slog.Logger) (*Provider, error) {
 		Host: d.Host,
 
 		WriteStatus: !cfg.ObserveOnly(),
+
+		MountChild: d.MountChild,
 
 		Ports: d.Allocator,
 
@@ -519,6 +532,10 @@ func (p *Provider) report() {
 		"datastore", p.storePlan(),
 		"datastoreHasRow", p.cfg.DatastoreHasRow,
 		"mintDir", p.cfg.MintKubeconfigs,
+		"mountContext", p.cfg.MountContext,
+		"mountChild", "written on every pass by a client built from that kcp context, because "+
+			"kcp accepts spec.URL only from a system privileged user and the identity that runs "+
+			"the tree is not one",
 		"statusWrite", status,
 		"bootstrap", "runs on each cluster's own transition into Ready, once")
 }

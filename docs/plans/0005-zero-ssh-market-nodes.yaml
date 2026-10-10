@@ -789,8 +789,14 @@ items:
       (provider, which owns the Cluster status) creates/repairs the mount child once status.URL appears,
       with a privileged identity scoped to that write; Ensure errors keep their own message/code and are
       logged. decided by Claude, user may veto.
-    status: todo
-    evidence: []
+    status: doing
+    evidence:
+      - "commit 9a56762: CreateCluster records spec.running FIRST on context.WithoutCancel and answers the phase it finds (Initializing is a 200, not a refusal); errForDeny maps only revocation.ErrDenyUnreadable to the identity-store message and everything else to ClusterUnavailable 'the cluster could not be prepared: <cause>', with the full error logged"
+      - "commit df51a4b: Ensure stops at the Cluster CR and never reads it back or waits for status.URL; kcpclient.MountChild (one method, EnsureMountChild) creates the child or repairs an empty spec.URL, built from SOCIALWEB_CLUSTERPROVIDER_MOUNT_CONTEXT (default system:admin) in cmd/socialweb-clusterprovider; Provider.addressMount runs it on every pass right after the status write and fails the pass on a refusal; Build refuses a join without the writer (ErrNoMountChild)"
+      - "tests watched to fail then pass: gateway TestCreateClusterRecordsRunningBeforeItReadsAnythingBack, TestACreateTheCallerAbandonedStillLeavesTheClusterRunning, TestCreateReportsThePhaseItFoundRatherThanRefusing, TestAnEnsureFailureKeepsItsOwnCauseAndIsLogged (FAILED: 'the identity store could not be read'); kcpclient TestEnsureStopsAtTheClusterCRAndNeverWaitsForAURL and TestEnsureCreatesTheTree (FAILED against the old wait: 'Ensure POSTed the mount child 1 time(s)', 'read the Cluster CR back 10 time(s)'), TestTheMountChildIsWrittenByItsOwnWriter (4 subtests), internal/kcpclient/context_test.go; clusterprovider TestAPassAddressesTheMountChildOnceTheCRReportsAURL, TestEveryPassRepairsTheMountChildItFinds, TestAMountChildThatCannotBeWrittenFailsThePass (FAILED against a stubbed addressMount)"
+      - "deploy/check.sh --fast green at df51a4b (gofmt, build, apigen 9 files no drift, vet, staticcheck, cargo fmt/test, go test)"
+      - "door unchanged: it already answers a create with the phase as data (test/cluster_api_test.ts 'the account is the proved one, never one named in the body' asserts 200 {name, phase: Initializing}) and its 30 s budget now covers a create that no longer waits"
+      - "owed: a create through the SPA on prod with the mount child written by the system:admin context, and the live-gated mount proofs (internal/kcpclient/mount_child_live_test.go, internal/clusterprovider/live_mount_test.go, internal/kcpclient/live_apiserver_test.go) run against a live kcp -- they were updated but NOT RUN here"
   - id: M6-DOCS
     milestone: M6
     title: Rewrite ARCHITECTURE invariant 13 and update docs/gitlab

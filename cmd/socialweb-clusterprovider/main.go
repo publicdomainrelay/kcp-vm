@@ -138,6 +138,21 @@ func buildInputs(cfg Config) (inputs, error) {
 	return inputs{restCfg: restCfg, registry: registry, alloc: alloc, networks: networks}, nil
 }
 
+func mountChildWriter(cfg Config) (clusterprovider.MountChildWriter, error) {
+	restCfg, err := kcpclient.ConfigFromContext(cfg.KCPKubeconfig, cfg.MountContext)
+	if err != nil {
+		return nil, fmt.Errorf("the kcp context the mount child is written as (%s names %q): %w. "+
+			"The child carries spec.URL, kcp accepts that field only from a system privileged "+
+			"user, and without it a cluster's kubeconfig reaches a workspace that proxies kcp "+
+			"itself", envMountContext, cfg.MountContext, err)
+	}
+	client, err := kcpclient.NewMountChild(kcpclient.Options{Host: cfg.KCPHost, RestConfig: restCfg})
+	if err != nil {
+		return nil, fmt.Errorf("the mount-child client: %w", err)
+	}
+	return client, nil
+}
+
 func migrateOnly(ctx context.Context, cfg Config, log *slog.Logger) error {
 	in, err := buildInputs(cfg)
 	if err != nil {
@@ -181,6 +196,10 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 	}
 
 	linkClient, err := kcpclient.New(kcpclient.Options{Host: cfg.KCPHost, RestConfig: restCfg})
+	if err != nil {
+		return Deps{}, err
+	}
+	mountChild, err := mountChildWriter(cfg)
 	if err != nil {
 		return Deps{}, err
 	}
@@ -331,6 +350,8 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 		Postgres:    postgres,
 		NewInstance: minter,
 		NodeScale:   scaleDriver,
+
+		MountChild: mountChild,
 
 		PostgresNeeded: needsPostgres,
 

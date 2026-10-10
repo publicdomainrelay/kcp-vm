@@ -143,9 +143,14 @@ func testDeps(t *testing.T, f *fakeClusters) Deps {
 		Tenant: func(context.Context, clusterprovider.Ref, *v1alpha1.Cluster) (*rest.Config, error) {
 			return &rest.Config{Host: "https://127.0.0.1:16445"}, nil
 		},
-		Host: materialiser.NewLocalHost(procgroup.Options{}),
+		Host:       materialiser.NewLocalHost(procgroup.Options{}),
+		MountChild: fakeMountChild{},
 	}
 }
+
+type fakeMountChild struct{}
+
+func (fakeMountChild) EnsureMountChild(context.Context, string, string, string) error { return nil }
 
 func TestObserveModeWritesNothing(t *testing.T) {
 	f := &fakeClusters{items: []v1alpha1.Cluster{{
@@ -191,6 +196,7 @@ func TestBuildRefusesWhatItCannotDo(t *testing.T) {
 		{"no allocator", func(d *Deps) { d.Allocator = nil }, "", nil},
 		{"no tenant", func(d *Deps) { d.Tenant = nil }, "liveweb", ErrNoTenant},
 		{"join without a process host", func(d *Deps) { d.Host = nil }, "liveweb", ErrNoHost},
+		{"join without a mount-child writer", func(d *Deps) { d.MountChild = nil }, "liveweb", ErrNoMountChild},
 	} {
 		d := full
 		tc.zero(&d)

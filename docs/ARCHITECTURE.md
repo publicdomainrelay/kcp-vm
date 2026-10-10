@@ -615,9 +615,11 @@ the door.
 How a user gets a kubeconfig. Seven procedures under `com.publicdomainrelay.temp.cluster.`:
 
 ```
-createCluster       create the named cluster and leave it RUNNING, in one call. Idempotent.
-                    The create-on-read path getKubeconfig walks, then the desired-state flip
-                    controlPlaneUp performs. Answers the phase.
+createCluster       create the named cluster and record the intent to run it, in one call.
+                    Idempotent. The create-on-read path getKubeconfig walks, then spec.running
+                    = true -- set FIRST, on a context the caller's hang-up cannot cancel.
+                    Answers the phase it FINDS, Initializing included: it never waits for the
+                    control plane and never answers an error for a cluster that is coming up.
 controlPlaneUp      bring the named cluster's control plane up. Idempotent. 429 + Retry-After
                     while Initializing. Refused once Draining. DOES NOT provision nodes.
 controlPlaneDown    the inverse
@@ -635,9 +637,17 @@ there skips the check.
 other way to a live cluster was two round trips through two different verbs — `getKubeconfig`, whose
 kubeconfig a caller that is provisioning has no use for, and then `controlPlaneUp` — and because a
 caller had to know that order. It is not a new path: it calls the same `revocation.CreateOnRead`
-around `Store.Ensure` that `getKubeconfig` does, and then the same code `controlPlaneUp` runs, so the
-deny is consulted before anything is created and the errors are the same six. `getKubeconfig` keeps
-its create-on-read, which is what makes a first login work at all.
+around `Store.Ensure` that `getKubeconfig` does, and then records `spec.running = true` itself, so the
+deny is consulted before anything is created. THE ORDERING IS THE CONTRACT: the running write comes
+first and reads nothing back, and it is made on a context the caller's cancellation cannot reach
+(`context.WithoutCancel`), because the door abandons a call at 30 s and the abort used to land before
+that write — leaving a cluster whose tree existed and whose `spec.running` was false, which no pass
+ever brings up. The phase is the ANSWER, not a refusal: a cluster whose control plane is still coming
+up is a 200 carrying `Initializing` (a market join is minutes away by construction), and only a
+Draining cluster is refused, from the view the write returns. `controlPlaneUp` keeps the stricter
+reading — 429 + Retry-After while Initializing — because a caller that asks the control plane up by
+name is asking about the control plane. `getKubeconfig` keeps its create-on-read, which is what makes
+a first login work at all.
 
 **`getKubeconfig` is served by a granter the composition root must be handed.** It renders an exec
 credential whose helper is named by configuration, so a gateway that is not configured for it refuses
@@ -3180,10 +3190,11 @@ refutation.
   bed (`deploy/examples/atproto/market`, `internal/marketbed`) is what proves a node end to end now,
   and it proves it through the RFP flow this project exists for.
 
-- **A cluster's kubeconfig mount child is built from the Cluster CR's `status.URL`, and it is created
-  or repaired on every Ensure. CLOSED, and it closed a mount that served kcp itself.** Before,
-  `kcpclient.Ensure` POSTed the Cluster CR and then POSTed the mount child at `MountPath` back to
-  back, both without reading anything the CR reports. kcp's `workspaceSpecUpdater`
+- **A cluster's kubeconfig mount child is written from the Cluster CR's `status.URL`, by a kcp system
+  privileged identity, on every reconcile pass. CLOSED TWICE: first a mount that served kcp itself,
+  then a mount nothing could write at all.** The first defect: `kcpclient.Ensure` POSTed the Cluster CR
+  and then POSTed the mount child at `MountPath` back to back, both without reading anything the CR
+  reports. kcp's `workspaceSpecUpdater`
   (`kcp/pkg/reconciler/tenancy/workspacemounts/workspacemounts_reconcile_updater.go`) copies the
   MOUNTED OBJECT's `status.URL` into the workspace's `spec.URL`, and returns
   `reconcileStatusStopAndRequeue` with `unable to read .status.URL` when the object has none; a mount
@@ -3201,33 +3212,71 @@ refutation.
   jsonpath={.spec.URL}` was empty on the original child; after deleting and recreating that child by
   hand the same read gave `https://127.0.0.1:20003`, and traffic then reached the tenant apiserver,
   which began asking for credentials -- the tenant k3s refusing kcp's admin token, the correct
-  refusal. After, `Ensure` calls `ensureMountChild` (`internal/kcpclient/kcpclient.go`), which builds
-  the child from the URL and never from nothing: `createCluster` now reports whether it created the
-  CR; if it did and the CR reports no `status.URL`, a bounded wait (`clusterURLTimeout`, 30 s, the
-  budget `workspaceReadyTimeout` already spends in the same function) re-reads the CR until a URL
-  appears; when it gives up, the child is NOT created and `Ensure` returns nil, leaving the job to a
-  later `Ensure`. If the CR already existed its URL is read once and nothing is waited for, so the
-  budget is paid only by the `Ensure` that itself created the CR, and a later one that finds the CR
-  still without a URL costs a single GET. Either way a missing child is CREATED with `spec.URL` set,
-  and an existing child whose `spec.URL` is empty is PATCHed with the CR's current `status.URL`; a
-  child that already carries one is left alone. THE ORDERING DECISION: a cluster whose node has not
-  started legitimately has no `status.URL` -- a market join is minutes away by construction, section
-  13 invariant 31 -- so the give-up is a DEFERRAL and not a refusal, which is safe precisely because
-  `Ensure` runs again for a live cluster (the door's `listClusters` and `getKubeconfig` both reach it
-  through `gateway.Server.create`), so a hard refusal would refuse every first login whose node has
-  not joined yet. Instruments, all in `internal/kcpclient/kcpclient_test.go`
-  unless named: `TestEachEnsureLeavesTheMountChildAddressingTheTenantApiserver`, four subtests that
-  pin the repair (an existing child with an empty `spec.URL` is PATCHed from the CR's `status.URL` and
-  is NOT re-created), the create (a child built after the CR reports a URL carries it),
-  idempotence (across two Ensures the child is POSTed exactly once), and the deferral (a CR reporting
-  no URL leaves no child, and the CR reporting one on the next Ensure produces it); all four subtests
-  and `TestEnsureCreatesTheTree` were watched to FAIL when `ensureMountChild` was replaced by the old
-  unconditional create, so the readings are the change and not the ambient result. NOT VERIFIED
-  against production: the deployment was inspected read-only, and this is a source change the owner
-  deploys. The two live-gated mount proofs (`internal/kcpclient/mount_child_live_test.go`,
-  `internal/clusterprovider/live_mount_test.go`) call `Ensure` once while the CR's `status.URL` is
-  still empty, so they now need a second `Ensure` after the CR reports one; they were not run, and
-  neither was `deploy/check.sh --local`. `NEXT.yaml` MOUNT-1.
+  refusal. That fix moved the write into `Ensure` (`ensureMountChild`), where a CR that reported no
+  `status.URL` was waited for (30 s, `clusterURLTimeout`) and an existing child with an empty
+  `spec.URL` was PATCHed.
+  The second defect, found by the acceptance run on 2026-10-08 (plan 0005 M6-SPA-CREATE), is that this
+  writer is the WRONG IDENTITY and sits in the WRONG PLACE. MEASURED in production: kcp answers
+  `workspaces.tenancy.kcp.io "clusters" is forbidden: spec.URL can only be set by system privileged
+  users` to a create or a patch of that field from `kcp-admin` -- the user of the `root` context of
+  `$KCP_ROOT/admin.kubeconfig`, which is what `SOCIALWEB_KCP_KUBECONFIG` names and what the gateway,
+  the provider and every read in this repo use -- and the same object created with
+  `--context system:admin` (kcp's `shard-admin`, context `system:admin`, cluster
+  `.../clusters/system:admin`; kcp writes both contexts into the one admin kubeconfig it generates)
+  succeeded and the mount served at once. So a `getKubeconfig` or `listClusters` on a cluster whose
+  child was missing failed the whole request, and the 30 s wait for `status.URL` inside the create
+  spent the door's entire 30 s budget: the abort then landed before the gateway wrote anything else.
+  THE DECISION, and it is a decision about identity: **`spec.URL` on a mount child is written by one
+  named client of its own, and by nothing else.** `kcpclient.MountChild`
+  (`internal/kcpclient/kcpclient.go`, `NewMountChild`) exposes exactly one method,
+  `EnsureMountChild(ctx, home, name, url)`, which CREATES the child at
+  `<home>/clusters` with `spec.URL` + the `Cluster` mount ref, or PATCHes `spec.URL` when the child
+  exists with an empty one, and refuses an empty `url` outright (`ErrNoMountURL`) rather than writing a
+  child kcp will never address. It is built from the kcp context
+  `SOCIALWEB_CLUSTERPROVIDER_MOUNT_CONTEXT` (default `system:admin`; `kcpclient.ShardAdminContext`,
+  loaded by `kcpclient.ConfigFromContext`) in `cmd/socialweb-clusterprovider` (`mountChildWriter`),
+  and the provider refuses to join without it (`cmd/socialweb-clusterprovider` `ErrNoMountChild`).
+  EVERY OTHER kcp call keeps the unprivileged identity: `Options.Host` overrides the config's server,
+  so the context contributes the credential alone. The writer is called from the reconcile pass that
+  already reads every Cluster's status (`Provider.addressMount`, `internal/clusterprovider/provider.go`),
+  right after the status write, so the child is created -- or repaired -- as soon as the pass publishes
+  a `status.URL`; a refused write FAILS the pass (`pass.Err`) rather than reporting a cluster whose
+  kubeconfig reaches the wrong apiserver. `kcpclient.Ensure` now stops at the Cluster CR: it never
+  reads the CR back and never waits for `status.URL`, because a market cluster's node is minutes away by
+  construction (section 13 invariant 31) and a create path that polls for it spends its caller's whole
+  budget (this deleted `ensureMountChild`, `waitForClusterURL`, `clusterURLRead` and
+  `clusterURLTimeout`). On the gateway side the same defect closed the other way round:
+  `gateway.Server.CreateCluster` records `spec.running` FIRST, on a context the caller's hang-up cannot
+  cancel (`context.WithoutCancel`), and then reports the phase it reads back -- `Initializing` is a
+  phase in a 200 response, not a refusal -- because `running=false` after a create is a cluster no pass
+  ever brings up. The port a cluster's apiserver answers on is leased per cluster and not per instance
+  (`portallocator`: `leaseKey{cluster, purpose}`), so the URL written once stays right across an
+  instance bump; that is why the repair is for an EMPTY `spec.URL` and not for a mismatch.
+  Instruments, all in `internal/kcpclient/kcpclient_test.go` unless named:
+  `TestTheMountChildIsWrittenByItsOwnWriter` (four subtests: an existing child with an empty
+  `spec.URL` is PATCHed from the CR's URL and NOT re-created; a missing child is created WITH the URL
+  and the mount ref; three passes create it exactly once and patch nothing once it carries the URL;
+  an empty URL is refused and writes nothing), `TestEnsureStopsAtTheClusterCRAndNeverWaitsForAURL`
+  (Ensure POSTs no child and reads the CR back zero times), `TestEnsureCreatesTheTree` (seven
+  requests, no child), `TestAConfigFromAContextIsThatContextsIdentity` and
+  `TestAContextThatIsNotThereIsRefused` (`internal/kcpclient/context_test.go`), and
+  `TestAPassAddressesTheMountChildOnceTheCRReportsAURL`, `TestEveryPassRepairsTheMountChildItFinds`
+  and `TestAMountChildThatCannotBeWrittenFailsThePass` (`internal/clusterprovider/provider_test.go`).
+  The Ensure-side subtests and `TestEnsureCreatesTheTree` were watched to FAIL against the old
+  create-on-read wait (`Ensure POSTed the mount child 1 time(s)`, `Ensure read the Cluster CR back N
+  time(s)`) and the provider-side three against a stubbed `addressMount`, so the readings are the
+  change and not the ambient result. KNOWN LIMITS: a pass that reports `pass.Foreign` (an apiserver
+  answers at `status.URL` and this process holds no group for it) writes no mount child, because such
+  a pass writes nothing at all; and in `join` mode (`SOCIALWEB_CLUSTERPROVIDER_JOIN` naming one
+  cluster) only that cluster is reconciled, so a cluster created in the SPA gets its child from a
+  `join-all` provider -- `scripts/deploy.sh` sets `SOCIALWEB_CLUSTERPROVIDER_JOIN=*` (line 97) with
+  `SOCIALWEB_CONTAINER_BOOTSTRAP=0`, which is the shape the plan's production reading requires: the
+  CR reported a `status.URL` and only the child was missing. NOT VERIFIED against production:
+  this is a source change the owner deploys, and the two live-gated mount proofs
+  (`internal/kcpclient/mount_child_live_test.go`, `internal/clusterprovider/live_mount_test.go`) and
+  `internal/kcpclient/live_apiserver_test.go` were updated to drive `EnsureMountChild` from the
+  `system:admin` context but were NOT RUN. `NEXT.yaml` MOUNT-1.
+
 
 - **A market cluster's tenant credential is signed from its own ClientCA, and the choice of source
   belongs to the substrate. CLOSED, and it closed the k8s door.** Before, `MintTenantCredentialForDataDir`
@@ -4786,7 +4835,18 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   is consulted before anything is created) and then the desired-state flip `controlPlaneUp`
   performs, and answers the phase. It declares the same six errors as `controlPlaneUp`, including the
   retryable `ClusterInitializing` with its `Retry-After`. `getKubeconfig` KEEPS its create-on-read:
-  that is what makes a first login work. Readings: the answerability check in `cmd/socialweb-gateway`
+  that is what makes a first login work. THE CONTRACT CHANGED on 2026-10-08 (plan 0005
+  M6-SPA-CREATE): `createCluster` no longer RUNS `controlPlaneUp`. It records `spec.running = true`
+  first, on a context the caller's hang-up cannot cancel, and answers the phase it finds --
+  `Initializing` is a phase in a 200 response and not a refusal, and the lexicon keeps declaring the
+  error for the callers that still handle it. `controlPlaneUp` keeps the stricter reading (429 +
+  `Retry-After` while Initializing), and `ClusterInitializing` is the only retryable error, so the
+  two verbs differ on exactly one thing: one is asking the control plane up by name, the other is
+  provisioning. `errForDeny` also stopped claiming every failure was the identity store: only
+  `revocation.ErrDenyUnreadable` maps to `ClusterUnavailable "the identity store could not be read"`,
+  and everything else from `Store.Ensure` answers `ClusterUnavailable` carrying its own cause
+  (`"the cluster could not be prepared: <cause>"`) while the gateway logs the full error. Readings:
+  the answerability check in `cmd/socialweb-gateway`
   now drives seven verbs, `internal/xrpcserver` drives `createCluster` past authentication and
   validates its output against the lexicon, and `internal/gateway` asserts one `Ensure` and a
   `Running` desired state, a second call still idempotent, and a revoked identity refused with zero

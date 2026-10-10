@@ -200,12 +200,27 @@ func TestTheMountShutsBeforeTheTenantProcessGroupDies(t *testing.T) {
 		t.Fatalf("materialiser.New: %v", err)
 	}
 
-	kcpHost, kcpCfg := startKCPForMountProof(t, stateDir, kinePort, kcpPort)
+	kcpHost, kcpCfg, kcpKubeconfig := startKCPForMountProof(t, stateDir, kinePort, kcpPort)
 	installMountProvider(t, ctx, kcpCfg, kcpHost)
 
 	registry, err := NewRegistry(RegistryOptions{Host: kcpHost, RestConfig: kcpCfg})
 	if err != nil {
 		t.Fatalf("NewRegistry: %v", err)
+	}
+
+	mountCfg, err := kcpclient.ConfigFromContext(kcpKubeconfig, kcpclient.ShardAdminContext)
+	if err != nil {
+		t.Fatalf("the kcp shard-admin context %q of %s: %v. spec.URL is refused from any other "+
+			"identity with `workspaces.tenancy.kcp.io \"clusters\" is forbidden: spec.URL can "+
+			"only be set by system privileged users`, and the mount then serves kcp itself",
+			kcpclient.ShardAdminContext, kcpKubeconfig, err)
+	}
+	mountCfg.TLSClientConfig.Insecure = true
+	mountCfg.TLSClientConfig.CAData = nil
+	mountCfg.TLSClientConfig.CAFile = ""
+	mountChild, err := kcpclient.NewMountChild(kcpclient.Options{Host: kcpHost, RestConfig: mountCfg})
+	if err != nil {
+		t.Fatalf("NewMountChild: %v", err)
 	}
 
 	prov, err := New(Options{
@@ -214,6 +229,7 @@ func TestTheMountShutsBeforeTheTenantProcessGroupDies(t *testing.T) {
 		Ports:            alloc,
 		Host:             host,
 		WriteStatus:      true,
+		MountChild:       mountChild,
 		NodeExpirySource: NodeExpiryRollup,
 		Probe:            Probe,
 		Interval:         time.Second,
@@ -664,10 +680,10 @@ func ensureMountProofCluster(t *testing.T, ctx context.Context, host string, cfg
 	}
 	if err := client.Ensure(ctx, mountProofCaller, mountProofCluster); err != nil {
 		t.Fatalf("kcpclient.Ensure: %v. This is the production bootstrap: it creates the account "+
-			"workspace, the home workspace, the Cluster CR and the mounted child, and the mount path "+
-			"the provider reads is derived from the same DID and name by the same package, so a "+
-			"hand-built tree could differ from the one production builds and the reading would not "+
-			"be about production", err)
+			"workspace, the home workspace and the Cluster CR, and the mount path the provider "+
+			"reads is derived from the same DID and name by the same package, so a hand-built "+
+			"tree could differ from the one production builds and the reading would not be "+
+			"about production", err)
 	}
 	home := kcpclient.HomePath(mountProofDID, mountProofCluster)
 	d := mountProofDynamic(t, cfg, host, home)
@@ -831,7 +847,7 @@ func mountProofAwaitExportIdentity(t *testing.T, ctx context.Context, d dynamic.
 	}
 }
 
-func startKCPForMountProof(t *testing.T, dir string, kinePort, kcpPort int) (string, *rest.Config) {
+func startKCPForMountProof(t *testing.T, dir string, kinePort, kcpPort int) (string, *rest.Config, string) {
 	t.Helper()
 	bin := os.Getenv("KCP_BIN")
 	if bin == "" {
@@ -886,7 +902,7 @@ func startKCPForMountProof(t *testing.T, dir string, kinePort, kcpPort int) (str
 	t.Logf("a real kcp is serving at %s as uid %d out of %s with WorkspaceMounts=true and a temp "+
 		"kine behind it, not the host's root-owned /var/.kcp and not an embedded etcd on the "+
 		"host-fixed 2379/2380", host, os.Getuid(), root)
-	return host, cfg
+	return host, cfg, kubeconfig
 }
 
 func mountProofStartProcess(t *testing.T, logPath, bin string, args ...string) {

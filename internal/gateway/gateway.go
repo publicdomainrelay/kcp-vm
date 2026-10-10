@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/revocation"
@@ -61,9 +63,29 @@ func errForDeny(err error) *XRPCError {
 		}
 	case errors.Is(err, revocation.ErrNoDID):
 		return ErrUnauthorized
-	default:
+	case errors.Is(err, revocation.ErrDenyUnreadable):
 		return ErrClusterUnavailable
+	default:
+		return unprepared(err)
 	}
+}
+
+const maxCause = 300
+
+func unprepared(cause error) *XRPCError {
+	return &XRPCError{
+		"ClusterUnavailable",
+		"the cluster could not be prepared: " + oneLine(cause.Error()),
+		503,
+	}
+}
+
+func oneLine(msg string) string {
+	line := strings.Join(strings.Fields(msg), " ")
+	if len(line) > maxCause {
+		line = line[:maxCause] + "..."
+	}
+	return line
 }
 
 type ClusterView struct {
@@ -147,7 +169,14 @@ func (s *Server) CreateCluster(ctx context.Context, caller Caller, req NameReque
 	if err := s.create(ctx, "createCluster", caller, req.Name); err != nil {
 		return ClusterView{}, err
 	}
-	return s.ControlPlaneUp(ctx, caller, req)
+	view, err := s.Store.SetRunning(context.WithoutCancel(ctx), caller, req.Name, true)
+	if err != nil {
+		return ClusterView{}, err
+	}
+	if view.Phase == "Draining" {
+		return ClusterView{}, ErrClusterDraining
+	}
+	return view, nil
 }
 
 func (s *Server) deviceKeyTTL(seconds *int64) (time.Duration, error) {
@@ -174,6 +203,8 @@ func (s *Server) create(ctx context.Context, verb string, caller Caller, name st
 		return s.Store.Ensure(ctx, caller, name)
 	})
 	if err != nil {
+		slog.Error("gateway: the create-on-read path failed",
+			"verb", verb, "caller", string(caller), "name", name, "err", err)
 		if x := errForDeny(err); x != nil {
 			return x
 		}

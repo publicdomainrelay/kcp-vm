@@ -54,6 +54,26 @@ func TestTheNotFoundDiscriminatorAgainstALiveApiserver(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 	if err := admin.Ensure(ctx, gateway.Caller(did), label); err != nil {
+		t.Fatalf("provisioning the account's tree: %v", err)
+	}
+	cr, err := admin.readCluster(ctx, HomePath(did, label), label)
+	if err != nil {
+		t.Fatalf("reading the Cluster CR %s out of %s: %v", label, HomePath(did, label), err)
+	}
+	if cr.Status.URL == "" {
+		livegate.Require(t, "NOT RUN: the Cluster CR %s in %s reports no status.URL, so the "+
+			"mount at %s has nothing to proxy. Bring the cluster up and run this again",
+			label, HomePath(did, label), MountPath(did, label))
+	}
+	mountCfg, err := ConfigFromContext(kubeconfig, ShardAdminContext)
+	if err != nil {
+		t.Fatalf("the privileged context %q of %s: %v", ShardAdminContext, kubeconfig, err)
+	}
+	mounter, err := NewMountChild(Options{Host: host, RestConfig: mountCfg})
+	if err != nil {
+		t.Fatalf("NewMountChild: %v", err)
+	}
+	if err := mounter.EnsureMountChild(ctx, HomePath(did, label), label, cr.Status.URL); err != nil {
 		t.Fatalf("provisioning the account's mounted child: %v", err)
 	}
 
@@ -68,7 +88,7 @@ func TestTheNotFoundDiscriminatorAgainstALiveApiserver(t *testing.T) {
 	bearer := tenantBearer(t, ctx, tenant)
 	name := ServiceAccountName(did)
 
-	mountCfg := rest.CopyConfig(restCfg)
+	mountCfg = rest.CopyConfig(restCfg)
 	mountCfg.Host = strings.TrimSuffix(host, "/") + "/clusters/" + MountPath(did, label)
 	mountCfg.CertData, mountCfg.CertFile, mountCfg.KeyData, mountCfg.KeyFile = nil, "", nil, ""
 	mountCfg.Username, mountCfg.Password, mountCfg.BearerToken, mountCfg.BearerTokenFile = "", "", bearer, ""
