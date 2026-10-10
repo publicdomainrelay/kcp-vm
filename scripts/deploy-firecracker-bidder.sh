@@ -431,17 +431,26 @@ BUILD_THE_IMAGE_AS_ROOT=(sudo -n env -u TMPDIR "PATH=${TOOLCHAIN}/bin:${PATH}" \
   GOFLAGS=-mod=mod "${LOCAL_NODEIMAGE_BIN}" -ensure -json \
   -preinstall "${LOCAL_PREINSTALL}" -config "${LOCAL_CONFIG}")
 
+# The answer is read with the question's own error kept aside: "the store does
+# not hold it" is one answer and a configuration the builder refuses is another,
+# and the second one is only visible in what the builder wrote to standard error.
+ASK_ERROR="${WORK}/build-host-ask.err"
+ask_the_store() {
+  ( cd "${LOCAL_INIT_PACKAGE}" && "${ASK_THE_STORE[@]}" 2>"${ASK_ERROR}" | tail -1 || true )
+}
 if ${DRY_RUN}; then
   printf -- '--- [dry-run] on the build host: %s   (run from %s)\n' \
     "${ASK_THE_STORE[*]}" "${LOCAL_INIT_PACKAGE}"
 fi
-ENSURE_JSON="$(cd "${LOCAL_INIT_PACKAGE}" && "${ASK_THE_STORE[@]}" 2>/dev/null | tail -1 || true)"
-ENSURE_STATE="$(ensure_field state)"
+ENSURE_JSON="$(ask_the_store)"
+ENSURE_STATE="$(ensure_field state 2>/dev/null || true)"
 case "${ENSURE_STATE}" in
   present|absent) ;;
   *)
     echo "the build host's store answered neither present nor absent, so nothing here can say" >&2
-    echo "which image these inputs name: ${ENSURE_JSON}" >&2
+    echo "which image these inputs name:" >&2
+    cat "${ASK_ERROR}" >&2
+    echo "  ${ENSURE_JSON}" >&2
     exit 1
     ;;
 esac
@@ -480,11 +489,13 @@ if [ "${ENSURE_STATE}" = absent ]; then
     if [ -d "${LOCAL_STAGE_DIR}" ]; then
       sudo -n chown -R "$(id -un):$(id -gn)" "${LOCAL_STAGE_DIR}"
     fi
-    ENSURE_JSON="$(cd "${LOCAL_INIT_PACKAGE}" && "${ASK_THE_STORE[@]}" 2>/dev/null | tail -1 || true)"
-    ENSURE_STATE="$(ensure_field state)"
+    ENSURE_JSON="$(ask_the_store)"
+    ENSURE_STATE="$(ensure_field state 2>/dev/null || true)"
     if [ "${ENSURE_STATE}" != present ]; then
       echo "the build ran and the store still does not hold the image these inputs name, so this" >&2
-      echo "deploy cannot say which image it is shipping: ${ENSURE_JSON}" >&2
+      echo "deploy cannot say which image it is shipping:" >&2
+      cat "${ASK_ERROR}" >&2
+      echo "  ${ENSURE_JSON}" >&2
       exit 1
     fi
     LOCAL_STORE_IMAGE="$(ensure_field dir)"
