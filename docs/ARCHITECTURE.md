@@ -3176,6 +3176,45 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   the store is valid; the same jsonpath with `@.type=="Ready"` returns `True`.
   Applying 25 CRDs needs `--server-side --force-conflicts`, because two of ESO's CRDs exceed the
   262144-byte client-side annotation limit.
+- **The tenant add-ons applied an External Secrets store to a cluster no operator was installed
+  into.** The pass applies the `ClusterSecretStore` and the `ExternalSecret` through `internal/eso`,
+  and ESO's own install lives in `deploy/eso/install.sh` -- a script the image carries and NOTHING
+  ran: no Go path exec'd it, the container entrypoint has no ESO step, and
+  `SOCIALWEB_CLUSTERPROVIDER_ESO_MANIFEST_DIR` names only the directory the two YAML files are read
+  from. On a cluster the provider brings up, the apiserver therefore served no
+  `external-secrets.io/v1` and answered the store apply with `the server could not find the requested
+  resource`: measured in production on a market cluster as `clusterprovider: installing the tenant
+  add-ons for test-cluster-alice-0001 after its bootstrap: eso: applying the ClusterSecretStore
+  openbao: the server could not find the requested resource`, once every 2 s, with `kubectl get crd`
+  against that tenant apiserver answering `No resources found`. The pass now reads the store resource
+  itself (`eso.Installed`: one `List` of `clustersecretstores` with `Limit: 1`), and a 404 from it
+  means the operator is absent, so the pass runs the shipped installer against the tenant apiserver
+  with a kubeconfig rendered from the provider's own tenant credential
+  (`clusterprovider.Kubeconfig`) and re-reads the resource BEFORE applying the store; a resource that
+  answers means the installer does not run again, so a steady cluster pays one `List` per pass. The
+  probe is deliberately a RESOURCE read and not a discovery read: the same request is the one the
+  production failure is made of, so its classification is the measured one, and the alternative was
+  measured to be wrong on this deployment -- kcp answers every `/apis*` path with
+  `forbidden: User "kcp-admin" cannot get path "/apis/external-secrets.io/v1": access denied` for a
+  tenant credential, so a `ServerResourcesForGroupVersion` probe would have turned a 404 into a 403
+  and failed the pass for a second reason. A cluster the installer cannot reach now fails with a
+  message naming the group and the installer's own output rather than with an unknown kind. Two costs
+  are stated rather than hidden: the installer fetches the pinned upstream bundle (v2.11.0) from its
+  release URL at tenant bring-up, so a provider host with no route to github.com fails the pass with
+  curl's error naming the host, and `ESO_BUNDLE` is the escape hatch that points it at a local copy;
+  and `bash`, `curl` and `kubectl` are inputs of this step, all three carried by the image today.
+  Watched to fail: with the install moved after the apply,
+  `TestTheOperatorIsInstalledBeforeTheStoreIsApplied` recorded
+  `secrets,clustersecretstores,externalsecrets,install` against the wanted
+  `install,secrets,clustersecretstores,externalsecrets`, and `TestAFailedInstallLeavesTheStoreUnapplied`
+  showed the store going out over a cluster with no operator. `NEXT.yaml` ESO-3.
+- **The clusterprovider's test package did not build, so the loop's own gate could not run.** Commit
+  c57d870 added the `CredentialSource` parameter to `MintTenantCredentialForDataDir` and left two
+  calls in `internal/clusterprovider/vault_tls_growth_test.go` at three arguments, so `go vet` and
+  `go test ./...` refused the package on `main` as well as on this branch, and what a reader would
+  have seen is a compile error rather than a test result. Both calls name
+  `CredentialSourceVaultIfSealed`, which is the path that test exercises: it mints against a running
+  vault after the tenant add-on pass has asked the vault's certificate to cover one more host.
 
 - **The container build now produces the qemu node image too, and the live gate runs inside a
   privileged, ephemeral rig. SETTLED 2026-09-25.** Before: the `nodeimage` stage built one image from

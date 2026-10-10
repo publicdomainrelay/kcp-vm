@@ -75,7 +75,7 @@ func TestTheVaultStillMintsAfterTheTenantAddOnPassAsksForAnotherHost(t *testing.
 	}
 	after := vaultCAFingerprint(t, dataDir)
 
-	cfg, err := MintTenantCredentialForDataDir(ctx, dataDir, testTenantServer)
+	cfg, err := MintTenantCredentialForDataDir(ctx, dataDir, testTenantServer, CredentialSourceVaultIfSealed)
 	if err != nil {
 		t.Fatalf("the vault's TLS CA on disk is %s before the tenant add-on pass asked for %s and "+
 			"%s after it, while the vault that is LISTENING on %s loaded its certificate once, at "+
@@ -99,7 +99,7 @@ func TestTheVaultStillMintsAfterTheTenantAddOnPassAsksForAnotherHost(t *testing.
 	if _, err := EnsureVault(ctx, dataDir, port); err != nil {
 		t.Fatalf("unsealing the vault after a restart: %v", err)
 	}
-	if _, err := MintTenantCredentialForDataDir(ctx, dataDir, testTenantServer); err != nil {
+	if _, err := MintTenantCredentialForDataDir(ctx, dataDir, testTenantServer, CredentialSourceVaultIfSealed); err != nil {
 		t.Fatalf("the mint failed after the vault was restarted onto the certificate the tenant "+
 			"add-on pass left on disk, so a cluster whose anchor had already moved under its "+
 			"listener cannot be repaired by restarting it: %v", err)

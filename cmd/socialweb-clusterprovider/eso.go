@@ -5,7 +5,11 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strconv"
+	"strings"
 
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
@@ -58,7 +62,12 @@ func tenantAddOns(cfg Config, networks *subnetallocator.Allocator, log *slog.Log
 		if err != nil {
 			return fmt.Errorf("clusterprovider: a dynamic client for %s's tenant add-ons: %w", cluster, err)
 		}
-		if err := eso.Apply(ctx, dyn, eso.Options{
+		install := func(ctx context.Context) error {
+			log.Info("cluster provider: installing the External Secrets Operator into the tenant cluster",
+				"cluster", cluster, "manifests", cfg.ESOManifestDir)
+			return installExternalSecrets(ctx, restCfg, cfg.ESOManifestDir)
+		}
+		if err := applyTenantAddOns(ctx, dyn, install, eso.Options{
 			ManifestDir:   cfg.ESOManifestDir,
 			Namespace:     kcpclient.TenantNamespace,
 			VaultServer:   vaultURL,
@@ -75,4 +84,43 @@ func tenantAddOns(cfg Config, networks *subnetallocator.Allocator, log *slog.Log
 				"Pending because it has no node to schedule on")
 		return nil
 	}
+}
+
+func applyTenantAddOns(ctx context.Context, dyn dynamic.Interface, install func(context.Context) error, o eso.Options) error {
+	if err := eso.InstallOperator(ctx, dyn, install); err != nil {
+		return err
+	}
+	return eso.Apply(ctx, dyn, o)
+}
+
+func installExternalSecrets(ctx context.Context, restCfg *rest.Config, manifestDir string) error {
+	script := filepath.Join(manifestDir, "install.sh")
+	dir, err := os.MkdirTemp("", "socialweb-eso-install")
+	if err != nil {
+		return fmt.Errorf("clusterprovider: a directory for the External Secrets installer's kubeconfig: %w", err)
+	}
+	defer os.RemoveAll(dir)
+	doc, err := clusterprovider.Kubeconfig("tenant", restCfg)
+	if err != nil {
+		return err
+	}
+	kubeconfig := filepath.Join(dir, "kubeconfig")
+	if err := os.WriteFile(kubeconfig, doc, 0o600); err != nil {
+		return fmt.Errorf("clusterprovider: writing the External Secrets installer's kubeconfig: %w", err)
+	}
+	env := []string{}
+	for _, kv := range os.Environ() {
+		if strings.HasPrefix(kv, "KUBECONFIG=") {
+			continue
+		}
+		env = append(env, kv)
+	}
+	cmd := exec.CommandContext(ctx, "bash", script)
+	cmd.Env = append(env, "KUBECONFIG="+kubeconfig)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("clusterprovider: the External Secrets install %s failed: %w: %s",
+			script, err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }

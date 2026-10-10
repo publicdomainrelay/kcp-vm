@@ -228,7 +228,7 @@ func WriteMintKubeconfig(dir, cluster string, cfg *rest.Config) error {
 	if cfg.BearerToken == "" {
 		return errors.New("clusterprovider: a mint credential with no token would send anonymous and fail as an authentication error")
 	}
-	doc, err := mintKubeconfig(cluster, cfg)
+	doc, err := Kubeconfig(cluster, cfg)
 	if err != nil {
 		return err
 	}
@@ -242,18 +242,22 @@ func WriteMintKubeconfig(dir, cluster string, cfg *rest.Config) error {
 	return nil
 }
 
-func mintKubeconfig(cluster string, cfg *rest.Config) ([]byte, error) {
+func Kubeconfig(cluster string, cfg *rest.Config) ([]byte, error) {
 	out := clientcmdapi.NewConfig()
 	out.Clusters[cluster] = &clientcmdapi.Cluster{
 		Server:                   cfg.Host,
 		CertificateAuthorityData: cfg.TLSClientConfig.CAData,
 	}
-	out.AuthInfos[cluster] = &clientcmdapi.AuthInfo{Token: cfg.BearerToken}
+	out.AuthInfos[cluster] = &clientcmdapi.AuthInfo{
+		Token:                 cfg.BearerToken,
+		ClientCertificateData: cfg.TLSClientConfig.CertData,
+		ClientKeyData:         cfg.TLSClientConfig.KeyData,
+	}
 	out.Contexts[cluster] = &clientcmdapi.Context{Cluster: cluster, AuthInfo: cluster}
 	out.CurrentContext = cluster
 	doc, err := clientcmd.Write(*out)
 	if err != nil {
-		return nil, fmt.Errorf("clusterprovider: rendering the mint credential for %q: %w", cluster, err)
+		return nil, fmt.Errorf("clusterprovider: rendering the kubeconfig for %q: %w", cluster, err)
 	}
 	return doc, nil
 }

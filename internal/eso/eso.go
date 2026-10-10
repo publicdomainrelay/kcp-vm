@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -37,7 +38,51 @@ const (
 	KeyKey = "tls.key"
 
 	CAKey = "ca.crt"
+
+	OperatorGroupVersion = "external-secrets.io/v1"
 )
+
+var ErrNoOperator = errors.New(
+	"eso: the cluster serves no " + OperatorGroupVersion + ", so the OpenBao ClusterSecretStore " +
+		"and ExternalSecret have no kind to be applied as. That group is served by the External " +
+		"Secrets Operator, and no operator is installed in this cluster")
+
+func Installed(ctx context.Context, dyn dynamic.Interface) (bool, error) {
+	_, err := dyn.Resource(externalSecretsResources["ClusterSecretStore"]).
+		List(ctx, metav1.ListOptions{Limit: 1})
+	if err == nil {
+		return true, nil
+	}
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	return false, fmt.Errorf("eso: asking the cluster whether it serves %s: %w", OperatorGroupVersion, err)
+}
+
+func InstallOperator(ctx context.Context, dyn dynamic.Interface, install func(context.Context) error) error {
+	ok, err := Installed(ctx, dyn)
+	if err != nil {
+		return err
+	}
+	if ok {
+		return nil
+	}
+	if install == nil {
+		return fmt.Errorf("%w (this provider configures no installer for it)", ErrNoOperator)
+	}
+	if err := install(ctx); err != nil {
+		return fmt.Errorf("eso: installing the External Secrets Operator, whose %s the store "+
+			"needs: %w", OperatorGroupVersion, err)
+	}
+	ok, err = Installed(ctx, dyn)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("%w (the installer ran and the group is still not served)", ErrNoOperator)
+	}
+	return nil
+}
 
 var ErrIncomplete = errors.New(
 	"eso: the OpenBao-backed External Secrets install needs a manifest directory, the tenant " +
