@@ -289,8 +289,8 @@ func TestEnsureCreatesTheTree(t *testing.T) {
 	}
 
 	seen := f.seen()
-	if len(seen) != 10 {
-		t.Fatalf("want one deny read, four reads and five creates, got %d requests: %+v",
+	if len(seen) != 7 {
+		t.Fatalf("want one deny read, three reads and three creates, got %d requests: %+v",
 			len(seen), seen)
 	}
 	if seen[0].Method != http.MethodGet || seen[0].Path != "/clusters/root/apis/tenancy.kcp.io/v1alpha1/workspaces/"+testHash {
@@ -316,10 +316,9 @@ func TestEnsureCreatesTheTree(t *testing.T) {
 		{http.MethodPost, "/clusters/" + accountPath + "/apis/socialweb.computer/v1alpha1/atprotoidentities", testHash},
 		{http.MethodPost, "/clusters/" + accountPath + "/apis/tenancy.kcp.io/v1alpha1/workspaces", testCluster},
 		{http.MethodPost, "/clusters/" + homePath + "/apis/socialweb.computer/v1alpha1/clusters", testCluster},
-		{http.MethodPost, "/clusters/" + homePath + "/apis/tenancy.kcp.io/v1alpha1/workspaces", ChildLabel},
 	}
 	for i, w := range want {
-		got := seen[[]int{1, 3, 4, 6, 9}[i]]
+		got := seen[[]int{1, 3, 4, 6}[i]]
 		if got.Method != w.method || got.Path != w.path {
 			t.Errorf("create %d: got %s %s, want %s %s", i, got.Method, got.Path, w.method, w.path)
 			continue
@@ -347,31 +346,6 @@ func TestEnsureCreatesTheTree(t *testing.T) {
 	}
 	if got := dig(t, cr, "spec", "running"); got != false {
 		t.Errorf("Cluster spec.running = %v, want false: a read must not wake a cluster", got)
-	}
-
-	if want := "/clusters/" + homePath + "/apis/socialweb.computer/v1alpha1/clusters/" + testCluster; seen[7].Path != want {
-		t.Fatalf("the read that follows the Cluster create is %s, want %s: the child inherits "+
-			"spec.URL from the CR's STATUS, so the child cannot be built without reading the "+
-			"CR back", seen[7].Path, want)
-	}
-
-	child := seen[9].json(t)
-	ref := dig(t, child, "spec", "mount", "ref")
-	if got := dig(t, ref, "apiVersion"); got != "socialweb.computer/v1alpha1" {
-		t.Errorf("mount ref apiVersion = %v", got)
-	}
-	if got := dig(t, ref, "kind"); got != "Cluster" {
-		t.Errorf("mount ref kind = %v", got)
-	}
-	if got := dig(t, ref, "name"); got != testCluster {
-		t.Errorf("mount ref name = %v, want %q", got, testCluster)
-	}
-	if got := dig(t, child, "spec", "URL"); got != mountChildURL {
-		t.Errorf("the child's spec.URL = %v, want the Cluster's status.URL %q. kcp's mount "+
-			"reconciler copies the mounted object's status.URL into the workspace's spec.URL "+
-			"once, and a child created while the CR reports none keeps an empty spec.URL "+
-			"forever -- so the mount serves KCP ITSELF and objects written to the tenant "+
-			"apiserver are invisible", got, mountChildURL)
 	}
 }
 
@@ -421,10 +395,10 @@ func TestEnsureToleratesAlreadyExists(t *testing.T) {
 			posts++
 		}
 	}
-	if posts != 5 {
-		t.Fatalf("want all five creates attempted (the account workspace, its identity record, "+
-			"home, the CR and the child), got %d: an AlreadyExists on the account "+
-			"workspace must not abandon the rest of the tree", posts)
+	if posts != 4 {
+		t.Fatalf("want all four creates attempted (the account workspace, its identity record, "+
+			"home and the CR), got %d: an AlreadyExists on the account workspace must not "+
+			"abandon the rest of the tree", posts)
 	}
 }
 
@@ -452,12 +426,9 @@ func TestEnsureRefusesWithoutAPermit(t *testing.T) {
 func fastWait(t *testing.T) {
 	t.Helper()
 	poll, timeout := workspaceReadyPoll, workspaceReadyTimeout
-	urlPoll, urlTimeout := clusterURLPoll, clusterURLTimeout
 	workspaceReadyPoll, workspaceReadyTimeout = time.Millisecond, 50*time.Millisecond
-	clusterURLPoll, clusterURLTimeout = time.Millisecond, 50*time.Millisecond
 	t.Cleanup(func() {
 		workspaceReadyPoll, workspaceReadyTimeout = poll, timeout
-		clusterURLPoll, clusterURLTimeout = urlPoll, urlTimeout
 	})
 }
 
@@ -766,33 +737,82 @@ func mountChildPosts(t *testing.T, f *fakeKCP) int {
 	return n
 }
 
-func TestEachEnsureLeavesTheMountChildAddressingTheTenantApiserver(t *testing.T) {
+func mountChildPatches(t *testing.T, f *fakeKCP) []request {
+	t.Helper()
+	var out []request
+	for _, r := range f.seen() {
+		if r.Method == http.MethodPatch && strings.HasSuffix(r.Path, "/workspaces/"+ChildLabel) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func clusterReads(f *fakeKCP) int {
+	n := 0
+	for _, r := range f.seen() {
+		if r.Method == http.MethodGet &&
+			strings.HasSuffix(r.Path, "/apis/socialweb.computer/v1alpha1/clusters/"+testCluster) {
+			n++
+		}
+	}
+	return n
+}
+
+func newTestMountChild(t *testing.T, f *fakeKCP) *MountChild {
+	t.Helper()
+	m, err := NewMountChild(Options{Host: testHost, Transport: f})
+	if err != nil {
+		t.Fatalf("NewMountChild: %v", err)
+	}
+	return m
+}
+
+func TestEnsureStopsAtTheClusterCRAndNeverWaitsForAURL(t *testing.T) {
+	fastWait(t)
+	s := newStatefulKCP(t)
+	s.clusterURL = func(string) string { return mountChildURL }
+	f := &fakeKCP{t: t, respond: s.respond}
+
+	if err := newTestClient(t, f).Ensure(context.Background(), gateway.Caller(testDID), testCluster); err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+
+	if n := mountChildPosts(t, f); n != 0 {
+		t.Fatalf("Ensure POSTed the mount child %d time(s): %+v. The child carries spec.URL, "+
+			"and kcp refuses that field from any identity but a system privileged one -- "+
+			"`workspaces.tenancy.kcp.io \"clusters\" is forbidden: spec.URL can only be set by "+
+			"system privileged users` -- so a create-on-read path that writes it fails the whole "+
+			"login", n, f.seen())
+	}
+	if n := clusterReads(f); n != 0 {
+		t.Fatalf("Ensure read the Cluster CR back %d time(s): %+v. A market cluster's node is "+
+			"minutes away, so a create path that re-reads the CR until status.URL appears spends "+
+			"its caller's whole budget inside the request -- the door aborts at 30 s, and the "+
+			"abort lands on whatever the gateway had not yet written", n, f.seen())
+	}
+}
+
+func TestTheMountChildIsWrittenByItsOwnWriter(t *testing.T) {
 	t.Run("a child that exists with an empty spec.URL is repaired from the CR", func(t *testing.T) {
-		fastWait(t)
 		s := newStatefulKCP(t)
-		s.clusterURL = func(string) string { return mountChildURL }
 		s.stored["workspaces\x00"+ChildLabel] = workspaceBody(ChildLabel, true)
 		f := &fakeKCP{t: t, respond: s.respond}
-		c := newTestClient(t, f)
+		m := newTestMountChild(t, f)
 
-		if err := c.Ensure(context.Background(), gateway.Caller(testDID), testCluster); err != nil {
-			t.Fatalf("Ensure: %v", err)
+		if err := m.EnsureMountChild(context.Background(), homePath, testCluster, mountChildURL); err != nil {
+			t.Fatalf("EnsureMountChild: %v", err)
 		}
 
-		var patched *request
-		for i, r := range f.seen() {
-			if r.Method == http.MethodPatch && strings.HasSuffix(r.Path, "/workspaces/"+ChildLabel) {
-				patched = &f.seen()[i]
-			}
+		patches := mountChildPatches(t, f)
+		if len(patches) != 1 {
+			t.Fatalf("the mount child kept its empty spec.URL (%d patches): %+v. This is the "+
+				"production shape -- the child was built before the CR reported a URL, kcp's "+
+				"mount reconciler copied nothing, and the mount serves KCP ITSELF: an admin token "+
+				"is accepted, the placeholder Node our provider wrote is listed, and every object "+
+				"written to the tenant apiserver is invisible", len(patches), f.seen())
 		}
-		if patched == nil {
-			t.Fatalf("the mount child kept its empty spec.URL: %+v. This is the production "+
-				"shape -- the child was built before the CR reported a URL, kcp's mount "+
-				"reconciler copied nothing, and the mount serves KCP ITSELF: an admin token is "+
-				"accepted, the placeholder Node our provider wrote is listed, and every object "+
-				"written to the tenant apiserver is invisible", f.seen())
-		}
-		if got := dig(t, patched.json(t), "spec", "URL"); got != mountChildURL {
+		if got := dig(t, patches[0].json(t), "spec", "URL"); got != mountChildURL {
 			t.Fatalf("the repair wrote spec.URL = %v, want the CR's status.URL %q -- a repair "+
 				"pointing anywhere else sends the tenant's kubeconfig to the wrong apiserver",
 				got, mountChildURL)
@@ -805,14 +825,12 @@ func TestEachEnsureLeavesTheMountChildAddressingTheTenantApiserver(t *testing.T)
 	})
 
 	t.Run("a child created after the CR reports a URL carries it", func(t *testing.T) {
-		fastWait(t)
 		s := newStatefulKCP(t)
-		s.clusterURL = func(string) string { return mountChildURL }
 		f := &fakeKCP{t: t, respond: s.respond}
-		c := newTestClient(t, f)
+		m := newTestMountChild(t, f)
 
-		if err := c.Ensure(context.Background(), gateway.Caller(testDID), testCluster); err != nil {
-			t.Fatalf("Ensure: %v", err)
+		if err := m.EnsureMountChild(context.Background(), homePath, testCluster, mountChildURL); err != nil {
+			t.Fatalf("EnsureMountChild: %v", err)
 		}
 		if n := mountChildPosts(t, f); n != 1 {
 			t.Fatalf("the missing child was created %d time(s), want exactly 1: %+v", n, f.seen())
@@ -823,58 +841,54 @@ func TestEachEnsureLeavesTheMountChildAddressingTheTenantApiserver(t *testing.T)
 				"created without it has no mount target, and kcp will not put one there later",
 				got, mountChildURL)
 		}
+		ref := dig(t, child, "spec", "mount", "ref")
+		if got := dig(t, ref, "apiVersion"); got != "socialweb.computer/v1alpha1" {
+			t.Errorf("mount ref apiVersion = %v", got)
+		}
+		if got := dig(t, ref, "kind"); got != "Cluster" {
+			t.Errorf("mount ref kind = %v", got)
+		}
+		if got := dig(t, ref, "name"); got != testCluster {
+			t.Errorf("mount ref name = %v, want %q", got, testCluster)
+		}
 	})
 
-	t.Run("the child is created once, not on every Ensure", func(t *testing.T) {
-		fastWait(t)
+	t.Run("the child is created once and then left alone", func(t *testing.T) {
 		s := newStatefulKCP(t)
-		s.clusterURL = func(string) string { return mountChildURL }
 		f := &fakeKCP{t: t, respond: s.respond}
-		c := newTestClient(t, f)
+		m := newTestMountChild(t, f)
 		ctx := context.Background()
 
-		for i := 0; i < 2; i++ {
-			if err := c.Ensure(ctx, gateway.Caller(testDID), testCluster); err != nil {
-				t.Fatalf("Ensure %d: %v", i+1, err)
+		for i := 0; i < 3; i++ {
+			if err := m.EnsureMountChild(ctx, homePath, testCluster, mountChildURL); err != nil {
+				t.Fatalf("EnsureMountChild %d: %v", i+1, err)
 			}
 		}
 		if n := mountChildPosts(t, f); n != 1 {
-			t.Fatalf("the mount child was POSTed %d time(s) across two Ensures, want exactly 1. "+
-				"Ensure runs on every listClusters and getKubeconfig, so a create that is not "+
-				"idempotent writes the tree on every read", n)
+			t.Fatalf("the mount child was POSTed %d time(s) across three passes, want exactly 1. "+
+				"A reconcile runs every pass, so a write that is not idempotent patches the tree "+
+				"every 2 s on a live cluster", n)
+		}
+		if n := len(mountChildPatches(t, f)); n != 0 {
+			t.Fatalf("the child already carrying the CR's status.URL was patched %d time(s): the "+
+				"repair is for an EMPTY spec.URL, and a pass that rewrites a correct one is a "+
+				"write per pass against kcp for nothing", n)
 		}
 	})
 
-	t.Run("a CR that reports no URL yet leaves the child to the next Ensure", func(t *testing.T) {
-		fastWait(t)
+	t.Run("a CR with no status.URL is refused rather than addressed with nothing", func(t *testing.T) {
 		s := newStatefulKCP(t)
-		url := ""
-		s.clusterURL = func(string) string { return url }
 		f := &fakeKCP{t: t, respond: s.respond}
-		c := newTestClient(t, f)
-		ctx := context.Background()
+		m := newTestMountChild(t, f)
 
-		if err := c.Ensure(ctx, gateway.Caller(testDID), testCluster); err != nil {
-			t.Fatalf("Ensure with a CR that has not reported status.URL: %v. A cluster whose "+
-				"node has not started legitimately has no URL, so this must not be a refusal", err)
+		err := m.EnsureMountChild(context.Background(), homePath, testCluster, "")
+		if err == nil {
+			t.Fatal("the mount child was written from an empty URL: kcp copies spec.URL out of " +
+				"the mounted object ONCE, so a child made now keeps an empty URL for ever and " +
+				"the mount serves kcp itself")
 		}
 		if n := mountChildPosts(t, f); n != 0 {
-			t.Fatalf("a mount child was created for a CR that reports no status.URL (%d POST(s), "+
-				"%+v). kcp copies spec.URL out of the mounted object ONCE, so a child made now "+
-				"keeps an empty URL and proxies nothing", n, f.seen())
-		}
-
-		url = mountChildURL
-		if err := c.Ensure(ctx, gateway.Caller(testDID), testCluster); err != nil {
-			t.Fatalf("the next Ensure: %v", err)
-		}
-		if n := mountChildPosts(t, f); n != 1 {
-			t.Fatalf("the later Ensure created %d child(ren), want 1: the give-up is a DEFERRAL, "+
-				"not an abandonment -- Ensure repeats for a live cluster, and that repetition is "+
-				"what completes the tree", n)
-		}
-		if got := dig(t, s.storedObject(t, "workspaces", ChildLabel), "spec", "URL"); got != mountChildURL {
-			t.Fatalf("the deferred child's spec.URL = %v, want %q", got, mountChildURL)
+			t.Fatalf("a child was created for an empty URL (%d POST(s)): %+v", n, f.seen())
 		}
 	})
 }

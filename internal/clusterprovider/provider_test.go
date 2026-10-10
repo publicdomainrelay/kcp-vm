@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -212,11 +213,24 @@ func providerWithExpiry(
 	source NodeExpirySource,
 ) *Provider {
 	t.Helper()
+	return providerWith(t, fc, host, reachable, write, source, nil)
+}
+
+func providerWith(
+	t *testing.T,
+	fc *fakeClusters,
+	host materialiser.Host,
+	reachable bool,
+	write bool,
+	source NodeExpirySource,
+	extra func(*Options),
+) *Provider {
+	t.Helper()
 	dh := host
 	if dh == nil {
 		dh = &fakeHost{}
 	}
-	p, err := New(Options{
+	opts := Options{
 		Registry:         fc,
 		Decider:          decider(t, dh),
 		Host:             host,
@@ -224,11 +238,100 @@ func providerWithExpiry(
 		WriteStatus:      write,
 		Probe:            func(context.Context, string) (int, bool) { return 200, reachable },
 		Log:              slog.New(slog.NewTextHandler(io.Discard, nil)),
-	})
+	}
+	if extra != nil {
+		extra(&opts)
+	}
+	p, err := New(opts)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	return p
+}
+
+type fakeMountChild struct {
+	addressed []string
+	urls      []string
+	err       error
+}
+
+func (f *fakeMountChild) EnsureMountChild(_ context.Context, home, name, url string) error {
+	f.addressed = append(f.addressed, home+"/"+name)
+	f.urls = append(f.urls, url)
+	return f.err
+}
+
+func TestAPassAddressesTheMountChildOnceTheCRReportsAURL(t *testing.T) {
+	const url = "https://127.0.0.1:20003"
+	host := &fakeHost{live: true}
+	fc := &fakeClusters{cluster: cluster(false, "", "")}
+	mc := &fakeMountChild{}
+	p := providerWith(t, fc, host, true, true, nil, func(o *Options) { o.MountChild = mc })
+	ctx := context.Background()
+
+	if _, err := p.Reconcile(ctx, ref()); err != nil {
+		t.Fatalf("the pass before the CR reports a URL: %v", err)
+	}
+	if len(mc.urls) != 0 {
+		t.Fatalf("a pass addressed the mount child while the CR reported no status.URL: %v. "+
+			"kcp copies spec.URL out of the mounted object ONCE, so a child built now keeps the "+
+			"URL it was given -- and if the CR never reports that one, the mount serves the wrong "+
+			"apiserver for ever", mc.urls)
+	}
+
+	fc.cluster = cluster(true, readyPhase, url)
+	if _, err := p.Reconcile(ctx, ref()); err != nil {
+		t.Fatalf("the pass after the CR reported status.URL: %v", err)
+	}
+	if len(mc.urls) != 1 || mc.urls[0] != url {
+		t.Fatalf("the pass addressed the mount child with %v, want exactly [%s]: nothing else "+
+			"creates it now that Ensure stops at the Cluster CR, so a cluster the SPA creates "+
+			"would be reachable only by hand", mc.urls, url)
+	}
+	if want := ref().Home + "/" + ref().Name; mc.addressed[0] != want {
+		t.Fatalf("the mount child was addressed in %q, want %q: the child lives in the "+
+			"cluster's HOME workspace, and a child written anywhere else mounts nothing the "+
+			"tenant's kubeconfig names", mc.addressed[0], want)
+	}
+}
+
+func TestEveryPassRepairsTheMountChildItFinds(t *testing.T) {
+	const url = "https://127.0.0.1:20003"
+	fc := &fakeClusters{cluster: cluster(true, readyPhase, url)}
+	mc := &fakeMountChild{}
+	p := providerWith(t, fc, &fakeHost{live: true}, true, true, nil, func(o *Options) { o.MountChild = mc })
+
+	for i := 0; i < 3; i++ {
+		if _, err := p.Reconcile(context.Background(), ref()); err != nil {
+			t.Fatalf("pass %d: %v", i+1, err)
+		}
+	}
+	if len(mc.urls) != 3 {
+		t.Fatalf("three passes addressed the mount child %d time(s): the repair has to run on "+
+			"every pass, because the child it repairs was created before the CR reported a URL "+
+			"and nothing else goes back for it", len(mc.urls))
+	}
+}
+
+func TestAMountChildThatCannotBeWrittenFailsThePass(t *testing.T) {
+	const url = "https://127.0.0.1:20003"
+	fc := &fakeClusters{cluster: cluster(true, readyPhase, url)}
+	mc := &fakeMountChild{err: errors.New(
+		`workspaces.tenancy.kcp.io "clusters" is forbidden: spec.URL can only be set by system privileged users`)}
+	p := providerWith(t, fc, &fakeHost{live: true}, true, true, nil, func(o *Options) { o.MountChild = mc })
+
+	pass, err := p.Reconcile(context.Background(), ref())
+	if err == nil {
+		t.Fatal("a pass whose mount child was refused reported success: the cluster reads Ready " +
+			"and its kubeconfig reaches kcp itself, which is the failure this whole path exists " +
+			"to make impossible")
+	}
+	if pass.Err == nil {
+		t.Fatalf("the pass returned %v without carrying the failure: the caller logs pass.Err", err)
+	}
+	if !strings.Contains(err.Error(), "system privileged users") {
+		t.Fatalf("the failure does not carry the cause: %v", err)
+	}
 }
 
 func TestForeignServingClusterIsLeftAlone(t *testing.T) {

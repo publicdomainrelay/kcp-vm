@@ -18,6 +18,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
 
 	corev1alpha1 "github.com/kcp-dev/sdk/apis/core/v1alpha1"
 	kcpv1alpha1 "github.com/kcp-dev/sdk/apis/tenancy/v1alpha1"
@@ -76,6 +77,25 @@ type Client struct {
 var ErrNoDeviceKey = errors.New(
 	"kcpclient: no device-key granter: getKubeconfig cannot hand out a kubeconfig whose " +
 		"exec.env carries a key bound to nothing, so it hands out nothing")
+
+const ShardAdminContext = "system:admin"
+
+func ConfigFromContext(kubeconfigPath, contextName string) (*rest.Config, error) {
+	if kubeconfigPath == "" || contextName == "" {
+		return nil, errors.New(
+			"kcpclient: ConfigFromContext needs both a kubeconfig path and a context name: the " +
+				"identity a write is made as comes from exactly those two, and a missing one of " +
+				"them would be filled in by whatever the file's current-context happens to be")
+	}
+	cfg, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
+		&clientcmd.ClientConfigLoadingRules{ExplicitPath: kubeconfigPath},
+		&clientcmd.ConfigOverrides{CurrentContext: contextName},
+	).ClientConfig()
+	if err != nil {
+		return nil, fmt.Errorf("kcpclient: the context %q of %s: %w", contextName, kubeconfigPath, err)
+	}
+	return cfg, nil
+}
 
 func New(opts Options) (*Client, error) {
 	if opts.Host == "" {
@@ -142,8 +162,6 @@ func (c *Client) bind(logicalCluster string, gv schema.GroupVersion, endpoint st
 var (
 	workspaceReadyTimeout = 30 * time.Second
 	workspaceReadyPoll    = 250 * time.Millisecond
-	clusterURLTimeout     = 30 * time.Second
-	clusterURLPoll        = 250 * time.Millisecond
 )
 
 func (c *Client) homePath(caller gateway.Caller, name string) (string, error) {
@@ -190,73 +208,46 @@ func (c *Client) ensure(ctx context.Context, permit revocation.Permit, name stri
 	if err := c.waitForWorkspaceReady(ctx, AccountPath(did), name); err != nil {
 		return err
 	}
-	created, err := c.createCluster(ctx, home, name, did)
-	if err != nil {
+	if _, err := c.createCluster(ctx, home, name, did); err != nil {
 		return fmt.Errorf("kcpclient: cluster %s: %w", home, err)
-	}
-	if err := c.ensureMountChild(ctx, home, name, created); err != nil {
-		return fmt.Errorf("kcpclient: mounted child %s: %w", MountPath(did, name), err)
 	}
 	return nil
 }
 
-func (c *Client) ensureMountChild(ctx context.Context, home, name string, created bool) error {
-	url := ""
-	if created {
-		var err error
-		url, err = c.waitForClusterURL(ctx, home, name)
-		if err != nil {
-			return err
-		}
-	} else {
-		var err error
-		url, err = c.readClusterURL(ctx, home, name)
-		if err != nil {
-			return err
-		}
+var ErrNoMountURL = errors.New(
+	"kcpclient: the mount child addresses the cluster's apiserver and carries the URL in " +
+		"spec.URL, which kcp copies out of the mounted object's status ONCE. A child written " +
+		"without a URL keeps an empty one for ever, and the mount then serves kcp itself: an " +
+		"admin token is accepted, the placeholder Node the provider wrote is listed, and every " +
+		"object written to the tenant apiserver is invisible")
+
+type MountChild struct{ c *Client }
+
+func NewMountChild(opts Options) (*MountChild, error) {
+	c, err := New(opts)
+	if err != nil {
+		return nil, err
+	}
+	return &MountChild{c: c}, nil
+}
+
+func (m *MountChild) EnsureMountChild(ctx context.Context, home, name, url string) error {
+	if home == "" || name == "" {
+		return errors.New("kcpclient: EnsureMountChild needs the cluster's home workspace and its name")
 	}
 	if url == "" {
-		return nil
+		return ErrNoMountURL
 	}
-	child, err := c.readWorkspace(ctx, home, ChildLabel)
+	child, err := m.c.readWorkspace(ctx, home, ChildLabel)
 	switch {
 	case apierrors.IsNotFound(err):
-		return c.createWorkspace(ctx, home, ChildLabel, mountChildSpec(name, url))
+		return m.c.createWorkspace(ctx, home, ChildLabel, mountChildSpec(name, url))
 	case err != nil:
 		return err
 	case child.Spec.URL == "":
-		return c.patchWorkspaceURL(ctx, home, ChildLabel, url)
+		return m.c.patchWorkspaceURL(ctx, home, ChildLabel, url)
 	}
 	return nil
-}
-
-func (c *Client) waitForClusterURL(ctx context.Context, home, name string) (string, error) {
-	deadline := time.Now().Add(clusterURLTimeout)
-	for {
-		cl, err := c.readCluster(ctx, home, name)
-		if err == nil && cl.Status.URL != "" {
-			return cl.Status.URL, nil
-		}
-		if err != nil && !apierrors.IsNotFound(err) {
-			return "", err
-		}
-		if !time.Now().Before(deadline) {
-			return "", nil
-		}
-		select {
-		case <-ctx.Done():
-			return "", ctx.Err()
-		case <-time.After(clusterURLPoll):
-		}
-	}
-}
-
-func (c *Client) readClusterURL(ctx context.Context, home, name string) (string, error) {
-	cl, err := c.readCluster(ctx, home, name)
-	if err != nil {
-		return "", err
-	}
-	return cl.Status.URL, nil
 }
 
 func mountChildSpec(name, url string) kcpv1alpha1.WorkspaceSpec {

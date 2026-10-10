@@ -55,6 +55,10 @@ type Clusters interface {
 	RemoveFinalizer(ctx context.Context, ref Ref) error
 }
 
+type MountChildWriter interface {
+	EnsureMountChild(ctx context.Context, home, name, url string) error
+}
+
 var _ Clusters = (*Registry)(nil)
 
 type NodeExpirySource func(cl *v1alpha1.Cluster, nodes []v1alpha1.Node) (expiry int64, reported bool)
@@ -98,6 +102,8 @@ type Options struct {
 	NodeExpirySource NodeExpirySource
 
 	WriteStatus bool
+
+	MountChild MountChildWriter
 
 	OnReady func(ctx context.Context, ref Ref, cl *v1alpha1.Cluster) error
 
@@ -310,6 +316,11 @@ func (p *Provider) reconcile(ctx context.Context, ref Ref, with func(*materialis
 	}
 	pass.Wrote = true
 
+	if err := p.addressMount(ctx, ref, res.URL); err != nil {
+		pass.Err = err
+		return pass, err
+	}
+
 	if res.RemoveFinalizer {
 		if err := p.opts.Registry.RemoveFinalizer(ctx, ref); err != nil {
 			pass.Err = err
@@ -328,6 +339,18 @@ func (p *Provider) reconcile(ctx context.Context, ref Ref, with func(*materialis
 		p.markReadyDone(o.Cluster.Name)
 	}
 	return pass, nil
+}
+
+func (p *Provider) addressMount(ctx context.Context, ref Ref, url string) error {
+	if url == "" || p.opts.MountChild == nil {
+		return nil
+	}
+	if err := p.opts.MountChild.EnsureMountChild(ctx, ref.Home, ref.Name, url); err != nil {
+		return fmt.Errorf("clusterprovider: the mount child at %s: %w", ref.MountPath(), err)
+	}
+	p.opts.Log.Debug("cluster provider: the mount child addresses the cluster's apiserver",
+		"cluster", ref.Name, "home", ref.Home, "url", url)
+	return nil
 }
 
 func (p *Provider) readyDone(cluster string) bool {
