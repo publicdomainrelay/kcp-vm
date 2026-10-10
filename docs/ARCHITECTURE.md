@@ -3964,6 +3964,10 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   Watched to fail with `forgetHeld` removed: "a node that was torn down is still counted as 1 nodes in
   flight". `forgetHeld` drops the primary host when the name is its own and removes the ordinal from
   `extra`, and `teardownHeld` calls it once the teardown has returned.
+  AFTER, on the same cluster: the decision reads `intent, and 4 nodes are counted for a target of 6`
+  against a `kubectl get nodes` that lists exactly four, and the pass provisions the two the target
+  asks for. The wedge is the thing to watch for because it is silent - an inflated count and a correct
+  count both stop at the same line, and only the cluster's own node list says which one this is.
 
 ## 16. Vocabulary
 
