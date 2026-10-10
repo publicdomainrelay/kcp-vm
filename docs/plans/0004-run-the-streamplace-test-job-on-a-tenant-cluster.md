@@ -321,20 +321,30 @@ that stops asking never sees a decision and waits for a teardown no one requeste
 the other live tests call `stack.choose(t, ctx, scale.Teardown)`. The first version of this test
 waited for the cluster to fall to zero on its own and sat at five nodes until the deadline.
 
-`TestFiveGitLabJobPodsScaleToFiveNodesAndBackToZero` PASS on 2026-10-06, against the real GitLab,
-pipeline 61, nodes of 2 vCPU and 3072 MiB:
+`TestFiveGitLabJobPodsScaleToFiveNodesAndBackToZero` **PASS, 346.11 s**, on 2026-10-06 against the
+real GitLab, pipeline 69, nodes of 2 vCPU and 3072 MiB, five `scale-check-N` jobs:
 
 ```
 STEP 3  the cluster is at zero nodes before anything is applied: ""
 STEP 5  5 job pods exist in gitlab-runner
 STEP 6  the scale decision read Provision with nodes=5: intent and no node
-STEP 7  5 nodes joined on demand; `kubectl get nodes`:
-        liveweb-node1 .. liveweb-node5, all Ready
+STEP 7  5 nodes joined on demand; `kubectl get nodes`: liveweb-node1 .. liveweb-node5, all Ready
 STEP 8  each job pod is on its own node:
-        liveweb-node1 <- ...-concurrent-3    liveweb-node4 <- ...-concurrent-1
-        liveweb-node2 <- ...-concurrent-4    liveweb-node5 <- ...-concurrent-2
-        liveweb-node3 <- ...-concurrent-0
+        liveweb-node1 <- ...-concurrent-0    liveweb-node4 <- ...-concurrent-3
+        liveweb-node2 <- ...-concurrent-1    liveweb-node5 <- ...-concurrent-4
+        liveweb-node3 <- ...-concurrent-2
+STEP 9  all 5 scale-check jobs finished success
+STEP 10 the job pods are gone (0 left), so nothing is asking for a node
+STEP 11 the scale decision read Teardown with nodes=0:
+        nothing running for 1m0.917972328s, past the 1m0s hold
+STEP 12 the cluster is back at zero nodes; `kubectl get nodes` said ""
+STEP 13 the cluster is at zero nodes and its control plane is still Ready at https://127.0.0.1:62302
 ```
+
+That is the whole loop: zero, five nodes because five Pods could not be placed, one job per node,
+the work finishing, and the cluster falling back to zero on its own hold while the apiserver keeps
+answering. Nine GitLab jobs ran on this cluster across the three passes it took to get here, and
+the fifth pass is the one that is a result.
 
 Observed mid-flight, one node at a time: with one node up, three Pods sat `Init` on it and two
 stayed `Pending` -- the anti-affinity refusing to co-schedule -- and the two Pending Pods are what

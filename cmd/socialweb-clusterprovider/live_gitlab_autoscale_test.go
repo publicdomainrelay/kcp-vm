@@ -157,15 +157,22 @@ func gitlabAutoscaleRun(t *testing.T, substrate, runnerBin, runnerToken string, 
 	podsGone := gitlabWaitRunnerPods(t, ctx, client, 0)
 	t.Logf("STEP 10 the job pods are gone (%d left), so nothing is asking for a node", len(podsGone))
 
+	dec = stack.choose(t, ctx, scale.Teardown)
+	if dec.Nodes != 0 {
+		t.Fatalf("the scale decision read %s with nodes=%d once nothing was running, and a cluster "+
+			"whose work has stopped is a target of zero (%s)", dec.Action, dec.Nodes, dec.Reason)
+	}
+	t.Logf("STEP 11 the scale decision read %s with nodes=%d: %s", dec.Action, dec.Nodes, dec.Reason)
+
 	back := stack.waitNodes(t, kubeconfig, 0)
-	t.Logf("STEP 11 the cluster is back at zero nodes; `kubectl get nodes` said %q", strings.TrimSpace(back))
+	t.Logf("STEP 12 the cluster is back at zero nodes; `kubectl get nodes` said %q", strings.TrimSpace(back))
 
 	if _, err := stack.prov.Reconcile(ctx, stack.ref()); err != nil {
 		t.Fatalf("the control plane stopped answering once the nodes were gone: %v -- a cluster that "+
 			"returns to zero by dying has not scaled back, it has fallen over", err)
 	}
 	stillReady := stack.waitReady(t, ctx)
-	t.Logf("STEP 12 the cluster is at zero nodes and its control plane is still %s at %s",
+	t.Logf("STEP 13 the cluster is at zero nodes and its control plane is still %s at %s",
 		stillReady.Phase, stillReady.URL)
 }
 
