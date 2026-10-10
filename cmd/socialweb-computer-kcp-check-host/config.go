@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostos"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodefirecracker"
 )
 
 const (
@@ -222,9 +223,13 @@ func readFacts(configPath string) (facts, error) {
 			f.vmm = cfg.VMM
 			f.qemu = cfg.QEMU
 			f.firecracker = cfg.Firecracker
-			f.kernel = orDefault(cfg.KernelSource, f.kernel)
-			f.kernelConfig = orDefault(cfg.KernelConfig, f.kernelConfig)
-			f.moduleSource = orDefault(cfg.ModuleSource, f.moduleSource)
+			resolution, err := nodefirecracker.HostKernelResolver().Resolve(cfg.KernelSource, cfg.KernelConfig, cfg.ModuleSource)
+			if err != nil {
+				return facts{}, err
+			}
+			f.kernel = orDefault(resolution.Source, f.kernel)
+			f.kernelConfig = orDefault(resolution.Config, f.kernelConfig)
+			f.moduleSource = orDefault(resolution.Modules, f.moduleSource)
 			f.stageDir = cfg.StageDir
 			f.outDir = cfg.OutDir
 			f.k3s = cfg.K3sBinary

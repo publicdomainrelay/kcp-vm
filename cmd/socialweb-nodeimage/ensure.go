@@ -34,6 +34,16 @@ type ensureResult struct {
 	Rootfs string `json:"rootfs,omitempty"`
 
 	RootfsMiB int64 `json:"rootfsMiB,omitempty"`
+
+	KernelSource string `json:"kernelSource,omitempty"`
+
+	KernelConfig string `json:"kernelConfig,omitempty"`
+
+	ModuleSource string `json:"moduleSource,omitempty"`
+
+	KernelOrigin string `json:"kernelOrigin,omitempty"`
+
+	KernelVersion string `json:"kernelVersion,omitempty"`
 }
 
 func rootfsTemplateMiB(dir string) int64 {
@@ -112,7 +122,17 @@ func Ensure(configPath string, reuseStale bool, asJSON bool, preinstallPath stri
 	if err != nil {
 		return err
 	}
-	result := ensureResult{State: statePresent, Fingerprint: fingerprint, Dir: dir, Config: cfg.Path}
+	result := ensureResult{
+		State:         statePresent,
+		Fingerprint:   fingerprint,
+		Dir:           dir,
+		Config:        cfg.Path,
+		KernelSource:  cfg.KernelSource,
+		KernelConfig:  cfg.KernelConfig,
+		ModuleSource:  cfg.ModuleSource,
+		KernelOrigin:  cfg.KernelOrigin,
+		KernelVersion: cfg.KernelVersion,
+	}
 	switch {
 	case present:
 	case reuseStale:

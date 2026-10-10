@@ -398,6 +398,10 @@ func canonicalSet(names []string) []string {
 }
 
 func LoadBuildConfig(path string) (BuildConfig, error) {
+	return loadBuildConfig(path, HostKernelResolver())
+}
+
+func loadBuildConfig(path string, resolver KernelResolver) (BuildConfig, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return BuildConfig{}, fmt.Errorf("nodefirecracker: reading the image builder's "+
@@ -442,6 +446,13 @@ func LoadBuildConfig(path string) (BuildConfig, error) {
 			"would report as the image's, which sends the operator to rebuild an image that may "+
 			"be the correct one", path, named.key)
 	}
+	resolution, err := resolver.Resolve(cfg.KernelSource, cfg.KernelConfig, cfg.ModuleSource)
+	if err != nil {
+		return BuildConfig{}, err
+	}
+	cfg.KernelSource = resolution.Source
+	cfg.KernelConfig = resolution.Config
+	cfg.ModuleSource = resolution.Modules
 	return cfg, nil
 }
 

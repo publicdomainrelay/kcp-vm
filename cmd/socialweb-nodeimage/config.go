@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kernelmodules"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodefirecracker"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodevm"
 )
 
@@ -61,6 +62,10 @@ type Config struct {
 	Preinstall string `json:"preinstall"`
 
 	Path string `json:"-"`
+
+	KernelOrigin string `json:"-"`
+
+	KernelVersion string `json:"-"`
 }
 
 func LoadConfig(path string) (Config, error) {
@@ -90,6 +95,19 @@ func LoadConfig(path string) (Config, error) {
 	cfg.Path = absolute
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
+	}
+	resolution, err := nodefirecracker.HostKernelResolver().Resolve(cfg.KernelSource, cfg.KernelConfig, cfg.ModuleSource)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.KernelSource = resolution.Source
+	cfg.KernelConfig = resolution.Config
+	cfg.ModuleSource = resolution.Modules
+	cfg.KernelOrigin = string(resolution.Origin)
+	cfg.KernelVersion = resolution.Version
+	if resolution.Origin != nodefirecracker.KernelNamed {
+		fmt.Printf("kernel %s %s\n  source  %s\n  config  %s\n  modules %s\n",
+			resolution.Version, resolution.Origin, resolution.Source, resolution.Config, resolution.Modules)
 	}
 	return cfg, nil
 }
