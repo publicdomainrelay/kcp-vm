@@ -23,6 +23,13 @@
 //   SOCIALWEB_FIRECRACKER_VMM=/path/to/firecracker \
 //   SOCIALWEB_FIRECRACKER_WORK_ROOT=/var/lib/socialweb/guests \
 //   deno test --allow-all test/bidder_firecracker_integration_test.ts
+//
+// To run it against an empty store -- which is what proves the image is built on
+// the way up rather than assumed -- the *builder* needs CAP_SYS_CHROOT, because
+// its preinstall chroots into the staged rootfs. Where the test runner does not
+// have it, point SOCIALWEB_FIRECRACKER_NODEIMAGE at a wrapper that runs the
+// builder under sudo; the provider passes it the arguments and the working
+// directory it would pass the builder itself.
 
 import { assert } from "@std/assert";
 import { Secp256k1Keypair } from "@atproto/crypto";
