@@ -82,6 +82,10 @@ const (
 	envESOManifestDir = "SOCIALWEB_CLUSTERPROVIDER_ESO_MANIFEST_DIR"
 
 	envESONamespace = "SOCIALWEB_CLUSTERPROVIDER_ESO_NAMESPACE"
+
+	envExternalSecrets = "SOCIALWEB_CLUSTERPROVIDER_EXTERNAL_SECRETS"
+
+	envESOBundle = "SOCIALWEB_CLUSTERPROVIDER_ESO_BUNDLE"
 )
 
 const DefaultESOManifestDir = "/opt/socialweb/deploy/eso"
@@ -161,6 +165,10 @@ type Config struct {
 
 	ESONamespace string
 
+	ExternalSecrets string
+
+	ESOBundle string
+
 	DatastoreHasRow bool
 
 	ScaleHold time.Duration
@@ -204,6 +212,8 @@ func load(get func(string) string) (Config, error) {
 		Dumbpipe:               strings.TrimSpace(get(envDumbpipe)),
 		ESOManifestDir:         strings.TrimSpace(get(envESOManifestDir)),
 		ESONamespace:           strings.TrimSpace(get(envESONamespace)),
+		ExternalSecrets:        strings.TrimSpace(get(envExternalSecrets)),
+		ESOBundle:              strings.TrimSpace(get(envESOBundle)),
 		GrantPath:              strings.TrimSpace(get(envGrant)),
 		Interval:               DefaultInterval,
 		LogLevel:               slog.LevelInfo,
@@ -355,6 +365,16 @@ func load(get func(string) string) (Config, error) {
 					"groups by, and nothing else names that binary: a join that accepted an empty one "+
 					"would lease, config and spawn everything else and silently drop the component "+
 					"that gives a joined node its cloud identity", envCloudControllerManager)
+		}
+
+		if cfg.ExternalSecrets == "" || cfg.ESOBundle == "" {
+			return Config{}, fmt.Errorf(
+				"%s and %s must both be set. Every joined cluster's process group carries the External "+
+					"Secrets controller and its webhook beside the control plane: the first names the "+
+					"pinned external-secrets binary, the second the pinned upstream bundle whose CRDs, "+
+					"ClusterRoles and webhook registration the group installs into the tenant before "+
+					"the pair starts. A join that accepted either empty would spawn a pair with nothing "+
+					"to run or a tenant serving none of its kinds", envExternalSecrets, envESOBundle)
 		}
 	}
 

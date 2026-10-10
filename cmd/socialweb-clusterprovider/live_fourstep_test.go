@@ -283,6 +283,8 @@ func fourstepConfig(t *testing.T, bins fourstepBins) Config {
 		"SOCIALWEB_CLUSTERPROVIDER_IMAGE_CONFIG":             bins.imageConfig,
 		"SOCIALWEB_CLUSTERPROVIDER_NODE_AGENT":               os.Getenv(fourstepAgentEnv),
 		"SOCIALWEB_CLUSTERPROVIDER_CLOUD_CONTROLLER_MANAGER": bins.cloudControllerManager,
+		"SOCIALWEB_CLUSTERPROVIDER_EXTERNAL_SECRETS":         "/usr/local/bin/external-secrets",
+		"SOCIALWEB_CLUSTERPROVIDER_ESO_BUNDLE":               "/opt/socialweb/eso/external-secrets.yaml",
 		"SOCIALWEB_CLUSTERPROVIDER_PORT_RANGE":               liveports.Text(slot),
 		"SOCIALWEB_CLUSTERPROVIDER_SCALE_HOLD":               fourstepHold(),
 		"SOCIALWEB_CLUSTERPROVIDER_NODE_DISK_MIB":            os.Getenv(envNodeDiskMiB),
