@@ -54,7 +54,21 @@ echo "install.sh: applying ${ESO_VERSION} from ${bundle}"
 # --server-side: client-side apply stores the whole object in the last-applied-configuration
 # annotation, and ESO's two largest CRDs exceed the apiserver's 262144-byte annotation limit, so a
 # plain kubectl apply -f refuses them.
-sed 's/^\( *failurePolicy: \)Fail$/\1Ignore/' "$bundle" | "$KUBECTL" apply --server-side --force-conflicts -f -
+# ESO_NAMESPACE moves the whole install, not just the rollout wait. The upstream
+# bundle names `default` in SIXTEEN places -- the metadata of every namespaced
+# object, the namespace of each ClusterRoleBinding's subject, and the webhook's
+# service namespace -- and defines no Namespace object of its own, so applying it
+# as written puts the controller in `default` whatever ESO_NAMESPACE says. That
+# mattered because the tenant grant admits the controller by
+# `system:serviceaccount:<namespace>:external-secrets`: with the namespace set to
+# anything else, the grant admitted a controller that was not installed and denied
+# the one that was.
+if [ "$NAMESPACE" != "default" ]; then
+  "$KUBECTL" create namespace "$NAMESPACE" --dry-run=client -o yaml | "$KUBECTL" apply -f - >/dev/null
+fi
+sed -e 's/^\( *failurePolicy: \)Fail$/\1Ignore/' \
+  -e "s/\( *namespace: \)default$/\1${NAMESPACE}/" "$bundle" |
+  "$KUBECTL" apply --server-side --force-conflicts -f -
 
 if [ "$ESO_SKIP_ROLLOUT_WAIT" = "1" ]; then
   echo "install.sh: ESO_SKIP_ROLLOUT_WAIT=1, so the controller rollout is not awaited; the CRDs are applied and the caller's own probe decides."
