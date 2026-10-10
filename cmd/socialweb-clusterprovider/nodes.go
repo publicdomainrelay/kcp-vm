@@ -682,6 +682,9 @@ func (n *tenantNodes) teardownHeld(ctx context.Context, node heldNode) error {
 }
 
 func (n *tenantNodes) inFlight(ctx context.Context) int {
+	if !n.opts.Substrate.deferredJoin() {
+		return 0
+	}
 	n.mu.Lock()
 	held := n.heldNodesLocked()
 	n.mu.Unlock()

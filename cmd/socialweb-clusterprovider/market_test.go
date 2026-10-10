@@ -547,3 +547,22 @@ func marketEnv(t *testing.T, extra map[string]string) map[string]string {
 	}
 	return base
 }
+
+func TestAGuestSubstrateCountsNoNodeInFlight(t *testing.T) {
+	tenant, _ := tenantClientFor(t)
+	hosts, err := newNodeHosts(nodeOptionsFor(t, tenant))
+	if err != nil {
+		t.Fatalf("newNodeHosts: %v", err)
+	}
+	key := "liveweb"
+	if _, err := hosts.forCluster(key); err != nil {
+		t.Fatalf("forCluster: %v", err)
+	}
+	if got := hosts.inFlight(context.Background(), key); got != 0 {
+		t.Fatalf("a firecracker host was counted as %d nodes in flight. A guest substrate's Provision "+
+			"does not return until the tenant cluster reports the node, so a host it still holds and "+
+			"the tenant does not name is a join that ran out its timeout, not a machine on its way: "+
+			"counting it holds the scale decision off a node that is never coming, and it is exactly "+
+			"the count the market substrate needs and this one must not have", got)
+	}
+}

@@ -1808,6 +1808,15 @@ A change must not break any of these. Each exists because something failed.
     cluster in the tree stops being a local delay and becomes a global one, and the thing being waited
     for is minutes away by construction.
 
+32. **A node is counted by the cluster that has it, never by the claim that asked for it.** The count a
+    scale decision reads is the tenant cluster's own node list, plus - under a substrate whose
+    `Provision` returns before the machine exists - the claims this process holds whose nodes that list
+    does not name. A claim's phase is not a count: the door writes `Running` when the
+    node's agent reaches the apiserver through the forward, and the Node object it is registering
+    appears in the cluster's list only after that connection is served, so a phase-keyed count has a
+    gap with a duration in it and every claim that crosses the gap together is counted nowhere at all
+    (section 15).
+
 ## 14. Open architectural gaps
 
 These are the things the architecture does not yet answer, and this list is the work. What is settled - a
@@ -3876,7 +3885,12 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   the gap. The fix removes the phase from the count entirely: `tenantNodes.inFlight` lists the
   tenant cluster's Nodes once per pass and counts every node it HOLDS whose name is not in that
   list, so the sum is `tenant Nodes + held claims the tenant does not name`, which cannot
-  double-count and cannot lose a moment. `internal/nodemarket.Host.InFlight` and the
+  double-count and cannot lose a moment. That second half is gated on `Substrate.deferredJoin()`,
+  which is the market substrate alone, so a guest substrate's count is exactly what it was: a
+  firecracker or qemu `Provision` does not return until the tenant cluster reports the node, so a
+  host such a substrate still holds and the tenant does not name is a join that ran out its timeout
+  rather than a machine on its way, and counting it would hold the decision off a node that is
+  never coming. `internal/nodemarket.Host.InFlight` and the
   `inFlightReporter` seam are deleted rather than corrected, because the shop that could answer the
   question moved: a host knows its claim's phase, and only the cluster knows what it has registered.
   A read that fails counts every held node, the conservative direction, and says so in a warning;
