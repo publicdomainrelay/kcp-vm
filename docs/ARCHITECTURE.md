@@ -4208,6 +4208,18 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   What this does NOT close is the ExternalSecret's own sync: that needs a store a tenant can reach,
   which is ESO-3, and the two are separate. `NEXT.yaml` ESO-2.
 
+- **FLAKE-3: the OpenBao live gate lends itself a port by listening and closing, so a concurrent run can
+  take it.** `internal/openbao/openbao_test.go`'s `freePort` listens on `127.0.0.1:0`, reads the port,
+  CLOSES the listener, and writes a vault config on that number with `tls_disable = true`. Between the
+  close and the vault binding it, the number is free for anyone -- including a second `go test` of this
+  repo running at the same time. MEASURED on 2026-10-07, with two other test runs in flight:
+  `TestClientAgainstRealBao` failed with `the vault answered before it was ready, which this gate did
+  not expect: openbao: GET /v1/sys/health -> HTTP 400: Client sent an HTTP request to an HTTPS server`
+  -- the gate's plain HTTP probe reached somebody else's TLS listener on the port it had just given
+  back. Run alone three times, the package is green each time. This is the same class as the rule the
+  TypeScript side already carries for exactly this pattern; it was written there and not here.
+  `NEXT.yaml` FLAKE-3.
+
 ## 16. Vocabulary
 
 | | |
