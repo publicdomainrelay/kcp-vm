@@ -158,11 +158,19 @@ open:
   - id: P5-M1
     title: The live test bed is the vendored deno-kcp market, and the market is the only node path.
     body: >
-      Plan 0005 items M1-MARKET-ONLY, M1-AGENT-SPLIT (M1-BIDDER-UNIT and M1-TESTBED done). The plan file holds
-      each item's decision, status and evidence; this entry mirrors that the milestone is open.
+      Plan 0005 items M1-BIDDER-UNIT and M1-TESTBED (done), and M1-MARKET-ONLY and M1-AGENT-SPLIT,
+      which closed together on 2026-10-07 in commit cd12808: the clusterprovider's local firecracker
+      and qemu substrates are deleted with their tests and their deployment paths, the guest binary
+      is socialweb-nodeinit alone, and the image configuration names init_package/init_binary. The
+      plan file holds each item's decision, status and evidence; this entry mirrors that the
+      milestone is open on its remaining live reading.
     instrument: >
       A live test that applies the vendored market example (PLC, relay, PDSs, a firecracker bidder on
-      our nodeimage) and gets a tenant node through RFP, bid, accept and cloud-init.
+      our nodeimage) and gets a tenant node through RFP, bid, accept and cloud-init. NOT RE-RUN for
+      cd12808: the test bed's ports 2583-2589 were held by an earlier session's bed on hat-8 for the
+      whole window, so the attempt skipped at its preflight (logs/marketbed-live.log) and the image
+      it would boot was checked directly instead (fingerprint sha256-bcdfbb68, stage and initramfs
+      inspected). The next run on a quiet host closes it.
   - id: P5-M2
     title: The requester is event driven and a node's contract survives the process that accepted it.
     body: >
@@ -219,8 +227,10 @@ limits:
   - title: A node cannot reach another node, so a cluster with more than one has no cluster DNS
       for the Pods on the others.
     body: >
-      Narrowed on 2026-10-07 to the LOCAL guest substrates (firecracker and qemu with pasta), which
-      keep flannel until plan 0005 M1-MARKET-ONLY retires them. On a market cluster, built but not
+      CLOSED for the local substrates: plan 0005 M1-MARKET-ONLY (commit cd12808) retired them, so
+      there is no longer a guest of this host whose networking this could bound. Kept as a limit of
+      the DELETED substrates, which is what the reading below describes. On a market
+      cluster, built but not
       yet deployed or read live: every node resolves on its own CoreDNS at 169.254.20.10 (M5-DNS),
       and pods reach pods on other nodes through socialweb-meshd over iroh (M5-MESHD); the
       docs/gitlab runner configs no longer carry the DNS wait. What follows is the local-substrate

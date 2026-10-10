@@ -31,8 +31,9 @@ state_at_handoff:
   tests: >
     `deploy/check.sh --fast` green (about 9 s); `--local` green (about 75 s, names the 14
     artifact-gated skips); `--full` needs the live artifacts and exits non-zero naming what is
-    missing without them. `deploy/test-rig/run.sh` derives those inputs and runs the live gate in
-    a privileged container.
+    missing without them. The privileged rig that used to carry the live gate
+    (`deploy/test-rig`) was deleted on 2026-10-07 with the local substrates (plan 0005
+    M1-MARKET-ONLY); the market test bed is what boots a real guest now.
   deployment: >
     The deployment is ONE container: `deploy/run-container.sh` builds the image and starts it
     detached as `socialweb`, and `deploy/wait-ready.sh socialweb 300` returns 0 when the cluster
@@ -165,7 +166,7 @@ proven:
 how_to_run:
   deployment: "deploy/run-container.sh ; deploy/wait-ready.sh socialweb 300"
   gate: "deploy/check.sh --fast   (the loop) ; deploy/check.sh --local   (this host's proofs) ; deploy/check.sh --full   (needs the live artifacts)"
-  live_gate_in_a_container: "deploy/test-rig/run.sh   (derives the live inputs and runs the gate in a privileged container)"
+  live_gate: "SOCIALWEB_REQUIRE_LIVE=1 go test ./...   (a live tenant cluster and a real guest; a skip is a failure)"
   all_tests: "deploy/check.sh --fast"
   control_plane_zero_node_proof:
     host: "SOCIALWEB_LOCAL=1 go test ./internal/clusterprovider -run TestTheControlPlaneReachesReadyAtZeroNodes -v -count=1"
@@ -330,9 +331,10 @@ orientation:
     cmd/${binary}/         the CLI layer; nothing else builds a binary
     deploy/                install scripts, manifests, audit policy, the control-plane container
   dependencies: "api <- internal <- cmd, one way. A new substrate or transport is a NEW PACKAGE, not a branch inside an existing one."
-  binaries: [socialweb-clusterprovider, socialweb-gateway, socialweb-credential, socialweb-nodeimage, socialweb-nodeagent, socialweb-computer-kcp-check-host]
+  binaries: [socialweb-clusterprovider, socialweb-gateway, socialweb-credential, socialweb-nodeimage, socialweb-nodeinit, socialweb-computer-kcp-check-host, socialweb-nodeboot]
   key_packages:
-    internal/nodefirecracker: the node substrate (cold boot from a per-node rootfs clone)
+    internal/nodefirecracker: the firecracker half of a market guest's boot, on the bidder's host (image, manifest, namespace child)
+    internal/nodemarket: the one node path, a NodeClaim the door fulfils under the owner's atproto session
     internal/noderecord: pid + start time + cmdline-identity record and reap; reap-never-adopt
     internal/kernelmodules: the builder's module check, shared by the builder and check-host
     internal/subnetallocator: pool 10.100.0.0/16 -> /24 per cluster
