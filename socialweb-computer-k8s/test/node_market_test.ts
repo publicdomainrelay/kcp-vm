@@ -52,7 +52,7 @@ function claim(name: string, overrides: Partial<NodeClaim> = {}): NodeClaim {
     name,
     finalizers: [],
     spec: {
-      cluster: "ci",
+      cluster: OWNER_CLUSTER_KEY,
       nodeName: name,
       ownerDid: OWNER,
       apiserverPort: 23456,
@@ -310,9 +310,12 @@ function deleteClaim(store: FakeStore, name: string) {
   store.claims.get(name)!.deletionTimestamp = "2026-10-07T00:00:00Z";
 }
 
-Deno.test("the door's cluster key is the provider's: account hash of the owner DID, dash, cluster name", async () => {
-  assertEquals(await clusterKeyOfClaim({ ownerDid: OWNER, cluster: "ci" }), OWNER_CLUSTER_KEY);
-  assertEquals(await clusterKeyOfClaim({ ownerDid: "did:plc:ewvi7nxzyoun6zhxrhs64oiz", cluster: "ci" }), "8moqwclj-ci");
+Deno.test("the door's cluster key is the claim's spec.cluster, which the provider writes as the key", async () => {
+  assertEquals(await clusterKeyOfClaim({ ownerDid: OWNER, cluster: OWNER_CLUSTER_KEY }), OWNER_CLUSTER_KEY);
+  assertEquals(
+    await clusterKeyOfClaim({ ownerDid: OWNER, cluster: "2wjeqtgx-test-cluster-alice-0001" }),
+    "2wjeqtgx-test-cluster-alice-0001",
+  );
   assertEquals(defaultOpenBaoCAFile(claim("ci-node1").spec), "/state/ci/openbao/tls/ca.crt");
 });
 
@@ -641,7 +644,7 @@ Deno.test("concurrent claims for one owner each get their own contract", async (
   const h = harness({ script: "hang_after_network", vmReadyTimeoutSec: 60 });
   h.store.put(claim("ci-node1"));
   h.store.put(claim("ci-node2"));
-  h.store.put(claim("ci-node3", { workspace: "root:acct:other", spec: { ...claim("x").spec, cluster: "other", nodeName: "other-node1" } }));
+  h.store.put(claim("ci-node3", { workspace: "root:acct:other", spec: { ...claim("x").spec, cluster: "d90m41be-other", nodeName: "other-node1" } }));
   await h.fulfiller.pass();
   await settle();
   assertEquals(h.contracts.length, 3);

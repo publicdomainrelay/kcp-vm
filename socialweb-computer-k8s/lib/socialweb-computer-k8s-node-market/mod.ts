@@ -92,8 +92,8 @@ async function sha256Hex(text: string): Promise<string> {
   return Array.from(await sha256(text), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-export async function clusterKeyOfClaim(spec: Pick<NodeClaimSpec, "ownerDid" | "cluster">): Promise<string> {
-  return clusterKeyOf(accountHashOf(await sha256(spec.ownerDid)), spec.cluster);
+export function clusterKeyOfClaim(spec: Pick<NodeClaimSpec, "ownerDid" | "cluster">): Promise<string> {
+  return Promise.resolve(spec.cluster);
 }
 
 export async function nodeGrantOf(spec: NodeClaimSpec, vars: Pick<GrantVars, "issuerUri" | "subject">): Promise<NodeClaimGrant> {
