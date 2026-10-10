@@ -392,6 +392,28 @@ for _ in $(seq 1 30); do
 done
 docker info --format '{{.ServerVersion}}' >/dev/null
 
+# A guest's launcher is an unprivileged user of its own inside the container and
+# pasta, which is what gives the guest its network, sandboxes itself: it clones
+# into a user, pid and mount namespace of its own before it starts the VMM.
+# Ubuntu 24.04 ships kernel.apparmor_restrict_unprivileged_userns=1, which pins
+# that namespace to a profile carrying `userns,` -- and a container is unconfined,
+# which that setting treats as unprivileged, so the clone fails with
+# "Couldn't write to /proc/self/uid_map: Operation not permitted" and pasta exits
+# before a guest exists. Measured on this host with the container privileged, which
+# is the other half of what pasta needs: at 1 the launcher cannot create its
+# namespace, at 0 it can. Nothing else on this host wants unprivileged user
+# namespaces, so the drop-in is written here and read back, and the running value
+# is applied without waiting for a reboot.
+install -d -m 0755 /etc/sysctl.d
+if ! grep -qs '^kernel\.apparmor_restrict_unprivileged_userns' /etc/sysctl.d/99-socialweb-guest-userns.conf; then
+  printf '%s\n' \
+    '# Read by the firecracker bidder: a guest launcher runs unprivileged and pasta' \
+    '# clones into a user namespace of its own before it starts the VMM.' \
+    'kernel.apparmor_restrict_unprivileged_userns = 0' \
+    > /etc/sysctl.d/99-socialweb-guest-userns.conf
+fi
+sysctl -q -w kernel.apparmor_restrict_unprivileged_userns=0 2>/dev/null || true
+
 # The bidder is not root: the unit drops it to this account and grants it nothing
 # beyond the docker socket.
 if ! id -u "${SERVICE_USER}" >/dev/null 2>&1; then
