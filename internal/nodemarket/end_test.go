@@ -66,3 +66,27 @@ func TestTheHostReportsADeclinedEndWithTheDoorsWords(t *testing.T) {
 		t.Fatalf("Terminal = %q and End.Message = %q: two readings of one claim disagree", got, end.Message)
 	}
 }
+
+func TestAClaimDeletedUnderAHeldNodeIsAnEnd(t *testing.T) {
+	claims := &fakeClaims{}
+	host, err := New(testOptions(t, claims))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := host.Provision(context.Background()); err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+	if err := claims.DeleteNodeClaim(context.Background(), testWorkspace, testNodeName); err != nil {
+		t.Fatalf("DeleteNodeClaim: %v", err)
+	}
+	if claim, _ := claims.ReadNodeClaim(context.Background(), testWorkspace, testNodeName); claim != nil {
+		t.Fatalf("the fake kept the claim after its delete: %+v", claim.Status)
+	}
+	end := host.End()
+	if end.Message == "" || end.Declined {
+		t.Fatalf("End = %+v after the claim of a provisioned node was deleted, want an end that is "+
+			"not a declined RFP. Provision writes the claim before the host is held, so a held host "+
+			"whose claim reads NotFound was released by someone else, and a host that reports no end "+
+			"stays counted forever: the cluster never asks the market again", end)
+	}
+}

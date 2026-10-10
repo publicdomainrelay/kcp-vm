@@ -75,6 +75,10 @@ const DefaultPoll = 500 * time.Millisecond
 
 const fatalReadTimeout = 2 * time.Second
 
+const claimGoneMessage = "the claim this node was rented under no longer exists: it was written " +
+	"before this node was counted, and the door releases a claim's machine before the claim can go, " +
+	"so a counted node with no claim is a machine already released"
+
 var ErrIncomplete = errors.New(
 	"nodemarket: a market node is a claim written into the cluster's own home workspace and " +
 		"fulfilled by a door in another process, and this one is missing an input that cannot be " +
@@ -274,8 +278,14 @@ func (h *Host) End() End {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	claim, err := h.read(ctx)
-	if err != nil || claim == nil {
+	if err != nil {
 		return End{}
+	}
+	if claim == nil {
+		if !h.provisioned {
+			return End{}
+		}
+		return End{Message: claimGoneMessage}
 	}
 	if !endedClaimPhase(claim.Status.Phase) {
 		return End{}
