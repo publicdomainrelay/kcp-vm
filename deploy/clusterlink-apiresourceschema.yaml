@@ -1,0 +1,60 @@
+apiVersion: apis.kcp.io/v1alpha1
+kind: APIResourceSchema
+metadata:
+  name: v1alpha1-1.clusterlinks.socialweb.computer
+spec:
+  group: socialweb.computer
+  names:
+    kind: ClusterLink
+    listKind: ClusterLinkList
+    plural: clusterlinks
+    singular: clusterlink
+  scope: Cluster
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      schema:
+        type: object
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            properties:
+              cluster:
+                type: string
+              service:
+                type: string
+                enum:
+                  - apiserver
+                  - openbao
+              targetPort:
+                type: integer
+            required:
+              - cluster
+              - service
+              - targetPort
+          status:
+            type: object
+            properties:
+              phase:
+                type: string
+                enum:
+                  - Pending
+                  - Listening
+                  - Failed
+              endpointId:
+                type: string
+              did:
+                type: string
+              ticket:
+                type: string
+              message:
+                type: string

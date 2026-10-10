@@ -191,6 +191,18 @@ type NodeClaimStatus struct {
 	Fqdn string `json:"fqdn,omitempty"`
 
 	Message string `json:"message,omitempty"`
+
+	Grant *NodeClaimGrant `json:"grant,omitempty"`
+}
+
+type NodeClaimGrant struct {
+	Issuer string `json:"issuer"`
+
+	Subject string `json:"subject"`
+
+	Audience string `json:"audience"`
+
+	Role string `json:"role,omitempty"`
 }
 
 const FinalizerNodeClaim = "nodeclaim.socialweb.computer/release"

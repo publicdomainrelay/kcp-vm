@@ -200,6 +200,7 @@ func (in *NodeClaimSpec) DeepCopyInto(out *NodeClaimSpec) {
 func (in *NodeClaimStatus) DeepCopyInto(out *NodeClaimStatus) {
 	*out = *in
 	in.Contract.DeepCopyInto(&out.Contract)
+	out.Grant = copyPtr(in.Grant)
 }
 
 func (in *NodeClaimContract) DeepCopyInto(out *NodeClaimContract) {
@@ -295,4 +296,56 @@ func (in *AtprotoIdentityStatus) DeepCopyInto(out *AtprotoIdentityStatus) {
 			in.Conditions[i].DeepCopyInto(&out.Conditions[i])
 		}
 	}
+}
+
+func (in *ClusterLink) DeepCopyInto(out *ClusterLink) {
+	*out = *in
+	out.TypeMeta = in.TypeMeta
+	in.ObjectMeta.DeepCopyInto(&out.ObjectMeta)
+	out.Spec = in.Spec
+	out.Status = in.Status
+}
+
+func (in *ClusterLink) DeepCopy() *ClusterLink {
+	if in == nil {
+		return nil
+	}
+	out := new(ClusterLink)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *ClusterLink) DeepCopyObject() runtime.Object {
+	if c := in.DeepCopy(); c != nil {
+		return c
+	}
+	return nil
+}
+
+func (in *ClusterLinkList) DeepCopyInto(out *ClusterLinkList) {
+	*out = *in
+	out.TypeMeta = in.TypeMeta
+	in.ListMeta.DeepCopyInto(&out.ListMeta)
+	if in.Items != nil {
+		out.Items = make([]ClusterLink, len(in.Items))
+		for i := range in.Items {
+			in.Items[i].DeepCopyInto(&out.Items[i])
+		}
+	}
+}
+
+func (in *ClusterLinkList) DeepCopy() *ClusterLinkList {
+	if in == nil {
+		return nil
+	}
+	out := new(ClusterLinkList)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *ClusterLinkList) DeepCopyObject() runtime.Object {
+	if c := in.DeepCopy(); c != nil {
+		return c
+	}
+	return nil
 }

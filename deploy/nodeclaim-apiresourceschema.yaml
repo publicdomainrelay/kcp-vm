@@ -1,7 +1,7 @@
 apiVersion: apis.kcp.io/v1alpha1
 kind: APIResourceSchema
 metadata:
-  name: v1alpha1-2.nodeclaims.socialweb.computer
+  name: v1alpha1-3.nodeclaims.socialweb.computer
 spec:
   group: socialweb.computer
   names:
@@ -242,3 +242,18 @@ spec:
                 type: string
               message:
                 type: string
+              grant:
+                type: object
+                properties:
+                  issuer:
+                    type: string
+                  subject:
+                    type: string
+                  audience:
+                    type: string
+                  role:
+                    type: string
+                required:
+                  - issuer
+                  - subject
+                  - audience

@@ -26,6 +26,12 @@ export type ContractPhase = typeof CONTRACT_PHASES[number];
 export const CONTRACT_OUTCOMES = ["no_bids", "bids_denied", "policy_rejected", "returned", "receipt_invalid", "network_timeout", "complete"] as const;
 export type ContractOutcome = typeof CONTRACT_OUTCOMES[number];
 
+export const CLUSTER_LINK_SERVICES = ["apiserver", "openbao"] as const;
+export type ClusterLinkService = typeof CLUSTER_LINK_SERVICES[number];
+
+export const CLUSTER_LINK_PHASES = ["Pending", "Listening", "Failed"] as const;
+export type ClusterLinkPhase = typeof CLUSTER_LINK_PHASES[number];
+
 export const IDENTITY_SCOPES = ["Account", "Cluster"] as const;
 export type IdentityScope = typeof IDENTITY_SCOPES[number];
 
@@ -114,6 +120,7 @@ export interface NodeClaimStatus {
   contract?: NodeClaimContract;
   fqdn?: string;
   message?: string;
+  grant?: NodeClaimGrant;
 }
 
 export interface NodeClaimContract {
@@ -169,6 +176,35 @@ export interface ContractTimestamps {
   receipt?: string;
   network?: string;
   released?: string;
+}
+
+export interface NodeClaimGrant {
+  issuer: string;
+  subject: string;
+  audience: string;
+  role?: string;
+}
+
+export interface ClusterLink {
+  apiVersion?: string;
+  kind?: string;
+  metadata?: ObjectMeta;
+  spec?: ClusterLinkSpec;
+  status?: ClusterLinkStatus;
+}
+
+export interface ClusterLinkSpec {
+  cluster: string;
+  service: ClusterLinkService;
+  targetPort: number;
+}
+
+export interface ClusterLinkStatus {
+  phase?: ClusterLinkPhase;
+  endpointId?: string;
+  did?: string;
+  ticket?: string;
+  message?: string;
 }
 
 export interface AtprotoIdentity {
@@ -231,7 +267,18 @@ export const NODE_CLAIM_RESOURCE: ApiResource = {
   listKind: "NodeClaimList",
   plural: "nodeclaims",
   singular: "nodeclaim",
-  schema: "v1alpha1-2.nodeclaims.socialweb.computer",
+  schema: "v1alpha1-3.nodeclaims.socialweb.computer",
+  export: "clusters",
+};
+
+export const CLUSTER_LINK_RESOURCE: ApiResource = {
+  group: "socialweb.computer",
+  version: "v1alpha1",
+  kind: "ClusterLink",
+  listKind: "ClusterLinkList",
+  plural: "clusterlinks",
+  singular: "clusterlink",
+  schema: "v1alpha1-1.clusterlinks.socialweb.computer",
   export: "clusters",
 };
 
@@ -246,13 +293,18 @@ export const ATPROTO_IDENTITY_RESOURCE: ApiResource = {
   export: "atprotoidentities",
 };
 
-export const API_RESOURCES: readonly ApiResource[] = [CLUSTER_RESOURCE, NODE_RESOURCE, NODE_CLAIM_RESOURCE, ATPROTO_IDENTITY_RESOURCE];
+export const API_RESOURCES: readonly ApiResource[] = [CLUSTER_RESOURCE, NODE_RESOURCE, NODE_CLAIM_RESOURCE, CLUSTER_LINK_RESOURCE, ATPROTO_IDENTITY_RESOURCE];
 
 export type ApiTypeName =
   | "AtprotoIdentity"
   | "AtprotoIdentitySpec"
   | "AtprotoIdentityStatus"
   | "Cluster"
+  | "ClusterLink"
+  | "ClusterLinkPhase"
+  | "ClusterLinkService"
+  | "ClusterLinkSpec"
+  | "ClusterLinkStatus"
   | "ClusterPhase"
   | "ClusterSpec"
   | "ClusterStatus"
@@ -267,6 +319,7 @@ export type ApiTypeName =
   | "Node"
   | "NodeClaim"
   | "NodeClaimContract"
+  | "NodeClaimGrant"
   | "NodeClaimPhase"
   | "NodeClaimSpec"
   | "NodeClaimStatus"
@@ -462,6 +515,82 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       },
       "status": {
         "ref": "ClusterStatus"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "ClusterLink": {
+    "properties": {
+      "apiVersion": {
+        "type": "string"
+      },
+      "kind": {
+        "type": "string"
+      },
+      "metadata": {
+        "ref": "ObjectMeta"
+      },
+      "spec": {
+        "ref": "ClusterLinkSpec"
+      },
+      "status": {
+        "ref": "ClusterLinkStatus"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "ClusterLinkPhase": {
+    "enum": [
+      "Pending",
+      "Listening",
+      "Failed"
+    ],
+    "type": "string"
+  },
+  "ClusterLinkService": {
+    "enum": [
+      "apiserver",
+      "openbao"
+    ],
+    "type": "string"
+  },
+  "ClusterLinkSpec": {
+    "properties": {
+      "cluster": {
+        "type": "string"
+      },
+      "service": {
+        "ref": "ClusterLinkService"
+      },
+      "targetPort": {
+        "type": "integer"
+      }
+    },
+    "required": [
+      "cluster",
+      "service",
+      "targetPort"
+    ],
+    "type": "object"
+  },
+  "ClusterLinkStatus": {
+    "properties": {
+      "did": {
+        "type": "string"
+      },
+      "endpointId": {
+        "type": "string"
+      },
+      "message": {
+        "type": "string"
+      },
+      "phase": {
+        "ref": "ClusterLinkPhase"
+      },
+      "ticket": {
+        "type": "string"
       }
     },
     "required": [],
@@ -744,6 +873,28 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
     "required": [],
     "type": "object"
   },
+  "NodeClaimGrant": {
+    "properties": {
+      "audience": {
+        "type": "string"
+      },
+      "issuer": {
+        "type": "string"
+      },
+      "role": {
+        "type": "string"
+      },
+      "subject": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "issuer",
+      "subject",
+      "audience"
+    ],
+    "type": "object"
+  },
   "NodeClaimPhase": {
     "enum": [
       "Pending",
@@ -808,6 +959,9 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       },
       "fqdn": {
         "type": "string"
+      },
+      "grant": {
+        "ref": "NodeClaimGrant"
       },
       "message": {
         "type": "string"
@@ -1216,6 +1370,114 @@ export function assertContractTimestamps(value: unknown): asserts value is Contr
 
 export function parseContractTimestamps(value: unknown): ContractTimestamps {
   assertContractTimestamps(value);
+  return value;
+}
+
+export function validateNodeClaimGrant(value: unknown): ApiIssue[] {
+  return validate("NodeClaimGrant", value);
+}
+
+export function isNodeClaimGrant(value: unknown): value is NodeClaimGrant {
+  return validate("NodeClaimGrant", value).length === 0;
+}
+
+export function assertNodeClaimGrant(value: unknown): asserts value is NodeClaimGrant {
+  const issues = validate("NodeClaimGrant", value);
+  if (issues.length > 0) throw new ApiValidationError("NodeClaimGrant", issues);
+}
+
+export function parseNodeClaimGrant(value: unknown): NodeClaimGrant {
+  assertNodeClaimGrant(value);
+  return value;
+}
+
+export function validateClusterLink(value: unknown): ApiIssue[] {
+  return validate("ClusterLink", value);
+}
+
+export function isClusterLink(value: unknown): value is ClusterLink {
+  return validate("ClusterLink", value).length === 0;
+}
+
+export function assertClusterLink(value: unknown): asserts value is ClusterLink {
+  const issues = validate("ClusterLink", value);
+  if (issues.length > 0) throw new ApiValidationError("ClusterLink", issues);
+}
+
+export function parseClusterLink(value: unknown): ClusterLink {
+  assertClusterLink(value);
+  return value;
+}
+
+export function validateClusterLinkSpec(value: unknown): ApiIssue[] {
+  return validate("ClusterLinkSpec", value);
+}
+
+export function isClusterLinkSpec(value: unknown): value is ClusterLinkSpec {
+  return validate("ClusterLinkSpec", value).length === 0;
+}
+
+export function assertClusterLinkSpec(value: unknown): asserts value is ClusterLinkSpec {
+  const issues = validate("ClusterLinkSpec", value);
+  if (issues.length > 0) throw new ApiValidationError("ClusterLinkSpec", issues);
+}
+
+export function parseClusterLinkSpec(value: unknown): ClusterLinkSpec {
+  assertClusterLinkSpec(value);
+  return value;
+}
+
+export function validateClusterLinkService(value: unknown): ApiIssue[] {
+  return validate("ClusterLinkService", value);
+}
+
+export function isClusterLinkService(value: unknown): value is ClusterLinkService {
+  return validate("ClusterLinkService", value).length === 0;
+}
+
+export function assertClusterLinkService(value: unknown): asserts value is ClusterLinkService {
+  const issues = validate("ClusterLinkService", value);
+  if (issues.length > 0) throw new ApiValidationError("ClusterLinkService", issues);
+}
+
+export function parseClusterLinkService(value: unknown): ClusterLinkService {
+  assertClusterLinkService(value);
+  return value;
+}
+
+export function validateClusterLinkStatus(value: unknown): ApiIssue[] {
+  return validate("ClusterLinkStatus", value);
+}
+
+export function isClusterLinkStatus(value: unknown): value is ClusterLinkStatus {
+  return validate("ClusterLinkStatus", value).length === 0;
+}
+
+export function assertClusterLinkStatus(value: unknown): asserts value is ClusterLinkStatus {
+  const issues = validate("ClusterLinkStatus", value);
+  if (issues.length > 0) throw new ApiValidationError("ClusterLinkStatus", issues);
+}
+
+export function parseClusterLinkStatus(value: unknown): ClusterLinkStatus {
+  assertClusterLinkStatus(value);
+  return value;
+}
+
+export function validateClusterLinkPhase(value: unknown): ApiIssue[] {
+  return validate("ClusterLinkPhase", value);
+}
+
+export function isClusterLinkPhase(value: unknown): value is ClusterLinkPhase {
+  return validate("ClusterLinkPhase", value).length === 0;
+}
+
+export function assertClusterLinkPhase(value: unknown): asserts value is ClusterLinkPhase {
+  const issues = validate("ClusterLinkPhase", value);
+  if (issues.length > 0) throw new ApiValidationError("ClusterLinkPhase", issues);
+}
+
+export function parseClusterLinkPhase(value: unknown): ClusterLinkPhase {
+  assertClusterLinkPhase(value);
   return value;
 }
 

@@ -47,13 +47,15 @@ func TestEveryKindTheSchemeRegistersHasAnAPIResource(t *testing.T) {
 func TestEnumValuesAreTheConstantsInDeclarationOrder(t *testing.T) {
 	m := mustModel(t)
 	want := map[string][]string{
-		"NodeClaimPhase":  {"Pending", "Bidding", "Provisioning", "Joining", "Running", "Failed", "Released"},
-		"ContractPhase":   {"requested", "rfp_submitted", "winner_selected", "accepted", "receipt", "network", "released"},
-		"ClusterPhase":    {"Initializing", "Ready", "Unavailable", "Draining"},
-		"NodePhase":       {"Pending", "Running", "Draining"},
-		"IdentityScope":   {"Account", "Cluster"},
-		"IdentityState":   {"Active", "Revoked", "RevocationPending", "ColdDeferred"},
-		"ContractOutcome": {"no_bids", "bids_denied", "policy_rejected", "returned", "receipt_invalid", "network_timeout", "complete"},
+		"NodeClaimPhase":     {"Pending", "Bidding", "Provisioning", "Joining", "Running", "Failed", "Released"},
+		"ContractPhase":      {"requested", "rfp_submitted", "winner_selected", "accepted", "receipt", "network", "released"},
+		"ClusterLinkPhase":   {"Pending", "Listening", "Failed"},
+		"ClusterLinkService": {"apiserver", "openbao"},
+		"ClusterPhase":       {"Initializing", "Ready", "Unavailable", "Draining"},
+		"NodePhase":          {"Pending", "Running", "Draining"},
+		"IdentityScope":      {"Account", "Cluster"},
+		"IdentityState":      {"Active", "Revoked", "RevocationPending", "ColdDeferred"},
+		"ContractOutcome":    {"no_bids", "bids_denied", "policy_rejected", "returned", "receipt_invalid", "network_timeout", "complete"},
 	}
 	got := map[string][]string{}
 	for _, e := range m.Enums {
@@ -183,6 +185,7 @@ func TestTheGeneratedFilesCoverEveryResourceAndExport(t *testing.T) {
 		"deploy/atprotoidentity-apiresourceschema.yaml",
 		"deploy/cluster-apiexport.yaml",
 		"deploy/cluster-apiresourceschema.yaml",
+		"deploy/clusterlink-apiresourceschema.yaml",
 		"deploy/node-apiresourceschema.yaml",
 		"deploy/nodeclaim-apiresourceschema.yaml",
 		TSPackageDir + "/mod.ts",
