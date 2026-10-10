@@ -44,14 +44,16 @@ acceptance:
   checks:
     - id: ACC-ZERO
       text: An idle cluster sits at 0 nodes; a pipeline scales it up; nodes scale in one by one and it returns to 0 with the control plane Ready.
-      status: todo
+      status: done
       evidence:
         - "GitLab pipeline 77 (project johnandersen777/kcp-ci-probe, branch acc-0005, runner 6 acc-kcp-tenant-spa on hat-10 with ONLY the SPA kubeconfig + socialweb-credential) on cluster acc-gitlab-0001 created through the SPA by aliceoa.bsky.social (headless OAuth login) on prod, 2026-10-08, SCALE_HOLD=0s, DEBUG_SOCIALWEB_NODE_SSH_DIR still set (key unused): 3 jobs, one per node"
         - "cluster idle at 0 nodes before the run (kubectl get nodes: No resources found 00:00:50Z); 00:04:56Z pipeline -> 00:04:59Z Provision nodes:3 -> jobs running 00:06:07-09Z; scale-in one by one: node2 cordoned+drained 00:07:12Z released 00:07:15Z (Release nodes:2), node3 00:08:11Z/00:08:13Z (Release nodes:1), node1 released 00:09:15Z Teardown nodes:0; control plane Ready throughout (10 Ready status lines at 00:09:26Z, 0 nodes)"
         - "owed: the same run with the debug key off (final configuration)"
+        - "FINAL CONFIGURATION: GitLab pipeline 78 (project johnandersen777/kcp-ci-probe branch acc-0005, runner 6 on hat-10 holding only the SPA kubeconfig + socialweb-credential) on SPA-created cluster acc-gitlab-0001, prod 2026-10-08, DEBUG_SOCIALWEB_NODE_SSH_DIR unset (container.env), SCALE_HOLD=0s, scope refresher deployed"
+        - "0 nodes before (No resources found); pipeline 00:11:46Z -> Provision nodes:3 00:12:08Z -> claims Joining 00:12:39-46Z -> 3 jobs one per node; scale-in one by one: cordon+drain 00:14:29Z Release nodes:2 00:14:32Z, cordon+drain 00:15:33Z Release nodes:1 00:15:36Z, Teardown nodes:0 00:16:27Z; tenant lists no nodes after; control plane Ready"
     - id: ACC-MESH
       text: A pod on node A reaches a pod on node B, and DNS resolves on a node that does not run CoreDNS.
-      status: doing
+      status: done
       evidence:
         - "prod 2026-10-07T23:20:54Z: Deployment mesh-probe (2 replicas, required pod anti-affinity) on test-cluster-alice-0001 scaled the cluster 0 -> 2 market nodes ('Provision nodes:2'); node96 and node97 registered 23:22:30Z, Ready 23:22:31Z; pods 10.42.2.4 on node96 and 10.42.4.3 on node97"
         - "23:23:06Z kubectl exec (apiserver->kubelet over the agent tunnel) into both pods: node97 -> node96 pod IP answered by node96's httpd (HTTP 404 before its index existed), node96 -> node97 pod IP returned node97's content"
@@ -59,10 +61,14 @@ acceptance:
         - "still owed: the same reading from a GitLab pipeline on an SPA-created cluster (acceptance 'where')"
         - "GitLab pipeline 77 (project johnandersen777/kcp-ci-probe, branch acc-0005, runner 6 acc-kcp-tenant-spa on hat-10 with ONLY the SPA kubeconfig + socialweb-credential) on cluster acc-gitlab-0001 created through the SPA by aliceoa.bsky.social (headless OAuth login) on prod, 2026-10-08, SCALE_HOLD=0s, DEBUG_SOCIALWEB_NODE_SSH_DIR still set (key unused): 3 jobs, one per node"
         - "probe-b on node3 at 00:06:09Z while CoreDNS ran on node2: resolv.conf nameserver 169.254.20.10 answered kubernetes.default.svc, kube-dns.kube-system.svc and gitlab.com; nslookup via the kube-dns Service 10.43.0.10 answered (pod on node3 -> CoreDNS pod on node2, cross-node)"
+        - "FINAL CONFIGURATION: GitLab pipeline 78 (project johnandersen777/kcp-ci-probe branch acc-0005, runner 6 on hat-10 holding only the SPA kubeconfig + socialweb-credential) on SPA-created cluster acc-gitlab-0001, prod 2026-10-08, DEBUG_SOCIALWEB_NODE_SSH_DIR unset (container.env), SCALE_HOLD=0s, scope refresher deployed"
+        - "jobs 277/278/279 all success: each resolved via node-local 169.254.20.10, via the kube-dns Service 10.43.0.10 and externally (gitlab.com); CoreDNS ran on node2 for the whole run (evicted at node2's release 00:15:33Z), so probe-a on node1 and probe-c on node3 reached the CoreDNS pod on node2 across nodes"
     - id: ACC-NOSSH
       text: Logs show zero ssh sessions to any guest for the whole run.
-      status: todo
-      evidence: []
+      status: done
+      evidence:
+        - "FINAL CONFIGURATION: GitLab pipeline 78 (project johnandersen777/kcp-ci-probe branch acc-0005, runner 6 on hat-10 holding only the SPA kubeconfig + socialweb-credential) on SPA-created cluster acc-gitlab-0001, prod 2026-10-08, DEBUG_SOCIALWEB_NODE_SSH_DIR unset (container.env), SCALE_HOLD=0s, scope refresher deployed"
+        - "door log 00:11:40Z-00:16:30Z: 0 lines naming debug_node_ssh, sshAuthorizedKey, ssh sessions; prod container: no ssh or dumbpipe-connect processes to guests; the three guests of the run (fc-1379be663dd9-bd5c385d, -374a2854, -12381479) carry an EMPTY /root/.ssh/authorized_keys in their user_data and their consoles show no sshd connection; join path entirely OpenBao JWT over dumbpipe links (M3)"
 items:
   - id: M0-BASELINE
     milestone: M0
@@ -505,10 +511,11 @@ items:
       key path and an ssh command over the guest's iroh ticket (the iroh module's dumbpipe listener in
       front of sshd). Unset = no key, so ACC-NOSSH runs with it unset and the door's no-ssh test still
       holds for the default. decided by Claude, user may veto.
-    status: doing
+    status: done
     evidence:
       - "commit a6a67e2: node-market debugSsh option, CLI option debug-node-ssh-dir (env DEBUG_SOCIALWEB_NODE_SSH_DIR), scripts/deploy.sh passes it into the container env file"
       - "test watched to fail then pass: socialweb-computer-k8s test/node_market_test.ts 'only a door given a debug key puts it in the guest's authorized_keys, and it is told the guest's address' (FAILED: sshAuthorizedKeys undefined); suite 106 passed"
+      - "used 2026-10-07T23:11Z to find the CNI root cause (M5-CNI-READY); acceptance run 78 with it unset showed empty authorized_keys"
   - id: M5-CNI-READY
     milestone: M5
     title: A market node's kubelet reports NetworkReady with the bridge CNI
