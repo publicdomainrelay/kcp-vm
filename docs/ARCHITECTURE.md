@@ -186,10 +186,17 @@ its cluster and its instance-file path ride `Spec.Env` and never argv (invariant
 readiness gate is its own `phase=Ready` log line, taken once its Node informer has synced: it binds
 no port, so that line is the only signal it can offer, and it is a positive marker that can fail.
 
-The cost of a portless member is recorded rather than hidden: the startup sweep
-(`cmd/socialweb-clusterprovider/nodesweep.go`) finds a previous gateway's survivors by the ports they
-hold, so a portless member left behind by a gateway that died WITHOUT its reverse-order reap is not
-discoverable by that sweep. `NEXT.yaml` CCM-2.
+A portless member is not swept, and that is a STATED LIMIT rather than an open item. The startup
+sweep (`cmd/socialweb-clusterprovider/nodesweep.go`) finds a previous gateway's survivors by the node
+record each substrate leaves under the state dir, and it matches that record against the argv the
+process was started with; a step that binds no port and leaves no record is invisible to it. The
+cloud controller manager is exactly that: it binds no port and leases nothing, deliberately, because
+its work is to reconcile Node objects against the instance snapshot rather than to own a node. A
+sweep that found processes by PID alone would find every process on the host, which is the failure
+mode the sweep exists to avoid, and a pid record can be reused by an unrelated process. So a
+controller left behind by a gateway that died WITHOUT its reverse-order reap is visible only to that
+gateway's own process group (invariant 21 stops it in the ordinary case), and a host that sees one
+stops it by hand. The alternatives were considered and are worse than the limit. `NEXT.yaml` CCM-2.
 
 Embedded-postgres is a special case: it is a Go **library** that runs the server as a child of
 whoever links it, so there is no argv for a step and `processrunner.Start` refuses the empty argv
@@ -1376,12 +1383,15 @@ is not, which is the only place the ratio is applied. `Decision.Nodes` is theref
 rather than a delta, and the driver reconciles the cluster's actual count - re-read from the Node
 CRs, never remembered - to it.
 
-**`MaxNodes` defaults to 1, so a cluster configured as before behaves as before.** Named defaults
-are `DefaultMaxNodes = 1` and `DefaultPodsPerNode = 8`, resolved in `Options` the same way
+**`MaxNodes` defaults to 10, and a ceiling below one node is REFUSED rather than clamped.** Named
+defaults are `DefaultMaxNodes = 10` and `DefaultPodsPerNode = 8`, resolved in `Options` the same way
 `hold()` resolves the grace, and settable per cluster as
-`SOCIALWEB_CLUSTERPROVIDER_SCALE_MAX_NODES` and `SOCIALWEB_CLUSTERPROVIDER_SCALE_PODS_PER_NODE`. A
-`MaxNodes` below `DefaultMaxNodes` is REFUSED rather than clamped, because a ceiling under one is
-not a smaller cluster - it is a configuration whose only consistent reading is "never place the work".
+`SOCIALWEB_CLUSTERPROVIDER_SCALE_MAX_NODES` and `SOCIALWEB_CLUSTERPROVIDER_SCALE_PODS_PER_NODE`. The
+refusal is on `n < 1`, not on `n < DefaultMaxNodes`: a ceiling under one is not a smaller cluster, it
+is a configuration whose only consistent reading is "never place the work", while a ceiling of three
+is a smaller cluster and is taken. The default was 1 until 2026-10-07, when a five-job GitLab run
+measured what one node means for a runner with `concurrent = 5` (section 15); `scripts/deploy.sh`
+passes 10 and one pod per node, so a cluster serving this runner asks for the nodes the jobs need.
 
 **Scale-in is all-or-nothing, and that limit is stated rather than latent.** While there is work
 the target only grows, to the cap; when the work stops the cluster goes to zero, exactly as it
@@ -3444,7 +3454,8 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   a cache, and a snapshot that reads as absent is read as "every guest is gone". A snapshot that
   exists and cannot be parsed IS an error and patches nothing (invariant 14); the absent case is not,
   and that asymmetry is the risk this entry leaves behind. Split out rather than folded in:
-  `NEXT.yaml` CCM-2, the portless member's invisibility to `portscan` across a gateway restart.
+  the stated limit in `NEXT.yaml` for a portless process-group member, which cannot be found by a
+  record-based sweep and is therefore not swept.
 
 - **The scale decision could not express more than one node. CLOSED 2026-10-05.** Before: `Decide`
   returned `Provision, Nodes: 1` for any intent, so one pending pod and fifty pending pods decided

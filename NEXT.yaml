@@ -113,22 +113,6 @@ open:
       rather than as a grant that does not name it.
     instrument: An install in another namespace still producing the Secret.
 
-  - id: CCM-2
-    title: A portless process-group member is invisible to the startup sweep.
-    body: >
-      The cloud controller manager binds no port, and the sweep that reaps a previous gateway's
-      survivors (`cmd/socialweb-clusterprovider/nodesweep.go`) finds processes by the ports they
-      hold. So a controller left behind by a gateway that died without its reverse-order reap is not
-      discoverable by that sweep. The group's own `Reap` does stop it in the ordinary case
-      (invariant 21), so this is the abnormal path only - which is exactly the path a sweep exists
-      for. Not a regression: the node hosts hold leases and the controller deliberately does not.
-    instrument: >
-      Either a second discovery key for a portless member (its own pid record, the way
-      `internal/noderecord` records a VMM), or an explicit statement in section 11 that the sweep
-      covers leased components only and that a portless member's survival is accepted. Closing
-      reading: a gateway killed with SIGKILL and restarted twice, with no controller process left
-      after the second start.
-
   - id: FLAKE-1
     title: A gate test depends on the network, so --fast can fail for reasons unrelated to a change.
     body: >
@@ -151,9 +135,33 @@ open:
       tried - pointing the fixture at `registry.invalid.example` - left the named test PASSING, so
       this fixture does not reach the registry on that path at all and nothing here shows the skip is
       what a real unreachable registry would hit.  Stated rather than papered over: a skip that was
-      never observed to fire is not the closing reading this item asks for.
+      never observed to fire is not the closing reading this item asks for.  ONE MORE READING,
+      2026-10-07, and it makes the position worse rather than better: `go test
+      ./cmd/socialweb-nodeimage/ -count=1` failed once, in this package, with
+      `TestAnImageUnderTheNameItsInputsGiveItIsNotBuiltAgain` and
+      `TestAnImageWhoseNameItsRecordDoesNotHashToIsRefusedInBothDirections` both reporting that Main
+      reached the unpinned-entry refusal -- and then passed FIVE times in a row with no edit between,
+      with and without the registry reachable.  Same package, same shape, same unexplained
+      green-after-red the item was opened for.  The likely mechanism, NOT yet confirmed: the store
+      lookup is keyed on a fingerprint computed at two different moments, so anything nondeterministic
+      in it puts the fixture's image under a name Main does not look for and sends it down the build
+      path that refuses an unpinned entry.  Confirming that is the next step.
 
 limits:
+  - title: A process-group member that binds no port and leaves no record is not swept.
+    body: >
+      The startup sweep finds a previous gateway's survivors by the node record each substrate leaves
+      under the state dir and matches it against the argv the process was started with. The cloud
+      controller manager binds no port and leaves no record, deliberately, because its work is to
+      reconcile Node objects against the instance snapshot rather than to own a node. So a controller
+      left behind by a gateway that died WITHOUT its reverse-order reap is not discoverable by that
+      sweep; the group's own Reap stops it in the ordinary case (invariant 21), so this is the
+      abnormal path only -- which is exactly the path a sweep exists for, and why this is stated
+      rather than hidden. A sweep that found processes by PID alone would find every process on the
+      host, and a pid record can be reused by an unrelated process: both alternatives are worse than
+      a controller that outlives a SIGKILLed gateway and binds nothing. A host that sees one stops it
+      by hand.
+
   - title: A node cannot reach another node, so a cluster with more than one has no cluster DNS
       for the Pods on the others.
     body: >
@@ -175,14 +183,16 @@ limits:
       cluster's guests, or a CoreDNS on every node -- is a change to the node network rather than a
       bug in it.
 
-  - title: One node per cluster is the DEFAULT, not the ceiling.
+  - title: The node ceiling is ten, and every node is a booted guest.
     body: >
-      `SOCIALWEB_CLUSTERPROVIDER_SCALE_MAX_NODES` defaults to 1, so a cluster configured as before
-      behaves as before and a runner should set `concurrent = 1` unless the ceiling is raised
-      deliberately - every node is a booted guest, so the cap changes the cost profile and not only
-      the behaviour. With the cap raised and `SOCIALWEB_CLUSTERPROVIDER_SCALE_PODS_PER_NODE` set
-      from a measured job, the cluster scales out; measured at 3 nodes with three concurrent
-      GitLab-shaped pods in section 15.
+      `SOCIALWEB_CLUSTERPROVIDER_SCALE_MAX_NODES` defaults to 10 and
+      `SOCIALWEB_CLUSTERPROVIDER_SCALE_PODS_PER_NODE` to 8; the two together are the whole cost
+      model, because every node is a booted guest and the cap is what bounds what one cluster can
+      rent. A ceiling below one is refused rather than clamped. `scripts/deploy.sh` passes 10 and
+      one pod per node, because the GitLab runner this cluster serves uses pod anti-affinity: one
+      job pod occupies one node whatever `podsPerNode` says, so a default of eight would answer
+      five queued jobs with one node. Measured on 2026-10-07: five jobs at once, each on a distinct
+      market node, all green, with the count never above the ceiling (section 15).
 
   - title: Scale-in is all-or-nothing, and that is a stated limit.
     body: >
