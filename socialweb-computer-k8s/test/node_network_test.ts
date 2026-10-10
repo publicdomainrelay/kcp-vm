@@ -157,6 +157,8 @@ Deno.test("pod-cni waits for the Node's podCIDR through the kubelet's own kubeco
     const script = renderPodCniScript({
       k3sPath: `${dir}/bin/k3s`,
       cniConfDir: `${dir}/net.d`,
+      cniBinDir: `${dir}/cni-bin`,
+      k3sDataDir: `${dir}/k3s`,
       kubeletKubeconfig: `${dir}/kubelet.kubeconfig`,
       cniWaitAttempts: 5,
     });
@@ -177,6 +179,9 @@ Deno.test("pod-cni waits for the Node's podCIDR through the kubelet's own kubeco
     assertEquals(bridge.ipam.ranges, [[{ subnet: "10.42.3.0/24" }]]);
     assertEquals(portmap.type, "portmap");
     assertEquals(portmap.capabilities, { portMappings: true });
+    for (const plugin of ["bridge", "host-local", "portmap", "loopback"]) {
+      assertEquals(await Deno.readLink(`${dir}/cni-bin/${plugin}`), `${dir}/k3s/data/current/bin/cni`, plugin);
+    }
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
@@ -367,6 +372,31 @@ Deno.test("node-diagnose prints containerd's CNI load status to the console unti
     assert(unit, "no node-diagnose unit in the user_data");
     assertEquals(values(unit, "ExecStart"), [NODE_NET_SCRIPTS.diagnose]);
     assertEquals(values(unit, "StandardError"), ["journal+console"]);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("the bridge conflist and its plugins go where containerd reads them when k3s runs no flannel", () => {
+  const script = renderPodCniScript({});
+  assertStringIncludes(script, "/etc/cni/net.d/10-socialweb-bridge.conflist");
+  assertStringIncludes(script, "install -d -m 0755 /etc/cni/net.d /opt/cni/bin");
+  assertEquals(script.includes("/var/lib/rancher/k3s/agent/etc/cni/net.d"), false,
+    "measured on a prod market node 2026-10-07T23:11Z: with --flannel-backend=none k3s writes no cni section into " +
+      "containerd's config, so containerd reads /etc/cni/net.d and /opt/cni/bin (lastCNILoadStatus: no network config " +
+      "found in /etc/cni/net.d) and a conflist under k3s's agent dir is never loaded");
+});
+
+Deno.test("node-diagnose says NetworkReady=false, not unknown, for a runtime that reports false", async () => {
+  const dir = await scratch();
+  try {
+    await Deno.writeTextFile(`${dir}/info.json`, JSON.stringify({
+      status: { conditions: [{ type: "NetworkReady", status: false, reason: "NetworkPluginNotReady", message: "x" }] },
+      config: { cni: { confDir: "/x", binDirs: ["/y"] } },
+    }));
+    await shim(dir, "k3s", `cat ${dir}/info.json`);
+    const run = await runScript(renderNodeDiagnoseScript({ k3sPath: `${dir}/bin/k3s`, diagnoseAttempts: 1 }), dir);
+    assertStringIncludes(run.stderr, "NetworkReady=false");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

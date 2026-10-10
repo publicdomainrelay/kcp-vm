@@ -58,6 +58,12 @@ export const CNI_WAIT_ATTEMPTS = 90;
 
 export const DIAGNOSE_ATTEMPTS = 30;
 
+export const CNI_CONF_DIR = "/etc/cni/net.d";
+
+export const CNI_BIN_DIR = "/opt/cni/bin";
+
+export const CNI_PLUGINS = ["bridge", "host-local", "portmap", "loopback"] as const;
+
 export const MESHD_PATH = "/usr/local/bin/socialweb-meshd";
 export const MESHD_ENV_PATH = `${NODE_SECRETS_DIR}/meshd.env`;
 export const MESHD_ARCHES = ["x86_64", "aarch64"] as const;
@@ -128,6 +134,7 @@ export interface K3sJoinModuleOptions {
   meshd?: MeshdPin;
   meshdPath?: string;
   cniConfDir?: string;
+  cniBinDir?: string;
   kubeletKubeconfig?: string;
   cniWaitAttempts?: number;
   diagnoseAttempts?: number;
@@ -167,6 +174,8 @@ interface ResolvedPaths {
   meshdEnv: string;
   meshd: string;
   cniConfDir: string;
+  cniBinDir: string;
+  cniPlugin: string;
   kubeletKubeconfig: string;
   cniWaitAttempts: number;
   diagnoseAttempts: number;
@@ -179,7 +188,9 @@ function resolvePaths(opts: K3sJoinModuleOptions): ResolvedPaths {
   return {
     meshdEnv: inDir(MESHD_ENV_PATH),
     meshd: opts.meshdPath ?? MESHD_PATH,
-    cniConfDir: opts.cniConfDir ?? `${dataDir}/agent/etc/cni/net.d`,
+    cniConfDir: opts.cniConfDir ?? CNI_CONF_DIR,
+    cniBinDir: opts.cniBinDir ?? CNI_BIN_DIR,
+    cniPlugin: `${dataDir}/data/current/bin/cni`,
     kubeletKubeconfig: opts.kubeletKubeconfig ?? `${dataDir}/agent/kubelet.kubeconfig`,
     cniWaitAttempts: opts.cniWaitAttempts ?? CNI_WAIT_ATTEMPTS,
     diagnoseAttempts: opts.diagnoseAttempts ?? DIAGNOSE_ATTEMPTS,
@@ -349,7 +360,10 @@ for _ in $(seq 1 ${p.cniWaitAttempts}); do
 done
 [ -n "\${CIDR}" ] || { say "node \${NODE_NAME} has no podCIDR yet"; exit 1; }
 printf '%s' "\${CIDR}" | grep -Eqx '([0-9]{1,3}\\.){3}[0-9]{1,3}/[0-9]{1,2}' || { say "podCIDR \${CIDR} is not an IPv4 CIDR"; exit 1; }
-install -d -m 0755 ${p.cniConfDir}
+install -d -m 0755 ${p.cniConfDir} ${p.cniBinDir}
+for PLUGIN in ${CNI_PLUGINS.join(" ")}; do
+  ln -sfn ${p.cniPlugin} ${p.cniBinDir}/"\${PLUGIN}"
+done
 printf '${renderCniConflist("%s")}' "\${CIDR}" > ${conf}.tmp
 mv ${conf}.tmp ${conf}
 say "wrote ${conf} for \${CIDR}"
@@ -363,7 +377,7 @@ set -uo pipefail
 say() { echo "socialweb-node-diagnose: $*" >&2; }
 for _ in $(seq 1 ${p.diagnoseAttempts}); do
   INFO="$(${p.k3s} crictl info 2>/dev/null)"
-  READY="$(printf '%s' "\${INFO}" | jq -r '[.status.conditions[]? | select(.type=="NetworkReady") | .status][0] // "unknown"' 2>/dev/null)"
+  READY="$(printf '%s' "\${INFO}" | jq -r '[.status.conditions[]? | select(.type=="NetworkReady") | .status | tostring][0] // "unknown"' 2>/dev/null)"
   if [ "\${READY}" = "true" ]; then
     say "NetworkReady=true"
     exit 0
