@@ -38,9 +38,9 @@ const (
 
 	gitlabTraceTail = 6000
 
-	gitlabJobCPURequest = "2"
+	gitlabJobCPURequest = "100m"
 
-	gitlabJobMemoryRequest = "4Gi"
+	gitlabJobMemoryRequest = "128Mi"
 
 	gitlabJobCPULimit = "10"
 
@@ -54,7 +54,9 @@ const (
 
 	gitlabPreBuildScript = "command -v pnpm >/dev/null 2>&1 || corepack enable || npm install -g pnpm@10.11.0"
 
-	gitlabJobConcurrency = 4
+	gitlabJobConcurrency = 8
+
+	gitlabSpreadLabelKey = "project.runner.gitlab.com/id"
 
 	gitlabOutputLimitKB = 51200
 
@@ -220,11 +222,19 @@ check_interval = 3
     helper_memory_limit = %q
     poll_timeout = %d
     cleanup_grace_period_seconds = 30
+    [runners.kubernetes.affinity]
+      [runners.kubernetes.affinity.pod_anti_affinity]
+        [[runners.kubernetes.affinity.pod_anti_affinity.required_during_scheduling_ignored_during_execution]]
+          topology_key = "kubernetes.io/hostname"
+          [runners.kubernetes.affinity.pod_anti_affinity.required_during_scheduling_ignored_during_execution.label_selector]
+            [[runners.kubernetes.affinity.pod_anti_affinity.required_during_scheduling_ignored_during_execution.label_selector.match_expressions]]
+              key = %q
+              operator = "Exists"
 `, gitlabJobConcurrency, url, token, gitlabPreBuildScript, gitlabOutputLimitKB, host,
 		filepath.Join(credDir, "tls.crt"), filepath.Join(credDir, "tls.key"),
 		filepath.Join(credDir, "ca.crt"), gitlabNamespace,
 		gitlabJobCPURequest, gitlabJobMemoryRequest, gitlabJobCPULimit, gitlabJobMemoryLimit,
-		gitlabHelperCPULimit, gitlabHelperMemoryLimit, gitlabJobPollTimeout)
+		gitlabHelperCPULimit, gitlabHelperMemoryLimit, gitlabJobPollTimeout, gitlabSpreadLabelKey)
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatalf("writing the runner config: %v", err)
 	}
