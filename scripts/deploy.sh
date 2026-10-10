@@ -84,6 +84,7 @@ chmod 0600 "$ENV_FILE"
 docker volume inspect "$VOLUME" >/dev/null 2>&1 || docker volume create "$VOLUME" >/dev/null
 docker rm -f "$SERVICE_NAME" >/dev/null 2>&1 || true
 docker run -d --name "$SERVICE_NAME" --restart unless-stopped \
+  --cgroup-parent system.slice \
   -v "$VOLUME:/var/lib/socialweb" \
   --env-file "$ENV_FILE" \
   -p "127.0.0.1:${DOOR_PORT}:8788" \
