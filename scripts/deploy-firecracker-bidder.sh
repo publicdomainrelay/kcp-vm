@@ -455,6 +455,12 @@ chown -R "${SERVICE_USER}:${SERVICE_USER}" "${STORE_DIR}" "${BIN_DIR}" \
   "${GUESTS_DIR}" "${STAGE_DIR}" "${CACHE_DIR}"
 chown -R root:root "${INPUTS_DIR}"
 chmod -R a+rX "${INPUTS_DIR}"
+# The image store is read by the CONTAINER that boots a guest, under whatever
+# user that container maps to, so it cannot be owner-only: measured on a real
+# deploy, the manifest at <store>/<fingerprint>/image.json answered
+# "permission denied" and every provisioning failed with "the container that
+# boots guest ... exited before it reported a guest".
+chmod -R a+rX "${STORE_DIR}"
 chmod 755 "${BIN_DIR}/socialweb-nodeimage"
 cd "${STORE_DIR}"
 sha256sum -c .image.sha256
