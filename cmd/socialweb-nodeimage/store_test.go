@@ -121,12 +121,35 @@ func TestAnImageUnderTheNameItsInputsGiveItIsNotBuiltAgain(t *testing.T) {
 	writeConfigFile(t, cfg)
 	dir := writeImageUnderItsName(t, cfg, nameOf(t, cfg))
 
+	loaded, err := LoadConfig(cfg.Path)
+	if err != nil {
+		t.Fatalf("reading back the configuration this fixture wrote: %v", err)
+	}
+	fromMemory, fromDisk := nameOf(t, cfg), ""
+	if disk, err := nodefirecracker.Fingerprint(cfg.Path, buildConfigOf(loaded)); err != nil {
+		t.Fatalf("naming the inputs the configuration ON DISK reads: %v", err)
+	} else {
+		fromDisk = disk
+	}
+	if fromMemory != fromDisk {
+		t.Fatalf("the fixture wrote its image under %s and the run looks under %s. The name is "+
+			"computed from the configuration IN MEMORY here and from the configuration ON DISK "+
+			"there, so any field the loader fills or normalises and the in-memory value does not "+
+			"carry puts the image the fixture wrote where the run does not look -- and a run that "+
+			"does not find it goes down the build path, which is how this test has been seen to "+
+			"fail once and pass five times with no edit between. This check is the instrument for "+
+			"that: it says WHICH name each side computed instead of leaving the next occurrence a "+
+			"mystery", fromMemory, fromDisk)
+	}
+
 	if err := Main(cfg.Path); err != nil {
 		t.Fatalf("a second run over a configuration whose image is already in the store did not "+
 			"leave it alone: %v -- the run is meant to be unconditional, so a run that builds, "+
 			"writes or pulls anything while the image it names is already there is a run nobody can "+
 			"put on a timer, and the build would have failed here (the module tree this fixture "+
-			"names does not exist), so what came back instead was not a build", err)
+			"names does not exist), so what came back instead was not a build. The fixture wrote "+
+			"the image under %s and a run that reads the configuration on disk names %s", err,
+			fromMemory, fromDisk)
 	}
 	if names := entriesIn(t, cfg.OutDir); len(names) != 1 || names[0] != nameOf(t, cfg) {
 		t.Fatalf("a run that found the image already built left %q in the store, and the store is "+

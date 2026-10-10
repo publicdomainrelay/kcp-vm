@@ -143,7 +143,14 @@ open:
       tried - pointing the fixture at `registry.invalid.example` - left the named test PASSING, so
       this fixture does not reach the registry on that path at all and nothing here shows the skip is
       what a real unreachable registry would hit.  Stated rather than papered over: a skip that was
-      never observed to fire is not the closing reading this item asks for.  ONE MORE READING,
+      never observed to fire is not the closing reading this item asks for.
+      AN INSTRUMENT, 2026-10-07, because the failure will not reproduce and a mystery that vanishes is
+      worse than one that stays: `TestAnImageUnderTheNameItsInputsGiveItIsNotBuiltAgain` now computes
+      the name BOTH ways before it runs -- from the configuration in memory, which is what the fixture
+      writes its image under, and from the configuration on disk, which is what `Main` reads -- and
+      fails naming both if they differ.  It also reports both names inside the failure when `Main`
+      fails at all.  Measured today: the two agree, which is why the store lookup should not miss, and
+      is exactly the fact the next occurrence has to contradict to be understood.  ONE MORE READING,
       2026-10-07, and it makes the position worse rather than better: `go test
       ./cmd/socialweb-nodeimage/ -count=1` failed once, in this package, with
       `TestAnImageUnderTheNameItsInputsGiveItIsNotBuiltAgain` and
