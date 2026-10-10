@@ -279,7 +279,7 @@ Deno.test({
     // what provisioning actually did. Asserting only that a bid was collected
     // would pass on a provider that collects bids and then fails to place
     // anything, which is the failure this test exists to catch.
-    const provisions: Array<{ providerId: string | number; ip: unknown; mode: unknown }> = [];
+    const provisions: Array<{ providerId: string | number; ip: unknown; mode: unknown; console: unknown }> = [];
     const provisionFailures: unknown[] = [];
     const provider = createComputeProviderHooks({
       provider: {
@@ -292,6 +292,7 @@ Deno.test({
               providerId: result.providerId,
               ip: metadata?.ip,
               mode: metadata?.mode,
+              console: metadata?.console,
             });
             return result;
           } catch (err) {
@@ -359,26 +360,65 @@ Deno.test({
       "central default bidder must not have bid (it was denied)",
     );
 
-    // What this test asserts about provisioning is deliberately only that
-    // nothing recognised as the provider's own failure happened. The accept
-    // path does not reach any provider's provision() in this harness -- the
-    // stock local provider fails here identically, which is why
-    // test/bidder_container_integration_test.ts passes while its own log says
-    // "failed to provision VM: TypeError: fetch failed". That is a defect in
-    // the path between accept and the provider, not in a provider, and it is
-    // asserted on directly by the test below, which drives provision() itself.
+    // The accept handler starts its provisioning in a detached promise and
+    // returns the receipt without waiting for it, so nothing here can await the
+    // provider directly: the work arrives after this call. Waiting for it is the
+    // point -- the previous version of this test tore its servers and its fetch
+    // patch down while that promise was still in flight, which is what turned a
+    // provision that was about to run into `TypeError: fetch failed`, and made
+    // the assertion below it vacuous.
+    const provisionDeadline = Date.now() + 180_000;
+    while (
+      Date.now() < provisionDeadline && provisions.length === 0 && provisionFailures.length === 0
+    ) {
+      await new Promise((r) => setTimeout(r, 1000));
+    }
     assert(
       provisionFailures.length === 0,
-      `provisioning threw: ${provisionFailures.map(String).join("; ")}`,
+      `the accept path reached the provider and provisioning threw: ${
+        provisionFailures.map(String).join("; ")
+      }`,
     );
-    if (provisions.length === 0) {
-      console.log(
-        `[test] the accept path did not reach provision() -- a pre-existing gap shared with the ` +
-          `container provider, not this provider's. contractErr=${
-            contractErr ? String(contractErr) : "none"
-          }; rejected fetches=${JSON.stringify(fetchFailures.slice(0, 4))}`,
-      );
+    assert(
+      provisions.length > 0,
+      `the accept path did not reach provision() within 180s, so this flow ends at the accept and ` +
+        `no guest was ever asked for. contractErr=${
+          contractErr ? String(contractErr) : "none"
+        }; rejected fetches=${JSON.stringify(fetchFailures.slice(0, 4))}`,
+    );
+    const placed = provisions[0];
+    assert(
+      placed.mode === "firecracker" && typeof placed.ip === "string" && placed.ip.length > 0,
+      `provision() must place a firecracker guest and report its address; it reported ` +
+        `${JSON.stringify(placed)}`,
+    );
+    console.log(`[test] the accept path provisioned ${placed.providerId} at ${placed.ip}`);
+    cleanups.push(() => {
+      firecracker.provider.destroy(placed.providerId).catch(() => {});
+    });
+
+    // And the guest is the one the RFP asked for: the requester's composed
+    // user_data is what cloud-init reads inside it.
+    const consolePath = placed.console as string;
+    const consoleDeadline = Date.now() + 120_000;
+    let guestConsole = "";
+    while (Date.now() < consoleDeadline) {
+      try {
+        guestConsole = await Deno.readTextFile(consolePath);
+      } catch {
+        await new Promise((r) => setTimeout(r, 2000));
+        continue;
+      }
+      if (/Datasource DataSourceNoCloud/.test(guestConsole)) break;
+      await new Promise((r) => setTimeout(r, 2000));
     }
+    assert(
+      /Datasource DataSourceNoCloud/.test(guestConsole),
+      `the guest the market provisioned did not read its user_data as a NoCloud seed within 120s, ` +
+        `so the guest at ${placed.ip} is not running what the RFP asked for. Last 800 bytes of its ` +
+        `console:\n${guestConsole.slice(-800)}`,
+    );
+    console.log(`[test] the guest the accept path placed read its user_data (NoCloud)`);
   } finally {
     for (const c of cleanups.reverse()) {
       try { c(); } catch { /* best effort */ }
