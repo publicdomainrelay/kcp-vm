@@ -49,6 +49,14 @@ func (c *Client) EnableAuth(ctx context.Context, path, kind string) error {
 	return err
 }
 
+func (c *Client) DisableAuth(ctx context.Context, path string) error {
+	_, err := c.do(ctx, http.MethodDelete, "sys/auth/"+strings.Trim(path, "/"), nil)
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	return err
+}
+
 func (c *Client) Write(ctx context.Context, path string, body map[string]any) error {
 	_, err := c.do(ctx, http.MethodPost, strings.Trim(path, "/"), body)
 	return err

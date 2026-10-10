@@ -303,7 +303,7 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 		Substrate:           substrate,
 		Links:               claims,
 		NodeSecrets: func(clusterDir string) nodemarket.NodeSecrets {
-			return clusterprovider.NewNodeVault(clusterDir)
+			return clusterprovider.NewNodeVault(clusterDir).WithLogger(log)
 		},
 		Observe: nodeObserver.Observe,
 	})

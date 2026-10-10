@@ -29,7 +29,7 @@ func (h *nodeHosts) adopt(ctx context.Context, cluster string) error {
 			"%s: %w -- a read that failed is not a workspace with no claims, and the next pass reads "+
 			"it again", target.Workspace, cluster, err)
 	}
-	return h.adoptClaims(cluster, claims)
+	return errors.Join(h.adoptClaims(cluster, claims), h.reconcileVault(ctx, cluster, claims))
 }
 
 func (h *nodeHosts) adoptOnce(ctx context.Context, cluster string) error {

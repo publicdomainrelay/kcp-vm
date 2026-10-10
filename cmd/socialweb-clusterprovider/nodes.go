@@ -808,6 +808,7 @@ type nodeHosts struct {
 	hosts    map[string]*tenantNodes
 	adopted  map[string]bool
 	released map[string]map[string]bool
+	synced   map[string]time.Time
 }
 
 func releasedClaimKey(claim v1alpha1.NodeClaim) string {
@@ -867,7 +868,8 @@ func newNodeHosts(opts nodeHostsOptions) (*nodeHosts, error) {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &nodeHosts{opts: opts, log: log, hosts: map[string]*tenantNodes{}}, nil
+	return &nodeHosts{opts: opts, log: log, hosts: map[string]*tenantNodes{},
+		synced: map[string]time.Time{}}, nil
 }
 
 func (h *nodeHosts) forCluster(cluster string) (scale.Nodes, error) {
@@ -932,6 +934,7 @@ func (h *nodeHosts) reconcile(ctx context.Context, cluster string) error {
 			"the claims that say which Nodes have no machine behind them", target.Workspace, err)
 	}
 	adoptErr := h.adoptClaims(cluster, claims)
+	adoptErr = errors.Join(adoptErr, h.reconcileVault(ctx, cluster, claims))
 	released := map[string]string{}
 	for i := range claims {
 		if claims[i].Status.Phase == v1alpha1.NodeClaimReleased {
