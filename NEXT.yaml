@@ -225,6 +225,122 @@ open:
       ACC-MESH and ACC-NOSSH on our GitLab.
     instrument: >
       The plan's three acceptance checks, each with UTC readings from prod and GitLab.
+  - id: P6-M0
+    title: QUEUED - how kcp is embedded and how large the one binary may be, measured.
+    body: >
+      QUEUED: starts only after plan 0005 is complete and ACC-ZERO, ACC-MESH and ACC-NOSSH pass on prod.
+      Plan 0006 (docs/plans/0006-socialweb-computer-unified-binary.yaml) items M0-KCP-EMBED-SPIKE and
+      M0-SIZE-BUDGET: kcp v0.33.0 linked in-process forces the kcp-dev Kubernetes fork onto every
+      package (its go.mod replaces ~33 k8s.io modules), so the default is the pinned release binary
+      carried inside socialweb-computer; the spike measures the other route.
+    instrument: >
+      Both kcp routes built and timed to /readyz on hat-8, and the size budget enforced by check.sh.
+  - id: P6-M1
+    title: QUEUED - cmd/socialweb-computer, its verified embedded assets, and kcp as its child.
+    body: >
+      QUEUED behind plan 0005 as P6-M0. Plan 0006 items M1-CLI, M1-ASSETS, M1-KCP-CHILD.
+    instrument: >
+      An extracted asset tampered with is re-extracted, never run; the embedded kcp opens a root
+      directory the container's kcp wrote and lists the same workspaces.
+  - id: P6-M2
+    title: QUEUED - every manifest in one embed.FS, templated, server-side applied from Go.
+    body: >
+      QUEUED behind plan 0005 as P6-M0. Plan 0006 items M2-MANIFESTS, M2-TEMPLATE, M2-APPLY; they
+      replace install-provider.sh, apply-permission-inventory.sh, the entrypoint's bootstrap heredocs
+      and the market bed's apply.sh, with no kubectl or yq.
+    instrument: >
+      Each replaced script's objects reproduced object for object by `socialweb-computer apply <set>`,
+      and a second apply changes no resourceVersion.
+  - id: P6-M3
+    title: QUEUED - serve gateway kcp replaces container-entrypoint.sh, server binaries fold into verbs.
+    body: >
+      QUEUED behind plan 0005 as P6-M0. Plan 0006 items M3-SERVE-GATEWAY-KCP and M3-FOLD.
+    instrument: >
+      The k8s image on a copy of a prod-shaped volume serves the door and the same workspaces with no
+      shell, kubectl, yq or socat in its process tree.
+  - id: P6-M4
+    title: QUEUED - a reproducible static build within its size budget.
+    body: >
+      QUEUED behind plan 0005 as P6-M0. Plan 0006 item M4-BUILD.
+    instrument: >
+      Two clean builds byte-identical; the binary within the budget in versions.json.
+  - id: P6-M5
+    title: QUEUED - prod moves to the unified binary with a measured window and a rehearsed rollback.
+    body: >
+      QUEUED behind plan 0005 as P6-M0. Plan 0006 items M5-SHADOW, M5-CUTOVER, M5-RETIRE and its
+      acceptance checks ACC6-ONE-BINARY, ACC6-STATE, ACC6-ROLLBACK, ACC6-REPRO. The user deploys prod.
+    instrument: >
+      Shadow and post-cutover readings identical; rollback rehearsal on hat-8 reads the same.
+  - id: P7-M1
+    title: QUEUED - compute-provider-kcp's shape - a ComputeVM CRD, its API, and shared user_data code.
+    body: >
+      QUEUED: starts only after plan 0005 is complete and ACC-ZERO, ACC-MESH and ACC-NOSSH pass on prod,
+      and after the plan 0006 and 0008 items it names. Plan 0007
+      (docs/plans/0007-compute-provider-kcp.yaml) items M1-DECIDE, M1-API, M1-COMMON-EXTRACT.
+    instrument: >
+      ComputeVM fixtures round-trip through Go and the generated TypeScript validator; the firecracker
+      provider's enriched user_data is byte-identical before and after the extraction.
+  - id: P7-M2
+    title: QUEUED - the Go ComputeVM controller boots, adopts and releases guests.
+    body: >
+      QUEUED behind plan 0005 as P7-M1. Plan 0007 item M2-CONTROLLER.
+    instrument: >
+      Offline: no two VMs share a network index across a restart, a vanished container is Lost and
+      never re-booted, deletion removes container and work dir before the finalizer goes.
+  - id: P7-M3
+    title: QUEUED - the TypeScript provider and the bidder flag that selects it.
+    body: >
+      QUEUED behind plan 0005 as P7-M1. Plan 0007 items M3-TS-PROVIDER, M3-BIDDER-FLAG.
+    instrument: >
+      Against a fake kcp, provision resolves on Running and destroy only after 404; createBidConfig
+      equals the firecracker record.
+  - id: P7-M4
+    title: QUEUED - a restarted bidder keeps its issuer, its keys and its contracts.
+    body: >
+      QUEUED behind plan 0005 as P7-M1. Plan 0007 items M4-DURABLE-IDENTITY, M4-CONTRACT-RESTORE,
+      M4-ONNETWORK. Today a restarted bidder answers vm.delete 400 unknown receipt and its issuer URL
+      moves.
+    instrument: >
+      A bidder seeded from its ContractStore answers vm.delete 200 and destroys once; two provider starts
+      publish the same issuer and JWKS.
+  - id: P7-M5
+    title: QUEUED - run bidder end to end, and kcp proven to hold the VMs across a bidder kill.
+    body: >
+      QUEUED behind plan 0005 as P7-M1. Plan 0007 items M5-RUN-BIDDER, M5-LIVE-RECOVERY, M5-NOSSH-JOIN
+      and its acceptance checks ACC7-*.
+    instrument: >
+      TestAKilledBidderStillReleasesTheVMItRentedBeforeTheKill red with the firecracker provider and green
+      with the kcp provider, through the RFP flow, with zero ssh sessions.
+  - id: P8-M1
+    title: QUEUED - a pinned deno and the TypeScript closure inside the binary, run offline.
+    body: >
+      QUEUED: starts only after plan 0005 is complete and ACC-ZERO, ACC-MESH and ACC-NOSSH pass on prod,
+      and after plan 0006 M1-ASSETS. Plan 0008 (docs/plans/0008-embedded-deno-and-typescript-denopods.yaml)
+      items M1-DENO, M1-TS-CLOSURE.
+    instrument: >
+      An entry imported from jsr and npm runs with no network; two bundles of the same commits are
+      byte-identical.
+  - id: P8-M2
+    title: QUEUED - the deno-kcp provider linked in, and one service DenoPod template.
+    body: >
+      QUEUED behind plan 0005 as P8-M1. Plan 0008 items M2-DENOKCP-INPROC, M2-SERVICE-TEMPLATE.
+    instrument: >
+      A DenoPod applied to the embedded kcp runs on the embedded deno, and a killed stack restarts every
+      recorded DenoPod exactly once.
+  - id: P8-M3
+    title: QUEUED - the door runs as a DenoPod.
+    body: >
+      QUEUED behind plan 0005 as P8-M1. Plan 0008 item M3-DOOR-DENOPOD.
+    instrument: >
+      The door DenoPod serves /api/config and reads the same claims on a copy of a prod-shaped volume.
+  - id: P8-M4
+    title: QUEUED - run gateway ssh, run request, and the market bed driven by socialweb-computer.
+    body: >
+      QUEUED behind plan 0005 as P8-M1. Plan 0008 items M4-RUN-GATEWAY-SSH, M4-RUN-REQUEST,
+      M4-TESTBED-PORT and its acceptance checks ACC8-*.
+    instrument: >
+      The market bed's live test passes twice through `socialweb-computer testbed`, and `run request`
+      reaches onNetwork and releases with vm.delete 200.
 
 limits:
   - title: A node cannot reach another node, so a cluster with more than one has no cluster DNS

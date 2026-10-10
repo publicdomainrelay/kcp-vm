@@ -566,3 +566,7 @@ items:
     decision: Invariant 13 reads that secrets cross only OpenBao JWT over the cluster link.
     status: todo
     evidence: []
+queued_after_this_plan:
+  - docs/plans/0006-socialweb-computer-unified-binary.yaml
+  - docs/plans/0007-compute-provider-kcp.yaml
+  - docs/plans/0008-embedded-deno-and-typescript-denopods.yaml
