@@ -27,3 +27,4 @@ ipnet = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 base64 = "0.22"
+blake3 = { version = "1.8", features = ["pure"] }

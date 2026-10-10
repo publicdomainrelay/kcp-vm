@@ -255,7 +255,8 @@ fn two_meshd_in_two_netns_carry_ping_between_two_pod_cidrs() {
     if !gate(GATE) {
         return;
     }
-    let bin = env!("CARGO_BIN_EXE_socialweb-meshd");
+    let bin_path = common::meshd_bin();
+    let bin = bin_path.as_str();
     let dir = scratch_dir("netns");
     let mut rig = Rig {
         peers: dir.join("peers.json"),

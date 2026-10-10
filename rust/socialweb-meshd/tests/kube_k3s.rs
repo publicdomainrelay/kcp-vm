@@ -180,7 +180,8 @@ fn with_a_kubelet_identity_meshd_annotates_its_own_node_and_follows_the_node_lis
     if !gate(GATE) {
         return;
     }
-    let bin = env!("CARGO_BIN_EXE_socialweb-meshd");
+    let bin_path = common::meshd_bin();
+    let bin = bin_path.as_str();
     let dir = scratch_dir("k3s");
     let mut rig = Rig {
         ns: format!("swmesh-{}-k3s", std::process::id()),

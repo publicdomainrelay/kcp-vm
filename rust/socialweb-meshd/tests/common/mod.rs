@@ -5,6 +5,19 @@ use std::process::{Child, Command, Output};
 use std::time::{Duration, Instant};
 
 pub const READY_WAIT: Duration = Duration::from_secs(30);
+pub const BIN_OVERRIDE: &str = "SOCIALWEB_MESHD_BIN";
+
+pub fn meshd_bin() -> String {
+    match std::env::var(BIN_OVERRIDE) {
+        Ok(path) if !path.is_empty() => {
+            let absolute = std::fs::canonicalize(&path)
+                .unwrap_or_else(|err| panic!("{BIN_OVERRIDE}={path}: {err}"));
+            eprintln!("meshd under test: {}", absolute.display());
+            absolute.to_string_lossy().into_owned()
+        }
+        _ => env!("CARGO_BIN_EXE_socialweb-meshd").to_string(),
+    }
+}
 
 pub fn sudo(args: &[&str]) -> Output {
     Command::new("sudo")
