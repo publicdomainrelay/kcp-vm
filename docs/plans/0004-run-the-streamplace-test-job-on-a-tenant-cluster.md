@@ -370,10 +370,32 @@ limits are not placement.
   nameserver to answer for `CI_SERVER_HOST` -- the name the clone is about to need -- and gives up
   quietly rather than failing the job it exists to protect.
 
-  Routing around this instead of fixing it was the first response, by giving the scale-check jobs
-  `GIT_STRATEGY: none`. That is recorded because it is the tempting answer and it is wrong: it
-  hides the failure in the one check whose whole job is to find it, and it leaves every other job
-  exposed. The clone is back in.
+  **It is not a startup delay, and it does not go away.** Measured on a live five-node cluster,
+  from a Pod on each node, TCP to the CoreDNS Pod's own IP:
+
+  ```
+  liveweb-node1  <- CoreDNS runs here   REACHABLE
+  liveweb-node2                         UNREACHABLE
+  liveweb-node3                         UNREACHABLE
+  liveweb-node4                         UNREACHABLE
+  liveweb-node5                         UNREACHABLE
+  ```
+
+  and `nslookup` inside those four answers `connection timed out; no servers could be reached`.
+  The reason is not CoreDNS: **a guest cannot reach another guest.** Each sits behind its own
+  pasta instance, pasta is user-mode networking, and it carries a guest's traffic out to the host
+  and nothing between two guests, so the nodes have no path to each other and k3s's flannel
+  overlay has nothing to run over. Cluster DNS is one hop that happens to need that path.
+
+  So this is a limit of the node network and not a race in the job: **anything that resolves a
+  name works on a one-node cluster and on whichever node CoreDNS is on, and fails on the others.**
+  It is recorded in `NEXT.yaml` as a limit, with the pod-to-pod reading above as its instrument.
+  The scale-check jobs therefore carry `GIT_STRATEGY: none` -- not to route around the failure but
+  because a check of the scale decision must not depend on a network path the cluster does not
+  have -- and the `pre_get_sources_script` wait stays for the jobs that do clone. Routing around
+  this silently was the first response, by giving those jobs `GIT_STRATEGY: none` before the cause
+  was known; that is recorded because it is the tempting answer, it hides the failure in the one
+  check whose whole job is to find it, and it leaves every other job exposed.
 
 ## 7. The mkfs measurement, in full
 
