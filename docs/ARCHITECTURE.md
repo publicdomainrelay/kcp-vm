@@ -1898,6 +1898,18 @@ because it bounds a mechanism the rest of this document leans on.
   belonging to substrates this process is not configured for, or a stated decision that changing
   substrate means changing state dir. `NEXT.yaml` MARKET-1.
 
+- **MARKET-5: a cluster's first node is named at construction, so a restart still claims a spent
+  name.** A node name whose claim has ended is skipped when the NEXT node is named (section 15,
+  MARKET-4's sibling), but the FIRST node is not named by that rule at all: `nodeHosts.forCluster`
+  builds the primary host as `node1`, and `Provision` takes ordinal 1 straight to `hostFor(1)` because
+  that host is already in hand. `kcpclient.WriteNodeClaimTo` leaves a claim whose spec already matches
+  exactly as it was, status included, so the new claim inherits the previous generation's `Failed` and
+  the door's old words with it. Measured on 2026-10-06: `-node1` claimed at 06:18:38 and released at
+  06:18:41 with "the door restarted and released this node's VM; a new node will be requested" - four
+  nodes were spent this way in one run and convergence to ten took minutes longer for it. The cost is
+  a wasted claim cycle and not a wasted machine, because the door never bids on a claim it did not
+  fulfil. `NEXT.yaml` MARKET-5, with the change that closes it.
+
 - **Whether the node half may ever run inside the control-plane container was answered by reading where
   the refusal lives, and the answer is a STATED LIMIT rather than an open question.** The allocator's
   refusal to lease a range overlapping the host's networks is a property of the NETWORK NAMESPACE the
@@ -3905,6 +3917,32 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   `a second pass over three claims that had all reached Running and whose nodes the cluster did not
   list yet left 6 claims, want three`, the doubling, on three claims instead of the production five.
   Both are green with the change. `NEXT.yaml` MARKET-4.
+
+- **A node claimed from the market was torn down two seconds later, because a node name hands its
+  last claim's words to the next claim written under it. PARTLY CLOSED - the naming rule is fixed for
+  every node but the first, and the first is MARKET-5.** `kcpclient.WriteNodeClaimTo` never touches
+  status: it reads the claim, and when the SPEC already matches it returns without a write at all. The
+  door writes the terminal status of a claim it can no longer serve (`adoptNever`, section 15's market
+  entries), and nothing clears it, so a name whose claim ended carries that phase and that message
+  into whatever is claimed under it next. The provider then reads its own fresh claim as a failure:
+  `confirmHeld` sees `Failed`, `guestFatal` returns the door's words, and the node is released.
+  MEASURED in production on 2026-10-06 during the five-job run: `nodemarket: node claimed from the
+  market` for `-node7` at 06:18:59, `nodemarket: releasing the node` for it at 06:19:01, and the
+  reason the provider reported was `the door restarted and released this node's VM; a new node will be
+  requested` - a sentence the door had written for a claim of an earlier generation. Four nodes went
+  that way in one run: `node1` (claimed 06:18:38, released 06:18:41), `node2`, `node7` and `node11`.
+  No machine was rented for any of them - the door acts on a claim that is `Pending` or has a
+  deletion timestamp, and a `Failed` one is neither - so the cost is a spent claim cycle and minutes
+  of slower convergence, not a leaked VM.
+  `tenantNodes.nextOrdinal` now seeds its `present` set from the claims already in the cluster's home
+  workspace whose phase has ENDED, so such a name is retired. A claim that has NOT ended is
+  deliberately left alone, and that is the half worth stating: re-claiming a live name is a no-op on
+  the spec, which is how a provider that restarted adopts a node the door is still bringing up instead
+  of abandoning it. `nodemarket.Claims` gained `ListNodeClaims` for this; `kcpclient` already had the
+  call. The instrument is `TestANodeNameWhoseClaimHasEndedIsNotClaimedAgain` in
+  `cmd/socialweb-clusterprovider`: a `Failed` claim seeded at `node2`, two provisions, and the second
+  must name `node3`. Watched to fail with the seeding removed. `NEXT.yaml` MARKET-5 covers what is
+  left - the FIRST node of a cluster, whose name is fixed at construction and never reconsidered.
 
 ## 16. Vocabulary
 

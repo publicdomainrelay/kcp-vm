@@ -75,6 +75,28 @@ open:
       the gateway's first mint request refused before the rename and served after it - the refusal
       naming the cluster and the key rather than returning a credential.
 
+  - id: MARKET-5
+    title: A cluster's first node is named at construction, so a restart still claims a spent name.
+    body: >
+      A name whose claim has ENDED is now skipped when the NEXT node is named (`nextOrdinal` seeds its
+      `present` set from the ended claims in the home workspace). The first node of a cluster is not
+      named that way: `nodeHosts.forCluster` builds the primary host as `node1` (`newNodeHost` with the
+      `nodeID` constant) and `Provision` takes ordinal 1 straight to `hostFor(1)` without consulting
+      `nextOrdinal`, because that host is already in hand. So a provider restart re-claims `node1`
+      whatever its claim says, and `kcpclient.WriteNodeClaimTo` leaves a matching spec alone --
+      including the `Failed` status the door wrote for the previous generation. Measured on
+      2026-10-06 during the five-job run: `-node1` claimed at 06:18:38 and released at 06:18:41 with
+      "the door restarted and released this node's VM; a new node will be requested". The cost is a
+      wasted claim cycle rather than a wasted machine (the door never bids on a claim it did not
+      fulfil), but four nodes were spent this way in one run and the convergence to ten took minutes
+      longer for it.
+    instrument: >
+      The primary host's name chosen by the same free-ordinal rule as every later one: extract the
+      `present`-set computation out of `nextOrdinal`, use it in `forCluster` to pick the primary's
+      ordinal, carry that ordinal on `tenantNodes` so `hostFor` and `retain` compare against it rather
+      than against 1, and a test that starts a cluster whose `node1` claim reads `Failed` and asserts
+      the first provision names `node2`.
+
   - id: MARKET-1
     title: The market substrate's startup sweep is a no-op, so a state dir a guest substrate left behind is never reaped.
     body: >
