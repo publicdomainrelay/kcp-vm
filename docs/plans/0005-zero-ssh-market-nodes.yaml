@@ -160,6 +160,9 @@ items:
       swc-bidder; MANAGE_DOCKER_DAEMON=no leaves daemon.json alone on a host with other containers.
     status: done
     evidence:
+      - "defect found 2026-10-07 ~19:20Z: QR waits time out after 5m and the unit restarted under a NEW did:plc each time (4 PLC registrations in 20 min, did:plc:474wle.., yhwrng.., 7ambb2.., jznwst..); unit stopped"
+      - "5330ff2: launcher writes the 0600 key before the first start; test TestTheBidderStartsWithTheSameKeyEveryTimeBeforeASignIn watched to fail (no key at start) then pass; reinstalled on hat-8 with deploy-firecracker-bidder.sh --local"
+      - "hat-8 2026-10-07 ~19:55-20:01Z: private_key_loaded_from_path, oauth_qr_did_registered did:plc:4iobc5hpgsfb5flxisath2pt once, next cycle oauth_qr_did_resolved same did; unit running, awaiting the operator QR scan"
       - "commit 51f9000 The bidder is a template unit keyed by the account's handle (deploy/bidder/socialweb-computer-bidder@.service, deploy/bidder/socialweb-computer-bidder-run, scripts/deploy-firecracker-bidder.sh reworked with --local and --dry-run, test/bidder_unit_test.go)"
       - "tests watched to fail (files absent, script still writing bidder.env and an account secret) then pass: TestTheBidderUnitIsATemplateKeyedByTheAccountHandle, TestNoAccountSecretReachesTheBidder, TestTheBidderDeployInstallsTheTemplate, TestTheLauncherSignsInByQRIntoItsOwnStateDirectory, TestTheLauncherRefusesAnAccountOtherThanItsInstance (restored, scanned, unnamed), TestTheLauncherAcceptsTheHandleInAnyCase, TestTheLauncherRefusesAnInstanceThatIsNotAHandle, TestTheBidderUnitVerifies (systemd-analyze verify, any output fails); deploy/check.sh --fast green"
       - "hat-8 2026-10-07T17:10Z deploy-firecracker-bidder.sh --local (MANAGE_DOCKER_DAEMON=no, prod untouched): rc 0, store verified, template/launcher/common.env installed, module cache warm, target ensure -reuse-stale answered reused from sha256-6e4f4f95...; second run rc 0 with all three unchanged and nothing restarted"
@@ -276,20 +279,60 @@ items:
     decision: >
       Listeners are procgroup components started after k3s beside postgres, openbao, kine and k3s.
       Guests dial the cluster; the door holds no per-node connection.
-    status: todo
-    evidence: []
+    status: done
+    evidence:
+      - "merged to main 0f24132 (links) and 3656ae9 (provider rents only once both links listen); deployed 2026-10-07 ~19:13Z"
+      - "prod 2026-10-07T19:14:59Z: ClusterLink 2wjeqtgx-test-cluster-alice-0001-apiserver Listening endpointId 2374b8ee..8059 and -openbao Listening endpointId a7d94692..1a6c; processes dumbpipe listen-tcp --host 127.0.0.1:20003 --ipv4-addr 0.0.0.0:20008 and --host 127.0.0.1:20001 --ipv4-addr 0.0.0.0:20009"
+      - "3656ae9: TestNothingIsRentedUntilBothClusterLinksListen (mutation: gate disabled -> FAIL); TestConfirmJoinedNeedsTheGuestToHaveFetchedItsSecrets (mutation: Joining not accepted -> FAIL); TestTheDoorFindsTheClusterOpenBaoCABesideTheTokenTheClaimNames"
+      - "41349d6 portallocator purposes apiserver-link and openbao-link (width 1, Purpose.Datagram); portscan reads /proc/net/udp{,6} state 07 for datagram leases and the TCP tables for the rest"
+      - "596bb86 procgroup.ComponentApiserverLink/ComponentOpenBaoLink and Step.Prepare (runs once the steps before it are ready; its spec is what starts)"
+      - "7c308b4 kcpclient WriteClusterLink (create spec, then status subresource; spec and status merge-patched only when changed), WriteClusterLinkStatus (never creates; NotFound is not written), ReadClusterLink, DeleteClusterLink"
+      - "8f2211a clusterprovider/links.go: StackConfig.Links appends two steps after every StackOrder member, argv dumbpipe listen-tcp --host 127.0.0.1:<k3s secure or vault port> --ipv4-addr 0.0.0.0:<link lease>; gate = ticket printed and naming the vault key; reporter writes Listening with retries, Failed (exit + output tail) on an unexpected exit, Pending when the group was reaped"
+      - "90f4130 wiring: on when SOCIALWEB_CLUSTERPROVIDER_DUMBPIPE is set (entrypoint default /usr/local/bin/dumbpipe), link purposes leased with the rest, restart argv derived without unleased links, a deleted cluster's two ClusterLinks deleted after its reap"
+      - "c90f9f2 ARCHITECTURE section 5 'The cluster links', component 8, CRD table, section 8 ports; permission-inventory: socialweb-cluster-provider may write clusterlinks and clusterlinks/status"
+      - "tests watched to fail then pass: internal/clusterprovider TestTheLinksAreComponentsOfTheGroupStartedAfterK3sInFrontOfTheApiserverAndTheVault, TestEachLinkIsRecordedListeningWithTheStableTicketAndTheDidKeyOfItsKey, TestAProviderRestartBringsTheLinksBackAsTheSameEndpoints, TestALinkThatDiesIsRecordedFailedWithWhatItLastSaid, TestTheLinksAreReapedWithTheGroupFirstInReverseOrder (red with Prepare removed, and with the stop-vs-crash split removed); internal/portscan TestALinkLeaseTakesItsOwnersFromTheDatagramTableAndEveryOtherLeaseFromTheStreamTable, TestASurvivingLinkIsAttributedToItsClusterLikeEveryOtherComponent (red with Datagram ignored); internal/kcpclient TestWriteClusterLinkCreatesItInTheHomeWorkspaceAndThenWritesItsStatus (red with the status patch skipped); cmd/socialweb-clusterprovider TestADeletedClusterLosesBothItsClusterLinks, TestARestartOverAClusterLeasedBeforeLinksExistedDerivesItsArgvWithoutThem (red without the delete / without WithoutUnleasedLinks)"
+      - "guards green first time: TestLinksWithoutAVaultToKeepTheirKeysAreRefused, TestLinksWithNoLeaseAreRefusedAndAStartupScanDerivesTheRestWithoutThem, TestALinkWhoseKeyTheFakeDoesNotKnowNeverPassesItsGate, TestAClusterSwitchedOffKeepsItsClusterLinks, TestTheRecorderWritesIntoTheHomeWorkspaceOfTheClusterKey, TestWriteClusterLinkStatusNeverRecreatesALinkTheTeardownDeleted, procgroup TestPrepareRunsAfterTheStepsBeforeItAreReadyAndItsSpecIsWhatStarts, TestAFailedPrepareStartsNothingAndReapsWhatCameBefore"
+      - "live (SOCIALWEB_LOCAL=1, dumbpipe v0.39.0, 2026-10-07): TestARealDumbpipeLinkCarriesTCPThroughItsPublishedTicketWhichARestartLeavesByteIdentical PASS 23.4s -- two real listeners in front of tcp echo servers, connect-tcp with each published (id-only) ticket echoes, group reaped (Pending) and respawned, same endpoint id, did and ticket bytes, and the pre-restart ticket echoes again"
+      - "deploy/check.sh --fast green at c90f9f2 (gofmt, build, apigen 9 files no drift, vet, staticcheck, go test)"
+      - "stated limits (ARCHITECTURE 'The cluster links'): a link that dies after bring-up is not restarted until the group is next brought up; link ports are probed for TCP only; the IPv6 socket is unpinned"
+      - "not yet proven on prod: needs a deploy (install-provider.sh re-applies the permission inventory); then a ClusterLink pair per cluster in each home workspace, phase Listening"
   - id: M3-IROH-KEYS
     milestone: M3
     title: Iroh secret keys persisted in the cluster's OpenBao, public key expressed as did:key
     decision: Stable tickets across deploys; ed25519 encodings per artob/edky.
-    status: todo
-    evidence: []
+    status: done
+    evidence:
+      - "prod 2026-10-07T19:14:59Z: did:key:z6MkgqfYYtADsuzQxt3cpxX4ZWFSFkvmqh8LCTrMHZsDFK8C (apiserver), did:key:z6MkqkUHpCn3SmfKqMob14YDDaCWG8BUc9CC3vasnVk4pqST (openbao), keys in the cluster OpenBao socialweb-links"
+      - "3c80658 internal/didkey: did:key = did:key:z + base58btc(0xed 0x01 + pub); endpoint id = lowercase hex of the pub, the form iroh prints"
+      - "017d8ee internal/clusterlink: EnsureKey reads socialweb-links/<service> or generates once and writes check-and-set 0 (a losing writer takes the winner's key); an unreadable or self-inconsistent record is refused, never regenerated over; Key.Env() = IROH_SECRET=<64 hex seed>; ParseTicket reads the endpoint id out of endpoint<base32 postcard>"
+      - "8f2211a VaultLinkKeys: enables the socialweb-links KV v2 mount if absent with the root token from unseal.json, retries while the mount upgrades to versioned data, Create posts {options:{cas:0}}"
+      - "measured on dumbpipe v0.39.0: IROH_SECRET is the 32-byte ed25519 seed as 64 hex (dumbpipe prints 'using secret key <hex>' when it makes one); IROH_SECRET=f855..91d8 printed tickets naming endpoint cb6686..693c = ed25519.NewKeyFromSeed(seed).Public(); two runs with one key printed different ticket bytes (relay and addresses) with the same endpoint id; with no network it still prints a ticket after 'Failed to connect to the home relay'"
+      - "tests watched to fail then pass: internal/didkey TestTheDidKeySpecVectorEncodesAnEd25519PublicKey (spec vector 3b6a27bc..da29 -> did:key:z6MkiTBz1ymuepAQ4HEHYSF1H8quG5GLVVQR3djdX3mDooWp), TestTheDidKeySpecVectorDecodesBackToItsPublicKey, TestTheEndpointIDDumbpipeDerivesFromIrohSecretIsTheSeedsPublicKeyInHex (red with multicodec 0xed00 and a truncated id); internal/clusterlink TestTheKeyIsGeneratedOnceAndAProviderRestartReadsTheSameOneBack, TestALosingFirstWriteTakesTheKeyThatWon, TestAnUnreadableStoredKeyIsNeverRegeneratedOver (red with the stored key ignored)"
+      - "live (SOCIALWEB_LOCAL=1, bao + embedded postgres): TestTheLinkKeyIsKeptInTheClusterVaultAndReadBackAfterTheVaultRestarts PASS 2.5s -- key written, a second check-and-set first write refused, vault stopped and restarted on the same store, same endpoint id and did read back, the openbao link has its own key"
+      - "stability decision (decided by Claude, user may veto): status.ticket is clusterlink.StableTicket(key), the id-only ticket that IROH_SECRET=<seed> dumbpipe generate-ticket prints (fixture endpointadfwnbtf..rutyaa for seed f855..91d8), so it is byte-stable for as long as the key is in the vault; the printed ticket (relay + addresses, different bytes per run) is only checked to name the key. Watched to fail with the printed ticket published: TestThePublishedTicketIsWhatDumbpipeGenerateTicketPrintsForTheKeyAndNeverChanges, TestTheTicketDumbpipePrintsIsFoundAndNamesTheEndpointItsSecretDerives, TestEachLinkIsRecordedListeningWithTheStableTicketAndTheDidKeyOfItsKey"
   - id: M3-SECRETS-TICKET
     milestone: M3
     title: OpenBao ticket delivered through the --secrets capability
-    decision: Only the public portion travels through the secrets flow.
-    status: todo
-    evidence: []
+    decision: >
+      Only the public portion travels through the secrets flow. Door half decided by Claude, user may
+      veto (ARCHITECTURE section 9 "A market node joins through its cluster's OpenBao, never through
+      ssh"): the bundle is exactly openbao-ticket (ClusterLink <clusterKey>-openbao status.ticket),
+      openbao-ca.pem (read from <dirname(spec.tokenFile)>/openbao/tls/ca.crt until the provider
+      publishes a path) and claim.json {node, cluster = cluster KEY, jwtMount, role = node, audience,
+      kvMount, kvPath = node}; claim.json joins the bundle when the capability is granted, because
+      jwtMount needs the winning issuer; status.grant {issuer, subject, audience, role} is awaited
+      inside the capability's onContract, before the accept record exists; the door returns at
+      onSecretsFetched (claim Joining), disposes capabilities, never returns at onAccepted, and
+      releases only on claim deletion.
+    status: doing
+    evidence:
+      - "0f3a771 + b489218 (socialweb-computer-k8s only): node-market fulfiller without ssh (guest.ts, node_session_test.ts, NodeJoinDocument helpers, the door's dumbpipe download and node-apiserver-host removed); grantingCapability; ClusterLinkReader in lib/abc + createKcpClusterLinkReader in nodeclaim-kcp; accountHashOf/clusterKeyOf/nodeAudience/jwtMountName/nodeClaimDocument in socialweb-computer-k8s-common"
+      - "red first: the new node_market_test.ts + k3s_join_test.ts against the previous door, join module and common with stub exports only (deno test --no-check): 29 failed / 3 passed"
+      - "green: node_market_test.ts 'at accept the claim carries the workload grant for its node's audience before the guest can be authorized' (grant on the claim when onAccepted runs, grant write precedes the accepted write, claim.json in the bundle before the inner capability is authorized), 'the secrets bundle carries exactly the OpenBao ticket, the OpenBao CA and claim.json' (link read as root:acct:ci/d90m41be-ci-openbao; jwtMount = jwt-<sha12(issuer)>), 'the flow returns at onSecretsFetched, the claim is Joining, capabilities are disposed and nothing is released', 'the door asks for no ssh key and builds no ssh session' (no sshPublicKey/sshAuthorizedKeys in the request; the fulfiller source names no SshSessionProvider, ssh2, runNodeSession or dumbpipe), 'a grant that cannot be written stops the flow once the receipt is known and fails the claim', 'a cluster whose OpenBao link has no ticket fails the claim without starting a contract', \"the door's cluster key is the provider's\" (d90m41be-ci and 8moqwclj-ci printed by kcpclient.ClusterKey); nodeclaim_kcp_test.ts 'a cluster link is read from the claim's workspace by name, and a missing one reads as null'"
+      - "mutations on a scratch copy, each reverted, each caught: grant written after the capability is authorized (2 fail), grant not written (2 fail), onSecretsFetched returning continue (1 fail)"
+      - "green: socialweb-computer-k8s deno task check exit 0; deno task test 85 passed 0 failed 1 ignored (live_market_node_test: SOCIALWEB_K8S_LIVE unset); run from a scratch org root (siblings symlinked, worktree rsynced) because the worktree's ../../ imports do not resolve; no Go changed, deploy/check.sh not run"
+      - "not proven: a real guest fetching the bundle and logging in (needs the provider's ClusterLink ticket, OpenBao JWT mount/role and KV entry); not deployed"
+      - "interface needs from the provider (ARCHITECTURE section 9 list): ClusterLink <clusterKey>-openbao with status.ticket before the claim exists; a published OpenBao CA path (NodeClaim spec field or ClusterLink status) or the guarantee of <dirname(tokenFile)>/openbao/tls/ca.crt; KV fields token, nodePassword, serverCA (exact server-ca.crt bytes), apiserverTicket (bare), advertiseAddress (IPv4), apiserverPort; nodemarket.ConfirmJoined accepting Joining"
   - id: M3-JWT
     milestone: M3
     title: Guest authenticates to the cluster OpenBao by JWT and fetches k3s token, node password, server CA and apiserver ticket
@@ -298,45 +341,131 @@ items:
       one role per NodeClaim bound to that guest's workload subject and audience, short token TTL,
       read-only on the claim's path, role deleted on release. Mount and discovery details decided
       by Claude, user may veto.
-    status: todo
-    evidence: []
+    status: doing
+    evidence:
+      - "provider half built 2026-10-07: ff3ca9c (vaultlayout names, openbao client auth/list/delete/LoginJWT, nodemarket secrets + SyncSecrets + revoke, clusterprovider.NodeVault), 9dff4fa (kcpclient.ReadClusterLink, nodes.go wiring, main.go Links + NodeSecrets); ARCHITECTURE section 7 'A market node's secrets live in its cluster's OpenBao, behind a JWT role'"
+      - "names: KV v2 mount socialweb-nodes, secret socialweb-nodes/data/<node> {token (pinned K10<sha256 serverCA>::server:<token>), nodePassword, serverCA, apiserverTicket, advertiseAddress, apiserverPort (int)}; policy node-<node> read socialweb-nodes/data/<node>; auth mount jwt-<sha256(issuer)[:12]> type jwt, oidc_discovery_url = bound_issuer = issuer; role <node>: role_type jwt, bound_subject, bound_audiences [audience], user_claim sub, token_ttl 5m, token_policies [node-<node>]"
+      - "decided by Claude, user may veto: secret held back (claim not) until ClusterLink <clusterKey>-apiserver is Listening with a ticket, filled by a later pass; policy failure fails Provision before the claim; status.grant.role never written by the provider (deterministic, logged); jwt mount kept when its last role goes (delete races a concurrent grant); revoke best-effort, 10 s bound, logged only, after the claim delete is accepted"
+      - "instrument (real OpenBao v2.6.2, bao server -dev, in-test ES256 OIDC issuer over http): internal/clusterprovider TestANodeLogsInWithItsWorkloadTokenAndReadsOnlyItsOwnSecret -- own token logs in and reads its path; other subject and other audience refused; 403 on another node's path; after Revoke role/policy/secret gone and login refused, other node's policy and the mount kept; second Revoke ok"
+      - "fakes: internal/nodemarket TestProvisionWritesTheNodePolicyAndSecretBeforeTheClaim (order policy, secret, claim; exact fields; link read from <workspace>/liveweb-apiserver), TestASecretWaitsForTheApiserverLinkWithoutHoldingTheClaimBack, TestAGrantOnTheClaimBecomesOneJWTRole, TestAReleaseRemovesTheNodesVaultState, TestAPolicyThatCannotBeWrittenRentsNothing, TestSecretsWithoutALinkReaderAreRefused; cmd TestTheConfirmPassWritesTheNodesSecretsAndTurnsAGrantIntoALogin; vaultlayout TestTheNodeJWTNamesAreTheOnesTheContractNames (mount hash checked against sha256sum); kcpclient TestReadClusterLinkCarriesTheTicketAndReportsAbsence"
+      - "watched to fail (scratch mutations, restored): no secrets at Provision -> 3 tests FAIL; no revoke at release -> nodemarket + cmd FAIL; no grant cache -> 2 FAIL; role without bound_subject -> real-bao test FAIL; policy wildcard socialweb-nodes/data/* -> vaultlayout + real-bao FAIL; confirm pass skips SyncSecrets -> cmd FAIL; no KV mount ensure -> real-bao FAIL; ticket dropped -> 2 FAIL"
+      - "green: deploy/check.sh --fast exit 0 (gofmt, build, apigen, vet, staticcheck, go test)"
+      - "not done: the door (claim.json, --secrets delivery, exchange for the audience), the guest units (M3-UNITS), a live login from a market guest; the provider has not been deployed"
+      - "interface for the door/guest: login POST /v1/auth/jwt-<sha256(issuer)[:12]>/login {role: <node>, jwt: <token with sub = grant.subject, aud = grant.audience>}; read GET /v1/socialweb-nodes/data/<node> with X-Vault-Token; the bidder issuer must serve <issuer>/.well-known/openid-configuration and its JWKS to the provider host"
   - id: M3-UNITS
     milestone: M3
     title: user_data installs systemd units for dumbpipe connect-tcp and the k3s agent; no ssh to guests
     decision: >
       Binaries come from our nodeimage when present, otherwise from the door hash-pinned (static
       musl amd64 and arm64, sha256 written into user_data). Invariant 13 changes from ssh stdin to
-      OpenBao JWT over the cluster link.
-    status: todo
-    evidence: []
+      OpenBao JWT over the cluster link. Measured for the market path: the iroh transport module
+      (setup-iroh.sh, /usr/local/bin/dumbpipe) and the k3s module (setup-k3s.sh, /usr/local/bin/k3s)
+      the door already composes install both binaries in the same runcmd before the units start, so
+      door-served binaries are not needed there. Decided by Claude, user may veto: the agent unit is
+      socialweb-k3s-agent (the k3s installer owns k3s/k3s-agent); socialweb-node-secrets is a oneshot
+      with Restart=on-failure (systemd refuses Restart=always on oneshot) and every unit has
+      StartLimitIntervalSec=0; node-secrets refuses a non-IPv4 advertiseAddress, a non-digit port and a
+      ticket outside [a-z0-9]+ because they reach a unit command line; the token is pinned
+      K10<sha256(serverCA)>::server:<token> as the ssh join pinned it.
+    status: doing
+    evidence:
+      - "0f3a771: cloud-init-plugin-k3s-join writes socialweb-openbao-link, socialweb-node-secrets, socialweb-apiserver-link, socialweb-k3s-agent (+ three 0700 scripts); the socialweb-k3s-join stdin script, the sshd GatewayPorts drop-in and its sshd reload are gone; the iroh transport module is untouched"
+      - "ARCHITECTURE invariant 13 rewritten (secrets cross only OpenBao JWT over the cluster link; no ssh to guests), invariant 29 rewritten, invariant 32 and the market row of section 9 corrected"
+      - "green: k3s_join_test.ts 'the node's user_data installs four units that join it through OpenBao and the apiserver link, in order' (composed with iroh, k3s, the join module and secrets: After chains, Restart, StartLimitIntervalSec=0, agent argv, setup-iroh.sh and setup-k3s.sh before the start), 'the node's user_data carries no secret value and no ssh join path', 'node-secrets exchanges the workload token for the claim's audience, logs in to OpenBao and writes the join files 0600' (real bash + jq, fake curl asserting aud, sub, --cacert, role, jwt and X-Vault-Token), 'node-secrets refuses a KV entry that would put an unsafe value on a unit's command line', 'node-secrets fails, and is restarted by systemd, when the KV entry lacks a field', 'the OpenBao link dials the delivered ticket and listens where node-secrets looks', 'the apiserver link puts the advertise address on lo and dials the apiserver ticket there'; node_market_test.ts 'the user_data the door asks for renders without any secret value'"
+      - "mutations caught: agent unit not ordered after the apiserver link (1 fail); token not pinned to the CA (1 fail)"
+      - "not proven: the units on a real guest (systemd ordering, dumbpipe connect-tcp against a provider listen-tcp, k3s agent Ready); needs M3-CLUSTERLINK and M3-JWT; not deployed"
   - id: M3-NODE-LOSS
     milestone: M3
     title: A Node NotReady for 90s is released and replaced; door or provider restarts never reap
-    decision: User chose 90s.
-    status: todo
-    evidence: []
+    decision: >
+      User chose 90s. Door half decided by Claude, user may veto: a restarted door adopts Joining and
+      Running claims with no write and no release; it marks Bidding and Provisioning claims Failed and
+      does not release them, because their guest's user_data names the old door's per-process secrets
+      server, so the guest can never fetch, and awaitComputeNetwork would only find an address the door
+      no longer needs; the release comes with the claim's deletion from the receipt it carries. stop()
+      releases nothing and writes nothing.
+    status: doing
+    evidence:
+      - "deployed 2026-10-07 ~19:44Z with main 6af8994 (adoption, shutdown no longer reaps, per-node scale-in 932b139): 19:45:36Z passes None nothing running and no node, ClusterLinks re-recorded after restart; a restart with live market nodes awaits a bidder"
+      - "provider half built 2026-10-07 in 9dff4fa: tenantNodes.confirmHeld reads each held market node's tenant Node; Ready False/Unknown with now - lastTransitionTime >= NodeLossGrace (90s) -> teardownHeld (claim deleted, vault state revoked, door releases with vm.delete, tenant Node deleted), reported in confirmOutcome.lost; the scale pass in the same tick claims a replacement if demand remains. ARCHITECTURE section 10 'A market node NotReady for 90 s is released'"
+      - "decided by Claude, user may veto: clock is the Node's lastTransitionTime (survives provider restarts), zero transition time falls back to first-seen in memory; no Node object or no Ready condition is not covered; held nodes only"
+      - "instrument: cmd/socialweb-clusterprovider/nodeloss_test.go TestAMarketNodeNotReadyFor89sIsKeptAndAt90sIsReleased (False and Unknown: 89s keeps claim + Node, 90s deletes both, revokes, reports lost), TestANodeTheClusterNeverReportedIsNotTouchedByTheLossRule (1h on, no Node, claim kept), TestAReadyNodeIsNotLostHoweverOldItsTransition"
+      - "watched to fail (scratch mutations, restored): grace '>' for '>=' -> 90s case FAIL (both subtests); ignore lastTransitionTime -> FAIL; unreported node judged -> never-reported test FAIL"
+      - "superseded by the provider restart half below: a PROVIDER restart re-holding market nodes it did not provision in this process (was: neither confirmed nor lost)"
+      - "door half, 0f3a771 + b489218: node_market_test.ts 'a door restarted with live claims adopts them and submits no vm.delete' (Joining, Running and a legacy Running claim: no records, no vm.delete, no status write), 'a door restarted mid-flight marks the orphaned claim Failed, releases nothing, and releases it once deleted' (exactly one vm.delete naming the claim's receipt, to its submitEventRef, then Released, finalizer gone, not released twice), 'a deleted Joining claim is released from the receipt on the claim, not the door's memory', 'a claim deleted while the door waits for the guest's fetch is released from its claim at once', 'stopping the door leaves in-flight claims for the next door and releases nothing', 'an unreadable claim at deletion defers the release to the next pass, which reads it again'"
+      - "mutations caught: a restart reaping live claims (2 fail); a release at the end of a successful flow (3 fail)"
+      - "provider restart half, 9ca4c04: decided by Claude, user may veto. Shutdown no longer releases market nodes (nodeHosts.reap skips the market substrate; it deleted every claim, so every deploy made the door destroy every machine). A restarted provider ADOPTS every live NodeClaim of a cluster (spec.cluster = key, <cluster>-node<N> name, phase not Failed/Released, no deletionTimestamp): nodemarket.Host.Adopt marks it provisioned with no claim, policy or secret write (secret marked written only for Joining/Running; earlier phases rewrite it on SyncSecrets; JWT role ensured once from status.grant), retained at its ordinal, live, counted in started, snapshot rewritten. Runs at startup right after the empty snapshot (before the cluster's CCM starts), on every pass from the claim list reconcile already reads (no extra kcp read), and once before an OFF cluster's reapCluster. ARCHITECTURE section 9 'A restarted provider never reaps; it adopts', sections 10 and 11 updated"
+      - "tests watched to fail against the stub (adopt a no-op) then pass: cmd/socialweb-clusterprovider TestARestartedProviderAdoptsItsJoiningAndRunningNodesOnceEach (held [] -> both; counted 2; no claim/policy/secret write; snapshot names both), TestAnAdoptedNodeNotReadyFor90sIsReleased, TestAnAdoptedIdleNodeIsScaledIn (decided None -> Release node3), TestTeardownToZeroReleasesAdoptedNodes (deletes 1 -> 2), TestAProvisionAfterARestartSkipsAdoptedNames (node3 never claimed -> claimed, adopted claims unchanged), TestAProviderShutdownLeavesItsMarketNodesForTheNextOne (2 claims deleted + 2 revokes -> none); TestAnEndedClaimIsNotAdopted passed first (guard)"
+      - "mutations (in place, restored with git checkout): reconcile not adopting -> TestTheFirstScalePassAfterARestartAdoptsBeforeItCounts FAIL; reapOne without adoptOnce -> TestAClusterSwitchedOffAfterARestartReleasesItsAdoptedNodes FAIL; nodemarket.Adoptable always true -> TestAnEndedClaimIsNotAdopted + TestAnEndedOrDeletingClaimIsNotAdopted FAIL; secret never marked written -> TestARestartedProvider... + TestAnAdoptedJoinedHostRewritesNoSecretAndLogsInFromTheGrant FAIL; secret always marked written -> TestAnAdoptedClaimTheGuestHasNotFetchedYetGetsItsSecretWritten FAIL; adopted not counted in started -> TestAProvisionAfterARestartSkipsAdoptedNames FAIL"
+      - "green: deploy/check.sh --fast exit 0 (gofmt, build, apigen, vet, staticcheck, go test)"
+      - "with the door half (0f3a771 + b489218, merged), prod's door and provider can now both restart without reaping a live market node -- in code and tests; not deployed, not yet read on prod"
+      - "not done: deploy; a prod provider restart with market nodes up re-registering within the 90s loss grace after the group comes back; a live NotReady release against a real bidder"
   - id: M4-SCALE-IN
     milestone: M4
     title: Per-node scale-in
     decision: >
       A node holding nothing beyond baseline for the 2m hold is cordoned, drained and released.
-      Supersedes plan 0002 section 4.4 (all-or-nothing).
-    status: todo
-    evidence: []
+      Supersedes plan 0002 section 4.4 (all-or-nothing). Decided by Claude, user may veto: "nothing
+      beyond baseline" means no live pod bound to the node other than DaemonSet pods, mirror pods,
+      k3s add-on pods and pods of measured-baseline workloads; one node per hold (a release restarts
+      the hold of the nodes left), emptiest (fewest baseline pods) then newest; never below the
+      target while intent exists; no release while a Pending pod with no node is younger than the
+      hold, and never of a node a Pending pod is nominated or hostname-pinned to; per-node idle
+      clocks in memory (a provider restart restarts the hold); only nodes this provider process
+      holds; cordon, re-observe, uncordon and keep a node that took work or whose eviction is
+      refused, evict through the Eviction API, then the existing teardownHeld. A DaemonSet is never
+      intent or demand (its desired count follows the nodes).
+    status: doing
+    evidence:
+      - "deployed 2026-10-07 ~19:44Z (main 932b139 + 6af8994); idle cluster unchanged at 0 nodes; a live release awaits a bidder"
+      - "fb4ca07 internal/scale: scale.Loads (per-node Busy/Evictable/Incoming, Unplaced), Decide's Release branch (State.NodeIdleSince, Decision.Release, scale.Releaser), DaemonSets and DaemonSet/mirror pods out of Intent and Demand"
+      - "fc16e9b provider: NodeObserver computes Placement; scaledriver performs Release through scale.Releaser (ErrNoReleaser otherwise); cmd/socialweb-clusterprovider/scalein.go tenantNodes.Release (cordon, re-observe, drain, teardownHeld) and nodeHosts.observeHeld (marks held nodes, adds in-flight)"
+      - "ARCHITECTURE section 10 'Scale-in is per node' and 'A DaemonSet is never intent'; plan 0002 section 4.4 marked superseded"
+      - "tests: internal/scale TestThreeIdleNodesWithDemandForOneReleaseTwoOverTwoHoldsAndKeepOne (releases c-node3 at 2m, c-node2 at 4m, c-node1 kept), TestANodeWithARunningNonBaselinePodIsNeverReleased, TestANodeThatBecameIdleLessThanTheHoldAgoIsKept, TestTheHoldIsExactForOneIdleNode, TestScaleInNeverGoesBelowTheTarget, TestAPodAboutToBeScheduledHoldsItsNode, TestAnUnplacedPendingPodHoldsEveryReleaseUntilItIsOlderThanTheHold, TestANodeThisProviderDoesNotHoldIsNeverReleased, TestLoadsCountsOnlyWhatHoldsANode, TestAReleaseRestartsTheHoldOfTheNodesLeft, TestADaemonSetIsNeverIntentAtZeroNodesOrOnceUp, TestADaemonSetOnlyClusterScalesToZero; internal/scaledriver TestAReleaseDecisionReleasesThatOneNodeAfterTheHold, TestAFailedReleaseLeavesTheStateWhereItWas, TestAnActuatorThatCannotReleaseOneNodeIsAnError; internal/clusterprovider TestObservePlacesEachPodOnItsNode; cmd TestIdleMarketNodesAreCordonedDrainedAndReleasedOnePerHold (3 held market nodes, real driver + observer over a fake tenant: DaemonSet-only node released at 2m without evicting its pod, node with a k3s add-on pod at 4m with that pod evicted, claims deleted, vault revoked, Nodes deleted, working node kept to 20m), TestANodeThatTakesWorkBeforeTheCordonIsUncordonedAndKept, TestARefusedEvictionKeepsTheNode"
+      - "superseded tests rewritten: TestADaemonSetIsInertAtZeroNodesAndHoldsOnceUp (asserted a DaemonSet with a node is intent) -> TestADaemonSetIsNeverIntentAtZeroNodesOrOnceUp; DaemonSet rows of TestTheNarrowTriggerCannotScaleToZero and TestDemandAgreesWithIntentOnEveryIntentFixture; TestPodsOfACountedJobStatefulSetOrDaemonSetAreNotCountedTwice now wants 3; TestTheObservationRangesOverExactlyThePredicatesKinds admits Placement and UnreconciledCustomResources"
+      - "watched to fail (scratch mutations, restored): decision with no per-node hold -> 4 FAIL; busy ignored -> 2 FAIL; incoming ignored -> 1; no hold restart after a release -> 3; held ignored -> 1; emptiest ignored -> 1; oldest first -> 2; unplaced pod ignored -> 1; DaemonSet pods as intent -> 2; DaemonSet desiredNumberScheduled as intent (the old rule) -> 3; the old None branch for count > target -> 7; release down to the target -> 3. Provider: no cordon -> 2; no re-observe -> 1; no uncordon -> 2; no eviction -> 2; DaemonSet pods evicted -> 1; refused eviction ignored -> 1; release without teardownHeld -> 1; held never marked -> 3"
+      - "green: deploy/check.sh --fast exit 0 (gofmt, build, apigen, vet, staticcheck, go test)"
+      - "not done: deployed; a live market cluster releasing a node one hold after its work moved off (ACC-ZERO)"
+      - "'only nodes this provider process holds' now includes market nodes adopted after a provider restart (M3-NODE-LOSS provider restart half, 9ca4c04): TestAnAdoptedIdleNodeIsScaledIn"
   - id: M4-ESO-BESIDE
     milestone: M4
     title: ESO runs beside the control plane per cluster and is removed from the tenant
     decision: >
       A process in our container against the tenant apiserver, webhook by loopback URL, store
       reaching the cluster OpenBao on loopback; works at zero nodes and closes the ESO-3 market gap.
-    status: todo
-    evidence: []
+    status: done
+    evidence:
+      - "merged to main 933a7c9; deployed 2026-10-07 ~19:57Z: external-secrets controller (--enable-leader-election=false, live 127.0.0.1:20012) and webhook (:20010, healthz 127.0.0.1:20011) run in the container; tenant has no ESO Deployment; ClusterSecretStore openbao Valid/ReadWrite/Ready True; ExternalSecret users/openbao-demo SecretSynced Ready True at ZERO nodes on the market substrate (ESO-3 closed on prod)"
+      - "defect seen in that deploy: at 19:57:39Z one pass read intent and wrote 3 claims; the migration deleted the old Deployments with BACKGROUND propagation, so their ReplicaSets' Pending pods outlived them, named no baseline workload, and read as demand 3. The claims failed and were released within seconds with no RFP published (no bidder online). Fixed: Retire deletes Foreground and waits until each object is gone; TestRetiringWaitsUntilTheOldWorkloadAndItsPodsAreGone and TestRetiringRefusesWhenTheOldWorkloadNeverGoes watched to fail (build) then pass"
+      - "commits 411678e (internal/eso beside install, migration split, webhook TLS), afe36e8 (process-group members, leases, grant), 209d724 (cmd wiring, add-on pass), fa35e32 (image pins, install.sh retired); docs commit follows"
+      - "two members external-secrets-webhook then external-secrets after the CCM in procgroup.StackOrder; leases external-secrets-health, external-secrets-webhook, external-secrets-webhook-health; metrics off, leader election off; identity system:socialweb:external-secrets bound to upstream ClusterRole external-secrets-controller; webhook by url https://127.0.0.1:<lease> under a minted CA, failurePolicy Ignore"
+      - "image: /usr/bin/external-secrets from ghcr.io/external-secrets/external-secrets:v2.11.0@sha256:66fb710878cbf3eba4a927e35c5d75e29a202c9bab238aad64bfb23b786b962b to /usr/local/bin/external-secrets (sha256 9ea572f5e1d6..., COPY probe built and compared); bundle /opt/socialweb/eso/external-secrets.yaml sha256 c427124642886d240af8f28d294714a168d920ef8e5d55db14600e00ed0cfb80 (esobundle stage built, checksum passed); versions.json pins all three and TestTheImageCarriesTheExternalSecretsThisManifestPins holds the Dockerfile to them"
+      - "live 2026-10-07, SOCIALWEB_LOCAL=1: TestAZeroNodeMarketClusterSyncsAnExternalSecretFromItsOwnVaultWithNoESOPodInTheTenant PASS 25.4 s; Ready in 22.68 s; zero nodes; webhook denied a data-less ExternalSecret on its loopback URL; store Ready=True Valid on https://127.0.0.1:<vault>; users/openbao-demo synced 500 ms after apply; no ESO pod or Deployment in the tenant"
+      - "watched to fail first: 7 internal/eso tests against a stub; the live test before the grant change (SecretSyncedError, VAP socialweb-mint-identity denied the beside identity); a CRD-schema-refused probe replaced by a webhook-only one"
+      - "unit: TestTheTenantKeepsOnlyTheCRDsAndTheRolesAndEverythingThatRanThereRetires, TestTheMigrationDeletesEveryRetiredObjectBeforeAnythingIsApplied, TestAWebhookRegistrationStillAddressedByServiceIsReplacedNotMerged, TestTheWebhooksAreRegisteredByLoopbackURLUnderTheMintedCA, TestTheExternalSecretsControllerBindsOnlyItsLeasedLoopbackHealthPortAndElectsNoLeader, TestTheExternalSecretsWebhookServesItsLeasedPortWithTheMintedCertDir, TestAClusterLeasedBeforeThePairExistedRestartsWithoutItUntilItsNextSpawnLeasesIt, TestTheBaselineIsReMeasuredEmptyOnceTheOperatorLeavesTheTenant, TestAJoinWithoutTheExternalSecretsBinaryOrBundleIsRefused; deploy/check.sh --fast green"
+      - "not deployed: prod's next deploy migrates its one cluster (ARCHITECTURE section 15)"
   - id: M4-PENDING-CRS
     milestone: M4
     title: Intent counts workloads beyond baseline plus our operators' CRs not yet reconciled
-    decision: User chose workloads plus pending CRs; leftover namespaces, RBAC and ConfigMaps never hold nodes.
-    status: todo
-    evidence: []
+    decision: >
+      User chose workloads plus pending CRs; leftover namespaces, RBAC and ConfigMaps never hold nodes.
+      Decided by Claude, user may veto: a CR counts as intent only if its operator runs IN the tenant
+      cluster and the CR is not reconciled, because an operator beside the control plane (ESO after
+      M4-ESO-BESIDE) reconciles at zero nodes. Registry scale.Operators of {Group, Kind,
+      ReadyCondition, InCluster}; not reconciled = ReadyCondition not True, or that condition's or
+      status.observedGeneration older than metadata.generation, or deleting behind a finalizer; each
+      such CR is one unit of demand. scale.OurOperators ships empty: no operator of ours runs in a
+      tenant cluster once ESO moves. NodeObserver refuses to observe when the registry names an
+      in-cluster kind and no lister is supplied.
+    status: done
+    evidence:
+      - "fb4ca07 internal/scale/operators.go (Operators, OperatorKind.Reconciled, Unreconciled, CustomResourceOf, OurOperators), Observation.UnreconciledCustomResources in Intent and Demand and carried through Narrow"
+      - "fc16e9b internal/clusterprovider NodeObserver.Operators + CustomResources lister and the no-lister refusal; main.go wires scale.OurOperators"
+      - "ARCHITECTURE section 10 'A custom resource is intent only while an operator of ours that runs IN the tenant cluster has not reconciled it'"
+      - "tests: internal/scale TestACustomResourceCountsOnlyWhileItsInClusterOperatorHasNotReconciledIt (no status, Ready False, stale condition generation, lagging status.observedGeneration and finalizer-held deletion count; Ready True, deleted without finalizer, beside-the-control-plane kind and unregistered kind do not), TestAnUnreconciledCustomResourceAsksForOneNodeAndAReconciledOneForNone, TestNoOperatorOfOursRunsInTheTenantClusterToday, TestCustomResourceOfReadsTheFieldsTheRuleNeeds, the CR row of TestDemandAgreesWithIntentOnEveryIntentFixture; internal/clusterprovider TestAnInClusterOperatorKindNeedsALister"
+      - "watched to fail (scratch mutations, restored): InCluster flag ignored -> 1 FAIL; stale generation ignored -> 1; CRs not intent -> 2"
+      - "green: deploy/check.sh --fast exit 0"
+      - "registry empty by design; correct only once M4-ESO-BESIDE lands -- until then ESO in the tenant is baseline and its CRs are not intent, which is the behaviour before this item"
   - id: M5-DNS
     milestone: M5
     title: Per-node CoreDNS on a link-local IP set as kubelet clusterDNS
@@ -349,8 +478,16 @@ items:
     decision: >
       QUIC datagrams over iroh, a tun device, each peer Node's podCIDR routed to its iroh endpoint id;
       k3s --flannel-backend=none with bridge CNI. Lives in this repo (user chose).
-    status: todo
-    evidence: []
+    status: done
+    evidence:
+      - "commits c67b7b6 (crate, unit tests, netns proof), ee9285e (kube mode against k3s, node-reader RBAC), 11c9a29 (static musl builds, check.sh hook), a56b60d (15 s idle timeout, relist per watch); ARCHITECTURE section 9 'Pods reach pods on other market nodes through socialweb-meshd'"
+      - "scope: the daemon only. Built, NOT deployed, NOT installed by any user_data. The integration (k3s --flannel-backend=none, bridge CNI conflist mtu 1160 on spec.podCIDR, cluster-cidr-only SNAT, node-reader RBAC in every tenant, user_data module installing the sha256-pinned binary, systemd unit) is listed in that section and is not done; ACC-MESH stays todo"
+      - "decisions (decided by Claude, user may veto): hand-rolled kube client over iroh's reqwest/rustls/ring instead of kube-rs; tun MTU 1160 = 1200-byte QUIC path - 38 bytes noq overhead - 2; tun address = own podCIDR network address /32 with routes src it; one packet per datagram, no header; lazy dial, 512-packet per-peer queue; connection idle timeout 15 s; blake3 pure-Rust backend for the aarch64 musl build"
+      - "found: k3s v1.36.4+k3s1 node authorizer refuses list nodes to system:node:<name> ('cannot read all nodes, only its own Node object'); rust/socialweb-meshd/deploy/node-reader-rbac.yaml (group system:nodes get/list/watch nodes) is required; patching another Node is 403 and meshd exits 4"
+      - "tests watched to fail then pass: 18 of 30 unit tests failed against mutated route computation, packet dispatch and did:key encoding (did:key spec vector did:key:z6MkiTBz1ymuepAQ4HEHYSF1H8quG5GLVVQR3djdX3mDooWp and the dumbpipe IROH_SECRET vector shared with internal/didkey), then 41 of 41 pass; two_meshd_in_two_netns_carry_ping_between_two_pod_cidrs failed with route install disabled and with emptied datagrams, then passed; with_a_kubelet_identity_meshd_annotates_its_own_node_and_follows_the_node_list failed on the 403 list before the RBAC existed, then passed"
+      - "measured: max_datagram_size 1162 on a 1228-byte underlay, 1414 on 1500; 1132-byte DF ping crosses, 1400-byte DF refused by the node, 1400-byte fragmentable ping crosses; one-way recovery after a peer SIGKILL+restart 30.8 s at iroh's 30 s idle, 15.4 s at 15 s"
+      - "binaries at a56b60d, rustc 1.95.0: socialweb-meshd-x86_64 9358064 bytes sha256 7c563cd6cd10e4113aab6a8dc3fc45e041728376499e6a215b1d51f0dfa2ad64; socialweb-meshd-aarch64 7875400 bytes sha256 47df130296100de6b08e9008421a6351fa5848264ebb71ec586245daf7f1212a; identical from a second target dir on hat-8; both static binaries pass the netns and k3s proofs (aarch64 under qemu binfmt)"
+      - "green: deploy/check.sh --fast exit 0 (cargo fmt, cargo test); SOCIALWEB_MESHD_NETNS=1 SOCIALWEB_MESHD_K3S=1 cargo test on hat-8 with sudo -n"
   - id: M6-RUNNER1
     milestone: M6
     title: GitLab runner 1 run_untagged false

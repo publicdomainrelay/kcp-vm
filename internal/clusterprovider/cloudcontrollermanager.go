@@ -52,71 +52,75 @@ var ErrCloudControllerManagerKubeconfigUnwritable = errors.New(
 		"start for a reason that is not in the controller's own log")
 
 func WriteCloudControllerManagerKubeconfig(path string, cfg *rest.Config) error {
+	return writeScopedKubeconfig(path, cfg, cloudControllerManagerKubeconfigContext,
+		ErrCloudControllerManagerKubeconfigUnwritable)
+}
+
+func writeScopedKubeconfig(path string, cfg *rest.Config, contextName string, unwritable error) error {
 	if cfg == nil {
-		return fmt.Errorf("%w: no credential was rendered for %s", ErrCloudControllerManagerKubeconfigUnwritable, path)
+		return fmt.Errorf("%w: no credential was rendered for %s", unwritable, path)
 	}
 	if path == "" {
-		return fmt.Errorf("%w: the target path is empty", ErrCloudControllerManagerKubeconfigUnwritable)
+		return fmt.Errorf("%w: the target path is empty", unwritable)
 	}
 	body, err := clientcmd.Write(clientcmdapi.Config{
-		Clusters: map[string]*clientcmdapi.Cluster{cloudControllerManagerKubeconfigContext: {
+		Clusters: map[string]*clientcmdapi.Cluster{contextName: {
 			Server:                   cfg.Host,
 			CertificateAuthorityData: cfg.CAData,
 			InsecureSkipTLSVerify:    cfg.Insecure,
 		}},
-		AuthInfos: map[string]*clientcmdapi.AuthInfo{cloudControllerManagerKubeconfigContext: {
+		AuthInfos: map[string]*clientcmdapi.AuthInfo{contextName: {
 			ClientCertificateData: cfg.CertData,
 			ClientKeyData:         cfg.KeyData,
 			Token:                 cfg.BearerToken,
 		}},
-		Contexts: map[string]*clientcmdapi.Context{cloudControllerManagerKubeconfigContext: {
-			Cluster:  cloudControllerManagerKubeconfigContext,
-			AuthInfo: cloudControllerManagerKubeconfigContext,
+		Contexts: map[string]*clientcmdapi.Context{contextName: {
+			Cluster:  contextName,
+			AuthInfo: contextName,
 		}},
-		CurrentContext: cloudControllerManagerKubeconfigContext,
+		CurrentContext: contextName,
 	})
 	if err != nil {
-		return fmt.Errorf("%w: rendering the credential for %s: %v",
-			ErrCloudControllerManagerKubeconfigUnwritable, path, err)
+		return fmt.Errorf("%w: rendering the credential for %s: %v", unwritable, path, err)
 	}
 
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("%w: the directory %s holding %s: %v",
-			ErrCloudControllerManagerKubeconfigUnwritable, dir, path, err)
+			unwritable, dir, path, err)
 	}
 	if info, err := os.Stat(path); err == nil {
 		current, err := os.ReadFile(path)
 		if err != nil {
-			return fmt.Errorf("%w: reading %s: %v", ErrCloudControllerManagerKubeconfigUnwritable, path, err)
+			return fmt.Errorf("%w: reading %s: %v", unwritable, path, err)
 		}
 		if string(current) == string(body) && info.Mode().Perm() == cloudControllerManagerKubeconfigMode {
 			return nil
 		}
 	} else if !errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("%w: stat %s: %v", ErrCloudControllerManagerKubeconfigUnwritable, path, err)
+		return fmt.Errorf("%w: stat %s: %v", unwritable, path, err)
 	}
 
-	tmp, err := os.CreateTemp(dir, clusterstack.CloudControllerManagerKubeconfigName+".")
+	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".")
 	if err != nil {
 		return fmt.Errorf("%w: a temporary file beside %s: %v",
-			ErrCloudControllerManagerKubeconfigUnwritable, path, err)
+			unwritable, path, err)
 	}
 	defer func() { _ = os.Remove(tmp.Name()) }()
 	if err := tmp.Chmod(cloudControllerManagerKubeconfigMode); err != nil {
 		_ = tmp.Close()
-		return fmt.Errorf("%w: the mode of %s: %v", ErrCloudControllerManagerKubeconfigUnwritable, tmp.Name(), err)
+		return fmt.Errorf("%w: the mode of %s: %v", unwritable, tmp.Name(), err)
 	}
 	if _, err := tmp.Write(body); err != nil {
 		_ = tmp.Close()
-		return fmt.Errorf("%w: writing %s: %v", ErrCloudControllerManagerKubeconfigUnwritable, tmp.Name(), err)
+		return fmt.Errorf("%w: writing %s: %v", unwritable, tmp.Name(), err)
 	}
 	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("%w: closing %s: %v", ErrCloudControllerManagerKubeconfigUnwritable, tmp.Name(), err)
+		return fmt.Errorf("%w: closing %s: %v", unwritable, tmp.Name(), err)
 	}
 	if err := os.Rename(tmp.Name(), path); err != nil {
 		return fmt.Errorf("%w: renaming %s over %s: %v",
-			ErrCloudControllerManagerKubeconfigUnwritable, tmp.Name(), path, err)
+			unwritable, tmp.Name(), path, err)
 	}
 	return nil
 }

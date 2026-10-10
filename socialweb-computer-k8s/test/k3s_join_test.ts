@@ -1,120 +1,96 @@
-import { assertEquals, assertStringIncludes } from "@std/assert";
-import { createK3sJoinModule, K3S_JOIN_SSHD_DROPIN, renderK3sJoinScript } from "@publicdomainrelay/cloud-init-plugin-k3s-join";
+import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { parse as parseYaml } from "@std/yaml";
+import { buildUserData } from "@publicdomainrelay/cloud-init-common";
 import {
+  createK3sJoinModule,
   DEFAULT_DNS_GATEWAY,
+  NODE_SCRIPTS,
+  NODE_UNIT_ORDER,
+  NODE_UNITS,
+  renderApiserverLinkScript,
+  renderNodeSecretsScript,
+  renderOpenBaoLinkScript,
   renderResolver,
   RESOLV_CONF_PATH,
+  SECRETS_FETCH_UNIT,
 } from "@publicdomainrelay/cloud-init-plugin-k3s-join";
-import {
-  encodeNodeJoinDocument,
-  K3S_JOIN_GO,
-  K3S_JOIN_PATH,
-  K3S_JOIN_READY_MARKER,
-  pinnedJoinToken,
-} from "@publicdomainrelay/socialweb-computer-k8s-common";
+import { OPENBAO_LINK_LOCAL_ADDR } from "@publicdomainrelay/socialweb-computer-k8s-common";
 
-const DOC = {
-  nodeName: "ci-node1",
-  serverUrl: "https://100.127.255.254:23456",
-  advertiseAddress: "100.127.255.254",
-  token: pinnedJoinToken("ab".repeat(32), "k10secret"),
-  nodePassword: "k10password",
-};
+const CA = "-----BEGIN CERTIFICATE-----\nSERVERCA\n-----END CERTIFICATE-----\n";
+const OPENBAO_CA = "-----BEGIN CERTIFICATE-----\nOPENBAOCA\n-----END CERTIFICATE-----\n";
 
-async function shims(dir: string) {
-  await Deno.mkdir(`${dir}/bin`, { recursive: true });
-  await Deno.writeTextFile(`${dir}/bin/ip`, `#!/bin/bash\necho "$*" >> ${dir}/ip.log\n`, { mode: 0o755 });
-  await Deno.writeTextFile(`${dir}/bin/k3s`, `#!/bin/bash\necho "K3S $*"\n`, { mode: 0o755 });
-  await Deno.writeTextFile(`${dir}/stamp`, "");
-  const script = renderK3sJoinScript({
-    setupWaitSec: 2,
-    setupStamp: `${dir}/stamp`,
-    tokenPath: `${dir}/kcp/token`,
-    nodePasswordPath: `${dir}/node/password`,
-    k3sDataDir: `${dir}/data`,
+interface CloudConfig {
+  write_files: { path: string; permissions?: string; content: string }[];
+  runcmd: unknown[];
+}
+
+function nodeUserData(): CloudConfig {
+  const text = buildUserData({
+    ctx: {
+      vmName: "ci-node1",
+      secretsUrl: "https://secrets.test",
+      secretsRoute: "/xrpc/secrets",
+      secretsAud: "api://ATProto?actx=did:plc:owner",
+    },
+    modules: ["iroh", "k3s", createK3sJoinModule(), "secrets"],
   });
-  await Deno.writeTextFile(`${dir}/join.sh`, script, { mode: 0o755 });
+  return parseYaml(text.replace(/^#cloud-config\n/, "")) as CloudConfig;
 }
 
-async function run(dir: string, stdin: string[]) {
-  const child = new Deno.Command("bash", {
-    args: [`${dir}/join.sh`],
-    env: { PATH: `${dir}/bin:/usr/bin:/bin` },
-    stdin: "piped",
-    stdout: "piped",
-    stderr: "piped",
-  }).spawn();
-  const writer = child.stdin.getWriter();
-  for (const part of stdin) await writer.write(new TextEncoder().encode(part));
-  await writer.close();
-  const out = await child.output();
-  return { code: out.code, stdout: new TextDecoder().decode(out.stdout), stderr: new TextDecoder().decode(out.stderr) };
+function unitSection(unit: string, key: string): string[] {
+  return unit.split("\n").filter((l) => l.startsWith(`${key}=`)).map((l) => l.slice(key.length + 1));
 }
 
-Deno.test("the join script takes its secrets on stdin, waits for the go-ahead, then execs the agent", async () => {
-  const dir = await Deno.makeTempDir();
-  try {
-    await shims(dir);
-    const out = await run(dir, [encodeNodeJoinDocument(DOC), `${K3S_JOIN_GO}\n`]);
-    assertEquals(out.code, 0, out.stderr);
-    const lines = out.stdout.trim().split("\n");
-    assertEquals(lines[0], K3S_JOIN_READY_MARKER);
-    assertEquals(
-      lines[1],
-      `K3S agent --server ${DOC.serverUrl} --token-file ${dir}/kcp/token --node-name ci-node1 --data-dir ${dir}/data`,
-    );
-    assertEquals(await Deno.readTextFile(`${dir}/kcp/token`), DOC.token);
-    assertEquals(await Deno.readTextFile(`${dir}/node/password`), DOC.nodePassword);
-    assertEquals((await Deno.stat(`${dir}/kcp/token`)).mode! & 0o777, 0o600);
-    assertStringIncludes(await Deno.readTextFile(`${dir}/ip.log`), `addr add ${DOC.advertiseAddress}/32 dev lo`);
-    assertEquals(out.stdout.includes("k10secret") || out.stderr.includes("k10secret"), false, "the token is never echoed");
-  } finally {
-    await Deno.remove(dir, { recursive: true });
-  }
+function runcmdIndex(config: CloudConfig, needle: string): number {
+  return config.runcmd.findIndex((c) => typeof c === "string" && c.includes(needle));
+}
+
+Deno.test("the node's user_data installs four units that join it through OpenBao and the apiserver link, in order", () => {
+  const config = nodeUserData();
+  const files = Object.fromEntries(config.write_files.map((f) => [f.path, f.content]));
+  const units = NODE_UNIT_ORDER.map((name) => files[`/etc/systemd/system/${name}`]);
+  for (const [i, unit] of units.entries()) assert(unit, `no unit file for ${NODE_UNIT_ORDER[i]}`);
+  const [openbao, secrets, apiserver, agent] = units;
+
+  assertEquals(unitSection(openbao, "After")[0].split(" ").includes(SECRETS_FETCH_UNIT), true);
+  assertEquals(unitSection(openbao, "ExecStart"), [NODE_SCRIPTS.openbaoLink]);
+  const secretsAfter = unitSection(secrets, "After")[0].split(" ");
+  assert(secretsAfter.includes(SECRETS_FETCH_UNIT) && secretsAfter.includes(NODE_UNITS.openbaoLink), secretsAfter.join(" "));
+  assertEquals(unitSection(secrets, "Type"), ["oneshot"]);
+  assert(unitSection(apiserver, "After")[0].split(" ").includes(NODE_UNITS.nodeSecrets));
+  const agentAfter = unitSection(agent, "After")[0].split(" ");
+  assert(agentAfter.includes(NODE_UNITS.apiserverLink) && agentAfter.includes(NODE_UNITS.nodeSecrets), agentAfter.join(" "));
+
+  for (const unit of [openbao, apiserver, agent]) assertEquals(unitSection(unit, "Restart"), ["always"]);
+  assertEquals(unitSection(secrets, "Restart"), ["on-failure"]);
+  for (const unit of units) assertEquals(unitSection(unit, "StartLimitIntervalSec"), ["0"]);
+
+  const agentExec = unitSection(agent, "ExecStart")[0];
+  assertStringIncludes(agentExec, "/usr/local/bin/k3s agent --server https://${ADVERTISE_ADDRESS}:${APISERVER_PORT}");
+  assertStringIncludes(agentExec, "--token-file /etc/socialweb/node/token");
+  assertStringIncludes(agentExec, "--node-name ${NODE_NAME}");
+  assertStringIncludes(agentExec, "--data-dir /var/lib/rancher/k3s");
+
+  const start = runcmdIndex(config, `systemctl start --no-block ${NODE_UNIT_ORDER.join(" ")}`);
+  assert(start >= 0, `no runcmd starts the node units: ${JSON.stringify(config.runcmd)}`);
+  assert(runcmdIndex(config, "/usr/local/bin/setup-iroh.sh") >= 0, "the iroh transport module installs dumbpipe");
+  assert(runcmdIndex(config, "/usr/local/bin/setup-k3s.sh") >= 0, "the k3s module installs k3s");
+  assert(runcmdIndex(config, "/usr/local/bin/setup-iroh.sh") < start, "dumbpipe is installed before the units start");
+  assert(runcmdIndex(config, "/usr/local/bin/setup-k3s.sh") < start, "k3s is installed before the units start");
 });
 
-Deno.test("the join script never starts the agent without the go-ahead", async () => {
-  const dir = await Deno.makeTempDir();
-  try {
-    await shims(dir);
-    const out = await run(dir, [encodeNodeJoinDocument(DOC)]);
-    assertEquals(out.code, 65);
-    assertEquals(out.stdout.includes("K3S agent"), false);
-  } finally {
-    await Deno.remove(dir, { recursive: true });
+Deno.test("the node's user_data carries no secret value and no ssh join path", () => {
+  const config = nodeUserData();
+  const text = JSON.stringify(config);
+  for (const forbidden of ["BEGIN CERTIFICATE", "GatewayPorts", "socialweb-k3s-join", "client_token\":\"", "nodePassword\":\""]) {
+    assertEquals(text.includes(forbidden), false, `user_data carries ${forbidden}`);
   }
-});
-
-Deno.test("the join script refuses an incomplete or unknown document", async () => {
-  const dir = await Deno.makeTempDir();
-  try {
-    await shims(dir);
-    const partial = encodeNodeJoinDocument(DOC).split("\n").filter((l) => !l.startsWith("TOKEN ")).join("\n");
-    assertEquals((await run(dir, [partial, "GO\n"])).code, 64);
-    assertEquals((await run(dir, ["EVIL eA==\n\n", "GO\n"])).code, 64);
-  } finally {
-    await Deno.remove(dir, { recursive: true });
+  assertEquals(/K10[0-9a-f]{64}::/.test(text), false, "user_data carries a pinned join token");
+  assertEquals(/ticket[^\n]*[a-z0-9]{40,}/.test(text), false, "user_data carries a ticket");
+  assertEquals(config.write_files.some((f) => f.path.startsWith("/etc/ssh/sshd_config.d/20-")), false);
+  for (const script of Object.values(NODE_SCRIPTS)) {
+    assertEquals(config.write_files.find((f) => f.path === script)?.permissions, "0700");
   }
-});
-
-Deno.test("the join script gives up when k3s never arrives", async () => {
-  const dir = await Deno.makeTempDir();
-  try {
-    await shims(dir);
-    await Deno.remove(`${dir}/bin/k3s`);
-    const out = await run(dir, [encodeNodeJoinDocument(DOC), "GO\n"]);
-    assertEquals(out.code, 69);
-  } finally {
-    await Deno.remove(dir, { recursive: true });
-  }
-});
-
-Deno.test("the module carries no secret and only allows reverse forwards", () => {
-  const patch = createK3sJoinModule()({});
-  const files = Object.fromEntries((patch.write_files ?? []).map((f) => [f.path, f.content]));
-  assertEquals(files[K3S_JOIN_SSHD_DROPIN], "AllowTcpForwarding remote\nGatewayPorts clientspecified\n");
-  assertStringIncludes(files[K3S_JOIN_PATH]!, "exec k3s agent");
-  assertEquals(JSON.stringify(patch).includes("k10"), false);
 });
 
 Deno.test("the module gives the guest the resolver the provider's network forwards through", () => {
@@ -125,6 +101,205 @@ Deno.test("the module gives the guest the resolver the provider's network forwar
   assertEquals(renderResolver(["10.0.0.1"]), "nameserver 10.0.0.1\noptions timeout:2 attempts:3\n");
 });
 
-Deno.test("the pinned token names the server CA hash", () => {
-  assertEquals(pinnedJoinToken("ff", "k10abc"), "K10ff::server:k10abc");
+function b64url(text: string): string {
+  return btoa(text).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+const FAKE_CURL = `#!/bin/bash
+URL=""; DATA=""; CACERT=""; HEADERS=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -d) DATA="$2"; shift 2 ;;
+    -H) HEADERS+=("$2"); shift 2 ;;
+    --cacert) CACERT="$2"; shift 2 ;;
+    -*) shift ;;
+    *) URL="$1"; shift ;;
+  esac
+done
+printf '%s\\t%s\\t%s\\t%s\\n' "$URL" "$CACERT" "$DATA" "\${HEADERS[*]}" >> "$CURL_LOG"
+case "$URL" in
+  https://issuer.test/v1/oidc/issue)
+    [ "$(printf '%s' "$DATA" | jq -r .aud)" = "$WANT_AUD" ] || exit 22
+    [ "$(printf '%s' "$DATA" | jq -r .sub)" = "$WANT_SUB" ] || exit 22
+    echo '{"token":"exchanged.jwt.sig"}' ;;
+  https://127.0.0.1:18200/v1/auth/jwt-0123456789ab/login)
+    [ "$CACERT" = "$WANT_CA" ] || exit 60
+    [ "$(printf '%s' "$DATA" | jq -r .role)" = "ci-node1" ] || exit 22
+    [ "$(printf '%s' "$DATA" | jq -r .jwt)" = "exchanged.jwt.sig" ] || exit 22
+    echo '{"auth":{"client_token":"s.bao"}}' ;;
+  https://127.0.0.1:18200/v1/socialweb-nodes/data/ci-node1)
+    [ "$CACERT" = "$WANT_CA" ] || exit 60
+    case " \${HEADERS[*]} " in *"X-Vault-Token: s.bao"*) ;; *) exit 22 ;; esac
+    cat "$KV_RESPONSE" ;;
+  *) exit 22 ;;
+esac
+`;
+
+async function nodeSecretsRun(kv: Record<string, unknown>) {
+  const dir = await Deno.makeTempDir();
+  const node = `${dir}/etc/socialweb/node`;
+  await Deno.mkdir(`${dir}/bin`, { recursive: true });
+  await Deno.mkdir(node, { recursive: true });
+  await Deno.writeTextFile(`${dir}/bin/curl`, FAKE_CURL, { mode: 0o755 });
+  const sub = "actx:a1:plc:owner:role:ci-node1";
+  await Deno.writeTextFile(`${dir}/wid`, `${b64url('{"alg":"ES256"}')}.${b64url(JSON.stringify({ sub, iss: "https://issuer.test" }))}.sig`);
+  await Deno.writeTextFile(`${dir}/issuer`, "https://issuer.test");
+  await Deno.writeTextFile(
+    `${dir}/accept.json`,
+    JSON.stringify({ bid_config: { value: { token_path: `${dir}/wid`, url_path: `${dir}/issuer` } } }),
+  );
+  const audience = "socialweb.computer/node/abcd1234-ci/ci-node1";
+  await Deno.writeTextFile(
+    `${node}/claim.json`,
+    JSON.stringify({
+      node: "ci-node1",
+      cluster: "abcd1234-ci",
+      jwtMount: "jwt-0123456789ab",
+      role: "ci-node1",
+      audience,
+      kvMount: "socialweb-nodes",
+      kvPath: "ci-node1",
+    }),
+  );
+  await Deno.writeTextFile(`${node}/openbao-ca.pem`, OPENBAO_CA);
+  await Deno.writeTextFile(`${dir}/kv.json`, JSON.stringify({ data: { data: kv } }));
+  const script = renderNodeSecretsScript({
+    nodeDir: node,
+    acceptPath: `${dir}/accept.json`,
+    k3sNodePasswordPath: `${dir}/rancher/node/password`,
+    doneStamp: `${dir}/done`,
+  });
+  await Deno.writeTextFile(`${dir}/node-secrets`, script, { mode: 0o700 });
+  const out = await new Deno.Command("bash", {
+    args: [`${dir}/node-secrets`],
+    env: {
+      PATH: `${dir}/bin:/usr/bin:/bin`,
+      CURL_LOG: `${dir}/curl.log`,
+      WANT_AUD: audience,
+      WANT_SUB: sub,
+      WANT_CA: `${node}/openbao-ca.pem`,
+      KV_RESPONSE: `${dir}/kv.json`,
+    },
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  return { dir, node, code: out.code, stderr: new TextDecoder().decode(out.stderr) };
+}
+
+async function sha256Hex(text: string): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)));
+  return Array.from(digest, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+const KV = {
+  token: "k10secret",
+  nodePassword: "k10password",
+  serverCA: CA,
+  apiserverTicket: "endpointabc123",
+  advertiseAddress: "100.127.255.254",
+  apiserverPort: 23456,
+};
+
+Deno.test("node-secrets exchanges the workload token for the claim's audience, logs in to OpenBao and writes the join files 0600", async () => {
+  const run = await nodeSecretsRun(KV);
+  try {
+    assertEquals(run.code, 0, run.stderr);
+    const read = (p: string) => Deno.readTextFile(p);
+    assertEquals(await read(`${run.node}/token`), `K10${await sha256Hex(CA)}::server:k10secret`);
+    assertEquals(await read(`${run.node}/server-ca.pem`), CA);
+    assertEquals(await read(`${run.node}/node-password`), "k10password");
+    assertEquals(await read(`${run.dir}/rancher/node/password`), "k10password");
+    assertEquals(
+      await read(`${run.node}/apiserver.env`),
+      "NODE_NAME=ci-node1\nADVERTISE_ADDRESS=100.127.255.254\nAPISERVER_PORT=23456\nAPISERVER_TICKET=endpointabc123\n",
+    );
+    for (const f of ["token", "server-ca.pem", "node-password", "apiserver.env"]) {
+      assertEquals((await Deno.stat(`${run.node}/${f}`)).mode! & 0o777, 0o600, f);
+    }
+    assertEquals((await Deno.stat(`${run.dir}/rancher/node/password`)).mode! & 0o777, 0o600);
+    const calls = (await read(`${run.dir}/curl.log`)).trim().split("\n").map((l) => l.split("\t")[0]);
+    assertEquals(calls, [
+      "https://issuer.test/v1/oidc/issue",
+      "https://127.0.0.1:18200/v1/auth/jwt-0123456789ab/login",
+      "https://127.0.0.1:18200/v1/socialweb-nodes/data/ci-node1",
+    ]);
+    await Deno.stat(`${run.dir}/done`);
+  } finally {
+    await Deno.remove(run.dir, { recursive: true });
+  }
+});
+
+Deno.test("node-secrets refuses a KV entry that would put an unsafe value on a unit's command line", async () => {
+  const run = await nodeSecretsRun({ ...KV, apiserverTicket: "abc; rm -rf /" });
+  try {
+    assertEquals(run.code, 1);
+    assertStringIncludes(run.stderr, "apiserverTicket is not a ticket");
+    await Deno.stat(`${run.node}/apiserver.env`).then(() => {
+      throw new Error("the env file was written");
+    }, () => undefined);
+  } finally {
+    await Deno.remove(run.dir, { recursive: true });
+  }
+});
+
+Deno.test("node-secrets fails, and is restarted by systemd, when the KV entry lacks a field", async () => {
+  const { serverCA: _ca, ...partial } = KV;
+  const run = await nodeSecretsRun(partial);
+  try {
+    assertEquals(run.code, 1);
+    assertStringIncludes(run.stderr, "has no serverCA");
+  } finally {
+    await Deno.remove(run.dir, { recursive: true });
+  }
+});
+
+async function shimmedLink(script: string, env: Record<string, string>) {
+  const dir = await Deno.makeTempDir();
+  await Deno.mkdir(`${dir}/bin`, { recursive: true });
+  await Deno.writeTextFile(`${dir}/bin/ip`, `#!/bin/bash\necho "$*" >> ${dir}/ip.log\n`, { mode: 0o755 });
+  await Deno.writeTextFile(`${dir}/dumbpipe`, `#!/bin/bash\necho "$*" > ${dir}/dumbpipe.args\n`, { mode: 0o755 });
+  await Deno.writeTextFile(`${dir}/ticket`, "openbaoticket\n");
+  const body = script.replaceAll("/usr/local/bin/dumbpipe", `${dir}/dumbpipe`).replaceAll(
+    "/etc/socialweb/node/openbao-ticket",
+    `${dir}/ticket`,
+  );
+  await Deno.writeTextFile(`${dir}/link`, body, { mode: 0o700 });
+  const out = await new Deno.Command("bash", {
+    args: [`${dir}/link`],
+    env: { PATH: `${dir}/bin:/usr/bin:/bin`, ...env },
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  return { dir, code: out.code, stderr: new TextDecoder().decode(out.stderr) };
+}
+
+Deno.test("the OpenBao link dials the delivered ticket and listens where node-secrets looks", async () => {
+  const run = await shimmedLink(renderOpenBaoLinkScript(), {});
+  try {
+    assertEquals(run.code, 0, run.stderr);
+    assertEquals(
+      (await Deno.readTextFile(`${run.dir}/dumbpipe.args`)).trim(),
+      `connect-tcp --addr ${OPENBAO_LINK_LOCAL_ADDR} openbaoticket`,
+    );
+  } finally {
+    await Deno.remove(run.dir, { recursive: true });
+  }
+});
+
+Deno.test("the apiserver link puts the advertise address on lo and dials the apiserver ticket there", async () => {
+  const run = await shimmedLink(renderApiserverLinkScript(), {
+    ADVERTISE_ADDRESS: "100.127.255.254",
+    APISERVER_PORT: "23456",
+    APISERVER_TICKET: "apiticket",
+  });
+  try {
+    assertEquals(run.code, 0, run.stderr);
+    assertStringIncludes(await Deno.readTextFile(`${run.dir}/ip.log`), "addr add 100.127.255.254/32 dev lo");
+    assertEquals(
+      (await Deno.readTextFile(`${run.dir}/dumbpipe.args`)).trim(),
+      "connect-tcp --addr 100.127.255.254:23456 apiticket",
+    );
+  } finally {
+    await Deno.remove(run.dir, { recursive: true });
+  }
 });

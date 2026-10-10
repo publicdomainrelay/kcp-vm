@@ -58,6 +58,8 @@ func joinEnv(t *testing.T, extra map[string]string) map[string]string {
 		"SOCIALWEB_CLUSTERPROVIDER_DATASTORE_HAS_ROW":        "true",
 		"SOCIALWEB_CLUSTERPROVIDER_STATE_DIR":                t.TempDir(),
 		"SOCIALWEB_CLUSTERPROVIDER_CLOUD_CONTROLLER_MANAGER": "/usr/local/bin/socialweb-cloud-controller-manager",
+		"SOCIALWEB_CLUSTERPROVIDER_EXTERNAL_SECRETS":         "/usr/local/bin/external-secrets",
+		"SOCIALWEB_CLUSTERPROVIDER_ESO_BUNDLE":               "/opt/socialweb/eso/external-secrets.yaml",
 	}
 	for k, v := range placementEnv(t) {
 		env[k] = v
@@ -239,6 +241,19 @@ func TestAnImageConfigBuiltForAnotherVMMIsRefusedAtStartup(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not name %q, so an operator cannot see which setting or "+
 				"VMM it is about: %v", want, err)
+		}
+	}
+}
+
+func TestAJoinWithoutTheExternalSecretsBinaryOrBundleIsRefused(t *testing.T) {
+	for _, env := range []string{"SOCIALWEB_CLUSTERPROVIDER_EXTERNAL_SECRETS", "SOCIALWEB_CLUSTERPROVIDER_ESO_BUNDLE"} {
+		_, err := loadJoin(t, map[string]string{env: ""})
+		if err == nil {
+			t.Fatalf("a join with no %s was accepted: every cluster's group carries the External "+
+				"Secrets pair, so it would spawn a pair with nothing to run or install", env)
+		}
+		if !strings.Contains(err.Error(), env) {
+			t.Fatalf("the refusal does not name %s: %v", env, err)
 		}
 	}
 }

@@ -63,6 +63,10 @@ type Options struct {
 	ReleaseTimeout time.Duration
 
 	Poll time.Duration
+
+	Secrets NodeSecrets
+
+	Links Links
 }
 
 const DefaultReleaseTimeout = 2 * time.Minute
@@ -81,6 +85,12 @@ var ErrIncomplete = errors.New(
 type Host struct {
 	mu   sync.Mutex
 	opts Options
+
+	provisioned   bool
+	policyWritten bool
+	secretWritten bool
+	heldBack      string
+	granted       *v1alpha1.NodeClaimGrant
 }
 
 var _ scale.Nodes = (*Host)(nil)
@@ -129,6 +139,9 @@ func (o Options) Validate() error {
 	if o.Record == nil {
 		missing = append(missing, "Record")
 	}
+	if o.Secrets != nil && o.Links == nil {
+		missing = append(missing, "Links")
+	}
 	if len(missing) > 0 {
 		return fmt.Errorf("%w (missing %s)", ErrIncomplete, strings.Join(missing, ", "))
 	}
@@ -162,11 +175,21 @@ func (h *Host) Provision(ctx context.Context) error {
 		return fmt.Errorf("nodemarket: the workspace and owner DID node %s of %s is claimed under: %w",
 			h.opts.NodeName, h.opts.Cluster, err)
 	}
+	if h.opts.Secrets != nil {
+		if why := h.linksNotListening(ctx, target); why != "" {
+			return fmt.Errorf("%w: node %s of %s: %s", ErrLinksNotListening, h.opts.NodeName,
+				h.opts.Cluster, why)
+		}
+	}
 	if err := h.opts.Record(ctx, h.opts.NodeName, v1alpha1.NodePending); err != nil {
 		return fmt.Errorf("nodemarket: recording node %s of %s as Pending before its claim is "+
 			"written: %w -- the phase is written first because the claim is about to exist, and a "+
 			"gateway that died between the two would leave no record at all of a node it rented",
 			h.opts.NodeName, h.opts.Cluster, err)
+	}
+	if err := h.writeSecretsLocked(ctx, target); err != nil {
+		return fmt.Errorf("%w -- nothing was rented: the claim is written only once the node's "+
+			"policy is in the cluster OpenBao", err)
 	}
 	claim := v1alpha1.NodeClaim{
 		TypeMeta: metav1.TypeMeta{
@@ -191,6 +214,7 @@ func (h *Host) Provision(ctx context.Context) error {
 			"is the whole request, so nothing was rented and the next pass may ask again",
 			h.opts.NodeName, h.opts.Cluster, target.Workspace, err)
 	}
+	h.provisioned = true
 	h.log().Info("nodemarket: node claimed from the market",
 		"cluster", h.opts.Cluster, "node", h.opts.NodeName, "workspace", target.Workspace,
 		"ownerDid", target.OwnerDid, "advertiseAddress", h.opts.AdvertiseAddress,
@@ -213,15 +237,16 @@ func (h *Host) ConfirmJoined(ctx context.Context) error {
 			h.opts.NodeName, h.opts.Cluster)
 	}
 	switch claim.Status.Phase {
-	case v1alpha1.NodeClaimRunning:
+	case v1alpha1.NodeClaimJoining, v1alpha1.NodeClaimRunning:
 	case v1alpha1.NodeClaimFailed:
 		return fmt.Errorf("nodemarket: node %s of %s: %s",
 			h.opts.NodeName, h.opts.Cluster, endedMessage(claim))
 	default:
 		return fmt.Errorf("nodemarket: node %s of %s is reported by its cluster while its claim is "+
-			"%q, not Running. The door writes Running only once the node's own agent reached its "+
-			"apiserver, so a cluster reporting the node before that is a node something else "+
-			"registered under this name", h.opts.NodeName, h.opts.Cluster, claim.Status.Phase)
+			"%q, not Joining. The door writes Joining only once the guest fetched this claim's "+
+			"secrets, and only that guest holds the node password the agent registers with, so a "+
+			"cluster reporting the node before that is a node something else registered under "+
+			"this name", h.opts.NodeName, h.opts.Cluster, claim.Status.Phase)
 	}
 	if err := h.opts.Record(ctx, h.opts.NodeName, v1alpha1.NodeRunning); err != nil {
 		return fmt.Errorf("nodemarket: recording node %s of %s as Running after the door reported "+
@@ -294,6 +319,7 @@ func (h *Host) release(ctx context.Context) error {
 			h.opts.NodeName, h.opts.Cluster, err))
 		return errors.Join(problems...)
 	}
+	h.revokeSecretsLocked(ctx)
 	if err := h.awaitRelease(ctx, target.Workspace); err != nil {
 		problems = append(problems, err)
 	}

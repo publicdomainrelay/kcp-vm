@@ -1,13 +1,20 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import {
   claimContractOf,
+  clusterKeyOfClaim,
   contractStateOfClaim,
   createMarketNodeFulfiller,
-  type NodeSessionPlan,
+  defaultOpenBaoCAFile,
 } from "@publicdomainrelay/socialweb-computer-k8s-node-market";
-import type { NodeClaim, NodeClaimStore } from "@publicdomainrelay/socialweb-computer-k8s-abc";
-import { K3S_JOIN_PATH } from "@publicdomainrelay/socialweb-computer-k8s-common";
+import type { ClusterLinkReader, ClusterLinkView, NodeClaim, NodeClaimStore } from "@publicdomainrelay/socialweb-computer-k8s-abc";
 import { FINALIZER_NODE_CLAIM, type NodeClaimStatus } from "@publicdomainrelay/socialweb-computer-k8s-api";
+import {
+  NODE_BUNDLE_PATHS,
+  NODE_CLAIM_DOC_PATH,
+  type NodeClaimDocument,
+  OPENBAO_CA_PATH,
+  OPENBAO_TICKET_PATH,
+} from "@publicdomainrelay/socialweb-computer-k8s-common";
 import {
   advanceContract,
   type ComputeRequestHandlers,
@@ -17,12 +24,19 @@ import {
   patchContract,
   type RecordRef,
 } from "@publicdomainrelay/compute-request-abc";
+import type { GrantVars, GuestCapability } from "@publicdomainrelay/guest-capability-abc";
+import type { SecretEntry } from "@publicdomainrelay/secrets-common";
+import { buildUserData, type UserDataModule } from "@publicdomainrelay/cloud-init-common";
 import { COMPUTE_EVENTS_VM_DELETE_NSID, EVENT_NSID, SUBMIT_EVENT_NSID } from "@publicdomainrelay/market-lexicons";
 
 const OWNER = "did:plc:nodeowner";
+const OWNER_CLUSTER_KEY = "d90m41be-ci";
 const BIDDER = "did:plc:bidder";
-const CA = "-----BEGIN CERTIFICATE-----\nCA\n-----END CERTIFICATE-----\n";
+const OPENBAO_CA = "-----BEGIN CERTIFICATE-----\nOPENBAO\n-----END CERTIFICATE-----\n";
+const OPENBAO_TICKET = "endpointopenbaoticket";
 const AT = "2026-10-07T00:00:00.000Z";
+const ISSUER = "https://bidder.test/oidc";
+const SUBJECT = "actx:a1:plc:nodeowner:role:ci-node1";
 
 const VM: RecordRef = { uri: `at://${OWNER}/compute.vm/1`, cid: "vmcid" };
 const RFP: RecordRef = { uri: `at://${OWNER}/market.rfp/1`, cid: "rfpcid" };
@@ -45,7 +59,7 @@ function claim(name: string, overrides: Partial<NodeClaim> = {}): NodeClaim {
       advertiseAddress: "100.127.255.254",
       tokenFile: "/state/ci/token",
       nodePasswordFile: `/state/ci/${name}/node-password`,
-      serverCAFile: "/state/ci/server-ca.crt",
+      serverCAFile: "/state/ci/server/tls/server-ca.crt",
     },
     status: {},
     ...overrides,
@@ -58,6 +72,7 @@ class FakeStore implements NodeClaimStore {
   removed: string[] = [];
   gets = 0;
   unreadable = false;
+  failGrantWrites = false;
 
   put(c: NodeClaim) {
     this.claims.set(c.name, structuredClone(c));
@@ -72,6 +87,7 @@ class FakeStore implements NodeClaimStore {
     return Promise.resolve(cur ? structuredClone(cur) : null);
   }
   replaceStatus(c: NodeClaim, status: NodeClaimStatus) {
+    if (this.failGrantWrites && status.grant) return Promise.reject(new Error("422 grant refused"));
     const cur = this.claims.get(c.name);
     if (cur) cur.status = JSON.parse(JSON.stringify(status));
     this.statuses.push({ name: c.name, status: JSON.parse(JSON.stringify(status)) });
@@ -93,6 +109,16 @@ class FakeStore implements NodeClaimStore {
   }
   contract(name: string) {
     return this.claims.get(name)?.status.contract;
+  }
+}
+
+class FakeLinks implements ClusterLinkReader {
+  asked: string[] = [];
+  constructor(readonly ticket: string | null = OPENBAO_TICKET) {}
+  get(workspace: string, name: string): Promise<ClusterLinkView | null> {
+    this.asked.push(`${workspace}/${name}`);
+    if (this.ticket === null) return Promise.resolve(null);
+    return Promise.resolve({ workspace, name, status: { phase: "Listening", ticket: this.ticket } });
   }
 }
 
@@ -141,184 +167,258 @@ class FakeRequesterPds {
 }
 
 const files: Record<string, string> = {
-  "/state/ci/token": "k10token\n",
-  "/state/ci/server-ca.crt": CA,
+  "/state/ci/openbao/tls/ca.crt": OPENBAO_CA,
 };
 
 function readText(path: string): Promise<string> {
   if (files[path]) return Promise.resolve(files[path]);
-  if (path.endsWith("/node-password")) return Promise.resolve("k10password\n");
   return Promise.reject(new Deno.errors.NotFound(path));
 }
 
-type Script = "complete" | "no_bids" | "hang_after_receipt" | "hang_before_accept";
+class FakeSecretsCapabilities {
+  bundles: SecretEntry[][] = [];
+  grants: GrantVars[] = [];
+  pathsAtGrant: string[][] = [];
+  disposed = 0;
+  factory = (secrets: SecretEntry[]): GuestCapability => {
+    this.bundles.push(secrets);
+    return {
+      id: "secrets",
+      userDataModule: "secrets",
+      onContract: (vars) => {
+        this.grants.push(vars);
+        this.pathsAtGrant.push(secrets.map((s) => s.path));
+      },
+      dispose: () => {
+        this.disposed++;
+        return Promise.resolve();
+      },
+    };
+  };
+}
 
-function scriptedRequest(script: Script, seen: Record<string, unknown>[]) {
+type Script = "complete" | "no_fetch" | "no_bids" | "hang_after_receipt" | "hang_before_accept" | "hang_after_network";
+
+interface Decisions {
+  onSecretsFetched: FlowDecision[];
+  onAccepted: FlowDecision[];
+  onReceipt: FlowDecision[];
+  grantAtAccept: (NodeClaimStatus["grant"] | undefined)[];
+}
+
+function scriptedRequest(script: Script, seen: Record<string, unknown>[], decisions: Decisions, store: FakeStore) {
   return async (_pds: unknown, o: Record<string, unknown>, handlers: ComputeRequestHandlers) => {
     seen.push(o);
-    const handle = (state: ContractState) => ({ state, capabilities: [], dispose: () => Promise.resolve() });
+    const caps = (o.capabilities as GuestCapability[] | undefined) ?? [];
+    let disposed = false;
+    const dispose = async () => {
+      if (disposed) return;
+      disposed = true;
+      for (const cap of caps) await cap.dispose?.();
+    };
+    const handle = (state: ContractState) => ({ state, capabilities: caps, dispose });
     const returned = (s: ContractState) => handle(patchContract(s, { outcome: "returned" }));
     const stop = (d: FlowDecision | undefined) => d === "return";
     let s = createContractState({ vmName: o.vmName as string, requesterDid: OWNER, marketDid: OWNER, at: AT });
     s = advanceContract(s, "rfp_submitted", { payload: VM, rfp: RFP }, AT);
     if (stop(await handlers.onRfpSubmitted?.({ rfp: RFP, payload: VM, bidderDids: [BIDDER] }, structuredClone(s)))) return returned(s);
-    if (script === "no_bids") return handle(patchContract(s, { outcome: "no_bids", bids: 0 }));
+    if (script === "no_bids") {
+      await dispose();
+      return { state: patchContract(s, { outcome: "no_bids", bids: 0 }), capabilities: [], dispose: () => Promise.resolve() };
+    }
     if (script === "hang_before_accept") await new Promise(() => {});
-    s = advanceContract(s, "accepted", { accept: ACCEPT, bid: BID, winner: { did: BIDDER } }, AT);
-    if (stop(await handlers.onAccepted?.({ accept: ACCEPT, bid: BID, winnerDid: BIDDER }, structuredClone(s)))) return returned(s);
+    const vars: GrantVars = {
+      requesterDid: OWNER,
+      role: o.vmName as string,
+      actx: "a1",
+      issuerUri: ISSUER,
+      subject: SUBJECT,
+      expectedAud: `api://ATProto?actx=${OWNER}`,
+    };
+    for (const cap of caps) {
+      try {
+        await cap.onContract?.(vars);
+      } catch {
+        continue;
+      }
+    }
+    s = advanceContract(s, "accepted", { accept: ACCEPT, bid: BID, winner: { did: BIDDER }, receipt: RECEIPT, submitEventRef: SUBMIT }, AT);
+    decisions.grantAtAccept.push(store.claims.get(o.vmName as string)?.status.grant);
+    const accepted = await handlers.onAccepted?.({ accept: ACCEPT, bid: BID, winnerDid: BIDDER }, structuredClone(s));
+    decisions.onAccepted.push(accepted ?? "continue");
+    if (stop(accepted)) return returned(s);
     s = advanceContract(s, "receipt", { receipt: RECEIPT, receiptOk: true, submitEventRef: SUBMIT }, AT);
-    if (stop(await handlers.onReceipt?.({ receipt: RECEIPT, receiptOk: true, submitEventRef: SUBMIT }, structuredClone(s)))) return returned(s);
+    const receipt = await handlers.onReceipt?.({ receipt: RECEIPT, receiptOk: true, submitEventRef: SUBMIT }, structuredClone(s));
+    decisions.onReceipt.push(receipt ?? "continue");
+    if (stop(receipt)) return returned(s);
     if (script === "hang_after_receipt") await new Promise(() => {});
     s = advanceContract(s, "network", { vmAddress: GUEST }, AT);
     if (stop(await handlers.onNetwork?.({ address: GUEST, kind: "iroh-ticket", source: "test" }, structuredClone(s)))) return returned(s);
+    if (script === "hang_after_network") await new Promise(() => {});
+    if (script === "complete") {
+      const decision = await handlers.onSecretsFetched?.({ capability: "secrets", subject: SUBJECT, count: 3 }, structuredClone(s));
+      decisions.onSecretsFetched.push(decision ?? "continue");
+      if (stop(decision)) return returned(s);
+    }
     return handle(patchContract(s, { outcome: "complete" }));
   };
 }
 
 interface HarnessOptions {
-  behaviour?: "hold" | "exit";
   script?: Script;
   bidderOk?: boolean;
   store?: FakeStore;
   pds?: FakeRequesterPds;
-  pollReady?: boolean;
+  links?: FakeLinks;
+  vmReadyTimeoutSec?: number;
 }
 
 function harness(o: HarnessOptions = {}) {
   const store = o.store ?? new FakeStore();
   const pds = o.pds ?? new FakeRequesterPds(o.bidderOk ?? true);
+  const links = o.links ?? new FakeLinks();
+  const secrets = new FakeSecretsCapabilities();
   const requested: string[] = [];
   const contracts: Record<string, unknown>[] = [];
-  const plans: NodeSessionPlan[] = [];
+  const decisions: Decisions = { onSecretsFetched: [], onAccepted: [], onReceipt: [], grantAtAccept: [] };
   const fulfiller = createMarketNodeFulfiller({
     store,
+    links,
     requesterFor: (did) => {
       requested.push(did);
       return Promise.resolve(pds as never);
     },
     readText,
     eventStreams: () => ({ close() {} }),
-    keypairs: { generateKeypair: () => Promise.resolve({ publicKey: "ssh-ed25519 AAAA", privateKeyPath: "/tmp/k" }) },
-    pollReady: () => Promise.resolve(o.pollReady ?? true),
-    nodeSession: async (plan) => {
-      plans.push(plan);
-      plan.onJoining?.();
-      plan.onForwarded?.();
-      if (o.behaviour === "exit") return { code: 1, reason: "the node's agent exited", tail: "level=fatal msg=boom" };
-      await new Promise<void>((resolve) => plan.signal.addEventListener("abort", () => resolve(), { once: true }));
-      return { code: 0, reason: "released", tail: "" };
-    },
-    requestCompute: scriptedRequest(o.script ?? "complete", contracts) as never,
+    secretsCapability: secrets.factory,
+    vmReadyTimeoutSec: o.vmReadyTimeoutSec ?? 0.05,
+    requestCompute: scriptedRequest(o.script ?? "complete", contracts, decisions, store) as never,
   });
-  return { store, pds, fulfiller, requested, contracts, plans };
+  return { store, pds, links, secrets, fulfiller, requested, contracts, decisions };
 }
 
 async function settle() {
   for (let i = 0; i < 40; i++) await new Promise((r) => setTimeout(r, 0));
 }
 
+async function settleFor(ms: number) {
+  await new Promise((r) => setTimeout(r, ms));
+  await settle();
+}
+
 function deleteClaim(store: FakeStore, name: string) {
   store.claims.get(name)!.deletionTimestamp = "2026-10-07T00:00:00Z";
 }
 
-Deno.test("a door restarted between accept and release still releases the node with vm.delete from the receipt on its NodeClaim", async () => {
-  const store = new FakeStore();
-  store.put(claim("ci-node1"));
-
-  const before = harness({ store, script: "hang_after_receipt" });
-  await before.fulfiller.pass();
-  await settle();
-  const recorded = store.contract("ci-node1")!;
-  assertEquals(store.phase("ci-node1"), "Provisioning");
-  assertEquals(recorded.phase, "receipt");
-  assertEquals(recorded.receipt, RECEIPT);
-  assertEquals(recorded.submitEventRef, SUBMIT);
-  assertEquals(recorded.accept, ACCEPT);
-  assertEquals(before.pds.calls, [], "the first door died before it released anything");
-
-  const after = harness({ store });
-  await after.fulfiller.pass();
-  await settle();
-
-  assertEquals(after.contracts, [], "the restarted door requests nothing for a claim that already holds a contract");
-  const deletions = after.pds.deletions();
-  assertEquals(deletions.length, 1, "exactly one vm.delete reached the bidder");
-  const event = deletions[0].body.record;
-  assertEquals({ uri: event.receipt.uri, cid: event.receipt.cid }, RECEIPT, "the vm.delete names the receipt recorded on the claim");
-  assertEquals(after.pds.resolved, [SUBMIT], "the vm.delete goes to the submitEventRef recorded on the claim");
-  assertEquals(after.pds.records.filter((r) => r.collection === EVENT_NSID).length, 1);
-  assertEquals(store.phase("ci-node1"), "Released");
-  assertEquals(store.contract("ci-node1")?.phase, "released");
-  assertEquals(store.contract("ci-node1")?.release?.ok, true);
-
-  await after.fulfiller.pass();
-  await settle();
-  assertEquals(after.pds.deletions().length, 1, "a released contract is not released twice");
+Deno.test("the door's cluster key is the provider's: account hash of the owner DID, dash, cluster name", async () => {
+  assertEquals(await clusterKeyOfClaim({ ownerDid: OWNER, cluster: "ci" }), OWNER_CLUSTER_KEY);
+  assertEquals(await clusterKeyOfClaim({ ownerDid: "did:plc:ewvi7nxzyoun6zhxrhs64oiz", cluster: "ci" }), "8moqwclj-ci");
+  assertEquals(defaultOpenBaoCAFile(claim("ci-node1").spec), "/state/ci/openbao/tls/ca.crt");
 });
 
-Deno.test("releasing a live claim reads the receipt back from the claim, not from the door's memory", async () => {
+Deno.test("at accept the claim carries the workload grant for its node's audience before the guest can be authorized", async () => {
   const h = harness();
   h.store.put(claim("ci-node1"));
   await h.fulfiller.pass();
   await settle();
-  assertEquals(h.store.phase("ci-node1"), "Running");
 
-  const moved: RecordRef = { uri: `at://${BIDDER}/market.receipt/as-recorded`, cid: "recorded" };
-  h.store.claims.get("ci-node1")!.status.contract!.receipt = moved;
-  deleteClaim(h.store, "ci-node1");
+  const expected = {
+    issuer: ISSUER,
+    subject: SUBJECT,
+    audience: `socialweb.computer/node/${OWNER_CLUSTER_KEY}/ci-node1`,
+    role: "ci-node1",
+  };
+  assertEquals(h.decisions.grantAtAccept, [expected], "the grant was on the claim when onAccepted ran");
+  assertEquals(h.store.claims.get("ci-node1")!.status.grant, expected);
+  const grantWrite = h.store.statuses.findIndex((s) => s.status.grant);
+  const acceptedWrite = h.store.statuses.findIndex((s) => s.status.contract?.phase === "accepted");
+  assert(grantWrite >= 0 && grantWrite < acceptedWrite, `grant write ${grantWrite} precedes accepted write ${acceptedWrite}`);
+  assertEquals(h.secrets.grants.length, 1, "the secrets capability is authorized once");
+  assertEquals(h.secrets.pathsAtGrant[0], [...NODE_BUNDLE_PATHS], "claim.json is in the bundle before the guest is authorized");
+  await h.fulfiller.stop();
+});
+
+Deno.test("the secrets bundle carries exactly the OpenBao ticket, the OpenBao CA and claim.json", async () => {
+  const h = harness();
+  h.store.put(claim("ci-node1"));
   await h.fulfiller.pass();
   await settle();
 
-  const deletions = h.pds.deletions();
-  assertEquals(deletions.length, 1);
-  assertEquals({ uri: deletions[0].body.record.receipt.uri, cid: deletions[0].body.record.receipt.cid }, moved);
-  assert(h.store.gets > 0, "the claim was read back before the release");
-});
-
-Deno.test("the door admits declared bidders and omits a policy it was not given", async () => {
-  const store = new FakeStore();
-  const contracts: Record<string, unknown>[] = [];
-  const fulfiller = createMarketNodeFulfiller({
-    store,
-    requesterFor: () => Promise.resolve(new FakeRequesterPds() as never),
-    readText,
-    eventStreams: () => ({ close() {} }),
-    keypairs: { generateKeypair: () => Promise.resolve({ publicKey: "k", privateKeyPath: "/tmp/k" }) },
-    pollReady: () => Promise.resolve(false),
-    extraBidderDids: ["did:plc:mine"],
-    requestCompute: scriptedRequest("no_bids", contracts) as never,
+  assertEquals(h.links.asked, [`root:acct:ci/${OWNER_CLUSTER_KEY}-openbao`]);
+  const bundle = h.secrets.bundles[0];
+  assertEquals(bundle.map((s) => s.path).sort(), [...NODE_BUNDLE_PATHS].sort());
+  const byPath = Object.fromEntries(bundle.map((s) => [s.path, s.value]));
+  assertEquals(byPath[OPENBAO_TICKET_PATH], OPENBAO_TICKET);
+  assertEquals(byPath[OPENBAO_CA_PATH], OPENBAO_CA);
+  const issuerHash = Array.from(
+    new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(ISSUER))),
+    (b) => b.toString(16).padStart(2, "0"),
+  ).join("");
+  const doc = JSON.parse(byPath[NODE_CLAIM_DOC_PATH]) as NodeClaimDocument;
+  assertEquals(doc, {
+    node: "ci-node1",
+    cluster: OWNER_CLUSTER_KEY,
+    jwtMount: `jwt-${issuerHash.slice(0, 12)}`,
+    role: "ci-node1",
+    audience: `socialweb.computer/node/${OWNER_CLUSTER_KEY}/ci-node1`,
+    kvMount: "socialweb-nodes",
+    kvPath: "ci-node1",
   });
-  store.put(claim("ci-node1"));
-  await fulfiller.pass();
-  await settle();
-  assertEquals(contracts[0].extraBidderDids, ["did:plc:mine"]);
-  assertEquals("policy" in contracts[0], false);
-  await fulfiller.stop();
+  await h.fulfiller.stop();
 });
 
-Deno.test("a pending claim is finalized and fulfilled through the market as its owner", async () => {
+Deno.test("the flow returns at onSecretsFetched, the claim is Joining, capabilities are disposed and nothing is released", async () => {
   const h = harness();
   h.store.put(claim("ci-node1"));
   await h.fulfiller.pass();
   await settle();
 
+  assertEquals(h.decisions.onSecretsFetched, ["return"]);
+  assertEquals(h.store.phase("ci-node1"), "Joining");
+  assertEquals(h.secrets.disposed, 1);
+  assertEquals(h.fulfiller.active(), [], "the door holds nothing for a node that fetched its secrets");
+  assertEquals(h.pds.deletions(), []);
   assertEquals(h.store.claims.get("ci-node1")!.finalizers, [FINALIZER_NODE_CLAIM]);
-  assertEquals(h.requested, [OWNER]);
-  assertEquals(h.contracts.length, 1);
+  assertEquals(h.store.contract("ci-node1")?.receipt, RECEIPT);
+
+  await h.fulfiller.pass();
+  await settle();
+  assertEquals(h.contracts.length, 1, "a Joining claim is not fulfilled again");
+  assertEquals(h.pds.deletions(), []);
+});
+
+Deno.test("the door asks for no ssh key and builds no ssh session", async () => {
+  const h = harness();
+  h.store.put(claim("ci-node1"));
+  await h.fulfiller.pass();
+  await settle();
   const c = h.contracts[0];
-  assertEquals(c.vmName, "ci-node1");
-  assertEquals(c.sshPublicKey, "ssh-ed25519 AAAA");
-  assertEquals((c.userData as { modules: unknown[] }).modules[0], "k3s");
-  assertEquals(h.plans[0].program, K3S_JOIN_PATH);
-  assertEquals(h.plans[0].ticket, GUEST);
-  assertEquals(h.store.phase("ci-node1"), "Running");
-  const contract = h.store.contract("ci-node1")!;
-  assertEquals(contract.receiptUri, RECEIPT.uri);
-  assertEquals(contract.receiptCid, RECEIPT.cid);
-  assertEquals(contract.receipt, RECEIPT);
-  assertEquals(contract.vmAddress, GUEST);
-  assertEquals(contract.phase, "network");
-  assertEquals(h.store.claims.get("ci-node1")!.status.fqdn, GUEST);
+  assertEquals(c.sshPublicKey, undefined);
+  assertEquals(c.sshAuthorizedKeys, undefined);
+  assertEquals((c.capabilities as GuestCapability[]).map((cap) => cap.id), ["secrets"]);
+  const source = await Deno.readTextFile(new URL("../lib/socialweb-computer-k8s-node-market/mod.ts", import.meta.url));
+  for (const ssh of ["createSshSessionProvider", "SshSessionProvider", "ssh2", "runNodeSession", "dumbpipe"]) {
+    assertEquals(source.includes(ssh), false, `the fulfiller still names ${ssh}`);
+  }
+});
+
+Deno.test("the user_data the door asks for renders without any secret value", async () => {
+  const h = harness();
+  h.store.put(claim("ci-node1"));
+  await h.fulfiller.pass();
+  await settle();
+  const c = h.contracts[0];
+  const modules = (c.userData as { modules: (string | UserDataModule)[] }).modules;
+  assertEquals(modules[0], "k3s");
+  const caps = c.capabilities as GuestCapability[];
+  const text = buildUserData({
+    ctx: { vmName: "ci-node1", secretsUrl: "https://secrets.test", secretsAud: "api://x" },
+    modules: ["iroh", ...modules, ...caps.flatMap((cap) => cap.userDataModule ? [cap.userDataModule] : [])],
+  });
+  for (const secret of [OPENBAO_TICKET, "BEGIN CERTIFICATE", SUBJECT, ISSUER]) {
+    assertEquals(text.includes(secret), false, `user_data carries ${secret}`);
+  }
+  assertStringIncludes(text, "socialweb-k3s-agent.service");
   await h.fulfiller.stop();
 });
 
@@ -338,34 +438,207 @@ Deno.test("every contract milestone reaches the claim before the flow moves on",
   assertEquals(accepted.contract?.vmUri, VM.uri);
 });
 
-Deno.test("the join document pins the cluster CA and the forward targets the claim's apiserver", async () => {
+Deno.test("a door restarted with live claims adopts them and submits no vm.delete", async () => {
+  const store = new FakeStore();
+  const full = createContractState({ vmName: "ci-node1", requesterDid: OWNER, marketDid: OWNER, at: AT });
+  const contract = claimContractOf(advanceContract(full, "network", { accept: ACCEPT, receipt: RECEIPT, submitEventRef: SUBMIT }, AT));
+  store.put(claim("ci-node1", { finalizers: [FINALIZER_NODE_CLAIM], status: { phase: "Joining", contract } }));
+  store.put(claim("ci-node2", { finalizers: [FINALIZER_NODE_CLAIM], status: { phase: "Running", contract } }));
+  store.put(claim("ci-node3", {
+    finalizers: [FINALIZER_NODE_CLAIM],
+    status: { phase: "Running", contract: { receiptUri: RECEIPT.uri, receiptCid: RECEIPT.cid, submitEventRef: SUBMIT } },
+  }));
+  const h = harness({ store });
+  await h.fulfiller.pass();
+  await settle();
+  await h.fulfiller.pass();
+  await settle();
+
+  assertEquals(h.pds.deletions(), []);
+  assertEquals(h.pds.records, []);
+  assertEquals(h.contracts, []);
+  assertEquals(h.store.statuses, [], "an adopted claim is not rewritten");
+  assertEquals(["ci-node1", "ci-node2", "ci-node3"].map((n) => h.store.phase(n)), ["Joining", "Running", "Running"]);
+  await h.fulfiller.stop();
+});
+
+Deno.test("a door restarted mid-flight marks the orphaned claim Failed, releases nothing, and releases it once deleted", async () => {
+  const store = new FakeStore();
+  store.put(claim("ci-node1"));
+  const before = harness({ store, script: "hang_after_receipt" });
+  await before.fulfiller.pass();
+  await settle();
+  assertEquals(store.phase("ci-node1"), "Provisioning");
+  assertEquals(store.contract("ci-node1")?.receipt, RECEIPT);
+
+  const after = harness({ store });
+  await after.fulfiller.pass();
+  await settle();
+  assertEquals(after.contracts, [], "the restarted door requests nothing for a claim that already holds a contract");
+  assertEquals(after.pds.deletions(), [], "startup never releases");
+  assertEquals(store.phase("ci-node1"), "Failed");
+  assertStringIncludes(store.claims.get("ci-node1")!.status.message!, "the door restarted");
+  assertEquals(store.claims.get("ci-node1")!.finalizers, [FINALIZER_NODE_CLAIM]);
+
+  deleteClaim(store, "ci-node1");
+  await after.fulfiller.pass();
+  await settle();
+  const deletions = after.pds.deletions();
+  assertEquals(deletions.length, 1, "exactly one vm.delete reached the bidder");
+  const event = deletions[0].body.record;
+  assertEquals({ uri: event.receipt.uri, cid: event.receipt.cid }, RECEIPT);
+  assertEquals(after.pds.resolved, [SUBMIT]);
+  assertEquals(after.pds.records.filter((r) => r.collection === EVENT_NSID).length, 1);
+  assertEquals(store.phase("ci-node1"), "Released");
+  assertEquals(store.contract("ci-node1")?.release?.ok, true);
+  assertEquals(store.claims.get("ci-node1")!.finalizers, []);
+
+  await after.fulfiller.pass();
+  await settle();
+  assertEquals(after.pds.deletions().length, 1, "a released contract is not released twice");
+});
+
+Deno.test("a deleted Joining claim is released from the receipt on the claim, not the door's memory", async () => {
   const h = harness();
   h.store.put(claim("ci-node1"));
   await h.fulfiller.pass();
   await settle();
-  const plan = h.plans[0];
-  assertEquals(plan.forwardAddress, "100.127.255.254");
-  assertEquals(plan.apiserverPort, 23456);
-  assertEquals(plan.apiserverHost, "127.0.0.1");
-  const doc = Object.fromEntries(plan.joinDocument.trim().split("\n").map((l) => {
-    const [k, v] = l.split(" ");
-    return [k, atob(v)];
-  }));
-  const caHash = Array.from(
-    new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(CA))),
-    (b) => b.toString(16).padStart(2, "0"),
-  ).join("");
-  assertEquals(doc.TOKEN, `K10${caHash}::server:k10token`);
-  assertEquals(doc.NODE_PASSWORD, "k10password");
-  assertEquals(doc.SERVER_URL, "https://100.127.255.254:23456");
-  assertEquals(doc.NODE_NAME, "ci-node1");
-  assertEquals(JSON.stringify(h.contracts[0]).includes("k10token"), false, "the token never enters the contract");
-  assertEquals(JSON.stringify(h.store.statuses).includes("k10token"), false, "the token never enters the claim");
+  assertEquals(h.store.phase("ci-node1"), "Joining");
+
+  const moved: RecordRef = { uri: `at://${BIDDER}/market.receipt/as-recorded`, cid: "recorded" };
+  h.store.claims.get("ci-node1")!.status.contract!.receipt = moved;
+  deleteClaim(h.store, "ci-node1");
+  await h.fulfiller.pass();
+  await settle();
+
+  const deletions = h.pds.deletions();
+  assertEquals(deletions.length, 1);
+  assertEquals({ uri: deletions[0].body.record.receipt.uri, cid: deletions[0].body.record.receipt.cid }, moved);
+  assertEquals(h.store.phase("ci-node1"), "Released");
+  assertEquals(h.store.claims.get("ci-node1")!.finalizers, []);
+  assert(h.store.gets > 0, "the claim was read back before the release");
+});
+
+Deno.test("a claim deleted while the door waits for the guest's fetch is released from its claim at once", async () => {
+  const h = harness({ script: "no_fetch", vmReadyTimeoutSec: 60 });
+  h.store.put(claim("ci-node1"));
+  await h.fulfiller.pass();
+  await settle();
+  assertEquals(h.store.phase("ci-node1"), "Provisioning");
+  assertEquals(h.fulfiller.active(), ["root:acct:ci/ci-node1"]);
+  deleteClaim(h.store, "ci-node1");
+  await h.fulfiller.pass();
+  await settle();
+  assertEquals(h.pds.deletions().length, 1);
+  assertEquals(h.store.phase("ci-node1"), "Released");
+  assertEquals(h.store.claims.get("ci-node1")!.finalizers, []);
+  assertEquals(h.secrets.disposed, 1);
+  assertEquals(h.fulfiller.active(), []);
+});
+
+Deno.test("a guest that never fetches its secrets is Failed, and released only when its claim is deleted", async () => {
+  const h = harness({ script: "no_fetch" });
+  h.store.put(claim("ci-node1"));
+  await h.fulfiller.pass();
+  await settleFor(120);
+  assertEquals(h.store.phase("ci-node1"), "Failed");
+  assertEquals(h.store.claims.get("ci-node1")!.status.message, "a VM was provisioned but it never fetched its join secrets");
+  assertEquals(h.pds.deletions(), []);
+  assertEquals(h.secrets.disposed, 1);
+  assertEquals(h.fulfiller.active(), []);
+
+  deleteClaim(h.store, "ci-node1");
+  await h.fulfiller.pass();
+  await settle();
+  assertEquals(h.pds.deletions().length, 1);
+  assertEquals(h.store.claims.get("ci-node1")!.finalizers, []);
+});
+
+Deno.test("a grant that cannot be written stops the flow once the receipt is known and fails the claim", async () => {
+  const store = new FakeStore();
+  store.failGrantWrites = true;
+  const h = harness({ store });
+  h.store.put(claim("ci-node1"));
+  await h.fulfiller.pass();
+  await settle();
+  assertEquals(h.decisions.onAccepted, ["continue"], "returning at accept could lose a receipt that has not arrived");
+  assertEquals(h.decisions.onReceipt, ["return"]);
+  assertEquals(h.store.contract("ci-node1")?.receipt, RECEIPT, "the VM stays releasable from its claim");
+  assertEquals(h.secrets.grants, [], "the guest is never authorized without a grant on its claim");
+  assertEquals(h.store.phase("ci-node1"), "Failed");
+  assertStringIncludes(h.store.claims.get("ci-node1")!.status.message!, "workload grant could not be written");
+});
+
+Deno.test("a cluster whose OpenBao link has no ticket fails the claim without starting a contract", async () => {
+  const h = harness({ links: new FakeLinks(null) });
+  h.store.put(claim("ci-node1"));
+  await h.fulfiller.pass();
+  await settle();
+  assertEquals(h.contracts.length, 0);
+  assertEquals(h.store.phase("ci-node1"), "Failed");
+  assertStringIncludes(h.store.claims.get("ci-node1")!.status.message!, `${OWNER_CLUSTER_KEY}-openbao carries no ticket`);
+});
+
+Deno.test("an unreadable OpenBao CA fails the claim without starting a contract", async () => {
+  const h = harness();
+  h.store.put(claim("ci-node1", { spec: { ...claim("ci-node1").spec, tokenFile: "/elsewhere/token" } }));
+  await h.fulfiller.pass();
+  await settle();
+  assertEquals(h.contracts.length, 0);
+  assertEquals(h.store.phase("ci-node1"), "Failed");
+});
+
+Deno.test("stopping the door leaves in-flight claims for the next door and releases nothing", async () => {
+  const h = harness({ script: "no_fetch", vmReadyTimeoutSec: 60 });
+  h.store.put(claim("ci-node1"));
+  await h.fulfiller.pass();
+  await settle();
+  await h.fulfiller.stop();
+  assertEquals(h.pds.deletions(), []);
+  assertEquals(h.store.phase("ci-node1"), "Provisioning");
+  assertEquals(h.store.claims.get("ci-node1")!.finalizers, [FINALIZER_NODE_CLAIM]);
+});
+
+Deno.test("the door admits declared bidders and omits a policy it was not given", async () => {
+  const store = new FakeStore();
+  const contracts: Record<string, unknown>[] = [];
+  const fulfiller = createMarketNodeFulfiller({
+    store,
+    links: new FakeLinks(),
+    requesterFor: () => Promise.resolve(new FakeRequesterPds() as never),
+    readText,
+    eventStreams: () => ({ close() {} }),
+    secretsCapability: new FakeSecretsCapabilities().factory,
+    extraBidderDids: ["did:plc:mine"],
+    requestCompute: scriptedRequest("no_bids", contracts, { onSecretsFetched: [], onAccepted: [], onReceipt: [], grantAtAccept: [] }, store) as never,
+  });
+  store.put(claim("ci-node1"));
+  await fulfiller.pass();
+  await settle();
+  assertEquals(contracts[0].extraBidderDids, ["did:plc:mine"]);
+  assertEquals("policy" in contracts[0], false);
+  await fulfiller.stop();
+});
+
+Deno.test("a pending claim is finalized and fulfilled through the market as its owner", async () => {
+  const h = harness();
+  h.store.put(claim("ci-node1"));
+  await h.fulfiller.pass();
+  await settle();
+  assertEquals(h.store.claims.get("ci-node1")!.finalizers, [FINALIZER_NODE_CLAIM]);
+  assertEquals(h.requested, [OWNER]);
+  assertEquals(h.contracts.length, 1);
+  assertEquals(h.contracts[0].vmName, "ci-node1");
+  const contract = h.store.contract("ci-node1")!;
+  assertEquals(contract.receiptUri, RECEIPT.uri);
+  assertEquals(contract.receipt, RECEIPT);
+  assertEquals(contract.vmAddress, GUEST);
+  assertEquals(h.store.claims.get("ci-node1")!.status.fqdn, GUEST);
   await h.fulfiller.stop();
 });
 
 Deno.test("concurrent claims for one owner each get their own contract", async () => {
-  const h = harness();
+  const h = harness({ script: "hang_after_network", vmReadyTimeoutSec: 60 });
   h.store.put(claim("ci-node1"));
   h.store.put(claim("ci-node2"));
   h.store.put(claim("ci-node3", { workspace: "root:acct:other", spec: { ...claim("x").spec, cluster: "other", nodeName: "other-node1" } }));
@@ -374,32 +647,10 @@ Deno.test("concurrent claims for one owner each get their own contract", async (
   assertEquals(h.contracts.length, 3);
   assertEquals(h.requested, [OWNER, OWNER, OWNER]);
   assertEquals(h.fulfiller.active().length, 3);
+  assertEquals(h.links.asked.includes(`root:acct:other/d90m41be-other-openbao`), true);
   await h.fulfiller.pass();
   await settle();
   assertEquals(h.contracts.length, 3, "a live claim is not fulfilled twice");
-  await h.fulfiller.stop();
-});
-
-Deno.test("deleting a live claim releases the node and only then drops the finalizer", async () => {
-  const h = harness();
-  h.store.put(claim("ci-node1"));
-  await h.fulfiller.pass();
-  await settle();
-  assertEquals(h.store.removed, []);
-  assertEquals(h.pds.deletions(), []);
-
-  deleteClaim(h.store, "ci-node1");
-  await h.fulfiller.pass();
-  await settle();
-  assertEquals(h.store.phase("ci-node1"), "Released");
-  assertEquals(h.store.claims.get("ci-node1")!.finalizers, []);
-  assertEquals(h.store.contract("ci-node1")?.phase, "released");
-  assertEquals(h.fulfiller.active(), []);
-  assertEquals(h.pds.deletions().length, 1);
-
-  await h.fulfiller.pass();
-  await settle();
-  assertEquals(h.pds.deletions().length, 1, "the finalizer path does not release a released contract again");
 });
 
 Deno.test("a claim deleted before any bid was accepted asks the flow to return and releases nothing", async () => {
@@ -414,31 +665,17 @@ Deno.test("a claim deleted before any bid was accepted asks the flow to return a
   assertEquals(h.pds.deletions(), []);
 });
 
-Deno.test("a node whose agent dies is reported Failed with the guest's words, its VM released, and keeps its finalizer", async () => {
-  const h = harness({ behaviour: "exit" });
+Deno.test("an unreadable claim at deletion defers the release to the next pass, which reads it again", async () => {
+  const h = harness({ script: "no_fetch" });
   h.store.put(claim("ci-node1"));
   await h.fulfiller.pass();
-  await settle();
-  assertEquals(h.store.phase("ci-node1"), "Failed");
-  assertStringIncludes(h.store.claims.get("ci-node1")!.status.message!, "level=fatal msg=boom");
-  assertEquals(h.store.claims.get("ci-node1")!.finalizers, [FINALIZER_NODE_CLAIM]);
-  assertEquals(h.pds.deletions().length, 1);
-
+  await settleFor(120);
   deleteClaim(h.store, "ci-node1");
-  await h.fulfiller.pass();
-  assertEquals(h.store.claims.get("ci-node1")!.finalizers, []);
-  assertEquals(h.pds.deletions().length, 1, "nothing left to release once the contract ended");
-});
-
-Deno.test("an unreadable claim at the end of a run defers the release to the next pass, which reads it again", async () => {
-  const h = harness({ behaviour: "exit" });
-  h.store.put(claim("ci-node1"));
   h.store.unreadable = true;
   await h.fulfiller.pass();
   await settle();
   assertEquals(h.pds.deletions(), [], "no claim, no release");
-  assertEquals(h.fulfiller.active(), []);
-  assertEquals(h.store.contract("ci-node1")?.receipt, RECEIPT);
+  assertEquals(h.store.claims.get("ci-node1")!.finalizers, [FINALIZER_NODE_CLAIM]);
 
   h.store.unreadable = false;
   await h.fulfiller.pass();
@@ -447,109 +684,34 @@ Deno.test("an unreadable claim at the end of a run defers the release to the nex
   assertEquals(h.store.phase("ci-node1"), "Released");
 });
 
-Deno.test("a guest whose ssh never comes up is Failed and released", async () => {
-  const h = harness({ pollReady: false });
-  h.store.put(claim("ci-node1"));
+Deno.test("a deleted claim the door could not confirm released is Failed, and its finalizer still goes", async () => {
+  const h = harness({ bidderOk: false });
+  h.store.put(claim("ci-node1", {
+    deletionTimestamp: "2026-10-06T00:00:00Z",
+    finalizers: [FINALIZER_NODE_CLAIM],
+    status: { phase: "Running", contract: { receiptUri: RECEIPT.uri, receiptCid: RECEIPT.cid, submitEventRef: SUBMIT } },
+  }));
   await h.fulfiller.pass();
   await settle();
-  assertEquals(h.store.phase("ci-node1"), "Failed");
-  assertEquals(h.store.claims.get("ci-node1")!.status.message, "a VM was provisioned but its SSH never came up");
   assertEquals(h.pds.deletions().length, 1);
-});
-
-Deno.test("no bids is a failure that says so", async () => {
-  const h = harness({ script: "no_bids" });
-  h.store.put(claim("ci-node1"));
-  await h.fulfiller.pass();
-  await settle();
   assertEquals(h.store.phase("ci-node1"), "Failed");
-  assertEquals(h.store.claims.get("ci-node1")!.status.message, "no bids arrived for this node");
-  assertEquals(h.pds.deletions(), []);
+  assertEquals(h.store.claims.get("ci-node1")!.status.message, "the claim was deleted but the node's VM could not be confirmed released");
+  assertEquals(h.store.claims.get("ci-node1")!.finalizers, []);
 });
 
-Deno.test("a no-bids end keeps the rfp it asked with and names no accept", async () => {
+Deno.test("no bids is a failure that says so, keeps the rfp it asked with and names no accept", async () => {
   const h = harness({ script: "no_bids" });
   h.store.put(claim("ci-node1"));
   await h.fulfiller.pass();
   await settle();
   const status = h.store.claims.get("ci-node1")!.status;
   assertEquals(status.phase, "Failed");
+  assertEquals(status.message, "no bids arrived for this node");
   assertEquals(status.contract?.rfpUri, RFP.uri);
   assertEquals(status.contract?.acceptUri, undefined);
   assertEquals(status.contract?.outcome, "no_bids");
-});
-
-Deno.test("a live claim this process never started is released from its legacy receipt, never adopted", async () => {
-  const h = harness();
-  h.store.put(claim("ci-node1", {
-    finalizers: [FINALIZER_NODE_CLAIM],
-    status: {
-      phase: "Running",
-      contract: { vmUri: "at://owner/vm/1", receiptUri: RECEIPT.uri, receiptCid: RECEIPT.cid, submitEventRef: SUBMIT },
-    },
-  }));
-  await h.fulfiller.pass();
-  await settle();
-  assertEquals(h.contracts.length, 0);
-  const deletions = h.pds.deletions();
-  assertEquals(deletions.length, 1);
-  assertEquals({ uri: deletions[0].body.record.receipt.uri, cid: deletions[0].body.record.receipt.cid }, RECEIPT);
-  assertEquals(
-    h.store.phase("ci-node1"),
-    "Released",
-    "a claim the door reaped and CONFIRMED released must say Released, not Failed. The cluster's " +
-      "Node object is still there and still reads Ready, and the two phases are the only thing that " +
-      "tells a reader which claims have a machine behind them: Released is the one whose machine the " +
-      "door took away, and it is what the clusterprovider deletes the corpse Node on.",
-  );
-  assertEquals(h.store.contract("ci-node1")?.phase, "released");
-  assertEquals(h.store.contract("ci-node1")?.vmUri, "at://owner/vm/1");
-});
-
-Deno.test("a claim the door could not confirm released is Failed, not Released", async () => {
-  const h = harness({ bidderOk: false });
-  h.store.put(claim("ci-node1", {
-    finalizers: [FINALIZER_NODE_CLAIM],
-    status: {
-      phase: "Running",
-      contract: { vmUri: "at://owner/vm/1", receiptUri: RECEIPT.uri, receiptCid: RECEIPT.cid, submitEventRef: SUBMIT },
-    },
-  }));
-  await h.fulfiller.pass();
-  await settle();
-  assertEquals(h.pds.deletions().length, 1);
-  assertEquals(
-    h.store.phase("ci-node1"),
-    "Failed",
-    "the door could not confirm the machine gone, so the claim may still have one, and only " +
-      "Released is safe to delete a cluster Node on",
-  );
-  assertEquals(
-    h.store.claims.get("ci-node1")!.status.message,
-    "the door restarted while this node was live; its VM could not be confirmed released",
-  );
-});
-
-Deno.test("a deleted claim with an unreleased contract is released before its finalizer goes", async () => {
-  const h = harness();
-  h.store.put(claim("ci-node1", {
-    deletionTimestamp: "2026-10-06T00:00:00Z",
-    finalizers: [FINALIZER_NODE_CLAIM],
-    status: { phase: "Failed", contract: { receiptUri: "r", receiptCid: "c", submitEventRef: "s" } },
-  }));
-  await h.fulfiller.pass();
-  assertEquals(h.pds.deletions().length, 1);
-  assertEquals(h.pds.resolved, ["s"]);
-  assertEquals(h.store.claims.get("ci-node1")!.finalizers, []);
-});
-
-Deno.test("an unreadable token fails the claim without starting a contract", async () => {
-  const h = harness();
-  h.store.put(claim("ci-node1", { spec: { ...claim("ci-node1").spec, tokenFile: "/missing" } }));
-  await h.fulfiller.pass();
-  await settle();
-  assertEquals(h.contracts.length, 0);
-  assertEquals(h.store.phase("ci-node1"), "Failed");
+  assertEquals(status.grant, undefined);
+  assertEquals(h.pds.deletions(), []);
 });
 
 Deno.test("a claim's contract round-trips to the requester's saved state and keeps the legacy refs", () => {

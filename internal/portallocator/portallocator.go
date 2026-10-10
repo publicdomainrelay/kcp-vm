@@ -46,7 +46,24 @@ const (
 	PurposeK3sControllerManager      Purpose = "k3s-controller-manager"
 	PurposeK3sScheduler              Purpose = "k3s-scheduler"
 	PurposeK3sCloudControllerManager Purpose = "k3s-cloud-controller-manager"
+
+	PurposeApiserverLink Purpose = "apiserver-link"
+
+	PurposeOpenBaoLink Purpose = "openbao-link"
+
+	PurposeExternalSecretsHealth Purpose = "external-secrets-health"
+
+	PurposeExternalSecretsWebhook Purpose = "external-secrets-webhook"
+
+	PurposeExternalSecretsWebhookHealth Purpose = "external-secrets-webhook-health"
 )
+
+var datagramPurposes = map[Purpose]bool{
+	PurposeApiserverLink: true,
+	PurposeOpenBaoLink:   true,
+}
+
+func (p Purpose) Datagram() bool { return datagramPurposes[p] }
 
 var retiredPurposes = map[Purpose]bool{
 	"ssh-server": true,
@@ -63,6 +80,12 @@ var purposeWidth = map[Purpose]int{
 	PurposeK3sControllerManager:      1,
 	PurposeK3sScheduler:              1,
 	PurposeK3sCloudControllerManager: 1,
+	PurposeApiserverLink:             1,
+	PurposeOpenBaoLink:               1,
+
+	PurposeExternalSecretsHealth:        1,
+	PurposeExternalSecretsWebhook:       1,
+	PurposeExternalSecretsWebhookHealth: 1,
 }
 
 func (p Purpose) Width() int { return purposeWidth[p] }

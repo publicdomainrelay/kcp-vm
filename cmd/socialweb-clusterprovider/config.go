@@ -74,12 +74,18 @@ const (
 
 	envCloudControllerManager = "SOCIALWEB_CLUSTERPROVIDER_CLOUD_CONTROLLER_MANAGER"
 
+	envDumbpipe = "SOCIALWEB_CLUSTERPROVIDER_DUMBPIPE"
+
 	envTokenTimeout = "SOCIALWEB_CLUSTERPROVIDER_TOKEN_TIMEOUT"
 	envLogLevel     = "SOCIALWEB_CLUSTERPROVIDER_LOG_LEVEL"
 
 	envESOManifestDir = "SOCIALWEB_CLUSTERPROVIDER_ESO_MANIFEST_DIR"
 
 	envESONamespace = "SOCIALWEB_CLUSTERPROVIDER_ESO_NAMESPACE"
+
+	envExternalSecrets = "SOCIALWEB_CLUSTERPROVIDER_EXTERNAL_SECRETS"
+
+	envESOBundle = "SOCIALWEB_CLUSTERPROVIDER_ESO_BUNDLE"
 )
 
 const DefaultESOManifestDir = "/opt/socialweb/deploy/eso"
@@ -153,9 +159,15 @@ type Config struct {
 
 	CloudControllerManager string
 
+	Dumbpipe string
+
 	ESOManifestDir string
 
 	ESONamespace string
+
+	ExternalSecrets string
+
+	ESOBundle string
 
 	DatastoreHasRow bool
 
@@ -197,8 +209,11 @@ func load(get func(string) string) (Config, error) {
 		QEMU:                   strings.TrimSpace(get(envQEMU)),
 		NodeAgent:              strings.TrimSpace(get(envNodeAgent)),
 		CloudControllerManager: strings.TrimSpace(get(envCloudControllerManager)),
+		Dumbpipe:               strings.TrimSpace(get(envDumbpipe)),
 		ESOManifestDir:         strings.TrimSpace(get(envESOManifestDir)),
 		ESONamespace:           strings.TrimSpace(get(envESONamespace)),
+		ExternalSecrets:        strings.TrimSpace(get(envExternalSecrets)),
+		ESOBundle:              strings.TrimSpace(get(envESOBundle)),
 		GrantPath:              strings.TrimSpace(get(envGrant)),
 		Interval:               DefaultInterval,
 		LogLevel:               slog.LevelInfo,
@@ -350,6 +365,16 @@ func load(get func(string) string) (Config, error) {
 					"groups by, and nothing else names that binary: a join that accepted an empty one "+
 					"would lease, config and spawn everything else and silently drop the component "+
 					"that gives a joined node its cloud identity", envCloudControllerManager)
+		}
+
+		if cfg.ExternalSecrets == "" || cfg.ESOBundle == "" {
+			return Config{}, fmt.Errorf(
+				"%s and %s must both be set. Every joined cluster's process group carries the External "+
+					"Secrets controller and its webhook beside the control plane: the first names the "+
+					"pinned external-secrets binary, the second the pinned upstream bundle whose CRDs, "+
+					"ClusterRoles and webhook registration the group installs into the tenant before "+
+					"the pair starts. A join that accepted either empty would spawn a pair with nothing "+
+					"to run or a tenant serving none of its kinds", envExternalSecrets, envESOBundle)
 		}
 	}
 

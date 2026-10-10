@@ -105,7 +105,9 @@ surprise: it is the default.
 - intent, `st.Nodes < target` -> `Provision, Nodes: target`
 - intent, `st.Nodes > target` -> not reachable in this iteration: see 4.4, where the target while
   intent exists only grows. The branch is written to `None, Nodes: st.Nodes` with a reason naming
-  4.4, so a future partial scale-in has one place to change rather than a silent gap.
+  4.4, so a future partial scale-in has one place to change rather than a silent gap. (Since
+  2026-10-07 this branch is the per-node scale-in of plan 0005 M4-SCALE-IN: `Release` of one idle
+  node, or `None` while no node has been idle for the hold.)
 - intent, `st.Nodes == target` -> `None, Nodes: st.Nodes`
 - no intent -> unchanged: hold, then `Teardown, Nodes: 0`
 
@@ -120,6 +122,15 @@ its own plan, and it is only worth doing once something measures which node to d
 
 This is a deliberate limit, stated rather than left implicit: the cluster scales out to `MaxNodes`
 and in to zero, and never to an intermediate count.
+
+SUPERSEDED 2026-10-07 by plan 0005 item M4-SCALE-IN (`docs/plans/0005-zero-ssh-market-nodes.yaml`):
+scale-in is now per node. With intent and more nodes counted than the target, a node this provider
+holds that has held nothing beyond the baseline (DaemonSet, mirror and baseline pods aside) for the
+whole hold is cordoned, drained and released, one node per hold, emptiest then newest, never below
+the target; with no intent the all-or-nothing teardown above is unchanged. The "which node, and does
+its work move" question this section left open is answered by `scale.Loads` (which node holds what)
+and by the drain (evicted baseline pods move; a node running tenant work is never chosen).
+ARCHITECTURE section 10 carries the rule.
 
 ### 4.5 The driver and the actuator
 
@@ -198,3 +209,5 @@ the single decider, and the CCM's numbers are the instrument that shows the deci
   alone would have been inert and the three-node test would have failed for a harness reason rather
   than for the defect it exists to catch. The live harness now forwards them, which is what
   production `main.go` already did.
+- 2026-10-07 Section 4.4 superseded by plan 0005 M4-SCALE-IN: per-node scale-in, one idle node per
+  hold, never below the target; the all-or-nothing teardown remains the no-intent path.

@@ -150,7 +150,9 @@ Everything is either a controller-runtime reconcile loop or a deploy config. No 
 | 4 | Node provider | Go | Watches the home workspace for intent, actuates one node, writes `Node` state |
 | 5 | kcp provider workspace | YAML | `APIResourceSchema` plus `APIExport` for our CRDs; tenants `APIBinding` |
 | 6 | k3s cloud-init module | sibling repo, `UserDataModule` | Installs k3s in a market guest. The only sanctioned way a guest-side component arrives |
-| 7 | OpenBao plus ESO | deploy config | The vault, at two levels: a root vault one per deployment and a cluster vault one per ON cluster, both in the production stack. OpenBao holds the per-cluster 13-entry identity bundle and is its AUTHORITATIVE store — the wake reads it out of the vault and materialises the file tree at `<DataDir>/server/tls`+`cred/`, because k3s has no vault plugin and must read files at runtime (sections 9, 14 and 15). ESO materialises vault-backed Secrets into the tenant cluster; the bundle is custody and wake-time restore, not the runtime location |
+| 7 | OpenBao plus ESO | deploy config | The vault, at two levels: a root vault one per deployment and a cluster vault one per ON cluster, both in the production stack. OpenBao holds the per-cluster 13-entry identity bundle and is its AUTHORITATIVE store — the wake reads it out of the vault and materialises the file tree at `<DataDir>/server/tls`+`cred/`, because k3s has no vault plugin and must read files at runtime (sections 9, 14 and 15). ESO materialises vault-backed Secrets into the tenant cluster (row 9); the bundle is custody and wake-time restore, not the runtime location |
+| 8 | Cluster links | Go, `internal/clusterlink` + `internal/clusterprovider/links.go` | Two `dumbpipe listen-tcp` members of every cluster's process group, one in front of the k3s apiserver and one in front of the cluster vault, each an iroh endpoint whose key lives in that cluster's vault. A node dials the cluster through them; the door holds no per-node connection. Recorded as `ClusterLink` objects (plan 0005 M3) |
+| 9 | External Secrets pair | pinned upstream binary, `internal/eso` + `internal/clusterprovider/externalsecrets.go` | The External Secrets Operator v2.11.0 run as TWO members of every cluster's process group, beside the control plane: the controller (`external-secrets`) and its admission webhook (`external-secrets webhook`), one binary copied digest-pinned into the control-plane image. They dial the tenant apiserver with a minted credential and reach the cluster vault on loopback, so an ExternalSecret syncs at ZERO nodes and on every substrate. The tenant keeps only the bundle's CRDs, ClusterRoles and a URL webhook registration; no ESO pod runs in it (`NEXT.yaml` ESO-4, plan 0005 M4-ESO-BESIDE) |
 
 **Not building**, each rejected on evidence: a CNI, a CAPI provider, an OIDC issuer, an ATProto
 bridge, a syncer, a virtual workspace, a second reverse proxy, a reachability substrate, an underlay,
@@ -162,7 +164,12 @@ so there is nothing to commit).
 
 ```
 embedded-postgres  ->  openbao  ->  kine  ->  k3s server --disable-agent  ->  cloud-controller-manager
+                   ->  external-secrets-webhook  ->  external-secrets  ->  apiserver-link  ->  openbao-link
 ```
+
+The two links are appended by `StepsFor` after every `StackOrder` member when
+`StackConfig.Links` is set (section "The cluster links" below); they are not in `StackOrder`
+because they are not stack components a `clusterstack.Spec` renders an argv for.
 
 That order is `procgroup.StackOrder` — every component a stack may name, in bring-up order — and
 reap is reverse order. It is deliberately a DIFFERENT list from `procgroup.DefaultOrder`, which is the
@@ -174,8 +181,8 @@ test asserting every member of `DefaultOrder` appears in `StackOrder`, in order.
 **no
 supervisor process**: the reconcile loop is the supervisor.
 
-The cloud controller manager is the LAST member, and its position is the whole reason it is a member
-at all. It is useless without an apiserver, so it comes after `k3s server`; a step placed before k3s
+The cloud controller manager follows k3s, and its position is the whole reason it is a member
+at all (the External Secrets pair, below, follows it for the same reason). It is useless without an apiserver, so it comes after `k3s server`; a step placed before k3s
 would also move the seam `ErrNoGuardSeam` protects, which is why the guard's own rule is that the
 identity check rides a step ahead of k3s and nothing else may be inserted between. Reverse-order reap
 therefore stops the controller FIRST, which is what is wanted: a controller that outlives the
@@ -198,10 +205,139 @@ controller left behind by a gateway that died WITHOUT its reverse-order reap is 
 gateway's own process group (invariant 21 stops it in the ordinary case), and a host that sees one
 stops it by hand. The alternatives were considered and are worse than the limit. `NEXT.yaml` CCM-2.
 
+### The External Secrets controller runs beside the control plane
+
+Until 2026-10-07 the External Secrets Operator was installed INTO each tenant cluster as three
+Deployments (controller, cert-controller, webhook). At zero nodes - the resting state - their pods
+were Pending, so nothing synced; on the market substrate the store could not reach the cluster
+vault at all (ESO-3). Both are closed by moving the operator into the process group
+(`NEXT.yaml` ESO-4, plan 0005 M4-ESO-BESIDE). The decisions, each held by a test:
+
+- **Two members, one binary.** `procgroup.ComponentExternalSecretsWebhook` then
+  `procgroup.ComponentExternalSecrets`, after the cloud controller manager in `StackOrder`. The
+  binary is the upstream `ghcr.io/external-secrets/external-secrets:v2.11.0` image's own
+  `/usr/bin/external-secrets`, copied by digest into the control-plane image
+  (`deploy/control-plane-container/Dockerfile`, `internal/versions/versions.json`); the webhook is
+  its `webhook` subcommand. The cert-controller is not run: its only job was minting the webhook's
+  serving certificate and injecting caBundles, which the provider now does itself.
+- **The webhook step installs the tenant half, before either process starts.** Its `Prepare`
+  (`internal/clusterprovider/externalsecrets.go`) mints the pair's tenant credential, mints the
+  webhook's serving pair, and calls `eso.InstallBeside` with the cluster's admin client against the
+  pinned bundle (`/opt/socialweb/eso/external-secrets.yaml`, sha256-checked at image build).
+  `eso.SplitBundle` sorts every bundle object three ways and refuses a kind it does not place: KEPT
+  (the 25 CRDs and the ClusterRoles `external-secrets-controller`, `-view`, `-edit`,
+  `-servicebindings`), RE-REGISTERED (the two ValidatingWebhookConfigurations), RETIRED (everything
+  else). Retired objects are deleted first, then the kept ones are server-side applied under
+  `socialweb-addons`, then the CRDs are awaited `Established`, because the controller starts an
+  informer per kind and an informer for an unserved kind fails its start. The step runs at every
+  spawn, so the install is also the migration.
+- **Identity and RBAC.** The pair authenticates as `system:socialweb:external-secrets` (group of
+  the same name), a client certificate minted from the cluster's CA exactly as the cloud
+  controller manager's is, written to `<DataDir>/external-secrets.kubeconfig` (0600) and handed to
+  both processes as `KUBECONFIG` and nothing else in their environment. A ClusterRoleBinding
+  `socialweb-external-secrets` binds that GROUP to the upstream `external-secrets-controller`
+  ClusterRole, so least privilege is upstream's own rule set rather than a fork of it. The
+  upstream ClusterRoleBindings to the ServiceAccount `external-secrets` are retired, not kept:
+  a binding to a ServiceAccount nothing runs as is one a tenant who creates that ServiceAccount
+  inherits. The tenant grant's `socialweb-mint-identity` policy admits the beside username (its
+  `__SOCIALWEB_ESO_USER__` placeholder) where it used to admit the in-tenant ServiceAccount.
+- **The webhook is registered by URL on loopback.** Each webhook's `clientConfig` becomes
+  `url: https://127.0.0.1:<leased webhook port><upstream path>` with `caBundle` the CA the provider
+  mints per cluster (`eso.EnsureWebhookTLS`: CA 10 years, key under
+  `<DataDir>/external-secrets/webhook-ca.key`, outside the cert dir the webhook reads; leaf 2 years,
+  SANs `localhost` and `127.0.0.1`, renewed at a spawn inside its last year). A registration still
+  naming a Service is deleted before the URL apply, because the field another manager owns
+  survives a server-side apply and a webhook carrying both is refused. MEASURED: the k3s apiserver
+  (`--egress-selector-mode cluster`) dials the loopback URL directly at zero nodes. The
+  registrations stay `failurePolicy: Ignore`: the pair is not restarted when it dies (nor is the
+  cloud controller manager), and a dead webhook under `Fail` would refuse the provider's own store
+  writes and deletes.
+- **Ports and singletons.** The upstream defaults (`:8080` metrics, `:8082` controller health,
+  `:8081` webhook health, `10250` webhook) are one set for the host, so each cluster leases three
+  (section 8): the controller's `--live-addr` and the webhook's `--healthz-addr` bind `127.0.0.1`;
+  metrics are off (`--metrics-addr=0`: nothing in the container scrapes them, and a leased port
+  nobody reads is a lease held for nothing); leader election is off, because the process group is
+  already the singleton per cluster. The webhook's `--port` has no host flag and binds every
+  interface (measured: `Serving webhook server` with an empty host); the container publishes no
+  such port, and the listener answers only admission reviews under a CA no client but the tenant
+  apiserver trusts.
+- **Readiness.** The webhook's gate waits for its `/readyz` (which itself checks the serving
+  pair) and then dials the serving port verifying the minted CA for `127.0.0.1`, which is what the
+  apiserver does. The controller's `/readyz` is a ping that answers before any cache syncs, so its
+  gate also waits for the `"Starting workers"` line of the `externalsecret` controller.
+- **The store dials the vault on loopback, on every substrate.** `esovault.ApplyVaultStore`
+  writes `server: https://127.0.0.1:<vault port>` and the vault CA; the substrate branch that kept
+  the store off the market substrate is gone with the reason for it.
+- **Clusters leased before the pair.** `StackConfig.WithoutUnleased` drops the pair from the
+  restart reap's argv derivation when a cluster's lease-file entry holds none of its ports; the
+  bring-up that follows leases them, because the materialiser allocates every purpose at spawn.
+
 Embedded-postgres is a special case: it is a Go **library** that runs the server as a child of
 whoever links it, so there is no argv for a step and `processrunner.Start` refuses the empty argv
 such a step would have. `procgroup.Options.PostgresUp func() bool` exists for this: the component
 holding the library handle answers for it, and a **nil predicate is a refusal, not a skip**.
+
+### The cluster links
+
+Plan 0005 M3 (M3-CLUSTERLINK, M3-IROH-KEYS). Decided by Claude, user may veto, except where the
+plan's `m3_contract` already fixed it (names, mount, path, env var, encoding).
+
+- **What runs.** Per cluster, `dumbpipe listen-tcp --host 127.0.0.1:<target> --ipv4-addr
+  0.0.0.0:<link port>` twice: target = the k3s secure port (k3s binds loopback) for
+  `apiserver-link`, the vault's leased port for `openbao-link`. dumbpipe v0.39.0, the same release
+  the guests install (`DUMBPIPE_VERSION` in the control-plane Dockerfile).
+- **On or off.** On when `SOCIALWEB_CLUSTERPROVIDER_DUMBPIPE` names the binary; the container
+  entrypoint defaults it to `/usr/local/bin/dumbpipe`. Unset leaves every cluster without links
+  (the live rigs and tests that build their own env), and the provider logs `cluster links on=false`
+  once at start. Links need the vault in the Stack (`ErrNoLinkSeam`) and a recorder
+  (`ErrNoLinkRecorder`).
+- **The key.** One ed25519 key per link, generated once and kept in the cluster's OWN vault at KV v2
+  mount `socialweb-links`, path `<service>` (`apiserver`, `openbao`), fields `secret` (64 hex, the
+  32-byte seed -- exactly the form dumbpipe reads from `IROH_SECRET`; measured: dumbpipe prints
+  `using secret key <hex>` when it generates one, and the ticket it prints for a given seed names
+  `ed25519.NewKeyFromSeed(seed).Public()`), `endpointId`, `did`. The mount is enabled if absent with
+  the root token from `unseal.json`. The first write is check-and-set 0, so two writers can never both
+  mint a key; a stored record that does not parse, or whose `endpointId` disagrees with its secret,
+  is an error and is NEVER regenerated over (a new key is a new endpoint id and strands every node
+  holding the old ticket). The key is read in the step's `procgroup.Step.Prepare`, which runs once
+  the steps before it passed their gates, so the vault is up; the secret rides `Spec.Env` only.
+- **Identity encodings.** `internal/didkey`: endpoint id = lowercase hex of the 32-byte public key
+  (what iroh prints); did:key = `did:key:z` + base58btc(0xed 0x01 + key). Fixture-tested against the
+  did:key spec vector and a dumbpipe-printed ticket.
+- **The ticket.** dumbpipe prints `dumbpipe connect-tcp <ticket>`: `endpoint` + lowercase unpadded
+  base32 of a postcard-encoded `EndpointTicket` (byte 0 the variant 0x00, bytes 1..32 the endpoint
+  id, then the relay URL and direct addresses). `clusterlink.ParseTicket` reads the id back, and the
+  gate opens only when the printed ticket names the vault-held key. The printed ticket's BYTES change
+  per bring-up (the relay chosen and the addresses are in it), so it is NOT what is published:
+  `status.ticket` is `clusterlink.StableTicket(key)`, the id-only ticket (variant 0x00, the id, zero
+  addresses) -- byte for byte what `IROH_SECRET=<seed> dumbpipe generate-ticket` prints, fixture-tested
+  -- so it is a function of the key alone and never changes while the key lives in the vault. A node
+  secret may hold it written once (the M3-JWT KV path does). dumbpipe resolves the id's current relay
+  and addresses by discovery; measured live in
+  `TestARealDumbpipeLinkCarriesTCPThroughItsPublishedTicketWhichARestartLeavesByteIdentical`
+  (connect-tcp with the published ticket echoes before and after a restart, and the ticket is
+  byte-identical). Decided by Claude, user may veto: the cost is that a dialer with no discovery
+  (no DNS to the n0 discovery service) cannot use the ticket; guests reach the internet anyway.
+- **The link port.** Leased (`apiserver-link`, `openbao-link`, width 1, section 8) and bound as the
+  endpoint's IPv4 UDP socket, so the direct address in a ticket is stable and a dumbpipe a dead
+  provider left running is found by the restart sweep: `portscan` reads `/proc/net/udp{,6}` (state
+  07) for a datagram purpose and the TCP tables for every other, and attributes the socket to the
+  cluster by the argv. A lease file written before links existed derives its restart argv without
+  them (`StackConfig.WithoutUnleasedLinks`); the next bring-up leases them.
+- **Status.** A reporter goroutine per link writes the `ClusterLink` `Listening` (spec
+  cluster/service/targetPort, status endpointId/did/ticket) with retries, so a kcp outage never reaps
+  a cluster. When the listener exits it writes status only (never a create): `Failed` with the exit
+  and the last 600 bytes of output if the group is still live, `Pending` "the cluster's process
+  group was stopped" if the group was reaped (`LocalHost.Live` is false by then). The home workspace
+  is found from the cluster key through the registry, as a NodeClaim's is.
+- **Teardown.** A deleted cluster's two ClusterLinks are deleted after its group is reaped (both the
+  all-clusters path and a pass that removes the finalizer). An OFF cluster keeps them: it comes back as
+  the same endpoints. The keys stay in the vault's data and go with it.
+- **Stated limits.** A link that dies after bring-up is NOT restarted: it reads `Failed` until the
+  group is next brought up (provider restart, or the cluster switched off and on), the same as any
+  other member dying today. The allocator probes a link port for TCP, not UDP, so a foreign UDP
+  holder of a leased port makes dumbpipe exit at bind and the bring-up fail with dumbpipe's bind error
+  in the gate message. The IPv6 socket takes a random port.
 
 ### The vault's config is rendered, not shipped
 
@@ -343,6 +479,7 @@ compatibility promise.
 | **Kine** | kine plus t4 to central S3 | system | no |
 | **Node** | one node. The only bound on leaks | node provider | no |
 | **NodeClaim** | one node RENTED FROM THE COMPUTE MARKET for a cluster, as that cluster's owner. Carries paths (`tokenFile`, `nodePasswordFile`, `serverCAFile`) and never a secret; the door in the sibling Deno process is the only writer of its `status` | cluster provider, spec and metadata only | no |
+| **ClusterLink** | one iroh listener in front of a cluster's apiserver or vault, named `<clusterKey>-apiserver` / `<clusterKey>-openbao` in the cluster's home workspace. `spec` {cluster (the key), service, targetPort}; `status` {phase `Pending`/`Listening`/`Failed`, endpointId (64 hex), did (did:key), ticket (id-only, a function of the key: byte-stable), message}. Never carries the secret | cluster provider, spec and status | no |
 | **AtprotoIdentity** | the DID to identity mapping, in the home workspace | us | no |
 | **Account** | the DID to shard map. Not a CRD - a real kcp `Workspace` of an account `WorkspaceType` in root | us | no |
 
@@ -435,22 +572,26 @@ awaits its status write before the flow moves on, so the receipt is on the claim
 boots. Writes stay the door's alone and go through the existing store (its 429 Retry-After hold
 applies to reads; a status PATCH is not held). The legacy `vmUri|rfpUri|acceptUri|receiptUri|
 receiptCid` are mirrored from the strongRefs on every write, so the provider's no_bids back-off is
-unchanged. After the flow, the door runs the same ssh session as before (the join needs it until M3),
-then reads the claim back with `NodeClaimStore.get` and calls `releaseCompute` with the state parsed
-FROM THE CLAIM, never from its memory. Decisions, made by Claude, user may veto:
+unchanged. Since plan 0005 M3 there is no session after the flow: the flow returns when the guest
+fetched its join secrets and the door releases only when the claim is DELETED, reading the claim back
+with `NodeClaimStore.get` and calling `releaseCompute` with the state parsed FROM THE CLAIM, never from
+its memory (section 9, "A market node joins through its cluster's OpenBao, never through ssh").
+Decisions, made by Claude, user may veto; the two marked SUPERSEDED were replaced by M3 and are kept
+for the record:
 
 - A claim needs releasing iff its contract has receipt refs (`receipt` + `submitEventRef`) and its
   phase is not `released`. A released claim keeps its receipt and gains `release {event, payload,
   ok}`; the legacy receipt fields are no longer cleared, the contract phase is what says "done".
-- A claim with no live session in this process (startup, or a live claim this process did not
-  start) is released with `releaseCompute` from its saved state, reason `requester_restarted`; this
-  replaces the hand-rolled reap and its separate vm.delete code. Still a reap, not an adoption:
-  adopting is M3-NODE-LOSS. A pre-upgrade claim carrying only the legacy fields is released from a
+- SUPERSEDED (M3): a claim with no live session in this process (startup, or a live claim this
+  process did not start) was released with `releaseCompute` from its saved state, reason
+  `requester_restarted`. A restarted door now adopts a `Joining` or `Running` claim without a write or
+  a release, and marks a `Bidding` or `Provisioning` claim `Failed`; the release waits for deletion. A pre-upgrade claim carrying only the legacy fields is released from a
   `ContractState` synthesised from them.
 - `Released` only when `release.ok`; an unconfirmed release is `Failed`. A release that threw leaves
   the phase unreleased, so the delete path retries it.
-- An unreadable claim at the end of a run (a held 429, an error) defers the release: the run ends
-  without a terminal write, and the next pass finds a live claim with no session and releases it.
+- SUPERSEDED (M3): an unreadable claim at the end of a run deferred the release to the next pass.
+  A run no longer releases at its end; an unreadable claim at DELETION defers the release, the
+  finalizer stays, and the next pass reads the deleted claim again.
 - A deleted claim aborts its run; the abort turns into a `return` from `onRfpSubmitted`, `onReceipt`
   or `onNetwork`, but never from `onAccepted`, because returning there would end the flow before the
   receipt is known and leave a VM nothing can release.
@@ -590,7 +731,10 @@ own admin kubeconfig carries, and it is the arm of the grant's carve-out that wr
 `request.resource.resource`, not a single condition: the `serviceaccounts/token` arm admits only
 `system:serviceaccount:users:gwmint`, and the Secrets arm admits only
 `request.userInfo.username == 'system:admin' && 'system:masters' in request.userInfo.groups`, or the
-External Secrets controller `system:serviceaccount:default:external-secrets`. The distinction is
+External Secrets controller `system:socialweb:external-secrets` (the identity of the pair beside the
+control plane, section 5; until 2026-10-07 it was the in-tenant ServiceAccount
+`system:serviceaccount:default:external-secrets`, which a tenant who creates that ServiceAccount would
+have inherited). The distinction is
 load-bearing rather than pedantic, because the two arms admit DIFFERENT subjects for different verbs
 on purpose: a ServiceAccount token is requested by the tenant's own mint, while writing a Secret in
 the tenant namespace is the provider's act -- through its own admin credential for the grant, and
@@ -674,6 +818,66 @@ the instance token, which is per-instance state.
 REGENERATE those and INVALIDATE every kubeconfig and SA token.** The count is load-bearing; the
 bundle's own test asserts it against the data.
 
+### A market node's secrets live in its cluster's OpenBao, behind a JWT role (plan 0005 M3-JWT)
+
+The provider half of the plan's `m3_contract` (node_secrets, jwt), built 2026-10-07. Names are in
+`internal/vaultlayout/nodejwt.go`, the vault writes in `clusterprovider.NodeVault`
+(`internal/clusterprovider/nodesecrets.go`, root token and CA from the cluster data dir, the same
+`ReadVaultSeal` + `vaultClient` every other cluster-vault write uses), the order in
+`internal/nodemarket/secrets.go`. Only the market substrate wires it (`nodeHostsOptions.NodeSecrets`,
+set in `main.go`); a firecracker or qemu guest keeps its cert-auth path (`node-secret-<node>`,
+`secret/data/k3s/node/<node>`), which is a different policy namespace and a different mount.
+
+| what | name | written | removed |
+|---|---|---|---|
+| KV v2 mount | `socialweb-nodes` | enabled on first use if `sys/mounts` lacks it | never |
+| node secret | `socialweb-nodes/data/<node>` | before the claim, once `ClusterLink <clusterKey>-apiserver` reads `Listening` with a ticket; else by the first later pass that sees one | release (`DELETE socialweb-nodes/metadata/<node>`, every version) |
+| policy | `node-<node>`: `path "socialweb-nodes/data/<node>" { capabilities = ["read"] }` | before the claim, always | release |
+| JWT auth mount | `jwt-<first 12 hex of sha256(issuer)>`, type `jwt`, `oidc_discovery_url` = `bound_issuer` = issuer | when a claim first carries `status.grant` with that issuer | never |
+| JWT role | `<node>` under that mount: `role_type jwt`, `bound_subject` = grant subject, `bound_audiences` = [grant audience], `user_claim sub`, `token_ttl 5m`, `token_policies [node-<node>]` | the first pass after the door writes `status.grant` | release, under every `jwt-<12 hex>` mount |
+
+The secret's fields are `token` (the pinned join token `K10<sha256 hex of serverCA>::server:<k3s
+token file, trimmed>`, byte-for-byte what the door's `pinnedJoinToken` composed for the ssh join, so
+`k3s agent --token` takes it verbatim), `nodePassword` (the per-node password
+`nodevm.MintOrReadNodePassword` minted at Provision, trimmed), `serverCA` (the PEM of
+`<data dir>/server/tls/server-ca.crt`, verbatim), `apiserverTicket` (the link's `status.ticket`),
+`advertiseAddress` and `apiserverPort` (an integer; the claim's own `spec` values). A secret exists
+only when it is whole: the guest may read "present" as "complete".
+
+Decisions, made by Claude, user may veto:
+
+- **The secret waits for the link; the claim does not.** A link that is not `Listening` holds back
+  the secret, never the claim, and never the pass: Provision writes the policy and the claim and
+  returns, and `confirmHeld` calls `SyncSecrets` on every held market node each pass, which writes
+  the secret once a ticket exists (logged once per distinct reason, not per pass). A policy that
+  cannot be written fails the Provision before the claim, so nothing is rented that could never
+  read its join material.
+- **The grant is the door's; the role name is not recorded in status.** The provider never writes
+  `status.grant.role`; the role name is deterministic (the node name), and it is logged with the
+  mount and policy when written. One `EnsureLogin` per distinct grant per host; a pass over an
+  unchanged grant costs nothing. The mount's config is re-written only when its discovery URL or
+  bound issuer differ, because writing it makes OpenBao fetch the issuer's discovery document.
+- **The mount outlives its last role.** Deleting an emptied `jwt-*` mount races a concurrent grant
+  of the same issuer in the same cluster (list empty, role written, mount deleted), and mounts are
+  bounded by the number of distinct bidder issuers, which is small. Kept.
+- **Revocation is best-effort and bounded** (`nodemarket.RevokeTimeout`, 10 s), runs right after the
+  claim delete is accepted and before the wait for the door, and only logs a failure: the machine is
+  what costs, and a leftover role binds one workload subject the released machine no longer runs.
+- **The issuer must answer from this host.** OpenBao fetches `<issuer>/.well-known/openid-configuration`
+  when the config is written and the JWKS at login; a bidder issuer the cluster vault cannot reach
+  is an `EnsureLogin` error in the pass log, retried every pass.
+
+How a guest logs in, which is the door's and the guest's half (`claim.json` carries `jwtMount`,
+`role`, `audience`, `kvMount`, `kvPath`): exchange the workload token for one whose `aud` is the
+grant's audience (`socialweb.computer/node/<clusterKey>/<node>`) and whose `sub` is the grant's
+subject, then `POST /v1/auth/jwt-<12 hex>/login` with `{"role": "<node>", "jwt": "<token>"}`, then
+`GET /v1/socialweb-nodes/data/<node>` with the returned `client_token` in `X-Vault-Token`. The
+instrument is `TestANodeLogsInWithItsWorkloadTokenAndReadsOnlyItsOwnSecret`
+(`internal/clusterprovider/nodesecrets_test.go`) against a real OpenBao v2.6.2 (`bao server -dev`)
+and an in-test ES256 OIDC issuer: the node's own token logs in and reads its path; a token for another
+subject or audience is refused; the node's token gets 403 on another node's path; after `Revoke` the
+role, policy and secret are gone, the login is refused, the other node's policy and the mount remain.
+
 ## 8. Ports
 
 Every per-cluster port is leased from `internal/portallocator`, ADR 0026. Persisted per host.
@@ -685,6 +889,10 @@ Every per-cluster port is leased from `internal/portallocator`, ADR 0026. Persis
 | `kine` | kine's listener |
 | `k3s-secure` | the apiserver, and the port a node dials it on |
 | `k3s-controller-manager`, `k3s-scheduler`, `k3s-cloud-controller-manager` | the k3s control-plane components' secure ports |
+| `apiserver-link`, `openbao-link` | UDP: the IPv4 socket of each cluster link's iroh endpoint (`--ipv4-addr 0.0.0.0:<port>`). The only datagram purposes (`Purpose.Datagram()`); the restart sweep reads the UDP tables for them |
+| `external-secrets-health` | the External Secrets controller's `--live-addr`, on `127.0.0.1` |
+| `external-secrets-webhook` | the External Secrets webhook's TLS `--port`, the one its `ValidatingWebhookConfiguration` names as `https://127.0.0.1:<port>`; it binds every interface, because the upstream flag has no host |
+| `external-secrets-webhook-health` | the External Secrets webhook's `--healthz-addr`, on `127.0.0.1`. Both members' metrics are off (`--metrics-addr=0`), so no metrics port is leased |
 
 **The vault's lease is ONE port, and it was two for as long as nothing read the second.**
 `purposeWidth[PurposeOpenBao]` was 2, spelled "api + cluster", while the config the vault is given —
@@ -776,7 +984,7 @@ alternatives for one cluster:
 |---|---|
 | **a VM** | the node is a guest with its own kernel, containerd and network stack. **This design's mechanism**, and the only one that survives measurement |
 | **local process** | a `k3s agent` child process, `internal/nodelocal`, behind the same `scale.Nodes` seam. REFUTED as the substrate, three ways, all measured: `k3s agent` is fatal as a non-root user (`agent requires additional privilege if not run with --rootless`); it needs root for `/run/k3s/containerd`, `/var/lib/kubelet/device-plugins`, `127.0.0.1:6444` and the host `KUBE-*` chains, none of which `--data-dir` moves; and postgres is fatal AS root (`initdb: cannot be run as root`), so a host that runs the store cannot run a node |
-| **SSH to a market guest** | the node is a VM rented from the COMPUTE MARKET through a `NodeClaim` the clusterprovider writes and the market door fulfils under the cluster owner's own atproto OAuth session. **`internal/nodemarket`**, selected by `SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE=market`. NOT a guest of this host: no subnet lease, no pasta, no VMM, no node image and no `/dev/kvm` is involved. The clusterprovider's whole part in the node is the claim; the door bids, wins, boots the guest from the winning bidder's cloud-init, reverse-forwards the advertised address (`SOCIALWEB_CLUSTERPROVIDER_MARKET_ADVERTISE_ADDRESS`, default `198.18.255.254`) to this host's loopback apiserver and writes the phase back. Confirming is the claim reaching `Running`, not a local process being alive |
+| **a market guest** | the node is a VM rented from the COMPUTE MARKET through a `NodeClaim` the clusterprovider writes and the market door fulfils under the cluster owner's own atproto OAuth session. **`internal/nodemarket`**, selected by `SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE=market`. NOT a guest of this host: no subnet lease, no pasta, no VMM, no node image and no `/dev/kvm` is involved. The clusterprovider's whole part in the node is the claim; the door bids, wins, boots the guest from the winning bidder's cloud-init and writes the phase back; the guest itself dials the cluster's OpenBao and apiserver through the cluster's ClusterLinks and binds the advertised address (`SOCIALWEB_CLUSTERPROVIDER_MARKET_ADVERTISE_ADDRESS`, default `198.18.255.254`) on its own loopback (section 9, "A market node joins through its cluster's OpenBao, never through ssh"). Confirming is the tenant Node appearing for a claim the door left `Joining`, not a local process being alive |
 
 **QEMU is the second implementation of the VM mechanism, behind the same seam.** Firecracker and
 QEMU are not two mechanisms for one cluster and not alternatives in one process: the composition root
@@ -1238,6 +1446,327 @@ identity with no binding is authenticated-and-denied, so the informer never sync
 times out, and the failure reads as a controller that will not start rather than as a missing
 binding.
 
+### A market node joins through its cluster's OpenBao, never through ssh
+
+Plan 0005 M3-SECRETS-TICKET, M3-UNITS and the door half of M3-NODE-LOSS, built to the plan's
+`m3_contract`. The door holds no connection to a market guest and opens no ssh session to one; the
+guest dials its cluster through the cluster's ClusterLinks and reads its join secrets from the
+cluster's OpenBao. Decisions not in the contract are marked "decided by Claude, user may veto".
+
+**What the door does per claim** (`lib/socialweb-computer-k8s-node-market`):
+
+- It derives the cluster key the provider uses, `<accountHash(ownerDid)>-<spec.cluster>`:
+  `accountHashOf` (first 8 characters of the base-36 SHA-256 of the DID, as `kcpclient.AccountHash`)
+  and `clusterKeyOf` in `socialweb-computer-k8s-common`, `clusterKeyOfClaim` in the fulfiller. A test
+  pins it to values printed by the Go function (`did:plc:nodeowner` + `ci` = `d90m41be-ci`).
+- It reads the ClusterLink `<clusterKey>-openbao` from the claim's own workspace
+  (`createKcpClusterLinkReader`, beside the claim store in `socialweb-computer-k8s-nodeclaim-kcp`,
+  sharing its request plumbing and 429 hold; `ClusterLinkReader` in `lib/abc`). A link with no
+  `status.ticket` fails the claim before any market round.
+- It reads the cluster OpenBao CA. Decided by Claude, user may veto: the path is
+  `<dirname(spec.tokenFile)>/openbao/tls/ca.crt`, because the provider names the token file
+  `TokenPath(clusterDir)` and keeps the CA at `clusterstack.OpenBaoTLSCAPath(clusterDir)`. It is an
+  option (`openBaoCAFileOf`) so a provider-published path replaces the derivation without a door
+  change; that published path is an open interface need, below.
+- It hands the guest exactly three files through atproto-market's secrets capability:
+  `/etc/socialweb/node/openbao-ticket`, `/etc/socialweb/node/openbao-ca.pem` and
+  `/etc/socialweb/node/claim.json` = `{node, cluster, jwtMount, role, audience, kvMount, kvPath}` with
+  `cluster` the cluster KEY, `jwtMount` = `jwt-<first 12 hex of sha256(issuer)>`, `role` = `kvPath` =
+  the node name and `kvMount` = `socialweb-nodes`. None of the three is secret: the ticket is the
+  link's public half, the CA is public, and `claim.json` holds names.
+- It writes `status.grant` = `{issuer, subject, audience: socialweb.computer/node/<clusterKey>/<node>,
+  role: <node>}` when the capability is granted. `grantingCapability` composes the secrets capability:
+  its `onContract` first awaits the grant write, then appends `claim.json` (its `jwtMount` needs the
+  winning bid's issuer, which is unknown before), then lets the inner capability install its
+  authorizer. `requestCompute` calls `onContract` after the winner is chosen and BEFORE it writes the
+  accept record, so the grant is on the claim before the bidder can provision anything. Decided by
+  Claude, user may veto: `role` is written although the API marks it optional, so the claim names the
+  role the provider must create. A grant write that fails leaves the inner capability unauthorized
+  (the guest can never fetch), drops the grant from the door's in-memory status so later writes do
+  not carry it, and makes `onReceipt` return `return`; the claim ends `Failed` with that reason and
+  stays releasable from its receipt. `onAccepted` never returns `return`, for the reason section 6
+  gives: the receipt may not have arrived yet.
+- Handlers: `onRfpSubmitted`, `onAccepted` (phase `Provisioning`), `onReceipt` and `onNetwork` (which
+  also records `status.fqdn`) write the contract as before; a deleted claim or a stopping door turns
+  into a `return` from all but `onAccepted`. `onSecretsFetched` writes phase `Joining`
+  and returns `return`. `requestCompute` itself returns at the network report, so the door then waits
+  up to `vmReadyTimeoutSec` for the fetch and disposes the capabilities, which shuts the per-contract
+  secrets server. `Joining` is the door's last word: it cannot observe the agent and writes no
+  `Running`.
+- It releases ONLY when the claim is deleted: from the claim read back, `releaseCompute` with reason
+  `claim_deleted`, `Released` on `release.ok` and `Failed` otherwise, finalizer removed either way.
+  Every other end (no bids, a guest that never fetched, an invalid receipt, a failed grant, no link,
+  no CA) writes `Failed` with its reason and releases nothing; the provider ends the claim by deleting
+  it, and the deletion releases.
+
+**A restarted door never reaps** (M3-NODE-LOSS, door half). Decided by Claude, user may veto. A
+`Joining` or `Running` claim is adopted as it is: no write, no release, there is no session to
+rebuild. A `Bidding` or `Provisioning` claim is marked `Failed` and NOT released: the guest's
+`user_data` names the old door's secrets server, which is per process and died with it, so that guest
+can never fetch its bundle, and resuming with `awaitComputeNetwork` would only find an address the
+door no longer needs. The release comes with the claim's deletion, from the receipt it carries.
+`stop()` (SIGTERM) releases nothing and writes nothing; the next door sees the claim as above. Two
+edges are stated rather than closed: a guest that fetched in the instant between the fetch and the
+`Joining` write is marked `Failed` and released on deletion although it may have joined; and an
+accept written just before a crash, with no status write after it, is a VM no claim names, which
+only the bidder's own expiry ends.
+
+**A restarted provider never reaps; it adopts** (M3-NODE-LOSS, provider half). Decided by Claude,
+user may veto. Before this, the provider's shutdown reap (`nodeHosts.reap`) called the market host's
+`Reap`, which DELETES the claim, so every provider stop (every deploy) made the door destroy every
+market machine; and a provider that started held nothing, so a node that survived anyway was never
+confirmed, lost, scaled in, torn down or counted in flight, and its name could be claimed again.
+Now:
+
+- *Shutdown leaves market nodes.* `nodeHosts.reap` returns without touching a market host (logged
+  `leaving the market nodes running for the next provider process`). The guest needs no session of
+  ours; its agent and links are `Restart=always` and reconnect when the next process brings the
+  cluster's group back. A cluster switched OFF or deleted still releases every node
+  (`reapCluster`), and the guest substrates still reap on shutdown, because their guest is a child
+  of this host.
+- *Adopt at startup, before the first pass.* `join`/`joinAll` call `nodeHosts.adopt` for every
+  cluster right after the empty instance snapshot is written, so the snapshot names the adopted
+  nodes before the cluster's cloud controller manager starts (it deletes every Node the snapshot
+  does not name). A failed adoption is a warning and the next pass retries.
+- *Adopt on every pass, from the list it already reads.* `nodeHosts.reconcile` lists the claims of
+  the cluster's home workspace each pass for the `Released` rule; the same list goes through
+  `adoptClaims`, so any live claim of the cluster that nothing holds is held from that pass on. No
+  extra kcp read per pass. An OFF cluster, which gets no scale pass, adopts once
+  (`adoptOnce`, one list until a reap that acted resets it) before `reapCluster`, so a cluster
+  switched off while the provider was down still releases its machines.
+- *What is adopted.* A claim whose `spec.cluster` is the cluster key, whose name carries the
+  `<cluster>-node<N>` ordinal, whose phase has not ended (not `Failed`, not `Released`) and which
+  is not being deleted. Pending, `Bidding` and `Provisioning` claims are adopted too: the door owns
+  their end, and the given-up rule tears them down when it writes `Failed`. An ended claim is never
+  adopted; the `Released` rule still deletes its Node.
+- *How.* A `nodemarket.Host` is built for that name exactly as `Provision` would build it, then
+  `Host.Adopt(claim)` marks it provisioned WITHOUT writing the claim, the policy or the secret: the
+  claim exists, so its policy was written before it (Provision writes the policy first); a
+  `Joining` or `Running` claim's guest already fetched its secret, so the secret is marked written;
+  an earlier phase's secret may have been held back for a link, so it is written on the next
+  `SyncSecrets` (an identical rewrite at worst). The JWT role is ensured once from `status.grant` on
+  the next pass, as for any node whose grant this process has not yet seen. The host is retained at
+  its ordinal, marked live, counted in `started` (so `Provision` never takes the primary path over
+  an adopted `node1`), and the snapshot is rewritten. A never-provisioned primary host is dropped
+  when adoption creates or meets the cluster's entry, so it cannot be counted in flight.
+- *Then every rule applies unchanged.* confirm (`ConfirmJoined`, `markJoined`), the 90 s loss rule,
+  per-node scale-in (`Held` is set from the held names), teardown to zero, `inFlight` (an adopted
+  `Joining` claim with no Node is in flight, a reported one is not, so each adopted node counts once)
+  and `nextOrdinal` (held names are present, so the next claim is named past them).
+- *Not proven live:* a prod deploy restarting the provider with market nodes up, the guests
+  re-registering within the 90 s the loss rule allows after the cluster's group comes back (the
+  node lifecycle controller starts the NotReady clock when the group restarts, not when it stopped).
+
+With the door half above, both the door and the provider can restart without reaping a live
+market node. The instruments are in `cmd/socialweb-clusterprovider/adopt_test.go` (a first process
+provisions through the real path; a second `nodeHosts` over the same claim store and state dir is
+the restarted provider): `TestARestartedProviderAdoptsItsJoiningAndRunningNodesOnceEach` (held
+once each across repeated passes, counted 2, no claim write, no policy or secret write, snapshot
+names both), `TestAnAdoptedNodeNotReadyFor90sIsReleased`, `TestAnAdoptedIdleNodeIsScaledIn`,
+`TestTeardownToZeroReleasesAdoptedNodes`, `TestAProvisionAfterARestartSkipsAdoptedNames`,
+`TestAnEndedClaimIsNotAdopted` (Failed, Released, deleting, another cluster's),
+`TestAProviderShutdownLeavesItsMarketNodesForTheNextOne`,
+`TestTheFirstScalePassAfterARestartAdoptsBeforeItCounts`,
+`TestAClusterSwitchedOffAfterARestartReleasesItsAdoptedNodes`; and in `internal/nodemarket`
+`TestAnAdoptedJoinedHostRewritesNoSecretAndLogsInFromTheGrant`,
+`TestAnAdoptedClaimTheGuestHasNotFetchedYetGetsItsSecretWritten`,
+`TestAnEndedOrDeletingClaimIsNotAdopted`.
+
+**What the guest runs** (`lib/cloud-init-plugin-k3s-join`, still the module the door passes as
+`["k3s", createK3sJoinModule()]`). Besides the resolver it always wrote, it writes three `0700`
+scripts and four units, and its runcmd enables and starts them with `--no-block`. Its runcmd comes
+after the iroh transport module's `setup-iroh.sh` (which installs `/usr/local/bin/dumbpipe`) and the
+k3s module's `setup-k3s.sh` (which installs `/usr/local/bin/k3s`) in the composed `user_data`, so
+for the market path both binaries come from modules the door already uses; door-served hash-pinned
+binaries (M3-UNITS's fallback) are not needed by it. Every unit carries `StartLimitIntervalSec=0`.
+
+| unit | after | does | restart |
+|---|---|---|---|
+| `socialweb-openbao-link` | `setup-secrets` | `dumbpipe connect-tcp --addr 127.0.0.1:18200 <openbao-ticket>` | always |
+| `socialweb-node-secrets` | `setup-secrets`, openbao link | exchange the workload token for the claim's audience; OpenBao JWT login; KV read; write files | on-failure |
+| `socialweb-apiserver-link` | node secrets | `<advertiseAddress>/32` on `lo`; `dumbpipe connect-tcp --addr <advertiseAddress>:<apiserverPort> <apiserverTicket>` | always |
+| `socialweb-k3s-agent` | node secrets, apiserver link | `k3s agent --server https://<advertiseAddress>:<apiserverPort> --token-file /etc/socialweb/node/token --node-name <node> --data-dir /var/lib/rancher/k3s` | always |
+
+- `socialweb-node-secrets` is a oneshot with `Restart=on-failure`, because systemd refuses
+  `Restart=always` on `Type=oneshot`; with no start limit it retries until it succeeds, which is what
+  "always" means for a oneshot. Its token exchange is the one cloud-init-common's `secrets` module
+  does (accept.json's `bid_config` `token_path`, `url_path`, `url_route`; the subject echoed back;
+  `ttl` 300) for `aud` = the claim's audience. It logs in at `/v1/auth/<jwtMount>/login` with
+  `{role, jwt}` and `--cacert openbao-ca.pem`, reads `/v1/<kvMount>/data/<kvPath>`, requires `token`,
+  `nodePassword`, `serverCA`, `apiserverTicket`, `advertiseAddress` and `apiserverPort`, and refuses
+  an `advertiseAddress` that is not IPv4, a port that is not digits and a ticket outside `[a-z0-9]+`,
+  because those three reach a unit's command line. It writes `server-ca.pem`, `token`,
+  `node-password` and `apiserver.env` under `/etc/socialweb/node/` and `/etc/rancher/node/password`,
+  all `0600`. The token is pinned as the ssh join pinned it,
+  `K10<sha256 of the server CA bytes>::server:<token>`, unless the stored token already starts with
+  `K10`.
+- `socialweb-k3s-agent` passes the flags the ssh join passed and no others (it passed no node-ip
+  flag); the node password stays where k3s reads it. Decided by Claude, user may veto: the unit is
+  `socialweb-k3s-agent`, not `k3s-agent`, because the k3s installer owns the `k3s` and `k3s-agent`
+  unit names. It carries the k3s installer unit's `Type=notify`, `KillMode=process`, `Delegate=yes`
+  and limits.
+- Gone: the `socialweb-k3s-join` stdin script, the sshd drop-in that set `AllowTcpForwarding remote`
+  and `GatewayPorts clientspecified`, and its sshd reload. The iroh transport module still installs
+  sshd for the requester's own ssh and is untouched; the door passes no ssh key, so that sshd's
+  `authorized_keys` is empty. The door no longer downloads dumbpipe, and `node-apiserver-host` is gone
+  from its options.
+
+**What the door needs from the provider** (interface needs, open until the Go side lands):
+
+1. The ClusterLink `<clusterKey>-openbao` in the claim's home workspace with `status.ticket` set
+   (a bare dumbpipe ticket) BEFORE the claim is written; otherwise the claim fails at once.
+2. A published path for the cluster OpenBao CA (a `NodeClaim` spec field such as `openBaoCAFile`, or
+   a ClusterLink status field), or the guarantee that `<dirname(tokenFile)>/openbao/tls/ca.crt` is it
+   and is readable by the door process.
+3. KV `socialweb-nodes/<node>` with `token` (bare, or the full `K10` form), `nodePassword`, `serverCA`
+   (the exact bytes of `server-ca.crt`, since k3s pins its hash), `apiserverTicket` (bare),
+   `advertiseAddress` (IPv4) and `apiserverPort` (number or digit string).
+4. JWT mount `jwt-<sha12(status.grant.issuer)>` and role `<node>` bound to `status.grant.subject` and
+   `status.grant.audience`, as the contract says, and an OpenBao serving certificate valid for
+   `127.0.0.1`.
+5. `nodemarket.ConfirmJoined` must accept a claim in `Joining`; today it refuses everything but
+   `Running`, and the door no longer writes `Running`.
+6. Legacy ssh-joined claims at the first deploy: their agent ran inside the old door's ssh session,
+   so they go NotReady, and the new door does not reap them. They are released only when the provider
+   deletes their claims (M3-NODE-LOSS's provider half), and until then they hold their VMs.
+
+### Pods reach pods on other market nodes through socialweb-meshd (plan 0005 M5-MESHD)
+
+Market guests cannot reach each other: each sits behind its own NAT or pasta, so k3s's flannel
+overlay has nothing to run over (the limit "A node cannot reach another node" in NEXT.yaml). The
+user's decision: QUIC datagrams over iroh, a tun device, each peer Node's podCIDR routed to that
+Node's iroh endpoint id, k3s with `--flannel-backend=none` and a bridge CNI for the node-local half.
+`rust/socialweb-meshd` (a cargo workspace at `rust/`, the first Rust in this repo) is that daemon.
+It is built and proved on hat-8; it is NOT deployed and NOT yet installed by any user_data.
+
+**Identity.** One ed25519 secret per node, read from `--secret-file` as 64 hex characters (the
+`IROH_SECRET` encoding dumbpipe and the cluster links use), generated 0600 through a rename if absent.
+The endpoint id is the public key in lowercase hex; the did:key is multicodec `0xed01` + key,
+base58btc, `z` prefix - the same spelling as `internal/didkey`, and the Rust tests carry the same two
+vectors (the did:key spec vector `did:key:z6MkiTBz1ymuepAQ4HEHYSF1H8quG5GLVVQR3djdX3mDooWp` and the
+dumbpipe v0.39.0 `IROH_SECRET` -> endpoint id vector). The secret is node-local and never leaves the
+guest: a node's mesh identity lives and dies with the guest, so nothing about it goes through
+OpenBao. `socialweb-meshd identity --secret-file F` prints `{endpoint, did}`.
+
+**Peers are Nodes.** With `--kubeconfig` (the kubelet's own, `/var/lib/rancher/k3s/agent/kubelet.kubeconfig`)
+meshd merge-patches its own Node with `socialweb.computer/mesh-endpoint=<hex>` and
+`socialweb.computer/mesh-did=<did:key>`, lists and watches all Nodes, and relists (rebuilding the
+client, so a rotated kubelet certificate is picked up) after every watch. The route table, computed
+by `RouteTable::compute` from a Node list and unit-tested on Node lists:
+
+- every OTHER Node with `spec.podCIDRs` (else `spec.podCIDR`) and a valid `mesh-endpoint` is one route
+  per pod CIDR to that endpoint; a Node missing either is skipped silently (it has not joined yet);
+- this node's own pod CIDRs are never routed, and come from its own Node object;
+- rejected and reported in `/status`: a malformed endpoint, an endpoint equal to this node's own, a
+  `mesh-did` naming a different key than `mesh-endpoint`, a pod CIDR overlapping this node's, and
+  BOTH of two peers whose pod CIDRs overlap;
+- `socialweb.computer/mesh-addrs` (comma-separated `ip:port`) is a read-only dialing hint; meshd never
+  writes it. It is how the tests dial directly with discovery off.
+
+`--peers-file` replaces the kube source with a NodeList JSON file (`kubectl get nodes -o json` shape),
+re-read when its mtime changes, and writes nothing. It exists for the network-namespace proof.
+
+**The node authorizer does NOT let a node list Nodes.** Measured against k3s v1.36.4+k3s1 with a
+`system:node:node-a` client certificate minted from the cluster client CA: `list nodes` answers 403
+`node 'node-a' cannot read all nodes, only its own Node object` (AuthorizeNodeWithSelectors). Every
+tenant cluster therefore needs `rust/socialweb-meshd/deploy/node-reader-rbac.yaml` - ClusterRole
+`socialweb-meshd-node-reader` (`nodes` get/list/watch) bound to group `system:nodes`. With it the same
+identity lists, watches and patches its own Node's annotations (node authorizer plus NodeRestriction
+allow annotations on one's own Node), and patching ANOTHER Node is 403, which meshd turns into exit 4.
+Until the binding exists meshd logs `list_nodes_forbidden` with the manifest's path, stays not ready,
+and retries. The binding is ours and installed by us, so it belongs in the addon baseline, not intent.
+
+**The Kubernetes client is hand-rolled, not kube-rs.** meshd makes three calls (list, watch, merge
+patch). iroh already brings reqwest, rustls and ring, so a client over those plus serde_yaml for the
+kubeconfig adds almost nothing to a static musl binary; kube-rs would add k8s-openapi and a second
+TLS configuration. The kubeconfig reader follows `current-context`, resolves file paths against the
+kubeconfig's directory, takes `*-data`, `token` and `tokenFile`, and REFUSES
+`insecure-skip-tls-verify` and a cluster with no CA, because the Node list decides where pod traffic
+goes. `tls-server-name` is refused as unsupported.
+
+**Data plane.** A tun device (`--tun-name`, default `swmesh0`, `IFF_TUN|IFF_NO_PI`, so one read is one
+IP packet). The tun takes the network address of each own pod CIDR as a host address (`10.42.1.0/32`
+for `10.42.1.0/24`, the flannel.1 convention; host-local IPAM never hands out `.0`), and each peer pod
+CIDR is routed `dev swmesh0 src <that address>`, so traffic the node itself originates leaves with a
+source inside its own pod CIDR and the reply comes back through the mesh. One IP packet is one QUIC
+datagram, with no header: the connection already authenticates the sender's endpoint id.
+
+- outbound: longest-prefix match of the destination over peer routes; a destination with no route,
+  or a source outside this node's own pod CIDRs, is dropped and counted by reason;
+- inbound: the sending endpoint must have a route, the source must be inside THAT endpoint's pod CIDRs
+  and the destination inside ours, else dropped and counted; a connection from an endpoint no Node
+  routes to is closed at accept (`connections_refused`);
+- connections are dialed lazily on the first packet for a peer, kept, and reused in both directions
+  (an accepted connection is used for sending too); a per-peer queue holds 512 packets, a dial has
+  15 s, a failed dial backs off 1 s doubling to 30 s and drops packets meanwhile; a peer leaving the
+  Node list has its connection closed and its routes removed. ALPN `socialweb.computer/meshd/0`.
+- The node-local half is untouched: own pod CIDR traffic never reaches the tun.
+
+**The tun MTU is 1160.** noq's largest datagram is `current_mtu - (1 flag + 8 CID + 4 PN + 16 AEAD tag)
+- 9 (datagram frame bound)`, and `current_mtu` is the minimum over a connection's live paths, starting
+at QUIC's 1200. A relay path stays at 1200, so with relays on the floor is 1200 - 38 = 1162; 1160
+leaves two bytes. Measured: `max_datagram_size` 1162 on a 1228-byte underlay (a 1200-byte UDP payload
+path) and 1414 on a 1500-byte one after MTU discovery. The bridge CNI's `mtu` must be 1160: a
+don't-fragment packet above it is refused by the node with frag-needed (proved), and a fragmentable
+1400-byte ping crosses as fragments (proved).
+
+**A crashed peer is reachable again in about 15 s.** A peer that is SIGKILLed and restarts with the
+same key leaves the other side holding a connection nobody answers; one-way traffic waits for that
+connection's idle timeout. Measured 30.8 s at iroh's default 30 s idle timeout and 15.4 s after
+meshd set it to 15 s (three of iroh's 5 s heartbeats). A clean stop sends CONNECTION_CLOSE and the
+peer re-dials on its next packet.
+
+**Relay and discovery** are iroh's n0 preset by default (pkarr publish, DNS lookup, n0 production
+relays), since guests have outbound internet: `--relay default|disabled|<url,...>`,
+`--discovery n0|none`, `--bind ip:port[,...]`. No inbound port is needed. The proofs run with relays
+and discovery off in network namespaces; the n0 path itself is iroh's and was not exercised here.
+
+**Health and lifecycle.** JSON log lines on stderr (tracing, `--log-filter`, default
+`info,iroh=warn,...`); `GET /status` (JSON: identity, own pod CIDRs, routes with connected flag and
+max datagram size, installed kernel routes, rejections, counters), `/metrics` (Prometheus text) and
+`/healthz` on `--metrics-listen`, default `127.0.0.1:9469` (a non-loopback address is warned about).
+Ready - and `READY=1` to `$NOTIFY_SOCKET` - means the tun is up, the own Node is seen with a pod CIDR,
+its annotations are visible through the watch (kube mode), and the routes synced. Exit codes:
+0 SIGTERM/SIGINT, 1 a task ended, 2 usage, 3 secret or peers file, 4 kubeconfig refused or own-Node
+patch forbidden, 5 tun create/up/read, 6 iroh bind, 7 status bind. A missing kubeconfig, an
+unreachable apiserver, a forbidden list and an unregistered own Node are retried, not fatal.
+
+**Build.** `rust/build.sh [x86_64] [aarch64]` writes `rust/dist/socialweb-meshd-<arch>` and
+`socialweb-meshd-<arch>.sha256` (sha256sum format): static musl, ring's C compiled by `clang
+--target`, linked by the toolchain's `rust-lld`, release profile `opt-level=s`, fat LTO, one codegen
+unit, `panic=abort`, stripped, with the checkout, registry and sysroot paths remapped. Two different
+target directories on hat-8 produced identical bytes; identity across hosts is not measured, so the
+pin a user_data carries is the `.sha256` written next to the binary it ships. blake3 is forced to its
+pure-Rust backend because its NEON C includes libc headers and there is no aarch64 musl sysroot.
+`rust/dist/` is not committed. `deploy/check.sh` runs `cargo fmt --check` and `cargo test` in every
+mode (skipped with a reason without cargo; `--full` fails instead), and adds the network-namespace and
+k3s proofs in `--local`/`--full` when `sudo -n` works. `tests/no_comments.rs` holds the Rust sources
+to the same no-comments, ASCII-only rule as `test/nocomments_test.go`.
+
+**What the integration that installs it must do** (not done by M5-MESHD):
+
+1. k3s server `--flannel-backend=none` (and, if kube-router's policy controller is not wanted,
+   `--disable-network-policy`); the agent then needs a CNI conflist in
+   `/var/lib/rancher/k3s/agent/etc/cni/net.d/`: `bridge` (`isGateway`, `ipMasq: false`, `mtu: 1160`)
+   with `host-local` on the Node's `spec.podCIDR`, plus `portmap`. The pod CIDR exists only once the
+   Node has registered and the controller manager allocated it; meshd's `/status` `ownPodCIDRs` reads it.
+2. SNAT only what leaves the cluster: `-s <cluster-cidr> ! -d <cluster-cidr> -j MASQUERADE`. The bridge
+   plugin's own `ipMasq` would masquerade cross-node pod traffic to the tun address and erase the pod
+   source that the inbound check and NetworkPolicy depend on.
+3. Apply `rust/socialweb-meshd/deploy/node-reader-rbac.yaml` in every tenant cluster.
+4. Install the binary from user_data (a `UserDataModule` in cloud-init-common's registry), pinned by its
+   sha256, or have the image builder embed it, and run it from
+   `rust/socialweb-meshd/deploy/socialweb-meshd.service` as root (CAP_NET_ADMIN, `/dev/net/tun`) with
+   `/etc/socialweb/node/meshd.env` setting `SOCIALWEB_MESHD_NODE_NAME` to the name the k3s agent
+   registers. It is `Type=notify` and becomes ready only after its own Node exists, so k3s-agent must
+   NOT be ordered after it; meshd waits for the kubeconfig and the Node on its own.
+5. `net.ipv4.ip_forward=1` (k3s sets it).
+
+Not carried by the mesh: node addresses. Traffic to another node's InternalIP (NodePort on another
+node, hostNetwork pods, kubelet ports) has no route; apiserver-to-kubelet and apiserver-to-pod
+traffic already rides k3s's own agent tunnel (`--egress-selector-mode cluster`). IPv6 pod CIDRs are
+routed and checked by the code but untested.
+
 ### `k3s server` argv
 
 
@@ -1551,8 +2080,8 @@ rather than a delta, and the driver reconciles the cluster's actual count - re-r
 CRs, never remembered - to it.
 
 **Our own add-ons are a MEASURED baseline, and a cluster holding only them has nothing deployed.**
-The add-ons this provider installs into a tenant cluster (today the External Secrets Operator's
-three Deployments) are workloads like any other, and at zero nodes their pods are Pending, so before
+The add-ons this provider installs into a tenant cluster (until 2026-10-07 the External Secrets
+Operator's three Deployments; since then NONE, see below) are workloads like any other, and at zero nodes their pods are Pending, so before
 2026-10-07 they were intent for ever: a cluster that had run one pipeline never returned to zero. The
 rule is a delta, measured rather than listed. The installer applies with its own server-side field
 manager, `socialweb-addons` (`clusterprovider.AddOnFieldManager`), and right after the apply the
@@ -1563,14 +2092,14 @@ directory. That file is provider state; a tenant cannot edit it. `scale.Narrow` 
 `Intent` and `Demand` see them, every workload whose kind, namespace, name AND spec hash match an
 entry, and every pod whose controller resolves to one. A baseline workload whose spec has changed
 (the tenant scaled our operator to two) is NOT dropped: that is a tenant's request. A workload of
-the same name in another namespace is not ours. The baseline is re-measured whenever the installer
-actually runs, and a cluster with no baseline file re-runs the installer once (an idempotent
-server-side apply that takes field ownership under our manager) so clusters from before this rule
-are measured too. There is no list of add-on names here for the same reason the k3s add-on rule has
+the same name in another namespace is not ours. The baseline is re-measured on every add-on pass
+(each `Bootstrap`), so a file written while the operator still ran in the tenant empties once the
+process group's migration has deleted those Deployments. There is no list of add-on names here for the same reason the k3s add-on rule has
 none. Non-workload objects (CRDs, RBAC, webhooks) are not recorded, because nothing the scale
-decision reads is one of them. This is the in-cluster half only: the operator itself is to move
-beside the control plane (`NEXT.yaml` ESO-4), after which the in-cluster baseline holds CRDs and
-RBAC and is empty of workloads.
+decision reads is one of them. Since 2026-10-07 the operator runs beside the control plane (`NEXT.yaml`
+ESO-4, section 5), the tenant holds its CRDs, ClusterRoles and webhook registration and no
+workload, and the measured baseline is EMPTY: the rule stays because it is what keeps any future
+add-on from pinning a node.
 
 **A pod and the workload that controls it are ONE unit of demand.** `Demand` counted a Pending pod
 and also its Deployment's replica, so three one-replica Deployments with their three Pending pods
@@ -1591,14 +2120,89 @@ is a smaller cluster and is taken. The default was 1 until 2026-10-07, when a fi
 measured what one node means for a runner with `concurrent = 5` (section 15); `scripts/deploy.sh`
 passes 10 and one pod per node, so a cluster serving this runner asks for the nodes the jobs need.
 
-**Scale-in is all-or-nothing, and that limit is stated rather than latent.** While there is work
-the target only grows, to the cap; when the work stops the cluster goes to zero, exactly as it
-always did. An intermediate count is not reachable, because scaling three nodes to two needs an
-answer to "which node, and does its work move", and no instrument here measures that yet. The
-branch that would do it reads `None` with a reason naming this paragraph, so a future scale-in has
-one place to change rather than a silent gap. The ceiling also interacts with the cluster's own
-`/24`: every node takes an address from the range `subnetallocator` leased, so a ceiling the range
-cannot address is a boot failure at the third node rather than a scheduling one.
+**Scale-in is per node: a node holding nothing beyond the baseline for the hold is cordoned,
+drained and released, one per hold (plan 0005 M4-SCALE-IN, 2026-10-07; supersedes the
+all-or-nothing rule of plan 0002 section 4.4).** Before this, while there was work the target only
+grew and the down direction was the whole-cluster teardown, so a cluster that scaled to seven nodes
+for one pipeline held seven until every last pod was gone. The rule now has a pure half and a side
+effect half:
+
+- *What a node holds.* `scale.Loads(nodes, observation, replicaSets, baseline)` reads, per tenant
+  Node, `Busy` (live pods bound to it that are not baseline), `Evictable` (live baseline pods bound
+  to it: our add-ons' workloads by the measured baseline, and k3s's own add-ons by
+  `AppliedByTheControlPlane`) and `Incoming` (a Pending pod with no node yet whose
+  `status.nominatedNodeName`, `nodeSelector kubernetes.io/hostname`, or single-valued required
+  hostname / `metadata.name` affinity names this node). Pods that FOLLOW the nodes are never counted
+  on a node: a DaemonSet's pods and mirror (static) pods (`kubernetes.io/config.mirror`). Terminal
+  pods are not counted. A Pending pod naming no node goes into `Placement.Unplaced` with its creation
+  time. The observer computes this in the same call as the rest of the observation, so the per-node
+  half and the intent half cannot disagree.
+- *The decision.* `scale.Decide`, with intent and the counted nodes above the target, keeps a
+  per-node idle clock in `State.NodeIdleSince` (the first pass that saw the node with `Busy == 0` and
+  not `Incoming`; a busy pass deletes it). It returns `Release` naming ONE node, `Nodes: count - 1`,
+  when that node is held by this provider (`NodeLoad.Held`), idle, and idle for the whole hold
+  (`SOCIALWEB_CLUSTERPROVIDER_SCALE_HOLD`, default 2 m). Among several it picks the emptiest
+  (fewest `Evictable`), then the newest (latest `creationTimestamp`), then by name. A release
+  restarts the idle clock of every node left, so three idle nodes over a target of one go one per
+  hold: one at 2 m, the next at 4 m, the third kept. No release happens while a Pending pod with no
+  node is younger than the hold (or has no creation time): the scheduler may be about to bind it to
+  any idle node. A pod Pending longer than the hold with idle nodes present is not going to fit
+  them, and holding every node for it would pin the cluster. The target is never undercut: the
+  branch is only reached when `count > target`, and the target is at least one while there is
+  intent. With NO intent the old path is unchanged: the whole-cluster hold, then `Teardown` to zero.
+- *The side effects (`cmd/socialweb-clusterprovider/scalein.go`).* `scaledriver` performs `Release`
+  through `scale.Releaser` (an actuator that is not one is `ErrNoReleaser`, never a whole-cluster
+  teardown). `tenantNodes.Release` cordons the Node (`spec.unschedulable`), re-observes the cluster,
+  and if the node took work between the decision's read and the cordon (Busy or Incoming) it
+  uncordons and keeps it. Otherwise it evicts, through the Eviction API so disruption budgets hold,
+  every live pod bound to the node that does not follow the nodes; a refused eviction uncordons and
+  keeps the node. Then the release is `teardownHeld`, the path the 90 s loss rule and the giving-up
+  rule already use: claim deleted, the door releases with `vm.delete`, the node's vault role, policy
+  and secret revoked, the tenant Node deleted. A node the provider uncordons is only one it cordoned
+  itself; an operator's cordon is left alone. Evicted pods are not waited on: the tenant Node is
+  deleted and their controllers recreate them elsewhere.
+- *Decided by Claude, user may veto:* one node per hold rather than every idle node at once (each
+  release can move baseline pods onto the nodes left); the clock is in memory, so a provider restart
+  restarts every node's hold (the safe direction); only nodes this provider process holds are
+  released, and a market node that outlived a provider restart is held again by adoption (section
+  9, "A restarted provider never reaps; it adopts"), so it is released like any other; a failed
+  drain uncordons rather than leaving a cordoned node counted.
+
+**A DaemonSet is never intent, and never demand (plan 0005 M4-SCALE-IN).** A DaemonSet's desired
+count follows the nodes, so with one tenant DaemonSet any cluster that had a node kept intent for
+ever and never reached zero (reported by the M0 work). `Intent` and `Demand` no longer read
+`Observation.DaemonSets` at all, and skip every pod whose controller is a DaemonSet or that is a
+mirror pod, whether or not its DaemonSet was in the same read. A DaemonSet-only cluster is a cluster
+with no intent: it holds its nodes for the hold and goes to zero. The `DaemonSets` field stays in the
+observation because the baseline narrowing ranges over it.
+
+**A custom resource is intent only while an operator of ours that runs IN the tenant cluster has not
+reconciled it (plan 0005 M4-PENDING-CRS; the rule "workloads beyond the baseline plus our operators'
+CRs not yet reconciled" is the user's, the mechanism decided by Claude, user may veto).**
+`scale.Operators` is a registry of `{Group, Kind, ReadyCondition, InCluster}`. A CR counts only if
+its group/kind is registered with `InCluster: true` and it is not reconciled: its `ReadyCondition`
+is not `True`, or that condition or `status.observedGeneration` is older than
+`metadata.generation`, or it is being deleted behind a finalizer. Each such CR adds one to `Demand`
+and makes `Intent` true, so it asks for one node, on which its operator runs and reconciles it.
+An operator that runs beside the control plane reconciles at zero nodes, so its CRs need no node
+and are never registered as in-cluster. `scale.OurOperators` ships EMPTY: ESO moves beside the
+control plane (M4-ESO-BESIDE), and no other operator of ours runs in a tenant cluster. Leftover
+namespaces, RBAC and ConfigMaps never hold nodes. `NodeObserver` lists each in-cluster kind through
+its `CustomResources` lister and refuses to observe at all when the registry names an in-cluster kind
+and no lister was supplied, so a future entry cannot silently never count.
+
+The ceiling also interacts with the cluster's own `/24`: every node takes an address from the range
+`subnetallocator` leased, so a ceiling the range cannot address is a boot failure at the third node
+rather than a scheduling one.
+
+The instruments: `internal/scale` `TestThreeIdleNodesWithDemandForOneReleaseTwoOverTwoHoldsAndKeepOne`,
+`TestANodeWithARunningNonBaselinePodIsNeverReleased`, `TestANodeThatBecameIdleLessThanTheHoldAgoIsKept`,
+`TestADaemonSetOnlyClusterScalesToZero`, `TestACustomResourceCountsOnlyWhileItsInClusterOperatorHasNotReconciledIt`;
+`cmd/socialweb-clusterprovider` `TestIdleMarketNodesAreCordonedDrainedAndReleasedOnePerHold` (three
+held market nodes over a fake tenant through the real driver and observer: the DaemonSet-only node
+goes at 2 m, the node holding a k3s add-on pod at 4 m with that pod evicted, the node running work
+is kept), `TestANodeThatTakesWorkBeforeTheCordonIsUncordonedAndKept`, `TestARefusedEvictionKeepsTheNode`.
+NOT yet read: a live market cluster releasing a node.
 
 The reading for this is a table case: the same observation that decided `Provision, Nodes: 1`
 before now decides `Provision, Nodes: <target>` with `MaxNodes` raised, and every existing case at
@@ -1656,6 +2260,35 @@ was given up was not held. Its claim was then never confirmed, never released, n
 flight and never seen ending -- it could not back anything off. `retain` now restores the primary
 slot when it is empty (`TestAFirstNodeClaimedAgainAfterItWasGivenUpIsHeld`).
 
+**A market node NotReady for 90 s is released, and its Node deleted (plan 0005 M3-NODE-LOSS,
+provider half; 90 s is the user's number).** In `tenantNodes.confirmHeld`, after the given-up rule
+and the per-pass `SyncSecrets`, each held market node's tenant Node is read (`readTenantNode`). If
+its `Ready` condition is `False` or `Unknown` and `now - lastTransitionTime >= NodeLossGrace` (90 s),
+the node goes through `teardownHeld`, the same path a scale-down takes: the claim is deleted, its
+vault role, policy and secret are revoked, the door releases the machine with `vm.delete` and drops
+its finalizer, then the tenant Node is deleted so the scheduler stops binding pods to it and evicted
+pods reschedule; the node is reported in `confirmOutcome.lost`, and the scale pass that follows in
+the same tick counts one node fewer and claims a replacement if the work still needs one. Decisions,
+made by Claude, user may veto:
+
+- *The clock is the Node's own `lastTransitionTime`*, written by the tenant cluster's node-lifecycle
+  controller on the same host, so a provider restart does not restart the 90 s. A condition with a
+  zero transition time falls back to the first pass that saw it not Ready, held in memory.
+- *Not covered:* a node the tenant cluster never reported (no Node object) -- the confirm and
+  giving-up rules own it, however long it has been -- and a Node with no `Ready` condition yet (its
+  kubelet has not posted a status). A Ready node is never lost, whatever its transition time.
+- *Held nodes only.* The rule acts on nodes this provider process holds. A market node that outlived
+  a provider restart is held again by adoption at startup and on every pass (section 9, "A restarted
+  provider never reaps; it adopts"), so the rule covers it from the first pass after a restart.
+- *It blocks the cluster's pass* for as long as `teardownHeld` waits for the door
+  (`ClaimReleaseTimeout`), exactly as the giving-up rule and the scale-down already do.
+
+The instruments are in `cmd/socialweb-clusterprovider/nodeloss_test.go`:
+`TestAMarketNodeNotReadyFor89sIsKeptAndAt90sIsReleased` (False and Unknown; 89 s keeps claim and
+Node, 90 s deletes both, revokes the vault state and reports the node lost),
+`TestANodeTheClusterNeverReportedIsNotTouchedByTheLossRule` (an hour on, no Node, claim kept) and
+`TestAReadyNodeIsNotLostHoweverOldItsTransition`.
+
 ## 11. Teardown, and the gate
 
 Teardown is gated, because a teardown that races a running job is a lost write, and after rotation
@@ -1705,6 +2338,13 @@ node            a node is found by its own record. Provision writes <node data d
                 /proc/<pid>/cmdline names the agent subcommand and this node name
 ```
 
+The rule is for children of THIS host. A market node is not one: its machine is the bidder's, its
+guest needs no session of ours, and its owner of record is the `NodeClaim` in the cluster's home
+workspace, which the door alone releases and only on deletion. So a market node is the one thing a
+restart ADOPTS rather than reaps, and it cannot have two owners: the claim is the single record, and
+a restarted provider holds it again from that record without writing it (section 9, "A restarted
+provider never reaps; it adopts").
+
 A pid-reuse mismatch is reported as NOT OURS and is never signalled. The 0600 mode is not hygiene: the
 record names a pid this gateway will signal, and a record another user can write is a record that aims
 our reap at a pid of their choosing.
@@ -1744,7 +2384,12 @@ cluster's next ON.
 gateway's SIGTERM does not `exec`-kill k3s, kine and postgres — which would leave the store needing
 crash recovery and bypass the reverse-order teardown and the tenant-side Node delete entirely. The CLI
 reaps explicitly on the way out, with a fresh context; what it does not finish is reaped by the next
-start, which is the same rule as above.
+start, which is the same rule as above. The shutdown's node-host reap skips the market substrate
+entirely: deleting a market claim is what makes the door destroy the machine, so a shutdown that
+reaped market hosts released every rented node on every deploy (watched in
+`TestAProviderShutdownLeavesItsMarketNodesForTheNextOne`: 2 claims deleted and both nodes' vault
+state revoked before the change, none after). A cluster switched OFF or deleted still releases its
+market nodes through `reapCluster`.
 
 **Every cluster, not the one this process was told to join.** `SOCIALWEB_CLUSTERPROVIDER_JOIN` names
 a single cluster by its bare name and keeps working exactly as it did. `SOCIALWEB_CLUSTERPROVIDER_JOIN=*`
@@ -1799,6 +2444,7 @@ internal/plcsweep/     the periodic pass that lists DIDs, resolves them and revo
 internal/sweepkcp/     the kcp side of that sweep: build the account worklist from workspaces and AtprotoIdentity records, write the deny, plan the fan-out
 cmd/${binary}/         the CLI layer; nothing else builds a binary
 deploy/                install scripts, manifests, the audit policy
+rust/                  a cargo workspace; rust/socialweb-meshd is the per-node pod mesh daemon that runs INSIDE a market guest (section 9), rust/build.sh its static musl build
 ```
 
 Dependencies flow one way: `api` <- `internal` <- `cmd`. A new substrate or transport is a NEW
@@ -1829,7 +2475,8 @@ names and starts from an empty state dir — and the cost of the node names chan
 recorded in section 15.
 
 Binaries: `socialweb-clusterprovider`, `socialweb-gateway`, `socialweb-credential`,
-`socialweb-nodeimage`, `socialweb-nodeagent` and `socialweb-computer-kcp-check-host`.
+`socialweb-nodeimage`, `socialweb-nodeagent` and `socialweb-computer-kcp-check-host`; outside
+`cmd/`, `rust/build.sh` builds `socialweb-meshd`, which runs inside a market guest beside the k3s agent.
 `socialweb-nodeimage` and `socialweb-nodeagent` are the node side of the seam:
 `socialweb-nodeimage` builds a node image and is a TOOL, never a controller, because provisioning
 must not be coupled to a boot plus a bootstrap; `socialweb-nodeagent` runs INSIDE the guest and is
@@ -2092,7 +2739,15 @@ A change must not break any of these. Each exists because something failed.
 10. **Nothing is read back out of a node.** The token and the name are ours.
 11. **Never request-header auth against the mount.** The mount authenticates nothing.
 12. **A revocation needs a consultable deny record**, not just a deleted object.
-13. **Secrets never ride argv or `user_data`.** `user_data` is readable from inside the guest.
+13. **Secrets never ride argv or `user_data`, and a market node's secrets cross only OpenBao JWT over
+    the cluster link.** `user_data` is readable from inside the guest. The door hands a market guest
+    only public material, through the `--secrets` capability: the OpenBao link's ticket, the cluster
+    OpenBao's CA and `claim.json`. The join token, the node password, the server CA and the apiserver
+    ticket are read by the guest itself from the cluster's OpenBao, after a JWT login bound to its
+    workload subject and its claim's audience, over its own dumbpipe link to that OpenBao. Nothing
+    reaches a guest over ssh: the door opens no session to any guest.
+    The provider half (KV, policy, mount, role, revoke at release) is in section 7; the guest login is
+    `auth/jwt-<12 hex>/login` as role `<node>`, reading `socialweb-nodes/data/<node>`.
 14. **A list failure is an error, never an empty observation.**
 15. **The state advances only on success.**
 16. **No comments in code.** Reasoning belongs in this document; `test/nocomments_test.go`'s
@@ -2137,12 +2792,14 @@ A change must not break any of these. Each exists because something failed.
     wait immediately, with the guest's own words. A timeout that runs to its end over a host that
     died at its first step reports the timeout instead of the cause, and the two are indistinguishable
     until the clock runs out.
-29. **A market node's secrets cross only the SSH session's stdin.** The join token, the per-node
-    password and the cluster's server CA reach a market guest as the door writes them to the standard
-    input of the session it runs the join program on. They never ride the claim: a `NodeClaim` is a
+29. **A market node's secrets never ride the claim or the door.** The join token, the per-node
+    password, the cluster's server CA and the apiserver ticket live in the cluster's OpenBao at
+    `socialweb-nodes/<node>`, and the guest fetches them itself (invariant 13). A `NodeClaim` is a
     cluster-scoped object in the owner's home workspace, readable by anything that can read that
-    workspace, and it carries the PATHS the door reads them from instead. They also never ride argv,
-    `user_data` or a boot command line, for the reasons invariants 13 and 25 already give.
+    workspace, so it carries only what is not secret: the PATHS the provider reads and the grant that
+    authorizes the guest's fetch (`issuer`, `subject`, `audience`, `role`). They also never ride argv,
+    `user_data` or a boot command line, for the reasons invariants 13 and 25 already give. This
+    replaces "a market node's secrets cross only the SSH session's stdin" (plan 0005 M3).
 30. **A cluster is its home workspace, not the name inside it.** Two accounts may each name a cluster
     `ci`; they are two clusters, with two state dirs, two sets of port and subnet leases, two sets of
     node names, two mint credentials and two process groups. Anything that identifies a cluster
@@ -2159,9 +2816,9 @@ A change must not break any of these. Each exists because something failed.
 32. **A node is counted by the cluster that has it, never by the claim that asked for it.** The count a
     scale decision reads is the tenant cluster's own node list, plus - under a substrate whose
     `Provision` returns before the machine exists - the claims this process holds whose nodes that list
-    does not name. A claim's phase is not a count: the door writes `Running` when the
-    node's agent reaches the apiserver through the forward, and the Node object it is registering
-    appears in the cluster's list only after that connection is served, so a phase-keyed count has a
+    does not name. A claim's phase is not a count: the door writes `Joining` when the guest has
+    fetched its join secrets, and the Node object it is registering appears in the cluster's list only
+    after its agent's connection through the apiserver link is served, so a phase-keyed count has a
     gap with a duration in it and every claim that crosses the gap together is counted nowhere at all
     (section 15).
 
@@ -2196,7 +2853,8 @@ P5-M6: the vendored deno-kcp test bed and a market-only node path, an event-driv
 contracts outlive the door, guests that join without ssh through cluster links and the cluster's
 OpenBao, per-node scale-in with ESO beside the control plane, a pod mesh with per-node DNS, and the
 old stated limits fixed. The plan file holds each item's decision and evidence; `NEXT.yaml` names
-each milestone's instrument.
+each milestone's instrument. ESO-4 closed the same day with M4-ESO-BESIDE and is in section 15 with
+its readings.
 **The live backlog is `NEXT.yaml`, which this section mirrors:
 an item is written here when it is opened and moves to section 15, with its readings, when it is
 closed.** The practice that produced the batch is the one worth keeping: the artefact was run and each
@@ -3828,8 +4486,9 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   so the evidence for three simultaneous guests is three `Provision` calls plus `kubectl get nodes`
   listing three, together with an independent observation of two firecracker processes during the run.
   No negative control was run either: that the test would fail with `MaxNodes` unset is argued from
-  `Target`'s ceiling rather than measured. Partial scale-in is deliberately not implemented (plan
-  0002 section 4.4), so the target only grows while intent exists.
+  `Target`'s ceiling rather than measured. Partial scale-in was deliberately not implemented then (plan
+  0002 section 4.4), so the target only grew while intent existed; superseded 2026-10-07 by per-node
+  scale-in (plan 0005 M4-SCALE-IN, section 10).
 
 - **The live backlog was declared in four places and did not exist.** `AGENTS.md:18`,
   `README.md:262`, `handoff.yaml:155` and section 14 of this document all name `NEXT.yaml` as the
@@ -4657,6 +5316,77 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   `TestABaselineEntryNamesOneNamespace`, `TestPodsOfACountedJobStatefulSetOrDaemonSetAreNotCountedTwice`
   in `internal/scale`; `TestObserveLeavesAnIdleClusterOfOurAddOnsAtNoIntent` (6, want 3) and
   `TestTheBaselineIsWhatOurFieldManagerApplied` in `internal/clusterprovider`.
+
+- **A market node lived only as long as the door's ssh session to it. CLOSED on the door's side by
+  plan 0005 M3-SECRETS-TICKET and M3-UNITS (commits 0f3a771, b489218); the provider's side is open.** Before,
+  the door generated an ssh keypair per claim, waited for the guest's sshd over dumbpipe, ran
+  `socialweb-k3s-join` with the join token, node password and pinned CA on its stdin, and held that
+  session (and a `forwardIn` of the advertised address) for the node's whole life; a door restart
+  killed every agent, and startup reaped every live claim. Now the door delivers three public files
+  through the secrets capability, writes `status.grant` before the accept, returns at
+  `onSecretsFetched` with the claim `Joining`, and releases only on deletion; the guest's four units
+  fetch the secrets from the cluster's OpenBao and dial the apiserver themselves (section 9, "A market
+  node joins through its cluster's OpenBao, never through ssh"; invariants 13 and 29 rewritten).
+  Tests watched to fail first (against the previous door and module with stub exports only, run
+  `--no-check`: 29 failed, 3 passed), then pass: in `socialweb-computer-k8s/test/node_market_test.ts`
+  "at accept the claim carries the workload grant for its node's audience before the guest can be
+  authorized", "the secrets bundle carries exactly the OpenBao ticket, the OpenBao CA and claim.json",
+  "the flow returns at onSecretsFetched, the claim is Joining, capabilities are disposed and nothing
+  is released", "the door asks for no ssh key and builds no ssh session", "the user_data the door
+  asks for renders without any secret value", "a door restarted with live claims adopts them and
+  submits no vm.delete", "a door restarted mid-flight marks the orphaned claim Failed, releases
+  nothing, and releases it once deleted", "a deleted Joining claim is released from the receipt on
+  the claim, not the door's memory"; in `test/k3s_join_test.ts` "the node's user_data installs four
+  units that join it through OpenBao and the apiserver link, in order", "the node's user_data carries
+  no secret value and no ssh join path", and the node-secrets script run against a fake curl and the
+  real jq ("exchanges the workload token for the claim's audience, logs in to OpenBao and writes the
+  join files 0600"). Mutations, each on a scratch copy and reverted, each caught: the grant written
+  after the capability is authorized, or not written; `onSecretsFetched` returning `continue`; a
+  restart reaping live claims; a release at the end of a successful flow; the agent unit not ordered
+  after the apiserver link; the token not pinned to the CA. NOT proven: a guest joining end to end
+  (needs the provider's ClusterLinks, OpenBao JWT mount and KV entry, and the live instrument
+  `test/live_market_node_test.ts` now also needs `SOCIALWEB_K8S_LIVE_OPENBAO_TICKET` and
+  `SOCIALWEB_K8S_LIVE_OPENBAO_CA`); nothing deployed.
+
+- **The External Secrets Operator ran as tenant pods, so it worked only while a node existed --
+  closed by running it beside the control plane (`NEXT.yaml` ESO-4, plan 0005 M4-ESO-BESIDE).**
+  Before: `deploy/eso/install.sh` applied the upstream bundle into each tenant (controller,
+  cert-controller and webhook Deployments, webhooks `failurePolicy: Ignore`); at zero nodes the pods
+  were Pending and nothing synced, and on the market substrate the add-on pass did not write the
+  store at all, because its vault address was a subnet gateway a market guest cannot route to
+  (ESO-3). After: the controller and its webhook are two members of each cluster's process group
+  (section 5, "The External Secrets controller runs beside the control plane"), the store dials the
+  cluster vault on `127.0.0.1`, and the tenant holds CRDs, ClusterRoles, one ClusterRoleBinding to
+  the beside identity and the URL webhook registrations. Readings, 2026-10-07, on this host with
+  the image's own binary (sha256 `9ea572f5...` for `/usr/bin/external-secrets` out of
+  `ghcr.io/external-secrets/external-secrets:v2.11.0@sha256:66fb7108...`, the same bytes the
+  Dockerfile `COPY --from` produced) and the release bundle (sha256 `c4271246...`):
+  `TestAZeroNodeMarketClusterSyncsAnExternalSecretFromItsOwnVaultWithNoESOPodInTheTenant` PASS in
+  25.4 s -- a `MarketDialled` cluster advertised on `198.18.0.7` reached Ready with the pair in its
+  group in 22.68 s; with zero nodes, an ExternalSecret carrying neither `data` nor `dataFrom` was
+  refused with `admission webhook "validate.externalsecret.external-secrets.io" denied the request:
+  either data or dataFrom should be specified`, which only the webhook says, so the apiserver
+  (`--egress-selector-mode cluster`) reached `https://127.0.0.1:<leased>` directly; the store went
+  `Ready=True reason=Valid` against `https://127.0.0.1:<vault port>`; and `users/openbao-demo`
+  carried `openbao:<cluster>` 500 ms after the apply, with 3 tenant pods (k3s's own Pending
+  add-ons), none of them External Secrets, and no External Secrets Deployment. Watched to fail
+  first: (1) the seven `eso` tests against a stub that split, registered and installed nothing;
+  (2) the live test before the grant change, whose store read `Ready=True reason=Valid` while the
+  ExternalSecret read `SecretSyncedError: ... ValidatingAdmissionPolicy 'socialweb-mint-identity'
+  ... denied request` -- the policy still admitted only `system:serviceaccount:default:external-secrets`,
+  which is now `__SOCIALWEB_ESO_USER__` rendered as `system:socialweb:external-secrets`; (3) the same
+  test's first probe, a `ClusterSecretStore` with an empty provider, was refused by the CRD schema
+  rather than the webhook, so it proved nothing and was replaced by the data-less ExternalSecret.
+  What a deploy does to an existing cluster: the restart reap derives argvs without the pair (its
+  lease-file entry holds none of the three purposes), the bring-up leases them, and the webhook
+  step's `Prepare` deletes the in-tenant Deployments, ServiceAccounts, webhook Service and Secret,
+  the cert-controller ClusterRole, both upstream ClusterRoleBindings and the leader-election
+  Role/RoleBinding from the configured namespace (`SOCIALWEB_CLUSTERPROVIDER_ESO_NAMESPACE`,
+  default `default`), deletes each webhook registration that still names a Service, and applies
+  the URL ones; the next `Bootstrap` re-renders the grant, writes the store on loopback and
+  re-measures an empty add-on baseline. Stated limits kept: neither member is restarted when it
+  dies, as the cloud controller manager is not (plan 0005 M6-LIMITS); the webhook's TLS listener
+  binds every interface of the container's namespace; the image grows by the 295 MB binary.
 
 ## 16. Vocabulary
 

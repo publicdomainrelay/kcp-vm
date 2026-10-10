@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -229,6 +230,10 @@ type nodeSubstrateOptions struct {
 	Log *slog.Logger
 
 	NodeDiskStage func(ctx context.Context, fillDir, nodePassword string) error
+
+	Secrets nodemarket.NodeSecrets
+
+	Links nodemarket.Links
 }
 
 func (s nodeSubstrate) NewNodeHost(opts nodeSubstrateOptions) (nodeHost, error) {
@@ -282,6 +287,8 @@ func (s nodeSubstrate) NewNodeHost(opts nodeSubstrateOptions) (nodeHost, error) 
 			Record:           opts.Record,
 			Log:              opts.Log,
 			ReleaseTimeout:   opts.ReleaseTimeout,
+			Secrets:          opts.Secrets,
+			Links:            opts.Links,
 		})
 	case "":
 		return nil, errNoSubstrateChoice
@@ -324,6 +331,32 @@ type nodeHostsOptions struct {
 	Log *slog.Logger
 
 	Substrate nodeSubstrate
+
+	Links nodemarket.Links
+
+	NodeSecrets func(clusterDir string) nodemarket.NodeSecrets
+
+	Now func() time.Time
+
+	NodeLossGrace time.Duration
+
+	Observe observeCluster
+}
+
+const NodeLossGrace = 90 * time.Second
+
+func (o nodeHostsOptions) now() time.Time {
+	if o.Now == nil {
+		return time.Now()
+	}
+	return o.Now()
+}
+
+func (o nodeHostsOptions) nodeLossGrace() time.Duration {
+	if o.NodeLossGrace <= 0 {
+		return NodeLossGrace
+	}
+	return o.NodeLossGrace
 }
 
 var errNoNodeClaims = errors.New(
@@ -393,6 +426,8 @@ func guestEnd(host nodeHost) nodemarket.End {
 type confirmOutcome struct {
 	joined []string
 
+	lost []string
+
 	declined []string
 
 	declinedWords string
@@ -416,11 +451,12 @@ type tenantNodes struct {
 
 	opts nodeHostsOptions
 
-	mu      sync.Mutex
-	started int
-	extra   map[int]heldNode
-	live    map[string]bool
-	joined  map[string]bool
+	mu            sync.Mutex
+	started       int
+	extra         map[int]heldNode
+	live          map[string]bool
+	joined        map[string]bool
+	notReadySince map[string]time.Time
 }
 
 type heldNode struct {
@@ -529,12 +565,32 @@ func (n *tenantNodes) confirmHeld(ctx context.Context) (confirmOutcome, error) {
 			}
 			continue
 		}
-		reported, err := nodeReported(ctx, n.tenant, n.cluster, node.name)
+		if syncer, ok := node.host.(secretSyncer); ok {
+			if err := syncer.SyncSecrets(ctx); err != nil {
+				problems = append(problems, err)
+			}
+		}
+		reported, err := readTenantNode(ctx, n.tenant, n.cluster, node.name)
 		if err != nil {
 			problems = append(problems, err)
 			continue
 		}
-		if !reported {
+		if reported == nil {
+			n.clearNotReady(node.name)
+			continue
+		}
+		if lost, since := n.lost(reported); lost {
+			n.log.Warn("cluster provider: a market node has been NotReady past the loss grace, so it "+
+				"is released and its Node deleted; its pods reschedule and the scale pass rents a "+
+				"replacement if the work still needs one",
+				"cluster", n.cluster, "node", node.name, "notReadySince", since.UTC().Format(time.RFC3339),
+				"grace", n.opts.nodeLossGrace())
+			if err := n.teardownHeld(ctx, node); err != nil {
+				problems = append(problems, err)
+				continue
+			}
+			n.clearNotReady(node.name)
+			outcome.lost = append(outcome.lost, node.name)
 			continue
 		}
 		if err := node.host.ConfirmJoined(ctx); err != nil {
@@ -547,6 +603,46 @@ func (n *tenantNodes) confirmHeld(ctx context.Context) (confirmOutcome, error) {
 		}
 	}
 	return outcome, errors.Join(problems...)
+}
+
+type secretSyncer interface {
+	SyncSecrets(ctx context.Context) error
+}
+
+func (n *tenantNodes) lost(node *corev1.Node) (bool, time.Time) {
+	var ready *corev1.NodeCondition
+	for i := range node.Status.Conditions {
+		if node.Status.Conditions[i].Type == corev1.NodeReady {
+			ready = &node.Status.Conditions[i]
+			break
+		}
+	}
+	if ready == nil || ready.Status == corev1.ConditionTrue {
+		n.clearNotReady(node.Name)
+		return false, time.Time{}
+	}
+	now := n.opts.now()
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	since := ready.LastTransitionTime.Time
+	if since.IsZero() {
+		if n.notReadySince == nil {
+			n.notReadySince = map[string]time.Time{}
+		}
+		first, seen := n.notReadySince[node.Name]
+		if !seen {
+			first = now
+			n.notReadySince[node.Name] = now
+		}
+		since = first
+	}
+	return now.Sub(since) >= n.opts.nodeLossGrace(), since
+}
+
+func (n *tenantNodes) clearNotReady(name string) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	delete(n.notReadySince, name)
 }
 
 func (n *tenantNodes) markJoined(name string) bool {
@@ -895,8 +991,9 @@ type nodeHosts struct {
 	opts nodeHostsOptions
 	log  *slog.Logger
 
-	mu    sync.Mutex
-	hosts map[string]*tenantNodes
+	mu      sync.Mutex
+	hosts   map[string]*tenantNodes
+	adopted map[string]bool
 }
 
 func newNodeHosts(opts nodeHostsOptions) (*nodeHosts, error) {
@@ -985,6 +1082,7 @@ func (h *nodeHosts) reconcile(ctx context.Context, cluster string) error {
 			"confirmed released: %w -- a read that failed is not a workspace with no claims, and it is "+
 			"the claims that say which Nodes have no machine behind them", target.Workspace, err)
 	}
+	adoptErr := h.adoptClaims(cluster, claims)
 	var gone []string
 	for i := range claims {
 		if claims[i].Status.Phase == v1alpha1.NodeClaimReleased {
@@ -992,26 +1090,26 @@ func (h *nodeHosts) reconcile(ctx context.Context, cluster string) error {
 		}
 	}
 	if len(gone) == 0 {
-		return nil
+		return adoptErr
 	}
 	client, err := h.opts.Tenant(ctx, cluster)
 	if err != nil {
-		return fmt.Errorf("clusterprovider: the tenant client for %s, needed to delete the Nodes "+
-			"whose claims the door confirmed released: %w", cluster, err)
+		return errors.Join(adoptErr, fmt.Errorf("clusterprovider: the tenant client for %s, needed to "+
+			"delete the Nodes whose claims the door confirmed released: %w", cluster, err))
 	}
 	list, err := client.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return fmt.Errorf("clusterprovider: listing the nodes of %s before removing the ones whose "+
-			"claim reads Released: %w -- a claim the door released stays in its workspace as the "+
-			"record of what happened, so the list of names to act on is not the list of Nodes still "+
-			"there, and deleting by name alone spends one write per pass for ever on a Node that went "+
-			"the first time", cluster, err)
+		return errors.Join(adoptErr, fmt.Errorf("clusterprovider: listing the nodes of %s before "+
+			"removing the ones whose claim reads Released: %w -- a claim the door released stays in "+
+			"its workspace as the record of what happened, so the list of names to act on is not the "+
+			"list of Nodes still there, and deleting by name alone spends one write per pass for ever "+
+			"on a Node that went the first time", cluster, err))
 	}
 	present := map[string]bool{}
 	for i := range list.Items {
 		present[list.Items[i].Name] = true
 	}
-	var problems []error
+	problems := []error{adoptErr}
 	for _, name := range gone {
 		if !present[name] {
 			continue
@@ -1046,6 +1144,7 @@ func (h *nodeHosts) reapCluster(ctx context.Context, cluster string) error {
 	n, ok := h.hosts[cluster]
 	if ok {
 		delete(h.hosts, cluster)
+		delete(h.adopted, cluster)
 	}
 	h.mu.Unlock()
 	if !ok {
@@ -1086,6 +1185,15 @@ func (h *nodeHosts) reap(ctx context.Context) error {
 	}
 	slices.Sort(clusters)
 
+	if h.opts.Substrate.deferredJoin() {
+		h.log.Info("cluster provider: leaving the market nodes running for the next provider process",
+			"nodeClusters", clusters,
+			"reason", "a market guest joined with no session of ours and outlives this process; "+
+				"deleting its claim is what makes the door destroy the machine, so a restart that "+
+				"released here would reap every node on every deploy",
+			"next", "the next provider adopts every live claim at startup and holds it again")
+		return nil
+	}
 	var problems []error
 	for _, cluster := range clusters {
 		n := held[cluster]
@@ -1236,6 +1344,10 @@ func newNodeHostOf(substrate nodeSubstrate, opts nodeHostsOptions, log *slog.Log
 			stage = nodeVaultStage(substrate, cluster, clusterDir, name)
 		}
 	}
+	var secrets nodemarket.NodeSecrets
+	if substrate.Name == SubstrateMarket && opts.NodeSecrets != nil {
+		secrets = opts.NodeSecrets(clusterDir)
+	}
 	return substrate.NewNodeHost(nodeSubstrateOptions{
 		Cluster:          cluster,
 		Server:           server,
@@ -1252,6 +1364,8 @@ func newNodeHostOf(substrate nodeSubstrate, opts nodeHostsOptions, log *slog.Log
 		Record:           nodeRecorder(opts.Registry, cluster, name, substrate.NodeExpiry()),
 		Log:              log,
 		NodeDiskStage:    stage,
+		Secrets:          secrets,
+		Links:            opts.Links,
 	})
 }
 
@@ -1354,25 +1468,31 @@ func nodeRefFor(ctx context.Context, registry clusterprovider.Clusters, key stri
 			"no node on every pass", key)
 }
 
-func nodeReported(ctx context.Context, tenant tenantClient, cluster, nodeName string) (bool, error) {
+func readTenantNode(ctx context.Context, tenant tenantClient, cluster, nodeName string) (*corev1.Node, error) {
 	if tenant == nil {
-		return false, errNoJoiningClient
+		return nil, errNoJoiningClient
 	}
 	client, err := tenant(ctx, cluster)
 	if err != nil {
-		return false, fmt.Errorf("clusterprovider: the tenant client for %s, which is what says "+
+		return nil, fmt.Errorf("clusterprovider: the tenant client for %s, which is what says "+
 			"whether node %s is in that cluster's node list: %w", cluster, nodeName, err)
 	}
 	if client == nil {
-		return false, errNoJoiningClient
+		return nil, errNoJoiningClient
 	}
-	if _, err := client.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{}); err != nil {
+	node, err := client.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
+	if err != nil {
 		if apierrors.IsNotFound(err) {
-			return false, nil
+			return nil, nil
 		}
-		return false, fmt.Errorf("clusterprovider: reading node %s from the tenant cluster %s: %w "+
+		return nil, fmt.Errorf("clusterprovider: reading node %s from the tenant cluster %s: %w "+
 			"-- a read that failed is not a node that is missing, and acting on the two alike holds "+
 			"back a node that is already serving", nodeName, cluster, err)
 	}
-	return true, nil
+	return node, nil
+}
+
+func nodeReported(ctx context.Context, tenant tenantClient, cluster, nodeName string) (bool, error) {
+	node, err := readTenantNode(ctx, tenant, cluster, nodeName)
+	return node != nil, err
 }

@@ -14,7 +14,6 @@ import (
 	"k8s.io/client-go/rest"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/eso"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/materialiser"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/portallocator"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/revocation"
@@ -108,8 +107,6 @@ type Options struct {
 
 	GrantPath string
 
-	ESONamespace string
-
 	MintDir string
 
 	TokenTimeout time.Duration
@@ -191,9 +188,6 @@ func New(opts Options) (*Provider, error) {
 	}
 	if opts.TokenTimeout == 0 {
 		opts.TokenTimeout = DefaultTokenTimeout
-	}
-	if opts.ESONamespace == "" {
-		opts.ESONamespace = eso.DefaultControllerNamespace
 	}
 	tenant := 0
 	for _, set := range []bool{opts.Tenant != nil, opts.GrantPath != "", opts.MintDir != ""} {

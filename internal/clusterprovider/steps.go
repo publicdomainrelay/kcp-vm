@@ -132,6 +132,9 @@ func StepsFrom(spec clusterstack.Spec, leases materialiser.Leases, stack Stack) 
 }
 
 func stepEnv(spec clusterstack.Spec, c procgroup.Component) []string {
+	if c == procgroup.ComponentExternalSecrets || c == procgroup.ComponentExternalSecretsWebhook {
+		return externalSecretsEnv(spec)
+	}
 	if c != procgroup.ComponentCloudControllerManager {
 		return nil
 	}
@@ -178,6 +181,10 @@ func gate(c procgroup.Component, spec clusterstack.Spec, bao, api portallocator.
 			return waitK3sControllers(ctx, spec.DataDir)
 		case procgroup.ComponentCloudControllerManager:
 			return waitCloudControllerManager(ctx, p)
+		case procgroup.ComponentExternalSecretsWebhook:
+			return waitExternalSecretsWebhook(ctx, spec, p)
+		case procgroup.ComponentExternalSecrets:
+			return waitExternalSecretsController(ctx, spec, p)
 		}
 		return fmt.Errorf("clusterprovider: no readiness gate for %q", c)
 	}

@@ -44,12 +44,32 @@ func Scan(leases []portallocator.Lease, stacks []Stack) (Survivors, []Drop, erro
 	if err != nil {
 		return nil, nil, err
 	}
-	owners, err := listeners()
+	stream, err := listeners()
 	if err != nil {
 		return nil, nil, err
 	}
-	survivors, dropped := scan(leases, expected, owners, cmdline)
+	datagram, err := datagramListeners()
+	if err != nil {
+		return nil, nil, err
+	}
+	survivors, dropped := scan(leases, expected, byTransport(leases, stream, datagram), cmdline)
 	return survivors, dropped, nil
+}
+
+func byTransport(leases []portallocator.Lease, stream, datagram map[int][]int) map[int][]int {
+	out := map[int][]int{}
+	for _, l := range leases {
+		owners := stream
+		if l.Purpose.Datagram() {
+			owners = datagram
+		}
+		for p := l.Port; p < l.Port+l.Width; p++ {
+			if pids, ok := owners[p]; ok {
+				out[p] = pids
+			}
+		}
+	}
+	return out
 }
 
 func scan(
@@ -111,6 +131,9 @@ func (s Stack) spawned() ([][]string, error) {
 	for _, c := range procgroup.StackOrder {
 		argv, err := s.Spec.Argv(c)
 		if errors.Is(err, clusterstack.ErrNotAProcess) {
+			continue
+		}
+		if errors.Is(err, clusterstack.ErrMissingExternalSecrets) && s.Spec.ExternalSecrets == (clusterstack.ExternalSecrets{}) {
 			continue
 		}
 		if err != nil {

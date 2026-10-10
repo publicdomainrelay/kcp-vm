@@ -18,6 +18,11 @@ var componentPorts = map[procgroup.Component][]portallocator.Purpose{
 		portallocator.PurposeK3sCloudControllerManager,
 	},
 	procgroup.ComponentCloudControllerManager: nil,
+	procgroup.ComponentExternalSecretsWebhook: {
+		portallocator.PurposeExternalSecretsWebhook,
+		portallocator.PurposeExternalSecretsWebhookHealth,
+	},
+	procgroup.ComponentExternalSecrets: {portallocator.PurposeExternalSecretsHealth},
 }
 
 var ErrNoPurposeForComponent = fmt.Errorf(

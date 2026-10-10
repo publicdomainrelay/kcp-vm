@@ -1,10 +1,10 @@
 // Live instrument S1: one NodeClaim fulfilled end to end by a real firecracker
 // guest, joining a k3s control plane that listens ONLY on this host's loopback.
 //
-// The control plane advertises an address this host does not carry, so the only
-// way the guest's agent, and the pods on it, can reach the apiserver is the
-// reverse forward the door opens over the guest's ssh tunnel. That is the whole
-// claim under test.
+// The guest reaches the cluster only through the links its user_data installs:
+// the OpenBao link named by SOCIALWEB_K8S_LIVE_OPENBAO_TICKET (CA at
+// SOCIALWEB_K8S_LIVE_OPENBAO_CA) and the apiserver link whose ticket it reads
+// from OpenBao. The door holds no connection to the guest.
 //
 // Skipped unless SOCIALWEB_K8S_LIVE=1, and skipped with a printed reason when
 // the firecracker harness's own environment is missing.
@@ -58,6 +58,8 @@ const ENV = {
   rangeBase: "SOCIALWEB_FIRECRACKER_RANGE_BASE",
   reuseImage: "SOCIALWEB_FIRECRACKER_REUSE_IMAGE",
   advertise: "SOCIALWEB_K8S_ADVERTISE",
+  openbaoTicket: "SOCIALWEB_K8S_LIVE_OPENBAO_TICKET",
+  openbaoCA: "SOCIALWEB_K8S_LIVE_OPENBAO_CA",
 } as const;
 
 const NODE_NAME = "live-node1";
@@ -77,7 +79,7 @@ function skipReasonOf(): string | null {
   if (Deno.env.get("SOCIALWEB_K8S_LIVE") !== "1") {
     return "SOCIALWEB_K8S_LIVE is not 1";
   }
-  const absent = (["nodeimage", "config", "repoDir", "runnerImage", "workRoot"] as const)
+  const absent = (["nodeimage", "config", "repoDir", "runnerImage", "workRoot", "openbaoTicket", "openbaoCA"] as const)
     .filter((k) => !Deno.env.get(ENV[k]));
   if (absent.length > 0) {
     return `${absent.map((k) => ENV[k]).join(", ")} unset`;
@@ -775,8 +777,12 @@ Deno.test({
 
     const fulfiller = createMarketNodeFulfiller({
       store,
+      links: {
+        get: (workspace, name) =>
+          Promise.resolve({ workspace, name, status: { phase: "Listening", ticket: Deno.env.get(ENV.openbaoTicket)! } }),
+      },
+      openBaoCAFileOf: () => Deno.env.get(ENV.openbaoCA)!,
       requesterFor: () => Promise.resolve(requester),
-      apiserverHost: "127.0.0.1",
       ingressProxyHost,
       relayUrls: [],
       // The wait for the guest to register its tunnel. It also bounds teardown:
@@ -797,7 +803,7 @@ Deno.test({
 
     const phaseProbe = async () => {
       const status = store.status();
-      if (status?.phase === "Running" && joinAt === 0) joinAt = Date.now();
+      if (status?.phase === "Joining" && joinAt === 0) joinAt = Date.now();
       if (status?.phase === "Failed") {
         throw new FailNow(`the node claim failed: ${status.message ?? "no reason given"}`);
       }
@@ -814,13 +820,13 @@ Deno.test({
         const verdict = await guestVerdict(consolePath);
         if (verdict) throw new FailNow(verdict);
       }
-      return status?.phase === "Running";
+      return status?.phase === "Joining";
     };
 
-    const joinMs = await waitFor("the claim to reach Running", 15 * 60_000, phaseProbe, 1_000);
-    console.log(`[live] READING claim-reached-Running ms=${Date.now() - started} (wait ${joinMs}ms)`);
-    assertEquals(store.phase(), "Running");
-    assert(provisions.length > 0, "the claim reached Running without the provider provisioning a guest");
+    const joinMs = await waitFor("the claim to reach Joining", 15 * 60_000, phaseProbe, 1_000);
+    console.log(`[live] READING claim-reached-Joining ms=${Date.now() - started} (wait ${joinMs}ms)`);
+    assertEquals(store.phase(), "Joining");
+    assert(provisions.length > 0, "the claim reached Joining without the provider provisioning a guest");
     providerId = provisions[0].providerId;
     console.log(`[live] provider placed ${providerId} at ${provisions[0].ip}`);
 

@@ -91,6 +91,14 @@ func (d *Driver) Pass(ctx context.Context, cluster string, o scale.Observation, 
 		if err := nodes.Teardown(ctx); err != nil {
 			return dec, fmt.Errorf("scaledriver: tearing down the node for %s: %w", cluster, err)
 		}
+	case scale.Release:
+		releaser, ok := nodes.(scale.Releaser)
+		if !ok {
+			return dec, fmt.Errorf("%w: %s, node %s", ErrNoReleaser, cluster, dec.Release)
+		}
+		if err := releaser.Release(ctx, dec.Release); err != nil {
+			return dec, fmt.Errorf("scaledriver: releasing node %s of %s: %w", dec.Release, cluster, err)
+		}
 	default:
 		return dec, fmt.Errorf("scaledriver: scale.Decide returned action %d, which this driver "+
 			"does not know how to perform", dec.Action)
@@ -98,9 +106,13 @@ func (d *Driver) Pass(ctx context.Context, cluster string, o scale.Observation, 
 
 	d.advance(cluster, st.Next(dec, now))
 	log.Info("scaledriver: node count changed", "cluster", cluster, "action", dec.Action,
-		"nodes", dec.Nodes, "reason", dec.Reason)
+		"nodes", dec.Nodes, "release", dec.Release, "reason", dec.Reason)
 	return dec, nil
 }
+
+var ErrNoReleaser = errors.New(
+	"scaledriver: the decision released one node and the actuator cannot release a single node; " +
+		"a decision nothing can perform is the state this package exists to end")
 
 var ErrNoObserver = errors.New(
 	"scaledriver: no Observer, so a pass has nothing to decide from -- Pass takes its " +

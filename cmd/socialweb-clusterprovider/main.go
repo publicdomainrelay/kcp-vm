@@ -22,6 +22,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostos"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpclient"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/materialiser"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodemarket"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/portallocator"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/procgroup"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/scale"
@@ -181,6 +182,7 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 
 	stack := append(clusterprovider.Stack{}, clusterprovider.DesignedStack...)
 	stack = append(stack, procgroup.ComponentCloudControllerManager)
+	stack = append(stack, clusterprovider.ExternalSecretsComponents...)
 	needsPostgres := stack.NeedsLocalPostgres(cfg.StoreEndpoint == "")
 	purposes, err := clusterprovider.PurposesFor(stack, needsPostgres)
 	if err != nil {
@@ -191,6 +193,18 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 	if err != nil {
 		return Deps{}, err
 	}
+
+	linkClient, err := kcpclient.New(kcpclient.Options{Host: cfg.KCPHost, RestConfig: restCfg})
+	if err != nil {
+		return Deps{}, err
+	}
+	links := clusterLinks(cfg, linkClient, registry, deciderHost, log)
+	if links != nil {
+		purposes = append(purposes, clusterprovider.LinkPurposes...)
+	}
+	log.Info("cluster provider: cluster links", "on", links != nil, "dumbpipe", cfg.Dumbpipe,
+		"reason", "each cluster gets a dumbpipe listener in front of its apiserver and one in front of its "+
+			"vault when "+envDumbpipe+" names the binary; unset, no cluster has a link and no node can join without ssh")
 
 	minter := instanceMinter()
 	stackCfg := clusterprovider.StackConfig{
@@ -206,6 +220,7 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 		VaultTLS:               vaultTLSFor(),
 		AuditPolicyPath:        cfg.AuditPolicyPath,
 		CloudControllerManager: cfg.CloudControllerManager,
+		ExternalSecrets:        externalSecretsFor(cfg),
 		Harvest: func(ctx context.Context, cluster string) error {
 			if err := clusterprovider.HarvestBundle(cfg.StateDir, cluster); err != nil {
 				return err
@@ -226,6 +241,7 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 			})
 		},
 		GuardRides: true,
+		Links:      links,
 	}
 	if substrate.IsGuest() {
 		stackCfg.GuestGateway = guestGateway(networks)
@@ -276,7 +292,8 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 	tenantConfig := tenantFromClusterCA(alloc, cfg.StateDir, tenantCredentialSource(substrate))
 	tenant := tenantClients(registry, tenantConfig)
 	nodeObserver := clusterprovider.NodeObserver{
-		Client: tenant,
+		Client:    tenant,
+		Operators: scale.OurOperators,
 		Baseline: func(cluster string) (scale.Baseline, error) {
 			dataDir, err := clusterprovider.ClusterDataDir(cfg.StateDir, cluster)
 			if err != nil {
@@ -302,18 +319,17 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 		Tenant:              tenant,
 		Log:                 log,
 		Substrate:           substrate,
+		Links:               claims,
+		NodeSecrets: func(clusterDir string) nodemarket.NodeSecrets {
+			return clusterprovider.NewNodeVault(clusterDir)
+		},
+		Observe: nodeObserver.Observe,
 	})
 	if err != nil {
 		return Deps{}, err
 	}
 	scaleDriver, err := scaledriver.New(nodeHosts.forCluster, scaledriver.Options{
-		Observe: func(ctx context.Context, cluster string) (scale.Observation, int, error) {
-			observed, nodes, err := nodeObserver.Observe(ctx, cluster)
-			if err != nil {
-				return observed, nodes, err
-			}
-			return observed, nodes + nodeHosts.inFlight(ctx, cluster), nil
-		},
+		Observe: nodeHosts.observeHeld(nodeObserver.Observe),
 		Scale: scale.Options{
 			Hold:        cfg.ScaleHold,
 			MaxNodes:    cfg.ScaleMaxNodes,
@@ -336,7 +352,10 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 
 		PostgresNeeded: needsPostgres,
 
-		InstallTenant: tenantAddOns(cfg, networks, log),
+		InstallTenant: tenantAddOns(cfg, log),
+	}
+	if links != nil {
+		deps.Links = &linkRecorder{client: linkClient, registry: registry}
 	}
 	if !cfg.ObserveOnly() {
 		deps.Host = host

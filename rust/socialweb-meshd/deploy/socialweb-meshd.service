@@ -1,0 +1,18 @@
+[Unit]
+Description=socialweb.computer pod mesh over iroh (socialweb-meshd)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=notify
+NotifyAccess=main
+TimeoutStartSec=infinity
+EnvironmentFile=/etc/socialweb/node/meshd.env
+ExecStart=/usr/local/bin/socialweb-meshd run --kubeconfig /var/lib/rancher/k3s/agent/kubelet.kubeconfig --secret-file /var/lib/socialweb/meshd/secret
+Restart=always
+RestartSec=2
+StateDirectory=socialweb/meshd
+StateDirectoryMode=0700
+
+[Install]
+WantedBy=multi-user.target

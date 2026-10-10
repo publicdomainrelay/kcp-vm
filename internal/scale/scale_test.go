@@ -153,30 +153,70 @@ func TestAnAbsentReplicasMeansOneNotZero(t *testing.T) {
 	}
 }
 
-func TestADaemonSetIsInertAtZeroNodesAndHoldsOnceUp(t *testing.T) {
+func TestADaemonSetIsNeverIntentAtZeroNodesOrOnceUp(t *testing.T) {
 	zero := Observation{DaemonSets: []appsv1.DaemonSet{
 		{ObjectMeta: metav1.ObjectMeta{Name: "node-exporter"}},
 	}}
-	if Intent(zero) {
-		t.Fatal("a DaemonSet at zero nodes reported intent; desiredNumberScheduled is 0 " +
-			"when there are no nodes to match, so this term cannot wake a cluster")
+	if Intent(zero) || Demand(zero) != 0 {
+		t.Fatal("a DaemonSet at zero nodes reported intent or demand")
 	}
-	up := Observation{DaemonSets: []appsv1.DaemonSet{{
-		ObjectMeta: metav1.ObjectMeta{Name: "node-exporter"},
-		Status:     appsv1.DaemonSetStatus{DesiredNumberScheduled: 1},
-	}}}
-	if !Intent(up) {
-		t.Fatal("a DaemonSet with a node to run on reported no intent; this term is the " +
-			"reason a DaemonSet, once a node exists, holds it open")
+	running := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "node-exporter-x", OwnerReferences: []metav1.OwnerReference{{
+			APIVersion: "apps/v1", Kind: KindDaemonSet, Name: "node-exporter", Controller: b(true)}}},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning},
 	}
-	if narrowFires(zero) || narrowFires(up) {
-		t.Fatal("the narrow trigger fired on a DaemonSet; it should see neither")
+	up := Observation{
+		DaemonSets: []appsv1.DaemonSet{{
+			ObjectMeta: metav1.ObjectMeta{Name: "node-exporter"},
+			Status:     appsv1.DaemonSetStatus{DesiredNumberScheduled: 1},
+		}},
+		Pods: []corev1.Pod{running},
+	}
+	if Intent(up) || Demand(up) != 0 {
+		t.Fatal("a DaemonSet with a node to run on, and its Running pod, reported intent or demand; " +
+			"its desired count follows the nodes, so counting it pins any cluster that ever had a " +
+			"node above zero for ever (plan 0005 M4-SCALE-IN)")
+	}
+	orphaned := Observation{Pods: []corev1.Pod{running}}
+	if Intent(orphaned) {
+		t.Fatal("a DaemonSet's pod whose DaemonSet was not in the same read reported intent; the " +
+			"pod's controller says it follows the nodes whether or not the DaemonSet was listed")
+	}
+}
+
+func TestADaemonSetOnlyClusterScalesToZero(t *testing.T) {
+	ds := appsv1.DaemonSet{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "obs", Name: "agent"},
+		Status:     appsv1.DaemonSetStatus{DesiredNumberScheduled: 2, CurrentNumberScheduled: 2},
+	}
+	o := Observation{DaemonSets: []appsv1.DaemonSet{ds}}
+	for _, node := range []string{"c-node1", "c-node2"} {
+		o.Pods = append(o.Pods, corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "obs", Name: "agent-" + node, OwnerReferences: []metav1.OwnerReference{{
+				APIVersion: "apps/v1", Kind: KindDaemonSet, Name: "agent", Controller: b(true)}}},
+			Spec:   corev1.PodSpec{NodeName: node},
+			Status: corev1.PodStatus{Phase: corev1.PodRunning},
+		})
+	}
+	o.Placement = Loads([]corev1.Node{node("c-node1", 0), node("c-node2", time.Second)}, o, nil, Baseline{})
+	st := State{Nodes: 2}
+	d := Decide(o, st, at(0), Options{})
+	if d.Intent || d.Action != None {
+		t.Fatalf("a cluster holding only a DaemonSet decided %s with intent %v at first sight, want "+
+			"None without intent: the hold starts", d.Action, d.Intent)
+	}
+	st = st.Next(d, at(0))
+	d = Decide(o, st, at(DefaultHold), Options{})
+	if d.Action != Teardown || d.Nodes != 0 {
+		t.Fatalf("a cluster holding only a DaemonSet decided %s/%d past the hold, want Teardown/0: "+
+			"%s", d.Action, d.Nodes, d.Reason)
 	}
 }
 
 func TestTheObservationRangesOverExactlyThePredicatesKinds(t *testing.T) {
 	t.Run("no-field-for-an-excluded-kind", func(t *testing.T) {
-		want := []string{"DaemonSets", "Deployments", "Jobs", "Pods", "StatefulSets"}
+		want := []string{"DaemonSets", "Deployments", "Jobs", "Placement", "Pods", "StatefulSets",
+			"UnreconciledCustomResources"}
 		var got []string
 		rt := reflect.TypeOf(Observation{})
 		for i := 0; i < rt.NumField(); i++ {
@@ -185,7 +225,9 @@ func TestTheObservationRangesOverExactlyThePredicatesKinds(t *testing.T) {
 		sort.Strings(got)
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("Observation ranges over %v, want %v -- a Service, CronJob, HPA or "+
-				"ReplicaSet field is excluded by ADR 0014 and cannot be added here", got, want)
+				"ReplicaSet field is excluded by ADR 0014 and cannot be added here; Placement is the "+
+				"per-node load scale-in reads (plan 0005 M4-SCALE-IN) and UnreconciledCustomResources "+
+				"the CRs an in-cluster operator of ours has not reconciled (M4-PENDING-CRS)", got, want)
 		}
 	})
 }
@@ -270,10 +312,6 @@ func TestTheNarrowTriggerCannotScaleToZero(t *testing.T) {
 		{
 			"a Deployment whose first pod does not exist yet",
 			Observation{Deployments: []appsv1.Deployment{{Spec: appsv1.DeploymentSpec{Replicas: i32(1)}}}},
-		},
-		{
-			"a DaemonSet with a node to run on",
-			Observation{DaemonSets: []appsv1.DaemonSet{{Status: appsv1.DaemonSetStatus{DesiredNumberScheduled: 1}}}},
 		},
 		{
 			"a pod left Unknown by a departed node",
@@ -527,7 +565,9 @@ func TestDemandAgreesWithIntentOnEveryIntentFixture(t *testing.T) {
 			{ObjectMeta: metav1.ObjectMeta{Name: "node-exporter"}}}}, false},
 		{"a DaemonSet with a node to run on", Observation{DaemonSets: []appsv1.DaemonSet{{
 			ObjectMeta: metav1.ObjectMeta{Name: "node-exporter"},
-			Status:     appsv1.DaemonSetStatus{DesiredNumberScheduled: 1}}}}, true},
+			Status:     appsv1.DaemonSetStatus{DesiredNumberScheduled: 1}}}}, false},
+		{"a CR an in-cluster operator of ours has not reconciled", Observation{
+			UnreconciledCustomResources: []CustomResource{{Group: "example.com", Kind: "Widget", Name: "w"}}}, true},
 	}
 	for _, tc := range cases {
 		if got := Intent(tc.o); got != tc.want {
@@ -614,7 +654,7 @@ func TestDecideAtTheDefaultCeilingReproducesToday(t *testing.T) {
 	}
 }
 
-func TestTheDecisionScalesOutToTheTargetAndNeverPartiallyBack(t *testing.T) {
+func TestTheDecisionScalesOutToTheTargetAndReleasesNothingItCannotSee(t *testing.T) {
 	o := pods(17)
 	opts := Options{MaxNodes: 3, PodsPerNode: 8}
 
@@ -629,8 +669,8 @@ func TestTheDecisionScalesOutToTheTargetAndNeverPartiallyBack(t *testing.T) {
 		t.Fatalf("at the target the decision was %s/%d, want None/3", d.Action, d.Nodes)
 	}
 	if d := Decide(o, State{Nodes: 4}, t0, opts); d.Action != None || d.Nodes != 4 {
-		t.Fatalf("above the target the decision was %s/%d, want None/4: partial scale-in is not "+
-			"implemented (section 4.4), so the count is held rather than reduced", d.Action, d.Nodes)
+		t.Fatalf("above the target the decision was %s/%d, want None/4: no node's load was "+
+			"observed, so no node has been seen idle for the hold and none is released", d.Action, d.Nodes)
 	}
 }
 
@@ -641,6 +681,7 @@ func TestATransientlyInflatedObservationIsBoundedByTheCeiling(t *testing.T) {
 	}
 	if d := Decide(pods(1), State{Nodes: 4}, t0, opts); d.Action != None || d.Nodes != 4 {
 		t.Fatalf("after the inflation passed the decision was %s/%d, want None/4: the target "+
-			"falling while intent remains must not scale the cluster in partially", d.Action, d.Nodes)
+			"falling while intent remains releases only a node seen idle for the whole hold, and "+
+			"none was seen", d.Action, d.Nodes)
 	}
 }

@@ -289,7 +289,7 @@ func whyUnowned(cl *v1alpha1.Cluster) string {
 }
 
 func spawnArgvs(cfg clusterprovider.StackConfig, cluster string, leases materialiser.Leases) ([][]string, error) {
-	steps, err := clusterprovider.StepsFor(cfg)(
+	steps, err := clusterprovider.StepsFor(cfg.WithoutUnleased(leases))(
 		materialiser.Observed{Cluster: v1alpha1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: cluster}}},
 		leases,
 	)

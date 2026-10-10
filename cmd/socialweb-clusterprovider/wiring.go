@@ -38,6 +38,8 @@ type Deps struct {
 	Tenant func(ctx context.Context, ref clusterprovider.Ref, cl *v1alpha1.Cluster) (*rest.Config, error)
 
 	InstallTenant func(ctx context.Context, cluster string, cfg *rest.Config) error
+
+	Links *linkRecorder
 }
 
 var ErrNoTenant = errors.New(
@@ -65,6 +67,8 @@ type Provider struct {
 	nodes *nodeHosts
 
 	host materialiser.Host
+
+	links *linkRecorder
 
 	newInstance func() string
 	log         *slog.Logger
@@ -171,7 +175,6 @@ func Build(cfg Config, d Deps, log *slog.Logger) (*Provider, error) {
 	}
 	if !cfg.ObserveOnly() {
 		opts.Tenant, opts.GrantPath, opts.MintDir = d.Tenant, cfg.GrantPath, cfg.MintKubeconfigs
-		opts.ESONamespace = cfg.ESONamespace
 		opts.InstallTenant = d.InstallTenant
 	}
 	provider, err := clusterprovider.New(opts)
@@ -189,6 +192,7 @@ func Build(cfg Config, d Deps, log *slog.Logger) (*Provider, error) {
 		nodeScale:      d.NodeScale,
 		nodes:          d.NodeHosts,
 		host:           d.Host,
+		links:          d.Links,
 		newInstance:    d.NewInstance,
 		log:            log,
 	}
@@ -226,6 +230,7 @@ func (p *Provider) join(ctx context.Context) error {
 	if err := p.resetSnapshots([]string{key}); err != nil {
 		return err
 	}
+	p.adoptNodes(ctx, []string{key})
 	if err := p.sweepNodeRecords(ctx); err != nil {
 		return err
 	}
@@ -261,6 +266,18 @@ func (p *Provider) resetSnapshots(keys []string) error {
 	return nil
 }
 
+func (p *Provider) adoptNodes(ctx context.Context, keys []string) {
+	if p.nodes == nil {
+		return
+	}
+	for _, key := range keys {
+		if err := p.nodes.adopt(ctx, key); err != nil {
+			p.log.Warn("cluster provider: adopting the live market nodes of a cluster at startup did "+
+				"not complete; its next pass tries again", "key", key, "error", err.Error())
+		}
+	}
+}
+
 func (p *Provider) joinAll(ctx context.Context) error {
 	p.log.Info("cluster provider: joining every Cluster in the tree", "join", p.cfg.Join,
 		"passes", "serial, one cluster at a time",
@@ -282,6 +299,7 @@ func (p *Provider) joinAll(ctx context.Context) error {
 	if err := p.resetSnapshots(keys); err != nil {
 		return err
 	}
+	p.adoptNodes(ctx, keys)
 	if err := p.sweepNodeRecords(ctx); err != nil {
 		return err
 	}
@@ -330,7 +348,13 @@ func (p *Provider) one(ctx context.Context, ref clusterprovider.Ref) error {
 		p.log.Info("cluster provider: this cluster is not running, so its group is reaped and "+
 			"nothing is brought up for it", "cluster", ref.Name, "key", key, "home", ref.Home,
 			"running", cl.Spec.Running, "deleting", cl.DeletionTimestamp != nil)
-		return p.reapOne(ctx, key)
+		if err := p.reapOne(ctx, key); err != nil {
+			return err
+		}
+		if cl.DeletionTimestamp != nil {
+			p.removeLinks(ctx, ref, key)
+		}
+		return nil
 	}
 	if _, err := p.store(ctx, key); err != nil {
 		return err
@@ -346,6 +370,10 @@ func (p *Provider) reapOne(ctx context.Context, key string) error {
 	}
 	if p.nodes == nil {
 		return nil
+	}
+	if err := p.nodes.adoptOnce(ctx, key); err != nil {
+		return fmt.Errorf("clusterprovider: adopting the live market nodes of %s before reaping it: "+
+			"%w -- a claim nothing holds is a machine nothing releases", key, err)
 	}
 	return p.nodes.reapCluster(ctx, key)
 }
@@ -401,6 +429,9 @@ func (p *Provider) pass(ctx context.Context, ref clusterprovider.Ref, key string
 			p.log.Warn("cluster provider: the materialiser reported an alert",
 				"cluster", ref.Name, "key", key, "alert", pass.Result.Alert)
 		}
+	}
+	if pass.Unfinalized {
+		p.removeLinks(ctx, ref, key)
 	}
 	if err != nil {
 		p.log.Error("cluster provider: the pass failed", "cluster", ref.Name, "key", key,

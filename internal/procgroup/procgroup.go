@@ -24,6 +24,14 @@ const (
 	ComponentK3s Component = "k3s-server"
 
 	ComponentCloudControllerManager Component = "socialweb-cloud-controller-manager"
+
+	ComponentExternalSecretsWebhook Component = "external-secrets-webhook"
+
+	ComponentExternalSecrets Component = "external-secrets"
+
+	ComponentApiserverLink Component = "apiserver-link"
+
+	ComponentOpenBaoLink Component = "openbao-link"
 )
 
 var DefaultOrder = []Component{
@@ -32,12 +40,14 @@ var DefaultOrder = []Component{
 
 var StackOrder = []Component{
 	ComponentPostgres, ComponentOpenBao, ComponentKine, ComponentK3s, ComponentCloudControllerManager,
+	ComponentExternalSecretsWebhook, ComponentExternalSecrets,
 }
 
 type Step struct {
-	Name  Component
-	Spec  processrunner.Spec
-	Ready func(ctx context.Context, p *processrunner.Process) error
+	Name    Component
+	Spec    processrunner.Spec
+	Prepare func(ctx context.Context, spec processrunner.Spec) (processrunner.Spec, error)
+	Ready   func(ctx context.Context, p *processrunner.Process) error
 }
 
 type Options struct {
@@ -82,7 +92,17 @@ func Spawn(ctx context.Context, steps []Step, opts Options) (*Group, error) {
 			}
 		}
 
-		proc, err := processrunner.Start(context.WithoutCancel(ctx), step.Spec)
+		spec := step.Spec
+		if step.Prepare != nil {
+			prepared, err := step.Prepare(ctx, spec)
+			if err != nil {
+				_ = g.Reap(ctx)
+				return nil, fmt.Errorf("procgroup: preparing %s: %w", step.Name, err)
+			}
+			spec = prepared
+		}
+
+		proc, err := processrunner.Start(context.WithoutCancel(ctx), spec)
 		if err != nil {
 			_ = g.Reap(ctx)
 			return nil, fmt.Errorf("procgroup: start %s: %w", step.Name, err)

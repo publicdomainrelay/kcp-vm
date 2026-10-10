@@ -41,12 +41,19 @@ type Observation struct {
 	Deployments  []appsv1.Deployment
 	StatefulSets []appsv1.StatefulSet
 	DaemonSets   []appsv1.DaemonSet
+
+	Placement Placement
+
+	UnreconciledCustomResources []CustomResource
 }
 
 func Intent(o Observation) bool {
+	if len(o.UnreconciledCustomResources) > 0 {
+		return true
+	}
 	for i := range o.Pods {
 		p := &o.Pods[i]
-		if AppliedByTheControlPlane(p.ObjectMeta) {
+		if AppliedByTheControlPlane(p.ObjectMeta) || FollowsTheNodes(p) {
 			continue
 		}
 		switch p.Status.Phase {
@@ -85,15 +92,6 @@ func Intent(o Observation) bool {
 			return true
 		}
 	}
-	for i := range o.DaemonSets {
-		d := &o.DaemonSets[i]
-		if AppliedByTheControlPlane(d.ObjectMeta) {
-			continue
-		}
-		if d.Status.DesiredNumberScheduled > 0 {
-			return true
-		}
-	}
 	return false
 }
 
@@ -105,10 +103,10 @@ func replicas(r *int32) int32 {
 }
 
 func Demand(o Observation) int {
-	total := 0
+	total := len(o.UnreconciledCustomResources)
 	for i := range o.Pods {
 		p := &o.Pods[i]
-		if AppliedByTheControlPlane(p.ObjectMeta) {
+		if AppliedByTheControlPlane(p.ObjectMeta) || FollowsTheNodes(p) {
 			continue
 		}
 		switch p.Status.Phase {
@@ -147,15 +145,6 @@ func Demand(o Observation) int {
 			total += r
 		}
 	}
-	for i := range o.DaemonSets {
-		d := &o.DaemonSets[i]
-		if AppliedByTheControlPlane(d.ObjectMeta) {
-			continue
-		}
-		if d.Status.DesiredNumberScheduled > 0 {
-			total += int(d.Status.DesiredNumberScheduled)
-		}
-	}
 	return total
 }
 
@@ -179,6 +168,8 @@ const (
 	Provision
 
 	Teardown
+
+	Release
 )
 
 func (a Action) String() string {
@@ -187,6 +178,8 @@ func (a Action) String() string {
 		return "Provision"
 	case Teardown:
 		return "Teardown"
+	case Release:
+		return "Release"
 	case None:
 		return "None"
 	}
@@ -199,6 +192,8 @@ type State struct {
 	IdleSince time.Time
 
 	Backoff Backoff
+
+	NodeIdleSince map[string]time.Time
 }
 
 type Decision struct {
@@ -211,6 +206,10 @@ type Decision struct {
 	Idle time.Duration
 
 	BackoffUntil time.Time
+
+	Release string
+
+	NodeIdleSince map[string]time.Time
 
 	Reason string
 }
@@ -271,6 +270,14 @@ func Target(o Observation, opts Options) int {
 }
 
 func Decide(o Observation, st State, now time.Time, opts Options) Decision {
+	d := decide(o, st, now, opts)
+	if d.NodeIdleSince == nil {
+		d.NodeIdleSince = nodeClocks(o.Placement, st.NodeIdleSince, now)
+	}
+	return d
+}
+
+func decide(o Observation, st State, now time.Time, opts Options) Decision {
 	intent := Intent(o)
 
 	if intent {
@@ -290,12 +297,7 @@ func Decide(o Observation, st State, now time.Time, opts Options) Decision {
 				Reason: fmt.Sprintf("intent, and %d nodes are counted for a target of %d", st.Nodes, target),
 			}
 		case st.Nodes > target:
-			return Decision{
-				Action: None, Nodes: st.Nodes, Intent: true,
-				Reason: "intent, and more nodes are counted than the target needs; scaling in is " +
-					"all-or-nothing (plan 0002 section 4.4), so while intent exists the target only " +
-					"grows to the ceiling and the down direction stays the teardown past the hold",
-			}
+			return scaleIn(o, st, now, opts, target, nodeClocks(o.Placement, st.NodeIdleSince, now))
 		default:
 			return Decision{
 				Action: None, Nodes: st.Nodes, Intent: true,
@@ -333,24 +335,31 @@ func Decide(o Observation, st State, now time.Time, opts Options) Decision {
 func (st State) Next(d Decision, now time.Time) State {
 	switch d.Action {
 	case Provision:
-		return State{Nodes: d.Nodes, Backoff: st.Backoff}
+		return State{Nodes: d.Nodes, Backoff: st.Backoff, NodeIdleSince: d.NodeIdleSince}
 	case Teardown:
 		return State{Nodes: 0}
+	case Release:
+		return State{Nodes: d.Nodes, Backoff: st.Backoff,
+			NodeIdleSince: restartedClocks(d.NodeIdleSince, d.Release, now)}
 	}
 	if d.Intent {
-		return State{Nodes: st.Nodes, Backoff: st.Backoff}
+		return State{Nodes: st.Nodes, Backoff: st.Backoff, NodeIdleSince: d.NodeIdleSince}
 	}
 	if st.Nodes == 0 {
 		return State{}
 	}
 	if !st.IdleSince.IsZero() {
-		return State{Nodes: st.Nodes, IdleSince: st.IdleSince}
+		return State{Nodes: st.Nodes, IdleSince: st.IdleSince, NodeIdleSince: d.NodeIdleSince}
 	}
-	return State{Nodes: st.Nodes, IdleSince: now}
+	return State{Nodes: st.Nodes, IdleSince: now, NodeIdleSince: d.NodeIdleSince}
 }
 
 type Nodes interface {
 	Provision(ctx context.Context) error
 
 	Teardown(ctx context.Context) error
+}
+
+type Releaser interface {
+	Release(ctx context.Context, node string) error
 }

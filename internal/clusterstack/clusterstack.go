@@ -3,9 +3,11 @@ package clusterstack
 import (
 	"errors"
 	"fmt"
+	"net"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/procgroup"
 )
@@ -63,11 +65,25 @@ type Spec struct {
 
 	CloudControllerManagerBinary string
 
+	ExternalSecrets ExternalSecrets
+
 	ServiceAccountIssuer string
 	APIAudiences         []string
 
 	Audit Audit
 }
+
+type ExternalSecrets struct {
+	Binary string
+
+	HealthPort int
+
+	WebhookPort int
+
+	WebhookHealth int
+}
+
+const ExternalSecretsWebhookLookahead = 720 * time.Hour
 
 type Audit struct {
 	PolicyPath string
@@ -148,6 +164,11 @@ var (
 		"controller dialling the apiserver with a minted tenant credential, and nothing on PATH or " +
 		"derived from the data dir names that binary. A cluster that came up without it would have " +
 		"Nodes carrying no providerID and nothing reconciling them")
+	ErrMissingExternalSecrets = errors.New("clusterstack: the External Secrets controller and its " +
+		"webhook run beside the control plane, one pair per cluster, and each needs the pinned " +
+		"external-secrets binary and its own leased ports: the upstream defaults (:8080 metrics, " +
+		":8081 webhook health, :8082 controller health, 10250 webhook) are one set for the whole " +
+		"host, so the second cluster's pair would fail at bind")
 	ErrTwoDialAddresses = errors.New("clusterstack: GuestDialled and MarketDialled are both set, and " +
 		"they name two different answers to where a node's machine is. A guest reaches this host " +
 		"through the gateway of the range its cluster holds in the subnet lease file and a market " +
@@ -202,6 +223,10 @@ func (s Spec) Argv(c procgroup.Component) ([]string, error) {
 		return s.ServerArgv()
 	case procgroup.ComponentCloudControllerManager:
 		return s.CloudControllerManagerArgv()
+	case procgroup.ComponentExternalSecrets:
+		return s.ExternalSecretsArgv()
+	case procgroup.ComponentExternalSecretsWebhook:
+		return s.ExternalSecretsWebhookArgv()
 	}
 	return nil, fmt.Errorf("clusterstack: unknown component %q", c)
 }
@@ -211,6 +236,41 @@ func (s Spec) CloudControllerManagerArgv() ([]string, error) {
 		return nil, ErrMissingCloudControllerManagerBinary
 	}
 	return []string{s.CloudControllerManagerBinary}, nil
+}
+
+func validPort(p int) bool { return p > 0 && p <= 65535 }
+
+func (s Spec) ExternalSecretsArgv() ([]string, error) {
+	e := s.ExternalSecrets
+	if e.Binary == "" || !validPort(e.HealthPort) {
+		return nil, fmt.Errorf("%w (binary %q, health port %d)", ErrMissingExternalSecrets, e.Binary, e.HealthPort)
+	}
+	return []string{
+		e.Binary,
+		"--live-addr=" + net.JoinHostPort("127.0.0.1", strconv.Itoa(e.HealthPort)),
+		"--metrics-addr=0",
+		"--enable-leader-election=false",
+		"--zap-time-encoding=iso8601",
+	}, nil
+}
+
+func (s Spec) ExternalSecretsWebhookArgv() ([]string, error) {
+	e := s.ExternalSecrets
+	if e.Binary == "" || !validPort(e.WebhookPort) || !validPort(e.WebhookHealth) || s.DataDir == "" {
+		return nil, fmt.Errorf("%w (binary %q, webhook port %d, webhook health port %d, data dir %q)",
+			ErrMissingExternalSecrets, e.Binary, e.WebhookPort, e.WebhookHealth, s.DataDir)
+	}
+	return []string{
+		e.Binary, "webhook",
+		"--port=" + strconv.Itoa(e.WebhookPort),
+		"--healthz-addr=" + net.JoinHostPort("127.0.0.1", strconv.Itoa(e.WebhookHealth)),
+		"--metrics-addr=0",
+		"--cert-dir=" + ExternalSecretsCertDir(s.DataDir),
+		"--dns-name=localhost",
+		"--lookahead-interval=" + ExternalSecretsWebhookLookahead.String(),
+		"--check-interval=1h0m0s",
+		"--zap-time-encoding=iso8601",
+	}, nil
 }
 
 func (s Spec) ServerArgv() ([]string, error) {
@@ -297,6 +357,22 @@ const CloudControllerManagerKubeconfigName = "cloud-controller-manager.kubeconfi
 
 func CloudControllerManagerKubeconfig(dataDir string) string {
 	return filepath.Join(dataDir, CloudControllerManagerKubeconfigName)
+}
+
+const ExternalSecretsKubeconfigName = "external-secrets.kubeconfig"
+
+func ExternalSecretsKubeconfig(dataDir string) string {
+	return filepath.Join(dataDir, ExternalSecretsKubeconfigName)
+}
+
+func ExternalSecretsDir(dataDir string) string { return filepath.Join(dataDir, "external-secrets") }
+
+func ExternalSecretsCertDir(dataDir string) string {
+	return filepath.Join(ExternalSecretsDir(dataDir), "webhook-certs")
+}
+
+func ExternalSecretsCAKey(dataDir string) string {
+	return filepath.Join(ExternalSecretsDir(dataDir), "webhook-ca.key")
 }
 
 const NodeSnapshotName = "nodes.json"

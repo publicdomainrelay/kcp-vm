@@ -44,6 +44,12 @@ func valid() Spec {
 		K3sCloudControllerManagerPort: 16449,
 		TokenFile:                     "/var/lib/socialweb/clusters/a/token",
 		CloudControllerManagerBinary:  "/usr/local/bin/socialweb-cloud-controller-manager",
+		ExternalSecrets: ExternalSecrets{
+			Binary:        "/usr/local/bin/external-secrets",
+			HealthPort:    16450,
+			WebhookPort:   16451,
+			WebhookHealth: 16452,
+		},
 		Audit: Audit{
 			PolicyPath: "/etc/socialweb/audit-policy.yaml",
 			LogPath:    "/var/lib/socialweb/clusters/a/audit.log",
@@ -617,5 +623,81 @@ func TestAStackCannotCarryTwoAnswersToWhereANodeIs(t *testing.T) {
 		t.Fatalf("a stack carrying both a guest and a market dial = %v, want ErrTwoDialAddresses: "+
 			"the two name different machines and different reachability, so the advertise invariant "+
 			"would be checked against one of them and the argv built for the other", err)
+	}
+}
+
+func flagValue(argv []string, flag string) (string, bool) {
+	for _, a := range argv {
+		if v, ok := strings.CutPrefix(a, flag+"="); ok {
+			return v, true
+		}
+	}
+	return "", false
+}
+
+func TestTheExternalSecretsControllerBindsOnlyItsLeasedLoopbackHealthPortAndElectsNoLeader(t *testing.T) {
+	s := valid()
+	argv, err := s.Argv(procgroup.ComponentExternalSecrets)
+	if err != nil {
+		t.Fatalf("Argv(external-secrets): %v", err)
+	}
+	if argv[0] != s.ExternalSecrets.Binary || len(argv) < 2 || argv[1] == "webhook" {
+		t.Fatalf("the controller argv is %v, want the binary's root command", argv)
+	}
+	for flag, want := range map[string]string{
+		"--live-addr":              "127.0.0.1:16450",
+		"--metrics-addr":           "0",
+		"--enable-leader-election": "false",
+	} {
+		if got, ok := flagValue(argv, flag); !ok || got != want {
+			t.Fatalf("%s is %q (set %t), want %q: the upstream defaults are :8082 and :8080 on every "+
+				"interface, one pair for the whole host, so the second cluster's controller fails at bind",
+				flag, got, ok, want)
+		}
+	}
+}
+
+func TestTheExternalSecretsWebhookServesItsLeasedPortWithTheMintedCertDir(t *testing.T) {
+	s := valid()
+	argv, err := s.Argv(procgroup.ComponentExternalSecretsWebhook)
+	if err != nil {
+		t.Fatalf("Argv(external-secrets-webhook): %v", err)
+	}
+	if argv[0] != s.ExternalSecrets.Binary || argv[1] != "webhook" {
+		t.Fatalf("the webhook argv is %v, want the binary's webhook subcommand", argv)
+	}
+	for flag, want := range map[string]string{
+		"--port":               "16451",
+		"--healthz-addr":       "127.0.0.1:16452",
+		"--metrics-addr":       "0",
+		"--cert-dir":           ExternalSecretsCertDir(s.DataDir),
+		"--dns-name":           "localhost",
+		"--lookahead-interval": "720h0m0s",
+	} {
+		if got, ok := flagValue(argv, flag); !ok || got != want {
+			t.Fatalf("%s is %q (set %t), want %q", flag, got, ok, want)
+		}
+	}
+}
+
+func TestAnExternalSecretsComponentWithNoBinaryOrPortIsRefused(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		mut  func(*Spec)
+	}{
+		{"no binary", func(s *Spec) { s.ExternalSecrets.Binary = "" }},
+		{"no health port", func(s *Spec) { s.ExternalSecrets.HealthPort = 0 }},
+		{"no webhook port", func(s *Spec) { s.ExternalSecrets.WebhookPort = 0 }},
+		{"no webhook health port", func(s *Spec) { s.ExternalSecrets.WebhookHealth = 0 }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := valid()
+			tc.mut(&s)
+			_, errC := s.Argv(procgroup.ComponentExternalSecrets)
+			_, errW := s.Argv(procgroup.ComponentExternalSecretsWebhook)
+			if !errors.Is(errC, ErrMissingExternalSecrets) && !errors.Is(errW, ErrMissingExternalSecrets) {
+				t.Fatalf("a spec with %s rendered both argvs: %v %v", tc.name, errC, errW)
+			}
+		})
 	}
 }

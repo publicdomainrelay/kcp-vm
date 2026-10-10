@@ -63,6 +63,14 @@ session="${secrets}/oauth-session.json"
 install -d -m 0700 "${secrets}" "${state}/pds"
 install -d -m 0777 "${state}/guests"
 
+# The bidder saves its key only after a sign-in, so a QR that times out would
+# restart it under a fresh did:plc each time. The key is made here, once.
+key="${secrets}/bidder-key.hex"
+if [ ! -s "${key}" ]; then
+  (umask 077 && od -An -vtx1 -N32 /dev/urandom | tr -d ' \n' > "${key}.tmp")
+  mv "${key}.tmp" "${key}"
+fi
+
 argv=(
   "${BIDDER_DENO}" run -A --node-modules-dir=none --unstable-kv --unstable-worker-options
 )
@@ -75,7 +83,7 @@ argv+=(
   --service-name "socialweb-computer-bidder"
   --atproto-oauth-qr
   --oauth-session-file "${session}"
-  --private-key-hex-path "${secrets}/bidder-key.hex"
+  --private-key-hex-path "${key}"
   --pds-state-path "${state}/pds"
   --ingress-proxy-host "${BIDDER_INGRESS_PROXY_HOST}"
   --plc-directory-url "${BIDDER_PLC_DIRECTORY_URL}"

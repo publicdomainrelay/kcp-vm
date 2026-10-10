@@ -63,7 +63,7 @@ func (b Baseline) Holds(k WorkloadKey, spec any) bool {
 
 func Narrow(o Observation, replicaSets []appsv1.ReplicaSet, b Baseline) Observation {
 	present := map[WorkloadKey]bool{}
-	var out Observation
+	out := Observation{Placement: o.Placement, UnreconciledCustomResources: o.UnreconciledCustomResources}
 	for _, d := range o.Deployments {
 		k := WorkloadKey{Kind: KindDeployment, Namespace: d.Namespace, Name: d.Name}
 		present[k] = true
@@ -92,14 +92,7 @@ func Narrow(o Observation, replicaSets []appsv1.ReplicaSet, b Baseline) Observat
 			out.Jobs = append(out.Jobs, j)
 		}
 	}
-	deploymentOf := map[WorkloadKey]WorkloadKey{}
-	for i := range replicaSets {
-		rs := &replicaSets[i]
-		if c := metav1.GetControllerOf(rs); c != nil && c.Kind == KindDeployment {
-			deploymentOf[WorkloadKey{Kind: KindReplicaSet, Namespace: rs.Namespace, Name: rs.Name}] =
-				WorkloadKey{Kind: KindDeployment, Namespace: rs.Namespace, Name: c.Name}
-		}
-	}
+	deploymentOf := deploymentsOfReplicaSets(replicaSets)
 	for _, p := range o.Pods {
 		if k, ok := workloadOf(&p, deploymentOf); ok && present[k] {
 			continue

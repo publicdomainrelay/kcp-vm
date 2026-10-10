@@ -151,9 +151,10 @@ func TestPodsOfACountedJobStatefulSetOrDaemonSetAreNotCountedTwice(t *testing.T)
 		DaemonSets:   []appsv1.DaemonSet{ds},
 		Pods:         []corev1.Pod{owned("ci", KindJob, "build"), owned("db", KindStatefulSet, "pg"), owned("obs", KindDaemonSet, "agent")},
 	}
-	if got := Demand(Narrow(o, nil, Baseline{})); got != 4 {
+	if got := Demand(Narrow(o, nil, Baseline{})); got != 3 {
 		t.Fatalf("a Job (1), a two-replica StatefulSet and a DaemonSet on one node, each with a Running pod, "+
-			"demanded %d, want 4", got)
+			"demanded %d, want 3: the Job and the StatefulSet once each, and the DaemonSet not at all, "+
+			"because its want follows the nodes rather than asking for one", got)
 	}
 }
 
