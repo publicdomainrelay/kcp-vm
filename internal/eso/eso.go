@@ -250,6 +250,49 @@ func Apply(ctx context.Context, dyn dynamic.Interface, o Options) error {
 	return nil
 }
 
+func Remove(ctx context.Context, dyn dynamic.Interface, o Options) error {
+	if o.ManifestDir == "" {
+		return fmt.Errorf("%w: the manifest directory, which is what names the objects to remove",
+			ErrIncomplete)
+	}
+	if o.Namespace == "" {
+		return fmt.Errorf("%w: the tenant namespace the ExternalSecret was written into", ErrIncomplete)
+	}
+	objs, err := Load(o.ManifestDir)
+	if err != nil {
+		return err
+	}
+	var problems []error
+	for i := range objs {
+		u := &objs[i]
+		gvr, ok := externalSecretsResources[u.GetKind()]
+		if !ok {
+			problems = append(problems, fmt.Errorf(
+				"eso: %s %s is not a kind this installer writes, so it is not one it may remove",
+				u.GetKind(), u.GetName()))
+			continue
+		}
+		var del error
+		if u.GetKind() == "ExternalSecret" {
+			del = dyn.Resource(gvr).Namespace(o.Namespace).Delete(ctx, u.GetName(), metav1.DeleteOptions{})
+		} else {
+			del = dyn.Resource(gvr).Delete(ctx, u.GetName(), metav1.DeleteOptions{})
+		}
+		if err := del; err != nil && !apierrors.IsNotFound(err) {
+			problems = append(problems, fmt.Errorf("eso: removing the %s %s: %w -- an object this "+
+				"installer can no longer stand behind is one a reader keeps taking at face value, and "+
+				"a store whose vault address nothing answers reads as a broken ExternalSecret rather "+
+				"than as an address nothing binds", u.GetKind(), u.GetName(), err))
+		}
+	}
+	if err := dyn.Resource(secretResource).Namespace(o.Namespace).
+		Delete(ctx, ClientSecretName, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+		problems = append(problems, fmt.Errorf("eso: removing the client certificate Secret %s/%s: %w",
+			o.Namespace, ClientSecretName, err))
+	}
+	return errors.Join(problems...)
+}
+
 func clientSecretBody(o Options) ([]byte, error) {
 	secret := &corev1.Secret{
 		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},

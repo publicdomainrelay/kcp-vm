@@ -54,6 +54,12 @@ func tenantAddOns(cfg Config, networks *subnetallocator.Allocator, log *slog.Log
 			if err := install(ctx); err != nil {
 				return err
 			}
+			if err := eso.Remove(ctx, dyn, eso.Options{
+				ManifestDir: cfg.ESOManifestDir,
+				Namespace:   kcpclient.TenantNamespace,
+			}); err != nil {
+				return err
+			}
 			log.Info("cluster provider: the tenant store is not written for this substrate",
 				"cluster", cluster, "substrate", cfg.Substrate,
 				"decision", "the store's vault server is the cluster's own subnet gateway, which a "+

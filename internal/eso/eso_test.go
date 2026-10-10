@@ -256,3 +256,49 @@ func kindsOf(objs []unstructured.Unstructured) []string {
 	}
 	return out
 }
+
+func TestRemoveTakesBackTheObjectsThisInstallerWrote(t *testing.T) {
+	ctx := context.Background()
+	dyn := storeDynamic(true, nil)
+	o := testOptions()
+	manifests, err := Load(o.ManifestDir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(manifests) == 0 {
+		t.Fatal("the manifest directory this fixture names holds nothing, so this test would " +
+			"remove nothing and pass for the wrong reason")
+	}
+	for i := range manifests {
+		u := &manifests[i]
+		gvr := externalSecretsResources[u.GetKind()]
+		if u.GetKind() == "ExternalSecret" {
+			u.SetNamespace(o.Namespace)
+			if _, err := dyn.Resource(gvr).Namespace(o.Namespace).Create(ctx, u, metav1.CreateOptions{}); err != nil {
+				t.Fatalf("seeding the %s: %v", u.GetKind(), err)
+			}
+			continue
+		}
+		if _, err := dyn.Resource(gvr).Create(ctx, u, metav1.CreateOptions{}); err != nil {
+			t.Fatalf("seeding the %s: %v", u.GetKind(), err)
+		}
+	}
+	if err := Remove(ctx, dyn, o); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	for _, gvr := range []schema.GroupVersionResource{
+		storeGVR,
+		{Group: "external-secrets.io", Version: "v1", Resource: "externalsecrets"},
+	} {
+		list, err := dyn.Resource(gvr).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			t.Fatalf("listing %s after the removal: %v", gvr.Resource, err)
+		}
+		if len(list.Items) != 0 {
+			t.Fatalf("%d %s objects survived the removal. A tenant store this installer can no "+
+				"longer stand behind is one a reader keeps taking at face value: on the market "+
+				"substrate its vault address answers nothing, and the objects read as a broken "+
+				"ExternalSecret rather than as an address nothing binds", len(list.Items), gvr.Resource)
+		}
+	}
+}
