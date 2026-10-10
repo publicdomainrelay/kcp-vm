@@ -19,7 +19,6 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clusterprovider"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clusterstack"
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostos"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpclient"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/materialiser"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodemarket"
@@ -45,19 +44,6 @@ const nodeID = "node1"
 
 func subnetLeasePath(stateDir string) string {
 	return filepath.Join(stateDir, "networks.json")
-}
-
-func guestGateway(networks *subnetallocator.Allocator) func(cluster string) (string, error) {
-	if hostos.NetworkMode() == hostos.NetworkUser {
-		return func(string) (string, error) { return hostos.UserGateway, nil }
-	}
-	return func(cluster string) (string, error) {
-		lease, err := networks.Allocate(subnetallocator.Request{Cluster: cluster})
-		if err != nil {
-			return "", err
-		}
-		return lease.Gateway().String(), nil
-	}
 }
 
 func main() {
@@ -214,8 +200,7 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 		StoreEndpoint:          storeEndpoint(cfg, postgres),
 		VaultStoreDSN:          postgres.vaultDSN,
 		AdvertiseAddress:       cfg.AdvertiseAddress,
-		GuestDialled:           substrate.IsGuest(),
-		MarketDialled:          substrate.Name == SubstrateMarket,
+		MarketDialled:          true,
 		BindAddress:            portallocator.LoopbackAdvertiseAddress,
 		VaultTLS:               vaultTLSFor(),
 		AuditPolicyPath:        cfg.AuditPolicyPath,
@@ -242,9 +227,6 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 		},
 		GuardRides: true,
 		Links:      links,
-	}
-	if substrate.IsGuest() {
-		stackCfg.GuestGateway = guestGateway(networks)
 	}
 	decider, err := materialiser.New(materialiser.Options{
 		Host:        deciderHost,
@@ -289,7 +271,7 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 		}
 	}
 
-	tenantConfig := tenantFromClusterCA(alloc, cfg.StateDir, tenantCredentialSource(substrate))
+	tenantConfig := tenantFromClusterCA(alloc, cfg.StateDir, tenantCredentialSource())
 	tenant := tenantClients(registry, tenantConfig)
 	nodeObserver := clusterprovider.NodeObserver{
 		Client:    tenant,
@@ -309,7 +291,6 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 	}
 	nodeHosts, err := newNodeHosts(nodeHostsOptions{
 		Allocator:           alloc,
-		Networks:            networks,
 		Registry:            registry,
 		Claims:              claims,
 		StateDir:            cfg.StateDir,
@@ -543,11 +524,8 @@ func instanceMinter() func() string {
 	}
 }
 
-func tenantCredentialSource(substrate nodeSubstrate) clusterprovider.CredentialSource {
-	if substrate.Name == SubstrateMarket {
-		return clusterprovider.CredentialSourceClusterCA
-	}
-	return clusterprovider.CredentialSourceVaultIfSealed
+func tenantCredentialSource() clusterprovider.CredentialSource {
+	return clusterprovider.CredentialSourceClusterCA
 }
 
 func tenantFromClusterCA(alloc *portallocator.Allocator, stateDir string, source clusterprovider.CredentialSource) func(context.Context, clusterprovider.Ref, *v1alpha1.Cluster) (*rest.Config, error) {

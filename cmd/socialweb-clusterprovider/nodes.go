@@ -5,9 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net"
-	"net/netip"
-	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -24,16 +21,10 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/cloudprovider"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clusterprovider"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clusterstack"
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostos"
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodefirecracker"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodemarket"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodeprovider"
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodeqemu"
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodevm"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/portallocator"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/scale"
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/subnetallocator"
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/vaultcert"
 )
 
 type tenantClient func(ctx context.Context, cluster string) (kubernetes.Interface, error)
@@ -69,21 +60,11 @@ var errNoNodeStateDir = errors.New(
 		"booted, and without it that guest keeps running while a new gateway provisions a second one " +
 		"under the same node name")
 
-var errNoNodeSubnets = errors.New(
-	"clusterprovider: a node is addressed inside the range its cluster holds in the subnet lease " +
-		"file, and no allocator for it was supplied -- the range's first usable address is the " +
-		"gateway the guest's default route names and the address its apiserver is advertised on, so " +
-		"a node built without the lease is addressed in a range nobody holds: two clusters then " +
-		"report the same InternalIP for different nodes and each cluster's flannel takes the other's " +
-		"pod CIDR as its own")
-
 var errNoAdvertiseAddress = errors.New(
-	"clusterprovider: a node is told to dial this host at --advertise-address, and none was given " +
-		"-- for a node that is not a guest there is no rule to derive it from, so it is a parameter " +
-		"rather than a guess, and a wrong one points a node at nothing usable. A guest is the opposite " +
-		"case and is derived rather than given: its dial address is the first usable address of the " +
-		"range its cluster holds in the subnet lease file, and --advertise-address is refused outright " +
-		"for that substrate, because a guest reaches none of this host's own addresses")
+	"clusterprovider: a node is told to dial this host at --advertise-address, and none was given. " +
+		"A market node's dial address is the one the market's door reverse-forwards into the guest, " +
+		"so there is no rule to derive it from: it is a parameter rather than a guess, and a wrong " +
+		"one points a node at nothing usable")
 
 var errNoNodeCluster = errors.New(
 	"clusterprovider: a node is per cluster, and the empty name has no Cluster CR, no lease and no " +
@@ -91,113 +72,34 @@ var errNoNodeCluster = errors.New(
 
 type nodeSubstrate struct {
 	Name string
-
-	Firecracker string
-
-	QEMU string
-
-	NodeAgent string
-
-	Image nodevm.Image
-
-	Guest nodevm.Guest
-
-	Network nodevm.Network
-
-	DiskMiB int
 }
-
-func (s nodeSubstrate) IsGuest() bool {
-	return s.Name == SubstrateFirecracker || s.Name == SubstrateQEMU
-}
-
-func (s nodeSubstrate) deferredJoin() bool { return s.Name == SubstrateMarket }
 
 func nodeSubstrateFor(cfg Config) (nodeSubstrate, error) {
 	switch cfg.Substrate {
-	case SubstrateFirecracker:
-		if !hostos.Firecracker() {
-			return nodeSubstrate{}, fmt.Errorf(
-				"clusterprovider: no firecracker node can be placed on this host, which is %s. "+
-					"Firecracker is a KVM guest and it exists only on Linux, so a Windows host "+
-					"cannot boot it at all and no check downstream would catch a placement that "+
-					"was never made. The name is refused rather than approximated: use %s, which "+
-					"runs on both hosts", hostos.Name(), SubstrateQEMU)
-		}
-		image, manifest, err := nodefirecracker.LoadImage(cfg.ImageOutDir, cfg.ImageConfig)
-		if err != nil {
-			return nodeSubstrate{}, err
-		}
-		if err := manifest.CheckVMM(SubstrateFirecracker); err != nil {
-			return nodeSubstrate{}, err
-		}
-		return nodeSubstrate{
-			Name:        SubstrateFirecracker,
-			Firecracker: cfg.Firecracker,
-			NodeAgent:   cfg.NodeAgent,
-			Image:       image,
-			Guest:       manifest.Guest(),
-			Network:     nodevm.Network{Interface: manifest.GuestInterface},
-			DiskMiB:     cfg.NodeDiskMiB,
-		}, nil
-	case SubstrateQEMU:
-		image, manifest, err := nodefirecracker.LoadImage(cfg.ImageOutDir, cfg.ImageConfig)
-		if err != nil {
-			return nodeSubstrate{}, err
-		}
-		if err := manifest.CheckVMM(SubstrateQEMU); err != nil {
-			return nodeSubstrate{}, err
-		}
-		return nodeSubstrate{
-			Name:      SubstrateQEMU,
-			QEMU:      cfg.QEMU,
-			NodeAgent: cfg.NodeAgent,
-			Image:     image,
-			Guest:     manifest.Guest(),
-			Network:   nodevm.Network{Interface: manifest.GuestInterface},
-			DiskMiB:   cfg.NodeDiskMiB,
-		}, nil
 	case SubstrateMarket:
-		return nodeSubstrate{
-			Name: SubstrateMarket,
-		}, nil
+		return nodeSubstrate{Name: SubstrateMarket}, nil
 	case "":
 		return nodeSubstrate{}, errNoSubstrateChoice
 	}
 	return nodeSubstrate{}, fmt.Errorf(
-		"clusterprovider: no substrate named %q places nodes here, and %s, %s and %s are the only "+
-			"ones implemented today. The name is refused rather than approximated: it decides what "+
-			"a node's record names, what its teardown stops and what its leases mean, so a gateway "+
+		"clusterprovider: no substrate named %q places nodes here, and %s is the only one "+
+			"implemented today: the local firecracker and qemu substrates were retired on %s (plan "+
+			"0005 M1-MARKET-ONLY). The name is refused rather than approximated: it decides what a "+
+			"node's record names, what its teardown stops and what its leases mean, so a gateway "+
 			"that ran anyway would report a placement it is not honouring",
-		cfg.Substrate, SubstrateFirecracker, SubstrateQEMU, SubstrateMarket)
+		cfg.Substrate, SubstrateMarket, RetiredSubstratesRetiredOn)
 }
 
 func (s nodeSubstrate) Validate() error {
 	switch s.Name {
-	case SubstrateFirecracker:
-		if s.Firecracker == "" || s.NodeAgent == "" {
-			return errNoSubstratePlacement
-		}
-		if err := s.Image.Validate(); err != nil {
-			return fmt.Errorf("%w: %v", errNoSubstratePlacement, err)
-		}
-		return nil
-	case SubstrateQEMU:
-		if s.QEMU == "" || s.NodeAgent == "" {
-			return errNoSubstratePlacementQEMU
-		}
-		if err := s.Image.Validate(); err != nil {
-			return fmt.Errorf("%w: %v", errNoSubstratePlacementQEMU, err)
-		}
-		return nil
 	case SubstrateMarket:
 		return nil
 	case "":
 		return errNoSubstrateChoice
 	}
 	return fmt.Errorf(
-		"clusterprovider: no substrate named %q places nodes here, and %s, %s and %s are the only "+
-			"ones implemented today", s.Name, SubstrateFirecracker, SubstrateQEMU, SubstrateMarket)
+		"clusterprovider: no substrate named %q places nodes here, and %s is the only one "+
+			"implemented today", s.Name, SubstrateMarket)
 }
 
 type nodeSubstrateOptions struct {
@@ -229,8 +131,6 @@ type nodeSubstrateOptions struct {
 
 	Log *slog.Logger
 
-	NodeDiskStage func(ctx context.Context, fillDir, nodePassword string) error
-
 	Secrets nodemarket.NodeSecrets
 
 	Links nodemarket.Links
@@ -238,40 +138,6 @@ type nodeSubstrateOptions struct {
 
 func (s nodeSubstrate) NewNodeHost(opts nodeSubstrateOptions) (nodeHost, error) {
 	switch s.Name {
-	case SubstrateFirecracker:
-		return nodefirecracker.New(nodefirecracker.Options{
-			Cluster:       opts.Cluster,
-			Server:        opts.Server,
-			NodeName:      opts.NodeName,
-			TokenFile:     opts.TokenFile,
-			DataDir:       opts.DataDir,
-			Record:        opts.Record,
-			Log:           opts.Log,
-			Agent:         s.NodeAgent,
-			Firecracker:   s.Firecracker,
-			Image:         s.Image,
-			Guest:         s.Guest,
-			Network:       s.Network,
-			DiskMiB:       s.DiskMiB,
-			NodeDiskStage: opts.NodeDiskStage,
-		})
-	case SubstrateQEMU:
-		return nodeqemu.New(nodeqemu.Options{
-			Cluster:       opts.Cluster,
-			Server:        opts.Server,
-			NodeName:      opts.NodeName,
-			TokenFile:     opts.TokenFile,
-			DataDir:       opts.DataDir,
-			Record:        opts.Record,
-			Log:           opts.Log,
-			Agent:         s.NodeAgent,
-			QEMU:          s.QEMU,
-			Image:         s.Image,
-			Guest:         s.Guest,
-			Network:       s.Network,
-			DiskMiB:       s.DiskMiB,
-			NodeDiskStage: opts.NodeDiskStage,
-		})
 	case SubstrateMarket:
 		return nodemarket.New(nodemarket.Options{
 			Cluster:          opts.Cluster,
@@ -294,23 +160,12 @@ func (s nodeSubstrate) NewNodeHost(opts nodeSubstrateOptions) (nodeHost, error) 
 		return nil, errNoSubstrateChoice
 	}
 	return nil, fmt.Errorf(
-		"clusterprovider: no substrate named %q places nodes here, and %s, %s and %s are the only "+
-			"ones implemented today", s.Name, SubstrateFirecracker, SubstrateQEMU, SubstrateMarket)
-}
-
-func (s nodeSubstrate) withPerNodeNetwork(lease subnetallocator.Lease, ordinal int) (nodeSubstrate, error) {
-	network, err := perNodeNetwork(s.Network, lease, ordinal)
-	if err != nil {
-		return s, err
-	}
-	s.Network = network
-	return s, nil
+		"clusterprovider: no substrate named %q places nodes here, and %s is the only one "+
+			"implemented today", s.Name, SubstrateMarket)
 }
 
 type nodeHostsOptions struct {
 	Allocator *portallocator.Allocator
-
-	Networks *subnetallocator.Allocator
 
 	Registry clusterprovider.Clusters
 
@@ -323,8 +178,6 @@ type nodeHostsOptions struct {
 	DenyBidderDids []string
 
 	ClaimReleaseTimeout time.Duration
-
-	JoinTimeout time.Duration
 
 	Tenant tenantClient
 
@@ -365,13 +218,6 @@ var errNoNodeClaims = errors.New(
 		"count a node it never asked anybody to rent, and the scale decision would ask again on " +
 		"every pass for ever")
 
-func (o nodeHostsOptions) joinTimeout() time.Duration {
-	if o.JoinTimeout <= 0 {
-		return NodeJoinTimeout
-	}
-	return o.JoinTimeout
-}
-
 var errNoSubstrateChoice = errors.New(
 	"clusterprovider: a node is placed by a substrate and none was chosen here. The name decides " +
 		"what a node's record names, what its teardown stops and what its leases mean, so the " +
@@ -379,18 +225,6 @@ var errNoSubstrateChoice = errors.New(
 		"this host's own kernel has been refuted by measurement, and a gateway that fell back to one " +
 		"would place a node whose lifetime this process owns while everything downstream still " +
 		"reported a guest")
-
-var errNoSubstratePlacement = errors.New(
-	"clusterprovider: the firecracker substrate needs the VMM binary, the agent binary that both " +
-		"wires the guest's network from outside it and runs inside it, and the image the guest boots " +
-		"from; none of the three can be derived, and a gateway that started anyway would count a node " +
-		"it never booted")
-
-var errNoSubstratePlacementQEMU = errors.New(
-	"clusterprovider: the qemu substrate needs the qemu-system binary, the agent binary that both " +
-		"wires the guest's network from outside it and runs inside it, and the image the guest boots " +
-		"from; none of the three can be derived, and a gateway that started anyway would count a node " +
-		"it never booted")
 
 type nodeHost interface {
 	scale.Nodes
@@ -466,10 +300,6 @@ type heldNode struct {
 
 var _ scale.Nodes = (*tenantNodes)(nil)
 
-const NodeJoinTimeout = 30 * time.Second
-
-const nodeJoinPoll = 250 * time.Millisecond
-
 func (n *tenantNodes) Provision(ctx context.Context) error {
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -522,24 +352,18 @@ func (n *tenantNodes) Provision(ctx context.Context) error {
 	if err := n.writeSnapshot(); err != nil {
 		return err
 	}
-	if n.opts.Substrate.deferredJoin() {
-		n.log.Info("cluster provider: the claim is written and this pass returns without waiting "+
-			"for the machine", "cluster", n.cluster, "node", name,
-			"reason", "a market machine takes minutes to appear in the tenant cluster's node list, "+
-				"and this pass is one of many in one process: blocking here would hold back every "+
-				"other cluster for the whole join timeout",
-			"next", "a later pass confirms the node once the claim reads Running AND the tenant "+
-				"cluster reports the Node, and a claim that reads Failed fails the node here")
-		return nil
-	}
-	return n.confirmJoined(ctx, host, name)
+	n.log.Info("cluster provider: the claim is written and this pass returns without waiting "+
+		"for the machine", "cluster", n.cluster, "node", name,
+		"reason", "a market machine takes minutes to appear in the tenant cluster's node list, "+
+			"and this pass is one of many in one process: blocking here would hold back every "+
+			"other cluster for the whole join timeout",
+		"next", "a later pass confirms the node once the claim reads Running AND the tenant "+
+			"cluster reports the Node, and a claim that reads Failed fails the node here")
+	return nil
 }
 
 func (n *tenantNodes) confirmHeld(ctx context.Context) (confirmOutcome, error) {
 	var outcome confirmOutcome
-	if !n.opts.Substrate.deferredJoin() {
-		return outcome, nil
-	}
 	n.mu.Lock()
 	held := n.heldNodesLocked()
 	n.mu.Unlock()
@@ -779,40 +603,6 @@ func endedClaimPhase(phase v1alpha1.NodeClaimPhase) bool {
 	return phase == v1alpha1.NodeClaimFailed || phase == v1alpha1.NodeClaimReleased
 }
 
-func (n *tenantNodes) confirmJoined(ctx context.Context, host nodeHost, name string) error {
-	deadline := time.Now().Add(n.opts.joinTimeout())
-	for {
-		reported, err := nodeReported(ctx, n.tenant, n.cluster, name)
-		if err != nil {
-			return err
-		}
-		if reported {
-			return host.ConfirmJoined(ctx)
-		}
-		if terminal := guestTerminal(host); terminal != "" {
-			return fmt.Errorf("clusterprovider: node %s of %s stopped making progress before the "+
-				"tenant cluster reported it: %s -- the guest's own words are returned here rather "+
-				"than waiting out the join timeout, because a host that died at its first step and "+
-				"a host that is merely slow look identical until the clock runs out, and only one "+
-				"of them is fixed by waiting", name, n.cluster, terminal)
-		}
-		if time.Now().After(deadline) {
-			n.log.Warn("clusterprovider: the tenant cluster has not reported this node within the "+
-				"join timeout, so its phase stays Pending. Pending is the honest phase -- it says "+
-				"the command is up and k3s has not registered it -- and the next pass re-observes "+
-				"and confirms it, because the count the scale decision reads is the tenant "+
-				"cluster's own node list and not this phase",
-				"cluster", n.cluster, "node", name, "timeout", n.opts.joinTimeout())
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(nodeJoinPoll):
-		}
-	}
-}
-
 func (n *tenantNodes) Teardown(ctx context.Context) error {
 	if _, err := n.client(ctx); err != nil {
 		return fmt.Errorf("clusterprovider: the tenant client for %s, which every teardown of its "+
@@ -912,9 +702,6 @@ func (n *tenantNodes) forgetHeldLocked(name string) {
 }
 
 func (n *tenantNodes) inFlight(ctx context.Context) int {
-	if !n.opts.Substrate.deferredJoin() {
-		return 0
-	}
 	n.mu.Lock()
 	held := n.heldNodesLocked()
 	n.mu.Unlock()
@@ -1038,15 +825,13 @@ func newNodeHosts(opts nodeHostsOptions) (*nodeHosts, error) {
 	switch {
 	case opts.Allocator == nil:
 		return nil, errNoNodeAllocator
-	case opts.Networks == nil:
-		return nil, errNoNodeSubnets
 	case opts.Registry == nil:
 		return nil, errNoNodeRegistry
 	case opts.StateDir == "":
 		return nil, errNoNodeStateDir
 	case opts.Substrate.Name == SubstrateMarket && opts.Claims == nil:
 		return nil, errNoNodeClaims
-	case opts.AdvertiseAddress == "" && !opts.Substrate.IsGuest():
+	case opts.AdvertiseAddress == "":
 		return nil, errNoAdvertiseAddress
 	}
 	if err := opts.Substrate.Validate(); err != nil {
@@ -1106,7 +891,7 @@ func (h *nodeHosts) resetSnapshot(cluster string) error {
 }
 
 func (h *nodeHosts) reconcile(ctx context.Context, cluster string) error {
-	if !h.opts.Substrate.deferredJoin() || h.opts.Claims == nil || h.opts.Tenant == nil {
+	if h.opts.Claims == nil || h.opts.Tenant == nil {
 		return nil
 	}
 	target, err := claimClusterFor(h.opts.Registry, cluster)(ctx)
@@ -1226,40 +1011,13 @@ func (h *nodeHosts) reap(ctx context.Context) error {
 	}
 	slices.Sort(clusters)
 
-	if h.opts.Substrate.deferredJoin() {
-		h.log.Info("cluster provider: leaving the market nodes running for the next provider process",
-			"nodeClusters", clusters,
-			"reason", "a market guest joined with no session of ours and outlives this process; "+
-				"deleting its claim is what makes the door destroy the machine, so a restart that "+
-				"released here would reap every node on every deploy",
-			"next", "the next provider adopts every live claim at startup and holds it again")
-		return nil
-	}
-	var problems []error
-	for _, cluster := range clusters {
-		n := held[cluster]
-		n.mu.Lock()
-		nodes := n.heldNodesLocked()
-		n.mu.Unlock()
-		for _, node := range nodes {
-			h.log.Info("cluster provider: reaping the node host this gateway booted a guest for",
-				"cluster", cluster, "node", node.name)
-			if err := node.host.Reap(ctx); err != nil {
-				problems = append(problems, fmt.Errorf(
-					"clusterprovider: reaping node %s of %s on shutdown: %w -- the agent outlives this "+
-						"process whichever way it exits, and the record it left is what makes the next "+
-						"gateway's Provision answer ErrAlreadyRunning, so that cluster can never "+
-						"provision a node again", node.name, cluster, err))
-			}
-		}
-		n.mu.Lock()
-		n.live = nil
-		n.mu.Unlock()
-		if err := n.writeSnapshot(); err != nil {
-			problems = append(problems, err)
-		}
-	}
-	return errors.Join(problems...)
+	h.log.Info("cluster provider: leaving the market nodes running for the next provider process",
+		"nodeClusters", clusters,
+		"reason", "a market guest joined with no session of ours and outlives this process; "+
+			"deleting its claim is what makes the door destroy the machine, so a restart that "+
+			"released here would reap every node on every deploy",
+		"next", "the next provider adopts every live claim at startup and holds it again")
+	return nil
 }
 
 func newNodeHost(opts nodeHostsOptions, log *slog.Logger, cluster, nodeID string) (*tenantNodes, error) {
@@ -1274,34 +1032,11 @@ func newNodeHost(opts nodeHostsOptions, log *slog.Logger, cluster, nodeID string
 	if err != nil {
 		return nil, err
 	}
-	ordinal, err := nodeOrdinal(nodeID)
-	if err != nil {
-		return nil, err
-	}
 	clusterDir, err := clusterprovider.ClusterDataDir(opts.StateDir, cluster)
 	if err != nil {
 		return nil, err
 	}
-	substrate := opts.Substrate
-	if substrate.IsGuest() {
-		if hostos.NetworkMode() == hostos.NetworkUser {
-			substrate.Network = nodevm.UserNetwork(substrate.Network.Interface)
-		} else {
-			network, err := opts.Networks.Allocate(subnetallocator.Request{Cluster: cluster})
-			if err != nil {
-				return nil, fmt.Errorf("clusterprovider: the range %s's guests are addressed in, "+
-					"which holds the gateway their apiserver is advertised on and one address per node: "+
-					"%w -- without it there is no range to address a guest in, and a guest addressed "+
-					"outside its cluster's range is one whose packets go to a node of another cluster "+
-					"or to this host", cluster, err)
-			}
-			substrate, err = substrate.withPerNodeNetwork(network, ordinal)
-			if err != nil {
-				return nil, err
-			}
-		}
-	}
-	host, err := newNodeHostOf(substrate, opts, log, cluster, name, apiserver.Port, clusterDir)
+	host, err := newNodeHostOf(opts.Substrate, opts, log, cluster, name, apiserver.Port, clusterDir)
 	if err != nil {
 		return nil, err
 	}
@@ -1313,26 +1048,6 @@ func newNodeHost(opts nodeHostsOptions, log *slog.Logger, cluster, nodeID string
 		log:      log,
 		opts:     opts,
 	}, nil
-}
-
-func perNodeNetwork(n nodevm.Network, lease subnetallocator.Lease, ordinal int) (nodevm.Network, error) {
-	address, err := lease.Host(1 + ordinal)
-	if err != nil {
-		return n, fmt.Errorf("clusterprovider: addressing node %d of cluster %s, whose range holds "+
-			"one address per node and whose first usable address is the gateway its guests dial the "+
-			"apiserver on: %w", ordinal, lease.Cluster, err)
-	}
-	n.Gateway = lease.Gateway().String()
-	n.Prefix = lease.PrefixBits()
-	n.GuestIP = address.String()
-	n.GuestMAC = guestMAC(address)
-	n.PastaIP = lease.Block.Masked().Addr().String()
-	return n, nil
-}
-
-func guestMAC(address netip.Addr) string {
-	v := address.As4()
-	return fmt.Sprintf("06:00:%02x:%02x:%02x:%02x", v[0], v[1], v[2], v[3])
 }
 
 func nodeOrdinal(nodeID string) (int, error) {
@@ -1378,15 +1093,8 @@ func nodeOrdinalInName(prefix, name string) (int, bool) {
 
 func newNodeHostOf(substrate nodeSubstrate, opts nodeHostsOptions, log *slog.Logger, cluster, name string, apiserverPort int, clusterDir string) (nodeHost, error) {
 	server := fmt.Sprintf("https://%s:%d", opts.AdvertiseAddress, apiserverPort)
-	var stage func(ctx context.Context, fillDir, nodePassword string) error
-	if substrate.IsGuest() {
-		server = fmt.Sprintf("https://%s:%d", substrate.Network.Gateway, apiserverPort)
-		if _, err := os.Stat(clusterprovider.VaultUnsealPath(clusterDir)); err == nil {
-			stage = nodeVaultStage(substrate, cluster, clusterDir, name)
-		}
-	}
 	var secrets nodemarket.NodeSecrets
-	if substrate.Name == SubstrateMarket && opts.NodeSecrets != nil {
+	if opts.NodeSecrets != nil {
 		secrets = opts.NodeSecrets(clusterDir)
 	}
 	return substrate.NewNodeHost(nodeSubstrateOptions{
@@ -1404,7 +1112,6 @@ func newNodeHostOf(substrate nodeSubstrate, opts nodeHostsOptions, log *slog.Log
 		ReleaseTimeout:   opts.ClaimReleaseTimeout,
 		Record:           nodeRecorder(opts.Registry, cluster, name, substrate.NodeExpiry()),
 		Log:              log,
-		NodeDiskStage:    stage,
 		Secrets:          secrets,
 		Links:            opts.Links,
 	})
@@ -1441,41 +1148,7 @@ func claimClusterFor(registry clusterprovider.Clusters, cluster string) nodemark
 	}
 }
 
-func nodeVaultStage(substrate nodeSubstrate, cluster, clusterDir, nodeName string) func(context.Context, string, string) error {
-	return func(ctx context.Context, fillDir, nodePassword string) error {
-		seal, err := clusterprovider.ReadVaultSeal(clusterDir)
-		if err != nil {
-			return err
-		}
-		vaultTLS, err := vaultcert.EnsureServedVaultTLS(ctx, clusterDir, seal.Port, substrate.Network.Gateway, "127.0.0.1")
-		if err != nil {
-			return fmt.Errorf("clusterprovider: the vault node %s of %s dials at %s: %w",
-				nodeName, cluster, substrate.Network.Gateway, err)
-		}
-		adminAddr := clusterprovider.VaultAddr(seal.Port)
-		vaultURL := "https://" + net.JoinHostPort(substrate.Network.Gateway, strconv.Itoa(seal.Port))
-		cert, err := vaultcert.MintNodeCertificate(ctx, adminAddr, seal.RootToken, nodeName, vaultURL, vaultTLS.CAPEM)
-		if err != nil {
-			return fmt.Errorf("clusterprovider: minting the vault certificate for node %s of %s: %w",
-				nodeName, cluster, err)
-		}
-		if err := vaultcert.WriteNodeSecret(ctx, adminAddr, seal.RootToken, nodeName,
-			map[string]any{"password": nodePassword}, vaultTLS.CAPEM); err != nil {
-			return fmt.Errorf("clusterprovider: writing the per-node secret for node %s of %s into the "+
-				"cluster vault: %w", nodeName, cluster, err)
-		}
-		if err := cert.WriteTo(fillDir); err != nil {
-			return fmt.Errorf("clusterprovider: placing the vault certificate for node %s of %s on "+
-				"its identity disk: %w", nodeName, cluster, err)
-		}
-		return nil
-	}
-}
-
 func (s nodeSubstrate) NodeExpiry() *int64 {
-	if !s.IsGuest() && s.Name != SubstrateMarket {
-		return nil
-	}
 	expiry := int64(clusterprovider.NodeExpiryUnlimited)
 	return &expiry
 }

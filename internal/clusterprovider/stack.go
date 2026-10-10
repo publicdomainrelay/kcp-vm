@@ -73,11 +73,7 @@ type StackConfig struct {
 
 	BindAddress string
 
-	GuestDialled bool
-
 	MarketDialled bool
-
-	GuestGateway func(cluster string) (string, error)
 
 	VaultTLS func(dataDir string, hosts ...string) (VaultTLS, error)
 
@@ -149,10 +145,7 @@ func StepsFor(cfg StackConfig) materialiser.StepBuilder {
 			return nil, fmt.Errorf("%w (cluster %s)", ErrNoStore, cluster)
 		}
 
-		advertise, sans, err := cfg.announced(cluster)
-		if err != nil {
-			return nil, err
-		}
+		advertise, sans := cfg.announced()
 
 		spec := clusterstack.Spec{
 			DataDir:                       dataDir,
@@ -164,7 +157,6 @@ func StepsFor(cfg StackConfig) materialiser.StepBuilder {
 			DatastoreEndpoint:             DaemonURL(kineListen),
 			AdvertiseAddress:              advertise,
 			BindAddress:                   cfg.BindAddress,
-			GuestDialled:                  cfg.GuestDialled,
 			MarketDialled:                 cfg.MarketDialled,
 			TLSSANs:                       sans,
 			AdvertisePort:                 advPort,
@@ -259,39 +251,8 @@ func StepsFor(cfg StackConfig) materialiser.StepBuilder {
 	}
 }
 
-func (cfg StackConfig) announced(cluster string) (string, []string, error) {
-	switch {
-	case cfg.GuestDialled && cfg.MarketDialled:
-		return "", nil, clusterstack.ErrTwoDialAddresses
-	case cfg.MarketDialled:
-		return cfg.AdvertiseAddress, []string{cfg.AdvertiseAddress}, nil
-	case !cfg.GuestDialled:
-		return cfg.AdvertiseAddress, cfg.TLSSANs, nil
-	}
-	if cfg.GuestGateway == nil {
-		return "", nil, fmt.Errorf(
-			"clusterprovider: %s's nodes are guests and no guest gateway was supplied, so the "+
-				"address they dial this cluster's apiserver on has no source. A guest reaches NONE "+
-				"of this host's own addresses: it sits behind a tap in its own network namespace "+
-				"and its only path to the host is the gateway its default route names, which is "+
-				"the first usable address of the range its cluster holds. Falling back to %q is "+
-				"refused rather than tried, because that address is one the guest cannot route "+
-				"to and the symptom of it -- a node that never joins -- is the same symptom as a "+
-				"guest that failed to boot, an agent that never started and a k3s that is merely "+
-				"slow", cluster, cfg.AdvertiseAddress)
-	}
-	gateway, err := cfg.GuestGateway(cluster)
-	if err != nil {
-		return "", nil, fmt.Errorf("clusterprovider: the gateway %s's guests dial this cluster's "+
-			"apiserver on, which is the first usable address of the range the cluster holds: %w",
-			cluster, err)
-	}
-	if gateway == "" {
-		return "", nil, fmt.Errorf("clusterprovider: %s's leased range returned no gateway, so "+
-			"there is no address its guests could dial and none the certificate could cover",
-			cluster)
-	}
-	return gateway, []string{gateway}, nil
+func (cfg StackConfig) announced() (string, []string) {
+	return cfg.AdvertiseAddress, []string{cfg.AdvertiseAddress}
 }
 
 func hasStepBeforeK3s(steps []procgroup.Step) bool {

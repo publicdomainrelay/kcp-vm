@@ -61,7 +61,7 @@ func buildTheImageTheConfigurationNames(
 	dir *string,
 	present *bool,
 ) error {
-	if err := buildAgent(cfg); err != nil {
+	if err := buildInit(cfg); err != nil {
 		return err
 	}
 	named, err := nodefirecracker.Fingerprint(cfg.Path, buildConfigOf(cfg))

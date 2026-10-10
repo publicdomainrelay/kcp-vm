@@ -15,7 +15,7 @@ type claimAdopter interface {
 }
 
 func (h *nodeHosts) adopt(ctx context.Context, cluster string) error {
-	if !h.opts.Substrate.deferredJoin() || h.opts.Claims == nil {
+	if h.opts.Claims == nil {
 		return nil
 	}
 	target, err := claimClusterFor(h.opts.Registry, cluster)(ctx)
@@ -43,9 +43,6 @@ func (h *nodeHosts) adoptOnce(ctx context.Context, cluster string) error {
 }
 
 func (h *nodeHosts) adoptClaims(cluster string, claims []v1alpha1.NodeClaim) error {
-	if !h.opts.Substrate.deferredJoin() {
-		return nil
-	}
 	prefix := strings.ToLower(cluster) + "-node"
 	var live []v1alpha1.NodeClaim
 	for i := range claims {

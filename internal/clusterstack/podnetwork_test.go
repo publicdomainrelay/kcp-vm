@@ -32,17 +32,15 @@ func TestAMarketClusterRunsNoFlannelAndNamesItsPodNetwork(t *testing.T) {
 }
 
 func TestOnlyAMarketClusterDropsFlannel(t *testing.T) {
-	guest := valid()
-	guest.GuestDialled = true
-	for _, s := range []Spec{valid(), guest} {
+	for _, s := range []Spec{valid()} {
 		argv, err := s.ServerArgv()
 		if err != nil {
 			t.Fatalf("ServerArgv: %v", err)
 		}
 		for _, a := range argv {
 			if strings.HasPrefix(a, "--flannel-backend") || strings.HasPrefix(a, "--cluster-cidr") {
-				t.Fatalf("a non-market stack (guest dialled %v) carries %s: its nodes share a "+
-					"network and keep flannel", s.GuestDialled, a)
+				t.Fatalf("a stack that dials no market carries %s: its nodes share one network and "+
+					"keep flannel", a)
 			}
 		}
 	}

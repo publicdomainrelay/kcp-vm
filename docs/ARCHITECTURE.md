@@ -984,28 +984,27 @@ this package, and it has no row at all for the bound-not-listening holder.
 - `--node-name` is set from the `(cluster, node)` pair, never learned by a round trip. This is not
   hygiene: IP reuse lets a dead node shadow a live kubelet and break `logs`/`exec` with a 502.
 
-**The mechanism**, which is substrate-specific. Two, and both are the mechanism OF a substrate, never
-alternatives for one cluster:
+**The mechanism**, which is substrate-specific. The design has had three; exactly one is still
+reachable, and the other two are recorded because the evidence that removed them is the evidence that
+keeps them removed:
 
 | | |
 |---|---|
-| **a VM** | the node is a guest with its own kernel, containerd and network stack. **This design's mechanism**, and the only one that survives measurement |
+| **a market guest** | **THE node path.** The node is a VM rented from the COMPUTE MARKET through a `NodeClaim` the clusterprovider writes and the market door fulfils under the cluster owner's own atproto OAuth session. **`internal/nodemarket`**, `SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE=market`. NOT a guest of this host: no subnet lease, no pasta, no VMM, no node image and no `/dev/kvm` is involved. The clusterprovider's whole part in the node is the claim; the door bids, wins, boots the guest from the winning bidder's cloud-init and writes the phase back; the guest itself dials the cluster's OpenBao and apiserver through the cluster's ClusterLinks and binds the advertised address (`SOCIALWEB_CLUSTERPROVIDER_MARKET_ADVERTISE_ADDRESS`, default `198.18.255.254`) on its own loopback (section 9, "A market node joins through its cluster's OpenBao, never through ssh"). Confirming is the tenant Node appearing for a claim the door left `Joining`, not a local process being alive |
+| **a guest of this host** | RETIRED 2026-10-07. A VM this host started itself -- `firecracker` or `qemu` behind the same `scale.Nodes` seam, each a VMM in its own network namespace, booting a node image built here and joining through an agent the image carried. Both values were refused and deleted (plan 0005 M1-MARKET-ONLY): the market path with a local bidder covers the same test bed, so a second way to place a node was a second way to be wrong about where a node is. What the guest half still needs survives where the bidder uses it -- `internal/nodevm`, `internal/nodefirecracker`'s image, manifest and namespace halves, `socialweb-nodeboot`, `socialweb-nodeimage` -- because that is what boots the guest the MARKET rents, on the bidder's host |
 | **local process** | a `k3s agent` child process, `internal/nodelocal`, behind the same `scale.Nodes` seam. REFUTED as the substrate, three ways, all measured: `k3s agent` is fatal as a non-root user (`agent requires additional privilege if not run with --rootless`); it needs root for `/run/k3s/containerd`, `/var/lib/kubelet/device-plugins`, `127.0.0.1:6444` and the host `KUBE-*` chains, none of which `--data-dir` moves; and postgres is fatal AS root (`initdb: cannot be run as root`), so a host that runs the store cannot run a node |
-| **a market guest** | the node is a VM rented from the COMPUTE MARKET through a `NodeClaim` the clusterprovider writes and the market door fulfils under the cluster owner's own atproto OAuth session. **`internal/nodemarket`**, selected by `SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE=market`. NOT a guest of this host: no subnet lease, no pasta, no VMM, no node image and no `/dev/kvm` is involved. The clusterprovider's whole part in the node is the claim; the door bids, wins, boots the guest from the winning bidder's cloud-init and writes the phase back; the guest itself dials the cluster's OpenBao and apiserver through the cluster's ClusterLinks and binds the advertised address (`SOCIALWEB_CLUSTERPROVIDER_MARKET_ADVERTISE_ADDRESS`, default `198.18.255.254`) on its own loopback (section 9, "A market node joins through its cluster's OpenBao, never through ssh"). Confirming is the tenant Node appearing for a claim the door left `Joining`, not a local process being alive |
 
-**QEMU is the second implementation of the VM mechanism, behind the same seam.** Firecracker and
-QEMU are not two mechanisms for one cluster and not alternatives in one process: the composition root
-selects ONE from configuration, and a cluster is placed by the substrate its gateway was configured
-with. `SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE` names it, `firecracker`, `qemu` and `market` are the
-three values that pass `checkPlacement`, and every other name is refused for the same reason one
-substrate was ever refused: a placement nobody wrote is one a gateway cannot be caught not honouring.
-Both `firecracker` and `qemu` are GUESTS, so `substrate.IsGuest()` is true for both, and
-`AdvertiseAddress`, `GuestDialled`, `GuestGateway`, `NodeExpiry` and per-node network allocation apply
-to QEMU exactly as they do to Firecracker. `market` is the one value that is NOT a guest:
-`IsGuest()` is false for it, so it takes no subnet range and mounts no guest gateway, and it is
-therefore the one value whose `checkPlacement` demands no VMM, no agent, no image and no pasta.
+**`SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE` accepts exactly one value, `market`, and every other name is
+refused at startup.** `checkPlacement` names `market` as the only placement implemented today; the two
+retired names get a refusal that says which day they were retired and what replaced them, because a
+name from before the retirement would otherwise read as a typo. `market` is the one value that was
+never a guest: it takes no subnet range, mounts no guest gateway, and its `checkPlacement` demands no
+VMM, no agent, no image and no pasta. The variables only the retired substrates read --
+`FIRECRACKER`, `QEMU`, `NODE_AGENT`, `IMAGE_OUT_DIR`, `IMAGE_CONFIG`, `NETWORK`, `NODE_DISK_MIB` --
+are no longer parsed into the Config, and setting one is refused rather than ignored, since an
+operator who set one and saw no complaint would believe it was carrying it.
 
-The local-process mechanism is now **DELETED, not merely refuted**: `internal/nodelocal` and the
+The local-process mechanism is **DELETED, not merely refuted**: `internal/nodelocal` and the
 `process` value of `SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE` are gone, so a host can no longer be
 configured into it. It was kept as a sibling only long enough for the firecracker substrate to run
 the proof, which it now has — deleting it earlier would have left the node path with nothing green,
@@ -1014,8 +1013,8 @@ measurements that refuted it survive in this repository's history — `git log` 
 `experiments/process-substrate/` carries them, along with the commit messages that explain what each
 one established — because deleting code deletes the error messages that recorded why. The tree itself
 is gone: a prototype that is not built, vetted or tested by anything, and that had already begun to
-lie about its own failures. The `scale.Nodes` seam stays:
-two substrates behind it, and the seam is what made the second one cheap.
+lie about its own failures. The `scale.Nodes` seam stays, with one implementation behind it, because
+the seam is what made the second one cheap and the third one possible.
 
 **A guest kernel is obtainable with no privileges at all, and this was measured.** Firecracker boots
 a kernel YOU supply, and the CI kernels cannot run a k3s node: all three fail `k3s check-config` with
@@ -2567,9 +2566,8 @@ internal/${concept}/   one package per concern; the interface declared where con
 internal/atprotoauth/  verifies an atproto service-auth token for one XRPC method: signature, audience, method, admitted DID methods and a 5-minute lifetime cap
 internal/execplugin/   the client-go exec credential plugin: mint, on-disk cache, refuse an empty or already-expired token
 internal/nodeprovider/ derives a node's DNS-1123 name from the (cluster label, node id) pair
-internal/nodevm/       the substrate-neutral half of a node: its image, guest, network and namespace parameters, the pasta link wiring, the identity disk, the rootfs clone and the /proc identity scan
-internal/nodefirecracker/ places a node as a firecracker guest
-internal/nodeqemu/     places a node as a qemu guest, behind the same seam
+internal/nodevm/       the substrate-neutral half of a node: its image, guest, network and namespace parameters, the pasta link wiring, the identity disk, the rootfs clone and the /proc identity scan. Used by `socialweb-nodeboot`, which boots a MARKET guest on the bidder's host
+internal/nodefirecracker/ the firecracker half of a market guest's boot, on the bidder's host: the image, its manifest and the namespace child
 internal/nodemarket/   places a node as a claim on the COMPUTE MARKET: it writes a NodeClaim into the cluster's home workspace and returns, reads the claim's status for the join wait and its fatal message, and closes the node by deleting the claim and waiting for the door to destroy the machine
 internal/hostos/       the one platform seam: capability predicates and the portable primitives (locking, process identity, liveness, termination, command line, port range, SysProcAttr) with Linux and Windows implementations
 internal/plcresolver/  resolves a did:plc or did:web to its key IDs for the revocation sweep; NXDOMAIN is an outage, not an absence
@@ -2608,19 +2606,19 @@ names and starts from an empty state dir — and the cost of the node names chan
 recorded in section 15.
 
 Binaries: `socialweb-clusterprovider`, `socialweb-gateway`, `socialweb-credential`,
-`socialweb-nodeimage`, `socialweb-nodeagent` and `socialweb-computer-kcp-check-host`; outside
+`socialweb-nodeimage`, `socialweb-nodeinit` and `socialweb-computer-kcp-check-host`; outside
 `cmd/`, `rust/build.sh` builds `socialweb-meshd`, which runs inside a market guest beside the k3s agent.
-`socialweb-nodeimage` and `socialweb-nodeagent` are the node side of the seam:
+`socialweb-nodeimage` and `socialweb-nodeinit` are the node side of the seam:
 `socialweb-nodeimage` builds a node image and is a TOOL, never a controller, because provisioning
-must not be coupled to a boot plus a bootstrap; `socialweb-nodeagent` runs INSIDE the guest and is
-one binary with one verb per stage of a guest's life (`namespace`, `init`, `preflight`, `agent`),
-which is what lets a single build serve both sides of the namespace boundary. That tool is also a
-BUILD STAGE rather than a step anyone schedules, and the last binary is the host contract itself: it
-is what the host and the control-plane container are both measured against, and its answer is what
-separates "this host cannot run this" from "this container must be handed this". The substrates are
-`internal/nodefirecracker` and `internal/nodeqemu`, sharing the substrate-neutral half in
-`internal/nodevm`; the record they reap by is `internal/noderecord`, and the composition
-root SELECTS a substrate from configuration rather than branching inside one.
+must not be coupled to a boot plus a bootstrap; `socialweb-nodeinit` is the guest's PID 1 from the
+initramfs and nothing else (plan 0005 M1-AGENT-SPLIT: the `agent` verb that mounted a node's identity
+disk is gone, because a market guest has no identity disk and the unit that ran it failed on every
+boot). That tool is also a BUILD STAGE rather than a step anyone schedules, and the last binary is the
+host contract itself: it is what the host and the control-plane container are both measured against,
+and its answer is what separates "this host cannot run this" from "this container must be handed
+this". The one placement is `internal/nodemarket`, whose node is a claim rather than a process; the
+VMM packages are what the BIDDER runs, and the composition root of this provider places a node by
+writing a claim.
 
 **A node image is named by its inputs, and nothing asks whether it is stale.** The build fingerprints
 everything it read — the VMM it is built for, the module list, the initramfs module list, the seeded
@@ -2633,10 +2631,13 @@ half-written directory used to validate and be consumable. A run asks whether th
 give EXISTS, which is a fact rather than a comparison — an unchanged configuration is left alone with
 no build, no write and no pull, and a changed one asks for a name that does not exist.
 
-**The runtime derives that name too, and is told neither it nor the directory.** The gateway that
-places a node is configured with the store and the builder's own configuration —
-`SOCIALWEB_CLUSTERPROVIDER_IMAGE_OUT_DIR` and `SOCIALWEB_CLUSTERPROVIDER_IMAGE_CONFIG` — never with a
-directory. It hashes the configuration's inputs exactly as the builder did, joins the fingerprint onto
+**The runtime derives that name too, and is told neither it nor the directory.** The consumer that
+does this is the BIDDER, not this provider: `deploy-firecracker-bidder.sh` runs
+`socialweb-nodeimage -ensure -json -reuse-stale` against the store it is about to ship and takes the
+fingerprint out of the answer, and the bidder's compute provider boots the guest from that directory.
+The clusterprovider places no node image at all any more (plan 0005 M1-MARKET-ONLY): its node is a
+claim, and the machine behind the claim belongs to the bidder. It hashes the configuration's inputs
+exactly as the builder did, joins the fingerprint onto
 the store, and then holds what it finds at that name to three things: that the manifest's own record
 hashes to the name, that the manifest's operative fields and recorded digests match the configuration
 (the same `CheckInputs` the substrate already ran), and that the kernel, the initramfs and the rootfs
@@ -2701,36 +2702,37 @@ section 15 records what closed both and what held the family shut.
 `internal/versions/versions.json` pins component versions. It has no production importer: its
 consumer is its own test.
 
-### The two node images, and the self-contained live rig
+### The node image, and the live gate
 
-**The container build produces one node image per VMM.** `deploy/control-plane-container/Dockerfile`
-has a `nodeimage` stage (firecracker) and a `nodeimage-qemu` stage (qemu), each parameterized by its
-own configuration: the firecracker stage reads `nodeimage.json`, the qemu stage
-`nodeimage-qemu.json`. Because the VMM is a recorded input, the two images have different
-fingerprints and coexist in the store; the `extract` stage copies both stages' `/dist` into one root,
-so the `computer` image carries both images under `/var/lib/socialweb/images` and both runtime
-configurations at `/home/johnandersen777/kcp-image/`. `build.sh`'s `nodeimage` and `nodeimage-qemu`
-targets mean exactly the stage they name, `nodeimages` builds the pair through `extract`, and
-`computer` builds all of it because `extract` depends on both. Before this the qemu image existed only
-as a host-built artefact; the container build is now the thing that produces it, which is the same
-statement the firecracker half already made. MEASURED 2026-09-25: `build.sh computer` built the
-firecracker image at `sha256-6f0163f5b34f4b7c793709cdbb90c74a9df700466f9d8ed6c9dedb2569319e3e` and the
+**The container build produces the node image the BIDDER boots.** `deploy/control-plane-container/Dockerfile`
+has one `nodeimage` stage, parameterized by its own configuration: it reads `nodeimage.json`, builds
+what it names and leaves the result in the store the build then ships. The `extract` stage copies that
+stage's `/dist` into one root, so the image built here is the artefact a bidder's compute provider
+boots a market guest from. `build.sh`'s `nodeimage` target means exactly the stage it names,
+`nodeimages` builds it through `extract`, and `nodeimage-image` tags it.
+
+Until 2026-10-07 there was a second stage and a second image: a `nodeimage-qemu` stage built a qemu
+image, the `extract` stage joined both, and a `computer` target shipped a container that could boot
+either as a guest of this host. The local substrates were retired (plan 0005 M1-MARKET-ONLY), so the
+qemu stage, the `computer` target and the qemu configuration are deleted, and `run-container.sh` keeps
+the `k8s` target alone. The firecracker image survives unchanged because a bidder still boots it --
+the difference is whose host runs it. MEASURED 2026-09-25, before the retirement: `build.sh computer`
+built the firecracker image at `sha256-6f0163f5b34f4b7c793709cdbb90c74a9df700466f9d8ed6c9dedb2569319e3e` and the
 qemu image at `sha256-e356da745efe1dab4b6c233045f33b491cc7cfe0851fdaa5856501991a565afd` in the same
 run, 122 s wall.
 
-**The live gate has a self-contained, privileged, ephemeral CI-only rig, and nothing but the rig
-takes the relaxed flags.** `deploy/test-rig/run.sh` builds the `computer` image, starts it through the
-product's own `container-entrypoint.sh`, waits for the cluster provider's own `"phase":"Ready"` line,
-and then runs `SOCIALWEB_REQUIRE_LIVE=1 go test ./...` inside it through `deploy/test-rig/inside.sh`.
-The rig derives the discoverable inputs instead of hand-exporting them: `cmd/socialweb-rig-inputs`
-reuses `internal/nodefirecracker.LoadImage` and the builder's own configuration parsing to resolve the
-firecracker and qemu image directories, the agent, the store and the two configurations, and it picks
-the tenant image out of the seeded set; `internal/hostos` is what reports the platform. The kcp admin
-kubeconfig, the mint directory and the default cluster name come from the running product. The inputs
-the product cannot derive are named before the full gate fails, each with the test it gates: a tenant
-cluster's admin kubeconfig, DID, registry workspace and namespace, and the granted ServiceAccount. An
-operator can run a named subset for a partial proof; the default is the whole gate and a skip is a
-failure.
+**The live gate's privileged rig is GONE with the local substrates (plan 0005 M1-MARKET-ONLY), and
+the market test bed is what replaced it.** `deploy/test-rig` and `cmd/socialweb-rig-inputs` existed to
+boot the product's own `computer` image with `/dev/kvm` and `/dev/net/tun` and run
+`SOCIALWEB_REQUIRE_LIVE=1 go test ./...` inside it, deriving the tenant inputs from the running
+product rather than asking for them. Every one of those inputs was an input to a node this host
+STARTED: the image directories, the agent, the store and the two image configurations were resolved
+with `internal/nodefirecracker.LoadImage`, and the rig's whole reason to exist was that no local
+substrate has a test bed of its own. The market has one: `deploy/examples/atproto/market` with
+`internal/marketbed` runs a local dispatcher, a bidder and a requester, and the guest is born from the
+RFP flow this project exists for — the same flow production uses, rather than a rig standing beside
+it. The gate itself is unchanged and still takes a live cluster:
+`SOCIALWEB_REQUIRE_LIVE=1 go test ./...`, where a skip is a failure.
 
 **Why the relaxation is confined to the rig, and what was measured.** A guest needs `/dev/kvm`,
 `/dev/net/tun` and a user and network namespace to build. Docker's default seccomp profile denies the
@@ -3006,22 +3008,17 @@ because it bounds a mechanism the rest of this document leans on.
   refusal to lease a range overlapping the host's networks is a property of the NETWORK NAMESPACE the
   process runs in — the host enumerates 15 networks, the container 3 (`127.0.0.0/8`, `172.17.0.0/16`,
   `::1`) — so a containerized allocator would lease a colliding range without refusing. What bounds it
-  is that the allocator and the node substrate are ONE PROCESS behind one config value:
-  `subnetallocator` is built once at `cmd/socialweb-clusterprovider/main.go:107` and both of its reach
-  sites — `guestGateway` (`main.go:36`, installed only `if substrate.IsGuest()`) and the node path
-  (`nodes.go:453`, inside `tenantNodes.Provision`) — sit behind `substrate.IsGuest()`, which is true
-  for BOTH guest substrates (`Name == SubstrateFirecracker || Name == SubstrateQEMU`). Either value's
-  own validation demands its own VMM binary, the node
-  agent, the image out dir and the image config (`config.go`), i.e. exactly the list the container
-  declines as MUST BE PASSED IN. So a container that can REACH the refusal is a container doing the node
-  half, and a control plane that places no nodes never allocates a range at all — the zero-node run's
-  ops end at `[allocate-ports spawn]`, with no gateway step. Two things are recorded with it rather than
+  is that the allocator is a property of the PROCESS it runs in. Since the local substrates were
+  retired (plan 0005 M1-MARKET-ONLY) the allocator has one reach site left — the materialiser's
+  teardown release, `OpReleaseSubnet`, which drops a cluster's leased range beside its ports — because
+  a market node is not addressed inside this host's ranges at all: the guest gateway, the per-node
+  address and the code that installed them are deleted, and a control plane that places no nodes never
+  ALLOCATES a range, only releases one. Two things are recorded with it rather than
   left latent: the limit is CONDITIONAL, costing nothing only because this host's LAN and bridges sit
   outside `10.100.0.0/16`, so a host network or docker network carrying part of the pool would let a
-  containerized allocator lease a colliding range and the collision lands on the HOST, because pasta
-  builds the guest's namespace from the host's network; and the seam to state it already exists, since
-  `subnetallocator.Config.HostNetworks` is injectable, so a containerized deployment can be handed the
-  host's enumeration without touching the package.
+  containerized allocator lease a colliding range and the collision lands on the HOST; and the seam to
+  state it already exists, since `subnetallocator.Config.HostNetworks` is injectable, so a
+  containerized deployment can be handed the host's enumeration without touching the package.
 - **Two concurrent proofs in two containers are not protected from each other, and no production path
   depends on that.** `liveports.LockDir()` is `/var/tmp/socialweb-liveports` inside each container's own
   filesystem, so a slot one run claims is invisible to a run in another container and both would take
@@ -3040,6 +3037,36 @@ can outlive the work that closed it, and why one whose subject has been deleted 
 questions for hours without anyone stopping on it. The measurements stay with the entries rather than
 being tidied away, because a number without its condition is how the 332-second boot outlived its own
 refutation.
+
+- **The local substrates were retired, and the guest binary was split, on 2026-10-07. CLOSED (plan
+  0005 M1-MARKET-ONLY and M1-AGENT-SPLIT).** Two things were true at once and each was the reason for
+  the other. First, the clusterprovider carried three substrates and only one was used: `firecracker`
+  and `qemu` were guests THIS host started, with their own VMM, network namespace, subnet lease,
+  guest gateway, node image and identity disk, and `market` — a VM rented from the compute market and
+  built by the winning bidder's cloud-init — had already replaced both as the production path. A
+  second way to place a node is a second way to be wrong about where a node is, so `internal/nodeqemu`
+  and the provider half of `internal/nodefirecracker` are deleted, `GuestDialled`, `GuestGateway`,
+  `nodeVaultStage`, the per-node network allocation, `AssertGuestAdvertiseInvariant`,
+  `dialFromAGuest`, the guest advertise invariant and the startup check that an image matches the
+  configuration that names it are gone with them, and
+  `SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE` now accepts `market` alone: the retired names are refused with
+  a message that says the day they were retired, because a name from before the retirement otherwise
+  reads as a typo. What the guest half still needs is KEPT, in the packages the bidder builds and runs:
+  `internal/nodevm`, `internal/nodefirecracker`'s image/manifest/namespace halves, `socialweb-nodeboot`
+  and `socialweb-nodeimage`. Second, `socialweb-nodeagent` was one binary carrying both halves of a
+  node's network — a host half (the `namespace` verb, run inside pasta) and a guest half (the `init`
+  verb for the initramfs, and an `agent` verb that mounted the node's identity disk and exec'd k3s) —
+  and on a market guest only the `init` verb can run: there is no identity disk, so the unit that ran
+  `agent` exited `KCP_AGENT fatal` on every boot of every market guest, for ever. The binary is now
+  `socialweb-nodeinit` with the `init` verb alone; `agent.go`, `audit.go`, `/kcp/kcpagent` and
+  `kcp-agent.service` are deleted from the image, and the image configuration's `agent_package`,
+  `agent_binary` and `agent_go_flags` are `init_package`, `init_binary` and `init_go_flags`, refused
+  under the old spellings rather than accepted. The image fingerprint changes with the input's name
+  and content, which is the point: an image's name is a hash of what its build read.
+  `cmd/socialweb-rig-inputs` and `deploy/test-rig` existed only to hand the local substrates their
+  `/dev/kvm`, `/dev/net/tun`, two images and a live gate, and were deleted with them; the market test
+  bed (`deploy/examples/atproto/market`, `internal/marketbed`) is what proves a node end to end now,
+  and it proves it through the RFP flow this project exists for.
 
 - **A cluster's kubeconfig mount child is built from the Cluster CR's `status.URL`, and it is created
   or repaired on every Ensure. CLOSED, and it closed a mount that served kcp itself.** Before,
