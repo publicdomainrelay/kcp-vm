@@ -3,12 +3,14 @@ package test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -159,6 +161,127 @@ func TestTheBidderDeployInstallsTheTemplate(t *testing.T) {
 			t.Errorf("bash -n %s: %v\n%s", path, err, out)
 		}
 	}
+}
+
+func envWith(overrides map[string]string) []string {
+	current := map[string]string{}
+	for _, entry := range os.Environ() {
+		if key, value, ok := strings.Cut(entry, "="); ok {
+			current[key] = value
+		}
+	}
+	for key, value := range overrides {
+		current[key] = value
+	}
+	out := make([]string, 0, len(current))
+	for key, value := range current {
+		out = append(out, key+"="+value)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func writeFileIn(t *testing.T, dir, name, body string) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("writing %s: %v", path, err)
+	}
+	return path
+}
+
+func runBidderDeployDryRun(t *testing.T) string {
+	t.Helper()
+	root := repoRoot(t)
+	home := t.TempDir()
+	org := filepath.Join(home, "org-root")
+	if err := os.MkdirAll(filepath.Join(org, "atproto-market"), 0o755); err != nil {
+		t.Fatalf("creating %s: %v", org, err)
+	}
+	writeFileIn(t, filepath.Join(org, "atproto-market"), "deno.json", "{}\n")
+	if err := os.Symlink(root, filepath.Join(org, "socialweb-computer-kcp")); err != nil {
+		t.Fatalf("linking the tree under test into %s: %v", org, err)
+	}
+	deno := writeFileIn(t, home, "deno", "#!/bin/sh\nexit 0\n")
+	if err := os.Chmod(deno, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	inputs := filepath.Join(home, "inputs")
+	if err := os.MkdirAll(filepath.Join(inputs, "modules", "kernel/drivers/virtio"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFileIn(t, filepath.Join(inputs, "modules"), "modules.dep", "kernel/drivers/virtio/virtio_mmio.ko:\n")
+	writeFileIn(t, filepath.Join(inputs, "modules"), "modules.builtin", "")
+	writeFileIn(t, filepath.Join(inputs, "modules"), "modules.alias", "")
+	writeFileIn(t, filepath.Join(inputs, "modules", "kernel/drivers/virtio"), "virtio_mmio.ko", "the firecracker transport\n")
+	kernel := writeFileIn(t, inputs, "vmlinuz", "this host's kernel\n")
+	kernelConfig := writeFileIn(t, inputs, "config", "CONFIG_NETFILTER_XT_TARGET_NFLOG=m\n")
+	base := writeFileIn(t, inputs, "base.squashfs", "the base userspace\n")
+	k3s := writeFileIn(t, inputs, "k3s", "k3s version v1.31.1+k3s1\n")
+	initBinary := writeFileIn(t, inputs, "kcpinit", "#!/bin/sh\nexec /bin/sh\n")
+	preinstall := writeFileIn(t, inputs, "preinstall.json", `{"packages":["cloud-init"]}`+"\n")
+
+	config := filepath.Join(home, "nodeimage-market.json")
+	body, err := json.Marshal(map[string]any{
+		"firecracker":       "/usr/bin/firecracker",
+		"kernel_source":     kernel,
+		"kernel_config":     kernelConfig,
+		"module_source":     filepath.Join(inputs, "modules"),
+		"base_image":        base,
+		"stage_dir":         filepath.Join(home, "stage"),
+		"out_dir":           filepath.Join(home, "store"),
+		"init_package":      filepath.Join(root, "cmd", "socialweb-nodeinit"),
+		"init_binary":       initBinary,
+		"k3s_binary":        k3s,
+		"k3s_data_dir":      "/var/lib/rancher/k3s",
+		"image_cache_dir":   filepath.Join(home, "cache"),
+		"boot_args":         []string{"console=ttyS0", "root=/dev/vda"},
+		"modules":           []string{"nf_conntrack"},
+		"initramfs_modules": []string{"kernel/drivers/virtio/virtio_mmio"},
+		"images":            []string{"rancher/mirrored-pause:3.10.2"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(config, append(body, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "bash",
+		filepath.Join(root, "scripts", "deploy-firecracker-bidder.sh"), "--dry-run")
+	cmd.Dir = filepath.Join(home, "run")
+	if err := os.MkdirAll(cmd.Dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd.Env = envWith(map[string]string{
+		"ORG_ROOT":            org,
+		"LOCAL_DENO":          deno,
+		"LOCAL_CONFIG":        config,
+		"LOCAL_PREINSTALL":    preinstall,
+		"LOCAL_INIT_BINARY":   initBinary,
+		"LOCAL_INIT_PACKAGE":  filepath.Join(root, "cmd", "socialweb-nodeinit"),
+		"LOCAL_NODEIMAGE_BIN": filepath.Join(home, "socialweb-nodeimage"),
+	})
+	out := &bytes.Buffer{}
+	cmd.Stdout = out
+	cmd.Stderr = out
+	runErr := cmd.Run()
+	if ctx.Err() != nil {
+		t.Fatalf("the deploy script did not return within 5 minutes; output:\n%s", out.String())
+	}
+	text := out.String()
+	if runErr != nil {
+		t.Fatalf("deploy-firecracker-bidder.sh --dry-run exited with %v. It previews the steps it "+
+			"would take without taking them, so a preview that fails is a preview of nothing:\n%s",
+			runErr, text)
+	}
+	if !strings.Contains(text, "checking the build host") {
+		t.Fatalf("the deploy script printed nothing that says it reached its own preflight, so this "+
+			"test is reading the output of something else:\n%s", text)
+	}
+	return text
 }
 
 type launcherRun struct {
@@ -352,6 +475,71 @@ func TestTheLauncherRefusesAnInstanceThatIsNotAHandle(t *testing.T) {
 		if _, err := os.Stat(run.argvFile); err == nil {
 			t.Errorf("instance %q: the bidder was started", instance)
 		}
+	}
+}
+
+func TestTheBidderDeployShipsTheImageTheInputsNameAndBuildsItUnderSudo(t *testing.T) {
+	out := runBidderDeployDryRun(t)
+
+	var asked, built, handed []string
+	for _, line := range strings.Split(out, "\n") {
+		if !strings.HasPrefix(line, "--- [dry-run] on the build host") {
+			continue
+		}
+		if strings.Contains(line, "-reuse-stale") {
+			t.Errorf("the build host's own steps still carry -reuse-stale: %s\n\nThat switch answers "+
+				"with the newest whole image in the store whatever its inputs, which is how an image "+
+				"built with no preinstall (its image.json carries \"preinstall\": \"\", its rootfs "+
+				"has no cloud-init) was shipped while the inputs named a different name -- and every "+
+				"market guest then booted with no cloud-init and the contract timed out. -reuse-stale "+
+				"stays on the TARGET, where the build host's busybox is an input and the two hosts "+
+				"can never agree on a name; the build host has to name the exact image.", line)
+		}
+		switch {
+		case strings.Contains(line, "-present-only"):
+			asked = append(asked, line)
+		case strings.Contains(line, "GOTOOLCHAIN=local"):
+			built = append(built, line)
+		case strings.Contains(line, "chown -R"):
+			handed = append(handed, line)
+		}
+	}
+
+	if len(asked) == 0 {
+		t.Fatalf("the preview never runs socialweb-nodeimage on the build host, so it does not say "+
+			"which image it would ship:\n%s", out)
+	}
+	for _, line := range asked {
+		if !strings.Contains(line, "-present-only") {
+			t.Errorf("the build host's ask is not -present-only: %s\n\n-ensure alone answers the "+
+				"question by BUILDING, and on a host whose user cannot mount that build gets as far "+
+				"as the preinstall chroot -- after the base image and every seeded image have been "+
+				"unpacked into the stage -- before it fails, so the ask has to be one that never "+
+				"builds", line)
+		}
+	}
+
+	if len(built) == 0 {
+		t.Fatalf("the preview never builds the image through sudo, so an image the store does not "+
+			"hold has no way to reach it:\n%s", out)
+	}
+	for _, line := range built {
+		if !strings.Contains(line, "sudo -n env -u TMPDIR") {
+			t.Errorf("the build under sudo is not run with TMPDIR unset: %s\n\nThe preinstall chroot "+
+				"inherits TMPDIR from this user, and dpkg's ca-certificates configure step then fails "+
+				"with \"mktemp: failed to create file via template '<TMPDIR>/ca-certificates.tmp.XXXXXX'\" "+
+				"-- a build that dies there leaves no image and no name", line)
+		}
+		if !strings.Contains(line, "toolchain@v0.0.1-go") || !strings.Contains(line, "GOTOOLCHAIN=local") {
+			t.Errorf("the build under sudo does not run on the toolchain the go.mod line names: %s\n\n"+
+				"root's own go cannot select the version go.mod asks for, because the downloaded "+
+				"toolchain lives in the invoking user's module cache under a different HOME", line)
+		}
+	}
+	if len(handed) == 0 {
+		t.Errorf("the preview never hands ownership of the new image and the stage back to this "+
+			"user. A build under sudo writes them root-owned and mode 0700, so the next run as this "+
+			"user cannot read image.json and a later -gc cannot reap them:\n%s", out)
 	}
 }
 

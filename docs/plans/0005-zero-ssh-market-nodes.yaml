@@ -178,9 +178,22 @@ items:
       build host's ensure must name the exact image of the current inputs, building it when absent through
       sudo -n with the go.mod toolchain (the preinstall chroot needs CAP_SYS_CHROOT) and handing ownership back;
       the target keeps -reuse-stale (busybox naming). An image whose manifest lacks the preinstall the config
-      asks for is refused. decided by Claude, user may veto.
+      asks for is refused. decided by Claude, user may veto. decided by deepseek executor, lead may veto: the
+      build host's ask is a new non-building mode of the builder (socialweb-nodeimage -ensure -json -present-only)
+      rather than a reuse answered by the store, because -ensure alone answers the same question by BUILDING and
+      an unprivileged build only fails at the preinstall chroot, after the base image and every seeded image have
+      been unpacked into the stage (option A, chosen by the lead 2026-10-07T22:50Z); the build under sudo runs
+      with TMPDIR unset (env -u TMPDIR) because the preinstall chroot inherits TMPDIR and dpkg's ca-certificates
+      configure step then dies in mktemp; -reuse-stale with -present-only is refused rather than ordered. The
+      build host's own step (a) runs for real in --dry-run too, because it is the question and it writes nothing,
+      and the store is not checksummed in a preview of a host that does not hold the image yet.
     status: doing
-    evidence: []
+    evidence:
+      - "5409398 nodeimage: -ensure refuses any image it resolves (present, reused or built) whose manifest disagrees with the run about whether a preinstall exists, naming the image and the manifest; -present-only is the non-building presence question (prints {state:absent,...} and exits non-zero when the exact-fingerprint image is not whole, builds/reuses/writes nothing); a host that must not build asks it before deciding to build"
+      - "9797f50 + ea4f664 bidder deploy (ea4f664 is the state of the installer to run): the build host answers in two steps -- (a) -ensure -json -present-only as the invoking user, (b) sudo -n env -u TMPDIR on the toolchain the go line in go.mod selects, then chown the new image dir and the stage back and ask (a) again, which must answer present; --dry-run prints every one of these steps; the target keeps -reuse-stale but its resolved dir must now be the shipped fingerprint, and remote_vars is a function so the target's script can carry FINGERPRINT"
+      - "tests watched to fail then pass: TestEnsureRefusesAnImageThatRecordsNoPreinstallWhenOneIsNamed and TestEnsureRefusesAnImageThatRecordsAPreinstallWhenNoneIsNamed (before: the stale image was handed back), with controls TestEnsureUsesAnImageThatRecordsThePreinstallTheInputsName, TestPresentOnlySaysAbsentAndBuildsNothing, TestPresentOnlySaysPresentForTheImageTheInputsName; TestTheBidderDeployShipsTheImageTheInputsNameAndBuildsItUnderSudo runs the script with --dry-run and asserts the build host's ask is -present-only with no -reuse-stale, the sudo build step with TMPDIR unset and the go.mod toolchain, and the chown back (before: the preview died on '-reuse-stale asked for an image already in the store, and the store at ... holds none that this configuration could have produced')"
+      - "deploy/check.sh --fast green at ea4f664 (gofmt, go build, apigen no drift, go vet, staticcheck, cargo fmt, cargo test, go test ./...) -- the last commit, and the working tree the check ran on is that commit"
+      - "not proven here, and the lead runs them: a real build under the new (b) and a real install. Expect the first real install to fail at the target's check if the target's store still holds the preinstall-less bcdfbb68 newer than the shipped image: that is the check doing its job, and the fix is to reap the target's other store directories"
   - id: M1-BIDDER-UNIT
     milestone: M1
     title: System template unit socialweb-computer-bidder@<handle>.service
