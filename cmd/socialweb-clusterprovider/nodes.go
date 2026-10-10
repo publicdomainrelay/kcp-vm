@@ -991,9 +991,47 @@ type nodeHosts struct {
 	opts nodeHostsOptions
 	log  *slog.Logger
 
-	mu      sync.Mutex
-	hosts   map[string]*tenantNodes
-	adopted map[string]bool
+	mu       sync.Mutex
+	hosts    map[string]*tenantNodes
+	adopted  map[string]bool
+	released map[string]map[string]bool
+}
+
+func releasedClaimKey(claim v1alpha1.NodeClaim) string {
+	return claim.Name + "/" + string(claim.UID)
+}
+
+func (h *nodeHosts) unconfirmedReleases(cluster string, gone map[string]string) []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	seen := h.released[cluster]
+	kept := map[string]bool{}
+	var pending []string
+	for name, key := range gone {
+		if seen[key] {
+			kept[key] = true
+			continue
+		}
+		pending = append(pending, name)
+	}
+	if h.released == nil {
+		h.released = map[string]map[string]bool{}
+	}
+	h.released[cluster] = kept
+	slices.Sort(pending)
+	return pending
+}
+
+func (h *nodeHosts) confirmRelease(cluster, key string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.released == nil {
+		h.released = map[string]map[string]bool{}
+	}
+	if h.released[cluster] == nil {
+		h.released[cluster] = map[string]bool{}
+	}
+	h.released[cluster][key] = true
 }
 
 func newNodeHosts(opts nodeHostsOptions) (*nodeHosts, error) {
@@ -1083,12 +1121,13 @@ func (h *nodeHosts) reconcile(ctx context.Context, cluster string) error {
 			"the claims that say which Nodes have no machine behind them", target.Workspace, err)
 	}
 	adoptErr := h.adoptClaims(cluster, claims)
-	var gone []string
+	released := map[string]string{}
 	for i := range claims {
 		if claims[i].Status.Phase == v1alpha1.NodeClaimReleased {
-			gone = append(gone, claims[i].Name)
+			released[claims[i].Name] = releasedClaimKey(claims[i])
 		}
 	}
+	gone := h.unconfirmedReleases(cluster, released)
 	if len(gone) == 0 {
 		return adoptErr
 	}
@@ -1112,6 +1151,7 @@ func (h *nodeHosts) reconcile(ctx context.Context, cluster string) error {
 	problems := []error{adoptErr}
 	for _, name := range gone {
 		if !present[name] {
+			h.confirmRelease(cluster, released[name])
 			continue
 		}
 		err := client.CoreV1().Nodes().Delete(ctx, name, metav1.DeleteOptions{})
@@ -1123,6 +1163,7 @@ func (h *nodeHosts) reconcile(ctx context.Context, cluster string) error {
 				"timeout on a machine that is not coming back", name, cluster, err))
 			continue
 		}
+		h.confirmRelease(cluster, released[name])
 		h.log.Info("cluster provider: removed a Node the door has taken the machine away for",
 			"cluster", cluster, "node", name)
 	}

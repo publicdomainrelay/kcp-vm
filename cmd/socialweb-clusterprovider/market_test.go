@@ -854,3 +854,78 @@ func TestAReleasedClaimWhoseNodeIsAlreadyGoneCostsNoDelete(t *testing.T) {
 		}
 	}
 }
+
+func TestTheReleasedNodeReconcileCostsTheTenantNothingOnceItsNodesAreGone(t *testing.T) {
+	claims := &marketClaims{}
+	key := clusterKey(t, "liveweb")
+	first := key + "-node1"
+	second := key + "-node2"
+	tenant, client := tenantClientFor(t, first, second)
+	released := v1alpha1.NodeClaimStatus{
+		Phase:   v1alpha1.NodeClaimReleased,
+		Message: "the door restarted and released this node's VM; a new node will be requested",
+	}
+	claims.claims = map[string]v1alpha1.NodeClaim{
+		testHomePrefix + "liveweb/" + first: {ObjectMeta: metav1.ObjectMeta{Name: first}, Status: released},
+		testHomePrefix + "liveweb/" + second: {
+			ObjectMeta: metav1.ObjectMeta{Name: second},
+			Status:     v1alpha1.NodeClaimStatus{Phase: v1alpha1.NodeClaimRunning},
+		},
+	}
+	hosts, err := newNodeHosts(marketOptions(t, claims, tenant))
+	if err != nil {
+		t.Fatalf("newNodeHosts: %v", err)
+	}
+	ctx := context.Background()
+	const passes = 5
+	tally := func() (deletes, calls int) {
+		for _, a := range client.Actions() {
+			calls++
+			if a.GetVerb() == "delete" {
+				deletes++
+			}
+		}
+		return deletes, calls
+	}
+
+	client.ClearActions()
+	for i := 0; i < passes; i++ {
+		if err := hosts.reconcile(ctx, key); err != nil {
+			t.Fatalf("reconcile pass %d: %v", i+1, err)
+		}
+	}
+	deletes, calls := tally()
+	t.Logf("reading: %d passes over one Released claim cost the tenant %d DELETEs and %d calls: %v",
+		passes, deletes, calls, client.Actions())
+	if tenantNode(t, client, first) {
+		t.Fatalf("the Node %s whose claim reads Released survived %d passes", first, passes)
+	}
+	if deletes != 1 {
+		t.Fatalf("%d passes issued %d DELETEs for one Released claim, want exactly 1", passes, deletes)
+	}
+	if calls != 2 {
+		t.Fatalf("%d passes cost the tenant apiserver %d calls, want 2 (one list, one delete): a "+
+			"Released claim stays in its workspace for ever as the door's record, so a reconcile that "+
+			"does not remember which Nodes it has already seen go asks the tenant about them on "+
+			"every pass for the life of the process. The calls were: %v", passes, calls, client.Actions())
+	}
+
+	claim := claims.claims[testHomePrefix+"liveweb/"+second]
+	claim.Status = released
+	claims.claims[testHomePrefix+"liveweb/"+second] = claim
+	client.ClearActions()
+	for i := 0; i < passes; i++ {
+		if err := hosts.reconcile(ctx, key); err != nil {
+			t.Fatalf("reconcile pass %d after the second release: %v", i+1, err)
+		}
+	}
+	deletes, calls = tally()
+	if tenantNode(t, client, second) {
+		t.Fatalf("the Node %s whose claim was released after the first was remembered was never "+
+			"removed: the memo of Nodes already gone must not hide a claim released later", second)
+	}
+	if deletes != 1 || calls != 2 {
+		t.Fatalf("a second release cost %d DELETEs and %d calls over %d passes, want 1 and 2: %v",
+			deletes, calls, passes, client.Actions())
+	}
+}
