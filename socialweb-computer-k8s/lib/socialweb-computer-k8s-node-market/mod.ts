@@ -327,7 +327,7 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
         });
       };
       tick();
-      timer = setInterval(tick, opts.pollIntervalMs ?? 2_000);
+      timer = setInterval(tick, opts.pollIntervalMs ?? 5_000);
     },
     async stop() {
       if (timer !== undefined) clearInterval(timer);

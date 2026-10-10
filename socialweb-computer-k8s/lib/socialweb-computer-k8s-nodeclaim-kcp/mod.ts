@@ -51,6 +51,23 @@ export interface KcpNodeClaimStoreOptions {
   credentials: KcpCredentials;
   fetch?: typeof fetch;
   timeoutMs?: number;
+  homesTtlMs?: number;
+}
+
+const DEFAULT_HOMES_TTL_MS = 30_000;
+
+const NO_HOMES_TTL_MS = 0;
+
+const DEFAULT_RETRY_AFTER_MS = 5_000;
+
+const MAX_RETRY_AFTER_MS = 60_000;
+
+function retryAfterMs(res: Response): number {
+  const raw = res.headers.get("retry-after");
+  const seconds = raw === null ? Number.NaN : Number(raw);
+  const ms = Number.isFinite(seconds) ? seconds * 1_000 : Date.parse(raw ?? "") - Date.now();
+  const wait = Number.isFinite(ms) && ms > 0 ? ms : DEFAULT_RETRY_AFTER_MS;
+  return Math.min(wait, MAX_RETRY_AFTER_MS);
 }
 
 interface RawClaim {
@@ -100,8 +117,19 @@ export function createKcpNodeClaimStore(opts: KcpNodeClaimStoreOptions): NodeCla
     })
     : undefined;
 
+  const homesTtlMs = opts.homesTtlMs ?? DEFAULT_HOMES_TTL_MS;
+  let homesCache: { at: number; homes: string[] } | null = null;
+  let readsPausedUntil = 0;
 
   async function request(url: string, init: RequestInit = {}): Promise<unknown> {
+    const method = (init.method ?? "GET").toUpperCase();
+    const reading = method === "GET";
+    if (reading && Date.now() < readsPausedUntil) {
+      throw new KcpRequestError(
+        429,
+        `${method} ${new URL(url).pathname}: held back until ${new Date(readsPausedUntil).toISOString()} because kcp rate limited this client and the Retry-After it sent has not elapsed`,
+      );
+    }
     const headers = new Headers(init.headers);
     headers.set("accept", "application/json");
     if (creds.token) headers.set("authorization", `Bearer ${creds.token}`);
@@ -112,7 +140,10 @@ export function createKcpNodeClaimStore(opts: KcpNodeClaimStoreOptions): NodeCla
       ...(client ? { client } : {}),
     } as RequestInit);
     const text = await res.text();
-    if (!res.ok) throw new KcpRequestError(res.status, `${init.method ?? "GET"} ${new URL(url).pathname}: ${res.status} ${text.slice(0, 300)}`);
+    if (!res.ok) {
+      if (res.status === 429) readsPausedUntil = Date.now() + retryAfterMs(res);
+      throw new KcpRequestError(res.status, `${init.method ?? "GET"} ${new URL(url).pathname}: ${res.status} ${text.slice(0, 300)}`);
+    }
     return text ? JSON.parse(text) : null;
   }
 
@@ -136,11 +167,13 @@ export function createKcpNodeClaimStore(opts: KcpNodeClaimStoreOptions): NodeCla
   }
 
   async function homes(): Promise<string[]> {
+    if (homesCache && Date.now() - homesCache.at < homesTtlMs) return homesCache.homes;
     const paths: string[] = [];
     for (const account of await childrenOf("root")) {
       const accountPath = `root:${account}`;
       for (const home of await childrenOf(accountPath)) paths.push(`${accountPath}:${home}`);
     }
+    if (homesTtlMs > NO_HOMES_TTL_MS) homesCache = { at: Date.now(), homes: paths };
     return paths;
   }
 

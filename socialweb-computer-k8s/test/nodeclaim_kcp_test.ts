@@ -147,3 +147,79 @@ Deno.test("an unreadable list is an error, never an empty list", async () => {
   const store = createKcpNodeClaimStore({ credentials: { server: "https://kcp.test" }, fetch: kcp.fetch });
   await assertRejects(() => store.list());
 });
+
+const WORKSPACE_WALK = "/apis/tenancy.kcp.io/v1alpha1/workspaces";
+
+function homesKcp(): { fetch: typeof fetch; seen: Seen[] } {
+  return fakeKcp((s) => {
+    if (s.url.endsWith(`/clusters/root${WORKSPACE_WALK}`)) {
+      return new Response(JSON.stringify({ items: [{ metadata: { name: "acct1" } }] }));
+    }
+    if (s.url.endsWith(`/clusters/root:acct1${WORKSPACE_WALK}`)) {
+      return new Response(JSON.stringify({ items: [{ metadata: { name: "ci" } }] }));
+    }
+    return new Response(JSON.stringify({ items: [] }));
+  });
+}
+
+const walkCalls = (seen: Seen[]) => seen.filter((s) => s.url.includes(WORKSPACE_WALK)).length;
+
+Deno.test("the account and home walk happens once per ttl, not once per poll", async () => {
+  const kcp = homesKcp();
+  const store = createKcpNodeClaimStore({
+    credentials: { server: "https://kcp.test" },
+    fetch: kcp.fetch,
+    homesTtlMs: 60_000,
+  });
+  await store.list();
+  await store.list();
+  await store.list();
+  assertEquals(
+    walkCalls(kcp.seen),
+    2,
+    "three polls inside the ttl must walk root and each account once between them. The walk is " +
+      "two requests per account on every tick, the door polls on a timer, and kcp rate limits the " +
+      "credential the door shares with the clusterprovider: the walk spent that budget and the " +
+      "429 it earned is what the door was logging",
+  );
+  assertEquals(kcp.seen.filter((s) => s.url.endsWith("/nodeclaims")).length, 3);
+});
+
+Deno.test("a walk past its ttl happens again, so a new account is not invisible", async () => {
+  const kcp = homesKcp();
+  const store = createKcpNodeClaimStore({
+    credentials: { server: "https://kcp.test" },
+    fetch: kcp.fetch,
+    homesTtlMs: 30,
+  });
+  await store.list();
+  await new Promise((r) => setTimeout(r, 50));
+  await store.list();
+  assertEquals(walkCalls(kcp.seen), 4);
+});
+
+Deno.test("a 429 holds reads back for the retry-after it named and writes still go through", async () => {
+  const kcp = fakeKcp((s) =>
+    s.method === "GET"
+      ? new Response("too many requests", { status: 429, headers: { "retry-after": "30" } })
+      : new Response("{}")
+  );
+  const store = createKcpNodeClaimStore({ credentials: { server: "https://kcp.test" }, fetch: kcp.fetch });
+  await assertRejects(() => store.list(), Error, "429");
+  const afterFirst = kcp.seen.length;
+  await assertRejects(() => store.list(), Error, "held back");
+  assertEquals(
+    kcp.seen.length,
+    afterFirst,
+    "a second read inside the window must not reach kcp at all: retrying a rate limit on the next " +
+      "tick is what turns one 429 into every tick being a 429, and the budget is shared with the " +
+      "clusterprovider",
+  );
+  await store.replaceStatus(claim(), { phase: "Running", contract: {} });
+  assertEquals(
+    kcp.seen[kcp.seen.length - 1].method,
+    "PATCH",
+    "a claim's own status write is not the traffic that earned the rate limit, and holding it " +
+      "back delays the node the door is bringing up",
+  );
+});
