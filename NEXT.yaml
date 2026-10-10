@@ -144,6 +144,16 @@ about: >
   its own vault 500 ms after the store was applied, with no ESO pod or Deployment in the tenant. It is
   in section 15 with the readings and the three things watched to fail first.
 
+  Closed on 2026-10-07 by plan 0005 M6-LIMITS and therefore NOT listed under `limits`: a
+  process-group member that binds no port and leaves no record is not swept (every member now dies
+  with the provider, Pdeathsig SIGKILL from a thread held for the child's life); the instance
+  snapshot is load-bearing and absent reads as empty (absent is now ErrNoSnapshot, so no Node is
+  deleted over it); a host added to the vault's certificate is not served until the vault restarts
+  (the re-sign now sends SIGHUP to the verified vault process and reads the served leaf back); and
+  the per-pass Released-node reconcile, which listed the tenant's Nodes on every pass for ever (a
+  per-cluster memo now makes a pass over remembered releases cost the tenant nothing). Section 15
+  has each one's readings and the test watched to fail first.
+
 open:
   - id: P5-M1
     title: The live test bed is the vendored deno-kcp market, and the market is the only node path.
@@ -202,20 +212,6 @@ open:
       The plan's three acceptance checks, each with UTC readings from prod and GitLab.
 
 limits:
-  - title: A process-group member that binds no port and leaves no record is not swept.
-    body: >
-      The startup sweep finds a previous gateway's survivors by the node record each substrate leaves
-      under the state dir and matches it against the argv the process was started with. The cloud
-      controller manager binds no port and leaves no record, deliberately, because its work is to
-      reconcile Node objects against the instance snapshot rather than to own a node. So a controller
-      left behind by a gateway that died WITHOUT its reverse-order reap is not discoverable by that
-      sweep; the group's own Reap stops it in the ordinary case (invariant 21), so this is the
-      abnormal path only -- which is exactly the path a sweep exists for, and why this is stated
-      rather than hidden. A sweep that found processes by PID alone would find every process on the
-      host, and a pid record can be reused by an unrelated process: both alternatives are worse than
-      a controller that outlives a SIGKILLed gateway and binds nothing. A host that sees one stops it
-      by hand.
-
   - title: A node cannot reach another node, so a cluster with more than one has no cluster DNS
       for the Pods on the others.
     body: >
@@ -254,49 +250,3 @@ limits:
       ZERO, not to an intermediate count. Scaling three nodes to two needs an answer to "which node,
       and does its work move", and no instrument here measures that yet, so the branch that would do
       it is not written rather than written wrong. See `docs/plans/0002` section 4.4.
-
-  - title: The instance snapshot is load-bearing, and absent reads as empty.
-    body: >
-      The cloud controller manager reads the guest set from `<DataDir>/nodes.json`, and its reader
-      answers `(known=false, err=nil)` for an absent file AND for an empty array - so both are the
-      DELETE path. Writing `[]` protects nothing; what protects a live Node is that the snapshot
-      lists it. A snapshot that parses and is wrong is worse than one that is missing, and a
-      snapshot that exists and cannot be parsed is an error that patches nothing (invariant 14).
-      Recorded as a limit rather than an item because the provider writes the file on every
-      provision, teardown and reap and once at startup, so the absent case is not reachable by the
-      ordinary path - only by a state dir that was removed under a running controller.
-
-  - title: A host a caller adds to the vault's certificate is not served until the vault restarts.
-    body: >
-      `vaultcert.EnsureVaultTLSCertificate` re-signs the leaf under the cluster's existing CA when a
-      caller asks for one more host, so no client loses the anchor it trusts (section 15). What it
-      cannot do is make the RUNNING vault serve the new leaf. OpenBao reads `tls_cert_file` once at
-      start, and a caller that adds a host reaches `vaultcert` with a data dir and a host list and no
-      process handle: the vault step's own gate (`internal/clusterprovider/steps.go`, `gate`) runs the
-      vault a whole pass before the tenant add-on pass and the node disk stage exist, and those two
-      are closures in `cmd/socialweb-clusterprovider` (`eso.go`, `nodes.go`) built without the
-      materialiser's process group, whose `LocalHost` is the only thing holding the vault's
-      `processrunner.Process`. On a market cluster the two host sets differ by construction: bring-up
-      asks for `SOCIALWEB_MARKET_ADVERTISE_ADDRESS` and loopback (`internal/clusterprovider/stack.go`),
-      the tenant add-on pass asks for the `10.100.0.0/16` gateway `internal/subnetallocator` leases and
-      loopback (`cmd/socialweb-clusterprovider/eso.go`). So `https://<gateway>:<vaultPort>` is on the
-      leaf on disk and not on the leaf in flight. Measured against a real OpenBao v2.6.2 on 2026-10-07:
-      the vault started on a leaf covering `[198.18.255.254 127.0.0.1]`, the tenant add-on pass re-signed
-      it to cover `[198.18.255.254 127.0.0.1 10.100.0.1]` on disk, and the vault went on serving
-      `[198.18.255.254 127.0.0.1]`; a client dialing it as `10.100.0.1` failed with
-      `tls: failed to verify certificate: x509: certificate is valid for 198.18.255.254, 127.0.0.1, not
-      10.100.0.1`. Pinned by `TestARunningVaultDoesNotServeAHostItsLeafGainedAfterItStarted` in
-      `internal/clusterprovider`. The window is from the re-sign until the vault process next starts:
-      the leaf on disk already carries every host a caller has asked for, so a restart - or a cluster
-      teardown and bring-up - closes it, and nothing asks for a NEW host after that. The next-best
-      behaviour is taken rather than the ideal. The tenant add-on pass REFUSES to hand the
-      ExternalSecret a URL the running listener cannot present
-      (`vaultcert.RequireServedVaultTLS`, called from `cmd/socialweb-clusterprovider/eso.go`), so that
-      pass fails with the reason until the vault has restarted, instead of succeeding onto a Secret
-      whose client is guaranteed to fail with a name mismatch. Repairing the listener was refused with
-      it: signalling the vault would need a handle the re-sign site does not have, and a reload whose
-      completion nothing can observe would let a reload that did not happen and one that did look
-      identical - the defect class `ErrNoGuardSeam` exists to prevent. Moving the gateway into the
-      FIRST mint was refused too: `subnetallocator.Allocate` walks the pool by occupancy, so the
-      gateway is not derivable without the allocator, and leasing a cluster's range in the vault
-      bring-up path would change what the zero-node run allocates (section 14).
