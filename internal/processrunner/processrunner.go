@@ -7,8 +7,11 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"runtime"
 	"sync"
 	"time"
+
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostos"
 )
 
 const OutputTailBytes = 256 << 10
@@ -23,6 +26,8 @@ type Spec struct {
 	Env    []string
 	Prefix []string
 	Output io.Writer
+
+	DieWithParent bool
 }
 
 type outputTail struct {
@@ -110,18 +115,35 @@ func Start(ctx context.Context, spec Spec) (*Process, error) {
 	sink := &outputSink{tail: tail, also: spec.Output}
 	cmd.Stdout = sink
 	cmd.Stderr = sink
-	if err := cmd.Start(); err != nil {
+	p := &Process{out: tail, cmd: cmd, waited: make(chan struct{})}
+	var err error
+	if spec.DieWithParent {
+		cmd.SysProcAttr = hostos.DieWithParent()
+		started := make(chan error, 1)
+		go p.holdSpawningThread(started)
+		err = <-started
+	} else {
+		err = cmd.Start()
+	}
+	if err != nil {
 		return nil, fmt.Errorf("processrunner: start %q: %w. Nothing was spawned, so there "+
 			"is no PID to signal and no child to reap: a caller that kept a handle here "+
 			"would gate the rest of the process group on a component that never ran",
 			argv[0], err)
 	}
-	return &Process{
-		PID:    cmd.Process.Pid,
-		out:    tail,
-		cmd:    cmd,
-		waited: make(chan struct{}),
-	}, nil
+	p.PID = cmd.Process.Pid
+	return p, nil
+}
+
+func (p *Process) holdSpawningThread(started chan<- error) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	if err := p.cmd.Start(); err != nil {
+		started <- err
+		return
+	}
+	started <- nil
+	_ = p.Wait()
 }
 
 func (p *Process) Output() string { return p.out.String() }
