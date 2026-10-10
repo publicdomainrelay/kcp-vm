@@ -33,7 +33,7 @@ export function renderK3sJoinScript(opts: K3sJoinModuleOptions = {}): string {
 set -euo pipefail
 umask 077
 declare -A V
-while IFS='=' read -r key value; do
+while read -r key value; do
   [ -z "\${key}" ] && break
   case " ${keys} " in
     *" \${key} "*) V[\${key}]=$(printf '%s' "\${value}" | base64 -d) ;;

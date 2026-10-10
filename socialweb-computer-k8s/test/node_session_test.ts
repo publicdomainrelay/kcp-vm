@@ -85,7 +85,7 @@ async function fakeGuest(opts: { sayReady?: boolean } = {}): Promise<FakeGuest> 
               const [docText, rest] = buf.split("\n\n");
               buf = rest ?? "";
               document.resolve(Object.fromEntries(docText.split("\n").map((l) => {
-                const [k, v] = l.split("=");
+                const [k, v] = l.split(" ");
                 return [k, atob(v)];
               })));
               phase = "go";
