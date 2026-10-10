@@ -100,9 +100,13 @@ Deno.test("the node's user_data adds the pod network units, and the k3s agent ne
   assertStringIncludes(install, PIN_ARM);
   assertStringIncludes(install, `${DOOR}/downloads/`);
 
-  const start = config.runcmd.find((c) => typeof c === "string" && c.startsWith("systemctl start --no-block")) as string;
+  const start = config.runcmd.find((c) =>
+    typeof c === "string" && c.startsWith("systemctl start --no-block") &&
+    c.includes(NODE_UNITS.openbaoLink)
+  ) as string;
   for (const name of Object.values(NODE_NET_UNITS)) assertStringIncludes(start, name);
-  assert(config.packages?.includes("iptables"), "the masquerade unit needs iptables");
+  const guard = config.runcmd.find((c) => typeof c === "string" && c.includes("for p in ")) as string;
+  assert(guard?.includes(`"iptables"`), `the masquerade unit needs iptables: ${guard}`);
   assertEquals(f["/etc/sysctl.d/90-socialweb-node.conf"], "net.ipv4.ip_forward = 1\n");
 });
 

@@ -185,7 +185,7 @@ MANAGE_DOCKER_DAEMON="${MANAGE_DOCKER_DAEMON:-yes}"
 
 # -- Build host inputs ---------------------------------------------------------
 LOCAL_CONFIG="${LOCAL_CONFIG:-${BUILD_HOST_HOME}/kcp-image/nodeimage-market.json}"
-LOCAL_PREINSTALL="${LOCAL_PREINSTALL:-${BUILD_HOST_HOME}/kcp-image/preinstall-market.json}"
+LOCAL_PREINSTALL="${LOCAL_PREINSTALL:-${PROJECT_DIR}/deploy/bidder/preinstall-market.json}"
 LOCAL_INIT_BINARY="${LOCAL_INIT_BINARY:-${BUILD_HOST_HOME}/kcp-image/kcpinit}"
 LOCAL_INIT_PACKAGE="${LOCAL_INIT_PACKAGE:-${ORG_ROOT}/socialweb-computer-kcp/cmd/socialweb-nodeinit}"
 LOCAL_NODEIMAGE_BIN="${LOCAL_NODEIMAGE_BIN:-${BUILD_HOST_HOME}/kcp-image/socialweb-nodeimage}"
