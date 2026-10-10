@@ -542,9 +542,11 @@ items:
   - id: M6-RUNNER1
     milestone: M6
     title: GitLab runner 1 run_untagged false
-    decision: User confirmed we own that GitLab config.
-    status: todo
-    evidence: []
+    decision: User confirmed we own that GitLab config. Set through the API (PUT /runners/1), not gitlab-rails.
+    status: done
+    evidence:
+      - "2026-10-07T22:11:42Z GET /api/v4/runners/1 before: run_untagged true, tag_list [socialwebcomputer], online"
+      - "2026-10-07T22:11:42Z PUT run_untagged=false; read back run_untagged false, tag_list [socialwebcomputer], paused false, online"
   - id: M6-LIMITS
     milestone: M6
     title: Fix the old stated limits
