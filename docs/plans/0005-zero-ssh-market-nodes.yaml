@@ -18,6 +18,25 @@ ownership:
     The market protocol records and lexicons, and the core architecture: kcp in front of
     k3s --disable-agent clusters at zero nodes, with nodes only ever born through
     requester -> RFP -> bid -> accept -> cloud-init user_data. Changes there are asked first.
+m3_contract:
+  decided: "2026-10-07, decided by Claude, user may veto (names only; the mechanism is the user's)"
+  api: "commit 0c1c7e5: ClusterLink (spec cluster/service/targetPort, status phase/endpointId/did/ticket/message), NodeClaim.status.grant {issuer, subject, audience, role}; NodeClaim schema revision 3"
+  links:
+    - "one ClusterLink per tenant cluster per service, named <clusterKey>-apiserver and <clusterKey>-openbao, in the cluster's home workspace; spec and status written by the provider only"
+    - "each is a dumbpipe listen-tcp process-group component started after k3s, forwarding to the k3s apiserver port or the cluster OpenBao port on loopback"
+    - "iroh secret key per link generated once and kept in the cluster OpenBao, KV v2 mount socialweb-links, path <service>; dumbpipe gets it as IROH_SECRET; the public key is published as did:key (multicodec ed25519-pub 0xed01, base58btc, z prefix)"
+  node_secrets:
+    - "the provider writes KV v2 mount socialweb-nodes, path <nodeName>: token, nodePassword, serverCA, apiserverTicket, advertiseAddress, apiserverPort; deleted at release"
+    - "policy node-<nodeName>: read on socialweb-nodes/data/<nodeName> only"
+  jwt:
+    - "the door writes status.grant at accept from the winning bid's grant (issuer, subject) plus audience socialweb.computer/node/<clusterKey>/<nodeName>"
+    - "the provider ensures JWT auth mount jwt-<first 12 hex of sha256(issuer)> with oidc_discovery_url = issuer, and role <nodeName> with bound_subject, bound_audiences, user_claim sub, token_ttl 5m, token_policies node-<nodeName>; role and policy deleted at release"
+  guest:
+    - "the --secrets capability delivers /etc/socialweb/node/openbao-ticket, /etc/socialweb/node/openbao-ca.pem and /etc/socialweb/node/claim.json {node, cluster, jwtMount, role, audience, kvMount, kvPath}"
+    - "user_data units: socialweb-openbao-link (dumbpipe connect-tcp --addr 127.0.0.1:18200), socialweb-node-secrets (oneshot: exchange the workload token for the audience at the bidder issuer, POST /v1/auth/<jwtMount>/login, read the KV path, write files 0600), socialweb-apiserver-link (advertise address on lo, dumbpipe connect-tcp --addr <advertiseAddress>:<apiserverPort>), k3s-agent; all Restart=always; no sshd use"
+    - "the cluster OpenBao serving certificate must verify as 127.0.0.1 with the delivered CA"
+  door:
+    - "requestCompute handlers: write contract state; at accept write status.grant; return at onSecretsFetched, then dispose capabilities; no ssh session; release only when the claim is deleted; startup never releases a live claim"
 acceptance:
   where: >
     Our GitLab (inspect git log -p docs/gitlab/, ssh gitlab, $GITLAB_TOKEN, chrome devtools MCP for
