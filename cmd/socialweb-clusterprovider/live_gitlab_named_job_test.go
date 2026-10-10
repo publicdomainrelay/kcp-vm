@@ -56,6 +56,8 @@ const (
 
 	gitlabJobConcurrency = 4
 
+	gitlabOutputLimitKB = 51200
+
 	gitlabRunnerFatalWait = 20 * time.Second
 
 	gitlabRunnerName = "gitlab-runner"
@@ -202,6 +204,7 @@ check_interval = 3
   token = %q
   executor = "kubernetes"
   pre_build_script = %q
+  output_limit = %d
   [runners.kubernetes]
     host = %q
     cert_file = %q
@@ -217,7 +220,7 @@ check_interval = 3
     helper_memory_limit = %q
     poll_timeout = %d
     cleanup_grace_period_seconds = 30
-`, gitlabJobConcurrency, url, token, gitlabPreBuildScript, host,
+`, gitlabJobConcurrency, url, token, gitlabPreBuildScript, gitlabOutputLimitKB, host,
 		filepath.Join(credDir, "tls.crt"), filepath.Join(credDir, "tls.key"),
 		filepath.Join(credDir, "ca.crt"), gitlabNamespace,
 		gitlabJobCPURequest, gitlabJobMemoryRequest, gitlabJobCPULimit, gitlabJobMemoryLimit,
