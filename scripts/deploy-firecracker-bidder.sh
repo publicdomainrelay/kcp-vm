@@ -343,11 +343,11 @@ done
 # The builder binary the provider shells out to (-ensure -json). It is a HOST
 # binary: it decides whether the store already holds the image, and with
 # -reuse-stale it does not build.
-if [ ! -x "${LOCAL_NODEIMAGE_BIN}" ]; then
-  say "building socialweb-nodeimage"
-  CGO_ENABLED=0 go build -C "${ORG_ROOT}/socialweb-computer-kcp" \
-    -o "${LOCAL_NODEIMAGE_BIN}" ./cmd/socialweb-nodeimage
-fi
+# Always rebuilt: a binary left from an older tree reads an older config schema
+# and refuses the current one.
+say "building socialweb-nodeimage"
+CGO_ENABLED=0 go build -C "${ORG_ROOT}/socialweb-computer-kcp" \
+  -o "${LOCAL_NODEIMAGE_BIN}" ./cmd/socialweb-nodeimage
 
 # Which image to ship is the build host's own answer, asked the way the target
 # will ask it. It is run from inside the init's module so a relative
