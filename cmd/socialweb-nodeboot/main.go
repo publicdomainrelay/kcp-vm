@@ -130,6 +130,8 @@ type guestSpec struct {
 
 	MemMiB int `json:"mem_mib"`
 
+	DiskMiB int `json:"disk_mib"`
+
 	InstanceTimeoutSec int `json:"instance_timeout_sec"`
 
 	Network networkSpec `json:"network"`
@@ -294,6 +296,9 @@ func Boot(specPath, resultPath string, foreground bool) error {
 	if err := writeSeed(s, filepath.Join(s.WorkDir, nodevm.RootfsName)); err != nil {
 		return err
 	}
+	if err := growRootfs(s, filepath.Join(s.WorkDir, nodevm.RootfsName)); err != nil {
+		return err
+	}
 	paramsPath, err := writeNamespaceParams(s, guest, resultPath != "")
 	if err != nil {
 		return err
@@ -450,6 +455,57 @@ func networkConfig(network nodevm.Network) string {
 }
 
 const seedDirInImage = "/var/lib/cloud/seed/nocloud"
+
+func growRootfs(s guestSpec, rootfsCopy string) error {
+	if s.DiskMiB <= 0 {
+		return nil
+	}
+	info, err := os.Stat(rootfsCopy)
+	if err != nil {
+		return fmt.Errorf("measuring the guest's copy of the root filesystem at %s: %w", rootfsCopy, err)
+	}
+	want := int64(s.DiskMiB) << 20
+	if info.Size() >= want {
+		return nil
+	}
+	if _, err := exec.LookPath("e2fsck"); err != nil {
+		return fmt.Errorf("this guest was asked for a %d MiB disk and the image's own root filesystem "+
+			"is %d MiB, and e2fsck is not on this host's PATH, so the copy cannot be grown to what "+
+			"the contract asked for: it would boot with a filesystem smaller than the contract says "+
+			"and fail to write under its own workload, with the reason inside the guest rather than "+
+			"here. This host is %s: %w", s.DiskMiB, info.Size()>>20, hostos.Name(), err)
+	}
+	if _, err := exec.LookPath("resize2fs"); err != nil {
+		return fmt.Errorf("this guest was asked for a %d MiB disk and resize2fs is not on this "+
+			"host's PATH, so the copy cannot be grown to it: %w", s.DiskMiB, err)
+	}
+	if err := os.Truncate(rootfsCopy, want); err != nil {
+		return fmt.Errorf("growing the guest's copy of the root filesystem to %d MiB: %w -- the copy "+
+			"is what the guest's /dev/vda is, so the device is only as big as this file", s.DiskMiB, err)
+	}
+	if err := runTool("e2fsck", "-f", "-y", rootfsCopy); err != nil {
+		return err
+	}
+	if err := runTool("resize2fs", rootfsCopy); err != nil {
+		return err
+	}
+	return nil
+}
+
+func runTool(name string, args ...string) error {
+	cmd := exec.Command(name, args...)
+	raw, err := cmd.CombinedOutput()
+	if err != nil {
+		var exit *exec.ExitError
+		if errors.As(err, &exit) && name == "e2fsck" && exit.ExitCode() == 1 {
+			return nil
+		}
+		return fmt.Errorf("%s %s: %v: %s -- the guest's copy of the root filesystem is left as it "+
+			"was rather than booted at a size nothing has verified", name, strings.Join(args, " "),
+			err, strings.TrimSpace(string(raw)))
+	}
+	return nil
+}
 
 func writeSeed(s guestSpec, rootfsCopy string) error {
 	raw, err := os.ReadFile(s.UserDataFile)
