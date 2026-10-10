@@ -156,7 +156,25 @@ open:
       writes its image under, and from the configuration on disk, which is what `Main` reads -- and
       fails naming both if they differ.  It also reports both names inside the failure when `Main`
       fails at all.  Measured today: the two agree, which is why the store lookup should not miss, and
-      is exactly the fact the next occurrence has to contradict to be understood.  ONE MORE READING,
+      is exactly the fact the next occurrence has to contradict to be understood.
+      ROOT-CAUSED, 2026-10-07, and NOT closed by it.  An independent agent reproduced the failure --
+      16 pass / 4 fail over 20 sequential runs, 6/6 fail in one concurrent round and 6/6 pass in the
+      next, and 20/20 pass with `GOFLAGS=-buildvcs=false`, whose agent builds were byte-identical 8/8
+      -- and the mechanism is this: the image's NAME carries the digest of the agent binary
+      (`internal/nodefirecracker` folds `fileDigest(cfg.AgentBinary)` into the inputs), and that binary
+      is built TWICE in one test process -- once by the fixture's `cachedAgent`, and again by `Main`'s
+      `buildAgent` before it fingerprints.  Anything that changes the agent's bytes between those two
+      builds moves the name, so `completeImage`'s `Stat` misses, `Main` takes the build path, and
+      `checkImagePins` refuses the fixture's unpinned image -- the failure text on record.  The
+      agent's evidence for the VCS stamp as the thing that changes is that `-buildvcs=false` made
+      builds byte-identical 8/8 and the suite 20/20.
+      `buildAgent` now always passes `-buildvcs=false`, which removes one way for the bytes to move
+      and is right on its own terms (an image's name must follow its inputs, not the tree around
+      them; the deployed configurations already pass it).  It is NOT shown to close this: my own
+      attempts did not reproduce the failure at all -- 20 sequential runs, then 8 runs with the
+      working tree being flipped dirty and clean every 0.3 s, then the same 8 with the flag removed
+      again, all green.  So the mechanism is established and the fix is defensible, and the item
+      stays open because the reproduction behind it is the agent's and not mine.  ONE MORE READING,
       2026-10-07, and it makes the position worse rather than better: `go test
       ./cmd/socialweb-nodeimage/ -count=1` failed once, in this package, with
       `TestAnImageUnderTheNameItsInputsGiveItIsNotBuiltAgain` and
