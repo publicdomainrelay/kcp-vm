@@ -253,8 +253,9 @@ func (c cmdRun) exec() (string, error) {
 func (c cmdRun) out() string {
 	out, err := c.exec()
 	if err != nil {
-		c.t.Helper()
-		c.t.Logf("query %s failed: %v\n%s", strings.Join(c.args, " "), err, out)
+		if c.t != nil {
+			c.t.Logf("query %s failed: %v\n%s", strings.Join(c.args, " "), err, out)
+		}
 		return ""
 	}
 	return out
@@ -598,7 +599,7 @@ func (b *m3Bed) startControlPlane() {
 		run(t, "docker", "exec", "-d", "-u", "0", b.name, "socat", s[0], "TCP:"+s[1])
 	}
 	end := time.Now().Add(5 * time.Minute)
-	for !strings.Contains(cmdRun{args: []string{"docker", "logs", b.name}}.out(), `"message":"ready","prefix":"socialweb-computer-k8s"`) {
+	for !strings.Contains(b.logs(), `"message":"ready","prefix":"socialweb-computer-k8s"`) {
 		if time.Now().After(end) {
 			t.Fatalf("the control plane container never logged the door ready")
 		}
@@ -726,11 +727,11 @@ func (b *m3Bed) waitClaimJSON(node, path string, within time.Duration) string {
 }
 
 func (b *m3Bed) logs() string {
-	return cmdRun{args: []string{"docker", "logs", b.name}}.out()
+	return cmdRun{t: b.t, args: []string{"docker", "logs", b.name}}.out()
 }
 
 func (b *m3Bed) logsSince(at time.Time) string {
-	return cmdRun{args: []string{"docker", "logs", "--since", at.UTC().Format(time.RFC3339), b.name}}.out()
+	return cmdRun{t: b.t, args: []string{"docker", "logs", "--since", at.UTC().Format(time.RFC3339), b.name}}.out()
 }
 
 func (b *m3Bed) logLine(msg, node string) string {
