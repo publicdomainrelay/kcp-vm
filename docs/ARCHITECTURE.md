@@ -4143,6 +4143,13 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   `TestRemoveTakesBackTheObjectsThisInstallerWrote` seeds the objects the manifests name and asserts
   none survive; watched to fail with `Remove` made a no-op: "1 clustersecretstores objects survived
   the removal".
+  One imperfection is left in it deliberately rather than fixed in a hurry: the removal is ATTEMPTED
+  on every pass, because nothing remembers that the cluster's store is already gone. Each attempt is
+  three deletes that come back NotFound, so it is cheap and it is bounded by the 60 s timeout -- but
+  it is the same shape as the unguarded installer that stalled the provider the same night, and the
+  fix (a per-cluster flag in the closure that owns the pass, so the removal is attempted once per
+  process and a restart retries it) is a change to a path that runs inside every pass. It was not
+  made at that hour because it would have shipped unverified, which is the mistake being recorded.
   Removing it took three passes to get right, and each correction came from production rather than
   from reading. FIRST: not writing is not enough, because an upgraded cluster keeps what an older
   version wrote. SECOND, and this is the one worth reading twice: the ExternalSecret went and then sat
