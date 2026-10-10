@@ -65,11 +65,11 @@ included `.ci/dockerfile-hash.yaml`.
   `DefaultMemMiB = 2048`, `DefaultDiskMiB = 16` (`internal/nodevm/spec.go:41-47`). The job builds
   Rust (cargo), meson/C, and Go, `-p 1`, in one Pod. The image alone is multi-gigabyte and the
   disk is 16 GiB.
-- **B3 - the guest's own route out is unproven.** A guest is addressed behind pasta
-  (`internal/nodevm/spec.go`), so its default route is the host's. The job must `git clone` from
-  GitLab and the cluster must pull the job image; neither has been exercised from inside a guest.
-  The four-step proof's tenant workload uses an image the node image already seeded, so it proves
-  nothing about the guest's egress.
+- **B3 - CLOSED 2026-10-06.** A guest is addressed behind pasta (`internal/nodevm/spec.go`) and
+  the node agent writes the guest's only nameserver as the gateway
+  (`cmd/socialweb-nodeagent/agent.go:228`), so the guest's resolution and its default route both
+  go through this host. Measured, not reasoned: a job pod inside a firecracker guest cloned
+  `johnandersen777/kcp-ci-probe` from the real GitLab. See section 6.
 - **B4 - runner placement.** The kubernetes executor's `host` is the apiserver's own loopback
   address on THIS host, and its port is leased per cluster. The existing runner is on the GitLab
   host and is an instance executor. `docs/gitlab/README.md` states the rule: the runner must reach
@@ -92,10 +92,26 @@ included `.ci/dockerfile-hash.yaml`.
 - **D3 - pause, do not delete, the existing runner.** Runner 1 is someone's working setup for a
   different mechanism. An untagged job is eligible for it, so it is paused for the duration of a
   run and restored after. Deleting it is not this plan's to do.
-- **D4 - the missing image is ours to build.** B1 has no upstream fix. The builder image is built
-  from `streamplace/docker/build.Dockerfile`, published to a registry the guest can reach, and
-  `DOCKER_REPO` is pointed at it with a project CI variable, which outranks the `variables:` block
-  in `.gitlab-ci.yml`. The job definition itself is not edited.
+- **D4 - the missing image is ours to build, and it is seeded, not pulled.** B1 has no upstream
+  fix: `public.ecr.aws/m4j3c0j7/streamplace` does not exist and no job in the project builds or
+  pushes it, so every job in that file is unrunnable as written. The image is built from
+  `streamplace/docker/build.Dockerfile` at the hash `.ci/dockerfile-hash.yaml` names, pushed to a
+  registry on this host, and then **seeded into the node image** through the mechanism the node
+  image already has for this (`images:` in the builder config). Seeding is chosen over letting the
+  guest pull because the guest is built to never reach a registry, and because a pull would make
+  the job depend on this host's registry being up at job time.
+- **D5 - the job runs from a branch that carries only the job.** The runner is `concurrent = 1`,
+  this host runs one node, and every other job in `streamplace/.gitlab-ci.yml` is untagged, so the
+  other build jobs would each take the only slot for up to their own 2h timeout and `test` would
+  never be reached -- it sorts last in its stage. A branch `kcp-tenant-ci` therefore carries the
+  `test` job verbatim and nothing else, and points `DOCKER_REPO` at the seeded image. The job's
+  own keys -- image, script, timeout, artifacts -- are byte-for-byte what the branch this is
+  measured against has.
+- **D6 - the runner gets a scoped credential, not the superuser.** `docs/gitlab/02` is explicit
+  that handing a runner `system:admin`/`system:masters` makes every RBAC rule decorative. The
+  existing live test mints the superuser credential; the new one mints `gitlab-runner` /
+  `gitlab-runner` from the ClientCA on disk and applies the ClusterRole and ClusterRoleBinding the
+  document lists, so the identity under test is the one a real deployment would use.
 
 ## 5. Steps
 
@@ -112,6 +128,30 @@ included `.ci/dockerfile-hash.yaml`.
    reading.
 
 ## 6. Readings
+
+**2026-10-06, a real GitLab pipeline runs a job on a tenant cluster.**
+`TestAGitLabPipelineRunsOnATenantCluster` against the real GitLab and the probe project,
+PASS, 37.58 s. Pipeline 46 succeeded; GitLab's runner created
+`runner-8t2uishn2-project-5-concurrent-0-ny1rvwue` and this cluster placed it on
+`liveweb-node1`, the node the scale decision provisioned. The existing instance runner
+(`socialwebcomputer`, id 1) was paused for the run so the reading could not have come from it,
+and is restored after.
+
+**2026-10-06, a job pod clones its repository from inside the guest.** `TestALiveGitLabJobRunsOnATenantCluster`
+against the probe project, PASS, 42.51 s. The job's own trace:
+
+```
+Getting source from Git repository
+Fetching changes with git depth set to 20...
+Initialized empty Git repository in /builds/johnandersen777/kcp-ci-probe/.git/
+Checking out c6d139c1 as detached HEAD (ref is main)
+...
+GIT_DIR_PRESENT
+Job succeeded
+```
+
+This is the reading that closes B3. It also shows the runner's helper image being pulled from
+the internet by the guest, because the helper image is not one the node image seeds.
 
 **2026-10-06, four-step proof, this host, firecracker substrate.** PASS. The control plane reached
 `Ready` at `https://127.0.0.1:62202` with zero nodes; `kubectl get nodes` was empty and stayed

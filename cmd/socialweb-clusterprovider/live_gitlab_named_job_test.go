@@ -1,17 +1,27 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	rbacv1 "k8s.io/api/rbac/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/clusterprovider"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/livegate"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/portallocator"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/scale"
 )
 
@@ -22,11 +32,29 @@ const (
 
 	gitlabPipelineFileEnv = "SOCIALWEB_LIVE_GITLAB_PIPELINE_FILE"
 
-	gitlabJobTimeout = 45 * time.Minute
+	gitlabJobTimeout = 110 * time.Minute
 
 	gitlabJobPoll = 10 * time.Second
 
 	gitlabTraceTail = 6000
+
+	gitlabJobCPURequest = "2"
+
+	gitlabJobMemoryRequest = "4Gi"
+
+	gitlabJobCPULimit = "10"
+
+	gitlabJobMemoryLimit = "20Gi"
+
+	gitlabHelperCPULimit = "1"
+
+	gitlabHelperMemoryLimit = "1Gi"
+
+	gitlabJobPollTimeout = 1800
+
+	gitlabRunnerName = "gitlab-runner"
+
+	gitlabRunnerGroup = "gitlab-runner"
 )
 
 func TestALiveGitLabJobRunsOnATenantCluster(t *testing.T) {
@@ -97,8 +125,10 @@ func gitlabNamedJobRun(t *testing.T, substrate, runnerBin, runnerToken string, g
 	gitlabNamespaceUp(t, ctx, client)
 	t.Logf("STEP 2 namespace %s exists on the tenant cluster", gitlabNamespace)
 
-	credDir, host := gitlabCredentialFiles(t, cfg, stack)
-	t.Logf("STEP 3 minted a tenant credential in %s against %s", credDir, host)
+	credDir, host := gitlabScopedCredentialFiles(t, cfg, stack)
+	gitlabScopedRBACUp(t, ctx, client)
+	t.Logf("STEP 3 minted the runner its own scoped tenant credential in %s against %s, and the "+
+		"cluster admits the group %s it carries", credDir, host, gitlabRunnerGroup)
 
 	kubeconfig := stack.kubeconfig(t)
 
@@ -113,7 +143,7 @@ func gitlabNamedJobRun(t *testing.T, substrate, runnerBin, runnerToken string, g
 		t.Logf("STEP 4 the project carries the pipeline definition from %s on %s", pipelineFile, ref)
 	}
 
-	runner := gitlabStartRunner(t, runnerBin, runnerToken, gitlab.url, host, credDir)
+	runner := gitlabStartJobRunner(t, runnerBin, runnerToken, gitlab.url, host, credDir)
 	defer gitlabStopRunner(t, runner)
 
 	online := gitlab.AwaitRunnerOnline(ctx)
@@ -151,6 +181,155 @@ func gitlabNamedJobRun(t *testing.T, substrate, runnerBin, runnerToken string, g
 
 	seen := placed.snapshot()
 	t.Logf("STEP 10 job %s ran in pod(s) %v, placed by this cluster", jobName, seen)
+}
+
+func gitlabStartJobRunner(t *testing.T, bin, token, url, host, credDir string) *gitlabRunner {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	body := fmt.Sprintf(`concurrent = 1
+check_interval = 3
+
+[[runners]]
+  name = "socialweb-live-job"
+  url = %q
+  token = %q
+  executor = "kubernetes"
+  [runners.kubernetes]
+    host = %q
+    cert_file = %q
+    key_file = %q
+    ca_file = %q
+    namespace = %q
+    image_pull_policy = "if-not-present"
+    cpu_request = %q
+    memory_request = %q
+    cpu_limit = %q
+    memory_limit = %q
+    helper_cpu_limit = %q
+    helper_memory_limit = %q
+    poll_timeout = %d
+    cleanup_grace_period_seconds = 30
+`, url, token, host,
+		filepath.Join(credDir, "tls.crt"), filepath.Join(credDir, "tls.key"),
+		filepath.Join(credDir, "ca.crt"), gitlabNamespace,
+		gitlabJobCPURequest, gitlabJobMemoryRequest, gitlabJobCPULimit, gitlabJobMemoryLimit,
+		gitlabHelperCPULimit, gitlabHelperMemoryLimit, gitlabJobPollTimeout)
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("writing the runner config: %v", err)
+	}
+	r := &gitlabRunner{buf: &bytes.Buffer{}}
+	r.ctx, r.cancel = context.WithCancel(context.Background())
+	r.cmd = exec.CommandContext(r.ctx, bin, "run", "--config", path, "--working-directory", dir)
+	r.cmd.Stdout = r.buf
+	r.cmd.Stderr = r.buf
+	if err := r.cmd.Start(); err != nil {
+		t.Fatalf("starting %s: %v", bin, err)
+	}
+	select {
+	case <-time.After(3 * time.Second):
+	case <-t.Context().Done():
+	}
+	t.Logf("STEP 5a the runner is up with the kubernetes executor against %s, requesting %s cpu and "+
+		"%s memory", host, gitlabJobCPURequest, gitlabJobMemoryRequest)
+	return r
+}
+
+func gitlabScopedCredentialFiles(t *testing.T, cfg Config, stack *fourstepStack) (string, string) {
+	t.Helper()
+	lease, ok := stack.alloc.PortFor(fourstepCluster, portallocator.PurposeK3sSecure)
+	if !ok {
+		t.Fatalf("no apiserver lease for %s", fourstepCluster)
+	}
+	minted, err := clusterprovider.MintTenantCredentialForClusterAs(
+		context.Background(), cfg.StateDir, fourstepCluster,
+		clusterprovider.APIServerURL(lease.Port), gitlabRunnerName, []string{gitlabRunnerGroup}, 0)
+	if err != nil {
+		t.Fatalf("minting the runner its OWN scoped tenant credential: %v. docs/gitlab/02 is "+
+			"explicit that a runner is never handed the cluster's superuser identity -- "+
+			"system:admin in system:masters makes every RBAC rule below decorative -- so this "+
+			"refuses rather than falling back to the credential that would always work", err)
+	}
+	dir := t.TempDir()
+	for _, f := range []struct {
+		name string
+		data []byte
+	}{
+		{"ca.crt", minted.CAData},
+		{"tls.crt", minted.CertData},
+		{"tls.key", minted.KeyData},
+	} {
+		if len(f.data) == 0 {
+			t.Fatalf("the minted credential carries no %s, so the runner would be handed a partial "+
+				"set and every call it makes would fail with a TLS error that names nothing", f.name)
+		}
+		if err := os.WriteFile(filepath.Join(dir, f.name), f.data, 0o600); err != nil {
+			t.Fatalf("writing %s: %v", f.name, err)
+		}
+	}
+	return dir, minted.Host
+}
+
+func gitlabScopedRBACUp(t *testing.T, ctx context.Context, client kubernetes.Interface) {
+	t.Helper()
+	role := &rbacv1.ClusterRole{
+		ObjectMeta: metav1.ObjectMeta{Name: gitlabRunnerName},
+		Rules: []rbacv1.PolicyRule{
+			{
+				APIGroups: []string{""},
+				Resources: []string{"pods", "pods/exec", "pods/attach", "pods/log"},
+				Verbs:     []string{"create", "delete", "get", "list", "watch", "patch", "update"},
+			},
+			{
+				APIGroups: []string{""},
+				Resources: []string{"secrets", "configmaps", "services", "serviceaccounts", "events", "persistentvolumeclaims"},
+				Verbs:     []string{"create", "delete", "get", "list", "watch", "update"},
+			},
+			{
+				APIGroups: []string{"apps"},
+				Resources: []string{"deployments"},
+				Verbs:     []string{"create", "delete", "get", "list", "update"},
+			},
+			{
+				APIGroups: []string{"scheduling.k8s.io"},
+				Resources: []string{"priorityclasses"},
+				Verbs:     []string{"get", "create"},
+			},
+		},
+	}
+	if _, err := client.RbacV1().ClusterRoles().Create(ctx, role, metav1.CreateOptions{}); err != nil {
+		if !apierrors.IsAlreadyExists(err) {
+			t.Fatalf("granting the runner's group the rules it needs in the tenant cluster: %v. "+
+				"priorityclasses is cluster-scoped, so a namespaced Role cannot grant it and a "+
+				"missing grant reads as a runner that cannot start a job", err)
+		}
+		if _, err := client.RbacV1().ClusterRoles().Update(ctx, role, metav1.UpdateOptions{}); err != nil {
+			t.Fatalf("updating the runner's ClusterRole: %v", err)
+		}
+	}
+	binding := &rbacv1.ClusterRoleBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: gitlabRunnerName},
+		RoleRef: rbacv1.RoleRef{
+			APIGroup: "rbac.authorization.k8s.io",
+			Kind:     "ClusterRole",
+			Name:     gitlabRunnerName,
+		},
+		Subjects: []rbacv1.Subject{{
+			Kind:     "Group",
+			Name:     gitlabRunnerGroup,
+			APIGroup: "rbac.authorization.k8s.io",
+		}},
+	}
+	if _, err := client.RbacV1().ClusterRoleBindings().Create(ctx, binding, metav1.CreateOptions{}); err != nil {
+		if !apierrors.IsAlreadyExists(err) {
+			t.Fatalf("binding the runner's certificate group to its ClusterRole: %v. The subject "+
+				"is the ORGANIZATIONS value the credential was minted with, and the two disagreeing "+
+				"is a 403 that reads like a broken runner", err)
+		}
+		if _, err := client.RbacV1().ClusterRoleBindings().Update(ctx, binding, metav1.UpdateOptions{}); err != nil {
+			t.Fatalf("updating the runner's ClusterRoleBinding: %v", err)
+		}
+	}
 }
 
 func tailOf(s string, n int) string {
