@@ -991,8 +991,9 @@ type nodeHosts struct {
 	opts nodeHostsOptions
 	log  *slog.Logger
 
-	mu    sync.Mutex
-	hosts map[string]*tenantNodes
+	mu      sync.Mutex
+	hosts   map[string]*tenantNodes
+	adopted map[string]bool
 }
 
 func newNodeHosts(opts nodeHostsOptions) (*nodeHosts, error) {
@@ -1081,6 +1082,7 @@ func (h *nodeHosts) reconcile(ctx context.Context, cluster string) error {
 			"confirmed released: %w -- a read that failed is not a workspace with no claims, and it is "+
 			"the claims that say which Nodes have no machine behind them", target.Workspace, err)
 	}
+	adoptErr := h.adoptClaims(cluster, claims)
 	var gone []string
 	for i := range claims {
 		if claims[i].Status.Phase == v1alpha1.NodeClaimReleased {
@@ -1088,26 +1090,26 @@ func (h *nodeHosts) reconcile(ctx context.Context, cluster string) error {
 		}
 	}
 	if len(gone) == 0 {
-		return nil
+		return adoptErr
 	}
 	client, err := h.opts.Tenant(ctx, cluster)
 	if err != nil {
-		return fmt.Errorf("clusterprovider: the tenant client for %s, needed to delete the Nodes "+
-			"whose claims the door confirmed released: %w", cluster, err)
+		return errors.Join(adoptErr, fmt.Errorf("clusterprovider: the tenant client for %s, needed to "+
+			"delete the Nodes whose claims the door confirmed released: %w", cluster, err))
 	}
 	list, err := client.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return fmt.Errorf("clusterprovider: listing the nodes of %s before removing the ones whose "+
-			"claim reads Released: %w -- a claim the door released stays in its workspace as the "+
-			"record of what happened, so the list of names to act on is not the list of Nodes still "+
-			"there, and deleting by name alone spends one write per pass for ever on a Node that went "+
-			"the first time", cluster, err)
+		return errors.Join(adoptErr, fmt.Errorf("clusterprovider: listing the nodes of %s before "+
+			"removing the ones whose claim reads Released: %w -- a claim the door released stays in "+
+			"its workspace as the record of what happened, so the list of names to act on is not the "+
+			"list of Nodes still there, and deleting by name alone spends one write per pass for ever "+
+			"on a Node that went the first time", cluster, err))
 	}
 	present := map[string]bool{}
 	for i := range list.Items {
 		present[list.Items[i].Name] = true
 	}
-	var problems []error
+	problems := []error{adoptErr}
 	for _, name := range gone {
 		if !present[name] {
 			continue
@@ -1142,6 +1144,7 @@ func (h *nodeHosts) reapCluster(ctx context.Context, cluster string) error {
 	n, ok := h.hosts[cluster]
 	if ok {
 		delete(h.hosts, cluster)
+		delete(h.adopted, cluster)
 	}
 	h.mu.Unlock()
 	if !ok {
@@ -1182,6 +1185,15 @@ func (h *nodeHosts) reap(ctx context.Context) error {
 	}
 	slices.Sort(clusters)
 
+	if h.opts.Substrate.deferredJoin() {
+		h.log.Info("cluster provider: leaving the market nodes running for the next provider process",
+			"nodeClusters", clusters,
+			"reason", "a market guest joined with no session of ours and outlives this process; "+
+				"deleting its claim is what makes the door destroy the machine, so a restart that "+
+				"released here would reap every node on every deploy",
+			"next", "the next provider adopts every live claim at startup and holds it again")
+		return nil
+	}
 	var problems []error
 	for _, cluster := range clusters {
 		n := held[cluster]

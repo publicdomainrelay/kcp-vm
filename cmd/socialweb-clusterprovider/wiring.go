@@ -231,6 +231,7 @@ func (p *Provider) join(ctx context.Context) error {
 	if err := p.resetSnapshots([]string{key}); err != nil {
 		return err
 	}
+	p.adoptNodes(ctx, []string{key})
 	if err := p.sweepNodeRecords(ctx); err != nil {
 		return err
 	}
@@ -266,6 +267,18 @@ func (p *Provider) resetSnapshots(keys []string) error {
 	return nil
 }
 
+func (p *Provider) adoptNodes(ctx context.Context, keys []string) {
+	if p.nodes == nil {
+		return
+	}
+	for _, key := range keys {
+		if err := p.nodes.adopt(ctx, key); err != nil {
+			p.log.Warn("cluster provider: adopting the live market nodes of a cluster at startup did "+
+				"not complete; its next pass tries again", "key", key, "error", err.Error())
+		}
+	}
+}
+
 func (p *Provider) joinAll(ctx context.Context) error {
 	p.log.Info("cluster provider: joining every Cluster in the tree", "join", p.cfg.Join,
 		"passes", "serial, one cluster at a time",
@@ -287,6 +300,7 @@ func (p *Provider) joinAll(ctx context.Context) error {
 	if err := p.resetSnapshots(keys); err != nil {
 		return err
 	}
+	p.adoptNodes(ctx, keys)
 	if err := p.sweepNodeRecords(ctx); err != nil {
 		return err
 	}
@@ -357,6 +371,10 @@ func (p *Provider) reapOne(ctx context.Context, key string) error {
 	}
 	if p.nodes == nil {
 		return nil
+	}
+	if err := p.nodes.adoptOnce(ctx, key); err != nil {
+		return fmt.Errorf("clusterprovider: adopting the live market nodes of %s before reaping it: "+
+			"%w -- a claim nothing holds is a machine nothing releases", key, err)
 	}
 	return p.nodes.reapCluster(ctx, key)
 }
