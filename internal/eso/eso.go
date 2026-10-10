@@ -263,26 +263,36 @@ func Remove(ctx context.Context, dyn dynamic.Interface, o Options) error {
 		return err
 	}
 	var problems []error
-	for i := range objs {
-		u := &objs[i]
-		gvr, ok := externalSecretsResources[u.GetKind()]
-		if !ok {
-			problems = append(problems, fmt.Errorf(
-				"eso: %s %s is not a kind this installer writes, so it is not one it may remove",
-				u.GetKind(), u.GetName()))
-			continue
-		}
-		var del error
-		if u.GetKind() == "ExternalSecret" {
-			del = dyn.Resource(gvr).Namespace(o.Namespace).Delete(ctx, u.GetName(), metav1.DeleteOptions{})
-		} else {
-			del = dyn.Resource(gvr).Delete(ctx, u.GetName(), metav1.DeleteOptions{})
-		}
-		if err := del; err != nil && !apierrors.IsNotFound(err) {
-			problems = append(problems, fmt.Errorf("eso: removing the %s %s: %w -- an object this "+
-				"installer can no longer stand behind is one a reader keeps taking at face value, and "+
-				"a store whose vault address nothing answers reads as a broken ExternalSecret rather "+
-				"than as an address nothing binds", u.GetKind(), u.GetName(), err))
+	for _, wantKind := range []string{"ExternalSecret", "ClusterSecretStore", "SecretStore"} {
+		for i := range objs {
+			u := &objs[i]
+			if u.GetKind() != wantKind {
+				continue
+			}
+			gvr, ok := externalSecretsResources[u.GetKind()]
+			if !ok {
+				problems = append(problems, fmt.Errorf(
+					"eso: %s %s is not a kind this installer writes, so it is not one it may remove",
+					u.GetKind(), u.GetName()))
+				continue
+			}
+			var del error
+			if u.GetKind() == "ExternalSecret" {
+				del = dyn.Resource(gvr).Namespace(o.Namespace).Delete(ctx, u.GetName(), metav1.DeleteOptions{})
+			} else {
+				del = dyn.Resource(gvr).Delete(ctx, u.GetName(), metav1.DeleteOptions{})
+			}
+			if err := del; err != nil && !apierrors.IsNotFound(err) {
+				problems = append(problems, fmt.Errorf("eso: removing the %s %s: %w -- an object this "+
+					"installer can no longer stand behind is one a reader keeps taking at face value, "+
+					"and a store whose vault address nothing answers reads as a broken ExternalSecret "+
+					"rather than as an address nothing binds", u.GetKind(), u.GetName(), err))
+			}
+			if u.GetKind() == "ExternalSecret" {
+				if err := releaseExternalSecret(ctx, dyn, o, u.GetName()); err != nil {
+					problems = append(problems, err)
+				}
+			}
 		}
 	}
 	if err := dyn.Resource(secretResource).Namespace(o.Namespace).
@@ -291,6 +301,44 @@ func Remove(ctx context.Context, dyn dynamic.Interface, o Options) error {
 			o.Namespace, ClientSecretName, err))
 	}
 	return errors.Join(problems...)
+}
+
+func releaseExternalSecret(ctx context.Context, dyn dynamic.Interface, o Options, name string) error {
+	gvr := externalSecretsResources["ExternalSecret"]
+	live, err := dyn.Resource(gvr).Namespace(o.Namespace).Get(ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("eso: reading the ExternalSecret %s/%s back after its deletion: %w",
+			o.Namespace, name, err)
+	}
+	if live.GetDeletionTimestamp() == nil {
+		return nil
+	}
+	kept := make([]string, 0, len(live.GetFinalizers()))
+	for _, f := range live.GetFinalizers() {
+		if !strings.HasPrefix(f, "externalsecrets.external-secrets.io/") {
+			kept = append(kept, f)
+		}
+	}
+	if len(kept) == len(live.GetFinalizers()) {
+		return nil
+	}
+	finalizers, err := json.Marshal(kept)
+	if err != nil {
+		return fmt.Errorf("eso: encoding the finalizers kept on %s/%s: %w", o.Namespace, name, err)
+	}
+	body := []byte(`{"metadata":{"finalizers":` + string(finalizers) + `}}`)
+	if _, err := dyn.Resource(gvr).Namespace(o.Namespace).Patch(ctx, name, types.MergePatchType,
+		body, metav1.PatchOptions{}); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("eso: releasing the External Secrets controller's finalizer on %s/%s, which "+
+			"is what lets the object go: the controller removes it after cleaning up the Secret it "+
+			"owns, and on a cluster with no node the controller is Pending and never does -- a "+
+			"cluster at rest has no node, so the object would stay Terminating for as long as that "+
+			"lasts: %w", o.Namespace, name, err)
+	}
+	return nil
 }
 
 func clientSecretBody(o Options) ([]byte, error) {

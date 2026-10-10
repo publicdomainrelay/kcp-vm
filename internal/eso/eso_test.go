@@ -302,3 +302,70 @@ func TestRemoveTakesBackTheObjectsThisInstallerWrote(t *testing.T) {
 		}
 	}
 }
+
+func TestRemoveReleasesAnExternalSecretTheControllerCannot(t *testing.T) {
+	ctx := context.Background()
+	dyn := storeDynamic(true, nil)
+	gvr := externalSecretsResources["ExternalSecret"]
+	dyn.PrependReactor("delete", "externalsecrets", func(action clienttesting.Action) (bool, runtime.Object, error) {
+		da := action.(clienttesting.DeleteAction)
+		obj, err := dyn.Tracker().Get(gvr, da.GetNamespace(), da.GetName())
+		if err != nil {
+			return false, nil, nil
+		}
+		u, ok := obj.(*unstructured.Unstructured)
+		if !ok || len(u.GetFinalizers()) == 0 {
+			return false, nil, nil
+		}
+		now := metav1.Now()
+		u.SetDeletionTimestamp(&now)
+		if err := dyn.Tracker().Update(gvr, u, da.GetNamespace()); err != nil {
+			return true, nil, err
+		}
+		return true, u, nil
+	})
+	o := testOptions()
+	manifests, err := Load(o.ManifestDir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	var name string
+	for i := range manifests {
+		if manifests[i].GetKind() != "ExternalSecret" {
+			continue
+		}
+		name = manifests[i].GetName()
+		u := manifests[i]
+		u.SetNamespace(o.Namespace)
+		u.SetFinalizers([]string{"externalsecrets.external-secrets.io/externalsecret-cleanup"})
+		now := metav1.Now()
+		u.SetDeletionTimestamp(&now)
+		if _, err := dyn.Resource(externalSecretsResources["ExternalSecret"]).Namespace(o.Namespace).
+			Create(ctx, &u, metav1.CreateOptions{}); err != nil {
+			t.Fatalf("seeding the terminating ExternalSecret: %v", err)
+		}
+	}
+	if name == "" {
+		t.Fatal("the manifest directory names no ExternalSecret, so this test would check nothing")
+	}
+	if err := Remove(ctx, dyn, o); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	live, err := dyn.Resource(externalSecretsResources["ExternalSecret"]).Namespace(o.Namespace).
+		Get(ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return
+	}
+	if err != nil {
+		t.Fatalf("reading the ExternalSecret back: %v", err)
+	}
+	for _, f := range live.GetFinalizers() {
+		if strings.HasPrefix(f, "externalsecrets.external-secrets.io/") {
+			t.Fatalf("the External Secrets controller's finalizer %q is still on %s/%s. The "+
+				"controller removes it after cleaning up the Secret it owns, and it runs at ONE node "+
+				"-- a cluster at rest has none, so the object stays Terminating for as long as the "+
+				"cluster is idle, which is the state a market cluster is in whenever it is not "+
+				"working", f, o.Namespace, name)
+		}
+	}
+}
