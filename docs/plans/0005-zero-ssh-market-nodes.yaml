@@ -184,9 +184,25 @@ items:
   - id: M2-BACKOFF
     milestone: M2
     title: Exponential no_bids back-off per cluster, capped at 10m
-    decision: decided by Claude, user may veto
-    status: todo
-    evidence: []
+    decision: >
+      decided by Claude, user may veto. A claim ending Failed with status.contract.rfpUri set and
+      acceptUri empty (nodemarket.MarketDeclined: the requester's NO_CONTRACT_OUTCOMES class, no_bids,
+      bids_denied, policy_rejected, which all loop identically) backs that cluster's further market
+      provisions off 30s*2^(n-1), capped at 10m; one end counted per confirm pass. A node newly
+      joining or intent dropping to none resets it; a provision does not. Classified from record
+      URIs, not message text; no status.reason field because APIResourceSchema.spec is immutable
+      and a schema change does not reach existing APIBindings (internal/versions/versions.json), so
+      no schema bump and no door code change. State in memory only: a provider restart resets it.
+      Failures after an accept keep today's behaviour. ARCHITECTURE section 10.
+    status: done
+    evidence:
+      - "0807250 scale.State.Backoff + scale.BackoffDelay + Decision.BackoffUntil; scaledriver Declined/Joined; nodemarket.MarketDeclined + Host.End; confirmHeld reports declined/newly-joined nodes, wiring feeds the driver before the pass and logs backoffUntil on the node-scale line"
+      - "0807250 also fixes tenantNodes.retain dropping ordinal 1 when the primary slot was empty: a first node claimed again after the first was given up was never held, confirmed, released or counted in flight (surfaced by the back-off test: one gap read 5s)"
+      - "d336b86 door guard: socialweb-computer-k8s test/node_market_test.ts 'a no-bids end keeps the rfp it asked with and names no accept'; door deno task check green, deno task test 67 passed 0 failed 1 ignored (run from a copy at org-root depth, the worktree's ../../ siblings do not resolve)"
+      - "tests watched to fail (against stubs: gaps read [5s 5s 5s 5s 5s 5s 5s], the prod loop) then pass: cmd/socialweb-clusterprovider TestNoBidsEndsBackTheMarketOffAtGrowingIntervalsCappedAtTenMinutes (gaps 35s 1m5s 2m5s 4m5s 8m5s 10m5s 10m5s at a 5s pass), TestAMarketNodeThatJoinsResetsTheBackoff, TestIntentGoneResetsTheMarketBackoff, TestAFirstNodeClaimedAgainAfterItWasGivenUpIsHeld; internal/scaledriver TestConsecutiveNoBidsEndsProvisionAtGrowingIntervalsCappedAtTenMinutes, TestAJoinedNodeResetsTheBackoff, TestIntentGoneResetsTheBackoff, TestADeclinedEndRecordsWhyAndUntilWhen; internal/scale TestTheBackoffDoublesFromItsBaseAndStopsAtItsCap, TestADeclinedMarketHoldsTheNextProvisionUntilTheWaitIsOver, TestTheBackoffSurvivesAProvisionAndDiesWithTheIntent; internal/nodemarket TestAnEndWithAnRFPAndNoAcceptIsTheMarketDeclining, TestTheHostReportsADeclinedEndWithTheDoorsWords"
+      - "guards that passed first time: TestAFailureAfterABidWasAcceptedDoesNotBackOff, TestANodeCountAtTheTargetIsNotReportedAsBackingOff"
+      - "deploy/check.sh --fast green after 0807250"
+      - "not yet proven on prod: a cluster with intent and no bidder reading RFPs at 30s/1m/2m/4m/8m/10m gaps and the 'backing off' node-scale line -- needs a deploy"
   - id: M3-CLUSTERLINK
     milestone: M3
     title: ClusterLink CRD and per-cluster dumbpipe listeners for the k3s apiserver and the cluster's OpenBao

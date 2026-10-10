@@ -1497,6 +1497,56 @@ before now decides `Provision, Nodes: <target>` with `MaxNodes` raised, and ever
 than one node at once - `NEXT.yaml` AUTO-1 stays open for that, and `docs/plans/0002` names the
 instrument: three concurrent pods, three joined nodes, and a return to zero.
 
+**A market that takes no bid backs the cluster off, exponentially, capped at ten minutes (plan 0005
+M2-BACKOFF, decided by Claude, user may veto).** MEASURED on prod 2026-10-07 15:43-16:48 UTC: with
+no bidder answering, the provider wrote a NodeClaim, the door's fulfiller got `no_bids` after its
+30 s bid window, the claim ended Failed, `confirmHeld` gave the node up, and the next scale pass
+claimed again -- a new public `market.rfp` about every 50 s per missing node, 49 RFPs and 86
+`no_bids` in one hour. The rule:
+
+- *What counts.* A claim that ends `Failed` with `status.contract.rfpUri` set and
+  `status.contract.acceptUri` empty (`nodemarket.MarketDeclined`): the door asked the market and no
+  bid was taken. That is the requester's whole `NO_CONTRACT_OUTCOMES` class -- `no_bids`,
+  `bids_denied` and `policy_rejected` -- and all three loop identically, each re-ask a fresh public
+  RFP, so all three back off. A claim that failed after an accept (the guest died, the join never
+  forwarded) keeps today's behaviour: the market did answer, and the next pass asks again at once.
+  So does every non-market substrate, which never reports a declined end.
+- *Why that shape and not a reason field.* The claim is classified from structured record URIs the
+  door already writes, never from `status.message` text. A new `status.reason` was rejected because
+  `APIResourceSchema.spec` is immutable and, MEASURED (`internal/versions/versions.json`), a schema
+  change does not reach existing APIBindings: every cluster home bound before the bump would prune
+  the field and silently never back off. The door keeps `rfpUri` and writes no `acceptUri` on a
+  `no_bids` end; `socialweb-computer-k8s/test/node_market_test.ts` "a no-bids end keeps the rfp it
+  asked with and names no accept" pins that, so the cross-process contract is guarded on both sides.
+  Status stays one writer per half: the door writes the claim's status, the provider only reads it.
+- *The wait.* `scale.BackoffDelay(n) = 30 s * 2^(n-1)` for the n-th declined end in a row, capped
+  at `scale.DefaultBackoffCap = 10m`: 30 s, 1 m, 2 m, 4 m, 8 m, 10 m, 10 m ... One confirm pass that
+  sees several declined claims counts ONE end, because they are one answer from one market at one
+  moment. The wait runs from the pass that saw the end. `Options.BackoffBase` / `BackoffCap` exist
+  for tests; production uses the defaults.
+- *Where it lives.* `scale.State.Backoff` is pure state; `scale.Decide` returns `None` with
+  `Decision.BackoffUntil` set while `st.Nodes < target` and the wait holds. The decision's reason
+  says the cluster is backing off, until when (RFC 3339 UTC), how many ends in a row, and the door's
+  own words, and the provider's `cluster provider: node scale` line carries `backoffUntil`.
+  `scaledriver.Driver.Declined(cluster, reason)` records an end (and logs `backing off market
+  provisions for this cluster` with `until`, `wait`, `why`); `Driver.Joined(cluster)` clears it. The
+  composition root (`wiring.go` `scale`) feeds both from `nodeHosts.confirm`'s outcome before the
+  scale pass, `Joined` first so a pass that sees one node join and another declined still backs off.
+- *Resets.* A node of the cluster newly confirmed joined (the tenant cluster reports it and its
+  claim reads Running; a node already joined does not re-reset on every pass), or the cluster's
+  intent dropping to none (`State.Next` keeps the back-off only while the decision carries intent).
+  A provision does NOT reset it: the count of ends outlives the provision it allowed, so the next
+  end waits longer.
+- *Memory only.* The back-off is held in the provider process. A provider restart starts every
+  cluster from no back-off, so the first pass after a restart may post one RFP at once; that costs
+  one RFP per restart, not one per pass.
+
+Writing these tests surfaced a defect in the same loop: `tenantNodes.retain` dropped ordinal 1
+unconditionally, assuming the primary host held it, so a first node claimed again after the first
+was given up was not held. Its claim was then never confirmed, never released, never counted in
+flight and never seen ending -- it could not back anything off. `retain` now restores the primary
+slot when it is empty (`TestAFirstNodeClaimedAgainAfterItWasGivenUpIsHeld`).
+
 ## 11. Teardown, and the gate
 
 Teardown is gated, because a teardown that races a running job is a lost write, and after rotation
