@@ -153,6 +153,12 @@ func Main(configPath string) error {
 	if err != nil {
 		return err
 	}
+	return withStageDirHeld(cfg, func() error {
+		return buildImage(cfg)
+	})
+}
+
+func buildImage(cfg Config) error {
 	if err := buildAgent(cfg); err != nil {
 		return err
 	}

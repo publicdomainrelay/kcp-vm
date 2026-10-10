@@ -33,6 +33,44 @@ type ensureResult struct {
 	Rootfs string `json:"rootfs,omitempty"`
 }
 
+func buildTheImageTheConfigurationNames(
+	cfg Config,
+	result *ensureResult,
+	fingerprint *string,
+	dir *string,
+	present *bool,
+) error {
+	if err := buildAgent(cfg); err != nil {
+		return err
+	}
+	named, err := nodefirecracker.Fingerprint(cfg.Path, buildConfigOf(cfg))
+	if err != nil {
+		return err
+	}
+	*fingerprint = named
+	*dir = storeDir(cfg, named)
+	result.Fingerprint = named
+	result.Dir = *dir
+	whole, err := completeImage(cfg, named)
+	if err != nil {
+		return err
+	}
+	*present = whole
+	if whole {
+		result.State = statePresent
+		return nil
+	}
+	artifacts, err := publishImage(cfg, named)
+	if err != nil {
+		return err
+	}
+	result.State = stateBuilt
+	result.Kernel = artifacts.Kernel
+	result.Initramfs = artifacts.Initramfs
+	result.Rootfs = artifacts.Rootfs
+	return nil
+}
+
 func Ensure(configPath string, reuseStale bool, asJSON bool, preinstallPath string) error {
 	if configPath == "" {
 		return fmt.Errorf("-config is required: the name of the image to ask for is derived from the " +
@@ -78,31 +116,11 @@ func Ensure(configPath string, reuseStale bool, asJSON bool, preinstallPath stri
 		result.Dir = entry.path
 		result.ReusedFrom = entry.fingerprint
 	default:
-		if err := buildAgent(cfg); err != nil {
+		if err := withStageDirHeld(cfg, func() error {
+			return buildTheImageTheConfigurationNames(cfg, &result, &fingerprint, &dir, &present)
+		}); err != nil {
 			return err
 		}
-		fingerprint, err = nodefirecracker.Fingerprint(cfg.Path, buildConfigOf(cfg))
-		if err != nil {
-			return err
-		}
-		dir = storeDir(cfg, fingerprint)
-		result.Fingerprint = fingerprint
-		result.Dir = dir
-		if present, err = completeImage(cfg, fingerprint); err != nil {
-			return err
-		}
-		if present {
-			result.State = statePresent
-			break
-		}
-		artifacts, err := publishImage(cfg, fingerprint)
-		if err != nil {
-			return err
-		}
-		result.State = stateBuilt
-		result.Kernel = artifacts.Kernel
-		result.Initramfs = artifacts.Initramfs
-		result.Rootfs = artifacts.Rootfs
 	}
 	if asJSON {
 		raw, err := json.Marshal(result)
