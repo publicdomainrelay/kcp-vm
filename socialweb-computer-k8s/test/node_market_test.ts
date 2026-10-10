@@ -128,6 +128,30 @@ async function settle() {
   for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 0));
 }
 
+Deno.test("the door admits declared bidders and omits a policy it was not given", async () => {
+  const store = new FakeStore();
+  const contracts: Record<string, unknown>[] = [];
+  const fulfiller = createMarketNodeFulfiller({
+    store,
+    requesterFor: () => Promise.resolve(fakePds),
+    readText,
+    eventStreams: () => ({ close() {} }),
+    keypairs: { generateKeypair: () => Promise.resolve({ publicKey: "k", privateKeyPath: "/tmp/k" }) },
+    pollReady: () => Promise.resolve(false),
+    extraBidderDids: ["did:plc:mine"],
+    runContract: (async (_pds: unknown, o: Record<string, unknown>) => {
+      contracts.push({ ...o, sshProvider: undefined, logger: undefined, eventStreams: undefined });
+      return { event: "no_bids", bids: 0 };
+    }) as never,
+  });
+  store.put(claim("ci-node1"));
+  await fulfiller.pass();
+  await settle();
+  assertEquals(contracts[0].extraBidderDids, ["did:plc:mine"]);
+  assertEquals("policy" in contracts[0], false);
+  await fulfiller.stop();
+});
+
 Deno.test("a pending claim is finalized and fulfilled through the market as its owner", async () => {
   const h = harness();
   h.store.put(claim("ci-node1"));

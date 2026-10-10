@@ -32,6 +32,7 @@ export interface MarketNodeFulfillerOptions {
   relayUrls?: string[];
   vmReadyTimeoutSec?: number;
   policy?: { name: string; args: Record<string, unknown> };
+  extraBidderDids?: string[];
   pollIntervalMs?: number;
   runContract?: ContractRunner;
   nodeSession?: NodeSessionRunner;
@@ -208,6 +209,7 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
           sshProvider: provider,
           userData: { modules: ["k3s", createK3sJoinModule()] },
           denyBidderDids: spec.denyBidderDids ?? [],
+          extraBidderDids: opts.extraBidderDids ?? [],
           vmReadyTimeoutSec,
           plcUrl: opts.plcUrl,
           ingressProxyHost: opts.ingressProxyHost,

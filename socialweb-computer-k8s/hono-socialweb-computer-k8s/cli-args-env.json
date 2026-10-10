@@ -126,11 +126,16 @@
       "env": "NODE_APISERVER_HOST",
       "default": "127.0.0.1"
     },
+    "node-extra-bidder-dids": {
+      "type": "string",
+      "description": "Comma-separated bidders to admit for node contracts without a vouch record in the owner's repo",
+      "env": "NODE_EXTRA_BIDDER_DIDS"
+    },
     "node-policy": {
       "type": "string",
       "description": "Fulfilment policy a node's RFP is evaluated under",
       "env": "NODE_POLICY",
-      "default": "tangled-vouch"
+      "default": ""
     },
     "node-policy-args": {
       "type": "string",

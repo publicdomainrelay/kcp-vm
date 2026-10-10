@@ -128,7 +128,8 @@ if (options.kcpKubeconfig) {
     ingressProxyHost: options.ingressProxyHost as string,
     relayUrls,
     vmReadyTimeoutSec: options.vmReadyTimeoutSec as number,
-    policy: { name: options.nodePolicy as string, args: JSON.parse(options.nodePolicyArgs as string) },
+    extraBidderDids: ((options.nodeExtraBidderDids as string | undefined) ?? "").split(",").map((d) => d.trim()).filter(Boolean),
+    ...(options.nodePolicy ? { policy: { name: options.nodePolicy as string, args: JSON.parse(options.nodePolicyArgs as string) } } : {}),
     pollIntervalMs: options.nodePollIntervalMs as number,
     log,
   });
