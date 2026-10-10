@@ -181,7 +181,7 @@ Deno.test("the join document pins the cluster CA and the forward targets the cla
   assertEquals(plan.apiserverPort, 23456);
   assertEquals(plan.apiserverHost, "127.0.0.1");
   const doc = Object.fromEntries(plan.joinDocument.trim().split("\n").map((l) => {
-    const [k, v] = l.split("=");
+    const [k, v] = l.split(" ");
     return [k, atob(v)];
   }));
   const caHash = Array.from(

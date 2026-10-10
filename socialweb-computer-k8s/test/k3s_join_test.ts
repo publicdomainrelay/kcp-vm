@@ -89,9 +89,9 @@ Deno.test("the join script refuses an incomplete or unknown document", async () 
   const dir = await Deno.makeTempDir();
   try {
     await shims(dir);
-    const partial = encodeNodeJoinDocument(DOC).split("\n").filter((l) => !l.startsWith("TOKEN=")).join("\n");
+    const partial = encodeNodeJoinDocument(DOC).split("\n").filter((l) => !l.startsWith("TOKEN ")).join("\n");
     assertEquals((await run(dir, [partial, "GO\n"])).code, 64);
-    assertEquals((await run(dir, ["EVIL=eA==\n\n", "GO\n"])).code, 64);
+    assertEquals((await run(dir, ["EVIL eA==\n\n", "GO\n"])).code, 64);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

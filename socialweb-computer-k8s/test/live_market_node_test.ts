@@ -197,11 +197,20 @@ async function kubectlApply(kubeconfig: string, manifest: string): Promise<Ran> 
 
 class FailNow extends Error {}
 
-// The guest's console is the only place its own reason for stopping appears, and
-// the agent's fatal exits are all of them: a guest whose agent refused to start
-// never writes /etc/resolv.conf, so nothing in it can be resolved and every
-// download the rest of cloud-init needs fails behind that. Naming it here turns
-// a claim that never leaves Joining into the sentence that says why.
+// The guest's console is the only place its own reason for stopping appears.
+//
+// The node image carries an agent that expects a node identity disk. A guest
+// rented for a cluster through the market has none, so that agent exits at boot
+// and its fatal is EXPECTED here: a cloud-init guest carries on without it, and
+// the join module gives the guest the resolver the agent would otherwise have
+// written. So the agent's words are a verdict only when the guest in fact never
+// got going - no tunnel subscriber started and no tunnel address reported.
+const PROGRESS = /Started tunnel-subscriber\.service|guest-onnetwork\.service|Deno was installed successfully/;
+
+// A guest needs minutes, not seconds: cloud-init installs deno, starts the tunnel
+// subscriber and reports its address before anything about the join can be said.
+const GUEST_GRACE_MS = 150_000;
+
 async function guestVerdict(consolePath: string): Promise<string | null> {
   let text: string;
   try {
@@ -210,6 +219,7 @@ async function guestVerdict(consolePath: string): Promise<string | null> {
     return null;
   }
   if (!/KCP_AGENT fatal|nodeagent: [^"]*fatal/.test(text)) return null;
+  if (PROGRESS.test(text)) return null;
   return `the guest's agent stopped the guest before it could join: ${
     text.split("\n").filter((l) => /KCP_AGENT fatal|nodeagent:/.test(l)).slice(-2).join(" | ")
   }\nlast 1200 bytes of ${consolePath}:\n${text.slice(-1200)}`;
@@ -798,7 +808,7 @@ Deno.test({
           }`,
         );
       }
-      if (typeof consolePath === "string") {
+      if (typeof consolePath === "string" && Date.now() - started > GUEST_GRACE_MS) {
         const verdict = await guestVerdict(consolePath);
         if (verdict) throw new FailNow(verdict);
       }

@@ -16,7 +16,7 @@ GATEWAY_TLS_PORT="${GATEWAY_TLS_PORT:-8443}"
 INGRESS_PROXY_HOST="${INGRESS_PROXY_HOST:-xrpc.fedproxy.com}"
 GATEWAY_AUDIENCE="${GATEWAY_AUDIENCE:-did:web:${ORIGIN}}"
 KUBECONFIG_MAX_TTL="${KUBECONFIG_MAX_TTL:-720h}"
-NODE_POLICY="${NODE_POLICY:-}"
+NODE_POLICY="${NODE_POLICY:-tangled-vouch}"
 DEFAULT_NODE_POLICY_ARGS='{"firstFree":true}'
 NODE_POLICY_ARGS="${NODE_POLICY_ARGS:-$DEFAULT_NODE_POLICY_ARGS}"
 RELAY_URL="${RELAY_URL:-}"
@@ -156,6 +156,7 @@ ${KCP_ORIGIN} {
     transport http {
       tls_trusted_ca_certs ${CA_DIR}/kcp.crt
       tls_server_name 127.0.0.1
+      versions 1.1
     }
   }
 }

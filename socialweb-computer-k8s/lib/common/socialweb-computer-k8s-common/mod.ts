@@ -152,7 +152,7 @@ export function encodeNodeJoinDocument(doc: NodeJoinDocument): string {
     TOKEN: doc.token,
     NODE_PASSWORD: doc.nodePassword,
   };
-  return NODE_JOIN_KEYS.map((k) => `${k}=${base64(values[k])}`).join("\n") + "\n\n";
+  return NODE_JOIN_KEYS.map((k) => `${k} ${base64(values[k])}`).join("\n") + "\n\n";
 }
 
 export function pinnedJoinToken(serverCASha256Hex: string, token: string): string {
