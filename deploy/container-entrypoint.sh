@@ -43,13 +43,20 @@ export SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE="${SOCIALWEB_CLUSTERPROVIDER_SUBSTRAT
 export SOCIALWEB_CLUSTERPROVIDER_NETWORK="${SOCIALWEB_CLUSTERPROVIDER_NETWORK:-pasta}"
 export SOCIALWEB_CLUSTERPROVIDER_IMAGE_OUT_DIR="$IMAGE_STORE"
 export SOCIALWEB_CLUSTERPROVIDER_IMAGE_CONFIG="$IMAGE_CONFIG"
-if [ "$SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE" = "qemu" ]; then
-	export SOCIALWEB_CLUSTERPROVIDER_QEMU="${SOCIALWEB_CLUSTERPROVIDER_QEMU:-/usr/local/bin/qemu-system-x86_64}"
-	unset SOCIALWEB_CLUSTERPROVIDER_FIRECRACKER
-else
-	export SOCIALWEB_CLUSTERPROVIDER_FIRECRACKER="${SOCIALWEB_CLUSTERPROVIDER_FIRECRACKER:-/usr/local/bin/firecracker}"
-fi
-export SOCIALWEB_CLUSTERPROVIDER_NODE_AGENT="${SOCIALWEB_CLUSTERPROVIDER_NODE_AGENT:-/usr/local/bin/kcpagent}"
+case "$SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE" in
+	qemu)
+		export SOCIALWEB_CLUSTERPROVIDER_QEMU="${SOCIALWEB_CLUSTERPROVIDER_QEMU:-/usr/local/bin/qemu-system-x86_64}"
+		unset SOCIALWEB_CLUSTERPROVIDER_FIRECRACKER
+		export SOCIALWEB_CLUSTERPROVIDER_NODE_AGENT="${SOCIALWEB_CLUSTERPROVIDER_NODE_AGENT:-/usr/local/bin/kcpagent}"
+		;;
+	firecracker)
+		export SOCIALWEB_CLUSTERPROVIDER_FIRECRACKER="${SOCIALWEB_CLUSTERPROVIDER_FIRECRACKER:-/usr/local/bin/firecracker}"
+		export SOCIALWEB_CLUSTERPROVIDER_NODE_AGENT="${SOCIALWEB_CLUSTERPROVIDER_NODE_AGENT:-/usr/local/bin/kcpagent}"
+		;;
+	*)
+		unset SOCIALWEB_CLUSTERPROVIDER_FIRECRACKER SOCIALWEB_CLUSTERPROVIDER_QEMU SOCIALWEB_CLUSTERPROVIDER_IMAGE_OUT_DIR SOCIALWEB_CLUSTERPROVIDER_IMAGE_CONFIG SOCIALWEB_CLUSTERPROVIDER_NETWORK
+		;;
+esac
 export SOCIALWEB_CLUSTERPROVIDER_CLOUD_CONTROLLER_MANAGER="${SOCIALWEB_CLUSTERPROVIDER_CLOUD_CONTROLLER_MANAGER:-/usr/local/bin/socialweb-cloud-controller-manager}"
 export SOCIALWEB_CLUSTERPROVIDER_STATE_DIR="${SOCIALWEB_CLUSTERPROVIDER_STATE_DIR:-$STATE_DIR/clusterprovider}"
 export SOCIALWEB_CLUSTERPROVIDER_LEASE_PATH="${SOCIALWEB_CLUSTERPROVIDER_LEASE_PATH:-$STATE_DIR/leases.json}"
@@ -59,13 +66,20 @@ export SOCIALWEB_CLUSTERPROVIDER_DATASTORE_HAS_ROW="${SOCIALWEB_CLUSTERPROVIDER_
 export SOCIALWEB_CLUSTERPROVIDER_AUDIT_POLICY="${SOCIALWEB_CLUSTERPROVIDER_AUDIT_POLICY:-$AUDIT_POLICY}"
 
 BOOTSTRAP=0
-if [ -z "${SOCIALWEB_CLUSTERPROVIDER_JOIN:-}" ]; then
+if [ -z "${SOCIALWEB_CLUSTERPROVIDER_JOIN:-}" ] && [ "${SOCIALWEB_CONTAINER_BOOTSTRAP:-1}" = "1" ]; then
 	SOCIALWEB_CLUSTERPROVIDER_JOIN="${SOCIALWEB_CONTAINER_CLUSTER:-socialweb}"
 	BOOTSTRAP=1
 fi
-export SOCIALWEB_CLUSTERPROVIDER_JOIN
+if [ -n "${SOCIALWEB_CLUSTERPROVIDER_JOIN:-}" ]; then
+	export SOCIALWEB_CLUSTERPROVIDER_JOIN
+fi
 
-mkdir -p "$KCP_ROOT" "$MINT_DIR" "$STATE_DIR/clusterprovider" "$STATE_DIR/stage" "$ROOT_VAULT_DIR"
+KCP_BIND="${SOCIALWEB_CONTAINER_KCP_BIND:-127.0.0.1}"
+DOOR_DIR="${SOCIALWEB_CONTAINER_DOOR_DIR:-}"
+DOOR="${SOCIALWEB_CONTAINER_DOOR:-on}"
+DOOR_PID=""
+
+mkdir -p "$KCP_ROOT" "$MINT_DIR" "$STATE_DIR/clusterprovider" "$STATE_DIR/stage" "$ROOT_VAULT_DIR" "$STATE_DIR/door"
 
 say() {
 	echo "container: $*"
@@ -228,7 +242,7 @@ say "the root vault holds the cross-deployment credentials on $ROOT_VAULT_ADDR; 
 say "starting kcp"
 kcp start \
 	--root-directory="$KCP_ROOT" \
-	--bind-address=127.0.0.1 \
+	--bind-address="$KCP_BIND" \
 	--secure-port=6443 \
 	--feature-gates=WorkspaceMounts=true \
 	--audit-policy-file=/opt/socialweb/deploy/kcp-audit-policy.yaml \
@@ -298,17 +312,43 @@ fi
 /usr/local/bin/socialweb-clusterprovider &
 PROVIDER_PID=$!
 
+start_door() {
+	[ "$DOOR" = "on" ] && [ -n "$DOOR_DIR" ] && [ -d "$DOOR_DIR" ] || return 0
+	say "starting the k8s door from $DOOR_DIR"
+	if [ "$SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE" = "market" ]; then
+		export KCP_KUBECONFIG="${KCP_KUBECONFIG:-$SOCIALWEB_KCP_KUBECONFIG}"
+	fi
+	(
+		cd "$DOOR_DIR"
+		export HTTP_PORT="${SOCIALWEB_CONTAINER_DOOR_PORT:-8788}"
+		export SERVE_ADDR="${SOCIALWEB_CONTAINER_DOOR_ADDR:-0.0.0.0}"
+		export STATE_DIR="$STATE_DIR/door"
+		export WEB_DIR="$DOOR_DIR/web"
+		export GATEWAY_URL="http://$SOCIALWEB_GATEWAY_ADDR"
+		export GATEWAY_AUDIENCE="${GATEWAY_AUDIENCE:-${SOCIALWEB_GATEWAY_AUDIENCES%%,*}}"
+		export KCP_PUBLIC_HOST="${KCP_PUBLIC_HOST:-${SOCIALWEB_GATEWAY_KCP_PUBLIC_HOST:-}}"
+		export PLC_DIRECTORY_URL="${PLC_DIRECTORY_URL:-$SOCIALWEB_GATEWAY_PLC_URL}"
+		exec deno run -A --unstable-kv --unstable-worker-options \
+			--preload hono-socialweb-computer-k8s/undici-preload.ts hono-socialweb-computer-k8s/mod.ts
+	) &
+	DOOR_PID=$!
+}
+
+start_door
+
 stop_children() {
-	kill -TERM "$KCP_PID" "$GATEWAY_PID" "$TLS_PID" "$PROVIDER_PID" "$ROOT_VAULT_PID" 2>/dev/null || true
+	kill -TERM "$KCP_PID" "$GATEWAY_PID" "$TLS_PID" "$PROVIDER_PID" "$ROOT_VAULT_PID" $DOOR_PID 2>/dev/null || true
 }
 
 trap 'stop_children; exit 0' TERM INT
 
-say "supervising rootvault=$ROOT_VAULT_PID kcp=$KCP_PID gateway=$GATEWAY_PID tls=$TLS_PID clusterprovider=$PROVIDER_PID"
+CHILDREN="rootvault:$ROOT_VAULT_PID kcp:$KCP_PID gateway:$GATEWAY_PID tls:$TLS_PID clusterprovider:$PROVIDER_PID"
+[ -n "$DOOR_PID" ] && CHILDREN="$CHILDREN door:$DOOR_PID"
+say "supervising $CHILDREN"
 while :; do
-	for child in "rootvault $ROOT_VAULT_PID" "kcp $KCP_PID" "gateway $GATEWAY_PID" "tls $TLS_PID" "clusterprovider $PROVIDER_PID"; do
-		name="${child%% *}"
-		pid="${child##* }"
+	for child in $CHILDREN; do
+		name="${child%%:*}"
+		pid="${child##*:}"
 		if ! kill -0 "$pid" 2>/dev/null; then
 			say "$name exited"
 			stop_children

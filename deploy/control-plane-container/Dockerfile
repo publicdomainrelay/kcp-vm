@@ -23,6 +23,14 @@ RUN --mount=type=bind,from=goroot,target=/go/toolchain,ro \
     --mount=type=cache,id=gocache,target=/go/cache \
     sh -ec 'if [ ! -d /go/pkg/mod/k8s.io ]; then cp -a /host-mod/. /go/pkg/mod/; fi; go build -o /usr/local/bin/socialweb-computer-kcp-check-host ./cmd/socialweb-computer-kcp-check-host && go build -o /usr/local/bin/socialweb-nodeimage ./cmd/socialweb-nodeimage && go build -o /usr/local/bin/socialweb-gateway ./cmd/socialweb-gateway && go build -o /usr/local/bin/socialweb-credential ./cmd/socialweb-credential && go build -o /usr/local/bin/socialweb-clusterprovider ./cmd/socialweb-clusterprovider && go build -o /usr/local/bin/socialweb-cloud-controller-manager ./cmd/socialweb-cloud-controller-manager && go build -o /usr/local/bin/socialweb-vault ./cmd/socialweb-vault && go build -ldflags "-s -w" -buildvcs=false -o /usr/local/bin/kcpagent ./cmd/socialweb-nodeagent'
 
+FROM gobuild AS credentials
+
+RUN --mount=type=bind,from=goroot,target=/go/toolchain,ro \
+    --mount=type=bind,from=gomod,target=/host-mod,ro \
+    --mount=type=cache,id=gomod,target=/go/pkg/mod \
+    --mount=type=cache,id=gocache,target=/go/cache \
+    sh -ec 'mkdir -p /downloads; for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do os=${target%/*}; arch=${target#*/}; GOOS=$os GOARCH=$arch go build -ldflags "-s -w" -buildvcs=false -o /downloads/socialweb-credential-$os-$arch ./cmd/socialweb-credential; done; ls -la /downloads'
+
 FROM ${FEDORA} AS tools
 
 RUN dnf install -y --setopt=install_weak_deps=False \
@@ -137,6 +145,56 @@ WORKDIR /src
 USER 1000:1000
 
 CMD ["socialweb-computer-kcp-check-host"]
+
+FROM controlplane AS k8s
+
+ARG DENO_VERSION=2.9.3
+
+USER root
+
+RUN dnf install -y --setopt=install_weak_deps=False yq iproute socat openssl unzip \
+ && dnf clean all \
+ && curl -fsSL "https://github.com/denoland/deno/releases/download/v${DENO_VERSION}/deno-x86_64-unknown-linux-gnu.zip" -o /tmp/deno.zip \
+ && unzip -o /tmp/deno.zip -d /usr/local/bin \
+ && rm /tmp/deno.zip \
+ && chmod 0755 /usr/local/bin/deno
+
+COPY --from=gobuild /usr/local/bin/socialweb-gateway /usr/local/bin/socialweb-gateway
+
+COPY --from=gobuild /usr/local/bin/socialweb-credential /usr/local/bin/socialweb-credential
+
+COPY --from=gobuild /usr/local/bin/socialweb-clusterprovider /usr/local/bin/socialweb-clusterprovider
+
+COPY --from=gobuild /usr/local/bin/socialweb-cloud-controller-manager /usr/local/bin/socialweb-cloud-controller-manager
+
+COPY --from=gobuild /usr/local/bin/socialweb-vault /usr/local/bin/socialweb-vault
+
+COPY --from=k8stree / /opt/org-root/
+
+COPY --from=credentials /downloads/ /opt/org-root/socialweb-computer-kcp/socialweb-computer-k8s/web/downloads/
+
+COPY deploy/ /opt/socialweb/deploy/
+
+COPY deploy/container-entrypoint.sh /usr/local/bin/container-entrypoint
+
+ENV DENO_DIR=/opt/deno-dir \
+    SOCIALWEB_CONTAINER_DOOR_DIR=/opt/org-root/socialweb-computer-kcp/socialweb-computer-k8s
+
+RUN install -d -o kcp -g kcp -m 0755 /opt/deno-dir \
+ && chown -R kcp:kcp /opt/org-root \
+ && install -d -o kcp -g kcp -m 0700 /var/lib/socialweb /var/lib/socialweb/kcp /var/lib/socialweb/mint /var/lib/socialweb/clusterprovider /var/lib/socialweb/door \
+ && chmod 0755 /usr/local/bin/container-entrypoint /usr/local/bin/socialweb-gateway /usr/local/bin/socialweb-credential /usr/local/bin/socialweb-clusterprovider /usr/local/bin/socialweb-cloud-controller-manager /usr/local/bin/socialweb-vault
+
+USER 1000:1000
+
+RUN cd "$SOCIALWEB_CONTAINER_DOOR_DIR" \
+ && deno install --entrypoint hono-socialweb-computer-k8s/mod.ts \
+ && deno cache hono-socialweb-computer-k8s/undici-preload.ts hono-socialweb-computer-k8s/mod.ts \
+ && ls web/downloads
+
+ENTRYPOINT ["/usr/local/bin/container-entrypoint"]
+
+CMD []
 
 FROM controlplane AS computer
 
