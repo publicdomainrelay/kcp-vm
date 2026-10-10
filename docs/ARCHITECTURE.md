@@ -1898,6 +1898,18 @@ because it bounds a mechanism the rest of this document leans on.
   belonging to substrates this process is not configured for, or a stated decision that changing
   substrate means changing state dir. `NEXT.yaml` MARKET-1.
 
+- **MARKET-6: a Node whose guest the door reaped outlives the clusterprovider's restart, and pods are
+  scheduled onto it.** The door's restart releases the claims it holds and destroys their machines, and
+  writes that into each claim's status. The provider acts on it only for the nodes IT holds
+  (`confirmHeld`), and a provider that has just started holds nothing - so the previous generation's
+  `Node` objects stay in the tenant cluster reading `Ready` and take pods. MEASURED on 2026-10-06,
+  forty seconds after a deploy restarted the door: pipeline 74's four runner pods were scheduled onto
+  `...-node6`, sat `Pending` for 58 s, and the runner gave up with `Job failed (system failure):
+  prepare environment: waiting for pod running: pods "runner-w93ufg0qn-project-1-concurrent-3-nuixd3cp"
+  not found` - the pod disappeared when the `Node` was finally deleted. Four of five jobs failed that
+  way, where a pipeline 25 minutes earlier with no restart in front of it had all five running at once
+  on five distinct nodes. `NEXT.yaml` MARKET-6, with the reconciliation that would close it.
+
 - **MARKET-5: a cluster's first node is named at construction, so a restart still claims a spent
   name.** A node name whose claim has ended is skipped when the NEXT node is named (section 15,
   MARKET-4's sibling), but the FIRST node is not named by that rule at all: `nodeHosts.forCluster`

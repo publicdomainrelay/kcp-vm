@@ -97,6 +97,28 @@ open:
       than against 1, and a test that starts a cluster whose `node1` claim reads `Failed` and asserts
       the first provision names `node2`.
 
+  - id: MARKET-6
+    title: A Node whose guest the door reaped outlives the clusterprovider's restart, and pods are scheduled onto it.
+    body: >
+      The door's own restart releases the claims it holds and destroys their machines, and it says so in
+      each claim's status. The clusterprovider acts on that only for nodes IT holds (`confirmHeld` reads
+      `Fatal` and tears the node down); a provider that has just started holds nothing, so the `Node`
+      objects of the previous generation stay in the tenant cluster reading `Ready`, and the scheduler
+      places pods on them. Measured on 2026-10-06, forty seconds after a deploy restarted the door:
+      pipeline 74's four runner pods were scheduled onto `...-node6` and sat `Pending` for 58 s until the
+      runner gave up with `Job failed (system failure): prepare environment: waiting for pod running:
+      pods "runner-w93ufg0qn-project-1-concurrent-3-nuixd3cp" not found` -- the pod vanished when the
+      `Node` was finally deleted. Four of that pipeline's five jobs failed this way; a pipeline run 25
+      minutes earlier, with no restart in front of it, had all five running at once on five distinct
+      nodes. The same cluster afterwards listed `node1`, `node10`, `node18` and `node19`, so the corpses
+      were removed rather than recovered.
+    instrument: >
+      A startup reconciliation that lists the tenant cluster's Nodes and deletes, or refuses to count, any
+      whose claim is gone or has ENDED -- the market substrate's half of what `sweepNodeRecords` does for
+      a guest substrate and skips here (MARKET-1). Closing reading: restart the door with a live node,
+      then confirm `kubectl get nodes` shows no Node whose claim the door released, and that a runner job
+      admitted in the first minute after the restart is not placed on one.
+
   - id: MARKET-1
     title: The market substrate's startup sweep is a no-op, so a state dir a guest substrate left behind is never reaped.
     body: >
