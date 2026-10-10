@@ -1,0 +1,42 @@
+{
+  "repository": "github.com/johnandersen777/deno-kcp",
+  "ref": "pr-2",
+  "commit": "f5b7c10cb12877a28355807748e04174f0aff3db",
+  "files": [
+    {"path": "deploy/denokcp/denojob-apiresourceschema.yaml", "upstream": "deploy/denojob-apiresourceschema.yaml", "sha256": "6d1e78c5257031f6ccb452c879dc9cde2608430be443360d0b8248d698aebe3c"},
+    {"path": "deploy/denokcp/denopod-apiresourceschema.yaml", "upstream": "deploy/denopod-apiresourceschema.yaml", "sha256": "d1623ba55c43326e5f0b2179823ba0cf7bab6bfd82de1ce1e946eef6bf64e42d"},
+    {"path": "deploy/denokcp/denorun-apiresourceschema.yaml", "upstream": "deploy/denorun-apiresourceschema.yaml", "sha256": "d5b2eb7b737fad528c03f7c49c5c15c228cb8c5e70088956c39b570e7a3c86b5"},
+    {"path": "deploy/denokcp/denoruntime-apiexport.yaml", "upstream": "deploy/denoruntime-apiexport.yaml", "sha256": "f547475abfdcada8f05b87266f37f36c1c3396cefbbd13bc12a27ac072c1e846"},
+    {"path": "deploy/denokcp/openbao-apiresourceschema.yaml", "upstream": "deploy/openbao-apiresourceschema.yaml", "sha256": "9738f720dd01d763b0482c73acc08f144e97620164c98ead9b747e585d680392"},
+    {"path": "deploy/denokcp/policyengine-apiresourceschema.yaml", "upstream": "deploy/policyengine-apiresourceschema.yaml", "sha256": "1a030b4cb02b119d88ae87a4b54821d2417deced0450b5f77f3bc5bae7796bfd"},
+    {"path": "deploy/denokcp/policyworkflowpod-apiresourceschema.yaml", "upstream": "deploy/policyworkflowpod-apiresourceschema.yaml", "sha256": "bda88d49cea3d5db2b1ed0f06c433fa4034a18e17379ba69c81429e5e05ce4fc"},
+    {"path": "deploy/denokcp/policyworkflowrun-apiexport.yaml", "upstream": "deploy/policyworkflowrun-apiexport.yaml", "sha256": "2150973b4bb14990a0c9d11d53d4280879d2de89a3ea3dd2a91294d310714428"},
+    {"path": "deploy/denokcp/policyworkflowrun-apiresourceschema.yaml", "upstream": "deploy/policyworkflowrun-apiresourceschema.yaml", "sha256": "32c59dad0c643002e5318bc97f5d8a673eae74097a2074876d3f414b87b0bacc"},
+    {"path": "deploy/denokcp/runtrigger-apiresourceschema.yaml", "upstream": "deploy/runtrigger-apiresourceschema.yaml", "sha256": "fe98c2fccda0d4f8e72c538716e6c22844b05b94c61d17e3e0106da42db8a5c3"},
+    {"path": "deploy/denokcp/workspacetype-denoruntime.yaml", "upstream": "deploy/workspacetype-denoruntime.yaml", "sha256": "5d8437728f8009a35f02d75a38706bbabca2a6d44f87fb48ac56f6852825eb56"},
+    {"path": "deploy/denokcp/workspacetype-workflow.yaml", "upstream": "deploy/workspacetype-workflow.yaml", "sha256": "59c625a3ce5fa73227c18d251ced946b50d0ed9c67bf80354ed6aebd1bfd70a3"},
+    {"path": "deploy/denokcp/install-provider.sh", "upstream": "deploy/install-provider.sh", "sha256": "098a3df5fdc736f5404b410bdf5d1a9a985b899968571f528b66f98339e63f30"},
+    {"path": "deploy/denokcp/start-kcp.sh", "upstream": "deploy/start-kcp.sh", "sha256": "a659b89fc7450fc8995020a188854d1b3b40986e4b943bbc82ceb0a06d7c4c48"},
+    {"path": "deploy/denokcp/start-openbao.sh", "upstream": "deploy/start-openbao.sh", "sha256": "034d1b0ef0dce313e79025ed3c03888ba20b8ab2a8bd153ff0cdc83abf81e981"},
+    {"path": "deploy/denokcp/stop-kcp.sh", "upstream": "deploy/stop-kcp.sh", "sha256": "7cb994e540a611c5091f53c6b9849990834efd4dc6082dc0edbacac752025da4"},
+    {"path": "deploy/examples/atproto/market/00-workspaces.yaml", "upstream": "deploy/examples/atproto/market/00-workspaces.yaml", "sha256": "1600fb93acba1a4fe7619a99eeb127e5356674a2d78e09d6b184d41027025a66"},
+    {"path": "deploy/examples/atproto/market/10-rbac.yaml", "upstream": "deploy/examples/atproto/market/10-rbac.yaml", "sha256": "e09560ac1a9740c474885158cd167df6a65d04a2a7738f288f26ed00b97c44fe"},
+    {"path": "deploy/examples/atproto/market/15-openbao-alice.yaml", "upstream": "deploy/examples/atproto/market/15-openbao-alice.yaml", "sha256": "8de6f577e60d144eaa186b56447206a1eed0d638bca34b82fbc5fd4e8de39ac5"},
+    {"path": "deploy/examples/atproto/market/15-openbao-bob.yaml", "upstream": "deploy/examples/atproto/market/15-openbao-bob.yaml", "sha256": "09a2fd10c5b716cc6f2929984558bc551a3faeddb092e9dff0153723fdaade49"},
+    {"path": "deploy/examples/atproto/market/15-openbao-global.yaml", "upstream": "deploy/examples/atproto/market/15-openbao-global.yaml", "sha256": "6887e8f675dce1278ac7294c54214d2d0b3319cb5188bae05c6a2d28cb9b327b"},
+    {"path": "deploy/examples/atproto/market/15-openbao-relay.yaml", "upstream": "deploy/examples/atproto/market/15-openbao-relay.yaml", "sha256": "575e068e744663da08f9bd9c206ff8bb6e9a4d60b0283f306a42c8149a0f25a3"},
+    {"path": "deploy/examples/atproto/market/20-global-plc.yaml", "upstream": "deploy/examples/atproto/market/20-global-plc.yaml", "sha256": "005c1678eee5c6aa048cddcb071eca17dace45fa947d7af7e6ab40f85097994b"},
+    {"path": "deploy/examples/atproto/market/30-relay-relay.yaml", "upstream": "deploy/examples/atproto/market/30-relay-relay.yaml", "sha256": "73dd63788a5ed4172ec8244a3f7d8e5763cc4702ecc3f5b3f8b9eeefa2a658e1"},
+    {"path": "deploy/examples/atproto/market/40-alice-pds.yaml", "upstream": "deploy/examples/atproto/market/40-alice-pds.yaml", "sha256": "b37909f078d9eb9ce0ecf9402a307f0417a993b80902c2c51a0607b69bf0eb07"},
+    {"path": "deploy/examples/atproto/market/50-verifier.yaml", "upstream": "deploy/examples/atproto/market/50-verifier.yaml", "sha256": "2ad531fa6f4cd24d8e0f8af3a47fe382a2e09983a5347f5f6db5960af2e5f180"},
+    {"path": "deploy/examples/atproto/market/60-bob-pds.yaml", "upstream": "deploy/examples/atproto/market/60-bob-pds.yaml", "sha256": "529b9312415c29781aee904962c3137c61594747f88642310a8c30864491aad3"},
+    {"path": "deploy/examples/atproto/market/70-bidder.yaml", "upstream": "deploy/examples/atproto/market/70-bidder.yaml", "sha256": "d7172d39f394b749d11a4ded63160eda93eff68ddc8c1be505aa93f282cf5cca"},
+    {"path": "deploy/examples/atproto/market/README.md", "upstream": "deploy/examples/atproto/market/README.md", "sha256": "d34fd4fd7ed96943eadf2ffec2a24aa8041ac9981b33ff2d16221d606e9318ee", "adapted": "em dashes written as -- (this repository is ASCII only)"},
+    {"path": "deploy/examples/atproto/market/apply.sh", "upstream": "deploy/examples/atproto/market/apply.sh", "sha256": "7f660769f0df0dc5ff1305738f6c361faa3853102cd895437efd56490de707fb", "adapted": "deno-kcp's deploy scripts live under deploy/denokcp here"},
+    {"path": "deploy/examples/atproto/market/accept.sh", "upstream": "deploy/examples/atproto/market/accept.sh", "sha256": "b5909600c4a128a5b0285f23bc20500737cc43469f8ffa6bbbbe2bf448f7f459", "adapted": "deno-kcp's deploy scripts live under deploy/denokcp here; the provider is built by deploy/denokcp/build-provider.sh at the recorded commit or named by DENO_KCP_PROVIDER; KEEP_ACCEPT_ROOT keeps the run's logs"}
+  ],
+  "local": [
+    {"path": "deploy/denokcp/vendor.json", "why": "this record"},
+    {"path": "deploy/denokcp/build-provider.sh", "why": "builds the deno-kcp provider from the recorded commit without touching the deno-kcp working copy"}
+  ]
+}

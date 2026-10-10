@@ -1,0 +1,112 @@
+apiVersion: apis.kcp.io/v1alpha1
+kind: APIResourceSchema
+metadata:
+  name: v1alpha1-3.denopods.deno.computer
+spec:
+  group: deno.computer
+  names:
+    kind: DenoPod
+    listKind: DenoPodList
+    plural: denopods
+    singular: denopod
+    shortNames:
+      - dpod
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      schema:
+        type: object
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            properties:
+              denoJson:
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+              denoLock:
+                type: string
+              script:
+                type: string
+              permissions:
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+              serviceAccount:
+                type: object
+                properties:
+                  name:
+                    type: string
+                  namespace:
+                    type: string
+              apiServer:
+                type: string
+              env:
+                type: object
+                additionalProperties:
+                  type: string
+              restartPolicy:
+                type: string
+                enum:
+                  - Always
+                  - OnFailure
+                  - Never
+              readinessProbe:
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+              livenessProbe:
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+              activeDeadlineSeconds:
+                type: integer
+                format: int64
+              ttlSecondsAfterFinished:
+                type: integer
+                format: int64
+            required:
+              - script
+          status:
+            type: object
+            properties:
+              phase:
+                type: string
+                enum:
+                  - Pending
+                  - Running
+                  - Succeeded
+                  - Failed
+              runID:
+                type: string
+              restarts:
+                type: integer
+                format: int32
+              startTime:
+                type: string
+                format: date-time
+              completionTime:
+                type: string
+                format: date-time
+              exitCode:
+                type: integer
+                format: int32
+              message:
+                type: string
+              outputs:
+                type: object
+                additionalProperties:
+                  type: string
+              ready:
+                type: boolean
+              conditions:
+                type: array
+                items:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true

@@ -1,0 +1,13 @@
+apiVersion: tenancy.kcp.io/v1alpha1
+kind: WorkspaceType
+metadata:
+  name: workflow
+spec:
+  extend:
+    with:
+      - name: universal
+        path: root
+
+  defaultAPIBindings:
+    - export: policyworkflowruns
+      path: root:deno-provider
