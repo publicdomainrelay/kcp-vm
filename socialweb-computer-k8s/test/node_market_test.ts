@@ -113,6 +113,7 @@ function harness(behaviour: "hold" | "exit" | "no_bids" = "hold", reapConfirmed 
       contracts.push(o);
       const logger = o.logger as { info(e: string, m: Record<string, unknown>): void };
       logger.info("vm_record_created", { uri: `at://owner/vm/${o.vmName}`, cid: "c" });
+      logger.info("rfp_created", { uri: `at://owner/rfp/${o.vmName}`, cid: "c" });
       if (behaviour === "no_bids") return { event: "no_bids", bids: 0 };
       logger.info("accept_created", { uri: "at://owner/accept/1", cid: "c" });
       logger.info("submitAccept_result", { receiptUri: "at://bidder/receipt/1", receiptCid: "rc", submitEventRef: "https://bidder/xrpc" });
@@ -251,6 +252,17 @@ Deno.test("no bids is a failure that says so", async () => {
   await settle();
   assertEquals(h.store.phase("ci-node1"), "Failed");
   assertEquals(h.store.claims.get("ci-node1")!.status.message, "no bids arrived for this node");
+});
+
+Deno.test("a no-bids end keeps the rfp it asked with and names no accept", async () => {
+  const h = harness("no_bids");
+  h.store.put(claim("ci-node1"));
+  await h.fulfiller.pass();
+  await settle();
+  const status = h.store.claims.get("ci-node1")!.status;
+  assertEquals(status.phase, "Failed");
+  assertEquals(status.contract?.rfpUri, "at://owner/rfp/ci-node1");
+  assertEquals(status.contract?.acceptUri, undefined);
 });
 
 Deno.test("a live claim this process never started is reaped, never adopted", async () => {
