@@ -271,6 +271,64 @@ own dial line, and a tail that has already evicted it fails loudly rather than p
 BEST-EFFORT with its errors dropped, because returning them would make `exec` stop copying and close
 the child's stdout — a full log disk must not SIGPIPE the apiserver.
 
+### A market bidder is a template unit, one instance per account
+
+No bidder runs on prod (plan 0005 M0-PROD-BIDDER); both doors rely on bidders their users run. A
+host that runs them is prepared by `scripts/deploy-firecracker-bidder.sh` (over ssh, or `--local`
+through `sudo -n`; `--dry-run` prints every step) and runs one systemd SYSTEM template instance per
+atproto account:
+
+```
+sudo systemctl enable --now socialweb-computer-bidder@<handle>.service
+journalctl -u socialweb-computer-bidder@<handle> -f     # the QR and its qr.fedfork.com URL
+```
+
+- **Files.** `deploy/bidder/socialweb-computer-bidder@.service` is installed as
+  `/etc/systemd/system/socialweb-computer-bidder@.service`; `deploy/bidder/socialweb-computer-bidder-run`
+  as `/usr/local/libexec/socialweb-computer-bidder-run`; the host's shared settings (paths, policy,
+  firecracker flags, `DENO_DIR`) are rendered by the script into
+  `/etc/socialweb-computer-bidder/common.env`; an optional `/etc/socialweb-computer-bidder/<handle>.env`
+  overrides any of them for one account. The script never enables an instance and never writes
+  anything of an account's; it restarts a running instance only when one of those three files changed.
+- **%i is the handle, and only %i.** `%I` would unescape `-` to `/`, so a hyphenated handle would name
+  another directory. The launcher refuses (exit 78, `RestartPreventExitStatus=78`) an instance that is
+  not a lowercase handle with at least one dot, which also keeps `host`, the shared directory, from
+  ever being an instance.
+- **State.** `StateDirectory=socialweb-computer-bidder/%i` (mode 0711, so a guest's container, uid 1000,
+  can traverse to `guests/` but not list) holds `secrets/` (0700: `oauth-session.json`,
+  `bidder-key.hex`), `pds/` (`--pds-state-path`; the QR branch of `hono-bidder/mod.ts` does not read it
+  today, it is passed so a mode that does stays per account) and `guests/` (0777, the provider's work
+  root, the mode the retired fixed unit measured as working). The session file is written with the
+  process umask, which is why it sits in a 0700 directory instead of relying on its own mode. What all
+  instances share (image store, image inputs, `socialweb-nodeimage`, module cache, undici preload) is
+  under `/var/lib/socialweb-computer-bidder/host`, the unit's one `ReadWritePaths=`; code and a deno
+  binary of its own are under `/opt/socialweb-computer-bidder`. Every instance runs as `swc-bidder`
+  (in the docker group, `SupplementaryGroups=docker`), so instances are separated by directory, not uid.
+- **Sign-in is QR only; no password exists anywhere.** The launcher runs the bidder with
+  `--atproto-oauth-qr --oauth-session-file <state>/secrets/oauth-session.json` and never
+  `--atproto-handle`. The bidder's QR flow signs in whichever account scans, so the launcher holds the
+  sign-in to %i itself: it relays every line of the bidder's output to the journal, reads the handle
+  from `oauth_qr_session_restored` (logged by `tryRestoreOAuthQRSession`) or `oauth_qr_session_ready`
+  (a fresh scan), and on another handle, or on `bidder_ready` with no handle seen, logs
+  `bidder_account_refused`, deletes that session, stops the bidder and exits 1 so the unit restarts
+  into a fresh QR. The comparison is against the handle the session reports, case-insensitively; it
+  is not a fresh DID-document resolution. An expired session makes the bidder delete the file and exit
+  1, and `Restart=always`, `RestartSec=10`, `StartLimitIntervalSec=0` bring the QR back.
+- **More than one instance per host** shares the guest slice budget, and each needs its own
+  `BIDDER_FC_RANGE_BASE` in its `<handle>.env`, or their guests are handed the same addresses.
+  `BIDDER_SERVE_PORT` defaults to 0 for the same reason.
+- **docker's cgroup parent.** `MANAGE_DOCKER_DAEMON=no` writes `socialweb-guests.slice` but leaves
+  `/etc/docker/daemon.json` alone and does not restart docker, for a host whose docker runs other
+  containers; guests are then NOT bounded by the slice, and the script says so.
+- **The shipped image is the build host's answer.** The script asks
+  `socialweb-nodeimage -ensure -json -reuse-stale` locally which image the configuration names and
+  takes the kernel paths from that answer, so a configuration whose kernel fields say `discover`
+  ships; the retired fixed-unit script took the first `sha256-*` directory and refused `discover`.
+- **A bidder waiting for its QR has no key on disk yet.** `hono-bidder/mod.ts` writes
+  `--private-key-hex-path` only after sign-in, so every restart before a scan registers a new
+  did:plc on the PLC directory. Measured on hat-8 2026-10-07: the waiting instance's `secrets/` held no
+  `bidder-key.hex`. That is atproto-market's to change, not this unit's.
+
 ## 6. CRDs and the API surface
 
 Every CRD here is INTERNAL. No CRD is user-facing: the user's surface is the mounted Kubernetes API

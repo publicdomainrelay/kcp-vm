@@ -124,8 +124,17 @@ items:
       System template unit (user chose it over a user unit because firecracker needs kvm and
       runuser); %i is the atproto handle; QR sign-in is read from the journal by the operator;
       enabled with systemctl enable --now socialweb-computer-bidder@<handle>.service.
-    status: todo
-    evidence: []
+      Decided by Claude, user may veto: the launcher holds the QR sign-in to %i by reading the handle
+      the bidder logs and refusing (session deleted, exit 1, restart into a fresh QR) any other
+      account; the shared dir is /var/lib/socialweb-computer-bidder/host and every instance runs as
+      swc-bidder; MANAGE_DOCKER_DAEMON=no leaves daemon.json alone on a host with other containers.
+    status: done
+    evidence:
+      - "commit 51f9000 The bidder is a template unit keyed by the account's handle (deploy/bidder/socialweb-computer-bidder@.service, deploy/bidder/socialweb-computer-bidder-run, scripts/deploy-firecracker-bidder.sh reworked with --local and --dry-run, test/bidder_unit_test.go)"
+      - "tests watched to fail (files absent, script still writing bidder.env and an account secret) then pass: TestTheBidderUnitIsATemplateKeyedByTheAccountHandle, TestNoAccountSecretReachesTheBidder, TestTheBidderDeployInstallsTheTemplate, TestTheLauncherSignsInByQRIntoItsOwnStateDirectory, TestTheLauncherRefusesAnAccountOtherThanItsInstance (restored, scanned, unnamed), TestTheLauncherAcceptsTheHandleInAnyCase, TestTheLauncherRefusesAnInstanceThatIsNotAHandle, TestTheBidderUnitVerifies (systemd-analyze verify, any output fails); deploy/check.sh --fast green"
+      - "hat-8 2026-10-07T17:10Z deploy-firecracker-bidder.sh --local (MANAGE_DOCKER_DAEMON=no, prod untouched): rc 0, store verified, template/launcher/common.env installed, module cache warm, target ensure -reuse-stale answered reused from sha256-6e4f4f95...; second run rc 0 with all three unchanged and nothing restarted"
+      - "hat-8 2026-10-07T17:11:24Z systemctl start socialweb-computer-bidder@bobvmbuilder.bsky.social with its session seeded as a 0600 swc-bidder copy of ~/.cache/pdr-market/bob-bidder-oauth-session.json: restore refused by the PDS (invalid_grant, Refresh token replayed -- the source file's refresh token was already spent, the source is unchanged), bidder deleted the copy, journal at 17:11:26Z shows the 60-char = frame, the QR, https://qr.fedfork.com/#oauth=did%3Aplc%3Awadxdef7inpvtaen77n7cfxw&n=... and oauth_qr_awaiting_session; bidder_ready not reached without a scan"
+      - "hat-8 2026-10-07T17:11:38Z systemctl disable --now: is-active inactive, is-enabled disabled, 0 swc-bidder processes; template, launcher, common.env and bobvmbuilder.bsky.social.env (BIDDER_POLICY=tangled-vouch) left installed"
   - id: M2-EVENT-CORE
     milestone: M2
     title: ABC-layered event-driven requester core in atproto-market

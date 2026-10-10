@@ -1,0 +1,36 @@
+[Unit]
+Description=Compute-market bidder for %i, placing Firecracker guests
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=swc-bidder
+Group=swc-bidder
+SupplementaryGroups=docker
+StateDirectory=socialweb-computer-bidder/%i
+StateDirectoryMode=0711
+RuntimeDirectory=socialweb-computer-bidder/%i
+RuntimeDirectoryMode=0700
+WorkingDirectory=%S/socialweb-computer-bidder/%i
+EnvironmentFile=/etc/socialweb-computer-bidder/common.env
+EnvironmentFile=-/etc/socialweb-computer-bidder/%i.env
+Environment=HOME=%S/socialweb-computer-bidder/%i
+ExecStart=/usr/local/libexec/socialweb-computer-bidder-run %i
+Restart=always
+RestartSec=10
+RestartPreventExitStatus=78
+LimitNOFILE=65536
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+ReadWritePaths=/var/lib/socialweb-computer-bidder/host
+
+[Install]
+WantedBy=multi-user.target
