@@ -217,9 +217,6 @@ check_interval = 3
   run_untagged = false
   tag_list = ["kcp-tenant"]
 
-  # Runs BEFORE the clone. Gate on DNS here, never in pre_build_script.
-  pre_get_sources_script = "if command -v getent >/dev/null 2>&1; then R='getent hosts'; elif command -v nslookup >/dev/null 2>&1; then R=nslookup; fi; i=0; while [ -n \"$R\" ] && [ $i -lt 180 ]; do $R \"$CI_SERVER_HOST\" >/dev/null 2>&1 && break; i=$((i+1)); sleep 1; done; true"
-
   # Runs AFTER the clone, before the job's script. A STRING, not an array.
   pre_build_script = "if ! command -v pnpm >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then npm install -g pnpm@10.11.0; fi; true"
 
@@ -263,7 +260,7 @@ check_interval = 3
 | `concurrent` | carried, value changed | Now a **cost** knob, not only a behaviour one: every concurrent job is a rented node. `1` still wedges on a stale job from a cancelled pipeline. Set it to the number of nodes the user is willing to pay for. |
 | `check_interval` | carried | Unchanged. |
 | `run_untagged` / `tag_list` | **new** | The GitLab host already carries an `instance` runner that is online and `run_untagged`. An untagged job is eligible for it and may never reach this one. Tag this runner and give its projects the tag. |
-| `pre_get_sources_script` | carried | Unchanged and still load-bearing: the Pod's resolver is cluster DNS, and CoreDNS is an addon created with the first node. [03](03-jobs.md#the-limit-that-bites-multi-node-first). |
+| `pre_get_sources_script` | **removed** | Was a 180-second wait for `$CI_SERVER_HOST` to resolve. Every market node now runs its own CoreDNS on `169.254.20.10` and its kubelet points Pods there, so a name resolves on the node the job runs on, from the moment that node can run the job. [README](README.md#why-the-dns-wait-is-gone). |
 | `pre_build_script` | carried | Unchanged. Still the place the pnpm/corepack guard lives. |
 | `output_limit` | carried | Unchanged. 4 MiB is the runner's own cap, not GitLab's. |
 | `host` | **removed** | Was `https://127.0.0.1:<leased port>` on the kcp host. There is no leased loopback port here, and the URL is in the kubeconfig. Setting `host` at all makes the executor take the out-of-cluster path and ignore the kubeconfig completely. |
@@ -274,7 +271,7 @@ check_interval = 3
 | `cpu_limit`/`memory_limit` | carried | Unchanged. Limits are enforcement, not placement. |
 | `helper_*_request` / `helper_*_limit` | carried | Unchanged. A limit with no request **is** the request. |
 | `poll_timeout` | carried, raised | Was 1800. Here the first Pod waits for the market to win an RFP, boot a VM, join it, and only then pull the image. Minutes, not seconds. |
-| anti-affinity | carried | Unchanged, and still not optional: cross-node pod networking does not exist, so two jobs on one node is two jobs sharing a CoreDNS-less node. |
+| anti-affinity | carried | Unchanged. It is no longer what keeps DNS working (every node resolves on its own); it is what makes one job one rented node, which is the cost model. |
 | `[runners.kubernetes.autoscaler]` | **not set** | Pause pods. See [pause pods](#pause-pods-scale-to-zero-still-loses). |
 
 ## What is already there
@@ -423,7 +420,7 @@ these are the ones the new hop adds or sharpens.
 | Pod `Pending` for minutes and then Running | Normal. A rented node has to boot. `poll_timeout` has to cover it. |
 | Pod `Pending` forever on a node that exists | Requests do not fit the node size the market rented. See 02's trap about a limit being a request. |
 | `ImagePullBackOff` after a node boot | The job's image does not exist, or the rented node cannot reach its registry. 03's check costs one curl and saves a node boot. |
-| Job fails at the clone with `Could not resolve host` | The job Pod's resolver is cluster DNS, which needs a network path between nodes that does not exist off the node CoreDNS sits on. [03](03-jobs.md#the-limit-that-bites-multi-node-first). One job per node is configured for exactly this. |
+| Job fails at the clone with `Could not resolve host` | The node's own CoreDNS is not answering on `169.254.20.10`. `kubectl -n kube-system get pods -l app.kubernetes.io/name=socialweb-node-dns -o wide` shows whether the node runs one; none means the node lacks the `socialweb.computer/node-local-dns=true` label (it joined with an older user_data) or the DaemonSet was never applied (the provider's add-on pass logs `applied the node network add-ons`). [03](03-jobs.md#pods-on-different-nodes-and-dns-on-every-node). |
 | Job fails at the clone with `unable to access '...'` where the DNS DID resolve | `CI_REPOSITORY_URL` names a GitLab the **rented** node cannot reach. This is 03's section, sharpened: in 02's shape the guest ran on the operator's kcp host, whose own resolver and routes reached the tailnet. A rented node's egress is the provider's, so `gitlab.dorper-matrix.ts.net` (a tailnet address, `100.119.250.32`) is reachable only if that provider happens to be on the tailnet. Either publish GitLab on a name the public internet resolves, or give the job `GIT_STRATEGY: none`. |
 | The cluster never returns to zero | Something is Pending that is not a job Pod. Pause pods are the usual answer; see below. |
 | A job's first request is `Forbidden`, ever | It should not be. The token is cluster-admin. If this ever appears, the mint changed and the runner is no longer the thing that broke. |
