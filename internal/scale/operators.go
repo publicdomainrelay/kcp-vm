@@ -1,0 +1,126 @@
+package scale
+
+import (
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+)
+
+type OperatorKind struct {
+	Group string
+
+	Kind string
+
+	ReadyCondition string
+
+	InCluster bool
+}
+
+type Operators []OperatorKind
+
+var OurOperators = Operators{}
+
+type CustomResourceCondition struct {
+	Type string
+
+	Status string
+
+	ObservedGeneration int64
+}
+
+type CustomResource struct {
+	Group string
+
+	Kind string
+
+	Namespace string
+
+	Name string
+
+	Generation int64
+
+	ObservedGeneration int64
+
+	Deleting bool
+
+	Finalizers int
+
+	Conditions []CustomResourceCondition
+}
+
+func (r Operators) InCluster() Operators {
+	var out Operators
+	for _, k := range r {
+		if k.InCluster {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+func (r Operators) lookup(group, kind string) (OperatorKind, bool) {
+	for _, k := range r {
+		if k.Group == group && k.Kind == kind {
+			return k, true
+		}
+	}
+	return OperatorKind{}, false
+}
+
+func (r Operators) Unreconciled(crs []CustomResource) []CustomResource {
+	var out []CustomResource
+	for _, cr := range crs {
+		k, ok := r.lookup(cr.Group, cr.Kind)
+		if !ok || !k.InCluster {
+			continue
+		}
+		if !k.Reconciled(cr) {
+			out = append(out, cr)
+		}
+	}
+	return out
+}
+
+func (k OperatorKind) Reconciled(cr CustomResource) bool {
+	if cr.Deleting {
+		return cr.Finalizers == 0
+	}
+	if cr.ObservedGeneration != 0 && cr.ObservedGeneration < cr.Generation {
+		return false
+	}
+	for _, c := range cr.Conditions {
+		if c.Type != k.ReadyCondition {
+			continue
+		}
+		if c.ObservedGeneration != 0 && c.ObservedGeneration < cr.Generation {
+			return false
+		}
+		return c.Status == "True"
+	}
+	return false
+}
+
+func CustomResourceOf(u *unstructured.Unstructured) CustomResource {
+	gvk := u.GroupVersionKind()
+	cr := CustomResource{
+		Group:      gvk.Group,
+		Kind:       gvk.Kind,
+		Namespace:  u.GetNamespace(),
+		Name:       u.GetName(),
+		Generation: u.GetGeneration(),
+		Deleting:   u.GetDeletionTimestamp() != nil,
+		Finalizers: len(u.GetFinalizers()),
+	}
+	cr.ObservedGeneration, _, _ = unstructured.NestedInt64(u.Object, "status", "observedGeneration")
+	conditions, _, _ := unstructured.NestedSlice(u.Object, "status", "conditions")
+	for _, raw := range conditions {
+		m, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		c := CustomResourceCondition{}
+		c.Type, _, _ = unstructured.NestedString(m, "type")
+		c.Status, _, _ = unstructured.NestedString(m, "status")
+		c.ObservedGeneration, _, _ = unstructured.NestedInt64(m, "observedGeneration")
+		cr.Conditions = append(cr.Conditions, c)
+	}
+	return cr
+}
