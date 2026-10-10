@@ -840,7 +840,7 @@ set in `main.go`); a firecracker or qemu guest keeps its cert-auth path (`node-s
 | KV v2 mount | `socialweb-nodes` | enabled on first use if `sys/mounts` lacks it | never |
 | node secret | `socialweb-nodes/data/<node>` | before the claim, once `ClusterLink <clusterKey>-apiserver` reads `Listening` with a ticket; else by the first later pass that sees one | release (`DELETE socialweb-nodes/metadata/<node>`, every version) |
 | policy | `node-<node>`: `path "socialweb-nodes/data/<node>" { capabilities = ["read"] }` | before the claim, always | release |
-| JWT auth mount | `jwt-<first 12 hex of sha256(issuer)>`, type `jwt`, `oidc_discovery_url` = `bound_issuer` = issuer | when a claim first carries `status.grant` with that issuer | never |
+| JWT auth mount | `jwt-<first 12 hex of sha256(issuer)>`, type `jwt`, `oidc_discovery_url` = `bound_issuer` = issuer | when a claim first carries `status.grant` with that issuer | disabled by the reconcile once no live claim's grant names it and it has no role left |
 | JWT role | `<node>` under that mount: `role_type jwt`, `bound_subject` = grant subject, `bound_audiences` = [grant audience], `user_claim sub`, `token_ttl 5m`, `token_policies [node-<node>]` | the first pass after the door writes `status.grant` | release, under every `jwt-<12 hex>` mount |
 
 The secret's fields are `token` (the pinned join token `K10<sha256 hex of serverCA>::server:<k3s
@@ -864,9 +864,12 @@ Decisions, made by Claude, user may veto:
   mount and policy when written. One `EnsureLogin` per distinct grant per host; a pass over an
   unchanged grant costs nothing. The mount's config is re-written only when its discovery URL or
   bound issuer differ, because writing it makes OpenBao fetch the issuer's discovery document.
-- **The mount outlives its last role.** Deleting an emptied `jwt-*` mount races a concurrent grant
-  of the same issuer in the same cluster (list empty, role written, mount deleted), and mounts are
-  bounded by the number of distinct bidder issuers, which is small. Kept.
+- **The mount outlives its last role until the reconcile reads the vault.** Deleting an emptied
+  `jwt-*` mount eagerly races a concurrent grant of the same issuer in the same cluster (list empty,
+  role written, mount deleted), and mounts are bounded by the number of distinct bidder issuers, which
+  is small. The reconcile below disables one, never inside that race: it is rate-limited, and a mount
+  a live claim's grant names is never disabled. Superseded the "kept forever" decision of
+  2026-10-07T22:53Z (M3-BAO-SYNC).
 - **Revocation is best-effort and bounded** (`nodemarket.RevokeTimeout`, 10 s), runs right after the
   claim delete is accepted and before the wait for the door, and only logs a failure: the machine is
   what costs, and a leftover role binds one workload subject the released machine no longer runs.
@@ -884,6 +887,46 @@ instrument is `TestANodeLogsInWithItsWorkloadTokenAndReadsOnlyItsOwnSecret`
 and an in-test ES256 OIDC issuer: the node's own token logs in and reads its path; a token for another
 subject or audience is refused; the node's token gets 403 on another node's path; after `Revoke` the
 role, policy and secret are gone, the login is refused, the other node's policy and the mount remain.
+
+### The cluster OpenBao is reconciled against the live claims (plan 0005 M3-BAO-SYNC)
+
+Built 2026-10-07. The rows above are what is written; this is what is removed, and it exists because
+`Revoke` alone is eager and therefore skippable: a provider restart or crash between a claim going
+away and its `Revoke` leaves a role, a policy and a secret behind, a bidder's issuer is a fresh
+`did:key` per restart, so every issuer a cluster has ever seen used to leave its `jwt-*` mount forever
+(read live 2026-10-07T22:53Z on the tenant cluster: 5 `jwt-*` mounts, 1 live node).
+`(*clusterprovider.NodeVault).Reconcile` (`internal/clusterprovider/nodesecrets.go`) takes
+`live map[string]*v1alpha1.NodeClaimGrant` for ONE cluster's OpenBao and makes actual equal desired:
+for every live node it keeps the policy `node-<node>`, the KV entry `socialweb-nodes/<node>` and, when
+the claim carries a grant, the mount `jwt-<12 hex of sha256(grant.Issuer)>` with the role `<node>`
+under it; it deletes every role under a `jwt-<12 hex>` mount whose name is not a live node or whose
+mount is not that node's grant mount, every policy named `node-<node>` that names no live node, every
+`socialweb-nodes/metadata/<node>` entry naming no live node, and disables a `jwt-<12 hex>` mount left
+with no role and named by no live grant. It never creates and never writes outside those deletions,
+never touches a mount, policy or path outside those naming patterns (a `jwt-` mount whose suffix is
+not 12 hex, an `approle` mount and `postgres`/`default`/`root` all survive it), and it deletes nothing
+on a failed read: the three listings that decide a deletion — the roles under each node mount,
+`sys/policies/acl`, and `socialweb-nodes/metadata` — each report their own failure out of `Reconcile`,
+because an unreadable list read as "nothing is declared" deletes every live node's login and join
+material. The method is declared as `nodemarket.NodeSecretsReconciler`, a sibling of `NodeSecrets`
+rather than a fourth method on it, so a substrate's secrets implementation still has one method per
+verb and the provider type-asserts it the way `confirmHeld` asserts `secretSyncer`
+(`cmd/socialweb-clusterprovider/vaultsync.go`); the provider calls it with `live` = the claims it
+holds plus the `Adoptable` claims in the cluster's home workspace (`liveNodeGrants`), after
+`adoptClaims` at adoption and on every pass, rate-limited to at most once per cluster per
+`VaultSyncInterval` (30 s), and every deletion is logged at INFO with its reason.
+`TestReconcileLeavesOnlyTheLiveNodesMaterialInTheClusterVault`,
+`TestReconcileWithNoLiveNodeRemovesEveryNode`,
+`TestReconcileKeepsTheMountALiveNodesGrantNamesBeforeItsRoleIsWritten` and
+`TestReconcileDeletesNothingWhenAListFails` (`internal/clusterprovider/nodesecrets_sync_test.go`) run
+it against a real `bao server -dev` seeded with four stale mounts (one with a stale role, one holding
+a live node's role under a stale issuer, two empty), a stale policy and a stale KV entry, plus one
+live node's full set; the failure case puts a proxy in front of the dev vault that answers every
+`LIST` with 500. `cmd/socialweb-clusterprovider/vaultsync_test.go` proves adoption reconciles with
+the live grants, that a claim the door released is not live, that a node the provider still holds with
+no claim left in the workspace stays live, and that a second pass inside the interval does not read
+the vault again. Not deployed at the time of writing: the live reading (`bao auth list`,
+`bao list auth/<m>/role` after a release and after a provider restart) is the lead's.
 
 ## 8. Ports
 
