@@ -171,7 +171,9 @@ included `.ci/dockerfile-hash.yaml`.
   for macOS -- a `pre_build_script` in the runner's `config.toml`, which runs in the build
   container before the job's script. It prefers `corepack enable`, which honours the
   `packageManager` field the project pins, and falls back to installing the version that field
-  names.
+  names. Against upstream `next`'s image it is a no-op -- the step prints nothing, because
+  `command -v pnpm` succeeds -- which is the reading that says the `next` image carries the shims
+  the `eli/moqt-firehose` one did not. It is left in as the guard it turned out to be.
 - **D6 - the runner gets a scoped credential, not the superuser.** `docs/gitlab/02` is explicit
   that handing a runner `system:admin`/`system:masters` makes every RBAC rule decorative. The
   existing live test mints the superuser credential; the new one mints `gitlab-runner` /
