@@ -155,79 +155,17 @@ about: >
   has each one's readings and the test watched to fail first.
 
 open:
-  - id: P5-M1
-    title: The live test bed is the vendored deno-kcp market, and the market is the only node path.
+  - id: P5
+    title: Plan 0005 (zero-ssh market nodes) - acceptance passed on prod 2026-10-08; open items below.
     body: >
-      Plan 0005 items M1-BIDDER-UNIT and M1-TESTBED (done), and M1-MARKET-ONLY and M1-AGENT-SPLIT,
-      which closed together on 2026-10-07 in commit cd12808: the clusterprovider's local firecracker
-      and qemu substrates are deleted with their tests and their deployment paths, the guest binary
-      is socialweb-nodeinit alone, and the image configuration names init_package/init_binary. The
-      plan file holds each item's decision, status and evidence; this entry mirrors that the
-      milestone is open on its remaining live reading.
+      docs/plans/0005-zero-ssh-market-nodes.yaml is the state. Done with prod evidence: M0-M6 items except
+      those listed here, and ACC-ZERO, ACC-MESH, ACC-NOSSH (GitLab pipeline 78 on an SPA-created cluster).
+      Open: M2-BID-LATENCY (a native subagent is fixing why the pre-warmed scope verdict misses at bid
+      time; warm-cache reading 0.25 s bid->winner, cold ~5.7 s), M3-JOIN-FOLLOWUPS (node-secrets retry
+      wait, the 16 s sandbox gap, an image name that ignores the builder), M6-CLONE (market nodes cannot
+      reach the tailnet GitLab to clone; needs the user's call on exposing GitLab).
     instrument: >
-      A live test that applies the vendored market example (PLC, relay, PDSs, a firecracker bidder on
-      our nodeimage) and gets a tenant node through RFP, bid, accept and cloud-init. ATTEMPTED TWICE
-      for cd12808 and NOT REACHED: 2026-10-07T21:48Z it skipped (ports 2583-2589 held by an earlier
-      session's bed), and 2026-10-07T21:55:29Z it failed in 120 s with the BED's own bring-up broken
-      -- apply.sh failed 3/3, no OpenBao ready, no DenoPod in any workspace, no guest work directory
-      -- while that other bed came back up on the same fixed ports. The bed never reached an RFP, so
-      the node image and the renamed keys were never read; the live reading is still owed, and the
-      image it would boot was checked directly instead (fingerprint sha256-bcdfbb68, stage and
-      initramfs inspected).
-  - id: P5-M2
-    title: The requester is event driven and a node's contract survives the process that accepted it.
-    body: >
-      Plan 0005 items M2-EVENT-CORE, M2-RELEASE, M2-WRAPPER, M2-CLAIM-RECEIPT, M2-CODEGEN,
-      M2-BACKOFF.
-    instrument: >
-      A door restarted between accept and release still releases the node with vm.delete from the
-      receipt recorded on its NodeClaim.
-  - id: P5-M3
-    title: Guests join without ssh, through cluster links and the cluster's OpenBao.
-    body: >
-      Plan 0005 items M3-CLUSTERLINK, M3-IROH-KEYS, M3-SECRETS-TICKET, M3-JWT, M3-UNITS,
-      M3-NODE-LOSS, and M3-JOIN-PATH (doing, opened 2026-10-08: the door delivers the apiserver
-      link's ticket with the OpenBao ticket so both dumbpipe dials run at once, and the node image
-      stages k3s's runtime assets so the guest does not unpack them at boot; the lead deploys,
-      rebuilds the image and measures). ARCHITECTURE invariant 13 changed with it. The door half is
-      built (0f3a771, b489218: no ssh session, secrets bundle, status.grant at accept, guest units,
-      restarts never reap); open on the provider side: ClusterLinks with tickets, OpenBao JWT mount,
-      role and KV entry, a published OpenBao CA path, ConfirmJoined accepting Joining, and the 90s
-      NotReady release (ARCHITECTURE section 9 lists the interface needs).
-    instrument: >
-      A market node joins and runs a pod with zero ssh sessions in any log, and survives a deploy of
-      the control plane container.
-  - id: P5-M4
-    title: Nodes scale in one at a time, and ESO runs beside the control plane.
-    body: >
-      Plan 0005 items M4-SCALE-IN, M4-ESO-BESIDE, M4-PENDING-CRS. ESO-4 closes with M4-ESO-BESIDE.
-      Built, not deployed (fb4ca07, fc16e9b): per-node scale-in (one idle held node per hold,
-      cordon, drain, teardownHeld), DaemonSets never intent, the in-cluster operator CR registry
-      (empty; M4-PENDING-CRS done). Open: deploy and a live release reading; M4-ESO-BESIDE.
-    instrument: >
-      A cluster at three nodes whose demand falls to one releases two nodes, then reaches zero.
-  - id: P5-M5
-    title: Pods reach pods on other nodes and DNS works on every node.
-    body: >
-      Plan 0005 items M5-DNS and M5-MESHD (rust/socialweb-meshd). The daemon (a56b60d) and its
-      integration (c8ba259, 2125360, 58dfd82, 4cbebf1, 4e72a73) are built, unit-proved and proved at
-      zero nodes live, NOT deployed: market k3s servers run --flannel-backend=none on 10.42.0.0/16;
-      every tenant gets the meshd node reader and a per-node CoreDNS DaemonSet on 169.254.20.10 as
-      baseline; the guest's user_data writes the bridge CNI conflist on the Node's podCIDR, the
-      cluster-CIDR-external SNAT, the DNS address and kubelet cluster-dns, and installs the
-      sha256-pinned meshd the door serves at /downloads/<sha256>/<name> (ARCHITECTURE section 9).
-      Open: deploy provider and door together; the live two-node reading, which needs two guests
-      through the RFP flow on the M1 test bed; the DNS-pod-versus-first-workload window on a fresh
-      node (a startup taint).
-    instrument: >
-      A pod on node A reaches a pod on node B, and a name resolves from a node not running CoreDNS.
-  - id: P5-M6
-    title: GitLab's instance runner stops taking untagged jobs and the old stated limits are fixed.
-    body: >
-      Plan 0005 items M6-RUNNER1, M6-LIMITS, M6-DOCS, then the plan's acceptance checks ACC-ZERO,
-      ACC-MESH and ACC-NOSSH on our GitLab.
-    instrument: >
-      The plan's three acceptance checks, each with UTC readings from prod and GitLab.
+      Each open item's own reading in the plan file.
   - id: P6-M0
     title: QUEUED - what linking kcp in-process breaks, and the one binary's size and platforms.
     body: >

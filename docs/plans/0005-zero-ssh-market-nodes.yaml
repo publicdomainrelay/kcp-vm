@@ -597,7 +597,7 @@ items:
       rootfs, checked against the .sha256sums and .links k3s itself checks after it unpacks, with
       data/current and the data/cni plugin links written to name the guest's path rather than the
       build host's. decided by Claude, user may veto.
-    status: doing
+    status: done
     evidence:
       - "the image reading the third change rests on: debugfs on the newest market image in ~/kcp-image/out-market (sha256-52df8a09..., the one M3-BOOT-TIME measured) shows /var/lib/rancher/k3s holding agent and nothing else, so the guest unpacks the runtime itself at its first k3s command"
       - "code: 69f91cf (STEP_PROBE and per-step lines in the six join scripts), e6b5d55 (NODE_LINK_ENV_PATH, renderNodeLinkEnv and nodeLinkEnv in k8s-common; the door reads <clusterKey>-apiserver beside <clusterKey>-openbao; node-secrets keeps a bundled apiserver.env and refuses one that names another node; apiserver-link waits on setup-secrets; ARCHITECTURE invariants 13 and 29 and section 9), 460521f (a link the door cannot read is withheld like an absent one, never fatal to the claim), 4a3f516 (cmd/socialweb-nodeimage/k3sdata.go: k3sAssetDir, parseK3sAssetDir, stageK3sAssets, verifyHashes, verifyLinks, linkK3sCurrent, linkK3sCNI, called from buildRootfs after stageK3s)"
@@ -607,6 +607,31 @@ items:
       - "not done: the lead deploys, rebuilds the image and measures. No image was built here and nothing was measured on prod. The numbers this is aimed at are the 6.4 s OpenBao link+login and the 8 s apiserver link+agent registration M3-BOOT-TIME lists as remaining; the staged assets add about 254 MiB to the image, and a rebuild that -reuse-stale answers with an older image would measure none of it"
       - "step 4 of the handoff (start the OpenBao dial before the token exchange finishes) needed no change: socialweb-openbao-link already waits only on setup-secrets, so it dials while socialweb-node-secrets, which is where the token exchange lives, is still running"
       - "the image's name does not cover the builder's own behaviour, and that is now load-bearing: internal/nodefirecracker's BuildConfig fingerprint digests the config's inputs (kernel, modules, base image, k3s binary, busybox, init binary and package, preinstall, seeded images, boot args) and not the builder's code, so an image built before this change and one built after it share a name and -present-only answers present for either. Measured while checking the deploy path (scripts/deploy-firecracker-bidder.sh --dry-run, ORG_ROOT and LOCAL_NODEIMAGE_BIN redirected): the current inputs name sha256-d1a844929f46a01f5ea06a777bbf02c340d1725b7f6ddaaa1ba5a4052a5d0d07, the store in ~/kcp-image/out-market does not hold it, and the deploy's own guard (the answered dir's basename against the shipped FINGERPRINT) refuses any other directory -reuse-stale would answer with. So the lead's rebuild does include this change, but the next builder change under the same inputs would not be visible in the name, and fixing that (an input covering the builder, or the built binary's digest) changes how every image is named and is left to the lead"
+      - "live prod 2026-10-08T00:23Z (image 52df8a09 rebuilt with the k3s runtime assets after moving the stale same-named build aside; door/provider 1abe746): bundle at uptime 11.03 s, apiserver-link and openbao-link both start 11.03 s (parallel), node-secrets done 17.66 s, Node registered ~22 s, CNI 23.9 s: secrets->registered ~11 s (was ~14 s); pod->Node registered 33.6 s (was 44.2 s). Follow-ups split into M3-JOIN-FOLLOWUPS"
+  - id: M3-JOIN-FOLLOWUPS
+    milestone: M3
+    title: The join's remaining waits, and an image name that changes when the builder does
+    decision: >
+      From the 2026-10-08T00:23Z prod reading: (1) socialweb-node-secrets starts with the bundle, fails
+      because the OpenBao link has not connected, and systemd retries it 5 s later (RestartSec) -- poll the
+      link inside the script at ~0.5 s for a bounded time instead; (2) Ready 00:23:46Z but the busybox pull
+      began 00:24:03Z: ~16 s of pod sandbox creation (5 s in earlier runs), cause unknown -- read kubelet and
+      containerd on a debug-ssh node; (3) internal/nodefirecracker's image fingerprint covers inputs, not
+      the builder, so a builder-only change keeps the name and the installer ships the stale image (hit
+      2026-10-08: the operator moved the old build aside to force a rebuild) -- add the nodeimage binary's
+      digest (or a builder version) to the fingerprint. decided by Claude, user may veto.
+    status: todo
+    evidence: []
+  - id: M6-CLONE
+    milestone: M6
+    title: A CI job on a market node can fetch its repository
+    decision: >
+      The acceptance run used GIT_STRATEGY none: market nodes resolve public names, but the GitLab host is a
+      tailnet name (gitlab.dorper-matrix.ts.net), so the runner helper cannot clone. Options: a public
+      clone_url for the runner (a reverse proxy in front of GitLab's HTTPS), or reaching the tailnet from
+      the cluster. Needs the user's call on exposing GitLab publicly. decided by Claude, user may veto.
+    status: todo
+    evidence: []
   - id: M2-BID-LATENCY
     milestone: M2
     title: A first-free winner is accepted within 0.5 s of its bid, not after 6 s of policy evaluation
