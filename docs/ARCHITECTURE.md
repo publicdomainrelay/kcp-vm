@@ -1837,7 +1837,8 @@ root vault's listener authenticates its clients by certificate. VAULT-1 closed w
 that its own premise named a file `kcp` does not write. RIG-6 was opened and closed in the same window,
 by a rig run that tested a tree moving under it. On 2026-10-05 five more were opened by the GitLab and
 cloud-controller-manager work: CCM-1 and AUTO-1 were opened and CLOSED inside the same window and are
-in section 15 with their readings, while ESO-2 remains and GL-1, GL-2 and FLAKE-1 join it. Each was
+in section 15 with their readings, while ESO-2 remains and FLAKE-1 joins it. GL-1 and GL-2 have since
+closed and are in section 15 too. Each was
 written from the code rather than from the request that produced it, and each names its instrument.
 On 2026-10-06 MARKET-2 was opened and CLOSED inside the same window, by the k8s door's tenant
 credential work, and is in section 15 with its readings.
@@ -1868,14 +1869,6 @@ because it bounds a mechanism the rest of this document leans on.
   outside `default` is denied, and the failure reads as a broken ExternalSecret rather than as a grant
   that does not name it. The instrument is an install in another namespace still producing the Secret.
   `NEXT.yaml` ESO-2.
-
-- **Nothing exposes a minted tenant credential to an operator.** `internal/clusterprovider` can mint a
-  client certificate signed by a cluster's own ClientCA and valid only against that cluster, and no
-  command writes it anywhere an operator or a CI runner can use. Invariant 20 forbids handing anyone
-  the k3s-written admin kubeconfig, so without this tool every documented recipe for connecting a
-  client either violates an invariant or does not exist. The instrument is a run of the minting command
-  against a real cluster data dir producing three files a `kubectl` authenticates with, and a refusal
-  to overwrite an existing set. `NEXT.yaml` GL-1.
 
 - **The market substrate's startup sweep is a no-op, so a state dir a guest substrate left behind is
   never reaped.** `sweepNodeRecords` finds a previous gateway's survivors by the identity their
@@ -4050,6 +4043,31 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   nodes with every job green (pipeline 75, `scale-check-1..5`, 198-202 s each), plus the same five
   green in pipeline 71 before it. A path that could not traverse the mount could not run a job.
   `NEXT.yaml` GL-2.
+
+- **The minting CLI had never been run against a real cluster's data dir, and could not have been:
+  it was not in the image. CLOSED.** `cmd/socialweb-tenantcredential` builds, is unit-tested, and the
+  container image built eight other commands and not this one - so the tool the section-14 bullet was
+  about existed and was undeployable, and its instrument ("a run of the minting command against a real
+  cluster data dir") could not be carried out anywhere the state dir is. The section-14 bullet's own
+  premise had also gone stale: it said no command writes a minted credential anywhere an operator can
+  use, and the command had existed since the entry below.
+  Built and copied into both final stages, beside `socialweb-vault`, and then run for real on
+  `root@socialweb.computer` on 2026-10-07 as uid `kcp` inside the container - the uid that can read
+  `<StateDir>/pdr-<key>/server/tls/client-ca.key`, mode 0600, which is why this cannot be done from
+  outside:
+  `SOCIALWEB_TENANTCREDENTIAL_STATE_DIR=/var/lib/socialweb/clusterprovider`,
+  `..._CLUSTER=2wjeqtgx-test-cluster-alice-0001`, `..._SERVER=https://127.0.0.1:20003`,
+  `..._COMMON_NAME=cli-close-gl-1`, `..._ORGANIZATIONS=system:masters`,
+  `..._OUT_DIR=/tmp/tenantcred`. It printed
+  `validUntil=2036-10-04T07:13:11Z ca=/tmp/tenantcred/ca.crt cert=/tmp/tenantcred/tls.crt
+  key=/tmp/tenantcred/tls.key`, and the three files came out mode 0600 owned by `kcp`.
+  `kubectl` with exactly those three files against the tenant apiserver listed the cluster's own Nodes
+  (`node28` to `node32`, all Ready), and `kubectl auth whoami` reported `Username cli-close-gl-1` and
+  `Groups [system:masters system:authenticated]` - the apiserver naming back the identity the CLI
+  claimed to mint, which is the reading the instrument asked for. A second run refused:
+  `these files already exist and this tool will not overwrite a credential ... that silent replacement
+  is the failure invariant 20 exists to prevent`. The credential was removed from the container's
+  `/tmp` afterwards. `NEXT.yaml` GL-1.
 
 ## 16. Vocabulary
 

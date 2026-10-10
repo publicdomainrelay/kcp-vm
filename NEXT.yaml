@@ -85,6 +85,12 @@ about: >
   once runs every job script with `pods/exec`. It is in section 15 with the readings, including what
   the front exposes to a caller with no credential.
 
+  Opened and closed on 2026-10-07 and therefore NOT listed below: GL-1 (the minting CLI had never
+  been run against a real cluster's data dir -- and could not have been, because the container image
+  built eight other commands and not this one). It is in section 15 with the readings, including the
+  identity the apiserver reported back for the credential it minted, and the refusal that protects
+  an existing set.
+
 open:
   - id: MINT-1
     title: A mint credential is named by the cluster's key, and the migration that renames an existing one runs in a different process from the reader.
@@ -174,20 +180,6 @@ open:
       `internal/livegate` names its artifact ones, so an unreachable registry is a SKIP with a
       reason and never a FAIL. Closing reading: a full `go test ./... -count=1` run with the
       registry unreachable, passing or skipping with the reason printed.
-
-  - id: GL-1
-    title: The minting CLI has not been run against a real cluster's data dir.
-    body: >
-      Half of this closed on 2026-10-05 and the rest did not. What is now measured: a credential
-      minted from a REAL cluster's ClientCA, by `clusterprovider.MintTenantCredentialForCluster`
-      inside the pipeline proof, authenticated a real GitLab Runner against a real tenant apiserver -
-      so the minting path itself is proven end to end. What is not: the CLI,
-      `cmd/socialweb-tenantcredential`, has never been run against a real cluster data dir, and its
-      scoped-identity entry point has only seen a synthetic ClientCA in tests. The library call and
-      the CLI share the signer, but sharing a signer is not the same as the CLI having been run.
-    instrument: >
-      A run of `cmd/socialweb-tenantcredential` with a real `STATE_DIR` and `CLUSTER`, producing
-      three files a `kubectl` authenticates with, and a refusal to overwrite an existing set.
 
 limits:
   - title: A node cannot reach another node, so a cluster with more than one has no cluster DNS
