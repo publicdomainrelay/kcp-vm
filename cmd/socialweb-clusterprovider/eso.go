@@ -50,10 +50,10 @@ func tenantAddOns(cfg Config, networks *subnetallocator.Allocator, log *slog.Log
 				"cluster", cluster, "manifests", cfg.ESOManifestDir, "namespace", cfg.ESONamespace)
 			return installExternalSecrets(ctx, restCfg, cfg.ESOManifestDir, cfg.ESONamespace)
 		}
-		if err := install(ctx); err != nil {
-			return err
-		}
 		if !tenantStoreIsReachableFrom(cfg) {
+			if err := install(ctx); err != nil {
+				return err
+			}
 			log.Info("cluster provider: the tenant store is not written for this substrate",
 				"cluster", cluster, "substrate", cfg.Substrate,
 				"decision", "the store's vault server is the cluster's own subnet gateway, which a "+
