@@ -147,19 +147,12 @@ case "$target" in
     build --target controlplane --tag "$IMAGE" --load "$REPO"
     echo "built $IMAGE"
     ;;
-  computer)
-    build --target computer --tag "$IMAGE" --load "$REPO"
-    echo "built $IMAGE"
-    ;;
   nodeimage)
     build --target nodeimage --progress=plain "$REPO"
     ;;
   nodeimage-image)
     build --target nodeimage --tag "$NODEIMAGE_IMAGE" --load "$REPO"
     echo "built $NODEIMAGE_IMAGE"
-    ;;
-  nodeimage-qemu)
-    build --target nodeimage-qemu --progress=plain "$REPO"
     ;;
   nodeimages)
     build --target extract --progress=plain "$REPO"
@@ -172,7 +165,7 @@ case "$target" in
     ls -la "$EXPORT_DIR"
     ;;
   *)
-    echo >&2 "unknown target $target: controlplane, computer, nodeimage, nodeimage-image, nodeimage-qemu, nodeimages or extract"
+    echo >&2 "unknown target $target: controlplane, nodeimage, nodeimage-image, nodeimages or extract"
     exit 1
     ;;
 esac

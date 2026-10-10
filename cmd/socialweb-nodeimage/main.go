@@ -39,7 +39,7 @@ is whole, so a build killed by a crash, a full disk or a signal leaves a name no
 instead of a directory that is half an image and still validates.
 
 The build is rootless and touches nothing outside its stage, its store and the image cache. It builds
-the guest's half of the agent from this tree, extracts this host's own kernel, stages this host's own
+the guest's init from this tree, extracts this host's own kernel, stages this host's own
 module tree and kernel config beside that kernel, and writes three files into the image directory:
 
   vmlinux          the guest's kernel
@@ -159,7 +159,7 @@ func Main(configPath string) error {
 }
 
 func buildImage(cfg Config) error {
-	if err := buildAgent(cfg); err != nil {
+	if err := buildInit(cfg); err != nil {
 		return err
 	}
 	fingerprint, err := nodefirecracker.Fingerprint(cfg.Path, buildConfigOf(cfg))

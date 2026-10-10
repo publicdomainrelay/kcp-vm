@@ -13,31 +13,31 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/tarball"
 )
 
-// ponytail: the guest agent is built once and copied per fixture; building it
+// ponytail: the guest init is built once and copied per fixture; building it
 // inside every validConfig call cost ~25s of the fast loop. Build the fixture
 // afresh if a test ever needs to mutate the toolchain inputs.
 var (
-	agentBuildOnce sync.Once
-	agentBuildBin  string
-	agentBuildErr  error
+	initBuildOnce sync.Once
+	initBuildBin  string
+	initBuildErr  error
 )
 
-func cachedAgent() (string, error) {
-	agentBuildOnce.Do(func() {
-		dir, err := os.MkdirTemp("", "kcp-nodeagent-")
+func cachedInit() (string, error) {
+	initBuildOnce.Do(func() {
+		dir, err := os.MkdirTemp("", "kcp-nodeinit-")
 		if err != nil {
-			agentBuildErr = err
+			initBuildErr = err
 			return
 		}
-		bin := filepath.Join(dir, "kcpagent")
-		agentBuildErr = buildAgent(Config{AgentPackage: "./cmd/socialweb-nodeagent", AgentBinary: bin})
-		agentBuildBin = bin
+		bin := filepath.Join(dir, "kcpinit")
+		initBuildErr = buildInit(Config{InitPackage: "./cmd/socialweb-nodeinit", InitBinary: bin})
+		initBuildBin = bin
 	})
-	return agentBuildBin, agentBuildErr
+	return initBuildBin, initBuildErr
 }
 
-func copyCachedAgent(dst string) error {
-	src, err := cachedAgent()
+func copyCachedInit(dst string) error {
+	src, err := cachedInit()
 	if err != nil {
 		return err
 	}
@@ -51,7 +51,7 @@ func copyCachedAgent(dst string) error {
 func validConfig(t *testing.T) Config {
 	t.Helper()
 	root := t.TempDir()
-	agent := filepath.Join(root, "kcpagent")
+	init := filepath.Join(root, "kcpinit")
 	modules := filepath.Join(root, "modules")
 	if err := os.MkdirAll(filepath.Join(modules, "kernel/net/netfilter"), 0o755); err != nil {
 		t.Fatalf("creating the module tree: %v", err)
@@ -80,8 +80,8 @@ func validConfig(t *testing.T) Config {
 		StageDir:         filepath.Join(root, "stage"),
 		OutDir:           filepath.Join(root, "out"),
 		ImageCacheDir:    filepath.Join(root, "cache"),
-		AgentPackage:     "./cmd/socialweb-nodeagent",
-		AgentBinary:      agent,
+		InitPackage:      "./cmd/socialweb-nodeinit",
+		InitBinary:       init,
 		K3sBinary:        "/usr/local/bin/k3s",
 		K3sDataDir:       "/var/lib/rancher/k3s",
 		Images:           []string{"rancher/mirrored-pause:3.10.2"},
@@ -89,8 +89,8 @@ func validConfig(t *testing.T) Config {
 		Modules:          []string{"nf_conntrack"},
 		InitramfsModules: []string{"kernel/drivers/virtio/virtio_mmio"},
 	}
-	if err := copyCachedAgent(agent); err != nil {
-		t.Fatalf("building the guest's agent for this fixture: %v", err)
+	if err := copyCachedInit(init); err != nil {
+		t.Fatalf("building the guest's init for this fixture: %v", err)
 	}
 	return cfg
 }

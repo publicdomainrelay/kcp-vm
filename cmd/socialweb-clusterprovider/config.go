@@ -10,19 +10,9 @@ import (
 	"time"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/eso"
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostos"
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodefirecracker"
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodevm"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/portallocator"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/scale"
 )
-
-func isAre(n int) string {
-	if n == 1 {
-		return "is"
-	}
-	return "are"
-}
 
 const (
 	envKCPHost       = "SOCIALWEB_KCP_HOST"
@@ -61,16 +51,8 @@ const (
 
 	envSubstrate = "SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE"
 	envHost      = "SOCIALWEB_CLUSTERPROVIDER_HOST"
-	envNetwork   = "SOCIALWEB_CLUSTERPROVIDER_NETWORK"
 
-	envImageOutDir = "SOCIALWEB_CLUSTERPROVIDER_IMAGE_OUT_DIR"
-	envImageConfig = "SOCIALWEB_CLUSTERPROVIDER_IMAGE_CONFIG"
-
-	envFirecracker = "SOCIALWEB_CLUSTERPROVIDER_FIRECRACKER"
-	envQEMU        = "SOCIALWEB_CLUSTERPROVIDER_QEMU"
-	envNodeAgent   = "SOCIALWEB_CLUSTERPROVIDER_NODE_AGENT"
-
-	envNodeDiskMiB = "SOCIALWEB_CLUSTERPROVIDER_NODE_DISK_MIB"
+	envRetiredSubstrateInput = "SOCIALWEB_CLUSTERPROVIDER_"
 
 	envCloudControllerManager = "SOCIALWEB_CLUSTERPROVIDER_CLOUD_CONTROLLER_MANAGER"
 
@@ -90,15 +72,21 @@ const (
 
 const DefaultESOManifestDir = "/opt/socialweb/deploy/eso"
 
-const SubstrateFirecracker = "firecracker"
-
-const SubstrateQEMU = "qemu"
-
 const SubstrateMarket = "market"
 
-const NetworkPasta = "pasta"
+const RetiredSubstratesRetiredOn = "2026-10-07"
 
-const AgentBinaryName = "kcpagent"
+var retiredSubstrateNames = []string{"firecracker", "qemu"}
+
+var retiredSubstrateInputs = []string{
+	envRetiredSubstrateInput + "FIRECRACKER",
+	envRetiredSubstrateInput + "QEMU",
+	envRetiredSubstrateInput + "NODE_AGENT",
+	envRetiredSubstrateInput + "IMAGE_OUT_DIR",
+	envRetiredSubstrateInput + "IMAGE_CONFIG",
+	envRetiredSubstrateInput + "NETWORK",
+	envRetiredSubstrateInput + "NODE_DISK_MIB",
+}
 
 const DefaultGrantPath = "deploy/tenant-grant.yaml"
 
@@ -142,20 +130,6 @@ type Config struct {
 	Substrate string
 
 	Host string
-
-	Network string
-
-	ImageOutDir string
-
-	ImageConfig string
-
-	Firecracker string
-
-	QEMU string
-
-	NodeAgent string
-
-	NodeDiskMiB int
 
 	CloudControllerManager string
 
@@ -202,12 +176,6 @@ func load(get func(string) string) (Config, error) {
 		AuditPolicyPath:        strings.TrimSpace(get(envAuditPolicy)),
 		Substrate:              strings.TrimSpace(get(envSubstrate)),
 		Host:                   strings.TrimSpace(get(envHost)),
-		Network:                strings.TrimSpace(get(envNetwork)),
-		ImageOutDir:            strings.TrimSpace(get(envImageOutDir)),
-		ImageConfig:            strings.TrimSpace(get(envImageConfig)),
-		Firecracker:            strings.TrimSpace(get(envFirecracker)),
-		QEMU:                   strings.TrimSpace(get(envQEMU)),
-		NodeAgent:              strings.TrimSpace(get(envNodeAgent)),
 		CloudControllerManager: strings.TrimSpace(get(envCloudControllerManager)),
 		Dumbpipe:               strings.TrimSpace(get(envDumbpipe)),
 		ESOManifestDir:         strings.TrimSpace(get(envESOManifestDir)),
@@ -229,7 +197,7 @@ func load(get func(string) string) (Config, error) {
 	if cfg.ESONamespace == "" {
 		cfg.ESONamespace = eso.DefaultControllerNamespace
 	}
-	if cfg.AdvertiseAddress == "" && !guestSubstrate(cfg.Substrate) && cfg.Substrate != SubstrateMarket {
+	if cfg.AdvertiseAddress == "" && cfg.Substrate != SubstrateMarket {
 		cfg.AdvertiseAddress = portallocator.LoopbackAdvertiseAddress
 	}
 	if cfg.MarketAdvertiseAddress == "" {
@@ -279,18 +247,6 @@ func load(get func(string) string) (Config, error) {
 		cfg.ScaleMaxNodes = n
 	}
 
-	if raw := strings.TrimSpace(get(envNodeDiskMiB)); raw != "" {
-		n, err := strconv.Atoi(raw)
-		if err != nil {
-			return Config{}, fmt.Errorf("%s is not a whole number: %w", envNodeDiskMiB, err)
-		}
-		if n < 1 {
-			return Config{}, fmt.Errorf("%s is %d. A node's disk holds the root filesystem and "+
-				"everything a job writes beside it, so a disk that is not at least one MiB is a "+
-				"guest that cannot boot. Leave it unset to take the node image's own default", envNodeDiskMiB, n)
-		}
-		cfg.NodeDiskMiB = n
-	}
 	if raw := strings.TrimSpace(get(envScalePodsPerNode)); raw != "" {
 		n, err := strconv.Atoi(raw)
 		if err != nil {
@@ -354,7 +310,7 @@ func load(get func(string) string) (Config, error) {
 					"VMMs running behind one node name", envStateDir, cfg.StateDir)
 		}
 
-		if err := cfg.checkPlacement(); err != nil {
+		if err := cfg.checkPlacement(get); err != nil {
 			return Config{}, err
 		}
 
@@ -397,11 +353,7 @@ func (c Config) ObserveOnly() bool { return c.Join == "" }
 
 func (c Config) AllClusters() bool { return c.Join == JoinAllClusters }
 
-func guestSubstrate(name string) bool {
-	return name == SubstrateFirecracker || name == SubstrateQEMU
-}
-
-func (c *Config) checkPlacement() error {
+func (c *Config) checkPlacement(get func(string) string) error {
 	switch c.Substrate {
 	case "":
 		return fmt.Errorf(
@@ -411,105 +363,23 @@ func (c *Config) checkPlacement() error {
 				"means -- a gateway that guessed would report a placement it is not honouring",
 			envSubstrate)
 	case SubstrateMarket:
-		return c.checkMarketPlacement()
-	case SubstrateFirecracker:
-		if !hostos.Firecracker() {
-			return fmt.Errorf(
-				"%s is %s and this host is %s. Firecracker is a KVM guest and it exists only on "+
-					"Linux, so a Windows host cannot boot one at all; the name is refused rather "+
-					"than tried, and a Windows host places nodes with %s instead, which runs on "+
-					"both. A gateway that accepted this name would count a node it never booted",
-				envSubstrate, SubstrateFirecracker, hostos.Name(), SubstrateQEMU)
-		}
-		var missing []string
-		for _, req := range []struct{ name, value string }{
-			{envFirecracker, c.Firecracker},
-			{envNodeAgent, c.NodeAgent},
-			{envImageOutDir, c.ImageOutDir},
-			{envImageConfig, c.ImageConfig},
-		} {
-			if req.value == "" {
-				missing = append(missing, req.name)
-			}
-		}
-		if len(missing) > 0 {
-			return fmt.Errorf(
-				"%s is %s and %s %s not set. A node on this substrate is a guest, and the guest is "+
-					"a VMM binary, the agent that both wires its network from the outside and runs "+
-					"inside it, and an image. The image is named by the inputs the builder read "+
-					"rather than by anything an operator writes down, so what is configured is the "+
-					"store that name is looked up in and the builder's own configuration, which is "+
-					"what the name is derived from: neither can be derived from the other, and a "+
-					"gateway that started anyway would report a node it never booted",
-				envSubstrate, SubstrateFirecracker, strings.Join(missing, " and "), isAre(len(missing)))
-		}
-		if err := c.checkImageConfig(SubstrateFirecracker); err != nil {
-			return err
-		}
-	case SubstrateQEMU:
-		var missing []string
-		for _, req := range []struct{ name, value string }{
-			{envQEMU, c.QEMU},
-			{envNodeAgent, c.NodeAgent},
-			{envImageOutDir, c.ImageOutDir},
-			{envImageConfig, c.ImageConfig},
-		} {
-			if req.value == "" {
-				missing = append(missing, req.name)
-			}
-		}
-		if len(missing) > 0 {
-			return fmt.Errorf(
-				"%s is %s and %s %s not set. A node on this substrate is a guest, and the guest is "+
-					"a qemu-system binary, the agent that both wires its network from the outside and "+
-					"runs inside it, and an image. The image is named by the inputs the builder read "+
-					"rather than by anything an operator writes down, so what is configured is the "+
-					"store that name is looked up in and the builder's own configuration, which is "+
-					"what the name is derived from: neither can be derived from the other, and a "+
-					"gateway that started anyway would report a node it never booted",
-				envSubstrate, SubstrateQEMU, strings.Join(missing, " and "), isAre(len(missing)))
-		}
-		if err := c.checkImageConfig(SubstrateQEMU); err != nil {
-			return err
-		}
+		return c.checkMarketPlacement(get)
 	default:
 		return fmt.Errorf(
-			"%s is %q, and %s, %s and %s are the only substrates implemented today. Another name "+
-				"is refused rather than tried: it would decide what a node's record names, what its "+
-				"teardown stops and what its leases mean, and a gateway running a placement nobody "+
-				"wrote would report a node it never booted, or one it cannot stop",
-			envSubstrate, c.Substrate, SubstrateFirecracker, SubstrateQEMU, SubstrateMarket)
+			"%s is %q, and %s is the only substrate implemented today: the local firecracker and "+
+				"qemu substrates were retired on %s (plan 0005 M1-MARKET-ONLY) and the market test bed "+
+				"replaces them -- a node is a VM rented from the compute market, born from the "+
+				"cloud-init its winning bidder applies, so nothing about it runs on this host. A name "+
+				"from before the retirement is refused rather than approximated: it would decide what "+
+				"a node's record names, what its teardown stops and what its leases mean, and a "+
+				"gateway running a placement nobody wrote would report a node it never booted, or one "+
+				"it cannot stop. The names retired: %s",
+			envSubstrate, c.Substrate, SubstrateMarket, RetiredSubstratesRetiredOn,
+			strings.Join(retiredSubstrateNames, ", "))
 	}
-
-	if err := c.refuseUnenforceableGuestInputs(); err != nil {
-		return err
-	}
-
-	if err := c.checkHost(); err != nil {
-		return err
-	}
-
-	switch c.Network {
-	case "":
-		return fmt.Errorf(
-			"%s is not set. It names how a node's network namespace is provided, and the answer "+
-				"is not observable from here: a node that comes up with no network is one whose "+
-				"apiserver it cannot dial, which reads as a join that never happens and a cluster "+
-				"stuck at zero nodes with no error that names the cause",
-			envNetwork)
-	case NetworkPasta:
-	default:
-		return fmt.Errorf(
-			"%s is %q, and %s is the only value accepted today: it is what was measured to work "+
-				"rootlessly on this host's kernel. Another name is refused rather than tried, "+
-				"because a node whose network came from something nobody measured is a node whose "+
-				"reachability is unknown at the moment it is counted as up",
-			envNetwork, c.Network, NetworkPasta)
-	}
-	return nil
 }
 
-func (c *Config) checkMarketPlacement() error {
+func (c *Config) checkMarketPlacement(get func(string) string) error {
 	if c.AdvertiseAddress != "" {
 		return fmt.Errorf(
 			"%s is %q and %s is %s. A node on this substrate is a VM rented from the compute "+
@@ -520,24 +390,8 @@ func (c *Config) checkMarketPlacement() error {
 				"no complaint would believe it was carrying it",
 			envAdvertiseAddress, c.AdvertiseAddress, envSubstrate, c.Substrate, envMarketAdvertiseAddress)
 	}
-	for _, req := range []struct{ name, value string }{
-		{envFirecracker, c.Firecracker},
-		{envQEMU, c.QEMU},
-		{envNodeAgent, c.NodeAgent},
-		{envImageOutDir, c.ImageOutDir},
-		{envImageConfig, c.ImageConfig},
-		{envNetwork, c.Network},
-	} {
-		if req.value == "" {
-			continue
-		}
-		return fmt.Errorf(
-			"%s is %q and %s is %s. A node on this substrate is neither started nor wired on this "+
-				"host: the market builds it from the cloud-init its bidder applies, and the "+
-				"clusterprovider's whole part in it is the claim it writes. So this setting cannot "+
-				"be in force, and it is refused rather than accepted and ignored -- an operator who "+
-				"set one and saw no complaint would believe it was carrying it",
-			req.name, req.value, envSubstrate, c.Substrate)
+	if err := c.refuseRetiredSubstrateInputs(get); err != nil {
+		return err
 	}
 	if err := c.checkHost(); err != nil {
 		return err
@@ -546,6 +400,25 @@ func (c *Config) checkMarketPlacement() error {
 		return fmt.Errorf("%s: %w", envMarketAdvertiseAddress, err)
 	}
 	c.AdvertiseAddress = c.MarketAdvertiseAddress
+	return nil
+}
+
+func (c *Config) refuseRetiredSubstrateInputs(get func(string) string) error {
+	for _, name := range retiredSubstrateInputs {
+		value := strings.TrimSpace(get(name))
+		if value == "" {
+			continue
+		}
+		return fmt.Errorf(
+			"%s is %q, and %s is %s. That variable belonged to a local substrate -- a guest this "+
+				"host started, wired and booted itself -- and those substrates were retired on %s "+
+				"(plan 0005 M1-MARKET-ONLY): a market node is neither started nor wired on this host, "+
+				"the market builds it from the cloud-init its winning bidder applies, and this "+
+				"provider's whole part in it is the claim it writes. So the setting cannot be in "+
+				"force, and it is refused rather than accepted and ignored -- an operator who set one "+
+				"and saw no complaint would believe it was carrying it",
+			name, value, envSubstrate, c.Substrate, RetiredSubstratesRetiredOn)
+	}
 	return nil
 }
 
@@ -573,61 +446,6 @@ func (c Config) checkHost() error {
 				"cluster running somewhere else, and every later pass would read that "+
 				"other machine's state as its own",
 			envHost, c.Host, host)
-	}
-	return nil
-}
-
-func (c Config) checkImageConfig(substrate string) error {
-	build, err := nodefirecracker.LoadBuildConfig(c.ImageConfig)
-	if err != nil {
-		return fmt.Errorf("%s is %q and it is not a configuration the image builder wrote, so "+
-			"the image a node of this cluster boots from cannot be named: %w", envImageConfig,
-			c.ImageConfig, err)
-	}
-	vmm, err := nodevm.NormalizeVMM(build.VMM)
-	if err != nil {
-		return fmt.Errorf("%s is %q: %w", envImageConfig, c.ImageConfig, err)
-	}
-	if vmm != substrate {
-		return fmt.Errorf("%s is %q and it is a configuration that builds a %s image, and %s is "+
-			"%s. A node is booted from an image built for the substrate that places it, and the "+
-			"other image is refused rather than booted: both VMMs boot the same kernel and hand "+
-			"the guest the same files, so a cross-substrate boot comes up, joins and reaches "+
-			"Running with no object naming the image that moved. Name a configuration whose vmm "+
-			"is %s, or select %s",
-			envImageConfig, c.ImageConfig, vmm, envSubstrate, c.Substrate, substrate, vmm)
-	}
-	return nil
-}
-
-func (c Config) refuseUnenforceableGuestInputs() error {
-	if c.AdvertiseAddress != "" {
-		return fmt.Errorf(
-			"%s is %q and %s is %s. A node on this substrate is a guest in its own network "+
-				"namespace and its own kernel, and it reaches NONE of this host's addresses: its "+
-				"only path to the host is the gateway its default route names, which is the FIRST "+
-				"USABLE ADDRESS OF THE RANGE ITS CLUSTER HOLDS in the subnet lease file. That "+
-				"range is allocated and not configured -- the pool is a constant in "+
-				"internal/subnetallocator and no flag, no environment variable and no config file "+
-				"can pick a cluster's range, because a range two operators can set differently is "+
-				"the same collision in a tidier place -- so a value here cannot be in force. It is "+
-				"refused rather than accepted and ignored, which is how the address of the machine "+
-				"running the gateway came back as a node's InternalIP: an operator who set a value "+
-				"and saw no complaint would believe it was carrying it",
-			envAdvertiseAddress, c.AdvertiseAddress, envSubstrate, c.Substrate)
-	}
-	name, value := envQEMU, c.QEMU
-	if c.Substrate == SubstrateQEMU {
-		name, value = envFirecracker, c.Firecracker
-	}
-	if value != "" {
-		return fmt.Errorf(
-			"%s is %q and %s is %s. That binary belongs to a different substrate, so it cannot be "+
-				"in force here: a node on this substrate is started by the VMM this substrate names, "+
-				"and the other one is never executed. It is refused rather than accepted and "+
-				"ignored, because an operator who set a value and saw no complaint would believe it "+
-				"was carrying it",
-			name, value, envSubstrate, c.Substrate)
 	}
 	return nil
 }

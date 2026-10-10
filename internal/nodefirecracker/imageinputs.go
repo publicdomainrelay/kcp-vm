@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodevm"
@@ -23,7 +24,7 @@ const (
 
 	fingerprintHexDigits = 64
 
-	moduleWhy = "The list is what the guest's agent modprobes before k3s starts, and it resolves " +
+	moduleWhy = "The list is what the guest modprobes before k3s starts, and it resolves " +
 		"against the module tree INSIDE this image, so a name the configuration carries and the " +
 		"image does not is a modprobe that fails inside the guest: iptables in a guest does not " +
 		"load extensions on demand, iptables-restore stops at the FIRST extension it cannot find, " +
@@ -78,19 +79,19 @@ const (
 		"pods are the old cluster's, and nothing reports the difference because both clusters are " +
 		"internally consistent"
 
-	agentWhy = "The guest's kubelet command line, its resolver, its identity and its interface are " +
-		"all decided by the agent inside this image, so an image carrying a different agent from " +
-		"the one in front of it boots a guest that behaves unlike the one this build describes. " +
+	initWhy = "The guest's PID 1 is this binary, and an image carrying a different init from the " +
+		"one in front of it boots a guest that behaves unlike the one this build describes. " +
 		"THIS INPUT WAS MISSING AND THE FAILURE IT CAUSED IS THE REASON IT IS HERE. The builder " +
 		"reported `up to date, nothing built, nothing pulled` and was right about every input it " +
-		"tracked; the guest then ran the OLD agent against a NEW node disk, that agent read a " +
-		"removed field as Go's zero value, passed `--kubelet-arg port=0`, and the kubelet refused " +
-		"to start at all -- `port (--port) 0 must be between 1 and 65535` -- so the guest never " +
-		"joined. Nothing in that sequence named the agent, and the operator's first instinct is to " +
-		"debug the kubelet: a refusal that cannot name the thing that is actually stale is the " +
-		"failure mode, not a missing check. The digest is taken from the binary the build just " +
-		"produced, not from the source that produced it, because the flags and the toolchain are " +
-		"inputs to that binary and no digest of a source tree covers either"
+		"tracked; the guest then ran the OLD binary -- the agent of that day, whose half is this " +
+		"init's ancestor -- against the NEW files the image carried, read a removed field as Go's " +
+		"zero value, passed `--kubelet-arg port=0`, and the kubelet refused to start at all -- " +
+		"`port (--port) 0 must be between 1 and 65535` -- so the guest never joined. Nothing in " +
+		"that sequence named the binary, and the operator's first instinct is to debug the kubelet: " +
+		"a refusal that cannot name the thing that is actually stale is the failure mode, not a " +
+		"missing check. The digest is taken from the binary the build just produced, not from the " +
+		"source that produced it, because the flags and the toolchain are inputs to that binary and " +
+		"no digest of a source tree covers either"
 
 	moduleSourceWhy = "The build copies this tree into the image WHOLE, and it is what modprobe " +
 		"inside the guest resolves against, so the tree is an input in its own right and not just " +
@@ -133,17 +134,17 @@ const (
 		"staging tree, so an image built with one figure and used as though it had another is a node " +
 		"that fills its disk at a moment nothing predicted"
 
-	agentPackageWhy = "The package is what the agent is built FROM, so a configuration naming " +
-		"another package is a configuration this image was not built from, whatever the binary it " +
-		"produced happens to look like -- and a package is a directory of source rather than a " +
-		"file, so an edited agent under an unchanged path is a different agent again, and the " +
+	initPackageWhy = "The package is what the guest's init is built FROM, so a configuration " +
+		"naming another package is a configuration this image was not built from, whatever the " +
+		"binary it produced happens to look like -- and a package is a directory of source rather " +
+		"than a file, so an edited init under an unchanged path is a different init again, and the " +
 		"binary the image carries is then not the one this configuration would build"
 
-	agentPackageDigestWhy = "no digest of the agent's own source, so the source the binary in this " +
+	initPackageDigestWhy = "no digest of the init's own source, so the source the binary in this " +
 		"image was built from cannot be compared against the package the configuration names"
 
-	agentGoFlagsWhy = "The flags are inputs to the agent's binary -- trimming, symbols, and anything " +
-		"added later -- so two builds of one package under different flags are two different agents " +
+	initGoFlagsWhy = "The flags are inputs to the init's binary -- trimming, symbols, and anything " +
+		"added later -- so two builds of one package under different flags are two different inits " +
 		"and this image carries one of them"
 )
 
@@ -193,11 +194,11 @@ type BuildConfig struct {
 
 	K3sBinary string `json:"k3s_binary"`
 
-	AgentBinary string `json:"agent_binary"`
+	InitBinary string `json:"init_binary"`
 
-	AgentPackage string `json:"agent_package"`
+	InitPackage string `json:"init_package"`
 
-	AgentGoFlags []string `json:"agent_go_flags"`
+	InitGoFlags []string `json:"init_go_flags"`
 
 	ModuleSource string `json:"module_source"`
 
@@ -247,15 +248,15 @@ type BuildInputs struct {
 
 	BusyboxDigest string `json:"busyboxDigest"`
 
-	AgentBinary string `json:"agentBinary"`
+	InitBinary string `json:"initBinary"`
 
-	AgentBinaryDigest string `json:"agentBinaryDigest"`
+	InitBinaryDigest string `json:"initBinaryDigest"`
 
-	AgentPackageDigest string `json:"agentPackageDigest"`
+	InitPackageDigest string `json:"initPackageDigest"`
 
-	AgentPackage string `json:"agentPackage"`
+	InitPackage string `json:"initPackage"`
 
-	AgentGoFlags []string `json:"agentGoFlags"`
+	InitGoFlags []string `json:"initGoFlags"`
 
 	ModuleSource string `json:"moduleSource"`
 
@@ -322,7 +323,7 @@ func resolvePath(path string) (string, error) {
 	return filepath.Join(parent, filepath.Base(absolute)), nil
 }
 
-func moduleRoot(agentPackage string) (string, error) {
+func moduleRoot(initPackage string) (string, error) {
 	dir, err := os.Getwd()
 	if err != nil {
 		return "", fmt.Errorf("nodefirecracker: reading the working directory, which is where go "+
@@ -339,28 +340,28 @@ func moduleRoot(agentPackage string) (string, error) {
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			return "", fmt.Errorf("nodefirecracker: agent_package is %q, which is a path relative "+
-				"to the module the agent is built in, and there is no go.mod in the working directory "+
+			return "", fmt.Errorf("nodefirecracker: init_package is %q, which is a path relative "+
+				"to the module the init is built in, and there is no go.mod in the working directory "+
 				"or in any directory above it. That path is what go resolves when it builds the "+
 				"package, and go resolves it from the module rather than from the directory the "+
 				"command happened to be run in -- so from here there is nothing for it to be "+
 				"relative to, and resolving it against the working directory instead would record "+
 				"the digest of whatever tree is standing there. Run this from inside the checkout, "+
-				"or give agent_package as the absolute path of the package", agentPackage)
+				"or give init_package as the absolute path of the package", initPackage)
 		}
 		dir = parent
 	}
 }
 
-func ResolveAgentPackage(path string) (string, error) {
+func ResolveInitPackage(path string) (string, error) {
 	if strings.TrimSpace(path) == "" {
-		return "", fmt.Errorf("nodefirecracker: the configuration names no agent_package, and the " +
-			"agent is the guest's half of the thing that talks to it. A build refuses a " +
-			"configuration without it, so an empty one is not a configuration with no agent -- it is " +
+		return "", fmt.Errorf("nodefirecracker: the configuration names no init_package, and the " +
+			"init is the guest's PID 1, built from that package. A build refuses a " +
+			"configuration without it, so an empty one is not a configuration with no init -- it is " +
 			"a field that has been renamed or dropped, and the empty string resolves to the working " +
 			"directory, which is a directory that exists and digests: the record would then hold the " +
 			"digest of whatever tree the reader happened to be standing in, and a change to the " +
-			"agent's own source would move nothing")
+			"init's own source would move nothing")
 	}
 	if filepath.IsAbs(path) {
 		return resolvePath(path)
@@ -414,6 +415,9 @@ func loadBuildConfig(path string, resolver KernelResolver) (BuildConfig, error) 
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		return BuildConfig{}, fmt.Errorf("nodefirecracker: %s: %w", path, err)
 	}
+	if err := RefuseRenamedKeys(raw, path); err != nil {
+		return BuildConfig{}, err
+	}
 	vmm, err := nodevm.NormalizeVMM(cfg.VMM)
 	if err != nil {
 		return BuildConfig{}, fmt.Errorf("nodefirecracker: the image builder's configuration at %s: %w",
@@ -431,7 +435,7 @@ func loadBuildConfig(path string, resolver KernelResolver) (BuildConfig, error) 
 		{"kernel_config", cfg.KernelConfig == ""},
 		{"base_image", cfg.BaseImage == ""},
 		{"k3s_binary", cfg.K3sBinary == ""},
-		{"agent_binary", cfg.AgentBinary == ""},
+		{"init_binary", cfg.InitBinary == ""},
 		{"module_source", cfg.ModuleSource == ""},
 	} {
 		if !named.empty {
@@ -456,6 +460,36 @@ func loadBuildConfig(path string, resolver KernelResolver) (BuildConfig, error) 
 	return cfg, nil
 }
 
+var renamedImageConfigKeys = map[string]string{
+	"agent_package":  "init_package",
+	"agent_binary":   "init_binary",
+	"agent_go_flags": "init_go_flags",
+}
+
+func RefuseRenamedKeys(raw []byte, path string) error {
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &keys); err != nil {
+		return fmt.Errorf("nodefirecracker: %s: %w", path, err)
+	}
+	renamed := make([]string, 0, len(renamedImageConfigKeys))
+	for old, new := range renamedImageConfigKeys {
+		if _, ok := keys[old]; !ok {
+			continue
+		}
+		renamed = append(renamed, fmt.Sprintf("%s -> %s", old, new))
+	}
+	if len(renamed) == 0 {
+		return nil
+	}
+	sort.Strings(renamed)
+	return fmt.Errorf("nodefirecracker: the image builder's configuration at %s carries the "+
+		"retired key(s) %s. The guest binary these name is the guest's init and nothing else "+
+		"(plan 0005 M1-AGENT-SPLIT), so the old spellings are refused rather than read: a build "+
+		"that accepted one would fingerprint an image by a key the current builder no longer "+
+		"writes, and the same configuration would name two different images depending on which "+
+		"builder read it", path, strings.Join(renamed, ", "))
+}
+
 func RecordInputs(configPath string, cfg BuildConfig) (BuildInputs, error) {
 	resolvedConfig, err := resolvePath(configPath)
 	if err != nil {
@@ -466,8 +500,8 @@ func RecordInputs(configPath string, cfg BuildConfig) (BuildInputs, error) {
 		Modules:           canonicalSet(cfg.Modules),
 		InitramfsModules:  canonicalSet(cfg.InitramfsModules),
 		Images:            canonicalSet(cfg.Images),
-		AgentPackage:      cfg.AgentPackage,
-		AgentGoFlags:      append([]string(nil), cfg.AgentGoFlags...),
+		InitPackage:       cfg.InitPackage,
+		InitGoFlags:       append([]string(nil), cfg.InitGoFlags...),
 		BootArgs:          append([]string(nil), cfg.BootArgs...),
 		K3sDataDir:        cfg.K3sDataDir,
 		RootfsLabel:       cfg.RootfsLabel,
@@ -525,38 +559,38 @@ func RecordInputs(configPath string, cfg BuildConfig) (BuildInputs, error) {
 		inputs.Preinstall = resolved
 		inputs.PreinstallDigest = digest
 	}
-	inputs.AgentBinary = ""
-	inputs.AgentBinaryDigest = ""
-	if _, statErr := os.Stat(cfg.AgentBinary); statErr == nil {
-		resolvedBinary, err := resolvePath(cfg.AgentBinary)
+	inputs.InitBinary = ""
+	inputs.InitBinaryDigest = ""
+	if _, statErr := os.Stat(cfg.InitBinary); statErr == nil {
+		resolvedBinary, err := resolvePath(cfg.InitBinary)
 		if err != nil {
 			return BuildInputs{}, err
 		}
 		digest, err := fileDigest(resolvedBinary)
 		if err != nil {
-			return BuildInputs{}, fmt.Errorf("nodefirecracker: reading the guest agent at %s: %w",
-				cfg.AgentBinary, err)
+			return BuildInputs{}, fmt.Errorf("nodefirecracker: reading the guest init at %s: %w",
+				cfg.InitBinary, err)
 		}
-		inputs.AgentBinary = resolvedBinary
-		inputs.AgentBinaryDigest = digest
+		inputs.InitBinary = resolvedBinary
+		inputs.InitBinaryDigest = digest
 	} else if !os.IsNotExist(statErr) {
-		return BuildInputs{}, fmt.Errorf("nodefirecracker: looking for the guest agent at %s: %w",
-			cfg.AgentBinary, statErr)
+		return BuildInputs{}, fmt.Errorf("nodefirecracker: looking for the guest init at %s: %w",
+			cfg.InitBinary, statErr)
 	}
-	resolvedAgent, err := ResolveAgentPackage(cfg.AgentPackage)
+	resolvedInit, err := ResolveInitPackage(cfg.InitPackage)
 	if err != nil {
 		return BuildInputs{}, err
 	}
-	agentTree, err := treeDigest(resolvedAgent)
+	initTree, err := treeDigest(resolvedInit)
 	if err != nil {
-		return BuildInputs{}, fmt.Errorf("nodefirecracker: reading the guest agent's own source at %s, "+
+		return BuildInputs{}, fmt.Errorf("nodefirecracker: reading the guest init's own source at %s, "+
 			"which is recorded so that a source change is visible without a Go toolchain to build the "+
 			"binary with: %w -- the binary is what the image carries and this is what the binary is "+
 			"built from, and a build that had to happen before the question could be asked would make "+
-			"asking it impossible on a host that has no toolchain", cfg.AgentPackage, err)
+			"asking it impossible on a host that has no toolchain", cfg.InitPackage, err)
 	}
-	inputs.AgentPackage = resolvedAgent
-	inputs.AgentPackageDigest = agentTree
+	inputs.InitPackage = resolvedInit
+	inputs.InitPackageDigest = initTree
 	resolvedSource, err := resolvePath(cfg.ModuleSource)
 	if err != nil {
 		return BuildInputs{}, err
@@ -664,7 +698,7 @@ func CompareImageToConfig(m Manifest, configPath string, cfg BuildConfig) error 
 		{"kernel configuration", m.Inputs.KernelConfig, m.Inputs.KernelConfigDigest, cfg.KernelConfig, kernelConfigWhy},
 		{"base image", m.Inputs.BaseImage, m.Inputs.BaseImageDigest, cfg.BaseImage, baseImageWhy},
 		{"k3s binary", m.K3sBinary, m.Inputs.K3sBinaryDigest, cfg.K3sBinary, k3sWhy},
-		{"guest agent", m.Inputs.AgentBinary, m.Inputs.AgentBinaryDigest, cfg.AgentBinary, agentWhy},
+		{"guest init", m.Inputs.InitBinary, m.Inputs.InitBinaryDigest, cfg.InitBinary, initWhy},
 		{"host busybox", m.Inputs.Busybox, m.Inputs.BusyboxDigest, HostBusybox, busyboxWhy},
 	} {
 		named, err := resolvePath(f.named)
@@ -700,8 +734,8 @@ func CompareImageToConfig(m Manifest, configPath string, cfg BuildConfig) error 
 	}{
 		{"kernel modules' tree", m.Inputs.ModuleSource, m.Inputs.ModuleSourceDigest, cfg.ModuleSource,
 			moduleSourceDigestWhy, moduleSourceWhy, resolvePath},
-		{"agent package's tree", m.Inputs.AgentPackage, m.Inputs.AgentPackageDigest, cfg.AgentPackage,
-			agentPackageDigestWhy, agentPackageWhy, ResolveAgentPackage},
+		{"init package's tree", m.Inputs.InitPackage, m.Inputs.InitPackageDigest, cfg.InitPackage,
+			initPackageDigestWhy, initPackageWhy, ResolveInitPackage},
 	} {
 		recorded := t.recorded
 		if resolved, err := resolvePath(t.recorded); err == nil {
@@ -720,7 +754,7 @@ func CompareImageToConfig(m Manifest, configPath string, cfg BuildConfig) error 
 	if d := listDifference("boot arguments", m.Inputs.BootArgs, cfg.BootArgs, bootArgsWhy); d != "" {
 		diffs = append(diffs, d)
 	}
-	if d := listDifference("agent build flags", m.Inputs.AgentGoFlags, cfg.AgentGoFlags, agentGoFlagsWhy); d != "" {
+	if d := listDifference("init build flags", m.Inputs.InitGoFlags, cfg.InitGoFlags, initGoFlagsWhy); d != "" {
 		diffs = append(diffs, d)
 	}
 	for _, f := range []struct {

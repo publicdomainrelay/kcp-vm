@@ -15,9 +15,10 @@ Agents working in this repo should read [`AGENTS.md`](AGENTS.md) first; it point
 
 ## Prerequisites
 
-- Linux with `/dev/kvm` and `/dev/net/tun`. A node is a KVM guest and its tap comes from `tun`; `deploy/run-container.sh` refuses with the exact `modprobe` to run if either is missing.
-- Docker, and a Go toolchain newer than `go.mod` for building.
-- Two artifacts that live outside the repo, under `/home/johnandersen777/kcp-image/`: `nodeimage.json` (the operator's builder config) and `artifacts/` (the firecracker binary and the base rootfs). The image build reads them; nothing can invent them.
+- Linux, and Docker. No `/dev/kvm` and no `/dev/net/tun`: a node is a VM rented from the compute
+  market and built by the winning bidder's cloud-init, so nothing about it runs on this host (see
+  "Substrates").
+- A Go toolchain newer than `go.mod` for building.
 - The container publishes only `127.0.0.1:8443` (TLS). Nothing else is exposed.
 
 ## Run it
@@ -31,8 +32,7 @@ docker logs -f socialweb
 ```
 
 The container name and the state volume are `SOCIALWEB_CONTAINER_NAME` and
-`SOCIALWEB_STATE_VOLUME`. That script is `docker build` plus `docker run --device=/dev/kvm
---device=/dev/net/tun --security-opt seccomp=unconfined --cap-add NET_ADMIN --cap-add SYS_ADMIN
+`SOCIALWEB_STATE_VOLUME`. That script is `docker build` plus `docker run
 -v <volume>:/var/lib/socialweb -p 127.0.0.1:8443:8443 <image>`. No host systemd unit, no root on
 the host, nothing to install.
 
@@ -46,9 +46,6 @@ By hand, if you prefer the flags in front of you:
 
 ```bash
 docker run -d --name socialweb \
-  --device=/dev/kvm --device=/dev/net/tun \
-  --security-opt seccomp=unconfined \
-  --cap-add NET_ADMIN --cap-add SYS_ADMIN \
   -v socialweb-state:/var/lib/socialweb \
   -p 127.0.0.1:8443:8443 \
   socialweb-control-plane:local
@@ -78,8 +75,6 @@ Override the defaults with the documented file, or with `-e`:
 
 ```bash
 docker run -d --name socialweb \
-  --device=/dev/kvm --device=/dev/net/tun \
-  --security-opt seccomp=unconfined --cap-add NET_ADMIN --cap-add SYS_ADMIN \
   -v socialweb-state:/var/lib/socialweb \
   -p 127.0.0.1:8443:8443 \
   --env-file deploy/container.env.example \
@@ -90,8 +85,6 @@ Terminate TLS with your own certificate instead of a generated one:
 
 ```bash
 docker run -d --name socialweb \
-  --device=/dev/kvm --device=/dev/net/tun \
-  --security-opt seccomp=unconfined --cap-add NET_ADMIN --cap-add SYS_ADMIN \
   -v socialweb-state:/var/lib/socialweb \
   -v "$PWD/tls:/tls:ro" \
   -p 127.0.0.1:8443:8443 \
@@ -103,7 +96,7 @@ docker run -d --name socialweb \
 Run a one-off command in the image instead of the stack (the entrypoint execs its arguments):
 
 ```bash
-docker run --rm --device=/dev/kvm --security-opt seccomp=unconfined \
+docker run --rm \
   socialweb-control-plane:local \
   socialweb-computer-kcp-check-host -config /home/johnandersen777/kcp-image/nodeimage.json
 ```
@@ -121,13 +114,13 @@ refusing, and a recycled pid no longer reads as a live postmaster.
 ## Build the image
 
 ```bash
-deploy/control-plane-container/build.sh computer
+deploy/control-plane-container/build.sh controlplane
 ```
 
-Targets: `controlplane` (the control-plane half), `computer` (the whole deployment, which is what
-`run-container.sh` builds and tags `socialweb-control-plane:local`), `nodeimage` and `nodeimages`
-(the node image stages), `extract` (write the built node images to a directory). The node-image
-stage caches on its own inputs, so a rebuild after editing unrelated Go is seconds, not minutes.
+Targets: `controlplane` (the control-plane half, which is what `run-container.sh` builds and tags
+`socialweb-control-plane:local`), `nodeimage` and `nodeimages` (the node image stages), `extract`
+(write the built node images to a directory). The node-image stage caches on its own inputs, so a
+rebuild after editing unrelated Go is seconds, not minutes.
 
 ## Gate
 
@@ -165,28 +158,20 @@ SOCIALWEB_REQUIRE_LIVE=1 go test ./...          # everything; a skip is a failur
 gate it FAILS rather than skips, so the fast loop can never be mistaken for the gate. A skip is not
 a pass in any mode: `--local` names every skip it takes, and `--full` fails on them.
 
-## The full live gate in a privileged rig
+## The full live gate
 
-The strict gate needs a tenant cluster and a real guest. `deploy/test-rig/run.sh` builds the input
-deriver, boots the product image with the VMM flags, and runs the live gate inside it against the
-node image in the store:
+The strict gate needs a tenant cluster and a real guest. The market test bed is where that is driven
+now: the vendored `deploy/examples/atproto/market` tree runs a local dispatcher, a bidder and a
+requester, and the guest is born from the RFP flow rather than from any rig this repo hosts. The
+privileged rig that used to do it here (`deploy/test-rig`, and `cmd/socialweb-rig-inputs` with it)
+existed only to boot the local substrates with `/dev/kvm` and `/dev/net/tun`, and was deleted with
+them on 2026-10-07 (plan 0005 M1-MARKET-ONLY).
+
+The gate it drove is unchanged and still runs against a live cluster:
 
 ```bash
-deploy/test-rig/run.sh
+SOCIALWEB_REQUIRE_LIVE=1 go test ./...     # everything; a skip is a failure
 ```
-
-The rig derives the tenant inputs from the running product rather than asking for them:
-`cmd/socialweb-rig-inputs` reads the account DID and the cluster name out of the Cluster CR through
-the container's own kcp admin kubeconfig, the tenant admin kubeconfig out of the clusterprovider's
-state directory, the device-key registry workspace and namespace out of the gateway's registry
-setting, and the granted `did-*` ServiceAccount out of the tenant grant the bootstrap applies. An
-input whose source is not present is left unset and the preflight names it, so the gate never runs
-on a fabricated value.
-
-It needs `/dev/kvm`, `/dev/net/tun`, the Go caches, and `/home/johnandersen777/kcp-image/`. It never
-changes the image, the entrypoint or the proof; it only adds the flags on its own `docker run`. It
-removes its container and volume on exit, including after a failure or an interrupt; set
-`KCP_RIG_KEEP=1` to keep them for debugging.
 
 ## Validate the containerized control plane
 
@@ -226,32 +211,28 @@ KCP_INSTANCE=dev KCP_SECURE_PORT=6444 KCP_KINE_ENDPOINT=http://127.0.0.1:20001 \
 
 | Binary | What it is |
 | --- | --- |
-| `socialweb-clusterprovider` | the reconciler: owns each `Cluster` CR, spawns and reaps its process group and its guests |
+| `socialweb-clusterprovider` | the reconciler: owns each `Cluster` CR, spawns and reaps its process group and writes its nodes' claims |
 | `socialweb-gateway` | the front door: device-key minting and the XRPC surface |
 | `socialweb-credential` | the kubeconfig exec plugin the gateway hands a tenant |
 | `socialweb-vault` | applies the root vault layout (init, unseal, mounts, policies, roles, secrets) |
-| `socialweb-nodeagent` | runs inside a guest: adopts identity and execs the k3s agent |
+| `socialweb-nodeinit` | the guest's PID 1, from the initramfs: mounts `/dev/vda` and `switch_root`s into it |
 | `socialweb-nodeimage` | builds a node image from the operator's configuration |
 | `socialweb-computer-kcp-check-host` | the host-contract probe above |
-| `socialweb-rig-inputs` | derives the live-gate inputs from the image store |
 
 ## Substrates
 
-A node is a guest. The default is firecracker; qemu is the second substrate and is selected by
-config, not by a code branch:
+**`market` is the only node path.** A node is a VM rented from the compute market: the
+clusterprovider writes a `NodeClaim`, the market's door fulfils it under the cluster owner's own
+atproto OAuth session, and the winning bidder boots the guest from the requester's cloud-init
+`user_data`. Nothing about a node runs on this host -- no VMM, no guest network, no image, no
+`/dev/kvm`.
 
-```bash
-docker run -d --name socialweb \
-  --device=/dev/kvm --device=/dev/net/tun \
-  --security-opt seccomp=unconfined --cap-add NET_ADMIN --cap-add SYS_ADMIN \
-  -v socialweb-state:/var/lib/socialweb \
-  -p 127.0.0.1:8443:8443 \
-  -e SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE=qemu \
-  socialweb-control-plane:local
-```
-
-qemu needs its binary in the image and its own builder config; the entrypoint defaults the firecracker
-paths and switches them for qemu when that value is set.
+The local `firecracker` and `qemu` substrates were retired on 2026-10-07 (plan
+[`0005-zero-ssh-market-nodes.yaml`](docs/plans/0005-zero-ssh-market-nodes.yaml), M1-MARKET-ONLY);
+their code, their tests and their deployment paths are gone, and a configuration that still names
+one is refused at startup by a message that says so. The VMM code the bidder still needs
+(`internal/nodevm`, `internal/nodefirecracker`'s image and manifest halves, `socialweb-nodeboot`) is
+kept: it is what boots the guest the market rents, on the bidder's host rather than this one.
 
 ## Where things are
 
@@ -267,8 +248,9 @@ paths and switches them for qemu when that value is set.
 
 ## Troubleshooting
 
-- **"no /dev/kvm"** or **"no /dev/net/tun"**: the script prints the `modprobe` to run. There is no
-  node without them.
+- **`/dev/kvm` or `/dev/net/tun` errors**: nothing asks for them any more. A node is a market guest
+  (see "Substrates"), so a message naming either is from a build or a script older than the
+  retirement on 2026-10-07.
 - **`curl` to 8080 fails**: 8080 is container-local. Publish and use 8443; that is the TLS
   terminator, which forwards to the loopback gateway.
 - **`--full` fails**: it names the missing variable for each failing test. It is the only mode that

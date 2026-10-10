@@ -130,9 +130,20 @@ items:
     title: Retire clusterprovider's local firecracker and qemu substrates
     decision: >
       The market path with a local bidder covers the same test bed; one node path remains. The VMM
-      code survives where the bidder's nodeboot needs it.
-    status: todo
-    evidence: []
+      code survives where the bidder's nodeboot needs it. decided by deepseek executor, lead may
+      veto: the subnet allocator STAYS in the composition root, because internal/materialiser
+      requires it to release a cluster's range beside its ports on teardown and removing it ripples
+      through materialiser, the legacy-key migrator and check-host for no behaviour a market cluster
+      has; the node hosts no longer take it. decided by deepseek executor, lead may veto: the node
+      record sweep keeps walking and keeps refusing to signal on a record it cannot verify, but a
+      record from a retired substrate is now REPORTED and left in place rather than reaped, because
+      the market path writes no record at all (a rented node is a NodeClaim) and every remaining
+      record names a process whose argv this provider can no longer reconstruct.
+    status: done
+    evidence:
+      - "commit cd12808: internal/nodeqemu deleted; internal/nodefirecracker trimmed to the image, manifest, namespace-child, fingerprint and guest-document halves the bidder's nodeboot builds and boots; SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE accepts market alone and refuses firecracker/qemu by name and retirement date; the variables only the retired substrates read (FIRECRACKER, QEMU, NODE_AGENT, IMAGE_OUT_DIR, IMAGE_CONFIG, NETWORK, NODE_DISK_MIB) are refused rather than parsed; GuestDialled, GuestGateway, nodeVaultStage, the per-node network allocation, AssertGuestAdvertiseInvariant, dialFromAGuest and internal/nodevm's guest-dial helpers deleted; internal/clusterprovider's guest advertise invariant and image-config check deleted; deploy/control-plane-container's computer target and nodeimage-qemu stage, deploy/test-rig and cmd/socialweb-rig-inputs deleted; run-container.sh keeps the k8s target"
+      - "tests watched to fail then pass: cmd/socialweb-clusterprovider TestTheRetiredSubstratesAreRefusedAtStartup, TestTheRetiredSubstratesAreRefusedAndNameTheirRetirement, TestNoPlacementSuppliesAProcessIdentityAnyMore, TestTheMarketSweepLeavesARetiredSubstratesRecordAlone, TestASweepLeavesARecordWhoseSubstrateItCannotRead, TestShutdownLeavesTheMarketNodesToTheNextProvider, TestTheCredentialSourceIsTheClustersOwnCA; internal/clusterstack TestAStackWithNoDialFlagValidates, TestOnlyAMarketClusterDropsFlannel; internal/portallocator dropped AssertGuestAdvertiseInvariant and AssertGuestDialAddress with no remaining caller"
+      - "deploy/check.sh --fast green 2026-10-07T21:50:55Z on the branch at cd12808 (gofmt, go build, apigen no drift, go vet, staticcheck, cargo, go test ./...); go build ./... and go vet ./... clean again at b2e931a 2026-10-07T21:51:03Z"
   - id: M1-AGENT-SPLIT
     milestone: M1
     title: Split socialweb-nodeagent into a static guest binary (init and agent) and a host binary (namespace and VMM runner)
@@ -144,9 +155,17 @@ items:
       socialweb-nodeinit (initramfs /init only), host binary socialweb-nodeboot (unchanged); the agent
       verb, /kcp/kcpagent and kcp-agent.service are deleted, the guest joining through cloud-init
       units (M3-UNITS). Done in one change with M1-MARKET-ONLY after M1-TESTBED proves the market
-      path, because both rewrite the same files. decided by Claude, user may veto.
-    status: todo
-    evidence: []
+      path, because both rewrite the same files. decided by Claude, user may veto. decided by
+      deepseek executor, lead may veto: the image configuration's old key names are REFUSED with a
+      message naming the new ones rather than accepted for a release, and the operator's
+      configurations under /home/johnandersen777/kcp-image/ were rewritten to the new names and
+      fingerprinted again (the old spellings are refused, so leaving them would have made every
+      build host fail).
+    status: done
+    evidence:
+      - "commit cd12808: cmd/socialweb-nodeagent -> cmd/socialweb-nodeinit with the init verb alone; agent.go, audit.go, agent_test.go, the guest identity-disk join, LoadNodeDocument, /kcp/kcpagent and kcp-agent.service deleted; kcp-agent.service added to rootfs staleUnits so an image built on a base that carried it retires it; image config keys init_package/init_binary/init_go_flags with RefuseRenamedKeys refusing agent_package/agent_binary/agent_go_flags; every JSON config in the repo and scripts/deploy-firecracker-bidder.sh updated"
+      - "image built by the real builder from the renamed configuration 2026-10-07T21:47:45Z (logs/image-build.log): fingerprint sha256-bcdfbb6824a7743d8fd4c15d1be1ad1bda35785fe97a0f1278ebfa507b98be00, stage /kcp holds guest.yaml alone, multi-user.target.wants holds no kcp unit, and the initramfs's /init is a stripped static x86-64 Go binary whose strings carry KCP_INIT fatal and 13 nodeinit markers and no KCP_AGENT marker"
+      - "internal/nodefirecracker TestAnInitPackageIsRelativeToTheModuleAndNotToWhereTheReaderStands and cmd/socialweb-nodeimage TestAnImageBuiltBeforeTheRecordCoveredTheInitIsRefused, plus the input-role table renamed; fingerprint tests updated deliberately (the input's name and content are both inputs)"
   - id: M1-BIDDER-UNIT
     milestone: M1
     title: System template unit socialweb-computer-bidder@<handle>.service

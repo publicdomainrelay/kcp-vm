@@ -33,17 +33,11 @@ func thisHost(t *testing.T) string {
 	return host
 }
 
-func placementEnv(t *testing.T) map[string]string {
+func marketPlacementEnv(t *testing.T) map[string]string {
 	t.Helper()
-	image := builtNodeImageFixture(t)
 	return map[string]string{
-		"SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE":     "firecracker",
-		"SOCIALWEB_CLUSTERPROVIDER_HOST":          thisHost(t),
-		"SOCIALWEB_CLUSTERPROVIDER_NETWORK":       "pasta",
-		"SOCIALWEB_CLUSTERPROVIDER_IMAGE_OUT_DIR": image.outDir,
-		"SOCIALWEB_CLUSTERPROVIDER_IMAGE_CONFIG":  image.configPath,
-		"SOCIALWEB_CLUSTERPROVIDER_FIRECRACKER":   "/usr/bin/firecracker",
-		"SOCIALWEB_CLUSTERPROVIDER_NODE_AGENT":    "/usr/bin/socialweb-nodeagent",
+		"SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE": SubstrateMarket,
+		"SOCIALWEB_CLUSTERPROVIDER_HOST":      thisHost(t),
 	}
 }
 
@@ -61,7 +55,7 @@ func joinEnv(t *testing.T, extra map[string]string) map[string]string {
 		"SOCIALWEB_CLUSTERPROVIDER_EXTERNAL_SECRETS":         "/usr/local/bin/external-secrets",
 		"SOCIALWEB_CLUSTERPROVIDER_ESO_BUNDLE":               "/opt/socialweb/eso/external-secrets.yaml",
 	}
-	for k, v := range placementEnv(t) {
+	for k, v := range marketPlacementEnv(t) {
 		env[k] = v
 	}
 	for k, v := range extra {
@@ -93,25 +87,11 @@ func TestAPlacementIsRequiredAndRefusedRatherThanDefaulted(t *testing.T) {
 		{"no substrate", map[string]string{"SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE": ""},
 			[]string{"SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE"}},
 		{"an unknown substrate", map[string]string{"SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE": "jail"},
-			[]string{"SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE", "jail", "firecracker"}},
+			[]string{"SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE", "jail", SubstrateMarket}},
 		{"a host that is not this one", map[string]string{"SOCIALWEB_CLUSTERPROVIDER_HOST": thisHost(t) + "-not"},
 			[]string{"SOCIALWEB_CLUSTERPROVIDER_HOST", "not"}},
 		{"no host", map[string]string{"SOCIALWEB_CLUSTERPROVIDER_HOST": ""},
 			[]string{"SOCIALWEB_CLUSTERPROVIDER_HOST"}},
-		{"no network", map[string]string{"SOCIALWEB_CLUSTERPROVIDER_NETWORK": ""},
-			[]string{"SOCIALWEB_CLUSTERPROVIDER_NETWORK"}},
-		{"an unknown network", map[string]string{"SOCIALWEB_CLUSTERPROVIDER_NETWORK": "host"},
-			[]string{"SOCIALWEB_CLUSTERPROVIDER_NETWORK", "host", "pasta"}},
-		{"no image store", map[string]string{"SOCIALWEB_CLUSTERPROVIDER_IMAGE_OUT_DIR": ""},
-			[]string{"SOCIALWEB_CLUSTERPROVIDER_IMAGE_OUT_DIR"}},
-		{"no image configuration", map[string]string{"SOCIALWEB_CLUSTERPROVIDER_IMAGE_CONFIG": ""},
-			[]string{"SOCIALWEB_CLUSTERPROVIDER_IMAGE_CONFIG"}},
-		{"an image configuration that is not one the builder wrote",
-			map[string]string{"SOCIALWEB_CLUSTERPROVIDER_IMAGE_CONFIG": "/nonexistent/nodeimage.json"},
-			[]string{"SOCIALWEB_CLUSTERPROVIDER_IMAGE_CONFIG", "/nonexistent/nodeimage.json"}},
-		{"an advertise address on a substrate whose nodes are guests",
-			map[string]string{"SOCIALWEB_CLUSTERPROVIDER_ADVERTISE_ADDRESS": "192.168.5.2"},
-			[]string{"SOCIALWEB_CLUSTERPROVIDER_ADVERTISE_ADDRESS", "192.168.5.2", "firecracker"}},
 	} {
 		_, err := loadJoin(t, tc.set)
 		if err == nil {
@@ -128,119 +108,21 @@ func TestAPlacementIsRequiredAndRefusedRatherThanDefaulted(t *testing.T) {
 	}
 }
 
-func TestFirecrackerNeedsItsWholePlacementAndIsNotFallenBackFrom(t *testing.T) {
-	_, err := loadJoin(t, map[string]string{
-		"SOCIALWEB_CLUSTERPROVIDER_FIRECRACKER": "",
-		"SOCIALWEB_CLUSTERPROVIDER_NODE_AGENT":  "",
-	})
-	if err == nil {
-		t.Fatal("the firecracker substrate was accepted with no VMM and no agent: a guest is the " +
-			"VMM, the agent and the image, and a join that accepted it would report a node it " +
-			"never booted")
-	}
-	for _, want := range []string{
-		"SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE",
-		"SOCIALWEB_CLUSTERPROVIDER_FIRECRACKER",
-		"SOCIALWEB_CLUSTERPROVIDER_NODE_AGENT",
-	} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("the refusal does not name %q, so an operator cannot tell which setting it "+
-				"is about: %v", want, err)
-		}
-	}
-	for _, other := range []string{"process", "local"} {
-		if strings.Contains(err.Error(), other) {
-			t.Errorf("the refusal names %q, which reads as a fallback to another substrate. "+
-				"Firecracker is the only one implemented today, and a fallback would place the "+
-				"node somewhere its record, its kubelet port and its teardown do not describe: %v",
-				other, err)
-		}
-	}
-}
-
-func TestQEMUIsCheckedTheSameWayAsFirecrackerAndIsNotFallenBackFrom(t *testing.T) {
-	qimage := builtNodeImageFixtureFor(t, SubstrateQEMU)
-	qemu := func(extra map[string]string) map[string]string {
-		env := map[string]string{
-			"SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE":     "qemu",
-			"SOCIALWEB_CLUSTERPROVIDER_FIRECRACKER":   "",
-			"SOCIALWEB_CLUSTERPROVIDER_QEMU":          "/usr/bin/qemu-system-x86_64",
-			"SOCIALWEB_CLUSTERPROVIDER_IMAGE_OUT_DIR": qimage.outDir,
-			"SOCIALWEB_CLUSTERPROVIDER_IMAGE_CONFIG":  qimage.configPath,
-		}
-		for k, v := range extra {
-			env[k] = v
-		}
-		return env
-	}
-	cfg, err := loadJoin(t, qemu(nil))
-	if err != nil {
-		t.Fatalf("a fully configured qemu join was refused: %v", err)
-	}
-	if cfg.Substrate != SubstrateQEMU || cfg.QEMU != "/usr/bin/qemu-system-x86_64" {
-		t.Fatalf("the qemu placement was not carried into the Config: %+v", cfg)
-	}
-
-	for _, tc := range []struct {
-		name  string
-		set   map[string]string
-		names []string
-	}{
-		{"no qemu binary", qemu(map[string]string{"SOCIALWEB_CLUSTERPROVIDER_QEMU": ""}),
-			[]string{"SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE", "SOCIALWEB_CLUSTERPROVIDER_QEMU"}},
-		{"an advertise address on a substrate whose nodes are guests",
-			qemu(map[string]string{"SOCIALWEB_CLUSTERPROVIDER_ADVERTISE_ADDRESS": "192.168.5.2"}),
-			[]string{"SOCIALWEB_CLUSTERPROVIDER_ADVERTISE_ADDRESS", "192.168.5.2",
-				"SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE"}},
-		{"a firecracker binary under qemu, where it cannot be in force",
-			qemu(map[string]string{"SOCIALWEB_CLUSTERPROVIDER_FIRECRACKER": "/usr/bin/firecracker"}),
-			[]string{"SOCIALWEB_CLUSTERPROVIDER_FIRECRACKER", "/usr/bin/firecracker"}},
-	} {
-		_, err := loadJoin(t, tc.set)
+func TestTheRetiredSubstratesAreRefusedAtStartup(t *testing.T) {
+	for _, name := range []string{"firecracker", "qemu"} {
+		_, err := loadJoin(t, map[string]string{
+			"SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE": name,
+		})
 		if err == nil {
-			t.Errorf("%s was accepted, and a placement that was guessed or partly inert is one "+
-				"this gateway cannot honour and cannot be caught not honouring", tc.name)
+			t.Fatalf("%s was accepted as a placement, and the local substrates were retired on %s "+
+				"(plan 0005 M1-MARKET-ONLY)", name, RetiredSubstratesRetiredOn)
 			continue
 		}
-		for _, want := range tc.names {
+		for _, want := range []string{name, SubstrateMarket, RetiredSubstratesRetiredOn} {
 			if !strings.Contains(err.Error(), want) {
-				t.Errorf("%s: the refusal does not name %q, so an operator cannot tell which "+
-					"setting it is about: %v", tc.name, want, err)
+				t.Errorf("%s: the refusal does not name %q, so it reads as a typo rather than as a "+
+					"placement that was withdrawn: %v", name, want, err)
 			}
-		}
-	}
-
-	_, err = loadJoin(t, map[string]string{
-		"SOCIALWEB_CLUSTERPROVIDER_QEMU": "/usr/bin/qemu-system-x86_64",
-	})
-	if err == nil {
-		t.Fatal("a qemu binary was accepted under the firecracker substrate: it is never " +
-			"executed there, and an operator who set it and saw no complaint would believe it was " +
-			"carrying it")
-	}
-	if !strings.Contains(err.Error(), "SOCIALWEB_CLUSTERPROVIDER_QEMU") {
-		t.Errorf("the refusal does not name the inert setting: %v", err)
-	}
-}
-
-func TestAnImageConfigBuiltForAnotherVMMIsRefusedAtStartup(t *testing.T) {
-	f := builtNodeImageFixture(t)
-	_, err := loadJoin(t, map[string]string{
-		"SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE":     "qemu",
-		"SOCIALWEB_CLUSTERPROVIDER_FIRECRACKER":   "",
-		"SOCIALWEB_CLUSTERPROVIDER_QEMU":          "/usr/bin/qemu-system-x86_64",
-		"SOCIALWEB_CLUSTERPROVIDER_IMAGE_OUT_DIR": f.outDir,
-		"SOCIALWEB_CLUSTERPROVIDER_IMAGE_CONFIG":  f.configPath,
-	})
-	if err == nil {
-		t.Fatal("a qemu placement was accepted with a configuration that builds a firecracker " +
-			"image: the guest booted from it would come up and join, and nothing downstream would " +
-			"name the image that moved")
-	}
-	for _, want := range []string{"SOCIALWEB_CLUSTERPROVIDER_IMAGE_CONFIG", "firecracker", "qemu"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("the refusal does not name %q, so an operator cannot see which setting or "+
-				"VMM it is about: %v", want, err)
 		}
 	}
 }
@@ -279,8 +161,7 @@ func TestObserveOnlyNeedsNoPlacement(t *testing.T) {
 	if !cfg.ObserveOnly() {
 		t.Fatal("an unset Join must be observe-only")
 	}
-	if cfg.Substrate != "" || cfg.Host != "" || cfg.Network != "" || cfg.ImageOutDir != "" ||
-		cfg.ImageConfig != "" {
+	if cfg.Substrate != "" || cfg.Host != "" {
 		t.Fatalf("observe-only invented a placement: %+v", cfg)
 	}
 }

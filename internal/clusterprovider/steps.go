@@ -165,14 +165,7 @@ func gate(c procgroup.Component, spec clusterstack.Spec, bao, api portallocator.
 			if api.Purpose != portallocator.PurposeK3sSecure {
 				return fmt.Errorf("%w: the apiserver, so this k3s step has no leased port to hold it to (data dir %s)", ErrNoLease, spec.DataDir)
 			}
-			invariant := portallocator.AssertAdvertiseInvariant
-			switch {
-			case spec.GuestDialled:
-				invariant = portallocator.AssertGuestAdvertiseInvariant
-			case spec.MarketDialled:
-				invariant = portallocator.AssertMarketAdvertiseInvariant
-			}
-			if err := invariant(spec.AdvertiseAddress, spec.AdvertisePort, spec.AdvertisePort, api); err != nil {
+			if err := portallocator.AssertMarketAdvertiseInvariant(spec.AdvertiseAddress, spec.AdvertisePort, spec.AdvertisePort, api); err != nil {
 				return err
 			}
 			if err := waitK3s(ctx, spec.BindAddress, spec.K3sSecurePort); err != nil {

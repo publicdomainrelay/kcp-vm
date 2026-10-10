@@ -4,11 +4,8 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
-	"io/fs"
-	"net/netip"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -28,12 +25,9 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clusterprovider"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/materialiser"
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodefirecracker"
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodeqemu"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/noderecord"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/procgroup"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/scale"
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/subnetallocator"
 )
 
 const standInEnv = "CLUSTERPROVIDER_TEST_HELPER"
@@ -130,285 +124,6 @@ func (c *nodeWritingClusters) wrote() ([]string, []v1alpha1.NodeStatus) {
 	return append([]string(nil), c.nodes...), append([]v1alpha1.NodeStatus(nil), c.statuses...)
 }
 
-type nodeImageFixture struct {
-	outDir     string
-	configPath string
-	build      nodefirecracker.BuildConfig
-}
-
-func (f nodeImageFixture) writeBuildConfig(t *testing.T) {
-	t.Helper()
-	encoded, err := json.Marshal(f.build)
-	if err != nil {
-		t.Fatalf("encoding the builder's configuration: %v", err)
-	}
-	if err := os.WriteFile(f.configPath, encoded, 0o600); err != nil {
-		t.Fatalf("writing the builder's configuration: %v", err)
-	}
-}
-
-func (f nodeImageFixture) imageDir(t *testing.T) string {
-	t.Helper()
-	fingerprint, err := nodefirecracker.Fingerprint(f.configPath, f.build)
-	if err != nil {
-		t.Fatalf("naming the image this configuration asks for: %v", err)
-	}
-	return filepath.Join(f.outDir, fingerprint)
-}
-
-func builtNodeImageFixture(t *testing.T) nodeImageFixture {
-	t.Helper()
-	return builtNodeImageFixtureFor(t, SubstrateFirecracker)
-}
-
-func builtNodeImageFixtureFor(t *testing.T, vmm string) nodeImageFixture {
-	t.Helper()
-	root := t.TempDir()
-	outDir := filepath.Join(root, "out")
-	if err := os.MkdirAll(outDir, 0o755); err != nil {
-		t.Fatalf("creating %s: %v", outDir, err)
-	}
-	host := filepath.Join(root, "host")
-	if err := os.MkdirAll(host, 0o755); err != nil {
-		t.Fatalf("creating %s: %v", host, err)
-	}
-	for name, body := range map[string]string{
-		"vmlinuz-6.16.4": "this host's kernel, as it was on the day of the build\n",
-		"config-6.16.4":  "CONFIG_NETFILTER_XT_TARGET_NFLOG=m\n",
-		"base.squashfs":  "the base userspace, as it was on the day of the build\n",
-		"k3s":            "k3s version v1.31.1+k3s1\n",
-		"kcpagent":       "the guest's agent, as it was on the day of the build\n",
-	} {
-		if err := os.WriteFile(filepath.Join(host, name), []byte(body), 0o600); err != nil {
-			t.Fatalf("writing the host's %s: %v", name, err)
-		}
-	}
-	modules := filepath.Join(host, "modules")
-	agentPackage := filepath.Join(host, "socialweb-nodeagent")
-	if err := os.MkdirAll(agentPackage, 0o755); err != nil {
-		t.Fatalf("creating the agent's package: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(agentPackage, "main.go"), []byte("package main\n"), 0o600); err != nil {
-		t.Fatalf("writing the agent's package: %v", err)
-	}
-	if err := os.MkdirAll(filepath.Join(modules, "kernel/net/netfilter"), 0o755); err != nil {
-		t.Fatalf("creating the module tree: %v", err)
-	}
-	for name, body := range map[string]string{
-		"modules.dep":                      "kernel/net/netfilter/xt_NFLOG.ko:\n",
-		"modules.builtin":                  "kernel/net/netfilter/nf_conntrack.ko\n",
-		"kernel/net/netfilter/xt_NFLOG.ko": "the extension\n",
-		"kernel/net/netfilter/veth.ko":     "the veth pair\n",
-	} {
-		if err := os.WriteFile(filepath.Join(modules, name), []byte(body), 0o600); err != nil {
-			t.Fatalf("writing the module tree's %s: %v", name, err)
-		}
-	}
-	f := nodeImageFixture{
-		outDir:     outDir,
-		configPath: filepath.Join(root, "nodeimage.json"),
-		build: nodefirecracker.BuildConfig{
-			VMM:              vmm,
-			Modules:          []string{"veth"},
-			InitramfsModules: []string{"kernel/drivers/virtio/virtio_mmio"},
-			Images:           []string{"rancher/mirrored-pause:3.10.2"},
-			KernelSource:     filepath.Join(host, "vmlinuz-6.16.4"),
-			KernelConfig:     filepath.Join(host, "config-6.16.4"),
-			BaseImage:        filepath.Join(host, "base.squashfs"),
-			K3sBinary:        filepath.Join(host, "k3s"),
-			AgentBinary:      filepath.Join(host, "kcpagent"),
-			AgentPackage:     agentPackage,
-			ModuleSource:     modules,
-		},
-	}
-	f.writeBuildConfig(t)
-	inputs, err := nodefirecracker.RecordInputs(f.configPath, f.build)
-	if err != nil {
-		t.Fatalf("recording what the build read: %v", err)
-	}
-	dir := f.imageDir(t)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatalf("creating %s: %v", dir, err)
-	}
-	for _, name := range []string{nodefirecracker.VMLinuxName, nodefirecracker.InitramfsName, nodefirecracker.RootfsImageName} {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte("built\n"), 0o600); err != nil {
-			t.Fatalf("writing the image's %s: %v", name, err)
-		}
-	}
-	manifest, err := json.Marshal(map[string]any{
-		"vmm":            vmm,
-		"bootArgs":       []string{"console=ttyS0"},
-		"guestInterface": nodefirecracker.DefaultInterface,
-		"k3sBinary":      f.build.K3sBinary,
-		"k3sDataDir":     "/var/lib/rancher/k3s",
-		"modules":        f.build.Modules,
-		"images": []map[string]any{{
-			"reference":  f.build.Images[0],
-			"repository": f.build.Images[0],
-			"digest":     "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-			"platform":   "linux/amd64",
-		}},
-		"buildInputs": inputs,
-		"fingerprint": filepath.Base(dir),
-	})
-	if err != nil {
-		t.Fatalf("encoding the image manifest: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, nodefirecracker.ManifestName), manifest, 0o600); err != nil {
-		t.Fatalf("writing the image manifest: %v", err)
-	}
-	return f
-}
-
-func firecrackerConfigOf(f nodeImageFixture) Config {
-	return Config{
-		Substrate:   SubstrateFirecracker,
-		ImageOutDir: f.outDir,
-		ImageConfig: f.configPath,
-		Firecracker: "/usr/bin/firecracker",
-		NodeAgent:   "/usr/bin/socialweb-nodeagent",
-	}
-}
-
-func qemuConfigOf(f nodeImageFixture) Config {
-	return Config{
-		Substrate:   SubstrateQEMU,
-		ImageOutDir: f.outDir,
-		ImageConfig: f.configPath,
-		QEMU:        "/usr/bin/qemu-system-x86_64",
-		NodeAgent:   "/usr/bin/socialweb-nodeagent",
-	}
-}
-
-func TestAStaleNodeImageIsNeverTheOneANodeBootsFrom(t *testing.T) {
-	f := builtNodeImageFixture(t)
-	before := f.imageDir(t)
-	stale, _, err := nodefirecracker.LoadImage(f.outDir, f.configPath)
-	if err != nil {
-		t.Fatalf("the image the build had just published was not the one its configuration names: %v",
-			err)
-	}
-
-	f.build.Modules = append(append([]string(nil), f.build.Modules...), "xt_NFLOG", "xt_physdev")
-	f.writeBuildConfig(t)
-	after := f.imageDir(t)
-	if after == before {
-		t.Fatal("changing the configuration's module list did not move the name its inputs give, " +
-			"so the name a node's image is looked up under is not derived from the inputs at all")
-	}
-
-	_, _, err = nodefirecracker.LoadImage(f.outDir, f.configPath)
-	if err == nil {
-		t.Fatal("a node image built before its configuration gained xt_NFLOG and xt_physdev was " +
-			"reached by the substrate the gateway builds before it places anything, and the guest " +
-			"it boots runs a kernel with neither extension: iptables-restore inside the guest stops " +
-			"at the first extension it cannot find, every rule after it is absent, and the cluster " +
-			"comes up with no firewall while every object in it reads as healthy")
-	}
-	for _, want := range []string{f.outDir, filepath.Base(after), f.configPath, "socialweb-nodeimage"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("the refusal does not name %q, so the operator cannot tell which image is "+
-				"missing, which configuration asked for it, or what writes it: %v", want, err)
-		}
-	}
-	if _, err := os.Stat(after); err == nil {
-		t.Fatal("the changed configuration's name is taken in the store, so something wrote an " +
-			"image this configuration never built")
-	}
-	if _, err := os.Stat(before); err != nil {
-		t.Fatalf("the image the previous configuration built is gone: %v -- it is a rollback a "+
-			"rebuild can be walked back to, and a run that reads a store never removes anything "+
-			"from it", err)
-	}
-	if stale.Kernel != filepath.Join(before, nodefirecracker.VMLinuxName) {
-		t.Errorf("the image the first load handed back is %s, which is not inside %s",
-			stale.Kernel, before)
-	}
-}
-
-func TestFirecrackerRefusesAStoreWithNoImageUnderTheNameItDerives(t *testing.T) {
-	f := builtNodeImageFixture(t)
-	empty := t.TempDir()
-
-	_, _, err := nodefirecracker.LoadImage(empty, f.configPath)
-	if err == nil {
-		t.Fatal("an empty directory was accepted as the store: the name the configuration's inputs " +
-			"give it holds nothing, and a substrate that trusted it would fail at boot rather than here")
-	}
-	for _, want := range []string{empty, f.configPath, "socialweb-nodeimage"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("the refusal does not name %q, so the operator cannot tell where the image was "+
-				"looked for, which configuration asked for it, or what writes it: %v", want, err)
-		}
-	}
-}
-
-func TestFirecrackerRefusesAStoreEntryThatIsNotAWholeImage(t *testing.T) {
-	f := builtNodeImageFixture(t)
-	dir := f.imageDir(t)
-	missing := filepath.Join(dir, nodefirecracker.VMLinuxName)
-	if err := os.Remove(missing); err != nil {
-		t.Fatalf("removing the image's kernel: %v", err)
-	}
-
-	_, _, err := nodefirecracker.LoadImage(f.outDir, f.configPath)
-	if err == nil {
-		t.Fatal("an image whose kernel is gone was accepted because its directory carries the " +
-			"right name: a name is a hash of what a build READ, not a statement about what is " +
-			"still on the disk, so a store that lost a file still answers with the name")
-	}
-	for _, want := range []string{missing, "kernel"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("the refusal does not name %q, so it does not say which of the three files "+
-				"the image is missing: %v", want, err)
-		}
-	}
-}
-
-func TestAStaleNodeImageIsRefusedOnTheWayToPlacingANode(t *testing.T) {
-	f := builtNodeImageFixture(t)
-	f.build.Modules = append(append([]string(nil), f.build.Modules...), "xt_NFLOG", "xt_physdev")
-	f.writeBuildConfig(t)
-
-	_, err := nodeSubstrateFor(firecrackerConfigOf(f))
-	if err == nil {
-		t.Fatal("a node image built before its configuration gained xt_NFLOG and xt_physdev was " +
-			"accepted by the substrate the gateway builds before it places anything, and the guest " +
-			"it boots runs a kernel with neither extension: iptables-restore inside the guest stops " +
-			"at the first extension it cannot find, every rule after it is absent, and the cluster " +
-			"comes up with no firewall while every object in it reads as healthy")
-	}
-	for _, want := range []string{f.configPath, "socialweb-nodeimage"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("the refusal does not name %q, so the operator cannot tell which configuration "+
-				"asked for the missing image or what writes it: %v", want, err)
-		}
-	}
-}
-
-func firecrackerSubstrateFor(t *testing.T) nodeSubstrate {
-	t.Helper()
-	substrate, err := nodeSubstrateFor(firecrackerConfigOf(builtNodeImageFixture(t)))
-	if err != nil {
-		t.Fatalf("nodeSubstrateFor: %v", err)
-	}
-	return substrate
-}
-
-func nodeOptionsFor(t *testing.T, tenant tenantClient) nodeHostsOptions {
-	t.Helper()
-	return nodeHostsOptions{
-		Allocator:        testAllocator(t),
-		Networks:         testNetworks(t),
-		Registry:         &fakeClusters{},
-		StateDir:         t.TempDir(),
-		AdvertiseAddress: "192.168.5.2",
-		Tenant:           tenant,
-		Log:              testLogger(),
-		Substrate:        firecrackerSubstrateFor(t),
-	}
-}
-
 func tenantClientFor(t *testing.T, nodes ...string) (tenantClient, *fake.Clientset) {
 	t.Helper()
 	items := make([]*corev1.Node, 0, len(nodes))
@@ -437,7 +152,7 @@ func tenantNode(t *testing.T, client kubernetes.Interface, name string) bool {
 }
 
 func TestTheNodeHostsAreOneHostPerCluster(t *testing.T) {
-	factory, err := newNodeHosts(nodeOptionsFor(t, nil))
+	factory, err := newNodeHosts(marketOptions(t, &marketClaims{}, nil))
 	if err != nil {
 		t.Fatalf("newNodeHosts: %v", err)
 	}
@@ -477,7 +192,7 @@ func TestTheNodeHostsAreOneHostPerCluster(t *testing.T) {
 }
 
 func TestTheNodeHostsAreSafeToBuildConcurrently(t *testing.T) {
-	factory, err := newNodeHosts(nodeOptionsFor(t, nil))
+	factory, err := newNodeHosts(marketOptions(t, &marketClaims{}, nil))
 	if err != nil {
 		t.Fatalf("newNodeHosts: %v", err)
 	}
@@ -712,19 +427,20 @@ func TestAProvisionThatFailsNamesTheNodeItWasFor(t *testing.T) {
 }
 
 func TestATeardownOfANodeDoesNotLoseTheClustersHost(t *testing.T) {
-	tenant, _ := tenantClientFor(t, "liveweb-node1")
-	factory, err := newNodeHosts(nodeOptionsFor(t, tenant))
+	tenant, _ := tenantClientFor(t)
+	factory, err := newNodeHosts(marketOptions(t, &marketClaims{}, tenant))
 	if err != nil {
 		t.Fatalf("newNodeHosts: %v", err)
 	}
-	first, err := factory.forCluster("liveweb")
+	key := clusterKey(t, "liveweb")
+	first, err := factory.forCluster(key)
 	if err != nil {
 		t.Fatalf("forCluster: %v", err)
 	}
 	if err := first.Teardown(context.Background()); err != nil {
 		t.Fatalf("Teardown: %v", err)
 	}
-	again, err := factory.forCluster("liveweb")
+	again, err := factory.forCluster(key)
 	if err != nil {
 		t.Fatalf("forCluster after the teardown: %v", err)
 	}
@@ -735,12 +451,13 @@ func TestATeardownOfANodeDoesNotLoseTheClustersHost(t *testing.T) {
 	}
 }
 
-func TestAJoinReapsTheNodeRecordsBeforeTheFirstPass(t *testing.T) {
+func TestAJoinSweepsTheNodeRecordsBeforeTheFirstPass(t *testing.T) {
 	stateDir := t.TempDir()
 	const cluster = "liveweb"
 	left := clusterprovider.NodeDataDir(stateDir, cluster, cluster+"-node1")
 	pid := spawnAgentStandIn(t, left)
-	writeNodeRecord(t, left, pid, nodefirecracker.Identity(left))
+	writeNodeRecordFor(t, left, pid, standInIdentity(left), "firecracker")
+	t.Cleanup(func() { _ = syscall.Kill(pid, syscall.SIGKILL) })
 
 	f := &fakeClusters{items: []v1alpha1.Cluster{{
 		ObjectMeta: metav1.ObjectMeta{Name: cluster},
@@ -752,7 +469,7 @@ func TestAJoinReapsTheNodeRecordsBeforeTheFirstPass(t *testing.T) {
 		MintKubeconfigs: t.TempDir(),
 		Join:            cluster,
 		StateDir:        stateDir,
-		Substrate:       SubstrateFirecracker,
+		Substrate:       SubstrateMarket,
 		StoreEndpoint:   "postgres://operator@127.0.0.1:25432/k3s?sslmode=disable",
 		Interval:        DefaultInterval,
 	}
@@ -766,59 +483,19 @@ func TestAJoinReapsTheNodeRecordsBeforeTheFirstPass(t *testing.T) {
 	defer cancel()
 	_ = p.Run(ctx)
 
-	waitGone(t, pid)
-	if _, err := os.Stat(noderecord.RecordPath(left)); !errors.Is(err, fs.ErrNotExist) {
-		t.Fatal("the join left the record of an agent a previous gateway started: the sweep is " +
-			"the only thing that clears it, and the first pass's Provision would read it and " +
-			"answer ErrAlreadyRunning, so this cluster could never provision a node again")
+	if err := syscall.Kill(pid, 0); err != nil {
+		t.Fatalf("the join's pre-pass sweep signalled pid %d (%v). Its record names the retired "+
+			"firecracker substrate, whose process identity this provider can no longer reconstruct, "+
+			"so nothing may be signalled on it", pid, err)
+	}
+	if _, err := os.Stat(noderecord.RecordPath(left)); err != nil {
+		t.Fatalf("the join's pre-pass sweep cleared a record it cannot verify: %v", err)
 	}
 }
 
-func TestShutdownReapsEveryNodeHost(t *testing.T) {
+func TestShutdownLeavesTheMarketNodesToTheNextProvider(t *testing.T) {
 	stateDir := t.TempDir()
-	opts := nodeOptionsFor(t, nil)
-	opts.StateDir = stateDir
-	factory, err := newNodeHosts(opts)
-	if err != nil {
-		t.Fatalf("newNodeHosts: %v", err)
-	}
-	clusters := []string{"liveweb", "secondweb"}
-	var pids []int
-	var dirs []string
-	for _, cluster := range clusters {
-		nodes, err := factory.forCluster(cluster)
-		if err != nil {
-			t.Fatalf("forCluster(%s): %v", cluster, err)
-		}
-		held := nodes.(*tenantNodes)
-		dir := clusterprovider.NodeDataDir(stateDir, cluster, held.nodeName)
-		pid := spawnAgentStandIn(t, dir)
-		writeNodeRecord(t, dir, pid, nodefirecracker.Identity(dir))
-		pids = append(pids, pid)
-		dirs = append(dirs, dir)
-	}
-
-	p := &Provider{
-		cfg:   Config{Join: "liveweb"},
-		host:  materialiser.NewLocalHost(procgroup.Options{}),
-		nodes: factory,
-		log:   testLogger(),
-	}
-	if err := p.Shutdown(); err != nil {
-		t.Fatalf("Shutdown: %v", err)
-	}
-	for i, pid := range pids {
-		waitGone(t, pid)
-		if _, err := os.Stat(noderecord.RecordPath(dirs[i])); !errors.Is(err, fs.ErrNotExist) {
-			t.Fatalf("cluster %s still has a node record after the shutdown reap", clusters[i])
-		}
-	}
-}
-
-func TestShutdownReapsTheNodeHostsOnlyAfterTheProcessGroup(t *testing.T) {
-	cause := errors.New("the group would not come down")
-	stateDir := t.TempDir()
-	opts := nodeOptionsFor(t, nil)
+	opts := marketOptions(t, &marketClaims{}, nil)
 	opts.StateDir = stateDir
 	factory, err := newNodeHosts(opts)
 	if err != nil {
@@ -830,66 +507,25 @@ func TestShutdownReapsTheNodeHostsOnlyAfterTheProcessGroup(t *testing.T) {
 	}
 	dir := clusterprovider.NodeDataDir(stateDir, "liveweb", nodes.(*tenantNodes).nodeName)
 	pid := spawnAgentStandIn(t, dir)
-	writeNodeRecord(t, dir, pid, nodefirecracker.Identity(dir))
+	writeNodeRecordFor(t, dir, pid, standInIdentity(dir), "firecracker")
+	t.Cleanup(func() { _ = syscall.Kill(pid, syscall.SIGKILL) })
 
 	p := &Provider{
 		cfg:   Config{Join: "liveweb"},
-		host:  &reapFailingHost{LocalHost: materialiser.NewLocalHost(procgroup.Options{}), err: cause},
+		host:  materialiser.NewLocalHost(procgroup.Options{}),
 		nodes: factory,
 		log:   testLogger(),
 	}
-	if err := p.Shutdown(); !errors.Is(err, cause) {
-		t.Fatalf("Shutdown = %v, want the group's own failure", err)
+	if err := p.Shutdown(); err != nil {
+		t.Fatalf("Shutdown: %v", err)
 	}
 	if err := syscall.Kill(pid, 0); err != nil {
-		t.Fatalf("the node's agent at pid %d was reaped although the process group came down "+
-			"first and failed (%v): the nodes are reaped AFTER the group, so a shutdown that "+
-			"stopped there must not have touched them", pid, err)
+		t.Fatalf("the shutdown signalled pid %d (%v). A market guest joined with no session of "+
+			"ours and outlives this process; deleting its claim is what makes the door destroy the "+
+			"machine, so a restart that released here would reap every node on every deploy", pid, err)
 	}
 	if _, err := os.Stat(noderecord.RecordPath(dir)); err != nil {
-		t.Fatalf("the node record was cleared although the node was never reaped: %v", err)
-	}
-	t.Cleanup(func() { _ = syscall.Kill(pid, syscall.SIGKILL) })
-}
-
-func TestTheSweepReapsAnAgentAPreviousGatewayLeft(t *testing.T) {
-	stateDir := t.TempDir()
-	dir := clusterprovider.NodeDataDir(stateDir, "liveweb", "liveweb-node1")
-	pid := spawnAgentStandIn(t, dir)
-	writeNodeRecord(t, dir, pid, nodefirecracker.Identity(dir))
-
-	p := &Provider{
-		cfg: Config{Join: "liveweb", Substrate: SubstrateFirecracker, StateDir: stateDir},
-		log: testLogger(),
-	}
-	if err := p.sweepNodeRecords(context.Background()); err != nil {
-		t.Fatalf("sweepNodeRecords: %v", err)
-	}
-	waitGone(t, pid)
-	if _, err := os.Stat(noderecord.RecordPath(dir)); !errors.Is(err, fs.ErrNotExist) {
-		t.Fatal("the record survived the sweep: it names an agent that is gone, and the next " +
-			"Provision for this node reads it as a node that is already running")
-	}
-}
-
-func TestTheSweepReapsANamespaceChildAPreviousGatewayLeft(t *testing.T) {
-	stateDir := t.TempDir()
-	dir := clusterprovider.NodeDataDir(stateDir, "liveweb", "liveweb-node1")
-	pid := spawnNamespaceChildStandIn(t, dir)
-	writeNodeRecord(t, dir, pid, nodefirecracker.NamespaceIdentity(dir))
-
-	p := &Provider{
-		cfg: Config{Join: "liveweb", Substrate: SubstrateFirecracker, StateDir: stateDir},
-		log: testLogger(),
-	}
-	if err := p.sweepNodeRecords(context.Background()); err != nil {
-		t.Fatalf("sweepNodeRecords: %v", err)
-	}
-	waitGone(t, pid)
-	if _, err := os.Stat(noderecord.RecordPath(dir)); !errors.Is(err, fs.ErrNotExist) {
-		t.Fatal("the record naming the namespace child survived the sweep: a gateway killed after " +
-			"pasta started but before the VMM's own record was written leaves exactly this record, " +
-			"and reaping the child is what tears the VMM and pasta down")
+		t.Fatalf("the shutdown cleared a node record it cannot verify: %v", err)
 	}
 }
 
@@ -897,10 +533,10 @@ func TestTheSweepLeavesAForeignProcessAlone(t *testing.T) {
 	stateDir := t.TempDir()
 	dir := clusterprovider.NodeDataDir(stateDir, "liveweb", "liveweb-node1")
 	pid := spawnAgentStandIn(t, filepath.Join(t.TempDir(), "otherweb-node9"))
-	writeNodeRecord(t, dir, pid, nodefirecracker.Identity(dir))
+	writeNodeRecordFor(t, dir, pid, standInIdentity(dir), "firecracker")
 
 	p := &Provider{
-		cfg: Config{Join: "liveweb", Substrate: SubstrateFirecracker, StateDir: stateDir},
+		cfg: Config{Join: "liveweb", Substrate: SubstrateMarket, StateDir: stateDir},
 		log: testLogger(),
 	}
 	if err := p.sweepNodeRecords(context.Background()); err != nil {
@@ -920,7 +556,7 @@ func TestTheSweepLeavesAForeignProcessAlone(t *testing.T) {
 func TestTheSweepOnAnEmptyStateDirIsANoOp(t *testing.T) {
 	stateDir := t.TempDir()
 	p := &Provider{
-		cfg: Config{Join: "liveweb", Substrate: SubstrateFirecracker, StateDir: stateDir},
+		cfg: Config{Join: "liveweb", Substrate: SubstrateMarket, StateDir: stateDir},
 		log: testLogger(),
 	}
 	if err := p.sweepNodeRecords(context.Background()); err != nil {
@@ -951,7 +587,7 @@ func TestTheSweepReportsARecordItCannotRead(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 	p := &Provider{
-		cfg: Config{Join: "liveweb", Substrate: SubstrateFirecracker, StateDir: stateDir},
+		cfg: Config{Join: "liveweb", Substrate: SubstrateMarket, StateDir: stateDir},
 		log: testLogger(),
 	}
 	err := p.sweepNodeRecords(context.Background())
@@ -965,28 +601,14 @@ func TestTheSweepReportsARecordItCannotRead(t *testing.T) {
 	}
 }
 
-func TestNodeIdentityIsPerSubstrate(t *testing.T) {
-	guest, err := nodeIdentityFor(SubstrateFirecracker)
-	if err != nil {
-		t.Fatalf("nodeIdentityFor(firecracker): %v", err)
-	}
-	got := guest("/s/liveweb", "liveweb-node1")
-	want := []string{"firecracker", "--api-sock", "/s/liveweb/nodes/liveweb-node1/fc.sock"}
-	if len(got) != len(want) {
-		t.Fatalf("the firecracker substrate's identity is %v, want %v", got, want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("the firecracker substrate's identity is %v, want %v: the VMM's command line "+
-				"is its API socket, and that socket path is the one element of it that names THIS "+
-				"node's VMM rather than every VMM on the host", got, want)
-		}
-	}
-	for _, substrate := range []string{"vm", "", "process"} {
-		if _, err := nodeIdentityFor(substrate); err == nil {
-			t.Errorf("nodeIdentityFor(%q) invented an identity: a substrate that says where its "+
-				"processes' identity comes from must say so, and a guess either kills a process "+
-				"that is not ours or leaves ours running for ever", substrate)
+func TestNoPlacementSuppliesAProcessIdentityAnyMore(t *testing.T) {
+	for _, substrate := range []string{"firecracker", "qemu", "vm", "", "process", SubstrateMarket} {
+		if err := unverifiableNodeRecord(substrate); err == nil {
+			t.Errorf("a record naming the %q substrate was treated as verifiable: the local "+
+				"substrates were retired (plan 0005 M1-MARKET-ONLY) and a market node is not a "+
+				"process on this host, so every record under this state dir is one this provider "+
+				"cannot check. A guess would either signal a process that is not ours or leave a "+
+				"stale one running for ever", substrate)
 		}
 	}
 }
@@ -1003,166 +625,67 @@ func TestTheProcessSubstrateIsNotASubstrate(t *testing.T) {
 	}
 }
 
-func TestTheSweepRefusesARecordWhoseSubstrateItCannotDeriveAnIdentityFor(t *testing.T) {
-	stateDir := t.TempDir()
-	dir := clusterprovider.NodeDataDir(stateDir, "liveweb", "liveweb-node1")
-	pid := spawnAgentStandIn(t, dir)
-	writeNodeRecordFor(t, dir, pid, []string{"some-argv-token"}, "vm")
-	t.Cleanup(func() { _ = syscall.Kill(pid, syscall.SIGKILL) })
-
-	p := &Provider{
-		cfg: Config{Join: "liveweb", Substrate: "vm", StateDir: stateDir},
-		log: testLogger(),
-	}
-	if err := p.sweepNodeRecords(context.Background()); err == nil {
-		t.Fatal("the sweep ran over a record whose substrate it cannot derive an identity for: it " +
-			"would match the record against a token the process does not carry, answer \"not ours\" " +
-			"for it, and leave the agent a previous gateway started running")
-	}
-}
-
-func TestQEMUIsASecondSubstrateBehindTheSameSeam(t *testing.T) {
-	sub, err := nodeSubstrateFor(qemuConfigOf(builtNodeImageFixtureFor(t, SubstrateQEMU)))
-	if err != nil {
-		t.Fatalf("nodeSubstrateFor(qemu): %v", err)
-	}
-	if sub.Name != SubstrateQEMU {
-		t.Fatalf("nodeSubstrateFor built substrate %q", sub.Name)
-	}
-	if !sub.IsGuest() {
-		t.Fatal("a qemu node was not treated as a guest: a Node guest dials its cluster's leased " +
-			"gateway, not this host, so AdvertiseAddress, GuestDialled, GuestGateway, NodeExpiry " +
-			"and per-node network allocation must all apply to it exactly as they do to firecracker")
-	}
-	lease := subnetallocator.Lease{Cluster: "liveweb", Block: netip.MustParsePrefix("10.100.0.0/24")}
-	sub, err = sub.withPerNodeNetwork(lease, 1)
-	if err != nil {
-		t.Fatalf("withPerNodeNetwork: %v", err)
-	}
-	if got := sub.Network.Gateway; got != "10.100.0.1" {
-		t.Fatalf("the qemu guest's gateway is %q, want the range's first usable address", got)
-	}
-	if got := sub.Network.GuestIP; got != "10.100.0.2" {
-		t.Fatalf("the qemu guest's address is %q, want the first node's address", got)
-	}
-	if got := sub.Network.PastaIP; got != "10.100.0.0" {
-		t.Fatalf("pasta's own end is %q, want the range's base", got)
-	}
-	if err := sub.Validate(); err != nil {
-		t.Fatalf("the qemu substrate refused a whole placement: %v", err)
-	}
-	host, err := sub.NewNodeHost(nodeSubstrateOptions{
-		Cluster:   "liveweb",
-		Server:    "https://10.100.0.1:24000",
-		NodeName:  "liveweb-node1",
-		TokenFile: filepath.Join(t.TempDir(), "token"),
-		DataDir:   t.TempDir(),
-		Record:    func(context.Context, string, v1alpha1.NodePhase) error { return nil },
-		Log:       testLogger(),
-	})
-	if err != nil {
-		t.Fatalf("the qemu substrate built no node host: %v", err)
-	}
-	if _, ok := host.(*nodeqemu.Host); !ok {
-		t.Fatalf("the qemu substrate built %T, want a qemu-backed host", host)
-	}
-}
-
-func TestQEMUPlacementNeedsItsWholeSubstrate(t *testing.T) {
-	f := builtNodeImageFixtureFor(t, SubstrateQEMU)
-	for _, tc := range []struct {
-		name  string
-		drop  func(*nodeSubstrate)
-		names []string
-	}{
-		{"no qemu binary", func(s *nodeSubstrate) { s.QEMU = "" },
-			[]string{"qemu"}},
-		{"no agent", func(s *nodeSubstrate) { s.NodeAgent = "" },
-			[]string{"agent"}},
-	} {
-		sub, err := nodeSubstrateFor(qemuConfigOf(f))
-		if err != nil {
-			t.Fatalf("nodeSubstrateFor(qemu): %v", err)
-		}
-		tc.drop(&sub)
-		err = sub.Validate()
+func TestTheRetiredSubstratesAreRefusedAndNameTheirRetirement(t *testing.T) {
+	for _, name := range []string{"firecracker", "qemu"} {
+		_, err := nodeSubstrateFor(Config{Substrate: name})
 		if err == nil {
-			t.Errorf("%s was accepted, and a gateway that started anyway would report a node it "+
-				"never booted", tc.name)
+			t.Fatalf("%s was still built as a placement: the local substrates were retired on %s "+
+				"(plan 0005 M1-MARKET-ONLY), and a gateway that accepted the name would start "+
+				"looking for a VMM, an agent and an image this host is no longer given",
+				name, RetiredSubstratesRetiredOn)
 			continue
 		}
-		for _, want := range tc.names {
+		for _, want := range []string{name, SubstrateMarket, RetiredSubstratesRetiredOn} {
 			if !strings.Contains(err.Error(), want) {
-				t.Errorf("%s: the refusal does not name %q: %v", tc.name, want, err)
+				t.Errorf("%s: the refusal does not name %q, so it reads as a typo rather than as a "+
+					"placement that was withdrawn: %v", name, want, err)
 			}
 		}
 	}
 }
 
-func TestQEMUNodeIdentityIsPerSubstrate(t *testing.T) {
-	id, err := nodeIdentityFor(SubstrateQEMU)
-	if err != nil {
-		t.Fatalf("nodeIdentityFor(qemu): %v", err)
+func TestTheSweepLeavesARecordWhoseSubstrateItCannotDeriveAnIdentityFor(t *testing.T) {
+	stateDir := t.TempDir()
+	dir := clusterprovider.NodeDataDir(stateDir, "liveweb", "liveweb-node1")
+	pid := spawnAgentStandIn(t, dir)
+	writeNodeRecordFor(t, dir, pid, standInIdentity(dir), "vm")
+	t.Cleanup(func() { _ = syscall.Kill(pid, syscall.SIGKILL) })
+
+	p := &Provider{
+		cfg: Config{Join: "liveweb", Substrate: SubstrateMarket, StateDir: stateDir},
+		log: testLogger(),
 	}
-	got := id("/s/liveweb", "liveweb-node1")
-	want := []string{"-name", "liveweb-node1"}
-	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
-		t.Fatalf("the qemu substrate's identity is %v, want %v: the node name is the `-name` "+
-			"argument qemu is started with, and it is what names THIS node's VMM rather than every "+
-			"one on the host", got, want)
+	if err := p.sweepNodeRecords(context.Background()); err != nil {
+		t.Fatalf("sweepNodeRecords: %v", err)
 	}
-	holder, err := nodeHolderIdentityFor(SubstrateQEMU)
-	if err != nil {
-		t.Fatalf("nodeHolderIdentityFor(qemu): %v", err)
+	if err := syscall.Kill(pid, 0); err != nil {
+		t.Fatalf("the sweep signalled pid %d, whose record names a substrate with no identity "+
+			"function: guessing would signal a process that is not ours (%v)", pid, err)
 	}
-	if got := holder("/s/liveweb", "liveweb-node1"); len(got) != 2 || got[0] != "namespace" {
-		t.Fatalf("the qemu substrate's holder identity is %v, want the namespace child the same "+
-			"way firecracker names it", got)
+	if _, err := os.Stat(noderecord.RecordPath(dir)); err != nil {
+		t.Fatalf("the sweep cleared a record whose identity it cannot reconstruct (%v): a cleared "+
+			"record takes away the only thing naming the process holding this node", err)
 	}
 }
 
-type reapFailingHost struct {
-	*materialiser.LocalHost
-	err error
+func standInIdentity(dataDir string) []string {
+	return []string{"--stand-in", dataDir}
 }
-
-func (h *reapFailingHost) Reap(context.Context, string) error { return h.err }
 
 func spawnAgentStandIn(t *testing.T, dataDir string) int {
 	t.Helper()
 	cmd := exec.Command(os.Args[0])
-	cmd.Args = append([]string{os.Args[0]}, nodefirecracker.Identity(dataDir)...)
+	cmd.Args = append([]string{os.Args[0]}, standInIdentity(dataDir)...)
 	cmd.Env = append(os.Environ(), standInEnv+"=1")
 	cmd.Stdout = io.Discard
 	cmd.Stderr = io.Discard
 	if err := cmd.Start(); err != nil {
-		t.Fatalf("starting a stand-in VMM for %s: %v", dataDir, err)
+		t.Fatalf("starting a stand-in process for %s: %v", dataDir, err)
 	}
 	go func() { _ = cmd.Wait() }()
 	pid := cmd.Process.Pid
 	t.Cleanup(func() { _ = cmd.Process.Kill() })
 	return pid
-}
-
-func spawnNamespaceChildStandIn(t *testing.T, dataDir string) int {
-	t.Helper()
-	cmd := exec.Command(os.Args[0])
-	cmd.Args = append([]string{os.Args[0]}, nodefirecracker.NamespaceIdentity(dataDir)...)
-	cmd.Env = append(os.Environ(), standInEnv+"=1")
-	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("starting a stand-in namespace child for %s: %v", dataDir, err)
-	}
-	go func() { _ = cmd.Wait() }()
-	pid := cmd.Process.Pid
-	t.Cleanup(func() { _ = cmd.Process.Kill() })
-	return pid
-}
-
-func writeNodeRecord(t *testing.T, dir string, pid int, identity []string) {
-	t.Helper()
-	writeNodeRecordFor(t, dir, pid, identity, nodefirecracker.Substrate)
 }
 
 func writeNodeRecordFor(t *testing.T, dir string, pid int, identity []string, substrate string) {
@@ -1176,19 +699,6 @@ func writeNodeRecordFor(t *testing.T, dir string, pid int, identity []string, su
 	}); err != nil {
 		t.Fatalf("writing the node record at %s: %v", dir, err)
 	}
-}
-
-func waitGone(t *testing.T, pid int) {
-	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if err := syscall.Kill(pid, 0); errors.Is(err, syscall.ESRCH) {
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	t.Fatalf("pid %d is still there: a guest left running keeps naming its node at the cluster's "+
-		"apiserver, and the record it leaves blocks that cluster from ever provisioning again", pid)
 }
 
 func TestTheNodeIDForAnOrdinalRoundTripsThroughItsName(t *testing.T) {

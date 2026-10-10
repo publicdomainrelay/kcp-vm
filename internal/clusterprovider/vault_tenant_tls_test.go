@@ -29,21 +29,19 @@ func testVaultTLS() func(string, ...string) (VaultTLS, error) {
 	}
 }
 
-func guestVaultStackConfig(t *testing.T, gateway string) StackConfig {
+func marketVaultStackConfig(t *testing.T) StackConfig {
 	t.Helper()
 	cfg := stackConfig(t, fakeAdmin())
 	cfg.Stack = DesignedStack
-	cfg.AdvertiseAddress = ""
-	cfg.GuestDialled = true
-	cfg.GuestGateway = func(string) (string, error) { return gateway, nil }
+	cfg.AdvertiseAddress = portallocator.MarketAdvertiseAddress
+	cfg.MarketDialled = true
 	cfg.VaultTLS = testVaultTLS()
 	cfg.VaultStoreDSN = func(string) (string, error) { return fakeVaultStoreDSN(), nil }
 	return cfg
 }
 
-func TestTheGuestClustersVaultRendersOneLoopbackTLSListener(t *testing.T) {
-	const gateway = "127.0.0.2"
-	cfg := guestVaultStackConfig(t, gateway)
+func TestTheClustersVaultRendersOneLoopbackTLSListener(t *testing.T) {
+	cfg := marketVaultStackConfig(t)
 	leases := designedLeases(21003)
 	steps, err := StepsFor(cfg)(observed(), leases)
 	if err != nil {
@@ -64,8 +62,8 @@ func TestTheGuestClustersVaultRendersOneLoopbackTLSListener(t *testing.T) {
 	text := string(body)
 	if got := strings.Count(text, `listener "tcp"`); got != 1 {
 		t.Fatalf("the vault config names %d listeners, want exactly 1: the vault listens on "+
-			"loopback with TLS, and the guest reaches it through pasta at the gateway address, "+
-			"which is a forward and not a second bind:\n%s", got, text)
+			"loopback with TLS, and a market node reaches it through the market's door at the "+
+			"advertised address, which is a forward and not a second bind:\n%s", got, text)
 	}
 	port := leases[portallocator.PurposeOpenBao].Port
 	loopback := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
@@ -78,11 +76,6 @@ func TestTheGuestClustersVaultRendersOneLoopbackTLSListener(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Fatalf("the wired vault config does not carry %q:\n%s", want, text)
 		}
-	}
-	if strings.Contains(text, gateway) {
-		t.Fatalf("the config names the guest gateway %s, which the host does not carry: binding "+
-			"it needs root or ip_nonlocal_bind, and the guest reaches loopback through pasta:\n%s",
-			gateway, text)
 	}
 	if strings.Contains(text, "tls_disable") {
 		t.Fatalf("the config names tls_disable, so a plaintext listener is back:\n%s", text)
@@ -102,7 +95,7 @@ func TestTheGuestClustersVaultRendersOneLoopbackTLSListener(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parsing the vault's TLS certificate: %v", err)
 	}
-	for _, want := range []string{"127.0.0.1", gateway} {
+	for _, want := range []string{"127.0.0.1", portallocator.MarketAdvertiseAddress} {
 		found := false
 		for _, name := range leaf.DNSNames {
 			if name == want {
@@ -115,16 +108,16 @@ func TestTheGuestClustersVaultRendersOneLoopbackTLSListener(t *testing.T) {
 			}
 		}
 		if !found {
-			t.Fatalf("the vault's TLS certificate does not name %s, so the guest that dials the "+
-				"gateway or the admin that dials loopback fails verification: DNS %v IP %v",
+			t.Fatalf("the vault's TLS certificate does not name %s, so a node that dials the "+
+				"advertised address or the admin that dials loopback fails verification: DNS %v IP %v",
 				want, leaf.DNSNames, leaf.IPAddresses)
 		}
 	}
 }
 
-func TestTheGuestClustersVaultAnswersOnLoopbackWithTLS(t *testing.T) {
+func TestTheClustersVaultAnswersOnLoopbackWithTLS(t *testing.T) {
 	skipWithoutBao(t)
-	cfg := guestVaultStackConfig(t, "127.0.0.2")
+	cfg := marketVaultStackConfig(t)
 	pg, _ := startTestPostgres(t, "vaulttls")
 	cfg.VaultStoreDSN = func(string) (string, error) { return pg.VaultDSN(), nil }
 	leases := designedLeases(21003)
@@ -176,9 +169,10 @@ func TestTheGuestClustersVaultAnswersOnLoopbackWithTLS(t *testing.T) {
 	if loopbackCode != http.StatusNotImplemented {
 		t.Fatalf("the loopback listener answered HTTP %d, want 501 over verified TLS", loopbackCode)
 	}
-	if _, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.2", strconv.Itoa(port)), time.Second); err == nil {
-		t.Fatalf("the vault accepts a connection on 127.0.0.2: a listener outside loopback is " +
-			"what needed root, and the guest reaches the vault through pasta, not a second bind")
+	if _, err := net.DialTimeout("tcp", net.JoinHostPort(portallocator.MarketAdvertiseAddress, strconv.Itoa(port)), time.Second); err == nil {
+		t.Fatalf("the vault accepts a connection on %s: a listener outside loopback is what needed "+
+			"root, and a node reaches the vault through the market's door, not a second bind",
+			portallocator.MarketAdvertiseAddress)
 	}
 }
 
@@ -204,13 +198,11 @@ func waitHealth(t *testing.T, url string, tlsConfig *tls.Config, logPath string)
 	return 0
 }
 
-func TestTheGuestClustersVaultRefusesToRenderWithoutACertificateSource(t *testing.T) {
-	gateway := "127.0.0.2"
+func TestTheClustersVaultRefusesToRenderWithoutACertificateSource(t *testing.T) {
 	cfg := stackConfig(t, fakeAdmin())
 	cfg.Stack = DesignedStack
-	cfg.AdvertiseAddress = ""
-	cfg.GuestDialled = true
-	cfg.GuestGateway = func(string) (string, error) { return gateway, nil }
+	cfg.AdvertiseAddress = portallocator.MarketAdvertiseAddress
+	cfg.MarketDialled = true
 	if _, err := StepsFor(cfg)(observed(), designedLeases(21003)); err == nil {
 		t.Fatal("a vault rendered with no TLS certificate source, so its single listener would " +
 			"come up without a certificate and auth/cert could never answer on it")

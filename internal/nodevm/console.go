@@ -10,9 +10,6 @@ var fatalMarkers = []string{
 	"Attempted to kill init",
 	"System halted",
 	"KCP_INIT fatal",
-	"KCP_AUDIT fatal",
-	"KCP_AGENT fatal",
-	"KCP_AGENT_EXIT rc=",
 }
 
 func Fatal(dataDir string) string {

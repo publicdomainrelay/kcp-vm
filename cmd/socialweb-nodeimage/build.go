@@ -106,9 +106,9 @@ func buildConfigOf(cfg Config) nodefirecracker.BuildConfig {
 		KernelConfig:      cfg.KernelConfig,
 		BaseImage:         cfg.BaseImage,
 		K3sBinary:         cfg.K3sBinary,
-		AgentBinary:       cfg.AgentBinary,
-		AgentPackage:      cfg.AgentPackage,
-		AgentGoFlags:      cfg.AgentGoFlags,
+		InitBinary:        cfg.InitBinary,
+		InitPackage:       cfg.InitPackage,
+		InitGoFlags:       cfg.InitGoFlags,
 		ModuleSource:      cfg.ModuleSource,
 		BootArgs:          cfg.BootArgs,
 		K3sDataDir:        cfg.K3sDataDir,
@@ -120,30 +120,30 @@ func buildConfigOf(cfg Config) nodefirecracker.BuildConfig {
 	}
 }
 
-func buildAgent(cfg Config) error {
-	if err := os.MkdirAll(filepath.Dir(cfg.AgentBinary), 0o755); err != nil {
-		return fmt.Errorf("socialweb-nodeimage: creating %s: %w", filepath.Dir(cfg.AgentBinary), err)
+func buildInit(cfg Config) error {
+	if err := os.MkdirAll(filepath.Dir(cfg.InitBinary), 0o755); err != nil {
+		return fmt.Errorf("socialweb-nodeimage: creating %s: %w", filepath.Dir(cfg.InitBinary), err)
 	}
-	packageDir, err := nodefirecracker.ResolveAgentPackage(cfg.AgentPackage)
+	packageDir, err := nodefirecracker.ResolveInitPackage(cfg.InitPackage)
 	if err != nil {
 		return err
 	}
-	args := append([]string{"build", "-trimpath"}, cfg.AgentGoFlags...)
-	args = append(args, "-buildvcs=false", "-o", cfg.AgentBinary, ".")
+	args := append([]string{"build", "-trimpath"}, cfg.InitGoFlags...)
+	args = append(args, "-buildvcs=false", "-o", cfg.InitBinary, ".")
 	cmd := exec.Command("go", args...)
 	cmd.Dir = packageDir
 	cmd.Env = append(os.Environ(), "GOOS=linux", "GOARCH=amd64", "CGO_ENABLED=0")
 	raw, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("socialweb-nodeimage: building the guest's agent (%s -> %s): %v: %s -- "+
-			"the guest's half of the agent is a static build for the guest, and the image must carry "+
-			"the binary built from the same source as the host's half, or the two sides disagree "+
-			"about how a guest is talked to. The build is always told -buildvcs=false, whatever "+
-			"agent_go_flags say: the agent's bytes are an INPUT of the image's name "+
+		return fmt.Errorf("socialweb-nodeimage: building the guest's init (%s -> %s): %v: %s -- "+
+			"the guest's PID 1 is a static build for the guest, because the initramfs runs before "+
+			"any root filesystem exists and nothing can load an interpreter for it. The build is "+
+			"always told -buildvcs=false, whatever "+
+			"init_go_flags say: the init's bytes are an INPUT of the image's name "+
 			"(internal/nodefirecracker folds the binary's digest in), and `go build` otherwise "+
 			"stamps the state of this git working tree into them -- so an edit anywhere in the "+
 			"repository while a build is running moves the name of an image whose inputs did not "+
-			"change. An image's name must follow its inputs and not the tree around them", cfg.AgentPackage, cfg.AgentBinary, err,
+			"change. An image's name must follow its inputs and not the tree around them", cfg.InitPackage, cfg.InitBinary, err,
 			strings.TrimSpace(string(raw)))
 	}
 	return nil
@@ -233,8 +233,8 @@ func buildInitramfs(cfg Config, dst string) error {
 			"by, and loading a module through the raw syscall instead was measured to fail with "+
 			"EFAULT on this kernel while the same file loads through insmod", err)
 	}
-	if err := copyFile(cfg.AgentBinary, filepath.Join(tree, "init"), 0o755); err != nil {
-		return fmt.Errorf("socialweb-nodeimage: staging the agent as the initramfs's /init: %w -- "+
+	if err := copyFile(cfg.InitBinary, filepath.Join(tree, "init"), 0o755); err != nil {
+		return fmt.Errorf("socialweb-nodeimage: staging the guest's init as the initramfs's /init: %w -- "+
 			"the initramfs runs before any root filesystem exists, so this must be the static "+
 			"cross-compiled build, not a host binary with an interpreter nothing can load yet", err)
 	}

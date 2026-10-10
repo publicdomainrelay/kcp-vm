@@ -43,10 +43,10 @@ var fieldDeclarations = map[string]fieldDeclaration{
 	"stage_dir":           {Role: writtenByTheBuild},
 	"out_dir":             {Role: writtenByTheBuild},
 	"image_cache_dir":     {Role: writtenByTheBuild},
-	"agent_package":       {Role: readByTheBuild, Covers: []string{"agentPackage", "agentPackageDigest"}},
-	"agent_binary":        {Role: readByTheBuild, Covers: []string{"agentBinary", "agentBinaryDigest"}},
+	"init_package":        {Role: readByTheBuild, Covers: []string{"initPackage", "initPackageDigest"}},
+	"init_binary":         {Role: readByTheBuild, Covers: []string{"initBinary", "initBinaryDigest"}},
 	"preinstall":          {Role: readByTheBuild, Covers: []string{"preinstall", "preinstallDigest"}},
-	"agent_go_flags":      {Role: readByTheBuild, Covers: []string{"agentGoFlags"}},
+	"init_go_flags":       {Role: readByTheBuild, Covers: []string{"initGoFlags"}},
 	"k3s_binary":          {Role: readByTheBuild, Covers: []string{"k3sBinary", "k3sBinaryDigest"}},
 	"k3s_data_dir":        {Role: readByTheBuild, Covers: []string{"k3sDataDir"}},
 	"rootfs_label":        {Role: readByTheBuild, Covers: []string{"rootfsLabel"}},
@@ -136,8 +136,8 @@ func TestEveryInputTheBuildReadsMovesTheNameAndTheComparison(t *testing.T) {
 		{"the k3s binary", func(t *testing.T, cfg *Config) {
 			writeFileAt(t, cfg.K3sBinary, "k3s version v1.32.0+k3s1\n")
 		}},
-		{"the guest agent", func(t *testing.T, cfg *Config) {
-			writeFileAt(t, cfg.AgentBinary, "another agent\n")
+		{"the guest init", func(t *testing.T, cfg *Config) {
+			writeFileAt(t, cfg.InitBinary, "another init\n")
 		}},
 		{"a module file under the tree the build copies", func(t *testing.T, cfg *Config) {
 			writeFileAt(t, filepath.Join(cfg.ModuleSource, "kernel/net/netfilter/nf_conntrack.ko"),
@@ -164,16 +164,16 @@ func TestEveryInputTheBuildReadsMovesTheNameAndTheComparison(t *testing.T) {
 		{"the rootfs headroom", func(t *testing.T, cfg *Config) {
 			cfg.RootfsHeadroomMiB = cfg.RootfsHeadroomMiB + 1
 		}},
-		{"the agent's package", func(t *testing.T, cfg *Config) {
-			elsewhere := filepath.Join(t.TempDir(), "socialweb-nodeagent-elsewhere")
+		{"the init's package", func(t *testing.T, cfg *Config) {
+			elsewhere := filepath.Join(t.TempDir(), "socialweb-nodeinit-elsewhere")
 			if err := os.MkdirAll(elsewhere, 0o755); err != nil {
 				t.Fatalf("creating %s: %v", elsewhere, err)
 			}
 			writeFileAt(t, filepath.Join(elsewhere, "main.go"), "package main\n")
-			cfg.AgentPackage = elsewhere
+			cfg.InitPackage = elsewhere
 		}},
-		{"the agent's build flags", func(t *testing.T, cfg *Config) {
-			cfg.AgentGoFlags = append(append([]string(nil), cfg.AgentGoFlags...), "-race")
+		{"the init's build flags", func(t *testing.T, cfg *Config) {
+			cfg.InitGoFlags = append(append([]string(nil), cfg.InitGoFlags...), "-race")
 		}},
 		{"the VMM", func(t *testing.T, cfg *Config) {
 			cfg.VMM = "qemu"
@@ -219,14 +219,14 @@ func TestEveryInputTheBuildReadsMovesTheNameAndTheComparison(t *testing.T) {
 	}
 }
 
-func TestAnImageBuiltBeforeTheRecordCoveredTheAgentIsRefused(t *testing.T) {
+func TestAnImageBuiltBeforeTheRecordCoveredTheInitIsRefused(t *testing.T) {
 	cfg := namedConfig(t)
 	inputs, err := nodefirecracker.RecordInputs(cfg.Path, buildConfigOf(cfg))
 	if err != nil {
 		t.Fatalf("recording the inputs: %v", err)
 	}
-	inputs.AgentBinary = ""
-	inputs.AgentBinaryDigest = ""
+	inputs.InitBinary = ""
+	inputs.InitBinaryDigest = ""
 	inputs.ModuleSource = ""
 	inputs.ModuleSourceDigest = ""
 	manifest := nodefirecracker.Manifest{
@@ -236,11 +236,11 @@ func TestAnImageBuiltBeforeTheRecordCoveredTheAgentIsRefused(t *testing.T) {
 	}
 	err = nodefirecracker.CompareImageToConfig(manifest, cfg.Path, buildConfigOf(cfg))
 	if err == nil {
-		t.Fatal("an image whose record says nothing about the agent it carries or the module tree it " +
+		t.Fatal("an image whose record says nothing about the init it carries or the module tree it " +
 			"copied was accepted, and that is the shape every image built before this change has: the " +
-			"record cannot show they match, so booting one is booting an agent nobody can account for")
+			"record cannot show they match, so booting one is booting an init nobody can account for")
 	}
-	for _, want := range []string{"guest agent", "tree"} {
+	for _, want := range []string{"guest init", "tree"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not name %q, so it does not say which input the record cannot "+
 				"show: %v", want, err)
