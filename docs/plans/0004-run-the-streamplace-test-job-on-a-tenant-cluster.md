@@ -80,6 +80,21 @@ included `.ci/dockerfile-hash.yaml`.
   are now config: `vcpu` and `memMiB` on the builder's configuration, folded into the image
   fingerprint, and `SOCIALWEB_CLUSTERPROVIDER_NODE_DISK_MIB` for the disk. `inputs_test.go`'s
   declaration table is what caught that they had to be recorded as well as read.
+- **B7 - the guest's root filesystem is where the job's image and its build outputs have to fit.**
+  The node's root filesystem is `rootfs.ext4`, cloned per node
+  (`internal/nodefirecracker/node.go:153`), and containerd's content store and every container
+  layer live inside it. Its size is the staged tree plus `rootfs_headroom_mib`, and nothing else
+  sizes it. The node disk is NOT an option: it is attached and mounted READ-ONLY as the identity
+  disk (`cmd/socialweb-nodeagent/agent.go:173`), so `SOCIALWEB_CLUSTERPROVIDER_NODE_DISK_MIB`
+  cannot hold state. Measured twice: at the default headroom the pull of the job's image dies with
+  `no space left on device` writing
+  `/var/lib/rancher/k3s/agent/containerd/io.containerd.content.v1.content/ingest/...`, and at
+  `rootfs_headroom_mib: 55000` the root filesystem is 58,401,488,896 bytes and the pull completes.
+  A corollary that bit once: those files are written into the test's state directory, which is
+  `os.MkdirTemp("", ...)` and therefore `/tmp`. On this host `/tmp` is a 24 GiB tmpfs, so the 58 GB
+  root filesystem and the 150 GiB node disk have to land somewhere else -- the run is made with
+  `TMPDIR` set to a directory on the host's own disk. A state directory that cannot hold a node's
+  disks fails as a full filesystem partway through a boot, not as a configuration error.
 - **B6 - the node image cannot carry a large image.** `layDownRootfs` writes the root filesystem
   with `mkfs.ext4 -d`, which refuses a file of about 2 GiB or more (`__populate_fs: Ext2 file too
   big while writing file ...`). A 3.3 GB tarball of the builder image is refused at 6 GB and at
