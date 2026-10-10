@@ -2,8 +2,8 @@
 import { Buffer } from "node:buffer";
 import { Duplex } from "node:stream";
 import net from "node:net";
+import { spawn } from "node:child_process";
 import { Client, type ClientChannel } from "ssh2";
-import { tunnelWsUrl } from "@publicdomainrelay/requester-xrpc";
 import { K3S_JOIN_GO, K3S_JOIN_READY_MARKER } from "@publicdomainrelay/socialweb-computer-k8s-common";
 
 function ignore(): void {
@@ -12,18 +12,21 @@ function ignore(): void {
 
 export type Log = (event: string, data?: Record<string, unknown>) => void;
 
-async function tunnelStream(url: string): Promise<Duplex> {
-  const ws = new WebSocket(url);
-  ws.binaryType = "arraybuffer";
-  await new Promise<void>((resolve, reject) => {
-    ws.addEventListener("open", () => resolve(), { once: true });
-    ws.addEventListener("error", () => reject(new Error(`tunnel websocket to ${url} failed`)), { once: true });
-  });
+/**
+ * The guest's transport is an iroh endpoint: the guest runs a dumbpipe listener
+ * in front of its own sshd, mints a ticket for it, and reports that ticket to
+ * the market. The door reaches it by running `dumbpipe connect <ticket>`, whose
+ * stdio IS the connection -- so one bidi stream, no relay in the middle, and no
+ * package the guest has to fetch from the door's registry before it can be
+ * reached at all.
+ */
+function dumbpipeStream(ticket: string, dumbpipePath: string, log?: Log): Duplex {
+  const child = spawn(dumbpipePath, ["connect", ticket], { stdio: ["pipe", "pipe", "pipe"] });
   const stream = new Duplex({
     read() { ignore(); },
     write(chunk: Uint8Array, _encoding, cb) {
       try {
-        ws.send(chunk);
+        child.stdin.write(chunk);
         cb();
       } catch (err) {
         cb(err as Error);
@@ -31,19 +34,45 @@ async function tunnelStream(url: string): Promise<Duplex> {
     },
     final(cb) {
       try {
-        ws.close();
+        child.stdin.end();
+        child.kill();
       } catch { ignore(); }
       cb();
     },
   });
-  ws.addEventListener("message", (event) => stream.push(new Uint8Array(event.data as ArrayBuffer)));
-  ws.addEventListener("close", () => stream.push(null));
-  ws.addEventListener("error", () => stream.destroy(new Error("tunnel websocket failed")));
+  child.stdout.on("data", (chunk: Uint8Array) => stream.push(chunk));
+  child.stdout.on("end", () => stream.push(null));
+  child.on("error", (err: Error) => stream.destroy(err));
+  child.on("exit", (code: number | null) => {
+    if (code !== 0 && code !== null) log?.("node_guest_dumbpipe_exit", { code });
+    stream.push(null);
+  });
+  child.stderr.on("data", (chunk: Uint8Array) =>
+    log?.("node_guest_dumbpipe_stderr", { line: new TextDecoder().decode(chunk).trim().slice(0, 200) }));
   return stream;
 }
 
-export async function connectGuest(fqdn: string, privateKey: string, timeoutMs: number): Promise<Client> {
-  const sock = await tunnelStream(tunnelWsUrl(fqdn));
+/** Opens one SSH client to a guest's transport address, however that transport is spoken. */
+export type GuestConnector = (
+  ticket: string,
+  privateKey: string,
+  timeoutMs: number,
+  log?: Log,
+) => Promise<Client>;
+
+/** The connector this door uses in production: one dumbpipe per session. */
+export function dumbpipeConnector(dumbpipePath: string): GuestConnector {
+  return (ticket, privateKey, timeoutMs, log) => connectGuest(ticket, privateKey, timeoutMs, dumbpipePath, log);
+}
+
+export async function connectGuest(
+  ticket: string,
+  privateKey: string,
+  timeoutMs: number,
+  dumbpipePath = "dumbpipe",
+  log?: Log,
+): Promise<Client> {
+  const sock = dumbpipeStream(ticket, dumbpipePath, log);
   const client = new Client();
   await new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error("tunnel connect timed out")), timeoutMs);
@@ -63,10 +92,11 @@ export async function connectGuest(fqdn: string, privateKey: string, timeoutMs: 
 
 export async function pollGuestReady(
   privateKeyPath: string,
-  fqdn: string,
+  ticket: string,
   timeoutMs: number,
   signal: AbortSignal,
   log: Log,
+  connect: GuestConnector,
 ): Promise<boolean> {
   const privateKey = await Deno.readTextFile(privateKeyPath).catch(() => "");
   if (!privateKey) return false;
@@ -76,7 +106,7 @@ export async function pollGuestReady(
     attempt += 1;
     let client: Client | null = null;
     try {
-      client = await connectGuest(fqdn, privateKey, 10_000);
+      client = await connect(ticket, privateKey, 10_000, log);
       const ok = await new Promise<boolean>((resolve) => {
         client!.exec("true", (err, stream) => {
           if (err) return resolve(false);
@@ -85,11 +115,11 @@ export async function pollGuestReady(
         });
       });
       if (ok) {
-        log("node_guest_ssh_ready", { fqdn, attempt });
+        log("node_guest_ssh_ready", { ticket: ticket.slice(0, 24), attempt });
         return true;
       }
     } catch (err) {
-      log("node_guest_ssh_poll", { fqdn, attempt, error: String(err) });
+      log("node_guest_ssh_poll", { ticket: ticket.slice(0, 24), attempt, error: String(err) });
     } finally {
       try {
         client?.end();
@@ -128,7 +158,8 @@ export class BoundedTail {
 
 export interface NodeSessionPlan {
   privateKeyPath: string;
-  fqdn: string;
+  ticket: string;
+  connect: GuestConnector;
   program: string;
   joinDocument: string;
   forwardAddress: string;
@@ -171,7 +202,7 @@ export const runNodeSession: NodeSessionRunner = async (plan) => {
   const upstreams = new Set<net.Socket>();
   try {
     const privateKey = await Deno.readTextFile(plan.privateKeyPath);
-    client = await connectGuest(plan.fqdn, privateKey, 30_000);
+    client = await plan.connect(plan.ticket, privateKey, 30_000, plan.log);
     let forwarded = false;
     client.on("tcp connection", (_info, accept) => {
       const channel = accept();
@@ -222,7 +253,7 @@ export const runNodeSession: NodeSessionRunner = async (plan) => {
     }
 
     await forwardIn(client, plan.forwardAddress, plan.apiserverPort);
-    plan.log("node_forward_open", { fqdn: plan.fqdn, address: plan.forwardAddress, port: plan.apiserverPort });
+    plan.log("node_forward_open", { ticket: plan.ticket.slice(0, 24), address: plan.forwardAddress, port: plan.apiserverPort });
     stream.write(Buffer.from(`${K3S_JOIN_GO}\n`));
 
     const aborted = new Promise<number>((resolve) => {
@@ -236,7 +267,7 @@ export const runNodeSession: NodeSessionRunner = async (plan) => {
     }
     return done(code === 0 ? 1 : code, "the node's agent exited");
   } catch (err) {
-    plan.log("node_session_failed", { fqdn: plan.fqdn, error: String(err) });
+    plan.log("node_session_failed", { ticket: plan.ticket.slice(0, 24), error: String(err) });
     return done(1, `node session failed: ${String(err)}`);
   } finally {
     for (const u of upstreams) u.destroy();

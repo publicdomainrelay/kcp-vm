@@ -15,10 +15,18 @@ import {
   type NodeClaimStatus,
   pinnedJoinToken,
 } from "@publicdomainrelay/socialweb-computer-k8s-common";
-import { type Log, type NodeSessionOutcome, type NodeSessionRunner, pollGuestReady, runNodeSession } from "./guest.ts";
+import {
+  dumbpipeConnector,
+  type GuestConnector,
+  type Log,
+  type NodeSessionOutcome,
+  type NodeSessionRunner,
+  pollGuestReady,
+  runNodeSession,
+} from "./guest.ts";
 
 export { BoundedTail, runNodeSession } from "./guest.ts";
-export type { NodeSessionOutcome, NodeSessionPlan, NodeSessionRunner } from "./guest.ts";
+export type { GuestConnector, NodeSessionOutcome, NodeSessionPlan, NodeSessionRunner } from "./guest.ts";
 
 type ContractRunner = typeof runComputeContract;
 type ContractResult = Awaited<ReturnType<ContractRunner>>;
@@ -37,7 +45,11 @@ export interface MarketNodeFulfillerOptions {
   runContract?: ContractRunner;
   nodeSession?: NodeSessionRunner;
   keypairs?: Pick<SshSessionProvider, "generateKeypair">;
-  pollReady?: (privateKeyPath: string, fqdn: string, timeoutMs: number, signal: AbortSignal) => Promise<boolean>;
+  pollReady?: (privateKeyPath: string, ticket: string, timeoutMs: number, signal: AbortSignal) => Promise<boolean>;
+  /** The dumbpipe binary the iroh transport runs, from an operator's PATH or the one ensureDumbpipe fetched. */
+  dumbpipePath?: string;
+  /** How a guest's transport address is opened; defaults to one dumbpipe per session. */
+  connect?: GuestConnector;
   eventStreams?: () => { close(): void };
   readText?: (path: string) => Promise<string>;
   reap?: (pds: RequesterPDS, contract: NodeClaimContract) => Promise<boolean>;
@@ -126,8 +138,10 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
     createDefaultATProtoEventStreamsClient({ additionalRelays: opts.relayUrls ?? [], log: quietLogger(log) }) as unknown as {
       close(): void;
     });
+  const connect: GuestConnector = opts.connect ?? dumbpipeConnector(opts.dumbpipePath ?? "dumbpipe");
   const ready = opts.pollReady ??
-    ((key: string, fqdn: string, timeoutMs: number, signal: AbortSignal) => pollGuestReady(key, fqdn, timeoutMs, signal, log));
+    ((key: string, ticket: string, timeoutMs: number, signal: AbortSignal) =>
+      pollGuestReady(key, ticket, timeoutMs, signal, log, connect));
 
   const running = new Map<string, { abort: AbortController; done: Promise<void> }>();
   let timer: ReturnType<typeof setInterval> | undefined;
@@ -184,18 +198,19 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
 
         const provider: SshSessionProvider = {
           generateKeypair: (vmName) => keypairs.generateKeypair(vmName),
-          pollReady: (privateKeyPath, fqdn, timeoutMs) => ready(privateKeyPath, fqdn, timeoutMs, abort.signal),
-          runSession: async (privateKeyPath, fqdn, program) => {
+          pollReady: (privateKeyPath, ticket, timeoutMs) => ready(privateKeyPath, ticket, timeoutMs, abort.signal),
+          runSession: async (privateKeyPath, ticket, program) => {
             session = await nodeSession({
               privateKeyPath,
-              fqdn,
+              ticket,
+              connect,
               program,
               joinDocument,
               forwardAddress: spec.advertiseAddress,
               apiserverHost,
               apiserverPort: spec.apiserverPort,
               signal: abort.signal,
-              onJoining: () => void write({ phase: "Joining", fqdn, message: "the node is joining its cluster" }),
+              onJoining: () => void write({ phase: "Joining", fqdn: ticket, message: "the node is joining its cluster" }),
               onForwarded: () => void write({ phase: "Running", message: "the node's agent reached its apiserver" }),
               log,
             });

@@ -3,7 +3,8 @@ import { Server, utils, type Connection } from "ssh2";
 import { Duplex } from "node:stream";
 import { Buffer } from "node:buffer";
 import { assertEquals } from "@std/assert";
-import { runNodeSession } from "@publicdomainrelay/socialweb-computer-k8s-node-market";
+import { type GuestConnector, runNodeSession } from "@publicdomainrelay/socialweb-computer-k8s-node-market";
+import { Client } from "ssh2";
 import {
   encodeNodeJoinDocument,
   K3S_JOIN_GO,
@@ -40,8 +41,45 @@ function serverSocketStream(socket: WebSocket): Duplex {
   return stream;
 }
 
+/**
+ * The fake guest in this file is an sshd behind a websocket, so the connector
+ * these tests inject is the one the door used to carry itself. Production now
+ * reaches a guest by running dumbpipe against the ticket it reported, and the
+ * session logic under test here is the same either way.
+ */
+const webSocketConnector: GuestConnector = async (target, privateKey, timeoutMs) => {
+  const socket = new WebSocket(`ws://${target}`);
+  socket.binaryType = "arraybuffer";
+  await new Promise<void>((resolve, reject) => {
+    socket.addEventListener("open", () => resolve(), { once: true });
+    socket.addEventListener("error", () => reject(new Error(`fake guest socket ${target} failed`)), { once: true });
+  });
+  const stream = new Duplex({
+    read() { return; },
+    write(chunk, _encoding, cb) {
+      try {
+        socket.send(chunk);
+        cb();
+      } catch (err) {
+        cb(err as Error);
+      }
+    },
+  });
+  socket.addEventListener("message", (e) => stream.push(new Uint8Array(e.data as ArrayBuffer)));
+  socket.addEventListener("close", () => stream.push(null));
+  const client = new Client();
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("fake guest connect timed out")), timeoutMs);
+    client
+      .on("ready", () => { clearTimeout(timer); resolve(); })
+      .on("error", (err: Error) => { clearTimeout(timer); reject(err); })
+      .connect({ sock: stream, username: "root", privateKey, hostVerifier: () => true });
+  });
+  return client;
+};
+
 interface FakeGuest {
-  fqdn: string;
+  target: string;
   privateKeyPath: string;
   forward: Promise<{ client: Connection; bindAddr: string; bindPort: number }>;
   document: Promise<Record<string, string>>;
@@ -112,7 +150,7 @@ async function fakeGuest(opts: { sayReady?: boolean } = {}): Promise<FakeGuest> 
   });
 
   return {
-    fqdn: `127.0.0.1:${server.addr.port}`,
+    target: `127.0.0.1:${server.addr.port}`,
     privateKeyPath,
     forward: forward.promise,
     document: document.promise,
@@ -154,7 +192,8 @@ Deno.test({
     try {
       const outcome = runNodeSession({
         privateKeyPath: guest.privateKeyPath,
-        fqdn: guest.fqdn,
+        ticket: guest.target,
+        connect: webSocketConnector,
         program: K3S_JOIN_PATH,
         joinDocument: encodeNodeJoinDocument({
           nodeName: "ci-node1",
@@ -216,7 +255,8 @@ Deno.test({
     try {
       const result = await runNodeSession({
         privateKeyPath: guest.privateKeyPath,
-        fqdn: guest.fqdn,
+        ticket: guest.target,
+        connect: webSocketConnector,
         program: K3S_JOIN_PATH,
         joinDocument: encodeNodeJoinDocument({
           nodeName: "n",
