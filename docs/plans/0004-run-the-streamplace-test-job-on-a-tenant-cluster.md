@@ -211,6 +211,24 @@ node`; the node joined and the cloud controller manager stamped it
 `providerID=socialweb://liveweb/liveweb-node1`; `INSTANCE_START_TO_READY_S=5.504` measured from the
 firecracker VMM's instance record to the Node's `Ready` condition at 250 ms resolution.
 
+**2026-10-06, the job's own script, as far as it has run.** The `test` job of project 1 on
+`kcp-tenant-ci`, pipeline 57, job 181, running as a Pod on `liveweb-node1`:
+
+```
+$ make dev-setup && make dev && make dev-test && make ci-lexicons
+pnpm install
+! Corepack is about to download https://registry.npmjs.org/pnpm/-/pnpm-10.11.0.tgz
+  Content-addressable store is at: /builds/.pnpm-store/v10
+FFmpeg| Has header "pthread_np.h" : NO
+HEAD is now at 20cbb63 meson: fix x264 version check without stdint.h header
+proxy-libintl| ... meson.build:14: WARNING: ...
+Progress: resolved 0, reused 0, downloaded 2917, added 3875
+```
+
+That is the target itself: the job's first `make` target, the pinned pnpm, the meson configure of
+FFmpeg from source, and the subproject fetches, all inside a firecracker guest this host booted
+because a Pod could not be placed.
+
 ## 7. The mkfs measurement, in full
 
 B6 is the reason the job's image is pulled rather than seeded, so it is written down rather than
