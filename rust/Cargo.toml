@@ -1,0 +1,15 @@
+[workspace]
+resolver = "3"
+members = ["socialweb-meshd"]
+
+[workspace.package]
+edition = "2024"
+license = "Unlicense"
+rust-version = "1.95"
+
+[profile.release]
+opt-level = "s"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
