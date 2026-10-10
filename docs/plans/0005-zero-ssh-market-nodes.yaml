@@ -393,8 +393,15 @@ items:
     decision: >
       A process in our container against the tenant apiserver, webhook by loopback URL, store
       reaching the cluster OpenBao on loopback; works at zero nodes and closes the ESO-3 market gap.
-    status: todo
-    evidence: []
+    status: done
+    evidence:
+      - "commits 411678e (internal/eso beside install, migration split, webhook TLS), afe36e8 (process-group members, leases, grant), 209d724 (cmd wiring, add-on pass), fa35e32 (image pins, install.sh retired); docs commit follows"
+      - "two members external-secrets-webhook then external-secrets after the CCM in procgroup.StackOrder; leases external-secrets-health, external-secrets-webhook, external-secrets-webhook-health; metrics off, leader election off; identity system:socialweb:external-secrets bound to upstream ClusterRole external-secrets-controller; webhook by url https://127.0.0.1:<lease> under a minted CA, failurePolicy Ignore"
+      - "image: /usr/bin/external-secrets from ghcr.io/external-secrets/external-secrets:v2.11.0@sha256:66fb710878cbf3eba4a927e35c5d75e29a202c9bab238aad64bfb23b786b962b to /usr/local/bin/external-secrets (sha256 9ea572f5e1d6..., COPY probe built and compared); bundle /opt/socialweb/eso/external-secrets.yaml sha256 c427124642886d240af8f28d294714a168d920ef8e5d55db14600e00ed0cfb80 (esobundle stage built, checksum passed); versions.json pins all three and TestTheImageCarriesTheExternalSecretsThisManifestPins holds the Dockerfile to them"
+      - "live 2026-10-07, SOCIALWEB_LOCAL=1: TestAZeroNodeMarketClusterSyncsAnExternalSecretFromItsOwnVaultWithNoESOPodInTheTenant PASS 25.4 s; Ready in 22.68 s; zero nodes; webhook denied a data-less ExternalSecret on its loopback URL; store Ready=True Valid on https://127.0.0.1:<vault>; users/openbao-demo synced 500 ms after apply; no ESO pod or Deployment in the tenant"
+      - "watched to fail first: 7 internal/eso tests against a stub; the live test before the grant change (SecretSyncedError, VAP socialweb-mint-identity denied the beside identity); a CRD-schema-refused probe replaced by a webhook-only one"
+      - "unit: TestTheTenantKeepsOnlyTheCRDsAndTheRolesAndEverythingThatRanThereRetires, TestTheMigrationDeletesEveryRetiredObjectBeforeAnythingIsApplied, TestAWebhookRegistrationStillAddressedByServiceIsReplacedNotMerged, TestTheWebhooksAreRegisteredByLoopbackURLUnderTheMintedCA, TestTheExternalSecretsControllerBindsOnlyItsLeasedLoopbackHealthPortAndElectsNoLeader, TestTheExternalSecretsWebhookServesItsLeasedPortWithTheMintedCertDir, TestAClusterLeasedBeforeThePairExistedRestartsWithoutItUntilItsNextSpawnLeasesIt, TestTheBaselineIsReMeasuredEmptyOnceTheOperatorLeavesTheTenant, TestAJoinWithoutTheExternalSecretsBinaryOrBundleIsRefused; deploy/check.sh --fast green"
+      - "not deployed: prod's next deploy migrates its one cluster (ARCHITECTURE section 15)"
   - id: M4-PENDING-CRS
     milestone: M4
     title: Intent counts workloads beyond baseline plus our operators' CRs not yet reconciled

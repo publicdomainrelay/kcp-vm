@@ -134,22 +134,17 @@ about: >
   to report a red about something else. It is in section 15 with the reproduction, the fix, and the
   instrument watched to fire.
 
+  Opened and closed on 2026-10-07 and therefore NOT listed below: ESO-4 (the External Secrets Operator
+  ran as three Deployments in each tenant, so at zero nodes nothing synced, and on the market substrate
+  the store could not reach the cluster vault at all). It closed with plan 0005 M4-ESO-BESIDE: the
+  controller and its webhook are two members of each cluster's process group, the store dials the
+  vault on loopback, and the tenant keeps only CRDs, ClusterRoles, a binding to the beside identity and
+  URL webhook registrations. The instrument passed: a market-dialled cluster at ZERO nodes refused a
+  data-less ExternalSecret through the webhook on its loopback URL and synced users/openbao-demo from
+  its own vault 500 ms after the store was applied, with no ESO pod or Deployment in the tenant. It is
+  in section 15 with the readings and the three things watched to fail first.
+
 open:
-  - id: ESO-4
-    title: The External Secrets Operator runs as tenant pods, so it works only while a node exists.
-    body: >
-      It is installed into each tenant cluster as three Deployments. At zero nodes its pods are
-      Pending, so an ExternalSecret syncs only while some tenant workload happens to hold a node, and
-      on the market substrate its store cannot reach the cluster vault at all (ESO-3). Since
-      2026-10-07 those Deployments are a measured baseline (ARCHITECTURE section 10), so they no
-      longer pin nodes; they still do no work at zero. Decided with the user: the operator moves
-      BESIDE the control plane, one controller process per tenant cluster in the provider's process
-      group (as the cloud controller manager is), pointed at the tenant apiserver, with its webhook
-      reached by URL on loopback and the cluster vault reachable on loopback. The in-cluster baseline
-      then holds CRDs and RBAC and no workloads.
-    instrument: >
-      A tenant cluster at ZERO nodes syncing an ExternalSecret from its own vault into a Secret, on
-      the market substrate, with no ESO pod in the tenant.
   - id: P5-M1
     title: The live test bed is the vendored deno-kcp market, and the market is the only node path.
     body: >
