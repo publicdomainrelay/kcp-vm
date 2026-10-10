@@ -185,6 +185,11 @@ if ((options.atprotoOauth as boolean)) {
 } else if ((options.atprotoOauthQr as boolean)) {
   // QR-based OAuth -- scan with phone, session transferred via qr.fedfork.com
   // Register DID on PLC (needed for service auth JWT verification)
+  const oauthSessionKey = {
+    sessionPath: options.oauthSessionFile as string | undefined,
+    label: "bidder",
+    handle: options.atprotoHandle as string | undefined,
+  };
   const plcClient = createPlcDirectoryClient({ plcDirectoryUrl });
   const genesisOp = await createGenesisOp({
     rotationKeys: [keypair.did()],
@@ -208,8 +213,7 @@ if ((options.atprotoOauth as boolean)) {
 
   // Try restoring saved OAuth QR session
   const _restoredAgent = await tryRestoreOAuthQRSession({
-    logger, label: "bidder", handle: options.atprotoHandle as string | undefined,
-    sessionPath: options.oauthSessionFile as string | undefined,
+    logger, ...oauthSessionKey,
     autoRefreshThresholdMs: AUTO_REFRESH_THRESHOLD_MS,
     // No onSessionExpired here -- restore handles expiry internally
     // (delete file, return null -> falls through to QR auth).
@@ -247,12 +251,12 @@ if ((options.atprotoOauth as boolean)) {
       logger,
       autoRefreshThresholdMs: AUTO_REFRESH_THRESHOLD_MS,
       onSessionExpired: createSessionExpiredHandler("bidder"),
-      saveSession: (s) => saveOAuthQRSession(s, { label: "bidder", handle: s.handle }),
+      saveSession: (s) => saveOAuthQRSession(s, oauthSessionKey),
     });
     atprotoAgent = oauthAgent;
 
     // Persist session for future restarts
-    await saveOAuthQRSession(session, { label: "bidder", handle: session.handle });
+    await saveOAuthQRSession(session, oauthSessionKey);
 
     isOAuth = true;
     pdsHostname = undefined;
