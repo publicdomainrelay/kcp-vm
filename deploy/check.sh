@@ -45,7 +45,7 @@ case "$run" in
     echo "check.sh: ok go test"
     ;;
   local)
-    if ! SOCIALWEB_LOCAL=1 go test ./... -count=1 -v >"$log" 2>&1; then
+    if ! SOCIALWEB_LOCAL=1 go test ./... -count=1 -timeout 60m -v >"$log" 2>&1; then
       grep -E -- '^(--- FAIL|FAIL)' "$log" | head -30 >&2
       fail "go test local"
     fi
@@ -54,7 +54,7 @@ case "$run" in
     grep -- '^--- SKIP' "$log" | sed 's/^/  /' || true
     ;;
   full)
-    if ! SOCIALWEB_REQUIRE_LIVE=1 go test ./... -count=1 -v >"$log" 2>&1; then
+    if ! SOCIALWEB_REQUIRE_LIVE=1 go test ./... -count=1 -timeout 60m -v >"$log" 2>&1; then
       echo "check.sh: --full needs live inputs this host must be handed; the failing tests and the input each names:" >&2
       grep -E -- '^(--- FAIL|[[:space:]]+[A-Za-z0-9_./-]+\.go:[0-9]+:)' "$log" | head -60 >&2
       fail "go test full"

@@ -1,0 +1,47 @@
+{
+  "name": "market-requester",
+  "description": "Test-bed requester: one compute contract through RFP, bid, accept and cloud-init, released once the guest reports onNetwork, with no ssh session",
+  "options": {
+    "plc-directory-url": {
+      "type": "string",
+      "description": "PLC directory the requester registers its DID with and resolves the bidder through",
+      "env": "PLC_DIRECTORY_URL"
+    },
+    "ingress-proxy-host": {
+      "type": "string",
+      "description": "XRPC dispatcher host:port the requester, bidder and guest share",
+      "env": "INGRESS_PROXY_HOST"
+    },
+    "bidder-dids": {
+      "type": "string",
+      "description": "Comma-separated bidder DIDs to send the RFP to",
+      "env": "BIDDER_DIDS"
+    },
+    "guest-host-aliases": {
+      "type": "string",
+      "description": "Comma-separated /etc/hosts entries for the guest, \"<ip> <name>\"",
+      "env": "GUEST_HOST_ALIASES"
+    },
+    "guest-ca-file": {
+      "type": "string",
+      "description": "PEM CA the guest's user_data adds to its trust store, for the dispatcher's TLS front",
+      "env": "GUEST_CA_FILE"
+    },
+    "guest-journal-to-console": {
+      "type": "boolean",
+      "description": "Have the guest's journal forwarded to its serial console, so its units' output lands in the console the bidder keeps"
+    },
+    "vm-ready-timeout-sec": {
+      "type": "number",
+      "description": "How long to wait for the guest to report onNetwork",
+      "env": "VM_READY_TIMEOUT_SEC",
+      "default": 420
+    },
+    "result-file": {
+      "type": "string",
+      "description": "Where the JSON verdict is written",
+      "env": "RESULT_FILE",
+      "default": "./market-requester-result.json"
+    }
+  }
+}

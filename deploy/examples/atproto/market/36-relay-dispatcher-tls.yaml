@@ -1,0 +1,72 @@
+apiVersion: deno.computer/v1alpha1
+kind: DenoPod
+metadata:
+  name: dispatcher-tls
+  namespace: default
+  finalizers:
+    - denopod.deno.computer/run
+spec:
+  restartPolicy: Always
+  serviceAccount:
+    name: deno-runner
+    namespace: default
+  env:
+    GUEST_TLS_DIR: "__GUEST_TLS_DIR__"
+    DISPATCHER_HOST: "relay.localhost"
+    DISPATCHER_PORT: "2588"
+    TLS_PORT: "2589"
+  script: |
+    const dir = Deno.env.get("GUEST_TLS_DIR") ?? "";
+    const base = Deno.env.get("DISPATCHER_HOST") ?? "relay.localhost";
+    const upstreamPort = Deno.env.get("DISPATCHER_PORT") ?? "2588";
+    const port = Number(Deno.env.get("TLS_PORT") ?? "2589");
+    const cert = await Deno.readTextFile(`${dir}/relay.localhost.crt`);
+    const key = await Deno.readTextFile(`${dir}/relay.localhost.key`);
+
+    const hostOnly = (h: string) => h.replace(/:\d+$/, "").toLowerCase();
+
+    Deno.serve({
+      hostname: "0.0.0.0",
+      port,
+      cert,
+      key,
+      onListen: ({ hostname, port }) =>
+        console.log(JSON.stringify({ event: "dispatcher_tls_listening", hostname, port, upstreamPort })),
+    }, async (req) => {
+      const host = hostOnly(req.headers.get("host") ?? "");
+      if (host !== base && !host.endsWith(`.${base}`)) {
+        return new Response("not a dispatcher name", { status: 404 });
+      }
+      if ((req.headers.get("upgrade") ?? "").toLowerCase() === "websocket") {
+        return new Response("websocket is served on the plain dispatcher port", { status: 501 });
+      }
+      const url = new URL(req.url);
+      const target = `http://${host}:${upstreamPort}${url.pathname}${url.search}`;
+      const headers = new Headers(req.headers);
+      headers.delete("host");
+      try {
+        const res = await fetch(target, {
+          method: req.method,
+          headers,
+          body: req.body,
+          redirect: "manual",
+        });
+        console.log(JSON.stringify({ event: "dispatcher_tls_proxied", host, path: url.pathname, status: res.status }));
+        return res;
+      } catch (err) {
+        console.log(JSON.stringify({ event: "dispatcher_tls_upstream_failed", host, path: url.pathname, error: String(err) }));
+        return new Response("upstream unreachable", { status: 502 });
+      }
+    });
+  permissions:
+    read:
+      allow: true
+    net:
+      allow: true
+    env:
+      allowList:
+        - GUEST_TLS_DIR
+        - DISPATCHER_HOST
+        - DISPATCHER_PORT
+        - TLS_PORT
+    noPrompt: true

@@ -41,9 +41,50 @@ K() { KC --server="$1" "${@:2}"; }
 echo "org root:   $ORG_ROOT"
 echo "root server: $ROOT_SERVER"
 
-for bin in atproto-market/hono-plc atproto-market/hono-bidder atproto-relay/hono-atproto-relay hono-pds; do
+for bin in atproto-market/hono-plc atproto-market/hono-bidder atproto-relay/hono-atproto-relay hono-pds did-key-ingress-proxy/hono-did-key-ingress-proxy; do
   [ -e "$ORG_ROOT/$bin" ] || { echo "missing $ORG_ROOT/$bin" >&2; exit 1; }
 done
+
+# socialweb-computer-kcp: the bidder runs --compute-provider-firecracker. Every
+# input below is a path on this host or in the runner image, and none has a
+# default that would be right on another machine, so a missing one stops the
+# apply here rather than at the first RFP. FC_NODEBOOT and FC_VMM name paths
+# inside the runner image, which is what boots each guest.
+FC_NODEBOOT=${FC_NODEBOOT:-/usr/local/bin/socialweb-nodeboot}
+FC_VMM=${FC_VMM:-/usr/local/bin/firecracker}
+missing=""
+for v in FC_NODEIMAGE FC_CONFIG FC_REPO_DIR FC_PREINSTALL FC_RUNNER_IMAGE FC_WORK_ROOT; do
+  [ -n "${!v:-}" ] || missing="$missing $v"
+done
+if [ -n "$missing" ]; then
+  echo "the firecracker bidder needs:$missing (see deploy/examples/atproto/market/accept.sh)" >&2
+  exit 1
+fi
+mkdir -p "$FC_WORK_ROOT"
+
+# socialweb-computer-kcp: a guest reaches the dispatcher only over https (its
+# OIDC proof and its onNetwork report), at <name>.relay.localhost on the
+# bidder's --guest-tls-port. 36-relay-dispatcher-tls.yaml terminates that TLS
+# with a leaf for relay.localhost and *.relay.localhost signed by this CA, and
+# the requester has the guest trust the CA through its own user_data.
+GUEST_TLS_DIR=${GUEST_TLS_DIR:-$REPO/.kcp-demo/guest-tls}
+if [ ! -s "$GUEST_TLS_DIR/relay.localhost.crt" ]; then
+  mkdir -p "$GUEST_TLS_DIR"
+  openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 30 \
+    -subj "/CN=market test bed guest CA" \
+    -addext "basicConstraints=critical,CA:TRUE" -addext "keyUsage=critical,keyCertSign,cRLSign" \
+    -keyout "$GUEST_TLS_DIR/ca.key" -out "$GUEST_TLS_DIR/ca.crt" 2>/dev/null
+  openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
+    -subj "/CN=relay.localhost" \
+    -keyout "$GUEST_TLS_DIR/relay.localhost.key" -out "$GUEST_TLS_DIR/relay.localhost.csr" 2>/dev/null
+  printf 'subjectAltName=DNS:relay.localhost,DNS:*.relay.localhost\nextendedKeyUsage=serverAuth\nbasicConstraints=CA:FALSE\n' \
+    >"$GUEST_TLS_DIR/relay.localhost.ext"
+  openssl x509 -req -in "$GUEST_TLS_DIR/relay.localhost.csr" -CA "$GUEST_TLS_DIR/ca.crt" \
+    -CAkey "$GUEST_TLS_DIR/ca.key" -CAcreateserial -days 30 \
+    -extfile "$GUEST_TLS_DIR/relay.localhost.ext" -out "$GUEST_TLS_DIR/relay.localhost.crt" 2>/dev/null
+  chmod 600 "$GUEST_TLS_DIR/ca.key" "$GUEST_TLS_DIR/relay.localhost.key"
+  echo "generated the guest TLS CA and the relay.localhost leaf in $GUEST_TLS_DIR" >&2
+fi
 
 KC --server="$ROOT_SERVER" apply --validate=false -f "$MARKET_DIR/00-workspaces.yaml"
 
@@ -123,6 +164,15 @@ apply_pod() {
       -e "s|__PDS_PRIVATE_KEY_HEX__|$key|g" \
       -e "s|__BOB_PDS_PRIVATE_KEY_HEX__|$bob_key|g" \
       -e "s|__BIDDER_PRIVATE_KEY_HEX__|$bidder_key|g" \
+      -e "s|__FC_NODEIMAGE__|$FC_NODEIMAGE|g" \
+      -e "s|__FC_NODEBOOT__|$FC_NODEBOOT|g" \
+      -e "s|__FC_CONFIG__|$FC_CONFIG|g" \
+      -e "s|__FC_REPO_DIR__|$FC_REPO_DIR|g" \
+      -e "s|__FC_PREINSTALL__|$FC_PREINSTALL|g" \
+      -e "s|__FC_VMM__|$FC_VMM|g" \
+      -e "s|__FC_RUNNER_IMAGE__|$FC_RUNNER_IMAGE|g" \
+      -e "s|__FC_WORK_ROOT__|$FC_WORK_ROOT|g" \
+      -e "s|__GUEST_TLS_DIR__|$GUEST_TLS_DIR|g" \
       "$MARKET_DIR/$file" \
     | KC --server="$S/clusters/root:$ws" apply --validate=false -f -
 }
@@ -155,6 +205,11 @@ for ws in $WORKSPACES; do
 done
 
 apply_pod global 20-global-plc.yaml
+# socialweb-computer-kcp: the market's XRPC dispatcher, which the bidder, the
+# requester and every guest register with. It resolves did:plc signers through
+# the PLC directory above, so it starts after it.
+apply_pod relay  35-relay-dispatcher.yaml
+apply_pod relay  36-relay-dispatcher-tls.yaml
 apply_pod alice  40-alice-pds.yaml
 apply_pod bob    60-bob-pds.yaml
 apply_pod relay  30-relay-relay.yaml
@@ -185,7 +240,7 @@ done
 apply_pod alice  50-verifier.yaml
 
 deadline=$(( $(date +%s) + WAIT_SECONDS ))
-for entry in "global plc" "relay relay" "alice pds" "bob pds" "bob bidder"; do
+for entry in "global plc" "relay relay" "relay dispatcher" "relay dispatcher-tls" "alice pds" "bob pds" "bob bidder"; do
   set -- $entry
   ws=$1; name=$2
   while :; do

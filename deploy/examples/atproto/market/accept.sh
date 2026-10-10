@@ -42,6 +42,23 @@ DELETE_SECONDS=${DELETE_SECONDS:-60}
 DENO_KCP_PROVIDER=${DENO_KCP_PROVIDER:-}
 # Set to 1 to keep $ACCEPT_ROOT (logs, run directories) after the run.
 KEEP_ACCEPT_ROOT=${KEEP_ACCEPT_ROOT:-0}
+# socialweb-computer-kcp: the bidder rents firecracker guests. FC_NODEIMAGE,
+# FC_CONFIG, FC_REPO_DIR, FC_PREINSTALL and FC_RUNNER_IMAGE must be set (see
+# apply.sh); each guest's work directory lands under FC_WORK_ROOT, which is this
+# run's own so every guest found there is one this run created.
+FC_WORK_ROOT=${FC_WORK_ROOT:-$ACCEPT_ROOT/guests}
+# How long the requester waits for the guest to report onNetwork, how long the
+# whole contract may take, and how long a released guest's container may
+# take to go away.
+VM_READY_SECONDS=${VM_READY_SECONDS:-900}
+MARKET_SECONDS=${MARKET_SECONDS:-1500}
+GUEST_GONE_SECONDS=${GUEST_GONE_SECONDS:-180}
+GUEST_TLS_DIR=${GUEST_TLS_DIR:-$ACCEPT_ROOT/guest-tls}
+# The provider stops every deno process after --pod-timeout (5m by default),
+# long-running DenoPods included, and restartPolicy Always then starts a fresh
+# bidder that has forgotten every contract. A market contract outlives 5m, so
+# the test bed's services are given a day.
+POD_TIMEOUT=${POD_TIMEOUT:-24h}
 
 # The four workspaces apply.sh creates. Defined here, not next to the apply
 # below, because the EXIT trap reads them and it can run before then.
@@ -81,6 +98,7 @@ start_provider() {
     --kubeconfig="$KUBECONFIG_PATH" \
     --openbao-addr="http://127.0.0.1:$OPENBAO_PORT" \
     --openbao-token=root \
+    --pod-timeout="$POD_TIMEOUT" \
     >>"$PROVIDER_LOG" 2>&1 &
   PROVIDER_PID=$!
 }
@@ -120,6 +138,23 @@ delete_workloads() {
   done
 }
 
+# Guests are named by their work directory under FC_WORK_ROOT, which belongs to
+# this run alone, so this stops only containers this run's bidder started.
+own_guests() {
+  [ -d "$FC_WORK_ROOT" ] || return 0
+  find "$FC_WORK_ROOT" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort
+}
+
+stop_own_guests() {
+  local name
+  for name in $(own_guests); do
+    if docker inspect "$name" >/dev/null 2>&1; then
+      echo "stopping guest container $name, left behind by this run" >&2
+      docker rm -f "$name" >/dev/null 2>&1 || true
+    fi
+  done
+}
+
 cleanup() {
   local status=$?
   trap - EXIT
@@ -127,6 +162,7 @@ cleanup() {
   # is orphaned onto the example's fixed ports.
   delete_workloads
   stop_provider
+  stop_own_guests
   if [ -s "$OPENBAO_DIR/bao.pid" ]; then
     local bao_pid
     bao_pid=$(cat "$OPENBAO_DIR/bao.pid")
@@ -173,6 +209,28 @@ echo "== openbao =="
 OPENBAO_DIR="$OPENBAO_DIR" \
 OPENBAO_LISTEN="127.0.0.1:$OPENBAO_PORT" \
   bash "$DENOKCP_DIR/start-openbao.sh"
+
+# The provider reconciles nothing when it starts before its APIExports publish
+# their virtual workspace endpoints, and the retry below only notices after a
+# full WAIT_SECONDS. kcp publishes an export's endpoint only once a workspace
+# binds it, so the market's workspaces are created here (apply.sh applies the
+# same file again, unchanged) and the endpoints are waited for, bounded,
+# before the provider starts.
+echo
+echo "== export endpoints =="
+ACCEPT_SERVER=$("$KUBECTL" --kubeconfig="$KUBECONFIG_PATH" config view --minify -o jsonpath='{.clusters[0].cluster.server}')
+ACCEPT_SERVER=${ACCEPT_SERVER%%/clusters/*}
+"$KUBECTL" --kubeconfig="$KUBECONFIG_PATH" --cache-dir="$KCACHE" --server="$ACCEPT_SERVER/clusters/root" \
+  apply --validate=false -f "$MARKET_DIR/00-workspaces.yaml"
+urls=""
+for _ in $(seq 1 120); do
+  urls=$("$KUBECTL" --kubeconfig="$KUBECONFIG_PATH" --cache-dir="$KCACHE" \
+    --server="$ACCEPT_SERVER/clusters/root:deno-provider" \
+    get apiexportendpointslices -o jsonpath='{.items[*].status.endpoints[*].url}' 2>/dev/null || true)
+  [ "$(echo "$urls" | wc -w)" -ge 2 ] && break
+  sleep 1
+done
+echo "endpoints: ${urls:-none}"
 
 echo
 echo "== provider =="
@@ -234,6 +292,8 @@ while :; do
   KEY_FILE="$ACCEPT_ROOT/alice-pds-key.hex" \
   BOB_KEY_FILE="$ACCEPT_ROOT/bob-pds-key.hex" \
   BIDDER_KEY_FILE="$ACCEPT_ROOT/bidder-key.hex" \
+  FC_WORK_ROOT="$FC_WORK_ROOT" \
+  GUEST_TLS_DIR="$GUEST_TLS_DIR" \
     bash "$MARKET_DIR/apply.sh" || apply_status=$?
   ATTEMPT_STATUS+=("$apply_status")
   if [ "$apply_status" -eq 0 ]; then
@@ -309,7 +369,7 @@ check() {
   [ "$2" = "PASS" ] || FAILED=1
 }
 
-PODS=("global plc" "relay relay" "alice pds" "bob pds" "bob bidder")
+PODS=("global plc" "relay relay" "relay dispatcher" "relay dispatcher-tls" "alice pds" "bob pds" "bob bidder")
 
 if [ "$apply_status" -eq 0 ]; then
   check "apply.sh" PASS "exit=$apply_status attempts=${ATTEMPT_STATUS[*]}"
@@ -391,6 +451,90 @@ for entry in "${PODS[@]}"; do
     check "still up root:$ws/$name" FAIL "phase=${phase:-missing} ready=${ready:-missing} after ${SETTLE_SECONDS}s"
   fi
 done
+
+# socialweb-computer-kcp: one compute contract through the test bed. A
+# requester on the host (market-requester/mod.ts, runComputeContract) sends a
+# signed RFP to the bidder through the dispatcher; the bidder bids, the
+# requester accepts, and the bidder boots a firecracker guest from the
+# cloud-init user_data the requester composed. The guest reports onNetwork,
+# the requester releases the contract with vm.delete without ever opening a
+# session to it, and the guest's container must then be gone.
+echo
+echo "== market contract =="
+BIDDER_DID=""
+for f in $(grep -rl 'localPDS plc' "$ACCEPT_ROOT/runs" --include=stdout.txt 2>/dev/null || true); do
+  BIDDER_DID=$(grep -h 'localPDS plc' "$f" | grep -o 'did:plc:[a-z2-7]\{24\}' | head -1)
+  [ -n "$BIDDER_DID" ] && break
+done
+HOST_IP=${HOST_IP:-$(ip -4 route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p')}
+MARKET_RESULT=$ACCEPT_ROOT/market-requester-result.json
+MARKET_LOG=$ACCEPT_ROOT/market-requester.log
+guests_before=$(own_guests)
+echo "bidder: ${BIDDER_DID:-unknown}  guests reach the dispatcher at: ${HOST_IP:-unknown}"
+market_status=0
+if [ -n "$BIDDER_DID" ] && [ -n "$HOST_IP" ]; then
+  market_started=$(date +%s)
+  (cd "$ORG_ROOT/atproto-market" && DENO_CERT="$CA_PEM" timeout "$MARKET_SECONDS" \
+    deno run -A --cached-only --config "$ORG_ROOT/atproto-market/deno.json" \
+      "$MARKET_DIR/market-requester/mod.ts" \
+      --plc-directory-url https://127.0.0.1:2587 \
+      --ingress-proxy-host relay.localhost:2588 \
+      --bidder-dids "$BIDDER_DID" \
+      --guest-host-aliases "$HOST_IP relay.localhost" \
+      --guest-ca-file "$GUEST_TLS_DIR/ca.crt" \
+      --guest-journal-to-console \
+      --vm-ready-timeout-sec "$VM_READY_SECONDS" \
+      --result-file "$MARKET_RESULT") >"$MARKET_LOG" 2>&1 || market_status=$?
+  echo "requester exit=$market_status after $(( $(date +%s) - market_started ))s, log $MARKET_LOG"
+fi
+field() {
+  python3 -c 'import json,sys
+try:
+    v = json.load(open(sys.argv[1])).get(sys.argv[2])
+except Exception:
+    v = None
+print("" if v is None else v)' "$MARKET_RESULT" "$1"
+}
+on_network=$(field onNetwork)
+if [ -n "$on_network" ]; then
+  check "market guest onNetwork" PASS "after $(field onNetworkMs)ms: ${on_network:0:60} winner=$(field winnerDid) bids=$(field bids)"
+else
+  check "market guest onNetwork" FAIL "bidder=${BIDDER_DID:-unknown} exit=$market_status reason=$(field reason)"
+fi
+if [ "$(field vmDeleteOk)" = "True" ] && [ "$market_status" -eq 0 ]; then
+  check "market contract released" PASS "vm.delete status=$(field vmDeleteStatus) total=$(field totalMs)ms"
+else
+  check "market contract released" FAIL "vm.delete status=$(field vmDeleteStatus) reason=$(field reason)"
+fi
+new_guests=""
+for g in $(own_guests); do
+  case " $(echo $guests_before) " in
+    *" $g "*) ;;
+    *) new_guests="$new_guests $g" ;;
+  esac
+done
+new_guests=${new_guests# }
+if [ -z "$new_guests" ]; then
+  check "market guest gone" FAIL "no guest work directory appeared under $FC_WORK_ROOT"
+else
+  gone_deadline=$(( $(date +%s) + GUEST_GONE_SECONDS ))
+  while :; do
+    alive=""
+    for g in $new_guests; do
+      if [ "$(docker inspect -f '{{.State.Running}}' "$g" 2>/dev/null || true)" = "true" ]; then
+        alive="$alive $g"
+      fi
+    done
+    [ -z "$alive" ] && break
+    [ "$(date +%s)" -ge "$gone_deadline" ] && break
+    sleep 2
+  done
+  if [ -z "$alive" ]; then
+    check "market guest gone" PASS "$(echo $new_guests) not running $(( GUEST_GONE_SECONDS - (gone_deadline - $(date +%s)) ))s after release"
+  else
+    check "market guest gone" FAIL "still running after ${GUEST_GONE_SECONDS}s:$alive"
+  fi
+fi
 
 echo
 echo "results:"

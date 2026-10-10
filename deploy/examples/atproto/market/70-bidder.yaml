@@ -13,8 +13,16 @@ spec:
   env:
     SERVICE_ENTRY: "/home/johnandersen777/src/publicdomainrelay-kcp/atproto-market/hono-bidder/mod.ts"
     SERVICE_CWD: "/home/johnandersen777/src/publicdomainrelay-kcp/atproto-market"
-    SERVICE_ARGS: '["--serve-port","2586","--relay-url","https://relay.default.relay.svc.kcp.local","--compute-provider-deno-worker","--skip-qr"]'
-    SERVICE_DENO_FLAGS: '["--unstable-kv"]'
+    # socialweb-computer-kcp: the test bed's bidder rents firecracker guests
+    # booted from our nodeimage by socialweb-nodeboot, through the RFP flow.
+    # It shares the in-cluster PLC directory (by the loopback address its leaf
+    # carries, which the host-side requester can also reach) and the test
+    # bed's own dispatcher in root:relay, which guests reach through an
+    # /etc/hosts alias for relay.localhost. --policy open, because the default
+    # only-me refuses an RFP from a requester with no operator association and
+    # every identity here is minted per run; see docs/ARCHITECTURE.md.
+    SERVICE_ARGS: '["--serve-port","2586","--relay-url","https://relay.default.relay.svc.kcp.local","--plc-directory-url","https://127.0.0.1:2587","--ingress-proxy-host","relay.localhost:2588","--skip-qr","--policy","open","--compute-provider-firecracker","--compute-provider-firecracker-nodeimage","__FC_NODEIMAGE__","--compute-provider-firecracker-nodeboot","__FC_NODEBOOT__","--compute-provider-firecracker-config","__FC_CONFIG__","--compute-provider-firecracker-repo-dir","__FC_REPO_DIR__","--compute-provider-firecracker-preinstall","__FC_PREINSTALL__","--compute-provider-firecracker-vmm","__FC_VMM__","--compute-provider-firecracker-runner-image","__FC_RUNNER_IMAGE__","--compute-provider-firecracker-work-root","__FC_WORK_ROOT__","--compute-provider-firecracker-reuse-image","--guest-tls-port","2589"]'
+    SERVICE_DENO_FLAGS: '["--unstable-kv","--unstable-worker-options"]'
     # SERVICE_TLS is true only so the provider injects KCP_CA_BUNDLE: the bidder
     # fetches the PLC directory and the relay over https by their cluster-local
     # names, so it needs the market CA, but it serves plain HTTP and never opens
@@ -61,6 +69,7 @@ spec:
     // control.
     childEnv.PDS_STATE_PATH = `${runDir}/pds-state`;
     childEnv.REPO_PRIVATE_KEY_HEX_PATH = `${runDir}/repo-private-key.hex`;
+    childEnv.PORT_FILE = `${runDir}/port-bound-to`;
 
     // The bidder registers with the PLC directory and announces itself to the
     // relay by their cluster-local names, resolved by the same shim this pod was
