@@ -67,9 +67,22 @@ node booted from would do it as a side effect of being run. Removal is its own m
                built them, so the newest one there is an image built from inputs this configuration
                does not describe, and booting it would be booting the image from before the change.
                This is the switch for a host that must come up without a build, not a fallback.
-  -json        with -ensure: print one JSON object instead of prose, so a caller that is not a
-               person can read the state, the name, the directory and, when one was reused, the name
-               it came from.
+  -json        with -ensure: print one JSON object, so a caller that is not a person can read the
+               state, the name, the directory and, when one was reused, the name it came from. The
+               object is the LAST line of standard output: a build reports each artifact as it is
+               written, and those lines stay, because a build can take minutes and one that says
+               nothing until it is finished is indistinguishable from one that has hung. A caller
+               reads the last line that parses, not the only line.
+  -preinstall <path>
+               a manifest naming software to bake into the image, overriding whatever the
+               configuration names. The image is named by its inputs and the manifest is one of
+               them, by digest, so changing what is baked in changes the name: without that, a
+               package added to the list would keep the old name and every guest would boot the
+               software from before the change. This exists as a flag rather than only as a
+               configuration key so that a caller which derives the list can pass it without
+               writing a second configuration file -- the name records the configuration's path,
+               so a generated file under a temporary directory would be an image rebuilt from
+               scratch every time that directory changed.
   -gc          reap, and nothing else. It keeps the image the configuration resolves to, every image
                named by -keep, and the newest -retain images. It removes the staging directories of
                builds that are no longer running -- a staging directory whose process is gone is a
@@ -102,6 +115,7 @@ func main() {
 	ensure := flag.Bool("ensure", false, "make the image the config names available, building it only when it is not already there")
 	reuseStale := flag.Bool("reuse-stale", false, "with -ensure: use an image already in the store instead of building the one the config names")
 	asJSON := flag.Bool("json", false, "with -ensure: print one line of JSON describing what was found, built or reused")
+	preinstall := flag.String("preinstall", "", "path to a preinstall manifest, overriding the one the config names")
 	flag.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 	flag.Parse()
 	run := Main
@@ -109,7 +123,13 @@ func main() {
 	case *gc:
 		run = func(configPath string) error { return MainGC(configPath, keep, *retain) }
 	case *ensure:
-		run = func(configPath string) error { return Ensure(configPath, *reuseStale, *asJSON) }
+		run = func(configPath string) error { return Ensure(configPath, *reuseStale, *asJSON, *preinstall) }
+	case *preinstall != "":
+		run = func(string) error {
+			return fmt.Errorf("-preinstall says which software to bake into the image, and the " +
+				"image it would be baked into is one only -ensure asks for: run -ensure, which " +
+				"builds when the store does not already hold the image these inputs name")
+		}
 	case *reuseStale || *asJSON:
 		run = func(string) error {
 			return fmt.Errorf("-reuse-stale and -json describe what -ensure did, and neither means " +

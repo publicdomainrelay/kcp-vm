@@ -126,6 +126,9 @@ func buildRootfs(cfg Config, dst string, tars []imageTar) error {
 	if err := disableSELinux(cfg.StageDir); err != nil {
 		return err
 	}
+	if err := applyPreinstall(cfg, cfg.Preinstall); err != nil {
+		return err
+	}
 	if err := verifyStage(cfg, tars); err != nil {
 		return err
 	}
@@ -381,6 +384,15 @@ func run(name string, args ...string) error {
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("%s %s: %v: %s", name, strings.Join(args, " "), err,
 			strings.TrimSpace(buf.String()))
+	}
+	return nil
+}
+
+func runStreaming(name string, args ...string) error {
+	cmd := exec.Command(name, args...)
+	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), err)
 	}
 	return nil
 }

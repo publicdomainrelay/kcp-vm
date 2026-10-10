@@ -58,6 +58,8 @@ type Config struct {
 
 	InitramfsModules []string `json:"initramfs_modules"`
 
+	Preinstall string `json:"preinstall"`
+
 	Path string `json:"-"`
 }
 
@@ -71,7 +73,7 @@ func LoadConfig(path string) (Config, error) {
 		return Config{}, fmt.Errorf("socialweb-nodeimage: %s: %w", path, err)
 	}
 	root := filepath.Dir(path)
-	for _, p := range []*string{&cfg.AgentBinary, &cfg.StageDir, &cfg.OutDir, &cfg.ImageCacheDir} {
+	for _, p := range []*string{&cfg.AgentBinary, &cfg.StageDir, &cfg.OutDir, &cfg.ImageCacheDir, &cfg.Preinstall} {
 		if *p == "" || filepath.IsAbs(*p) {
 			continue
 		}

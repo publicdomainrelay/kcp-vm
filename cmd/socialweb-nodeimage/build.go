@@ -111,6 +111,7 @@ func buildConfigOf(cfg Config) nodefirecracker.BuildConfig {
 		RootfsHeadroomMiB: cfg.RootfsHeadroomMiB,
 		Vcpu:              cfg.Vcpu,
 		MemMiB:            cfg.MemMiB,
+		Preinstall:        cfg.Preinstall,
 	}
 }
 

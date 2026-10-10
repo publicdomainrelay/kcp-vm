@@ -191,6 +191,8 @@ type BuildConfig struct {
 	Vcpu int `json:"vcpu"`
 
 	MemMiB int `json:"memMiB"`
+
+	Preinstall string `json:"preinstall"`
 }
 
 type BuildInputs struct {
@@ -243,6 +245,10 @@ type BuildInputs struct {
 	Vcpu int `json:"vcpu"`
 
 	MemMiB int `json:"memMiB"`
+
+	Preinstall string `json:"preinstall"`
+
+	PreinstallDigest string `json:"preinstallDigest"`
 }
 
 func (i BuildInputs) Fingerprint() (string, error) {
@@ -414,6 +420,22 @@ func RecordInputs(configPath string, cfg BuildConfig) (BuildInputs, error) {
 		}
 		*f.named = resolved
 		*f.into = digest
+	}
+	if strings.TrimSpace(cfg.Preinstall) != "" {
+		resolved, err := resolvePath(cfg.Preinstall)
+		if err != nil {
+			return BuildInputs{}, err
+		}
+		digest, err := fileDigest(resolved)
+		if err != nil {
+			return BuildInputs{}, fmt.Errorf("nodefirecracker: reading the preinstall manifest at %s, "+
+				"which decides which software is baked into the image and is therefore part of what "+
+				"the image is: %w -- a preinstall list that changed while the name stayed the same "+
+				"would be a guest booted from an image carrying the software from before the change, "+
+				"and nothing downstream would name the manifest as the cause", cfg.Preinstall, err)
+		}
+		inputs.Preinstall = resolved
+		inputs.PreinstallDigest = digest
 	}
 	resolvedSource, err := resolvePath(cfg.ModuleSource)
 	if err != nil {

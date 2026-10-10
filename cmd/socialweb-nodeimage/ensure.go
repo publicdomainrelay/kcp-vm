@@ -3,6 +3,8 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
+	"strings"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodefirecracker"
 )
@@ -31,7 +33,7 @@ type ensureResult struct {
 	Rootfs string `json:"rootfs,omitempty"`
 }
 
-func Ensure(configPath string, reuseStale bool, asJSON bool) error {
+func Ensure(configPath string, reuseStale bool, asJSON bool, preinstallPath string) error {
 	if configPath == "" {
 		return fmt.Errorf("-config is required: the name of the image to ask for is derived from the " +
 			"inputs a configuration reads, and there is no configuration here to derive it from")
@@ -39,6 +41,16 @@ func Ensure(configPath string, reuseStale bool, asJSON bool) error {
 	cfg, err := LoadConfig(configPath)
 	if err != nil {
 		return err
+	}
+	if strings.TrimSpace(preinstallPath) != "" {
+		absolute, err := filepath.Abs(preinstallPath)
+		if err != nil {
+			return fmt.Errorf("socialweb-nodeimage: resolving the preinstall manifest at %s: %w -- the "+
+				"manifest is an input of the image and an input whose name changes with the working "+
+				"directory is one the recorded inputs would hold the image to the wrong file for",
+				preinstallPath, err)
+		}
+		cfg.Preinstall = absolute
 	}
 	if err := buildAgent(cfg); err != nil {
 		return err
