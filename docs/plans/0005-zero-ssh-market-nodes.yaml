@@ -45,7 +45,10 @@ acceptance:
     - id: ACC-ZERO
       text: An idle cluster sits at 0 nodes; a pipeline scales it up; nodes scale in one by one and it returns to 0 with the control plane Ready.
       status: todo
-      evidence: []
+      evidence:
+        - "GitLab pipeline 77 (project johnandersen777/kcp-ci-probe, branch acc-0005, runner 6 acc-kcp-tenant-spa on hat-10 with ONLY the SPA kubeconfig + socialweb-credential) on cluster acc-gitlab-0001 created through the SPA by aliceoa.bsky.social (headless OAuth login) on prod, 2026-10-08, SCALE_HOLD=0s, DEBUG_SOCIALWEB_NODE_SSH_DIR still set (key unused): 3 jobs, one per node"
+        - "cluster idle at 0 nodes before the run (kubectl get nodes: No resources found 00:00:50Z); 00:04:56Z pipeline -> 00:04:59Z Provision nodes:3 -> jobs running 00:06:07-09Z; scale-in one by one: node2 cordoned+drained 00:07:12Z released 00:07:15Z (Release nodes:2), node3 00:08:11Z/00:08:13Z (Release nodes:1), node1 released 00:09:15Z Teardown nodes:0; control plane Ready throughout (10 Ready status lines at 00:09:26Z, 0 nodes)"
+        - "owed: the same run with the debug key off (final configuration)"
     - id: ACC-MESH
       text: A pod on node A reaches a pod on node B, and DNS resolves on a node that does not run CoreDNS.
       status: doing
@@ -54,6 +57,8 @@ acceptance:
         - "23:23:06Z kubectl exec (apiserver->kubelet over the agent tunnel) into both pods: node97 -> node96 pod IP answered by node96's httpd (HTTP 404 before its index existed), node96 -> node97 pod IP returned node97's content"
         - "23:23:16Z from the pod on node97 (CoreDNS runs on node96): resolv.conf nameserver 169.254.20.10; kubernetes.default.svc -> 10.43.0.1, mesh-probe.default.svc -> 10.43.21.222, gitlab.com resolves; wget via the Service ClusterIP returned node96's pod content"
         - "still owed: the same reading from a GitLab pipeline on an SPA-created cluster (acceptance 'where')"
+        - "GitLab pipeline 77 (project johnandersen777/kcp-ci-probe, branch acc-0005, runner 6 acc-kcp-tenant-spa on hat-10 with ONLY the SPA kubeconfig + socialweb-credential) on cluster acc-gitlab-0001 created through the SPA by aliceoa.bsky.social (headless OAuth login) on prod, 2026-10-08, SCALE_HOLD=0s, DEBUG_SOCIALWEB_NODE_SSH_DIR still set (key unused): 3 jobs, one per node"
+        - "probe-b on node3 at 00:06:09Z while CoreDNS ran on node2: resolv.conf nameserver 169.254.20.10 answered kubernetes.default.svc, kube-dns.kube-system.svc and gitlab.com; nslookup via the kube-dns Service 10.43.0.10 answered (pod on node3 -> CoreDNS pod on node2, cross-node)"
     - id: ACC-NOSSH
       text: Logs show zero ssh sessions to any guest for the whole run.
       status: todo
