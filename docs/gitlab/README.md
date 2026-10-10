@@ -55,11 +55,16 @@ works on a ONE-node cluster and fails elsewhere, permanently. Measured, and in `
 limit. Read [03](03-jobs.md#the-limit-that-bites-multi-node-first) before scaling a cluster past
 one node for anything that needs the network.
 
-**The default ceiling is one node.** `SOCIALWEB_CLUSTERPROVIDER_SCALE_MAX_NODES` defaults to 1, so
-a cluster configured as before behaves as before. Raising it is deliberate: every node is a booted
-guest. Once raised, `concurrent` in `config.toml` may exceed one too - it does not have to stay at
+**The default ceiling is ten nodes, and `scripts/deploy.sh` passes ten with one Pod per node.**
+`SOCIALWEB_CLUSTERPROVIDER_SCALE_MAX_NODES` defaults to 10 and
+`SOCIALWEB_CLUSTERPROVIDER_SCALE_PODS_PER_NODE` to 8; a ceiling below one is refused rather than
+clamped. Every node is a booted guest, so the pair is a cost knob and not only a behaviour one, and a
+cluster serving a runner should set `podsPerNode` from a measured job: the runner this document is
+about uses pod anti-affinity, so one job Pod occupies one node whatever the setting says. With the
+ceiling above one, `concurrent` in `config.toml` may exceed one too - it does not have to stay at
 1, and `concurrent = 1` is itself a hazard, because a job left over from a cancelled pipeline
-holds the only slot. See [03](03-jobs.md#one-job-per-node).
+holds the only slot. Measured 2026-10-07: five jobs at once, each on a distinct node, all green, with
+the count never above the ceiling. See [03](03-jobs.md#one-job-per-node).
 
 Also the hold: past the idle grace (`SOCIALWEB_CLUSTERPROVIDER_SCALE_HOLD`, default 2m) a cluster
 with nothing running goes back to zero nodes. A job arriving after that pays the node boot again

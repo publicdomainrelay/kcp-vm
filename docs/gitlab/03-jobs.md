@@ -234,14 +234,14 @@ Pod co-schedules whenever the scheduler feels like it.
 Cluster side:
 
 ```bash
-SOCIALWEB_CLUSTERPROVIDER_SCALE_MAX_NODES=5
+SOCIALWEB_CLUSTERPROVIDER_SCALE_MAX_NODES=5   # the default is 10; this is a deliberate five
 SOCIALWEB_CLUSTERPROVIDER_SCALE_PODS_PER_NODE=1
 SOCIALWEB_CLUSTERPROVIDER_SCALE_HOLD=1m
 ```
 
 | Variable | Meaning |
 | --- | --- |
-| `SCALE_MAX_NODES` | Ceiling. Default 1. Every node is a booted guest, so this is a cost knob, not only a behaviour one. |
+| `SCALE_MAX_NODES` | Ceiling. Default 10; below one is refused rather than clamped. Every node is a booted guest, so this is a cost knob, not only a behaviour one. |
 | `SCALE_PODS_PER_NODE` | How much work one node is assumed to hold. Set it from a measured job. |
 | `SCALE_HOLD` | Idle grace before scale-in. Default 2m. |
 
