@@ -1,18 +1,45 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Deploy a compute-market bidder whose compute provider is the Firecracker
-# provider, onto a host that has never run one.
+# Prepare a host to run compute-market bidders whose compute provider is the
+# Firecracker provider, one per atproto account, and install the systemd
+# template that runs them.
 #
-#   ./scripts/deploy-firecracker-bidder.sh --dry-run
-#   ./scripts/deploy-firecracker-bidder.sh
+#   ./scripts/deploy-firecracker-bidder.sh --dry-run           preview, over ssh
+#   ./scripts/deploy-firecracker-bidder.sh                     over ssh to SSH_TARGET
+#   ./scripts/deploy-firecracker-bidder.sh --local [--dry-run] this host, through sudo
+#
+# Then, on that host, once per account:
+#
+#   sudo systemctl enable --now socialweb-computer-bidder@<handle>.service
+#   journalctl -u socialweb-computer-bidder@<handle> -f
+#
+# The journal shows a QR code and its https://qr.fedfork.com/#oauth=... URL;
+# scanning it with <handle> signs the bidder in, and the session is kept in that
+# instance's own state directory so a restart does not ask again.
 #
 # Every host- or service-specific value is a variable below; nothing further
-# down names a particular host, path or port. The script is idempotent: every
+# down names a particular host, path or port, except the ones the unit template
+# itself names (its User= and its ReadWritePaths=, which this script reads back
+# out of the template rather than restating). The script is idempotent: every
 # remote step either checks first or writes only what changed, so a second run
 # against a converged host restarts nothing.
 #
-# What the bidder does once it is up: it watches the market for
+# WHY NO ACCOUNT IS NAMED HERE
+#
+# The unit is a TEMPLATE, deploy/bidder/socialweb-computer-bidder@.service. Its
+# instance name %i is the handle of the account the bidder runs as, and every
+# file that belongs to that account lives under
+# /var/lib/socialweb-computer-bidder/<handle>, created by systemd from
+# StateDirectory=. The account signs in by QR from the journal, so this script
+# never holds anything of the account's: it installs the template, the
+# launcher (deploy/bidder/socialweb-computer-bidder-run, installed as
+# /usr/local/libexec/socialweb-computer-bidder-run) and the host's shared
+# settings in /etc/socialweb-computer-bidder/common.env, and it never enables an
+# instance. An instance that is already running is restarted when one of those
+# three files changes, and only then.
+#
+# What a bidder does once it is up: it watches the market for
 # com.publicdomainrelay.temp.compute.vm records, bids on them, and on accept
 # boots a Firecracker guest from the node image this repo builds. The guest is
 # born from the requester's cloud-init user_data -- the provider refuses an RFP
@@ -38,6 +65,9 @@ set -euo pipefail
 # Fedora build and an Ubuntu host can never agree on a name. -reuse-stale is the
 # switch that says "use the whole image this configuration could have produced,
 # whatever it is called"; without it the provider would try to build here.
+# Which image is shipped is the build host's own answer to the same question
+# (socialweb-nodeimage -ensure -json -reuse-stale), not the first directory in
+# the store.
 #
 # WHY THE GUEST KERNEL DOES NOT COME FROM THIS HOST
 #
@@ -46,56 +76,76 @@ set -euo pipefail
 # manifest out of the image directory and boots filepath.Join(ImageDir, "vmlinux")
 # (cmd/socialweb-nodeboot/main.go:584), and the provider hands it nothing but
 # image_dir. So the build host's Fedora kernel boots the guest on an Ubuntu 6.8
-# host; the host kernel is only asked for KVM.
+# host; the host kernel is only asked for KVM. A configuration that says
+# "discover" for its kernel is shipped with the paths the build host's ensure
+# resolved them to.
 #
-# WHY A SEPARATE ORG-ROOT COPY
+# WHY A SEPARATE ORG-ROOT COPY, AND A DENO OF ITS OWN
 #
-# This host already runs services out of /opt/org-root, and their deploys replace
-# that tree wholesale. This one does not: it ships the import closure of
-# atproto-market/hono-bidder into its own prefix, so a deploy here cannot change
-# what any other service reads on its next restart.
+# A host may already run services out of /opt/org-root, and their deploys
+# replace that tree wholesale. This one does not: it ships the import closure of
+# atproto-market/hono-bidder into its own prefix, and the build host's deno
+# binary beside it, so a deploy here cannot change what any other service reads
+# on its next restart, and the bidder runs on the deno the code was run with.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-ORG_ROOT="$(dirname "$PROJECT_DIR")"
+ORG_ROOT="${ORG_ROOT:-$(dirname "$PROJECT_DIR")}"
 BUILD_HOST_HOME="${HOME}"
 
-# ── Host ──────────────────────────────────────────────────────────────────────
+# -- Target --------------------------------------------------------------------
+# --local runs every remote step on this host through sudo -n instead of ssh.
 SSH_TARGET="${SSH_TARGET:-root@socialweb.computer}"
 SSH_PORT="${SSH_PORT:-1997}"
 SSH_KEY="${SSH_KEY:-${HOME}/.ssh/id_ed25519_no_password}"
 SSH_CONTROL_DIR="${SSH_CONTROL_DIR:-${HOME}/.ssh}"
 SSH_OPTS="-o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 -o BatchMode=yes -o IdentitiesOnly=yes -o ControlMaster=auto -o ControlPath=${SSH_CONTROL_DIR}/cm-swc-%r@%h:%p -o ControlPersist=10m -o ServerAliveInterval=15"
 
-# ── Service ───────────────────────────────────────────────────────────────────
-SERVICE_NAME="${SERVICE_NAME:-socialweb-computer-bidder-firecracker}"
-SERVICE_USER="${SERVICE_USER:-swc-fc-bidder}"
-PREFIX="${PREFIX:-/opt/${SERVICE_NAME}}"
-STATE_DIR="${STATE_DIR:-/var/lib/${SERVICE_NAME}}"
-# Named BIDDER_* rather than after the flags they feed: the environment this is
-# run from has ATPROTO_HANDLE, ATPROTO_PDS and POLICY in it already, and a knob
-# that silently takes its value from an unrelated variable is worse than one that
-# has no override at all.
-BIDDER_DENO="${BIDDER_DENO:-/usr/local/bin/deno}"
+# -- What gets installed -------------------------------------------------------
+UNIT_TEMPLATE_SRC="${PROJECT_DIR}/deploy/bidder/socialweb-computer-bidder@.service"
+LAUNCHER_SRC="${PROJECT_DIR}/deploy/bidder/socialweb-computer-bidder-run"
+UNIT_TEMPLATE_DEST="/etc/systemd/system/socialweb-computer-bidder@.service"
+LAUNCHER_DEST="/usr/local/libexec/socialweb-computer-bidder-run"
+ETC_DIR="/etc/socialweb-computer-bidder"
+COMMON_ENV="/etc/socialweb-computer-bidder/common.env"
+INSTANCE_GLOB="socialweb-computer-bidder@*.service"
+PREFIX="${PREFIX:-/opt/socialweb-computer-bidder}"
+
+[ -f "${UNIT_TEMPLATE_SRC}" ] || { echo "missing: ${UNIT_TEMPLATE_SRC}" >&2; exit 1; }
+[ -f "${LAUNCHER_SRC}" ] || { echo "missing: ${LAUNCHER_SRC}" >&2; exit 1; }
+SERVICE_USER="$(sed -n 's/^User=//p' "${UNIT_TEMPLATE_SRC}")"
+HOST_DIR="$(sed -n 's/^ReadWritePaths=//p' "${UNIT_TEMPLATE_SRC}")"
+if [ -z "${SERVICE_USER}" ] || [ -z "${HOST_DIR}" ]; then
+  echo "${UNIT_TEMPLATE_SRC} names no User= or no ReadWritePaths=; this script reads both from it" >&2
+  exit 1
+fi
+STATE_ROOT="$(dirname "${HOST_DIR}")"
+
+# Named BIDDER_* rather than after the flags they feed: the bidder CLI reads
+# SERVE_PORT, POLICY and friends straight from its environment, and a knob that
+# silently takes its value from an unrelated variable is worse than one that has
+# no override at all. A per-account override goes in
+# /etc/socialweb-computer-bidder/<handle>.env under the same names.
 BIDDER_SERVE_ADDR="${BIDDER_SERVE_ADDR:-127.0.0.1}"
-BIDDER_SERVE_PORT="${BIDDER_SERVE_PORT:-8792}"
+BIDDER_SERVE_PORT="${BIDDER_SERVE_PORT:-0}"
 BIDDER_INGRESS_PROXY_HOST="${BIDDER_INGRESS_PROXY_HOST:-xrpc.fedproxy.com}"
 BIDDER_PLC_DIRECTORY_URL="${BIDDER_PLC_DIRECTORY_URL:-https://plc.directory}"
-BIDDER_PDS_URL="${BIDDER_PDS_URL:-http://127.0.0.1:8789}"
-BIDDER_HANDLE="${BIDDER_HANDLE:-bidder-firecracker.socialweb.computer}"
 BIDDER_POLICY="${BIDDER_POLICY:-open}"
 BIDDER_POLICY_ARGS="${BIDDER_POLICY_ARGS:-{\"bidWindowSec\":8,\"firstFree\":true\}}"
 
-# Derived remote paths. All of them live under STATE_DIR or PREFIX, so the unit's
-# ReadWritePaths covers exactly the writable set.
+# Derived remote paths. Everything shared by every instance lives under
+# HOST_DIR, which is the unit's one ReadWritePaths= beside its own StateDirectory.
 CODE_DIR="${PREFIX}/org-root"
-BIN_DIR="${STATE_DIR}/bin"
-STORE_DIR="${STATE_DIR}/images"
-INPUTS_DIR="${STATE_DIR}/image-inputs"
-GUESTS_DIR="${STATE_DIR}/guests"
-STAGE_DIR="${STATE_DIR}/stage"
-CACHE_DIR="${STATE_DIR}/cache"
-CONFIG_PATH="${STATE_DIR}/nodeimage-firecracker.json"
+DIST_DIR="${PREFIX}/dist"
+DENO_BIN="${PREFIX}/bin/deno"
+BIN_DIR="${HOST_DIR}/bin"
+STORE_DIR="${HOST_DIR}/images"
+INPUTS_DIR="${HOST_DIR}/image-inputs"
+STAGE_DIR="${HOST_DIR}/stage"
+CACHE_DIR="${HOST_DIR}/cache"
+DENO_DIR_REMOTE="${HOST_DIR}/deno"
+CONFIG_PATH="${HOST_DIR}/nodeimage-firecracker.json"
+SHIM_PATH="${HOST_DIR}/undici-shim.ts"
 
 # Paths as the RUNNER CONTAINER sees them. The provider only checks that the
 # --compute-provider-firecracker-vmm and -nodeboot flags are non-empty
@@ -106,16 +156,13 @@ CONFIG_PATH="${STATE_DIR}/nodeimage-firecracker.json"
 FIRECRACKER_IN_CONTAINER="${FIRECRACKER_IN_CONTAINER:-/usr/local/bin/firecracker}"
 NODEBOOT_IN_CONTAINER="${NODEBOOT_IN_CONTAINER:-/usr/local/bin/socialweb-nodeboot}"
 
-# ── Capacity ──────────────────────────────────────────────────────────────────
+# -- Capacity ------------------------------------------------------------------
 # The market has no capacity field: an offering carries only appliesTo and
 # endpointUrl, and the bidder bids every compute.vm RFP its policy admits --
 # there is no "does this fit" gate anywhere in lib/market-bidder. So capacity is
 # not advertised to the market; it is enforced on the host, where the guests
-# actually are. See the slice below.
-#
-# The ceiling is one guest by default and two at most: this host has 4 vCPU and
-# 7 GB and is also running caddy, a PDS, a relay, a gateway, an appview and
-# another bidder. Raise MAX_GUESTS to 2 only after checking free memory.
+# actually are. See the slice below. The budget is the host's, shared by every
+# instance.
 MAX_GUESTS="${MAX_GUESTS:-1}"
 GUEST_VCPU="${GUEST_VCPU:-2}"
 GUEST_MEM_MIB="${GUEST_MEM_MIB:-3072}"
@@ -123,39 +170,51 @@ GUEST_MEM_MIB="${GUEST_MEM_MIB:-3072}"
 # fedora userland the entrypoint starts, and pasta.
 RUNNER_OVERHEAD_MIB="${RUNNER_OVERHEAD_MIB:-1024}"
 GUEST_SLICE="${GUEST_SLICE:-socialweb-guests.slice}"
+# yes: point docker's cgroup-parent at the slice (writes /etc/docker/daemon.json
+# when there is none and restarts docker). no: write the slice and leave docker
+# alone, for a host whose docker runs other people's containers.
+MANAGE_DOCKER_DAEMON="${MANAGE_DOCKER_DAEMON:-yes}"
 
-# ── Build host inputs ─────────────────────────────────────────────────────────
-# The image store and the exact bytes it was built from, all already present
-# locally. Nothing below is built by this script except one Go host binary.
+# -- Build host inputs ---------------------------------------------------------
 LOCAL_CONFIG="${LOCAL_CONFIG:-${BUILD_HOST_HOME}/kcp-image/nodeimage-market.json}"
-LOCAL_IMAGE_STORE="${LOCAL_IMAGE_STORE:-${BUILD_HOST_HOME}/kcp-image/out-market}"
 LOCAL_PREINSTALL="${LOCAL_PREINSTALL:-${BUILD_HOST_HOME}/kcp-image/preinstall-market.json}"
 LOCAL_AGENT_BINARY="${LOCAL_AGENT_BINARY:-${BUILD_HOST_HOME}/kcp-image/kcpagent}"
 LOCAL_AGENT_PACKAGE="${LOCAL_AGENT_PACKAGE:-${ORG_ROOT}/socialweb-computer-kcp/cmd/socialweb-nodeagent}"
 LOCAL_NODEIMAGE_BIN="${LOCAL_NODEIMAGE_BIN:-${BUILD_HOST_HOME}/kcp-image/socialweb-nodeimage}"
+LOCAL_DENO="${LOCAL_DENO:-$(command -v deno || true)}"
 
 RUNNER_IMAGE="${RUNNER_IMAGE:-localhost/socialweb-firecracker-runner:local}"
 RANGE_BASE="${RANGE_BASE:-172.30.0.0}"
 
 DRY_RUN=false
+LOCAL=false
 for arg in "$@"; do
   case "$arg" in
     --dry-run) DRY_RUN=true ;;
-    -h|--help) sed -n '2,52p' "$0"; exit 0 ;;
+    --local) LOCAL=true ;;
+    -h|--help) sed -n '2,89p' "$0"; exit 0 ;;
     *) echo "unknown argument: $arg" >&2; exit 2 ;;
   esac
 done
+
+if ${LOCAL}; then
+  TARGET_NAME="this host (sudo)"
+else
+  TARGET_NAME="${SSH_TARGET} -p ${SSH_PORT}"
+fi
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "${WORK}"' EXIT
 
 say() { printf '\n=== %s ===\n' "$*"; }
 
-# Every single remote command goes through here, so --dry-run is one branch
-# rather than a flag threaded through forty steps.
+# Every single remote command goes through here, so --dry-run and --local are
+# one branch each rather than flags threaded through forty steps.
 remote() {
   if ${DRY_RUN}; then
-    printf -- '--- [dry-run] ssh %s -p %s %s\n' "${SSH_TARGET}" "${SSH_PORT}" "$*"
+    printf -- '--- [dry-run] on %s: %s\n' "${TARGET_NAME}" "$*"
+  elif ${LOCAL}; then
+    sudo -n bash -c "$*"
   else
     ssh ${SSH_OPTS} -i "${SSH_KEY}" -p "${SSH_PORT}" "${SSH_TARGET}" "$@"
   fi
@@ -165,36 +224,33 @@ remote() {
 # than as environment, because the script is the thing being previewed and it
 # should read the way it will run.
 REMOTE_VARS="$(cat <<EOF
-SERVICE_NAME='${SERVICE_NAME}'
 SERVICE_USER='${SERVICE_USER}'
 PREFIX='${PREFIX}'
-STATE_DIR='${STATE_DIR}'
+STATE_ROOT='${STATE_ROOT}'
+HOST_DIR='${HOST_DIR}'
 CODE_DIR='${CODE_DIR}'
+DIST_DIR='${DIST_DIR}'
+DENO_BIN='${DENO_BIN}'
 BIN_DIR='${BIN_DIR}'
 STORE_DIR='${STORE_DIR}'
 INPUTS_DIR='${INPUTS_DIR}'
-GUESTS_DIR='${GUESTS_DIR}'
 STAGE_DIR='${STAGE_DIR}'
 CACHE_DIR='${CACHE_DIR}'
+DENO_DIR_REMOTE='${DENO_DIR_REMOTE}'
 CONFIG_PATH='${CONFIG_PATH}'
-DENO='${BIDDER_DENO}'
-SERVE_ADDR='${BIDDER_SERVE_ADDR}'
-SERVE_PORT='${BIDDER_SERVE_PORT}'
-INGRESS_PROXY_HOST='${BIDDER_INGRESS_PROXY_HOST}'
-PLC_DIRECTORY_URL='${BIDDER_PLC_DIRECTORY_URL}'
-ATPROTO_PDS_URL='${BIDDER_PDS_URL}'
-ATPROTO_HANDLE='${BIDDER_HANDLE}'
-POLICY='${BIDDER_POLICY}'
-POLICY_ARGS='${BIDDER_POLICY_ARGS}'
-FIRECRACKER_IN_CONTAINER='${FIRECRACKER_IN_CONTAINER}'
-NODEBOOT_IN_CONTAINER='${NODEBOOT_IN_CONTAINER}'
+SHIM_PATH='${SHIM_PATH}'
+ETC_DIR='${ETC_DIR}'
+COMMON_ENV='${COMMON_ENV}'
+UNIT_TEMPLATE_DEST='${UNIT_TEMPLATE_DEST}'
+LAUNCHER_DEST='${LAUNCHER_DEST}'
+INSTANCE_GLOB='${INSTANCE_GLOB}'
 RUNNER_IMAGE='${RUNNER_IMAGE}'
-RANGE_BASE='${RANGE_BASE}'
 GUEST_SLICE='${GUEST_SLICE}'
 MAX_GUESTS='${MAX_GUESTS}'
 GUEST_VCPU='${GUEST_VCPU}'
 GUEST_MEM_MIB='${GUEST_MEM_MIB}'
 RUNNER_OVERHEAD_MIB='${RUNNER_OVERHEAD_MIB}'
+MANAGE_DOCKER_DAEMON='${MANAGE_DOCKER_DAEMON}'
 EOF
 )"
 
@@ -206,8 +262,10 @@ remote_script() {
   full="${REMOTE_VARS}
 ${body}"
   if ${DRY_RUN}; then
-    printf -- '--- [dry-run] ssh %s -p %s %s <<REMOTE\n%s\n--- end\n' \
-      "${SSH_TARGET}" "${SSH_PORT}" "${desc}" "${full}"
+    printf -- '--- [dry-run] on %s: %s <<REMOTE\n%s\n--- end\n' \
+      "${TARGET_NAME}" "${desc}" "${full}"
+  elif ${LOCAL}; then
+    printf '%s\n' "${full}" | sudo -n bash -s
   else
     printf '%s\n' "${full}" | ssh ${SSH_OPTS} -i "${SSH_KEY}" -p "${SSH_PORT}" \
       "${SSH_TARGET}" "bash -s"
@@ -220,7 +278,9 @@ rsync_to() {
   local desc="$1" src="$2" dest="$3"
   shift 3
   if ${DRY_RUN}; then
-    printf -- '--- [dry-run] rsync (%s) %s -> %s:%s %s\n' "${desc}" "${src}" "${SSH_TARGET}" "${dest}" "$*"
+    printf -- '--- [dry-run] rsync (%s) %s -> %s:%s %s\n' "${desc}" "${src}" "${TARGET_NAME}" "${dest}" "$*"
+  elif ${LOCAL}; then
+    sudo -n rsync -a "$@" "${src}" "${dest}"
   else
     rsync -a "$@" -e "${RSYNC_SSH}" "${src}" "${SSH_TARGET}:${dest}"
   fi
@@ -263,37 +323,21 @@ print("\n".join(sorted(dirs)))
 PY
 }
 
-# ── Local preflight ───────────────────────────────────────────────────────────
+# -- Local preflight -----------------------------------------------------------
 say "checking the build host"
+echo "target       ${TARGET_NAME}"
+echo "service user ${SERVICE_USER}"
+echo "shared dir   ${HOST_DIR}"
 command -v python3 >/dev/null 2>&1 || { echo "python3 is needed to rewrite the image configuration" >&2; exit 1; }
-
-for required in "${LOCAL_CONFIG}" "${LOCAL_IMAGE_STORE}" "${LOCAL_PREINSTALL}" \
-                "${LOCAL_AGENT_BINARY}" "${LOCAL_AGENT_PACKAGE}"; do
-  [ -e "${required}" ] || { echo "missing on the build host: ${required}" >&2; exit 1; }
-done
-
-FINGERPRINT="$(basename "$(ls -1d "${LOCAL_IMAGE_STORE}"/sha256-* 2>/dev/null | head -1)" 2>/dev/null || true)"
-if ! [[ "${FINGERPRINT}" =~ ^sha256-[0-9a-f]{64}$ ]]; then
-  echo "no image store under ${LOCAL_IMAGE_STORE}: expected one sha256-<64 hex> directory" >&2
-  exit 1
+if ${LOCAL} && ! ${DRY_RUN}; then
+  sudo -n true 2>/dev/null || { echo "--local runs every step through sudo -n, and sudo here would prompt" >&2; exit 1; }
 fi
-LOCAL_STORE_IMAGE="${LOCAL_IMAGE_STORE}/${FINGERPRINT}"
-echo "image        ${LOCAL_STORE_IMAGE}"
 
-cfg_field() { python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))[sys.argv[2]])' "${LOCAL_CONFIG}" "$1"; }
-LOCAL_KERNEL="$(cfg_field kernel_source)"
-LOCAL_KERNEL_CONFIG="$(cfg_field kernel_config)"
-LOCAL_MODULES="$(cfg_field module_source)"
-LOCAL_BASE_IMAGE="$(cfg_field base_image)"
-LOCAL_K3S="$(cfg_field k3s_binary)"
-for required in "${LOCAL_KERNEL}" "${LOCAL_KERNEL_CONFIG}" "${LOCAL_MODULES}" \
-                "${LOCAL_BASE_IMAGE}" "${LOCAL_K3S}"; do
-  if [ ! -e "${required}" ]; then
-    echo "the configuration at ${LOCAL_CONFIG} names ${required}, which does not exist here." >&2
-    echo "the store cannot be reused from a configuration whose inputs are gone: the host" >&2
-    echo "recomputes the fingerprint, and it reads every one of them." >&2
-    exit 1
-  fi
+[ -n "${LOCAL_DENO}" ] || { echo "no deno on the build host's PATH; set LOCAL_DENO" >&2; exit 1; }
+LOCAL_DENO="$(readlink -f "${LOCAL_DENO}")"
+for required in "${LOCAL_CONFIG}" "${LOCAL_PREINSTALL}" "${LOCAL_AGENT_BINARY}" \
+                "${LOCAL_AGENT_PACKAGE}" "${LOCAL_DENO}" "${ORG_ROOT}/atproto-market/deno.json"; do
+  [ -e "${required}" ] || { echo "missing on the build host: ${required}" >&2; exit 1; }
 done
 
 # The builder binary the provider shells out to (-ensure -json). It is a HOST
@@ -301,23 +345,48 @@ done
 # -reuse-stale it does not build.
 if [ ! -x "${LOCAL_NODEIMAGE_BIN}" ]; then
   say "building socialweb-nodeimage"
-  if ${DRY_RUN}; then
-    printf -- '--- [dry-run] CGO_ENABLED=0 go build -C %s -o %s ./cmd/socialweb-nodeimage\n' \
-      "${ORG_ROOT}/socialweb-computer-kcp" "${LOCAL_NODEIMAGE_BIN}"
-  else
-    CGO_ENABLED=0 go build -C "${ORG_ROOT}/socialweb-computer-kcp" \
-      -o "${LOCAL_NODEIMAGE_BIN}" ./cmd/socialweb-nodeimage
-  fi
+  CGO_ENABLED=0 go build -C "${ORG_ROOT}/socialweb-computer-kcp" \
+    -o "${LOCAL_NODEIMAGE_BIN}" ./cmd/socialweb-nodeimage
 fi
+
+# Which image to ship is the build host's own answer, asked the way the target
+# will ask it. It is run from inside the agent's module so a relative
+# agent_package resolves the way go resolves it.
+ENSURE_JSON="$(cd "${LOCAL_AGENT_PACKAGE}" && "${LOCAL_NODEIMAGE_BIN}" -ensure -json -reuse-stale \
+  -preinstall "${LOCAL_PREINSTALL}" -config "${LOCAL_CONFIG}" | tail -1)"
+ensure_field() { python3 -c 'import json,sys;print(json.loads(sys.argv[1]).get(sys.argv[2]) or "")' "${ENSURE_JSON}" "$1"; }
+LOCAL_STORE_IMAGE="$(ensure_field dir)"
+FINGERPRINT="$(basename "${LOCAL_STORE_IMAGE}")"
+LOCAL_KERNEL="$(ensure_field kernelSource)"
+LOCAL_KERNEL_CONFIG="$(ensure_field kernelConfig)"
+LOCAL_MODULES="$(ensure_field moduleSource)"
+if ! [[ "${FINGERPRINT}" =~ ^sha256-[0-9a-f]{64}$ ]] || [ ! -d "${LOCAL_STORE_IMAGE}" ]; then
+  echo "the build host's ensure named no whole image: ${ENSURE_JSON}" >&2
+  exit 1
+fi
+echo "image        ${LOCAL_STORE_IMAGE} ($(ensure_field state))"
+
+cfg_field() { python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))[sys.argv[2]])' "${LOCAL_CONFIG}" "$1"; }
+LOCAL_BASE_IMAGE="$(cfg_field base_image)"
+LOCAL_K3S="$(cfg_field k3s_binary)"
+for required in "${LOCAL_KERNEL}" "${LOCAL_KERNEL_CONFIG}" "${LOCAL_MODULES}" \
+                "${LOCAL_BASE_IMAGE}" "${LOCAL_K3S}"; do
+  if [ ! -e "${required}" ]; then
+    echo "the configuration at ${LOCAL_CONFIG} reads ${required}, which does not exist here." >&2
+    echo "the store cannot be reused from a configuration whose inputs are gone: the host" >&2
+    echo "recomputes the fingerprint, and it reads every one of them." >&2
+    exit 1
+  fi
+done
 
 # The runner image: fedora + passt + e2fsprogs + iproute + firecracker +
 # socialweb-nodeboot (hono-compute-provider/hono-firecracker-standalone/Dockerfile),
 # built by `deno task build:firecracker-runner` in hono-compute-provider.
 LOCAL_RUNNER_ID=""
-if ${DRY_RUN}; then
-  LOCAL_RUNNER_ID="<current image id>"
-elif docker image inspect "${RUNNER_IMAGE}" >/dev/null 2>&1; then
+if docker image inspect "${RUNNER_IMAGE}" >/dev/null 2>&1; then
   LOCAL_RUNNER_ID="$(docker image inspect --format '{{json .RootFS.Layers}}' "${RUNNER_IMAGE}")"
+elif ${DRY_RUN}; then
+  LOCAL_RUNNER_ID="<missing here>"
 else
   echo "the runner image ${RUNNER_IMAGE} is not present here. Build it with:" >&2
   echo "  cd ${ORG_ROOT}/hono-compute-provider && deno task build:firecracker-runner" >&2
@@ -325,12 +394,12 @@ else
 fi
 echo "runner image ${RUNNER_IMAGE}"
 
-# ── The image builder's configuration, as this host will read it ──────────────
+# -- The image builder's configuration, as the target will read it -------------
 # Same fields, same bytes, same digests; only the paths move, and out_dir names
 # the store that is about to be rsynced. The one input this cannot carry is the
-# build host's /usr/bin/busybox, which is why the host runs with -reuse-stale
+# build host's /usr/bin/busybox, which is why the target runs with -reuse-stale
 # instead of expecting the name to match.
-say "rendering the host's copy of the image configuration"
+say "rendering the target's copy of the image configuration"
 python3 - "${LOCAL_CONFIG}" "${WORK}/nodeimage-firecracker.json" \
   "${STORE_DIR}" "${INPUTS_DIR}" "${STAGE_DIR}" "${CACHE_DIR}" \
   "${FIRECRACKER_IN_CONTAINER}" <<'PY'
@@ -358,16 +427,54 @@ if ${DRY_RUN}; then
   sed 's/^/    /' "${WORK}/nodeimage-firecracker.json"
 fi
 
+# -- The host's shared settings, as every instance will read them --------------
+# Loaded by the unit as an EnvironmentFile, so values are quoted the way systemd
+# unquotes them. DENO_DIR is read by deno itself; everything else by the
+# launcher. Nothing of any account is in it.
+say "rendering ${COMMON_ENV}"
+{
+  printf 'DENO_DIR=%s\n' "${DENO_DIR_REMOTE}"
+  printf 'BIDDER_DENO=%s\n' "${DENO_BIN}"
+  printf 'BIDDER_CODE_DIR=%s\n' "${CODE_DIR}"
+  printf 'BIDDER_HOST_DIR=%s\n' "${HOST_DIR}"
+  printf 'BIDDER_PRELOAD=%s\n' "${SHIM_PATH}"
+  printf 'BIDDER_SERVE_ADDR=%s\n' "${BIDDER_SERVE_ADDR}"
+  printf 'BIDDER_SERVE_PORT=%s\n' "${BIDDER_SERVE_PORT}"
+  printf 'BIDDER_INGRESS_PROXY_HOST=%s\n' "${BIDDER_INGRESS_PROXY_HOST}"
+  printf 'BIDDER_PLC_DIRECTORY_URL=%s\n' "${BIDDER_PLC_DIRECTORY_URL}"
+  printf 'BIDDER_POLICY=%s\n' "${BIDDER_POLICY}"
+  printf "BIDDER_POLICY_ARGS='%s'\n" "${BIDDER_POLICY_ARGS}"
+  printf 'BIDDER_FC_NODEIMAGE=%s\n' "${BIN_DIR}/socialweb-nodeimage"
+  printf 'BIDDER_FC_NODEBOOT=%s\n' "${NODEBOOT_IN_CONTAINER}"
+  printf 'BIDDER_FC_CONFIG=%s\n' "${CONFIG_PATH}"
+  printf 'BIDDER_FC_REPO_DIR=%s\n' "${HOST_DIR}"
+  printf 'BIDDER_FC_PREINSTALL=%s\n' "${INPUTS_DIR}/preinstall.json"
+  printf 'BIDDER_FC_VMM=%s\n' "${FIRECRACKER_IN_CONTAINER}"
+  printf 'BIDDER_FC_RUNNER_IMAGE=%s\n' "${RUNNER_IMAGE}"
+  printf 'BIDDER_FC_RANGE_BASE=%s\n' "${RANGE_BASE}"
+} > "${WORK}/common.env"
+sed 's/^/    /' "${WORK}/common.env"
+
+# The undici preload. @atproto-labs/fetch-node's unicast guard reads
+# process.versions.undici, which Deno does not define, so anything that builds an
+# IdResolver throws "Unicast SSRF protection requires Node.js 20.6+" on Linux.
+# The guard asks whether undici is patched; Deno's fetch is not undici, so the
+# question does not apply.
+cat > "${WORK}/undici-shim.ts" <<'SHIM'
+const versions = process.versions as Record<string, string>;
+if (!versions.undici) versions.undici = "6.11.1";
+SHIM
+
 # Checksums of the store, verified on the far side afterwards. This is the only
 # thing that says the gigabytes that arrived are the gigabytes that left: rsync
 # --sparse rebuilds the holes, and a truncated transfer still looks whole in a
 # directory listing.
 say "checksumming the image store"
-( cd "${LOCAL_IMAGE_STORE}" && find "${FINGERPRINT}" -type f -print0 \
+( cd "$(dirname "${LOCAL_STORE_IMAGE}")" && find "${FINGERPRINT}" -type f -print0 \
     | sort -z | xargs -0 sha256sum ) > "${WORK}/image.sha256"
 cat "${WORK}/image.sha256"
 
-# ── Remote: account, directories, runtime ─────────────────────────────────────
+# -- Remote: account, directories, runtime -------------------------------------
 say "creating the service account and its directories"
 remote_script "account and directories" <<'REMOTE'
 set -euo pipefail
@@ -376,9 +483,14 @@ set -euo pipefail
 # drives the docker CLI and starts the daemon itself if it is down. Ubuntu's
 # docker.io is the same CLI and daemon. Idempotent.
 if ! command -v docker >/dev/null 2>&1; then
-  export DEBIAN_FRONTEND=noninteractive
-  apt-get update -qq
-  apt-get install -y -qq docker.io
+  if command -v apt-get >/dev/null 2>&1; then
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -qq
+    apt-get install -y -qq docker.io
+  else
+    echo "no docker here and no apt-get to install it with; install docker and run this again" >&2
+    exit 1
+  fi
 fi
 systemctl enable --now docker >/dev/null 2>&1 || true
 # The daemon is a separate process that takes a moment; this is what says it came
@@ -399,83 +511,89 @@ docker info --format '{{.ServerVersion}}' >/dev/null
 # that namespace to a profile carrying `userns,` -- and a container is unconfined,
 # which that setting treats as unprivileged, so the clone fails with
 # "Couldn't write to /proc/self/uid_map: Operation not permitted" and pasta exits
-# before a guest exists. Measured on this host with the container privileged, which
-# is the other half of what pasta needs: at 1 the launcher cannot create its
-# namespace, at 0 it can. Nothing else on this host wants unprivileged user
-# namespaces, so the drop-in is written here and read back, and the running value
-# is applied without waiting for a reboot.
-install -d -m 0755 /etc/sysctl.d
-if ! grep -qs '^kernel\.apparmor_restrict_unprivileged_userns' /etc/sysctl.d/99-socialweb-guest-userns.conf; then
-  printf '%s\n' \
-    '# Read by the firecracker bidder: a guest launcher runs unprivileged and pasta' \
-    '# clones into a user namespace of its own before it starts the VMM.' \
-    'kernel.apparmor_restrict_unprivileged_userns = 0' \
-    > /etc/sysctl.d/99-socialweb-guest-userns.conf
+# before a guest exists. Measured on that host with the container privileged,
+# which is the other half of what pasta needs: at 1 the launcher cannot create
+# its namespace, at 0 it can. A kernel without the knob (Fedora) has no such
+# restriction, and gets no drop-in naming a key it does not have.
+if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+  install -d -m 0755 /etc/sysctl.d
+  if ! grep -qs '^kernel\.apparmor_restrict_unprivileged_userns' /etc/sysctl.d/99-socialweb-guest-userns.conf; then
+    printf '%s\n' \
+      '# Read by the firecracker bidder: a guest launcher runs unprivileged and pasta' \
+      '# clones into a user namespace of its own before it starts the VMM.' \
+      'kernel.apparmor_restrict_unprivileged_userns = 0' \
+      > /etc/sysctl.d/99-socialweb-guest-userns.conf
+  fi
+  sysctl -q -w kernel.apparmor_restrict_unprivileged_userns=0 2>/dev/null || true
 fi
-sysctl -q -w kernel.apparmor_restrict_unprivileged_userns=0 2>/dev/null || true
 
-# The bidder is not root: the unit drops it to this account and grants it nothing
-# beyond the docker socket.
+# The bidders are not root: the unit drops each to this account and grants it
+# nothing beyond the docker socket. Every instance runs as it, so instances are
+# separated by their state directories, not by uid.
 if ! id -u "${SERVICE_USER}" >/dev/null 2>&1; then
-  useradd --system --create-home \
-    --home-dir "${STATE_DIR}" --shell /usr/sbin/nologin "${SERVICE_USER}"
+  useradd --system --no-create-home \
+    --home-dir "${HOST_DIR}" --shell /usr/sbin/nologin "${SERVICE_USER}"
 fi
 # Driving the daemon is what lets it start a guest's container. That membership
 # is privileged by construction -- there is no narrower way to drive docker --
 # and it is why this account exists for this service alone.
 usermod -aG docker "${SERVICE_USER}"
 
-install -d -m 755 -o root -g root "${PREFIX}"
+install -d -m 755 -o root -g root "${PREFIX}" "${PREFIX}/bin" "${DIST_DIR}" "${CODE_DIR}" \
+  "${STATE_ROOT}" "${ETC_DIR}" "$(dirname "${LAUNCHER_DEST}")"
 install -d -m 755 -o "${SERVICE_USER}" -g "${SERVICE_USER}" \
-  "${STATE_DIR}" "${BIN_DIR}" "${STORE_DIR}" "${GUESTS_DIR}" "${STAGE_DIR}" "${CACHE_DIR}"
+  "${HOST_DIR}" "${BIN_DIR}" "${STORE_DIR}" "${STAGE_DIR}" "${CACHE_DIR}"
+install -d -m 700 -o "${SERVICE_USER}" -g "${SERVICE_USER}" "${DENO_DIR_REMOTE}"
 install -d -m 755 -o root -g root "${INPUTS_DIR}" "${INPUTS_DIR}/kernel" \
   "${INPUTS_DIR}/base" "${INPUTS_DIR}/k3s" "${INPUTS_DIR}/agent" "${INPUTS_DIR}/agent-package"
 echo "account ${SERVICE_USER} ready"
 REMOTE
 
-# ── Ship ──────────────────────────────────────────────────────────────────────
-say "shipping the code the bidder imports"
+# -- Ship ----------------------------------------------------------------------
+say "shipping the code the bidder imports, and the deno that runs it"
 CLOSURE="$(code_closure)"
 echo "${CLOSURE}" | sed 's/^/  /'
-if ! ${DRY_RUN}; then
-  remote "install -d -m 755 '${CODE_DIR}'"
-fi
 while read -r repo; do
   [ -n "${repo}" ] || continue
   rsync_to "code ${repo}" "${ORG_ROOT}/${repo}/" "${CODE_DIR}/${repo}/" \
-    --delete --exclude node_modules --exclude .git --exclude .codegraph
+    --delete --chown=root:root --exclude node_modules --exclude .git --exclude .codegraph
 done <<< "${CLOSURE}"
+rsync_to "deno" "${LOCAL_DENO}" "${DENO_BIN}" --copy-links --chown=root:root --chmod=F755
 
 say "shipping the image store (${FINGERPRINT})"
 rsync_to "image store" "${LOCAL_STORE_IMAGE}/" "${STORE_DIR}/${FINGERPRINT}/" --sparse
 
 say "shipping the bytes the image was built from"
 # Not needed to boot -- the guest's copy is already inside the image -- but the
-# configuration on the host names these paths, and the builder reads every one of
-# them to work out which image the configuration asks for. Naming the real files
-# keeps the host's record of provenance true, so a later reader sees what the
-# image is instead of what some other host's kernel happened to be.
-rsync_to "kernel" "${LOCAL_KERNEL}" "${INPUTS_DIR}/kernel/vmlinuz"
-rsync_to "kernel config" "${LOCAL_KERNEL_CONFIG}" "${INPUTS_DIR}/kernel/config"
+# configuration on the target names these paths, and the builder reads every one
+# of them to work out which image the configuration asks for. Naming the real
+# files keeps the target's record of provenance true, so a later reader sees what
+# the image is instead of what some other host's kernel happened to be.
+rsync_to "kernel" "${LOCAL_KERNEL}" "${INPUTS_DIR}/kernel/vmlinuz" --copy-links
+rsync_to "kernel config" "${LOCAL_KERNEL_CONFIG}" "${INPUTS_DIR}/kernel/config" --copy-links
 # The tree has dangling build/ and source/ symlinks pointing at a source tree
-# that is not here; -a preserves them as symlinks, which is what the build host
+# that is not there; -a preserves them as symlinks, which is what the build host
 # read and what the digest is taken over.
 rsync_to "kernel modules" "${LOCAL_MODULES}/" "${INPUTS_DIR}/modules/" --delete
-rsync_to "base image" "${LOCAL_BASE_IMAGE}" "${INPUTS_DIR}/base/ubuntu-24.04.squashfs"
-rsync_to "k3s" "${LOCAL_K3S}" "${INPUTS_DIR}/k3s/k3s"
-rsync_to "guest agent" "${LOCAL_AGENT_BINARY}" "${INPUTS_DIR}/agent/kcpagent"
+rsync_to "base image" "${LOCAL_BASE_IMAGE}" "${INPUTS_DIR}/base/ubuntu-24.04.squashfs" --copy-links
+rsync_to "k3s" "${LOCAL_K3S}" "${INPUTS_DIR}/k3s/k3s" --copy-links
+rsync_to "guest agent" "${LOCAL_AGENT_BINARY}" "${INPUTS_DIR}/agent/kcpagent" --copy-links
 rsync_to "agent package" "${LOCAL_AGENT_PACKAGE}/" "${INPUTS_DIR}/agent-package/" --delete
-rsync_to "preinstall manifest" "${LOCAL_PREINSTALL}" "${INPUTS_DIR}/preinstall.json"
+rsync_to "preinstall manifest" "${LOCAL_PREINSTALL}" "${INPUTS_DIR}/preinstall.json" --copy-links
 rsync_to "image configuration" "${WORK}/nodeimage-firecracker.json" "${CONFIG_PATH}"
-rsync_to "image builder" "${LOCAL_NODEIMAGE_BIN}" "${BIN_DIR}/socialweb-nodeimage"
+rsync_to "image builder" "${LOCAL_NODEIMAGE_BIN}" "${BIN_DIR}/socialweb-nodeimage" --copy-links
 rsync_to "store checksums" "${WORK}/image.sha256" "${STORE_DIR}/.image.sha256"
+rsync_to "undici preload" "${WORK}/undici-shim.ts" "${SHIM_PATH}"
+rsync_to "unit template" "${UNIT_TEMPLATE_SRC}" "${DIST_DIR}/socialweb-computer-bidder@.service"
+rsync_to "launcher" "${LAUNCHER_SRC}" "${DIST_DIR}/socialweb-computer-bidder-run"
+rsync_to "shared settings" "${WORK}/common.env" "${DIST_DIR}/common.env"
 
 say "verifying the store arrived intact"
 remote_script "verify the store" <<'REMOTE'
 set -euo pipefail
-chown -R "${SERVICE_USER}:${SERVICE_USER}" "${STORE_DIR}" "${BIN_DIR}" \
-  "${GUESTS_DIR}" "${STAGE_DIR}" "${CACHE_DIR}"
-chown -R root:root "${INPUTS_DIR}"
+chown -R "${SERVICE_USER}:${SERVICE_USER}" "${STORE_DIR}" "${BIN_DIR}" "${STAGE_DIR}" \
+  "${CACHE_DIR}" "${CONFIG_PATH}" "${SHIM_PATH}"
+chown -R root:root "${INPUTS_DIR}" "${DIST_DIR}"
 chmod -R a+rX "${INPUTS_DIR}"
 # The image store is read by the CONTAINER that boots a guest, under whatever
 # user that container maps to, so it cannot be owner-only: measured on a real
@@ -483,19 +601,13 @@ chmod -R a+rX "${INPUTS_DIR}"
 # "permission denied" and every provisioning failed with "the container that
 # boots guest ... exited before it reported a guest".
 chmod -R a+rX "${STORE_DIR}"
-# The container that boots a guest runs as a DIFFERENT user from the service
-# that owns this directory, and it creates each guest's rootfs copy and identity
-# disk inside it: measured, a 0755 guests directory owned by the service user
-# answered "open .../rootfs.ext4: permission denied" and every provisioning
-# failed. This is a scratch directory of per-boot guest files on a single-tenant
-# host; it is the one place the door's own user cannot be the only writer.
-chmod 0777 "${GUESTS_DIR}"
 chmod 755 "${BIN_DIR}/socialweb-nodeimage"
 cd "${STORE_DIR}"
-sha256sum -c .image.sha256
+sha256sum -c --quiet .image.sha256
+echo "store verified"
 REMOTE
 
-# ── Capacity: the only place it can be enforced ───────────────────────────────
+# -- Capacity: the only place it can be enforced -------------------------------
 say "capping the guest budget"
 remote_script "guest slice and docker's cgroup parent" <<'REMOTE'
 set -euo pipefail
@@ -538,13 +650,16 @@ else
 fi
 
 # Point the daemon at that slice. Written only when there is no daemon.json at
-# all: this host had no docker before this script, so the file is either ours or
-# an operator's, and merging JSON in shell is how an operator's file gets
-# silently rewritten. If it is theirs, say exactly what to add.
-install -d -m 755 /etc/docker
+# all: the file is either ours or an operator's, and merging JSON in shell is how
+# an operator's file gets silently rewritten. If it is theirs, say exactly what
+# to add. MANAGE_DOCKER_DAEMON=no skips this for a host whose docker runs other
+# containers that must not move into the guests' budget or be restarted.
 daemon_json=/etc/docker/daemon.json
 docker_changed=no
-if [ ! -f "${daemon_json}" ]; then
+if [ "${MANAGE_DOCKER_DAEMON}" != yes ]; then
+  echo "MANAGE_DOCKER_DAEMON=${MANAGE_DOCKER_DAEMON}: ${daemon_json} left alone; guests are NOT bounded by ${GUEST_SLICE}"
+elif [ ! -f "${daemon_json}" ]; then
+  install -d -m 755 /etc/docker
   cat > "${daemon_json}" <<JSON
 {
   "cgroup-parent": "${GUEST_SLICE}"
@@ -556,8 +671,8 @@ elif grep -q "\"cgroup-parent\"" "${daemon_json}" \
   echo "docker already parents containers at ${GUEST_SLICE}"
 else
   echo "refusing: ${daemon_json} exists and does not name ${GUEST_SLICE}." >&2
-  echo "Add \"cgroup-parent\": \"${GUEST_SLICE}\" to it by hand and run this again." >&2
-  echo "The file was left exactly as it was." >&2
+  echo "Add \"cgroup-parent\": \"${GUEST_SLICE}\" to it by hand and run this again," >&2
+  echo "or run with MANAGE_DOCKER_DAEMON=no. The file was left exactly as it was." >&2
   exit 1
 fi
 
@@ -575,212 +690,118 @@ systemctl show -p MemoryMax -p CPUQuota "${GUEST_SLICE}" 2>/dev/null || true
 REMOTE
 
 say "shipping the runner image"
-if ! ${DRY_RUN}; then
-  if ! remote "docker image inspect --format '{{json .RootFS.Layers}}' '${RUNNER_IMAGE}'" 2>/dev/null \
-      | grep -qxF "${LOCAL_RUNNER_ID}"; then
-    docker save "${RUNNER_IMAGE}" \
-      | ssh ${SSH_OPTS} -i "${SSH_KEY}" -p "${SSH_PORT}" "${SSH_TARGET}" "docker load"
-    remote "docker image inspect --format '{{json .RootFS.Layers}}' '${RUNNER_IMAGE}'" \
-      | grep -qxF "${LOCAL_RUNNER_ID}"
-    echo "runner image ${RUNNER_IMAGE} loaded"
-  else
-    echo "runner image ${RUNNER_IMAGE} already current"
-  fi
+if ${DRY_RUN}; then
+  printf -- '--- [dry-run] on %s: docker image inspect %s   (load only if its layers differ)\n' \
+    "${TARGET_NAME}" "${RUNNER_IMAGE}"
+elif remote "docker image inspect --format '{{json .RootFS.Layers}}' '${RUNNER_IMAGE}'" 2>/dev/null \
+    | grep -qxF "${LOCAL_RUNNER_ID}"; then
+  echo "runner image ${RUNNER_IMAGE} already current"
+elif ${LOCAL}; then
+  echo "the runner image on this host's docker differs from the one this script just read" >&2
+  exit 1
 else
-  printf -- '--- [dry-run] docker image inspect --format {{.Id}} %s   (load only if it differs)\n' "${RUNNER_IMAGE}"
-  printf -- '--- [dry-run] docker save %s | ssh %s -p %s %s docker load\n' \
-    "${RUNNER_IMAGE}" "${SSH_TARGET}" "${SSH_PORT}" "${SSH_TARGET}"
+  docker save "${RUNNER_IMAGE}" \
+    | ssh ${SSH_OPTS} -i "${SSH_KEY}" -p "${SSH_PORT}" "${SSH_TARGET}" "docker load"
+  remote "docker image inspect --format '{{json .RootFS.Layers}}' '${RUNNER_IMAGE}'" \
+    | grep -qxF "${LOCAL_RUNNER_ID}"
+  echo "runner image ${RUNNER_IMAGE} loaded"
 fi
 
-# ── Identity and the unit ─────────────────────────────────────────────────────
-say "writing the bidder's state, environment and unit"
-remote_script "state, environment, unit" <<'REMOTE'
+# -- The template, the launcher and the shared settings ------------------------
+say "installing the unit template, its launcher and the shared settings"
+remote_script "template, launcher, common.env" <<'REMOTE'
 set -euo pipefail
+cd "${HOST_DIR}"
 
-# The undici preload. @atproto-labs/fetch-node's unicast guard reads
-# process.versions.undici, which Deno does not define, so anything that builds an
-# IdResolver throws "Unicast SSRF protection requires Node.js 20.6+" on Linux.
-# The guard asks whether undici is patched; Deno's fetch is not undici, so the
-# question does not apply. Same shim the sibling bidder preloads.
-cat > "${STATE_DIR}/undici-shim.ts" <<'SHIM'
-const versions = process.versions as Record<string, string>;
-if (!versions.undici) versions.undici = "6.11.1";
-SHIM
-chown "${SERVICE_USER}:${SERVICE_USER}" "${STATE_DIR}/undici-shim.ts"
-
-# The bidder's identity is the CLI's, not this script's. Given
-# --private-key-hex-path it reads a hex secp256k1 key there, generates and writes
-# one when the file is absent (atproto-market hono-bidder/mod.ts:41-58, 468-481),
-# registers the did:plc, and keeps its repo in the PDS state directory. So the
-# key and the DID appear on first start and every later run reuses them.
-#
-# The handle and password select the branch that does NOT print an association
-# QR and wait (mod.ts:261-281); that branch builds a local PDS agent and never
-# authenticates to a remote PDS with them. A real random secret is written
-# rather than a placeholder, so nothing downstream can mistake it for one.
-if [ ! -f "${STATE_DIR}/bidder.env" ]; then
-  {
-    echo "ATPROTO_HANDLE=${ATPROTO_HANDLE}"
-    echo "ATPROTO_PASSWORD=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
-    echo "ATPROTO_PDS_URL=${ATPROTO_PDS_URL}"
-  } > "${STATE_DIR}/bidder.env"
-  chown "${SERVICE_USER}:${SERVICE_USER}" "${STATE_DIR}/bidder.env"
-  chmod 600 "${STATE_DIR}/bidder.env"
-fi
-
-cat > "${STATE_DIR}/${SERVICE_NAME}.service.new" <<UNIT
-[Unit]
-Description=${SERVICE_NAME} — market bidder that places Firecracker guests
-After=network.target network-online.target docker.service
-Wants=network-online.target
-Requires=docker.service
-
-[Service]
-Type=simple
-User=${SERVICE_USER}
-Group=${SERVICE_USER}
-WorkingDirectory=${STATE_DIR}
-EnvironmentFile=${STATE_DIR}/bidder.env
-Environment=HOME=${STATE_DIR}
-Environment=DENO_DIR=${STATE_DIR}/deno
-# --node-modules-dir=none is what lets this run from a source tree that is never
-# written: npm deps resolve out of DENO_DIR instead of a node_modules beside
-# deno.json. --preload has to come before the entrypoint.
-ExecStart=${DENO} run -A --node-modules-dir=none --unstable-kv --unstable-worker-options \\
-  --preload ${STATE_DIR}/undici-shim.ts \\
-  --config ${CODE_DIR}/atproto-market/deno.json \\
-  ${CODE_DIR}/atproto-market/hono-bidder/mod.ts \\
-  --service-name ${SERVICE_NAME} \\
-  --private-key-hex-path ${STATE_DIR}/bidder-key.hex \\
-  --pds-state-path ${STATE_DIR}/bidder-pds \\
-  --atproto-handle \${ATPROTO_HANDLE} \\
-  --atproto-password \${ATPROTO_PASSWORD} \\
-  --atproto-pds-url \${ATPROTO_PDS_URL} \\
-  --ingress-proxy-host ${INGRESS_PROXY_HOST} \\
-  --plc-directory-url ${PLC_DIRECTORY_URL} \\
-  --compute-provider-firecracker \\
-  --compute-provider-firecracker-nodeimage ${BIN_DIR}/socialweb-nodeimage \\
-  --compute-provider-firecracker-nodeboot ${NODEBOOT_IN_CONTAINER} \\
-  --compute-provider-firecracker-config ${CONFIG_PATH} \\
-  --compute-provider-firecracker-repo-dir ${STATE_DIR} \\
-  --compute-provider-firecracker-preinstall ${INPUTS_DIR}/preinstall.json \\
-  --compute-provider-firecracker-vmm ${FIRECRACKER_IN_CONTAINER} \\
-  --compute-provider-firecracker-runner-image ${RUNNER_IMAGE} \\
-  --compute-provider-firecracker-work-root ${GUESTS_DIR} \\
-  --compute-provider-firecracker-range-base ${RANGE_BASE} \\
-  --compute-provider-firecracker-reuse-image \\
-  --serve-addr ${SERVE_ADDR} \\
-  --serve-port ${SERVE_PORT} \\
-  --policy ${POLICY} \\
-  --policy-args '${POLICY_ARGS}'
-
-Restart=always
-RestartSec=5
-LimitNOFILE=65536
-
-# It needs the docker socket at /run/docker.sock. ProtectSystem=strict makes
-# /run read-only too, and that is fine: connect()ing to a unix socket is not a
-# write. Everything it may write is named below; nothing else is writable.
-NoNewPrivileges=yes
-PrivateTmp=yes
-ProtectSystem=strict
-ProtectHome=yes
-ProtectKernelTunables=yes
-ProtectControlGroups=yes
-RestrictSUIDSGID=yes
-ReadWritePaths=${STATE_DIR}
-
-[Install]
-WantedBy=multi-user.target
-UNIT
+changed=no
+place() {
+  local src="$1" dest="$2" mode="$3"
+  if cmp -s "${src}" "${dest}"; then
+    echo "unchanged ${dest}"
+  else
+    install -m "${mode}" -o root -g root "${src}" "${dest}"
+    echo "installed ${dest}"
+    changed=yes
+  fi
+}
+place "${DIST_DIR}/socialweb-computer-bidder@.service" "${UNIT_TEMPLATE_DEST}" 0644
+place "${DIST_DIR}/socialweb-computer-bidder-run" "${LAUNCHER_DEST}" 0755
+place "${DIST_DIR}/common.env" "${COMMON_ENV}" 0644
 
 # Warm the module cache as the service user so the first start is not the thing
 # that discovers a slow registry, and so a start that races Restart=always is
 # racing a warm cache. Best effort: a network hiccup here must not fail a deploy
 # that is otherwise converged.
-install -d -m 700 -o "${SERVICE_USER}" -g "${SERVICE_USER}" "${STATE_DIR}/deno"
-runuser -u "${SERVICE_USER}" -- env HOME="${STATE_DIR}" DENO_DIR="${STATE_DIR}/deno" \
-  "${DENO}" cache --node-modules-dir=none --unstable-kv --unstable-worker-options \
+runuser -u "${SERVICE_USER}" -- env HOME="${HOST_DIR}" DENO_DIR="${DENO_DIR_REMOTE}" \
+  "${DENO_BIN}" cache --node-modules-dir=none --unstable-kv --unstable-worker-options \
   --config "${CODE_DIR}/atproto-market/deno.json" \
-  "${CODE_DIR}/atproto-market/hono-bidder/mod.ts" >/dev/null 2>&1 || true
-
-changed=no
-if cmp -s "${STATE_DIR}/${SERVICE_NAME}.service.new" \
-          "/etc/systemd/system/${SERVICE_NAME}.service"; then
-  rm -f "${STATE_DIR}/${SERVICE_NAME}.service.new"
-else
-  mv "${STATE_DIR}/${SERVICE_NAME}.service.new" \
-     "/etc/systemd/system/${SERVICE_NAME}.service"
-  chmod 644 "/etc/systemd/system/${SERVICE_NAME}.service"
-  changed=yes
-fi
+  "${CODE_DIR}/atproto-market/hono-bidder/mod.ts" >/dev/null 2>&1 \
+  && echo "module cache warm" || echo "module cache NOT warmed; the first start fetches"
 
 systemctl daemon-reload
-systemctl enable "${SERVICE_NAME}" >/dev/null
-if [ "${changed}" = yes ]; then
-  systemctl restart "${SERVICE_NAME}"
-  echo "unit changed; restarted ${SERVICE_NAME}"
-elif ! systemctl is-active --quiet "${SERVICE_NAME}"; then
-  systemctl start "${SERVICE_NAME}"
-  echo "unit unchanged; started ${SERVICE_NAME}"
-else
-  echo "unit unchanged and running; left alone"
+running="$(systemctl list-units --type=service --state=running --no-legend --plain "${INSTANCE_GLOB}" | awk '{print $1}')"
+if [ "${changed}" = yes ] && [ -n "${running}" ]; then
+  # shellcheck disable=SC2086
+  systemctl restart ${running}
+  echo "restarted, because what they run changed: ${running}"
 fi
-sleep 5
-systemctl is-active "${SERVICE_NAME}" || true
+echo "instances enabled: $(systemctl list-unit-files --no-legend --plain "${INSTANCE_GLOB}" 2>/dev/null | awk '$2=="enabled"{print $1}' | tr '\n' ' ')"
+echo "instances running: ${running:-none}"
 REMOTE
 
-# ── Prove the host resolves the image the way the unit says it will ───────────
-say "asking the host which image its configuration names"
+# -- Prove the target resolves the image the way the launcher says it will -----
+say "asking the target which image its configuration names"
 remote_script "ensure -reuse-stale" <<'REMOTE'
 set -euo pipefail
+cd "${HOST_DIR}"
 # Runs as the service user, which is who will run it at boot, so this is the
 # permission check as much as the resolution check. -reuse-stale against a store
 # that already holds a whole image reads and returns; it does not build.
-runuser -u "${SERVICE_USER}" -- env HOME="${STATE_DIR}" \
+runuser -u "${SERVICE_USER}" -- env HOME="${HOST_DIR}" \
   "${BIN_DIR}/socialweb-nodeimage" -ensure -json -reuse-stale \
   -preinstall "${INPUTS_DIR}/preinstall.json" -config "${CONFIG_PATH}"
 REMOTE
 
-# ── Report ────────────────────────────────────────────────────────────────────
-say "how to verify it is bidding"
+# -- Report --------------------------------------------------------------------
+say "how to run a bidder for an account"
 cat <<REPORT
 
-  service        systemctl status ${SERVICE_NAME}
-  logs           journalctl -u ${SERVICE_NAME} -f
+  enable         sudo systemctl enable --now socialweb-computer-bidder@<handle>.service
+  sign in        journalctl -u socialweb-computer-bidder@<handle> -f
+                 scan the QR (or open the qr.fedfork.com URL) with <handle>
+  stop           sudo systemctl disable --now socialweb-computer-bidder@<handle>.service
 
-  These are the log lines the bidder emits when it bids:
+  <handle> is the account's handle in lowercase, e.g. alice.bsky.social. A sign-in
+  by any other account is refused: the launcher deletes that session and the unit
+  restarts into a fresh QR.
 
-    {"event":"bidder_ready",...}        startup: the DID and the relay ingress it is
-                                        reachable at. This is the identity the market
-                                        sees bidding.
-    bidder offering refreshed           the offering record saying it is open for business
+  Per account, under /var/lib/socialweb-computer-bidder/<handle>:
+    secrets/oauth-session.json   the session the QR sign-in saved
+    secrets/bidder-key.hex       the bidder's key; its did:plc is derived from it
+    guests/                      one directory per running guest
+
+  Per-account overrides go in ${ETC_DIR}/<handle>.env, same names as
+  ${COMMON_ENV}. A second instance on one host must set its own
+  BIDDER_FC_RANGE_BASE there, or its guests are handed addresses the first
+  instance's guests already hold.
+
+  These are the log lines a bidder emits:
+
+    oauth_qr_awaiting_session           the QR is above it; scan it
+    oauth_qr_session_restored           the saved session was reused
+    bidder_account_verified             the session's handle is the instance's
+    {"event":"bidder_ready",...}        the DID and the relay ingress it is
+                                        reachable at
     bidder received VM RFP              an RFP arrived
     bidder created VM bid               the bid was written; bidUri names it
-    bidder submitted bid to requester   the requester took it
-    bidder provisioned VM               the accept path reached the provider and a guest
-                                        is booting; metadata.ip is its address
-    vm.onNetwork event created on PDS   the guest is up and reported its address
+    bidder provisioned VM               the accept path reached the provider and a
+                                        guest is booting
+    bidder_account_refused              a sign-in named another account
 
-  Records it publishes, in its own repo on the PDS it runs in process:
-
-    com.publicdomainrelay.temp.market.offering    once per offering-refresh interval
-    com.publicdomainrelay.temp.market.bid         per RFP it bids on
-    com.publicdomainrelay.temp.market.receipt     per contract it wins
-
-  The identity is created on first start, not by this script:
-    ${STATE_DIR}/bidder-key.hex   the secp256k1 key the CLI generated
-    ${STATE_DIR}/bidder-pds       the repo and the did:plc it registered
-
-  The image it boots from:
+  The image every instance boots from:
     ls ${STORE_DIR}/${FINGERPRINT}
-    ${BIN_DIR}/socialweb-nodeimage -ensure -json -reuse-stale \\
-      -preinstall ${INPUTS_DIR}/preinstall.json -config ${CONFIG_PATH}
-  That answers {"state":"reused",...}. "present" is unreachable here: it would
-  require this host's /usr/bin/busybox to hash to the build host's.
 
   A guest that is running:
     docker ps --filter name=fc-
-    ls ${GUESTS_DIR}
 
 REPORT
