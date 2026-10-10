@@ -84,6 +84,7 @@ func TestAMarketNodeJoinsATenantClusterThroughItsOpenBaoWithNoSsh(t *testing.T) 
 	}
 
 	b := &m3Bed{t: t, image: image}
+	env = marketImageEnv(t, env, workRoot)
 	b.facts = startHeldTestBed(t, root, env)
 	if b.facts["CHECKS_FAILED"] != "0" {
 		t.Fatalf("the test bed came up with failing checks: %v", b.facts)
@@ -95,7 +96,6 @@ func TestAMarketNodeJoinsATenantClusterThroughItsOpenBaoWithNoSsh(t *testing.T) 
 	for _, port := range []int{2583, 2587} {
 		forwardLoopback(t, b.gateway, port)
 	}
-	env = marketImageEnv(t, env, workRoot)
 	b.ownerDid = b.createOwner()
 	b.reading("owner %s created on the test bed PDS %s", b.ownerDid, m3OwnerPDS)
 	b.key = kcpclient.AccountHash(b.ownerDid) + "-" + m3Cluster
@@ -150,6 +150,15 @@ func TestAMarketNodeJoinsATenantClusterThroughItsOpenBaoWithNoSsh(t *testing.T) 
 	guest := waitNewGuest(t, workRoot, 5*time.Minute)
 	b.reading("guest %s booted from the bidder's cloud-init", guest)
 	console := filepath.Join(workRoot, guest, "guest.console")
+	t.Cleanup(func() {
+		if !t.Failed() {
+			return
+		}
+		copyEvidence(t, b.name+"-guest-console.txt", console)
+		copyEvidence(t, b.name+"-provider.log", b.facts["PROVIDER_LOG"])
+		copyEvidence(t, b.name+"-bidder.txt", b.facts["BIDDER_STDOUT"])
+		b.dumpContainerLog()
+	})
 	waitFileContains(t, console, "Finished setup-secrets.service", 12*time.Minute)
 	b.reading("guest fetched the --secrets bundle (setup-secrets finished)")
 	waitFileContains(t, console, "fetched the join secrets for "+node, 6*time.Minute)
@@ -244,6 +253,8 @@ func (c cmdRun) exec() (string, error) {
 func (c cmdRun) out() string {
 	out, err := c.exec()
 	if err != nil {
+		c.t.Helper()
+		c.t.Logf("query %s failed: %v\n%s", strings.Join(c.args, " "), err, out)
 		return ""
 	}
 	return out
@@ -630,10 +641,66 @@ func (b *m3Bed) waitTenant(what string, within time.Duration, ok func() bool) {
 	end := time.Now().Add(within)
 	for !ok() {
 		if time.Now().After(end) {
-			b.t.Fatalf("%s did not happen within %s", what, within)
+			b.t.Fatalf("%s did not happen within %s\n%s", what, within, b.diagnose())
 		}
 		time.Sleep(3 * time.Second)
 	}
+}
+
+const evidenceDir = "/home/johnandersen777/.cache/handoff/m3-local-e2e/evidence"
+
+func copyEvidence(t *testing.T, name, path string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Logf("no evidence from %s: %v", path, err)
+		return
+	}
+	if err := os.MkdirAll(evidenceDir, 0o755); err != nil {
+		t.Log(err)
+		return
+	}
+	target := filepath.Join(evidenceDir, name)
+	if err := os.WriteFile(target, data, 0o644); err != nil {
+		t.Log(err)
+		return
+	}
+	t.Logf("evidence kept at %s", target)
+}
+
+func (b *m3Bed) dumpContainerLog() {
+	out, err := exec.Command("docker", "logs", b.name).CombinedOutput()
+	if err != nil {
+		b.t.Logf("docker logs %s: %v", b.name, err)
+		return
+	}
+	if err := os.MkdirAll(evidenceDir, 0o755); err != nil {
+		b.t.Log(err)
+		return
+	}
+	target := filepath.Join(evidenceDir, b.name+"-control-plane.log")
+	if err := os.WriteFile(target, out, 0o644); err != nil {
+		b.t.Log(err)
+		return
+	}
+	b.t.Logf("evidence kept at %s", target)
+}
+
+func (b *m3Bed) diagnose() string {
+	b.t.Helper()
+	var out strings.Builder
+	for _, c := range [][]string{
+		{"get", "nodes", "-o", "wide"},
+		{"get", "nodes", "-o", "jsonpath={range .items[*]}{.metadata.name} {.status.conditions}{end}"},
+		{"get", "pods", "-A", "-o", "wide"},
+		{"get", "events", "-A", "--sort-by=.lastTimestamp"},
+	} {
+		text, err := b.tenant(c...).exec()
+		fmt.Fprintf(&out, "\n$ kubectl %s (err %v)\n%s\n", strings.Join(c, " "), err, text)
+	}
+	claims, _ := b.kcp(b.home, "get", "nodeclaims", "-o", "yaml").exec()
+	fmt.Fprintf(&out, "\n$ nodeclaims\n%s\n", claims)
+	return out.String()
 }
 
 func (b *m3Bed) waitForClaim(within time.Duration) string {
