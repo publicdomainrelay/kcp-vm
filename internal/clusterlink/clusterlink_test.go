@@ -24,6 +24,8 @@ dumbpipe connect-tcp endpointadfwnbtfmwi5nymildqcmkrqzetqavb7giynhveduslwzp6l7ru
 
 const fixtureTicket = "endpointadfwnbtfmwi5nymildqcmkrqzetqavb7giynhveduslwzp6l7rutybiaenuhi5dqom5c6l3von3tcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqayltuyk3xcqdaeagiwullc5yuaybacwbcaabxofagaiaycuaaff3ribq"
 
+const fixtureGeneratedTicket = "endpointadfwnbtfmwi5nymildqcmkrqzetqavb7giynhveduslwzp6l7rutyaa"
+
 const fixtureOfflineOutput = `using secret key 30b0a6d2e8c91c167a71bfa88b1f05a1775a84144ce0f3a3f3a65650ef5a67c4
 Warning: Failed to connect to the home relay
 Forwarding incoming requests to '127.0.0.1:9'.
@@ -75,7 +77,7 @@ func TestTheTicketDumbpipePrintsIsFoundAndNamesTheEndpointItsSecretDerives(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.Phase != v1alpha1.ClusterLinkListening || st.EndpointID != fixtureEndpointID || st.Ticket != ticket ||
+	if st.Phase != v1alpha1.ClusterLinkListening || st.EndpointID != fixtureEndpointID || st.Ticket != fixtureGeneratedTicket ||
 		!strings.HasPrefix(st.Did, "did:key:z6Mk") {
 		t.Fatalf("Listening = %+v", st)
 	}
@@ -220,5 +222,32 @@ func TestTheObjectIsNamedForItsClusterAndService(t *testing.T) {
 	if o.Name != "abc123-dev-openbao" || o.Spec.Cluster != "abc123-dev" || o.Spec.Service != v1alpha1.ClusterLinkOpenBao ||
 		o.Spec.TargetPort != 20003 || o.Kind != "ClusterLink" || o.APIVersion != v1alpha1.GroupVersion.String() {
 		t.Fatalf("Object = %+v", o)
+	}
+}
+
+func TestThePublishedTicketIsWhatDumbpipeGenerateTicketPrintsForTheKeyAndNeverChanges(t *testing.T) {
+	seed, _ := hex.DecodeString(fixtureSecret)
+	k, err := KeyFromSeed(v1alpha1.ClusterLinkApiserver, seed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := StableTicket(k); got != fixtureGeneratedTicket {
+		t.Fatalf("StableTicket = %s, IROH_SECRET=%s dumbpipe generate-ticket printed %s", got, fixtureSecret, fixtureGeneratedTicket)
+	}
+	if id, err := ParseTicket(fixtureGeneratedTicket); err != nil || id != fixtureEndpointID {
+		t.Fatalf("ParseTicket(generated) = %s %v", id, err)
+	}
+	a, err := Listening(k, fixtureTicket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	offline := strings.Replace(fixtureOutput, fixtureTicket, fixtureGeneratedTicket, 1)
+	printed, _ := TicketIn(offline)
+	b, err := Listening(k, printed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Ticket != b.Ticket {
+		t.Fatalf("two bring-ups that printed different tickets published %s and %s", a.Ticket, b.Ticket)
 	}
 }

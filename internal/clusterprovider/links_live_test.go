@@ -151,7 +151,7 @@ func dialThroughTicket(t *testing.T, binary, ticket string) {
 	t.Fatalf("nothing came back through %s: %v", ticket, last)
 }
 
-func TestARealDumbpipeLinkCarriesTCPToItsTargetAndAnOldTicketStillReachesItAfterARestart(t *testing.T) {
+func TestARealDumbpipeLinkCarriesTCPThroughItsPublishedTicketWhichARestartLeavesByteIdentical(t *testing.T) {
 	livegate.Short(t, "this test runs real dumbpipe listeners and dials them over iroh")
 	binary := dumbpipeBinary(t)
 	h := newLinkHarness(t)
@@ -194,7 +194,7 @@ func TestARealDumbpipeLinkCarriesTCPToItsTargetAndAnOldTicketStillReachesItAfter
 	g = spawn()
 	defer g.Reap(context.Background())
 	after := h.recorder.await(t, "liveweb-apiserver", v1alpha1.ClusterLinkListening).status
-	if after.EndpointID != api.EndpointID || after.Did != api.Did {
+	if after.EndpointID != api.EndpointID || after.Did != api.Did || after.Ticket != api.Ticket {
 		t.Fatalf("restarted link is %s, before it was %s", after.EndpointID, api.EndpointID)
 	}
 	dialThroughTicket(t, binary, api.Ticket)
