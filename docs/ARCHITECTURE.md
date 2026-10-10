@@ -1924,18 +1924,6 @@ because it bounds a mechanism the rest of this document leans on.
   way, where a pipeline 25 minutes earlier with no restart in front of it had all five running at once
   on five distinct nodes. `NEXT.yaml` MARKET-6, with the reconciliation that would close it.
 
-- **MARKET-5: a cluster's first node is named at construction, so a restart still claims a spent
-  name.** A node name whose claim has ended is skipped when the NEXT node is named (section 15,
-  MARKET-4's sibling), but the FIRST node is not named by that rule at all: `nodeHosts.forCluster`
-  builds the primary host as `node1`, and `Provision` takes ordinal 1 straight to `hostFor(1)` because
-  that host is already in hand. `kcpclient.WriteNodeClaimTo` leaves a claim whose spec already matches
-  exactly as it was, status included, so the new claim inherits the previous generation's `Failed` and
-  the door's old words with it. Measured on 2026-10-06: `-node1` claimed at 06:18:38 and released at
-  06:18:41 with "the door restarted and released this node's VM; a new node will be requested" - four
-  nodes were spent this way in one run and convergence to ten took minutes longer for it. The cost is
-  a wasted claim cycle and not a wasted machine, because the door never bids on a claim it did not
-  fulfil. `NEXT.yaml` MARKET-5, with the change that closes it.
-
 - **Whether the node half may ever run inside the control-plane container was answered by reading where
   the refusal lives, and the answer is a STATED LIMIT rather than an open question.** The allocator's
   refusal to lease a range overlapping the host's networks is a property of the NETWORK NAMESPACE the
@@ -3994,6 +3982,26 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   against a `kubectl get nodes` that lists exactly four, and the pass provisions the two the target
   asks for. The wedge is the thing to watch for because it is silent - an inflated count and a correct
   count both stop at the same line, and only the cluster's own node list says which one this is.
+
+- **A cluster's first node was claimed under a name whose claim had ended, and released two seconds
+  later. CLOSED.** `nodeHosts.forCluster` built the primary host as `node1` and `Provision` took
+  ordinal 1 straight to `hostFor(1)`, the host already in hand, never consulting the free-ordinal rule
+  that the NEXT node is named by. `kcpclient.WriteNodeClaimTo` reads the claim and, when the spec
+  already matches, returns without a write - so a name whose claim had ended carried its `Failed`
+  phase and the door's old sentence into the claim written under it, and `confirmHeld` read it as a
+  failure. MEASURED in production on 2026-10-06, after a deploy restarted the door: `-node1` claimed
+  at 06:18:38 and released at 06:18:41 with `the door restarted and released this node's VM; a new
+  node will be requested`, a sentence the door had written for an earlier generation's claim.
+  `Provision` now asks whether the primary host's name is spent before it uses that host, reads the
+  claim at that name (a by-name GET, not a list), and when its phase has ENDED it drops the host
+  (`forgetHeldLocked`) and lets the ordinary free-ordinal rule name the first node instead. This is
+  the same shape as the two counts above and it closed the same way: the thing that names a node is
+  the claim that already exists at the name, not the host this process happened to build.
+  The instrument is `TestTheFirstNodeOfAClusterIsNotClaimedUnderASpentName` in
+  `cmd/socialweb-clusterprovider`: a `Failed` claim seeded at `node1`, one provision, and it must name
+  `node2` and leave the spent claim alone. Watched to fail with the check removed. `forgetHeld` was
+  split into a locked and an unlocked form in the process - the first draft called the locking one
+  from `Provision`, which already held the mutex, and hung the test until the timeout named it.
 
 ## 16. Vocabulary
 

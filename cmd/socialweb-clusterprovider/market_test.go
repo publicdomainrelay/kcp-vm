@@ -678,3 +678,49 @@ func TestANodeThatIsTornDownStopsBeingCounted(t *testing.T) {
 			"outlives both is a node that is counted for ever", got)
 	}
 }
+
+func TestTheFirstNodeOfAClusterIsNotClaimedUnderASpentName(t *testing.T) {
+	claims := &marketClaims{}
+	tenant, _ := intentTenant(t)
+	key := clusterKey(t, "liveweb")
+	spent := testHomePrefix + "liveweb/" + key + "-node1"
+	claims.claims = map[string]v1alpha1.NodeClaim{
+		spent: {
+			ObjectMeta: metav1.ObjectMeta{Name: key + "-node1"},
+			Status: v1alpha1.NodeClaimStatus{
+				Phase:   v1alpha1.NodeClaimFailed,
+				Message: "the door restarted and released this node's VM; a new node will be requested",
+			},
+		},
+	}
+	hosts, err := newNodeHosts(marketOptions(t, claims, tenant))
+	if err != nil {
+		t.Fatalf("newNodeHosts: %v", err)
+	}
+	ctx := context.Background()
+	nodes, err := hosts.forCluster(key)
+	if err != nil {
+		t.Fatalf("forCluster: %v", err)
+	}
+	if err := nodes.Provision(ctx); err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+	if claim, ok := claims.claims[spent]; !ok || claim.Status.Phase != v1alpha1.NodeClaimFailed {
+		t.Fatal("the spent claim's name was taken, so the first node of this cluster was claimed " +
+			"under a name whose claim has already ended")
+	}
+	if _, ok := claims.claims[testHomePrefix+"liveweb/"+key+"-node2"]; !ok {
+		t.Fatalf("the first provision did not name node2. MEASURED in production on 2026-10-06: after "+
+			"a deploy restarted the door, the provider built its first node as node1 at construction "+
+			"and Provision took ordinal 1 straight to the host already in hand, never consulting the "+
+			"free-ordinal rule -- so it re-claimed node1, and kcpclient.WriteNodeClaimTo leaves a claim "+
+			"whose spec matches exactly as it was, Failed status and the door's old words included. "+
+			"The provider then read its own fresh claim as a failure and released it: node1 claimed at "+
+			"06:18:38 and released at 06:18:41. The names now are: %v", keysOf(claims.claims))
+	}
+	if got := hosts.inFlight(ctx, key); got != 1 {
+		t.Fatalf("the cluster holds %d nodes in flight, want 1: the host built for node1 was dropped "+
+			"when its name turned out to be spent, and the one that replaced it is the only one it "+
+			"holds", got)
+	}
+}

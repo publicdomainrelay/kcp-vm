@@ -57,6 +57,13 @@ about: >
   cluster's own node list. It is in section 15 with its readings, including the production node
   count and the two tests watched to fail against the old predicate.
 
+  Opened and closed on 2026-10-07 and therefore NOT listed below: MARKET-5 (a cluster's first node
+  was named at construction, so a restart re-claimed node1 whatever its claim said, and
+  kcpclient.WriteNodeClaimTo leaves a claim whose spec matches exactly as it was -- Failed status and
+  the door's old words included -- so the provider read its own fresh claim as a failure and released
+  it 2 s later). It is in section 15 with its readings, including the production claim/release pair
+  and the test watched to fail without the free-ordinal rule reaching the primary host.
+
 open:
   - id: MINT-1
     title: A mint credential is named by the cluster's key, and the migration that renames an existing one runs in a different process from the reader.
@@ -74,28 +81,6 @@ open:
       A container image carrying a legacy `<MINT_DIR>/<name>` and no keyed file, started normally, with
       the gateway's first mint request refused before the rename and served after it - the refusal
       naming the cluster and the key rather than returning a credential.
-
-  - id: MARKET-5
-    title: A cluster's first node is named at construction, so a restart still claims a spent name.
-    body: >
-      A name whose claim has ENDED is now skipped when the NEXT node is named (`nextOrdinal` seeds its
-      `present` set from the ended claims in the home workspace). The first node of a cluster is not
-      named that way: `nodeHosts.forCluster` builds the primary host as `node1` (`newNodeHost` with the
-      `nodeID` constant) and `Provision` takes ordinal 1 straight to `hostFor(1)` without consulting
-      `nextOrdinal`, because that host is already in hand. So a provider restart re-claims `node1`
-      whatever its claim says, and `kcpclient.WriteNodeClaimTo` leaves a matching spec alone --
-      including the `Failed` status the door wrote for the previous generation. Measured on
-      2026-10-06 during the five-job run: `-node1` claimed at 06:18:38 and released at 06:18:41 with
-      "the door restarted and released this node's VM; a new node will be requested". The cost is a
-      wasted claim cycle rather than a wasted machine (the door never bids on a claim it did not
-      fulfil), but four nodes were spent this way in one run and the convergence to ten took minutes
-      longer for it.
-    instrument: >
-      The primary host's name chosen by the same free-ordinal rule as every later one: extract the
-      `present`-set computation out of `nextOrdinal`, use it in `forCluster` to pick the primary's
-      ordinal, carry that ordinal on `tenantNodes` so `hostFor` and `retain` compare against it rather
-      than against 1, and a test that starts a cluster whose `node1` claim reads `Failed` and asserts
-      the first provision names `node2`.
 
   - id: MARKET-6
     title: A Node whose guest the door reaped outlives the clusterprovider's restart, and pods are scheduled onto it.

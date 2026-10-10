@@ -411,7 +411,18 @@ func (n *tenantNodes) Provision(ctx context.Context) error {
 	defer n.mu.Unlock()
 
 	ordinal := 1
-	if n.started > 0 || n.host == nil {
+	primary := n.started == 0 && n.host != nil
+	if primary {
+		spent, err := n.primaryNameSpent(ctx)
+		if err != nil {
+			return err
+		}
+		if spent {
+			n.forgetHeldLocked(n.nodeName)
+			primary = false
+		}
+	}
+	if !primary {
 		next, err := n.nextOrdinal(ctx)
 		if err != nil {
 			return err
@@ -708,14 +719,38 @@ func (n *tenantNodes) teardownHeld(ctx context.Context, node heldNode) error {
 	return nil
 }
 
+func (n *tenantNodes) primaryNameSpent(ctx context.Context) (bool, error) {
+	if n.opts.Claims == nil || n.nodeName == "" {
+		return false, nil
+	}
+	target, err := claimClusterFor(n.opts.Registry, n.cluster)(ctx)
+	if err != nil {
+		return false, fmt.Errorf("clusterprovider: the home workspace of %s, whose claim decides "+
+			"whether the name this host built for its first node of %s is still usable: %w",
+			n.cluster, n.cluster, err)
+	}
+	claim, err := n.opts.Claims.ReadNodeClaim(ctx, target.Workspace, n.nodeName)
+	if err != nil {
+		return false, fmt.Errorf("clusterprovider: reading the claim at %s before provisioning the "+
+			"first node of %s under it: %w -- a read that failed is not a name that is free, and a "+
+			"claim whose spec already matches is left exactly as it was, status included; nothing "+
+			"was provisioned", n.nodeName, n.cluster, err)
+	}
+	return claim != nil && endedClaimPhase(claim.Status.Phase), nil
+}
+
 func (n *tenantNodes) forgetHeld(name string) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.forgetHeldLocked(name)
+}
+
+func (n *tenantNodes) forgetHeldLocked(name string) {
 	prefix := strings.ToLower(n.cluster) + "-node"
 	ordinal, ok := nodeOrdinalInName(prefix, name)
 	if !ok {
 		return
 	}
-	n.mu.Lock()
-	defer n.mu.Unlock()
 	if n.host != nil && n.nodeName == name {
 		n.host, n.nodeName = nil, ""
 	}
