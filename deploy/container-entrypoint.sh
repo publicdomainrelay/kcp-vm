@@ -14,6 +14,7 @@ AUDIT_LOG="${SOCIALWEB_KCP_AUDIT_LOG:-$KCP_ROOT/audit.log}"
 MINT_DIR="${SOCIALWEB_GATEWAY_MINT_KUBECONFIGS:-$STATE_DIR/mint}"
 IMAGE_STORE="${SOCIALWEB_CLUSTERPROVIDER_IMAGE_OUT_DIR:-$STATE_DIR/images}"
 IMAGE_CONFIG="${SOCIALWEB_CLUSTERPROVIDER_IMAGE_CONFIG:-/home/johnandersen777/kcp-image/nodeimage.json}"
+IMAGE_ENSURE="${SOCIALWEB_CLUSTERPROVIDER_IMAGE_ENSURE:-0}"
 TLS_PORT="${SOCIALWEB_CONTAINER_TLS_PORT:-8443}"
 TLS_CERT="${SOCIALWEB_CONTAINER_TLS_CERT:-}"
 TLS_KEY="${SOCIALWEB_CONTAINER_TLS_KEY:-}"
@@ -287,6 +288,13 @@ socat OPENSSL-LISTEN:"$TLS_PORT",fork,reuseaddr,cert="$TLS_CERT",key="$TLS_KEY",
 TLS_PID=$!
 
 say "starting socialweb-clusterprovider"
+if [ "$IMAGE_ENSURE" = "1" ]; then
+	say "bringing the store at $IMAGE_STORE up to date from $IMAGE_CONFIG"
+	if ! /usr/local/bin/socialweb-nodeimage -ensure -config "$IMAGE_CONFIG"; then
+		say "the image store could not be brought up to date, and this deployment asked for that with SOCIALWEB_CLUSTERPROVIDER_IMAGE_ENSURE=1: the store holds the image built when this image was built, so a configuration that changed since then names an image the store does not hold, and every node placed from it would boot the filesystem from before the change"
+		exit 1
+	fi
+fi
 /usr/local/bin/socialweb-clusterprovider &
 PROVIDER_PID=$!
 
