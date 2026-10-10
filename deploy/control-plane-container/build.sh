@@ -64,18 +64,42 @@ stage_door_tree() {
   done
 }
 
+MESHD="${KCP_MESHD_CONTEXT:-/var/tmp/socialweb-control-plane-meshd}"
+
+stage_meshd() {
+  install -d -m 0755 "$MESHD"
+  rm -f "$MESHD"/socialweb-meshd-*
+  if [ -n "${KCP_MESHD_DIST:-}" ]; then
+    for arch in x86_64 aarch64; do
+      for f in "socialweb-meshd-$arch" "socialweb-meshd-$arch.sha256"; do
+        [ -s "$KCP_MESHD_DIST/$f" ] || { echo >&2 "KCP_MESHD_DIST=$KCP_MESHD_DIST has no $f: rust/build.sh writes both arches and their sidecars"; exit 1; }
+        install -m 0644 "$KCP_MESHD_DIST/$f" "$MESHD/$f"
+      done
+    done
+  else
+    MESHD_DIST="$MESHD" "$REPO/rust/build.sh" x86_64 aarch64
+  fi
+  for arch in x86_64 aarch64; do
+    (cd "$MESHD" && sha256sum -c "socialweb-meshd-$arch.sha256") || { echo >&2 "socialweb-meshd-$arch does not match its sidecar: the door refuses to start on such a pair"; exit 1; }
+    chmod 0644 "$MESHD/socialweb-meshd-$arch"
+  done
+  echo "meshd       $MESHD ($(cut -d' ' -f1 "$MESHD/socialweb-meshd-x86_64.sha256") x86_64, $(cut -d' ' -f1 "$MESHD/socialweb-meshd-aarch64.sha256") aarch64)"
+}
+
 if [ "$target" = "k8s" ]; then
   for dir in "$TOOLCHAIN" "$MODCACHE" "$BUILDCACHE"; do
     [ -d "$dir" ] || { echo >&2 "no $dir on this host: this build reads it as a named context and cannot invent it"; exit 1; }
   done
   stage_binaries
   stage_door_tree
+  stage_meshd
   docker buildx build \
     --build-context "goroot=$TOOLCHAIN" \
     --build-context "gomod=$MODCACHE" \
     --build-context "gocache=$BUILDCACHE" \
     --build-context "binaries=$BINARIES" \
     --build-context "k8stree=$K8S_TREE" \
+    --build-context "meshd=$MESHD" \
     --file "$DOCKERFILE" \
     --target k8s --tag "${KCP_K8S_IMAGE:-socialweb-k8s:local}" --load "$REPO"
   echo "built ${KCP_K8S_IMAGE:-socialweb-k8s:local}"

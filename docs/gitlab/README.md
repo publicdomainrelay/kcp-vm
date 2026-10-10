@@ -49,11 +49,38 @@ Instructions stop at that boundary; see [01](01-kcp-server.md#gitlab-on-its-own-
 
 ## The limits you will hit first
 
-**A Pod on one node cannot reach a Pod on another node**, so a cluster with more than one has
-cluster DNS only for the Pods on the node CoreDNS sits on. Anything that resolves a name therefore
-works on a ONE-node cluster and fails elsewhere, permanently. Measured, and in `NEXT.yaml` as a
-limit. Read [03](03-jobs.md#the-limit-that-bites-multi-node-first) before scaling a cluster past
-one node for anything that needs the network.
+**Cross-node pod traffic and DNS are new on market clusters and not yet read live.** Every market
+node resolves names on its own CoreDNS, and pods reach pods on other nodes through
+`socialweb-meshd`; on the local firecracker substrate a Pod still cannot reach a Pod on another
+node. Read [03](03-jobs.md#pods-on-different-nodes-and-dns-on-every-node) before scaling a cluster
+past one node for anything that needs the network.
+
+## Why the DNS wait is gone
+
+02 and 04 used to carry a `pre_get_sources_script` that looped up to 180 seconds on `getent hosts
+$CI_SERVER_HOST` before the clone. It existed because a job Pod's resolver was the cluster's one
+CoreDNS, which sat on one node; a Pod on any other node had no path to it, so three of five jobs on
+five fresh nodes died at the clone with `Could not resolve host`. The wait only named that failure;
+it never fixed it, because the failure did not go away with time.
+
+Plan 0005 `M5-DNS` fixes the cause. The guest's user_data puts `169.254.20.10` on a dummy interface
+and starts the k3s agent with `--kubelet-arg=cluster-dns=169.254.20.10` and the
+`socialweb.computer/node-local-dns=true` label; the provider applies, in every tenant, a host-network
+CoreDNS DaemonSet selected by that label and bound to that address. A job Pod therefore asks a
+CoreDNS on its own node, which answers cluster names from the apiserver and forwards everything
+else to the node's resolver. Nothing crosses to another node, so the failure the wait named cannot
+happen.
+
+One window is stated rather than closed: on a node that has JUST become Ready, the DNS pod and the
+job pod start side by side, and a clone that runs before the DNS pod is ready fails. The DNS image is
+one the node image seeds, so it usually wins against the job's helper image pull, but nothing orders
+the two. Closing it means a startup taint the node lifts once its DNS answers; that is open in
+`docs/ARCHITECTURE.md` section 9.
+
+What still makes a clone fail is in 04's failure table: a node that joined with an older user_data
+(no label, no address), or a `CI_REPOSITORY_URL` the rented node cannot reach. The live GitLab test
+on the local firecracker substrate (`cmd/socialweb-clusterprovider/live_gitlab_named_job_test.go`)
+keeps its wait, because that substrate keeps flannel and one CoreDNS.
 
 **The default ceiling is ten nodes, and `scripts/deploy.sh` passes ten with one Pod per node.**
 `SOCIALWEB_CLUSTERPROVIDER_SCALE_MAX_NODES` defaults to 10 and

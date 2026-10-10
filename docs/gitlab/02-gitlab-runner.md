@@ -86,9 +86,6 @@ check_interval = 3
   token = "<<runner authentication token>>"
   executor = "kubernetes"
 
-  # Runs BEFORE the clone. Gate on DNS here, never in pre_build_script.
-  pre_get_sources_script = "if command -v getent >/dev/null 2>&1; then R='getent hosts'; elif command -v nslookup >/dev/null 2>&1; then R=nslookup; fi; i=0; while [ -n \"$R\" ] && [ $i -lt 180 ]; do $R \"$CI_SERVER_HOST\" >/dev/null 2>&1 && break; i=$((i+1)); sleep 1; done; true"
-
   # Runs AFTER the clone, before the job's script. A STRING, not an array.
   pre_build_script = "true"
 
@@ -167,9 +164,9 @@ Unschedulable: "0/1 nodes are available: 1 Insufficient cpu."
 
 Reads as a slow cluster. Is a Pod that cannot fit.
 
-**`pre_build_script` runs AFTER the clone. `pre_get_sources_script` runs BEFORE it.** A DNS wait in
-`pre_build_script` is too late - the clone already failed. Anything guarding the clone goes in
-`pre_get_sources_script`.
+**`pre_build_script` runs AFTER the clone. `pre_get_sources_script` runs BEFORE it.** Anything that
+must guard the clone goes in `pre_get_sources_script`. This file used to carry a 180-second DNS wait
+there; it is gone, and [the README says why](README.md#why-the-dns-wait-is-gone).
 
 **The 4 MiB log cap is the runner's, not GitLab's.**
 

@@ -13,6 +13,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clusterprovider"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/esovault"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpclient"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/tenantnet"
 )
 
 const tenantAddOnTimeout = 60 * time.Second
@@ -31,14 +32,26 @@ func tenantAddOns(cfg Config, log *slog.Logger) func(context.Context, string, *r
 		if err != nil {
 			return err
 		}
+		dyn, err := dynamic.NewForConfig(restCfg)
+		if err != nil {
+			return fmt.Errorf("clusterprovider: a dynamic client for %s's tenant add-ons: %w", cluster, err)
+		}
+		netCtx, netCancel := context.WithTimeout(ctx, tenantAddOnTimeout)
+		err = tenantnet.Apply(netCtx, dyn, clusterprovider.AddOnFieldManager)
+		netCancel()
+		if err != nil {
+			return fmt.Errorf("clusterprovider: the node network add-ons of %s: %w", cluster, err)
+		}
+		log.Info("cluster provider: applied the node network add-ons",
+			"cluster", cluster, "nodeReader", tenantnet.NodeReaderName, "nodeDNS", tenantnet.DNSName,
+			"address", tenantnet.Address, "nodeLabel", tenantnet.NodeLabel,
+			"meaning", "every node may list Nodes for socialweb-meshd, and a node whose user_data carries "+
+				"the link-local DNS address runs its own CoreDNS there; both are ours and baseline",
+			"item", "plan 0005 M5-DNS, M5-MESHD")
 		seal, err := clusterprovider.ReadVaultSeal(dataDir)
 		if err != nil {
 			return fmt.Errorf("clusterprovider: reading the cluster vault's unseal material for the "+
 				"tenant add-ons of %s: %w", cluster, err)
-		}
-		dyn, err := dynamic.NewForConfig(restCfg)
-		if err != nil {
-			return fmt.Errorf("clusterprovider: a dynamic client for %s's tenant add-ons: %w", cluster, err)
 		}
 		bounded, cancel := context.WithTimeout(ctx, tenantAddOnTimeout)
 		defer cancel()

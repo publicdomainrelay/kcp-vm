@@ -45,6 +45,72 @@ export const NODE_FILES = {
 
 export const K3S_NODE_PASSWORD_PATH = "/etc/rancher/node/password";
 
+export const NODE_LOCAL_DNS_ADDRESS = "169.254.20.10";
+export const NODE_LOCAL_DNS_LABEL = "socialweb.computer/node-local-dns";
+export const NODE_LOCAL_DNS_LINK = "swdns0";
+
+export const POD_CLUSTER_CIDR = "10.42.0.0/16";
+export const POD_MTU = 1160;
+export const POD_BRIDGE = "cni0";
+export const POD_EGRESS_COMMENT = "socialweb-pod-egress";
+export const CNI_CONFLIST_NAME = "10-socialweb-bridge.conflist";
+export const CNI_WAIT_ATTEMPTS = 90;
+
+export const MESHD_PATH = "/usr/local/bin/socialweb-meshd";
+export const MESHD_ENV_PATH = `${NODE_SECRETS_DIR}/meshd.env`;
+export const MESHD_ARCHES = ["x86_64", "aarch64"] as const;
+export type MeshdArch = typeof MESHD_ARCHES[number];
+
+export const SYSCTL_PATH = "/etc/sysctl.d/90-socialweb-node.conf";
+
+export const NODE_NET_UNITS = {
+  dnsLink: "socialweb-node-dns-link.service",
+  masquerade: "socialweb-pod-masquerade.service",
+  cni: "socialweb-pod-cni.service",
+  meshdInstall: "socialweb-meshd-install.service",
+  meshd: "socialweb-meshd.service",
+} as const;
+
+export const NODE_NET_SCRIPTS = {
+  dnsLink: "/usr/local/bin/socialweb-node-dns-link",
+  masquerade: "/usr/local/bin/socialweb-pod-masquerade",
+  cni: "/usr/local/bin/socialweb-pod-cni",
+  meshdInstall: "/usr/local/bin/socialweb-meshd-install",
+} as const;
+
+export const MESHD_UNIT = `[Unit]
+Description=socialweb.computer pod mesh over iroh (socialweb-meshd)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=notify
+NotifyAccess=main
+TimeoutStartSec=infinity
+EnvironmentFile=/etc/socialweb/node/meshd.env
+ExecStart=/usr/local/bin/socialweb-meshd run --kubeconfig /var/lib/rancher/k3s/agent/kubelet.kubeconfig --secret-file /var/lib/socialweb/meshd/secret
+Restart=always
+RestartSec=2
+StateDirectory=socialweb/meshd
+StateDirectoryMode=0700
+
+[Install]
+WantedBy=multi-user.target
+`;
+
+export const MESHD_UNIT_DROP_IN = `[Unit]
+After=${NODE_NET_UNITS.meshdInstall} ${NODE_UNITS.nodeSecrets}
+Wants=${NODE_NET_UNITS.meshdInstall} ${NODE_UNITS.nodeSecrets}
+StartLimitIntervalSec=0
+`;
+
+export const MESHD_DROP_IN_PATH = `/etc/systemd/system/${NODE_NET_UNITS.meshd}.d/10-socialweb-node.conf`;
+
+export interface MeshdPin {
+  downloadBase: string;
+  sha256: Record<MeshdArch, string>;
+}
+
 export interface K3sJoinModuleOptions {
   dnsNameservers?: string[];
   k3sDataDir?: string;
@@ -55,6 +121,26 @@ export interface K3sJoinModuleOptions {
   k3sNodePasswordPath?: string;
   doneStamp?: string;
   openbaoAddr?: string;
+  meshd?: MeshdPin;
+  meshdPath?: string;
+  cniConfDir?: string;
+  kubeletKubeconfig?: string;
+  cniWaitAttempts?: number;
+}
+
+const SHA256_HEX = /^[0-9a-f]{64}$/;
+const HTTP_ORIGIN = /^https?:\/\/[A-Za-z0-9.-]+(:[0-9]{1,5})?$/;
+
+export function validateMeshdPin(pin: MeshdPin): MeshdPin {
+  if (!HTTP_ORIGIN.test(pin.downloadBase)) {
+    throw new Error(`meshd downloadBase ${JSON.stringify(pin.downloadBase)} is not an http(s) origin with no path`);
+  }
+  for (const arch of MESHD_ARCHES) {
+    if (!SHA256_HEX.test(pin.sha256?.[arch] ?? "")) {
+      throw new Error(`meshd sha256 for ${arch} is not 64 lowercase hex characters`);
+    }
+  }
+  return pin;
 }
 
 interface ResolvedPaths {
@@ -73,12 +159,23 @@ interface ResolvedPaths {
   done: string;
   openbaoAddr: string;
   dataDir: string;
+  meshdEnv: string;
+  meshd: string;
+  cniConfDir: string;
+  kubeletKubeconfig: string;
+  cniWaitAttempts: number;
 }
 
 function resolvePaths(opts: K3sJoinModuleOptions): ResolvedPaths {
   const dir = opts.nodeDir ?? NODE_SECRETS_DIR;
   const inDir = (canonical: string) => `${dir}${canonical.slice(NODE_SECRETS_DIR.length)}`;
+  const dataDir = opts.k3sDataDir ?? "/var/lib/rancher/k3s";
   return {
+    meshdEnv: inDir(MESHD_ENV_PATH),
+    meshd: opts.meshdPath ?? MESHD_PATH,
+    cniConfDir: opts.cniConfDir ?? `${dataDir}/agent/etc/cni/net.d`,
+    kubeletKubeconfig: opts.kubeletKubeconfig ?? `${dataDir}/agent/kubelet.kubeconfig`,
+    cniWaitAttempts: opts.cniWaitAttempts ?? CNI_WAIT_ATTEMPTS,
     acceptPath: opts.acceptPath ?? DEFAULT_ACCEPT_PATH,
     dumbpipe: opts.dumbpipePath ?? "/usr/local/bin/dumbpipe",
     k3s: opts.k3sPath ?? "/usr/local/bin/k3s",
@@ -93,7 +190,7 @@ function resolvePaths(opts: K3sJoinModuleOptions): ResolvedPaths {
     k3sNodePassword: opts.k3sNodePasswordPath ?? K3S_NODE_PASSWORD_PATH,
     done: opts.doneStamp ?? NODE_FILES.done,
     openbaoAddr: opts.openbaoAddr ?? OPENBAO_LINK_LOCAL_ADDR,
-    dataDir: opts.k3sDataDir ?? "/var/lib/rancher/k3s",
+    dataDir,
   };
 }
 
@@ -102,7 +199,7 @@ export function renderNodeSecretsScript(opts: K3sJoinModuleOptions = {}): string
   return `#!/bin/bash
 set -euo pipefail
 say() { echo "socialweb-node-secrets: $*" >&2; }
-[ -f ${p.done} ] && [ -s ${p.linkEnv} ] && exit 0
+[ -f ${p.done} ] && [ -s ${p.linkEnv} ] && [ -s ${p.meshdEnv} ] && exit 0
 for f in ${p.claim} ${p.ca} ${p.acceptPath}; do
   [ -s "\${f}" ] || { say "\${f} is missing"; exit 1; }
 done
@@ -170,7 +267,9 @@ install -m 0600 ${p.nodePassword} ${p.k3sNodePassword}
 printf 'NODE_NAME=%s\\nADVERTISE_ADDRESS=%s\\nAPISERVER_PORT=%s\\nAPISERVER_TICKET=%s\\n' \\
   "\${NODE}" "\${ADVERTISE}" "\${PORT}" "\${TICKET}" > ${p.linkEnv}.tmp
 mv ${p.linkEnv}.tmp ${p.linkEnv}
-chmod 0600 ${p.serverCA} ${p.token} ${p.nodePassword} ${p.k3sNodePassword} ${p.linkEnv}
+printf 'SOCIALWEB_MESHD_NODE_NAME=%s\\nSOCIALWEB_MESHD_KUBECONFIG=%s\\n' "\${NODE}" ${p.kubeletKubeconfig} > ${p.meshdEnv}.tmp
+mv ${p.meshdEnv}.tmp ${p.meshdEnv}
+chmod 0600 ${p.serverCA} ${p.token} ${p.nodePassword} ${p.k3sNodePassword} ${p.linkEnv} ${p.meshdEnv}
 touch ${p.done}
 say "fetched the join secrets for \${NODE}"
 `;
@@ -195,6 +294,110 @@ set -euo pipefail
 : "\${ADVERTISE_ADDRESS:?}" "\${APISERVER_PORT:?}" "\${APISERVER_TICKET:?}"
 ip -4 addr show dev lo | grep -q " \${ADVERTISE_ADDRESS}/32 " || ip addr add "\${ADVERTISE_ADDRESS}/32" dev lo
 exec ${p.dumbpipe} connect-tcp --addr "\${ADVERTISE_ADDRESS}:\${APISERVER_PORT}" "\${APISERVER_TICKET}"
+`;
+}
+
+export function renderCniConflist(subnet: string): string {
+  return JSON.stringify(
+    {
+      cniVersion: "1.0.0",
+      name: "socialweb-pods",
+      plugins: [
+        {
+          type: "bridge",
+          bridge: POD_BRIDGE,
+          isGateway: true,
+          ipMasq: false,
+          hairpinMode: true,
+          mtu: POD_MTU,
+          ipam: {
+            type: "host-local",
+            ranges: [[{ subnet }]],
+            routes: [{ dst: "0.0.0.0/0" }],
+          },
+        },
+        { type: "portmap", capabilities: { portMappings: true } },
+      ],
+    },
+    null,
+    2,
+  ) + "\n";
+}
+
+export function renderPodCniScript(opts: K3sJoinModuleOptions = {}): string {
+  const p = resolvePaths(opts);
+  const conf = `${p.cniConfDir}/${CNI_CONFLIST_NAME}`;
+  return `#!/bin/bash
+set -euo pipefail
+say() { echo "socialweb-pod-cni: $*" >&2; }
+: "\${NODE_NAME:?}"
+printf '%s' "\${NODE_NAME}" | grep -Eqx '[a-z0-9]([a-z0-9.-]*[a-z0-9])?' || { say "NODE_NAME is not a node name"; exit 1; }
+CIDR=""
+for _ in $(seq 1 ${p.cniWaitAttempts}); do
+  if [ -s ${p.kubeletKubeconfig} ]; then
+    CIDR="$(${p.k3s} kubectl --kubeconfig ${p.kubeletKubeconfig} get node "\${NODE_NAME}" -o 'jsonpath={.spec.podCIDR}' 2>/dev/null || true)"
+    [ -n "\${CIDR}" ] && break
+  fi
+  sleep 2
+done
+[ -n "\${CIDR}" ] || { say "node \${NODE_NAME} has no podCIDR yet"; exit 1; }
+printf '%s' "\${CIDR}" | grep -Eqx '([0-9]{1,3}\\.){3}[0-9]{1,3}/[0-9]{1,2}' || { say "podCIDR \${CIDR} is not an IPv4 CIDR"; exit 1; }
+install -d -m 0755 ${p.cniConfDir}
+printf '${renderCniConflist("%s")}' "\${CIDR}" > ${conf}.tmp
+mv ${conf}.tmp ${conf}
+say "wrote ${conf} for \${CIDR}"
+`;
+}
+
+export function renderPodMasqueradeScript(): string {
+  return `#!/bin/bash
+set -euo pipefail
+sysctl -qw net.ipv4.ip_forward=1
+RULE=(-s ${POD_CLUSTER_CIDR} ! -d ${POD_CLUSTER_CIDR} -m comment --comment ${POD_EGRESS_COMMENT} -j MASQUERADE)
+iptables -w -t nat -C POSTROUTING "\${RULE[@]}" 2>/dev/null || iptables -w -t nat -A POSTROUTING "\${RULE[@]}"
+`;
+}
+
+export function renderDnsLinkScript(): string {
+  return `#!/bin/bash
+set -euo pipefail
+modprobe dummy 2>/dev/null || true
+ip link show ${NODE_LOCAL_DNS_LINK} >/dev/null 2>&1 || ip link add ${NODE_LOCAL_DNS_LINK} type dummy
+ADDRS="$(ip -4 addr show dev ${NODE_LOCAL_DNS_LINK})"
+case "\${ADDRS}" in
+  *" ${NODE_LOCAL_DNS_ADDRESS}/32 "*) ;;
+  *) ip addr add ${NODE_LOCAL_DNS_ADDRESS}/32 dev ${NODE_LOCAL_DNS_LINK} ;;
+esac
+ip link set ${NODE_LOCAL_DNS_LINK} up
+`;
+}
+
+export function renderMeshdInstallScript(opts: K3sJoinModuleOptions): string {
+  if (!opts.meshd) throw new Error("renderMeshdInstallScript needs a meshd pin");
+  const pin = validateMeshdPin(opts.meshd);
+  const p = resolvePaths(opts);
+  return `#!/bin/bash
+set -euo pipefail
+say() { echo "socialweb-meshd-install: $*" >&2; }
+BIN=${p.meshd}
+case "$(uname -m)" in
+  x86_64|amd64) ARCH=x86_64; WANT=${pin.sha256.x86_64} ;;
+  aarch64|arm64) ARCH=aarch64; WANT=${pin.sha256.aarch64} ;;
+  *) say "no socialweb-meshd build for $(uname -m)"; exit 1 ;;
+esac
+if [ -x "\${BIN}" ] && [ "$(sha256sum "\${BIN}" | cut -d' ' -f1)" = "\${WANT}" ]; then
+  say "socialweb-meshd \${WANT} is already installed"
+  exit 0
+fi
+TMP="$(mktemp "\${BIN}.download.XXXXXX")"
+trap 'rm -f "\${TMP}"' EXIT
+curl -fsSL --retry 5 --retry-delay 2 -o "\${TMP}" "${pin.downloadBase}/downloads/\${WANT}/socialweb-meshd-\${ARCH}"
+GOT="$(sha256sum "\${TMP}" | cut -d' ' -f1)"
+[ "\${GOT}" = "\${WANT}" ] || { say "the door served sha256 \${GOT}, not the pinned \${WANT}"; exit 1; }
+chmod 0755 "\${TMP}"
+mv -f "\${TMP}" "\${BIN}"
+trap - EXIT
+say "installed socialweb-meshd \${WANT} for \${ARCH} from ${pin.downloadBase}"
 `;
 }
 
@@ -246,8 +449,8 @@ export function renderNodeUnits(opts: K3sJoinModuleOptions = {}): Record<string,
     [NODE_UNITS.k3sAgent]: unit({
       Unit: [
         "Description=socialweb node: k3s agent joined through the apiserver link",
-        `After=network-online.target ${NODE_UNITS.nodeSecrets} ${NODE_UNITS.apiserverLink}`,
-        `Wants=network-online.target ${NODE_UNITS.nodeSecrets} ${NODE_UNITS.apiserverLink}`,
+        `After=network-online.target ${NODE_UNITS.nodeSecrets} ${NODE_UNITS.apiserverLink} ${NODE_NET_UNITS.dnsLink} ${NODE_NET_UNITS.masquerade}`,
+        `Wants=network-online.target ${NODE_UNITS.nodeSecrets} ${NODE_UNITS.apiserverLink} ${NODE_NET_UNITS.dnsLink} ${NODE_NET_UNITS.masquerade}`,
         "StartLimitIntervalSec=0",
       ],
       Service: [
@@ -264,12 +467,67 @@ export function renderNodeUnits(opts: K3sJoinModuleOptions = {}): Record<string,
         "ExecStartPre=-/sbin/modprobe overlay",
         `ExecStartPre=/usr/bin/test -x ${p.k3s}`,
         `ExecStartPre=/usr/bin/test -s ${p.token}`,
-        `ExecStart=${p.k3s} agent --server https://\${ADVERTISE_ADDRESS}:\${APISERVER_PORT} --token-file ${p.token} --node-name \${NODE_NAME} --data-dir ${p.dataDir}`,
+        `ExecStart=${p.k3s} agent --server https://\${ADVERTISE_ADDRESS}:\${APISERVER_PORT} --token-file ${p.token} --node-name \${NODE_NAME} --data-dir ${p.dataDir} --kubelet-arg=cluster-dns=${NODE_LOCAL_DNS_ADDRESS} --node-label=${NODE_LOCAL_DNS_LABEL}=true`,
         ...always,
       ],
       Install: install,
     }),
   };
+}
+
+export function renderNodeNetworkUnits(opts: K3sJoinModuleOptions = {}): Record<string, string> {
+  const p = resolvePaths(opts);
+  const install = ["WantedBy=multi-user.target"];
+  const oneshot = (exec: string, extra: string[] = []) => [
+    "Type=oneshot",
+    "RemainAfterExit=yes",
+    ...extra,
+    `ExecStart=${exec}`,
+    "Restart=on-failure",
+    "RestartSec=5",
+  ];
+  const units: Record<string, string> = {
+    [NODE_NET_UNITS.dnsLink]: unit({
+      Unit: [
+        "Description=socialweb node: the per-node DNS address on a dummy interface",
+        "StartLimitIntervalSec=0",
+      ],
+      Service: oneshot(NODE_NET_SCRIPTS.dnsLink),
+      Install: install,
+    }),
+    [NODE_NET_UNITS.masquerade]: unit({
+      Unit: [
+        "Description=socialweb node: forward pod traffic and SNAT only what leaves the cluster CIDR",
+        "StartLimitIntervalSec=0",
+      ],
+      Service: oneshot(NODE_NET_SCRIPTS.masquerade),
+      Install: install,
+    }),
+    [NODE_NET_UNITS.cni]: unit({
+      Unit: [
+        "Description=socialweb node: bridge CNI on the Node's podCIDR, once the Node has registered",
+        `After=${NODE_UNITS.nodeSecrets}`,
+        `Wants=${NODE_UNITS.nodeSecrets}`,
+        "StartLimitIntervalSec=0",
+      ],
+      Service: oneshot(NODE_NET_SCRIPTS.cni, [`EnvironmentFile=${p.linkEnv}`, "TimeoutStartSec=infinity"]),
+      Install: install,
+    }),
+  };
+  if (opts.meshd) {
+    units[NODE_NET_UNITS.meshdInstall] = unit({
+      Unit: [
+        "Description=socialweb node: install the sha256-pinned socialweb-meshd",
+        "After=network-online.target",
+        "Wants=network-online.target",
+        "StartLimitIntervalSec=0",
+      ],
+      Service: oneshot(NODE_NET_SCRIPTS.meshdInstall),
+      Install: install,
+    });
+    units[NODE_NET_UNITS.meshd] = MESHD_UNIT;
+  }
+  return units;
 }
 
 export function renderResolver(nameservers: string[]): string {
@@ -280,31 +538,45 @@ function script(path: string, content: string): WriteFileEntry {
   return { path, owner: "root:root", permissions: "0700", content };
 }
 
+function systemdFile(path: string, content: string): WriteFileEntry {
+  return { path, owner: "root:root", permissions: "0644", content };
+}
+
 export function createK3sJoinModule(opts: K3sJoinModuleOptions = {}): UserDataModule {
+  if (opts.meshd) validateMeshdPin(opts.meshd);
   const nameservers = opts.dnsNameservers ?? [DEFAULT_DNS_GATEWAY];
   const resolver = renderResolver(nameservers);
   const writeResolver = `printf '%s' '${resolver.replace(/'/g, `'\\''`)}' > ${RESOLV_CONF_PATH}`;
   const units = renderNodeUnits(opts);
+  const netUnits = renderNodeNetworkUnits(opts);
+  const started = [...NODE_UNIT_ORDER, ...Object.keys(netUnits)];
+  const meshdFiles: WriteFileEntry[] = opts.meshd
+    ? [
+      script(NODE_NET_SCRIPTS.meshdInstall, renderMeshdInstallScript(opts)),
+      systemdFile(MESHD_DROP_IN_PATH, MESHD_UNIT_DROP_IN),
+    ]
+    : [];
   return (): UserDataPatch => ({
-    packages: ["jq", "curl"],
+    packages: ["jq", "curl", "iptables"],
     write_files: [
       { path: RESOLV_CONF_PATH, owner: "root:root", permissions: "0644", content: resolver },
+      { path: SYSCTL_PATH, owner: "root:root", permissions: "0644", content: "net.ipv4.ip_forward = 1\n" },
       script(NODE_SCRIPTS.openbaoLink, renderOpenBaoLinkScript(opts)),
       script(NODE_SCRIPTS.nodeSecrets, renderNodeSecretsScript(opts)),
       script(NODE_SCRIPTS.apiserverLink, renderApiserverLinkScript(opts)),
-      ...NODE_UNIT_ORDER.map((name) => ({
-        path: `/etc/systemd/system/${name}`,
-        owner: "root:root",
-        permissions: "0644",
-        content: units[name],
-      })),
+      script(NODE_NET_SCRIPTS.dnsLink, renderDnsLinkScript()),
+      script(NODE_NET_SCRIPTS.masquerade, renderPodMasqueradeScript()),
+      script(NODE_NET_SCRIPTS.cni, renderPodCniScript(opts)),
+      ...meshdFiles,
+      ...NODE_UNIT_ORDER.map((name) => systemdFile(`/etc/systemd/system/${name}`, units[name])),
+      ...Object.entries(netUnits).map(([name, content]) => systemdFile(`/etc/systemd/system/${name}`, content)),
     ],
     bootcmd: [writeResolver],
     runcmd: [
       writeResolver,
       "systemctl daemon-reload",
-      `systemctl enable ${NODE_UNIT_ORDER.join(" ")}`,
-      `systemctl start --no-block ${NODE_UNIT_ORDER.join(" ")}`,
+      `systemctl enable ${started.join(" ")}`,
+      `systemctl start --no-block ${started.join(" ")}`,
     ],
   });
 }

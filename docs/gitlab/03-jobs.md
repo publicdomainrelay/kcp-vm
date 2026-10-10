@@ -184,9 +184,10 @@ Three ways out, in the order that costs least:
 Option 1 proves the integration. Options 2 and 3 are what a real pipeline needs, and which one is
 right depends on whether GitLab is reachable from the tenant network at all.
 
-Related: a node that has just joined may not resolve yet either, because cluster DNS is an addon
-that comes up after it. That is what `pre_get_sources_script` in
-[02](02-gitlab-runner.md#the-file) waits for, and it is a different problem from this one.
+Related, and no longer a problem on market nodes: a node that had just joined used not to resolve
+either, because cluster DNS was one CoreDNS on one node. Every market node now resolves on its own
+([below](#pods-on-different-nodes-and-dns-on-every-node)), so the `pre_get_sources_script` wait 02
+used to carry is gone.
 
 ## Artifacts and cache
 
@@ -294,12 +295,29 @@ Mid-flight, one node at a time: with one node up, several Pods sit `Init` on it 
 `Pending` - the anti-affinity refusing to co-schedule - and those Pending Pods are what take the
 count up. That is the loop working, not scheduling luck.
 
-### The limit that bites multi-node first
+### Pods on different nodes, and DNS on every node
 
-**A Pod on one node cannot reach a Pod on another node.** Each guest sits behind its own pasta
-instance, pasta is user-mode networking, and it carries a guest's traffic out to the host and
-nothing between two guests. The nodes have no path to each other, so k3s's flannel overlay has
-nothing to run over.
+On a **market** cluster (every cluster the SPA creates), two changes in plan 0005 replace the limit
+this section used to describe:
+
+- **DNS never leaves the node.** Every market node carries `169.254.20.10` on a dummy interface, runs
+  its own CoreDNS there (the `kube-system/socialweb-node-dns` DaemonSet, host network, the
+  `kubernetes` plugin talking to the apiserver through the node's own apiserver link, everything
+  else forwarded to the node's resolver), and its kubelet hands Pods `nameserver 169.254.20.10`. A
+  job Pod resolves cluster names and `$CI_SERVER_HOST` on the node it runs on, whichever node that is.
+- **Pods reach Pods on other nodes through `socialweb-meshd`**: k3s runs with
+  `--flannel-backend=none`, each node has a bridge CNI on its own pod CIDR, and meshd routes every
+  other node's pod CIDR over iroh QUIC datagrams to that node. Traffic leaving the cluster is
+  masqueraded on the node it leaves from; traffic between pods keeps its pod source address.
+
+Both are built and unit-proved; neither has yet been read on a live multi-node market cluster
+(plan 0005 `ACC-MESH`). `docs/ARCHITECTURE.md` section 9 has the details and the stated limits.
+
+The rest of this section is what still holds on the LOCAL firecracker substrate, which keeps flannel
+and is being retired (plan 0005 `M1-MARKET-ONLY`). **There, a Pod on one node cannot reach a Pod on
+another node.** Each guest sits behind its own pasta instance, pasta is user-mode networking, and it
+carries a guest's traffic out to the host and nothing between two guests. The nodes have no path to
+each other, so k3s's flannel overlay has nothing to run over.
 
 Cluster DNS is the first thing that needs that path. A Pod's resolver is cluster DNS, cluster DNS is
 CoreDNS, and CoreDNS runs on ONE node. Measured on a live five-node cluster, TCP to the CoreDNS Pod
@@ -316,8 +334,8 @@ away with time.
 So anything that resolves a name works on a ONE-node cluster, and on whichever node CoreDNS happens
 to sit on. Everywhere else it fails. `GIT_STRATEGY: none` on a job that does not need the repository
 sidesteps it - that is a workaround, not a fix, and it is written here so it is not mistaken for
-one. Recorded in `NEXT.yaml` as a limit; the shape of a fix is a shared L2 for one cluster's guests,
-or a CoreDNS on every node, and both are a change to the node network.
+one. Recorded in `NEXT.yaml` as a limit of the local substrate; the market path's fix is the two
+changes above.
 
 ## Pause pods, and why they fight scale-to-zero
 

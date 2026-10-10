@@ -154,7 +154,10 @@ Everything is either a controller-runtime reconcile loop or a deploy config. No 
 | 8 | Cluster links | Go, `internal/clusterlink` + `internal/clusterprovider/links.go` | Two `dumbpipe listen-tcp` members of every cluster's process group, one in front of the k3s apiserver and one in front of the cluster vault, each an iroh endpoint whose key lives in that cluster's vault. A node dials the cluster through them; the door holds no per-node connection. Recorded as `ClusterLink` objects (plan 0005 M3) |
 | 9 | External Secrets pair | pinned upstream binary, `internal/eso` + `internal/clusterprovider/externalsecrets.go` | The External Secrets Operator v2.11.0 run as TWO members of every cluster's process group, beside the control plane: the controller (`external-secrets`) and its admission webhook (`external-secrets webhook`), one binary copied digest-pinned into the control-plane image. They dial the tenant apiserver with a minted credential and reach the cluster vault on loopback, so an ExternalSecret syncs at ZERO nodes and on every substrate. The tenant keeps only the bundle's CRDs, ClusterRoles and a URL webhook registration; no ESO pod runs in it (`NEXT.yaml` ESO-4, plan 0005 M4-ESO-BESIDE) |
 
-**Not building**, each rejected on evidence: a CNI, a CAPI provider, an OIDC issuer, an ATProto
+| 10 | Node network | Rust `rust/socialweb-meshd`, Go `internal/tenantnet`, TS `lib/cloud-init-plugin-k3s-join` + `lib/socialweb-computer-k8s-downloads-fs` | Market clusters run `--flannel-backend=none`; each market node gets, from its `user_data`, a bridge CNI conflist on its Node's pod CIDR, cluster-CIDR-external SNAT, the sha256-pinned `socialweb-meshd` (downloaded from the door by hash) carrying pod traffic to other nodes over iroh, and `169.254.20.10` for its own CoreDNS; every tenant gets the meshd node reader RBAC and the per-node DNS DaemonSet as baseline (plan 0005 M5-MESHD, M5-DNS; section 9) |
+
+**Not building**, each rejected on evidence: a CNI plugin (the market path writes a conflist for
+k3s's bundled `bridge`/`host-local`/`portmap`; the cross-node half is component 10), a CAPI provider, an OIDC issuer, an ATProto
 bridge, a syncer, a virtual workspace, a second reverse proxy, a reachability substrate, an underlay,
 a warm node pool, an admission plugin (RBAC already enforces the identity classes exactly),
 a registry plus volume-commit machinery (S3-backed PVs ride the CSI driver on the central rustfs,
@@ -1589,7 +1592,13 @@ binaries (M3-UNITS's fallback) are not needed by it. Every unit carries `StartLi
 | `socialweb-openbao-link` | `setup-secrets` | `dumbpipe connect-tcp --addr 127.0.0.1:18200 <openbao-ticket>` | always |
 | `socialweb-node-secrets` | `setup-secrets`, openbao link | exchange the workload token for the claim's audience; OpenBao JWT login; KV read; write files | on-failure |
 | `socialweb-apiserver-link` | node secrets | `<advertiseAddress>/32` on `lo`; `dumbpipe connect-tcp --addr <advertiseAddress>:<apiserverPort> <apiserverTicket>` | always |
-| `socialweb-k3s-agent` | node secrets, apiserver link | `k3s agent --server https://<advertiseAddress>:<apiserverPort> --token-file /etc/socialweb/node/token --node-name <node> --data-dir /var/lib/rancher/k3s` | always |
+| `socialweb-k3s-agent` | node secrets, apiserver link, DNS link, masquerade | `k3s agent --server https://<advertiseAddress>:<apiserverPort> --token-file /etc/socialweb/node/token --node-name <node> --data-dir /var/lib/rancher/k3s --kubelet-arg=cluster-dns=169.254.20.10 --node-label=socialweb.computer/node-local-dns=true` | always |
+
+M5 adds the node network units beside these four (section 9 "Pods reach pods..." and "Every market
+node resolves names..."): `socialweb-node-dns-link`, `socialweb-pod-masquerade`, `socialweb-pod-cni`
+(after node secrets) and, when the door ships a meshd pin, `socialweb-meshd-install` and
+`socialweb-meshd` (after the install and node secrets). All are enabled and started by the same
+runcmd; none is a dependency of the agent except the DNS link and the masquerade.
 
 - `socialweb-node-secrets` is a oneshot with `Restart=on-failure`, because systemd refuses
   `Restart=always` on `Type=oneshot`; with no start limit it retries until it succeeds, which is what
@@ -1641,7 +1650,8 @@ overlay has nothing to run over (the limit "A node cannot reach another node" in
 user's decision: QUIC datagrams over iroh, a tun device, each peer Node's podCIDR routed to that
 Node's iroh endpoint id, k3s with `--flannel-backend=none` and a bridge CNI for the node-local half.
 `rust/socialweb-meshd` (a cargo workspace at `rust/`, the first Rust in this repo) is that daemon.
-It is built and proved on hat-8; it is NOT deployed and NOT yet installed by any user_data.
+It is built and proved on hat-8, and the door's guest module installs it (the integration, below);
+none of it is deployed, and no live multi-node market cluster has carried pod traffic through it yet.
 
 **Identity.** One ed25519 secret per node, read from `--secret-file` as 64 hex characters (the
 `IROH_SECRET` encoding dumbpipe and the cluster links use), generated 0600 through a rename if absent.
@@ -1747,29 +1757,146 @@ mode (skipped with a reason without cargo; `--full` fails instead), and adds the
 k3s proofs in `--local`/`--full` when `sudo -n` works. `tests/no_comments.rs` holds the Rust sources
 to the same no-comments, ASCII-only rule as `test/nocomments_test.go`.
 
-**What the integration that installs it must do** (not done by M5-MESHD):
+**The integration** (plan 0005 M5-MESHD integration half, with M5-DNS below). Every guest piece is
+written by the door's guest module (`lib/cloud-init-plugin-k3s-join`) into the `user_data` the RFP
+flow carries; nothing reaches a guest any other way. Decisions not in the meshd author's list are
+marked "decided by Claude, user may veto".
 
-1. k3s server `--flannel-backend=none` (and, if kube-router's policy controller is not wanted,
-   `--disable-network-policy`); the agent then needs a CNI conflist in
-   `/var/lib/rancher/k3s/agent/etc/cni/net.d/`: `bridge` (`isGateway`, `ipMasq: false`, `mtu: 1160`)
-   with `host-local` on the Node's `spec.podCIDR`, plus `portmap`. The pod CIDR exists only once the
-   Node has registered and the controller manager allocated it; meshd's `/status` `ownPodCIDRs` reads it.
-2. SNAT only what leaves the cluster: `-s <cluster-cidr> ! -d <cluster-cidr> -j MASQUERADE`. The bridge
-   plugin's own `ipMasq` would masquerade cross-node pod traffic to the tun address and erase the pod
-   source that the inbound check and NetworkPolicy depend on.
-3. Apply `rust/socialweb-meshd/deploy/node-reader-rbac.yaml` in every tenant cluster.
-4. Install the binary from user_data (a `UserDataModule` in cloud-init-common's registry), pinned by its
-   sha256, or have the image builder embed it, and run it from
-   `rust/socialweb-meshd/deploy/socialweb-meshd.service` as root (CAP_NET_ADMIN, `/dev/net/tun`) with
-   `/etc/socialweb/node/meshd.env` setting `SOCIALWEB_MESHD_NODE_NAME` to the name the k3s agent
-   registers. It is `Type=notify` and becomes ready only after its own Node exists, so k3s-agent must
-   NOT be ordered after it; meshd waits for the kubeconfig and the Node on its own.
-5. `net.ipv4.ip_forward=1` (k3s sets it).
+1. *Server.* `clusterstack.Spec.ServerArgv` adds `--flannel-backend=none --cluster-cidr=10.42.0.0/16`
+   when `MarketDialled` (a market cluster), and only then: the guest substrates keep flannel until
+   M1-MARKET-ONLY retires them. Decided by Claude, user may veto: the cluster CIDR is named
+   explicitly, at k3s's own default (so a running cluster's CIDR does not change), because the
+   guest's masquerade rule names it and must not depend on a k3s default; kube-router's network
+   policy controller is KEPT (no `--disable-network-policy`), since it works on pod IPs over any
+   bridge and the meshd inbound check keeps pod source addresses. Tests
+   `TestAMarketClusterRunsNoFlannelAndNamesItsPodNetwork`, `TestOnlyAMarketClusterDropsFlannel`,
+   `TestK3sAcceptsTheMarketPodNetworkFlags` (the real k3s v1.36.4 binary accepts them). Live:
+   `TestAZeroNodeMarketClusterAllocatesPodCIDRsAndTakesTheNodeNetworkAddOnsAsBaseline` reads
+   `--allocate-node-cidrs=true --cluster-cidr=10.42.0.0/16` on the controller manager k3s runs, so a
+   Node gets the `spec.podCIDR` the bridge waits for.
+2. *Bridge CNI on the Node's pod CIDR.* host-local has no "range from the Node" mode (that is
+   Calico's IPAM; flannel feeds host-local through its own `subnet.env`), so decided by Claude, user
+   may veto: a oneshot `socialweb-pod-cni` (after `socialweb-node-secrets`, which supplies
+   `NODE_NAME`) polls `k3s kubectl --kubeconfig /var/lib/rancher/k3s/agent/kubelet.kubeconfig get
+   node $NODE_NAME -o jsonpath={.spec.podCIDR}` every 2 s for 3 minutes (the node authorizer lets a
+   kubelet read its own Node), refuses anything that is not an IPv4 CIDR, and writes
+   `/var/lib/rancher/k3s/agent/etc/cni/net.d/10-socialweb-bridge.conflist` through a rename:
+   `bridge` `cni0` (`isGateway`, `ipMasq: false`, `hairpinMode`, `mtu: 1160`) with `host-local`
+   `ranges [[{subnet: <podCIDR>}]]` and a default route, then `portmap`; cniVersion 1.0.0, the
+   plugins k3s bundles. Until it exists the kubelet reports the network not ready and nothing is
+   scheduled there; `Restart=on-failure` retries a Node that has no CIDR yet. Stated limit: the
+   conflist is written once; a Node deleted and re-registered with a different CIDR is not followed
+   (the CCM deletes a Node only when its claim is gone, which also releases the machine).
+3. *Masquerade only what leaves the cluster.* `socialweb-pod-masquerade` (oneshot) sets
+   `net.ipv4.ip_forward=1` (also persisted in `/etc/sysctl.d/90-socialweb-node.conf`) and adds, once
+   (`-C` before `-A`), `iptables -w -t nat -A POSTROUTING -s 10.42.0.0/16 ! -d 10.42.0.0/16 -m comment
+   --comment socialweb-pod-egress -j MASQUERADE`; `iptables` joins the module's packages.
+4. *Node reader RBAC in every tenant.* `internal/tenantnet` embeds a byte-identical copy of
+   `rust/socialweb-meshd/deploy/node-reader-rbac.yaml` (held equal by
+   `TestTheNodeReaderRBACIsTheOneMeshdShips`) and the provider's tenant add-on pass
+   (`cmd/socialweb-clusterprovider/eso.go` `tenantAddOns`, run by the bootstrap on every provider
+   process's first Ready of each cluster) server-side applies it under the `socialweb-addons` field
+   manager BEFORE it needs the cluster vault, then measures the baseline. Live: a
+   `system:node:<n>` in `system:nodes` is denied `list nodes` before the apply and allowed after it
+   (`RBAC: allowed by ClusterRoleBinding "socialweb-meshd-node-reader"`). RBAC objects are not
+   workloads, so they never enter intent.
+5. *meshd itself.* With a pin, the module writes `socialweb-meshd-install` (oneshot, after
+   `network-online`, `Restart=on-failure`): it picks the pin for `uname -m` (x86_64/amd64 or
+   aarch64/arm64), keeps `/usr/local/bin/socialweb-meshd` if a node image already put a binary with
+   that sha256 there, and otherwise downloads `<door>/downloads/<sha256>/socialweb-meshd-<arch>` into
+   a temporary file beside the target, refuses bytes whose sha256 is not the pin, and renames it in
+   0755. The unit is `rust/socialweb-meshd/deploy/socialweb-meshd.service` byte for byte (a test
+   reads the file), plus the drop-in `socialweb-meshd.service.d/10-socialweb-node.conf`:
+   `After=`/`Wants=` the install and `socialweb-node-secrets`, `StartLimitIntervalSec=0`.
+   `socialweb-node-secrets` writes `/etc/socialweb/node/meshd.env`
+   (`SOCIALWEB_MESHD_NODE_NAME=<node>`, `SOCIALWEB_MESHD_KUBECONFIG=<the kubelet kubeconfig>`), since
+   it is the unit that learns the node name. `socialweb-k3s-agent` is ordered after
+   `socialweb-node-dns-link` and `socialweb-pod-masquerade` and NEVER after meshd, its install or
+   `socialweb-pod-cni`: all three wait for the agent's Node, so ordering the agent after any of them
+   is a deadlock. A test asserts it on every `After`/`Wants`/`Requires`/`BindsTo`/`Requisite` line
+   (watched to fail with meshd added to the agent's `After`).
+6. *Where the binary comes from.* The door serves pinned downloads at `/downloads/<sha256>/<name>`
+   (`lib/socialweb-computer-k8s-downloads-fs` `loadPinnedDownloads`, `createPinnedDownloadsFactory`):
+   every file in its downloads dir with a `sha256sum`-format `<name>.sha256` sidecar, held in memory,
+   served only at its own hash and name with `cache-control: public, max-age=31536000, immutable`
+   and `etag "<sha256>"`; a sidecar that names another file, or bytes that do not hash to it, stop
+   the door at startup. The meshd pin is the sidecar hash of the shipped `socialweb-meshd-x86_64` and
+   `socialweb-meshd-aarch64` at `public-origin` (`meshdPinOf`); with either missing, or no
+   `public-origin`, the door offers no meshd and logs `meshd_not_offered` (nodes still get the
+   bridge, masquerade and DNS). Decided by Claude, user may veto: the binaries are built on the host
+   by `rust/build.sh` inside `deploy/control-plane-container/build.sh k8s` (or taken from
+   `KCP_MESHD_DIST`), checked against their sidecars, and passed as the `meshd` named context, not
+   built in a Docker builder stage: the image's Go stages already take the host toolchain as named
+   contexts with no network, and `rust/build.sh` needs rustup's musl targets, clang and rust-lld,
+   which a builder stage would have to download unpinned. The `k8s` stage copies the pair AFTER its
+   `chown -R kcp:kcp /opt/org-root`, so the 17.2 MB is not copied up a second time (measured: the
+   first placement made that layer 82.8 MB instead of 65.6 MB), and checks them again with
+   `sha256sum -c`. The node images do not embed meshd yet; the install path that keeps an embedded
+   binary is ready for when they do.
 
 Not carried by the mesh: node addresses. Traffic to another node's InternalIP (NodePort on another
 node, hostNetwork pods, kubelet ports) has no route; apiserver-to-kubelet and apiserver-to-pod
 traffic already rides k3s's own agent tunnel (`--egress-selector-mode cluster`). IPv6 pod CIDRs are
 routed and checked by the code but untested.
+
+### Every market node resolves names on its own CoreDNS (plan 0005 M5-DNS)
+
+A Pod's resolver was the cluster's one CoreDNS on one node, so on a multi-node cluster every Pod off
+that node failed to resolve (NEXT.yaml limit, measured on five nodes). Now the resolver is on the
+Pod's own node, so it needs no cross-node path at all, the mesh included.
+
+- *The address.* `socialweb-node-dns-link` (oneshot) creates the dummy interface `swdns0` and puts
+  `169.254.20.10/32` on it, idempotently. Decided by Claude, user may veto: a guest unit and not an
+  init container, because the address is node plumbing that must exist before the kubelet starts
+  Pods that resolve through it, and a tenant-side init container would need `NET_ADMIN` on the host
+  network.
+- *The kubelet.* `socialweb-k3s-agent` passes `--kubelet-arg=cluster-dns=169.254.20.10` and
+  `--node-label=socialweb.computer/node-local-dns=true`, and is ordered after the address unit. The
+  server's `--cluster-dns` is not used: it is also the ClusterIP of k3s's `kube-dns` Service, which
+  must be inside the service CIDR. `resolv-conf` is left at k3s's choice (`/etc/resolv.conf`, which the
+  module writes with the provider's resolver and public fallbacks, and which has no loopback entry).
+- *The DNS.* `internal/tenantnet/manifests/node-local-dns.yaml`, applied with the node reader in
+  every tenant: ServiceAccount, ClusterRole (list/watch endpoints, services, pods, namespaces,
+  endpointslices), binding and Corefile ConfigMap `socialweb-node-dns` in `kube-system`, and a
+  DaemonSet of the same name: host network, `dnsPolicy: Default`, `priorityClassName:
+  system-node-critical`, tolerating every taint, selected by `socialweb.computer/node-local-dns=true`,
+  image `rancher/mirrored-coredns-coredns:1.14.6@sha256:1ba6f472...` (the one the node images seed,
+  held by `TestTheDNSImageIsOneTheNodeImageSeeds`), k3s's CoreDNS security context, probes on
+  `169.254.20.10:8080/health` and `:8181/ready`. The Corefile binds only `169.254.20.10`, serves
+  `cluster.local` and the reverse zones from the apiserver through the `kubernetes` plugin (in-cluster
+  config: the `kubernetes` Service's ClusterIP, which kube-proxy on the node DNATs to the advertise
+  address the apiserver link carries on `lo`), and forwards everything else to `/etc/resolv.conf`.
+- *Why the label.* Decided by Claude, user may veto: the DaemonSet is applied in EVERY tenant
+  regardless of substrate, and the label is what keeps it off a node that has no `169.254.20.10`
+  (a guest-substrate node, a node that joined with an older user_data): there it would crash-loop on
+  `bind`. The address, the label and the cluster CIDR are held equal across Go and TypeScript by
+  `node_network_test.ts` "the guest, the tenant DaemonSet and the k3s server agree...".
+- *Baseline, never intent.* The DaemonSet is applied by `socialweb-addons`, so the baseline measures
+  it (`TestThePodNetworkAddOnsAreBaselineAndNeverIntent`, and live at zero nodes), and a DaemonSet is
+  never intent anyway (section 10); its pod leaves its node idle for scale-in.
+- *k3s's own CoreDNS stays.* Decided by Claude, user may veto: `--disable=coredns` is not passed. The
+  `kube-dns` Service (`10.43.0.10`) keeps answering anything that names it explicitly, and its pod is
+  a k3s add-on that never holds a node. Retiring it is a separate change.
+- *Stated limits.* A node that has just become Ready starts its DNS pod and its first workload side
+  by side; a workload that resolves before the DNS pod is ready fails (the image is seeded, so it
+  usually wins, but nothing orders the two). The fix is a startup taint the node lifts once its DNS
+  answers; open. No live multi-node reading yet (ACC-MESH).
+
+**What changes on prod at the next deploy** (not deployed by this work). The provider builds each
+cluster's argv when it spawns the group, and a deploy restarts the container, so every market
+cluster's k3s server comes back with `--flannel-backend=none --cluster-cidr=10.42.0.0/16`, and the
+first Ready of each cluster in the new process re-runs the bootstrap, which applies the node reader
+and the per-node DNS and re-measures the baseline. Measured 2026-10-07 on hat-8 with k3s
+v1.36.4+k3s1: a `--disable-agent` server started with the default (vxlan) backend, stopped, and
+started again on the same datastore with `--flannel-backend=none --cluster-cidr=10.42.0.0/16`
+answered `/readyz` `ok` in 2.1 s, logged no `critical configuration` and no fatal line, and still
+held the ConfigMap written before the switch; at zero nodes there is no flannel state anywhere (the
+backend lives only in the agent and its Node annotations). A cluster with flannel nodes still up
+would keep them on vxlan with no path to new nodes; prod read zero nodes at its last check. The door
+must ship in the same deploy: its image carries the meshd pair (`build.sh k8s` now builds it, which
+needs cargo, rustup's `x86_64-unknown-linux-musl` and `aarch64-unknown-linux-musl` targets and clang
+on the build host, or `KCP_MESHD_DIST`), and `PUBLIC_ORIGIN` is already set by `scripts/deploy.sh`.
+Image size: 1,711,865,393 bytes, +17.2 MB for the two binaries.
 
 ### `k3s server` argv
 
@@ -1806,6 +1933,8 @@ routed and checked by the code but untested.
                                        the apiserver's own tunnel
 --token-file <0600 path>
 --write-kubeconfig <DataDir>/server/cred/admin.kubeconfig
+--flannel-backend=none                 market clusters only: pods cross nodes through socialweb-meshd
+--cluster-cidr=10.42.0.0/16            market clusters only: named because the guest masquerades it
 --kube-apiserver-arg=audit-policy-file / audit-log-path / -maxsize / -maxage / -maxbackup
 --kube-apiserver-arg=service-account-issuer, api-audiences
 --kube-controller-manager-arg=secure-port, --kube-scheduler-arg=secure-port,

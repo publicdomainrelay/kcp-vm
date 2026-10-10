@@ -273,6 +273,20 @@ func (s Spec) ExternalSecretsWebhookArgv() ([]string, error) {
 	}, nil
 }
 
+const MarketClusterCIDR = "10.42.0.0/16"
+
+const MarketFlannelBackend = "none"
+
+func (s Spec) podNetworkArgv() []string {
+	if !s.MarketDialled {
+		return nil
+	}
+	return []string{
+		"--flannel-backend=" + MarketFlannelBackend,
+		"--cluster-cidr=" + MarketClusterCIDR,
+	}
+}
+
 func (s Spec) ServerArgv() ([]string, error) {
 	if err := s.Validate(); err != nil {
 		return nil, err
@@ -294,6 +308,7 @@ func (s Spec) ServerArgv() ([]string, error) {
 	for _, san := range s.TLSSANs {
 		argv = append(argv, "--tls-san", san)
 	}
+	argv = append(argv, s.podNetworkArgv()...)
 	argv = append(argv, s.Audit.argv()...)
 	if s.ServiceAccountIssuer != "" {
 		argv = append(argv, "--kube-apiserver-arg=service-account-issuer="+s.ServiceAccountIssuer)

@@ -195,12 +195,16 @@ open:
   - id: P5-M5
     title: Pods reach pods on other nodes and DNS works on every node.
     body: >
-      Plan 0005 items M5-DNS and M5-MESHD (rust/socialweb-meshd). M5-MESHD's daemon is built and
-      proved locally (a56b60d), not deployed; still open is its integration: k3s
-      --flannel-backend=none, a bridge CNI conflist (mtu 1160) on the Node's podCIDR, SNAT for
-      cluster-cidr-external traffic only, rust/socialweb-meshd/deploy/node-reader-rbac.yaml in every
-      tenant (a node may not list Nodes otherwise), and a user_data module installing the
-      sha256-pinned binary with its systemd unit (ARCHITECTURE section 9).
+      Plan 0005 items M5-DNS and M5-MESHD (rust/socialweb-meshd). The daemon (a56b60d) and its
+      integration (c8ba259, 2125360, 58dfd82, 4cbebf1, 4e72a73) are built, unit-proved and proved at
+      zero nodes live, NOT deployed: market k3s servers run --flannel-backend=none on 10.42.0.0/16;
+      every tenant gets the meshd node reader and a per-node CoreDNS DaemonSet on 169.254.20.10 as
+      baseline; the guest's user_data writes the bridge CNI conflist on the Node's podCIDR, the
+      cluster-CIDR-external SNAT, the DNS address and kubelet cluster-dns, and installs the
+      sha256-pinned meshd the door serves at /downloads/<sha256>/<name> (ARCHITECTURE section 9).
+      Open: deploy provider and door together; the live two-node reading, which needs two guests
+      through the RFP flow on the M1 test bed; the DNS-pod-versus-first-workload window on a fresh
+      node (a startup taint).
     instrument: >
       A pod on node A reaches a pod on node B, and a name resolves from a node not running CoreDNS.
   - id: P5-M6
@@ -215,6 +219,12 @@ limits:
   - title: A node cannot reach another node, so a cluster with more than one has no cluster DNS
       for the Pods on the others.
     body: >
+      Narrowed on 2026-10-07 to the LOCAL guest substrates (firecracker and qemu with pasta), which
+      keep flannel until plan 0005 M1-MARKET-ONLY retires them. On a market cluster, built but not
+      yet deployed or read live: every node resolves on its own CoreDNS at 169.254.20.10 (M5-DNS),
+      and pods reach pods on other nodes through socialweb-meshd over iroh (M5-MESHD); the
+      docs/gitlab runner configs no longer carry the DNS wait. What follows is the local-substrate
+      reading, unchanged.
       Every guest sits behind its own pasta instance, and pasta is user-mode networking: it carries
       a guest's traffic out to the host's network and nothing between two guests. So the guests of
       one cluster have no path to each other and k3s's flannel overlay has nothing to run over. A

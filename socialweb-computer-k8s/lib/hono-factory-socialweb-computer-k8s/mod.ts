@@ -1,7 +1,7 @@
 import { createFactory } from "@hono/hono/factory";
 import type { Context } from "@hono/hono";
 import { ClusterGatewayError } from "@publicdomainrelay/socialweb-computer-k8s-abc";
-import type { ClusterGateway, RequestProofVerifier } from "@publicdomainrelay/socialweb-computer-k8s-abc";
+import type { ClusterGateway, PinnedDownloads, RequestProofVerifier } from "@publicdomainrelay/socialweb-computer-k8s-abc";
 import {
   isClusterName,
   kubeconfigFilename,
@@ -142,6 +142,34 @@ export function createClusterApiFactory(opts: ClusterApiFactoryOptions) {
         } catch (err) {
           return failure(c, req.did, "kubeconfig", err);
         }
+      });
+    },
+  });
+}
+
+export interface PinnedDownloadsFactoryOptions {
+  downloads: PinnedDownloads;
+  log?: (event: string, data?: Record<string, unknown>) => void;
+}
+
+export const PINNED_DOWNLOAD_CACHE_CONTROL = "public, max-age=31536000, immutable";
+
+export function createPinnedDownloadsFactory(opts: PinnedDownloadsFactoryOptions) {
+  const log = opts.log ?? (() => {});
+  return createFactory({
+    initApp: (app) => {
+      app.get("/downloads/:sha256/:name", (c) => {
+        const sha256 = c.req.param("sha256");
+        const name = c.req.param("name");
+        const bytes = opts.downloads.get(sha256, name);
+        if (!bytes) return c.json({ error: "NotFound", message: "no download with that sha256 and name" }, 404);
+        log("pinned_download_served", { name, sha256, bytes: bytes.length });
+        return c.body(bytes, 200, {
+          "content-type": "application/octet-stream",
+          "content-length": String(bytes.length),
+          "etag": `"${sha256}"`,
+          "cache-control": PINNED_DOWNLOAD_CACHE_CONTROL,
+        });
       });
     },
   });

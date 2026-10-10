@@ -469,17 +469,46 @@ items:
   - id: M5-DNS
     milestone: M5
     title: Per-node CoreDNS on a link-local IP set as kubelet clusterDNS
-    decision: Removes the docs/gitlab DNS wait hack.
-    status: todo
-    evidence: []
+    decision: >
+      Removes the docs/gitlab DNS wait hack. Decided by Claude, user may veto (ARCHITECTURE section 9
+      "Every market node resolves names on its own CoreDNS"): 169.254.20.10 on a dummy interface
+      swdns0 made by a guest unit (socialweb-node-dns-link), not an init container; the agent passes
+      --kubelet-arg=cluster-dns=169.254.20.10 and --node-label=socialweb.computer/node-local-dns=true
+      (not the server's --cluster-dns, which is also kube-dns's ClusterIP); resolv-conf left at k3s's
+      choice; a host-network CoreDNS DaemonSet kube-system/socialweb-node-dns (k3s's seeded CoreDNS
+      image, Corefile bound to the address, kubernetes plugin over the in-cluster Service the apiserver
+      link carries, forward . /etc/resolv.conf) applied in EVERY tenant by the add-on pass under
+      socialweb-addons and selected by that label, so a node without the address never runs it;
+      k3s's own CoreDNS is kept.
+    status: doing
+    evidence:
+      - "commits 2125360 (internal/tenantnet: manifests, Apply, wiring into tenantAddOns before the vault step), 58dfd82 (guest units, agent flags), 4e72a73 (live zero-node proof); docs commit follows"
+      - "tests watched to fail then pass: internal/tenantnet TestApplyServerSideAppliesTheNodeReaderAndThePerNodeDNSUnderTheAddOnManager, TestThePerNodeDNSServesOnTheLinkLocalAddressOnlyOnNodesThatCarryIt, TestTheDNSImageIsOneTheNodeImageSeeds (3 failed against a stub Objects/Apply); cmd/socialweb-clusterprovider TestTheTenantAddOnsApplyTheNodeReaderAndThePerNodeDNSBeforeAnythingElse (applied [] before the wiring); socialweb-computer-k8s test/node_network_test.ts 'the node's user_data adds the pod network units, and the k3s agent never waits on meshd' (agent flags and After), 'the DNS link puts the per-node DNS address on a dummy interface, once', 'the guest, the tenant DaemonSet and the k3s server agree on the DNS address, its label and the cluster CIDR' (12 of 12 in that file failed against the previous module with its new exports stubbed, deno test --no-check)"
+      - "guard that passed first: internal/clusterprovider TestThePodNetworkAddOnsAreBaselineAndNeverIntent (DaemonSet applied by socialweb-addons is baseline; a node running only its pod has Busy 0 and no intent)"
+      - "live 2026-10-07 hat-8, SOCIALWEB_LOCAL=1: internal/clusterprovider TestAZeroNodeMarketClusterAllocatesPodCIDRsAndTakesTheNodeNetworkAddOnsAsBaseline PASS 10.3 s -- market cluster Ready in 7.7 s at zero nodes; the real apiserver admitted every tenantnet object twice; the DaemonSet kept its selector and host network; measured baseline holds kube-system/socialweb-node-dns; Observe reads no intent; zero nodes"
+      - "docs/gitlab: pre_get_sources_script removed from 02-gitlab-runner.md and 04-spa-cluster-runner.md; README 'Why the DNS wait is gone' explains it; 03 rewritten for market clusters; the local-substrate live GitLab test keeps its wait (flannel, one CoreDNS)"
+      - "stated limits: a node that just became Ready starts its DNS pod beside its first workload, unordered (the removed wait covered that window; a startup taint lifted once DNS answers is the fix, open); no live multi-node reading"
+      - "green: deploy/check.sh --fast exit 0; door deno task check exit 0, deno task test 103 passed 0 failed 1 ignored (scratch org root, siblings symlinked)"
+      - "not done: deploy; ACC-MESH's 'DNS resolves on a node that does not run the cluster CoreDNS' on a live market cluster (needs guests through the RFP flow; not hand-provisioned)"
   - id: M5-MESHD
     milestone: M5
     title: Rust iroh pod mesh in rust/socialweb-meshd
     decision: >
       QUIC datagrams over iroh, a tun device, each peer Node's podCIDR routed to its iroh endpoint id;
       k3s --flannel-backend=none with bridge CNI. Lives in this repo (user chose).
-    status: done
+    status: doing
     evidence:
+      - "status moved back to doing on 2026-10-07: the daemon is done (below); the integration half is built and unit-proved but not deployed and not read on a live multi-node market cluster"
+      - "integration commits c8ba259 (k3s server --flannel-backend=none --cluster-cidr=10.42.0.0/16 for MarketDialled only), 2125360 (node-reader RBAC in every tenant via internal/tenantnet, byte-identical to rust/socialweb-meshd/deploy), 58dfd82 (guest units: socialweb-pod-cni, socialweb-pod-masquerade, socialweb-meshd-install, socialweb-meshd + drop-in, meshd.env from node-secrets), 4cbebf1 (door /downloads/<sha256>/<name>, loadPinnedDownloads, meshdPinOf, fulfiller meshd option), 4e72a73 (image ships both builds; live proof); docs commit follows"
+      - "decisions (decided by Claude, user may veto; ARCHITECTURE section 9 'The integration'): podCIDR fed by a oneshot polling the Node through the kubelet's own kubeconfig with k3s kubectl (host-local has no range-from-Node mode), written once; cluster CIDR named explicitly at k3s's default; kube-router network policy kept; masquerade -s 10.42.0.0/16 ! -d 10.42.0.0/16 by iptables -w with a comment; meshd binary kept from a node image when its sha256 matches else downloaded from the door by hash; binaries built on the host by rust/build.sh inside build.sh k8s (or KCP_MESHD_DIST) and passed as a named context, not a Docker builder stage; copied after the /opt/org-root chown; door refuses to start on a sidecar mismatch and offers no meshd (meshd_not_offered) without the pair or public-origin"
+      - "tests watched to fail then pass: internal/clusterstack TestAMarketClusterRunsNoFlannelAndNamesItsPodNetwork (argv lacked the flag), TestOnlyAMarketClusterDropsFlannel, TestK3sAcceptsTheMarketPodNetworkFlags (real k3s v1.36.4 probe); socialweb-computer-k8s test/node_network_test.ts (12/12 red against the previous module): pod-cni polls until the podCIDR exists and writes bridge isGateway ipMasq false mtu 1160 host-local + portmap, fails without a CIDR and refuses a non-IPv4 one; masquerade adds the rule once; meshd-install keeps a matching node-image binary, downloads <door>/downloads/<pin>/socialweb-meshd-<arch> and installs it 0755, refuses tampered bytes leaving nothing, asks for aarch64 on arm64; the module refuses a non-sha256 pin and a non-origin door; k3s_join_test.ts node-secrets writes meshd.env 0600 (1 red); test/pinned_downloads_test.ts + node_market_test.ts (5 red against stubs): exact bytes and sha256 at /downloads/<sha256>/<name>, 404 for wrong hash/name/uppercase/unsidecarred file, start refused on a mismatched or misnamed sidecar, pin needs both arches and an origin, the fulfiller's user_data carries the pin and installs no meshd without one; test/meshd_image_test.go (red against the previous Dockerfile and build.sh)"
+      - "mutation caught (scratch copy): socialweb-meshd.service added to the k3s agent's After -> 'the k3s agent is After socialweb-meshd.service: deadlock'"
+      - "live 2026-10-07 hat-8: TestAZeroNodeMarketClusterAllocatesPodCIDRsAndTakesTheNodeNetworkAddOnsAsBaseline PASS 10.3 s -- k3s ran kube-controller-manager --allocate-node-cidrs=true --cluster-cidr=10.42.0.0/16; a system:node identity was denied list nodes before the node reader and allowed after (RBAC: allowed by ClusterRoleBinding socialweb-meshd-node-reader)"
+      - "measured 2026-10-07 hat-8, k3s v1.36.4+k3s1 --disable-agent: started with the default backend, stopped, restarted on the same datastore with --flannel-backend=none --cluster-cidr=10.42.0.0/16 -> /readyz ok in 2.1 s, 0 'critical configuration' lines, 0 fatal lines, a ConfigMap written before the switch still read back; zero nodes before and after"
+      - "image: build.sh k8s with KCP_MESHD_DIST built socialweb-k8s:m5-meshd (local only, not deployed) at 1,711,865,393 bytes; the meshd layer is 17.2 MB (socialweb-meshd-x86_64 9358064 bytes sha256 7c563cd6..ad64, socialweb-meshd-aarch64 7875400 bytes sha256 47df1302..212a, rebuilt identical to a56b60d's); sha256sum -c OK in the image; the first placement (before the chown) cost a second 17.2 MB copy-up, fixed"
+      - "smoke: the door's loadPinnedDownloads + route over those two real binaries returned 200 with bytes hashing to each pin"
+      - "green: deploy/check.sh --fast exit 0 (gofmt, build, apigen, vet, staticcheck, cargo fmt, cargo test, go test); door deno task check exit 0, deno task test 103 passed 0 failed 1 ignored"
+      - "not done: deploy (provider + door together); ACC-MESH pod A on node 1 reaching pod B on node 2 -- a real two-node run needs two guests born through requester -> RFP -> bid -> accept -> cloud-init on the M1 test bed; no guest was hand-provisioned, so this stops at the unit, zero-node live and image level"
       - "commits c67b7b6 (crate, unit tests, netns proof), ee9285e (kube mode against k3s, node-reader RBAC), 11c9a29 (static musl builds, check.sh hook), a56b60d (15 s idle timeout, relist per watch); ARCHITECTURE section 9 'Pods reach pods on other market nodes through socialweb-meshd'"
       - "scope: the daemon only. Built, NOT deployed, NOT installed by any user_data. The integration (k3s --flannel-backend=none, bridge CNI conflist mtu 1160 on spec.podCIDR, cluster-cidr-only SNAT, node-reader RBAC in every tenant, user_data module installing the sha256-pinned binary, systemd unit) is listed in that section and is not done; ACC-MESH stays todo"
       - "decisions (decided by Claude, user may veto): hand-rolled kube client over iroh's reqwest/rustls/ring instead of kube-rs; tun MTU 1160 = 1200-byte QUIC path - 38 bytes noq overhead - 2; tun address = own podCIDR network address /32 with routes src it; one packet per datagram, no header; lazy dial, 512-packet per-peer queue; connection idle timeout 15 s; blake3 pure-Rust backend for the aarch64 musl build"
