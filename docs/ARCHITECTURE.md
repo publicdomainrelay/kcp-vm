@@ -4148,6 +4148,21 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   `TestRemoveTakesBackTheObjectsThisInstallerWrote` seeds the objects the manifests name and asserts
   none survive; watched to fail with `Remove` made a no-op: "1 clustersecretstores objects survived
   the removal".
+  Removing it took three passes to get right, and each correction came from production rather than
+  from reading. FIRST: not writing is not enough, because an upgraded cluster keeps what an older
+  version wrote. SECOND, and this is the one worth reading twice: the ExternalSecret went and then sat
+  TERMINATING on ESO's own finalizer
+  (`externalsecrets.external-secrets.io/externalsecret-cleanup`), which the controller removes after
+  cleaning up the Secret it owns -- and that controller runs at ONE node, so on a cluster at rest,
+  which is every market cluster that is not working, it is Pending and removes nothing. The object
+  would have sat there indefinitely. The removal now deletes the ExternalSecret FIRST, so a running
+  controller has something to work against, and then releases the finalizer itself, because the target
+  Secret is already gone and waiting for a controller that cannot schedule is not a cleanup.
+  The first version of that test passed against a no-op release, and it was the FAKE that was wrong:
+  it deleted an object with finalizers outright, where an apiserver marks it Terminating and waits.
+  With the fake made to behave like an apiserver,
+  `TestRemoveReleasesAnExternalSecretTheControllerCannot` fails as it should when the release is
+  removed.
   The first version of THAT change stalled production, and the way it read is the lesson. The
   store-less path called the installer function directly, which bypasses `eso.InstallOperator`'s "only
   if the group is not served" guard, so `bash install.sh` ran against the tenant apiserver on every
