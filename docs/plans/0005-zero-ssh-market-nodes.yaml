@@ -430,7 +430,6 @@ items:
       - "not proven: the units on a real guest (systemd ordering, dumbpipe connect-tcp against a provider listen-tcp, k3s agent Ready); needs M3-CLUSTERLINK and M3-JWT; not deployed"
       - 'prod 2026-10-07 fresh guest fc-1379be663dd9-9d1763c5 (bob, image sha256-0437ff0d, door+provider at 3919df6/eada921): claim written 23:15:58.76Z, RFP 23:15:59.79Z, winner 23:16:11.30Z, receipt 23:16:12.32Z, microVM booted 23:16:13.67Z, setup-secrets token exchange at bob /v1/oidc/issue 23:17:49Z, door secrets_served + claim Joining 23:17:52.5Z, node-secrets ''fetched the join secrets'' (OpenBao JWT login over the dumbpipe openbao link) 23:17:56Z, apiserver link + k3s agent, Node registered 23:18:03Z, Ready 23:18:04Z; no ssh session to that guest (its debug key was never used)'
       - commits 3919df6 (CNI under --flannel-backend=none), bde602f (units log to the console), 2501ea9 (node-diagnose)
-...
 
   - id: M3-NODE-LOSS
     milestone: M3
