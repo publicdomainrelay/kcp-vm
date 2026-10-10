@@ -1,7 +1,16 @@
-import { createSshSessionProvider, runComputeContract } from "@publicdomainrelay/requester-xrpc";
+import { createSshSessionProvider } from "@publicdomainrelay/requester-xrpc";
 import type { RequesterPDS, SshSessionProvider } from "@publicdomainrelay/requester-abc";
+import { type ComputeRequestHandle, releaseCompute, requestCompute } from "@publicdomainrelay/compute-request-xrpc";
+import {
+  type ComputeRequestHandlers,
+  CONTRACT_STATE_VERSION,
+  type ContractState,
+  type FlowDecision,
+  NO_CONTRACT_OUTCOMES,
+  parseContractState,
+  releaseTargetOf,
+} from "@publicdomainrelay/compute-request-abc";
 import { createDefaultATProtoEventStreamsClient } from "@publicdomainrelay/atproto-event-streams-client";
-import { COMPUTE_EVENTS_VM_DELETE_NSID, EVENT_NSID, SUBMIT_EVENT_LXM, SUBMIT_EVENT_NSID } from "@publicdomainrelay/market-lexicons";
 import { type NodeClaim, nodeClaimKey, type NodeClaimStore } from "@publicdomainrelay/socialweb-computer-k8s-abc";
 import { createK3sJoinModule } from "@publicdomainrelay/cloud-init-plugin-k3s-join";
 import { encodeNodeJoinDocument, K3S_JOIN_PATH, pinnedJoinToken } from "@publicdomainrelay/socialweb-computer-k8s-common";
@@ -24,8 +33,8 @@ import {
 export { BoundedTail, redactTransportLine, runNodeSession } from "./guest.ts";
 export type { GuestConnector, NodeSessionOutcome, NodeSessionPlan, NodeSessionRunner } from "./guest.ts";
 
-type ContractRunner = typeof runComputeContract;
-type ContractResult = Awaited<ReturnType<ContractRunner>>;
+type ComputeRequester = typeof requestCompute;
+type ComputeReleaser = typeof releaseCompute;
 
 export interface MarketNodeFulfillerOptions {
   store: NodeClaimStore;
@@ -38,17 +47,15 @@ export interface MarketNodeFulfillerOptions {
   policy?: { name: string; args: Record<string, unknown> };
   extraBidderDids?: string[];
   pollIntervalMs?: number;
-  runContract?: ContractRunner;
+  requestCompute?: ComputeRequester;
+  releaseCompute?: ComputeReleaser;
   nodeSession?: NodeSessionRunner;
   keypairs?: Pick<SshSessionProvider, "generateKeypair">;
   pollReady?: (privateKeyPath: string, ticket: string, timeoutMs: number, signal: AbortSignal) => Promise<boolean>;
-  /** The dumbpipe binary the iroh transport runs, from an operator's PATH or the one ensureDumbpipe fetched. */
   dumbpipePath?: string;
-  /** How a guest's transport address is opened; defaults to one dumbpipe per session. */
   connect?: GuestConnector;
   eventStreams?: () => { close(): void };
   readText?: (path: string) => Promise<string>;
-  reap?: (pds: RequesterPDS, contract: NodeClaimContract) => Promise<boolean>;
   log?: Log;
 }
 
@@ -61,73 +68,92 @@ export interface MarketNodeFulfiller {
 
 const LIVE_PHASES: ReadonlySet<NodeClaimPhase> = new Set(["Bidding", "Provisioning", "Joining", "Running"]);
 
+const RELEASE_REASON_SESSION_ENDED = "session_ended";
+const RELEASE_REASON_DOOR_RESTARTED = "requester_restarted";
+
 async function sha256Hex(text: string): Promise<string> {
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)));
   return Array.from(digest, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-export function hasReceipt(contract: NodeClaimContract | undefined): contract is Required<Pick<NodeClaimContract, "receiptUri" | "receiptCid" | "submitEventRef">> & NodeClaimContract {
-  return !!contract?.receiptUri && !!contract.receiptCid && !!contract.submitEventRef;
+function definedOnly<T extends object>(value: T): T {
+  return Object.fromEntries(Object.entries(value).filter(([, v]) => v !== undefined)) as T;
 }
 
-export async function reapContract(pds: RequesterPDS, contract: NodeClaimContract): Promise<boolean> {
-  if (!hasReceipt(contract)) return false;
-  const nowIso = new Date().toISOString();
-  const del = await pds.createSignedRepoRecord(
-    COMPUTE_EVENTS_VM_DELETE_NSID,
-    { $type: COMPUTE_EVENTS_VM_DELETE_NSID, reason: "requester_restarted", createdAt: nowIso },
-    pds.attestationKp,
-    pds.did,
-  );
-  const eventRecord = {
-    $type: EVENT_NSID,
-    receipt: { $type: "com.atproto.repo.strongRef", uri: contract.receiptUri, cid: contract.receiptCid },
-    payload: { $type: "com.atproto.repo.strongRef", uri: del.uri, cid: del.cid },
-    createdAt: nowIso,
-  };
-  const event = await pds.createSignedRepoRecord(EVENT_NSID, eventRecord, pds.attestationKp, pds.did);
-  const target = await pds.resolveBidderEndpoint(contract.submitEventRef);
-  if (!target) return false;
-  const res = await pds.callBidder(target.targetUrl, SUBMIT_EVENT_NSID, SUBMIT_EVENT_LXM, target.audDid, {
-    uri: event.uri,
-    cid: event.cid,
-    record: eventRecord,
+export function claimContractOf(state: ContractState): NodeClaimContract {
+  return definedOnly({
+    ...state,
+    vmUri: state.payload?.uri,
+    rfpUri: state.rfp?.uri,
+    acceptUri: state.accept?.uri,
+    receiptUri: state.receipt?.uri,
+    receiptCid: state.receipt?.cid,
   });
-  return res.ok;
 }
 
-const CONTRACT_EVENTS: Record<string, "vmUri" | "rfpUri" | "acceptUri"> = {
-  vm_record_created: "vmUri",
-  rfp_created: "rfpUri",
-  accept_created: "acceptUri",
-};
+const LEGACY_FIELDS = ["vmUri", "rfpUri", "acceptUri", "receiptUri", "receiptCid"] as const;
 
-export function contractFromEvent(event: string, meta: Record<string, unknown>): Partial<NodeClaimContract> {
-  const out: Partial<NodeClaimContract> = {};
-  const field = CONTRACT_EVENTS[event];
-  if (field && typeof meta.uri === "string") out[field] = meta.uri;
-  for (const key of ["receiptUri", "receiptCid", "submitEventRef"] as const) {
-    if (typeof meta[key] === "string" && meta[key]) out[key] = meta[key] as string;
+function legacyContractState(claim: NodeClaim, contract: NodeClaimContract): ContractState {
+  return {
+    version: CONTRACT_STATE_VERSION,
+    phase: contract.receiptUri && contract.receiptCid ? "receipt" : "requested",
+    vmName: claim.spec.nodeName,
+    requesterDid: claim.spec.ownerDid,
+    marketDid: claim.spec.ownerDid,
+    ...(contract.receiptUri && contract.receiptCid ? { receipt: { uri: contract.receiptUri, cid: contract.receiptCid } } : {}),
+    ...(contract.submitEventRef ? { submitEventRef: contract.submitEventRef } : {}),
+    timestamps: {},
+  };
+}
+
+export function contractStateOfClaim(claim: NodeClaim): ContractState | null {
+  const contract = claim.status.contract;
+  if (!contract || Object.keys(contract).length === 0) return null;
+  if (contract.version !== undefined) {
+    const saved: Record<string, unknown> = { ...contract };
+    for (const key of LEGACY_FIELDS) delete saved[key];
+    try {
+      return parseContractState(saved);
+    } catch {
+      return legacyContractState(claim, contract);
+    }
   }
-  return out;
+  return legacyContractState(claim, contract);
 }
 
-export function explainEnd(result: Pick<ContractResult, "event" | "error" | "bids" | "sshReady"> | null, session: NodeSessionOutcome | null): string {
+export function needsRelease(state: ContractState | null): state is ContractState {
+  return state !== null && state.phase !== "released" && releaseTargetOf(state) !== null;
+}
+
+function confirmedReleased(state: ContractState | null): boolean {
+  return state?.phase === "released" && state.release?.ok === true;
+}
+
+export function explainEnd(
+  state: ContractState | null,
+  session: NodeSessionOutcome | null,
+  sshReady?: boolean,
+): string {
   if (session) return `${session.reason}${session.tail ? `: ${session.tail.trim().split("\n").slice(-5).join(" | ")}` : ""}`;
-  if (!result) return "the contract did not run";
-  if (result.event === "no_bids") return "no bids arrived for this node";
-  if (result.event === "policy_rejected") return `the winning bid was rejected by policy${result.error ? `: ${result.error}` : ""}`;
-  if (result.sshReady === false) return "a VM was provisioned but its SSH never came up";
-  return `provisioning did not complete (${result.event ?? "unknown"})${result.error ? `: ${result.error}` : ""}`;
+  if (!state) return "the contract did not run";
+  if (state.outcome === "no_bids") return "no bids arrived for this node";
+  if (state.outcome === "policy_rejected") return `the winning bid was rejected by policy${state.error ? `: ${state.error}` : ""}`;
+  if (sshReady === false || (state.receiptOk && !state.vmAddress)) return "a VM was provisioned but its SSH never came up";
+  return `provisioning did not complete (${state.outcome ?? state.phase})${state.error ? `: ${state.error}` : ""}`;
+}
+
+interface ReleaseOutcome {
+  state: ContractState | null;
+  attempted: boolean;
 }
 
 export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): MarketNodeFulfiller {
   const log = opts.log ?? (() => {});
-  const runContract = opts.runContract ?? runComputeContract;
+  const request = opts.requestCompute ?? requestCompute;
+  const release = opts.releaseCompute ?? releaseCompute;
   const nodeSession = opts.nodeSession ?? runNodeSession;
   const keypairs = opts.keypairs ?? createSshSessionProvider(undefined);
   const readText = opts.readText ?? ((p: string) => Deno.readTextFile(p));
-  const reap = opts.reap ?? reapContract;
   const apiserverHost = opts.apiserverHost ?? "127.0.0.1";
   const vmReadyTimeoutSec = opts.vmReadyTimeoutSec ?? 600;
   const eventStreams = opts.eventStreams ?? (() =>
@@ -143,6 +169,30 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
   let timer: ReturnType<typeof setInterval> | undefined;
   let passing: Promise<void> | null = null;
 
+  function claimLogger(key: string) {
+    return {
+      debug: () => {},
+      info: (event: string, meta?: Record<string, unknown>) => log(event, { claim: key, ...meta }),
+      warn: (event: string, meta?: Record<string, unknown>) => log(event, { claim: key, ...meta }),
+      error: (event: string, meta?: Record<string, unknown>) => log(event, { claim: key, ...meta }),
+    };
+  }
+
+  async function releaseFromClaim(claim: NodeClaim, reason: string): Promise<ReleaseOutcome> {
+    const state = contractStateOfClaim(claim);
+    if (!needsRelease(state)) return { state, attempted: false };
+    const pds = await opts.requesterFor(claim.spec.ownerDid);
+    const next = await release(pds, state, { logger: claimLogger(nodeClaimKey(claim)), reason });
+    log("node_claim_contract_released", {
+      claim: nodeClaimKey(claim),
+      reason,
+      receiptUri: state.receipt?.uri,
+      ok: next.release?.ok ?? false,
+      error: next.error ?? null,
+    });
+    return { state: next, attempted: true };
+  }
+
   function fulfil(claim: NodeClaim): void {
     const key = nodeClaimKey(claim);
     const abort = new AbortController();
@@ -156,11 +206,16 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
       );
       return writes;
     };
+    const record = (state: ContractState, patch: Partial<NodeClaimStatus> = {}) =>
+      write({ ...patch, contract: claimContractOf(state) });
+    const stopWhenReleased = (): FlowDecision => abort.signal.aborted ? "return" : "continue";
 
     const done = (async () => {
       let streams: { close(): void } | null = null;
       let session: NodeSessionOutcome | null = null;
-      let result: ContractResult | null = null;
+      let state: ContractState | null = null;
+      let handle: ComputeRequestHandle | null = null;
+      let sshReady: boolean | undefined;
       try {
         await write({ phase: "Bidding", message: "requesting a node from the compute market" });
         const spec = claim.spec;
@@ -177,47 +232,31 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
           nodePassword: nodePassword.trim(),
         });
         const pds = await opts.requesterFor(spec.ownerDid);
+        const keypair = await keypairs.generateKeypair(spec.nodeName);
         streams = eventStreams();
 
-        const logger = {
-          debug: () => {},
-          info: (event: string, meta?: Record<string, unknown>) => {
-            const contract = contractFromEvent(event, meta ?? {});
-            if (Object.keys(contract).length > 0) {
-              void write({ contract, ...(event === "accept_created" ? { phase: "Provisioning" as const, message: "a bid was accepted; the VM is booting" } : {}) });
-            }
-            log(event, { claim: key, ...meta });
+        const handlers: ComputeRequestHandlers = {
+          onRfpSubmitted: async (_event, s) => {
+            await record(s);
+            return stopWhenReleased();
           },
-          warn: (event: string, meta?: Record<string, unknown>) => log(event, { claim: key, ...meta }),
-          error: (event: string, meta?: Record<string, unknown>) => log(event, { claim: key, ...meta }),
-        };
-
-        const provider: SshSessionProvider = {
-          generateKeypair: (vmName) => keypairs.generateKeypair(vmName),
-          pollReady: (privateKeyPath, ticket, timeoutMs) => ready(privateKeyPath, ticket, timeoutMs, abort.signal),
-          runSession: async (privateKeyPath, ticket, program) => {
-            session = await nodeSession({
-              privateKeyPath,
-              ticket,
-              connect,
-              program,
-              joinDocument,
-              forwardAddress: spec.advertiseAddress,
-              apiserverHost,
-              apiserverPort: spec.apiserverPort,
-              signal: abort.signal,
-              onJoining: () => void write({ phase: "Joining", fqdn: ticket, message: "the node is joining its cluster" }),
-              onForwarded: () => void write({ phase: "Running", message: "the node's agent reached its apiserver" }),
-              log,
-            });
-            return session.code;
+          onAccepted: async (_event, s): Promise<FlowDecision> => {
+            await record(s, { phase: "Provisioning", message: "a bid was accepted; the VM is booting" });
+            return "continue";
+          },
+          onReceipt: async (_event, s) => {
+            await record(s);
+            return stopWhenReleased();
+          },
+          onNetwork: async (_event, s) => {
+            await record(s);
+            return stopWhenReleased();
           },
         };
 
-        result = await runContract(pds, {
+        handle = await request(pds, {
           vmName: spec.nodeName,
-          execProgram: K3S_JOIN_PATH,
-          sshProvider: provider,
+          sshPublicKey: keypair.publicKey,
           userData: { modules: ["k3s", createK3sJoinModule()] },
           denyBidderDids: spec.denyBidderDids ?? [],
           extraBidderDids: opts.extraBidderDids ?? [],
@@ -227,8 +266,32 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
           relayUrls: opts.relayUrls,
           eventStreams: streams as never,
           ...(opts.policy ? { policy: opts.policy } : {}),
-          logger,
-        } as Parameters<ContractRunner>[1]);
+          logger: claimLogger(key),
+        } as Parameters<ComputeRequester>[1], handlers);
+        const settled = handle.state;
+        state = settled;
+        await record(settled);
+
+        const ticket = settled.vmAddress;
+        if (settled.receiptOk && ticket && !abort.signal.aborted) {
+          sshReady = await ready(keypair.privateKeyPath, ticket, vmReadyTimeoutSec * 1000, abort.signal);
+          if (sshReady && !abort.signal.aborted) {
+            session = await nodeSession({
+              privateKeyPath: keypair.privateKeyPath,
+              ticket,
+              connect,
+              program: K3S_JOIN_PATH,
+              joinDocument,
+              forwardAddress: spec.advertiseAddress,
+              apiserverHost,
+              apiserverPort: spec.apiserverPort,
+              signal: abort.signal,
+              onJoining: () => void write({ phase: "Joining", fqdn: ticket, message: "the node is joining its cluster" }),
+              onForwarded: () => void write({ phase: "Running", message: "the node's agent reached its apiserver" }),
+              log,
+            });
+          }
+        }
       } catch (err) {
         log("node_claim_contract_failed", { claim: key, error: String(err) });
         session ??= { code: 1, reason: `the contract failed: ${String(err)}`, tail: "" };
@@ -237,19 +300,42 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
       }
 
       const released = abort.signal.aborted;
-      const cleared: NodeClaimContract = { receiptUri: undefined, receiptCid: undefined, submitEventRef: undefined };
+      await writes;
+      let recorded: NodeClaim | null = null;
+      let outcome: ReleaseOutcome | null = null;
+      try {
+        recorded = await opts.store.get(claim);
+        if (recorded) outcome = await releaseFromClaim(recorded, RELEASE_REASON_SESSION_ENDED);
+      } catch (err) {
+        log("node_claim_release_deferred", { claim: key, error: String(err) });
+      }
+      await handle?.dispose().catch(() => undefined);
+      running.delete(key);
+      if (!outcome) {
+        log("node_claim_ended", { claim: key, released, outcome: state?.outcome ?? null, deferred: true });
+        return;
+      }
+
+      const finalState = outcome.state ?? state;
+      const contract = finalState ? claimContractOf(finalState) : {};
+      const gone = !outcome.attempted || confirmedReleased(outcome.state);
       await write(
         released
-          ? { phase: "Released", message: "the node was released and its VM deleted", contract: result ? cleared : {} }
-          : { phase: "Failed", message: explainEnd(result, session), contract: result ? cleared : {} },
+          ? {
+            phase: gone ? "Released" : "Failed",
+            message: gone
+              ? "the node was released and its VM deleted"
+              : "the node was released but its VM could not be confirmed deleted",
+            contract,
+          }
+          : { phase: "Failed", message: explainEnd(state, session, sshReady), contract },
       );
-      running.delete(key);
       if (released) {
         await opts.store.removeFinalizer(claim).catch((err) =>
           log("node_claim_finalizer_release_failed", { claim: key, error: String(err) })
         );
       }
-      log("node_claim_ended", { claim: key, released, event: result?.event ?? null });
+      log("node_claim_ended", { claim: key, released, outcome: state?.outcome ?? null, vmReleased: outcome.attempted });
     })();
 
     running.set(key, { abort, done });
@@ -263,25 +349,19 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
       return;
     }
     if (!claim.finalizers.includes(FINALIZER_NODE_CLAIM)) return;
-    if (hasReceipt(claim.status.contract)) {
-      const pds = await opts.requesterFor(claim.spec.ownerDid);
-      const ok = await reap(pds, claim.status.contract!);
-      log("node_claim_reaped", { claim: key, ok });
-    }
+    const outcome = await releaseFromClaim(claim, RELEASE_REASON_DOOR_RESTARTED);
+    if (outcome.attempted) log("node_claim_reaped", { claim: key, ok: confirmedReleased(outcome.state) });
     await opts.store.removeFinalizer(claim);
   }
 
   async function adoptNever(claim: NodeClaim): Promise<void> {
     const key = nodeClaimKey(claim);
-    let reaped = false;
-    if (hasReceipt(claim.status.contract)) {
-      const pds = await opts.requesterFor(claim.spec.ownerDid);
-      reaped = await reap(pds, claim.status.contract!);
-    }
+    const outcome = await releaseFromClaim(claim, RELEASE_REASON_DOOR_RESTARTED);
+    const reaped = outcome.attempted && confirmedReleased(outcome.state);
     await opts.store.replaceStatus(claim, {
       ...claim.status,
       phase: reaped ? "Released" : "Failed",
-      contract: { ...claim.status.contract, receiptUri: undefined, receiptCid: undefined, submitEventRef: undefined },
+      contract: outcome.state ? { ...claim.status.contract, ...claimContractOf(outcome.state) } : claim.status.contract,
       message: reaped
         ? "the door restarted and released this node's VM; a new node will be requested"
         : "the door restarted while this node was live; its VM could not be confirmed released",

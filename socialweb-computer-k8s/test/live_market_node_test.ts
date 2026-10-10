@@ -41,7 +41,8 @@ import { createFirecrackerMicrovm } from "@publicdomainrelay/microvm-firecracker
 import { createDockerBackend } from "@publicdomainrelay/container-backend-docker";
 import type { ComputeAtproto } from "@publicdomainrelay/compute-provider-abc";
 import { createRelayFactory } from "@publicdomainrelay/hono-factory-did-key-ingress-proxy-xrpc";
-import { createRequesterPDS, runComputeContract } from "@publicdomainrelay/requester-xrpc";
+import { createRequesterPDS } from "@publicdomainrelay/requester-xrpc";
+import { requestCompute } from "@publicdomainrelay/compute-request-xrpc";
 import { createMarketNodeFulfiller } from "@publicdomainrelay/socialweb-computer-k8s-node-market";
 import type { NodeClaim, NodeClaimStore } from "@publicdomainrelay/socialweb-computer-k8s-abc";
 import { FINALIZER_NODE_CLAIM, type NodeClaimStatus } from "@publicdomainrelay/socialweb-computer-k8s-api";
@@ -452,6 +453,11 @@ class MemoryNodeClaimStore implements NodeClaimStore {
     return Promise.resolve([...this.claims.values()].map((c) => structuredClone(c)));
   }
 
+  get(claim: Pick<NodeClaim, "workspace" | "name">): Promise<NodeClaim | null> {
+    const current = this.claims.get(claim.name);
+    return Promise.resolve(current ? structuredClone(current) : null);
+  }
+
   replaceStatus(claim: NodeClaim, status: NodeClaimStatus): Promise<void> {
     const current = this.claims.get(claim.name);
     if (current) current.status = structuredClone(status);
@@ -758,14 +764,14 @@ Deno.test({
     // or a vouch graph, and it points the guest at the dispatcher through an
     // /etc/hosts alias, because the host's loopback is not something a guest
     // shares. A NodeClaim carries neither, so both are added here, around the
-    // same runComputeContract the fulfiller would call: the RFP flow, cloud-init
+    // same requestCompute the fulfiller would call: the RFP flow, cloud-init
     // composition and the guest are untouched.
-    const contractRunner: typeof runComputeContract = (pds, opts) =>
-      runComputeContract(pds, {
+    const computeRequester: typeof requestCompute = (pds, opts, handlers) =>
+      requestCompute(pds, {
         ...(opts ?? {}),
         extraBidderDids: [atproto.did],
         guestHostAliases: [`${relayHostIp} relay.localhost`],
-      });
+      }, handlers);
 
     const fulfiller = createMarketNodeFulfiller({
       store,
@@ -774,10 +780,10 @@ Deno.test({
       ingressProxyHost,
       relayUrls: [],
       // The wait for the guest to register its tunnel. It also bounds teardown:
-      // runComputeContract's FQDN wait is not abort-aware, so an abort during it
+      // requestCompute's network wait is not abort-aware, so an abort during it
       // only lands when this elapses.
       vmReadyTimeoutSec: 300,
-      runContract: contractRunner,
+      requestCompute: computeRequester,
       log: (event, data) => {
         fulfilLog.push({ at: Date.now(), event });
         console.log(JSON.stringify({ at: new Date().toISOString(), src: "node-fulfiller", event, ...data }));
@@ -916,7 +922,9 @@ Deno.test({
     const finalClaim = store.claims.get(NODE_NAME)!;
     assertEquals(finalClaim.status.phase, "Released");
     assertEquals(finalClaim.finalizers, []);
-    assertEquals(store.status()?.contract?.receiptUri, undefined);
+    assertEquals(store.status()?.contract?.phase, "released");
+    assertEquals(store.status()?.contract?.release?.ok, true);
+    assert(store.status()?.contract?.receipt?.uri, "the released claim keeps the receipt it released");
 
     const deleteEvents = fulfilLog.slice(beforeDelete).map((e) => e.event);
     assert(

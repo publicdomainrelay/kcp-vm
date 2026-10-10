@@ -209,6 +209,14 @@ export function createKcpNodeClaimStore(opts: KcpNodeClaimStoreOptions): NodeCla
       }
       return claims;
     },
+    async get(claim) {
+      try {
+        return toNodeClaim(await request(await itemUrl(claim)), claim.workspace);
+      } catch (err) {
+        if (err instanceof KcpRequestError && err.status === 404) return null;
+        throw err;
+      }
+    },
     async replaceStatus(claim, status) {
       assertNodeClaimStatus(status);
       await jsonPatch(await itemUrl(claim, "/status"), [{ op: "add", path: "/status", value: status }]);

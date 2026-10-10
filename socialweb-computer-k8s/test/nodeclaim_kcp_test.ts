@@ -221,6 +221,35 @@ Deno.test("a walk past its ttl happens again, so a new account is not invisible"
   assertEquals(walkCalls(kcp.seen), 4);
 });
 
+Deno.test("one claim is read back by name, a gone claim is null, and a rate-limited read is an error", async () => {
+  const contract = {
+    version: 1,
+    phase: "receipt" as const,
+    vmName: "ci-node1",
+    requesterDid: "did:plc:o",
+    marketDid: "did:plc:o",
+    receipt: { uri: "at://r", cid: "rc" },
+    submitEventRef: "https://b",
+    timestamps: {},
+  };
+  const kcp = fakeKcp(() => new Response(JSON.stringify({ ...raw("7"), status: { phase: "Running", contract } })));
+  const store = createKcpNodeClaimStore({ credentials: { server: KCP }, fetch: kcp.fetch });
+  const read = await store.get(claim());
+  assertEquals(kcp.seen[0].method, "GET");
+  assertEquals(kcp.seen[0].url, `${KCP}/clusters/abc123/apis/socialweb.computer/v1alpha1/nodeclaims/ci-node1`);
+  assertEquals(read?.status.contract, contract);
+  assertEquals(read?.resourceVersion, "7");
+
+  const gone = fakeKcp(() => new Response("not found", { status: 404 }));
+  assertEquals(await createKcpNodeClaimStore({ credentials: { server: KCP }, fetch: gone.fetch }).get(claim()), null);
+
+  const limited = fakeKcp(() => new Response("slow down", { status: 429, headers: { "retry-after": "30" } }));
+  const held = createKcpNodeClaimStore({ credentials: { server: KCP }, fetch: limited.fetch });
+  await assertRejects(() => held.get(claim()), Error, "429");
+  await assertRejects(() => held.get(claim()), Error, "held back");
+  assertEquals(limited.seen.length, 1);
+});
+
 Deno.test("a 429 holds reads back for the retry-after it named and writes still go through", async () => {
   const kcp = fakeKcp((s) =>
     s.method === "GET"
