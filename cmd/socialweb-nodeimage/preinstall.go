@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -138,16 +139,12 @@ func parseFileMode(spelled string) (os.FileMode, error) {
 
 func chrootPreinstall(cfg Config, preinstallPath string, p Preinstall) error {
 	stage := cfg.StageDir
-	mounts := []struct{ target, kind, device string }{
-		{target: filepath.Join(stage, "proc"), kind: "proc", device: "proc"},
-		{target: filepath.Join(stage, "sys"), kind: "sysfs", device: "sys"},
-		{target: filepath.Join(stage, "dev"), kind: "rbind", device: "/dev"},
+	mounted, err := mountChrootDevices(stage)
+	if err != nil {
+		unmountAll(mounted)
+		return err
 	}
-	for _, m := range mounts {
-		if err := os.MkdirAll(m.target, 0o755); err != nil {
-			return fmt.Errorf("socialweb-nodeimage: creating %s to mount over: %w", m.target, err)
-		}
-	}
+	defer unmountAll(mounted)
 	for _, dir := range []struct {
 		path string
 		mode os.FileMode
@@ -169,25 +166,6 @@ func chrootPreinstall(cfg Config, preinstallPath string, p Preinstall) error {
 		}
 		if err := os.Chmod(full, dir.mode); err != nil {
 			return fmt.Errorf("socialweb-nodeimage: setting %s to %v: %w", full, dir.mode, err)
-		}
-	}
-	defer func() {
-		for i := len(mounts) - 1; i >= 0; i-- {
-			_ = run("umount", "-l", mounts[i].target)
-		}
-	}()
-	for _, m := range mounts {
-		args := []string{"-t", m.kind}
-		if m.kind == "rbind" {
-			args = []string{"--rbind"}
-		}
-		if err := run("mount", append(args, m.device, m.target)...); err != nil {
-			return fmt.Errorf("socialweb-nodeimage: mounting %s over %s for the preinstall from %s: %w "+
-				"-- installing packages into a staged root filesystem needs that filesystem's own dpkg "+
-				"and apt to run with /proc, /sys and /dev in place, and a build without the privilege "+
-				"to mount them cannot bake anything: the image would then be one whose first boot "+
-				"reaches the network for every package it needs. Run this build where it can mount, "+
-				"which is what the container build does", m.device, m.target, preinstallPath, err)
 		}
 	}
 	resolv := filepath.Join(stage, "etc/resolv.conf")
@@ -246,4 +224,77 @@ func chrootPreinstall(cfg Config, preinstallPath string, p Preinstall) error {
 
 func shellQuote(word string) string {
 	return "'" + strings.ReplaceAll(word, "'", `'\''`) + "'"
+}
+
+var chrootDeviceFiles = []string{"null", "zero", "random", "urandom", "tty"}
+
+func mountChrootDevices(stage string) ([]string, error) {
+	dev := filepath.Join(stage, "dev")
+	if err := os.MkdirAll(dev, 0o755); err != nil {
+		return nil, fmt.Errorf("socialweb-nodeimage: creating %s: %w", dev, err)
+	}
+	mounted := make([]string, 0, len(chrootDeviceFiles)+1)
+	pts := filepath.Join(dev, "pts")
+	if err := os.MkdirAll(pts, 0o755); err != nil {
+		return mounted, fmt.Errorf("socialweb-nodeimage: creating %s: %w", pts, err)
+	}
+	if err := run("mount", "-t", "devpts", "devpts", pts, "-o", "gid=5,mode=620,ptmxmode=000"); err != nil {
+		return mounted, fmt.Errorf("socialweb-nodeimage: mounting a fresh devpts at %s for the "+
+			"preinstall: %w -- dpkg writes its log through a pty, and a chroot with no pts is a "+
+			"chroot where every install reports that it cannot write its log", pts, err)
+	}
+	mounted = append(mounted, pts)
+	for _, name := range chrootDeviceFiles {
+		target := filepath.Join(dev, name)
+		if err := os.WriteFile(target, nil, 0o666); err != nil {
+			return mounted, fmt.Errorf("socialweb-nodeimage: creating %s to bind /dev/%s over: %w",
+				target, name, err)
+		}
+		if err := run("mount", "--bind", filepath.Join("/dev", name), target); err != nil {
+			return mounted, fmt.Errorf("socialweb-nodeimage: binding /dev/%s over %s for the "+
+				"preinstall: %w -- installing packages into a staged root filesystem needs the "+
+				"device nodes its maintainer scripts read, and a build without the privilege to "+
+				"bind them cannot bake anything. Run this build where it can mount, which is what "+
+				"the container build does", name, target, err)
+		}
+		mounted = append(mounted, target)
+	}
+	return mounted, nil
+}
+
+func unmountAll(mounted []string) {
+	for i := len(mounted) - 1; i >= 0; i-- {
+		_ = run("umount", "-l", mounted[i])
+	}
+}
+
+func unmountUnder(dir string) error {
+	raw, err := os.ReadFile("/proc/self/mountinfo")
+	if err != nil {
+		return fmt.Errorf("socialweb-nodeimage: reading /proc/self/mountinfo to find anything "+
+			"mounted under %s: %w -- a staged tree is cleared with a recursive remove, and a "+
+			"recursive remove that walks a live bind mount deletes the host's files through it: "+
+			"that is how /dev was emptied once already, so this refuses rather than clearing a "+
+			"directory it cannot prove is unmounted", dir, err)
+	}
+	prefix := filepath.Clean(dir) + string(filepath.Separator)
+	var points []string
+	for _, line := range strings.Split(string(raw), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 5 {
+			continue
+		}
+		point := fields[4]
+		if strings.HasPrefix(filepath.Clean(point)+string(filepath.Separator), prefix) {
+			points = append(points, point)
+		}
+	}
+	sort.Slice(points, func(i, j int) bool { return len(points[i]) > len(points[j]) })
+	for _, point := range points {
+		if err := run("umount", "-l", point); err != nil {
+			return fmt.Errorf("socialweb-nodeimage: unmounting %s before clearing %s: %w -- "+
+				"nothing under a staged tree may be mounted when it is removed", point, dir, err)
+		}
+	}
+	return nil
 }

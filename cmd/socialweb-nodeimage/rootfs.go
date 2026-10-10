@@ -60,6 +60,9 @@ func renderGuestDocument(cfg Config) ([]byte, error) {
 }
 
 func buildRootfs(cfg Config, dst string, tars []imageTar) error {
+	if err := unmountUnder(cfg.StageDir); err != nil {
+		return err
+	}
 	if err := os.RemoveAll(cfg.StageDir); err != nil {
 		return fmt.Errorf("socialweb-nodeimage: clearing the staging directory %s: %w -- the stage "+
 			"is rebuilt from the base image every time, because a stage that keeps what the last "+
