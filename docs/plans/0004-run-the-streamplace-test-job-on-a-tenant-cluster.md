@@ -143,6 +143,14 @@ included `.ci/dockerfile-hash.yaml`.
   `test` job verbatim and nothing else, and names the registry this project publishes its builder
   image to. The job's own keys -- image, script, timeout, artifacts -- are byte-for-byte what the
   branch this is measured against has.
+- **D8 - the runner is not pinned to one job, and the harness stopped dropping the scale knobs.**
+  `concurrent = 1` was taken from `docs/gitlab/README.md`, which says to set it until the cluster
+  can place more than one job. That limit is gone -- the scale decision carries a target total --
+  so a run with the old value has a single slot that a job from any earlier, cancelled pipeline can
+  take, and the reading then comes from a pipeline nobody was watching. Measured: a cancelled run's
+  job held the slot and the current pipeline sat `pending`. The harness also passed
+  `SCALE_MAX_NODES` and `SCALE_PODS_PER_NODE` through but not `NODE_DISK_MIB`, so the disk knob
+  this plan added was dropped by the code written to exercise it.
 - **D7 - pnpm is provided by the runner, not by the job.** B8 is a property of the image, and the
   image is named by a Dockerfile hash nothing published matches. Editing the job to add a setup
   step would change the thing being measured, so the step goes where the project already puts it
