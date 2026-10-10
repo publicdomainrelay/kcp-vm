@@ -81,7 +81,7 @@ spec:
         request.resource.resource == 'serviceaccounts'
           ? request.userInfo.username == 'system:serviceaccount:users:gwmint'
           : (request.userInfo.username == 'system:admin' && 'system:masters' in request.userInfo.groups)
-            || request.userInfo.username == 'system:serviceaccount:default:external-secrets'
+            || request.userInfo.username == 'system:serviceaccount:__SOCIALWEB_ESO_NAMESPACE__:external-secrets'
       message: "only the tenant mint may request ServiceAccount tokens, and only the provisioning cluster-admin or the External Secrets controller that materialises its vault-backed Secrets may write Secrets in this namespace"
     - expression: request.namespace == 'users'
       message: "ServiceAccount tokens may only be requested in users"

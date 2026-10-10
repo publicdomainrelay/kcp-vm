@@ -27,7 +27,7 @@ import (
 const FieldManager = "socialweb-clusterprovider"
 
 const (
-	DefaultNamespace = "default"
+	DefaultControllerNamespace = "default"
 
 	ClientSecretName = "openbao-eso-client-cert"
 

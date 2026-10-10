@@ -515,7 +515,10 @@ func TestTheGrantIsScopedByResourceNames(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read deploy/tenant-grant.yaml: %v", err)
 	}
-	rendered, err := kcpclient.RenderTenantGrant(string(raw), grantExampleDID)
+	rendered, err := kcpclient.RenderTenantGrant(string(raw), kcpclient.GrantScope{
+		OwnerDID:     grantExampleDID,
+		ESONamespace: "external-secrets",
+	})
 	if err != nil {
 		t.Fatalf("the deployed grant is not renderable: %v", err)
 	}

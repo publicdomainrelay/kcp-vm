@@ -125,7 +125,7 @@ func TestTheInstallerIsHandedAKubeconfigForTheTenantCluster(t *testing.T) {
 			KeyData:  []byte("key-pem"),
 		},
 	}
-	if err := installExternalSecrets(context.Background(), creds, dir); err != nil {
+	if err := installExternalSecrets(context.Background(), creds, dir, "external-secrets"); err != nil {
 		t.Fatalf("installExternalSecrets: %v", err)
 	}
 	read, err := clientcmd.BuildConfigFromFlags("", seen)
@@ -149,7 +149,7 @@ func TestAFailedInstallerIsReportedWithItsOwnOutput(t *testing.T) {
 		t.Fatalf("writing the installer: %v", err)
 	}
 	creds := &rest.Config{Host: "https://10.100.0.1:6443", BearerToken: "a-token"}
-	err := installExternalSecrets(context.Background(), creds, dir)
+	err := installExternalSecrets(context.Background(), creds, dir, "external-secrets")
 	if err == nil {
 		t.Fatal("an installer that exited 7 was reported as a success, so the pass would apply the " +
 			"store into a cluster with no CRDs")
@@ -195,7 +195,7 @@ func TestTheInstallDoesNotWaitForTheOperatorToRoll(t *testing.T) {
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("ESO_BUNDLE", bundle)
 	creds := &rest.Config{Host: "https://10.100.0.1:6443", BearerToken: "a-token"}
-	if err := installExternalSecrets(context.Background(), creds, "../../deploy/eso"); err != nil {
+	if err := installExternalSecrets(context.Background(), creds, "../../deploy/eso", "external-secrets"); err != nil {
 		t.Fatalf("installExternalSecrets: %v", err)
 	}
 	recorded, err := os.ReadFile(args)

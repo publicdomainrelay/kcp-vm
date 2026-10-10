@@ -12,6 +12,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clusterprovider"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/eso"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpclient"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodefirecracker"
 )
@@ -33,12 +34,13 @@ func main() {
 	registryNamespace := flag.String("registry-namespace", "default", "the namespace holding the device-key binding rows")
 	clusterproviderState := flag.String("clusterprovider-state", "/var/lib/socialweb/clusterprovider", "the clusterprovider's state directory")
 	grant := flag.String("grant", "/opt/socialweb/deploy/tenant-grant.yaml", "the tenant grant the bootstrap applies")
+	esoNamespace := flag.String("eso-namespace", eso.DefaultControllerNamespace, "the namespace the External Secrets controller is installed into")
 	flag.Parse()
 	if err := run(*store, *fcConfig, *qemuConfig, *fcBin, *qemuBin, *k3s, *kubectl, *kcp, *scratch); err != nil {
 		fmt.Fprintf(os.Stderr, "socialweb-rig-inputs: %v\n", err)
 		os.Exit(1)
 	}
-	for _, v := range derive(*kcpKubeconfig, *kcpHost, *cluster, *registryWorkspace, *registryNamespace, *clusterproviderState, *grant) {
+	for _, v := range derive(*kcpKubeconfig, *kcpHost, *cluster, *registryWorkspace, *registryNamespace, *clusterproviderState, *grant, *esoNamespace) {
 		fmt.Printf("export %s=%s\n", v[0], shellQuote(v[1]))
 	}
 }
@@ -105,7 +107,7 @@ func run(store, fcConfig, qemuConfig, fcBin, qemuBin, k3s, kubectl, kcp, scratch
 	return nil
 }
 
-func derive(kcpKubeconfig, kcpHost, cluster, registryWorkspace, registryNamespace, clusterproviderState, grantPath string) [][2]string {
+func derive(kcpKubeconfig, kcpHost, cluster, registryWorkspace, registryNamespace, clusterproviderState, grantPath, esoNamespace string) [][2]string {
 	if _, err := os.Stat(kcpKubeconfig); err != nil {
 		return nil
 	}
@@ -155,18 +157,21 @@ func derive(kcpKubeconfig, kcpHost, cluster, registryWorkspace, registryNamespac
 				[2]string{"CLUSTERPROVIDER_LIVE_TENANT_KUBECONFIG", tenant})
 		}
 	}
-	if sa := grantServiceAccount(grantPath, ref.DID); sa != "" {
+	if sa := grantServiceAccount(grantPath, ref.DID, esoNamespace); sa != "" {
 		vars = append(vars, [2]string{"SOCIALWEB_LIVE_GRANTED_SA", sa})
 	}
 	return vars
 }
 
-func grantServiceAccount(path, ownerDID string) string {
+func grantServiceAccount(path, ownerDID, esoNamespace string) string {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return ""
 	}
-	grant, err := kcpclient.RenderTenantGrant(string(raw), ownerDID)
+	grant, err := kcpclient.RenderTenantGrant(string(raw), kcpclient.GrantScope{
+		OwnerDID:     ownerDID,
+		ESONamespace: esoNamespace,
+	})
 	if err != nil {
 		return ""
 	}

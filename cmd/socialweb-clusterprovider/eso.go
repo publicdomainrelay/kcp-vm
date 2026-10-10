@@ -64,8 +64,8 @@ func tenantAddOns(cfg Config, networks *subnetallocator.Allocator, log *slog.Log
 		}
 		install := func(ctx context.Context) error {
 			log.Info("cluster provider: installing the External Secrets Operator into the tenant cluster",
-				"cluster", cluster, "manifests", cfg.ESOManifestDir)
-			return installExternalSecrets(ctx, restCfg, cfg.ESOManifestDir)
+				"cluster", cluster, "manifests", cfg.ESOManifestDir, "namespace", cfg.ESONamespace)
+			return installExternalSecrets(ctx, restCfg, cfg.ESOManifestDir, cfg.ESONamespace)
 		}
 		if err := applyTenantAddOns(ctx, dyn, install, eso.Options{
 			ManifestDir:   cfg.ESOManifestDir,
@@ -93,7 +93,7 @@ func applyTenantAddOns(ctx context.Context, dyn dynamic.Interface, install func(
 	return eso.Apply(ctx, dyn, o)
 }
 
-func installExternalSecrets(ctx context.Context, restCfg *rest.Config, manifestDir string) error {
+func installExternalSecrets(ctx context.Context, restCfg *rest.Config, manifestDir, namespace string) error {
 	script := filepath.Join(manifestDir, "install.sh")
 	dir, err := os.MkdirTemp("", "socialweb-eso-install")
 	if err != nil {
@@ -110,13 +110,13 @@ func installExternalSecrets(ctx context.Context, restCfg *rest.Config, manifestD
 	}
 	env := []string{}
 	for _, kv := range os.Environ() {
-		if strings.HasPrefix(kv, "KUBECONFIG=") || strings.HasPrefix(kv, "ESO_SKIP_ROLLOUT_WAIT=") {
+		if strings.HasPrefix(kv, "KUBECONFIG=") || strings.HasPrefix(kv, "ESO_NAMESPACE=") || strings.HasPrefix(kv, "ESO_SKIP_ROLLOUT_WAIT=") {
 			continue
 		}
 		env = append(env, kv)
 	}
 	cmd := exec.CommandContext(ctx, "bash", script)
-	cmd.Env = append(env, "KUBECONFIG="+kubeconfig, "ESO_SKIP_ROLLOUT_WAIT=1")
+	cmd.Env = append(env, "KUBECONFIG="+kubeconfig, "ESO_NAMESPACE="+namespace, "ESO_SKIP_ROLLOUT_WAIT=1")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("clusterprovider: the External Secrets install %s failed: %w: %s",

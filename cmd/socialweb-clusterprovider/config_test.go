@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/eso"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/portallocator"
 )
 
@@ -333,6 +334,26 @@ func TestCarveIsHonouredAndMakesTwoInstancesDisjoint(t *testing.T) {
 	}
 	if !alpha.PortRange.Contains(lA.Port) || !beta.PortRange.Contains(lB.Port) {
 		t.Fatalf("a carve was not honoured: %d for %s and %d for %s", lA.Port, alpha.PortRange, lB.Port, beta.PortRange)
+	}
+}
+
+func TestTheExternalSecretsNamespaceDefaultsToTheOneTheOperatorInstallsInto(t *testing.T) {
+	cfg, err := loadJoin(t, nil)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.ESONamespace != eso.DefaultControllerNamespace {
+		t.Fatalf("the External Secrets namespace defaulted to %q, want %q: an unchanged deployment "+
+			"installs the operator into that namespace and the tenant grant admits it there, so any "+
+			"other default would deny the controller the grant exists to admit",
+			cfg.ESONamespace, eso.DefaultControllerNamespace)
+	}
+	cfg, err = loadJoin(t, map[string]string{"SOCIALWEB_CLUSTERPROVIDER_ESO_NAMESPACE": "external-secrets"})
+	if err != nil {
+		t.Fatalf("load with a namespace: %v", err)
+	}
+	if cfg.ESONamespace != "external-secrets" {
+		t.Fatalf("the External Secrets namespace is %q, want the external-secrets the environment named", cfg.ESONamespace)
 	}
 }
 

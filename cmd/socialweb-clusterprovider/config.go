@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/eso"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostos"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodefirecracker"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodevm"
@@ -77,6 +78,8 @@ const (
 	envLogLevel     = "SOCIALWEB_CLUSTERPROVIDER_LOG_LEVEL"
 
 	envESOManifestDir = "SOCIALWEB_CLUSTERPROVIDER_ESO_MANIFEST_DIR"
+
+	envESONamespace = "SOCIALWEB_CLUSTERPROVIDER_ESO_NAMESPACE"
 )
 
 const DefaultESOManifestDir = "/opt/socialweb/deploy/eso"
@@ -152,6 +155,8 @@ type Config struct {
 
 	ESOManifestDir string
 
+	ESONamespace string
+
 	DatastoreHasRow bool
 
 	ScaleHold time.Duration
@@ -193,6 +198,7 @@ func load(get func(string) string) (Config, error) {
 		NodeAgent:              strings.TrimSpace(get(envNodeAgent)),
 		CloudControllerManager: strings.TrimSpace(get(envCloudControllerManager)),
 		ESOManifestDir:         strings.TrimSpace(get(envESOManifestDir)),
+		ESONamespace:           strings.TrimSpace(get(envESONamespace)),
 		GrantPath:              strings.TrimSpace(get(envGrant)),
 		Interval:               DefaultInterval,
 		LogLevel:               slog.LevelInfo,
@@ -204,6 +210,9 @@ func load(get func(string) string) (Config, error) {
 	}
 	if cfg.ESOManifestDir == "" {
 		cfg.ESOManifestDir = DefaultESOManifestDir
+	}
+	if cfg.ESONamespace == "" {
+		cfg.ESONamespace = eso.DefaultControllerNamespace
 	}
 	if cfg.AdvertiseAddress == "" && !guestSubstrate(cfg.Substrate) && cfg.Substrate != SubstrateMarket {
 		cfg.AdvertiseAddress = portallocator.LoopbackAdvertiseAddress

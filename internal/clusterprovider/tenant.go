@@ -282,7 +282,10 @@ func (p *Provider) Bootstrap(ctx context.Context, ref Ref, cl *v1alpha1.Cluster)
 	if err != nil {
 		return fmt.Errorf("clusterprovider: reading the tenant grant: %w", err)
 	}
-	grant, err := kcpclient.RenderTenantGrant(string(raw), ref.DID)
+	grant, err := kcpclient.RenderTenantGrant(string(raw), kcpclient.GrantScope{
+		OwnerDID:     ref.DID,
+		ESONamespace: p.opts.ESONamespace,
+	})
 	if err != nil {
 		return fmt.Errorf("clusterprovider: the tenant grant for %s: %w", ref.Name, err)
 	}

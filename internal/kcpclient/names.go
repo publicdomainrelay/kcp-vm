@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	kcpv1alpha1 "github.com/kcp-dev/sdk/apis/tenancy/v1alpha1"
+	"k8s.io/apimachinery/pkg/util/validation"
 )
 
 const (
@@ -67,19 +68,46 @@ func ServiceAccountName(did string) string {
 
 const GrantOwnerPlaceholder = "__SOCIALWEB_OWNER_SERVICE_ACCOUNT__"
 
-func RenderTenantGrant(doc, ownerDID string) (string, error) {
-	if ownerDID == "" {
+const GrantESONamespacePlaceholder = "__SOCIALWEB_ESO_NAMESPACE__"
+
+type GrantScope struct {
+	OwnerDID     string
+	ESONamespace string
+}
+
+func RenderTenantGrant(doc string, scope GrantScope) (string, error) {
+	if scope.OwnerDID == "" {
 		return "", errors.New(
 			"kcpclient: the tenant grant needs the owning DID: every name it scopes is derived from it, " +
 				"and a grant rendered without one would be scoped to a name nothing owns")
 	}
-	if !strings.Contains(doc, GrantOwnerPlaceholder) {
-		return "", fmt.Errorf(
-			"kcpclient: the tenant grant carries no %s, so rendering it would apply a grant scoped to "+
-				"whatever name is written in the file rather than to the cluster's owner",
-			GrantOwnerPlaceholder)
+	if scope.ESONamespace == "" {
+		return "", errors.New(
+			"kcpclient: the tenant grant needs the namespace the External Secrets controller is " +
+				"installed into: the policy admits that controller by its ServiceAccount username, and a " +
+				"grant rendered without the namespace would admit whichever one the file hardcoded -- " +
+				"denying every install elsewhere, which reads as a broken ExternalSecret rather than as " +
+				"a grant that does not name it")
 	}
-	return strings.ReplaceAll(doc, GrantOwnerPlaceholder, ServiceAccountName(ownerDID)), nil
+	if errs := validation.IsDNS1123Label(scope.ESONamespace); len(errs) > 0 {
+		return "", fmt.Errorf(
+			"kcpclient: the External Secrets namespace %q is not a DNS-1123 label (%s), so the "+
+				"ServiceAccount username the policy admits can name no namespace and the policy would "+
+				"deny every install", scope.ESONamespace, errs[0])
+	}
+	for _, p := range []struct{ name, placeholder string }{
+		{"the owning DID", GrantOwnerPlaceholder},
+		{"the External Secrets namespace", GrantESONamespacePlaceholder},
+	} {
+		if !strings.Contains(doc, p.placeholder) {
+			return "", fmt.Errorf(
+				"kcpclient: the tenant grant carries no placeholder for %s (%s), so rendering it would "+
+					"apply a grant scoped to whatever is written in the file rather than to the value "+
+					"this renderer was handed", p.name, p.placeholder)
+		}
+	}
+	rendered := strings.ReplaceAll(doc, GrantOwnerPlaceholder, ServiceAccountName(scope.OwnerDID))
+	return strings.ReplaceAll(rendered, GrantESONamespacePlaceholder, scope.ESONamespace), nil
 }
 
 const (
