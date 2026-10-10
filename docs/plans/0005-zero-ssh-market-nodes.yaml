@@ -446,8 +446,16 @@ items:
     decision: >
       QUIC datagrams over iroh, a tun device, each peer Node's podCIDR routed to its iroh endpoint id;
       k3s --flannel-backend=none with bridge CNI. Lives in this repo (user chose).
-    status: todo
-    evidence: []
+    status: done
+    evidence:
+      - "commits c67b7b6 (crate, unit tests, netns proof), ee9285e (kube mode against k3s, node-reader RBAC), 11c9a29 (static musl builds, check.sh hook), a56b60d (15 s idle timeout, relist per watch); ARCHITECTURE section 9 'Pods reach pods on other market nodes through socialweb-meshd'"
+      - "scope: the daemon only. Built, NOT deployed, NOT installed by any user_data. The integration (k3s --flannel-backend=none, bridge CNI conflist mtu 1160 on spec.podCIDR, cluster-cidr-only SNAT, node-reader RBAC in every tenant, user_data module installing the sha256-pinned binary, systemd unit) is listed in that section and is not done; ACC-MESH stays todo"
+      - "decisions (decided by Claude, user may veto): hand-rolled kube client over iroh's reqwest/rustls/ring instead of kube-rs; tun MTU 1160 = 1200-byte QUIC path - 38 bytes noq overhead - 2; tun address = own podCIDR network address /32 with routes src it; one packet per datagram, no header; lazy dial, 512-packet per-peer queue; connection idle timeout 15 s; blake3 pure-Rust backend for the aarch64 musl build"
+      - "found: k3s v1.36.4+k3s1 node authorizer refuses list nodes to system:node:<name> ('cannot read all nodes, only its own Node object'); rust/socialweb-meshd/deploy/node-reader-rbac.yaml (group system:nodes get/list/watch nodes) is required; patching another Node is 403 and meshd exits 4"
+      - "tests watched to fail then pass: 18 of 30 unit tests failed against mutated route computation, packet dispatch and did:key encoding (did:key spec vector did:key:z6MkiTBz1ymuepAQ4HEHYSF1H8quG5GLVVQR3djdX3mDooWp and the dumbpipe IROH_SECRET vector shared with internal/didkey), then 41 of 41 pass; two_meshd_in_two_netns_carry_ping_between_two_pod_cidrs failed with route install disabled and with emptied datagrams, then passed; with_a_kubelet_identity_meshd_annotates_its_own_node_and_follows_the_node_list failed on the 403 list before the RBAC existed, then passed"
+      - "measured: max_datagram_size 1162 on a 1228-byte underlay, 1414 on 1500; 1132-byte DF ping crosses, 1400-byte DF refused by the node, 1400-byte fragmentable ping crosses; one-way recovery after a peer SIGKILL+restart 30.8 s at iroh's 30 s idle, 15.4 s at 15 s"
+      - "binaries at a56b60d, rustc 1.95.0: socialweb-meshd-x86_64 9358064 bytes sha256 7c563cd6cd10e4113aab6a8dc3fc45e041728376499e6a215b1d51f0dfa2ad64; socialweb-meshd-aarch64 7875400 bytes sha256 47df130296100de6b08e9008421a6351fa5848264ebb71ec586245daf7f1212a; identical from a second target dir on hat-8; both static binaries pass the netns and k3s proofs (aarch64 under qemu binfmt)"
+      - "green: deploy/check.sh --fast exit 0 (cargo fmt, cargo test); SOCIALWEB_MESHD_NETNS=1 SOCIALWEB_MESHD_K3S=1 cargo test on hat-8 with sudo -n"
   - id: M6-RUNNER1
     milestone: M6
     title: GitLab runner 1 run_untagged false

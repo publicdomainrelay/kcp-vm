@@ -190,7 +190,12 @@ open:
   - id: P5-M5
     title: Pods reach pods on other nodes and DNS works on every node.
     body: >
-      Plan 0005 items M5-DNS and M5-MESHD (rust/socialweb-meshd).
+      Plan 0005 items M5-DNS and M5-MESHD (rust/socialweb-meshd). M5-MESHD's daemon is built and
+      proved locally (a56b60d), not deployed; still open is its integration: k3s
+      --flannel-backend=none, a bridge CNI conflist (mtu 1160) on the Node's podCIDR, SNAT for
+      cluster-cidr-external traffic only, rust/socialweb-meshd/deploy/node-reader-rbac.yaml in every
+      tenant (a node may not list Nodes otherwise), and a user_data module installing the
+      sha256-pinned binary with its systemd unit (ARCHITECTURE section 9).
     instrument: >
       A pod on node A reaches a pod on node B, and a name resolves from a node not running CoreDNS.
   - id: P5-M6
