@@ -2992,17 +2992,22 @@ each milestone's instrument. ESO-4 closed the same day with M4-ESO-BESIDE and is
 its readings. Also on 2026-10-07 three plans were QUEUED behind plan 0005, and none of them starts
 until plan 0005 is complete and its acceptance checks ACC-ZERO, ACC-MESH and ACC-NOSSH pass on prod:
 plan 0006 (`docs/plans/0006-socialweb-computer-unified-binary.yaml`, P6-M0 through P6-M5) makes one Go
-binary, `socialweb-computer`, the entrypoint of the whole stack, carrying the pinned kcp release binary
-it runs as a child and every manifest in an embed.FS it templates and server-side applies from Go, so
-`serve gateway kcp` replaces `deploy/container-entrypoint.sh`; plan 0008
-(`docs/plans/0008-embedded-deno-and-typescript-denopods.yaml`, P8-M1 through P8-M4) carries a pinned deno
-and the TypeScript closure inside that binary and runs every long-lived TypeScript service as a
-deno-kcp DenoPod reconciled by the deno-kcp provider linked into it, adding `run gateway ssh` and
-`run request`; plan 0007 (`docs/plans/0007-compute-provider-kcp.yaml`, P7-M1 through P7-M5) adds
-compute-provider-kcp, a bidder compute provider whose VMs are ComputeVM objects in the bidder's own kcp,
-reconciled by a Go controller through the same runner containers the firecracker provider uses, so a
-killed bidder recovers its running VMs and still honours vm.delete, with no change to any market record.
-Each plan file holds its items' decisions, dependencies and the questions left for the user.
+binary, `socialweb-computer`, the entrypoint of the whole stack, with kcp linked in-process (the module
+moves onto kcp's Kubernetes fork, and kcp and its embedded etcd bind port 0 and report the bound ports),
+every manifest in an embed.FS it templates and server-side applies from Go, no container at runtime
+(postgres and the OpenBao servers embedded and driven by CRDs, long-lived children in their own systemd
+units so an upgrade of the binary leaves them running), so `serve gateway kcp` on the host replaces
+`deploy/container-entrypoint.sh`; plan 0008 (`docs/plans/0008-embedded-deno-and-typescript-denopods.yaml`,
+P8-M1 through P8-M4) carries a pinned deno and the TypeScript closure inside that binary (the org root
+in non-production builds), forks deno-kcp and kcp-libs into this repo, and runs every long-lived
+TypeScript service as a DenoPod, adding `run gateway ssh` and `run request` with its contracts held in
+kcp; plan 0007 (`docs/plans/0007-compute-provider-kcp.yaml`, P7-M1 through P7-M6) adds
+compute-provider-kcp beside the firecracker provider, whose learnings it backports with parity tests:
+VMs are ComputeVM objects in the bidder's own kcp, booted unprivileged through the kvm group with no
+docker, each in its own systemd unit, and the bidder's keys live in an OpenBao beside it, so a bidder
+or a gateway can be upgraded while its VMs keep running and each re-populates what it owns afterwards,
+with no change to any market record. Each plan file holds its items' decisions, dependencies and the
+questions left for the user.
 **The live backlog is `NEXT.yaml`, which this section mirrors:
 an item is written here when it is opened and moves to section 15, with its readings, when it is
 closed.** The practice that produced the batch is the one worth keeping: the artefact was run and each
