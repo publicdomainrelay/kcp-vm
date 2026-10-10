@@ -98,3 +98,20 @@ Deno.test("with no explicit path, a session round-trips under the same label and
     }
   });
 });
+
+Deno.test("with no handle configured, a pinned session is restored without knowing the account", async () => {
+  await withMockPds(async (origin) => {
+    const tmpDir = await Deno.makeTempDir();
+    const sessionPath = `${tmpDir}/pinned-no-handle.json`;
+    const handle = "bobvmbuilder.bsky.social";
+
+    await saveOAuthQRSession(await makeSession(origin, handle), { sessionPath, label: "bidder", handle });
+
+    const agent = await tryRestoreOAuthQRSession({ sessionPath, label: "bidder" });
+    console.log("[qrsession] restored with no handle =", agent !== null, "carried handle =", agent?.sessionData.handle);
+    agent?.dispose();
+
+    assert(agent !== null);
+    assertEquals(agent?.sessionData.handle, handle);
+  });
+});
