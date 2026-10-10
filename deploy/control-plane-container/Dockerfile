@@ -150,14 +150,33 @@ FROM controlplane AS k8s
 
 ARG DENO_VERSION=2.9.3
 
+# The release the guests install for the iroh transport, so the door and the
+# guests speak one dumbpipe. ensureDumbpipe prefers a dumbpipe already on PATH
+# and only fetches when there is none, and its PATH probe is `which` -- which
+# this image did not carry either, so the probe threw before it could fetch
+# anything and the door was left with no transport at all.
+ARG DUMBPIPE_VERSION=0.39.0
+
 USER root
 
-RUN dnf install -y --setopt=install_weak_deps=False yq iproute socat openssl unzip openssh-clients \
+RUN dnf install -y --setopt=install_weak_deps=False yq iproute socat openssl unzip openssh-clients which \
  && dnf clean all \
  && curl -fsSL "https://github.com/denoland/deno/releases/download/v${DENO_VERSION}/deno-x86_64-unknown-linux-gnu.zip" -o /tmp/deno.zip \
  && unzip -o /tmp/deno.zip -d /usr/local/bin \
  && rm /tmp/deno.zip \
- && chmod 0755 /usr/local/bin/deno
+ && chmod 0755 /usr/local/bin/deno \
+ && curl -fsSL "https://github.com/n0-computer/dumbpipe/releases/download/v${DUMBPIPE_VERSION}/dumbpipe-v${DUMBPIPE_VERSION}-linux-x86_64.tar.gz" -o /tmp/dumbpipe.tar.gz \
+ && tar -xzf /tmp/dumbpipe.tar.gz -C /tmp \
+ && install -m 0755 /tmp/dumbpipe /usr/local/bin/dumbpipe \
+ && rm -f /tmp/dumbpipe.tar.gz /tmp/dumbpipe \
+ && test -x /usr/local/bin/dumbpipe \
+ && chmod 1777 /tmp
+
+# /tmp is 1777 in the base image and this stage's dnf transaction re-created it
+# 0755 root:root. The container runs as uid 1000, so an unwritable /tmp is not a
+# missing convenience: install-provider.sh mktemp's its rendered manifests there,
+# fails before it applies anything, and the entrypoint exits -- and docker
+# restarts the container, in a loop, every thirteen seconds.
 
 COPY --from=gobuild /usr/local/bin/socialweb-gateway /usr/local/bin/socialweb-gateway
 
