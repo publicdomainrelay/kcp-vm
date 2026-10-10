@@ -74,6 +74,8 @@ const (
 
 	envCloudControllerManager = "SOCIALWEB_CLUSTERPROVIDER_CLOUD_CONTROLLER_MANAGER"
 
+	envDumbpipe = "SOCIALWEB_CLUSTERPROVIDER_DUMBPIPE"
+
 	envTokenTimeout = "SOCIALWEB_CLUSTERPROVIDER_TOKEN_TIMEOUT"
 	envLogLevel     = "SOCIALWEB_CLUSTERPROVIDER_LOG_LEVEL"
 
@@ -153,6 +155,8 @@ type Config struct {
 
 	CloudControllerManager string
 
+	Dumbpipe string
+
 	ESOManifestDir string
 
 	ESONamespace string
@@ -197,6 +201,7 @@ func load(get func(string) string) (Config, error) {
 		QEMU:                   strings.TrimSpace(get(envQEMU)),
 		NodeAgent:              strings.TrimSpace(get(envNodeAgent)),
 		CloudControllerManager: strings.TrimSpace(get(envCloudControllerManager)),
+		Dumbpipe:               strings.TrimSpace(get(envDumbpipe)),
 		ESOManifestDir:         strings.TrimSpace(get(envESOManifestDir)),
 		ESONamespace:           strings.TrimSpace(get(envESONamespace)),
 		GrantPath:              strings.TrimSpace(get(envGrant)),

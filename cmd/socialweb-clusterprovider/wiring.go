@@ -38,6 +38,8 @@ type Deps struct {
 	Tenant func(ctx context.Context, ref clusterprovider.Ref, cl *v1alpha1.Cluster) (*rest.Config, error)
 
 	InstallTenant func(ctx context.Context, cluster string, cfg *rest.Config) error
+
+	Links *linkRecorder
 }
 
 var ErrNoTenant = errors.New(
@@ -65,6 +67,8 @@ type Provider struct {
 	nodes *nodeHosts
 
 	host materialiser.Host
+
+	links *linkRecorder
 
 	newInstance func() string
 	log         *slog.Logger
@@ -189,6 +193,7 @@ func Build(cfg Config, d Deps, log *slog.Logger) (*Provider, error) {
 		nodeScale:      d.NodeScale,
 		nodes:          d.NodeHosts,
 		host:           d.Host,
+		links:          d.Links,
 		newInstance:    d.NewInstance,
 		log:            log,
 	}
@@ -330,7 +335,13 @@ func (p *Provider) one(ctx context.Context, ref clusterprovider.Ref) error {
 		p.log.Info("cluster provider: this cluster is not running, so its group is reaped and "+
 			"nothing is brought up for it", "cluster", ref.Name, "key", key, "home", ref.Home,
 			"running", cl.Spec.Running, "deleting", cl.DeletionTimestamp != nil)
-		return p.reapOne(ctx, key)
+		if err := p.reapOne(ctx, key); err != nil {
+			return err
+		}
+		if cl.DeletionTimestamp != nil {
+			p.removeLinks(ctx, ref, key)
+		}
+		return nil
 	}
 	if _, err := p.store(ctx, key); err != nil {
 		return err
@@ -401,6 +412,9 @@ func (p *Provider) pass(ctx context.Context, ref clusterprovider.Ref, key string
 			p.log.Warn("cluster provider: the materialiser reported an alert",
 				"cluster", ref.Name, "key", key, "alert", pass.Result.Alert)
 		}
+	}
+	if pass.Unfinalized {
+		p.removeLinks(ctx, ref, key)
 	}
 	if err != nil {
 		p.log.Error("cluster provider: the pass failed", "cluster", ref.Name, "key", key,
