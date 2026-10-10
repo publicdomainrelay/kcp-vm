@@ -113,6 +113,54 @@ export default {
       description: "Local provider cache directory",
       env: "COMPUTE_PROVIDER_LOCAL_CACHE_DIR",
     },
+    "compute-provider-firecracker": {
+      type: "boolean" as const,
+      description: "Enable the Firecracker compute provider",
+    },
+    "compute-provider-firecracker-nodeimage": {
+      type: "string" as const,
+      description: "Path to the socialweb-nodeimage binary, which builds the image a guest boots from",
+      env: "COMPUTE_PROVIDER_FIRECRACKER_NODEIMAGE",
+    },
+    "compute-provider-firecracker-nodeboot": {
+      type: "string" as const,
+      description: "Path to the socialweb-nodeboot binary, which boots one guest",
+      env: "COMPUTE_PROVIDER_FIRECRACKER_NODEBOOT",
+    },
+    "compute-provider-firecracker-config": {
+      type: "string" as const,
+      description: "Path to the image builder's nodeimage.json",
+      env: "COMPUTE_PROVIDER_FIRECRACKER_CONFIG",
+    },
+    "compute-provider-firecracker-repo-dir": {
+      type: "string" as const,
+      description: "Path to the socialweb-computer-kcp checkout, which the image builder builds the guest agent from",
+      env: "COMPUTE_PROVIDER_FIRECRACKER_REPO_DIR",
+    },
+    "compute-provider-firecracker-preinstall": {
+      type: "string" as const,
+      description: "Path to the preinstall manifest naming the software baked into the image",
+      env: "COMPUTE_PROVIDER_FIRECRACKER_PREINSTALL",
+    },
+    "compute-provider-firecracker-vmm": {
+      type: "string" as const,
+      description: "Path to the firecracker binary",
+      env: "COMPUTE_PROVIDER_FIRECRACKER_VMM",
+    },
+    "compute-provider-firecracker-work-root": {
+      type: "string" as const,
+      description: "Directory each guest gets a work directory under",
+      env: "COMPUTE_PROVIDER_FIRECRACKER_WORK_ROOT",
+    },
+    "compute-provider-firecracker-range-base": {
+      type: "string" as const,
+      description: "Base address guests are addressed from, one /30 each",
+      env: "COMPUTE_PROVIDER_FIRECRACKER_RANGE_BASE",
+    },
+    "compute-provider-firecracker-reuse-image": {
+      type: "boolean" as const,
+      description: "Use the image already in the store and skip the rebuild when the inputs have moved",
+    },
     "compute-provider-deno-worker": {
       type: "boolean" as const,
       description: "Enable Deno worker compute provider",

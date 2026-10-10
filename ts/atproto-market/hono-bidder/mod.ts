@@ -19,6 +19,9 @@ import { DEFAULT_RELAY_URLS } from "@publicdomainrelay/atproto-event-stream-comm
 import { createPlcDirectoryClient, createGenesisOp, PlcClient, PlcNotFoundError } from "@publicdomainrelay/did-plc";
 import { createDigitalOceanComputeProvider } from "@publicdomainrelay/compute-provider-digitalocean";
 import { createLocalComputeProvider } from "@publicdomainrelay/compute-provider-local";
+import { createFirecrackerComputeProvider } from "@publicdomainrelay/compute-provider-firecracker";
+import { createFirecrackerNodeImage } from "@publicdomainrelay/node-image-firecracker";
+import { createFirecrackerMicrovm } from "@publicdomainrelay/microvm-firecracker";
 import { createOidcProvisioningEnricher } from "@publicdomainrelay/oidc-issuer-hono";
 import { createRbacProvisioner } from "@publicdomainrelay/rbac-atproto";
 import { Secp256k1Keypair } from "@atproto/crypto";
@@ -534,6 +537,61 @@ if (options.computeProviderLocal) {
   localProviderEnsureImage = () => (localProvider as { ensureImage?(): Promise<void> }).ensureImage?.() ?? Promise.resolve();
   providers.push(createComputeProviderHooks({
     provider: localProvider,
+  }));
+  await serve.beginServe();
+}
+
+if (options.computeProviderFirecracker) {
+  const required: Array<[string, unknown]> = [
+    ["--compute-provider-firecracker-nodeimage", options.computeProviderFirecrackerNodeimage],
+    ["--compute-provider-firecracker-nodeboot", options.computeProviderFirecrackerNodeboot],
+    ["--compute-provider-firecracker-config", options.computeProviderFirecrackerConfig],
+    ["--compute-provider-firecracker-repo-dir", options.computeProviderFirecrackerRepoDir],
+    ["--compute-provider-firecracker-vmm", options.computeProviderFirecrackerVmm],
+    ["--compute-provider-firecracker-work-root", options.computeProviderFirecrackerWorkRoot],
+  ];
+  const missing = required.filter(([, value]) => !value).map(([flag]) => flag);
+  if (missing.length > 0) {
+    throw new Error(
+      `the Firecracker provider is enabled and ${missing.join(", ")} ${missing.length === 1 ? "is" : "are"} ` +
+        `not set. Every one of them is a path on this host -- the two binaries, the image builder's ` +
+        `configuration, the checkout the guest agent is built from, the VMM, and where guests work ` +
+        `-- and none has a default that would be right on another machine. A provider started ` +
+        `without one of them would fail at the first RFP instead of at startup.`,
+    );
+  }
+  const relay = await cliCreateIngress();
+  const serve = createServe({ logger, relays: [relay] });
+  serves.push(serve);
+  const firecrackerProvider = createFirecrackerComputeProvider({
+    logger,
+    atproto: atproto as import("@publicdomainrelay/compute-provider-abc").ComputeAtproto,
+    serve,
+    getIssuerUrl: () => relay.ingressUrl,
+    image: createFirecrackerNodeImage({
+      binary: options.computeProviderFirecrackerNodeimage as string,
+      configPath: options.computeProviderFirecrackerConfig as string,
+      repoDir: options.computeProviderFirecrackerRepoDir as string,
+      preinstallPath: options.computeProviderFirecrackerPreinstall as string | undefined,
+      logger,
+    }),
+    microvm: createFirecrackerMicrovm({
+      binary: options.computeProviderFirecrackerNodeboot as string,
+      firecracker: options.computeProviderFirecrackerVmm as string,
+      logger,
+    }),
+    workRoot: options.computeProviderFirecrackerWorkRoot as string,
+    rangeBase: options.computeProviderFirecrackerRangeBase as string | undefined,
+    reuseStale: options.computeProviderFirecrackerReuseImage === true,
+    oidcProvisioner: createOidcProvisioningEnricher(() => relay.ingressUrl),
+    rbacProvisioner: createRbacProvisioner(),
+    guestTlsPort: options.guestTlsPort as number | undefined,
+    createSignedRepoRecord: atproto.createSignedRepoRecord.bind(atproto),
+    callService: atproto.callService.bind(atproto),
+    acceptToContract,
+  });
+  providers.push(createComputeProviderHooks({
+    provider: firecrackerProvider.provider,
   }));
   await serve.beginServe();
 }

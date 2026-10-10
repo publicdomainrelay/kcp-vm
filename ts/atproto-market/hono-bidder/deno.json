@@ -21,7 +21,10 @@
     "@publicdomainrelay/serve": "jsr:@publicdomainrelay/serve@^0",
     "@publicdomainrelay/did-key-ingress-proxy": "jsr:@publicdomainrelay/did-key-ingress-proxy@^0",
     "@atproto/identity": "npm:@atproto/identity@^0.5.0",
-    "@libs/qrcode": "jsr:@libs/qrcode@^2"
+    "@libs/qrcode": "jsr:@libs/qrcode@^2",
+    "@publicdomainrelay/compute-provider-firecracker": "jsr:@publicdomainrelay/compute-provider-firecracker@^0",
+    "@publicdomainrelay/node-image-firecracker": "jsr:@publicdomainrelay/node-image-firecracker@^0",
+    "@publicdomainrelay/microvm-firecracker": "jsr:@publicdomainrelay/microvm-firecracker@^0"
   },
   "compile": {
     "include": [
