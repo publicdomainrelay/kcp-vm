@@ -111,7 +111,7 @@ func buildRootfs(cfg Config, dst string, tars []imageTar) error {
 	if err := os.WriteFile(filepath.Join(kcpDir, nodefirecracker.GuestFileName), doc, 0o644); err != nil {
 		return fmt.Errorf("socialweb-nodeimage: %w", err)
 	}
-	if err := installUnits(cfg.StageDir); err != nil {
+	if err := installUnits(cfg); err != nil {
 		return err
 	}
 	if err := stageModulesLoad(cfg); err != nil {
@@ -246,7 +246,8 @@ func stageK3s(cfg Config) error {
 	return nil
 }
 
-func installUnits(stage string) error {
+func installUnits(cfg Config) error {
+	stage := cfg.StageDir
 	units := filepath.Join(stage, "etc/systemd/system")
 	wants := filepath.Join(units, "multi-user.target.wants")
 	if err := os.MkdirAll(wants, 0o755); err != nil {
@@ -258,6 +259,15 @@ func installUnits(stage string) error {
 		}
 	}
 	for name, body := range guestUnits {
+		if !cfg.IsK3sNode() {
+			if err := os.Remove(filepath.Join(units, name)); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("socialweb-nodeimage: %w", err)
+			}
+			if err := os.Remove(filepath.Join(wants, name)); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("socialweb-nodeimage: %w", err)
+			}
+			continue
+		}
 		if err := os.WriteFile(filepath.Join(units, name), []byte(body), 0o644); err != nil {
 			return fmt.Errorf("socialweb-nodeimage: %w", err)
 		}

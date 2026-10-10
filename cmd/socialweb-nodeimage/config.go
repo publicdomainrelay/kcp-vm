@@ -60,6 +60,8 @@ type Config struct {
 
 	Preinstall string `json:"preinstall"`
 
+	K3sNode *bool `json:"k3s_node"`
+
 	Path string `json:"-"`
 }
 
@@ -92,6 +94,10 @@ func LoadConfig(path string) (Config, error) {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+func (c Config) IsK3sNode() bool {
+	return c.K3sNode == nil || *c.K3sNode
 }
 
 func (c Config) VMMName() string {

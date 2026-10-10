@@ -193,6 +193,8 @@ type BuildConfig struct {
 	MemMiB int `json:"memMiB"`
 
 	Preinstall string `json:"preinstall"`
+
+	K3sNode bool `json:"k3s_node"`
 }
 
 type BuildInputs struct {
@@ -249,6 +251,8 @@ type BuildInputs struct {
 	Preinstall string `json:"preinstall"`
 
 	PreinstallDigest string `json:"preinstallDigest"`
+
+	K3sNode bool `json:"k3sNode"`
 }
 
 func (i BuildInputs) Fingerprint() (string, error) {
@@ -386,6 +390,7 @@ func RecordInputs(configPath string, cfg BuildConfig) (BuildInputs, error) {
 		RootfsHeadroomMiB: cfg.RootfsHeadroomMiB,
 		Vcpu:              cfg.Vcpu,
 		MemMiB:            cfg.MemMiB,
+		K3sNode:           cfg.K3sNode,
 	}
 	vmm, err := nodevm.NormalizeVMM(cfg.VMM)
 	if err != nil {
