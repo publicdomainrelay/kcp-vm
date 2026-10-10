@@ -401,6 +401,8 @@ say "installed socialweb-meshd \${WANT} for \${ARCH} from ${pin.downloadBase}"
 `;
 }
 
+const CONSOLE = ["StandardOutput=journal+console", "StandardError=journal+console"];
+
 function unit(sections: Record<string, string[]>): string {
   return Object.entries(sections).map(([name, lines]) => [`[${name}]`, ...lines].join("\n")).join("\n\n") + "\n";
 }
@@ -417,7 +419,7 @@ export function renderNodeUnits(opts: K3sJoinModuleOptions = {}): Record<string,
         "Wants=network-online.target",
         "StartLimitIntervalSec=0",
       ],
-      Service: ["Type=simple", `ExecStart=${NODE_SCRIPTS.openbaoLink}`, ...always],
+      Service: ["Type=simple", `ExecStart=${NODE_SCRIPTS.openbaoLink}`, ...always, ...CONSOLE],
       Install: install,
     }),
     [NODE_UNITS.nodeSecrets]: unit({
@@ -433,6 +435,7 @@ export function renderNodeUnits(opts: K3sJoinModuleOptions = {}): Record<string,
         `ExecStart=${NODE_SCRIPTS.nodeSecrets}`,
         "Restart=on-failure",
         "RestartSec=5",
+        ...CONSOLE,
       ],
       Install: install,
     }),
@@ -443,7 +446,7 @@ export function renderNodeUnits(opts: K3sJoinModuleOptions = {}): Record<string,
         `Wants=network-online.target ${NODE_UNITS.nodeSecrets}`,
         "StartLimitIntervalSec=0",
       ],
-      Service: ["Type=simple", `EnvironmentFile=${p.linkEnv}`, `ExecStart=${NODE_SCRIPTS.apiserverLink}`, ...always],
+      Service: ["Type=simple", `EnvironmentFile=${p.linkEnv}`, `ExecStart=${NODE_SCRIPTS.apiserverLink}`, ...always, ...CONSOLE],
       Install: install,
     }),
     [NODE_UNITS.k3sAgent]: unit({
@@ -485,6 +488,7 @@ export function renderNodeNetworkUnits(opts: K3sJoinModuleOptions = {}): Record<
     `ExecStart=${exec}`,
     "Restart=on-failure",
     "RestartSec=5",
+    ...CONSOLE,
   ];
   const units: Record<string, string> = {
     [NODE_NET_UNITS.dnsLink]: unit({
