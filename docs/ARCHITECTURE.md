@@ -4016,7 +4016,16 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   `TestANodeWhoseClaimTheDoorConfirmedReleasedIsRemoved` seeds a `Released` claim and a `Running` claim
   with a tenant `Node` each, and asserts the first Node is gone and the second is not - watched to fail
   with the reconcile made a no-op: "the Node acct-liveweb-node1 is still in the tenant cluster after
-  the door confirmed its machine gone". `NEXT.yaml` MARKET-6.
+  the door confirmed its machine gone".
+  The reconcile's OWN first version was a defect, and in production within five minutes: it deleted by
+  NAME, and a claim the door released stays in the workspace for ever as its own record, so the names
+  to act on are not the Nodes still there. MEASURED on 2026-10-07: 325 `removed a Node the door has
+  taken the machine away for` lines in five minutes - one write per pass per lingering released claim,
+  on Nodes that had gone the first time - beside a `429` on the credential the door and the provider
+  share. It now lists the tenant `Node`s once, intersects, acts only on names in both, and logs only a
+  removal that happened. `TestAReleasedClaimWhoseNodeIsAlreadyGoneCostsNoDelete` runs it twice over a
+  released claim with no `Node` and asserts the fake client saw no delete action; watched to fail with
+  the intersection removed. `NEXT.yaml` MARKET-6.
 
 - **A GitLab Runner off the kcp host reaches a tenant apiserver, exec and all. CLOSED, and it was
   closed by the runs rather than by a change.** The apiserver binds loopback and the only off-host
