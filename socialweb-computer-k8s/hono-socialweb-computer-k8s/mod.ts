@@ -11,9 +11,12 @@ import { createWebFactory } from "@publicdomainrelay/hono-factory-socialweb-comp
 import { createRequestProofVerifier } from "@publicdomainrelay/socialweb-computer-k8s-request-proof";
 import { createXrpcClusterGateway } from "@publicdomainrelay/socialweb-computer-k8s-gateway-xrpc";
 import { createClusterApiFactory, type CredentialHelper } from "@publicdomainrelay/hono-factory-socialweb-computer-k8s";
-import { createKcpNodeClaimStore, parseKubeconfig } from "@publicdomainrelay/socialweb-computer-k8s-nodeclaim-kcp";
+import {
+  createKcpClusterLinkReader,
+  createKcpNodeClaimStore,
+  parseKubeconfig,
+} from "@publicdomainrelay/socialweb-computer-k8s-nodeclaim-kcp";
 import { createMarketNodeFulfiller, type MarketNodeFulfiller } from "@publicdomainrelay/socialweb-computer-k8s-node-market";
-import { ensureDumbpipe } from "@publicdomainrelay/requester-xrpc";
 import cliArgsEnv from "./cli-args-env.json" with { type: "json" };
 
 let runtimeConfig: Record<string, unknown> | null = null;
@@ -117,16 +120,10 @@ const relayUrls = ((options.relayUrl as string | undefined) ?? "").split(",").ma
 let fulfiller: MarketNodeFulfiller | null = null;
 if (options.kcpKubeconfig) {
   const credentials = parseKubeconfig(await Deno.readTextFile(options.kcpKubeconfig as string), options.kcpContext as string | undefined);
-  // The guests this door rents are reached over iroh, which means this process
-  // runs `dumbpipe connect <ticket>` to open each session. A dumbpipe the
-  // operator put on PATH is used as it is; otherwise ensureDumbpipe fetches the
-  // same pinned release the guests install, so both ends speak one dumbpipe.
-  const dumbpipePath = await ensureDumbpipe(logger);
   fulfiller = createMarketNodeFulfiller({
-    dumbpipePath,
     store: createKcpNodeClaimStore({ credentials }),
+    links: createKcpClusterLinkReader({ credentials }),
     requesterFor: (did) => accounts.requesterFor(did),
-    apiserverHost: options.nodeApiserverHost as string,
     plcUrl: options.plcDirectoryUrl as string,
     ingressProxyHost: options.ingressProxyHost as string,
     relayUrls,

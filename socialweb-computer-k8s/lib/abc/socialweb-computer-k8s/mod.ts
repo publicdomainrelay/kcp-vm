@@ -1,5 +1,5 @@
 import type { ClusterPhaseResult, ClusterSummary, KubeconfigGrant } from "@publicdomainrelay/socialweb-computer-k8s-common";
-import type { NodeClaimSpec, NodeClaimStatus } from "@publicdomainrelay/socialweb-computer-k8s-api";
+import type { ClusterLinkSpec, ClusterLinkStatus, NodeClaimSpec, NodeClaimStatus } from "@publicdomainrelay/socialweb-computer-k8s-api";
 
 export interface NodeClaim {
   workspace: string;
@@ -78,4 +78,15 @@ export interface NodeClaimStore {
   replaceStatus(claim: NodeClaim, status: NodeClaimStatus): Promise<void>;
   addFinalizer(claim: NodeClaim): Promise<void>;
   removeFinalizer(claim: NodeClaim): Promise<void>;
+}
+
+export interface ClusterLinkView {
+  workspace: string;
+  name: string;
+  spec?: ClusterLinkSpec;
+  status: ClusterLinkStatus;
+}
+
+export interface ClusterLinkReader {
+  get(workspace: string, name: string): Promise<ClusterLinkView | null>;
 }

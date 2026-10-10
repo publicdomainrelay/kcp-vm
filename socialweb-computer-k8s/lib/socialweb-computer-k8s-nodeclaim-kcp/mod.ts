@@ -1,9 +1,16 @@
 import { parse as parseYaml } from "@std/yaml";
-import type { NodeClaim, NodeClaimStore } from "@publicdomainrelay/socialweb-computer-k8s-abc";
+import type {
+  ClusterLinkReader,
+  ClusterLinkView,
+  NodeClaim,
+  NodeClaimStore,
+} from "@publicdomainrelay/socialweb-computer-k8s-abc";
 import {
   assertNodeClaimStatus,
+  CLUSTER_LINK_RESOURCE,
   FINALIZER_NODE_CLAIM,
   NODE_CLAIM_RESOURCE,
+  parseClusterLink,
   parseNodeClaim,
 } from "@publicdomainrelay/socialweb-computer-k8s-api";
 
@@ -95,7 +102,9 @@ export function toNodeClaim(raw: unknown, fallbackWorkspace?: string): NodeClaim
   };
 }
 
-export function createKcpNodeClaimStore(opts: KcpNodeClaimStoreOptions): NodeClaimStore {
+type KcpRequest = (url: string, init?: RequestInit) => Promise<unknown>;
+
+function createKcpRequest(opts: KcpNodeClaimStoreOptions): KcpRequest {
   const creds = opts.credentials;
   const timeoutMs = opts.timeoutMs ?? 15_000;
   const baseFetch = opts.fetch ?? fetch;
@@ -106,8 +115,6 @@ export function createKcpNodeClaimStore(opts: KcpNodeClaimStoreOptions): NodeCla
     })
     : undefined;
 
-  const homesTtlMs = opts.homesTtlMs ?? DEFAULT_HOMES_TTL_MS;
-  let homesCache: { at: number; homes: string[] } | null = null;
   let readsPausedUntil = 0;
 
   async function request(url: string, init: RequestInit = {}): Promise<unknown> {
@@ -135,6 +142,38 @@ export function createKcpNodeClaimStore(opts: KcpNodeClaimStoreOptions): NodeCla
     }
     return text ? JSON.parse(text) : null;
   }
+
+  return request;
+}
+
+export function toClusterLink(raw: unknown, workspace: string): ClusterLinkView {
+  const link = parseClusterLink(raw);
+  const name = link.metadata?.name;
+  if (!name) throw new Error("a clusterlink from kcp carries no metadata.name");
+  return { workspace, name, spec: link.spec, status: link.status ?? {} };
+}
+
+export function createKcpClusterLinkReader(opts: KcpNodeClaimStoreOptions): ClusterLinkReader {
+  const request = createKcpRequest(opts);
+  const { group, version, plural } = CLUSTER_LINK_RESOURCE;
+  return {
+    async get(workspace, name) {
+      const url = `${opts.credentials.server}/clusters/${workspace}/apis/${group}/${version}/${plural}/${encodeURIComponent(name)}`;
+      try {
+        return toClusterLink(await request(url), workspace);
+      } catch (err) {
+        if (err instanceof KcpRequestError && err.status === 404) return null;
+        throw err;
+      }
+    },
+  };
+}
+
+export function createKcpNodeClaimStore(opts: KcpNodeClaimStoreOptions): NodeClaimStore {
+  const creds = opts.credentials;
+  const request = createKcpRequest(opts);
+  const homesTtlMs = opts.homesTtlMs ?? DEFAULT_HOMES_TTL_MS;
+  let homesCache: { at: number; homes: string[] } | null = null;
 
   function clusterPath(workspace: string, resource: string): string {
     return `${creds.server}/clusters/${workspace}/apis/${NODE_CLAIM_RESOURCE.group}/${NODE_CLAIM_RESOURCE.version}/${NODE_CLAIM_RESOURCE.plural}${resource}`;
