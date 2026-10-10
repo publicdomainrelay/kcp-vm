@@ -150,6 +150,50 @@ open:
     instrument: >
       A tenant cluster at ZERO nodes syncing an ExternalSecret from its own vault into a Secret, on
       the market substrate, with no ESO pod in the tenant.
+  - id: P5-M1
+    title: The live test bed is the vendored deno-kcp market, and the market is the only node path.
+    body: >
+      Plan 0005 items M1-TESTBED, M1-MARKET-ONLY, M1-AGENT-SPLIT, M1-BIDDER-UNIT. The plan file holds
+      each item's decision, status and evidence; this entry mirrors that the milestone is open.
+    instrument: >
+      A live test that applies the vendored market example (PLC, relay, PDSs, a firecracker bidder on
+      our nodeimage) and gets a tenant node through RFP, bid, accept and cloud-init.
+  - id: P5-M2
+    title: The requester is event driven and a node's contract survives the process that accepted it.
+    body: >
+      Plan 0005 items M2-EVENT-CORE, M2-RELEASE, M2-WRAPPER, M2-CLAIM-RECEIPT, M2-CODEGEN,
+      M2-BACKOFF.
+    instrument: >
+      A door restarted between accept and release still releases the node with vm.delete from the
+      receipt recorded on its NodeClaim.
+  - id: P5-M3
+    title: Guests join without ssh, through cluster links and the cluster's OpenBao.
+    body: >
+      Plan 0005 items M3-CLUSTERLINK, M3-IROH-KEYS, M3-SECRETS-TICKET, M3-JWT, M3-UNITS,
+      M3-NODE-LOSS. ARCHITECTURE invariant 13 changes with it.
+    instrument: >
+      A market node joins and runs a pod with zero ssh sessions in any log, and survives a deploy of
+      the control plane container.
+  - id: P5-M4
+    title: Nodes scale in one at a time, and ESO runs beside the control plane.
+    body: >
+      Plan 0005 items M4-SCALE-IN, M4-ESO-BESIDE, M4-PENDING-CRS. ESO-4 closes with M4-ESO-BESIDE.
+      A tenant DaemonSet must not count as intent on its own, or a cluster with one never reaches zero.
+    instrument: >
+      A cluster at three nodes whose demand falls to one releases two nodes, then reaches zero.
+  - id: P5-M5
+    title: Pods reach pods on other nodes and DNS works on every node.
+    body: >
+      Plan 0005 items M5-DNS and M5-MESHD (rust/socialweb-meshd).
+    instrument: >
+      A pod on node A reaches a pod on node B, and a name resolves from a node not running CoreDNS.
+  - id: P5-M6
+    title: GitLab's instance runner stops taking untagged jobs and the old stated limits are fixed.
+    body: >
+      Plan 0005 items M6-RUNNER1, M6-LIMITS, M6-DOCS, then the plan's acceptance checks ACC-ZERO,
+      ACC-MESH and ACC-NOSSH on our GitLab.
+    instrument: >
+      The plan's three acceptance checks, each with UTC readings from prod and GitLab.
 
 limits:
   - title: A process-group member that binds no port and leaves no record is not swept.

@@ -1883,7 +1883,13 @@ FLAKE-1 have all since closed and are in section 15 too, which leaves this secti
 item that is not a stated limit. Each was
 written from the code rather than from the request that produced it, and each names its instrument.
 On 2026-10-06 MARKET-2 was opened and CLOSED inside the same window, by the k8s door's tenant
-credential work, and is in section 15 with its readings.
+credential work, and is in section 15 with its readings. On 2026-10-07 ESO-4 was opened by the
+baseline work, and plan 0005 (`docs/plans/0005-zero-ssh-market-nodes.yaml`) opened P5-M1 through
+P5-M6: the vendored deno-kcp test bed and a market-only node path, an event-driven requester whose
+contracts outlive the door, guests that join without ssh through cluster links and the cluster's
+OpenBao, per-node scale-in with ESO beside the control plane, a pod mesh with per-node DNS, and the
+old stated limits fixed. The plan file holds each item's decision and evidence; `NEXT.yaml` names
+each milestone's instrument.
 **The live backlog is `NEXT.yaml`, which this section mirrors:
 an item is written here when it is opened and moves to section 15, with its readings, when it is
 closed.** The practice that produced the batch is the one worth keeping: the artefact was run and each

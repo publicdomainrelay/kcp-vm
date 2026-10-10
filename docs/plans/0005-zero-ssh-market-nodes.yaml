@@ -43,23 +43,28 @@ items:
       Record the objects our installers wrote plus a hash of their live spec read back after apply;
       pods are resolved through their controller chain to a baseline workload; a baseline workload
       whose spec changed counts as intent. Chosen by the user over hand-stamping.
-    status: doing
+    status: done
     evidence:
       - "commit 65cd9d7 An idle cluster of only our own add-ons scales to zero"
-      - prod reading pending
+      - "installer applies under field manager socialweb-addons; provider records what that manager applied with a live spec hash in the cluster's addon-baseline.json; scale.Narrow drops baseline workloads and pods whose owner is counted"
+      - "tests watched to fail then pass: TestOurInstalledOperatorAloneIsNothingDeployed (demand 6 before), TestABaselineWorkloadWhoseSpecChangedIsIntent, TestATenantWorkloadBesideTheBaselineIsIntent, TestABaselineEntryNamesOneNamespace, TestTheSpecHashIsStableAndSeesAReplicaChange, TestObserveLeavesAnIdleClusterOfOurAddOnsAtNoIntent, TestTheBaselineIsWhatOurFieldManagerApplied, TestTheBaselineSurvivesARoundTripThroughItsFile; deploy/check.sh --fast green"
+      - "prod 2026-10-07T16:48:28Z baseline measured: 3 ESO Deployments in default"
   - id: M0-DEMAND
     milestone: M0
     title: Demand stops counting a pod and its owning workload twice
     decision: A pod whose controller workload is counted is not counted again.
-    status: doing
+    status: done
     evidence:
       - "commit 65cd9d7 (same change as M0-BASELINE)"
+      - "tests watched to fail then pass: TestAPodAndItsDeploymentAreOneUnitOfDemand (6, want 3), TestPodsOfACountedJobStatefulSetOrDaemonSetAreNotCountedTwice"
   - id: M0-PROD-ZERO
     milestone: M0
     title: Prod idle cluster observed at 0 nodes with control plane Ready and no new RFPs
     decision: Proof required before M1 starts.
-    status: todo
-    evidence: []
+    status: done
+    evidence:
+      - "2026-10-07T16:48:30Z..16:51:37Z 96 of 96 scale passes: None, nodes 0, nothing running and no node; 0 RFPs, 0 claims, 0 no_bids"
+      - "2026-10-07T16:52:07Z independent check: 111 of 111 passes in 5m None nodes 0; rfps=0 no_bids=0; tenant get nodes: No resources found; /readyz ok"
   - id: M0-PROD-BIDDER
     milestone: M0
     title: Retire the bidder that ran on the prod host
@@ -77,8 +82,10 @@ items:
     decision: >
       /tmp/rfp-guests, /tmp/nodeboot-check, /tmp/nodeimage-preinstall-check only, each re-checked for
       open files and process cwds immediately before deletion.
-    status: todo
-    evidence: []
+    status: done
+    evidence:
+      - "2026-10-07T16:51Z: no process cmdline or cwd referenced any of the three (own shell excluded), none written in the last hour; rfp-guests 6.6G, nodeboot-check 6.6G, nodeimage-preinstall-check 5.6G removed (its root-owned stage/ via sudo after /proc/mounts showed no mount under it)"
+      - "2026-10-07T16:52:03Z /tmp 24G tmpfs at 12% (2.6G used, was 92%); all 7 /tmp/live-k3s-* untouched"
   - id: M1-TESTBED
     milestone: M1
     title: Vendor deno-kcp CRDs and deploy/examples/atproto/market (with PR 2's bidder and bob PDS) as the live test bed
