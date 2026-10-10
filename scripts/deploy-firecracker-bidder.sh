@@ -178,8 +178,8 @@ MANAGE_DOCKER_DAEMON="${MANAGE_DOCKER_DAEMON:-yes}"
 # -- Build host inputs ---------------------------------------------------------
 LOCAL_CONFIG="${LOCAL_CONFIG:-${BUILD_HOST_HOME}/kcp-image/nodeimage-market.json}"
 LOCAL_PREINSTALL="${LOCAL_PREINSTALL:-${BUILD_HOST_HOME}/kcp-image/preinstall-market.json}"
-LOCAL_AGENT_BINARY="${LOCAL_AGENT_BINARY:-${BUILD_HOST_HOME}/kcp-image/kcpagent}"
-LOCAL_AGENT_PACKAGE="${LOCAL_AGENT_PACKAGE:-${ORG_ROOT}/socialweb-computer-kcp/cmd/socialweb-nodeagent}"
+LOCAL_INIT_BINARY="${LOCAL_INIT_BINARY:-${BUILD_HOST_HOME}/kcp-image/kcpinit}"
+LOCAL_INIT_PACKAGE="${LOCAL_INIT_PACKAGE:-${ORG_ROOT}/socialweb-computer-kcp/cmd/socialweb-nodeinit}"
 LOCAL_NODEIMAGE_BIN="${LOCAL_NODEIMAGE_BIN:-${BUILD_HOST_HOME}/kcp-image/socialweb-nodeimage}"
 LOCAL_DENO="${LOCAL_DENO:-$(command -v deno || true)}"
 
@@ -335,24 +335,24 @@ fi
 
 [ -n "${LOCAL_DENO}" ] || { echo "no deno on the build host's PATH; set LOCAL_DENO" >&2; exit 1; }
 LOCAL_DENO="$(readlink -f "${LOCAL_DENO}")"
-for required in "${LOCAL_CONFIG}" "${LOCAL_PREINSTALL}" "${LOCAL_AGENT_BINARY}" \
-                "${LOCAL_AGENT_PACKAGE}" "${LOCAL_DENO}" "${ORG_ROOT}/atproto-market/deno.json"; do
+for required in "${LOCAL_CONFIG}" "${LOCAL_PREINSTALL}" "${LOCAL_INIT_BINARY}" \
+                "${LOCAL_INIT_PACKAGE}" "${LOCAL_DENO}" "${ORG_ROOT}/atproto-market/deno.json"; do
   [ -e "${required}" ] || { echo "missing on the build host: ${required}" >&2; exit 1; }
 done
 
 # The builder binary the provider shells out to (-ensure -json). It is a HOST
 # binary: it decides whether the store already holds the image, and with
 # -reuse-stale it does not build.
-if [ ! -x "${LOCAL_NODEIMAGE_BIN}" ]; then
-  say "building socialweb-nodeimage"
-  CGO_ENABLED=0 go build -C "${ORG_ROOT}/socialweb-computer-kcp" \
-    -o "${LOCAL_NODEIMAGE_BIN}" ./cmd/socialweb-nodeimage
-fi
+# Always rebuilt: a binary left from an older tree reads an older config schema
+# and refuses the current one.
+say "building socialweb-nodeimage"
+CGO_ENABLED=0 go build -C "${ORG_ROOT}/socialweb-computer-kcp" \
+  -o "${LOCAL_NODEIMAGE_BIN}" ./cmd/socialweb-nodeimage
 
 # Which image to ship is the build host's own answer, asked the way the target
-# will ask it. It is run from inside the agent's module so a relative
-# agent_package resolves the way go resolves it.
-ENSURE_JSON="$(cd "${LOCAL_AGENT_PACKAGE}" && "${LOCAL_NODEIMAGE_BIN}" -ensure -json -reuse-stale \
+# will ask it. It is run from inside the init's module so a relative
+# init_package resolves the way go resolves it.
+ENSURE_JSON="$(cd "${LOCAL_INIT_PACKAGE}" && "${LOCAL_NODEIMAGE_BIN}" -ensure -json -reuse-stale \
   -preinstall "${LOCAL_PREINSTALL}" -config "${LOCAL_CONFIG}" | tail -1)"
 ensure_field() { python3 -c 'import json,sys;print(json.loads(sys.argv[1]).get(sys.argv[2]) or "")' "${ENSURE_JSON}" "$1"; }
 LOCAL_STORE_IMAGE="$(ensure_field dir)"
@@ -412,8 +412,8 @@ cfg["kernel_config"] = inputs + "/kernel/config"
 cfg["module_source"] = inputs + "/modules"
 cfg["base_image"] = inputs + "/base/ubuntu-24.04.squashfs"
 cfg["k3s_binary"] = inputs + "/k3s/k3s"
-cfg["agent_binary"] = inputs + "/agent/kcpagent"
-cfg["agent_package"] = inputs + "/agent-package"
+cfg["init_binary"] = inputs + "/init/kcpinit"
+cfg["init_package"] = inputs + "/init-package"
 cfg["stage_dir"] = stage
 cfg["out_dir"] = store
 cfg["image_cache_dir"] = cache
@@ -545,7 +545,7 @@ install -d -m 755 -o "${SERVICE_USER}" -g "${SERVICE_USER}" \
   "${HOST_DIR}" "${BIN_DIR}" "${STORE_DIR}" "${STAGE_DIR}" "${CACHE_DIR}"
 install -d -m 700 -o "${SERVICE_USER}" -g "${SERVICE_USER}" "${DENO_DIR_REMOTE}"
 install -d -m 755 -o root -g root "${INPUTS_DIR}" "${INPUTS_DIR}/kernel" \
-  "${INPUTS_DIR}/base" "${INPUTS_DIR}/k3s" "${INPUTS_DIR}/agent" "${INPUTS_DIR}/agent-package"
+  "${INPUTS_DIR}/base" "${INPUTS_DIR}/k3s" "${INPUTS_DIR}/init" "${INPUTS_DIR}/init-package"
 echo "account ${SERVICE_USER} ready"
 REMOTE
 
@@ -577,8 +577,8 @@ rsync_to "kernel config" "${LOCAL_KERNEL_CONFIG}" "${INPUTS_DIR}/kernel/config" 
 rsync_to "kernel modules" "${LOCAL_MODULES}/" "${INPUTS_DIR}/modules/" --delete
 rsync_to "base image" "${LOCAL_BASE_IMAGE}" "${INPUTS_DIR}/base/ubuntu-24.04.squashfs" --copy-links
 rsync_to "k3s" "${LOCAL_K3S}" "${INPUTS_DIR}/k3s/k3s" --copy-links
-rsync_to "guest agent" "${LOCAL_AGENT_BINARY}" "${INPUTS_DIR}/agent/kcpagent" --copy-links
-rsync_to "agent package" "${LOCAL_AGENT_PACKAGE}/" "${INPUTS_DIR}/agent-package/" --delete
+rsync_to "guest init" "${LOCAL_INIT_BINARY}" "${INPUTS_DIR}/init/kcpinit" --copy-links
+rsync_to "init package" "${LOCAL_INIT_PACKAGE}/" "${INPUTS_DIR}/init-package/" --delete
 rsync_to "preinstall manifest" "${LOCAL_PREINSTALL}" "${INPUTS_DIR}/preinstall.json" --copy-links
 rsync_to "image configuration" "${WORK}/nodeimage-firecracker.json" "${CONFIG_PATH}"
 rsync_to "image builder" "${LOCAL_NODEIMAGE_BIN}" "${BIN_DIR}/socialweb-nodeimage" --copy-links

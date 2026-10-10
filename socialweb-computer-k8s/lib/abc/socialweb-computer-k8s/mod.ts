@@ -90,3 +90,14 @@ export interface ClusterLinkView {
 export interface ClusterLinkReader {
   get(workspace: string, name: string): Promise<ClusterLinkView | null>;
 }
+
+export interface PinnedDownload {
+  name: string;
+  sha256: string;
+  size: number;
+}
+
+export interface PinnedDownloads {
+  list(): PinnedDownload[];
+  get(sha256: string, name: string): Uint8Array<ArrayBuffer> | null;
+}

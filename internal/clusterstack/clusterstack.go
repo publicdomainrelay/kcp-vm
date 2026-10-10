@@ -47,8 +47,6 @@ type Spec struct {
 
 	BindAddress string
 
-	GuestDialled bool
-
 	MarketDialled bool
 
 	TLSSANs []string
@@ -169,11 +167,6 @@ var (
 		"external-secrets binary and its own leased ports: the upstream defaults (:8080 metrics, " +
 		":8081 webhook health, :8082 controller health, 10250 webhook) are one set for the whole " +
 		"host, so the second cluster's pair would fail at bind")
-	ErrTwoDialAddresses = errors.New("clusterstack: GuestDialled and MarketDialled are both set, and " +
-		"they name two different answers to where a node's machine is. A guest reaches this host " +
-		"through the gateway of the range its cluster holds in the subnet lease file and a market " +
-		"node reaches it through the market's SSH door, so a stack carrying both would be checked " +
-		"against one of them and advertise for the other")
 )
 
 func (s Spec) Validate() error {
@@ -205,8 +198,6 @@ func (s Spec) Validate() error {
 			"K3sCloudControllerManagerPort", s.K3sCloudControllerManagerPort)
 	case s.TokenFile == "":
 		return ErrMissingTokenFile
-	case s.GuestDialled && s.MarketDialled:
-		return ErrTwoDialAddresses
 	}
 	return s.Audit.Validate()
 }
@@ -273,6 +264,20 @@ func (s Spec) ExternalSecretsWebhookArgv() ([]string, error) {
 	}, nil
 }
 
+const MarketClusterCIDR = "10.42.0.0/16"
+
+const MarketFlannelBackend = "none"
+
+func (s Spec) podNetworkArgv() []string {
+	if !s.MarketDialled {
+		return nil
+	}
+	return []string{
+		"--flannel-backend=" + MarketFlannelBackend,
+		"--cluster-cidr=" + MarketClusterCIDR,
+	}
+}
+
 func (s Spec) ServerArgv() ([]string, error) {
 	if err := s.Validate(); err != nil {
 		return nil, err
@@ -294,6 +299,7 @@ func (s Spec) ServerArgv() ([]string, error) {
 	for _, san := range s.TLSSANs {
 		argv = append(argv, "--tls-san", san)
 	}
+	argv = append(argv, s.podNetworkArgv()...)
 	argv = append(argv, s.Audit.argv()...)
 	if s.ServiceAccountIssuer != "" {
 		argv = append(argv, "--kube-apiserver-arg=service-account-issuer="+s.ServiceAccountIssuer)

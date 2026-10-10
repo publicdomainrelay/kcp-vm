@@ -158,11 +158,22 @@ open:
   - id: P5-M1
     title: The live test bed is the vendored deno-kcp market, and the market is the only node path.
     body: >
-      Plan 0005 items M1-MARKET-ONLY, M1-AGENT-SPLIT (M1-BIDDER-UNIT and M1-TESTBED done). The plan file holds
-      each item's decision, status and evidence; this entry mirrors that the milestone is open.
+      Plan 0005 items M1-BIDDER-UNIT and M1-TESTBED (done), and M1-MARKET-ONLY and M1-AGENT-SPLIT,
+      which closed together on 2026-10-07 in commit cd12808: the clusterprovider's local firecracker
+      and qemu substrates are deleted with their tests and their deployment paths, the guest binary
+      is socialweb-nodeinit alone, and the image configuration names init_package/init_binary. The
+      plan file holds each item's decision, status and evidence; this entry mirrors that the
+      milestone is open on its remaining live reading.
     instrument: >
       A live test that applies the vendored market example (PLC, relay, PDSs, a firecracker bidder on
-      our nodeimage) and gets a tenant node through RFP, bid, accept and cloud-init.
+      our nodeimage) and gets a tenant node through RFP, bid, accept and cloud-init. ATTEMPTED TWICE
+      for cd12808 and NOT REACHED: 2026-10-07T21:48Z it skipped (ports 2583-2589 held by an earlier
+      session's bed), and 2026-10-07T21:55:29Z it failed in 120 s with the BED's own bring-up broken
+      -- apply.sh failed 3/3, no OpenBao ready, no DenoPod in any workspace, no guest work directory
+      -- while that other bed came back up on the same fixed ports. The bed never reached an RFP, so
+      the node image and the renamed keys were never read; the live reading is still owed, and the
+      image it would boot was checked directly instead (fingerprint sha256-bcdfbb68, stage and
+      initramfs inspected).
   - id: P5-M2
     title: The requester is event driven and a node's contract survives the process that accepted it.
     body: >
@@ -195,12 +206,16 @@ open:
   - id: P5-M5
     title: Pods reach pods on other nodes and DNS works on every node.
     body: >
-      Plan 0005 items M5-DNS and M5-MESHD (rust/socialweb-meshd). M5-MESHD's daemon is built and
-      proved locally (a56b60d), not deployed; still open is its integration: k3s
-      --flannel-backend=none, a bridge CNI conflist (mtu 1160) on the Node's podCIDR, SNAT for
-      cluster-cidr-external traffic only, rust/socialweb-meshd/deploy/node-reader-rbac.yaml in every
-      tenant (a node may not list Nodes otherwise), and a user_data module installing the
-      sha256-pinned binary with its systemd unit (ARCHITECTURE section 9).
+      Plan 0005 items M5-DNS and M5-MESHD (rust/socialweb-meshd). The daemon (a56b60d) and its
+      integration (c8ba259, 2125360, 58dfd82, 4cbebf1, 4e72a73) are built, unit-proved and proved at
+      zero nodes live, NOT deployed: market k3s servers run --flannel-backend=none on 10.42.0.0/16;
+      every tenant gets the meshd node reader and a per-node CoreDNS DaemonSet on 169.254.20.10 as
+      baseline; the guest's user_data writes the bridge CNI conflist on the Node's podCIDR, the
+      cluster-CIDR-external SNAT, the DNS address and kubelet cluster-dns, and installs the
+      sha256-pinned meshd the door serves at /downloads/<sha256>/<name> (ARCHITECTURE section 9).
+      Open: deploy provider and door together; the live two-node reading, which needs two guests
+      through the RFP flow on the M1 test bed; the DNS-pod-versus-first-workload window on a fresh
+      node (a startup taint).
     instrument: >
       A pod on node A reaches a pod on node B, and a name resolves from a node not running CoreDNS.
   - id: P5-M6
@@ -215,6 +230,14 @@ limits:
   - title: A node cannot reach another node, so a cluster with more than one has no cluster DNS
       for the Pods on the others.
     body: >
+      CLOSED for the local substrates: plan 0005 M1-MARKET-ONLY (commit cd12808) retired them, so
+      there is no longer a guest of this host whose networking this could bound. Kept as a limit of
+      the DELETED substrates, which is what the reading below describes. On a market
+      cluster, built but not
+      yet deployed or read live: every node resolves on its own CoreDNS at 169.254.20.10 (M5-DNS),
+      and pods reach pods on other nodes through socialweb-meshd over iroh (M5-MESHD); the
+      docs/gitlab runner configs no longer carry the DNS wait. What follows is the local-substrate
+      reading, unchanged.
       Every guest sits behind its own pasta instance, and pasta is user-mode networking: it carries
       a guest's traffic out to the host's network and nothing between two guests. So the guests of
       one cluster have no path to each other and k3s's flannel overlay has nothing to run over. A

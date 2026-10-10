@@ -15,27 +15,8 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodefirecracker"
 )
 
-var guestUnits = map[string]string{
-	"kcp-agent.service": `[Unit]
-Description=kcp k3s agent in the guest
-After=network-online.target systemd-modules-load.service
-Wants=network-online.target systemd-modules-load.service
-
-[Service]
-Type=simple
-ExecStart=` + nodefirecracker.GuestAgentPath + ` ` + nodefirecracker.AgentVerb + `
-StandardOutput=journal+console
-StandardError=journal+console
-Restart=no
-TimeoutStartSec=600
-
-[Install]
-WantedBy=multi-user.target
-`,
-}
-
 var staleUnits = []string{
-	"node-identity.service", "node-watch.service", "k3s-preflight.service",
+	"node-identity.service", "node-watch.service", "k3s-preflight.service", "kcp-agent.service",
 }
 
 const (
@@ -102,9 +83,6 @@ func buildRootfs(cfg Config, dst string, tars []imageTar) error {
 	}
 	kcpDir := filepath.Join(cfg.StageDir, "kcp")
 	if err := os.MkdirAll(kcpDir, 0o755); err != nil {
-		return fmt.Errorf("socialweb-nodeimage: %w", err)
-	}
-	if err := copyFile(cfg.AgentBinary, filepath.Join(kcpDir, "kcpagent"), 0o755); err != nil {
 		return fmt.Errorf("socialweb-nodeimage: %w", err)
 	}
 	doc, err := renderGuestDocument(cfg)
@@ -203,14 +181,11 @@ func verifyModuleNames(cfg Config) error {
 func verifyStage(cfg Config, tars []imageTar) error {
 	var missing []string
 	required := []struct{ what, path string }{
-		{"the k3s binary the guest's agent execs", filepath.Join(cfg.StageDir, cfg.K3sBinary)},
-		{"the agent the guest's units run", filepath.Join(cfg.StageDir, nodefirecracker.GuestAgentPath)},
+		{"the k3s binary the guest's units exec", filepath.Join(cfg.StageDir, cfg.K3sBinary)},
 		{"the guest document that names the modules and the k3s paths", filepath.Join(cfg.StageDir, nodefirecracker.GuestFilePath)},
 		{"the modules the guest's systemd-modules-load reads", filepath.Join(cfg.StageDir, modulesLoadDir, modulesLoadFile)},
 		{"the kernel config k3s check-config reads", filepath.Join(cfg.StageDir, "boot", "config-"+filepath.Base(cfg.ModuleSource))},
 	}
-	required = append(required, struct{ what, path string }{
-		"the agent unit", filepath.Join(cfg.StageDir, "etc/systemd/system/kcp-agent.service")})
 	for _, t := range tars {
 		required = append(required, struct{ what, path string }{
 			"the seeded tarball for " + t.reference,
@@ -261,16 +236,7 @@ func installUnits(cfg Config) error {
 		if err := os.Remove(filepath.Join(wants, stale)); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("socialweb-nodeimage: %w", err)
 		}
-	}
-	for name, body := range guestUnits {
-		if err := os.WriteFile(filepath.Join(units, name), []byte(body), 0o644); err != nil {
-			return fmt.Errorf("socialweb-nodeimage: %w", err)
-		}
-		link := filepath.Join(wants, name)
-		if err := os.Remove(link); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("socialweb-nodeimage: %w", err)
-		}
-		if err := os.Symlink("/etc/systemd/system/"+name, link); err != nil {
+		if err := os.Remove(filepath.Join(units, stale)); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("socialweb-nodeimage: %w", err)
 		}
 	}

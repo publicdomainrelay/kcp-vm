@@ -15,6 +15,7 @@
     "./lib/socialweb-computer-k8s-request-proof",
     "./lib/socialweb-computer-k8s-gateway-xrpc",
     "./lib/cloud-init-plugin-k3s-join",
+    "./lib/socialweb-computer-k8s-downloads-fs",
     "./lib/socialweb-computer-k8s-nodeclaim-kcp",
     "./lib/socialweb-computer-k8s-node-market",
     "./lib/hono-factory-socialweb-computer-oauth",

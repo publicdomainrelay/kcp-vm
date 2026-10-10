@@ -269,6 +269,7 @@ func TestKineGateDialsTheAddressItsOwnArgvNamed(t *testing.T) {
 
 func TestK3sGateRefusesAnAdvertisePortThatIsNotThisClustersLease(t *testing.T) {
 	s := spec()
+	s.AdvertiseAddress = portallocator.MarketAdvertiseAddress
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 

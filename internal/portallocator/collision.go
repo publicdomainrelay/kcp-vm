@@ -103,35 +103,10 @@ func AssertAdvertiseAddress(address string) error {
 	return fmt.Errorf("portallocator: --advertise-address %q is not an address this host carries, "+
 		"so a node that is a LOCAL PROCESS told to dial it dials nothing. This was measured: the "+
 		"deleted VM substrate's constant 192.168.5.2 has no interface here, nothing answers it, and "+
-		"the store DSN built from it never connected. That rule does NOT hold for a node that is a "+
-		"guest, and it is inverted there: a guest sits behind a tap in its own network namespace and "+
-		"cannot route to ANY address this host carries -- it reaches the host's apiserver through "+
-		"the gateway its own default route points at. A guest's dial address is the substrate's, so "+
-		"it is checked by AssertGuestDialAddress and then proved by AssertAgentDialledOurPort from "+
-		"the node's own dial, not by this host's interface list",
-		address)
-}
-
-func AssertGuestDialAddress(address string) error {
-	ip := net.ParseIP(address)
-	if ip == nil {
-		return fmt.Errorf("portallocator: %q is not an IP address, and it is the address this "+
-			"cluster's GUEST nodes dial its apiserver on. A name here resolves to whatever each "+
-			"guest's resolver says, which is a different answer in every guest and no answer at all "+
-			"in a guest whose resolver has not been written yet", address)
-	}
-	for _, iface := range hostAddresses() {
-		if iface.Equal(ip) {
-			return fmt.Errorf("portallocator: %q is an address THIS HOST carries, and a guest "+
-				"cannot route to it: the guest's only path to the host is the gateway its default "+
-				"route names, so an address on the host's own interfaces is one the guest's packets "+
-				"never arrive at. The value a guest dials belongs to the substrate that gives the "+
-				"guest its network, which for the firecracker substrate is the pasta gateway, and "+
-				"the evidence that it is right is the node's own dial line -- AssertAgentDialledOurPort "+
-				"-- rather than any property of this host", address)
-		}
-	}
-	return nil
+		"the store DSN built from it never connected. A market node is not a local process and does "+
+		"not answer to this rule: its advertised address is put on the GUEST's own loopback and the "+
+		"market's door reverse-forwards it here, so it is checked by "+
+		"AssertMarketAdvertiseAddress instead", address)
 }
 
 func AssertMarketAdvertiseAddress(address string) error {
@@ -171,10 +146,6 @@ func AssertAdvertiseInvariant(advertiseAddress string, advertisePort, forwardHos
 	return advertiseInvariant(advertiseAddress, advertisePort, forwardHostPort, lease, dialFromThisHost)
 }
 
-func AssertGuestAdvertiseInvariant(advertiseAddress string, advertisePort, forwardHostPort int, lease Lease) error {
-	return advertiseInvariant(advertiseAddress, advertisePort, forwardHostPort, lease, dialFromAGuest)
-}
-
 func AssertMarketAdvertiseInvariant(advertiseAddress string, advertisePort, forwardHostPort int, lease Lease) error {
 	return advertiseInvariant(advertiseAddress, advertisePort, forwardHostPort, lease, dialFromTheMarket)
 }
@@ -184,17 +155,12 @@ type dialler uint8
 const (
 	dialFromThisHost dialler = iota
 
-	dialFromAGuest
-
 	dialFromTheMarket
 )
 
 func advertiseInvariant(advertiseAddress string, advertisePort, forwardHostPort int, lease Lease, dial dialler) error {
 	check := AssertAdvertiseAddress
-	switch dial {
-	case dialFromAGuest:
-		check = AssertGuestDialAddress
-	case dialFromTheMarket:
+	if dial == dialFromTheMarket {
 		check = AssertMarketAdvertiseAddress
 	}
 	if err := check(advertiseAddress); err != nil {

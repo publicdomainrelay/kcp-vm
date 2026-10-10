@@ -31,11 +31,11 @@ type Config struct {
 
 	OutDir string `json:"out_dir"`
 
-	AgentPackage string `json:"agent_package"`
+	InitPackage string `json:"init_package"`
 
-	AgentBinary string `json:"agent_binary"`
+	InitBinary string `json:"init_binary"`
 
-	AgentGoFlags []string `json:"agent_go_flags"`
+	InitGoFlags []string `json:"init_go_flags"`
 
 	K3sBinary string `json:"k3s_binary"`
 
@@ -77,8 +77,11 @@ func LoadConfig(path string) (Config, error) {
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		return Config{}, fmt.Errorf("socialweb-nodeimage: %s: %w", path, err)
 	}
+	if err := nodefirecracker.RefuseRenamedKeys(raw, path); err != nil {
+		return Config{}, err
+	}
 	root := filepath.Dir(path)
-	for _, p := range []*string{&cfg.AgentBinary, &cfg.StageDir, &cfg.OutDir, &cfg.ImageCacheDir, &cfg.Preinstall} {
+	for _, p := range []*string{&cfg.InitBinary, &cfg.StageDir, &cfg.OutDir, &cfg.ImageCacheDir, &cfg.Preinstall} {
 		if *p == "" || filepath.IsAbs(*p) {
 			continue
 		}
@@ -131,8 +134,8 @@ func (c Config) Validate() error {
 		{"base_image", c.BaseImage},
 		{"stage_dir", c.StageDir},
 		{"out_dir", c.OutDir},
-		{"agent_package", c.AgentPackage},
-		{"agent_binary", c.AgentBinary},
+		{"init_package", c.InitPackage},
+		{"init_binary", c.InitBinary},
 		{"k3s_binary", c.K3sBinary},
 		{"k3s_data_dir", c.K3sDataDir},
 		{"image_cache_dir", c.ImageCacheDir},

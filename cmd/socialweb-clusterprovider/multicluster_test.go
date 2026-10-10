@@ -183,7 +183,6 @@ func TestAMarketProvisionReturnsBeforeTheMachineExists(t *testing.T) {
 	claims := &marketClaims{}
 	tenant, _ := tenantClientFor(t)
 	opts := marketOptions(t, claims, tenant)
-	opts.JoinTimeout = NodeJoinTimeout
 	hosts, err := newNodeHosts(opts)
 	if err != nil {
 		t.Fatalf("newNodeHosts: %v", err)
@@ -201,9 +200,8 @@ func TestAMarketProvisionReturnsBeforeTheMachineExists(t *testing.T) {
 	elapsed := time.Since(start)
 	if elapsed >= time.Second {
 		t.Fatalf("a market Provision took %s with no tenant Node present. A market machine is "+
-			"absent for minutes, so the pass waited out the %s join timeout inside a process that "+
-			"serves every cluster in the tree: one new claim blocks every other cluster for the "+
-			"whole timeout", elapsed, NodeJoinTimeout)
+			"absent for minutes, and this pass is one of many in one process that serves every "+
+			"cluster in the tree: a pass that waited would hold back every other cluster", elapsed)
 	}
 	if got := claims.held(); got != 1 {
 		t.Fatalf("%d claims after Provision, want exactly one: returning early must not skip the "+
@@ -216,7 +214,6 @@ func TestAMarketNodeIsConfirmedOnALaterPass(t *testing.T) {
 	nodeName := clusterKey(t, "liveweb") + "-node1"
 	tenant, client := tenantClientFor(t, nodeName)
 	opts := marketOptions(t, claims, tenant)
-	opts.JoinTimeout = NodeJoinTimeout
 	hosts, err := newNodeHosts(opts)
 	if err != nil {
 		t.Fatalf("newNodeHosts: %v", err)
@@ -247,7 +244,6 @@ func TestAMarketNodeWhoseClaimFailedIsTornDownOnALaterPass(t *testing.T) {
 	claims := &marketClaims{}
 	tenant, client := tenantClientFor(t)
 	opts := marketOptions(t, claims, tenant)
-	opts.JoinTimeout = NodeJoinTimeout
 	hosts, err := newNodeHosts(opts)
 	if err != nil {
 		t.Fatalf("newNodeHosts: %v", err)

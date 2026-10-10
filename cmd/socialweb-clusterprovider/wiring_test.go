@@ -285,7 +285,7 @@ func TestLoadRefusesAHalfConfiguredJoin(t *testing.T) {
 	env["SOCIALWEB_CLUSTERPROVIDER_CLOUD_CONTROLLER_MANAGER"] = "/usr/local/bin/socialweb-cloud-controller-manager"
 	env["SOCIALWEB_CLUSTERPROVIDER_EXTERNAL_SECRETS"] = "/usr/local/bin/external-secrets"
 	env["SOCIALWEB_CLUSTERPROVIDER_ESO_BUNDLE"] = "/opt/socialweb/eso/external-secrets.yaml"
-	for k, v := range placementEnv(t) {
+	for k, v := range marketPlacementEnv(t) {
 		env[k] = v
 	}
 	cfg, err = load(get)

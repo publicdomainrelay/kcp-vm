@@ -132,9 +132,9 @@ func TestAnImageUnderTheNameItsInputsGiveItIsNotBuiltAgain(t *testing.T) {
 	writeConfigFile(t, cfg)
 	dir := writeImageUnderItsName(t, cfg, nameOf(t, cfg))
 
-	digestBefore, err := fileDigestOf(cfg.AgentBinary)
+	digestBefore, err := fileDigestOf(cfg.InitBinary)
 	if err != nil {
-		t.Fatalf("reading the agent binary this fixture wrote: %v", err)
+		t.Fatalf("reading the init binary this fixture wrote: %v", err)
 	}
 	loaded, err := LoadConfig(cfg.Path)
 	if err != nil {
@@ -158,10 +158,10 @@ func TestAnImageUnderTheNameItsInputsGiveItIsNotBuiltAgain(t *testing.T) {
 	}
 
 	mainErr := Main(cfg.Path)
-	digestAfter, digestErr := fileDigestOf(cfg.AgentBinary)
+	digestAfter, digestErr := fileDigestOf(cfg.InitBinary)
 	if mainErr != nil && digestErr == nil && digestAfter != digestBefore {
-		livegate.Require(t, "the agent binary changed UNDER this run, from %s to %s, and the "+
-			"image's name carries that binary's digest: `Main` rebuilds the agent before it "+
+		livegate.Require(t, "the init binary changed UNDER this run, from %s to %s, and the "+
+			"image's name carries that binary's digest: `Main` rebuilds the init before it "+
 			"fingerprints, so a binary that moves between the fixture naming its image and the run "+
 			"looking for it puts the image under a name the run does not know, sends it down the "+
 			"build path, and that path refuses this fixture's unpinned image. The premise of this "+
@@ -176,7 +176,7 @@ func TestAnImageUnderTheNameItsInputsGiveItIsNotBuiltAgain(t *testing.T) {
 			"put on a timer, and the build would have failed here (the module tree this fixture "+
 			"names does not exist), so what came back instead was not a build. The fixture wrote "+
 			"the image under %s and a run that reads the configuration on disk names %s, and the "+
-			"agent binary hashed %s both before and after the run", mainErr,
+			"init binary hashed %s both before and after the run", mainErr,
 			fromMemory, fromDisk, digestBefore)
 	}
 	if names := entriesIn(t, cfg.OutDir); len(names) != 1 || names[0] != nameOf(t, cfg) {

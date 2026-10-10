@@ -9,8 +9,6 @@ import (
 	"strings"
 	"syscall"
 	"time"
-
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodefirecracker"
 )
 
 const initModulesDir = "/modules"
@@ -29,7 +27,7 @@ func InitGuest() error {
 	}
 	entries, err := os.ReadDir(initModulesDir)
 	if err != nil {
-		return fmt.Errorf("nodeagent: reading %s, which is where the initramfs carries the virtio "+
+		return fmt.Errorf("nodeinit: reading %s, which is where the initramfs carries the virtio "+
 			"transport the guest's block device arrives on: %w -- without virtio_mmio the guest has "+
 			"no /dev/vda, and the failure that follows is a kernel panic about a missing root device "+
 			"that names none of this", initModulesDir, err)
@@ -53,29 +51,29 @@ func InitGuest() error {
 	}
 	initLogf("vda present after %s", waited)
 	if err := syscall.Mount("/dev/vda", "/newroot", "ext4", 0, ""); err != nil {
-		return fmt.Errorf("nodeagent: mounting the root filesystem at /dev/vda as ext4: %w -- the "+
+		return fmt.Errorf("nodeinit: mounting the root filesystem at /dev/vda as ext4: %w -- the "+
 			"disk the VMM attached is the root filesystem this initramfs exists to hand over to, "+
 			"and a mount that fails here leaves the guest with no init at all", err)
 	}
 	for _, d := range []string{"proc", "sys", "dev"} {
 		if err := os.MkdirAll("/newroot"+d, 0o755); err != nil {
-			return fmt.Errorf("nodeagent: creating /newroot%s: %w", d, err)
+			return fmt.Errorf("nodeinit: creating /newroot%s: %w", d, err)
 		}
 		if err := syscall.Mount(d, "/newroot"+d, "", syscall.MS_MOVE, ""); err != nil {
-			return fmt.Errorf("nodeagent: moving %s into the root filesystem: %w -- the guest's "+
+			return fmt.Errorf("nodeinit: moving %s into the root filesystem: %w -- the guest's "+
 				"systemd re-mounts these itself, but a log line from before it does lands outside "+
 				"the journal, and a failure here is what makes a boot that dies early say nothing",
 				d, err)
 		}
 	}
 	if err := os.Chdir("/newroot"); err != nil {
-		return fmt.Errorf("nodeagent: entering /newroot: %w", err)
+		return fmt.Errorf("nodeinit: entering /newroot: %w", err)
 	}
 	if err := syscall.Mount("/newroot", "/", "", syscall.MS_MOVE, ""); err != nil {
-		return fmt.Errorf("nodeagent: moving the root filesystem onto /: %w", err)
+		return fmt.Errorf("nodeinit: moving the root filesystem onto /: %w", err)
 	}
 	if err := syscall.Chroot("."); err != nil {
-		return fmt.Errorf("nodeagent: chrooting into the root filesystem: %w", err)
+		return fmt.Errorf("nodeinit: chrooting into the root filesystem: %w", err)
 	}
 	initLogf("switch_root -> /sbin/init")
 	return syscall.Exec("/sbin/init", []string{"/sbin/init"}, os.Environ())
@@ -93,8 +91,4 @@ func loadModule(name, path string) error {
 	}
 	loadedModules[name] = true
 	return nil
-}
-
-func loadGuestDocument() (nodefirecracker.GuestDocument, error) {
-	return nodefirecracker.LoadGuestDocument(nodefirecracker.GuestFilePath)
 }

@@ -18,11 +18,10 @@ import {
   type NodeClaim,
   nodeClaimKey,
   type NodeClaimStore,
+  type PinnedDownload,
 } from "@publicdomainrelay/socialweb-computer-k8s-abc";
-import { createK3sJoinModule } from "@publicdomainrelay/cloud-init-plugin-k3s-join";
+import { createK3sJoinModule, MESHD_ARCHES, type MeshdPin } from "@publicdomainrelay/cloud-init-plugin-k3s-join";
 import {
-  accountHashOf,
-  clusterKeyOf,
   clusterLinkName,
   NODE_CLAIM_DOC_PATH,
   nodeAudience,
@@ -65,6 +64,7 @@ export interface MarketNodeFulfillerOptions {
   openBaoCAFileOf?: (spec: NodeClaimSpec) => string;
   eventStreams?: () => { close(): void };
   readText?: (path: string) => Promise<string>;
+  meshd?: MeshdPin;
   log?: Log;
 }
 
@@ -81,6 +81,19 @@ const RELEASE_REASON_CLAIM_DELETED = "claim_deleted";
 
 export const OPENBAO_CA_RELATIVE_TO_CLUSTER_DIR = "openbao/tls/ca.crt";
 
+export const MESHD_DOWNLOAD_PREFIX = "socialweb-meshd-";
+
+export function meshdPinOf(downloads: PinnedDownload[], downloadBase: string | undefined): MeshdPin | null {
+  if (!downloadBase) return null;
+  const sha256: Partial<MeshdPin["sha256"]> = {};
+  for (const arch of MESHD_ARCHES) {
+    const found = downloads.find((d) => d.name === `${MESHD_DOWNLOAD_PREFIX}${arch}`);
+    if (!found) return null;
+    sha256[arch] = found.sha256;
+  }
+  return { downloadBase, sha256: sha256 as MeshdPin["sha256"] };
+}
+
 export function defaultOpenBaoCAFile(spec: NodeClaimSpec): string {
   const dir = spec.tokenFile.replace(/\/+[^/]*$/, "");
   return `${dir}/${OPENBAO_CA_RELATIVE_TO_CLUSTER_DIR}`;
@@ -94,15 +107,8 @@ async function sha256Hex(text: string): Promise<string> {
   return Array.from(await sha256(text), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-export async function clusterKeyOfClaim(spec: Pick<NodeClaimSpec, "ownerDid" | "cluster">): Promise<string> {
-  const ownerPrefix = clusterKeyOf(accountHashOf(await sha256(spec.ownerDid)), "");
-  if (!spec.cluster.startsWith(ownerPrefix) || spec.cluster.length === ownerPrefix.length) {
-    throw new Error(
-      `the claim names cluster ${spec.cluster}, which is not a cluster key of its owner ${spec.ownerDid} ` +
-        `(the provider writes spec.cluster as ${ownerPrefix}<cluster>)`,
-    );
-  }
-  return spec.cluster;
+export function clusterKeyOfClaim(spec: Pick<NodeClaimSpec, "ownerDid" | "cluster">): Promise<string> {
+  return Promise.resolve(spec.cluster);
 }
 
 export async function nodeGrantOf(spec: NodeClaimSpec, vars: Pick<GrantVars, "issuerUri" | "subject">): Promise<NodeClaimGrant> {
@@ -224,6 +230,7 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
   const secretsCapability = opts.secretsCapability ??
     ((secrets: SecretEntry[], logger: StructuredLoggerInterface) => createSecretsCapability({ secrets, logger }));
   const vmReadyTimeoutSec = opts.vmReadyTimeoutSec ?? 600;
+  const joinModule = createK3sJoinModule(opts.meshd ? { meshd: opts.meshd } : {});
   const eventStreams = opts.eventStreams ?? (() =>
     createDefaultATProtoEventStreamsClient({ additionalRelays: opts.relayUrls ?? [], log: quietLogger(log) }) as unknown as {
       close(): void;
@@ -377,7 +384,7 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
           vmName: spec.nodeName,
           userData: {
             ...(opts.userDataBase ? { base: opts.userDataBase } : {}),
-            modules: ["k3s", createK3sJoinModule()],
+            modules: ["k3s", joinModule],
           },
           ...(opts.guestHostAliases?.length ? { guestHostAliases: opts.guestHostAliases } : {}),
           capabilities: [capability],

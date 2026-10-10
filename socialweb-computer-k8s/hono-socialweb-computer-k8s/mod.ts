@@ -11,13 +11,22 @@ import { createPasswordSessionAgent, parsePasswordSessions } from "@publicdomain
 import { createWebFactory } from "@publicdomainrelay/hono-factory-socialweb-computer-oauth";
 import { createRequestProofVerifier } from "@publicdomainrelay/socialweb-computer-k8s-request-proof";
 import { createXrpcClusterGateway } from "@publicdomainrelay/socialweb-computer-k8s-gateway-xrpc";
-import { createClusterApiFactory, type CredentialHelper } from "@publicdomainrelay/hono-factory-socialweb-computer-k8s";
+import {
+  createClusterApiFactory,
+  createPinnedDownloadsFactory,
+  type CredentialHelper,
+} from "@publicdomainrelay/hono-factory-socialweb-computer-k8s";
+import { loadPinnedDownloads } from "@publicdomainrelay/socialweb-computer-k8s-downloads-fs";
 import {
   createKcpClusterLinkReader,
   createKcpNodeClaimStore,
   parseKubeconfig,
 } from "@publicdomainrelay/socialweb-computer-k8s-nodeclaim-kcp";
-import { createMarketNodeFulfiller, type MarketNodeFulfiller } from "@publicdomainrelay/socialweb-computer-k8s-node-market";
+import {
+  createMarketNodeFulfiller,
+  type MarketNodeFulfiller,
+  meshdPinOf,
+} from "@publicdomainrelay/socialweb-computer-k8s-node-market";
 import cliArgsEnv from "./cli-args-env.json" with { type: "json" };
 
 let runtimeConfig: Record<string, unknown> | null = null;
@@ -81,11 +90,13 @@ const gateway = createXrpcClusterGateway({
   },
 });
 
+const downloadsDir = `${webDir}/${(options.downloadsSubdir as string).replace(/^\/+|\/+$/g, "")}`;
+
 async function credentialHelpers(): Promise<CredentialHelper[]> {
   const subdir = (options.downloadsSubdir as string).replace(/^\/+|\/+$/g, "");
   const out: CredentialHelper[] = [];
   try {
-    for await (const entry of Deno.readDir(`${webDir}/${subdir}`)) {
+    for await (const entry of Deno.readDir(downloadsDir)) {
       const match = /^socialweb-credential-([a-z0-9]+)-([a-z0-9_]+)$/.exec(entry.name);
       if (entry.isFile && match) out.push({ os: match[1], arch: match[2], path: `/${subdir}/${entry.name}` });
     }
@@ -96,6 +107,8 @@ async function credentialHelpers(): Promise<CredentialHelper[]> {
 }
 
 const helpers = await credentialHelpers();
+const pinned = await loadPinnedDownloads(downloadsDir);
+const meshd = meshdPinOf(pinned.list(), publicOrigin);
 
 const serve = createServe({
   logger,
@@ -134,6 +147,7 @@ const staticApp = createStaticFilesApp(webDir, createStructuredLogger("web", get
 
 serve.app.route("/", web.createApp());
 serve.app.route("/", api.createApp());
+serve.app.route("/", createPinnedDownloadsFactory({ downloads: pinned, log }).createApp());
 serve.app.route("/", staticApp as never);
 
 const relayUrls = ((options.relayUrl as string | undefined) ?? "").split(",").map((u) => u.trim()).filter(Boolean);
@@ -154,6 +168,7 @@ if (options.kcpKubeconfig) {
     userDataBase: testNodeUserDataBase,
     ...(options.nodePolicy ? { policy: { name: options.nodePolicy as string, args: JSON.parse(options.nodePolicyArgs as string) } } : {}),
     pollIntervalMs: options.nodePollIntervalMs as number,
+    ...(meshd ? { meshd } : {}),
     log,
   });
 }
@@ -165,8 +180,18 @@ log("ready", {
   webDir,
   publicOrigin: publicOrigin ?? null,
   credentialHelpers: helpers.length,
+  pinnedDownloads: pinned.list(),
+  meshd: meshd ?? null,
   fulfilsNodes: fulfiller !== null,
 });
+if (fulfiller && !meshd) {
+  logger.warn("meshd_not_offered", {
+    downloadsDir,
+    publicOrigin: publicOrigin ?? null,
+    meaning: "market nodes join with the bridge CNI and per-node DNS but no pod mesh: pods on different nodes cannot reach each other",
+    needs: "socialweb-meshd-x86_64 and socialweb-meshd-aarch64 with their .sha256 sidecars in the downloads dir, and public-origin set",
+  });
+}
 
 async function shutdown(): Promise<void> {
   await fulfiller?.stop();

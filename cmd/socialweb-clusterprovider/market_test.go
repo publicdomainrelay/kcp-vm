@@ -4,9 +4,7 @@ package main
 
 import (
 	"context"
-	"errors"
 	"io"
-	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -23,7 +21,6 @@ import (
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clusterprovider"
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodefirecracker"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodemarket"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/noderecord"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/portallocator"
@@ -106,13 +103,11 @@ func marketOptions(t *testing.T, claims nodemarket.Claims, tenant tenantClient) 
 	t.Helper()
 	return nodeHostsOptions{
 		Allocator:           testAllocator(t),
-		Networks:            testNetworks(t),
 		Registry:            marketRegistry(),
 		Claims:              claims,
 		StateDir:            t.TempDir(),
 		AdvertiseAddress:    portallocator.MarketAdvertiseAddress,
 		ClaimReleaseTimeout: time.Second,
-		JoinTimeout:         time.Nanosecond,
 		Tenant:              tenant,
 		Log:                 slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Substrate:           nodeSubstrate{Name: SubstrateMarket},
@@ -142,11 +137,6 @@ func TestTheMarketSubstrateNeedsNoBinaryOnThisHost(t *testing.T) {
 	if sub.Name != SubstrateMarket {
 		t.Fatalf("nodeSubstrateFor built substrate %q", sub.Name)
 	}
-	if sub.IsGuest() {
-		t.Fatal("a market node was treated as a guest: it is not addressed inside this host's " +
-			"subnet lease and it reaches its apiserver through the market's SSH door, so a guest " +
-			"gateway and a per-node range would name a network it is not on")
-	}
 	if err := sub.Validate(); err != nil {
 		t.Fatalf("the market substrate refused a whole placement: %v", err)
 	}
@@ -163,24 +153,13 @@ func TestTheMarketSubstrateNeedsNoBinaryOnThisHost(t *testing.T) {
 	}
 }
 
-func TestTheCredentialSourceFollowsTheSubstrate(t *testing.T) {
-	for _, tc := range []struct {
-		substrate nodeSubstrate
-		want      clusterprovider.CredentialSource
-	}{
-		{nodeSubstrate{Name: SubstrateMarket}, clusterprovider.CredentialSourceClusterCA},
-		{nodeSubstrate{Name: SubstrateFirecracker}, clusterprovider.CredentialSourceVaultIfSealed},
-		{nodeSubstrate{Name: SubstrateQEMU}, clusterprovider.CredentialSourceVaultIfSealed},
-	} {
-		t.Run(tc.substrate.Name, func(t *testing.T) {
-			got := tenantCredentialSource(tc.substrate)
-			if got != tc.want {
-				t.Fatalf("a cluster placed on the %s substrate mints its tenant credential as %q, "+
-					"want %q: a market node's machine is not this host, so the cluster's own "+
-					"ClientCA signs it and the vault is never on the path between this provider "+
-					"and the tenant apiserver", tc.substrate.Name, got, tc.want)
-			}
-		})
+func TestTheCredentialSourceIsTheClustersOwnCA(t *testing.T) {
+	got := tenantCredentialSource()
+	want := clusterprovider.CredentialSourceClusterCA
+	if got != want {
+		t.Fatalf("a node's tenant credential is minted as %q, want %q: a market node's machine is "+
+			"not this host, so the cluster's own ClientCA signs it and the vault is never on the "+
+			"path between this provider and the tenant apiserver", got, want)
 	}
 }
 
@@ -214,7 +193,6 @@ func TestTheMarketSubstrateBuildsAClaimingHost(t *testing.T) {
 func TestTheMarketSubstrateRefusesAHostWithNoStoreToClaimThrough(t *testing.T) {
 	hosts, err := newNodeHosts(nodeHostsOptions{
 		Allocator:        testAllocator(t),
-		Networks:         testNetworks(t),
 		Registry:         marketRegistry(),
 		StateDir:         t.TempDir(),
 		AdvertiseAddress: portallocator.MarketAdvertiseAddress,
@@ -455,44 +433,48 @@ func TestTheMarketTeardownIsTheClaimAndNotTheMachine(t *testing.T) {
 	}
 }
 
-func TestTheMarketSweepReapsWhatAnotherSubstrateLeftBehind(t *testing.T) {
+func TestTheMarketSweepLeavesARetiredSubstratesRecordAlone(t *testing.T) {
 	stateDir := t.TempDir()
 	dir := clusterprovider.NodeDataDir(stateDir, "liveweb", "liveweb-node1")
 	pid := spawnAgentStandIn(t, dir)
-	writeNodeRecordFor(t, dir, pid, nodefirecracker.Identity(dir), nodefirecracker.Substrate)
+	writeNodeRecordFor(t, dir, pid, standInIdentity(dir), "firecracker")
+	t.Cleanup(func() { _ = syscall.Kill(pid, syscall.SIGKILL) })
 
 	p := &Provider{cfg: Config{Join: "liveweb", Substrate: SubstrateMarket, StateDir: stateDir},
 		log: testLogger()}
 	if err := p.sweepNodeRecords(context.Background()); err != nil {
 		t.Fatalf("sweepNodeRecords: %v", err)
 	}
-	waitGone(t, pid)
-	if _, err := os.Stat(noderecord.RecordPath(dir)); !errors.Is(err, fs.ErrNotExist) {
-		t.Fatal("a firecracker record survived a sweep by a gateway configured for the market " +
-			"substrate. The record names the substrate that wrote it, and the identity inside it is " +
-			"the argv THAT substrate gave the process: a sweep that resolves the identity from its " +
-			"own configuration instead reads the record as a node that is not ours and leaves a " +
-			"guest running, which is the whole failure the record exists to prevent")
+	if err := syscall.Kill(pid, 0); err != nil {
+		t.Fatalf("the sweep signalled pid %d (%v). Its record names the firecracker substrate, "+
+			"retired on %s (plan 0005 M1-MARKET-ONLY), whose process identity this provider can no "+
+			"longer reconstruct: the market path writes no node record at all, so the record is a "+
+			"leftover and nothing may be signalled on it", pid, err, RetiredSubstratesRetiredOn)
+	}
+	if _, err := os.Stat(noderecord.RecordPath(dir)); err != nil {
+		t.Fatalf("the sweep cleared a record it cannot verify (%v): a cleared record takes away "+
+			"the only thing naming the process that holds this node", err)
 	}
 }
 
-func TestASweepStopsOnARecordWhoseSubstrateItCannotRead(t *testing.T) {
+func TestASweepLeavesARecordWhoseSubstrateItCannotRead(t *testing.T) {
 	stateDir := t.TempDir()
 	dir := clusterprovider.NodeDataDir(stateDir, "liveweb", "liveweb-node1")
 	pid := spawnAgentStandIn(t, dir)
-	writeNodeRecordFor(t, dir, pid, nodefirecracker.Identity(dir), "a-substrate-nothing-here-runs")
+	writeNodeRecordFor(t, dir, pid, standInIdentity(dir), "a-substrate-nothing-here-runs")
 	t.Cleanup(func() { _ = syscall.Kill(pid, syscall.SIGKILL) })
 
 	p := &Provider{cfg: Config{Join: "liveweb", Substrate: SubstrateMarket, StateDir: stateDir},
 		log: testLogger()}
-	err := p.sweepNodeRecords(context.Background())
-	if err == nil {
-		t.Fatal("a record naming a substrate with no identity function was walked past, and the " +
-			"process it names is one nothing on this host can match: guessing would either signal a " +
-			"process that is not ours or leave ours running for ever")
+	if err := p.sweepNodeRecords(context.Background()); err != nil {
+		t.Fatalf("sweepNodeRecords: %v", err)
 	}
-	if !strings.Contains(err.Error(), "a-substrate-nothing-here-runs") {
-		t.Fatalf("the refusal does not name the substrate the record was written by: %v", err)
+	if err := syscall.Kill(pid, 0); err != nil {
+		t.Fatalf("the sweep signalled pid %d, whose record names a substrate with no identity "+
+			"function: guessing would signal a process that is not ours (%v)", pid, err)
+	}
+	if _, err := os.Stat(noderecord.RecordPath(dir)); err != nil {
+		t.Fatalf("the sweep cleared a record whose substrate it cannot read (%v)", err)
 	}
 }
 
@@ -588,25 +570,6 @@ func marketEnv(t *testing.T, extra map[string]string) map[string]string {
 		base[k] = v
 	}
 	return base
-}
-
-func TestAGuestSubstrateCountsNoNodeInFlight(t *testing.T) {
-	tenant, _ := tenantClientFor(t)
-	hosts, err := newNodeHosts(nodeOptionsFor(t, tenant))
-	if err != nil {
-		t.Fatalf("newNodeHosts: %v", err)
-	}
-	key := "liveweb"
-	if _, err := hosts.forCluster(key); err != nil {
-		t.Fatalf("forCluster: %v", err)
-	}
-	if got := hosts.inFlight(context.Background(), key); got != 0 {
-		t.Fatalf("a firecracker host was counted as %d nodes in flight. A guest substrate's Provision "+
-			"does not return until the tenant cluster reports the node, so a host it still holds and "+
-			"the tenant does not name is a join that ran out its timeout, not a machine on its way: "+
-			"counting it holds the scale decision off a node that is never coming, and it is exactly "+
-			"the count the market substrate needs and this one must not have", got)
-	}
 }
 
 func TestANodeNameWhoseClaimHasEndedIsNotClaimedAgain(t *testing.T) {

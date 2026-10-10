@@ -18,8 +18,8 @@ type imageFixture struct {
 	kernelEnv  string
 	baseImage  string
 	k3s        string
-	agent      string
-	agentPkg   string
+	init       string
+	initPkg    string
 	preinstall string
 	modules    string
 	cfg        BuildConfig
@@ -45,16 +45,16 @@ func newImageFixture(t *testing.T) imageFixture {
 		kernelEnv:  filepath.Join(root, "config-6.16.4"),
 		baseImage:  filepath.Join(root, "base.squashfs"),
 		k3s:        filepath.Join(root, "k3s"),
-		agent:      filepath.Join(root, "kcpagent"),
-		agentPkg:   filepath.Join(root, "socialweb-nodeagent"),
+		init:       filepath.Join(root, "kcpinit"),
+		initPkg:    filepath.Join(root, "socialweb-nodeinit"),
 		modules:    filepath.Join(root, "modules"),
 	}
 	writeFileAt(t, f.kernel, "this host's kernel, as it was on the day of the build\n")
 	writeFileAt(t, f.kernelEnv, "CONFIG_NETFILTER_XT_TARGET_NFLOG=m\n")
 	writeFileAt(t, f.baseImage, "the base userspace, as it was on the day of the build\n")
 	writeFileAt(t, f.k3s, "k3s version v1.31.1+k3s1\n")
-	writeFileAt(t, f.agent, "the guest's agent, as it was on the day of the build\n")
-	writeFileAt(t, filepath.Join(f.agentPkg, "main.go"), "package main\n")
+	writeFileAt(t, f.init, "the guest's init, as it was on the day of the build\n")
+	writeFileAt(t, filepath.Join(f.initPkg, "main.go"), "package main\n")
 	writeFileAt(t, filepath.Join(f.modules, "modules.dep"), "kernel/net/netfilter/xt_NFLOG.ko:\n")
 	writeFileAt(t, filepath.Join(f.modules, "modules.builtin"), "kernel/net/netfilter/nf_conntrack.ko\n")
 	writeFileAt(t, filepath.Join(f.modules, "kernel/net/netfilter/xt_NFLOG.ko"), "the extension\n")
@@ -66,8 +66,8 @@ func newImageFixture(t *testing.T) imageFixture {
 		KernelConfig:     f.kernelEnv,
 		BaseImage:        f.baseImage,
 		K3sBinary:        f.k3s,
-		AgentBinary:      f.agent,
-		AgentPackage:     f.agentPkg,
+		InitBinary:       f.init,
+		InitPackage:      f.initPkg,
 		ModuleSource:     f.modules,
 	}
 	f.writeConfig(t, f.cfg)
@@ -395,10 +395,10 @@ func moduleRootOfTheTest(t *testing.T) string {
 	}
 }
 
-func TestAnAgentPackageIsRelativeToTheModuleAndNotToWhereTheReaderStands(t *testing.T) {
+func TestAnInitPackageIsRelativeToTheModuleAndNotToWhereTheReaderStands(t *testing.T) {
 	f := newImageFixture(t)
 	cfg := f.cfg
-	cfg.AgentPackage = "./cmd/socialweb-nodeagent"
+	cfg.InitPackage = "./cmd/socialweb-nodeinit"
 
 	fromThePackage, err := Fingerprint(f.configPath, cfg)
 	if err != nil {
@@ -427,7 +427,7 @@ func TestAnAgentPackageIsRelativeToTheModuleAndNotToWhereTheReaderStands(t *test
 	if _, err := Fingerprint(f.configPath, cfg); err == nil {
 		t.Fatal("a package path was resolved from a directory that is inside no module at all, and " +
 			"there is nothing there for a relative path to be relative to: whatever it picked would " +
-			"be recorded as the source the agent in the image was built from")
+			"be recorded as the source the init in the image was built from")
 	} else if !strings.Contains(err.Error(), "go.mod") {
 		t.Errorf("the refusal does not name the file it looked for and did not find: %v", err)
 	}

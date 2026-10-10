@@ -6,9 +6,9 @@
   "base_image": "/home/johnandersen777/kcp-image/artifacts/img/ubuntu-24.04.squashfs",
   "stage_dir": "/var/lib/socialweb/stage",
   "out_dir": "/var/lib/socialweb/images",
-  "agent_package": "./cmd/socialweb-nodeagent",
-  "agent_binary": "/home/johnandersen777/kcp-image/kcpagent",
-  "agent_go_flags": [
+  "init_package": "./cmd/socialweb-nodeinit",
+  "init_binary": "/home/johnandersen777/kcp-image/kcpinit",
+  "init_go_flags": [
     "-ldflags",
     "-s -w",
     "-buildvcs=false"

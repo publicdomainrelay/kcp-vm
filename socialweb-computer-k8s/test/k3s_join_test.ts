@@ -213,7 +213,11 @@ Deno.test("node-secrets exchanges the workload token for the claim's audience, l
       await read(`${run.node}/apiserver.env`),
       "NODE_NAME=ci-node1\nADVERTISE_ADDRESS=100.127.255.254\nAPISERVER_PORT=23456\nAPISERVER_TICKET=endpointabc123\n",
     );
-    for (const f of ["token", "server-ca.pem", "node-password", "apiserver.env"]) {
+    assertEquals(
+      await read(`${run.node}/meshd.env`),
+      "SOCIALWEB_MESHD_NODE_NAME=ci-node1\nSOCIALWEB_MESHD_KUBECONFIG=/var/lib/rancher/k3s/agent/kubelet.kubeconfig\n",
+    );
+    for (const f of ["token", "server-ca.pem", "node-password", "apiserver.env", "meshd.env"]) {
       assertEquals((await Deno.stat(`${run.node}/${f}`)).mode! & 0o777, 0o600, f);
     }
     assertEquals((await Deno.stat(`${run.dir}/rancher/node/password`)).mode! & 0o777, 0o600);

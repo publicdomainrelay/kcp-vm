@@ -9,51 +9,22 @@ import (
 	"path/filepath"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clusterprovider"
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodefirecracker"
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodeqemu"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/noderecord"
 )
 
-type nodeIdentity func(clusterDir, nodeName string) []string
+var errUnverifiableNodeRecord = errors.New(
+	"clusterprovider: the node record names a substrate this provider no longer places nodes with. " +
+		"The local firecracker and qemu substrates were retired (plan 0005 M1-MARKET-ONLY): a market " +
+		"node is a VM rented from the compute market, born from a bidder's cloud-init, and nothing " +
+		"about it runs on this host, so the market path writes no node record at all -- a rented node " +
+		"is a NodeClaim, and the door releases it. A record is therefore a leftover from a host that " +
+		"still ran a local substrate, and its identity (the argv that substrate gave the process) is " +
+		"one this provider cannot reconstruct. The record is left where it is and nothing is " +
+		"signalled on it: a signal aimed at a pid nobody can verify is a signal aimed at whatever " +
+		"now holds that number")
 
-var errNoNodeIdentity = errors.New(
-	"clusterprovider: no node-record identity is derivable for this substrate, and an identity is " +
-		"the only thing that separates the process a record names from whatever later took over its " +
-		"pid number. An identity has to be a token the process itself carries and this sweep can " +
-		"compare against, so a substrate whose process carries no such token must say where its " +
-		"identity comes from before its records can be swept at all; an invented one either signals " +
-		"a process that is not ours or leaves ours running for ever")
-
-func nodeIdentityFor(substrate string) (nodeIdentity, error) {
-	switch substrate {
-	case SubstrateFirecracker:
-		return func(clusterDir, nodeName string) []string {
-			return nodefirecracker.Identity(
-				filepath.Join(clusterDir, clusterprovider.NodesDirName, nodeName))
-		}, nil
-	case SubstrateQEMU:
-		return func(clusterDir, nodeName string) []string {
-			return nodeqemu.Identity(
-				filepath.Join(clusterDir, clusterprovider.NodesDirName, nodeName))
-		}, nil
-	}
-	return nil, fmt.Errorf("%w (substrate %q)", errNoNodeIdentity, substrate)
-}
-
-func nodeHolderIdentityFor(substrate string) (nodeIdentity, error) {
-	switch substrate {
-	case SubstrateFirecracker:
-		return func(clusterDir, nodeName string) []string {
-			return nodefirecracker.NamespaceIdentity(
-				filepath.Join(clusterDir, clusterprovider.NodesDirName, nodeName))
-		}, nil
-	case SubstrateQEMU:
-		return func(clusterDir, nodeName string) []string {
-			return nodeqemu.NamespaceIdentity(
-				filepath.Join(clusterDir, clusterprovider.NodesDirName, nodeName))
-		}, nil
-	}
-	return nil, fmt.Errorf("%w (substrate %q)", errNoNodeIdentity, substrate)
+func unverifiableNodeRecord(substrate string) error {
+	return fmt.Errorf("%w (substrate %q)", errUnverifiableNodeRecord, substrate)
 }
 
 func (p *Provider) sweepNodeRecords(ctx context.Context) error {
@@ -75,8 +46,8 @@ func (p *Provider) sweepNodeRecords(ctx context.Context) error {
 
 	var (
 		problems []error
-		reaped   int
 		scanned  int
+		left     int
 	)
 	for _, cluster := range clusters {
 		if !cluster.IsDir() {
@@ -100,100 +71,48 @@ func (p *Provider) sweepNodeRecords(ctx context.Context) error {
 				continue
 			}
 			scanned++
-			reapedHere, err := p.sweepNodeRecord(ctx, clusterDir, node.Name(),
+			reported, err := p.sweepNodeRecord(clusterDir, node.Name(),
 				filepath.Join(nodesDir, node.Name()))
 			if err != nil {
 				problems = append(problems, err)
 				continue
 			}
-			reaped += reapedHere
+			if reported {
+				left++
+			}
 		}
 	}
 	if err := errors.Join(problems...); err != nil {
 		return err
 	}
 	p.log.Info("cluster provider: node record sweep", "stateDir", p.cfg.StateDir,
-		"records", scanned, "reaped", reaped,
-		"decision", "run before the first pass: a guest a hard kill left behind keeps naming "+
-			"its node at the cluster's apiserver, and its record would make every later Provision "+
-			"answer ErrAlreadyRunning, so that cluster could never provision again")
+		"records", scanned, "leftUnverifiable", left,
+		"decision", "run before the first pass: a record under this state dir names a process by "+
+			"the argv its substrate gave it, and the only placement this provider has left -- a "+
+			"claim on the compute market -- starts no process here at all, so every record it finds "+
+			"is one it reports rather than signals on")
 	return nil
 }
 
-func (p *Provider) sweepNodeRecord(ctx context.Context, clusterDir, nodeName, dataDir string) (int, error) {
+func (p *Provider) sweepNodeRecord(clusterDir, nodeName, dataDir string) (bool, error) {
 	cluster := filepath.Base(clusterDir)
 	rec, err := noderecord.Read(dataDir)
 	if errors.Is(err, fs.ErrNotExist) {
-		return 0, nil
+		return false, nil
 	}
 	if err != nil {
-		return 0, fmt.Errorf(
+		return false, fmt.Errorf(
 			"clusterprovider: the node record at %s, read before the first pass: %w -- it names a "+
 				"pid this gateway would signal, and a record that cannot be read is not a node that "+
 				"is absent; the sweep stops there rather than provisioning over a process nobody "+
 				"can account for", noderecord.RecordPath(dataDir), err)
 	}
-	identity, err := nodeIdentityFor(rec.Substrate)
-	if err != nil {
-		return 0, fmt.Errorf(
-			"clusterprovider: the record at %s was written by the %q substrate and this gateway is "+
-				"configured for %q, and there is no identity to match it against: %w. The walk stops "+
-				"rather than guessing, because the argv in a record is the argv ITS substrate gave "+
-				"the process, so guessing reads a live guest as gone and a gone one as live",
-			noderecord.RecordPath(dataDir), rec.Substrate, p.cfg.Substrate, err)
-	}
-	holderIdentity, err := nodeHolderIdentityFor(rec.Substrate)
-	if err != nil {
-		return 0, fmt.Errorf(
-			"clusterprovider: the namespace identity for the %q substrate that wrote the record at "+
-				"%s: %w -- a record is matched against the argv its own substrate gave the process, "+
-				"and no other substrate's reading of it is evidence of anything",
-			rec.Substrate, noderecord.RecordPath(dataDir), err)
-	}
-	id := identity(clusterDir, nodeName)
-	holder := holderIdentity(clusterDir, nodeName)
-	live, err := noderecord.LivenessOf(dataDir, id, holder)
-	if err != nil {
-		return 0, fmt.Errorf(
-			"clusterprovider: deciding whether the process recorded for node %s at pid %d is this "+
-				"node's own: %w -- nothing was signalled, because a signal aimed at a pid we could "+
-				"not verify is a signal aimed at whatever now holds that number", nodeName, rec.PID, err)
-	}
-	switch live {
-	case noderecord.LivenessNotOurs:
-		p.log.Warn("cluster provider: a node record names a process that is not this node's agent",
-			"cluster", cluster, "node", nodeName, "pid", rec.PID,
-			"recordedIdentity", rec.Identity, "identity", id, "holderIdentity", holder,
-			"record", noderecord.RecordPath(dataDir),
-			"decision", "left alone and reported, never killed: this process is not ours, so "+
-				"signalling it would kill whatever it really is, and the record stays where it is "+
-				"because clearing it would hide the mismatch from every later pass")
-		return 0, nil
-	case noderecord.LivenessGone:
-		p.log.Info("cluster provider: a node record outlived the process it names",
-			"cluster", cluster, "node", nodeName, "pid", rec.PID,
-			"decision", "the record is cleared; there is no process to stop and the next "+
-				"Provision for this node writes a fresh one")
-	default:
-		p.log.Warn("cluster provider: a previous gateway left this node's agent running",
-			"cluster", cluster, "node", nodeName, "pid", rec.PID, "identity", id,
-			"decision", "reaped before the first pass: this gateway is about to become the only "+
-				"owner of this node, and a guest it cannot reach would keep the Node object named "+
-				"while the first pass booted a second guest under the same node name")
-	}
-	if err := noderecord.Reap(ctx, noderecord.ReapOptions{
-		Cluster:        cluster,
-		NodeName:       nodeName,
-		DataDir:        dataDir,
-		Identity:       id,
-		HolderIdentity: holder,
-		Log:            p.log,
-	}); err != nil {
-		return 0, fmt.Errorf(
-			"clusterprovider: reaping node %s of %s before the first pass: %w -- the guest is "+
-				"still up with its Node object, and its record is still on disk, so the pass that "+
-				"follows would refuse to provision this node for ever",
-			nodeName, cluster, err)
-	}
-	return 1, nil
+	p.log.Warn("cluster provider: a node record names a process this provider cannot verify",
+		"cluster", cluster, "node", nodeName, "pid", rec.PID, "substrate", rec.Substrate,
+		"record", noderecord.RecordPath(dataDir),
+		"error", unverifiableNodeRecord(rec.Substrate).Error(),
+		"decision", "left alone and reported, never signalled: the identity in the record is the "+
+			"argv ITS substrate gave the process, and this provider has no way to reconstruct it "+
+			"for a placement that starts no process here")
+	return true, nil
 }

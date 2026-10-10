@@ -154,7 +154,10 @@ Everything is either a controller-runtime reconcile loop or a deploy config. No 
 | 8 | Cluster links | Go, `internal/clusterlink` + `internal/clusterprovider/links.go` | Two `dumbpipe listen-tcp` members of every cluster's process group, one in front of the k3s apiserver and one in front of the cluster vault, each an iroh endpoint whose key lives in that cluster's vault. A node dials the cluster through them; the door holds no per-node connection. Recorded as `ClusterLink` objects (plan 0005 M3) |
 | 9 | External Secrets pair | pinned upstream binary, `internal/eso` + `internal/clusterprovider/externalsecrets.go` | The External Secrets Operator v2.11.0 run as TWO members of every cluster's process group, beside the control plane: the controller (`external-secrets`) and its admission webhook (`external-secrets webhook`), one binary copied digest-pinned into the control-plane image. They dial the tenant apiserver with a minted credential and reach the cluster vault on loopback, so an ExternalSecret syncs at ZERO nodes and on every substrate. The tenant keeps only the bundle's CRDs, ClusterRoles and a URL webhook registration; no ESO pod runs in it (`NEXT.yaml` ESO-4, plan 0005 M4-ESO-BESIDE) |
 
-**Not building**, each rejected on evidence: a CNI, a CAPI provider, an OIDC issuer, an ATProto
+| 10 | Node network | Rust `rust/socialweb-meshd`, Go `internal/tenantnet`, TS `lib/cloud-init-plugin-k3s-join` + `lib/socialweb-computer-k8s-downloads-fs` | Market clusters run `--flannel-backend=none`; each market node gets, from its `user_data`, a bridge CNI conflist on its Node's pod CIDR, cluster-CIDR-external SNAT, the sha256-pinned `socialweb-meshd` (downloaded from the door by hash) carrying pod traffic to other nodes over iroh, and `169.254.20.10` for its own CoreDNS; every tenant gets the meshd node reader RBAC and the per-node DNS DaemonSet as baseline (plan 0005 M5-MESHD, M5-DNS; section 9) |
+
+**Not building**, each rejected on evidence: a CNI plugin (the market path writes a conflist for
+k3s's bundled `bridge`/`host-local`/`portmap`; the cross-node half is component 10), a CAPI provider, an OIDC issuer, an ATProto
 bridge, a syncer, a virtual workspace, a second reverse proxy, a reachability substrate, an underlay,
 a warm node pool, an admission plugin (RBAC already enforces the identity classes exactly),
 a registry plus volume-commit machinery (S3-backed PVs ride the CSI driver on the central rustfs,
@@ -981,28 +984,27 @@ this package, and it has no row at all for the bound-not-listening holder.
 - `--node-name` is set from the `(cluster, node)` pair, never learned by a round trip. This is not
   hygiene: IP reuse lets a dead node shadow a live kubelet and break `logs`/`exec` with a 502.
 
-**The mechanism**, which is substrate-specific. Two, and both are the mechanism OF a substrate, never
-alternatives for one cluster:
+**The mechanism**, which is substrate-specific. The design has had three; exactly one is still
+reachable, and the other two are recorded because the evidence that removed them is the evidence that
+keeps them removed:
 
 | | |
 |---|---|
-| **a VM** | the node is a guest with its own kernel, containerd and network stack. **This design's mechanism**, and the only one that survives measurement |
+| **a market guest** | **THE node path.** The node is a VM rented from the COMPUTE MARKET through a `NodeClaim` the clusterprovider writes and the market door fulfils under the cluster owner's own atproto OAuth session. **`internal/nodemarket`**, `SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE=market`. NOT a guest of this host: no subnet lease, no pasta, no VMM, no node image and no `/dev/kvm` is involved. The clusterprovider's whole part in the node is the claim; the door bids, wins, boots the guest from the winning bidder's cloud-init and writes the phase back; the guest itself dials the cluster's OpenBao and apiserver through the cluster's ClusterLinks and binds the advertised address (`SOCIALWEB_CLUSTERPROVIDER_MARKET_ADVERTISE_ADDRESS`, default `198.18.255.254`) on its own loopback (section 9, "A market node joins through its cluster's OpenBao, never through ssh"). Confirming is the tenant Node appearing for a claim the door left `Joining`, not a local process being alive |
+| **a guest of this host** | RETIRED 2026-10-07. A VM this host started itself -- `firecracker` or `qemu` behind the same `scale.Nodes` seam, each a VMM in its own network namespace, booting a node image built here and joining through an agent the image carried. Both values were refused and deleted (plan 0005 M1-MARKET-ONLY): the market path with a local bidder covers the same test bed, so a second way to place a node was a second way to be wrong about where a node is. What the guest half still needs survives where the bidder uses it -- `internal/nodevm`, `internal/nodefirecracker`'s image, manifest and namespace halves, `socialweb-nodeboot`, `socialweb-nodeimage` -- because that is what boots the guest the MARKET rents, on the bidder's host |
 | **local process** | a `k3s agent` child process, `internal/nodelocal`, behind the same `scale.Nodes` seam. REFUTED as the substrate, three ways, all measured: `k3s agent` is fatal as a non-root user (`agent requires additional privilege if not run with --rootless`); it needs root for `/run/k3s/containerd`, `/var/lib/kubelet/device-plugins`, `127.0.0.1:6444` and the host `KUBE-*` chains, none of which `--data-dir` moves; and postgres is fatal AS root (`initdb: cannot be run as root`), so a host that runs the store cannot run a node |
-| **a market guest** | the node is a VM rented from the COMPUTE MARKET through a `NodeClaim` the clusterprovider writes and the market door fulfils under the cluster owner's own atproto OAuth session. **`internal/nodemarket`**, selected by `SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE=market`. NOT a guest of this host: no subnet lease, no pasta, no VMM, no node image and no `/dev/kvm` is involved. The clusterprovider's whole part in the node is the claim; the door bids, wins, boots the guest from the winning bidder's cloud-init and writes the phase back; the guest itself dials the cluster's OpenBao and apiserver through the cluster's ClusterLinks and binds the advertised address (`SOCIALWEB_CLUSTERPROVIDER_MARKET_ADVERTISE_ADDRESS`, default `198.18.255.254`) on its own loopback (section 9, "A market node joins through its cluster's OpenBao, never through ssh"). Confirming is the tenant Node appearing for a claim the door left `Joining`, not a local process being alive |
 
-**QEMU is the second implementation of the VM mechanism, behind the same seam.** Firecracker and
-QEMU are not two mechanisms for one cluster and not alternatives in one process: the composition root
-selects ONE from configuration, and a cluster is placed by the substrate its gateway was configured
-with. `SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE` names it, `firecracker`, `qemu` and `market` are the
-three values that pass `checkPlacement`, and every other name is refused for the same reason one
-substrate was ever refused: a placement nobody wrote is one a gateway cannot be caught not honouring.
-Both `firecracker` and `qemu` are GUESTS, so `substrate.IsGuest()` is true for both, and
-`AdvertiseAddress`, `GuestDialled`, `GuestGateway`, `NodeExpiry` and per-node network allocation apply
-to QEMU exactly as they do to Firecracker. `market` is the one value that is NOT a guest:
-`IsGuest()` is false for it, so it takes no subnet range and mounts no guest gateway, and it is
-therefore the one value whose `checkPlacement` demands no VMM, no agent, no image and no pasta.
+**`SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE` accepts exactly one value, `market`, and every other name is
+refused at startup.** `checkPlacement` names `market` as the only placement implemented today; the two
+retired names get a refusal that says which day they were retired and what replaced them, because a
+name from before the retirement would otherwise read as a typo. `market` is the one value that was
+never a guest: it takes no subnet range, mounts no guest gateway, and its `checkPlacement` demands no
+VMM, no agent, no image and no pasta. The variables only the retired substrates read --
+`FIRECRACKER`, `QEMU`, `NODE_AGENT`, `IMAGE_OUT_DIR`, `IMAGE_CONFIG`, `NETWORK`, `NODE_DISK_MIB` --
+are no longer parsed into the Config, and setting one is refused rather than ignored, since an
+operator who set one and saw no complaint would believe it was carrying it.
 
-The local-process mechanism is now **DELETED, not merely refuted**: `internal/nodelocal` and the
+The local-process mechanism is **DELETED, not merely refuted**: `internal/nodelocal` and the
 `process` value of `SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE` are gone, so a host can no longer be
 configured into it. It was kept as a sibling only long enough for the firecracker substrate to run
 the proof, which it now has — deleting it earlier would have left the node path with nothing green,
@@ -1011,8 +1013,8 @@ measurements that refuted it survive in this repository's history — `git log` 
 `experiments/process-substrate/` carries them, along with the commit messages that explain what each
 one established — because deleting code deletes the error messages that recorded why. The tree itself
 is gone: a prototype that is not built, vetted or tested by anything, and that had already begun to
-lie about its own failures. The `scale.Nodes` seam stays:
-two substrates behind it, and the seam is what made the second one cheap.
+lie about its own failures. The `scale.Nodes` seam stays, with one implementation behind it, because
+the seam is what made the second one cheap and the third one possible.
 
 **A guest kernel is obtainable with no privileges at all, and this was measured.** Firecracker boots
 a kernel YOU supply, and the CI kernels cannot run a k3s node: all three fail `k3s check-config` with
@@ -1589,7 +1591,13 @@ binaries (M3-UNITS's fallback) are not needed by it. Every unit carries `StartLi
 | `socialweb-openbao-link` | `setup-secrets` | `dumbpipe connect-tcp --addr 127.0.0.1:18200 <openbao-ticket>` | always |
 | `socialweb-node-secrets` | `setup-secrets`, openbao link | exchange the workload token for the claim's audience; OpenBao JWT login; KV read; write files | on-failure |
 | `socialweb-apiserver-link` | node secrets | `<advertiseAddress>/32` on `lo`; `dumbpipe connect-tcp --addr <advertiseAddress>:<apiserverPort> <apiserverTicket>` | always |
-| `socialweb-k3s-agent` | node secrets, apiserver link | `k3s agent --server https://<advertiseAddress>:<apiserverPort> --token-file /etc/socialweb/node/token --node-name <node> --data-dir /var/lib/rancher/k3s` | always |
+| `socialweb-k3s-agent` | node secrets, apiserver link, DNS link, masquerade | `k3s agent --server https://<advertiseAddress>:<apiserverPort> --token-file /etc/socialweb/node/token --node-name <node> --data-dir /var/lib/rancher/k3s --kubelet-arg=cluster-dns=169.254.20.10 --node-label=socialweb.computer/node-local-dns=true` | always |
+
+M5 adds the node network units beside these four (section 9 "Pods reach pods..." and "Every market
+node resolves names..."): `socialweb-node-dns-link`, `socialweb-pod-masquerade`, `socialweb-pod-cni`
+(after node secrets) and, when the door ships a meshd pin, `socialweb-meshd-install` and
+`socialweb-meshd` (after the install and node secrets). All are enabled and started by the same
+runcmd; none is a dependency of the agent except the DNS link and the masquerade.
 
 - `socialweb-node-secrets` is a oneshot with `Restart=on-failure`, because systemd refuses
   `Restart=always` on `Type=oneshot`; with no start limit it retries until it succeeds, which is what
@@ -1641,7 +1649,8 @@ overlay has nothing to run over (the limit "A node cannot reach another node" in
 user's decision: QUIC datagrams over iroh, a tun device, each peer Node's podCIDR routed to that
 Node's iroh endpoint id, k3s with `--flannel-backend=none` and a bridge CNI for the node-local half.
 `rust/socialweb-meshd` (a cargo workspace at `rust/`, the first Rust in this repo) is that daemon.
-It is built and proved on hat-8; it is NOT deployed and NOT yet installed by any user_data.
+It is built and proved on hat-8, and the door's guest module installs it (the integration, below);
+none of it is deployed, and no live multi-node market cluster has carried pod traffic through it yet.
 
 **Identity.** One ed25519 secret per node, read from `--secret-file` as 64 hex characters (the
 `IROH_SECRET` encoding dumbpipe and the cluster links use), generated 0600 through a rename if absent.
@@ -1747,29 +1756,146 @@ mode (skipped with a reason without cargo; `--full` fails instead), and adds the
 k3s proofs in `--local`/`--full` when `sudo -n` works. `tests/no_comments.rs` holds the Rust sources
 to the same no-comments, ASCII-only rule as `test/nocomments_test.go`.
 
-**What the integration that installs it must do** (not done by M5-MESHD):
+**The integration** (plan 0005 M5-MESHD integration half, with M5-DNS below). Every guest piece is
+written by the door's guest module (`lib/cloud-init-plugin-k3s-join`) into the `user_data` the RFP
+flow carries; nothing reaches a guest any other way. Decisions not in the meshd author's list are
+marked "decided by Claude, user may veto".
 
-1. k3s server `--flannel-backend=none` (and, if kube-router's policy controller is not wanted,
-   `--disable-network-policy`); the agent then needs a CNI conflist in
-   `/var/lib/rancher/k3s/agent/etc/cni/net.d/`: `bridge` (`isGateway`, `ipMasq: false`, `mtu: 1160`)
-   with `host-local` on the Node's `spec.podCIDR`, plus `portmap`. The pod CIDR exists only once the
-   Node has registered and the controller manager allocated it; meshd's `/status` `ownPodCIDRs` reads it.
-2. SNAT only what leaves the cluster: `-s <cluster-cidr> ! -d <cluster-cidr> -j MASQUERADE`. The bridge
-   plugin's own `ipMasq` would masquerade cross-node pod traffic to the tun address and erase the pod
-   source that the inbound check and NetworkPolicy depend on.
-3. Apply `rust/socialweb-meshd/deploy/node-reader-rbac.yaml` in every tenant cluster.
-4. Install the binary from user_data (a `UserDataModule` in cloud-init-common's registry), pinned by its
-   sha256, or have the image builder embed it, and run it from
-   `rust/socialweb-meshd/deploy/socialweb-meshd.service` as root (CAP_NET_ADMIN, `/dev/net/tun`) with
-   `/etc/socialweb/node/meshd.env` setting `SOCIALWEB_MESHD_NODE_NAME` to the name the k3s agent
-   registers. It is `Type=notify` and becomes ready only after its own Node exists, so k3s-agent must
-   NOT be ordered after it; meshd waits for the kubeconfig and the Node on its own.
-5. `net.ipv4.ip_forward=1` (k3s sets it).
+1. *Server.* `clusterstack.Spec.ServerArgv` adds `--flannel-backend=none --cluster-cidr=10.42.0.0/16`
+   when `MarketDialled` (a market cluster), and only then: the guest substrates keep flannel until
+   M1-MARKET-ONLY retires them. Decided by Claude, user may veto: the cluster CIDR is named
+   explicitly, at k3s's own default (so a running cluster's CIDR does not change), because the
+   guest's masquerade rule names it and must not depend on a k3s default; kube-router's network
+   policy controller is KEPT (no `--disable-network-policy`), since it works on pod IPs over any
+   bridge and the meshd inbound check keeps pod source addresses. Tests
+   `TestAMarketClusterRunsNoFlannelAndNamesItsPodNetwork`, `TestOnlyAMarketClusterDropsFlannel`,
+   `TestK3sAcceptsTheMarketPodNetworkFlags` (the real k3s v1.36.4 binary accepts them). Live:
+   `TestAZeroNodeMarketClusterAllocatesPodCIDRsAndTakesTheNodeNetworkAddOnsAsBaseline` reads
+   `--allocate-node-cidrs=true --cluster-cidr=10.42.0.0/16` on the controller manager k3s runs, so a
+   Node gets the `spec.podCIDR` the bridge waits for.
+2. *Bridge CNI on the Node's pod CIDR.* host-local has no "range from the Node" mode (that is
+   Calico's IPAM; flannel feeds host-local through its own `subnet.env`), so decided by Claude, user
+   may veto: a oneshot `socialweb-pod-cni` (after `socialweb-node-secrets`, which supplies
+   `NODE_NAME`) polls `k3s kubectl --kubeconfig /var/lib/rancher/k3s/agent/kubelet.kubeconfig get
+   node $NODE_NAME -o jsonpath={.spec.podCIDR}` every 2 s for 3 minutes (the node authorizer lets a
+   kubelet read its own Node), refuses anything that is not an IPv4 CIDR, and writes
+   `/var/lib/rancher/k3s/agent/etc/cni/net.d/10-socialweb-bridge.conflist` through a rename:
+   `bridge` `cni0` (`isGateway`, `ipMasq: false`, `hairpinMode`, `mtu: 1160`) with `host-local`
+   `ranges [[{subnet: <podCIDR>}]]` and a default route, then `portmap`; cniVersion 1.0.0, the
+   plugins k3s bundles. Until it exists the kubelet reports the network not ready and nothing is
+   scheduled there; `Restart=on-failure` retries a Node that has no CIDR yet. Stated limit: the
+   conflist is written once; a Node deleted and re-registered with a different CIDR is not followed
+   (the CCM deletes a Node only when its claim is gone, which also releases the machine).
+3. *Masquerade only what leaves the cluster.* `socialweb-pod-masquerade` (oneshot) sets
+   `net.ipv4.ip_forward=1` (also persisted in `/etc/sysctl.d/90-socialweb-node.conf`) and adds, once
+   (`-C` before `-A`), `iptables -w -t nat -A POSTROUTING -s 10.42.0.0/16 ! -d 10.42.0.0/16 -m comment
+   --comment socialweb-pod-egress -j MASQUERADE`; `iptables` joins the module's packages.
+4. *Node reader RBAC in every tenant.* `internal/tenantnet` embeds a byte-identical copy of
+   `rust/socialweb-meshd/deploy/node-reader-rbac.yaml` (held equal by
+   `TestTheNodeReaderRBACIsTheOneMeshdShips`) and the provider's tenant add-on pass
+   (`cmd/socialweb-clusterprovider/eso.go` `tenantAddOns`, run by the bootstrap on every provider
+   process's first Ready of each cluster) server-side applies it under the `socialweb-addons` field
+   manager BEFORE it needs the cluster vault, then measures the baseline. Live: a
+   `system:node:<n>` in `system:nodes` is denied `list nodes` before the apply and allowed after it
+   (`RBAC: allowed by ClusterRoleBinding "socialweb-meshd-node-reader"`). RBAC objects are not
+   workloads, so they never enter intent.
+5. *meshd itself.* With a pin, the module writes `socialweb-meshd-install` (oneshot, after
+   `network-online`, `Restart=on-failure`): it picks the pin for `uname -m` (x86_64/amd64 or
+   aarch64/arm64), keeps `/usr/local/bin/socialweb-meshd` if a node image already put a binary with
+   that sha256 there, and otherwise downloads `<door>/downloads/<sha256>/socialweb-meshd-<arch>` into
+   a temporary file beside the target, refuses bytes whose sha256 is not the pin, and renames it in
+   0755. The unit is `rust/socialweb-meshd/deploy/socialweb-meshd.service` byte for byte (a test
+   reads the file), plus the drop-in `socialweb-meshd.service.d/10-socialweb-node.conf`:
+   `After=`/`Wants=` the install and `socialweb-node-secrets`, `StartLimitIntervalSec=0`.
+   `socialweb-node-secrets` writes `/etc/socialweb/node/meshd.env`
+   (`SOCIALWEB_MESHD_NODE_NAME=<node>`, `SOCIALWEB_MESHD_KUBECONFIG=<the kubelet kubeconfig>`), since
+   it is the unit that learns the node name. `socialweb-k3s-agent` is ordered after
+   `socialweb-node-dns-link` and `socialweb-pod-masquerade` and NEVER after meshd, its install or
+   `socialweb-pod-cni`: all three wait for the agent's Node, so ordering the agent after any of them
+   is a deadlock. A test asserts it on every `After`/`Wants`/`Requires`/`BindsTo`/`Requisite` line
+   (watched to fail with meshd added to the agent's `After`).
+6. *Where the binary comes from.* The door serves pinned downloads at `/downloads/<sha256>/<name>`
+   (`lib/socialweb-computer-k8s-downloads-fs` `loadPinnedDownloads`, `createPinnedDownloadsFactory`):
+   every file in its downloads dir with a `sha256sum`-format `<name>.sha256` sidecar, held in memory,
+   served only at its own hash and name with `cache-control: public, max-age=31536000, immutable`
+   and `etag "<sha256>"`; a sidecar that names another file, or bytes that do not hash to it, stop
+   the door at startup. The meshd pin is the sidecar hash of the shipped `socialweb-meshd-x86_64` and
+   `socialweb-meshd-aarch64` at `public-origin` (`meshdPinOf`); with either missing, or no
+   `public-origin`, the door offers no meshd and logs `meshd_not_offered` (nodes still get the
+   bridge, masquerade and DNS). Decided by Claude, user may veto: the binaries are built on the host
+   by `rust/build.sh` inside `deploy/control-plane-container/build.sh k8s` (or taken from
+   `KCP_MESHD_DIST`), checked against their sidecars, and passed as the `meshd` named context, not
+   built in a Docker builder stage: the image's Go stages already take the host toolchain as named
+   contexts with no network, and `rust/build.sh` needs rustup's musl targets, clang and rust-lld,
+   which a builder stage would have to download unpinned. The `k8s` stage copies the pair AFTER its
+   `chown -R kcp:kcp /opt/org-root`, so the 17.2 MB is not copied up a second time (measured: the
+   first placement made that layer 82.8 MB instead of 65.6 MB), and checks them again with
+   `sha256sum -c`. The node images do not embed meshd yet; the install path that keeps an embedded
+   binary is ready for when they do.
 
 Not carried by the mesh: node addresses. Traffic to another node's InternalIP (NodePort on another
 node, hostNetwork pods, kubelet ports) has no route; apiserver-to-kubelet and apiserver-to-pod
 traffic already rides k3s's own agent tunnel (`--egress-selector-mode cluster`). IPv6 pod CIDRs are
 routed and checked by the code but untested.
+
+### Every market node resolves names on its own CoreDNS (plan 0005 M5-DNS)
+
+A Pod's resolver was the cluster's one CoreDNS on one node, so on a multi-node cluster every Pod off
+that node failed to resolve (NEXT.yaml limit, measured on five nodes). Now the resolver is on the
+Pod's own node, so it needs no cross-node path at all, the mesh included.
+
+- *The address.* `socialweb-node-dns-link` (oneshot) creates the dummy interface `swdns0` and puts
+  `169.254.20.10/32` on it, idempotently. Decided by Claude, user may veto: a guest unit and not an
+  init container, because the address is node plumbing that must exist before the kubelet starts
+  Pods that resolve through it, and a tenant-side init container would need `NET_ADMIN` on the host
+  network.
+- *The kubelet.* `socialweb-k3s-agent` passes `--kubelet-arg=cluster-dns=169.254.20.10` and
+  `--node-label=socialweb.computer/node-local-dns=true`, and is ordered after the address unit. The
+  server's `--cluster-dns` is not used: it is also the ClusterIP of k3s's `kube-dns` Service, which
+  must be inside the service CIDR. `resolv-conf` is left at k3s's choice (`/etc/resolv.conf`, which the
+  module writes with the provider's resolver and public fallbacks, and which has no loopback entry).
+- *The DNS.* `internal/tenantnet/manifests/node-local-dns.yaml`, applied with the node reader in
+  every tenant: ServiceAccount, ClusterRole (list/watch endpoints, services, pods, namespaces,
+  endpointslices), binding and Corefile ConfigMap `socialweb-node-dns` in `kube-system`, and a
+  DaemonSet of the same name: host network, `dnsPolicy: Default`, `priorityClassName:
+  system-node-critical`, tolerating every taint, selected by `socialweb.computer/node-local-dns=true`,
+  image `rancher/mirrored-coredns-coredns:1.14.6@sha256:1ba6f472...` (the one the node images seed,
+  held by `TestTheDNSImageIsOneTheNodeImageSeeds`), k3s's CoreDNS security context, probes on
+  `169.254.20.10:8080/health` and `:8181/ready`. The Corefile binds only `169.254.20.10`, serves
+  `cluster.local` and the reverse zones from the apiserver through the `kubernetes` plugin (in-cluster
+  config: the `kubernetes` Service's ClusterIP, which kube-proxy on the node DNATs to the advertise
+  address the apiserver link carries on `lo`), and forwards everything else to `/etc/resolv.conf`.
+- *Why the label.* Decided by Claude, user may veto: the DaemonSet is applied in EVERY tenant
+  regardless of substrate, and the label is what keeps it off a node that has no `169.254.20.10`
+  (a guest-substrate node, a node that joined with an older user_data): there it would crash-loop on
+  `bind`. The address, the label and the cluster CIDR are held equal across Go and TypeScript by
+  `node_network_test.ts` "the guest, the tenant DaemonSet and the k3s server agree...".
+- *Baseline, never intent.* The DaemonSet is applied by `socialweb-addons`, so the baseline measures
+  it (`TestThePodNetworkAddOnsAreBaselineAndNeverIntent`, and live at zero nodes), and a DaemonSet is
+  never intent anyway (section 10); its pod leaves its node idle for scale-in.
+- *k3s's own CoreDNS stays.* Decided by Claude, user may veto: `--disable=coredns` is not passed. The
+  `kube-dns` Service (`10.43.0.10`) keeps answering anything that names it explicitly, and its pod is
+  a k3s add-on that never holds a node. Retiring it is a separate change.
+- *Stated limits.* A node that has just become Ready starts its DNS pod and its first workload side
+  by side; a workload that resolves before the DNS pod is ready fails (the image is seeded, so it
+  usually wins, but nothing orders the two). The fix is a startup taint the node lifts once its DNS
+  answers; open. No live multi-node reading yet (ACC-MESH).
+
+**What changes on prod at the next deploy** (not deployed by this work). The provider builds each
+cluster's argv when it spawns the group, and a deploy restarts the container, so every market
+cluster's k3s server comes back with `--flannel-backend=none --cluster-cidr=10.42.0.0/16`, and the
+first Ready of each cluster in the new process re-runs the bootstrap, which applies the node reader
+and the per-node DNS and re-measures the baseline. Measured 2026-10-07 on hat-8 with k3s
+v1.36.4+k3s1: a `--disable-agent` server started with the default (vxlan) backend, stopped, and
+started again on the same datastore with `--flannel-backend=none --cluster-cidr=10.42.0.0/16`
+answered `/readyz` `ok` in 2.1 s, logged no `critical configuration` and no fatal line, and still
+held the ConfigMap written before the switch; at zero nodes there is no flannel state anywhere (the
+backend lives only in the agent and its Node annotations). A cluster with flannel nodes still up
+would keep them on vxlan with no path to new nodes; prod read zero nodes at its last check. The door
+must ship in the same deploy: its image carries the meshd pair (`build.sh k8s` now builds it, which
+needs cargo, rustup's `x86_64-unknown-linux-musl` and `aarch64-unknown-linux-musl` targets and clang
+on the build host, or `KCP_MESHD_DIST`), and `PUBLIC_ORIGIN` is already set by `scripts/deploy.sh`.
+Image size: 1,711,865,393 bytes, +17.2 MB for the two binaries.
 
 ### `k3s server` argv
 
@@ -1806,6 +1932,8 @@ routed and checked by the code but untested.
                                        the apiserver's own tunnel
 --token-file <0600 path>
 --write-kubeconfig <DataDir>/server/cred/admin.kubeconfig
+--flannel-backend=none                 market clusters only: pods cross nodes through socialweb-meshd
+--cluster-cidr=10.42.0.0/16            market clusters only: named because the guest masquerades it
 --kube-apiserver-arg=audit-policy-file / audit-log-path / -maxsize / -maxage / -maxbackup
 --kube-apiserver-arg=service-account-issuer, api-audiences
 --kube-controller-manager-arg=secure-port, --kube-scheduler-arg=secure-port,
@@ -2438,9 +2566,8 @@ internal/${concept}/   one package per concern; the interface declared where con
 internal/atprotoauth/  verifies an atproto service-auth token for one XRPC method: signature, audience, method, admitted DID methods and a 5-minute lifetime cap
 internal/execplugin/   the client-go exec credential plugin: mint, on-disk cache, refuse an empty or already-expired token
 internal/nodeprovider/ derives a node's DNS-1123 name from the (cluster label, node id) pair
-internal/nodevm/       the substrate-neutral half of a node: its image, guest, network and namespace parameters, the pasta link wiring, the identity disk, the rootfs clone and the /proc identity scan
-internal/nodefirecracker/ places a node as a firecracker guest
-internal/nodeqemu/     places a node as a qemu guest, behind the same seam
+internal/nodevm/       the substrate-neutral half of a node: its image, guest, network and namespace parameters, the pasta link wiring, the identity disk, the rootfs clone and the /proc identity scan. Used by `socialweb-nodeboot`, which boots a MARKET guest on the bidder's host
+internal/nodefirecracker/ the firecracker half of a market guest's boot, on the bidder's host: the image, its manifest and the namespace child
 internal/nodemarket/   places a node as a claim on the COMPUTE MARKET: it writes a NodeClaim into the cluster's home workspace and returns, reads the claim's status for the join wait and its fatal message, and closes the node by deleting the claim and waiting for the door to destroy the machine
 internal/hostos/       the one platform seam: capability predicates and the portable primitives (locking, process identity, liveness, termination, command line, port range, SysProcAttr) with Linux and Windows implementations
 internal/plcresolver/  resolves a did:plc or did:web to its key IDs for the revocation sweep; NXDOMAIN is an outage, not an absence
@@ -2479,19 +2606,19 @@ names and starts from an empty state dir — and the cost of the node names chan
 recorded in section 15.
 
 Binaries: `socialweb-clusterprovider`, `socialweb-gateway`, `socialweb-credential`,
-`socialweb-nodeimage`, `socialweb-nodeagent` and `socialweb-computer-kcp-check-host`; outside
+`socialweb-nodeimage`, `socialweb-nodeinit` and `socialweb-computer-kcp-check-host`; outside
 `cmd/`, `rust/build.sh` builds `socialweb-meshd`, which runs inside a market guest beside the k3s agent.
-`socialweb-nodeimage` and `socialweb-nodeagent` are the node side of the seam:
+`socialweb-nodeimage` and `socialweb-nodeinit` are the node side of the seam:
 `socialweb-nodeimage` builds a node image and is a TOOL, never a controller, because provisioning
-must not be coupled to a boot plus a bootstrap; `socialweb-nodeagent` runs INSIDE the guest and is
-one binary with one verb per stage of a guest's life (`namespace`, `init`, `preflight`, `agent`),
-which is what lets a single build serve both sides of the namespace boundary. That tool is also a
-BUILD STAGE rather than a step anyone schedules, and the last binary is the host contract itself: it
-is what the host and the control-plane container are both measured against, and its answer is what
-separates "this host cannot run this" from "this container must be handed this". The substrates are
-`internal/nodefirecracker` and `internal/nodeqemu`, sharing the substrate-neutral half in
-`internal/nodevm`; the record they reap by is `internal/noderecord`, and the composition
-root SELECTS a substrate from configuration rather than branching inside one.
+must not be coupled to a boot plus a bootstrap; `socialweb-nodeinit` is the guest's PID 1 from the
+initramfs and nothing else (plan 0005 M1-AGENT-SPLIT: the `agent` verb that mounted a node's identity
+disk is gone, because a market guest has no identity disk and the unit that ran it failed on every
+boot). That tool is also a BUILD STAGE rather than a step anyone schedules, and the last binary is the
+host contract itself: it is what the host and the control-plane container are both measured against,
+and its answer is what separates "this host cannot run this" from "this container must be handed
+this". The one placement is `internal/nodemarket`, whose node is a claim rather than a process; the
+VMM packages are what the BIDDER runs, and the composition root of this provider places a node by
+writing a claim.
 
 **A node image is named by its inputs, and nothing asks whether it is stale.** The build fingerprints
 everything it read — the VMM it is built for, the module list, the initramfs module list, the seeded
@@ -2504,10 +2631,13 @@ half-written directory used to validate and be consumable. A run asks whether th
 give EXISTS, which is a fact rather than a comparison — an unchanged configuration is left alone with
 no build, no write and no pull, and a changed one asks for a name that does not exist.
 
-**The runtime derives that name too, and is told neither it nor the directory.** The gateway that
-places a node is configured with the store and the builder's own configuration —
-`SOCIALWEB_CLUSTERPROVIDER_IMAGE_OUT_DIR` and `SOCIALWEB_CLUSTERPROVIDER_IMAGE_CONFIG` — never with a
-directory. It hashes the configuration's inputs exactly as the builder did, joins the fingerprint onto
+**The runtime derives that name too, and is told neither it nor the directory.** The consumer that
+does this is the BIDDER, not this provider: `deploy-firecracker-bidder.sh` runs
+`socialweb-nodeimage -ensure -json -reuse-stale` against the store it is about to ship and takes the
+fingerprint out of the answer, and the bidder's compute provider boots the guest from that directory.
+The clusterprovider places no node image at all any more (plan 0005 M1-MARKET-ONLY): its node is a
+claim, and the machine behind the claim belongs to the bidder. It hashes the configuration's inputs
+exactly as the builder did, joins the fingerprint onto
 the store, and then holds what it finds at that name to three things: that the manifest's own record
 hashes to the name, that the manifest's operative fields and recorded digests match the configuration
 (the same `CheckInputs` the substrate already ran), and that the kernel, the initramfs and the rootfs
@@ -2572,36 +2702,37 @@ section 15 records what closed both and what held the family shut.
 `internal/versions/versions.json` pins component versions. It has no production importer: its
 consumer is its own test.
 
-### The two node images, and the self-contained live rig
+### The node image, and the live gate
 
-**The container build produces one node image per VMM.** `deploy/control-plane-container/Dockerfile`
-has a `nodeimage` stage (firecracker) and a `nodeimage-qemu` stage (qemu), each parameterized by its
-own configuration: the firecracker stage reads `nodeimage.json`, the qemu stage
-`nodeimage-qemu.json`. Because the VMM is a recorded input, the two images have different
-fingerprints and coexist in the store; the `extract` stage copies both stages' `/dist` into one root,
-so the `computer` image carries both images under `/var/lib/socialweb/images` and both runtime
-configurations at `/home/johnandersen777/kcp-image/`. `build.sh`'s `nodeimage` and `nodeimage-qemu`
-targets mean exactly the stage they name, `nodeimages` builds the pair through `extract`, and
-`computer` builds all of it because `extract` depends on both. Before this the qemu image existed only
-as a host-built artefact; the container build is now the thing that produces it, which is the same
-statement the firecracker half already made. MEASURED 2026-09-25: `build.sh computer` built the
-firecracker image at `sha256-6f0163f5b34f4b7c793709cdbb90c74a9df700466f9d8ed6c9dedb2569319e3e` and the
+**The container build produces the node image the BIDDER boots.** `deploy/control-plane-container/Dockerfile`
+has one `nodeimage` stage, parameterized by its own configuration: it reads `nodeimage.json`, builds
+what it names and leaves the result in the store the build then ships. The `extract` stage copies that
+stage's `/dist` into one root, so the image built here is the artefact a bidder's compute provider
+boots a market guest from. `build.sh`'s `nodeimage` target means exactly the stage it names,
+`nodeimages` builds it through `extract`, and `nodeimage-image` tags it.
+
+Until 2026-10-07 there was a second stage and a second image: a `nodeimage-qemu` stage built a qemu
+image, the `extract` stage joined both, and a `computer` target shipped a container that could boot
+either as a guest of this host. The local substrates were retired (plan 0005 M1-MARKET-ONLY), so the
+qemu stage, the `computer` target and the qemu configuration are deleted, and `run-container.sh` keeps
+the `k8s` target alone. The firecracker image survives unchanged because a bidder still boots it --
+the difference is whose host runs it. MEASURED 2026-09-25, before the retirement: `build.sh computer`
+built the firecracker image at `sha256-6f0163f5b34f4b7c793709cdbb90c74a9df700466f9d8ed6c9dedb2569319e3e` and the
 qemu image at `sha256-e356da745efe1dab4b6c233045f33b491cc7cfe0851fdaa5856501991a565afd` in the same
 run, 122 s wall.
 
-**The live gate has a self-contained, privileged, ephemeral CI-only rig, and nothing but the rig
-takes the relaxed flags.** `deploy/test-rig/run.sh` builds the `computer` image, starts it through the
-product's own `container-entrypoint.sh`, waits for the cluster provider's own `"phase":"Ready"` line,
-and then runs `SOCIALWEB_REQUIRE_LIVE=1 go test ./...` inside it through `deploy/test-rig/inside.sh`.
-The rig derives the discoverable inputs instead of hand-exporting them: `cmd/socialweb-rig-inputs`
-reuses `internal/nodefirecracker.LoadImage` and the builder's own configuration parsing to resolve the
-firecracker and qemu image directories, the agent, the store and the two configurations, and it picks
-the tenant image out of the seeded set; `internal/hostos` is what reports the platform. The kcp admin
-kubeconfig, the mint directory and the default cluster name come from the running product. The inputs
-the product cannot derive are named before the full gate fails, each with the test it gates: a tenant
-cluster's admin kubeconfig, DID, registry workspace and namespace, and the granted ServiceAccount. An
-operator can run a named subset for a partial proof; the default is the whole gate and a skip is a
-failure.
+**The live gate's privileged rig is GONE with the local substrates (plan 0005 M1-MARKET-ONLY), and
+the market test bed is what replaced it.** `deploy/test-rig` and `cmd/socialweb-rig-inputs` existed to
+boot the product's own `computer` image with `/dev/kvm` and `/dev/net/tun` and run
+`SOCIALWEB_REQUIRE_LIVE=1 go test ./...` inside it, deriving the tenant inputs from the running
+product rather than asking for them. Every one of those inputs was an input to a node this host
+STARTED: the image directories, the agent, the store and the two image configurations were resolved
+with `internal/nodefirecracker.LoadImage`, and the rig's whole reason to exist was that no local
+substrate has a test bed of its own. The market has one: `deploy/examples/atproto/market` with
+`internal/marketbed` runs a local dispatcher, a bidder and a requester, and the guest is born from the
+RFP flow this project exists for — the same flow production uses, rather than a rig standing beside
+it. The gate itself is unchanged and still takes a live cluster:
+`SOCIALWEB_REQUIRE_LIVE=1 go test ./...`, where a skip is a failure.
 
 **Why the relaxation is confined to the rig, and what was measured.** A guest needs `/dev/kvm`,
 `/dev/net/tun` and a user and network namespace to build. Docker's default seccomp profile denies the
@@ -2877,22 +3008,17 @@ because it bounds a mechanism the rest of this document leans on.
   refusal to lease a range overlapping the host's networks is a property of the NETWORK NAMESPACE the
   process runs in — the host enumerates 15 networks, the container 3 (`127.0.0.0/8`, `172.17.0.0/16`,
   `::1`) — so a containerized allocator would lease a colliding range without refusing. What bounds it
-  is that the allocator and the node substrate are ONE PROCESS behind one config value:
-  `subnetallocator` is built once at `cmd/socialweb-clusterprovider/main.go:107` and both of its reach
-  sites — `guestGateway` (`main.go:36`, installed only `if substrate.IsGuest()`) and the node path
-  (`nodes.go:453`, inside `tenantNodes.Provision`) — sit behind `substrate.IsGuest()`, which is true
-  for BOTH guest substrates (`Name == SubstrateFirecracker || Name == SubstrateQEMU`). Either value's
-  own validation demands its own VMM binary, the node
-  agent, the image out dir and the image config (`config.go`), i.e. exactly the list the container
-  declines as MUST BE PASSED IN. So a container that can REACH the refusal is a container doing the node
-  half, and a control plane that places no nodes never allocates a range at all — the zero-node run's
-  ops end at `[allocate-ports spawn]`, with no gateway step. Two things are recorded with it rather than
+  is that the allocator is a property of the PROCESS it runs in. Since the local substrates were
+  retired (plan 0005 M1-MARKET-ONLY) the allocator has one reach site left — the materialiser's
+  teardown release, `OpReleaseSubnet`, which drops a cluster's leased range beside its ports — because
+  a market node is not addressed inside this host's ranges at all: the guest gateway, the per-node
+  address and the code that installed them are deleted, and a control plane that places no nodes never
+  ALLOCATES a range, only releases one. Two things are recorded with it rather than
   left latent: the limit is CONDITIONAL, costing nothing only because this host's LAN and bridges sit
   outside `10.100.0.0/16`, so a host network or docker network carrying part of the pool would let a
-  containerized allocator lease a colliding range and the collision lands on the HOST, because pasta
-  builds the guest's namespace from the host's network; and the seam to state it already exists, since
-  `subnetallocator.Config.HostNetworks` is injectable, so a containerized deployment can be handed the
-  host's enumeration without touching the package.
+  containerized allocator lease a colliding range and the collision lands on the HOST; and the seam to
+  state it already exists, since `subnetallocator.Config.HostNetworks` is injectable, so a
+  containerized deployment can be handed the host's enumeration without touching the package.
 - **Two concurrent proofs in two containers are not protected from each other, and no production path
   depends on that.** `liveports.LockDir()` is `/var/tmp/socialweb-liveports` inside each container's own
   filesystem, so a slot one run claims is invisible to a run in another container and both would take
@@ -2911,6 +3037,36 @@ can outlive the work that closed it, and why one whose subject has been deleted 
 questions for hours without anyone stopping on it. The measurements stay with the entries rather than
 being tidied away, because a number without its condition is how the 332-second boot outlived its own
 refutation.
+
+- **The local substrates were retired, and the guest binary was split, on 2026-10-07. CLOSED (plan
+  0005 M1-MARKET-ONLY and M1-AGENT-SPLIT).** Two things were true at once and each was the reason for
+  the other. First, the clusterprovider carried three substrates and only one was used: `firecracker`
+  and `qemu` were guests THIS host started, with their own VMM, network namespace, subnet lease,
+  guest gateway, node image and identity disk, and `market` — a VM rented from the compute market and
+  built by the winning bidder's cloud-init — had already replaced both as the production path. A
+  second way to place a node is a second way to be wrong about where a node is, so `internal/nodeqemu`
+  and the provider half of `internal/nodefirecracker` are deleted, `GuestDialled`, `GuestGateway`,
+  `nodeVaultStage`, the per-node network allocation, `AssertGuestAdvertiseInvariant`,
+  `dialFromAGuest`, the guest advertise invariant and the startup check that an image matches the
+  configuration that names it are gone with them, and
+  `SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE` now accepts `market` alone: the retired names are refused with
+  a message that says the day they were retired, because a name from before the retirement otherwise
+  reads as a typo. What the guest half still needs is KEPT, in the packages the bidder builds and runs:
+  `internal/nodevm`, `internal/nodefirecracker`'s image/manifest/namespace halves, `socialweb-nodeboot`
+  and `socialweb-nodeimage`. Second, `socialweb-nodeagent` was one binary carrying both halves of a
+  node's network — a host half (the `namespace` verb, run inside pasta) and a guest half (the `init`
+  verb for the initramfs, and an `agent` verb that mounted the node's identity disk and exec'd k3s) —
+  and on a market guest only the `init` verb can run: there is no identity disk, so the unit that ran
+  `agent` exited `KCP_AGENT fatal` on every boot of every market guest, for ever. The binary is now
+  `socialweb-nodeinit` with the `init` verb alone; `agent.go`, `audit.go`, `/kcp/kcpagent` and
+  `kcp-agent.service` are deleted from the image, and the image configuration's `agent_package`,
+  `agent_binary` and `agent_go_flags` are `init_package`, `init_binary` and `init_go_flags`, refused
+  under the old spellings rather than accepted. The image fingerprint changes with the input's name
+  and content, which is the point: an image's name is a hash of what its build read.
+  `cmd/socialweb-rig-inputs` and `deploy/test-rig` existed only to hand the local substrates their
+  `/dev/kvm`, `/dev/net/tun`, two images and a live gate, and were deleted with them; the market test
+  bed (`deploy/examples/atproto/market`, `internal/marketbed`) is what proves a node end to end now,
+  and it proves it through the RFP flow this project exists for.
 
 - **A cluster's kubeconfig mount child is built from the Cluster CR's `status.URL`, and it is created
   or repaired on every Ensure. CLOSED, and it closed a mount that served kcp itself.** Before,

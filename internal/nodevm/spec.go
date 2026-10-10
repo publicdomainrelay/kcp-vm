@@ -27,13 +27,9 @@ const (
 	NodeFileName = "node.json"
 
 	NodeDiskLabel   = "kcpnode"
-	GuestAgentPath  = "/kcp/kcpagent"
 	GuestFilePath   = "/kcp/guest.yaml"
-	GuestNodeDir    = "/mnt/node"
-	GuestTokenPath  = "/kcp/token"
 	GuestK3sBinary  = "/usr/local/bin/k3s"
 	GuestK3sDataDir = "/var/lib/rancher/k3s"
-	GuestAgentLog   = "/kcp/agent.log"
 
 	TapName    = "fctap0"
 	BridgeName = "br0"
@@ -54,7 +50,6 @@ const (
 	VMMQEMU        = "qemu"
 
 	NamespaceVerb = "namespace"
-	AgentVerb     = "agent"
 	InitVerb      = "init"
 )
 
