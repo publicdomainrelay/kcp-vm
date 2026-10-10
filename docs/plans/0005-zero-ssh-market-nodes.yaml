@@ -541,10 +541,13 @@ items:
       firstFree true, bidWindowSec 30; bid present 23:16:04.97Z, first_free_winner 23:16:11.30Z. The window
       is not the cost: BidCollector waits on allow() = decideBid + evaluateCandidate, which spent ~3 s
       silent (policy worker start, record/DID resolution) then ~3.3 s scanning the same delegated-trust
-      vouch chains (badgeBlueKeys, operator vouches) three times, uncached. Fix in the requester libs
-      (owned; no protocol change): per-DID cache of delegated-trust/vouch results with a TTL, pre-warm the
-      vouched candidates found at bidder_discovery while bids are awaited, one warm policy worker per
-      door, timing logs per phase. decided by Claude, user may veto.
+      vouch chains (badgeBlueKeys, operator vouches) three times, uncached. User 2026-10-07: caching must
+      keep the policy engine generic from the execution of it. So the requester learns nothing about what
+      a policy does: it mirrors the bidder's host wiring (market-bidder/mod.ts: one createScopeCache() per
+      process passed to createPolicyEvaluator, firehose trust events -> scopeCache.applyEvent); the door
+      creates the one ScopeCache and shares it across contracts; candidates are pre-warmed through the
+      generic evaluator.scope at bidder_discovery; verdict memoization stays inside policy execution
+      (runPolicy's opaque cache). Timing logs per phase. decided by Claude, user may veto.
     status: doing
     evidence: []
   - id: M4-SCALE-IN
