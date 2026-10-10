@@ -1,0 +1,121 @@
+# 0004 - Run streamplace's `test` job on a tenant cluster
+
+Status: in flight, opened 2026-10-06.
+Repo: socialweb-computer-kcp.
+Related: `docs/gitlab/` (the operator recipes), `cmd/socialweb-clusterprovider/live_gitlab_pipeline_test.go`
+(the only thing in this tree that drives a real GitLab pipeline against a real tenant cluster).
+
+## 1. Goal
+
+Run the `test` job of `streamplace/streamplace`'s `.gitlab-ci.yml` (branch `eli/moqt-firehose`,
+job at `.gitlab-ci.yml:104`) as a Pod on a tenant k3s cluster this repo provisions on THIS host,
+with the real GitLab at `https://gitlab.dorper-matrix.ts.net:8443` as the source of the job.
+
+kcp runs on this host and only this host. The GitLab host (`ssh gitlab`, 192.168.0.49) runs the
+GitLab instance and must not run kcp.
+
+The job, verbatim, is:
+
+```yaml
+test:
+  stage: build
+  interruptible: true
+  image: "$DOCKER_REPO:builder-$DOCKERFILE_HASH"
+  timeout: 2 hours
+  variables:
+    STREAMPLACE_TEST_COUNT: "1"
+  script:
+    - git fetch --unshallow || echo 'already unshallow'
+    - make dev-setup && make dev && make dev-test && make ci-lexicons
+  artifacts:
+    when: always
+    paths:
+      - test.xml
+    reports:
+      junit: test.xml
+```
+
+`DOCKER_REPO` is `public.ecr.aws/m4j3c0j7/streamplace` and `DOCKERFILE_HASH` comes from the
+included `.ci/dockerfile-hash.yaml`.
+
+## 2. What exists, measured on 2026-10-06
+
+- The four-step proof passes on this host, unmodified: control plane Ready at zero nodes, an empty
+  cluster that stays at zero, a node provisioned by the scale decision when a tenant workload
+  appears, and the workload running on it. See the run in section 6.
+- This host carries every live input the proofs want: `/dev/kvm`, Docker, postgres 18,
+  `kine`, `k3s`, `kubectl`, and the operator's image store under `/home/johnandersen777/kcp-image/`
+  (nodeimage.json, `artifacts/bin/firecracker`, `artifacts/img/ubuntu-24.04.squashfs`, `out/`).
+- GitLab is 19.2.7 at `gitlab.dorper-matrix.ts.net:8443`. Project `streamplace/streamplace` is
+  id 1, its default branch is `eli/moqt-firehose`, and its five recorded pipelines all FAILED.
+- Exactly one runner is registered: id 1, `socialwebcomputer`, instance_type, online, tags
+  `[socialwebcomputer]`, `run_untagged` true, version 19.2.1. It is NOT a kubernetes executor.
+  It runs on the GitLab host as `executor = "instance"` with the Fleeting plugin
+  `fleeting-plugin-socialwebcomputer`, which provisions VMs through the market
+  (`request-vm-ssh`). It is a different mechanism from this plan's, and an untagged job is
+  eligible for it.
+
+## 3. The blockers, named
+
+- **B1 - the job's image does not exist.** `public.ecr.aws/m4j3c0j7/streamplace` answers
+  `NAME_UNKNOWN` for the repository itself, so `builder-4dc3e0c...` cannot be pulled. As written,
+  the job fails at image pull before its first script line. Nothing else in this plan can run until
+  this is answered.
+- **B2 - the guest is smaller than the job.** A node boots at `DefaultVcpu = 2`,
+  `DefaultMemMiB = 2048`, `DefaultDiskMiB = 16` (`internal/nodevm/spec.go:41-47`). The job builds
+  Rust (cargo), meson/C, and Go, `-p 1`, in one Pod. The image alone is multi-gigabyte and the
+  disk is 16 GiB.
+- **B3 - the guest's own route out is unproven.** A guest is addressed behind pasta
+  (`internal/nodevm/spec.go`), so its default route is the host's. The job must `git clone` from
+  GitLab and the cluster must pull the job image; neither has been exercised from inside a guest.
+  The four-step proof's tenant workload uses an image the node image already seeded, so it proves
+  nothing about the guest's egress.
+- **B4 - runner placement.** The kubernetes executor's `host` is the apiserver's own loopback
+  address on THIS host, and its port is leased per cluster. The existing runner is on the GitLab
+  host and is an instance executor. `docs/gitlab/README.md` states the rule: the runner must reach
+  `127.0.0.1:<leased port>`.
+- **B5 - the size knob does not exist.** `Vcpu`/`MemMiB` live on the image manifest
+  (`internal/nodefirecracker/manifest.go:18-22`) and the builder writes neither, so they always
+  take the defaults. `DiskMiB` is a runtime `Options` field with no clusterprovider config key.
+  Sizing a node for a real job needs a config surface that is not there.
+
+## 4. Decisions
+
+- **D1 - kcp runs here; the runner is the part that moves.** The apiserver binds loopback on this
+  host, so a kubernetes-executor runner is run here. An `ssh -R` tunnel from here to the GitLab
+  host is the fallback if the runner has to live beside GitLab; it is a raw TCP forward, so it
+  preserves the SPDY `pods/exec` paths the kcp mount URL does not, and `docs/gitlab/README.md`'s
+  warning is about the mount, not about a tunnel.
+- **D2 - prove the integration with a small job before the real one.** A separate GitLab project
+  carries the probe job, so the real project's `.gitlab-ci.yml` is never overwritten by an
+  experiment and the real job changes nothing until it is the thing being measured.
+- **D3 - pause, do not delete, the existing runner.** Runner 1 is someone's working setup for a
+  different mechanism. An untagged job is eligible for it, so it is paused for the duration of a
+  run and restored after. Deleting it is not this plan's to do.
+- **D4 - the missing image is ours to build.** B1 has no upstream fix. The builder image is built
+  from `streamplace/docker/build.Dockerfile`, published to a registry the guest can reach, and
+  `DOCKER_REPO` is pointed at it with a project CI variable, which outranks the `variables:` block
+  in `.gitlab-ci.yml`. The job definition itself is not edited.
+
+## 5. Steps
+
+1. Four-step proof on this host. DONE (section 6).
+2. Egress: a guest reaching GitLab and a registry. Instrument: a Pod in the tenant cluster that
+   dials both, and its trace.
+3. A small pipeline from a probe project, run by a kubernetes-executor runner registered for it,
+   against a tenant cluster this host provisioned. Instrument:
+   `TestAGitLabPipelineRunsOnATenantCluster` generalized to a real GitLab, plus the job's own trace.
+4. Sizing: `vcpu`, `memMiB` and `diskMiB` as clusterprovider config, plumbed to the manifest and
+   the node provider, so a node can be sized for a real job. This closes B5 and B2.
+5. The builder image, built and published where the guest can pull it. This closes B1.
+6. The real `test` job, run through the real GitLab, with the job's own trace and `test.xml` as the
+   reading.
+
+## 6. Readings
+
+**2026-10-06, four-step proof, this host, firecracker substrate.** PASS. The control plane reached
+`Ready` at `https://127.0.0.1:62202` with zero nodes; `kubectl get nodes` was empty and stayed
+empty across 10 passes 2 s apart over 20 s; the scale decision read `Provision: intent and no
+node`; the node joined and the cloud controller manager stamped it
+`providerID=socialweb://liveweb/liveweb-node1`; `INSTANCE_START_TO_READY_S=5.504` measured from the
+firecracker VMM's instance record to the Node's `Ready` condition at 250 ms resolution.
