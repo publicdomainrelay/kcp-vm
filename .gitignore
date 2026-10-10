@@ -22,4 +22,6 @@ deno.lock
 /socialweb-gateway
 /socialweb-credential
 *.test
-
+/socialweb-nodeimage
+/kata-containers/
+/streamplace/
