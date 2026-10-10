@@ -4,13 +4,9 @@ import {
   createMarketNodeFulfiller,
   type NodeSessionPlan,
 } from "@publicdomainrelay/socialweb-computer-k8s-node-market";
-import type { NodeClaimStore } from "@publicdomainrelay/socialweb-computer-k8s-abc";
-import {
-  K3S_JOIN_PATH,
-  NODECLAIM_FINALIZER,
-  type NodeClaim,
-  type NodeClaimStatus,
-} from "@publicdomainrelay/socialweb-computer-k8s-common";
+import type { NodeClaim, NodeClaimStore } from "@publicdomainrelay/socialweb-computer-k8s-abc";
+import { K3S_JOIN_PATH } from "@publicdomainrelay/socialweb-computer-k8s-common";
+import { FINALIZER_NODE_CLAIM, type NodeClaimStatus } from "@publicdomainrelay/socialweb-computer-k8s-api";
 
 const OWNER = "did:plc:nodeowner";
 const CA = "-----BEGIN CERTIFICATE-----\nCA\n-----END CERTIFICATE-----\n";
@@ -54,12 +50,12 @@ class FakeStore implements NodeClaimStore {
   }
   addFinalizer(c: NodeClaim) {
     const cur = this.claims.get(c.name)!;
-    if (!cur.finalizers.includes(NODECLAIM_FINALIZER)) cur.finalizers.push(NODECLAIM_FINALIZER);
+    if (!cur.finalizers.includes(FINALIZER_NODE_CLAIM)) cur.finalizers.push(FINALIZER_NODE_CLAIM);
     return Promise.resolve();
   }
   removeFinalizer(c: NodeClaim) {
     const cur = this.claims.get(c.name);
-    if (cur) cur.finalizers = cur.finalizers.filter((f) => f !== NODECLAIM_FINALIZER);
+    if (cur) cur.finalizers = cur.finalizers.filter((f) => f !== FINALIZER_NODE_CLAIM);
     this.removed.push(c.name);
     return Promise.resolve();
   }
@@ -158,7 +154,7 @@ Deno.test("a pending claim is finalized and fulfilled through the market as its 
   await h.fulfiller.pass();
   await settle();
 
-  assertEquals(h.store.claims.get("ci-node1")!.finalizers, [NODECLAIM_FINALIZER]);
+  assertEquals(h.store.claims.get("ci-node1")!.finalizers, [FINALIZER_NODE_CLAIM]);
   assertEquals(h.requested, [OWNER]);
   assertEquals(h.contracts.length, 1);
   const c = h.contracts[0];
@@ -236,7 +232,7 @@ Deno.test("a node whose agent dies is reported Failed with the guest's words, an
   await settle();
   assertEquals(h.store.phase("ci-node1"), "Failed");
   assertStringIncludes(h.store.claims.get("ci-node1")!.status.message!, "level=fatal msg=boom");
-  assertEquals(h.store.claims.get("ci-node1")!.finalizers, [NODECLAIM_FINALIZER]);
+  assertEquals(h.store.claims.get("ci-node1")!.finalizers, [FINALIZER_NODE_CLAIM]);
 
   h.store.claims.get("ci-node1")!.deletionTimestamp = "2026-10-06T00:00:00Z";
   await h.fulfiller.pass();
@@ -256,7 +252,7 @@ Deno.test("no bids is a failure that says so", async () => {
 Deno.test("a live claim this process never started is reaped, never adopted", async () => {
   const h = harness();
   h.store.put(claim("ci-node1", {
-    finalizers: [NODECLAIM_FINALIZER],
+    finalizers: [FINALIZER_NODE_CLAIM],
     status: {
       phase: "Running",
       contract: { vmUri: "at://owner/vm/1", receiptUri: "at://bidder/receipt/1", receiptCid: "rc", submitEventRef: "https://bidder/xrpc" },
@@ -281,7 +277,7 @@ Deno.test("a live claim this process never started is reaped, never adopted", as
 Deno.test("a claim the door could not confirm released is Failed, not Released", async () => {
   const h = harness("hold", false);
   h.store.put(claim("ci-node1", {
-    finalizers: [NODECLAIM_FINALIZER],
+    finalizers: [FINALIZER_NODE_CLAIM],
     status: {
       phase: "Running",
       contract: { vmUri: "at://owner/vm/1", receiptUri: "at://bidder/receipt/1", receiptCid: "rc", submitEventRef: "https://bidder/xrpc" },
@@ -306,7 +302,7 @@ Deno.test("a deleted claim with an unreleased contract is reaped before its fina
   const h = harness();
   h.store.put(claim("ci-node1", {
     deletionTimestamp: "2026-10-06T00:00:00Z",
-    finalizers: [NODECLAIM_FINALIZER],
+    finalizers: [FINALIZER_NODE_CLAIM],
     status: { phase: "Failed", contract: { receiptUri: "r", receiptCid: "c", submitEventRef: "s" } },
   }));
   await h.fulfiller.pass();

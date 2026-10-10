@@ -1,14 +1,11 @@
 import { parse as parseYaml } from "@std/yaml";
-import type { NodeClaimStore } from "@publicdomainrelay/socialweb-computer-k8s-abc";
+import type { NodeClaim, NodeClaimStore } from "@publicdomainrelay/socialweb-computer-k8s-abc";
 import {
-  NODECLAIM_FINALIZER,
-  NODECLAIM_GROUP,
-  NODECLAIM_RESOURCE,
-  NODECLAIM_VERSION,
-  type NodeClaim,
-  type NodeClaimSpec,
-  type NodeClaimStatus,
-} from "@publicdomainrelay/socialweb-computer-k8s-common";
+  assertNodeClaimStatus,
+  FINALIZER_NODE_CLAIM,
+  NODE_CLAIM_RESOURCE,
+  parseNodeClaim,
+} from "@publicdomainrelay/socialweb-computer-k8s-api";
 
 export interface KcpCredentials {
   server: string;
@@ -70,18 +67,6 @@ function retryAfterMs(res: Response): number {
   return Math.min(wait, MAX_RETRY_AFTER_MS);
 }
 
-interface RawClaim {
-  metadata: {
-    name: string;
-    resourceVersion?: string;
-    deletionTimestamp?: string;
-    finalizers?: string[];
-    annotations?: Record<string, string>;
-  };
-  spec: NodeClaimSpec;
-  status?: NodeClaimStatus;
-}
-
 export class KcpRequestError extends Error {
   constructor(readonly status: number, message: string) {
     super(message);
@@ -92,17 +77,21 @@ export class KcpRequestError extends Error {
 const LOGICAL_CLUSTER_ANNOTATION = "kcp.io/cluster";
 const CONFLICT_STATUSES = new Set([409, 422]);
 
-export function toNodeClaim(raw: RawClaim, fallbackWorkspace?: string): NodeClaim {
-  const workspace = raw.metadata.annotations?.[LOGICAL_CLUSTER_ANNOTATION] ?? fallbackWorkspace;
-  if (!workspace) throw new Error(`nodeclaim ${raw.metadata.name} carries no ${LOGICAL_CLUSTER_ANNOTATION} annotation`);
+export function toNodeClaim(raw: unknown, fallbackWorkspace?: string): NodeClaim {
+  const claim = parseNodeClaim(raw);
+  const name = claim.metadata?.name;
+  if (!name) throw new Error("a nodeclaim from kcp carries no metadata.name");
+  if (!claim.spec) throw new Error(`nodeclaim ${name} carries no spec`);
+  const workspace = claim.metadata?.annotations?.[LOGICAL_CLUSTER_ANNOTATION] ?? fallbackWorkspace;
+  if (!workspace) throw new Error(`nodeclaim ${name} carries no ${LOGICAL_CLUSTER_ANNOTATION} annotation`);
   return {
     workspace,
-    name: raw.metadata.name,
-    resourceVersion: raw.metadata.resourceVersion,
-    deletionTimestamp: raw.metadata.deletionTimestamp,
-    finalizers: raw.metadata.finalizers ?? [],
-    spec: raw.spec,
-    status: raw.status ?? {},
+    name,
+    resourceVersion: claim.metadata?.resourceVersion,
+    deletionTimestamp: claim.metadata?.deletionTimestamp,
+    finalizers: claim.metadata?.finalizers ?? [],
+    spec: claim.spec,
+    status: claim.status ?? {},
   };
 }
 
@@ -148,7 +137,7 @@ export function createKcpNodeClaimStore(opts: KcpNodeClaimStoreOptions): NodeCla
   }
 
   function clusterPath(workspace: string, resource: string): string {
-    return `${creds.server}/clusters/${workspace}/apis/${NODECLAIM_GROUP}/${NODECLAIM_VERSION}/${NODECLAIM_RESOURCE}${resource}`;
+    return `${creds.server}/clusters/${workspace}/apis/${NODE_CLAIM_RESOURCE.group}/${NODE_CLAIM_RESOURCE.version}/${NODE_CLAIM_RESOURCE.plural}${resource}`;
   }
 
   async function itemUrl(claim: Pick<NodeClaim, "workspace" | "name">, sub = ""): Promise<string> {
@@ -190,7 +179,7 @@ export function createKcpNodeClaimStore(opts: KcpNodeClaimStoreOptions): NodeCla
     for (let attempt = 0; attempt < 3; attempt++) {
       let fresh: NodeClaim;
       try {
-        fresh = toNodeClaim(await request(url) as RawClaim, claim.workspace);
+        fresh = toNodeClaim(await request(url), claim.workspace);
       } catch (err) {
         if (err instanceof KcpRequestError && err.status === 404) return;
         throw err;
@@ -215,19 +204,20 @@ export function createKcpNodeClaimStore(opts: KcpNodeClaimStoreOptions): NodeCla
     async list() {
       const claims: NodeClaim[] = [];
       for (const home of await homes()) {
-        const out = await request(clusterPath(home, "")) as { items?: RawClaim[] };
+        const out = await request(clusterPath(home, "")) as { items?: unknown[] };
         for (const item of out.items ?? []) claims.push(toNodeClaim(item, home));
       }
       return claims;
     },
     async replaceStatus(claim, status) {
+      assertNodeClaimStatus(status);
       await jsonPatch(await itemUrl(claim, "/status"), [{ op: "add", path: "/status", value: status }]);
     },
     addFinalizer(claim) {
-      return editFinalizers(claim, (cur) => cur.includes(NODECLAIM_FINALIZER) ? null : [...cur, NODECLAIM_FINALIZER]);
+      return editFinalizers(claim, (cur) => cur.includes(FINALIZER_NODE_CLAIM) ? null : [...cur, FINALIZER_NODE_CLAIM]);
     },
     removeFinalizer(claim) {
-      return editFinalizers(claim, (cur) => cur.includes(NODECLAIM_FINALIZER) ? cur.filter((f) => f !== NODECLAIM_FINALIZER) : null);
+      return editFinalizers(claim, (cur) => cur.includes(FINALIZER_NODE_CLAIM) ? cur.filter((f) => f !== FINALIZER_NODE_CLAIM) : null);
     },
   };
 }

@@ -3,6 +3,7 @@
   "workspace": [
     "./lib/common/socialweb-computer-common",
     "./lib/common/socialweb-computer-k8s-common",
+    "./lib/common/socialweb-computer-k8s-api",
     "./lib/json-file-store-fs",
     "./lib/key-file-fs",
     "./lib/abc/socialweb-computer",

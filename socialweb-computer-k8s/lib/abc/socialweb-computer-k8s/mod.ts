@@ -1,10 +1,19 @@
-import type {
-  ClusterPhaseResult,
-  ClusterSummary,
-  KubeconfigGrant,
-  NodeClaim,
-  NodeClaimStatus,
-} from "@publicdomainrelay/socialweb-computer-k8s-common";
+import type { ClusterPhaseResult, ClusterSummary, KubeconfigGrant } from "@publicdomainrelay/socialweb-computer-k8s-common";
+import type { NodeClaimSpec, NodeClaimStatus } from "@publicdomainrelay/socialweb-computer-k8s-api";
+
+export interface NodeClaim {
+  workspace: string;
+  name: string;
+  resourceVersion?: string;
+  deletionTimestamp?: string;
+  finalizers: string[];
+  spec: NodeClaimSpec;
+  status: NodeClaimStatus;
+}
+
+export function nodeClaimKey(claim: Pick<NodeClaim, "workspace" | "name">): string {
+  return `${claim.workspace}/${claim.name}`;
+}
 
 export interface ClusterGateway {
   list(did: string): Promise<ClusterSummary[]>;

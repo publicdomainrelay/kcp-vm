@@ -65,63 +65,6 @@ export function ttlChoicesUpTo(maxSec: number, choices: readonly number[] = DEFA
   return allowed.length > 0 ? allowed : [maxSec];
 }
 
-export const NODECLAIM_GROUP = "socialweb.computer";
-export const NODECLAIM_VERSION = "v1alpha1";
-export const NODECLAIM_RESOURCE = "nodeclaims";
-export const NODECLAIM_KIND = "NodeClaim";
-export const NODECLAIM_FINALIZER = "nodeclaim.socialweb.computer/release";
-
-export type NodeClaimPhase =
-  | "Pending"
-  | "Bidding"
-  | "Provisioning"
-  | "Joining"
-  | "Running"
-  | "Failed"
-  | "Released";
-
-export interface NodeClaimSpec {
-  cluster: string;
-  nodeName: string;
-  ownerDid: string;
-  apiserverPort: number;
-  advertiseAddress: string;
-  tokenFile: string;
-  nodePasswordFile: string;
-  serverCAFile: string;
-  denyBidderDids?: string[];
-}
-
-export interface NodeClaimContract {
-  vmUri?: string;
-  rfpUri?: string;
-  acceptUri?: string;
-  receiptUri?: string;
-  receiptCid?: string;
-  submitEventRef?: string;
-}
-
-export interface NodeClaimStatus {
-  phase?: NodeClaimPhase;
-  contract?: NodeClaimContract;
-  fqdn?: string;
-  message?: string;
-}
-
-export interface NodeClaim {
-  workspace: string;
-  name: string;
-  resourceVersion?: string;
-  deletionTimestamp?: string;
-  finalizers: string[];
-  spec: NodeClaimSpec;
-  status: NodeClaimStatus;
-}
-
-export function nodeClaimKey(claim: Pick<NodeClaim, "workspace" | "name">): string {
-  return `${claim.workspace}/${claim.name}`;
-}
-
 export const K3S_JOIN_PATH = "/usr/local/bin/socialweb-k3s-join";
 export const K3S_JOIN_READY_MARKER = "SOCIALWEB_K3S_JOIN_READY";
 export const K3S_JOIN_GO = "GO";
