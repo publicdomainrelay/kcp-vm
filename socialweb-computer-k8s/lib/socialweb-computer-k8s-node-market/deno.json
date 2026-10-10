@@ -1,0 +1,6 @@
+{
+  "name": "@publicdomainrelay/socialweb-computer-k8s-node-market",
+  "version": "0.0.0",
+  "license": "Unlicense",
+  "exports": "./mod.ts"
+}

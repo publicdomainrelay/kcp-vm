@@ -1,0 +1,159 @@
+{
+  "name": "hono-socialweb-computer-k8s",
+  "description": "Kubernetes front door for the social web computer: atproto OAuth, a cluster list, kubeconfig downloads, and market-provisioned nodes",
+  "options": {
+    "http-port": {
+      "type": "number",
+      "description": "Port the web app and API listen on",
+      "env": "HTTP_PORT",
+      "default": 8788
+    },
+    "serve-addr": {
+      "type": "string",
+      "description": "Address the web app and API bind",
+      "env": "SERVE_ADDR",
+      "default": "127.0.0.1"
+    },
+    "state-dir": {
+      "type": "string",
+      "description": "Directory holding OAuth sessions and the requester key",
+      "env": "STATE_DIR",
+      "default": ".socialweb-computer-k8s"
+    },
+    "label": {
+      "type": "string",
+      "description": "Service name in structured logs",
+      "env": "LABEL",
+      "default": "socialweb-computer-k8s"
+    },
+    "web-dir": {
+      "type": "string",
+      "description": "Directory the single page app is served from",
+      "env": "WEB_DIR",
+      "default": "web"
+    },
+    "public-origin": {
+      "type": "string",
+      "description": "Public https origin this door is reached at; names the OAuth client_id and binds request proofs",
+      "env": "PUBLIC_ORIGIN"
+    },
+    "oauth-client-id": {
+      "type": "string",
+      "description": "Fallback OAuth client_id to refresh as when a deposited session carries none",
+      "env": "OAUTH_CLIENT_ID"
+    },
+    "plc-directory-url": {
+      "type": "string",
+      "description": "PLC directory used to resolve accounts",
+      "env": "PLC_DIRECTORY_URL",
+      "default": "https://plc.directory"
+    },
+    "ingress-proxy-host": {
+      "type": "string",
+      "description": "did-key ingress proxy the requester registers its own repo with",
+      "env": "INGRESS_PROXY_HOST",
+      "default": "xrpc.fedproxy.com"
+    },
+    "gateway-url": {
+      "type": "string",
+      "description": "Base URL of the cluster gateway XRPC surface",
+      "env": "GATEWAY_URL",
+      "default": "http://127.0.0.1:8080"
+    },
+    "gateway-audience": {
+      "type": "string",
+      "description": "Audience the cluster gateway accepts service-auth tokens for; must be one of SOCIALWEB_GATEWAY_AUDIENCES",
+      "env": "GATEWAY_AUDIENCE",
+      "default": "did:web:socialweb.local"
+    },
+    "kcp-public-host": {
+      "type": "string",
+      "description": "Public kcp front kubeconfigs point at, shown on the page",
+      "env": "KCP_PUBLIC_HOST"
+    },
+    "kubeconfig-max-ttl-sec": {
+      "type": "number",
+      "description": "Longest kubeconfig lifetime a user may pick",
+      "env": "KUBECONFIG_MAX_TTL_SEC",
+      "default": 2592000
+    },
+    "downloads-subdir": {
+      "type": "string",
+      "description": "Subdirectory of the web dir holding socialweb-credential builds named socialweb-credential-<os>-<arch>",
+      "env": "DOWNLOADS_SUBDIR",
+      "default": "downloads"
+    },
+    "tls-cert-file": {
+      "type": "string",
+      "description": "Serve TLS with this certificate file",
+      "env": "TLS_CERT_FILE"
+    },
+    "tls-key-file": {
+      "type": "string",
+      "description": "Serve TLS with this key file",
+      "env": "TLS_KEY_FILE"
+    },
+    "port-file": {
+      "type": "string",
+      "description": "Write the bound port to this file once listening",
+      "env": "PORT_FILE"
+    },
+    "kcp-kubeconfig": {
+      "type": "string",
+      "description": "kcp admin kubeconfig; when set, this door fulfils NodeClaims through the compute market",
+      "env": "KCP_KUBECONFIG"
+    },
+    "kcp-context": {
+      "type": "string",
+      "description": "Context in the kcp kubeconfig to use; defaults to its current-context",
+      "env": "KCP_CONTEXT"
+    },
+    "kcp-provider-workspace": {
+      "type": "string",
+      "description": "Workspace path holding the provider's APIExport",
+      "env": "KCP_PROVIDER_WORKSPACE",
+      "default": "root:socialweb-provider"
+    },
+    "kcp-apiexport": {
+      "type": "string",
+      "description": "APIExport that serves NodeClaims",
+      "env": "KCP_APIEXPORT",
+      "default": "clusters"
+    },
+    "node-apiserver-host": {
+      "type": "string",
+      "description": "Host a node's forwarded connections are delivered to; the tenant apiserver binds it",
+      "env": "NODE_APISERVER_HOST",
+      "default": "127.0.0.1"
+    },
+    "node-policy": {
+      "type": "string",
+      "description": "Fulfilment policy a node's RFP is evaluated under",
+      "env": "NODE_POLICY",
+      "default": "tangled-vouch"
+    },
+    "node-policy-args": {
+      "type": "string",
+      "description": "JSON object of policy arguments",
+      "env": "NODE_POLICY_ARGS",
+      "default": "{\"firstFree\":true}"
+    },
+    "relay-url": {
+      "type": "string",
+      "description": "Comma-separated extra relays to watch for bids",
+      "env": "RELAY_URL"
+    },
+    "vm-ready-timeout-sec": {
+      "type": "number",
+      "description": "How long a node's VM may take to answer SSH",
+      "env": "VM_READY_TIMEOUT_SEC",
+      "default": 600
+    },
+    "node-poll-interval-ms": {
+      "type": "number",
+      "description": "How often NodeClaims are re-read",
+      "env": "NODE_POLL_INTERVAL_MS",
+      "default": 2000
+    }
+  }
+}
