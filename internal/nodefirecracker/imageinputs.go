@@ -102,6 +102,13 @@ const (
 
 	moduleSourceDigestWhy = "no digest of the tree it copied its modules from"
 
+	preinstallWhy = "The manifest is what decides which software is baked into the image, so what " +
+		"the image carries is the manifest's: a manifest whose content changed names an image whose " +
+		"packages were chosen by a list the configuration no longer holds, and a configuration that " +
+		"stopped naming one describes an image carrying software it does not ask for -- in both " +
+		"directions the guest installs at first boot what the image was supposed to have made " +
+		"unnecessary, and the boot looks the same either way"
+
 	bootArgsWhy = "The boot arguments become the kernel command line the guest is started with, and " +
 		"they travel in the manifest inside the image, so a configuration that changed them and was " +
 		"answered `up to date` leaves the image with the OLD command line: the operator edits the " +
@@ -652,6 +659,12 @@ func CompareImageToConfig(m Manifest, configPath string, cfg BuildConfig) error 
 			diffs = append(diffs, d)
 		}
 	}
+	if d, err := optionalFileDifference("preinstall manifest", m.Inputs.Preinstall,
+		m.Inputs.PreinstallDigest, cfg.Preinstall, preinstallWhy); err != nil {
+		return err
+	} else if d != "" {
+		diffs = append(diffs, d)
+	}
 	for _, t := range []struct {
 		what     string
 		recorded string
@@ -774,6 +787,29 @@ func fileDifference(what, recorded, digest, named, why string) (string, error) {
 	}
 	return fmt.Sprintf("%s: the file at %s is not the file this image was built from. It is now "+
 		"%s and this image records %s. %s", what, named, current, digest, why), nil
+}
+
+func optionalFileDifference(what, recorded, digest, named, why string) (string, error) {
+	if recorded == "" && named == "" {
+		return "", nil
+	}
+	if recorded == "" {
+		return fmt.Sprintf("%s: this image was built without one and the configuration names %s. %s",
+			what, named, why), nil
+	}
+	if named == "" {
+		return fmt.Sprintf("%s: this image was built from %s and the configuration names none. %s",
+			what, recorded, why), nil
+	}
+	resolvedRecorded := recorded
+	if resolved, err := resolvePath(recorded); err == nil {
+		resolvedRecorded = resolved
+	}
+	resolvedNamed, err := resolvePath(named)
+	if err != nil {
+		return "", err
+	}
+	return fileDifference(what, resolvedRecorded, digest, resolvedNamed, why)
 }
 
 func onlyIn(these, those []string) []string {

@@ -20,6 +20,7 @@ type imageFixture struct {
 	k3s        string
 	agent      string
 	agentPkg   string
+	preinstall string
 	modules    string
 	cfg        BuildConfig
 }
@@ -429,5 +430,76 @@ func TestAnAgentPackageIsRelativeToTheModuleAndNotToWhereTheReaderStands(t *test
 			"be recorded as the source the agent in the image was built from")
 	} else if !strings.Contains(err.Error(), "go.mod") {
 		t.Errorf("the refusal does not name the file it looked for and did not find: %v", err)
+	}
+}
+
+func (f imageFixture) withPreinstall(t *testing.T) imageFixture {
+	t.Helper()
+	f.preinstall = filepath.Join(f.root, "preinstall.json")
+	writeFileAt(t, f.preinstall, `{"packages":["cloud-init","jq"],"files":[],"runs":[]}`)
+	f.cfg.Preinstall = f.preinstall
+	f.writeConfig(t, f.cfg)
+	return f
+}
+
+func TestAnImageBuiltWithoutTheManifestTheConfigurationNamesIsRefused(t *testing.T) {
+	f := newImageFixture(t).withPreinstall(t)
+	f.writeImage(t, f.manifest(t, f.cfg))
+
+	manifest, err := LoadManifest(f.root)
+	if err != nil {
+		t.Fatalf("LoadManifest: %v", err)
+	}
+	if err := manifest.CheckInputs(); err != nil {
+		t.Fatalf("an image built from the configuration in front of it was refused: %v", err)
+	}
+
+	without := f.cfg
+	without.Preinstall = ""
+	f.writeConfig(t, without)
+	err = manifest.CheckInputs()
+	if err == nil {
+		t.Fatal("a configuration that stopped naming the manifest its image was built with was " +
+			"accepted, and the image it describes carries software chosen by a list nothing names " +
+			"any more")
+	}
+	if !strings.Contains(err.Error(), "preinstall manifest") {
+		t.Errorf("the refusal does not name the input that cannot be compared: %v", err)
+	}
+
+	f.writeConfig(t, f.cfg)
+	if err := manifest.CheckInputs(); err != nil {
+		t.Fatalf("the configuration the image was built from was refused once it was written back: %v", err)
+	}
+	writeFileAt(t, f.preinstall, `{"packages":["cloud-init","jq"],"files":[],"runs":["cloud-init --version"]}`)
+	err = manifest.CheckInputs()
+	if err == nil {
+		t.Fatal("a manifest whose contents changed was accepted, so the image is the one built from " +
+			"a list of packages that is not the list in front of it")
+	}
+	if !strings.Contains(err.Error(), "preinstall manifest") {
+		t.Errorf("the refusal does not name the manifest whose contents moved: %v", err)
+	}
+}
+
+func TestAManifestTheImageWasNotBuiltFromIsRefused(t *testing.T) {
+	f := newImageFixture(t)
+	f.writeImage(t, f.manifest(t, f.cfg))
+
+	withOne := f.withPreinstall(t)
+	if withOne.cfg.Preinstall == "" {
+		t.Fatal("the fixture names no manifest, so this test compared nothing")
+	}
+	manifest, err := LoadManifest(f.root)
+	if err != nil {
+		t.Fatalf("LoadManifest: %v", err)
+	}
+	err = manifest.CheckInputs()
+	if err == nil {
+		t.Fatal("an image built with no manifest at all was accepted by a configuration that names " +
+			"one, so the guest installs at first boot what the image was meant to have baked")
+	}
+	if !strings.Contains(err.Error(), "preinstall manifest") {
+		t.Errorf("the refusal does not name the input that differs: %v", err)
 	}
 }
