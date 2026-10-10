@@ -1,7 +1,7 @@
 apiVersion: apis.kcp.io/v1alpha1
 kind: APIResourceSchema
 metadata:
-  name: v1alpha1-1.nodeclaims.socialweb.computer
+  name: v1alpha1-2.nodeclaims.socialweb.computer
 spec:
   group: socialweb.computer
   names:
@@ -85,6 +85,159 @@ spec:
                     type: string
                   submitEventRef:
                     type: string
+                  version:
+                    type: integer
+                  phase:
+                    type: string
+                    enum:
+                      - requested
+                      - rfp_submitted
+                      - winner_selected
+                      - accepted
+                      - receipt
+                      - network
+                      - released
+                  vmName:
+                    type: string
+                  requesterDid:
+                    type: string
+                  marketDid:
+                    type: string
+                  payload:
+                    type: object
+                    properties:
+                      uri:
+                        type: string
+                      cid:
+                        type: string
+                    required:
+                      - uri
+                      - cid
+                  rfp:
+                    type: object
+                    properties:
+                      uri:
+                        type: string
+                      cid:
+                        type: string
+                    required:
+                      - uri
+                      - cid
+                  policy:
+                    type: object
+                    properties:
+                      uri:
+                        type: string
+                      cid:
+                        type: string
+                    required:
+                      - uri
+                      - cid
+                  bid:
+                    type: object
+                    properties:
+                      uri:
+                        type: string
+                      cid:
+                        type: string
+                    required:
+                      - uri
+                      - cid
+                  winner:
+                    type: object
+                    properties:
+                      did:
+                        type: string
+                      submitAccept:
+                        type: string
+                    required:
+                      - did
+                  accept:
+                    type: object
+                    properties:
+                      uri:
+                        type: string
+                      cid:
+                        type: string
+                    required:
+                      - uri
+                      - cid
+                  receipt:
+                    type: object
+                    properties:
+                      uri:
+                        type: string
+                      cid:
+                        type: string
+                    required:
+                      - uri
+                      - cid
+                  receiptOk:
+                    type: boolean
+                  vmAddress:
+                    type: string
+                  bids:
+                    type: integer
+                  release:
+                    type: object
+                    properties:
+                      event:
+                        type: object
+                        properties:
+                          uri:
+                            type: string
+                          cid:
+                            type: string
+                        required:
+                          - uri
+                          - cid
+                      payload:
+                        type: object
+                        properties:
+                          uri:
+                            type: string
+                          cid:
+                            type: string
+                        required:
+                          - uri
+                          - cid
+                      ok:
+                        type: boolean
+                      status:
+                        type: integer
+                    required:
+                      - event
+                      - payload
+                      - ok
+                  outcome:
+                    type: string
+                    enum:
+                      - no_bids
+                      - bids_denied
+                      - policy_rejected
+                      - returned
+                      - receipt_invalid
+                      - network_timeout
+                      - complete
+                  error:
+                    type: string
+                  timestamps:
+                    type: object
+                    properties:
+                      requested:
+                        type: string
+                      rfp_submitted:
+                        type: string
+                      winner_selected:
+                        type: string
+                      accepted:
+                        type: string
+                      receipt:
+                        type: string
+                      network:
+                        type: string
+                      released:
+                        type: string
               fqdn:
                 type: string
               message:

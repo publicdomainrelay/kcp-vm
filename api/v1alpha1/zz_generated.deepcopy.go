@@ -142,7 +142,7 @@ func (in *NodeClaim) DeepCopyInto(out *NodeClaim) {
 	out.TypeMeta = in.TypeMeta
 	in.ObjectMeta.DeepCopyInto(&out.ObjectMeta)
 	in.Spec.DeepCopyInto(&out.Spec)
-	out.Status = in.Status
+	in.Status.DeepCopyInto(&out.Status)
 }
 
 func (in *NodeClaim) DeepCopy() *NodeClaim {
@@ -199,6 +199,40 @@ func (in *NodeClaimSpec) DeepCopyInto(out *NodeClaimSpec) {
 
 func (in *NodeClaimStatus) DeepCopyInto(out *NodeClaimStatus) {
 	*out = *in
+	in.Contract.DeepCopyInto(&out.Contract)
+}
+
+func (in *NodeClaimContract) DeepCopyInto(out *NodeClaimContract) {
+	*out = *in
+	out.Version = copyPtr(in.Version)
+	out.Payload = copyPtr(in.Payload)
+	out.RFP = copyPtr(in.RFP)
+	out.Policy = copyPtr(in.Policy)
+	out.Bid = copyPtr(in.Bid)
+	out.Winner = copyPtr(in.Winner)
+	out.Accept = copyPtr(in.Accept)
+	out.Receipt = copyPtr(in.Receipt)
+	out.ReceiptOk = copyPtr(in.ReceiptOk)
+	out.Bids = copyPtr(in.Bids)
+	if in.Release != nil {
+		out.Release = new(ContractRelease)
+		in.Release.DeepCopyInto(out.Release)
+	}
+	out.Timestamps = copyPtr(in.Timestamps)
+}
+
+func (in *ContractRelease) DeepCopyInto(out *ContractRelease) {
+	*out = *in
+	out.Status = copyPtr(in.Status)
+}
+
+func copyPtr[T any](in *T) *T {
+	if in == nil {
+		return nil
+	}
+	out := new(T)
+	*out = *in
+	return out
 }
 
 func (in *AtprotoIdentity) DeepCopyInto(out *AtprotoIdentity) {
