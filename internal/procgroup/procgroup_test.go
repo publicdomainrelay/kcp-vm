@@ -24,6 +24,9 @@ const (
 )
 
 func TestMain(m *testing.M) {
+	if os.Getenv(providerEnv) != "" {
+		os.Exit(runProvider())
+	}
 	if os.Getenv(helperEnv) == "" {
 		os.Exit(m.Run())
 	}

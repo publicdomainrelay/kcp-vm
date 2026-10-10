@@ -56,6 +56,14 @@ func Scan(leases []portallocator.Lease, stacks []Stack) (Survivors, []Drop, erro
 	return survivors, dropped, nil
 }
 
+func ListenerPIDs(port int) ([]int, error) {
+	stream, err := listeners()
+	if err != nil {
+		return nil, err
+	}
+	return append([]int(nil), stream[port]...), nil
+}
+
 func byTransport(leases []portallocator.Lease, stream, datagram map[int][]int) map[int][]int {
 	out := map[int][]int{}
 	for _, l := range leases {

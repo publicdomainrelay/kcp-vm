@@ -13,6 +13,12 @@ func DetachProcess() *syscall.SysProcAttr {
 	return &syscall.SysProcAttr{CreationFlags: windows.CREATE_NEW_PROCESS_GROUP | windows.DETACHED_PROCESS}
 }
 
+// ponytail: Windows has no Pdeathsig, so a member here outlives a killed provider;
+// a job object with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE is the upgrade.
+func DieWithParent() *syscall.SysProcAttr {
+	return &syscall.SysProcAttr{}
+}
+
 func NewProcessGroup() *syscall.SysProcAttr {
 	return &syscall.SysProcAttr{CreationFlags: windows.CREATE_NEW_PROCESS_GROUP}
 }

@@ -151,3 +151,50 @@ func TestARunningVaultDoesNotServeAHostItsLeafGainedAfterItStarted(t *testing.T)
 			"more than the host the listener lacks: %v", err)
 	}
 }
+
+func TestARunningVaultServesAHostItsLeafGainedOnceItIsReloaded(t *testing.T) {
+	skipWithoutBao(t)
+	ctx := context.Background()
+	clientCA := newTestCA(t, "k3s-client-ca")
+	serverCA := newTestCA(t, "k3s-server-ca")
+	dataDir := seedClusterTLS(t, clientCA, serverCA)
+	port := freePort(t)
+	pg, _ := startTestPostgres(t, "vaultreload")
+	spec := vaultSpecForHosts(t, dataDir, port, pg.VaultDSN(),
+		portallocator.MarketAdvertiseAddress, "127.0.0.1")
+	writeAndStartBao(t, spec)
+	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+	awaitServedLeafCovers(t, addr, portallocator.MarketAdvertiseAddress)
+	before := servedLeafHosts(t, addr)
+
+	began := time.Now()
+	if _, err := vaultcert.EnsureServedVaultTLS(ctx, dataDir, port, tenantAddOnGateway, "127.0.0.1"); err != nil {
+		t.Fatalf("asking the running vault to serve %s as well: %v", tenantAddOnGateway, err)
+	}
+	took := time.Since(began)
+	after := servedLeafHosts(t, addr)
+	t.Logf("reading: the vault at %s served %v; after the re-sign and a SIGHUP it serves %v, "+
+		"%s after the call began", addr, before, after, took.Round(time.Millisecond))
+	if !strings.Contains(strings.Join(after, " "), tenantAddOnGateway) {
+		t.Fatalf("the running vault serves %v after the reload, want %s among them", after, tenantAddOnGateway)
+	}
+	if !strings.Contains(strings.Join(after, " "), portallocator.MarketAdvertiseAddress) {
+		t.Fatalf("the reloaded vault dropped the host it started with: %v", after)
+	}
+	caPEM, err := os.ReadFile(clusterstack.OpenBaoTLSCAPath(dataDir))
+	if err != nil {
+		t.Fatalf("reading the vault's TLS CA on disk: %v", err)
+	}
+	pool := x509.NewCertPool()
+	pool.AppendCertsFromPEM(caPEM)
+	raw, err := (&net.Dialer{Timeout: 5 * time.Second}).Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("dialing the vault at %s: %v", addr, err)
+	}
+	defer raw.Close()
+	conn := tls.Client(raw, &tls.Config{RootCAs: pool, ServerName: tenantAddOnGateway, MinVersion: tls.VersionTLS12})
+	if err := conn.Handshake(); err != nil {
+		t.Fatalf("a client dialing the reloaded vault as %s, trusting the CA on disk, fails: %v",
+			tenantAddOnGateway, err)
+	}
+}

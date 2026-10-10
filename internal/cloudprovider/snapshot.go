@@ -10,6 +10,8 @@ import (
 
 const snapshotMode = 0o600
 
+var ErrNoSnapshot = errors.New("cloudprovider: the instance snapshot does not exist")
+
 var ErrNoSnapshotPath = errors.New(
 	"cloudprovider: the instance snapshot needs a path. Without one the provider would write an " +
 		"instance list no cloud controller manager can read, and every Node would read as unknown")

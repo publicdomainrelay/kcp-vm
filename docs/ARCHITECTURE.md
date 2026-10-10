@@ -193,17 +193,21 @@ its cluster and its instance-file path ride `Spec.Env` and never argv (invariant
 readiness gate is its own `phase=Ready` log line, taken once its Node informer has synced: it binds
 no port, so that line is the only signal it can offer, and it is a positive marker that can fail.
 
-A portless member is not swept, and that is a STATED LIMIT rather than an open item. The startup
-sweep (`cmd/socialweb-clusterprovider/nodesweep.go`) finds a previous gateway's survivors by the node
-record each substrate leaves under the state dir, and it matches that record against the argv the
-process was started with; a step that binds no port and leaves no record is invisible to it. The
-cloud controller manager is exactly that: it binds no port and leases nothing, deliberately, because
-its work is to reconcile Node objects against the instance snapshot rather than to own a node. A
-sweep that found processes by PID alone would find every process on the host, which is the failure
-mode the sweep exists to avoid, and a pid record can be reused by an unrelated process. So a
-controller left behind by a gateway that died WITHOUT its reverse-order reap is visible only to that
-gateway's own process group (invariant 21 stops it in the ordinary case), and a host that sees one
-stops it by hand. The alternatives were considered and are worse than the limit. `NEXT.yaml` CCM-2.
+A portless member is not swept, and it no longer needs to be: every process-group member dies with
+the provider. The startup sweep (`cmd/socialweb-clusterprovider/nodesweep.go`, and the leased-port
+scan in `startup.go`) finds a previous gateway's survivors by the record or the port they leave and
+the argv they were started with; a step that binds no port and leaves no record is invisible to it,
+and the cloud controller manager is exactly that, deliberately, because its work is to reconcile
+Node objects against the instance snapshot rather than to own a node. A sweep by PID alone would
+find every process on the host, and a pid record can be reused. So the member is made unable to
+survive instead: `procgroup.Spawn` sets `processrunner.Spec.DieWithParent` on every step, which
+spawns the child with `Pdeathsig: SIGKILL` from a goroutine that holds `runtime.LockOSThread` for
+the child's whole life. The thread matters: Linux delivers the parent-death signal when the THREAD
+that forked the child exits, not the process, and a Go thread can exit under a healthy provider. The
+sweep is kept unchanged for the members that bind ports, as a backstop for a member that escapes the
+signal (a setuid exec clears it). A Windows host has no Pdeathsig; a job object is the upgrade, named
+in `internal/hostos/sysproc_windows.go`. Closed by plan 0005 M6-LIMITS (section 15); this was
+`NEXT.yaml` CCM-2, then a stated limit.
 
 ### The External Secrets controller runs beside the control plane
 
@@ -4453,7 +4457,8 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   edge is stated rather than smoothed over - the snapshot file is load-bearing infrastructure and not
   a cache, and a snapshot that reads as absent is read as "every guest is gone". A snapshot that
   exists and cannot be parsed IS an error and patches nothing (invariant 14); the absent case is not,
-  and that asymmetry is the risk this entry leaves behind. Split out rather than folded in:
+  and that asymmetry is the risk this entry leaves behind (closed by plan 0005 M6-LIMITS: an absent
+  snapshot is now an error, the entry at the end of this section). Split out rather than folded in:
   the stated limit in `NEXT.yaml` for a portless process-group member, which cannot be found by a
   record-based sweep and is therefore not swept.
 
@@ -5082,7 +5087,9 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   walks the pool by occupancy, so the gateway is not derivable without it, and leasing a cluster's range
   on the vault bring-up path would change what the zero-node run allocates (section 14). Pinned by
   `TestARunningVaultDoesNotServeAHostItsLeafGainedAfterItStarted` in `internal/clusterprovider`, which
-  takes the reading and fails without the refusal. `NEXT.yaml` VAULT-TLS-1, now a limit.
+  takes the reading and fails without the refusal. `NEXT.yaml` VAULT-TLS-1, then a limit; the
+  signal-based repair refused here was built with the observation it lacked, and the limit closed, by
+  plan 0005 M6-LIMITS (the entry at the end of this section).
 
 - **The legacy-key migration ran in a different process from the one that reads what it renames.
   CLOSED.** The clusterprovider writes a mint credential as `<MINT_DIR>/<accountHash>-<name>` and the
@@ -5156,6 +5163,8 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   fix (a per-cluster flag in the closure that owns the pass, so the removal is attempted once per
   process and a restart retries it) is a change to a path that runs inside every pass. It was not
   made at that hour because it would have shipped unverified, which is the mistake being recorded.
+  (Closed by deletion: since M4-ESO-BESIDE the add-on pass no longer calls `eso.Remove` at all, and the
+  same per-cluster memo was then built for the released-Node reconcile, plan 0005 M6-LIMITS.)
   Removing it took three passes to get right, and each correction came from production rather than
   from reading. FIRST: not writing is not enough, because an upgraded cluster keeps what an older
   version wrote. SECOND, and this is the one worth reading twice: the ExternalSecret went and then sat
@@ -5387,6 +5396,66 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   re-measures an empty add-on baseline. Stated limits kept: neither member is restarted when it
   dies, as the cloud controller manager is not (plan 0005 M6-LIMITS); the webhook's TLS listener
   binds every interface of the container's namespace; the image grows by the 295 MB binary.
+
+- **Four stated limits, fixed (plan 0005 M6-LIMITS). CLOSED 2026-10-07.** Each was a `NEXT.yaml`
+  limit or a section 15 imperfection recorded as left on purpose; each now has a test watched to fail
+  against the old code.
+  ONE, a process-group member that binds no port and leaves no record was not swept. The cloud
+  controller manager outlived a gateway that died without its reverse-order reap, and nothing on the
+  host would ever stop it. Now `procgroup.Spawn` sets `processrunner.Spec.DieWithParent` on every
+  step: `Pdeathsig: SIGKILL`, spawned from a goroutine that holds `runtime.LockOSThread` until the
+  child is reaped, because Linux fires the signal when the FORKING THREAD exits. All members get it,
+  not only the portless one, because a survivor of any member is never adopted -- the restart reap
+  kills what it finds before the bring-up spawns -- so the signal only makes that death immediate.
+  The port sweep is unchanged. `TestAGroupMemberDiesWithTheProviderAndNotWithTheThreadThatSpawnedIt`
+  re-execs the test binary as a provider that spawns the group from a locked goroutine which then
+  returns. Readings on hat-8: with no Pdeathsig the member outlived the SIGKILLed provider by the full
+  5 s bound; with a bare `Pdeathsig` and no held thread the member was already a zombie when the test
+  first read it, killed by its spawning thread's exit under a healthy provider; with the held thread
+  it is alive 500 ms after that thread's goroutine returned and gone 0-20 ms after the provider is
+  SIGKILLed.
+  TWO, the instance snapshot was load-bearing and absent read as empty. `FileInstances.Get` now
+  answers `ErrNoSnapshot` for a missing `nodes.json`, so the controller requeues the Node instead of
+  deleting it; the `[]` the provider writes still means no guest. Absent is reachable only by a state
+  dir removed under a running controller, and that is now a refusal rather than every Node deleted.
+  `TestTheControllerDeletesNoNodeOverAnAbsentSnapshotAndDeletesOverAnEmptyOne` reads `deleted=[]`
+  over an absent file and `deleted=[c1-node1]` over `[]`; before, the first Reconcile returned nil
+  and deleted the Node. `TestAMissingInstanceFileIsAnErrorNotAnAbsence` and
+  `TestAnAbsentSnapshotIsRefusedAndAnEmptyOneIsEmpty` replace the two tests that pinned the old
+  reading.
+  THREE, a running vault did not serve a host added to its leaf later (VAULT-TLS-1). The repair was
+  refused before for two reasons and both are answered. The handle: the re-sign site has the data dir
+  and the vault's port, and that is enough to find the process without the materialiser -- the one
+  process holding the port (`portscan.ListenerPIDs`) whose command line is exactly
+  `bao server -config=<OpenBaoConfigPath(dataDir)>`; any other holder is refused and never signalled.
+  The observation: after the SIGHUP the SERVED leaf is read again, up to 10 s, so a reload that did not
+  happen still reads as a refusal (`ErrVaultReloadDidNotTake`). `vaultcert.EnsureServedVaultTLS` is
+  re-sign, read the served leaf, and only if it lacks a host, reload-then-verify; `esovault` and the
+  node vault stage call it. OpenBao v2.6.2 reloads listener TLS on SIGHUP, MEASURED on hat-8:
+  `TestARunningVaultServesAHostItsLeafGainedOnceItIsReloaded` started a real vault serving
+  `[198.18.255.254 127.0.0.1]`, asked for `10.100.0.1`, and read `[198.18.255.254 127.0.0.1
+  10.100.0.1]` served 114 ms after the call began, with a client verifying as `10.100.0.1` against
+  the CA on disk; with the reload a no-op it failed with `ErrVaultReloadDidNotTake` after 10 s. The
+  refusal is kept and pinned without a vault: `TestAReloadThatDoesNotTakeKeepsTheRefusal` and
+  `TestAListenerThatIsNotTheVaultIsNeverSignalled` (the port's holder is the test binary, which a
+  SIGHUP would end). The 21 vault tests of `internal/clusterprovider` pass with it under
+  `SOCIALWEB_LOCAL=1`. As of this change no production caller grows the host set after start --
+  bring-up already covers what the add-on pass and the node stage ask for -- so this closes the window
+  for the next caller rather than one that is open now.
+  FOUR, the per-pass deletes that come back NotFound. The ESO store removal that did them has had no
+  caller since M4-ESO-BESIDE, and the released-Node reconcile had already stopped deleting a Node that
+  was gone (`TestAReleasedClaimWhoseNodeIsAlreadyGoneCostsNoDelete`); what it still did was LIST the
+  tenant's Nodes on every pass for the life of the process, because a Released claim stays in its
+  workspace for ever. `nodeHosts` now keeps a per-cluster set of released claims (name and UID) whose
+  Node it deleted or saw absent; a pass whose Released claims are all in it makes no tenant call, the
+  set is pruned to the claims still Released on each pass, and a restart retries.
+  `TestTheReleasedNodeReconcileCostsTheTenantNothingOnceItsNodesAreGone` counts calls over 5 passes:
+  before, 1 DELETE and 6 calls (5 lists); after, 1 DELETE and 2 calls, and a claim released later
+  still gets its one delete. The cost: a Node that re-registers under a name whose Released claim is
+  already remembered is not deleted again until the provider restarts. That needs a kubelet on a
+  machine the door took away, and a claim re-written under the same name is a new object with a new
+  UID, so it is not remembered; the provider also never claims under a name whose claim has ended
+  (`TestTheFirstNodeOfAClusterIsNotClaimedUnderASpentName`).
 
 ## 16. Vocabulary
 

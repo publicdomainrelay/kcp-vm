@@ -101,6 +101,7 @@ func Spawn(ctx context.Context, steps []Step, opts Options) (*Group, error) {
 			}
 			spec = prepared
 		}
+		spec.DieWithParent = true
 
 		proc, err := processrunner.Start(context.WithoutCancel(ctx), spec)
 		if err != nil {
