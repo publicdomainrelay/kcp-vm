@@ -48,11 +48,14 @@ export interface ContractFlowOptions {
   onSshStart?: () => void;
   onSshEnd?: () => void | Promise<void>;
   /**
-   * Overrides the ssh ProxyCommand per guest FQDN (default:
-   * `websocat --binary wss://<fqdn>`). Lets tests and alternate ingress
-   * topologies rewrite the tunnel endpoint while keeping the RFP flow intact.
+   * Overrides the ssh ProxyCommand per guest target. Without it the
+   * ProxyCommand follows the transport the flow selected: `dumbpipe connect
+   * <ticket>` for the default iroh transport, and `websocat --binary
+   * wss://<fqdn>` only for the explicitly selected tunnel or fedproxy-ssh
+   * transport. Lets tests and alternate ingress topologies rewrite the guest
+   * endpoint while keeping the RFP flow intact.
    */
-  sshProxyCommandFn?: (fqdn: string) => string;
+  sshProxyCommandFn?: (target: string) => string;
   /**
    * XRPC dispatcher host: the atproto/WS relay plane the requester and guest
    * subscribe to (e.g. xrpc.fedproxy.com). Carries createRecord/submitRfp.
@@ -76,7 +79,10 @@ export interface ContractFlowOptions {
   userData?: {
     /** Caller-supplied base cloud-config (e.g. read from a --user-data file). */
     base?: string;
-    /** Transport module id. Default "tunnel". See cloud-init-common listUserDataModules. */
+    /**
+     * Transport module id. Defaults to the iroh module id (the dumbpipe
+     * listener transport). See cloud-init-common listUserDataModules.
+     */
     transport?: string;
     /** Extra modules appended after the transport module. */
     modules?: Array<string | import("@publicdomainrelay/cloud-init-common").UserDataModule>;
@@ -181,18 +187,33 @@ export interface RequesterPDS {
   resolveIrohNodeId?(nodeId: string): void;
   /** Set callback invoked when guest-side onNetwork event arrives via submitEvent XRPC. */
   /**
-   * Register interest in a contract's guest FQDN, keyed by that contract's
-   * receipt. A requester serves many contracts concurrently, so the key is what
-   * keeps one run's onNetwork from resolving another run's wait.
+   * Register interest in a contract's guest transport address, keyed by that
+   * contract's receipt. A requester serves many contracts concurrently, so the
+   * key is what keeps one run's onNetwork from resolving another run's wait.
+   * The address is opaque (an iroh ticket for the default transport, a relay
+   * hostname for the websocket transports) and resolves at most once per key;
+   * a second address for the same contract is ignored.
    */
   setOnNetworkResolved?(key: string, fn: (address: string) => void): void;
   clearOnNetworkResolved?(key: string): void;
 }
 
+/**
+ * The whole SSH surface the flow may assume. The address handed to pollReady
+ * and runSession is the guest's transport address, not necessarily a DNS name:
+ * an iroh ticket for the iroh transport and a relay hostname for the websocket
+ * transports. The provider turns that address into a ProxyCommand.
+ */
 export interface SshSessionProvider {
   generateKeypair(vmName: string): Promise<{ publicKey: string; privateKeyPath: string }>;
-  pollReady(privateKeyPath: string, fqdn: string, timeoutMs: number): Promise<boolean>;
-  runSession(privateKeyPath: string, fqdn: string, program: string): Promise<number>;
+  pollReady(privateKeyPath: string, target: string, timeoutMs: number): Promise<boolean>;
+  runSession(privateKeyPath: string, target: string, program: string): Promise<number>;
+  /**
+   * Everything the last non-interactive session printed, when the provider
+   * captures it. Absent on providers that inherit stdio, so the flow treats a
+   * missing capture as "no output to report" rather than an error.
+   */
+  lastSessionOutput?(): string;
 }
 
 export interface ContractFlowResult {
@@ -212,8 +233,20 @@ export interface ContractFlowResult {
   receiptOk?: boolean;
   bids?: number;
   error?: string;
+  /**
+   * The ProxyCommand the SSH provider was given or derived for the guest
+   * target, e.g. `dumbpipe connect <ticket>` for iroh. Absent on a run that
+   * never attempted SSH.
+   */
+  sshProxyCommand?: string;
   sshReady?: boolean;
   sshExitCode?: number;
+  /**
+   * Output captured from the session's stdout/stderr, when the provider
+   * captures it. Lets a caller assert on what the guest printed without
+   * reaching into the guest over a side channel.
+   */
+  sshOutput?: string;
 }
 
 export interface ConsoleBuffer {

@@ -7,7 +7,9 @@ import {
   createOAuthRequester,
   runComputeContract,
   createSshSessionProvider,
+  ensureDumbpipe,
   ensureWebsocat,
+  DEFAULT_TRANSPORT_MODULE,
 } from "@publicdomainrelay/requester-xrpc";
 import { pollForOAuthSession, createOAuthAgentFromSession, tryRestoreOAuthQRSession, saveOAuthQRSession, OAuthSessionExpiredError } from "@publicdomainrelay/atproto-helpers";
 import { startLoopbackCallbackServer } from "@publicdomainrelay/atproto-oauth-helpers";
@@ -102,8 +104,23 @@ if (secretsPath) {
   });
 }
 
-await ensureWebsocat(logger);
-logger.info("requester_starting", { label, ingressProxyHost, relayUrls });
+// Bootstrap the binary the selected transport's SSH path actually runs: the
+// default iroh transport reaches the guest with `dumbpipe connect <ticket>`,
+// while the websocket transports keep the websocat ProxyCommand.
+const transportModule = (options.userDataTransport as string | undefined) ??
+  DEFAULT_TRANSPORT_MODULE;
+let dumbpipePath: string | undefined;
+if (transportModule === "iroh") {
+  dumbpipePath = await ensureDumbpipe(logger);
+} else {
+  await ensureWebsocat(logger);
+}
+logger.info("requester_starting", {
+  label,
+  ingressProxyHost,
+  relayUrls,
+  transport: transportModule,
+});
 
 const serve = createServe({
   logger,
@@ -524,7 +541,7 @@ const result = await runComputeContract(pds, {
   allowUntrustedPolicyExec: options.allowUntrustedPolicyExec as boolean | undefined,
   offeringWatcherDids: () => [...offeringDids],
   eventStreams,
-  sshProvider: createSshSessionProvider(logger),
+  sshProvider: createSshSessionProvider(logger, { dumbpipePath }),
   onSshStart: () => pauseConsole(),
   onSshEnd: () => resumeConsole(),
 });

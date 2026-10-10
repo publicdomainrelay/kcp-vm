@@ -216,7 +216,40 @@ Deno.test("injectJsrUrl adds JSR_URL env to tunnel unit", () => {
   assert(patched.includes(`Environment="JSR_URL=jsr.local:8080"`));
 });
 
+const IROH_CTX = {
+  ...CTX,
+  irohReportUrl: "https://relay.local/iroh/ticket",
+  targetPort: 22,
+  hostAliases: ["10.0.0.1 relay.internal"],
+};
+
+Deno.test("iroh module snapshot matches fixture", async () => {
+  assertEquals(
+    buildUserData({ ctx: IROH_CTX, modules: ["iroh"] }),
+    await fixture("iroh.yaml"),
+  );
+});
+
+Deno.test("iroh module semantics", () => {
+  const y = buildUserData({ ctx: IROH_CTX, modules: ["iroh"] });
+  assert(y.includes('DUMBPIPE_VERSION="0.39.0"'), "pins the dumbpipe release");
+  assert(y.includes("dumbpipe-v${DUMBPIPE_VERSION}-linux-${_arch}.tar.gz"), "release URL from GitHub");
+  assert(y.includes("--host 127.0.0.1:22"), "listener forwards to the guest's own sshd");
+  assert(y.includes("openssh-server"), "installs the sshd it configures");
+  assert(!y.includes("ListenAddress"), "no ListenAddress line");
+  assert(y.includes("iroh-report.service"), "report unit written when irohReportUrl is set");
+  assert(y.includes(IROH_CTX.irohReportUrl), "reports to the configured URL");
+  assert(y.includes(`{\\"ticket\\":\\"\${TICKET}\\"}`), "posts a ticket body");
+
+  // Without irohReportUrl the guest still mints and stores its ticket.
+  const bare = buildUserData({ ctx: { vmName: CTX.vmName, sshAuthorizedKey: SSH }, modules: ["iroh"] });
+  assert(bare.includes("/run/guest-iroh-ticket"), "ticket file still written");
+  assert(!bare.includes("iroh-report.service"), "no reporter without irohReportUrl");
+  assert(!bare.includes("iroh-report.path"), "no report path unit without irohReportUrl");
+});
+
 Deno.test("registry: built-ins present, unknown id throws", () => {
+  assert(listUserDataModules().includes("iroh"));
   assert(listUserDataModules().includes("tunnel"));
   assert(listUserDataModules().includes("fedproxy-ssh"));
   assert(listUserDataModules().includes("fedproxy-web"));

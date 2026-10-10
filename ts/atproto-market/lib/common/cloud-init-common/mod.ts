@@ -62,6 +62,12 @@ export interface CloudInitContext {
   dnsGateway?: string;
   /** Public resolvers appended after dnsGateway so one gateway hiccup cannot brick the guest. */
   dnsFallbacks?: string[];
+
+  // iroh transport
+  /** Absolute URL the guest POSTs its own iroh ticket to ({"ticket":"..."}). Omit to mint and store the ticket without announcing it. */
+  irohReportUrl?: string;
+  /** Pinned dumbpipe release the iroh module installs. Default 0.39.0. */
+  dumbpipeVersion?: string;
 }
 
 /** Back-compat context for the tunnel-subscriber transport (historical buildTunnelUserData shape). */
@@ -979,12 +985,277 @@ touch "\${STAMP}"
   runcmd: [K3S_SETUP_PATH],
 });
 
+/** Pinned dumbpipe release installed by the iroh transport module. */
+export const DUMBPIPE_VERSION_DEFAULT = "0.39.0";
+
+/**
+ * iroh — dumbpipe listener in front of the guest's own sshd. The guest listens
+ * for iroh (outbound dials only; nothing here opens an inbound port) and the
+ * wrapper forwards every bidi stream to 127.0.0.1:<targetPort>. Requires
+ * ctx.sshAuthorizedKey; optional ctx.targetPort (default 22), ctx.hostAliases,
+ * ctx.irohReportUrl, ctx.dumbpipeVersion (default 0.39.0).
+ *
+ * The ticket is minted by the guest, not read off it by the host: the wrapper
+ * captures the `dumbpipe connect-tcp <ticket>` startup line from stderr, writes
+ * the ticket to /run/guest-iroh-ticket (and /run/guest-fqdn, the rendezvous file
+ * the on-network reporter reads) and, when irohReportUrl is set, a path unit
+ * re-arms a reporter that POSTs {"ticket":"..."} outbound to it. IROH_SECRET is
+ * generated once and persisted root-only so the endpoint id survives restarts.
+ */
+const irohModule: UserDataModule = (ctx) => {
+  const targetPort = ctx.targetPort ?? 22;
+  const dumbpipeVersion = ctx.dumbpipeVersion ?? DUMBPIPE_VERSION_DEFAULT;
+  const aliases = (ctx.hostAliases ?? []).filter((a) => /^[\w.:-]+\s+[\w.-]+$/.test(a));
+  const reportUrl = ctx.irohReportUrl;
+
+  const writeFiles: WriteFileEntry[] = [
+    {
+      path: "/root/.ssh/authorized_keys",
+      owner: "root:root",
+      permissions: "0600",
+      content: `${ctx.sshAuthorizedKey ?? ""}\n`,
+    },
+    {
+      path: "/etc/ssh/sshd_config.d/10-iroh.conf",
+      owner: "root:root",
+      permissions: "0644",
+      content: [
+        "# Key-only root login; reached over the guest's own iroh endpoint (the",
+        "# compute-provider harness also TCP-probes :22 directly for readiness).",
+        "PermitRootLogin prohibit-password",
+        "PasswordAuthentication no",
+      ].join("\n") + "\n",
+    },
+    {
+      path: "/usr/local/bin/setup-iroh.sh",
+      owner: "root:root",
+      permissions: "0755",
+      content: `#!/bin/bash
+set -euo pipefail
+
+STAMP=/var/lib/setup-iroh.done
+[ -f "\${STAMP}" ] && exit 0
+
+DUMBPIPE_VERSION="${dumbpipeVersion}"
+
+# dumbpipe ships linux tarballs for x86_64 and aarch64 only.
+case "$(uname -m)" in
+  x86_64|amd64) _arch=x86_64 ;;
+  aarch64|arm64) _arch=aarch64 ;;
+  *) echo "unsupported machine type for dumbpipe: $(uname -m)" >&2; exit 1 ;;
+esac
+
+URL="https://github.com/n0-computer/dumbpipe/releases/download/v\${DUMBPIPE_VERSION}/dumbpipe-v\${DUMBPIPE_VERSION}-linux-\${_arch}.tar.gz"
+
+TMP="$(mktemp -d)"
+trap 'rm -rf "\${TMP}"' EXIT
+
+# Bounded retry: the archive carries only ./dumbpipe, so the whole archive is
+# extracted into TMP and the ./dumbpipe it produced is moved into place.
+for attempt in $(seq 1 5); do
+  if curl -fsSL "\${URL}" -o "\${TMP}/dumbpipe.tar.gz" \\
+      && tar -xzf "\${TMP}/dumbpipe.tar.gz" -C "\${TMP}"; then
+    install -m 0755 "\${TMP}/dumbpipe" /usr/local/bin/dumbpipe
+    touch "\${STAMP}"
+    exit 0
+  fi
+  echo "dumbpipe install failed (attempt \${attempt}): \${URL}" >&2
+  sleep 5
+done
+
+echo "dumbpipe install failed after 5 attempts: \${URL}" >&2
+exit 1
+`,
+    },
+    {
+      path: "/usr/local/bin/iroh-listener.sh",
+      owner: "root:root",
+      permissions: "0755",
+      content: `#!/bin/bash
+set -euo pipefail
+
+# One persistent endpoint secret: regenerating it would change the endpoint id
+# and therefore the ticket on every restart.
+SECRET_FILE=/root/.iroh-secret
+if [ ! -s "\${SECRET_FILE}" ]; then
+  umask 077
+  head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \\n' > "\${SECRET_FILE}"
+  chmod 0600 "\${SECRET_FILE}"
+fi
+IROH_SECRET="$(cat "\${SECRET_FILE}")"
+export IROH_SECRET
+
+TICKET_FILE=/run/guest-iroh-ticket
+LOG=/run/guest-iroh.log
+rm -f "\${TICKET_FILE}" "\${LOG}"
+
+# No --verbose: it appends a second, short-ticket line. The last connect-tcp
+# line's final field is the full ticket.
+/usr/local/bin/dumbpipe listen-tcp --host 127.0.0.1:${targetPort} 2>>"\${LOG}" &
+DUMBPIPE_PID=$!
+
+TICKET=""
+for _ in $(seq 1 300); do
+  if [ -s "\${LOG}" ]; then
+    TICKET="$(grep -a 'connect-tcp' "\${LOG}" | tail -n 1 | awk '{print $NF}')"
+  fi
+  if [ -n "\${TICKET}" ]; then
+    break
+  fi
+  if ! kill -0 "\${DUMBPIPE_PID}" 2>/dev/null; then
+    break
+  fi
+  sleep 1
+done
+
+if [ -n "\${TICKET}" ]; then
+  printf '%s\\n' "\${TICKET}" > "\${TICKET_FILE}"
+  chmod 0600 "\${TICKET_FILE}"
+  printf '%s\\n' "\${TICKET}" > /run/guest-fqdn
+fi
+
+wait "\${DUMBPIPE_PID}"
+`,
+    },
+    {
+      path: "/etc/systemd/system/iroh.service",
+      owner: "root:root",
+      permissions: "0644",
+      content: [
+        "[Unit]",
+        "Description=iroh dumbpipe listener in front of local sshd",
+        "After=network-online.target sshd.service ssh.service",
+        "Wants=network-online.target",
+        "",
+        "[Service]",
+        "Type=simple",
+        "User=root",
+        "ExecStart=/usr/local/bin/iroh-listener.sh",
+        "Restart=always",
+        "RestartSec=5",
+        "TimeoutStopSec=10",
+        "StandardOutput=journal",
+        "StandardError=journal",
+        "",
+        "[Install]",
+        "WantedBy=multi-user.target",
+        "",
+      ].join("\n"),
+    },
+  ];
+
+  if (reportUrl) {
+    writeFiles.push(
+      {
+        path: "/usr/local/bin/report-iroh-ticket.sh",
+        owner: "root:root",
+        permissions: "0755",
+        content: `#!/bin/bash
+set -euo pipefail
+
+TICKET_FILE=/run/guest-iroh-ticket
+
+for _ in $(seq 1 90); do
+  if [ -s "\${TICKET_FILE}" ]; then
+    break
+  fi
+  sleep 1
+done
+[ -s "\${TICKET_FILE}" ] || { echo "no iroh ticket at \${TICKET_FILE}" >&2; exit 1; }
+
+TICKET="$(cat "\${TICKET_FILE}")"
+
+# Fail fast and loudly: a refused POST returns immediately, and a bounded
+# number of attempts with a hard curl timeout means a guest whose report can
+# never land exits non-zero in under two minutes instead of retrying for
+# minutes on end.
+for attempt in $(seq 1 10); do
+  if curl -sf --connect-timeout 5 --max-time 10 -X POST \\
+      -H 'Content-Type: application/json' \\
+      --data "{\\"ticket\\":\\"\${TICKET}\\"}" "${reportUrl}"; then
+    exit 0
+  fi
+  echo "iroh ticket report failed (attempt \${attempt}); retrying" >&2
+  sleep 2
+done
+
+echo "iroh ticket report never succeeded" >&2
+exit 1
+`,
+      },
+      {
+        path: "/etc/systemd/system/iroh-report.service",
+        owner: "root:root",
+        permissions: "0644",
+        content: [
+          "[Unit]",
+          "Description=Report the guest's iroh ticket to the requester",
+          "After=network-online.target iroh.service",
+          "Wants=network-online.target",
+          "",
+          "[Service]",
+          "Type=oneshot",
+          "User=root",
+          "ExecStart=/usr/local/bin/report-iroh-ticket.sh",
+          "StandardOutput=journal",
+          "StandardError=journal",
+          "",
+          "[Install]",
+          "WantedBy=multi-user.target",
+          "",
+        ].join("\n"),
+      },
+      {
+        path: "/etc/systemd/system/iroh-report.path",
+        owner: "root:root",
+        permissions: "0644",
+        content: [
+          "[Unit]",
+          "Description=Report the iroh ticket once the listener has minted it",
+          "",
+          "[Path]",
+          "PathExists=/run/guest-iroh-ticket",
+          "Unit=iroh-report.service",
+          "",
+          "[Install]",
+          "WantedBy=multi-user.target",
+          "",
+        ].join("\n"),
+      },
+    );
+  }
+
+  return {
+    apt: { preserve_sources_list: true },
+    packages: ["openssh-server"],
+    disable_root: false,
+    ssh_pwauth: false,
+    bootcmd: aliases.map((a) =>
+      ["sh", "-c", `grep -qxF '${a}' /etc/hosts || echo '${a}' >> /etc/hosts`]
+    ),
+    write_files: writeFiles,
+    runcmd: [
+      "/usr/local/bin/setup-iroh.sh",
+      "systemctl daemon-reload",
+      "systemctl enable --now ssh || systemctl enable --now sshd",
+      "systemctl enable --now iroh.service",
+      ...(reportUrl
+        ? [
+          "systemctl enable iroh-report.path",
+          "systemctl start --no-block iroh-report.path",
+        ]
+        : []),
+    ],
+  };
+};
+
 registerUserDataModule("tunnel", tunnelModule);
 registerUserDataModule("fedproxy-ssh", fedproxySshModule);
 registerUserDataModule("fedproxy-web", fedproxyWebModule);
 registerUserDataModule("wootty", woottyModule);
 registerUserDataModule("secrets", secretsModule);
 registerUserDataModule("k3s", k3sModule);
+registerUserDataModule("iroh", irohModule);
 
 // ---------------------------------------------------------------------------
 // Back-compat wrappers (deprecated)

@@ -1,21 +1,33 @@
-// Integration: start a real bidder (container-mode local compute provider) and
-// drive a real requester (request-vm-ssh lib) against it through a real local
-// xrpc relay dispatcher, denying the central/default bidder so the bid must
-// come from the locally-started bidder.
+// Acceptance: the iroh transport, end to end.
+//
+// This suite drives a complete RFP -> bid -> accept -> cloud-init -> SSH
+// contract against a real container guest whose cloud-init the RFP itself
+// composed, and it proves the run reached that guest over the transport the
+// cloud-init deployed: the guest's own dumbpipe listener, reached by the ticket
+// the guest reported outbound.
 //
 // No external network: a high-fidelity in-process fake PLC directory derives
-// DID documents from the genesis ops the components submit, and global fetch is
+// DID documents (including the atproto signing key the relay and the market
+// resolve) from the genesis ops the components submit, and global fetch is
 // patched to send https://plc.directory + https://*.localhost traffic to the
-// local PLC / dispatcher (the dispatcher routes by Host-header subdomain).
+// local PLC / dispatcher.
 //
-// Container mode only (no full VM, no deno workers). The local provider
-// auto-selects the container backend per OS: macOS `container`, else Docker.
-// Both are assumed always available, so the test runs by default. Run it with:
-//   deno test --allow-all test/bidder_container_integration_test.ts
+// The guest is provisioned locally in a container. The requester's report route
+// must be reachable from inside that container, so the dispatcher is served on
+// a plain port and a TLS port from one app whose ingress name is
+// relay.localhost (two labels; a single-label *.localhost cert is rejected),
+// the fetch interceptor carries the CA and the TLS port, and the local compute
+// provider is given the same CA plus the TLS port -- the provisioning backend
+// maps relay.localhost to the container gateway in the guest's /etc/hosts and
+// substitutes that port for the portless https report URL the requester
+// composed. Nothing host-side reads the ticket out of the guest.
+//
+// Run it with:
+//   deno test -A test/bidder_container_integration_test.ts
 
 import { assert } from "@std/assert";
-import { Secp256k1Keypair } from "@atproto/crypto";
 import { Hono } from "@hono/hono";
+import { Secp256k1Keypair } from "@atproto/crypto";
 import { createLogger } from "@publicdomainrelay/logger";
 import { createServe } from "@publicdomainrelay/serve";
 import { createIngress } from "@publicdomainrelay/did-key-ingress-proxy";
@@ -26,16 +38,48 @@ import { createMarketBidder } from "@publicdomainrelay/market-bidder";
 import { createComputeProviderHooks } from "@publicdomainrelay/market-bidder-compute";
 import { createLocalComputeProvider } from "@publicdomainrelay/compute-provider-local";
 import type { ComputeAtproto } from "@publicdomainrelay/compute-provider-abc";
+import type { ContainerBackend } from "@publicdomainrelay/container-backend-abc";
+import { createContainerBackend } from "@publicdomainrelay/container-backend-container";
+import { createDockerBackend } from "@publicdomainrelay/container-backend-docker";
 import { createRelayFactory } from "@publicdomainrelay/hono-factory-did-key-ingress-proxy-xrpc";
 import { createRequesterPDS, runComputeContract } from "@publicdomainrelay/requester-xrpc";
+import { generateLocalhostTlsCert } from "@publicdomainrelay/tls-localhost";
+
+const MARKER = "SSH_OK_VIA_IROH";
 
 function didWebToHttps(s: string): string {
   return s.startsWith("did:web:") ? "https://" + s.slice("did:web:".length) : s;
 }
 
+function serveOnPort0(
+  f: (r: Request) => Response | Promise<Response>,
+  ac: AbortController,
+  hostname = "127.0.0.1",
+  cert?: string,
+  key?: string,
+): Promise<number> {
+  const { promise, resolve } = Promise.withResolvers<number>();
+  const tlsOpts = cert && key ? { cert, key } : {};
+  Deno.serve(
+    {
+      port: 0,
+      hostname,
+      signal: ac.signal,
+      onListen: (a) => resolve((a as Deno.NetAddr).port),
+      ...tlsOpts,
+    },
+    f,
+  );
+  return promise;
+}
+
 // -- high-fidelity fake PLC directory --------------------------------------
-// POST /<did>  stores the genesis op.  GET /<did>  derives the DID document
-// (verificationMethod from op.verificationMethods, service from op.services).
+// POST /<did> stores the genesis op.  GET /<did> derives the DID document:
+// verificationMethod from op.verificationMethods (yielding each DID's did:key,
+// which is what the relay authenticates the requester's subscriber
+// registration against and what the market verifies receipt signatures with)
+// and service from op.services. Resolving a did:plc DID must work end to end
+// through whatever resolver the relay and the market actually call.
 
 function createFakePlc() {
   const ops = new Map<string, Record<string, unknown>>();
@@ -85,57 +129,99 @@ function createFakePlc() {
 }
 
 Deno.test({
-  name: "[integration] bidder (container mode) wins bid when central default denied",
+  name: "[acceptance] iroh: RFP -> bid -> accept -> SSH over the guest's own ticket",
   sanitizeOps: false,
   sanitizeResources: false,
 }, async () => {
-  const logger = createLogger({ serviceName: "it" });
+  const logEvents: Array<{ event: string; data: Record<string, unknown> }> = [];
+  const baseLogger = createLogger({ serviceName: "iroh-acceptance" });
+  // Record every structured event (the flow's own address-discovery events and
+  // the relay's registration errors) so the run-level facts can be asserted
+  // without reaching into any component's internals.
+  const logger = new Proxy(baseLogger, {
+    get(target, prop, receiver) {
+      if (prop === "info") {
+        return (event: string, data?: Record<string, unknown>) => {
+          logEvents.push({ event, data: data ?? {} });
+          (target as unknown as { info(e: string, d?: Record<string, unknown>): void })
+            .info(event, data);
+        };
+      }
+      return Reflect.get(target, prop, receiver);
+    },
+  }) as typeof baseLogger;
 
   const cleanups: Array<() => void> = [];
 
-  const dispatcherApp = createRelayFactory({ hostname: "localhost" }).createApp();
-  const dispatcherCtl = new AbortController();
-  const { promise: dispPortReady, resolve: resolveDispPort } = Promise.withResolvers<number>();
-  Deno.serve(
-    { port: 0, hostname: "127.0.0.1", signal: dispatcherCtl.signal, onListen: (addr) => resolveDispPort((addr as Deno.NetAddr).port) },
-    dispatcherApp.fetch,
-  );
-  const dispPort = await dispPortReady;
-  cleanups.push(() => dispatcherCtl.abort());
-  const ingressProxyHost = `localhost:${dispPort}`;
+  const backend: ContainerBackend = Deno.build.os === "darwin"
+    ? createContainerBackend()
+    : createDockerBackend();
+  if (!(await backend.ensureRunning())) {
+    // The acceptance suite needs a container runtime: there is no guest to
+    // reach otherwise. Skipping loudly beats asserting against a phantom guest.
+    console.log(`[SKIP] container backend not available (${Deno.build.os})`);
+    return;
+  }
+  const gateway = await backend.defaultGateway();
+  logger.info("container_backend", { type: backend.type, gateway });
 
-  // -- fake PLC ---------------------------------------------------------
-  const plc = createFakePlc();
-  const plcCtl = new AbortController();
-  const { promise: plcPortReady, resolve: resolvePlcPort } = Promise.withResolvers<number>();
-  Deno.serve(
-    { port: 0, hostname: "127.0.0.1", signal: plcCtl.signal, onListen: (addr) => resolvePlcPort((addr as Deno.NetAddr).port) },
-    plc.app.fetch,
+  // The one dispatcher app, served twice. Its ingress name is relay.localhost,
+  // not localhost: the guest dials <sub>.relay.localhost, which must resolve
+  // both in the container (via the gateway /etc/hosts alias the provider
+  // writes) and here. The cert covers the two-label base and its wildcard.
+  const { caCertPem, serverCertPem, serverKeyPem } = await generateLocalhostTlsCert({
+    extraDnsSans: ["relay.localhost", "*.relay.localhost"],
+  });
+  const dispatcherApp = createRelayFactory({
+    hostname: "relay.localhost",
+    additionalHosts: [gateway],
+  }).createApp();
+  const dispAc = new AbortController();
+  const dispTlsAc = new AbortController();
+  const dispPort = await serveOnPort0(dispatcherApp.fetch, dispAc, "0.0.0.0");
+  const dispTlsPort = await serveOnPort0(
+    dispatcherApp.fetch,
+    dispTlsAc,
+    "0.0.0.0",
+    serverCertPem,
+    serverKeyPem,
   );
-  const plcPort = await plcPortReady;
-  cleanups.push(() => plcCtl.abort());
+  cleanups.push(() => { dispAc.abort(); dispTlsAc.abort(); });
+  // The requester, bidder and provider subscribe over plain ws to the plain
+  // listener; only the guest's https report needs the TLS one.
+  const ingressProxyHost = `relay.localhost:${dispPort}`;
+  logger.info("dispatcher", { port: dispPort, tlsPort: dispTlsPort, ingressProxyHost });
+
+  const plc = createFakePlc();
+  const plcAc = new AbortController();
+  const plcPort = await serveOnPort0(plc.app.fetch, plcAc);
+  cleanups.push(() => plcAc.abort());
   const plcDirectoryUrl = `http://localhost:${plcPort}`;
 
-  // -- Fetch interception ----------------------------------------------
+  // The interceptor carries the TLS port and the CA -- not the plain port --
+  // so an in-process fetch of a portless https *.localhost name reaches the TLS
+  // listener and keeps its scheme.
   const { installFetchInterceptor } = await import("./fetch-interceptor.ts");
   const restoreFetch = installFetchInterceptor({
     realFetch: globalThis.fetch,
     plcDirectoryUrl,
-    dispPort,
+    dispPort: dispTlsPort,
+    caCertPem,
   });
   cleanups.push(restoreFetch);
 
   try {
-
     // -- bidder -----------------------------------------------------------
     const bidderKeypair = await Secp256k1Keypair.create({ exportable: true });
     const bidderPrivHex = Array.from(await bidderKeypair.export())
       .map((b) => b.toString(16).padStart(2, "0")).join("");
 
     const pdsAgent = await createLocalPDSAgent({
-      logger, keypair: bidderKeypair,
+      logger,
+      keypair: bidderKeypair,
       serve: createServe({ logger }),
-      plcDirectoryUrl, ingressProxyHost,
+      plcDirectoryUrl,
+      ingressProxyHost,
     });
     await pdsAgent.beginServe();
 
@@ -151,7 +237,9 @@ Deno.test({
       return createIngress({ logger, ingressProxyHost, signer: atproto.signer, keypair: kp });
     };
 
-    // local compute provider (container mode) on its own relay/serve
+    // local compute provider (container mode): the CA and the guest-reachable
+    // TLS port are what let the guest's curl trust the dispatcher cert and
+    // reach the requester's ticket-report route at a portless *.localhost URL.
     const providerRelay = await makeRelay();
     const providerServe = createServe({ logger, relays: [providerRelay] });
     const provisions: Array<{ providerId: string | number; ip: unknown; mode: unknown }> = [];
@@ -164,31 +252,26 @@ Deno.test({
       containerMode: "container",
     });
     const provider = createComputeProviderHooks({
-      provider: {
-        ...local,
-        async provision(vm, requesterDid, spec) {
-          try {
-            const result = await local.provision(vm, requesterDid, spec);
-            const metadata = result.metadata as Record<string, unknown>;
-            provisions.push({
-              providerId: result.providerId,
-              ip: metadata?.ip,
-              mode: metadata?.mode,
-            });
-            return result;
-          } catch (err) {
-            provisionFailures.push(err);
-            throw err;
-          }
-        },
-      },
+      provider: createLocalComputeProvider({
+        logger,
+        atproto: atproto as unknown as ComputeAtproto,
+        serve: providerServe,
+        getIssuerUrl: () => didWebToHttps(providerRelay.ingressRef),
+        containerMode: "container",
+        ingressProxyHost,
+        caCertPem,
+        guestTlsPort: dispTlsPort,
+      }),
     });
     await providerServe.beginServe();
+    cleanups.push(() => providerServe.shutdown());
 
-    // market factory on its own relay/serve
     const bidderRelay = await makeRelay();
     const bidder = await createMarketBidder({
-      logger, atproto, providers: [provider], relay: bidderRelay,
+      logger,
+      atproto,
+      providers: [provider],
+      relay: bidderRelay,
       serve: createServe({ logger, tcp: { addr: "127.0.0.1", port: 0 }, relays: [bidderRelay] }),
     });
     await bidder.beginServe();
@@ -197,53 +280,75 @@ Deno.test({
     // -- requester (wires its own submitBid -> pendingBids handler) --------
     const requesterServe = createServe({ logger, tcp: { addr: "127.0.0.1", port: 0 } });
     const requester = await createRequesterPDS({
-      logger, serve: requesterServe,
-      plcDirectoryUrl, ingressProxyHost, label: "requester",
+      logger,
+      serve: requesterServe,
+      plcDirectoryUrl,
+      ingressProxyHost,
+      label: "requester",
     });
     cleanups.push(() => requesterServe.shutdown());
-
-    // runComputeContract deletes pendingBids[rfpUri] after collecting, so spy
-    // on inserts to capture every bid the requester received.
-    const seenBids: Array<{ did: string; uri: string }> = [];
-    const origSet = requester.pendingBids.set.bind(requester.pendingBids);
-    requester.pendingBids.set = ((k: string, v: Array<{ did: string; uri: string }>) => {
-      for (const b of v) seenBids.push({ did: b.did, uri: b.uri });
-      return origSet(k, v as never);
-    }) as typeof requester.pendingBids.set;
-
     await requester.beginServe();
 
     // -- run the contract: deny the central default, include our bidder ----
-    let contractErr: unknown;
-    const contract = runComputeContract(requester, {
+    // skipSsh false, and the whole promise is awaited -- no Promise.race and no
+    // wall-clock deadline, so provisioning is never torn down while it runs.
+    const result = await runComputeContract(requester, {
       logger,
       ingressProxyHost,
-      skipSsh: true,
+      skipSsh: false,
       keepVm: true,
-      policy: { name: "open", args: { bidWindowSec: 8 } },
-      vmReadyTimeoutSec: 1,
-      execProgram: "true",
+      policy: { name: "open", args: { bidWindowSec: 20 } },
+      vmReadyTimeoutSec: 300,
+      execProgram: `echo ${MARKER} && uname -a`,
       extraBidderDids: [atproto.did],
       denyBidderDids: ["did:plc:centraldefaultbidder000000"],
-    }).catch((e) => { contractErr = e; });
-    // The bid is collected within the bid window; cap total time so real
-    // container provisioning on accept cannot hang the test.
-    await Promise.race([
-      contract,
-      new Promise((r) => setTimeout(r, 40_000)),
-    ]);
+    });
 
-    // -- assert: a bid from our locally-started bidder was collected -------
-    const ourBids = seenBids.filter((b) => b.did === atproto.did);
-    assert(
-      ourBids.length > 0,
-      `expected >=1 bid from our bidder ${atproto.did}; saw ${seenBids.length} bid(s) from ${
-        JSON.stringify(seenBids.map((b) => b.did))
-      }; contractErr=${contractErr ? String(contractErr) : "none"}`,
+    logger.info("contract_result", {
+      receiptOk: result.receiptOk,
+      sshReady: result.sshReady,
+      sshExitCode: result.sshExitCode,
+      sshProxyCommand: result.sshProxyCommand,
+    });
+
+    // -- run-level facts ---------------------------------------------------
+    // Receipt verification resolves the bidder's did:plc through the fake PLC
+    // and must succeed; the requester's subscriber registered with the relay
+    // (a 401 there would leave the guest's report unroutable and the run
+    // without a ticket).
+    assert(result.receiptOk === true, "receipt verification should pass");
+    const unauthorized = logEvents.filter((e) =>
+      e.event.includes("401") || JSON.stringify(e.data).includes("401")
     );
     assert(
-      !seenBids.some((b) => b.did === "did:plc:centraldefaultbidder000000"),
-      "central default bidder must not have bid (it was denied)",
+      unauthorized.length === 0,
+      `subscriber registration must not be refused: ${JSON.stringify(unauthorized)}`,
+    );
+
+    // -- the guest's own ticket reached the requester ----------------------
+    const ticketEvent = logEvents.find((e) =>
+      e.event === "vm_fqdn_discovered" && e.data.kind === "iroh-ticket"
+    );
+    assert(
+      ticketEvent,
+      `the guest's own outbound ticket report should reach the requester: ${
+        JSON.stringify(logEvents.map((e) => e.event))
+      }`,
+    );
+    const ticket = String(ticketEvent!.data.fqdn);
+
+    // -- the session went over the iroh transport, not the websocket relay --
+    assert(result.sshReady === true, "the guest should become reachable over iroh");
+    assert(result.sshExitCode === 0, `ssh session exited ${result.sshExitCode}`);
+    const proxyCommand = result.sshProxyCommand ?? "";
+    assert(
+      /dumbpipe connect /.test(proxyCommand) && proxyCommand.trim().endsWith(ticket),
+      `ProxyCommand should be the dumbpipe connect command for the reported ticket, got: ${proxyCommand}`,
+    );
+    assert(!proxyCommand.includes("websocat"), "must not fall back to the websocat relay");
+    assert(
+      result.sshOutput?.includes(MARKER) === true,
+      `the guest's program should print ${MARKER}, got: ${result.sshOutput ?? "<no output>"}`,
     );
 
     // The accept handler returns its receipt while its provisioning runs
@@ -271,6 +376,8 @@ Deno.test({
       local.destroy(provisions[0].providerId).catch(() => {});
     });
   } finally {
+    // Servers, bidder, provider and requester go away only now, after the
+    // contract promise settled.
     for (const c of cleanups.reverse()) {
       try { c(); } catch { /* best effort */ }
     }
