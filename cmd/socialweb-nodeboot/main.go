@@ -70,6 +70,18 @@ image's fcnet-setup.sh, which derives the guest's address from its MAC and nothi
 -stdout is kept for the result alone; the guest's console goes to <work_dir>/guest.console and the
 process hosting it logs to <work_dir>/namespace.log, which is where a guest that dies before it can
 report anything is explained.
+
+The spec may carry "pasta_args", which are inserted into pasta's own argv ahead of the arguments this
+builds. Pasta's argv is a host policy decision and the arguments that are right here are not right
+everywhere: on a host where pasta running as root cannot write the process's uid map, "pasta_args":
+["--runas", "0:0"] is the difference between a guest and no guest, and on a host where it can, the
+same flag is wrong. Nothing here guesses it, and unset is the default.
+
+This must NOT be run as root unless the host has been shown to need it. Pasta drops the process that
+starts the VMM to nobody when it is started as root, and a process running as nobody cannot write the
+record or open the devices a guest needs. Started as an ordinary user, pasta does its own user
+mapping and the process inside holds the same files and devices the caller did, which is the shape
+this is built for and the shape the kcp container runs its runtime in.
 `
 
 type networkSpec struct {
@@ -100,6 +112,8 @@ type guestSpec struct {
 	Firecracker string `json:"firecracker"`
 
 	Pasta string `json:"pasta"`
+
+	PastaArgs []string `json:"pasta_args"`
 
 	Shell string `json:"shell"`
 
@@ -306,8 +320,12 @@ func Boot(specPath string) error {
 	defer log.Close()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	argv := nodevm.PastaArgv(pasta, shell, self, network, paramsPath)
+	if len(s.PastaArgs) > 0 {
+		argv = append(append([]string{argv[0]}, s.PastaArgs...), argv[1:]...)
+	}
 	proc, err := processrunner.Start(ctx, processrunner.Spec{
-		Argv:   nodevm.PastaArgv(pasta, shell, self, network, paramsPath),
+		Argv:   argv,
 		Output: log,
 	})
 	if err != nil {
