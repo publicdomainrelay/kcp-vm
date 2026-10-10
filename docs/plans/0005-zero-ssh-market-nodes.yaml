@@ -371,7 +371,7 @@ items:
       inside the capability's onContract, before the accept record exists; the door returns at
       onSecretsFetched (claim Joining), disposes capabilities, never returns at onAccepted, and
       releases only on claim deletion.
-    status: doing
+    status: done
     evidence:
       - "0f3a771 + b489218 (socialweb-computer-k8s only): node-market fulfiller without ssh (guest.ts, node_session_test.ts, NodeJoinDocument helpers, the door's dumbpipe download and node-apiserver-host removed); grantingCapability; ClusterLinkReader in lib/abc + createKcpClusterLinkReader in nodeclaim-kcp; accountHashOf/clusterKeyOf/nodeAudience/jwtMountName/nodeClaimDocument in socialweb-computer-k8s-common"
       - "red first: the new node_market_test.ts + k3s_join_test.ts against the previous door, join module and common with stub exports only (deno test --no-check): 29 failed / 3 passed"
@@ -380,6 +380,8 @@ items:
       - "green: socialweb-computer-k8s deno task check exit 0; deno task test 85 passed 0 failed 1 ignored (live_market_node_test: SOCIALWEB_K8S_LIVE unset); run from a scratch org root (siblings symlinked, worktree rsynced) because the worktree's ../../ imports do not resolve; no Go changed, deploy/check.sh not run"
       - "not proven: a real guest fetching the bundle and logging in (needs the provider's ClusterLink ticket, OpenBao JWT mount/role and KV entry); not deployed"
       - "interface needs from the provider (ARCHITECTURE section 9 list): ClusterLink <clusterKey>-openbao with status.ticket before the claim exists; a published OpenBao CA path (NodeClaim spec field or ClusterLink status) or the guarantee of <dirname(tokenFile)>/openbao/tls/ca.crt; KV fields token, nodePassword, serverCA (exact server-ca.crt bytes), apiserverTicket (bare), advertiseAddress (IPv4), apiserverPort; nodemarket.ConfirmJoined accepting Joining"
+      - 'prod 2026-10-07 fresh guest fc-1379be663dd9-9d1763c5 (bob, image sha256-0437ff0d, door+provider at 3919df6/eada921): claim written 23:15:58.76Z, RFP 23:15:59.79Z, winner 23:16:11.30Z, receipt 23:16:12.32Z, microVM booted 23:16:13.67Z, setup-secrets token exchange at bob /v1/oidc/issue 23:17:49Z, door secrets_served + claim Joining 23:17:52.5Z, node-secrets ''fetched the join secrets'' (OpenBao JWT login over the dumbpipe openbao link) 23:17:56Z, apiserver link + k3s agent, Node registered 23:18:03Z, Ready 23:18:04Z; no ssh session to that guest (its debug key was never used)'
+
   - id: M3-JWT
     milestone: M3
     title: Guest authenticates to the cluster OpenBao by JWT and fetches k3s token, node password, server CA and apiserver ticket
@@ -388,7 +390,7 @@ items:
       one role per NodeClaim bound to that guest's workload subject and audience, short token TTL,
       read-only on the claim's path, role deleted on release. Mount and discovery details decided
       by Claude, user may veto.
-    status: doing
+    status: done
     evidence:
       - "provider half built 2026-10-07: ff3ca9c (vaultlayout names, openbao client auth/list/delete/LoginJWT, nodemarket secrets + SyncSecrets + revoke, clusterprovider.NodeVault), 9dff4fa (kcpclient.ReadClusterLink, nodes.go wiring, main.go Links + NodeSecrets); ARCHITECTURE section 7 'A market node's secrets live in its cluster's OpenBao, behind a JWT role'"
       - "names: KV v2 mount socialweb-nodes, secret socialweb-nodes/data/<node> {token (pinned K10<sha256 serverCA>::server:<token>), nodePassword, serverCA, apiserverTicket, advertiseAddress, apiserverPort (int)}; policy node-<node> read socialweb-nodes/data/<node>; auth mount jwt-<sha256(issuer)[:12]> type jwt, oidc_discovery_url = bound_issuer = issuer; role <node>: role_type jwt, bound_subject, bound_audiences [audience], user_claim sub, token_ttl 5m, token_policies [node-<node>]"
@@ -399,6 +401,9 @@ items:
       - "green: deploy/check.sh --fast exit 0 (gofmt, build, apigen, vet, staticcheck, go test)"
       - "not done: the door (claim.json, --secrets delivery, exchange for the audience), the guest units (M3-UNITS), a live login from a market guest; the provider has not been deployed"
       - "interface for the door/guest: login POST /v1/auth/jwt-<sha256(issuer)[:12]>/login {role: <node>, jwt: <token with sub = grant.subject, aud = grant.audience>}; read GET /v1/socialweb-nodes/data/<node> with X-Vault-Token; the bidder issuer must serve <issuer>/.well-known/openid-configuration and its JWKS to the provider host"
+      - 'prod 2026-10-07 fresh guest fc-1379be663dd9-9d1763c5 (bob, image sha256-0437ff0d, door+provider at 3919df6/eada921): claim written 23:15:58.76Z, RFP 23:15:59.79Z, winner 23:16:11.30Z, receipt 23:16:12.32Z, microVM booted 23:16:13.67Z, setup-secrets token exchange at bob /v1/oidc/issue 23:17:49Z, door secrets_served + claim Joining 23:17:52.5Z, node-secrets ''fetched the join secrets'' (OpenBao JWT login over the dumbpipe openbao link) 23:17:56Z, apiserver link + k3s agent, Node registered 23:18:03Z, Ready 23:18:04Z; no ssh session to that guest (its debug key was never used)'
+      - 'live read 2026-10-07T22:53Z of the tenant OpenBao: mount jwt-df356681a07e bound_issuer = bob''s issuer, role <node> bound_subject actx:<bidder>:plc:<owner>:role:<node>, bound_audiences socialweb.computer/node/<clusterKey>/<node>, token_ttl 300, policy node-<node>; stale mounts from earlier issuers tracked in M3-BAO-SYNC'
+
   - id: M3-UNITS
     milestone: M3
     title: user_data installs systemd units for dumbpipe connect-tcp and the k3s agent; no ssh to guests
@@ -414,7 +419,7 @@ items:
       StartLimitIntervalSec=0; node-secrets refuses a non-IPv4 advertiseAddress, a non-digit port and a
       ticket outside [a-z0-9]+ because they reach a unit command line; the token is pinned
       K10<sha256(serverCA)>::server:<token> as the ssh join pinned it.
-    status: doing
+    status: done
     evidence:
       - "prod probe 2026-10-07T20:54Z (first bidder online, bob on hat-8): the door asked for ClusterLink 2wjeqtgx-2wjeqtgx-...-openbao -- it re-derived the cluster key from spec.cluster, which the provider already writes as the key; every claim failed before its RFP. Fixed in 657a915 (door test now pins spec.cluster as the key; 4 tests failed first), deployed ~20:57Z"
       - "prod probe 2026-10-07T20:57:40Z: RFP -> bob won -> status.grant written -> accept -> receipt verified -> guest booted on hat-8 (fc-1379be663dd9-a58a9c15), cloud-init wrote all four socialweb units; then provisioning-token.service FAILED: bob's provider answered /v1/oidc/prove with OIDC token failed validation: signature verification failed (token kid uCOvMc.., the issuer now serves kid EQCTHB..); setup-secrets, guest-onnetwork, node-secrets, apiserver-link and k3s-agent failed after it; door ended network_timeout at 21:17:57Z and released the VM. BLOCKED on a bidder-side OIDC signing-key defect in hono-compute-provider (not ours); root cause being investigated"
@@ -423,6 +428,10 @@ items:
       - "green: k3s_join_test.ts 'the node's user_data installs four units that join it through OpenBao and the apiserver link, in order' (composed with iroh, k3s, the join module and secrets: After chains, Restart, StartLimitIntervalSec=0, agent argv, setup-iroh.sh and setup-k3s.sh before the start), 'the node's user_data carries no secret value and no ssh join path', 'node-secrets exchanges the workload token for the claim's audience, logs in to OpenBao and writes the join files 0600' (real bash + jq, fake curl asserting aud, sub, --cacert, role, jwt and X-Vault-Token), 'node-secrets refuses a KV entry that would put an unsafe value on a unit's command line', 'node-secrets fails, and is restarted by systemd, when the KV entry lacks a field', 'the OpenBao link dials the delivered ticket and listens where node-secrets looks', 'the apiserver link puts the advertise address on lo and dials the apiserver ticket there'; node_market_test.ts 'the user_data the door asks for renders without any secret value'"
       - "mutations caught: agent unit not ordered after the apiserver link (1 fail); token not pinned to the CA (1 fail)"
       - "not proven: the units on a real guest (systemd ordering, dumbpipe connect-tcp against a provider listen-tcp, k3s agent Ready); needs M3-CLUSTERLINK and M3-JWT; not deployed"
+      - 'prod 2026-10-07 fresh guest fc-1379be663dd9-9d1763c5 (bob, image sha256-0437ff0d, door+provider at 3919df6/eada921): claim written 23:15:58.76Z, RFP 23:15:59.79Z, winner 23:16:11.30Z, receipt 23:16:12.32Z, microVM booted 23:16:13.67Z, setup-secrets token exchange at bob /v1/oidc/issue 23:17:49Z, door secrets_served + claim Joining 23:17:52.5Z, node-secrets ''fetched the join secrets'' (OpenBao JWT login over the dumbpipe openbao link) 23:17:56Z, apiserver link + k3s agent, Node registered 23:18:03Z, Ready 23:18:04Z; no ssh session to that guest (its debug key was never used)'
+      - commits 3919df6 (CNI under --flannel-backend=none), bde602f (units log to the console), 2501ea9 (node-diagnose)
+...
+
   - id: M3-NODE-LOSS
     milestone: M3
     title: A Node NotReady for 90s is released and replaced; door or provider restarts never reap
@@ -433,7 +442,7 @@ items:
       server, so the guest can never fetch, and awaitComputeNetwork would only find an address the door
       no longer needs; the release comes with the claim's deletion from the receipt it carries. stop()
       releases nothing and writes nothing.
-    status: doing
+    status: done
     evidence:
       - "deployed 2026-10-07 ~19:44Z with main 6af8994 (adoption, shutdown no longer reaps, per-node scale-in 932b139): 19:45:36Z passes None nothing running and no node, ClusterLinks re-recorded after restart; a restart with live market nodes awaits a bidder"
       - "provider half built 2026-10-07 in 9dff4fa: tenantNodes.confirmHeld reads each held market node's tenant Node; Ready False/Unknown with now - lastTransitionTime >= NodeLossGrace (90s) -> teardownHeld (claim deleted, vault state revoked, door releases with vm.delete, tenant Node deleted), reported in confirmOutcome.lost; the scale pass in the same tick claims a replacement if demand remains. ARCHITECTURE section 10 'A market node NotReady for 90 s is released'"
@@ -449,6 +458,8 @@ items:
       - "green: deploy/check.sh --fast exit 0 (gofmt, build, apigen, vet, staticcheck, go test)"
       - "with the door half (0f3a771 + b489218, merged), prod's door and provider can now both restart without reaping a live market node -- in code and tests; not deployed, not yet read on prod"
       - "not done: deploy; a prod provider restart with market nodes up re-registering within the 90s loss grace after the group comes back; a live NotReady release against a real bidder"
+      - 'live 2026-10-07T22:52:55Z: a node NotReady since 22:51:24Z was released by the 90s rule and a replacement rented; 2f0ad94+eada921: a never-Ready node gets a join grace (2m default, SOCIALWEB_CLUSTERPROVIDER_NODE_JOIN_GRACE) instead; restarts adopt: 23:01:4xZ deploy -> ''adopted a live market node a previous provider process rented''; 3539ad8: a held node whose claim was deleted is released and replaced (live 22:22:53Z)'
+
   - id: M3-BAO-SYNC
     milestone: M3
     title: The cluster OpenBao's JWT mounts, roles, policies and KV entries match the live claims, always
@@ -499,9 +510,26 @@ items:
       unit that creates net.d before the agent for H4. The join grace (2f0ad94, 10m) is a placeholder to be
       replaced by 2x the measured register->Ready time once a node reaches Ready. decided by Claude, user
       may veto.
-    status: doing
+    status: done
     evidence:
       - "2026-10-07T22:52:55Z provider: node96 NotReady since 22:51:24Z released by the 90s loss rule; tenant Node condition read 22:58Z: KubeletNotReady cni plugin not initialized"
+      - 'root cause read over the debug ssh on guest fc-1379be663dd9-48148a7e 23:11Z: k3s with --flannel-backend=none writes no cni section into containerd''s config, so crictl info shows confDir=/etc/cni/net.d binDirs=[/opt/cni/bin], lastCNILoadStatus ''no network config found in /etc/cni/net.d''; linking k3s''s bundled cni into /opt/cni/bin and the conflist into /etc/cni/net.d -> NetworkReady true and Node Ready at 23:12:04Z within seconds'
+      - 'fix 3919df6 (tests watched to fail: pod-cni symlink test, path test, diagnose false test; suite 108 passed); deployed 23:15:28Z; fresh node registered 23:18:03Z Ready 23:18:04Z with no hand change'
+      - 'claim->Ready 125 s on prod: apt-get update 55 s, apt install 15 s, dumbpipe 7 s, k3s install 9.5 s, bid window 6.6 s; targets in M3-BOOT-TIME'
+
+  - id: M3-BOOT-TIME
+    milestone: M3
+    title: Claim to Ready in about 30 s by baking the guest's software into the node image
+    decision: >
+      Measured 125 s claim->Ready on prod 2026-10-07 (M5-CNI-READY evidence); 85 s of it is the guest
+      installing software at boot. (1) preinstall-market.json carries openssh-server, jq, curl, iptables and
+      everything else the user_data packages lists, and the user_data skips package_update when nothing is
+      missing (~70 s); (2) k3s and dumbpipe come from the node image (k3s is already a nodeimage input) or
+      door-served sha256-pinned, never get.k3s.io/GitHub at boot (~16 s); (3) setup-secrets starts once the
+      network is up instead of at the end of cloud-init's runcmd (~10 s). Bid window (6.6 s, policy
+      bidWindowSec 8) is market policy: ask the user before changing it. decided by Claude, user may veto.
+    status: todo
+    evidence: []
   - id: M4-SCALE-IN
     milestone: M4
     title: Per-node scale-in
@@ -529,6 +557,8 @@ items:
       - "green: deploy/check.sh --fast exit 0 (gofmt, build, apigen, vet, staticcheck, go test)"
       - "not done: deployed; a live market cluster releasing a node one hold after its work moved off (ACC-ZERO)"
       - "'only nodes this provider process holds' now includes market nodes adopted after a provider restart (M3-NODE-LOSS provider restart half, 9ca4c04): TestAnAdoptedIdleNodeIsScaledIn"
+      - 'live 2026-10-07T23:18:56Z: the cluster''s last node torn down ''nothing running for 2m0.03s, past the 2m0s hold''; tenant then lists no nodes, control plane up. Per-node scale-in with >1 node still owed (ACC-ZERO)'
+
   - id: M4-ESO-BESIDE
     milestone: M4
     title: ESO runs beside the control plane per cluster and is removed from the tenant
