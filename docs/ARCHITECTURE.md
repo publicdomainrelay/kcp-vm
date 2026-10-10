@@ -1865,11 +1865,6 @@ open list, are two stated LIMITS rather than open work: each marks where a behav
 being true, which is a fact about the design rather than a question left in it, and each sits here
 because it bounds a mechanism the rest of this document leans on.
 
-- **The tenant grant admits the External Secrets controller by a hardcoded namespace.** An install
-  outside `default` is denied, and the failure reads as a broken ExternalSecret rather than as a grant
-  that does not name it. The instrument is an install in another namespace still producing the Secret.
-  `NEXT.yaml` ESO-2.
-
 - **Whether the node half may ever run inside the control-plane container was answered by reading where
   the refusal lives, and the answer is a STATED LIMIT rather than an open question.** The allocator's
   refusal to lease a range overlapping the host's networks is a property of the NETWORK NAMESPACE the
@@ -4179,6 +4174,32 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   the door the node's SSH session uses, or publishing the vault on the provider host behind the
   client certificate that is already minted per cluster -- and both are trust decisions rather than
   bugs, which is why neither was taken here.
+
+- **The tenant grant admitted the External Secrets controller by the literal namespace `default`, and
+  the installer could not have put it anywhere else. CLOSED, and the second half was found by taking
+  the reading.** The grant's CEL policy admitted exactly
+  `system:serviceaccount:default:external-secrets`, so an install anywhere else was denied and the
+  denial read as a broken ExternalSecret rather than as a grant that does not name it.
+  MEASURED BEFORE, on production: the policy named `default`;
+  `kubectl create secret --as=system:serviceaccount:external-secrets:external-secrets -n users` was
+  `forbidden`, while the same create as `system:serviceaccount:default:external-secrets` was
+  `secret/... created (server dry run)`.
+  The grant is a template, not a file applied verbatim, so the namespace became a placeholder
+  `RenderTenantGrant` substitutes, from one source that also sets `ESO_NAMESPACE` for the installer, and
+  the default is `default` on every path so an unchanged deployment renders byte-identically. MEASURED
+  AFTER: the policy names `external-secrets`, and the same create as
+  `system:serviceaccount:external-secrets:external-secrets` is `created (server dry run)`.
+  Taking that reading is what showed the fix was only half of one. The upstream ESO bundle names
+  `default` in SIXTEEN places -- the metadata of every namespaced object, the namespace of each
+  ClusterRoleBinding's subject, and the webhook's service namespace -- and defines no Namespace object
+  of its own, so `ESO_NAMESPACE` only ever decided which namespace the ROLLOUT WAIT looked in. With the
+  grant naming `external-secrets` and the controller still installed in `default`, the grant admitted a
+  controller that was not installed and denied the one that was. The installer now creates the
+  namespace and rewrites those sixteen references; measured after: the controller's three pods are in
+  `external-secrets`, its bindings' subjects name it, and `default` -- which the grant no longer names
+  and which STILL has the RBAC -- is refused, which is the pair that isolates the policy from RBAC.
+  What this does NOT close is the ExternalSecret's own sync: that needs a store a tenant can reach,
+  which is ESO-3, and the two are separate. `NEXT.yaml` ESO-2.
 
 ## 16. Vocabulary
 

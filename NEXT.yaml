@@ -112,27 +112,15 @@ about: >
   operator still is. It is in section 15 with the production readings, including the loopback-only
   listener and the count of binders on the gateway address.
 
-open:
-  - id: ESO-2
-    title: The tenant grant admits the External Secrets controller by a hardcoded namespace.
-    body: >
-      An install outside `default` is denied, and the failure reads as a broken ExternalSecret
-      rather than as a grant that does not name it.
-    instrument: >
-      An install in another namespace still producing the Secret.
-      PART DONE, reading BLOCKED.  On 2026-10-07 the namespace became a placeholder the renderer
-      substitutes, from a single source that also forces ESO_NAMESPACE for the installer, so the grant
-      and the controller cannot disagree; the default is `default` on every path, so an unchanged
-      deployment renders byte-identically.  What is shown is that the rendered grant admits
-      `system:serviceaccount:<namespace>:external-secrets` for the namespace it was given, and that a
-      document missing the placeholder is refused.
-      The reading cannot be taken yet, and not because of this item: ESO-3, measured the same day,
-      says the ExternalSecret does not sync even in `default` -- the store dials
-      `https://10.100.0.1:20001`, nothing binds it and the vault's listener is loopback.  Installing
-      the controller elsewhere would move it to a namespace where the same store still cannot be
-      reached.  This needs ESO-3 answered first, or a guest-substrate cluster, where the store's URL
-      is one the guests can reach.
+  Opened and closed on 2026-10-07 and therefore NOT listed below: ESO-2 (the tenant grant admitted the
+  External Secrets controller by the literal namespace `default`, so an install anywhere else was
+  denied and the denial read as a broken ExternalSecret). Taking the reading found a second half: the
+  installer ignored `ESO_NAMESPACE` altogether -- the upstream bundle names `default` in sixteen places
+  and defines no Namespace object -- so the grant and the install could not have agreed however the
+  render was fixed. Both are closed, and it is in section 15 with the readings, taken in both
+  directions.
 
+open:
   - id: FLAKE-1
     title: A gate test depends on the network, so --fast can fail for reasons unrelated to a change.
     body: >
