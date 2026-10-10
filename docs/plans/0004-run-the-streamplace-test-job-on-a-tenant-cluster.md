@@ -1,6 +1,8 @@
 # 0004 - Run streamplace's `test` job on a tenant cluster
 
-Status: in flight, opened 2026-10-06.
+Status: done. The `test` job of `streamplace/streamplace` runs green as a Pod on a tenant cluster
+this host provisions: job 183, upstream `next`, 2063 s, 1104 tests, 0 failures. See section 6.
+Opened 2026-10-06; closed 2026-10-06.
 Repo: socialweb-computer-kcp.
 Related: `docs/gitlab/` (the operator recipes), `cmd/socialweb-clusterprovider/live_gitlab_pipeline_test.go`
 (the only thing in this tree that drives a real GitLab pipeline against a real tenant cluster).
@@ -257,6 +259,35 @@ Progress: resolved 0, reused 0, downloaded 2917, added 3875
 That is the target itself: the job's first `make` target, the pinned pnpm, the meson configure of
 FFmpeg from source, and the subproject fetches, all inside a firecracker guest this host booted
 because a Pod could not be placed.
+
+**2026-10-06, the streamplace `test` job PASSES on a tenant cluster.** Pipeline 57, job 183,
+branch `kcp-tenant-ci` (upstream `next` with only `test` kept), project 1 on the real GitLab at
+`gitlab.dorper-matrix.ts.net:8443`. Job status `success`, duration **2063 s**, `failure_reason`
+`None`. `TestALiveGitLabJobRunsOnATenantCluster` PASS, 2095.10 s, and it records the placement:
+
+```
+STEP 10 job test ran in pod(s)
+  map[runner-hhvwl7zg6-project-1-concurrent-0-tifm253t:liveweb-node1],
+  placed by this cluster
+```
+
+`liveweb-node1` is a firecracker guest this host booted because the job's Pod was Pending and
+`internal/scale` read that as intent. The Job's own junit artifact, `test.xml`, downloaded from
+`/projects/1/jobs/183/artifacts` and 19,820,634 bytes:
+
+```
+testsuites 82   tests 1104   failures 0   errors 0   skipped 15
+  stream.place/streamplace/pkg/api   67 tests  0 failures
+  stream.place/streamplace/pkg/aqtime 38 tests  0 failures
+  stream.place/streamplace/pkg/viewlog 38 tests 0 failures
+  stream.place/streamplace/pkg/vod    26 tests  0 failures
+```
+
+That is `make dev-setup && make dev && make dev-test && make ci-lexicons` run to exit 0: FFmpeg,
+GStreamer, x264 and libav built from source in the guest, the Rust `iroh-streamplace` cdylib
+built, the Go tree built, and 1104 tests green -- on a cluster whose control plane was at zero
+nodes when the job arrived. The console trace is truncated at 4 MiB by the runner's `output_limit`
+(B10); the junit artifact is the complete record and is the better instrument anyway.
 
 ## 7. The mkfs measurement, in full
 
