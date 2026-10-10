@@ -265,14 +265,33 @@ items:
     decision: >
       Listeners are procgroup components started after k3s beside postgres, openbao, kine and k3s.
       Guests dial the cluster; the door holds no per-node connection.
-    status: todo
-    evidence: []
+    status: done
+    evidence:
+      - "41349d6 portallocator purposes apiserver-link and openbao-link (width 1, Purpose.Datagram); portscan reads /proc/net/udp{,6} state 07 for datagram leases and the TCP tables for the rest"
+      - "596bb86 procgroup.ComponentApiserverLink/ComponentOpenBaoLink and Step.Prepare (runs once the steps before it are ready; its spec is what starts)"
+      - "7c308b4 kcpclient WriteClusterLink (create spec, then status subresource; spec and status merge-patched only when changed), WriteClusterLinkStatus (never creates; NotFound is not written), ReadClusterLink, DeleteClusterLink"
+      - "8f2211a clusterprovider/links.go: StackConfig.Links appends two steps after every StackOrder member, argv dumbpipe listen-tcp --host 127.0.0.1:<k3s secure or vault port> --ipv4-addr 0.0.0.0:<link lease>; gate = ticket printed and naming the vault key; reporter writes Listening with retries, Failed (exit + output tail) on an unexpected exit, Pending when the group was reaped"
+      - "90f4130 wiring: on when SOCIALWEB_CLUSTERPROVIDER_DUMBPIPE is set (entrypoint default /usr/local/bin/dumbpipe), link purposes leased with the rest, restart argv derived without unleased links, a deleted cluster's two ClusterLinks deleted after its reap"
+      - "c90f9f2 ARCHITECTURE section 5 'The cluster links', component 8, CRD table, section 8 ports; permission-inventory: socialweb-cluster-provider may write clusterlinks and clusterlinks/status"
+      - "tests watched to fail then pass: internal/clusterprovider TestTheLinksAreComponentsOfTheGroupStartedAfterK3sInFrontOfTheApiserverAndTheVault, TestEachLinkIsRecordedListeningWithTheTicketItPrintedAndTheDidKeyOfItsKey, TestAProviderRestartBringsTheLinksBackAsTheSameEndpoints, TestALinkThatDiesIsRecordedFailedWithWhatItLastSaid, TestTheLinksAreReapedWithTheGroupFirstInReverseOrder (red with Prepare removed, and with the stop-vs-crash split removed); internal/portscan TestALinkLeaseTakesItsOwnersFromTheDatagramTableAndEveryOtherLeaseFromTheStreamTable, TestASurvivingLinkIsAttributedToItsClusterLikeEveryOtherComponent (red with Datagram ignored); internal/kcpclient TestWriteClusterLinkCreatesItInTheHomeWorkspaceAndThenWritesItsStatus (red with the status patch skipped); cmd/socialweb-clusterprovider TestADeletedClusterLosesBothItsClusterLinks, TestARestartOverAClusterLeasedBeforeLinksExistedDerivesItsArgvWithoutThem (red without the delete / without WithoutUnleasedLinks)"
+      - "guards green first time: TestLinksWithoutAVaultToKeepTheirKeysAreRefused, TestLinksWithNoLeaseAreRefusedAndAStartupScanDerivesTheRestWithoutThem, TestALinkWhoseKeyTheFakeDoesNotKnowNeverPassesItsGate, TestAClusterSwitchedOffKeepsItsClusterLinks, TestTheRecorderWritesIntoTheHomeWorkspaceOfTheClusterKey, TestWriteClusterLinkStatusNeverRecreatesALinkTheTeardownDeleted, procgroup TestPrepareRunsAfterTheStepsBeforeItAreReadyAndItsSpecIsWhatStarts, TestAFailedPrepareStartsNothingAndReapsWhatCameBefore"
+      - "live (SOCIALWEB_LOCAL=1, dumbpipe v0.39.0, 2026-10-07): TestARealDumbpipeLinkCarriesTCPToItsTargetAndAnOldTicketStillReachesItAfterARestart PASS 22.7s -- two real listeners in front of tcp echo servers, connect-tcp with each recorded ticket echoes, group reaped (Pending) and respawned, same endpoint id and did, and the PRE-restart ticket still echoes"
+      - "deploy/check.sh --fast green at c90f9f2 (gofmt, build, apigen 9 files no drift, vet, staticcheck, go test)"
+      - "stated limits (ARCHITECTURE 'The cluster links'): a link that dies after bring-up is not restarted until the group is next brought up; link ports are probed for TCP only; the IPv6 socket is unpinned"
+      - "not yet proven on prod: needs a deploy (install-provider.sh re-applies the permission inventory); then a ClusterLink pair per cluster in each home workspace, phase Listening"
   - id: M3-IROH-KEYS
     milestone: M3
     title: Iroh secret keys persisted in the cluster's OpenBao, public key expressed as did:key
     decision: Stable tickets across deploys; ed25519 encodings per artob/edky.
-    status: todo
-    evidence: []
+    status: done
+    evidence:
+      - "3c80658 internal/didkey: did:key = did:key:z + base58btc(0xed 0x01 + pub); endpoint id = lowercase hex of the pub, the form iroh prints"
+      - "017d8ee internal/clusterlink: EnsureKey reads socialweb-links/<service> or generates once and writes check-and-set 0 (a losing writer takes the winner's key); an unreadable or self-inconsistent record is refused, never regenerated over; Key.Env() = IROH_SECRET=<64 hex seed>; ParseTicket reads the endpoint id out of endpoint<base32 postcard>"
+      - "8f2211a VaultLinkKeys: enables the socialweb-links KV v2 mount if absent with the root token from unseal.json, retries while the mount upgrades to versioned data, Create posts {options:{cas:0}}"
+      - "measured on dumbpipe v0.39.0: IROH_SECRET is the 32-byte ed25519 seed as 64 hex (dumbpipe prints 'using secret key <hex>' when it makes one); IROH_SECRET=f855..91d8 printed tickets naming endpoint cb6686..693c = ed25519.NewKeyFromSeed(seed).Public(); two runs with one key printed different ticket bytes (relay and addresses) with the same endpoint id; with no network it still prints a ticket after 'Failed to connect to the home relay'"
+      - "tests watched to fail then pass: internal/didkey TestTheDidKeySpecVectorEncodesAnEd25519PublicKey (spec vector 3b6a27bc..da29 -> did:key:z6MkiTBz1ymuepAQ4HEHYSF1H8quG5GLVVQR3djdX3mDooWp), TestTheDidKeySpecVectorDecodesBackToItsPublicKey, TestTheEndpointIDDumbpipeDerivesFromIrohSecretIsTheSeedsPublicKeyInHex (red with multicodec 0xed00 and a truncated id); internal/clusterlink TestTheKeyIsGeneratedOnceAndAProviderRestartReadsTheSameOneBack, TestALosingFirstWriteTakesTheKeyThatWon, TestAnUnreadableStoredKeyIsNeverRegeneratedOver (red with the stored key ignored)"
+      - "live (SOCIALWEB_LOCAL=1, bao + embedded postgres): TestTheLinkKeyIsKeptInTheClusterVaultAndReadBackAfterTheVaultRestarts PASS 2.5s -- key written, a second check-and-set first write refused, vault stopped and restarted on the same store, same endpoint id and did read back, the openbao link has its own key"
+      - "stability decision (decided by Claude, user may veto): the stable identity is status.endpointId / status.did; status.ticket is the ticket as printed and its bytes may differ per bring-up, and any ticket naming the endpoint id reaches it (live proof under M3-CLUSTERLINK)"
   - id: M3-SECRETS-TICKET
     milestone: M3
     title: OpenBao ticket delivered through the --secrets capability

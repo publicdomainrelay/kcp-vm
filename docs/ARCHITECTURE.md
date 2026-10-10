@@ -151,6 +151,7 @@ Everything is either a controller-runtime reconcile loop or a deploy config. No 
 | 5 | kcp provider workspace | YAML | `APIResourceSchema` plus `APIExport` for our CRDs; tenants `APIBinding` |
 | 6 | k3s cloud-init module | sibling repo, `UserDataModule` | Installs k3s in a market guest. The only sanctioned way a guest-side component arrives |
 | 7 | OpenBao plus ESO | deploy config | The vault, at two levels: a root vault one per deployment and a cluster vault one per ON cluster, both in the production stack. OpenBao holds the per-cluster 13-entry identity bundle and is its AUTHORITATIVE store — the wake reads it out of the vault and materialises the file tree at `<DataDir>/server/tls`+`cred/`, because k3s has no vault plugin and must read files at runtime (sections 9, 14 and 15). ESO materialises vault-backed Secrets into the tenant cluster; the bundle is custody and wake-time restore, not the runtime location |
+| 8 | Cluster links | Go, `internal/clusterlink` + `internal/clusterprovider/links.go` | Two `dumbpipe listen-tcp` members of every cluster's process group, one in front of the k3s apiserver and one in front of the cluster vault, each an iroh endpoint whose key lives in that cluster's vault. A node dials the cluster through them; the door holds no per-node connection. Recorded as `ClusterLink` objects (plan 0005 M3) |
 
 **Not building**, each rejected on evidence: a CNI, a CAPI provider, an OIDC issuer, an ATProto
 bridge, a syncer, a virtual workspace, a second reverse proxy, a reachability substrate, an underlay,
@@ -162,7 +163,12 @@ so there is nothing to commit).
 
 ```
 embedded-postgres  ->  openbao  ->  kine  ->  k3s server --disable-agent  ->  cloud-controller-manager
+                                                                          ->  apiserver-link  ->  openbao-link
 ```
+
+The two links are appended by `StepsFor` after every `StackOrder` member when
+`StackConfig.Links` is set (section "The cluster links" below); they are not in `StackOrder`
+because they are not stack components a `clusterstack.Spec` renders an argv for.
 
 That order is `procgroup.StackOrder` — every component a stack may name, in bring-up order — and
 reap is reverse order. It is deliberately a DIFFERENT list from `procgroup.DefaultOrder`, which is the
@@ -202,6 +208,62 @@ Embedded-postgres is a special case: it is a Go **library** that runs the server
 whoever links it, so there is no argv for a step and `processrunner.Start` refuses the empty argv
 such a step would have. `procgroup.Options.PostgresUp func() bool` exists for this: the component
 holding the library handle answers for it, and a **nil predicate is a refusal, not a skip**.
+
+### The cluster links
+
+Plan 0005 M3 (M3-CLUSTERLINK, M3-IROH-KEYS). Decided by Claude, user may veto, except where the
+plan's `m3_contract` already fixed it (names, mount, path, env var, encoding).
+
+- **What runs.** Per cluster, `dumbpipe listen-tcp --host 127.0.0.1:<target> --ipv4-addr
+  0.0.0.0:<link port>` twice: target = the k3s secure port (k3s binds loopback) for
+  `apiserver-link`, the vault's leased port for `openbao-link`. dumbpipe v0.39.0, the same release
+  the guests install (`DUMBPIPE_VERSION` in the control-plane Dockerfile).
+- **On or off.** On when `SOCIALWEB_CLUSTERPROVIDER_DUMBPIPE` names the binary; the container
+  entrypoint defaults it to `/usr/local/bin/dumbpipe`. Unset leaves every cluster without links
+  (the live rigs and tests that build their own env), and the provider logs `cluster links on=false`
+  once at start. Links need the vault in the Stack (`ErrNoLinkSeam`) and a recorder
+  (`ErrNoLinkRecorder`).
+- **The key.** One ed25519 key per link, generated once and kept in the cluster's OWN vault at KV v2
+  mount `socialweb-links`, path `<service>` (`apiserver`, `openbao`), fields `secret` (64 hex, the
+  32-byte seed -- exactly the form dumbpipe reads from `IROH_SECRET`; measured: dumbpipe prints
+  `using secret key <hex>` when it generates one, and the ticket it prints for a given seed names
+  `ed25519.NewKeyFromSeed(seed).Public()`), `endpointId`, `did`. The mount is enabled if absent with
+  the root token from `unseal.json`. The first write is check-and-set 0, so two writers can never both
+  mint a key; a stored record that does not parse, or whose `endpointId` disagrees with its secret,
+  is an error and is NEVER regenerated over (a new key is a new endpoint id and strands every node
+  holding the old ticket). The key is read in the step's `procgroup.Step.Prepare`, which runs once
+  the steps before it passed their gates, so the vault is up; the secret rides `Spec.Env` only.
+- **Identity encodings.** `internal/didkey`: endpoint id = lowercase hex of the 32-byte public key
+  (what iroh prints); did:key = `did:key:z` + base58btc(0xed 0x01 + key). Fixture-tested against the
+  did:key spec vector and a dumbpipe-printed ticket.
+- **The ticket.** What dumbpipe prints on `dumbpipe connect-tcp <ticket>`: `endpoint` + lowercase
+  unpadded base32 of a postcard-encoded `EndpointTicket` (byte 0 the variant 0x00, bytes 1..32 the
+  endpoint id, then relay URL and direct addresses). `clusterlink.ParseTicket` reads the id back. The
+  gate opens only when a ticket is printed AND names the vault-held key. The ticket's BYTES change
+  across restarts (the relay chosen and the addresses are in it); the endpoint id and did:key do not.
+  An old ticket still reaches the restarted listener -- dumbpipe resolves the endpoint id by discovery
+  -- measured in `TestARealDumbpipeLinkCarriesTCPToItsTargetAndAnOldTicketStillReachesItAfterARestart`.
+  Consumers key on `status.endpointId` and may use any ticket that names it.
+- **The link port.** Leased (`apiserver-link`, `openbao-link`, width 1, section 8) and bound as the
+  endpoint's IPv4 UDP socket, so the direct address in a ticket is stable and a dumbpipe a dead
+  provider left running is found by the restart sweep: `portscan` reads `/proc/net/udp{,6}` (state
+  07) for a datagram purpose and the TCP tables for every other, and attributes the socket to the
+  cluster by the argv. A lease file written before links existed derives its restart argv without
+  them (`StackConfig.WithoutUnleasedLinks`); the next bring-up leases them.
+- **Status.** A reporter goroutine per link writes the `ClusterLink` `Listening` (spec
+  cluster/service/targetPort, status endpointId/did/ticket) with retries, so a kcp outage never reaps
+  a cluster. When the listener exits it writes status only (never a create): `Failed` with the exit
+  and the last 600 bytes of output if the group is still live, `Pending` "the cluster's process
+  group was stopped" if the group was reaped (`LocalHost.Live` is false by then). The home workspace
+  is found from the cluster key through the registry, as a NodeClaim's is.
+- **Teardown.** A deleted cluster's two ClusterLinks are deleted after its group is reaped (both the
+  all-clusters path and a pass that removes the finalizer). An OFF cluster keeps them: it comes back as
+  the same endpoints. The keys stay in the vault's data and go with it.
+- **Stated limits.** A link that dies after bring-up is NOT restarted: it reads `Failed` until the
+  group is next brought up (provider restart, or the cluster switched off and on), the same as any
+  other member dying today. The allocator probes a link port for TCP, not UDP, so a foreign UDP
+  holder of a leased port makes dumbpipe exit at bind and the bring-up fail with dumbpipe's bind error
+  in the gate message. The IPv6 socket takes a random port.
 
 ### The vault's config is rendered, not shipped
 
@@ -343,6 +405,7 @@ compatibility promise.
 | **Kine** | kine plus t4 to central S3 | system | no |
 | **Node** | one node. The only bound on leaks | node provider | no |
 | **NodeClaim** | one node RENTED FROM THE COMPUTE MARKET for a cluster, as that cluster's owner. Carries paths (`tokenFile`, `nodePasswordFile`, `serverCAFile`) and never a secret; the door in the sibling Deno process is the only writer of its `status` | cluster provider, spec and metadata only | no |
+| **ClusterLink** | one iroh listener in front of a cluster's apiserver or vault, named `<clusterKey>-apiserver` / `<clusterKey>-openbao` in the cluster's home workspace. `spec` {cluster (the key), service, targetPort}; `status` {phase `Pending`/`Listening`/`Failed`, endpointId (64 hex), did (did:key), ticket (as dumbpipe printed it), message}. Never carries the secret | cluster provider, spec and status | no |
 | **AtprotoIdentity** | the DID to identity mapping, in the home workspace | us | no |
 | **Account** | the DID to shard map. Not a CRD - a real kcp `Workspace` of an account `WorkspaceType` in root | us | no |
 
@@ -745,6 +808,7 @@ Every per-cluster port is leased from `internal/portallocator`, ADR 0026. Persis
 | `kine` | kine's listener |
 | `k3s-secure` | the apiserver, and the port a node dials it on |
 | `k3s-controller-manager`, `k3s-scheduler`, `k3s-cloud-controller-manager` | the k3s control-plane components' secure ports |
+| `apiserver-link`, `openbao-link` | UDP: the IPv4 socket of each cluster link's iroh endpoint (`--ipv4-addr 0.0.0.0:<port>`). The only datagram purposes (`Purpose.Datagram()`); the restart sweep reads the UDP tables for them |
 
 **The vault's lease is ONE port, and it was two for as long as nothing read the second.**
 `purposeWidth[PurposeOpenBao]` was 2, spelled "api + cluster", while the config the vault is given —

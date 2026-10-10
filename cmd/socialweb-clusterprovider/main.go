@@ -193,6 +193,18 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 		return Deps{}, err
 	}
 
+	linkClient, err := kcpclient.New(kcpclient.Options{Host: cfg.KCPHost, RestConfig: restCfg})
+	if err != nil {
+		return Deps{}, err
+	}
+	links := clusterLinks(cfg, linkClient, registry, deciderHost, log)
+	if links != nil {
+		purposes = append(purposes, clusterprovider.LinkPurposes...)
+	}
+	log.Info("cluster provider: cluster links", "on", links != nil, "dumbpipe", cfg.Dumbpipe,
+		"reason", "each cluster gets a dumbpipe listener in front of its apiserver and one in front of its "+
+			"vault when "+envDumbpipe+" names the binary; unset, no cluster has a link and no node can join without ssh")
+
 	minter := instanceMinter()
 	stackCfg := clusterprovider.StackConfig{
 		Stack:                  stack,
@@ -227,6 +239,7 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 			})
 		},
 		GuardRides: true,
+		Links:      links,
 	}
 	if substrate.IsGuest() {
 		stackCfg.GuestGateway = guestGateway(networks)
@@ -342,6 +355,9 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 		PostgresNeeded: needsPostgres,
 
 		InstallTenant: tenantAddOns(cfg, networks, log),
+	}
+	if links != nil {
+		deps.Links = &linkRecorder{client: linkClient, registry: registry}
 	}
 	if !cfg.ObserveOnly() {
 		deps.Host = host
