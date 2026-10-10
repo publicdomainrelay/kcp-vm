@@ -1865,6 +1865,19 @@ open list, are two stated LIMITS rather than open work: each marks where a behav
 being true, which is a fact about the design rather than a question left in it, and each sits here
 because it bounds a mechanism the rest of this document leans on.
 
+- **ESO-3: the ESO store dials the cluster's subnet gateway, which the market substrate neither binds
+  nor routes.** The store's vault server is `https://<the cluster's subnet gateway>:<vault port>`. On a
+  guest substrate that address is inside the cluster's own range, the guests dial it and the host binds
+  it, and the demo ExternalSecret was measured syncing there. On `market` the vault is a child of the
+  clusterprovider bound to LOOPBACK, and the gateway address is one a market guest has no route to.
+  MEASURED on production on 2026-10-07: the store reads `https://10.100.0.1:20001`, nothing binds
+  10.100.0.1 (`grep -c 0A640001 /proc/net/tcp` = 0), the listener on 20001 is `0100007F:4E21` -- loopback
+  only -- and the store reads `Ready=False unable to create client` with the ExternalSecret at
+  `Ready=False reason=SecretSyncedError`. The section-15 claim about `Secret/users/openbao-demo` holds
+  for the firecracker substrate it was taken on and not for this one; the entry above about the served
+  leaf does not catch it, because the leaf DOES carry the host -- there is simply nothing there to
+  answer. `NEXT.yaml` ESO-3.
+
 - **The tenant grant admits the External Secrets controller by a hardcoded namespace.** An install
   outside `default` is denied, and the failure reads as a broken ExternalSecret rather than as a grant
   that does not name it. The instrument is an install in another namespace still producing the Secret.
@@ -3177,6 +3190,8 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   this tree and a fresh volume, with no hand apply of any object: `socialweb-node1` Ready,
   `deployment/external-secrets` 1/1, the store `Ready=True reason=Valid` ("store validated"), the
   ExternalSecret `Ready=True reason=SecretSynced` ("secret synced"), `Secret/users/openbao-demo`
+  (ON A FIRECRACKER CLUSTER: the store's URL is the cluster's subnet gateway, which that substrate
+  binds and routes and `market` does not -- see ESO-3 in section 14, measured failing on production)
   `data.demo` = base64("openbao:socialweb"), and `demo` = `openbao:socialweb` at
   `secret/data/k3s/eso-demo` in the cluster vault -- the Secret equals the vault value. The node was
   booted by the scale driver rather than a test harness: ESO's Deployment is not addon-owned, so its
