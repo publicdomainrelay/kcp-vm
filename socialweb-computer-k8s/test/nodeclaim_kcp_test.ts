@@ -1,5 +1,9 @@
 import { assertEquals, assertRejects } from "@std/assert";
-import { createKcpNodeClaimStore, parseKubeconfig } from "@publicdomainrelay/socialweb-computer-k8s-nodeclaim-kcp";
+import {
+  createKcpClusterLinkReader,
+  createKcpNodeClaimStore,
+  parseKubeconfig,
+} from "@publicdomainrelay/socialweb-computer-k8s-nodeclaim-kcp";
 import type { NodeClaim } from "@publicdomainrelay/socialweb-computer-k8s-abc";
 import { ApiValidationError, FINALIZER_NODE_CLAIM } from "@publicdomainrelay/socialweb-computer-k8s-api";
 
@@ -274,4 +278,30 @@ Deno.test("a 429 holds reads back for the retry-after it named and writes still 
     "a claim's own status write is not the traffic that earned the rate limit, and holding it " +
       "back delays the node the door is bringing up",
   );
+});
+
+Deno.test("a cluster link is read from the claim's workspace by name, and a missing one reads as null", async () => {
+  const kcp = fakeKcp((s) => {
+    if (s.url.endsWith("/clusterlinks/k-openbao")) {
+      return new Response(JSON.stringify({
+        metadata: { name: "k-openbao" },
+        spec: { cluster: "ci", service: "openbao", targetPort: 8200 },
+        status: { phase: "Listening", ticket: "endpointticket", did: "did:key:z6Mk" },
+      }));
+    }
+    return new Response("not found", { status: 404 });
+  });
+  const links = createKcpClusterLinkReader({ credentials: { server: KCP, token: "t" }, fetch: kcp.fetch });
+  const link = await links.get("abc123", "k-openbao");
+  assertEquals(link?.status.ticket, "endpointticket");
+  assertEquals(link?.spec?.service, "openbao");
+  assertEquals(kcp.seen[0].url, `${KCP}/clusters/abc123/apis/socialweb.computer/v1alpha1/clusterlinks/k-openbao`);
+  assertEquals(kcp.seen[0].auth, "Bearer t");
+  assertEquals(await links.get("abc123", "k-apiserver"), null);
+});
+
+Deno.test("a cluster link that does not match the generated schema is refused", async () => {
+  const kcp = fakeKcp(() => new Response(JSON.stringify({ metadata: { name: "k-openbao" }, spec: { cluster: "ci", service: "ssh", targetPort: 1 } })));
+  const links = createKcpClusterLinkReader({ credentials: { server: KCP }, fetch: kcp.fetch });
+  await assertRejects(() => links.get("abc123", "k-openbao"), ApiValidationError);
 });

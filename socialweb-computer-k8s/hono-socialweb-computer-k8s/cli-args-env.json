@@ -108,12 +108,6 @@
       "description": "Context in the kcp kubeconfig to use; defaults to its current-context",
       "env": "KCP_CONTEXT"
     },
-    "node-apiserver-host": {
-      "type": "string",
-      "description": "Host a node's forwarded connections are delivered to; the tenant apiserver binds it",
-      "env": "NODE_APISERVER_HOST",
-      "default": "127.0.0.1"
-    },
     "node-extra-bidder-dids": {
       "type": "string",
       "description": "Comma-separated bidders to admit for node contracts without a vouch record in the owner's repo",
