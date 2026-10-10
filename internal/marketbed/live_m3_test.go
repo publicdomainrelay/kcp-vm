@@ -95,6 +95,7 @@ func TestAMarketNodeJoinsATenantClusterThroughItsOpenBaoWithNoSsh(t *testing.T) 
 	for _, port := range []int{2583, 2587} {
 		forwardLoopback(t, b.gateway, port)
 	}
+	env = marketImageEnv(t, env, workRoot)
 	b.ownerDid = b.createOwner()
 	b.reading("owner %s created on the test bed PDS %s", b.ownerDid, m3OwnerPDS)
 	b.key = kcpclient.AccountHash(b.ownerDid) + "-" + m3Cluster
@@ -355,6 +356,96 @@ func (b *m3Bed) ensureIssuerHost(issuer string) {
 	host := strings.TrimPrefix(issuer, "https://")
 	run(b.t, "docker", "exec", "-u", "0", b.name, "sh", "-c", "echo '127.0.0.1 "+host+"' >> /etc/hosts")
 	b.reading("the bidder's issuer moved to %s during the run; named it in the control plane's /etc/hosts", host)
+}
+
+func imageHasCloudInit(t *testing.T, rootfs string) bool {
+	t.Helper()
+	out, _ := exec.Command("debugfs", "-R", "stat /usr/bin/cloud-init", rootfs).CombinedOutput()
+	return bytes.Contains(out, []byte("Inode:"))
+}
+
+func marketImageEnv(t *testing.T, env []string, workRoot string) []string {
+	t.Helper()
+	if _, err := exec.LookPath("debugfs"); err != nil {
+		livegate.Require(t, "debugfs is not on PATH; this test asks the image store which of its images "+
+			"carry cloud-init, because a market guest is born from the door's cloud-init user_data")
+	}
+	hostConfig := os.Getenv("SOCIALWEB_FIRECRACKER_CONFIG")
+	raw, err := os.ReadFile(hostConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config map[string]any
+	if err := json.Unmarshal(raw, &config); err != nil {
+		t.Fatalf("%s: %v", hostConfig, err)
+	}
+	hostStore, _ := config["out_dir"].(string)
+	if hostStore == "" {
+		t.Fatalf("%s names no out_dir, so the store the bidder reuses images from is unknown", hostConfig)
+	}
+	entries, err := os.ReadDir(hostStore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := filepath.Join(filepath.Dir(workRoot), filepath.Base(workRoot)+"-images")
+	if err := os.MkdirAll(store, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(store) })
+	var kept []string
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		dir := filepath.Join(hostStore, entry.Name())
+		if _, err := os.Stat(filepath.Join(dir, "rootfs.ext4")); err != nil {
+			continue
+		}
+		if !imageHasCloudInit(t, filepath.Join(dir, "rootfs.ext4")) {
+			continue
+		}
+		if err := os.Symlink(dir, filepath.Join(store, entry.Name())); err != nil {
+			t.Fatal(err)
+		}
+		kept = append(kept, entry.Name())
+	}
+	if len(kept) == 0 {
+		t.Fatalf("none of the images in %s carries cloud-init, and a market guest is born from the "+
+			"door's cloud-init user_data: the bidder reuses a stale image when it has none for its "+
+			"configuration (plan 0005 M3), so every market node would boot with no units and never "+
+			"join. Rebuild the store with its preinstall manifest "+
+			"(socialweb-nodeimage -ensure -config <config> -preinstall <manifest>, as root: the "+
+			"preinstall chroots)", hostStore)
+	}
+	config["out_dir"] = store
+	config["stage_dir"] = store + "-stage"
+	if err := os.MkdirAll(store+"-stage", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(store + "-stage") })
+	adjusted, err := json.Marshal(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(t.TempDir(), "nodeimage.json")
+	if err := os.WriteFile(configPath, adjusted, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("image store for this run: %s, holding %v from %s (the images that carry cloud-init)", store, kept, hostStore)
+	out := make([]string, 0, len(env))
+	replaced := false
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "FC_CONFIG=") {
+			out = append(out, "FC_CONFIG="+configPath)
+			replaced = true
+			continue
+		}
+		out = append(out, entry)
+	}
+	if !replaced {
+		out = append(out, "FC_CONFIG="+configPath)
+	}
+	return out
 }
 
 func forwardLoopback(t *testing.T, gateway string, port int) {
