@@ -21,8 +21,6 @@ import {
 } from "@publicdomainrelay/socialweb-computer-k8s-abc";
 import { createK3sJoinModule } from "@publicdomainrelay/cloud-init-plugin-k3s-join";
 import {
-  accountHashOf,
-  clusterKeyOf,
   clusterLinkName,
   NODE_CLAIM_DOC_PATH,
   nodeAudience,
