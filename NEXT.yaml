@@ -83,26 +83,38 @@ open:
       naming the cluster and the key rather than returning a credential.
 
   - id: MARKET-6
-    title: A Node whose guest the door reaped outlives the clusterprovider's restart, and pods are scheduled onto it.
+    title: A Node whose guest the door reaped advertises Ready and takes pods, for as long as it takes the cloud controller manager to notice.
     body: >
-      The door's own restart releases the claims it holds and destroys their machines, and it says so in
-      each claim's status. The clusterprovider acts on that only for nodes IT holds (`confirmHeld` reads
-      `Fatal` and tears the node down); a provider that has just started holds nothing, so the `Node`
-      objects of the previous generation stay in the tenant cluster reading `Ready`, and the scheduler
-      places pods on them. Measured on 2026-10-06, forty seconds after a deploy restarted the door:
-      pipeline 74's four runner pods were scheduled onto `...-node6` and sat `Pending` for 58 s until the
-      runner gave up with `Job failed (system failure): prepare environment: waiting for pod running:
-      pods "runner-w93ufg0qn-project-1-concurrent-3-nuixd3cp" not found` -- the pod vanished when the
-      `Node` was finally deleted. Four of that pipeline's five jobs failed this way; a pipeline run 25
-      minutes earlier, with no restart in front of it, had all five running at once on five distinct
-      nodes. The same cluster afterwards listed `node1`, `node10`, `node18` and `node19`, so the corpses
-      were removed rather than recovered.
+      The door's own restart releases the claims it holds and destroys their machines, and writes that
+      into each claim's status. The clusterprovider acts on it only for the nodes IT holds
+      (`confirmHeld` reads `Fatal` and tears the node down); a provider that has just started holds
+      nothing, so the previous generation's `Node` objects stay in the tenant cluster reading `Ready`.
+      MEASURED on 2026-10-06, forty seconds after a deploy restarted the door: pipeline 74's four runner
+      pods were scheduled onto `...-node6` and sat `Pending` for 58 s until the runner gave up with
+      `Job failed (system failure): prepare environment: waiting for pod running: pods
+      "runner-w93ufg0qn-project-1-concurrent-3-nuixd3cp" not found` -- the pod vanished when the `Node`
+      was finally deleted. Four of that pipeline's five jobs failed this way; a pipeline 25 minutes
+      earlier, with no restart in front of it, had all five running at once on five distinct nodes. The
+      deletion came from the cloud controller manager: the corpse is a Node absent from the instance
+      snapshot, and a snapshot is only rewritten when the provider next provisions or tears down --
+      which is why node3..node6 survived until the pass that wrote the ten new nodes, and why the
+      window is bounded by the next snapshot write rather than by anything that notices the guest is
+      gone.
+      The obvious fix -- list the tenant Nodes and delete any whose claim is gone or ENDED -- is not
+      safe as stated, and that is the reason this is still open rather than closed: `adoptNever` writes
+      `Failed` for a claim it reaped AND for one whose machine it could not confirm released ("the door
+      restarted while this node was live; its VM could not be confirmed released"), and the second of
+      those may still have a running machine that is about to join. A claim cannot currently say which
+      of the two it is in a way a reader can act on -- the distinction lives in the message text, which
+      is not a field -- so a reconciler built on the phase alone would delete Nodes for machines that
+      are still being paid for and may still arrive.
     instrument: >
-      A startup reconciliation that lists the tenant cluster's Nodes and deletes, or refuses to count, any
-      whose claim is gone or has ENDED -- the market substrate's half of what `sweepNodeRecords` does for
-      a guest substrate and skips here (MARKET-1). Closing reading: restart the door with a live node,
-      then confirm `kubectl get nodes` shows no Node whose claim the door released, and that a runner job
-      admitted in the first minute after the restart is not placed on one.
+      First, a field on the claim's status that says the machine is gone (set only where the door has
+      confirmed the release), and then a reconcile -- at startup or on the first pass for a cluster,
+      not only for the nodes this process holds -- that deletes the tenant Node of every claim carrying
+      it. Closing reading: restart the door with a live node, then a runner job admitted in the first
+      minute after the restart is not placed on a Node whose claim the door released, and `kubectl get
+      nodes` loses that Node without waiting for the next snapshot write.
 
   - id: MARKET-1
     title: The market substrate's startup sweep is a no-op, so a state dir a guest substrate left behind is never reaped.

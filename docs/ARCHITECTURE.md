@@ -1922,7 +1922,16 @@ because it bounds a mechanism the rest of this document leans on.
   prepare environment: waiting for pod running: pods "runner-w93ufg0qn-project-1-concurrent-3-nuixd3cp"
   not found` - the pod disappeared when the `Node` was finally deleted. Four of five jobs failed that
   way, where a pipeline 25 minutes earlier with no restart in front of it had all five running at once
-  on five distinct nodes. `NEXT.yaml` MARKET-6, with the reconciliation that would close it.
+  on five distinct nodes. The deletion came from the cloud controller manager, not from anything that
+  noticed the guest was gone: a corpse is a `Node` absent from the instance snapshot, and a snapshot is
+  rewritten only when the provider next provisions or tears down, which is why `node3..node6` survived
+  until the pass that wrote the ten new nodes. The obvious fix - list the tenant `Node`s and delete the
+  ones whose claim is gone or ended - is NOT safe as stated, and that is why this is open rather than
+  closed: `adoptNever` writes `Failed` both for a claim it reaped and for one whose machine it could not
+  confirm released, and the second may still have a running machine on its way to joining. A claim
+  cannot yet say which it is except in prose, and a reconciler built on the phase alone would delete
+  `Node`s for machines still being paid for. `NEXT.yaml` MARKET-6, with the field that has to come
+  first.
 
 - **Whether the node half may ever run inside the control-plane container was answered by reading where
   the refusal lives, and the answer is a STATED LIMIT rather than an open question.** The allocator's
