@@ -2,6 +2,7 @@
   "repository": "github.com/johnandersen777/deno-kcp",
   "ref": "pr-2",
   "commit": "f5b7c10cb12877a28355807748e04174f0aff3db",
+  "kcpLibsCommit": "f6911d237e3140ff2c6ff198b50189c07daa46d8",
   "files": [
     {"path": "deploy/denokcp/denojob-apiresourceschema.yaml", "upstream": "deploy/denojob-apiresourceschema.yaml", "sha256": "6d1e78c5257031f6ccb452c879dc9cde2608430be443360d0b8248d698aebe3c"},
     {"path": "deploy/denokcp/denopod-apiresourceschema.yaml", "upstream": "deploy/denopod-apiresourceschema.yaml", "sha256": "d1623ba55c43326e5f0b2179823ba0cf7bab6bfd82de1ce1e946eef6bf64e42d"},
@@ -37,6 +38,7 @@
   ],
   "local": [
     {"path": "deploy/denokcp/vendor.json", "why": "this record"},
-    {"path": "deploy/denokcp/build-provider.sh", "why": "builds the deno-kcp provider from the recorded commit without touching the deno-kcp working copy"}
+    {"path": "deploy/denokcp/build-provider.sh", "why": "builds the deno-kcp provider from the recorded deno-kcp and kcp-libs commits without touching either working copy"},
+    {"path": "deploy/denokcp/kcp-libs-no-default-issuer.patch", "why": "kcp-libs reads OpenBao 2.6/2.7 HTTP 400 no default issuer on an empty PKI mount as an error, not as no authority yet; applied by build-provider.sh until kcp-libs carries it"}
   ]
 }

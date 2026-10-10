@@ -21,6 +21,7 @@ type Record struct {
 	Repository string         `json:"repository"`
 	Ref        string         `json:"ref"`
 	Commit     string         `json:"commit"`
+	KcpLibs    string         `json:"kcpLibsCommit"`
 	Files      []VendoredFile `json:"files"`
 	Local      []LocalFile    `json:"local"`
 }
