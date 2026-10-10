@@ -43,8 +43,14 @@ fi
 say "making sure $SSH_TARGET has a container runtime"
 ssh "${SSH_OPTS[@]}" "$SSH_TARGET" 'command -v docker >/dev/null || { export DEBIAN_FRONTEND=noninteractive; apt-get update -q && apt-get install -y -q docker.io && systemctl enable --now docker; }; docker version --format "{{.Server.Version}}"'
 
-say "shipping $IMAGE to $SSH_TARGET"
-docker save "$IMAGE" | gzip -1 | ssh "${SSH_OPTS[@]}" "$SSH_TARGET" 'gunzip | docker load'
+LAYERS="$(docker image inspect --format '{{json .RootFS.Layers}}' "$IMAGE")"
+REMOTE_LAYERS="$(ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "docker image inspect --format '{{json .RootFS.Layers}}' '$IMAGE'" 2>/dev/null || true)"
+if [ "$LAYERS" = "$REMOTE_LAYERS" ]; then
+  say "$SSH_TARGET already holds this image"
+else
+  say "shipping $IMAGE to $SSH_TARGET"
+  docker save "$IMAGE" | gzip -1 | ssh "${SSH_OPTS[@]}" "$SSH_TARGET" 'gunzip | docker load'
+fi
 
 q() {
   printf "%q" "$1"
@@ -119,7 +125,10 @@ say "the door answers"
 
 CA_DIR="/etc/caddy/${SERVICE_NAME}"
 install -d -m 0755 "$CA_DIR"
-docker exec "$SERVICE_NAME" cat /var/lib/socialweb/kcp/apiserver.crt > "$CA_DIR/kcp.crt"
+docker exec "$SERVICE_NAME" kubectl --kubeconfig=/var/lib/socialweb/kcp/admin.kubeconfig \
+  config view --raw -o jsonpath="{.clusters[0].cluster.certificate-authority-data}" \
+  | tr -d "\n" | base64 -d > "$CA_DIR/kcp.crt"
+[ -s "$CA_DIR/kcp.crt" ] || { say "kcp's serving CA could not be read out of the container's admin kubeconfig"; exit 1; }
 docker exec "$SERVICE_NAME" cat /var/lib/socialweb/tls/tls.crt > "$CA_DIR/gateway.crt"
 chmod 0644 "$CA_DIR"/*.crt
 
