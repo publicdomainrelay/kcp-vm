@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -67,6 +68,48 @@ func imageInDir(dir string) nodefirecracker.Image {
 		Initramfs: artifacts.Initramfs,
 		Rootfs:    artifacts.Rootfs,
 	}
+}
+
+func newestWholeImage(cfg Config) (storeEntry, error) {
+	entries, err := scanStore(cfg)
+	if err != nil {
+		return storeEntry{}, err
+	}
+	whole := make([]storeEntry, 0, len(entries))
+	for _, entry := range entries {
+		if entry.class != classImage {
+			continue
+		}
+		present, err := completeImage(cfg, entry.fingerprint)
+		if err != nil {
+			var notWhole *NotWholeError
+			if errors.As(err, &notWhole) {
+				continue
+			}
+			return storeEntry{}, err
+		}
+		if !present {
+			continue
+		}
+		manifest, err := nodefirecracker.LoadManifest(entry.path)
+		if err != nil {
+			continue
+		}
+		if err := manifest.CheckVMM(cfg.VMMName()); err != nil {
+			continue
+		}
+		whole = append(whole, entry)
+	}
+	sort.Slice(whole, func(i, j int) bool {
+		if whole[i].built.Equal(whole[j].built) {
+			return whole[i].name > whole[j].name
+		}
+		return whole[i].built.After(whole[j].built)
+	})
+	if len(whole) == 0 {
+		return storeEntry{}, nil
+	}
+	return whole[0], nil
 }
 
 func completeImage(cfg Config, fingerprint string) (bool, error) {

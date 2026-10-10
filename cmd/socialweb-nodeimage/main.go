@@ -12,6 +12,7 @@ import (
 const usage = `socialweb-nodeimage - build the artifacts a node boots from
 
   socialweb-nodeimage -config nodeimage.json
+  socialweb-nodeimage -ensure -config nodeimage.json [-reuse-stale] [-json]
   socialweb-nodeimage -config nodeimage.json -gc [-retain N] [-keep <fingerprint>]...
 
 The image is named by its inputs, and the VMM is one of them. The configuration is fingerprinted --
@@ -52,6 +53,23 @@ the image it came from.
 Nothing is overwritten, and nothing is removed by a build: a build that deleted the image a running
 node booted from would do it as a side effect of being run. Removal is its own mode:
 
+  -ensure      make the image the configuration resolves to available, and nothing else. When the
+               store already holds it whole under its own name, this builds nothing, pulls nothing and
+               writes nothing, which is what makes it safe to run at the start of anything that boots
+               a guest: a host that has been asleep through a kernel or base image change brings the
+               image up to date on the way up instead of failing at the first placement. Where -config
+               alone refuses, this builds; where a build is not wanted, see -reuse-stale.
+  -reuse-stale with -ensure: do not build. Use the newest image already in the store that is whole
+               AND built for the VMM this configuration places with, and say which name it came from.
+               The name the inputs give is still computed and still reported, so a caller can see the
+               distance between what it asked for and what it got. If the store holds no such image
+               this refuses and builds nothing: the images in a store are named by the inputs that
+               built them, so the newest one there is an image built from inputs this configuration
+               does not describe, and booting it would be booting the image from before the change.
+               This is the switch for a host that must come up without a build, not a fallback.
+  -json        with -ensure: print one JSON object instead of prose, so a caller that is not a
+               person can read the state, the name, the directory and, when one was reused, the name
+               it came from.
   -gc          reap, and nothing else. It keeps the image the configuration resolves to, every image
                named by -keep, and the newest -retain images. It removes the staging directories of
                builds that are no longer running -- a staging directory whose process is gone is a
@@ -81,11 +99,23 @@ func main() {
 	retain := flag.Int("retain", retainDefault, "how many images -gc keeps in total")
 	keep := keepFlags{}
 	flag.Var(&keep, "keep", "a fingerprint directory -gc must keep; repeatable")
+	ensure := flag.Bool("ensure", false, "make the image the config names available, building it only when it is not already there")
+	reuseStale := flag.Bool("reuse-stale", false, "with -ensure: use an image already in the store instead of building the one the config names")
+	asJSON := flag.Bool("json", false, "with -ensure: print one line of JSON describing what was found, built or reused")
 	flag.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 	flag.Parse()
 	run := Main
-	if *gc {
+	switch {
+	case *gc:
 		run = func(configPath string) error { return MainGC(configPath, keep, *retain) }
+	case *ensure:
+		run = func(configPath string) error { return Ensure(configPath, *reuseStale, *asJSON) }
+	case *reuseStale || *asJSON:
+		run = func(string) error {
+			return fmt.Errorf("-reuse-stale and -json describe what -ensure did, and neither means " +
+				"anything without it: -reuse-stale is answered by the store rather than by a build, " +
+				"and -json is the shape of that answer")
+		}
 	}
 	if err := run(*config); err != nil {
 		fmt.Fprintf(os.Stderr, "socialweb-nodeimage: %v\n", err)
