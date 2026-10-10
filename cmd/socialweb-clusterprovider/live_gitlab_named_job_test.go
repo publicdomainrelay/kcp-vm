@@ -54,6 +54,10 @@ const (
 
 	gitlabPreBuildScript = "command -v pnpm >/dev/null 2>&1 || corepack enable || npm install -g pnpm@10.11.0"
 
+	gitlabJobConcurrency = 4
+
+	gitlabRunnerFatalWait = 20 * time.Second
+
 	gitlabRunnerName = "gitlab-runner"
 
 	gitlabRunnerGroup = "gitlab-runner"
@@ -189,7 +193,7 @@ func gitlabStartJobRunner(t *testing.T, bin, token, url, host, credDir string) *
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
-	body := fmt.Sprintf(`concurrent = 1
+	body := fmt.Sprintf(`concurrent = %d
 check_interval = 3
 
 [[runners]]
@@ -197,7 +201,7 @@ check_interval = 3
   url = %q
   token = %q
   executor = "kubernetes"
-  pre_build_script = [%q]
+  pre_build_script = %q
   [runners.kubernetes]
     host = %q
     cert_file = %q
@@ -213,7 +217,7 @@ check_interval = 3
     helper_memory_limit = %q
     poll_timeout = %d
     cleanup_grace_period_seconds = 30
-`, url, token, gitlabPreBuildScript, host,
+`, gitlabJobConcurrency, url, token, gitlabPreBuildScript, host,
 		filepath.Join(credDir, "tls.crt"), filepath.Join(credDir, "tls.key"),
 		filepath.Join(credDir, "ca.crt"), gitlabNamespace,
 		gitlabJobCPURequest, gitlabJobMemoryRequest, gitlabJobCPULimit, gitlabJobMemoryLimit,
@@ -229,12 +233,26 @@ check_interval = 3
 	if err := r.cmd.Start(); err != nil {
 		t.Fatalf("starting %s: %v", bin, err)
 	}
-	select {
-	case <-time.After(3 * time.Second):
-	case <-t.Context().Done():
+	deadline := time.Now().Add(gitlabRunnerFatalWait)
+	for {
+		out := r.buf.String()
+		if strings.Contains(out, "FATAL") {
+			t.Fatalf("the runner refused its own configuration and exited, so nothing would ever "+
+				"pick the job up and the wait that follows would read as a job that never ran rather "+
+				"than as a runner that never started. A gitlab-runner config is decoded strictly and "+
+				"a key of the wrong type is a startup failure, not a warning.\n%s", out)
+		}
+		if time.Now().After(deadline) {
+			break
+		}
+		select {
+		case <-time.After(200 * time.Millisecond):
+		case <-t.Context().Done():
+		}
 	}
-	t.Logf("STEP 5a the runner is up with the kubernetes executor against %s, requesting %s cpu and "+
-		"%s memory", host, gitlabJobCPURequest, gitlabJobMemoryRequest)
+	t.Logf("STEP 5a the runner is up with the kubernetes executor against %s, concurrent=%d, "+
+		"requesting %s cpu and %s memory", host, gitlabJobConcurrency,
+		gitlabJobCPURequest, gitlabJobMemoryRequest)
 	return r
 }
 

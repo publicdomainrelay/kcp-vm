@@ -285,6 +285,7 @@ func fourstepConfig(t *testing.T, bins fourstepBins) Config {
 		"SOCIALWEB_CLUSTERPROVIDER_CLOUD_CONTROLLER_MANAGER": bins.cloudControllerManager,
 		"SOCIALWEB_CLUSTERPROVIDER_PORT_RANGE":               liveports.Text(slot),
 		"SOCIALWEB_CLUSTERPROVIDER_SCALE_HOLD":               fourstepHold(),
+		"SOCIALWEB_CLUSTERPROVIDER_NODE_DISK_MIB":            os.Getenv(envNodeDiskMiB),
 		"SOCIALWEB_CLUSTERPROVIDER_SCALE_MAX_NODES":          os.Getenv(envScaleMaxNodes),
 		"SOCIALWEB_CLUSTERPROVIDER_SCALE_PODS_PER_NODE":      os.Getenv(envScalePodsPerNode),
 	}
