@@ -290,8 +290,8 @@ func gitlabScopedCredentialFiles(t *testing.T, cfg Config, stack *fourstepStack)
 		context.Background(), cfg.StateDir, fourstepCluster,
 		clusterprovider.APIServerURL(lease.Port), gitlabRunnerName, []string{gitlabRunnerGroup}, 0)
 	if err != nil {
-		t.Fatalf("minting the runner its OWN scoped tenant credential: %v. docs/gitlab/02 is "+
-			"explicit that a runner is never handed the cluster's superuser identity -- "+
+		t.Fatalf("minting the runner its OWN scoped tenant credential: %v. docs/gitlab/01-kcp-server.md "+
+			"is explicit that a runner is never handed the cluster's superuser identity -- "+
 			"system:admin in system:masters makes every RBAC rule below decorative -- so this "+
 			"refuses rather than falling back to the credential that would always work", err)
 	}

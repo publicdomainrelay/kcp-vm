@@ -3159,7 +3159,7 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   in the test, not in the product. Third, a job Pod runs INSIDE a guest, so `CI_REPOSITORY_URL`
   naming the GitLab host's loopback resolves to the guest's own loopback and the clone fails with
   `exit code 128` and a `script_failure` that reads like a broken runner; the proof sets
-  `GIT_STRATEGY: none`, and the three ways out are recorded in `docs/gitlab/03-ci-pipeline.md`.
+  `GIT_STRATEGY: none`, and the three ways out are recorded in `docs/gitlab/03-jobs.md`.
   NOT closed by this, and still in `NEXT.yaml`: GL-2 (a runner OFF the host still cannot reach a
   tenant apiserver) and the CLI half of GL-1.
 
