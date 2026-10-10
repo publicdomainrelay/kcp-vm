@@ -101,6 +101,9 @@ func buildRootfs(cfg Config, dst string, tars []imageTar) error {
 	if err := stageK3s(cfg); err != nil {
 		return err
 	}
+	if err := stageK3sData(cfg); err != nil {
+		return err
+	}
 	if err := stageImageTars(cfg, tars); err != nil {
 		return err
 	}

@@ -24,8 +24,10 @@ import { createK3sJoinModule, MESHD_ARCHES, type MeshdPin } from "@publicdomainr
 import {
   clusterLinkName,
   NODE_CLAIM_DOC_PATH,
+  NODE_LINK_ENV_PATH,
   nodeAudience,
   nodeClaimDocument,
+  nodeLinkEnv,
   OPENBAO_CA_PATH,
   OPENBAO_TICKET_PATH,
 } from "@publicdomainrelay/socialweb-computer-k8s-common";
@@ -349,6 +351,35 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
           { path: OPENBAO_TICKET_PATH, value: ticket },
           { path: OPENBAO_CA_PATH, value: openBaoCA },
         ];
+        const apiserverName = clusterLinkName(clusterKey, "apiserver");
+        let apiserverLink: Awaited<ReturnType<ClusterLinkReader["get"]>> = null;
+        let apiserverWhy: string | null = null;
+        try {
+          apiserverLink = await opts.links.get(claim.workspace, apiserverName);
+        } catch (err) {
+          apiserverWhy = String(err);
+        }
+        const linkEnv = apiserverLink?.status.phase === "Listening" && apiserverLink.status.ticket
+          ? nodeLinkEnv(
+            { node: spec.nodeName, advertiseAddress: spec.advertiseAddress, apiserverPort: spec.apiserverPort },
+            apiserverLink.status.ticket,
+          )
+          : null;
+        if (linkEnv) {
+          bundle.push({ path: NODE_LINK_ENV_PATH, value: linkEnv });
+          log("node_claim_apiserver_link_delivered", { claim: key, link: apiserverName });
+        } else {
+          log("node_claim_apiserver_link_withheld", {
+            claim: key,
+            link: apiserverName,
+            phase: apiserverLink?.status.phase ?? null,
+            ticketBytes: apiserverLink?.status.ticket?.length ?? 0,
+            error: apiserverWhy,
+            next: "the guest reads its apiserver ticket out of the cluster OpenBao instead, once its own link " +
+              "to that OpenBao is up, so this node's join is serial rather than parallel; nothing else about " +
+              "the claim changes, because this ticket is the only thing the door was adding",
+          });
+        }
         const capability = grantingCapability(secretsCapability(bundle, claimLogger(key)), async (vars) => {
           const grant = await nodeGrantOf(spec, vars);
           if (!(await write({ grant }))) {

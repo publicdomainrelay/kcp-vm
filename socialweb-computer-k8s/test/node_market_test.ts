@@ -12,6 +12,7 @@ import {
   NODE_BUNDLE_PATHS,
   NODE_CLAIM_DOC_PATH,
   type NodeClaimDocument,
+  NODE_LINK_ENV_PATH,
   OPENBAO_CA_PATH,
   OPENBAO_TICKET_PATH,
 } from "@publicdomainrelay/socialweb-computer-k8s-common";
@@ -35,6 +36,7 @@ const OWNER_CLUSTER_KEY = "d90m41be-ci";
 const BIDDER = "did:plc:bidder";
 const OPENBAO_CA = "-----BEGIN CERTIFICATE-----\nOPENBAO\n-----END CERTIFICATE-----\n";
 const OPENBAO_TICKET = "endpointopenbaoticket";
+const APISERVER_TICKET = "endpointapiserverticket";
 const AT = "2026-10-07T00:00:00.000Z";
 const ISSUER = "https://bidder.test/oidc";
 const SUBJECT = "actx:a1:plc:nodeowner:role:ci-node1";
@@ -115,11 +117,21 @@ class FakeStore implements NodeClaimStore {
 
 class FakeLinks implements ClusterLinkReader {
   asked: string[] = [];
-  constructor(readonly ticket: string | null = OPENBAO_TICKET) {}
+  unreadable = false;
+  constructor(
+    readonly ticket: string | null = OPENBAO_TICKET,
+    readonly apiserver: ClusterLinkView["status"] | null = { phase: "Listening", ticket: APISERVER_TICKET },
+  ) {}
   get(workspace: string, name: string): Promise<ClusterLinkView | null> {
     this.asked.push(`${workspace}/${name}`);
-    if (this.ticket === null) return Promise.resolve(null);
-    return Promise.resolve({ workspace, name, status: { phase: "Listening", ticket: this.ticket } });
+    if (name.endsWith("-apiserver") && this.unreadable) return Promise.reject(new Error("429 held back"));
+    const link = name.endsWith("-apiserver")
+      ? this.apiserver
+      : this.ticket === null
+      ? null
+      : { phase: "Listening" as const, ticket: this.ticket };
+    if (link === null) return Promise.resolve(null);
+    return Promise.resolve({ workspace, name, status: link });
   }
 }
 
@@ -346,19 +358,76 @@ Deno.test("at accept the claim carries the workload grant for its node's audienc
   const acceptedWrite = h.store.statuses.findIndex((s) => s.status.contract?.phase === "accepted");
   assert(grantWrite >= 0 && grantWrite < acceptedWrite, `grant write ${grantWrite} precedes accepted write ${acceptedWrite}`);
   assertEquals(h.secrets.grants.length, 1, "the secrets capability is authorized once");
-  assertEquals(h.secrets.pathsAtGrant[0], [...NODE_BUNDLE_PATHS], "claim.json is in the bundle before the guest is authorized");
+  assertEquals(
+    [...h.secrets.pathsAtGrant[0]].sort(),
+    [...NODE_BUNDLE_PATHS, NODE_LINK_ENV_PATH].sort(),
+    "claim.json is in the bundle before the guest is authorized",
+  );
   await h.fulfiller.stop();
 });
 
-Deno.test("the secrets bundle carries exactly the OpenBao ticket, the OpenBao CA and claim.json", async () => {
+Deno.test("the secrets bundle hands the guest the apiserver link's ticket with the OpenBao ticket, so both links can be dialed at once", async () => {
   const h = harness();
   h.store.put(claim("ci-node1"));
   await h.fulfiller.pass();
   await settle();
 
-  assertEquals(h.links.asked, [`root:acct:ci/${OWNER_CLUSTER_KEY}-openbao`]);
+  assertEquals(h.links.asked, [
+    `root:acct:ci/${OWNER_CLUSTER_KEY}-openbao`,
+    `root:acct:ci/${OWNER_CLUSTER_KEY}-apiserver`,
+  ]);
   const bundle = h.secrets.bundles[0];
-  assertEquals(bundle.map((s) => s.path).sort(), [...NODE_BUNDLE_PATHS].sort());
+  assertEquals(bundle.map((s) => s.path).sort(), [...NODE_BUNDLE_PATHS, NODE_LINK_ENV_PATH].sort());
+  const byPath = Object.fromEntries(bundle.map((s) => [s.path, s.value]));
+  assertEquals(
+    byPath[NODE_LINK_ENV_PATH],
+    "NODE_NAME=ci-node1\nADVERTISE_ADDRESS=100.127.255.254\nAPISERVER_PORT=23456\nAPISERVER_TICKET=endpointapiserverticket\n",
+  );
+  assertEquals(byPath[OPENBAO_TICKET_PATH], OPENBAO_TICKET, "the OpenBao ticket is unaffected");
+  await h.fulfiller.stop();
+});
+
+Deno.test("an apiserver link that is not listening leaves the link out of the bundle, and the claim still runs on the KV copy", async () => {
+  const h = harness({ links: new FakeLinks(OPENBAO_TICKET, { phase: "Pending", ticket: "" }) });
+  h.store.put(claim("ci-node1"));
+  await h.fulfiller.pass();
+  await settle();
+
+  assertEquals(h.contracts.length, 1, "the contract still starts");
+  assertEquals(h.secrets.bundles[0].some((s) => s.path === NODE_LINK_ENV_PATH), false);
+  await h.fulfiller.stop();
+});
+
+Deno.test("an apiserver ticket that would ride a unit's command line is left out of the bundle", async () => {
+  const h = harness({ links: new FakeLinks(OPENBAO_TICKET, { phase: "Listening", ticket: "endpoint; rm -rf /" }) });
+  h.store.put(claim("ci-node1"));
+  await h.fulfiller.pass();
+  await settle();
+
+  assertEquals(h.secrets.bundles[0].some((s) => s.path === NODE_LINK_ENV_PATH), false);
+  await h.fulfiller.stop();
+});
+
+Deno.test("an apiserver link the door cannot read is withheld like an absent one, and the claim still runs on the KV copy", async () => {
+  const links = new FakeLinks();
+  links.unreadable = true;
+  const h = harness({ links });
+  h.store.put(claim("ci-node1"));
+  await h.fulfiller.pass();
+  await settle();
+
+  assertEquals(h.contracts.length, 1, "a 429 on the apiserver link does not fail the claim");
+  assertEquals(h.secrets.bundles[0].some((s) => s.path === NODE_LINK_ENV_PATH), false);
+  await h.fulfiller.stop();
+});
+
+Deno.test("the bundle's claim.json names the guest's jwt mount, audience and KV path, beside the OpenBao ticket and CA", async () => {
+  const h = harness();
+  h.store.put(claim("ci-node1"));
+  await h.fulfiller.pass();
+  await settle();
+
+  const bundle = h.secrets.bundles[0];
   const byPath = Object.fromEntries(bundle.map((s) => [s.path, s.value]));
   assertEquals(byPath[OPENBAO_TICKET_PATH], OPENBAO_TICKET);
   assertEquals(byPath[OPENBAO_CA_PATH], OPENBAO_CA);

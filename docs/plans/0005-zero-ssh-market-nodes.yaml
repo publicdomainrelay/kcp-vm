@@ -574,6 +574,39 @@ items:
       - "not done: the image is not rebuilt and nothing is measured on prod -- the lead ships it and measures claim->Ready (the target is about 30 s against the 125 s of 2026-10-07). tmux (the wootty module) is deliberately not in the manifest: no market user_data asks for it, and the manifest is the market image's"
       - "live prod 2026-10-07T23:47:24.8Z (image sha256-52df8a09 built by the installer under sudo with the repo preinstall manifest; door/provider 0a7e9b0): pod created -> Running 54.0 s (was ~130 s); boot -> cloud-init finished 5.9 s (was 92 s), no apt fetch at all; secrets served 23:47:54.8Z, Node registered 23:48:09Z, Ready 23:48:11Z"
       - "remaining: policy eval 5.3 s (M2-BID-LATENCY), OpenBao link+login 6.4 s, apiserver link+agent registration 8 s, bob bid 3.6 s, claim->RFP 2.9 s, receipt->boot 3.4 s"
+  - id: M3-JOIN-PATH
+    milestone: M3
+    title: >
+      A node dials both links at once, and the guest stops unpacking k3s on its way to joining
+    decision: >
+      Measured on prod 2026-10-07T23:47Z (M3-BOOT-TIME evidence): secrets served at uptime ~11 s,
+      "fetched the join secrets" at 17.4 s, Node registered about 8 s later. The chain is serial for
+      one reason -- the apiserver link's dumbpipe ticket arrives only in the KV entry the OpenBao JWT
+      login reads -- and the guest's first k3s command unpacks k3s's own runtime (about 254 MiB) into
+      <data-dir>/data/<sha256 of its data tarball> on a filesystem it is already booting. Three
+      changes, none of them to the market protocol or the cluster design: (1) every join script prints
+      its own step times off the guest's /proc/uptime, so the split reads off the console instead of
+      being inferred from two timestamps 8 s apart; (2) the door delivers the apiserver link's ticket
+      with the claim's advertise address and port in the secrets bundle, and
+      socialweb-apiserver-link waits on setup-secrets instead of socialweb-node-secrets, so both
+      dumbpipe dials are up before the agent needs either. An apiserver ticket is a capability, not a
+      credential: the apiserver still refuses a connection that does not carry the k3s token, and that
+      token, the node password and the server CA stay in OpenBao. The KV copy of the ticket is still
+      read when the bundle does not carry one -- an older door, or a link that is not listening yet --
+      so those nodes still join, serially. (3) the image build stages k3s's runtime assets into the
+      rootfs, checked against the .sha256sums and .links k3s itself checks after it unpacks, with
+      data/current and the data/cni plugin links written to name the guest's path rather than the
+      build host's. decided by Claude, user may veto.
+    status: doing
+    evidence:
+      - "the image reading the third change rests on: debugfs on the newest market image in ~/kcp-image/out-market (sha256-52df8a09..., the one M3-BOOT-TIME measured) shows /var/lib/rancher/k3s holding agent and nothing else, so the guest unpacks the runtime itself at its first k3s command"
+      - "code: 69f91cf (STEP_PROBE and per-step lines in the six join scripts), e6b5d55 (NODE_LINK_ENV_PATH, renderNodeLinkEnv and nodeLinkEnv in k8s-common; the door reads <clusterKey>-apiserver beside <clusterKey>-openbao; node-secrets keeps a bundled apiserver.env and refuses one that names another node; apiserver-link waits on setup-secrets; ARCHITECTURE invariants 13 and 29 and section 9), 460521f (a link the door cannot read is withheld like an absent one, never fatal to the claim), 4a3f516 (cmd/socialweb-nodeimage/k3sdata.go: k3sAssetDir, parseK3sAssetDir, stageK3sAssets, verifyHashes, verifyLinks, linkK3sCurrent, linkK3sCNI, called from buildRootfs after stageK3s)"
+      - "tests watched to fail then pass: k3s_join_test.ts 'node-secrets keeps the apiserver link the bundle already wrote, and needs no ticket in the KV entry' (mutation: the bundle branch disabled -> 3 FAILED), 'every join script times its own steps' and 'node-secrets prints its start and done times' (mutation: the two done lines dropped -> 2 FAILED); node_market_test.ts 'the secrets bundle hands the guest the apiserver link's ticket with the OpenBao ticket' FAILED first with the four-path diff, and 'an apiserver link that is not listening', 'an apiserver ticket that would ride a unit's command line' and 'an apiserver link the door cannot read' FAILED as undefined bundle entries; k3sdata_test.go TestAnAssetDirectoryWhoseSumsDoNotMatchIsRefused and TestAnAssetDirectoryWithNoSumsAtAllIsRefused (mutation: the sums check skipped -> 2 FAILED)"
+      - "k3s's own trigger, measured on the build host: k3s --debug --data-dir <stage> check-config <kernel config> prints msg=\"Asset dir /var/lib/rancher/k3s/data/5a9973ddf4c7ec074f657c06287e0e6a07a24ecafd6d326827f70ef1e95bdd2d\". k3s falls back to its default data dir before it extracts, so on a host that already has this k3s the line names a directory outside the stage; the build copies that directory in and checks it either way. A probe run of stageK3sAssets against the real directory staged it in 3.5 s, with data/current -> /var/lib/rancher/k3s/data/5a9973dd... and data/cni/{bandwidth,bridge,cni,firewall,flannel,host-local,loopback,portmap} each pointing at the guest's bin/cni, the same shape as the host's own data/cni. The probe file was scratch and is deleted"
+      - "green at 4a3f516 and 460521f: socialweb-computer-k8s deno test -A test/ 125 passed (live_market_node_test.ts excluded: a worktree has no sibling org root for its ../../../atproto-market/test/fetch-interceptor.ts import), deno check hono-socialweb-computer-k8s/mod.ts exit 0, cmd/socialweb-nodeimage go test -count=1 exit 0, gofmt/go vet/staticcheck clean, deploy/check.sh --fast exit 0"
+      - "not done: the lead deploys, rebuilds the image and measures. No image was built here and nothing was measured on prod. The numbers this is aimed at are the 6.4 s OpenBao link+login and the 8 s apiserver link+agent registration M3-BOOT-TIME lists as remaining; the staged assets add about 254 MiB to the image, and a rebuild that -reuse-stale answers with an older image would measure none of it"
+      - "step 4 of the handoff (start the OpenBao dial before the token exchange finishes) needed no change: socialweb-openbao-link already waits only on setup-secrets, so it dials while socialweb-node-secrets, which is where the token exchange lives, is still running"
+      - "the image's name does not cover the builder's own behaviour, and that is now load-bearing: internal/nodefirecracker's BuildConfig fingerprint digests the config's inputs (kernel, modules, base image, k3s binary, busybox, init binary and package, preinstall, seeded images, boot args) and not the builder's code, so an image built before this change and one built after it share a name and -present-only answers present for either. Measured while checking the deploy path (scripts/deploy-firecracker-bidder.sh --dry-run, ORG_ROOT and LOCAL_NODEIMAGE_BIN redirected): the current inputs name sha256-d1a844929f46a01f5ea06a777bbf02c340d1725b7f6ddaaa1ba5a4052a5d0d07, the store in ~/kcp-image/out-market does not hold it, and the deploy's own guard (the answered dir's basename against the shipped FINGERPRINT) refuses any other directory -reuse-stale would answer with. So the lead's rebuild does include this change, but the next builder change under the same inputs would not be visible in the name, and fixing that (an input covering the builder, or the built binary's digest) changes how every image is named and is left to the lead"
   - id: M2-BID-LATENCY
     milestone: M2
     title: A first-free winner is accepted within 0.5 s of its bid, not after 6 s of policy evaluation
@@ -761,7 +794,12 @@ items:
   - id: M6-DOCS
     milestone: M6
     title: Rewrite ARCHITECTURE invariant 13 and update docs/gitlab
-    decision: Invariant 13 reads that secrets cross only OpenBao JWT over the cluster link.
+    decision: >
+      Invariant 13 read that a market node's secrets cross only OpenBao JWT over the cluster link; it
+      now reads what the guest is handed before it has authenticated to anything and what stays in
+      OpenBao, and invariant 29 and section 9 moved with it. That half was done by M3-JOIN-PATH on
+      2026-10-08, because the join path could not be shortened without the invariant saying where the
+      apiserver ticket travels. What remains here is docs/gitlab.
     status: todo
     evidence: []
 queued_after_this_plan:
