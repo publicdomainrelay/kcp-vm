@@ -228,6 +228,8 @@ type BuildInputs struct {
 
 	AgentBinaryDigest string `json:"agentBinaryDigest"`
 
+	AgentPackageDigest string `json:"agentPackageDigest"`
+
 	AgentPackage string `json:"agentPackage"`
 
 	AgentGoFlags []string `json:"agentGoFlags"`
@@ -442,6 +444,20 @@ func RecordInputs(configPath string, cfg BuildConfig) (BuildInputs, error) {
 		inputs.Preinstall = resolved
 		inputs.PreinstallDigest = digest
 	}
+	resolvedAgent, err := resolvePath(cfg.AgentPackage)
+	if err != nil {
+		return BuildInputs{}, err
+	}
+	agentTree, err := treeDigest(resolvedAgent)
+	if err != nil {
+		return BuildInputs{}, fmt.Errorf("nodefirecracker: reading the guest agent's own source at %s, "+
+			"which is recorded so that a source change is visible without a Go toolchain to build the "+
+			"binary with: %w -- the binary is what the image carries and this is what the binary is "+
+			"built from, and a build that had to happen before the question could be asked would make "+
+			"asking it impossible on a host that has no toolchain", cfg.AgentPackage, err)
+	}
+	inputs.AgentPackage = resolvedAgent
+	inputs.AgentPackageDigest = agentTree
 	resolvedSource, err := resolvePath(cfg.ModuleSource)
 	if err != nil {
 		return BuildInputs{}, err

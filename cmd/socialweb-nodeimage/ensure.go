@@ -52,9 +52,6 @@ func Ensure(configPath string, reuseStale bool, asJSON bool, preinstallPath stri
 		}
 		cfg.Preinstall = absolute
 	}
-	if err := buildAgent(cfg); err != nil {
-		return err
-	}
 	fingerprint, err := nodefirecracker.Fingerprint(cfg.Path, buildConfigOf(cfg))
 	if err != nil {
 		return fmt.Errorf("cannot tell which image under %s the configuration at %s names, so there "+
@@ -81,6 +78,23 @@ func Ensure(configPath string, reuseStale bool, asJSON bool, preinstallPath stri
 		result.Dir = entry.path
 		result.ReusedFrom = entry.fingerprint
 	default:
+		if err := buildAgent(cfg); err != nil {
+			return err
+		}
+		fingerprint, err = nodefirecracker.Fingerprint(cfg.Path, buildConfigOf(cfg))
+		if err != nil {
+			return err
+		}
+		dir = storeDir(cfg, fingerprint)
+		result.Fingerprint = fingerprint
+		result.Dir = dir
+		if present, err = completeImage(cfg, fingerprint); err != nil {
+			return err
+		}
+		if present {
+			result.State = statePresent
+			break
+		}
 		artifacts, err := publishImage(cfg, fingerprint)
 		if err != nil {
 			return err
