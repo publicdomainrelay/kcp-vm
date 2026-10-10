@@ -353,6 +353,88 @@ can never be deleted.
 `ClusterPhase`: `Initializing`, `Ready`, `Unavailable`, `Draining`.
 `NodePhase`: `Pending`, `Running`, `Draining`.
 
+### Generated from api/v1alpha1
+
+The Go types in `api/v1alpha1` are the ONLY source of every CRD's shape. `go generate ./api/...`
+(`cmd/socialweb-apigen -root .`, logic in `internal/apigen`) writes, and nothing else may write:
+
+| Output | What |
+|---|---|
+| `deploy/<kind>-apiresourceschema.yaml` | one kcp `APIResourceSchema` per entry of `v1alpha1.APIResources` |
+| `deploy/cluster-apiexport.yaml`, `deploy/atprotoidentity-apiexport.yaml` | one `APIExport` per distinct `Export`, resources in registry order |
+| `deploy/apiresourceschema-revisions.json` | the revision lock: every schema name ever generated and the sha256 of its `spec` |
+| `socialweb-computer-k8s/lib/common/socialweb-computer-k8s-api/mod.ts` | `@publicdomainrelay/socialweb-computer-k8s-api`: TS interfaces, enum tuples and their literal unions, finalizer and condition constants, `*_RESOURCE` descriptors, and a validator (`validateX`, `isX`, `assertX`, `parseX`, `ApiValidationError`) for every generated type |
+
+How the Go type maps, decided by Claude (user may veto):
+
+- Struct layout comes from reflection over `encoding/json` tags, so the schema is what Go actually
+  writes. A field is `required` exactly when its json tag lacks `omitempty`, unless it carries the
+  struct tag `apigen:"optional"` (only `ClusterSpec.running`, which is written as `false` and was never
+  required). Struct tags, because the no-comments rule forbids kubebuilder markers and so rules out
+  controller-gen.
+- Enums are read from SOURCE (`go/parser`): a named string type's enum is its typed string
+  constants in declaration order. Untyped exported string constants (`GroupName`, `Version`,
+  `Finalizer*`, `Condition*`) become UPPER_SNAKE TS constants. A named string type with no constants
+  is a generator error, so an enum cannot silently become a free string.
+- `metav1.ObjectMeta` is `type: object`; `[]metav1.Condition` items are `type: object` with
+  `x-kubernetes-preserve-unknown-fields`; `int` is `integer`, `int64` adds `format: int64`. Anything
+  else outside `api/v1alpha1` is a generator error.
+- The validator is the same rules as the schema plus one kube does not apply: an UNKNOWN field is an
+  error, not pruned. `metadata` and conditions stay open. A key whose TS value is `undefined` counts as
+  absent, as JSON would send it.
+
+The first generation reproduced the hand-written Cluster, Node and AtprotoIdentity schemas and both
+exports BYTE FOR BYTE; NodeClaim differs only by its name and the added `status.contract` fields.
+
+`deploy/check.sh` (every mode) regenerates into a temp dir and `diff -u`s every output against the
+tree: any drift fails with `run: go generate ./api/...`. Protobuf was rejected: a CRD travels through
+kube and kcp as JSON validated by OpenAPI, so a second wire format is a second source of truth.
+
+**Schema revisions.** kcp holds `APIResourceSchema.spec` IMMUTABLE (re-measured: an update of a
+changed spec under the same name is Forbidden). So a schema is named `v1alpha1-<Revision>.<plural>.<group>`
+with `Revision` set per kind in `api/v1alpha1/resources.go`, and the revision lock refuses to generate
+a spec that differs from what it recorded under that name: changing a Go type without bumping its
+`Revision` fails generation, and so `check.sh`, before any host sees a schema it cannot apply. Old
+names stay in the lock forever; old `APIResourceSchema` objects stay in kcp and are harmless.
+
+**What the re-point does to tenants, MEASURED** (`internal/apigen`
+`TestAnAlreadyBoundWorkspaceKeepsTheNewContractFieldsAfterTheSchemaUpgrade`, kcp v0.33.0 over kine,
+runs under `check.sh --local`): a workspace that bound the export while it named `v1alpha1-1` PRUNES
+the new fields (a write returns `unknown field` warnings and drops them). Creating `v1alpha1-2` and
+re-pointing the export moves that ALREADY-BOUND `APIBinding`'s `boundResources` to `v1alpha1-2` within
+seconds, with the identity hash unchanged (so the etcd prefix and every stored claim are untouched),
+the pre-upgrade claim intact, and the new fields then persisting. No binding is deleted or recreated:
+the migration IS `install-provider.sh` applying the new schema and then the re-pointed export, in the
+order it already does. Without the re-point the binding stays on `v1alpha1-1` and the proof fails.
+The deployed `v1alpha1-1` NodeClaim schema is kept at
+`testdata/apiresourceschema/v1alpha1-1.nodeclaims.socialweb.computer.yaml`, checked against the lock.
+
+**Shared fixtures.** `testdata/nodeclaim/valid-*.json` are claims the Go suite decodes STRICTLY
+(`DisallowUnknownFields`) into `v1alpha1.NodeClaim`, re-encodes without losing a leaf, and validates
+against the generated schema; the Deno suite (`socialweb-computer-k8s/test/k8s_api_fixtures_test.ts`)
+parses the same files. `invalid-*.json` wrap an object with `expectError` (the issue path BOTH
+validators must report) and `goDecodeRejects` (whether the strict Go decode alone already refuses
+it: wrong types and unknown fields yes, unknown enums and missing required fields no).
+
+**NodeClaim `status.contract`** carries, beside the original
+`vmUri|rfpUri|acceptUri|receiptUri|receiptCid|submitEventRef` (kept: prod claims hold them and the
+no_bids back-off keys on `Failed` + `rfpUri` without `acceptUri`), every field of atproto-market's
+`ContractState` (`lib/abc/compute-request`): `version`, `phase`
+(`requested|rfp_submitted|winner_selected|accepted|receipt|network|released`), `vmName`,
+`requesterDid`, `marketDid`, strongRefs `{uri, cid}` `payload|rfp|policy|bid|accept|receipt`,
+`winner {did, submitAccept?}`, `receiptOk`, `vmAddress` (relay FQDN or `iroh://` ticket), `bids`,
+`release {event, payload, ok, status?}`, `outcome`, `error` and `timestamps` keyed by contract phase.
+All optional, so every existing claim stays valid. None of it is secret: records are public repo
+records, `submitAccept`/`submitEventRef` are bidder endpoints. The door does not yet write the new
+fields; that is M2-CLAIM-RECEIPT.
+
+**Door layering.** The generated package is a `lib/common` leaf with no imports. The store's claim
+VIEW (`workspace`, `name`, `finalizers`, `spec`, `status`) is `NodeClaim` in
+`lib/abc/socialweb-computer-k8s`, beside `NodeClaimStore`, typed by the generated spec and status.
+`socialweb-computer-k8s-nodeclaim-kcp` parses every claim kcp serves with `parseNodeClaim` and runs
+`assertNodeClaimStatus` before every status PATCH, so a status kcp would prune or refuse never leaves
+the door.
+
 ### The XRPC surface
 
 How a user gets a kubeconfig. Seven procedures under `com.publicdomainrelay.temp.cluster.`:
@@ -3672,11 +3754,13 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   the clusterprovider into the CLUSTER'S OWN HOME workspace - the logical cluster `Ref.Home` the
   registry already derives - and listed by the door across `clusters/*` through the `clusters`
   APIExport's virtual workspace, which is why the resource is in `deploy/cluster-apiexport.yaml`,
-  schema `v1alpha1-1.nodeclaims.socialweb.computer`, applied by `deploy/install-provider.sh`. Its
+  schema `v1alpha1-2.nodeclaims.socialweb.computer` (was `v1alpha1-1` until M2-CODEGEN; see section 6,
+  "Generated from api/v1alpha1"), applied by `deploy/install-provider.sh`. Its
   spec is `cluster`, `nodeName`, `ownerDid`, `apiserverPort`, `advertiseAddress`, `tokenFile`,
   `nodePasswordFile`, `serverCAFile`, `denyBidderDids`; its status is `phase`
   (`Pending|Bidding|Provisioning|Joining|Running|Failed|Released`), `contract`
-  (`vmUri|rfpUri|acceptUri|receiptUri|receiptCid|submitEventRef`), `fqdn` and `message`. The Go side
+  (`vmUri|rfpUri|acceptUri|receiptUri|receiptCid|submitEventRef`, plus since v1alpha1-2 the requester's
+  whole `ContractState`), `fqdn` and `message`. The Go side
   writes spec and metadata and NEVER status: `setPhase` on the Go side, the door's `replaceStatus` on
   the other, and `kcpclient.WriteNodeClaimTo` patches an existing claim's spec only when it differs,
   so a live claim is not rewritten on every pass.
