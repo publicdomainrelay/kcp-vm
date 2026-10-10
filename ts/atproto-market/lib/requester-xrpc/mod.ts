@@ -58,7 +58,6 @@ import { createPolicyRegistry } from "@publicdomainrelay/policy-deno-typescript"
 import { GhaLiteExecutor } from "@publicdomainrelay/policy-engine-executor-gha-lite";
 import { TypescriptExecutor } from "@publicdomainrelay/policy-engine-executor-typescript";
 import { POLICY_GHA_LITE_NSID, POLICY_TYPESCRIPT_NSID, type PolicyResult } from "@publicdomainrelay/policy-engine-abc";
-import { Hono } from "hono";
 import {
   buildUserData,
   DUMBPIPE_VERSION_DEFAULT,
@@ -721,18 +720,21 @@ export function sshTunnelArgs(
 }
 
 /**
- * The default ProxyCommand for a guest transport target, chosen from the target
- * itself so one builder serves both transports: a target that contains a dot is
- * a hostname reachable through the websocket relay, so it keeps the websocat
- * ProxyCommand built from tunnelWsUrl; a target with no dot is an iroh ticket
- * (a dumbpipe EndpointTicket, lowercase letters and digits only), so the
+ * The default ProxyCommand for a guest transport address, chosen from the
+ * address itself so one builder serves both transports: an address that says
+ * `iroh://` carries the ticket the guest's own dumbpipe endpoint minted, so the
  * ProxyCommand is `dumbpipe connect <ticket>` -- one bidi stream, no local port
- * and no separate forwarder. dumbpipe comes from the provider's dumbpipePath
- * when one was supplied and from PATH otherwise.
+ * and no separate forwarder -- and anything else is a relay hostname, which
+ * keeps the websocat ProxyCommand built from tunnelWsUrl. dumbpipe comes from
+ * the provider's dumbpipePath when one was supplied and from PATH otherwise.
  */
+export const IROH_SCHEME = "iroh://";
+
 export function sshProxyCommandFor(target: string, dumbpipePath?: string): string {
-  if (target.includes(".")) return `websocat --binary ${tunnelWsUrl(target)}`;
-  return `${dumbpipePath ?? "dumbpipe"} connect ${target}`;
+  if (target.startsWith(IROH_SCHEME)) {
+    return `${dumbpipePath ?? "dumbpipe"} connect ${target.slice(IROH_SCHEME.length)}`;
+  }
+  return `websocat --binary ${tunnelWsUrl(target)}`;
 }
 
 export function createSshSessionProvider(
@@ -997,7 +999,6 @@ export async function ensureWebsocat(logger?: StructuredLoggerInterface): Promis
 export const DEFAULT_TRANSPORT_MODULE = "iroh";
 
 /** Path the guest POSTs its own iroh ticket to, on the requester's own serve. */
-export const IROH_TICKET_ROUTE = "/iroh-ticket";
 
 // ---------------------------------------------------------------------------
 // runComputeContract -- adapted from reference server.ts
@@ -1144,8 +1145,6 @@ export async function runComputeContract(
     logger ? logger.info(event, extra) : console.log(JSON.stringify({ event, ...extra }));
 
   const disposeCapabilities = async (): Promise<void> => {
-    // The contract is over: its ticket-report token must stop resolving.
-    irohTicketHandlers.clear();
     for (const cap of capabilities) {
       try {
         await cap.dispose?.();
@@ -1344,7 +1343,7 @@ export async function runComputeContract(
     vmFqdnReady.resolve(address);
     log("vm_fqdn_discovered", {
       fqdn: address,
-      kind: address.includes(".") ? "relay-fqdn" : "iroh-ticket",
+      kind: address.startsWith(IROH_SCHEME) ? "iroh-ticket" : "relay-fqdn",
       source,
     });
   };
@@ -1357,45 +1356,6 @@ export async function runComputeContract(
   // the ticket out of the guest, and the body carries the ticket alone -- no
   // key material, no provider path, no accept bundle.
   //
-  // The URL is our own relay ingress URL: "https://" plus the registered ingress
-  // host as the relay reports it (never a host or port we invent, never a
-  // loopback fallback), plus the token. The provisioning backend that stands up
-  // the guest maps that name to a guest-reachable address, substitutes a
-  // guest-reachable port and gives the guest's curl our CA; the cloud-init
-  // module writes no CA material of its own.
-  const irohTicketHandlers = new Map<string, (ticket: string) => void>();
-  const irohTicketApp = new Hono();
-  irohTicketApp.post(`${IROH_TICKET_ROUTE}/:token`, async (c) => {
-    const token = c.req.param("token");
-    const handler = irohTicketHandlers.get(token);
-    // Unknown and already-satisfied tokens answer identically, so a prober
-    // cannot learn whether a token ever existed.
-    if (!handler) return c.json({ ok: false }, 404);
-    const body = await c.req.json().catch(() => null) as { ticket?: unknown } | null;
-    const ticket = typeof body?.ticket === "string" ? body.ticket : "";
-    if (!ticket) return c.json({ ok: false }, 404);
-    irohTicketHandlers.delete(token);
-    handler(ticket);
-    return c.json({ ok: true });
-  });
-  let irohReportUrl: string | undefined;
-  if (transport === "iroh" && !skipSsh) {
-    const ingressHost = (pds.ingressHost || pds.relay.ingressHost || "").split(":")[0];
-    if (ingressHost.includes(".")) {
-      const bytes = new Uint8Array(16);
-      crypto.getRandomValues(bytes);
-      const token = Array.from(bytes, (x) => x.toString(16).padStart(2, "0")).join("");
-      irohTicketHandlers.set(token, (ticket) => resolveGuestAddress(ticket, "iroh-ticket-report"));
-      pds.serve.app.route("/", irohTicketApp as never);
-      irohReportUrl = `https://${ingressHost}${IROH_TICKET_ROUTE}/${token}`;
-      log("iroh_ticket_route_mounted", { url: irohReportUrl });
-    } else {
-      log("iroh_ticket_route_skipped", {
-        reason: "no publicly addressed ingress",
-        ingressHost,
-      });
-    }
-  }
   // Registered only once the receipt is known, because the receipt is what keys
   // this contract's events. Registering before it exists would need a keyless
   // slot, and several contracts share one requester.
@@ -1452,8 +1412,6 @@ export async function runComputeContract(
         // (e.g. the GitLab plugin's ConnectInfo identity) share the guest's
         // /root/.ssh/authorized_keys.
         sshAuthorizedKey: [ssh.publicKey, ...(opts.sshAuthorizedKeys ?? [])].join("\n"),
-        // iroh only: the absolute URL the guest POSTs its own ticket to.
-        irohReportUrl,
         ...capCtx,
       },
       base: ud?.base ?? opts.baseUserData,

@@ -64,8 +64,6 @@ export interface CloudInitContext {
   dnsFallbacks?: string[];
 
   // iroh transport
-  /** Absolute URL the guest POSTs its own iroh ticket to ({"ticket":"..."}). Omit to mint and store the ticket without announcing it. */
-  irohReportUrl?: string;
   /** Pinned dumbpipe release the iroh module installs. Default 0.39.0. */
   dumbpipeVersion?: string;
 }
@@ -993,20 +991,20 @@ export const DUMBPIPE_VERSION_DEFAULT = "0.39.0";
  * for iroh (outbound dials only; nothing here opens an inbound port) and the
  * wrapper forwards every bidi stream to 127.0.0.1:<targetPort>. Requires
  * ctx.sshAuthorizedKey; optional ctx.targetPort (default 22), ctx.hostAliases,
- * ctx.irohReportUrl, ctx.dumbpipeVersion (default 0.39.0).
+ * ctx.dumbpipeVersion (default 0.39.0).
  *
  * The ticket is minted by the guest, not read off it by the host: the wrapper
  * captures the `dumbpipe connect-tcp <ticket>` startup line from stderr, writes
- * the ticket to /run/guest-iroh-ticket (and /run/guest-fqdn, the rendezvous file
- * the on-network reporter reads) and, when irohReportUrl is set, a path unit
- * re-arms a reporter that POSTs {"ticket":"..."} outbound to it. IROH_SECRET is
- * generated once and persisted root-only so the endpoint id survives restarts.
+ * the ticket to /run/guest-iroh-ticket and, as `iroh://<ticket>`, to
+ * /run/guest-fqdn -- the rendezvous file the on-network reporter every transport
+ * already uses publishes to the market, so nothing about how a guest announces
+ * itself changes with the transport. IROH_SECRET is generated once and persisted
+ * root-only so the endpoint id survives restarts.
  */
 const irohModule: UserDataModule = (ctx) => {
   const targetPort = ctx.targetPort ?? 22;
   const dumbpipeVersion = ctx.dumbpipeVersion ?? DUMBPIPE_VERSION_DEFAULT;
   const aliases = (ctx.hostAliases ?? []).filter((a) => /^[\w.:-]+\s+[\w.-]+$/.test(a));
-  const reportUrl = ctx.irohReportUrl;
 
   const writeFiles: WriteFileEntry[] = [
     {
@@ -1109,9 +1107,9 @@ for _ in $(seq 1 300); do
 done
 
 if [ -n "\${TICKET}" ]; then
-  printf '%s\\n' "\${TICKET}" > "\${TICKET_FILE}"
+  printf 'iroh://%s\\n' "\${TICKET}" > "\${TICKET_FILE}"
   chmod 0600 "\${TICKET_FILE}"
-  printf '%s\\n' "\${TICKET}" > /run/guest-fqdn
+  printf 'iroh://%s\\n' "\${TICKET}" > /run/guest-fqdn
 fi
 
 wait "\${DUMBPIPE_PID}"
@@ -1144,87 +1142,6 @@ wait "\${DUMBPIPE_PID}"
     },
   ];
 
-  if (reportUrl) {
-    writeFiles.push(
-      {
-        path: "/usr/local/bin/report-iroh-ticket.sh",
-        owner: "root:root",
-        permissions: "0755",
-        content: `#!/bin/bash
-set -euo pipefail
-
-TICKET_FILE=/run/guest-iroh-ticket
-
-for _ in $(seq 1 90); do
-  if [ -s "\${TICKET_FILE}" ]; then
-    break
-  fi
-  sleep 1
-done
-[ -s "\${TICKET_FILE}" ] || { echo "no iroh ticket at \${TICKET_FILE}" >&2; exit 1; }
-
-TICKET="$(cat "\${TICKET_FILE}")"
-
-# Fail fast and loudly: a refused POST returns immediately, and a bounded
-# number of attempts with a hard curl timeout means a guest whose report can
-# never land exits non-zero in under two minutes instead of retrying for
-# minutes on end.
-for attempt in $(seq 1 10); do
-  if curl -sf --connect-timeout 5 --max-time 10 -X POST \\
-      -H 'Content-Type: application/json' \\
-      --data "{\\"ticket\\":\\"\${TICKET}\\"}" "${reportUrl}"; then
-    exit 0
-  fi
-  echo "iroh ticket report failed (attempt \${attempt}); retrying" >&2
-  sleep 2
-done
-
-echo "iroh ticket report never succeeded" >&2
-exit 1
-`,
-      },
-      {
-        path: "/etc/systemd/system/iroh-report.service",
-        owner: "root:root",
-        permissions: "0644",
-        content: [
-          "[Unit]",
-          "Description=Report the guest's iroh ticket to the requester",
-          "After=network-online.target iroh.service",
-          "Wants=network-online.target",
-          "",
-          "[Service]",
-          "Type=oneshot",
-          "User=root",
-          "ExecStart=/usr/local/bin/report-iroh-ticket.sh",
-          "StandardOutput=journal",
-          "StandardError=journal",
-          "",
-          "[Install]",
-          "WantedBy=multi-user.target",
-          "",
-        ].join("\n"),
-      },
-      {
-        path: "/etc/systemd/system/iroh-report.path",
-        owner: "root:root",
-        permissions: "0644",
-        content: [
-          "[Unit]",
-          "Description=Report the iroh ticket once the listener has minted it",
-          "",
-          "[Path]",
-          "PathExists=/run/guest-iroh-ticket",
-          "Unit=iroh-report.service",
-          "",
-          "[Install]",
-          "WantedBy=multi-user.target",
-          "",
-        ].join("\n"),
-      },
-    );
-  }
-
   return {
     apt: { preserve_sources_list: true },
     packages: ["openssh-server"],
@@ -1239,12 +1156,6 @@ exit 1
       "systemctl daemon-reload",
       "systemctl enable --now ssh || systemctl enable --now sshd",
       "systemctl enable --now iroh.service",
-      ...(reportUrl
-        ? [
-          "systemctl enable iroh-report.path",
-          "systemctl start --no-block iroh-report.path",
-        ]
-        : []),
     ],
   };
 };

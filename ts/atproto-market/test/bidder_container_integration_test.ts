@@ -367,7 +367,7 @@ Deno.test({
     assert(
       provisions.length > 0,
       `the accept path did not reach provision() within 240s, so this flow ends at the accept and ` +
-        `no guest was ever asked for. contractErr=${contractErr ? String(contractErr) : "none"}`,
+        `no guest was ever asked for`,
     );
     console.log(
       `[test] the accept path provisioned ${provisions[0].providerId} at ${provisions[0].ip}`,

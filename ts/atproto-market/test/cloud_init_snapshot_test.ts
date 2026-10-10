@@ -32,10 +32,21 @@ const CTX = {
   audHost: "relay.local",
 };
 
-function fixture(name: string): Promise<string> {
-  return Deno.readTextFile(
-    new URL(`./fixtures/cloud-init/${name}`, import.meta.url),
-  );
+// Fixtures are the composer's byte-stable output: a change to composed YAML is
+// expected to fail here first, and is accepted by rewriting the fixture it
+// changed rather than by loosening the comparison.
+const UPDATE = Deno.env.get("UPDATE_FIXTURES") === "1";
+
+async function fixture(name: string): Promise<string> {
+  return await Deno.readTextFile(new URL(`./fixtures/cloud-init/${name}`, import.meta.url));
+}
+
+async function snapshot(name: string, composed: string): Promise<void> {
+  if (UPDATE) {
+    await Deno.writeTextFile(new URL(`./fixtures/cloud-init/${name}`, import.meta.url), composed);
+    return;
+  }
+  assertEquals(composed, await fixture(name));
 }
 
 Deno.test("composer snapshots match fixtures", async () => {
@@ -218,16 +229,12 @@ Deno.test("injectJsrUrl adds JSR_URL env to tunnel unit", () => {
 
 const IROH_CTX = {
   ...CTX,
-  irohReportUrl: "https://relay.local/iroh/ticket",
   targetPort: 22,
   hostAliases: ["10.0.0.1 relay.internal"],
 };
 
 Deno.test("iroh module snapshot matches fixture", async () => {
-  assertEquals(
-    buildUserData({ ctx: IROH_CTX, modules: ["iroh"] }),
-    await fixture("iroh.yaml"),
-  );
+  await snapshot("iroh.yaml", buildUserData({ ctx: IROH_CTX, modules: ["iroh"] }));
 });
 
 Deno.test("iroh module semantics", () => {
@@ -237,15 +244,21 @@ Deno.test("iroh module semantics", () => {
   assert(y.includes("--host 127.0.0.1:22"), "listener forwards to the guest's own sshd");
   assert(y.includes("openssh-server"), "installs the sshd it configures");
   assert(!y.includes("ListenAddress"), "no ListenAddress line");
-  assert(y.includes("iroh-report.service"), "report unit written when irohReportUrl is set");
-  assert(y.includes(IROH_CTX.irohReportUrl), "reports to the configured URL");
-  assert(y.includes(`{\\"ticket\\":\\"\${TICKET}\\"}`), "posts a ticket body");
-
-  // Without irohReportUrl the guest still mints and stores its ticket.
-  const bare = buildUserData({ ctx: { vmName: CTX.vmName, sshAuthorizedKey: SSH }, modules: ["iroh"] });
-  assert(bare.includes("/run/guest-iroh-ticket"), "ticket file still written");
-  assert(!bare.includes("iroh-report.service"), "no reporter without irohReportUrl");
-  assert(!bare.includes("iroh-report.path"), "no report path unit without irohReportUrl");
+  // The guest announces itself the way every other transport does: it leaves its
+  // address in the rendezvous file the on-network reporter publishes to the
+  // market, and says which transport the address belongs to by its scheme. A
+  // reporting path of its own would be a second thing to keep working, and the
+  // one that exists already carries a hostname for the websocket transports.
+  assert(
+    y.includes(`/run/guest-fqdn`),
+    "leaves its address in the file the on-network reporter already publishes",
+  );
+  assert(
+    y.includes(`printf 'iroh://%s`),
+    "announces the ticket as an iroh address, so the scheme says which transport it is",
+  );
+  assert(!y.includes("iroh-report.service"), "no reporter unit of its own");
+  assert(!y.includes("iroh-report.path"), "no path unit of its own");
 });
 
 Deno.test("registry: built-ins present, unknown id throws", () => {
