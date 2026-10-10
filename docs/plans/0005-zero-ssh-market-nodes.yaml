@@ -565,7 +565,7 @@ items:
       holds; cordon, re-observe, uncordon and keep a node that took work or whose eviction is
       refused, evict through the Eviction API, then the existing teardownHeld. A DaemonSet is never
       intent or demand (its desired count follows the nodes).
-    status: doing
+    status: done
     evidence:
       - "deployed 2026-10-07 ~19:44Z (main 932b139 + 6af8994); idle cluster unchanged at 0 nodes; a live release awaits a bidder"
       - "fb4ca07 internal/scale: scale.Loads (per-node Busy/Evictable/Incoming, Unplaced), Decide's Release branch (State.NodeIdleSince, Decision.Release, scale.Releaser), DaemonSets and DaemonSet/mirror pods out of Intent and Demand"
@@ -578,7 +578,7 @@ items:
       - "not done: deployed; a live market cluster releasing a node one hold after its work moved off (ACC-ZERO)"
       - "'only nodes this provider process holds' now includes market nodes adopted after a provider restart (M3-NODE-LOSS provider restart half, 9ca4c04): TestAnAdoptedIdleNodeIsScaledIn"
       - 'live 2026-10-07T23:18:56Z: the cluster''s last node torn down ''nothing running for 2m0.03s, past the 2m0s hold''; tenant then lists no nodes, control plane up. Per-node scale-in with >1 node still owed (ACC-ZERO)'
-
+      - "live 2026-10-07T23:26:15Z with 2 market nodes and the workload cut to 1 replica at 23:23:43Z: node96 'held nothing beyond the baseline for the hold, so it is cordoned, drained and released' (evicted kube-system/coredns, metrics-server), its OpenBao role/policy/secret removed, VM released confirmed, Node removed 23:26:16.7Z; decision 'emptiest and newest of 1 such nodes'; node97 kept the workload"
   - id: M4-ESO-BESIDE
     milestone: M4
     title: ESO runs beside the control plane per cluster and is removed from the tenant
