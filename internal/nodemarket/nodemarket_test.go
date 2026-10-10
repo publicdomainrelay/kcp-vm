@@ -66,6 +66,18 @@ func (f *fakeClaims) ReadNodeClaim(_ context.Context, workspace, name string) (*
 	return &out, nil
 }
 
+func (f *fakeClaims) ListNodeClaims(_ context.Context, workspace string) ([]v1alpha1.NodeClaim, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := []v1alpha1.NodeClaim{}
+	for key, claim := range f.claims {
+		if strings.HasPrefix(key, workspace+"/") {
+			out = append(out, claim)
+		}
+	}
+	return out, nil
+}
+
 func (f *fakeClaims) DeleteNodeClaim(_ context.Context, workspace, name string) error {
 	f.mu.Lock()
 	f.deletes++

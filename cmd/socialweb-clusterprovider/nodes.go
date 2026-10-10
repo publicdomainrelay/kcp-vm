@@ -582,11 +582,37 @@ func (n *tenantNodes) nextOrdinal(ctx context.Context) (int, error) {
 			}
 		}
 	}
+	if n.opts.Claims != nil {
+		target, err := claimClusterFor(n.opts.Registry, n.cluster)(ctx)
+		if err != nil {
+			return 0, fmt.Errorf("clusterprovider: the home workspace of %s, which holds the claims "+
+				"that say which node names are already spent: %w", n.cluster, err)
+		}
+		claims, err := n.opts.Claims.ListNodeClaims(ctx, target.Workspace)
+		if err != nil {
+			return 0, fmt.Errorf("clusterprovider: listing the node claims already written in %s "+
+				"before naming the next node of %s: %w -- a read that failed is not a workspace with "+
+				"no claims, and a name whose claim has ended is a name whose next claim inherits the "+
+				"old one's last words; nothing was provisioned", target.Workspace, n.cluster, err)
+		}
+		for i := range claims {
+			if !endedClaimPhase(claims[i].Status.Phase) {
+				continue
+			}
+			if ordinal, ok := nodeOrdinalInName(prefix, claims[i].Name); ok {
+				present[ordinal] = true
+			}
+		}
+	}
 	for ordinal := 1; ; ordinal++ {
 		if !present[ordinal] {
 			return ordinal, nil
 		}
 	}
+}
+
+func endedClaimPhase(phase v1alpha1.NodeClaimPhase) bool {
+	return phase == v1alpha1.NodeClaimFailed || phase == v1alpha1.NodeClaimReleased
 }
 
 func (n *tenantNodes) confirmJoined(ctx context.Context, host nodeHost, name string) error {

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -53,6 +54,18 @@ func (c *marketClaims) ReadNodeClaim(_ context.Context, workspace, name string) 
 	}
 	out := claim
 	return &out, nil
+}
+
+func (c *marketClaims) ListNodeClaims(_ context.Context, workspace string) ([]v1alpha1.NodeClaim, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := []v1alpha1.NodeClaim{}
+	for key, claim := range c.claims {
+		if strings.HasPrefix(key, workspace+"/") {
+			out = append(out, claim)
+		}
+	}
+	return out, nil
 }
 
 func (c *marketClaims) DeleteNodeClaim(_ context.Context, workspace, name string) error {
@@ -565,4 +578,64 @@ func TestAGuestSubstrateCountsNoNodeInFlight(t *testing.T) {
 			"counting it holds the scale decision off a node that is never coming, and it is exactly "+
 			"the count the market substrate needs and this one must not have", got)
 	}
+}
+
+func TestANodeNameWhoseClaimHasEndedIsNotClaimedAgain(t *testing.T) {
+	claims := &marketClaims{}
+	tenant, client := intentTenant(t)
+	for _, name := range []string{"work-b"} {
+		if _, err := client.CoreV1().Pods("default").Create(context.Background(), &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
+			Status:     corev1.PodStatus{Phase: corev1.PodRunning},
+		}, metav1.CreateOptions{}); err != nil {
+			t.Fatalf("seeding the pod %s: %v", name, err)
+		}
+	}
+	key := clusterKey(t, "liveweb")
+	ended := testHomePrefix + "liveweb/" + key + "-node2"
+	claims.claims = map[string]v1alpha1.NodeClaim{
+		ended: {
+			ObjectMeta: metav1.ObjectMeta{Name: key + "-node2"},
+			Status: v1alpha1.NodeClaimStatus{
+				Phase:   v1alpha1.NodeClaimFailed,
+				Message: "the door restarted and released this node's VM; a new node will be requested",
+			},
+		},
+	}
+	hosts, err := newNodeHosts(marketOptions(t, claims, tenant))
+	if err != nil {
+		t.Fatalf("newNodeHosts: %v", err)
+	}
+	ctx := context.Background()
+	nodes, err := hosts.forCluster(key)
+	if err != nil {
+		t.Fatalf("forCluster: %v", err)
+	}
+	if err := nodes.Provision(ctx); err != nil {
+		t.Fatalf("first provision: %v", err)
+	}
+	if err := nodes.Provision(ctx); err != nil {
+		t.Fatalf("second provision: %v", err)
+	}
+	if claim, ok := claims.claims[ended]; !ok || claim.Status.Phase != v1alpha1.NodeClaimFailed {
+		t.Fatal("the test's own ended claim was overwritten, so nothing here says what a second " +
+			"provision does with a spent name")
+	}
+	if _, ok := claims.claims[testHomePrefix+"liveweb/"+key+"-node3"]; !ok {
+		t.Fatalf("the second provision did not name node3, so it asked the market for a name whose "+
+			"claim has already ended. MEASURED in production on 2026-10-06: a node claimed 2 s after "+
+			"it was written was torn down on the next pass, because WriteNodeClaimTo never touches "+
+			"status and a claim whose SPEC matches is left exactly as it was -- Failed, with the door's "+
+			"old words still on it -- so the provider read its own fresh claim as a failure. The names "+
+			"in the workspace were: %v", keysOf(claims.claims))
+	}
+}
+
+func keysOf(m map[string]v1alpha1.NodeClaim) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }

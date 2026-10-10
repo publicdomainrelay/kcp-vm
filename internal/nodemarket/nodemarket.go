@@ -23,6 +23,8 @@ type Claims interface {
 	ReadNodeClaim(ctx context.Context, logicalCluster, name string) (*v1alpha1.NodeClaim, error)
 
 	DeleteNodeClaim(ctx context.Context, logicalCluster, name string) error
+
+	ListNodeClaims(ctx context.Context, logicalCluster string) ([]v1alpha1.NodeClaim, error)
 }
 
 type Cluster struct {
