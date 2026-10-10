@@ -37,6 +37,7 @@ import { createPlcDirectoryClient } from "@publicdomainrelay/did-plc";
 import { createMarketBidder } from "@publicdomainrelay/market-bidder";
 import { createComputeProviderHooks } from "@publicdomainrelay/market-bidder-compute";
 import { createLocalComputeProvider } from "@publicdomainrelay/compute-provider-local";
+import { createOidcProvisioningEnricher } from "@publicdomainrelay/oidc-issuer-hono";
 import type { ComputeAtproto } from "@publicdomainrelay/compute-provider-abc";
 import type { ContainerBackend } from "@publicdomainrelay/container-backend-abc";
 import { createContainerBackend } from "@publicdomainrelay/container-backend-container";
@@ -239,29 +240,54 @@ Deno.test({
 
     // local compute provider (container mode): the CA and the guest-reachable
     // TLS port are what let the guest's curl trust the dispatcher cert and
-    // reach the requester's ticket-report route at a portless *.localhost URL.
+    // reach the bidder's report route at a portless *.localhost URL. The OIDC
+    // provisioning enricher is what composes the guest's on-network reporter --
+    // guest-onnetwork.service, which publishes /run/guest-fqdn, the file the
+    // iroh module leaves the ticket in -- the way every other provider
+    // configuration does. The accept-to-receipt map is shared with the bidder
+    // so the reporter's accept ref resolves to this contract's receipt.
     const providerRelay = await makeRelay();
     const providerServe = createServe({ logger, relays: [providerRelay] });
     const provisions: Array<{ providerId: string | number; ip: unknown; mode: unknown }> = [];
     const provisionFailures: unknown[] = [];
+    const issuerUrl = () => didWebToHttps(providerRelay.ingressRef);
+    const acceptToContract = new Map<
+      string,
+      { receiptKey: string; receiptUri: string; receiptCid: string; submitEventUrl?: string }
+    >();
     const local = createLocalComputeProvider({
       logger,
       atproto: atproto as unknown as ComputeAtproto,
       serve: providerServe,
-      getIssuerUrl: () => didWebToHttps(providerRelay.ingressRef),
+      getIssuerUrl: issuerUrl,
+      oidcProvisioner: createOidcProvisioningEnricher(issuerUrl),
       containerMode: "container",
+      ingressProxyHost,
+      caCertPem,
+      guestTlsPort: dispTlsPort,
+      createSignedRepoRecord: atproto.createSignedRepoRecord.bind(atproto),
+      callService: atproto.callService.bind(atproto),
+      acceptToContract,
     });
     const provider = createComputeProviderHooks({
-      provider: createLocalComputeProvider({
-        logger,
-        atproto: atproto as unknown as ComputeAtproto,
-        serve: providerServe,
-        getIssuerUrl: () => didWebToHttps(providerRelay.ingressRef),
-        containerMode: "container",
-        ingressProxyHost,
-        caCertPem,
-        guestTlsPort: dispTlsPort,
-      }),
+      provider: {
+        ...local,
+        async provision(vm, requesterDid, spec) {
+          try {
+            const result = await local.provision(vm, requesterDid, spec);
+            const metadata = result.metadata as Record<string, unknown>;
+            provisions.push({
+              providerId: result.providerId,
+              ip: metadata?.ip,
+              mode: metadata?.mode,
+            });
+            return result;
+          } catch (err) {
+            provisionFailures.push(err);
+            throw err;
+          }
+        },
+      },
     });
     await providerServe.beginServe();
     cleanups.push(() => providerServe.shutdown());
@@ -272,6 +298,7 @@ Deno.test({
       atproto,
       providers: [provider],
       relay: bidderRelay,
+      acceptToContract,
       serve: createServe({ logger, tcp: { addr: "127.0.0.1", port: 0 }, relays: [bidderRelay] }),
     });
     await bidder.beginServe();
@@ -335,7 +362,9 @@ Deno.test({
         JSON.stringify(logEvents.map((e) => e.event))
       }`,
     );
-    const ticket = String(ticketEvent!.data.fqdn);
+    // The reported address carries the scheme that says which transport it
+    // belongs to; dumbpipe is handed the ticket alone (sshProxyCommandFor).
+    const ticket = String(ticketEvent!.data.fqdn).replace(/^iroh:\/\//, "");
 
     // -- the session went over the iroh transport, not the websocket relay --
     assert(result.sshReady === true, "the guest should become reachable over iroh");
