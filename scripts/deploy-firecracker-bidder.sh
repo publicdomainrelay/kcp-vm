@@ -64,7 +64,8 @@ BUILD_HOST_HOME="${HOME}"
 SSH_TARGET="${SSH_TARGET:-root@socialweb.computer}"
 SSH_PORT="${SSH_PORT:-1997}"
 SSH_KEY="${SSH_KEY:-${HOME}/.ssh/id_ed25519_no_password}"
-SSH_OPTS="-o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -o BatchMode=yes -o IdentitiesOnly=yes"
+SSH_CONTROL_DIR="${SSH_CONTROL_DIR:-${HOME}/.ssh}"
+SSH_OPTS="-o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 -o BatchMode=yes -o IdentitiesOnly=yes -o ControlMaster=auto -o ControlPath=${SSH_CONTROL_DIR}/cm-swc-%r@%h:%p -o ControlPersist=10m -o ServerAliveInterval=15"
 
 # ── Service ───────────────────────────────────────────────────────────────────
 SERVICE_NAME="${SERVICE_NAME:-socialweb-computer-bidder-firecracker}"
@@ -316,7 +317,7 @@ LOCAL_RUNNER_ID=""
 if ${DRY_RUN}; then
   LOCAL_RUNNER_ID="<current image id>"
 elif docker image inspect "${RUNNER_IMAGE}" >/dev/null 2>&1; then
-  LOCAL_RUNNER_ID="$(docker image inspect --format '{{.Id}}' "${RUNNER_IMAGE}")"
+  LOCAL_RUNNER_ID="$(docker image inspect --format '{{json .RootFS.Layers}}' "${RUNNER_IMAGE}")"
 else
   echo "the runner image ${RUNNER_IMAGE} is not present here. Build it with:" >&2
   echo "  cd ${ORG_ROOT}/hono-compute-provider && deno task build:firecracker-runner" >&2
@@ -540,12 +541,12 @@ REMOTE
 
 say "shipping the runner image"
 if ! ${DRY_RUN}; then
-  if ! remote "docker image inspect --format '{{.Id}}' '${RUNNER_IMAGE}'" 2>/dev/null \
-      | grep -qx "${LOCAL_RUNNER_ID}"; then
+  if ! remote "docker image inspect --format '{{json .RootFS.Layers}}' '${RUNNER_IMAGE}'" 2>/dev/null \
+      | grep -qxF "${LOCAL_RUNNER_ID}"; then
     docker save "${RUNNER_IMAGE}" \
       | ssh ${SSH_OPTS} -i "${SSH_KEY}" -p "${SSH_PORT}" "${SSH_TARGET}" "docker load"
-    remote "docker image inspect --format '{{.Id}}' '${RUNNER_IMAGE}'" \
-      | grep -qx "${LOCAL_RUNNER_ID}"
+    remote "docker image inspect --format '{{json .RootFS.Layers}}' '${RUNNER_IMAGE}'" \
+      | grep -qxF "${LOCAL_RUNNER_ID}"
     echo "runner image ${RUNNER_IMAGE} loaded"
   else
     echo "runner image ${RUNNER_IMAGE} already current"
