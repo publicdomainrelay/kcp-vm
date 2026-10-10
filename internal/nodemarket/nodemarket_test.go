@@ -334,36 +334,6 @@ func TestAFailedClaimIsNotConfirmedAsJoined(t *testing.T) {
 	}
 }
 
-func TestInFlightCountsEveryClaimShortOfRunning(t *testing.T) {
-	claims := &fakeClaims{}
-	host, err := New(testOptions(t, claims))
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	ctx := context.Background()
-	if host.InFlight(ctx) {
-		t.Fatal("a claim that was never written was counted as in flight")
-	}
-	if err := host.Provision(ctx); err != nil {
-		t.Fatalf("Provision: %v", err)
-	}
-	for _, phase := range []v1alpha1.NodeClaimPhase{
-		v1alpha1.NodeClaimPending, v1alpha1.NodeClaimBidding, v1alpha1.NodeClaimProvisioning,
-		v1alpha1.NodeClaimJoining,
-	} {
-		claims.setPhase(testWorkspace, testNodeName, phase, "")
-		if !host.InFlight(ctx) {
-			t.Fatalf("a claim at %q was not counted in flight, so a scale pass would ask for "+
-				"another node on every tick while this one is still coming up", phase)
-		}
-	}
-	claims.setPhase(testWorkspace, testNodeName, v1alpha1.NodeClaimRunning, "")
-	if host.InFlight(ctx) {
-		t.Fatal("a Running claim was counted in flight: the node it names is in its cluster's own " +
-			"node list, and counting it twice makes the decision read two nodes for one")
-	}
-}
-
 func TestTeardownClosesTheClaimAndWaitsForTheDoorToDestroyTheMachine(t *testing.T) {
 	claims := &fakeClaims{}
 	opts := testOptions(t, claims)

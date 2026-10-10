@@ -3657,20 +3657,23 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   `SOCIALWEB_CLUSTERPROVIDER_ADVERTISE_ADDRESS` is refused under this substrate, and so are the VMM
   binaries, `NODE_AGENT`, the image settings and `NETWORK=pasta`: none of them can be in force here,
   and an operator who set one and saw no complaint would believe it was carrying it. **(b)** The node
-  count a scale pass OBSERVES now includes the claims it has in flight - held hosts whose claim is not
-  yet `Running` - because a market node is absent from its tenant cluster's node list for minutes
-  while the pass runs every 2 s, and without that the decision reads zero nodes and asks again on
-  every tick. `internal/scale.Decide` is unchanged; the counting happens in the observe closure
-  `cmd/socialweb-clusterprovider/main.go` hands `scaledriver`, and only substrates that implement
-  `InFlight` contribute, so a guest's count is exactly what it was. **(c)** The startup sweep
+  count a scale pass OBSERVES now includes every node this clusterprovider HOLDS whose own cluster
+  does not yet list it - because a market node is absent from its tenant cluster's node list for
+  minutes while the pass runs every 2 s, and without that the decision reads zero nodes and asks
+  again on every tick. `internal/scale.Decide` is unchanged; the counting happens in the observe
+  closure `cmd/socialweb-clusterprovider/main.go` hands `scaledriver`. This was first written as
+  "held hosts whose claim is not yet `Running`", keyed on the claim's phase, and that predicate was
+  itself the defect closed as MARKET-4: the door writes `Running` when the node's agent reaches the
+  apiserver through the forward, which is a moment BEFORE the Node object appears in the cluster's
+  node list, so a claim in that gap was in no list at all. The predicate is now the tenant cluster's
+  own node list, and it is the only list that can be. **(c)** The startup sweep
   (`sweepNodeRecords`) skips the walk under this substrate with a logged decision, because a market
   node's machine is not a process on this host and no identity can be derived for it; what that leaves
   open is `NEXT.yaml` MARKET-1.
 
   The instrument is `go test ./...`. New: `internal/nodemarket` (the claim's fields and paths
   survive `Provision`; a second `Provision` leaves one claim; `ConfirmJoined` refuses anything short
-  of `Running` and carries the door's message for `Failed`; `InFlight` counts every phase short of
-  `Running` and nothing else; a teardown the door never releases is a FAILURE and one it does is not;
+  of `Running` and carries the door's message for `Failed`; a teardown the door never releases is a FAILURE and one it does is not;
   a failed read during a release is not a claim that is gone), `internal/kcpclient` (the claim is
   created in the home workspace with the door's exact field names, is not rewritten when its spec
   matches, is patched when it does not and never through `/status`, and an absent claim decodes to
@@ -3678,8 +3681,10 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   (the market advertise invariant, and that it rejects loopback, the unspecified address and every
   address this host carries), `internal/clusterstack` (a stack cannot carry both dials), and
   `cmd/socialweb-clusterprovider` (the market substrate builds with no VMM, agent, image, pasta or
-  `/dev/kvm`; two scale passes over a `Pending` claim ask for exactly ONE node; a `Pending` claim is
-  counted in flight and a `Running` one is not; the teardown issues exactly one claim delete; the
+  `/dev/kvm`; two scale passes over a `Pending` claim ask for exactly ONE node; a claim is counted
+  until its own cluster's node list names it and not one moment earlier; a second pass over claims
+  that have all reached `Running` with none of their nodes listed rents nothing; the teardown issues
+  exactly one claim delete; the
   sweep is a no-op; and the market join needs nothing but its own advertise address).
   `internal/scale`, the four-step proof and the live GitLab tests are untouched and still use
   firecracker.
@@ -3833,6 +3838,48 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   three running pods and one pass, watched to fail against the old `nextOrdinal` with `one pass that
   needs three nodes left 1 claims, want three`, and green with the change, where three distinct claims
   exist and a second pass writes nothing. `NEXT.yaml` MARKET-3.
+
+- **A market cluster rented 15 machines for a target of 10, because a claim that had reached
+  `Running` was counted in no list at all until its k3s agent registered. CLOSED, and the count is
+  now the tenant cluster's own node list.** The count a pass observed was `tenant Nodes +
+  inFlight`, and `inFlight` was keyed on the CLAIM's phase: `nodemarket.Host.InFlight` returned
+  `claim.Status.Phase != Running`. That predicate has a hole with a duration in it. The door writes
+  `Running` from `onForwarded`
+  (`socialweb-computer-k8s/lib/socialweb-computer-k8s-node-market/mod.ts:214`, "the node's agent
+  reached its apiserver"), which fires when the guest's k3s agent completes its first forwarded TCP
+  connection through the door to the apiserver - and the Node object it is registering appears in
+  the CLUSTER's node list only after that connection is served. Between those two moments the node
+  exists and is paid for, is absent from the tenant node list because k3s has not registered it yet,
+  and has stopped being counted as in flight because its claim says `Running`. It is in neither half
+  of the sum, so the sum reads one node too few for as long as the gap lasts. One node too few would
+  be harmless. What makes it a defect is that claims cross that gap TOGETHER: a batch of guests
+  booted by one pass reaches `Running` within seconds of each other, so the whole batch leaves the
+  count at once, the pass reads a count far below the target that is really out there, and it rents
+  the difference again.
+  MEASURED in production on `root@socialweb.computer` (ssh port 1997) on 2026-10-06, five GitLab
+  jobs admitted at once with `SCALE_MAX_NODES=10` and `SCALE_PODS_PER_NODE=1`: the node count read
+  `1 -> 5 -> 6 -> 7 -> 8 -> 15` and settled on `scaledriver: no change action=None nodes=15 ...` -
+  15 Ready nodes named `node3` to `node17` for a ceiling of 10 - while all five jobs went `success`
+  on five distinct nodes and both bidders carried the 18 VMs with no resource refusal. The claims
+  that had already reached `Running` with none of their Nodes in the tenant list were the whole of
+  the gap. The fix removes the phase from the count entirely: `tenantNodes.inFlight` lists the
+  tenant cluster's Nodes once per pass and counts every node it HOLDS whose name is not in that
+  list, so the sum is `tenant Nodes + held claims the tenant does not name`, which cannot
+  double-count and cannot lose a moment. `internal/nodemarket.Host.InFlight` and the
+  `inFlightReporter` seam are deleted rather than corrected, because the shop that could answer the
+  question moved: a host knows its claim's phase, and only the cluster knows what it has registered.
+  A read that fails counts every held node, the conservative direction, and says so in a warning;
+  the previous behaviour on a failed read was the same. `tenantNodes.client`'s error text lost its
+  teardown-specific wording, since the count now calls it too, and `Teardown` carries that wording
+  itself.
+  The instrument is `go test ./cmd/socialweb-clusterprovider/ -count=1`. Two tests, both watched to
+  fail against the old predicate by restoring it in place and running them:
+  `TestAMarketNodeIsCountedUntilItsOwnClusterListsIt` records `a claim that reached Running while
+  its cluster still did not list the node counted 0 nodes in flight, want 1`, and
+  `TestASecondPassRentsNothingWhileTheFirstNodesAreStillJoining` - the regression itself - records
+  `a second pass over three claims that had all reached Running and whose nodes the cluster did not
+  list yet left 6 claims, want three`, the doubling, on three claims instead of the production five.
+  Both are green with the change. `NEXT.yaml` MARKET-4.
 
 ## 16. Vocabulary
 

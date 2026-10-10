@@ -243,22 +243,6 @@ func (h *Host) Fatal() string {
 	return failedMessage(claim)
 }
 
-func (h *Host) InFlight(ctx context.Context) bool {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	claim, err := h.read(ctx)
-	if err != nil {
-		h.log().Warn("nodemarket: a claim could not be read while counting the nodes this cluster "+
-			"has in flight, so it is counted as in flight",
-			"cluster", h.opts.Cluster, "node", h.opts.NodeName, "error", err.Error())
-		return true
-	}
-	if claim == nil {
-		return false
-	}
-	return claim.Status.Phase != v1alpha1.NodeClaimRunning
-}
-
 func (h *Host) Teardown(ctx context.Context) error {
 	return h.release(ctx)
 }

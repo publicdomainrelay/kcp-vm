@@ -50,6 +50,13 @@ about: >
   It is in section 15 with its readings, including the production log cadence, the claim and node
   counts before the change, and the test watched to fail against the old ordinal.
 
+  Opened and closed on 2026-10-07 and therefore NOT listed below: MARKET-4 (a market node was counted
+  in flight while its claim fell short of Running and not after, so a claim that had reached Running
+  with its k3s agent not yet registered was in NEITHER half of the count: the pass read zero and
+  rented the whole target again - 15 machines for a ceiling of 10). The count is now the tenant
+  cluster's own node list. It is in section 15 with its readings, including the production node
+  count and the two tests watched to fail against the old predicate.
+
 open:
   - id: MINT-1
     title: A mint credential is named by the cluster's key, and the migration that renames an existing one runs in a different process from the reader.

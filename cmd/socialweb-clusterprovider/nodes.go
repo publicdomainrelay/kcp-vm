@@ -371,10 +371,6 @@ type guestWatcher interface {
 	Fatal() string
 }
 
-type inFlightReporter interface {
-	InFlight(ctx context.Context) bool
-}
-
 func guestFatal(host nodeHost) string {
 	watcher, ok := host.(guestWatcher)
 	if !ok {
@@ -629,7 +625,9 @@ func (n *tenantNodes) confirmJoined(ctx context.Context, host nodeHost, name str
 
 func (n *tenantNodes) Teardown(ctx context.Context) error {
 	if _, err := n.client(ctx); err != nil {
-		return err
+		return fmt.Errorf("clusterprovider: the tenant client for %s, which every teardown of its "+
+			"nodes needs before it stops anything -- stopping an agent first would leave a node with "+
+			"no process behind a Node object nothing here can delete: %w", n.cluster, err)
 	}
 	n.mu.Lock()
 	held := n.heldNodesLocked()
@@ -687,14 +685,43 @@ func (n *tenantNodes) inFlight(ctx context.Context) int {
 	n.mu.Lock()
 	held := n.heldNodesLocked()
 	n.mu.Unlock()
+	if len(held) == 0 {
+		return 0
+	}
+	reported, err := n.reportedNodeNames(ctx)
+	if err != nil {
+		n.log.Warn("clusterprovider: the tenant cluster's node list could not be read while counting "+
+			"the nodes this one has in flight, so every node held here is counted as in flight. "+
+			"Counting a node that has already joined costs one pass of a slower scale-up; counting "+
+			"a node that has not joined is what rents a machine nobody asked for, and the next pass "+
+			"reads the list again",
+			"cluster", n.cluster, "held", len(held), "error", err.Error())
+		return len(held)
+	}
 	count := 0
 	for _, node := range held {
-		reporter, ok := node.host.(inFlightReporter)
-		if ok && reporter.InFlight(ctx) {
+		if !reported[node.name] {
 			count++
 		}
 	}
 	return count
+}
+
+func (n *tenantNodes) reportedNodeNames(ctx context.Context) (map[string]bool, error) {
+	client, err := n.client(ctx)
+	if err != nil {
+		return nil, err
+	}
+	list, err := client.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("clusterprovider: listing the nodes of %s, which is what says which "+
+			"of the nodes held here its k3s agent has already registered: %w", n.cluster, err)
+	}
+	out := make(map[string]bool, len(list.Items))
+	for i := range list.Items {
+		out[list.Items[i].Name] = true
+	}
+	return out, nil
 }
 
 func (n *tenantNodes) heldNodesLocked() []heldNode {
@@ -719,9 +746,7 @@ func (n *tenantNodes) client(ctx context.Context) (kubernetes.Interface, error) 
 	}
 	client, err := n.tenant(ctx, n.cluster)
 	if err != nil {
-		return nil, fmt.Errorf("clusterprovider: the tenant client for %s, which the teardown of "+
-			"node %s needs before it stops anything -- stopping the agent first would leave a node "+
-			"with no process behind a Node object nothing here can delete: %w", n.cluster, n.nodeName, err)
+		return nil, fmt.Errorf("clusterprovider: the tenant client for %s: %w", n.cluster, err)
 	}
 	if client == nil {
 		return nil, errNoTenantClient

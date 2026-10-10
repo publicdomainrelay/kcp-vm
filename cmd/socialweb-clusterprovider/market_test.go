@@ -308,32 +308,104 @@ func TestOneScalePassClaimsEveryNodeTheTargetNeeds(t *testing.T) {
 	}
 }
 
-func TestAMarketNodeIsCountedUntilTheDoorReportsItRunning(t *testing.T) {
+func TestAMarketNodeIsCountedUntilItsOwnClusterListsIt(t *testing.T) {
 	claims := &marketClaims{}
-	tenant, _ := tenantClientFor(t)
+	tenant, client := intentTenant(t)
 	hosts, err := newNodeHosts(marketOptions(t, claims, tenant))
 	if err != nil {
 		t.Fatalf("newNodeHosts: %v", err)
 	}
 	ctx := context.Background()
-	if got := hosts.inFlight(ctx, clusterKey(t, "liveweb")); got != 0 {
+	key := clusterKey(t, "liveweb")
+	nodeName := key + "-node1"
+	if got := hosts.inFlight(ctx, key); got != 0 {
 		t.Fatalf("a cluster with no node host counted %d nodes in flight", got)
 	}
-	nodes, err := hosts.forCluster(clusterKey(t, "liveweb"))
+	nodes, err := hosts.forCluster(key)
 	if err != nil {
 		t.Fatalf("forCluster: %v", err)
 	}
 	if err := nodes.Provision(ctx); err != nil {
 		t.Fatalf("Provision: %v", err)
 	}
-	if got := hosts.inFlight(ctx, clusterKey(t, "liveweb")); got != 1 {
-		t.Fatalf("a claim still Pending counted %d nodes in flight, want 1", got)
+	if got := hosts.inFlight(ctx, key); got != 1 {
+		t.Fatalf("a claim still Pending counted %d nodes in flight, want 1: the cluster's own node "+
+			"list does not name it, so nothing else counts it and a pass would ask for another node "+
+			"on every tick while this one is still coming up", got)
 	}
-	claims.setPhase(testHomePrefix+"liveweb", clusterKey(t, "liveweb")+"-node1", v1alpha1.NodeClaimRunning)
-	if got := hosts.inFlight(ctx, clusterKey(t, "liveweb")); got != 0 {
-		t.Fatalf("a Running claim counted %d nodes in flight, want 0: the node it names is in its "+
-			"cluster's own node list, and counting it twice makes a decision read two nodes for one",
+	claims.setPhase(testHomePrefix+"liveweb", nodeName, v1alpha1.NodeClaimRunning)
+	if got := hosts.inFlight(ctx, key); got != 1 {
+		t.Fatalf("a claim that reached Running while its cluster still did not list the node "+
+			"counted %d nodes in flight, want 1. The door writes Running when the node's agent "+
+			"reaches the apiserver through the forward, and the Node object appears in the "+
+			"cluster's own node list after that: they are two moments, and a count that ends at the "+
+			"first one names a node in NEITHER list for the seconds between them, so every claim "+
+			"that crosses together reads as zero nodes and the pass rents a whole second set",
 			got)
+	}
+	if _, err := client.CoreV1().Nodes().Create(ctx, &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: nodeName},
+	}, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("seeding the Node the cluster registers once the agent has joined: %v", err)
+	}
+	if got := hosts.inFlight(ctx, key); got != 0 {
+		t.Fatalf("a claim whose node the cluster lists counted %d nodes in flight, want 0: the "+
+			"tenant node list already counts it, and counting it twice makes a decision read two "+
+			"nodes for one", got)
+	}
+}
+
+func TestASecondPassRentsNothingWhileTheFirstNodesAreStillJoining(t *testing.T) {
+	claims := &marketClaims{}
+	tenant, client := intentTenant(t)
+	for _, name := range []string{"work-b", "work-c"} {
+		if _, err := client.CoreV1().Pods("default").Create(context.Background(), &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
+			Status:     corev1.PodStatus{Phase: corev1.PodRunning},
+		}, metav1.CreateOptions{}); err != nil {
+			t.Fatalf("seeding the pod %s the scale decision reads as intent: %v", name, err)
+		}
+	}
+	hosts, err := newNodeHosts(marketOptions(t, claims, tenant))
+	if err != nil {
+		t.Fatalf("newNodeHosts: %v", err)
+	}
+	observer := clusterprovider.NodeObserver{Client: tenant}
+	driver, err := scaledriver.New(hosts.forCluster, scaledriver.Options{
+		Observe: func(ctx context.Context, cluster string) (scale.Observation, int, error) {
+			observed, nodes, err := observer.Observe(ctx, cluster)
+			if err != nil {
+				return observed, nodes, err
+			}
+			return observed, nodes + hosts.inFlight(ctx, cluster), nil
+		},
+		Scale: scale.Options{MaxNodes: 3, PodsPerNode: 1},
+		Log:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err != nil {
+		t.Fatalf("scaledriver.New: %v", err)
+	}
+	ctx := context.Background()
+	key := clusterKey(t, "liveweb")
+	if _, err := driver.RunPass(ctx, key); err != nil {
+		t.Fatalf("first scale pass: %v", err)
+	}
+	if got := claims.held(); got != 3 {
+		t.Fatalf("the first pass left %d claims, want three", got)
+	}
+	for _, suffix := range []string{"-node1", "-node2", "-node3"} {
+		claims.setPhase(testHomePrefix+"liveweb", key+suffix, v1alpha1.NodeClaimRunning)
+	}
+	if _, err := driver.RunPass(ctx, key); err != nil {
+		t.Fatalf("second scale pass: %v", err)
+	}
+	if got := claims.held(); got != 3 {
+		t.Fatalf("a second pass over three claims that had all reached Running and whose nodes the "+
+			"cluster did not list yet left %d claims, want three. MEASURED in production on "+
+			"2026-10-06: the count reached 15 for a target of 10, because a claim that has reached "+
+			"Running is in no list at all until its k3s agent registers -- the claim's own phase has "+
+			"stopped counting it and the tenant node list does not name it yet -- so the pass read "+
+			"zero nodes and rented the whole target again", got)
 	}
 }
 
