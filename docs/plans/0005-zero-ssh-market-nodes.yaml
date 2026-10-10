@@ -1,0 +1,256 @@
+plan: 0005-zero-ssh-market-nodes
+written: 2026-10-07
+source: >
+  Decided with the user on 2026-10-07 in a question-by-question session after prod was found pinned
+  at six market nodes for 7.5 idle hours. goal.txt carries the same content in compressed form.
+state_rules:
+  - This file is the only state. Every step updates status and evidence.
+  - status is one of todo, doing, done, blocked.
+  - An item is done only when its evidence is recorded (commit SHAs, test names watched to fail and
+    then pass, prod or GitLab readings with UTC timestamps).
+  - Open items are mirrored in NEXT.yaml.
+  - A decision marked "decided by Claude, user may veto" was not confirmed by the user.
+ownership:
+  owned: >
+    All code in socialweb-computer-kcp, the prod deployment on socialweb.computer, the vendored
+    deno-kcp test bed, and the atproto-market requester libraries.
+  not_owned: >
+    The market protocol records and lexicons, and the core architecture: kcp in front of
+    k3s --disable-agent clusters at zero nodes, with nodes only ever born through
+    requester -> RFP -> bid -> accept -> cloud-init user_data. Changes there are asked first.
+acceptance:
+  where: >
+    Our GitLab (inspect git log -p docs/gitlab/, ssh gitlab, $GITLAB_TOKEN, chrome devtools MCP for
+    the OAuth flow) running against a cluster created through the SPA on prod.
+  checks:
+    - id: ACC-ZERO
+      text: An idle cluster sits at 0 nodes; a pipeline scales it up; nodes scale in one by one and it returns to 0 with the control plane Ready.
+      status: todo
+      evidence: []
+    - id: ACC-MESH
+      text: A pod on node A reaches a pod on node B, and DNS resolves on a node that does not run CoreDNS.
+      status: todo
+      evidence: []
+    - id: ACC-NOSSH
+      text: Logs show zero ssh sessions to any guest for the whole run.
+      status: todo
+      evidence: []
+items:
+  - id: M0-BASELINE
+    milestone: M0
+    title: Measured baseline delta so a cluster holding only our stuff reads as nothing deployed
+    decision: >
+      Record the objects our installers wrote plus a hash of their live spec read back after apply;
+      pods are resolved through their controller chain to a baseline workload; a baseline workload
+      whose spec changed counts as intent. Chosen by the user over hand-stamping.
+    status: doing
+    evidence:
+      - "commit 65cd9d7 An idle cluster of only our own add-ons scales to zero"
+      - prod reading pending
+  - id: M0-DEMAND
+    milestone: M0
+    title: Demand stops counting a pod and its owning workload twice
+    decision: A pod whose controller workload is counted is not counted again.
+    status: doing
+    evidence:
+      - "commit 65cd9d7 (same change as M0-BASELINE)"
+  - id: M0-PROD-ZERO
+    milestone: M0
+    title: Prod idle cluster observed at 0 nodes with control plane Ready and no new RFPs
+    decision: Proof required before M1 starts.
+    status: todo
+    evidence: []
+  - id: M0-PROD-BIDDER
+    milestone: M0
+    title: Retire the bidder that ran on the prod host
+    decision: The user decided no bidder runs on prod; both doors rely on user-run bidders.
+    status: done
+    evidence:
+      - >
+        2026-10-07 ~16:00 UTC: socialweb-computer-bidder-firecracker stopped, disabled, unit moved
+        out of /etc/systemd/system; 6 fc-1379be663dd9-* containers removed; no process left under
+        its guests dir; 17G of guest disks deleted; bidder-key.hex, bidder.env and the unit kept in
+        /root/retired-bidder; systemctl is-active reads inactive; prod / at 26%.
+  - id: M0-TMP
+    milestone: M0
+    title: Delete hat-8's three dead /tmp directories, never /tmp/live-k3s-*
+    decision: >
+      /tmp/rfp-guests, /tmp/nodeboot-check, /tmp/nodeimage-preinstall-check only, each re-checked for
+      open files and process cwds immediately before deletion.
+    status: todo
+    evidence: []
+  - id: M1-TESTBED
+    milestone: M1
+    title: Vendor deno-kcp CRDs and deploy/examples/atproto/market (with PR 2's bidder and bob PDS) as the live test bed
+    decision: >
+      Vendored into this repo (user chose vendoring over building in deno-kcp). The bidder runs
+      --compute-provider-firecracker with our nodeimage and nodeboot. Replaces the ad-hoc local
+      dispatcher plus fake PLC harness for live tests.
+    status: todo
+    evidence: []
+  - id: M1-MARKET-ONLY
+    milestone: M1
+    title: Retire clusterprovider's local firecracker and qemu substrates
+    decision: >
+      The market path with a local bidder covers the same test bed; one node path remains. The VMM
+      code survives where the bidder's nodeboot needs it.
+    status: todo
+    evidence: []
+  - id: M1-AGENT-SPLIT
+    milestone: M1
+    title: Split socialweb-nodeagent into a static guest binary (init and agent) and a host binary (namespace and VMM runner)
+    decision: User suggested the split; market guests stop carrying a host half that always fails.
+    status: todo
+    evidence: []
+  - id: M1-BIDDER-UNIT
+    milestone: M1
+    title: System template unit socialweb-computer-bidder@<handle>.service
+    decision: >
+      System template unit (user chose it over a user unit because firecracker needs kvm and
+      runuser); %i is the atproto handle; QR sign-in is read from the journal by the operator;
+      enabled with systemctl enable --now socialweb-computer-bidder@<handle>.service.
+    status: todo
+    evidence: []
+  - id: M2-EVENT-CORE
+    milestone: M2
+    title: ABC-layered event-driven requester core in atproto-market
+    decision: >
+      Callbacks onRfpSubmitted, onBid (accept or deny), onAccepted, onReceipt, onNetwork,
+      onSecretsFetched; each decides whether the flow continues or returns. No ssh session is held
+      by the core.
+    status: todo
+    evidence: []
+  - id: M2-RELEASE
+    milestone: M2
+    title: Standalone releaseCompute(receipt) that submits vm.delete
+    decision: Release no longer depends on a session returning inside the process that accepted the bid.
+    status: todo
+    evidence: []
+  - id: M2-WRAPPER
+    milestone: M2
+    title: runComputeContract reimplemented as a thin wrapper over the event core
+    decision: socialweb-computer-ssh and request-vm-ssh stay unchanged (user chose to leave the ssh door on the wrapper).
+    status: todo
+    evidence: []
+  - id: M2-CLAIM-RECEIPT
+    milestone: M2
+    title: NodeClaim tracks receipt and contract URIs
+    decision: The claim is the durable record a restarted door resumes from.
+    status: todo
+    evidence: []
+  - id: M2-CODEGEN
+    milestone: M2
+    title: Go api/v1alpha1 generates the APIResourceSchema and a TS types plus validator package for the door
+    decision: >
+      Go types are the source of truth; drift check in deploy/check.sh; shared JSON fixtures both
+      suites round-trip. Protobuf rejected because CRDs travel as JSON/OpenAPI through kube and kcp.
+    status: todo
+    evidence: []
+  - id: M2-BACKOFF
+    milestone: M2
+    title: Exponential no_bids back-off per cluster, capped at 10m
+    decision: decided by Claude, user may veto
+    status: todo
+    evidence: []
+  - id: M3-CLUSTERLINK
+    milestone: M3
+    title: ClusterLink CRD and per-cluster dumbpipe listeners for the k3s apiserver and the cluster's OpenBao
+    decision: >
+      Listeners are procgroup components started after k3s beside postgres, openbao, kine and k3s.
+      Guests dial the cluster; the door holds no per-node connection.
+    status: todo
+    evidence: []
+  - id: M3-IROH-KEYS
+    milestone: M3
+    title: Iroh secret keys persisted in the cluster's OpenBao, public key expressed as did:key
+    decision: Stable tickets across deploys; ed25519 encodings per artob/edky.
+    status: todo
+    evidence: []
+  - id: M3-SECRETS-TICKET
+    milestone: M3
+    title: OpenBao ticket delivered through the --secrets capability
+    decision: Only the public portion travels through the secrets flow.
+    status: todo
+    evidence: []
+  - id: M3-JWT
+    milestone: M3
+    title: Guest authenticates to the cluster OpenBao by JWT and fetches k3s token, node password, server CA and apiserver ticket
+    decision: >
+      One JWT auth mount per bidder OIDC issuer (oidc_discovery_url is the bidder's public issuer),
+      one role per NodeClaim bound to that guest's workload subject and audience, short token TTL,
+      read-only on the claim's path, role deleted on release. Mount and discovery details decided
+      by Claude, user may veto.
+    status: todo
+    evidence: []
+  - id: M3-UNITS
+    milestone: M3
+    title: user_data installs systemd units for dumbpipe connect-tcp and the k3s agent; no ssh to guests
+    decision: >
+      Binaries come from our nodeimage when present, otherwise from the door hash-pinned (static
+      musl amd64 and arm64, sha256 written into user_data). Invariant 13 changes from ssh stdin to
+      OpenBao JWT over the cluster link.
+    status: todo
+    evidence: []
+  - id: M3-NODE-LOSS
+    milestone: M3
+    title: A Node NotReady for 90s is released and replaced; door or provider restarts never reap
+    decision: User chose 90s.
+    status: todo
+    evidence: []
+  - id: M4-SCALE-IN
+    milestone: M4
+    title: Per-node scale-in
+    decision: >
+      A node holding nothing beyond baseline for the 2m hold is cordoned, drained and released.
+      Supersedes plan 0002 section 4.4 (all-or-nothing).
+    status: todo
+    evidence: []
+  - id: M4-ESO-BESIDE
+    milestone: M4
+    title: ESO runs beside the control plane per cluster and is removed from the tenant
+    decision: >
+      A process in our container against the tenant apiserver, webhook by loopback URL, store
+      reaching the cluster OpenBao on loopback; works at zero nodes and closes the ESO-3 market gap.
+    status: todo
+    evidence: []
+  - id: M4-PENDING-CRS
+    milestone: M4
+    title: Intent counts workloads beyond baseline plus our operators' CRs not yet reconciled
+    decision: User chose workloads plus pending CRs; leftover namespaces, RBAC and ConfigMaps never hold nodes.
+    status: todo
+    evidence: []
+  - id: M5-DNS
+    milestone: M5
+    title: Per-node CoreDNS on a link-local IP set as kubelet clusterDNS
+    decision: Removes the docs/gitlab DNS wait hack.
+    status: todo
+    evidence: []
+  - id: M5-MESHD
+    milestone: M5
+    title: Rust iroh pod mesh in rust/socialweb-meshd
+    decision: >
+      QUIC datagrams over iroh, a tun device, each peer Node's podCIDR routed to its iroh endpoint id;
+      k3s --flannel-backend=none with bridge CNI. Lives in this repo (user chose).
+    status: todo
+    evidence: []
+  - id: M6-RUNNER1
+    milestone: M6
+    title: GitLab runner 1 run_untagged false
+    decision: User confirmed we own that GitLab config.
+    status: todo
+    evidence: []
+  - id: M6-LIMITS
+    milestone: M6
+    title: Fix the old stated limits
+    decision: >
+      CCM child gets Pdeathsig; an absent instance snapshot makes CCM refuse Node deletes; OpenBao
+      SIGHUP TLS reload for a host added later; reconcile's NotFound deletes behind a per-cluster
+      flag. decided by Claude, user may veto.
+    status: todo
+    evidence: []
+  - id: M6-DOCS
+    milestone: M6
+    title: Rewrite ARCHITECTURE invariant 13 and update docs/gitlab
+    decision: Invariant 13 reads that secrets cross only OpenBao JWT over the cluster link.
+    status: todo
+    evidence: []
