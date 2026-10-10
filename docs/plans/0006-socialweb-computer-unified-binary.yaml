@@ -310,6 +310,46 @@ items:
     risks: ["Two writers of the root vault layout (the old apply-root and the controller) during migration; the controller calls apply-root's code, never a copy."]
     status: todo
     evidence: []
+  - id: M3-BAO-SYNC
+    milestone: M3
+    title: Every OpenBao this binary runs holds exactly the backends, roles, policies and KV entries live objects ask for
+    depends_on: [M2-OPENBAO-SERVER, M3-CLUSTER-SCOPES, "0005:M3-BAO-SYNC"]
+    decision: >
+      User asked 2026-10-07 that the plans keep OpenBao backends and roles in sync with what is active;
+      plan 0005 M3-BAO-SYNC found 5 jwt-* mounts in one cluster OpenBao, one per issuer a bidder ever had,
+      only one serving a live node. Carried to every OpenBao this plan introduces or moves, decided by
+      Claude, user may veto. One reconcile library, internal/baosync: desired state is a pure function of
+      live objects; the reconciler lists actual auth mounts, roles, ACL policies and KV paths under the
+      prefixes it owns, creates what is missing, deletes what no live object asks for, and disables a
+      jwt-* auth mount left with no role. It runs every pass, at controller startup, and at adoption of
+      a server or cluster group after a restart or upgrade (M3-CLUSTER-SCOPES), so a crash between a
+      release and its revoke is repaired by the next pass. Owned prefixes only: a mount, policy or path
+      outside them is reported, never touched. Applied to: (1) each cluster's OpenBao, now a member of a
+      host-scoped group: the plan 0005 M3-BAO-SYNC rule moves into internal/baosync unchanged (per live
+      claim with a grant: mount jwt-<sha12(issuer)>, role <node>, policy node-<node>, KV
+      socialweb-nodes/<node>; plus the ClusterLink keys in socialweb-links and the ESO cert role, derived
+      from the cluster's live ClusterLinks and its ESO pair); (2) the gateway's root vault
+      (OpenBaoServer object): internal/vaultlayout's static layout plus per-cluster and per-account
+      entries derived from live Cluster and AtprotoIdentity objects; an entry for a deleted cluster or
+      revoked identity is removed. The layout's static paths (vaultlayout.go Path* constants) are owned
+      too: a path the layout no longer names (for example secret/data/k3s/ssh once nothing reads it) is
+      deleted only by a layout change, and the reconcile's report lists it until then.
+    files: ["internal/baosync/ (Desired, Actual, Diff, Apply; fake OpenBao for tests)", "internal/clusterprovider (cluster vault reconcile moves onto baosync)", "internal/openbaoctl (root vault reconcile)", "internal/vaultlayout (owned prefixes declared)"]
+    test_first: >
+      internal/baosync TestAVaultSeededWithStaleMountsRolesPoliciesAndKVIsReducedToExactlyTheLiveSet (fake
+      OpenBao seeded with five jwt-* mounts, roles and policies for released nodes, a deleted cluster's
+      root-vault entries, and one foreign mount: after one pass only the live set remains, the foreign
+      mount untouched), TestAJwtMountWithNoRoleLeftIsDisabled, TestTheReconcileRunsOnAdoptionBeforeTheFirstPass;
+      behind livegate on a real bao: TestARestartBetweenReleaseAndRevokeIsRepairedByTheNextPass. Red first.
+    done_when: >
+      Tests green; on hat-8 after a release and after an upgrade of the binary, `bao auth list`, `bao list
+      auth/<m>/role`, `bao policy list` and the owned KV listings in every cluster vault and the root
+      vault name exactly the live set (reading recorded).
+    risks:
+      - "A reconcile that deletes from a wrong desired set (for example a claim list that failed to load) would revoke live nodes; an empty or failed listing of live objects aborts the pass instead of reading as 'nothing is live'."
+      - "Plan 0005 M3-BAO-SYNC may land first; this item then moves its code into internal/baosync without changing behaviour, proved by its existing test."
+    status: todo
+    evidence: []
   - id: M2-MANIFESTS
     milestone: M2
     title: Every YAML the stack applies lives in one embed.FS, grouped into named, ordered sets
@@ -406,7 +446,7 @@ items:
   - id: M3-SERVE-GATEWAY-KCP
     milestone: M3
     title: socialweb-computer serve gateway kcp replaces container-entrypoint.sh, on the host
-    depends_on: [M1-KCP-PORT0, M2-APPLY, M2-OPENBAO-SERVER, M3-FOLD, M3-CLUSTER-SCOPES]
+    depends_on: [M1-KCP-PORT0, M2-APPLY, M2-OPENBAO-SERVER, M3-FOLD, M3-CLUSTER-SCOPES, M3-BAO-SYNC]
     decision: >
       One Go process composes, in the entrypoint's order: the root vault (OpenBaoServer object), kcp
       (in-process), the provider and permission-inventory sets, bootstrap-cluster when asked, migrate,
@@ -503,6 +543,10 @@ acceptance:
       evidence: []
     - id: ACC6-UPGRADE
       text: An upgrade of the binary on the gateway host keeps every tenant apiserver answering and every market node Ready throughout.
+      status: todo
+      evidence: []
+    - id: ACC6-BAO-SYNC
+      text: "After a release, after a cluster deletion and after an upgrade of the binary, every cluster OpenBao and the root vault hold exactly the auth mounts, roles, policies and owned KV entries live objects ask for; no jwt-* mount without a live node (decided by Claude, user may veto)."
       status: todo
       evidence: []
     - id: ACC6-REPRO

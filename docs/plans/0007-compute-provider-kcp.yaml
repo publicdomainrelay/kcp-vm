@@ -276,6 +276,39 @@ items:
     risks: ["The dispatcher must accept a reconnect under the same relay key after a crash (stale registration); measured on the bed."]
     status: todo
     evidence: []
+  - id: M4-BIDDER-BAO-SYNC
+    milestone: M4
+    title: The bidder's OpenBao holds exactly what live ComputeVMs ask for, and key rotation never orphans a cluster's jwt mount
+    depends_on: [M4-BIDDER-VAULT, M2-CONTROLLER, "0006:M3-BAO-SYNC"]
+    decision: >
+      User asked 2026-10-07 that OpenBao backends and roles stay in sync with what is active (plan 0005
+      M3-BAO-SYNC: 5 jwt-* mounts in one cluster vault, one per issuer a bidder ever had). Decided by
+      Claude, user may veto. (1) The bidder vault is reconciled by internal/baosync (0006:M3-BAO-SYNC):
+      desired = the fixed identity set (mount bidder: repo-key, relay-keypair, oidc-jwk; policy
+      bidder-read; the DenoPod's token role) plus, for each live ComputeVM, whatever per-guest policy,
+      role or KV path the provider issues under the owned prefix guests/<computevm>; a per-guest entry
+      whose ComputeVM is gone is deleted; the pass runs every controller pass, at startup and after an
+      upgrade. (2) One stable issuer per bidder is the cluster-side invariant: the issuer URL derives from
+      the relay keypair, so a restart, upgrade or OIDC signing-key rotation never changes it. Signing-key
+      rotation is explicit (`socialweb-computer run bidder rotate-signing-key`) and keeps the issuer URL:
+      the new key is added to the JWKS, tokens are signed with it, and the old key stays published until
+      the longest token TTL has passed, so no cluster needs a new mount. Relay-keypair rotation changes the
+      issuer and therefore the jwt-<sha12(issuer)> mount on every cluster; it is a separate explicit
+      command, refused while any ComputeVM is Running unless --drain, which waits for each guest to be
+      released. Clusters drop the old mount through 0005 M3-BAO-SYNC's rule (a jwt-* mount with no role
+      left is disabled) once its last node is released, never earlier.
+    files: ["internal/stack/bidder (bidder vault reconcile, rotation subcommands)", "internal/baosync (bidder desired set)", "hono-compute-provider/lib/oidc-issuer-hono (JWKS with overlapping keys)"]
+    test_first: >
+      internal/stack/bidder TestTheBidderVaultSeededWithStaleGuestEntriesIsReducedToTheLiveComputeVMs,
+      TestASigningKeyRotationKeepsTheIssuerUrlAndTokensSignedBeforeItStillValidate,
+      TestARelayKeyRotationIsRefusedWhileAGuestRuns; behind livegate on the bed:
+      TestBidderRestartsAndUpgradesLeaveOneJwtMountPerBidderInTheClusterVault (three restarts and one
+      upgrade of the bidder while its node stays joined: the cluster vault holds one jwt-* mount for it).
+      Red first (today every restart adds a mount).
+    done_when: "tests green; the cluster-vault reading on hat-8 recorded: one jwt-* mount per bidder with a live node."
+    risks: ["oidc-issuer-hono publishes a single key today; overlapping keys change its JWKS shape, which OpenBao's JWT auth already accepts (it verifies by kid)."]
+    status: todo
+    evidence: []
   - id: M4-CONTRACT-RESTORE
     milestone: M4
     title: A restarted bidder rebuilds its contracts from the ComputeVMs and still honours vm.delete
@@ -311,7 +344,7 @@ items:
   - id: M5-RUN-BIDDER
     milestone: M5
     title: socialweb-computer run bidder, configured end to end, no docker
-    depends_on: [M2-CONTROLLER, M3-BIDDER-FLAG, M4-BIDDER-VAULT, M4-CONTRACT-RESTORE, "0008:M2-SERVICE-TEMPLATE", "0006:M1-KCP-PORT0"]
+    depends_on: [M2-CONTROLLER, M3-BIDDER-FLAG, M4-BIDDER-VAULT, M4-BIDDER-BAO-SYNC, M4-CONTRACT-RESTORE, "0008:M2-SERVICE-TEMPLATE", "0006:M1-KCP-PORT0"]
     decision: >
       `socialweb-computer run bidder --handle <h>` under /var/lib/socialweb-computer-bidder/<h> (or the
       user's state dir when run as a user unit): in-process kcp on port 0, the owned deno-kcp provider, the
@@ -421,6 +454,10 @@ acceptance:
       evidence: []
     - id: ACC7-PARITY
       text: Every requirement in docs/compute-provider-requirements.yaml is met by the Go side, with its parity test green on both providers.
+      status: todo
+      evidence: []
+    - id: ACC7-BAO-SYNC
+      text: "Across restarts, upgrades and a signing-key rotation of a bidder, each cluster OpenBao holds exactly one jwt-* mount per bidder with a live node, and the bidder's own OpenBao holds no per-guest entry without a live ComputeVM (decided by Claude, user may veto)."
       status: todo
       evidence: []
     - id: ACC7-NO-PROTOCOL-CHANGE
