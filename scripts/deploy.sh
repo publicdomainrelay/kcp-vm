@@ -16,7 +16,11 @@ GATEWAY_TLS_PORT="${GATEWAY_TLS_PORT:-8443}"
 INGRESS_PROXY_HOST="${INGRESS_PROXY_HOST:-xrpc.fedproxy.com}"
 GATEWAY_AUDIENCE="${GATEWAY_AUDIENCE:-did:web:${ORIGIN}}"
 KUBECONFIG_MAX_TTL="${KUBECONFIG_MAX_TTL:-720h}"
-NODE_POLICY="${NODE_POLICY:-tangled-vouch}"
+# `-` and not `:-`: an EXPLICITLY empty NODE_POLICY means "no policy attached",
+# which is the declared-bidder mode, and `:-` would substitute the default for it
+# just as it does for unset - so a deployment asking for no policy silently got
+# tangled-vouch and every bid from a declared bidder was policy_rejected.
+NODE_POLICY="${NODE_POLICY-tangled-vouch}"
 DEFAULT_NODE_POLICY_ARGS='{"firstFree":true}'
 NODE_POLICY_ARGS="${NODE_POLICY_ARGS:-$DEFAULT_NODE_POLICY_ARGS}"
 RELAY_URL="${RELAY_URL:-}"

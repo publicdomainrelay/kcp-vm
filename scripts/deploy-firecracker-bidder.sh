@@ -461,6 +461,13 @@ chmod -R a+rX "${INPUTS_DIR}"
 # "permission denied" and every provisioning failed with "the container that
 # boots guest ... exited before it reported a guest".
 chmod -R a+rX "${STORE_DIR}"
+# The container that boots a guest runs as a DIFFERENT user from the service
+# that owns this directory, and it creates each guest's rootfs copy and identity
+# disk inside it: measured, a 0755 guests directory owned by the service user
+# answered "open .../rootfs.ext4: permission denied" and every provisioning
+# failed. This is a scratch directory of per-boot guest files on a single-tenant
+# host; it is the one place the door's own user cannot be the only writer.
+chmod 0777 "${GUESTS_DIR}"
 chmod 755 "${BIN_DIR}/socialweb-nodeimage"
 cd "${STORE_DIR}"
 sha256sum -c .image.sha256
