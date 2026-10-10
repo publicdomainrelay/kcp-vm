@@ -195,45 +195,39 @@ pub async fn run_kube(
             }
         };
         retry = KUBE_RETRY_MIN;
-        let mut version = list.metadata.resource_version.clone().unwrap_or_default();
+        let version = list.metadata.resource_version.clone().unwrap_or_default();
         let mut nodes = NodeSet::from_list(list);
         let table = publish(&me, &nodes, &tx, &stats);
         if !table.self_view.seen {
             tracing::info!(event = "own_node_waiting", node = %me.node_name);
         }
 
-        loop {
-            let watched = client
-                .watch_nodes(&version, |event| {
-                    let dirty = match event {
-                        NodeEvent::Upsert(node) => {
-                            nodes.upsert(*node);
-                            true
-                        }
-                        NodeEvent::Delete(name, _) => {
-                            nodes.remove(&name);
-                            true
-                        }
-                        NodeEvent::Bookmark(_) | NodeEvent::Gone => false,
-                    };
-                    if dirty {
-                        publish(&me, &nodes, &tx, &stats);
+        let watch_started = tokio::time::Instant::now();
+        let watched = client
+            .watch_nodes(&version, |event| {
+                let dirty = match event {
+                    NodeEvent::Upsert(node) => {
+                        nodes.upsert(*node);
+                        true
                     }
-                })
-                .await;
-            match watched {
-                Ok(Some(v)) => version = v,
-                Ok(None) => {}
-                Err(err) if err.is_gone() => {
-                    tracing::info!(event = "watch_expired_relisting");
-                    break;
+                    NodeEvent::Delete(name, _) => {
+                        nodes.remove(&name);
+                        true
+                    }
+                    NodeEvent::Bookmark(_) | NodeEvent::Gone => false,
+                };
+                if dirty {
+                    publish(&me, &nodes, &tx, &stats);
                 }
-                Err(err) => {
-                    tracing::warn!(event = "watch_failed", error = %err);
-                    tokio::time::sleep(KUBE_RETRY_MIN).await;
-                    break;
-                }
-            }
+            })
+            .await;
+        match watched {
+            Ok(_) => tracing::debug!(event = "watch_ended_relisting"),
+            Err(err) if err.is_gone() => tracing::info!(event = "watch_expired_relisting"),
+            Err(err) => tracing::warn!(event = "watch_failed", error = %err),
+        }
+        if watch_started.elapsed() < KUBE_RETRY_MIN {
+            tokio::time::sleep(KUBE_RETRY_MIN).await;
         }
     }
 }

@@ -22,15 +22,18 @@ pub const EXIT_STATUS_LISTEN: i32 = 7;
 pub const EXIT_CODES_HELP: &str = "\
 Exit codes:
   0  stopped by SIGTERM or SIGINT
-  1  a running task failed (the tun read loop or a source task died)
+  1  a running task ended (a source task or the outbound loop stopped)
   2  usage error
   3  the secret file or the peers file is unreadable or malformed
   4  the kubeconfig is malformed or refused (insecure-skip-tls-verify, no CA), or patching
      this node's own Node was forbidden (--node-name is not the kubeconfig's node)
-  5  the tun device or its link, address or routes could not be configured
-     (needs CAP_NET_ADMIN and /dev/net/tun)
+  5  the tun device could not be created, brought up or read (needs CAP_NET_ADMIN and
+     /dev/net/tun; a name already in use is refused). A route or address that fails to
+     install is not fatal: it is retried on the next Node change, counted and logged
   6  the iroh endpoint could not bind
-  7  the --metrics-listen address could not bind";
+  7  the --metrics-listen address could not bind
+Not fatal, retried: a missing kubeconfig, an unreachable apiserver, a list forbidden by
+the node authorizer, an own Node not yet registered or without a podCIDR.";
 
 pub const RUN_HELP: &str = "\
 Node annotations written (kube mode) and read on every Node:

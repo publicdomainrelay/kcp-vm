@@ -3,7 +3,7 @@ mod common;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use common::{
     READY_WAIT, gate, identity, must, reap, scratch_dir, status, stop_namespace_processes, sudo,
@@ -358,4 +358,36 @@ fn two_meshd_in_two_netns_carry_ping_between_two_pod_cidrs() {
     wait_ready(&mut rig.b);
     assert_ping(&rig.a.pod_ns, rig.b.pod_ip, &["-c", "5"]);
     assert_ping(&rig.b.pod_ns, rig.a.pod_ip, &[]);
+
+    let pids = sudo(&["ip", "netns", "pids", &rig.b.node_ns]);
+    for pid in String::from_utf8_lossy(&pids.stdout).split_whitespace() {
+        let _ = sudo(&["kill", "-KILL", pid]);
+    }
+    let mut crashed = rig.b.child.take().expect("running");
+    assert_ne!(wait_exit(&mut crashed, Duration::from_secs(10)), 0);
+    start(bin, &mut rig.b, &peers_path);
+    wait_ready(&mut rig.b);
+    let since_restart = Instant::now();
+    let one_way = sudo(&[
+        "ip",
+        "netns",
+        "exec",
+        &rig.a.pod_ns,
+        "ping",
+        "-n",
+        "-c",
+        "1",
+        "-w",
+        "60",
+        rig.b.pod_ip,
+    ]);
+    eprintln!(
+        "after peer b was SIGKILLed and restarted, pod a reached pod b again in {:?}",
+        since_restart.elapsed()
+    );
+    assert!(
+        one_way.status.success(),
+        "pod a must reach pod b again after b crashed and restarted:\n{}",
+        String::from_utf8_lossy(&one_way.stdout)
+    );
 }

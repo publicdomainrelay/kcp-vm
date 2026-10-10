@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use bytes::Bytes;
-use iroh::endpoint::{Connection, SendDatagramError, presets};
+use iroh::endpoint::{Connection, IdleTimeout, QuicTransportConfig, SendDatagramError, presets};
 use iroh::{Endpoint, EndpointAddr, EndpointId, RelayMode, RelayUrl, TransportAddr};
 use tokio::sync::{mpsc, watch};
 use tokio::time::Instant;
@@ -23,6 +23,7 @@ pub const DIAL_BACKOFF_MAX: Duration = Duration::from_secs(30);
 pub const TUN_READ_BUFFER: usize = 65536;
 pub const CLOSE_UNKNOWN_PEER: u32 = 1;
 pub const CLOSE_SHUTDOWN: u32 = 0;
+pub const CONNECTION_IDLE_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RelayChoice {
@@ -52,8 +53,15 @@ pub async fn bind_endpoint(
         DiscoveryChoice::N0 => Endpoint::builder(presets::N0),
         DiscoveryChoice::None => Endpoint::builder(presets::Minimal),
     };
+    let idle = IdleTimeout::try_from(CONNECTION_IDLE_TIMEOUT)
+        .map_err(|err| format!("idle timeout {CONNECTION_IDLE_TIMEOUT:?}: {err}"))?;
     builder = builder
         .secret_key(secret)
+        .transport_config(
+            QuicTransportConfig::builder()
+                .max_idle_timeout(Some(idle))
+                .build(),
+        )
         .alpns(vec![ALPN.to_vec()])
         .relay_mode(match &options.relay {
             RelayChoice::Default => RelayMode::Default,

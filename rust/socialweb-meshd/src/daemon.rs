@@ -140,6 +140,14 @@ pub async fn run(args: RunArgs) -> i32 {
         }
     };
 
+    if !args.metrics_listen.ip().is_loopback() {
+        tracing::warn!(
+            event = "status_not_loopback",
+            listen = %args.metrics_listen,
+            reason = "the status endpoint names every peer endpoint and pod CIDR"
+        );
+    }
+
     let options = EndpointOptions {
         relay: args.relay.clone(),
         discovery: args.discovery.into(),
