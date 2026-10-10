@@ -1,8 +1,6 @@
 #cloud-config
 apt:
   preserve_sources_list: true
-packages:
-  - openssh-server
 write_files:
   - path: /root/.ssh/authorized_keys
     owner: root:root
@@ -48,6 +46,12 @@ write_files:
       STAMP=/var/lib/setup-k3s.done
       [ -f "${STAMP}" ] && exit 0
 
+      if [ -x /usr/local/bin/k3s ] && /usr/local/bin/k3s --version 2>/dev/null | grep -qF 'v1.36.4+k3s1'; then
+        /usr/local/bin/k3s --version
+        touch "${STAMP}"
+        exit 0
+      fi
+
       command -v curl >/dev/null || { apt-get update && apt-get install -y curl ca-certificates; }
 
       curl -sfL https://get.k3s.io -o /tmp/k3s-install.sh
@@ -75,6 +79,7 @@ bootcmd:
     options timeout:2 attempts:3
     ' > /etc/resolv.conf
 runcmd:
+  - sh -c 'missing=""; for p in "openssh-server"; do dpkg -s "$p" >/dev/null 2>&1 || missing="$missing $p"; done; [ -z "$missing" ] || { apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends -o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confdef $missing; }'
   - - sh
     - -c
     - command -v deno || { apt-get update && apt-get install -y curl unzip; curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh; chmod 755 /usr/local/bin/deno; }
@@ -90,3 +95,4 @@ runcmd:
     ' > /etc/resolv.conf
 disable_root: false
 ssh_pwauth: false
+package_update: false

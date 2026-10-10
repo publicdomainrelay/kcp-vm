@@ -50,17 +50,11 @@ async function snapshot(name: string, composed: string): Promise<void> {
 }
 
 Deno.test("composer snapshots match fixtures", async () => {
-  assertEquals(
-    buildUserData({ ctx: CTX, modules: ["tunnel"] }),
-    await fixture("tunnel.yaml"),
-  );
-  assertEquals(
-    buildUserData({ ctx: CTX, modules: ["fedproxy-ssh"] }),
-    await fixture("fedproxy-ssh.yaml"),
-  );
-  assertEquals(
+  await snapshot("tunnel.yaml", buildUserData({ ctx: CTX, modules: ["tunnel"] }));
+  await snapshot("fedproxy-ssh.yaml", buildUserData({ ctx: CTX, modules: ["fedproxy-ssh"] }));
+  await snapshot(
+    "fedproxy-web-wootty.yaml",
     buildUserData({ ctx: CTX, modules: ["fedproxy-web", "wootty"] }),
-    await fixture("fedproxy-web-wootty.yaml"),
   );
 });
 
@@ -73,9 +67,9 @@ const SECRETS_CTX = {
 };
 
 Deno.test("secrets module composes with the transport", async () => {
-  assertEquals(
+  await snapshot(
+    "tunnel-secrets.yaml",
     buildUserData({ ctx: SECRETS_CTX, modules: ["tunnel", "secrets"] }),
-    await fixture("tunnel-secrets.yaml"),
   );
 });
 
@@ -176,8 +170,9 @@ runcmd:
     base,
     modules: ["tunnel"],
   });
-  // base preserved
-  assert(merged.includes("- curl"));
+  // base preserved: its packages ride the guard the composer puts at the head
+  // of runcmd, and cloud-init's own package list is gone
+  assert(merged.includes('"curl"'), "the base's packages are not carried into the composed document");
   assert(merged.includes("/etc/base.conf"));
   assert(merged.includes("echo base"));
   // tunnel appended

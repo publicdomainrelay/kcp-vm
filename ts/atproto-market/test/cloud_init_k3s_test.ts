@@ -29,21 +29,25 @@ const CTX = {
 
 const K3S_SETUP_PATH = "/usr/local/bin/setup-k3s.sh";
 
+const UPDATE = Deno.env.get("UPDATE_FIXTURES") === "1";
+
 function fixture(name: string): Promise<string> {
   return Deno.readTextFile(
     new URL(`./fixtures/cloud-init/${name}`, import.meta.url),
   );
 }
 
+async function snapshot(name: string, composed: string): Promise<void> {
+  if (UPDATE) {
+    await Deno.writeTextFile(new URL(`./fixtures/cloud-init/${name}`, import.meta.url), composed);
+    return;
+  }
+  assertEquals(composed, await fixture(name));
+}
+
 Deno.test("k3s composes alone and with the tunnel transport", async () => {
-  assertEquals(
-    buildUserData({ ctx: CTX, modules: ["k3s"] }),
-    await fixture("k3s.yaml"),
-  );
-  assertEquals(
-    buildUserData({ ctx: CTX, modules: ["tunnel", "k3s"] }),
-    await fixture("tunnel-k3s.yaml"),
-  );
+  await snapshot("k3s.yaml", buildUserData({ ctx: CTX, modules: ["k3s"] }));
+  await snapshot("tunnel-k3s.yaml", buildUserData({ ctx: CTX, modules: ["tunnel", "k3s"] }));
 });
 
 Deno.test("k3s resolves by registry id and is byte-deterministic", () => {

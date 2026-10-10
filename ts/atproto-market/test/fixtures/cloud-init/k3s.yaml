@@ -10,6 +10,12 @@ write_files:
       STAMP=/var/lib/setup-k3s.done
       [ -f "${STAMP}" ] && exit 0
 
+      if [ -x /usr/local/bin/k3s ] && /usr/local/bin/k3s --version 2>/dev/null | grep -qF 'v1.36.4+k3s1'; then
+        /usr/local/bin/k3s --version
+        touch "${STAMP}"
+        exit 0
+      fi
+
       command -v curl >/dev/null || { apt-get update && apt-get install -y curl ca-certificates; }
 
       curl -sfL https://get.k3s.io -o /tmp/k3s-install.sh

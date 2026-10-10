@@ -96,6 +96,7 @@ export interface WriteFileEntry {
 export interface UserDataPatch {
   apt?: Record<string, unknown>;
   packages?: string[];
+  package_update?: boolean;
   users?: Record<string, unknown>[];
   write_files?: WriteFileEntry[];
   runcmd?: unknown[];
@@ -184,6 +185,7 @@ function applyPatch(base: Record<string, unknown>, p: UserDataPatch): Record<str
   const out = { ...base };
   if (p.apt) out.apt = { ...asObj(out.apt), ...p.apt };
   if (p.packages) out.packages = [...new Set([...asArray(out.packages), ...p.packages])];
+  if (p.package_update !== undefined) out.package_update = p.package_update;
   if (p.users) {
     out.users = dedupeByKey([...asArray(out.users), ...p.users], (u) => (u as { name?: unknown }).name);
   }
@@ -199,6 +201,50 @@ function applyPatch(base: Record<string, unknown>, p: UserDataPatch): Record<str
   }
   if (p.disable_root !== undefined) out.disable_root = p.disable_root;
   if (p.ssh_pwauth !== undefined) out.ssh_pwauth = p.ssh_pwauth;
+  return out;
+}
+
+const PACKAGE_NAME = /^[a-z0-9][a-z0-9+.-]*$/;
+
+/**
+ * A first-runcmd step that installs only the packages the boot is missing.
+ * The node image carries the market's packages already, so on a market node
+ * every `dpkg -s` succeeds and no apt runs at all; on a guest nothing was
+ * baked for (the container and droplet providers), the same step apt-get
+ * updates and installs exactly what is missing.
+ */
+export function packagesGuardCommand(packages: string[]): string {
+  const names = [...new Set(packages)];
+  for (const name of names) {
+    if (!PACKAGE_NAME.test(name)) {
+      throw new Error(
+        `the composed user_data asks for the package ${JSON.stringify(name)}, which is not a package ` +
+          `name this will put in a shell command. The step it would go into is what installs a ` +
+          `guest's packages at boot, so a name that is not one is a step that either installs ` +
+          `something else or fails and leaves the guest without the package a unit of its waits on.`,
+      );
+    }
+  }
+  const list = names.map((name) => `"${name}"`).join(" ");
+  return `sh -c 'missing=""; for p in ${list}; do dpkg -s "$p" >/dev/null 2>&1 || ` +
+    `missing="$missing $p"; done; [ -z "$missing" ] || { apt-get update && ` +
+    `DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ` +
+    `-o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confdef $missing; }'`;
+}
+
+/**
+ * Take the packages the modules asked for out of cloud-init's own apt module
+ * and put them behind the guard as the document's first runcmd entry:
+ * cloud-init's module runs `apt-get update` on every boot whatever the image
+ * already carries, and the guard does not.
+ */
+function guardPackages(base: Record<string, unknown>): Record<string, unknown> {
+  const requested = asArray(base.packages).filter((p): p is string => typeof p === "string");
+  if (requested.length === 0) return base;
+  const out = { ...base };
+  delete out.packages;
+  out.package_update = false;
+  out.runcmd = [packagesGuardCommand(requested), ...asArray(out.runcmd)];
   return out;
 }
 
@@ -288,6 +334,7 @@ export function buildUserData(opts: {
     obj = applyPatch(obj, m(ctx));
   }
   if (opts.overrides) obj = applyPatch(obj, opts.overrides);
+  obj = guardPackages(obj);
   obj = assertResolver(obj, gateway, fallbacks);
   return "#cloud-config\n" + yamlStringify(obj, { lineWidth: 0 });
 }
@@ -933,7 +980,7 @@ touch "\${STAMP}"
         ].join("\n"),
       },
     ],
-    runcmd: [
+    runcmdPrepend: [
       "systemctl daemon-reload",
       "systemctl enable setup-secrets.service",
       "systemctl start --no-block setup-secrets.service",
@@ -969,6 +1016,12 @@ set -eux -o pipefail
 
 STAMP=/var/lib/setup-k3s.done
 [ -f "\${STAMP}" ] && exit 0
+
+if [ -x /usr/local/bin/k3s ] && /usr/local/bin/k3s --version 2>/dev/null | grep -qF '${K3S_VERSION}'; then
+  /usr/local/bin/k3s --version
+  touch "\${STAMP}"
+  exit 0
+fi
 
 command -v curl >/dev/null || { apt-get update && apt-get install -y curl ca-certificates; }
 
@@ -1039,6 +1092,11 @@ STAMP=/var/lib/setup-iroh.done
 [ -f "\${STAMP}" ] && exit 0
 
 DUMBPIPE_VERSION="${dumbpipeVersion}"
+
+if [ -x /usr/local/bin/dumbpipe ] && [ "$(cat /usr/local/bin/dumbpipe.version 2>/dev/null)" = "\${DUMBPIPE_VERSION}" ]; then
+  touch "\${STAMP}"
+  exit 0
+fi
 
 # dumbpipe ships linux tarballs for x86_64 and aarch64 only.
 case "$(uname -m)" in

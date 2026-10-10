@@ -184,8 +184,6 @@ write_files:
       nameserver 1.1.1.1
       nameserver 9.9.9.9
       options timeout:2 attempts:3
-packages:
-  - tmux
 users:
   - name: agent
     gecos: Policy Engine Agent
@@ -197,6 +195,7 @@ users:
     lock_passwd: true
     no_user_group: false
 runcmd:
+  - sh -c 'missing=""; for p in "tmux"; do dpkg -s "$p" >/dev/null 2>&1 || missing="$missing $p"; done; [ -z "$missing" ] || { apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends -o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confdef $missing; }'
   - systemctl daemon-reload
   - systemctl enable setup-wootty.path
   - systemctl start --no-block setup-wootty.path
@@ -208,6 +207,7 @@ runcmd:
     ' > /etc/resolv.conf
 disable_root: false
 ssh_pwauth: false
+package_update: false
 bootcmd:
   - |-
     printf '%s' 'nameserver 172.30.0.1
