@@ -3,6 +3,7 @@ import { Buffer } from "node:buffer";
 import { Duplex } from "node:stream";
 import net from "node:net";
 import { spawn } from "node:child_process";
+import { IROH_SCHEME } from "@publicdomainrelay/requester-xrpc";
 import { Client, type ClientChannel } from "ssh2";
 import { K3S_JOIN_GO, K3S_JOIN_READY_MARKER } from "@publicdomainrelay/socialweb-computer-k8s-common";
 
@@ -21,7 +22,11 @@ export type Log = (event: string, data?: Record<string, unknown>) => void;
  * reached at all.
  */
 function dumbpipeStream(ticket: string, dumbpipePath: string, log?: Log): Duplex {
-  const child = spawn(dumbpipePath, ["connect", ticket], { stdio: ["pipe", "pipe", "pipe"] });
+  // The guest announces its endpoint as `iroh://<ticket>` on the same on-network
+  // report the websocket transports announce a hostname on, so the scheme is
+  // stripped here rather than by every caller.
+  const bare = ticket.startsWith(IROH_SCHEME) ? ticket.slice(IROH_SCHEME.length) : ticket;
+  const child = spawn(dumbpipePath, ["connect", bare], { stdio: ["pipe", "pipe", "pipe"] });
   const stream = new Duplex({
     read() { ignore(); },
     write(chunk: Uint8Array, _encoding, cb) {
