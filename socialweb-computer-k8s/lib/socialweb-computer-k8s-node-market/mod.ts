@@ -345,11 +345,11 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
           },
           onAccepted: async (_event, s): Promise<FlowDecision> => {
             await record(s, { phase: "Provisioning", message: "a bid was accepted; the VM is booting" });
-            return grantFailed ? "return" : stopWhenEnded();
+            return "continue";
           },
-          onReceipt: async (_event, s) => {
+          onReceipt: async (_event, s): Promise<FlowDecision> => {
             await record(s);
-            return stopWhenEnded();
+            return grantFailed ? "return" : stopWhenEnded();
           },
           onNetwork: async (event, s) => {
             await record(s, { fqdn: event.address });

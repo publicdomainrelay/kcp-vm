@@ -202,6 +202,7 @@ type Script = "complete" | "no_fetch" | "no_bids" | "hang_after_receipt" | "hang
 interface Decisions {
   onSecretsFetched: FlowDecision[];
   onAccepted: FlowDecision[];
+  onReceipt: FlowDecision[];
   grantAtAccept: (NodeClaimStatus["grant"] | undefined)[];
 }
 
@@ -247,7 +248,9 @@ function scriptedRequest(script: Script, seen: Record<string, unknown>[], decisi
     decisions.onAccepted.push(accepted ?? "continue");
     if (stop(accepted)) return returned(s);
     s = advanceContract(s, "receipt", { receipt: RECEIPT, receiptOk: true, submitEventRef: SUBMIT }, AT);
-    if (stop(await handlers.onReceipt?.({ receipt: RECEIPT, receiptOk: true, submitEventRef: SUBMIT }, structuredClone(s)))) return returned(s);
+    const receipt = await handlers.onReceipt?.({ receipt: RECEIPT, receiptOk: true, submitEventRef: SUBMIT }, structuredClone(s));
+    decisions.onReceipt.push(receipt ?? "continue");
+    if (stop(receipt)) return returned(s);
     if (script === "hang_after_receipt") await new Promise(() => {});
     s = advanceContract(s, "network", { vmAddress: GUEST }, AT);
     if (stop(await handlers.onNetwork?.({ address: GUEST, kind: "iroh-ticket", source: "test" }, structuredClone(s)))) return returned(s);
@@ -277,7 +280,7 @@ function harness(o: HarnessOptions = {}) {
   const secrets = new FakeSecretsCapabilities();
   const requested: string[] = [];
   const contracts: Record<string, unknown>[] = [];
-  const decisions: Decisions = { onSecretsFetched: [], onAccepted: [], grantAtAccept: [] };
+  const decisions: Decisions = { onSecretsFetched: [], onAccepted: [], onReceipt: [], grantAtAccept: [] };
   const fulfiller = createMarketNodeFulfiller({
     store,
     links,
@@ -551,14 +554,16 @@ Deno.test("a guest that never fetches its secrets is Failed, and released only w
   assertEquals(h.store.claims.get("ci-node1")!.finalizers, []);
 });
 
-Deno.test("a grant that cannot be written stops the flow at accept and fails the claim", async () => {
+Deno.test("a grant that cannot be written stops the flow once the receipt is known and fails the claim", async () => {
   const store = new FakeStore();
   store.failGrantWrites = true;
   const h = harness({ store });
   h.store.put(claim("ci-node1"));
   await h.fulfiller.pass();
   await settle();
-  assertEquals(h.decisions.onAccepted, ["return"]);
+  assertEquals(h.decisions.onAccepted, ["continue"], "returning at accept could lose a receipt that has not arrived");
+  assertEquals(h.decisions.onReceipt, ["return"]);
+  assertEquals(h.store.contract("ci-node1")?.receipt, RECEIPT, "the VM stays releasable from its claim");
   assertEquals(h.secrets.grants, [], "the guest is never authorized without a grant on its claim");
   assertEquals(h.store.phase("ci-node1"), "Failed");
   assertStringIncludes(h.store.claims.get("ci-node1")!.status.message!, "workload grant could not be written");
@@ -605,7 +610,7 @@ Deno.test("the door admits declared bidders and omits a policy it was not given"
     eventStreams: () => ({ close() {} }),
     secretsCapability: new FakeSecretsCapabilities().factory,
     extraBidderDids: ["did:plc:mine"],
-    requestCompute: scriptedRequest("no_bids", contracts, { onSecretsFetched: [], onAccepted: [], grantAtAccept: [] }, store) as never,
+    requestCompute: scriptedRequest("no_bids", contracts, { onSecretsFetched: [], onAccepted: [], onReceipt: [], grantAtAccept: [] }, store) as never,
   });
   store.put(claim("ci-node1"));
   await fulfiller.pass();
