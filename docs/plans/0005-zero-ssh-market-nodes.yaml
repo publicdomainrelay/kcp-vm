@@ -184,6 +184,8 @@ items:
       "Generated from api/v1alpha1".
     status: done
     evidence:
+      - "merged to main as 5d5ce05; check.sh --fast green (apigen: 8 generated files, no drift); door deno task test 73 passed 0 failed"
+      - "prod deploy 2026-10-07 ~17:47Z: workspace b3wgagx6dzltmtsx binding clusters-3pj7y now bound to v1alpha1-2.nodeclaims.socialweb.computer (re-pointed export, no rebind); all 95 pre-existing claims still list; door logged no claim refusal, only one transient 429 storage (re)initializing at 17:47:56Z right after kcp start"
       - "d1cb357 cmd/socialweb-apigen + internal/apigen: go generate ./api/... writes deploy/*-apiresourceschema.yaml, both APIExports, deploy/apiresourceschema-revisions.json and socialweb-computer-k8s/lib/common/socialweb-computer-k8s-api/mod.ts; Cluster, Node, AtprotoIdentity schemas and both exports byte-identical to the hand-written ones"
       - "d1cb357 NodeClaim status.contract += every ContractState field (version, phase, vmName, requesterDid, marketDid, payload/rfp/policy/bid/accept/receipt strongRefs, winner, receiptOk, vmAddress, bids, release, outcome, error, timestamps), all optional; old six fields kept; schema renamed v1alpha1-2.nodeclaims.socialweb.computer, clusters export re-pointed"
       - "99e894c door: socialweb-computer-k8s-common drops its NodeClaim wire types; the claim view moves to lib/abc; nodeclaim-kcp parses every claim with parseNodeClaim and asserts a status before PATCH"
@@ -207,6 +209,9 @@ items:
       Failures after an accept keep today's behaviour. ARCHITECTURE section 10.
     status: done
     evidence:
+      - "merged to main as f4ce9be (fast-forward); deployed to prod 2026-10-07 ~17:34Z"
+      - "prod proof 2026-10-07: probe pod (pause) in tenant default ns at 17:36:15Z, no bidder on the market; RFP rounds at 17:36:19, 17:37:24, 17:39:01, 17:41:37 (gaps 65/97/156/272s = 30s bid window + back-off 30/60/120/240s); log: backing off market provisions until 17:37:21Z/17:38:57Z/17:41:33Z/17:46:09Z with 1..4 provisions in a row"
+      - "pod deleted 17:45:16Z; next 30s: 15 passes None nodes 0 nothing running and no node (intent gone resets, no RFP at 17:46:09)"
       - "0807250 scale.State.Backoff + scale.BackoffDelay + Decision.BackoffUntil; scaledriver Declined/Joined; nodemarket.MarketDeclined + Host.End; confirmHeld reports declined/newly-joined nodes, wiring feeds the driver before the pass and logs backoffUntil on the node-scale line"
       - "0807250 also fixes tenantNodes.retain dropping ordinal 1 when the primary slot was empty: a first node claimed again after the first was given up was never held, confirmed, released or counted in flight (surfaced by the back-off test: one gap read 5s)"
       - "d336b86 door guard: socialweb-computer-k8s test/node_market_test.ts 'a no-bids end keeps the rfp it asked with and names no accept'; door deno task check green, deno task test 67 passed 0 failed 1 ignored (run from a copy at org-root depth, the worktree's ../../ siblings do not resolve)"
