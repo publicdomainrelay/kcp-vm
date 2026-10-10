@@ -70,14 +70,22 @@ included `.ci/dockerfile-hash.yaml`.
   (`cmd/socialweb-nodeagent/agent.go:228`), so the guest's resolution and its default route both
   go through this host. Measured, not reasoned: a job pod inside a firecracker guest cloned
   `johnandersen777/kcp-ci-probe` from the real GitLab. See section 6.
-- **B4 - runner placement.** The kubernetes executor's `host` is the apiserver's own loopback
-  address on THIS host, and its port is leased per cluster. The existing runner is on the GitLab
-  host and is an instance executor. `docs/gitlab/README.md` states the rule: the runner must reach
-  `127.0.0.1:<leased port>`.
-- **B5 - the size knob does not exist.** `Vcpu`/`MemMiB` live on the image manifest
-  (`internal/nodefirecracker/manifest.go:18-22`) and the builder writes neither, so they always
-  take the defaults. `DiskMiB` is a runtime `Options` field with no clusterprovider config key.
-  Sizing a node for a real job needs a config surface that is not there.
+- **B4 - CLOSED 2026-10-06.** The kubernetes executor's `host` is the apiserver's own loopback
+  address on THIS host, and its port is leased per cluster. Solved by running the runner here, on
+  the same host: nothing has to be tunnelled, and the port comes from the cluster's own lease. The
+  existing instance runner is paused for a run, not deleted.
+- **B5 - CLOSED 2026-10-06.** `Vcpu`/`MemMiB` live on the image manifest
+  (`internal/nodefirecracker/manifest.go:18-22`) and the builder wrote neither, so they always took
+  the defaults; `DiskMiB` was a runtime `Options` field with no clusterprovider config key. Both
+  are now config: `vcpu` and `memMiB` on the builder's configuration, folded into the image
+  fingerprint, and `SOCIALWEB_CLUSTERPROVIDER_NODE_DISK_MIB` for the disk. `inputs_test.go`'s
+  declaration table is what caught that they had to be recorded as well as read.
+- **B6 - the node image cannot carry a large image.** `layDownRootfs` writes the root filesystem
+  with `mkfs.ext4 -d`, which refuses a file of about 2 GiB or more (`__populate_fs: Ext2 file too
+  big while writing file ...`). A 3.3 GB tarball of the builder image is refused at 6 GB and at
+  12 GB, with the file alone and with the whole stage; a 3.5 GB file of zeros is accepted at 4.9 GB
+  and 6.5 GB, and 1 GB of the same tarball is accepted. Measured, not assumed; see section 7. So
+  the node image cannot seed this job's image, and the guest pulls it instead.
 
 ## 4. Decisions
 
@@ -92,14 +100,18 @@ included `.ci/dockerfile-hash.yaml`.
 - **D3 - pause, do not delete, the existing runner.** Runner 1 is someone's working setup for a
   different mechanism. An untagged job is eligible for it, so it is paused for the duration of a
   run and restored after. Deleting it is not this plan's to do.
-- **D4 - the missing image is ours to build, and it is seeded, not pulled.** B1 has no upstream
-  fix: `public.ecr.aws/m4j3c0j7/streamplace` does not exist and no job in the project builds or
-  pushes it, so every job in that file is unrunnable as written. The image is built from
-  `streamplace/docker/build.Dockerfile` at the hash `.ci/dockerfile-hash.yaml` names, pushed to a
-  registry on this host, and then **seeded into the node image** through the mechanism the node
-  image already has for this (`images:` in the builder config). Seeding is chosen over letting the
-  guest pull because the guest is built to never reach a registry, and because a pull would make
-  the job depend on this host's registry being up at job time.
+- **D4 - the job image comes from the registry this project already publishes to.** B1 has no
+  upstream fix: `public.ecr.aws/m4j3c0j7/streamplace` does not exist and no job in the project
+  builds or pushes it, so every job in that file is unrunnable as written.
+  `ghcr.io/streamplace/streamplace` carries the image the builder stage of
+  `docker/build.Dockerfile` produces, under the tag `builder-`, and the guest can pull it over the
+  internet -- measured, because the runner's own helper image already arrives that way. So the
+  branch sets `DOCKER_REPO` to that registry and empties `DOCKERFILE_HASH`, which makes the job's
+  untouched `image: "$DOCKER_REPO:builder-$DOCKERFILE_HASH"` resolve to the published tag.
+  **Seeding the image into the node image was tried first and does not work**: the node image is
+  written with `mkfs.ext4 -d`, and it refuses a file larger than about 2 GiB (`Ext2 file too big
+  while writing file ...`), while the builder tarball is 3.3 GB. That is measured, not assumed --
+  see section 7.
 - **D5 - the job runs from a branch that carries only the job.** The runner is `concurrent = 1`,
   this host runs one node, and every other job in `streamplace/.gitlab-ci.yml` is untagged, so the
   other build jobs would each take the only slot for up to their own 2h timeout and `test` would
@@ -116,16 +128,16 @@ included `.ci/dockerfile-hash.yaml`.
 ## 5. Steps
 
 1. Four-step proof on this host. DONE (section 6).
-2. Egress: a guest reaching GitLab and a registry. Instrument: a Pod in the tenant cluster that
-   dials both, and its trace.
+2. Egress: a guest reaching GitLab. DONE (section 6), by running a cloning job rather than by
+   dialing -- the clone is the thing the job actually does.
 3. A small pipeline from a probe project, run by a kubernetes-executor runner registered for it,
-   against a tenant cluster this host provisioned. Instrument:
-   `TestAGitLabPipelineRunsOnATenantCluster` generalized to a real GitLab, plus the job's own trace.
-4. Sizing: `vcpu`, `memMiB` and `diskMiB` as clusterprovider config, plumbed to the manifest and
-   the node provider, so a node can be sized for a real job. This closes B5 and B2.
-5. The builder image, built and published where the guest can pull it. This closes B1.
+   against a tenant cluster this host provisioned. DONE (section 6), with the scoped identity.
+4. Sizing: `vcpu`, `memMiB` and `diskMiB`, plumbed to the manifest and the node provider, so a node
+   can be sized for a real job. DONE, committed. Closes B5 and B2.
+5. The job image. DONE, by pointing the branch at the registry this project already publishes the
+   builder stage to. Closes B1; B6 is the reason seeding was abandoned.
 6. The real `test` job, run through the real GitLab, with the job's own trace and `test.xml` as the
-   reading.
+   reading. IN FLIGHT.
 
 ## 6. Readings
 
