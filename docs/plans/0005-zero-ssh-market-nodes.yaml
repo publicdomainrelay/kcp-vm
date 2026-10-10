@@ -529,6 +529,20 @@ items:
       bidWindowSec 8) is market policy: ask the user before changing it. decided by Claude, user may veto.
     status: todo
     evidence: []
+  - id: M2-BID-LATENCY
+    milestone: M2
+    title: A first-free winner is accepted within 0.5 s of its bid, not after 6 s of policy evaluation
+    decision: >
+      User asked 2026-10-07 why first-free waits. Measured on prod (door log, claim node96 23:16Z):
+      firstFree true, bidWindowSec 30; bid present 23:16:04.97Z, first_free_winner 23:16:11.30Z. The window
+      is not the cost: BidCollector waits on allow() = decideBid + evaluateCandidate, which spent ~3 s
+      silent (policy worker start, record/DID resolution) then ~3.3 s scanning the same delegated-trust
+      vouch chains (badgeBlueKeys, operator vouches) three times, uncached. Fix in the requester libs
+      (owned; no protocol change): per-DID cache of delegated-trust/vouch results with a TTL, pre-warm the
+      vouched candidates found at bidder_discovery while bids are awaited, one warm policy worker per
+      door, timing logs per phase. decided by Claude, user may veto.
+    status: doing
+    evidence: []
   - id: M4-SCALE-IN
     milestone: M4
     title: Per-node scale-in
