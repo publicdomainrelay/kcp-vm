@@ -60,6 +60,37 @@ echo "check.sh: ok staticcheck"
 log="$(mktemp)"
 trap 'rm -f "$log"' EXIT
 
+rust_check() {
+  if ! command -v cargo >/dev/null 2>&1; then
+    if [ "$run" = full ]; then
+      fail "cargo not found; --full builds and tests rust/socialweb-meshd"
+    fi
+    echo "check.sh: skipped cargo test (cargo not found, so rust/socialweb-meshd is not tested on this host)"
+    return
+  fi
+  if cargo fmt --version >/dev/null 2>&1; then
+    cargo fmt --check --manifest-path rust/Cargo.toml || fail "cargo fmt"
+    echo "check.sh: ok cargo fmt"
+  else
+    echo "check.sh: skipped cargo fmt (rustfmt not installed)"
+  fi
+  gates=""
+  if [ "$run" != fast ]; then
+    if sudo -n true >/dev/null 2>&1; then
+      gates="SOCIALWEB_MESHD_NETNS=1 SOCIALWEB_MESHD_K3S=1"
+    elif [ "$run" = full ]; then
+      fail "sudo -n unavailable; --full runs the meshd netns and k3s proofs, which need CAP_NET_ADMIN"
+    fi
+  fi
+  env $gates cargo test --locked --manifest-path rust/Cargo.toml || fail "cargo test"
+  if [ -n "$gates" ]; then
+    echo "check.sh: ok cargo test (rust/, with the netns and k3s proofs)"
+  else
+    echo "check.sh: ok cargo test (rust/; the netns and k3s proofs need SOCIALWEB_MESHD_NETNS=1 / SOCIALWEB_MESHD_K3S=1 and sudo -n)"
+  fi
+}
+rust_check
+
 case "$run" in
   fast)
     go test ./... -count=1 || fail "go test"

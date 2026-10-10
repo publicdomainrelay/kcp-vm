@@ -1630,6 +1630,143 @@ binaries (M3-UNITS's fallback) are not needed by it. Every unit carries `StartLi
    so they go NotReady, and the new door does not reap them. They are released only when the provider
    deletes their claims (M3-NODE-LOSS's provider half), and until then they hold their VMs.
 
+### Pods reach pods on other market nodes through socialweb-meshd (plan 0005 M5-MESHD)
+
+Market guests cannot reach each other: each sits behind its own NAT or pasta, so k3s's flannel
+overlay has nothing to run over (the limit "A node cannot reach another node" in NEXT.yaml). The
+user's decision: QUIC datagrams over iroh, a tun device, each peer Node's podCIDR routed to that
+Node's iroh endpoint id, k3s with `--flannel-backend=none` and a bridge CNI for the node-local half.
+`rust/socialweb-meshd` (a cargo workspace at `rust/`, the first Rust in this repo) is that daemon.
+It is built and proved on hat-8; it is NOT deployed and NOT yet installed by any user_data.
+
+**Identity.** One ed25519 secret per node, read from `--secret-file` as 64 hex characters (the
+`IROH_SECRET` encoding dumbpipe and the cluster links use), generated 0600 through a rename if absent.
+The endpoint id is the public key in lowercase hex; the did:key is multicodec `0xed01` + key,
+base58btc, `z` prefix - the same spelling as `internal/didkey`, and the Rust tests carry the same two
+vectors (the did:key spec vector `did:key:z6MkiTBz1ymuepAQ4HEHYSF1H8quG5GLVVQR3djdX3mDooWp` and the
+dumbpipe v0.39.0 `IROH_SECRET` -> endpoint id vector). The secret is node-local and never leaves the
+guest: a node's mesh identity lives and dies with the guest, so nothing about it goes through
+OpenBao. `socialweb-meshd identity --secret-file F` prints `{endpoint, did}`.
+
+**Peers are Nodes.** With `--kubeconfig` (the kubelet's own, `/var/lib/rancher/k3s/agent/kubelet.kubeconfig`)
+meshd merge-patches its own Node with `socialweb.computer/mesh-endpoint=<hex>` and
+`socialweb.computer/mesh-did=<did:key>`, lists and watches all Nodes, and relists (rebuilding the
+client, so a rotated kubelet certificate is picked up) after every watch. The route table, computed
+by `RouteTable::compute` from a Node list and unit-tested on Node lists:
+
+- every OTHER Node with `spec.podCIDRs` (else `spec.podCIDR`) and a valid `mesh-endpoint` is one route
+  per pod CIDR to that endpoint; a Node missing either is skipped silently (it has not joined yet);
+- this node's own pod CIDRs are never routed, and come from its own Node object;
+- rejected and reported in `/status`: a malformed endpoint, an endpoint equal to this node's own, a
+  `mesh-did` naming a different key than `mesh-endpoint`, a pod CIDR overlapping this node's, and
+  BOTH of two peers whose pod CIDRs overlap;
+- `socialweb.computer/mesh-addrs` (comma-separated `ip:port`) is a read-only dialing hint; meshd never
+  writes it. It is how the tests dial directly with discovery off.
+
+`--peers-file` replaces the kube source with a NodeList JSON file (`kubectl get nodes -o json` shape),
+re-read when its mtime changes, and writes nothing. It exists for the network-namespace proof.
+
+**The node authorizer does NOT let a node list Nodes.** Measured against k3s v1.36.4+k3s1 with a
+`system:node:node-a` client certificate minted from the cluster client CA: `list nodes` answers 403
+`node 'node-a' cannot read all nodes, only its own Node object` (AuthorizeNodeWithSelectors). Every
+tenant cluster therefore needs `rust/socialweb-meshd/deploy/node-reader-rbac.yaml` - ClusterRole
+`socialweb-meshd-node-reader` (`nodes` get/list/watch) bound to group `system:nodes`. With it the same
+identity lists, watches and patches its own Node's annotations (node authorizer plus NodeRestriction
+allow annotations on one's own Node), and patching ANOTHER Node is 403, which meshd turns into exit 4.
+Until the binding exists meshd logs `list_nodes_forbidden` with the manifest's path, stays not ready,
+and retries. The binding is ours and installed by us, so it belongs in the addon baseline, not intent.
+
+**The Kubernetes client is hand-rolled, not kube-rs.** meshd makes three calls (list, watch, merge
+patch). iroh already brings reqwest, rustls and ring, so a client over those plus serde_yaml for the
+kubeconfig adds almost nothing to a static musl binary; kube-rs would add k8s-openapi and a second
+TLS configuration. The kubeconfig reader follows `current-context`, resolves file paths against the
+kubeconfig's directory, takes `*-data`, `token` and `tokenFile`, and REFUSES
+`insecure-skip-tls-verify` and a cluster with no CA, because the Node list decides where pod traffic
+goes. `tls-server-name` is refused as unsupported.
+
+**Data plane.** A tun device (`--tun-name`, default `swmesh0`, `IFF_TUN|IFF_NO_PI`, so one read is one
+IP packet). The tun takes the network address of each own pod CIDR as a host address (`10.42.1.0/32`
+for `10.42.1.0/24`, the flannel.1 convention; host-local IPAM never hands out `.0`), and each peer pod
+CIDR is routed `dev swmesh0 src <that address>`, so traffic the node itself originates leaves with a
+source inside its own pod CIDR and the reply comes back through the mesh. One IP packet is one QUIC
+datagram, with no header: the connection already authenticates the sender's endpoint id.
+
+- outbound: longest-prefix match of the destination over peer routes; a destination with no route,
+  or a source outside this node's own pod CIDRs, is dropped and counted by reason;
+- inbound: the sending endpoint must have a route, the source must be inside THAT endpoint's pod CIDRs
+  and the destination inside ours, else dropped and counted; a connection from an endpoint no Node
+  routes to is closed at accept (`connections_refused`);
+- connections are dialed lazily on the first packet for a peer, kept, and reused in both directions
+  (an accepted connection is used for sending too); a per-peer queue holds 512 packets, a dial has
+  15 s, a failed dial backs off 1 s doubling to 30 s and drops packets meanwhile; a peer leaving the
+  Node list has its connection closed and its routes removed. ALPN `socialweb.computer/meshd/0`.
+- The node-local half is untouched: own pod CIDR traffic never reaches the tun.
+
+**The tun MTU is 1160.** noq's largest datagram is `current_mtu - (1 flag + 8 CID + 4 PN + 16 AEAD tag)
+- 9 (datagram frame bound)`, and `current_mtu` is the minimum over a connection's live paths, starting
+at QUIC's 1200. A relay path stays at 1200, so with relays on the floor is 1200 - 38 = 1162; 1160
+leaves two bytes. Measured: `max_datagram_size` 1162 on a 1228-byte underlay (a 1200-byte UDP payload
+path) and 1414 on a 1500-byte one after MTU discovery. The bridge CNI's `mtu` must be 1160: a
+don't-fragment packet above it is refused by the node with frag-needed (proved), and a fragmentable
+1400-byte ping crosses as fragments (proved).
+
+**A crashed peer is reachable again in about 15 s.** A peer that is SIGKILLed and restarts with the
+same key leaves the other side holding a connection nobody answers; one-way traffic waits for that
+connection's idle timeout. Measured 30.8 s at iroh's default 30 s idle timeout and 15.4 s after
+meshd set it to 15 s (three of iroh's 5 s heartbeats). A clean stop sends CONNECTION_CLOSE and the
+peer re-dials on its next packet.
+
+**Relay and discovery** are iroh's n0 preset by default (pkarr publish, DNS lookup, n0 production
+relays), since guests have outbound internet: `--relay default|disabled|<url,...>`,
+`--discovery n0|none`, `--bind ip:port[,...]`. No inbound port is needed. The proofs run with relays
+and discovery off in network namespaces; the n0 path itself is iroh's and was not exercised here.
+
+**Health and lifecycle.** JSON log lines on stderr (tracing, `--log-filter`, default
+`info,iroh=warn,...`); `GET /status` (JSON: identity, own pod CIDRs, routes with connected flag and
+max datagram size, installed kernel routes, rejections, counters), `/metrics` (Prometheus text) and
+`/healthz` on `--metrics-listen`, default `127.0.0.1:9469` (a non-loopback address is warned about).
+Ready - and `READY=1` to `$NOTIFY_SOCKET` - means the tun is up, the own Node is seen with a pod CIDR,
+its annotations are visible through the watch (kube mode), and the routes synced. Exit codes:
+0 SIGTERM/SIGINT, 1 a task ended, 2 usage, 3 secret or peers file, 4 kubeconfig refused or own-Node
+patch forbidden, 5 tun create/up/read, 6 iroh bind, 7 status bind. A missing kubeconfig, an
+unreachable apiserver, a forbidden list and an unregistered own Node are retried, not fatal.
+
+**Build.** `rust/build.sh [x86_64] [aarch64]` writes `rust/dist/socialweb-meshd-<arch>` and
+`socialweb-meshd-<arch>.sha256` (sha256sum format): static musl, ring's C compiled by `clang
+--target`, linked by the toolchain's `rust-lld`, release profile `opt-level=s`, fat LTO, one codegen
+unit, `panic=abort`, stripped, with the checkout, registry and sysroot paths remapped. Two different
+target directories on hat-8 produced identical bytes; identity across hosts is not measured, so the
+pin a user_data carries is the `.sha256` written next to the binary it ships. blake3 is forced to its
+pure-Rust backend because its NEON C includes libc headers and there is no aarch64 musl sysroot.
+`rust/dist/` is not committed. `deploy/check.sh` runs `cargo fmt --check` and `cargo test` in every
+mode (skipped with a reason without cargo; `--full` fails instead), and adds the network-namespace and
+k3s proofs in `--local`/`--full` when `sudo -n` works. `tests/no_comments.rs` holds the Rust sources
+to the same no-comments, ASCII-only rule as `test/nocomments_test.go`.
+
+**What the integration that installs it must do** (not done by M5-MESHD):
+
+1. k3s server `--flannel-backend=none` (and, if kube-router's policy controller is not wanted,
+   `--disable-network-policy`); the agent then needs a CNI conflist in
+   `/var/lib/rancher/k3s/agent/etc/cni/net.d/`: `bridge` (`isGateway`, `ipMasq: false`, `mtu: 1160`)
+   with `host-local` on the Node's `spec.podCIDR`, plus `portmap`. The pod CIDR exists only once the
+   Node has registered and the controller manager allocated it; meshd's `/status` `ownPodCIDRs` reads it.
+2. SNAT only what leaves the cluster: `-s <cluster-cidr> ! -d <cluster-cidr> -j MASQUERADE`. The bridge
+   plugin's own `ipMasq` would masquerade cross-node pod traffic to the tun address and erase the pod
+   source that the inbound check and NetworkPolicy depend on.
+3. Apply `rust/socialweb-meshd/deploy/node-reader-rbac.yaml` in every tenant cluster.
+4. Install the binary from user_data (a `UserDataModule` in cloud-init-common's registry), pinned by its
+   sha256, or have the image builder embed it, and run it from
+   `rust/socialweb-meshd/deploy/socialweb-meshd.service` as root (CAP_NET_ADMIN, `/dev/net/tun`) with
+   `/etc/socialweb/node/meshd.env` setting `SOCIALWEB_MESHD_NODE_NAME` to the name the k3s agent
+   registers. It is `Type=notify` and becomes ready only after its own Node exists, so k3s-agent must
+   NOT be ordered after it; meshd waits for the kubeconfig and the Node on its own.
+5. `net.ipv4.ip_forward=1` (k3s sets it).
+
+Not carried by the mesh: node addresses. Traffic to another node's InternalIP (NodePort on another
+node, hostNetwork pods, kubelet ports) has no route; apiserver-to-kubelet and apiserver-to-pod
+traffic already rides k3s's own agent tunnel (`--egress-selector-mode cluster`). IPv6 pod CIDRs are
+routed and checked by the code but untested.
+
 ### `k3s server` argv
 
 
@@ -2307,6 +2444,7 @@ internal/plcsweep/     the periodic pass that lists DIDs, resolves them and revo
 internal/sweepkcp/     the kcp side of that sweep: build the account worklist from workspaces and AtprotoIdentity records, write the deny, plan the fan-out
 cmd/${binary}/         the CLI layer; nothing else builds a binary
 deploy/                install scripts, manifests, the audit policy
+rust/                  a cargo workspace; rust/socialweb-meshd is the per-node pod mesh daemon that runs INSIDE a market guest (section 9), rust/build.sh its static musl build
 ```
 
 Dependencies flow one way: `api` <- `internal` <- `cmd`. A new substrate or transport is a NEW
@@ -2337,7 +2475,8 @@ names and starts from an empty state dir — and the cost of the node names chan
 recorded in section 15.
 
 Binaries: `socialweb-clusterprovider`, `socialweb-gateway`, `socialweb-credential`,
-`socialweb-nodeimage`, `socialweb-nodeagent` and `socialweb-computer-kcp-check-host`.
+`socialweb-nodeimage`, `socialweb-nodeagent` and `socialweb-computer-kcp-check-host`; outside
+`cmd/`, `rust/build.sh` builds `socialweb-meshd`, which runs inside a market guest beside the k3s agent.
 `socialweb-nodeimage` and `socialweb-nodeagent` are the node side of the seam:
 `socialweb-nodeimage` builds a node image and is a TOOL, never a controller, because provisioning
 must not be coupled to a boot plus a bootstrap; `socialweb-nodeagent` runs INSIDE the guest and is
