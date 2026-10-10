@@ -184,6 +184,8 @@ items:
       "Generated from api/v1alpha1".
     status: done
     evidence:
+      - "merged to main as 5d5ce05; check.sh --fast green (apigen: 8 generated files, no drift); door deno task test 73 passed 0 failed"
+      - "prod deploy 2026-10-07 ~17:47Z: workspace b3wgagx6dzltmtsx binding clusters-3pj7y now bound to v1alpha1-2.nodeclaims.socialweb.computer (re-pointed export, no rebind); all 95 pre-existing claims still list; door logged no claim refusal, only one transient 429 storage (re)initializing at 17:47:56Z right after kcp start"
       - "d1cb357 cmd/socialweb-apigen + internal/apigen: go generate ./api/... writes deploy/*-apiresourceschema.yaml, both APIExports, deploy/apiresourceschema-revisions.json and socialweb-computer-k8s/lib/common/socialweb-computer-k8s-api/mod.ts; Cluster, Node, AtprotoIdentity schemas and both exports byte-identical to the hand-written ones"
       - "d1cb357 NodeClaim status.contract += every ContractState field (version, phase, vmName, requesterDid, marketDid, payload/rfp/policy/bid/accept/receipt strongRefs, winner, receiptOk, vmAddress, bids, release, outcome, error, timestamps), all optional; old six fields kept; schema renamed v1alpha1-2.nodeclaims.socialweb.computer, clusters export re-pointed"
       - "99e894c door: socialweb-computer-k8s-common drops its NodeClaim wire types; the claim view moves to lib/abc; nodeclaim-kcp parses every claim with parseNodeClaim and asserts a status before PATCH"
