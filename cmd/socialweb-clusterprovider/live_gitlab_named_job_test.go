@@ -46,6 +46,10 @@ const (
 
 	gitlabJobMemoryLimit = "20Gi"
 
+	gitlabHelperCPURequest = "100m"
+
+	gitlabHelperMemoryRequest = "128Mi"
+
 	gitlabHelperCPULimit = "1"
 
 	gitlabHelperMemoryLimit = "1Gi"
@@ -218,6 +222,8 @@ check_interval = 3
     memory_request = %q
     cpu_limit = %q
     memory_limit = %q
+    helper_cpu_request = %q
+    helper_memory_request = %q
     helper_cpu_limit = %q
     helper_memory_limit = %q
     poll_timeout = %d
@@ -234,7 +240,9 @@ check_interval = 3
 		filepath.Join(credDir, "tls.crt"), filepath.Join(credDir, "tls.key"),
 		filepath.Join(credDir, "ca.crt"), gitlabNamespace,
 		gitlabJobCPURequest, gitlabJobMemoryRequest, gitlabJobCPULimit, gitlabJobMemoryLimit,
-		gitlabHelperCPULimit, gitlabHelperMemoryLimit, gitlabJobPollTimeout, gitlabSpreadLabelKey)
+		gitlabHelperCPURequest, gitlabHelperMemoryRequest,
+		gitlabHelperCPULimit, gitlabHelperMemoryLimit,
+		gitlabJobPollTimeout, gitlabSpreadLabelKey)
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatalf("writing the runner config: %v", err)
 	}
