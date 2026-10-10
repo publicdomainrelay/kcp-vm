@@ -236,14 +236,20 @@ plan's `m3_contract` already fixed it (names, mount, path, env var, encoding).
 - **Identity encodings.** `internal/didkey`: endpoint id = lowercase hex of the 32-byte public key
   (what iroh prints); did:key = `did:key:z` + base58btc(0xed 0x01 + key). Fixture-tested against the
   did:key spec vector and a dumbpipe-printed ticket.
-- **The ticket.** What dumbpipe prints on `dumbpipe connect-tcp <ticket>`: `endpoint` + lowercase
-  unpadded base32 of a postcard-encoded `EndpointTicket` (byte 0 the variant 0x00, bytes 1..32 the
-  endpoint id, then relay URL and direct addresses). `clusterlink.ParseTicket` reads the id back. The
-  gate opens only when a ticket is printed AND names the vault-held key. The ticket's BYTES change
-  across restarts (the relay chosen and the addresses are in it); the endpoint id and did:key do not.
-  An old ticket still reaches the restarted listener -- dumbpipe resolves the endpoint id by discovery
-  -- measured in `TestARealDumbpipeLinkCarriesTCPToItsTargetAndAnOldTicketStillReachesItAfterARestart`.
-  Consumers key on `status.endpointId` and may use any ticket that names it.
+- **The ticket.** dumbpipe prints `dumbpipe connect-tcp <ticket>`: `endpoint` + lowercase unpadded
+  base32 of a postcard-encoded `EndpointTicket` (byte 0 the variant 0x00, bytes 1..32 the endpoint
+  id, then the relay URL and direct addresses). `clusterlink.ParseTicket` reads the id back, and the
+  gate opens only when the printed ticket names the vault-held key. The printed ticket's BYTES change
+  per bring-up (the relay chosen and the addresses are in it), so it is NOT what is published:
+  `status.ticket` is `clusterlink.StableTicket(key)`, the id-only ticket (variant 0x00, the id, zero
+  addresses) -- byte for byte what `IROH_SECRET=<seed> dumbpipe generate-ticket` prints, fixture-tested
+  -- so it is a function of the key alone and never changes while the key lives in the vault. A node
+  secret may hold it written once (the M3-JWT KV path does). dumbpipe resolves the id's current relay
+  and addresses by discovery; measured live in
+  `TestARealDumbpipeLinkCarriesTCPThroughItsPublishedTicketWhichARestartLeavesByteIdentical`
+  (connect-tcp with the published ticket echoes before and after a restart, and the ticket is
+  byte-identical). Decided by Claude, user may veto: the cost is that a dialer with no discovery
+  (no DNS to the n0 discovery service) cannot use the ticket; guests reach the internet anyway.
 - **The link port.** Leased (`apiserver-link`, `openbao-link`, width 1, section 8) and bound as the
   endpoint's IPv4 UDP socket, so the direct address in a ticket is stable and a dumbpipe a dead
   provider left running is found by the restart sweep: `portscan` reads `/proc/net/udp{,6}` (state
@@ -405,7 +411,7 @@ compatibility promise.
 | **Kine** | kine plus t4 to central S3 | system | no |
 | **Node** | one node. The only bound on leaks | node provider | no |
 | **NodeClaim** | one node RENTED FROM THE COMPUTE MARKET for a cluster, as that cluster's owner. Carries paths (`tokenFile`, `nodePasswordFile`, `serverCAFile`) and never a secret; the door in the sibling Deno process is the only writer of its `status` | cluster provider, spec and metadata only | no |
-| **ClusterLink** | one iroh listener in front of a cluster's apiserver or vault, named `<clusterKey>-apiserver` / `<clusterKey>-openbao` in the cluster's home workspace. `spec` {cluster (the key), service, targetPort}; `status` {phase `Pending`/`Listening`/`Failed`, endpointId (64 hex), did (did:key), ticket (as dumbpipe printed it), message}. Never carries the secret | cluster provider, spec and status | no |
+| **ClusterLink** | one iroh listener in front of a cluster's apiserver or vault, named `<clusterKey>-apiserver` / `<clusterKey>-openbao` in the cluster's home workspace. `spec` {cluster (the key), service, targetPort}; `status` {phase `Pending`/`Listening`/`Failed`, endpointId (64 hex), did (did:key), ticket (id-only, a function of the key: byte-stable), message}. Never carries the secret | cluster provider, spec and status | no |
 | **AtprotoIdentity** | the DID to identity mapping, in the home workspace | us | no |
 | **Account** | the DID to shard map. Not a CRD - a real kcp `Workspace` of an account `WorkspaceType` in root | us | no |
 

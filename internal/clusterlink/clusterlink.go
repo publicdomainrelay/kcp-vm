@@ -160,6 +160,12 @@ func ParseTicket(ticket string) (string, error) {
 	return didkey.EndpointID(ed25519.PublicKey(raw[1 : 1+ed25519.PublicKeySize]))
 }
 
+func StableTicket(k Key) string {
+	pub := k.Private.Public().(ed25519.PublicKey)
+	body := append(append([]byte{ticketVariant}, pub...), 0x00)
+	return TicketPrefix + strings.ToLower(ticketEncoding.EncodeToString(body))
+}
+
 func TicketIn(output string) (string, bool) {
 	found := ""
 	for _, line := range strings.Split(output, "\n") {
@@ -203,8 +209,8 @@ func Object(clusterKey string, service v1alpha1.ClusterLinkService, targetPort i
 	}
 }
 
-func Listening(k Key, ticket string) (v1alpha1.ClusterLinkStatus, error) {
-	id, err := ParseTicket(ticket)
+func Listening(k Key, printed string) (v1alpha1.ClusterLinkStatus, error) {
+	id, err := ParseTicket(printed)
 	if err != nil {
 		return v1alpha1.ClusterLinkStatus{}, err
 	}
@@ -217,7 +223,7 @@ func Listening(k Key, ticket string) (v1alpha1.ClusterLinkStatus, error) {
 		Phase:      v1alpha1.ClusterLinkListening,
 		EndpointID: k.EndpointID,
 		Did:        k.Did,
-		Ticket:     ticket,
+		Ticket:     StableTicket(k),
 	}, nil
 }
 

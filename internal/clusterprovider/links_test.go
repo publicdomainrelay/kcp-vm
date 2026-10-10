@@ -29,6 +29,7 @@ const (
 	apiserverTicket   = "endpointadfwnbtfmwi5nymildqcmkrqzetqavb7giynhveduslwzp6l7rutybiaenuhi5dqom5c6l3von3tcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqayltuyk3xcqdaeagiwullc5yuaybacwbcaabxofagaiaycuaaff3ribq"
 	openbaoSeed       = "30b0a6d2e8c91c167a71bfa88b1f05a1775a84144ce0f3a3f3a65650ef5a67c4"
 	openbaoTicket     = "endpointabqxdprknrzh52p6hssdgbbu2ost4ax2zqh3fljn5o7plucisqcukaa"
+	apiserverStable   = "endpointadfwnbtfmwi5nymildqcmkrqzetqavb7giynhveduslwzp6l7rutyaa"
 )
 
 type linkKV struct {
@@ -279,7 +280,7 @@ func spawnLinks(t *testing.T, h *linkHarness, cfg StackConfig) *procgroup.Group 
 	return g
 }
 
-func TestEachLinkIsRecordedListeningWithTheTicketItPrintedAndTheDidKeyOfItsKey(t *testing.T) {
+func TestEachLinkIsRecordedListeningWithTheStableTicketAndTheDidKeyOfItsKey(t *testing.T) {
 	h := newLinkHarness(t)
 	g := spawnLinks(t, h, linkStackConfig(t, h.links))
 	defer g.Reap(context.Background())
@@ -288,7 +289,7 @@ func TestEachLinkIsRecordedListeningWithTheTicketItPrintedAndTheDidKeyOfItsKey(t
 	if !api.full || api.link.Spec != (v1alpha1.ClusterLinkSpec{Cluster: "liveweb", Service: v1alpha1.ClusterLinkApiserver, TargetPort: 21003}) {
 		t.Fatalf("apiserver link written as %+v", api)
 	}
-	if api.status.EndpointID != apiserverEndpoint || api.status.Ticket != apiserverTicket ||
+	if api.status.EndpointID != apiserverEndpoint || api.status.Ticket != apiserverStable ||
 		!strings.HasPrefix(api.status.Did, "did:key:z6Mk") || api.status.Message != "" {
 		t.Fatalf("apiserver link status = %+v", api.status)
 	}
@@ -322,8 +323,9 @@ func TestAProviderRestartBringsTheLinksBackAsTheSameEndpoints(t *testing.T) {
 	g = spawnLinks(t, h, cfg)
 	defer g.Reap(context.Background())
 	after := h.recorder.await(t, "liveweb-apiserver", v1alpha1.ClusterLinkListening).status
-	if after.EndpointID != before.EndpointID || after.Did != before.Did {
-		t.Fatalf("after the restart the link is %s, before it was %s", after.EndpointID, before.EndpointID)
+	if after.EndpointID != before.EndpointID || after.Did != before.Did || after.Ticket != before.Ticket {
+		t.Fatalf("after the restart the link is %s %s, before it was %s %s: a node secret holds the ticket "+
+			"written once", after.EndpointID, after.Ticket, before.EndpointID, before.Ticket)
 	}
 	id, err := clusterlink.ParseTicket(after.Ticket)
 	if err != nil || id != before.EndpointID {
