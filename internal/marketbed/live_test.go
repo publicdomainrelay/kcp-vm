@@ -44,10 +44,8 @@ func findOrgRoot(start string) (string, bool) {
 	}
 }
 
-func TestTheMarketTestBedRentsAFirecrackerGuestThroughTheRFPFlow(t *testing.T) {
-	livegate.Short(t, "this test brings up kcp, OpenBao, the deno-kcp provider and the whole market test bed, "+
-		"and rents a firecracker guest through it: a skip is NOT a pass; drop -short, or set SOCIALWEB_REQUIRE_LIVE=1 to fail instead")
-
+func testBedEnv(t *testing.T) (string, string, []string) {
+	t.Helper()
 	for _, bin := range []string{"kcp", "kine", "kubectl", "go", "python3", "curl", "openssl"} {
 		if _, err := exec.LookPath(bin); err != nil {
 			livegate.RequireLocal(t, "%s is not on PATH; the test bed's kcp and its scripts need it", bin)
@@ -120,6 +118,14 @@ func TestTheMarketTestBedRentsAFirecrackerGuestThroughTheRFPFlow(t *testing.T) {
 		_ = l.Close()
 	}
 
+	return root, workRoot, env
+}
+
+func TestTheMarketTestBedRentsAFirecrackerGuestThroughTheRFPFlow(t *testing.T) {
+	livegate.Short(t, "this test brings up kcp, OpenBao, the deno-kcp provider and the whole market test bed, "+
+		"and rents a firecracker guest through it: a skip is NOT a pass; drop -short, or set SOCIALWEB_REQUIRE_LIVE=1 to fail instead")
+	root, _, env := testBedEnv(t)
+
 	deadline, hasDeadline := t.Deadline()
 	budget := 55 * time.Minute
 	if hasDeadline {
@@ -132,8 +138,7 @@ func TestTheMarketTestBedRentsAFirecrackerGuestThroughTheRFPFlow(t *testing.T) {
 	defer cancel()
 
 	logPath := filepath.Join(t.TempDir(), "accept.log")
-	var logFile *os.File
-	logFile, err = os.Create(logPath)
+	logFile, err := os.Create(logPath)
 	if err != nil {
 		t.Fatal(err)
 	}
