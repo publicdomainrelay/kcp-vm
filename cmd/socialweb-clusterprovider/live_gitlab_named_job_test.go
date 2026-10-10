@@ -417,7 +417,8 @@ func (g gitlabClient) TriggerPipelineOn(ctx context.Context, ref string) (int, e
 
 func (g gitlabClient) AwaitJob(t *testing.T, ctx context.Context, pipeline int, name string) jobState {
 	t.Helper()
-	deadline := time.Now().Add(gitlabJobTimeout)
+	start := time.Now()
+	deadline := start.Add(gitlabJobTimeout)
 	last := ""
 	for time.Now().Before(deadline) {
 		raw, code, err := g.api(ctx, http.MethodGet,
@@ -442,9 +443,11 @@ func (g gitlabClient) AwaitJob(t *testing.T, ctx context.Context, pipeline int, 
 					case "success", "failed", "canceled", "skipped", "manual":
 						return jobState{id: j.ID, status: j.Status, duration: j.Duration}
 					}
-					if j.Status == "created" && time.Since(deadline.Add(-gitlabJobTimeout)) > 4*time.Minute {
-						t.Logf("job %s is still created after 4m; every job of this pipeline that "+
-							"this host cannot run is listed below:\n%s", name, g.PipelineJobs(ctx, pipeline))
+					if j.Status == "created" && time.Since(start) > 4*time.Minute {
+						t.Logf("job %s is still created after %s; this host can run one named job "+
+							"of this pipeline and nothing else in it, so a job that never leaves "+
+							"created is a runner that did not take it:\n%s",
+							name, time.Since(start).Round(time.Second), g.PipelineJobs(ctx, pipeline))
 					}
 				}
 			}
