@@ -119,12 +119,24 @@ export function createAtprotoSessionVerifier(opts: SessionVerifierOptions = {}):
           if (fresh) res = await call(fresh);
         }
         if (!res.ok) {
-          log("get_session_not_ok", {
-            status: res.status,
-            pds,
-            body: (await res.text()).slice(0, 300),
-          });
-          return null;
+          const status = res.status;
+          const body = (await res.text()).slice(0, 300);
+          log("get_session_not_ok", { status, pds, body });
+          const bearer = await fetch(endpoint, {
+            headers: { Authorization: `Bearer ${session.accessJwt}` },
+            signal: AbortSignal.timeout(timeoutMs),
+          }).catch(() => null);
+          if (!bearer?.ok) {
+            log("get_session_bearer_not_ok", { status: bearer?.status ?? 0, pds });
+            return null;
+          }
+          const said = await bearer.json() as { did?: string; handle?: string };
+          if (said.did !== session.userDid) {
+            log("did_mismatch", { claimed: session.userDid, pdsSaid: said.did });
+            return null;
+          }
+          log("session_proved_as_bearer", { did: said.did });
+          return { did: said.did, handle: said.handle ?? said.did };
         }
         const body = await res.json() as { did?: string; handle?: string };
         if (body.did !== session.userDid) {
