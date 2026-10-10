@@ -39,6 +39,7 @@ const (
 
 const (
 	nsidGetKubeconfig    = NSIDPrefix + "getKubeconfig"
+	nsidCreateCluster    = NSIDPrefix + "createCluster"
 	nsidControlPlaneUp   = NSIDPrefix + "controlPlaneUp"
 	nsidControlPlaneDown = NSIDPrefix + "controlPlaneDown"
 	nsidDeleteCluster    = NSIDPrefix + "deleteCluster"
@@ -115,8 +116,12 @@ func New(opts Options) (*Server, error) {
 	}
 
 	for _, r := range []route{
-		{nsid: nsidGetKubeconfig, call: func(ctx context.Context, c gateway.Caller, in any) (any, error) {
-			return s.gateway.GetKubeconfig(ctx, c, *(in.(*gateway.NameRequest)))
+		{nsid: nsidGetKubeconfig, input: &gateway.KubeconfigRequest{},
+			call: func(ctx context.Context, c gateway.Caller, in any) (any, error) {
+				return s.gateway.GetKubeconfig(ctx, c, *(in.(*gateway.KubeconfigRequest)))
+			}},
+		{nsid: nsidCreateCluster, call: func(ctx context.Context, c gateway.Caller, in any) (any, error) {
+			return s.gateway.CreateCluster(ctx, c, *(in.(*gateway.NameRequest)))
 		}},
 		{nsid: nsidControlPlaneUp, call: func(ctx context.Context, c gateway.Caller, in any) (any, error) {
 			return s.gateway.ControlPlaneUp(ctx, c, *(in.(*gateway.NameRequest)))
@@ -269,6 +274,8 @@ func decodeBody(req *http.Request, nsid string, cat *lexicon.BaseCatalog, def le
 func checkClusterName(out any) error {
 	switch t := out.(type) {
 	case *gateway.NameRequest:
+		return labelOrInvalidRequest(t.Name)
+	case *gateway.KubeconfigRequest:
 		return labelOrInvalidRequest(t.Name)
 	case *gateway.RevokeRequest:
 		if t.Name == "" {

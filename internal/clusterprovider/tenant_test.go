@@ -17,6 +17,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpclient"
 )
 
 const tenantGrantPath = "../../deploy/tenant-grant.yaml"
@@ -30,45 +31,126 @@ func tenantGrantDoc(t *testing.T) []byte {
 	return raw
 }
 
-func TestGrantObjectsReadsTheRealGrant(t *testing.T) {
-	objs, err := GrantObjects(tenantGrantDoc(t))
+func renderedGrant(t *testing.T, ownerDID string) []unstructured.Unstructured {
+	t.Helper()
+	rendered, err := kcpclient.RenderTenantGrant(string(tenantGrantDoc(t)), ownerDID)
+	if err != nil {
+		t.Fatalf("the deployed grant is not renderable for %s: %v", ownerDID, err)
+	}
+	objs, err := GrantObjects([]byte(rendered))
 	if err != nil {
 		t.Fatalf("GrantObjects: %v", err)
 	}
-	want := map[string]bool{
-		"ServiceAccount": false, "Role": false, "RoleBinding": false,
-		"ValidatingAdmissionPolicy": false, "ValidatingAdmissionPolicyBinding": false,
+	return objs
+}
+
+func TestGrantObjectsReadsTheRealGrant(t *testing.T) {
+	objs := renderedGrant(t, grantOwner)
+	want := map[string]int{
+		"ServiceAccount": 1, "Role": 1, "RoleBinding": 1, "ClusterRoleBinding": 1,
+		"ValidatingAdmissionPolicy": 1, "ValidatingAdmissionPolicyBinding": 1,
 	}
+	got := map[string]int{}
 	for _, o := range objs {
 		if _, ok := want[o.GetKind()]; !ok {
 			t.Fatalf("the grant holds a %s this test does not know about", o.GetKind())
 		}
-		want[o.GetKind()] = true
+		got[o.GetKind()]++
 		if o.GetName() == "" {
 			t.Errorf("a %s came through with no name", o.GetKind())
 		}
 	}
-	for kind, seen := range want {
-		if !seen {
-			t.Errorf("the grant no longer holds a %s", kind)
+	for kind, n := range want {
+		if got[kind] != n {
+			t.Errorf("the grant holds %d %s, want %d", got[kind], kind, n)
 		}
 	}
-	if len(objs) != len(want) {
-		t.Errorf("the grant holds %d objects and %d kinds", len(objs), len(want))
+}
+
+const grantOwner = "did:plc:grantowner0000000000000000"
+
+func TestTheGrantIsRenderedForTheClustersOwner(t *testing.T) {
+	if !strings.Contains(string(tenantGrantDoc(t)), kcpclient.GrantOwnerPlaceholder) {
+		t.Fatalf("deploy/tenant-grant.yaml carries no %s, so the bootstrap would apply a grant "+
+			"scoped to whatever name is written in the file rather than to the cluster's owner",
+			kcpclient.GrantOwnerPlaceholder)
+	}
+	objs := renderedGrant(t, grantOwner)
+	owner := kcpclient.ServiceAccountName(grantOwner)
+
+	var sawTokenRule, sawReadRule, sawOwnerBinding bool
+	for i := range objs {
+		o := &objs[i]
+		switch o.GetKind() {
+		case "ServiceAccount":
+			if o.GetName() != MintServiceAccount || o.GetNamespace() != kcpclient.TenantNamespace {
+				t.Errorf("the mint ServiceAccount is %s/%s, want %s/%s",
+					o.GetNamespace(), o.GetName(), kcpclient.TenantNamespace, MintServiceAccount)
+			}
+		case "Role":
+			rules, _, _ := unstructured.NestedSlice(o.Object, "rules")
+			for _, rule := range rules {
+				r, _ := rule.(map[string]any)
+				names, _ := r["resourceNames"].([]any)
+				if len(names) != 1 || names[0] != owner {
+					t.Errorf("the grant's %v rule names %v, want exactly [%s]: it is scoped to ONE "+
+						"derived ServiceAccount and a wildcard here is total impersonation",
+						r["resources"], names, owner)
+				}
+				if roleNamesTheTokenSubresource(r) {
+					sawTokenRule = true
+				} else if _, ok := r["resources"].([]any); ok {
+					sawReadRule = true
+				}
+			}
+		case "ClusterRoleBinding":
+			if o.GetName() != "socialweb-owner" {
+				t.Errorf("the owner binding is named %q, want socialweb-owner", o.GetName())
+			}
+			subjects, _, _ := unstructured.NestedSlice(o.Object, "subjects")
+			if len(subjects) != 1 {
+				t.Fatalf("the owner binding carries %d subjects, want exactly the owner", len(subjects))
+			}
+			s, _ := subjects[0].(map[string]any)
+			if s["name"] != owner || s["namespace"] != kcpclient.TenantNamespace {
+				t.Errorf("the owner binding binds %v/%v, want %s/%s",
+					s["namespace"], s["name"], kcpclient.TenantNamespace, owner)
+			}
+			ref, _, _ := unstructured.NestedMap(o.Object, "roleRef")
+			if ref["kind"] != "ClusterRole" || ref["name"] != "cluster-admin" {
+				t.Errorf("the owner binding's roleRef is %v, want ClusterRole cluster-admin: it is "+
+					"the owner's own cluster and its credential must be able to create namespaces, "+
+					"exec into pods and drive a runner", ref)
+			}
+			sawOwnerBinding = true
+		}
+	}
+	if !sawTokenRule || !sawReadRule {
+		t.Errorf("the grant is missing a scoped rule: token=%v read=%v", sawTokenRule, sawReadRule)
+	}
+	if !sawOwnerBinding {
+		t.Fatal("the grant carries no ClusterRoleBinding, so a real user's minted token " +
+			"authenticates and is authorized for nothing")
+	}
+
+	other, err := kcpclient.RenderTenantGrant(string(tenantGrantDoc(t)), "did:plc:someoneelse00000000000000")
+	if err != nil {
+		t.Fatalf("RenderTenantGrant: %v", err)
+	}
+	if other == string(tenantGrantDoc(t)) || strings.Contains(other, owner) {
+		t.Fatalf("rendering the grant for a different owner produced the same names, so the " +
+			"substitution is not reading the owner it was handed")
 	}
 }
 
 func TestBootstrapEnsuresTheServiceAccountsTheGrantNames(t *testing.T) {
-	objs, err := GrantObjects(tenantGrantDoc(t))
-	if err != nil {
-		t.Fatalf("GrantObjects: %v", err)
-	}
+	objs := renderedGrant(t, grantOwner)
 	ctx := context.Background()
 	core := fake.NewSimpleClientset()
 	if err := ensureGrantServiceAccounts(ctx, core, objs); err != nil {
 		t.Fatalf("ensureGrantServiceAccounts: %v", err)
 	}
-	const named = "did-mruwiotxmvrduzlymfwxa3dffzrw63i"
+	named := kcpclient.ServiceAccountName(grantOwner)
 	got, err := core.CoreV1().ServiceAccounts("users").Get(ctx, named, metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("the grant's token rule names %s and nothing created it, so the mint can "+

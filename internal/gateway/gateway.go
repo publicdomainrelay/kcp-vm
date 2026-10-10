@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/revocation"
 )
+
+const MinDeviceKeyTTL = 60 * time.Second
 
 type Caller string
 
@@ -78,7 +81,7 @@ type ClusterView struct {
 type Store interface {
 	Ensure(ctx context.Context, caller Caller, name string) error
 
-	Kubeconfig(ctx context.Context, caller Caller, name string) (string, error)
+	Kubeconfig(ctx context.Context, caller Caller, name string, ttl time.Duration) (string, error)
 
 	Get(ctx context.Context, caller Caller, name string) (ClusterView, bool, error)
 	List(ctx context.Context, caller Caller) ([]ClusterView, error)
@@ -97,10 +100,18 @@ type Server struct {
 	Store Store
 
 	Revoker Revoker
+
+	MaxDeviceKeyTTL time.Duration
 }
 
 type NameRequest struct {
 	Name string
+}
+
+type KubeconfigRequest struct {
+	Name string
+
+	TTLSeconds *int64
 }
 
 type GetKubeconfigResponse struct {
@@ -108,27 +119,13 @@ type GetKubeconfigResponse struct {
 	Instance   string
 }
 
-func (s *Server) GetKubeconfig(ctx context.Context, caller Caller, req NameRequest) (*GetKubeconfigResponse, error) {
-	if caller == "" {
-		return nil, ErrUnauthorized
-	}
-	if req.Name == "" {
-		return nil, ErrInvalidRequest
-	}
-
-	permit, err := revocation.CreateOnRead(ctx, s.Deny, string(caller), func(ctx context.Context) error {
-		return s.Store.Ensure(ctx, caller, req.Name)
-	})
+func (s *Server) GetKubeconfig(ctx context.Context, caller Caller, req KubeconfigRequest) (*GetKubeconfigResponse, error) {
+	ttl, err := s.deviceKeyTTL(req.TTLSeconds)
 	if err != nil {
-		if x := errForDeny(err); x != nil {
-			return nil, x
-		}
-		return nil, fmt.Errorf("getKubeconfig: %w", err)
+		return nil, err
 	}
-
-	if permit.Admitted() != string(caller) {
-		return nil, fmt.Errorf("getKubeconfig: permit is for %q, caller is %q",
-			permit.Admitted(), caller)
+	if err := s.create(ctx, "getKubeconfig", caller, req.Name); err != nil {
+		return nil, err
 	}
 
 	view, ok, err := s.Store.Get(ctx, caller, req.Name)
@@ -138,12 +135,55 @@ func (s *Server) GetKubeconfig(ctx context.Context, caller Caller, req NameReque
 	if !ok {
 		return nil, ErrClusterNotFound
 	}
-	kubeconfig, err := s.Store.Kubeconfig(ctx, caller, req.Name)
+	kubeconfig, err := s.Store.Kubeconfig(ctx, caller, req.Name, ttl)
 	if err != nil {
 		return nil, fmt.Errorf("getKubeconfig: %w", err)
 	}
 
 	return &GetKubeconfigResponse{Kubeconfig: kubeconfig, Instance: view.Instance}, nil
+}
+
+func (s *Server) CreateCluster(ctx context.Context, caller Caller, req NameRequest) (ClusterView, error) {
+	if err := s.create(ctx, "createCluster", caller, req.Name); err != nil {
+		return ClusterView{}, err
+	}
+	return s.ControlPlaneUp(ctx, caller, req)
+}
+
+func (s *Server) deviceKeyTTL(seconds *int64) (time.Duration, error) {
+	if seconds == nil {
+		return 0, nil
+	}
+	floor := int64(MinDeviceKeyTTL / time.Second)
+	if s.MaxDeviceKeyTTL < MinDeviceKeyTTL || *seconds < floor ||
+		*seconds > int64(s.MaxDeviceKeyTTL/time.Second) {
+		return 0, ErrInvalidRequest
+	}
+	return time.Duration(*seconds) * time.Second, nil
+}
+
+func (s *Server) create(ctx context.Context, verb string, caller Caller, name string) error {
+	if caller == "" {
+		return ErrUnauthorized
+	}
+	if name == "" {
+		return ErrInvalidRequest
+	}
+
+	permit, err := revocation.CreateOnRead(ctx, s.Deny, string(caller), func(ctx context.Context) error {
+		return s.Store.Ensure(ctx, caller, name)
+	})
+	if err != nil {
+		if x := errForDeny(err); x != nil {
+			return x
+		}
+		return fmt.Errorf("%s: %w", verb, err)
+	}
+
+	if permit.Admitted() != string(caller) {
+		return fmt.Errorf("%s: permit is for %q, caller is %q", verb, permit.Admitted(), caller)
+	}
+	return nil
 }
 
 func (s *Server) ControlPlaneUp(ctx context.Context, caller Caller, req NameRequest) (ClusterView, error) {

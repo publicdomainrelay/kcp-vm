@@ -22,6 +22,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpclient"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/mint"
 )
 
@@ -513,7 +514,11 @@ func TestTheGrantIsScopedByResourceNames(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read deploy/tenant-grant.yaml: %v", err)
 	}
-	docs := grantDocs(raw)
+	rendered, err := kcpclient.RenderTenantGrant(string(raw), grantExampleDID)
+	if err != nil {
+		t.Fatalf("the deployed grant is not renderable: %v", err)
+	}
+	docs := grantDocs([]byte(rendered))
 	roleDoc, vapDoc := docOfKind(t, docs, "Role"), docOfKind(t, docs, "ValidatingAdmissionPolicy")
 
 	var role struct {

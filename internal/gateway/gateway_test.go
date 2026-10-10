@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/revocation"
 )
@@ -25,6 +26,7 @@ type fakeStore struct {
 	views    map[string]ClusterView
 	creates  int
 	lastName string
+	ttl      time.Duration
 }
 
 func newStore() *fakeStore { return &fakeStore{views: map[string]ClusterView{}} }
@@ -38,7 +40,8 @@ func (s *fakeStore) Ensure(_ context.Context, caller Caller, name string) error 
 	return nil
 }
 
-func (s *fakeStore) Kubeconfig(_ context.Context, _ Caller, name string) (string, error) {
+func (s *fakeStore) Kubeconfig(_ context.Context, _ Caller, name string, ttl time.Duration) (string, error) {
+	s.ttl = ttl
 	return "server: https://kcp.invalid/clusters/root:abc:def:" + name, nil
 }
 
@@ -87,7 +90,7 @@ func server(state revocation.DenyState) (*Server, *fakeDeny, *fakeStore) {
 func TestRevokedDIDIsRefusedAndNothingIsCreated(t *testing.T) {
 	srv, deny, store := server(revocation.DenyRevoked)
 
-	_, err := srv.GetKubeconfig(context.Background(), "did:plc:revoked", NameRequest{Name: "web"})
+	_, err := srv.GetKubeconfig(context.Background(), "did:plc:revoked", KubeconfigRequest{Name: "web"})
 	if err == nil {
 		t.Fatal("a REVOKED identity got a kubeconfig -- and because getKubeconfig is " +
 			"create-on-read, that call also REBUILDS everything the revocation deleted")
@@ -104,10 +107,27 @@ func TestRevokedDIDIsRefusedAndNothingIsCreated(t *testing.T) {
 	}
 }
 
+func TestCreateClusterIsRefusedForARevokedIdentityAndCreatesNothing(t *testing.T) {
+	srv, deny, store := server(revocation.DenyRevoked)
+
+	_, err := srv.CreateCluster(context.Background(), "did:plc:revoked", NameRequest{Name: "web"})
+	if !errors.Is(err, ErrIdentityRevoked) {
+		t.Fatalf("want IdentityRevoked, got %v", err)
+	}
+	if store.creates != 0 {
+		t.Fatalf("createCluster wrote the store %d time(s) for a revoked identity -- it walks "+
+			"the same create-on-read path getKubeconfig does, and that path must consult the "+
+			"deny BEFORE it creates anything", store.creates)
+	}
+	if deny.reads == 0 {
+		t.Fatal("the deny was never consulted")
+	}
+}
+
 func TestGrantedIdentityIsAdmittedAndCreatesOnFirstLogin(t *testing.T) {
 	srv, deny, store := server(revocation.DenyGranted)
 
-	resp, err := srv.GetKubeconfig(context.Background(), "did:plc:fresh", NameRequest{Name: "web"})
+	resp, err := srv.GetKubeconfig(context.Background(), "did:plc:fresh", KubeconfigRequest{Name: "web"})
 	if err != nil {
 		t.Fatalf("GetKubeconfig: %v", err)
 	}
@@ -129,7 +149,7 @@ func TestAColdClusterStillGetsAKubeconfig(t *testing.T) {
 			srv, _, store := server(revocation.DenyGranted)
 			store.views["web"] = ClusterView{Name: "web", Phase: phase, URL: "", Instance: "1"}
 
-			resp, err := srv.GetKubeconfig(context.Background(), "did:plc:a", NameRequest{Name: "web"})
+			resp, err := srv.GetKubeconfig(context.Background(), "did:plc:a", KubeconfigRequest{Name: "web"})
 			if err != nil {
 				t.Fatalf("getKubeconfig failed for a %s cluster: %v -- it must return a "+
 					"kubeconfig, because the 503 comes from the MOUNT, not from this verb",
@@ -145,12 +165,12 @@ func TestAColdClusterStillGetsAKubeconfig(t *testing.T) {
 
 func TestTheCallerIsNotReadFromTheRequest(t *testing.T) {
 	srv, _, _ := server(revocation.DenyGranted)
-	if _, err := srv.GetKubeconfig(context.Background(), "", NameRequest{Name: "web"}); !errors.Is(err, ErrUnauthorized) {
+	if _, err := srv.GetKubeconfig(context.Background(), "", KubeconfigRequest{Name: "web"}); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("an empty caller must be refused, got %v", err)
 	}
 }
 
-func TestOnlyGetKubeconfigCreates(t *testing.T) {
+func TestOnlyTheCreatingVerbsCreate(t *testing.T) {
 	srv, _, store := server(revocation.DenyGranted)
 	store.views["web"] = ClusterView{Name: "web", Phase: "Ready", URL: "https://x", Instance: "1"}
 
@@ -165,8 +185,72 @@ func TestOnlyGetKubeconfigCreates(t *testing.T) {
 		t.Fatalf("ListClusters: %v", err)
 	}
 	if store.creates != 0 {
-		t.Fatalf("the lifecycle verbs created %d times; ONLY getKubeconfig is "+
-			"create-on-read, and every other verb must be a pure read or update", store.creates)
+		t.Fatalf("the non-creating lifecycle verbs created %d times; every one of them must "+
+			"be a pure read or update", store.creates)
+	}
+
+	if _, err := srv.CreateCluster(ctx, "did:plc:a", NameRequest{Name: "web"}); err != nil {
+		t.Fatalf("CreateCluster: %v", err)
+	}
+	if store.creates != 1 {
+		t.Fatalf("CreateCluster created %d times, want exactly 1: it walks getKubeconfig's "+
+			"create-on-read path and then flips the desired state", store.creates)
+	}
+	if v := store.views["web"]; !v.Running {
+		t.Fatalf("CreateCluster left the cluster not running: %+v", v)
+	}
+	if _, err := srv.CreateCluster(ctx, "did:plc:a", NameRequest{Name: "web"}); err != nil {
+		t.Fatalf("a second CreateCluster: %v", err)
+	}
+	if store.creates != 2 {
+		t.Fatalf("a second CreateCluster reached Ensure %d times in total; the tree half is "+
+			"create-on-read and is expected to run again, and the desired-state half must "+
+			"still be idempotent", store.creates)
+	}
+}
+
+func TestARequestedLifetimeOutsideTheConfiguredWindowIsRefused(t *testing.T) {
+	seconds := func(n int64) *int64 { return &n }
+
+	for _, tc := range []struct {
+		name  string
+		cap   time.Duration
+		asked *int64
+		want  time.Duration
+	}{
+		{"absent keeps the deployment's own", 2 * time.Hour, nil, 0},
+		{"the declared floor", 2 * time.Hour, seconds(60), time.Minute},
+		{"the configured ceiling", 2 * time.Hour, seconds(7200), 2 * time.Hour},
+		{"one second below the floor", 2 * time.Hour, seconds(59), -1},
+		{"one second above the ceiling", 2 * time.Hour, seconds(7201), -1},
+		{"zero", 2 * time.Hour, seconds(0), -1},
+		{"negative", 2 * time.Hour, seconds(-1), -1},
+		{"no ceiling configured at all", 0, seconds(60), -1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, _, store := server(revocation.DenyGranted)
+			srv.MaxDeviceKeyTTL = tc.cap
+			store.views["web"] = ClusterView{Name: "web", Phase: "Ready", Instance: "1"}
+
+			resp, err := srv.GetKubeconfig(context.Background(), "did:plc:a",
+				KubeconfigRequest{Name: "web", TTLSeconds: tc.asked})
+			if tc.want < 0 {
+				if !errors.Is(err, ErrInvalidRequest) {
+					t.Fatalf("want InvalidRequest, got %v (resp %+v)", err, resp)
+				}
+				if store.creates != 0 {
+					t.Fatalf("a refused lifetime still ran the create path %d time(s): the "+
+						"window is checked before anything is written", store.creates)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("GetKubeconfig: %v", err)
+			}
+			if store.ttl != tc.want {
+				t.Fatalf("the store was handed lifetime %s, want %s", store.ttl, tc.want)
+			}
+		})
 	}
 }
 
@@ -206,7 +290,7 @@ func TestAnUnreadableDenyFailsClosed(t *testing.T) {
 	store := newStore()
 	srv := &Server{Deny: d, Store: store}
 
-	_, err := srv.GetKubeconfig(context.Background(), "did:plc:a", NameRequest{Name: "web"})
+	_, err := srv.GetKubeconfig(context.Background(), "did:plc:a", KubeconfigRequest{Name: "web"})
 	if err == nil {
 		t.Fatal("an unreadable deny ADMITTED the caller -- fail closed means refuse")
 	}
@@ -217,7 +301,7 @@ func TestAnUnreadableDenyFailsClosed(t *testing.T) {
 
 func TestAMissingRecordIsDistinctFromARevocation(t *testing.T) {
 	srv, _, _ := server(revocation.DenyRecordMissing)
-	_, err := srv.GetKubeconfig(context.Background(), "did:plc:a", NameRequest{Name: "web"})
+	_, err := srv.GetKubeconfig(context.Background(), "did:plc:a", KubeconfigRequest{Name: "web"})
 	if err == nil {
 		t.Fatal("a MISSING identity record was admitted -- deleting the record must not " +
 			"buy a fresh first login, which is the same re-arming one level up")

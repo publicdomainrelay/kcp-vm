@@ -107,6 +107,7 @@ func buildDeps(cfg Config) (Deps, error) {
 		TTL:         cfg.DeviceKeyTTL,
 		ExecCommand: cfg.DeviceKeyExecCommand,
 		ExecEnvName: cfg.DeviceKeyExecEnvName,
+		MintURL:     cfg.PublicMintURL,
 	})
 	if err != nil {
 		return Deps{}, fmt.Errorf("the device-key granter: %w", err)
@@ -114,6 +115,7 @@ func buildDeps(cfg Config) (Deps, error) {
 
 	client, err := kcpclient.New(kcpclient.Options{
 		Host:       cfg.KCPHost,
+		PublicHost: cfg.KCPPublicHost,
 		RestConfig: kcpRestConfig,
 		DeviceKeys: deviceKeys,
 	})

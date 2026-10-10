@@ -406,6 +406,83 @@ func issuerOf(t *testing.T, token string) string {
 	return claims.Iss
 }
 
+func expiryOf(t *testing.T, token string) time.Time {
+	t.Helper()
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		t.Fatalf("the device credential is not a JWT: %q", token)
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		t.Fatalf("the credential's payload is not base64url: %v", err)
+	}
+	var claims struct {
+		Exp int64 `json:"exp"`
+	}
+	if err := json.Unmarshal(raw, &claims); err != nil {
+		t.Fatalf("the credential's payload is not JSON: %v (%s)", err, raw)
+	}
+	if claims.Exp == 0 {
+		t.Fatalf("the credential carries no exp: %s", raw)
+	}
+	return time.Unix(claims.Exp, 0)
+}
+
+func TestTheGrantedLifetimeIsTheOneSigned(t *testing.T) {
+	b := &recordingBinder{}
+	g := granter(t, b)
+
+	byDefault, err := g.Grant(context.Background(), grantInput())
+	if err != nil {
+		t.Fatalf("Grant: %v", err)
+	}
+	if delta := time.Until(expiryOf(t, execEnvValue(t, byDefault))); delta < 300*24*time.Hour {
+		t.Fatalf("a grant with no requested lifetime signed one that expires in %s, but the "+
+			"granter was built with a TTL of 365 days: an absent ttlSeconds must keep the "+
+			"deployment's own policy", delta)
+	}
+
+	requested := grantInput()
+	requested.TTL = 90 * time.Second
+	shorter, err := g.Grant(context.Background(), requested)
+	if err != nil {
+		t.Fatalf("Grant: %v", err)
+	}
+	if delta := time.Until(expiryOf(t, execEnvValue(t, shorter))); delta > 2*time.Minute || delta < time.Minute {
+		t.Fatalf("a requested lifetime of 90s signed a credential expiring in %s: the granter "+
+			"must sign what it was handed, and a caller that asked for a shorter credential "+
+			"must not be given a longer one", delta)
+	}
+}
+
+func TestTheMintURLReachesTheKubeconfigWhenItIsConfigured(t *testing.T) {
+	const mintURL = "https://socialweb.example/v1/credential"
+	b := &recordingBinder{}
+
+	g, err := New(Options{
+		Binder:      b,
+		Audience:    gatewayDID,
+		TTL:         time.Hour,
+		ExecCommand: execCommand,
+		ExecEnvName: execEnvName,
+		MintURL:     mintURL,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	rendered, err := g.Grant(context.Background(), grantInput())
+	if err != nil {
+		t.Fatalf("Grant: %v", err)
+	}
+	if !strings.Contains(rendered, kubeconfig.MintURLEnvName) || !strings.Contains(rendered, mintURL) {
+		t.Fatalf("the granter was configured with a mint URL and the kubeconfig does not name "+
+			"it, so the helper has nothing to present the credential to:\n%s", rendered)
+	}
+	if err := kubeconfig.AssertClean(rendered); err != nil {
+		t.Fatalf("the document stopped being one a user may hold: %v", err)
+	}
+}
+
 func TestNewRefusesAnUnusableConfiguration(t *testing.T) {
 	complete := func() Options {
 		return Options{

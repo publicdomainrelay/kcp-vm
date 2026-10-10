@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -28,8 +29,12 @@ const (
 
 	envDeviceKeyAudience    = "SOCIALWEB_GATEWAY_DEVICE_KEY_AUDIENCE"
 	envDeviceKeyTTL         = "SOCIALWEB_GATEWAY_DEVICE_KEY_TTL"
+	envDeviceKeyMaxTTL      = "SOCIALWEB_GATEWAY_DEVICE_KEY_MAX_TTL"
 	envDeviceKeyExecCommand = "SOCIALWEB_GATEWAY_DEVICE_KEY_EXEC_COMMAND"
 	envDeviceKeyExecEnvName = "SOCIALWEB_GATEWAY_DEVICE_KEY_EXEC_ENV_NAME"
+
+	envKCPPublicHost = "SOCIALWEB_GATEWAY_KCP_PUBLIC_HOST"
+	envPublicMintURL = "SOCIALWEB_GATEWAY_PUBLIC_MINT_URL"
 )
 
 const DevkeyRegistryNamespace = "default"
@@ -62,10 +67,15 @@ type Config struct {
 
 	DeviceKeyAudience string
 
-	DeviceKeyTTL time.Duration
+	DeviceKeyTTL    time.Duration
+	DeviceKeyMaxTTL time.Duration
 
 	DeviceKeyExecCommand string
 	DeviceKeyExecEnvName string
+
+	KCPPublicHost string
+
+	PublicMintURL string
 
 	LogLevel slog.Level
 }
@@ -120,6 +130,18 @@ func load(get func(string) string) (Config, error) {
 
 	var err error
 	if cfg.DeviceKeyTTL, err = requiredDuration(get, envDeviceKeyTTL); err != nil {
+		return Config{}, err
+	}
+	if cfg.DeviceKeyMaxTTL, err = optionalDuration(get, envDeviceKeyMaxTTL); err != nil {
+		return Config{}, err
+	}
+	if cfg.DeviceKeyMaxTTL == 0 {
+		cfg.DeviceKeyMaxTTL = cfg.DeviceKeyTTL
+	}
+	if cfg.KCPPublicHost, err = optionalHTTPSURL(get, envKCPPublicHost); err != nil {
+		return Config{}, err
+	}
+	if cfg.PublicMintURL, err = optionalHTTPSURL(get, envPublicMintURL); err != nil {
 		return Config{}, err
 	}
 	if cfg.MintTTL, err = optionalDuration(get, envMintTTL); err != nil {
@@ -188,6 +210,24 @@ func requiredDuration(get func(string) string, name string) (time.Duration, erro
 			"decision, not a default, so this gateway will not choose one", name)
 	}
 	return duration(get, name, 0)
+}
+
+func optionalHTTPSURL(get func(string) string, name string) (string, error) {
+	raw := strings.TrimSpace(get(name))
+	if raw == "" {
+		return "", nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", fmt.Errorf("%s: %q is not a URL: %w", name, raw, err)
+	}
+	if u.Scheme != "https" || u.Host == "" {
+		return "", fmt.Errorf("%s: %q must be an absolute https URL. This value is rendered "+
+			"into a kubeconfig a user holds, and client-go silently drops the exec credential "+
+			"plugin for a server that is not https, so an http one would hand out a document "+
+			"that authenticates nothing", name, raw)
+	}
+	return strings.TrimSuffix(raw, "/"), nil
 }
 
 func optionalDuration(get func(string) string, name string) (time.Duration, error) {

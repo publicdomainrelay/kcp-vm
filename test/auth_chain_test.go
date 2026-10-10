@@ -43,7 +43,7 @@ func (s *storeStub) Ensure(_ context.Context, caller gateway.Caller, name string
 	return nil
 }
 
-func (s *storeStub) Kubeconfig(_ context.Context, caller gateway.Caller, name string) (string, error) {
+func (s *storeStub) Kubeconfig(_ context.Context, caller gateway.Caller, name string, _ time.Duration) (string, error) {
 	return kubeconfig.Build(kubeconfig.Input{
 		ClusterName:      name,
 		Server:           "https://kcp.invalid/clusters/root:abc:" + name + ":child",
@@ -92,7 +92,7 @@ func TestTheVerifiedIdentityIsTheOneActedOn(t *testing.T) {
 
 	const verified = gateway.Caller("did:plc:verified")
 
-	resp, err := srv.GetKubeconfig(context.Background(), verified, gateway.NameRequest{Name: "web"})
+	resp, err := srv.GetKubeconfig(context.Background(), verified, gateway.KubeconfigRequest{Name: "web"})
 	if err != nil {
 		t.Fatalf("GetKubeconfig: %v", err)
 	}
@@ -129,7 +129,7 @@ func TestARefusedIdentityCreatesNothing(t *testing.T) {
 			store := newStore()
 			srv := &gateway.Server{Deny: deny, Store: store}
 
-			if _, err := srv.GetKubeconfig(context.Background(), "did:plc:a", gateway.NameRequest{Name: "web"}); err == nil {
+			if _, err := srv.GetKubeconfig(context.Background(), "did:plc:a", gateway.KubeconfigRequest{Name: "web"}); err == nil {
 				t.Fatal("a refused identity received a kubeconfig")
 			}
 			if store.creates != 0 {

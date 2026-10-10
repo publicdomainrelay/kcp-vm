@@ -95,6 +95,34 @@ func TestTheDeviceCredentialRidesTheEnvironment(t *testing.T) {
 	}
 }
 
+func TestTheMintURLRidesTheEnvironmentOnlyWhenItIsConfigured(t *testing.T) {
+	out, err := Build(base())
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if strings.Contains(out, MintURLEnvName) {
+		t.Fatalf("a kubeconfig built with no mint URL carries %s anyway, which points the "+
+			"helper at an endpoint nobody named:\n%s", MintURLEnvName, out)
+	}
+
+	in := base()
+	in.MintURL = "https://socialweb.example/v1/credential"
+	out, err = Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if !strings.Contains(out, MintURLEnvName) {
+		t.Fatalf("the exec env does not carry %s, so the helper has no endpoint to present "+
+			"the device credential to:\n%s", MintURLEnvName, out)
+	}
+	if !strings.Contains(out, in.MintURL) {
+		t.Fatalf("the mint URL's value did not reach the exec env:\n%s", out)
+	}
+	if err := AssertClean(out); err != nil {
+		t.Fatalf("the document stopped being one a user may hold: %v", err)
+	}
+}
+
 func TestTheServerIsCarriedVerbatim(t *testing.T) {
 	in := base()
 	out, err := Build(in)

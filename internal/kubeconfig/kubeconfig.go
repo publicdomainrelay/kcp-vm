@@ -23,6 +23,8 @@ type Input struct {
 	DeviceCredential string
 
 	DeviceKeyEnvName string
+
+	MintURL string
 }
 
 var ErrNotHTTPS = errors.New("kubeconfig: server must be https")
@@ -30,6 +32,8 @@ var ErrNotHTTPS = errors.New("kubeconfig: server must be https")
 var ErrNoExec = errors.New("kubeconfig: an exec credential helper is required")
 
 const ExecAPIVersion = "client.authentication.k8s.io/v1"
+
+const MintURLEnvName = "SOCIALWEB_MINT_URL"
 
 func Build(in Input) (string, error) {
 	if in.Server == "" {
@@ -54,6 +58,13 @@ func Build(in Input) (string, error) {
 		cluster["certificate-authority-data"] = in.CACertPEM
 	}
 
+	env := []map[string]any{
+		{"name": in.DeviceKeyEnvName, "value": in.DeviceCredential},
+	}
+	if in.MintURL != "" {
+		env = append(env, map[string]any{"name": MintURLEnvName, "value": in.MintURL})
+	}
+
 	user := map[string]any{
 		"exec": map[string]any{
 			"apiVersion": ExecAPIVersion,
@@ -62,9 +73,7 @@ func Build(in Input) (string, error) {
 
 			"interactiveMode": "Never",
 
-			"env": []map[string]any{
-				{"name": in.DeviceKeyEnvName, "value": in.DeviceCredential},
-			},
+			"env": env,
 		},
 	}
 

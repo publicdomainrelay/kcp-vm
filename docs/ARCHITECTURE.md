@@ -268,9 +268,12 @@ can never be deleted.
 
 ### The XRPC surface
 
-How a user gets a kubeconfig. Six procedures under `com.publicdomainrelay.temp.cluster.`:
+How a user gets a kubeconfig. Seven procedures under `com.publicdomainrelay.temp.cluster.`:
 
 ```
+createCluster       create the named cluster and leave it RUNNING, in one call. Idempotent.
+                    The create-on-read path getKubeconfig walks, then the desired-state flip
+                    controlPlaneUp performs. Answers the phase.
 controlPlaneUp      bring the named cluster's control plane up. Idempotent. 429 + Retry-After
                     while Initializing. Refused once Draining. DOES NOT provision nodes.
 controlPlaneDown    the inverse
@@ -284,10 +287,18 @@ Auth is a service-auth token whose `aud` is the service and whose `lxm` is the m
 verifier on this path MUST be passed a real NSID: it compares against the token's `lxm`, and a nil
 there skips the check.
 
+**A door that wants a usable cluster gets it in ONE call.** `createCluster` exists because the only
+other way to a live cluster was two round trips through two different verbs — `getKubeconfig`, whose
+kubeconfig a caller that is provisioning has no use for, and then `controlPlaneUp` — and because a
+caller had to know that order. It is not a new path: it calls the same `revocation.CreateOnRead`
+around `Store.Ensure` that `getKubeconfig` does, and then the same code `controlPlaneUp` runs, so the
+deny is consulted before anything is created and the errors are the same six. `getKubeconfig` keeps
+its create-on-read, which is what makes a first login work at all.
+
 **`getKubeconfig` is served by a granter the composition root must be handed.** It renders an exec
 credential whose helper is named by configuration, so a gateway that is not configured for it refuses
-to START rather than routing a verb that can never answer. The four settings and the reasoning behind
-each are in section 15.
+to START rather than routing a verb that can never answer. A caller may also ask for a chosen
+credential lifetime; the settings and the reasoning behind each are in section 15.
 
 **A routed verb is not a working verb, and the difference was invisible here for as long as it took to
 notice.** `getKubeconfig` was on this surface, routed, documented and unit-tested, while the
@@ -358,6 +369,17 @@ a request-header identity is forgeable.
   impersonation of every ServiceAccount in the namespace; and `TestTheGrantIsScopedByResourceNames`
   reads the deployed file and fails on a `*` or an underived name. The spelling also cannot be
   changed later without a migration, because the deployed grant carries it in its `resourceNames`.
+- **The grant is rendered for the cluster's OWNER, and the owner can act in it.** The name in those
+  `resourceNames` is not a literal in the deployed file: `deploy/tenant-grant.yaml` carries
+  `__SOCIALWEB_OWNER_SERVICE_ACCOUNT__` and the bootstrap substitutes `ServiceAccountName` of the
+  `Cluster`'s `spec.account` — the same DID the mount path is derived from — before it parses the
+  document. `RenderTenantGrant` REFUSES a document with no placeholder rather than applying it, so a
+  grant scoped to a name nobody owns cannot be applied by accident. The file also carries a
+  `ClusterRoleBinding` `socialweb-owner` binding that ServiceAccount to `cluster-admin`: it is the
+  owner's own cluster, and until this existed a real user's minted token authenticated and was
+  authorized for NOTHING, because no `did-*` ServiceAccount had any RBAC. The `gwmint` Role stays
+  scoped by `resourceNames` and is NOT widened by this — it still reaches exactly one name, and the
+  owner's power comes from its own binding rather than from the mint's.
 - **A revocation that only deletes objects does not revoke.** Deleting a ServiceAccount is a ~10 s
   interruption, not a revocation: a stale, name-keyed RoleBinding resumes grants the moment the
   object is recreated. Revocation needs a consultable deny record, and it is per-DID.
@@ -3237,6 +3259,73 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   iteration opened, each with the instrument that would close it. The reading is the two commands
   that disagree: the four references, and `ls` on the path they name. The class is worth keeping in
   view because it is the same one a green check is - a pointer with no referent reads as presence.
+
+- **The door's verbs: createCluster, a chosen kubeconfig lifetime, the public front, and an owner
+  who can act.** Four things stood between a real user and a usable cluster, and each was a gap
+  between two parts that were individually finished. First, `createCluster`
+  (`com.publicdomainrelay.temp.cluster.createCluster`) did not exist, so the k8s door reached a live
+  cluster only by calling `getKubeconfig` for a kubeconfig it would throw away and then
+  `controlPlaneUp`, in that order, and had to know the order. It is now one verb: it walks
+  `getKubeconfig`'s create-on-read path (`revocation.CreateOnRead` around `Store.Ensure`, so the deny
+  is consulted before anything is created) and then the desired-state flip `controlPlaneUp`
+  performs, and answers the phase. It declares the same six errors as `controlPlaneUp`, including the
+  retryable `ClusterInitializing` with its `Retry-After`. `getKubeconfig` KEEPS its create-on-read:
+  that is what makes a first login work. Readings: the answerability check in `cmd/socialweb-gateway`
+  now drives seven verbs, `internal/xrpcserver` drives `createCluster` past authentication and
+  validates its output against the lexicon, and `internal/gateway` asserts one `Ensure` and a
+  `Running` desired state, a second call still idempotent, and a revoked identity refused with zero
+  creates. Second, a device credential's lifetime was whatever the deployment chose and a caller
+  could not ask for anything else. `getKubeconfig` now takes an optional integer `ttlSeconds`, signed
+  by `internal/devicekey` with the requested TTL when one is given and with
+  `SOCIALWEB_GATEWAY_DEVICE_KEY_TTL` when none is. `SOCIALWEB_GATEWAY_DEVICE_KEY_MAX_TTL` is the
+  ceiling, and when it is unset it EQUALS the TTL, so the default answer to "may a caller extend its
+  own credential" is no. A value below 60s or above the ceiling is `InvalidRequest` and is REFUSED
+  rather than clamped, because a caller that asked for a lifetime and silently got a different one
+  has been told something false about the credential in its hand; the check runs BEFORE the create
+  path, so a refused request writes nothing. A gateway with no ceiling configured refuses any
+  explicit lifetime rather than granting an unbounded one. Readings: tables in `internal/gateway`
+  (absent, floor, ceiling, one below, one above, zero, negative, no ceiling at all) and in
+  `internal/xrpcserver` (the same window driven through the real lexicons and the real transport).
+  Third, the kubeconfig a user held pointed at the address the GATEWAY uses.
+  `SOCIALWEB_GATEWAY_KCP_PUBLIC_HOST` now names the public kcp front in the rendered `server:`
+  (`<public host>/clusters/<MountPath>`), and `SOCIALWEB_GATEWAY_PUBLIC_MINT_URL` adds
+  `SOCIALWEB_MINT_URL=<value>` to the exec block's env, which `cmd/socialweb-credential` reads and
+  which nothing had ever set. The gateway's OWN kcp client keeps `SOCIALWEB_KCP_HOST`, so the
+  loopback address and the user-facing address are now two settings instead of one that could not be
+  both; with either public setting unset the rendered document is byte-for-byte what it was. Both are
+  validated as absolute https URLs at startup, because client-go silently drops the exec credential
+  plugin for a server that is not https, and `kubeconfig.AssertClean` still passes on the document
+  that carries the mint URL. Readings: `internal/kubeconfig` asserts the env entry is present when
+  configured and absent when not; `internal/kcpclient` asserts the granter is handed the public host
+  with the trailing slash trimmed and the requested TTL, and that no request reaches kcp from a verb
+  that only derives a path; `internal/devicekey` asserts a requested 90s really is what gets signed.
+  Fourth, and the one that made the rest useless: the tenant grant scoped its mint Role to ONE
+  hardcoded ServiceAccount, `did-mruwiotxmvrduzlymfwxa3dffzrw63i`, and no `did-*` ServiceAccount had
+  any RBAC at all, so a real user's minted token authenticated and could do nothing.
+  `deploy/tenant-grant.yaml` is now a TEMPLATE: it carries `__SOCIALWEB_OWNER_SERVICE_ACCOUNT__`
+  where the derived name goes, and `Bootstrap` renders it with `ServiceAccountName` of the `Cluster`'s
+  `spec.account` — the owner, and the same DID the mount path is derived from —
+  via `kcpclient.RenderTenantGrant`, which refuses a document with no placeholder. The grant grew a
+  `ClusterRoleBinding` `socialweb-owner` binding that ServiceAccount to `cluster-admin`, because it is
+  the owner's own cluster and the credential has to be able to create namespaces, exec into pods and
+  drive a GitLab runner. The `gwmint` Role is NOT widened: it is still scoped by `resourceNames` to
+  exactly one derived name, and the owner's power comes from its own binding rather than from the
+  mint's, so the tenancy boundary section 7 states is unchanged. Readings: `internal/tenantclient`
+  renders the deployed file and still fails on a `*` or an underived `resourceName`;
+  `internal/clusterprovider` asserts every `resourceNames` entry and the binding's subject are the
+  owner's derived name, that the binding's `roleRef` is `ClusterRole cluster-admin`, that rendering
+  for a different owner produces different names, and that a second `ensureGrantServiceAccounts`
+  pass creates nothing new; `cmd/socialweb-rig-inputs` renders before it derives
+  `SOCIALWEB_LIVE_GRANTED_SA`. The re-apply of the objects themselves is a server-side apply and is
+  not exercised here: the client-go dynamic FAKE cannot apply a patch it did not first create, so a
+  test of it would be a test of the fake. WHAT THIS DOES
+  NOT SHOW, stated because the unit readings are strong and the live ones do not exist here: no run
+  in this tree has yet created a cluster through `createCluster`, followed a kubeconfig whose server
+  is a public front, or measured that a real user's minted token can `create namespaces` against a
+  real tenant cluster through that binding. The instrument is the container-mode stack plus the k8s
+  door: `createCluster` once, a `kubectl` through the public host, and a job whose script needs
+  `pods/exec`. Until that runs, the owner's power is asserted from the document and the API, not
+  measured.
 
 ## 16. Vocabulary
 
