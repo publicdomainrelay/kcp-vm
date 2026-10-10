@@ -75,6 +75,7 @@ type fakeStore struct {
 	views    map[string]gateway.ClusterView
 	callers  []gateway.Caller
 	names    []string
+	ttls     []time.Duration
 	wakes    int
 	failWith error
 	failVerb string
@@ -100,8 +101,9 @@ func (s *fakeStore) Ensure(_ context.Context, c gateway.Caller, name string) err
 	return nil
 }
 
-func (s *fakeStore) Kubeconfig(_ context.Context, c gateway.Caller, name string) (string, error) {
+func (s *fakeStore) Kubeconfig(_ context.Context, c gateway.Caller, name string, ttl time.Duration) (string, error) {
 	s.saw(c, name)
+	s.ttls = append(s.ttls, ttl)
 	return "server: https://kcp.invalid/clusters/" + name, nil
 }
 
@@ -224,7 +226,10 @@ func newRig(t *testing.T) *rig {
 		DID: callerDID, Cluster: "c", SA: "sa", SAExists: true, Instance: "1",
 	}}
 	srv, err := New(Options{
-		Gateway:   &gateway.Server{Deny: granted(), Store: store, Revoker: rev},
+		Gateway: &gateway.Server{
+			Deny: granted(), Store: store, Revoker: rev,
+			MaxDeviceKeyTTL: time.Hour,
+		},
 		Mint:      mint.New(ms, mint.Options{}),
 		Audiences: audiences(),
 		Directory: &fakeDirectory{keys: map[string]atcrypto.PublicKey{callerDID: pub}},
@@ -339,6 +344,19 @@ func TestAVerifiedCallerReachesTheRightVerb(t *testing.T) {
 		}
 	})
 
+	t.Run("createCluster", func(t *testing.T) {
+		r.store.views["c"] = gateway.ClusterView{Name: "c", Phase: "Ready", Instance: "1"}
+		w := r.procedure("createCluster", `{"name":"c"}`)
+		if w.Code != 200 {
+			t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
+		}
+		r.validateOutput(nsidCreateCluster, w)
+		if !r.store.views["c"].Running {
+			t.Fatalf("createCluster answered a phase but left the cluster not running: %+v",
+				r.store.views["c"])
+		}
+	})
+
 	t.Run("controlPlaneUp", func(t *testing.T) {
 		r.store.views["c"] = gateway.ClusterView{Name: "c", Phase: "Ready", Instance: "1"}
 		w := r.procedure("controlPlaneUp", `{"name":"c"}`)
@@ -375,6 +393,46 @@ func TestAVerifiedCallerReachesTheRightVerb(t *testing.T) {
 		}
 		r.validateOutput(n, w)
 	})
+}
+
+func TestTheRequestedDeviceKeyLifetimeIsCheckedAtTheDoor(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		want int
+		ttl  time.Duration
+	}{
+		{"absent keeps the deployment's lifetime", `{"name":"c"}`, 200, 0},
+		{"the declared floor", `{"name":"c","ttlSeconds":60}`, 200, time.Minute},
+		{"the configured ceiling", `{"name":"c","ttlSeconds":3600}`, 200, time.Hour},
+		{"one second below the floor", `{"name":"c","ttlSeconds":59}`, 400, 0},
+		{"one second above the ceiling", `{"name":"c","ttlSeconds":3601}`, 400, 0},
+		{"zero", `{"name":"c","ttlSeconds":0}`, 400, 0},
+		{"negative", `{"name":"c","ttlSeconds":-1}`, 400, 0},
+		{"not an integer at all", `{"name":"c","ttlSeconds":"60"}`, 400, 0},
+		{"a fractional second", `{"name":"c","ttlSeconds":60.5}`, 400, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRig(t)
+			w := r.procedure("getKubeconfig", tc.body)
+			if w.Code != tc.want {
+				t.Fatalf("status = %d, want %d: %s", w.Code, tc.want, w.Body.String())
+			}
+			if tc.want == 400 {
+				if got := decode(t, w)["error"]; got != "InvalidRequest" {
+					t.Fatalf("error = %v, want InvalidRequest -- an out-of-window lifetime is "+
+						"REFUSED, and the response must not read as a cluster problem", got)
+				}
+				if len(r.store.ttls) != 0 {
+					t.Fatalf("a refused lifetime still reached the store as %v", r.store.ttls)
+				}
+				return
+			}
+			if len(r.store.ttls) != 1 || r.store.ttls[0] != tc.ttl {
+				t.Fatalf("the store was handed lifetimes %v, want [%s]", r.store.ttls, tc.ttl)
+			}
+		})
+	}
 }
 
 func TestEveryRefusalIsRefused(t *testing.T) {
@@ -790,8 +848,8 @@ func TestEveryTrackedLexiconIsRouted(t *testing.T) {
 		routed[rt.nsid] = true
 	}
 
-	if len(embedded) != 6 {
-		t.Fatalf("the embedded lexicon set has %d methods, want 6: %v", len(embedded), embedded)
+	if len(embedded) != 7 {
+		t.Fatalf("the embedded lexicon set has %d methods, want 7: %v", len(embedded), embedded)
 	}
 	for _, id := range embedded {
 		if !routed[id] {
@@ -992,7 +1050,7 @@ func TestEmbeddedLexiconsMatchTheTrackedOnes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if found != 6 {
-		t.Fatalf("%d lexicons compared, want 6", found)
+	if found != 7 {
+		t.Fatalf("%d lexicons compared, want 7", found)
 	}
 }

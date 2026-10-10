@@ -43,6 +43,7 @@ var grantResources = map[string]schema.GroupVersionResource{
 	"ServiceAccount":                   {Group: "", Version: "v1", Resource: "serviceaccounts"},
 	"Role":                             {Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "roles"},
 	"RoleBinding":                      {Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "rolebindings"},
+	"ClusterRoleBinding":               {Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "clusterrolebindings"},
 	"ValidatingAdmissionPolicy":        {Group: "admissionregistration.k8s.io", Version: "v1", Resource: "validatingadmissionpolicies"},
 	"ValidatingAdmissionPolicyBinding": {Group: "admissionregistration.k8s.io", Version: "v1", Resource: "validatingadmissionpolicybindings"},
 }
@@ -268,11 +269,15 @@ func (p *Provider) Bootstrap(ctx context.Context, ref Ref, cl *v1alpha1.Cluster)
 		return fmt.Errorf("clusterprovider: no tenant credential for %s", ref.Name)
 	}
 
-	grant, err := os.ReadFile(p.opts.GrantPath)
+	raw, err := os.ReadFile(p.opts.GrantPath)
 	if err != nil {
 		return fmt.Errorf("clusterprovider: reading the tenant grant: %w", err)
 	}
-	objs, err := GrantObjects(grant)
+	grant, err := kcpclient.RenderTenantGrant(string(raw), ref.DID)
+	if err != nil {
+		return fmt.Errorf("clusterprovider: the tenant grant for %s: %w", ref.Name, err)
+	}
+	objs, err := GrantObjects([]byte(grant))
 	if err != nil {
 		return err
 	}

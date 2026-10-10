@@ -703,7 +703,7 @@ func TestKubeconfigIsTheMountPathAndNotTheBackend(t *testing.T) {
 	keys := &recordingGranter{}
 	c := newTestClientWith(t, f, keys)
 
-	if _, err := c.Kubeconfig(context.Background(), gateway.Caller(testDID), testCluster); err != nil {
+	if _, err := c.Kubeconfig(context.Background(), gateway.Caller(testDID), testCluster, 0); err != nil {
 		t.Fatalf("Kubeconfig: %v", err)
 	}
 	if len(f.seen()) != 0 {
@@ -728,11 +728,37 @@ func TestKubeconfigIsTheMountPathAndNotTheBackend(t *testing.T) {
 	}
 }
 
+func TestKubeconfigPointsAtThePublicFrontAndCarriesTheRequestedLifetime(t *testing.T) {
+	const public = "https://kcp.socialweb.example/"
+	f := &fakeKCP{t: t}
+	keys := &recordingGranter{}
+	c, err := New(Options{Host: testHost, PublicHost: public, Transport: f, DeviceKeys: keys})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	if _, err := c.Kubeconfig(context.Background(), gateway.Caller(testDID), testCluster, 45*time.Second); err != nil {
+		t.Fatalf("Kubeconfig: %v", err)
+	}
+	want := strings.TrimSuffix(public, "/") + "/clusters/" + mountPath
+	if keys.got.Server != want {
+		t.Errorf("the granter was handed server %q, want the public front %q -- the user's "+
+			"kubeconfig must name the address a user can reach, while this client keeps "+
+			"speaking to kcp over the loopback host", keys.got.Server, want)
+	}
+	if keys.got.TTL != 45*time.Second {
+		t.Errorf("the granter was handed ttl %s, want the 45s the caller asked for", keys.got.TTL)
+	}
+	if len(f.seen()) != 0 {
+		t.Errorf("%d request(s) reached kcp from a verb that only derives a path: %v", len(f.seen()), f.seen())
+	}
+}
+
 func TestKubeconfigRefusesWithNoGranter(t *testing.T) {
 	f := &fakeKCP{t: t}
 	c := newTestClient(t, f)
 
-	if _, err := c.Kubeconfig(context.Background(), gateway.Caller(testDID), testCluster); !errors.Is(err, ErrNoDeviceKey) {
+	if _, err := c.Kubeconfig(context.Background(), gateway.Caller(testDID), testCluster, 0); !errors.Is(err, ErrNoDeviceKey) {
 		t.Fatalf("want ErrNoDeviceKey with no granter wired, got %v", err)
 	}
 }
@@ -742,7 +768,7 @@ func TestTheRenderedKubeconfigIsCleanAndCarriesTheCredential(t *testing.T) {
 	keys := &recordingGranter{}
 	c := newTestClientWith(t, f, keys)
 
-	rendered, err := c.Kubeconfig(context.Background(), gateway.Caller(testDID), testCluster)
+	rendered, err := c.Kubeconfig(context.Background(), gateway.Caller(testDID), testCluster, 0)
 	if err != nil {
 		t.Fatalf("Kubeconfig: %v", err)
 	}

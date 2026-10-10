@@ -44,6 +44,8 @@ type GrantInput struct {
 	Cluster string
 
 	Server string
+
+	TTL time.Duration
 }
 
 type DeviceKeyGranter interface {
@@ -52,6 +54,8 @@ type DeviceKeyGranter interface {
 
 type Options struct {
 	Host string
+
+	PublicHost string
 
 	DeviceKeys DeviceKeyGranter
 
@@ -65,6 +69,7 @@ type Client struct {
 	http       *http.Client
 	codecs     runtime.NegotiatedSerializer
 	host       string
+	publicHost string
 	deviceKeys DeviceKeyGranter
 }
 
@@ -97,6 +102,7 @@ func New(opts Options) (*Client, error) {
 	codecs := serializer.NewCodecFactory(scheme).WithoutConversion()
 	return &Client{
 		cfg: cfg, http: httpClient, codecs: codecs, host: cfg.Host,
+		publicHost: strings.TrimSuffix(opts.PublicHost, "/"),
 		deviceKeys: opts.DeviceKeys,
 	}, nil
 }
@@ -394,17 +400,22 @@ func (c *Client) Delete(ctx context.Context, caller gateway.Caller, name string)
 	return viewOf(cl, n), nil
 }
 
-func (c *Client) Kubeconfig(ctx context.Context, caller gateway.Caller, name string) (string, error) {
+func (c *Client) Kubeconfig(ctx context.Context, caller gateway.Caller, name string, ttl time.Duration) (string, error) {
 	if _, err := c.homePath(caller, name); err != nil {
 		return "", err
 	}
 	if c.deviceKeys == nil {
 		return "", ErrNoDeviceKey
 	}
+	host := c.host
+	if c.publicHost != "" {
+		host = c.publicHost
+	}
 	return c.deviceKeys.Grant(ctx, GrantInput{
 		Caller:  caller,
 		Cluster: name,
-		Server:  c.host + "/clusters/" + MountPath(string(caller), name),
+		Server:  host + "/clusters/" + MountPath(string(caller), name),
+		TTL:     ttl,
 	})
 }
 

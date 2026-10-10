@@ -54,7 +54,10 @@ func Build(cfg Config, d Deps, log *slog.Logger) (*Gateway, error) {
 		log = slog.Default()
 	}
 
-	verbs := &gateway.Server{Deny: d.Deny, Store: d.Store, Revoker: d.Revoker}
+	verbs := &gateway.Server{
+		Deny: d.Deny, Store: d.Store, Revoker: d.Revoker,
+		MaxDeviceKeyTTL: cfg.DeviceKeyMaxTTL,
+	}
 	credentials := mint.New(d.MintStore, mint.Options{TTL: cfg.MintTTL, FailureHold: cfg.MintFailureHold})
 
 	surface, err := xrpcserver.New(xrpcserver.Options{

@@ -12,6 +12,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clusterprovider"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpclient"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodefirecracker"
 )
 
@@ -149,18 +150,22 @@ func derive(kcpKubeconfig, kcpHost, cluster, registryWorkspace, registryNamespac
 				[2]string{"CLUSTERPROVIDER_LIVE_TENANT_KUBECONFIG", tenant})
 		}
 	}
-	if sa := grantServiceAccount(grantPath); sa != "" {
+	if sa := grantServiceAccount(grantPath, ref.DID); sa != "" {
 		vars = append(vars, [2]string{"SOCIALWEB_LIVE_GRANTED_SA", sa})
 	}
 	return vars
 }
 
-func grantServiceAccount(path string) string {
+func grantServiceAccount(path, ownerDID string) string {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return ""
 	}
-	objs, err := clusterprovider.GrantObjects(raw)
+	grant, err := kcpclient.RenderTenantGrant(string(raw), ownerDID)
+	if err != nil {
+		return ""
+	}
+	objs, err := clusterprovider.GrantObjects([]byte(grant))
 	if err != nil {
 		return ""
 	}

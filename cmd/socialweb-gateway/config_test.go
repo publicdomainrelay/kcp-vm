@@ -85,6 +85,12 @@ func TestLoadRefusesAValueThatDoesNotParse(t *testing.T) {
 		{"a directory ttl of zero, which the cache reads as UNLIMITED", envDirectoryTTL, "0"},
 		{"a negative shutdown timeout", envShutdownTimeout, "-5s"},
 		{"a log level that is not one", envLogLevel, "loud"},
+		{"a device key max ttl that is not a duration", envDeviceKeyMaxTTL, "banana"},
+		{"a device key max ttl of zero", envDeviceKeyMaxTTL, "0s"},
+		{"a public kcp host that is plain http", envKCPPublicHost, "http://kcp.example.com"},
+		{"a public kcp host with no host at all", envKCPPublicHost, "https://"},
+		{"a public mint url that is not a URL", envPublicMintURL, "://socialweb.example"},
+		{"a public mint url that is not https", envPublicMintURL, "http://socialweb.example/v1/credential"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -94,6 +100,40 @@ func TestLoadRefusesAValueThatDoesNotParse(t *testing.T) {
 				t.Fatalf("%s=%q was accepted; a server must not start misconfigured", tc.env, tc.raw)
 			}
 		})
+	}
+}
+
+func TestLoadDefaultsTheDeviceKeyCeilingAndKeepsThePublicFrontOptional(t *testing.T) {
+	cfg, err := load(env(completeEnv()))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.DeviceKeyMaxTTL != cfg.DeviceKeyTTL {
+		t.Fatalf("with %s unset the ceiling is %s and the lifetime is %s: unset means the "+
+			"ceiling IS the deployment's own policy, so no caller can ask for more",
+			envDeviceKeyMaxTTL, cfg.DeviceKeyMaxTTL, cfg.DeviceKeyTTL)
+	}
+	if cfg.KCPPublicHost != "" || cfg.PublicMintURL != "" {
+		t.Fatalf("unset public-front settings resolved to %q/%q, want empty: with them empty "+
+			"the rendered kubeconfig keeps naming the loopback kcp this gateway speaks to",
+			cfg.KCPPublicHost, cfg.PublicMintURL)
+	}
+
+	pairs := completeEnv()
+	pairs[envDeviceKeyMaxTTL] = "2h"
+	pairs[envKCPPublicHost] = "https://kcp.socialweb.example/"
+	pairs[envPublicMintURL] = "https://socialweb.example/v1/credential"
+	if cfg, err = load(env(pairs)); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.DeviceKeyMaxTTL != 2*time.Hour {
+		t.Fatalf("device key max ttl = %s, want 2h", cfg.DeviceKeyMaxTTL)
+	}
+	if cfg.KCPPublicHost != "https://kcp.socialweb.example" {
+		t.Fatalf("public kcp host = %q, want the trailing slash trimmed", cfg.KCPPublicHost)
+	}
+	if cfg.PublicMintURL != "https://socialweb.example/v1/credential" {
+		t.Fatalf("public mint url = %q", cfg.PublicMintURL)
 	}
 }
 

@@ -28,6 +28,8 @@ type Options struct {
 
 	ExecCommand string
 	ExecEnvName string
+
+	MintURL string
 }
 
 type Granter struct {
@@ -75,7 +77,12 @@ func (g *Granter) Grant(ctx context.Context, in kcpclient.GrantInput) (string, e
 		return "", fmt.Errorf("devicekey: bind %s: %w", deviceKey, err)
 	}
 
-	credential, err := auth.SignServiceAuth(syntax.DID(deviceKey), g.opts.Audience, g.opts.TTL, nil, priv)
+	ttl := in.TTL
+	if ttl <= 0 {
+		ttl = g.opts.TTL
+	}
+
+	credential, err := auth.SignServiceAuth(syntax.DID(deviceKey), g.opts.Audience, ttl, nil, priv)
 	if err != nil {
 		return "", fmt.Errorf("devicekey: sign the device credential: %w", err)
 	}
@@ -86,6 +93,7 @@ func (g *Granter) Grant(ctx context.Context, in kcpclient.GrantInput) (string, e
 		ExecCommand:      g.opts.ExecCommand,
 		DeviceCredential: credential,
 		DeviceKeyEnvName: g.opts.ExecEnvName,
+		MintURL:          g.opts.MintURL,
 	})
 	if err != nil {
 		return "", err

@@ -113,8 +113,8 @@ func TestLiveBootstrapRunsAgainstARealTenantCluster(t *testing.T) {
 	t.Logf("the mint credential authenticates as: %s groups=%v",
 		who.Status.UserInfo.Username, who.Status.UserInfo.Groups)
 
-	const allowed = "did-mruwiotxmvrduzlymfwxa3dffzrw63i"
-	const other = "did-mruwiotqnrrtu2tunf2gk43ugaydambqgaydambqgaydambqgaydama"
+	allowed := kcpclient.ServiceAccountName(ref.DID)
+	other := kcpclient.ServiceAccountName("did:plc:notthisowner000000000000000")
 	if _, err := minted.CoreV1().ServiceAccounts(kcpclient.TenantNamespace).Get(ctx, allowed, metav1.GetOptions{}); err != nil {
 		t.Errorf("the mint credential cannot read the ServiceAccount its own grant names (%s): %v", allowed, err)
 	}

@@ -18,12 +18,12 @@ rules:
     resources: ["serviceaccounts/token"]
     verbs: ["create"]
     resourceNames:
-      - did-mruwiotxmvrduzlymfwxa3dffzrw63i
+      - __SOCIALWEB_OWNER_SERVICE_ACCOUNT__
   - apiGroups: [""]
     resources: ["serviceaccounts"]
     verbs: ["get"]
     resourceNames:
-      - did-mruwiotxmvrduzlymfwxa3dffzrw63i
+      - __SOCIALWEB_OWNER_SERVICE_ACCOUNT__
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -38,6 +38,22 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: gwmint
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: socialweb-owner
+  labels:
+    app.kubernetes.io/part-of: socialweb-computer
+    socialweb.computer/role: owner
+subjects:
+  - kind: ServiceAccount
+    name: __SOCIALWEB_OWNER_SERVICE_ACCOUNT__
+    namespace: users
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy

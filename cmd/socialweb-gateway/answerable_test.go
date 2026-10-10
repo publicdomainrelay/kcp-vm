@@ -66,7 +66,7 @@ func TestBuildDepsWiresTheDeviceKeyGranterFromTheRealImplementation(t *testing.T
 		t.Fatal("buildDeps supplied no store, so Build serves nothing at all")
 	}
 
-	_, err = deps.Store.Kubeconfig(context.Background(), gateway.Caller(answeringCaller), "c")
+	_, err = deps.Store.Kubeconfig(context.Background(), gateway.Caller(answeringCaller), "c", 0)
 	if err == nil {
 		t.Fatal("getKubeconfig answered a kubeconfig with no kcp to reach; this test's " +
 			"premise is that the host is unreachable, so a nil error means the premise broke")
@@ -189,6 +189,7 @@ func answerableVerbs() []struct {
 				t.Fatalf("instance = %v, want the cluster's status.instance", body["instance"])
 			}
 		}},
+		{"createCluster", false, `{"name":"c"}`, nonEmptyPhase},
 		{"controlPlaneUp", false, `{"name":"c"}`, nonEmptyPhase},
 		{"controlPlaneDown", false, `{"name":"c"}`, nonEmptyPhase},
 		{"deleteCluster", false, `{"name":"c"}`, nonEmptyPhase},
