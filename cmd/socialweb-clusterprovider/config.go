@@ -45,6 +45,8 @@ const (
 
 	envScaleHold = "SOCIALWEB_CLUSTERPROVIDER_SCALE_HOLD"
 
+	envNodeJoinGrace = "SOCIALWEB_CLUSTERPROVIDER_NODE_JOIN_GRACE"
+
 	envScaleMaxNodes = "SOCIALWEB_CLUSTERPROVIDER_SCALE_MAX_NODES"
 
 	envScalePodsPerNode = "SOCIALWEB_CLUSTERPROVIDER_SCALE_PODS_PER_NODE"
@@ -147,6 +149,8 @@ type Config struct {
 
 	ScaleHold time.Duration
 
+	NodeJoinGrace time.Duration
+
 	ScaleMaxNodes int
 
 	ScalePodsPerNode int
@@ -231,6 +235,17 @@ func load(get func(string) string) (Config, error) {
 			return Config{}, fmt.Errorf("%s must not be negative", envScaleHold)
 		}
 		cfg.ScaleHold = d
+	}
+
+	if raw := strings.TrimSpace(get(envNodeJoinGrace)); raw != "" {
+		d, err := time.ParseDuration(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("%s is not a duration: %w", envNodeJoinGrace, err)
+		}
+		if d <= 0 {
+			return Config{}, fmt.Errorf("%s must be positive", envNodeJoinGrace)
+		}
+		cfg.NodeJoinGrace = d
 	}
 
 	if raw := strings.TrimSpace(get(envScaleMaxNodes)); raw != "" {

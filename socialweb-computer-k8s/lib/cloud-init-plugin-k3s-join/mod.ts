@@ -56,6 +56,14 @@ export const POD_EGRESS_COMMENT = "socialweb-pod-egress";
 export const CNI_CONFLIST_NAME = "10-socialweb-bridge.conflist";
 export const CNI_WAIT_ATTEMPTS = 90;
 
+export const DIAGNOSE_ATTEMPTS = 30;
+
+export const CNI_CONF_DIR = "/etc/cni/net.d";
+
+export const CNI_BIN_DIR = "/opt/cni/bin";
+
+export const CNI_PLUGINS = ["bridge", "host-local", "portmap", "loopback"] as const;
+
 export const MESHD_PATH = "/usr/local/bin/socialweb-meshd";
 export const MESHD_ENV_PATH = `${NODE_SECRETS_DIR}/meshd.env`;
 export const MESHD_ARCHES = ["x86_64", "aarch64"] as const;
@@ -69,6 +77,7 @@ export const NODE_NET_UNITS = {
   cni: "socialweb-pod-cni.service",
   meshdInstall: "socialweb-meshd-install.service",
   meshd: "socialweb-meshd.service",
+  diagnose: "socialweb-node-diagnose.service",
 } as const;
 
 export const NODE_NET_SCRIPTS = {
@@ -76,6 +85,7 @@ export const NODE_NET_SCRIPTS = {
   masquerade: "/usr/local/bin/socialweb-pod-masquerade",
   cni: "/usr/local/bin/socialweb-pod-cni",
   meshdInstall: "/usr/local/bin/socialweb-meshd-install",
+  diagnose: "/usr/local/bin/socialweb-node-diagnose",
 } as const;
 
 export const MESHD_UNIT = `[Unit]
@@ -124,8 +134,10 @@ export interface K3sJoinModuleOptions {
   meshd?: MeshdPin;
   meshdPath?: string;
   cniConfDir?: string;
+  cniBinDir?: string;
   kubeletKubeconfig?: string;
   cniWaitAttempts?: number;
+  diagnoseAttempts?: number;
 }
 
 const SHA256_HEX = /^[0-9a-f]{64}$/;
@@ -162,8 +174,11 @@ interface ResolvedPaths {
   meshdEnv: string;
   meshd: string;
   cniConfDir: string;
+  cniBinDir: string;
+  cniPlugin: string;
   kubeletKubeconfig: string;
   cniWaitAttempts: number;
+  diagnoseAttempts: number;
 }
 
 function resolvePaths(opts: K3sJoinModuleOptions): ResolvedPaths {
@@ -173,9 +188,12 @@ function resolvePaths(opts: K3sJoinModuleOptions): ResolvedPaths {
   return {
     meshdEnv: inDir(MESHD_ENV_PATH),
     meshd: opts.meshdPath ?? MESHD_PATH,
-    cniConfDir: opts.cniConfDir ?? `${dataDir}/agent/etc/cni/net.d`,
+    cniConfDir: opts.cniConfDir ?? CNI_CONF_DIR,
+    cniBinDir: opts.cniBinDir ?? CNI_BIN_DIR,
+    cniPlugin: `${dataDir}/data/current/bin/cni`,
     kubeletKubeconfig: opts.kubeletKubeconfig ?? `${dataDir}/agent/kubelet.kubeconfig`,
     cniWaitAttempts: opts.cniWaitAttempts ?? CNI_WAIT_ATTEMPTS,
+    diagnoseAttempts: opts.diagnoseAttempts ?? DIAGNOSE_ATTEMPTS,
     acceptPath: opts.acceptPath ?? DEFAULT_ACCEPT_PATH,
     dumbpipe: opts.dumbpipePath ?? "/usr/local/bin/dumbpipe",
     k3s: opts.k3sPath ?? "/usr/local/bin/k3s",
@@ -342,10 +360,42 @@ for _ in $(seq 1 ${p.cniWaitAttempts}); do
 done
 [ -n "\${CIDR}" ] || { say "node \${NODE_NAME} has no podCIDR yet"; exit 1; }
 printf '%s' "\${CIDR}" | grep -Eqx '([0-9]{1,3}\\.){3}[0-9]{1,3}/[0-9]{1,2}' || { say "podCIDR \${CIDR} is not an IPv4 CIDR"; exit 1; }
-install -d -m 0755 ${p.cniConfDir}
+install -d -m 0755 ${p.cniConfDir} ${p.cniBinDir}
+for PLUGIN in ${CNI_PLUGINS.join(" ")}; do
+  ln -sfn ${p.cniPlugin} ${p.cniBinDir}/"\${PLUGIN}"
+done
 printf '${renderCniConflist("%s")}' "\${CIDR}" > ${conf}.tmp
 mv ${conf}.tmp ${conf}
 say "wrote ${conf} for \${CIDR}"
+`;
+}
+
+export function renderNodeDiagnoseScript(opts: K3sJoinModuleOptions = {}): string {
+  const p = resolvePaths(opts);
+  return `#!/bin/bash
+set -uo pipefail
+say() { echo "socialweb-node-diagnose: $*" >&2; }
+for _ in $(seq 1 ${p.diagnoseAttempts}); do
+  INFO="$(${p.k3s} crictl info 2>/dev/null)"
+  READY="$(printf '%s' "\${INFO}" | jq -r '[.status.conditions[]? | select(.type=="NetworkReady") | .status | tostring][0] // "unknown"' 2>/dev/null)"
+  if [ "\${READY}" = "true" ]; then
+    say "NetworkReady=true"
+    exit 0
+  fi
+  REASON="$(printf '%s' "\${INFO}" | jq -r '[.status.conditions[]? | select(.type=="NetworkReady") | "\\(.reason // "") \\(.message // "")"][0] // ""' 2>/dev/null)"
+  LOAD="$(printf '%s' "\${INFO}" | jq -r '.lastCNILoadStatus // ""' 2>/dev/null)"
+  CONF="$(printf '%s' "\${INFO}" | jq -r '.config.cni.confDir // ""' 2>/dev/null)"
+  BINS="$(printf '%s' "\${INFO}" | jq -r '(.config.cni.binDirs // [.config.cni.binDir // empty]) | join(",")' 2>/dev/null)"
+  say "NetworkReady=\${READY} \${REASON}"
+  say "lastCNILoadStatus=\${LOAD}"
+  say "confDir=\${CONF} holds: $(ls -A "\${CONF}" 2>&1 | tr '\\n' ' ')"
+  for B in \${BINS//,/ }; do
+    say "binDirs=\${BINS} \${B} holds: $(ls -A "\${B}" 2>&1 | tr '\\n' ' ')"
+  done
+  sleep 20
+done
+say "the node network was still not ready after ${p.diagnoseAttempts} readings"
+exit 0
 `;
 }
 
@@ -401,6 +451,8 @@ say "installed socialweb-meshd \${WANT} for \${ARCH} from ${pin.downloadBase}"
 `;
 }
 
+const CONSOLE = ["StandardOutput=journal+console", "StandardError=journal+console"];
+
 function unit(sections: Record<string, string[]>): string {
   return Object.entries(sections).map(([name, lines]) => [`[${name}]`, ...lines].join("\n")).join("\n\n") + "\n";
 }
@@ -417,7 +469,7 @@ export function renderNodeUnits(opts: K3sJoinModuleOptions = {}): Record<string,
         "Wants=network-online.target",
         "StartLimitIntervalSec=0",
       ],
-      Service: ["Type=simple", `ExecStart=${NODE_SCRIPTS.openbaoLink}`, ...always],
+      Service: ["Type=simple", `ExecStart=${NODE_SCRIPTS.openbaoLink}`, ...always, ...CONSOLE],
       Install: install,
     }),
     [NODE_UNITS.nodeSecrets]: unit({
@@ -433,6 +485,7 @@ export function renderNodeUnits(opts: K3sJoinModuleOptions = {}): Record<string,
         `ExecStart=${NODE_SCRIPTS.nodeSecrets}`,
         "Restart=on-failure",
         "RestartSec=5",
+        ...CONSOLE,
       ],
       Install: install,
     }),
@@ -443,7 +496,7 @@ export function renderNodeUnits(opts: K3sJoinModuleOptions = {}): Record<string,
         `Wants=network-online.target ${NODE_UNITS.nodeSecrets}`,
         "StartLimitIntervalSec=0",
       ],
-      Service: ["Type=simple", `EnvironmentFile=${p.linkEnv}`, `ExecStart=${NODE_SCRIPTS.apiserverLink}`, ...always],
+      Service: ["Type=simple", `EnvironmentFile=${p.linkEnv}`, `ExecStart=${NODE_SCRIPTS.apiserverLink}`, ...always, ...CONSOLE],
       Install: install,
     }),
     [NODE_UNITS.k3sAgent]: unit({
@@ -485,8 +538,17 @@ export function renderNodeNetworkUnits(opts: K3sJoinModuleOptions = {}): Record<
     `ExecStart=${exec}`,
     "Restart=on-failure",
     "RestartSec=5",
+    ...CONSOLE,
   ];
   const units: Record<string, string> = {
+    [NODE_NET_UNITS.diagnose]: unit({
+      Unit: [
+        "Description=socialweb node: print containerd's CNI status to the console until the node network is ready",
+        "StartLimitIntervalSec=0",
+      ],
+      Service: ["Type=oneshot", `ExecStart=${NODE_NET_SCRIPTS.diagnose}`, ...CONSOLE],
+      Install: install,
+    }),
     [NODE_NET_UNITS.dnsLink]: unit({
       Unit: [
         "Description=socialweb node: the per-node DNS address on a dummy interface",
@@ -567,6 +629,7 @@ export function createK3sJoinModule(opts: K3sJoinModuleOptions = {}): UserDataMo
       script(NODE_NET_SCRIPTS.dnsLink, renderDnsLinkScript()),
       script(NODE_NET_SCRIPTS.masquerade, renderPodMasqueradeScript()),
       script(NODE_NET_SCRIPTS.cni, renderPodCniScript(opts)),
+      script(NODE_NET_SCRIPTS.diagnose, renderNodeDiagnoseScript(opts)),
       ...meshdFiles,
       ...NODE_UNIT_ORDER.map((name) => systemdFile(`/etc/systemd/system/${name}`, units[name])),
       ...Object.entries(netUnits).map(([name, content]) => systemdFile(`/etc/systemd/system/${name}`, content)),

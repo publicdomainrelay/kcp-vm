@@ -225,6 +225,153 @@ open:
       ACC-MESH and ACC-NOSSH on our GitLab.
     instrument: >
       The plan's three acceptance checks, each with UTC readings from prod and GitLab.
+  - id: P6-M0
+    title: QUEUED - what linking kcp in-process breaks, and the one binary's size and platforms.
+    body: >
+      QUEUED: starts only after plan 0005 is complete and ACC-ZERO, ACC-MESH and ACC-NOSSH pass on prod.
+      Plan 0006 (docs/plans/0006-socialweb-computer-unified-binary.yaml) items M0-KCP-SPIKE and
+      M0-SIZE-BUDGET. The user decided kcp is linked in-process and there is one binary; the spike sizes
+      the move onto kcp's Kubernetes fork (its go.mod replaces ~33 k8s.io modules) rather than choosing.
+    instrument: >
+      A per-package breakage list from a scratch build on the fork, and the size budget enforced by
+      check.sh.
+  - id: P6-M1
+    title: QUEUED - the module on kcp's fork, kcp in-process on port 0, verified assets, a host inventory.
+    body: >
+      QUEUED behind plan 0005 as P6-M0. Plan 0006 items M1-CLI, M1-K8S-FORK, M1-KCP-INPROC,
+      M1-KCP-PORT0, M1-ASSETS, M1-HOST-INVENTORY. kcp's secure port and its embedded etcd (fixed
+      2379/2380 today) bind port 0 and report the bound ports through an OnListen callback.
+    instrument: >
+      Two in-process kcps on port 0 in one test process get distinct ports and each admin kubeconfig
+      reaches its own; go test ./... green on the fork; every executable the code runs has a fate in
+      the host inventory.
+  - id: P6-M2
+    title: QUEUED - long-lived children in their own systemd units, postgres and OpenBao as CRDs, manifests applied from Go.
+    body: >
+      QUEUED behind plan 0005 as P6-M0. Plan 0006 items M2-HOST-SCOPES, M2-POSTGRES, M2-OPENBAO-SERVER,
+      M2-MANIFESTS, M2-TEMPLATE, M2-APPLY; no container at runtime, so postgres and the vaults are
+      embedded and reconciled, and install-provider.sh, apply-permission-inventory.sh, the bootstrap
+      heredocs and apply.sh are replaced with no kubectl or yq.
+    instrument: >
+      A scoped child outlives its starter and is adopted by the next; a Postgres object survives its
+      controller's restart; a second apply of every set changes no resourceVersion.
+  - id: P6-M3
+    title: QUEUED - serve gateway kcp on the host, verbs folded, control planes that survive an upgrade.
+    body: >
+      QUEUED behind plan 0005 as P6-M0. Plan 0006 items M3-FOLD, M3-CLUSTER-SCOPES, M3-BAO-SYNC,
+      M3-SERVE-GATEWAY-KCP, M3-HOST-INSTALL. M3-BAO-SYNC carries plan 0005 M3-BAO-SYNC's rule to every
+      OpenBao the binary runs: backends, roles, policies and KV derived from live objects, reconciled
+      every pass and at startup and adoption, stale entries deleted, empty jwt mounts disabled.
+    instrument: >
+      A zero-node market cluster's /readyz never fails across a kill and restart of the core process;
+      a vault seeded with stale mounts, roles, policies and KV is reduced to exactly the live set in one
+      pass; the host service on a state dir the container wrote serves the door and the same workspaces.
+  - id: P6-M4
+    title: QUEUED - a reproducible static build within its size budget.
+    body: >
+      QUEUED behind plan 0005 as P6-M0. Plan 0006 item M4-BUILD.
+    instrument: >
+      Two clean builds byte-identical; the binary within the budget in versions.json.
+  - id: P6-M5
+    title: QUEUED - prod moves from the container to the host service; the user runs the cutover.
+    body: >
+      QUEUED behind plan 0005 as P6-M0. Plan 0006 items M5-CUTOVER, M5-RETIRE and its acceptance checks
+      ACC6-ONE-BINARY, ACC6-STATE, ACC6-UPGRADE, ACC6-REPRO. No rehearsal; the rollback path is the
+      untouched docker volume and the old container, kept until M5-RETIRE.
+    instrument: >
+      Post-cutover readings equal the pre-cutover ones: same workspaces, bindings, claims and ClusterLinks,
+      None nodes 0.
+  - id: P7-M1
+    title: QUEUED - compute-provider-kcp's shape, and the firecracker provider's learnings inventoried.
+    body: >
+      QUEUED: starts only after plan 0005 is complete and ACC-ZERO, ACC-MESH and ACC-NOSSH pass on prod,
+      and after the plan 0006 and 0008 items it names. Plan 0007
+      (docs/plans/0007-compute-provider-kcp.yaml) items M1-DECIDE, M1-FC-INVENTORY, M1-API,
+      M1-COMMON-EXTRACT. compute-provider-firecracker is the gold standard; both providers stay.
+    instrument: >
+      Every exported function and logger event of the firecracker provider maps to a requirement entry;
+      ComputeVM fixtures round-trip through Go and TypeScript; enriched user_data byte-identical across
+      the extraction.
+  - id: P7-M2
+    title: QUEUED - the Go side at the firecracker provider's standard, unprivileged, no docker.
+    body: >
+      QUEUED behind plan 0005 as P7-M1. Plan 0007 items M2-BACKPORT, M2-UNPRIVILEGED-RUNNER,
+      M2-CONTROLLER. VMs boot through the kvm group, each in its own systemd unit, and the controller
+      re-populates from ComputeVM plus live VMM state.
+    instrument: >
+      Parity tests green on both providers; a guest boots as a non-root kvm-group user and outlives its
+      starter; a Lost guest is never booted again.
+  - id: P7-M3
+    title: QUEUED - the TypeScript provider and the bidder flag that selects it.
+    body: >
+      QUEUED behind plan 0005 as P7-M1. Plan 0007 items M3-TS-PROVIDER, M3-BIDDER-FLAG.
+    instrument: >
+      Against a fake kcp, provision resolves on Running and destroy only after 404; createBidConfig
+      equals the firecracker record.
+  - id: P7-M4
+    title: QUEUED - a restarted bidder keeps its issuer, its keys and its contracts.
+    body: >
+      QUEUED behind plan 0005 as P7-M1. Plan 0007 items M4-BIDDER-VAULT, M4-BIDDER-BAO-SYNC,
+      M4-CONTRACT-RESTORE, M4-ONNETWORK. Live on hat-8 2026-10-07 a restarted bidder lost its receipts,
+      vm.delete failed and the guest leaked; its issuer URL also moves, leaving one jwt mount per issuer
+      in cluster vaults. The keys move into an OpenBao beside the bidder, reconciled against live
+      ComputeVMs, with one stable issuer per bidder.
+    instrument: >
+      A bidder seeded from its ContractStore answers vm.delete 200 and destroys once; three starts keep
+      the same did, issuer URL and JWKS; restarts and an upgrade leave one jwt mount per bidder in the
+      cluster vault.
+  - id: P7-M5
+    title: QUEUED - run bidder end to end, with no docker.
+    body: >
+      QUEUED behind plan 0005 as P7-M1. Plan 0007 item M5-RUN-BIDDER.
+    instrument: >
+      The unit verifies and runs as a kvm-group member; the bidder DenoPod holds no kvm or unit-manager
+      access.
+  - id: P7-M6
+    title: QUEUED - bidder and gateway upgrades leave VMs running, and each side re-populates what it owns.
+    body: >
+      QUEUED behind plan 0005 as P7-M1. Plan 0007 items M6-BIDDER-UPGRADE, M6-GATEWAY-REPOPULATE,
+      M6-LIVE-RECOVERY, M6-NOSSH-JOIN and its acceptance checks ACC7-*. The gateway rebuilds its
+      ownership from NodeClaims, receipts, market records and Nodes, including VMs bidders elsewhere
+      rented to it.
+    instrument: >
+      TestABidderUpgradeLeavesItsVMRunningAndStillReleasesIt and
+      TestAGatewayUpgradeKeepsEveryMarketNodeReadyAndOwned, through the RFP flow, with zero ssh sessions.
+  - id: P8-M1
+    title: QUEUED - a pinned deno and the TypeScript closure inside the binary, run offline.
+    body: >
+      QUEUED: starts only after plan 0005 is complete and ACC-ZERO, ACC-MESH and ACC-NOSSH pass on prod,
+      and after plan 0006 M1-ASSETS. Plan 0008 (docs/plans/0008-embedded-deno-and-typescript-denopods.yaml)
+      items M1-DENO, M1-TS-SOURCE, M1-TS-CLOSURE. Production runs the embedded archive; other builds
+      take the org root from SOCIALWEB_COMPUTER_ORG_ROOT or find it by walking up. DENO_DIR is keyed by
+      the closure's sha256 and every run passes --no-code-cache (13349d6: a stale code cache ran old
+      bidder code after a restart).
+    instrument: >
+      An upgraded closure never runs the old code cache; an entry imported from jsr and npm runs with no
+      network; two bundles of the same commits are byte-identical.
+  - id: P8-M2
+    title: QUEUED - deno-kcp and kcp-libs forked into this repo and run in-process; one service DenoPod template.
+    body: >
+      QUEUED behind plan 0005 as P8-M1. Plan 0008 items M2-DENOKCP-FORK, M2-DENOKCP-INPROC,
+      M2-SERVICE-TEMPLATE.
+    instrument: >
+      A DenoPod applied to the in-process kcp runs on the embedded deno, and an upgrade restarts every
+      recorded DenoPod on the new closure exactly once.
+  - id: P8-M3
+    title: QUEUED - the door runs as a DenoPod.
+    body: >
+      QUEUED behind plan 0005 as P8-M1. Plan 0008 item M3-DOOR-DENOPOD.
+    instrument: >
+      The door DenoPod serves /api/config and reads the same claims on a state dir the container wrote.
+  - id: P8-M4
+    title: QUEUED - run gateway ssh, run request, and the market bed driven by socialweb-computer.
+    body: >
+      QUEUED behind plan 0005 as P8-M1. Plan 0008 items M4-RUN-GATEWAY-SSH, M4-RUN-REQUEST,
+      M4-TESTBED-PORT and its acceptance checks ACC8-*. run request keeps its contracts as
+      ComputeContract objects in an in-process kcp.
+    instrument: >
+      The market bed's live test passes twice through `socialweb-computer testbed`, and `run request`
+      reaches onNetwork, lists the contract, and releases it from a fresh process with vm.delete 200.
 
 limits:
   - title: A node cannot reach another node, so a cluster with more than one has no cluster DNS

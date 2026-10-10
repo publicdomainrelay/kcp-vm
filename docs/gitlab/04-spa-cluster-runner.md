@@ -288,7 +288,7 @@ Measured on `ssh gitlab` (host `hat-10`, Fedora 44, tailnet address `100.119.250
 
 | id | description | type | state |
 | --- | --- | --- | --- |
-| 1 | `socialwebcomputer` | instance_type | online, `executor = "instance"` with the Fleeting plugin |
+| 1 | `socialwebcomputer` | instance_type | online, `executor = "instance"` with the Fleeting plugin, tag `socialwebcomputer`, `run_untagged = false` since 2026-10-07 |
 | 2 | `kcp-tenant-kubernetes` | project_type, project 5 | offline |
 | 3 | `kcp-tenant-kubernetes-streamplace` | project_type, project 1 | offline |
 
@@ -345,7 +345,8 @@ export SOCIALWEB_MINT_URL=https://k8s.socialweb.computer/v1/credential
 gitlab-runner run --config ~/.gitlab-runner/config.toml --working-directory /var/lib/gitlab-runner
 ```
 
-Pause runner 1 first, or its `run_untagged` will take jobs meant for this one.
+Runner 1 takes only jobs tagged `socialwebcomputer` (`run_untagged = false`, set 2026-10-07), so
+it no longer competes for untagged jobs; give this runner's jobs the `kcp-tenant` tag all the same.
 
 ## Verify
 

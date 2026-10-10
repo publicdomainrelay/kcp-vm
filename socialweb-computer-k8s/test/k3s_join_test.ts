@@ -307,3 +307,19 @@ Deno.test("the apiserver link puts the advertise address on lo and dials the api
     await Deno.remove(run.dir, { recursive: true });
   }
 });
+
+Deno.test("every join and network oneshot unit writes to the guest console, so a failure reads without a shell on the guest", () => {
+  const config = nodeUserData();
+  const files = Object.fromEntries(config.write_files.map((f) => [f.path, f.content]));
+  const quiet = [NODE_UNITS.k3sAgent];
+  const units = Object.keys(files)
+    .filter((path) => /^\/etc\/systemd\/system\/socialweb-[^/]+\.service$/.test(path))
+    .filter((path) => !quiet.some((name) => path.endsWith(`/${name}`)));
+  assert(units.length >= 6, units.join(" "));
+  for (const path of units) {
+    assertEquals(unitSection(files[path], "StandardOutput"), ["journal+console"], path);
+    assertEquals(unitSection(files[path], "StandardError"), ["journal+console"], path);
+  }
+  const agent = files[`/etc/systemd/system/${NODE_UNITS.k3sAgent}`];
+  assertEquals(unitSection(agent, "StandardOutput"), [], "the k3s agent's kubelet log would drown the console");
+});

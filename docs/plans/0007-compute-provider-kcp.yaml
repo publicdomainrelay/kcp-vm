@@ -1,0 +1,472 @@
+plan: 0007-compute-provider-kcp
+written: 2026-10-07
+revised: "2026-10-07, with the user's answers to the plan's questions (decisions below marked 'decided by the user 2026-10-07')"
+queued: >
+  QUEUED. Starts only after plan 0005 (docs/plans/0005-zero-ssh-market-nodes.yaml) is complete and its
+  acceptance checks ACC-ZERO, ACC-MESH and ACC-NOSSH pass on prod with UTC readings recorded there.
+  It also waits on the plan 0006 and 0008 items named in depends_on.
+source: >
+  The user's request of 2026-10-07: from what the bidder's firecracker compute provider taught us, build
+  compute-provider-kcp. Its TypeScript half is a ComputeProvider the bidder uses, configured
+  automatically under `socialweb-computer run bidder`; it launches VMs by applying objects to kcp
+  (Go-native, never kubectl); VM state lives in kcp, so a killed bidder still knows its running VMs. The
+  user then decided: ComputeVM plus a Go controller; keep both providers, with compute-provider-firecracker
+  as the GOLD STANDARD whose learnings are backported into the Go side with parity tests; no docker for
+  Go VM runners (unprivileged, /dev/kvm through the kvm group); a lost guest is replaced through a new
+  RFP; bidder identity keys live in an OpenBao beside the bidder; and the core binary and deno processes
+  of BOTH the bidder and the gateway are upgradable while VMs keep running, each re-populating which VMs
+  it owns afterwards.
+state_rules:
+  - This file is the only state. Every step updates status and evidence.
+  - status is one of todo, doing, done, blocked.
+  - An item is done only when its evidence is recorded (commit SHAs, test names watched to fail and
+    then pass, hat-8 readings with UTC timestamps).
+  - Open items are mirrored in NEXT.yaml (P7-*).
+  - A decision marked "decided by Claude, user may veto" was not confirmed by the user; one marked
+    "decided by the user 2026-10-07" was.
+  - An item names its dependencies in depends_on; an item may not start while one of them is not done.
+    Cross-plan dependencies are written <plan>:<item id>.
+  - >
+    RFP flow is the spine (org-root CLAUDE.md). Every test that needs a live guest drives the requester
+    (requestCompute / runComputeContract) against a bidder through RFP, bid, accept and cloud-init
+    user_data. No test or code boots a guest any other way.
+ownership:
+  owned: >
+    All code in socialweb-computer-kcp, the vendored deno-kcp test bed, and the atproto-market requester
+    libraries. Decided by the user 2026-10-07: anything in hono-compute-provider and atproto-market may be
+    changed, committed only, never pushed.
+  not_owned: >
+    The market protocol records and lexicons. This plan changes NO record, NSID or wire shape: the bid
+    config, receipt, onNetwork and vm.delete records stay what the firecracker provider writes. kcp objects
+    introduced here are local state of one host and are never published.
+research:
+  measured_on: "2026-10-07; hono-compute-provider c06b2ad, atproto-market 117ab30, deno-kcp 25d10f92, kcp-libs f6911d2, this repo 13349d6"
+  compute_provider_abc: "hono-compute-provider lib/abc/compute-provider/mod.ts:39-55 ComputeProvider {name, provision, destroy, createBidConfig, injectAcceptBundle, getDroplet?, setup?, teardown?}"
+  firecracker_gold_standard:
+    - "lib/compute-provider-firecracker/mod.ts:563 guests is an in-memory Map, :643 the network index an in-memory counter, :734-749 destroy stops only guests in that Map"
+    - ":629-732 provision: name fc-<shortId(requester)>-<8 hex> (:641), work dir <workRoot>/<name> (:642), enrichment order: OIDC enricher (:647), onNetwork base URL (:650), the requester-named relay address else the container's gateway (:662), JSR URL (:663), guest pointed at host with the guest TLS port (:664, :521-524), /root/.curlrc --resolve (:548); disk from the contract (:608-610, :670); mem parsed (:812-827)"
+    - ":29-37 NSIDs and SECRETS_PREFIX /root/secrets/digitalocean.com/serviceaccount; :612-627 bid config wif.simple with to_issue exchange-firecracker-oidc, token_path ${SECRETS_PREFIX}/token (c06b2ad: the bid config names the token path the provisioning script writes); :161-166 injectAcceptBundle at the accept path; :347-515 preinstall manifest (packages, files, runs baked into the image, leftToBoot); :592-606 image ensure with reuseStale and fingerprint; :574-590 a JSR registry for guests; :751-807 POST /v1/on-network; :837-848 the issuer's droplet view (containerName for the host-key scan done from inside the guest's container, oidc-sub tags, guest IP); :860-871 issuer mounted in serve.onConnected; :697-710 rbac record created at provision and deleted at destroy"
+    - "lib/microvm-firecracker/mod.ts:155-163 the bidder must not hold /dev/kvm, so each guest boots in its own privileged runner container (:203-216, no restart policy), work dir chmod 0777 (:186-189), result.json polled (:218-245), stop = kill + rm (:254-277); :48-58 the host address a guest dials is the container's default gateway"
+    - "cmd/socialweb-nodeboot/main.go:26-29 boots from -spec, stops by -stop -work-dir; :283-288 refuses a second boot in a work dir already holding a guest; it re-execs itself for the namespace verb, and pasta runs inside the guest's namespace to wire the tap and start the VMM (:305-310)"
+  restart_defects:
+    - "live, hat-8 2026-10-07 (lead's reading): restarting a bidder loses its receipts; vm.delete then fails (404 through the dispatcher) and the guest leaks. In code: atproto-market lib/market-bidder/mod.ts:175 activeContracts is in memory, lib/market-bidder-compute/mod.ts:395-409 answers an unknown receipt with 400 and destroys nothing"
+    - "live, 13349d6: a restarted bidder ran old provider code from a stale DENO_DIR v8_code_cache_v2 (bid_config token path and node image of the previous version) until the cache was moved aside; the launcher now passes --no-code-cache (plan 0008 M1-DENO keys DENO_DIR by closure sha256)"
+    - "atproto-market hono-bidder/mod.ts:103-113 a fresh relay keypair per process, so the issuer URL guests were told, and the OpenBao JWT mount plan 0005 keys by issuer, move on every restart; hono-compute-provider lib/oidc-issuer-hono/mod.ts:42-53 the signing key store defaults to memory"
+    - "plan 0005 M3-NODE-LOSS (door half): a restarted door adopts Joining and Running claims but marks Bidding and Provisioning claims Failed, because their guest's user_data names the old door's per-process secrets server"
+  kcp_side_precedent:
+    - "kcp-libs impl/execrunner/pod.go:184-196 KCP_TOKEN, KCP_SERVER, KCP_WORKSPACE for a DenoPod with a serviceAccount; deno-kcp main.go:89 token TTL 1h"
+    - "socialweb-computer-k8s lib/socialweb-computer-k8s-nodeclaim-kcp/mod.ts:172-192 a TypeScript kcp REST client; api/v1alpha1/resources.go:18-22 + cmd/socialweb-apigen generate schemas, exports and TS wire types"
+items:
+  - id: M1-DECIDE
+    milestone: M1
+    title: Record the ComputeVM-plus-Go-controller design in ARCHITECTURE
+    depends_on: []
+    decision: >
+      Decided by the user 2026-10-07: a typed ComputeVM CRD reconciled by a Go controller, not a DenoPod
+      per VM. The bidder runs as a DenoPod and writes ComputeVMs; kcp lists running VMs. Reasons kept on
+      record: deleting a DenoPod SIGKILLs its group (supervisor.go:156,:322) so no release runs; the 5m
+      runner timeout (pod.go:17) killed the bed's bidder mid-contract (run 4); DenoPod status has no typed
+      guest fields; booting needs /dev/kvm reach the TypeScript sandbox must not hold.
+    files: ["docs/ARCHITECTURE.md (subsection 'compute-provider-kcp' under section 5)"]
+    test_first: "None (decision record)."
+    done_when: "ARCHITECTURE subsection committed with these citations."
+    risks: []
+    status: todo
+    evidence: []
+  - id: M1-FC-INVENTORY
+    milestone: M1
+    title: Inventory what compute-provider-firecracker learned, as requirements the Go side must meet
+    depends_on: []
+    decision: >
+      Decided by the user 2026-10-07: compute-provider-firecracker (TypeScript) is the gold standard; it
+      was sourced from nodeboot/nodeimage and has advanced since. This item reads it (and
+      microvm-firecracker, node-image-firecracker, oidc-issuer-hono's enricher, cloud-init-common's
+      modules it composes) and writes docs/compute-provider-requirements.yaml: one entry per learning
+      with id, the TypeScript source line, the behaviour, whether nodeboot/nodeimage/the Go controller
+      already meet it, and the parity test that will prove it. At least: user_data enrichment order and
+      idempotence; the accept bundle at the accept path (accept.json); the onNetwork reporter, its
+      targets and the relay.localhost alias; SECRETS_PREFIX and the token path the provisioning script
+      writes; .curlrc --resolve and CURL_HOME; guest TLS port rewrite; the host address a guest dials
+      (today the runner container's gateway; with no container, pasta's mapped gateway); network range,
+      index and MAC; disk size from the contract and mem parsing; image ensure, fingerprint, reuseStale
+      and the preinstall manifest; the JSR registry for guests; the issuer's droplet view including the
+      guest host-key scan (done from inside the container today, which no longer exists); rbac records
+      created and deleted; boot timeout and result.json fields; the work dir's two writers.
+    files: ["docs/compute-provider-requirements.yaml"]
+    test_first: >
+      hono-compute-provider test/requirements_inventory_test.ts: every exported function and every
+      logger event name in lib/compute-provider-firecracker/mod.ts and lib/microvm-firecracker/mod.ts is
+      referenced by some requirement entry; red before the file exists.
+    done_when: "inventory committed; test green; each entry names its parity test id."
+    risks: ["The firecracker provider keeps moving; the test re-runs on every hono-compute-provider change so a new learning cannot land without an entry."]
+    status: todo
+    evidence: []
+  - id: M1-API
+    milestone: M1
+    title: ComputeVM in api/v1alpha1, generated schema, export, workspace type and TypeScript wire types
+    depends_on: [M1-DECIDE, "0006:M1-K8S-FORK"]
+    decision: >
+      Go types are the source of truth (plan 0005 M2-CODEGEN). ComputeVM spec: vm {cpus, mem, disk,
+      network, role}, userDataSecret, requester {did, plc}, contract {receiptUri, receiptCid, acceptUri,
+      acceptCid, submitEventUrl, acceptedAt}, image {reuseStale}. Status through /status by two field
+      managers (decided by Claude, user may veto): the controller owns phase (Pending, Booting, Running,
+      Releasing, Lost, Failed), network {guestIp, gateway, prefix, guestMac, index}, workDir, unit,
+      vmmPid, vmmStartTicks, pastaPid, apiSocket, imageFingerprint, bootedAt, message, conditions; the
+      provider owns market {onNetworkUri, address, reportedAt}. Finalizer
+      computevm.socialweb.computer/release; printer columns phase, guestIp, requester, age. Export
+      computevms; WorkspaceType bidder binds denoruntime, computevms and hostprocesses (for the bidder's
+      OpenBaoServer). apigen's second TypeScript target writes
+      hono-compute-provider/lib/common/compute-provider-kcp-common/mod.ts, drift-checked when the sibling
+      is present.
+    files: ["api/v1alpha1/computevm_types.go", "api/v1alpha1/resources.go", "internal/apigen", "deploy/*computevm*.yaml, deploy/workspacetype-bidder.yaml", "deploy/sets.yaml (bidder)", "hono-compute-provider/lib/common/compute-provider-kcp-common/"]
+    test_first: "TestComputeVMRoundTripsThroughTheSharedFixtures (Go and the generated TS validator), TestTheComputeVMSchemaIsRevisionLocked; red first."
+    done_when: "check.sh --fast green with apigen no drift; both fixture suites green."
+    risks: ["APIResourceSchema.spec is immutable; the first revision is reviewed field by field."]
+    status: todo
+    evidence: []
+  - id: M1-COMMON-EXTRACT
+    milestone: M1
+    title: Move the firecracker provider's pure user_data and network functions into compute-provider-common
+    depends_on: []
+    decision: >
+      Two impls of one ABC must not import each other (org-root CLAUDE.md). Move unchanged into
+      lib/common/compute-provider-common: injectAcceptBundle, onNetworkUrlFromBundle, onNetworkTargets,
+      onNetworkReporterModule, withOnNetworkBaseUrl, withOnNetworkReporter, addressTheRequesterNamed,
+      pointGuestAtHost, the curlrc module, injectJsrUrl, networkFor, guestMacFor, shortId, parseMemMiB,
+      preinstallManifest and the NSID and path constants. Firecracker imports them; its behaviour is the
+      reference and does not change.
+    files: ["hono-compute-provider/lib/common/compute-provider-common/mod.ts", "hono-compute-provider/lib/compute-provider-firecracker/mod.ts", "hono-compute-provider/deno.json"]
+    test_first: "test/user_data_enrichment_golden_test.ts (goldens captured from firecracker before the move); fails to compile before, passes after; the suite stays green."
+    done_when: "golden test green; deno task test green."
+    risks: ["Helpers closing over module state (jsrPort, nextIndex) stay in the impl and are passed in."]
+    status: todo
+    evidence: []
+  - id: M2-BACKPORT
+    milestone: M2
+    title: Bring nodeboot, nodeimage and the Go controller to the firecracker provider's standard, proved by parity tests
+    depends_on: [M1-FC-INVENTORY, M1-COMMON-EXTRACT, "0006:M3-FOLD"]
+    decision: >
+      Decided by the user 2026-10-07: backport the gold standard into the Go side with parity tests. Each
+      requirement of M1-FC-INVENTORY that the Go side misses is implemented in internal/nodefirecracker,
+      the nodeboot verb, the nodeimage verb or internal/computevm, in the order the inventory lists. The
+      parity harness: one recorded RFP fixture (vm record, requester, accept bundle, contract) is handed
+      to the TypeScript firecracker provider (its microvm stubbed at the boot-spec boundary) and to the Go
+      controller (its VMM stubbed at the same boundary); the boot-spec.json, the user_data written into
+      the work dir, the bid config record and the issuer's droplet view must be equal field for field,
+      except names and addresses the fixture marks as allocated. Pure enrichment stays TypeScript
+      (compute-provider-common, applied by compute-provider-kcp before the ComputeVM is written); the Go
+      side owns image, network, disk, boot, stop and host-key scan.
+    files: ["internal/nodefirecracker", "internal/computevm", "testdata/compute-parity/", "hono-compute-provider/test/compute_parity_test.ts", "internal/computevm/parity_test.go"]
+    test_first: "Both parity tests, run against the same fixture, red on every requirement the Go side misses (the failure list is the evidence); then green."
+    done_when: "every inventory entry marked met with its parity test green on both sides."
+    risks: ["The host-key scan ran inside the runner container; with no container it moves into the guest's namespace through the nodeboot namespace verb, and the parity test fixes its output shape."]
+    status: todo
+    evidence: []
+  - id: M2-UNPRIVILEGED-RUNNER
+    milestone: M2
+    title: VMs boot unprivileged through the kvm group, with no docker, each in its own host scope
+    depends_on: [M2-BACKPORT, "0006:M2-HOST-SCOPES", "0006:M1-ASSETS"]
+    decision: >
+      Decided by the user 2026-10-07: docker is not a requirement for Go VM runners; VMs are created
+      unprivileged through /dev/kvm access, and the documentation tells users to add themselves to the
+      kvm group (never to chmod /dev/kvm). Decided by Claude, user may veto: firecracker and pasta are
+      embedded assets; the controller starts each guest as `socialweb-computer internal nodeboot -spec
+      ...` in a transient systemd user unit socialweb-vm-<name> (0006:M2-HOST-SCOPES), so the VMM and its
+      pasta live outside the bidder's cgroup and survive any restart or upgrade of the core binary and
+      its deno processes. pasta runs rootless in its own user and network namespace, the way rootless
+      podman uses it. check-host refuses `run bidder` when the user cannot open /dev/kvm read-write,
+      with the message "add yourself to the kvm group (sudo usermod -aG kvm $USER) and log in again";
+      it never suggests changing the device's mode. The two-uid work dir (bidder uid and container uid)
+      disappears: one uid writes it, mode 0700.
+    files: ["internal/computevm (runner)", "internal/nodefirecracker", "cmd/socialweb-computer check-host", "docs/bidder-host.md (kvm group instructions)"]
+    test_first: >
+      Behind livegate on hat-8 as a non-root user in group kvm: internal/computevm
+      TestAGuestBootsAsAnUnprivilegedUserWithNoDockerAndOutlivesItsStarter (boot through the RFP-flow
+      fixture's boot-spec from a child process, kill -9 the child, the unit and the VMM still run, a new
+      process adopts and stops it); check-host TestRunBidderIsRefusedWithTheKvmGroupInstruction. Red first.
+    done_when: "green; `docker` absent from every code path of run bidder (test greps the binary's exec targets)."
+    risks: ["A user added to kvm needs a new login session; on hat-8 only, the lead may chmod /dev/kvm to avoid that, and that is never written into docs or code."]
+    status: todo
+    evidence: []
+  - id: M2-CONTROLLER
+    milestone: M2
+    title: The Go ComputeVM controller boots, adopts from live VMM state, and releases
+    depends_on: [M1-API, M2-UNPRIVILEGED-RUNNER, "0006:M2-APPLY", "0008:M2-DENOKCP-FORK"]
+    decision: >
+      internal/computevm on the owned kcp-libs controller factory (plan 0008 M2-DENOKCP-FORK). A ComputeVM
+      without deletionTimestamp: allocate the lowest network index no other ComputeVM holds; write the
+      work dir and boot-spec; ensure the image in-process; start the guest's unit; read result.json; write
+      status Running with unit, VMM pid and start ticks, API socket. With deletionTimestamp: Releasing,
+      stop the unit, remove the work dir, drop the finalizer. Re-population after any restart or upgrade
+      (decided by the user 2026-10-07: the bidder re-populates from ComputeVM plus live VMM state): for
+      each ComputeVM, Running only if its unit is active AND the VMM pid has the recorded start ticks
+      AND the firecracker API socket answers with state Running; otherwise Lost. A Lost guest is never
+      booted again (decided by the user 2026-10-07: replaced through a new RFP; plan 0005 M3-NODE-LOSS
+      does that from the requester side), and the receipt stays releasable. A socialweb-vm-* unit of this
+      bidder with no ComputeVM is reported and stopped after a 10-minute grace; units of other bidders or
+      beds are never touched.
+    files: ["internal/computevm/", "internal/stack/bidder"]
+    test_first: >
+      Offline (fake unit manager, fake VMM API socket, fake kcp): TestTwoComputeVMsNeverShareANetworkIndexAcrossARestart,
+      TestARunningComputeVMWhoseVMMStartTicksChangedIsLost, TestALostGuestIsNeverBootedAgain,
+      TestDeletingAComputeVMStopsItsUnitAndRemovesItsWorkDirBeforeTheFinalizerGoes,
+      TestAnotherBiddersUnitIsNeverTouched. Red first.
+    done_when: "offline tests green; live proofs are M6-*."
+    risks: ["The unix socket path limit (107 bytes) on the API socket: the work root stays short and is refused up front when too long, as apply.sh does."]
+    status: todo
+    evidence: []
+  - id: M3-TS-PROVIDER
+    milestone: M3
+    title: compute-provider-kcp, the TypeScript ComputeProvider that writes ComputeVMs
+    depends_on: [M1-API, M1-COMMON-EXTRACT]
+    decision: >
+      ABC-layered: lib/common/compute-provider-kcp-common (generated types), lib/compute-provider-kcp (impl,
+      fetch to kcp, no Hono), lib/hono-factory-compute-provider-kcp (mounts the OIDC issuer, POST
+      /v1/on-network and the guest JSR registry on the provider's serve in serve.onConnected).
+      provision: enrich user_data with the common functions in firecracker's order, server-side apply the
+      user_data Secret and the ComputeVM (fieldManager compute-provider-kcp), watch until Running or
+      Failed within the boot timeout. destroy: DELETE and wait for 404. createBidConfig: the firecracker
+      record's exact shape. getDroplet: from a list+watch cache filled in setup() before the bidder serves.
+      The kcp credential is a token file the Go side rotates (TokenRequest every TTL/2) because the
+      DenoPod env token expires after 1h (deno-kcp main.go:89). Decided by Claude, user may veto.
+    files: ["hono-compute-provider/lib/compute-provider-kcp/", "hono-compute-provider/lib/hono-factory-compute-provider-kcp/", "hono-compute-provider/deno.json", "internal/stack/bidder (token file)"]
+    test_first: "test/compute_provider_kcp_test.ts against a fake kcp: provision resolves on Running; destroy only after 404; createBidConfig equals firecracker's; setup() rebuilds getDroplet. Red first."
+    done_when: "unit suite green; deno check of hono-bidder green."
+    risks: ["If watch is unavailable through the workspace path, bounded polling; which one was used is recorded."]
+    status: todo
+    evidence: []
+  - id: M3-BIDDER-FLAG
+    milestone: M3
+    title: hono-bidder --compute-provider-kcp
+    depends_on: [M3-TS-PROVIDER]
+    decision: >
+      New cli-args-env options with env names (no Deno.env.get): compute-provider-kcp (COMPUTE_PROVIDER_KCP),
+      compute-provider-kcp-server (KCP_SERVER), compute-provider-kcp-workspace (KCP_WORKSPACE),
+      compute-provider-kcp-token-file, compute-provider-kcp-ca-file. A wiring block shaped like
+      firecracker's (hono-bidder/mod.ts:546-597). Auto-configuration means run bidder's DenoPod template
+      sets them; the bidder does not sniff its environment. Both providers stay selectable (decided by
+      the user 2026-10-07).
+    files: ["atproto-market/hono-bidder/cli-args-env.ts", "atproto-market/hono-bidder/mod.ts", "atproto-market/hono-bidder/deno.json"]
+    test_first: "test/bidder_cli_kcp_provider_test.ts: --compute-provider-kcp without a server refuses at startup naming the missing options; red first."
+    done_when: "test green; existing bidder tests green."
+    risks: []
+    status: todo
+    evidence: []
+  - id: M4-BIDDER-VAULT
+    milestone: M4
+    title: The bidder's keys live in an OpenBao beside it, so its identity and issuer survive restarts
+    depends_on: [M3-BIDDER-FLAG, "0006:M2-OPENBAO-SERVER"]
+    decision: >
+      Decided by the user 2026-10-07: the bidder key, the OIDC signing key and the relay keypair live in an
+      OpenBao beside the bidder, so they persist across restarts and the issuer URL stays stable.
+      Decided by Claude, user may veto: run bidder applies an OpenBaoServer object (loopback TLS, storage
+      under the bidder's state dir, unit socialweb-vault-<handle> so it also outlives upgrades); a KV v2
+      mount bidder holds repo-key, relay-keypair and oidc-jwk; each is created once with check-and-set 0
+      (a losing writer takes the winner's value, the internal/clusterlink EnsureKey pattern). The bidder
+      DenoPod gets a short-lived OpenBao token for policy bidder-read through a token file the Go side
+      renews; hono-bidder's cliCreateIngress takes a keypair loader, oidc-issuer-hono a JwkStore, and the
+      bidder's repo key a loader, each backed by that KV. Applies to both providers when run under
+      run bidder.
+    files: ["internal/stack/bidder (vault object, token file)", "atproto-market/hono-bidder/mod.ts (loaders)", "hono-compute-provider/lib/oidc-issuer-hono (JwkStore over OpenBao) or a sibling jwk-store-openbao package"]
+    test_first: >
+      Behind livegate: TestABidderRestartedTwiceKeepsItsDidItsIssuerUrlAndItsJwks (three starts against
+      one state dir; the logged did, issuer URL and JWKS are identical, and a token issued before the
+      restart validates after). Red against today's per-process keypair.
+    done_when: "green; on the market bed the issuer URL logged before and after a bidder restart is identical."
+    risks: ["The dispatcher must accept a reconnect under the same relay key after a crash (stale registration); measured on the bed."]
+    status: todo
+    evidence: []
+  - id: M4-BIDDER-BAO-SYNC
+    milestone: M4
+    title: The bidder's OpenBao holds exactly what live ComputeVMs ask for, and key rotation never orphans a cluster's jwt mount
+    depends_on: [M4-BIDDER-VAULT, M2-CONTROLLER, "0006:M3-BAO-SYNC"]
+    decision: >
+      User asked 2026-10-07 that OpenBao backends and roles stay in sync with what is active (plan 0005
+      M3-BAO-SYNC: 5 jwt-* mounts in one cluster vault, one per issuer a bidder ever had). Decided by
+      Claude, user may veto. (1) The bidder vault is reconciled by internal/baosync (0006:M3-BAO-SYNC):
+      desired = the fixed identity set (mount bidder: repo-key, relay-keypair, oidc-jwk; policy
+      bidder-read; the DenoPod's token role) plus, for each live ComputeVM, whatever per-guest policy,
+      role or KV path the provider issues under the owned prefix guests/<computevm>; a per-guest entry
+      whose ComputeVM is gone is deleted; the pass runs every controller pass, at startup and after an
+      upgrade. (2) One stable issuer per bidder is the cluster-side invariant: the issuer URL derives from
+      the relay keypair, so a restart, upgrade or OIDC signing-key rotation never changes it. Signing-key
+      rotation is explicit (`socialweb-computer run bidder rotate-signing-key`) and keeps the issuer URL:
+      the new key is added to the JWKS, tokens are signed with it, and the old key stays published until
+      the longest token TTL has passed, so no cluster needs a new mount. Relay-keypair rotation changes the
+      issuer and therefore the jwt-<sha12(issuer)> mount on every cluster; it is a separate explicit
+      command, refused while any ComputeVM is Running unless --drain, which waits for each guest to be
+      released. Clusters drop the old mount through 0005 M3-BAO-SYNC's rule (a jwt-* mount with no role
+      left is disabled) once its last node is released, never earlier.
+    files: ["internal/stack/bidder (bidder vault reconcile, rotation subcommands)", "internal/baosync (bidder desired set)", "hono-compute-provider/lib/oidc-issuer-hono (JWKS with overlapping keys)"]
+    test_first: >
+      internal/stack/bidder TestTheBidderVaultSeededWithStaleGuestEntriesIsReducedToTheLiveComputeVMs,
+      TestASigningKeyRotationKeepsTheIssuerUrlAndTokensSignedBeforeItStillValidate,
+      TestARelayKeyRotationIsRefusedWhileAGuestRuns; behind livegate on the bed:
+      TestBidderRestartsAndUpgradesLeaveOneJwtMountPerBidderInTheClusterVault (three restarts and one
+      upgrade of the bidder while its node stays joined: the cluster vault holds one jwt-* mount for it).
+      Red first (today every restart adds a mount).
+    done_when: "tests green; the cluster-vault reading on hat-8 recorded: one jwt-* mount per bidder with a live node."
+    risks: ["oidc-issuer-hono publishes a single key today; overlapping keys change its JWKS shape, which OpenBao's JWT auth already accepts (it verifies by kid)."]
+    status: todo
+    evidence: []
+  - id: M4-CONTRACT-RESTORE
+    milestone: M4
+    title: A restarted bidder rebuilds its contracts from the ComputeVMs and still honours vm.delete
+    depends_on: [M3-BIDDER-FLAG, M2-CONTROLLER]
+    decision: >
+      Closes the live finding (restart loses receipts, vm.delete fails, guest leaks). market-bidder gains
+      an optional ContractStore in its ABC (load() seeds activeContracts before the bidder subscribes;
+      onContractChange is the save path); compute-provider-kcp implements it on ComputeVM spec.contract,
+      seeding providerIdPromise = Promise.resolve(name) and acceptToContract. The firecracker provider gets
+      a file-backed ContractStore under its work root so it stops leaking too (both providers stay,
+      decided by the user 2026-10-07). No market record changes.
+    files: ["atproto-market/lib/abc/market-bidder/mod.ts", "atproto-market/lib/market-bidder/mod.ts", "hono-compute-provider/lib/compute-provider-kcp", "hono-compute-provider/lib/compute-provider-firecracker (file store)"]
+    test_first: >
+      atproto-market test/market_bidder_contract_restore_test.ts: a bidder seeded from a ContractStore
+      answers vm.delete for that receipt with 200 and destroys once (today 400 unknown receipt); red first.
+    done_when: "green for both stores; existing market-bidder suite green."
+    risks: []
+    status: todo
+    evidence: []
+  - id: M4-ONNETWORK
+    milestone: M4
+    title: onNetwork is recorded on the ComputeVM as well as in the market record
+    depends_on: [M3-TS-PROVIDER]
+    decision: >
+      The factory's POST /v1/on-network keeps firecracker's behaviour and also applies status.market under
+      fieldManager compute-provider-kcp; a failed status write never fails the guest's request.
+    files: ["hono-compute-provider/lib/hono-factory-compute-provider-kcp"]
+    test_first: "test/compute_provider_kcp_onnetwork_test.ts; red first."
+    done_when: "green."
+    risks: []
+    status: todo
+    evidence: []
+  - id: M5-RUN-BIDDER
+    milestone: M5
+    title: socialweb-computer run bidder, configured end to end, no docker
+    depends_on: [M2-CONTROLLER, M3-BIDDER-FLAG, M4-BIDDER-VAULT, M4-BIDDER-BAO-SYNC, M4-CONTRACT-RESTORE, "0008:M2-SERVICE-TEMPLATE", "0006:M1-KCP-PORT0"]
+    decision: >
+      `socialweb-computer run bidder --handle <h>` under /var/lib/socialweb-computer-bidder/<h> (or the
+      user's state dir when run as a user unit): in-process kcp on port 0, the owned deno-kcp provider, the
+      bidder set (computevms, hostprocesses, workspace root:bidder, a ServiceAccount limited to computevms,
+      computevms/status and Secrets there), the bidder vault, token rotation, the ComputeVM controller, and
+      the bidder DenoPod with --compute-provider-kcp and every operator option. Keeps plan 0005
+      M1-BIDDER-UNIT's guarantees (key written before first start, a QR sign-in into another account
+      refused). The unit becomes a user-or-system unit running as a member of group kvm with
+      ExecStart=socialweb-computer run bidder --handle %i and KillMode=mixed; VM and vault units are
+      separate and survive it. Decided by Claude, user may veto.
+    files: ["internal/stack/bidder", "deploy/sets.yaml", "deploy/denopods/bidder.values.yaml", "deploy/bidder/socialweb-computer-bidder@.service", "deploy/bidder/socialweb-computer-bidder-run (deleted)", "scripts/deploy-firecracker-bidder.sh (installs the binary)"]
+    test_first: "test/bidder_unit_test.go TestTheBidderUnitRunsSocialwebComputerRunBidder (systemd-analyze verify clean), TestRunBidderRefusesAnAccountOtherThanItsHandle, TestTheBidderDenoPodHoldsNoKvmOrUnitManagerAccess; red first."
+    done_when: "tests green; on hat-8 the unit runs and `kubectl get computevms` on its kcp answers."
+    risks: []
+    status: todo
+    evidence: []
+  - id: M6-BIDDER-UPGRADE
+    milestone: M6
+    title: Upgrade the bidder's binary and deno processes while its VMs keep running
+    depends_on: [M5-RUN-BIDDER, "0008:M4-TESTBED-PORT"]
+    decision: >
+      Decided by the user 2026-10-07. On the market bed with run bidder: rent a guest through the RFP
+      flow, then `socialweb-computer upgrade --binary <a build with a different closure>`; read: the guest's
+      unit never restarted (same VMM pid and start ticks), every DenoPod restarted on the new code
+      (version marker), ComputeVM still Running, the same issuer URL, the guest's next onNetwork POST
+      accepted, then releaseCompute's vm.delete 200, ComputeVM and unit gone.
+    files: ["internal/marketbed/live_test.go (TestABidderUpgradeLeavesItsVMRunningAndStillReleasesIt)"]
+    test_first: "The live test, red until upgrade and re-population exist (today the guest leaks on restart)."
+    done_when: "PASS recorded with UTC timestamps; zero ssh sessions to the guest."
+    risks: ["Needs /dev/kvm through the kvm group and the bed's fixed ports free on hat-8."]
+    status: todo
+    evidence: []
+  - id: M6-GATEWAY-REPOPULATE
+    milestone: M6
+    title: After an upgrade the gateway re-populates every VM it owns, including ones rented from bidders elsewhere
+    depends_on: ["0008:M3-DOOR-DENOPOD", "0006:M3-CLUSTER-SCOPES", M4-BIDDER-VAULT]
+    decision: >
+      Decided by the user 2026-10-07: the gateway's core binary and deno processes are upgradable while VMs
+      keep running, and afterwards it re-populates which VMs it owns from NodeClaims, receipts and market
+      records. Decided by Claude, user may veto: the door builds one ownership table at start and on a
+      timer from (1) every NodeClaim's status.contract, (2) the accept records its requester repos wrote
+      and the vm.delete events they submitted, (3) the receipts in the winners' repos that reference those
+      accepts, (4) onNetwork records, and (5) the tenant clusters' Node objects. Rules: a receipt with a
+      claim and a joined Node is adopted (no write); a receipt with a claim and no Node follows plan 0005
+      M3-NODE-LOSS (90 s, then release); a receipt with NO claim (claim lost while the VM lives) gets a
+      claim written in phase Orphaned and is released by releaseCompute unless its Node is joined, in which
+      case it is adopted; a vm.delete already submitted is never submitted twice. A restart no longer fails
+      Bidding and Provisioning claims: the door's ingress keypair moves into the cluster OpenBao (stable
+      secrets-server URL, the M4-BIDDER-VAULT pattern) and the secrets capability's served state is read
+      back from the claim, so awaitComputeNetwork resumes them. Control planes stay up across the upgrade
+      (0006:M3-CLUSTER-SCOPES), so joined nodes stay Ready.
+    files: ["socialweb-computer-k8s/lib/socialweb-computer-k8s-node-market (ownership table, Orphaned phase)", "api/v1alpha1 NodeClaim (phase Orphaned: a schema revision and export re-point)", "atproto-market/lib (requester record listing helpers)", "socialweb-computer-k8s door ingress key loader"]
+    test_first: >
+      socialweb-computer-k8s test/node_market_test.ts: 'a door restarted with a receipt that has no claim
+      writes an Orphaned claim and releases it once', 'a door restarted during Provisioning resumes the
+      claim to Joining', 'a restarted door never submits a second vm.delete'; behind livegate on the bed:
+      TestAGatewayUpgradeKeepsEveryMarketNodeReadyAndOwned. Red first.
+    done_when: "unit tests green; live: a two-node market cluster stays Ready across a gateway upgrade, both claims adopted, no RFP and no vm.delete sent by the restart."
+    risks: ["Listing market records across winners' repos is network-bound; the table is built from claims first and the record scan only fills gaps, bounded per pass."]
+    status: todo
+    evidence: []
+  - id: M6-LIVE-RECOVERY
+    milestone: M6
+    title: A killed bidder still releases the VM it rented before the kill
+    depends_on: [M5-RUN-BIDDER, "0008:M4-TESTBED-PORT"]
+    decision: >
+      SIGKILL the bidder unit (systemctl kill -s KILL), let it restart, then: ComputeVM Running with the
+      same VMM, same issuer URL, onNetwork accepted, vm.delete 200, VM gone. Written first against the
+      firecracker provider before M4-CONTRACT-RESTORE, where it fails (vm.delete refused, guest leaks).
+    files: ["internal/marketbed/live_test.go (TestAKilledBidderStillReleasesTheVMItRentedBeforeTheKill)"]
+    test_first: "That test: FAIL with the firecracker provider today (recorded), PASS with both providers after M4-CONTRACT-RESTORE."
+    done_when: "readings recorded; zero ssh sessions."
+    risks: []
+    status: todo
+    evidence: []
+  - id: M6-NOSSH-JOIN
+    milestone: M6
+    title: A market node rented through compute-provider-kcp joins a tenant cluster with no ssh, across a bidder upgrade
+    depends_on: [M6-BIDDER-UPGRADE]
+    decision: >
+      Plan 0005's join (M3-UNITS, M3-JWT) needs a stable issuer from the winning bidder, which
+      M4-BIDDER-VAULT provides. A door-driven NodeClaim rented from a run bidder host joins, runs a pod,
+      stays Ready through a bidder upgrade, and is released through the claim's deletion.
+    files: ["the live test that owns the door-driven join at the time"]
+    test_first: "The join test upgrading the bidder mid-run; fails while the issuer moves, passes after."
+    done_when: "node Ready, pod Running, bidder upgraded, node still Ready, release vm.delete 200, zero ssh sessions."
+    risks: []
+    status: todo
+    evidence: []
+semantics:
+  bidder_deno_restarts_or_upgrades: "DenoPods restart on the new closure; setup() rebuilds getDroplet from ComputeVMs; ContractStore seeds activeContracts; the vault keeps the did, issuer URL and keys; VMs never notice."
+  bidder_core_binary_upgraded_or_killed: "kcp, the controller and the deno processes stop with the unit; VM units and the vault unit are separate and keep running; on start the controller re-populates from ComputeVM plus live VMM state (unit active, pid start ticks, API socket)."
+  gateway_upgraded: "control planes in their own units keep serving; the door re-populates its ownership table from claims, receipts, market records and Nodes; joined nodes stay Ready; no RFP and no vm.delete is caused by the restart."
+  kcp_state_lost_on_a_bidder: "every socialweb-vm unit of this bidder becomes an orphan and is stopped after its grace; its receipts can no longer be honoured - a stated limit; the bidder state dir is durable state, backed up with its vault."
+  host_reboots: "transient units are gone, so every VM is gone; Running ComputeVMs become Lost; the requester replaces them through new RFPs (plan 0005 M3-NODE-LOSS) and releases the old receipts, which delete the Lost ComputeVMs."
+  vm_delete: "bidder onVmDelete -> provider.destroy -> DELETE ComputeVM -> finalizer stops the unit and removes the work dir -> 404 -> 200 to the requester."
+acceptance:
+  where: hat-8 market bed, then a door-driven join
+  checks:
+    - id: ACC7-SOURCE-OF-TRUTH
+      text: "`kubectl get computevms` on the bidder's kcp lists exactly the guests whose VMMs run, before and after a kill and after an upgrade of the bidder."
+      status: todo
+      evidence: []
+    - id: ACC7-UPGRADE
+      text: A bidder upgrade and a gateway upgrade each leave every VM running (same VMM pid and start ticks) and every market node Ready, and each side re-populates what it owns.
+      status: todo
+      evidence: []
+    - id: ACC7-PARITY
+      text: Every requirement in docs/compute-provider-requirements.yaml is met by the Go side, with its parity test green on both providers.
+      status: todo
+      evidence: []
+    - id: ACC7-BAO-SYNC
+      text: "Across restarts, upgrades and a signing-key rotation of a bidder, each cluster OpenBao holds exactly one jwt-* mount per bidder with a live node, and the bidder's own OpenBao holds no per-guest entry without a live ComputeVM (decided by Claude, user may veto)."
+      status: todo
+      evidence: []
+    - id: ACC7-NO-PROTOCOL-CHANGE
+      text: The bid config, receipt, onNetwork and vm.delete records written in the runs are field-for-field the shapes the firecracker provider writes.
+      status: todo
+      evidence: []
+    - id: ACC7-NOSSH
+      text: Zero ssh sessions to any guest in every log of every run of this plan.
+      status: todo
+      evidence: []
+questions_for_user:
+  - "A receipt the gateway finds with no NodeClaim gets an Orphaned claim and is released unless its Node is joined (then adopted). Is release the right default for an unclaimed, unjoined VM?"

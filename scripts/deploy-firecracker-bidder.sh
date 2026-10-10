@@ -65,9 +65,17 @@ set -euo pipefail
 # Fedora build and an Ubuntu host can never agree on a name. -reuse-stale is the
 # switch that says "use the whole image this configuration could have produced,
 # whatever it is called"; without it the provider would try to build here.
-# Which image is shipped is the build host's own answer to the same question
-# (socialweb-nodeimage -ensure -json -reuse-stale), not the first directory in
-# the store.
+#
+# Which image is shipped is not that question, though: -reuse-stale answers it
+# with the NEWEST whole image in the store whatever its inputs, so shipping what
+# it names is shipping an image built from inputs nothing compared. On
+# 2026-10-07 that shipped sha256-bcdfbb68 -- an image built with no preinstall,
+# its image.json carrying "preinstall": "" and its rootfs with no cloud-init --
+# while the inputs named sha256-144a6d33, and every market guest then booted with
+# no cloud-init and the contract timed out with nothing naming the image. So the
+# build host answers with the EXACT image its inputs name
+# (socialweb-nodeimage -ensure -json -present-only), building it there when the
+# store does not hold it, and the target is held to the name that came back.
 #
 # WHY THE GUEST KERNEL DOES NOT COME FROM THIS HOST
 #
@@ -222,8 +230,11 @@ remote() {
 
 # The local values are handed to the remote script as shell assignments rather
 # than as environment, because the script is the thing being previewed and it
-# should read the way it will run.
-REMOTE_VARS="$(cat <<EOF
+# should read the way it will run. It is a function because FINGERPRINT is not
+# known until the build host has named the image, and every remote script is
+# written after that point.
+remote_vars() {
+  cat <<EOF
 SERVICE_USER='${SERVICE_USER}'
 PREFIX='${PREFIX}'
 STATE_ROOT='${STATE_ROOT}'
@@ -251,15 +262,16 @@ GUEST_VCPU='${GUEST_VCPU}'
 GUEST_MEM_MIB='${GUEST_MEM_MIB}'
 RUNNER_OVERHEAD_MIB='${RUNNER_OVERHEAD_MIB}'
 MANAGE_DOCKER_DAEMON='${MANAGE_DOCKER_DAEMON}'
+FINGERPRINT='${FINGERPRINT}'
 EOF
-)"
+}
 
 # A multi-line remote script, read from stdin.
 remote_script() {
   local desc="$1"
   local body full
   body="$(cat)"
-  full="${REMOTE_VARS}
+  full="$(remote_vars)
 ${body}"
   if ${DRY_RUN}; then
     printf -- '--- [dry-run] on %s: %s <<REMOTE\n%s\n--- end\n' \
@@ -341,32 +353,168 @@ for required in "${LOCAL_CONFIG}" "${LOCAL_PREINSTALL}" "${LOCAL_INIT_BINARY}" \
 done
 
 # The builder binary the provider shells out to (-ensure -json). It is a HOST
-# binary: it decides whether the store already holds the image, and with
-# -reuse-stale it does not build.
+# binary: it is the only thing that can name the image the current inputs are,
+# because the name is the hash of every input the build reads, and it is what
+# answers whether the store already holds one under that name.
 # Always rebuilt: a binary left from an older tree reads an older config schema
 # and refuses the current one.
 say "building socialweb-nodeimage"
 CGO_ENABLED=0 go build -C "${ORG_ROOT}/socialweb-computer-kcp" \
   -o "${LOCAL_NODEIMAGE_BIN}" ./cmd/socialweb-nodeimage
 
-# Which image to ship is the build host's own answer, asked the way the target
-# will ask it. It is run from inside the init's module so a relative
-# init_package resolves the way go resolves it.
-ENSURE_JSON="$(cd "${LOCAL_INIT_PACKAGE}" && "${LOCAL_NODEIMAGE_BIN}" -ensure -json -reuse-stale \
-  -preinstall "${LOCAL_PREINSTALL}" -config "${LOCAL_CONFIG}" | tail -1)"
 ensure_field() { python3 -c 'import json,sys;print(json.loads(sys.argv[1]).get(sys.argv[2]) or "")' "${ENSURE_JSON}" "$1"; }
+cfg_field() { python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))[sys.argv[2]])' "${LOCAL_CONFIG}" "$1"; }
+
+# Which image to ship is the build host's own answer to a question asked in two
+# steps, because the build that answers it needs root and the question has to be
+# read as the invoking user:
+#
+#   (a) ask the store whether it already holds the EXACT image these inputs
+#       name, with -present-only: it never builds, reuses or writes. Asked from
+#       inside the init's module so a relative init_package resolves the way go
+#       resolves it.
+#   (b) when it does not, build that image through sudo -n on the toolchain
+#       go.mod names. The build needs root because the preinstall step chroots,
+#       and a user without CAP_SYS_CHROOT gets as far as unpacking the base image
+#       and every seeded image into the stage before failing there. Root's own go
+#       cannot select the version go.mod asks for -- the downloaded toolchain
+#       lives in this user's module cache under a different HOME -- so the
+#       toolchain is named here rather than left to root's PATH. TMPDIR is
+#       unset for it because the preinstall chroot inherits TMPDIR and dpkg's
+#       ca-certificates configure step then dies in mktemp. The build writes
+#       root-owned, so the image and the stage are handed back afterwards, and
+#       then (a) is asked again and must answer present.
+#
+# -reuse-stale is NOT asked here: it answers with the newest whole image in the
+# store whatever its inputs, which is how an image built with no preinstall was
+# shipped while the inputs named a different name (see the header). It stays on
+# the target, where the build host's busybox is an input of the name and the two
+# hosts can never agree on one; the target is held to the name resolved here.
+say "resolving the image the current inputs name on the build host"
+LOCAL_GO_MOD="${ORG_ROOT}/socialweb-computer-kcp/go.mod"
+LOCAL_STAGE_DIR="$(cfg_field stage_dir)"
+ASK_THE_STORE=("${LOCAL_NODEIMAGE_BIN}" -ensure -json -present-only \
+  -preinstall "${LOCAL_PREINSTALL}" -config "${LOCAL_CONFIG}")
+
+# The toolchain the build under sudo runs on, derived from the go line go.mod
+# carries rather than pinned here: a go directive that moves and a path that does
+# not is a build that runs on a toolchain nobody chose.
+toolchain_dir() {
+  local version cache
+  version="$(sed -n 's/^go \([0-9][0-9.]*\)$/\1/p' "${LOCAL_GO_MOD}" | head -1)"
+  if [ -z "${version}" ]; then
+    echo "${LOCAL_GO_MOD} names no go version, and the build under sudo runs on the toolchain" >&2
+    echo "that line selects: root's own go cannot select it, because the toolchain the line" >&2
+    echo "resolves to lives in this user's module cache under a different HOME." >&2
+    return 1
+  fi
+  cache="$(go env GOMODCACHE)"
+  if [ -z "${cache}" ]; then
+    echo "go env GOMODCACHE is empty, so there is no module cache to find the go ${version}" >&2
+    echo "toolchain in, and the build under sudo needs it." >&2
+    return 1
+  fi
+  printf '%s/golang.org/toolchain@v0.0.1-go%s.%s-%s\n' \
+    "${cache}" "${version}" "$(go env GOOS)" "$(go env GOARCH)"
+}
+TOOLCHAIN="$(toolchain_dir)" || exit 1
+if [ ! -d "${TOOLCHAIN}" ]; then
+  echo "the toolchain the build under sudo runs on is not in this user's module cache:" >&2
+  echo "  ${TOOLCHAIN}" >&2
+  echo "named by the go line in ${LOCAL_GO_MOD}. Root's own go cannot select it, because the" >&2
+  echo "downloaded toolchain lives in this user's module cache under a different HOME, so the" >&2
+  echo "build would fail there rather than build anything." >&2
+  exit 1
+fi
+BUILD_THE_IMAGE_AS_ROOT=(sudo -n env -u TMPDIR "PATH=${TOOLCHAIN}/bin:${PATH}" \
+  "GOROOT=${TOOLCHAIN}" GOTOOLCHAIN=local GOPATH=/root/go GOCACHE=/root/.cache/go-build \
+  GOFLAGS=-mod=mod "${LOCAL_NODEIMAGE_BIN}" -ensure -json \
+  -preinstall "${LOCAL_PREINSTALL}" -config "${LOCAL_CONFIG}")
+
+# The answer is read with the question's own error kept aside: "the store does
+# not hold it" is one answer and a configuration the builder refuses is another,
+# and the second one is only visible in what the builder wrote to standard error.
+ASK_ERROR="${WORK}/build-host-ask.err"
+ask_the_store() {
+  ( cd "${LOCAL_INIT_PACKAGE}" && "${ASK_THE_STORE[@]}" 2>"${ASK_ERROR}" | tail -1 || true )
+}
+if ${DRY_RUN}; then
+  printf -- '--- [dry-run] on the build host: %s   (run from %s)\n' \
+    "${ASK_THE_STORE[*]}" "${LOCAL_INIT_PACKAGE}"
+fi
+ENSURE_JSON="$(ask_the_store)"
+ENSURE_STATE="$(ensure_field state 2>/dev/null || true)"
+case "${ENSURE_STATE}" in
+  present|absent) ;;
+  *)
+    echo "the build host's store answered neither present nor absent, so nothing here can say" >&2
+    echo "which image these inputs name:" >&2
+    cat "${ASK_ERROR}" >&2
+    echo "  ${ENSURE_JSON}" >&2
+    exit 1
+    ;;
+esac
 LOCAL_STORE_IMAGE="$(ensure_field dir)"
 FINGERPRINT="$(basename "${LOCAL_STORE_IMAGE}")"
+if ! [[ "${FINGERPRINT}" =~ ^sha256-[0-9a-f]{64}$ ]]; then
+  echo "the build host's store named no image of these inputs: ${ENSURE_JSON}" >&2
+  exit 1
+fi
+
+if [ "${ENSURE_STATE}" = absent ]; then
+  if ${DRY_RUN}; then
+    printf -- '--- [dry-run] on the build host: it holds no image of these inputs, so it builds one, from %s\n' \
+      "${LOCAL_INIT_PACKAGE}"
+    printf -- '--- [dry-run] on the build host: %s\n' "${BUILD_THE_IMAGE_AS_ROOT[*]}"
+    printf -- '--- [dry-run] on the build host: sudo -n chown -R %s %s %s\n' \
+      "$(id -un):$(id -gn)" "${LOCAL_STORE_IMAGE}" "${LOCAL_STAGE_DIR}"
+    printf -- '--- [dry-run] on the build host: %s   (again, which must answer present)\n' \
+      "${ASK_THE_STORE[*]}"
+  else
+    sudo -n true 2>/dev/null || {
+      echo "the build host holds no image of these inputs and building one runs through sudo -n," >&2
+      echo "and sudo here would prompt. Run this where sudo -n works, or build the image by hand:" >&2
+      echo "  cd ${LOCAL_INIT_PACKAGE} && ${BUILD_THE_IMAGE_AS_ROOT[*]}" >&2
+      exit 1
+    }
+    echo "the build host holds no image of these inputs: building it"
+    ENSURE_JSON="$(cd "${LOCAL_INIT_PACKAGE}" && "${BUILD_THE_IMAGE_AS_ROOT[@]}" | tail -1)"
+    BUILT_DIR="$(ensure_field dir)"
+    if [ -z "${BUILT_DIR}" ]; then
+      echo "the build named no image it wrote, so there is nothing to hand back or to ship:" >&2
+      echo "  ${ENSURE_JSON}" >&2
+      exit 1
+    fi
+    sudo -n chown -R "$(id -un):$(id -gn)" "${BUILT_DIR}"
+    if [ -d "${LOCAL_STAGE_DIR}" ]; then
+      sudo -n chown -R "$(id -un):$(id -gn)" "${LOCAL_STAGE_DIR}"
+    fi
+    ENSURE_JSON="$(ask_the_store)"
+    ENSURE_STATE="$(ensure_field state 2>/dev/null || true)"
+    if [ "${ENSURE_STATE}" != present ]; then
+      echo "the build ran and the store still does not hold the image these inputs name, so this" >&2
+      echo "deploy cannot say which image it is shipping:" >&2
+      cat "${ASK_ERROR}" >&2
+      echo "  ${ENSURE_JSON}" >&2
+      exit 1
+    fi
+    LOCAL_STORE_IMAGE="$(ensure_field dir)"
+    FINGERPRINT="$(basename "${LOCAL_STORE_IMAGE}")"
+  fi
+fi
+
+if [ "${ENSURE_STATE}" = present ] && [ ! -d "${LOCAL_STORE_IMAGE}" ]; then
+  echo "the build host reports the image at ${LOCAL_STORE_IMAGE} and that is not a directory" >&2
+  exit 1
+fi
+if [ "${ENSURE_STATE}" = present ]; then
+  echo "image        ${LOCAL_STORE_IMAGE} (present)"
+else
+  echo "image        ${LOCAL_STORE_IMAGE} (absent here; the build above is what puts it there)"
+fi
 LOCAL_KERNEL="$(ensure_field kernelSource)"
 LOCAL_KERNEL_CONFIG="$(ensure_field kernelConfig)"
 LOCAL_MODULES="$(ensure_field moduleSource)"
-if ! [[ "${FINGERPRINT}" =~ ^sha256-[0-9a-f]{64}$ ]] || [ ! -d "${LOCAL_STORE_IMAGE}" ]; then
-  echo "the build host's ensure named no whole image: ${ENSURE_JSON}" >&2
-  exit 1
-fi
-echo "image        ${LOCAL_STORE_IMAGE} ($(ensure_field state))"
-
-cfg_field() { python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))[sys.argv[2]])' "${LOCAL_CONFIG}" "$1"; }
 LOCAL_BASE_IMAGE="$(cfg_field base_image)"
 LOCAL_K3S="$(cfg_field k3s_binary)"
 for required in "${LOCAL_KERNEL}" "${LOCAL_KERNEL_CONFIG}" "${LOCAL_MODULES}" \
@@ -470,9 +618,22 @@ SHIM
 # --sparse rebuilds the holes, and a truncated transfer still looks whole in a
 # directory listing.
 say "checksumming the image store"
-( cd "$(dirname "${LOCAL_STORE_IMAGE}")" && find "${FINGERPRINT}" -type f -print0 \
-    | sort -z | xargs -0 sha256sum ) > "${WORK}/image.sha256"
-cat "${WORK}/image.sha256"
+if [ -d "${LOCAL_STORE_IMAGE}" ]; then
+  ( cd "$(dirname "${LOCAL_STORE_IMAGE}")" && find "${FINGERPRINT}" -type f -print0 \
+      | sort -z | xargs -0 sha256sum ) > "${WORK}/image.sha256"
+  cat "${WORK}/image.sha256"
+elif ${DRY_RUN}; then
+  # The image is not on this host yet: the build above is what would put it
+  # there, and --dry-run does not run it. The rsync below would ship the
+  # directory it names.
+  printf -- '--- [dry-run] %s is not on the build host: the build above is what would put it\n' \
+    "${LOCAL_STORE_IMAGE}"
+  printf -- '--- [dry-run] there, and the rsync below would ship it and verify these checksums\n'
+else
+  echo "${LOCAL_STORE_IMAGE} is not on the build host, so there is nothing to ship:" >&2
+  echo "the store is rsynced from the image the ensure above named." >&2
+  exit 1
+fi
 
 # -- Remote: account, directories, runtime -------------------------------------
 say "creating the service account and its directories"
@@ -749,17 +910,36 @@ echo "instances enabled: $(systemctl list-unit-files --no-legend --plain "${INST
 echo "instances running: ${running:-none}"
 REMOTE
 
-# -- Prove the target resolves the image the way the launcher says it will -----
+# -- Prove the target resolves the image this deploy shipped -------------------
+# -reuse-stale is right here and only here: the name the inputs give is not the
+# name this target can compute, because the build host's /usr/bin/busybox is one
+# of the inputs and a Fedora build host and an Ubuntu target never agree on it.
+# But "the newest whole image in the store" is not an answer either -- that is
+# how the image with no preinstall was booted -- so the target is held to the
+# name resolved on the build host: the directory it resolves must be the one this
+# deploy shipped.
 say "asking the target which image its configuration names"
-remote_script "ensure -reuse-stale" <<'REMOTE'
+remote_script "ensure -reuse-stale, held to the shipped name" <<'REMOTE'
 set -euo pipefail
 cd "${HOST_DIR}"
 # Runs as the service user, which is who will run it at boot, so this is the
 # permission check as much as the resolution check. -reuse-stale against a store
 # that already holds a whole image reads and returns; it does not build.
-runuser -u "${SERVICE_USER}" -- env HOME="${HOST_DIR}" \
+ANSWER="$(runuser -u "${SERVICE_USER}" -- env HOME="${HOST_DIR}" \
   "${BIN_DIR}/socialweb-nodeimage" -ensure -json -reuse-stale \
-  -preinstall "${INPUTS_DIR}/preinstall.json" -config "${CONFIG_PATH}"
+  -preinstall "${INPUTS_DIR}/preinstall.json" -config "${CONFIG_PATH}" | tail -1)"
+echo "${ANSWER}"
+ANSWERED="$(printf '%s' "${ANSWER}" | sed -n 's/.*"dir":"\([^"]*\)".*/\1/p')"
+if [ "$(basename "${ANSWERED}")" != "${FINGERPRINT}" ]; then
+  echo "the target resolves ${ANSWERED} and this deploy shipped ${FINGERPRINT}." >&2
+  echo "Its store holds an image built from other inputs and -reuse-stale answered with that" >&2
+  echo "one, so a guest booted here would run an image this deploy never checked: the guests" >&2
+  echo "of the whole market come up from ${STORE_DIR}/${FINGERPRINT}. Remove the other" >&2
+  echo "directories under ${STORE_DIR} the running nodes are not booted from, or let their" >&2
+  echo "configuration be the one this deploy ships, and run this again." >&2
+  exit 1
+fi
+echo "the target resolves the image this deploy shipped: ${ANSWERED}"
 REMOTE
 
 # -- Report --------------------------------------------------------------------

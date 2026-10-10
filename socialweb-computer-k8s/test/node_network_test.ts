@@ -15,6 +15,7 @@ import {
   POD_MTU,
   renderDnsLinkScript,
   renderMeshdInstallScript,
+  renderNodeDiagnoseScript,
   renderPodCniScript,
   renderPodMasqueradeScript,
 } from "@publicdomainrelay/cloud-init-plugin-k3s-join";
@@ -156,6 +157,8 @@ Deno.test("pod-cni waits for the Node's podCIDR through the kubelet's own kubeco
     const script = renderPodCniScript({
       k3sPath: `${dir}/bin/k3s`,
       cniConfDir: `${dir}/net.d`,
+      cniBinDir: `${dir}/cni-bin`,
+      k3sDataDir: `${dir}/k3s`,
       kubeletKubeconfig: `${dir}/kubelet.kubeconfig`,
       cniWaitAttempts: 5,
     });
@@ -176,6 +179,9 @@ Deno.test("pod-cni waits for the Node's podCIDR through the kubelet's own kubeco
     assertEquals(bridge.ipam.ranges, [[{ subnet: "10.42.3.0/24" }]]);
     assertEquals(portmap.type, "portmap");
     assertEquals(portmap.capabilities, { portMappings: true });
+    for (const plugin of ["bridge", "host-local", "portmap", "loopback"]) {
+      assertEquals(await Deno.readLink(`${dir}/cni-bin/${plugin}`), `${dir}/k3s/data/current/bin/cni`, plugin);
+    }
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
@@ -330,4 +336,68 @@ Deno.test("the guest, the tenant DaemonSet and the k3s server agree on the DNS a
   assertStringIncludes(tenantnet, `NodeLabel = "${NODE_LOCAL_DNS_LABEL}"`);
   const stack = await Deno.readTextFile(repo("internal/clusterstack/clusterstack.go"));
   assertStringIncludes(stack, `const MarketClusterCIDR = "${POD_CLUSTER_CIDR}"`);
+});
+
+Deno.test("node-diagnose prints containerd's CNI load status to the console until the node network is ready", async () => {
+  const dir = await scratch();
+  try {
+    await Deno.mkdir(`${dir}/cni-bin`);
+    await Deno.writeTextFile(`${dir}/cni-bin/bridge`, "");
+    await Deno.mkdir(`${dir}/net.d`);
+    await Deno.writeTextFile(`${dir}/net.d/10-socialweb-bridge.conflist`, "{}");
+    const notReady = JSON.stringify({
+      status: { conditions: [{ type: "RuntimeReady", status: true }, { type: "NetworkReady", status: false, reason: "NetworkPluginNotReady", message: "cni plugin not initialized" }] },
+      config: { cni: { confDir: `${dir}/net.d`, binDirs: [`${dir}/cni-bin`] } },
+      lastCNILoadStatus: "cni config load failed: failed to find plugin \"portmap\" in path",
+    });
+    const ready = JSON.stringify({ status: { conditions: [{ type: "NetworkReady", status: true }] }, config: { cni: {} } });
+    await Deno.writeTextFile(`${dir}/not-ready.json`, notReady);
+    await Deno.writeTextFile(`${dir}/ready.json`, ready);
+    await shim(
+      dir,
+      "k3s",
+      `echo "$*" >> ${dir}/k3s.log\nn=$(cat ${dir}/n 2>/dev/null || echo 0); n=$((n+1)); echo $n > ${dir}/n\nif [ $n -ge 3 ]; then cat ${dir}/ready.json; else cat ${dir}/not-ready.json; fi`,
+    );
+    const run = await runScript(renderNodeDiagnoseScript({ k3sPath: `${dir}/bin/k3s`, diagnoseAttempts: 5 }), dir);
+    assertEquals(run.code, 0, run.stderr);
+    assertEquals((await Deno.readTextFile(`${dir}/k3s.log`)).trim().split("\n")[0], "crictl info");
+    assertStringIncludes(run.stderr, "failed to find plugin \"portmap\" in path");
+    assertStringIncludes(run.stderr, `confDir=${dir}/net.d`);
+    assertStringIncludes(run.stderr, "10-socialweb-bridge.conflist");
+    assertStringIncludes(run.stderr, `binDirs=${dir}/cni-bin`);
+    assertStringIncludes(run.stderr, "bridge");
+    assertStringIncludes(run.stderr, "NetworkReady");
+    const config = userData();
+    const unit = files(config)[`/etc/systemd/system/${NODE_NET_UNITS.diagnose}`];
+    assert(unit, "no node-diagnose unit in the user_data");
+    assertEquals(values(unit, "ExecStart"), [NODE_NET_SCRIPTS.diagnose]);
+    assertEquals(values(unit, "StandardError"), ["journal+console"]);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("the bridge conflist and its plugins go where containerd reads them when k3s runs no flannel", () => {
+  const script = renderPodCniScript({});
+  assertStringIncludes(script, "/etc/cni/net.d/10-socialweb-bridge.conflist");
+  assertStringIncludes(script, "install -d -m 0755 /etc/cni/net.d /opt/cni/bin");
+  assertEquals(script.includes("/var/lib/rancher/k3s/agent/etc/cni/net.d"), false,
+    "measured on a prod market node 2026-10-07T23:11Z: with --flannel-backend=none k3s writes no cni section into " +
+      "containerd's config, so containerd reads /etc/cni/net.d and /opt/cni/bin (lastCNILoadStatus: no network config " +
+      "found in /etc/cni/net.d) and a conflist under k3s's agent dir is never loaded");
+});
+
+Deno.test("node-diagnose says NetworkReady=false, not unknown, for a runtime that reports false", async () => {
+  const dir = await scratch();
+  try {
+    await Deno.writeTextFile(`${dir}/info.json`, JSON.stringify({
+      status: { conditions: [{ type: "NetworkReady", status: false, reason: "NetworkPluginNotReady", message: "x" }] },
+      config: { cni: { confDir: "/x", binDirs: ["/y"] } },
+    }));
+    await shim(dir, "k3s", `cat ${dir}/info.json`);
+    const run = await runScript(renderNodeDiagnoseScript({ k3sPath: `${dir}/bin/k3s`, diagnoseAttempts: 1 }), dir);
+    assertStringIncludes(run.stderr, "NetworkReady=false");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });

@@ -1,0 +1,558 @@
+plan: 0006-socialweb-computer-unified-binary
+written: 2026-10-07
+revised: "2026-10-07, with the user's answers to the plan's questions (decisions below marked 'decided by the user 2026-10-07')"
+queued: >
+  QUEUED. Starts only after plan 0005 (docs/plans/0005-zero-ssh-market-nodes.yaml) is complete and its
+  acceptance checks ACC-ZERO, ACC-MESH and ACC-NOSSH pass on prod with UTC readings recorded there.
+  No item below may be moved to doing before that.
+source: >
+  The user's request of 2026-10-07: take the test setup (the vendored deno-kcp market bed) and expand it
+  into a prod environment, so one Go binary, socialweb-computer, is the entrypoint for the whole stack;
+  it runs kcp embedded and does Go-programmatic kubectl-apply-equivalents of templated YAML held in an
+  embed.FS; it supports `socialweb-computer run {request,bidder,gateway ssh}` and
+  `socialweb-computer serve gateway kcp`; Go and TypeScript are both first class, with the TypeScript
+  codebase shipped inside the binary in the style of sshai's policy_engine. The user then decided: kcp is
+  linked IN-PROCESS and gains port-0 binding with the bound port reported; ONE binary; no container at
+  runtime, with postgres and everything else the container supplied embedded cross-platform and driven
+  by CRDs; the user runs the prod cutover with no rehearsal; the core binary and its deno processes
+  must be upgradable while VMs keep running. This plan holds the Go binary, in-process kcp, assets,
+  host processes as reconciled resources, programmatic apply, the gateway composition, the build and the
+  prod move. The embedded deno, the TypeScript closure and DenoPods are plan 0008; the new compute
+  provider and VM ownership across upgrades are plan 0007.
+state_rules:
+  - This file is the only state. Every step updates status and evidence.
+  - status is one of todo, doing, done, blocked.
+  - An item is done only when its evidence is recorded (commit SHAs, test names watched to fail and
+    then pass, prod or hat-8 readings with UTC timestamps).
+  - Open items are mirrored in NEXT.yaml (P6-*).
+  - A decision marked "decided by Claude, user may veto" was not confirmed by the user; one marked
+    "decided by the user 2026-10-07" was.
+  - An item names its dependencies in depends_on; an item may not start while one of them is not done.
+    Cross-plan dependencies are written <plan>:<item id>.
+ownership:
+  owned: >
+    All code in socialweb-computer-kcp, the prod deployment on socialweb.computer, the vendored deno-kcp
+    test bed, the atproto-market requester libraries, and (decided by the user 2026-10-07) the forked
+    copies of kcp v0.33.0, its staging modules and github.com/kcp-dev/embeddedetcd that this plan
+    vendors into the repo. hono-compute-provider and atproto-market may be changed by commit; never
+    pushed.
+  not_owned: >
+    The market protocol records and lexicons, and the core architecture: kcp in front of
+    k3s --disable-agent clusters at zero nodes, with nodes only ever born through
+    requester -> RFP -> bid -> accept -> cloud-init user_data.
+research:
+  measured_on: "hat-8, 2026-10-07; repo at 13349d6 (main)"
+  today_prod_shape:
+    - "deploy/control-plane-container/Dockerfile:140-214 (target k8s): Fedora 44 base, postgres from dnf (:105-106), /etc/rancher/node/password created for uid 1000 (:108-113), kcp/k3s/kine/kubectl/bao copied from a host-staged binaries context (:117-125), external-secrets from its digest-pinned image (:127-129), deno 2.9.3 and dumbpipe 0.39.0 fetched (:142-164) with yq, iproute, socat, openssl, unzip, openssh-clients, which (:153), seven Go binaries (:172-181), the door's org-root closure at /opt/org-root (:183), credential cross-builds and meshd as door downloads (:185, :199-202), deno cache of the door (:206-210), ENTRYPOINT container-entrypoint (:212)"
+    - "deploy/container-entrypoint.sh: root vault bao child (:215-224), kcp start --feature-gates=WorkspaceMounts=true with the audit policy (:226-235), readyz poll (:237-247), socialweb-vault apply-root (:253-258), install-provider.sh through kubectl (:260-266), bootstrap_cluster as four kubectl heredoc applies (:129-213, :268-276), clusterprovider migrate (:278-281), socialweb-gateway (:283-285), socat TLS terminator forking per connection (:287-291), socialweb-clusterprovider (:293-295), the door as deno run with --preload undici-preload.ts (:297-317); any child exit stops all and exits 1 (:321-341)"
+    - "scripts/deploy.sh: docker save | ssh | docker load (:59-67), docker rm -f the running container (:114), docker run --network host -v socialweb-k8s-state:/var/lib/socialweb (:119-124), door readiness by curl /api/config (:126-140), caddy reload (:187). Stop-then-start: there is downtime today."
+    - "deploy/control-plane-container/build.sh:42-64 derives the door's TypeScript closure across the org root with deno info --json; :22-39 stages and sha256-pins host binaries"
+    - "internal/versions/versions.json: kcp v1.36.0+kcp-v0.33.0 (MUST run --feature-gates=WorkspaceMounts=true), k3s v1.36.4+k3s1 (a --disable-agent server still needs /etc/rancher/node/password readable and writable, no flag moves it), kine v0.17.1 (CGO_ENABLED=1), openbao v2.6.2, external-secrets v2.11.0 by digest, embedded-postgres = the host's PostgreSQL 18.x binaries, postgres refuses to run as root"
+    - "executables named in non-test Go under internal/ and cmd/ (string mentions, 2026-10-07): k3s, firecracker, external-secrets, postgres, kine, mount, psql, bao, initdb, pasta, kubectl, mkfs.ext4, ip, busybox, dumbpipe, zstd, xz, ssh, openssl, unshare, resize2fs, e2fsck, qemu-system-x86_64"
+    - "plan 0005 M6-LIMITS: every per-cluster process-group member dies with the provider (Pdeathsig SIGKILL); plan 0005 M3-NODE-LOSS: a Node NotReady for 90 s is released and replaced, so a gateway restart that keeps control planes down past 90 s releases market nodes"
+  kcp_in_process:
+    - "our go.mod: go 1.26.6, github.com/kcp-dev/sdk v0.33.1, k8s.io/{api,apimachinery,client-go} v0.36.4, sigs.k8s.io/yaml v1.6.0, klauspost/compress v1.19.2 (indirect)"
+    - "kcp v0.33.0 go.mod :61-95 replaces EVERY k8s.io staging module (~33, incl. api, apiserver, client-go, apimachinery, kubernetes) with github.com/kcp-dev/kubernetes/staging/... v0.0.0-20260602065202-e006560fc76a (k8s.io/kubernetes => kcp-dev/kubernetes v1.37.0-alpha.0.0.20260602065202-e006560fc76a); :98-103 replaces kcp-dev/{apimachinery,client-go,code-generator,sdk,virtual-workspace-framework} with ./staging/src paths. A dependency's replaces are ignored and ./staging paths do not resolve from a module download, so linking kcp means vendoring its source and repeating every replace in OUR go.mod, moving every package of this module onto the fork."
+    - "kcp v0.33.0 cmd/kcp/kcp.go:95-162: options.NewOptions(rootDir) -> Complete(ctx) -> Validate() -> server.NewConfig(ctx, opts.Server) -> Complete() -> embeddedetcd.NewServer(...).Run before NewServer -> server.NewServer(completed) -> s.Run(ctx)"
+    - "kcp v0.33.0 pkg/server/options/options.go:78,204 --experimental-bind-free-port; :236-240 requires --secure-port=0 with it; :355-361 creates a tcp listener on <bind>:0 and stores it in SecureServing.Listener; :387-392 adds the listener's IP to the serving cert; :411-416 relaxes SecureServing.Required. The secure port can bind 0 today; nothing reports the bound port to a caller."
+    - "github.com/kcp-dev/embeddedetcd 2cc5c5cce35e options/embedded.go:33-45 PeerPort and ClientPort are strings defaulting to 2380 and 2379, :51-52 flags, :70 the apiserver's etcd ServerList is formatted from ClientPort before etcd runs. Embedded etcd cannot bind 0, and two embedded kcps on one host (gateway, bidder, run request, a test) collide on 2379/2380."
+  server_side_apply_precedent:
+    - "internal/clusterprovider/tenant.go:101-102 and internal/eso/beside.go:350-351 apply unstructured objects with types.ApplyPatchType and PatchOptions{FieldManager, Force: true}; internal/clusterprovider/registry.go:293 addresses a workspace by APIPath /clusters/<logical cluster>/apis"
+    - "deploy/install-provider.sh:55-64 applies 5 APIResourceSchemas, 2 APIExports and 2 WorkspaceTypes; deploy/apply-permission-inventory.sh (285 lines) renders the inventory through yq; deploy/examples/atproto/market/apply.sh:171 templates by sed"
+  binary_sizes_raw_and_zstd19:
+    deno_2_9_3: "106313392 / 33967519"
+    kcp_v0_33_0_release: "176825356 / 60028199 (now linked, not an asset; the in-process delta is measured by M0)"
+    bao_v2_6_2: "196404560 / 63961162"
+    k3s_v1_36_4: "78991522 / 72883115"
+    kine_v0_17_1: "57397648 / 25394980"
+items:
+  - id: M0-KCP-SPIKE
+    milestone: M0
+    title: Link kcp v0.33.0 in-process in a scratch branch and list everything the fork breaks
+    depends_on: []
+    decision: >
+      Decided by the user 2026-10-07: kcp is linked in-process; this spike no longer chooses the route, it
+      sizes M1-K8S-FORK. In a scratch branch: vendor kcp v0.33.0 with its staging modules, repeat its
+      replace set in our go.mod, add an in-process start, then record per package every compile error
+      and every test failure of go test ./..., the binary size delta, cold start to /readyz, and whether
+      the kcp-libs and deno-kcp sources (k8s.io v0.36.4 today) build on the fork.
+    files: ["scratch branch only; the breakage list is recorded in this item's evidence and becomes M1-K8S-FORK's checklist"]
+    test_first: "None (measurement). The reading is the build log, the go test summary and a timed /readyz."
+    done_when: "breakage list recorded by package with counts; size delta and start time recorded."
+    risks: ["Time box one executor day; a partial list is still recorded and M1-K8S-FORK starts from it."]
+    status: todo
+    evidence: []
+  - id: M0-SIZE-BUDGET
+    milestone: M0
+    title: One binary, a size budget and a platform matrix
+    depends_on: [M0-KCP-SPIKE]
+    decision: >
+      ONE release binary (decided by the user 2026-10-07). Platform matrix and budget decided by Claude,
+      user may veto: linux/amd64 and linux/arm64 carry everything (server, bidder, client modes);
+      darwin/arm64 and darwin/amd64 carry only what client modes need (in-process kcp, deno, the
+      TypeScript closure, postgres is not needed there) and refuse `serve gateway kcp` and `run bidder`
+      by name. Budget per platform recorded in versions.json from measured asset sizes plus M0's
+      in-process delta, enforced by check.sh. socialweb-credential is still built separately for four
+      platforms, but only as a download asset carried inside the one binary (today's
+      web/downloads, Dockerfile:47-53, :185).
+    files: ["internal/versions/versions.json (budget, platform matrix, per-asset sha256)", "deploy/check.sh (size gate)"]
+    test_first: "internal/versions TestTheReleaseBinaryFitsItsSizeBudget, red with a 1-byte budget, then green."
+    done_when: "budget and matrix recorded and enforced."
+    risks: ["k3s barely compresses (79 MB -> 73 MB); it is linux-only and stays in the linux builds regardless."]
+    status: todo
+    evidence: []
+  - id: M1-CLI
+    milestone: M1
+    title: cmd/socialweb-computer, a multi-call CLI whose subcommand tree is the stack
+    depends_on: []
+    decision: >
+      The four subcommands the user named: serve gateway kcp, run bidder, run gateway ssh, run request.
+      The rest decided by Claude, user may veto: serve provider, vault prepare-root|apply-root, migrate,
+      apply <set> [--set k=v] [--dry-run], manifests list|render <set>, check-host, nodeimage, version
+      [--json], upgrade (M3-UPGRADE), internal <verb> (re-exec targets: cloud-controller-manager,
+      tenantcredential, nodeboot, nodeboot-namespace). Config resolution mirrors the TypeScript
+      cli-args-env chain (flag, env, config file, default) with internal/clicfg/options.json; every
+      SOCIALWEB_* variable today's entrypoint reads stays the env name of its option. Stdlib flag only.
+    files: ["cmd/socialweb-computer/main.go", "internal/clicfg/", "internal/clicfg/options.json"]
+    test_first: >
+      internal/clicfg TestTheFlagBeatsTheEnvBeatsTheConfigBeatsTheDefault and
+      TestEveryEnvVariableTheEntrypointReadsIsAnOptionsEnvName (parses container-entrypoint.sh and
+      container.env.example); red before options.json exists.
+    done_when: "--help lists the tree; unbuilt subcommands exit 2 naming the item that builds them; check.sh --fast green."
+    risks: ["A second config system beside cli-args-env.json; options.json mirrors its JSON shape exactly."]
+    status: todo
+    evidence: []
+  - id: M1-K8S-FORK
+    milestone: M1
+    title: Move this module onto kcp's Kubernetes fork and own the vendored kcp source
+    depends_on: [M0-KCP-SPIKE]
+    decision: >
+      Real work, not a side effect (decided by the user 2026-10-07). Vendor kcp v0.33.0 (source tree incl.
+      staging/src/github.com/kcp-dev/*) to third_party/kcp and github.com/kcp-dev/embeddedetcd at
+      2cc5c5cce35e to third_party/embeddedetcd, each recorded (upstream, commit, sha256 per file) in
+      third_party/vendor.json and checked offline like internal/marketbed checks deploy/denokcp; go.mod
+      replaces github.com/kcp-dev/kcp, the five kcp-dev staging modules, embeddedetcd and every k8s.io
+      module exactly as kcp's go.mod :61-103 does. github.com/kcp-dev/sdk moves from v0.33.1 to kcp's
+      staging sdk. Every package that fails (M0's list) is fixed in this item; go test ./... and
+      deploy/check.sh --full must be as green as before. A later kcp upgrade is a re-vendor through one
+      script (scripts/vendor-kcp.sh) and a diff of the recorded patches, never a hand edit.
+    files: ["third_party/kcp/, third_party/embeddedetcd/ (generated, recorded)", "third_party/vendor.json", "scripts/vendor-kcp.sh", "go.mod, go.sum", "every package in M0's breakage list"]
+    test_first: >
+      internal/thirdparty TestTheVendoredKcpTreeIsExactlyItsRecord (red before the tree exists), then the
+      whole suite: go test ./... green on the fork, with the before/after test counts equal.
+    done_when: "go build ./... and go test ./... green on the fork; check.sh --full green; vendor record check green."
+    risks:
+      - "The fork's client-go is 1.37.0-alpha; generated clients and informers here (apigen output, clusterprovider) may need regeneration."
+      - "kine and k3s are exec'd assets, not linked, so their own k8s versions are unaffected."
+      - "Repository size grows by the kcp source; recorded in evidence."
+    status: todo
+    evidence: []
+  - id: M1-KCP-INPROC
+    milestone: M1
+    title: kcp served from inside socialweb-computer with today's flags
+    depends_on: [M1-K8S-FORK]
+    decision: >
+      internal/kcpserver runs the cmd/kcp/kcp.go:95-162 sequence with the options today's entrypoint
+      passes (container-entrypoint.sh:227-234): root directory, bind address, secure port,
+      WorkspaceMounts=true set on kcp's feature gate (refused if absent; versions.json kcp invariant),
+      the embedded audit policy, audit log rotation. Readiness is the server's own readyz, not an HTTP
+      poll from outside. Stop is context cancellation with a bounded drain. One kcp per root directory:
+      an flock on <root>/.socialweb-computer.lock taken before options complete. State written by the
+      release binary v0.33.0 opens unchanged (same version, same etcd layout).
+    files: ["internal/kcpserver/"]
+    test_first: >
+      internal/kcpserver TestKcpIsRefusedWithoutTheWorkspaceMountsGate (offline) and, behind livegate,
+      TestTheInProcessKcpOpensARootDirectoryTheReleaseBinaryWrote (workspaces listed before and after
+      equal); red first.
+    done_when: "both green on hat-8."
+    risks: ["kcp in-process shares the heap and GC with the gateway and clusterprovider; RSS before and after recorded on a prod-shaped root."]
+    status: todo
+    evidence: []
+  - id: M1-KCP-PORT0
+    milestone: M1
+    title: kcp and its embedded etcd bind port 0 and report the ports they got
+    depends_on: [M1-KCP-INPROC]
+    decision: >
+      Decided by the user 2026-10-07: kcp supports binding port 0 and the caller learns the bound port,
+      the Go twin of createServe's onListen. Secure port: socialweb-computer creates the listener itself
+      (port 0 or a fixed port) and hands it to SecureServing.Listener, the path
+      --experimental-bind-free-port already uses (options.go:355-361), so no flag hack. Embedded etcd: a
+      patch to the vendored embeddedetcd lets ClientPort and PeerPort be 0 by binding the listeners first
+      and formatting the apiserver's ServerList (embedded.go:70) from the bound client address. Every
+      URL kcp derives from the port (ExternalHost and shard base URL, options.go:339-353, the written
+      admin.kubeconfig server, virtual workspace URLs) uses the bound address. kcpserver.Config gains
+      OnListen(func(name string, addr net.Addr)) called once per listener (secure, etcd-client,
+      etcd-peer) before readiness; the structured log line names each. Prod keeps an explicit 6443
+      (caddy fronts kcp.socialweb.computer); run bidder, run gateway ssh, run request and every test use
+      0. The patches live in third_party/kcp-patches/*.patch and the vendor record names them.
+    files: ["internal/kcpserver (OnListen, listener injection)", "third_party/kcp-patches/embeddedetcd-port-zero.patch, kcp-bound-address.patch", "third_party/vendor.json"]
+    test_first: >
+      internal/kcpserver TestTwoInProcessKcpsOnPortZeroGetDistinctPortsAndEachAdminKubeconfigReachesItsOwn
+      (both started in one test process: OnListen reports six distinct ports, each admin.kubeconfig lists
+      its own root workspace) and TestOnListenFiresBeforeReadyWithTheAddressTheKubeconfigNames. Red first
+      (today the second start fails on 2379).
+    done_when: "both green; no fixed 2379/2380 left in any socialweb-computer mode except where prod config names them."
+    risks: ["A port-0 etcd peer URL written into the member's persisted config would break the next start on a different port; the patch keeps the peer URL out of persisted state or pins it after first bind, and the test restarts the same root on new ports."]
+    status: todo
+    evidence: []
+  - id: M1-ASSETS
+    milestone: M1
+    title: Content-addressed embedded executables, verified on every start
+    depends_on: [M0-SIZE-BUDGET]
+    decision: >
+      internal/assets embeds each non-Go executable per platform as zstd through build-tagged files (the
+      sshai pattern, sshai a00ab8c9 src/policy_engine/common/deno_embed_linux_amd64.go:1-7), extracts to
+      <state-dir>/runtime/<sha256>/<name> with temp-file-plus-rename, re-hashes an existing extraction
+      before every use (sshai reuses an extracted file with no check, deno_manager.go:112-115), and has no
+      PATH or download fallback in a release build. The development build tag `dev` resolves each asset
+      from an explicit path option, never PATH. The asset list is M1-HOST-INVENTORY's embed column; pins
+      in versions.json. kcp is NOT an asset (linked).
+    files: ["internal/assets/", "internal/assets/blobs/ (gitignored, filled by scripts/stage-assets.sh)", "scripts/stage-assets.sh", "internal/versions/versions.json"]
+    test_first: >
+      internal/assets TestAnExtractedAssetThatNoLongerMatchesItsPinIsReplacedNotRun and
+      TestAReleaseBuildWithAMissingAssetRefusesToStart; red against a naive extractor.
+    done_when: "every inventoried asset extracts and verifies; `version --json` lists each with version and sha256."
+    risks: ["The state dir, never /tmp (a 24 GiB tmpfs on hat-8), holds the runtime."]
+    status: todo
+    evidence: []
+  - id: M1-HOST-INVENTORY
+    milestone: M1
+    title: Everything the container supplied, each given a fate on a bare host
+    depends_on: []
+    decision: >
+      Decided by the user 2026-10-07: no container at runtime; postgres and everything else the container
+      supplied is embedded cross-platform and, when it is a long-running server, driven by a CRD. This
+      item writes docs/host-inventory.yaml: every package and binary of the Dockerfile's controlplane and
+      k8s stages and of the bidder's runner image, and every executable the Go and TypeScript code
+      execs (the list above plus each Deno.Command target), each with one fate: linked (kcp),
+      embedded server driven by a CRD (postgres -> M2-POSTGRES, the root vault bao -> M2-OPENBAO-SERVER),
+      embedded child (k3s, kine, external-secrets, dumbpipe, deno, firecracker, pasta, the per-cluster
+      bao), embedded tool (busybox and e2fsprogs for nodeimage, unless replaced), replaced by Go (socat ->
+      crypto/tls proxy, yq -> kcpapply, openssl -> crypto/x509, kubectl -> kcpapply, which/unzip/curl ->
+      gone), download asset (socialweb-credential x4, socialweb-meshd x2), host file
+      (/etc/rancher/node/password, the k3s invariant), or a stated host prerequisite (Linux kernel, /dev/kvm
+      for bidders, systemd). A test holds the inventory complete.
+    files: ["docs/host-inventory.yaml", "internal/versions (inventory test)"]
+    test_first: >
+      internal/versions TestEveryExecutableTheCodeExecsHasAFateInTheHostInventory (scans exec.Command,
+      exec.LookPath and Deno.Command call sites); red before the file exists.
+    done_when: "inventory committed, test green; no fate is 'from the host's package manager'."
+    risks: ["mkfs.ext4/resize2fs/e2fsck static builds per platform may not exist upstream; the fallback fate is a Go ext4 image writer, decided in this item with a measurement."]
+    status: todo
+    evidence: []
+  - id: M2-HOST-SCOPES
+    milestone: M2
+    title: Long-lived children run in their own systemd scopes so an upgrade of the core binary does not touch them
+    depends_on: [M1-ASSETS]
+    decision: >
+      Decided by the user 2026-10-07: the core binary and its deno processes are upgradable while VMs keep
+      running. Decided by Claude, user may veto: internal/hostunit starts each long-lived child that must
+      outlive the core binary (a VMM and its pasta, plan 0007; a postgres server; an OpenBao server; a
+      cluster's process group, M3-CLUSTER-SCOPES) as a transient systemd unit through the systemd D-Bus
+      API (StartTransientUnit, new dependency github.com/coreos/go-systemd/v22), named
+      socialweb-<kind>-<name>, in the user manager for unprivileged modes and the system manager for the
+      gateway service. Adoption after a restart is by unit name plus the child's own state record (pid
+      and start ticks, the execrunner pattern). Children that must die with the core binary (deno
+      processes, the TLS proxy) stay plain children with Pdeathsig. A host without systemd refuses the
+      server and bidder modes by name.
+    files: ["internal/hostunit/", "go.mod (go-systemd)"]
+    test_first: >
+      Behind livegate (systemd --user): internal/hostunit TestAScopedChildOutlivesItsStarterAndIsAdoptedByTheNext
+      (start a sleep in a transient unit from a child process, kill -9 that process, a new process adopts
+      by name and stops it). Red first.
+    done_when: "green on hat-8; `systemctl --user list-units 'socialweb-*'` reading recorded."
+    risks: ["Transient units vanish at reboot; that is the stated boundary (a reboot kills VMs and stores alike), handled by plan 0007's Lost path and by the controllers restarting stores."]
+    status: todo
+    evidence: []
+  - id: M2-POSTGRES
+    milestone: M2
+    title: An embedded PostgreSQL driven by a Postgres CRD
+    depends_on: [M1-HOST-INVENTORY, M2-HOST-SCOPES, M2-APPLY]
+    decision: >
+      Decided by the user 2026-10-07: postgres is embedded cross-platform and is a reconciled resource,
+      not a container package. Decided by Claude, user may veto: the binaries are a pinned relocatable
+      PostgreSQL 18 build per platform (linux amd64/arm64, darwin amd64/arm64; source and sha256 chosen in
+      M1-HOST-INVENTORY), extracted by internal/assets. Kind Postgres (socialweb.computer/v1alpha1, export
+      hostprocesses, apigen-generated) with spec {version, port (0 = leased), dataDir, listen 127.0.0.1}
+      and status {phase, port, pid, startTicks, unit, message}; a Go controller does initdb, writes
+      pg_hba (127.0.0.1/32 only, today's rule), starts postgres in a host scope, reports the bound port,
+      and on deletion stops it and keeps the data dir unless spec.deleteData. The clusterprovider's
+      per-cluster store (internal/clusterprovider/postgres.go:286-364 today execs initdb, postgres and
+      psql from PATH) creates a Postgres object in the cluster's home workspace and waits for Ready
+      instead; the psql calls (bootstraprows.go:28, postgres.go:364) run the embedded psql with today's
+      arguments. Postgres refuses root, so the gateway runs as a non-root service user.
+    files: ["api/v1alpha1/postgres_types.go", "internal/postgresctl/", "internal/clusterprovider/postgres.go", "deploy/sets.yaml (hostprocesses)"]
+    test_first: >
+      Behind livegate: internal/postgresctl TestAPostgresObjectBecomesAServerOnItsReportedPortAndSurvivesItsControllersRestart;
+      internal/clusterprovider TestTheClusterStoreIsAPostgresObjectNotAProcessGroupMember. Red first.
+    done_when: "a market cluster reaches Ready on hat-8 with its store as a Postgres object; no postgres binary from the host is on the path."
+    risks: ["Existing clusters' data dirs were initdb'd by Fedora's PostgreSQL 18; the embedded build must be the same major version and its catalog compatible; a cluster's store is adopted, never re-initialised (refused if PG_VERSION differs)."]
+    status: todo
+    evidence: []
+  - id: M2-OPENBAO-SERVER
+    milestone: M2
+    title: An OpenBao server as a reconciled resource, for the gateway's root vault and the bidder's vault
+    depends_on: [M1-ASSETS, M2-HOST-SCOPES, M2-APPLY]
+    decision: >
+      Kind OpenBaoServer (export hostprocesses) with spec {listen, tls, storageDir, init: {shares,
+      threshold, keysSecret}} and status {phase, address, initialized, sealed, unit}; the controller
+      reuses internal/rootvault for init, unseal and engine layout and runs the extracted bao in a host
+      scope. The gateway's root vault (container-entrypoint.sh:215-224, :253-258) becomes one such
+      object; plan 0007's bidder vault is another (decided by the user 2026-10-07: bidder identity keys
+      live in an OpenBao beside the bidder). Unseal material stays where internal/rootvault keeps it
+      today (state dir, 0600). Distinct from deno-kcp's OpenBao kind, which provisions a namespace and
+      PKI inside a running server.
+    files: ["api/v1alpha1/openbaoserver_types.go", "internal/openbaoctl/", "internal/rootvault (callers)"]
+    test_first: >
+      Behind livegate: internal/openbaoctl TestAnOpenBaoServerIsInitialisedOnceUnsealedOnEveryStartAndKeepsItsKV
+      (restart the controller and the server; a KV value written before reads back). Red first.
+    done_when: "green; the gateway's root vault comes up as an object on hat-8."
+    risks: ["Two writers of the root vault layout (the old apply-root and the controller) during migration; the controller calls apply-root's code, never a copy."]
+    status: todo
+    evidence: []
+  - id: M3-BAO-SYNC
+    milestone: M3
+    title: Every OpenBao this binary runs holds exactly the backends, roles, policies and KV entries live objects ask for
+    depends_on: [M2-OPENBAO-SERVER, M3-CLUSTER-SCOPES, "0005:M3-BAO-SYNC"]
+    decision: >
+      User asked 2026-10-07 that the plans keep OpenBao backends and roles in sync with what is active;
+      plan 0005 M3-BAO-SYNC found 5 jwt-* mounts in one cluster OpenBao, one per issuer a bidder ever had,
+      only one serving a live node. Carried to every OpenBao this plan introduces or moves, decided by
+      Claude, user may veto. One reconcile library, internal/baosync: desired state is a pure function of
+      live objects; the reconciler lists actual auth mounts, roles, ACL policies and KV paths under the
+      prefixes it owns, creates what is missing, deletes what no live object asks for, and disables a
+      jwt-* auth mount left with no role. It runs every pass, at controller startup, and at adoption of
+      a server or cluster group after a restart or upgrade (M3-CLUSTER-SCOPES), so a crash between a
+      release and its revoke is repaired by the next pass. Owned prefixes only: a mount, policy or path
+      outside them is reported, never touched. Applied to: (1) each cluster's OpenBao, now a member of a
+      host-scoped group: the plan 0005 M3-BAO-SYNC rule moves into internal/baosync unchanged (per live
+      claim with a grant: mount jwt-<sha12(issuer)>, role <node>, policy node-<node>, KV
+      socialweb-nodes/<node>; plus the ClusterLink keys in socialweb-links and the ESO cert role, derived
+      from the cluster's live ClusterLinks and its ESO pair); (2) the gateway's root vault
+      (OpenBaoServer object): internal/vaultlayout's static layout plus per-cluster and per-account
+      entries derived from live Cluster and AtprotoIdentity objects; an entry for a deleted cluster or
+      revoked identity is removed. The layout's static paths (vaultlayout.go Path* constants) are owned
+      too: a path the layout no longer names (for example secret/data/k3s/ssh once nothing reads it) is
+      deleted only by a layout change, and the reconcile's report lists it until then.
+    files: ["internal/baosync/ (Desired, Actual, Diff, Apply; fake OpenBao for tests)", "internal/clusterprovider (cluster vault reconcile moves onto baosync)", "internal/openbaoctl (root vault reconcile)", "internal/vaultlayout (owned prefixes declared)"]
+    test_first: >
+      internal/baosync TestAVaultSeededWithStaleMountsRolesPoliciesAndKVIsReducedToExactlyTheLiveSet (fake
+      OpenBao seeded with five jwt-* mounts, roles and policies for released nodes, a deleted cluster's
+      root-vault entries, and one foreign mount: after one pass only the live set remains, the foreign
+      mount untouched), TestAJwtMountWithNoRoleLeftIsDisabled, TestTheReconcileRunsOnAdoptionBeforeTheFirstPass;
+      behind livegate on a real bao: TestARestartBetweenReleaseAndRevokeIsRepairedByTheNextPass. Red first.
+    done_when: >
+      Tests green; on hat-8 after a release and after an upgrade of the binary, `bao auth list`, `bao list
+      auth/<m>/role`, `bao policy list` and the owned KV listings in every cluster vault and the root
+      vault name exactly the live set (reading recorded).
+    risks:
+      - "A reconcile that deletes from a wrong desired set (for example a claim list that failed to load) would revoke live nodes; an empty or failed listing of live objects aborts the pass instead of reading as 'nothing is live'."
+      - "Plan 0005 M3-BAO-SYNC may land first; this item then moves its code into internal/baosync without changing behaviour, proved by its existing test."
+    status: todo
+    evidence: []
+  - id: M2-MANIFESTS
+    milestone: M2
+    title: Every YAML the stack applies lives in one embed.FS, grouped into named, ordered sets
+    depends_on: [M1-CLI]
+    decision: >
+      deploy/embed.go (package deploy) embeds deploy/*.yaml, deploy/denokcp/*.yaml, deploy/eso/*.yaml and
+      deploy/examples/atproto/market/*.yaml, and deploy/sets.yaml names ordered sets of phases with wait
+      conditions: provider, permission-inventory, denoruntime, hostprocesses, bootstrap-cluster,
+      market-testbed, plus the sets plans 0007 and 0008 add. Decided by Claude, user may veto.
+    files: ["deploy/embed.go", "deploy/sets.yaml", "internal/marketbed (sets.yaml recorded as ours)"]
+    test_first: "deploy TestEveryYAMLUnderDeployIsInExactlyOneSetOrListedAsUnapplied and TestEverySetDecodesStrictlyIntoKcpAndKubernetesTypes; red first."
+    done_when: "`manifests list` prints every set; tests green."
+    risks: ["deploy becomes a Go package; check.sh keeps working."]
+    status: todo
+    evidence: []
+  - id: M2-TEMPLATE
+    milestone: M2
+    title: Templating with typed values and no silent blanks
+    depends_on: [M2-MANIFESTS]
+    decision: >
+      text/template with missingkey=error over a typed values struct per set; strict decode after render.
+      The test bed's twelve __PLACEHOLDER__ tokens and apply.sh:171's sed org-root rewrite become fields.
+      Only files recorded as adapted in deploy/denokcp/vendor.json carry template fields. Decided by
+      Claude, user may veto.
+    files: ["internal/manifests/", "deploy/denokcp/vendor.json"]
+    test_first: "internal/manifests TestAMissingValueIsARenderErrorNotAnEmptyField and TestTheRenderedMarketBedEqualsWhatApplyShProduced; red first."
+    done_when: "golden equal; tests green."
+    risks: []
+    status: todo
+    evidence: []
+  - id: M2-APPLY
+    milestone: M2
+    title: Server-side apply into kcp workspaces from Go, phase by phase, never kubectl
+    depends_on: [M2-TEMPLATE, M1-KCP-INPROC]
+    decision: >
+      internal/kcpapply: dynamic client, ApplyPatchType, field manager socialweb-computer, Force (tenant.go
+      precedent); workspace by /clusters/<path>; fresh discovery per phase; typed waits; APIResourceSchemas
+      create-only and compared (immutable spec); kubectl client-side-applied objects adopted with Force and
+      their last-applied annotation removed; `apply --dry-run` reports every field whose manager changes.
+      In-process it uses the loopback client config kcp hands back, no kubeconfig file needed.
+    files: ["internal/kcpapply/", "cmd/socialweb-computer apply"]
+    test_first: >
+      Behind livegate: TestApplyingTheProviderSetTwiceChangesNothingTheSecondTime,
+      TestAnObjectKubectlAppliedIsAdoptedWithoutLosingAField, TestAChangedAPIResourceSchemaIsRefusedNotPatched.
+    done_when: "install-provider.sh, apply-permission-inventory.sh, the denokcp install and apply.sh each reproduced object for object; no kubectl or yq anywhere."
+    risks: ["apply-permission-inventory.sh's yq subject/grant split (:52-53) and DRY_RUN server mode must be kept."]
+    status: todo
+    evidence: []
+  - id: M3-FOLD
+    milestone: M3
+    title: Fold every host-side Go binary into verbs
+    depends_on: [M1-CLI]
+    decision: >
+      Fold: socialweb-gateway, socialweb-clusterprovider, socialweb-vault, socialweb-computer-kcp-check-host,
+      socialweb-nodeimage, and, now that no runner container exists (decided by the user 2026-10-07: no
+      docker for VM runners), socialweb-nodeboot; plus socialweb-cloud-controller-manager,
+      socialweb-tenantcredential and nodeboot's namespace verb as `internal <verb>` re-execs of
+      /proc/self/exe. Built separately but carried inside the binary as assets: socialweb-nodeinit (the
+      guest's /init, copied into images by nodeimage so a bidder host needs no Go toolchain),
+      socialweb-credential (four platforms, door downloads), socialweb-meshd (two arches, door
+      downloads). socialweb-apigen stays a go generate tool. Folded cmd/ keep a one-line main for one
+      release, then M5-RETIRE deletes them.
+    files: ["cmd/socialweb-computer", "cmd/socialweb-*/main.go (shims)", "internal/clusterprovider (exec path defaults)", "internal/nodefirecracker (init binary from the embedded asset, not go build)"]
+    test_first: >
+      TestEveryFoldedBinaryIsAVerbWithTheSameUsageAndExitCodes, TestTheClusterProviderSpawnsTheCCMAsAReExecOfItself,
+      TestNodeimageCopiesTheEmbeddedInitInsteadOfBuildingIt; red first.
+    done_when: "the host install carries socialweb-computer alone; tests green."
+    risks: ["A re-exec'd verb inherits the parent's env; the CCM's curated env is rebuilt explicitly."]
+    status: todo
+    evidence: []
+  - id: M3-CLUSTER-SCOPES
+    milestone: M3
+    title: A gateway upgrade does not restart tenant control planes
+    depends_on: [M2-HOST-SCOPES, M2-POSTGRES]
+    decision: >
+      Decided by Claude, user may veto, from the user's upgrade requirement: a gateway restart that takes
+      every tenant control plane down for longer than 90 s makes plan 0005 M3-NODE-LOSS release market
+      nodes, so VMs would die of a core-binary upgrade. Each cluster's process group (kine, k3s server,
+      the cluster bao, the dumbpipe links, ESO, the CCM; postgres is already its own object) moves into
+      one transient unit per cluster (socialweb-cluster-<key>), started by a re-exec of the binary as the
+      group's supervisor, so it outlives the core binary; the restarted clusterprovider adopts each group
+      by unit name and the port leases it already attributes (internal/portscan). Pdeathsig (plan 0005
+      M6-LIMITS) still applies inside the group: its members die with the group's supervisor, not with
+      the core binary.
+    files: ["internal/clusterprovider (group supervisor verb, adoption)", "internal/procgroup", "internal/hostunit"]
+    test_first: >
+      Behind livegate: cmd/socialweb-computer TestAGatewayRestartLeavesEveryClusterApiserverAnswering
+      (a zero-node market cluster's /readyz polled every 200 ms across a kill -9 and restart of the core
+      process: no failed poll). Red first.
+    done_when: "green on hat-8; across the restart the provider logs adoption, not respawn, for every cluster."
+    risks: ["Changes plan 0005 M6-LIMITS's 'every member dies with the provider' to 'with its group supervisor'; ARCHITECTURE section 5 is updated in the same change."]
+    status: todo
+    evidence: []
+  - id: M3-SERVE-GATEWAY-KCP
+    milestone: M3
+    title: socialweb-computer serve gateway kcp replaces container-entrypoint.sh, on the host
+    depends_on: [M1-KCP-PORT0, M2-APPLY, M2-OPENBAO-SERVER, M3-FOLD, M3-CLUSTER-SCOPES, M3-BAO-SYNC]
+    decision: >
+      One Go process composes, in the entrypoint's order: the root vault (OpenBaoServer object), kcp
+      (in-process), the provider and permission-inventory sets, bootstrap-cluster when asked, migrate,
+      the gateway (in-process), the TLS front (Go crypto/tls proxy replacing socat, decided by Claude,
+      user may veto), the clusterprovider (in-process), and the door (a deno child with today's argv and
+      env until 0008:M3-DOOR-DENOPOD moves it into a DenoPod). Any in-process member failing ends the
+      process with exit 1 and systemd restarts it; host-scoped children (vaults, stores, cluster groups)
+      are adopted on the next start rather than restarted.
+    files: ["internal/stack/gatewaykcp/", "cmd/socialweb-gateway and cmd/socialweb-clusterprovider bodies moved into run(ctx, cfg)"]
+    test_first: >
+      TestServeGatewayKcpStartsMembersInTheEntrypointsOrderAndDiesWithAnyInProcessMember and, behind
+      livegate, TestServeGatewayKcpOnAStateDirTheContainerWroteServesTheDoorAndTheSameWorkspaces (state dir
+      produced on hat-8 by the current image, then opened by the host process). Red first.
+    done_when: "same workspaces, bindings and claims; door /api/config 200; scale passes None nodes 0; no shell, kubectl, yq, socat or docker in the process tree."
+    risks: ["One address space for kcp, gateway and clusterprovider: a panic ends all three; the blast radius equals today's container restart."]
+    status: todo
+    evidence: []
+  - id: M3-HOST-INSTALL
+    milestone: M3
+    title: The gateway as a host service, and an upgrade that is a binary swap
+    depends_on: [M3-SERVE-GATEWAY-KCP]
+    decision: >
+      deploy/host/socialweb-computer-gateway.service (system unit, User=socialweb, StateDirectory=socialweb,
+      KillMode=mixed so in-process members stop and host scopes are untouched), /etc/rancher/node/password
+      created 0600 for the service user (the k3s invariant), caddy unchanged in front. `socialweb-computer
+      upgrade --binary <new>` verifies the new binary's manifest and sha256, renames it into place
+      atomically and restarts the unit; scopes outlive the restart (M2-HOST-SCOPES, M3-CLUSTER-SCOPES).
+      scripts/deploy.sh is rewritten to copy the binary, verify, and run upgrade; no docker.
+    files: ["deploy/host/socialweb-computer-gateway.service", "scripts/deploy.sh", "cmd/socialweb-computer upgrade"]
+    test_first: >
+      test/host_unit_test.go TestTheGatewayUnitVerifies (systemd-analyze verify clean) and
+      TestUpgradeRefusesABinaryWhoseManifestDoesNotMatch; red first.
+    done_when: "unit verifies; an upgrade on hat-8 swapped the binary with every cluster apiserver answering throughout."
+    risks: ["deploy.sh needs the no-password key (SSH_KEY=~/.ssh/id_ed25519_no_password); kept as today."]
+    status: todo
+    evidence: []
+  - id: M4-BUILD
+    milestone: M4
+    title: Reproducible build of the one binary per platform
+    depends_on: [M1-ASSETS, M3-FOLD, M1-K8S-FORK]
+    decision: >
+      CGO_ENABLED=0, -trimpath, -buildvcs=true, -ldflags "-s -w -X version", GOTOOLCHAIN=local, GOPROXY=off
+      from the staged module cache (the Dockerfile's recipe, :32-45, run on the build host instead).
+      Assets staged and checked against versions.json; two clean builds byte-identical; a
+      socialweb-computer.manifest.json (every asset, version, sha256, the TypeScript closure manifest from
+      plan 0008) printed identically by `version --json`.
+    files: ["scripts/build-socialweb-computer.sh", "deploy/check.sh (--full: build twice, compare, size gate)"]
+    test_first: "check.sh --full step reproducible-build red with a timestamp injected into one build, then green."
+    done_when: "two clean builds per platform byte-identical; manifest and sizes recorded."
+    risks: []
+    status: todo
+    evidence: []
+  - id: M5-CUTOVER
+    milestone: M5
+    title: Prod moves from the container to the host service; the user runs it
+    depends_on: [M3-HOST-INSTALL, M4-BUILD]
+    decision: >
+      Decided by the user 2026-10-07: the user runs the cutover, no rehearsal. Prepared here: a cutover
+      script that stops the container (no docker rm, no volume change), COPIES the volume's data
+      (/var/lib/docker/volumes/socialweb-k8s-state/_data) to /var/lib/socialweb with ownership moved from
+      uid 1000 to the service user, installs the unit and starts it. Rollback path kept: stop the unit and
+      `docker start socialweb-k8s` on the untouched volume; the old image is not deleted until M5-RETIRE.
+      kcp is the same v0.33.0, linked instead of exec'd, so the copied root opens unchanged.
+    files: ["scripts/cutover-to-host.sh", "scripts/rollback-to-container.sh"]
+    test_first: "test/cutover_script_test.go TestTheCutoverCopiesAndNeverMovesTheVolume (fake docker and a temp volume dir); red first."
+    done_when: "the user ran it; post-cutover readings recorded: same workspaces, bindings, claims, ClusterLinks, None nodes 0."
+    risks: ["The window is stop to door /api/config 200 and is recorded; it is not zero, because one kcp root admits one server."]
+    status: todo
+    evidence: []
+  - id: M5-RETIRE
+    milestone: M5
+    title: Delete the container path seven days after the cutover
+    depends_on: [M5-CUTOVER]
+    decision: >
+      Delete deploy/control-plane-container/, deploy/container-entrypoint.sh, deploy/install-provider.sh,
+      deploy/apply-permission-inventory.sh, deploy/denokcp/install-provider.sh, run-container.sh, the folded
+      cmd/ shims and the old image on prod (with the user). Seven days decided by Claude, user may veto.
+    files: ["the files listed", "docs/ARCHITECTURE.md sections 5 and 12"]
+    test_first: "TestNothingInTheRepoInvokesKubectlDockerOrSocatOutsideTestAssets; red while they exist."
+    done_when: "files gone; check.sh --full green; ARCHITECTURE updated."
+    risks: ["accept.sh keeps kubectl until 0008:M4-TESTBED-PORT; it is a test asset."]
+    status: todo
+    evidence: []
+acceptance:
+  where: "hat-8 for every proof; prod readings after the user's cutover"
+  checks:
+    - id: ACC6-ONE-BINARY
+      text: Prod's service runs socialweb-computer alone plus the children it extracted (k3s, kine, postgres, bao, external-secrets, dumbpipe, deno); no container, shell, kubectl, yq or socat.
+      status: todo
+      evidence: []
+    - id: ACC6-STATE
+      text: After the cutover the same workspaces, APIBindings (same bound schema revisions), ClusterLinks and NodeClaims list as before it, and an idle cluster reads None nodes 0.
+      status: todo
+      evidence: []
+    - id: ACC6-UPGRADE
+      text: An upgrade of the binary on the gateway host keeps every tenant apiserver answering and every market node Ready throughout.
+      status: todo
+      evidence: []
+    - id: ACC6-BAO-SYNC
+      text: "After a release, after a cluster deletion and after an upgrade of the binary, every cluster OpenBao and the root vault hold exactly the auth mounts, roles, policies and owned KV entries live objects ask for; no jwt-* mount without a live node (decided by Claude, user may veto)."
+      status: todo
+      evidence: []
+    - id: ACC6-REPRO
+      text: Two clean builds are byte-identical per platform and within budget.
+      status: todo
+      evidence: []
+questions_for_user:
+  - "Per-cluster control planes move into their own systemd units so a gateway upgrade does not restart them (M3-CLUSTER-SCOPES); this changes plan 0005 M6-LIMITS from 'members die with the provider' to 'with their group supervisor'. Agreed?"
+  - "darwin builds carry only the client modes (run request, run gateway ssh); serve gateway kcp and run bidder are linux-only. Agreed?"

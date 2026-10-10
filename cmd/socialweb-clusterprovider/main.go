@@ -297,6 +297,7 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 		AdvertiseAddress:    cfg.AdvertiseAddress,
 		DenyBidderDids:      cfg.MarketDenyBidderDids,
 		ClaimReleaseTimeout: cfg.MarketReleaseTimeout,
+		NodeJoinGrace:       cfg.NodeJoinGrace,
 		Tenant:              tenant,
 		Log:                 log,
 		Substrate:           substrate,

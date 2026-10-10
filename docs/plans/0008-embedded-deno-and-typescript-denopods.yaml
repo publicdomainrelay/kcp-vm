@@ -1,0 +1,268 @@
+plan: 0008-embedded-deno-and-typescript-denopods
+written: 2026-10-07
+revised: "2026-10-07, with the user's answers to the plan's questions (decisions below marked 'decided by the user 2026-10-07')"
+queued: >
+  QUEUED. Starts only after plan 0005 (docs/plans/0005-zero-ssh-market-nodes.yaml) is complete and its
+  acceptance checks ACC-ZERO, ACC-MESH and ACC-NOSSH pass on prod with UTC readings recorded there.
+  Its items also wait on the plan 0006 items named in depends_on.
+source: >
+  Split out of plan 0006 (same user request of 2026-10-07): Go and TypeScript are both first class in
+  socialweb-computer. The binary carries a pinned deno and the TypeScript codebase; every long-running
+  TypeScript service runs as a DenoPod reconciled by a deno-kcp provider that this repo now owns (the
+  user decided to fork and vendor deno-kcp); kcp records which services run, and the core binary and its
+  deno processes can be upgraded while VMs keep running.
+state_rules:
+  - This file is the only state. Every step updates status and evidence.
+  - status is one of todo, doing, done, blocked.
+  - An item is done only when its evidence is recorded (commit SHAs, test names watched to fail and
+    then pass, hat-8 or prod readings with UTC timestamps).
+  - Open items are mirrored in NEXT.yaml (P8-*).
+  - A decision marked "decided by Claude, user may veto" was not confirmed by the user; one marked
+    "decided by the user 2026-10-07" was.
+  - An item names its dependencies in depends_on; an item may not start while one of them is not done.
+    Cross-plan dependencies are written <plan>:<item id>.
+ownership:
+  owned: >
+    All code in socialweb-computer-kcp, the prod deployment, the vendored deno-kcp test bed, the
+    atproto-market requester libraries, and (decided by the user 2026-10-07) the forked copies of
+    deno-kcp and kcp-libs this plan brings into the repo. hono-compute-provider and atproto-market may
+    be changed by commit; never pushed.
+  not_owned: >
+    The market protocol records and lexicons; the core architecture (nodes only ever born through
+    requester -> RFP -> bid -> accept -> cloud-init user_data).
+research:
+  sshai_policy_engine:
+    commit: "publicdomainrelay/sshai a00ab8c9ff721e22f95855b9164b8d031e4cf295 (main, 2026-06-10)"
+    findings:
+      - "src/policy_engine/common/deno_embed_linux_amd64.go:1-7: //go:build embed_deno && linux && amd64, //go:embed deno_embedded/deno-linux-amd64.zip; one file per platform; deno_noembed.go returns nil under !embed_deno"
+      - "common/deno_manager.go:20 pins v2.1.4; :51-90 embedded -> PATH -> GitHub download; :95-135 extracts to <cache>/deno-embedded/deno; :112-115 reuses an extracted file with no version or hash check"
+      - "The TypeScript is NOT in an embed.FS in sshai: ts/ is a separate deno program; bundled actions are copied by the Dockerfile to /bundled-actions (Dockerfile:71-73, workflow.go:659-663); Go spawns deno run per step (workflow.go:893)"
+  ts_embedding_precedent: "kcp-libs f6911d2 impl/assets/dns.go:8-11 go:embeds dnsshim.ts and dnsprobe.ts, materialised by the deno-kcp provider as the KCP_SHIM preload"
+  live_findings_2026_10_07:
+    - "commit 13349d6: on hat-8 a bidder restarted onto new hono-compute-provider code kept writing the old provider's bid_config token path and booting the old node image until its DENO_DIR v8_code_cache_v2 was moved aside (2026-10-07T22:22Z); the launcher now runs deno with --no-code-cache (deploy/bidder/socialweb-computer-bidder-run). A shared, long-lived DENO_DIR can run stale code after an upgrade."
+    - "the same launcher runs the bidder with --node-modules-dir=none, so the bidder runs from the global DENO_DIR without a node_modules tree"
+  deno_kcp:
+    commit: "deno-kcp 25d10f92 (local), test bed vendored at f5b7c10c; kcp-libs f6911d2"
+    findings:
+      - "cmd/deno-kcp-provider/main.go:17 imports internal/provider (not importable from another module); :75-109 flags incl. pod-timeout 5m and token-ttl 1h"
+      - "go.mod:85 replace kcp-libs => ../kcp-libs; deploy/denokcp/kcp-libs-no-default-issuer.patch is carried here today"
+      - "kcp-libs impl/execrunner/supervisor.go:141 Setpgid without Pdeathsig, :220-229 state.json, :249-268 and :394 recover a run by pid and start ticks, :156 and :322 stop is SIGKILL of the group; pod.go:61-62 maps only Timeout 0 to 5m and :101-105 enforces only > 0; pod.go:184-196 injects KCP_TOKEN, KCP_SERVER, KCP_WORKSPACE"
+      - "the test bed's DenoPods name host paths: 70-bidder.yaml:14-15 SERVICE_ENTRY/SERVICE_CWD under /home/johnandersen777/src/publicdomainrelay-kcp, rewritten by apply.sh:171; :35-92 the supervisor script every service repeats; :78-79 prepends --preload KCP_SHIM"
+  ts_closure_measured:
+    - "deno info --json over the door, hono-bidder and the ssh door on 2026-10-07: 389 local files, 1842618 bytes, across atproto-market, deno-worker-sandbox, did-key-ingress-proxy, hono-compute-provider, hono-jsr, hono-pds, policy-engine, typescript-helpers, socialweb-computer-kcp, socialweb-computer-ssh; 234-237 remote modules and 211-261 npm packages per entry; atproto-market/node_modules 143 MiB on disk"
+    - "deno 2.9.3 (Dockerfile:142, hat-8 host); `deno run --help`: --preload takes a list of files"
+items:
+  - id: M1-DENO
+    milestone: M1
+    title: A pinned deno inside the binary; a DENO_DIR that can never hold another version's code
+    depends_on: ["0006:M1-ASSETS"]
+    decision: >
+      deno 2.9.3 per platform is an internal/assets entry. internal/denorun builds every deno argv. From
+      the live finding (13349d6): every run passes --no-code-cache, AND each DENO_DIR is keyed by the
+      sha256 of the TypeScript it serves (<state>/deno/<closure sha256>/), so an upgrade starts from an
+      empty code cache by construction and the old directory is removed once no DenoPod names it.
+      Production runs add --cached-only and --frozen (no jsr.io or npm at runtime; lockfile drift is a
+      start failure) and DENO_NO_UPDATE_CHECK=1. Decided by Claude, user may veto.
+    files: ["internal/assets (deno)", "internal/denorun/", "internal/versions/versions.json"]
+    test_first: >
+      internal/denorun TestAnUpgradedClosureNeverRunsTheOldCodeCache (run a fixture entry, swap its source
+      for a new closure sha256, run again: the new behaviour, even with the old DENO_DIR left on disk) and
+      TestAProductionRunNeverReachesTheNetworkForItsModules (under unshare -rn). Red first.
+    done_when: "both green; `version` prints deno 2.9.3 and its sha256."
+    risks: ["A cache missing one module fails at first import; M1-TS-CLOSURE runs every entry with --cached-only at build time."]
+    status: todo
+    evidence: []
+  - id: M1-TS-SOURCE
+    milestone: M1
+    title: Where the TypeScript comes from - the embedded archive in production, the org root otherwise
+    depends_on: [M1-DENO]
+    decision: >
+      Decided by the user 2026-10-07: production builds run the TypeScript from the embed.FS archive;
+      non-production builds take the org-root path from an env var with an auto-detected fallback that
+      walks up ../ until the org root is found. Details decided by Claude, user may veto: the variable is
+      SOCIALWEB_COMPUTER_ORG_ROOT (an option in internal/clicfg); the walk starts at the working
+      directory, then at the executable's directory, and stops at the first directory holding
+      typescript-helpers/, atproto-market/ and socialweb-computer-kcp/ as real directories; a symlinked
+      sibling is refused by name, because the live market test proved a symlinked sibling is not a
+      directory to Deno.readDir and the guest's tunnel then 404s. Non-production runs allow network
+      module fetches into a DENO_DIR keyed by the org root path. Production is the build without the
+      `dev` tag; it has no org-root option at all.
+    files: ["internal/tsbundle/source.go (Source interface: Embedded, OrgRoot)", "internal/clicfg/options.json"]
+    test_first: >
+      internal/tsbundle TestTheOrgRootIsFoundByWalkingUpAndASymlinkedSiblingIsRefused and
+      TestAProductionBuildHasNoOrgRootOption; red first.
+    done_when: "tests green; a dev build run from a worktree three levels deep finds the org root."
+    risks: ["A worktree's own sibling imports (../../) do not resolve from a worktree (plan 0005 evidence); the walk finds the org root above the worktree, which is the checkout the user runs."]
+    status: todo
+    evidence: []
+  - id: M1-TS-CLOSURE
+    milestone: M1
+    title: The production TypeScript closure and its module cache as one deterministic embedded archive
+    depends_on: [M1-TS-SOURCE]
+    decision: >
+      cmd/socialweb-tsbundle (build tool, not shipped) reads deploy/ts-entries.yaml (the door and its
+      undici-preload.ts, hono-bidder, hono-socialweb-computer-ssh, the request CLI of M4-RUN-REQUEST, the
+      test bed's hono-plc, hono-atproto-relay, hono-did-key-ingress-proxy and hono-pds), stages each
+      needed sibling repo in org-root layout, fills one DENO_DIR with `deno install --frozen
+      --node-modules-dir=none --entrypoint` per entry (the flag the bidder launcher already runs with,
+      13349d6, so no node_modules symlink tree is shipped), runs each entry once with --cached-only, and
+      writes a tar (sorted, mtime SOURCE_DATE_EPOCH, uid/gid 0) compressed with zstd plus manifest.json
+      (every repo's git commit, every file's sha256, every entry). A dirty sibling repo is refused. The
+      archive and manifest are files in an embed.FS. An entry that cannot run without node_modules is
+      recorded by name with the reason, not silently given one.
+    files: ["cmd/socialweb-tsbundle/", "deploy/ts-entries.yaml", "internal/tsbundle/ (embed, extract to <state>/ts/<sha256>/, read-only)", "deploy/check.sh"]
+    test_first: >
+      TestTwoBundlesOfTheSameCommitsAreByteIdentical, TestAnExtractedTreeWhoseFileChangedIsRefused,
+      TestADirtySiblingRepoIsRefusedForARelease; red first.
+    done_when: "archive built; size recorded (feeds 0006:M0-SIZE-BUDGET); every entry starts offline from the extracted tree."
+    risks: ["The door today runs with node_modules (nodeModulesDir auto); its suite is run under --node-modules-dir=none before the switch."]
+    status: todo
+    evidence: []
+  - id: M2-DENOKCP-FORK
+    milestone: M2
+    title: Fork deno-kcp and kcp-libs into this repo and own them
+    depends_on: ["0006:M1-K8S-FORK"]
+    decision: >
+      Decided by the user 2026-10-07: fork/vendor the deno-kcp provider into this repo and own the copy.
+      Decided by Claude, user may veto: deno-kcp's api, internal/provider, internal/denopod, denojob,
+      denorun and the rest it needs, and the kcp-libs packages they import, are copied into
+      internal/denokcp/... and internal/kcplibs/... with import paths rewritten, the carried
+      kcp-libs-no-default-issuer.patch applied as an ordinary commit, and deploy/denokcp/vendor.json
+      recording the upstream commits they started from. They build on kcp's Kubernetes fork with the rest
+      of the module. The CRDs (DenoPod, OpenBao, ...) keep their group deno.computer so existing
+      manifests and the test bed apply unchanged. Upstream is no longer followed automatically; a later
+      upstream change is pulled by a recorded cherry-pick.
+    files: ["internal/denokcp/", "internal/kcplibs/", "deploy/denokcp/vendor.json", "deploy/denokcp/build-provider.sh (deleted once the in-process provider passes M2-DENOKCP-INPROC)"]
+    test_first: >
+      The forked packages' own tests, moved with them and green on the fork; plus
+      internal/denokcp TestTheForkRecordsTheUpstreamCommitsItStartedFrom. Red until the copy exists.
+    done_when: "go test ./internal/denokcp/... ./internal/kcplibs/... green; vendor record check green."
+    risks: ["deno-kcp's third_party/openbao and baoembed (an openbao module-path trick) are not copied; the provider talks to a running bao over its API, which is what socialweb-computer runs."]
+    status: todo
+    evidence: []
+  - id: M2-DENOKCP-INPROC
+    milestone: M2
+    title: The owned deno-kcp provider running inside socialweb-computer, upgradable without touching VMs
+    depends_on: [M2-DENOKCP-FORK, M1-DENO, "0006:M1-KCP-INPROC"]
+    decision: >
+      internal/stack/denoruntime runs the provider with: deno-bin the extracted deno, runs-dir
+      <state>/denokcp/runs, the runner timeout NEGATIVE (disabled; services are long-running and a
+      DenoPod that wants a limit sets activeDeadlineSeconds), and the kcp loopback client config.
+      Upgrade semantics (decided by the user 2026-10-07: the core binary and its deno processes are
+      upgradable while VMs keep running): deno processes are plain children and die with the core
+      binary; on start the provider finds every DenoPod whose status.runID names no live process and
+      restartPolicy Always starts it again from the new closure. Nothing that holds a VM is a deno
+      process (VMMs live in their own host scopes, plan 0007), so restarting every deno process never
+      touches a VM.
+    files: ["internal/stack/denoruntime/"]
+    test_first: >
+      Behind livegate: TestADenoPodAppliedToTheInProcessKcpRunsOnTheEmbeddedDeno and
+      TestAnUpgradeRestartsEveryRecordedDenoPodOnTheNewClosureExactlyOnce (run the stack in a child, kill
+      -9 it, start a build with a different closure sha256: every DenoPod Running on the new code, one
+      deno process each, no deleted DenoPod returns). Red first.
+    done_when: "both green on hat-8."
+    risks: []
+    status: todo
+    evidence: []
+  - id: M2-SERVICE-TEMPLATE
+    milestone: M2
+    title: One service DenoPod template instead of a supervisor script per manifest
+    depends_on: [M1-TS-CLOSURE, M2-DENOKCP-INPROC, "0006:M2-TEMPLATE"]
+    decision: >
+      deploy/denopods/service.yaml renders the supervisor script the test bed repeats (70-bidder.yaml:35-92)
+      from typed fields: entry and cwd relative to the TypeScript source root (M1-TS-SOURCE; never an
+      absolute host path), args, deno flags (always --no-code-cache), env, permissions, probe,
+      restartPolicy Always. Preloads: KCP_SHIM first, then the service's own (the door's undici-preload.ts).
+      The test bed's 20-70 manifests become values for this template; vendored originals stay records.
+    files: ["deploy/denopods/service.yaml", "deploy/sets.yaml", "internal/manifests"]
+    test_first: "TestEveryServiceDenoPodNamesItsEntryRelativeToTheSourceRoot and, behind livegate, TestTwoPreloadsBothRunBeforeTheEntry; red first."
+    done_when: "the market bed's services start from the template on hat-8 with the probes of M1-TESTBED run 9 passing."
+    risks: []
+    status: todo
+    evidence: []
+  - id: M3-DOOR-DENOPOD
+    milestone: M3
+    title: The door runs as a DenoPod
+    depends_on: [M2-SERVICE-TEMPLATE, "0006:M3-SERVE-GATEWAY-KCP"]
+    decision: >
+      `serve gateway kcp` applies a door DenoPod in root:socialweb-door (type denoruntime) with the env the
+      entrypoint sets today (container-entrypoint.sh:305-312), STATE_DIR on the persistent state dir, a
+      fixed PORT 8788 behind caddy. A door restart (upgrade) must not cost a node; what the door must
+      re-populate after one is plan 0007 M6-GATEWAY-REPOPULATE.
+    files: ["internal/stack/gatewaykcp", "deploy/denopods/door.values.yaml", "deploy/sets.yaml"]
+    test_first: "Behind livegate: TestTheDoorDenoPodServesApiConfigAndReadsTheSameClaims; red while the door is a child process."
+    done_when: "on hat-8 the door DenoPod serves /api/config and lists the same claims."
+    risks: ["The door's per-process secrets server for guests in flight (plan 0005 M3-NODE-LOSS) is made durable by plan 0007 M6-GATEWAY-REPOPULATE; until then a door restart still fails Bidding/Provisioning claims."]
+    status: todo
+    evidence: []
+  - id: M4-RUN-GATEWAY-SSH
+    milestone: M4
+    title: socialweb-computer run gateway ssh
+    depends_on: [M2-SERVICE-TEMPLATE, "0006:M1-KCP-PORT0"]
+    decision: >
+      In-process kcp on port 0 under <state-dir>/kcp, the owned deno-kcp provider, one DenoPod running
+      hono-socialweb-computer-ssh/mod.ts with its cli-args-env options passed through; its json-file-store
+      state under <state-dir>/ssh-door so a DenoPod recreate keeps it. Decided by Claude, user may veto.
+    files: ["internal/stack/gatewayssh", "deploy/denopods/ssh-door.values.yaml"]
+    test_first: "TestRunGatewaySshServesTheSshDoorFromTheEmbeddedTree (live, hat-8); red first."
+    done_when: "the ssh door answers; its deno unit suite passes against the extracted tree."
+    risks: []
+    status: todo
+    evidence: []
+  - id: M4-RUN-REQUEST
+    milestone: M4
+    title: socialweb-computer run request, contracts held as ComputeContract objects in kcp
+    depends_on: [M1-TS-CLOSURE, "0006:M1-KCP-PORT0", "0006:M2-APPLY"]
+    decision: >
+      Decided by the user 2026-10-07: run request keeps its state in kcp objects. Kind ComputeContract
+      (socialweb.computer/v1alpha1, export computecontracts, apigen) with spec {vm request, bidder
+      allow/deny lists, policy refs, keepUntil} and status.contract = the same ContractState fields
+      NodeClaim.status.contract carries (plan 0005 M2-CODEGEN), so the requester core writes one shape for
+      both. `run request` starts an in-process kcp on port 0 under ~/.local/state/socialweb-computer and a
+      DenoPod (or, for a one-shot, a deno child) running a thin CLI hono-compute-request in atproto-market
+      (CLAUDE.md CLI layer) over compute-request-xrpc requestCompute, awaitComputeNetwork and
+      releaseCompute; every handler awaits a status write (the M2-CLAIM-RECEIPT pattern). Subcommands:
+      run request [--wait onNetwork], run request list, run request release <name>, run request resume
+      <name> (a restarted CLI resumes a contract from its object, including one accepted before the
+      restart). Everything goes through the RFP flow.
+    files: ["api/v1alpha1/computecontract_types.go", "atproto-market/hono-compute-request/", "atproto-market/lib (a ComputeContract store over kcp REST, beside the door's nodeclaim-kcp)", "internal/stack/request", "deploy/ts-entries.yaml"]
+    test_first: >
+      atproto-market test/compute_request_cli_test.ts: against fakes, the CLI writes status.contract at
+      onRfpSubmitted, onAccepted and onReceipt, and `release` from a fresh process submits exactly one
+      vm.delete from the object; red first.
+    done_when: "test green; on the market bed `run request` reaches onNetwork, `run request list` shows it, `release` gets vm.delete 200 and the guest is gone."
+    risks: []
+    status: todo
+    evidence: []
+  - id: M4-TESTBED-PORT
+    milestone: M4
+    title: The market test bed driven by socialweb-computer instead of accept.sh and apply.sh
+    depends_on: [M2-SERVICE-TEMPLATE, "0006:M2-APPLY", "0006:M1-KCP-PORT0"]
+    decision: >
+      `socialweb-computer testbed up|accept|down`: in-process kcp on port 0 (the bed's kine is no longer
+      needed), an OpenBaoServer object for the bed's dev vault, the denoruntime and market-testbed sets, the
+      same checks as accept.sh run 9. The bed's service ports 2583-2589 are fixed by the vendored
+      manifests, so a second bed on the host is refused by a lock file rather than failing in bring-up.
+      accept.sh and apply.sh are deleted after two passes.
+    files: ["internal/stack/testbed", "internal/marketbed/live_test.go", "deploy/examples/atproto/market/accept.sh, apply.sh (deleted at the end)"]
+    test_first: "TestTheMarketTestBedRentsAFirecrackerGuestThroughTheRFPFlow switched to the subcommand; red until it exists."
+    done_when: "two PASS readings through the subcommand with accept.sh run 9's check list."
+    risks: []
+    status: todo
+    evidence: []
+acceptance:
+  where: hat-8
+  checks:
+    - id: ACC8-OFFLINE
+      text: Every production service DenoPod starts with jsr.io and registry.npmjs.org unreachable, from the embedded closure alone.
+      status: todo
+      evidence: []
+    - id: ACC8-NO-STALE-CODE
+      text: After an upgrade to a binary with a different closure, every DenoPod runs the new code (checked by a version marker each service logs), with the previous DENO_DIR still on disk.
+      status: todo
+      evidence: []
+    - id: ACC8-RESTART
+      text: A kill -s KILL of the unit running socialweb-computer, then its restart, brings every recorded DenoPod back to Running exactly once, and no deleted DenoPod returns.
+      status: todo
+      evidence: []
+questions_for_user: []

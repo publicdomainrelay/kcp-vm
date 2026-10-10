@@ -162,6 +162,24 @@ func (f *lossFixture) registerNode(t *testing.T, status corev1.ConditionStatus, 
 	}
 }
 
+func (f *lossFixture) setReady(t *testing.T, status corev1.ConditionStatus, since time.Time) {
+	t.Helper()
+	client, err := f.tenant(context.Background(), f.key)
+	if err != nil {
+		t.Fatalf("tenant client: %v", err)
+	}
+	node, err := client.CoreV1().Nodes().Get(context.Background(), f.node, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("reading the Node: %v", err)
+	}
+	node.Status.Conditions = []corev1.NodeCondition{{
+		Type: corev1.NodeReady, Status: status, LastTransitionTime: metav1.NewTime(since),
+	}}
+	if _, err := client.CoreV1().Nodes().UpdateStatus(context.Background(), node, metav1.UpdateOptions{}); err != nil {
+		t.Fatalf("updating the Node's Ready condition: %v", err)
+	}
+}
+
 func (f *lossFixture) nodePresent(t *testing.T) bool {
 	t.Helper()
 	client, err := f.tenant(context.Background(), f.key)
@@ -183,8 +201,12 @@ func TestAMarketNodeNotReadyFor89sIsKeptAndAt90sIsReleased(t *testing.T) {
 		t.Run(string(status), func(t *testing.T) {
 			f := newLossFixture(t)
 			ctx := context.Background()
+			f.registerNode(t, corev1.ConditionTrue, f.clock.Now().Add(-time.Minute))
+			if _, err := f.hosts.confirm(ctx, f.key); err != nil {
+				t.Fatalf("confirm while Ready: %v", err)
+			}
 			wentNotReady := f.clock.Now()
-			f.registerNode(t, status, wentNotReady)
+			f.setReady(t, status, wentNotReady)
 
 			f.clock.set(wentNotReady.Add(89 * time.Second))
 			outcome, err := f.hosts.confirm(ctx, f.key)
@@ -278,5 +300,49 @@ func TestTheConfirmPassWritesTheNodesSecretsAndTurnsAGrantIntoALogin(t *testing.
 	}
 	if !slices.Equal(f.secrets.logins, []v1alpha1.NodeClaimGrant{grant}) {
 		t.Fatalf("two passes over a granted claim made logins %v, want exactly the grant once", f.secrets.logins)
+	}
+}
+
+func TestANodeThatNeverWasReadyGetsTheJoinGraceNotTheLossGrace(t *testing.T) {
+	f := newLossFixture(t)
+	ctx := context.Background()
+	registered := f.clock.Now()
+	f.registerNode(t, corev1.ConditionFalse, registered)
+	for _, at := range []time.Duration{NodeLossGrace, NodeJoinGrace - time.Second} {
+		f.clock.set(registered.Add(at))
+		if _, err := f.hosts.confirm(ctx, f.key); err != nil {
+			t.Fatalf("confirm at %s: %v", at, err)
+		}
+		if f.claims.deletes != 0 || !f.nodePresent(t) {
+			t.Fatalf("a node that registered and was never Ready was released %s after registering "+
+				"(deletes %d). Measured on prod 2026-10-07T22:52:55Z: a market node registered at "+
+				"22:51:24Z, its kubelet still starting, and the 90s loss rule released it before it "+
+				"could become Ready; a node that has not been Ready yet is joining, not lost",
+				at, f.claims.deletes)
+		}
+	}
+	if NodeJoinGrace > 2*time.Minute {
+		t.Fatalf("the default join grace is %s; a broken node held longer than 2m stalls every debugging "+
+			"loop (user, 2026-10-07: 10 minutes kills the dev flow); a longer hold is an explicit %s",
+			NodeJoinGrace, "SOCIALWEB_CLUSTERPROVIDER_NODE_JOIN_GRACE")
+	}
+	f.clock.set(registered.Add(NodeJoinGrace))
+	outcome, err := f.hosts.confirm(ctx, f.key)
+	if err != nil {
+		t.Fatalf("confirm at the join grace: %v", err)
+	}
+	if f.claims.deletes != 1 || f.nodePresent(t) || !slices.Equal(outcome.lost, []string{f.node}) {
+		t.Fatalf("at the join grace a never-Ready node: deletes %d, Node present %v, lost %v; want it "+
+			"released and replaced", f.claims.deletes, f.nodePresent(t), outcome.lost)
+	}
+}
+
+func TestTheJoinGraceIsConfigurable(t *testing.T) {
+	cfg, err := load(envFor(map[string]string{"SOCIALWEB_CLUSTERPROVIDER_NODE_JOIN_GRACE": "15m"}))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.NodeJoinGrace != 15*time.Minute {
+		t.Fatalf("NodeJoinGrace = %s, want 15m from SOCIALWEB_CLUSTERPROVIDER_NODE_JOIN_GRACE", cfg.NodeJoinGrace)
 	}
 }

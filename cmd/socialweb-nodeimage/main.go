@@ -67,6 +67,17 @@ node booted from would do it as a side effect of being run. Removal is its own m
                built them, so the newest one there is an image built from inputs this configuration
                does not describe, and booting it would be booting the image from before the change.
                This is the switch for a host that must come up without a build, not a fallback.
+  -present-only with -ensure: answer whether the store already holds the exact image these inputs
+               name, and answer it without building, pulling, reusing or writing anything: the state
+               is "present" and the exit is 0 when it does, and the state is "absent" with a non-zero
+               exit when it does not. This is the question a build host has to ask before it decides
+               to build, because -ensure alone answers the same question by BUILDING: on a host whose
+               user cannot mount, that build gets as far as the preinstall chroot -- after the base
+               image and every seeded image have been unpacked into the stage -- and then fails, so
+               asking with -ensure costs a full stage and answers nothing. -reuse-stale is not this
+               answer either: it names an image that is by construction not the one these inputs
+               name. It is a question, so it never changes the store, and a caller that reads it as
+               "build it if it is absent" owns that build itself.
   -json        with -ensure: print one JSON object, so a caller that is not a person can read the
                state, the name, the directory and, when one was reused, the name it came from. The
                object is the LAST line of standard output: a build reports each artifact as it is
@@ -116,14 +127,31 @@ func main() {
 	reuseStale := flag.Bool("reuse-stale", false, "with -ensure: use an image already in the store instead of building the one the config names")
 	asJSON := flag.Bool("json", false, "with -ensure: print one line of JSON describing what was found, built or reused")
 	preinstall := flag.String("preinstall", "", "path to a preinstall manifest, overriding the one the config names")
+	presentOnly := flag.Bool("present-only", false, "with -ensure: answer whether the store already holds the exact image the config names, and build nothing")
 	flag.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 	flag.Parse()
 	run := Main
 	switch {
+	case *presentOnly && !*ensure:
+		run = func(string) error {
+			return fmt.Errorf("-present-only asks a question about -ensure -- whether the store " +
+				"already holds the exact image these inputs name -- and there is no -ensure here for " +
+				"it to ask it of")
+		}
+	case *presentOnly && *reuseStale:
+		run = func(string) error {
+			return fmt.Errorf("-present-only asks whether the store holds the exact image these " +
+				"inputs name, and -reuse-stale answers that question with the newest whole image in " +
+				"the store whatever its inputs: the two cannot both answer it, and the answer that " +
+				"matters is the one that says whether the inputs in front of this run have been " +
+				"built, so one of them has to go")
+		}
 	case *gc:
 		run = func(configPath string) error { return MainGC(configPath, keep, *retain) }
 	case *ensure:
-		run = func(configPath string) error { return Ensure(configPath, *reuseStale, *asJSON, *preinstall) }
+		run = func(configPath string) error {
+			return Ensure(configPath, *reuseStale, *asJSON, *preinstall, *presentOnly)
+		}
 	case *preinstall != "":
 		run = func(string) error {
 			return fmt.Errorf("-preinstall says which software to bake into the image, and the " +

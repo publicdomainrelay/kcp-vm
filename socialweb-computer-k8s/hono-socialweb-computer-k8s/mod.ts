@@ -152,6 +152,34 @@ serve.app.route("/", staticApp as never);
 
 const relayUrls = ((options.relayUrl as string | undefined) ?? "").split(",").map((u) => u.trim()).filter(Boolean);
 
+async function debugNodeSsh(dir: string) {
+  const privateKeyPath = `${dir}/id_ed25519`;
+  await Deno.mkdir(dir, { recursive: true, mode: 0o700 });
+  const exists = await Deno.stat(privateKeyPath).then(() => true, () => false);
+  if (!exists) {
+    const out = await new Deno.Command("ssh-keygen", {
+      args: ["-q", "-t", "ed25519", "-N", "", "-C", "socialweb-debug-node-ssh", "-f", privateKeyPath],
+    }).output();
+    if (!out.success) throw new Error(`ssh-keygen failed: ${new TextDecoder().decode(out.stderr)}`);
+  }
+  const authorizedKey = (await Deno.readTextFile(`${privateKeyPath}.pub`)).trim();
+  logger.warn("debug_node_ssh_enabled", { privateKeyPath, authorizedKey });
+  return {
+    authorizedKey,
+    onNetwork(claim: string, address: string) {
+      const ticket = address.replace(/^iroh:\/\//, "");
+      if (ticket === address) return;
+      logger.warn("debug_node_ssh", {
+        claim,
+        privateKeyPath,
+        ssh: `ssh -i ${privateKeyPath} -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ProxyCommand='dumbpipe connect ${ticket}' root@${claim}`,
+      });
+    },
+  };
+}
+
+const debugSsh = options.debugNodeSshDir ? await debugNodeSsh(options.debugNodeSshDir as string) : null;
+
 let fulfiller: MarketNodeFulfiller | null = null;
 if (options.kcpKubeconfig) {
   const credentials = parseKubeconfig(await Deno.readTextFile(options.kcpKubeconfig as string), options.kcpContext as string | undefined);
@@ -169,6 +197,7 @@ if (options.kcpKubeconfig) {
     ...(options.nodePolicy ? { policy: { name: options.nodePolicy as string, args: JSON.parse(options.nodePolicyArgs as string) } } : {}),
     pollIntervalMs: options.nodePollIntervalMs as number,
     ...(meshd ? { meshd } : {}),
+    ...(debugSsh ? { debugSsh } : {}),
     log,
   });
 }
