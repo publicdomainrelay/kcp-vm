@@ -18,7 +18,14 @@ Read this file first. Then:
 | [02 - Point a Runner at a tenant cluster](02-runner-kubernetes.md) | the kubernetes executor, the credential, the RBAC, `config.toml` |
 | [03 - A pipeline that proves it](03-ci-pipeline.md) | `.gitlab-ci.yml` examples and what each one exercises |
 | [04 - The cloud controller manager and autoscaling](04-ccm-and-autoscaling.md) | node identity, node lifecycle, scale-out |
+| [05 - The runner's config.toml, key by key](05-runner-config.md) | every key that matters, and the four traps |
+| [06 - Credential and RBAC for the runner](06-runner-credential-and-rbac.md) | minting, binding, and the checks between them |
+| [07 - The image a job runs in](07-job-images.md) | `DOCKER_REPO`/`DOCKERFILE_HASH`, and what to do when it does not exist |
+| [08 - One job per node, and scaling to N](08-one-job-per-node.md) | anti-affinity, the ceiling, and the cross-node limit |
+| [09 - Sizing a node for a real job](09-sizing-nodes.md) | vCPU, memory, disk, and the root filesystem that bites first |
 | [examples/](examples/) | the literal files, copy them |
+
+05 onwards are runbooks: terser than 01-04 on purpose, written to be followed and copied from.
 
 ## Reachability: the single operational fact
 
@@ -97,15 +104,21 @@ The GitLab instance itself is **not run here**: `gitlab/gitlab-ce` is a multi-gi
 this project's gate never pulls it. So "a pipeline ran green end to end" is documented, not
 measured; everything from the runner's API calls downward is measured.
 
-## The limit you will hit first
+## The limits you will hit first
 
-**A tenant cluster runs at most one node today.** `internal/scale/scale.go` decides between zero
-and one - the decision is deliberately coarse, and `Decision.Nodes` is hardwired to 0 or 1. One
-GitLab job fits on one node. Two concurrent jobs do not, and the second job waits.
+**A Pod on one node cannot reach a Pod on another node**, so a cluster with more than one has
+cluster DNS only for the Pods on the node CoreDNS sits on. Anything that resolves a name therefore
+works on a ONE-node cluster and fails elsewhere, permanently. Every guest sits behind its own pasta
+instance and the nodes have no path to each other for k3s's overlay to run over. Measured, and in
+`NEXT.yaml` as a limit. Read
+[08](08-one-job-per-node.md#the-limit-that-bites-multi-node-first) before scaling a cluster past
+one node for anything that needs the network.
 
-[04 - The cloud controller manager and autoscaling](04-ccm-and-autoscaling.md) is the work that
-lifts this to N. Until it lands, set `concurrent = 1` in `config.toml` so that the runner does not
-queue jobs it cannot place, and read that document for what changes.
+**The default ceiling is one node.** `SOCIALWEB_CLUSTERPROVIDER_SCALE_MAX_NODES` defaults to 1, so
+a cluster configured as before behaves as before. Raising it is deliberate: every node is a booted
+guest. Once raised, `concurrent` in `config.toml` may exceed one too - it does not have to stay at
+1, and `concurrent = 1` is itself a hazard, because a job left over from a cancelled pipeline
+holds the only slot. See [08](08-one-job-per-node.md).
 
 Also note the hold: past the idle grace (`SOCIALWEB_CLUSTERPROVIDER_SCALE_HOLD`, default 2m) a
 cluster with nothing running goes back to zero nodes. A CI job that arrives after that pays the
