@@ -480,7 +480,7 @@ items:
       live reading on prod: after a release and after a provider restart, `bao auth list` and
       `bao list auth/<m>/role` name exactly the live nodes. Plan 0007's stable bidder keys shrink the
       churn; this keeps the store honest regardless. decided by Claude, user may veto.
-    status: doing
+    status: done
     evidence:
       - 'commit 0ff704b: NodeVault.Reconcile (internal/clusterprovider/nodesecrets.go) declared as nodemarket.NodeSecretsReconciler, a sibling of NodeSecrets rather than a fourth method on it; deletes every role under a jwt-<12 hex> mount whose name is not a live node or whose mount is not that node''s grant mount, every policy named node-<node> that names no live node, every socialweb-nodes/metadata/<node> entry naming no live node, and disables a jwt-<12 hex> mount left with no role that no live grant names; creates nothing, writes nothing else, never touches a mount, policy or path outside those naming patterns, and deletes nothing when any of its three listings fails (each reports its own error out of Reconcile)'
       - 'commit 0ff704b: the provider calls it (cmd/socialweb-clusterprovider/vaultsync.go) with live = the claims it holds plus the Adoptable claims in the home workspace (liveNodeGrants), after adoptClaims at adoption (adopt.go) and on every pass (nodes.go reconcile), rate-limited to once per cluster per VaultSyncInterval (30 s); every deletion is logged at INFO with its reason (NodeVault.WithLogger, wired in main.go)'
@@ -489,6 +489,7 @@ items:
       - 'mutations caught (9, each reverted): a LIST failure read as an empty list for roles, for policies and for KV; a role kept under a mount that is not its node''s grant mount; the policy naming filter dropped; the jwt-<12 hex> mount filter dropped; a mount named by a live grant disabled anyway; the rate limit removed; a Released claim counted live; the held nodes dropped from live'
       - 'docs/ARCHITECTURE.md: new section "The cluster OpenBao is reconciled against the live claims (plan 0005 M3-BAO-SYNC)"; the M3-JWT mount row now reads "disabled by the reconcile" instead of "never", and the "the mount outlives its last role" decision is superseded there'
       - 'not done: the live reading on prod (after a release and after a provider restart, bao auth list and bao list auth/<m>/role name exactly the live nodes) -- the lead deploys and reads; nothing here was deployed'
+      - "live prod 2026-10-07T23:51:42Z after the merged reconcile was deployed (23:41:44Z), a provider restart and two node releases: the tenant OpenBao lists 0 jwt-* auth mounts (5 at 22:53Z, one per bob issuer ever seen), 0 node-* policies and no socialweb-nodes KV entries, with 0 live nodes"
   - id: M3-DEBUG-SSH
     milestone: M3
     title: DEBUG_SOCIALWEB_NODE_SSH_DIR gives the operator an ssh key into market nodes, off by default
