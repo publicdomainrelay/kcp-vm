@@ -4147,7 +4147,18 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   manifest directory -- and the pass calls it on that path.
   `TestRemoveTakesBackTheObjectsThisInstallerWrote` seeds the objects the manifests name and asserts
   none survive; watched to fail with `Remove` made a no-op: "1 clustersecretstores objects survived
-  the removal". What is given up is stated rather than
+  the removal".
+  The first version of THAT change stalled production, and the way it read is the lesson. The
+  store-less path called the installer function directly, which bypasses `eso.InstallOperator`'s "only
+  if the group is not served" guard, so `bash install.sh` ran against the tenant apiserver on every
+  pass; the pass is synchronous, so the node-scale pass behind it stopped with it. MEASURED minutes
+  after it shipped: the last line the clusterprovider logged was `installing the External Secrets
+  Operator into the tenant cluster`, nothing followed it, and the process showed ZERO cpu time 51
+  seconds in -- blocked rather than working. It now calls `InstallOperator`, which is what the guest
+  path has always reached through `applyTenantAddOns`, and the removal carries a 60 s timeout so the
+  worst case is a pass that fails loudly rather than a provider that stops. NO instrument covers this
+  one: the stall was found by reading the log and the process's cpu time, and what would have caught
+  it is a test that counts the installer's invocations per pass, which does not exist. What is given up is stated rather than
   implied: a market cluster now has the operator and no store, and a tenant who wants one configures
   one they can reach. The other two instruments remain open as options -- reaching the vault through
   the door the node's SSH session uses, or publishing the vault on the provider host behind the
