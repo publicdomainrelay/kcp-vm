@@ -71,7 +71,34 @@ export const NODE_SECRETS_DIR = "/etc/socialweb/node";
 export const OPENBAO_TICKET_PATH = `${NODE_SECRETS_DIR}/openbao-ticket`;
 export const OPENBAO_CA_PATH = `${NODE_SECRETS_DIR}/openbao-ca.pem`;
 export const NODE_CLAIM_DOC_PATH = `${NODE_SECRETS_DIR}/claim.json`;
+export const NODE_LINK_ENV_PATH = `${NODE_SECRETS_DIR}/apiserver.env`;
 export const NODE_BUNDLE_PATHS = [OPENBAO_TICKET_PATH, OPENBAO_CA_PATH, NODE_CLAIM_DOC_PATH] as const;
+
+export interface NodeLinkEnv {
+  node: string;
+  advertiseAddress: string;
+  apiserverPort: number;
+  ticket: string;
+}
+
+export const IPV4_ADDRESS = /^([0-9]{1,3}\.){3}[0-9]{1,3}$/;
+export const PORT_NUMBER = /^[0-9]{1,5}$/;
+export const DUMBPIPE_TICKET = /^[a-z0-9]+$/;
+
+export function renderNodeLinkEnv(env: NodeLinkEnv): string {
+  return `NODE_NAME=${env.node}\nADVERTISE_ADDRESS=${env.advertiseAddress}\n` +
+    `APISERVER_PORT=${env.apiserverPort}\nAPISERVER_TICKET=${env.ticket}\n`;
+}
+
+export function nodeLinkEnv(
+  spec: Pick<NodeLinkEnv, "node" | "advertiseAddress" | "apiserverPort">,
+  ticket: string,
+): string | null {
+  if (!DUMBPIPE_TICKET.test(ticket)) return null;
+  if (!IPV4_ADDRESS.test(spec.advertiseAddress)) return null;
+  if (!PORT_NUMBER.test(String(spec.apiserverPort))) return null;
+  return renderNodeLinkEnv({ ...spec, ticket });
+}
 
 export const NODE_KV_MOUNT = "socialweb-nodes";
 export const OPENBAO_LINK_LOCAL_ADDR = "127.0.0.1:18200";

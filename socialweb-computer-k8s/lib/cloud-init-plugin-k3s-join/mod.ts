@@ -1,6 +1,7 @@
 import type { UserDataModule, UserDataPatch, WriteFileEntry } from "@publicdomainrelay/cloud-init-common";
 import {
   NODE_CLAIM_DOC_PATH,
+  NODE_LINK_ENV_PATH,
   NODE_SECRETS_DIR,
   OPENBAO_CA_PATH,
   OPENBAO_LINK_LOCAL_ADDR,
@@ -37,6 +38,14 @@ export const STEP_PROBE = `uptime_ms() {
 step() { echo "socialweb-step: $1 $2 $(uptime_ms)" >&2; }
 `;
 
+export const LINK_ENV_GUARD = `link_env_field() { sed -n "s/^$1=//p" "$2" | head -n 1; }
+link_env_guard() {
+  printf '%s' "\${ADVERTISE_ADDRESS:-}" | grep -Eqx '([0-9]{1,3}\\.){3}[0-9]{1,3}' || { echo "advertiseAddress is not an IPv4 address" >&2; return 1; }
+  printf '%s' "\${APISERVER_PORT:-}" | grep -Eqx '[0-9]{1,5}' || { echo "apiserverPort is not a port" >&2; return 1; }
+  printf '%s' "\${APISERVER_TICKET:-}" | grep -Eqx '[a-z0-9]+' || { echo "apiserverTicket is not a ticket" >&2; return 1; }
+}
+`;
+
 export const NODE_SCRIPTS = {
   openbaoLink: "/usr/local/bin/socialweb-openbao-link",
   nodeSecrets: "/usr/local/bin/socialweb-node-secrets",
@@ -47,7 +56,7 @@ export const NODE_FILES = {
   token: `${NODE_SECRETS_DIR}/token`,
   nodePassword: `${NODE_SECRETS_DIR}/node-password`,
   serverCA: `${NODE_SECRETS_DIR}/server-ca.pem`,
-  linkEnv: `${NODE_SECRETS_DIR}/apiserver.env`,
+  linkEnv: NODE_LINK_ENV_PATH,
   done: "/var/lib/socialweb-node-secrets.done",
 } as const;
 
@@ -224,7 +233,7 @@ export function renderNodeSecretsScript(opts: K3sJoinModuleOptions = {}): string
   const p = resolvePaths(opts);
   return `#!/bin/bash
 set -euo pipefail
-${STEP_PROBE}say() { echo "socialweb-node-secrets: $*" >&2; }
+${STEP_PROBE}${LINK_ENV_GUARD}say() { echo "socialweb-node-secrets: $*" >&2; }
 step node-secrets start
 [ -f ${p.done} ] && [ -s ${p.linkEnv} ] && [ -s ${p.meshdEnv} ] && exit 0
 for f in ${p.claim} ${p.ca} ${p.acceptPath}; do
@@ -271,13 +280,23 @@ BAO_TOKEN="$(curl -sf --cacert ${p.ca} -H "Content-Type: application/json" \\
 DATA="$(curl -sf --cacert ${p.ca} -H "X-Vault-Token: \${BAO_TOKEN}" "\${BAO}/v1/\${KV_MOUNT}/data/\${KV_PATH}" | jq -c '.data.data // empty')" || true
 [ -n "\${DATA}" ] || { say "reading \${KV_MOUNT}/\${KV_PATH} failed"; exit 1; }
 need() { printf '%s' "\${DATA}" | jq -er --arg k "$1" '.[$k] | if type == "number" then tostring else strings end | select(length > 0)' >/dev/null || { say "\${KV_MOUNT}/\${KV_PATH} has no $1"; exit 1; }; }
-for k in token nodePassword serverCA apiserverTicket advertiseAddress apiserverPort; do need "\${k}"; done
-ADVERTISE="$(printf '%s' "\${DATA}" | jq -r '.advertiseAddress')"
-PORT="$(printf '%s' "\${DATA}" | jq -r '.apiserverPort | tostring')"
-TICKET="$(printf '%s' "\${DATA}" | jq -r '.apiserverTicket')"
-printf '%s' "\${ADVERTISE}" | grep -Eqx '([0-9]{1,3}\\.){3}[0-9]{1,3}' || { say "advertiseAddress is not an IPv4 address"; exit 1; }
-printf '%s' "\${PORT}" | grep -Eqx '[0-9]{1,5}' || { say "apiserverPort is not a port"; exit 1; }
-printf '%s' "\${TICKET}" | grep -Eqx '[a-z0-9]+' || { say "apiserverTicket is not a ticket"; exit 1; }
+for k in token nodePassword serverCA; do need "\${k}"; done
+LINK_FROM_BUNDLE=""
+if [ -s ${p.linkEnv} ]; then
+  LINK_FROM_BUNDLE=yes
+  BUNDLED_NODE="$(link_env_field NODE_NAME ${p.linkEnv})"
+  [ "\${BUNDLED_NODE}" = "\${NODE}" ] || { say "the bundled apiserver link names \${BUNDLED_NODE}, not \${NODE}"; exit 1; }
+  ADVERTISE_ADDRESS="$(link_env_field ADVERTISE_ADDRESS ${p.linkEnv})"
+  APISERVER_PORT="$(link_env_field APISERVER_PORT ${p.linkEnv})"
+  APISERVER_TICKET="$(link_env_field APISERVER_TICKET ${p.linkEnv})"
+  say "the apiserver link came with the bundle"
+else
+  for k in apiserverTicket advertiseAddress apiserverPort; do need "\${k}"; done
+  ADVERTISE_ADDRESS="$(printf '%s' "\${DATA}" | jq -r '.advertiseAddress')"
+  APISERVER_PORT="$(printf '%s' "\${DATA}" | jq -r '.apiserverPort | tostring')"
+  APISERVER_TICKET="$(printf '%s' "\${DATA}" | jq -r '.apiserverTicket')"
+fi
+link_env_guard || exit 1
 
 umask 077
 install -d -m 0700 ${p.dir} "$(dirname ${p.k3sNodePassword})"
@@ -291,9 +310,11 @@ esac
 printf '%s' "\${JOIN}" > ${p.token}
 printf '%s' "\${DATA}" | jq -j '.nodePassword' | tr -d '\\n' > ${p.nodePassword}
 install -m 0600 ${p.nodePassword} ${p.k3sNodePassword}
-printf 'NODE_NAME=%s\\nADVERTISE_ADDRESS=%s\\nAPISERVER_PORT=%s\\nAPISERVER_TICKET=%s\\n' \\
-  "\${NODE}" "\${ADVERTISE}" "\${PORT}" "\${TICKET}" > ${p.linkEnv}.tmp
-mv ${p.linkEnv}.tmp ${p.linkEnv}
+if [ -z "\${LINK_FROM_BUNDLE}" ]; then
+  printf 'NODE_NAME=%s\\nADVERTISE_ADDRESS=%s\\nAPISERVER_PORT=%s\\nAPISERVER_TICKET=%s\\n' \\
+    "\${NODE}" "\${ADVERTISE_ADDRESS}" "\${APISERVER_PORT}" "\${APISERVER_TICKET}" > ${p.linkEnv}.tmp
+  mv ${p.linkEnv}.tmp ${p.linkEnv}
+fi
 printf 'SOCIALWEB_MESHD_NODE_NAME=%s\\nSOCIALWEB_MESHD_KUBECONFIG=%s\\n' "\${NODE}" ${p.kubeletKubeconfig} > ${p.meshdEnv}.tmp
 mv ${p.meshdEnv}.tmp ${p.meshdEnv}
 chmod 0600 ${p.serverCA} ${p.token} ${p.nodePassword} ${p.k3sNodePassword} ${p.linkEnv} ${p.meshdEnv}
@@ -319,9 +340,10 @@ export function renderApiserverLinkScript(opts: K3sJoinModuleOptions = {}): stri
   const p = resolvePaths(opts);
   return `#!/bin/bash
 set -euo pipefail
-${STEP_PROBE}step apiserver-link start
+${STEP_PROBE}${LINK_ENV_GUARD}step apiserver-link start
 [ -x ${p.dumbpipe} ] || { echo "socialweb-apiserver-link: ${p.dumbpipe} is not installed" >&2; exit 1; }
 : "\${ADVERTISE_ADDRESS:?}" "\${APISERVER_PORT:?}" "\${APISERVER_TICKET:?}"
+link_env_guard || exit 1
 ip -4 addr show dev lo | grep -q " \${ADVERTISE_ADDRESS}/32 " || ip addr add "\${ADVERTISE_ADDRESS}/32" dev lo
 exec ${p.dumbpipe} connect-tcp --addr "\${ADVERTISE_ADDRESS}:\${APISERVER_PORT}" "\${APISERVER_TICKET}"
 `;
@@ -510,8 +532,8 @@ export function renderNodeUnits(opts: K3sJoinModuleOptions = {}): Record<string,
     [NODE_UNITS.apiserverLink]: unit({
       Unit: [
         "Description=socialweb node: dumbpipe to the cluster apiserver on its advertise address",
-        `After=network-online.target ${NODE_UNITS.nodeSecrets}`,
-        `Wants=network-online.target ${NODE_UNITS.nodeSecrets}`,
+        `After=network-online.target ${SECRETS_FETCH_UNIT}`,
+        `Wants=network-online.target ${SECRETS_FETCH_UNIT}`,
         "StartLimitIntervalSec=0",
       ],
       Service: ["Type=simple", `EnvironmentFile=${p.linkEnv}`, `ExecStart=${NODE_SCRIPTS.apiserverLink}`, ...always, ...CONSOLE],

@@ -1517,12 +1517,19 @@ cluster's OpenBao. Decisions not in the contract are marked "decided by Claude, 
   `TokenPath(clusterDir)` and keeps the CA at `clusterstack.OpenBaoTLSCAPath(clusterDir)`. It is an
   option (`openBaoCAFileOf`) so a provider-published path replaces the derivation without a door
   change; that published path is an open interface need, below.
-- It hands the guest exactly three files through atproto-market's secrets capability:
-  `/etc/socialweb/node/openbao-ticket`, `/etc/socialweb/node/openbao-ca.pem` and
+- It hands the guest exactly four files through atproto-market's secrets capability:
+  `/etc/socialweb/node/openbao-ticket`, `/etc/socialweb/node/openbao-ca.pem`,
   `/etc/socialweb/node/claim.json` = `{node, cluster, jwtMount, role, audience, kvMount, kvPath}` with
   `cluster` the cluster KEY, `jwtMount` = `jwt-<first 12 hex of sha256(issuer)>`, `role` = `kvPath` =
-  the node name and `kvMount` = `socialweb-nodes`. None of the three is secret: the ticket is the
-  link's public half, the CA is public, and `claim.json` holds names.
+  the node name and `kvMount` = `socialweb-nodes`, and `/etc/socialweb/node/apiserver.env` =
+  `NODE_NAME`, `ADVERTISE_ADDRESS`, `APISERVER_PORT`, `APISERVER_TICKET` from the claim's spec and the
+  `<clusterKey>-apiserver` link's `status.ticket`. None of the four is a credential: the two tickets
+  are the links' public halves, the CA is public, and `claim.json` holds names.
+  The apiserver link is read beside the OpenBao one and its absence is not an error: a link that is not
+  listening yet, or a ticket outside `[a-z0-9]+`, leaves `apiserver.env` out of the bundle, and the
+  guest falls back to reading those three values out of the KV entry, which is what every door did
+  before this one. Delivering them is what lets `socialweb-apiserver-link` start with the OpenBao link
+  rather than after the KV read, and that is the whole of M3-JOIN-PATH.
 - It writes `status.grant` = `{issuer, subject, audience: socialweb.computer/node/<clusterKey>/<node>,
   role: <node>}` when the capability is granted. `grantingCapability` composes the secrets capability:
   its `onContract` first awaits the grant write, then appends `claim.json` (its `jwtMount` needs the
@@ -1633,7 +1640,7 @@ binaries (M3-UNITS's fallback) are not needed by it. Every unit carries `StartLi
 |---|---|---|---|
 | `socialweb-openbao-link` | `setup-secrets` | `dumbpipe connect-tcp --addr 127.0.0.1:18200 <openbao-ticket>` | always |
 | `socialweb-node-secrets` | `setup-secrets`, openbao link | exchange the workload token for the claim's audience; OpenBao JWT login; KV read; write files | on-failure |
-| `socialweb-apiserver-link` | node secrets | `<advertiseAddress>/32` on `lo`; `dumbpipe connect-tcp --addr <advertiseAddress>:<apiserverPort> <apiserverTicket>` | always |
+| `socialweb-apiserver-link` | `setup-secrets` (the bundle) | `<advertiseAddress>/32` on `lo`; `dumbpipe connect-tcp --addr <advertiseAddress>:<apiserverPort> <apiserverTicket>` | always |
 | `socialweb-k3s-agent` | node secrets, apiserver link, DNS link, masquerade | `k3s agent --server https://<advertiseAddress>:<apiserverPort> --token-file /etc/socialweb/node/token --node-name <node> --data-dir /var/lib/rancher/k3s --kubelet-arg=cluster-dns=169.254.20.10 --node-label=socialweb.computer/node-local-dns=true` | always |
 
 M5 adds the node network units beside these four (section 9 "Pods reach pods..." and "Every market
@@ -1647,14 +1654,18 @@ runcmd; none is a dependency of the agent except the DNS link and the masquerade
   "always" means for a oneshot. Its token exchange is the one cloud-init-common's `secrets` module
   does (accept.json's `bid_config` `token_path`, `url_path`, `url_route`; the subject echoed back;
   `ttl` 300) for `aud` = the claim's audience. It logs in at `/v1/auth/<jwtMount>/login` with
-  `{role, jwt}` and `--cacert openbao-ca.pem`, reads `/v1/<kvMount>/data/<kvPath>`, requires `token`,
-  `nodePassword`, `serverCA`, `apiserverTicket`, `advertiseAddress` and `apiserverPort`, and refuses
-  an `advertiseAddress` that is not IPv4, a port that is not digits and a ticket outside `[a-z0-9]+`,
-  because those three reach a unit's command line. It writes `server-ca.pem`, `token`,
-  `node-password` and `apiserver.env` under `/etc/socialweb/node/` and `/etc/rancher/node/password`,
-  all `0600`. The token is pinned as the ssh join pinned it,
-  `K10<sha256 of the server CA bytes>::server:<token>`, unless the stored token already starts with
-  `K10`.
+  `{role, jwt}` and `--cacert openbao-ca.pem`, reads `/v1/<kvMount>/data/<kvPath>`, and requires
+  `token`, `nodePassword` and `serverCA`, because those three are credentials OpenBao alone holds.
+  The apiserver ticket, the advertise address and the port it requires only when the bundle did not
+  already write `/etc/socialweb/node/apiserver.env`; when the bundle did, it reads them back out of
+  that file and checks the file names this node, so the two halves of the join cannot disagree about
+  which node the ticket belongs to. Either way it refuses an `advertiseAddress` that is not IPv4, a
+  port that is not digits and a ticket outside `[a-z0-9]+`, because those three reach a unit's command
+  line, and the link script checks the same three itself, because systemd loads them from the file
+  without reading it. It writes `server-ca.pem`, `token`, `node-password` and `apiserver.env` under
+  `/etc/socialweb/node/` and `/etc/rancher/node/password`, all `0600`. The token is pinned as the ssh
+  join pinned it, `K10<sha256 of the server CA bytes>::server:<token>`, unless the stored token already
+  starts with `K10`.
 - `socialweb-k3s-agent` passes the flags the ssh join passed and no others (it passed no node-ip
   flag); the node password stays where k3s reads it. Decided by Claude, user may veto: the unit is
   `socialweb-k3s-agent`, not `k3s-agent`, because the k3s installer owns the `k3s` and `k3s-agent`
@@ -1670,6 +1681,9 @@ runcmd; none is a dependency of the agent except the DNS link and the masquerade
 
 1. The ClusterLink `<clusterKey>-openbao` in the claim's home workspace with `status.ticket` set
    (a bare dumbpipe ticket) BEFORE the claim is written; otherwise the claim fails at once.
+   The ClusterLink `<clusterKey>-apiserver` is read the same way and delivered to the guest in the
+   same bundle when it holds a ticket, which it does on every cluster the provider rents nodes from;
+   when it does not, the guest reads that ticket from the KV entry below instead, and joins serially.
 2. A published path for the cluster OpenBao CA (a `NodeClaim` spec field such as `openBaoCAFile`, or
    a ClusterLink status field), or the guarantee that `<dirname(tokenFile)>/openbao/tls/ca.crt` is it
    and is readable by the door process.
@@ -2917,13 +2931,21 @@ A change must not break any of these. Each exists because something failed.
 10. **Nothing is read back out of a node.** The token and the name are ours.
 11. **Never request-header auth against the mount.** The mount authenticates nothing.
 12. **A revocation needs a consultable deny record**, not just a deleted object.
-13. **Secrets never ride argv or `user_data`, and a market node's secrets cross only OpenBao JWT over
+13. **Secrets never ride argv or `user_data`, and a market node's credentials cross only OpenBao JWT over
     the cluster link.** `user_data` is readable from inside the guest. The door hands a market guest
-    only public material, through the `--secrets` capability: the OpenBao link's ticket, the cluster
-    OpenBao's CA and `claim.json`. The join token, the node password, the server CA and the apiserver
-    ticket are read by the guest itself from the cluster's OpenBao, after a JWT login bound to its
-    workload subject and its claim's audience, over its own dumbpipe link to that OpenBao. Nothing
-    reaches a guest over ssh: the door opens no session to any guest.
+    through the `--secrets` capability the material a guest may hold before it has authenticated to
+    anything: the cluster OpenBao's CA, `claim.json`, and the two capability tickets — the OpenBao
+    link's ticket, and the apiserver link's ticket with the node's advertise address and port. A
+    capability ticket is one that is useless on its own: the cluster's apiserver still refuses a
+    connection without the k3s token, and OpenBao still refuses one without the JWT login. Delivering
+    the apiserver ticket with the OpenBao ticket is what lets the guest dial the apiserver while it is
+    still exchanging its workload token for that login, instead of waiting for the ticket to come back
+    out through the OpenBao it is still dialing. The join token, the node password and the server CA
+    are credentials, and they are read by the guest itself from the cluster's OpenBao, after a JWT
+    login bound to its workload subject and its claim's audience, over its own dumbpipe link to that
+    OpenBao. The apiserver ticket is read from that same KV entry when the door's bundle does not
+    carry one, so a guest whose door predates the bundle keeps joining the serial way. Nothing reaches
+    a guest over ssh: the door opens no session to any guest.
     The provider half (KV, policy, mount, role, revoke at release) is in section 7; the guest login is
     `auth/jwt-<12 hex>/login` as role `<node>`, reading `socialweb-nodes/data/<node>`.
 14. **A list failure is an error, never an empty observation.**
@@ -2970,14 +2992,17 @@ A change must not break any of these. Each exists because something failed.
     wait immediately, with the guest's own words. A timeout that runs to its end over a host that
     died at its first step reports the timeout instead of the cause, and the two are indistinguishable
     until the clock runs out.
-29. **A market node's secrets never ride the claim or the door.** The join token, the per-node
+29. **A market node's credentials never ride the claim or the door.** The join token, the per-node
     password, the cluster's server CA and the apiserver ticket live in the cluster's OpenBao at
     `socialweb-nodes/<node>`, and the guest fetches them itself (invariant 13). A `NodeClaim` is a
     cluster-scoped object in the owner's home workspace, readable by anything that can read that
     workspace, so it carries only what is not secret: the PATHS the provider reads and the grant that
-    authorizes the guest's fetch (`issuer`, `subject`, `audience`, `role`). They also never ride argv,
-    `user_data` or a boot command line, for the reasons invariants 13 and 25 already give. This
-    replaces "a market node's secrets cross only the SSH session's stdin" (plan 0005 M3).
+    authorizes the guest's fetch (`issuer`, `subject`, `audience`, `role`). The door carries the two
+    capability tickets and nothing else: an OpenBao ticket alone buys a dial to OpenBao, and that still
+    needs the JWT login, and an apiserver ticket alone buys a dial to the apiserver, and that still
+    needs the k3s token, which only OpenBao holds. They also never ride argv, `user_data` or a boot
+    command line, for the reasons invariants 13 and 25 already give. This replaces "a market node's
+    secrets cross only the SSH session's stdin" (plan 0005 M3).
 30. **A cluster is its home workspace, not the name inside it.** Two accounts may each name a cluster
     `ci`; they are two clusters, with two state dirs, two sets of port and subnet leases, two sets of
     node names, two mint credentials and two process groups. Anything that identifies a cluster

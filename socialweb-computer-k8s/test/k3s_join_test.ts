@@ -61,7 +61,13 @@ Deno.test("the node's user_data installs four units that join it through OpenBao
   const secretsAfter = unitSection(secrets, "After")[0].split(" ");
   assert(secretsAfter.includes(SECRETS_FETCH_UNIT) && secretsAfter.includes(NODE_UNITS.openbaoLink), secretsAfter.join(" "));
   assertEquals(unitSection(secrets, "Type"), ["oneshot"]);
-  assert(unitSection(apiserver, "After")[0].split(" ").includes(NODE_UNITS.nodeSecrets));
+  const apiserverAfter = unitSection(apiserver, "After")[0].split(" ");
+  assert(apiserverAfter.includes(SECRETS_FETCH_UNIT), apiserverAfter.join(" "));
+  assertEquals(
+    apiserverAfter.includes(NODE_UNITS.nodeSecrets),
+    false,
+    "the apiserver link starts once the bundle is on disk, in parallel with the OpenBao login",
+  );
   const agentAfter = unitSection(agent, "After")[0].split(" ");
   assert(agentAfter.includes(NODE_UNITS.apiserverLink) && agentAfter.includes(NODE_UNITS.nodeSecrets), agentAfter.join(" "));
 
@@ -139,7 +145,7 @@ case "$URL" in
 esac
 `;
 
-async function nodeSecretsRun(kv: Record<string, unknown>) {
+async function nodeSecretsRun(kv: Record<string, unknown>, opts: { linkEnv?: string } = {}) {
   const dir = await Deno.makeTempDir();
   const node = `${dir}/etc/socialweb/node`;
   await Deno.mkdir(`${dir}/bin`, { recursive: true });
@@ -166,6 +172,7 @@ async function nodeSecretsRun(kv: Record<string, unknown>) {
     }),
   );
   await Deno.writeTextFile(`${node}/openbao-ca.pem`, OPENBAO_CA);
+  if (opts.linkEnv !== undefined) await Deno.writeTextFile(`${node}/apiserver.env`, opts.linkEnv, { mode: 0o600 });
   await Deno.writeTextFile(`${dir}/kv.json`, JSON.stringify({ data: { data: kv } }));
   const script = renderNodeSecretsScript({
     nodeDir: node,
@@ -189,6 +196,70 @@ async function nodeSecretsRun(kv: Record<string, unknown>) {
   }).output();
   return { dir, node, code: out.code, stderr: new TextDecoder().decode(out.stderr) };
 }
+
+Deno.test("node-secrets keeps the apiserver link the bundle already wrote, and needs no ticket in the KV entry", async () => {
+  const { apiserverTicket: _t, advertiseAddress: _a, apiserverPort: _p, ...kv } = KV;
+  const linkEnv = "NODE_NAME=ci-node1\nADVERTISE_ADDRESS=100.127.255.254\nAPISERVER_PORT=23456\nAPISERVER_TICKET=endpointabc123\n";
+  const run = await nodeSecretsRun(kv, { linkEnv });
+  try {
+    assertEquals(run.code, 0, run.stderr);
+    assertEquals(await Deno.readTextFile(`${run.node}/apiserver.env`), linkEnv);
+    assertEquals(await Deno.readTextFile(`${run.node}/token`), `K10${await sha256Hex(CA)}::server:k10secret`);
+    assertStringIncludes(run.stderr, "the apiserver link came with the bundle");
+  } finally {
+    await Deno.remove(run.dir, { recursive: true });
+  }
+});
+
+Deno.test("node-secrets refuses a bundled apiserver link that names another node", async () => {
+  const run = await nodeSecretsRun(KV, {
+    linkEnv: "NODE_NAME=ci-node2\nADVERTISE_ADDRESS=100.127.255.254\nAPISERVER_PORT=23456\nAPISERVER_TICKET=endpointabc123\n",
+  });
+  try {
+    assertEquals(run.code, 1);
+    assertStringIncludes(run.stderr, "names ci-node2");
+  } finally {
+    await Deno.remove(run.dir, { recursive: true });
+  }
+});
+
+Deno.test("node-secrets refuses a bundled apiserver link whose ticket would ride a unit's command line", async () => {
+  const run = await nodeSecretsRun(KV, {
+    linkEnv: "NODE_NAME=ci-node1\nADVERTISE_ADDRESS=100.127.255.254\nAPISERVER_PORT=23456\nAPISERVER_TICKET=abc; rm -rf /\n",
+  });
+  try {
+    assertEquals(run.code, 1);
+    assertStringIncludes(run.stderr, "apiserverTicket is not a ticket");
+  } finally {
+    await Deno.remove(run.dir, { recursive: true });
+  }
+});
+
+Deno.test("node-secrets reads the link out of the KV entry when no bundle carried one", async () => {
+  const run = await nodeSecretsRun(KV);
+  try {
+    assertEquals(run.code, 0, run.stderr);
+    assertStringIncludes(await Deno.readTextFile(`${run.node}/apiserver.env`), "APISERVER_TICKET=endpointabc123");
+  } finally {
+    await Deno.remove(run.dir, { recursive: true });
+  }
+});
+
+Deno.test("the apiserver link refuses an address, a port or a ticket that would not survive a command line", async () => {
+  for (const env of [
+    { ADVERTISE_ADDRESS: "100.127.255.254; rm -rf /", APISERVER_PORT: "23456", APISERVER_TICKET: "apiticket" },
+    { ADVERTISE_ADDRESS: "100.127.255.254", APISERVER_PORT: "80 80", APISERVER_TICKET: "apiticket" },
+    { ADVERTISE_ADDRESS: "100.127.255.254", APISERVER_PORT: "23456", APISERVER_TICKET: "api ticket" },
+  ]) {
+    const run = await shimmedLink(renderApiserverLinkScript(), env);
+    try {
+      assertEquals(run.code, 1, JSON.stringify(env));
+      assertEquals(await Deno.readTextFile(`${run.dir}/dumbpipe.args`).catch(() => ""), "", JSON.stringify(env));
+    } finally {
+      await Deno.remove(run.dir, { recursive: true });
+    }
+  }
+});
 
 async function sha256Hex(text: string): Promise<string> {
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)));
