@@ -543,3 +543,60 @@ before `expirationTimestamp`. The runner's own docs say the same thing in prose
 (`docs/executors/kubernetes/_index.md`, v19.2.1): `host` is "Optional Kubernetes API server host URL
 (auto-discovery attempted if not specified)", and `context` is to be used "when you don't specify
 `host`".
+
+## What was measured on 2026-10-07
+
+Everything below was run against the live deployment, not reasoned from the source.
+
+**The mount carries the exec path, and Caddy had to be told to speak HTTP/1.1 to do it.** An exec or
+attach is an HTTP upgrade, and Caddy's upstream transport offers HTTP/2 by default - it forces
+HTTP/1.1 for websockets only, and SPDY is not a websocket. Measured against the live front, with a
+bogus bearer so nothing could be provisioned:
+
+```
+$ curl -sk -i --http1.1 -X POST -H 'Connection: Upgrade' -H 'Upgrade: SPDY/3.1' \
+    -H 'Authorization: Bearer bogus' \
+    https://kcp.socialweb.computer/clusters/root:<acct>:<cluster>:clusters/api/v1/namespaces/default/pods/probe/exec
+HTTP/1.1 502 Bad Gateway                       # before: the upgrade died at Caddy, no Audit-Id
+HTTP/1.1 401 Unauthorized ... Audit-Id: 1f84af2c-...   # after `versions 1.1` on the kcp vhost
+```
+
+A 401 with an `Audit-Id` is the tenant apiserver answering, which is the proof the request arrived:
+the credential is what was wrong, not the hop. So the constraint 03 recorded - that the runner must
+use the apiserver's loopback with a client certificate because the mount does not carry the exec
+path - is lifted for this deployment, and the kcp vhost's `transport http` block carries
+`versions 1.1` for that reason.
+
+**The runner reaches the cluster from off-host.** With the config.toml block in this document, a
+pushed commit produced a pipeline whose jobs were attributed to the tagged kcp runner, and two job
+pods appeared in the tenant cluster through the mount:
+
+```
+scale-check-1   running   runner=kcp-tenant-kubernetes-streamplace
+scale-check-2   running   runner=kcp-tenant-kubernetes-streamplace
+scale-check-3   pending            # concurrent = 2
+$ kubectl get pods -n gitlab-runner
+runner-ipe-baff-project-1-concurrent-0-zolp6f3a   0/2   Pending   NODE <none>
+runner-ipe-baff-project-1-concurrent-1-yl375jpx   0/2   Pending   NODE <none>
+```
+
+`Pending` with no node is the design at rest, not a failure: the pods are the intent that drives the
+scale decision.
+
+**Two things the recipe above assumes and the deployment had to be told.**
+
+- The QR/session and the operator's own bidder are the trust graph's business: a tenant created by an
+  atproto account can only buy a node from a bidder that account's vouches admit. Every bid from a
+  bidder outside that graph is `policy_rejected`, which reads as an empty market rather than as a
+  missing vouch, so the operator's own bidder has to be the one that runs.
+- `denyBidderDids` steers who is *solicited*; a bidder that was not solicited can still submit, so a
+  denied bidder could win. The deny is now enforced where bids arrive.
+
+**A guest's tunnel address has one writer.** The reporter the guest runs reads its target out of
+`/root/secrets/digitalocean.com/serviceaccount/base_url`, and the only writer of that file is the
+provisioning-token script, which writes it only when its token exchange succeeds. A bidder with no
+OIDC issuer therefore leaves the guest falling back to the public dispatcher, whose `/v1/on-network`
+answers 404 - the unit fails with `[FAILED] Failed to start guest-onnetwork.service`, the guest never
+reports the FQDN it already has in `/run/guest-fqdn`, and the requester waits out its whole timeout.
+The firecracker provider now writes that file itself, from the same `guest_onnetwork_url` it extracts
+from the accept bundle.
