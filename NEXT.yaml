@@ -77,6 +77,14 @@ about: >
   including pipeline 74's trace, the rate, and the reason the obvious reconcile was recorded as unsafe
   before the phase distinction made it safe.
 
+  Opened and closed on 2026-10-07 and therefore NOT listed below: GL-2 (a GitLab runner off the kcp
+  host could not reach a tenant apiserver, or so it was recorded -- the apiserver binds loopback and
+  the only route is the mount, a reverse proxy carrying bearers, and whether exec survives it was
+  unmeasured). It closed by measurement rather than by a change: an off-host `kubectl exec` reaches
+  containerd through `kcp.socialweb.computer`, and the kubernetes executor that ran five green jobs at
+  once runs every job script with `pods/exec`. It is in section 15 with the readings, including what
+  the front exposes to a caller with no credential.
+
 open:
   - id: MINT-1
     title: A mint credential is named by the cluster's key, and the migration that renames an existing one runs in a different process from the reader.
@@ -180,18 +188,6 @@ open:
     instrument: >
       A run of `cmd/socialweb-tenantcredential` with a real `STATE_DIR` and `CLUSTER`, producing
       three files a `kubectl` authenticates with, and a refusal to overwrite an existing set.
-
-  - id: GL-2
-    title: A GitLab Runner off the kcp host cannot reach a tenant apiserver.
-    body: >
-      The apiserver binds loopback. Off-host the only route is the kcp mount, which is a reverse
-      proxy that carries bearers only, so the exec and attach paths a CI runner needs are not
-      guaranteed to traverse it. Making an off-host runner work means publishing an authenticated
-      front, which widens the trust boundary the gateway and the entrypoint keep at loopback on
-      purpose. Recorded rather than implemented, because it is a trust decision and not a bug.
-    instrument: >
-      A runner off the host completing a job whose script requires `pods/exec`, with the front it
-      went through named, and a statement of what that front exposes to whom.
 
 limits:
   - title: A node cannot reach another node, so a cluster with more than one has no cluster DNS

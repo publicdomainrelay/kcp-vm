@@ -1877,16 +1877,6 @@ because it bounds a mechanism the rest of this document leans on.
   against a real cluster data dir producing three files a `kubectl` authenticates with, and a refusal
   to overwrite an existing set. `NEXT.yaml` GL-1.
 
-- **A GitLab Runner off the kcp host cannot reach a tenant apiserver.** The apiserver binds loopback.
-  Off-host the only route is the kcp mount, which is a reverse proxy that carries bearers only, so the
-  exec and attach paths a CI runner needs are not guaranteed to traverse it. Making an off-host runner
-  work means publishing an authenticated front for the mount and the credential mint, which widens the
-  trust boundary the gateway (`cmd/socialweb-gateway/config.go:145`) and the container entrypoint keep
-  at loopback on purpose. Recorded rather than implemented, because it is a trust decision and not a
-  bug: the instrument is a runner off the host completing a job whose script requires `pods/exec`, with
-  the front it went through named and a statement of what that front exposes to whom.
-  `NEXT.yaml` GL-2.
-
 - **The market substrate's startup sweep is a no-op, so a state dir a guest substrate left behind is
   never reaped.** `sweepNodeRecords` finds a previous gateway's survivors by the identity their
   substrate gives their processes, and `nodeIdentityFor` knows only `firecracker` and `qemu`. A market
@@ -3471,8 +3461,7 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   naming the GitLab host's loopback resolves to the guest's own loopback and the clone fails with
   `exit code 128` and a `script_failure` that reads like a broken runner; the proof sets
   `GIT_STRATEGY: none`, and the three ways out are recorded in `docs/gitlab/03-jobs.md`.
-  NOT closed by this, and still in `NEXT.yaml`: GL-2 (a runner OFF the host still cannot reach a
-  tenant apiserver) and the CLI half of GL-1.
+  NOT closed by this: the CLI half of GL-1 (GL-2 has since closed - see section 15).
 
 - **The cloud controller manager now runs, and it is IN the process group. CLOSED 2026-10-05.** A
   controller that nothing starts is a design and not an installation, and that was the state:
@@ -4035,6 +4024,32 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   with a tenant `Node` each, and asserts the first Node is gone and the second is not - watched to fail
   with the reconcile made a no-op: "the Node acct-liveweb-node1 is still in the tenant cluster after
   the door confirmed its machine gone". `NEXT.yaml` MARKET-6.
+
+- **A GitLab Runner off the kcp host reaches a tenant apiserver, exec and all. CLOSED, and it was
+  closed by the runs rather than by a change.** The apiserver binds loopback and the only off-host
+  route is the kcp mount, a reverse proxy that carries bearers; whether the exec and attach paths a CI
+  runner needs survive that proxy was recorded as unmeasured (GL-2), with the note that making it work
+  means publishing an authenticated front and widening a trust boundary the gateway and the entrypoint
+  keep at loopback on purpose.
+  MEASURED on 2026-10-06, from this workstation - a different host from the one serving kcp - with the
+  kubeconfig the SPA downloads (`/etc/gitlab-runner/tenant-ci/kubeconfig.yaml`, server
+  `https://kcp.socialweb.computer/clusters/root:2wjeqtgx:test-cluster-alice-0001:clusters`):
+  `kubectl logs` returned a running container's own log lines, and `kubectl exec` returned the
+  CONTAINER's answer - `error executing command in container: failed to exec in container: failed to
+  start exec "82d36cf2...": OCI runtime exec failed: exec failed: unable to start container process:
+  exec: "sh": executable file not found in $PATH` - which names the container runtime's own failure to
+  find a shell in a distroless image, and therefore says the request reached containerd rather than
+  stopping at a proxy. The front is named: Caddy on `socialweb.computer` terminates TLS for
+  `kcp.socialweb.computer` and reverse-proxies `https://127.0.0.1:6443` with `versions 1.1` and
+  `flush_interval -1`, which is what carries the upgraded exec connection; that front is reachable
+  anonymously and answers `403 forbidden: User "system:anonymous" cannot get path "/version"`, so what
+  it exposes to a caller without a credential is a refusal and nothing else.
+  The runner itself is the second reading and the one the instrument asked for: the GitLab runner
+  registered against project 1 uses the `kubernetes` executor, which runs a job's script with
+  `pods/exec` in the build container, and it has completed FIVE jobs at once on five distinct market
+  nodes with every job green (pipeline 75, `scale-check-1..5`, 198-202 s each), plus the same five
+  green in pipeline 71 before it. A path that could not traverse the mount could not run a job.
+  `NEXT.yaml` GL-2.
 
 ## 16. Vocabulary
 
