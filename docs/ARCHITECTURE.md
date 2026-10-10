@@ -1903,6 +1903,24 @@ because it bounds a mechanism the rest of this document leans on.
   `deploy/control-plane-container/validate.sh` does. Two runs inside ONE container see each other,
   because they share one `/var/tmp`. Two containers must share that path or be serialized, and nothing
   outside the test suite turns on which.
+- **VAULT-TLS-1: a host a caller adds to the vault's certificate is not served until the vault
+  restarts.** `vaultcert.EnsureVaultTLSCertificate` re-signs the leaf under the cluster's existing CA
+  when a caller asks for one more host, so no client loses the anchor it trusts (section 15). What it
+  cannot do is make the RUNNING vault serve the new leaf: OpenBao reads `tls_cert_file` at start and
+  re-reads it only on a signal, and the callers that add a host hold no process handle: the tenant
+  add-on pass (`cmd/socialweb-clusterprovider/eso.go`) runs long after the vault step, and the node
+  disk stage (`cmd/socialweb-clusterprovider/nodes.go`, guest substrates only) runs later still. On a
+  market cluster the two host sets differ by construction: bring-up asks for
+  `SOCIALWEB_MARKET_ADVERTISE_ADDRESS`, the tenant add-on pass asks for the `10.100.0.0/16` gateway
+  `internal/subnetallocator` leases. So the address an `ExternalSecret` is told to dial
+  (`https://<gateway>:<vaultPort>`) is on the leaf on disk and not on the leaf in flight until the next
+  vault start. The clusterprovider's own dial is loopback, which both leaves carry, so the credential
+  mint (the one path this was found through) is unaffected. Recorded rather than fixed because the
+  fix is a reload seam between the material and the process that holds it, which is a design change
+  and not a bug in the writer.
+  instrument: a market cluster whose ESO pod reads its `ExternalSecret` without the vault having been
+  restarted since the tenant add-on pass; or the union of hosts moved to the FIRST mint, with a stated
+  source for the gateway address that does not require the allocator to have run.
 
 ## 15. Settled decisions, and the defects they closed
 
@@ -3571,6 +3589,42 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   are migrated to the key; a bare name two accounts share is left where it is). `internal/portallocator`
   and `internal/subnetallocator` gained `Rekey`, `internal/materialiser` gained `LocalHost.Clusters`,
   and the four-step proof and the live tests are untouched.
+
+- **The cluster vault's certificate can be asked to cover one more host without any client losing the
+  CA it trusts. CLOSED, and the CA key written beside the CA is what closed it.**
+  `vaultcert.EnsureVaultTLSCertificate` minted a brand new CA and leaf whenever the hosts it was asked
+  for were not already on the leaf, then wrote `ca.crt` over whatever was there, and it never wrote the
+  CA key at all - so a CA could not be reused and every host-set change forced a new anchor. Two
+  callers ask a market cluster's vault for different hosts: bring-up asks for
+  `SOCIALWEB_MARKET_ADVERTISE_ADDRESS` and loopback (`internal/clusterprovider/stack.go`), and the
+  tenant add-on pass asks for the `10.100.0.0/16` gateway `internal/subnetallocator` leases and
+  loopback (`cmd/socialweb-clusterprovider/eso.go`). So the second call replaced `ca.crt` while the
+  vault the first call had configured was still listening and serving the leaf it loaded at start,
+  which OpenBao does not re-read. Every later client built its pool from the new `ca.crt` and verified
+  it against the old leaf. Reproduced against a real `bao`: the mint failed with `x509: certificate
+  signed by unknown authority (possibly because of "x509: ECDSA verification failure" while trying to
+  verify candidate authority certificate "socialweb-vault-tls-ca")`, and it stayed failed for the life
+  of the process because the trust anchor had moved under a listener that never re-read it. The CA key
+  is now written 0600 beside `ca.crt`, the CA is minted only when there is none, and a caller that
+  needs one more host re-signs the leaf under the SAME CA to cover the union of the hosts the leaf
+  already names and the hosts asked for. Readings, on one run of the reproduction: the CA's SHA-256
+  first eight bytes were `d6e56d5aea1e43d7` before the tenant add-on pass and `d8491e1f7319d3b2` after
+  it, and the mint failed; with the change the CA stayed `829b657ffabfe2a0` across the same pass and
+  the mint succeeded against the same running vault. Pinned by
+  `TestTheVaultTLSCAOutlivesTheHostsItsCertificateCovers`,
+  `TestTheVaultTLSCertificateCarriesEveryHostItHasBeenAskedFor` and
+  `TestTheVaultTLSCAKeyIsWrittenBesideTheCAItSignsWith` in `internal/vaultcert`, all three of which
+  fail against the old writer, and by `TestTheVaultStillMintsAfterTheTenantAddOnPassAsksForAnotherHost` in
+  `internal/clusterprovider`, which starts a real `bao` and reproduces the production message verbatim.
+  A cluster whose `ca.crt` predates the CA key is kept rather than re-anchored - a leaf that is still
+  usable is returned as it is, because replacing the anchor breaks every client and every node
+  certificate already issued - and the host such a cluster cannot cover is section 14's VAULT-TLS-1.
+  The cluster vault and the root vault deliberately differ here, and the difference is the listener:
+  `EnsureRootVaultTLS` REPLACES its whole material, CA included, when the host set no longer matches
+  (`TestRootVaultTLSRotatesWhenAHostItMustCoverIsGone` pins it), and that is sound because every root
+  vault client re-reads `LoadRootVaultTLS` before it dials; a cluster vault's clients do not, and the
+  `bao` serving the leaf reads it once. So the cluster vault grows the leaf under a stable CA and the
+  root vault rotates both. Neither is the other's bug.
 
 ## 16. Vocabulary
 

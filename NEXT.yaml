@@ -55,6 +55,23 @@ open:
       firecracker record, started with `SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE=market`, leaving no
       process from that record running.
 
+  - id: VAULT-TLS-1
+    title: A host a caller adds to the vault's certificate is not served until the vault restarts.
+    body: >
+      `vaultcert.EnsureVaultTLSCertificate` re-signs the leaf under the cluster's existing CA when a
+      caller asks for one more host, so no client loses the anchor it trusts (section 15). What it
+      cannot do is make the RUNNING vault serve the new leaf: OpenBao reads `tls_cert_file` at start and
+      re-reads it only on a signal, and the callers that add a host hold no process handle. On a market
+      cluster the two host sets differ by construction - bring-up asks for
+      `SOCIALWEB_MARKET_ADVERTISE_ADDRESS`, the tenant add-on pass asks for the `10.100.0.0/16` gateway
+      `internal/subnetallocator` leases - so the address an `ExternalSecret` is told to dial is on the
+      leaf on disk and not on the leaf in flight until the next vault start. The clusterprovider's own
+      dial is loopback, which both leaves carry, so the credential mint is unaffected.
+    instrument: >
+      A market cluster whose ESO pod reads its ExternalSecret without the vault having been restarted
+      since the tenant add-on pass; or the union of hosts moved to the FIRST mint, with a stated source
+      for the gateway address that does not require the allocator to have run.
+
   - id: ESO-2
     title: The tenant grant admits the External Secrets controller by a hardcoded namespace.
     body: >
