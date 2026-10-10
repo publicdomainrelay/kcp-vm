@@ -201,6 +201,11 @@ if ((options.atprotoOauth as boolean) && (options.atprotoHandle as string | unde
   isOAuth = true;
 } else if ((options.atprotoOauthQr as boolean)) {
   // QR-based OAuth -- scan with phone, session transferred via qr.fedfork.com
+  const qrSessionKey = (handle: string | undefined) => ({
+    sessionPath: options.oauthSessionFile as string | undefined,
+    label: "requester",
+    handle,
+  });
   const kp = resolvedPrivateKeyHex
     ? await Secp256k1Keypair.import(resolvedPrivateKeyHex, { exportable: true })
     : await Secp256k1Keypair.create({ exportable: true });
@@ -235,8 +240,7 @@ if ((options.atprotoOauth as boolean) && (options.atprotoHandle as string | unde
   let _restoredOAuthAgent: any = null;
   let _session: any = null;
   const _restoredAgent = await tryRestoreOAuthQRSession({
-    logger, label: "requester", handle: options.atprotoHandle as string | undefined,
-    sessionPath: options.oauthSessionFile as string | undefined,
+    logger, ...qrSessionKey(options.atprotoHandle as string | undefined),
     clientId: options.oauthSessionClientId as string | undefined,
     autoRefreshThresholdMs: AUTO_REFRESH_THRESHOLD_MS,
     // No onSessionExpired here -- restore handles expiry internally
@@ -292,12 +296,12 @@ if ((options.atprotoOauth as boolean) && (options.atprotoHandle as string | unde
       logger,
       autoRefreshThresholdMs: AUTO_REFRESH_THRESHOLD_MS,
       onSessionExpired: createSessionExpiredHandler("requester"),
-      saveSession: (s) => saveOAuthQRSession(s, { label: "requester", handle: s.handle }),
+      saveSession: (s) => saveOAuthQRSession(s, qrSessionKey(s.handle)),
     });
     _oauthAgentForDispose = oauthAgent;
     (pds as unknown as Record<string, unknown>).oauthAgent = oauthAgent;
     (pds as unknown as Record<string, unknown>).oauthSession = _session;
-    await saveOAuthQRSession(_session, { label: "requester", handle: _session.handle });
+    await saveOAuthQRSession(_session, qrSessionKey(_session.handle));
     logger.info("oauth_qr_session_ready", { userDid: _session.userDid, handle: _session.handle });
   }
 
