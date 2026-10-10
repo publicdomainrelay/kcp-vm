@@ -48,7 +48,7 @@ func LoadImage(outDir, configPath string) (Image, Manifest, error) {
 	if err := manifest.Validate(); err != nil {
 		return Image{}, Manifest{}, err
 	}
-	recorded, err := manifest.Inputs.Fingerprint()
+	recorded, err := manifest.RecordedFingerprint()
 	if err != nil {
 		return Image{}, Manifest{}, err
 	}

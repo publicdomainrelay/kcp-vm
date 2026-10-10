@@ -65,7 +65,12 @@ func writeManifest(cfg Config, out Artifacts, tars []imageTar) error {
 	if err != nil {
 		return err
 	}
+	named, err := inputs.Fingerprint()
+	if err != nil {
+		return err
+	}
 	manifest := nodefirecracker.Manifest{
+		Fingerprint:    named,
 		VMM:            cfg.VMMName(),
 		BootArgs:       cfg.BootArgs,
 		Vcpu:           cfg.Vcpu,

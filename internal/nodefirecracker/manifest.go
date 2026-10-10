@@ -33,6 +33,23 @@ type Manifest struct {
 	Images []SeededImage `json:"images"`
 
 	Inputs *BuildInputs `json:"buildInputs,omitempty"`
+
+	Fingerprint string `json:"fingerprint,omitempty"`
+}
+
+func (m Manifest) RecordedFingerprint() (string, error) {
+	if m.Fingerprint == "" {
+		return "", fmt.Errorf("the manifest in this image records no fingerprint, so the name of " +
+			"its directory cannot be checked against it. Every image built since the name was " +
+			"recorded in the manifest carries it; one that does not was built before that, and " +
+			"its record is also a different shape. It is treated as stale rather than as whole: " +
+			"rebuilding it under the current name is the only way to know what it contains")
+	}
+	if !IsFingerprint(m.Fingerprint) {
+		return "", fmt.Errorf("the manifest in this image records the fingerprint %q, which is not "+
+			"a name this store issues", m.Fingerprint)
+	}
+	return m.Fingerprint, nil
 }
 
 type SeededImage struct {

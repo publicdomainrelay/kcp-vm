@@ -510,7 +510,7 @@ func imageStoreResult(f facts) Result {
 				"does not hold it: %v", f.outDir, err),
 		}
 	}
-	recorded, err := manifest.Inputs.Fingerprint()
+	recorded, err := manifest.RecordedFingerprint()
 	if err != nil {
 		return Result{
 			Label: "host.image-store",

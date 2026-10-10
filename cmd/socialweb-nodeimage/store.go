@@ -130,7 +130,7 @@ func completeImage(cfg Config, fingerprint string) (bool, error) {
 	if err := manifest.Validate(); err != nil {
 		return false, refusedNotWhole(cfg, dir, err)
 	}
-	recorded, err := manifest.Inputs.Fingerprint()
+	recorded, err := manifest.RecordedFingerprint()
 	if err != nil {
 		return false, refusedNotWhole(cfg, dir, err)
 	}
