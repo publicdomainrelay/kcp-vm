@@ -198,6 +198,8 @@ type nodeHostsOptions struct {
 
 const NodeLossGrace = 90 * time.Second
 
+const NodeJoinGrace = 10 * time.Minute
+
 func (o nodeHostsOptions) now() time.Time {
 	if o.Now == nil {
 		return time.Now()
@@ -291,6 +293,7 @@ type tenantNodes struct {
 	live          map[string]bool
 	joined        map[string]bool
 	notReadySince map[string]time.Time
+	readySeen     map[string]bool
 }
 
 type heldNode struct {
@@ -441,13 +444,27 @@ func (n *tenantNodes) lost(node *corev1.Node) (bool, time.Time) {
 			break
 		}
 	}
-	if ready == nil || ready.Status == corev1.ConditionTrue {
+	if ready != nil && ready.Status == corev1.ConditionTrue {
+		n.clearNotReady(node.Name)
+		n.mu.Lock()
+		if n.readySeen == nil {
+			n.readySeen = map[string]bool{}
+		}
+		n.readySeen[node.Name] = true
+		n.mu.Unlock()
+		return false, time.Time{}
+	}
+	if ready == nil {
 		n.clearNotReady(node.Name)
 		return false, time.Time{}
 	}
 	now := n.opts.now()
 	n.mu.Lock()
 	defer n.mu.Unlock()
+	grace := n.opts.nodeLossGrace()
+	if !n.readySeen[node.Name] && ready.Status == corev1.ConditionFalse {
+		grace = NodeJoinGrace
+	}
 	since := ready.LastTransitionTime.Time
 	if since.IsZero() {
 		if n.notReadySince == nil {
@@ -460,7 +477,7 @@ func (n *tenantNodes) lost(node *corev1.Node) (bool, time.Time) {
 		}
 		since = first
 	}
-	return now.Sub(since) >= n.opts.nodeLossGrace(), since
+	return now.Sub(since) >= grace, since
 }
 
 func (n *tenantNodes) clearNotReady(name string) {
