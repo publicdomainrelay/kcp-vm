@@ -245,9 +245,21 @@ func InstallBeside(ctx context.Context, dyn dynamic.Interface, o BesideOptions) 
 	return waitEstablished(ctx, dyn, crds)
 }
 
+const (
+	defaultRetirePoll    = time.Second
+	defaultRetireTimeout = 2 * time.Minute
+)
+
+var (
+	RetirePoll    = defaultRetirePoll
+	RetireTimeout = defaultRetireTimeout
+)
+
 func Retire(ctx context.Context, dyn dynamic.Interface, retired []unstructured.Unstructured) error {
-	background := metav1.DeletePropagationBackground
+	foreground := metav1.DeletePropagationForeground
 	var problems []error
+	var deleted []dynamic.ResourceInterface
+	var deletedNames []unstructured.Unstructured
 	for _, u := range retired {
 		gvr, ok := bundleResources[u.GetKind()]
 		if !ok {
@@ -258,9 +270,36 @@ func Retire(ctx context.Context, dyn dynamic.Interface, retired []unstructured.U
 		if u.GetNamespace() != "" {
 			ri = dyn.Resource(gvr).Namespace(u.GetNamespace())
 		}
-		err := ri.Delete(ctx, u.GetName(), metav1.DeleteOptions{PropagationPolicy: &background})
-		if err != nil && !apierrors.IsNotFound(err) {
+		err := ri.Delete(ctx, u.GetName(), metav1.DeleteOptions{PropagationPolicy: &foreground})
+		switch {
+		case apierrors.IsNotFound(err):
+		case err != nil:
 			problems = append(problems, fmt.Errorf("eso: retiring the in-tenant %s %s: %w", u.GetKind(), keyName(u), err))
+		default:
+			deleted = append(deleted, ri)
+			deletedNames = append(deletedNames, u)
+		}
+	}
+	deadline := time.Now().Add(RetireTimeout)
+	for i, ri := range deleted {
+		u := deletedNames[i]
+		for {
+			_, err := ri.Get(ctx, u.GetName(), metav1.GetOptions{})
+			if apierrors.IsNotFound(err) {
+				break
+			}
+			if time.Now().After(deadline) {
+				problems = append(problems, fmt.Errorf("eso: the in-tenant %s %s is still there %s after "+
+					"its foreground delete; its pods would read as tenant demand once the baseline no "+
+					"longer names it, so the install stops here and the next pass retries",
+					u.GetKind(), keyName(u), RetireTimeout))
+				break
+			}
+			select {
+			case <-ctx.Done():
+				return errors.Join(append(problems, ctx.Err())...)
+			case <-time.After(RetirePoll):
+			}
 		}
 	}
 	return errors.Join(problems...)

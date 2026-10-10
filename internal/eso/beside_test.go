@@ -382,3 +382,67 @@ func TestTheWebhookCertificateVerifiesForTheLoopbackURLAndIsKeptAcrossSpawns(t *
 		t.Fatal("the renewed CA is not PEM")
 	}
 }
+
+func TestRetiringWaitsUntilTheOldWorkloadAndItsPodsAreGone(t *testing.T) {
+	RetirePoll = time.Millisecond
+	RetireTimeout = 2 * time.Second
+	t.Cleanup(func() { RetirePoll, RetireTimeout = defaultRetirePoll, defaultRetireTimeout })
+	dyn := fakedynamic.NewSimpleDynamicClient(runtime.NewScheme())
+	var policies []string
+	dyn.PrependReactor("delete", "*", func(action clienttesting.Action) (bool, runtime.Object, error) {
+		opts := action.(clienttesting.DeleteActionImpl).DeleteOptions
+		policy := ""
+		if opts.PropagationPolicy != nil {
+			policy = string(*opts.PropagationPolicy)
+		}
+		policies = append(policies, policy)
+		return true, nil, nil
+	})
+	gets := 0
+	dyn.PrependReactor("get", "deployments", func(action clienttesting.Action) (bool, runtime.Object, error) {
+		gets++
+		if gets < 3 {
+			return true, &unstructured.Unstructured{Object: map[string]any{
+				"apiVersion": "apps/v1", "kind": "Deployment",
+				"metadata": map[string]any{"name": "external-secrets", "namespace": "default"},
+			}}, nil
+		}
+		return true, nil, apierrors.NewNotFound(schema.GroupResource{Group: "apps", Resource: "deployments"}, "external-secrets")
+	})
+	retired := []unstructured.Unstructured{{Object: map[string]any{
+		"apiVersion": "apps/v1", "kind": "Deployment",
+		"metadata": map[string]any{"name": "external-secrets", "namespace": "default"},
+	}}}
+	if err := Retire(context.Background(), dyn, retired); err != nil {
+		t.Fatalf("Retire: %v", err)
+	}
+	if len(policies) != 1 || policies[0] != "Foreground" {
+		t.Fatalf("the old Deployment was deleted with propagation %v, want Foreground: deleted in the "+
+			"background, its ReplicaSet's Pending pods outlive it, name no baseline workload, and read "+
+			"as tenant demand (prod 2026-10-07T19:57:39Z wrote three claims that way)", policies)
+	}
+	if gets < 3 {
+		t.Fatalf("Retire returned after %d reads, while the Deployment still existed", gets)
+	}
+}
+
+func TestRetiringRefusesWhenTheOldWorkloadNeverGoes(t *testing.T) {
+	RetirePoll = time.Millisecond
+	RetireTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { RetirePoll, RetireTimeout = defaultRetirePoll, defaultRetireTimeout })
+	dyn := fakedynamic.NewSimpleDynamicClient(runtime.NewScheme())
+	dyn.PrependReactor("delete", "*", func(clienttesting.Action) (bool, runtime.Object, error) { return true, nil, nil })
+	dyn.PrependReactor("get", "deployments", func(clienttesting.Action) (bool, runtime.Object, error) {
+		return true, &unstructured.Unstructured{Object: map[string]any{
+			"apiVersion": "apps/v1", "kind": "Deployment",
+			"metadata": map[string]any{"name": "external-secrets", "namespace": "default"},
+		}}, nil
+	})
+	retired := []unstructured.Unstructured{{Object: map[string]any{
+		"apiVersion": "apps/v1", "kind": "Deployment",
+		"metadata": map[string]any{"name": "external-secrets", "namespace": "default"},
+	}}}
+	if err := Retire(context.Background(), dyn, retired); err == nil {
+		t.Fatal("Retire reported success while the old Deployment was still there")
+	}
+}
