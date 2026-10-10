@@ -166,11 +166,14 @@ open:
       milestone is open on its remaining live reading.
     instrument: >
       A live test that applies the vendored market example (PLC, relay, PDSs, a firecracker bidder on
-      our nodeimage) and gets a tenant node through RFP, bid, accept and cloud-init. NOT RE-RUN for
-      cd12808: the test bed's ports 2583-2589 were held by an earlier session's bed on hat-8 for the
-      whole window, so the attempt skipped at its preflight (logs/marketbed-live.log) and the image
-      it would boot was checked directly instead (fingerprint sha256-bcdfbb68, stage and initramfs
-      inspected). The next run on a quiet host closes it.
+      our nodeimage) and gets a tenant node through RFP, bid, accept and cloud-init. ATTEMPTED TWICE
+      for cd12808 and NOT REACHED: 2026-10-07T21:48Z it skipped (ports 2583-2589 held by an earlier
+      session's bed), and 2026-10-07T21:55:29Z it failed in 120 s with the BED's own bring-up broken
+      -- apply.sh failed 3/3, no OpenBao ready, no DenoPod in any workspace, no guest work directory
+      -- while that other bed came back up on the same fixed ports. The bed never reached an RFP, so
+      the node image and the renamed keys were never read; the live reading is still owed, and the
+      image it would boot was checked directly instead (fingerprint sha256-bcdfbb68, stage and
+      initramfs inspected).
   - id: P5-M2
     title: The requester is event driven and a node's contract survives the process that accepted it.
     body: >
