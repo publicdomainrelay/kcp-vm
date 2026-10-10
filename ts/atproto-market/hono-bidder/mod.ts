@@ -22,6 +22,7 @@ import { createLocalComputeProvider } from "@publicdomainrelay/compute-provider-
 import { createFirecrackerComputeProvider } from "@publicdomainrelay/compute-provider-firecracker";
 import { createFirecrackerNodeImage } from "@publicdomainrelay/node-image-firecracker";
 import { createFirecrackerMicrovm } from "@publicdomainrelay/microvm-firecracker";
+import { createDockerBackend } from "@publicdomainrelay/container-backend-docker";
 import { createOidcProvisioningEnricher } from "@publicdomainrelay/oidc-issuer-hono";
 import { createRbacProvisioner } from "@publicdomainrelay/rbac-atproto";
 import { Secp256k1Keypair } from "@atproto/crypto";
@@ -548,6 +549,7 @@ if (options.computeProviderFirecracker) {
     ["--compute-provider-firecracker-config", options.computeProviderFirecrackerConfig],
     ["--compute-provider-firecracker-repo-dir", options.computeProviderFirecrackerRepoDir],
     ["--compute-provider-firecracker-vmm", options.computeProviderFirecrackerVmm],
+    ["--compute-provider-firecracker-runner-image", options.computeProviderFirecrackerRunnerImage],
     ["--compute-provider-firecracker-work-root", options.computeProviderFirecrackerWorkRoot],
   ];
   const missing = required.filter(([, value]) => !value).map(([flag]) => flag);
@@ -576,8 +578,8 @@ if (options.computeProviderFirecracker) {
       logger,
     }),
     microvm: createFirecrackerMicrovm({
-      binary: options.computeProviderFirecrackerNodeboot as string,
-      firecracker: options.computeProviderFirecrackerVmm as string,
+      backend: createDockerBackend(),
+      runnerImage: options.computeProviderFirecrackerRunnerImage as string,
       logger,
     }),
     workRoot: options.computeProviderFirecrackerWorkRoot as string,

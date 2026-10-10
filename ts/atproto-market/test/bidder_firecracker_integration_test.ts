@@ -38,16 +38,16 @@ import { createComputeProviderHooks } from "@publicdomainrelay/market-bidder-com
 import { createFirecrackerComputeProvider } from "@publicdomainrelay/compute-provider-firecracker";
 import { createFirecrackerNodeImage } from "@publicdomainrelay/node-image-firecracker";
 import { createFirecrackerMicrovm } from "@publicdomainrelay/microvm-firecracker";
+import { createDockerBackend } from "@publicdomainrelay/container-backend-docker";
 import type { ComputeAtproto } from "@publicdomainrelay/compute-provider-abc";
 import { createRelayFactory } from "@publicdomainrelay/hono-factory-did-key-ingress-proxy-xrpc";
 import { createRequesterPDS, runComputeContract } from "@publicdomainrelay/requester-xrpc";
 
 const ENV = {
   nodeimage: "SOCIALWEB_FIRECRACKER_NODEIMAGE",
-  nodeboot: "SOCIALWEB_FIRECRACKER_NODEBOOT",
   config: "SOCIALWEB_FIRECRACKER_CONFIG",
   repoDir: "SOCIALWEB_FIRECRACKER_REPO_DIR",
-  vmm: "SOCIALWEB_FIRECRACKER_VMM",
+  runnerImage: "SOCIALWEB_FIRECRACKER_RUNNER_IMAGE",
   workRoot: "SOCIALWEB_FIRECRACKER_WORK_ROOT",
   preinstall: "SOCIALWEB_FIRECRACKER_PREINSTALL",
   rangeBase: "SOCIALWEB_FIRECRACKER_RANGE_BASE",
@@ -61,7 +61,7 @@ function missingEnvironment(): string | null {
   if (absent.length > 0) {
     return `${absent.map((k) => ENV[k]).join(", ")} unset`;
   }
-  for (const k of ["nodeimage", "nodeboot", "vmm"] as const) {
+  for (const k of ["nodeimage"] as const) {
     const path = Deno.env.get(ENV[k])!;
     try {
       Deno.statSync(path);
@@ -79,14 +79,33 @@ function missingEnvironment(): string | null {
       return `${ENV.workRoot}=${workRoot} is neither present nor creatable: ${String(err)}`;
     }
   }
+  // The bidder does not need /dev/kvm or /dev/net/tun: each guest is given a
+  // container that has them. What the bidder needs is a container runtime.
   try {
-    const fd = Deno.openSync("/dev/kvm", { read: true, write: true });
-    fd.close();
+    const probe = new Deno.Command("docker", {
+      args: ["info", "--format", "{{.ServerVersion}}"],
+      stdout: "piped",
+      stderr: "piped",
+    }).outputSync();
+    if (probe.code !== 0) {
+      return `docker is not usable: ${new TextDecoder().decode(probe.stderr).trim()}`;
+    }
   } catch (err) {
-    return `/dev/kvm cannot be opened by uid ${Deno.uid()}: ${String(err)}. A KVM guest needs it, ` +
-      `and the two ways this fails are different: a device policy that denies it to anyone but ` +
-      `root cannot be worked around by running as root either, because pasta then drops the ` +
-      `process that starts the VMM to nobody, which holds no devices at all`;
+    return `docker is not on PATH, and each guest is booted in a container: ${String(err)}`;
+  }
+  const image = Deno.env.get(ENV.runnerImage)!;
+  try {
+    const probe = new Deno.Command("docker", {
+      args: ["image", "inspect", image],
+      stdout: "piped",
+      stderr: "piped",
+    }).outputSync();
+    if (probe.code !== 0) {
+      return `the runner image ${image} is not present locally. Build it with ` +
+        `deno task build:firecracker-runner in hono-compute-provider`;
+    }
+  } catch (err) {
+    return `could not check the runner image ${image}: ${String(err)}`;
   }
   return null;
 }
@@ -184,6 +203,31 @@ Deno.test({
   });
   cleanups.push(restoreFetch);
 
+  // A bare "TypeError: fetch failed" says nothing about which call failed, and a
+  // resolver that cannot reach a PDS fails several steps before provisioning.
+  // Record every rejected fetch with its URL and the underlying cause.
+  const fetchFailures: Array<{ url: string; cause: string }> = [];
+  {
+    const patched = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string"
+        ? input
+        : input instanceof URL
+        ? input.toString()
+        : input.url;
+      try {
+        return await patched(input, init);
+      } catch (err) {
+        const cause = (err as { cause?: unknown }).cause;
+        fetchFailures.push({ url, cause: cause === undefined ? String(err) : String(cause) });
+        throw err;
+      }
+    }) as typeof fetch;
+    cleanups.push(() => {
+      globalThis.fetch = patched;
+    });
+  }
+
   try {
     const bidderKeypair = await Secp256k1Keypair.create({ exportable: true });
     const bidderPrivHex = Array.from(await bidderKeypair.export())
@@ -223,15 +267,40 @@ Deno.test({
         logger,
       }),
       microvm: createFirecrackerMicrovm({
-        binary: Deno.env.get(ENV.nodeboot)!,
-        firecracker: Deno.env.get(ENV.vmm)!,
+        backend: createDockerBackend(),
+        runnerImage: Deno.env.get(ENV.runnerImage)!,
         logger,
       }),
       workRoot: Deno.env.get(ENV.workRoot)!,
       rangeBase: Deno.env.get(ENV.rangeBase),
       reuseStale: Deno.env.get(ENV.reuseImage) === "1",
     });
-    const provider = createComputeProviderHooks({ provider: firecracker.provider });
+    // The provider is wrapped rather than used directly so the test can assert on
+    // what provisioning actually did. Asserting only that a bid was collected
+    // would pass on a provider that collects bids and then fails to place
+    // anything, which is the failure this test exists to catch.
+    const provisions: Array<{ providerId: string | number; ip: unknown; mode: unknown }> = [];
+    const provisionFailures: unknown[] = [];
+    const provider = createComputeProviderHooks({
+      provider: {
+        ...firecracker.provider,
+        async provision(vm, requesterDid, spec) {
+          try {
+            const result = await firecracker.provider.provision(vm, requesterDid, spec);
+            const metadata = result.metadata as Record<string, unknown>;
+            provisions.push({
+              providerId: result.providerId,
+              ip: metadata?.ip,
+              mode: metadata?.mode,
+            });
+            return result;
+          } catch (err) {
+            provisionFailures.push(err);
+            throw err;
+          }
+        },
+      },
+    });
 
     // The startup path under test: setup() is what replaces the pre-stage.
     await firecracker.ensureImage();
@@ -289,10 +358,144 @@ Deno.test({
       !seenBids.some((b) => b.did === "did:plc:centraldefaultbidder000000"),
       "central default bidder must not have bid (it was denied)",
     );
+
+    // What this test asserts about provisioning is deliberately only that
+    // nothing recognised as the provider's own failure happened. The accept
+    // path does not reach any provider's provision() in this harness -- the
+    // stock local provider fails here identically, which is why
+    // test/bidder_container_integration_test.ts passes while its own log says
+    // "failed to provision VM: TypeError: fetch failed". That is a defect in
+    // the path between accept and the provider, not in a provider, and it is
+    // asserted on directly by the test below, which drives provision() itself.
+    assert(
+      provisionFailures.length === 0,
+      `provisioning threw: ${provisionFailures.map(String).join("; ")}`,
+    );
+    if (provisions.length === 0) {
+      console.log(
+        `[test] the accept path did not reach provision() -- a pre-existing gap shared with the ` +
+          `container provider, not this provider's. contractErr=${
+            contractErr ? String(contractErr) : "none"
+          }; rejected fetches=${JSON.stringify(fetchFailures.slice(0, 4))}`,
+      );
+    }
   } finally {
     for (const c of cleanups.reverse()) {
       try { c(); } catch { /* best effort */ }
     }
     await new Promise((r) => setTimeout(r, 200));
   }
+});
+
+// Drives the provider's own provision() and reads the guest's console back.
+//
+// This is the assertion that says the firecracker provider works, and it is
+// deliberately separate from the market above: the market's accept path does
+// not reach any provider's provision() in this harness (see the note there),
+// so a test that only drives the market cannot tell a provider that places a
+// guest from one that places nothing. Here the provider is called directly and
+// the guest is asked to prove itself.
+Deno.test({
+  name: "[integration] firecracker provider boots a guest that consumes its user_data",
+  ignore: skipReason !== null,
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  const logger = createLogger({ serviceName: "it-firecracker-direct" });
+  const workRoot = Deno.env.get(ENV.workRoot)!;
+  const userDataFile = await Deno.makeTempFile({ prefix: "fc-direct-", suffix: ".yaml" });
+  const marker = `DIRECT-PROVISION-${crypto.randomUUID().slice(0, 8)}`;
+  await Deno.writeTextFile(
+    userDataFile,
+    `#cloud-config\n` +
+      `write_files:\n` +
+      `  - path: /root/proof.txt\n` +
+      `    owner: root:root\n` +
+      `    permissions: "0644"\n` +
+      `    content: "the seed was read by cloud-init\\n"\n` +
+      `runcmd:\n` +
+      `  - [ sh, -c, "echo ${marker} > /dev/console" ]\n` +
+      `  - [ sh, -c, "cat /root/proof.txt > /dev/console" ]\n`,
+  );
+
+  const provider = createFirecrackerComputeProvider({
+    logger,
+    atproto: {
+      getAgentDid: () => "did:plc:directprovisiontest0000000",
+      createRecord: () => Promise.reject(new Error("this test does not write records")),
+      deleteRecord: () => Promise.resolve(),
+    } as unknown as ComputeAtproto,
+    serve: {
+      app: new Hono(),
+      onConnected: () => {},
+    },
+    getIssuerUrl: () => "http://127.0.0.1:1",
+    image: createFirecrackerNodeImage({
+      binary: Deno.env.get(ENV.nodeimage)!,
+      configPath: Deno.env.get(ENV.config)!,
+      repoDir: Deno.env.get(ENV.repoDir)!,
+      preinstallPath: Deno.env.get(ENV.preinstall),
+      logger,
+    }),
+    microvm: createFirecrackerMicrovm({
+      backend: createDockerBackend(),
+      runnerImage: Deno.env.get(ENV.runnerImage)!,
+      logger,
+    }),
+    workRoot,
+    rangeBase: Deno.env.get(ENV.rangeBase),
+  });
+
+  const result = await provider.provider.provision(
+    {
+      cpus: 2,
+      mem: "2G",
+      disk: "4G",
+      network: "default",
+      role: "test",
+      user_data: await Deno.readTextFile(userDataFile),
+    },
+    "did:plc:directprovisiontest0000000",
+  );
+
+  const metadata = result.metadata as Record<string, unknown>;
+  assert(
+    typeof metadata.ip === "string" && (metadata.ip as string).length > 0,
+    `provision() must report the address the host routed to the guest; got ${JSON.stringify(metadata.ip)}`,
+  );
+  assert(
+    metadata.mode === "firecracker",
+    `provision() must say the placement is a firecracker guest; got ${JSON.stringify(metadata.mode)}`,
+  );
+  const consolePath = metadata.console as string;
+  assert(typeof consolePath === "string" && consolePath.length > 0, "provision() must report the guest's console");
+
+  const deadline = Date.now() + 120_000;
+  let console = "";
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 2000));
+    try {
+      console = await Deno.readTextFile(consolePath);
+    } catch {
+      continue;
+    }
+    if (console.includes(marker)) break;
+  }
+  assert(
+    console.includes(marker),
+    `the guest did not run the runcmd from its user_data within 120s, so cloud-init never acted on the ` +
+      `seed. provision() reported ip=${metadata.ip}. Last 800 bytes of the guest's console:\n` +
+      console.slice(-800),
+  );
+  assert(
+    console.includes("the seed was read by cloud-init"),
+    "the file the user_data writes was never read back inside the guest",
+  );
+  assert(
+    /Datasource DataSourceNoCloud/.test(console),
+    "cloud-init did not report the seed as its datasource; the user_data reached the guest by some " +
+      "other path than the one this provider claims to use",
+  );
+  await provider.provider.destroy(result.providerId).catch(() => {});
+  await Deno.remove(workRoot, { recursive: true }).catch(() => {});
 });

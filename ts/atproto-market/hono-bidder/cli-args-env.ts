@@ -147,6 +147,11 @@ export default {
       description: "Path to the firecracker binary",
       env: "COMPUTE_PROVIDER_FIRECRACKER_VMM",
     },
+    "compute-provider-firecracker-runner-image": {
+      type: "string" as const,
+      description: "Image each guest is booted in; it carries firecracker and socialweb-nodeboot and is given /dev/kvm",
+      env: "COMPUTE_PROVIDER_FIRECRACKER_RUNNER_IMAGE",
+    },
     "compute-provider-firecracker-work-root": {
       type: "string" as const,
       description: "Directory each guest gets a work directory under",
