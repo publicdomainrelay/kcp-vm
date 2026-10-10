@@ -7,9 +7,15 @@ Related: `docs/gitlab/` (the operator recipes), `cmd/socialweb-clusterprovider/l
 
 ## 1. Goal
 
-Run the `test` job of `streamplace/streamplace`'s `.gitlab-ci.yml` (branch `eli/moqt-firehose`,
-job at `.gitlab-ci.yml:104`) as a Pod on a tenant k3s cluster this repo provisions on THIS host,
-with the real GitLab at `https://gitlab.dorper-matrix.ts.net:8443` as the source of the job.
+Run the `test` job of `streamplace/streamplace`'s `.gitlab-ci.yml` as a Pod on a tenant k3s
+cluster this repo provisions on THIS host, with the real GitLab at
+`https://gitlab.dorper-matrix.ts.net:8443` as the source of the job.
+
+The branch it runs is `kcp-tenant-ci`, which is upstream `next` (`git.stream.place`, the project's
+canonical home; the GitLab instance is a mirror) with every job but `test` removed. `test` is
+byte-for-byte upstream's, including the `STREAMPLACE_TEST_POSTGRES_COMMAND` that branch added. The
+first attempts ran `eli/moqt-firehose`, the mirror's default branch and three months behind;
+`next` is the line upstream actually builds.
 
 kcp runs on this host and only this host. The GitLab host (`ssh gitlab`, 192.168.0.49) runs the
 GitLab instance and must not run kcp.
@@ -95,7 +101,14 @@ included `.ci/dockerfile-hash.yaml`.
   root filesystem and the 150 GiB node disk have to land somewhere else -- the run is made with
   `TMPDIR` set to a directory on the host's own disk. A state directory that cannot hold a node's
   disks fails as a full filesystem partway through a boot, not as a configuration error.
-- **B8 - the published builder image has no `pnpm`.** The job's first make target is
+- **B9 - CLOSED 2026-10-06, by rebasing.** The published builder image for `eli/moqt-firehose`'s
+  Dockerfile hash is a `builder-` tag built 2025-05-23, and its Rust predates let-chains (stable
+  1.88): `make dev-setup` died at `FAILED: rust/iroh-streamplace/libiroh_streamplace.so` with
+  `error[E0658]: let expressions in this position are unstable` compiling `iroh-smol-kv`. The repo
+  pins no `rust-toolchain.toml`, so rustup used the image's default. Upstream's `next` names a
+  `DOCKERFILE_HASH` whose image was built 2026-10-04, so the branch is rebased onto `next` and the
+  stale image is not used at all.
+- **B8 - the `eli/moqt-firehose` builder image has no `pnpm`.** The job's first make target is
   `dev-setup` -> `app-cached` -> `make install` -> `pnpm install`, and in
   `ghcr.io/streamplace/streamplace:builder-` that fails with
   `make[2]: pnpm: No such file or directory`. A fresh build of the SAME
@@ -124,14 +137,15 @@ included `.ci/dockerfile-hash.yaml`.
 - **D3 - pause, do not delete, the existing runner.** Runner 1 is someone's working setup for a
   different mechanism. An untagged job is eligible for it, so it is paused for the duration of a
   run and restored after. Deleting it is not this plan's to do.
-- **D4 - the job image comes from the registry this project already publishes to.** B1 has no
-  upstream fix: `public.ecr.aws/m4j3c0j7/streamplace` does not exist and no job in the project
-  builds or pushes it, so every job in that file is unrunnable as written.
-  `ghcr.io/streamplace/streamplace` carries the image the builder stage of
-  `docker/build.Dockerfile` produces, under the tag `builder-`, and the guest can pull it over the
-  internet -- measured, because the runner's own helper image already arrives that way. So the
-  branch sets `DOCKER_REPO` to that registry and empties `DOCKERFILE_HASH`, which makes the job's
-  untouched `image: "$DOCKER_REPO:builder-$DOCKERFILE_HASH"` resolve to the published tag.
+- **D4 - the job image comes from the registry upstream already publishes to, and upstream already
+  says so.** B1 has no fix to make: `public.ecr.aws/m4j3c0j7/streamplace` answers `NAME_UNKNOWN`,
+  but upstream's own `.gitlab-ci.yml` sets `DOCKER_REPO: "ghcr.io/streamplace/streamplace"` and
+  publishes `builder-<DOCKERFILE_HASH>` there from `.github/workflows/docker.yaml`. On
+  `eli/moqt-firehose` -- the June branch this plan started from -- `DOCKER_REPO` still named the
+  ECR repo, which is why the first attempts had to work out the ghcr path at all. Rebasing onto
+  `upstream/next` removed that problem rather than solving it: the branch now carries upstream's
+  own `variables:` block, and the tag its own `.ci/dockerfile-hash.yaml` names
+  (`builder-3e14c389b80a359787d73741f221fdfaacb12f53`) exists, built 2026-10-04.
   **Seeding the image into the node image was tried first and does not work**: the node image is
   written with `mkfs.ext4 -d`, and it refuses a file larger than about 2 GiB (`Ext2 file too big
   while writing file ...`), while the builder tarball is 3.3 GB. That is measured, not assumed --
