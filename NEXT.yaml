@@ -86,6 +86,27 @@ open:
       went through named, and a statement of what that front exposes to whom.
 
 limits:
+  - title: A node cannot reach another node, so a cluster with more than one has no cluster DNS
+      for the Pods on the others.
+    body: >
+      Every guest sits behind its own pasta instance, and pasta is user-mode networking: it carries
+      a guest's traffic out to the host's network and nothing between two guests. So the guests of
+      one cluster have no path to each other and k3s's flannel overlay has nothing to run over. A
+      Pod's resolver is cluster DNS, cluster DNS is CoreDNS, and CoreDNS runs on ONE node; measured
+      on a live five-node cluster, TCP to the CoreDNS Pod IP is reachable from a Pod on the node
+      CoreDNS runs on and unreachable from the Pods on the other four, and `nslookup` there answers
+      `connection timed out; no servers could be reached`. Anything that resolves a name therefore
+      works on a ONE-node cluster and on the node CoreDNS happens to sit on, and fails elsewhere.
+      This is worse than a race and it is not a startup delay: it does not go away with time. Found
+      by running five GitLab jobs on five freshly-booted nodes, where three died on `Could not
+      resolve host ... Timeout while contacting DNS servers` and were reported as `script_failure`.
+      The runner-side wait in `pre_get_sources_script` bounds the wait and names it, and does not
+      fix it. Recorded as a limit rather than an open item because the instrument is
+      `TestFiveGitLabJobPodsScaleToFiveNodesAndBackToZero` together with the pod-to-pod reachability
+      reading in `docs/plans/0004` section 6a, and the shape of the fix -- a shared L2 for one
+      cluster's guests, or a CoreDNS on every node -- is a change to the node network rather than a
+      bug in it.
+
   - title: One node per cluster is the DEFAULT, not the ceiling.
     body: >
       `SOCIALWEB_CLUSTERPROVIDER_SCALE_MAX_NODES` defaults to 1, so a cluster configured as before
