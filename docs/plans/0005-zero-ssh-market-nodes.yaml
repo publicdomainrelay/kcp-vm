@@ -267,6 +267,9 @@ items:
       Guests dial the cluster; the door holds no per-node connection.
     status: done
     evidence:
+      - "merged to main 0f24132 (links) and 3656ae9 (provider rents only once both links listen); deployed 2026-10-07 ~19:13Z"
+      - "prod 2026-10-07T19:14:59Z: ClusterLink 2wjeqtgx-test-cluster-alice-0001-apiserver Listening endpointId 2374b8ee..8059 and -openbao Listening endpointId a7d94692..1a6c; processes dumbpipe listen-tcp --host 127.0.0.1:20003 --ipv4-addr 0.0.0.0:20008 and --host 127.0.0.1:20001 --ipv4-addr 0.0.0.0:20009"
+      - "3656ae9: TestNothingIsRentedUntilBothClusterLinksListen (mutation: gate disabled -> FAIL); TestConfirmJoinedNeedsTheGuestToHaveFetchedItsSecrets (mutation: Joining not accepted -> FAIL); TestTheDoorFindsTheClusterOpenBaoCABesideTheTokenTheClaimNames"
       - "41349d6 portallocator purposes apiserver-link and openbao-link (width 1, Purpose.Datagram); portscan reads /proc/net/udp{,6} state 07 for datagram leases and the TCP tables for the rest"
       - "596bb86 procgroup.ComponentApiserverLink/ComponentOpenBaoLink and Step.Prepare (runs once the steps before it are ready; its spec is what starts)"
       - "7c308b4 kcpclient WriteClusterLink (create spec, then status subresource; spec and status merge-patched only when changed), WriteClusterLinkStatus (never creates; NotFound is not written), ReadClusterLink, DeleteClusterLink"
@@ -285,6 +288,7 @@ items:
     decision: Stable tickets across deploys; ed25519 encodings per artob/edky.
     status: done
     evidence:
+      - "prod 2026-10-07T19:14:59Z: did:key:z6MkgqfYYtADsuzQxt3cpxX4ZWFSFkvmqh8LCTrMHZsDFK8C (apiserver), did:key:z6MkqkUHpCn3SmfKqMob14YDDaCWG8BUc9CC3vasnVk4pqST (openbao), keys in the cluster OpenBao socialweb-links"
       - "3c80658 internal/didkey: did:key = did:key:z + base58btc(0xed 0x01 + pub); endpoint id = lowercase hex of the pub, the form iroh prints"
       - "017d8ee internal/clusterlink: EnsureKey reads socialweb-links/<service> or generates once and writes check-and-set 0 (a losing writer takes the winner's key); an unreadable or self-inconsistent record is refused, never regenerated over; Key.Env() = IROH_SECRET=<64 hex seed>; ParseTicket reads the endpoint id out of endpoint<base32 postcard>"
       - "8f2211a VaultLinkKeys: enables the socialweb-links KV v2 mount if absent with the root token from unseal.json, retries while the mount upgrades to versioned data, Create posts {options:{cas:0}}"
