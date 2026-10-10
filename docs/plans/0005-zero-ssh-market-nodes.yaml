@@ -724,6 +724,25 @@ items:
       - "commit 273c109 vaultcert.EnsureServedVaultTLS: re-sign, read served leaf, SIGHUP the one port holder whose argv is this cluster's bao server -config, read back up to 10 s, refuse if not served. OpenBao v2.6.2 on hat-8: [198.18.255.254 127.0.0.1] -> [198.18.255.254 127.0.0.1 10.100.0.1] served 114 ms after the call; with a no-op reload TestARunningVaultServesAHostItsLeafGainedOnceItIsReloaded failed with ErrVaultReloadDidNotTake. Refusal kept: TestAReloadThatDoesNotTakeKeepsTheRefusal, TestAListenerThatIsNotTheVaultIsNeverSignalled"
       - "commit 2665f00 nodeHosts memo of released claims (name/UID) whose Node is gone, per cluster: TestTheReleasedNodeReconcileCostsTheTenantNothingOnceItsNodesAreGone, 5 passes before 1 DELETE + 6 calls (5 lists), after 1 DELETE + 2 calls. The ESO per-pass eso.Remove deletes had no caller since M4-ESO-BESIDE"
       - "NEXT.yaml limits: three removed (portless member not swept, absent snapshot reads empty, vault host added later); ARCHITECTURE section 15 entry 'Four stated limits, fixed'; deploy/check.sh --fast green; 21 internal/clusterprovider vault tests pass under SOCIALWEB_LOCAL=1"
+  - id: M6-SPA-CREATE
+    milestone: M6
+    title: A cluster created in the SPA is reachable through its kubeconfig without operator help
+    decision: >
+      Found by the acceptance run 2026-10-08: (1) the door's createCluster call times out at 30 s while the
+      gateway's Ensure waits for a Cluster status.URL that cannot appear, because CreateCluster sets running
+      only AFTER Ensure returns; the request's cancellation then also drops ControlPlaneUp, leaving the
+      cluster running=false; (2) the kcp mount child (workspace "clusters" with spec.URL + mount ref) is only
+      ever created inside Ensure and only if status.URL is already set, so nothing creates it later; (3) the
+      gateway talks to kcp as kcp-admin (admin.kubeconfig context root), and kcp refuses spec.URL from a
+      non-privileged user ("spec.URL can only be set by system privileged users"), so even a later Ensure
+      cannot create or repair the child; the operator had to create it as system:admin; (4) errForDeny maps
+      every Ensure error to "the identity store could not be read" (503), hiding the real cause. Fix: set
+      running before waiting; never wait for the URL in the request path (return Initializing); a reconciler
+      (provider, which owns the Cluster status) creates/repairs the mount child once status.URL appears,
+      with a privileged identity scoped to that write; Ensure errors keep their own message/code and are
+      logged. decided by Claude, user may veto.
+    status: todo
+    evidence: []
   - id: M6-DOCS
     milestone: M6
     title: Rewrite ARCHITECTURE invariant 13 and update docs/gitlab
