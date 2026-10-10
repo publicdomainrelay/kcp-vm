@@ -101,6 +101,15 @@ included `.ci/dockerfile-hash.yaml`.
   root filesystem and the 150 GiB node disk have to land somewhere else -- the run is made with
   `TMPDIR` set to a directory on the host's own disk. A state directory that cannot hold a node's
   disks fails as a full filesystem partway through a boot, not as a configuration error.
+- **B10 - the job's own log exceeds this GitLab's trace cap.** `make dev-test` runs
+  `go test -p 1 -timeout 30m ./pkg/... -v | tee /dev/stderr`, so the trace is the whole verbose
+  test log. This instance stops collecting at 4,194,304 bytes -- `Job's log exceeded limit of
+  4194304 bytes. Job execution will continue but no more output will be collected.` -- which is
+  `ci_jobs_trace_size_limit`, a `gitlab.rb` setting and NOT an application setting: it is absent
+  from `GET /application/settings`, and the admin API cannot set it. It is raised to 200 MB in
+  `/srv/gitlab/config/gitlab.rb` and applied with `gitlab-ctl reconfigure`. The reading for this
+  plan is that a job whose own log is its evidence cannot be read past 4 MiB on this instance
+  until that is changed, and the job's exit status still decides pass or fail either way.
 - **B9 - CLOSED 2026-10-06, by rebasing.** The published builder image for `eli/moqt-firehose`'s
   Dockerfile hash is a `builder-` tag built 2025-05-23, and its Rust predates let-chains (stable
   1.88): `make dev-setup` died at `FAILED: rust/iroh-streamplace/libiroh_streamplace.so` with
