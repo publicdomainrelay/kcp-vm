@@ -153,7 +153,7 @@ open:
   - id: P5-M1
     title: The live test bed is the vendored deno-kcp market, and the market is the only node path.
     body: >
-      Plan 0005 items M1-TESTBED, M1-MARKET-ONLY, M1-AGENT-SPLIT, M1-BIDDER-UNIT. The plan file holds
+      Plan 0005 items M1-TESTBED, M1-MARKET-ONLY, M1-AGENT-SPLIT (M1-BIDDER-UNIT done). The plan file holds
       each item's decision, status and evidence; this entry mirrors that the milestone is open.
     instrument: >
       A live test that applies the vendored market example (PLC, relay, PDSs, a firecracker bidder on
