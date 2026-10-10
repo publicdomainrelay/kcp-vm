@@ -180,6 +180,15 @@ open:
       `internal/livegate` names its artifact ones, so an unreachable registry is a SKIP with a
       reason and never a FAIL. Closing reading: a full `go test ./... -count=1` run with the
       registry unreachable, passing or skipping with the reason printed.
+      PART DONE, and the closing reading is NOT reached.  On 2026-10-07 the registry dependency was
+      named: `cmd/socialweb-nodeimage/images.go` wraps both remote calls in `ErrRegistryUnreachable`,
+      and `nameOf` in `store_test.go` - which every test in that package names its image through -
+      skips with that reason instead of failing.  What could NOT be done is the reading: the failure
+      this item is about was seen by other agents and not reproduced here, and the control that was
+      tried - pointing the fixture at `registry.invalid.example` - left the named test PASSING, so
+      this fixture does not reach the registry on that path at all and nothing here shows the skip is
+      what a real unreachable registry would hit.  Stated rather than papered over: a skip that was
+      never observed to fire is not the closing reading this item asks for.
 
 limits:
   - title: A node cannot reach another node, so a cluster with more than one has no cluster DNS

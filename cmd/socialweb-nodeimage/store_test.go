@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/livegate"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodefirecracker"
 )
 
@@ -57,6 +58,12 @@ func nameOf(t *testing.T, cfg Config) string {
 	t.Helper()
 	fingerprint, err := nodefirecracker.Fingerprint(cfg.Path, buildConfigOf(cfg))
 	if err != nil {
+		if errors.Is(err, ErrRegistryUnreachable) {
+			livegate.Require(t, "the registry an image reference names could not be reached, so the "+
+				"name these inputs hash to cannot be computed and this test cannot say anything "+
+				"about it: %v", err)
+			return ""
+		}
 		t.Fatalf("naming the inputs this configuration reads: %v", err)
 	}
 	return fingerprint

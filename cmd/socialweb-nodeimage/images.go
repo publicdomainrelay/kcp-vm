@@ -3,6 +3,7 @@ package main
 import (
 	"archive/tar"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -168,6 +169,17 @@ func imagePlatformString() string {
 	return imagePlatformOS + "/" + imagePlatformArch
 }
 
+var ErrRegistryUnreachable = errors.New(
+	"socialweb-nodeimage: the registry an image reference names could not be reached. Every image " +
+		"this build consumes is pinned by digest and that pin is what the image's own name hashes, so " +
+		"a registry that cannot be reached stops the name being computed at all rather than producing " +
+		"a different one -- a build step that depends on the network, which a gate can only assert " +
+		"about when it knows whether the network is there")
+
+func registryError(reference string, err error) error {
+	return fmt.Errorf("%w: %s: %w", ErrRegistryUnreachable, reference, err)
+}
+
 func resolveTagDigest(tag name.Tag) (v1.Hash, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), imagePullTimeout)
 	defer cancel()
@@ -177,11 +189,11 @@ func resolveTagDigest(tag name.Tag) (v1.Hash, error) {
 		remote.WithAuth(authn.Anonymous),
 		remote.WithUserAgent(imageUserAgent))
 	if err != nil {
-		return v1.Hash{}, err
+		return v1.Hash{}, registryError(tag.Name(), err)
 	}
 	img, err := desc.Image()
 	if err != nil {
-		return v1.Hash{}, err
+		return v1.Hash{}, registryError(tag.Name(), err)
 	}
 	return img.Digest()
 }
@@ -236,7 +248,7 @@ func pullImageTar(cacheDir, reference string) (imageTar, error) {
 		remote.WithAuth(authn.Anonymous),
 		remote.WithUserAgent(imageUserAgent))
 	if err != nil {
-		return imageTar{}, fmt.Errorf("socialweb-nodeimage: fetching %s: %w -- this build has to "+
+		return imageTar{}, fmt.Errorf("%w: fetching %s: %w -- this build has to "+
 			"reach the registry because it is the only thing that can: the guest it produces is "+
 			"built to run these images without ever reaching a registry itself. The entry names "+
 			"the image by digest, so the registry either serves that exact manifest or this fails "+
@@ -244,7 +256,7 @@ func pullImageTar(cacheDir, reference string) (imageTar, error) {
 			"re-pushed since this entry was written, or a manifest the registry has collected -- "+
 			"is answered by resolving the tag again and writing the digest it now has. No "+
 			"credential is sent, so a private image and a rate-limited Docker Hub both fail here "+
-			"rather than in the guest", reference, err)
+			"rather than in the guest", ErrRegistryUnreachable, reference, err)
 	}
 	img, err := desc.Image()
 	if err != nil {
