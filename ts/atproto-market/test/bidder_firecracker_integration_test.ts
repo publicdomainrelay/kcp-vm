@@ -496,7 +496,7 @@ Deno.test({
     {
       cpus: 2,
       mem: "2G",
-      disk: "4G",
+      disk: "2G",
       network: "default",
       role: "test",
       user_data: await Deno.readTextFile(userDataFile),
