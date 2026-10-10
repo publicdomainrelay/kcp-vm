@@ -4180,7 +4180,36 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   one they can reach. The other two instruments remain open as options -- reaching the vault through
   the door the node's SSH session uses, or publishing the vault on the provider host behind the
   client certificate that is already minted per cluster -- and both are trust decisions rather than
-  bugs, which is why neither was taken here.
+  bugs, which is why neither was taken here. They were scoped rather than left as words, and the
+  scoping is the decision material:
+  THROUGH THE DOOR. The door already opens exactly this bridge for the apiserver -- one ssh2
+  `forwardIn` per session, pumped back to the provider host
+  (`socialweb-computer-k8s/lib/socialweb-computer-k8s-node-market/guest.ts:198`, `:223-235`) -- so a
+  second forward for the vault port carries the client certificate unchanged, because the forward is
+  a raw TCP pipe and not a TLS terminator; the vault's own `auth/cert` stays the thing that decides,
+  and a credential for one cluster cannot open another's vault because the role trusts only that
+  cluster's imported CA. Two companions are required and neither is optional: the advertised address
+  is a `/32` on the GUEST's own loopback, so a pod's CNI cannot reach where the forward would land,
+  and the vault's leaf would have to carry the advertise address or the store's server-name check
+  fails. And the forward lives and dies with the join session, which is reaped and renewed (MARKET-6),
+  so vault reads would fail whenever a session drops -- the apiserver path lives with that; the vault
+  never has.
+  PUBLISHED ON THE PROVIDER HOST. This is the highest-blast-radius option: it puts a vault listener on
+  the internet and makes the edge the first gate, where a miswritten site exposes every vault to
+  anonymous TLS and one leaked ESO client certificate -- it lives in a tenant-namespace Secret --
+  reads from anywhere. It also has an unanswered question that has to be settled before it can be
+  called achievable at all: the vault authenticates by CLIENT CERTIFICATE IN THE HANDSHAKE, and an
+  HTTP-terminating Caddy does not forward that certificate upstream, so as stated the vault would
+  never see it. Settling that means L4/SNI passthrough to a per-cluster port, or replacing cert auth
+  with a token.
+  A THIRD OPTION, cheaper and honest, which the item did not name: under `market` keep the OpenBao
+  store off and write instead a small, DIFFERENTLY-NAMED store using a provider that lives inside the
+  tenant cluster (a `kubernetes` provider reading a ConfigMap). That proves operator installed ->
+  store `Ready` -> `SecretSynced` end to end inside the cluster, with no provider-host transport and
+  no new exposure -- it proves less, in that it does not exercise OpenBao on market, and it has to say
+  so by name. The manifest set is already a directory chosen by config, so this is one YAML and one
+  branch beside the log. Leaving the demo out entirely under market is the same shape and already
+  half-built; it is the honest minimum that proves nothing.
 
 - **The tenant grant admitted the External Secrets controller by the literal namespace `default`, and
   the installer could not have put it anywhere else. CLOSED, and the second half was found by taking
