@@ -87,6 +87,7 @@
   ],
   "initramfs_modules": [
     "kernel/drivers/virtio/virtio_mmio",
+    "kernel/net/core/failover",
     "kernel/drivers/net/net_failover",
     "kernel/drivers/net/virtio_net"
   ]

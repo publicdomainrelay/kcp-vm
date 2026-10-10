@@ -65,8 +65,10 @@ func configure(ctx context.Context, params namespaceParams) (int64, error) {
 	if err := client.Drive(ctx, "rootfs", params.Rootfs, true, false); err != nil {
 		return 0, err
 	}
-	if err := client.Drive(ctx, "nodedata", params.NodeDisk, false, true); err != nil {
-		return 0, err
+	if params.NodeDisk != "" {
+		if err := client.Drive(ctx, "nodedata", params.NodeDisk, false, true); err != nil {
+			return 0, err
+		}
 	}
 	if err := client.NetworkInterface(ctx, DefaultInterface, params.Tap, params.GuestMAC); err != nil {
 		return 0, err

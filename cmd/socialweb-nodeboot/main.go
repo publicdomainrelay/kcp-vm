@@ -6,9 +6,13 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -148,12 +152,6 @@ type result struct {
 	WorkDir string `json:"work_dir"`
 }
 
-const seedLabel = "cidata"
-
-const seedFillDir = "seed"
-
-const seedDiskName = "seed.ext4"
-
 func main() {
 	specPath := flag.String("spec", "", "path to the guest spec")
 	stop := flag.Bool("stop", false, "stop the guest whose work directory is named by -work-dir")
@@ -284,15 +282,17 @@ func Boot(specPath string) error {
 			"record: stop it first (socialweb-nodeboot -stop -work-dir %s) or give this one its own",
 			s.WorkDir, s.WorkDir)
 	}
-	if err := writeSeed(s); err != nil {
-		return err
-	}
 	if err := nodefirecracker.CloneFile(
 		filepath.Join(s.ImageDir, nodefirecracker.RootfsImageName),
 		filepath.Join(s.WorkDir, nodevm.RootfsName),
 	); err != nil {
 		return err
 	}
+	seedPort, err := serveSeed(s)
+	if err != nil {
+		return err
+	}
+	guest.BootArgs = append(append([]string(nil), guest.BootArgs...), seedFrom(s.network(), seedPort))
 	paramsPath, err := writeNamespaceParams(s, guest)
 	if err != nil {
 		return err
@@ -407,61 +407,61 @@ func readInstance(path string) (int, error) {
 	return rec.PID, nil
 }
 
-func writeSeed(s guestSpec) error {
+const noCloudArgsPrefix = "ds=nocloud-net;s=http://"
+
+func networkConfig(network nodevm.Network) string {
+	lines := []string{
+		"version: 2",
+		"ethernets:",
+		"  " + network.Interface + ":",
+		"    match:",
+		"      macaddress: \"" + network.GuestMAC + "\"",
+		"    set-name: " + network.Interface,
+		"    dhcp4: true",
+		"    dhcp6: false",
+	}
+	return strings.Join(lines, "\n") + "\n"
+}
+
+func serveSeed(s guestSpec) (int, error) {
 	raw, err := os.ReadFile(s.UserDataFile)
 	if err != nil {
-		return fmt.Errorf("reading the guest's user-data at %s: %w -- this file is the whole "+
+		return 0, fmt.Errorf("reading the guest's user-data at %s: %w -- this file is the whole "+
 			"contract the requester asked for, so a guest booted without it is one nothing has "+
 			"asked anything of and nothing would be installed in", s.UserDataFile, err)
 	}
 	if len(raw) == 0 {
-		return fmt.Errorf("the guest's user-data at %s is empty, and a seed that carries nothing is "+
-			"one cloud-init reads and does nothing with", s.UserDataFile)
+		return 0, fmt.Errorf("the guest's user-data at %s is empty, and a seed that carries nothing "+
+			"is one cloud-init reads and does nothing with", s.UserDataFile)
 	}
 	meta := s.MetaData
 	if meta == "" {
 		meta = "instance-id: " + s.Name + "\nlocal-hostname: " + s.Name + "\n"
 	}
-	fill := filepath.Join(s.WorkDir, seedFillDir)
-	if err := os.RemoveAll(fill); err != nil {
-		return fmt.Errorf("clearing %s: %w", fill, err)
+	documents := map[string]string{
+		"/user-data":      string(raw),
+		"/meta-data":      meta,
+		"/network-config": networkConfig(s.network()),
 	}
-	if err := os.MkdirAll(fill, 0o700); err != nil {
-		return fmt.Errorf("creating %s: %w", fill, err)
+	server := &http.Server{ReadHeaderTimeout: 10 * time.Second}
+	mux := http.NewServeMux()
+	for path, body := range documents {
+		mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/plain")
+			fmt.Fprint(w, body)
+		})
 	}
-	defer os.RemoveAll(fill)
-	for _, f := range []struct {
-		name string
-		body string
-	}{
-		{name: "user-data", body: string(raw)},
-		{name: "meta-data", body: meta},
-	} {
-		if err := os.WriteFile(filepath.Join(fill, f.name), []byte(f.body), 0o600); err != nil {
-			return fmt.Errorf("writing %s into the seed: %w", f.name, err)
-		}
-	}
-	disk := filepath.Join(s.WorkDir, seedDiskName)
-	if err := os.Remove(disk); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("removing a previous seed at %s: %w", disk, err)
-	}
-	f, err := os.OpenFile(disk, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o600)
+	server.Handler = mux
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		return fmt.Errorf("creating the seed disk at %s: %w", disk, err)
+		return 0, fmt.Errorf("listening for the guest's cloud-init requests: %w", err)
 	}
-	size := int64(len(raw)) + int64(len(meta)) + 4<<20
-	if err := f.Truncate(size); err != nil {
-		f.Close()
-		return fmt.Errorf("sizing the seed disk at %s to %d bytes: %w", disk, size, err)
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	if err := nodevm.MkfsExt4(disk, fill, seedLabel); err != nil {
-		return fmt.Errorf("laying the cloud-init seed down as %s: %w -- the label is what cloud-init "+
-			"looks for, so a seed with the wrong one is a disk the guest mounts and ignores", disk, err)
-	}
-	return nil
+	go func() { _ = server.Serve(listener) }()
+	return listener.Addr().(*net.TCPAddr).Port, nil
+}
+
+func seedFrom(network nodevm.Network, port int) string {
+	return noCloudArgsPrefix + network.Gateway + ":" + strconv.Itoa(port) + "/"
 }
 
 func writeNamespaceParams(s guestSpec, guest nodevm.Guest) (string, error) {
@@ -479,7 +479,7 @@ func writeNamespaceParams(s guestSpec, guest nodevm.Guest) (string, error) {
 
 		Rootfs: filepath.Join(s.WorkDir, nodevm.RootfsName),
 
-		NodeDisk: filepath.Join(s.WorkDir, seedDiskName),
+		NodeDisk: "",
 
 		BootArgs: guest.CommandLine(),
 

@@ -78,12 +78,16 @@ func readNamespaceParams(path string) (NamespaceParams, error) {
 		return NamespaceParams{}, fmt.Errorf("nodevm: the namespace parameters at %s: %w",
 			path, err)
 	}
-	if params.Kind == "" || params.VMM == "" || params.Rootfs == "" || params.NodeDisk == "" ||
+	if params.Kind == "" || params.VMM == "" || params.Rootfs == "" ||
 		params.Instance == "" || params.Console == "" {
 		return NamespaceParams{}, fmt.Errorf("nodevm: the namespace parameters at %s name kind %q, "+
-			"VMM %q, rootfs %q, node disk %q, instance %q and console %q, and a parameter set "+
-			"missing any of those would start a VMM that boots a guest with no identity and no disk",
-			path, params.Kind, params.VMM, params.Rootfs, params.NodeDisk, params.Instance, params.Console)
+			"VMM %q, rootfs %q, instance %q and console %q, and a parameter set missing any of "+
+			"those would start a VMM with no kernel to run, no filesystem to run it from, or no "+
+			"path for its API and its console. The node disk is not in this list on purpose: it is "+
+			"the disk a k3s node's identity is written on, and a guest booted from a cloud-init "+
+			"document carries its identity in that document instead, so requiring the disk here "+
+			"would be this layer encoding one substrate's shape into a helper every substrate uses",
+			path, params.Kind, params.VMM, params.Rootfs, params.Instance, params.Console)
 	}
 	return params, nil
 }
