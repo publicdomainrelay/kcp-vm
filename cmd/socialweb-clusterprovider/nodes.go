@@ -339,6 +339,8 @@ type nodeHostsOptions struct {
 	Now func() time.Time
 
 	NodeLossGrace time.Duration
+
+	Observe observeCluster
 }
 
 const NodeLossGrace = 90 * time.Second

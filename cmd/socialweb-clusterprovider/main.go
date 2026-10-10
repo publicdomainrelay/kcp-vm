@@ -290,7 +290,8 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 	tenantConfig := tenantFromClusterCA(alloc, cfg.StateDir, tenantCredentialSource(substrate))
 	tenant := tenantClients(registry, tenantConfig)
 	nodeObserver := clusterprovider.NodeObserver{
-		Client: tenant,
+		Client:    tenant,
+		Operators: scale.OurOperators,
 		Baseline: func(cluster string) (scale.Baseline, error) {
 			dataDir, err := clusterprovider.ClusterDataDir(cfg.StateDir, cluster)
 			if err != nil {
@@ -320,18 +321,13 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 		NodeSecrets: func(clusterDir string) nodemarket.NodeSecrets {
 			return clusterprovider.NewNodeVault(clusterDir)
 		},
+		Observe: nodeObserver.Observe,
 	})
 	if err != nil {
 		return Deps{}, err
 	}
 	scaleDriver, err := scaledriver.New(nodeHosts.forCluster, scaledriver.Options{
-		Observe: func(ctx context.Context, cluster string) (scale.Observation, int, error) {
-			observed, nodes, err := nodeObserver.Observe(ctx, cluster)
-			if err != nil {
-				return observed, nodes, err
-			}
-			return observed, nodes + nodeHosts.inFlight(ctx, cluster), nil
-		},
+		Observe: nodeHosts.observeHeld(nodeObserver.Observe),
 		Scale: scale.Options{
 			Hold:        cfg.ScaleHold,
 			MaxNodes:    cfg.ScaleMaxNodes,

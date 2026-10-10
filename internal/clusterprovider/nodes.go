@@ -14,6 +14,10 @@ type NodeObserver struct {
 	Client func(ctx context.Context, cluster string) (kubernetes.Interface, error)
 
 	Baseline func(cluster string) (scale.Baseline, error)
+
+	Operators scale.Operators
+
+	CustomResources func(ctx context.Context, cluster string, kind scale.OperatorKind) ([]scale.CustomResource, error)
 }
 
 func (o NodeObserver) Observe(ctx context.Context, cluster string) (scale.Observation, int, error) {
@@ -84,11 +88,41 @@ func (o NodeObserver) Observe(ctx context.Context, cluster string) (scale.Observ
 		}
 	}
 
-	return scale.Narrow(scale.Observation{
-		Pods:         pods.Items,
-		Jobs:         jobs.Items,
-		Deployments:  deployments.Items,
-		StatefulSets: statefulsets.Items,
-		DaemonSets:   daemonsets.Items,
-	}, replicasets.Items, baseline), len(nodes.Items), nil
+	unreconciled, err := o.unreconciled(ctx, cluster)
+	if err != nil {
+		return scale.Observation{}, 0, err
+	}
+
+	raw := scale.Observation{
+		Pods:                        pods.Items,
+		Jobs:                        jobs.Items,
+		Deployments:                 deployments.Items,
+		StatefulSets:                statefulsets.Items,
+		DaemonSets:                  daemonsets.Items,
+		UnreconciledCustomResources: unreconciled,
+	}
+	raw.Placement = scale.Loads(nodes.Items, raw, replicasets.Items, baseline)
+	return scale.Narrow(raw, replicasets.Items, baseline), len(nodes.Items), nil
+}
+
+func (o NodeObserver) unreconciled(ctx context.Context, cluster string) ([]scale.CustomResource, error) {
+	inCluster := o.Operators.InCluster()
+	if len(inCluster) == 0 {
+		return nil, nil
+	}
+	if o.CustomResources == nil {
+		return nil, fmt.Errorf("clusterprovider: %d kind(s) in the operator registry run in the tenant "+
+			"cluster and no lister for custom resources was supplied, so their unreconciled CRs could "+
+			"never ask for a node: a CR its operator cannot reach at zero nodes would wait for ever", len(inCluster))
+	}
+	var all []scale.CustomResource
+	for _, kind := range inCluster {
+		crs, err := o.CustomResources(ctx, cluster, kind)
+		if err != nil {
+			return nil, fmt.Errorf("clusterprovider: listing %s.%s in %s: %w -- a read that failed is "+
+				"not a cluster whose CRs are all reconciled", kind.Kind, kind.Group, cluster, err)
+		}
+		all = append(all, crs...)
+	}
+	return o.Operators.Unreconciled(all), nil
 }

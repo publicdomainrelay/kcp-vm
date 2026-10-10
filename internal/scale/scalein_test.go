@@ -67,7 +67,7 @@ func driveScaleIn(t *testing.T, o Observation, st State, until time.Duration, op
 
 func TestThreeIdleNodesWithDemandForOneReleaseTwoOverTwoHoldsAndKeepOne(t *testing.T) {
 	o := Observation{Deployments: []appsv1.Deployment{oneReplica()}}
-	o.Placement = held(Loads([]corev1.Node{node("c-node1", 0), node("c-node2", time.Second), node("c-node3", 2 * time.Second)}, o, nil, Baseline{}))
+	o.Placement = held(Loads([]corev1.Node{node("c-node1", 0), node("c-node2", time.Second), node("c-node3", 2*time.Second)}, o, nil, Baseline{}))
 	if Target(o, Options{}) != 1 {
 		t.Fatalf("the fixture's target is %d, want 1", Target(o, Options{}))
 	}
@@ -103,7 +103,7 @@ func TestANodeWithARunningNonBaselinePodIsNeverReleased(t *testing.T) {
 			addonPod,
 		},
 	}
-	nodes := []corev1.Node{node("c-node1", 0), node("c-node2", time.Second), node("c-node3", 2 * time.Second)}
+	nodes := []corev1.Node{node("c-node1", 0), node("c-node2", time.Second), node("c-node3", 2*time.Second)}
 	raw.Placement = held(Loads(nodes, raw, []appsv1.ReplicaSet{rs}, baseline))
 	o := Narrow(raw, []appsv1.ReplicaSet{rs}, baseline)
 	if Target(o, Options{}) != 1 {
@@ -179,7 +179,7 @@ func TestScaleInNeverGoesBelowTheTarget(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "web"},
 		Spec:       appsv1.DeploymentSpec{Replicas: i32(2)},
 	}}}
-	o.Placement = held(Loads([]corev1.Node{node("a", 0), node("b", time.Second), node("c", 2 * time.Second)}, o, nil, Baseline{}))
+	o.Placement = held(Loads([]corev1.Node{node("a", 0), node("b", time.Second), node("c", 2*time.Second)}, o, nil, Baseline{}))
 	released, st := driveScaleIn(t, o, State{Nodes: 3}, 10*DefaultHold, Options{PodsPerNode: 1})
 	if len(released) != 1 || st.Nodes != 2 {
 		t.Fatalf("a target of 2 over three idle nodes released %v and ended at %d", released, st.Nodes)
@@ -193,7 +193,7 @@ func TestAPodAboutToBeScheduledHoldsItsNode(t *testing.T) {
 	pinned := podOn("default", "web-2", "", corev1.PodPending)
 	pinned.Spec.NodeSelector = map[string]string{HostnameLabel: "c-node3"}
 	o.Pods = []corev1.Pod{nominated, pinned}
-	o.Placement = held(Loads([]corev1.Node{node("c-node1", 0), node("c-node2", time.Second), node("c-node3", 2 * time.Second)}, o, nil, Baseline{}))
+	o.Placement = held(Loads([]corev1.Node{node("c-node1", 0), node("c-node2", time.Second), node("c-node3", 2*time.Second)}, o, nil, Baseline{}))
 	for _, name := range []string{"c-node2", "c-node3"} {
 		if l, _ := o.Placement.Load(name); !l.Incoming {
 			t.Fatalf("%s is not marked as a pod's destination", name)

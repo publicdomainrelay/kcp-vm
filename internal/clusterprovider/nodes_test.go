@@ -95,3 +95,59 @@ func TestAnObserverWithNoClientRefuses(t *testing.T) {
 		t.Fatal("an observer with no client was allowed to report an observation")
 	}
 }
+
+func TestObservePlacesEachPodOnItsNode(t *testing.T) {
+	controller := true
+	cs := fake.NewSimpleClientset(
+		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "a"}},
+		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "b"}},
+		&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: "work", Namespace: "default"},
+			Spec:       corev1.PodSpec{NodeName: "a"},
+			Status:     corev1.PodStatus{Phase: corev1.PodRunning},
+		},
+		&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: "agent-b", Namespace: "obs", OwnerReferences: []metav1.OwnerReference{{
+				APIVersion: "apps/v1", Kind: "DaemonSet", Name: "agent", Controller: &controller}}},
+			Spec:   corev1.PodSpec{NodeName: "b"},
+			Status: corev1.PodStatus{Phase: corev1.PodRunning},
+		},
+	)
+	obs, _, err := observer(cs, nil).Observe(context.Background(), "liveweb")
+	if err != nil {
+		t.Fatalf("Observe: %v", err)
+	}
+	a, okA := obs.Placement.Load("a")
+	b, okB := obs.Placement.Load("b")
+	if !okA || !okB || a.Busy != 1 || b.Busy != 0 {
+		t.Fatalf("placement = %+v, want a busy with the tenant pod and b holding only a DaemonSet pod",
+			obs.Placement)
+	}
+}
+
+func TestAnInClusterOperatorKindNeedsALister(t *testing.T) {
+	o := observer(fake.NewSimpleClientset(), nil)
+	o.Operators = scale.Operators{{Group: "inside.example.com", Kind: "Widget", ReadyCondition: "Ready", InCluster: true}}
+	if _, _, err := o.Observe(context.Background(), "liveweb"); err == nil {
+		t.Fatal("an in-cluster operator kind with no lister was observed as having no unreconciled CRs")
+	}
+	o.CustomResources = func(_ context.Context, _ string, kind scale.OperatorKind) ([]scale.CustomResource, error) {
+		return []scale.CustomResource{
+			{Group: kind.Group, Kind: kind.Kind, Name: "pending", Generation: 1},
+			{Group: kind.Group, Kind: kind.Kind, Name: "done", Generation: 1,
+				Conditions: []scale.CustomResourceCondition{{Type: "Ready", Status: "True"}}},
+		}, nil
+	}
+	obs, _, err := o.Observe(context.Background(), "liveweb")
+	if err != nil {
+		t.Fatalf("Observe: %v", err)
+	}
+	if len(obs.UnreconciledCustomResources) != 1 || obs.UnreconciledCustomResources[0].Name != "pending" || !scale.Intent(obs) {
+		t.Fatalf("unreconciled = %+v, want only the pending CR, as intent", obs.UnreconciledCustomResources)
+	}
+	o.Operators = scale.OurOperators
+	o.CustomResources = nil
+	if _, _, err := o.Observe(context.Background(), "liveweb"); err != nil {
+		t.Fatalf("the registry as shipped needs no lister: %v", err)
+	}
+}
