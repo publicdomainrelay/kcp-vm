@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -53,6 +54,34 @@ const RevokeTimeout = 10 * time.Second
 
 func ApiserverLinkName(cluster string) string {
 	return cluster + "-" + string(v1alpha1.ClusterLinkApiserver)
+}
+
+func OpenBaoLinkName(cluster string) string {
+	return cluster + "-" + string(v1alpha1.ClusterLinkOpenBao)
+}
+
+var ErrLinksNotListening = errors.New("nodemarket: a market node is rented only once both of its " +
+	"cluster's links listen, because the guest is handed the OpenBao link's ticket at boot and reads " +
+	"the apiserver link's ticket from OpenBao; a guest rented before either exists can only fail, and " +
+	"the next pass tries again")
+
+func (h *Host) linksNotListening(ctx context.Context, target Cluster) string {
+	if h.opts.Links == nil {
+		return "no ClusterLink reader was supplied"
+	}
+	for _, name := range []string{ApiserverLinkName(h.opts.Cluster), OpenBaoLinkName(h.opts.Cluster)} {
+		link, err := h.opts.Links.ReadClusterLink(ctx, target.Workspace, name)
+		switch {
+		case err != nil:
+			return name + ": reading the link failed: " + err.Error()
+		case link == nil:
+			return name + ": the link does not exist yet"
+		case link.Status.Phase != v1alpha1.ClusterLinkListening || link.Status.Ticket == "":
+			return fmt.Sprintf("%s: the link reads %q with %d bytes of ticket", name,
+				link.Status.Phase, len(link.Status.Ticket))
+		}
+	}
+	return ""
 }
 
 func PinnedJoinToken(serverCA, token string) string {

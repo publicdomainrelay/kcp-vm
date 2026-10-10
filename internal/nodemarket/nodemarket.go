@@ -175,6 +175,12 @@ func (h *Host) Provision(ctx context.Context) error {
 		return fmt.Errorf("nodemarket: the workspace and owner DID node %s of %s is claimed under: %w",
 			h.opts.NodeName, h.opts.Cluster, err)
 	}
+	if h.opts.Secrets != nil {
+		if why := h.linksNotListening(ctx, target); why != "" {
+			return fmt.Errorf("%w: node %s of %s: %s", ErrLinksNotListening, h.opts.NodeName,
+				h.opts.Cluster, why)
+		}
+	}
 	if err := h.opts.Record(ctx, h.opts.NodeName, v1alpha1.NodePending); err != nil {
 		return fmt.Errorf("nodemarket: recording node %s of %s as Pending before its claim is "+
 			"written: %w -- the phase is written first because the claim is about to exist, and a "+
@@ -231,15 +237,16 @@ func (h *Host) ConfirmJoined(ctx context.Context) error {
 			h.opts.NodeName, h.opts.Cluster)
 	}
 	switch claim.Status.Phase {
-	case v1alpha1.NodeClaimRunning:
+	case v1alpha1.NodeClaimJoining, v1alpha1.NodeClaimRunning:
 	case v1alpha1.NodeClaimFailed:
 		return fmt.Errorf("nodemarket: node %s of %s: %s",
 			h.opts.NodeName, h.opts.Cluster, endedMessage(claim))
 	default:
 		return fmt.Errorf("nodemarket: node %s of %s is reported by its cluster while its claim is "+
-			"%q, not Running. The door writes Running only once the node's own agent reached its "+
-			"apiserver, so a cluster reporting the node before that is a node something else "+
-			"registered under this name", h.opts.NodeName, h.opts.Cluster, claim.Status.Phase)
+			"%q, not Joining. The door writes Joining only once the guest fetched this claim's "+
+			"secrets, and only that guest holds the node password the agent registers with, so a "+
+			"cluster reporting the node before that is a node something else registered under "+
+			"this name", h.opts.NodeName, h.opts.Cluster, claim.Status.Phase)
 	}
 	if err := h.opts.Record(ctx, h.opts.NodeName, v1alpha1.NodeRunning); err != nil {
 		return fmt.Errorf("nodemarket: recording node %s of %s as Running after the door reported "+

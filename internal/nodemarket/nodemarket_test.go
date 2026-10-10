@@ -276,7 +276,7 @@ func TestASecondProvisionLeavesOneClaim(t *testing.T) {
 	}
 }
 
-func TestConfirmJoinedNeedsTheDoorToHaveReportedRunning(t *testing.T) {
+func TestConfirmJoinedNeedsTheGuestToHaveFetchedItsSecrets(t *testing.T) {
 	claims := &fakeClaims{}
 	opts := testOptions(t, claims)
 	rec := &recorder{}
@@ -289,20 +289,25 @@ func TestConfirmJoinedNeedsTheDoorToHaveReportedRunning(t *testing.T) {
 		t.Fatalf("Provision: %v", err)
 	}
 
-	claims.setPhase(testWorkspace, testNodeName, v1alpha1.NodeClaimJoining, "")
-	if err := host.ConfirmJoined(context.Background()); err == nil {
-		t.Fatal("a claim still Joining was confirmed as joined: the tenant cluster reporting a node " +
-			"says a k3s agent registered, and the door writes Running only once that node's own " +
-			"agent reached its apiserver, so a phase short of Running is a node something else " +
-			"registered under this name")
+	for _, early := range []v1alpha1.NodeClaimPhase{v1alpha1.NodeClaimBidding, v1alpha1.NodeClaimProvisioning} {
+		claims.setPhase(testWorkspace, testNodeName, early, "")
+		if err := host.ConfirmJoined(context.Background()); err == nil {
+			t.Fatalf("a claim still %s was confirmed as joined: the door writes Joining only once "+
+				"the guest fetched this claim's secrets, and no other machine can hold the node "+
+				"password the agent registers with, so a node reported before that is something "+
+				"else registered under this name", early)
+		}
 	}
 
-	claims.setPhase(testWorkspace, testNodeName, v1alpha1.NodeClaimRunning, "")
-	if err := host.ConfirmJoined(context.Background()); err != nil {
-		t.Fatalf("ConfirmJoined on a Running claim: %v", err)
+	for _, joined := range []v1alpha1.NodeClaimPhase{v1alpha1.NodeClaimJoining, v1alpha1.NodeClaimRunning} {
+		claims.setPhase(testWorkspace, testNodeName, joined, "")
+		if err := host.ConfirmJoined(context.Background()); err != nil {
+			t.Fatalf("ConfirmJoined on a %s claim: %v -- the door no longer writes Running, so a "+
+				"Joining claim whose node the cluster reports is the joined node", joined, err)
+		}
 	}
 	phases := rec.seen()
-	if len(phases) != 2 || phases[0] != v1alpha1.NodePending || phases[1] != v1alpha1.NodeRunning {
+	if len(phases) < 2 || phases[0] != v1alpha1.NodePending || phases[1] != v1alpha1.NodeRunning {
 		t.Fatalf("the Node CR saw %v, want Pending then Running", phases)
 	}
 }

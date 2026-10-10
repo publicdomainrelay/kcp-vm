@@ -157,6 +157,7 @@ func secretOptions(t *testing.T) (Options, *fakeClaims, *fakeSecrets, *fakeLinks
 func TestProvisionWritesTheNodePolicyAndSecretBeforeTheClaim(t *testing.T) {
 	opts, _, secrets, links, events := secretOptions(t)
 	links.listen(testWorkspace, "liveweb-apiserver", "nodeticket-apiserver")
+	links.listen(testWorkspace, "liveweb-openbao", "openbao-ticket")
 	host, err := New(opts)
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -197,66 +198,65 @@ func TestProvisionWritesTheNodePolicyAndSecretBeforeTheClaim(t *testing.T) {
 	if secret.NodePassword == "" {
 		t.Error("the node password in the secret is empty")
 	}
-	if got := links.reads; len(got) != 1 || got[0] != testWorkspace+"/liveweb-apiserver" {
+	if got := links.reads; len(got) == 0 || !slices.Contains(got, testWorkspace+"/liveweb-apiserver") || slices.ContainsFunc(got, func(r string) bool { return !strings.HasPrefix(r, testWorkspace+"/") }) {
 		t.Errorf("the ticket was read from %v, want the ClusterLink liveweb-apiserver in the "+
 			"cluster's home workspace %s", got, testWorkspace)
 	}
 }
 
-func TestASecretWaitsForTheApiserverLinkWithoutHoldingTheClaimBack(t *testing.T) {
+func TestNothingIsRentedUntilBothClusterLinksListen(t *testing.T) {
 	opts, claims, secrets, links, events := secretOptions(t)
 	host, err := New(opts)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	ctx := context.Background()
-	done := make(chan error, 1)
-	go func() { done <- host.Provision(ctx) }()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("Provision: %v", err)
+	for _, step := range []struct {
+		name   string
+		listen func()
+	}{
+		{"no link listens", func() {}},
+		{"only the apiserver link listens", func() {
+			links.listen(testWorkspace, "liveweb-apiserver", "apiserver-ticket")
+		}},
+	} {
+		step.listen()
+		done := make(chan error, 1)
+		go func() { done <- host.Provision(ctx) }()
+		select {
+		case err := <-done:
+			if !errors.Is(err, ErrLinksNotListening) {
+				t.Fatalf("%s: Provision returned %v, want ErrLinksNotListening -- a guest rented "+
+					"now is handed no OpenBao ticket and no apiserver ticket, so it can only fail", step.name, err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s: Provision waited on a link; the pass holds every other cluster while it waits",
+				step.name)
 		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("Provision waited on a link that is not listening; the pass holds every other " +
-			"cluster while it waits")
+		if got := claims.held(); got != 0 {
+			t.Fatalf("%s: %d claims written, want 0", step.name, got)
+		}
+		if got := events.seen(); len(got) != 0 {
+			t.Fatalf("%s: Provision wrote %v before both links listened, want nothing", step.name, got)
+		}
+	}
+	links.listen(testWorkspace, "liveweb-openbao", "openbao-ticket")
+	if err := host.Provision(ctx); err != nil {
+		t.Fatalf("Provision once both links listen: %v", err)
 	}
 	if got := claims.held(); got != 1 {
-		t.Fatalf("%d claims after Provision, want 1", got)
-	}
-	if _, ok := secrets.secret(testNodeName); ok {
-		t.Fatal("a secret was written with no apiserver ticket in it; the guest reads a secret as " +
-			"complete once it exists")
-	}
-	if err := host.SyncSecrets(ctx); err != nil {
-		t.Fatalf("SyncSecrets before the link listens: %v", err)
-	}
-	if _, ok := secrets.secret(testNodeName); ok {
-		t.Fatal("a pass wrote the secret while the link still had no ticket")
-	}
-	links.listen(testWorkspace, "liveweb-apiserver", "late-ticket")
-	if err := host.SyncSecrets(ctx); err != nil {
-		t.Fatalf("SyncSecrets after the link listens: %v", err)
+		t.Fatalf("%d claims after both links listened, want 1", got)
 	}
 	secret, ok := secrets.secret(testNodeName)
-	if !ok || secret.ApiserverTicket != "late-ticket" {
-		t.Fatalf("the pass after the link listened left secret %+v (written %v), want the late ticket",
-			secret, ok)
-	}
-	policies := 0
-	for _, e := range events.seen() {
-		if strings.HasPrefix(e, "policy ") {
-			policies++
-		}
-	}
-	if policies != 1 {
-		t.Errorf("the policy was written %d times over three passes, want once", policies)
+	if !ok || secret.ApiserverTicket != "apiserver-ticket" {
+		t.Fatalf("secret %+v (written %v), want the apiserver link's ticket", secret, ok)
 	}
 }
 
 func TestAGrantOnTheClaimBecomesOneJWTRole(t *testing.T) {
 	opts, claims, secrets, links, _ := secretOptions(t)
 	links.listen(testWorkspace, "liveweb-apiserver", "ticket")
+	links.listen(testWorkspace, "liveweb-openbao", "openbao-ticket")
 	host, err := New(opts)
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -298,6 +298,7 @@ func TestAGrantOnTheClaimBecomesOneJWTRole(t *testing.T) {
 func TestAReleaseRemovesTheNodesVaultState(t *testing.T) {
 	opts, claims, secrets, links, events := secretOptions(t)
 	links.listen(testWorkspace, "liveweb-apiserver", "ticket")
+	links.listen(testWorkspace, "liveweb-openbao", "openbao-ticket")
 	host, err := New(opts)
 	if err != nil {
 		t.Fatalf("New: %v", err)
