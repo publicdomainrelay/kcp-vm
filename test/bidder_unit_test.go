@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -161,18 +162,24 @@ func TestTheBidderDeployInstallsTheTemplate(t *testing.T) {
 }
 
 type launcherRun struct {
-	state    string
-	argvFile string
-	session  string
-	output   string
-	code     int
-	elapsed  time.Duration
+	state      string
+	argvFile   string
+	session    string
+	output     string
+	code       int
+	elapsed    time.Duration
+	keyAtStart string
 }
 
 func runLauncher(t *testing.T, instance string, lines string, linger string) launcherRun {
 	t.Helper()
+	state := filepath.Join(t.TempDir(), "state")
+	return runLauncherIn(t, state, instance, lines, linger)
+}
+
+func runLauncherIn(t *testing.T, state, instance string, lines string, linger string) launcherRun {
+	t.Helper()
 	dir := t.TempDir()
-	state := filepath.Join(dir, "state")
 	if err := os.MkdirAll(filepath.Join(state, "secrets"), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +193,9 @@ func runLauncher(t *testing.T, instance string, lines string, linger string) lau
 		t.Fatal(err)
 	}
 	fake := filepath.Join(dir, "fake-deno")
+	keyAtStart := filepath.Join(dir, "key-at-start")
 	body := "#!/usr/bin/env bash\nprintf '%s\\n' \"$@\" > " + argvFile +
+		"\ncat \"$STATE_DIRECTORY/secrets/bidder-key.hex\" > " + keyAtStart + " 2>/dev/null" +
 		"\ncat " + linesFile + "\nexec sleep " + linger + "\n"
 	if err := os.WriteFile(fake, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
@@ -221,7 +230,7 @@ func runLauncher(t *testing.T, instance string, lines string, linger string) lau
 	cmd.Stderr = &out
 	start := time.Now()
 	err := cmd.Run()
-	run := launcherRun{state: state, argvFile: argvFile, session: session, output: out.String(), elapsed: time.Since(start)}
+	run := launcherRun{state: state, argvFile: argvFile, session: session, output: out.String(), elapsed: time.Since(start), keyAtStart: keyAtStart}
 	if ctx.Err() != nil {
 		t.Fatalf("the launcher did not return within 20 s; output:\n%s", run.output)
 	}
@@ -368,5 +377,31 @@ func TestTheBidderUnitVerifies(t *testing.T) {
 		t.Fatalf("systemd-analyze verify %s: %v; it reports an unparsable or unknown directive as "+
 			"a warning and ignores it, so any output at all is a directive the unit does not have:\n%s",
 			instance, err, out)
+	}
+}
+
+func TestTheBidderStartsWithTheSameKeyEveryTimeBeforeASignIn(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "state")
+	first := runLauncherIn(t, state, bidderInstance, "", "0")
+	keyPath := filepath.Join(state, "secrets", "bidder-key.hex")
+	seen, err := os.ReadFile(first.keyAtStart)
+	if err != nil || len(strings.TrimSpace(string(seen))) == 0 {
+		t.Fatalf("the bidder started with no key at %s (%v): it then mints a new did:plc on every "+
+			"restart while the QR waits, and a QR that times out every five minutes registers a new "+
+			"identity at the PLC directory every five minutes", keyPath, err)
+	}
+	key := strings.TrimSpace(string(seen))
+	if ok, _ := regexp.MatchString(`^[0-9a-f]{64}$`, key); !ok {
+		t.Fatalf("the key the launcher wrote is %q, want 64 lowercase hex characters", key)
+	}
+	info, err := os.Stat(keyPath)
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("the key file is %v (%v), want mode 0600", info, err)
+	}
+	second := runLauncherIn(t, state, bidderInstance, "", "0")
+	again, err := os.ReadFile(second.keyAtStart)
+	if err != nil || strings.TrimSpace(string(again)) != key {
+		t.Fatalf("the second start saw key %q, want the first start's %q: a restart must keep the "+
+			"bidder's identity", strings.TrimSpace(string(again)), key)
 	}
 }
