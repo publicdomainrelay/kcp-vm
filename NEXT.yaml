@@ -258,11 +258,14 @@ open:
   - id: P6-M3
     title: QUEUED - serve gateway kcp on the host, verbs folded, control planes that survive an upgrade.
     body: >
-      QUEUED behind plan 0005 as P6-M0. Plan 0006 items M3-FOLD, M3-CLUSTER-SCOPES,
-      M3-SERVE-GATEWAY-KCP, M3-HOST-INSTALL.
+      QUEUED behind plan 0005 as P6-M0. Plan 0006 items M3-FOLD, M3-CLUSTER-SCOPES, M3-BAO-SYNC,
+      M3-SERVE-GATEWAY-KCP, M3-HOST-INSTALL. M3-BAO-SYNC carries plan 0005 M3-BAO-SYNC's rule to every
+      OpenBao the binary runs: backends, roles, policies and KV derived from live objects, reconciled
+      every pass and at startup and adoption, stale entries deleted, empty jwt mounts disabled.
     instrument: >
-      A zero-node market cluster's /readyz never fails across a kill and restart of the core process,
-      and the host service on a state dir the container wrote serves the door and the same workspaces.
+      A zero-node market cluster's /readyz never fails across a kill and restart of the core process;
+      a vault seeded with stale mounts, roles, policies and KV is reduced to exactly the live set in one
+      pass; the host service on a state dir the container wrote serves the door and the same workspaces.
   - id: P6-M4
     title: QUEUED - a reproducible static build within its size budget.
     body: >
@@ -308,12 +311,15 @@ open:
   - id: P7-M4
     title: QUEUED - a restarted bidder keeps its issuer, its keys and its contracts.
     body: >
-      QUEUED behind plan 0005 as P7-M1. Plan 0007 items M4-BIDDER-VAULT, M4-CONTRACT-RESTORE,
-      M4-ONNETWORK. Live on hat-8 2026-10-07 a restarted bidder lost its receipts, vm.delete failed and
-      the guest leaked; its issuer URL also moves. The keys move into an OpenBao beside the bidder.
+      QUEUED behind plan 0005 as P7-M1. Plan 0007 items M4-BIDDER-VAULT, M4-BIDDER-BAO-SYNC,
+      M4-CONTRACT-RESTORE, M4-ONNETWORK. Live on hat-8 2026-10-07 a restarted bidder lost its receipts,
+      vm.delete failed and the guest leaked; its issuer URL also moves, leaving one jwt mount per issuer
+      in cluster vaults. The keys move into an OpenBao beside the bidder, reconciled against live
+      ComputeVMs, with one stable issuer per bidder.
     instrument: >
       A bidder seeded from its ContractStore answers vm.delete 200 and destroys once; three starts keep
-      the same did, issuer URL and JWKS.
+      the same did, issuer URL and JWKS; restarts and an upgrade leave one jwt mount per bidder in the
+      cluster vault.
   - id: P7-M5
     title: QUEUED - run bidder end to end, with no docker.
     body: >
