@@ -18,6 +18,7 @@ import {
   requestCompute,
 } from "@publicdomainrelay/compute-request-xrpc";
 import type { ComputeRequestOptions } from "@publicdomainrelay/compute-request-xrpc";
+import { createScopeRefresher } from "@publicdomainrelay/scope-refresh-timers";
 
 Deno.env.delete("ATPROTO_DID");
 
@@ -220,7 +221,7 @@ Deno.test("the requester scope verdict is cached across contracts and dropped by
   assertEquals(handleA.state.outcome, "complete");
   assertEquals(handleA.state.winner?.did, BIDDER_DID);
   assert(eventsA.some((e) => e.event === "first_free_winner"), "the free bid won inside the window");
-  await waitForEvent(eventsA, "scope_prewarm");
+  await waitForEvent(eventsA, "scope_prewarm_done");
   assert(scope.sets.includes(key), "the first contract ran the scope lane and cached the verdict");
 
   const trustWatches = streams.registrations.filter((r) =>
@@ -237,7 +238,7 @@ Deno.test("the requester scope verdict is cached across contracts and dropped by
     handlers(second),
   );
   assertEquals(handleB.state.outcome, "complete");
-  await waitForEvent(eventsB, "scope_prewarm");
+  await waitForEvent(eventsB, "scope_prewarm_done");
 
   assert(scope.hits.includes(key), "the second contract read the verdict from the cache");
   assertEquals(
@@ -270,11 +271,87 @@ Deno.test("the requester scope verdict is cached across contracts and dropped by
     handlers(third),
   );
   assertEquals(handleC.state.outcome, "complete");
-  await waitForEvent(eventsC, "scope_prewarm");
+  await waitForEvent(eventsC, "scope_prewarm_done");
   assert(
     scope.sets.filter((k) => k === key).length > setsBefore,
     "the contract after the trust event re-ran the scope lane",
   );
+});
+
+Deno.test("prewarm starts at bidder_discovery, before any bid is solicited", async () => {
+  const events: LoggedEvent[] = [];
+  const fake = fakePds({ $type: BIDS_FREE_NSID, cost: 0 });
+  const handle = await requestCompute(
+    fake.pds,
+    opts(fake, events, { scopeCache: createScopeCache() }),
+    handlers(fake),
+  );
+  assertEquals(handle.state.outcome, "complete");
+  const done = await waitForEvent(events, "scope_prewarm_done");
+
+  const discovery = events.find((e) => e.event === "bidder_discovery");
+  const started = events.find((e) => e.event === "scope_prewarm");
+  assert(discovery, "the requester logged bidder_discovery");
+  assert(started, "the requester logged the prewarm start");
+  assertEquals(started.extra.candidates, 1, "the prewarm start names its candidates");
+  assertEquals(started.extra.durationMs, undefined, "the prewarm start carries no duration");
+
+  const startLagMs = started.at - discovery.at;
+  assert(
+    startLagMs < 250,
+    `prewarm started ${startLagMs}ms after bidder_discovery, so it waited for the candidates to settle`,
+  );
+
+  const firstSolicit = events.find((e) => e.event === "submitting_rfp");
+  if (firstSolicit) {
+    assert(
+      started.at <= firstSolicit.at,
+      "the prewarm started before the requester asked any bidder for a bid",
+    );
+  }
+  assert(typeof done.extra.durationMs === "number", "the prewarm reports what the candidates cost");
+  assert(done.at >= started.at, "the prewarm finished after it started");
+});
+
+Deno.test("the requester tracks every used verdict and drops it on a trust event", async () => {
+  const events: LoggedEvent[] = [];
+  const streams = fakeEventStreams();
+  const cache = createScopeCache();
+  const refresher = createScopeRefresher({ scopeCache: cache, log: () => {} });
+  const fake = fakePds({ $type: BIDS_FREE_NSID, cost: 0 });
+  try {
+    const handle = await requestCompute(
+      fake.pds,
+      opts(fake, events, {
+        scopeCache: cache,
+        scopeRefresher: refresher,
+        eventStreams: streams.client,
+      }),
+      handlers(fake),
+    );
+    assertEquals(handle.state.outcome, "complete");
+    await waitForEvent(events, "scope_prewarm_done");
+
+    assert(refresher.stats().attached, "the requester handed the refresher its evaluator");
+    assert(refresher.stats().entries > 0, "the verdict a contract used is tracked for refresh");
+
+    const trustWatches = streams.registrations.filter((r) =>
+      r.wantedCollections.includes(BADGE_BLUE_KEYS_NSID)
+    );
+    assertEquals(trustWatches.length, 1, "the requester registered one trust firehose watch");
+    for (const watch of trustWatches) {
+      watch.onEvent({ did: BIDDER_DID, rkey: "self", collection: "sh.tangled.graph.vouch" } as never);
+    }
+    assertEquals(refresher.stats().entries, 0, "the trust event dropped the tracked verdict");
+    assertEquals(refresher.stats().pending, 0, "the trust event dropped the pending refresh");
+    assertEquals(
+      cache.get({ kind: "ref", uri: SCOPE_URI, cid: POLICY_NAME }, BIDDER_DID, POLICY_ARGS),
+      undefined,
+      "the trust event dropped the cached verdict",
+    );
+  } finally {
+    refresher.close();
+  }
 });
 
 Deno.test("a warmed scope cache answers a bid in under 200ms", async () => {

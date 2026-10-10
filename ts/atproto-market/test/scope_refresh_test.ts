@@ -1,5 +1,5 @@
 import { assertEquals } from "@std/assert";
-import { createScopeCache, scopeCacheKey } from "@publicdomainrelay/policy-engine-scope-cache";
+import { createScopeCache } from "@publicdomainrelay/policy-engine-scope-cache";
 import { createPolicyEvaluator } from "@publicdomainrelay/policy-engine-evaluator";
 import {
   POLICY_GHA_LITE_NSID,
@@ -8,7 +8,7 @@ import {
 import type { PolicyResult } from "@publicdomainrelay/policy-common";
 import { createCandidateScopeGate } from "@publicdomainrelay/compute-request-xrpc";
 import { createScopeRefresher } from "@publicdomainrelay/scope-refresh-timers";
-import type { ScopeRefresher, ScopeRefreshInput } from "@publicdomainrelay/scope-refresh-timers";
+import type { ScopeRefresher } from "@publicdomainrelay/scope-refresh-timers";
 
 const REQUESTER_DID = "did:plc:requesterfake";
 const BIDDER_DID = "did:plc:bidderone";
@@ -16,7 +16,6 @@ const POLICY_NAME = "open";
 const SCOPE_URI = `at://${REQUESTER_DID}/policy-gha-lite/${POLICY_NAME}`;
 const POLICY_ARGS = { bidWindowSec: 5, firstFree: true };
 const IDENTITY = { kind: "ref" as const, uri: SCOPE_URI, cid: POLICY_NAME };
-const KEY = scopeCacheKey(IDENTITY, BIDDER_DID, POLICY_ARGS);
 
 const POLICY_RECORD = {
   uri: SCOPE_URI,
