@@ -222,7 +222,7 @@ func buildInitramfs(cfg Config, dst string) error {
 			return fmt.Errorf("socialweb-nodeimage: %w", err)
 		}
 	}
-	if err := copyFile("/usr/bin/busybox", filepath.Join(tree, "bin/busybox"), 0o755); err != nil {
+	if err := copyFile(nodefirecracker.HostBusybox, filepath.Join(tree, "bin/busybox"), 0o755); err != nil {
 		return fmt.Errorf("socialweb-nodeimage: staging busybox into the initramfs: %w -- busybox is "+
 			"the insmod the guest's PID 1 uses to load the transport module of the VMM it is booted "+
 			"by, and loading a module through the raw syscall instead was measured to fail with "+

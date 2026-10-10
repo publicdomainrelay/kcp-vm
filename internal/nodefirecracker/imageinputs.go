@@ -102,6 +102,13 @@ const (
 
 	moduleSourceDigestWhy = "no digest of the tree it copied its modules from"
 
+	busyboxWhy = "The initramfs carries this host's busybox as the insmod the guest's PID 1 loads " +
+		"its transport module with, and the host it was copied from is the one build input that is " +
+		"outside every other input: the kernel, the modules and the base image are all files a " +
+		"configuration names, and this one is whatever the host happens to have installed. A host " +
+		"that upgraded busybox since the build has an image that loads a module through a binary no " +
+		"longer on the host, and nothing in a boot would name it"
+
 	preinstallWhy = "The manifest is what decides which software is baked into the image, so what " +
 		"the image carries is the manifest's: a manifest whose content changed names an image whose " +
 		"packages were chosen by a list the configuration no longer holds, and a configuration that " +
@@ -235,6 +242,10 @@ type BuildInputs struct {
 	K3sBinary string `json:"k3sBinary"`
 
 	K3sBinaryDigest string `json:"k3sBinaryDigest"`
+
+	Busybox string `json:"busybox"`
+
+	BusyboxDigest string `json:"busyboxDigest"`
 
 	AgentBinary string `json:"agentBinary"`
 
@@ -468,6 +479,7 @@ func RecordInputs(configPath string, cfg BuildConfig) (BuildInputs, error) {
 		{"kernel configuration", cfg.KernelConfig, &inputs.KernelConfig, &inputs.KernelConfigDigest},
 		{"base image", cfg.BaseImage, &inputs.BaseImage, &inputs.BaseImageDigest},
 		{"k3s binary", cfg.K3sBinary, &inputs.K3sBinary, &inputs.K3sBinaryDigest},
+		{"host busybox", HostBusybox, &inputs.Busybox, &inputs.BusyboxDigest},
 	} {
 		resolved, resolveErr := resolvePath(f.path)
 		digest := ""
@@ -642,6 +654,7 @@ func CompareImageToConfig(m Manifest, configPath string, cfg BuildConfig) error 
 		{"base image", m.Inputs.BaseImage, m.Inputs.BaseImageDigest, cfg.BaseImage, baseImageWhy},
 		{"k3s binary", m.K3sBinary, m.Inputs.K3sBinaryDigest, cfg.K3sBinary, k3sWhy},
 		{"guest agent", m.Inputs.AgentBinary, m.Inputs.AgentBinaryDigest, cfg.AgentBinary, agentWhy},
+		{"host busybox", m.Inputs.Busybox, m.Inputs.BusyboxDigest, HostBusybox, busyboxWhy},
 	} {
 		named, err := resolvePath(f.named)
 		if err != nil {

@@ -503,3 +503,29 @@ func TestAManifestTheImageWasNotBuiltFromIsRefused(t *testing.T) {
 		t.Errorf("the refusal does not name the input that differs: %v", err)
 	}
 }
+
+func TestTheHostBusyboxIsRecordedAndAnImageBuiltWithAnotherOneIsRefused(t *testing.T) {
+	f := newImageFixture(t)
+	manifest := f.manifest(t, f.cfg)
+	if manifest.Inputs.Busybox != HostBusybox || manifest.Inputs.BusyboxDigest == "" {
+		t.Fatalf("a build records carrying this host's busybox as %q %q. The initramfs carries that "+
+			"binary as the insmod the guest's PID 1 loads its transport module with, so a build that "+
+			"does not record which one it copied is an image whose contents were decided by a file "+
+			"outside every input a configuration names",
+			manifest.Inputs.Busybox, manifest.Inputs.BusyboxDigest)
+	}
+	if err := CompareImageToConfig(manifest, f.configPath, f.cfg); err != nil {
+		t.Fatalf("an image built from the configuration in front of it was refused: %v", err)
+	}
+
+	manifest.Inputs.BusyboxDigest = digestPrefix + strings.Repeat("0", 64)
+	err := CompareImageToConfig(manifest, f.configPath, f.cfg)
+	if err == nil {
+		t.Fatal("an image whose initramfs carries a different busybox was accepted, so a host that " +
+			"upgraded busybox boots an image that loads a module through a binary the record cannot " +
+			"identify")
+	}
+	if !strings.Contains(err.Error(), "busybox") {
+		t.Errorf("the refusal does not name the input that differs: %v", err)
+	}
+}

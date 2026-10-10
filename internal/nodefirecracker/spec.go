@@ -16,6 +16,8 @@ const (
 	InitramfsName   = "initramfs.cpio"
 	RootfsImageName = "rootfs.ext4"
 	GuestFileName   = "guest.yaml"
+
+	HostBusybox = "/usr/bin/busybox"
 )
 
 const (

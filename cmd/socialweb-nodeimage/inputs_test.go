@@ -28,8 +28,11 @@ type fieldDeclaration struct {
 
 const configFileField = "(the configuration file the builder is told to read)"
 
+const hostBusyboxField = "(this host's busybox, which the initramfs carries)"
+
 var fieldDeclarations = map[string]fieldDeclaration{
 	configFileField:       {Role: readByTheBuild, Covers: []string{"configPath"}},
+	hostBusyboxField:      {Role: readByTheBuild, Covers: []string{"busybox", "busyboxDigest"}},
 	"vmm":                 {Role: readByTheBuild, Covers: []string{"vmm"}},
 	"firecracker":         {Role: usedElsewhere},
 	"qemu":                {Role: usedElsewhere},
