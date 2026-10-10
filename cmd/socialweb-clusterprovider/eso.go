@@ -48,6 +48,10 @@ func tenantAddOns(cfg Config, networks *subnetallocator.Allocator, log *slog.Log
 			return err
 		}
 		vaultURL := "https://" + net.JoinHostPort(gateway, strconv.Itoa(seal.Port))
+		if err := vaultcert.RequireServedVaultTLS(ctx, net.JoinHostPort("127.0.0.1", strconv.Itoa(seal.Port)), gateway); err != nil {
+			return fmt.Errorf("clusterprovider: the ESO store for %s would be told to dial %s, and "+
+				"the vault that is running cannot present that host: %w", cluster, vaultURL, err)
+		}
 		if err := vaultcert.WriteESODemoSecret(ctx, clusterprovider.VaultAddr(seal.Port),
 			seal.RootToken, map[string]any{"demo": "openbao:" + cluster}, vaultTLS.CAPEM); err != nil {
 			return fmt.Errorf("clusterprovider: writing the ESO demo value the tenant's "+

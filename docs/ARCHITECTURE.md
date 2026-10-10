@@ -1911,25 +1911,6 @@ because it bounds a mechanism the rest of this document leans on.
   `deploy/control-plane-container/validate.sh` does. Two runs inside ONE container see each other,
   because they share one `/var/tmp`. Two containers must share that path or be serialized, and nothing
   outside the test suite turns on which.
-- **VAULT-TLS-1: a host a caller adds to the vault's certificate is not served until the vault
-  restarts.** `vaultcert.EnsureVaultTLSCertificate` re-signs the leaf under the cluster's existing CA
-  when a caller asks for one more host, so no client loses the anchor it trusts (section 15). What it
-  cannot do is make the RUNNING vault serve the new leaf: OpenBao reads `tls_cert_file` at start and
-  re-reads it only on a signal, and the callers that add a host hold no process handle: the tenant
-  add-on pass (`cmd/socialweb-clusterprovider/eso.go`) runs long after the vault step, and the node
-  disk stage (`cmd/socialweb-clusterprovider/nodes.go`, guest substrates only) runs later still. On a
-  market cluster the two host sets differ by construction: bring-up asks for
-  `SOCIALWEB_MARKET_ADVERTISE_ADDRESS`, the tenant add-on pass asks for the `10.100.0.0/16` gateway
-  `internal/subnetallocator` leases. So the address an `ExternalSecret` is told to dial
-  (`https://<gateway>:<vaultPort>`) is on the leaf on disk and not on the leaf in flight until the next
-  vault start. The clusterprovider's own dial is loopback, which both leaves carry, so the credential
-  mint (the one path this was found through) is unaffected. Recorded rather than fixed because the
-  fix is a reload seam between the material and the process that holds it, which is a design change
-  and not a bug in the writer.
-  instrument: a market cluster whose ESO pod reads its `ExternalSecret` without the vault having been
-  restarted since the tenant add-on pass; or the union of hosts moved to the FIRST mint, with a stated
-  source for the gateway address that does not require the allocator to have run.
-
 ## 15. Settled decisions, and the defects they closed
 
 Not gaps. Each entry was open once, and each says what settled it and what the settlement was — and,
@@ -4077,6 +4058,38 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   `these files already exist and this tool will not overwrite a credential ... that silent replacement
   is the failure invariant 20 exists to prevent`. The credential was removed from the container's
   `/tmp` afterwards. `NEXT.yaml` GL-1.
+
+- **A host a caller adds to the vault's certificate is not served until the vault restarts. CLOSED as
+  a STATED LIMIT, with a refusal where a URL would otherwise be handed out.**
+  `vaultcert.EnsureVaultTLSCertificate` re-signs the leaf under the cluster's existing CA when a caller
+  asks for one more host, so no client loses the anchor it trusts (the entry above). What it cannot do
+  is make the RUNNING vault serve the new leaf, and the reason is where the handle lives: OpenBao reads
+  `tls_cert_file` once at start; the vault step's own gate (`internal/clusterprovider/steps.go`) runs
+  the vault a whole pass before the tenant add-on pass and the node disk stage exist; and those two are
+  closures in `cmd/socialweb-clusterprovider` (`eso.go`, `nodes.go`) built without the materialiser's
+  process group, whose `LocalHost` is the only thing holding the vault's `processrunner.Process`. On a
+  market cluster the two host sets differ by construction: bring-up asks for
+  `SOCIALWEB_MARKET_ADVERTISE_ADDRESS` and loopback (`internal/clusterprovider/stack.go`), the tenant
+  add-on pass asks for the `10.100.0.0/16` gateway `internal/subnetallocator` leases and loopback
+  (`cmd/socialweb-clusterprovider/eso.go`). The reading, against a real OpenBao v2.6.2 on 2026-10-07:
+  the vault started covering `[198.18.255.254 127.0.0.1]`, the tenant add-on pass re-signed the leaf to
+  cover `[198.18.255.254 127.0.0.1 10.100.0.1]` on disk, the vault went on serving
+  `[198.18.255.254 127.0.0.1]`, and a client dialing it as `10.100.0.1` failed with `tls: failed to
+  verify certificate: x509: certificate is valid for 198.18.255.254, 127.0.0.1, not 10.100.0.1`. The
+  window is from the re-sign until the vault process next starts; the leaf on disk already carries every
+  host a caller has asked for, so a restart - or a cluster teardown and bring-up - closes it, and
+  nothing asks for a NEW host after that. The next-best behaviour is taken: the tenant add-on pass
+  REFUSES to hand the ExternalSecret a URL the running listener cannot present
+  (`vaultcert.RequireServedVaultTLS`, called from `cmd/socialweb-clusterprovider/eso.go`), failing that
+  pass with the reason rather than writing a Secret whose client is guaranteed to fail with a name
+  mismatch. A signal-based repair was refused with it - it would need a handle the re-sign site does
+  not have, and a reload whose completion nothing observes would let a reload that did not happen and
+  one that did look identical, the defect class `ErrNoGuardSeam` exists to prevent - and so was moving
+  the gateway into the FIRST mint, whose host source is the allocator itself: `subnetallocator.Allocate`
+  walks the pool by occupancy, so the gateway is not derivable without it, and leasing a cluster's range
+  on the vault bring-up path would change what the zero-node run allocates (section 14). Pinned by
+  `TestARunningVaultDoesNotServeAHostItsLeafGainedAfterItStarted` in `internal/clusterprovider`, which
+  takes the reading and fails without the refusal. `NEXT.yaml` VAULT-TLS-1, now a limit.
 
 ## 16. Vocabulary
 
