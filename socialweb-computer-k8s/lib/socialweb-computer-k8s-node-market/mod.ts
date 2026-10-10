@@ -2,19 +2,15 @@ import { createSshSessionProvider, runComputeContract } from "@publicdomainrelay
 import type { RequesterPDS, SshSessionProvider } from "@publicdomainrelay/requester-abc";
 import { createDefaultATProtoEventStreamsClient } from "@publicdomainrelay/atproto-event-streams-client";
 import { COMPUTE_EVENTS_VM_DELETE_NSID, EVENT_NSID, SUBMIT_EVENT_LXM, SUBMIT_EVENT_NSID } from "@publicdomainrelay/market-lexicons";
-import type { NodeClaimStore } from "@publicdomainrelay/socialweb-computer-k8s-abc";
+import { type NodeClaim, nodeClaimKey, type NodeClaimStore } from "@publicdomainrelay/socialweb-computer-k8s-abc";
 import { createK3sJoinModule } from "@publicdomainrelay/cloud-init-plugin-k3s-join";
+import { encodeNodeJoinDocument, K3S_JOIN_PATH, pinnedJoinToken } from "@publicdomainrelay/socialweb-computer-k8s-common";
 import {
-  encodeNodeJoinDocument,
-  K3S_JOIN_PATH,
-  NODECLAIM_FINALIZER,
-  nodeClaimKey,
-  type NodeClaim,
+  FINALIZER_NODE_CLAIM,
   type NodeClaimContract,
   type NodeClaimPhase,
   type NodeClaimStatus,
-  pinnedJoinToken,
-} from "@publicdomainrelay/socialweb-computer-k8s-common";
+} from "@publicdomainrelay/socialweb-computer-k8s-api";
 import {
   dumbpipeConnector,
   type GuestConnector,
@@ -100,7 +96,7 @@ export async function reapContract(pds: RequesterPDS, contract: NodeClaimContrac
   return res.ok;
 }
 
-const CONTRACT_EVENTS: Record<string, keyof NodeClaimContract> = {
+const CONTRACT_EVENTS: Record<string, "vmUri" | "rfpUri" | "acceptUri"> = {
   vm_record_created: "vmUri",
   rfp_created: "rfpUri",
   accept_created: "acceptUri",
@@ -266,7 +262,7 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
       live.abort.abort();
       return;
     }
-    if (!claim.finalizers.includes(NODECLAIM_FINALIZER)) return;
+    if (!claim.finalizers.includes(FINALIZER_NODE_CLAIM)) return;
     if (hasReceipt(claim.status.contract)) {
       const pds = await opts.requesterFor(claim.spec.ownerDid);
       const ok = await reap(pds, claim.status.contract!);
@@ -305,7 +301,7 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
         if (running.has(key)) continue;
         const phase = claim.status.phase;
         if (!phase || phase === "Pending") {
-          if (!claim.finalizers.includes(NODECLAIM_FINALIZER)) await opts.store.addFinalizer(claim);
+          if (!claim.finalizers.includes(FINALIZER_NODE_CLAIM)) await opts.store.addFinalizer(claim);
           fulfil(claim);
         } else if (LIVE_PHASES.has(phase)) {
           await adoptNever(claim);

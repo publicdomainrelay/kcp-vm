@@ -22,7 +22,7 @@ type ClusterList struct {
 type ClusterSpec struct {
 	Account string `json:"account"`
 
-	Running bool `json:"running"`
+	Running bool `json:"running" apigen:"optional"`
 }
 
 type ClusterPhase string

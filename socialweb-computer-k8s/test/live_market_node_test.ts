@@ -43,12 +43,8 @@ import type { ComputeAtproto } from "@publicdomainrelay/compute-provider-abc";
 import { createRelayFactory } from "@publicdomainrelay/hono-factory-did-key-ingress-proxy-xrpc";
 import { createRequesterPDS, runComputeContract } from "@publicdomainrelay/requester-xrpc";
 import { createMarketNodeFulfiller } from "@publicdomainrelay/socialweb-computer-k8s-node-market";
-import type { NodeClaimStore } from "@publicdomainrelay/socialweb-computer-k8s-abc";
-import {
-  NODECLAIM_FINALIZER,
-  type NodeClaim,
-  type NodeClaimStatus,
-} from "@publicdomainrelay/socialweb-computer-k8s-common";
+import type { NodeClaim, NodeClaimStore } from "@publicdomainrelay/socialweb-computer-k8s-abc";
+import { FINALIZER_NODE_CLAIM, type NodeClaimStatus } from "@publicdomainrelay/socialweb-computer-k8s-api";
 import { installFetchInterceptor } from "../../../atproto-market/test/fetch-interceptor.ts";
 
 const ENV = {
@@ -465,15 +461,15 @@ class MemoryNodeClaimStore implements NodeClaimStore {
 
   addFinalizer(claim: NodeClaim): Promise<void> {
     const current = this.claims.get(claim.name);
-    if (current && !current.finalizers.includes(NODECLAIM_FINALIZER)) {
-      current.finalizers.push(NODECLAIM_FINALIZER);
+    if (current && !current.finalizers.includes(FINALIZER_NODE_CLAIM)) {
+      current.finalizers.push(FINALIZER_NODE_CLAIM);
     }
     return Promise.resolve();
   }
 
   removeFinalizer(claim: NodeClaim): Promise<void> {
     const current = this.claims.get(claim.name);
-    if (current) current.finalizers = current.finalizers.filter((f) => f !== NODECLAIM_FINALIZER);
+    if (current) current.finalizers = current.finalizers.filter((f) => f !== FINALIZER_NODE_CLAIM);
     return Promise.resolve();
   }
 

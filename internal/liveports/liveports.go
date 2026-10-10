@@ -36,8 +36,9 @@ var (
 	RebuildProof    = Block{What: "the rebuild proof", First: 61000, Slots: 8, Width: 10}
 	FourStepProof   = Block{What: "the four-step proof", First: 62000, Slots: 8, Width: 100}
 	SubnetProof     = Block{What: "the subnet proof", First: 63000, Slots: 8, Width: 100}
+	SchemaUpgrade   = Block{What: "the schema upgrade proof", First: 63800, Slots: 4, Width: 10}
 
-	Blocks = []Block{ZeroNodeProof, PostgresWindows, MountProof, RebuildProof, FourStepProof, SubnetProof}
+	Blocks = []Block{ZeroNodeProof, PostgresWindows, MountProof, RebuildProof, FourStepProof, SubnetProof, SchemaUpgrade}
 
 	GuestJoinProbe = Span{What: "the guest-join probe", First: GuestJoinProbeFirst, Width: GuestJoinProbeWidth}
 

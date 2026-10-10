@@ -179,8 +179,19 @@ items:
     decision: >
       Go types are the source of truth; drift check in deploy/check.sh; shared JSON fixtures both
       suites round-trip. Protobuf rejected because CRDs travel as JSON/OpenAPI through kube and kcp.
-    status: todo
-    evidence: []
+      Mapping rules (reflection over json tags, apigen:"optional" struct tag, enums from source
+      constants, revision lock), decided by Claude, user may veto; recorded in ARCHITECTURE section 6
+      "Generated from api/v1alpha1".
+    status: done
+    evidence:
+      - "d1cb357 cmd/socialweb-apigen + internal/apigen: go generate ./api/... writes deploy/*-apiresourceschema.yaml, both APIExports, deploy/apiresourceschema-revisions.json and socialweb-computer-k8s/lib/common/socialweb-computer-k8s-api/mod.ts; Cluster, Node, AtprotoIdentity schemas and both exports byte-identical to the hand-written ones"
+      - "d1cb357 NodeClaim status.contract += every ContractState field (version, phase, vmName, requesterDid, marketDid, payload/rfp/policy/bid/accept/receipt strongRefs, winner, receiptOk, vmAddress, bids, release, outcome, error, timestamps), all optional; old six fields kept; schema renamed v1alpha1-2.nodeclaims.socialweb.computer, clusters export re-pointed"
+      - "99e894c door: socialweb-computer-k8s-common drops its NodeClaim wire types; the claim view moves to lib/abc; nodeclaim-kcp parses every claim with parseNodeClaim and asserts a status before PATCH"
+      - "ee7e07c live proof internal/apigen TestAnAlreadyBoundWorkspaceKeepsTheNewContractFieldsAfterTheSchemaUpgrade on kcp v0.33.0 + kine: already-bound tenant prunes new fields on v1alpha1-1, in-place spec change Forbidden, re-point moves the existing binding to v1alpha1-2 (identity hash unchanged), new fields persist; PASS 14.8s; mutated to re-apply the old export it FAILS (still bound to v1alpha1-1)"
+      - "red first: socialweb-computer-k8s/test/k8s_api_fixtures_test.ts failed TS2307 (package missing); internal/apigen fixtures_test failed to build (no model); then both green"
+      - "drift red: a Go field added to NodeClaimStatus without a Revision bump -> check.sh FAILED apigen (revision lock: spec of v1alpha1-2 changed); with the bump but not regenerated -> check.sh FAILED apigen drift (diff of lock, export, schema, mod.ts); reverted"
+      - "green: deploy/check.sh --fast (ok apigen, 8 generated files); socialweb-computer-k8s deno task check exit 0; deno task test 72 passed 0 failed 1 ignored (from a real-org-root copy; the worktree's ../../ siblings do not resolve)"
+      - "deploy needed (not done, user deploys): install-provider.sh applies deploy/nodeclaim-apiresourceschema.yaml (creates v1alpha1-2) then deploy/cluster-apiexport.yaml (re-point); no binding migration; the door and the schema must ship together"
   - id: M2-BACKOFF
     milestone: M2
     title: Exponential no_bids back-off per cluster, capped at 10m

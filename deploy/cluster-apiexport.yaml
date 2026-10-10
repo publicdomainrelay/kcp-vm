@@ -16,6 +16,6 @@ spec:
         crd: {}
     - group: socialweb.computer
       name: nodeclaims
-      schema: v1alpha1-1.nodeclaims.socialweb.computer
+      schema: v1alpha1-2.nodeclaims.socialweb.computer
       storage:
         crd: {}
