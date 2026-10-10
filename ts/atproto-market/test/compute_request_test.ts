@@ -54,7 +54,13 @@ function quietLogger(events: string[] = []): StructuredLoggerInterface {
   } as unknown as StructuredLoggerInterface;
 }
 
-function fakePds(bidSpecs: BidSpec[] = []) {
+const RECEIPT = {
+  uri: "at://did:plc:bidder/com.publicdomainrelay.temp.market.receipt/1",
+  cid: "bafyreceipt",
+  submitEvent: BIDDER_ENDPOINT,
+};
+
+function fakePds(bidSpecs: BidSpec[] = [], acceptBody: Record<string, unknown> = RECEIPT) {
   const calls: FakeCall[] = [];
   const records: FakeRecord[] = [];
   const onNetwork = new Map<string, (address: string) => void>();
@@ -120,15 +126,7 @@ function fakePds(bidSpecs: BidSpec[] = []) {
     ) => {
       calls.push({ nsid, body });
       if (nsid === SUBMIT_ACCEPT_NSID) {
-        return Promise.resolve({
-          status: 200,
-          ok: true,
-          body: {
-            uri: "at://did:plc:bidder/com.publicdomainrelay.temp.market.receipt/1",
-            cid: "bafyreceipt",
-            submitEvent: BIDDER_ENDPOINT,
-          },
-        });
+        return Promise.resolve({ status: 200, ok: true, body: acceptBody });
       }
       return Promise.resolve({ status: 200, ok: true, body: {} });
     },
@@ -468,4 +466,49 @@ Deno.test("awaitComputeNetwork resumes the onNetwork wait from a saved state", a
   assertEquals(resumed.phase, "network");
   assertEquals(resumed.vmAddress, TICKET);
   assertEquals(second.registeredNetworkKeys(), []);
+});
+
+Deno.test("an accept the bidder already processed answers with no receipt, and the receipt is read from the winner's repo", async () => {
+  const fake = fakePds([{ did: "did:plc:bidder", cost: 1 }], {});
+  const asked: Array<{ bidderDid: string; acceptUri: string }> = [];
+  const order: string[] = [];
+  const events: string[] = [];
+  const handle = await requestCompute(
+    fake.pds,
+    baseOpts(fake, {
+      logger: quietLogger(events),
+      receiptFinder: (bidderDid, acceptUri) => {
+        asked.push({ bidderDid, acceptUri });
+        return Promise.resolve(asked.length < 2 ? null : RECEIPT);
+      },
+    }),
+    recordingHandlers(order, {}, fake),
+  );
+  const accept = fake.records.find((r) => r.collection === ACCEPT_NSID)!;
+  assertEquals(asked.map((a) => a.bidderDid), ["did:plc:bidder", "did:plc:bidder"]);
+  assertEquals(asked.every((a) => a.acceptUri === accept.uri), true);
+  assertEquals(handle.state.receipt, { uri: RECEIPT.uri, cid: RECEIPT.cid });
+  assertEquals(handle.state.submitEventRef, BIDDER_ENDPOINT);
+  assertEquals(handle.state.receiptOk, true);
+  assert(order.includes("onReceipt"));
+  assert(events.includes("receipt_from_bidder_repo"));
+  await handle.dispose();
+});
+
+Deno.test("a receipt carried by submitAccept is never looked up in the winner's repo", async () => {
+  const fake = fakePds([{ did: "did:plc:bidder", cost: 1 }]);
+  let asked = 0;
+  const handle = await requestCompute(
+    fake.pds,
+    baseOpts(fake, {
+      receiptFinder: () => {
+        asked++;
+        return Promise.resolve(null);
+      },
+    }),
+    recordingHandlers([], {}, fake),
+  );
+  assertEquals(asked, 0);
+  assertEquals(handle.state.receiptOk, true);
+  await handle.dispose();
 });

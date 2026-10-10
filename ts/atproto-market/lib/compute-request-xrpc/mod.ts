@@ -92,6 +92,8 @@ export const DEFAULT_TRANSPORT_MODULE = "iroh";
 export const DEFAULT_VM_DISK = "50G";
 export const DEFAULT_VM_READY_TIMEOUT_SEC = 300;
 export const RECEIPT_FIREHOSE_TIMEOUT_MS = 30_000;
+export const RECEIPT_REPO_ATTEMPTS = 5;
+export const RECEIPT_REPO_RETRY_MS = 1_000;
 
 export function defaultVmName(): string {
   const b = new Uint8Array(4);
@@ -547,7 +549,35 @@ export type ComputeRequestOptions =
     sshPublicKey?: string;
     receiptVerifier?: ReceiptVerifier;
     recordResolver?: RecordResolver;
+    receiptFinder?: ReceiptFinder;
   };
+
+export interface FoundReceipt {
+  uri: string;
+  cid: string;
+  submitEvent?: string;
+}
+
+export type ReceiptFinder = (bidderDid: string, acceptUri: string) => Promise<FoundReceipt | null>;
+
+export function createRepoReceiptFinder(idResolver: IdResolver): ReceiptFinder {
+  return async (bidderDid, acceptUri) => {
+    const pdsUrl = await pdsUrlOf(idResolver, bidderDid);
+    if (!pdsUrl) return null;
+    const records = await listRecordsAll(pdsUrl, bidderDid, RECEIPT_NSID, { timeoutMs: 10_000 });
+    for (const rec of records) {
+      const val = rec.value as Record<string, unknown>;
+      const acceptRef = val.accept as { uri?: string } | undefined;
+      if (acceptRef?.uri !== acceptUri || !rec.uri || !rec.cid) continue;
+      return {
+        uri: rec.uri,
+        cid: rec.cid,
+        ...(typeof val.submitEvent === "string" ? { submitEvent: val.submitEvent } : {}),
+      };
+    }
+    return null;
+  };
+}
 
 export interface ComputeRequestHandle {
   state: ContractState;
@@ -621,6 +651,7 @@ export async function requestCompute(
   const idResolver = new IdResolver({ plcUrl: opts.plcUrl });
   const resolveRecord = opts.recordResolver ?? createIdRecordResolver(idResolver);
   const verifyReceipt = opts.receiptVerifier ?? createReceiptVerifier(resolveRecord);
+  const findReceipt = opts.receiptFinder ?? createRepoReceiptFinder(idResolver);
 
   let capKeypair: Promise<Secp256k1Keypair> | null = null;
   const capabilitySigner: PrepareContext["signer"] = {
@@ -1278,6 +1309,20 @@ runcmd:
       } else {
         log("accept_target_unresolvable", { submitAcceptTarget });
       }
+    }
+
+    for (let attempt = 1; !receiptUri && attempt <= RECEIPT_REPO_ATTEMPTS && !latch.requested; attempt++) {
+      try {
+        const found = await findReceipt(winner.did, acceptUri);
+        if (found) {
+          takeReceipt(found);
+          log("receipt_from_bidder_repo", { receiptUri, receiptCid, submitEventRef, attempt });
+          break;
+        }
+      } catch (err) {
+        log("receipt_repo_lookup_failed", { bidderDid: winner.did, attempt, error: String(err) });
+      }
+      if (attempt < RECEIPT_REPO_ATTEMPTS) await new Promise((r) => setTimeout(r, RECEIPT_REPO_RETRY_MS));
     }
 
     const receiptPatch = (): ContractStatePatch => ({
