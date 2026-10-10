@@ -106,7 +106,15 @@ items:
   - id: M1-AGENT-SPLIT
     milestone: M1
     title: Split socialweb-nodeagent into a static guest binary (init and agent) and a host binary (namespace and VMM runner)
-    decision: User suggested the split; market guests stop carrying a host half that always fails.
+    decision: >
+      User suggested the split; market guests stop carrying a host half that always fails. Mapping on
+      2026-10-07 showed nodeboot already re-execs ITSELF for the namespace verb, and the agent verb
+      needs an identity disk only local substrates attach, so on market guests it always exits
+      KCP_AGENT fatal. With M1-MARKET-ONLY the split therefore lands as: guest binary
+      socialweb-nodeinit (initramfs /init only), host binary socialweb-nodeboot (unchanged); the agent
+      verb, /kcp/kcpagent and kcp-agent.service are deleted, the guest joining through cloud-init
+      units (M3-UNITS). Done in one change with M1-MARKET-ONLY after M1-TESTBED proves the market
+      path, because both rewrite the same files. decided by Claude, user may veto.
     status: todo
     evidence: []
   - id: M1-BIDDER-UNIT
