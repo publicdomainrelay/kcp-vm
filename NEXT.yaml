@@ -25,6 +25,12 @@ about: >
   is no longer on the path between the provider and the tenant apiserver). It is in section 15 with
   its readings, including the production failure it closed and the test watched to fail without it.
 
+  Opened and closed on 2026-10-06 and therefore NOT listed below: MOUNT-1 (a cluster's kubeconfig
+  mount child was created before the Cluster CR reported a status.URL, and kcp copies that URL into
+  the workspace's spec.URL only while reconciling the mount, so the child kept an empty spec.URL and
+  the mount served kcp itself). It is in section 15 with its readings, including the production
+  reading and the four subtests watched to fail against the old unconditional create.
+
   Opened and closed on 2026-10-07 and therefore NOT listed below: ESO-3 (the tenant add-ons applied
   a ClusterSecretStore to a tenant cluster no External Secrets Operator was ever installed into, so
   the pass failed every 2 s with an unknown kind until the pass installed the operator first). It is

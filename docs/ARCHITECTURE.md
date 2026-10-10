@@ -1948,6 +1948,55 @@ questions for hours without anyone stopping on it. The measurements stay with th
 being tidied away, because a number without its condition is how the 332-second boot outlived its own
 refutation.
 
+- **A cluster's kubeconfig mount child is built from the Cluster CR's `status.URL`, and it is created
+  or repaired on every Ensure. CLOSED, and it closed a mount that served kcp itself.** Before,
+  `kcpclient.Ensure` POSTed the Cluster CR and then POSTed the mount child at `MountPath` back to
+  back, both without reading anything the CR reports. kcp's `workspaceSpecUpdater`
+  (`kcp/pkg/reconciler/tenancy/workspacemounts/workspacemounts_reconcile_updater.go`) copies the
+  MOUNTED OBJECT's `status.URL` into the workspace's `spec.URL`, and returns
+  `reconcileStatusStopAndRequeue` with `unable to read .status.URL` when the object has none; a mount
+  workspace's own `status.URL` is empty by design. The CR's `status.URL` is written later, by the
+  clusterprovider's `Joined` (`internal/clusterprovider/provider.go`: `o.Cluster.Status.URL = at.URL`),
+  so a child created in that gap inherited nothing. The requeue is rate limited by the controller
+  (`c.queue.AddRateLimited(key)`), so the healing pass recedes rather than arriving promptly, and in
+  production it did not arrive at all in the observation window. kcp then served the mount ITSELF:
+  `kcp-admin` was accepted, `kubectl get nodes` returned the placeholder Node the provider wrote, and
+  every object on the real tenant apiserver was invisible. Downstream, the SPA/runner kubeconfig
+  showed an empty cluster and the clusterprovider re-claimed a node from the market every 2 s because
+  it never saw the join. MEASURED in production on `root@socialweb.computer` (ssh port 1997):
+  `kubectl --kubeconfig=/var/lib/socialweb/kcp/admin.kubeconfig
+  --server=https://127.0.0.1:6443/clusters/root:<account>:<cluster> get workspace clusters -o
+  jsonpath={.spec.URL}` was empty on the original child; after deleting and recreating that child by
+  hand the same read gave `https://127.0.0.1:20003`, and traffic then reached the tenant apiserver,
+  which began asking for credentials -- the tenant k3s refusing kcp's admin token, the correct
+  refusal. After, `Ensure` calls `ensureMountChild` (`internal/kcpclient/kcpclient.go`), which builds
+  the child from the URL and never from nothing: `createCluster` now reports whether it created the
+  CR; if it did and the CR reports no `status.URL`, a bounded wait (`clusterURLTimeout`, 30 s, the
+  budget `workspaceReadyTimeout` already spends in the same function) re-reads the CR until a URL
+  appears; when it gives up, the child is NOT created and `Ensure` returns nil, leaving the job to a
+  later `Ensure`. If the CR already existed its URL is read once and nothing is waited for, so the
+  budget is paid only by the `Ensure` that itself created the CR, and a later one that finds the CR
+  still without a URL costs a single GET. Either way a missing child is CREATED with `spec.URL` set,
+  and an existing child whose `spec.URL` is empty is PATCHed with the CR's current `status.URL`; a
+  child that already carries one is left alone. THE ORDERING DECISION: a cluster whose node has not
+  started legitimately has no `status.URL` -- a market join is minutes away by construction, section
+  13 invariant 31 -- so the give-up is a DEFERRAL and not a refusal, which is safe precisely because
+  `Ensure` runs again for a live cluster (the door's `listClusters` and `getKubeconfig` both reach it
+  through `gateway.Server.create`), so a hard refusal would refuse every first login whose node has
+  not joined yet. Instruments, all in `internal/kcpclient/kcpclient_test.go`
+  unless named: `TestEachEnsureLeavesTheMountChildAddressingTheTenantApiserver`, four subtests that
+  pin the repair (an existing child with an empty `spec.URL` is PATCHed from the CR's `status.URL` and
+  is NOT re-created), the create (a child built after the CR reports a URL carries it),
+  idempotence (across two Ensures the child is POSTed exactly once), and the deferral (a CR reporting
+  no URL leaves no child, and the CR reporting one on the next Ensure produces it); all four subtests
+  and `TestEnsureCreatesTheTree` were watched to FAIL when `ensureMountChild` was replaced by the old
+  unconditional create, so the readings are the change and not the ambient result. NOT VERIFIED
+  against production: the deployment was inspected read-only, and this is a source change the owner
+  deploys. The two live-gated mount proofs (`internal/kcpclient/mount_child_live_test.go`,
+  `internal/clusterprovider/live_mount_test.go`) call `Ensure` once while the CR's `status.URL` is
+  still empty, so they now need a second `Ensure` after the CR reports one; they were not run, and
+  neither was `deploy/check.sh --local`. `NEXT.yaml` MOUNT-1.
+
 - **A market cluster's tenant credential is signed from its own ClientCA, and the choice of source
   belongs to the substrate. CLOSED, and it closed the k8s door.** Before, `MintTenantCredentialForDataDir`
   chose its source from `ReadVaultSeal(dataDir)` alone: a port and a root token meant the vault, and

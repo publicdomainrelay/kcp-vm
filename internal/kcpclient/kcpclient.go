@@ -142,6 +142,8 @@ func (c *Client) bind(logicalCluster string, gv schema.GroupVersion, endpoint st
 var (
 	workspaceReadyTimeout = 30 * time.Second
 	workspaceReadyPoll    = 250 * time.Millisecond
+	clusterURLTimeout     = 30 * time.Second
+	clusterURLPoll        = 250 * time.Millisecond
 )
 
 func (c *Client) homePath(caller gateway.Caller, name string) (string, error) {
@@ -188,16 +190,98 @@ func (c *Client) ensure(ctx context.Context, permit revocation.Permit, name stri
 	if err := c.waitForWorkspaceReady(ctx, AccountPath(did), name); err != nil {
 		return err
 	}
-	if err := c.createCluster(ctx, home, name, did); err != nil {
+	created, err := c.createCluster(ctx, home, name, did)
+	if err != nil {
 		return fmt.Errorf("kcpclient: cluster %s: %w", home, err)
 	}
-	child := kcpv1alpha1.WorkspaceSpec{Mount: &kcpv1alpha1.Mount{Reference: kcpv1alpha1.ObjectReference{
-		APIVersion: socialwebResource.String(),
-		Kind:       "Cluster",
-		Name:       name,
-	}}}
-	if err := c.createWorkspace(ctx, home, ChildLabel, child); err != nil {
+	if err := c.ensureMountChild(ctx, home, name, created); err != nil {
 		return fmt.Errorf("kcpclient: mounted child %s: %w", MountPath(did, name), err)
+	}
+	return nil
+}
+
+func (c *Client) ensureMountChild(ctx context.Context, home, name string, created bool) error {
+	url := ""
+	if created {
+		var err error
+		url, err = c.waitForClusterURL(ctx, home, name)
+		if err != nil {
+			return err
+		}
+	} else {
+		var err error
+		url, err = c.readClusterURL(ctx, home, name)
+		if err != nil {
+			return err
+		}
+	}
+	if url == "" {
+		return nil
+	}
+	child, err := c.readWorkspace(ctx, home, ChildLabel)
+	switch {
+	case apierrors.IsNotFound(err):
+		return c.createWorkspace(ctx, home, ChildLabel, mountChildSpec(name, url))
+	case err != nil:
+		return err
+	case child.Spec.URL == "":
+		return c.patchWorkspaceURL(ctx, home, ChildLabel, url)
+	}
+	return nil
+}
+
+func (c *Client) waitForClusterURL(ctx context.Context, home, name string) (string, error) {
+	deadline := time.Now().Add(clusterURLTimeout)
+	for {
+		cl, err := c.readCluster(ctx, home, name)
+		if err == nil && cl.Status.URL != "" {
+			return cl.Status.URL, nil
+		}
+		if err != nil && !apierrors.IsNotFound(err) {
+			return "", err
+		}
+		if !time.Now().Before(deadline) {
+			return "", nil
+		}
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(clusterURLPoll):
+		}
+	}
+}
+
+func (c *Client) readClusterURL(ctx context.Context, home, name string) (string, error) {
+	cl, err := c.readCluster(ctx, home, name)
+	if err != nil {
+		return "", err
+	}
+	return cl.Status.URL, nil
+}
+
+func mountChildSpec(name, url string) kcpv1alpha1.WorkspaceSpec {
+	return kcpv1alpha1.WorkspaceSpec{
+		URL: url,
+		Mount: &kcpv1alpha1.Mount{Reference: kcpv1alpha1.ObjectReference{
+			APIVersion: socialwebResource.String(),
+			Kind:       "Cluster",
+			Name:       name,
+		}},
+	}
+}
+
+func (c *Client) patchWorkspaceURL(ctx context.Context, parent, name, url string) error {
+	r, err := c.resource(parent, tenancyResource)
+	if err != nil {
+		return err
+	}
+	body, err := json.Marshal(map[string]any{"spec": map[string]any{"URL": url}})
+	if err != nil {
+		return fmt.Errorf("kcpclient: workspace %s: marshal: %w", name, err)
+	}
+	if err := r.Patch(types.MergePatchType).Resource("workspaces").Name(name).
+		Body(body).Do(ctx).Error(); err != nil {
+		return fmt.Errorf("kcpclient: patch workspace %s spec.URL: %w", name, err)
 	}
 	return nil
 }
@@ -276,10 +360,10 @@ func (c *Client) createWorkspace(ctx context.Context, parent, name string, spec 
 	return err
 }
 
-func (c *Client) createCluster(ctx context.Context, home, name, did string) error {
+func (c *Client) createCluster(ctx context.Context, home, name, did string) (bool, error) {
 	r, err := c.resource(home, socialwebResource)
 	if err != nil {
-		return err
+		return false, err
 	}
 	obj := &v1alpha1.Cluster{
 		TypeMeta:   metav1.TypeMeta{APIVersion: socialwebResource.String(), Kind: "Cluster"},
@@ -289,9 +373,12 @@ func (c *Client) createCluster(ctx context.Context, home, name, did string) erro
 	var out v1alpha1.Cluster
 	err = r.Post().Resource("clusters").Body(obj).Do(ctx).Into(&out)
 	if apierrors.IsAlreadyExists(err) {
-		return nil
+		return false, nil
 	}
-	return err
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (c *Client) Get(ctx context.Context, caller gateway.Caller, name string) (gateway.ClusterView, bool, error) {

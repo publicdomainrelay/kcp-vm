@@ -44,6 +44,10 @@ func TestTheTreeIsBuiltWithTheDeclaredTypes(t *testing.T) {
 	wsReads := 0
 	f := &fakeKCP{t: t, respond: func(req request) (int, any) {
 		switch {
+		case req.Method == http.MethodGet && strings.Contains(req.Path, "/apis/socialweb.computer/v1alpha1/clusters/"):
+			return http.StatusOK, clusterBody(testCluster, "Ready", mountChildURL, "inst-1", true)
+		case req.Method == http.MethodGet && strings.HasSuffix(req.Path, "/workspaces/"+ChildLabel):
+			return notFound()
 		case req.Method == http.MethodGet && strings.Contains(req.Path, "/workspaces/"):
 			wsReads++
 			if wsReads == 1 {
