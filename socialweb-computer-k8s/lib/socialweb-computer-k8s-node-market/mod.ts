@@ -18,8 +18,9 @@ import {
   type NodeClaim,
   nodeClaimKey,
   type NodeClaimStore,
+  type PinnedDownload,
 } from "@publicdomainrelay/socialweb-computer-k8s-abc";
-import { createK3sJoinModule } from "@publicdomainrelay/cloud-init-plugin-k3s-join";
+import { createK3sJoinModule, MESHD_ARCHES, type MeshdPin } from "@publicdomainrelay/cloud-init-plugin-k3s-join";
 import {
   accountHashOf,
   clusterKeyOf,
@@ -63,6 +64,7 @@ export interface MarketNodeFulfillerOptions {
   openBaoCAFileOf?: (spec: NodeClaimSpec) => string;
   eventStreams?: () => { close(): void };
   readText?: (path: string) => Promise<string>;
+  meshd?: MeshdPin;
   log?: Log;
 }
 
@@ -78,6 +80,19 @@ const ORPHANED_PHASES: ReadonlySet<NodeClaimPhase> = new Set(["Bidding", "Provis
 const RELEASE_REASON_CLAIM_DELETED = "claim_deleted";
 
 export const OPENBAO_CA_RELATIVE_TO_CLUSTER_DIR = "openbao/tls/ca.crt";
+
+export const MESHD_DOWNLOAD_PREFIX = "socialweb-meshd-";
+
+export function meshdPinOf(downloads: PinnedDownload[], downloadBase: string | undefined): MeshdPin | null {
+  if (!downloadBase) return null;
+  const sha256: Partial<MeshdPin["sha256"]> = {};
+  for (const arch of MESHD_ARCHES) {
+    const found = downloads.find((d) => d.name === `${MESHD_DOWNLOAD_PREFIX}${arch}`);
+    if (!found) return null;
+    sha256[arch] = found.sha256;
+  }
+  return { downloadBase, sha256: sha256 as MeshdPin["sha256"] };
+}
 
 export function defaultOpenBaoCAFile(spec: NodeClaimSpec): string {
   const dir = spec.tokenFile.replace(/\/+[^/]*$/, "");
@@ -215,6 +230,7 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
   const secretsCapability = opts.secretsCapability ??
     ((secrets: SecretEntry[], logger: StructuredLoggerInterface) => createSecretsCapability({ secrets, logger }));
   const vmReadyTimeoutSec = opts.vmReadyTimeoutSec ?? 600;
+  const joinModule = createK3sJoinModule(opts.meshd ? { meshd: opts.meshd } : {});
   const eventStreams = opts.eventStreams ?? (() =>
     createDefaultATProtoEventStreamsClient({ additionalRelays: opts.relayUrls ?? [], log: quietLogger(log) }) as unknown as {
       close(): void;
@@ -366,7 +382,7 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
 
         handle = await request(pds, {
           vmName: spec.nodeName,
-          userData: { modules: ["k3s", createK3sJoinModule()] },
+          userData: { modules: ["k3s", joinModule] },
           capabilities: [capability],
           denyBidderDids: spec.denyBidderDids ?? [],
           extraBidderDids: opts.extraBidderDids ?? [],

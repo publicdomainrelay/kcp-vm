@@ -27,6 +27,7 @@ import {
 import type { GrantVars, GuestCapability } from "@publicdomainrelay/guest-capability-abc";
 import type { SecretEntry } from "@publicdomainrelay/secrets-common";
 import { buildUserData, type UserDataModule } from "@publicdomainrelay/cloud-init-common";
+import { type MeshdPin, NODE_NET_UNITS } from "@publicdomainrelay/cloud-init-plugin-k3s-join";
 import { COMPUTE_EVENTS_VM_DELETE_NSID, EVENT_NSID, SUBMIT_EVENT_NSID } from "@publicdomainrelay/market-lexicons";
 
 const OWNER = "did:plc:nodeowner";
@@ -271,6 +272,7 @@ interface HarnessOptions {
   pds?: FakeRequesterPds;
   links?: FakeLinks;
   vmReadyTimeoutSec?: number;
+  meshd?: MeshdPin;
 }
 
 function harness(o: HarnessOptions = {}) {
@@ -292,6 +294,7 @@ function harness(o: HarnessOptions = {}) {
     eventStreams: () => ({ close() {} }),
     secretsCapability: secrets.factory,
     vmReadyTimeoutSec: o.vmReadyTimeoutSec ?? 0.05,
+    ...(o.meshd ? { meshd: o.meshd } : {}),
     requestCompute: scriptedRequest(o.script ?? "complete", contracts, decisions, store) as never,
   });
   return { store, pds, links, secrets, fulfiller, requested, contracts, decisions };
@@ -420,6 +423,37 @@ Deno.test("the user_data the door asks for renders without any secret value", as
   }
   assertStringIncludes(text, "socialweb-k3s-agent.service");
   await h.fulfiller.stop();
+});
+
+function renderedUserData(c: Record<string, unknown>): string {
+  const modules = (c.userData as { modules: (string | UserDataModule)[] }).modules;
+  const caps = c.capabilities as GuestCapability[];
+  return buildUserData({
+    ctx: { vmName: "ci-node1", secretsUrl: "https://secrets.test", secretsAud: "api://x" },
+    modules: ["iroh", ...modules, ...caps.flatMap((cap) => cap.userDataModule ? [cap.userDataModule] : [])],
+  });
+}
+
+Deno.test("the user_data the door asks for installs the meshd it ships, pinned by sha256, and the pod network", async () => {
+  const meshd = { downloadBase: "https://door.test", sha256: { x86_64: "1".repeat(64), aarch64: "2".repeat(64) } };
+  const h = harness({ meshd });
+  h.store.put(claim("ci-node1"));
+  await h.fulfiller.pass();
+  await settle();
+  const text = renderedUserData(h.contracts[0]);
+  for (const want of [NODE_NET_UNITS.meshdInstall, NODE_NET_UNITS.meshd, "1".repeat(64), "2".repeat(64), "https://door.test/downloads/"]) {
+    assertStringIncludes(text, want);
+  }
+  await h.fulfiller.stop();
+
+  const bare = harness();
+  bare.store.put(claim("ci-node1"));
+  await bare.fulfiller.pass();
+  await settle();
+  const without = renderedUserData(bare.contracts[0]);
+  assertStringIncludes(without, NODE_NET_UNITS.cni);
+  assertEquals(without.includes(NODE_NET_UNITS.meshdInstall), false, "a door that ships no meshd asks for none");
+  await bare.fulfiller.stop();
 });
 
 Deno.test("every contract milestone reaches the claim before the flow moves on", async () => {
