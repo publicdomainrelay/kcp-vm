@@ -13,12 +13,22 @@ import (
 
 const tcpListen = "0A"
 
+const udpBound = "07"
+
 type listenSocket struct {
 	Port  int
 	Inode uint64
 }
 
 func parseProcNetTCP(r io.Reader) ([]listenSocket, error) {
+	return parseProcNet(r, tcpListen)
+}
+
+func parseProcNetUDP(r io.Reader) ([]listenSocket, error) {
+	return parseProcNet(r, udpBound)
+}
+
+func parseProcNet(r io.Reader, state string) ([]listenSocket, error) {
 	sc := bufio.NewScanner(r)
 	var out []listenSocket
 	for sc.Scan() {
@@ -29,7 +39,7 @@ func parseProcNetTCP(r io.Reader) ([]listenSocket, error) {
 		if len(fields) < 10 {
 			return nil, fmt.Errorf("portscan: %q is not a socket-table row", sc.Text())
 		}
-		if fields[3] != tcpListen {
+		if fields[3] != state {
 			continue
 		}
 		_, portHex, ok := strings.Cut(fields[1], ":")
@@ -100,11 +110,19 @@ func walkInodeOwners(root string, want map[uint64]bool) (map[uint64][]int, error
 }
 
 func listenersIn(root string) (map[int][]int, error) {
-	socks, err := readTable(filepath.Join(root, "net", "tcp"), true)
+	return ownersIn(root, "tcp", parseProcNetTCP)
+}
+
+func datagramListenersIn(root string) (map[int][]int, error) {
+	return ownersIn(root, "udp", parseProcNetUDP)
+}
+
+func ownersIn(root, table string, parse func(io.Reader) ([]listenSocket, error)) (map[int][]int, error) {
+	socks, err := readTable(filepath.Join(root, "net", table), true, parse)
 	if err != nil {
 		return nil, err
 	}
-	six, err := readTable(filepath.Join(root, "net", "tcp6"), false)
+	six, err := readTable(filepath.Join(root, "net", table+"6"), false, parse)
 	if err != nil {
 		return nil, err
 	}
@@ -128,7 +146,7 @@ func listenersIn(root string) (map[int][]int, error) {
 	return byPort, nil
 }
 
-func readTable(path string, required bool) ([]listenSocket, error) {
+func readTable(path string, required bool, parse func(io.Reader) ([]listenSocket, error)) ([]listenSocket, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		if !required && errors.Is(err, os.ErrNotExist) {
@@ -137,5 +155,5 @@ func readTable(path string, required bool) ([]listenSocket, error) {
 		return nil, fmt.Errorf("portscan: opening %s: %w", path, err)
 	}
 	defer f.Close()
-	return parseProcNetTCP(f)
+	return parse(f)
 }
