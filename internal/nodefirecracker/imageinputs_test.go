@@ -19,6 +19,7 @@ type imageFixture struct {
 	baseImage  string
 	k3s        string
 	agent      string
+	agentPkg   string
 	modules    string
 	cfg        BuildConfig
 }
@@ -44,6 +45,7 @@ func newImageFixture(t *testing.T) imageFixture {
 		baseImage:  filepath.Join(root, "base.squashfs"),
 		k3s:        filepath.Join(root, "k3s"),
 		agent:      filepath.Join(root, "kcpagent"),
+		agentPkg:   filepath.Join(root, "socialweb-nodeagent"),
 		modules:    filepath.Join(root, "modules"),
 	}
 	writeFileAt(t, f.kernel, "this host's kernel, as it was on the day of the build\n")
@@ -51,6 +53,7 @@ func newImageFixture(t *testing.T) imageFixture {
 	writeFileAt(t, f.baseImage, "the base userspace, as it was on the day of the build\n")
 	writeFileAt(t, f.k3s, "k3s version v1.31.1+k3s1\n")
 	writeFileAt(t, f.agent, "the guest's agent, as it was on the day of the build\n")
+	writeFileAt(t, filepath.Join(f.agentPkg, "main.go"), "package main\n")
 	writeFileAt(t, filepath.Join(f.modules, "modules.dep"), "kernel/net/netfilter/xt_NFLOG.ko:\n")
 	writeFileAt(t, filepath.Join(f.modules, "modules.builtin"), "kernel/net/netfilter/nf_conntrack.ko\n")
 	writeFileAt(t, filepath.Join(f.modules, "kernel/net/netfilter/xt_NFLOG.ko"), "the extension\n")
@@ -63,6 +66,7 @@ func newImageFixture(t *testing.T) imageFixture {
 		BaseImage:        f.baseImage,
 		K3sBinary:        f.k3s,
 		AgentBinary:      f.agent,
+		AgentPackage:     f.agentPkg,
 		ModuleSource:     f.modules,
 	}
 	f.writeConfig(t, f.cfg)

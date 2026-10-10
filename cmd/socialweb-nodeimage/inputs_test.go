@@ -40,8 +40,9 @@ var fieldDeclarations = map[string]fieldDeclaration{
 	"stage_dir":           {Role: writtenByTheBuild},
 	"out_dir":             {Role: writtenByTheBuild},
 	"image_cache_dir":     {Role: writtenByTheBuild},
-	"agent_package":       {Role: readByTheBuild, Covers: []string{"agentPackage"}},
+	"agent_package":       {Role: readByTheBuild, Covers: []string{"agentPackage", "agentPackageDigest"}},
 	"agent_binary":        {Role: readByTheBuild, Covers: []string{"agentBinary", "agentBinaryDigest"}},
+	"preinstall":          {Role: readByTheBuild, Covers: []string{"preinstall", "preinstallDigest"}},
 	"agent_go_flags":      {Role: readByTheBuild, Covers: []string{"agentGoFlags"}},
 	"k3s_binary":          {Role: readByTheBuild, Covers: []string{"k3sBinary", "k3sBinaryDigest"}},
 	"k3s_data_dir":        {Role: readByTheBuild, Covers: []string{"k3sDataDir"}},
@@ -161,7 +162,12 @@ func TestEveryInputTheBuildReadsMovesTheNameAndTheComparison(t *testing.T) {
 			cfg.RootfsHeadroomMiB = cfg.RootfsHeadroomMiB + 1
 		}},
 		{"the agent's package", func(t *testing.T, cfg *Config) {
-			cfg.AgentPackage = "./cmd/socialweb-nodeagent-elsewhere"
+			elsewhere := filepath.Join(t.TempDir(), "socialweb-nodeagent-elsewhere")
+			if err := os.MkdirAll(elsewhere, 0o755); err != nil {
+				t.Fatalf("creating %s: %v", elsewhere, err)
+			}
+			writeFileAt(t, filepath.Join(elsewhere, "main.go"), "package main\n")
+			cfg.AgentPackage = elsewhere
 		}},
 		{"the agent's build flags", func(t *testing.T, cfg *Config) {
 			cfg.AgentGoFlags = append(append([]string(nil), cfg.AgentGoFlags...), "-race")

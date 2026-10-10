@@ -17,8 +17,8 @@ import (
 	"time"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostos"
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/noderecord"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodefirecracker"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/noderecord"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodevm"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/processrunner"
 )

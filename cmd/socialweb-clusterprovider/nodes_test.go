@@ -184,6 +184,13 @@ func builtNodeImageFixtureFor(t *testing.T, vmm string) nodeImageFixture {
 		}
 	}
 	modules := filepath.Join(host, "modules")
+	agentPackage := filepath.Join(host, "socialweb-nodeagent")
+	if err := os.MkdirAll(agentPackage, 0o755); err != nil {
+		t.Fatalf("creating the agent's package: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(agentPackage, "main.go"), []byte("package main\n"), 0o600); err != nil {
+		t.Fatalf("writing the agent's package: %v", err)
+	}
 	if err := os.MkdirAll(filepath.Join(modules, "kernel/net/netfilter"), 0o755); err != nil {
 		t.Fatalf("creating the module tree: %v", err)
 	}
@@ -210,6 +217,7 @@ func builtNodeImageFixtureFor(t *testing.T, vmm string) nodeImageFixture {
 			BaseImage:        filepath.Join(host, "base.squashfs"),
 			K3sBinary:        filepath.Join(host, "k3s"),
 			AgentBinary:      filepath.Join(host, "kcpagent"),
+			AgentPackage:     agentPackage,
 			ModuleSource:     modules,
 		},
 	}
@@ -241,6 +249,7 @@ func builtNodeImageFixtureFor(t *testing.T, vmm string) nodeImageFixture {
 			"platform":   "linux/amd64",
 		}},
 		"buildInputs": inputs,
+		"fingerprint": filepath.Base(dir),
 	})
 	if err != nil {
 		t.Fatalf("encoding the image manifest: %v", err)

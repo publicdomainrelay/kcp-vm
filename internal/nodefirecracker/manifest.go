@@ -49,6 +49,21 @@ func (m Manifest) RecordedFingerprint() (string, error) {
 		return "", fmt.Errorf("the manifest in this image records the fingerprint %q, which is not "+
 			"a name this store issues", m.Fingerprint)
 	}
+	if m.Inputs == nil {
+		return "", ErrNoBuildInputs
+	}
+	derived, err := m.Inputs.Fingerprint()
+	if err != nil {
+		return "", err
+	}
+	if derived != m.Fingerprint {
+		return "", fmt.Errorf("the manifest in this image carries the fingerprint %s and the record "+
+			"of inputs inside it hashes to %s, so the record and the name it claims to have been "+
+			"given disagree. The name is the hash of the record, so a record that does not hash to "+
+			"its own name is a record that was edited after the build wrote it, and every comparison "+
+			"made against it -- the configuration on the host, the modules, the agent -- would be "+
+			"made against the edit rather than against the build", m.Fingerprint, derived)
+	}
 	return m.Fingerprint, nil
 }
 

@@ -100,6 +100,8 @@ const (
 		"tree of the same version moves the image's name, which is the only thing that makes the " +
 		"difference visible without booting to find out"
 
+	moduleSourceDigestWhy = "no digest of the tree it copied its modules from"
+
 	bootArgsWhy = "The boot arguments become the kernel command line the guest is started with, and " +
 		"they travel in the manifest inside the image, so a configuration that changed them and was " +
 		"answered `up to date` leaves the image with the OLD command line: the operator edits the " +
@@ -119,7 +121,12 @@ const (
 
 	agentPackageWhy = "The package is what the agent is built FROM, so a configuration naming " +
 		"another package is a configuration this image was not built from, whatever the binary it " +
-		"produced happens to look like"
+		"produced happens to look like -- and a package is a directory of source rather than a " +
+		"file, so an edited agent under an unchanged path is a different agent again, and the " +
+		"binary the image carries is then not the one this configuration would build"
+
+	agentPackageDigestWhy = "no digest of the agent's own source, so the source the binary in this " +
+		"image was built from cannot be compared against the package the configuration names"
 
 	agentGoFlagsWhy = "The flags are inputs to the agent's binary -- trimming, symbols, and anything " +
 		"added later -- so two builds of one package under different flags are two different agents " +
@@ -297,6 +304,19 @@ func resolvePath(path string) (string, error) {
 	return filepath.Join(parent, filepath.Base(absolute)), nil
 }
 
+func resolveAgentPackage(path string) (string, error) {
+	if strings.TrimSpace(path) == "" {
+		return "", fmt.Errorf("nodefirecracker: the configuration names no agent_package, and the " +
+			"agent is the guest's half of the thing that talks to it. A build refuses a " +
+			"configuration without it, so an empty one is not a configuration with no agent -- it is " +
+			"a field that has been renamed or dropped, and the empty string resolves to the working " +
+			"directory, which is a directory that exists and digests: the record would then hold the " +
+			"digest of whatever tree the reader happened to be standing in, and a change to the " +
+			"agent's own source would move nothing")
+	}
+	return resolvePath(path)
+}
+
 func unresolvedPathRefusal(path string, cause error) error {
 	return fmt.Errorf("nodefirecracker: resolving the path %s, which is part of the name an image "+
 		"built from it is given and part of the record a later boot holds that image to: %w. One "+
@@ -456,7 +476,7 @@ func RecordInputs(configPath string, cfg BuildConfig) (BuildInputs, error) {
 		return BuildInputs{}, fmt.Errorf("nodefirecracker: looking for the guest agent at %s: %w",
 			cfg.AgentBinary, statErr)
 	}
-	resolvedAgent, err := resolvePath(cfg.AgentPackage)
+	resolvedAgent, err := resolveAgentPackage(cfg.AgentPackage)
 	if err != nil {
 		return BuildInputs{}, err
 	}
@@ -595,18 +615,33 @@ func CompareImageToConfig(m Manifest, configPath string, cfg BuildConfig) error 
 			diffs = append(diffs, d)
 		}
 	}
-	recordedTree := m.Inputs.ModuleSource
-	if resolved, err := resolvePath(m.Inputs.ModuleSource); err == nil {
-		recordedTree = resolved
-	}
-	namedTree, err := resolvePath(cfg.ModuleSource)
-	if err != nil {
-		return err
-	}
-	if d, err := treeDifference(recordedTree, m.Inputs.ModuleSourceDigest, namedTree); err != nil {
-		return err
-	} else if d != "" {
-		diffs = append(diffs, d)
+	for _, t := range []struct {
+		what     string
+		recorded string
+		digest   string
+		named    string
+		emptyWhy string
+		why      string
+		resolve  func(string) (string, error)
+	}{
+		{"kernel modules' tree", m.Inputs.ModuleSource, m.Inputs.ModuleSourceDigest, cfg.ModuleSource,
+			moduleSourceDigestWhy, moduleSourceWhy, resolvePath},
+		{"agent package's tree", m.Inputs.AgentPackage, m.Inputs.AgentPackageDigest, cfg.AgentPackage,
+			agentPackageDigestWhy, agentPackageWhy, resolveAgentPackage},
+	} {
+		recorded := t.recorded
+		if resolved, err := resolvePath(t.recorded); err == nil {
+			recorded = resolved
+		}
+		named, err := t.resolve(t.named)
+		if err != nil {
+			return err
+		}
+		if d, err := treeDifference(t.what, recorded, t.digest, named, t.emptyWhy, t.why); err != nil {
+			return err
+		} else if d != "" {
+			diffs = append(diffs, d)
+		}
 	}
 	if d := listDifference("boot arguments", m.Inputs.BootArgs, cfg.BootArgs, bootArgsWhy); d != "" {
 		diffs = append(diffs, d)
@@ -622,7 +657,6 @@ func CompareImageToConfig(m Manifest, configPath string, cfg BuildConfig) error 
 	}{
 		{"guest's k3s data directory", m.Inputs.K3sDataDir, cfg.K3sDataDir, k3sDataDirWhy},
 		{"rootfs label", m.Inputs.RootfsLabel, cfg.RootfsLabel, rootfsLabelWhy},
-		{"agent package", m.Inputs.AgentPackage, cfg.AgentPackage, agentPackageWhy},
 	} {
 		if f.recorded == f.named {
 			continue
@@ -641,27 +675,26 @@ func CompareImageToConfig(m Manifest, configPath string, cfg BuildConfig) error 
 	return &InputsDifferError{ConfigPath: configPath, Differences: diffs}
 }
 
-func treeDifference(recorded, digest, named string) (string, error) {
+func treeDifference(what, recorded, digest, named, emptyWhy, why string) (string, error) {
 	if digest == "" {
-		return fmt.Sprintf("kernel modules' tree: this image records no digest of the tree it copied "+
-			"its modules from, so the tree it was built from cannot be compared against %s. %s",
-			named, moduleSourceWhy), nil
+		return fmt.Sprintf("%s: this image records %s, so the tree it was built from cannot be "+
+			"compared against %s. %s", what, emptyWhy, named, why), nil
 	}
 	if recorded != named {
-		return fmt.Sprintf("kernel modules' tree: this image was built from %s and the configuration "+
-			"now names %s. %s", recorded, named, moduleSourceWhy), nil
+		return fmt.Sprintf("%s: this image was built from %s and the configuration now names %s. %s",
+			what, recorded, named, why), nil
 	}
 	current, err := treeDigest(named)
 	if err != nil {
-		return "", fmt.Errorf("nodefirecracker: reading the module tree the configuration names at "+
+		return "", fmt.Errorf("nodefirecracker: reading the tree the configuration names at "+
 			"%s, which is the tree this image records being built from: %w -- whether this image "+
 			"was built from the configuration in front of it cannot be established from here, and "+
 			"this refuses rather than passing on an input it could not compare", named, err)
 	}
 	if current != digest {
-		return fmt.Sprintf("kernel modules' tree: this image records the tree at %s as %s and this "+
-			"host's tree of the same name is %s, so the files it would load inside the guest are not "+
-			"the files this image was built with. %s", named, digest, current, moduleSourceWhy), nil
+		return fmt.Sprintf("%s: this image records the tree at %s as %s and this host's tree of the "+
+			"same name is %s, so the files this image was built from are not the files the "+
+			"configuration names. %s", what, named, digest, current, why), nil
 	}
 	return "", nil
 }
