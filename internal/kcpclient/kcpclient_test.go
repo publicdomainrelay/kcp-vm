@@ -1727,3 +1727,247 @@ func TestWriteNodeRefusesAnUnnamedNodeOrCluster(t *testing.T) {
 		t.Error("an empty cluster was accepted: a node that names no cluster is one no cluster can count")
 	}
 }
+
+func testClaimSpec() v1alpha1.NodeClaimSpec {
+	return v1alpha1.NodeClaimSpec{
+		Cluster:          testCluster,
+		NodeName:         "web-node1",
+		OwnerDid:         testDID,
+		ApiserverPort:    24000,
+		AdvertiseAddress: "100.127.255.254",
+		TokenFile:        "/state/pdr-web/token",
+		NodePasswordFile: "/state/pdr-web/nodes/web-node1/node-password",
+		ServerCAFile:     "/state/pdr-web/server/tls/server-ca.crt",
+		DenyBidderDids:   []string{"did:plc:bad"},
+	}
+}
+
+func newClaim() v1alpha1.NodeClaim {
+	return v1alpha1.NodeClaim{
+		TypeMeta:   metav1.TypeMeta{APIVersion: "socialweb.computer/v1alpha1", Kind: "NodeClaim"},
+		ObjectMeta: metav1.ObjectMeta{Name: "web-node1"},
+		Spec:       testClaimSpec(),
+	}
+}
+
+func claimPath(name string) string {
+	return "/clusters/" + homePath + "/apis/socialweb.computer/v1alpha1/nodeclaims/" + name
+}
+
+func TestWriteNodeClaimCreatesItInTheClustersHomeWorkspace(t *testing.T) {
+	f := &fakeKCP{t: t, respond: func(req request) (int, any) {
+		switch {
+		case req.Method == http.MethodGet && req.Path == claimPath("web-node1"):
+			return notFound()
+		case req.Method == http.MethodPost && req.Path == "/clusters/"+homePath+"/apis/socialweb.computer/v1alpha1/nodeclaims":
+			return http.StatusCreated, newClaim()
+		}
+		return 0, nil
+	}}
+	c := newTestClient(t, f)
+
+	if err := c.WriteNodeClaim(context.Background(), homePath, newClaim()); err != nil {
+		t.Fatalf("WriteNodeClaim: %v", err)
+	}
+	var posted *request
+	for i, r := range f.seen() {
+		if r.Method == http.MethodPost {
+			posted = &f.seen()[i]
+		}
+	}
+	if posted == nil {
+		t.Fatalf("no CREATE was issued for an absent claim: %+v", f.seen())
+	}
+	body := posted.json(t)
+	spec, _ := body["spec"].(map[string]any)
+	for field, want := range map[string]any{
+		"cluster": testCluster, "nodeName": "web-node1", "ownerDid": testDID,
+		"advertiseAddress": "100.127.255.254",
+		"tokenFile":        "/state/pdr-web/token",
+		"nodePasswordFile": "/state/pdr-web/nodes/web-node1/node-password",
+		"serverCAFile":     "/state/pdr-web/server/tls/server-ca.crt",
+	} {
+		if got := spec[field]; got != want {
+			t.Errorf("the created claim's spec.%s is %v, want %v. The field names are the door's "+
+				"wire contract; a Go-idiomatic rename silently writes a claim the door reads as "+
+				"empty", field, got, want)
+		}
+	}
+	if got := spec["apiserverPort"]; got != float64(24000) {
+		t.Errorf("the created claim's spec.apiserverPort is %v, want 24000", got)
+	}
+	if status, ok := body["status"].(map[string]any); ok {
+		if phase, present := status["phase"]; present && phase != nil && phase != "" {
+			t.Errorf("the create carries status.phase, which the schema's status subresource "+
+				"DISCARDS: the claim would exist with no phase at all. %s", posted.Body)
+		}
+	}
+}
+
+func TestWriteNodeClaimIsSilentWhenTheSpecAlreadyMatches(t *testing.T) {
+	f := &fakeKCP{t: t, respond: func(req request) (int, any) {
+		if req.Method == http.MethodGet && req.Path == claimPath("web-node1") {
+			return http.StatusOK, newClaim()
+		}
+		return 0, nil
+	}}
+	c := newTestClient(t, f)
+
+	if err := c.WriteNodeClaim(context.Background(), homePath, newClaim()); err != nil {
+		t.Fatalf("WriteNodeClaim: %v", err)
+	}
+	if f.hasMethod(http.MethodPost) || f.hasMethod(http.MethodPatch) {
+		t.Fatalf("a claim whose spec already matches was written again on every pass: %+v", f.seen())
+	}
+}
+
+func TestWriteNodeClaimPatchesASpecThatChangedAndNeverTheStatus(t *testing.T) {
+	f := &fakeKCP{t: t, respond: func(req request) (int, any) {
+		switch {
+		case req.Method == http.MethodGet && req.Path == claimPath("web-node1"):
+			stale := newClaim()
+			stale.Spec.AdvertiseAddress = "10.0.0.1"
+			return http.StatusOK, stale
+		case req.Method == http.MethodPatch && req.Path == claimPath("web-node1"):
+			return http.StatusOK, newClaim()
+		}
+		return 0, nil
+	}}
+	c := newTestClient(t, f)
+
+	if err := c.WriteNodeClaim(context.Background(), homePath, newClaim()); err != nil {
+		t.Fatalf("WriteNodeClaim: %v", err)
+	}
+	var patched *request
+	for i, r := range f.seen() {
+		if r.Method == http.MethodPatch {
+			patched = &f.seen()[i]
+		}
+	}
+	if patched == nil {
+		t.Fatalf("a claim whose advertise address changed was left alone: %+v", f.seen())
+	}
+	if strings.Contains(patched.Path, "/status") {
+		t.Fatalf("the spec write went to the status subresource: %s", patched.Path)
+	}
+	if _, ok := patched.json(t)["status"]; ok {
+		t.Fatalf("the spec write carries a status, and status belongs to the door alone: %s",
+			patched.Body)
+	}
+}
+
+func TestReadNodeClaimReportsAbsenceWithoutAnError(t *testing.T) {
+	f := &fakeKCP{t: t, respond: func(req request) (int, any) {
+		if req.Method == http.MethodGet {
+			return notFound()
+		}
+		return 0, nil
+	}}
+	c := newTestClient(t, f)
+
+	claim, err := c.ReadNodeClaim(context.Background(), homePath, "web-node1")
+	if err != nil {
+		t.Fatalf("ReadNodeClaim on an absent claim: %v -- an absent claim is an answer, and a "+
+			"caller that cannot tell it from a failed read cannot tell a released node from an "+
+			"unreachable apiserver", err)
+	}
+	if claim != nil {
+		t.Fatalf("an absent claim decoded to %+v", claim)
+	}
+}
+
+func TestReadNodeClaimCarriesTheDoorsStatus(t *testing.T) {
+	f := &fakeKCP{t: t, respond: func(req request) (int, any) {
+		if req.Method == http.MethodGet {
+			claimed := newClaim()
+			claimed.Status = v1alpha1.NodeClaimStatus{
+				Phase:   v1alpha1.NodeClaimRunning,
+				Fqdn:    "node.example.invalid",
+				Message: "the node's agent reached its apiserver",
+				Contract: v1alpha1.NodeClaimContract{
+					VMUri: "at://did:plc:x/com.example.vm/1", ReceiptCid: "bafyrei",
+				},
+			}
+			return http.StatusOK, claimed
+		}
+		return 0, nil
+	}}
+	c := newTestClient(t, f)
+
+	claim, err := c.ReadNodeClaim(context.Background(), homePath, "web-node1")
+	if err != nil {
+		t.Fatalf("ReadNodeClaim: %v", err)
+	}
+	if claim == nil || claim.Status.Phase != v1alpha1.NodeClaimRunning {
+		t.Fatalf("the door's phase did not survive the read: %+v", claim)
+	}
+	if claim.Status.Fqdn != "node.example.invalid" || claim.Status.Message == "" {
+		t.Fatalf("the door's fqdn and message did not survive the read: %+v", claim.Status)
+	}
+	if claim.Status.Contract.ReceiptCid != "bafyrei" || claim.Status.Contract.VMUri == "" {
+		t.Fatalf("the contract the door wrote did not survive the read: %+v", claim.Status.Contract)
+	}
+}
+
+func TestDeleteNodeClaimTreatsAnAlreadyGoneOneAsDone(t *testing.T) {
+	f := &fakeKCP{t: t, respond: func(req request) (int, any) {
+		if req.Method == http.MethodDelete {
+			return notFound()
+		}
+		return 0, nil
+	}}
+	c := newTestClient(t, f)
+
+	if err := c.DeleteNodeClaim(context.Background(), homePath, "web-node1"); err != nil {
+		t.Fatalf("DeleteNodeClaim on an absent claim: %v -- a teardown that already landed is not "+
+			"a teardown that failed, and reporting it as one leaves a cluster that can never reach "+
+			"its zero state", err)
+	}
+	if !f.hasMethod(http.MethodDelete) {
+		t.Fatalf("no DELETE was issued: %+v", f.seen())
+	}
+}
+
+func TestListNodeClaimsReadsOneHomeWorkspace(t *testing.T) {
+	f := &fakeKCP{t: t, respond: func(req request) (int, any) {
+		if req.Method != http.MethodGet {
+			return 0, nil
+		}
+		claimed := newClaim()
+		claimed.Status = v1alpha1.NodeClaimStatus{Phase: v1alpha1.NodeClaimJoining}
+		return http.StatusOK, map[string]any{
+			"kind": "NodeClaimList", "apiVersion": "socialweb.computer/v1alpha1",
+			"items": []any{claimed},
+		}
+	}}
+	c := newTestClient(t, f)
+
+	claims, err := c.ListNodeClaims(context.Background(), homePath)
+	if err != nil {
+		t.Fatalf("ListNodeClaims: %v", err)
+	}
+	if len(claims) != 1 || claims[0].Spec.Cluster != testCluster {
+		t.Fatalf("ListNodeClaims returned %+v", claims)
+	}
+	if got := f.seen()[0].Path; got != "/clusters/"+homePath+"/apis/socialweb.computer/v1alpha1/nodeclaims" {
+		t.Fatalf("the list went to %s, want the cluster's own home workspace", got)
+	}
+}
+
+func TestWriteNodeClaimRefusesAnUnnamedClaim(t *testing.T) {
+	c := newTestClient(t, &fakeKCP{t: t, respond: func(request) (int, any) { return 0, nil }})
+	if err := c.WriteNodeClaim(context.Background(), homePath, v1alpha1.NodeClaim{}); err == nil {
+		t.Error("a claim with no name was accepted: it would be written at the empty name, which " +
+			"is not a resource")
+	}
+	named := newClaim()
+	named.Spec.Cluster = ""
+	if err := c.WriteNodeClaim(context.Background(), homePath, named); err == nil {
+		t.Error("a claim naming no cluster was accepted")
+	}
+	named = newClaim()
+	named.Spec.NodeName = ""
+	if err := c.WriteNodeClaim(context.Background(), homePath, named); err == nil {
+		t.Error("a claim naming no node was accepted")
+	}
+}

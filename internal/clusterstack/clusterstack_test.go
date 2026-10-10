@@ -602,3 +602,20 @@ func hasFlag(argv []string, flag, value string) bool {
 	}
 	return false
 }
+
+func TestAStackCannotCarryTwoAnswersToWhereANodeIs(t *testing.T) {
+	s := valid()
+	if err := s.Validate(); err != nil {
+		t.Fatalf("a stack with neither dial flagged must validate: %v", err)
+	}
+	s.GuestDialled = true
+	if err := s.Validate(); err != nil {
+		t.Fatalf("a guest stack must validate: %v", err)
+	}
+	s.MarketDialled = true
+	if err := s.Validate(); !errors.Is(err, ErrTwoDialAddresses) {
+		t.Fatalf("a stack carrying both a guest and a market dial = %v, want ErrTwoDialAddresses: "+
+			"the two name different machines and different reachability, so the advertise invariant "+
+			"would be checked against one of them and the argv built for the other", err)
+	}
+}

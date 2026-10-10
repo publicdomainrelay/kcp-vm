@@ -57,6 +57,15 @@ func nodeHolderIdentityFor(substrate string) (nodeIdentity, error) {
 }
 
 func (p *Provider) sweepNodeRecords(ctx context.Context) error {
+	if p.cfg.Substrate == SubstrateMarket {
+		p.log.Info("cluster provider: node record sweep", "stateDir", p.cfg.StateDir,
+			"substrate", p.cfg.Substrate,
+			"decision", "a market node's machine is a VM in someone else's cloud, reached through "+
+				"the market's SSH door: no process on this host is a node of this substrate, so "+
+				"there is no record under this state dir that names one, and the walk stops here "+
+				"rather than refusing to start a gateway nothing could configure into the market")
+		return nil
+	}
 	identity, err := nodeIdentityFor(p.cfg.Substrate)
 	if err != nil {
 		return fmt.Errorf("%w; the walk over %s stops here rather than guessing an identity, "+

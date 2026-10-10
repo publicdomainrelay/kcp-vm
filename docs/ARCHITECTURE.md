@@ -57,6 +57,27 @@ Two things this does not change:
 `kcp + k3s` here are **gateway-side processes**, not market VMs. Where text elsewhere says "market
 VM", read it as the substrate a provider made, wherever it came from.
 
+**The market is now reached through a NodeClaim, and that is a scope change.** This document used to
+end at the `ComputeProvider` seam: "given this cloud-init, make me a guest and give me back an id",
+with the requester, the RFP, the bid and the accept declared out of scope. A tenant cluster's nodes
+are rented from the market AS THE CLUSTER'S OWNER, through that owner's single atproto OAuth session,
+which is held in a SEPARATE Deno process (the k8s door) and not in this repo. So the Go side no
+longer stops at a seam it cannot cross: it writes a `NodeClaim` into the cluster's home workspace,
+and the door reads it, runs the RFP flow with the owner's session, boots the winning bidder's guest
+from cloud-init, reverse-forwards the advertised address to this host's loopback apiserver and
+writes the claim's status back. `internal/nodemarket` is the node host that does the writing; the
+`internal/scale` decision that says WHEN a node is needed is unchanged.
+
+Three things this does not change:
+
+- The cloud-init is still the real composer's (`buildUserData` plus the module registry, sibling
+  repo). The substitution is still *who won the bid*, never *what the guest is told to install*.
+- A guest is still born from cloud-init `user_data`, never hand-assembled. The market substrate adds
+  no provisioning path of its own: it writes a record and waits.
+- The claim carries PATHS, never secrets. The join token, the per-node password and the server CA are
+  read out of the cluster's data dir by the door and handed to the guest on the SSH session's own
+  standard input (invariant 29).
+
 ## 3. The zero state - the mechanism
 
 ```
@@ -256,6 +277,7 @@ compatibility promise.
 | **Postgres** | embedded-postgres - the vault's store and the one per-cluster local state | system | no |
 | **Kine** | kine plus t4 to central S3 | system | no |
 | **Node** | one node. The only bound on leaks | node provider | no |
+| **NodeClaim** | one node RENTED FROM THE COMPUTE MARKET for a cluster, as that cluster's owner. Carries paths (`tokenFile`, `nodePasswordFile`, `serverCAFile`) and never a secret; the door in the sibling Deno process is the only writer of its `status` | cluster provider, spec and metadata only | no |
 | **AtprotoIdentity** | the DID to identity mapping, in the home workspace | us | no |
 | **Account** | the DID to shard map. Not a CRD - a real kcp `Workspace` of an account `WorkspaceType` in root | us | no |
 
@@ -566,17 +588,19 @@ alternatives for one cluster:
 |---|---|
 | **a VM** | the node is a guest with its own kernel, containerd and network stack. **This design's mechanism**, and the only one that survives measurement |
 | **local process** | a `k3s agent` child process, `internal/nodelocal`, behind the same `scale.Nodes` seam. REFUTED as the substrate, three ways, all measured: `k3s agent` is fatal as a non-root user (`agent requires additional privilege if not run with --rootless`); it needs root for `/run/k3s/containerd`, `/var/lib/kubelet/device-plugins`, `127.0.0.1:6444` and the host `KUBE-*` chains, none of which `--data-dir` moves; and postgres is fatal AS root (`initdb: cannot be run as root`), so a host that runs the store cannot run a node |
-| **SSH to a market guest** | `ssh <handle>@socialweb.computer <command>`. Out of scope; plugs in at `ComputeProvider` |
+| **SSH to a market guest** | the node is a VM rented from the COMPUTE MARKET through a `NodeClaim` the clusterprovider writes and the market door fulfils under the cluster owner's own atproto OAuth session. **`internal/nodemarket`**, selected by `SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE=market`. NOT a guest of this host: no subnet lease, no pasta, no VMM, no node image and no `/dev/kvm` is involved. The clusterprovider's whole part in the node is the claim; the door bids, wins, boots the guest from the winning bidder's cloud-init, reverse-forwards the advertised address (`SOCIALWEB_CLUSTERPROVIDER_MARKET_ADVERTISE_ADDRESS`, default `100.127.255.254`) to this host's loopback apiserver and writes the phase back. Confirming is the claim reaching `Running`, not a local process being alive |
 
 **QEMU is the second implementation of the VM mechanism, behind the same seam.** Firecracker and
 QEMU are not two mechanisms for one cluster and not alternatives in one process: the composition root
 selects ONE from configuration, and a cluster is placed by the substrate its gateway was configured
-with. `SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE` names it, `firecracker` and `qemu` are the two values
-that pass `checkPlacement`, and every other name is refused for the same reason one substrate was
-ever refused: a placement nobody wrote is one a gateway cannot be caught not honouring. Both values
-are GUESTS, so `substrate.IsGuest()` is true for both, and `AdvertiseAddress`, `GuestDialled`,
-`GuestGateway`, `NodeExpiry` and per-node network allocation apply to QEMU exactly as they do to
-Firecracker.
+with. `SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE` names it, `firecracker`, `qemu` and `market` are the
+three values that pass `checkPlacement`, and every other name is refused for the same reason one
+substrate was ever refused: a placement nobody wrote is one a gateway cannot be caught not honouring.
+Both `firecracker` and `qemu` are GUESTS, so `substrate.IsGuest()` is true for both, and
+`AdvertiseAddress`, `GuestDialled`, `GuestGateway`, `NodeExpiry` and per-node network allocation apply
+to QEMU exactly as they do to Firecracker. `market` is the one value that is NOT a guest:
+`IsGuest()` is false for it, so it takes no subnet range and mounts no guest gateway, and it is
+therefore the one value whose `checkPlacement` demands no VMM, no agent, no image and no pasta.
 
 The local-process mechanism is now **DELETED, not merely refuted**: `internal/nodelocal` and the
 `process` value of `SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE` are gone, so a host can no longer be
@@ -1461,6 +1485,7 @@ internal/nodeprovider/ derives a node's DNS-1123 name from the (cluster label, n
 internal/nodevm/       the substrate-neutral half of a node: its image, guest, network and namespace parameters, the pasta link wiring, the identity disk, the rootfs clone and the /proc identity scan
 internal/nodefirecracker/ places a node as a firecracker guest
 internal/nodeqemu/     places a node as a qemu guest, behind the same seam
+internal/nodemarket/   places a node as a claim on the COMPUTE MARKET: it writes a NodeClaim into the cluster's home workspace and returns, reads the claim's status for the join wait and its fatal message, and closes the node by deleting the claim and waiting for the door to destroy the machine
 internal/hostos/       the one platform seam: capability predicates and the portable primitives (locking, process identity, liveness, termination, command line, port range, SysProcAttr) with Linux and Windows implementations
 internal/plcresolver/  resolves a did:plc or did:web to its key IDs for the revocation sweep; NXDOMAIN is an outage, not an absence
 internal/plcsweep/     the periodic pass that lists DIDs, resolves them and revokes those whose keys are gone
@@ -1691,6 +1716,12 @@ A change must not break any of these. Each exists because something failed.
     wait immediately, with the guest's own words. A timeout that runs to its end over a host that
     died at its first step reports the timeout instead of the cause, and the two are indistinguishable
     until the clock runs out.
+29. **A market node's secrets cross only the SSH session's stdin.** The join token, the per-node
+    password and the cluster's server CA reach a market guest as the door writes them to the standard
+    input of the session it runs the join program on. They never ride the claim: a `NodeClaim` is a
+    cluster-scoped object in the owner's home workspace, readable by anything that can read that
+    workspace, and it carries the PATHS the door reads them from instead. They also never ride argv,
+    `user_data` or a boot command line, for the reasons invariants 13 and 25 already give.
 
 ## 14. Open architectural gaps
 
@@ -1749,6 +1780,17 @@ because it bounds a mechanism the rest of this document leans on.
   bug: the instrument is a runner off the host completing a job whose script requires `pods/exec`, with
   the front it went through named and a statement of what that front exposes to whom.
   `NEXT.yaml` GL-2.
+
+- **The market substrate's startup sweep is a no-op, so a state dir a guest substrate left behind is
+  never reaped.** `sweepNodeRecords` finds a previous gateway's survivors by the identity their
+  substrate gives their processes, and `nodeIdentityFor` knows only `firecracker` and `qemu`. A market
+  node's machine is not a process on this host at all, so the market branch skips the walk with a
+  logged decision rather than inventing an identity. What that leaves unasked is the host that was
+  reconfigured from a guest substrate to `market` over the same `SOCIALWEB_CLUSTERPROVIDER_STATE_DIR`:
+  the records under it name guests of a substrate nothing is running any more, and no pass reaps them.
+  The instrument is either a record that names the substrate that wrote it, so a walk can reap records
+  belonging to substrates this process is not configured for, or a stated decision that changing
+  substrate means changing state dir. `NEXT.yaml` MARKET-1.
 
 - **Whether the node half may ever run inside the control-plane container was answered by reading where
   the refusal lives, and the answer is a STATED LIMIT rather than an open question.** The allocator's
@@ -3327,16 +3369,93 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   `pods/exec`. Until that runs, the owner's power is asserted from the document and the API, not
   measured.
 
+- **A node can be rented from the market: NodeClaim and the market substrate.** Before this, a node
+  was either a guest THIS host booted (firecracker, qemu) or nothing, and section 2 declared the
+  market out of scope at the `ComputeProvider` seam. A tenant cluster's nodes are now rented as THE
+  CLUSTER'S OWNER through that owner's single atproto OAuth session, held in a separate Deno process
+  (the k8s door) that this repo does not build. The hand-off is a new CRD and one new substrate.
+
+  The CRD is `NodeClaim`, `socialweb.computer/v1alpha1`, cluster-scoped in its workspace, written by
+  the clusterprovider into the CLUSTER'S OWN HOME workspace - the logical cluster `Ref.Home` the
+  registry already derives - and listed by the door across `clusters/*` through the `clusters`
+  APIExport's virtual workspace, which is why the resource is in `deploy/cluster-apiexport.yaml`,
+  schema `v1alpha1-1.nodeclaims.socialweb.computer`, applied by `deploy/install-provider.sh`. Its
+  spec is `cluster`, `nodeName`, `ownerDid`, `apiserverPort`, `advertiseAddress`, `tokenFile`,
+  `nodePasswordFile`, `serverCAFile`, `denyBidderDids`; its status is `phase`
+  (`Pending|Bidding|Provisioning|Joining|Running|Failed|Released`), `contract`
+  (`vmUri|rfpUri|acceptUri|receiptUri|receiptCid|submitEventRef`), `fqdn` and `message`. The Go side
+  writes spec and metadata and NEVER status: `setPhase` on the Go side, the door's `replaceStatus` on
+  the other, and `kcpclient.WriteNodeClaimTo` patches an existing claim's spec only when it differs,
+  so a live claim is not rewritten on every pass.
+
+  The substrate is `internal/nodemarket`, selected by `SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE=market`.
+  `Provision` mints-or-reads the per-node password at `nodevm.NodePasswordPath(DataDir)`, records
+  `Pending` on the existing Node CR, writes the claim and RETURNS - it does not wait for the market,
+  because a claim takes minutes and the scale pass runs every 2 s for every cluster. `ConfirmJoined`
+  reads the claim and requires `Running`: the door writes that only once the node's own agent reached
+  its apiserver, so a tenant cluster reporting the node before then is a node something else
+  registered. `Fatal` returns the claim's `status.message` while the phase is `Failed`, so the join
+  wait ends with the door's own words instead of a timeout (invariant 28). `Teardown` and `Reap` delete
+  the claim and then WAIT, bounded by
+  `SOCIALWEB_CLUSTERPROVIDER_MARKET_RELEASE_TIMEOUT` (default 2m), for it to disappear, because the
+  door removes its finalizer only after the market VM is deleted: closing is not destroying
+  (invariant 18), and a claim still there when the wait runs out is a machine still being paid for and
+  is reported as a failed release rather than a completed one. `NodeExpiry` is the explicit `0` that
+  means UNLIMITED, not nil: no door session cap applies to this substrate, because the door holds the
+  owner's session for the node's whole life, and an ABSENT expiry refuses teardown for ever
+  (invariant 9).
+
+  Three smaller decisions came with it, each of which had to be made rather than assumed. **(a)** The
+  address a market node dials is `SOCIALWEB_CLUSTERPROVIDER_MARKET_ADVERTISE_ADDRESS`, default
+  `100.127.255.254`: not loopback, because k3s refuses a loopback address for the in-cluster
+  `kubernetes` Service endpoint, and NOT an address this host carries, because the guest puts it on
+  its OWN loopback and the door reverse-forwards it to the apiserver, which stays bound to
+  `127.0.0.1`. That is a third case in `portallocator`'s advertise invariant
+  (`AssertMarketAdvertiseInvariant`), because neither existing case fits: the local-process case
+  REQUIRES a host-carried address and the guest case requires one of the cluster's own subnet range.
+  The same address goes into `--tls-san`, for the reason the guest gateway does: the certificate has
+  to cover the address the node's kubelet actually connects to, or the join reads as an x509 name
+  error rather than as a missing SAN.
+  `SOCIALWEB_CLUSTERPROVIDER_ADVERTISE_ADDRESS` is refused under this substrate, and so are the VMM
+  binaries, `NODE_AGENT`, the image settings and `NETWORK=pasta`: none of them can be in force here,
+  and an operator who set one and saw no complaint would believe it was carrying it. **(b)** The node
+  count a scale pass OBSERVES now includes the claims it has in flight - held hosts whose claim is not
+  yet `Running` - because a market node is absent from its tenant cluster's node list for minutes
+  while the pass runs every 2 s, and without that the decision reads zero nodes and asks again on
+  every tick. `internal/scale.Decide` is unchanged; the counting happens in the observe closure
+  `cmd/socialweb-clusterprovider/main.go` hands `scaledriver`, and only substrates that implement
+  `InFlight` contribute, so a guest's count is exactly what it was. **(c)** The startup sweep
+  (`sweepNodeRecords`) skips the walk under this substrate with a logged decision, because a market
+  node's machine is not a process on this host and no identity can be derived for it; what that leaves
+  open is `NEXT.yaml` MARKET-1.
+
+  The instrument is `go test ./...`. New: `internal/nodemarket` (the claim's fields and paths
+  survive `Provision`; a second `Provision` leaves one claim; `ConfirmJoined` refuses anything short
+  of `Running` and carries the door's message for `Failed`; `InFlight` counts every phase short of
+  `Running` and nothing else; a teardown the door never releases is a FAILURE and one it does is not;
+  a failed read during a release is not a claim that is gone), `internal/kcpclient` (the claim is
+  created in the home workspace with the door's exact field names, is not rewritten when its spec
+  matches, is patched when it does not and never through `/status`, and an absent claim decodes to
+  nil), `api/v1alpha1` (the wire field names and the seven phase literals), `internal/portallocator`
+  (the market advertise invariant, and that it rejects loopback, the unspecified address and every
+  address this host carries), `internal/clusterstack` (a stack cannot carry both dials), and
+  `cmd/socialweb-clusterprovider` (the market substrate builds with no VMM, agent, image, pasta or
+  `/dev/kvm`; two scale passes over a `Pending` claim ask for exactly ONE node; a `Pending` claim is
+  counted in flight and a `Running` one is not; the teardown issues exactly one claim delete; the
+  sweep is a no-op; and the market join needs nothing but its own advertise address).
+  `internal/scale`, the four-step proof and the live GitLab tests are untouched and still use
+  firecracker.
+
 ## 16. Vocabulary
 
 | | |
 |---|---|
 | **gateway** | the host-side process set: for us, kcp plus the per-cluster process groups |
 | **mount** | the kcp workspace mount by which a tenant reaches its cluster's apiserver |
-| **guest** | the VM a node IS: its own kernel, containerd and network stack. Not the market's guest, which stays out of scope |
+| **guest** | the VM a node IS: its own kernel, containerd and network stack. A node rented from the market is one too, but it is not THIS host's guest: no tap, no pasta and no address out of this host's subnet leases |
 | **node** | a worker. One long-lived command. Never the apiserver |
 | **instance** | one cluster's incarnation. The token is per instance |
 | **ON / OFF** | whether a cluster's process group is up |
 | **zero state** | control plane up, zero nodes, workloads Pending |
 | **seam** | the interface where a substrate plugs in: `ComputeProvider`, `scale.Nodes`, `processrunner` |
-| **the door** | the market's SSH front door. Out of scope; its report surface is not |
+| **the door** | the market's front door, in the sibling Deno process: it holds each owner's atproto OAuth session, fulfils the `NodeClaim`s this repo writes, and is the only writer of a claim's status. Its own build is out of scope here |

@@ -154,3 +154,37 @@ func flagValue(argv []string, flag string) string {
 	}
 	return ""
 }
+
+func TestAMarketClustersApiserverIsAdvertisedOnAnAddressThisHostDoesNotCarry(t *testing.T) {
+	cfg := stackConfig(t, fakeAdmin())
+	cfg.GuestDialled = false
+	cfg.MarketDialled = true
+	cfg.AdvertiseAddress = portallocator.MarketAdvertiseAddress
+	argv := k3sArgv(t, cfg, observed(), stackLeases(21003))
+	if got := flagValue(argv, "--advertise-address"); got != portallocator.MarketAdvertiseAddress {
+		t.Fatalf("--advertise-address is %q, want %q: the guest puts that address on its OWN "+
+			"loopback and the market's door reverse-forwards it to the apiserver here",
+			got, portallocator.MarketAdvertiseAddress)
+	}
+	if got := flagValue(argv, "--tls-san"); got != portallocator.MarketAdvertiseAddress {
+		t.Fatalf("--tls-san is %q, want %q: the certificate must cover the address the node's "+
+			"kubelet actually connects to, or the join reads as an x509 name error rather than as a "+
+			"missing SAN", got, portallocator.MarketAdvertiseAddress)
+	}
+	if got := flagValue(argv, "--bind-address"); got != portallocator.LoopbackAdvertiseAddress {
+		t.Fatalf("--bind-address is %q, want loopback: the market advertise address is not one this "+
+			"host carries, so binding what is advertised would fail at bind rather than keep the "+
+			"listener off the network", got)
+	}
+}
+
+func TestAMarketStackAsksForNoGuestGateway(t *testing.T) {
+	cfg := stackConfig(t, fakeAdmin())
+	cfg.MarketDialled = true
+	cfg.AdvertiseAddress = portallocator.MarketAdvertiseAddress
+	cfg.GuestGateway = nil
+	if _, err := StepsFor(cfg)(observed(), stackLeases(21003)); err != nil {
+		t.Fatalf("a market cluster's steps refused with no guest gateway: a market node is not "+
+			"addressed inside this host's subnet leases at all. %v", err)
+	}
+}

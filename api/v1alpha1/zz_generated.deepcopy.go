@@ -137,6 +137,70 @@ func (in *NodeStatus) DeepCopyInto(out *NodeStatus) {
 	}
 }
 
+func (in *NodeClaim) DeepCopyInto(out *NodeClaim) {
+	*out = *in
+	out.TypeMeta = in.TypeMeta
+	in.ObjectMeta.DeepCopyInto(&out.ObjectMeta)
+	in.Spec.DeepCopyInto(&out.Spec)
+	out.Status = in.Status
+}
+
+func (in *NodeClaim) DeepCopy() *NodeClaim {
+	if in == nil {
+		return nil
+	}
+	out := new(NodeClaim)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *NodeClaim) DeepCopyObject() runtime.Object {
+	if c := in.DeepCopy(); c != nil {
+		return c
+	}
+	return nil
+}
+
+func (in *NodeClaimList) DeepCopyInto(out *NodeClaimList) {
+	*out = *in
+	out.TypeMeta = in.TypeMeta
+	in.ListMeta.DeepCopyInto(&out.ListMeta)
+	if in.Items != nil {
+		out.Items = make([]NodeClaim, len(in.Items))
+		for i := range in.Items {
+			in.Items[i].DeepCopyInto(&out.Items[i])
+		}
+	}
+}
+
+func (in *NodeClaimList) DeepCopy() *NodeClaimList {
+	if in == nil {
+		return nil
+	}
+	out := new(NodeClaimList)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *NodeClaimList) DeepCopyObject() runtime.Object {
+	if c := in.DeepCopy(); c != nil {
+		return c
+	}
+	return nil
+}
+
+func (in *NodeClaimSpec) DeepCopyInto(out *NodeClaimSpec) {
+	*out = *in
+	if in.DenyBidderDids != nil {
+		out.DenyBidderDids = make([]string, len(in.DenyBidderDids))
+		copy(out.DenyBidderDids, in.DenyBidderDids)
+	}
+}
+
+func (in *NodeClaimStatus) DeepCopyInto(out *NodeClaimStatus) {
+	*out = *in
+}
+
 func (in *AtprotoIdentity) DeepCopyInto(out *AtprotoIdentity) {
 	*out = *in
 	out.TypeMeta = in.TypeMeta

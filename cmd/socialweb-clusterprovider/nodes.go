@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -24,6 +25,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clusterstack"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostos"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodefirecracker"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodemarket"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodeprovider"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodeqemu"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodevm"
@@ -152,15 +154,19 @@ func nodeSubstrateFor(cfg Config) (nodeSubstrate, error) {
 			Network:   nodevm.Network{Interface: manifest.GuestInterface},
 			DiskMiB:   cfg.NodeDiskMiB,
 		}, nil
+	case SubstrateMarket:
+		return nodeSubstrate{
+			Name: SubstrateMarket,
+		}, nil
 	case "":
 		return nodeSubstrate{}, errNoSubstrateChoice
 	}
 	return nodeSubstrate{}, fmt.Errorf(
-		"clusterprovider: no substrate named %q places nodes here, and %s and %s are the only "+
+		"clusterprovider: no substrate named %q places nodes here, and %s, %s and %s are the only "+
 			"ones implemented today. The name is refused rather than approximated: it decides what "+
 			"a node's record names, what its teardown stops and what its leases mean, so a gateway "+
 			"that ran anyway would report a placement it is not honouring",
-		cfg.Substrate, SubstrateFirecracker, SubstrateQEMU)
+		cfg.Substrate, SubstrateFirecracker, SubstrateQEMU, SubstrateMarket)
 }
 
 func (s nodeSubstrate) Validate() error {
@@ -181,12 +187,14 @@ func (s nodeSubstrate) Validate() error {
 			return fmt.Errorf("%w: %v", errNoSubstratePlacementQEMU, err)
 		}
 		return nil
+	case SubstrateMarket:
+		return nil
 	case "":
 		return errNoSubstrateChoice
 	}
 	return fmt.Errorf(
-		"clusterprovider: no substrate named %q places nodes here, and %s and %s are the only "+
-			"ones implemented today", s.Name, SubstrateFirecracker, SubstrateQEMU)
+		"clusterprovider: no substrate named %q places nodes here, and %s, %s and %s are the only "+
+			"ones implemented today", s.Name, SubstrateFirecracker, SubstrateQEMU, SubstrateMarket)
 }
 
 type nodeSubstrateOptions struct {
@@ -198,7 +206,21 @@ type nodeSubstrateOptions struct {
 
 	TokenFile string
 
+	ServerCAFile string
+
 	DataDir string
+
+	AdvertiseAddress string
+
+	ApiserverPort int
+
+	DenyBidderDids []string
+
+	Claims nodemarket.Claims
+
+	ClusterSource nodemarket.ClusterSource
+
+	ReleaseTimeout time.Duration
 
 	Record func(ctx context.Context, nodeName string, phase v1alpha1.NodePhase) error
 
@@ -243,12 +265,28 @@ func (s nodeSubstrate) NewNodeHost(opts nodeSubstrateOptions) (nodeHost, error) 
 			DiskMiB:       s.DiskMiB,
 			NodeDiskStage: opts.NodeDiskStage,
 		})
+	case SubstrateMarket:
+		return nodemarket.New(nodemarket.Options{
+			Cluster:          opts.Cluster,
+			NodeName:         opts.NodeName,
+			AdvertiseAddress: opts.AdvertiseAddress,
+			ApiserverPort:    opts.ApiserverPort,
+			TokenFile:        opts.TokenFile,
+			ServerCAFile:     opts.ServerCAFile,
+			DataDir:          opts.DataDir,
+			DenyBidderDids:   opts.DenyBidderDids,
+			Resolve:          opts.ClusterSource,
+			Claims:           opts.Claims,
+			Record:           opts.Record,
+			Log:              opts.Log,
+			ReleaseTimeout:   opts.ReleaseTimeout,
+		})
 	case "":
 		return nil, errNoSubstrateChoice
 	}
 	return nil, fmt.Errorf(
-		"clusterprovider: no substrate named %q places nodes here, and %s and %s are the only "+
-			"ones implemented today", s.Name, SubstrateFirecracker, SubstrateQEMU)
+		"clusterprovider: no substrate named %q places nodes here, and %s, %s and %s are the only "+
+			"ones implemented today", s.Name, SubstrateFirecracker, SubstrateQEMU, SubstrateMarket)
 }
 
 func (s nodeSubstrate) withPerNodeNetwork(lease subnetallocator.Lease, ordinal int) (nodeSubstrate, error) {
@@ -267,15 +305,36 @@ type nodeHostsOptions struct {
 
 	Registry clusterprovider.Clusters
 
+	Claims nodemarket.Claims
+
 	StateDir string
 
 	AdvertiseAddress string
+
+	DenyBidderDids []string
+
+	ClaimReleaseTimeout time.Duration
+
+	JoinTimeout time.Duration
 
 	Tenant tenantClient
 
 	Log *slog.Logger
 
 	Substrate nodeSubstrate
+}
+
+var errNoNodeClaims = errors.New(
+	"clusterprovider: a market node IS a NodeClaim written into its cluster's home workspace, and " +
+		"none of the store that writes one was supplied -- a gateway that started anyway would " +
+		"count a node it never asked anybody to rent, and the scale decision would ask again on " +
+		"every pass for ever")
+
+func (o nodeHostsOptions) joinTimeout() time.Duration {
+	if o.JoinTimeout <= 0 {
+		return NodeJoinTimeout
+	}
+	return o.JoinTimeout
 }
 
 var errNoSubstrateChoice = errors.New(
@@ -308,6 +367,10 @@ type nodeHost interface {
 
 type guestWatcher interface {
 	Fatal() string
+}
+
+type inFlightReporter interface {
+	InFlight(ctx context.Context) bool
 }
 
 func guestFatal(host nodeHost) string {
@@ -477,7 +540,7 @@ func (n *tenantNodes) nextOrdinal(ctx context.Context) (int, error) {
 }
 
 func (n *tenantNodes) confirmJoined(ctx context.Context, host nodeHost, name string) error {
-	deadline := time.Now().Add(NodeJoinTimeout)
+	deadline := time.Now().Add(n.opts.joinTimeout())
 	for {
 		reported, err := nodeReported(ctx, n.tenant, n.cluster, name)
 		if err != nil {
@@ -499,7 +562,7 @@ func (n *tenantNodes) confirmJoined(ctx context.Context, host nodeHost, name str
 				"the command is up and k3s has not registered it -- and the next pass re-observes "+
 				"and confirms it, because the count the scale decision reads is the tenant "+
 				"cluster's own node list and not this phase",
-				"cluster", n.cluster, "node", name, "timeout", NodeJoinTimeout)
+				"cluster", n.cluster, "node", name, "timeout", n.opts.joinTimeout())
 			return nil
 		}
 		select {
@@ -560,6 +623,20 @@ func (n *tenantNodes) Teardown(ctx context.Context) error {
 	return nil
 }
 
+func (n *tenantNodes) inFlight(ctx context.Context) int {
+	n.mu.Lock()
+	held := n.heldNodesLocked()
+	n.mu.Unlock()
+	count := 0
+	for _, node := range held {
+		reporter, ok := node.host.(inFlightReporter)
+		if ok && reporter.InFlight(ctx) {
+			count++
+		}
+	}
+	return count
+}
+
 func (n *tenantNodes) heldNodesLocked() []heldNode {
 	out := make([]heldNode, 0, 1+len(n.extra))
 	if n.host != nil {
@@ -610,6 +687,8 @@ func newNodeHosts(opts nodeHostsOptions) (*nodeHosts, error) {
 		return nil, errNoNodeRegistry
 	case opts.StateDir == "":
 		return nil, errNoNodeStateDir
+	case opts.Substrate.Name == SubstrateMarket && opts.Claims == nil:
+		return nil, errNoNodeClaims
 	case opts.AdvertiseAddress == "" && !opts.Substrate.IsGuest():
 		return nil, errNoAdvertiseAddress
 	}
@@ -638,6 +717,16 @@ func (h *nodeHosts) forCluster(cluster string) (scale.Nodes, error) {
 	}
 	h.hosts[cluster] = created
 	return created, nil
+}
+
+func (h *nodeHosts) inFlight(ctx context.Context, cluster string) int {
+	h.mu.Lock()
+	n, ok := h.hosts[cluster]
+	h.mu.Unlock()
+	if !ok {
+		return 0
+	}
+	return n.inFlight(ctx)
 }
 
 func (h *nodeHosts) clusters() []string {
@@ -823,15 +912,53 @@ func newNodeHostOf(substrate nodeSubstrate, opts nodeHostsOptions, log *slog.Log
 		}
 	}
 	return substrate.NewNodeHost(nodeSubstrateOptions{
-		Cluster:       cluster,
-		Server:        server,
-		NodeName:      name,
-		TokenFile:     clusterprovider.TokenPath(clusterDir),
-		DataDir:       clusterprovider.NodeDataDir(opts.StateDir, cluster, name),
-		Record:        nodeRecorder(opts.Registry, cluster, name, substrate.NodeExpiry()),
-		Log:           log,
-		NodeDiskStage: stage,
+		Cluster:          cluster,
+		Server:           server,
+		NodeName:         name,
+		TokenFile:        clusterprovider.TokenPath(clusterDir),
+		ServerCAFile:     filepath.Join(clusterstack.TLSDir(clusterDir), "server-ca.crt"),
+		DataDir:          clusterprovider.NodeDataDir(opts.StateDir, cluster, name),
+		AdvertiseAddress: opts.AdvertiseAddress,
+		ApiserverPort:    apiserverPort,
+		DenyBidderDids:   opts.DenyBidderDids,
+		Claims:           opts.Claims,
+		ClusterSource:    claimClusterFor(opts.Registry, cluster),
+		ReleaseTimeout:   opts.ClaimReleaseTimeout,
+		Record:           nodeRecorder(opts.Registry, cluster, name, substrate.NodeExpiry()),
+		Log:              log,
+		NodeDiskStage:    stage,
 	})
+}
+
+func claimClusterFor(registry clusterprovider.Clusters, cluster string) nodemarket.ClusterSource {
+	return func(ctx context.Context) (nodemarket.Cluster, error) {
+		ref, err := nodeRefFor(ctx, registry, cluster)
+		if err != nil {
+			return nodemarket.Cluster{}, err
+		}
+		if ref.Home == "" {
+			return nodemarket.Cluster{}, fmt.Errorf(
+				"clusterprovider: the Cluster CR for %s was found with no home workspace, so there "+
+					"is no logical cluster to write this node's claim into: the claim lives in the "+
+					"owner's own home, and a claim written anywhere else is one the door's listing "+
+					"across clusters/* never sees", cluster)
+		}
+		cl, err := registry.Read(ctx, ref)
+		if err != nil {
+			return nodemarket.Cluster{}, fmt.Errorf(
+				"clusterprovider: reading Cluster %s out of %s, whose spec.account is the DID the "+
+					"market rents this node AS: %w -- the door fulfils the claim through that "+
+					"owner's own OAuth session, so a claim with no owner DID is one no door can "+
+					"act for", cluster, ref.Home, err)
+		}
+		if cl.Spec.Account == "" {
+			return nodemarket.Cluster{}, fmt.Errorf(
+				"clusterprovider: Cluster %s in %s carries no spec.account. That DID is the "+
+					"requester the node is rented as, and it is not derivable from the cluster name: "+
+					"a claim written without it names no session the door holds", cluster, ref.Home)
+		}
+		return nodemarket.Cluster{Workspace: ref.Home, OwnerDid: cl.Spec.Account}, nil
+	}
 }
 
 func nodeVaultStage(substrate nodeSubstrate, cluster, clusterDir, nodeName string) func(context.Context, string, string) error {
@@ -865,7 +992,7 @@ func nodeVaultStage(substrate nodeSubstrate, cluster, clusterDir, nodeName strin
 }
 
 func (s nodeSubstrate) NodeExpiry() *int64 {
-	if !s.IsGuest() {
+	if !s.IsGuest() && s.Name != SubstrateMarket {
 		return nil
 	}
 	expiry := int64(clusterprovider.NodeExpiryUnlimited)

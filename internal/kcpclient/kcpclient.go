@@ -745,3 +745,150 @@ func createNode(ctx context.Context, r rest.Interface, cluster, nodeName string,
 	}
 	return nil
 }
+
+func (c *Client) WriteNodeClaim(ctx context.Context, logicalCluster string, claim v1alpha1.NodeClaim) error {
+	r, err := c.resource(logicalCluster, socialwebResource)
+	if err != nil {
+		return err
+	}
+	return WriteNodeClaimTo(ctx, r, claim)
+}
+
+func WriteNodeClaimTo(ctx context.Context, r rest.Interface, claim v1alpha1.NodeClaim) error {
+	if claim.Name == "" {
+		return errors.New("kcpclient: WriteNodeClaim needs a claim name")
+	}
+	if claim.Spec.Cluster == "" {
+		return errors.New("kcpclient: WriteNodeClaim needs the cluster the claimed node belongs to")
+	}
+	if claim.Spec.NodeName == "" {
+		return errors.New("kcpclient: WriteNodeClaim needs the node name the claimed node joins as")
+	}
+
+	var existing v1alpha1.NodeClaim
+	err := r.Get().Resource("nodeclaims").Name(claim.Name).Do(ctx).Into(&existing)
+	switch {
+	case apierrors.IsNotFound(err):
+		return createNodeClaim(ctx, r, claim)
+	case err != nil:
+		return fmt.Errorf("kcpclient: read nodeclaim %s: %w", claim.Name, err)
+	}
+	if sameNodeClaimSpec(existing.Spec, claim.Spec) {
+		return nil
+	}
+	body, err := nodeClaimSpecPatch(claim.Spec)
+	if err != nil {
+		return fmt.Errorf("kcpclient: nodeclaim %s: marshal: %w", claim.Name, err)
+	}
+	if err := r.Patch(types.MergePatchType).Resource("nodeclaims").Name(claim.Name).
+		Body(body).Do(ctx).Error(); err != nil {
+		return fmt.Errorf("kcpclient: patch nodeclaim %s: %w -- the claim is the only handle on a "+
+			"machine the market is being asked to rent, so a spec that did not land is a node "+
+			"nobody can account for", claim.Name, err)
+	}
+	return nil
+}
+
+func (c *Client) ReadNodeClaim(ctx context.Context, logicalCluster, name string) (*v1alpha1.NodeClaim, error) {
+	r, err := c.resource(logicalCluster, socialwebResource)
+	if err != nil {
+		return nil, err
+	}
+	if name == "" {
+		return nil, errors.New("kcpclient: ReadNodeClaim needs a claim name")
+	}
+	var claim v1alpha1.NodeClaim
+	err = r.Get().Resource("nodeclaims").Name(name).Do(ctx).Into(&claim)
+	if apierrors.IsNotFound(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("kcpclient: read nodeclaim %s: %w", name, err)
+	}
+	return &claim, nil
+}
+
+func (c *Client) DeleteNodeClaim(ctx context.Context, logicalCluster, name string) error {
+	r, err := c.resource(logicalCluster, socialwebResource)
+	if err != nil {
+		return err
+	}
+	if name == "" {
+		return errors.New("kcpclient: DeleteNodeClaim needs a claim name")
+	}
+	err = r.Delete().Resource("nodeclaims").Name(name).Do(ctx).Error()
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("kcpclient: delete nodeclaim %s: %w", name, err)
+	}
+	return nil
+}
+
+func (c *Client) ListNodeClaims(ctx context.Context, logicalCluster string) ([]v1alpha1.NodeClaim, error) {
+	r, err := c.resource(logicalCluster, socialwebResource)
+	if err != nil {
+		return nil, err
+	}
+	var list v1alpha1.NodeClaimList
+	if err := r.Get().Resource("nodeclaims").Do(ctx).Into(&list); err != nil {
+		return nil, fmt.Errorf("kcpclient: list nodeclaims in %s: %w", logicalCluster, err)
+	}
+	return list.Items, nil
+}
+
+func sameNodeClaimSpec(have, want v1alpha1.NodeClaimSpec) bool {
+	if have.Cluster != want.Cluster || have.NodeName != want.NodeName ||
+		have.OwnerDid != want.OwnerDid || have.ApiserverPort != want.ApiserverPort ||
+		have.AdvertiseAddress != want.AdvertiseAddress || have.TokenFile != want.TokenFile ||
+		have.NodePasswordFile != want.NodePasswordFile || have.ServerCAFile != want.ServerCAFile {
+		return false
+	}
+	if len(have.DenyBidderDids) != len(want.DenyBidderDids) {
+		return false
+	}
+	for i := range have.DenyBidderDids {
+		if have.DenyBidderDids[i] != want.DenyBidderDids[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func nodeClaimSpecPatch(spec v1alpha1.NodeClaimSpec) ([]byte, error) {
+	dids := spec.DenyBidderDids
+	if dids == nil {
+		dids = []string{}
+	}
+	return json.Marshal(map[string]any{"spec": map[string]any{
+		"cluster":          spec.Cluster,
+		"nodeName":         spec.NodeName,
+		"ownerDid":         spec.OwnerDid,
+		"apiserverPort":    spec.ApiserverPort,
+		"advertiseAddress": spec.AdvertiseAddress,
+		"tokenFile":        spec.TokenFile,
+		"nodePasswordFile": spec.NodePasswordFile,
+		"serverCAFile":     spec.ServerCAFile,
+		"denyBidderDids":   dids,
+	}})
+}
+
+func createNodeClaim(ctx context.Context, r rest.Interface, claim v1alpha1.NodeClaim) error {
+	created := v1alpha1.NodeClaim{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: v1alpha1.GroupVersion.String(),
+			Kind:       "NodeClaim",
+		},
+		ObjectMeta: metav1.ObjectMeta{Name: claim.Name},
+		Spec:       claim.Spec,
+	}
+	body, err := json.Marshal(created)
+	if err != nil {
+		return fmt.Errorf("kcpclient: nodeclaim %s: marshal: %w", claim.Name, err)
+	}
+	if err := r.Post().Resource("nodeclaims").Body(body).Do(ctx).Error(); err != nil {
+		return fmt.Errorf("kcpclient: create nodeclaim %s: %w", claim.Name, err)
+	}
+	return nil
+}
