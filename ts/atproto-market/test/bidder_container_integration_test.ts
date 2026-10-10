@@ -154,14 +154,34 @@ Deno.test({
     // local compute provider (container mode) on its own relay/serve
     const providerRelay = await makeRelay();
     const providerServe = createServe({ logger, relays: [providerRelay] });
+    const provisions: Array<{ providerId: string | number; ip: unknown; mode: unknown }> = [];
+    const provisionFailures: unknown[] = [];
+    const local = createLocalComputeProvider({
+      logger,
+      atproto: atproto as unknown as ComputeAtproto,
+      serve: providerServe,
+      getIssuerUrl: () => didWebToHttps(providerRelay.ingressRef),
+      containerMode: "container",
+    });
     const provider = createComputeProviderHooks({
-      provider: createLocalComputeProvider({
-        logger,
-        atproto: atproto as unknown as ComputeAtproto,
-        serve: providerServe,
-        getIssuerUrl: () => didWebToHttps(providerRelay.ingressRef),
-        containerMode: "container",
-      }),
+      provider: {
+        ...local,
+        async provision(vm, requesterDid, spec) {
+          try {
+            const result = await local.provision(vm, requesterDid, spec);
+            const metadata = result.metadata as Record<string, unknown>;
+            provisions.push({
+              providerId: result.providerId,
+              ip: metadata?.ip,
+              mode: metadata?.mode,
+            });
+            return result;
+          } catch (err) {
+            provisionFailures.push(err);
+            throw err;
+          }
+        },
+      },
     });
     await providerServe.beginServe();
 
@@ -225,6 +245,31 @@ Deno.test({
       !seenBids.some((b) => b.did === "did:plc:centraldefaultbidder000000"),
       "central default bidder must not have bid (it was denied)",
     );
+
+    // The accept handler returns its receipt while its provisioning runs
+    // detached, so a test that stops here stops before anything was placed and
+    // cannot say whether the market flow provisions at all. Wait for it.
+    const deadline = Date.now() + 240_000;
+    while (Date.now() < deadline && provisions.length === 0 && provisionFailures.length === 0) {
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+    assert(
+      provisionFailures.length === 0,
+      `the accept path reached the provider and provisioning threw: ${
+        provisionFailures.map(String).join("; ")
+      }`,
+    );
+    assert(
+      provisions.length > 0,
+      `the accept path did not reach provision() within 240s, so this flow ends at the accept and ` +
+        `no guest was ever asked for. contractErr=${contractErr ? String(contractErr) : "none"}`,
+    );
+    console.log(
+      `[test] the accept path provisioned ${provisions[0].providerId} at ${provisions[0].ip}`,
+    );
+    cleanups.push(() => {
+      local.destroy(provisions[0].providerId).catch(() => {});
+    });
   } finally {
     for (const c of cleanups.reverse()) {
       try { c(); } catch { /* best effort */ }
