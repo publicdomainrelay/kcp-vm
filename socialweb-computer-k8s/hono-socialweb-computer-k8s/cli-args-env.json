@@ -108,18 +108,6 @@
       "description": "Context in the kcp kubeconfig to use; defaults to its current-context",
       "env": "KCP_CONTEXT"
     },
-    "kcp-provider-workspace": {
-      "type": "string",
-      "description": "Workspace path holding the provider's APIExport",
-      "env": "KCP_PROVIDER_WORKSPACE",
-      "default": "root:socialweb-provider"
-    },
-    "kcp-apiexport": {
-      "type": "string",
-      "description": "APIExport that serves NodeClaims",
-      "env": "KCP_APIEXPORT",
-      "default": "clusters"
-    },
     "node-apiserver-host": {
       "type": "string",
       "description": "Host a node's forwarded connections are delivered to; the tenant apiserver binds it",

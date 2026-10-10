@@ -117,11 +117,7 @@ let fulfiller: MarketNodeFulfiller | null = null;
 if (options.kcpKubeconfig) {
   const credentials = parseKubeconfig(await Deno.readTextFile(options.kcpKubeconfig as string), options.kcpContext as string | undefined);
   fulfiller = createMarketNodeFulfiller({
-    store: createKcpNodeClaimStore({
-      credentials,
-      providerPath: options.kcpProviderWorkspace as string,
-      exportName: options.kcpApiexport as string,
-    }),
+    store: createKcpNodeClaimStore({ credentials }),
     requesterFor: (did) => accounts.requesterFor(did),
     apiserverHost: options.nodeApiserverHost as string,
     plcUrl: options.plcDirectoryUrl as string,

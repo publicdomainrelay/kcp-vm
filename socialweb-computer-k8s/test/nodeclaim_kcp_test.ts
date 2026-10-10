@@ -2,7 +2,7 @@ import { assertEquals, assertRejects } from "@std/assert";
 import { createKcpNodeClaimStore, parseKubeconfig } from "@publicdomainrelay/socialweb-computer-k8s-nodeclaim-kcp";
 import { NODECLAIM_FINALIZER, type NodeClaim } from "@publicdomainrelay/socialweb-computer-k8s-common";
 
-const VW = "https://kcp.test/services/apiexport/root:socialweb-provider/clusters";
+const KCP = "https://kcp.test";
 const SPEC = {
   cluster: "ci",
   nodeName: "ci-node1",
@@ -73,16 +73,24 @@ users:
   });
 });
 
-Deno.test("claims are listed across every workspace through the export's virtual workspace", async () => {
+Deno.test("claims are read from every account's home workspace, one query per home", async () => {
   const kcp = fakeKcp((s) => {
-    if (s.url.includes("apiexportendpointslices")) return new Response(JSON.stringify({ status: { endpoints: [{ url: VW }] } }));
+    if (s.url.endsWith("/clusters/root/apis/tenancy.kcp.io/v1alpha1/workspaces")) {
+      return new Response(JSON.stringify({ items: [{ metadata: { name: "acct1" } }] }));
+    }
+    if (s.url.endsWith("/clusters/root:acct1/apis/tenancy.kcp.io/v1alpha1/workspaces")) {
+      return new Response(JSON.stringify({ items: [{ metadata: { name: "ci" } }] }));
+    }
     return new Response(JSON.stringify({ items: [raw("7", [NODECLAIM_FINALIZER])] }));
   });
   const store = createKcpNodeClaimStore({ credentials: { server: "https://kcp.test", token: "t" }, fetch: kcp.fetch });
   const claims = await store.list();
-  assertEquals(kcp.seen[0].url, "https://kcp.test/clusters/root:socialweb-provider/apis/apis.kcp.io/v1alpha1/apiexportendpointslices/clusters");
-  assertEquals(kcp.seen[1].url, `${VW}/clusters/*/apis/socialweb.computer/v1alpha1/nodeclaims`);
-  assertEquals(kcp.seen[1].auth, "Bearer t");
+  assertEquals(kcp.seen.map((s) => s.url), [
+    `${KCP}/clusters/root/apis/tenancy.kcp.io/v1alpha1/workspaces`,
+    `${KCP}/clusters/root:acct1/apis/tenancy.kcp.io/v1alpha1/workspaces`,
+    `${KCP}/clusters/root:acct1:ci/apis/socialweb.computer/v1alpha1/nodeclaims`,
+  ]);
+  assertEquals(kcp.seen[2].auth, "Bearer t");
   assertEquals(claims, [{
     workspace: "abc123",
     name: "ci-node1",
@@ -96,10 +104,10 @@ Deno.test("claims are listed across every workspace through the export's virtual
 
 Deno.test("status is replaced whole on the status subresource", async () => {
   const kcp = fakeKcp(() => new Response("{}"));
-  const store = createKcpNodeClaimStore({ credentials: { server: "https://kcp.test" }, virtualWorkspaceUrl: VW, fetch: kcp.fetch });
+  const store = createKcpNodeClaimStore({ credentials: { server: "https://kcp.test" }, fetch: kcp.fetch });
   await store.replaceStatus(claim(), { phase: "Running", contract: { vmUri: "at://v" } });
   assertEquals(kcp.seen[0].method, "PATCH");
-  assertEquals(kcp.seen[0].url, `${VW}/clusters/abc123/apis/socialweb.computer/v1alpha1/nodeclaims/ci-node1/status`);
+  assertEquals(kcp.seen[0].url, `${KCP}/clusters/abc123/apis/socialweb.computer/v1alpha1/nodeclaims/ci-node1/status`);
   assertEquals(kcp.seen[0].type, "application/json-patch+json");
   assertEquals(kcp.seen[0].body, [{ op: "add", path: "/status", value: { phase: "Running", contract: { vmUri: "at://v" } } }]);
 });
@@ -110,7 +118,7 @@ Deno.test("a finalizer edit is pinned to the version it read and retried on conf
     if (s.method === "GET") return new Response(JSON.stringify(raw(String(++gets), ["other"])));
     return gets === 1 ? new Response("conflict", { status: 422 }) : new Response("{}");
   });
-  const store = createKcpNodeClaimStore({ credentials: { server: "https://kcp.test" }, virtualWorkspaceUrl: VW, fetch: kcp.fetch });
+  const store = createKcpNodeClaimStore({ credentials: { server: "https://kcp.test" }, fetch: kcp.fetch });
   await store.addFinalizer(claim());
   const patches = kcp.seen.filter((s) => s.method === "PATCH").map((s) => s.body);
   assertEquals(patches, [
@@ -121,7 +129,7 @@ Deno.test("a finalizer edit is pinned to the version it read and retried on conf
 
 Deno.test("removing a finalizer keeps everyone else's and is a no-op once gone", async () => {
   const kcp = fakeKcp((s) => s.method === "GET" ? new Response(JSON.stringify(raw("4", ["other", NODECLAIM_FINALIZER]))) : new Response("{}"));
-  const store = createKcpNodeClaimStore({ credentials: { server: "https://kcp.test" }, virtualWorkspaceUrl: VW, fetch: kcp.fetch });
+  const store = createKcpNodeClaimStore({ credentials: { server: "https://kcp.test" }, fetch: kcp.fetch });
   await store.removeFinalizer(claim());
   assertEquals(kcp.seen[1].body, [
     { op: "test", path: "/metadata/resourceVersion", value: "4" },
@@ -129,13 +137,13 @@ Deno.test("removing a finalizer keeps everyone else's and is a no-op once gone",
   ]);
 
   const gone = fakeKcp(() => new Response("not found", { status: 404 }));
-  await createKcpNodeClaimStore({ credentials: { server: "https://kcp.test" }, virtualWorkspaceUrl: VW, fetch: gone.fetch })
+  await createKcpNodeClaimStore({ credentials: { server: "https://kcp.test" }, fetch: gone.fetch })
     .removeFinalizer(claim());
   assertEquals(gone.seen.length, 1);
 });
 
 Deno.test("an unreadable list is an error, never an empty list", async () => {
   const kcp = fakeKcp(() => new Response("forbidden", { status: 403 }));
-  const store = createKcpNodeClaimStore({ credentials: { server: "https://kcp.test" }, virtualWorkspaceUrl: VW, fetch: kcp.fetch });
+  const store = createKcpNodeClaimStore({ credentials: { server: "https://kcp.test" }, fetch: kcp.fetch });
   await assertRejects(() => store.list());
 });

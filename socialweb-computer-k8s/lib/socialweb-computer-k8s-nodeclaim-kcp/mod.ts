@@ -49,9 +49,6 @@ export function parseKubeconfig(text: string, contextName?: string): KcpCredenti
 
 export interface KcpNodeClaimStoreOptions {
   credentials: KcpCredentials;
-  providerPath?: string;
-  exportName?: string;
-  virtualWorkspaceUrl?: string;
   fetch?: typeof fetch;
   timeoutMs?: number;
 }
@@ -94,8 +91,6 @@ export function toNodeClaim(raw: RawClaim, fallbackWorkspace?: string): NodeClai
 
 export function createKcpNodeClaimStore(opts: KcpNodeClaimStoreOptions): NodeClaimStore {
   const creds = opts.credentials;
-  const providerPath = opts.providerPath ?? "root:socialweb-provider";
-  const exportName = opts.exportName ?? "clusters";
   const timeoutMs = opts.timeoutMs ?? 15_000;
   const baseFetch = opts.fetch ?? fetch;
   const client = !opts.fetch && (creds.ca || creds.cert)
@@ -104,7 +99,7 @@ export function createKcpNodeClaimStore(opts: KcpNodeClaimStoreOptions): NodeCla
       ...(creds.cert && creds.key ? { cert: creds.cert, key: creds.key } : {}),
     })
     : undefined;
-  let vwBase: string | undefined = opts.virtualWorkspaceUrl?.replace(/\/+$/, "");
+
 
   async function request(url: string, init: RequestInit = {}): Promise<unknown> {
     const headers = new Headers(init.headers);
@@ -121,18 +116,32 @@ export function createKcpNodeClaimStore(opts: KcpNodeClaimStoreOptions): NodeCla
     return text ? JSON.parse(text) : null;
   }
 
-  async function virtualWorkspace(): Promise<string> {
-    if (vwBase) return vwBase;
-    const slice = await request(
-      `${creds.server}/clusters/${providerPath}/apis/apis.kcp.io/v1alpha1/apiexportendpointslices/${exportName}`,
-    ).catch(() => null) as { status?: { endpoints?: { url: string }[] } } | null;
-    vwBase = slice?.status?.endpoints?.[0]?.url?.replace(/\/+$/, "") ??
-      `${creds.server}/services/apiexport/${providerPath}/${exportName}`;
-    return vwBase;
+  function clusterPath(workspace: string, resource: string): string {
+    return `${creds.server}/clusters/${workspace}/apis/${NODECLAIM_GROUP}/${NODECLAIM_VERSION}/${NODECLAIM_RESOURCE}${resource}`;
   }
 
   async function itemUrl(claim: Pick<NodeClaim, "workspace" | "name">, sub = ""): Promise<string> {
-    return `${await virtualWorkspace()}/clusters/${claim.workspace}/apis/${NODECLAIM_GROUP}/${NODECLAIM_VERSION}/${NODECLAIM_RESOURCE}/${encodeURIComponent(claim.name)}${sub}`;
+    return clusterPath(claim.workspace, `/${encodeURIComponent(claim.name)}${sub}`);
+  }
+
+  interface WorkspaceList {
+    items?: { metadata: { name: string }; spec?: { type?: { name?: string } } }[];
+  }
+
+  async function childrenOf(workspace: string): Promise<string[]> {
+    const out = await request(
+      `${creds.server}/clusters/${workspace}/apis/tenancy.kcp.io/v1alpha1/workspaces`,
+    ) as WorkspaceList;
+    return (out.items ?? []).map((w) => w.metadata.name);
+  }
+
+  async function homes(): Promise<string[]> {
+    const paths: string[] = [];
+    for (const account of await childrenOf("root")) {
+      const accountPath = `root:${account}`;
+      for (const home of await childrenOf(accountPath)) paths.push(`${accountPath}:${home}`);
+    }
+    return paths;
   }
 
   async function jsonPatch(url: string, ops: unknown[]): Promise<unknown> {
@@ -171,10 +180,12 @@ export function createKcpNodeClaimStore(opts: KcpNodeClaimStoreOptions): NodeCla
 
   return {
     async list() {
-      const out = await request(
-        `${await virtualWorkspace()}/clusters/*/apis/${NODECLAIM_GROUP}/${NODECLAIM_VERSION}/${NODECLAIM_RESOURCE}`,
-      ) as { items?: RawClaim[] };
-      return (out.items ?? []).map((item) => toNodeClaim(item));
+      const claims: NodeClaim[] = [];
+      for (const home of await homes()) {
+        const out = await request(clusterPath(home, "")) as { items?: RawClaim[] };
+        for (const item of out.items ?? []) claims.push(toNodeClaim(item, home));
+      }
+      return claims;
     },
     async replaceStatus(claim, status) {
       await jsonPatch(await itemUrl(claim, "/status"), [{ op: "add", path: "/status", value: status }]);
