@@ -316,11 +316,11 @@ func TestFatalReturnsTheDoorsOwnWords(t *testing.T) {
 	if err := host.Provision(context.Background()); err != nil {
 		t.Fatalf("Provision: %v", err)
 	}
-	if got := host.Fatal(); got != "" {
+	if got := host.Terminal(); got != "" {
 		t.Fatalf("a pending claim reported %q as fatal, which ends a join wait that has not failed", got)
 	}
 	claims.setPhase(testWorkspace, testNodeName, v1alpha1.NodeClaimFailed, "no bidder under the cap")
-	got := host.Fatal()
+	got := host.Terminal()
 	if !strings.Contains(got, "no bidder under the cap") {
 		t.Fatalf("Fatal returned %q, want the door's own message: a join wait that times out over a "+
 			"claim that failed at its first step reports the timeout instead of the cause", got)

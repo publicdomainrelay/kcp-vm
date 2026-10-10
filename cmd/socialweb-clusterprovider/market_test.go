@@ -724,3 +724,66 @@ func TestTheFirstNodeOfAClusterIsNotClaimedUnderASpentName(t *testing.T) {
 			"holds", got)
 	}
 }
+
+func TestANodeWhoseClaimTheDoorConfirmedReleasedIsRemoved(t *testing.T) {
+	claims := &marketClaims{}
+	key := clusterKey(t, "liveweb")
+	gone := key + "-node1"
+	live := key + "-node2"
+	tenant, client := tenantClientFor(t, gone, live)
+	claims.claims = map[string]v1alpha1.NodeClaim{
+		testHomePrefix + "liveweb/" + gone: {
+			ObjectMeta: metav1.ObjectMeta{Name: gone},
+			Status: v1alpha1.NodeClaimStatus{
+				Phase:   v1alpha1.NodeClaimReleased,
+				Message: "the door restarted and released this node's VM; a new node will be requested",
+			},
+		},
+		testHomePrefix + "liveweb/" + live: {
+			ObjectMeta: metav1.ObjectMeta{Name: live},
+			Status:     v1alpha1.NodeClaimStatus{Phase: v1alpha1.NodeClaimRunning},
+		},
+	}
+	hosts, err := newNodeHosts(marketOptions(t, claims, tenant))
+	if err != nil {
+		t.Fatalf("newNodeHosts: %v", err)
+	}
+	ctx := context.Background()
+	if err := hosts.reconcile(ctx, key); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if tenantNode(t, client, gone) {
+		t.Fatalf("the Node %s is still in the tenant cluster after the door confirmed its machine "+
+			"gone. MEASURED in production on 2026-10-06: forty seconds after a deploy restarted the "+
+			"door, pipeline 74's four runner pods were scheduled onto just such a Node, sat Pending "+
+			"for 58 s and then vanished when the cloud controller manager deleted it -- four of five "+
+			"jobs failed that way", gone)
+	}
+	if !tenantNode(t, client, live) {
+		t.Fatalf("the Node %s was removed while its claim reads Running, so a node that is serving "+
+			"was deleted", live)
+	}
+}
+
+func TestANodeIsNotRemovedWhileItsClaimIsStillRunning(t *testing.T) {
+	claims := &marketClaims{}
+	key := clusterKey(t, "liveweb")
+	name := key + "-node1"
+	tenant, client := tenantClientFor(t, name)
+	claims.claims = map[string]v1alpha1.NodeClaim{
+		testHomePrefix + "liveweb/" + name: {
+			ObjectMeta: metav1.ObjectMeta{Name: name},
+			Status:     v1alpha1.NodeClaimStatus{Phase: v1alpha1.NodeClaimRunning},
+		},
+	}
+	hosts, err := newNodeHosts(marketOptions(t, claims, tenant))
+	if err != nil {
+		t.Fatalf("newNodeHosts: %v", err)
+	}
+	if err := hosts.reconcile(context.Background(), key); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if !tenantNode(t, client, name) {
+		t.Fatal("a Node whose claim is still Running was deleted by the reconcile")
+	}
+}

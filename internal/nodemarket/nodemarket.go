@@ -216,7 +216,7 @@ func (h *Host) ConfirmJoined(ctx context.Context) error {
 	case v1alpha1.NodeClaimRunning:
 	case v1alpha1.NodeClaimFailed:
 		return fmt.Errorf("nodemarket: node %s of %s: %s",
-			h.opts.NodeName, h.opts.Cluster, failedMessage(claim))
+			h.opts.NodeName, h.opts.Cluster, endedMessage(claim))
 	default:
 		return fmt.Errorf("nodemarket: node %s of %s is reported by its cluster while its claim is "+
 			"%q, not Running. The door writes Running only once the node's own agent reached its "+
@@ -230,7 +230,7 @@ func (h *Host) ConfirmJoined(ctx context.Context) error {
 	return nil
 }
 
-func (h *Host) Fatal() string {
+func (h *Host) Terminal() string {
 	ctx, cancel := context.WithTimeout(context.Background(), fatalReadTimeout)
 	defer cancel()
 	h.mu.Lock()
@@ -239,10 +239,10 @@ func (h *Host) Fatal() string {
 	if err != nil || claim == nil {
 		return ""
 	}
-	if claim.Status.Phase != v1alpha1.NodeClaimFailed {
+	if !endedClaimPhase(claim.Status.Phase) {
 		return ""
 	}
-	return failedMessage(claim)
+	return endedMessage(claim)
 }
 
 func (h *Host) Teardown(ctx context.Context) error {
@@ -329,9 +329,13 @@ func (h *Host) read(ctx context.Context) (*v1alpha1.NodeClaim, error) {
 	return claim, nil
 }
 
-func failedMessage(claim *v1alpha1.NodeClaim) string {
+func endedClaimPhase(phase v1alpha1.NodeClaimPhase) bool {
+	return phase == v1alpha1.NodeClaimFailed || phase == v1alpha1.NodeClaimReleased
+}
+
+func endedMessage(claim *v1alpha1.NodeClaim) string {
 	if claim.Status.Message != "" {
 		return claim.Status.Message
 	}
-	return "the market failed this claim and the door recorded no reason"
+	return "the door ended this claim and recorded no reason"
 }

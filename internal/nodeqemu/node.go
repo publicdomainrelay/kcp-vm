@@ -472,4 +472,4 @@ func (h *Host) Teardown(ctx context.Context) error {
 	return errors.Join(problems...)
 }
 
-func (h *Host) Fatal() string { return nodevm.Fatal(h.opts.DataDir) }
+func (h *Host) Terminal() string { return nodevm.Fatal(h.opts.DataDir) }

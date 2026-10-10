@@ -354,6 +354,10 @@ func (p *Provider) scale(ctx context.Context, key, name string, running bool) {
 		return
 	}
 	if p.nodes != nil {
+		if err := p.nodes.reconcile(ctx, key); err != nil {
+			p.log.Warn("cluster provider: reconciling the Nodes whose machines the door has taken "+
+				"away did not complete", "cluster", name, "key", key, "error", err.Error())
+		}
 		if err := p.nodes.confirm(ctx, key); err != nil {
 			p.log.Warn("cluster provider: confirming the nodes this cluster already holds did not "+
 				"complete", "cluster", name, "key", key, "error", err.Error())

@@ -1898,27 +1898,6 @@ because it bounds a mechanism the rest of this document leans on.
   belonging to substrates this process is not configured for, or a stated decision that changing
   substrate means changing state dir. `NEXT.yaml` MARKET-1.
 
-- **MARKET-6: a Node whose guest the door reaped outlives the clusterprovider's restart, and pods are
-  scheduled onto it.** The door's restart releases the claims it holds and destroys their machines, and
-  writes that into each claim's status. The provider acts on it only for the nodes IT holds
-  (`confirmHeld`), and a provider that has just started holds nothing - so the previous generation's
-  `Node` objects stay in the tenant cluster reading `Ready` and take pods. MEASURED on 2026-10-06,
-  forty seconds after a deploy restarted the door: pipeline 74's four runner pods were scheduled onto
-  `...-node6`, sat `Pending` for 58 s, and the runner gave up with `Job failed (system failure):
-  prepare environment: waiting for pod running: pods "runner-w93ufg0qn-project-1-concurrent-3-nuixd3cp"
-  not found` - the pod disappeared when the `Node` was finally deleted. Four of five jobs failed that
-  way, where a pipeline 25 minutes earlier with no restart in front of it had all five running at once
-  on five distinct nodes. The deletion came from the cloud controller manager, not from anything that
-  noticed the guest was gone: a corpse is a `Node` absent from the instance snapshot, and a snapshot is
-  rewritten only when the provider next provisions or tears down, which is why `node3..node6` survived
-  until the pass that wrote the ten new nodes. The obvious fix - list the tenant `Node`s and delete the
-  ones whose claim is gone or ended - is NOT safe as stated, and that is why this is open rather than
-  closed: `adoptNever` writes `Failed` both for a claim it reaped and for one whose machine it could not
-  confirm released, and the second may still have a running machine on its way to joining. A claim
-  cannot yet say which it is except in prose, and a reconciler built on the phase alone would delete
-  `Node`s for machines still being paid for. `NEXT.yaml` MARKET-6, with the field that has to come
-  first.
-
 - **Whether the node half may ever run inside the control-plane container was answered by reading where
   the refusal lives, and the answer is a STATED LIMIT rather than an open question.** The allocator's
   refusal to lease a range overlapping the host's networks is a property of the NETWORK NAMESPACE the
@@ -4019,6 +3998,43 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   The fix is a fixed test keypair for the fake guest, which removes the generator and the randomness
   together. Closing reading: SIX concurrent `deno task test` suites, 65 passed each; the same six-way
   run before the change failed one suite. `NEXT.yaml` FLAKE-2.
+
+- **A Node whose guest the door reaped stayed Ready and took pods, and the door already had the word
+  that says so. CLOSED.** The door's restart releases the claims it holds and destroys their machines,
+  and it wrote `Failed` for that - the same phase it writes for a claim whose machine it could NOT
+  confirm released. The provider acts on `Failed` only for the nodes IT holds, and a provider that has
+  just started holds nothing, so the previous generation's `Node` objects stayed in the tenant cluster
+  reading `Ready` and took pods. MEASURED on 2026-10-06, forty seconds after a deploy restarted the
+  door: pipeline 74's four runner pods were scheduled onto `...-node6`, sat `Pending` for 58 s, and the
+  runner gave up with `Job failed (system failure): prepare environment: waiting for pod running: pods
+  "runner-w93ufg0qn-project-1-concurrent-3-nuixd3cp" not found` - the pod gone when the `Node` finally
+  was. Four of five jobs failed that way, where a pipeline 25 minutes earlier with no restart in front
+  of it had all five running at once on five distinct nodes. The deletion came from the cloud
+  controller manager, not from anything that noticed the guest was gone: a corpse is a `Node` absent
+  from the instance snapshot, and a snapshot is rewritten only when the provider next provisions or
+  tears down.
+  The obvious reconcile was recorded as UNSAFE first, and that entry is the reason the fix is shaped
+  the way it is: `adoptNever` wrote `Failed` both for a claim it reaped and for one whose machine it
+  could not confirm released, and the second may still have a running machine on its way to joining, so
+  a reconciler built on the phase alone would delete `Node`s for machines still being paid for. The
+  door's vocabulary already had the distinction - `Released` is what it writes in the normal teardown
+  path, for a node whose VM it deleted - so `adoptNever` now writes `Released` when its own reap
+  returned true and `Failed` when it did not, and no schema changed at all.
+  Two halves follow from that. `nodemarket.Host.Fatal` becomes `Terminal` and returns the claim's own
+  words for ANY ended phase, so a claim the door released is given up on rather than left counted (the
+  guest hosts implement `Terminal` as the fatal-console marker they always had). `nodeHosts.reconcile`
+  runs each pass before `confirm`: it lists the claims in the cluster's home workspace, and for every
+  one reading `Released` it deletes the tenant `Node` of that name, because only `Released` says the
+  machine is gone. It does not need the cluster's node host, which is what a just-restarted provider
+  does not have.
+  The instruments are three tests, each watched to fail with its half removed. In the door,
+  "a live claim this process never started is reaped, never adopted" now asserts `Released` where it
+  asserted `Failed`, and "a claim the door could not confirm released is Failed, not Released" holds
+  the other branch. In `cmd/socialweb-clusterprovider`,
+  `TestANodeWhoseClaimTheDoorConfirmedReleasedIsRemoved` seeds a `Released` claim and a `Running` claim
+  with a tenant `Node` each, and asserts the first Node is gone and the second is not - watched to fail
+  with the reconcile made a no-op: "the Node acct-liveweb-node1 is still in the tenant cluster after
+  the door confirmed its machine gone". `NEXT.yaml` MARKET-6.
 
 ## 16. Vocabulary
 

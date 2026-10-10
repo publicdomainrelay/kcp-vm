@@ -81,7 +81,7 @@ function readText(path: string): Promise<string> {
 
 const fakePds = { did: "did:plc:ephemeral" } as never;
 
-function harness(behaviour: "hold" | "exit" | "no_bids" = "hold") {
+function harness(behaviour: "hold" | "exit" | "no_bids" = "hold", reapConfirmed = true) {
   const store = new FakeStore();
   const requested: string[] = [];
   const contracts: Record<string, unknown>[] = [];
@@ -99,7 +99,7 @@ function harness(behaviour: "hold" | "exit" | "no_bids" = "hold") {
     pollReady: () => Promise.resolve(true),
     reap: (_pds, contract) => {
       reaped.push(contract);
-      return Promise.resolve(true);
+      return Promise.resolve(reapConfirmed);
     },
     nodeSession: async (plan) => {
       plans.push(plan);
@@ -266,9 +266,40 @@ Deno.test("a live claim this process never started is reaped, never adopted", as
   await settle();
   assertEquals(h.contracts.length, 0);
   assertEquals(h.reaped.length, 1);
-  assertEquals(h.store.phase("ci-node1"), "Failed");
+  assertEquals(
+    h.store.phase("ci-node1"),
+    "Released",
+    "a claim the door reaped and CONFIRMED released must say Released, not Failed. The cluster's " +
+      "Node object is still there and still reads Ready, and the two phases are the only thing that " +
+      "tells a reader which claims have a machine behind them: Released is the one whose machine the " +
+      "door took away, and it is what the clusterprovider deletes the corpse Node on.",
+  );
   assertEquals(h.store.claims.get("ci-node1")!.status.contract?.receiptUri, undefined);
   assertEquals(h.store.claims.get("ci-node1")!.status.contract?.vmUri, "at://owner/vm/1");
+});
+
+Deno.test("a claim the door could not confirm released is Failed, not Released", async () => {
+  const h = harness("hold", false);
+  h.store.put(claim("ci-node1", {
+    finalizers: [NODECLAIM_FINALIZER],
+    status: {
+      phase: "Running",
+      contract: { vmUri: "at://owner/vm/1", receiptUri: "at://bidder/receipt/1", receiptCid: "rc", submitEventRef: "https://bidder/xrpc" },
+    },
+  }));
+  await h.fulfiller.pass();
+  await settle();
+  assertEquals(h.reaped.length, 1);
+  assertEquals(
+    h.store.phase("ci-node1"),
+    "Failed",
+    "the door could not confirm the machine gone, so the claim may still have one, and only " +
+      "Released is safe to delete a cluster Node on",
+  );
+  assertEquals(
+    h.store.claims.get("ci-node1")!.status.message,
+    "the door restarted while this node was live; its VM could not be confirmed released",
+  );
 });
 
 Deno.test("a deleted claim with an unreleased contract is reaped before its finalizer goes", async () => {

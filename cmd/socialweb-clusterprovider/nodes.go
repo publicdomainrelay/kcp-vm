@@ -368,15 +368,15 @@ type nodeHost interface {
 }
 
 type guestWatcher interface {
-	Fatal() string
+	Terminal() string
 }
 
-func guestFatal(host nodeHost) string {
+func guestTerminal(host nodeHost) string {
 	watcher, ok := host.(guestWatcher)
 	if !ok {
 		return ""
 	}
-	return watcher.Fatal()
+	return watcher.Terminal()
 }
 
 type tenantNodes struct {
@@ -481,12 +481,12 @@ func (n *tenantNodes) confirmHeld(ctx context.Context) error {
 
 	var problems []error
 	for _, node := range held {
-		if fatal := guestFatal(node.host); fatal != "" {
+		if terminal := guestTerminal(node.host); terminal != "" {
 			problems = append(problems, fmt.Errorf(
 				"clusterprovider: node %s of %s stopped making progress before the tenant cluster "+
-					"reported it, so it is failed rather than left counted: %s -- the claim is "+
+					"reported it, so it is given up rather than left counted: %s -- the claim is "+
 					"released and the next pass may ask the market again",
-				node.name, n.cluster, fatal))
+				node.name, n.cluster, terminal))
 			if err := n.teardownHeld(ctx, node); err != nil {
 				problems = append(problems, err)
 			}
@@ -636,12 +636,12 @@ func (n *tenantNodes) confirmJoined(ctx context.Context, host nodeHost, name str
 		if reported {
 			return host.ConfirmJoined(ctx)
 		}
-		if fatal := guestFatal(host); fatal != "" {
+		if terminal := guestTerminal(host); terminal != "" {
 			return fmt.Errorf("clusterprovider: node %s of %s stopped making progress before the "+
 				"tenant cluster reported it: %s -- the guest's own words are returned here rather "+
 				"than waiting out the join timeout, because a host that died at its first step and "+
 				"a host that is merely slow look identical until the clock runs out, and only one "+
-				"of them is fixed by waiting", name, n.cluster, fatal)
+				"of them is fixed by waiting", name, n.cluster, terminal)
 		}
 		if time.Now().After(deadline) {
 			n.log.Warn("clusterprovider: the tenant cluster has not reported this node within the "+
@@ -910,6 +910,52 @@ func (h *nodeHosts) resetSnapshot(cluster string) error {
 		return err
 	}
 	return cloudprovider.WriteSnapshot(clusterstack.NodeSnapshotPath(dir), nil)
+}
+
+func (h *nodeHosts) reconcile(ctx context.Context, cluster string) error {
+	if !h.opts.Substrate.deferredJoin() || h.opts.Claims == nil || h.opts.Tenant == nil {
+		return nil
+	}
+	target, err := claimClusterFor(h.opts.Registry, cluster)(ctx)
+	if err != nil {
+		return fmt.Errorf("clusterprovider: the home workspace of %s, which holds the claims that "+
+			"say whose machine the door has taken away: %w", cluster, err)
+	}
+	claims, err := h.opts.Claims.ListNodeClaims(ctx, target.Workspace)
+	if err != nil {
+		return fmt.Errorf("clusterprovider: listing the node claims in %s to find the ones the door "+
+			"confirmed released: %w -- a read that failed is not a workspace with no claims, and it is "+
+			"the claims that say which Nodes have no machine behind them", target.Workspace, err)
+	}
+	var gone []string
+	for i := range claims {
+		if claims[i].Status.Phase == v1alpha1.NodeClaimReleased {
+			gone = append(gone, claims[i].Name)
+		}
+	}
+	if len(gone) == 0 {
+		return nil
+	}
+	client, err := h.opts.Tenant(ctx, cluster)
+	if err != nil {
+		return fmt.Errorf("clusterprovider: the tenant client for %s, needed to delete the Nodes "+
+			"whose claims the door confirmed released: %w", cluster, err)
+	}
+	var problems []error
+	for _, name := range gone {
+		err := client.CoreV1().Nodes().Delete(ctx, name, metav1.DeleteOptions{})
+		if err != nil && !apierrors.IsNotFound(err) {
+			problems = append(problems, fmt.Errorf("clusterprovider: deleting the tenant cluster's "+
+				"Node %s of %s, whose claim reads Released: %w -- the door writes Released only where "+
+				"it took the machine away, and a Node left behind it still reads Ready, so the "+
+				"scheduler places pods on a guest that is gone and the workload waits out its own "+
+				"timeout on a machine that is not coming back", name, cluster, err))
+			continue
+		}
+		h.log.Info("cluster provider: removed a Node the door has taken the machine away for",
+			"cluster", cluster, "node", name)
+	}
+	return errors.Join(problems...)
 }
 
 func (h *nodeHosts) confirm(ctx context.Context, cluster string) error {

@@ -284,7 +284,7 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
     }
     await opts.store.replaceStatus(claim, {
       ...claim.status,
-      phase: "Failed",
+      phase: reaped ? "Released" : "Failed",
       contract: { ...claim.status.contract, receiptUri: undefined, receiptCid: undefined, submitEventRef: undefined },
       message: reaped
         ? "the door restarted and released this node's VM; a new node will be requested"
