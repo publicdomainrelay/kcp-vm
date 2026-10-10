@@ -6,9 +6,8 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"net"
-	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strconv"
@@ -16,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostos"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/noderecord"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodefirecracker"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodevm"
@@ -288,11 +288,9 @@ func Boot(specPath string) error {
 	); err != nil {
 		return err
 	}
-	seedPort, err := serveSeed(s)
-	if err != nil {
+	if err := writeSeed(s, filepath.Join(s.WorkDir, nodevm.RootfsName)); err != nil {
 		return err
 	}
-	guest.BootArgs = append(append([]string(nil), guest.BootArgs...), seedFrom(s.network(), seedPort))
 	paramsPath, err := writeNamespaceParams(s, guest)
 	if err != nil {
 		return err
@@ -417,51 +415,84 @@ func networkConfig(network nodevm.Network) string {
 		"    match:",
 		"      macaddress: \"" + network.GuestMAC + "\"",
 		"    set-name: " + network.Interface,
-		"    dhcp4: true",
+		"    dhcp4: false",
 		"    dhcp6: false",
+		"    addresses: [" + network.GuestIP + "/" + strconv.Itoa(network.Prefix) + "]",
+		"    routes:",
+		"      - to: default",
+		"        via: " + network.Gateway,
+	}
+	if network.Gateway != "" {
+		lines = append(lines, "    nameservers:", "      addresses: ["+network.Gateway+"]")
 	}
 	return strings.Join(lines, "\n") + "\n"
 }
 
-func serveSeed(s guestSpec) (int, error) {
+const seedDirInImage = "/var/lib/cloud/seed/nocloud"
+
+func writeSeed(s guestSpec, rootfsCopy string) error {
 	raw, err := os.ReadFile(s.UserDataFile)
 	if err != nil {
-		return 0, fmt.Errorf("reading the guest's user-data at %s: %w -- this file is the whole "+
+		return fmt.Errorf("reading the guest's user-data at %s: %w -- this file is the whole "+
 			"contract the requester asked for, so a guest booted without it is one nothing has "+
 			"asked anything of and nothing would be installed in", s.UserDataFile, err)
 	}
 	if len(raw) == 0 {
-		return 0, fmt.Errorf("the guest's user-data at %s is empty, and a seed that carries nothing "+
-			"is one cloud-init reads and does nothing with", s.UserDataFile)
+		return fmt.Errorf("the guest's user-data at %s is empty, and a seed that carries nothing is "+
+			"one cloud-init reads and does nothing with", s.UserDataFile)
 	}
 	meta := s.MetaData
 	if meta == "" {
 		meta = "instance-id: " + s.Name + "\nlocal-hostname: " + s.Name + "\n"
 	}
-	documents := map[string]string{
-		"/user-data":      string(raw),
-		"/meta-data":      meta,
-		"/network-config": networkConfig(s.network()),
+	network := s.network()
+	documents := []struct{ name, body string }{
+		{"user-data", string(raw)},
+		{"meta-data", meta},
+		{"network-config", networkConfig(network)},
 	}
-	server := &http.Server{ReadHeaderTimeout: 10 * time.Second}
-	mux := http.NewServeMux()
-	for path, body := range documents {
-		mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "text/plain")
-			fmt.Fprint(w, body)
-		})
+	if _, err := exec.LookPath("debugfs"); err != nil {
+		return fmt.Errorf("debugfs is not on this host's PATH, and it is what writes the seed into "+
+			"the guest's copy of the root filesystem without mounting it. This host is %s. The seed "+
+			"is written into the copy rather than served over the network because cloud-init reads "+
+			"/var/lib/cloud/seed/nocloud during its local stage, before any interface exists: a seed "+
+			"fetched over HTTP needs the network that the seed is what configures, and this image "+
+			"has no DHCP to give the guest an address first: %w", hostos.Name(), err)
 	}
-	server.Handler = mux
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	staging, err := os.MkdirTemp(filepath.Dir(s.WorkDir), "seed-")
 	if err != nil {
-		return 0, fmt.Errorf("listening for the guest's cloud-init requests: %w", err)
+		return fmt.Errorf("creating a directory to stage the seed in: %w", err)
 	}
-	go func() { _ = server.Serve(listener) }()
-	return listener.Addr().(*net.TCPAddr).Port, nil
+	defer os.RemoveAll(staging)
+	for _, doc := range documents {
+		if err := os.WriteFile(filepath.Join(staging, doc.name), []byte(doc.body), 0o644); err != nil {
+			return fmt.Errorf("staging %s for the seed: %w", doc.name, err)
+		}
+	}
+	for _, dir := range []string{"/var/lib/cloud", "/var/lib/cloud/seed", seedDirInImage} {
+		_ = debugfsRun(rootfsCopy, "mkdir "+dir)
+	}
+	for _, doc := range documents {
+		target := seedDirInImage + "/" + doc.name
+		_ = debugfsRun(rootfsCopy, "rm "+target)
+		if err := debugfsRun(rootfsCopy, "write "+filepath.Join(staging, doc.name)+" "+target); err != nil {
+			return fmt.Errorf("writing %s into %s at %s: %w -- a guest whose seed is incomplete "+
+				"reads it and does as much as it can, so a missing piece here shows up as a guest "+
+				"that never installs the thing the missing piece asked for",
+				doc.name, rootfsCopy, target, err)
+		}
+	}
+	return nil
 }
 
-func seedFrom(network nodevm.Network, port int) string {
-	return noCloudArgsPrefix + network.Gateway + ":" + strconv.Itoa(port) + "/"
+func debugfsRun(image, command string) error {
+	cmd := exec.Command("debugfs", "-w", "-R", command, image)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("debugfs -w -R %q %s: %w: %s", command, image, err,
+			strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 func writeNamespaceParams(s guestSpec, guest nodevm.Guest) (string, error) {
