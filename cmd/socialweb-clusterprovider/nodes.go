@@ -1120,7 +1120,7 @@ func (h *nodeHosts) reconcile(ctx context.Context, cluster string) error {
 			"confirmed released: %w -- a read that failed is not a workspace with no claims, and it is "+
 			"the claims that say which Nodes have no machine behind them", target.Workspace, err)
 	}
-	adoptErr := h.adoptClaims(cluster, claims)
+	adoptErr := errors.Join(h.adoptClaims(cluster, claims), h.releaseStranded(ctx, cluster, claims))
 	released := map[string]string{}
 	for i := range claims {
 		if claims[i].Status.Phase == v1alpha1.NodeClaimReleased {
