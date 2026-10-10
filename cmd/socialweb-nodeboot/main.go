@@ -154,6 +154,8 @@ type result struct {
 
 func main() {
 	specPath := flag.String("spec", "", "path to the guest spec")
+	resultPath := flag.String("result", "", "write the result JSON here as well as to stdout")
+	foreground := flag.Bool("foreground", false, "stay up until signalled, so a container hosting this guest lives as long as the guest does")
 	stop := flag.Bool("stop", false, "stop the guest whose work directory is named by -work-dir")
 	workDir := flag.String("work-dir", "", "the work directory of the guest to stop")
 	flag.Usage = func() { fmt.Fprint(os.Stderr, usage) }
@@ -173,7 +175,7 @@ func main() {
 		err = fmt.Errorf("-spec is required, and so is -stop with -work-dir: a boot needs the guest " +
 			"to start and a stop needs the one to stop, and neither is a default")
 	default:
-		err = Boot(*specPath)
+		err = Boot(*specPath, *resultPath, *foreground)
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "socialweb-nodeboot: %v\n", err)
@@ -254,7 +256,7 @@ func (s guestSpec) network() nodevm.Network {
 	return network.WithDefaults()
 }
 
-func Boot(specPath string) error {
+func Boot(specPath, resultPath string, foreground bool) error {
 	s, err := LoadSpec(specPath)
 	if err != nil {
 		return err
@@ -358,6 +360,22 @@ func Boot(specPath string) error {
 		return err
 	}
 	fmt.Printf("%s\n", raw)
+	if resultPath != "" {
+		if err := os.WriteFile(resultPath, append(raw, '\n'), 0o644); err != nil {
+			return fmt.Errorf("writing the result to %s: %w -- a caller that starts this in a "+
+				"container reads the result from a file rather than from a log, because a log is "+
+				"also where the guest and the VMM write and a result parsed out of it cannot be told "+
+				"from their output", resultPath, err)
+		}
+	}
+	if !foreground {
+		return nil
+	}
+	<-ctx.Done()
+	fmt.Printf("stopping guest %s\n", s.Name)
+	if err := Stop(s.WorkDir); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -459,7 +477,7 @@ func writeSeed(s guestSpec, rootfsCopy string) error {
 			"fetched over HTTP needs the network that the seed is what configures, and this image "+
 			"has no DHCP to give the guest an address first: %w", hostos.Name(), err)
 	}
-	staging, err := os.MkdirTemp(filepath.Dir(s.WorkDir), "seed-")
+	staging, err := os.MkdirTemp(s.WorkDir, "seed-")
 	if err != nil {
 		return fmt.Errorf("creating a directory to stage the seed in: %w", err)
 	}
