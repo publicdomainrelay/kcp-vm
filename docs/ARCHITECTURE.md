@@ -1855,31 +1855,10 @@ open list, are two stated LIMITS rather than open work: each marks where a behav
 being true, which is a fact about the design rather than a question left in it, and each sits here
 because it bounds a mechanism the rest of this document leans on.
 
-- **A mint credential is named by the cluster's key, and the process that renames an existing one is
-  not the process that reads it.** The clusterprovider writes `<MINT_DIR>/<accountHash>-<name>` and the
-  gateway reads that name, so the two agree from the clusterprovider's first pass onward. The
-  container entrypoint starts the gateway before the clusterprovider, and the rename of an existing
-  `<MINT_DIR>/<name>` is the clusterprovider's startup migration, so a mint request that arrives in
-  between names a file that is not there: the lookup fails closed, with an error naming the cluster and
-  the key, and never returns another cluster's credential. The instrument is a container started with a
-  legacy mint directory and no keyed file, whose first mint request is refused and whose next is
-  served. `NEXT.yaml` MINT-1.
-
 - **The tenant grant admits the External Secrets controller by a hardcoded namespace.** An install
   outside `default` is denied, and the failure reads as a broken ExternalSecret rather than as a grant
   that does not name it. The instrument is an install in another namespace still producing the Secret.
   `NEXT.yaml` ESO-2.
-
-- **The market substrate's startup sweep is a no-op, so a state dir a guest substrate left behind is
-  never reaped.** `sweepNodeRecords` finds a previous gateway's survivors by the identity their
-  substrate gives their processes, and `nodeIdentityFor` knows only `firecracker` and `qemu`. A market
-  node's machine is not a process on this host at all, so the market branch skips the walk with a
-  logged decision rather than inventing an identity. What that leaves unasked is the host that was
-  reconfigured from a guest substrate to `market` over the same `SOCIALWEB_CLUSTERPROVIDER_STATE_DIR`:
-  the records under it name guests of a substrate nothing is running any more, and no pass reaps them.
-  The instrument is either a record that names the substrate that wrote it, so a walk can reap records
-  belonging to substrates this process is not configured for, or a stated decision that changing
-  substrate means changing state dir. `NEXT.yaml` MARKET-1.
 
 - **Whether the node half may ever run inside the control-plane container was answered by reading where
   the refusal lives, and the answer is a STATED LIMIT rather than an open question.** The allocator's
@@ -3641,7 +3620,7 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   own node list, and it is the only list that can be. **(c)** The startup sweep
   (`sweepNodeRecords`) skips the walk under this substrate with a logged decision, because a market
   node's machine is not a process on this host and no identity can be derived for it; what that leaves
-  open is `NEXT.yaml` MARKET-1.
+  open is the sweep MARKET-1 has since closed (section 15).
 
   The instrument is `go test ./...`. New: `internal/nodemarket` (the claim's fields and paths
   survive `Provision`; a second `Provision` leaves one claim; `ConfirmJoined` refuses anything short
@@ -4090,6 +4069,45 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   on the vault bring-up path would change what the zero-node run allocates (section 14). Pinned by
   `TestARunningVaultDoesNotServeAHostItsLeafGainedAfterItStarted` in `internal/clusterprovider`, which
   takes the reading and fails without the refusal. `NEXT.yaml` VAULT-TLS-1, now a limit.
+
+- **The legacy-key migration ran in a different process from the one that reads what it renames.
+  CLOSED.** The clusterprovider writes a mint credential as `<MINT_DIR>/<accountHash>-<name>` and the
+  gateway reads that name, so the two agree from the clusterprovider's first pass onward. What did not
+  agree was the ORDER: the entrypoint started the gateway first, and the rename of an existing
+  `<MINT_DIR>/<name>` was the clusterprovider's own startup migration, so a mint request arriving in
+  between named a file that was about to be renamed and was refused. It failed closed - an error naming
+  the cluster and the key, never another cluster's credential - so the cost was a window of seconds and
+  a refusal that reads to an operator as a broken deployment.
+  The clusterprovider gained a `migrate` subcommand that opens the same inputs the gateway needs
+  (`buildInputs`, extracted from `buildDeps`) and runs `migrateLegacyKeys`, and the entrypoint runs it
+  BEFORE starting the gateway. A migration that fails does not stop the deployment: the gateway is
+  started anyway and the clusterprovider runs the same migration itself, because a gateway that never
+  starts is worse than a mint refused in the seconds before that one does. The ordering is what the fix
+  IS, and it lives in a shell file, so it is pinned by a test that reads
+  `deploy/container-entrypoint.sh` and asserts the `migrate` invocation appears before the gateway is
+  started - `TestTheLegacyKeyMigrationRunsBeforeAnythingCanReadAMintCredential`, watched to fail with
+  the step removed: "the container entrypoint never runs the legacy-key migration as its own step".
+  `NEXT.yaml` MINT-1.
+
+- **A node record did not say which substrate wrote it, so a sweep could only reap its own. CLOSED,
+  and it closed with the reading the item asked for.** `noderecord.Record` held a pid, a start time
+  and an identity, and the identity is the ARGV the process was started with - which only the substrate
+  that started it knows how to read. `nodeIdentityFor` switched on the CONFIGURED substrate, and
+  `sweepNodeRecords` returned early under `market`, so a state dir a firecracker or qemu gateway left
+  behind was never walked and its guests stayed up.
+  The record now carries `Substrate`, `noderecord.Write` refuses an empty one, and the four writers set
+  it: `internal/nodefirecracker` and `internal/nodeqemu` from a name constant each, and
+  `internal/nodevm` from `NamespaceParams.Kind`, which is the substrate the namespace child was started
+  for and was already in the file it reads. The sweep resolves the identity pair PER RECORD from
+  `rec.Substrate` rather than once from its own configuration, and a record naming a substrate with no
+  identity function is a refusal naming that substrate, never a skip - guessing reads a live guest as
+  gone and a gone one as live.
+  Readings: `TestTheMarketSweepReapsWhatAnotherSubstrateLeftBehind` starts a stand-in process, records
+  it under firecracker, sweeps it with a gateway configured for `market`, and asserts the process is
+  gone and the record cleared - the item's own closing reading, watched to fail with the market
+  early-return restored (`waitGone` timed out). `TestASweepStopsOnARecordWhoseSubstrateItCannotRead`
+  holds the other side. `TestTheSweepRefusesASubstrateWithNoIdentity` asserted the up-front refusal
+  that this replaces and was rewritten to the per-record one rather than deleted. `NEXT.yaml` MARKET-1.
 
 ## 16. Vocabulary
 

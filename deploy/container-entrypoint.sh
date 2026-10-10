@@ -291,6 +291,11 @@ if [ "$BOOTSTRAP" = "1" ]; then
 	fi
 fi
 
+say "migrating a legacy mint credential before anything can read one"
+if ! /usr/local/bin/socialweb-clusterprovider migrate; then
+	say "the legacy-key migration did not complete; the gateway is started anyway because the clusterprovider runs the same migration itself, and a gateway that never starts is worse than a mint refused in the seconds before that one does"
+fi
+
 say "starting socialweb-gateway"
 /usr/local/bin/socialweb-gateway &
 GATEWAY_PID=$!

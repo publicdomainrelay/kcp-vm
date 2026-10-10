@@ -66,6 +66,8 @@ func main() {
 	}
 }
 
+const migrateSubcommand = "migrate"
+
 func run() error {
 	cfg, err := Load()
 	if err != nil {
@@ -75,6 +77,10 @@ func run() error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	if len(os.Args) > 1 && os.Args[1] == migrateSubcommand {
+		return migrateOnly(ctx, cfg, log)
+	}
 
 	d, err := buildDeps(ctx, cfg, log)
 	if err != nil {
@@ -98,17 +104,27 @@ func run() error {
 	return nil
 }
 
-func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) {
+type inputs struct {
+	restCfg *rest.Config
+
+	registry clusterprovider.Clusters
+
+	alloc *portallocator.Allocator
+
+	networks *subnetallocator.Allocator
+}
+
+func buildInputs(cfg Config) (inputs, error) {
 	restCfg, err := clientcmd.BuildConfigFromFlags("", cfg.KCPKubeconfig)
 	if err != nil {
-		return Deps{}, fmt.Errorf("reading %s: %w", cfg.KCPKubeconfig, err)
+		return inputs{}, fmt.Errorf("reading %s: %w", cfg.KCPKubeconfig, err)
 	}
 	registry, err := clusterprovider.NewRegistry(clusterprovider.RegistryOptions{
 		Host:       cfg.KCPHost,
 		RestConfig: restCfg,
 	})
 	if err != nil {
-		return Deps{}, err
+		return inputs{}, err
 	}
 
 	alloc, err := portallocator.Open(portallocator.Config{
@@ -117,20 +133,44 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 		ReclaimGrace: DefaultReclaimGrace,
 	})
 	if err != nil {
-		return Deps{}, fmt.Errorf("opening the lease file %s: %w", cfg.LeasePath, err)
+		return inputs{}, fmt.Errorf("opening the lease file %s: %w", cfg.LeasePath, err)
 	}
 
 	networks, err := subnetallocator.Open(subnetallocator.Config{
 		LeasePath: subnetLeasePath(cfg.StateDir),
 	})
 	if err != nil {
-		return Deps{}, fmt.Errorf("opening the subnet lease file %s: %w. A cluster's range is "+
+		return inputs{}, fmt.Errorf("opening the subnet lease file %s: %w. A cluster's range is "+
 			"leased for as long as the cluster is, and its first usable address is the gateway its "+
 			"guests dial the apiserver through, so a gateway with no subnet lease has no range to "+
 			"address a node in and no gateway to advertise; it refuses to start rather than "+
 			"falling back to an address of its own, which is how a node's InternalIP became the "+
 			"address of the machine running the gateway", subnetLeasePath(cfg.StateDir), err)
 	}
+
+	return inputs{restCfg: restCfg, registry: registry, alloc: alloc, networks: networks}, nil
+}
+
+func migrateOnly(ctx context.Context, cfg Config, log *slog.Logger) error {
+	in, err := buildInputs(cfg)
+	if err != nil {
+		return err
+	}
+	return migrateLegacyKeys(ctx, in.registry, legacyKeys{
+		StateDir: cfg.StateDir,
+		MintDir:  cfg.MintKubeconfigs,
+		Ports:    in.alloc,
+		Networks: in.networks,
+		Log:      log,
+	})
+}
+
+func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) {
+	in, err := buildInputs(cfg)
+	if err != nil {
+		return Deps{}, err
+	}
+	restCfg, registry, alloc, networks := in.restCfg, in.registry, in.alloc, in.networks
 
 	postgres := newPostgresRegistry()
 
