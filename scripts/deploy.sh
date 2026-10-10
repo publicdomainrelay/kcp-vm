@@ -77,7 +77,6 @@ cat > "$ENV_FILE" <<ENV
 PUBLIC_ORIGIN=https://${ORIGIN}
 SOCIALWEB_CONTAINER_BOOTSTRAP=0
 SOCIALWEB_CLUSTERPROVIDER_JOIN=*
-SOCIALWEB_CONTAINER_KCP_BIND=0.0.0.0
 SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE=market
 SOCIALWEB_CLUSTERPROVIDER_MARKET_DENY_BIDDER_DIDS=${MARKET_DENY_BIDDER_DIDS}
 SOCIALWEB_GATEWAY_AUDIENCES=${GATEWAY_AUDIENCE}
@@ -95,13 +94,15 @@ chmod 0600 "$ENV_FILE"
 
 docker volume inspect "$VOLUME" >/dev/null 2>&1 || docker volume create "$VOLUME" >/dev/null
 docker rm -f "$SERVICE_NAME" >/dev/null 2>&1 || true
+if [ "${RESET_KCP:-0}" = "1" ]; then
+  say "dropping this deployment's kcp root so it generates a certificate for the address it now binds"
+  docker run --rm -v "$VOLUME:/v" --entrypoint /bin/sh "$IMAGE" -c 'rm -rf /v/kcp' >/dev/null
+fi
 docker run -d --name "$SERVICE_NAME" --restart unless-stopped \
   --cgroup-parent system.slice \
+  --network host \
   -v "$VOLUME:/var/lib/socialweb" \
   --env-file "$ENV_FILE" \
-  -p "127.0.0.1:${DOOR_PORT}:8788" \
-  -p "127.0.0.1:${KCP_PORT}:6443" \
-  -p "127.0.0.1:${GATEWAY_TLS_PORT}:8443" \
   "$IMAGE" >/dev/null
 
 say "waiting for the door to answer"
@@ -154,7 +155,7 @@ ${KCP_ORIGIN} {
     flush_interval -1
     transport http {
       tls_trusted_ca_certs ${CA_DIR}/kcp.crt
-      tls_server_name localhost
+      tls_server_name 127.0.0.1
     }
   }
 }
