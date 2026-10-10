@@ -21,7 +21,7 @@ RUN --mount=type=bind,from=goroot,target=/go/toolchain,ro \
     --mount=type=bind,from=gomod,target=/host-mod,ro \
     --mount=type=cache,id=gomod,target=/go/pkg/mod \
     --mount=type=cache,id=gocache,target=/go/cache \
-    sh -ec 'if [ ! -d /go/pkg/mod/k8s.io ]; then cp -a /host-mod/. /go/pkg/mod/; fi; go build -o /usr/local/bin/socialweb-computer-kcp-check-host ./cmd/socialweb-computer-kcp-check-host && go build -o /usr/local/bin/socialweb-nodeimage ./cmd/socialweb-nodeimage && go build -o /usr/local/bin/socialweb-gateway ./cmd/socialweb-gateway && go build -o /usr/local/bin/socialweb-credential ./cmd/socialweb-credential && go build -o /usr/local/bin/socialweb-clusterprovider ./cmd/socialweb-clusterprovider && go build -o /usr/local/bin/socialweb-cloud-controller-manager ./cmd/socialweb-cloud-controller-manager && go build -o /usr/local/bin/socialweb-vault ./cmd/socialweb-vault && go build -ldflags "-s -w" -buildvcs=false -o /usr/local/bin/kcpagent ./cmd/socialweb-nodeagent'
+    sh -ec 'if [ ! -d /go/pkg/mod/k8s.io ]; then cp -a /host-mod/. /go/pkg/mod/; fi; go build -o /usr/local/bin/socialweb-computer-kcp-check-host ./cmd/socialweb-computer-kcp-check-host && go build -o /usr/local/bin/socialweb-nodeimage ./cmd/socialweb-nodeimage && go build -o /usr/local/bin/socialweb-gateway ./cmd/socialweb-gateway && go build -o /usr/local/bin/socialweb-credential ./cmd/socialweb-credential && go build -o /usr/local/bin/socialweb-clusterprovider ./cmd/socialweb-clusterprovider && go build -o /usr/local/bin/socialweb-cloud-controller-manager ./cmd/socialweb-cloud-controller-manager && go build -o /usr/local/bin/socialweb-vault ./cmd/socialweb-vault && go build -o /usr/local/bin/socialweb-tenantcredential ./cmd/socialweb-tenantcredential && go build -ldflags "-s -w" -buildvcs=false -o /usr/local/bin/kcpagent ./cmd/socialweb-nodeagent'
 
 FROM gobuild AS credentials
 
@@ -187,6 +187,7 @@ COPY --from=gobuild /usr/local/bin/socialweb-clusterprovider /usr/local/bin/soci
 COPY --from=gobuild /usr/local/bin/socialweb-cloud-controller-manager /usr/local/bin/socialweb-cloud-controller-manager
 
 COPY --from=gobuild /usr/local/bin/socialweb-vault /usr/local/bin/socialweb-vault
+COPY --from=gobuild /usr/local/bin/socialweb-tenantcredential /usr/local/bin/socialweb-tenantcredential
 
 COPY --from=k8stree / /opt/org-root/
 
@@ -202,7 +203,7 @@ ENV DENO_DIR=/opt/deno-dir \
 RUN install -d -o kcp -g kcp -m 0755 /opt/deno-dir \
  && chown -R kcp:kcp /opt/org-root \
  && install -d -o kcp -g kcp -m 0700 /var/lib/socialweb /var/lib/socialweb/kcp /var/lib/socialweb/mint /var/lib/socialweb/clusterprovider /var/lib/socialweb/door \
- && chmod 0755 /usr/local/bin/container-entrypoint /usr/local/bin/socialweb-gateway /usr/local/bin/socialweb-credential /usr/local/bin/socialweb-clusterprovider /usr/local/bin/socialweb-cloud-controller-manager /usr/local/bin/socialweb-vault
+ && chmod 0755 /usr/local/bin/container-entrypoint /usr/local/bin/socialweb-gateway /usr/local/bin/socialweb-credential /usr/local/bin/socialweb-clusterprovider /usr/local/bin/socialweb-cloud-controller-manager /usr/local/bin/socialweb-vault /usr/local/bin/socialweb-tenantcredential
 
 USER 1000:1000
 
@@ -235,6 +236,7 @@ COPY --from=gobuild /usr/local/bin/socialweb-clusterprovider /usr/local/bin/soci
 COPY --from=gobuild /usr/local/bin/socialweb-cloud-controller-manager /usr/local/bin/socialweb-cloud-controller-manager
 
 COPY --from=gobuild /usr/local/bin/socialweb-vault /usr/local/bin/socialweb-vault
+COPY --from=gobuild /usr/local/bin/socialweb-tenantcredential /usr/local/bin/socialweb-tenantcredential
 
 COPY --from=gobuild /usr/local/bin/kcpagent /usr/local/bin/kcpagent
 
@@ -260,7 +262,7 @@ COPY deploy/container-entrypoint.sh /usr/local/bin/container-entrypoint
 
 RUN install -d -o kcp -g kcp -m 0700 /var/lib/socialweb/kcp /var/lib/socialweb/mint /var/lib/socialweb/stage /var/lib/socialweb/clusterprovider \
  && chown -R kcp:kcp /var/lib/socialweb \
- && chmod 0755 /usr/local/bin/container-entrypoint /usr/local/bin/firecracker /usr/local/bin/kcpagent /usr/local/bin/socialweb-nodeimage /usr/local/bin/socialweb-gateway /usr/local/bin/socialweb-credential /usr/local/bin/socialweb-clusterprovider /usr/local/bin/socialweb-cloud-controller-manager /usr/local/bin/socialweb-vault
+ && chmod 0755 /usr/local/bin/container-entrypoint /usr/local/bin/firecracker /usr/local/bin/kcpagent /usr/local/bin/socialweb-nodeimage /usr/local/bin/socialweb-gateway /usr/local/bin/socialweb-credential /usr/local/bin/socialweb-clusterprovider /usr/local/bin/socialweb-cloud-controller-manager /usr/local/bin/socialweb-vault /usr/local/bin/socialweb-tenantcredential
 
 USER 1000:1000
 
