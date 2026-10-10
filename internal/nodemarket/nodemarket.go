@@ -63,6 +63,10 @@ type Options struct {
 	ReleaseTimeout time.Duration
 
 	Poll time.Duration
+
+	Secrets NodeSecrets
+
+	Links Links
 }
 
 const DefaultReleaseTimeout = 2 * time.Minute
@@ -81,6 +85,12 @@ var ErrIncomplete = errors.New(
 type Host struct {
 	mu   sync.Mutex
 	opts Options
+
+	provisioned   bool
+	policyWritten bool
+	secretWritten bool
+	heldBack      string
+	granted       *v1alpha1.NodeClaimGrant
 }
 
 var _ scale.Nodes = (*Host)(nil)
@@ -129,6 +139,9 @@ func (o Options) Validate() error {
 	if o.Record == nil {
 		missing = append(missing, "Record")
 	}
+	if o.Secrets != nil && o.Links == nil {
+		missing = append(missing, "Links")
+	}
 	if len(missing) > 0 {
 		return fmt.Errorf("%w (missing %s)", ErrIncomplete, strings.Join(missing, ", "))
 	}
@@ -168,6 +181,10 @@ func (h *Host) Provision(ctx context.Context) error {
 			"gateway that died between the two would leave no record at all of a node it rented",
 			h.opts.NodeName, h.opts.Cluster, err)
 	}
+	if err := h.writeSecretsLocked(ctx, target); err != nil {
+		return fmt.Errorf("%w -- nothing was rented: the claim is written only once the node's "+
+			"policy is in the cluster OpenBao", err)
+	}
 	claim := v1alpha1.NodeClaim{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: v1alpha1.GroupVersion.String(),
@@ -191,6 +208,7 @@ func (h *Host) Provision(ctx context.Context) error {
 			"is the whole request, so nothing was rented and the next pass may ask again",
 			h.opts.NodeName, h.opts.Cluster, target.Workspace, err)
 	}
+	h.provisioned = true
 	h.log().Info("nodemarket: node claimed from the market",
 		"cluster", h.opts.Cluster, "node", h.opts.NodeName, "workspace", target.Workspace,
 		"ownerDid", target.OwnerDid, "advertiseAddress", h.opts.AdvertiseAddress,
@@ -294,6 +312,7 @@ func (h *Host) release(ctx context.Context) error {
 			h.opts.NodeName, h.opts.Cluster, err))
 		return errors.Join(problems...)
 	}
+	h.revokeSecretsLocked(ctx)
 	if err := h.awaitRelease(ctx, target.Workspace); err != nil {
 		problems = append(problems, err)
 	}
