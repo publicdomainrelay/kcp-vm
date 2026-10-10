@@ -1383,6 +1383,37 @@ is not, which is the only place the ratio is applied. `Decision.Nodes` is theref
 rather than a delta, and the driver reconciles the cluster's actual count - re-read from the Node
 CRs, never remembered - to it.
 
+**Our own add-ons are a MEASURED baseline, and a cluster holding only them has nothing deployed.**
+The add-ons this provider installs into a tenant cluster (today the External Secrets Operator's
+three Deployments) are workloads like any other, and at zero nodes their pods are Pending, so before
+2026-10-07 they were intent for ever: a cluster that had run one pipeline never returned to zero. The
+rule is a delta, measured rather than listed. The installer applies with its own server-side field
+manager, `socialweb-addons` (`clusterprovider.AddOnFieldManager`), and right after the apply the
+provider lists the Deployments, StatefulSets, DaemonSets and Jobs whose `managedFields` carry an
+`Apply` entry from that manager, hashes each one's LIVE spec as read back (so the apiserver's
+defaulting is inside the hash), and writes the result to `addon-baseline.json` in the cluster's data
+directory. That file is provider state; a tenant cannot edit it. `scale.Narrow` then drops, before
+`Intent` and `Demand` see them, every workload whose kind, namespace, name AND spec hash match an
+entry, and every pod whose controller resolves to one. A baseline workload whose spec has changed
+(the tenant scaled our operator to two) is NOT dropped: that is a tenant's request. A workload of
+the same name in another namespace is not ours. The baseline is re-measured whenever the installer
+actually runs, and a cluster with no baseline file re-runs the installer once (an idempotent
+server-side apply that takes field ownership under our manager) so clusters from before this rule
+are measured too. There is no list of add-on names here for the same reason the k3s add-on rule has
+none. Non-workload objects (CRDs, RBAC, webhooks) are not recorded, because nothing the scale
+decision reads is one of them. This is the in-cluster half only: the operator itself is to move
+beside the control plane (`NEXT.yaml` ESO-4), after which the in-cluster baseline holds CRDs and
+RBAC and is empty of workloads.
+
+**A pod and the workload that controls it are ONE unit of demand.** `Demand` counted a Pending pod
+and also its Deployment's replica, so three one-replica Deployments with their three Pending pods
+demanded six and, at one pod per node, asked for six nodes. `scale.Narrow` drops every pod whose
+controller chain (Pod -> ReplicaSet -> Deployment, or Pod -> StatefulSet / DaemonSet / Job) names a
+workload present in the observation; the workload's own want is the count. A bare pod, and a pod of
+a ReplicaSet no Deployment controls, still count as themselves, because nothing else counts them.
+The ReplicaSets are read only to resolve that chain; they are not a predicate kind and the
+`Observation` still ranges over exactly the five it did.
+
 **`MaxNodes` defaults to 10, and a ceiling below one node is REFUSED rather than clamped.** Named
 defaults are `DefaultMaxNodes = 10` and `DefaultPodsPerNode = 8`, resolved in `Options` the same way
 `hold()` resolves the grace, and settable per cluster as
@@ -4293,6 +4324,24 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   and REJECTED: building the fixture's agent where `Main` will rebuild it narrows the window from the
   whole test process to the milliseconds between the two builds, and took the package from about 4 s to
   about 24 s, because the agent is a real `go build` and seven tests then pay for one each.
+
+
+- **An idle cluster of only our own add-ons held market nodes for seven hours. CLOSED by a measured
+  baseline and by counting a pod once.** Reading on prod, 2026-10-07: the last GitLab job finished at
+  07:58 UTC, and from 08:10 to 15:43 the cluster `2wjeqtgx-test-cluster-alice-0001` held seven market
+  nodes, deciding `None` every pass with "scaling in is all-or-nothing" because it always had intent.
+  The tenant held no workload of anyone's but ours: the External Secrets Operator's three Deployments
+  in `default`, `replicas=1`, their pods Pending. When the bidder behind those nodes stopped, the
+  cluster asked for SIX nodes, not three, because `Demand` counted each Pending pod AND its
+  Deployment's replica (3 + 3) and prod runs one pod per node. Both halves are in section 10: the
+  installer's own field manager marks what it applied, the provider hashes those workloads' live
+  specs into `addon-baseline.json`, and `scale.Narrow` drops them and every pod whose controller is a
+  counted workload. Tests watched to fail first: `TestOurInstalledOperatorAloneIsNothingDeployed`
+  (demand 6 before), `TestAPodAndItsDeploymentAreOneUnitOfDemand` (6, want 3),
+  `TestABaselineWorkloadWhoseSpecChangedIsIntent`, `TestATenantWorkloadBesideTheBaselineIsIntent`,
+  `TestABaselineEntryNamesOneNamespace`, `TestPodsOfACountedJobStatefulSetOrDaemonSetAreNotCountedTwice`
+  in `internal/scale`; `TestObserveLeavesAnIdleClusterOfOurAddOnsAtNoIntent` (6, want 3) and
+  `TestTheBaselineIsWhatOurFieldManagerApplied` in `internal/clusterprovider`.
 
 ## 16. Vocabulary
 

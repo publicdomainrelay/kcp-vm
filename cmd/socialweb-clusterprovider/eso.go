@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clusterprovider"
@@ -24,6 +25,8 @@ import (
 )
 
 const tenantAddOnTimeout = 60 * time.Second
+
+const tenantAddOnInstallTimeout = 3 * time.Minute
 
 func tenantStoreIsReachableFrom(cfg Config) bool {
 	return nodeSubstrate{Name: cfg.Substrate}.IsGuest()
@@ -48,13 +51,40 @@ func tenantAddOns(cfg Config, networks *subnetallocator.Allocator, log *slog.Log
 		if err != nil {
 			return fmt.Errorf("clusterprovider: a dynamic client for %s's tenant add-ons: %w", cluster, err)
 		}
+		installed := false
 		install := func(ctx context.Context) error {
 			log.Info("cluster provider: installing the External Secrets Operator into the tenant cluster",
-				"cluster", cluster, "manifests", cfg.ESOManifestDir, "namespace", cfg.ESONamespace)
-			return installExternalSecrets(ctx, restCfg, cfg.ESOManifestDir, cfg.ESONamespace)
+				"cluster", cluster, "manifests", cfg.ESOManifestDir, "namespace", cfg.ESONamespace,
+				"fieldManager", clusterprovider.AddOnFieldManager)
+			bounded, cancel := context.WithTimeout(ctx, tenantAddOnInstallTimeout)
+			defer cancel()
+			if err := installExternalSecrets(bounded, restCfg, cfg.ESOManifestDir, cfg.ESONamespace); err != nil {
+				return err
+			}
+			installed = true
+			return nil
+		}
+		_, measured, err := clusterprovider.ReadAddOnBaseline(dataDir)
+		if err != nil {
+			return err
+		}
+		if !measured {
+			if err := install(ctx); err != nil {
+				return fmt.Errorf("clusterprovider: re-applying the add-ons of %s under %s so their "+
+					"baseline can be measured: %w", cluster, clusterprovider.AddOnFieldManager, err)
+			}
+		}
+		measure := func() error {
+			if !installed {
+				return nil
+			}
+			return measureTenantBaseline(ctx, restCfg, dataDir, cluster, log)
 		}
 		if !tenantStoreIsReachableFrom(cfg) {
 			if err := eso.InstallOperator(ctx, dyn, install); err != nil {
+				return err
+			}
+			if err := measure(); err != nil {
 				return err
 			}
 			removing, cancelRemoval := context.WithTimeout(ctx, tenantAddOnTimeout)
@@ -112,6 +142,9 @@ func tenantAddOns(cfg Config, networks *subnetallocator.Allocator, log *slog.Log
 		}); err != nil {
 			return err
 		}
+		if err := measure(); err != nil {
+			return err
+		}
 		log.Info("cluster provider: applied the tenant add-ons",
 			"cluster", cluster, "manifests", cfg.ESOManifestDir,
 			"namespace", kcpclient.TenantNamespace, "vault", vaultURL,
@@ -119,6 +152,30 @@ func tenantAddOns(cfg Config, networks *subnetallocator.Allocator, log *slog.Log
 				"Pending because it has no node to schedule on")
 		return nil
 	}
+}
+
+func measureTenantBaseline(ctx context.Context, restCfg *rest.Config, dataDir, cluster string, log *slog.Logger) error {
+	cs, err := kubernetes.NewForConfig(restCfg)
+	if err != nil {
+		return fmt.Errorf("clusterprovider: a client to measure the add-on baseline of %s: %w", cluster, err)
+	}
+	b, err := clusterprovider.MeasureAddOnBaseline(ctx, cs, clusterprovider.AddOnFieldManager, time.Now())
+	if err != nil {
+		return fmt.Errorf("clusterprovider: measuring the add-on baseline of %s: %w", cluster, err)
+	}
+	if err := clusterprovider.WriteAddOnBaseline(dataDir, b); err != nil {
+		return err
+	}
+	names := make([]string, 0, len(b.Workloads))
+	for _, w := range b.Workloads {
+		names = append(names, w.WorkloadKey.String())
+	}
+	log.Info("cluster provider: measured the add-on baseline",
+		"cluster", cluster, "manager", b.Manager, "workloads", names,
+		"path", clusterprovider.AddOnBaselinePath(dataDir),
+		"meaning", "a cluster holding exactly these workloads, with these specs, has nothing deployed "+
+			"and scales to zero nodes; a changed spec or any other workload is a tenant's intent")
+	return nil
 }
 
 func applyTenantAddOns(ctx context.Context, dyn dynamic.Interface, install func(context.Context) error, o eso.Options) error {
@@ -145,13 +202,15 @@ func installExternalSecrets(ctx context.Context, restCfg *rest.Config, manifestD
 	}
 	env := []string{}
 	for _, kv := range os.Environ() {
-		if strings.HasPrefix(kv, "KUBECONFIG=") || strings.HasPrefix(kv, "ESO_NAMESPACE=") || strings.HasPrefix(kv, "ESO_SKIP_ROLLOUT_WAIT=") {
+		if strings.HasPrefix(kv, "KUBECONFIG=") || strings.HasPrefix(kv, "ESO_NAMESPACE=") ||
+			strings.HasPrefix(kv, "ESO_SKIP_ROLLOUT_WAIT=") || strings.HasPrefix(kv, "ESO_FIELD_MANAGER=") {
 			continue
 		}
 		env = append(env, kv)
 	}
 	cmd := exec.CommandContext(ctx, "bash", script)
-	cmd.Env = append(env, "KUBECONFIG="+kubeconfig, "ESO_NAMESPACE="+namespace, "ESO_SKIP_ROLLOUT_WAIT=1")
+	cmd.Env = append(env, "KUBECONFIG="+kubeconfig, "ESO_NAMESPACE="+namespace, "ESO_SKIP_ROLLOUT_WAIT=1",
+		"ESO_FIELD_MANAGER="+clusterprovider.AddOnFieldManager)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("clusterprovider: the External Secrets install %s failed: %w: %s",

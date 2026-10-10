@@ -12,6 +12,8 @@ import (
 
 type NodeObserver struct {
 	Client func(ctx context.Context, cluster string) (kubernetes.Interface, error)
+
+	Baseline func(cluster string) (scale.Baseline, error)
 }
 
 func (o NodeObserver) Observe(ctx context.Context, cluster string) (scale.Observation, int, error) {
@@ -74,11 +76,19 @@ func (o NodeObserver) Observe(ctx context.Context, cluster string) (scale.Observ
 		}
 	}
 
-	return scale.Observation{
+	var baseline scale.Baseline
+	if o.Baseline != nil {
+		baseline, err = o.Baseline(cluster)
+		if err != nil {
+			return scale.Observation{}, 0, fmt.Errorf("clusterprovider: the add-on baseline of %s: %w", cluster, err)
+		}
+	}
+
+	return scale.Narrow(scale.Observation{
 		Pods:         pods.Items,
 		Jobs:         jobs.Items,
 		Deployments:  deployments.Items,
 		StatefulSets: statefulsets.Items,
 		DaemonSets:   daemonsets.Items,
-	}, len(nodes.Items), nil
+	}, replicasets.Items, baseline), len(nodes.Items), nil
 }

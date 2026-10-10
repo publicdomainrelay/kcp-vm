@@ -275,7 +275,17 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 
 	tenantConfig := tenantFromClusterCA(alloc, cfg.StateDir, tenantCredentialSource(substrate))
 	tenant := tenantClients(registry, tenantConfig)
-	nodeObserver := clusterprovider.NodeObserver{Client: tenant}
+	nodeObserver := clusterprovider.NodeObserver{
+		Client: tenant,
+		Baseline: func(cluster string) (scale.Baseline, error) {
+			dataDir, err := clusterprovider.ClusterDataDir(cfg.StateDir, cluster)
+			if err != nil {
+				return scale.Baseline{}, err
+			}
+			b, _, err := clusterprovider.ReadAddOnBaseline(dataDir)
+			return b, err
+		},
+	}
 	claims, err := kcpclient.New(kcpclient.Options{Host: cfg.KCPHost, RestConfig: restCfg})
 	if err != nil {
 		return Deps{}, err

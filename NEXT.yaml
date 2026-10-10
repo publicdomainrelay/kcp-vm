@@ -135,6 +135,22 @@ about: >
   instrument watched to fire.
 
 open:
+  - id: ESO-4
+    title: The External Secrets Operator runs as tenant pods, so it works only while a node exists.
+    body: >
+      It is installed into each tenant cluster as three Deployments. At zero nodes its pods are
+      Pending, so an ExternalSecret syncs only while some tenant workload happens to hold a node, and
+      on the market substrate its store cannot reach the cluster vault at all (ESO-3). Since
+      2026-10-07 those Deployments are a measured baseline (ARCHITECTURE section 10), so they no
+      longer pin nodes; they still do no work at zero. Decided with the user: the operator moves
+      BESIDE the control plane, one controller process per tenant cluster in the provider's process
+      group (as the cloud controller manager is), pointed at the tenant apiserver, with its webhook
+      reached by URL on loopback and the cluster vault reachable on loopback. The in-cluster baseline
+      then holds CRDs and RBAC and no workloads.
+    instrument: >
+      A tenant cluster at ZERO nodes syncing an ExternalSecret from its own vault into a Secret, on
+      the market substrate, with no ESO pod in the tenant.
+
 limits:
   - title: A process-group member that binds no port and leaves no record is not swept.
     body: >

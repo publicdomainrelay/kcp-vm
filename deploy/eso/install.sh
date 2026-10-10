@@ -22,6 +22,7 @@ ESO_VERSION="${ESO_VERSION:-v2.11.0}"
 NAMESPACE="${ESO_NAMESPACE:-default}"
 KUBECTL="${KUBECTL:-kubectl}"
 ESO_SKIP_ROLLOUT_WAIT="${ESO_SKIP_ROLLOUT_WAIT:-0}"
+FIELD_MANAGER="${ESO_FIELD_MANAGER:-socialweb-addons}"
 
 bundle="${ESO_BUNDLE:-}"
 tmp=""
@@ -68,7 +69,7 @@ if [ "$NAMESPACE" != "default" ]; then
 fi
 sed -e 's/^\( *failurePolicy: \)Fail$/\1Ignore/' \
   -e "s/\( *namespace: \)default$/\1${NAMESPACE}/" "$bundle" |
-  "$KUBECTL" apply --server-side --force-conflicts -f -
+  "$KUBECTL" apply --server-side --force-conflicts --field-manager="$FIELD_MANAGER" -f -
 
 if [ "$ESO_SKIP_ROLLOUT_WAIT" = "1" ]; then
   echo "install.sh: ESO_SKIP_ROLLOUT_WAIT=1, so the controller rollout is not awaited; the CRDs are applied and the caller's own probe decides."
