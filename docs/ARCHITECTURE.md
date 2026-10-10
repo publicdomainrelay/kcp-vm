@@ -435,22 +435,26 @@ awaits its status write before the flow moves on, so the receipt is on the claim
 boots. Writes stay the door's alone and go through the existing store (its 429 Retry-After hold
 applies to reads; a status PATCH is not held). The legacy `vmUri|rfpUri|acceptUri|receiptUri|
 receiptCid` are mirrored from the strongRefs on every write, so the provider's no_bids back-off is
-unchanged. After the flow, the door runs the same ssh session as before (the join needs it until M3),
-then reads the claim back with `NodeClaimStore.get` and calls `releaseCompute` with the state parsed
-FROM THE CLAIM, never from its memory. Decisions, made by Claude, user may veto:
+unchanged. Since plan 0005 M3 there is no session after the flow: the flow returns when the guest
+fetched its join secrets and the door releases only when the claim is DELETED, reading the claim back
+with `NodeClaimStore.get` and calling `releaseCompute` with the state parsed FROM THE CLAIM, never from
+its memory (section 9, "A market node joins through its cluster's OpenBao, never through ssh").
+Decisions, made by Claude, user may veto; the two marked SUPERSEDED were replaced by M3 and are kept
+for the record:
 
 - A claim needs releasing iff its contract has receipt refs (`receipt` + `submitEventRef`) and its
   phase is not `released`. A released claim keeps its receipt and gains `release {event, payload,
   ok}`; the legacy receipt fields are no longer cleared, the contract phase is what says "done".
-- A claim with no live session in this process (startup, or a live claim this process did not
-  start) is released with `releaseCompute` from its saved state, reason `requester_restarted`; this
-  replaces the hand-rolled reap and its separate vm.delete code. Still a reap, not an adoption:
-  adopting is M3-NODE-LOSS. A pre-upgrade claim carrying only the legacy fields is released from a
+- SUPERSEDED (M3): a claim with no live session in this process (startup, or a live claim this
+  process did not start) was released with `releaseCompute` from its saved state, reason
+  `requester_restarted`. A restarted door now adopts a `Joining` or `Running` claim without a write or
+  a release, and marks a `Bidding` or `Provisioning` claim `Failed`; the release waits for deletion. A pre-upgrade claim carrying only the legacy fields is released from a
   `ContractState` synthesised from them.
 - `Released` only when `release.ok`; an unconfirmed release is `Failed`. A release that threw leaves
   the phase unreleased, so the delete path retries it.
-- An unreadable claim at the end of a run (a held 429, an error) defers the release: the run ends
-  without a terminal write, and the next pass finds a live claim with no session and releases it.
+- SUPERSEDED (M3): an unreadable claim at the end of a run deferred the release to the next pass.
+  A run no longer releases at its end; an unreadable claim at DELETION defers the release, the
+  finalizer stays, and the next pass reads the deleted claim again.
 - A deleted claim aborts its run; the abort turns into a `return` from `onRfpSubmitted`, `onReceipt`
   or `onNetwork`, but never from `onAccepted`, because returning there would end the flow before the
   receipt is known and leave a VM nothing can release.
@@ -776,7 +780,7 @@ alternatives for one cluster:
 |---|---|
 | **a VM** | the node is a guest with its own kernel, containerd and network stack. **This design's mechanism**, and the only one that survives measurement |
 | **local process** | a `k3s agent` child process, `internal/nodelocal`, behind the same `scale.Nodes` seam. REFUTED as the substrate, three ways, all measured: `k3s agent` is fatal as a non-root user (`agent requires additional privilege if not run with --rootless`); it needs root for `/run/k3s/containerd`, `/var/lib/kubelet/device-plugins`, `127.0.0.1:6444` and the host `KUBE-*` chains, none of which `--data-dir` moves; and postgres is fatal AS root (`initdb: cannot be run as root`), so a host that runs the store cannot run a node |
-| **SSH to a market guest** | the node is a VM rented from the COMPUTE MARKET through a `NodeClaim` the clusterprovider writes and the market door fulfils under the cluster owner's own atproto OAuth session. **`internal/nodemarket`**, selected by `SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE=market`. NOT a guest of this host: no subnet lease, no pasta, no VMM, no node image and no `/dev/kvm` is involved. The clusterprovider's whole part in the node is the claim; the door bids, wins, boots the guest from the winning bidder's cloud-init, reverse-forwards the advertised address (`SOCIALWEB_CLUSTERPROVIDER_MARKET_ADVERTISE_ADDRESS`, default `198.18.255.254`) to this host's loopback apiserver and writes the phase back. Confirming is the claim reaching `Running`, not a local process being alive |
+| **a market guest** | the node is a VM rented from the COMPUTE MARKET through a `NodeClaim` the clusterprovider writes and the market door fulfils under the cluster owner's own atproto OAuth session. **`internal/nodemarket`**, selected by `SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE=market`. NOT a guest of this host: no subnet lease, no pasta, no VMM, no node image and no `/dev/kvm` is involved. The clusterprovider's whole part in the node is the claim; the door bids, wins, boots the guest from the winning bidder's cloud-init and writes the phase back; the guest itself dials the cluster's OpenBao and apiserver through the cluster's ClusterLinks and binds the advertised address (`SOCIALWEB_CLUSTERPROVIDER_MARKET_ADVERTISE_ADDRESS`, default `198.18.255.254`) on its own loopback (section 9, "A market node joins through its cluster's OpenBao, never through ssh"). Confirming is the tenant Node appearing for a claim the door left `Joining`, not a local process being alive |
 
 **QEMU is the second implementation of the VM mechanism, behind the same seam.** Firecracker and
 QEMU are not two mechanisms for one cluster and not alternatives in one process: the composition root
@@ -1237,6 +1241,129 @@ The identity is SCOPED, never the superuser, and the provider grants it `get`, `
 identity with no binding is authenticated-and-denied, so the informer never syncs, the readiness gate
 times out, and the failure reads as a controller that will not start rather than as a missing
 binding.
+
+### A market node joins through its cluster's OpenBao, never through ssh
+
+Plan 0005 M3-SECRETS-TICKET, M3-UNITS and the door half of M3-NODE-LOSS, built to the plan's
+`m3_contract`. The door holds no connection to a market guest and opens no ssh session to one; the
+guest dials its cluster through the cluster's ClusterLinks and reads its join secrets from the
+cluster's OpenBao. Decisions not in the contract are marked "decided by Claude, user may veto".
+
+**What the door does per claim** (`lib/socialweb-computer-k8s-node-market`):
+
+- It derives the cluster key the provider uses, `<accountHash(ownerDid)>-<spec.cluster>`:
+  `accountHashOf` (first 8 characters of the base-36 SHA-256 of the DID, as `kcpclient.AccountHash`)
+  and `clusterKeyOf` in `socialweb-computer-k8s-common`, `clusterKeyOfClaim` in the fulfiller. A test
+  pins it to values printed by the Go function (`did:plc:nodeowner` + `ci` = `d90m41be-ci`).
+- It reads the ClusterLink `<clusterKey>-openbao` from the claim's own workspace
+  (`createKcpClusterLinkReader`, beside the claim store in `socialweb-computer-k8s-nodeclaim-kcp`,
+  sharing its request plumbing and 429 hold; `ClusterLinkReader` in `lib/abc`). A link with no
+  `status.ticket` fails the claim before any market round.
+- It reads the cluster OpenBao CA. Decided by Claude, user may veto: the path is
+  `<dirname(spec.tokenFile)>/openbao/tls/ca.crt`, because the provider names the token file
+  `TokenPath(clusterDir)` and keeps the CA at `clusterstack.OpenBaoTLSCAPath(clusterDir)`. It is an
+  option (`openBaoCAFileOf`) so a provider-published path replaces the derivation without a door
+  change; that published path is an open interface need, below.
+- It hands the guest exactly three files through atproto-market's secrets capability:
+  `/etc/socialweb/node/openbao-ticket`, `/etc/socialweb/node/openbao-ca.pem` and
+  `/etc/socialweb/node/claim.json` = `{node, cluster, jwtMount, role, audience, kvMount, kvPath}` with
+  `cluster` the cluster KEY, `jwtMount` = `jwt-<first 12 hex of sha256(issuer)>`, `role` = `kvPath` =
+  the node name and `kvMount` = `socialweb-nodes`. None of the three is secret: the ticket is the
+  link's public half, the CA is public, and `claim.json` holds names.
+- It writes `status.grant` = `{issuer, subject, audience: socialweb.computer/node/<clusterKey>/<node>,
+  role: <node>}` when the capability is granted. `grantingCapability` composes the secrets capability:
+  its `onContract` first awaits the grant write, then appends `claim.json` (its `jwtMount` needs the
+  winning bid's issuer, which is unknown before), then lets the inner capability install its
+  authorizer. `requestCompute` calls `onContract` after the winner is chosen and BEFORE it writes the
+  accept record, so the grant is on the claim before the bidder can provision anything. Decided by
+  Claude, user may veto: `role` is written although the API marks it optional, so the claim names the
+  role the provider must create. A grant write that fails leaves the inner capability unauthorized
+  (the guest can never fetch), drops the grant from the door's in-memory status so later writes do
+  not carry it, and makes `onReceipt` return `return`; the claim ends `Failed` with that reason and
+  stays releasable from its receipt. `onAccepted` never returns `return`, for the reason section 6
+  gives: the receipt may not have arrived yet.
+- Handlers: `onRfpSubmitted`, `onAccepted` (phase `Provisioning`), `onReceipt` and `onNetwork` (which
+  also records `status.fqdn`) write the contract as before; a deleted claim or a stopping door turns
+  into a `return` from all but `onAccepted`. `onSecretsFetched` writes phase `Joining`
+  and returns `return`. `requestCompute` itself returns at the network report, so the door then waits
+  up to `vmReadyTimeoutSec` for the fetch and disposes the capabilities, which shuts the per-contract
+  secrets server. `Joining` is the door's last word: it cannot observe the agent and writes no
+  `Running`.
+- It releases ONLY when the claim is deleted: from the claim read back, `releaseCompute` with reason
+  `claim_deleted`, `Released` on `release.ok` and `Failed` otherwise, finalizer removed either way.
+  Every other end (no bids, a guest that never fetched, an invalid receipt, a failed grant, no link,
+  no CA) writes `Failed` with its reason and releases nothing; the provider ends the claim by deleting
+  it, and the deletion releases.
+
+**A restarted door never reaps** (M3-NODE-LOSS, door half). Decided by Claude, user may veto. A
+`Joining` or `Running` claim is adopted as it is: no write, no release, there is no session to
+rebuild. A `Bidding` or `Provisioning` claim is marked `Failed` and NOT released: the guest's
+`user_data` names the old door's secrets server, which is per process and died with it, so that guest
+can never fetch its bundle, and resuming with `awaitComputeNetwork` would only find an address the
+door no longer needs. The release comes with the claim's deletion, from the receipt it carries.
+`stop()` (SIGTERM) releases nothing and writes nothing; the next door sees the claim as above. Two
+edges are stated rather than closed: a guest that fetched in the instant between the fetch and the
+`Joining` write is marked `Failed` and released on deletion although it may have joined; and an
+accept written just before a crash, with no status write after it, is a VM no claim names, which
+only the bidder's own expiry ends.
+
+**What the guest runs** (`lib/cloud-init-plugin-k3s-join`, still the module the door passes as
+`["k3s", createK3sJoinModule()]`). Besides the resolver it always wrote, it writes three `0700`
+scripts and four units, and its runcmd enables and starts them with `--no-block`. Its runcmd comes
+after the iroh transport module's `setup-iroh.sh` (which installs `/usr/local/bin/dumbpipe`) and the
+k3s module's `setup-k3s.sh` (which installs `/usr/local/bin/k3s`) in the composed `user_data`, so
+for the market path both binaries come from modules the door already uses; door-served hash-pinned
+binaries (M3-UNITS's fallback) are not needed by it. Every unit carries `StartLimitIntervalSec=0`.
+
+| unit | after | does | restart |
+|---|---|---|---|
+| `socialweb-openbao-link` | `setup-secrets` | `dumbpipe connect-tcp --addr 127.0.0.1:18200 <openbao-ticket>` | always |
+| `socialweb-node-secrets` | `setup-secrets`, openbao link | exchange the workload token for the claim's audience; OpenBao JWT login; KV read; write files | on-failure |
+| `socialweb-apiserver-link` | node secrets | `<advertiseAddress>/32` on `lo`; `dumbpipe connect-tcp --addr <advertiseAddress>:<apiserverPort> <apiserverTicket>` | always |
+| `socialweb-k3s-agent` | node secrets, apiserver link | `k3s agent --server https://<advertiseAddress>:<apiserverPort> --token-file /etc/socialweb/node/token --node-name <node> --data-dir /var/lib/rancher/k3s` | always |
+
+- `socialweb-node-secrets` is a oneshot with `Restart=on-failure`, because systemd refuses
+  `Restart=always` on `Type=oneshot`; with no start limit it retries until it succeeds, which is what
+  "always" means for a oneshot. Its token exchange is the one cloud-init-common's `secrets` module
+  does (accept.json's `bid_config` `token_path`, `url_path`, `url_route`; the subject echoed back;
+  `ttl` 300) for `aud` = the claim's audience. It logs in at `/v1/auth/<jwtMount>/login` with
+  `{role, jwt}` and `--cacert openbao-ca.pem`, reads `/v1/<kvMount>/data/<kvPath>`, requires `token`,
+  `nodePassword`, `serverCA`, `apiserverTicket`, `advertiseAddress` and `apiserverPort`, and refuses
+  an `advertiseAddress` that is not IPv4, a port that is not digits and a ticket outside `[a-z0-9]+`,
+  because those three reach a unit's command line. It writes `server-ca.pem`, `token`,
+  `node-password` and `apiserver.env` under `/etc/socialweb/node/` and `/etc/rancher/node/password`,
+  all `0600`. The token is pinned as the ssh join pinned it,
+  `K10<sha256 of the server CA bytes>::server:<token>`, unless the stored token already starts with
+  `K10`.
+- `socialweb-k3s-agent` passes the flags the ssh join passed and no others (it passed no node-ip
+  flag); the node password stays where k3s reads it. Decided by Claude, user may veto: the unit is
+  `socialweb-k3s-agent`, not `k3s-agent`, because the k3s installer owns the `k3s` and `k3s-agent`
+  unit names. It carries the k3s installer unit's `Type=notify`, `KillMode=process`, `Delegate=yes`
+  and limits.
+- Gone: the `socialweb-k3s-join` stdin script, the sshd drop-in that set `AllowTcpForwarding remote`
+  and `GatewayPorts clientspecified`, and its sshd reload. The iroh transport module still installs
+  sshd for the requester's own ssh and is untouched; the door passes no ssh key, so that sshd's
+  `authorized_keys` is empty. The door no longer downloads dumbpipe, and `node-apiserver-host` is gone
+  from its options.
+
+**What the door needs from the provider** (interface needs, open until the Go side lands):
+
+1. The ClusterLink `<clusterKey>-openbao` in the claim's home workspace with `status.ticket` set
+   (a bare dumbpipe ticket) BEFORE the claim is written; otherwise the claim fails at once.
+2. A published path for the cluster OpenBao CA (a `NodeClaim` spec field such as `openBaoCAFile`, or
+   a ClusterLink status field), or the guarantee that `<dirname(tokenFile)>/openbao/tls/ca.crt` is it
+   and is readable by the door process.
+3. KV `socialweb-nodes/<node>` with `token` (bare, or the full `K10` form), `nodePassword`, `serverCA`
+   (the exact bytes of `server-ca.crt`, since k3s pins its hash), `apiserverTicket` (bare),
+   `advertiseAddress` (IPv4) and `apiserverPort` (number or digit string).
+4. JWT mount `jwt-<sha12(status.grant.issuer)>` and role `<node>` bound to `status.grant.subject` and
+   `status.grant.audience`, as the contract says, and an OpenBao serving certificate valid for
+   `127.0.0.1`.
+5. `nodemarket.ConfirmJoined` must accept a claim in `Joining`; today it refuses everything but
+   `Running`, and the door no longer writes `Running`.
+6. Legacy ssh-joined claims at the first deploy: their agent ran inside the old door's ssh session,
+   so they go NotReady, and the new door does not reap them. They are released only when the provider
+   deletes their claims (M3-NODE-LOSS's provider half), and until then they hold their VMs.
 
 ### `k3s server` argv
 
@@ -2002,7 +2129,13 @@ A change must not break any of these. Each exists because something failed.
 10. **Nothing is read back out of a node.** The token and the name are ours.
 11. **Never request-header auth against the mount.** The mount authenticates nothing.
 12. **A revocation needs a consultable deny record**, not just a deleted object.
-13. **Secrets never ride argv or `user_data`.** `user_data` is readable from inside the guest.
+13. **Secrets never ride argv or `user_data`, and a market node's secrets cross only OpenBao JWT over
+    the cluster link.** `user_data` is readable from inside the guest. The door hands a market guest
+    only public material, through the `--secrets` capability: the OpenBao link's ticket, the cluster
+    OpenBao's CA and `claim.json`. The join token, the node password, the server CA and the apiserver
+    ticket are read by the guest itself from the cluster's OpenBao, after a JWT login bound to its
+    workload subject and its claim's audience, over its own dumbpipe link to that OpenBao. Nothing
+    reaches a guest over ssh: the door opens no session to any guest.
 14. **A list failure is an error, never an empty observation.**
 15. **The state advances only on success.**
 16. **No comments in code.** Reasoning belongs in this document; `test/nocomments_test.go`'s
@@ -2047,12 +2180,14 @@ A change must not break any of these. Each exists because something failed.
     wait immediately, with the guest's own words. A timeout that runs to its end over a host that
     died at its first step reports the timeout instead of the cause, and the two are indistinguishable
     until the clock runs out.
-29. **A market node's secrets cross only the SSH session's stdin.** The join token, the per-node
-    password and the cluster's server CA reach a market guest as the door writes them to the standard
-    input of the session it runs the join program on. They never ride the claim: a `NodeClaim` is a
+29. **A market node's secrets never ride the claim or the door.** The join token, the per-node
+    password, the cluster's server CA and the apiserver ticket live in the cluster's OpenBao at
+    `socialweb-nodes/<node>`, and the guest fetches them itself (invariant 13). A `NodeClaim` is a
     cluster-scoped object in the owner's home workspace, readable by anything that can read that
-    workspace, and it carries the PATHS the door reads them from instead. They also never ride argv,
-    `user_data` or a boot command line, for the reasons invariants 13 and 25 already give.
+    workspace, so it carries only what is not secret: the PATHS the provider reads and the grant that
+    authorizes the guest's fetch (`issuer`, `subject`, `audience`, `role`). They also never ride argv,
+    `user_data` or a boot command line, for the reasons invariants 13 and 25 already give. This
+    replaces "a market node's secrets cross only the SSH session's stdin" (plan 0005 M3).
 30. **A cluster is its home workspace, not the name inside it.** Two accounts may each name a cluster
     `ci`; they are two clusters, with two state dirs, two sets of port and subnet leases, two sets of
     node names, two mint credentials and two process groups. Anything that identifies a cluster
@@ -2069,9 +2204,9 @@ A change must not break any of these. Each exists because something failed.
 32. **A node is counted by the cluster that has it, never by the claim that asked for it.** The count a
     scale decision reads is the tenant cluster's own node list, plus - under a substrate whose
     `Provision` returns before the machine exists - the claims this process holds whose nodes that list
-    does not name. A claim's phase is not a count: the door writes `Running` when the
-    node's agent reaches the apiserver through the forward, and the Node object it is registering
-    appears in the cluster's list only after that connection is served, so a phase-keyed count has a
+    does not name. A claim's phase is not a count: the door writes `Joining` when the guest has
+    fetched its join secrets, and the Node object it is registering appears in the cluster's list only
+    after its agent's connection through the apiserver link is served, so a phase-keyed count has a
     gap with a duration in it and every claim that crosses the gap together is counted nowhere at all
     (section 15).
 
@@ -4567,6 +4702,37 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   `TestABaselineEntryNamesOneNamespace`, `TestPodsOfACountedJobStatefulSetOrDaemonSetAreNotCountedTwice`
   in `internal/scale`; `TestObserveLeavesAnIdleClusterOfOurAddOnsAtNoIntent` (6, want 3) and
   `TestTheBaselineIsWhatOurFieldManagerApplied` in `internal/clusterprovider`.
+
+- **A market node lived only as long as the door's ssh session to it. CLOSED on the door's side by
+  plan 0005 M3-SECRETS-TICKET and M3-UNITS (commits 0f3a771, b489218); the provider's side is open.** Before,
+  the door generated an ssh keypair per claim, waited for the guest's sshd over dumbpipe, ran
+  `socialweb-k3s-join` with the join token, node password and pinned CA on its stdin, and held that
+  session (and a `forwardIn` of the advertised address) for the node's whole life; a door restart
+  killed every agent, and startup reaped every live claim. Now the door delivers three public files
+  through the secrets capability, writes `status.grant` before the accept, returns at
+  `onSecretsFetched` with the claim `Joining`, and releases only on deletion; the guest's four units
+  fetch the secrets from the cluster's OpenBao and dial the apiserver themselves (section 9, "A market
+  node joins through its cluster's OpenBao, never through ssh"; invariants 13 and 29 rewritten).
+  Tests watched to fail first (against the previous door and module with stub exports only, run
+  `--no-check`: 29 failed, 3 passed), then pass: in `socialweb-computer-k8s/test/node_market_test.ts`
+  "at accept the claim carries the workload grant for its node's audience before the guest can be
+  authorized", "the secrets bundle carries exactly the OpenBao ticket, the OpenBao CA and claim.json",
+  "the flow returns at onSecretsFetched, the claim is Joining, capabilities are disposed and nothing
+  is released", "the door asks for no ssh key and builds no ssh session", "the user_data the door
+  asks for renders without any secret value", "a door restarted with live claims adopts them and
+  submits no vm.delete", "a door restarted mid-flight marks the orphaned claim Failed, releases
+  nothing, and releases it once deleted", "a deleted Joining claim is released from the receipt on
+  the claim, not the door's memory"; in `test/k3s_join_test.ts` "the node's user_data installs four
+  units that join it through OpenBao and the apiserver link, in order", "the node's user_data carries
+  no secret value and no ssh join path", and the node-secrets script run against a fake curl and the
+  real jq ("exchanges the workload token for the claim's audience, logs in to OpenBao and writes the
+  join files 0600"). Mutations, each on a scratch copy and reverted, each caught: the grant written
+  after the capability is authorized, or not written; `onSecretsFetched` returning `continue`; a
+  restart reaping live claims; a release at the end of a successful flow; the agent unit not ordered
+  after the apiserver link; the token not pinned to the CA. NOT proven: a guest joining end to end
+  (needs the provider's ClusterLinks, OpenBao JWT mount and KV entry, and the live instrument
+  `test/live_market_node_test.ts` now also needs `SOCIALWEB_K8S_LIVE_OPENBAO_TICKET` and
+  `SOCIALWEB_K8S_LIVE_OPENBAO_CA`); nothing deployed.
 
 ## 16. Vocabulary
 
