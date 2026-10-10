@@ -15,6 +15,7 @@ import {
   POD_MTU,
   renderDnsLinkScript,
   renderMeshdInstallScript,
+  renderNodeDiagnoseScript,
   renderPodCniScript,
   renderPodMasqueradeScript,
 } from "@publicdomainrelay/cloud-init-plugin-k3s-join";
@@ -330,4 +331,43 @@ Deno.test("the guest, the tenant DaemonSet and the k3s server agree on the DNS a
   assertStringIncludes(tenantnet, `NodeLabel = "${NODE_LOCAL_DNS_LABEL}"`);
   const stack = await Deno.readTextFile(repo("internal/clusterstack/clusterstack.go"));
   assertStringIncludes(stack, `const MarketClusterCIDR = "${POD_CLUSTER_CIDR}"`);
+});
+
+Deno.test("node-diagnose prints containerd's CNI load status to the console until the node network is ready", async () => {
+  const dir = await scratch();
+  try {
+    await Deno.mkdir(`${dir}/cni-bin`);
+    await Deno.writeTextFile(`${dir}/cni-bin/bridge`, "");
+    await Deno.mkdir(`${dir}/net.d`);
+    await Deno.writeTextFile(`${dir}/net.d/10-socialweb-bridge.conflist`, "{}");
+    const notReady = JSON.stringify({
+      status: { conditions: [{ type: "RuntimeReady", status: true }, { type: "NetworkReady", status: false, reason: "NetworkPluginNotReady", message: "cni plugin not initialized" }] },
+      config: { cni: { confDir: `${dir}/net.d`, binDirs: [`${dir}/cni-bin`] } },
+      lastCNILoadStatus: "cni config load failed: failed to find plugin \"portmap\" in path",
+    });
+    const ready = JSON.stringify({ status: { conditions: [{ type: "NetworkReady", status: true }] }, config: { cni: {} } });
+    await Deno.writeTextFile(`${dir}/not-ready.json`, notReady);
+    await Deno.writeTextFile(`${dir}/ready.json`, ready);
+    await shim(
+      dir,
+      "k3s",
+      `echo "$*" >> ${dir}/k3s.log\nn=$(cat ${dir}/n 2>/dev/null || echo 0); n=$((n+1)); echo $n > ${dir}/n\nif [ $n -ge 3 ]; then cat ${dir}/ready.json; else cat ${dir}/not-ready.json; fi`,
+    );
+    const run = await runScript(renderNodeDiagnoseScript({ k3sPath: `${dir}/bin/k3s`, diagnoseAttempts: 5 }), dir);
+    assertEquals(run.code, 0, run.stderr);
+    assertEquals((await Deno.readTextFile(`${dir}/k3s.log`)).trim().split("\n")[0], "crictl info");
+    assertStringIncludes(run.stderr, "failed to find plugin \"portmap\" in path");
+    assertStringIncludes(run.stderr, `confDir=${dir}/net.d`);
+    assertStringIncludes(run.stderr, "10-socialweb-bridge.conflist");
+    assertStringIncludes(run.stderr, `binDirs=${dir}/cni-bin`);
+    assertStringIncludes(run.stderr, "bridge");
+    assertStringIncludes(run.stderr, "NetworkReady");
+    const config = userData();
+    const unit = files(config)[`/etc/systemd/system/${NODE_NET_UNITS.diagnose}`];
+    assert(unit, "no node-diagnose unit in the user_data");
+    assertEquals(values(unit, "ExecStart"), [NODE_NET_SCRIPTS.diagnose]);
+    assertEquals(values(unit, "StandardError"), ["journal+console"]);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });

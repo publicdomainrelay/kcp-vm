@@ -56,6 +56,8 @@ export const POD_EGRESS_COMMENT = "socialweb-pod-egress";
 export const CNI_CONFLIST_NAME = "10-socialweb-bridge.conflist";
 export const CNI_WAIT_ATTEMPTS = 90;
 
+export const DIAGNOSE_ATTEMPTS = 30;
+
 export const MESHD_PATH = "/usr/local/bin/socialweb-meshd";
 export const MESHD_ENV_PATH = `${NODE_SECRETS_DIR}/meshd.env`;
 export const MESHD_ARCHES = ["x86_64", "aarch64"] as const;
@@ -69,6 +71,7 @@ export const NODE_NET_UNITS = {
   cni: "socialweb-pod-cni.service",
   meshdInstall: "socialweb-meshd-install.service",
   meshd: "socialweb-meshd.service",
+  diagnose: "socialweb-node-diagnose.service",
 } as const;
 
 export const NODE_NET_SCRIPTS = {
@@ -76,6 +79,7 @@ export const NODE_NET_SCRIPTS = {
   masquerade: "/usr/local/bin/socialweb-pod-masquerade",
   cni: "/usr/local/bin/socialweb-pod-cni",
   meshdInstall: "/usr/local/bin/socialweb-meshd-install",
+  diagnose: "/usr/local/bin/socialweb-node-diagnose",
 } as const;
 
 export const MESHD_UNIT = `[Unit]
@@ -126,6 +130,7 @@ export interface K3sJoinModuleOptions {
   cniConfDir?: string;
   kubeletKubeconfig?: string;
   cniWaitAttempts?: number;
+  diagnoseAttempts?: number;
 }
 
 const SHA256_HEX = /^[0-9a-f]{64}$/;
@@ -164,6 +169,7 @@ interface ResolvedPaths {
   cniConfDir: string;
   kubeletKubeconfig: string;
   cniWaitAttempts: number;
+  diagnoseAttempts: number;
 }
 
 function resolvePaths(opts: K3sJoinModuleOptions): ResolvedPaths {
@@ -176,6 +182,7 @@ function resolvePaths(opts: K3sJoinModuleOptions): ResolvedPaths {
     cniConfDir: opts.cniConfDir ?? `${dataDir}/agent/etc/cni/net.d`,
     kubeletKubeconfig: opts.kubeletKubeconfig ?? `${dataDir}/agent/kubelet.kubeconfig`,
     cniWaitAttempts: opts.cniWaitAttempts ?? CNI_WAIT_ATTEMPTS,
+    diagnoseAttempts: opts.diagnoseAttempts ?? DIAGNOSE_ATTEMPTS,
     acceptPath: opts.acceptPath ?? DEFAULT_ACCEPT_PATH,
     dumbpipe: opts.dumbpipePath ?? "/usr/local/bin/dumbpipe",
     k3s: opts.k3sPath ?? "/usr/local/bin/k3s",
@@ -349,6 +356,35 @@ say "wrote ${conf} for \${CIDR}"
 `;
 }
 
+export function renderNodeDiagnoseScript(opts: K3sJoinModuleOptions = {}): string {
+  const p = resolvePaths(opts);
+  return `#!/bin/bash
+set -uo pipefail
+say() { echo "socialweb-node-diagnose: $*" >&2; }
+for _ in $(seq 1 ${p.diagnoseAttempts}); do
+  INFO="$(${p.k3s} crictl info 2>/dev/null)"
+  READY="$(printf '%s' "\${INFO}" | jq -r '[.status.conditions[]? | select(.type=="NetworkReady") | .status][0] // "unknown"' 2>/dev/null)"
+  if [ "\${READY}" = "true" ]; then
+    say "NetworkReady=true"
+    exit 0
+  fi
+  REASON="$(printf '%s' "\${INFO}" | jq -r '[.status.conditions[]? | select(.type=="NetworkReady") | "\\(.reason // "") \\(.message // "")"][0] // ""' 2>/dev/null)"
+  LOAD="$(printf '%s' "\${INFO}" | jq -r '.lastCNILoadStatus // ""' 2>/dev/null)"
+  CONF="$(printf '%s' "\${INFO}" | jq -r '.config.cni.confDir // ""' 2>/dev/null)"
+  BINS="$(printf '%s' "\${INFO}" | jq -r '(.config.cni.binDirs // [.config.cni.binDir // empty]) | join(",")' 2>/dev/null)"
+  say "NetworkReady=\${READY} \${REASON}"
+  say "lastCNILoadStatus=\${LOAD}"
+  say "confDir=\${CONF} holds: $(ls -A "\${CONF}" 2>&1 | tr '\\n' ' ')"
+  for B in \${BINS//,/ }; do
+    say "binDirs=\${BINS} \${B} holds: $(ls -A "\${B}" 2>&1 | tr '\\n' ' ')"
+  done
+  sleep 20
+done
+say "the node network was still not ready after ${p.diagnoseAttempts} readings"
+exit 0
+`;
+}
+
 export function renderPodMasqueradeScript(): string {
   return `#!/bin/bash
 set -euo pipefail
@@ -491,6 +527,14 @@ export function renderNodeNetworkUnits(opts: K3sJoinModuleOptions = {}): Record<
     ...CONSOLE,
   ];
   const units: Record<string, string> = {
+    [NODE_NET_UNITS.diagnose]: unit({
+      Unit: [
+        "Description=socialweb node: print containerd's CNI status to the console until the node network is ready",
+        "StartLimitIntervalSec=0",
+      ],
+      Service: ["Type=oneshot", `ExecStart=${NODE_NET_SCRIPTS.diagnose}`, ...CONSOLE],
+      Install: install,
+    }),
     [NODE_NET_UNITS.dnsLink]: unit({
       Unit: [
         "Description=socialweb node: the per-node DNS address on a dummy interface",
@@ -571,6 +615,7 @@ export function createK3sJoinModule(opts: K3sJoinModuleOptions = {}): UserDataMo
       script(NODE_NET_SCRIPTS.dnsLink, renderDnsLinkScript()),
       script(NODE_NET_SCRIPTS.masquerade, renderPodMasqueradeScript()),
       script(NODE_NET_SCRIPTS.cni, renderPodCniScript(opts)),
+      script(NODE_NET_SCRIPTS.diagnose, renderNodeDiagnoseScript(opts)),
       ...meshdFiles,
       ...NODE_UNIT_ORDER.map((name) => systemdFile(`/etc/systemd/system/${name}`, units[name])),
       ...Object.entries(netUnits).map(([name, content]) => systemdFile(`/etc/systemd/system/${name}`, content)),
