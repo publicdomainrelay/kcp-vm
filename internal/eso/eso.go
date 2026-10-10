@@ -167,31 +167,41 @@ func Load(dir string) ([]unstructured.Unstructured, error) {
 		if err != nil {
 			return nil, fmt.Errorf("eso: reading %s: %w", path, err)
 		}
-		dec := utilyaml.NewYAMLOrJSONDecoder(bytes.NewReader(raw), 4096)
-		for {
-			var obj map[string]any
-			err := dec.Decode(&obj)
-			if errors.Is(err, io.EOF) {
-				break
-			}
-			if err != nil {
-				return nil, fmt.Errorf("eso: %s: %w", path, err)
-			}
-			if len(obj) == 0 {
-				continue
-			}
-			u := unstructured.Unstructured{Object: obj}
-			if u.GetKind() == "" || u.GetAPIVersion() == "" {
-				return nil, fmt.Errorf("eso: %s holds an object with no apiVersion or kind", path)
-			}
-			if u.GetName() == "" {
-				return nil, fmt.Errorf("eso: %s holds a %s with no name", path, u.GetKind())
-			}
-			out = append(out, u)
+		objs, err := decodeObjects(raw, path)
+		if err != nil {
+			return nil, err
 		}
+		out = append(out, objs...)
 	}
 	if len(out) == 0 {
 		return nil, fmt.Errorf("eso: the manifest directory %s holds no objects", dir)
+	}
+	return out, nil
+}
+
+func decodeObjects(raw []byte, source string) ([]unstructured.Unstructured, error) {
+	var out []unstructured.Unstructured
+	dec := utilyaml.NewYAMLOrJSONDecoder(bytes.NewReader(raw), 4096)
+	for {
+		var obj map[string]any
+		err := dec.Decode(&obj)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("eso: %s: %w", source, err)
+		}
+		if len(obj) == 0 {
+			continue
+		}
+		u := unstructured.Unstructured{Object: obj}
+		if u.GetKind() == "" || u.GetAPIVersion() == "" {
+			return nil, fmt.Errorf("eso: %s holds an object with no apiVersion or kind", source)
+		}
+		if u.GetName() == "" {
+			return nil, fmt.Errorf("eso: %s holds a %s with no name", source, u.GetKind())
+		}
+		out = append(out, u)
 	}
 	return out, nil
 }
