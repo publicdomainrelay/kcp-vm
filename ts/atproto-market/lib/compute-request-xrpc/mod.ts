@@ -35,6 +35,7 @@ import {
   resolvePolicyName,
 } from "@publicdomainrelay/policy-engine-evaluator";
 import type { PolicyEvaluator, ScopeCache } from "@publicdomainrelay/policy-engine-evaluator";
+import type { ScopeRefresher } from "@publicdomainrelay/scope-refresh-timers";
 import type { PolicyArgs, PolicyRecord } from "@publicdomainrelay/policy-common";
 import { WORKFLOWS } from "@publicdomainrelay/policies-gha-lite";
 import { createPolicyRegistry } from "@publicdomainrelay/policy-deno-typescript";
@@ -234,13 +235,14 @@ export interface CandidateScopeGateOptions {
   args: PolicyArgs;
   policyRecord?: PolicyRecord;
   ref?: RecordRef;
+  refresher?: ScopeRefresher;
   log: FlowLog;
 }
 
 export function createCandidateScopeGate(
   opts: CandidateScopeGateOptions,
 ): (counterpartyDid: string) => Promise<PolicyResult> {
-  const { evaluator, selfDid, args, policyRecord, ref, log } = opts;
+  const { evaluator, selfDid, args, policyRecord, ref, refresher, log } = opts;
   const target: { policyRecord: PolicyRecord } | { ref: RecordRef } | undefined = policyRecord
     ? { policyRecord }
     : ref
@@ -256,6 +258,15 @@ export function createCandidateScopeGate(
       counterpartyDid,
       args,
     });
+    if (result.allow) {
+      refresher?.noteUse({
+        perspective: "requester",
+        selfDid,
+        counterpartyDid,
+        args,
+        ...target,
+      });
+    }
     log("candidate_scope", {
       bidderDid: counterpartyDid,
       allow: result.allow,
@@ -268,6 +279,7 @@ export function createCandidateScopeGate(
 function wireTrustInvalidation(
   eventStreams: EventStreamsClient | undefined,
   scopeCache: ScopeCache | undefined,
+  refresher: ScopeRefresher | undefined,
   log: FlowLog,
 ): void {
   if (!eventStreams || !scopeCache) return;
@@ -275,7 +287,10 @@ function wireTrustInvalidation(
   trustInvalidationWired.add(eventStreams);
   eventStreams.watch({
     wantedCollections: [BADGE_BLUE_KEYS_NSID, VOUCH_NSID, BIDDER_ASSOCIATION_NSID],
-    onEvent: (e) => scopeCache.applyEvent({ did: e.did, rkey: e.rkey }),
+    onEvent: (e) => {
+      scopeCache.applyEvent({ did: e.did, rkey: e.rkey });
+      refresher?.invalidate({ did: e.did, rkey: e.rkey });
+    },
   });
   log("scope_invalidation_wired", {
     collections: [BADGE_BLUE_KEYS_NSID, VOUCH_NSID, BIDDER_ASSOCIATION_NSID],
@@ -610,6 +625,7 @@ export type ComputeRequestOptions =
     vmDisk?: string;
     eventStreams?: EventStreamsClient;
     scopeCache?: ScopeCache;
+    scopeRefresher?: ScopeRefresher;
     sshPublicKey?: string;
     receiptVerifier?: ReceiptVerifier;
     recordResolver?: RecordResolver;
@@ -713,7 +729,8 @@ export async function requestCompute(
   const logger = opts.logger;
   const log = flowLog(logger);
   const scopeCache = opts.scopeCache;
-  wireTrustInvalidation(opts.eventStreams, scopeCache, log);
+  const scopeRefresher = opts.scopeRefresher;
+  wireTrustInvalidation(opts.eventStreams, scopeCache, scopeRefresher, log);
   const idResolver = new IdResolver({ plcUrl: opts.plcUrl });
   const resolveRecord = opts.recordResolver ?? createIdRecordResolver(idResolver);
   const verifyReceipt = opts.receiptVerifier ?? createReceiptVerifier(resolveRecord);
@@ -958,6 +975,7 @@ runcmd:
       scopeCache,
       log: (level, msg, meta) => log(`policy_eval_${level}`, { msg, ...(meta ?? {}) }),
     });
+    scopeRefresher?.setEvaluator(evaluator);
 
     let policyRef: RecordRef | undefined;
     let scopeRecord: PolicyRecord | undefined;
@@ -1009,6 +1027,7 @@ runcmd:
       args: policyArgs,
       ...(scopeRecord ? { policyRecord: scopeRecord } : {}),
       ...(policyRef ? { ref: policyRef } : {}),
+      ...(scopeRefresher ? { refresher: scopeRefresher } : {}),
       log,
     });
 
@@ -1091,9 +1110,10 @@ runcmd:
 
     if (scopeCache && filteredBidderDids.length > 0) {
       const startedAt = Date.now();
+      log("scope_prewarm", { candidates: filteredBidderDids.length });
       bestEffort(async () => {
         await Promise.allSettled(filteredBidderDids.map((did) => scopeGate(did)));
-        log("scope_prewarm", {
+        log("scope_prewarm_done", {
           candidates: filteredBidderDids.length,
           entries: scopeCache.stats().entries,
           durationMs: Date.now() - startedAt,

@@ -26,6 +26,7 @@
     "@publicdomainrelay/policy-engine-executor-gha-lite": "jsr:@publicdomainrelay/policy-engine-executor-gha-lite@^0",
     "@publicdomainrelay/policy-engine-executor-typescript": "jsr:@publicdomainrelay/policy-engine-executor-typescript@^0",
     "@publicdomainrelay/policy-deno-typescript": "jsr:@publicdomainrelay/policy-deno-typescript@^0",
-    "@publicdomainrelay/policies-gha-lite": "jsr:@publicdomainrelay/policies-gha-lite@^0"
+    "@publicdomainrelay/policies-gha-lite": "jsr:@publicdomainrelay/policies-gha-lite@^0",
+    "@publicdomainrelay/scope-refresh-timers": "jsr:@publicdomainrelay/scope-refresh-timers@^0"
   }
 }
