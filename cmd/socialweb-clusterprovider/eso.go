@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
@@ -21,6 +22,8 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/vaultcert"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/vaultlayout"
 )
+
+const tenantAddOnTimeout = 60 * time.Second
 
 func tenantStoreIsReachableFrom(cfg Config) bool {
 	return nodeSubstrate{Name: cfg.Substrate}.IsGuest()
@@ -51,13 +54,16 @@ func tenantAddOns(cfg Config, networks *subnetallocator.Allocator, log *slog.Log
 			return installExternalSecrets(ctx, restCfg, cfg.ESOManifestDir, cfg.ESONamespace)
 		}
 		if !tenantStoreIsReachableFrom(cfg) {
-			if err := install(ctx); err != nil {
+			if err := eso.InstallOperator(ctx, dyn, install); err != nil {
 				return err
 			}
-			if err := eso.Remove(ctx, dyn, eso.Options{
+			removing, cancelRemoval := context.WithTimeout(ctx, tenantAddOnTimeout)
+			err := eso.Remove(removing, dyn, eso.Options{
 				ManifestDir: cfg.ESOManifestDir,
 				Namespace:   kcpclient.TenantNamespace,
-			}); err != nil {
+			})
+			cancelRemoval()
+			if err != nil {
 				return err
 			}
 			log.Info("cluster provider: the tenant store is not written for this substrate",
