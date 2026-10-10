@@ -289,6 +289,74 @@ built, the Go tree built, and 1104 tests green -- on a cluster whose control pla
 nodes when the job arrived. The console trace is truncated at 4 MiB by the runner's `output_limit`
 (B10); the junit artifact is the complete record and is the better instrument anyway.
 
+## 6a. Autoscaling to five nodes, and back to zero
+
+The same instrument, pointed at the scale decision instead of at one job. The branch carries five
+`scale-check-N` jobs in place of `test` -- `test` is commented out rather than deleted, because
+the two need different cluster shapes: a toolchain build wants one large node, an autoscale check
+wants five small ones at once. Each job sleeps, so all five Pods are alive together; a job that
+exits immediately is a Pod that is gone before the second one is scheduled.
+
+**One job per node is configured, not hoped for.** The runner's `podAntiAffinity` is first-class
+config, unlike `pod_spec` which needs the beta `FF_USE_ADVANCED_POD_SPEC_CONFIGURATION` flag:
+
+```toml
+    [runners.kubernetes.affinity]
+      [runners.kubernetes.affinity.pod_anti_affinity]
+        [[...required_during_scheduling_ignored_during_execution]]
+          topology_key = "kubernetes.io/hostname"
+          [...label_selector.match_expressions]
+            key = "project.runner.gitlab.com/id"
+            operator = "Exists"
+```
+
+`project.runner.gitlab.com/id` is a label the runner puts on every job Pod and that nothing else
+carries, so the Pods repel each other and nothing else. `Demand` counts Pods that are Pending,
+Running or Unknown, so five live job Pods are a target of five at one Pod per node, and zero once
+they are gone.
+
+`TestFiveGitLabJobPodsScaleToFiveNodesAndBackToZero` PASS on 2026-10-06, against the real GitLab,
+pipeline 61, nodes of 2 vCPU and 3072 MiB:
+
+```
+STEP 3  the cluster is at zero nodes before anything is applied: ""
+STEP 5  5 job pods exist in gitlab-runner
+STEP 6  the scale decision read Provision with nodes=5: intent and no node
+STEP 7  5 nodes joined on demand; `kubectl get nodes`:
+        liveweb-node1 .. liveweb-node5, all Ready
+STEP 8  each job pod is on its own node:
+        liveweb-node1 <- ...-concurrent-3    liveweb-node4 <- ...-concurrent-1
+        liveweb-node2 <- ...-concurrent-4    liveweb-node5 <- ...-concurrent-2
+        liveweb-node3 <- ...-concurrent-0
+```
+
+Observed mid-flight, one node at a time: with one node up, three Pods sat `Init` on it and two
+stayed `Pending` -- the anti-affinity refusing to co-schedule -- and the two Pending Pods are what
+took the count to three, four and five. That is the loop working, not a coincidence of scheduling.
+
+The nodes of a scale check are small on purpose: five of the nodes the `test` job needs would be
+60 vCPU and 120 GiB, which this host does not have. The Pod requests drop to 100m/128Mi for the
+same reason -- requests are what the scheduler places against, and limits stay generous because
+limits are not placement.
+
+**Two things the first attempt at this got wrong, both worth keeping.**
+
+- **A limit is a request when no request is given.** `helper_cpu_limit = 1` with no helper request
+  made every job Pod ask for about 2.1 CPU -- the build container's own request plus the helper's
+  and the init container's, each pulled up from its limit -- and a two-vCPU node answers that with
+  `Unschedulable: "0/1 nodes are available: 1 Insufficient cpu"`. The reading is a Pod that sits
+  `Pending` while nodes join around it, which looks like a slow cluster and is actually a Pod that
+  cannot fit on any of it. `helper_cpu_request` and `helper_memory_request` exist; setting them
+  says where the Pod is placed without capping what it may burst to.
+- **A node that has just booted may not resolve yet.** The scale-check jobs cloned the repository
+  like every other job, and the first attempt died on
+  `fatal: unable to access '...': Could not resolve host: gitlab.dorper-matrix.ts.net (Timeout
+  while contacting DNS servers)`, reported as `script_failure`. A scale check does not need a
+  repository, so its jobs carry `GIT_STRATEGY: none`. The streamplace `test` job does need one and
+  succeeded, which is the difference between a job that runs seconds after its node joins and one
+  that runs minutes after: the guest resolves through the gateway pasta hands it, and that path is
+  not instant.
+
 ## 7. The mkfs measurement, in full
 
 B6 is the reason the job's image is pulled rather than seeded, so it is written down rather than
