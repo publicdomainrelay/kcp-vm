@@ -561,6 +561,12 @@ func (n *tenantNodes) retain(ordinal int, held heldNode) {
 
 func (n *tenantNodes) nextOrdinal(ctx context.Context) (int, error) {
 	present := map[int]bool{}
+	prefix := strings.ToLower(n.cluster) + "-node"
+	for _, held := range n.heldNodesLocked() {
+		if ordinal, ok := nodeOrdinalInName(prefix, held.name); ok {
+			present[ordinal] = true
+		}
+	}
 	if n.tenant != nil {
 		client, err := n.tenant(ctx, n.cluster)
 		if err != nil {
@@ -574,7 +580,6 @@ func (n *tenantNodes) nextOrdinal(ctx context.Context) (int, error) {
 				"over one that already exists is the collision this list exists to avoid; nothing "+
 				"was provisioned", n.cluster, err)
 		}
-		prefix := strings.ToLower(n.cluster) + "-node"
 		for i := range list.Items {
 			if ordinal, ok := nodeOrdinalInName(prefix, list.Items[i].Name); ok {
 				present[ordinal] = true

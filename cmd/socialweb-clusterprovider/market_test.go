@@ -249,6 +249,65 @@ func TestTwoScalePassesOverAPendingClaimAskForOneNode(t *testing.T) {
 	}
 }
 
+func TestOneScalePassClaimsEveryNodeTheTargetNeeds(t *testing.T) {
+	claims := &marketClaims{}
+	tenant, client := tenantClientFor(t)
+	for _, name := range []string{"work-a", "work-b", "work-c"} {
+		if _, err := client.CoreV1().Pods("default").Create(context.Background(), &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
+			Status:     corev1.PodStatus{Phase: corev1.PodRunning},
+		}, metav1.CreateOptions{}); err != nil {
+			t.Fatalf("seeding the pod %s the scale decision reads as intent: %v", name, err)
+		}
+	}
+	hosts, err := newNodeHosts(marketOptions(t, claims, tenant))
+	if err != nil {
+		t.Fatalf("newNodeHosts: %v", err)
+	}
+	observer := clusterprovider.NodeObserver{Client: tenant}
+	driver, err := scaledriver.New(hosts.forCluster, scaledriver.Options{
+		Observe: func(ctx context.Context, cluster string) (scale.Observation, int, error) {
+			observed, nodes, err := observer.Observe(ctx, cluster)
+			if err != nil {
+				return observed, nodes, err
+			}
+			return observed, nodes + hosts.inFlight(ctx, cluster), nil
+		},
+		Scale: scale.Options{MaxNodes: 3, PodsPerNode: 1},
+		Log:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err != nil {
+		t.Fatalf("scaledriver.New: %v", err)
+	}
+	ctx := context.Background()
+	if _, err := driver.RunPass(ctx, clusterKey(t, "liveweb")); err != nil {
+		t.Fatalf("scale pass: %v", err)
+	}
+	if got := claims.held(); got != 3 {
+		t.Fatalf("one pass that needs three nodes left %d claims, want three. A market claim "+
+			"returns before its machine joins, so the tenant cluster's own node list cannot name "+
+			"the next ordinal: every provision in the pass then re-asks for the one node in "+
+			"flight, and a cluster whose pods need three nodes never asks for more than one", got)
+	}
+	key := clusterKey(t, "liveweb")
+	for _, suffix := range []string{"-node1", "-node2", "-node3"} {
+		if _, ok := claims.claims[testHomePrefix+"liveweb/"+key+suffix]; !ok {
+			t.Fatalf("the pass left no claim named %s%s, so the nodes it counted are not the nodes "+
+				"it asked the market for", key, suffix)
+		}
+	}
+	writes := claims.writes
+	if _, err := driver.RunPass(ctx, clusterKey(t, "liveweb")); err != nil {
+		t.Fatalf("second scale pass: %v", err)
+	}
+	if claims.writes != writes {
+		t.Fatalf("a second pass rewrote the claims it had already written, %d writes becoming %d. "+
+			"The pass runs every 2 s and a market machine takes minutes, so a pass that cannot see "+
+			"what it already asked for spends that time asking again, and the writes are what "+
+			"throttle the door's own list of the same claims", writes, claims.writes)
+	}
+}
+
 func TestAMarketNodeIsCountedUntilTheDoorReportsItRunning(t *testing.T) {
 	claims := &marketClaims{}
 	tenant, _ := tenantClientFor(t)

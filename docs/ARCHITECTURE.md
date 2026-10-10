@@ -3797,6 +3797,43 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   `TestAnInstallThatLeavesTheOperatorUnservedFailsThePassByName` pins the refusal by group name.
   `NEXT.yaml` ESO-4.
 
+- **A market cluster's scale pass re-asked the market for one node instead of naming the nodes its
+  target needed, every 2 s, for as long as a claim was in flight. CLOSED, and the ordinal that names
+  a node is what closed it.** `tenantNodes.nextOrdinal` named the next node from the TENANT cluster's
+  `Nodes()` list alone (`cmd/socialweb-clusterprovider/nodes.go`). That list holds only nodes whose
+  k3s agent has already joined, and a market `Provision` writes its `NodeClaim` and returns before the
+  machine exists (invariant 31, section 11), so every provision inside one pass read the same stale
+  list and resolved to the SAME ordinal: `scaledriver` asked for `target - observed` nodes and
+  `inFlight` correctly counted the claims already pending, but the loop wrote the one claim again for
+  each node it still wanted and never advanced past it. The count was right and the naming was wrong.
+  MEASURED in production on `root@socialweb.computer` (ssh port 1997), with
+  `SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE=market`, `SCALE_PODS_PER_NODE=1` and a target of 6:
+  `docker logs socialweb-k8s` carried four `nodemarket: node claimed from the market` lines for
+  `...-node2` per 2 s pass (240 in two minutes) beside one
+  `scaledriver: node count changed action=1 nodes=6 reason="intent, and 2 nodes are counted for a
+  target of 6"`; the cluster's home workspace `root:2wjeqtgx:test-cluster-alice-0001` held two claims,
+  `node1` `Running` and `node2` `Provisioning`, and the tenant apiserver reported one node, `node1`.
+  So `observed` was 2 (one joined plus one in flight) and the four provisions that aimed at 6 all
+  landed on `node2`. The `429` the door logs (`node_claim_list_failed ... nodeclaims: 429`) is largely
+  an EFFECT and not the cause: the door and the clusterprovider both authenticate with
+  `/var/lib/socialweb/kcp/admin.kubeconfig`, so kcp's per-user rate limit is shared, and the
+  provider's churn spent the budget the door's own list needed. After: `nextOrdinal` seeds its
+  `present` set with the ordinals this `tenantNodes` already holds (`heldNodesLocked`, reading each
+  name's ordinal the same way the tenant branch already does), so a pass at `observed=2`/`target=6`
+  names `node3..node6` and the next pass counts 6 and asks for nothing. The door's own side is a
+  separate change in the sibling Deno tree and is NOT made here: its poll
+  (`socialweb-computer-k8s/lib/socialweb-computer-k8s-node-market/mod.ts:330`,
+  `setInterval(tick, opts.pollIntervalMs ?? 2_000)`) calls `NodeClaimStore.list`, which re-walks every
+  account and home and then LISTs nodeclaims per home on every tick
+  (`socialweb-computer-k8s/lib/socialweb-computer-k8s-nodeclaim-kcp/mod.ts:182`, with `homes()` at
+  :138 re-reading the whole workspace tree), and its `request` (:104) has no `429` handling; the
+  change owed there is to cache the home list between ticks and to honour `Retry-After` on `429`
+  (raising the interval, or a `watch` per home), so the door reads the claims it must act on. The
+  instrument is `TestOneScalePassClaimsEveryNodeTheTargetNeeds` in `cmd/socialweb-clusterprovider`:
+  three running pods and one pass, watched to fail against the old `nextOrdinal` with `one pass that
+  needs three nodes left 1 claims, want three`, and green with the change, where three distinct claims
+  exist and a second pass writes nothing. `NEXT.yaml` MARKET-3.
+
 ## 16. Vocabulary
 
 | | |
