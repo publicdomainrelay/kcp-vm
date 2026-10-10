@@ -117,12 +117,14 @@ class FakeStore implements NodeClaimStore {
 
 class FakeLinks implements ClusterLinkReader {
   asked: string[] = [];
+  unreadable = false;
   constructor(
     readonly ticket: string | null = OPENBAO_TICKET,
     readonly apiserver: ClusterLinkView["status"] | null = { phase: "Listening", ticket: APISERVER_TICKET },
   ) {}
   get(workspace: string, name: string): Promise<ClusterLinkView | null> {
     this.asked.push(`${workspace}/${name}`);
+    if (name.endsWith("-apiserver") && this.unreadable) return Promise.reject(new Error("429 held back"));
     const link = name.endsWith("-apiserver")
       ? this.apiserver
       : this.ticket === null
@@ -400,6 +402,19 @@ Deno.test("an apiserver ticket that would ride a unit's command line is left out
   await h.fulfiller.pass();
   await settle();
 
+  assertEquals(h.secrets.bundles[0].some((s) => s.path === NODE_LINK_ENV_PATH), false);
+  await h.fulfiller.stop();
+});
+
+Deno.test("an apiserver link the door cannot read is withheld like an absent one, and the claim still runs on the KV copy", async () => {
+  const links = new FakeLinks();
+  links.unreadable = true;
+  const h = harness({ links });
+  h.store.put(claim("ci-node1"));
+  await h.fulfiller.pass();
+  await settle();
+
+  assertEquals(h.contracts.length, 1, "a 429 on the apiserver link does not fail the claim");
   assertEquals(h.secrets.bundles[0].some((s) => s.path === NODE_LINK_ENV_PATH), false);
   await h.fulfiller.stop();
 });

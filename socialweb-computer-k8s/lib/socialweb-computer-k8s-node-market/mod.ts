@@ -349,7 +349,13 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
           { path: OPENBAO_CA_PATH, value: openBaoCA },
         ];
         const apiserverName = clusterLinkName(clusterKey, "apiserver");
-        const apiserverLink = await opts.links.get(claim.workspace, apiserverName);
+        let apiserverLink: Awaited<ReturnType<ClusterLinkReader["get"]>> = null;
+        let apiserverWhy: string | null = null;
+        try {
+          apiserverLink = await opts.links.get(claim.workspace, apiserverName);
+        } catch (err) {
+          apiserverWhy = String(err);
+        }
         const linkEnv = apiserverLink?.status.phase === "Listening" && apiserverLink.status.ticket
           ? nodeLinkEnv(
             { node: spec.nodeName, advertiseAddress: spec.advertiseAddress, apiserverPort: spec.apiserverPort },
@@ -365,8 +371,10 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
             link: apiserverName,
             phase: apiserverLink?.status.phase ?? null,
             ticketBytes: apiserverLink?.status.ticket?.length ?? 0,
+            error: apiserverWhy,
             next: "the guest reads its apiserver ticket out of the cluster OpenBao instead, once its own link " +
-              "to that OpenBao is up, so the join is serial rather than parallel",
+              "to that OpenBao is up, so this node's join is serial rather than parallel; nothing else about " +
+              "the claim changes, because this ticket is the only thing the door was adding",
           });
         }
         const capability = grantingCapability(secretsCapability(bundle, claimLogger(key)), async (vars) => {
