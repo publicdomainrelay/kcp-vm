@@ -444,6 +444,12 @@ Deno.test({
     }),
     workRoot,
     rangeBase: Deno.env.get(ENV.rangeBase),
+    // The same switch the bidder above honours. Whether this host builds the
+    // image or is told to use the one already in the store is a property of the
+    // host -- making the image needs a chroot, which needs privileges a test
+    // runner does not have -- and not of which of these two tests is running, so
+    // a run that must not build has to be able to say so to both.
+    reuseStale: Deno.env.get(ENV.reuseImage) === "1",
   });
 
   const result = await provider.provider.provision(
