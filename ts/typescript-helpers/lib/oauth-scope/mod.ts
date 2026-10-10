@@ -46,6 +46,12 @@ const R = {
   SUBMIT_BID: "rpc:com.publicdomainrelay.temp.market.submitBid?aud=*",
   SUBMIT_EVENT: "rpc:com.publicdomainrelay.temp.market.submitEvent?aud=*",
   ASSOCIATE_CONFIRM: "rpc:com.publicdomainrelay.temp.requester.associateConfirm?aud=*",
+  CLUSTER_CREATE: "rpc:com.publicdomainrelay.temp.cluster.createCluster?aud=*",
+  CLUSTER_LIST: "rpc:com.publicdomainrelay.temp.cluster.listClusters?aud=*",
+  CLUSTER_KUBECONFIG: "rpc:com.publicdomainrelay.temp.cluster.getKubeconfig?aud=*",
+  CLUSTER_UP: "rpc:com.publicdomainrelay.temp.cluster.controlPlaneUp?aud=*",
+  CLUSTER_DOWN: "rpc:com.publicdomainrelay.temp.cluster.controlPlaneDown?aud=*",
+  CLUSTER_DELETE: "rpc:com.publicdomainrelay.temp.cluster.deleteCluster?aud=*",
 } as const;
 
 /**
@@ -182,6 +188,16 @@ export const DID_KEY_ASSOCIATOR_OAUTH_SCOPE: string[] = dedupeScopes(
 );
 
 /**
+ * k8s door (socialweb-computer-k8s): the requester set, because a cluster's
+ * nodes are provisioned through the market as the signed-in account, plus the
+ * cluster lifecycle RPCs the door calls on the account's behalf.
+ */
+export const K8S_OAUTH_SCOPE: string[] = dedupeScopes(
+  REQUESTER_OAUTH_SCOPE,
+  [R.CLUSTER_CREATE, R.CLUSTER_LIST, R.CLUSTER_KUBECONFIG, R.CLUSTER_UP, R.CLUSTER_DOWN, R.CLUSTER_DELETE],
+);
+
+/**
  * The full canonical union of every scope token in the system — every role's
  * set (with its own verbs), plus every RPC endpoint. Each role ⊆ OAUTH_SCOPE.
  */
@@ -192,6 +208,7 @@ export const OAUTH_SCOPE: string[] = dedupeScopes(
   DESKTOP_OAUTH_SCOPE,
   COMPUTE_SPA_OAUTH_SCOPE,
   DID_KEY_ASSOCIATOR_OAUTH_SCOPE,
+  K8S_OAUTH_SCOPE,
 );
 
 /** `OAUTH_SCOPE` joined into the space-separated form used in OAuth requests. */
