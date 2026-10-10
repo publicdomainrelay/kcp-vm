@@ -188,6 +188,14 @@ func chrootPreinstall(cfg Config, preinstallPath string, p Preinstall) error {
 	if err := os.MkdirAll(filepath.Dir(policy), 0o755); err != nil {
 		return err
 	}
+	previousPolicy, hadPolicy := os.ReadFile(policy)
+	defer func() {
+		if hadPolicy == nil {
+			_ = os.WriteFile(policy, previousPolicy, 0o755)
+			return
+		}
+		_ = os.Remove(policy)
+	}()
 	if err := os.WriteFile(policy, []byte("#!/bin/sh\nexit 101\n"), 0o755); err != nil {
 		return fmt.Errorf("socialweb-nodeimage: writing %s: %w -- a package's post-install script "+
 			"starts its services through invoke-rc.d, and there is no init in a staged root "+
