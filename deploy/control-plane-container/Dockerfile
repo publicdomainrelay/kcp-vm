@@ -187,7 +187,8 @@ RUN install -d -o kcp -g kcp -m 0755 /opt/deno-dir \
 
 USER 1000:1000
 
-RUN cd "$SOCIALWEB_CONTAINER_DOOR_DIR" \
+RUN --mount=type=cache,id=deno,target=/opt/deno-dir,uid=1000,gid=1000 \
+ cd "$SOCIALWEB_CONTAINER_DOOR_DIR" \
  && deno install --entrypoint hono-socialweb-computer-k8s/mod.ts \
  && deno cache hono-socialweb-computer-k8s/undici-preload.ts hono-socialweb-computer-k8s/mod.ts \
  && ls web/downloads
