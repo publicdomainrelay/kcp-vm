@@ -639,3 +639,42 @@ func keysOf(m map[string]v1alpha1.NodeClaim) []string {
 	sort.Strings(out)
 	return out
 }
+
+func TestANodeThatIsTornDownStopsBeingCounted(t *testing.T) {
+	claims := &marketClaims{}
+	tenant, _ := intentTenant(t)
+	hosts, err := newNodeHosts(marketOptions(t, claims, tenant))
+	if err != nil {
+		t.Fatalf("newNodeHosts: %v", err)
+	}
+	ctx := context.Background()
+	key := clusterKey(t, "liveweb")
+	nodes, err := hosts.forCluster(key)
+	if err != nil {
+		t.Fatalf("forCluster: %v", err)
+	}
+	if err := nodes.Provision(ctx); err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+	if got := hosts.inFlight(ctx, key); got != 1 {
+		t.Fatalf("a live claim counted %d nodes in flight, want 1", got)
+	}
+	claims.setPhase(testHomePrefix+"liveweb", key+"-node1", v1alpha1.NodeClaimFailed)
+	err = hosts.confirm(ctx, key)
+	if err == nil || !strings.Contains(err.Error(), "stopped making progress") {
+		t.Fatalf("confirming a node whose claim failed reported %v, want the failure itself: the "+
+			"pass returns it so a failed node is visible rather than silent", err)
+	}
+	if got := claims.held(); got != 0 {
+		t.Fatalf("the failed node's claim is still there after its teardown, %d claims", got)
+	}
+	if got := hosts.inFlight(ctx, key); got != 0 {
+		t.Fatalf("a node that was torn down is still counted as %d nodes in flight. MEASURED in "+
+			"production on 2026-10-06: 11 claims had been written and 7 released, leaving 4 live "+
+			"claims and 4 Nodes, and the count read 11 -- so the cluster could not scale up again, "+
+			"because the ceiling it had already passed is what stops a provision. The count is the "+
+			"tenant cluster's node list plus the claims this process holds, so a host that is torn "+
+			"down has to stop being held: its claim is gone, its Node is deleted, and a hold that "+
+			"outlives both is a node that is counted for ever", got)
+	}
+}

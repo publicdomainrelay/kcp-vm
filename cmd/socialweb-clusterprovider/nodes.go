@@ -681,6 +681,7 @@ func (n *tenantNodes) teardownHeld(ctx context.Context, node heldNode) error {
 	if err := node.host.Teardown(ctx); err != nil {
 		return err
 	}
+	n.forgetHeld(node.name)
 	n.mu.Lock()
 	delete(n.live, node.name)
 	n.mu.Unlock()
@@ -705,6 +706,20 @@ func (n *tenantNodes) teardownHeld(ctx context.Context, node heldNode) error {
 	n.log.Info("clusterprovider: removed the node from the tenant cluster",
 		"cluster", n.cluster, "node", node.name)
 	return nil
+}
+
+func (n *tenantNodes) forgetHeld(name string) {
+	prefix := strings.ToLower(n.cluster) + "-node"
+	ordinal, ok := nodeOrdinalInName(prefix, name)
+	if !ok {
+		return
+	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.host != nil && n.nodeName == name {
+		n.host, n.nodeName = nil, ""
+	}
+	delete(n.extra, ordinal)
 }
 
 func (n *tenantNodes) inFlight(ctx context.Context) int {
