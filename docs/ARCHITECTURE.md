@@ -3944,6 +3944,27 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   must name `node3`. Watched to fail with the seeding removed. `NEXT.yaml` MARKET-5 covers what is
   left - the FIRST node of a cluster, whose name is fixed at construction and never reconsidered.
 
+- **A torn-down node kept being held, so the count passed the ceiling and the cluster could not rent
+  another machine. CLOSED.** `tenantNodes.teardownHeld` deleted the node's claim, deleted the
+  cluster's `Node` object and dropped the name from the live set, and left the host in `extra`. That
+  was invisible while the count was keyed on a claim's PHASE, because a deleted claim reads as nil and
+  a nil claim was not counted; the moment the count became "the tenant cluster's node list plus the
+  names this process holds" (MARKET-4, above), a hold that outlives both its claim and its `Node`
+  became a node counted for ever. It is the same shape as the defect it came from: the count and the
+  thing counting it disagreed about what a held node is.
+  MEASURED in production on 2026-10-06, at the end of the five-job run, by counting the log rather
+  than reading the count: 11 `node claimed from the market` lines, 7 `releasing the node` lines, so 4
+  live claims - and the tenant cluster reporting exactly those four Nodes, `node3` to `node6`, while
+  the scale decision read `nodes=11` on 131 consecutive passes. That is not a wrong number in a log.
+  11 is above the ceiling of 10, so `scale.Decide` returned the branch that reads "more nodes are
+  counted than the target needs", which is the branch that does NOT provision: the cluster was holding
+  four nodes and could not rent a fifth, and no pass would ever have corrected it on its own. The
+  instrument is `TestANodeThatIsTornDownStopsBeingCounted` in `cmd/socialweb-clusterprovider`: a node
+  is provisioned, its claim is failed, the cluster is confirmed, and the count must fall back to zero.
+  Watched to fail with `forgetHeld` removed: "a node that was torn down is still counted as 1 nodes in
+  flight". `forgetHeld` drops the primary host when the name is its own and removes the ordinal from
+  `extra`, and `teardownHeld` calls it once the teardown has returned.
+
 ## 16. Vocabulary
 
 | | |
