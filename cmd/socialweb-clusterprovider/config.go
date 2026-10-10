@@ -357,7 +357,11 @@ func load(get func(string) string) (Config, error) {
 	return cfg, nil
 }
 
+const JoinAllClusters = "*"
+
 func (c Config) ObserveOnly() bool { return c.Join == "" }
+
+func (c Config) AllClusters() bool { return c.Join == JoinAllClusters }
 
 func guestSubstrate(name string) bool {
 	return name == SubstrateFirecracker || name == SubstrateQEMU

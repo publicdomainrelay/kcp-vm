@@ -14,7 +14,7 @@ import (
 
 const LoopbackAdvertiseAddress = "127.0.0.1"
 
-const MarketAdvertiseAddress = "100.127.255.254"
+const MarketAdvertiseAddress = "198.18.255.254"
 
 func FindDuplicatePorts(leases []Lease) []string {
 	byPort := map[int][]Lease{}

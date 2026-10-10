@@ -206,6 +206,15 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 
 	var host materialiser.Host = deciderHost
 	if !cfg.ObserveOnly() {
+		if err := migrateLegacyKeys(ctx, registry, legacyKeys{
+			StateDir: cfg.StateDir,
+			MintDir:  cfg.MintKubeconfigs,
+			Ports:    alloc,
+			Networks: networks,
+			Log:      log,
+		}); err != nil {
+			return Deps{}, err
+		}
 		host, err = Startup(ctx, StartupOptions{
 			Allocator: alloc,
 			Registry:  registry,
@@ -246,15 +255,6 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 	})
 	if err != nil {
 		return Deps{}, err
-	}
-	if !cfg.ObserveOnly() {
-		if err := nodeHosts.resetSnapshot(cfg.Join); err != nil {
-			return Deps{}, fmt.Errorf("clusterprovider: writing the empty instance snapshot for %s "+
-				"before any node exists: %w. The cloud controller manager reads that file to decide "+
-				"which Nodes still have a guest; an absent file and an empty one both read as "+
-				"\"no instance\", so the provider always writes the file rather than leaving its "+
-				"absence to mean something", cfg.Join, err)
-		}
 	}
 	scaleDriver, err := scaledriver.New(nodeHosts.forCluster, scaledriver.Options{
 		Observe: func(ctx context.Context, cluster string) (scale.Observation, int, error) {
@@ -364,13 +364,17 @@ func tenantClients(registry clusterprovider.Clusters, mint func(context.Context,
 	}
 }
 
-func tenantCluster(ctx context.Context, reg clusterprovider.Clusters, cluster string) (clusterprovider.Ref, *v1alpha1.Cluster, error) {
+func tenantCluster(ctx context.Context, reg clusterprovider.Clusters, key string) (clusterprovider.Ref, *v1alpha1.Cluster, error) {
 	refs, err := reg.Refs(ctx)
 	if err != nil {
 		return clusterprovider.Ref{}, nil, err
 	}
 	for _, r := range refs {
-		if r.Name != cluster {
+		found, err := r.Key()
+		if err != nil {
+			return clusterprovider.Ref{}, nil, err
+		}
+		if found != key {
 			continue
 		}
 		cl, err := reg.Read(ctx, r)
@@ -379,7 +383,7 @@ func tenantCluster(ctx context.Context, reg clusterprovider.Clusters, cluster st
 		}
 		return r, cl, nil
 	}
-	return clusterprovider.Ref{}, nil, fmt.Errorf("clusterprovider: no Cluster CR named %s", cluster)
+	return clusterprovider.Ref{}, nil, fmt.Errorf("clusterprovider: no Cluster CR with the key %s", key)
 }
 
 func guardDeps(cfg Config, tokens *tokenStore, postgres *postgresRegistry, log *slog.Logger) clusterprovider.GuardDeps {
@@ -471,14 +475,18 @@ func instanceMinter() func() string {
 }
 
 func tenantFromClusterCA(alloc *portallocator.Allocator, stateDir string) func(context.Context, clusterprovider.Ref, *v1alpha1.Cluster) (*rest.Config, error) {
-	return func(ctx context.Context, _ clusterprovider.Ref, cl *v1alpha1.Cluster) (*rest.Config, error) {
+	return func(ctx context.Context, ref clusterprovider.Ref, cl *v1alpha1.Cluster) (*rest.Config, error) {
+		key, err := ref.Key()
+		if err != nil {
+			return nil, err
+		}
 		lease, err := alloc.Allocate(portallocator.Request{
-			Cluster: cl.Name, Purpose: portallocator.PurposeK3sSecure,
+			Cluster: key, Purpose: portallocator.PurposeK3sSecure,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("clusterprovider: the apiserver lease for %s, which is the "+
 				"address this cluster's apiserver answers on: %w", cl.Name, err)
 		}
-		return clusterprovider.MintTenantCredentialForCluster(ctx, stateDir, cl.Name, clusterprovider.APIServerURL(lease.Port))
+		return clusterprovider.MintTenantCredentialForCluster(ctx, stateDir, key, clusterprovider.APIServerURL(lease.Port))
 	}
 }

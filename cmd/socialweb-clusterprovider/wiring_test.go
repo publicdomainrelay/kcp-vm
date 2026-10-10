@@ -17,6 +17,7 @@ import (
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clusterprovider"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpclient"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/materialiser"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/portallocator"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/procgroup"
@@ -35,7 +36,7 @@ func (f *fakeClusters) Refs(context.Context) ([]clusterprovider.Ref, error) {
 	f.refs++
 	out := make([]clusterprovider.Ref, 0, len(f.items))
 	for _, c := range f.items {
-		out = append(out, clusterprovider.Ref{Home: "root:acct:home", Name: c.Name})
+		out = append(out, clusterprovider.Ref{Home: testHomePrefix + c.Name, Name: c.Name})
 	}
 	return out, nil
 }
@@ -71,6 +72,17 @@ func (f *fakeClusters) Nodes(context.Context, clusterprovider.Ref) ([]v1alpha1.N
 
 func (f *fakeClusters) WriteNode(context.Context, clusterprovider.Ref, string, v1alpha1.NodeStatus) error {
 	return nil
+}
+
+const testHomePrefix = "root:acct:"
+
+func clusterKey(t *testing.T, name string) string {
+	t.Helper()
+	key, err := kcpclient.ClusterKey(testHomePrefix + name)
+	if err != nil {
+		t.Fatalf("the key of cluster %q: %v", name, err)
+	}
+	return key
 }
 
 func testLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
@@ -222,7 +234,7 @@ func TestJoinRefusesAnUnknownClusterAndNamesTheTreeItSearched(t *testing.T) {
 	if err == nil {
 		t.Fatal("a join for a cluster that does not exist succeeded")
 	}
-	for _, want := range []string{"nosuch", "root:acct:home/liveweb"} {
+	for _, want := range []string{"nosuch", testHomePrefix + "liveweb/liveweb"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not name %q: %v", want, err)
 		}

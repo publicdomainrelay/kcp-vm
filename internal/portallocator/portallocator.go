@@ -395,6 +395,40 @@ func (a *Allocator) refresh() {
 	_ = a.withLock(hostos.LockShared, a.load)
 }
 
+func (a *Allocator) Rekey(legacy, key string) (int, error) {
+	if legacy == "" || key == "" || legacy == key {
+		return 0, nil
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	moved := 0
+	err := a.withLock(hostos.LockExclusive, func() error {
+		if err := a.load(); err != nil {
+			return err
+		}
+		for held, l := range a.leases {
+			if l.Cluster != legacy {
+				continue
+			}
+			if _, taken := a.leases[leaseKey{key, held.purpose}]; taken {
+				continue
+			}
+			delete(a.leases, held)
+			l.Cluster = key
+			a.leases[leaseKey{key, held.purpose}] = l
+			moved++
+		}
+		if moved == 0 {
+			return nil
+		}
+		return a.save()
+	})
+	if err != nil {
+		return 0, err
+	}
+	return moved, nil
+}
+
 func (a *Allocator) Reclaim(known map[string]bool) ([]Lease, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()

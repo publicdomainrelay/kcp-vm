@@ -21,10 +21,12 @@ func TestTheMintCredentialAgainstRealInfrastructure(t *testing.T) {
 	livegate.Short(t, "this test mints against real tenant infrastructure and -short was asked for: a skip is NOT a pass; drop -short, or set SOCIALWEB_REQUIRE_LIVE=1 to fail instead")
 	dir := os.Getenv("SOCIALWEB_LIVE_MINT_KUBECONFIGS")
 	cluster := os.Getenv("SOCIALWEB_LIVE_CLUSTER")
+	did := os.Getenv("SOCIALWEB_LIVE_DID")
 	grantedSA := os.Getenv("SOCIALWEB_LIVE_GRANTED_SA")
 	for _, env := range []struct{ name, value string }{
 		{"SOCIALWEB_LIVE_MINT_KUBECONFIGS", dir},
 		{"SOCIALWEB_LIVE_CLUSTER", cluster},
+		{"SOCIALWEB_LIVE_DID", did},
 		{"SOCIALWEB_LIVE_GRANTED_SA", grantedSA},
 	} {
 		if env.value == "" {
@@ -39,9 +41,9 @@ func TestTheMintCredentialAgainstRealInfrastructure(t *testing.T) {
 	ctx := context.Background()
 	configs := mintCredentials(dir)
 
-	cfg, err := configs(cluster)
+	cfg, err := configs(did, cluster)
 	if err != nil {
-		t.Fatalf("MintConfig(%q): %v", cluster, err)
+		t.Fatalf("MintConfig(%q, %q): %v", did, cluster, err)
 	}
 	clientset, err := kubernetes.NewForConfig(cfg)
 	if err != nil {
@@ -107,7 +109,7 @@ func TestTheMintCredentialAgainstRealInfrastructure(t *testing.T) {
 	t.Logf("ok -- and REFUSED (403) for %s/%s, so the credential is bounded to the names "+
 		"the grant lists", tenantclient.Namespace, uncovered)
 
-	if cfg, err := configs("no-such-cluster-label"); err == nil || cfg != nil {
+	if cfg, err := configs(did, "no-such-cluster-label"); err == nil || cfg != nil {
 		t.Fatalf("an unknown cluster returned (%v, %v) against the real credential directory, "+
 			"so the mint would fall back to another cluster's identity", cfg, err)
 	}

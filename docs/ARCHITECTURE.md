@@ -146,7 +146,7 @@ Everything is either a controller-runtime reconcile loop or a deploy config. No 
 |---|---|---|---|
 | 1 | `Cluster` CRD - the mount object | Go | Carries `status.URL` and `status.phase`, which are the real contract. Owns `Draining`, `conditions[TenantPathShut]`, `conditions[Reachable]`, `status.nodeExpiry` |
 | 2 | **Materialiser** - controller watching kcp with a host selector | Go | Spawns and reaps the per-cluster process group. This IS the gateway's supervisor |
-| 3 | Cluster provider | Go | Owns the `Cluster` CR lifecycle: mints the instance token, fetches the identity bundle, sets `status.URL` once the apiserver answers |
+| 3 | Cluster provider | Go | Owns the `Cluster` CR lifecycle: mints the instance token, fetches the identity bundle, sets `status.URL` once the apiserver answers. ONE process serves EVERY cluster in the kcp tree, and a cluster is named inside it by its home workspace, not by the bare name the owner chose |
 | 4 | Node provider | Go | Watches the home workspace for intent, actuates one node, writes `Node` state |
 | 5 | kcp provider workspace | YAML | `APIResourceSchema` plus `APIExport` for our CRDs; tenants `APIBinding` |
 | 6 | k3s cloud-init module | sibling repo, `UserDataModule` | Installs k3s in a market guest. The only sanctioned way a guest-side component arrives |
@@ -588,7 +588,7 @@ alternatives for one cluster:
 |---|---|
 | **a VM** | the node is a guest with its own kernel, containerd and network stack. **This design's mechanism**, and the only one that survives measurement |
 | **local process** | a `k3s agent` child process, `internal/nodelocal`, behind the same `scale.Nodes` seam. REFUTED as the substrate, three ways, all measured: `k3s agent` is fatal as a non-root user (`agent requires additional privilege if not run with --rootless`); it needs root for `/run/k3s/containerd`, `/var/lib/kubelet/device-plugins`, `127.0.0.1:6444` and the host `KUBE-*` chains, none of which `--data-dir` moves; and postgres is fatal AS root (`initdb: cannot be run as root`), so a host that runs the store cannot run a node |
-| **SSH to a market guest** | the node is a VM rented from the COMPUTE MARKET through a `NodeClaim` the clusterprovider writes and the market door fulfils under the cluster owner's own atproto OAuth session. **`internal/nodemarket`**, selected by `SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE=market`. NOT a guest of this host: no subnet lease, no pasta, no VMM, no node image and no `/dev/kvm` is involved. The clusterprovider's whole part in the node is the claim; the door bids, wins, boots the guest from the winning bidder's cloud-init, reverse-forwards the advertised address (`SOCIALWEB_CLUSTERPROVIDER_MARKET_ADVERTISE_ADDRESS`, default `100.127.255.254`) to this host's loopback apiserver and writes the phase back. Confirming is the claim reaching `Running`, not a local process being alive |
+| **SSH to a market guest** | the node is a VM rented from the COMPUTE MARKET through a `NodeClaim` the clusterprovider writes and the market door fulfils under the cluster owner's own atproto OAuth session. **`internal/nodemarket`**, selected by `SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE=market`. NOT a guest of this host: no subnet lease, no pasta, no VMM, no node image and no `/dev/kvm` is involved. The clusterprovider's whole part in the node is the claim; the door bids, wins, boots the guest from the winning bidder's cloud-init, reverse-forwards the advertised address (`SOCIALWEB_CLUSTERPROVIDER_MARKET_ADVERTISE_ADDRESS`, default `198.18.255.254`) to this host's loopback apiserver and writes the phase back. Confirming is the claim reaching `Running`, not a local process being alive |
 
 **QEMU is the second implementation of the VM mechanism, behind the same seam.** Firecracker and
 QEMU are not two mechanisms for one cluster and not alternatives in one process: the composition root
@@ -1474,6 +1474,41 @@ crash recovery and bypass the reverse-order teardown and the tenant-side Node de
 reaps explicitly on the way out, with a fresh context; what it does not finish is reaped by the next
 start, which is the same rule as above.
 
+**Every cluster, not the one this process was told to join.** `SOCIALWEB_CLUSTERPROVIDER_JOIN` names
+a single cluster by its bare name and keeps working exactly as it did. `SOCIALWEB_CLUSTERPROVIDER_JOIN=*`
+is the mode the k8s door needs, because that door lets any atproto user create a cluster and NOTHING
+materialises one unless a process joins it: the provider lists `registry.Refs` — which already walks
+root, the accounts, the homes and the clusters — and reconciles EVERY cluster each pass, in SERIES and
+one at a time. Serial rather than parallel is the v1 answer and it is stated rather than implied: the
+pass is bounded by the interval, the interval is 2 s, and the passes this process runs per cluster are
+the same ones the single-cluster loop runs, so what a wider tree costs is latency and not correctness.
+A failure in one cluster is caught, logged with the cluster's name, home and error, and the pass moves
+on to the next: one cluster that cannot come up must not hold back the others, and an all-clusters pass
+that returns on the first error is a tree where every cluster behind the broken one is frozen. The
+startup reap and the shutdown reap cover the same set. Startup already walked every `Cluster` CR and
+every lease to decide which group to adopt, reap or bring up — that walk was always tree-wide, and only
+the JOIN-scoped state dir and the single `Host.Reap` on the way out were not. Shutdown now asks the
+`LocalHost` which groups it holds (`Clusters()`) and reaps each, so `*` gets the same reverse-order
+teardown, the same node-host reap and the same store stop that a single join gets, and the node hosts
+are reaped per cluster rather than only for the joined one.
+
+**One process per host still holds ONE apiserver per store (invariant 1).** Every cluster in the pass
+gets its own state dir, its own port leases, its own postgres, its own process group and its own
+`Host` entry, and the `Host` is memoised by the same key the state dir is named by, so a pass in one
+cluster and a teardown in a later pass act on the same object. Two clusters named `ci` by two
+different accounts are two entries in every one of those maps.
+
+**A market claim does not stall the pass.** `tenantNodes.Provision` writes the `NodeClaim` and returns.
+It does NOT poll the tenant cluster for the node first, and the distinction is the whole reason the
+all-clusters mode is usable: a market machine is absent for minutes, the join wait is 30 s, and one new
+claim would otherwise block every other cluster in the tree for the whole timeout, once per cluster,
+serially. Joining is confirmed on a LATER pass, by `nodeHosts.confirm`, which runs before that
+cluster's scale pass: a node whose tenant Node object has appeared is confirmed through the same
+`ConfirmJoined` the guest substrates call inline, and a node whose claim reads `Failed` is torn down
+there — the claim released and the tenant Node deleted — so the failure is reported and the cluster may
+ask the market again rather than counting a machine it will never get. The guest substrates still
+confirm inline, unchanged.
+
 ## 12. Code layout
 
 ```
@@ -1496,6 +1531,30 @@ deploy/                install scripts, manifests, the audit policy
 
 Dependencies flow one way: `api` <- `internal` <- `cmd`. A new substrate or transport is a NEW
 PACKAGE, not a branch inside an existing one.
+
+**A cluster's key is derived once, from its home workspace.** `kcpclient.ClusterKey` is the only
+spelling: it takes a home workspace path `root:<accountHash>:<name>` — `HomePath` builds the one the
+door's `Ensure` creates — and returns `<accountHash>-<name>`, which is a DNS-1123 subdomain. Every
+place a cluster is identified INSIDE a provider uses it and nothing else: the state dir
+(`pdr-<key>`), the node data dir (`<key>/nodes/<node>`), the `Cluster` field of every port and subnet
+lease, the node name `nodeprovider.NodeName` derives, the `nodes.json` instance snapshot, the
+`scaledriver` state map, the tenant-credential mint file, the `NodeClaim` name and the process-group
+attribution in the startup sweep. Both binaries reach it through `internal/kcpclient`: the
+clusterprovider from a `Ref` (`Ref.Key()`), the gateway from the `(did, cluster)` pair a mint binding
+carries (`ClusterKey(HomePath(did, cluster))`), so the file the clusterprovider writes and the file
+the gateway reads are named by one function. The bare name is still what a `Cluster` CR, a `Node`
+CR's `spec.cluster` and a `NodeClaim`'s `spec.cluster` carry, because those live inside one home
+workspace and are unique there; what the key keeps apart is everything OUTSIDE it.
+
+`cmd/socialweb-clusterprovider/migrate.go` is why an existing single-cluster deployment keeps working.
+Before the first pass, and only when the CR tree names a given bare name exactly ONCE, it renames
+`<state dir>/pdr-<name>` to `pdr-<key>`, `<state dir>/<name>` to `<key>` (the node records, renamed
+with their directory), the mint credential `<mint dir>/<name>` to `<key>`, and re-keys that cluster's
+port and subnet leases in place, preserving their ports and ranges. A name two accounts share is left
+alone and reported: which home it belongs to is not knowable from the name, and renaming it onto one
+of them would hand that cluster the other's data. It is a one-way move — a downgrade finds the keyed
+names and starts from an empty state dir — and the cost of the node names changing with the key is
+recorded in section 15.
 
 Binaries: `socialweb-clusterprovider`, `socialweb-gateway`, `socialweb-credential`,
 `socialweb-nodeimage`, `socialweb-nodeagent` and `socialweb-computer-kcp-check-host`.
@@ -1722,6 +1781,18 @@ A change must not break any of these. Each exists because something failed.
     cluster-scoped object in the owner's home workspace, readable by anything that can read that
     workspace, and it carries the PATHS the door reads them from instead. They also never ride argv,
     `user_data` or a boot command line, for the reasons invariants 13 and 25 already give.
+30. **A cluster is its home workspace, not the name inside it.** Two accounts may each name a cluster
+    `ci`; they are two clusters, with two state dirs, two sets of port and subnet leases, two sets of
+    node names, two mint credentials and two process groups. Anything that identifies a cluster
+    OUTSIDE its home — a state dir, a lease, a node name, a snapshot, a mint file, a process group —
+    carries the key `kcpclient.ClusterKey(home)` = `<accountHash>-<name>` and never the bare name. A
+    pass over one cluster must never key anything by a name two workspaces can share, because the
+    failure mode is not a collision error: it is one cluster reading another's leases and state dir
+    and reporting them as its own.
+31. **A claim does not wait for the machine.** Provisioning a market node writes the `NodeClaim` and
+    returns; the join is confirmed on a later pass. A blocking wait inside a pass that serves every
+    cluster in the tree stops being a local delay and becomes a global one, and the thing being waited
+    for is minutes away by construction.
 
 ## 14. Open architectural gaps
 
@@ -1757,6 +1828,16 @@ document, or by running it, rather than by reading the document. What remains at
 open list, are two stated LIMITS rather than open work: each marks where a behaviour that passes stops
 being true, which is a fact about the design rather than a question left in it, and each sits here
 because it bounds a mechanism the rest of this document leans on.
+
+- **A mint credential is named by the cluster's key, and the process that renames an existing one is
+  not the process that reads it.** The clusterprovider writes `<MINT_DIR>/<accountHash>-<name>` and the
+  gateway reads that name, so the two agree from the clusterprovider's first pass onward. The
+  container entrypoint starts the gateway before the clusterprovider, and the rename of an existing
+  `<MINT_DIR>/<name>` is the clusterprovider's startup migration, so a mint request that arrives in
+  between names a file that is not there: the lookup fails closed, with an error naming the cluster and
+  the key, and never returns another cluster's credential. The instrument is a container started with a
+  legacy mint directory and no keyed file, whose first mint request is refused and whose next is
+  served. `NEXT.yaml` MINT-1.
 
 - **The tenant grant admits the External Secrets controller by a hardcoded namespace.** An install
   outside `default` is denied, and the failure reads as a broken ExternalSecret rather than as a grant
@@ -3407,7 +3488,7 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
 
   Three smaller decisions came with it, each of which had to be made rather than assumed. **(a)** The
   address a market node dials is `SOCIALWEB_CLUSTERPROVIDER_MARKET_ADVERTISE_ADDRESS`, default
-  `100.127.255.254`: not loopback, because k3s refuses a loopback address for the in-cluster
+  `198.18.255.254`: not loopback, because k3s refuses a loopback address for the in-cluster
   `kubernetes` Service endpoint, and NOT an address this host carries, because the guest puts it on
   its OWN loopback and the door reverse-forwards it to the apiserver, which stays bound to
   `127.0.0.1`. That is a third case in `portallocator`'s advertise invariant
@@ -3446,6 +3527,51 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   `internal/scale`, the four-step proof and the live GitLab tests are untouched and still use
   firecracker.
 
+- **One provider serves every cluster, and a cluster is named by its home.** The k8s door writes
+  `root:<accountHash>:<name>` plus a `Cluster` CR plus the `:clusters` mount for every cluster any
+  atproto user creates, and NOTHING materialised one unless a process was started with
+  `SOCIALWEB_CLUSTERPROVIDER_JOIN` naming it. Worse, a cluster was looked up by its bare name, so two
+  accounts that each named a cluster `ci` shared ONE state dir, ONE set of port leases, ONE set of
+  node names, ONE `nodes.json` and ONE `scaledriver` state map — a collision that reports as one
+  cluster reading another's state rather than as an error. The key is now
+  `kcpclient.ClusterKey(home)` = `<accountHash>-<name>` (invariant 30), used for the state dir, the
+  port and subnet leases, the node names, the snapshot, the scale driver key, the mint credential, the
+  `NodeClaim` name and the startup sweep's process-group attribution (section 12). `JOIN=*` reconciles
+  every `Cluster` in the tree each pass, serially, with one failure logged and skipped rather than
+  returned (invariant 23 says why it is logged at all); startup already walked the whole tree and now
+  the shutdown reap does too, by asking the `LocalHost` which groups it holds. An existing
+  single-cluster deployment is migrated by rename at startup, and only where the bare name is
+  unambiguous (section 12). Two costs are recorded rather than hidden. **(a)** The node names change
+  with the key, so a cluster that already had nodes under `<name>-node1` sees `<key>-node1` after the
+  migration and its `nextOrdinal` no longer recognises the old name. The tenant Node object is not
+  renamed, because renaming it is a write into a running cluster's apiserver and the shell that
+  carried the node outlives the rename; the old node is reaped by the ordinary zero-state path and
+  re-provisioned under the new name, which is the same work an OFF/ON cycle does. **(b)** A
+  `NodeClaim` written before the migration is named for the bare cluster and is not renamed, so it is
+  released and re-claimed once.
+  Two smaller defects closed with it. `tenantNodes.Provision` no longer polls the tenant cluster for
+  a market node before returning: a market machine is absent for minutes and the poll is 30 s, so a
+  single new claim blocked every other cluster in the tree for the whole timeout, once per cluster,
+  serially. The market substrate now returns once the claim is written and the snapshot updated, and a
+  later pass confirms the join or fails the node on `Fatal` (invariant 31, section 11); the guest
+  substrates are unchanged. And the market advertise default moved from `100.127.255.254` to
+  `198.18.255.254`: the old value is inside `100.64.0.0/10`, which is Tailscale's CGNAT space, so a
+  tailnet peer can hold exactly that address and the guest's loopback forward collides with the
+  tailnet. `198.18.0.0/15` is RFC 2544 benchmarking space, never routed on the internet, and
+  `AssertMarketAdvertiseAddress` still refuses loopback, the unspecified address and every address this
+  host carries.
+
+  The instrument is `go test ./...` plus `deploy/check.sh --fast`. New:
+  `cmd/socialweb-clusterprovider` (two accounts naming a cluster `ci` get distinct state dirs, leases,
+  node names and mint paths; an all-clusters pass over three CRs, two ON and one OFF, brings up
+  exactly the two and reaps the OFF one; a cluster whose CR cannot be read does not hold back the
+  others; a market `Provision` returns in well under a second with no tenant Node present and still
+  writes exactly one claim; a later pass confirms a node the tenant cluster reports and tears down one
+  whose claim reads `Failed`; a legacy state dir, node dir, mint credential and port and subnet leases
+  are migrated to the key; a bare name two accounts share is left where it is). `internal/portallocator`
+  and `internal/subnetallocator` gained `Rekey`, `internal/materialiser` gained `LocalHost.Clusters`,
+  and the four-step proof and the live tests are untouched.
+
 ## 16. Vocabulary
 
 | | |
@@ -3457,5 +3583,6 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
 | **instance** | one cluster's incarnation. The token is per instance |
 | **ON / OFF** | whether a cluster's process group is up |
 | **zero state** | control plane up, zero nodes, workloads Pending |
+| **key** | the name a cluster has INSIDE a provider: `kcpclient.ClusterKey(home)` = `<accountHash>-<name>`, derived from its home workspace path. Unique across accounts; the bare name is not |
 | **seam** | the interface where a substrate plugs in: `ComputeProvider`, `scale.Nodes`, `processrunner` |
 | **the door** | the market's front door, in the sibling Deno process: it holds each owner's atproto OAuth session, fulfils the `NodeClaim`s this repo writes, and is the only writer of a claim's status. Its own build is out of scope here |

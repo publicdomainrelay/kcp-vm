@@ -21,6 +21,23 @@ about: >
   section 15 with their readings.
 
 open:
+  - id: MINT-1
+    title: A mint credential is named by the cluster's key, and the migration that renames an existing one runs in a different process from the reader.
+    body: >
+      The clusterprovider now writes `<MINT_DIR>/<accountHash>-<name>` and the gateway reads the same
+      name, so the two agree once the clusterprovider has started. The container entrypoint starts the
+      gateway BEFORE the clusterprovider (deploy/container-entrypoint.sh), and it is the
+      clusterprovider's startup migration (`cmd/socialweb-clusterprovider/migrate.go`) that renames an
+      existing `<MINT_DIR>/<name>` to the key. Between those two moments a mint request names a file
+      that is not there, and the lookup fails closed - an error, never another cluster's identity - so
+      the cost is a refused mint rather than a wrong one, for as long as the rename takes. Recorded
+      rather than fixed because the fix is an ordering the entrypoint owns, and the entrypoint is the
+      deployment's file rather than this package's.
+    instrument: >
+      A container image carrying a legacy `<MINT_DIR>/<name>` and no keyed file, started normally, with
+      the gateway's first mint request refused before the rename and served after it - the refusal
+      naming the cluster and the key rather than returning a credential.
+
   - id: MARKET-1
     title: The market substrate's startup sweep is a no-op, so a state dir a guest substrate left behind is never reaped.
     body: >

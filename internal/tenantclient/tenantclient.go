@@ -55,7 +55,7 @@ type Options struct {
 
 	Audience string
 
-	MintConfig func(cluster string) (*rest.Config, error)
+	MintConfig func(did, cluster string) (*rest.Config, error)
 }
 
 type Client struct {
@@ -136,7 +136,7 @@ func (c *Client) Resolve(ctx context.Context, cred mint.DeviceCredential) (mint.
 		return mint.Binding{}, err
 	}
 
-	core, err := c.tenantCore(row.Cluster)
+	core, err := c.tenantCore(row.DID, row.Cluster)
 	if err != nil {
 		return mint.Binding{}, err
 	}
@@ -168,7 +168,7 @@ func (c *Client) Issue(ctx context.Context, b mint.Binding, ttl time.Duration) (
 	if ttl < MinTokenTTL {
 		return "", time.Time{}, fmt.Errorf("%w: %s", ErrTTLBelowFloor, ttl)
 	}
-	core, err := c.tenantCore(b.Cluster)
+	core, err := c.tenantCore(b.DID, b.Cluster)
 	if err != nil {
 		return "", time.Time{}, err
 	}
@@ -258,8 +258,8 @@ func (c *Client) kcpAPI(logicalCluster string, gv schema.GroupVersion) (rest.Int
 	return c.bind(rest.CopyConfig(c.opts.Registry), logicalCluster, gv)
 }
 
-func (c *Client) tenantCore(cluster string) (rest.Interface, error) {
-	cfg, err := c.opts.MintConfig(cluster)
+func (c *Client) tenantCore(did, cluster string) (rest.Interface, error) {
+	cfg, err := c.opts.MintConfig(did, cluster)
 	if err != nil {
 		return nil, fmt.Errorf("tenantclient: no mint credential for cluster %q: %w", cluster, err)
 	}

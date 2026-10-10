@@ -241,7 +241,8 @@ func newHarness(t *testing.T) (*harness, *Client, mint.DeviceCredential, string)
 		RegistryWorkspace: registryWS,
 		RegistryNamespace: registryNS,
 		Audience:          gatewayDID,
-		MintConfig: func(cluster string) (*rest.Config, error) {
+		MintConfig: func(did, cluster string) (*rest.Config, error) {
+			_ = did
 			if cluster != testCluster {
 				return nil, fmt.Errorf("no mint credential for %q", cluster)
 			}

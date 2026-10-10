@@ -68,7 +68,11 @@ func Startup(ctx context.Context, opts StartupOptions) (materialiser.Host, error
 					"group up or reaps it, and guessing that from a partial read is how a group "+
 					"comes up twice", ref.Name, err)
 		}
-		clusters[cl.Name] = cl
+		key, err := ref.Key()
+		if err != nil {
+			return nil, err
+		}
+		clusters[key] = cl
 	}
 
 	leases := opts.Allocator.Leases()
@@ -210,7 +214,9 @@ func Startup(ctx context.Context, opts StartupOptions) (materialiser.Host, error
 		if !owned[name] {
 			continue
 		}
-		observed = append(observed, materialiser.Observed{Cluster: *clusters[name], Now: now})
+		view := clusters[name].DeepCopy()
+		view.Name = name
+		observed = append(observed, materialiser.Observed{Cluster: *view, Now: now})
 	}
 	results, err := opts.Decider.Startup(ctx, observed)
 	if err != nil {
@@ -222,7 +228,8 @@ func Startup(ctx context.Context, opts StartupOptions) (materialiser.Host, error
 		if i >= len(observed) {
 			break
 		}
-		log.Info("cluster provider: restart bring-up", "cluster", observed[i].Cluster.Name,
+		log.Info("cluster provider: restart bring-up", "cluster", clusters[observed[i].Cluster.Name].Name,
+			"key", observed[i].Cluster.Name,
 			"phase", res.Phase, "url", res.URL, "instance", res.Instance,
 			"ops", opsOf(res), "alert", res.Alert)
 	}

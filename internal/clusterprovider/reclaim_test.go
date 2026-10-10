@@ -28,7 +28,7 @@ func reclaimStore(t *testing.T) *portallocator.Allocator {
 	if err != nil {
 		t.Fatalf("portallocator.Open: %v", err)
 	}
-	for _, cluster := range []string{"liveweb", "ghost"} {
+	for _, cluster := range []string{key(), "ghost"} {
 		if _, err := a.Allocate(portallocator.Request{
 			Cluster: cluster, Instance: "1", Purpose: portallocator.PurposeKine,
 		}); err != nil {
@@ -64,7 +64,7 @@ func TestRunReclaimsLeasesWithNoClusterCRAndKeepsTheOnesThatHaveOne(t *testing.T
 		t.Fatal("a lease whose Cluster CR is absent survived the reclaim pass: this is the leak " +
 			"ADR 0026 says is bounded, and the carve is finite")
 	}
-	if held, ok := ports.PortFor("liveweb", portallocator.PurposeKine); !ok {
+	if held, ok := ports.PortFor(key(), portallocator.PurposeKine); !ok {
 		t.Fatal("reclaim freed the lease of a cluster whose CR EXISTS. A cluster that is OFF has " +
 			"a CR -- spec.running=false is a field, not a deletion -- so this is how an OFF " +
 			"cluster loses the lease it will bind on its next ON and binds a port another cluster " +
