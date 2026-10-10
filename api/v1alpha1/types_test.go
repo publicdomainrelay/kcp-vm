@@ -101,6 +101,8 @@ func TestSchemeRoundTripsEveryType(t *testing.T) {
 		{"ClusterList", &ClusterList{}},
 		{"Node", &Node{}},
 		{"NodeList", &NodeList{}},
+		{"NodeClaim", &NodeClaim{}},
+		{"NodeClaimList", &NodeClaimList{}},
 		{"AtprotoIdentity", &AtprotoIdentity{}},
 		{"AtprotoIdentityList", &AtprotoIdentityList{}},
 	} {
@@ -132,5 +134,90 @@ func TestDeepCopyDoesNotAliasNodeExpiryOrConditions(t *testing.T) {
 	}
 	if orig.Status.Conditions[0].Type != ConditionTeardownBlocked {
 		t.Fatalf("DeepCopy aliased conditions: original changed to %q", orig.Status.Conditions[0].Type)
+	}
+}
+
+func TestNodeClaimFieldNamesAreTheDoorsWireContract(t *testing.T) {
+	raw, err := json.Marshal(&NodeClaim{
+		Spec: NodeClaimSpec{
+			Cluster: "web", NodeName: "web-node1", OwnerDid: "did:web:example.com",
+			ApiserverPort: 24000, AdvertiseAddress: "100.127.255.254",
+			TokenFile: "/state/token", NodePasswordFile: "/state/password",
+			ServerCAFile: "/state/server-ca.crt", DenyBidderDids: []string{"did:plc:bad"},
+		},
+		Status: NodeClaimStatus{
+			Phase: NodeClaimRunning, Fqdn: "node.example.invalid", Message: "joined",
+			Contract: NodeClaimContract{
+				VMUri: "at://x/1", RFPUri: "at://x/2", AcceptUri: "at://x/3",
+				ReceiptUri: "at://x/4", ReceiptCid: "bafyrei", SubmitEventRef: "at://x/5",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	spec, _ := got["spec"].(map[string]any)
+	for _, field := range []string{
+		"cluster", "nodeName", "ownerDid", "apiserverPort", "advertiseAddress",
+		"tokenFile", "nodePasswordFile", "serverCAFile", "denyBidderDids",
+	} {
+		if _, ok := spec[field]; !ok {
+			t.Errorf("spec.%s is missing from the wire form. The door is a separate process that "+
+				"reads these names literally, and a Go-idiomatic rename writes a claim it reads as "+
+				"empty. got: %v", field, spec)
+		}
+	}
+	status, _ := got["status"].(map[string]any)
+	for _, field := range []string{"phase", "fqdn", "message"} {
+		if _, ok := status[field]; !ok {
+			t.Errorf("status.%s is missing from the wire form. got: %v", field, status)
+		}
+	}
+	contract, _ := status["contract"].(map[string]any)
+	for _, field := range []string{
+		"vmUri", "rfpUri", "acceptUri", "receiptUri", "receiptCid", "submitEventRef",
+	} {
+		if _, ok := contract[field]; !ok {
+			t.Errorf("status.contract.%s is missing from the wire form. got: %v", field, contract)
+		}
+	}
+}
+
+func TestNodeClaimPhasesAreTheDoorsLiterals(t *testing.T) {
+	want := map[NodeClaimPhase]string{
+		NodeClaimPending:      "Pending",
+		NodeClaimBidding:      "Bidding",
+		NodeClaimProvisioning: "Provisioning",
+		NodeClaimJoining:      "Joining",
+		NodeClaimRunning:      "Running",
+		NodeClaimFailed:       "Failed",
+		NodeClaimReleased:     "Released",
+	}
+	if len(want) != 7 {
+		t.Fatalf("two phases collided: %v", want)
+	}
+	for phase, literal := range want {
+		if string(phase) != literal {
+			t.Errorf("%q is not the literal the door writes (%q)", phase, literal)
+		}
+	}
+	if FinalizerNodeClaim != "nodeclaim.socialweb.computer/release" {
+		t.Fatalf("the finalizer is %q, and the door removes the one it names: a different string "+
+			"is a claim the door never releases, which is a machine that is never destroyed",
+			FinalizerNodeClaim)
+	}
+}
+
+func TestDeepCopyDoesNotAliasTheDeniedBidderDids(t *testing.T) {
+	orig := &NodeClaim{Spec: NodeClaimSpec{DenyBidderDids: []string{"did:plc:bad"}}}
+	dup := orig.DeepCopy()
+	dup.Spec.DenyBidderDids[0] = "did:plc:other"
+	if orig.Spec.DenyBidderDids[0] != "did:plc:bad" {
+		t.Fatalf("DeepCopy aliased denyBidderDids: original changed to %q",
+			orig.Spec.DenyBidderDids[0])
 	}
 }

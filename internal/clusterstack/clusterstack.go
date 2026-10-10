@@ -47,6 +47,8 @@ type Spec struct {
 
 	GuestDialled bool
 
+	MarketDialled bool
+
 	TLSSANs []string
 
 	AdvertisePort int
@@ -146,6 +148,11 @@ var (
 		"controller dialling the apiserver with a minted tenant credential, and nothing on PATH or " +
 		"derived from the data dir names that binary. A cluster that came up without it would have " +
 		"Nodes carrying no providerID and nothing reconciling them")
+	ErrTwoDialAddresses = errors.New("clusterstack: GuestDialled and MarketDialled are both set, and " +
+		"they name two different answers to where a node's machine is. A guest reaches this host " +
+		"through the gateway of the range its cluster holds in the subnet lease file and a market " +
+		"node reaches it through the market's SSH door, so a stack carrying both would be checked " +
+		"against one of them and advertise for the other")
 )
 
 func (s Spec) Validate() error {
@@ -177,6 +184,8 @@ func (s Spec) Validate() error {
 			"K3sCloudControllerManagerPort", s.K3sCloudControllerManagerPort)
 	case s.TokenFile == "":
 		return ErrMissingTokenFile
+	case s.GuestDialled && s.MarketDialled:
+		return ErrTwoDialAddresses
 	}
 	return s.Audit.Validate()
 }

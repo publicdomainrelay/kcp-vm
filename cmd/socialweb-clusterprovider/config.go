@@ -48,6 +48,10 @@ const (
 	envStoreEndpoint    = "SOCIALWEB_CLUSTERPROVIDER_STORE_ENDPOINT"
 	envAuditPolicy      = "SOCIALWEB_CLUSTERPROVIDER_AUDIT_POLICY"
 
+	envMarketAdvertiseAddress = "SOCIALWEB_CLUSTERPROVIDER_MARKET_ADVERTISE_ADDRESS"
+	envMarketDenyBidderDids   = "SOCIALWEB_CLUSTERPROVIDER_MARKET_DENY_BIDDER_DIDS"
+	envMarketReleaseTimeout   = "SOCIALWEB_CLUSTERPROVIDER_MARKET_RELEASE_TIMEOUT"
+
 	envScaleHold = "SOCIALWEB_CLUSTERPROVIDER_SCALE_HOLD"
 
 	envScaleMaxNodes = "SOCIALWEB_CLUSTERPROVIDER_SCALE_MAX_NODES"
@@ -81,6 +85,8 @@ const SubstrateFirecracker = "firecracker"
 
 const SubstrateQEMU = "qemu"
 
+const SubstrateMarket = "market"
+
 const NetworkPasta = "pasta"
 
 const AgentBinaryName = "kcpagent"
@@ -113,6 +119,12 @@ type Config struct {
 	PostgresBinDir string
 
 	AdvertiseAddress string
+
+	MarketAdvertiseAddress string
+
+	MarketDenyBidderDids []string
+
+	MarketReleaseTimeout time.Duration
 
 	StoreEndpoint string
 
@@ -168,6 +180,7 @@ func load(get func(string) string) (Config, error) {
 		StateDir:               strings.TrimSpace(get(envStateDir)),
 		PostgresBinDir:         strings.TrimSpace(get(envPostgresBinDir)),
 		AdvertiseAddress:       strings.TrimSpace(get(envAdvertiseAddress)),
+		MarketAdvertiseAddress: strings.TrimSpace(get(envMarketAdvertiseAddress)),
 		StoreEndpoint:          strings.TrimSpace(get(envStoreEndpoint)),
 		AuditPolicyPath:        strings.TrimSpace(get(envAuditPolicy)),
 		Substrate:              strings.TrimSpace(get(envSubstrate)),
@@ -192,9 +205,13 @@ func load(get func(string) string) (Config, error) {
 	if cfg.ESOManifestDir == "" {
 		cfg.ESOManifestDir = DefaultESOManifestDir
 	}
-	if cfg.AdvertiseAddress == "" && !guestSubstrate(cfg.Substrate) {
+	if cfg.AdvertiseAddress == "" && !guestSubstrate(cfg.Substrate) && cfg.Substrate != SubstrateMarket {
 		cfg.AdvertiseAddress = portallocator.LoopbackAdvertiseAddress
 	}
+	if cfg.MarketAdvertiseAddress == "" {
+		cfg.MarketAdvertiseAddress = portallocator.MarketAdvertiseAddress
+	}
+	cfg.MarketDenyBidderDids = splitList(get(envMarketDenyBidderDids))
 	switch {
 	case cfg.StoreEndpoint != "" && cfg.Datastore != "" && cfg.StoreEndpoint != cfg.Datastore:
 		return Config{}, fmt.Errorf(
@@ -331,6 +348,9 @@ func load(get func(string) string) (Config, error) {
 	if cfg.TokenTimeout, err = optionalDuration(get, envTokenTimeout); err != nil {
 		return Config{}, err
 	}
+	if cfg.MarketReleaseTimeout, err = optionalDuration(get, envMarketReleaseTimeout); err != nil {
+		return Config{}, err
+	}
 	if cfg.LogLevel, err = level(get(envLogLevel)); err != nil {
 		return Config{}, err
 	}
@@ -343,7 +363,7 @@ func guestSubstrate(name string) bool {
 	return name == SubstrateFirecracker || name == SubstrateQEMU
 }
 
-func (c Config) checkPlacement() error {
+func (c *Config) checkPlacement() error {
 	switch c.Substrate {
 	case "":
 		return fmt.Errorf(
@@ -352,6 +372,8 @@ func (c Config) checkPlacement() error {
 				"decides what a node's record names, what its teardown stops and what its lease "+
 				"means -- a gateway that guessed would report a placement it is not honouring",
 			envSubstrate)
+	case SubstrateMarket:
+		return c.checkMarketPlacement()
 	case SubstrateFirecracker:
 		if !hostos.Firecracker() {
 			return fmt.Errorf(
@@ -414,17 +436,82 @@ func (c Config) checkPlacement() error {
 		}
 	default:
 		return fmt.Errorf(
-			"%s is %q, and %s and %s are the only substrates implemented today. Another name is "+
-				"refused rather than tried: it would decide what a node's record names, what its "+
+			"%s is %q, and %s, %s and %s are the only substrates implemented today. Another name "+
+				"is refused rather than tried: it would decide what a node's record names, what its "+
 				"teardown stops and what its leases mean, and a gateway running a placement nobody "+
 				"wrote would report a node it never booted, or one it cannot stop",
-			envSubstrate, c.Substrate, SubstrateFirecracker, SubstrateQEMU)
+			envSubstrate, c.Substrate, SubstrateFirecracker, SubstrateQEMU, SubstrateMarket)
 	}
 
 	if err := c.refuseUnenforceableGuestInputs(); err != nil {
 		return err
 	}
 
+	if err := c.checkHost(); err != nil {
+		return err
+	}
+
+	switch c.Network {
+	case "":
+		return fmt.Errorf(
+			"%s is not set. It names how a node's network namespace is provided, and the answer "+
+				"is not observable from here: a node that comes up with no network is one whose "+
+				"apiserver it cannot dial, which reads as a join that never happens and a cluster "+
+				"stuck at zero nodes with no error that names the cause",
+			envNetwork)
+	case NetworkPasta:
+	default:
+		return fmt.Errorf(
+			"%s is %q, and %s is the only value accepted today: it is what was measured to work "+
+				"rootlessly on this host's kernel. Another name is refused rather than tried, "+
+				"because a node whose network came from something nobody measured is a node whose "+
+				"reachability is unknown at the moment it is counted as up",
+			envNetwork, c.Network, NetworkPasta)
+	}
+	return nil
+}
+
+func (c *Config) checkMarketPlacement() error {
+	if c.AdvertiseAddress != "" {
+		return fmt.Errorf(
+			"%s is %q and %s is %s. A node on this substrate is a VM rented from the compute "+
+				"market, and the address it dials its cluster's apiserver on is put on the guest's "+
+				"OWN loopback and reverse-forwarded to this host by the market's door. That address "+
+				"comes from %s, not from here, so a value in this variable cannot be in force: it is "+
+				"refused rather than accepted and ignored, because an operator who set one and saw "+
+				"no complaint would believe it was carrying it",
+			envAdvertiseAddress, c.AdvertiseAddress, envSubstrate, c.Substrate, envMarketAdvertiseAddress)
+	}
+	for _, req := range []struct{ name, value string }{
+		{envFirecracker, c.Firecracker},
+		{envQEMU, c.QEMU},
+		{envNodeAgent, c.NodeAgent},
+		{envImageOutDir, c.ImageOutDir},
+		{envImageConfig, c.ImageConfig},
+		{envNetwork, c.Network},
+	} {
+		if req.value == "" {
+			continue
+		}
+		return fmt.Errorf(
+			"%s is %q and %s is %s. A node on this substrate is neither started nor wired on this "+
+				"host: the market builds it from the cloud-init its bidder applies, and the "+
+				"clusterprovider's whole part in it is the claim it writes. So this setting cannot "+
+				"be in force, and it is refused rather than accepted and ignored -- an operator who "+
+				"set one and saw no complaint would believe it was carrying it",
+			req.name, req.value, envSubstrate, c.Substrate)
+	}
+	if err := c.checkHost(); err != nil {
+		return err
+	}
+	if err := portallocator.AssertMarketAdvertiseAddress(c.MarketAdvertiseAddress); err != nil {
+		return fmt.Errorf("%s: %w", envMarketAdvertiseAddress, err)
+	}
+	c.AdvertiseAddress = c.MarketAdvertiseAddress
+	return nil
+}
+
+func (c Config) checkHost() error {
 	host, err := os.Hostname()
 	if err != nil {
 		return fmt.Errorf(
@@ -448,24 +535,6 @@ func (c Config) checkPlacement() error {
 				"cluster running somewhere else, and every later pass would read that "+
 				"other machine's state as its own",
 			envHost, c.Host, host)
-	}
-
-	switch c.Network {
-	case "":
-		return fmt.Errorf(
-			"%s is not set. It names how a node's network namespace is provided, and the answer "+
-				"is not observable from here: a node that comes up with no network is one whose "+
-				"apiserver it cannot dial, which reads as a join that never happens and a cluster "+
-				"stuck at zero nodes with no error that names the cause",
-			envNetwork)
-	case NetworkPasta:
-	default:
-		return fmt.Errorf(
-			"%s is %q, and %s is the only value accepted today: it is what was measured to work "+
-				"rootlessly on this host's kernel. Another name is refused rather than tried, "+
-				"because a node whose network came from something nobody measured is a node whose "+
-				"reachability is unknown at the moment it is counted as up",
-			envNetwork, c.Network, NetworkPasta)
 	}
 	return nil
 }
@@ -523,6 +592,16 @@ func (c Config) refuseUnenforceableGuestInputs() error {
 			name, value, envSubstrate, c.Substrate)
 	}
 	return nil
+}
+
+func splitList(raw string) []string {
+	out := []string{}
+	for _, part := range strings.Split(raw, ",") {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
 }
 
 func parsePortRange(raw string) (portallocator.Range, error) {

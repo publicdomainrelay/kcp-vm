@@ -54,6 +54,7 @@ done
 
 KW apply -f "$DEPLOY_DIR/cluster-apiresourceschema.yaml"
 KW apply -f "$DEPLOY_DIR/node-apiresourceschema.yaml"
+KW apply -f "$DEPLOY_DIR/nodeclaim-apiresourceschema.yaml"
 KW apply -f "$DEPLOY_DIR/atprotoidentity-apiresourceschema.yaml"
 KW apply -f "$DEPLOY_DIR/cluster-apiexport.yaml"
 KW apply -f "$DEPLOY_DIR/atprotoidentity-apiexport.yaml"

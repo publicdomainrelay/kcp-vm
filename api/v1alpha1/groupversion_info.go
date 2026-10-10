@@ -22,6 +22,8 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 		&ClusterList{},
 		&Node{},
 		&NodeList{},
+		&NodeClaim{},
+		&NodeClaimList{},
 		&AtprotoIdentity{},
 		&AtprotoIdentityList{},
 	)

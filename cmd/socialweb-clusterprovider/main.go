@@ -20,6 +20,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clusterprovider"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clusterstack"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostos"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpclient"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/materialiser"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/portallocator"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/procgroup"
@@ -160,6 +161,7 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 		VaultStoreDSN:          postgres.vaultDSN,
 		AdvertiseAddress:       cfg.AdvertiseAddress,
 		GuestDialled:           substrate.IsGuest(),
+		MarketDialled:          substrate.Name == SubstrateMarket,
 		BindAddress:            portallocator.LoopbackAdvertiseAddress,
 		VaultTLS:               vaultTLSFor(),
 		AuditPolicyPath:        cfg.AuditPolicyPath,
@@ -225,15 +227,22 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 	tenantConfig := tenantFromClusterCA(alloc, cfg.StateDir)
 	tenant := tenantClients(registry, tenantConfig)
 	nodeObserver := clusterprovider.NodeObserver{Client: tenant}
+	claims, err := kcpclient.New(kcpclient.Options{Host: cfg.KCPHost, RestConfig: restCfg})
+	if err != nil {
+		return Deps{}, err
+	}
 	nodeHosts, err := newNodeHosts(nodeHostsOptions{
-		Allocator:        alloc,
-		Networks:         networks,
-		Registry:         registry,
-		StateDir:         cfg.StateDir,
-		AdvertiseAddress: cfg.AdvertiseAddress,
-		Tenant:           tenant,
-		Log:              log,
-		Substrate:        substrate,
+		Allocator:           alloc,
+		Networks:            networks,
+		Registry:            registry,
+		Claims:              claims,
+		StateDir:            cfg.StateDir,
+		AdvertiseAddress:    cfg.AdvertiseAddress,
+		DenyBidderDids:      cfg.MarketDenyBidderDids,
+		ClaimReleaseTimeout: cfg.MarketReleaseTimeout,
+		Tenant:              tenant,
+		Log:                 log,
+		Substrate:           substrate,
 	})
 	if err != nil {
 		return Deps{}, err
@@ -248,7 +257,13 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 		}
 	}
 	scaleDriver, err := scaledriver.New(nodeHosts.forCluster, scaledriver.Options{
-		Observe: nodeObserver.Observe,
+		Observe: func(ctx context.Context, cluster string) (scale.Observation, int, error) {
+			observed, nodes, err := nodeObserver.Observe(ctx, cluster)
+			if err != nil {
+				return observed, nodes, err
+			}
+			return observed, nodes + nodeHosts.inFlight(ctx, cluster), nil
+		},
 		Scale: scale.Options{
 			Hold:        cfg.ScaleHold,
 			MaxNodes:    cfg.ScaleMaxNodes,

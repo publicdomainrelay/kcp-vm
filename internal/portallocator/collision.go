@@ -14,6 +14,8 @@ import (
 
 const LoopbackAdvertiseAddress = "127.0.0.1"
 
+const MarketAdvertiseAddress = "100.127.255.254"
+
 func FindDuplicatePorts(leases []Lease) []string {
 	byPort := map[int][]Lease{}
 	for _, l := range leases {
@@ -132,18 +134,68 @@ func AssertGuestDialAddress(address string) error {
 	return nil
 }
 
+func AssertMarketAdvertiseAddress(address string) error {
+	ip := net.ParseIP(address)
+	if ip == nil {
+		return fmt.Errorf("portallocator: %q is not an IP address, and it is the address a MARKET "+
+			"node dials its cluster's apiserver on. A name here resolves to whatever each guest's "+
+			"resolver says, which is a different answer in every guest and no answer at all in a "+
+			"guest whose resolver has not been written yet", address)
+	}
+	if ip.IsLoopback() {
+		return fmt.Errorf("portallocator: %q is a loopback address, and a market node's machine is "+
+			"not this host. k3s refuses a loopback address for the in-cluster `kubernetes` Service "+
+			"endpoint (measured: subsets[0].addresses[0].ip Invalid value: \"127.0.0.1\": may not be "+
+			"in the loopback range), so a cluster advertised on one fails to start rather than fails "+
+			"to be reached", address)
+	}
+	if ip.IsUnspecified() {
+		return fmt.Errorf("portallocator: %q is the unspecified address, which names every "+
+			"interface and no interface. A market node puts the advertised address on its OWN "+
+			"loopback and the door reverse-forwards it here, so there is nothing for a wildcard to "+
+			"be put on and nothing for the forward to name", address)
+	}
+	for _, iface := range hostAddresses() {
+		if iface.Equal(ip) {
+			return fmt.Errorf("portallocator: %q is an address THIS HOST carries, and a market "+
+				"node's machine is on the far side of the market's SSH door. The guest puts the "+
+				"advertised address on its OWN loopback and the door reverse-forwards it to this "+
+				"host's apiserver, so an address this host already carries is one the guest cannot "+
+				"take and the forward collides with whatever answers it here", address)
+		}
+	}
+	return nil
+}
+
 func AssertAdvertiseInvariant(advertiseAddress string, advertisePort, forwardHostPort int, lease Lease) error {
-	return advertiseInvariant(advertiseAddress, advertisePort, forwardHostPort, lease, false)
+	return advertiseInvariant(advertiseAddress, advertisePort, forwardHostPort, lease, dialFromThisHost)
 }
 
 func AssertGuestAdvertiseInvariant(advertiseAddress string, advertisePort, forwardHostPort int, lease Lease) error {
-	return advertiseInvariant(advertiseAddress, advertisePort, forwardHostPort, lease, true)
+	return advertiseInvariant(advertiseAddress, advertisePort, forwardHostPort, lease, dialFromAGuest)
 }
 
-func advertiseInvariant(advertiseAddress string, advertisePort, forwardHostPort int, lease Lease, guest bool) error {
+func AssertMarketAdvertiseInvariant(advertiseAddress string, advertisePort, forwardHostPort int, lease Lease) error {
+	return advertiseInvariant(advertiseAddress, advertisePort, forwardHostPort, lease, dialFromTheMarket)
+}
+
+type dialler uint8
+
+const (
+	dialFromThisHost dialler = iota
+
+	dialFromAGuest
+
+	dialFromTheMarket
+)
+
+func advertiseInvariant(advertiseAddress string, advertisePort, forwardHostPort int, lease Lease, dial dialler) error {
 	check := AssertAdvertiseAddress
-	if guest {
+	switch dial {
+	case dialFromAGuest:
 		check = AssertGuestDialAddress
+	case dialFromTheMarket:
+		check = AssertMarketAdvertiseAddress
 	}
 	if err := check(advertiseAddress); err != nil {
 		return err

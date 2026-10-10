@@ -75,6 +75,8 @@ type StackConfig struct {
 
 	GuestDialled bool
 
+	MarketDialled bool
+
 	GuestGateway func(cluster string) (string, error)
 
 	VaultTLS func(dataDir string, hosts ...string) (VaultTLS, error)
@@ -159,6 +161,7 @@ func StepsFor(cfg StackConfig) materialiser.StepBuilder {
 			AdvertiseAddress:              advertise,
 			BindAddress:                   cfg.BindAddress,
 			GuestDialled:                  cfg.GuestDialled,
+			MarketDialled:                 cfg.MarketDialled,
 			TLSSANs:                       sans,
 			AdvertisePort:                 advPort,
 			K3sSecurePort:                 k3sSecure,
@@ -234,7 +237,12 @@ func StepsFor(cfg StackConfig) materialiser.StepBuilder {
 }
 
 func (cfg StackConfig) announced(cluster string) (string, []string, error) {
-	if !cfg.GuestDialled {
+	switch {
+	case cfg.GuestDialled && cfg.MarketDialled:
+		return "", nil, clusterstack.ErrTwoDialAddresses
+	case cfg.MarketDialled:
+		return cfg.AdvertiseAddress, []string{cfg.AdvertiseAddress}, nil
+	case !cfg.GuestDialled:
 		return cfg.AdvertiseAddress, cfg.TLSSANs, nil
 	}
 	if cfg.GuestGateway == nil {
