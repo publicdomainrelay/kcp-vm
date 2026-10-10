@@ -321,6 +321,11 @@ func TestANodeThatNeverWasReadyGetsTheJoinGraceNotTheLossGrace(t *testing.T) {
 				at, f.claims.deletes)
 		}
 	}
+	if NodeJoinGrace > 2*time.Minute {
+		t.Fatalf("the default join grace is %s; a broken node held longer than 2m stalls every debugging "+
+			"loop (user, 2026-10-07: 10 minutes kills the dev flow); a longer hold is an explicit %s",
+			NodeJoinGrace, "SOCIALWEB_CLUSTERPROVIDER_NODE_JOIN_GRACE")
+	}
 	f.clock.set(registered.Add(NodeJoinGrace))
 	outcome, err := f.hosts.confirm(ctx, f.key)
 	if err != nil {
@@ -329,5 +334,15 @@ func TestANodeThatNeverWasReadyGetsTheJoinGraceNotTheLossGrace(t *testing.T) {
 	if f.claims.deletes != 1 || f.nodePresent(t) || !slices.Equal(outcome.lost, []string{f.node}) {
 		t.Fatalf("at the join grace a never-Ready node: deletes %d, Node present %v, lost %v; want it "+
 			"released and replaced", f.claims.deletes, f.nodePresent(t), outcome.lost)
+	}
+}
+
+func TestTheJoinGraceIsConfigurable(t *testing.T) {
+	cfg, err := load(envFor(map[string]string{"SOCIALWEB_CLUSTERPROVIDER_NODE_JOIN_GRACE": "15m"}))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.NodeJoinGrace != 15*time.Minute {
+		t.Fatalf("NodeJoinGrace = %s, want 15m from SOCIALWEB_CLUSTERPROVIDER_NODE_JOIN_GRACE", cfg.NodeJoinGrace)
 	}
 }

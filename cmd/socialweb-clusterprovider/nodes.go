@@ -193,18 +193,27 @@ type nodeHostsOptions struct {
 
 	NodeLossGrace time.Duration
 
+	NodeJoinGrace time.Duration
+
 	Observe observeCluster
 }
 
 const NodeLossGrace = 90 * time.Second
 
-const NodeJoinGrace = 10 * time.Minute
+const NodeJoinGrace = 2 * time.Minute
 
 func (o nodeHostsOptions) now() time.Time {
 	if o.Now == nil {
 		return time.Now()
 	}
 	return o.Now()
+}
+
+func (o nodeHostsOptions) nodeJoinGrace() time.Duration {
+	if o.NodeJoinGrace <= 0 {
+		return NodeJoinGrace
+	}
+	return o.NodeJoinGrace
 }
 
 func (o nodeHostsOptions) nodeLossGrace() time.Duration {
@@ -463,7 +472,7 @@ func (n *tenantNodes) lost(node *corev1.Node) (bool, time.Time) {
 	defer n.mu.Unlock()
 	grace := n.opts.nodeLossGrace()
 	if !n.readySeen[node.Name] && ready.Status == corev1.ConditionFalse {
-		grace = NodeJoinGrace
+		grace = n.opts.nodeJoinGrace()
 	}
 	since := ready.LastTransitionTime.Time
 	if since.IsZero() {
