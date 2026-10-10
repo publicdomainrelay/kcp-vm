@@ -34,6 +34,14 @@ func NodeJWTPolicyName(node string) string {
 	return NodeJWTPolicyPrefix + node
 }
 
+func NodeFromJWTPolicy(name string) (string, bool) {
+	node, ok := strings.CutPrefix(name, NodeJWTPolicyPrefix)
+	if !ok || node == "" {
+		return "", false
+	}
+	return node, true
+}
+
 func NodeJWTPolicyHCL(node string) string {
 	return readPolicy(NodeKVDataPath(node))
 }
