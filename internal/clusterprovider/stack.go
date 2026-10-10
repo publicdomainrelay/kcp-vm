@@ -93,6 +93,8 @@ type StackConfig struct {
 	Harvest func(ctx context.Context, cluster string) error
 
 	GuardRides bool
+
+	Links *Links
 }
 
 func StepsFor(cfg StackConfig) materialiser.StepBuilder {
@@ -228,6 +230,12 @@ func StepsFor(cfg StackConfig) materialiser.StepBuilder {
 		}
 		if cfg.Stack.Has(procgroup.ComponentCloudControllerManager) {
 			steps, err = prepareCloudControllerManager(steps, cfg, cluster, APIServerURL(k3sSecure))
+			if err != nil {
+				return nil, err
+			}
+		}
+		if cfg.Links != nil {
+			steps, err = linksAfterK3s(steps, cfg, cluster, dataDir, l, k3sSecure, spec.OpenBaoPort)
 			if err != nil {
 				return nil, err
 			}
