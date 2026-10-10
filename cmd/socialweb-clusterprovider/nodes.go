@@ -100,6 +100,8 @@ type nodeSubstrate struct {
 	Guest nodevm.Guest
 
 	Network nodevm.Network
+
+	DiskMiB int
 }
 
 func (s nodeSubstrate) IsGuest() bool {
@@ -131,6 +133,7 @@ func nodeSubstrateFor(cfg Config) (nodeSubstrate, error) {
 			Image:       image,
 			Guest:       manifest.Guest(),
 			Network:     nodevm.Network{Interface: manifest.GuestInterface},
+			DiskMiB:     cfg.NodeDiskMiB,
 		}, nil
 	case SubstrateQEMU:
 		image, manifest, err := nodefirecracker.LoadImage(cfg.ImageOutDir, cfg.ImageConfig)
@@ -147,6 +150,7 @@ func nodeSubstrateFor(cfg Config) (nodeSubstrate, error) {
 			Image:     image,
 			Guest:     manifest.Guest(),
 			Network:   nodevm.Network{Interface: manifest.GuestInterface},
+			DiskMiB:   cfg.NodeDiskMiB,
 		}, nil
 	case "":
 		return nodeSubstrate{}, errNoSubstrateChoice
@@ -219,6 +223,7 @@ func (s nodeSubstrate) NewNodeHost(opts nodeSubstrateOptions) (nodeHost, error) 
 			Image:         s.Image,
 			Guest:         s.Guest,
 			Network:       s.Network,
+			DiskMiB:       s.DiskMiB,
 			NodeDiskStage: opts.NodeDiskStage,
 		})
 	case SubstrateQEMU:
@@ -235,6 +240,7 @@ func (s nodeSubstrate) NewNodeHost(opts nodeSubstrateOptions) (nodeHost, error) 
 			Image:         s.Image,
 			Guest:         s.Guest,
 			Network:       s.Network,
+			DiskMiB:       s.DiskMiB,
 			NodeDiskStage: opts.NodeDiskStage,
 		})
 	case "":

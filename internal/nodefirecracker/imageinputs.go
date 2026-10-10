@@ -187,6 +187,10 @@ type BuildConfig struct {
 	RootfsLabel string `json:"rootfs_label"`
 
 	RootfsHeadroomMiB int `json:"rootfs_headroom_mib"`
+
+	Vcpu int `json:"vcpu"`
+
+	MemMiB int `json:"memMiB"`
 }
 
 type BuildInputs struct {
@@ -235,6 +239,10 @@ type BuildInputs struct {
 	RootfsLabel string `json:"rootfsLabel"`
 
 	RootfsHeadroomMiB int `json:"rootfsHeadroomMiB"`
+
+	Vcpu int `json:"vcpu"`
+
+	MemMiB int `json:"memMiB"`
 }
 
 func (i BuildInputs) Fingerprint() (string, error) {
@@ -370,6 +378,8 @@ func RecordInputs(configPath string, cfg BuildConfig) (BuildInputs, error) {
 		K3sDataDir:        cfg.K3sDataDir,
 		RootfsLabel:       cfg.RootfsLabel,
 		RootfsHeadroomMiB: cfg.RootfsHeadroomMiB,
+		Vcpu:              cfg.Vcpu,
+		MemMiB:            cfg.MemMiB,
 	}
 	vmm, err := nodevm.NormalizeVMM(cfg.VMM)
 	if err != nil {

@@ -48,6 +48,10 @@ type Config struct {
 
 	RootfsHeadroomMiB int `json:"rootfs_headroom_mib"`
 
+	Vcpu int `json:"vcpu"`
+
+	MemMiB int `json:"memMiB"`
+
 	BootArgs []string `json:"boot_args"`
 
 	Modules []string `json:"modules"`

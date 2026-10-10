@@ -68,6 +68,8 @@ func writeManifest(cfg Config, out Artifacts, tars []imageTar) error {
 	manifest := nodefirecracker.Manifest{
 		VMM:            cfg.VMMName(),
 		BootArgs:       cfg.BootArgs,
+		Vcpu:           cfg.Vcpu,
+		MemMiB:         cfg.MemMiB,
 		K3sBinary:      cfg.K3sBinary,
 		K3sDataDir:     cfg.K3sDataDir,
 		Modules:        cfg.Modules,
@@ -107,6 +109,8 @@ func buildConfigOf(cfg Config) nodefirecracker.BuildConfig {
 		K3sDataDir:        cfg.K3sDataDir,
 		RootfsLabel:       cfg.RootfsLabel,
 		RootfsHeadroomMiB: cfg.RootfsHeadroomMiB,
+		Vcpu:              cfg.Vcpu,
+		MemMiB:            cfg.MemMiB,
 	}
 }
 

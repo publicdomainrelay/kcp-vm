@@ -65,6 +65,8 @@ const (
 	envQEMU        = "SOCIALWEB_CLUSTERPROVIDER_QEMU"
 	envNodeAgent   = "SOCIALWEB_CLUSTERPROVIDER_NODE_AGENT"
 
+	envNodeDiskMiB = "SOCIALWEB_CLUSTERPROVIDER_NODE_DISK_MIB"
+
 	envCloudControllerManager = "SOCIALWEB_CLUSTERPROVIDER_CLOUD_CONTROLLER_MANAGER"
 
 	envTokenTimeout = "SOCIALWEB_CLUSTERPROVIDER_TOKEN_TIMEOUT"
@@ -131,6 +133,8 @@ type Config struct {
 	QEMU string
 
 	NodeAgent string
+
+	NodeDiskMiB int
 
 	CloudControllerManager string
 
@@ -234,6 +238,18 @@ func load(get func(string) string) (Config, error) {
 		cfg.ScaleMaxNodes = n
 	}
 
+	if raw := strings.TrimSpace(get(envNodeDiskMiB)); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("%s is not a whole number: %w", envNodeDiskMiB, err)
+		}
+		if n < 1 {
+			return Config{}, fmt.Errorf("%s is %d. A node's disk holds the root filesystem and "+
+				"everything a job writes beside it, so a disk that is not at least one MiB is a "+
+				"guest that cannot boot. Leave it unset to take the node image's own default", envNodeDiskMiB, n)
+		}
+		cfg.NodeDiskMiB = n
+	}
 	if raw := strings.TrimSpace(get(envScalePodsPerNode)); raw != "" {
 		n, err := strconv.Atoi(raw)
 		if err != nil {

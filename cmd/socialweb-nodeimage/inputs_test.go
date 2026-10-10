@@ -47,6 +47,8 @@ var fieldDeclarations = map[string]fieldDeclaration{
 	"k3s_data_dir":        {Role: readByTheBuild, Covers: []string{"k3sDataDir"}},
 	"rootfs_label":        {Role: readByTheBuild, Covers: []string{"rootfsLabel"}},
 	"rootfs_headroom_mib": {Role: readByTheBuild, Covers: []string{"rootfsHeadroomMiB"}},
+	"vcpu":                {Role: readByTheBuild, Covers: []string{"vcpu"}},
+	"memMiB":              {Role: readByTheBuild, Covers: []string{"memMiB"}},
 	"boot_args":           {Role: readByTheBuild, Covers: []string{"bootArgs"}},
 	"modules":             {Role: readByTheBuild, Covers: []string{"modules"}},
 	"initramfs_modules":   {Role: readByTheBuild, Covers: []string{"initramfsModules"}},
