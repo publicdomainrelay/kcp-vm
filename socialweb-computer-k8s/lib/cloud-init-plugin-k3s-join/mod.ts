@@ -31,7 +31,6 @@ export function renderK3sJoinScript(opts: K3sJoinModuleOptions = {}): string {
   const keys = NODE_JOIN_KEYS.join(" ");
   return `#!/bin/bash
 set -euo pipefail
-umask 077
 declare -A V
 while IFS='=' read -r key value; do
   [ -z "\${key}" ] && break
@@ -49,8 +48,10 @@ for _ in $(seq 1 ${setupWaitSec}); do
 done
 command -v k3s >/dev/null || { echo "socialweb-k3s-join: k3s was not installed within ${setupWaitSec}s" >&2; exit 69; }
 mkdir -p "$(dirname ${tokenPath})" "$(dirname ${passwordPath})"
+umask 077
 printf '%s' "\${V[TOKEN]}" > ${tokenPath}
 printf '%s' "\${V[NODE_PASSWORD]}" > ${passwordPath}
+umask 022
 ip -4 addr show dev lo | grep -q " \${V[ADVERTISE]}/32 " || ip addr add "\${V[ADVERTISE]}/32" dev lo
 echo "${K3S_JOIN_READY_MARKER}"
 IFS= read -r go || true
