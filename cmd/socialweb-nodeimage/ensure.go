@@ -14,6 +14,7 @@ const (
 	statePresent = "present"
 	stateBuilt   = "built"
 	stateReused  = "reused"
+	stateAbsent  = "absent"
 )
 
 type ensureResult struct {
@@ -92,7 +93,7 @@ func buildTheImageTheConfigurationNames(
 	return nil
 }
 
-func Ensure(configPath string, reuseStale bool, asJSON bool, preinstallPath string) error {
+func Ensure(configPath string, reuseStale bool, asJSON bool, preinstallPath string, presentOnly bool) error {
 	if configPath == "" {
 		return fmt.Errorf("-config is required: the name of the image to ask for is derived from the " +
 			"inputs a configuration reads, and there is no configuration here to derive it from")
@@ -133,6 +134,20 @@ func Ensure(configPath string, reuseStale bool, asJSON bool, preinstallPath stri
 		KernelOrigin:  cfg.KernelOrigin,
 		KernelVersion: cfg.KernelVersion,
 	}
+	if presentOnly && !present {
+		result.State = stateAbsent
+		if asJSON {
+			raw, err := json.Marshal(result)
+			if err != nil {
+				return fmt.Errorf("socialweb-nodeimage: rendering the result of asking whether %s holds "+
+					"the image the configuration at %s names: %w", dir, cfg.Path, err)
+			}
+			fmt.Printf("%s\n", raw)
+		} else {
+			fmt.Printf("absent %s\n  config   %s\n  nothing built, nothing pulled\n", dir, cfg.Path)
+		}
+		return refusedAbsent(cfg, fingerprint, dir)
+	}
 	switch {
 	case present:
 	case reuseStale:
@@ -153,6 +168,9 @@ func Ensure(configPath string, reuseStale bool, asJSON bool, preinstallPath stri
 			return err
 		}
 	}
+	if err := refusePreinstallTheImageDoesNotCarry(cfg, result.Dir); err != nil {
+		return err
+	}
 	result.RootfsMiB = rootfsTemplateMiB(result.Dir)
 	if asJSON {
 		raw, err := json.Marshal(result)
@@ -172,6 +190,53 @@ func Ensure(configPath string, reuseStale bool, asJSON bool, preinstallPath stri
 	default:
 		fmt.Printf("image %s\n  kernel    %s\n  initramfs %s\n  rootfs    %s\n",
 			dir, result.Kernel, result.Initramfs, result.Rootfs)
+	}
+	return nil
+}
+
+func refusedAbsent(cfg Config, fingerprint string, dir string) error {
+	return fmt.Errorf("socialweb-nodeimage: -present-only asked whether the store at %s already holds the "+
+		"image the inputs of the configuration at %s name, and it does not: the inputs name %s and %s "+
+		"is not a whole build of them. Nothing was built, pulled or reused, and this is the answer "+
+		"rather than a failure: a host that must not build -- or must not build as the user it is "+
+		"running the caller as -- asks this question so that it can decide whether to build, and an "+
+		"absent answer that returned success would be indistinguishable from a whole image in the "+
+		"store. Build it (socialweb-nodeimage -ensure -config %s) or point -config at the "+
+		"configuration the images in %s were built from", cfg.OutDir, cfg.Path, fingerprint, dir,
+		cfg.Path, cfg.OutDir)
+}
+
+func refusePreinstallTheImageDoesNotCarry(cfg Config, dir string) error {
+	manifest, err := nodefirecracker.LoadManifest(dir)
+	if err != nil {
+		return err
+	}
+	if manifest.Inputs == nil {
+		return nodefirecracker.ErrNoBuildInputs
+	}
+	recorded := strings.TrimSpace(manifest.Inputs.Preinstall)
+	asked := strings.TrimSpace(cfg.Preinstall)
+	switch {
+	case recorded == "" && asked != "":
+		return fmt.Errorf("socialweb-nodeimage: the image in %s records no preinstall, and the "+
+			"preinstall manifest %s was named for this run. The manifest is an input of the image -- "+
+			"it is read and digested into the name the image is published under -- so an image built "+
+			"without it and an image built with it are two different images, and this is the one built "+
+			"without it: none of the software %s bakes in is in it. A guest booted from it comes up, "+
+			"joins and reaches Running carrying none of what the manifest exists to install, and "+
+			"nothing in the guest or in the cluster names the image as the cause, so this is refused "+
+			"rather than used. Build the image these inputs name (socialweb-nodeimage -ensure -config "+
+			"%s -preinstall %s)", dir, asked, asked, cfg.Path, asked)
+	case recorded != "" && asked == "":
+		return fmt.Errorf("socialweb-nodeimage: the image in %s records the preinstall manifest %s "+
+			"and this run named no preinstall at all. The manifest is an input of the image -- it is "+
+			"read and digested into the name the image is published under -- so an image built with it "+
+			"and an image built without it are two different images, and this is the one built with "+
+			"the software %s bakes in: the inputs in front of this run do not name that software, and "+
+			"an image carrying a package list nobody named is one whose contents cannot be derived "+
+			"from its inputs. Refused rather than used: build the image these inputs name "+
+			"(socialweb-nodeimage -ensure -config %s), or name the manifest this image was built with "+
+			"(-preinstall %s)", dir, recorded, recorded, cfg.Path, recorded)
 	}
 	return nil
 }
