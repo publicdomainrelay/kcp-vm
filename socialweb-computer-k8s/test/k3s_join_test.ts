@@ -8,11 +8,15 @@ import {
   NODE_UNIT_ORDER,
   NODE_UNITS,
   renderApiserverLinkScript,
+  renderDnsLinkScript,
   renderNodeSecretsScript,
   renderOpenBaoLinkScript,
+  renderPodCniScript,
+  renderPodMasqueradeScript,
   renderResolver,
   RESOLV_CONF_PATH,
   SECRETS_FETCH_UNIT,
+  STEP_PROBE,
 } from "@publicdomainrelay/cloud-init-plugin-k3s-join";
 import { OPENBAO_LINK_LOCAL_ADDR } from "@publicdomainrelay/socialweb-computer-k8s-common";
 
@@ -305,6 +309,60 @@ Deno.test("the apiserver link puts the advertise address on lo and dials the api
     );
   } finally {
     await Deno.remove(run.dir, { recursive: true });
+  }
+});
+
+Deno.test("every join script times its own steps against /proc/uptime, so a boot's split reads off the console", () => {
+  const scripts: [string, string][] = [
+    ["openbao-link", renderOpenBaoLinkScript()],
+    ["node-secrets", renderNodeSecretsScript()],
+    ["apiserver-link", renderApiserverLinkScript()],
+    ["dns-link", renderDnsLinkScript()],
+    ["masquerade", renderPodMasqueradeScript()],
+    ["cni", renderPodCniScript()],
+  ];
+  for (const [name, script] of scripts) {
+    assertStringIncludes(script, STEP_PROBE);
+    assertStringIncludes(script, `step ${name} start`);
+  }
+  for (const [name, script] of scripts.filter(([n]) => !n.endsWith("-link"))) {
+    assertStringIncludes(script, `step ${name} done`);
+  }
+  for (const [name, script] of scripts) {
+    assertStringIncludes(script, "/proc/uptime", name);
+  }
+});
+
+Deno.test("node-secrets prints its start and done times as the milliseconds the guest's own kernel reports", async () => {
+  const run = await nodeSecretsRun(KV);
+  try {
+    assertEquals(run.code, 0, run.stderr);
+    assert(new RegExp(`socialweb-step: node-secrets start [0-9]+\\n`).test(`${run.stderr}\n`), run.stderr);
+    assert(new RegExp(`socialweb-step: node-secrets done [0-9]+\\n`).test(`${run.stderr}\n`), run.stderr);
+  } finally {
+    await Deno.remove(run.dir, { recursive: true });
+  }
+});
+
+Deno.test("the links time their dials, and the link that execs dumbpipe reports only the start", async () => {
+  const openbao = await shimmedLink(renderOpenBaoLinkScript(), {});
+  try {
+    assertEquals(openbao.code, 0, openbao.stderr);
+    assert(new RegExp("socialweb-step: openbao-link start [0-9]+\\n").test(`${openbao.stderr}\n`), openbao.stderr);
+    assertEquals(openbao.stderr.includes("socialweb-step: openbao-link done"), false, "exec replaces the shell");
+  } finally {
+    await Deno.remove(openbao.dir, { recursive: true });
+  }
+  const apiserver = await shimmedLink(renderApiserverLinkScript(), {
+    ADVERTISE_ADDRESS: "100.127.255.254",
+    APISERVER_PORT: "23456",
+    APISERVER_TICKET: "apiticket",
+  });
+  try {
+    assertEquals(apiserver.code, 0, apiserver.stderr);
+    assert(new RegExp("socialweb-step: apiserver-link start [0-9]+\\n").test(`${apiserver.stderr}\n`), apiserver.stderr);
+  } finally {
+    await Deno.remove(apiserver.dir, { recursive: true });
   }
 });
 

@@ -29,6 +29,14 @@ export const NODE_UNIT_ORDER = [
 
 export const SECRETS_FETCH_UNIT = "setup-secrets.service";
 
+export const STEP_PROBE = `uptime_ms() {
+  local uptime
+  uptime="$(cut -d' ' -f1 /proc/uptime)"
+  printf '%s' "$(( \${uptime%.*} * 1000 + 10#\${uptime#*.} * 10 ))"
+}
+step() { echo "socialweb-step: $1 $2 $(uptime_ms)" >&2; }
+`;
+
 export const NODE_SCRIPTS = {
   openbaoLink: "/usr/local/bin/socialweb-openbao-link",
   nodeSecrets: "/usr/local/bin/socialweb-node-secrets",
@@ -216,7 +224,8 @@ export function renderNodeSecretsScript(opts: K3sJoinModuleOptions = {}): string
   const p = resolvePaths(opts);
   return `#!/bin/bash
 set -euo pipefail
-say() { echo "socialweb-node-secrets: $*" >&2; }
+${STEP_PROBE}say() { echo "socialweb-node-secrets: $*" >&2; }
+step node-secrets start
 [ -f ${p.done} ] && [ -s ${p.linkEnv} ] && [ -s ${p.meshdEnv} ] && exit 0
 for f in ${p.claim} ${p.ca} ${p.acceptPath}; do
   [ -s "\${f}" ] || { say "\${f} is missing"; exit 1; }
@@ -289,6 +298,7 @@ printf 'SOCIALWEB_MESHD_NODE_NAME=%s\\nSOCIALWEB_MESHD_KUBECONFIG=%s\\n' "\${NOD
 mv ${p.meshdEnv}.tmp ${p.meshdEnv}
 chmod 0600 ${p.serverCA} ${p.token} ${p.nodePassword} ${p.k3sNodePassword} ${p.linkEnv} ${p.meshdEnv}
 touch ${p.done}
+step node-secrets done
 say "fetched the join secrets for \${NODE}"
 `;
 }
@@ -297,6 +307,7 @@ export function renderOpenBaoLinkScript(opts: K3sJoinModuleOptions = {}): string
   const p = resolvePaths(opts);
   return `#!/bin/bash
 set -euo pipefail
+${STEP_PROBE}step openbao-link start
 [ -s ${p.ticket} ] || { echo "socialweb-openbao-link: ${p.ticket} is missing" >&2; exit 1; }
 [ -x ${p.dumbpipe} ] || { echo "socialweb-openbao-link: ${p.dumbpipe} is not installed" >&2; exit 1; }
 TICKET="$(tr -d '[:space:]' < ${p.ticket})"
@@ -308,6 +319,7 @@ export function renderApiserverLinkScript(opts: K3sJoinModuleOptions = {}): stri
   const p = resolvePaths(opts);
   return `#!/bin/bash
 set -euo pipefail
+${STEP_PROBE}step apiserver-link start
 [ -x ${p.dumbpipe} ] || { echo "socialweb-apiserver-link: ${p.dumbpipe} is not installed" >&2; exit 1; }
 : "\${ADVERTISE_ADDRESS:?}" "\${APISERVER_PORT:?}" "\${APISERVER_TICKET:?}"
 ip -4 addr show dev lo | grep -q " \${ADVERTISE_ADDRESS}/32 " || ip addr add "\${ADVERTISE_ADDRESS}/32" dev lo
@@ -347,7 +359,8 @@ export function renderPodCniScript(opts: K3sJoinModuleOptions = {}): string {
   const conf = `${p.cniConfDir}/${CNI_CONFLIST_NAME}`;
   return `#!/bin/bash
 set -euo pipefail
-say() { echo "socialweb-pod-cni: $*" >&2; }
+${STEP_PROBE}say() { echo "socialweb-pod-cni: $*" >&2; }
+step cni start
 : "\${NODE_NAME:?}"
 printf '%s' "\${NODE_NAME}" | grep -Eqx '[a-z0-9]([a-z0-9.-]*[a-z0-9])?' || { say "NODE_NAME is not a node name"; exit 1; }
 CIDR=""
@@ -367,6 +380,7 @@ done
 printf '${renderCniConflist("%s")}' "\${CIDR}" > ${conf}.tmp
 mv ${conf}.tmp ${conf}
 say "wrote ${conf} for \${CIDR}"
+step cni done
 `;
 }
 
@@ -402,15 +416,18 @@ exit 0
 export function renderPodMasqueradeScript(): string {
   return `#!/bin/bash
 set -euo pipefail
+${STEP_PROBE}step masquerade start
 sysctl -qw net.ipv4.ip_forward=1
 RULE=(-s ${POD_CLUSTER_CIDR} ! -d ${POD_CLUSTER_CIDR} -m comment --comment ${POD_EGRESS_COMMENT} -j MASQUERADE)
 iptables -w -t nat -C POSTROUTING "\${RULE[@]}" 2>/dev/null || iptables -w -t nat -A POSTROUTING "\${RULE[@]}"
+step masquerade done
 `;
 }
 
 export function renderDnsLinkScript(): string {
   return `#!/bin/bash
 set -euo pipefail
+${STEP_PROBE}step dns-link start
 modprobe dummy 2>/dev/null || true
 ip link show ${NODE_LOCAL_DNS_LINK} >/dev/null 2>&1 || ip link add ${NODE_LOCAL_DNS_LINK} type dummy
 ADDRS="$(ip -4 addr show dev ${NODE_LOCAL_DNS_LINK})"
@@ -419,6 +436,7 @@ case "\${ADDRS}" in
   *) ip addr add ${NODE_LOCAL_DNS_ADDRESS}/32 dev ${NODE_LOCAL_DNS_LINK} ;;
 esac
 ip link set ${NODE_LOCAL_DNS_LINK} up
+step dns-link done
 `;
 }
 
