@@ -18,6 +18,6 @@
   ],
   "runs": [
     "cloud-init --version",
-    "case \"$(uname -m)\" in x86_64|amd64) _arch=x86_64; _sha=9ac5e71983eba4cf4f47e92e4694dad0f0133abba4f14dd2a2a8428cece88fef ;; aarch64|arm64) _arch=aarch64; _sha=8cd099afe80c69ac58bfbc975b28e29d41caea141f3dd396457345a739836a0e ;; *) echo \"no dumbpipe archive for $(uname -m)\" >&2; exit 1 ;; esac && curl -fsSL \"https://github.com/n0-computer/dumbpipe/releases/download/v0.39.0/dumbpipe-v0.39.0-linux-${_arch}.tar.gz\" -o /tmp/dumbpipe.tar.gz && printf '%s  %s\\n' \"${_sha}\" /tmp/dumbpipe.tar.gz | sha256sum -c - && tar -xzf /tmp/dumbpipe.tar.gz -C /tmp && install -m 0755 /tmp/dumbpipe /usr/local/bin/dumbpipe && echo 0.39.0 > /usr/local/bin/dumbpipe.version && rm -f /tmp/dumbpipe.tar.gz /tmp/dumbpipe"
+    "case \"$(uname -m)\" in x86_64|amd64) _arch=x86_64; _sha=9ac5e71983eba4cf4f47e92e4694dad0f0133abba4f14dd2a2a8428cece88fef ;; aarch64|arm64) _arch=aarch64; _sha=8cd099afe80c69ac58bfbc975b28e29d41caea141f3dd396457345a739836a0e ;; *) echo \"no dumbpipe archive for $(uname -m)\" >&2; exit 1 ;; esac && curl -fsSL \"https://github.com/n0-computer/dumbpipe/releases/download/v0.39.0/dumbpipe-v0.39.0-linux-${_arch}.tar.gz\" -o /tmp/dumbpipe.tar.gz && printf '%s  %s\\n' \"${_sha}\" /tmp/dumbpipe.tar.gz | sha256sum -c - && mkdir -p /tmp/dumbpipe-unpack && tar -xzf /tmp/dumbpipe.tar.gz -C /tmp/dumbpipe-unpack && install -m 0755 /tmp/dumbpipe-unpack/dumbpipe /usr/local/bin/dumbpipe && echo 0.39.0 > /usr/local/bin/dumbpipe.version && rm -rf /tmp/dumbpipe.tar.gz /tmp/dumbpipe-unpack"
   ]
 }
