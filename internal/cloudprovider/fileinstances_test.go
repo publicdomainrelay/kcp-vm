@@ -2,20 +2,26 @@ package cloudprovider
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 )
 
-func TestAMissingInstanceFileIsAnAbsentInstance(t *testing.T) {
+func TestAMissingInstanceFileIsAnErrorNotAnAbsence(t *testing.T) {
 	f := NewFileInstances(filepath.Join(t.TempDir(), "nodes.json"))
 	inst, known, err := f.Get(context.Background(), "c1-node1")
-	if err != nil {
-		t.Fatalf("Get on a missing file = %v, want no error: an absent snapshot is an absent "+
-			"instance, which is what makes the controller delete a Node whose guest is gone", err)
+	if err == nil {
+		t.Fatalf("Get on a missing file = (known=%v, %+v, nil), want an error: the provider writes "+
+			"the snapshot on every provision, teardown and reap and once at startup, so a missing "+
+			"file is a state dir removed under a running controller, and reading it as \"no "+
+			"instance\" deletes every Node of the cluster", known, inst)
+	}
+	if !errors.Is(err, ErrNoSnapshot) {
+		t.Fatalf("Get on a missing file = %v, want it to wrap ErrNoSnapshot", err)
 	}
 	if known {
-		t.Fatalf("Get on a missing file = (known=%v, %+v), want known=false", known, inst)
+		t.Fatal("Get on a missing file reported the instance as known")
 	}
 }
 

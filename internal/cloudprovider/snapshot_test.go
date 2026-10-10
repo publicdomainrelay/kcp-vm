@@ -5,6 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestTheSnapshotWriterWritesAnEmptyArrayAndNotAnAbsentFile(t *testing.T) {
@@ -15,9 +18,9 @@ func TestTheSnapshotWriterWritesAnEmptyArrayAndNotAnAbsentFile(t *testing.T) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("the snapshot for an empty node set is ABSENT: %v. The provider must always write "+
-			"the file, because its absence and an empty list are both read as \"no instance\", and a "+
-			"provider whose write is skipped leaves the cloud controller manager unable to tell a "+
-			"cluster with no nodes from one whose snapshot never ran", err)
+			"the file, because an absent snapshot makes the cloud controller manager refuse to judge "+
+			"any Node, so a provider whose write is skipped leaves a cluster with no guests holding "+
+			"Nodes nothing removes", err)
 	}
 	if string(raw) != "[]" {
 		t.Fatalf("the snapshot for an empty node set is %q, want an empty JSON array", string(raw))
@@ -46,14 +49,14 @@ func TestTheSnapshotWriterRoundTripsANonEmptySet(t *testing.T) {
 	}
 }
 
-func TestAbsentAndEmptySnapshotsReadTheSameAndMalformedIsRefused(t *testing.T) {
+func TestAnAbsentSnapshotIsRefusedAndAnEmptyOneIsEmpty(t *testing.T) {
 	dir := t.TempDir()
 	absent := filepath.Join(dir, "absent.json")
 	_, known, err := NewFileInstances(absent).Get(context.Background(), "c1-node1")
-	if err != nil || known {
-		t.Fatalf("an absent snapshot = (known=%v, err=%v), want (false, nil): fileinstances.go "+
-			"documents an absent file as an absent instance and NOT as an unreadable source, so both "+
-			"the absent file and the empty array are the delete path", known, err)
+	if err == nil || known {
+		t.Fatalf("an absent snapshot = (known=%v, err=%v), want an error: absent is not empty, "+
+			"and only the empty array the provider writes may mean that no guest is behind a Node",
+			known, err)
 	}
 
 	empty := filepath.Join(dir, "nodes.json")
@@ -62,9 +65,8 @@ func TestAbsentAndEmptySnapshotsReadTheSameAndMalformedIsRefused(t *testing.T) {
 	}
 	_, known, err = NewFileInstances(empty).Get(context.Background(), "c1-node1")
 	if err != nil || known {
-		t.Fatalf("an empty-array snapshot = (known=%v, err=%v), want (false, nil), the same as an "+
-			"absent file -- so writing the array is what keeps the file present, and presence is not "+
-			"itself a claim that the node still exists", known, err)
+		t.Fatalf("an empty-array snapshot = (known=%v, err=%v), want (false, nil): a present, "+
+			"empty snapshot is the provider saying the cluster has no guest", known, err)
 	}
 
 	malformed := filepath.Join(dir, "malformed.json")
@@ -74,5 +76,31 @@ func TestAbsentAndEmptySnapshotsReadTheSameAndMalformedIsRefused(t *testing.T) {
 	if _, known, err := NewFileInstances(malformed).Get(context.Background(), "c1-node1"); err == nil {
 		t.Fatalf("an unparseable snapshot returned known=%v and no error; an unreadable source is "+
 			"NOT an absent instance and must never become the delete path", known)
+	}
+}
+
+func TestTheControllerDeletesNoNodeOverAnAbsentSnapshotAndDeletesOverAnEmptyOne(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "nodes.json")
+	c, rec := newTestController(t, NewFileInstances(path))
+	seedNode(t, c, &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "c1-node1"}})
+
+	if err := c.Reconcile(context.Background(), "c1-node1"); err == nil {
+		t.Fatal("Reconcile over an absent snapshot returned nil; it must return an error so the " +
+			"Node is requeued rather than judged")
+	}
+	if len(rec.deleted) != 0 {
+		t.Fatalf("deleted = %v over an absent snapshot, want nothing: the controller fails closed "+
+			"when the instance snapshot is missing", rec.deleted)
+	}
+
+	if err := WriteSnapshot(path, nil); err != nil {
+		t.Fatalf("WriteSnapshot: %v", err)
+	}
+	if err := c.Reconcile(context.Background(), "c1-node1"); err != nil {
+		t.Fatalf("Reconcile over an empty snapshot: %v", err)
+	}
+	if len(rec.deleted) != 1 || rec.deleted[0] != "c1-node1" {
+		t.Fatalf("deleted = %v over an empty snapshot, want [c1-node1]", rec.deleted)
 	}
 }

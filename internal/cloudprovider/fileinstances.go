@@ -30,7 +30,12 @@ func (f *FileInstances) Get(ctx context.Context, nodeName string) (Instance, boo
 	raw, err := os.ReadFile(f.Path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return Instance{}, false, nil
+			return Instance{}, false, fmt.Errorf(
+				"%w at %s. ABSENT is not EMPTY: the provider writes this file on every provision, "+
+					"teardown and reap and once at startup, and writes [] for a cluster with no guest, "+
+					"so a missing file is a state dir removed under a running controller. Reading it "+
+					"as \"no instance\" would delete every Node of the cluster, so no Node is judged "+
+					"until the snapshot exists", ErrNoSnapshot, f.Path)
 		}
 		return Instance{}, false, fmt.Errorf(
 			"cloudprovider: reading the instance snapshot at %s: %w. A read that failed is an "+
