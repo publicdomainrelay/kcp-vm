@@ -17,6 +17,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/eso"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpclient"
 )
 
@@ -31,13 +32,11 @@ func tenantGrantDoc(t *testing.T) []byte {
 	return raw
 }
 
-const grantESONamespace = "external-secrets"
-
 func renderedGrant(t *testing.T, ownerDID string) []unstructured.Unstructured {
 	t.Helper()
 	rendered, err := kcpclient.RenderTenantGrant(string(tenantGrantDoc(t)), kcpclient.GrantScope{
-		OwnerDID:     ownerDID,
-		ESONamespace: grantESONamespace,
+		OwnerDID: ownerDID,
+		ESOUser:  eso.ControllerUser,
 	})
 	if err != nil {
 		t.Fatalf("the deployed grant is not renderable for %s: %v", ownerDID, err)
@@ -139,8 +138,8 @@ func TestTheGrantIsRenderedForTheClustersOwner(t *testing.T) {
 	}
 
 	other, err := kcpclient.RenderTenantGrant(string(tenantGrantDoc(t)), kcpclient.GrantScope{
-		OwnerDID:     "did:plc:someoneelse00000000000000",
-		ESONamespace: grantESONamespace,
+		OwnerDID: "did:plc:someoneelse00000000000000",
+		ESOUser:  eso.ControllerUser,
 	})
 	if err != nil {
 		t.Fatalf("RenderTenantGrant: %v", err)
@@ -151,37 +150,36 @@ func TestTheGrantIsRenderedForTheClustersOwner(t *testing.T) {
 	}
 }
 
-func TestTheGrantAdmitsTheExternalSecretsControllerInItsInstallNamespace(t *testing.T) {
-	if !strings.Contains(string(tenantGrantDoc(t)), kcpclient.GrantESONamespacePlaceholder) {
-		t.Fatalf("deploy/tenant-grant.yaml carries no %s, so the policy admits whichever namespace "+
-			"the file hardcodes and denies an External Secrets install anywhere else",
-			kcpclient.GrantESONamespacePlaceholder)
+func TestTheGrantAdmitsTheExternalSecretsControllerBesideTheControlPlaneAndNoServiceAccount(t *testing.T) {
+	if !strings.Contains(string(tenantGrantDoc(t)), kcpclient.GrantESOUserPlaceholder) {
+		t.Fatalf("deploy/tenant-grant.yaml carries no %s, so the policy admits whichever username "+
+			"the file hardcodes", kcpclient.GrantESOUserPlaceholder)
 	}
-	for _, esoNamespace := range []string{"external-secrets", "eso"} {
-		rendered, err := kcpclient.RenderTenantGrant(string(tenantGrantDoc(t)), kcpclient.GrantScope{
-			OwnerDID:     grantOwner,
-			ESONamespace: esoNamespace,
-		})
-		if err != nil {
-			t.Fatalf("RenderTenantGrant for namespace %q: %v", esoNamespace, err)
-		}
-		want := "system:serviceaccount:" + esoNamespace + ":external-secrets"
-		if !strings.Contains(rendered, want) {
-			t.Fatalf("the grant rendered for namespace %q does not admit %s, so the External "+
-				"Secrets controller installed there is denied and its ExternalSecret reads as a "+
-				"broken secret rather than as a grant that does not name it", esoNamespace, want)
-		}
-		if strings.Contains(rendered, "system:serviceaccount:default:external-secrets") {
-			t.Fatalf("the grant rendered for namespace %q still admits the default namespace, "+
-				"which is the hardcoded namespace this rendering exists to replace", esoNamespace)
-		}
-	}
-	if _, err := kcpclient.RenderTenantGrant(string(tenantGrantDoc(t)), kcpclient.GrantScope{
+	rendered, err := kcpclient.RenderTenantGrant(string(tenantGrantDoc(t)), kcpclient.GrantScope{
 		OwnerDID: grantOwner,
-	}); err == nil {
-		t.Fatal("RenderTenantGrant accepted an empty External Secrets namespace, so the policy " +
-			"would admit system:serviceaccount::external-secrets and the failure would surface " +
-			"later as a broken ExternalSecret")
+		ESOUser:  eso.ControllerUser,
+	})
+	if err != nil {
+		t.Fatalf("RenderTenantGrant: %v", err)
+	}
+	if want := "'" + eso.ControllerUser + "'"; !strings.Contains(rendered, want) {
+		t.Fatalf("the grant does not admit %s, so the controller beside the control plane is denied "+
+			"every Secret it materialises in %s", want, kcpclient.TenantNamespace)
+	}
+	if strings.Contains(rendered, "system:serviceaccount:default:external-secrets") {
+		t.Fatal("the grant still admits the in-tenant controller's ServiceAccount, which a tenant who " +
+			"can create a ServiceAccount of that name inherits")
+	}
+	if strings.Contains(rendered, "system:serviceaccount:__") || strings.Contains(rendered, "__SOCIALWEB_ESO") {
+		t.Fatal("the grant carries an unrendered placeholder")
+	}
+	for _, bad := range []string{"", "x' || true || 'y", "a\\b", "system:socialweb:eso "} {
+		if _, err := kcpclient.RenderTenantGrant(string(tenantGrantDoc(t)), kcpclient.GrantScope{
+			OwnerDID: grantOwner, ESOUser: bad,
+		}); err == nil {
+			t.Fatalf("RenderTenantGrant accepted the External Secrets username %q, which the policy "+
+				"compares inside a CEL string literal", bad)
+		}
 	}
 }
 

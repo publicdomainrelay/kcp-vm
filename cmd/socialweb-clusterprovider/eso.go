@@ -4,12 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"net"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strconv"
-	"strings"
 	"time"
 
 	"k8s.io/client-go/dynamic"
@@ -17,27 +11,22 @@ import (
 	"k8s.io/client-go/rest"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clusterprovider"
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/eso"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/esovault"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpclient"
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/subnetallocator"
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/vaultcert"
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/vaultlayout"
 )
 
 const tenantAddOnTimeout = 60 * time.Second
 
-const tenantAddOnInstallTimeout = 3 * time.Minute
-
-func tenantStoreIsReachableFrom(cfg Config) bool {
-	return nodeSubstrate{Name: cfg.Substrate}.IsGuest()
+func externalSecretsFor(cfg Config) *clusterprovider.ExternalSecrets {
+	return &clusterprovider.ExternalSecrets{
+		Binary:          cfg.ExternalSecrets,
+		Bundle:          cfg.ESOBundle,
+		LegacyNamespace: cfg.ESONamespace,
+	}
 }
 
-func tenantAddOns(cfg Config, networks *subnetallocator.Allocator, log *slog.Logger) func(context.Context, string, *rest.Config) error {
+func tenantAddOns(cfg Config, log *slog.Logger) func(context.Context, string, *rest.Config) error {
 	return func(ctx context.Context, cluster string, restCfg *rest.Config) error {
-		if cfg.ESOManifestDir == "" {
-			return fmt.Errorf("clusterprovider: no ESO manifest directory is configured, so the "+
-				"OpenBao-backed tenant store for %s has no manifests to apply", cluster)
-		}
 		dataDir, err := clusterprovider.ClusterDataDir(cfg.StateDir, cluster)
 		if err != nil {
 			return err
@@ -51,114 +40,38 @@ func tenantAddOns(cfg Config, networks *subnetallocator.Allocator, log *slog.Log
 		if err != nil {
 			return fmt.Errorf("clusterprovider: a dynamic client for %s's tenant add-ons: %w", cluster, err)
 		}
-		installed := false
-		install := func(ctx context.Context) error {
-			log.Info("cluster provider: installing the External Secrets Operator into the tenant cluster",
-				"cluster", cluster, "manifests", cfg.ESOManifestDir, "namespace", cfg.ESONamespace,
-				"fieldManager", clusterprovider.AddOnFieldManager)
-			bounded, cancel := context.WithTimeout(ctx, tenantAddOnInstallTimeout)
-			defer cancel()
-			if err := installExternalSecrets(bounded, restCfg, cfg.ESOManifestDir, cfg.ESONamespace); err != nil {
-				return err
-			}
-			installed = true
-			return nil
-		}
-		_, measured, err := clusterprovider.ReadAddOnBaseline(dataDir)
+		bounded, cancel := context.WithTimeout(ctx, tenantAddOnTimeout)
+		defer cancel()
+		vaultURL, err := esovault.ApplyVaultStore(bounded, dyn, esovault.VaultStore{
+			Cluster:     cluster,
+			DataDir:     dataDir,
+			VaultPort:   seal.Port,
+			RootToken:   seal.RootToken,
+			ManifestDir: cfg.ESOManifestDir,
+			Namespace:   kcpclient.TenantNamespace,
+		})
 		if err != nil {
 			return err
 		}
-		if !measured {
-			if err := install(ctx); err != nil {
-				return fmt.Errorf("clusterprovider: re-applying the add-ons of %s under %s so their "+
-					"baseline can be measured: %w", cluster, clusterprovider.AddOnFieldManager, err)
-			}
-		}
-		measure := func() error {
-			if !installed {
-				return nil
-			}
-			return measureTenantBaseline(ctx, restCfg, dataDir, cluster, log)
-		}
-		if !tenantStoreIsReachableFrom(cfg) {
-			if err := eso.InstallOperator(ctx, dyn, install); err != nil {
-				return err
-			}
-			if err := measure(); err != nil {
-				return err
-			}
-			removing, cancelRemoval := context.WithTimeout(ctx, tenantAddOnTimeout)
-			err := eso.Remove(removing, dyn, eso.Options{
-				ManifestDir: cfg.ESOManifestDir,
-				Namespace:   kcpclient.TenantNamespace,
-			})
-			cancelRemoval()
-			if err != nil {
-				return err
-			}
-			log.Info("cluster provider: the tenant store is not written for this substrate",
-				"cluster", cluster, "substrate", cfg.Substrate,
-				"decision", "the store's vault server is the cluster's own subnet gateway, which a "+
-					"guest substrate binds and routes and this one does not: the vault is a child of "+
-					"this process bound to loopback, and a market guest has no route to the gateway "+
-					"address. A store that cannot be reached reads as a broken ExternalSecret rather "+
-					"than as an address nothing binds, so it is not written at all; the operator IS "+
-					"installed, and a tenant who wants a store configures one they can reach",
-				"item", "NEXT.yaml ESO-3")
-			return nil
-		}
-		lease, err := networks.Allocate(subnetallocator.Request{Cluster: cluster})
+		cs, err := kubernetes.NewForConfig(restCfg)
 		if err != nil {
-			return fmt.Errorf("clusterprovider: the gateway the ESO store for %s dials the vault on: %w",
-				cluster, err)
+			return fmt.Errorf("clusterprovider: a client to measure the add-on baseline of %s: %w", cluster, err)
 		}
-		gateway := lease.Gateway().String()
-		vaultTLS, err := vaultcert.EnsureVaultTLSCertificate(dataDir, gateway, "127.0.0.1")
-		if err != nil {
-			return err
-		}
-		vaultURL := "https://" + net.JoinHostPort(gateway, strconv.Itoa(seal.Port))
-		if err := vaultcert.RequireServedVaultTLS(ctx, net.JoinHostPort("127.0.0.1", strconv.Itoa(seal.Port)), gateway); err != nil {
-			return fmt.Errorf("clusterprovider: the ESO store for %s would be told to dial %s, and "+
-				"the vault that is running cannot present that host: %w", cluster, vaultURL, err)
-		}
-		if err := vaultcert.WriteESODemoSecret(ctx, clusterprovider.VaultAddr(seal.Port),
-			seal.RootToken, map[string]any{"demo": "openbao:" + cluster}, vaultTLS.CAPEM); err != nil {
-			return fmt.Errorf("clusterprovider: writing the ESO demo value the tenant's "+
-				"ExternalSecret reads out of the cluster vault for %s: %w", cluster, err)
-		}
-		cert, err := vaultcert.MintESOCertificate(ctx, clusterprovider.VaultAddr(seal.Port),
-			seal.RootToken, vaultlayout.RoleESO, vaultURL, vaultTLS.CAPEM)
-		if err != nil {
-			return fmt.Errorf("clusterprovider: minting the ESO certificate for %s: %w", cluster, err)
-		}
-		if err := applyTenantAddOns(ctx, dyn, install, eso.Options{
-			ManifestDir:   cfg.ESOManifestDir,
-			Namespace:     kcpclient.TenantNamespace,
-			VaultServer:   vaultURL,
-			ServerCAPEM:   vaultTLS.CAPEM,
-			ClientCertPEM: cert.CertPEM,
-			ClientKeyPEM:  cert.KeyPEM,
-		}); err != nil {
-			return err
-		}
-		if err := measure(); err != nil {
+		if err := measureTenantBaseline(ctx, cs, dataDir, cluster, log); err != nil {
 			return err
 		}
 		log.Info("cluster provider: applied the tenant add-ons",
 			"cluster", cluster, "manifests", cfg.ESOManifestDir,
-			"namespace", kcpclient.TenantNamespace, "vault", vaultURL,
-			"note", "a cluster with zero nodes accepts the objects; the ESO controller pod stays "+
-				"Pending because it has no node to schedule on")
+			"namespace", kcpclient.TenantNamespace, "vault", vaultURL, "substrate", cfg.Substrate,
+			"decision", "the External Secrets controller runs beside the control plane in this "+
+				"cluster's process group, so the store dials the cluster vault on loopback on every "+
+				"substrate and syncs at zero nodes; the tenant holds only its CRDs and RBAC",
+			"item", "NEXT.yaml ESO-4")
 		return nil
 	}
 }
 
-func measureTenantBaseline(ctx context.Context, restCfg *rest.Config, dataDir, cluster string, log *slog.Logger) error {
-	cs, err := kubernetes.NewForConfig(restCfg)
-	if err != nil {
-		return fmt.Errorf("clusterprovider: a client to measure the add-on baseline of %s: %w", cluster, err)
-	}
+func measureTenantBaseline(ctx context.Context, cs kubernetes.Interface, dataDir, cluster string, log *slog.Logger) error {
 	b, err := clusterprovider.MeasureAddOnBaseline(ctx, cs, clusterprovider.AddOnFieldManager, time.Now())
 	if err != nil {
 		return fmt.Errorf("clusterprovider: measuring the add-on baseline of %s: %w", cluster, err)
@@ -175,46 +88,5 @@ func measureTenantBaseline(ctx context.Context, restCfg *rest.Config, dataDir, c
 		"path", clusterprovider.AddOnBaselinePath(dataDir),
 		"meaning", "a cluster holding exactly these workloads, with these specs, has nothing deployed "+
 			"and scales to zero nodes; a changed spec or any other workload is a tenant's intent")
-	return nil
-}
-
-func applyTenantAddOns(ctx context.Context, dyn dynamic.Interface, install func(context.Context) error, o eso.Options) error {
-	if err := eso.InstallOperator(ctx, dyn, install); err != nil {
-		return err
-	}
-	return eso.Apply(ctx, dyn, o)
-}
-
-func installExternalSecrets(ctx context.Context, restCfg *rest.Config, manifestDir, namespace string) error {
-	script := filepath.Join(manifestDir, "install.sh")
-	dir, err := os.MkdirTemp("", "socialweb-eso-install")
-	if err != nil {
-		return fmt.Errorf("clusterprovider: a directory for the External Secrets installer's kubeconfig: %w", err)
-	}
-	defer os.RemoveAll(dir)
-	doc, err := clusterprovider.Kubeconfig("tenant", restCfg)
-	if err != nil {
-		return err
-	}
-	kubeconfig := filepath.Join(dir, "kubeconfig")
-	if err := os.WriteFile(kubeconfig, doc, 0o600); err != nil {
-		return fmt.Errorf("clusterprovider: writing the External Secrets installer's kubeconfig: %w", err)
-	}
-	env := []string{}
-	for _, kv := range os.Environ() {
-		if strings.HasPrefix(kv, "KUBECONFIG=") || strings.HasPrefix(kv, "ESO_NAMESPACE=") ||
-			strings.HasPrefix(kv, "ESO_SKIP_ROLLOUT_WAIT=") || strings.HasPrefix(kv, "ESO_FIELD_MANAGER=") {
-			continue
-		}
-		env = append(env, kv)
-	}
-	cmd := exec.CommandContext(ctx, "bash", script)
-	cmd.Env = append(env, "KUBECONFIG="+kubeconfig, "ESO_NAMESPACE="+namespace, "ESO_SKIP_ROLLOUT_WAIT=1",
-		"ESO_FIELD_MANAGER="+clusterprovider.AddOnFieldManager)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("clusterprovider: the External Secrets install %s failed: %w: %s",
-			script, err, strings.TrimSpace(string(out)))
-	}
 	return nil
 }

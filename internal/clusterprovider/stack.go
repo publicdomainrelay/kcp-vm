@@ -88,6 +88,8 @@ type StackConfig struct {
 
 	CloudControllerManager string
 
+	ExternalSecrets *ExternalSecrets
+
 	AuditPolicyPath string
 
 	Harvest func(ctx context.Context, cluster string) error
@@ -180,6 +182,13 @@ func StepsFor(cfg StackConfig) materialiser.StepBuilder {
 			},
 		}
 
+		if cfg.runsExternalSecrets() {
+			spec.ExternalSecrets, err = externalSecretsSpec(cfg, l, cluster)
+			if err != nil {
+				return nil, err
+			}
+		}
+
 		if cfg.Stack.Has(procgroup.ComponentOpenBao) {
 			baoPort, err := leasePort(l, portallocator.PurposeOpenBao, cluster)
 			if err != nil {
@@ -230,6 +239,12 @@ func StepsFor(cfg StackConfig) materialiser.StepBuilder {
 		}
 		if cfg.Stack.Has(procgroup.ComponentCloudControllerManager) {
 			steps, err = prepareCloudControllerManager(steps, cfg, cluster, APIServerURL(k3sSecure))
+			if err != nil {
+				return nil, err
+			}
+		}
+		if cfg.runsExternalSecrets() {
+			steps, err = prepareExternalSecrets(steps, cfg, spec, cluster, APIServerURL(k3sSecure))
 			if err != nil {
 				return nil, err
 			}

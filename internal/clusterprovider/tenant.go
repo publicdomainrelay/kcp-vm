@@ -26,6 +26,7 @@ import (
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/eso"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpclient"
 )
 
@@ -283,8 +284,8 @@ func (p *Provider) Bootstrap(ctx context.Context, ref Ref, cl *v1alpha1.Cluster)
 		return fmt.Errorf("clusterprovider: reading the tenant grant: %w", err)
 	}
 	grant, err := kcpclient.RenderTenantGrant(string(raw), kcpclient.GrantScope{
-		OwnerDID:     ref.DID,
-		ESONamespace: p.opts.ESONamespace,
+		OwnerDID: ref.DID,
+		ESOUser:  eso.ControllerUser,
 	})
 	if err != nil {
 		return fmt.Errorf("clusterprovider: the tenant grant for %s: %w", ref.Name, err)

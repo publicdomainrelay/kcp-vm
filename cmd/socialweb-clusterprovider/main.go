@@ -182,6 +182,7 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 
 	stack := append(clusterprovider.Stack{}, clusterprovider.DesignedStack...)
 	stack = append(stack, procgroup.ComponentCloudControllerManager)
+	stack = append(stack, clusterprovider.ExternalSecretsComponents...)
 	needsPostgres := stack.NeedsLocalPostgres(cfg.StoreEndpoint == "")
 	purposes, err := clusterprovider.PurposesFor(stack, needsPostgres)
 	if err != nil {
@@ -219,6 +220,7 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 		VaultTLS:               vaultTLSFor(),
 		AuditPolicyPath:        cfg.AuditPolicyPath,
 		CloudControllerManager: cfg.CloudControllerManager,
+		ExternalSecrets:        externalSecretsFor(cfg),
 		Harvest: func(ctx context.Context, cluster string) error {
 			if err := clusterprovider.HarvestBundle(cfg.StateDir, cluster); err != nil {
 				return err
@@ -350,7 +352,7 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 
 		PostgresNeeded: needsPostgres,
 
-		InstallTenant: tenantAddOns(cfg, networks, log),
+		InstallTenant: tenantAddOns(cfg, log),
 	}
 	if links != nil {
 		deps.Links = &linkRecorder{client: linkClient, registry: registry}

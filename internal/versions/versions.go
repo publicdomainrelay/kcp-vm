@@ -17,6 +17,10 @@ type Component struct {
 	Invariant string `json:"invariant,omitempty"`
 	Disputed  string `json:"disputed,omitempty"`
 
+	Image string `json:"image,omitempty"`
+
+	BundleSHA256 string `json:"bundleSha256,omitempty"`
+
 	Resolved string `json:"resolved,omitempty"`
 }
 

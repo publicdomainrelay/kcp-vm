@@ -150,8 +150,9 @@ Everything is either a controller-runtime reconcile loop or a deploy config. No 
 | 4 | Node provider | Go | Watches the home workspace for intent, actuates one node, writes `Node` state |
 | 5 | kcp provider workspace | YAML | `APIResourceSchema` plus `APIExport` for our CRDs; tenants `APIBinding` |
 | 6 | k3s cloud-init module | sibling repo, `UserDataModule` | Installs k3s in a market guest. The only sanctioned way a guest-side component arrives |
-| 7 | OpenBao plus ESO | deploy config | The vault, at two levels: a root vault one per deployment and a cluster vault one per ON cluster, both in the production stack. OpenBao holds the per-cluster 13-entry identity bundle and is its AUTHORITATIVE store — the wake reads it out of the vault and materialises the file tree at `<DataDir>/server/tls`+`cred/`, because k3s has no vault plugin and must read files at runtime (sections 9, 14 and 15). ESO materialises vault-backed Secrets into the tenant cluster; the bundle is custody and wake-time restore, not the runtime location |
+| 7 | OpenBao plus ESO | deploy config | The vault, at two levels: a root vault one per deployment and a cluster vault one per ON cluster, both in the production stack. OpenBao holds the per-cluster 13-entry identity bundle and is its AUTHORITATIVE store — the wake reads it out of the vault and materialises the file tree at `<DataDir>/server/tls`+`cred/`, because k3s has no vault plugin and must read files at runtime (sections 9, 14 and 15). ESO materialises vault-backed Secrets into the tenant cluster (row 9); the bundle is custody and wake-time restore, not the runtime location |
 | 8 | Cluster links | Go, `internal/clusterlink` + `internal/clusterprovider/links.go` | Two `dumbpipe listen-tcp` members of every cluster's process group, one in front of the k3s apiserver and one in front of the cluster vault, each an iroh endpoint whose key lives in that cluster's vault. A node dials the cluster through them; the door holds no per-node connection. Recorded as `ClusterLink` objects (plan 0005 M3) |
+| 9 | External Secrets pair | pinned upstream binary, `internal/eso` + `internal/clusterprovider/externalsecrets.go` | The External Secrets Operator v2.11.0 run as TWO members of every cluster's process group, beside the control plane: the controller (`external-secrets`) and its admission webhook (`external-secrets webhook`), one binary copied digest-pinned into the control-plane image. They dial the tenant apiserver with a minted credential and reach the cluster vault on loopback, so an ExternalSecret syncs at ZERO nodes and on every substrate. The tenant keeps only the bundle's CRDs, ClusterRoles and a URL webhook registration; no ESO pod runs in it (`NEXT.yaml` ESO-4, plan 0005 M4-ESO-BESIDE) |
 
 **Not building**, each rejected on evidence: a CNI, a CAPI provider, an OIDC issuer, an ATProto
 bridge, a syncer, a virtual workspace, a second reverse proxy, a reachability substrate, an underlay,
@@ -163,7 +164,7 @@ so there is nothing to commit).
 
 ```
 embedded-postgres  ->  openbao  ->  kine  ->  k3s server --disable-agent  ->  cloud-controller-manager
-                                                                          ->  apiserver-link  ->  openbao-link
+                   ->  external-secrets-webhook  ->  external-secrets  ->  apiserver-link  ->  openbao-link
 ```
 
 The two links are appended by `StepsFor` after every `StackOrder` member when
@@ -180,8 +181,8 @@ test asserting every member of `DefaultOrder` appears in `StackOrder`, in order.
 **no
 supervisor process**: the reconcile loop is the supervisor.
 
-The cloud controller manager is the LAST member, and its position is the whole reason it is a member
-at all. It is useless without an apiserver, so it comes after `k3s server`; a step placed before k3s
+The cloud controller manager follows k3s, and its position is the whole reason it is a member
+at all (the External Secrets pair, below, follows it for the same reason). It is useless without an apiserver, so it comes after `k3s server`; a step placed before k3s
 would also move the seam `ErrNoGuardSeam` protects, which is why the guard's own rule is that the
 identity check rides a step ahead of k3s and nothing else may be inserted between. Reverse-order reap
 therefore stops the controller FIRST, which is what is wanted: a controller that outlives the
@@ -203,6 +204,73 @@ mode the sweep exists to avoid, and a pid record can be reused by an unrelated p
 controller left behind by a gateway that died WITHOUT its reverse-order reap is visible only to that
 gateway's own process group (invariant 21 stops it in the ordinary case), and a host that sees one
 stops it by hand. The alternatives were considered and are worse than the limit. `NEXT.yaml` CCM-2.
+
+### The External Secrets controller runs beside the control plane
+
+Until 2026-10-07 the External Secrets Operator was installed INTO each tenant cluster as three
+Deployments (controller, cert-controller, webhook). At zero nodes - the resting state - their pods
+were Pending, so nothing synced; on the market substrate the store could not reach the cluster
+vault at all (ESO-3). Both are closed by moving the operator into the process group
+(`NEXT.yaml` ESO-4, plan 0005 M4-ESO-BESIDE). The decisions, each held by a test:
+
+- **Two members, one binary.** `procgroup.ComponentExternalSecretsWebhook` then
+  `procgroup.ComponentExternalSecrets`, after the cloud controller manager in `StackOrder`. The
+  binary is the upstream `ghcr.io/external-secrets/external-secrets:v2.11.0` image's own
+  `/usr/bin/external-secrets`, copied by digest into the control-plane image
+  (`deploy/control-plane-container/Dockerfile`, `internal/versions/versions.json`); the webhook is
+  its `webhook` subcommand. The cert-controller is not run: its only job was minting the webhook's
+  serving certificate and injecting caBundles, which the provider now does itself.
+- **The webhook step installs the tenant half, before either process starts.** Its `Prepare`
+  (`internal/clusterprovider/externalsecrets.go`) mints the pair's tenant credential, mints the
+  webhook's serving pair, and calls `eso.InstallBeside` with the cluster's admin client against the
+  pinned bundle (`/opt/socialweb/eso/external-secrets.yaml`, sha256-checked at image build).
+  `eso.SplitBundle` sorts every bundle object three ways and refuses a kind it does not place: KEPT
+  (the 25 CRDs and the ClusterRoles `external-secrets-controller`, `-view`, `-edit`,
+  `-servicebindings`), RE-REGISTERED (the two ValidatingWebhookConfigurations), RETIRED (everything
+  else). Retired objects are deleted first, then the kept ones are server-side applied under
+  `socialweb-addons`, then the CRDs are awaited `Established`, because the controller starts an
+  informer per kind and an informer for an unserved kind fails its start. The step runs at every
+  spawn, so the install is also the migration.
+- **Identity and RBAC.** The pair authenticates as `system:socialweb:external-secrets` (group of
+  the same name), a client certificate minted from the cluster's CA exactly as the cloud
+  controller manager's is, written to `<DataDir>/external-secrets.kubeconfig` (0600) and handed to
+  both processes as `KUBECONFIG` and nothing else in their environment. A ClusterRoleBinding
+  `socialweb-external-secrets` binds that GROUP to the upstream `external-secrets-controller`
+  ClusterRole, so least privilege is upstream's own rule set rather than a fork of it. The
+  upstream ClusterRoleBindings to the ServiceAccount `external-secrets` are retired, not kept:
+  a binding to a ServiceAccount nothing runs as is one a tenant who creates that ServiceAccount
+  inherits. The tenant grant's `socialweb-mint-identity` policy admits the beside username (its
+  `__SOCIALWEB_ESO_USER__` placeholder) where it used to admit the in-tenant ServiceAccount.
+- **The webhook is registered by URL on loopback.** Each webhook's `clientConfig` becomes
+  `url: https://127.0.0.1:<leased webhook port><upstream path>` with `caBundle` the CA the provider
+  mints per cluster (`eso.EnsureWebhookTLS`: CA 10 years, key under
+  `<DataDir>/external-secrets/webhook-ca.key`, outside the cert dir the webhook reads; leaf 2 years,
+  SANs `localhost` and `127.0.0.1`, renewed at a spawn inside its last year). A registration still
+  naming a Service is deleted before the URL apply, because the field another manager owns
+  survives a server-side apply and a webhook carrying both is refused. MEASURED: the k3s apiserver
+  (`--egress-selector-mode cluster`) dials the loopback URL directly at zero nodes. The
+  registrations stay `failurePolicy: Ignore`: the pair is not restarted when it dies (nor is the
+  cloud controller manager), and a dead webhook under `Fail` would refuse the provider's own store
+  writes and deletes.
+- **Ports and singletons.** The upstream defaults (`:8080` metrics, `:8082` controller health,
+  `:8081` webhook health, `10250` webhook) are one set for the host, so each cluster leases three
+  (section 8): the controller's `--live-addr` and the webhook's `--healthz-addr` bind `127.0.0.1`;
+  metrics are off (`--metrics-addr=0`: nothing in the container scrapes them, and a leased port
+  nobody reads is a lease held for nothing); leader election is off, because the process group is
+  already the singleton per cluster. The webhook's `--port` has no host flag and binds every
+  interface (measured: `Serving webhook server` with an empty host); the container publishes no
+  such port, and the listener answers only admission reviews under a CA no client but the tenant
+  apiserver trusts.
+- **Readiness.** The webhook's gate waits for its `/readyz` (which itself checks the serving
+  pair) and then dials the serving port verifying the minted CA for `127.0.0.1`, which is what the
+  apiserver does. The controller's `/readyz` is a ping that answers before any cache syncs, so its
+  gate also waits for the `"Starting workers"` line of the `externalsecret` controller.
+- **The store dials the vault on loopback, on every substrate.** `esovault.ApplyVaultStore`
+  writes `server: https://127.0.0.1:<vault port>` and the vault CA; the substrate branch that kept
+  the store off the market substrate is gone with the reason for it.
+- **Clusters leased before the pair.** `StackConfig.WithoutUnleased` drops the pair from the
+  restart reap's argv derivation when a cluster's lease-file entry holds none of its ports; the
+  bring-up that follows leases them, because the materialiser allocates every purpose at spawn.
 
 Embedded-postgres is a special case: it is a Go **library** that runs the server as a child of
 whoever links it, so there is no argv for a step and `processrunner.Start` refuses the empty argv
@@ -663,7 +731,10 @@ own admin kubeconfig carries, and it is the arm of the grant's carve-out that wr
 `request.resource.resource`, not a single condition: the `serviceaccounts/token` arm admits only
 `system:serviceaccount:users:gwmint`, and the Secrets arm admits only
 `request.userInfo.username == 'system:admin' && 'system:masters' in request.userInfo.groups`, or the
-External Secrets controller `system:serviceaccount:default:external-secrets`. The distinction is
+External Secrets controller `system:socialweb:external-secrets` (the identity of the pair beside the
+control plane, section 5; until 2026-10-07 it was the in-tenant ServiceAccount
+`system:serviceaccount:default:external-secrets`, which a tenant who creates that ServiceAccount would
+have inherited). The distinction is
 load-bearing rather than pedantic, because the two arms admit DIFFERENT subjects for different verbs
 on purpose: a ServiceAccount token is requested by the tenant's own mint, while writing a Secret in
 the tenant namespace is the provider's act -- through its own admin credential for the grant, and
@@ -819,6 +890,9 @@ Every per-cluster port is leased from `internal/portallocator`, ADR 0026. Persis
 | `k3s-secure` | the apiserver, and the port a node dials it on |
 | `k3s-controller-manager`, `k3s-scheduler`, `k3s-cloud-controller-manager` | the k3s control-plane components' secure ports |
 | `apiserver-link`, `openbao-link` | UDP: the IPv4 socket of each cluster link's iroh endpoint (`--ipv4-addr 0.0.0.0:<port>`). The only datagram purposes (`Purpose.Datagram()`); the restart sweep reads the UDP tables for them |
+| `external-secrets-health` | the External Secrets controller's `--live-addr`, on `127.0.0.1` |
+| `external-secrets-webhook` | the External Secrets webhook's TLS `--port`, the one its `ValidatingWebhookConfiguration` names as `https://127.0.0.1:<port>`; it binds every interface, because the upstream flag has no host |
+| `external-secrets-webhook-health` | the External Secrets webhook's `--healthz-addr`, on `127.0.0.1`. Both members' metrics are off (`--metrics-addr=0`), so no metrics port is leased |
 
 **The vault's lease is ONE port, and it was two for as long as nothing read the second.**
 `purposeWidth[PurposeOpenBao]` was 2, spelled "api + cluster", while the config the vault is given —
@@ -1869,8 +1943,8 @@ rather than a delta, and the driver reconciles the cluster's actual count - re-r
 CRs, never remembered - to it.
 
 **Our own add-ons are a MEASURED baseline, and a cluster holding only them has nothing deployed.**
-The add-ons this provider installs into a tenant cluster (today the External Secrets Operator's
-three Deployments) are workloads like any other, and at zero nodes their pods are Pending, so before
+The add-ons this provider installs into a tenant cluster (until 2026-10-07 the External Secrets
+Operator's three Deployments; since then NONE, see below) are workloads like any other, and at zero nodes their pods are Pending, so before
 2026-10-07 they were intent for ever: a cluster that had run one pipeline never returned to zero. The
 rule is a delta, measured rather than listed. The installer applies with its own server-side field
 manager, `socialweb-addons` (`clusterprovider.AddOnFieldManager`), and right after the apply the
@@ -1881,14 +1955,14 @@ directory. That file is provider state; a tenant cannot edit it. `scale.Narrow` 
 `Intent` and `Demand` see them, every workload whose kind, namespace, name AND spec hash match an
 entry, and every pod whose controller resolves to one. A baseline workload whose spec has changed
 (the tenant scaled our operator to two) is NOT dropped: that is a tenant's request. A workload of
-the same name in another namespace is not ours. The baseline is re-measured whenever the installer
-actually runs, and a cluster with no baseline file re-runs the installer once (an idempotent
-server-side apply that takes field ownership under our manager) so clusters from before this rule
-are measured too. There is no list of add-on names here for the same reason the k3s add-on rule has
+the same name in another namespace is not ours. The baseline is re-measured on every add-on pass
+(each `Bootstrap`), so a file written while the operator still ran in the tenant empties once the
+process group's migration has deleted those Deployments. There is no list of add-on names here for the same reason the k3s add-on rule has
 none. Non-workload objects (CRDs, RBAC, webhooks) are not recorded, because nothing the scale
-decision reads is one of them. This is the in-cluster half only: the operator itself is to move
-beside the control plane (`NEXT.yaml` ESO-4), after which the in-cluster baseline holds CRDs and
-RBAC and is empty of workloads.
+decision reads is one of them. Since 2026-10-07 the operator runs beside the control plane (`NEXT.yaml`
+ESO-4, section 5), the tenant holds its CRDs, ClusterRoles and webhook registration and no
+workload, and the measured baseline is EMPTY: the rule stays because it is what keeps any future
+add-on from pinning a node.
 
 **A pod and the workload that controls it are ONE unit of demand.** `Demand` counted a Pending pod
 and also its Deployment's replica, so three one-replica Deployments with their three Pending pods
@@ -2550,7 +2624,8 @@ P5-M6: the vendored deno-kcp test bed and a market-only node path, an event-driv
 contracts outlive the door, guests that join without ssh through cluster links and the cluster's
 OpenBao, per-node scale-in with ESO beside the control plane, a pod mesh with per-node DNS, and the
 old stated limits fixed. The plan file holds each item's decision and evidence; `NEXT.yaml` names
-each milestone's instrument.
+each milestone's instrument. ESO-4 closed the same day with M4-ESO-BESIDE and is in section 15 with
+its readings.
 **The live backlog is `NEXT.yaml`, which this section mirrors:
 an item is written here when it is opened and moves to section 15, with its readings, when it is
 closed.** The practice that produced the batch is the one worth keeping: the artefact was run and each
@@ -5043,6 +5118,46 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   (needs the provider's ClusterLinks, OpenBao JWT mount and KV entry, and the live instrument
   `test/live_market_node_test.ts` now also needs `SOCIALWEB_K8S_LIVE_OPENBAO_TICKET` and
   `SOCIALWEB_K8S_LIVE_OPENBAO_CA`); nothing deployed.
+
+- **The External Secrets Operator ran as tenant pods, so it worked only while a node existed --
+  closed by running it beside the control plane (`NEXT.yaml` ESO-4, plan 0005 M4-ESO-BESIDE).**
+  Before: `deploy/eso/install.sh` applied the upstream bundle into each tenant (controller,
+  cert-controller and webhook Deployments, webhooks `failurePolicy: Ignore`); at zero nodes the pods
+  were Pending and nothing synced, and on the market substrate the add-on pass did not write the
+  store at all, because its vault address was a subnet gateway a market guest cannot route to
+  (ESO-3). After: the controller and its webhook are two members of each cluster's process group
+  (section 5, "The External Secrets controller runs beside the control plane"), the store dials the
+  cluster vault on `127.0.0.1`, and the tenant holds CRDs, ClusterRoles, one ClusterRoleBinding to
+  the beside identity and the URL webhook registrations. Readings, 2026-10-07, on this host with
+  the image's own binary (sha256 `9ea572f5...` for `/usr/bin/external-secrets` out of
+  `ghcr.io/external-secrets/external-secrets:v2.11.0@sha256:66fb7108...`, the same bytes the
+  Dockerfile `COPY --from` produced) and the release bundle (sha256 `c4271246...`):
+  `TestAZeroNodeMarketClusterSyncsAnExternalSecretFromItsOwnVaultWithNoESOPodInTheTenant` PASS in
+  25.4 s -- a `MarketDialled` cluster advertised on `198.18.0.7` reached Ready with the pair in its
+  group in 22.68 s; with zero nodes, an ExternalSecret carrying neither `data` nor `dataFrom` was
+  refused with `admission webhook "validate.externalsecret.external-secrets.io" denied the request:
+  either data or dataFrom should be specified`, which only the webhook says, so the apiserver
+  (`--egress-selector-mode cluster`) reached `https://127.0.0.1:<leased>` directly; the store went
+  `Ready=True reason=Valid` against `https://127.0.0.1:<vault port>`; and `users/openbao-demo`
+  carried `openbao:<cluster>` 500 ms after the apply, with 3 tenant pods (k3s's own Pending
+  add-ons), none of them External Secrets, and no External Secrets Deployment. Watched to fail
+  first: (1) the seven `eso` tests against a stub that split, registered and installed nothing;
+  (2) the live test before the grant change, whose store read `Ready=True reason=Valid` while the
+  ExternalSecret read `SecretSyncedError: ... ValidatingAdmissionPolicy 'socialweb-mint-identity'
+  ... denied request` -- the policy still admitted only `system:serviceaccount:default:external-secrets`,
+  which is now `__SOCIALWEB_ESO_USER__` rendered as `system:socialweb:external-secrets`; (3) the same
+  test's first probe, a `ClusterSecretStore` with an empty provider, was refused by the CRD schema
+  rather than the webhook, so it proved nothing and was replaced by the data-less ExternalSecret.
+  What a deploy does to an existing cluster: the restart reap derives argvs without the pair (its
+  lease-file entry holds none of the three purposes), the bring-up leases them, and the webhook
+  step's `Prepare` deletes the in-tenant Deployments, ServiceAccounts, webhook Service and Secret,
+  the cert-controller ClusterRole, both upstream ClusterRoleBindings and the leader-election
+  Role/RoleBinding from the configured namespace (`SOCIALWEB_CLUSTERPROVIDER_ESO_NAMESPACE`,
+  default `default`), deletes each webhook registration that still names a Service, and applies
+  the URL ones; the next `Bootstrap` re-renders the grant, writes the store on loopback and
+  re-measures an empty add-on baseline. Stated limits kept: neither member is restarted when it
+  dies, as the cloud controller manager is not (plan 0005 M6-LIMITS); the webhook's TLS listener
+  binds every interface of the container's namespace; the image grows by the 295 MB binary.
 
 ## 16. Vocabulary
 

@@ -25,6 +25,10 @@ const (
 
 	ComponentCloudControllerManager Component = "socialweb-cloud-controller-manager"
 
+	ComponentExternalSecretsWebhook Component = "external-secrets-webhook"
+
+	ComponentExternalSecrets Component = "external-secrets"
+
 	ComponentApiserverLink Component = "apiserver-link"
 
 	ComponentOpenBaoLink Component = "openbao-link"
@@ -36,6 +40,7 @@ var DefaultOrder = []Component{
 
 var StackOrder = []Component{
 	ComponentPostgres, ComponentOpenBao, ComponentKine, ComponentK3s, ComponentCloudControllerManager,
+	ComponentExternalSecretsWebhook, ComponentExternalSecrets,
 }
 
 type Step struct {
