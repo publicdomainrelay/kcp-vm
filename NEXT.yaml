@@ -182,7 +182,9 @@ open:
     title: Nodes scale in one at a time, and ESO runs beside the control plane.
     body: >
       Plan 0005 items M4-SCALE-IN, M4-ESO-BESIDE, M4-PENDING-CRS. ESO-4 closes with M4-ESO-BESIDE.
-      A tenant DaemonSet must not count as intent on its own, or a cluster with one never reaches zero.
+      Built, not deployed (fb4ca07, fc16e9b): per-node scale-in (one idle held node per hold,
+      cordon, drain, teardownHeld), DaemonSets never intent, the in-cluster operator CR registry
+      (empty; M4-PENDING-CRS done). Open: deploy and a live release reading; M4-ESO-BESIDE.
     instrument: >
       A cluster at three nodes whose demand falls to one releases two nodes, then reaches zero.
   - id: P5-M5

@@ -384,9 +384,26 @@ items:
     title: Per-node scale-in
     decision: >
       A node holding nothing beyond baseline for the 2m hold is cordoned, drained and released.
-      Supersedes plan 0002 section 4.4 (all-or-nothing).
-    status: todo
-    evidence: []
+      Supersedes plan 0002 section 4.4 (all-or-nothing). Decided by Claude, user may veto: "nothing
+      beyond baseline" means no live pod bound to the node other than DaemonSet pods, mirror pods,
+      k3s add-on pods and pods of measured-baseline workloads; one node per hold (a release restarts
+      the hold of the nodes left), emptiest (fewest baseline pods) then newest; never below the
+      target while intent exists; no release while a Pending pod with no node is younger than the
+      hold, and never of a node a Pending pod is nominated or hostname-pinned to; per-node idle
+      clocks in memory (a provider restart restarts the hold); only nodes this provider process
+      holds; cordon, re-observe, uncordon and keep a node that took work or whose eviction is
+      refused, evict through the Eviction API, then the existing teardownHeld. A DaemonSet is never
+      intent or demand (its desired count follows the nodes).
+    status: doing
+    evidence:
+      - "fb4ca07 internal/scale: scale.Loads (per-node Busy/Evictable/Incoming, Unplaced), Decide's Release branch (State.NodeIdleSince, Decision.Release, scale.Releaser), DaemonSets and DaemonSet/mirror pods out of Intent and Demand"
+      - "fc16e9b provider: NodeObserver computes Placement; scaledriver performs Release through scale.Releaser (ErrNoReleaser otherwise); cmd/socialweb-clusterprovider/scalein.go tenantNodes.Release (cordon, re-observe, drain, teardownHeld) and nodeHosts.observeHeld (marks held nodes, adds in-flight)"
+      - "ARCHITECTURE section 10 'Scale-in is per node' and 'A DaemonSet is never intent'; plan 0002 section 4.4 marked superseded"
+      - "tests: internal/scale TestThreeIdleNodesWithDemandForOneReleaseTwoOverTwoHoldsAndKeepOne (releases c-node3 at 2m, c-node2 at 4m, c-node1 kept), TestANodeWithARunningNonBaselinePodIsNeverReleased, TestANodeThatBecameIdleLessThanTheHoldAgoIsKept, TestTheHoldIsExactForOneIdleNode, TestScaleInNeverGoesBelowTheTarget, TestAPodAboutToBeScheduledHoldsItsNode, TestAnUnplacedPendingPodHoldsEveryReleaseUntilItIsOlderThanTheHold, TestANodeThisProviderDoesNotHoldIsNeverReleased, TestLoadsCountsOnlyWhatHoldsANode, TestAReleaseRestartsTheHoldOfTheNodesLeft, TestADaemonSetIsNeverIntentAtZeroNodesOrOnceUp, TestADaemonSetOnlyClusterScalesToZero; internal/scaledriver TestAReleaseDecisionReleasesThatOneNodeAfterTheHold, TestAFailedReleaseLeavesTheStateWhereItWas, TestAnActuatorThatCannotReleaseOneNodeIsAnError; internal/clusterprovider TestObservePlacesEachPodOnItsNode; cmd TestIdleMarketNodesAreCordonedDrainedAndReleasedOnePerHold (3 held market nodes, real driver + observer over a fake tenant: DaemonSet-only node released at 2m without evicting its pod, node with a k3s add-on pod at 4m with that pod evicted, claims deleted, vault revoked, Nodes deleted, working node kept to 20m), TestANodeThatTakesWorkBeforeTheCordonIsUncordonedAndKept, TestARefusedEvictionKeepsTheNode"
+      - "superseded tests rewritten: TestADaemonSetIsInertAtZeroNodesAndHoldsOnceUp (asserted a DaemonSet with a node is intent) -> TestADaemonSetIsNeverIntentAtZeroNodesOrOnceUp; DaemonSet rows of TestTheNarrowTriggerCannotScaleToZero and TestDemandAgreesWithIntentOnEveryIntentFixture; TestPodsOfACountedJobStatefulSetOrDaemonSetAreNotCountedTwice now wants 3; TestTheObservationRangesOverExactlyThePredicatesKinds admits Placement and UnreconciledCustomResources"
+      - "watched to fail (scratch mutations, restored): decision with no per-node hold -> 4 FAIL; busy ignored -> 2 FAIL; incoming ignored -> 1; no hold restart after a release -> 3; held ignored -> 1; emptiest ignored -> 1; oldest first -> 2; unplaced pod ignored -> 1; DaemonSet pods as intent -> 2; DaemonSet desiredNumberScheduled as intent (the old rule) -> 3; the old None branch for count > target -> 7; release down to the target -> 3. Provider: no cordon -> 2; no re-observe -> 1; no uncordon -> 2; no eviction -> 2; DaemonSet pods evicted -> 1; refused eviction ignored -> 1; release without teardownHeld -> 1; held never marked -> 3"
+      - "green: deploy/check.sh --fast exit 0 (gofmt, build, apigen, vet, staticcheck, go test)"
+      - "not done: deployed; a live market cluster releasing a node one hold after its work moved off (ACC-ZERO)"
   - id: M4-ESO-BESIDE
     milestone: M4
     title: ESO runs beside the control plane per cluster and is removed from the tenant
@@ -398,9 +415,25 @@ items:
   - id: M4-PENDING-CRS
     milestone: M4
     title: Intent counts workloads beyond baseline plus our operators' CRs not yet reconciled
-    decision: User chose workloads plus pending CRs; leftover namespaces, RBAC and ConfigMaps never hold nodes.
-    status: todo
-    evidence: []
+    decision: >
+      User chose workloads plus pending CRs; leftover namespaces, RBAC and ConfigMaps never hold nodes.
+      Decided by Claude, user may veto: a CR counts as intent only if its operator runs IN the tenant
+      cluster and the CR is not reconciled, because an operator beside the control plane (ESO after
+      M4-ESO-BESIDE) reconciles at zero nodes. Registry scale.Operators of {Group, Kind,
+      ReadyCondition, InCluster}; not reconciled = ReadyCondition not True, or that condition's or
+      status.observedGeneration older than metadata.generation, or deleting behind a finalizer; each
+      such CR is one unit of demand. scale.OurOperators ships empty: no operator of ours runs in a
+      tenant cluster once ESO moves. NodeObserver refuses to observe when the registry names an
+      in-cluster kind and no lister is supplied.
+    status: done
+    evidence:
+      - "fb4ca07 internal/scale/operators.go (Operators, OperatorKind.Reconciled, Unreconciled, CustomResourceOf, OurOperators), Observation.UnreconciledCustomResources in Intent and Demand and carried through Narrow"
+      - "fc16e9b internal/clusterprovider NodeObserver.Operators + CustomResources lister and the no-lister refusal; main.go wires scale.OurOperators"
+      - "ARCHITECTURE section 10 'A custom resource is intent only while an operator of ours that runs IN the tenant cluster has not reconciled it'"
+      - "tests: internal/scale TestACustomResourceCountsOnlyWhileItsInClusterOperatorHasNotReconciledIt (no status, Ready False, stale condition generation, lagging status.observedGeneration and finalizer-held deletion count; Ready True, deleted without finalizer, beside-the-control-plane kind and unregistered kind do not), TestAnUnreconciledCustomResourceAsksForOneNodeAndAReconciledOneForNone, TestNoOperatorOfOursRunsInTheTenantClusterToday, TestCustomResourceOfReadsTheFieldsTheRuleNeeds, the CR row of TestDemandAgreesWithIntentOnEveryIntentFixture; internal/clusterprovider TestAnInClusterOperatorKindNeedsALister"
+      - "watched to fail (scratch mutations, restored): InCluster flag ignored -> 1 FAIL; stale generation ignored -> 1; CRs not intent -> 2"
+      - "green: deploy/check.sh --fast exit 0"
+      - "registry empty by design; correct only once M4-ESO-BESIDE lands -- until then ESO in the tenant is baseline and its CRs are not intent, which is the behaviour before this item"
   - id: M5-DNS
     milestone: M5
     title: Per-node CoreDNS on a link-local IP set as kubelet clusterDNS

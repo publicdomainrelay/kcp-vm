@@ -1848,14 +1848,88 @@ is a smaller cluster and is taken. The default was 1 until 2026-10-07, when a fi
 measured what one node means for a runner with `concurrent = 5` (section 15); `scripts/deploy.sh`
 passes 10 and one pod per node, so a cluster serving this runner asks for the nodes the jobs need.
 
-**Scale-in is all-or-nothing, and that limit is stated rather than latent.** While there is work
-the target only grows, to the cap; when the work stops the cluster goes to zero, exactly as it
-always did. An intermediate count is not reachable, because scaling three nodes to two needs an
-answer to "which node, and does its work move", and no instrument here measures that yet. The
-branch that would do it reads `None` with a reason naming this paragraph, so a future scale-in has
-one place to change rather than a silent gap. The ceiling also interacts with the cluster's own
-`/24`: every node takes an address from the range `subnetallocator` leased, so a ceiling the range
-cannot address is a boot failure at the third node rather than a scheduling one.
+**Scale-in is per node: a node holding nothing beyond the baseline for the hold is cordoned,
+drained and released, one per hold (plan 0005 M4-SCALE-IN, 2026-10-07; supersedes the
+all-or-nothing rule of plan 0002 section 4.4).** Before this, while there was work the target only
+grew and the down direction was the whole-cluster teardown, so a cluster that scaled to seven nodes
+for one pipeline held seven until every last pod was gone. The rule now has a pure half and a side
+effect half:
+
+- *What a node holds.* `scale.Loads(nodes, observation, replicaSets, baseline)` reads, per tenant
+  Node, `Busy` (live pods bound to it that are not baseline), `Evictable` (live baseline pods bound
+  to it: our add-ons' workloads by the measured baseline, and k3s's own add-ons by
+  `AppliedByTheControlPlane`) and `Incoming` (a Pending pod with no node yet whose
+  `status.nominatedNodeName`, `nodeSelector kubernetes.io/hostname`, or single-valued required
+  hostname / `metadata.name` affinity names this node). Pods that FOLLOW the nodes are never counted
+  on a node: a DaemonSet's pods and mirror (static) pods (`kubernetes.io/config.mirror`). Terminal
+  pods are not counted. A Pending pod naming no node goes into `Placement.Unplaced` with its creation
+  time. The observer computes this in the same call as the rest of the observation, so the per-node
+  half and the intent half cannot disagree.
+- *The decision.* `scale.Decide`, with intent and the counted nodes above the target, keeps a
+  per-node idle clock in `State.NodeIdleSince` (the first pass that saw the node with `Busy == 0` and
+  not `Incoming`; a busy pass deletes it). It returns `Release` naming ONE node, `Nodes: count - 1`,
+  when that node is held by this provider (`NodeLoad.Held`), idle, and idle for the whole hold
+  (`SOCIALWEB_CLUSTERPROVIDER_SCALE_HOLD`, default 2 m). Among several it picks the emptiest
+  (fewest `Evictable`), then the newest (latest `creationTimestamp`), then by name. A release
+  restarts the idle clock of every node left, so three idle nodes over a target of one go one per
+  hold: one at 2 m, the next at 4 m, the third kept. No release happens while a Pending pod with no
+  node is younger than the hold (or has no creation time): the scheduler may be about to bind it to
+  any idle node. A pod Pending longer than the hold with idle nodes present is not going to fit
+  them, and holding every node for it would pin the cluster. The target is never undercut: the
+  branch is only reached when `count > target`, and the target is at least one while there is
+  intent. With NO intent the old path is unchanged: the whole-cluster hold, then `Teardown` to zero.
+- *The side effects (`cmd/socialweb-clusterprovider/scalein.go`).* `scaledriver` performs `Release`
+  through `scale.Releaser` (an actuator that is not one is `ErrNoReleaser`, never a whole-cluster
+  teardown). `tenantNodes.Release` cordons the Node (`spec.unschedulable`), re-observes the cluster,
+  and if the node took work between the decision's read and the cordon (Busy or Incoming) it
+  uncordons and keeps it. Otherwise it evicts, through the Eviction API so disruption budgets hold,
+  every live pod bound to the node that does not follow the nodes; a refused eviction uncordons and
+  keeps the node. Then the release is `teardownHeld`, the path the 90 s loss rule and the giving-up
+  rule already use: claim deleted, the door releases with `vm.delete`, the node's vault role, policy
+  and secret revoked, the tenant Node deleted. A node the provider uncordons is only one it cordoned
+  itself; an operator's cordon is left alone. Evicted pods are not waited on: the tenant Node is
+  deleted and their controllers recreate them elsewhere.
+- *Decided by Claude, user may veto:* one node per hold rather than every idle node at once (each
+  release can move baseline pods onto the nodes left); the clock is in memory, so a provider restart
+  restarts every node's hold (the safe direction); only nodes this provider process holds are
+  released (a market node that outlived a provider restart is neither confirmed nor released, the
+  same limit as the loss rule); a failed drain uncordons rather than leaving a cordoned node counted.
+
+**A DaemonSet is never intent, and never demand (plan 0005 M4-SCALE-IN).** A DaemonSet's desired
+count follows the nodes, so with one tenant DaemonSet any cluster that had a node kept intent for
+ever and never reached zero (reported by the M0 work). `Intent` and `Demand` no longer read
+`Observation.DaemonSets` at all, and skip every pod whose controller is a DaemonSet or that is a
+mirror pod, whether or not its DaemonSet was in the same read. A DaemonSet-only cluster is a cluster
+with no intent: it holds its nodes for the hold and goes to zero. The `DaemonSets` field stays in the
+observation because the baseline narrowing ranges over it.
+
+**A custom resource is intent only while an operator of ours that runs IN the tenant cluster has not
+reconciled it (plan 0005 M4-PENDING-CRS; the rule "workloads beyond the baseline plus our operators'
+CRs not yet reconciled" is the user's, the mechanism decided by Claude, user may veto).**
+`scale.Operators` is a registry of `{Group, Kind, ReadyCondition, InCluster}`. A CR counts only if
+its group/kind is registered with `InCluster: true` and it is not reconciled: its `ReadyCondition`
+is not `True`, or that condition or `status.observedGeneration` is older than
+`metadata.generation`, or it is being deleted behind a finalizer. Each such CR adds one to `Demand`
+and makes `Intent` true, so it asks for one node, on which its operator runs and reconciles it.
+An operator that runs beside the control plane reconciles at zero nodes, so its CRs need no node
+and are never registered as in-cluster. `scale.OurOperators` ships EMPTY: ESO moves beside the
+control plane (M4-ESO-BESIDE), and no other operator of ours runs in a tenant cluster. Leftover
+namespaces, RBAC and ConfigMaps never hold nodes. `NodeObserver` lists each in-cluster kind through
+its `CustomResources` lister and refuses to observe at all when the registry names an in-cluster kind
+and no lister was supplied, so a future entry cannot silently never count.
+
+The ceiling also interacts with the cluster's own `/24`: every node takes an address from the range
+`subnetallocator` leased, so a ceiling the range cannot address is a boot failure at the third node
+rather than a scheduling one.
+
+The instruments: `internal/scale` `TestThreeIdleNodesWithDemandForOneReleaseTwoOverTwoHoldsAndKeepOne`,
+`TestANodeWithARunningNonBaselinePodIsNeverReleased`, `TestANodeThatBecameIdleLessThanTheHoldAgoIsKept`,
+`TestADaemonSetOnlyClusterScalesToZero`, `TestACustomResourceCountsOnlyWhileItsInClusterOperatorHasNotReconciledIt`;
+`cmd/socialweb-clusterprovider` `TestIdleMarketNodesAreCordonedDrainedAndReleasedOnePerHold` (three
+held market nodes over a fake tenant through the real driver and observer: the DaemonSet-only node
+goes at 2 m, the node holding a k3s add-on pod at 4 m with that pod evicted, the node running work
+is kept), `TestANodeThatTakesWorkBeforeTheCordonIsUncordonedAndKept`, `TestARefusedEvictionKeepsTheNode`.
+NOT yet read: a live market cluster releasing a node.
 
 The reading for this is a table case: the same observation that decided `Provision, Nodes: 1`
 before now decides `Provision, Nodes: <target>` with `MaxNodes` raised, and every existing case at
@@ -4034,8 +4108,9 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   so the evidence for three simultaneous guests is three `Provision` calls plus `kubectl get nodes`
   listing three, together with an independent observation of two firecracker processes during the run.
   No negative control was run either: that the test would fail with `MaxNodes` unset is argued from
-  `Target`'s ceiling rather than measured. Partial scale-in is deliberately not implemented (plan
-  0002 section 4.4), so the target only grows while intent exists.
+  `Target`'s ceiling rather than measured. Partial scale-in was deliberately not implemented then (plan
+  0002 section 4.4), so the target only grew while intent existed; superseded 2026-10-07 by per-node
+  scale-in (plan 0005 M4-SCALE-IN, section 10).
 
 - **The live backlog was declared in four places and did not exist.** `AGENTS.md:18`,
   `README.md:262`, `handoff.yaml:155` and section 14 of this document all name `NEXT.yaml` as the
