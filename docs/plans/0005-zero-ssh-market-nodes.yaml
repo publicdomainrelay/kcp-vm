@@ -142,20 +142,31 @@ items:
       Callbacks onRfpSubmitted, onBid (accept or deny), onAccepted, onReceipt, onNetwork,
       onSecretsFetched; each decides whether the flow continues or returns. No ssh session is held
       by the core.
-    status: todo
-    evidence: []
+    status: done
+    evidence:
+      - "atproto-market pre-iroh cdb0f9c A compute contract is a state that can be saved, and its events can stop it"
+      - "atproto-market pre-iroh 28a1be5 The requester's flow runs without an ssh session, and release stands alone"
+      - "packages @publicdomainrelay/compute-request-abc (ContractState, phases requested..released, handlers onRfpSubmitted/onBid/onAccepted/onReceipt/onNetwork/onSecretsFetched, parse/serialize) and @publicdomainrelay/compute-request-xrpc (requestCompute, releaseCompute, awaitComputeNetwork); secrets capability reports onServed -> onSecretsFetched"
+      - "tests fail->pass: test/compute_request_test.ts (event order, return at onRfpSubmitted, return at onNetwork submits no vm.delete, onBid deny never accepted, all-denied no contract, onSecretsFetched return, awaitComputeNetwork resume), test/compute_request_state_test.ts (7), test/secrets_capability_test.ts onServed; whole suite 109 passed 0 failed 4 ignored (was 92)"
+      - "not yet proven: awaitComputeNetwork backfill path; onSecretsFetched with a real guest; a live early return -- closed by M2-CLAIM-RECEIPT and M3 live runs"
   - id: M2-RELEASE
     milestone: M2
     title: Standalone releaseCompute(receipt) that submits vm.delete
     decision: Release no longer depends on a session returning inside the process that accepted the bid.
-    status: todo
-    evidence: []
+    status: done
+    evidence:
+      - "28a1be5 releaseCompute(pds, state) submits vm.delete from a saved ContractState"
+      - "test: releaseCompute from a JSON round-tripped state submits vm.delete from another process; no receipt refs submits nothing"
+      - "live: bidder_container_integration_test vm_delete_result 200 through the wrapper (release from the SAME owner DID; the door releases as the owner, so a foreign signer is not needed)"
   - id: M2-WRAPPER
     milestone: M2
     title: runComputeContract reimplemented as a thin wrapper over the event core
     decision: socialweb-computer-ssh and request-vm-ssh stay unchanged (user chose to leave the ssh door on the wrapper).
-    status: todo
-    evidence: []
+    status: done
+    evidence:
+      - "28a1be5 runComputeContract = requestCompute + existing ssh session + releaseCompute unless keepVm; signature, options, ContractFlowResult unchanged; old flow code deleted"
+      - "test/bidder_container_integration_test.ts green before (38s) and after (44s), SSH_OK_VIA_IROH"
+      - "deno check green: socialweb-computer-ssh (task check, requester-inproc, live_market_test), socialweb-computer-k8s (task check, node-market, requester-inproc, node_market_test, live_market_node_test)"
   - id: M2-CLAIM-RECEIPT
     milestone: M2
     title: NodeClaim tracks receipt and contract URIs
