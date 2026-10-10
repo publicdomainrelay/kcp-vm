@@ -161,12 +161,26 @@ items:
       configurations under /home/johnandersen777/kcp-image/ were rewritten to the new names and
       fingerprinted again (the old spellings are refused, so leaving them would have made every
       build host fail).
-    status: done
+    status: doing
     evidence:
       - "commit cd12808: cmd/socialweb-nodeagent -> cmd/socialweb-nodeinit with the init verb alone; agent.go, audit.go, agent_test.go, the guest identity-disk join, LoadNodeDocument, /kcp/kcpagent and kcp-agent.service deleted; kcp-agent.service added to rootfs staleUnits so an image built on a base that carried it retires it; image config keys init_package/init_binary/init_go_flags with RefuseRenamedKeys refusing agent_package/agent_binary/agent_go_flags; every JSON config in the repo and scripts/deploy-firecracker-bidder.sh updated"
       - "image built by the real builder from the renamed configuration 2026-10-07T21:47:45Z (logs/image-build.log): fingerprint sha256-bcdfbb6824a7743d8fd4c15d1be1ad1bda35785fe97a0f1278ebfa507b98be00, stage /kcp holds guest.yaml alone, multi-user.target.wants holds no kcp unit, and the initramfs's /init is a stripped static x86-64 Go binary whose strings carry KCP_INIT fatal and 13 nodeinit markers and no KCP_AGENT marker"
       - "internal/nodefirecracker TestAnInitPackageIsRelativeToTheModuleAndNotToWhereTheReaderStands and cmd/socialweb-nodeimage TestAnImageBuiltBeforeTheRecordCoveredTheInitIsRefused, plus the input-role table renamed; fingerprint tests updated deliberately (the input's name and content are both inputs)"
       - "the market test bed live test was attempted twice and did NOT reach a verdict on this change: 2026-10-07T21:48Z SKIPPED (ports 2583-2589 held by an earlier session's bed), then 2026-10-07T21:55:29Z FAIL in 120 s with the BED's own bring-up broken -- apply.sh failed 3/3, no OpenBao ready, no DenoPod in any workspace, the OpenBao CA unreadable, and no guest work directory ever created -- while that other session's bed came back up on the same fixed ports (ss shows the listeners again). The failure is upstream of everything this change touches: the bed never reached an RFP, so the node image, the init binary and the renamed image keys were never read. Nothing in this change is known-failing; the live reading is owed on a host with no second bed running"
+      - "REOPENED 2026-10-07T22:50Z by the lead: the image bcdfbb68 above was built WITHOUT -preinstall (image.json preinstall \"\"), so its rootfs carries no cloud-init (no /etc/cloud, no cloud-init.target.wants, no /usr/bin/cloud-init; debugfs on the bidder store). Prod guest fc-1379be663dd9-4d49fee1 booted it 22:23Z, console stops after fcnet.service, no cloud-init stage, door node_claim_ended outcome network_timeout 22:43:08Z. Done needs an image built WITH preinstall-market.json, shipped, and a market guest that runs cloud-init on it"
+  - id: M1-IMAGE-SHIP
+    milestone: M1
+    title: The bidder installer ships exactly the image the current inputs name, never a stale one
+    decision: >
+      scripts/deploy-firecracker-bidder.sh asked the build host -ensure -json -reuse-stale, which answers with
+      the newest whole image in the store whatever its inputs, so it shipped bcdfbb68 (no preinstall) while the
+      current inputs fingerprint to sha256-144a6d33 (target ensure 2026-10-07T22:22Z reusedFrom bcdfbb68). The
+      build host's ensure must name the exact image of the current inputs, building it when absent through
+      sudo -n with the go.mod toolchain (the preinstall chroot needs CAP_SYS_CHROOT) and handing ownership back;
+      the target keeps -reuse-stale (busybox naming). An image whose manifest lacks the preinstall the config
+      asks for is refused. decided by Claude, user may veto.
+    status: doing
+    evidence: []
   - id: M1-BIDDER-UNIT
     milestone: M1
     title: System template unit socialweb-computer-bidder@<handle>.service
