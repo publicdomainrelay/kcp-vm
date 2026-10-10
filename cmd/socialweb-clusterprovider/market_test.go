@@ -689,7 +689,7 @@ func TestANodeThatIsTornDownStopsBeingCounted(t *testing.T) {
 		t.Fatalf("a live claim counted %d nodes in flight, want 1", got)
 	}
 	claims.setPhase(testHomePrefix+"liveweb", key+"-node1", v1alpha1.NodeClaimFailed)
-	err = hosts.confirm(ctx, key)
+	_, err = hosts.confirm(ctx, key)
 	if err == nil || !strings.Contains(err.Error(), "stopped making progress") {
 		t.Fatalf("confirming a node whose claim failed reported %v, want the failure itself: the "+
 			"pass returns it so a failed node is visible rather than silent", err)

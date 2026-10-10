@@ -230,19 +230,36 @@ func (h *Host) ConfirmJoined(ctx context.Context) error {
 	return nil
 }
 
-func (h *Host) Terminal() string {
+type End struct {
+	Message string
+
+	Declined bool
+}
+
+func MarketDeclined(claim *v1alpha1.NodeClaim) bool {
+	if claim == nil || claim.Status.Phase != v1alpha1.NodeClaimFailed {
+		return false
+	}
+	return claim.Status.Contract.RFPUri != "" && claim.Status.Contract.AcceptUri == ""
+}
+
+func (h *Host) End() End {
 	ctx, cancel := context.WithTimeout(context.Background(), fatalReadTimeout)
 	defer cancel()
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	claim, err := h.read(ctx)
 	if err != nil || claim == nil {
-		return ""
+		return End{}
 	}
 	if !endedClaimPhase(claim.Status.Phase) {
-		return ""
+		return End{}
 	}
-	return endedMessage(claim)
+	return End{Message: endedMessage(claim), Declined: MarketDeclined(claim)}
+}
+
+func (h *Host) Terminal() string {
+	return h.End().Message
 }
 
 func (h *Host) Teardown(ctx context.Context) error {

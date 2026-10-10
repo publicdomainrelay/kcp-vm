@@ -359,9 +359,16 @@ func (p *Provider) scale(ctx context.Context, key, name string, running bool) {
 			p.log.Warn("cluster provider: reconciling the Nodes whose machines the door has taken "+
 				"away did not complete", "cluster", name, "key", key, "error", err.Error())
 		}
-		if err := p.nodes.confirm(ctx, key); err != nil {
+		outcome, err := p.nodes.confirm(ctx, key)
+		if err != nil {
 			p.log.Warn("cluster provider: confirming the nodes this cluster already holds did not "+
 				"complete", "cluster", name, "key", key, "error", err.Error())
+		}
+		if len(outcome.joined) > 0 {
+			p.nodeScale.Joined(key)
+		}
+		if reason := outcome.declinedReason(); reason != "" {
+			p.nodeScale.Declined(key, reason)
 		}
 	}
 	dec, err := p.nodeScale.RunPass(ctx, key)
@@ -370,8 +377,12 @@ func (p *Provider) scale(ctx context.Context, key, name string, running bool) {
 			"cluster", name, "key", key, "error", err.Error())
 		return
 	}
-	p.log.Info("cluster provider: node scale", "cluster", name, "key", key,
-		"action", dec.Action.String(), "nodes", dec.Nodes, "reason", dec.Reason)
+	args := []any{"cluster", name, "key", key,
+		"action", dec.Action.String(), "nodes", dec.Nodes, "reason", dec.Reason}
+	if !dec.BackoffUntil.IsZero() {
+		args = append(args, "backoffUntil", dec.BackoffUntil.UTC().Format(time.RFC3339))
+	}
+	p.log.Info("cluster provider: node scale", args...)
 }
 
 func (p *Provider) pass(ctx context.Context, ref clusterprovider.Ref, key string) {
