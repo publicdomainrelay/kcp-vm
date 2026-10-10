@@ -1437,6 +1437,67 @@ edges are stated rather than closed: a guest that fetched in the instant between
 accept written just before a crash, with no status write after it, is a VM no claim names, which
 only the bidder's own expiry ends.
 
+**A restarted provider never reaps; it adopts** (M3-NODE-LOSS, provider half). Decided by Claude,
+user may veto. Before this, the provider's shutdown reap (`nodeHosts.reap`) called the market host's
+`Reap`, which DELETES the claim, so every provider stop (every deploy) made the door destroy every
+market machine; and a provider that started held nothing, so a node that survived anyway was never
+confirmed, lost, scaled in, torn down or counted in flight, and its name could be claimed again.
+Now:
+
+- *Shutdown leaves market nodes.* `nodeHosts.reap` returns without touching a market host (logged
+  `leaving the market nodes running for the next provider process`). The guest needs no session of
+  ours; its agent and links are `Restart=always` and reconnect when the next process brings the
+  cluster's group back. A cluster switched OFF or deleted still releases every node
+  (`reapCluster`), and the guest substrates still reap on shutdown, because their guest is a child
+  of this host.
+- *Adopt at startup, before the first pass.* `join`/`joinAll` call `nodeHosts.adopt` for every
+  cluster right after the empty instance snapshot is written, so the snapshot names the adopted
+  nodes before the cluster's cloud controller manager starts (it deletes every Node the snapshot
+  does not name). A failed adoption is a warning and the next pass retries.
+- *Adopt on every pass, from the list it already reads.* `nodeHosts.reconcile` lists the claims of
+  the cluster's home workspace each pass for the `Released` rule; the same list goes through
+  `adoptClaims`, so any live claim of the cluster that nothing holds is held from that pass on. No
+  extra kcp read per pass. An OFF cluster, which gets no scale pass, adopts once
+  (`adoptOnce`, one list until a reap that acted resets it) before `reapCluster`, so a cluster
+  switched off while the provider was down still releases its machines.
+- *What is adopted.* A claim whose `spec.cluster` is the cluster key, whose name carries the
+  `<cluster>-node<N>` ordinal, whose phase has not ended (not `Failed`, not `Released`) and which
+  is not being deleted. Pending, `Bidding` and `Provisioning` claims are adopted too: the door owns
+  their end, and the given-up rule tears them down when it writes `Failed`. An ended claim is never
+  adopted; the `Released` rule still deletes its Node.
+- *How.* A `nodemarket.Host` is built for that name exactly as `Provision` would build it, then
+  `Host.Adopt(claim)` marks it provisioned WITHOUT writing the claim, the policy or the secret: the
+  claim exists, so its policy was written before it (Provision writes the policy first); a
+  `Joining` or `Running` claim's guest already fetched its secret, so the secret is marked written;
+  an earlier phase's secret may have been held back for a link, so it is written on the next
+  `SyncSecrets` (an identical rewrite at worst). The JWT role is ensured once from `status.grant` on
+  the next pass, as for any node whose grant this process has not yet seen. The host is retained at
+  its ordinal, marked live, counted in `started` (so `Provision` never takes the primary path over
+  an adopted `node1`), and the snapshot is rewritten. A never-provisioned primary host is dropped
+  when adoption creates or meets the cluster's entry, so it cannot be counted in flight.
+- *Then every rule applies unchanged.* confirm (`ConfirmJoined`, `markJoined`), the 90 s loss rule,
+  per-node scale-in (`Held` is set from the held names), teardown to zero, `inFlight` (an adopted
+  `Joining` claim with no Node is in flight, a reported one is not, so each adopted node counts once)
+  and `nextOrdinal` (held names are present, so the next claim is named past them).
+- *Not proven live:* a prod deploy restarting the provider with market nodes up, the guests
+  re-registering within the 90 s the loss rule allows after the cluster's group comes back (the
+  node lifecycle controller starts the NotReady clock when the group restarts, not when it stopped).
+
+With the door half above, both the door and the provider can restart without reaping a live
+market node. The instruments are in `cmd/socialweb-clusterprovider/adopt_test.go` (a first process
+provisions through the real path; a second `nodeHosts` over the same claim store and state dir is
+the restarted provider): `TestARestartedProviderAdoptsItsJoiningAndRunningNodesOnceEach` (held
+once each across repeated passes, counted 2, no claim write, no policy or secret write, snapshot
+names both), `TestAnAdoptedNodeNotReadyFor90sIsReleased`, `TestAnAdoptedIdleNodeIsScaledIn`,
+`TestTeardownToZeroReleasesAdoptedNodes`, `TestAProvisionAfterARestartSkipsAdoptedNames`,
+`TestAnEndedClaimIsNotAdopted` (Failed, Released, deleting, another cluster's),
+`TestAProviderShutdownLeavesItsMarketNodesForTheNextOne`,
+`TestTheFirstScalePassAfterARestartAdoptsBeforeItCounts`,
+`TestAClusterSwitchedOffAfterARestartReleasesItsAdoptedNodes`; and in `internal/nodemarket`
+`TestAnAdoptedJoinedHostRewritesNoSecretAndLogsInFromTheGrant`,
+`TestAnAdoptedClaimTheGuestHasNotFetchedYetGetsItsSecretWritten`,
+`TestAnEndedOrDeletingClaimIsNotAdopted`.
+
 **What the guest runs** (`lib/cloud-init-plugin-k3s-join`, still the module the door passes as
 `["k3s", createK3sJoinModule()]`). Besides the resolver it always wrote, it writes three `0700`
 scripts and four units, and its runcmd enables and starts them with `--no-block`. Its runcmd comes
@@ -1892,8 +1953,9 @@ effect half:
 - *Decided by Claude, user may veto:* one node per hold rather than every idle node at once (each
   release can move baseline pods onto the nodes left); the clock is in memory, so a provider restart
   restarts every node's hold (the safe direction); only nodes this provider process holds are
-  released (a market node that outlived a provider restart is neither confirmed nor released, the
-  same limit as the loss rule); a failed drain uncordons rather than leaving a cordoned node counted.
+  released, and a market node that outlived a provider restart is held again by adoption (section
+  9, "A restarted provider never reaps; it adopts"), so it is released like any other; a failed
+  drain uncordons rather than leaving a cordoned node counted.
 
 **A DaemonSet is never intent, and never demand (plan 0005 M4-SCALE-IN).** A DaemonSet's desired
 count follows the nodes, so with one tenant DaemonSet any cluster that had a node kept intent for
@@ -2005,8 +2067,8 @@ made by Claude, user may veto:
   giving-up rules own it, however long it has been -- and a Node with no `Ready` condition yet (its
   kubelet has not posted a status). A Ready node is never lost, whatever its transition time.
 - *Held nodes only.* The rule acts on nodes this provider process holds. A market node that outlived
-  a provider restart is not held, so it is neither confirmed nor lost here; that, and "door or
-  provider restarts never reap", is the rest of M3-NODE-LOSS.
+  a provider restart is held again by adoption at startup and on every pass (section 9, "A restarted
+  provider never reaps; it adopts"), so the rule covers it from the first pass after a restart.
 - *It blocks the cluster's pass* for as long as `teardownHeld` waits for the door
   (`ClaimReleaseTimeout`), exactly as the giving-up rule and the scale-down already do.
 
@@ -2065,6 +2127,13 @@ node            a node is found by its own record. Provision writes <node data d
                 /proc/<pid>/cmdline names the agent subcommand and this node name
 ```
 
+The rule is for children of THIS host. A market node is not one: its machine is the bidder's, its
+guest needs no session of ours, and its owner of record is the `NodeClaim` in the cluster's home
+workspace, which the door alone releases and only on deletion. So a market node is the one thing a
+restart ADOPTS rather than reaps, and it cannot have two owners: the claim is the single record, and
+a restarted provider holds it again from that record without writing it (section 9, "A restarted
+provider never reaps; it adopts").
+
 A pid-reuse mismatch is reported as NOT OURS and is never signalled. The 0600 mode is not hygiene: the
 record names a pid this gateway will signal, and a record another user can write is a record that aims
 our reap at a pid of their choosing.
@@ -2104,7 +2173,12 @@ cluster's next ON.
 gateway's SIGTERM does not `exec`-kill k3s, kine and postgres — which would leave the store needing
 crash recovery and bypass the reverse-order teardown and the tenant-side Node delete entirely. The CLI
 reaps explicitly on the way out, with a fresh context; what it does not finish is reaped by the next
-start, which is the same rule as above.
+start, which is the same rule as above. The shutdown's node-host reap skips the market substrate
+entirely: deleting a market claim is what makes the door destroy the machine, so a shutdown that
+reaped market hosts released every rented node on every deploy (watched in
+`TestAProviderShutdownLeavesItsMarketNodesForTheNextOne`: 2 claims deleted and both nodes' vault
+state revoked before the change, none after). A cluster switched OFF or deleted still releases its
+market nodes through `reapCluster`.
 
 **Every cluster, not the one this process was told to join.** `SOCIALWEB_CLUSTERPROVIDER_JOIN` names
 a single cluster by its bare name and keeps working exactly as it did. `SOCIALWEB_CLUSTERPROVIDER_JOIN=*`
