@@ -1854,16 +1854,19 @@ open list, are two stated LIMITS rather than open work: each marks where a behav
 being true, which is a fact about the design rather than a question left in it, and each sits here
 because it bounds a mechanism the rest of this document leans on.
 
-- **FLAKE-2: the door's node-session test fails about one run in three on ssh2's own key generator.**
-  `test/node_session_test.ts`'s `fakeGuest` builds its host key with ssh2's `generateKeyPairSync` and
-  hands it to `new Server({ hostKeys: [hostKey.private] })`. MEASURED on 2026-10-06 on a loaded host
-  (thirteen firecracker guests, swap full): four consecutive `deno task test` runs gave 65 passed,
-  `FAILED | 64 passed | 1 failed` twice, then 65 passed, always the same line -
-  `error: Error: Cannot parse privateKey: Malformed OpenSSH private key` at
-  `node_modules/.deno/ssh2@1.17.0/node_modules/ssh2/lib/server.js:249`, from `fakeGuest` at
-  `test/node_session_test.ts:104`. No edit sat between those runs, which is the shape FLAKE-1
-  describes: a gate that is re-run until it is green is how a real red goes unseen. `NEXT.yaml`
-  FLAKE-2.
+- **FLAKE-2: the door's node-session test fails when this host's /tmp is nearly full, and it is.**
+  MEASURED on 2026-10-06: four consecutive `deno task test` runs gave 65 passed, then 64 passed / 1
+  failed twice, then 65 passed, the failure always being `error: Error: Cannot parse privateKey:
+  Malformed OpenSSH private key` at
+  `node_modules/.deno/ssh2@1.17.0/node_modules/ssh2/lib/server.js:249`, reached from `fakeGuest` at
+  `test/node_session_test.ts:104`. The first reading - an ssh2 key-generator defect - was WRONG, and
+  the control that refuted it is worth recording: this host's `/tmp` is a 24 GiB tmpfs with 2.3 GiB
+  free, 19 GiB of it three stale scratch directories from earlier firecracker work (`/tmp/rfp-guests`
+  6.6 GiB, `/tmp/nodeboot-check` 6.6 GiB, `/tmp/nodeimage-preinstall-check` 5.6 GiB), a `go test
+  -race` in the same window died with `compile: writing output: write $WORK/_pkg_.a: disk quota
+  exceeded`, and ssh2 reaches `ssh-keygen` through a temporary file. With `TMPDIR` pointed at the
+  filesystem holding 1.2 TiB free, five consecutive runs were green at 65 passed. The test is the
+  messenger, not the defect. `NEXT.yaml` FLAKE-2.
 
 - **A mint credential is named by the cluster's key, and the process that renames an existing one is
   not the process that reads it.** The clusterprovider writes `<MINT_DIR>/<accountHash>-<name>` and the
