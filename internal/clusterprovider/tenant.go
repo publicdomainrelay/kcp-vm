@@ -218,8 +218,9 @@ func mintTokenSecret(namespace string) *corev1.Secret {
 }
 
 func WriteMintKubeconfig(dir, cluster string, cfg *rest.Config) error {
-	if errs := validation.IsDNS1123Label(cluster); len(errs) > 0 {
-		return fmt.Errorf("clusterprovider: %q is not a DNS-1123 label, so it cannot name a mint credential: %s", cluster, errs[0])
+	if errs := validation.IsDNS1123Subdomain(cluster); len(errs) > 0 {
+		return fmt.Errorf("clusterprovider: %q is not a DNS-1123 subdomain, so it cannot name a "+
+			"mint credential: %s", cluster, errs[0])
 	}
 	if cfg == nil || cfg.Host == "" {
 		return errors.New("clusterprovider: a mint credential with no server address is not writable")
@@ -261,6 +262,10 @@ func (p *Provider) Bootstrap(ctx context.Context, ref Ref, cl *v1alpha1.Cluster)
 	if p.opts.Tenant == nil || p.opts.GrantPath == "" || p.opts.MintDir == "" {
 		return fmt.Errorf("%w (cluster %s)", ErrNoBootstrap, ref.Name)
 	}
+	key, err := ref.Key()
+	if err != nil {
+		return err
+	}
 	cfg, err := p.opts.Tenant(ctx, ref, cl)
 	if err != nil {
 		return fmt.Errorf("clusterprovider: no tenant credential for %s: %w", ref.Name, err)
@@ -299,22 +304,22 @@ func (p *Provider) Bootstrap(ctx context.Context, ref Ref, cl *v1alpha1.Cluster)
 	if err != nil {
 		return err
 	}
-	if err := WriteMintKubeconfig(p.opts.MintDir, ref.Name, credential); err != nil {
+	if err := WriteMintKubeconfig(p.opts.MintDir, key, credential); err != nil {
 		return err
 	}
-	if err := p.SetMintConfig(ref.Name, credential); err != nil {
+	if err := p.SetMintConfig(key, credential); err != nil {
 		return err
 	}
 	if p.opts.InstallTenant != nil {
-		if err := p.opts.InstallTenant(ctx, ref.Name, cfg); err != nil {
+		if err := p.opts.InstallTenant(ctx, key, cfg); err != nil {
 			return fmt.Errorf("clusterprovider: installing the tenant add-ons for %s after its "+
 				"bootstrap: %w", ref.Name, err)
 		}
 	}
 	p.opts.Log.Info("tenant bootstrap complete",
-		"cluster", ref.Name, "did", ref.DID,
+		"cluster", ref.Name, "key", key, "did", ref.DID,
 		"grant", p.opts.GrantPath, "objects", len(objs),
-		"mintCredential", filepath.Join(p.opts.MintDir, ref.Name),
+		"mintCredential", filepath.Join(p.opts.MintDir, key),
 		"credentialHost", credential.Host, "statusURL", cl.Status.URL,
 	)
 	return nil

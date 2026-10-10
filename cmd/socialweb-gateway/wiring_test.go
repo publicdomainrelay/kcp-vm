@@ -18,6 +18,7 @@ import (
 	"github.com/bluesky-social/indigo/atproto/identity"
 	"github.com/bluesky-social/indigo/atproto/syntax"
 
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpclient"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/mint"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/plcsweep"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/revocation"
@@ -178,7 +179,11 @@ contexts:
     user: gwmint
 current-context: tenant
 `
-		if err := os.WriteFile(filepath.Join(dir, cluster), []byte(doc), 0o600); err != nil {
+		key, err := kcpclient.ClusterKey(kcpclient.HomePath(mintTestDID, cluster))
+		if err != nil {
+			t.Fatalf("the cluster key for %q: %v", cluster, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, key), []byte(doc), 0o600); err != nil {
 			t.Fatalf("writing the mint kubeconfig for %q: %v", cluster, err)
 		}
 	}

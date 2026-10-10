@@ -72,6 +72,8 @@ type Provider struct {
 
 const ShutdownTimeout = 60 * time.Second
 
+type clusterLister interface{ Clusters() []string }
+
 func (p *Provider) Shutdown() error {
 	if p.cfg.ObserveOnly() || p.host == nil {
 		return nil
@@ -79,9 +81,20 @@ func (p *Provider) Shutdown() error {
 	ctx, cancel := context.WithTimeout(context.Background(), ShutdownTimeout)
 	defer cancel()
 	p.log.Info("cluster provider: shutting down; the process group is reaped in reverse order "+
-		"rather than killed with this process", "cluster", p.cfg.Join, "timeout", ShutdownTimeout)
-	if err := p.host.Reap(ctx, p.cfg.Join); err != nil {
-		return fmt.Errorf("clusterprovider: reaping %s on shutdown: %w", p.cfg.Join, err)
+		"rather than killed with this process", "join", p.cfg.Join, "timeout", ShutdownTimeout)
+	held := []string{p.cfg.Join}
+	if lister, ok := p.host.(clusterLister); ok {
+		if live := lister.Clusters(); len(live) > 0 {
+			held = live
+		}
+	}
+	for _, cluster := range held {
+		if cluster == "" {
+			continue
+		}
+		if err := p.host.Reap(ctx, cluster); err != nil {
+			return fmt.Errorf("clusterprovider: reaping %s on shutdown: %w", cluster, err)
+		}
 	}
 	if err := p.reapNodeHosts(ctx); err != nil {
 		return err
@@ -187,20 +200,31 @@ func (p *Provider) Run(ctx context.Context) error {
 		p.log.Info("cluster provider: observing only", "join", "unset: no process lifecycle is attached, so no pass may act or write")
 		return p.provider.Run(ctx)
 	}
+	if p.cfg.AllClusters() {
+		return p.joinAll(ctx)
+	}
 	return p.join(ctx)
 }
 
 func (p *Provider) join(ctx context.Context) error {
-	ref, cl, err := p.lookup(ctx, p.cfg.Join)
+	ref, _, err := p.lookup(ctx, p.cfg.Join)
 	if err != nil {
 		return err
 	}
-	dsn, err := p.store(ctx, cl.Name)
+	key, err := ref.Key()
 	if err != nil {
 		return err
 	}
-	p.log.Info("cluster provider: joining", "cluster", ref.Name, "home", ref.Home, "datastore", dsn)
+	dsn, err := p.store(ctx, key)
+	if err != nil {
+		return err
+	}
+	p.log.Info("cluster provider: joining", "cluster", ref.Name, "key", key, "home", ref.Home,
+		"datastore", dsn)
 
+	if err := p.resetSnapshots([]string{key}); err != nil {
+		return err
+	}
 	if err := p.sweepNodeRecords(ctx); err != nil {
 		return err
 	}
@@ -211,17 +235,8 @@ func (p *Provider) join(ctx context.Context) error {
 	tick := time.NewTicker(p.cfg.Interval)
 	defer tick.Stop()
 	for {
-		p.pass(ctx, ref)
-		if p.nodeScale != nil {
-			dec, err := p.nodeScale.RunPass(ctx, ref.Name)
-			if err != nil {
-				p.log.Warn("cluster provider: the node-scale pass did not complete",
-					"cluster", ref.Name, "error", err.Error())
-			} else {
-				p.log.Info("cluster provider: node scale", "cluster", ref.Name,
-					"action", dec.Action.String(), "nodes", dec.Nodes, "reason", dec.Reason)
-			}
-		}
+		p.pass(ctx, ref, key)
+		p.scale(ctx, key, ref.Name, true)
 		select {
 		case <-ctx.Done():
 			return nil
@@ -230,25 +245,150 @@ func (p *Provider) join(ctx context.Context) error {
 	}
 }
 
-func (p *Provider) pass(ctx context.Context, ref clusterprovider.Ref) {
+func (p *Provider) resetSnapshots(keys []string) error {
+	if p.nodes == nil {
+		return nil
+	}
+	for _, key := range keys {
+		if err := p.nodes.resetSnapshot(key); err != nil {
+			return fmt.Errorf("clusterprovider: writing the empty instance snapshot for %s before "+
+				"any node exists: %w. The cloud controller manager reads that file to decide which "+
+				"Nodes still have a guest; the provider always writes the file rather than leaving "+
+				"its absence to mean something", key, err)
+		}
+	}
+	return nil
+}
+
+func (p *Provider) joinAll(ctx context.Context) error {
+	p.log.Info("cluster provider: joining every Cluster in the tree", "join", p.cfg.Join,
+		"passes", "serial, one cluster at a time",
+		"reason", "a failure in one cluster is logged and the pass moves on, so one cluster that "+
+			"cannot come up never holds back the others")
+	refs, err := p.registry.Refs(ctx)
+	if err != nil {
+		return fmt.Errorf("clusterprovider: listing the Cluster CRs before the first all-clusters "+
+			"pass: %w", err)
+	}
+	keys := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		key, err := ref.Key()
+		if err != nil {
+			return err
+		}
+		keys = append(keys, key)
+	}
+	if err := p.resetSnapshots(keys); err != nil {
+		return err
+	}
+	if err := p.sweepNodeRecords(ctx); err != nil {
+		return err
+	}
+	if p.nodeScale == nil {
+		p.log.Warn("cluster provider: no node-scale driver; no cluster will scale its nodes")
+	}
+	tick := time.NewTicker(p.cfg.Interval)
+	defer tick.Stop()
+	for {
+		p.passAll(ctx)
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-tick.C:
+		}
+	}
+}
+
+func (p *Provider) passAll(ctx context.Context) {
+	refs, err := p.registry.Refs(ctx)
+	if err != nil {
+		p.log.Error("cluster provider: listing the Cluster CRs in the tree failed; no cluster was "+
+			"touched this pass", "error", err.Error())
+		return
+	}
+	p.provider.Reclaim(refs)
+	for _, ref := range refs {
+		if err := p.one(ctx, ref); err != nil {
+			p.log.Error("cluster provider: this cluster's pass failed and the others continue",
+				"cluster", ref.Name, "home", ref.Home, "error", err.Error())
+		}
+	}
+}
+
+func (p *Provider) one(ctx context.Context, ref clusterprovider.Ref) error {
+	key, err := ref.Key()
+	if err != nil {
+		return err
+	}
+	cl, err := p.registry.Read(ctx, ref)
+	if err != nil {
+		return fmt.Errorf("clusterprovider: reading the Cluster CR of %s out of %s: %w",
+			ref.Name, ref.Home, err)
+	}
+	if !cl.Spec.Running || cl.DeletionTimestamp != nil {
+		p.log.Info("cluster provider: this cluster is not running, so its group is reaped and "+
+			"nothing is brought up for it", "cluster", ref.Name, "key", key, "home", ref.Home,
+			"running", cl.Spec.Running, "deleting", cl.DeletionTimestamp != nil)
+		return p.reapOne(ctx, key)
+	}
+	if _, err := p.store(ctx, key); err != nil {
+		return err
+	}
+	p.pass(ctx, ref, key)
+	p.scale(ctx, key, ref.Name, true)
+	return nil
+}
+
+func (p *Provider) reapOne(ctx context.Context, key string) error {
+	if err := p.host.Reap(ctx, key); err != nil {
+		return err
+	}
+	if p.nodes == nil {
+		return nil
+	}
+	return p.nodes.reapCluster(ctx, key)
+}
+
+func (p *Provider) scale(ctx context.Context, key, name string, running bool) {
+	if p.nodeScale == nil || !running {
+		return
+	}
+	if p.nodes != nil {
+		if err := p.nodes.confirm(ctx, key); err != nil {
+			p.log.Warn("cluster provider: confirming the nodes this cluster already holds did not "+
+				"complete", "cluster", name, "key", key, "error", err.Error())
+		}
+	}
+	dec, err := p.nodeScale.RunPass(ctx, key)
+	if err != nil {
+		p.log.Warn("cluster provider: the node-scale pass did not complete",
+			"cluster", name, "key", key, "error", err.Error())
+		return
+	}
+	p.log.Info("cluster provider: node scale", "cluster", name, "key", key,
+		"action", dec.Action.String(), "nodes", dec.Nodes, "reason", dec.Reason)
+}
+
+func (p *Provider) pass(ctx context.Context, ref clusterprovider.Ref, key string) {
 	pass, err := p.provider.Reconcile(ctx, ref)
 	if pass.Result.Phase != "" {
 		args := []any{
-			"cluster", ref.Name, "home", ref.Home,
+			"cluster", ref.Name, "key", key, "home", ref.Home,
 			"phase", pass.Result.Phase, "url", pass.Result.URL, "instance", pass.Result.Instance,
 			"wrote", pass.Wrote, "alert", pass.Alert(),
 		}
 		if mints := p.provider.MintClusters(); len(mints) > 0 {
-			args = append(args, "mintCredential", p.cfg.MintKubeconfigs+"/"+ref.Name, "mints", mints)
+			args = append(args, "mintCredential", p.cfg.MintKubeconfigs+"/"+key, "mints", mints)
 		}
 		p.log.Info("cluster provider: status", args...)
 		if pass.Result.Alert != "" {
 			p.log.Warn("cluster provider: the materialiser reported an alert",
-				"cluster", ref.Name, "alert", pass.Result.Alert)
+				"cluster", ref.Name, "key", key, "alert", pass.Result.Alert)
 		}
 	}
 	if err != nil {
-		p.log.Error("cluster provider: the pass failed", "cluster", ref.Name, "error", err.Error())
+		p.log.Error("cluster provider: the pass failed", "cluster", ref.Name, "key", key,
+			"error", err.Error())
 	}
 }
 
@@ -261,26 +401,49 @@ func (p *Provider) lookup(ctx context.Context, name string) (clusterprovider.Ref
 	if err != nil {
 		return clusterprovider.Ref{}, nil, err
 	}
-	var found []string
+	var named []clusterprovider.Ref
 	for _, ref := range refs {
-		if ref.Name != name {
-			continue
+		if ref.Name == name {
+			named = append(named, ref)
 		}
-		cl, err := p.registry.Read(ctx, ref)
-		if err != nil {
-			return clusterprovider.Ref{}, nil, err
+	}
+	switch len(named) {
+	case 1:
+	case 0:
+		found := make([]string, 0, len(refs))
+		for _, ref := range refs {
+			found = append(found, ref.Home+"/"+ref.Name)
 		}
-		p.log.Info("cluster provider: joining", "cluster", ref.Name, "home", ref.Home,
-			"did", ref.DID, "account", ref.Account,
-			"running", cl.Spec.Running, "phase", cl.Status.Phase, "url", cl.Status.URL)
-		return ref, cl, nil
+		return clusterprovider.Ref{}, nil, fmt.Errorf(
+			"clusterprovider: no Cluster %q in the tree this credential can see; it holds %d: %v",
+			name, len(found), found)
+	default:
+		homes := make([]string, 0, len(named))
+		for _, ref := range named {
+			homes = append(homes, ref.Home)
+		}
+		return clusterprovider.Ref{}, nil, fmt.Errorf(
+			"clusterprovider: %d workspaces in this tree hold a Cluster named %q (%v), and %s names "+
+				"one cluster. A name is unique only inside its home workspace, so this join is "+
+				"refused rather than resolved to whichever home was listed first: the two clusters "+
+				"have different state dirs, different ports and different node names, and picking "+
+				"one silently would provision the wrong cluster. Set %s to %s to reconcile every "+
+				"cluster in the tree instead",
+			len(named), name, homes, envJoin, envJoin, JoinAllClusters)
 	}
-	for _, ref := range refs {
-		found = append(found, ref.Home+"/"+ref.Name)
+	ref := named[0]
+	cl, err := p.registry.Read(ctx, ref)
+	if err != nil {
+		return clusterprovider.Ref{}, nil, err
 	}
-	return clusterprovider.Ref{}, nil, fmt.Errorf(
-		"clusterprovider: no Cluster %q in the tree this credential can see; it holds %d: %v",
-		name, len(found), found)
+	key, err := ref.Key()
+	if err != nil {
+		return clusterprovider.Ref{}, nil, err
+	}
+	p.log.Info("cluster provider: joining", "cluster", ref.Name, "key", key, "home", ref.Home,
+		"did", ref.DID, "account", ref.Account,
+		"running", cl.Spec.Running, "phase", cl.Status.Phase, "url", cl.Status.URL)
+	return ref, cl, nil
 }
 
 func (p *Provider) report() {
@@ -293,15 +456,24 @@ func (p *Provider) report() {
 			"consequence", "the tenant grant is not applied and no mint credential is obtained while this mode is set")
 		return
 	}
+	mode := "join"
+	scope := p.cfg.Join
+	status := "on, for THIS cluster only: the join holds its VM, so the pass may write"
+	if p.cfg.AllClusters() {
+		mode = "join-all"
+		scope = "every Cluster in the tree"
+		status = "on, for EVERY cluster this pass brings up: each one holds its own VM"
+	}
 	p.log.Info("cluster provider: report",
-		"mode", "join",
-		"cluster", p.cfg.Join,
-		"instance", "(derived: pdr-<normalised cluster>)",
+		"mode", mode,
+		"join", scope,
+		"key", "(derived: <accountHash>-<name>, from the cluster's home workspace)",
+		"instance", "(derived: pdr-<key>)",
 		"datastore", p.storePlan(),
 		"datastoreHasRow", p.cfg.DatastoreHasRow,
 		"mintDir", p.cfg.MintKubeconfigs,
-		"statusWrite", "on, for THIS cluster only: the join holds its VM, so the pass may write",
-		"bootstrap", "runs on the provider's own transition into Ready, once")
+		"statusWrite", status,
+		"bootstrap", "runs on each cluster's own transition into Ready, once")
 }
 
 func (p *Provider) storePlan() string {

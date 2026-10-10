@@ -76,6 +76,17 @@ func (h *LocalHost) Reap(ctx context.Context, cluster string) error {
 	return g.Reap(ctx)
 }
 
+func (h *LocalHost) Clusters() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	out := make([]string, 0, len(h.groups))
+	for cluster := range h.groups {
+		out = append(out, cluster)
+	}
+	sort.Strings(out)
+	return out
+}
+
 func (h *LocalHost) PIDs(cluster string) []int {
 	h.mu.Lock()
 	defer h.mu.Unlock()

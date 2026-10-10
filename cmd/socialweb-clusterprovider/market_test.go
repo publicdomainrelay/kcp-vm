@@ -216,7 +216,7 @@ func TestTwoScalePassesOverAPendingClaimAskForOneNode(t *testing.T) {
 	}
 	ctx := context.Background()
 	for pass := 1; pass <= 2; pass++ {
-		if _, err := driver.RunPass(ctx, "liveweb"); err != nil {
+		if _, err := driver.RunPass(ctx, clusterKey(t, "liveweb")); err != nil {
 			t.Fatalf("scale pass %d: %v", pass, err)
 		}
 	}
@@ -236,21 +236,21 @@ func TestAMarketNodeIsCountedUntilTheDoorReportsItRunning(t *testing.T) {
 		t.Fatalf("newNodeHosts: %v", err)
 	}
 	ctx := context.Background()
-	if got := hosts.inFlight(ctx, "liveweb"); got != 0 {
+	if got := hosts.inFlight(ctx, clusterKey(t, "liveweb")); got != 0 {
 		t.Fatalf("a cluster with no node host counted %d nodes in flight", got)
 	}
-	nodes, err := hosts.forCluster("liveweb")
+	nodes, err := hosts.forCluster(clusterKey(t, "liveweb"))
 	if err != nil {
 		t.Fatalf("forCluster: %v", err)
 	}
 	if err := nodes.Provision(ctx); err != nil {
 		t.Fatalf("Provision: %v", err)
 	}
-	if got := hosts.inFlight(ctx, "liveweb"); got != 1 {
+	if got := hosts.inFlight(ctx, clusterKey(t, "liveweb")); got != 1 {
 		t.Fatalf("a claim still Pending counted %d nodes in flight, want 1", got)
 	}
-	claims.setPhase("root:acct:home", "liveweb-node1", v1alpha1.NodeClaimRunning)
-	if got := hosts.inFlight(ctx, "liveweb"); got != 0 {
+	claims.setPhase(testHomePrefix+"liveweb", clusterKey(t, "liveweb")+"-node1", v1alpha1.NodeClaimRunning)
+	if got := hosts.inFlight(ctx, clusterKey(t, "liveweb")); got != 0 {
 		t.Fatalf("a Running claim counted %d nodes in flight, want 0: the node it names is in its "+
 			"cluster's own node list, and counting it twice makes a decision read two nodes for one",
 			got)
@@ -265,7 +265,7 @@ func TestTheMarketTeardownIsTheClaimAndNotTheMachine(t *testing.T) {
 		t.Fatalf("newNodeHosts: %v", err)
 	}
 	ctx := context.Background()
-	nodes, err := hosts.forCluster("liveweb")
+	nodes, err := hosts.forCluster(clusterKey(t, "liveweb"))
 	if err != nil {
 		t.Fatalf("forCluster: %v", err)
 	}

@@ -35,6 +35,8 @@ type Ref struct {
 
 func (r Ref) MountPath() string { return kcpclient.MountPath(r.DID, r.Name) }
 
+func (r Ref) Key() (string, error) { return kcpclient.ClusterKey(r.Home) }
+
 type RegistryOptions struct {
 	Host string
 

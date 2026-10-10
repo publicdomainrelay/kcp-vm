@@ -290,7 +290,7 @@ func (p *Provider) reconcile(ctx context.Context, ref Ref, with func(*materialis
 		pass.Result = carryStatus(cl)
 		return pass, nil
 	}
-	if !p.opts.Host.Live(ref.Name) && o.Reachable && cl.Status.URL != "" {
+	if !p.opts.Host.Live(o.Cluster.Name) && o.Reachable && cl.Status.URL != "" {
 		pass.Foreign = true
 		pass.Result = carryStatus(cl)
 		return pass, nil
@@ -318,14 +318,14 @@ func (p *Provider) reconcile(ctx context.Context, ref Ref, with func(*materialis
 		pass.Unfinalized = true
 	}
 
-	if res.Phase == readyPhase && p.opts.OnReady != nil && !p.readyDone(ref.Name) {
+	if res.Phase == readyPhase && p.opts.OnReady != nil && !p.readyDone(o.Cluster.Name) {
 		after := cl.DeepCopy()
 		after.Status = statusOf(cl, res)
 		if err := p.opts.OnReady(ctx, ref, after); err != nil {
 			pass.Err = err
 			return pass, err
 		}
-		p.markReadyDone(ref.Name)
+		p.markReadyDone(o.Cluster.Name)
 	}
 	return pass, nil
 }
@@ -371,11 +371,16 @@ func (p *Provider) Observe(ctx context.Context, ref Ref) (materialiser.Observed,
 }
 
 func (p *Provider) observe(ctx context.Context, ref Ref, cl *v1alpha1.Cluster) (materialiser.Observed, error) {
+	key, err := ref.Key()
+	if err != nil {
+		return materialiser.Observed{}, err
+	}
 	o := materialiser.Observed{
 		Cluster:    *cl,
 		PathStatus: p.opts.Registry.MountStatus(ctx, ref),
 		Now:        p.opts.Now(),
 	}
+	o.Cluster.Name = key
 	if cl.Status.URL != "" {
 		_, o.Reachable = p.opts.Probe(ctx, cl.Status.URL)
 	}
@@ -429,13 +434,22 @@ func (p *Provider) Run(ctx context.Context) error {
 	}
 }
 
+func (p *Provider) Reclaim(refs []Ref) { p.reclaim(refs) }
+
 func (p *Provider) reclaim(refs []Ref) {
 	if p.opts.Ports == nil || len(refs) == 0 {
 		return
 	}
 	known := make(map[string]bool, len(refs))
 	for _, ref := range refs {
-		known[ref.Name] = true
+		key, err := ref.Key()
+		if err != nil {
+			p.opts.Log.Error("portallocator: a Cluster CR has no derivable key, so its leases "+
+				"cannot be told from leases whose CR is gone", "cluster", ref.Name, "home", ref.Home,
+				"err", err.Error())
+			return
+		}
+		known[key] = true
 	}
 	freed, err := p.opts.Ports.Reclaim(known)
 	if err != nil {

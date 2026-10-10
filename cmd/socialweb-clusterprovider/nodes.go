@@ -110,6 +110,8 @@ func (s nodeSubstrate) IsGuest() bool {
 	return s.Name == SubstrateFirecracker || s.Name == SubstrateQEMU
 }
 
+func (s nodeSubstrate) deferredJoin() bool { return s.Name == SubstrateMarket }
+
 func nodeSubstrateFor(cfg Config) (nodeSubstrate, error) {
 	switch cfg.Substrate {
 	case SubstrateFirecracker:
@@ -449,7 +451,54 @@ func (n *tenantNodes) Provision(ctx context.Context) error {
 	if err := n.writeSnapshot(); err != nil {
 		return err
 	}
+	if n.opts.Substrate.deferredJoin() {
+		n.log.Info("cluster provider: the claim is written and this pass returns without waiting "+
+			"for the machine", "cluster", n.cluster, "node", name,
+			"reason", "a market machine takes minutes to appear in the tenant cluster's node list, "+
+				"and this pass is one of many in one process: blocking here would hold back every "+
+				"other cluster for the whole join timeout",
+			"next", "a later pass confirms the node once the claim reads Running AND the tenant "+
+				"cluster reports the Node, and a claim that reads Failed fails the node here")
+		return nil
+	}
 	return n.confirmJoined(ctx, host, name)
+}
+
+func (n *tenantNodes) confirmHeld(ctx context.Context) error {
+	if !n.opts.Substrate.deferredJoin() {
+		return nil
+	}
+	n.mu.Lock()
+	held := n.heldNodesLocked()
+	n.mu.Unlock()
+
+	var problems []error
+	for _, node := range held {
+		if fatal := guestFatal(node.host); fatal != "" {
+			problems = append(problems, fmt.Errorf(
+				"clusterprovider: node %s of %s stopped making progress before the tenant cluster "+
+					"reported it, so it is failed rather than left counted: %s -- the claim is "+
+					"released and the next pass may ask the market again",
+				node.name, n.cluster, fatal))
+			if err := n.teardownHeld(ctx, node); err != nil {
+				problems = append(problems, err)
+			}
+			continue
+		}
+		reported, err := nodeReported(ctx, n.tenant, n.cluster, node.name)
+		if err != nil {
+			problems = append(problems, err)
+			continue
+		}
+		if !reported {
+			continue
+		}
+		if err := node.host.ConfirmJoined(ctx); err != nil {
+			problems = append(problems, fmt.Errorf("clusterprovider: confirming node %s of %s "+
+				"after the tenant cluster reported it: %w", node.name, n.cluster, err))
+		}
+	}
+	return errors.Join(problems...)
 }
 
 func (n *tenantNodes) markLive(name string) {
@@ -574,8 +623,7 @@ func (n *tenantNodes) confirmJoined(ctx context.Context, host nodeHost, name str
 }
 
 func (n *tenantNodes) Teardown(ctx context.Context) error {
-	client, err := n.client(ctx)
-	if err != nil {
+	if _, err := n.client(ctx); err != nil {
 		return err
 	}
 	n.mu.Lock()
@@ -583,34 +631,11 @@ func (n *tenantNodes) Teardown(ctx context.Context) error {
 	n.mu.Unlock()
 
 	var problems []error
-	gone := make([]string, 0, len(held))
 	for _, node := range held {
-		if err := node.host.Teardown(ctx); err != nil {
+		if err := n.teardownHeld(ctx, node); err != nil {
 			problems = append(problems, err)
-			continue
 		}
-		gone = append(gone, node.name)
-		if err := client.CoreV1().Nodes().Delete(ctx, node.name, metav1.DeleteOptions{}); err != nil {
-			if apierrors.IsNotFound(err) {
-				n.log.Info("clusterprovider: the tenant cluster holds no Node object for this node",
-					"cluster", n.cluster, "node", node.name)
-				continue
-			}
-			problems = append(problems, fmt.Errorf("clusterprovider: deleting the tenant cluster's "+
-				"Node object %s: %w -- the guest is stopped, and this object is the count the scale "+
-				"decision reads: left behind it reads as a node that still exists, so the next pass "+
-				"tears down a node that is already gone and the cluster never reaches the zero state",
-				node.name, err))
-			continue
-		}
-		n.log.Info("clusterprovider: removed the node from the tenant cluster",
-			"cluster", n.cluster, "node", node.name)
 	}
-	n.mu.Lock()
-	for _, name := range gone {
-		delete(n.live, name)
-	}
-	n.mu.Unlock()
 	if err := n.writeSnapshot(); err != nil {
 		problems = append(problems, err)
 	}
@@ -620,6 +645,36 @@ func (n *tenantNodes) Teardown(ctx context.Context) error {
 	n.mu.Lock()
 	n.extra = nil
 	n.mu.Unlock()
+	return nil
+}
+
+func (n *tenantNodes) teardownHeld(ctx context.Context, node heldNode) error {
+	if err := node.host.Teardown(ctx); err != nil {
+		return err
+	}
+	n.mu.Lock()
+	delete(n.live, node.name)
+	n.mu.Unlock()
+	client, err := n.client(ctx)
+	if err != nil {
+		return fmt.Errorf("clusterprovider: the tenant client, needed to delete the Node object of "+
+			"%s after its guest was stopped: %w -- left behind it reads as a node that still exists, "+
+			"so the next pass tears down a node that is already gone", node.name, err)
+	}
+	if err := client.CoreV1().Nodes().Delete(ctx, node.name, metav1.DeleteOptions{}); err != nil {
+		if apierrors.IsNotFound(err) {
+			n.log.Info("clusterprovider: the tenant cluster holds no Node object for this node",
+				"cluster", n.cluster, "node", node.name)
+			return nil
+		}
+		return fmt.Errorf("clusterprovider: deleting the tenant cluster's "+
+			"Node object %s: %w -- the guest is stopped, and this object is the count the scale "+
+			"decision reads: left behind it reads as a node that still exists, so the next pass "+
+			"tears down a node that is already gone and the cluster never reaches the zero state",
+			node.name, err)
+	}
+	n.log.Info("clusterprovider: removed the node from the tenant cluster",
+		"cluster", n.cluster, "node", node.name)
 	return nil
 }
 
@@ -746,6 +801,48 @@ func (h *nodeHosts) resetSnapshot(cluster string) error {
 		return err
 	}
 	return cloudprovider.WriteSnapshot(clusterstack.NodeSnapshotPath(dir), nil)
+}
+
+func (h *nodeHosts) confirm(ctx context.Context, cluster string) error {
+	h.mu.Lock()
+	n, ok := h.hosts[cluster]
+	h.mu.Unlock()
+	if !ok {
+		return nil
+	}
+	return n.confirmHeld(ctx)
+}
+
+func (h *nodeHosts) reapCluster(ctx context.Context, cluster string) error {
+	h.mu.Lock()
+	n, ok := h.hosts[cluster]
+	if ok {
+		delete(h.hosts, cluster)
+	}
+	h.mu.Unlock()
+	if !ok {
+		return nil
+	}
+	n.mu.Lock()
+	nodes := n.heldNodesLocked()
+	n.mu.Unlock()
+	var problems []error
+	for _, node := range nodes {
+		h.log.Info("cluster provider: reaping the node host of a cluster that is OFF or deleting",
+			"cluster", cluster, "node", node.name)
+		if err := node.host.Reap(ctx); err != nil {
+			problems = append(problems, fmt.Errorf(
+				"clusterprovider: reaping node %s of %s, whose CR is OFF or deleting: %w",
+				node.name, cluster, err))
+		}
+	}
+	n.mu.Lock()
+	n.live = nil
+	n.mu.Unlock()
+	if err := n.writeSnapshot(); err != nil {
+		problems = append(problems, err)
+	}
+	return errors.Join(problems...)
 }
 
 func (h *nodeHosts) reap(ctx context.Context) error {
@@ -1009,20 +1106,24 @@ func nodeRecorder(registry clusterprovider.Clusters, cluster, name string, expir
 	}
 }
 
-func nodeRefFor(ctx context.Context, registry clusterprovider.Clusters, cluster string) (clusterprovider.Ref, error) {
+func nodeRefFor(ctx context.Context, registry clusterprovider.Clusters, key string) (clusterprovider.Ref, error) {
 	refs, err := registry.Refs(ctx)
 	if err != nil {
 		return clusterprovider.Ref{}, err
 	}
 	for _, ref := range refs {
-		if ref.Name == cluster {
+		found, err := ref.Key()
+		if err != nil {
+			return clusterprovider.Ref{}, err
+		}
+		if found == key {
 			return ref, nil
 		}
 	}
 	return clusterprovider.Ref{}, fmt.Errorf(
-		"clusterprovider: no Cluster CR named %s in the tree this registry searched, so this node's "+
-			"phase has nowhere to be written and the scale decision would read a cluster with no "+
-			"node on every pass", cluster)
+		"clusterprovider: no Cluster CR with the key %s in the tree this registry searched, so this "+
+			"node's phase has nowhere to be written and the scale decision would read a cluster with "+
+			"no node on every pass", key)
 }
 
 func nodeReported(ctx context.Context, tenant tenantClient, cluster, nodeName string) (bool, error) {

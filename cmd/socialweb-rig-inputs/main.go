@@ -142,7 +142,12 @@ func derive(kcpKubeconfig, kcpHost, cluster, registryWorkspace, registryNamespac
 		{"SOCIALWEB_LIVE_REGISTRY_WORKSPACE", registryWorkspace},
 		{"SOCIALWEB_LIVE_REGISTRY_NAMESPACE", registryNamespace},
 	}
-	if dir, err := clusterprovider.ClusterDataDir(clusterproviderState, ref.Name); err == nil {
+	key, keyErr := ref.Key()
+	if keyErr != nil {
+		fmt.Fprintf(os.Stderr, "socialweb-rig-inputs: %v\n", keyErr)
+		return nil
+	}
+	if dir, err := clusterprovider.ClusterDataDir(clusterproviderState, key); err == nil {
 		tenant := filepath.Join(dir, "server", "cred", "admin.kubeconfig")
 		if _, err := os.Stat(tenant); err == nil {
 			vars = append(vars,

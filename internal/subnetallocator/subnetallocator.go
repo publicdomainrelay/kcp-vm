@@ -386,6 +386,36 @@ func (a *Allocator) save() error {
 	return os.Rename(tmp, a.path)
 }
 
+func (a *Allocator) Rekey(legacy, key string) (int, error) {
+	if legacy == "" || key == "" || legacy == key {
+		return 0, nil
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	moved := 0
+	err := a.withLock(hostos.LockExclusive, func() error {
+		if err := a.load(); err != nil {
+			return err
+		}
+		held, ok := a.leases[legacy]
+		if !ok {
+			return nil
+		}
+		if _, taken := a.leases[key]; taken {
+			return nil
+		}
+		delete(a.leases, legacy)
+		held.Cluster = key
+		a.leases[key] = held
+		moved = 1
+		return a.save()
+	})
+	if err != nil {
+		return 0, err
+	}
+	return moved, nil
+}
+
 func (a *Allocator) Allocate(req Request) (Lease, error) {
 	if req.Cluster == "" {
 		return Lease{}, errors.New("subnetallocator: Cluster is required. A range is leased to a " +

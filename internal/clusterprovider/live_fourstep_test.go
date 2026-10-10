@@ -20,6 +20,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clusterstack"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/identitybundle"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/instance"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpclient"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/livegate"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/liveports"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/materialiser"
@@ -91,11 +92,24 @@ type proofClusters struct {
 	live      func() bool
 }
 
+const proofDID = "did:web:proof.example"
+
+func proofHome(name string) string { return kcpclient.HomePath(proofDID, name) }
+
+func proofKey(t *testing.T, name string) string {
+	t.Helper()
+	key, err := kcpclient.ClusterKey(proofHome(name))
+	if err != nil {
+		t.Fatalf("the key of %s: %v", name, err)
+	}
+	return key
+}
+
 func (p *proofClusters) Refs(context.Context) ([]Ref, error) {
 	if p.err != nil {
 		return nil, p.err
 	}
-	return []Ref{{Account: "root:proof", DID: p.cluster.Spec.Account, Home: "root:proof:home", Name: p.cluster.Name}}, nil
+	return []Ref{{Account: "root:proof", DID: p.cluster.Spec.Account, Home: proofHome(p.cluster.Name), Name: p.cluster.Name}}, nil
 }
 
 func (p *proofClusters) Read(context.Context, Ref) (*v1alpha1.Cluster, error) {
@@ -164,7 +178,7 @@ func timeToReady(t *testing.T, ctx context.Context, prov *Provider, registry *pr
 	var times bringUpTimes
 	start := time.Now()
 	deadline := start.Add(3 * time.Minute)
-	ref := Ref{Account: "root:proof", Home: "root:proof:home", Name: registry.cluster.Name}
+	ref := Ref{Account: "root:proof", Home: proofHome(registry.cluster.Name), Name: registry.cluster.Name}
 	for {
 		pass, err := prov.Reconcile(ctx, ref)
 		if err != nil {
@@ -203,6 +217,7 @@ func TestAPreSeededIdentityBundleSavesTheControlPlaneFromAuthoringItsCAs(t *test
 	stateDir := t.TempDir()
 	const clusterName = "liveweb"
 	const did = "did:plc:liveweb0000000000000000"
+	clusterKey := proofKey(t, clusterName)
 
 	rebuildPorts, err := liveports.TakeForProcess(liveports.RebuildProof)
 	if err != nil {
@@ -219,7 +234,7 @@ func TestAPreSeededIdentityBundleSavesTheControlPlaneFromAuthoringItsCAs(t *test
 		t.Fatalf("portallocator.Open: %v", err)
 	}
 
-	pgLease, err := alloc.Allocate(portallocator.Request{Cluster: clusterName, Purpose: portallocator.PurposePostgres})
+	pgLease, err := alloc.Allocate(portallocator.Request{Cluster: clusterKey, Purpose: portallocator.PurposePostgres})
 	if err != nil {
 		t.Fatalf("the store's lease: %v", err)
 	}
@@ -269,7 +284,7 @@ func TestAPreSeededIdentityBundleSavesTheControlPlaneFromAuthoringItsCAs(t *test
 	t.Cleanup(func() {
 		reapCtx, reap := context.WithTimeout(context.Background(), 60*time.Second)
 		defer reap()
-		if err := host.Reap(reapCtx, clusterName); err != nil {
+		if err := host.Reap(reapCtx, clusterKey); err != nil {
 			t.Logf("reaping the group: %v", err)
 		}
 	})
@@ -290,7 +305,7 @@ func TestAPreSeededIdentityBundleSavesTheControlPlaneFromAuthoringItsCAs(t *test
 	registry := &proofClusters{cluster: &v1alpha1.Cluster{
 		ObjectMeta: metav1.ObjectMeta{Name: clusterName},
 		Spec:       v1alpha1.ClusterSpec{Account: did, Running: true},
-	}, live: func() bool { return host.Live(clusterName) }}
+	}, live: func() bool { return host.Live(clusterKey) }}
 	prov, err := New(Options{
 		Registry:         registry,
 		Decider:          decider,
@@ -306,18 +321,18 @@ func TestAPreSeededIdentityBundleSavesTheControlPlaneFromAuthoringItsCAs(t *test
 		t.Fatalf("clusterprovider.New: %v", err)
 	}
 
-	dataDir, err := ClusterDataDir(stateDir, clusterName)
+	dataDir, err := ClusterDataDir(stateDir, clusterKey)
 	if err != nil {
 		t.Fatalf("ClusterDataDir: %v", err)
 	}
 	root := filepath.Join(dataDir, "server")
-	bundleDir, err := BundleDir(stateDir, clusterName)
+	bundleDir, err := BundleDir(stateDir, clusterKey)
 	if err != nil {
 		t.Fatalf("BundleDir: %v", err)
 	}
 
 	apiURL := func() string {
-		lease, ok := alloc.PortFor(clusterName, portallocator.PurposeK3sSecure)
+		lease, ok := alloc.PortFor(clusterKey, portallocator.PurposeK3sSecure)
 		if !ok {
 			return ""
 		}
@@ -332,7 +347,7 @@ func TestAPreSeededIdentityBundleSavesTheControlPlaneFromAuthoringItsCAs(t *test
 			"the same name", bundleDir, err)
 	}
 
-	if err := host.Reap(ctx, clusterName); err != nil {
+	if err := host.Reap(ctx, clusterKey); err != nil {
 		t.Fatalf("reaping the group before the rebuild: %v", err)
 	}
 	if err := os.RemoveAll(root); err != nil {
@@ -350,7 +365,7 @@ func TestAPreSeededIdentityBundleSavesTheControlPlaneFromAuthoringItsCAs(t *test
 	t.Logf("MEASURED cold ready=%s listener=%s apiserver=%s", cold.ready, cold.listener, cold.api)
 	t.Logf("MEASURED pre-seeded ready=%s listener=%s apiserver=%s", seeded.ready, seeded.listener, seeded.api)
 
-	if err := host.Reap(ctx, clusterName); err != nil {
+	if err := host.Reap(ctx, clusterKey); err != nil {
 		t.Fatalf("reaping the group before the control run: %v", err)
 	}
 	if err := os.RemoveAll(root); err != nil {
@@ -390,6 +405,7 @@ func TestTheControlPlaneReachesReadyAtZeroNodes(t *testing.T) {
 	stateDir := proofStateDir(t)
 	const clusterName = "liveweb"
 	const did = "did:plc:liveweb0000000000000000"
+	clusterKey := proofKey(t, clusterName)
 
 	zeroNodePorts, err := liveports.TakeForProcess(liveports.ZeroNodeProof)
 	if err != nil {
@@ -407,7 +423,7 @@ func TestTheControlPlaneReachesReadyAtZeroNodes(t *testing.T) {
 		t.Fatalf("portallocator.Open: %v", err)
 	}
 
-	pgLease, err := alloc.Allocate(portallocator.Request{Cluster: clusterName, Purpose: portallocator.PurposePostgres})
+	pgLease, err := alloc.Allocate(portallocator.Request{Cluster: clusterKey, Purpose: portallocator.PurposePostgres})
 	if err != nil {
 		t.Fatalf("the store's lease: %v", err)
 	}
@@ -484,7 +500,7 @@ func TestTheControlPlaneReachesReadyAtZeroNodes(t *testing.T) {
 	t.Cleanup(func() {
 		reapCtx, reap := context.WithTimeout(context.Background(), 30*time.Second)
 		defer reap()
-		if err := host.Reap(reapCtx, clusterName); err != nil {
+		if err := host.Reap(reapCtx, clusterKey); err != nil {
 			t.Logf("reaping the group: %v", err)
 		}
 	})
@@ -492,7 +508,7 @@ func TestTheControlPlaneReachesReadyAtZeroNodes(t *testing.T) {
 	registry := &proofClusters{cluster: &v1alpha1.Cluster{
 		ObjectMeta: metav1.ObjectMeta{Name: clusterName},
 		Spec:       v1alpha1.ClusterSpec{Account: did, Running: true},
-	}, live: func() bool { return host.Live(clusterName) }}
+	}, live: func() bool { return host.Live(clusterKey) }}
 	prov, err := New(Options{
 		Registry:         registry,
 		Decider:          decider,
@@ -512,10 +528,10 @@ func TestTheControlPlaneReachesReadyAtZeroNodes(t *testing.T) {
 		fmt.Sprintf("the zero-node proof, holding %s", liveports.Text(zeroNodePorts)))
 	t.Logf("STEP 1 cluster reached %s at %s", ready.Phase, ready.URL)
 
-	logClusterVault(t, ctx, stateDir, clusterName)
+	logClusterVault(t, ctx, stateDir, clusterKey)
 
-	apiserver := APIServerURL(mustAPIPort(t, alloc, clusterName))
-	tenant := tenantClientFor(t, ctx, stateDir, clusterName, apiserver)
+	apiserver := APIServerURL(mustAPIPort(t, alloc, clusterKey))
+	tenant := tenantClientFor(t, ctx, stateDir, clusterKey, apiserver)
 
 	if got := nodeNames(t, ctx, tenant); len(got) != 0 {
 		t.Fatalf("STEP 2 the cluster reports %v nodes at zero; the state is not zero", got)
@@ -607,7 +623,7 @@ func tenantClientFor(t *testing.T, ctx context.Context, stateDir, cluster, apise
 func waitReady(t *testing.T, ctx context.Context, prov *Provider, registry *proofClusters, what string) materialiser.Result {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Minute)
-	ref := Ref{Account: "root:proof", Home: "root:proof:home", Name: registry.cluster.Name}
+	ref := Ref{Account: "root:proof", Home: proofHome(registry.cluster.Name), Name: registry.cluster.Name}
 	for {
 		pass, err := prov.Reconcile(ctx, ref)
 		if err != nil {

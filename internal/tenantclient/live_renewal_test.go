@@ -72,7 +72,7 @@ func TestTheRenewalPathAgainstRealInfrastructure(t *testing.T) {
 		RegistryWorkspace: registryWorkspace,
 		RegistryNamespace: registryNamespace,
 		Audience:          audience,
-		MintConfig: func(string) (*rest.Config, error) {
+		MintConfig: func(string, string) (*rest.Config, error) {
 			c := rest.CopyConfig(tenantCfg)
 			c.Impersonate = rest.ImpersonationConfig{
 				UserName: "system:serviceaccount:users:gwmint",

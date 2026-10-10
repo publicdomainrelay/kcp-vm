@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"regexp"
 	"strings"
 
 	kcpv1alpha1 "github.com/kcp-dev/sdk/apis/tenancy/v1alpha1"
@@ -36,6 +37,26 @@ func MountPath(did, cluster string) string {
 
 func IdentityRecordName(did string) string {
 	return AccountHash(did)
+}
+
+var clusterKeyShape = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
+
+func ClusterKey(home string) (string, error) {
+	parts := strings.Split(home, ":")
+	if len(parts) != 3 || parts[0] != RootWorkspace || parts[1] == "" || parts[2] == "" {
+		return "", fmt.Errorf(
+			"kcpclient: %q is not a home workspace path of the form %s:<account>:<cluster>, so the "+
+				"key a cluster is known by inside a provider cannot be derived from it",
+			home, RootWorkspace)
+	}
+	key := parts[1] + "-" + parts[2]
+	if !clusterKeyShape.MatchString(key) {
+		return "", fmt.Errorf(
+			"kcpclient: the home workspace path %q resolves to %q, which is not a DNS-1123 label: "+
+				"the key names a state dir, a port lease, a node and a mint credential, so a "+
+				"character outside [a-z0-9-] would make it name nothing those can hold", home, key)
+	}
+	return key, nil
 }
 
 const TenantNamespace = "users"

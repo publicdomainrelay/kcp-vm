@@ -622,7 +622,7 @@ func TestTheNodeRecordGoesThroughTheRegistryAndNamesTheNode(t *testing.T) {
 		Spec:       v1alpha1.ClusterSpec{Account: "did:web:example.com"},
 	}}}}
 	expiry := int64(1790000000)
-	rec := nodeRecorder(registry, "liveweb", "liveweb-node1", &expiry)
+	rec := nodeRecorder(registry, clusterKey(t, "liveweb"), "liveweb-node1", &expiry)
 	if err := rec(context.Background(), "liveweb-node1", v1alpha1.NodePending); err != nil {
 		t.Fatalf("record(Pending): %v", err)
 	}

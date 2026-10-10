@@ -142,6 +142,14 @@ func ref() Ref {
 	}
 }
 
+func key() string {
+	k, err := ref().Key()
+	if err != nil {
+		panic(err)
+	}
+	return k
+}
+
 func cluster(running bool, phase v1alpha1.ClusterPhase, url string) *v1alpha1.Cluster {
 	cl := &v1alpha1.Cluster{
 		ObjectMeta: metav1.ObjectMeta{Name: "liveweb", Generation: 1},
@@ -345,7 +353,7 @@ func TestAPIServerURLNamesThePortTheApiserverHolds(t *testing.T) {
 		if p == portallocator.PurposeK3sSecure {
 			continue
 		}
-		other, ok := ports.PortFor("liveweb", p)
+		other, ok := ports.PortFor(key(), p)
 		if !ok {
 			continue
 		}
@@ -364,7 +372,7 @@ func TestAPIServerURLNamesThePortTheApiserverHolds(t *testing.T) {
 
 func TestJoinedWritesReadyAtTheURLTheJoinAnsweredAt(t *testing.T) {
 	vm := newTestHost()
-	if err := vm.Hold("liveweb"); err != nil {
+	if err := vm.Hold(key()); err != nil {
 		t.Fatalf("Hold: %v", err)
 	}
 	fc := &fakeClusters{cluster: cluster(true, "", "")}
@@ -397,7 +405,7 @@ func TestJoinedWritesReadyAtTheURLTheJoinAnsweredAt(t *testing.T) {
 
 func TestJoinedWithoutAnAnswerWritesInitializing(t *testing.T) {
 	vm := newTestHost()
-	if err := vm.Hold("liveweb"); err != nil {
+	if err := vm.Hold(key()); err != nil {
 		t.Fatalf("Hold: %v", err)
 	}
 	fc := &fakeClusters{cluster: cluster(true, "", "")}
@@ -434,7 +442,7 @@ func TestJoinedWithoutAHeldVMDoesNotClaimReady(t *testing.T) {
 
 func TestJoinedHoldsTheRatchet(t *testing.T) {
 	vm := newTestHost()
-	if err := vm.Hold("liveweb"); err != nil {
+	if err := vm.Hold(key()); err != nil {
 		t.Fatalf("Hold: %v", err)
 	}
 	fc := &fakeClusters{cluster: cluster(true, v1alpha1.ClusterDraining, "https://192.168.5.2:16445")}
