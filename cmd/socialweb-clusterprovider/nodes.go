@@ -356,7 +356,7 @@ func (n *tenantNodes) Provision(ctx context.Context) error {
 		"for the machine", "cluster", n.cluster, "node", name,
 		"reason", "a market machine takes minutes to appear in the tenant cluster's node list, "+
 			"and this pass is one of many in one process: blocking here would hold back every "+
-			"other cluster for the whole join timeout",
+			"other cluster for as long as the door takes to boot one",
 		"next", "a later pass confirms the node once the claim reads Running AND the tenant "+
 			"cluster reports the Node, and a claim that reads Failed fails the node here")
 	return nil
