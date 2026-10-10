@@ -4141,7 +4141,13 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   it. `tenantAddOns` installs the operator on every substrate and returns before the store, the demo
   value and the ESO certificate when `tenantStoreIsReachableFrom` is false, with a logged decision
   naming this entry. `TestTheTenantStoreIsNotWrittenWhereNothingCanReachIt` pins the decision for all
-  three substrates, watched to fail with it forced true. What is given up is stated rather than
+  three substrates, watched to fail with it forced true. Not writing is not enough on its own, and
+  that was measured too: an upgraded cluster kept the store an older version had written, because
+  nothing removed it, so `eso.Remove` takes back what `eso.Apply` wrote -- by the names in the same
+  manifest directory -- and the pass calls it on that path.
+  `TestRemoveTakesBackTheObjectsThisInstallerWrote` seeds the objects the manifests name and asserts
+  none survive; watched to fail with `Remove` made a no-op: "1 clustersecretstores objects survived
+  the removal". What is given up is stated rather than
   implied: a market cluster now has the operator and no store, and a tenant who wants one configures
   one they can reach. The other two instruments remain open as options -- reaching the vault through
   the door the node's SSH session uses, or publishing the vault on the provider host behind the
