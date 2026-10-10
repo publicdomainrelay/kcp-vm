@@ -1,5 +1,5 @@
 // @ts-types="npm:@types/ssh2@^1"
-import { Server, utils, type Connection } from "ssh2";
+import { Server, type Connection } from "ssh2";
 import { Duplex } from "node:stream";
 import { Buffer } from "node:buffer";
 import { assertEquals } from "@std/assert";
@@ -89,11 +89,17 @@ interface FakeGuest {
   close(): Promise<void>;
 }
 
+const TEST_PRIVATE_KEY = `-----BEGIN OPENSSH PRIVATE KEY-----
+b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
+QyNTUxOQAAACDcpOTZKQCWWpjlL92OZjfgtFU5GnCMuVmv2N0BfN4A2wAAAJg+/v99Pv7/
+fQAAAAtzc2gtZWQyNTUxOQAAACDcpOTZKQCWWpjlL92OZjfgtFU5GnCMuVmv2N0BfN4A2w
+AAAECb/zMbdJi5UJL3nIdNKXoZYVljjFzLSwLzvDt38SojD9yk5NkpAJZamOUv3Y5mN+C0
+VTkacIy5Wa/Y3QF83gDbAAAAE3NvY2lhbHdlYi1kb29yLXRlc3QBAg==
+-----END OPENSSH PRIVATE KEY-----`;
+
 async function fakeGuest(opts: { sayReady?: boolean } = {}): Promise<FakeGuest> {
-  const hostKey = utils.generateKeyPairSync("ed25519");
-  const clientKey = utils.generateKeyPairSync("ed25519");
   const privateKeyPath = await Deno.makeTempFile();
-  await Deno.writeTextFile(privateKeyPath, clientKey.private);
+  await Deno.writeTextFile(privateKeyPath, TEST_PRIVATE_KEY);
 
   const forward = Promise.withResolvers<{ client: Connection; bindAddr: string; bindPort: number }>();
   const document = Promise.withResolvers<Record<string, string>>();
@@ -101,7 +107,7 @@ async function fakeGuest(opts: { sayReady?: boolean } = {}): Promise<FakeGuest> 
   const execCommand = Promise.withResolvers<string>();
   const channelClosed = Promise.withResolvers<void>();
 
-  const ssh = new Server({ hostKeys: [hostKey.private] }, (client) => {
+  const ssh = new Server({ hostKeys: [TEST_PRIVATE_KEY] }, (client) => {
     client.on("authentication", (ctx) => ctx.method === "publickey" ? ctx.accept() : ctx.reject(["publickey"]));
     client.on("ready", () => {
       client.on("request", (accept, reject, name, info) => {

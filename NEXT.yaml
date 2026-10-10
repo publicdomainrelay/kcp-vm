@@ -64,6 +64,12 @@ about: >
   it 2 s later). It is in section 15 with its readings, including the production claim/release pair
   and the test watched to fail without the free-ordinal rule reaching the primary host.
 
+  Opened and closed on 2026-10-07 and therefore NOT listed below: FLAKE-2 (the door's node-session
+  test failed about one run in four, because its fake guest let ssh2 generate the host key it then
+  handed back to ssh2 to parse, and ssh2's own generator occasionally emits a key ssh2's own parser
+  refuses). It is in section 15 with its readings, including both of the causes that were proposed and
+  refuted first, the rate measured with and without concurrency, and the fixed key that closed it.
+
 open:
   - id: MINT-1
     title: A mint credential is named by the cluster's key, and the migration that renames an existing one runs in a different process from the reader.
@@ -172,27 +178,6 @@ open:
       covers leased components only and that a portless member's survival is accepted. Closing
       reading: a gateway killed with SIGKILL and restarted twice, with no controller process left
       after the second start.
-
-  - id: FLAKE-2
-    title: The door's node-session test fails when this host's /tmp is nearly full, which it is.
-    body: >
-      `test/node_session_test.ts`'s `fakeGuest` builds its host key with ssh2's `generateKeyPairSync`
-      and hands it to `new Server({ hostKeys: [hostKey.private] })`. Measured on 2026-10-06: four
-      consecutive `deno task test` runs gave 65 passed, then 64 passed / 1 failed twice, then 65
-      passed, with the failure always `error: Error: Cannot parse privateKey: Malformed OpenSSH private
-      key` at `node_modules/.deno/ssh2@1.17.0/node_modules/ssh2/lib/server.js:249`, from `fakeGuest` at
-      `test/node_session_test.ts:104`. The first reading was an ssh2 defect and it was wrong. This
-      host's `/tmp` is a 24 GiB tmpfs with 2.3 GiB free (91% used, 6.6 GiB of it `/tmp/rfp-guests`,
-      6.6 GiB `/tmp/nodeboot-check`, 5.6 GiB `/tmp/nodeimage-preinstall-check`, all stale scratch from
-      earlier firecracker work), a `go test -race` in the same window died with `compile: writing
-      output: write $WORK/_pkg_.a: disk quota exceeded`, and ssh2 reaches `ssh-keygen` through a
-      temporary file. With `TMPDIR` pointed at the filesystem that has 1.2 TiB free, FIVE consecutive
-      `deno task test` runs were green, 65 passed each. So the flake is this host's scratch space, and
-      the test is only its messenger.
-    instrument: >
-      Either the scratch is reaped (the three stale directories are 19 GiB of a 24 GiB tmpfs), or the
-      test does not need a temp file it cannot get -- and the closing reading is `df /tmp` with room in
-      it plus ten consecutive green runs WITHOUT `TMPDIR` being set anywhere.
 
   - id: FLAKE-1
     title: A gate test depends on the network, so --fast can fail for reasons unrelated to a change.

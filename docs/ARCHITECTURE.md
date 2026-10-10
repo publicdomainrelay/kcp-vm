@@ -1854,20 +1854,6 @@ open list, are two stated LIMITS rather than open work: each marks where a behav
 being true, which is a fact about the design rather than a question left in it, and each sits here
 because it bounds a mechanism the rest of this document leans on.
 
-- **FLAKE-2: the door's node-session test fails when this host's /tmp is nearly full, and it is.**
-  MEASURED on 2026-10-06: four consecutive `deno task test` runs gave 65 passed, then 64 passed / 1
-  failed twice, then 65 passed, the failure always being `error: Error: Cannot parse privateKey:
-  Malformed OpenSSH private key` at
-  `node_modules/.deno/ssh2@1.17.0/node_modules/ssh2/lib/server.js:249`, reached from `fakeGuest` at
-  `test/node_session_test.ts:104`. The first reading - an ssh2 key-generator defect - was WRONG, and
-  the control that refuted it is worth recording: this host's `/tmp` is a 24 GiB tmpfs with 2.3 GiB
-  free, 19 GiB of it three stale scratch directories from earlier firecracker work (`/tmp/rfp-guests`
-  6.6 GiB, `/tmp/nodeboot-check` 6.6 GiB, `/tmp/nodeimage-preinstall-check` 5.6 GiB), a `go test
-  -race` in the same window died with `compile: writing output: write $WORK/_pkg_.a: disk quota
-  exceeded`, and ssh2 reaches `ssh-keygen` through a temporary file. With `TMPDIR` pointed at the
-  filesystem holding 1.2 TiB free, five consecutive runs were green at 65 passed. The test is the
-  messenger, not the defect. `NEXT.yaml` FLAKE-2.
-
 - **A mint credential is named by the cluster's key, and the process that renames an existing one is
   not the process that reads it.** The clusterprovider writes `<MINT_DIR>/<accountHash>-<name>` and the
   gateway reads that name, so the two agree from the clusterprovider's first pass onward. The
@@ -4011,6 +3997,28 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   `node2` and leave the spent claim alone. Watched to fail with the check removed. `forgetHeld` was
   split into a locked and an unlocked form in the process - the first draft called the locking one
   from `Provision`, which already held the mutex, and hung the test until the timeout named it.
+
+- **The door's node-session test let ssh2 generate the key it then asked ssh2 to parse, and failed
+  about one run in four. CLOSED, and BOTH of the causes proposed before the real one were wrong.**
+  `test/node_session_test.ts`'s `fakeGuest` did `const hostKey = utils.generateKeyPairSync("ed25519")`
+  and then `new Server({ hostKeys: [hostKey.private] })`, which fails with `error: Cannot parse
+  privateKey: Malformed OpenSSH private key` from `ssh2@1.17.0/lib/server.js:249` whenever the
+  generator's output is one its own parser rejects. MEASURED 2026-10-06/07, and the two refutations are
+  the part worth keeping:
+  the FIRST cause proposed was an ssh2 key-generator defect under load, which is right in substance but
+  was written before any control; the SECOND was this host's `/tmp`, a 24 GiB tmpfs at 91% with 19 GiB
+  of stale scratch, on the evidence of five green runs with `TMPDIR` moved off it - and that control
+  changed two things at once. The refutation is direct: five more consecutive runs were green with
+  `TMPDIR` LEFT ON the 91%-full tmpfs, and a 60-iteration probe of exactly that path
+  (`generateKeyPairSync` + `Deno.makeTempFile` + write + read + `new Server`) never failed once. What
+  the rate actually tracks is CONCURRENCY: 0 failures in 60 sequential generations, 1 in 240 across
+  four concurrent probe processes, and 1 of 4 concurrent `deno task test` suites against 0 of 5
+  sequential ones. Production does not use that path at all - the requester shells out to the real
+  `ssh-keygen` into a per-VM temp dir (`atproto-market/lib/requester-xrpc/mod.ts:749`) - so this was
+  ever only the test's own key.
+  The fix is a fixed test keypair for the fake guest, which removes the generator and the randomness
+  together. Closing reading: SIX concurrent `deno task test` suites, 65 passed each; the same six-way
+  run before the change failed one suite. `NEXT.yaml` FLAKE-2.
 
 ## 16. Vocabulary
 
