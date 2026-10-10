@@ -152,7 +152,7 @@ ARG DENO_VERSION=2.9.3
 
 USER root
 
-RUN dnf install -y --setopt=install_weak_deps=False yq iproute socat openssl unzip \
+RUN dnf install -y --setopt=install_weak_deps=False yq iproute socat openssl unzip openssh-clients \
  && dnf clean all \
  && curl -fsSL "https://github.com/denoland/deno/releases/download/v${DENO_VERSION}/deno-x86_64-unknown-linux-gnu.zip" -o /tmp/deno.zip \
  && unzip -o /tmp/deno.zip -d /usr/local/bin \
