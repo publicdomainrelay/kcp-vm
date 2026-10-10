@@ -184,6 +184,9 @@ items:
       ARCHITECTURE section 6 "The claim is the durable record a door releases from".
     status: done
     evidence:
+      - "merged to main as 8af4f67 (via 444755e, 4c60f9d); door deno task test 80 passed 0 failed on main"
+      - "prod deploy 2026-10-07 ~18:40Z: door started, 95 historical claims (68 Released, legacy receipt fields only) produced no release and no vm.delete in the first 4 minutes (18:41:28Z reading)"
+      - "pending: a live door restart between accept and release against a real bidder; it runs on the M1 test bed firecracker bidder once M1-TESTBED lands"
       - "444755e node-market: requestCompute + handlers writing status.contract, releaseFromClaim via store.get + releaseCompute; reapContract/contractFromEvent/runContract option removed; NodeClaimStore.get in abc + nodeclaim-kcp (404 -> null, 429 hold applies)"
       - "instrument: test/node_market_test.ts 'a door restarted between accept and release still releases the node with vm.delete from the receipt on its NodeClaim' -- door 1 (fake kcp store + fake requester PDS, scripted requestCompute) hangs after onReceipt and is abandoned; a fresh fulfiller with a fresh PDS submits exactly one vm.delete whose event.receipt == the claim's receipt and goes to the claim's submitEventRef; claim ends Released, contract phase released, release.ok; second pass does not release twice"
       - "red first: the new suite against the old fulfiller (stub exports only) 16 failed / 3 passed, the instrument among them"
