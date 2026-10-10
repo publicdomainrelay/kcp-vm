@@ -170,9 +170,27 @@ items:
   - id: M2-CLAIM-RECEIPT
     milestone: M2
     title: NodeClaim tracks receipt and contract URIs
-    decision: The claim is the durable record a restarted door resumes from.
-    status: todo
-    evidence: []
+    decision: >
+      The claim is the durable record a restarted door resumes from. decided by Claude, user may
+      veto: the fulfiller drives requestCompute; onRfpSubmitted/onAccepted/onReceipt/onNetwork each
+      await a status write of the full ContractState (legacy vmUri/rfpUri/acceptUri/receiptUri/
+      receiptCid mirrored); after the ssh session the door reads the claim back (new
+      NodeClaimStore.get) and calls releaseCompute with the state parsed from the claim. A claim
+      needs release iff it has receipt + submitEventRef and contract phase != released; released
+      claims keep the receipt plus release refs. Startup / not-ours / deleted claims are released by
+      releaseCompute from the saved state (reason requester_restarted), replacing reapContract; still
+      a reap (adopting is M3-NODE-LOSS). Released only on release.ok. Unreadable claim at run end
+      defers the release to the next pass. No early return from onAccepted (would lose the receipt).
+      ARCHITECTURE section 6 "The claim is the durable record a door releases from".
+    status: done
+    evidence:
+      - "444755e node-market: requestCompute + handlers writing status.contract, releaseFromClaim via store.get + releaseCompute; reapContract/contractFromEvent/runContract option removed; NodeClaimStore.get in abc + nodeclaim-kcp (404 -> null, 429 hold applies)"
+      - "instrument: test/node_market_test.ts 'a door restarted between accept and release still releases the node with vm.delete from the receipt on its NodeClaim' -- door 1 (fake kcp store + fake requester PDS, scripted requestCompute) hangs after onReceipt and is abandoned; a fresh fulfiller with a fresh PDS submits exactly one vm.delete whose event.receipt == the claim's receipt and goes to the claim's submitEventRef; claim ends Released, contract phase released, release.ok; second pass does not release twice"
+      - "red first: the new suite against the old fulfiller (stub exports only) 16 failed / 3 passed, the instrument among them"
+      - "mutations (scratch copy only, reverted): release from in-memory state instead of the read-back claim -> 'reads the receipt back from the claim' FAILS; restarted door ignoring the saved ContractState -> instrument FAILS (7 fail); onReceipt not writing the claim -> instrument + milestone test FAIL"
+      - "green: socialweb-computer-k8s deno task check exit 0; deno task test 80 passed 0 failed 1 ignored (live_market_node_test: SOCIALWEB_K8S_LIVE unset and SOCIALWEB_FIRECRACKER_* unset; k3s/kine/kubectl/docker present); run from a scratch org root (siblings symlinked, worktree rsynced) because the worktree's ../../ imports do not resolve; deploy/check.sh --fast green"
+      - "test/live_market_node_test.ts compiles against the new API (requestCompute wrapper adds extraBidderDids + guestHostAliases; asserts contract phase released + release.ok after delete); NOT run"
+      - "not proven: a live door restart against a real bidder; the live instrument end to end on the new path; status writes failing mid-flow (a failed onReceipt PATCH leaves the claim without its receipt and the VM unreleasable from the claim); deploy needed (not done, user deploys) -- door code only, no schema change"
   - id: M2-CODEGEN
     milestone: M2
     title: Go api/v1alpha1 generates the APIResourceSchema and a TS types plus validator package for the door

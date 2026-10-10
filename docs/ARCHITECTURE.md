@@ -425,8 +425,35 @@ no_bids back-off keys on `Failed` + `rfpUri` without `acceptUri`), every field o
 `winner {did, submitAccept?}`, `receiptOk`, `vmAddress` (relay FQDN or `iroh://` ticket), `bids`,
 `release {event, payload, ok, status?}`, `outcome`, `error` and `timestamps` keyed by contract phase.
 All optional, so every existing claim stays valid. None of it is secret: records are public repo
-records, `submitAccept`/`submitEventRef` are bidder endpoints. The door does not yet write the new
-fields; that is M2-CLAIM-RECEIPT.
+records, `submitAccept`/`submitEventRef` are bidder endpoints.
+
+**The claim is the durable record a door releases from (M2-CLAIM-RECEIPT).** The door's fulfiller
+(`lib/socialweb-computer-k8s-node-market`) calls atproto-market's `requestCompute` (not
+`runComputeContract`) with handlers that write the evolving `ContractState` into `status.contract`
+at `onRfpSubmitted`, `onAccepted` (phase `Provisioning`), `onReceipt` and `onNetwork`; each handler
+awaits its status write before the flow moves on, so the receipt is on the claim before the guest
+boots. Writes stay the door's alone and go through the existing store (its 429 Retry-After hold
+applies to reads; a status PATCH is not held). The legacy `vmUri|rfpUri|acceptUri|receiptUri|
+receiptCid` are mirrored from the strongRefs on every write, so the provider's no_bids back-off is
+unchanged. After the flow, the door runs the same ssh session as before (the join needs it until M3),
+then reads the claim back with `NodeClaimStore.get` and calls `releaseCompute` with the state parsed
+FROM THE CLAIM, never from its memory. Decisions, made by Claude, user may veto:
+
+- A claim needs releasing iff its contract has receipt refs (`receipt` + `submitEventRef`) and its
+  phase is not `released`. A released claim keeps its receipt and gains `release {event, payload,
+  ok}`; the legacy receipt fields are no longer cleared, the contract phase is what says "done".
+- A claim with no live session in this process (startup, or a live claim this process did not
+  start) is released with `releaseCompute` from its saved state, reason `requester_restarted`; this
+  replaces the hand-rolled reap and its separate vm.delete code. Still a reap, not an adoption:
+  adopting is M3-NODE-LOSS. A pre-upgrade claim carrying only the legacy fields is released from a
+  `ContractState` synthesised from them.
+- `Released` only when `release.ok`; an unconfirmed release is `Failed`. A release that threw leaves
+  the phase unreleased, so the delete path retries it.
+- An unreadable claim at the end of a run (a held 429, an error) defers the release: the run ends
+  without a terminal write, and the next pass finds a live claim with no session and releases it.
+- A deleted claim aborts its run; the abort turns into a `return` from `onRfpSubmitted`, `onReceipt`
+  or `onNetwork`, but never from `onAccepted`, because returning there would end the flow before the
+  receipt is known and leave a VM nothing can release.
 
 **Door layering.** The generated package is a `lib/common` leaf with no imports. The store's claim
 VIEW (`workspace`, `name`, `finalizers`, `spec`, `status`) is `NodeClaim` in
