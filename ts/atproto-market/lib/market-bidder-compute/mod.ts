@@ -41,6 +41,39 @@ import {
 } from "@publicdomainrelay/market-common";
 import { COMPUTE_VM_NSID, COMPUTE_EVENTS_VM_DELETE_NSID, COMPUTE_EVENTS_VM_ONNETWORK_NSID } from "@publicdomainrelay/market-common";
 
+/**
+ * The URL a guest is told to report its tunnel FQDN to, carried in the accept
+ * bundle as `guest_onnetwork_url`.
+ *
+ * A guest reaches the bidder's own `/v1/on-network` (the route that holds the
+ * accept-to-receipt map, wraps the record in a market.event and submits it to
+ * the requester) through the same relay dispatcher its tunnel dials. The relay's
+ * advertised URL carries no port -- TLS termination sits at 443 in a deployment
+ * -- but a locally-run dispatcher listens on an ephemeral one, and the guest's
+ * cloud-config already names it as `--ingress-proxy-host host:port`. When the
+ * relay's hostname is behind such a dispatcher, that port is the one the guest
+ * can actually connect to, and the dispatcher speaks plain HTTP. Otherwise the
+ * relay's own URL is used unchanged.
+ */
+export function guestOnNetworkUrl(relayUrl: string, userData: string): string {
+  const base = `${relayUrl.replace(/\/+$/, "")}/v1/on-network`;
+  let relayHost = "";
+  try {
+    relayHost = new URL(relayUrl).host;
+  } catch {
+    return base;
+  }
+  const proxy = /--ingress-proxy-host[=\s]+(\S+)/.exec(userData)?.[1];
+  if (!proxy) return base;
+  const at = proxy.lastIndexOf(":");
+  if (at <= 0) return base;
+  const proxyHost = proxy.slice(0, at);
+  const port = proxy.slice(at + 1);
+  if (!/^\d+$/.test(port)) return base;
+  if (relayHost !== proxyHost && !relayHost.endsWith(`.${proxyHost}`)) return base;
+  return `http://${relayHost}:${port}/v1/on-network`;
+}
+
 export interface VmBidderDeps {
   /** How this bidder is willing to execute an RFP's attached policy. */
   policyExec?: { onlyRemote?: boolean; allowUntrusted?: boolean };
@@ -227,6 +260,7 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
             bid: bidRef ? { uri: bidRef.uri, cid: bidRef.cid } : null,
             bid_config: bidConfigResolved,
             vm: { uri: payloadRef.uri, cid: payloadRef.cid, value: vm },
+            guest_onnetwork_url: guestOnNetworkUrl(relay.ingressUrl, (vm.user_data as string) ?? ""),
           };
           const vmWithBundle = {
             ...vm,
