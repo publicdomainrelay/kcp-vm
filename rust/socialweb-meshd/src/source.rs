@@ -14,6 +14,7 @@ pub const PEERS_FILE_POLL: Duration = Duration::from_secs(2);
 pub const KUBE_RETRY_MIN: Duration = Duration::from_secs(1);
 pub const KUBE_RETRY_MAX: Duration = Duration::from_secs(30);
 pub const ANNOTATE_RETRY: Duration = Duration::from_secs(5);
+pub const NODE_READER_HINT: &str = "the node authorizer lets a node read only its own Node (AuthorizeNodeWithSelectors); apply rust/socialweb-meshd/deploy/node-reader-rbac.yaml to grant group system:nodes get/list/watch on nodes";
 
 #[derive(Clone)]
 pub struct SelfIdentity {
@@ -175,6 +176,17 @@ pub async fn run_kube(
         };
         let list = match client.list_nodes().await {
             Ok(list) => list,
+            Err(KubeError::Status { code: 403, body }) => {
+                tracing::error!(
+                    event = "list_nodes_forbidden",
+                    error = %body,
+                    hint = NODE_READER_HINT,
+                    retry_in_ms = retry.as_millis() as u64
+                );
+                tokio::time::sleep(retry).await;
+                retry = (retry * 2).min(KUBE_RETRY_MAX);
+                continue;
+            }
             Err(err) => {
                 tracing::warn!(event = "list_nodes_failed", error = %err, retry_in_ms = retry.as_millis() as u64);
                 tokio::time::sleep(retry).await;

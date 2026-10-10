@@ -1,31 +1,17 @@
+mod common;
+
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use common::{
+    READY_WAIT, gate, identity, must, reap, scratch_dir, status, stop_namespace_processes, sudo,
+    wait_exit, wait_for_log,
+};
 
 const GATE: &str = "SOCIALWEB_MESHD_NETNS";
-const READY_WAIT: Duration = Duration::from_secs(30);
 const UNDERLAY_MTU: &str = "1228";
-
-fn sudo(args: &[&str]) -> Output {
-    Command::new("sudo")
-        .arg("-n")
-        .args(args)
-        .output()
-        .expect("spawn sudo")
-}
-
-fn must(args: &[&str]) -> String {
-    let out = sudo(args);
-    assert!(
-        out.status.success(),
-        "sudo {} failed: {}{}",
-        args.join(" "),
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8_lossy(&out.stdout).into_owned()
-}
 
 struct Side {
     node_ns: String,
@@ -60,13 +46,6 @@ impl Rig {
     }
 }
 
-fn stop_namespace_processes(ns: &str) {
-    let pids = sudo(&["ip", "netns", "pids", ns]);
-    for pid in String::from_utf8_lossy(&pids.stdout).split_whitespace() {
-        let _ = sudo(&["kill", "-TERM", pid]);
-    }
-}
-
 impl Drop for Rig {
     fn drop(&mut self) {
         for ns in self.namespaces() {
@@ -74,15 +53,7 @@ impl Drop for Rig {
         }
         for side in [&mut self.a, &mut self.b] {
             if let Some(mut child) = side.child.take() {
-                let deadline = Instant::now() + Duration::from_secs(5);
-                while Instant::now() < deadline {
-                    if let Ok(Some(_)) = child.try_wait() {
-                        break;
-                    }
-                    std::thread::sleep(Duration::from_millis(100));
-                }
-                let _ = child.kill();
-                let _ = child.wait();
+                reap(&mut child, Duration::from_secs(5));
             }
         }
         for ns in self.namespaces() {
@@ -90,24 +61,6 @@ impl Drop for Rig {
         }
         let _ = std::fs::remove_dir_all(&self.dir);
     }
-}
-
-fn identity(bin: &str, secret: &Path) -> (String, String) {
-    let out = Command::new(bin)
-        .args(["identity", "--secret-file"])
-        .arg(secret)
-        .output()
-        .expect("run identity");
-    assert!(
-        out.status.success(),
-        "identity: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let value: serde_json::Value = serde_json::from_slice(&out.stdout).expect("identity json");
-    (
-        value["endpoint"].as_str().unwrap().to_string(),
-        value["did"].as_str().unwrap().to_string(),
-    )
 }
 
 fn plumb(side: &Side, peer_underlay_ns: Option<&str>) {
@@ -246,26 +199,8 @@ fn start(bin: &str, side: &mut Side, peers: &Path) {
 }
 
 fn wait_ready(side: &mut Side) {
-    let deadline = Instant::now() + READY_WAIT;
-    loop {
-        let log = std::fs::read_to_string(&side.log).unwrap_or_default();
-        if log.contains("\"event\":\"ready\"") {
-            return;
-        }
-        if let Some(status) = side
-            .child
-            .as_mut()
-            .and_then(|c| c.try_wait().ok().flatten())
-        {
-            panic!("{} exited {status} before ready:\n{log}", side.node_name);
-        }
-        assert!(
-            Instant::now() < deadline,
-            "{} not ready within {READY_WAIT:?}:\n{log}",
-            side.node_name
-        );
-        std::thread::sleep(Duration::from_millis(200));
-    }
+    let child = side.child.as_mut().expect("running");
+    wait_for_log(child, &side.log, "\"event\":\"ready\"", READY_WAIT);
 }
 
 fn ping(ns: &str, target: &str, extra: &[&str]) -> Output {
@@ -287,29 +222,10 @@ fn assert_ping(ns: &str, target: &str, extra: &[&str]) {
     );
 }
 
-fn status(ns: &str) -> serde_json::Value {
-    let script =
-        "exec 3<>/dev/tcp/127.0.0.1/9469; printf 'GET /status HTTP/1.0\\r\\n\\r\\n' >&3; cat <&3";
-    let raw = must(&["ip", "netns", "exec", ns, "bash", "-c", script]);
-    let body = raw.split("\r\n\r\n").nth(1).expect("http body");
-    serde_json::from_str(body).expect("status json")
-}
-
 fn stop(side: &mut Side) -> i32 {
     stop_namespace_processes(&side.node_ns);
     let mut child = side.child.take().expect("running");
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        if let Some(status) = child.try_wait().expect("wait") {
-            return status.code().unwrap_or(-1);
-        }
-        assert!(
-            Instant::now() < deadline,
-            "{} did not stop on SIGTERM",
-            side.node_name
-        );
-        std::thread::sleep(Duration::from_millis(100));
-    }
+    wait_exit(&mut child, Duration::from_secs(10))
 }
 
 fn side(dir: &Path, tag: &str, node_name: &'static str, underlay: &'static str, n: u8) -> Side {
@@ -336,22 +252,11 @@ fn side(dir: &Path, tag: &str, node_name: &'static str, underlay: &'static str, 
 
 #[test]
 fn two_meshd_in_two_netns_carry_ping_between_two_pod_cidrs() {
-    if std::env::var_os(GATE).is_none() {
-        eprintln!("skipped: set {GATE}=1 (needs sudo -n, ip netns and CAP_NET_ADMIN)");
+    if !gate(GATE) {
         return;
     }
-    assert!(
-        sudo(&["true"]).status.success(),
-        "{GATE} is set but sudo -n is not available"
-    );
     let bin = env!("CARGO_BIN_EXE_socialweb-meshd");
-    let base = std::env::var_os("TMPDIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir);
-    let dir = base.join(format!("meshd-netns-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-
+    let dir = scratch_dir("netns");
     let mut rig = Rig {
         peers: dir.join("peers.json"),
         a: side(&dir, "a", "node-a", "10.199.0.1", 1),
