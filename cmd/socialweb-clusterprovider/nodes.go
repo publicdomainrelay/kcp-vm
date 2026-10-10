@@ -1447,9 +1447,10 @@ func nodeVaultStage(substrate nodeSubstrate, cluster, clusterDir, nodeName strin
 		if err != nil {
 			return err
 		}
-		vaultTLS, err := vaultcert.EnsureVaultTLSCertificate(clusterDir, substrate.Network.Gateway, "127.0.0.1")
+		vaultTLS, err := vaultcert.EnsureServedVaultTLS(ctx, clusterDir, seal.Port, substrate.Network.Gateway, "127.0.0.1")
 		if err != nil {
-			return err
+			return fmt.Errorf("clusterprovider: the vault node %s of %s dials at %s: %w",
+				nodeName, cluster, substrate.Network.Gateway, err)
 		}
 		adminAddr := clusterprovider.VaultAddr(seal.Port)
 		vaultURL := "https://" + net.JoinHostPort(substrate.Network.Gateway, strconv.Itoa(seal.Port))

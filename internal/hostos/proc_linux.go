@@ -106,6 +106,13 @@ func Signal(pid int, force bool) error {
 	return nil
 }
 
+func Reload(pid int) error {
+	if err := syscall.Kill(pid, syscall.SIGHUP); err != nil {
+		return fmt.Errorf("hostos: sending SIGHUP to pid %d: %w", pid, err)
+	}
+	return nil
+}
+
 func Terminate(pid int, grace time.Duration) error {
 	if err := Signal(pid, false); err != nil {
 		return err

@@ -42,13 +42,9 @@ func ApplyVaultStore(ctx context.Context, dyn dynamic.Interface, o VaultStore) (
 			"its process-group step installs the CRDs before it starts, so a tenant that serves none "+
 			"of them is one whose group came up without that step", err)
 	}
-	loopback := net.JoinHostPort("127.0.0.1", strconv.Itoa(o.VaultPort))
 	vaultURL := StoreVaultURL(o.VaultPort)
-	vaultTLS, err := vaultcert.EnsureVaultTLSCertificate(o.DataDir, "127.0.0.1")
+	vaultTLS, err := vaultcert.EnsureServedVaultTLS(ctx, o.DataDir, o.VaultPort, "127.0.0.1")
 	if err != nil {
-		return "", err
-	}
-	if err := vaultcert.RequireServedVaultTLS(ctx, loopback, "127.0.0.1"); err != nil {
 		return "", fmt.Errorf("esovault: the store for %s would be told to dial %s, and the vault that is "+
 			"running cannot present that host: %w", o.Cluster, vaultURL, err)
 	}

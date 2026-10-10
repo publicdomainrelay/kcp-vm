@@ -93,6 +93,10 @@ func Signal(pid int, force bool) error {
 	return nil
 }
 
+func Reload(pid int) error {
+	return fmt.Errorf("hostos: pid %d cannot be asked to reload: Windows has no SIGHUP", pid)
+}
+
 func Terminate(pid int, grace time.Duration) error {
 	if err := Signal(pid, false); err != nil {
 		return err

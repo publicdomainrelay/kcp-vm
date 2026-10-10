@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"net"
 	"net/netip"
@@ -11,6 +12,8 @@ import (
 )
 
 const servedVaultTLSDialTimeout = 5 * time.Second
+
+var ErrVaultServesAnotherLeaf = errors.New("vaultcert: the running vault does not present every host asked for")
 
 func RequireServedVaultTLS(ctx context.Context, hostPort string, hosts ...string) error {
 	if len(hosts) == 0 {
@@ -38,7 +41,7 @@ func RequireServedVaultTLS(ctx context.Context, hostPort string, hosts ...string
 	if len(missing) == 0 {
 		return nil
 	}
-	return fmt.Errorf("vaultcert: the vault listening at %s is serving a certificate that does not name %v, so a client told to dial it verifies nothing and the handshake fails with a name mismatch. The leaf on disk was re-signed to carry that host, and OpenBao reads tls_cert_file once at start and re-reads it only when the process is signalled or restarted, so the leaf on disk carries %v while the leaf in flight carries only the hosts the vault started with. Refusing to hand a client a URL the running listener cannot present: restart the vault, or the cluster that holds it, and run this pass again", hostPort, missing, missing)
+	return fmt.Errorf("%w: the vault listening at %s is serving a certificate that does not name %v, so a client told to dial it verifies nothing and the handshake fails with a name mismatch. The leaf on disk was re-signed to carry that host, and OpenBao reads tls_cert_file at start and again only on SIGHUP, so the leaf on disk carries %v while the leaf in flight carries only the hosts the vault was last loaded with. Refusing to hand a client a URL the running listener cannot present", ErrVaultServesAnotherLeaf, hostPort, missing, missing)
 }
 
 func hostsTheLeafDoesNotCarry(leaf *x509.Certificate, dns []string, ips []netip.Addr) []string {
