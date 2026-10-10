@@ -1003,15 +1003,21 @@ func TestTheProcessSubstrateIsNotASubstrate(t *testing.T) {
 	}
 }
 
-func TestTheSweepRefusesASubstrateWithNoIdentity(t *testing.T) {
+func TestTheSweepRefusesARecordWhoseSubstrateItCannotDeriveAnIdentityFor(t *testing.T) {
+	stateDir := t.TempDir()
+	dir := clusterprovider.NodeDataDir(stateDir, "liveweb", "liveweb-node1")
+	pid := spawnAgentStandIn(t, dir)
+	writeNodeRecordFor(t, dir, pid, []string{"some-argv-token"}, "vm")
+	t.Cleanup(func() { _ = syscall.Kill(pid, syscall.SIGKILL) })
+
 	p := &Provider{
-		cfg: Config{Join: "liveweb", Substrate: "vm", StateDir: t.TempDir()},
+		cfg: Config{Join: "liveweb", Substrate: "vm", StateDir: stateDir},
 		log: testLogger(),
 	}
 	if err := p.sweepNodeRecords(context.Background()); err == nil {
-		t.Fatal("the sweep ran for a substrate whose identity it cannot derive: it would match " +
-			"records against a token the process does not carry, answer \"not ours\" for every " +
-			"one of them, and leave every agent a previous gateway started running")
+		t.Fatal("the sweep ran over a record whose substrate it cannot derive an identity for: it " +
+			"would match the record against a token the process does not carry, answer \"not ours\" " +
+			"for it, and leave the agent a previous gateway started running")
 	}
 }
 
@@ -1156,12 +1162,17 @@ func spawnNamespaceChildStandIn(t *testing.T, dataDir string) int {
 
 func writeNodeRecord(t *testing.T, dir string, pid int, identity []string) {
 	t.Helper()
+	writeNodeRecordFor(t, dir, pid, identity, nodefirecracker.Substrate)
+}
+
+func writeNodeRecordFor(t *testing.T, dir string, pid int, identity []string, substrate string) {
+	t.Helper()
 	start, err := noderecord.ProcStart(pid)
 	if err != nil {
 		t.Fatalf("ProcStat(%d): %v", pid, err)
 	}
 	if err := noderecord.Write(dir, noderecord.Record{
-		PID: pid, StartTime: start, Identity: identity,
+		PID: pid, StartTime: start, Identity: identity, Substrate: substrate,
 	}); err != nil {
 		t.Fatalf("writing the node record at %s: %v", dir, err)
 	}

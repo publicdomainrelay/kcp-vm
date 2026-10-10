@@ -41,6 +41,13 @@ func RunNamespace(ctx context.Context, paramsPath string, runners map[string]Run
 
 func WriteNamespaceRecord(paramsPath string) error {
 	dataDir := filepath.Dir(paramsPath)
+	params, err := readNamespaceParams(paramsPath)
+	if err != nil {
+		return fmt.Errorf("nodevm: the substrate this namespace child runs for, which its own "+
+			"record has to name: %w -- the record is what a later sweep matches a process "+
+			"against, and only the substrate that wrote a record knows how to read the argv "+
+			"inside it", err)
+	}
 	pid := os.Getpid()
 	start, err := noderecord.ProcStart(pid)
 	if err != nil {
@@ -51,6 +58,7 @@ func WriteNamespaceRecord(paramsPath string) error {
 	}
 	if err := noderecord.Write(dataDir, noderecord.Record{
 		PID: pid, StartTime: start, Identity: paramsNamespaceIdentity(dataDir),
+		Substrate: params.Kind,
 	}); err != nil {
 		return fmt.Errorf("nodevm: recording the namespace child at pid %d before it "+
 			"starts a VMM: %w -- this runs FIRST, so a gateway killed between starting pasta and "+

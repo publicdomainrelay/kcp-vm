@@ -11,6 +11,13 @@ import (
 
 const RecordFileName = "node.json"
 
+var ErrNoSubstrate = errors.New(
+	"noderecord: a record needs the name of the substrate that started the process it names. The " +
+		"identity in the record is the ARGV the substrate gave that process, and only the substrate " +
+		"knows how to read it: a record with no substrate is one a sweep has to match against " +
+		"whichever substrate IT was configured for, so a state dir a host left under one substrate " +
+		"is invisible to a gateway configured for another and nothing reaps what it names")
+
 var ErrNoIdentity = errors.New(
 	"noderecord: a record needs the identity its substrate gives the process it names, and an empty " +
 		"one is not a weaker record but an unusable one -- a record that carries no identity can " +
@@ -37,6 +44,7 @@ type Record struct {
 	PID       int      `json:"pid"`
 	StartTime uint64   `json:"startTime"`
 	Identity  []string `json:"identity"`
+	Substrate string   `json:"substrate"`
 }
 
 func RecordPath(dataDir string) string {
@@ -68,6 +76,10 @@ func Write(dataDir string, rec Record) error {
 	if len(rec.Identity) == 0 {
 		return fmt.Errorf("%w (the record at %s would name pid %d)",
 			ErrNoIdentity, RecordPath(dataDir), rec.PID)
+	}
+	if rec.Substrate == "" {
+		return fmt.Errorf("%w (the record at %s would name pid %d)",
+			ErrNoSubstrate, RecordPath(dataDir), rec.PID)
 	}
 	path := RecordPath(dataDir)
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {

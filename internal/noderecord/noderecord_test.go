@@ -72,7 +72,7 @@ func recordFor(t *testing.T, pid int, identity []string) Record {
 	if err != nil {
 		t.Fatalf("ProcStat(%d): %v", pid, err)
 	}
-	return Record{PID: pid, StartTime: start, Identity: identity}
+	return Record{PID: pid, StartTime: start, Identity: identity, Substrate: "firecracker"}
 }
 
 func waitGone(t *testing.T, pid int) {
@@ -95,7 +95,7 @@ func TestTheNodeRecordRoundTrips(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ProcStat: %v", err)
 	}
-	want := Record{PID: pid, StartTime: start, Identity: testIdentity()}
+	want := Record{PID: pid, StartTime: start, Identity: testIdentity(), Substrate: "firecracker"}
 	if err := Write(dir, want); err != nil {
 		t.Fatalf("Write: %v", err)
 	}

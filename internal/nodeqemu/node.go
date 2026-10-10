@@ -26,6 +26,8 @@ type Host struct {
 	exited chan struct{}
 }
 
+const Substrate = "qemu"
+
 var _ scale.Nodes = (*Host)(nil)
 
 func New(opts Options) (*Host, error) {
@@ -155,7 +157,7 @@ func (h *Host) recordPIDLocked(pid int) error {
 			h.opts.NodeName, err)
 	}
 	return noderecord.Write(h.opts.DataDir, noderecord.Record{
-		PID: pid, StartTime: start, Identity: Identity(h.opts.DataDir),
+		PID: pid, StartTime: start, Identity: Identity(h.opts.DataDir), Substrate: Substrate,
 	})
 }
 
@@ -303,7 +305,7 @@ func (h *Host) recordLocked(ctx context.Context) error {
 			h.opts.NodeName, err)
 	}
 	if err := noderecord.Write(h.opts.DataDir, noderecord.Record{
-		PID: pid, StartTime: start, Identity: Identity(h.opts.DataDir),
+		PID: pid, StartTime: start, Identity: Identity(h.opts.DataDir), Substrate: Substrate,
 	}); err != nil {
 		return err
 	}

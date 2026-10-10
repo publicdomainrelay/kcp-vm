@@ -57,28 +57,6 @@ func nodeHolderIdentityFor(substrate string) (nodeIdentity, error) {
 }
 
 func (p *Provider) sweepNodeRecords(ctx context.Context) error {
-	if p.cfg.Substrate == SubstrateMarket {
-		p.log.Info("cluster provider: node record sweep", "stateDir", p.cfg.StateDir,
-			"substrate", p.cfg.Substrate,
-			"decision", "a market node's machine is a VM in someone else's cloud, reached through "+
-				"the market's SSH door: no process on this host is a node of this substrate, so "+
-				"there is no record under this state dir that names one, and the walk stops here "+
-				"rather than refusing to start a gateway nothing could configure into the market")
-		return nil
-	}
-	identity, err := nodeIdentityFor(p.cfg.Substrate)
-	if err != nil {
-		return fmt.Errorf("%w; the walk over %s stops here rather than guessing an identity, "+
-			"because a guess either kills a process that is not ours or leaves ours running for "+
-			"ever", err, p.cfg.StateDir)
-	}
-	holderIdentity, err := nodeHolderIdentityFor(p.cfg.Substrate)
-	if err != nil {
-		return fmt.Errorf("%w; the walk over %s stops here rather than guessing an identity, "+
-			"because a guess either kills a process that is not ours or leaves ours running for "+
-			"ever", err, p.cfg.StateDir)
-	}
-
 	clusters, err := os.ReadDir(p.cfg.StateDir)
 	if errors.Is(err, fs.ErrNotExist) {
 		p.log.Info("cluster provider: node record sweep", "stateDir", p.cfg.StateDir,
@@ -122,7 +100,7 @@ func (p *Provider) sweepNodeRecords(ctx context.Context) error {
 				continue
 			}
 			scanned++
-			reapedHere, err := p.sweepNodeRecord(ctx, identity, holderIdentity, clusterDir, node.Name(),
+			reapedHere, err := p.sweepNodeRecord(ctx, clusterDir, node.Name(),
 				filepath.Join(nodesDir, node.Name()))
 			if err != nil {
 				problems = append(problems, err)
@@ -142,7 +120,7 @@ func (p *Provider) sweepNodeRecords(ctx context.Context) error {
 	return nil
 }
 
-func (p *Provider) sweepNodeRecord(ctx context.Context, identity, holderIdentity nodeIdentity, clusterDir, nodeName, dataDir string) (int, error) {
+func (p *Provider) sweepNodeRecord(ctx context.Context, clusterDir, nodeName, dataDir string) (int, error) {
 	cluster := filepath.Base(clusterDir)
 	rec, err := noderecord.Read(dataDir)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -154,6 +132,23 @@ func (p *Provider) sweepNodeRecord(ctx context.Context, identity, holderIdentity
 				"pid this gateway would signal, and a record that cannot be read is not a node that "+
 				"is absent; the sweep stops there rather than provisioning over a process nobody "+
 				"can account for", noderecord.RecordPath(dataDir), err)
+	}
+	identity, err := nodeIdentityFor(rec.Substrate)
+	if err != nil {
+		return 0, fmt.Errorf(
+			"clusterprovider: the record at %s was written by the %q substrate and this gateway is "+
+				"configured for %q, and there is no identity to match it against: %w. The walk stops "+
+				"rather than guessing, because the argv in a record is the argv ITS substrate gave "+
+				"the process, so guessing reads a live guest as gone and a gone one as live",
+			noderecord.RecordPath(dataDir), rec.Substrate, p.cfg.Substrate, err)
+	}
+	holderIdentity, err := nodeHolderIdentityFor(rec.Substrate)
+	if err != nil {
+		return 0, fmt.Errorf(
+			"clusterprovider: the namespace identity for the %q substrate that wrote the record at "+
+				"%s: %w -- a record is matched against the argv its own substrate gave the process, "+
+				"and no other substrate's reading of it is evidence of anything",
+			rec.Substrate, noderecord.RecordPath(dataDir), err)
 	}
 	id := identity(clusterDir, nodeName)
 	holder := holderIdentity(clusterDir, nodeName)

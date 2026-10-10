@@ -4,13 +4,16 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -20,7 +23,9 @@ import (
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clusterprovider"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodefirecracker"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodemarket"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/noderecord"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/portallocator"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/scale"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/scaledriver"
@@ -450,20 +455,44 @@ func TestTheMarketTeardownIsTheClaimAndNotTheMachine(t *testing.T) {
 	}
 }
 
-func TestTheMarketSweepReapsNoProcessBecauseThereIsNone(t *testing.T) {
+func TestTheMarketSweepReapsWhatAnotherSubstrateLeftBehind(t *testing.T) {
 	stateDir := t.TempDir()
-	nodesDir := filepath.Join(stateDir, "pdr-liveweb", clusterprovider.NodesDirName, "liveweb-node1")
-	if err := os.MkdirAll(nodesDir, 0o700); err != nil {
-		t.Fatalf("creating a node record dir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(nodesDir, "node.json"), []byte(`{"pid":1}`), 0o600); err != nil {
-		t.Fatalf("writing a stale record: %v", err)
-	}
-	p := &Provider{cfg: Config{Substrate: SubstrateMarket, StateDir: stateDir}, log: testLogger()}
+	dir := clusterprovider.NodeDataDir(stateDir, "liveweb", "liveweb-node1")
+	pid := spawnAgentStandIn(t, dir)
+	writeNodeRecordFor(t, dir, pid, nodefirecracker.Identity(dir), nodefirecracker.Substrate)
+
+	p := &Provider{cfg: Config{Join: "liveweb", Substrate: SubstrateMarket, StateDir: stateDir},
+		log: testLogger()}
 	if err := p.sweepNodeRecords(context.Background()); err != nil {
-		t.Fatalf("the market substrate's startup sweep refused: %v -- a market node's machine is "+
-			"not a process on this host, so the sweep has nothing to derive an identity from and "+
-			"must say so rather than stop a gateway nothing could configure into the market", err)
+		t.Fatalf("sweepNodeRecords: %v", err)
+	}
+	waitGone(t, pid)
+	if _, err := os.Stat(noderecord.RecordPath(dir)); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatal("a firecracker record survived a sweep by a gateway configured for the market " +
+			"substrate. The record names the substrate that wrote it, and the identity inside it is " +
+			"the argv THAT substrate gave the process: a sweep that resolves the identity from its " +
+			"own configuration instead reads the record as a node that is not ours and leaves a " +
+			"guest running, which is the whole failure the record exists to prevent")
+	}
+}
+
+func TestASweepStopsOnARecordWhoseSubstrateItCannotRead(t *testing.T) {
+	stateDir := t.TempDir()
+	dir := clusterprovider.NodeDataDir(stateDir, "liveweb", "liveweb-node1")
+	pid := spawnAgentStandIn(t, dir)
+	writeNodeRecordFor(t, dir, pid, nodefirecracker.Identity(dir), "a-substrate-nothing-here-runs")
+	t.Cleanup(func() { _ = syscall.Kill(pid, syscall.SIGKILL) })
+
+	p := &Provider{cfg: Config{Join: "liveweb", Substrate: SubstrateMarket, StateDir: stateDir},
+		log: testLogger()}
+	err := p.sweepNodeRecords(context.Background())
+	if err == nil {
+		t.Fatal("a record naming a substrate with no identity function was walked past, and the " +
+			"process it names is one nothing on this host can match: guessing would either signal a " +
+			"process that is not ours or leave ours running for ever")
+	}
+	if !strings.Contains(err.Error(), "a-substrate-nothing-here-runs") {
+		t.Fatalf("the refusal does not name the substrate the record was written by: %v", err)
 	}
 }
 
