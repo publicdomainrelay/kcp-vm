@@ -275,6 +275,7 @@ interface HarnessOptions {
   meshd?: MeshdPin;
   debugSsh?: { authorizedKey: string; onNetwork(claim: string, address: string): void };
   scopeCache?: unknown;
+  scopeRefresher?: unknown;
 }
 
 function harness(o: HarnessOptions = {}) {
@@ -299,6 +300,7 @@ function harness(o: HarnessOptions = {}) {
     ...(o.meshd ? { meshd: o.meshd } : {}),
     ...(o.debugSsh ? { debugSsh: o.debugSsh } : {}),
     ...(o.scopeCache ? { scopeCache: o.scopeCache as never } : {}),
+    ...(o.scopeRefresher ? { scopeRefresher: o.scopeRefresher as never } : {}),
     requestCompute: scriptedRequest(o.script ?? "complete", contracts, decisions, store) as never,
   });
   return { store, pds, links, secrets, fulfiller, requested, contracts, decisions };
@@ -798,4 +800,15 @@ Deno.test("every contract the door starts shares the one host scope cache it was
   for (const c of h.contracts) {
     assertEquals(c.scopeCache, scopeCache, "a contract ran without the door's scope cache, so its bidder's trust verdict is computed again from nothing");
   }
+});
+
+Deno.test("every contract shares the door's one scope refresher, so a bidder's verdict stays warm between contracts", async () => {
+  const scopeRefresher = { marker: "the door's one ScopeRefresher" };
+  const h = harness({ scopeRefresher });
+  h.store.put(claim("ci-node1"));
+  h.store.put(claim("ci-node2"));
+  await h.fulfiller.pass();
+  await settle();
+  assertEquals(h.contracts.length, 2);
+  for (const c of h.contracts) assertEquals(c.scopeRefresher, scopeRefresher);
 });

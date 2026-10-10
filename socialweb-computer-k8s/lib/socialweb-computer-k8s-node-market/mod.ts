@@ -67,6 +67,7 @@ export interface MarketNodeFulfillerOptions {
   meshd?: MeshdPin;
   debugSsh?: DebugNodeSsh;
   scopeCache?: ComputeRequestOptions["scopeCache"];
+  scopeRefresher?: ComputeRequestOptions["scopeRefresher"];
   log?: Log;
 }
 
@@ -394,6 +395,7 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
           capabilities: [capability],
           ...(opts.debugSsh ? { sshAuthorizedKeys: [opts.debugSsh.authorizedKey] } : {}),
           ...(opts.scopeCache ? { scopeCache: opts.scopeCache } : {}),
+          ...(opts.scopeRefresher ? { scopeRefresher: opts.scopeRefresher } : {}),
           denyBidderDids: spec.denyBidderDids ?? [],
           extraBidderDids: opts.extraBidderDids ?? [],
           vmReadyTimeoutSec,

@@ -27,6 +27,7 @@ import {
   meshdPinOf,
 } from "@publicdomainrelay/socialweb-computer-k8s-node-market";
 import { createScopeCache } from "@publicdomainrelay/policy-engine-scope-cache";
+import { createScopeRefresher } from "@publicdomainrelay/scope-refresh-timers";
 import cliArgsEnv from "./cli-args-env.json" with { type: "json" };
 
 let runtimeConfig: Record<string, unknown> | null = null;
@@ -160,6 +161,9 @@ async function debugNodeSsh(dir: string) {
 
 const debugSsh = options.debugNodeSshDir ? await debugNodeSsh(options.debugNodeSshDir as string) : null;
 
+const scopeCache = createScopeCache();
+const scopeRefresher = createScopeRefresher({ scopeCache });
+
 let fulfiller: MarketNodeFulfiller | null = null;
 if (options.kcpKubeconfig) {
   const credentials = parseKubeconfig(await Deno.readTextFile(options.kcpKubeconfig as string), options.kcpContext as string | undefined);
@@ -176,7 +180,8 @@ if (options.kcpKubeconfig) {
     pollIntervalMs: options.nodePollIntervalMs as number,
     ...(meshd ? { meshd } : {}),
     ...(debugSsh ? { debugSsh } : {}),
-    scopeCache: createScopeCache(),
+    scopeCache,
+    scopeRefresher,
     log,
   });
 }
