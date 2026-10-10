@@ -449,6 +449,59 @@ items:
       - "green: deploy/check.sh --fast exit 0 (gofmt, build, apigen, vet, staticcheck, go test)"
       - "with the door half (0f3a771 + b489218, merged), prod's door and provider can now both restart without reaping a live market node -- in code and tests; not deployed, not yet read on prod"
       - "not done: deploy; a prod provider restart with market nodes up re-registering within the 90s loss grace after the group comes back; a live NotReady release against a real bidder"
+  - id: M3-BAO-SYNC
+    milestone: M3
+    title: The cluster OpenBao's JWT mounts, roles, policies and KV entries match the live claims, always
+    decision: >
+      User asked 2026-10-07 that the plans keep OpenBao backends and roles in sync with what is active.
+      Read live 22:53Z: the tenant OpenBao holds 5 jwt-* mounts, one per issuer bob has had (its issuer
+      is a fresh did:key relay keypair every restart), and only jwt-df356681a07e serves a live node. Rule:
+      per cluster, desired = for each live (Adoptable) claim with a grant: mount jwt-<sha12(issuer)>,
+      role <node>, policy node-<node>, KV socialweb-nodes/<node>. The provider reconciles actual to desired
+      every confirm pass and at adoption: a role, policy or KV entry with no live claim is deleted; a
+      jwt-* mount with no role left is disabled. Release keeps revoking eagerly; the reconcile is the
+      backstop for restarts and crashes. Unit test against a fake OpenBao seeded with stale mounts/roles;
+      live reading on prod: after a release and after a provider restart, `bao auth list` and
+      `bao list auth/<m>/role` name exactly the live nodes. Plan 0007's stable bidder keys shrink the
+      churn; this keeps the store honest regardless. decided by Claude, user may veto.
+    status: todo
+    evidence: []
+  - id: M3-DEBUG-SSH
+    milestone: M3
+    title: DEBUG_SOCIALWEB_NODE_SSH_DIR gives the operator an ssh key into market nodes, off by default
+    decision: >
+      User asked 2026-10-07 for a debug ssh path into live nodes, gated by a DEBUG_ env var. The door
+      generates an ed25519 key once in that directory, the requester adds the public half to the guest's
+      user_data authorized_keys (RFP/cloud-init path), and the door logs debug_node_ssh with the private
+      key path and an ssh command over the guest's iroh ticket (the iroh module's dumbpipe listener in
+      front of sshd). Unset = no key, so ACC-NOSSH runs with it unset and the door's no-ssh test still
+      holds for the default. decided by Claude, user may veto.
+    status: doing
+    evidence:
+      - "commit a6a67e2: node-market debugSsh option, CLI option debug-node-ssh-dir (env DEBUG_SOCIALWEB_NODE_SSH_DIR), scripts/deploy.sh passes it into the container env file"
+      - "test watched to fail then pass: socialweb-computer-k8s test/node_market_test.ts 'only a door given a debug key puts it in the guest's authorized_keys, and it is told the guest's address' (FAILED: sshAuthorizedKeys undefined); suite 106 passed"
+  - id: M5-CNI-READY
+    milestone: M5
+    title: A market node's kubelet reports NetworkReady with the bridge CNI
+    decision: >
+      Prod 2026-10-07 22:51-23:00Z: three market nodes joined over the no-ssh path (secrets bundle,
+      OpenBao JWT login, dumbpipe apiserver link, Node registered ~75-80 s after boot) and every one stayed
+      NotReady: "container runtime network not ready: NetworkReady=false reason:NetworkPluginNotReady
+      message:Network plugin returns error: cni plugin not initialized", although socialweb-pod-cni wrote
+      <data-dir>/agent/etc/cni/net.d/10-socialweb-bridge.conflist ~76 s after boot. The bridge CNI had never
+      run under a real kubelet (M5 evidence is zero-node and unit level). Hypotheses: H4 containerd's conf
+      watch was never armed because net.d did not exist when it started (with flannel off nothing creates
+      it before pod-cni); H1 a plugin named by the conflist (bridge/host-local/portmap, loopback) is not in
+      containerd's bin_dirs; H2 containerd's conf_dir is not the dir we write; H3 the conflist is rejected.
+      Isolation: socialweb-node-diagnose (2501ea9) prints crictl info's lastCNILoadStatus, confDir, binDirs
+      and their contents to the console; DEBUG ssh (M3-DEBUG-SSH) for containerd's own log; a host-side
+      netns test of the rendered conflist against k3s's bundled plugins (cnitool, no guest) for H1/H3; a
+      unit that creates net.d before the agent for H4. The join grace (2f0ad94, 10m) is a placeholder to be
+      replaced by 2x the measured register->Ready time once a node reaches Ready. decided by Claude, user
+      may veto.
+    status: doing
+    evidence:
+      - "2026-10-07T22:52:55Z provider: node96 NotReady since 22:51:24Z released by the 90s loss rule; tenant Node condition read 22:58Z: KubeletNotReady cni plugin not initialized"
   - id: M4-SCALE-IN
     milestone: M4
     title: Per-node scale-in
