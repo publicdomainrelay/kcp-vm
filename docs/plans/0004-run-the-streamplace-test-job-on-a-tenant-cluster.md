@@ -95,6 +95,15 @@ included `.ci/dockerfile-hash.yaml`.
   root filesystem and the 150 GiB node disk have to land somewhere else -- the run is made with
   `TMPDIR` set to a directory on the host's own disk. A state directory that cannot hold a node's
   disks fails as a full filesystem partway through a boot, not as a configuration error.
+- **B8 - the published builder image has no `pnpm`.** The job's first make target is
+  `dev-setup` -> `app-cached` -> `make install` -> `pnpm install`, and in
+  `ghcr.io/streamplace/streamplace:builder-` that fails with
+  `make[2]: pnpm: No such file or directory`. A fresh build of the SAME
+  `docker/build.Dockerfile` on this host has `/usr/local/bin/pnpm`, a symlink to corepack's
+  `pnpm.js`, so the published tag predates the corepack that writes those shims -- the builder
+  image is named by the Dockerfile's hash, and no published tag matches this branch's hash. The
+  project's own macOS job runs `npm install -g corepack@latest --force && corepack enable`
+  explicitly, which is the same step. Answered runner-side, see D7.
 - **B6 - the node image cannot carry a large image.** `layDownRootfs` writes the root filesystem
   with `mkfs.ext4 -d`, which refuses a file of about 2 GiB or more (`__populate_fs: Ext2 file too
   big while writing file ...`). A 3.3 GB tarball of the builder image is refused at 6 GB and at
@@ -134,6 +143,13 @@ included `.ci/dockerfile-hash.yaml`.
   `test` job verbatim and nothing else, and names the registry this project publishes its builder
   image to. The job's own keys -- image, script, timeout, artifacts -- are byte-for-byte what the
   branch this is measured against has.
+- **D7 - pnpm is provided by the runner, not by the job.** B8 is a property of the image, and the
+  image is named by a Dockerfile hash nothing published matches. Editing the job to add a setup
+  step would change the thing being measured, so the step goes where the project already puts it
+  for macOS -- a `pre_build_script` in the runner's `config.toml`, which runs in the build
+  container before the job's script. It prefers `corepack enable`, which honours the
+  `packageManager` field the project pins, and falls back to installing the version that field
+  names.
 - **D6 - the runner gets a scoped credential, not the superuser.** `docs/gitlab/02` is explicit
   that handing a runner `system:admin`/`system:masters` makes every RBAC rule decorative. The
   existing live test mints the superuser credential; the new one mints `gitlab-runner` /
