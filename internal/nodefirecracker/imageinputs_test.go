@@ -375,3 +375,59 @@ func TestAnImageWhoseRecordedConfigurationNamesNoModulesIsRefusedByKey(t *testin
 		t.Errorf("the refusal does not name the key it could not read: %v", err)
 	}
 }
+
+func moduleRootOfTheTest(t *testing.T) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("reading the working directory: %v", err)
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatalf("no go.mod at or above %s, so this test cannot say where the module is", dir)
+		}
+		dir = parent
+	}
+}
+
+func TestAnAgentPackageIsRelativeToTheModuleAndNotToWhereTheReaderStands(t *testing.T) {
+	f := newImageFixture(t)
+	cfg := f.cfg
+	cfg.AgentPackage = "./cmd/socialweb-nodeagent"
+
+	fromThePackage, err := Fingerprint(f.configPath, cfg)
+	if err != nil {
+		t.Fatalf("naming the inputs from the directory the configuration was read in: %v", err)
+	}
+
+	t.Chdir(moduleRootOfTheTest(t))
+	fromTheRoot, err := Fingerprint(f.configPath, cfg)
+	if err != nil {
+		t.Fatalf("naming the inputs from the module's own root: %v", err)
+	}
+	t.Chdir(filepath.Join(moduleRootOfTheTest(t), "internal"))
+	fromBelow, err := Fingerprint(f.configPath, cfg)
+	if err != nil {
+		t.Fatalf("naming the inputs from a directory below the module's root: %v", err)
+	}
+	if fromTheRoot != fromThePackage || fromBelow != fromThePackage {
+		t.Fatalf("one configuration names %s from the directory it was read in, %s from the "+
+			"module's root and %s from below it. The package path is written relative to the module, "+
+			"which is how go resolves it, so a reader who is one directory deeper asks the store for "+
+			"a name no build has taken and the answer is a rebuild of 2.3 GB of unchanged inputs",
+			fromThePackage, fromTheRoot, fromBelow)
+	}
+
+	t.Chdir(t.TempDir())
+	if _, err := Fingerprint(f.configPath, cfg); err == nil {
+		t.Fatal("a package path was resolved from a directory that is inside no module at all, and " +
+			"there is nothing there for a relative path to be relative to: whatever it picked would " +
+			"be recorded as the source the agent in the image was built from")
+	} else if !strings.Contains(err.Error(), "go.mod") {
+		t.Errorf("the refusal does not name the file it looked for and did not find: %v", err)
+	}
+}

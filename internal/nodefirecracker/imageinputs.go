@@ -304,7 +304,37 @@ func resolvePath(path string) (string, error) {
 	return filepath.Join(parent, filepath.Base(absolute)), nil
 }
 
-func resolveAgentPackage(path string) (string, error) {
+func moduleRoot(agentPackage string) (string, error) {
+	dir, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("nodefirecracker: reading the working directory, which is where go "+
+			"starts looking for the module a package path is written relative to: %w", err)
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir, nil
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			return "", fmt.Errorf("nodefirecracker: looking for a go.mod in %s, which is one of the "+
+				"directories a package path is written relative to: %w -- a package whose module "+
+				"cannot be read is one whose source cannot be found, and a build input that cannot "+
+				"be found is one no later check can hold this image to", dir, err)
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", fmt.Errorf("nodefirecracker: agent_package is %q, which is a path relative "+
+				"to the module the agent is built in, and there is no go.mod in the working directory "+
+				"or in any directory above it. That path is what go resolves when it builds the "+
+				"package, and go resolves it from the module rather than from the directory the "+
+				"command happened to be run in -- so from here there is nothing for it to be "+
+				"relative to, and resolving it against the working directory instead would record "+
+				"the digest of whatever tree is standing there. Run this from inside the checkout, "+
+				"or give agent_package as the absolute path of the package", agentPackage)
+		}
+		dir = parent
+	}
+}
+
+func ResolveAgentPackage(path string) (string, error) {
 	if strings.TrimSpace(path) == "" {
 		return "", fmt.Errorf("nodefirecracker: the configuration names no agent_package, and the " +
 			"agent is the guest's half of the thing that talks to it. A build refuses a " +
@@ -314,7 +344,14 @@ func resolveAgentPackage(path string) (string, error) {
 			"digest of whatever tree the reader happened to be standing in, and a change to the " +
 			"agent's own source would move nothing")
 	}
-	return resolvePath(path)
+	if filepath.IsAbs(path) {
+		return resolvePath(path)
+	}
+	root, err := moduleRoot(path)
+	if err != nil {
+		return "", err
+	}
+	return resolvePath(filepath.Join(root, path))
 }
 
 func unresolvedPathRefusal(path string, cause error) error {
@@ -476,7 +513,7 @@ func RecordInputs(configPath string, cfg BuildConfig) (BuildInputs, error) {
 		return BuildInputs{}, fmt.Errorf("nodefirecracker: looking for the guest agent at %s: %w",
 			cfg.AgentBinary, statErr)
 	}
-	resolvedAgent, err := resolveAgentPackage(cfg.AgentPackage)
+	resolvedAgent, err := ResolveAgentPackage(cfg.AgentPackage)
 	if err != nil {
 		return BuildInputs{}, err
 	}
@@ -627,7 +664,7 @@ func CompareImageToConfig(m Manifest, configPath string, cfg BuildConfig) error 
 		{"kernel modules' tree", m.Inputs.ModuleSource, m.Inputs.ModuleSourceDigest, cfg.ModuleSource,
 			moduleSourceDigestWhy, moduleSourceWhy, resolvePath},
 		{"agent package's tree", m.Inputs.AgentPackage, m.Inputs.AgentPackageDigest, cfg.AgentPackage,
-			agentPackageDigestWhy, agentPackageWhy, resolveAgentPackage},
+			agentPackageDigestWhy, agentPackageWhy, ResolveAgentPackage},
 	} {
 		recorded := t.recorded
 		if resolved, err := resolvePath(t.recorded); err == nil {

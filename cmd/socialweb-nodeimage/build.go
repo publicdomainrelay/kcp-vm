@@ -124,9 +124,14 @@ func buildAgent(cfg Config) error {
 	if err := os.MkdirAll(filepath.Dir(cfg.AgentBinary), 0o755); err != nil {
 		return fmt.Errorf("socialweb-nodeimage: creating %s: %w", filepath.Dir(cfg.AgentBinary), err)
 	}
+	packageDir, err := nodefirecracker.ResolveAgentPackage(cfg.AgentPackage)
+	if err != nil {
+		return err
+	}
 	args := append([]string{"build", "-trimpath"}, cfg.AgentGoFlags...)
-	args = append(args, "-o", cfg.AgentBinary, cfg.AgentPackage)
+	args = append(args, "-o", cfg.AgentBinary, ".")
 	cmd := exec.Command("go", args...)
+	cmd.Dir = packageDir
 	cmd.Env = append(os.Environ(), "GOOS=linux", "GOARCH=amd64", "CGO_ENABLED=0")
 	raw, err := cmd.CombinedOutput()
 	if err != nil {

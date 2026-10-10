@@ -30,7 +30,7 @@ func cachedAgent() (string, error) {
 			return
 		}
 		bin := filepath.Join(dir, "kcpagent")
-		agentBuildErr = buildAgent(Config{AgentPackage: "../socialweb-nodeagent", AgentBinary: bin})
+		agentBuildErr = buildAgent(Config{AgentPackage: "./cmd/socialweb-nodeagent", AgentBinary: bin})
 		agentBuildBin = bin
 	})
 	return agentBuildBin, agentBuildErr
@@ -80,7 +80,7 @@ func validConfig(t *testing.T) Config {
 		StageDir:         filepath.Join(root, "stage"),
 		OutDir:           filepath.Join(root, "out"),
 		ImageCacheDir:    filepath.Join(root, "cache"),
-		AgentPackage:     "../socialweb-nodeagent",
+		AgentPackage:     "./cmd/socialweb-nodeagent",
 		AgentBinary:      agent,
 		K3sBinary:        "/usr/local/bin/k3s",
 		K3sDataDir:       "/var/lib/rancher/k3s",
