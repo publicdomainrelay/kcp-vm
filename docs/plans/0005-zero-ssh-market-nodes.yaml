@@ -48,8 +48,12 @@ acceptance:
       evidence: []
     - id: ACC-MESH
       text: A pod on node A reaches a pod on node B, and DNS resolves on a node that does not run CoreDNS.
-      status: todo
-      evidence: []
+      status: doing
+      evidence:
+        - "prod 2026-10-07T23:20:54Z: Deployment mesh-probe (2 replicas, required pod anti-affinity) on test-cluster-alice-0001 scaled the cluster 0 -> 2 market nodes ('Provision nodes:2'); node96 and node97 registered 23:22:30Z, Ready 23:22:31Z; pods 10.42.2.4 on node96 and 10.42.4.3 on node97"
+        - "23:23:06Z kubectl exec (apiserver->kubelet over the agent tunnel) into both pods: node97 -> node96 pod IP answered by node96's httpd (HTTP 404 before its index existed), node96 -> node97 pod IP returned node97's content"
+        - "23:23:16Z from the pod on node97 (CoreDNS runs on node96): resolv.conf nameserver 169.254.20.10; kubernetes.default.svc -> 10.43.0.1, mesh-probe.default.svc -> 10.43.21.222, gitlab.com resolves; wget via the Service ClusterIP returned node96's pod content"
+        - "still owed: the same reading from a GitLab pipeline on an SPA-created cluster (acceptance 'where')"
     - id: ACC-NOSSH
       text: Logs show zero ssh sessions to any guest for the whole run.
       status: todo
@@ -625,7 +629,7 @@ items:
       link carries, forward . /etc/resolv.conf) applied in EVERY tenant by the add-on pass under
       socialweb-addons and selected by that label, so a node without the address never runs it;
       k3s's own CoreDNS is kept.
-    status: doing
+    status: done
     evidence:
       - "commits 2125360 (internal/tenantnet: manifests, Apply, wiring into tenantAddOns before the vault step), 58dfd82 (guest units, agent flags), 4e72a73 (live zero-node proof); docs commit follows"
       - "tests watched to fail then pass: internal/tenantnet TestApplyServerSideAppliesTheNodeReaderAndThePerNodeDNSUnderTheAddOnManager, TestThePerNodeDNSServesOnTheLinkLocalAddressOnlyOnNodesThatCarryIt, TestTheDNSImageIsOneTheNodeImageSeeds (3 failed against a stub Objects/Apply); cmd/socialweb-clusterprovider TestTheTenantAddOnsApplyTheNodeReaderAndThePerNodeDNSBeforeAnythingElse (applied [] before the wiring); socialweb-computer-k8s test/node_network_test.ts 'the node's user_data adds the pod network units, and the k3s agent never waits on meshd' (agent flags and After), 'the DNS link puts the per-node DNS address on a dummy interface, once', 'the guest, the tenant DaemonSet and the k3s server agree on the DNS address, its label and the cluster CIDR' (12 of 12 in that file failed against the previous module with its new exports stubbed, deno test --no-check)"
@@ -635,13 +639,14 @@ items:
       - "stated limits: a node that just became Ready starts its DNS pod beside its first workload, unordered (the removed wait covered that window; a startup taint lifted once DNS answers is the fix, open); no live multi-node reading"
       - "green: deploy/check.sh --fast exit 0; door deno task check exit 0, deno task test 103 passed 0 failed 1 ignored (scratch org root, siblings symlinked)"
       - "not done: deploy; ACC-MESH's 'DNS resolves on a node that does not run the cluster CoreDNS' on a live market cluster (needs guests through the RFP flow; not hand-provisioned)"
+      - "23:23:16Z from the pod on node97 (CoreDNS runs on node96): resolv.conf nameserver 169.254.20.10; kubernetes.default.svc -> 10.43.0.1, mesh-probe.default.svc -> 10.43.21.222, gitlab.com resolves; wget via the Service ClusterIP returned node96's pod content"
   - id: M5-MESHD
     milestone: M5
     title: Rust iroh pod mesh in rust/socialweb-meshd
     decision: >
       QUIC datagrams over iroh, a tun device, each peer Node's podCIDR routed to its iroh endpoint id;
       k3s --flannel-backend=none with bridge CNI. Lives in this repo (user chose).
-    status: doing
+    status: done
     evidence:
       - "status moved back to doing on 2026-10-07: the daemon is done (below); the integration half is built and unit-proved but not deployed and not read on a live multi-node market cluster"
       - "integration commits c8ba259 (k3s server --flannel-backend=none --cluster-cidr=10.42.0.0/16 for MarketDialled only), 2125360 (node-reader RBAC in every tenant via internal/tenantnet, byte-identical to rust/socialweb-meshd/deploy), 58dfd82 (guest units: socialweb-pod-cni, socialweb-pod-masquerade, socialweb-meshd-install, socialweb-meshd + drop-in, meshd.env from node-secrets), 4cbebf1 (door /downloads/<sha256>/<name>, loadPinnedDownloads, meshdPinOf, fulfiller meshd option), 4e72a73 (image ships both builds; live proof); docs commit follows"
@@ -662,6 +667,9 @@ items:
       - "measured: max_datagram_size 1162 on a 1228-byte underlay, 1414 on 1500; 1132-byte DF ping crosses, 1400-byte DF refused by the node, 1400-byte fragmentable ping crosses; one-way recovery after a peer SIGKILL+restart 30.8 s at iroh's 30 s idle, 15.4 s at 15 s"
       - "binaries at a56b60d, rustc 1.95.0: socialweb-meshd-x86_64 9358064 bytes sha256 7c563cd6cd10e4113aab6a8dc3fc45e041728376499e6a215b1d51f0dfa2ad64; socialweb-meshd-aarch64 7875400 bytes sha256 47df130296100de6b08e9008421a6351fa5848264ebb71ec586245daf7f1212a; identical from a second target dir on hat-8; both static binaries pass the netns and k3s proofs (aarch64 under qemu binfmt)"
       - "green: deploy/check.sh --fast exit 0 (cargo fmt, cargo test); SOCIALWEB_MESHD_NETNS=1 SOCIALWEB_MESHD_K3S=1 cargo test on hat-8 with sudo -n"
+      - "prod 2026-10-07T23:20:54Z: Deployment mesh-probe (2 replicas, required pod anti-affinity) on test-cluster-alice-0001 scaled the cluster 0 -> 2 market nodes ('Provision nodes:2'); node96 and node97 registered 23:22:30Z, Ready 23:22:31Z; pods 10.42.2.4 on node96 and 10.42.4.3 on node97"
+      - "23:23:06Z kubectl exec (apiserver->kubelet over the agent tunnel) into both pods: node97 -> node96 pod IP answered by node96's httpd (HTTP 404 before its index existed), node96 -> node97 pod IP returned node97's content"
+      - "23:23:16Z from the pod on node97 (CoreDNS runs on node96): resolv.conf nameserver 169.254.20.10; kubernetes.default.svc -> 10.43.0.1, mesh-probe.default.svc -> 10.43.21.222, gitlab.com resolves; wget via the Service ClusterIP returned node96's pod content"
   - id: M6-RUNNER1
     milestone: M6
     title: GitLab runner 1 run_untagged false
