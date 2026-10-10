@@ -1,6 +1,7 @@
 import { assertEquals, assertRejects } from "@std/assert";
 import { createKcpNodeClaimStore, parseKubeconfig } from "@publicdomainrelay/socialweb-computer-k8s-nodeclaim-kcp";
-import { NODECLAIM_FINALIZER, type NodeClaim } from "@publicdomainrelay/socialweb-computer-k8s-common";
+import type { NodeClaim } from "@publicdomainrelay/socialweb-computer-k8s-abc";
+import { ApiValidationError, FINALIZER_NODE_CLAIM } from "@publicdomainrelay/socialweb-computer-k8s-api";
 
 const KCP = "https://kcp.test";
 const SPEC = {
@@ -81,7 +82,7 @@ Deno.test("claims are read from every account's home workspace, one query per ho
     if (s.url.endsWith("/clusters/root:acct1/apis/tenancy.kcp.io/v1alpha1/workspaces")) {
       return new Response(JSON.stringify({ items: [{ metadata: { name: "ci" } }] }));
     }
-    return new Response(JSON.stringify({ items: [raw("7", [NODECLAIM_FINALIZER])] }));
+    return new Response(JSON.stringify({ items: [raw("7", [FINALIZER_NODE_CLAIM])] }));
   });
   const store = createKcpNodeClaimStore({ credentials: { server: "https://kcp.test", token: "t" }, fetch: kcp.fetch });
   const claims = await store.list();
@@ -96,10 +97,32 @@ Deno.test("claims are read from every account's home workspace, one query per ho
     name: "ci-node1",
     resourceVersion: "7",
     deletionTimestamp: undefined,
-    finalizers: [NODECLAIM_FINALIZER],
+    finalizers: [FINALIZER_NODE_CLAIM],
     spec: SPEC,
     status: {},
   }]);
+});
+
+Deno.test("a claim kcp serves outside the generated schema is refused, not half-read", async () => {
+  const kcp = fakeKcp((s) => {
+    if (s.url.endsWith("/clusters/root/apis/tenancy.kcp.io/v1alpha1/workspaces")) {
+      return new Response(JSON.stringify({ items: [{ metadata: { name: "acct1" } }] }));
+    }
+    if (s.url.endsWith("/clusters/root:acct1/apis/tenancy.kcp.io/v1alpha1/workspaces")) {
+      return new Response(JSON.stringify({ items: [{ metadata: { name: "ci" } }] }));
+    }
+    return new Response(JSON.stringify({ items: [{ ...raw("7"), spec: { ...SPEC, apiserverPort: "1" } }] }));
+  });
+  const store = createKcpNodeClaimStore({ credentials: { server: KCP, token: "t" }, fetch: kcp.fetch });
+  await assertRejects(() => store.list(), ApiValidationError, "spec.apiserverPort");
+});
+
+Deno.test("a status outside the generated schema never leaves the door", async () => {
+  const kcp = fakeKcp(() => new Response("{}"));
+  const store = createKcpNodeClaimStore({ credentials: { server: KCP }, fetch: kcp.fetch });
+  const bogus = { phase: "Exploded", contract: {} } as unknown as NodeClaim["status"];
+  await assertRejects(() => store.replaceStatus(claim(), bogus), ApiValidationError, "phase");
+  assertEquals(kcp.seen.length, 0);
 });
 
 Deno.test("status is replaced whole on the status subresource", async () => {
@@ -122,13 +145,13 @@ Deno.test("a finalizer edit is pinned to the version it read and retried on conf
   await store.addFinalizer(claim());
   const patches = kcp.seen.filter((s) => s.method === "PATCH").map((s) => s.body);
   assertEquals(patches, [
-    [{ op: "test", path: "/metadata/resourceVersion", value: "1" }, { op: "add", path: "/metadata/finalizers", value: ["other", NODECLAIM_FINALIZER] }],
-    [{ op: "test", path: "/metadata/resourceVersion", value: "2" }, { op: "add", path: "/metadata/finalizers", value: ["other", NODECLAIM_FINALIZER] }],
+    [{ op: "test", path: "/metadata/resourceVersion", value: "1" }, { op: "add", path: "/metadata/finalizers", value: ["other", FINALIZER_NODE_CLAIM] }],
+    [{ op: "test", path: "/metadata/resourceVersion", value: "2" }, { op: "add", path: "/metadata/finalizers", value: ["other", FINALIZER_NODE_CLAIM] }],
   ]);
 });
 
 Deno.test("removing a finalizer keeps everyone else's and is a no-op once gone", async () => {
-  const kcp = fakeKcp((s) => s.method === "GET" ? new Response(JSON.stringify(raw("4", ["other", NODECLAIM_FINALIZER]))) : new Response("{}"));
+  const kcp = fakeKcp((s) => s.method === "GET" ? new Response(JSON.stringify(raw("4", ["other", FINALIZER_NODE_CLAIM]))) : new Response("{}"));
   const store = createKcpNodeClaimStore({ credentials: { server: "https://kcp.test" }, fetch: kcp.fetch });
   await store.removeFinalizer(claim());
   assertEquals(kcp.seen[1].body, [
@@ -196,6 +219,35 @@ Deno.test("a walk past its ttl happens again, so a new account is not invisible"
   await new Promise((r) => setTimeout(r, 50));
   await store.list();
   assertEquals(walkCalls(kcp.seen), 4);
+});
+
+Deno.test("one claim is read back by name, a gone claim is null, and a rate-limited read is an error", async () => {
+  const contract = {
+    version: 1,
+    phase: "receipt" as const,
+    vmName: "ci-node1",
+    requesterDid: "did:plc:o",
+    marketDid: "did:plc:o",
+    receipt: { uri: "at://r", cid: "rc" },
+    submitEventRef: "https://b",
+    timestamps: {},
+  };
+  const kcp = fakeKcp(() => new Response(JSON.stringify({ ...raw("7"), status: { phase: "Running", contract } })));
+  const store = createKcpNodeClaimStore({ credentials: { server: KCP }, fetch: kcp.fetch });
+  const read = await store.get(claim());
+  assertEquals(kcp.seen[0].method, "GET");
+  assertEquals(kcp.seen[0].url, `${KCP}/clusters/abc123/apis/socialweb.computer/v1alpha1/nodeclaims/ci-node1`);
+  assertEquals(read?.status.contract, contract);
+  assertEquals(read?.resourceVersion, "7");
+
+  const gone = fakeKcp(() => new Response("not found", { status: 404 }));
+  assertEquals(await createKcpNodeClaimStore({ credentials: { server: KCP }, fetch: gone.fetch }).get(claim()), null);
+
+  const limited = fakeKcp(() => new Response("slow down", { status: 429, headers: { "retry-after": "30" } }));
+  const held = createKcpNodeClaimStore({ credentials: { server: KCP }, fetch: limited.fetch });
+  await assertRejects(() => held.get(claim()), Error, "429");
+  await assertRejects(() => held.get(claim()), Error, "held back");
+  assertEquals(limited.seen.length, 1);
 });
 
 Deno.test("a 429 holds reads back for the retry-after it named and writes still go through", async () => {

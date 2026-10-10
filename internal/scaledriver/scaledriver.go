@@ -64,6 +64,12 @@ func (d *Driver) Pass(ctx context.Context, cluster string, o scale.Observation, 
 
 	if dec.Action == scale.None {
 		d.advance(cluster, st.Next(dec, now))
+		if !dec.BackoffUntil.IsZero() {
+			log.Info("scaledriver: backing off; no market provision this pass", "cluster", cluster,
+				"nodes", dec.Nodes, "backoffUntil", dec.BackoffUntil.UTC().Format(time.RFC3339),
+				"reason", dec.Reason)
+			return dec, nil
+		}
 		log.Debug("scaledriver: no change", "cluster", cluster, "nodes", dec.Nodes, "reason", dec.Reason)
 		return dec, nil
 	}
@@ -121,6 +127,43 @@ func (d *Driver) Forget(cluster string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	delete(d.states, cluster)
+}
+
+func (d *Driver) log() *slog.Logger {
+	if d.opts.Log == nil {
+		return slog.Default()
+	}
+	return d.opts.Log
+}
+
+func (d *Driver) Declined(cluster, reason string) scale.Backoff {
+	now := d.opts.Now()
+	d.mu.Lock()
+	st := d.states[cluster].Declined(now, reason, d.opts.Scale)
+	d.states[cluster] = st
+	d.mu.Unlock()
+	d.log().Info("scaledriver: backing off market provisions for this cluster",
+		"cluster", cluster, "until", st.Backoff.Until.UTC().Format(time.RFC3339),
+		"wait", st.Backoff.Until.Sub(now).String(), "endsInARow", st.Backoff.Ends,
+		"why", reason,
+		"resets", "a node of this cluster joining, or the cluster's intent dropping to none",
+		"memory", "held in this process only, so a provider restart starts the cluster from no back-off")
+	return st.Backoff
+}
+
+func (d *Driver) Joined(cluster string) {
+	d.mu.Lock()
+	st, ok := d.states[cluster]
+	held := ok && st.Backoff != (scale.Backoff{})
+	if held {
+		d.states[cluster] = st.Joined()
+	}
+	d.mu.Unlock()
+	if held {
+		d.log().Info("scaledriver: a node of this cluster joined, so its market back-off is dropped",
+			"cluster", cluster, "endsInARow", st.Backoff.Ends,
+			"wasUntil", st.Backoff.Until.UTC().Format(time.RFC3339))
+	}
 }
 
 func (d *Driver) advance(cluster string, st scale.State) {

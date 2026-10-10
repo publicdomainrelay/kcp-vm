@@ -142,7 +142,7 @@ func (in *NodeClaim) DeepCopyInto(out *NodeClaim) {
 	out.TypeMeta = in.TypeMeta
 	in.ObjectMeta.DeepCopyInto(&out.ObjectMeta)
 	in.Spec.DeepCopyInto(&out.Spec)
-	out.Status = in.Status
+	in.Status.DeepCopyInto(&out.Status)
 }
 
 func (in *NodeClaim) DeepCopy() *NodeClaim {
@@ -199,6 +199,41 @@ func (in *NodeClaimSpec) DeepCopyInto(out *NodeClaimSpec) {
 
 func (in *NodeClaimStatus) DeepCopyInto(out *NodeClaimStatus) {
 	*out = *in
+	in.Contract.DeepCopyInto(&out.Contract)
+	out.Grant = copyPtr(in.Grant)
+}
+
+func (in *NodeClaimContract) DeepCopyInto(out *NodeClaimContract) {
+	*out = *in
+	out.Version = copyPtr(in.Version)
+	out.Payload = copyPtr(in.Payload)
+	out.RFP = copyPtr(in.RFP)
+	out.Policy = copyPtr(in.Policy)
+	out.Bid = copyPtr(in.Bid)
+	out.Winner = copyPtr(in.Winner)
+	out.Accept = copyPtr(in.Accept)
+	out.Receipt = copyPtr(in.Receipt)
+	out.ReceiptOk = copyPtr(in.ReceiptOk)
+	out.Bids = copyPtr(in.Bids)
+	if in.Release != nil {
+		out.Release = new(ContractRelease)
+		in.Release.DeepCopyInto(out.Release)
+	}
+	out.Timestamps = copyPtr(in.Timestamps)
+}
+
+func (in *ContractRelease) DeepCopyInto(out *ContractRelease) {
+	*out = *in
+	out.Status = copyPtr(in.Status)
+}
+
+func copyPtr[T any](in *T) *T {
+	if in == nil {
+		return nil
+	}
+	out := new(T)
+	*out = *in
+	return out
 }
 
 func (in *AtprotoIdentity) DeepCopyInto(out *AtprotoIdentity) {
@@ -261,4 +296,56 @@ func (in *AtprotoIdentityStatus) DeepCopyInto(out *AtprotoIdentityStatus) {
 			in.Conditions[i].DeepCopyInto(&out.Conditions[i])
 		}
 	}
+}
+
+func (in *ClusterLink) DeepCopyInto(out *ClusterLink) {
+	*out = *in
+	out.TypeMeta = in.TypeMeta
+	in.ObjectMeta.DeepCopyInto(&out.ObjectMeta)
+	out.Spec = in.Spec
+	out.Status = in.Status
+}
+
+func (in *ClusterLink) DeepCopy() *ClusterLink {
+	if in == nil {
+		return nil
+	}
+	out := new(ClusterLink)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *ClusterLink) DeepCopyObject() runtime.Object {
+	if c := in.DeepCopy(); c != nil {
+		return c
+	}
+	return nil
+}
+
+func (in *ClusterLinkList) DeepCopyInto(out *ClusterLinkList) {
+	*out = *in
+	out.TypeMeta = in.TypeMeta
+	in.ListMeta.DeepCopyInto(&out.ListMeta)
+	if in.Items != nil {
+		out.Items = make([]ClusterLink, len(in.Items))
+		for i := range in.Items {
+			in.Items[i].DeepCopyInto(&out.Items[i])
+		}
+	}
+}
+
+func (in *ClusterLinkList) DeepCopy() *ClusterLinkList {
+	if in == nil {
+		return nil
+	}
+	out := new(ClusterLinkList)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *ClusterLinkList) DeepCopyObject() runtime.Object {
+	if c := in.DeepCopy(); c != nil {
+		return c
+	}
+	return nil
 }

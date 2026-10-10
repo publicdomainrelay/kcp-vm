@@ -30,6 +30,27 @@ echo "check.sh: ok gofmt"
 go build ./... || fail "go build"
 echo "check.sh: ok go build"
 
+gen="$(mktemp -d)"
+go run ./cmd/socialweb-apigen -root . -out "$gen" || { rm -rf "$gen"; fail "apigen"; }
+drift=0
+compared=0
+for generated in $(cd "$gen" && find . -type f | sort); do
+  rel="${generated#./}"
+  compared=$((compared + 1))
+  if ! diff -u "$rel" "$gen/$rel" >&2; then
+    drift=1
+  fi
+done
+rm -rf "$gen"
+if [ "$compared" -eq 0 ]; then
+  fail "apigen generated nothing to compare"
+fi
+if [ "$drift" -ne 0 ]; then
+  echo "check.sh: the files above are generated from api/v1alpha1 and differ from what it generates now; run: go generate ./api/..." >&2
+  fail "apigen drift"
+fi
+echo "check.sh: ok apigen ($compared generated files, no drift from api/v1alpha1)"
+
 go vet ./... || fail "go vet"
 echo "check.sh: ok go vet"
 

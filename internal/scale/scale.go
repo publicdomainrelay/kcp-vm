@@ -197,6 +197,8 @@ type State struct {
 	Nodes int
 
 	IdleSince time.Time
+
+	Backoff Backoff
 }
 
 type Decision struct {
@@ -208,6 +210,8 @@ type Decision struct {
 
 	Idle time.Duration
 
+	BackoffUntil time.Time
+
 	Reason string
 }
 
@@ -217,6 +221,10 @@ type Options struct {
 	MaxNodes int
 
 	PodsPerNode int
+
+	BackoffBase time.Duration
+
+	BackoffCap time.Duration
 }
 
 func (o Options) hold() time.Duration {
@@ -268,6 +276,8 @@ func Decide(o Observation, st State, now time.Time, opts Options) Decision {
 	if intent {
 		target := Target(o, opts)
 		switch {
+		case st.Nodes < target && st.Backoff.Holds(now):
+			return backingOff(st, target, now)
 		case st.Nodes < target:
 			if st.Nodes == 0 {
 				return Decision{
@@ -323,12 +333,12 @@ func Decide(o Observation, st State, now time.Time, opts Options) Decision {
 func (st State) Next(d Decision, now time.Time) State {
 	switch d.Action {
 	case Provision:
-		return State{Nodes: d.Nodes}
+		return State{Nodes: d.Nodes, Backoff: st.Backoff}
 	case Teardown:
 		return State{Nodes: 0}
 	}
 	if d.Intent {
-		return State{Nodes: st.Nodes}
+		return State{Nodes: st.Nodes, Backoff: st.Backoff}
 	}
 	if st.Nodes == 0 {
 		return State{}

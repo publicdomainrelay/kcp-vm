@@ -26,6 +26,8 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 		&NodeClaimList{},
 		&AtprotoIdentity{},
 		&AtprotoIdentityList{},
+		&ClusterLink{},
+		&ClusterLinkList{},
 	)
 	return nil
 }

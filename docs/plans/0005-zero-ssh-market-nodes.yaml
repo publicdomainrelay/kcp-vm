@@ -18,6 +18,25 @@ ownership:
     The market protocol records and lexicons, and the core architecture: kcp in front of
     k3s --disable-agent clusters at zero nodes, with nodes only ever born through
     requester -> RFP -> bid -> accept -> cloud-init user_data. Changes there are asked first.
+m3_contract:
+  decided: "2026-10-07, decided by Claude, user may veto (names only; the mechanism is the user's)"
+  api: "commit 0c1c7e5: ClusterLink (spec cluster/service/targetPort, status phase/endpointId/did/ticket/message), NodeClaim.status.grant {issuer, subject, audience, role}; NodeClaim schema revision 3"
+  links:
+    - "one ClusterLink per tenant cluster per service, named <clusterKey>-apiserver and <clusterKey>-openbao, in the cluster's home workspace; spec and status written by the provider only"
+    - "each is a dumbpipe listen-tcp process-group component started after k3s, forwarding to the k3s apiserver port or the cluster OpenBao port on loopback"
+    - "iroh secret key per link generated once and kept in the cluster OpenBao, KV v2 mount socialweb-links, path <service>; dumbpipe gets it as IROH_SECRET; the public key is published as did:key (multicodec ed25519-pub 0xed01, base58btc, z prefix)"
+  node_secrets:
+    - "the provider writes KV v2 mount socialweb-nodes, path <nodeName>: token, nodePassword, serverCA, apiserverTicket, advertiseAddress, apiserverPort; deleted at release"
+    - "policy node-<nodeName>: read on socialweb-nodes/data/<nodeName> only"
+  jwt:
+    - "the door writes status.grant at accept from the winning bid's grant (issuer, subject) plus audience socialweb.computer/node/<clusterKey>/<nodeName>"
+    - "the provider ensures JWT auth mount jwt-<first 12 hex of sha256(issuer)> with oidc_discovery_url = issuer, and role <nodeName> with bound_subject, bound_audiences, user_claim sub, token_ttl 5m, token_policies node-<nodeName>; role and policy deleted at release"
+  guest:
+    - "the --secrets capability delivers /etc/socialweb/node/openbao-ticket, /etc/socialweb/node/openbao-ca.pem and /etc/socialweb/node/claim.json {node, cluster, jwtMount, role, audience, kvMount, kvPath}"
+    - "user_data units: socialweb-openbao-link (dumbpipe connect-tcp --addr 127.0.0.1:18200), socialweb-node-secrets (oneshot: exchange the workload token for the audience at the bidder issuer, POST /v1/auth/<jwtMount>/login, read the KV path, write files 0600), socialweb-apiserver-link (advertise address on lo, dumbpipe connect-tcp --addr <advertiseAddress>:<apiserverPort>), k3s-agent; all Restart=always; no sshd use"
+    - "the cluster OpenBao serving certificate must verify as 127.0.0.1 with the delivered CA"
+  door:
+    - "requestCompute handlers: write contract state; at accept write status.grant; return at onSecretsFetched, then dispose capabilities; no ssh session; release only when the claim is deleted; startup never releases a live claim"
 acceptance:
   where: >
     Our GitLab (inspect git log -p docs/gitlab/, ssh gitlab, $GITLAB_TOKEN, chrome devtools MCP for
@@ -106,7 +125,15 @@ items:
   - id: M1-AGENT-SPLIT
     milestone: M1
     title: Split socialweb-nodeagent into a static guest binary (init and agent) and a host binary (namespace and VMM runner)
-    decision: User suggested the split; market guests stop carrying a host half that always fails.
+    decision: >
+      User suggested the split; market guests stop carrying a host half that always fails. Mapping on
+      2026-10-07 showed nodeboot already re-execs ITSELF for the namespace verb, and the agent verb
+      needs an identity disk only local substrates attach, so on market guests it always exits
+      KCP_AGENT fatal. With M1-MARKET-ONLY the split therefore lands as: guest binary
+      socialweb-nodeinit (initramfs /init only), host binary socialweb-nodeboot (unchanged); the agent
+      verb, /kcp/kcpagent and kcp-agent.service are deleted, the guest joining through cloud-init
+      units (M3-UNITS). Done in one change with M1-MARKET-ONLY after M1-TESTBED proves the market
+      path, because both rewrite the same files. decided by Claude, user may veto.
     status: todo
     evidence: []
   - id: M1-BIDDER-UNIT
@@ -116,8 +143,17 @@ items:
       System template unit (user chose it over a user unit because firecracker needs kvm and
       runuser); %i is the atproto handle; QR sign-in is read from the journal by the operator;
       enabled with systemctl enable --now socialweb-computer-bidder@<handle>.service.
-    status: todo
-    evidence: []
+      Decided by Claude, user may veto: the launcher holds the QR sign-in to %i by reading the handle
+      the bidder logs and refusing (session deleted, exit 1, restart into a fresh QR) any other
+      account; the shared dir is /var/lib/socialweb-computer-bidder/host and every instance runs as
+      swc-bidder; MANAGE_DOCKER_DAEMON=no leaves daemon.json alone on a host with other containers.
+    status: done
+    evidence:
+      - "commit 51f9000 The bidder is a template unit keyed by the account's handle (deploy/bidder/socialweb-computer-bidder@.service, deploy/bidder/socialweb-computer-bidder-run, scripts/deploy-firecracker-bidder.sh reworked with --local and --dry-run, test/bidder_unit_test.go)"
+      - "tests watched to fail (files absent, script still writing bidder.env and an account secret) then pass: TestTheBidderUnitIsATemplateKeyedByTheAccountHandle, TestNoAccountSecretReachesTheBidder, TestTheBidderDeployInstallsTheTemplate, TestTheLauncherSignsInByQRIntoItsOwnStateDirectory, TestTheLauncherRefusesAnAccountOtherThanItsInstance (restored, scanned, unnamed), TestTheLauncherAcceptsTheHandleInAnyCase, TestTheLauncherRefusesAnInstanceThatIsNotAHandle, TestTheBidderUnitVerifies (systemd-analyze verify, any output fails); deploy/check.sh --fast green"
+      - "hat-8 2026-10-07T17:10Z deploy-firecracker-bidder.sh --local (MANAGE_DOCKER_DAEMON=no, prod untouched): rc 0, store verified, template/launcher/common.env installed, module cache warm, target ensure -reuse-stale answered reused from sha256-6e4f4f95...; second run rc 0 with all three unchanged and nothing restarted"
+      - "hat-8 2026-10-07T17:11:24Z systemctl start socialweb-computer-bidder@bobvmbuilder.bsky.social with its session seeded as a 0600 swc-bidder copy of ~/.cache/pdr-market/bob-bidder-oauth-session.json: restore refused by the PDS (invalid_grant, Refresh token replayed -- the source file's refresh token was already spent, the source is unchanged), bidder deleted the copy, journal at 17:11:26Z shows the 60-char = frame, the QR, https://qr.fedfork.com/#oauth=did%3Aplc%3Awadxdef7inpvtaen77n7cfxw&n=... and oauth_qr_awaiting_session; bidder_ready not reached without a scan"
+      - "hat-8 2026-10-07T17:11:38Z systemctl disable --now: is-active inactive, is-enabled disabled, 0 swc-bidder processes; template, launcher, common.env and bobvmbuilder.bsky.social.env (BIDDER_POLICY=tangled-vouch) left installed"
   - id: M2-EVENT-CORE
     milestone: M2
     title: ABC-layered event-driven requester core in atproto-market
@@ -125,40 +161,104 @@ items:
       Callbacks onRfpSubmitted, onBid (accept or deny), onAccepted, onReceipt, onNetwork,
       onSecretsFetched; each decides whether the flow continues or returns. No ssh session is held
       by the core.
-    status: todo
-    evidence: []
+    status: done
+    evidence:
+      - "atproto-market pre-iroh cdb0f9c A compute contract is a state that can be saved, and its events can stop it"
+      - "atproto-market pre-iroh 28a1be5 The requester's flow runs without an ssh session, and release stands alone"
+      - "packages @publicdomainrelay/compute-request-abc (ContractState, phases requested..released, handlers onRfpSubmitted/onBid/onAccepted/onReceipt/onNetwork/onSecretsFetched, parse/serialize) and @publicdomainrelay/compute-request-xrpc (requestCompute, releaseCompute, awaitComputeNetwork); secrets capability reports onServed -> onSecretsFetched"
+      - "tests fail->pass: test/compute_request_test.ts (event order, return at onRfpSubmitted, return at onNetwork submits no vm.delete, onBid deny never accepted, all-denied no contract, onSecretsFetched return, awaitComputeNetwork resume), test/compute_request_state_test.ts (7), test/secrets_capability_test.ts onServed; whole suite 109 passed 0 failed 4 ignored (was 92)"
+      - "not yet proven: awaitComputeNetwork backfill path; onSecretsFetched with a real guest; a live early return -- closed by M2-CLAIM-RECEIPT and M3 live runs"
   - id: M2-RELEASE
     milestone: M2
     title: Standalone releaseCompute(receipt) that submits vm.delete
     decision: Release no longer depends on a session returning inside the process that accepted the bid.
-    status: todo
-    evidence: []
+    status: done
+    evidence:
+      - "28a1be5 releaseCompute(pds, state) submits vm.delete from a saved ContractState"
+      - "test: releaseCompute from a JSON round-tripped state submits vm.delete from another process; no receipt refs submits nothing"
+      - "live: bidder_container_integration_test vm_delete_result 200 through the wrapper (release from the SAME owner DID; the door releases as the owner, so a foreign signer is not needed)"
   - id: M2-WRAPPER
     milestone: M2
     title: runComputeContract reimplemented as a thin wrapper over the event core
     decision: socialweb-computer-ssh and request-vm-ssh stay unchanged (user chose to leave the ssh door on the wrapper).
-    status: todo
-    evidence: []
+    status: done
+    evidence:
+      - "28a1be5 runComputeContract = requestCompute + existing ssh session + releaseCompute unless keepVm; signature, options, ContractFlowResult unchanged; old flow code deleted"
+      - "test/bidder_container_integration_test.ts green before (38s) and after (44s), SSH_OK_VIA_IROH"
+      - "deno check green: socialweb-computer-ssh (task check, requester-inproc, live_market_test), socialweb-computer-k8s (task check, node-market, requester-inproc, node_market_test, live_market_node_test)"
   - id: M2-CLAIM-RECEIPT
     milestone: M2
     title: NodeClaim tracks receipt and contract URIs
-    decision: The claim is the durable record a restarted door resumes from.
-    status: todo
-    evidence: []
+    decision: >
+      The claim is the durable record a restarted door resumes from. decided by Claude, user may
+      veto: the fulfiller drives requestCompute; onRfpSubmitted/onAccepted/onReceipt/onNetwork each
+      await a status write of the full ContractState (legacy vmUri/rfpUri/acceptUri/receiptUri/
+      receiptCid mirrored); after the ssh session the door reads the claim back (new
+      NodeClaimStore.get) and calls releaseCompute with the state parsed from the claim. A claim
+      needs release iff it has receipt + submitEventRef and contract phase != released; released
+      claims keep the receipt plus release refs. Startup / not-ours / deleted claims are released by
+      releaseCompute from the saved state (reason requester_restarted), replacing reapContract; still
+      a reap (adopting is M3-NODE-LOSS). Released only on release.ok. Unreadable claim at run end
+      defers the release to the next pass. No early return from onAccepted (would lose the receipt).
+      ARCHITECTURE section 6 "The claim is the durable record a door releases from".
+    status: done
+    evidence:
+      - "merged to main as 8af4f67 (via 444755e, 4c60f9d); door deno task test 80 passed 0 failed on main"
+      - "prod deploy 2026-10-07 ~18:40Z: door started, 95 historical claims (68 Released, legacy receipt fields only) produced no release and no vm.delete in the first 4 minutes (18:41:28Z reading)"
+      - "pending: a live door restart between accept and release against a real bidder; it runs on the M1 test bed firecracker bidder once M1-TESTBED lands"
+      - "444755e node-market: requestCompute + handlers writing status.contract, releaseFromClaim via store.get + releaseCompute; reapContract/contractFromEvent/runContract option removed; NodeClaimStore.get in abc + nodeclaim-kcp (404 -> null, 429 hold applies)"
+      - "instrument: test/node_market_test.ts 'a door restarted between accept and release still releases the node with vm.delete from the receipt on its NodeClaim' -- door 1 (fake kcp store + fake requester PDS, scripted requestCompute) hangs after onReceipt and is abandoned; a fresh fulfiller with a fresh PDS submits exactly one vm.delete whose event.receipt == the claim's receipt and goes to the claim's submitEventRef; claim ends Released, contract phase released, release.ok; second pass does not release twice"
+      - "red first: the new suite against the old fulfiller (stub exports only) 16 failed / 3 passed, the instrument among them"
+      - "mutations (scratch copy only, reverted): release from in-memory state instead of the read-back claim -> 'reads the receipt back from the claim' FAILS; restarted door ignoring the saved ContractState -> instrument FAILS (7 fail); onReceipt not writing the claim -> instrument + milestone test FAIL"
+      - "green: socialweb-computer-k8s deno task check exit 0; deno task test 80 passed 0 failed 1 ignored (live_market_node_test: SOCIALWEB_K8S_LIVE unset and SOCIALWEB_FIRECRACKER_* unset; k3s/kine/kubectl/docker present); run from a scratch org root (siblings symlinked, worktree rsynced) because the worktree's ../../ imports do not resolve; deploy/check.sh --fast green"
+      - "test/live_market_node_test.ts compiles against the new API (requestCompute wrapper adds extraBidderDids + guestHostAliases; asserts contract phase released + release.ok after delete); NOT run"
+      - "not proven: a live door restart against a real bidder; the live instrument end to end on the new path; status writes failing mid-flow (a failed onReceipt PATCH leaves the claim without its receipt and the VM unreleasable from the claim); deploy needed (not done, user deploys) -- door code only, no schema change"
   - id: M2-CODEGEN
     milestone: M2
     title: Go api/v1alpha1 generates the APIResourceSchema and a TS types plus validator package for the door
     decision: >
       Go types are the source of truth; drift check in deploy/check.sh; shared JSON fixtures both
       suites round-trip. Protobuf rejected because CRDs travel as JSON/OpenAPI through kube and kcp.
-    status: todo
-    evidence: []
+      Mapping rules (reflection over json tags, apigen:"optional" struct tag, enums from source
+      constants, revision lock), decided by Claude, user may veto; recorded in ARCHITECTURE section 6
+      "Generated from api/v1alpha1".
+    status: done
+    evidence:
+      - "merged to main as 5d5ce05; check.sh --fast green (apigen: 8 generated files, no drift); door deno task test 73 passed 0 failed"
+      - "prod deploy 2026-10-07 ~17:47Z: workspace b3wgagx6dzltmtsx binding clusters-3pj7y now bound to v1alpha1-2.nodeclaims.socialweb.computer (re-pointed export, no rebind); all 95 pre-existing claims still list; door logged no claim refusal, only one transient 429 storage (re)initializing at 17:47:56Z right after kcp start"
+      - "d1cb357 cmd/socialweb-apigen + internal/apigen: go generate ./api/... writes deploy/*-apiresourceschema.yaml, both APIExports, deploy/apiresourceschema-revisions.json and socialweb-computer-k8s/lib/common/socialweb-computer-k8s-api/mod.ts; Cluster, Node, AtprotoIdentity schemas and both exports byte-identical to the hand-written ones"
+      - "d1cb357 NodeClaim status.contract += every ContractState field (version, phase, vmName, requesterDid, marketDid, payload/rfp/policy/bid/accept/receipt strongRefs, winner, receiptOk, vmAddress, bids, release, outcome, error, timestamps), all optional; old six fields kept; schema renamed v1alpha1-2.nodeclaims.socialweb.computer, clusters export re-pointed"
+      - "99e894c door: socialweb-computer-k8s-common drops its NodeClaim wire types; the claim view moves to lib/abc; nodeclaim-kcp parses every claim with parseNodeClaim and asserts a status before PATCH"
+      - "ee7e07c live proof internal/apigen TestAnAlreadyBoundWorkspaceKeepsTheNewContractFieldsAfterTheSchemaUpgrade on kcp v0.33.0 + kine: already-bound tenant prunes new fields on v1alpha1-1, in-place spec change Forbidden, re-point moves the existing binding to v1alpha1-2 (identity hash unchanged), new fields persist; PASS 14.8s; mutated to re-apply the old export it FAILS (still bound to v1alpha1-1)"
+      - "red first: socialweb-computer-k8s/test/k8s_api_fixtures_test.ts failed TS2307 (package missing); internal/apigen fixtures_test failed to build (no model); then both green"
+      - "drift red: a Go field added to NodeClaimStatus without a Revision bump -> check.sh FAILED apigen (revision lock: spec of v1alpha1-2 changed); with the bump but not regenerated -> check.sh FAILED apigen drift (diff of lock, export, schema, mod.ts); reverted"
+      - "green: deploy/check.sh --fast (ok apigen, 8 generated files); socialweb-computer-k8s deno task check exit 0; deno task test 72 passed 0 failed 1 ignored (from a real-org-root copy; the worktree's ../../ siblings do not resolve)"
+      - "deploy needed (not done, user deploys): install-provider.sh applies deploy/nodeclaim-apiresourceschema.yaml (creates v1alpha1-2) then deploy/cluster-apiexport.yaml (re-point); no binding migration; the door and the schema must ship together"
   - id: M2-BACKOFF
     milestone: M2
     title: Exponential no_bids back-off per cluster, capped at 10m
-    decision: decided by Claude, user may veto
-    status: todo
-    evidence: []
+    decision: >
+      decided by Claude, user may veto. A claim ending Failed with status.contract.rfpUri set and
+      acceptUri empty (nodemarket.MarketDeclined: the requester's NO_CONTRACT_OUTCOMES class, no_bids,
+      bids_denied, policy_rejected, which all loop identically) backs that cluster's further market
+      provisions off 30s*2^(n-1), capped at 10m; one end counted per confirm pass. A node newly
+      joining or intent dropping to none resets it; a provision does not. Classified from record
+      URIs, not message text; no status.reason field because APIResourceSchema.spec is immutable
+      and a schema change does not reach existing APIBindings (internal/versions/versions.json), so
+      no schema bump and no door code change. State in memory only: a provider restart resets it.
+      Failures after an accept keep today's behaviour. ARCHITECTURE section 10.
+    status: done
+    evidence:
+      - "merged to main as f4ce9be (fast-forward); deployed to prod 2026-10-07 ~17:34Z"
+      - "prod proof 2026-10-07: probe pod (pause) in tenant default ns at 17:36:15Z, no bidder on the market; RFP rounds at 17:36:19, 17:37:24, 17:39:01, 17:41:37 (gaps 65/97/156/272s = 30s bid window + back-off 30/60/120/240s); log: backing off market provisions until 17:37:21Z/17:38:57Z/17:41:33Z/17:46:09Z with 1..4 provisions in a row"
+      - "pod deleted 17:45:16Z; next 30s: 15 passes None nodes 0 nothing running and no node (intent gone resets, no RFP at 17:46:09)"
+      - "0807250 scale.State.Backoff + scale.BackoffDelay + Decision.BackoffUntil; scaledriver Declined/Joined; nodemarket.MarketDeclined + Host.End; confirmHeld reports declined/newly-joined nodes, wiring feeds the driver before the pass and logs backoffUntil on the node-scale line"
+      - "0807250 also fixes tenantNodes.retain dropping ordinal 1 when the primary slot was empty: a first node claimed again after the first was given up was never held, confirmed, released or counted in flight (surfaced by the back-off test: one gap read 5s)"
+      - "d336b86 door guard: socialweb-computer-k8s test/node_market_test.ts 'a no-bids end keeps the rfp it asked with and names no accept'; door deno task check green, deno task test 67 passed 0 failed 1 ignored (run from a copy at org-root depth, the worktree's ../../ siblings do not resolve)"
+      - "tests watched to fail (against stubs: gaps read [5s 5s 5s 5s 5s 5s 5s], the prod loop) then pass: cmd/socialweb-clusterprovider TestNoBidsEndsBackTheMarketOffAtGrowingIntervalsCappedAtTenMinutes (gaps 35s 1m5s 2m5s 4m5s 8m5s 10m5s 10m5s at a 5s pass), TestAMarketNodeThatJoinsResetsTheBackoff, TestIntentGoneResetsTheMarketBackoff, TestAFirstNodeClaimedAgainAfterItWasGivenUpIsHeld; internal/scaledriver TestConsecutiveNoBidsEndsProvisionAtGrowingIntervalsCappedAtTenMinutes, TestAJoinedNodeResetsTheBackoff, TestIntentGoneResetsTheBackoff, TestADeclinedEndRecordsWhyAndUntilWhen; internal/scale TestTheBackoffDoublesFromItsBaseAndStopsAtItsCap, TestADeclinedMarketHoldsTheNextProvisionUntilTheWaitIsOver, TestTheBackoffSurvivesAProvisionAndDiesWithTheIntent; internal/nodemarket TestAnEndWithAnRFPAndNoAcceptIsTheMarketDeclining, TestTheHostReportsADeclinedEndWithTheDoorsWords"
+      - "guards that passed first time: TestAFailureAfterABidWasAcceptedDoesNotBackOff, TestANodeCountAtTheTargetIsNotReportedAsBackingOff"
+      - "deploy/check.sh --fast green after 0807250"
+      - "not yet proven on prod: a cluster with intent and no bidder reading RFPs at 30s/1m/2m/4m/8m/10m gaps and the 'backing off' node-scale line -- needs a deploy"
   - id: M3-CLUSTERLINK
     milestone: M3
     title: ClusterLink CRD and per-cluster dumbpipe listeners for the k3s apiserver and the cluster's OpenBao

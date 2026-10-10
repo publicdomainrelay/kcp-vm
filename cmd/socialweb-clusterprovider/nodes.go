@@ -379,6 +379,33 @@ func guestTerminal(host nodeHost) string {
 	return watcher.Terminal()
 }
 
+type marketEnder interface {
+	End() nodemarket.End
+}
+
+func guestEnd(host nodeHost) nodemarket.End {
+	if ender, ok := host.(marketEnder); ok {
+		return ender.End()
+	}
+	return nodemarket.End{Message: guestTerminal(host)}
+}
+
+type confirmOutcome struct {
+	joined []string
+
+	declined []string
+
+	declinedWords string
+}
+
+func (o confirmOutcome) declinedReason() string {
+	if len(o.declined) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d market claim(s) of this cluster ended with an RFP no bidder took (%s): %s",
+		len(o.declined), strings.Join(o.declined, ", "), o.declinedWords)
+}
+
 type tenantNodes struct {
 	cluster  string
 	nodeName string
@@ -393,6 +420,7 @@ type tenantNodes struct {
 	started int
 	extra   map[int]heldNode
 	live    map[string]bool
+	joined  map[string]bool
 }
 
 type heldNode struct {
@@ -471,9 +499,10 @@ func (n *tenantNodes) Provision(ctx context.Context) error {
 	return n.confirmJoined(ctx, host, name)
 }
 
-func (n *tenantNodes) confirmHeld(ctx context.Context) error {
+func (n *tenantNodes) confirmHeld(ctx context.Context) (confirmOutcome, error) {
+	var outcome confirmOutcome
 	if !n.opts.Substrate.deferredJoin() {
-		return nil
+		return outcome, nil
 	}
 	n.mu.Lock()
 	held := n.heldNodesLocked()
@@ -481,12 +510,20 @@ func (n *tenantNodes) confirmHeld(ctx context.Context) error {
 
 	var problems []error
 	for _, node := range held {
-		if terminal := guestTerminal(node.host); terminal != "" {
+		if end := guestEnd(node.host); end.Message != "" {
+			next := "the claim is released and the next pass may ask the market again"
+			if end.Declined {
+				outcome.declined = append(outcome.declined, node.name)
+				if outcome.declinedWords == "" {
+					outcome.declinedWords = end.Message
+				}
+				next = "the claim is released, and the market asked for it and took no bid, so " +
+					"this cluster's next market provision waits out its back-off"
+			}
 			problems = append(problems, fmt.Errorf(
 				"clusterprovider: node %s of %s stopped making progress before the tenant cluster "+
-					"reported it, so it is given up rather than left counted: %s -- the claim is "+
-					"released and the next pass may ask the market again",
-				node.name, n.cluster, terminal))
+					"reported it, so it is given up rather than left counted: %s -- %s",
+				node.name, n.cluster, end.Message, next))
 			if err := n.teardownHeld(ctx, node); err != nil {
 				problems = append(problems, err)
 			}
@@ -503,9 +540,26 @@ func (n *tenantNodes) confirmHeld(ctx context.Context) error {
 		if err := node.host.ConfirmJoined(ctx); err != nil {
 			problems = append(problems, fmt.Errorf("clusterprovider: confirming node %s of %s "+
 				"after the tenant cluster reported it: %w", node.name, n.cluster, err))
+			continue
+		}
+		if n.markJoined(node.name) {
+			outcome.joined = append(outcome.joined, node.name)
 		}
 	}
-	return errors.Join(problems...)
+	return outcome, errors.Join(problems...)
+}
+
+func (n *tenantNodes) markJoined(name string) bool {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.joined[name] {
+		return false
+	}
+	if n.joined == nil {
+		n.joined = map[string]bool{}
+	}
+	n.joined[name] = true
+	return true
 }
 
 func (n *tenantNodes) markLive(name string) {
@@ -558,6 +612,9 @@ func (n *tenantNodes) hostFor(ordinal int) (nodeHost, string, bool) {
 
 func (n *tenantNodes) retain(ordinal int, held heldNode) {
 	if ordinal == 1 {
+		if n.host == nil {
+			n.host, n.nodeName = held.host, held.name
+		}
 		return
 	}
 	if n.extra == nil {
@@ -755,6 +812,7 @@ func (n *tenantNodes) forgetHeldLocked(name string) {
 		n.host, n.nodeName = nil, ""
 	}
 	delete(n.extra, ordinal)
+	delete(n.joined, name)
 }
 
 func (n *tenantNodes) inFlight(ctx context.Context) int {
@@ -973,12 +1031,12 @@ func (h *nodeHosts) reconcile(ctx context.Context, cluster string) error {
 	return errors.Join(problems...)
 }
 
-func (h *nodeHosts) confirm(ctx context.Context, cluster string) error {
+func (h *nodeHosts) confirm(ctx context.Context, cluster string) (confirmOutcome, error) {
 	h.mu.Lock()
 	n, ok := h.hosts[cluster]
 	h.mu.Unlock()
 	if !ok {
-		return nil
+		return confirmOutcome{}, nil
 	}
 	return n.confirmHeld(ctx)
 }

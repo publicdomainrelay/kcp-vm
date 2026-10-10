@@ -231,7 +231,7 @@ func TestAMarketNodeIsConfirmedOnALaterPass(t *testing.T) {
 	}
 	claims.setPhase(testHomePrefix+"liveweb", nodeName, v1alpha1.NodeClaimRunning)
 
-	if err := hosts.confirm(ctx, clusterKey(t, "liveweb")); err != nil {
+	if _, err := hosts.confirm(ctx, clusterKey(t, "liveweb")); err != nil {
 		t.Fatalf("confirm on a later pass: %v", err)
 	}
 	if !tenantNode(t, client, nodeName) {
@@ -266,7 +266,7 @@ func TestAMarketNodeWhoseClaimFailedIsTornDownOnALaterPass(t *testing.T) {
 	claim.Status.Message = "the market refused every bid"
 	claims.claims[testHomePrefix+"liveweb/"+key+"-node1"] = claim
 
-	err = hosts.confirm(ctx, key)
+	_, err = hosts.confirm(ctx, key)
 	if err == nil {
 		t.Fatal("a claim the market FAILED was carried into the next pass as if it were still " +
 			"working: nothing fails the node, so the cluster counts a machine it will never get")

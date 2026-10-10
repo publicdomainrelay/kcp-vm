@@ -271,6 +271,64 @@ own dial line, and a tail that has already evicted it fails loudly rather than p
 BEST-EFFORT with its errors dropped, because returning them would make `exec` stop copying and close
 the child's stdout — a full log disk must not SIGPIPE the apiserver.
 
+### A market bidder is a template unit, one instance per account
+
+No bidder runs on prod (plan 0005 M0-PROD-BIDDER); both doors rely on bidders their users run. A
+host that runs them is prepared by `scripts/deploy-firecracker-bidder.sh` (over ssh, or `--local`
+through `sudo -n`; `--dry-run` prints every step) and runs one systemd SYSTEM template instance per
+atproto account:
+
+```
+sudo systemctl enable --now socialweb-computer-bidder@<handle>.service
+journalctl -u socialweb-computer-bidder@<handle> -f     # the QR and its qr.fedfork.com URL
+```
+
+- **Files.** `deploy/bidder/socialweb-computer-bidder@.service` is installed as
+  `/etc/systemd/system/socialweb-computer-bidder@.service`; `deploy/bidder/socialweb-computer-bidder-run`
+  as `/usr/local/libexec/socialweb-computer-bidder-run`; the host's shared settings (paths, policy,
+  firecracker flags, `DENO_DIR`) are rendered by the script into
+  `/etc/socialweb-computer-bidder/common.env`; an optional `/etc/socialweb-computer-bidder/<handle>.env`
+  overrides any of them for one account. The script never enables an instance and never writes
+  anything of an account's; it restarts a running instance only when one of those three files changed.
+- **%i is the handle, and only %i.** `%I` would unescape `-` to `/`, so a hyphenated handle would name
+  another directory. The launcher refuses (exit 78, `RestartPreventExitStatus=78`) an instance that is
+  not a lowercase handle with at least one dot, which also keeps `host`, the shared directory, from
+  ever being an instance.
+- **State.** `StateDirectory=socialweb-computer-bidder/%i` (mode 0711, so a guest's container, uid 1000,
+  can traverse to `guests/` but not list) holds `secrets/` (0700: `oauth-session.json`,
+  `bidder-key.hex`), `pds/` (`--pds-state-path`; the QR branch of `hono-bidder/mod.ts` does not read it
+  today, it is passed so a mode that does stays per account) and `guests/` (0777, the provider's work
+  root, the mode the retired fixed unit measured as working). The session file is written with the
+  process umask, which is why it sits in a 0700 directory instead of relying on its own mode. What all
+  instances share (image store, image inputs, `socialweb-nodeimage`, module cache, undici preload) is
+  under `/var/lib/socialweb-computer-bidder/host`, the unit's one `ReadWritePaths=`; code and a deno
+  binary of its own are under `/opt/socialweb-computer-bidder`. Every instance runs as `swc-bidder`
+  (in the docker group, `SupplementaryGroups=docker`), so instances are separated by directory, not uid.
+- **Sign-in is QR only; no password exists anywhere.** The launcher runs the bidder with
+  `--atproto-oauth-qr --oauth-session-file <state>/secrets/oauth-session.json` and never
+  `--atproto-handle`. The bidder's QR flow signs in whichever account scans, so the launcher holds the
+  sign-in to %i itself: it relays every line of the bidder's output to the journal, reads the handle
+  from `oauth_qr_session_restored` (logged by `tryRestoreOAuthQRSession`) or `oauth_qr_session_ready`
+  (a fresh scan), and on another handle, or on `bidder_ready` with no handle seen, logs
+  `bidder_account_refused`, deletes that session, stops the bidder and exits 1 so the unit restarts
+  into a fresh QR. The comparison is against the handle the session reports, case-insensitively; it
+  is not a fresh DID-document resolution. An expired session makes the bidder delete the file and exit
+  1, and `Restart=always`, `RestartSec=10`, `StartLimitIntervalSec=0` bring the QR back.
+- **More than one instance per host** shares the guest slice budget, and each needs its own
+  `BIDDER_FC_RANGE_BASE` in its `<handle>.env`, or their guests are handed the same addresses.
+  `BIDDER_SERVE_PORT` defaults to 0 for the same reason.
+- **docker's cgroup parent.** `MANAGE_DOCKER_DAEMON=no` writes `socialweb-guests.slice` but leaves
+  `/etc/docker/daemon.json` alone and does not restart docker, for a host whose docker runs other
+  containers; guests are then NOT bounded by the slice, and the script says so.
+- **The shipped image is the build host's answer.** The script asks
+  `socialweb-nodeimage -ensure -json -reuse-stale` locally which image the configuration names and
+  takes the kernel paths from that answer, so a configuration whose kernel fields say `discover`
+  ships; the retired fixed-unit script took the first `sha256-*` directory and refused `discover`.
+- **A bidder waiting for its QR has no key on disk yet.** `hono-bidder/mod.ts` writes
+  `--private-key-hex-path` only after sign-in, so every restart before a scan registers a new
+  did:plc on the PLC directory. Measured on hat-8 2026-10-07: the waiting instance's `secrets/` held no
+  `bidder-key.hex`. That is atproto-market's to change, not this unit's.
+
 ## 6. CRDs and the API surface
 
 Every CRD here is INTERNAL. No CRD is user-facing: the user's surface is the mounted Kubernetes API
@@ -294,6 +352,115 @@ can never be deleted.
 
 `ClusterPhase`: `Initializing`, `Ready`, `Unavailable`, `Draining`.
 `NodePhase`: `Pending`, `Running`, `Draining`.
+
+### Generated from api/v1alpha1
+
+The Go types in `api/v1alpha1` are the ONLY source of every CRD's shape. `go generate ./api/...`
+(`cmd/socialweb-apigen -root .`, logic in `internal/apigen`) writes, and nothing else may write:
+
+| Output | What |
+|---|---|
+| `deploy/<kind>-apiresourceschema.yaml` | one kcp `APIResourceSchema` per entry of `v1alpha1.APIResources` |
+| `deploy/cluster-apiexport.yaml`, `deploy/atprotoidentity-apiexport.yaml` | one `APIExport` per distinct `Export`, resources in registry order |
+| `deploy/apiresourceschema-revisions.json` | the revision lock: every schema name ever generated and the sha256 of its `spec` |
+| `socialweb-computer-k8s/lib/common/socialweb-computer-k8s-api/mod.ts` | `@publicdomainrelay/socialweb-computer-k8s-api`: TS interfaces, enum tuples and their literal unions, finalizer and condition constants, `*_RESOURCE` descriptors, and a validator (`validateX`, `isX`, `assertX`, `parseX`, `ApiValidationError`) for every generated type |
+
+How the Go type maps, decided by Claude (user may veto):
+
+- Struct layout comes from reflection over `encoding/json` tags, so the schema is what Go actually
+  writes. A field is `required` exactly when its json tag lacks `omitempty`, unless it carries the
+  struct tag `apigen:"optional"` (only `ClusterSpec.running`, which is written as `false` and was never
+  required). Struct tags, because the no-comments rule forbids kubebuilder markers and so rules out
+  controller-gen.
+- Enums are read from SOURCE (`go/parser`): a named string type's enum is its typed string
+  constants in declaration order. Untyped exported string constants (`GroupName`, `Version`,
+  `Finalizer*`, `Condition*`) become UPPER_SNAKE TS constants. A named string type with no constants
+  is a generator error, so an enum cannot silently become a free string.
+- `metav1.ObjectMeta` is `type: object`; `[]metav1.Condition` items are `type: object` with
+  `x-kubernetes-preserve-unknown-fields`; `int` is `integer`, `int64` adds `format: int64`. Anything
+  else outside `api/v1alpha1` is a generator error.
+- The validator is the same rules as the schema plus one kube does not apply: an UNKNOWN field is an
+  error, not pruned. `metadata` and conditions stay open. A key whose TS value is `undefined` counts as
+  absent, as JSON would send it.
+
+The first generation reproduced the hand-written Cluster, Node and AtprotoIdentity schemas and both
+exports BYTE FOR BYTE; NodeClaim differs only by its name and the added `status.contract` fields.
+
+`deploy/check.sh` (every mode) regenerates into a temp dir and `diff -u`s every output against the
+tree: any drift fails with `run: go generate ./api/...`. Protobuf was rejected: a CRD travels through
+kube and kcp as JSON validated by OpenAPI, so a second wire format is a second source of truth.
+
+**Schema revisions.** kcp holds `APIResourceSchema.spec` IMMUTABLE (re-measured: an update of a
+changed spec under the same name is Forbidden). So a schema is named `v1alpha1-<Revision>.<plural>.<group>`
+with `Revision` set per kind in `api/v1alpha1/resources.go`, and the revision lock refuses to generate
+a spec that differs from what it recorded under that name: changing a Go type without bumping its
+`Revision` fails generation, and so `check.sh`, before any host sees a schema it cannot apply. Old
+names stay in the lock forever; old `APIResourceSchema` objects stay in kcp and are harmless.
+
+**What the re-point does to tenants, MEASURED** (`internal/apigen`
+`TestAnAlreadyBoundWorkspaceKeepsTheNewContractFieldsAfterTheSchemaUpgrade`, kcp v0.33.0 over kine,
+runs under `check.sh --local`): a workspace that bound the export while it named `v1alpha1-1` PRUNES
+the new fields (a write returns `unknown field` warnings and drops them). Creating `v1alpha1-2` and
+re-pointing the export moves that ALREADY-BOUND `APIBinding`'s `boundResources` to `v1alpha1-2` within
+seconds, with the identity hash unchanged (so the etcd prefix and every stored claim are untouched),
+the pre-upgrade claim intact, and the new fields then persisting. No binding is deleted or recreated:
+the migration IS `install-provider.sh` applying the new schema and then the re-pointed export, in the
+order it already does. Without the re-point the binding stays on `v1alpha1-1` and the proof fails.
+The deployed `v1alpha1-1` NodeClaim schema is kept at
+`testdata/apiresourceschema/v1alpha1-1.nodeclaims.socialweb.computer.yaml`, checked against the lock.
+
+**Shared fixtures.** `testdata/nodeclaim/valid-*.json` are claims the Go suite decodes STRICTLY
+(`DisallowUnknownFields`) into `v1alpha1.NodeClaim`, re-encodes without losing a leaf, and validates
+against the generated schema; the Deno suite (`socialweb-computer-k8s/test/k8s_api_fixtures_test.ts`)
+parses the same files. `invalid-*.json` wrap an object with `expectError` (the issue path BOTH
+validators must report) and `goDecodeRejects` (whether the strict Go decode alone already refuses
+it: wrong types and unknown fields yes, unknown enums and missing required fields no).
+
+**NodeClaim `status.contract`** carries, beside the original
+`vmUri|rfpUri|acceptUri|receiptUri|receiptCid|submitEventRef` (kept: prod claims hold them and the
+no_bids back-off keys on `Failed` + `rfpUri` without `acceptUri`), every field of atproto-market's
+`ContractState` (`lib/abc/compute-request`): `version`, `phase`
+(`requested|rfp_submitted|winner_selected|accepted|receipt|network|released`), `vmName`,
+`requesterDid`, `marketDid`, strongRefs `{uri, cid}` `payload|rfp|policy|bid|accept|receipt`,
+`winner {did, submitAccept?}`, `receiptOk`, `vmAddress` (relay FQDN or `iroh://` ticket), `bids`,
+`release {event, payload, ok, status?}`, `outcome`, `error` and `timestamps` keyed by contract phase.
+All optional, so every existing claim stays valid. None of it is secret: records are public repo
+records, `submitAccept`/`submitEventRef` are bidder endpoints.
+
+**The claim is the durable record a door releases from (M2-CLAIM-RECEIPT).** The door's fulfiller
+(`lib/socialweb-computer-k8s-node-market`) calls atproto-market's `requestCompute` (not
+`runComputeContract`) with handlers that write the evolving `ContractState` into `status.contract`
+at `onRfpSubmitted`, `onAccepted` (phase `Provisioning`), `onReceipt` and `onNetwork`; each handler
+awaits its status write before the flow moves on, so the receipt is on the claim before the guest
+boots. Writes stay the door's alone and go through the existing store (its 429 Retry-After hold
+applies to reads; a status PATCH is not held). The legacy `vmUri|rfpUri|acceptUri|receiptUri|
+receiptCid` are mirrored from the strongRefs on every write, so the provider's no_bids back-off is
+unchanged. After the flow, the door runs the same ssh session as before (the join needs it until M3),
+then reads the claim back with `NodeClaimStore.get` and calls `releaseCompute` with the state parsed
+FROM THE CLAIM, never from its memory. Decisions, made by Claude, user may veto:
+
+- A claim needs releasing iff its contract has receipt refs (`receipt` + `submitEventRef`) and its
+  phase is not `released`. A released claim keeps its receipt and gains `release {event, payload,
+  ok}`; the legacy receipt fields are no longer cleared, the contract phase is what says "done".
+- A claim with no live session in this process (startup, or a live claim this process did not
+  start) is released with `releaseCompute` from its saved state, reason `requester_restarted`; this
+  replaces the hand-rolled reap and its separate vm.delete code. Still a reap, not an adoption:
+  adopting is M3-NODE-LOSS. A pre-upgrade claim carrying only the legacy fields is released from a
+  `ContractState` synthesised from them.
+- `Released` only when `release.ok`; an unconfirmed release is `Failed`. A release that threw leaves
+  the phase unreleased, so the delete path retries it.
+- An unreadable claim at the end of a run (a held 429, an error) defers the release: the run ends
+  without a terminal write, and the next pass finds a live claim with no session and releases it.
+- A deleted claim aborts its run; the abort turns into a `return` from `onRfpSubmitted`, `onReceipt`
+  or `onNetwork`, but never from `onAccepted`, because returning there would end the flow before the
+  receipt is known and leave a VM nothing can release.
+
+**Door layering.** The generated package is a `lib/common` leaf with no imports. The store's claim
+VIEW (`workspace`, `name`, `finalizers`, `spec`, `status`) is `NodeClaim` in
+`lib/abc/socialweb-computer-k8s`, beside `NodeClaimStore`, typed by the generated spec and status.
+`socialweb-computer-k8s-nodeclaim-kcp` parses every claim kcp serves with `parseNodeClaim` and runs
+`assertNodeClaimStatus` before every status PATCH, so a status kcp would prune or refuse never leaves
+the door.
 
 ### The XRPC surface
 
@@ -1438,6 +1605,56 @@ before now decides `Provision, Nodes: <target>` with `MaxNodes` raised, and ever
 `MaxNodes == 1` is byte-for-byte what it was. What is NOT yet read is a live cluster holding more
 than one node at once - `NEXT.yaml` AUTO-1 stays open for that, and `docs/plans/0002` names the
 instrument: three concurrent pods, three joined nodes, and a return to zero.
+
+**A market that takes no bid backs the cluster off, exponentially, capped at ten minutes (plan 0005
+M2-BACKOFF, decided by Claude, user may veto).** MEASURED on prod 2026-10-07 15:43-16:48 UTC: with
+no bidder answering, the provider wrote a NodeClaim, the door's fulfiller got `no_bids` after its
+30 s bid window, the claim ended Failed, `confirmHeld` gave the node up, and the next scale pass
+claimed again -- a new public `market.rfp` about every 50 s per missing node, 49 RFPs and 86
+`no_bids` in one hour. The rule:
+
+- *What counts.* A claim that ends `Failed` with `status.contract.rfpUri` set and
+  `status.contract.acceptUri` empty (`nodemarket.MarketDeclined`): the door asked the market and no
+  bid was taken. That is the requester's whole `NO_CONTRACT_OUTCOMES` class -- `no_bids`,
+  `bids_denied` and `policy_rejected` -- and all three loop identically, each re-ask a fresh public
+  RFP, so all three back off. A claim that failed after an accept (the guest died, the join never
+  forwarded) keeps today's behaviour: the market did answer, and the next pass asks again at once.
+  So does every non-market substrate, which never reports a declined end.
+- *Why that shape and not a reason field.* The claim is classified from structured record URIs the
+  door already writes, never from `status.message` text. A new `status.reason` was rejected because
+  `APIResourceSchema.spec` is immutable and, MEASURED (`internal/versions/versions.json`), a schema
+  change does not reach existing APIBindings: every cluster home bound before the bump would prune
+  the field and silently never back off. The door keeps `rfpUri` and writes no `acceptUri` on a
+  `no_bids` end; `socialweb-computer-k8s/test/node_market_test.ts` "a no-bids end keeps the rfp it
+  asked with and names no accept" pins that, so the cross-process contract is guarded on both sides.
+  Status stays one writer per half: the door writes the claim's status, the provider only reads it.
+- *The wait.* `scale.BackoffDelay(n) = 30 s * 2^(n-1)` for the n-th declined end in a row, capped
+  at `scale.DefaultBackoffCap = 10m`: 30 s, 1 m, 2 m, 4 m, 8 m, 10 m, 10 m ... One confirm pass that
+  sees several declined claims counts ONE end, because they are one answer from one market at one
+  moment. The wait runs from the pass that saw the end. `Options.BackoffBase` / `BackoffCap` exist
+  for tests; production uses the defaults.
+- *Where it lives.* `scale.State.Backoff` is pure state; `scale.Decide` returns `None` with
+  `Decision.BackoffUntil` set while `st.Nodes < target` and the wait holds. The decision's reason
+  says the cluster is backing off, until when (RFC 3339 UTC), how many ends in a row, and the door's
+  own words, and the provider's `cluster provider: node scale` line carries `backoffUntil`.
+  `scaledriver.Driver.Declined(cluster, reason)` records an end (and logs `backing off market
+  provisions for this cluster` with `until`, `wait`, `why`); `Driver.Joined(cluster)` clears it. The
+  composition root (`wiring.go` `scale`) feeds both from `nodeHosts.confirm`'s outcome before the
+  scale pass, `Joined` first so a pass that sees one node join and another declined still backs off.
+- *Resets.* A node of the cluster newly confirmed joined (the tenant cluster reports it and its
+  claim reads Running; a node already joined does not re-reset on every pass), or the cluster's
+  intent dropping to none (`State.Next` keeps the back-off only while the decision carries intent).
+  A provision does NOT reset it: the count of ends outlives the provision it allowed, so the next
+  end waits longer.
+- *Memory only.* The back-off is held in the provider process. A provider restart starts every
+  cluster from no back-off, so the first pass after a restart may post one RFP at once; that costs
+  one RFP per restart, not one per pass.
+
+Writing these tests surfaced a defect in the same loop: `tenantNodes.retain` dropped ordinal 1
+unconditionally, assuming the primary host held it, so a first node claimed again after the first
+was given up was not held. Its claim was then never confirmed, never released, never counted in
+flight and never seen ending -- it could not back anything off. `retain` now restores the primary
+slot when it is empty (`TestAFirstNodeClaimedAgainAfterItWasGivenUpIsHeld`).
 
 ## 11. Teardown, and the gate
 
@@ -3614,11 +3831,13 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   the clusterprovider into the CLUSTER'S OWN HOME workspace - the logical cluster `Ref.Home` the
   registry already derives - and listed by the door across `clusters/*` through the `clusters`
   APIExport's virtual workspace, which is why the resource is in `deploy/cluster-apiexport.yaml`,
-  schema `v1alpha1-1.nodeclaims.socialweb.computer`, applied by `deploy/install-provider.sh`. Its
+  schema `v1alpha1-2.nodeclaims.socialweb.computer` (was `v1alpha1-1` until M2-CODEGEN; see section 6,
+  "Generated from api/v1alpha1"), applied by `deploy/install-provider.sh`. Its
   spec is `cluster`, `nodeName`, `ownerDid`, `apiserverPort`, `advertiseAddress`, `tokenFile`,
   `nodePasswordFile`, `serverCAFile`, `denyBidderDids`; its status is `phase`
   (`Pending|Bidding|Provisioning|Joining|Running|Failed|Released`), `contract`
-  (`vmUri|rfpUri|acceptUri|receiptUri|receiptCid|submitEventRef`), `fqdn` and `message`. The Go side
+  (`vmUri|rfpUri|acceptUri|receiptUri|receiptCid|submitEventRef`, plus since v1alpha1-2 the requester's
+  whole `ContractState`), `fqdn` and `message`. The Go side
   writes spec and metadata and NEVER status: `setPhase` on the Go side, the door's `replaceStatus` on
   the other, and `kcpclient.WriteNodeClaimTo` patches an existing claim's spec only when it differs,
   so a live claim is not rewritten on every pass.
