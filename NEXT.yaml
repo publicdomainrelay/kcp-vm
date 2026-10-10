@@ -174,7 +174,13 @@ open:
       attempts did not reproduce the failure at all -- 20 sequential runs, then 8 runs with the
       working tree being flipped dirty and clean every 0.3 s, then the same 8 with the flag removed
       again, all green.  So the mechanism is established and the fix is defensible, and the item
-      stays open because the reproduction behind it is the agent's and not mine.  ONE MORE READING,
+      stays open because the reproduction behind it is the agent's and not mine.
+      One alternative was measured and REJECTED: building the fixture's agent where `Main` will
+      rebuild it, which narrows the window from the whole test process to the milliseconds between the
+      two builds.  It works, and it took the package from ~4 s to ~24 s, because the agent is a real
+      `go build` and seven tests now pay for one each.  Five times slower for a narrowed window and
+      not a closed one is the wrong trade in a suite that is meant to be a fast gate, so it is
+      recorded rather than taken.  ONE MORE READING,
       2026-10-07, and it makes the position worse rather than better: `go test
       ./cmd/socialweb-nodeimage/ -count=1` failed once, in this package, with
       `TestAnImageUnderTheNameItsInputsGiveItIsNotBuiltAgain` and
