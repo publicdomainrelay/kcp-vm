@@ -372,6 +372,7 @@ items:
       releases nothing and writes nothing.
     status: doing
     evidence:
+      - "deployed 2026-10-07 ~19:44Z with main 6af8994 (adoption, shutdown no longer reaps, per-node scale-in 932b139): 19:45:36Z passes None nothing running and no node, ClusterLinks re-recorded after restart; a restart with live market nodes awaits a bidder"
       - "provider half built 2026-10-07 in 9dff4fa: tenantNodes.confirmHeld reads each held market node's tenant Node; Ready False/Unknown with now - lastTransitionTime >= NodeLossGrace (90s) -> teardownHeld (claim deleted, vault state revoked, door releases with vm.delete, tenant Node deleted), reported in confirmOutcome.lost; the scale pass in the same tick claims a replacement if demand remains. ARCHITECTURE section 10 'A market node NotReady for 90 s is released'"
       - "decided by Claude, user may veto: clock is the Node's lastTransitionTime (survives provider restarts), zero transition time falls back to first-seen in memory; no Node object or no Ready condition is not covered; held nodes only"
       - "instrument: cmd/socialweb-clusterprovider/nodeloss_test.go TestAMarketNodeNotReadyFor89sIsKeptAndAt90sIsReleased (False and Unknown: 89s keeps claim + Node, 90s deletes both, revokes, reports lost), TestANodeTheClusterNeverReportedIsNotTouchedByTheLossRule (1h on, no Node, claim kept), TestAReadyNodeIsNotLostHoweverOldItsTransition"
@@ -402,6 +403,7 @@ items:
       intent or demand (its desired count follows the nodes).
     status: doing
     evidence:
+      - "deployed 2026-10-07 ~19:44Z (main 932b139 + 6af8994); idle cluster unchanged at 0 nodes; a live release awaits a bidder"
       - "fb4ca07 internal/scale: scale.Loads (per-node Busy/Evictable/Incoming, Unplaced), Decide's Release branch (State.NodeIdleSince, Decision.Release, scale.Releaser), DaemonSets and DaemonSet/mirror pods out of Intent and Demand"
       - "fc16e9b provider: NodeObserver computes Placement; scaledriver performs Release through scale.Releaser (ErrNoReleaser otherwise); cmd/socialweb-clusterprovider/scalein.go tenantNodes.Release (cordon, re-observe, drain, teardownHeld) and nodeHosts.observeHeld (marks held nodes, adds in-flight)"
       - "ARCHITECTURE section 10 'Scale-in is per node' and 'A DaemonSet is never intent'; plan 0002 section 4.4 marked superseded"
