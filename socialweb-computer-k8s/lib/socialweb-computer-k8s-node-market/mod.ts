@@ -56,6 +56,8 @@ export interface MarketNodeFulfillerOptions {
   vmReadyTimeoutSec?: number;
   policy?: { name: string; args: Record<string, unknown> };
   extraBidderDids?: string[];
+  guestHostAliases?: string[];
+  userDataBase?: string;
   pollIntervalMs?: number;
   requestCompute?: ComputeRequester;
   releaseCompute?: ComputeReleaser;
@@ -93,7 +95,14 @@ async function sha256Hex(text: string): Promise<string> {
 }
 
 export async function clusterKeyOfClaim(spec: Pick<NodeClaimSpec, "ownerDid" | "cluster">): Promise<string> {
-  return clusterKeyOf(accountHashOf(await sha256(spec.ownerDid)), spec.cluster);
+  const ownerPrefix = clusterKeyOf(accountHashOf(await sha256(spec.ownerDid)), "");
+  if (!spec.cluster.startsWith(ownerPrefix) || spec.cluster.length === ownerPrefix.length) {
+    throw new Error(
+      `the claim names cluster ${spec.cluster}, which is not a cluster key of its owner ${spec.ownerDid} ` +
+        `(the provider writes spec.cluster as ${ownerPrefix}<cluster>)`,
+    );
+  }
+  return spec.cluster;
 }
 
 export async function nodeGrantOf(spec: NodeClaimSpec, vars: Pick<GrantVars, "issuerUri" | "subject">): Promise<NodeClaimGrant> {
@@ -366,7 +375,11 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
 
         handle = await request(pds, {
           vmName: spec.nodeName,
-          userData: { modules: ["k3s", createK3sJoinModule()] },
+          userData: {
+            ...(opts.userDataBase ? { base: opts.userDataBase } : {}),
+            modules: ["k3s", createK3sJoinModule()],
+          },
+          ...(opts.guestHostAliases?.length ? { guestHostAliases: opts.guestHostAliases } : {}),
           capabilities: [capability],
           denyBidderDids: spec.denyBidderDids ?? [],
           extraBidderDids: opts.extraBidderDids ?? [],
