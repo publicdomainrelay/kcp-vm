@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -31,6 +32,16 @@ type ensureResult struct {
 	Initramfs string `json:"initramfs,omitempty"`
 
 	Rootfs string `json:"rootfs,omitempty"`
+
+	RootfsMiB int64 `json:"rootfsMiB,omitempty"`
+}
+
+func rootfsTemplateMiB(dir string) int64 {
+	info, err := os.Stat(filepath.Join(dir, nodefirecracker.RootfsImageName))
+	if err != nil {
+		return 0
+	}
+	return info.Size() >> 20
 }
 
 func buildTheImageTheConfigurationNames(
@@ -122,6 +133,7 @@ func Ensure(configPath string, reuseStale bool, asJSON bool, preinstallPath stri
 			return err
 		}
 	}
+	result.RootfsMiB = rootfsTemplateMiB(result.Dir)
 	if asJSON {
 		raw, err := json.Marshal(result)
 		if err != nil {
