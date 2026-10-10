@@ -61,6 +61,14 @@ if [ -n "$missing" ]; then
   exit 1
 fi
 mkdir -p "$FC_WORK_ROOT"
+# Each guest's firecracker API socket lives in its work directory, and a unix
+# socket path cannot exceed 107 bytes; past that the guest dies at boot and its
+# work directory is removed, which reads as a bidder that never provisioned.
+fc_sock="$FC_WORK_ROOT/fc-000000000000-00000000/fc.sock"
+if [ "${#fc_sock}" -gt 107 ]; then
+  echo "FC_WORK_ROOT is too long: a guest's API socket would be ${#fc_sock} bytes ($fc_sock), over the 107-byte unix socket limit" >&2
+  exit 1
+fi
 
 # socialweb-computer-kcp: a guest reaches the dispatcher only over https (its
 # OIDC proof and its onNetwork report), at <name>.relay.localhost on the

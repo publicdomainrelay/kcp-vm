@@ -75,9 +75,24 @@ func TestTheMarketTestBedRentsAFirecrackerGuestThroughTheRFPFlow(t *testing.T) {
 		}
 	}
 
+	workBase := os.Getenv("MARKETBED_WORK_ROOT_BASE")
+	if workBase == "" {
+		workBase = "/var/tmp"
+	}
+	workRoot, err := os.MkdirTemp(workBase, "mtb-")
+	if err != nil {
+		livegate.Require(t, "cannot make a guest work root under %s (set MARKETBED_WORK_ROOT_BASE): %v", workBase, err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(workRoot) })
+	if sock := filepath.Join(workRoot, "fc-000000000000-00000000", "fc.sock"); len(sock) > 107 {
+		livegate.Require(t, "the guest work root %s is too long: a guest's API socket would be %d bytes, over the "+
+			"107-byte unix socket limit; set MARKETBED_WORK_ROOT_BASE to a shorter directory", workRoot, len(sock))
+	}
+
 	env := append(os.Environ(),
 		"ORG_ROOT="+org,
 		"ACCEPT_ROOT="+filepath.Join(t.TempDir(), "accept"),
+		"FC_WORK_ROOT="+workRoot,
 	)
 	for _, in := range firecrackerInputs {
 		v := os.Getenv(in.env)
@@ -117,7 +132,8 @@ func TestTheMarketTestBedRentsAFirecrackerGuestThroughTheRFPFlow(t *testing.T) {
 	defer cancel()
 
 	logPath := filepath.Join(t.TempDir(), "accept.log")
-	logFile, err := os.Create(logPath)
+	var logFile *os.File
+	logFile, err = os.Create(logPath)
 	if err != nil {
 		t.Fatal(err)
 	}
