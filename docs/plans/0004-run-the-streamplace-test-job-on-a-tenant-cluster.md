@@ -348,14 +348,32 @@ limits are not placement.
   `Pending` while nodes join around it, which looks like a slow cluster and is actually a Pod that
   cannot fit on any of it. `helper_cpu_request` and `helper_memory_request` exist; setting them
   says where the Pod is placed without capping what it may burst to.
-- **A node that has just booted may not resolve yet.** The scale-check jobs cloned the repository
-  like every other job, and the first attempt died on
+- **A job Pod resolves through CoreDNS, and CoreDNS is an addon that comes up after the node it
+  runs on.** The scale-check jobs cloned like every other job, and the first attempt lost three of
+  five to
   `fatal: unable to access '...': Could not resolve host: gitlab.dorper-matrix.ts.net (Timeout
-  while contacting DNS servers)`, reported as `script_failure`. A scale check does not need a
-  repository, so its jobs carry `GIT_STRATEGY: none`. The streamplace `test` job does need one and
-  succeeded, which is the difference between a job that runs seconds after its node joins and one
-  that runs minutes after: the guest resolves through the gateway pasta hands it, and that path is
-  not instant.
+  while contacting DNS servers)`,
+  reported as `script_failure` -- which reads as a broken job. A Pod's `/etc/resolv.conf` is
+  k3s's `kube-dns`, so the query goes Pod -> CoreDNS -> the node's own resolver -> pasta -> the
+  host, and CoreDNS is created when the first node joins and is not serving for the first seconds
+  after. A job that starts the moment its node joins is a job that queries a resolver that is not
+  there yet.
+
+  **pasta is not the fault, and it was the first thing suspected.** Querying its forwarder at the
+  gateway address from inside its own namespace answers `gitlab.dorper-matrix.ts.net`, `github.com`
+  and `ghcr.io` in about ten milliseconds each. The host's `nameserver 127.0.0.53` is
+  systemd-resolved's stub and pasta reaches it fine, tailscale MagicDNS included. The fault is one
+  hop further in.
+
+  The fix is `pre_get_sources_script`, which runs BEFORE the clone; `pre_build_script` runs after
+  it, which is why the pnpm step could never have covered this. The gate waits for the job's own
+  nameserver to answer for `CI_SERVER_HOST` -- the name the clone is about to need -- and gives up
+  quietly rather than failing the job it exists to protect.
+
+  Routing around this instead of fixing it was the first response, by giving the scale-check jobs
+  `GIT_STRATEGY: none`. That is recorded because it is the tempting answer and it is wrong: it
+  hides the failure in the one check whose whole job is to find it, and it leaves every other job
+  exposed. The clone is back in.
 
 ## 7. The mkfs measurement, in full
 
