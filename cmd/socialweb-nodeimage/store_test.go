@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io/fs"
@@ -116,11 +118,24 @@ func entriesIn(t *testing.T, dir string) []string {
 	return names
 }
 
+func fileDigestOf(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:]), nil
+}
+
 func TestAnImageUnderTheNameItsInputsGiveItIsNotBuiltAgain(t *testing.T) {
 	cfg := imageFixture(t)
 	writeConfigFile(t, cfg)
 	dir := writeImageUnderItsName(t, cfg, nameOf(t, cfg))
 
+	digestBefore, err := fileDigestOf(cfg.AgentBinary)
+	if err != nil {
+		t.Fatalf("reading the agent binary this fixture wrote: %v", err)
+	}
 	loaded, err := LoadConfig(cfg.Path)
 	if err != nil {
 		t.Fatalf("reading back the configuration this fixture wrote: %v", err)
@@ -142,14 +157,27 @@ func TestAnImageUnderTheNameItsInputsGiveItIsNotBuiltAgain(t *testing.T) {
 			"mystery", fromMemory, fromDisk)
 	}
 
-	if err := Main(cfg.Path); err != nil {
+	mainErr := Main(cfg.Path)
+	digestAfter, digestErr := fileDigestOf(cfg.AgentBinary)
+	if mainErr != nil && digestErr == nil && digestAfter != digestBefore {
+		livegate.Require(t, "the agent binary changed UNDER this run, from %s to %s, and the "+
+			"image's name carries that binary's digest: `Main` rebuilds the agent before it "+
+			"fingerprints, so a binary that moves between the fixture naming its image and the run "+
+			"looking for it puts the image under a name the run does not know, sends it down the "+
+			"build path, and that path refuses this fixture's unpinned image. The premise of this "+
+			"test -- that the image is already in the store -- is void when an input changes "+
+			"underneath it, and something is editing this repository while the suite runs: %v",
+			digestBefore, digestAfter, mainErr)
+	}
+	if mainErr != nil {
 		t.Fatalf("a second run over a configuration whose image is already in the store did not "+
 			"leave it alone: %v -- the run is meant to be unconditional, so a run that builds, "+
 			"writes or pulls anything while the image it names is already there is a run nobody can "+
 			"put on a timer, and the build would have failed here (the module tree this fixture "+
 			"names does not exist), so what came back instead was not a build. The fixture wrote "+
-			"the image under %s and a run that reads the configuration on disk names %s", err,
-			fromMemory, fromDisk)
+			"the image under %s and a run that reads the configuration on disk names %s, and the "+
+			"agent binary hashed %s both before and after the run", mainErr,
+			fromMemory, fromDisk, digestBefore)
 	}
 	if names := entriesIn(t, cfg.OutDir); len(names) != 1 || names[0] != nameOf(t, cfg) {
 		t.Fatalf("a run that found the image already built left %q in the store, and the store is "+

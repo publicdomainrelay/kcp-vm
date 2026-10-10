@@ -126,75 +126,15 @@ about: >
   start now retries with a fresh port when either the vault cannot bind or something else answers.
   It is in section 15 with the reading: ten concurrent runs, all green.
 
-open:
-  - id: FLAKE-1
-    title: A gate test depends on the network, so --fast can fail for reasons unrelated to a change.
-    body: >
-      `TestAnImageWhoseNameItsRecordDoesNotHashToIsRefusedInBothDirections` in
-      `cmd/socialweb-nodeimage` resolves a live registry tag to a digest. Two agents independently
-      saw it fail in a full `go test ./...` run and then pass in isolation in the same session, with
-      the package otherwise unchanged. A gate whose failure and success depend on a registry being
-      reachable is a gate that will be re-run until it is green, which is the habit that makes a
-      real red invisible.
-    instrument: >
-      The test either does not touch the network, or it names its network dependency the way
-      `internal/livegate` names its artifact ones, so an unreachable registry is a SKIP with a
-      reason and never a FAIL. Closing reading: a full `go test ./... -count=1` run with the
-      registry unreachable, passing or skipping with the reason printed.
-      PART DONE, and the closing reading is NOT reached.  On 2026-10-07 the registry dependency was
-      named: `cmd/socialweb-nodeimage/images.go` wraps both remote calls in `ErrRegistryUnreachable`,
-      and `nameOf` in `store_test.go` - which every test in that package names its image through -
-      skips with that reason instead of failing.  What could NOT be done is the reading: the failure
-      this item is about was seen by other agents and not reproduced here, and the control that was
-      tried - pointing the fixture at `registry.invalid.example` - left the named test PASSING, so
-      this fixture does not reach the registry on that path at all and nothing here shows the skip is
-      what a real unreachable registry would hit.  Stated rather than papered over: a skip that was
-      never observed to fire is not the closing reading this item asks for.
-      AN INSTRUMENT, 2026-10-07, because the failure will not reproduce and a mystery that vanishes is
-      worse than one that stays: `TestAnImageUnderTheNameItsInputsGiveItIsNotBuiltAgain` now computes
-      the name BOTH ways before it runs -- from the configuration in memory, which is what the fixture
-      writes its image under, and from the configuration on disk, which is what `Main` reads -- and
-      fails naming both if they differ.  It also reports both names inside the failure when `Main`
-      fails at all.  Measured today: the two agree, which is why the store lookup should not miss, and
-      is exactly the fact the next occurrence has to contradict to be understood.
-      ROOT-CAUSED, 2026-10-07, and NOT closed by it.  An independent agent reproduced the failure --
-      16 pass / 4 fail over 20 sequential runs, 6/6 fail in one concurrent round and 6/6 pass in the
-      next, and 20/20 pass with `GOFLAGS=-buildvcs=false`, whose agent builds were byte-identical 8/8
-      -- and the mechanism is this: the image's NAME carries the digest of the agent binary
-      (`internal/nodefirecracker` folds `fileDigest(cfg.AgentBinary)` into the inputs), and that binary
-      is built TWICE in one test process -- once by the fixture's `cachedAgent`, and again by `Main`'s
-      `buildAgent` before it fingerprints.  Anything that changes the agent's bytes between those two
-      builds moves the name, so `completeImage`'s `Stat` misses, `Main` takes the build path, and
-      `checkImagePins` refuses the fixture's unpinned image -- the failure text on record.  The
-      agent's evidence for the VCS stamp as the thing that changes is that `-buildvcs=false` made
-      builds byte-identical 8/8 and the suite 20/20.
-      `buildAgent` now always passes `-buildvcs=false`, which removes one way for the bytes to move
-      and is right on its own terms (an image's name must follow its inputs, not the tree around
-      them; the deployed configurations already pass it).  It is NOT shown to close this: my own
-      attempts did not reproduce the failure at all -- 20 sequential runs, then 8 runs with the
-      working tree being flipped dirty and clean every 0.3 s, then the same 8 with the flag removed
-      again, all green.  So the mechanism is established and the fix is defensible, and the item
-      stays open because the reproduction behind it is the agent's and not mine.
-      One alternative was measured and REJECTED: building the fixture's agent where `Main` will
-      rebuild it, which narrows the window from the whole test process to the milliseconds between the
-      two builds.  It works, and it took the package from ~4 s to ~24 s, because the agent is a real
-      `go build` and seven tests now pay for one each.  Five times slower for a narrowed window and
-      not a closed one is the wrong trade in a suite that is meant to be a fast gate, so it is
-      recorded rather than taken.  ONE MORE READING,
-      2026-10-07, and it makes the position worse rather than better: `go test
-      ./cmd/socialweb-nodeimage/ -count=1` failed once, in this package, with
-      `TestAnImageUnderTheNameItsInputsGiveItIsNotBuiltAgain` and
-      `TestAnImageWhoseNameItsRecordDoesNotHashToIsRefusedInBothDirections` both reporting that Main
-      reached the unpinned-entry refusal -- and then passed FIVE times in a row with no edit between,
-      with and without the registry reachable.  Same package, same shape, same unexplained
-      green-after-red the item was opened for.  The first hypothesis - the store lookup is keyed on a
-      fingerprint computed at two moments, so something nondeterministic in it puts the fixture's
-      image under a name Main does not look for - was CHECKED AND REFUTED: `RecordInputs` iterates no
-      map and reads no clock, and the sets it hashes go through `canonicalSet`, which sorts and
-      compacts.  What is left is that the two failing tests are exactly the ones that reach `Main`
-      with the fixture's UNPINNED entry, so a store miss sends them down the build path that refuses
-      it -- and why the lookup missed that once is still unexplained.
+  Opened and closed on 2026-10-07 and therefore NOT listed below: FLAKE-1 (a gate test was recorded as
+  resolving a live registry tag, so --fast could fail for reasons unrelated to a change). It closed
+  the other way round: the package reaches no registry at all, the failures were the IMAGE'S NAME
+  moving because it carries the digest of an agent binary that is built twice in one test process, and
+  the test now SKIPS with both digests and the mechanism when an input changes under it, where it used
+  to report a red about something else. It is in section 15 with the reproduction, the fix, and the
+  instrument watched to fire.
 
+open:
 limits:
   - title: A process-group member that binds no port and leaves no record is not swept.
     body: >

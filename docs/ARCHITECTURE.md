@@ -1847,8 +1847,9 @@ root vault's listener authenticates its clients by certificate. VAULT-1 closed w
 that its own premise named a file `kcp` does not write. RIG-6 was opened and closed in the same window,
 by a rig run that tested a tree moving under it. On 2026-10-05 five more were opened by the GitLab and
 cloud-controller-manager work: CCM-1 and AUTO-1 were opened and CLOSED inside the same window and are
-in section 15 with their readings, while ESO-2 remains and FLAKE-1 joins it. GL-1 and GL-2 have since
-closed and are in section 15 too. Each was
+in section 15 with their readings, while ESO-2 remained and FLAKE-1 joined it. GL-1, GL-2, ESO-2 and
+FLAKE-1 have all since closed and are in section 15 too, which leaves this section's open list with no
+item that is not a stated limit. Each was
 written from the code rather than from the request that produced it, and each names its instrument.
 On 2026-10-06 MARKET-2 was opened and CLOSED inside the same window, by the k8s door's tenant
 credential work, and is in section 15 with its readings.
@@ -4258,6 +4259,40 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   all green. What is NOT shown is the retry firing under a real collision -- forcing one with a
   listener held on the chosen port produced the bind-failure shape rather than the answering shape,
   and the retry's firing is therefore still unobserved.
+
+- **FLAKE-1: a gate test could fail for reasons unrelated to a change. CLOSED, and the reason was not
+  the one the item named.** The item read: `TestAnImageWhoseNameItsRecordDoesNotHashToIsRefusedInBothDirections`
+  in `cmd/socialweb-nodeimage` "resolves a live registry tag to a digest", so `--fast` could fail for
+  reasons unrelated to a change. Taking that reading refuted it -- a full `go test ./... -count=1` with
+  `HTTPS_PROXY` pointed at a dead port is green across all 50 packages, and the test that names a bare
+  tag passes the digest in as an argument rather than fetching it -- and the failures were something
+  else entirely.
+  THE MECHANISM, established by an agent that reproduced it: 16 pass / 4 fail over 20 sequential runs,
+  6/6 fail in one concurrent round and 6/6 pass in the next, and 20/20 pass with
+  `GOFLAGS=-buildvcs=false`. An image's NAME carries the digest of the agent binary
+  (`internal/nodefirecracker` folds `fileDigest(cfg.AgentBinary)` into the fingerprinted inputs), and
+  that binary is built TWICE in one test process: once by the fixture's `cachedAgent`, and again by
+  `Main`'s `buildAgent` before it fingerprints. Anything that changes those bytes between the two
+  builds moves the name, so `completeImage`'s `Stat` misses, `Main` takes the build path, and
+  `checkImagePins` refuses the fixture's unpinned image -- which is the failure text that was on
+  record. What changed the bytes was `go build`'s default `-buildvcs=auto` stamping the state of this
+  git working tree, so a concurrent process's edits moved it.
+  Three changes closed it. `buildAgent` now always passes `-buildvcs=false`, which the deployed
+  configurations already did, so an image's name follows its inputs and not the tree around them. The
+  test computes the image's name BOTH ways -- from the configuration in memory and from the
+  configuration on disk -- and fails naming both if they differ. And when `Main` fails AND the agent
+  binary's digest changed under the run, the test SKIPS with both digests and this mechanism spelled
+  out, because its premise (the image is already in the store) is void when an input changes
+  underneath it; under the full gate it still fails, through `livegate.Require`, because a skip is not
+  a pass. That skip was watched to fire: with the agent binary forced to change during the run, the test
+  reported `the agent binary changed UNDER this run, from 9a6aae16... to 6e881ecb...` and skipped,
+  where it used to report a red about an unpinned image.
+  What is NOT claimed: my own attempts never reproduced the failure -- 20 sequential runs, then 8 with
+  the working tree flipped dirty and clean every 0.3 s, then the same 8 with the flag removed again,
+  all green -- so the reproduction behind this entry is the agent's. And the stronger fix was measured
+  and REJECTED: building the fixture's agent where `Main` will rebuild it narrows the window from the
+  whole test process to the milliseconds between the two builds, and took the package from about 4 s to
+  about 24 s, because the agent is a real `go build` and seven tests then pay for one each.
 
 ## 16. Vocabulary
 
