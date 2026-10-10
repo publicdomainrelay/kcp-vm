@@ -1865,19 +1865,6 @@ open list, are two stated LIMITS rather than open work: each marks where a behav
 being true, which is a fact about the design rather than a question left in it, and each sits here
 because it bounds a mechanism the rest of this document leans on.
 
-- **ESO-3: the ESO store dials the cluster's subnet gateway, which the market substrate neither binds
-  nor routes.** The store's vault server is `https://<the cluster's subnet gateway>:<vault port>`. On a
-  guest substrate that address is inside the cluster's own range, the guests dial it and the host binds
-  it, and the demo ExternalSecret was measured syncing there. On `market` the vault is a child of the
-  clusterprovider bound to LOOPBACK, and the gateway address is one a market guest has no route to.
-  MEASURED on production on 2026-10-07: the store reads `https://10.100.0.1:20001`, nothing binds
-  10.100.0.1 (`grep -c 0A640001 /proc/net/tcp` = 0), the listener on 20001 is `0100007F:4E21` -- loopback
-  only -- and the store reads `Ready=False unable to create client` with the ExternalSecret at
-  `Ready=False reason=SecretSyncedError`. The section-15 claim about `Secret/users/openbao-demo` holds
-  for the firecracker substrate it was taken on and not for this one; the entry above about the served
-  leaf does not catch it, because the leaf DOES carry the host -- there is simply nothing there to
-  answer. `NEXT.yaml` ESO-3.
-
 - **The tenant grant admits the External Secrets controller by a hardcoded namespace.** An install
   outside `default` is denied, and the failure reads as a broken ExternalSecret rather than as a grant
   that does not name it. The instrument is an install in another namespace still producing the Secret.
@@ -4134,6 +4121,32 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   early-return restored (`waitGone` timed out). `TestASweepStopsOnARecordWhoseSubstrateItCannotRead`
   holds the other side. `TestTheSweepRefusesASubstrateWithNoIdentity` asserted the up-front refusal
   that this replaces and was rewritten to the per-record one rather than deleted. `NEXT.yaml` MARKET-1.
+
+- **The tenant store was written with a vault address nothing could reach, so the demo
+  ExternalSecret had never synced on a market cluster. CLOSED.** The store's vault server is
+  `https://<the cluster's subnet gateway>:<vault port>` (`cmd/socialweb-clusterprovider/eso.go`). On
+  a guest substrate that address is inside the cluster's own range -- the guests dial it and the host
+  binds it -- and the demo was measured syncing there, which is where section 15's claim about
+  `Secret/users/openbao-demo` comes from. On `market` it is neither bound nor routed.
+  MEASURED on production on 2026-10-07, one cluster on `SUBSTRATE=market`: the store read
+  `https://10.100.0.1:20001`; `grep -c 0A640001 /proc/net/tcp` inside the container was `0`, so
+  nothing on the host binds that address; the only listener on 20001 was `0100007F:4E21` -- loopback
+  -- and it is the cluster's own `bao server`; the store read `Ready=False unable to create client`
+  and the ExternalSecret `Ready=False reason=SecretSyncedError`, `could not get secret data from
+  provider`.
+  The entry above about the served leaf does NOT catch this, and the distinction is the point: that
+  check asks whether the running vault can PRESENT the host, and the leaf does carry 10.100.0.1 --
+  what it cannot do is answer, because there is no listener there and no route to one.
+  Closed by the third of the item's own instruments: the store is not written where nothing can reach
+  it. `tenantAddOns` installs the operator on every substrate and returns before the store, the demo
+  value and the ESO certificate when `tenantStoreIsReachableFrom` is false, with a logged decision
+  naming this entry. `TestTheTenantStoreIsNotWrittenWhereNothingCanReachIt` pins the decision for all
+  three substrates, watched to fail with it forced true. What is given up is stated rather than
+  implied: a market cluster now has the operator and no store, and a tenant who wants one configures
+  one they can reach. The other two instruments remain open as options -- reaching the vault through
+  the door the node's SSH session uses, or publishing the vault on the provider host behind the
+  client certificate that is already minted per cluster -- and both are trust decisions rather than
+  bugs, which is why neither was taken here.
 
 ## 16. Vocabulary
 

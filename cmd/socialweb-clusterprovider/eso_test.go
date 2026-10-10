@@ -240,3 +240,24 @@ func TestAnInstallThatLeavesTheOperatorUnservedFailsThePassByName(t *testing.T) 
 		t.Fatalf("the store was applied over a cluster with no operator: %v", order)
 	}
 }
+
+func TestTheTenantStoreIsNotWrittenWhereNothingCanReachIt(t *testing.T) {
+	if tenantStoreIsReachableFrom(Config{Substrate: SubstrateMarket}) {
+		t.Fatal("the tenant store was taken as reachable on the market substrate. Its vault server " +
+			"is the cluster's own SUBNET gateway, which a guest substrate binds and routes and this " +
+			"one does not: the vault is a child of this process bound to loopback, so a market guest " +
+			"has no route to that address and no listener waits there. MEASURED on production on " +
+			"2026-10-07: the store read https://10.100.0.1:20001, `grep -c 0A640001 /proc/net/tcp` " +
+			"inside the container was 0, the listener on 20001 was 0100007F:4E21 -- loopback only -- " +
+			"and the ExternalSecret read Ready=False SecretSyncedError. Writing it anyway is a " +
+			"permanently broken object that reads as a broken ExternalSecret rather than as an " +
+			"address nothing binds")
+	}
+	for _, guest := range []string{SubstrateFirecracker, SubstrateQEMU} {
+		if !tenantStoreIsReachableFrom(Config{Substrate: guest}) {
+			t.Fatalf("the tenant store was taken as unreachable on %s, where the gateway address IS "+
+				"inside the cluster's own range and the guests dial it: the demo ExternalSecret was "+
+				"measured syncing on that substrate", guest)
+		}
+	}
+}

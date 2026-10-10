@@ -22,6 +22,10 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/vaultlayout"
 )
 
+func tenantStoreIsReachableFrom(cfg Config) bool {
+	return nodeSubstrate{Name: cfg.Substrate}.IsGuest()
+}
+
 func tenantAddOns(cfg Config, networks *subnetallocator.Allocator, log *slog.Logger) func(context.Context, string, *rest.Config) error {
 	return func(ctx context.Context, cluster string, restCfg *rest.Config) error {
 		if cfg.ESOManifestDir == "" {
@@ -36,6 +40,30 @@ func tenantAddOns(cfg Config, networks *subnetallocator.Allocator, log *slog.Log
 		if err != nil {
 			return fmt.Errorf("clusterprovider: reading the cluster vault's unseal material for the "+
 				"tenant add-ons of %s: %w", cluster, err)
+		}
+		dyn, err := dynamic.NewForConfig(restCfg)
+		if err != nil {
+			return fmt.Errorf("clusterprovider: a dynamic client for %s's tenant add-ons: %w", cluster, err)
+		}
+		install := func(ctx context.Context) error {
+			log.Info("cluster provider: installing the External Secrets Operator into the tenant cluster",
+				"cluster", cluster, "manifests", cfg.ESOManifestDir, "namespace", cfg.ESONamespace)
+			return installExternalSecrets(ctx, restCfg, cfg.ESOManifestDir, cfg.ESONamespace)
+		}
+		if err := install(ctx); err != nil {
+			return err
+		}
+		if !tenantStoreIsReachableFrom(cfg) {
+			log.Info("cluster provider: the tenant store is not written for this substrate",
+				"cluster", cluster, "substrate", cfg.Substrate,
+				"decision", "the store's vault server is the cluster's own subnet gateway, which a "+
+					"guest substrate binds and routes and this one does not: the vault is a child of "+
+					"this process bound to loopback, and a market guest has no route to the gateway "+
+					"address. A store that cannot be reached reads as a broken ExternalSecret rather "+
+					"than as an address nothing binds, so it is not written at all; the operator IS "+
+					"installed, and a tenant who wants a store configures one they can reach",
+				"item", "NEXT.yaml ESO-3")
+			return nil
 		}
 		lease, err := networks.Allocate(subnetallocator.Request{Cluster: cluster})
 		if err != nil {
@@ -61,15 +89,6 @@ func tenantAddOns(cfg Config, networks *subnetallocator.Allocator, log *slog.Log
 			seal.RootToken, vaultlayout.RoleESO, vaultURL, vaultTLS.CAPEM)
 		if err != nil {
 			return fmt.Errorf("clusterprovider: minting the ESO certificate for %s: %w", cluster, err)
-		}
-		dyn, err := dynamic.NewForConfig(restCfg)
-		if err != nil {
-			return fmt.Errorf("clusterprovider: a dynamic client for %s's tenant add-ons: %w", cluster, err)
-		}
-		install := func(ctx context.Context) error {
-			log.Info("cluster provider: installing the External Secrets Operator into the tenant cluster",
-				"cluster", cluster, "manifests", cfg.ESOManifestDir, "namespace", cfg.ESONamespace)
-			return installExternalSecrets(ctx, restCfg, cfg.ESOManifestDir, cfg.ESONamespace)
 		}
 		if err := applyTenantAddOns(ctx, dyn, install, eso.Options{
 			ManifestDir:   cfg.ESOManifestDir,

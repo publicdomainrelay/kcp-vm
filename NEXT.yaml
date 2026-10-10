@@ -105,38 +105,14 @@ about: >
   in section 15 with the closing reading the item asked for: a state dir carrying a firecracker record,
   swept by a gateway configured for market, leaving no process from that record running.
 
-open:
-  - id: ESO-3
-    title: The ESO store dials the cluster's subnet gateway, which the market substrate neither binds nor routes.
-    body: >
-      The tenant add-on pass writes a `ClusterSecretStore` whose vault server is
-      `https://<the cluster's subnet gateway>:<vault port>` (`cmd/socialweb-clusterprovider/eso.go`,
-      `vaultURL := "https://" + net.JoinHostPort(gateway, strconv.Itoa(seal.Port))`). On a guest
-      substrate that address is the gateway inside the cluster's own range, which the guests dial and
-      the host binds, and the demo ExternalSecret was MEASURED syncing there. On the MARKET substrate
-      it is neither: the vault is a child process of the clusterprovider and binds LOOPBACK only, and
-      the gateway address is a host-side address a market guest has no route to.
-      MEASURED on production on 2026-10-07, `SUBSTRATE=market`, one cluster, one tenant:
-      `kubectl get clustersecretstore openbao -o jsonpath={.spec.provider.vault.server}` is
-      `https://10.100.0.1:20001`; `grep -c 0A640001 /proc/net/tcp` inside the container is `0`, so
-      nothing on the host binds 10.100.0.1 at all; the listener on 20001 is
-      `0100007F:4E21` -- 127.0.0.1 only -- and it is the cluster's own `bao server`; the store reads
-      `Ready=False`, message `unable to create client`, and the ExternalSecret reads
-      `Ready=False reason=SecretSyncedError`, message `could not get secret data from provider`. So the
-      demo has never synced on a market cluster, and section 15's measured claim about
-      `Secret/users/openbao-demo` holds for the firecracker substrate it was taken on and not for this
-      one.
-      This is NOT what the section-15 entry above about the served leaf catches: that check asks
-      whether the running vault can present the host, and the leaf DOES carry 10.100.0.1 -- what it
-      cannot do is answer, because there is no listener there and no route to one.
-    instrument: >
-      A store URL that a tenant-side client can actually reach on the market substrate -- the vault
-      reached through the same door the node's SSH session uses, a published port on the provider host,
-      or a stated decision that the demo store exists only on a guest substrate and is not written at
-      all under market. Closing reading: on a market cluster, with no hand apply,
-      `Secret/users/openbao-demo` materialises and its `data.demo` equals the value at
-      `secret/data/k3s/eso-demo` in the cluster vault.
+  Opened and closed on 2026-10-07 and therefore NOT listed below: ESO-3 (the tenant store's vault
+  server is the cluster's own subnet gateway, which a guest substrate binds and routes and the market
+  substrate does neither -- so the demo ExternalSecret read SecretSyncedError on every market cluster
+  and had never synced there). The store is no longer written where nothing can reach it, and the
+  operator still is. It is in section 15 with the production readings, including the loopback-only
+  listener and the count of binders on the gateway address.
 
+open:
   - id: ESO-2
     title: The tenant grant admits the External Secrets controller by a hardcoded namespace.
     body: >
