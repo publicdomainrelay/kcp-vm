@@ -186,11 +186,14 @@ open:
     title: Guests join without ssh, through cluster links and the cluster's OpenBao.
     body: >
       Plan 0005 items M3-CLUSTERLINK, M3-IROH-KEYS, M3-SECRETS-TICKET, M3-JWT, M3-UNITS,
-      M3-NODE-LOSS. ARCHITECTURE invariant 13 changes with it. The door half is built (0f3a771,
-      b489218: no ssh session, secrets bundle, status.grant at accept, guest units, restarts never
-      reap); open on the provider side: ClusterLinks with tickets, OpenBao JWT mount, role and KV
-      entry, a published OpenBao CA path, ConfirmJoined accepting Joining, and the 90s NotReady
-      release (ARCHITECTURE section 9 lists the interface needs).
+      M3-NODE-LOSS, and M3-JOIN-PATH (doing, opened 2026-10-08: the door delivers the apiserver
+      link's ticket with the OpenBao ticket so both dumbpipe dials run at once, and the node image
+      stages k3s's runtime assets so the guest does not unpack them at boot; the lead deploys,
+      rebuilds the image and measures). ARCHITECTURE invariant 13 changed with it. The door half is
+      built (0f3a771, b489218: no ssh session, secrets bundle, status.grant at accept, guest units,
+      restarts never reap); open on the provider side: ClusterLinks with tickets, OpenBao JWT mount,
+      role and KV entry, a published OpenBao CA path, ConfirmJoined accepting Joining, and the 90s
+      NotReady release (ARCHITECTURE section 9 lists the interface needs).
     instrument: >
       A market node joins and runs a pod with zero ssh sessions in any log, and survives a deploy of
       the control plane container.
