@@ -126,6 +126,41 @@ func (h *nodeHosts) adoptClaims(cluster string, claims []v1alpha1.NodeClaim) err
 	return errors.Join(problems...)
 }
 
+func (h *nodeHosts) releaseStranded(ctx context.Context, cluster string, claims []v1alpha1.NodeClaim) error {
+	if h.opts.Claims == nil {
+		return nil
+	}
+	prefix := strings.ToLower(cluster) + "-node"
+	held := h.heldNames(cluster)
+	var problems []error
+	for i := range claims {
+		claim := claims[i]
+		if claim.Spec.Cluster != cluster || claim.DeletionTimestamp != nil ||
+			claim.Status.Phase != v1alpha1.NodeClaimFailed || held[claim.Name] {
+			continue
+		}
+		ordinal, ok := nodeOrdinalInName(prefix, claim.Name)
+		if !ok {
+			continue
+		}
+		built, err := newNodeHost(h.opts, h.log, cluster, nodeIDFor(ordinal))
+		if err != nil {
+			problems = append(problems, err)
+			continue
+		}
+		h.log.Info("cluster provider: deleting a Failed claim no provider process holds",
+			"cluster", cluster, "node", claim.Name, "message", claim.Status.Message,
+			"reason", "the door releases a claim's machine only when the claim is deleted, and a claim "+
+				"that was already Failed when this process first read it is never adopted, so nothing "+
+				"else would ever delete it and its machine would run on")
+		if err := built.host.Reap(ctx); err != nil {
+			problems = append(problems, fmt.Errorf("clusterprovider: releasing the Failed claim %s of %s: %w",
+				claim.Name, cluster, err))
+		}
+	}
+	return errors.Join(problems...)
+}
+
 func (h *nodeHosts) markAdopted(cluster string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()

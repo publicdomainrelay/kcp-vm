@@ -459,14 +459,42 @@ done
 # cloud-init user_data the requester composed. The guest reports onNetwork,
 # the requester releases the contract with vm.delete without ever opening a
 # session to it, and the guest's container must then be gone.
-echo
-echo "== market contract =="
 BIDDER_DID=""
+BIDDER_STDOUT=""
 for f in $(grep -rl 'localPDS plc' "$ACCEPT_ROOT/runs" --include=stdout.txt 2>/dev/null || true); do
   BIDDER_DID=$(grep -h 'localPDS plc' "$f" | grep -o 'did:plc:[a-z2-7]\{24\}' | head -1)
+  BIDDER_STDOUT=$f
   [ -n "$BIDDER_DID" ] && break
 done
 HOST_IP=${HOST_IP:-$(ip -4 route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p')}
+
+if [ -n "${ACCEPT_HOLD_DIR:-}" ]; then
+  echo
+  echo "== hold =="
+  mkdir -p "$ACCEPT_HOLD_DIR"
+  {
+    echo "ACCEPT_ROOT=$ACCEPT_ROOT"
+    echo "CA_PEM=$CA_PEM"
+    echo "GUEST_TLS_DIR=$GUEST_TLS_DIR"
+    echo "FC_WORK_ROOT=$FC_WORK_ROOT"
+    echo "BIDDER_DID=$BIDDER_DID"
+    echo "BIDDER_STDOUT=$BIDDER_STDOUT"
+    echo "HOST_IP=$HOST_IP"
+    echo "KUBECONFIG_PATH=$KUBECONFIG_PATH"
+    echo "PROVIDER_LOG=$PROVIDER_LOG"
+    echo "CHECKS_FAILED=$FAILED"
+  } >"$ACCEPT_HOLD_DIR/facts.env.tmp"
+  mv "$ACCEPT_HOLD_DIR/facts.env.tmp" "$ACCEPT_HOLD_DIR/facts.env"
+  echo "holding the test bed up until $ACCEPT_HOLD_DIR/release exists"
+  while [ ! -e "$ACCEPT_HOLD_DIR/release" ]; do
+    sleep 2
+  done
+  echo "released after the hold"
+fi
+
+if [ -z "${ACCEPT_HOLD_DIR:-}" ]; then
+echo
+echo "== market contract =="
 MARKET_RESULT=$ACCEPT_ROOT/market-requester-result.json
 MARKET_LOG=$ACCEPT_ROOT/market-requester.log
 guests_before=$(own_guests)
@@ -536,6 +564,7 @@ else
   else
     check "market guest gone" FAIL "still running after ${GUEST_GONE_SECONDS}s:$alive"
   fi
+fi
 fi
 
 echo

@@ -1,4 +1,4 @@
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import {
   claimContractOf,
   clusterKeyOfClaim,

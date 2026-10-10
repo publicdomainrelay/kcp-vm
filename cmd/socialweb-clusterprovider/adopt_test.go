@@ -372,8 +372,33 @@ func TestAnEndedClaimIsNotAdopted(t *testing.T) {
 		t.Fatalf("Failed, Released, deleting and another cluster's claims left %v held and %d counted; "+
 			"want none: an ended claim is a machine that is gone or going", f.held(), f.counted(t))
 	}
-	if f.claims.writes != f.writes || f.claims.deletes != 0 {
-		t.Fatalf("not adopting wrote %d claims and deleted %d", f.claims.writes-f.writes, f.claims.deletes)
+	if f.claims.writes != f.writes || f.claims.deletes != 1 || f.claim(1) != nil || f.claim(2) == nil || f.claim(3) == nil {
+		t.Fatalf("not adopting wrote %d claims and deleted %d (Failed claim left: %v, Released kept: %v, "+
+			"deleting kept: %v); want only the Failed claim deleted, so the door releases its machine",
+			f.claims.writes-f.writes, f.claims.deletes, f.claim(1) != nil, f.claim(2) != nil, f.claim(3) != nil)
+	}
+}
+
+func TestAFailedClaimNoProcessHoldsIsDeletedSoTheDoorReleasesItsMachine(t *testing.T) {
+	f := newRestartFixture(t, v1alpha1.NodeClaimProvisioning, v1alpha1.NodeClaimJoining)
+	f.claims.setPhase(adoptWorkspace, f.node(1), v1alpha1.NodeClaimFailed)
+	f.adopt(t)
+	for pass := 0; pass < 3; pass++ {
+		if err := f.hosts.reconcile(context.Background(), f.key); err != nil {
+			t.Fatalf("reconcile pass %d: %v", pass, err)
+		}
+	}
+	if f.claim(1) != nil || f.claims.deletes != 1 {
+		t.Fatalf("a claim the door wrote Failed before this process adopted it is still there after three "+
+			"passes (deletes %d); want it deleted once: the door releases its machine only on deletion",
+			f.claims.deletes)
+	}
+	if !slices.Contains(f.after.revokes, f.node(1)) {
+		t.Fatalf("the Failed claim's vault state was not revoked: revokes %v", f.after.revokes)
+	}
+	if want := []string{f.node(2)}; !slices.Equal(f.held(), want) || f.claim(2) == nil {
+		t.Fatalf("the restarted provider holds %v (claim 2 present %v); want %v, untouched",
+			f.held(), f.claim(2) != nil, want)
 	}
 }
 

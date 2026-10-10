@@ -1666,6 +1666,32 @@ runcmd; none is a dependency of the agent except the DNS link and the masquerade
   `authorized_keys` is empty. The door no longer downloads dumbpipe, and `node-apiserver-host` is gone
   from its options.
 
+**MEASURED locally end to end, 2026-10-07** (`internal/marketbed/TestAMarketNodeJoinsATenantClusterThroughItsOpenBaoWithNoSsh`,
+PASS 753.57s, finished 23:55:13Z; the vendored market test bed held up by `accept.sh`'s `ACCEPT_HOLD_DIR`,
+and the deployed control-plane container `socialweb-k8s:m3live` built from the tree running against it, so
+prod's own entrypoint and provider are what was measured). One Deployment on a tenant cluster took the
+whole path: both ClusterLinks Listening and the cluster Ready 23:49:18Z, the claim written 23:49:21Z after
+them, `status.grant` 23:49:24Z, the OpenBao JWT role the same second, a firecracker guest booted from the
+RFP's cloud-init 23:49:27Z, the `--secrets` bundle fetched 23:49:32Z, the OpenBao JWT login over the
+openbao link and the KV read 23:49:37Z, the tenant Node Ready with the workload pod Running on it and the
+claim `Joining` 23:49:47Z - 29s after the Deployment was applied - then a control-plane restart with the
+node up, which adopted the claim (same uid, node Ready, guest up, no `vm.delete`) for 2m30s, and then the
+workload's deletion, the claim's deletion, `vm.delete` accepted at 23:55:11.733Z, the guest gone 1s later
+and the cluster back to zero with the control plane Ready. Zero ssh sessions: no line of the door's log
+names one, and the guest's sshd records only the compute provider's own unauthenticated pre-auth TCP
+probe of port 22. Three defects, all found by this gate and all closed with tests watched to fail first:
+the door re-derived a claim's cluster key instead of taking `spec.cluster` from the provider (87562e8,
+main 657a915); the requester waited out its firehose when a bidder that had already dispatched the accept
+answered `submitAccept` with no receipt, ending `receipt_invalid` with a VM nobody could release
+(atproto-market a1b467e: the winner's repo is asked for the `market.receipt` naming this accept); and
+`setup-secrets.sh` appended `==` to every JWT payload, which GNU `base64 -d` rejects when the payload is
+0 or 3 mod 4 (atproto-market 117ab30). Two things the gate had to name rather than assume: the image
+store's newest image had been rebuilt with no preinstall manifest and so carried no cloud-init, while the
+bidder reuses a stale image when it has none for its configuration (the gate now reuses only images that
+carry cloud-init and refuses to run when none does); and a node's bridge conflist has to land in
+`/etc/cni/net.d` with the plugins linked into `/opt/cni/bin`, because under `--flannel-backend=none`
+containerd reads the stock directories rather than k3s's agent directory (3919df6).
+
 **What the door needs from the provider** (interface needs, open until the Go side lands):
 
 1. The ClusterLink `<clusterKey>-openbao` in the claim's home workspace with `status.ticket` set

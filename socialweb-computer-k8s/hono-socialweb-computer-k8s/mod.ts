@@ -7,6 +7,7 @@ import { K8S_OAUTH_SCOPE } from "@publicdomainrelay/oauth-scope";
 import { createAtprotoSessionVerifier } from "@publicdomainrelay/socialweb-computer-oauth-atproto";
 import { createFileSessionStore } from "@publicdomainrelay/socialweb-computer-oauth-session-fs";
 import { createAccountRequesters } from "@publicdomainrelay/socialweb-computer-requester-inproc";
+import { createPasswordSessionAgent, parsePasswordSessions } from "@publicdomainrelay/socialweb-computer-session-password";
 import { createWebFactory } from "@publicdomainrelay/hono-factory-socialweb-computer-oauth";
 import { createRequestProofVerifier } from "@publicdomainrelay/socialweb-computer-k8s-request-proof";
 import { createXrpcClusterGateway } from "@publicdomainrelay/socialweb-computer-k8s-gateway-xrpc";
@@ -50,12 +51,32 @@ const sessionStore = createFileSessionStore(`${stateDir}/oauth-sessions.json`, {
   onCorrupt: ({ path, quarantine }) => logger.error("session_store_corrupt", { path, quarantine }),
 });
 
+const testOwnerSessions = options.testOwnerSessionsFile
+  ? parsePasswordSessions(JSON.parse(await Deno.readTextFile(options.testOwnerSessionsFile as string)))
+  : null;
+const testNodeGuestHostAliases = ((options.testNodeGuestHostAliases as string | undefined) ?? "").split(",").map((a) => a.trim())
+  .filter(Boolean);
+const testNodeUserDataBase = options.testNodeUserDataBaseFile
+  ? await Deno.readTextFile(options.testNodeUserDataBaseFile as string)
+  : undefined;
+if (testOwnerSessions || testNodeGuestHostAliases.length > 0 || testNodeUserDataBase !== undefined) {
+  logger.warn("test_seams_enabled", {
+    ownerSessions: testOwnerSessions ? [...testOwnerSessions.keys()] : [],
+    nodeGuestHostAliases: testNodeGuestHostAliases,
+    nodeUserDataBase: testNodeUserDataBase !== undefined,
+  });
+}
+
 const accounts = createAccountRequesters({
   sessionStore,
   requesterKeyPath: `${stateDir}/requester-key.hex`,
   plcDirectoryUrl: options.plcDirectoryUrl as string,
   ingressProxyHost: options.ingressProxyHost as string,
   oauthClientId: options.oauthClientId as string | undefined,
+  agentWithoutOAuthFor: (did) => {
+    const session = testOwnerSessions?.get(did);
+    return session ? createPasswordSessionAgent(session) : null;
+  },
   log,
 });
 
@@ -176,6 +197,8 @@ if (options.kcpKubeconfig) {
     relayUrls,
     vmReadyTimeoutSec: options.vmReadyTimeoutSec as number,
     extraBidderDids: ((options.nodeExtraBidderDids as string | undefined) ?? "").split(",").map((d) => d.trim()).filter(Boolean),
+    guestHostAliases: testNodeGuestHostAliases,
+    userDataBase: testNodeUserDataBase,
     ...(options.nodePolicy ? { policy: { name: options.nodePolicy as string, args: JSON.parse(options.nodePolicyArgs as string) } } : {}),
     pollIntervalMs: options.nodePollIntervalMs as number,
     ...(meshd ? { meshd } : {}),

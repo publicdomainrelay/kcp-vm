@@ -57,6 +57,8 @@ export interface MarketNodeFulfillerOptions {
   vmReadyTimeoutSec?: number;
   policy?: { name: string; args: Record<string, unknown> };
   extraBidderDids?: string[];
+  guestHostAliases?: string[];
+  userDataBase?: string;
   pollIntervalMs?: number;
   requestCompute?: ComputeRequester;
   releaseCompute?: ComputeReleaser;
@@ -391,7 +393,11 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
 
         handle = await request(pds, {
           vmName: spec.nodeName,
-          userData: { modules: ["k3s", joinModule] },
+          userData: {
+            ...(opts.userDataBase ? { base: opts.userDataBase } : {}),
+            modules: ["k3s", joinModule],
+          },
+          ...(opts.guestHostAliases?.length ? { guestHostAliases: opts.guestHostAliases } : {}),
           capabilities: [capability],
           ...(opts.debugSsh ? { sshAuthorizedKeys: [opts.debugSsh.authorizedKey] } : {}),
           ...(opts.scopeCache ? { scopeCache: opts.scopeCache } : {}),
