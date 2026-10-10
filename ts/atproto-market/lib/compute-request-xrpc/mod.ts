@@ -1067,7 +1067,8 @@ runcmd:
       if (!policyRef) return { allow: true, violations: [] };
       const candidateDid = candidate.did;
       const payloadRef = candidate.record.payload as { uri: string; cid: string } | undefined;
-      return await evaluator.evaluatePolicies({
+      const startedAt = Date.now();
+      const result = await evaluator.evaluatePolicies({
         refs: [policyRef],
         ctx: {
           policyName: "requester-recheck",
@@ -1092,6 +1093,12 @@ runcmd:
             : {}),
         },
       });
+      log("candidate_evaluate", {
+        bidderDid: candidateDid,
+        allow: result.allow,
+        durationMs: Date.now() - startedAt,
+      });
+      return result;
     };
 
     const bidDecisions = new Map<string, Promise<BidDecision>>();
@@ -1099,9 +1106,15 @@ runcmd:
       let decision = bidDecisions.get(bid.uri);
       if (!decision) {
         decision = (async () => {
+          const startedAt = Date.now();
           const d = await runHandler("onBid", handlers.onBid, { bid });
           const result: BidDecision = d === "deny" ? "deny" : "accept";
-          if (result === "deny") log("bid_denied", { uri: bid.uri, did: bid.did });
+          log("bid_decide", {
+            uri: bid.uri,
+            bidderDid: bid.did,
+            decision: result,
+            durationMs: Date.now() - startedAt,
+          });
           return result;
         })();
         bidDecisions.set(bid.uri, decision);
