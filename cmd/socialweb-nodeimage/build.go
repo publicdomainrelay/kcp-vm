@@ -112,7 +112,6 @@ func buildConfigOf(cfg Config) nodefirecracker.BuildConfig {
 		Vcpu:              cfg.Vcpu,
 		MemMiB:            cfg.MemMiB,
 		Preinstall:        cfg.Preinstall,
-		K3sNode:           cfg.IsK3sNode(),
 	}
 }
 

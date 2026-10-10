@@ -207,9 +207,10 @@ func verifyStage(cfg Config, tars []imageTar) error {
 		{"the agent the guest's units run", filepath.Join(cfg.StageDir, nodefirecracker.GuestAgentPath)},
 		{"the guest document that names the modules and the k3s paths", filepath.Join(cfg.StageDir, nodefirecracker.GuestFilePath)},
 		{"the modules the guest's systemd-modules-load reads", filepath.Join(cfg.StageDir, modulesLoadDir, modulesLoadFile)},
-		{"the agent unit", filepath.Join(cfg.StageDir, "etc/systemd/system/kcp-agent.service")},
 		{"the kernel config k3s check-config reads", filepath.Join(cfg.StageDir, "boot", "config-"+filepath.Base(cfg.ModuleSource))},
 	}
+	required = append(required, struct{ what, path string }{
+		"the agent unit", filepath.Join(cfg.StageDir, "etc/systemd/system/kcp-agent.service")})
 	for _, t := range tars {
 		required = append(required, struct{ what, path string }{
 			"the seeded tarball for " + t.reference,
@@ -262,15 +263,6 @@ func installUnits(cfg Config) error {
 		}
 	}
 	for name, body := range guestUnits {
-		if !cfg.IsK3sNode() {
-			if err := os.Remove(filepath.Join(units, name)); err != nil && !os.IsNotExist(err) {
-				return fmt.Errorf("socialweb-nodeimage: %w", err)
-			}
-			if err := os.Remove(filepath.Join(wants, name)); err != nil && !os.IsNotExist(err) {
-				return fmt.Errorf("socialweb-nodeimage: %w", err)
-			}
-			continue
-		}
 		if err := os.WriteFile(filepath.Join(units, name), []byte(body), 0o644); err != nil {
 			return fmt.Errorf("socialweb-nodeimage: %w", err)
 		}
