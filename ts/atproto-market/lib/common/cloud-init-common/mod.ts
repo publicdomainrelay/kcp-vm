@@ -56,6 +56,12 @@ export interface CloudInitContext {
   secretsAud?: string;
   /** Guest path of the bidder-injected accept.json carrying bid_config. */
   secretsAcceptPath?: string;
+
+  // resolver
+  /** Provider's forwarded resolver gateway; first nameserver in /etc/resolv.conf. */
+  dnsGateway?: string;
+  /** Public resolvers appended after dnsGateway so one gateway hiccup cannot brick the guest. */
+  dnsFallbacks?: string[];
 }
 
 /** Back-compat context for the tunnel-subscriber transport (historical buildTunnelUserData shape). */
@@ -101,6 +107,20 @@ export type UserDataModule = (ctx: Partial<CloudInitContext>) => UserDataPatch;
 /** Mirror atprp-ssh-relay's flattenLabel. Must stay in sync with cmd/atprp-ssh-relay/main.go:flattenLabel. */
 export function flattenLabel(s: string): string {
   return s.replace(/[.:]/g, "-");
+}
+
+export const RESOLV_CONF_PATH = "/etc/resolv.conf";
+
+/** The pasta gateway every firecracker guest's provider forwards DNS through. */
+export const DEFAULT_DNS_GATEWAY = "172.30.0.1";
+
+/** Public resolvers so one gateway hiccup cannot strand a guest mid-provision. */
+export const DEFAULT_DNS_FALLBACKS = ["1.1.1.1", "9.9.9.9"];
+
+/** Render an /etc/resolv.conf naming each server once, in the given order. */
+export function renderResolver(nameservers: string[]): string {
+  const unique = [...new Set(nameservers.filter((n) => n.length > 0))];
+  return `${unique.map((n) => `nameserver ${n}`).join("\n")}\noptions timeout:2 attempts:3\n`;
 }
 
 // ---------------------------------------------------------------------------
@@ -190,6 +210,57 @@ function parseBase(base: string | null | undefined): Record<string, unknown> {
   }
 }
 
+function nameserversIn(content: string): string[] {
+  const out: string[] = [];
+  for (const line of content.split("\n")) {
+    const m = /^\s*nameserver\s+(\S+)/.exec(line);
+    if (m) out.push(m[1]);
+  }
+  return out;
+}
+
+function resolvWriteCommand(resolver: string): string {
+  return `printf '%s' '${resolver.replace(/'/g, `'\\''`)}' > ${RESOLV_CONF_PATH}`;
+}
+
+function trailingOnce(arr: unknown[], item: string): unknown[] {
+  return [...arr.filter((x) => x !== item), item];
+}
+
+/**
+ * Force the composed document to end with a resolver that names the gateway
+ * first and the fallbacks behind it, whatever earlier writers put at
+ * /etc/resolv.conf: merge any nameservers a caller wrote (later write_files
+ * entries win on path), then re-assert the file in bootcmd and, last of all, in
+ * runcmd so a later cloud-init stage cannot take it away.
+ */
+function assertResolver(
+  base: Record<string, unknown>,
+  gateway: string,
+  fallbacks: string[],
+): Record<string, unknown> {
+  const out = { ...base };
+  const files = asArray(out.write_files) as WriteFileEntry[];
+  const idx = files.findIndex((f) => f && (f as WriteFileEntry).path === RESOLV_CONF_PATH);
+  const existing = idx >= 0 ? String(files[idx].content ?? "") : "";
+  const extras = nameserversIn(existing).filter((n) => n !== gateway && !fallbacks.includes(n));
+  const resolver = renderResolver([gateway, ...fallbacks, ...extras]);
+  const entry: WriteFileEntry = {
+    path: RESOLV_CONF_PATH,
+    owner: "root:root",
+    permissions: "0644",
+    content: resolver,
+  };
+  if (idx >= 0) files[idx] = { ...files[idx], ...entry };
+  else files.push(entry);
+  out.write_files = files;
+
+  const command = resolvWriteCommand(resolver);
+  out.bootcmd = trailingOnce(asArray(out.bootcmd), command);
+  out.runcmd = trailingOnce(asArray(out.runcmd), command);
+  return out;
+}
+
 /**
  * Build a #cloud-config string: optional caller-supplied base cloud-config,
  * then the given modules applied in order (later modules win on scalar toggles
@@ -202,13 +273,18 @@ export function buildUserData(opts: {
   base?: string | null;
   modules: Array<string | UserDataModule>;
   overrides?: Partial<UserDataPatch>;
+  dnsGateway?: string;
+  dnsFallbacks?: string[];
 }): string {
   const ctx = opts.ctx ?? {};
+  const gateway = opts.dnsGateway ?? ctx.dnsGateway ?? DEFAULT_DNS_GATEWAY;
+  const fallbacks = opts.dnsFallbacks ?? ctx.dnsFallbacks ?? DEFAULT_DNS_FALLBACKS;
   let obj = parseBase(opts.base);
   for (const m of getUserDataModules(opts.modules)) {
     obj = applyPatch(obj, m(ctx));
   }
   if (opts.overrides) obj = applyPatch(obj, opts.overrides);
+  obj = assertResolver(obj, gateway, fallbacks);
   return "#cloud-config\n" + yamlStringify(obj, { lineWidth: 0 });
 }
 

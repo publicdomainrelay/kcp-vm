@@ -21,5 +21,26 @@ write_files:
       /usr/local/bin/k3s --version
 
       touch "${STAMP}"
+  - path: /etc/resolv.conf
+    owner: root:root
+    permissions: "0644"
+    content: |
+      nameserver 172.30.0.1
+      nameserver 1.1.1.1
+      nameserver 9.9.9.9
+      options timeout:2 attempts:3
 runcmd:
   - /usr/local/bin/setup-k3s.sh
+  - |-
+    printf '%s' 'nameserver 172.30.0.1
+    nameserver 1.1.1.1
+    nameserver 9.9.9.9
+    options timeout:2 attempts:3
+    ' > /etc/resolv.conf
+bootcmd:
+  - |-
+    printf '%s' 'nameserver 172.30.0.1
+    nameserver 1.1.1.1
+    nameserver 9.9.9.9
+    options timeout:2 attempts:3
+    ' > /etc/resolv.conf

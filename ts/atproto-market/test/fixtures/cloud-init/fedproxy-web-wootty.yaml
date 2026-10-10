@@ -176,6 +176,14 @@ write_files:
 
       [Install]
       WantedBy=multi-user.target
+  - path: /etc/resolv.conf
+    owner: root:root
+    permissions: "0644"
+    content: |
+      nameserver 172.30.0.1
+      nameserver 1.1.1.1
+      nameserver 9.9.9.9
+      options timeout:2 attempts:3
 packages:
   - tmux
 users:
@@ -192,5 +200,18 @@ runcmd:
   - systemctl daemon-reload
   - systemctl enable setup-wootty.path
   - systemctl start --no-block setup-wootty.path
+  - |-
+    printf '%s' 'nameserver 172.30.0.1
+    nameserver 1.1.1.1
+    nameserver 9.9.9.9
+    options timeout:2 attempts:3
+    ' > /etc/resolv.conf
 disable_root: false
 ssh_pwauth: false
+bootcmd:
+  - |-
+    printf '%s' 'nameserver 172.30.0.1
+    nameserver 1.1.1.1
+    nameserver 9.9.9.9
+    options timeout:2 attempts:3
+    ' > /etc/resolv.conf
