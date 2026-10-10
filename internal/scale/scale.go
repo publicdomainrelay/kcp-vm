@@ -13,7 +13,7 @@ import (
 
 const DefaultHold = 2 * time.Minute
 
-const DefaultMaxNodes = 1
+const DefaultMaxNodes = 10
 
 const DefaultPodsPerNode = 8
 

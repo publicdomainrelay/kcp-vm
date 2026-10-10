@@ -566,8 +566,8 @@ func TestTargetReturnsThePlanAcceptance(t *testing.T) {
 		{"seventeen pods, eight per node", pods(17), Options{PodsPerNode: 8, MaxNodes: 3}, 3},
 		{"a hundred pods at a ceiling of four", pods(100), Options{MaxNodes: 4}, 4},
 		{"seventeen pods at a ceiling of two", pods(17), Options{MaxNodes: 2}, 2},
-		{"seventeen pods with no ceiling named", pods(17), Options{}, 1},
-		{"a hundred pods with no ceiling named", pods(100), Options{}, 1},
+		{"seventeen pods with no ceiling named still fit under the default", pods(17), Options{}, 3},
+		{"a hundred pods with no ceiling named stop at the default", pods(100), Options{}, 10},
 		{"a Succeeded pod is no target", Observation{Pods: []corev1.Pod{pod(corev1.PodSucceeded)}}, Options{}, 0},
 	}
 	for _, tc := range cases {
