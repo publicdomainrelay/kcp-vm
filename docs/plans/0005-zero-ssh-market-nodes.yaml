@@ -631,6 +631,22 @@ items:
       - "(3) what the change costs elsewhere, checked rather than assumed: socialweb-computer-kcp-check-host/checks.go:490 derives the name in ITS OWN process, so with the builder digest in the name its host.image-store check reports MISSING on a host whose store holds an image the nodeimage binary built -- a false MISSING for an operator; no Result in imageStoreResult sets Build:true, so -build exit statuses and deploy/control-plane-container/validate.sh's summary line are unaffected, and no Go test calls LoadImage. Nothing on the market path is affected, because nothing else resolves that name: the target asks `-ensure -json -reuse-stale` and is held to the shipped basename (scripts/deploy-firecracker-bidder.sh:929), the bidder's provider asks with --compute-provider-firecracker-reuse-image (deploy/bidder/socialweb-computer-bidder-run:108, deploy/examples/atproto/market/70-bidder.yaml:24), and a host that builds for itself builds with the binary doing the asking. Two follow-ups for the lead, not done here: check-host could be handed the builder binary as a fact, and the deploy's builder build could pass -buildvcs=false, because a binary built inside the repo carries vcs.revision, so an unrelated commit also renames the image and buys a 2.3 GB rebuild"
       - "(2) not touched: the ~16 s pod sandbox gap still needs kubelet and containerd read on a debug-ssh node, left to the lead as the handoff asks"
       - "green at 1a5cd4d: deploy/check.sh --fast exit 0 (gofmt, go build, apigen 9 files no drift, go vet, staticcheck, cargo fmt, cargo test, go test ./...); socialweb-computer-k8s deno test -A test/ 130 passed with live_market_node_test.ts excluded (a worktree has no sibling org root for its ../../../atproto-market/test/fetch-interceptor.ts import, so it needs the import-map override deno.worktree.json this worktree carries)"
+      - "(1),(3) cherry-picked onto rewritten main as 3957880, 63b2b5c, 831a370; deployed 2026-10-10T01:54Z; the installer built a NEW name sha256-51e20605 for unchanged inputs because the builder digest is now an input (3 proven: the old name 52df8a09 is no longer reused); guest console 02:01Z: node-secrets start 10.26 s -> done 11.71 s with no failed attempt (1) (was 11.04 -> fail -> 16.66 -> 17.66)"
+      - "(2) root cause read 2026-10-10T02:02Z over debug ssh: Node Ready 02:02:13Z, kubelet idle 02:02:14.5-02:02:29.0, pod PodScheduled 02:02:29Z (CoreDNS and metrics-server also started 02:02:30Z): the 16 s is the k3s SERVER's kube-scheduler backoff for pods that were unschedulable while the cluster had no node, not the guest. Fix in flight: market clusters run kube-scheduler with ~1 s pod backoff (--kube-scheduler-arg)"
+  - id: M5-NETPOL
+    milestone: M5
+    title: NetworkPolicies are enforced on market nodes
+    decision: >
+      Read 2026-10-10T02:02Z over debug ssh on a market node: k3s logs "Failed to load kernel module
+      nft-expr-counter with modprobe", kube-router's network policy controller "Aborting sync. Failed to run
+      iptables-restore ... RULE_APPEND failed (No such file or directory): rule in chain KUBE-POD-FW-*", and
+      `iptables -S` answers "iptables: Incompatible with this kernel" (iptables-nft 1.8.10; nft_compat,
+      nf_tables, xt_comment, xt_mark, xt_set loaded). Pod traffic works (M5 proven) but tenant NetworkPolicies
+      are not enforced. Fix: ship the missing nft expression modules (nft_counter and whatever else the rules
+      need) in the node image's module set or kernel config, prove a deny-all NetworkPolicy blocks a cross-node
+      connection on prod. decided by Claude, user may veto.
+    status: todo
+    evidence: []
   - id: M6-CLONE
     milestone: M6
     title: A CI job on a market node can fetch its repository
@@ -638,7 +654,7 @@ items:
       The acceptance run used GIT_STRATEGY none: market nodes resolve public names, but the GitLab host is a
       tailnet name (gitlab.dorper-matrix.ts.net), so the runner helper cannot clone. Options: a public
       clone_url for the runner (a reverse proxy in front of GitLab's HTTPS), or reaching the tailnet from
-      the cluster. Needs the user's call on exposing GitLab publicly. decided by Claude, user may veto.
+      the cluster. User 2026-10-08: "It's a funnel" -- GitLab :8443 is a Tailscale Funnel. Measured 2026-10-10 from socialweb.computer (no tailscale): gitlab.dorper-matrix.ts.net resolves publicly (208.111.34.11) and https://gitlab.dorper-matrix.ts.net:8443/users/sign_in answers 200, so the GIT_STRATEGY none was a wrong assumption; prove a market-node job clones. decided by Claude, user may veto.
     status: todo
     evidence: []
   - id: M2-BID-LATENCY
@@ -656,10 +672,12 @@ items:
       creates the one ScopeCache and shares it across contracts; candidates are pre-warmed through the
       generic evaluator.scope at bidder_discovery; verdict memoization stays inside policy execution
       (runPolicy's opaque cache). Timing logs per phase. decided by Claude, user may veto.
-    status: doing
+    status: done
     evidence:
       - "merged atproto-market 87e9ebf (502a1bf timing logs, 2b4bfd1 requester scopeCache + prewarm + trust invalidation), door 0a7e9b0 (one createScopeCache per process shared by every contract)"
       - "live 2026-10-07T23:47Z: bid_decide 0 ms; bid 23:47:34.18Z -> first_free_winner 23:47:39.46Z = 5.3 s (was 6.3 s): the previous contract was 5.5 min earlier, past the 5 min positive TTL, and scope_prewarm logged at 23:47:35.7Z, after the bid, though bidder_discovery was 23:47:29.4Z. Still doing."
+      - "merged 2026-10-10 onto the rewritten histories: policy-engine fast-forward to b049d54 (47fb02f one in-flight scope run per (policy, counterparty, args); b049d54 gha-lite trust lookups concurrent, once per DID); atproto-market cherry-picks cfb9a73 (refresh in place), 754658c (delegated trust concurrent), 02bb5c6 (first-free wins when the shared run lands); tests: policy-engine 52 passed, atproto-market check + 130 unit passed, bidder lock --frozen ok; door main 831a370 130 passed"
+      - "live prod COLD (first contract after the 01:54Z door restart) 2026-10-10: bidder_discovery 02:01:47.648Z, scope_prewarm_done 02:01:49.242Z (1.6 s, was ~6 s), waiting_for_bids 02:01:51.120Z, first_free_winner 02:01:51.375Z: bid->winner 0.255 s cold (was 5.3-5.7 s); warm reading 2026-10-08T00:23Z 0.25 s"
   - id: M4-SCALE-IN
     milestone: M4
     title: Per-node scale-in
