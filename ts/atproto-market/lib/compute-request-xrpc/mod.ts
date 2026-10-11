@@ -904,28 +904,30 @@ runcmd:
     ): Promise<Record<string, unknown>> => resolveRecord({ uri: ref.uri, cid: ref.cid });
 
     const listRecordsForPolicy = async (repo: string, coll: string) => {
+      type Listed = Array<{ uri: string; value: Record<string, unknown> }>;
+      const ownReads: Array<Promise<Listed | undefined>> = repo === marketDid
+        ? [
+          (async () => (await oauthAgent?.listRecords(repo, coll, { limit: 100 }))?.records)(),
+          (async () => (await ownApi.listRecords(repo, coll))?.records as Listed | undefined)(),
+        ]
+        : [];
+      const [publicRead, ...ownSettled] = await Promise.allSettled([
+        listRecordsPublic(idResolver, repo, coll),
+        ...ownReads,
+      ]);
       const merged = new Map<string, { uri: string; value: Record<string, unknown> }>();
-      if (repo === marketDid) {
-        for (
-          const read of [
-            async () => (await oauthAgent?.listRecords(repo, coll, { limit: 100 }))?.records,
-            async () =>
-              (await ownApi.listRecords(repo, coll))?.records as
-                | Array<{ uri: string; value: Record<string, unknown> }>
-                | undefined,
-          ]
-        ) {
-          try {
-            for (const r of (await read()) ?? []) merged.set(r.uri, r);
-          } catch {
-            continue;
-          }
-        }
+      for (const read of ownSettled) {
+        if (read.status !== "fulfilled") continue;
+        for (const r of read.value ?? []) merged.set(r.uri, r);
       }
-      try {
-        for (const r of await listRecordsPublic(idResolver, repo, coll)) merged.set(r.uri, r);
-      } catch (err) {
-        log("policy_public_records_failed", { repo, collection: coll, error: String(err) });
+      if (publicRead.status === "fulfilled") {
+        for (const r of publicRead.value) merged.set(r.uri, r);
+      } else {
+        log("policy_public_records_failed", {
+          repo,
+          collection: coll,
+          error: String(publicRead.reason),
+        });
       }
       return [...merged.values()];
     };

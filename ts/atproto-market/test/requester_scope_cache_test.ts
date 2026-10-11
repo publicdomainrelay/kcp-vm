@@ -79,6 +79,12 @@ function spyScopeCache() {
       sets.push(scopeCacheKey(identity, did, args));
       inner.set(identity, did, args, result);
     },
+    once(identity: never, did: string, args: never, work: () => Promise<never>) {
+      return inner.once(identity, did, args, () => {
+        sets.push(scopeCacheKey(identity, did, args));
+        return work();
+      });
+    },
     applyEvent(e: { did: string; rkey: string }) {
       inner.applyEvent(e);
     },
