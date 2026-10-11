@@ -113,6 +113,9 @@ func buildRootfs(cfg Config, dst string, tars []imageTar) error {
 	if err := applyPreinstall(cfg, cfg.Preinstall); err != nil {
 		return err
 	}
+	if err := linkKernelModprobe(cfg); err != nil {
+		return err
+	}
 	if err := verifyStage(cfg, tars); err != nil {
 		return err
 	}
