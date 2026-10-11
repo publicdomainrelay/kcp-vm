@@ -2037,6 +2037,10 @@ Image size: 1,711,865,393 bytes, +17.2 MB for the two binaries.
 --kube-apiserver-arg=service-account-issuer, api-audiences
 --kube-controller-manager-arg=secure-port, --kube-scheduler-arg=secure-port,
 --kube-cloud-controller-manager-arg=secure-port
+--kube-scheduler-arg=config <DataDir>/kube-scheduler.yaml
+                                       market clusters only: podInitialBackoffSeconds and
+                                       podMaxBackoffSeconds at 1 s, from a file this host writes
+                                       before the server starts
 ```
 
 A direct `--audit-policy-file` on the server is SKIPPED by k3s with only a warning, which leaves the
@@ -2519,6 +2523,36 @@ The instruments are in `cmd/socialweb-clusterprovider/nodeloss_test.go`:
 Node, 90 s deletes both, revokes the vault state and reports the node lost),
 `TestANodeTheClusterNeverReportedIsNotTouchedByTheLossRule` (an hour on, no Node, claim kept) and
 `TestAReadyNodeIsNotLostHoweverOldItsTransition`.
+
+**A market cluster's kube-scheduler runs with a 1 s pod backoff, written into the cluster's data dir
+before the server starts (plan 0005 M3-JOIN-FOLLOWUPS part 2).** The scale-from-zero path has one
+wait this project does not own: kube-scheduler holds every pod it could not place -- and a cluster
+with zero nodes cannot place any -- for a backoff that starts at 1 s and doubles, capped at 10 s.
+The node that finally makes such a pod placeable does not cancel that wait, so the pod that waited
+for the first node can wait again after it arrives, which is the whole latency this milestone is
+about. Market clusters therefore name `--kube-scheduler-arg=config=<DataDir>/kube-scheduler.yaml`,
+rendered by `clusterstack.KubeSchedulerConfig` (pure) and written by
+`clusterprovider.WriteKubeSchedulerConfig` before the steps are built, exactly as the OpenBao config
+is; the file sets `podInitialBackoffSeconds` and `podMaxBackoffSeconds` to 1 and carries a
+`clientConnection`, because a `--config` file makes kube-scheduler IGNORE the deprecated
+`--kubeconfig` flag k3s still passes. A stack that dials no market has no zero-node window and its
+argv names no config file.
+
+The two flags the plan preferred do not exist in this kube-scheduler: MEASURED against k3s
+v1.36.4+k3s1, `--pod-initial-backoff-seconds` and `--pod-max-backoff-seconds` are absent from
+kube-scheduler's own `--help` (which lists `--config` and the deprecated
+`--pod-max-in-unschedulable-pods-duration`), and a non-numeric value for the first is not rejected,
+so the flag form is not a flag this binary defines. The file form is read: an unreadable config
+(garbage bytes) makes the scheduler exit -- k3s's log records `scheduler exited` while the server
+itself stays up, so the failure an operator sees is a cluster whose pods are never placed, not one
+that failed to start. Both halves are pinned against the real binary by
+`TestK3sPlacesAZeroNodePodWithTheMarketSchedulerConfig` (a pod created at zero nodes is placed on
+the node that arrives, MEASURED 7.7 s end to end including the cluster's start) and
+`TestK3sPlacesNoPodWhenTheSchedulerConfigIsUnreadable` in `internal/clusterstack`, which run under
+`SOCIALWEB_LOCAL=1`. What this does NOT claim: on this host a pod waiting for a node was requeued
+~50 ms after the node became schedulable with the DEFAULT backoff in every shape tried (a node
+becoming Ready, a taint leaving it, a label arriving), so the 16 s read on prod is not reproduced
+here and this change bounds the worst case rather than an observed wait.
 
 ## 11. Teardown, and the gate
 
@@ -5790,6 +5824,28 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   machine the door took away, and a claim re-written under the same name is a new object with a new
   UID, so it is not remembered; the provider also never claims under a name whose claim has ended
   (`TestTheFirstNodeOfAClusterIsNotClaimedUnderASpentName`).
+
+- **A market cluster's kube-scheduler was given a 1 s pod backoff, and not the flags the plan asked
+  for, on 2026-10-10. CLOSED (plan 0005 M3-JOIN-FOLLOWUPS part 2).** The prod reading left the shape
+  of the fix open -- `--kube-scheduler-arg=pod-initial-backoff-seconds=1` and its max sibling, or a
+  `KubeSchedulerConfiguration` file -- and the real binary answered it: k3s v1.36.4+k3s1's
+  kube-scheduler defines neither flag (its own `--help`, printed when it is handed a flag it does
+  not know, lists `--config` and a deprecated `--pod-max-in-unschedulable-pods-duration`; a
+  non-numeric value for `--pod-initial-backoff-seconds` is not rejected, so it is not a flag it
+  parses), so the file form is taken, and it is read -- a config of garbage bytes makes
+  kube-scheduler exit while the k3s server stays up, which the probes pin in both directions. The
+  file is written into the cluster's data dir by `clusterprovider.WriteKubeSchedulerConfig` before
+  the steps are built, and the market argv names it. Two decisions inside the file: `clientConnection`
+  is set, because with a `--config` file kube-scheduler ignores the deprecated `--kubeconfig` flag
+  k3s still passes and a config without it leaves the scheduler with no apiserver to talk to; and
+  both backoffs are 1 s rather than the initial alone, because the initial is what a cluster that has
+  been empty for one pass pays and the cap is what it pays after that. Market clusters only, since
+  only they start from zero nodes and the plain argv names no file. What the change does not claim,
+  and what the next reader should check before believing the root cause: in this host's reproduction
+  a pod waiting on a node was requeued about 50 ms after the node became schedulable with the
+  DEFAULT backoff, in every shape tried (node Ready, a taint removed, a label added), so the 16 s
+  read on prod was not reproduced here and the backoff is a bound on the worst case rather than a
+  measured cause.
 
 ## 16. Vocabulary
 

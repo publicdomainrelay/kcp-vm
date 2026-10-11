@@ -160,11 +160,15 @@ open:
     body: >
       docs/plans/0005-zero-ssh-market-nodes.yaml is the state. Done with prod evidence: M0-M6 items except
       those listed here, and ACC-ZERO, ACC-MESH, ACC-NOSSH (GitLab pipeline 78 on an SPA-created cluster).
-      Open: M2-BID-LATENCY (a native subagent is fixing why the pre-warmed scope verdict misses at bid
-      time; warm-cache reading 0.25 s bid->winner, cold ~5.7 s), M3-JOIN-FOLLOWUPS (the ~16 s pod sandbox
-      gap only: node-secrets now waits for the OpenBao link itself, and the image name covers the builder
-      that reads the configuration, so every image is renamed once and rebuilt), M6-CLONE (market nodes
-      cannot reach the tailnet GitLab to clone; needs the user's call on exposing GitLab).
+      Open: M5-NETPOL (tenant NetworkPolicies are not enforced on market nodes: the node image's module
+      set is missing the nft expressions kube-router's rules need, so prove a deny-all NetworkPolicy
+      blocks a cross-node connection on prod), M6-CLONE (market nodes cannot reach the tailnet GitLab to
+      clone; needs the user's call on exposing GitLab).
+      Closed since this line was written: M2-BID-LATENCY (cold bid->winner 0.255 s on prod) and
+      M3-JOIN-FOLLOWUPS (all three parts: node-secrets waits for the OpenBao link itself, the image name
+      covers the builder, and market clusters now run kube-scheduler with a 1 s pod backoff written into
+      the cluster's data dir -- the flags the plan preferred are not flags k3s v1.36.4's kube-scheduler
+      defines, and the measured note in the plan says the local reproduction did not show the 16 s wait).
     instrument: >
       Each open item's own reading in the plan file.
   - id: P6-M0
