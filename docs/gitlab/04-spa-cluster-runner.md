@@ -645,10 +645,11 @@ at a time.
 
 **Limits this run found:**
 
-- **Jobs here cannot clone.** The GitLab host is `gitlab.dorper-matrix.ts.net`, a tailnet name. Market
-  nodes resolve public names (per-node DNS) but not tailnet ones, so the runner's helper cannot fetch
-  the repository. The probes set `GIT_STRATEGY: none`. A job that needs its sources needs a GitLab URL
-  the market can reach (a public `clone_url`, or the project mirrored somewhere public).
+- **Cloning works; the probes skipped it only by assumption.** The acceptance probes set
+  `GIT_STRATEGY: none` on the belief that `gitlab.dorper-matrix.ts.net` was tailnet-only. It is a Tailscale
+  Funnel: the name resolves in public DNS and `:8443` answers from off the tailnet. Pipeline 79 (branch
+  `acc-clone`, 2026-10-10) cloned on a market node with the default strategy: "Created fresh repository...
+  Checking out 8cc8fd76", and the job saw its `.gitlab-ci.yml`.
 - **The hold is an operator knob.** `SOCIALWEB_CLUSTERPROVIDER_SCALE_HOLD` (via `SCALE_HOLD` in
   `scripts/deploy.sh`) was `0s` for this run, so a node went the moment its last job pod did; release
   then followed each job by the pod's 30 s termination grace. Unset, the hold is 2 minutes.

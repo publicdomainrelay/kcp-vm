@@ -655,8 +655,9 @@ items:
       tailnet name (gitlab.dorper-matrix.ts.net), so the runner helper cannot clone. Options: a public
       clone_url for the runner (a reverse proxy in front of GitLab's HTTPS), or reaching the tailnet from
       the cluster. User 2026-10-08: "It's a funnel" -- GitLab :8443 is a Tailscale Funnel. Measured 2026-10-10 from socialweb.computer (no tailscale): gitlab.dorper-matrix.ts.net resolves publicly (208.111.34.11) and https://gitlab.dorper-matrix.ts.net:8443/users/sign_in answers 200, so the GIT_STRATEGY none was a wrong assumption; prove a market-node job clones. decided by Claude, user may veto.
-    status: todo
-    evidence: []
+    status: done
+    evidence:
+      - "GitLab pipeline 79 (project kcp-ci-probe, branch acc-clone, runner 6, SPA cluster acc-gitlab-0001, prod 2026-10-10): job 280 with the default GIT_STRATEGY ran 02:04:19-02:05:27Z on a market node: 'Fetching changes with git depth set to 20... Created fresh repository. Checking out 8cc8fd76 as detached HEAD', test -f .gitlab-ci.yml passed, Job succeeded; docs/gitlab/04 corrected (the clone limit was an untested assumption)"
   - id: M2-BID-LATENCY
     milestone: M2
     title: A first-free winner is accepted within 0.5 s of its bid, not after 6 s of policy evaluation
