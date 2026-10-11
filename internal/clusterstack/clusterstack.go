@@ -300,6 +300,7 @@ func (s Spec) ServerArgv() ([]string, error) {
 		argv = append(argv, "--tls-san", san)
 	}
 	argv = append(argv, s.podNetworkArgv()...)
+	argv = append(argv, s.schedulerArgv()...)
 	argv = append(argv, s.Audit.argv()...)
 	if s.ServiceAccountIssuer != "" {
 		argv = append(argv, "--kube-apiserver-arg=service-account-issuer="+s.ServiceAccountIssuer)
