@@ -1147,6 +1147,33 @@ that cannot do is prove a name NECESSARY: five names have been proven by a measu
 `ipt_REJECT`, `ip6t_REJECT`, `xt_nat`, `xt_NFLOG`, `xt_physdev` — and the remaining ~43 are carried
 for modes and matches these boots did not exercise.
 
+**Why nothing loaded on demand, found 2026-10-10 (plan 0005 M5-NETPOL): the kernel execs a modprobe
+the rootfs did not have.** The guest boots the build host's Fedora kernel, built with
+`CONFIG_MODPROBE_PATH="/usr/bin/modprobe"` (Fedora merged sbin into bin), over an Ubuntu 24.04 rootfs
+whose modprobe is `/usr/sbin/modprobe` only. Every `request_module()` the kernel makes -- the
+autoload of an nf_tables expression, an xt match, a logger -- exec'd a path that did not exist, so the
+only modules a guest ever had were the ones `systemd-modules-load` or a userspace `modprobe` on PATH
+loaded. Measured on the local market test bed (`internal/marketbed` live M3 gate):
+`/proc/sys/kernel/modprobe` read `/usr/bin/modprobe` from a pod, `nft_limit` and `nft_log` were not
+in `/proc/modules`, and kube-router's network policy controller aborted every sync with
+`iptables-restore v1.8.10 (nf_tables): line 61: RULE_APPEND failed (No such file or directory): rule
+in chain KUBE-POD-FW-*`; line 61 of the dumped payload is
+`-m mark ! --mark 0x10000/0x10000 -j NFLOG --nflog-group 100 -m limit --limit 10/minute`, which
+iptables-nft 1.8.10 writes as the NATIVE expressions `log group` and `limit` (`nft --debug=netlink`
+on the same ruleset in a user+net namespace on the build host: `[ log group`, `[ limit rate`), and
+those need `nft_log` and `nft_limit` -- not `xt_NFLOG` and `xt_limit`, which the module list carried
+and which iptables-nft never asks for. So the derivation above was complete for the xtables path and
+blind to the nf_tables one, and a deny-all NetworkPolicy left a pod reachable. The builder now reads
+`CONFIG_MODPROBE_PATH` from the kernel config it stages and, when that path does not resolve inside
+the stage (symlinks resolved within the stage, never on the build host), links it to the rootfs's own
+modprobe (`/usr/bin/modprobe -> /usr/sbin/modprobe`), and refuses a rootfs with no modprobe at all
+(`cmd/socialweb-nodeimage/modprobe.go`, `linkKernelModprobe`). With it, the same gate on a rebuilt
+image: `nft_limit` and `nft_log` loaded on demand, no aborted sync on the console, and a deny-all
+ingress policy refused the client 9 s after it was applied. The module list stays as a preload, not
+as the only way a module gets in. `nft-expr-counter` still fails k3s's own modprobe and is harmless:
+the counter expression is built into `nf_tables.ko` on this kernel (no `CONFIG_NFT_COUNTER`, no
+`nft-expr-counter` alias, and the rules above carry `counter` expressions that load).
+
 **And the same missing module is why a node's own cluster services die, which is the failure that
 looked like a network problem.** `iptables-restore` is ALL-OR-NOTHING: when kube-proxy's ruleset names
 the first extension the guest has no module for, the entire `KUBE-SERVICES` chain is dropped —
@@ -3067,6 +3094,13 @@ A change must not break any of these. Each exists because something failed.
     gap with a duration in it and every claim that crosses the gap together is counted nowhere at all
     (section 15).
 
+33. **A node image's rootfs holds the modprobe its kernel execs.** The kernel and the rootfs come from
+    different distributions, and the kernel's `CONFIG_MODPROBE_PATH` is the only way a module gets
+    loaded on demand; the builder resolves that path inside the stage and links it to the rootfs's own
+    modprobe, or refuses the build. Without it no nf_tables expression autoloads, iptables-nft's
+    native `log` and `limit` rules fail with ENOENT, and NetworkPolicies are silently not enforced
+    (section 15, plan 0005 M5-NETPOL).
+
 ## 14. Open architectural gaps
 
 These are the things the architecture does not yet answer, and this list is the work. What is settled - a
@@ -3165,6 +3199,21 @@ can outlive the work that closed it, and why one whose subject has been deleted 
 questions for hours without anyone stopping on it. The measurements stay with the entries rather than
 being tidied away, because a number without its condition is how the 332-second boot outlived its own
 refutation.
+
+- **NetworkPolicies were not enforced on market nodes; fixed in the image builder on 2026-10-10.
+  PROVEN ON THE LOCAL TEST BED, prod pending (plan 0005 M5-NETPOL).** Prod read over debug ssh at
+  02:02Z: kube-router's `Aborting sync ... RULE_APPEND failed (No such file or directory)`. Root cause:
+  the Fedora kernel execs `/usr/bin/modprobe` for every on-demand module load and the Ubuntu rootfs
+  has modprobe only at `/usr/sbin/modprobe`, so `nft_limit` and `nft_log`, which iptables-nft 1.8.10
+  needs for kube-router's `-j NFLOG -m limit` rule, never loaded (section 9's module derivation, "Why
+  nothing loaded on demand"). Before: test bed gate, image `sha256-51e20605`, `kernel.modprobe` =
+  `/usr/bin/modprobe`, no `nft_limit`/`nft_log` in `/proc/modules`, every policy sync aborted, a
+  deny-all ingress policy left the server answering for the full 2 min. After: image
+  `sha256-9b6879e3` built by the fixed builder (`/usr/bin/modprobe -> /usr/sbin/modprobe` in the
+  rootfs), `nft_limit` and `nft_log` loaded, zero aborted syncs, the policy refused the client 9 s
+  after it was applied and deleting it restored the fetch. Not explained here: prod's
+  `iptables -S` answering `iptables: Incompatible with this kernel` (iptables-nft maps errno 0 to that
+  text); re-read it on prod after the rebuilt image ships.
 
 - **The local substrates were retired, and the guest binary was split, on 2026-10-07. CLOSED (plan
   0005 M1-MARKET-ONLY and M1-AGENT-SPLIT).** Two things were true at once and each was the reason for
