@@ -190,20 +190,19 @@ async function buildTrustInput(
   const resolveOp = resolvers.resolveOperatorDid ?? (async () => null);
   const getVouches = resolvers.getVouchedDids ?? (async () => new Set<string>());
 
-  const selfOp = (await resolveOp(selfDid)) ?? selfDid;
-  const coOp = await resolveOp(counterpartyDid);
+  const [selfOpResolved, coOp] = await Promise.all([resolveOp(selfDid), resolveOp(counterpartyDid)]);
+  const selfOp = selfOpResolved ?? selfDid;
 
   const operatorOf: Record<string, string> = { [selfDid]: selfOp };
   if (coOp) operatorOf[counterpartyDid] = coOp;
 
   const trustedOperators = [selfDid, selfOp];
+  const vouchers = [...new Set(coOp ? [...trustedOperators, coOp] : trustedOperators)];
+  const vouchSets = await Promise.all(vouchers.map((op) => getVouches(op)));
   const vouchedBy: Record<string, string[]> = {};
-  for (const op of trustedOperators) {
-    vouchedBy[op] = [...(await getVouches(op))];
-  }
-  if (coOp && !trustedOperators.includes(coOp)) {
-    vouchedBy[coOp] = [...(await getVouches(coOp))];
-  }
+  vouchers.forEach((op, i) => {
+    vouchedBy[op] = [...vouchSets[i]];
+  });
 
   return { operatorOf, vouchedBy, trustedOperators };
 }
