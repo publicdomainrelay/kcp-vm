@@ -3,6 +3,10 @@
 package nodefirecracker
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -244,4 +248,99 @@ func TestTheNameIsTheSameForTheSameInputsInAnotherOrder(t *testing.T) {
 			"order, or lists one twice, names an image that does not exist: the store fills with " +
 			"2.3 GB copies of one image and a guest is told to rebuild for nothing")
 	}
+}
+
+func builderDigestOf(digest string) func() (string, error) {
+	return func() (string, error) { return digest, nil }
+}
+
+func nameFrom(t *testing.T, f imageFixture, digest string) string {
+	t.Helper()
+	inputs, err := recordInputs(f.configPath, f.cfg, builderDigestOf(digest))
+	if err != nil {
+		t.Fatalf("recording the inputs read by the builder whose own digest is %s: %v", digest, err)
+	}
+	name, err := inputs.Fingerprint()
+	if err != nil {
+		t.Fatalf("naming the inputs read by the builder whose own digest is %s: %v", digest, err)
+	}
+	return name
+}
+
+func TestABuilderThatChangedNamesAnotherImageOverOneConfiguration(t *testing.T) {
+	f := newImageFixture(t)
+	before := nameFrom(t, f, "sha256:"+strings.Repeat("a", 64))
+	again := nameFrom(t, f, "sha256:"+strings.Repeat("a", 64))
+	if before != again {
+		t.Fatalf("one builder named one configuration two ways (%s and %s), so a store fills with "+
+			"2.3 GB copies of one image and the build that was never due runs again", before, again)
+	}
+	after := nameFrom(t, f, "sha256:"+strings.Repeat("b", 64))
+	if after == before {
+		t.Fatalf("two builders name one configuration %s. Everything else about the two is equal -- "+
+			"the configuration file, the kernel, the module tree, the base image, the k3s binary, the "+
+			"init -- so the builder itself is the only input that changed and the name is the only "+
+			"place anything downstream would see it: the store answers 'this image is the one your "+
+			"inputs name' with the image the earlier builder wrote, the installer ships it, and the "+
+			"guest runs the behaviour from before the builder changed while nothing in the log says so",
+			before)
+	}
+}
+
+func TestTheBuilderTheRecordNamesIsTheBinaryThatReadTheConfiguration(t *testing.T) {
+	f := newImageFixture(t)
+	inputs, err := RecordInputs(f.configPath, f.cfg)
+	if err != nil {
+		t.Fatalf("recording the inputs: %v", err)
+	}
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatalf("finding the binary this test is running as: %v", err)
+	}
+	want := independentDigestOf(t, self)
+	if inputs.BuilderDigest != want {
+		t.Fatalf("the record of a build's inputs carries the builder digest %q and the binary reading "+
+			"the configuration is %s, which digests to %s. The digest has to be of the process that "+
+			"does the work: a digest of anything else -- a path recorded in the configuration, a "+
+			"constant, an earlier build of the builder -- is a name that stops moving exactly when a "+
+			"rebuild of the builder is what changed", inputs.BuilderDigest, self, want)
+	}
+	name, err := inputs.Fingerprint()
+	if err != nil {
+		t.Fatalf("naming the inputs: %v", err)
+	}
+	if !IsFingerprint(name) {
+		t.Fatalf("the name given to an image of these inputs is %q, which is not a name this store "+
+			"issues", name)
+	}
+}
+
+func TestABuilderThatCannotBeReadIsNotAnInputThatHasNotChanged(t *testing.T) {
+	f := newImageFixture(t)
+	_, err := recordInputs(f.configPath, f.cfg, func() (string, error) {
+		return "", errors.New("the builder binary is not there")
+	})
+	if err == nil {
+		t.Fatal("a build whose own builder binary cannot be read was named. A digest that cannot be " +
+			"taken cannot be shown to be the one a previous build recorded, and this is the same hole " +
+			"as an unresolvable input path: the store answers with the image from before the builder " +
+			"changed and nothing downstream can tell")
+	}
+	if !strings.Contains(err.Error(), "the builder binary is not there") {
+		t.Fatalf("the refusal does not carry the reason the builder could not be read: %v", err)
+	}
+}
+
+func independentDigestOf(t *testing.T, path string) string {
+	t.Helper()
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("reading %s: %v", path, err)
+	}
+	defer f.Close()
+	sum := sha256.New()
+	if _, err := io.Copy(sum, f); err != nil {
+		t.Fatalf("digesting %s: %v", path, err)
+	}
+	return "sha256:" + hex.EncodeToString(sum.Sum(nil))
 }

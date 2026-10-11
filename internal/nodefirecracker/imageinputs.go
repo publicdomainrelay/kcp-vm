@@ -220,6 +220,8 @@ type BuildConfig struct {
 type BuildInputs struct {
 	ConfigPath string `json:"configPath"`
 
+	BuilderDigest string `json:"builderDigest"`
+
 	VMM string `json:"vmm"`
 
 	Modules []string `json:"modules"`
@@ -491,12 +493,40 @@ func RefuseRenamedKeys(raw []byte, path string) error {
 }
 
 func RecordInputs(configPath string, cfg BuildConfig) (BuildInputs, error) {
+	return recordInputs(configPath, cfg, ExecutableDigest)
+}
+
+func ExecutableDigest() (string, error) {
+	path, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("nodefirecracker: finding the builder whose own digest is recorded, "+
+			"because the name an image is given is the hash of everything its build read and of the "+
+			"builder that read it: %w -- a builder that cannot name itself cannot say whether the image "+
+			"already in the store is one it wrote, and the answer that costs is the one where a change "+
+			"to the builder keeps the name and the image from before the change is shipped under it", err)
+	}
+	digest, err := fileDigest(path)
+	if err != nil {
+		return "", fmt.Errorf("nodefirecracker: reading %s, the builder whose own digest is recorded, "+
+			"so that a store holding an image an earlier builder wrote cannot answer for this one: %w -- "+
+			"the builder's behaviour is an input of what it produces and is not written in any "+
+			"configuration, so nothing else here can stand in for it", path, err)
+	}
+	return digest, nil
+}
+
+func recordInputs(configPath string, cfg BuildConfig, builderDigest func() (string, error)) (BuildInputs, error) {
 	resolvedConfig, err := resolvePath(configPath)
+	if err != nil {
+		return BuildInputs{}, err
+	}
+	digest, err := builderDigest()
 	if err != nil {
 		return BuildInputs{}, err
 	}
 	inputs := BuildInputs{
 		ConfigPath:        resolvedConfig,
+		BuilderDigest:     digest,
 		Modules:           canonicalSet(cfg.Modules),
 		InitramfsModules:  canonicalSet(cfg.InitramfsModules),
 		Images:            canonicalSet(cfg.Images),
