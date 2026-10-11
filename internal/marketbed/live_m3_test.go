@@ -179,6 +179,8 @@ func TestAMarketNodeJoinsATenantClusterThroughItsOpenBaoWithNoSsh(t *testing.T) 
 	}
 	b.reading("door phase Joining; joined %s after the workload was applied", time.Since(appliedAt).Round(time.Second))
 
+	b.assertNetworkPolicyEnforced(node, console)
+
 	b.assertNoSsh(console)
 
 	uid := b.claimField(node, "{.metadata.uid}")
