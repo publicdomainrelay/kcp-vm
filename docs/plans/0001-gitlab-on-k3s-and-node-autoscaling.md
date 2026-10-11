@@ -1,6 +1,6 @@
 # 0001 - GitLab on the virtual k3s clusters, with a cloud controller manager and node autoscaling
 
-Status: active
+Status: done. Closed 2026-10-11; each phase's outcome and where it landed is in the last log entry.
 Opened: 2026-10-05
 Repo: socialweb-computer-kcp (the k3s product and the CCM). Sibling repos referenced:
 publicdomainrelay (RFP / market / request-vm-ssh), gitlab-autoscale-socialweb-computer
@@ -293,3 +293,17 @@ The distinction is load-bearing (see docs/ARCHITECTURE.md section 15, "reads gre
   `tenant-superuser` PKI role pins `organization: system:masters` and can therefore issue only the
   superuser. A runner with cluster-admin would have made every RBAC rule in
   `docs/gitlab/02-runner-kubernetes.md` decorative, so the docs' recipe depends on this.
+- 2026-10-11 Closed. Every phase landed, two of them in a different shape than planned:
+  - P1 CCM: built here (P1a), installed by plan 0003 into the per-cluster process group; the live
+    STEP 3 reading is `spec.providerID = socialweb://liveweb/liveweb-node1` (ARCHITECTURE section
+    15). Three tenant CCMs ran on prod on 2026-10-11.
+  - P2 autoscaling N>1: plan 0002 (Demand, Target, Decision.Nodes, per-node scale-in); plan 0004
+    section 6a scaled five concurrent jobs to five nodes and back to zero.
+  - P3 docs/gitlab/: shipped as README.md, 01-kcp-server.md, 02-gitlab-runner.md, 03-jobs.md and
+    04-spa-cluster-runner.md rather than the file names listed in section 5; the VM-and-GitLab
+    install is the existing GitLab on hat-10, not a recipe this repo runs.
+  - P4 the proof: `deploy/gitlab-ci-proof.sh` was never written. A real GitLab pipeline replaced the
+    GitLab-shaped pod: plan 0004 job 183 (streamplace `test`, 1104 tests, 0 failures) on a local
+    substrate, then plan 0005 pipelines 78 and 79 on market nodes of an SPA-created prod cluster
+    (0 nodes idle, scale up, per-node scale-in back to 0, control plane Ready, no ssh to guests).
+
