@@ -21,9 +21,14 @@ export function createBadgeBlueKeysDelegatedTrustResolver(
 
   return {
     async getDelegatedTrustedDids(selfDid: string): Promise<Set<string>> {
-      const vouched = await vouchResolver.getVouchedDids(selfDid).catch(() => new Set<string>());
+      const [ownVouches, badgeRead] = await Promise.allSettled([
+        vouchResolver.getVouchedDids(selfDid),
+        listOwnRecords(BADGE_BLUE_KEYS_NSID, { limit: 200 }),
+      ]);
+      const vouched = ownVouches.status === "fulfilled" ? ownVouches.value : new Set<string>();
       try {
-        const badge = await listOwnRecords(BADGE_BLUE_KEYS_NSID, { limit: 200 });
+        if (badgeRead.status === "rejected") throw badgeRead.reason;
+        const badge = badgeRead.value;
         // Union of both association shapes as candidate operators; a wrong
         // candidate (e.g. an operator misreading its own acknowledgment) has an
         // empty vouch set and adds nothing, while the correct operator adds the
@@ -45,11 +50,16 @@ export function createBadgeBlueKeysDelegatedTrustResolver(
             candidateOperators.add(v.keyId);
           }
         }
-        for (const op of candidateOperators) {
-          const opVouched = await vouchResolver.getVouchedDids(op);
-          logFn("info", "delegated trust resolved operator vouches", { keyId: op, opVouchCount: opVouched.size });
-          opVouched.forEach(d => vouched.add(d));
-        }
+        const operators = [...candidateOperators];
+        const opReads = await Promise.allSettled(operators.map((op) => vouchResolver.getVouchedDids(op)));
+        opReads.forEach((read, i) => {
+          if (read.status === "rejected") {
+            logFn("warn", "delegated trust operator vouch lookup failed", { keyId: operators[i], error: String(read.reason) });
+            return;
+          }
+          logFn("info", "delegated trust resolved operator vouches", { keyId: operators[i], opVouchCount: read.value.size });
+          read.value.forEach((d) => vouched.add(d));
+        });
       } catch (err) {
         logFn("warn", "delegated trust badgeBlueKeys lookup failed", { selfDid, error: String(err) });
       }
