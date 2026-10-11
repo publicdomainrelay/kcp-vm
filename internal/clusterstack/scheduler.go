@@ -48,6 +48,8 @@ func (s Spec) KubeSchedulerConfig() ([]byte, error) {
 kind: KubeSchedulerConfiguration
 clientConnection:
   kubeconfig: %s
+leaderElection:
+  leaderElect: false
 podInitialBackoffSeconds: %d
 podMaxBackoffSeconds: %d
 `, SchedulerKubeconfig(s.DataDir), MarketSchedulerPodInitialBackoffSeconds,

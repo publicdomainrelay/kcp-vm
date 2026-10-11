@@ -287,3 +287,19 @@ func TestK3sPlacesNoPodWhenTheSchedulerConfigIsUnreadable(t *testing.T) {
 			"test above proves nothing")
 	}
 }
+
+func TestTheSchedulerConfigTurnsLeaderElectionOff(t *testing.T) {
+	body, err := market().KubeSchedulerConfig()
+	if err != nil {
+		t.Fatalf("KubeSchedulerConfig: %v", err)
+	}
+	text := string(body)
+	if !strings.Contains(text, "leaderElection:\n  leaderElect: false\n") {
+		t.Fatalf("the scheduler config is:\n%s\n\nwant leaderElection.leaderElect false. Measured on prod "+
+			"2026-10-10: k3s --disable-agent starts kube-scheduler only once a node registers "+
+			"(02:53:17.22Z), and the scheduler then waited out the lease its previous incarnation held "+
+			"(\"Attempting to acquire leader lease\" 02:53:17.35Z, \"Successfully acquired lease\" "+
+			"02:53:33.08Z), so the first pod was scheduled 15 s after its Node was Ready. One k3s "+
+			"server per cluster means there is nothing to elect", text)
+	}
+}

@@ -2066,7 +2066,8 @@ Image size: 1,711,865,393 bytes, +17.2 MB for the two binaries.
 --kube-cloud-controller-manager-arg=secure-port
 --kube-scheduler-arg=config <DataDir>/kube-scheduler.yaml
                                        market clusters only: podInitialBackoffSeconds and
-                                       podMaxBackoffSeconds at 1 s, from a file this host writes
+                                       podMaxBackoffSeconds at 1 s and leaderElect false, from a
+                                       file this host writes
                                        before the server starts
 ```
 
@@ -2564,6 +2565,15 @@ is; the file sets `podInitialBackoffSeconds` and `podMaxBackoffSeconds` to 1 and
 `clientConnection`, because a `--config` file makes kube-scheduler IGNORE the deprecated
 `--kubeconfig` flag k3s still passes. A stack that dials no market has no zero-node window and its
 argv names no config file.
+
+**The backoff was not the 16 s; leader election was (measured on prod 2026-10-10).** With the 1 s
+backoff deployed the first pod still waited 15 s after its Node was Ready. k3s `--disable-agent` starts
+kube-scheduler only once a node registers ("Starting controller" 02:53:17.22Z), and the new scheduler
+then waited out the leader lease its previous incarnation still held ("Attempting to acquire leader
+lease" 02:53:17.35Z, "Successfully acquired lease" 02:53:33.08Z, kube-scheduler's 15 s default lease).
+Each cluster runs exactly one k3s server, so there is nothing to elect: the same file now sets
+`leaderElection.leaderElect: false` (the `--config` file owns leader election, so a flag would be
+ignored). The 1 s backoffs stay, as they cost nothing and bound the wait once the scheduler runs.
 
 The two flags the plan preferred do not exist in this kube-scheduler: MEASURED against k3s
 v1.36.4+k3s1, `--pod-initial-backoff-seconds` and `--pod-max-backoff-seconds` are absent from
