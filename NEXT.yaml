@@ -163,6 +163,15 @@ open:
       are paused by the user (being refined out-of-band); do not start them until the user says so.
     instrument: >
       None open.
+  - id: P10
+    title: DRAFT - plan 0010, close the gaps found after plan 0005 with a GitLab-in-docker fixture.
+    body: >
+      docs/plans/0010-close-the-gaps-with-a-gitlab-fixture.yaml. First item R0-REASSESS: re-assess every
+      gap and approach, ask the user the listed questions, revise the plan. Nothing else starts before it.
+      Gaps: no repeatable acceptance, one bidder, restart leak, kernel/rootfs contract, dead substrate
+      code, thin NetworkPolicy coverage, leaderElect guard, debug-ssh guard, hand-built GitLab, leftovers.
+    instrument: >
+      R0-REASSESS answered and recorded in the plan.
   - id: P6-M0
     title: QUEUED - what linking kcp in-process breaks, and the one binary's size and platforms.
     body: >

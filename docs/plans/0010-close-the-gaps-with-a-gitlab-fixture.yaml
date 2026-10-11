@@ -1,0 +1,228 @@
+plan: 0010-close-the-gaps-with-a-gitlab-fixture
+written: 2026-10-11
+status: >
+  DRAFT. Nothing here executes until R0-REASSESS is done: every item below is re-assessed, the
+  questions in R0-REASSESS are answered by the user, and this file is revised with those answers.
+source: >
+  The gaps found on 2026-10-11 when plans 0001-0005 were reviewed together after plan 0005 closed
+  (all 40 items and ACC-ZERO/ACC-MESH/ACC-NOSSH done on prod). The user asked that they be written down
+  as plan 0010, assuming a GitLab server run in a docker container as the test fixture, with the
+  first item a re-assessment that asks the user questions before anything executes.
+relation_to_other_plans: >
+  Plans 0006-0008 (and any 0009) are being refined by the user out-of-band. G3-RESTART-LEAK overlaps
+  plan 0007 and G4-DEAD-SUBSTRATE may overlap plan 0006's module work; R0-REASSESS decides which plan
+  owns each overlap so nothing is done twice.
+state_rules:
+  - This file is the only state for plan 0010. Every step updates status and evidence.
+  - status is one of todo, doing, done, blocked.
+  - An item is done only when its evidence is recorded (commit SHAs, test names watched to fail and
+    then pass, prod or GitLab readings with UTC timestamps).
+  - Open items are mirrored in NEXT.yaml.
+  - Every decision below is "proposed by Claude, to be refined in R0-REASSESS" until the user
+    confirms it; confirmed ones are rewritten as "decided by the user <date>".
+ownership:
+  owned: >
+    All code in socialweb-computer-kcp, the prod deployment on socialweb.computer, the vendored
+    deno-kcp test bed, the atproto-market requester libraries, the bidder install on hat-8, and the
+    GitLab fixture this plan creates.
+  not_owned: >
+    The market protocol records and lexicons, and the core architecture: kcp in front of
+    k3s --disable-agent clusters at zero nodes, nodes only through requester -> RFP -> bid -> accept
+    -> cloud-init user_data, never hand-provisioned, never reached by ssh. Changes there are asked
+    first.
+gaps:
+  - id: GAP-1
+    text: >
+      No repeatable end-to-end acceptance. Pipelines 78/79 were driven by hand; nothing re-runs
+      them on a change, so a regression on prod goes unnoticed. Plan 0001 P4
+      (deploy/gitlab-ci-proof.sh) was never written.
+  - id: GAP-2
+    text: >
+      One real bidder. bob on hat-8 is the whole market on prod. Several bidders competing, a bidder
+      failing mid-contract and failover to another bidder are unproven live.
+  - id: GAP-3
+    text: >
+      A bidder restart leaks its guests (vm.delete then 404s). 14 exited fc-* containers from
+      2026-10-07 remain on hat-8. Plan 0007 owns the defect today.
+  - id: GAP-4
+    text: >
+      The guest boots the build host's Fedora kernel under an Ubuntu 24.04 rootfs. The mismatch
+      caused M5-NETPOL (CONFIG_MODPROBE_PATH); nothing checks the kernel/rootfs contract (modprobe
+      path, module tree for the running kernel, netfilter modules kube-router needs) at build time.
+  - id: GAP-5
+    text: >
+      The retired local substrates were swept by name only: internal/nodefirecracker and the
+      substrate network and address vocabulary remain in the tree.
+  - id: GAP-6
+    text: >
+      NetworkPolicy coverage is one case: cross-node deny-all ingress. Egress, namespaceSelector,
+      ipBlock, and a DNS-allow policy beside default-deny are untested.
+  - id: GAP-7
+    text: >
+      Market clusters run kube-scheduler with leaderElect false. Safe while each cluster has exactly
+      one k3s server; nothing refuses the config if a second server ever appears.
+  - id: GAP-8
+    text: >
+      The debug ssh path (DEBUG_SOCIALWEB_NODE_SSH_DIR) is in the shipped code and gated only by
+      deploy configuration. Zero ssh on prod is a property of container.env, not of the build.
+  - id: GAP-9
+    text: >
+      The GitLab used for acceptance (hat-10, Tailscale funnel) was installed by hand and is not a
+      fixture this repo can recreate; plan 0001's "spin a VM and run GitLab" recipe was never run by
+      this repo.
+  - id: GAP-10
+    text: >
+      Acceptance leftovers on prod and the lab: runner 6 on hat-10, clusters acc-gitlab-0001 and
+      acc-gitlab-0002, branches acc-0005 and acc-clone in kcp-ci-probe, 14 exited fc-* containers on
+      hat-8.
+acceptance:
+  checks:
+    - id: ACC-REPEAT
+      text: >
+        One command brings up the GitLab fixture, creates a cluster through the SPA as the test
+        identity, registers a runner against it, runs the acceptance pipeline and records the
+        ACC-ZERO/ACC-MESH/ACC-NOSSH readings (plus G2-NETPOL-MATRIX) with UTC timestamps, then tears
+        the fixture down. Run twice in a row on prod, both green.
+      status: todo
+      evidence: []
+    - id: ACC-FAILOVER
+      text: >
+        With two bidders bidding, one killed mid-contract: the node is re-requested, won by the other
+        bidder, joins, and the pipeline still goes green; the dead bidder's claim is released.
+      status: todo
+      evidence: []
+items:
+  - id: R0-REASSESS
+    milestone: R0
+    title: Re-assess every item and the best way to approach it, then ask the user and revise this plan
+    decision: >
+      Decided by the user 2026-10-11: this is the first item and nothing else in the plan starts
+      before it is done. Steps: (1) re-read each gap against the code and prod as they stand, and
+      say whether it is still real, already covered by plan 0006/0007/0008, or smaller or larger
+      than written; (2) for each item propose an approach with its cost and the alternative not
+      taken; (3) ask the user the questions below plus any the re-read raises, in one batch; (4)
+      rewrite items, order and decisions with the answers and mark them "decided by the user".
+    questions_for_user:
+      - "Where does the GitLab fixture container run: hat-8 beside the bidder, the prod host, or a fresh host? It must be reachable by market guests (git clone) and by the runner."
+      - "How do market guests reach the fixture: same LAN/tailnet, a Tailscale funnel like hat-10, a fedproxy tunnel, or through the relay?"
+      - "Does the gitlab-runner also run as a container next to the fixture (with the SPA kubeconfig), or stay a host install?"
+      - "Is the fixture throwaway per run (fresh container, fresh root password and runner token every time) or long-lived with a reset step? Run time vs. isolation."
+      - "Does hat-10's GitLab stay as a second target, or is it retired from acceptance once the fixture works?"
+      - "Second bidder for GAP-2: another host you own, a second bidder identity on hat-8, or a container-mode bidder that is expected to lose (it cannot run k3s)?"
+      - "GAP-3: fix the restart leak here or leave it to plan 0007? May the 14 exited fc-* containers on hat-8 be deleted now?"
+      - "GAP-4: keep the host kernel + Ubuntu rootfs and add a build-time contract check, or ship a kernel matched to the rootfs (Ubuntu's own) in the image?"
+      - "GAP-5: delete internal/nodefirecracker and the substrate vocabulary here, or fold it into plan 0006?"
+      - "GAP-8: remove the debug ssh path from release builds (build tag), or keep it env-gated with a prod assertion that it is unset?"
+      - "GAP-10: tear down runner 6, acc-gitlab-0001/0002 and the acc-* branches, or keep any as a standing canary?"
+      - "Should the repeatable acceptance run on a schedule (nightly on prod) or only on demand / before each deploy?"
+    status: todo
+    evidence: []
+  - id: G1-GITLAB-FIXTURE
+    milestone: G1
+    title: GitLab CE in a docker container as a reproducible test fixture
+    decision: >
+      Proposed by Claude, to be refined in R0-REASSESS: a script under scripts/ starts gitlab/gitlab-ce
+      pinned by digest with a generated root password, waits for readiness, creates the test project
+      from a template repo holding the acceptance .gitlab-ci.yml, and prints its URL and a runner
+      registration token. TLS from a local CA the guest trusts via user_data, or plain http on the
+      reachable address, decided in R0. Covers GAP-9.
+    status: todo
+    evidence: []
+  - id: G1-RUNNER
+    milestone: G1
+    title: A gitlab-runner container bound to an SPA-created cluster
+    decision: >
+      Proposed by Claude, to be refined in R0-REASSESS: gitlab-runner image pinned by digest, kubernetes
+      executor, KUBECONFIG from the SPA download (long TTL), registered with the fixture's token and a
+      tag unique to the run, so no other runner takes its jobs (the M6-RUNNER1 lesson).
+    status: todo
+    evidence: []
+  - id: G1-ACCEPT-SCRIPT
+    milestone: G1
+    title: One command that runs plan 0005's acceptance end to end and records readings
+    decision: >
+      Proposed by Claude, to be refined in R0-REASSESS: drives the SPA login headlessly (the
+      puppeteer-core flow used for M6-SPA-CREATE, credentials from the env file, never printed),
+      creates a cluster, starts fixture + runner, runs the pipeline, asserts idle at 0 nodes before,
+      scale-up, pod A on node A reaches pod B on node B, DNS via the CoreDNS node, NetworkPolicy deny,
+      per-node scale-in back to 0 with the control plane Ready, and zero ssh to guests in the door and
+      provider logs; writes the readings as YAML with UTC timestamps. Replaces plan 0001 P4. Covers
+      GAP-1.
+    status: todo
+    evidence: []
+  - id: G2-NETPOL-MATRIX
+    milestone: G2
+    title: NetworkPolicy matrix beyond deny-all ingress
+    decision: >
+      Proposed by Claude, to be refined in R0-REASSESS: cross-node cases for egress deny, egress allow
+      to one CIDR (ipBlock), namespaceSelector allow, and default-deny plus DNS-allow; each asserted
+      red with the policy and green without, in the live M3 gate and in G1-ACCEPT-SCRIPT. Covers GAP-6.
+    status: todo
+    evidence: []
+  - id: G3-MULTI-BIDDER
+    milestone: G3
+    title: Two real bidders on prod and failover mid-contract
+    decision: >
+      Proposed by Claude, to be refined in R0-REASSESS: a second bidder identity and host (R0 picks
+      which); prove both win contracts, then kill one after accept and before the node joins and show
+      the claim fails, is released, and the node is re-requested and won by the other. Market
+      protocol changes, if any turn out to be needed, are asked first. Covers GAP-2 and ACC-FAILOVER.
+    status: todo
+    evidence: []
+  - id: G3-RESTART-LEAK
+    milestone: G3
+    title: A bidder restart does not leak guests
+    decision: >
+      Proposed by Claude, to be refined in R0-REASSESS: R0 decides whether this plan or plan 0007
+      fixes it. If here: the bidder re-adopts or reaps guests it finds at start, so vm.delete after a
+      restart finds its guest; then delete the 14 exited fc-* containers on hat-8 once the user
+      agrees. Covers GAP-3.
+    status: todo
+    evidence: []
+  - id: G4-KERNEL-CONTRACT
+    milestone: G4
+    title: The guest kernel and rootfs agree, checked at image build
+    decision: >
+      Proposed by Claude, to be refined in R0-REASSESS: socialweb-nodeimage refuses an image whose
+      rootfs lacks the kernel's CONFIG_MODPROBE_PATH target, a modules tree for the kernel version it
+      boots, or the netfilter modules kube-router's rules load (nft_log, nft_limit, nft_compat,
+      xt_NFLOG, xt_limit, ...); alternative is shipping a matched kernel. Covers GAP-4.
+    status: todo
+    evidence: []
+  - id: G4-DEAD-SUBSTRATE
+    milestone: G4
+    title: Remove what is left of the retired local substrates
+    decision: >
+      Proposed by Claude, to be refined in R0-REASSESS: delete internal/nodefirecracker and the
+      substrate network and address vocabulary that only the retired substrates used, keeping what
+      the image builder still needs under a name that says so; or fold into plan 0006. Covers GAP-5.
+    status: todo
+    evidence: []
+  - id: G4-SCHED-SINGLE-SERVER
+    milestone: G4
+    title: Leader election off only while a cluster has one k3s server
+    decision: >
+      Proposed by Claude, to be refined in R0-REASSESS: clusterstack refuses to render leaderElect false
+      for a spec with more than one server, with a test, so an HA control plane cannot inherit it
+      silently. Covers GAP-7.
+    status: todo
+    evidence: []
+  - id: G4-NO-SSH-GUARD
+    milestone: G4
+    title: Zero ssh to guests is enforced by the build or by a prod check
+    decision: >
+      Proposed by Claude, to be refined in R0-REASSESS: either a build tag that leaves the debug ssh
+      path out of release builds, or deploy.sh and the acceptance script refusing a prod
+      container.env with DEBUG_SOCIALWEB_NODE_SSH_DIR set and asserting no ssh authorized_keys module
+      in any prod user_data. Covers GAP-8.
+    status: todo
+    evidence: []
+  - id: G5-CLEANUP
+    milestone: G5
+    title: Tear down or adopt the plan 0005 acceptance leftovers
+    decision: >
+      Proposed by Claude, to be refined in R0-REASSESS: per the user's answer, remove runner 6,
+      acc-gitlab-0001/0002 and the acc-* branches, or keep them as a standing canary driven by
+      G1-ACCEPT-SCRIPT. Covers GAP-10.
+    status: todo
+    evidence: []
