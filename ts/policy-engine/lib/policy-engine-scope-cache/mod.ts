@@ -30,14 +30,31 @@ export interface ScopeCacheOptions {
   log?: (level: string, msg: string, meta?: Record<string, unknown>) => void;
 }
 
+export interface ScopeVerdict {
+  result: PolicyResult;
+  cacheable: boolean;
+}
+
 export interface ScopeCache {
   /** Cached verdict, or undefined on a miss / expired entry. */
   get(identity: PolicyIdentity, counterpartyDid: string, args: PolicyArgs): PolicyResult | undefined;
   /** Store a verdict (positives live longer than negatives). */
   set(identity: PolicyIdentity, counterpartyDid: string, args: PolicyArgs, result: PolicyResult): void;
+  once(
+    identity: PolicyIdentity,
+    counterpartyDid: string,
+    args: PolicyArgs,
+    work: () => Promise<ScopeVerdict>,
+  ): Promise<PolicyResult>;
   /** Firehose trust event → drop cached scope verdicts for both DIDs. */
   applyEvent(e: { did: string; rkey: string }): void;
-  stats(): { entries: number };
+  stats(): { entries: number; inflight: number };
+}
+
+interface Flight {
+  counterpartyDid: string;
+  mark: { stale: boolean };
+  verdict: Promise<PolicyResult>;
 }
 
 interface Entry {
@@ -83,6 +100,7 @@ export function createScopeCache(opts: ScopeCacheOptions = {}): ScopeCache {
 
   const entries = new Map<string, Entry>();
   const byDid = new Map<string, Set<string>>();
+  const flights = new Map<string, Flight>();
 
   function touch(key: string): void {
     const e = entries.get(key);
@@ -113,6 +131,25 @@ export function createScopeCache(opts: ScopeCacheOptions = {}): ScopeCache {
     entries.delete(key);
   }
 
+  function store(key: string, counterpartyDid: string, result: PolicyResult): void {
+    const ttlMs = result.allow ? positiveTtlMs : negativeTtlMs;
+    entries.set(key, { result, cachedAt: Date.now(), ttlMs });
+    touch(key);
+    evict();
+    indexByDid(counterpartyDid, key);
+  }
+
+  function groundFlights(did: string): number {
+    let grounded = 0;
+    for (const [key, flight] of flights) {
+      if (flight.counterpartyDid !== did) continue;
+      flight.mark.stale = true;
+      flights.delete(key);
+      grounded++;
+    }
+    return grounded;
+  }
+
   return {
     get(identity, counterpartyDid, args) {
       const key = scopeCacheKey(identity, counterpartyDid, args);
@@ -127,17 +164,32 @@ export function createScopeCache(opts: ScopeCacheOptions = {}): ScopeCache {
     },
 
     set(identity, counterpartyDid, args, result) {
+      store(scopeCacheKey(identity, counterpartyDid, args), counterpartyDid, result);
+    },
+
+    once(identity, counterpartyDid, args, work) {
       const key = scopeCacheKey(identity, counterpartyDid, args);
-      const ttlMs = result.allow ? positiveTtlMs : negativeTtlMs;
-      entries.set(key, { result, cachedAt: Date.now(), ttlMs });
-      touch(key);
-      evict();
-      indexByDid(counterpartyDid, key);
+      const running = flights.get(key);
+      if (running) return running.verdict;
+      const mark = { stale: false };
+      const verdict: Promise<PolicyResult> = Promise.resolve()
+        .then(work)
+        .then(({ result, cacheable }) => {
+          if (cacheable && !mark.stale) store(key, counterpartyDid, result);
+          return result;
+        })
+        .finally(() => {
+          if (flights.get(key)?.verdict === verdict) flights.delete(key);
+        });
+      flights.set(key, { counterpartyDid, mark, verdict });
+      return verdict;
     },
 
     applyEvent({ did, rkey }) {
       for (const other of [did, rkey]) {
         if (!other) continue;
+        const grounded = groundFlights(other);
+        if (grounded > 0) log("debug", "scope cache grounded in-flight runs", { did: other, grounded });
         const keys = byDid.get(other);
         if (!keys || keys.size === 0) continue;
         for (const k of keys) dropKey(k);
@@ -147,7 +199,7 @@ export function createScopeCache(opts: ScopeCacheOptions = {}): ScopeCache {
     },
 
     stats() {
-      return { entries: entries.size };
+      return { entries: entries.size, inflight: flights.size };
     },
   };
 }

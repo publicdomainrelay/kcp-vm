@@ -25,10 +25,10 @@ import type {
 } from "@publicdomainrelay/policy-common";
 import { POLICY_GHA_LITE_NSID, POLICY_TYPESCRIPT_NSID } from "@publicdomainrelay/policy-common";
 import { resolvePolicyName, type PolicyRegistry } from "@publicdomainrelay/policy-deno-typescript-shared";
-import type { ScopeCache } from "@publicdomainrelay/policy-engine-scope-cache";
+import type { ScopeCache, ScopeVerdict } from "@publicdomainrelay/policy-engine-scope-cache";
 
 export { resolvePolicyName } from "@publicdomainrelay/policy-deno-typescript-shared";
-export type { PolicyIdentity, ScopeCache } from "@publicdomainrelay/policy-engine-scope-cache";
+export type { PolicyIdentity, ScopeCache, ScopeVerdict } from "@publicdomainrelay/policy-engine-scope-cache";
 
 export interface PolicyEvaluatorOptions {
   /** $type → executor dispatch (gha-lite, typescript). */
@@ -63,6 +63,7 @@ export interface PolicyEvaluator {
     selfDid: string;
     counterpartyDid: string;
     args: PolicyArgs;
+    refresh?: boolean;
   }): Promise<PolicyResult>;
   /** Mint a policy record (gha-lite workflow or typescript bundle). */
   buildPolicyRecord(opts: BuildPolicyRecordOpts): BuiltPolicyRecord;
@@ -156,14 +157,33 @@ export function createPolicyEvaluator(opts: PolicyEvaluatorOptions): PolicyEvalu
     selfDid: string;
     counterpartyDid: string;
     args: PolicyArgs;
+    refresh?: boolean;
   }): Promise<PolicyResult> {
-    const { ref, policyRecord: prebuilt, perspective, selfDid, counterpartyDid, args } = input;
+    const { ref, policyRecord: prebuilt, counterpartyDid, args } = input;
     const uri = ref?.uri ?? prebuilt?.uri ?? "";
     const cid = ref?.cid ?? prebuilt?.cid ?? "";
     const identity = { kind: "ref" as const, uri, cid };
-    const cacheHit = scopeCache?.get(identity, counterpartyDid, args);
-    if (cacheHit) return cacheHit;
+    if (!input.refresh) {
+      const cacheHit = scopeCache?.get(identity, counterpartyDid, args);
+      if (cacheHit) return cacheHit;
+    }
+    const work = () => runScope(input, uri);
+    if (!scopeCache) return (await work()).result;
+    return await scopeCache.once(identity, counterpartyDid, args, work);
+  }
 
+  async function runScope(
+    input: {
+      ref?: StrongRef;
+      policyRecord?: PolicyRecord;
+      perspective: PolicyPerspective;
+      selfDid: string;
+      counterpartyDid: string;
+      args: PolicyArgs;
+    },
+    uri: string,
+  ): Promise<ScopeVerdict> {
+    const { ref, policyRecord: prebuilt, perspective, selfDid, counterpartyDid, args } = input;
     let policyRecord: PolicyRecord;
     if (prebuilt) {
       policyRecord = prebuilt;
@@ -172,11 +192,11 @@ export function createPolicyEvaluator(opts: PolicyEvaluatorOptions): PolicyEvalu
       try {
         value = await opts.resolve(ref);
       } catch (err) {
-        return deny(`failed to resolve policy ref ${ref.uri}: ${err}`, ref.uri);
+        return { result: deny(`failed to resolve policy ref ${ref.uri}: ${err}`, ref.uri), cacheable: false };
       }
       policyRecord = { uri: ref.uri, cid: ref.cid, value };
     } else {
-      return deny("scope requires a ref or a policyRecord", "server");
+      return { result: deny("scope requires a ref or a policyRecord", "server"), cacheable: false };
     }
     const $type = String(policyRecord.value?.$type ?? "");
     const executor = registry.get($type);
@@ -197,9 +217,8 @@ export function createPolicyEvaluator(opts: PolicyEvaluatorOptions): PolicyEvalu
         : deny(`unknown policy record type: ${$type === "" ? "(empty)" : $type}`, $type);
     }
 
-    scopeCache?.set(identity, counterpartyDid, args, result);
     (log ?? (() => {}))("debug", "scope verdict", { ref: uri, counterpartyDid, allow: result.allow });
-    return result;
+    return { result, cacheable: true };
   }
 
   function buildPolicyRecord(build: BuildPolicyRecordOpts): BuiltPolicyRecord {
