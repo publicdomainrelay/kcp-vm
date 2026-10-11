@@ -156,15 +156,14 @@ about: >
 
 open:
   - id: P5
-    title: Plan 0005 (zero-ssh market nodes) - acceptance passed on prod 2026-10-08; open items below.
+    title: Plan 0005 (zero-ssh market nodes) - acceptance passed on prod 2026-10-08; two items open.
     body: >
-      docs/plans/0005-zero-ssh-market-nodes.yaml is the state. Done with prod evidence: M0-M6 items except
-      those listed here, and ACC-ZERO, ACC-MESH, ACC-NOSSH (GitLab pipeline 78 on an SPA-created cluster).
-      Open: M2-BID-LATENCY (a native subagent is fixing why the pre-warmed scope verdict misses at bid
-      time; warm-cache reading 0.25 s bid->winner, cold ~5.7 s), M3-JOIN-FOLLOWUPS (the ~16 s pod sandbox
-      gap only: node-secrets now waits for the OpenBao link itself, and the image name covers the builder
-      that reads the configuration, so every image is renamed once and rebuilt), M6-CLONE (market nodes
-      cannot reach the tailnet GitLab to clone; needs the user's call on exposing GitLab).
+      docs/plans/0005-zero-ssh-market-nodes.yaml is the state. Done with prod evidence: every M0-M6 item except
+      the two below, ACC-ZERO/ACC-MESH/ACC-NOSSH (GitLab pipeline 78 on an SPA-created cluster), M2-BID-LATENCY
+      (cold bid->winner 0.255 s), M6-CLONE (pipeline 79 cloned through the funnel). Open: M3-JOIN-FOLLOWUPS
+      part (2) (the tenant kube-scheduler's backoff delays the first pod 16 s after its Node is Ready; executor
+      ds-sched-backoff) and M5-NETPOL (NetworkPolicies not enforced on market nodes: iptables-restore fails in
+      the guest; a native subagent is investigating on the local market test bed).
     instrument: >
       Each open item's own reading in the plan file.
   - id: P6-M0
