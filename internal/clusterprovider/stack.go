@@ -212,6 +212,10 @@ func StepsFor(cfg StackConfig) materialiser.StepBuilder {
 			}
 		}
 
+		if err := WriteKubeSchedulerConfig(spec); err != nil {
+			return nil, err
+		}
+
 		steps, err := StepsFrom(spec, l, cfg.Stack)
 		if err != nil {
 			return nil, err

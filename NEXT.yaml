@@ -158,12 +158,12 @@ open:
   - id: P5
     title: Plan 0005 (zero-ssh market nodes) - acceptance passed on prod 2026-10-08; two items open.
     body: >
-      docs/plans/0005-zero-ssh-market-nodes.yaml is the state. Done with prod evidence: every M0-M6 item except
-      the two below, ACC-ZERO/ACC-MESH/ACC-NOSSH (GitLab pipeline 78 on an SPA-created cluster), M2-BID-LATENCY
-      (cold bid->winner 0.255 s), M6-CLONE (pipeline 79 cloned through the funnel). Open: M3-JOIN-FOLLOWUPS
-      part (2) (the tenant kube-scheduler's backoff delays the first pod 16 s after its Node is Ready; executor
-      ds-sched-backoff) and M5-NETPOL (NetworkPolicies not enforced on market nodes: iptables-restore fails in
-      the guest; a native subagent is investigating on the local market test bed).
+      docs/plans/0005-zero-ssh-market-nodes.yaml is the state. Done with prod evidence: every M0-M6 item,
+      ACC-ZERO/ACC-MESH/ACC-NOSSH (GitLab pipeline 78 on an SPA-created cluster), M2-BID-LATENCY (cold
+      bid->winner 0.255 s), M6-CLONE (pipeline 79 cloned through the funnel), M5-NETPOL (cross-node deny-all
+      enforced 2026-10-10). Open: M3-JOIN-FOLLOWUPS part (2) only -- market clusters' kube-scheduler gets a 1 s
+      pod backoff from a config file (merged); its prod reading (pod scheduled ~1 s after its Node is Ready,
+      was 16 s) is owed.
     instrument: >
       Each open item's own reading in the plan file.
   - id: P6-M0
