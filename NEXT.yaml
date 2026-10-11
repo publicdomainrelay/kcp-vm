@@ -156,16 +156,13 @@ about: >
 
 open:
   - id: P5
-    title: Plan 0005 (zero-ssh market nodes) - acceptance passed on prod 2026-10-08; two items open.
+    title: Plan 0005 (zero-ssh market nodes) - COMPLETE 2026-10-10; every item and acceptance check done with prod evidence.
     body: >
-      docs/plans/0005-zero-ssh-market-nodes.yaml is the state. Done with prod evidence: every M0-M6 item,
-      ACC-ZERO/ACC-MESH/ACC-NOSSH (GitLab pipeline 78 on an SPA-created cluster), M2-BID-LATENCY (cold
-      bid->winner 0.255 s), M6-CLONE (pipeline 79 cloned through the funnel), M5-NETPOL (cross-node deny-all
-      enforced 2026-10-10). Open: M3-JOIN-FOLLOWUPS part (2) only -- market clusters' kube-scheduler gets a 1 s
-      pod backoff from a config file (merged); its prod reading (pod scheduled ~1 s after its Node is Ready,
-      was 16 s) is owed.
+      docs/plans/0005-zero-ssh-market-nodes.yaml holds each item's evidence. Final configuration on prod:
+      debug key unset, SCALE_HOLD=0s, image sha256-5b823ce0, door/provider at 22d1841. Plans 0006-0008 below
+      are paused by the user (being refined out-of-band); do not start them until the user says so.
     instrument: >
-      Each open item's own reading in the plan file.
+      None open.
   - id: P6-M0
     title: QUEUED - what linking kcp in-process breaks, and the one binary's size and platforms.
     body: >
