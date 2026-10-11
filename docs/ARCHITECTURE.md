@@ -1666,6 +1666,12 @@ runcmd; none is a dependency of the agent except the DNS link and the masquerade
   `ttl` 300) for `aud` = the claim's audience. It logs in at `/v1/auth/<jwtMount>/login` with
   `{role, jwt}` and `--cacert openbao-ca.pem`, reads `/v1/<kvMount>/data/<kvPath>`, and requires
   `token`, `nodePassword` and `serverCA`, because those three are credentials OpenBao alone holds.
+  Both calls go through a bounded wait on the link, because the OpenBao link is started beside this
+  unit and its listener is not bound the moment the unit is (MEASURED 2026-10-08T00:23Z: node-secrets
+  started at 11.0 s and failed at 11.0 s, and systemd's `RestartSec=5` cost the join 5.6 s): 120
+  attempts 0.5 s apart, the last one 60 s after the first, and each failed attempt says so on the
+  console with curl's own exit code and the address it is waiting on. The bound is
+  `NODE_SECRETS_LINK_ATTEMPTS`; a wait that runs out exits 1, so the retry is still systemd's.
   The apiserver ticket, the advertise address and the port it requires only when the bundle did not
   already write `/etc/socialweb/node/apiserver.env`; when the bundle did, it reads them back out of
   that file and checks the file names this node, so the two halves of the join cannot disagree about

@@ -75,6 +75,10 @@ export const CNI_WAIT_ATTEMPTS = 90;
 
 export const DIAGNOSE_ATTEMPTS = 30;
 
+export const NODE_SECRETS_LINK_ATTEMPTS = 120;
+
+export const LINK_WAIT_INTERVAL_SECONDS = "0.5";
+
 export const CNI_CONF_DIR = "/etc/cni/net.d";
 
 export const CNI_BIN_DIR = "/opt/cni/bin";
@@ -155,6 +159,7 @@ export interface K3sJoinModuleOptions {
   kubeletKubeconfig?: string;
   cniWaitAttempts?: number;
   diagnoseAttempts?: number;
+  linkWaitAttempts?: number;
 }
 
 const SHA256_HEX = /^[0-9a-f]{64}$/;
@@ -196,6 +201,7 @@ interface ResolvedPaths {
   kubeletKubeconfig: string;
   cniWaitAttempts: number;
   diagnoseAttempts: number;
+  linkWaitAttempts: number;
 }
 
 function resolvePaths(opts: K3sJoinModuleOptions): ResolvedPaths {
@@ -211,6 +217,7 @@ function resolvePaths(opts: K3sJoinModuleOptions): ResolvedPaths {
     kubeletKubeconfig: opts.kubeletKubeconfig ?? `${dataDir}/agent/kubelet.kubeconfig`,
     cniWaitAttempts: opts.cniWaitAttempts ?? CNI_WAIT_ATTEMPTS,
     diagnoseAttempts: opts.diagnoseAttempts ?? DIAGNOSE_ATTEMPTS,
+    linkWaitAttempts: opts.linkWaitAttempts ?? NODE_SECRETS_LINK_ATTEMPTS,
     acceptPath: opts.acceptPath ?? DEFAULT_ACCEPT_PATH,
     dumbpipe: opts.dumbpipePath ?? "/usr/local/bin/dumbpipe",
     k3s: opts.k3sPath ?? "/usr/local/bin/k3s",
@@ -272,13 +279,28 @@ EXCHANGED="$(curl -sf -H "Authorization: Bearer \${WID_TOKEN}" -H "Content-Type:
 [ -n "\${EXCHANGED}" ] || { say "token exchange for \${AUDIENCE} failed"; exit 1; }
 
 BAO="https://${p.openbaoAddr}"
-BAO_TOKEN="$(curl -sf --cacert ${p.ca} -H "Content-Type: application/json" \\
+link_call() {
+  local attempt=0 status=0 body=""
+  while [ "\${attempt}" -lt ${p.linkWaitAttempts} ]; do
+    attempt=$(( attempt + 1 ))
+    if body="$(curl -sf "$@" 2>/dev/null)"; then status=0; else status=$?; fi
+    if [ "\${status}" -eq 0 ] && [ -n "\${body}" ]; then
+      printf '%s' "\${body}"
+      return 0
+    fi
+    say "the OpenBao link on ${p.openbaoAddr} has not answered yet (attempt \${attempt} of ${p.linkWaitAttempts}, curl exit \${status})"
+    sleep ${LINK_WAIT_INTERVAL_SECONDS}
+  done
+  return 1
+}
+
+BAO_TOKEN="$(link_call --cacert ${p.ca} -H "Content-Type: application/json" \\
   -d "$(jq -nc --arg role "\${ROLE}" --arg jwt "\${EXCHANGED}" '{role: $role, jwt: $jwt}')" \\
   "\${BAO}/v1/auth/\${JWT_MOUNT}/login" | jq -r '.auth.client_token // empty')" || true
-[ -n "\${BAO_TOKEN}" ] || { say "OpenBao login at auth/\${JWT_MOUNT} as \${ROLE} failed"; exit 1; }
+[ -n "\${BAO_TOKEN}" ] || { say "OpenBao login at auth/\${JWT_MOUNT} as \${ROLE} failed after ${p.linkWaitAttempts} attempts at the link on ${p.openbaoAddr}"; exit 1; }
 
-DATA="$(curl -sf --cacert ${p.ca} -H "X-Vault-Token: \${BAO_TOKEN}" "\${BAO}/v1/\${KV_MOUNT}/data/\${KV_PATH}" | jq -c '.data.data // empty')" || true
-[ -n "\${DATA}" ] || { say "reading \${KV_MOUNT}/\${KV_PATH} failed"; exit 1; }
+DATA="$(link_call --cacert ${p.ca} -H "X-Vault-Token: \${BAO_TOKEN}" "\${BAO}/v1/\${KV_MOUNT}/data/\${KV_PATH}" | jq -c '.data.data // empty')" || true
+[ -n "\${DATA}" ] || { say "reading \${KV_MOUNT}/\${KV_PATH} failed after ${p.linkWaitAttempts} attempts at the link on ${p.openbaoAddr}"; exit 1; }
 need() { printf '%s' "\${DATA}" | jq -er --arg k "$1" '.[$k] | if type == "number" then tostring else strings end | select(length > 0)' >/dev/null || { say "\${KV_MOUNT}/\${KV_PATH} has no $1"; exit 1; }; }
 for k in token nodePassword serverCA; do need "\${k}"; done
 LINK_FROM_BUNDLE=""

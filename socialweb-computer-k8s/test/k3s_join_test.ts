@@ -5,6 +5,7 @@ import {
   createK3sJoinModule,
   DEFAULT_DNS_GATEWAY,
   NODE_SCRIPTS,
+  NODE_SECRETS_LINK_ATTEMPTS,
   NODE_UNIT_ORDER,
   NODE_UNITS,
   renderApiserverLinkScript,
@@ -127,6 +128,14 @@ while [ $# -gt 0 ]; do
   esac
 done
 printf '%s\\t%s\\t%s\\t%s\\n' "$URL" "$CACERT" "$DATA" "\${HEADERS[*]}" >> "$CURL_LOG"
+tries() {
+  local n=0
+  [ -f "$1" ] && n="$(cat "$1")"
+  n=$(( n + 1 ))
+  printf '%s' "\${n}" > "$1"
+  printf '%s' "\${n}"
+}
+connect_failed() { [ "$1" -le "$2" ]; }
 case "$URL" in
   https://issuer.test/v1/oidc/issue)
     [ "$(printf '%s' "$DATA" | jq -r .aud)" = "$WANT_AUD" ] || exit 22
@@ -136,16 +145,25 @@ case "$URL" in
     [ "$CACERT" = "$WANT_CA" ] || exit 60
     [ "$(printf '%s' "$DATA" | jq -r .role)" = "ci-node1" ] || exit 22
     [ "$(printf '%s' "$DATA" | jq -r .jwt)" = "exchanged.jwt.sig" ] || exit 22
+    connect_failed "$(tries "\${CURL_LOG}.login")" "\${FAIL_LOGIN_TIMES:-0}" && exit 7
     echo '{"auth":{"client_token":"s.bao"}}' ;;
   https://127.0.0.1:18200/v1/socialweb-nodes/data/ci-node1)
     [ "$CACERT" = "$WANT_CA" ] || exit 60
     case " \${HEADERS[*]} " in *"X-Vault-Token: s.bao"*) ;; *) exit 22 ;; esac
+    connect_failed "$(tries "\${CURL_LOG}.kv")" "\${FAIL_KV_TIMES:-0}" && exit 7
     cat "$KV_RESPONSE" ;;
   *) exit 22 ;;
 esac
 `;
 
-async function nodeSecretsRun(kv: Record<string, unknown>, opts: { linkEnv?: string } = {}) {
+interface NodeSecretsRunOptions {
+  linkEnv?: string;
+  loginFailures?: number;
+  kvFailures?: number;
+  linkWaitAttempts?: number;
+}
+
+async function nodeSecretsRun(kv: Record<string, unknown>, opts: NodeSecretsRunOptions = {}) {
   const dir = await Deno.makeTempDir();
   const node = `${dir}/etc/socialweb/node`;
   await Deno.mkdir(`${dir}/bin`, { recursive: true });
@@ -179,8 +197,10 @@ async function nodeSecretsRun(kv: Record<string, unknown>, opts: { linkEnv?: str
     acceptPath: `${dir}/accept.json`,
     k3sNodePasswordPath: `${dir}/rancher/node/password`,
     doneStamp: `${dir}/done`,
+    ...(opts.linkWaitAttempts === undefined ? {} : { linkWaitAttempts: opts.linkWaitAttempts }),
   });
   await Deno.writeTextFile(`${dir}/node-secrets`, script, { mode: 0o700 });
+  const started = Date.now();
   const out = await new Deno.Command("bash", {
     args: [`${dir}/node-secrets`],
     env: {
@@ -190,11 +210,16 @@ async function nodeSecretsRun(kv: Record<string, unknown>, opts: { linkEnv?: str
       WANT_SUB: sub,
       WANT_CA: `${node}/openbao-ca.pem`,
       KV_RESPONSE: `${dir}/kv.json`,
+      FAIL_LOGIN_TIMES: String(opts.loginFailures ?? 0),
+      FAIL_KV_TIMES: String(opts.kvFailures ?? 0),
     },
     stdout: "piped",
     stderr: "piped",
   }).output();
-  return { dir, node, code: out.code, stderr: new TextDecoder().decode(out.stderr) };
+  const elapsedMs = Date.now() - started;
+  const calls = (await Deno.readTextFile(`${dir}/curl.log`).catch(() => ""))
+    .trim().split("\n").filter((l) => l !== "").map((l) => l.split("\t")[0]);
+  return { dir, node, code: out.code, elapsedMs, calls, stderr: new TextDecoder().decode(out.stderr) };
 }
 
 Deno.test("node-secrets keeps the apiserver link the bundle already wrote, and needs no ticket in the KV entry", async () => {
@@ -330,6 +355,59 @@ Deno.test("node-secrets fails, and is restarted by systemd, when the KV entry la
   } finally {
     await Deno.remove(run.dir, { recursive: true });
   }
+});
+
+Deno.test("node-secrets waits for the OpenBao link the bundle started beside it, and retries the login itself", async () => {
+  const run = await nodeSecretsRun(KV, { loginFailures: 3 });
+  try {
+    assertEquals(run.code, 0, run.stderr);
+    assertEquals(run.calls.filter((u) => u.endsWith("/login")).length, 4);
+    assertEquals(run.calls.filter((u) => u.endsWith("/data/ci-node1")).length, 1);
+    assertStringIncludes(
+      run.stderr,
+      `the OpenBao link on ${OPENBAO_LINK_LOCAL_ADDR} has not answered yet (attempt 1 of 120, curl exit 7)`,
+    );
+    assert(run.elapsedMs >= 1500, `three waits of 0.5 s took ${run.elapsedMs} ms`);
+    await Deno.stat(`${run.dir}/done`);
+  } finally {
+    await Deno.remove(run.dir, { recursive: true });
+  }
+});
+
+Deno.test("node-secrets gives the link a bounded wait and then says how long it waited before failing to systemd", async () => {
+  const run = await nodeSecretsRun(KV, { loginFailures: 99, linkWaitAttempts: 3 });
+  try {
+    assertEquals(run.code, 1);
+    assertEquals(run.calls.filter((u) => u.endsWith("/login")).length, 3);
+    assertStringIncludes(run.stderr, "OpenBao login at auth/jwt-0123456789ab as ci-node1 failed after 3 attempts");
+    assert(run.elapsedMs >= 1000, `two waits of 0.5 s took ${run.elapsedMs} ms`);
+    await Deno.stat(`${run.dir}/done`).then(() => {
+      throw new Error("the done stamp was written");
+    }, () => undefined);
+  } finally {
+    await Deno.remove(run.dir, { recursive: true });
+  }
+});
+
+Deno.test("node-secrets retries the read of the KV entry as well as the login, so a link that drops is not a lost boot", async () => {
+  const run = await nodeSecretsRun(KV, { kvFailures: 2 });
+  try {
+    assertEquals(run.code, 0, run.stderr);
+    assertEquals(run.calls.filter((u) => u.endsWith("/login")).length, 1);
+    assertEquals(run.calls.filter((u) => u.endsWith("/data/ci-node1")).length, 3);
+  } finally {
+    await Deno.remove(run.dir, { recursive: true });
+  }
+});
+
+Deno.test("the wait node-secrets puts on the link is 60 s of half-second attempts, and names the listener it is waiting for", () => {
+  assertEquals(NODE_SECRETS_LINK_ATTEMPTS * 500, 60_000);
+  const script = renderNodeSecretsScript();
+  assertStringIncludes(script, `-lt ${NODE_SECRETS_LINK_ATTEMPTS}`);
+  assertStringIncludes(script, "sleep 0.5");
+  assertStringIncludes(script, OPENBAO_LINK_LOCAL_ADDR);
+  assertEquals(renderNodeSecretsScript({ linkWaitAttempts: 7 }).includes("-lt 7"), true);
+  assertEquals(renderNodeSecretsScript({ openbaoAddr: "127.0.0.1:19999" }).includes("127.0.0.1:19999"), true);
 });
 
 async function shimmedLink(script: string, env: Record<string, string>) {
