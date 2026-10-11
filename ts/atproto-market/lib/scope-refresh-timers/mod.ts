@@ -120,7 +120,6 @@ export function createScopeRefresher(opts: ScopeRefresherOptions): ScopeRefreshe
     }
     const input = entry.payload;
     const running = evaluator;
-    scopeCache.applyEvent({ did: entry.counterpartyDid, rkey: "" });
 
     let result: PolicyResult;
     try {
@@ -131,6 +130,7 @@ export function createScopeRefresher(opts: ScopeRefresherOptions): ScopeRefreshe
         selfDid: input.selfDid,
         counterpartyDid: input.counterpartyDid,
         args: input.args,
+        refresh: true,
       });
     } catch (err) {
       state.drop(key);

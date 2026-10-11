@@ -265,3 +265,33 @@ Deno.test("a refresh that errors leaves no verdict", async () => {
   assertEquals(after.allow, true);
   refresher.close();
 });
+
+Deno.test("a bid that lands during a refresh is served the warm verdict", async () => {
+  const { executor, state } = countingExecutor(async () => {
+    if (state.executions === 2) await delay(400);
+    return { allow: true, violations: [] };
+  });
+  const cache = createScopeCache({ positiveTtlMs: 10_000 });
+  const evaluator = harness({ executor, cache });
+  const timers = fakeTimers();
+  const refresher = refresherOf({ cache, evaluator, timers, positiveTtlMs: 10_000 });
+  const gate = gateOf(evaluator, refresher);
+  try {
+    await gate(BIDDER_DID);
+    assertEquals(state.executions, 1);
+
+    timers.setNow(timers.now() + 8000);
+    timers.fireAllDue();
+    await waitFor("the refresh to start", () => state.executions === 2);
+
+    const startedAt = Date.now();
+    const verdict = await gate(BIDDER_DID);
+    const waitedMs = Date.now() - startedAt;
+    assertEquals(verdict.allow, true);
+    assertEquals(state.executions, 2, "the bid did not start a run of its own");
+    assertEquals(waitedMs < 100, true, `the bid waited ${waitedMs}ms on the refresh`);
+    await waitFor("the refresh to finish", () => refresher.stats().refreshes === 1);
+  } finally {
+    refresher.close();
+  }
+});
