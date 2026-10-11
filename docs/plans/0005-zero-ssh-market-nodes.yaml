@@ -85,6 +85,7 @@ items:
       - "installer applies under field manager socialweb-addons; provider records what that manager applied with a live spec hash in the cluster's addon-baseline.json; scale.Narrow drops baseline workloads and pods whose owner is counted"
       - "tests watched to fail then pass: TestOurInstalledOperatorAloneIsNothingDeployed (demand 6 before), TestABaselineWorkloadWhoseSpecChangedIsIntent, TestATenantWorkloadBesideTheBaselineIsIntent, TestABaselineEntryNamesOneNamespace, TestTheSpecHashIsStableAndSeesAReplicaChange, TestObserveLeavesAnIdleClusterOfOurAddOnsAtNoIntent, TestTheBaselineIsWhatOurFieldManagerApplied, TestTheBaselineSurvivesARoundTripThroughItsFile; deploy/check.sh --fast green"
       - "prod 2026-10-07T16:48:28Z baseline measured: 3 ESO Deployments in default"
+      - "SHAs rewritten by the user's 2026-10-08/09 history rewrite (old->current, matched by subject): 65cd9d7->d389636"
   - id: M0-DEMAND
     milestone: M0
     title: Demand stops counting a pod and its owning workload twice
@@ -93,6 +94,8 @@ items:
     evidence:
       - "commit 65cd9d7 (same change as M0-BASELINE)"
       - "tests watched to fail then pass: TestAPodAndItsDeploymentAreOneUnitOfDemand (6, want 3), TestPodsOfACountedJobStatefulSetOrDaemonSetAreNotCountedTwice"
+      - "re-verified 2026-10-10: 65cd9d7 is d389636 after the 2026-10-08/09 history rewrite. Parent d389636^ with d389636's baseline_test.go: FAIL (build: undefined KindDeployment). Behavioural mutation on a scratch HEAD worktree 03:01:30Z (Narrow's pod/owner dedupe removed): TestAPodAndItsDeploymentAreOneUnitOfDemand FAIL 'demanded 6, want 3', TestPodsOfACountedJobStatefulSetOrDaemonSetAreNotCountedTwice FAIL 'demanded 5, want 3'; unmutated HEAD a7932be: ok internal/scale"
+      - "SHAs rewritten by the user's 2026-10-08/09 history rewrite (old->current, matched by subject): 65cd9d7->d389636"
   - id: M0-PROD-ZERO
     milestone: M0
     title: Prod idle cluster observed at 0 nodes with control plane Ready and no new RFPs
@@ -101,6 +104,7 @@ items:
     evidence:
       - "2026-10-07T16:48:30Z..16:51:37Z 96 of 96 scale passes: None, nodes 0, nothing running and no node; 0 RFPs, 0 claims, 0 no_bids"
       - "2026-10-07T16:52:07Z independent check: 111 of 111 passes in 5m None nodes 0; rfps=0 no_bids=0; tenant get nodes: No resources found; /readyz ok"
+      - "re-verified 2026-10-10T02:59:16Z..03:00Z on prod: provider logged node scale action Teardown nodes 0 for test-cluster-alice-0001; test-cluster-alice-0001, acc-gitlab-0001 and acc-gitlab-0002 each list 0 nodes; bob runs 0 guests"
   - id: M0-PROD-BIDDER
     milestone: M0
     title: Retire the bidder that ran on the prod host
@@ -112,6 +116,7 @@ items:
         out of /etc/systemd/system; 6 fc-1379be663dd9-* containers removed; no process left under
         its guests dir; 17G of guest disks deleted; bidder-key.hex, bidder.env and the unit kept in
         /root/retired-bidder; systemctl is-active reads inactive; prod / at 26%.
+      - "re-verified 2026-10-10T03:01:53Z on socialweb.computer: systemctl is-active socialweb-computer-bidder-firecracker = inactive; no bidder-firecracker unit in /etc/systemd/system; /root/retired-bidder holds bidder-key.hex, bidder.env, socialweb-computer-bidder-firecracker.service; 0 fc-* containers"
   - id: M0-TMP
     milestone: M0
     title: Delete hat-8's three dead /tmp directories, never /tmp/live-k3s-*
@@ -122,6 +127,7 @@ items:
     evidence:
       - "2026-10-07T16:51Z: no process cmdline or cwd referenced any of the three (own shell excluded), none written in the last hour; rfp-guests 6.6G, nodeboot-check 6.6G, nodeimage-preinstall-check 5.6G removed (its root-owned stage/ via sudo after /proc/mounts showed no mount under it)"
       - "2026-10-07T16:52:03Z /tmp 24G tmpfs at 12% (2.6G used, was 92%); all 7 /tmp/live-k3s-* untouched"
+      - "re-verified 2026-10-10T03:01:44Z on hat-8: /tmp/rfp-guests, /tmp/nodeboot-check and /tmp/nodeimage-preinstall-check absent (test -e false for each); /tmp tmpfs 24G, 6.9M used"
   - id: M1-TESTBED
     milestone: M1
     title: Vendor deno-kcp CRDs and deploy/examples/atproto/market (with PR 2's bidder and bob PDS) as the live test bed
@@ -142,6 +148,7 @@ items:
       - "tests watched to fail then pass: TestTheVendoredDenoKcpTreeIsExactlyItsRecord, TestTheRecordMatchesTheDenoKcpCommitItNames, TestEveryVendoredManifestDecodesAgainstTheVendoredSchemas (no vendor.json, then pass; a mutated 70-bidder.yaml fails all three); TestTheMarketTestBedRentsAFirecrackerGuestThroughTheRFPFlow (FAIL 964 s at 2026-10-07T20:09:51Z, guest socket path too long; PASS 684 s at 2026-10-07T20:22:12Z)"
       - "accept.sh on hat-8 2026-10-07: run 1 17:23Z 0/17 (OpenBao 400); run 2 17:30:42Z deno-worker bidder as upstream, accept: pass 17/17 (upstream bidder registered did:plc:lm4cljto7fyrug2xgjvsefh3 in the public plc.directory); run 3 17:45Z firecracker bidder up, RFP 403 scope filter (only-me); run 4 17:53Z bid, accept, receipt verified, guest booted, every DenoPod killed at the 5m pod timeout; runs 5-8 vm.delete 200 and guest gone, guest never got its OIDC token; run 9 19:53:16Z accept: pass 23/23, onNetwork iroh ticket 335 s after the RFP, vm.delete 200, guest container gone 2 s after release"
       - "deploy/check.sh --fast green 2026-10-07T20:23:04Z on the branch merged with main"
+      - "SHAs rewritten by the user's 2026-10-08/09 history rewrite (old->current, matched by subject): 3e1f2c6->5060160 c1451df->04dece8 d4448f2->09e4f31 e997fe6->0c3dab8 fb6da3a->2d40964"
   - id: M1-MARKET-ONLY
     milestone: M1
     title: Retire clusterprovider's local firecracker and qemu substrates
@@ -161,6 +168,8 @@ items:
       - "commit cd12808: internal/nodeqemu deleted; internal/nodefirecracker trimmed to the image, manifest, namespace-child, fingerprint and guest-document halves the bidder's nodeboot builds and boots; SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE accepts market alone and refuses firecracker/qemu by name and retirement date; the variables only the retired substrates read (FIRECRACKER, QEMU, NODE_AGENT, IMAGE_OUT_DIR, IMAGE_CONFIG, NETWORK, NODE_DISK_MIB) are refused rather than parsed; GuestDialled, GuestGateway, nodeVaultStage, the per-node network allocation, AssertGuestAdvertiseInvariant, dialFromAGuest and internal/nodevm's guest-dial helpers deleted; internal/clusterprovider's guest advertise invariant and image-config check deleted; deploy/control-plane-container's computer target and nodeimage-qemu stage, deploy/test-rig and cmd/socialweb-rig-inputs deleted; run-container.sh keeps the k8s target"
       - "tests watched to fail then pass: cmd/socialweb-clusterprovider TestTheRetiredSubstratesAreRefusedAtStartup, TestTheRetiredSubstratesAreRefusedAndNameTheirRetirement, TestNoPlacementSuppliesAProcessIdentityAnyMore, TestTheMarketSweepLeavesARetiredSubstratesRecordAlone, TestASweepLeavesARecordWhoseSubstrateItCannotRead, TestShutdownLeavesTheMarketNodesToTheNextProvider, TestTheCredentialSourceIsTheClustersOwnCA; internal/clusterstack TestAStackWithNoDialFlagValidates, TestOnlyAMarketClusterDropsFlannel; internal/portallocator dropped AssertGuestAdvertiseInvariant and AssertGuestDialAddress with no remaining caller"
       - "deploy/check.sh --fast green 2026-10-07T21:50:55Z on the branch at cd12808 (gofmt, go build, apigen no drift, go vet, staticcheck, cargo, go test ./...); go build ./... and go vet ./... clean again at b2e931a 2026-10-07T21:51:03Z"
+      - "re-verified 2026-10-10: cd12808 is 9d85916, b2e931a is 5b48f5d after the history rewrite. Parent 9d85916^ with 9d85916's config_test.go/market_test.go: FAIL (build: undefined RetiredSubstratesRetiredOn). Behavioural mutation 03:01:30Z (checkPlacement's default branch returns nil): TestTheRetiredSubstratesAreRefusedAtStartup FAIL 'firecracker was accepted as a placement'; HEAD a7932be: ok cmd/socialweb-clusterprovider"
+      - "SHAs rewritten by the user's 2026-10-08/09 history rewrite (old->current, matched by subject): b2e931a->5b48f5d cd12808->9d85916"
   - id: M1-AGENT-SPLIT
     milestone: M1
     title: Split socialweb-nodeagent into a static guest binary (init and agent) and a host binary (namespace and VMM runner)
@@ -186,6 +195,9 @@ items:
       - "the market test bed live test was attempted twice and did NOT reach a verdict on this change: 2026-10-07T21:48Z SKIPPED (ports 2583-2589 held by an earlier session's bed), then 2026-10-07T21:55:29Z FAIL in 120 s with the BED's own bring-up broken -- apply.sh failed 3/3, no OpenBao ready, no DenoPod in any workspace, the OpenBao CA unreadable, and no guest work directory ever created -- while that other session's bed came back up on the same fixed ports (ss shows the listeners again). The failure is upstream of everything this change touches: the bed never reached an RFP, so the node image, the init binary and the renamed image keys were never read. Nothing in this change is known-failing; the live reading is owed on a host with no second bed running"
       - "REOPENED 2026-10-07T22:50Z by the lead: the image bcdfbb68 above was built WITHOUT -preinstall (image.json preinstall \"\"), so its rootfs carries no cloud-init (no /etc/cloud, no cloud-init.target.wants, no /usr/bin/cloud-init; debugfs on the bidder store). Prod guest fc-1379be663dd9-4d49fee1 booted it 22:23Z, console stops after fcnet.service, no cloud-init stage, door node_claim_ended outcome network_timeout 22:43:08Z. Done needs an image built WITH preinstall-market.json, shipped, and a market guest that runs cloud-init on it"
       - "live 2026-10-07: guests on images 0437ff0d and 52df8a09 (built from cmd/socialweb-nodeinit, no kcp-agent unit) ran cloud-init and joined; console shows no KCP_AGENT line"
+      - "re-verified 2026-10-10: cd12808 is 9d85916 after the history rewrite; tree at a7932be has cmd/socialweb-nodeinit and no cmd/socialweb-nodeagent; parent 9d85916^ with 9d85916's inputs_test.go: FAIL [build failed]; HEAD: ok cmd/socialweb-nodeimage (TestAnImageBuiltBeforeTheRecordCoveredTheInitIsRefused)"
+      - "live 2026-10-10T03:01:44Z: the image prod guests boot today (sha256-5b823ce0, built 02:43Z from main 1ecc684) has /kcp holding guest.yaml alone, no kcp-agent.service in /etc/systemd/system, its multi-user.target.wants or /usr/lib/systemd/system, and no /usr/local/bin/socialweb-nodeagent; guests on it joined via cloud-init at 02:44Z (np-client/np-server nodes) and 02:58:45Z (sched-probe node)"
+      - "SHAs rewritten by the user's 2026-10-08/09 history rewrite (old->current, matched by subject): cd12808->9d85916"
   - id: M1-IMAGE-SHIP
     milestone: M1
     title: The bidder installer ships exactly the image the current inputs name, never a stale one
@@ -213,6 +225,7 @@ items:
       - "deploy/check.sh --fast green at ea4f664 (gofmt, go build, apigen no drift, go vet, staticcheck, cargo fmt, cargo test, go test ./...) -- the last commit, and the working tree the check ran on is that commit"
       - "not proven here, and the lead runs them: a real build under the new (b) and a real install. Expect the first real install to fail at the target's check if the target's store still holds the preinstall-less bcdfbb68 newer than the shipped image: that is the check doing its job, and the fix is to reap the target's other store directories"
       - "live 2026-10-07T23:39Z: the installer resolved 'the build host holds no image of these inputs: building it', built sha256-52df8a09 under sudo, shipped it, the target resolved exactly that dir; a guest booted it 23:47:43Z"
+      - "SHAs rewritten by the user's 2026-10-08/09 history rewrite (old->current, matched by subject): 5409398->317e739 9797f50->3e5d90a ea4f664->2010161"
   - id: M1-BIDDER-UNIT
     milestone: M1
     title: System template unit socialweb-computer-bidder@<handle>.service
@@ -234,6 +247,7 @@ items:
       - "hat-8 2026-10-07T17:10Z deploy-firecracker-bidder.sh --local (MANAGE_DOCKER_DAEMON=no, prod untouched): rc 0, store verified, template/launcher/common.env installed, module cache warm, target ensure -reuse-stale answered reused from sha256-6e4f4f95...; second run rc 0 with all three unchanged and nothing restarted"
       - "hat-8 2026-10-07T17:11:24Z systemctl start socialweb-computer-bidder@bobvmbuilder.bsky.social with its session seeded as a 0600 swc-bidder copy of ~/.cache/pdr-market/bob-bidder-oauth-session.json: restore refused by the PDS (invalid_grant, Refresh token replayed -- the source file's refresh token was already spent, the source is unchanged), bidder deleted the copy, journal at 17:11:26Z shows the 60-char = frame, the QR, https://qr.fedfork.com/#oauth=did%3Aplc%3Awadxdef7inpvtaen77n7cfxw&n=... and oauth_qr_awaiting_session; bidder_ready not reached without a scan"
       - "hat-8 2026-10-07T17:11:38Z systemctl disable --now: is-active inactive, is-enabled disabled, 0 swc-bidder processes; template, launcher, common.env and bobvmbuilder.bsky.social.env (BIDDER_POLICY=tangled-vouch) left installed"
+      - "SHAs rewritten by the user's 2026-10-08/09 history rewrite (old->current, matched by subject): 51f9000->e0e2c6e 5330ff2->910f622"
   - id: M2-EVENT-CORE
     milestone: M2
     title: ABC-layered event-driven requester core in atproto-market
@@ -248,6 +262,8 @@ items:
       - "packages @publicdomainrelay/compute-request-abc (ContractState, phases requested..released, handlers onRfpSubmitted/onBid/onAccepted/onReceipt/onNetwork/onSecretsFetched, parse/serialize) and @publicdomainrelay/compute-request-xrpc (requestCompute, releaseCompute, awaitComputeNetwork); secrets capability reports onServed -> onSecretsFetched"
       - "tests fail->pass: test/compute_request_test.ts (event order, return at onRfpSubmitted, return at onNetwork submits no vm.delete, onBid deny never accepted, all-denied no contract, onSecretsFetched return, awaitComputeNetwork resume), test/compute_request_state_test.ts (7), test/secrets_capability_test.ts onServed; whole suite 109 passed 0 failed 4 ignored (was 92)"
       - "not yet proven: awaitComputeNetwork backfill path; onSecretsFetched with a real guest; a live early return -- closed by M2-CLAIM-RECEIPT and M3 live runs"
+      - "re-verified 2026-10-10: cdb0f9c is a260ed0 and 28a1be5 is 1a0a83b on atproto-market pre-iroh after the history rewrite; 03:02:05Z at pre-iroh 57bbcd3 test/compute_request_test.ts + compute_request_state_test.ts + secrets_capability_test.ts: 35 passed, 0 failed"
+      - "SHAs rewritten by the user's 2026-10-08/09 history rewrite (old->current, matched by subject): 28a1be5->1a0a83b(atproto-market) cdb0f9c->a260ed0(atproto-market)"
   - id: M2-RELEASE
     milestone: M2
     title: Standalone releaseCompute(receipt) that submits vm.delete
@@ -257,6 +273,8 @@ items:
       - "28a1be5 releaseCompute(pds, state) submits vm.delete from a saved ContractState"
       - "test: releaseCompute from a JSON round-tripped state submits vm.delete from another process; no receipt refs submits nothing"
       - "live: bidder_container_integration_test vm_delete_result 200 through the wrapper (release from the SAME owner DID; the door releases as the owner, so a foreign signer is not needed)"
+      - "re-verified 2026-10-10: 28a1be5 is 1a0a83b on pre-iroh. Behavioural mutation 03:02:43Z (releaseCompute returns before vm.delete even with receipt refs; file restored by git checkout, status clean): 'releaseCompute from a JSON round-tripped state submits vm.delete from another process' FAILED (17 passed, 1 failed); unmutated 57bbcd3: 35 passed, 0 failed"
+      - "SHAs rewritten by the user's 2026-10-08/09 history rewrite (old->current, matched by subject): 28a1be5->1a0a83b(atproto-market)"
   - id: M2-WRAPPER
     milestone: M2
     title: runComputeContract reimplemented as a thin wrapper over the event core
@@ -266,6 +284,8 @@ items:
       - "28a1be5 runComputeContract = requestCompute + existing ssh session + releaseCompute unless keepVm; signature, options, ContractFlowResult unchanged; old flow code deleted"
       - "test/bidder_container_integration_test.ts green before (38s) and after (44s), SSH_OK_VIA_IROH"
       - "deno check green: socialweb-computer-ssh (task check, requester-inproc, live_market_test), socialweb-computer-k8s (task check, node-market, requester-inproc, node_market_test, live_market_node_test)"
+      - "re-verified 2026-10-10: 28a1be5 is 1a0a83b on pre-iroh; every prod contract since runs through it: today's joins (02:44Z, 02:58Z) ran requestCompute -> releaseCompute through the door, and bob ran 0 guests after the 02:59:16Z Teardown"
+      - "SHAs rewritten by the user's 2026-10-08/09 history rewrite (old->current, matched by subject): 28a1be5->1a0a83b(atproto-market)"
   - id: M2-CLAIM-RECEIPT
     milestone: M2
     title: NodeClaim tracks receipt and contract URIs
@@ -293,6 +313,7 @@ items:
       - "green: socialweb-computer-k8s deno task check exit 0; deno task test 80 passed 0 failed 1 ignored (live_market_node_test: SOCIALWEB_K8S_LIVE unset and SOCIALWEB_FIRECRACKER_* unset; k3s/kine/kubectl/docker present); run from a scratch org root (siblings symlinked, worktree rsynced) because the worktree's ../../ imports do not resolve; deploy/check.sh --fast green"
       - "test/live_market_node_test.ts compiles against the new API (requestCompute wrapper adds extraBidderDids + guestHostAliases; asserts contract phase released + release.ok after delete); NOT run"
       - "not proven: a live door restart against a real bidder; the live instrument end to end on the new path; status writes failing mid-flow (a failed onReceipt PATCH leaves the claim without its receipt and the VM unreleasable from the claim); deploy needed (not done, user deploys) -- door code only, no schema change"
+      - "SHAs rewritten by the user's 2026-10-08/09 history rewrite (old->current, matched by subject): 444755e->d81ff42 4c60f9d->d2a7426 8af4f67->314bc58"
   - id: M2-CODEGEN
     milestone: M2
     title: Go api/v1alpha1 generates the APIResourceSchema and a TS types plus validator package for the door
@@ -314,6 +335,7 @@ items:
       - "drift red: a Go field added to NodeClaimStatus without a Revision bump -> check.sh FAILED apigen (revision lock: spec of v1alpha1-2 changed); with the bump but not regenerated -> check.sh FAILED apigen drift (diff of lock, export, schema, mod.ts); reverted"
       - "green: deploy/check.sh --fast (ok apigen, 8 generated files); socialweb-computer-k8s deno task check exit 0; deno task test 72 passed 0 failed 1 ignored (from a real-org-root copy; the worktree's ../../ siblings do not resolve)"
       - "deploy needed (not done, user deploys): install-provider.sh applies deploy/nodeclaim-apiresourceschema.yaml (creates v1alpha1-2) then deploy/cluster-apiexport.yaml (re-point); no binding migration; the door and the schema must ship together"
+      - "SHAs rewritten by the user's 2026-10-08/09 history rewrite (old->current, matched by subject): 5d5ce05->e9eab79 99e894c->9322188 d1cb357->42b18ed ee7e07c->5364b92"
   - id: M2-BACKOFF
     milestone: M2
     title: Exponential no_bids back-off per cluster, capped at 10m
@@ -339,6 +361,7 @@ items:
       - "guards that passed first time: TestAFailureAfterABidWasAcceptedDoesNotBackOff, TestANodeCountAtTheTargetIsNotReportedAsBackingOff"
       - "deploy/check.sh --fast green after 0807250"
       - "not yet proven on prod: a cluster with intent and no bidder reading RFPs at 30s/1m/2m/4m/8m/10m gaps and the 'backing off' node-scale line -- needs a deploy"
+      - "SHAs rewritten by the user's 2026-10-08/09 history rewrite (old->current, matched by subject): 0807250->ee19ae2 d336b86->ec19df7 f4ce9be->5a067f9"
   - id: M3-CLUSTERLINK
     milestone: M3
     title: ClusterLink CRD and per-cluster dumbpipe listeners for the k3s apiserver and the cluster's OpenBao
@@ -362,6 +385,7 @@ items:
       - "deploy/check.sh --fast green at c90f9f2 (gofmt, build, apigen 9 files no drift, vet, staticcheck, go test)"
       - "stated limits (ARCHITECTURE 'The cluster links'): a link that dies after bring-up is not restarted until the group is next brought up; link ports are probed for TCP only; the IPv6 socket is unpinned"
       - "not yet proven on prod: needs a deploy (install-provider.sh re-applies the permission inventory); then a ClusterLink pair per cluster in each home workspace, phase Listening"
+      - "SHAs rewritten by the user's 2026-10-08/09 history rewrite (old->current, matched by subject): 0f24132->2d9f6b1,68abfc8 3656ae9->cc8f58c 41349d6->771f833 596bb86->5d9851b 7c308b4->d61fed1 8f2211a->10f2845 90f4130->c9ecd62 c90f9f2->dfa175a"
   - id: M3-IROH-KEYS
     milestone: M3
     title: Iroh secret keys persisted in the cluster's OpenBao, public key expressed as did:key
@@ -376,6 +400,7 @@ items:
       - "tests watched to fail then pass: internal/didkey TestTheDidKeySpecVectorEncodesAnEd25519PublicKey (spec vector 3b6a27bc..da29 -> did:key:z6MkiTBz1ymuepAQ4HEHYSF1H8quG5GLVVQR3djdX3mDooWp), TestTheDidKeySpecVectorDecodesBackToItsPublicKey, TestTheEndpointIDDumbpipeDerivesFromIrohSecretIsTheSeedsPublicKeyInHex (red with multicodec 0xed00 and a truncated id); internal/clusterlink TestTheKeyIsGeneratedOnceAndAProviderRestartReadsTheSameOneBack, TestALosingFirstWriteTakesTheKeyThatWon, TestAnUnreadableStoredKeyIsNeverRegeneratedOver (red with the stored key ignored)"
       - "live (SOCIALWEB_LOCAL=1, bao + embedded postgres): TestTheLinkKeyIsKeptInTheClusterVaultAndReadBackAfterTheVaultRestarts PASS 2.5s -- key written, a second check-and-set first write refused, vault stopped and restarted on the same store, same endpoint id and did read back, the openbao link has its own key"
       - "stability decision (decided by Claude, user may veto): status.ticket is clusterlink.StableTicket(key), the id-only ticket that IROH_SECRET=<seed> dumbpipe generate-ticket prints (fixture endpointadfwnbtf..rutyaa for seed f855..91d8), so it is byte-stable for as long as the key is in the vault; the printed ticket (relay + addresses, different bytes per run) is only checked to name the key. Watched to fail with the printed ticket published: TestThePublishedTicketIsWhatDumbpipeGenerateTicketPrintsForTheKeyAndNeverChanges, TestTheTicketDumbpipePrintsIsFoundAndNamesTheEndpointItsSecretDerives, TestEachLinkIsRecordedListeningWithTheStableTicketAndTheDidKeyOfItsKey"
+      - "SHAs rewritten by the user's 2026-10-08/09 history rewrite (old->current, matched by subject): 017d8ee->c02b559 3c80658->2c9206d 8f2211a->10f2845"
   - id: M3-SECRETS-TICKET
     milestone: M3
     title: OpenBao ticket delivered through the --secrets capability
@@ -400,6 +425,7 @@ items:
       - "not proven: a real guest fetching the bundle and logging in (needs the provider's ClusterLink ticket, OpenBao JWT mount/role and KV entry); not deployed"
       - "interface needs from the provider (ARCHITECTURE section 9 list): ClusterLink <clusterKey>-openbao with status.ticket before the claim exists; a published OpenBao CA path (NodeClaim spec field or ClusterLink status) or the guarantee of <dirname(tokenFile)>/openbao/tls/ca.crt; KV fields token, nodePassword, serverCA (exact server-ca.crt bytes), apiserverTicket (bare), advertiseAddress (IPv4), apiserverPort; nodemarket.ConfirmJoined accepting Joining"
       - 'prod 2026-10-07 fresh guest fc-1379be663dd9-9d1763c5 (bob, image sha256-0437ff0d, door+provider at 3919df6/eada921): claim written 23:15:58.76Z, RFP 23:15:59.79Z, winner 23:16:11.30Z, receipt 23:16:12.32Z, microVM booted 23:16:13.67Z, setup-secrets token exchange at bob /v1/oidc/issue 23:17:49Z, door secrets_served + claim Joining 23:17:52.5Z, node-secrets ''fetched the join secrets'' (OpenBao JWT login over the dumbpipe openbao link) 23:17:56Z, apiserver link + k3s agent, Node registered 23:18:03Z, Ready 23:18:04Z; no ssh session to that guest (its debug key was never used)'
+      - "SHAs rewritten by the user's 2026-10-08/09 history rewrite (old->current, matched by subject): 0f3a771->6b6a762 117ab30->333108a(atproto-market) 3919df6->4c7e5b3 657a915->41705ed 87562e8->07ac55a a1b467f->86a68c3(atproto-market) b489218->05523fc eada921->d86b93c"
 
       - "LOCAL gate (hat-8, no prod, rerunnable): TestAMarketNodeJoinsATenantClusterThroughItsOpenBaoWithNoSsh in internal/marketbed PASS 753.57s, finished 2026-10-07T23:55:13Z, on the 7th run of the day; the 6 earlier runs are the readings that closed the defects below. It brings the vendored market test bed up held (accept.sh ACCEPT_HOLD_DIR), runs the deployed control-plane container image socialweb-k8s:m3live built from this tree against it (SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE=market, the same entrypoint prod runs), creates a cluster the way kcpclient does, and applies ONE Deployment to the tenant. Readings (UTC): 23:48:21Z test bed held up (bidder did:plc:vvb2czwkqncbgb6fnyledro2); 23:49:18Z cluster 11l3u1ii-m3 Ready with ClusterLinks 11l3u1ii-m3-apiserver and 11l3u1ii-m3-openbao Listening; 23:49:18Z workload applied at zero nodes; 23:49:21Z NodeClaim 11l3u1ii-m3-node1 written (creationTimestamp 23:49:19Z) after both links listened; 23:49:24Z status.grant {issuer https://did-key-zq3shpydjewhxwsdvhzmhk2gra2vduhp3h2y4pv8yecmmrjsm.relay.localhost, audience socialweb.computer/node/11l3u1ii-m3/11l3u1ii-m3-node1, role 11l3u1ii-m3-node1} and the provider created the OpenBao JWT role 11l3u1ii-m3-node1; 23:49:27Z guest fc-7066f9bdb453-d87bccdc booted from the bidder's cloud-init; 23:49:32Z guest fetched the --secrets bundle; 23:49:37Z guest logged in to the cluster OpenBao over its openbao link and read its KV; 23:49:47Z tenant Node 11l3u1ii-m3-node1 Ready with the workload pod Running on it and the door phase Joining, 29s after the Deployment was applied; 23:50:03Z the control plane container replaced (door and provider restarted) with the node up; 23:52:35Z claim adopted (same uid), node Ready, guest running, no vm.delete, observed for 2m30s; 23:52:35Z workload deleted; 23:55:12Z claim deleted and the door released the node (vm_delete_result 200 at 23:55:11.733Z); 23:55:13Z guest gone, zero nodes with the control plane Ready. For this item: the guest's setup-secrets finished 5s after boot (23:49:32Z), writing the three files the capability served (openbao-ticket, openbao-ca.pem, claim.json), and its own node-secrets then read claim.json - neither file is a secret value, and nothing in the door log names an ssh session."
       - "LOCAL gate defects this item's runs found and closed: (1) the door derived the cluster key again from the claim instead of taking spec.cluster, so it read ClusterLink <hash>-<hash>-<cluster>-openbao and every live claim failed at 20:59:06Z with 'carries no ticket yet' (87562e8, main 657a915); (2) the requester waited 30s on its own firehose when a bidder that had already dispatched the accept answered submitAccept with no receipt, and ended receipt_invalid with a VM provisioned and no receipt to release it by - eight guests rented in three minutes for one node at 21:06:39Z (atproto-market a1b467f: the winner's repo is asked for the market.receipt whose accept.uri is this accept); (3) setup-secrets.sh appended '==' to every JWT payload, and GNU base64 -d exits 1 on surplus padding when the payload is 0 or 3 mod 4, so a subject of that length never fetched anything (atproto-market 117ab30, red-first test test/cloud_init_secrets_subject_test.ts, 3 lengths, 2 of 3 fail before the fix)."
@@ -424,6 +450,7 @@ items:
       - "interface for the door/guest: login POST /v1/auth/jwt-<sha256(issuer)[:12]>/login {role: <node>, jwt: <token with sub = grant.subject, aud = grant.audience>}; read GET /v1/socialweb-nodes/data/<node> with X-Vault-Token; the bidder issuer must serve <issuer>/.well-known/openid-configuration and its JWKS to the provider host"
       - 'prod 2026-10-07 fresh guest fc-1379be663dd9-9d1763c5 (bob, image sha256-0437ff0d, door+provider at 3919df6/eada921): claim written 23:15:58.76Z, RFP 23:15:59.79Z, winner 23:16:11.30Z, receipt 23:16:12.32Z, microVM booted 23:16:13.67Z, setup-secrets token exchange at bob /v1/oidc/issue 23:17:49Z, door secrets_served + claim Joining 23:17:52.5Z, node-secrets ''fetched the join secrets'' (OpenBao JWT login over the dumbpipe openbao link) 23:17:56Z, apiserver link + k3s agent, Node registered 23:18:03Z, Ready 23:18:04Z; no ssh session to that guest (its debug key was never used)'
       - 'live read 2026-10-07T22:53Z of the tenant OpenBao: mount jwt-df356681a07e bound_issuer = bob''s issuer, role <node> bound_subject actx:<bidder>:plc:<owner>:role:<node>, bound_audiences socialweb.computer/node/<clusterKey>/<node>, token_ttl 300, policy node-<node>; stale mounts from earlier issuers tracked in M3-BAO-SYNC'
+      - "SHAs rewritten by the user's 2026-10-08/09 history rewrite (old->current, matched by subject): 3919df6->4c7e5b3 9dff4fa->afc0c51 eada921->d86b93c ff3ca9c->4700d8c"
 
       - "LOCAL gate (hat-8, no prod, rerunnable): TestAMarketNodeJoinsATenantClusterThroughItsOpenBaoWithNoSsh in internal/marketbed PASS 753.57s, finished 2026-10-07T23:55:13Z, on the 7th run of the day; the 6 earlier runs are the readings that closed the defects below. It brings the vendored market test bed up held (accept.sh ACCEPT_HOLD_DIR), runs the deployed control-plane container image socialweb-k8s:m3live built from this tree against it (SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE=market, the same entrypoint prod runs), creates a cluster the way kcpclient does, and applies ONE Deployment to the tenant. Readings (UTC): 23:48:21Z test bed held up (bidder did:plc:vvb2czwkqncbgb6fnyledro2); 23:49:18Z cluster 11l3u1ii-m3 Ready with ClusterLinks 11l3u1ii-m3-apiserver and 11l3u1ii-m3-openbao Listening; 23:49:18Z workload applied at zero nodes; 23:49:21Z NodeClaim 11l3u1ii-m3-node1 written (creationTimestamp 23:49:19Z) after both links listened; 23:49:24Z status.grant {issuer https://did-key-zq3shpydjewhxwsdvhzmhk2gra2vduhp3h2y4pv8yecmmrjsm.relay.localhost, audience socialweb.computer/node/11l3u1ii-m3/11l3u1ii-m3-node1, role 11l3u1ii-m3-node1} and the provider created the OpenBao JWT role 11l3u1ii-m3-node1; 23:49:27Z guest fc-7066f9bdb453-d87bccdc booted from the bidder's cloud-init; 23:49:32Z guest fetched the --secrets bundle; 23:49:37Z guest logged in to the cluster OpenBao over its openbao link and read its KV; 23:49:47Z tenant Node 11l3u1ii-m3-node1 Ready with the workload pod Running on it and the door phase Joining, 29s after the Deployment was applied; 23:50:03Z the control plane container replaced (door and provider restarted) with the node up; 23:52:35Z claim adopted (same uid), node Ready, guest running, no vm.delete, observed for 2m30s; 23:52:35Z workload deleted; 23:55:12Z claim deleted and the door released the node (vm_delete_result 200 at 23:55:11.733Z); 23:55:13Z guest gone, zero nodes with the control plane Ready. For this item: node-secrets exchanged its workload token for the claim's audience, logged in to the cluster OpenBao at the jwt mount the provider created (logged 'the node can log in to the cluster OpenBao with its workload token', role and policy named for the node) and read its own KV entry at 23:49:37Z; a first attempt failed and the unit's Restart=on-failure retried it five seconds later, which is the retry design."
   - id: M3-UNITS
@@ -452,6 +479,7 @@ items:
       - "not proven: the units on a real guest (systemd ordering, dumbpipe connect-tcp against a provider listen-tcp, k3s agent Ready); needs M3-CLUSTERLINK and M3-JWT; not deployed"
       - 'prod 2026-10-07 fresh guest fc-1379be663dd9-9d1763c5 (bob, image sha256-0437ff0d, door+provider at 3919df6/eada921): claim written 23:15:58.76Z, RFP 23:15:59.79Z, winner 23:16:11.30Z, receipt 23:16:12.32Z, microVM booted 23:16:13.67Z, setup-secrets token exchange at bob /v1/oidc/issue 23:17:49Z, door secrets_served + claim Joining 23:17:52.5Z, node-secrets ''fetched the join secrets'' (OpenBao JWT login over the dumbpipe openbao link) 23:17:56Z, apiserver link + k3s agent, Node registered 23:18:03Z, Ready 23:18:04Z; no ssh session to that guest (its debug key was never used)'
       - commits 3919df6 (CNI under --flannel-backend=none), bde602f (units log to the console), 2501ea9 (node-diagnose)
+      - "SHAs rewritten by the user's 2026-10-08/09 history rewrite (old->current, matched by subject): 0f3a771->6b6a762 2501ea9->15c8d9f 3919df6->4c7e5b3 657a915->41705ed bde602f->8636fa2 eada921->d86b93c"
 
       - "LOCAL gate (hat-8, no prod, rerunnable): TestAMarketNodeJoinsATenantClusterThroughItsOpenBaoWithNoSsh in internal/marketbed PASS 753.57s, finished 2026-10-07T23:55:13Z, on the 7th run of the day; the 6 earlier runs are the readings that closed the defects below. It brings the vendored market test bed up held (accept.sh ACCEPT_HOLD_DIR), runs the deployed control-plane container image socialweb-k8s:m3live built from this tree against it (SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE=market, the same entrypoint prod runs), creates a cluster the way kcpclient does, and applies ONE Deployment to the tenant. Readings (UTC): 23:48:21Z test bed held up (bidder did:plc:vvb2czwkqncbgb6fnyledro2); 23:49:18Z cluster 11l3u1ii-m3 Ready with ClusterLinks 11l3u1ii-m3-apiserver and 11l3u1ii-m3-openbao Listening; 23:49:18Z workload applied at zero nodes; 23:49:21Z NodeClaim 11l3u1ii-m3-node1 written (creationTimestamp 23:49:19Z) after both links listened; 23:49:24Z status.grant {issuer https://did-key-zq3shpydjewhxwsdvhzmhk2gra2vduhp3h2y4pv8yecmmrjsm.relay.localhost, audience socialweb.computer/node/11l3u1ii-m3/11l3u1ii-m3-node1, role 11l3u1ii-m3-node1} and the provider created the OpenBao JWT role 11l3u1ii-m3-node1; 23:49:27Z guest fc-7066f9bdb453-d87bccdc booted from the bidder's cloud-init; 23:49:32Z guest fetched the --secrets bundle; 23:49:37Z guest logged in to the cluster OpenBao over its openbao link and read its KV; 23:49:47Z tenant Node 11l3u1ii-m3-node1 Ready with the workload pod Running on it and the door phase Joining, 29s after the Deployment was applied; 23:50:03Z the control plane container replaced (door and provider restarted) with the node up; 23:52:35Z claim adopted (same uid), node Ready, guest running, no vm.delete, observed for 2m30s; 23:52:35Z workload deleted; 23:55:12Z claim deleted and the door released the node (vm_delete_result 200 at 23:55:11.733Z); 23:55:13Z guest gone, zero nodes with the control plane Ready. For this item: the guest is born from the RFP's cloud-init user_data - the four join units plus main's pod network units are enabled and started after setup-secrets, node-secrets is the oneshot that fetches, and the apiserver link then the k3s agent follow, which is what registers the Node 8s before it reports Ready."
   - id: M3-NODE-LOSS
@@ -481,6 +509,7 @@ items:
       - "with the door half (0f3a771 + b489218, merged), prod's door and provider can now both restart without reaping a live market node -- in code and tests; not deployed, not yet read on prod"
       - "not done: deploy; a prod provider restart with market nodes up re-registering within the 90s loss grace after the group comes back; a live NotReady release against a real bidder"
       - 'live 2026-10-07T22:52:55Z: a node NotReady since 22:51:24Z was released by the 90s rule and a replacement rented; 2f0ad94+eada921: a never-Ready node gets a join grace (2m default, SOCIALWEB_CLUSTERPROVIDER_NODE_JOIN_GRACE) instead; restarts adopt: 23:01:4xZ deploy -> ''adopted a live market node a previous provider process rented''; 3539ad8: a held node whose claim was deleted is released and replaced (live 22:22:53Z)'
+      - "SHAs rewritten by the user's 2026-10-08/09 history rewrite (old->current, matched by subject): 0f3a771->6b6a762 2f0ad94->d872ca7 3539ad8->90740fd 6af8994->0b02637 932b139->a6072ee 9ca4c04->acd218f 9dff4fa->afc0c51 b2624c6->3f0d73b b489218->05523fc eada921->d86b93c"
 
       - "LOCAL gate (hat-8, no prod, rerunnable): TestAMarketNodeJoinsATenantClusterThroughItsOpenBaoWithNoSsh in internal/marketbed PASS 753.57s, finished 2026-10-07T23:55:13Z, on the 7th run of the day; the 6 earlier runs are the readings that closed the defects below. It brings the vendored market test bed up held (accept.sh ACCEPT_HOLD_DIR), runs the deployed control-plane container image socialweb-k8s:m3live built from this tree against it (SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE=market, the same entrypoint prod runs), creates a cluster the way kcpclient does, and applies ONE Deployment to the tenant. Readings (UTC): 23:48:21Z test bed held up (bidder did:plc:vvb2czwkqncbgb6fnyledro2); 23:49:18Z cluster 11l3u1ii-m3 Ready with ClusterLinks 11l3u1ii-m3-apiserver and 11l3u1ii-m3-openbao Listening; 23:49:18Z workload applied at zero nodes; 23:49:21Z NodeClaim 11l3u1ii-m3-node1 written (creationTimestamp 23:49:19Z) after both links listened; 23:49:24Z status.grant {issuer https://did-key-zq3shpydjewhxwsdvhzmhk2gra2vduhp3h2y4pv8yecmmrjsm.relay.localhost, audience socialweb.computer/node/11l3u1ii-m3/11l3u1ii-m3-node1, role 11l3u1ii-m3-node1} and the provider created the OpenBao JWT role 11l3u1ii-m3-node1; 23:49:27Z guest fc-7066f9bdb453-d87bccdc booted from the bidder's cloud-init; 23:49:32Z guest fetched the --secrets bundle; 23:49:37Z guest logged in to the cluster OpenBao over its openbao link and read its KV; 23:49:47Z tenant Node 11l3u1ii-m3-node1 Ready with the workload pod Running on it and the door phase Joining, 29s after the Deployment was applied; 23:50:03Z the control plane container replaced (door and provider restarted) with the node up; 23:52:35Z claim adopted (same uid), node Ready, guest running, no vm.delete, observed for 2m30s; 23:52:35Z workload deleted; 23:55:12Z claim deleted and the door released the node (vm_delete_result 200 at 23:55:11.733Z); 23:55:13Z guest gone, zero nodes with the control plane Ready. For this item, the restart half: the container was replaced with a Joined node up at 23:50:03Z and for 2m30s the claim kept its uid, the node stayed Ready, the guest stayed up and no vm.delete was submitted (the door adopted it and the provider re-held it); the release came only from the claim's deletion at 23:55:12Z, with vm.delete accepted and the guest gone 1s later."
       - "LOCAL gate defect this item's runs found and closed: a provider restarted while a claim was Bidding/Provisioning read it as already Failed, never adopted it, and nothing ever deleted it, so its machine ran on (5fzvzwkw-m3-node1 left Failed after a container restart at 21:36:41Z). b2624c6 makes reconcile delete a Failed, undeleted claim no host of this process holds, and TestAnEndedClaimIsNotAdopted - which pinned the leak - now wants it deleted; both it and the new TestAFailedClaimNoProcessHoldsIsDeletedSoTheDoorReleasesItsMachine FAIL with the call removed."
@@ -509,6 +538,7 @@ items:
       - 'docs/ARCHITECTURE.md: new section "The cluster OpenBao is reconciled against the live claims (plan 0005 M3-BAO-SYNC)"; the M3-JWT mount row now reads "disabled by the reconcile" instead of "never", and the "the mount outlives its last role" decision is superseded there'
       - 'not done: the live reading on prod (after a release and after a provider restart, bao auth list and bao list auth/<m>/role name exactly the live nodes) -- the lead deploys and reads; nothing here was deployed'
       - "live prod 2026-10-07T23:51:42Z after the merged reconcile was deployed (23:41:44Z), a provider restart and two node releases: the tenant OpenBao lists 0 jwt-* auth mounts (5 at 22:53Z, one per bob issuer ever seen), 0 node-* policies and no socialweb-nodes KV entries, with 0 live nodes"
+      - "SHAs rewritten by the user's 2026-10-08/09 history rewrite (old->current, matched by subject): 0ff704b->034afff"
   - id: M3-DEBUG-SSH
     milestone: M3
     title: DEBUG_SOCIALWEB_NODE_SSH_DIR gives the operator an ssh key into market nodes, off by default
@@ -524,6 +554,7 @@ items:
       - "commit a6a67e2: node-market debugSsh option, CLI option debug-node-ssh-dir (env DEBUG_SOCIALWEB_NODE_SSH_DIR), scripts/deploy.sh passes it into the container env file"
       - "test watched to fail then pass: socialweb-computer-k8s test/node_market_test.ts 'only a door given a debug key puts it in the guest's authorized_keys, and it is told the guest's address' (FAILED: sshAuthorizedKeys undefined); suite 106 passed"
       - "used 2026-10-07T23:11Z to find the CNI root cause (M5-CNI-READY); acceptance run 78 with it unset showed empty authorized_keys"
+      - "SHAs rewritten by the user's 2026-10-08/09 history rewrite (old->current, matched by subject): a6a67e2->4a47aa5"
   - id: M5-CNI-READY
     milestone: M5
     title: A market node's kubelet reports NetworkReady with the bridge CNI
@@ -549,6 +580,7 @@ items:
       - 'root cause read over the debug ssh on guest fc-1379be663dd9-48148a7e 23:11Z: k3s with --flannel-backend=none writes no cni section into containerd''s config, so crictl info shows confDir=/etc/cni/net.d binDirs=[/opt/cni/bin], lastCNILoadStatus ''no network config found in /etc/cni/net.d''; linking k3s''s bundled cni into /opt/cni/bin and the conflist into /etc/cni/net.d -> NetworkReady true and Node Ready at 23:12:04Z within seconds'
       - 'fix 3919df6 (tests watched to fail: pod-cni symlink test, path test, diagnose false test; suite 108 passed); deployed 23:15:28Z; fresh node registered 23:18:03Z Ready 23:18:04Z with no hand change'
       - 'claim->Ready 125 s on prod: apt-get update 55 s, apt install 15 s, dumbpipe 7 s, k3s install 9.5 s, bid window 6.6 s; targets in M3-BOOT-TIME'
+      - "SHAs rewritten by the user's 2026-10-08/09 history rewrite (old->current, matched by subject): 3919df6->4c7e5b3"
 
   - id: M3-BOOT-TIME
     milestone: M3
@@ -574,6 +606,7 @@ items:
       - "not done: the image is not rebuilt and nothing is measured on prod -- the lead ships it and measures claim->Ready (the target is about 30 s against the 125 s of 2026-10-07). tmux (the wootty module) is deliberately not in the manifest: no market user_data asks for it, and the manifest is the market image's"
       - "live prod 2026-10-07T23:47:24.8Z (image sha256-52df8a09 built by the installer under sudo with the repo preinstall manifest; door/provider 0a7e9b0): pod created -> Running 54.0 s (was ~130 s); boot -> cloud-init finished 5.9 s (was 92 s), no apt fetch at all; secrets served 23:47:54.8Z, Node registered 23:48:09Z, Ready 23:48:11Z"
       - "remaining: policy eval 5.3 s (M2-BID-LATENCY), OpenBao link+login 6.4 s, apiserver link+agent registration 8 s, bob bid 3.6 s, claim->RFP 2.9 s, receipt->boot 3.4 s"
+      - "SHAs rewritten by the user's 2026-10-08/09 history rewrite (old->current, matched by subject): 0a7e9b0->cd3c96b 8cd8e12->7393baf bcccf22->78641f5 d20612d->6f51515(atproto-market)"
   - id: M3-JOIN-PATH
     milestone: M3
     title: >
@@ -608,6 +641,7 @@ items:
       - "step 4 of the handoff (start the OpenBao dial before the token exchange finishes) needed no change: socialweb-openbao-link already waits only on setup-secrets, so it dials while socialweb-node-secrets, which is where the token exchange lives, is still running"
       - "the image's name does not cover the builder's own behaviour, and that is now load-bearing: internal/nodefirecracker's BuildConfig fingerprint digests the config's inputs (kernel, modules, base image, k3s binary, busybox, init binary and package, preinstall, seeded images, boot args) and not the builder's code, so an image built before this change and one built after it share a name and -present-only answers present for either. Measured while checking the deploy path (scripts/deploy-firecracker-bidder.sh --dry-run, ORG_ROOT and LOCAL_NODEIMAGE_BIN redirected): the current inputs name sha256-d1a844929f46a01f5ea06a777bbf02c340d1725b7f6ddaaa1ba5a4052a5d0d07, the store in ~/kcp-image/out-market does not hold it, and the deploy's own guard (the answered dir's basename against the shipped FINGERPRINT) refuses any other directory -reuse-stale would answer with. So the lead's rebuild does include this change, but the next builder change under the same inputs would not be visible in the name, and fixing that (an input covering the builder, or the built binary's digest) changes how every image is named and is left to the lead"
       - "live prod 2026-10-08T00:23Z (image 52df8a09 rebuilt with the k3s runtime assets after moving the stale same-named build aside; door/provider 1abe746): bundle at uptime 11.03 s, apiserver-link and openbao-link both start 11.03 s (parallel), node-secrets done 17.66 s, Node registered ~22 s, CNI 23.9 s: secrets->registered ~11 s (was ~14 s); pod->Node registered 33.6 s (was 44.2 s). Follow-ups split into M3-JOIN-FOLLOWUPS"
+      - "SHAs rewritten by the user's 2026-10-08/09 history rewrite (old->current, matched by subject): 1abe746->35bb7d2 460521f->2c3bec3 4a3f516->eb85648 69f91cf->e596fb5 e6b5d55->c1178bf"
   - id: M3-JOIN-FOLLOWUPS
     milestone: M3
     title: The join's remaining waits, and an image name that changes when the builder does
@@ -641,6 +675,7 @@ items:
       - "(2) merged ds-sched-backoff (ee75a03, 11e23e8; market kube-scheduler config file with 1 s backoffs) as b223f8a and deployed 2026-10-10T02:51Z: the first pod STILL scheduled 15 s after its Node was Ready (Ready 02:53:18Z, PodScheduled 02:53:33Z). k3s server log: kube-scheduler starts when a node registers (02:53:17.22Z) and waited out its previous incarnation's leader lease ('Attempting to acquire leader lease' 02:53:17.35Z, 'Successfully acquired lease' 02:53:33.08Z)"
       - "fix 22d1841: the config sets leaderElection.leaderElect false (one k3s server per cluster); TestTheSchedulerConfigTurnsLeaderElectionOff watched to fail then pass; TestK3sPlacesAZeroNodePodWithTheMarketSchedulerConfig PASS 8.82 s against the real k3s v1.36.4 (SOCIALWEB_LOCAL=1); deployed 02:57:14Z (final configuration: debug key unset, SCALE_HOLD=0s)"
       - "live prod 2026-10-10: pod created 02:57:58.3Z, Node registered 02:58:43Z, Ready 02:58:45Z, PodScheduled 02:58:45Z (0 s after Ready, was 15-16 s), Running 02:58:52.9Z (Ready->Running 6 s)"
+      - "SHAs rewritten by the user's 2026-10-08/09 history rewrite (old->current, matched by subject): 11e23e8=ok 1a5cd4d->63b2b5c 22d1841=ok 3957880=ok 4e5d9cf->3957880 63b2b5c=ok 831a370=ok b223f8a=ok ee75a03=ok"
   - id: M5-NETPOL
     milestone: M5
     title: NetworkPolicies are enforced on market nodes
@@ -699,6 +734,7 @@ items:
       - "live 2026-10-07T23:47Z: bid_decide 0 ms; bid 23:47:34.18Z -> first_free_winner 23:47:39.46Z = 5.3 s (was 6.3 s): the previous contract was 5.5 min earlier, past the 5 min positive TTL, and scope_prewarm logged at 23:47:35.7Z, after the bid, though bidder_discovery was 23:47:29.4Z. Still doing."
       - "merged 2026-10-10 onto the rewritten histories: policy-engine fast-forward to b049d54 (47fb02f one in-flight scope run per (policy, counterparty, args); b049d54 gha-lite trust lookups concurrent, once per DID); atproto-market cherry-picks cfb9a73 (refresh in place), 754658c (delegated trust concurrent), 02bb5c6 (first-free wins when the shared run lands); tests: policy-engine 52 passed, atproto-market check + 130 unit passed, bidder lock --frozen ok; door main 831a370 130 passed"
       - "live prod COLD (first contract after the 01:54Z door restart) 2026-10-10: bidder_discovery 02:01:47.648Z, scope_prewarm_done 02:01:49.242Z (1.6 s, was ~6 s), waiting_for_bids 02:01:51.120Z, first_free_winner 02:01:51.375Z: bid->winner 0.255 s cold (was 5.3-5.7 s); warm reading 2026-10-08T00:23Z 0.25 s"
+      - "SHAs rewritten by the user's 2026-10-08/09 history rewrite (old->current, matched by subject): 02bb5c6->57bbcd3(atproto-market) 0a7e9b0->cd3c96b 2b4bfd1->d030da3(atproto-market) 502a1bf->47013be(atproto-market) 754658c->e6f0529(atproto-market) 831a370=ok 87e9ebf->MISSING(atproto-market) cfb9a73->a28e714(atproto-market)"
   - id: M4-SCALE-IN
     milestone: M4
     title: Per-node scale-in
@@ -728,6 +764,7 @@ items:
       - "'only nodes this provider process holds' now includes market nodes adopted after a provider restart (M3-NODE-LOSS provider restart half, 9ca4c04): TestAnAdoptedIdleNodeIsScaledIn"
       - 'live 2026-10-07T23:18:56Z: the cluster''s last node torn down ''nothing running for 2m0.03s, past the 2m0s hold''; tenant then lists no nodes, control plane up. Per-node scale-in with >1 node still owed (ACC-ZERO)'
       - "live 2026-10-07T23:26:15Z with 2 market nodes and the workload cut to 1 replica at 23:23:43Z: node96 'held nothing beyond the baseline for the hold, so it is cordoned, drained and released' (evicted kube-system/coredns, metrics-server), its OpenBao role/policy/secret removed, VM released confirmed, Node removed 23:26:16.7Z; decision 'emptiest and newest of 1 such nodes'; node97 kept the workload"
+      - "SHAs rewritten by the user's 2026-10-08/09 history rewrite (old->current, matched by subject): 6af8994->0b02637 932b139->a6072ee 9ca4c04->acd218f fb4ca07->9c90581 fc16e9b->7d0f1c3"
   - id: M4-ESO-BESIDE
     milestone: M4
     title: ESO runs beside the control plane per cluster and is removed from the tenant
@@ -745,6 +782,7 @@ items:
       - "watched to fail first: 7 internal/eso tests against a stub; the live test before the grant change (SecretSyncedError, VAP socialweb-mint-identity denied the beside identity); a CRD-schema-refused probe replaced by a webhook-only one"
       - "unit: TestTheTenantKeepsOnlyTheCRDsAndTheRolesAndEverythingThatRanThereRetires, TestTheMigrationDeletesEveryRetiredObjectBeforeAnythingIsApplied, TestAWebhookRegistrationStillAddressedByServiceIsReplacedNotMerged, TestTheWebhooksAreRegisteredByLoopbackURLUnderTheMintedCA, TestTheExternalSecretsControllerBindsOnlyItsLeasedLoopbackHealthPortAndElectsNoLeader, TestTheExternalSecretsWebhookServesItsLeasedPortWithTheMintedCertDir, TestAClusterLeasedBeforeThePairExistedRestartsWithoutItUntilItsNextSpawnLeasesIt, TestTheBaselineIsReMeasuredEmptyOnceTheOperatorLeavesTheTenant, TestAJoinWithoutTheExternalSecretsBinaryOrBundleIsRefused; deploy/check.sh --fast green"
       - "not deployed: prod's next deploy migrates its one cluster (ARCHITECTURE section 15)"
+      - "SHAs rewritten by the user's 2026-10-08/09 history rewrite (old->current, matched by subject): 209d724->2611347 411678e->ff1e515 933a7c9->47181ca afe36e8->ea807e8 fa35e32->6b7840d"
   - id: M4-PENDING-CRS
     milestone: M4
     title: Intent counts workloads beyond baseline plus our operators' CRs not yet reconciled
@@ -767,6 +805,8 @@ items:
       - "watched to fail (scratch mutations, restored): InCluster flag ignored -> 1 FAIL; stale generation ignored -> 1; CRs not intent -> 2"
       - "green: deploy/check.sh --fast exit 0"
       - "registry empty by design; correct only once M4-ESO-BESIDE lands -- until then ESO in the tenant is baseline and its CRs are not intent, which is the behaviour before this item"
+      - "re-verified 2026-10-10: fb4ca07 is 9c90581 and fc16e9b is 7d0f1c3 after the history rewrite. Parent 9c90581^ with 9c90581's tests: FAIL (build: undefined Operators); HEAD a7932be 03:00Z: ok internal/scale (TestACustomResourceCountsOnlyWhileItsInClusterOperatorHasNotReconciledIt)"
+      - "SHAs rewritten by the user's 2026-10-08/09 history rewrite (old->current, matched by subject): fb4ca07->9c90581 fc16e9b->7d0f1c3"
   - id: M5-DNS
     milestone: M5
     title: Per-node CoreDNS on a link-local IP set as kubelet clusterDNS
@@ -792,6 +832,7 @@ items:
       - "green: deploy/check.sh --fast exit 0; door deno task check exit 0, deno task test 103 passed 0 failed 1 ignored (scratch org root, siblings symlinked)"
       - "not done: deploy; ACC-MESH's 'DNS resolves on a node that does not run the cluster CoreDNS' on a live market cluster (needs guests through the RFP flow; not hand-provisioned)"
       - "23:23:16Z from the pod on node97 (CoreDNS runs on node96): resolv.conf nameserver 169.254.20.10; kubernetes.default.svc -> 10.43.0.1, mesh-probe.default.svc -> 10.43.21.222, gitlab.com resolves; wget via the Service ClusterIP returned node96's pod content"
+      - "SHAs rewritten by the user's 2026-10-08/09 history rewrite (old->current, matched by subject): 2125360->69166e1 4e72a73->7470210 58dfd82->d89a123"
   - id: M5-MESHD
     milestone: M5
     title: Rust iroh pod mesh in rust/socialweb-meshd
@@ -822,6 +863,7 @@ items:
       - "prod 2026-10-07T23:20:54Z: Deployment mesh-probe (2 replicas, required pod anti-affinity) on test-cluster-alice-0001 scaled the cluster 0 -> 2 market nodes ('Provision nodes:2'); node96 and node97 registered 23:22:30Z, Ready 23:22:31Z; pods 10.42.2.4 on node96 and 10.42.4.3 on node97"
       - "23:23:06Z kubectl exec (apiserver->kubelet over the agent tunnel) into both pods: node97 -> node96 pod IP answered by node96's httpd (HTTP 404 before its index existed), node96 -> node97 pod IP returned node97's content"
       - "23:23:16Z from the pod on node97 (CoreDNS runs on node96): resolv.conf nameserver 169.254.20.10; kubernetes.default.svc -> 10.43.0.1, mesh-probe.default.svc -> 10.43.21.222, gitlab.com resolves; wget via the Service ClusterIP returned node96's pod content"
+      - "SHAs rewritten by the user's 2026-10-08/09 history rewrite (old->current, matched by subject): 11c9a29->f5a8319 2125360->69166e1 4cbebf1->c1f3494 4e72a73->7470210 58dfd82->d89a123 a56b60d->8981e07 c67b7b6->c392aa6 c8ba259->38f279a ee9285e->debf915"
   - id: M6-RUNNER1
     milestone: M6
     title: GitLab runner 1 run_untagged false
@@ -830,6 +872,7 @@ items:
     evidence:
       - "2026-10-07T22:11:42Z GET /api/v4/runners/1 before: run_untagged true, tag_list [socialwebcomputer], online"
       - "2026-10-07T22:11:42Z PUT run_untagged=false; read back run_untagged false, tag_list [socialwebcomputer], paused false, online"
+      - "commit 9adc4d8 'M6-RUNNER1: runner 1 takes only tagged jobs'"
   - id: M6-LIMITS
     milestone: M6
     title: Fix the old stated limits
@@ -845,6 +888,7 @@ items:
       - "commit 273c109 vaultcert.EnsureServedVaultTLS: re-sign, read served leaf, SIGHUP the one port holder whose argv is this cluster's bao server -config, read back up to 10 s, refuse if not served. OpenBao v2.6.2 on hat-8: [198.18.255.254 127.0.0.1] -> [198.18.255.254 127.0.0.1 10.100.0.1] served 114 ms after the call; with a no-op reload TestARunningVaultServesAHostItsLeafGainedOnceItIsReloaded failed with ErrVaultReloadDidNotTake. Refusal kept: TestAReloadThatDoesNotTakeKeepsTheRefusal, TestAListenerThatIsNotTheVaultIsNeverSignalled"
       - "commit 2665f00 nodeHosts memo of released claims (name/UID) whose Node is gone, per cluster: TestTheReleasedNodeReconcileCostsTheTenantNothingOnceItsNodesAreGone, 5 passes before 1 DELETE + 6 calls (5 lists), after 1 DELETE + 2 calls. The ESO per-pass eso.Remove deletes had no caller since M4-ESO-BESIDE"
       - "NEXT.yaml limits: three removed (portless member not swept, absent snapshot reads empty, vault host added later); ARCHITECTURE section 15 entry 'Four stated limits, fixed'; deploy/check.sh --fast green; 21 internal/clusterprovider vault tests pass under SOCIALWEB_LOCAL=1"
+      - "SHAs rewritten by the user's 2026-10-08/09 history rewrite (old->current, matched by subject): 01f9b2e->185a12c 2665f00->8b60d64 273c109->edd7c3a 3cfc6ae->4376da6 5cde08e->04059a4 65e3297->54bf63b"
   - id: M6-SPA-CREATE
     milestone: M6
     title: A cluster created in the SPA is reachable through its kubeconfig without operator help
@@ -871,6 +915,7 @@ items:
       - "door unchanged: it already answers a create with the phase as data (test/cluster_api_test.ts 'the account is the proved one, never one named in the body' asserts 200 {name, phase: Initializing}) and its 30 s budget now covers a create that no longer waits"
       - "owed: a create through the SPA on prod with the mount child written by the system:admin context, and the live-gated mount proofs (internal/kcpclient/mount_child_live_test.go, internal/clusterprovider/live_mount_test.go, internal/kcpclient/live_apiserver_test.go) run against a live kcp -- they were updated but NOT RUN here"
       - "live prod 2026-10-08 after merge e27c6f6 deployed: the SPA (headless OAuth as aliceoa.bsky.social) created acc-gitlab-0002 and returned its kubeconfig 00:27:14Z->00:27:31Z with no clusterUp workaround; the provider wrote the mount child 'clusters' (spec.URL https://127.0.0.1:20029) itself, Ready 32 s after creation; from hat-10 the SPA kubeconfig + socialweb-credential reached the cluster through kcp.socialweb.computer at 00:28:45Z (~74 s after create) with no operator action (acc-gitlab-0001's child had needed a manual system:admin create)"
+      - "SHAs rewritten by the user's 2026-10-08/09 history rewrite (old->current, matched by subject): 9a56762->2015b46 df51a4b->e83444b e27c6f6->361b083"
   - id: M6-DOCS
     milestone: M6
     title: Rewrite ARCHITECTURE invariant 13 and update docs/gitlab
@@ -883,6 +928,7 @@ items:
     status: done
     evidence:
       - "docs/gitlab/04-spa-cluster-runner.md: 'The hop this document cannot prove' now opens with the 2026-10-08 settlement (pipelines 77/78 exec'd through Caddy->kcp->mount); new section 'What was measured on 2026-10-08' with the SPA create, the runner config and run command, the pipeline, the pipeline-78 timeline and the limits found (no clone from market nodes to the tailnet GitLab, the SCALE_HOLD knob, one job = one rented node); invariant 13 rewritten by M3-JOIN-PATH"
+      - "commits 5589f4e (docs/gitlab: the SPA runner recipe ran end to end on 2026-10-08) and 453c0a8 (clone-through-funnel correction, 2026-10-10)"
 queued_after_this_plan:
   - docs/plans/0006-socialweb-computer-unified-binary.yaml
   - docs/plans/0007-compute-provider-kcp.yaml
