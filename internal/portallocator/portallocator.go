@@ -50,6 +50,14 @@ const (
 	PurposeK3sScheduler              Purpose = "k3s-scheduler"
 	PurposeK3sCloudControllerManager Purpose = "k3s-cloud-controller-manager"
 
+	PurposeK3sSlotA Purpose = "k3s-slot-a"
+	PurposeK3sSlotB Purpose = "k3s-slot-b"
+
+	PurposeKineB                      Purpose = "kine-b"
+	PurposeK3sControllerManagerB      Purpose = "k3s-controller-manager-b"
+	PurposeK3sSchedulerB              Purpose = "k3s-scheduler-b"
+	PurposeK3sCloudControllerManagerB Purpose = "k3s-cloud-controller-manager-b"
+
 	PurposeApiserverLink Purpose = "apiserver-link"
 
 	PurposeOpenBaoLink Purpose = "openbao-link"
@@ -83,8 +91,16 @@ var purposeWidth = map[Purpose]int{
 	PurposeK3sControllerManager:      1,
 	PurposeK3sScheduler:              1,
 	PurposeK3sCloudControllerManager: 1,
-	PurposeApiserverLink:             1,
-	PurposeOpenBaoLink:               1,
+	PurposeK3sSlotA:                  2,
+	PurposeK3sSlotB:                  2,
+
+	PurposeKineB:                      1,
+	PurposeK3sControllerManagerB:      1,
+	PurposeK3sSchedulerB:              1,
+	PurposeK3sCloudControllerManagerB: 1,
+
+	PurposeApiserverLink: 1,
+	PurposeOpenBaoLink:   1,
 
 	PurposeExternalSecretsHealth:        1,
 	PurposeExternalSecretsWebhook:       1,
@@ -92,6 +108,33 @@ var purposeWidth = map[Purpose]int{
 }
 
 func (p Purpose) Width() int { return purposeWidth[p] }
+
+type SlotPurposes struct {
+	Secure                 Purpose
+	Kine                   Purpose
+	ControllerManager      Purpose
+	Scheduler              Purpose
+	CloudControllerManager Purpose
+}
+
+func (s SlotPurposes) All() []Purpose {
+	return []Purpose{s.Secure, s.Kine, s.ControllerManager, s.Scheduler, s.CloudControllerManager}
+}
+
+var slotPurposes = map[string]SlotPurposes{
+	"a": {PurposeK3sSlotA, PurposeKine, PurposeK3sControllerManager, PurposeK3sScheduler, PurposeK3sCloudControllerManager},
+	"b": {PurposeK3sSlotB, PurposeKineB, PurposeK3sControllerManagerB, PurposeK3sSchedulerB, PurposeK3sCloudControllerManagerB},
+}
+
+var ControlPlaneSlots = []string{"a", "b"}
+
+func PurposesOfSlot(slot string) (SlotPurposes, error) {
+	s, ok := slotPurposes[slot]
+	if !ok {
+		return SlotPurposes{}, fmt.Errorf("portallocator: %q is no control-plane slot; the slots are %v", slot, ControlPlaneSlots)
+	}
+	return s, nil
+}
 
 var gatewayShared = []Range{
 	{6443, 6443},

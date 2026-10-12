@@ -27,7 +27,7 @@ func WriteKubeSchedulerConfig(spec clusterstack.Spec) error {
 	if err != nil {
 		return err
 	}
-	path := clusterstack.KubeSchedulerConfigPath(spec.DataDir)
+	path := spec.KubeSchedulerConfigFile()
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("%w: the directory %s holding %s: %v", ErrKubeSchedulerConfigUnwritable,

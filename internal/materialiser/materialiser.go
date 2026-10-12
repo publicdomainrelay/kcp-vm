@@ -135,6 +135,7 @@ var DefaultPurposes = []portallocator.Purpose{
 	portallocator.PurposePostgres,
 	portallocator.PurposeKine,
 	portallocator.PurposeK3sSecure,
+	portallocator.PurposeK3sSlotA,
 	portallocator.PurposeK3sControllerManager,
 	portallocator.PurposeK3sScheduler,
 	portallocator.PurposeK3sCloudControllerManager,

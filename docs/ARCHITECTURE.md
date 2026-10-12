@@ -288,12 +288,13 @@ restart or upgrade restarts no member.
 <prefix>pg-<store>.service                 the cluster's Postgres object (M2-POSTGRES), unix socket only
 <prefix>cluster-<key with - as _>.slice    one slice per cluster
   <prefix>c-<key>-bao.service              After/Wants the pg unit
+  <prefix>c-<key>-front.service            no ordering, Restart=always, fd store (section 8)
   <prefix>c-<key>-kine@a.service           After/Wants the pg unit
   <prefix>c-<key>-k3s@a.service            After/Wants kine@a
-  <prefix>c-<key>-ccm.service              After/Wants k3s@a
-  <prefix>c-<key>-esowh.service            After/Wants k3s@a
-  <prefix>c-<key>-eso.service              After/Wants k3s@a
-  <prefix>c-<key>-link-apiserver.service   After/Wants k3s@a, Restart=always
+  <prefix>c-<key>-ccm.service              After/Wants front
+  <prefix>c-<key>-esowh.service            After/Wants front
+  <prefix>c-<key>-eso.service              After/Wants front
+  <prefix>c-<key>-link-apiserver.service   After/Wants front, Restart=always
   <prefix>c-<key>-link-openbao.service     After/Wants bao, Restart=always
 ```
 
@@ -1314,12 +1315,29 @@ reports its address into its kcp object (plans 0006 M2-KCP-PORT0, M1-NO-FIXED-PO
 | `postgres` | the cluster's embedded-postgres - if embedded bostgres doesn't work, use real postgres |
 | `openbao` | the vault |
 | `kine` | kine's listener |
-| `k3s-secure` | the apiserver, and the port a node dials it on |
-| `k3s-controller-manager`, `k3s-scheduler`, `k3s-cloud-controller-manager` | the k3s control-plane components' secure ports |
+| `k3s-secure` | the cluster's apiserver front (`internal apiserver-front`, member `front`): the port a node, the kcp mount, the provider, the CCM and ESO dial, and `--advertise-port` of every slot |
+| `k3s-slot-a`, `k3s-slot-b` | width 2 each: the `--https-listen-port` pair of k3s slot a and slot b behind the front; never advertised |
+| `kine`, `kine-b` | kine's listener of slot a and slot b |
+| `k3s-controller-manager`, `k3s-scheduler`, `k3s-cloud-controller-manager` (slot a), the same names with `-b` (slot b) | the k3s control-plane components' secure ports |
 | `apiserver-link`, `openbao-link` | UDP: the IPv4 socket of each cluster link's iroh endpoint (`--ipv4-addr 0.0.0.0:<port>`). The only datagram purposes (`Purpose.Datagram()`); the restart sweep reads the UDP tables for them |
 | `external-secrets-health` | the External Secrets controller's `--live-addr`, on `127.0.0.1` |
 | `external-secrets-webhook` | the External Secrets webhook's TLS `--port`, the one its `ValidatingWebhookConfiguration` names as `https://127.0.0.1:<port>`; it binds every interface, because the upstream flag has no host |
 | `external-secrets-webhook-health` | the External Secrets webhook's `--healthz-addr`, on `127.0.0.1`. Both members' metrics are off (`--metrics-addr=0`), so no metrics port is leased |
+
+**The apiserver front owns the `k3s-secure` port (plan 0006 M3-APISERVER-FRONT).** Each cluster runs
+member `front`: `internal apiserver-front`, the same L4 front kcp uses (`internal/apiserverfront`), bound
+on `BindAddress:<k3s-secure>`, its control socket `<dataDir>/front.sock` (or
+`<stateDir>/fronts/<hash>.sock` when that path is over 107 bytes) and its state `<dataDir>/front.json`.
+k3s listens on its slot lease and advertises the front pair (`--advertise-address` unchanged,
+`--advertise-port` = the front port), so `status.URL`, every node secret's `apiserverPort`, the link's
+`--host`, every kubeconfig and the kubernetes EndpointSlice keep their number across a k3s swap. The
+backend is chosen per new connection; open connections stay on their backend. The front never fails
+over by itself: the k3s gate points it at its slot after `/readyz` and the first kube-system Deployment
+answer on the slot port, then checks `/readyz` through the front and that the kubernetes EndpointSlice
+names only the advertise address and the front port. Its listening socket is kept in the backend's fd
+store (systemd `FDSTORE=1`; devsup on proc), so a front restart refuses no connection and resets only
+open ones. `AssertMarketAdvertiseInvariant` takes a `portallocator.Advertisement`: advertise port ==
+front lease, link target == front lease, no slot listen port inside the front lease.
 
 **The vault's lease is ONE port, and it was two for as long as nothing read the second.**
 `purposeWidth[PurposeOpenBao]` was 2, spelled "api + cluster", while the config the vault is given —

@@ -12,6 +12,8 @@ const (
 
 	ComponentOpenBao Component = "openbao"
 
+	ComponentApiserverFront Component = "apiserver-front"
+
 	ComponentKine Component = "kine"
 
 	ComponentK3s Component = "k3s-server"
@@ -32,8 +34,8 @@ var DefaultOrder = []Component{
 }
 
 var StackOrder = []Component{
-	ComponentPostgres, ComponentOpenBao, ComponentKine, ComponentK3s, ComponentCloudControllerManager,
-	ComponentExternalSecretsWebhook, ComponentExternalSecrets,
+	ComponentPostgres, ComponentOpenBao, ComponentApiserverFront, ComponentKine, ComponentK3s,
+	ComponentCloudControllerManager, ComponentExternalSecretsWebhook, ComponentExternalSecrets,
 }
 
 type Spec struct {
@@ -54,6 +56,7 @@ type Member interface {
 
 type Step struct {
 	Name    Component
+	Slot    string
 	Spec    Spec
 	Prepare func(ctx context.Context, spec Spec) (Spec, error)
 	Ready   func(ctx context.Context, m Member) error

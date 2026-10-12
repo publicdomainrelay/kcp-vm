@@ -144,6 +144,9 @@ func (s Stack) spawned() ([][]string, error) {
 		if errors.Is(err, clusterstack.ErrMissingExternalSecrets) && s.Spec.ExternalSecrets == (clusterstack.ExternalSecrets{}) {
 			continue
 		}
+		if errors.Is(err, clusterstack.ErrMissingFront) && len(s.Spec.FrontExec) == 0 {
+			continue
+		}
 		if err != nil {
 			return nil, fmt.Errorf("portscan: %s: %w", s.Cluster, err)
 		}

@@ -205,7 +205,7 @@ func (h *UnitsHost) vaultSpec(key string, st procgroup.Step, declared *v1alpha1.
 			return v1alpha1.OpenBaoServerSpec{}, err
 		}
 	}
-	deps := memberDeps(h, key, procgroup.ComponentOpenBao)
+	deps := memberDeps(h, key, procgroup.ComponentOpenBao, "")
 	return v1alpha1.OpenBaoServerSpec{Exec: exe, Listen: st.Spec.Listen, RestartPolicy: v1alpha1.HostProcessRestartOnFailure,
 		Unit: h.Unit(key, MemberName(procgroup.ComponentOpenBao)), Slice: h.Slice(key), After: deps, Wants: deps, Log: st.Spec.Log,
 		Storage: &v1alpha1.OpenBaoServerStorage{Postgres: &v1alpha1.OpenBaoServerPostgres{SocketDir: store.SocketDir, User: store.User,

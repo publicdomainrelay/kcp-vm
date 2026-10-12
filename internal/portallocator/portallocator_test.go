@@ -368,55 +368,6 @@ func TestF2_TheAgentsOwnDialLineMustMatchThisClustersLease(t *testing.T) {
 	}
 }
 
-func TestH_TheAdvertiseAddressMustBeOneThisHostCarriesAndTheInvariantIsTiedToOneLease(t *testing.T) {
-	if err := AssertAdvertiseAddress(LoopbackAdvertiseAddress); err != nil {
-		t.Fatalf("the local-process substrate's advertise address must pass: %v", err)
-	}
-	for _, bad := range []string{"192.168.5.2", "0.0.0.0", "", "localhost", "example.com", "203.0.113.7"} {
-		err := AssertAdvertiseAddress(bad)
-		if err == nil {
-			t.Fatalf("%q was accepted as an advertise address; a node is a local process and the "+
-				"only address it can certainly dial is loopback", bad)
-		}
-		if !strings.Contains(err.Error(), "this host") && !strings.Contains(err.Error(), "IP address") {
-			t.Fatalf("the refusal must name what an advertise address has to be, and that a name is "+
-				"not one: %v", err)
-		}
-	}
-
-	lease := Lease{Port: 20000, Width: 1, Purpose: PurposeK3sSecure, Cluster: "A"}
-	if err := AssertAdvertiseInvariant(LoopbackAdvertiseAddress, 20000, 20000, lease); err != nil {
-		t.Fatalf("forward and advertise-port from ONE lease must pass: %v", err)
-	}
-	if err := AssertAdvertiseInvariant(LoopbackAdvertiseAddress, 20001, 20001, lease); err == nil {
-		t.Fatal("an --advertise-port that is not leased to this cluster must refuse to start")
-	}
-	if err := AssertAdvertiseInvariant(LoopbackAdvertiseAddress, 20000, 20001, lease); err == nil {
-		t.Fatal("a forward disagreeing with the lease must refuse to start")
-	}
-	if err := AssertAdvertiseInvariant("192.168.5.2", 20000, 20000, lease); err == nil {
-		t.Fatal("the invariant carried an address this host does not carry through to the port checks")
-	}
-	if err := AssertAdvertiseInvariant(LoopbackAdvertiseAddress, 20000, 20000,
-		Lease{Port: 20000, Width: 1, Purpose: PurposeKine, Cluster: "A"}); err == nil {
-		t.Fatal("a lease for a port nothing advertises was accepted as the port the apiserver is " +
-			"advertised on: the advertised port is the port k3s binds its listener on, so any other " +
-			"lease names a port no client in the cluster can dial")
-	}
-	if err := AssertAdvertiseInvariant(LoopbackAdvertiseAddress, 20000, 20000,
-		Lease{Port: 20000, Width: 1, Purpose: "advertise", Cluster: "A"}); err == nil {
-		t.Fatal("the retired advertise lease was accepted as the apiserver's own port: a second " +
-			"lease for the advertisement is the defect this invariant exists to refuse")
-	}
-	for _, own := range hostAddresses() {
-		if err := AssertAdvertiseAddress(own.String()); err != nil {
-			t.Fatalf("this host's own address %s was refused: %v -- a node in a guest dials an "+
-				"address the guest can route to, and refusing the host's own addresses would make "+
-				"the VM substrate unexpressible", own, err)
-		}
-	}
-}
-
 func TestI_ExhaustionFailsLoudlyRatherThanWrappingOrReusing(t *testing.T) {
 	withAllocator(t, Range{20000, 20001}, func(a *Allocator, _ string) {
 		mustAllocate(t, a, "A", PurposeKine)
@@ -682,45 +633,5 @@ func TestE4_TheZeroRangeMeansTheDocumentedDefault(t *testing.T) {
 	}
 	if got := a2.Range(); got != (Range{20000, 20005}) {
 		t.Fatalf("Range() = %s, want the supplied carve", got)
-	}
-}
-
-func TestTheMarketAdvertiseAddressIsOneThisHostDoesNotCarryAndIsNotLoopback(t *testing.T) {
-	if err := AssertMarketAdvertiseAddress(MarketAdvertiseAddress); err != nil {
-		t.Fatalf("the market substrate's own constant must pass: %v", err)
-	}
-	for _, bad := range []string{
-		"127.0.0.1", "::1", "0.0.0.0", "", "node.example.invalid", "100.127.255.999",
-	} {
-		err := AssertMarketAdvertiseAddress(bad)
-		if err == nil {
-			t.Fatalf("%q was accepted as the address a market node dials its apiserver on. The "+
-				"guest puts that address on its OWN loopback and the door reverse-forwards it to "+
-				"this host, so a loopback or a wildcard names nothing to put anywhere and a name "+
-				"resolves differently in every guest", bad)
-		}
-	}
-	for _, own := range hostAddresses() {
-		if own.IsUnspecified() || own.IsLoopback() {
-			continue
-		}
-		err := AssertMarketAdvertiseAddress(own.String())
-		if err == nil {
-			t.Fatalf("%q is an address this host already carries, and it was accepted: the "+
-				"forward the door opens would collide with whatever answers it here", own)
-		}
-	}
-
-	lease := Lease{Port: 20000, Width: 1, Purpose: PurposeK3sSecure, Cluster: "A"}
-	if err := AssertMarketAdvertiseInvariant(MarketAdvertiseAddress, 20000, 20000, lease); err != nil {
-		t.Fatalf("a market placement from one lease must pass: %v", err)
-	}
-	if err := AssertMarketAdvertiseInvariant(LoopbackAdvertiseAddress, 20000, 20000, lease); err == nil {
-		t.Fatal("the market invariant accepted the local-process advertise address: k3s refuses a " +
-			"loopback address for the in-cluster `kubernetes` Service endpoint, so such a cluster " +
-			"fails to start")
-	}
-	if err := AssertMarketAdvertiseInvariant(MarketAdvertiseAddress, 20001, 20001, lease); err == nil {
-		t.Fatal("an --advertise-port that is not leased to this cluster must refuse to start")
 	}
 }

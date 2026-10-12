@@ -8,14 +8,19 @@ import (
 )
 
 var componentPorts = map[procgroup.Component][]portallocator.Purpose{
-	procgroup.ComponentPostgres: {portallocator.PurposePostgres},
-	procgroup.ComponentOpenBao:  {portallocator.PurposeOpenBao},
-	procgroup.ComponentKine:     {portallocator.PurposeKine},
+	procgroup.ComponentPostgres:       {portallocator.PurposePostgres},
+	procgroup.ComponentOpenBao:        {portallocator.PurposeOpenBao},
+	procgroup.ComponentApiserverFront: {portallocator.PurposeK3sSecure},
+	procgroup.ComponentKine:           {portallocator.PurposeKine, portallocator.PurposeKineB},
 	procgroup.ComponentK3s: {
-		portallocator.PurposeK3sSecure,
+		portallocator.PurposeK3sSlotA,
 		portallocator.PurposeK3sControllerManager,
 		portallocator.PurposeK3sScheduler,
 		portallocator.PurposeK3sCloudControllerManager,
+		portallocator.PurposeK3sSlotB,
+		portallocator.PurposeK3sControllerManagerB,
+		portallocator.PurposeK3sSchedulerB,
+		portallocator.PurposeK3sCloudControllerManagerB,
 	},
 	procgroup.ComponentCloudControllerManager: nil,
 	procgroup.ComponentExternalSecretsWebhook: {

@@ -58,6 +58,20 @@ type Spec struct {
 
 	TokenFile string
 
+	Slot string
+
+	ServerDataDir string
+
+	Hostname string
+
+	HostnameExec []string
+
+	FrontExec []string
+
+	FrontControl string
+
+	FrontState string
+
 	CloudControllerManagerExec []string
 
 	ExternalSecrets ExternalSecrets
@@ -158,6 +172,9 @@ var (
 		"controller dialling the apiserver with a minted tenant credential, and nothing on PATH or " +
 		"derived from the data dir names that binary. A cluster that came up without it would have " +
 		"Nodes carrying no providerID and nothing reconciling them")
+	ErrMissingFront = errors.New("clusterstack: the apiserver front owns the cluster's apiserver port " +
+		"and every k3s slot sits behind it; it needs the core executable, its control socket and its " +
+		"state file")
 	ErrMissingExternalSecrets = errors.New("clusterstack: the External Secrets controller and its " +
 		"webhook run beside the control plane, one pair per cluster, and each needs the pinned " +
 		"external-secrets binary and its own leased ports: the upstream defaults (:8080 metrics, " +
@@ -202,6 +219,8 @@ func (s Spec) Argv(c procgroup.Component) ([]string, error) {
 		return nil, ErrNotAProcess
 	case procgroup.ComponentOpenBao:
 		return s.OpenBaoArgv()
+	case procgroup.ComponentApiserverFront:
+		return s.FrontArgv()
 	case procgroup.ComponentKine:
 		return s.KineArgv()
 	case procgroup.ComponentK3s:
@@ -224,6 +243,35 @@ func (s Spec) CloudControllerManagerArgv() ([]string, error) {
 }
 
 func validPort(p int) bool { return p > 0 && p <= 65535 }
+
+func (s Spec) FrontAddress() string {
+	return net.JoinHostPort(s.BindAddress, strconv.Itoa(s.AdvertisePort))
+}
+
+func (s Spec) FrontArgv() ([]string, error) {
+	if len(s.FrontExec) == 0 || s.FrontExec[0] == "" || s.FrontControl == "" || s.FrontState == "" ||
+		s.BindAddress == "" || !validPort(s.AdvertisePort) {
+		return nil, ErrMissingFront
+	}
+	return append(append([]string(nil), s.FrontExec...),
+		"--owner", "cluster-"+s.Cluster,
+		"--kcp-front-address", s.FrontAddress(),
+		"--front-control", s.FrontControl,
+		"--front-state", s.FrontState,
+		"--front-fd-store",
+	), nil
+}
+
+func (s Spec) serverDir() string {
+	if s.ServerDataDir != "" {
+		return s.ServerDataDir
+	}
+	return s.DataDir
+}
+
+func (s Spec) ServerAdminKubeconfig() string { return AdminKubeconfig(s.serverDir()) }
+
+func (s Spec) ServerTLSDir() string { return TLSDir(s.serverDir()) }
 
 func (s Spec) ExternalSecretsArgv() ([]string, error) {
 	e := s.ExternalSecrets
@@ -280,7 +328,7 @@ func (s Spec) ServerArgv() ([]string, error) {
 		"k3s", "server",
 		"--disable-agent",
 		"--disable=traefik",
-		"--data-dir", s.DataDir,
+		"--data-dir", s.serverDir(),
 		"--datastore-endpoint", s.DatastoreEndpoint,
 		"--egress-selector-mode", "cluster",
 		"--advertise-address", s.AdvertiseAddress,
@@ -288,7 +336,7 @@ func (s Spec) ServerArgv() ([]string, error) {
 		"--bind-address", s.BindAddress,
 		"--https-listen-port", strconv.Itoa(s.K3sSecurePort),
 		"--token-file", s.TokenFile,
-		"--write-kubeconfig", AdminKubeconfig(s.DataDir),
+		"--write-kubeconfig", s.ServerAdminKubeconfig(),
 	}
 	for _, san := range s.TLSSANs {
 		argv = append(argv, "--tls-san", san)

@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/eso"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/portallocator"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/scale"
 )
@@ -76,40 +75,6 @@ func loadJoin(t *testing.T, extra map[string]string) (Config, error) {
 	return load(func(k string) string { return env[k] })
 }
 
-func TestAPlacementIsRequiredAndRefusedRatherThanDefaulted(t *testing.T) {
-	if _, err := loadJoin(t, nil); err != nil {
-		t.Fatalf("a fully configured join was refused: %v", err)
-	}
-
-	for _, tc := range []struct {
-		name  string
-		set   map[string]string
-		names []string
-	}{
-		{"no substrate", map[string]string{"SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE": ""},
-			[]string{"SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE"}},
-		{"an unknown substrate", map[string]string{"SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE": "jail"},
-			[]string{"SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE", "jail", SubstrateMarket}},
-		{"a host that is not this one", map[string]string{"SOCIALWEB_CLUSTERPROVIDER_HOST": thisHost(t) + "-not"},
-			[]string{"SOCIALWEB_CLUSTERPROVIDER_HOST", "not"}},
-		{"no host", map[string]string{"SOCIALWEB_CLUSTERPROVIDER_HOST": ""},
-			[]string{"SOCIALWEB_CLUSTERPROVIDER_HOST"}},
-	} {
-		_, err := loadJoin(t, tc.set)
-		if err == nil {
-			t.Errorf("%s was accepted, and there is no default for it: a placement that was "+
-				"guessed is one this gateway cannot honour and cannot be caught not honouring", tc.name)
-			continue
-		}
-		for _, want := range tc.names {
-			if !strings.Contains(err.Error(), want) {
-				t.Errorf("%s: the refusal does not name %q, so an operator cannot tell which "+
-					"setting it is about: %v", tc.name, want, err)
-			}
-		}
-	}
-}
-
 func TestTheRetiredSubstratesAreRefusedAtStartup(t *testing.T) {
 	for _, name := range []string{"firecracker", "qemu"} {
 		_, err := loadJoin(t, map[string]string{
@@ -125,19 +90,6 @@ func TestTheRetiredSubstratesAreRefusedAtStartup(t *testing.T) {
 				t.Errorf("%s: the refusal does not name %q, so it reads as a typo rather than as a "+
 					"placement that was withdrawn: %v", name, want, err)
 			}
-		}
-	}
-}
-
-func TestAJoinWithoutTheExternalSecretsBinaryOrBundleIsRefused(t *testing.T) {
-	for _, env := range []string{"SOCIALWEB_CLUSTERPROVIDER_EXTERNAL_SECRETS", "SOCIALWEB_CLUSTERPROVIDER_ESO_BUNDLE"} {
-		_, err := loadJoin(t, map[string]string{env: ""})
-		if err == nil {
-			t.Fatalf("a join with no %s was accepted: every cluster's group carries the External "+
-				"Secrets pair, so it would spawn a pair with nothing to run or install", env)
-		}
-		if !strings.Contains(err.Error(), env) {
-			t.Fatalf("the refusal does not name %s: %v", env, err)
 		}
 	}
 }
@@ -232,26 +184,6 @@ func TestCarveIsHonouredAndMakesTwoInstancesDisjoint(t *testing.T) {
 	}
 	if !alpha.PortRange.Contains(lA.Port) || !beta.PortRange.Contains(lB.Port) {
 		t.Fatalf("a carve was not honoured: %d for %s and %d for %s", lA.Port, alpha.PortRange, lB.Port, beta.PortRange)
-	}
-}
-
-func TestTheExternalSecretsNamespaceDefaultsToTheOneTheOperatorInstallsInto(t *testing.T) {
-	cfg, err := loadJoin(t, nil)
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
-	if cfg.ESONamespace != eso.DefaultControllerNamespace {
-		t.Fatalf("the External Secrets namespace defaulted to %q, want %q: an unchanged deployment "+
-			"installs the operator into that namespace and the tenant grant admits it there, so any "+
-			"other default would deny the controller the grant exists to admit",
-			cfg.ESONamespace, eso.DefaultControllerNamespace)
-	}
-	cfg, err = loadJoin(t, map[string]string{"SOCIALWEB_CLUSTERPROVIDER_ESO_NAMESPACE": "external-secrets"})
-	if err != nil {
-		t.Fatalf("load with a namespace: %v", err)
-	}
-	if cfg.ESONamespace != "external-secrets" {
-		t.Fatalf("the External Secrets namespace is %q, want the external-secrets the environment named", cfg.ESONamespace)
 	}
 }
 

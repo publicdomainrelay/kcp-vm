@@ -191,6 +191,7 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 	}
 
 	stack := append(clusterprovider.Stack{}, clusterprovider.DesignedStack...)
+	stack = append(stack, procgroup.ComponentApiserverFront)
 	stack = append(stack, procgroup.ComponentCloudControllerManager)
 	stack = append(stack, clusterprovider.ExternalSecretsComponents...)
 	purposes, err := clusterprovider.PurposesFor(stack, false)
@@ -232,6 +233,7 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 		VaultTLS:                   vaultTLSFor(),
 		AuditPolicyPath:            cfg.AuditPolicyPath,
 		CloudControllerManagerExec: cfg.CloudControllerManagerExec,
+		FrontExec:                  cfg.FrontExec,
 		ExternalSecrets:            externalSecretsFor(cfg),
 		Harvest: func(ctx context.Context, cluster string) error {
 			if err := clusterprovider.HarvestBundle(cfg.StateDir, cluster); err != nil {

@@ -146,12 +146,24 @@ func AssertMarketAdvertiseAddress(address string) error {
 	return nil
 }
 
-func AssertAdvertiseInvariant(advertiseAddress string, advertisePort, forwardHostPort int, lease Lease) error {
-	return advertiseInvariant(advertiseAddress, advertisePort, forwardHostPort, lease, dialFromThisHost)
+type Advertisement struct {
+	Address string
+
+	Port int
+
+	LinkTarget int
+
+	Front Lease
+
+	SlotListen []int
 }
 
-func AssertMarketAdvertiseInvariant(advertiseAddress string, advertisePort, forwardHostPort int, lease Lease) error {
-	return advertiseInvariant(advertiseAddress, advertisePort, forwardHostPort, lease, dialFromTheMarket)
+func AssertAdvertiseInvariant(a Advertisement) error {
+	return advertiseInvariant(a, dialFromThisHost)
+}
+
+func AssertMarketAdvertiseInvariant(a Advertisement) error {
+	return advertiseInvariant(a, dialFromTheMarket)
 }
 
 type dialler uint8
@@ -162,34 +174,39 @@ const (
 	dialFromTheMarket
 )
 
-func advertiseInvariant(advertiseAddress string, advertisePort, forwardHostPort int, lease Lease, dial dialler) error {
+func advertiseInvariant(a Advertisement, dial dialler) error {
 	check := AssertAdvertiseAddress
 	if dial == dialFromTheMarket {
 		check = AssertMarketAdvertiseAddress
 	}
-	if err := check(advertiseAddress); err != nil {
+	if err := check(a.Address); err != nil {
 		return err
 	}
+	lease := a.Front
 	if lease.Purpose != PurposeK3sSecure {
 		return fmt.Errorf("portallocator: cluster %s holds %s:%d, and that is not the lease whose port "+
-			"the apiserver is advertised on. The advertised port is where the apiserver is reachable, "+
-			"so it is the port k3s binds its listener on -- %s -- and a second lease for the "+
-			"advertisement is a lease nothing binds",
+			"the apiserver is advertised on. The advertised port is the port the cluster's apiserver "+
+			"front binds -- %s -- and every k3s slot sits behind it on a port of its own",
 			lease.Cluster, lease.Purpose, lease.Port, PurposeK3sSecure)
 	}
-	if advertisePort != lease.Port {
+	if a.Port != lease.Port {
 		return fmt.Errorf("portallocator: refusing to start: --advertise-port is %d but cluster %s's "+
-			"apiserver lease is %d. The port a cluster advertises is the port everything in the "+
+			"front lease is %d. The port a cluster advertises is the port everything in the "+
 			"cluster reaches it on: the `kubernetes` Service endpoints carry it, and the tunnel a "+
-			"guest's kubelet dials back to the apiserver is dialled at it. Announcing a port nothing "+
-			"binds leaves coredns, metrics-server and local-path-provisioner dialling a closed port "+
-			"and the apiserver's own log proxy refused, which surfaces as a refused dial and a 502 "+
-			"from kubectl logs rather than as a misconfigured flag",
-			advertisePort, lease.Cluster, lease.Port)
+			"guest's kubelet dials back to the apiserver is dialled at it. Only the front binds it; "+
+			"announcing any other port leaves coredns, metrics-server and local-path-provisioner "+
+			"dialling a slot that may be gone after the next control-plane swap",
+			a.Port, lease.Cluster, lease.Port)
 	}
-	if forwardHostPort != lease.Port {
-		return fmt.Errorf("portallocator: refusing to start: the advertise forward is bound to host %d but cluster %s's lease is %d; "+
-			"the forward and the advertised port must come from the same lease", forwardHostPort, lease.Cluster, lease.Port)
+	if a.LinkTarget != lease.Port {
+		return fmt.Errorf("portallocator: refusing to start: the apiserver link targets %d but cluster %s's front "+
+			"lease is %d; a link is never re-pointed for a k3s swap, so it targets the front", a.LinkTarget, lease.Cluster, lease.Port)
+	}
+	for _, p := range a.SlotListen {
+		if p >= lease.Port && p < lease.Port+max(lease.Width, 1) {
+			return fmt.Errorf("portallocator: refusing to start: a k3s slot of cluster %s listens on %d, inside the "+
+				"front lease %d. A slot's listen port is never advertised and never the front's", lease.Cluster, p, lease.Port)
+		}
 	}
 	return nil
 }

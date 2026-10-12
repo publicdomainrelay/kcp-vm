@@ -27,6 +27,7 @@ import (
 	"k8s.io/client-go/rest"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/apiserverfront"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostprocess"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/openbaoctl"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/pgunit"
@@ -47,6 +48,7 @@ const (
 	DefaultReapTimeout  = 2 * time.Minute
 	MemberOutputCap     = 64 << 20
 	memberStopGrace     = 30
+	frontStopGrace      = 10
 	memberOutputTail    = 1 << 20
 	unitPoll            = 500 * time.Millisecond
 )
@@ -122,7 +124,15 @@ type ControlPlane struct {
 	Slice      string               `json:"slice"`
 	Store      string               `json:"store"`
 	Members    []ControlPlaneMember `json:"members"`
+	Front      *ControlPlaneFront   `json:"front,omitempty"`
 	WrittenAt  string               `json:"writtenAt"`
+}
+
+type ControlPlaneFront struct {
+	Address    string `json:"address"`
+	Backend    string `json:"backend"`
+	Generation int64  `json:"generation"`
+	Control    string `json:"control"`
 }
 
 type ControlPlaneMember struct {
@@ -170,12 +180,33 @@ func NewUnitsHost(c UnitsConfig) (*UnitsHost, error) {
 		stores: map[string]Store{}}, nil
 }
 
+func slotOr(slot string) string {
+	if slot == "" {
+		return ActiveSlot
+	}
+	return slot
+}
+
+func StepMember(st procgroup.Step) string { return SlotMember(st.Name, st.Slot) }
+
+func SlotMember(c procgroup.Component, slot string) string {
+	switch c {
+	case procgroup.ComponentKine:
+		return "kine@" + slotOr(slot)
+	case procgroup.ComponentK3s:
+		return "k3s@" + slotOr(slot)
+	}
+	return MemberName(c)
+}
+
 func MemberName(c procgroup.Component) string {
 	switch c {
 	case procgroup.ComponentKine:
 		return "kine@" + ActiveSlot
 	case procgroup.ComponentK3s:
 		return "k3s@" + ActiveSlot
+	case procgroup.ComponentApiserverFront:
+		return "front"
 	case procgroup.ComponentOpenBao:
 		return "bao"
 	case procgroup.ComponentApiserverLink:
@@ -415,19 +446,22 @@ func (h *UnitsHost) Adoption(ctx context.Context, key string) ([]string, error) 
 	return out, nil
 }
 
-func memberDeps(h *UnitsHost, key string, c procgroup.Component) []string {
+func memberDeps(h *UnitsHost, key string, c procgroup.Component, slot string) []string {
 	switch c {
+	case procgroup.ComponentApiserverFront:
+		return nil
 	case procgroup.ComponentKine, procgroup.ComponentOpenBao:
 		return []string{h.StoreUnit(key)}
 	case procgroup.ComponentK3s:
-		return []string{h.Unit(key, MemberName(procgroup.ComponentKine))}
+		return []string{h.Unit(key, SlotMember(procgroup.ComponentKine, slot))}
 	case procgroup.ComponentOpenBaoLink:
 		return []string{h.Unit(key, MemberName(procgroup.ComponentOpenBao))}
 	}
-	return []string{h.Unit(key, MemberName(procgroup.ComponentK3s))}
+	return []string{h.Unit(key, MemberName(procgroup.ComponentApiserverFront))}
 }
 
-func (h *UnitsHost) memberSpec(key string, c procgroup.Component, spec procgroup.Spec) (v1alpha1.HostProcessSpec, error) {
+func (h *UnitsHost) memberSpec(key string, st procgroup.Step, spec procgroup.Spec) (v1alpha1.HostProcessSpec, error) {
+	c := st.Name
 	if len(spec.Argv) == 0 {
 		return v1alpha1.HostProcessSpec{}, fmt.Errorf("clusterprovider: %s of %s has no argv", c, key)
 	}
@@ -441,13 +475,18 @@ func (h *UnitsHost) memberSpec(key string, c procgroup.Component, spec procgroup
 			return v1alpha1.HostProcessSpec{}, err
 		}
 	}
-	deps := memberDeps(h, key, c)
-	out := v1alpha1.HostProcessSpec{Unit: h.Unit(key, MemberName(c)), Exec: exe, Argv: append([]string(nil), spec.Argv[1:]...),
+	deps := memberDeps(h, key, c, st.Slot)
+	out := v1alpha1.HostProcessSpec{Unit: h.Unit(key, StepMember(st)), Exec: exe, Argv: append([]string(nil), spec.Argv[1:]...),
 		EnvFiles: append([]string(nil), spec.EnvFiles...), RestartPolicy: v1alpha1.HostProcessRestartOnFailure,
 		Stop:  &v1alpha1.HostProcessStop{Signal: "SIGTERM", GraceSeconds: memberStopGrace},
 		After: deps, Wants: deps, Slice: h.Slice(key), Placement: v1alpha1.HostProcessPlacementSupervisor}
-	if c == procgroup.ComponentApiserverLink || c == procgroup.ComponentOpenBaoLink {
+	switch c {
+	case procgroup.ComponentApiserverLink, procgroup.ComponentOpenBaoLink:
 		out.RestartPolicy = v1alpha1.HostProcessRestartAlways
+	case procgroup.ComponentApiserverFront:
+		out.RestartPolicy = v1alpha1.HostProcessRestartAlways
+		out.FdStore = 1
+		out.Stop.GraceSeconds = frontStopGrace
 	}
 	for _, kv := range spec.Env {
 		k, v, _ := strings.Cut(kv, "=")
@@ -615,16 +654,20 @@ func (h *UnitsHost) Spawn(ctx context.Context, key string, steps []procgroup.Ste
 			return err
 		}
 	}
-	cp := ControlPlane{ActiveSlot: ActiveSlot, Slice: h.Slice(key), Store: store.Unit}
+	prev, _ := h.readControlPlane(key)
+	cp := ControlPlane{ActiveSlot: ActiveSlot, Slice: h.Slice(key), Store: store.Unit, Front: prev.Front}
 	for _, st := range steps {
-		member := MemberName(st.Name)
+		member := StepMember(st)
+		if st.Name == procgroup.ComponentK3s {
+			cp.ActiveSlot = slotOr(st.Slot)
+		}
 		cp.Members = append(cp.Members, ControlPlaneMember{Name: member, Unit: h.Unit(key, member), Object: ObjectName(key, member)})
 	}
 	if err := h.writeControlPlane(key, cp); err != nil {
 		return err
 	}
 	for i, st := range steps {
-		member := MemberName(st.Name)
+		member := StepMember(st)
 		if (st.Name == procgroup.ComponentKine || st.Name == procgroup.ComponentOpenBao) && !h.storeReady(ctx, key) {
 			return fmt.Errorf("%w (cluster %s, Postgres %s)", procgroup.ErrPostgresUnavailable, key, store.Object)
 		}
@@ -662,7 +705,7 @@ func (h *UnitsHost) Spawn(ctx context.Context, key string, steps []procgroup.Ste
 				return fmt.Errorf("clusterprovider: preparing %s of %s: %w", member, key, err)
 			}
 		}
-		want, err := h.memberSpec(key, st.Name, spec)
+		want, err := h.memberSpec(key, st, spec)
 		if err != nil {
 			return err
 		}
@@ -683,7 +726,30 @@ func (h *UnitsHost) Spawn(ctx context.Context, key string, steps []procgroup.Ste
 		h.c.Log.Info("cluster provider: member ready", "cluster", key, "member", member, "unit", o.Spec.Unit, "invocation", inv)
 		cp.Members[i].InvocationID = inv
 	}
+	if f, err := h.frontRecord(ctx, key); err == nil {
+		cp.Front = f
+	}
 	return h.writeControlPlane(key, cp)
+}
+
+func (h *UnitsHost) FrontControl(key string) (string, error) {
+	dir, err := ClusterDataDir(h.c.StateDir, key)
+	if err != nil {
+		return "", err
+	}
+	return FrontControlPath(h.c.StateDir, dir, key), nil
+}
+
+func (h *UnitsHost) frontRecord(ctx context.Context, key string) (*ControlPlaneFront, error) {
+	ctl, err := h.FrontControl(key)
+	if err != nil {
+		return nil, err
+	}
+	st, err := (apiserverfront.Client{Path: ctl}).Status(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &ControlPlaneFront{Address: st.Address, Backend: st.Backend, Generation: st.Generation, Control: ctl}, nil
 }
 
 func (h *UnitsHost) controlPlanePath(key string) (string, error) {

@@ -73,6 +73,10 @@ type StackConfig struct {
 
 	CloudControllerManagerExec []string
 
+	FrontExec []string
+
+	Slot func(cluster string) string
+
 	ExternalSecrets *ExternalSecrets
 
 	AuditPolicyPath string
@@ -94,25 +98,30 @@ func StepsFor(cfg StackConfig) materialiser.StepBuilder {
 		if err != nil {
 			return nil, err
 		}
-		advPort, k3sSecure, err := K3sAPIPorts(l, cluster)
+		slot := cfg.slotOf(cluster)
+		sp, err := portallocator.PurposesOfSlot(slot)
 		if err != nil {
 			return nil, err
 		}
-		k3sControllerManager, err := leasePort(l, portallocator.PurposeK3sControllerManager, cluster)
+		advPort, k3sSecure, err := K3sAPIPorts(l, cluster, slot)
 		if err != nil {
 			return nil, err
 		}
-		k3sScheduler, err := leasePort(l, portallocator.PurposeK3sScheduler, cluster)
+		k3sControllerManager, err := leasePort(l, sp.ControllerManager, cluster)
 		if err != nil {
 			return nil, err
 		}
-		k3sCloudControllerManager, err := leasePort(l, portallocator.PurposeK3sCloudControllerManager, cluster)
+		k3sScheduler, err := leasePort(l, sp.Scheduler, cluster)
 		if err != nil {
 			return nil, err
 		}
-		kineLease, ok := l[portallocator.PurposeKine]
+		k3sCloudControllerManager, err := leasePort(l, sp.CloudControllerManager, cluster)
+		if err != nil {
+			return nil, err
+		}
+		kineLease, ok := l[sp.Kine]
 		if !ok {
-			return nil, fmt.Errorf("%w: kine (cluster %s)", ErrNoLease, cluster)
+			return nil, fmt.Errorf("%w: %s (cluster %s)", ErrNoLease, sp.Kine, cluster)
 		}
 		kineListen := fmt.Sprintf("127.0.0.1:%d", kineLease.Port)
 
@@ -149,6 +158,11 @@ func StepsFor(cfg StackConfig) materialiser.StepBuilder {
 			K3sSchedulerPort:              k3sScheduler,
 			K3sCloudControllerManagerPort: k3sCloudControllerManager,
 			TokenFile:                     TokenPath(dataDir),
+			Slot:                          slot,
+			ServerDataDir:                 SlotDataDir(dataDir, slot),
+			FrontExec:                     cfg.FrontExec,
+			FrontControl:                  FrontControlPath(cfg.StateDir, dataDir, cluster),
+			FrontState:                    FrontStatePath(dataDir),
 			CloudControllerManagerExec:    cfg.CloudControllerManagerExec,
 			ServiceAccountIssuer:          cfg.ServiceAccountIssuer,
 			APIAudiences:                  cfg.APIAudiences,
@@ -210,24 +224,24 @@ func StepsFor(cfg StackConfig) materialiser.StepBuilder {
 				return nil, err
 			}
 		}
-		steps, err = hardenAfterK3s(steps, cfg.Admin, cluster, APIServerURL(k3sSecure))
+		steps, err = hardenAfterK3s(steps, cfg.Admin, cluster, APIServerURL(advPort))
 		if err != nil {
 			return nil, err
 		}
 		if cfg.Stack.Has(procgroup.ComponentCloudControllerManager) {
-			steps, err = prepareCloudControllerManager(steps, cfg, cluster, APIServerURL(k3sSecure))
+			steps, err = prepareCloudControllerManager(steps, cfg, cluster, APIServerURL(advPort))
 			if err != nil {
 				return nil, err
 			}
 		}
 		if cfg.runsExternalSecrets() {
-			steps, err = prepareExternalSecrets(steps, cfg, spec, cluster, APIServerURL(k3sSecure))
+			steps, err = prepareExternalSecrets(steps, cfg, spec, cluster, APIServerURL(advPort))
 			if err != nil {
 				return nil, err
 			}
 		}
 		if cfg.Links != nil {
-			steps, err = linksAfterK3s(steps, cfg, cluster, dataDir, l, k3sSecure, spec.OpenBaoPort)
+			steps, err = linksAfterK3s(steps, cfg, cluster, dataDir, l, advPort, spec.OpenBaoPort)
 			if err != nil {
 				return nil, err
 			}
@@ -249,13 +263,36 @@ func hasStepBeforeK3s(steps []procgroup.Step) bool {
 	return false
 }
 
-func K3sAPIPorts(l materialiser.Leases, cluster string) (advertisePort, listenPort int, err error) {
-	listenPort, err = leasePort(l, portallocator.PurposeK3sSecure, cluster)
+func K3sAPIPorts(l materialiser.Leases, cluster, slot string) (advertisePort, listenPort int, err error) {
+	sp, err := portallocator.PurposesOfSlot(slot)
 	if err != nil {
 		return 0, 0, err
 	}
-	advertisePort = listenPort
+	if advertisePort, err = leasePort(l, portallocator.PurposeK3sSecure, cluster); err != nil {
+		return 0, 0, err
+	}
+	if listenPort, err = leasePort(l, sp.Secure, cluster); err != nil {
+		return 0, 0, err
+	}
 	return advertisePort, listenPort, nil
+}
+
+const SlotsDirName = "slots"
+
+func SlotDataDir(dataDir, slot string) string {
+	if slot == "" || slot == ActiveSlot {
+		return dataDir
+	}
+	return filepath.Join(dataDir, SlotsDirName, slot)
+}
+
+func (cfg StackConfig) slotOf(cluster string) string {
+	if cfg.Slot != nil {
+		if s := cfg.Slot(cluster); s != "" {
+			return s
+		}
+	}
+	return ActiveSlot
 }
 
 func leasePort(l materialiser.Leases, p portallocator.Purpose, cluster string) (int, error) {

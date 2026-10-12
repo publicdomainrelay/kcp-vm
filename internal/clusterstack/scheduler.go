@@ -52,7 +52,7 @@ leaderElection:
   leaderElect: false
 podInitialBackoffSeconds: %d
 podMaxBackoffSeconds: %d
-`, SchedulerKubeconfig(s.DataDir), MarketSchedulerPodInitialBackoffSeconds,
+`, SchedulerKubeconfig(s.serverDir()), MarketSchedulerPodInitialBackoffSeconds,
 		MarketSchedulerPodMaxBackoffSeconds), nil
 }
 
@@ -60,5 +60,7 @@ func (s Spec) schedulerArgv() []string {
 	if !s.MarketDialled {
 		return nil
 	}
-	return []string{"--kube-scheduler-arg=config=" + KubeSchedulerConfigPath(s.DataDir)}
+	return []string{"--kube-scheduler-arg=config=" + s.KubeSchedulerConfigFile()}
 }
+
+func (s Spec) KubeSchedulerConfigFile() string { return KubeSchedulerConfigPath(s.serverDir()) }

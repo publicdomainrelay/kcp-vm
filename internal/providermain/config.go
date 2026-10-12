@@ -1,6 +1,7 @@
 package providermain
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -149,6 +150,8 @@ type Config struct {
 
 	CloudControllerManagerExec []string
 
+	FrontExec []string
+
 	Dumbpipe string
 
 	ESOManifestDir string
@@ -223,6 +226,7 @@ func loadFor(get func(string) string, inv foldmain.Invocation) (Config, error) {
 		cfg.MountContext = kcpclient.ShardAdminContext
 	}
 	cfg.CloudControllerManagerExec = inv.Reexec("internal", "cloud-controller-manager")
+	cfg.FrontExec = inv.Reexec("internal", "apiserver-front")
 	if cfg.CloudControllerManager != "" {
 		cfg.CloudControllerManagerExec = []string{cfg.CloudControllerManager}
 	}
@@ -370,6 +374,13 @@ func loadFor(get func(string) string, inv foldmain.Invocation) (Config, error) {
 					"groups by, and nothing else names that binary: a join that accepted an empty one "+
 					"would lease, config and spawn everything else and silently drop the component "+
 					"that gives a joined node its cloud identity", envCloudControllerManager)
+		}
+
+		if len(cfg.FrontExec) == 0 {
+			return Config{}, errors.New(
+				"the cluster provider is not running from the socialweb-computer binary, so no executable " +
+					"carries `internal apiserver-front`: every joined cluster's apiserver port is owned by that " +
+					"front, and k3s sits behind it on a slot port")
 		}
 
 		if cfg.ExternalSecrets == "" || cfg.ESOBundle == "" {

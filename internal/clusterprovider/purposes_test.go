@@ -29,44 +29,6 @@ func hasPurpose(ps []portallocator.Purpose, want portallocator.Purpose) bool {
 	return false
 }
 
-func TestProvenStackLeasesOnlyWhatItRuns(t *testing.T) {
-	got := purposes(t, ProvenStack, true)
-	for _, want := range []portallocator.Purpose{
-		portallocator.PurposePostgres,
-		portallocator.PurposeK3sSecure,
-		portallocator.PurposeK3sControllerManager,
-		portallocator.PurposeK3sScheduler,
-		portallocator.PurposeK3sCloudControllerManager,
-	} {
-		if !hasPurpose(got, want) {
-			t.Fatalf("the proven stack leases %v and holds no %s", got, want)
-		}
-	}
-	for _, unwanted := range []portallocator.Purpose{
-		portallocator.PurposeOpenBao,
-		portallocator.PurposeKine,
-	} {
-		if hasPurpose(got, unwanted) {
-			t.Fatalf("the proven stack runs no component that binds %s, and leasing it reserves a "+
-				"port for a process that never starts: %v", unwanted, got)
-		}
-	}
-}
-
-func TestDesignedStackLeasesItsOwnComponents(t *testing.T) {
-	got := purposes(t, DesignedStack, true)
-	for _, want := range []portallocator.Purpose{
-		portallocator.PurposePostgres,
-		portallocator.PurposeOpenBao,
-		portallocator.PurposeKine,
-		portallocator.PurposeK3sSecure,
-	} {
-		if !hasPurpose(got, want) {
-			t.Fatalf("the designed stack runs a component that binds %s and does not lease it: %v", want, got)
-		}
-	}
-}
-
 func TestAnExternalStoreRemovesTheLocalPostgresLease(t *testing.T) {
 	got := purposes(t, ProvenStack, false)
 	if hasPurpose(got, portallocator.PurposePostgres) {

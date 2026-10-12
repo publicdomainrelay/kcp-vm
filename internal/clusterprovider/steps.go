@@ -18,6 +18,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/apiserverfront"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clusterstack"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/materialiser"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/portallocator"
@@ -99,6 +100,9 @@ func StepsFrom(spec clusterstack.Spec, leases materialiser.Leases, stack Stack) 
 	}
 
 	api := leases[portallocator.PurposeK3sSecure]
+	if in[procgroup.ComponentK3s] && !in[procgroup.ComponentApiserverFront] {
+		return nil, fmt.Errorf("%w: this Stack runs k3s and no apiserver front (data dir %s)", clusterstack.ErrMissingFront, spec.DataDir)
+	}
 
 	steps := make([]procgroup.Step, 0, len(stack))
 	for _, c := range procgroup.StackOrder {
@@ -116,12 +120,20 @@ func StepsFrom(spec clusterstack.Spec, leases materialiser.Leases, stack Stack) 
 		if err != nil {
 			return nil, err
 		}
+		slot := ""
+		if c == procgroup.ComponentKine || c == procgroup.ComponentK3s {
+			slot = spec.Slot
+		}
+		if slot != "" && slot != ActiveSlot {
+			log = strings.TrimSuffix(log, ".log") + "@" + slot + ".log"
+		}
 		ps := procgroup.Spec{Argv: argv, Env: stepEnv(spec, c), Log: log}
 		if c == procgroup.ComponentOpenBao {
 			ps.Listen = net.JoinHostPort(portallocator.LoopbackAdvertiseAddress, strconv.Itoa(bao.Port))
 		}
 		steps = append(steps, procgroup.Step{
 			Name:  c,
+			Slot:  slot,
 			Spec:  ps,
 			Ready: gate(c, spec, bao, api),
 		})
@@ -152,17 +164,26 @@ func gate(c procgroup.Component, spec clusterstack.Spec, bao, api portallocator.
 			return waitOpenBao(ctx, spec.DataDir, bao.Port)
 		case procgroup.ComponentKine:
 			return waitDial(ctx, spec.KineListen)
+		case procgroup.ComponentApiserverFront:
+			return waitFront(ctx, spec.FrontControl)
 		case procgroup.ComponentK3s:
 			if api.Purpose != portallocator.PurposeK3sSecure {
-				return fmt.Errorf("%w: the apiserver, so this k3s step has no leased port to hold it to (data dir %s)", ErrNoLease, spec.DataDir)
+				return fmt.Errorf("%w: the apiserver front, so this k3s step has no leased port to hold it to (data dir %s)", ErrNoLease, spec.DataDir)
 			}
-			if err := portallocator.AssertMarketAdvertiseInvariant(spec.AdvertiseAddress, spec.AdvertisePort, spec.AdvertisePort, api); err != nil {
+			if err := portallocator.AssertMarketAdvertiseInvariant(portallocator.Advertisement{Address: spec.AdvertiseAddress,
+				Port: spec.AdvertisePort, LinkTarget: spec.AdvertisePort, Front: api, SlotListen: []int{spec.K3sSecurePort}}); err != nil {
 				return err
 			}
-			if err := waitK3s(ctx, spec.BindAddress, spec.K3sSecurePort); err != nil {
+			if err := WaitSlot(ctx, spec); err != nil {
 				return err
 			}
-			return waitK3sControllers(ctx, spec.DataDir)
+			if _, err := (apiserverfront.Client{Path: spec.FrontControl}).Set(ctx, SlotBackend(spec)); err != nil {
+				return fmt.Errorf("clusterprovider: pointing the front of %s at slot %s: %w", spec.Cluster, spec.Slot, err)
+			}
+			if err := waitK3s(ctx, spec.BindAddress, spec.AdvertisePort); err != nil {
+				return err
+			}
+			return CheckAdvertisedEndpoints(ctx, spec)
 		case procgroup.ComponentCloudControllerManager:
 			return waitCloudControllerManager(ctx, p)
 		case procgroup.ComponentExternalSecretsWebhook:
@@ -257,8 +278,7 @@ func waitK3s(ctx context.Context, host string, port int) error {
 	}, func() error { return &errNotReady{what: "k3s server at " + url, last: last} })
 }
 
-func waitK3sControllers(ctx context.Context, dataDir string) error {
-	kubeconfig := clusterstack.AdminKubeconfig(dataDir)
+func waitK3sControllers(ctx context.Context, kubeconfig string) error {
 	last := "no answer"
 	return poll(ctx, func(ctx context.Context) (bool, error) {
 		cfg, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
