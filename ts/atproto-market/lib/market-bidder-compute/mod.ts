@@ -7,7 +7,7 @@ import type { IdResolver } from "@atproto/identity";
 import { createAttestationCid, type RecordMap } from "@atiproto/atproto-attestation";
 import type { RepoApi } from "@publicdomainrelay/atproto-repo-abc";
 import { signServiceAuth } from "@publicdomainrelay/atproto-repo-deno";
-import type { ComputeProvider } from "@publicdomainrelay/compute-provider-abc";
+import type { ComputeProvider, GuestGone } from "@publicdomainrelay/compute-provider-abc";
 import {
   attestationFor,
   toStorableEntry,
@@ -120,6 +120,33 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
   } = deps;
 
   const registered = new Set<string>();
+
+  const releaseGoneGuest = async (gone: GuestGone): Promise<void> => {
+    for (const [key, contract] of activeContracts) {
+      const providerId = await contract.providerIdPromise?.catch(() => undefined);
+      if (providerId === undefined || String(providerId) !== String(gone.id)) continue;
+      if (!activeContracts.has(key)) return;
+      activeContracts.delete(key);
+      log("warn", "bidder_guest_gone", {
+        receiptKey: key, providerId, reason: gone.reason, exitCode: gone.exitCode,
+        remaining: activeContracts.size,
+      });
+      onContractChange?.({
+        type: "terminated", key,
+        receiptUri: contract.receiptUri!, receiptCid: contract.receiptCid!,
+        acceptAuthor: contract.acceptAuthor, acceptedAt: contract.acceptedAt!,
+        terminatedAt: new Date().toISOString(), providerId,
+      });
+      return;
+    }
+    log("info", "bidder_guest_gone_no_contract", { providerId: gone.id, reason: gone.reason });
+  };
+
+  computeProvider.onGuestGone?.((gone) => {
+    releaseGoneGuest(gone).catch((err: unknown) =>
+      log("error", "bidder_guest_gone_release_failed", { providerId: gone.id, error: String(err) })
+    );
+  });
 
   const onRfp: SubmitRfpCallback = async ({ rfpUri, rfpCid, rfp, issuerDid, log: cbLog }) => {
     cbLog("info", "bidder received VM RFP", { rfpUri, rfpCid, issuerDid });
