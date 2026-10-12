@@ -16,20 +16,24 @@ type Enabler interface {
 	Enable(ctx context.Context, units []string) error
 }
 
-func BootstrapApps(role hostcontract.Role, handles []string) []table.App {
+func BootstrapApps(role hostcontract.Role, prefix string, handles []string) []table.App {
 	if role == hostcontract.RoleGateway {
-		return []table.App{table.Gateway()}
+		g := table.Gateway()
+		g.Prefix = prefix
+		return []table.App{g}
 	}
 	var out []table.App
 	for _, h := range handles {
-		out = append(out, table.Bidder(h, HandleID(h)))
+		b := table.Bidder(h, HandleID(h))
+		b.Prefix = prefix
+		out = append(out, b)
 	}
 	return out
 }
 
-func BootableUnits(role hostcontract.Role, handles []string) ([]string, error) {
+func BootableUnits(role hostcontract.Role, prefix string, handles []string) ([]string, error) {
 	var out []string
-	for _, a := range BootstrapApps(role, handles) {
+	for _, a := range BootstrapApps(role, prefix, handles) {
 		entries, err := bootstrap.Bootable(a)
 		if err != nil {
 			return nil, err
@@ -46,7 +50,7 @@ func (in *installer) bootstrapFiles(dir string) ([]string, bool, error) {
 	changed := false
 	uid, gid := in.acct.UID, in.acct.GID
 	front := in.configString("kcp-front-address")
-	for _, a := range BootstrapApps(in.o.Role, in.o.Handles) {
+	for _, a := range BootstrapApps(in.o.Role, in.o.UnitPrefix, in.o.Handles) {
 		p := bootstrap.InstallParams(a, in.o.StateDir)
 		frontURL := ""
 		if front != "" && a.Role == table.RoleGateway {
@@ -106,7 +110,7 @@ func (in *installer) configString(key string) string {
 }
 
 func (in *installer) enableBootstrap(um UserManager) error {
-	units, err := BootableUnits(in.o.Role, in.o.Handles)
+	units, err := BootableUnits(in.o.Role, in.o.UnitPrefix, in.o.Handles)
 	if err != nil || len(units) == 0 {
 		return err
 	}

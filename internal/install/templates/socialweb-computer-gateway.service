@@ -7,6 +7,7 @@ Type=exec
 Slice=socialweb.slice
 WorkingDirectory={{.State}}
 Environment=CONFIG_PATH_SOCIALWEB_COMPUTER={{.State}}/config.json
+EnvironmentFile=-{{.State}}/gateway.env
 ExecStart={{.State}}/bin/current/socialweb-computer serve gateway kcp
 Restart=always
 RestartSec=5

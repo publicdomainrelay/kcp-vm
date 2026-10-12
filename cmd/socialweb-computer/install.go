@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/user"
+	"path/filepath"
 	"strings"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clicfg"
@@ -14,9 +14,10 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/install"
 )
 
-var installOptions = []string{backendOpt, "handle", "account", "state-dir", "vm-slots", "dry-run", "adopt-account", "json"}
+var installOptions = []string{backendOpt, "handle", "account", "state-dir", "vm-slots", "dry-run", "adopt-account", "json", "root", "unit-prefix",
+	install.OptKcpFront, install.OptTLSFront, install.OptDoor}
 
-var uninstallOptions = []string{"account", "purge", "force", "json"}
+var uninstallOptions = []string{"account", "purge", "force", "json", "root"}
 
 func splitHandles(s string) []string {
 	var out []string
@@ -54,24 +55,46 @@ func runInstall(role hostcontract.Role) verbFunc {
 			return installExit(a, verb, install.Report{}, install.ErrProcBackend, false)
 		}
 		dry := vals.Bool("dry-run")
-		if os.Geteuid() != 0 && !dry {
-			return a.fail(exitRefused, "%s: the one explicit root step: run it as root (or --dry-run to print the step list)", verb)
+		root := vals.String("root")
+		staged := install.Rooted(root)
+		if os.Geteuid() != 0 && !dry && !staged {
+			return a.fail(exitRefused, "%s: the one explicit root step: run it as root (or --dry-run to print the step list, or --root for a staged host)", verb)
+		}
+		if staged && os.Geteuid() == 0 {
+			return a.fail(exitRefused, "%s: --root stages a host for the invoking user's own manager; run it as that user, never as root", verb)
 		}
 		exe, err := foldmain.ResolveExe()
 		if err != nil {
 			return a.fail(exitFailed, "%s: resolving this binary: %v", verb, err)
 		}
-		sys, err := install.NewSystem(a.stdout)
+		sys, err := a.installSystem(root)
 		if err != nil {
 			return installExit(a, verb, install.Report{}, err, false)
+		}
+		listen := map[string]string{}
+		for _, k := range []string{install.OptKcpFront, install.OptTLSFront, install.OptDoor} {
+			if s := vals.Source(k); s == clicfg.SourceFlag || s == clicfg.SourceEnv {
+				listen[k] = vals.String(k)
+			}
 		}
 		rep, err := install.Install(ctx, install.Options{
 			Role: role, Handles: splitHandles(vals.String("handle")), Account: vals.String("account"),
 			StateDir: vals.String("state-dir"), Binary: exe, VMSlots: vals.Int("vm-slots"), DryRun: dry,
 			AdoptAccount: vals.Bool("adopt-account"), HostBackend: vals.String(backendOpt), Out: a.stdout,
+			Root: root, Staged: staged, UnitPrefix: vals.String("unit-prefix"), Listen: listen,
 		}, sys)
 		return installExit(a, verb, rep, err, vals.Bool("json"))
 	}
+}
+
+func (a *app) installSystem(root string) (install.System, error) {
+	if install.Rooted(root) {
+		if !filepath.IsAbs(root) {
+			return nil, fmt.Errorf("--root %q is not absolute", root)
+		}
+		return install.NewStagedSystem(root, a.stdout)
+	}
+	return install.NewSystem(a.stdout)
 }
 
 func runUninstall(role hostcontract.Role) verbFunc {
@@ -80,15 +103,17 @@ func runUninstall(role hostcontract.Role) verbFunc {
 		if len(rest) > 0 {
 			return a.fail(exitRefused, "%s: unexpected arguments %q", verb, rest)
 		}
-		if os.Geteuid() != 0 {
+		root := vals.String("root")
+		staged := install.Rooted(root)
+		if os.Geteuid() != 0 && !staged {
 			return a.fail(exitRefused, "%s: run it as root", verb)
 		}
-		sys, err := install.NewSystem(a.stdout)
+		sys, err := a.installSystem(root)
 		if err != nil {
 			return installExit(a, verb, install.Report{}, err, false)
 		}
 		rep, err := install.Uninstall(ctx, install.UninstallOptions{Role: role, Account: vals.String("account"),
-			Purge: vals.Bool("purge"), Force: vals.Bool("force"), Out: a.stdout}, sys)
+			Purge: vals.Bool("purge"), Force: vals.Bool("force"), Root: root, Staged: staged, Out: a.stdout}, sys)
 		return installExit(a, verb, rep, err, vals.Bool("json"))
 	}
 }
@@ -103,11 +128,11 @@ func (a *app) upgradeOptions(verb string, vals clicfg.Values) (install.UpgradeOp
 	if state == "" {
 		return install.UpgradeOptions{}, fmt.Errorf("%s: --state-dir (SOCIALWEB_STATE_DIR) names the account's state dir; the core unit's config.json carries it", verb)
 	}
-	u, err := user.Current()
-	if err != nil {
-		return install.UpgradeOptions{}, err
+	if !filepath.IsAbs(state) {
+		return install.UpgradeOptions{}, fmt.Errorf("%s: state-dir %q is not absolute", verb, state)
 	}
-	return install.UpgradeOptions{StateDir: state, Home: u.HomeDir, Out: a.stdout, SelfCheck: install.SelfCheck, Restart: install.RestartOwnUnits}, nil
+	return install.UpgradeOptions{StateDir: state, Home: state, RuntimeDir: install.OwnRuntimeDir(), Out: a.stdout,
+		SelfCheck: install.SelfCheck, Restart: install.RestartOwnUnits}, nil
 }
 
 func runUpgrade(ctx context.Context, a *app, vals clicfg.Values, rest []string) int {

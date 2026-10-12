@@ -541,6 +541,10 @@
       "type": "boolean",
       "description": "uninstall: also remove the state dir (vault, kcp store, keys) and the account install created"
     },
+    "root": {
+      "type": "string",
+      "description": "install/uninstall: a staged host: the host files (/etc, the linger file, the install record) live under this directory, the state dir is used as given, the account is the invoking user and the units run in the invoking user's own manager (a proof run, no root needed)"
+    },
     "force": {
       "type": "boolean",
       "description": "uninstall: proceed while VM units are active (each stopped VM becomes Lost)"
@@ -555,7 +559,7 @@
     },
     "unit-prefix": {
       "type": "string",
-      "description": "units roll kcp, serve gateway kcp: the unit name prefix of the installed application (a test placement; socialweb- when unset)",
+      "description": "install, units roll kcp, serve gateway kcp: the unit name prefix of the installed application (a test placement; socialweb- when unset)",
       "env": "SOCIALWEB_UNIT_PREFIX"
     },
     "tls-front-address": {

@@ -16,3 +16,7 @@ func SelfCheck(ctx context.Context, exe string, role hostcontract.Role, stateDir
 }
 
 func RestartOwnUnits(ctx context.Context, units []string) error { return ErrUnsupported }
+
+func NewStagedSystem(root string, out io.Writer) (System, error) { return nil, ErrUnsupported }
+
+func OwnRuntimeDir() string { return "" }

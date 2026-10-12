@@ -25,8 +25,8 @@ const (
 	StoreSqlite   = "kine-sqlite"
 	StorePostgres = "kine-postgres"
 	GatewayKey    = "gw"
-	GatewayCore   = "socialweb-computer-gateway" + hostsvc.ServiceSuffix
-	BidderCore    = "socialweb-computer-bidder@"
+	GatewayCore   = "computer-gateway" + hostsvc.ServiceSuffix
+	BidderCore    = "computer-bidder@"
 	RolePostgres  = "pg"
 	RoleFront     = "front"
 	RoleCore      = "core"
@@ -174,9 +174,19 @@ func (a App) CoreUnit() string {
 	case a.DevCore:
 		return a.Names().DevCore()
 	case a.Role == RoleBidder:
-		return BidderCore + a.Handle + hostsvc.ServiceSuffix
+		return a.Names().Prefix + BidderCore + a.Handle + hostsvc.ServiceSuffix
 	}
-	return GatewayCore
+	return a.Names().Prefix + GatewayCore
+}
+
+func CoreTemplate(prefix, role string) string {
+	if prefix == "" {
+		prefix = hostsvc.NamePrefix
+	}
+	if role == RoleBidder {
+		return prefix + BidderCore + hostsvc.ServiceSuffix
+	}
+	return prefix + GatewayCore
 }
 
 func Table(a App) ([]Entry, error) {

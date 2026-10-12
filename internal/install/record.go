@@ -43,6 +43,7 @@ type Record struct {
 	Account     string            `json:"account"`
 	UID         int               `json:"uid"`
 	StateDir    string            `json:"stateDir"`
+	UnitPrefix  string            `json:"unitPrefix,omitempty"`
 	Handles     []string          `json:"handles,omitempty"`
 	Steps       map[string]string `json:"steps"`
 	SubidLines  map[string]string `json:"subidLines,omitempty"`

@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/bootstrap/table"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostcontract"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc"
 )
@@ -33,8 +34,8 @@ const (
 	SubidFloor      = 100000
 	KVMGroup        = "kvm"
 	CoreName        = "socialweb-computer"
-	GatewayUnit     = "socialweb-computer-gateway.service"
-	BidderTemplate  = "socialweb-computer-bidder@.service"
+	GatewayUnit     = hostsvc.NamePrefix + table.GatewayCore
+	BidderTemplate  = hostsvc.NamePrefix + table.BidderCore + hostsvc.ServiceSuffix
 	SliceUnit       = "socialweb.slice"
 	DropInName      = "socialweb-delegate.conf"
 	AppArmorPath    = "/etc/apparmor.d/" + hostcontract.AppArmorProfileName
@@ -105,7 +106,27 @@ type Options struct {
 	AdoptAccount bool
 	HostBackend  string
 	Root         string
+	Staged       bool
+	UnitPrefix   string
+	Listen       map[string]string
 	Out          io.Writer
+}
+
+const (
+	OptKcpFront = "kcp-front-address"
+	OptTLSFront = "tls-front-address"
+	OptDoor     = "door-address"
+)
+
+var GatewayListen = map[string]string{OptKcpFront: "127.0.0.1:6443", OptTLSFront: "127.0.0.1:8443", OptDoor: "127.0.0.1:8788"}
+
+func Rooted(root string) bool { return root != "" && filepath.Clean(root) != "/" }
+
+func prefixOr(p string) string {
+	if p == "" {
+		return hostsvc.NamePrefix
+	}
+	return p
 }
 
 type StepResult struct {
@@ -133,13 +154,13 @@ func HandleID(handle string) string {
 	return hex.EncodeToString(s[:])[:10]
 }
 
-func CoreUnits(role hostcontract.Role, handles []string) []string {
+func CoreUnits(role hostcontract.Role, prefix string, handles []string) []string {
 	if role == hostcontract.RoleGateway {
-		return []string{GatewayUnit}
+		return []string{table.CoreTemplate(prefix, table.RoleGateway)}
 	}
 	out := make([]string, 0, len(handles))
 	for _, h := range handles {
-		out = append(out, strings.TrimSuffix(BidderTemplate, "@.service")+"@"+h+".service")
+		out = append(out, prefixOr(prefix)+table.BidderCore+h+hostsvc.ServiceSuffix)
 	}
 	sort.Strings(out)
 	return out
@@ -158,7 +179,14 @@ type installer struct {
 	planned map[string]bool
 }
 
-func (in *installer) path(p string) string { return filepath.Join(in.o.Root, p) }
+func within(p, dir string) bool { return p == dir || strings.HasPrefix(p, dir+"/") }
+
+func (in *installer) path(p string) string {
+	if in.o.Staged && in.o.StateDir != "" && (within(p, in.o.StateDir) || within(in.o.StateDir, p)) {
+		return p
+	}
+	return filepath.Join(in.o.Root, p)
+}
 
 func (in *installer) out() io.Writer {
 	if in.o.Out == nil {
@@ -331,6 +359,14 @@ func validate(o *Options) error {
 	if o.Root == "" {
 		o.Root = "/"
 	}
+	if o.UnitPrefix != "" {
+		if err := hostsvc.ValidatePrefix(o.UnitPrefix); err != nil {
+			return fmt.Errorf("install: unit-prefix: %w", err)
+		}
+		if !strings.HasSuffix(o.UnitPrefix, "-") {
+			return fmt.Errorf("install: unit-prefix %q must end in -", o.UnitPrefix)
+		}
+	}
 	switch o.Role {
 	case hostcontract.RoleGateway:
 		if len(o.Handles) > 0 {
@@ -368,6 +404,10 @@ func Install(ctx context.Context, o Options, sys System) (Report, error) {
 	if rec.StateDir != o.StateDir {
 		return rep, fmt.Errorf("install: %s was installed with state dir %s, not %s", o.Account, rec.StateDir, o.StateDir)
 	}
+	if len(rec.Steps) > 0 && rec.UnitPrefix != o.UnitPrefix {
+		return rep, fmt.Errorf("install: %s was installed with unit prefix %q, not %q", o.Account, prefixOr(rec.UnitPrefix), prefixOr(o.UnitPrefix))
+	}
+	rec.UnitPrefix = o.UnitPrefix
 	in.rec = rec
 	steps := []func() error{in.account, in.subids, in.kvm, in.delegation, in.apparmor, in.nodePassword, in.stateLayout,
 		in.unitFiles, in.linger, in.enable, in.checkHost}
@@ -512,6 +552,9 @@ func (in *installer) kvm() error {
 	if !in.known {
 		return nil
 	}
+	if in.o.Staged {
+		return nil
+	}
 	pid, groups, notRunning := hostcontract.ManagerGroups(in.o.Root, in.acct.UID)
 	if notRunning != "" {
 		return nil
@@ -546,18 +589,18 @@ type unitData struct {
 	State string
 }
 
-func RenderUnits(role hostcontract.Role, state string) (map[string][]byte, error) {
+func RenderUnits(role hostcontract.Role, state, prefix string) (map[string][]byte, error) {
 	out := map[string][]byte{}
-	names := []string{SliceUnit, GatewayUnit}
+	core, tmpl := table.CoreTemplate(prefix, table.RoleGateway), GatewayUnit
 	if role == hostcontract.RoleBidder {
-		names = []string{SliceUnit, BidderTemplate}
+		core, tmpl = table.CoreTemplate(prefix, table.RoleBidder), BidderTemplate
 	}
-	for _, n := range names {
-		b, err := render(n, unitData{State: state})
+	for name, src := range map[string]string{SliceUnit: SliceUnit, core: tmpl} {
+		b, err := render(src, unitData{State: state})
 		if err != nil {
 			return nil, err
 		}
-		out[n] = b
+		out[name] = b
 	}
 	return out, nil
 }
@@ -777,6 +820,23 @@ func (in *installer) config() error {
 	cfg["host-backend"] = string(hostsvc.BackendSystemdUser)
 	cfg["state-dir"] = in.o.StateDir
 	cfg["asset-cache"] = filepath.Join(in.o.StateDir, "runtime")
+	if in.o.UnitPrefix != "" {
+		cfg["unit-prefix"] = in.o.UnitPrefix
+	} else {
+		delete(cfg, "unit-prefix")
+	}
+	if in.o.Role == hostcontract.RoleGateway {
+		for k, v := range GatewayListen {
+			if s, _ := cfg[k].(string); s == "" {
+				cfg[k] = v
+			}
+		}
+	}
+	for k, v := range in.o.Listen {
+		if v != "" {
+			cfg[k] = v
+		}
+	}
 	b, _ := json.MarshalIndent(cfg, "", "  ")
 	changed, err := in.ensureFile(p, append(b, '\n'), 0o644, in.acct.UID, in.acct.GID)
 	if err != nil {
@@ -793,7 +853,7 @@ func (in *installer) config() error {
 func (in *installer) unitDir() string { return filepath.Join(in.acct.Home, UserUnitDir) }
 
 func (in *installer) unitFiles() error {
-	units, err := RenderUnits(in.o.Role, in.o.StateDir)
+	units, err := RenderUnits(in.o.Role, in.o.StateDir, in.o.UnitPrefix)
 	if err != nil {
 		return err
 	}
@@ -848,7 +908,7 @@ func (in *installer) linger() error {
 }
 
 func (in *installer) enable() error {
-	units := CoreUnits(in.o.Role, in.o.Handles)
+	units := CoreUnits(in.o.Role, in.o.UnitPrefix, in.o.Handles)
 	if in.o.DryRun && !in.known {
 		for _, u := range units {
 			in.rep.Changes = append(in.rep.Changes, "enable --now "+u)

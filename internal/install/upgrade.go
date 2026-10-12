@@ -11,7 +11,9 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/bootstrap/table"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostcontract"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc"
 )
 
 var (
@@ -22,13 +24,15 @@ var (
 )
 
 type UpgradeOptions struct {
-	StateDir  string
-	Home      string
-	Binary    string
-	SHA256    string
-	Out       io.Writer
-	SelfCheck func(ctx context.Context, exe string, role hostcontract.Role, stateDir string) error
-	Restart   func(ctx context.Context, units []string) error
+	StateDir   string
+	Home       string
+	RuntimeDir string
+	Proc       string
+	Binary     string
+	SHA256     string
+	Out        io.Writer
+	SelfCheck  func(ctx context.Context, exe string, role hostcontract.Role, stateDir string) error
+	Restart    func(ctx context.Context, units []string) error
 }
 
 func (o UpgradeOptions) out() io.Writer {
@@ -40,9 +44,20 @@ func (o UpgradeOptions) out() io.Writer {
 
 func (o UpgradeOptions) bin() string { return filepath.Join(o.StateDir, "bin") }
 
+func isGatewayCore(name string) bool {
+	return strings.HasPrefix(name, RuntimePrefix) && strings.HasSuffix(name, "-"+table.GatewayCore)
+}
+
+func isBidderCore(name string) bool {
+	return strings.HasPrefix(name, RuntimePrefix) && strings.Contains(name, "-"+table.BidderCore) && strings.HasSuffix(name, hostsvc.ServiceSuffix)
+}
+
 func InstalledRole(home string) hostcontract.Role {
-	if _, err := os.Stat(filepath.Join(home, UserUnitDir, GatewayUnit)); err == nil {
-		return hostcontract.RoleGateway
+	entries, _ := os.ReadDir(filepath.Join(home, UserUnitDir))
+	for _, e := range entries {
+		if isGatewayCore(e.Name()) {
+			return hostcontract.RoleGateway
+		}
 	}
 	return hostcontract.RoleBidder
 }
@@ -51,7 +66,7 @@ func EnabledCoreUnits(home string) []string {
 	entries, _ := os.ReadDir(filepath.Join(home, UserUnitDir, WantsDir))
 	var out []string
 	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), CoreName+"-") && strings.HasSuffix(e.Name(), ".service") {
+		if isGatewayCore(e.Name()) || isBidderCore(e.Name()) {
 			out = append(out, e.Name())
 		}
 	}
@@ -109,7 +124,11 @@ func Upgrade(ctx context.Context, o UpgradeOptions) error {
 		return err
 	}
 	fmt.Fprintf(o.out(), "upgrade: bin/current -> %s (previous %s)\n", sum, current)
-	return o.restart(ctx)
+	if err := o.restart(ctx); err != nil {
+		return err
+	}
+	o.collect()
+	return nil
 }
 
 func (o UpgradeOptions) restart(ctx context.Context) error {
@@ -139,5 +158,9 @@ func Rollback(ctx context.Context, o UpgradeOptions) error {
 		}
 	}
 	fmt.Fprintf(o.out(), "rollback: bin/current -> %s (previous %s)\n", previous, current)
-	return o.restart(ctx)
+	if err := o.restart(ctx); err != nil {
+		return err
+	}
+	o.collect()
+	return nil
 }

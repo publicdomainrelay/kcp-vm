@@ -22,10 +22,14 @@ type UninstallOptions struct {
 	Purge   bool
 	Force   bool
 	Root    string
+	Staged  bool
 	Out     io.Writer
 }
 
-func OwnsUnit(name string) bool {
+func OwnsUnit(prefix, name string) bool {
+	if prefix != "" && prefix != RuntimePrefix {
+		return strings.HasPrefix(name, prefix)
+	}
 	return strings.HasPrefix(name, RuntimePrefix) || name == SliceUnit || strings.HasPrefix(name, RuntimeSliceTop+"-")
 }
 
@@ -53,7 +57,7 @@ func Uninstall(ctx context.Context, uo UninstallOptions, sys System) (Report, er
 	if rec.Role != uo.Role {
 		return rep, fmt.Errorf("uninstall: %s was installed as a %s, not a %s", uo.Account, rec.Role, uo.Role)
 	}
-	u := &uninstaller{installer: installer{ctx: ctx, o: Options{Role: uo.Role, Account: uo.Account, StateDir: rec.StateDir, Root: uo.Root, Out: uo.Out},
+	u := &uninstaller{installer: installer{ctx: ctx, o: Options{Role: uo.Role, Account: uo.Account, StateDir: rec.StateDir, Root: uo.Root, Staged: uo.Staged, Out: uo.Out},
 		sys: sys, rep: &rep, rec: rec, recPath: recPath}, uo: uo}
 	a, ok, err := sys.LookupAccount(uo.Account)
 	if err != nil {
@@ -64,7 +68,11 @@ func Uninstall(ctx context.Context, uo UninstallOptions, sys System) (Report, er
 	}
 	var um UserManager
 	if u.known {
-		if _, _, notRunning := hostcontract.ManagerGroups(uo.Root, a.UID); notRunning == "" {
+		mgRoot := uo.Root
+		if uo.Staged {
+			mgRoot = "/"
+		}
+		if _, _, notRunning := hostcontract.ManagerGroups(mgRoot, a.UID); notRunning == "" {
 			if um, err = sys.User(ctx, a); err != nil {
 				return rep, fmt.Errorf("uninstall: reaching user@%d: %w", a.UID, err)
 			}
@@ -78,7 +86,7 @@ func Uninstall(ctx context.Context, uo UninstallOptions, sys System) (Report, er
 		}
 		var vms []string
 		for _, s := range units {
-			if treeaudit.IsVMUnit(s.Name) && (s.State == hostsvc.Active || s.State == hostsvc.Activating || s.State == hostsvc.Reloading) {
+			if OwnsUnit(rec.UnitPrefix, s.Name) && treeaudit.IsVMUnit(s.Name) && (s.State == hostsvc.Active || s.State == hostsvc.Activating || s.State == hostsvc.Reloading) {
 				vms = append(vms, s.Name)
 			}
 		}
@@ -103,7 +111,7 @@ func (u *uninstaller) stopUnits(units []hostsvc.UnitStatus, um UserManager) erro
 	if um == nil {
 		return nil
 	}
-	core := CoreUnits(u.rec.Role, u.rec.Handles)
+	core := CoreUnits(u.rec.Role, u.rec.UnitPrefix, u.rec.Handles)
 	if err := u.change("disable --now "+strings.Join(core, " ")+" as "+u.uo.Account, func() error { return um.DisableStop(u.ctx, core) }); err != nil {
 		return err
 	}
@@ -113,7 +121,7 @@ func (u *uninstaller) stopUnits(units []hostsvc.UnitStatus, um UserManager) erro
 	}
 	var rest []string
 	for _, s := range units {
-		if OwnsUnit(s.Name) && !isCore[s.Name] && s.State != hostsvc.Inactive && s.State != hostsvc.NotFound {
+		if OwnsUnit(u.rec.UnitPrefix, s.Name) && !isCore[s.Name] && s.State != hostsvc.Inactive && s.State != hostsvc.NotFound {
 			rest = append(rest, s.Name)
 		}
 	}
@@ -258,7 +266,7 @@ func (u *uninstaller) removeCreatedDirs(match func(string) bool) {
 
 func (u *uninstaller) purge(units []hostsvc.UnitStatus, um UserManager) error {
 	if !u.uo.Purge {
-		kept := &Record{Role: u.rec.Role, Account: u.rec.Account, UID: u.rec.UID, StateDir: u.rec.StateDir,
+		kept := &Record{Role: u.rec.Role, Account: u.rec.Account, UID: u.rec.UID, StateDir: u.rec.StateDir, UnitPrefix: u.rec.UnitPrefix,
 			Steps: map[string]string{StepAccount: u.rec.Steps[StepAccount], StepStateDir: u.rec.Steps[StepStateDir]}}
 		for _, d := range u.rec.CreatedDirs {
 			if d == u.rec.StateDir || strings.HasPrefix(u.rec.StateDir, d+"/") {
