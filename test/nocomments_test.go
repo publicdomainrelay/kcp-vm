@@ -18,7 +18,7 @@ func TestNoCommentsAndASCII(t *testing.T) {
 	}
 	root := filepath.Dir(filepath.Dir(file))
 
-	for _, dir := range []string{"api", "internal", "cmd", "test"} {
+	for _, dir := range []string{"api", "internal", "cmd", "test", "deploy"} {
 		base := filepath.Join(root, dir)
 		err := filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
 			if err != nil {

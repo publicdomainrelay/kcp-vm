@@ -1,0 +1,258 @@
+sets:
+  - name: provider
+    summary: the socialweb provider workspace, its schemas and exports, and the account and cluster WorkspaceTypes (was install-provider.sh)
+    values: None
+    phases:
+      - name: workspace
+        workspace: root
+        files:
+          - path: workspace-socialweb-provider.yaml
+        after:
+          - kind: Workspace
+            for: Ready
+      - name: schemas
+        workspace: root:socialweb-provider
+        files:
+          - path: cluster-apiresourceschema.yaml
+          - path: node-apiresourceschema.yaml
+          - path: nodeclaim-apiresourceschema.yaml
+          - path: clusterlink-apiresourceschema.yaml
+          - path: atprotoidentity-apiresourceschema.yaml
+          - path: cluster-apiexport.yaml
+          - path: atprotoidentity-apiexport.yaml
+      - name: workspacetypes
+        workspace: root
+        files:
+          - path: workspacetype-account.yaml
+          - path: workspacetype-cluster.yaml
+        after:
+          - kind: APIExport
+            name: clusters
+            workspace: root:socialweb-provider
+            for: IdentityValid
+          - kind: APIExport
+            name: atprotoidentities
+            workspace: root:socialweb-provider
+            for: IdentityValid
+
+  - name: permission-inventory
+    summary: the four provider ServiceAccounts, then their ClusterRoles and bindings named to the live provider cluster (was apply-permission-inventory.sh)
+    values: PermissionInventory
+    phases:
+      - name: provider-cluster
+        workspace: root
+        before:
+          - kind: Workspace
+            name: socialweb-provider
+            for: Ready
+            capture:
+              into: ProviderCluster
+              from: LogicalCluster
+      - name: subjects
+        workspace: root:socialweb-provider
+        files:
+          - path: permission-inventory.yaml
+            kinds: [ServiceAccount]
+      - name: grants
+        workspace: root:socialweb-provider
+        files:
+          - path: permission-inventory.yaml
+            exceptKinds: [ServiceAccount]
+
+  - name: denoruntime
+    summary: the deno provider workspace, the DenoPod, DenoRun, DenoJob, OpenBao and policy schemas and exports, and the workflow and denoruntime WorkspaceTypes (was denokcp/install-provider.sh)
+    values: None
+    phases:
+      - name: workspace
+        workspace: root
+        files:
+          - path: workspace-deno-provider.yaml
+        after:
+          - kind: Workspace
+            for: Ready
+      - name: schemas
+        workspace: root:deno-provider
+        files:
+          - path: denokcp/policyworkflowrun-apiresourceschema.yaml
+          - path: denokcp/policyworkflowrun-apiexport.yaml
+          - path: denokcp/denopod-apiresourceschema.yaml
+          - path: denokcp/denorun-apiresourceschema.yaml
+          - path: denokcp/denojob-apiresourceschema.yaml
+          - path: denokcp/runtrigger-apiresourceschema.yaml
+          - path: denokcp/policyengine-apiresourceschema.yaml
+          - path: denokcp/policyworkflowpod-apiresourceschema.yaml
+          - path: denokcp/openbao-apiresourceschema.yaml
+          - path: denokcp/denoruntime-apiexport.yaml
+      - name: workspacetypes
+        workspace: root
+        files:
+          - path: denokcp/workspacetype-workflow.yaml
+          - path: denokcp/workspacetype-denoruntime.yaml
+        after:
+          - kind: APIExport
+            name: policyworkflowruns
+            workspace: root:deno-provider
+            for: IdentityValid
+          - kind: APIExport
+            name: denoruntime
+            workspace: root:deno-provider
+            for: IdentityValid
+
+  - name: market-identity
+    summary: the MarketIdentity schema and export in an application's own workspace (plan 0007 M1-MARKET-IDENTITY)
+    values: MarketIdentity
+    phases:
+      - name: schemas
+        workspace: "{{.Workspace}}"
+        files:
+          - path: marketidentity-apiresourceschema.yaml
+          - path: marketidentity-apiexport.yaml
+        after:
+          - kind: APIExport
+            name: marketidentities
+            for: IdentityValid
+
+  - name: market-testbed
+    summary: the AT Protocol market test bed - PLC, relay, dispatcher and its TLS front, two PDSes, N bidders and the verifier (was apply.sh); needs denoruntime and a running deno provider
+    values: MarketBed
+    phases:
+      - name: workspaces
+        workspace: root
+        files:
+          - path: examples/atproto/market/00-workspaces.yaml
+        after:
+          - kind: Workspace
+            for: Ready
+      - name: rbac-global
+        workspace: root:global
+        before:
+          - kind: APIBinding
+            for: Ready
+        files:
+          - path: examples/atproto/market/10-rbac.yaml
+      - name: rbac-relay
+        workspace: root:relay
+        before:
+          - kind: APIBinding
+            for: Ready
+        files:
+          - path: examples/atproto/market/10-rbac.yaml
+      - name: rbac-alice
+        workspace: root:alice
+        before:
+          - kind: APIBinding
+            for: Ready
+        files:
+          - path: examples/atproto/market/10-rbac.yaml
+      - name: rbac-bob
+        workspace: root:bob
+        before:
+          - kind: APIBinding
+            for: Ready
+        files:
+          - path: examples/atproto/market/10-rbac.yaml
+      - name: openbao-global
+        workspace: root:global
+        files:
+          - path: examples/atproto/market/15-openbao-global.yaml
+      - name: openbao-relay
+        workspace: root:relay
+        files:
+          - path: examples/atproto/market/15-openbao-relay.yaml
+      - name: openbao-alice
+        workspace: root:alice
+        files:
+          - path: examples/atproto/market/15-openbao-alice.yaml
+      - name: openbao-bob
+        workspace: root:bob
+        files:
+          - path: examples/atproto/market/15-openbao-bob.yaml
+        after:
+          - kind: OpenBao
+            name: openbao
+            workspace: root:global
+            for: Ready
+          - kind: OpenBao
+            name: openbao
+            workspace: root:relay
+            for: Ready
+          - kind: OpenBao
+            name: openbao
+            workspace: root:alice
+            for: Ready
+          - kind: OpenBao
+            name: openbao
+            workspace: root:bob
+            for: Ready
+      - name: plc
+        workspace: root:global
+        files:
+          - path: examples/atproto/market/20-global-plc.yaml
+      - name: dispatcher
+        workspace: root:relay
+        files:
+          - path: examples/atproto/market/35-relay-dispatcher.yaml
+        after:
+          - kind: DenoPod
+            name: dispatcher
+            for: Address
+            capture:
+              into: DispatcherPort
+              from: AddressPort
+      - name: dispatcher-tls
+        workspace: root:relay
+        files:
+          - path: examples/atproto/market/36-relay-dispatcher-tls.yaml
+        after:
+          - kind: DenoPod
+            name: dispatcher-tls
+            for: Address
+            capture:
+              into: GuestTLSPort
+              from: AddressPort
+      - name: alice-pds
+        workspace: root:alice
+        files:
+          - path: examples/atproto/market/40-alice-pds.yaml
+      - name: bob-pds
+        workspace: root:bob
+        files:
+          - path: examples/atproto/market/60-bob-pds.yaml
+      - name: relay
+        workspace: root:relay
+        files:
+          - path: examples/atproto/market/30-relay-relay.yaml
+      - name: bidders
+        workspace: root:bob
+        files:
+          - path: examples/atproto/market/70-bidder.yaml
+            each: Bidders
+            as: Bidder
+      - name: verifier
+        workspace: root:alice
+        before:
+          - kind: DenoPod
+            name: pds
+            for: Ready
+            bestEffort: true
+          - kind: DenoPod
+            name: relay
+            workspace: root:relay
+            for: Address
+            bestEffort: true
+        files:
+          - path: examples/atproto/market/50-verifier.yaml
+
+unapplied:
+  - path: sets.yaml
+    why: this index
+  - path: audit-policy.yaml
+    why: an audit.k8s.io Policy file a k3s apiserver reads at start through --audit-policy-file, never an object
+  - path: kcp-audit-policy.yaml
+    why: the Policy file kcp reads at start through --audit-policy-file (run-kcp-instance.sh, the image), never an object
+  - path: tenant-grant.yaml
+    why: applied into each tenant k3s cluster by internal/clusterprovider (tenant.go) with its owner placeholder rewritten, never into kcp
+  - path: eso/cluster-secret-store.yaml
+    why: applied into each tenant k3s cluster by internal/eso with its vault values rewritten, never into kcp
+  - path: eso/external-secret.yaml
+    why: applied into each tenant k3s cluster by internal/eso, never into kcp
