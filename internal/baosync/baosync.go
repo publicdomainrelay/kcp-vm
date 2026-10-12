@@ -5,6 +5,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 )
 
 const (
@@ -50,6 +51,7 @@ type KVScope struct {
 	Mount  string
 	Prefix string
 	Keys   []string
+	Grace  time.Duration
 }
 
 type Desired struct {
@@ -67,6 +69,8 @@ type Actual struct {
 	Collections  map[string][]string
 	Objects      map[string]map[string]any
 	KV           map[string][]string
+	KVUpdated    map[string]time.Time
+	Now          time.Time
 }
 
 type OpKind string
@@ -276,18 +280,32 @@ func Diff(d Desired, a Actual) Plan {
 	}
 	for _, s := range d.KV {
 		key := KVScopeKey(s)
-		keep := map[string]bool{}
-		for _, k := range s.Keys {
-			keep[strings.Trim(k, "/")] = true
-		}
+		keep := KeptKV(s)
 		for _, name := range a.KV[key] {
-			if name == "" || strings.HasSuffix(name, "/") || keep[name] {
+			if name == "" || strings.HasSuffix(name, "/") || keep[KVTop(name)] {
 				continue
 			}
-			add(Op{Kind: OpDeleteKV, Target: strings.TrimSuffix(key, "/") + "/" + name, Why: "no declaration names this entry"})
+			target := strings.TrimSuffix(key, "/") + "/" + name
+			if at, ok := a.KVUpdated[target]; ok && s.Grace > 0 && a.Now.Sub(at) < s.Grace {
+				continue
+			}
+			add(Op{Kind: OpDeleteKV, Target: target, Why: "no declaration names this entry"})
 		}
 	}
 	return plan
+}
+
+func KeptKV(s KVScope) map[string]bool {
+	keep := map[string]bool{}
+	for _, k := range s.Keys {
+		keep[strings.Trim(k, "/")] = true
+	}
+	return keep
+}
+
+func KVTop(name string) string {
+	top, _, _ := strings.Cut(strings.Trim(name, "/"), "/")
+	return top
 }
 
 func maxLease(ttl string) map[string]any {

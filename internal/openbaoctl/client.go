@@ -1,0 +1,51 @@
+package openbaoctl
+
+import (
+	"context"
+	"crypto/tls"
+	"fmt"
+	"os"
+	"strings"
+
+	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/openbao"
+)
+
+func FileRef(ref string) string { return strings.TrimPrefix(ref, "file:") }
+
+func ClientRefs(st v1alpha1.OpenBaoServerStatus, name string) (v1alpha1.OpenBaoServerClientRefs, error) {
+	if st.Address == "" || st.Refs == nil {
+		return v1alpha1.OpenBaoServerClientRefs{}, fmt.Errorf("the OpenBaoServer reports no address yet (phase %s)", st.Phase)
+	}
+	for _, c := range st.Clients {
+		if c.Name == name && c.ClientCert != "" {
+			return c, nil
+		}
+	}
+	return v1alpha1.OpenBaoServerClientRefs{}, fmt.Errorf("the OpenBaoServer reports no client %s yet", name)
+}
+
+func ClientLogin(ctx context.Context, st v1alpha1.OpenBaoServerStatus, name string) (*openbao.Client, v1alpha1.OpenBaoServerClientRefs, error) {
+	c, err := ClientRefs(st, name)
+	if err != nil {
+		return nil, c, err
+	}
+	caPEM, err := os.ReadFile(FileRef(st.Refs.CA))
+	if err != nil {
+		return nil, c, err
+	}
+	pool, err := openbao.CertPoolFromPEM(caPEM)
+	if err != nil {
+		return nil, c, err
+	}
+	cert, err := tls.LoadX509KeyPair(FileRef(c.ClientCert), FileRef(c.ClientKey))
+	if err != nil {
+		return nil, c, err
+	}
+	client := openbao.New(st.Address, "", openbao.WithCACertPool(pool), openbao.WithClientCertificate(cert))
+	token, err := client.LoginCert(ctx, c.CertAuthMount, c.CertAuthRole)
+	if err != nil {
+		return nil, c, err
+	}
+	return client.WithToken(token), c, nil
+}

@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/baosync"
@@ -36,7 +37,7 @@ var CorePolicyRules = []v1alpha1.OpenBaoPolicyRule{
 	{Path: "auth/+/config", Capabilities: []string{"create", "read", "update"}},
 	{Path: "+/config", Capabilities: []string{"read"}},
 	{Path: "+/roles/*", Capabilities: []string{"create", "read", "update", "delete", "list"}},
-	{Path: "+/metadata/*", Capabilities: []string{"delete", "list"}},
+	{Path: "+/metadata/*", Capabilities: []string{"read", "delete", "list"}},
 }
 
 var (
@@ -261,7 +262,15 @@ func desired(ctx context.Context, in layoutInput, ca caSource) (baosync.Desired,
 	for _, s := range decl.KV {
 		keys := append([]string(nil), s.Keys...)
 		sort.Strings(keys)
-		d.KV = append(d.KV, baosync.KVScope{Mount: strings.Trim(s.Mount, "/"), Prefix: s.Prefix, Keys: keys})
+		var grace time.Duration
+		if s.Grace != "" {
+			g, err := time.ParseDuration(s.Grace)
+			if err != nil {
+				return d, nil, fmt.Errorf("spec.declared.kv %s/%s: grace %q: %w", s.Mount, s.Prefix, s.Grace, err)
+			}
+			grace = g
+		}
+		d.KV = append(d.KV, baosync.KVScope{Mount: strings.Trim(s.Mount, "/"), Prefix: s.Prefix, Keys: keys, Grace: grace})
 	}
 	return d, pending, nil
 }
