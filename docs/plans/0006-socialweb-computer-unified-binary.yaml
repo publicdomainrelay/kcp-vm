@@ -764,7 +764,7 @@ items:
     risks:
       - "logind KillUserProcesses=yes on a host kills a detached devsup at logout; dev check reports it and --fg is the documented alternative."
       - "Each application instance's kcp costs ~0.4-0.5 GB and ~6-9 s cold start (kcp-spike.md); measured per profile once M2-BOOTSTRAP-LAYER lands."
-    status: doing
+    status: done
     evidence:
   - id: M1-INSTALL
     milestone: M1
