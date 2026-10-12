@@ -1483,8 +1483,8 @@ items:
     test_first: "deploy TestEveryYAMLUnderDeployIsInExactlyOneSetOrListedAsUnapplied and TestEverySetDecodesStrictlyIntoKcpAndKubernetesTypes; red first."
     done_when: "`manifests list` prints every set; tests green."
     risks: ["deploy becomes a Go package; check.sh keeps working."]
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M2-TEMPLATE
     milestone: M2
     title: Templating with typed values and no silent blanks
@@ -1498,8 +1498,8 @@ items:
     test_first: "internal/manifests TestAMissingValueIsARenderErrorNotAnEmptyField and TestTheRenderedMarketBedEqualsWhatApplyShProduced; red first."
     done_when: "golden equal; tests green."
     risks: []
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M2-APPLY
     milestone: M2
     title: Server-side apply into kcp workspaces from Go, phase by phase, never kubectl
@@ -1517,8 +1517,8 @@ items:
       TestAChangedAPIResourceSchemaIsRefusedNotPatched.
     done_when: "install-provider.sh, apply-permission-inventory.sh, the denokcp install and apply.sh each reproduced object for object; no kubectl or yq anywhere."
     risks: ["apply-permission-inventory.sh's yq subject/grant split (:52-53) and DRY_RUN server mode must be kept."]
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M2-HOSTPROCESS-KIND
     milestone: M2
     title: "HostProcess objects reconciled by the in-binary supervisor onto a placement backend - each application instance's kcp as its own service manager"
