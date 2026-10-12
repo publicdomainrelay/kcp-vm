@@ -101,9 +101,9 @@ func probePath(command []string) string {
 	return "/"
 }
 
-func (p *Provider) publishAddress(ctx context.Context, ref Ref, address string) {
+func (p *Provider) publishListeners(ctx context.Context, ref Ref, address string, ls []v1alpha1.DenoPodListener) {
 	services := p.serviceResolver()
-	services.Observe(ctx, ref, address)
+	services.ObserveListeners(ctx, ref, address, runnerListeners(ls))
 	if _, err := services.WriteTableFile(ctx); err != nil {
 		p.opts.Log.Warn("kcpdns: the table file was not rewritten, peers keep the addresses they had", "err", err)
 	}

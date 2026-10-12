@@ -4,9 +4,12 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcplibs/common/denospec"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcplibs/common/listeners"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcplibs/common/ref"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcplibs/factory/servicenames"
 
@@ -17,8 +20,9 @@ import (
 
 func (p *Provider) reconcilePod(ctx context.Context, ref Ref, pod *v1alpha1.DenoPod) (time.Duration, bool, error) {
 	ref.ResourceVersion = pod.ResourceVersion
-	o := denopod.Observed{Pod: *pod, Now: p.opts.Now()}
+	o := denopod.Observed{Pod: *pod, Now: p.opts.Now(), Refusal: refusal(pod)}
 	address := ""
+	var reported []v1alpha1.DenoPodListener
 	if pod.Status.RunID != "" {
 		st, err := p.opts.PodRunner.Observe(ctx, pod.Status.RunID)
 		if err != nil {
@@ -27,10 +31,12 @@ func (p *Provider) reconcilePod(ctx context.Context, ref Ref, pod *v1alpha1.Deno
 		state := denopod.ExecutionExited
 		if st.State == runner.StateRunning {
 			state = denopod.ExecutionRunning
-			address = servicenames.BoundAddress(pod.Spec.Env["SERVICE_ARGS"], pod.Spec.Env["SERVICE_ENV"], st.BoundPort)
+			bound := servicenames.BoundListeners(pod.Spec.Env["SERVICE_ARGS"], pod.Spec.Env["SERVICE_ENV"], st.BoundPort, st.Listeners)
+			address = listeners.Primary(bound)
+			reported = statusListeners(bound)
 		}
-		if address != pod.Status.Address {
-			p.publishAddress(ctx, ref, address)
+		if address != pod.Status.Address || !slices.Equal(reported, pod.Status.Listeners) {
+			p.publishListeners(ctx, ref, address, reported)
 		}
 		o.Execution = &denopod.ExecutionObservation{
 			RunID:    pod.Status.RunID,
@@ -51,10 +57,11 @@ func (p *Provider) reconcilePod(ctx context.Context, ref Ref, pod *v1alpha1.Deno
 	}
 	runID := res.RunID
 	if runID != pod.Status.RunID || terminal {
-		if address != "" || pod.Status.Address != "" {
-			p.publishAddress(ctx, ref, "")
+		if address != "" || pod.Status.Address != "" || len(reported) > 0 || len(pod.Status.Listeners) > 0 {
+			p.publishListeners(ctx, ref, "", nil)
 		}
 		address = ""
+		reported = nil
 	}
 	for _, op := range res.Ops {
 		switch op {
@@ -86,6 +93,7 @@ func (p *Provider) reconcilePod(ctx context.Context, ref Ref, pod *v1alpha1.Deno
 		Outputs:        res.Outputs,
 		Ready:          res.Ready,
 		Address:        address,
+		Listeners:      reported,
 		Conditions:     res.Conditions,
 	}
 	status.Phase = res.Phase
@@ -110,6 +118,32 @@ func (p *Provider) reconcilePod(ctx context.Context, ref Ref, pod *v1alpha1.Deno
 		}
 	}
 	return res.RequeueAfter, terminal, nil
+}
+
+func refusal(pod *v1alpha1.DenoPod) string {
+	if pod.Annotations[v1alpha1.AnnotationEdge] != "" {
+		return ""
+	}
+	return strings.Join(servicenames.FixedPorts(pod.Spec.Env), ", ")
+}
+
+func statusListeners(ls []listeners.Listener) []v1alpha1.DenoPodListener {
+	if len(ls) == 0 {
+		return nil
+	}
+	out := make([]v1alpha1.DenoPodListener, 0, len(ls))
+	for _, l := range ls {
+		out = append(out, v1alpha1.DenoPodListener{Name: l.Name, Kind: l.Kind, Address: l.Address})
+	}
+	return out
+}
+
+func runnerListeners(ls []v1alpha1.DenoPodListener) []listeners.Listener {
+	out := make([]listeners.Listener, 0, len(ls))
+	for _, l := range ls {
+		out = append(out, listeners.Listener{Name: l.Name, Kind: l.Kind, Address: l.Address})
+	}
+	return out
 }
 
 func (p *Provider) observeProbes(ctx context.Context, ref Ref, pod *v1alpha1.DenoPod, o *denopod.Observed) {

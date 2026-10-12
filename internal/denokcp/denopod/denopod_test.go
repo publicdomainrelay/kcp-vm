@@ -154,3 +154,27 @@ func TestDeletionStopsAndUnfinalizes(t *testing.T) {
 		t.Fatalf("ops=%v removeFinalizer=%v", res.Ops, res.RemoveFinalizer)
 	}
 }
+
+func TestARefusedPodNeverStartsAndSaysWhy(t *testing.T) {
+	res := reconcile(t, Observed{Pod: pod(v1alpha1.DenoPodSpec{DenoPodTemplate: tmpl()}, v1alpha1.DenoPodStatus{}), Refusal: "SERVICE_ARGS --port 2583"})
+	if hasOp(res, OpStartRun) || res.Phase != v1alpha1.DenoPodFailed {
+		t.Fatalf("phase=%s ops=%v, a refused pod is Failed and never started", res.Phase, res.Ops)
+	}
+	failed := false
+	for _, c := range res.Conditions {
+		if c.Type == v1alpha1.ConditionFailed && c.Status == metav1.ConditionTrue && c.Reason == v1alpha1.ReasonFixedPortBehindTheEdge {
+			failed = true
+		}
+	}
+	if !failed || res.Message == "" {
+		t.Fatalf("conditions=%+v message=%q, the refusal names its reason", res.Conditions, res.Message)
+	}
+}
+
+func TestARefusedRunningPodIsStopped(t *testing.T) {
+	p := pod(v1alpha1.DenoPodSpec{DenoPodTemplate: tmpl()}, v1alpha1.DenoPodStatus{Phase: v1alpha1.DenoPodRunning, RunID: "r1"})
+	res := reconcile(t, Observed{Pod: p, Execution: &ExecutionObservation{RunID: "r1", State: ExecutionRunning}, Refusal: "env PORT 2583"})
+	if !hasOp(res, OpStopRun) || res.Phase != v1alpha1.DenoPodFailed || res.RunID != "" {
+		t.Fatalf("phase=%s run=%q ops=%v", res.Phase, res.RunID, res.Ops)
+	}
+}

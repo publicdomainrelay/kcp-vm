@@ -66,7 +66,21 @@ type DenoPodStatus struct {
 
 	Address string `json:"address,omitempty"`
 
+	Listeners []DenoPodListener `json:"listeners,omitempty"`
+
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
+
+type DenoPodListener struct {
+	Name string `json:"name"`
+
+	Kind string `json:"kind"`
+
+	Address string `json:"address"`
+}
+
+const AnnotationEdge = "deno.computer/edge"
+
+const ReasonFixedPortBehindTheEdge = "FixedPortBehindTheEdge"
 
 const FinalizerDenoPod = "denopod.deno.computer/run"

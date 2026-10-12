@@ -12,7 +12,7 @@
     "patches": [
       {"patch": "deploy/denokcp/kcp-libs-no-default-issuer.patch", "from": "kcp-libs", "root": "internal/kcplibs"}
     ],
-    "local": ["internal/denokcp/fork.go", "internal/denokcp/fork_test.go"],
+    "local": ["internal/denokcp/fork.go", "internal/denokcp/fork_test.go", "internal/denokcp/manifests_test.go", "internal/kcplibs/common/listeners/listeners.go", "internal/kcplibs/common/listeners/listeners_test.go"],
     "packages": [
       {"path": "internal/denokcp/api/v1alpha1", "from": "deno-kcp", "upstream": "api/v1alpha1"},
       {"path": "internal/denokcp/denojob", "from": "deno-kcp", "upstream": "internal/denojob"},
@@ -21,7 +21,7 @@
       {"path": "internal/denokcp/policyengine", "from": "deno-kcp", "upstream": "internal/policyengine"},
       {"path": "internal/denokcp/policyworkflowpod", "from": "deno-kcp", "upstream": "internal/policyworkflowpod"},
       {"path": "internal/denokcp/policyworkflowrun", "from": "deno-kcp", "upstream": "internal/policyworkflowrun"},
-      {"path": "internal/denokcp/provider", "from": "deno-kcp", "upstream": "internal/provider"},
+      {"path": "internal/denokcp/provider", "from": "deno-kcp", "upstream": "internal/provider", "added": ["listeners_test.go"]},
       {"path": "internal/denokcp/trigger", "from": "deno-kcp", "upstream": "internal/trigger"},
       {"path": "internal/kcplibs/abc/joballoc", "from": "kcp-libs", "upstream": "abc/joballoc"},
       {"path": "internal/kcplibs/abc/pki", "from": "kcp-libs", "upstream": "abc/pki"},
@@ -40,9 +40,9 @@
       {"path": "internal/kcplibs/common/ref", "from": "kcp-libs", "upstream": "common/ref"},
       {"path": "internal/kcplibs/common/statuspatch", "from": "kcp-libs", "upstream": "common/statuspatch"},
       {"path": "internal/kcplibs/factory/admission", "from": "kcp-libs", "upstream": "factory/admission"},
-      {"path": "internal/kcplibs/factory/servicenames", "from": "kcp-libs", "upstream": "factory/servicenames"},
-      {"path": "internal/kcplibs/impl/assets", "from": "kcp-libs", "upstream": "impl/assets"},
-      {"path": "internal/kcplibs/impl/execrunner", "from": "kcp-libs", "upstream": "impl/execrunner", "added": ["runner.go", "runner_darwin.go", "runner_linux.go", "runner_linux_test.go", "runner_windows.go"]},
+      {"path": "internal/kcplibs/factory/servicenames", "from": "kcp-libs", "upstream": "factory/servicenames", "added": ["listeners_test.go"]},
+      {"path": "internal/kcplibs/impl/assets", "from": "kcp-libs", "upstream": "impl/assets", "added": ["dns_listeners_test.go"]},
+      {"path": "internal/kcplibs/impl/execrunner", "from": "kcp-libs", "upstream": "impl/execrunner", "added": ["listeners_test.go", "runner.go", "runner_darwin.go", "runner_linux.go", "runner_linux_test.go", "runner_windows.go"]},
       {"path": "internal/kcplibs/impl/kcpstore", "from": "kcp-libs", "upstream": "impl/kcpstore"},
       {"path": "internal/kcplibs/impl/memoryrunner", "from": "kcp-libs", "upstream": "impl/memoryrunner"},
       {"path": "internal/kcplibs/impl/metrics", "from": "kcp-libs", "upstream": "impl/metrics"},
@@ -55,9 +55,9 @@
   },
   "files": [
     {"path": "deploy/denokcp/denojob-apiresourceschema.yaml", "upstream": "deploy/denojob-apiresourceschema.yaml", "sha256": "6d1e78c5257031f6ccb452c879dc9cde2608430be443360d0b8248d698aebe3c"},
-    {"path": "deploy/denokcp/denopod-apiresourceschema.yaml", "upstream": "deploy/denopod-apiresourceschema.yaml", "sha256": "6c2f8d35a0f9a63d7a308774fbf3d4060624ce2ba6049aaedbb4ca6c323488a0"},
+    {"path": "deploy/denokcp/denopod-apiresourceschema.yaml", "upstream": "deploy/denopod-apiresourceschema.yaml", "sha256": "6c2f8d35a0f9a63d7a308774fbf3d4060624ce2ba6049aaedbb4ca6c323488a0", "adapted": "revision v1alpha1-5: status.listeners, every listener the pod reported (name, kind tcp|unix|relay, address)"},
     {"path": "deploy/denokcp/denorun-apiresourceschema.yaml", "upstream": "deploy/denorun-apiresourceschema.yaml", "sha256": "d5b2eb7b737fad528c03f7c49c5c15c228cb8c5e70088956c39b570e7a3c86b5"},
-    {"path": "deploy/denokcp/denoruntime-apiexport.yaml", "upstream": "deploy/denoruntime-apiexport.yaml", "sha256": "acba18dee2de5437eeba862e9bb794de4ef999ff79473c495929b29f0fff8ab0"},
+    {"path": "deploy/denokcp/denoruntime-apiexport.yaml", "upstream": "deploy/denoruntime-apiexport.yaml", "sha256": "acba18dee2de5437eeba862e9bb794de4ef999ff79473c495929b29f0fff8ab0", "adapted": "names the DenoPod schema revision v1alpha1-5 that carries status.listeners"},
     {"path": "deploy/denokcp/openbao-apiresourceschema.yaml", "upstream": "deploy/openbao-apiresourceschema.yaml", "sha256": "9738f720dd01d763b0482c73acc08f144e97620164c98ead9b747e585d680392"},
     {"path": "deploy/denokcp/policyengine-apiresourceschema.yaml", "upstream": "deploy/policyengine-apiresourceschema.yaml", "sha256": "1a030b4cb02b119d88ae87a4b54821d2417deced0450b5f77f3bc5bae7796bfd"},
     {"path": "deploy/denokcp/policyworkflowpod-apiresourceschema.yaml", "upstream": "deploy/policyworkflowpod-apiresourceschema.yaml", "sha256": "bda88d49cea3d5db2b1ed0f06c433fa4034a18e17379ba69c81429e5e05ce4fc"},

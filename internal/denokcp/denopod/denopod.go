@@ -42,6 +42,8 @@ type Observed struct {
 
 	LivenessFailed bool
 
+	Refusal string
+
 	Now time.Time
 }
 
@@ -123,6 +125,10 @@ func (r *Reconciler) Reconcile(ctx context.Context, o Observed) (Result, error) 
 		return r.finish(o, res), nil
 	}
 
+	if o.Refusal != "" {
+		return r.refuse(o, res), nil
+	}
+
 	if deadlineExceeded(o.Pod, o.Now) {
 		return r.deadline(o, res), nil
 	}
@@ -194,6 +200,25 @@ func (r *Reconciler) deadline(o Observed, res Result) Result {
 		"DeadlineExceeded", "activeDeadlineSeconds elapsed before the deno process finished")
 	setCondition(&res, o.Pod.Generation, metav1.ConditionFalse, v1alpha1.ConditionReady,
 		"DeadlineExceeded", "the pod exceeded its active deadline")
+	res.RequeueAfter = RequeueAfter
+	return res
+}
+
+func (r *Reconciler) refuse(o Observed, res Result) Result {
+	if o.Execution != nil && o.Execution.State == ExecutionRunning {
+		res.Ops = append(res.Ops, OpStopRun)
+	}
+	message := "a listener behind the edge binds port 0 and reports its address; this pod names a fixed port (" +
+		o.Refusal + ") and carries no " + v1alpha1.AnnotationEdge + " annotation"
+	res.Phase = v1alpha1.DenoPodFailed
+	res.RunID = ""
+	res.Ready = false
+	res.Message = message
+	res.CompletionTime = timePtr(o.Now)
+	setCondition(&res, o.Pod.Generation, metav1.ConditionTrue, v1alpha1.ConditionFailed,
+		v1alpha1.ReasonFixedPortBehindTheEdge, message)
+	setCondition(&res, o.Pod.Generation, metav1.ConditionFalse, v1alpha1.ConditionReady,
+		v1alpha1.ReasonFixedPortBehindTheEdge, message)
 	res.RequeueAfter = RequeueAfter
 	return res
 }

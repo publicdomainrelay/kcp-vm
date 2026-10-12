@@ -1,7 +1,7 @@
 apiVersion: apis.kcp.io/v1alpha1
 kind: APIResourceSchema
 metadata:
-  name: v1alpha1-4.denopods.deno.computer
+  name: v1alpha1-5.denopods.deno.computer
 spec:
   group: deno.computer
   names:
@@ -107,6 +107,25 @@ spec:
                 type: boolean
               address:
                 type: string
+              listeners:
+                type: array
+                items:
+                  type: object
+                  required:
+                    - name
+                    - kind
+                    - address
+                  properties:
+                    name:
+                      type: string
+                    kind:
+                      type: string
+                      enum:
+                        - tcp
+                        - unix
+                        - relay
+                    address:
+                      type: string
               conditions:
                 type: array
                 items:

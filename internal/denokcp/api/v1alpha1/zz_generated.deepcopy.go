@@ -294,6 +294,10 @@ func (in *DenoPodStatus) DeepCopyInto(out *DenoPodStatus) {
 			out.Outputs[k] = v
 		}
 	}
+	if in.Listeners != nil {
+		out.Listeners = make([]DenoPodListener, len(in.Listeners))
+		copy(out.Listeners, in.Listeners)
+	}
 	if in.Conditions != nil {
 		out.Conditions = make([]metav1.Condition, len(in.Conditions))
 		for i := range in.Conditions {

@@ -3,6 +3,8 @@ package runner
 import (
 	"context"
 	"time"
+
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcplibs/common/listeners"
 )
 
 type State string
@@ -47,6 +49,8 @@ type PodStatus struct {
 	Outputs map[string]string
 
 	BoundPort int32
+
+	Listeners []listeners.Listener
 }
 
 type PodRunner interface {

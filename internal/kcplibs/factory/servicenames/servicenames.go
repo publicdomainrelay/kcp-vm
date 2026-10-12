@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcplibs/abc/store"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcplibs/common/denospec"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcplibs/common/kcp"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcplibs/common/listeners"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcplibs/common/ref"
 )
 
@@ -80,7 +82,7 @@ type Resolver struct {
 
 	mu sync.Mutex
 
-	observed map[string]string
+	observed map[string]map[string]string
 
 	written []byte
 }
@@ -92,18 +94,31 @@ func New(opts Options) *Resolver {
 	if opts.ServiceAccountNamespace == "" {
 		opts.ServiceAccountNamespace = "default"
 	}
-	return &Resolver{opts: opts, observed: map[string]string{}}
+	return &Resolver{opts: opts, observed: map[string]map[string]string{}}
 }
 
 func (d *Resolver) Observe(ctx context.Context, target ref.Ref, address string) {
+	d.ObserveListeners(ctx, target, address, nil)
+}
+
+func (d *Resolver) ObserveListeners(ctx context.Context, target ref.Ref, address string, ls []listeners.Listener) {
 	name := d.Name(ctx, target.Name, target.Namespace, target.LogicalCluster)
+	entries := podEntries(name, address, ls)
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if address == "" {
+	if len(entries) == 0 {
 		delete(d.observed, name)
 		return
 	}
-	d.observed[name] = address
+	d.observed[name] = entries
+}
+
+func podEntries(name, address string, ls []listeners.Listener) map[string]string {
+	entries := listeners.TableEntries(name, ls)
+	if address != "" {
+		entries[name] = address
+	}
+	return entries
 }
 
 func (d *Resolver) WriteTableFile(ctx context.Context) (bool, error) {
@@ -176,14 +191,20 @@ func (d *Resolver) Table(ctx context.Context) (map[string]string, []string) {
 		if address == "" {
 			address = AdvertisedAddress(envOf(pod, ArgsKey), envOf(pod, EnvKey))
 		}
-		if address == "" {
-			continue
+		for key, value := range podEntries(d.Name(ctx, pod.GetName(), pod.GetNamespace(), cluster), address, statusListeners(pod)) {
+			table[key] = value
 		}
-		table[d.Name(ctx, pod.GetName(), pod.GetNamespace(), cluster)] = address
 	}
 	d.mu.Lock()
-	for name, address := range d.observed {
-		table[name] = address
+	for name, entries := range d.observed {
+		for key := range table {
+			if key == name || strings.HasSuffix(key, "."+name) && strings.HasPrefix(key, listeners.NamePrefix) {
+				delete(table, key)
+			}
+		}
+		for key, value := range entries {
+			table[key] = value
+		}
 	}
 	d.mu.Unlock()
 	return table, workspaces
@@ -256,6 +277,55 @@ func BoundAddress(argsJSON, envJSON string, port int32) string {
 	return host + ":" + strconv.Itoa(int(port))
 }
 
+func BoundListeners(argsJSON, envJSON string, port int32, reported []listeners.Listener) []listeners.Listener {
+	if len(reported) > 0 {
+		return reported
+	}
+	address := BoundAddress(argsJSON, envJSON, port)
+	if address == "" {
+		return nil
+	}
+	return []listeners.Listener{{Name: listeners.DefaultTCPName, Kind: listeners.KindTCP, Address: address}}
+}
+
+var (
+	bindFlags = []string{"--port", "--serve-port", "--tls-port"}
+
+	bindEnv = []string{"PORT", "SERVE_PORT", "TLS_PORT"}
+)
+
+func FixedPorts(env map[string]string) []string {
+	var found []string
+	fixed := func(value string) bool {
+		n, err := strconv.ParseUint(strings.TrimSpace(value), 10, 16)
+		return err == nil && n != 0
+	}
+	args := []string{}
+	if raw := env[ArgsKey]; raw != "" {
+		_ = json.Unmarshal([]byte(raw), &args)
+	}
+	for i, arg := range args {
+		if slices.Contains(bindFlags, arg) && i+1 < len(args) && fixed(args[i+1]) {
+			found = append(found, ArgsKey+" "+arg+" "+args[i+1])
+		}
+	}
+	serviceEnv := map[string]string{}
+	if raw := env[EnvKey]; raw != "" {
+		_ = json.Unmarshal([]byte(raw), &serviceEnv)
+	}
+	for _, key := range bindEnv {
+		if fixed(serviceEnv[key]) {
+			found = append(found, EnvKey+" "+key+" "+serviceEnv[key])
+		}
+	}
+	for _, key := range bindEnv {
+		if fixed(env[key]) {
+			found = append(found, "env "+key+" "+env[key])
+		}
+	}
+	return found
+}
+
 func advertised(argsJSON, envJSON string) (string, string) {
 	args := []string{}
 	if argsJSON != "" {
@@ -281,15 +351,28 @@ func advertised(argsJSON, envJSON string) (string, string) {
 	if host == "" {
 		host = serviceEnv["HOSTNAME"]
 	}
-	if host == "" || host == "0.0.0.0" || host == "::" {
-		host = "127.0.0.1"
-	}
-	return port, host
+	return port, listeners.LoopbackFor(host)
 }
 
 func statusAddress(pod *unstructured.Unstructured) string {
 	address, _, _ := unstructured.NestedString(pod.Object, "status", "address")
 	return address
+}
+
+func statusListeners(pod *unstructured.Unstructured) []listeners.Listener {
+	items, _, _ := unstructured.NestedSlice(pod.Object, "status", "listeners")
+	var out []listeners.Listener
+	for _, item := range items {
+		fields, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		name, _ := fields["name"].(string)
+		kind, _ := fields["kind"].(string)
+		address, _ := fields["address"].(string)
+		out = append(out, listeners.Listener{Name: name, Kind: kind, Address: address})
+	}
+	return listeners.Clean(out)
 }
 
 func envOf(pod *unstructured.Unstructured, key string) string {

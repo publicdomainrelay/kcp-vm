@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcplibs/abc/runner"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcplibs/common/listeners"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcplibs/common/outputs"
 )
 
@@ -108,7 +109,7 @@ func (p *Pod) Observe(_ context.Context, runID string) (runner.PodStatus, error)
 			_ = p.sup.stop(runID)
 			return runner.PodStatus{State: runner.StateFailed, Message: "the deno process exceeded the runner timeout"}, nil
 		}
-		return runner.PodStatus{State: runner.StateRunning, BoundPort: boundPort(run.dir)}, nil
+		return runner.PodStatus{State: runner.StateRunning, BoundPort: boundPort(run.dir), Listeners: reportedListeners(run.dir)}, nil
 	}
 	if run.stopped.Load() {
 		return runner.PodStatus{State: runner.StateFailed, Message: "the deno process was stopped"}, nil
@@ -212,6 +213,9 @@ func (p *Pod) dirEnv(dir string, caller []string) []string {
 	if !containsKey(caller, "PORT_FILE") {
 		env = append(env, "PORT_FILE="+filepath.Join(dir, PortFileName))
 	}
+	if !containsKey(caller, listeners.FileEnv) {
+		env = append(env, listeners.FileEnv+"="+filepath.Join(dir, listeners.FileName))
+	}
 	if len(p.trustBundle()) > 0 && !containsKey(caller, "DENO_CERT") {
 		env = append(env, "DENO_CERT="+filepath.Join(dir, "ca.pem"))
 	}
@@ -228,6 +232,18 @@ func boundPort(dir string) int32 {
 		return 0
 	}
 	return int32(port)
+}
+
+func reportedListeners(dir string) []listeners.Listener {
+	body, err := os.ReadFile(filepath.Join(dir, listeners.FileName))
+	if err != nil {
+		return nil
+	}
+	found, err := listeners.Parse(body)
+	if err != nil {
+		return nil
+	}
+	return found
 }
 
 func containsKey(env []string, key string) bool {
