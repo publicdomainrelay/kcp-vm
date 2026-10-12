@@ -153,8 +153,8 @@ items:
       TestAProductionRunNeverReachesTheNetworkForItsModules (under unshare -rn). Red first.
     done_when: "both green; `version` prints deno 2.9.3 and its sha256."
     risks: ["A cache missing one module fails at first import; M1-TS-CLOSURE runs every entry with --cached-only at build time."]
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M1-TS-SOURCE
     milestone: M1
     title: Where the TypeScript comes from - the embedded archive in production, the org root otherwise
@@ -176,8 +176,8 @@ items:
       TestAProductionBuildHasNoOrgRootOption; red first.
     done_when: "tests green; a dev build run from a worktree three levels deep finds the org root."
     risks: ["A worktree's own sibling imports (../../) do not resolve from a worktree (plan 0005 evidence); the walk finds the org root above the worktree, which is the checkout the user runs."]
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M1-TS-CLOSURE
     milestone: M1
     title: The production TypeScript closure and its module cache as one deterministic embedded archive
@@ -200,8 +200,8 @@ items:
       TestADirtySiblingRepoIsRefusedForARelease; red first.
     done_when: "archive built; size recorded (feeds 0006:M0-SIZE-BUDGET); every entry starts offline from the extracted tree."
     risks: ["The door today runs with node_modules (nodeModulesDir auto); its suite is run under --node-modules-dir=none before the switch."]
-    status: todo
-    evidence: []
+    status: doing
+    evidence:
   - id: M1-BED-PARALLEL
     milestone: M1
     title: "EARLY: today's market bed runs N per host - no fixed ports, no one-bed check - so live tests in parallel worktrees stop colliding"
