@@ -1766,8 +1766,8 @@ items:
     risks:
       - "User-manager fd-store support is unverified on the target systemd; without it a front restart has a refused-connection window of its restart time, recorded."
       - "On graceful stop the lease endpoint reconciler may RemoveEndpoints for the shared IP; not observed (k3s exits in 0.1 s), asserted on the market network."
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M3-CP-SLOTS
     milestone: M3
     kcp_use: "traditional-exception (virtual Kubernetes clusters project; principle)"
@@ -1825,8 +1825,8 @@ items:
       - "k3s's own wrangler lease is 45 s; after blue stops, green's k3s controllers (addons, helm) may wait up to 45 s unless blue releases on cancel - measured."
       - "exec/attach/log streams through blue reset on every swap; that is why swaps are idle-first."
       - "If neither hostname mechanism works in the user manager, this item is blocked and the user is asked; switch-then-stop alone is not accepted as solving the lease collision."
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M3-LINK-HANDOVER
     milestone: M3
     kcp_use: "traditional-exception (virtual Kubernetes clusters project; principle)"
@@ -1853,8 +1853,8 @@ items:
       ticket byte-identical, the node's Lease renewal gap recorded). Red first.
     done_when: "green; the relay-promotion and discovery timings for the pinned dumbpipe recorded with UTC timestamps."
     risks: ["n0's public relays must run the promotion behaviour; the measurement names the relay used."]
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M3-BAO-SYNC
     milestone: M3
     kcp_use: "traditional-exception for the cluster OpenBaos (virtual Kubernetes clusters project); the root vault half is the gateway application's own state (principle)"
