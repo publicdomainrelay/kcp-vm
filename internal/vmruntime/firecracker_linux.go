@@ -231,10 +231,13 @@ func (r *firecracker) UnitSpec(p Prepared, slot int) hostsvc.UnitSpec {
 }
 
 func (r *firecracker) Start(ctx context.Context, p Prepared) (RuntimeRef, error) {
-	slot, err := r.place(ctx, p)
+	slot, err := r.Reserve(ctx, p, func(ctx context.Context, _ int, spec hostsvc.UnitSpec) error {
+		_, err := r.cfg.Manager.Start(ctx, spec)
+		return err
+	})
 	ref := RuntimeRef{}
 	if err == nil {
-		ref, err = r.await(ctx, p, slot)
+		ref, err = r.Await(ctx, p, slot)
 	}
 	if err != nil {
 		stopCtx := context.WithoutCancel(ctx)
@@ -247,7 +250,56 @@ func (r *firecracker) Start(ctx context.Context, p Prepared) (RuntimeRef, error)
 	return ref, nil
 }
 
-func (r *firecracker) place(ctx context.Context, p Prepared) (int, error) {
+func (r *firecracker) Placed(handle, name string) Prepared {
+	p := Prepared{
+		Spec:      VMSpec{Handle: handle, Name: name},
+		Unit:      UnitName(handle, name),
+		WorkDir:   WorkDir(r.cfg.StateDir, handle, name),
+		SocketDir: SocketDir(r.cfg.RuntimeDir, handle, name),
+		VMMID:     VMMID(handle, name),
+	}
+	p.Socket = filepath.Join(p.SocketDir, SocketFile)
+	return p
+}
+
+func (r *firecracker) StopGrace() time.Duration { return r.cfg.StopGrace }
+
+func (r *firecracker) Shutdown(ctx context.Context, ref RuntimeRef, grace time.Duration) (bool, error) {
+	live := func(st hostsvc.UnitStatus) bool {
+		return st.State == hostsvc.Active || st.State == hostsvc.Activating || st.State == hostsvc.Deactivating
+	}
+	st, err := r.cfg.Manager.Inspect(ctx, ref.Unit)
+	if err != nil {
+		return false, err
+	}
+	if !live(st) {
+		return true, nil
+	}
+	if !GracefulStop() || ref.Socket == "" {
+		return false, nil
+	}
+	if err := fcapi.NewClient(ref.Socket, 2*time.Second).SendCtrlAltDel(ctx); err != nil {
+		return false, nil
+	}
+	deadline := time.Now().Add(grace)
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return false, ctx.Err()
+		case <-time.After(50 * time.Millisecond):
+		}
+		st, err = r.cfg.Manager.Inspect(ctx, ref.Unit)
+		if err != nil {
+			return false, err
+		}
+		if !live(st) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (r *firecracker) Reserve(ctx context.Context, p Prepared, place Placer) (int, error) {
 	unlock, err := r.lock()
 	if err != nil {
 		return 0, err
@@ -271,7 +323,7 @@ func (r *firecracker) place(ctx context.Context, p Prepared) (int, error) {
 	if err := r.grant(p, vmmUID); err != nil {
 		return 0, err
 	}
-	if _, err := r.cfg.Manager.Start(ctx, r.UnitSpec(p, slot)); err != nil {
+	if err := place(ctx, slot, r.UnitSpec(p, slot)); err != nil {
 		return 0, err
 	}
 	return slot, nil
@@ -332,7 +384,7 @@ func (r *firecracker) grant(p Prepared, vmmUID int) error {
 	return writeJSON(filepath.Join(p.WorkDir, GrantsFile), outside, 0o600)
 }
 
-func (r *firecracker) await(ctx context.Context, p Prepared, slot int) (RuntimeRef, error) {
+func (r *firecracker) Await(ctx context.Context, p Prepared, slot int) (RuntimeRef, error) {
 	client := fcapi.NewClient(p.Socket, 2*time.Second)
 	deadline := time.Now().Add(r.cfg.BootTimeout)
 	var last error

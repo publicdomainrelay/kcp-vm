@@ -133,9 +133,16 @@ type Listed struct {
 	Loaded  bool               `json:"loaded"`
 }
 
+type Placer func(ctx context.Context, slot int, spec hostsvc.UnitSpec) error
+
 type Runtime interface {
 	Capabilities() Capabilities
 	Prepare(ctx context.Context, spec VMSpec) (Prepared, error)
+	Placed(handle, name string) Prepared
+	Reserve(ctx context.Context, p Prepared, place Placer) (int, error)
+	Await(ctx context.Context, p Prepared, slot int) (RuntimeRef, error)
+	Shutdown(ctx context.Context, ref RuntimeRef, grace time.Duration) (bool, error)
+	StopGrace() time.Duration
 	Start(ctx context.Context, p Prepared) (RuntimeRef, error)
 	Inspect(ctx context.Context, ref RuntimeRef) (Observation, error)
 	Stop(ctx context.Context, ref RuntimeRef) (StopResult, error)
