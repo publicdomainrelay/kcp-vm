@@ -7,7 +7,7 @@ export const CONDITION_GUEST_REPORTED = "GuestReported";
 export const FINALIZER_COMPUTE_VM = "computevm.socialweb.computer/release";
 export const FIELD_MANAGER_COMPUTE_VM_CONTROLLER = "computevm-controller";
 export const FIELD_MANAGER_COMPUTE_VM_PROVIDER = "compute-provider-kcp";
-export const GUEST_HOST_ADDRESS = "10.0.2.2";
+export const GUEST_HOST_ADDRESS = "192.0.2.1";
 export const USER_DATA_SECRET_NAMESPACE = "default";
 export const USER_DATA_SECRET_KEY = "user-data";
 

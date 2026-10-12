@@ -203,7 +203,7 @@ const (
 	FieldManagerComputeVMProvider = "compute-provider-kcp"
 )
 
-const GuestHostAddress = "10.0.2.2"
+const GuestHostAddress = "192.0.2.1"
 
 const (
 	UserDataSecretNamespace = "default"
