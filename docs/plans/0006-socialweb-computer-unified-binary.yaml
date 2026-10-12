@@ -144,7 +144,8 @@ state_rules:
     No backwards compatibility (decided by the user 2026-10-12): no item plans a migration of container-era
     state, a cutover, a rollback to the container, or prod downtime handling until the finished solution
     exists. Continuity is planned only for upgrades of the finished system (M3-CP-CONTINUITY).
-  - An item names its dependencies in depends_on; an item may not start while one of them is not done.
+  - >
+    An item names its dependencies in depends_on; an item may not start while one of them is not done.
     Cross-plan dependencies are written <plan>:<item id>. Exception (user-approved 2026-10-12): an item with
     a `variant_dependencies` field may start the variant that field names as unblocked before the
     dependencies listed against other variants are done; the item is done only when every variant is.
