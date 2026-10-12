@@ -94,7 +94,7 @@ export function createFakeKcp(workspace = "root:bidder"): FakeKcp {
         if (v === null) delete spec[k];
         else spec[k] = v;
       }
-      obj.spec = spec as MarketIdentity["spec"];
+      obj.spec = spec as unknown as MarketIdentity["spec"];
       obj.metadata = { ...obj.metadata, generation: Number(obj.metadata?.generation ?? 1) + 1, resourceVersion: String(++version) };
       return Response.json(obj);
     }

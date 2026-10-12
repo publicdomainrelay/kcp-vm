@@ -3,16 +3,16 @@ import { parsePolicyArgs } from "@publicdomainrelay/policy-engine-cli-options";
 import { createLogger } from "@publicdomainrelay/logger";
 import { createServe } from "@publicdomainrelay/serve";
 import {
+  applyOAuthAgentToRequesterPDS,
   createRequesterPDS,
   createOAuthRequester,
   runComputeContract,
   createSshSessionProvider,
   ensureDumbpipe,
 } from "@publicdomainrelay/requester-xrpc";
+import type { OAuthRequesterHandle } from "@publicdomainrelay/requester-xrpc";
 import { removedTransportFlagsIn } from "@publicdomainrelay/cloud-init-common";
-import { pollForOAuthSession, createOAuthAgentFromSession, tryRestoreOAuthQRSession, saveOAuthQRSession, OAuthSessionExpiredError } from "@publicdomainrelay/atproto-helpers";
-import { startLoopbackCallbackServer } from "@publicdomainrelay/atproto-oauth-helpers";
-import { createPlcDirectoryClient, createGenesisOp, PlcClient, PlcNotFoundError } from "@publicdomainrelay/did-plc";
+import { createDelegatingAgent } from "@publicdomainrelay/atproto-helpers";
 import type { RequesterPDS } from "@publicdomainrelay/requester-abc";
 import { EVENT_NSID, OFFERING_NSID } from "@publicdomainrelay/market-common";
 import { REQUESTER_OAUTH_SCOPE } from "@publicdomainrelay/oauth-scope";
@@ -21,11 +21,18 @@ import { DEFAULT_RELAY_URLS } from "@publicdomainrelay/atproto-event-stream-comm
 import { parseSecretsFile } from "@publicdomainrelay/secrets-common";
 import { createSecretsCapability } from "@publicdomainrelay/guest-capability-secrets";
 import type { GuestCapability } from "@publicdomainrelay/guest-capability-abc";
-import { qrcode } from "@libs/qrcode";
-import { IdResolver } from "@atproto/identity";
 import { Secp256k1Keypair } from "@atproto/crypto";
 import { marketNetwork } from "@publicdomainrelay/market-network-common";
 import { installMarketNetworkFetch } from "@publicdomainrelay/market-network-fetch";
+import { callbackRef, cliIdentityMode, cliMarketIdentity, vaultRefs } from "@publicdomainrelay/market-identity-abc";
+import type { BrowserOAuthClient, IdentityPrompt, IdentityVault, MarketIdentity, MarketIdentityMode } from "@publicdomainrelay/market-identity-abc";
+import { requesterAssociatingRepo, startMarketIdentityReconciler, vaultOAuthSessionStore } from "@publicdomainrelay/market-identity-atproto";
+import type { MarketIdentityHandle } from "@publicdomainrelay/market-identity-atproto";
+import { createMemoryIdentityVault } from "@publicdomainrelay/market-identity-memory";
+import { createKcpIdentityPrompt } from "@publicdomainrelay/identity-prompt-kcp";
+import { createTtyIdentityPrompt } from "@publicdomainrelay/identity-prompt-tty";
+import { createOpenBaoIdentityVault } from "@publicdomainrelay/market-identity-vault-openbao";
+import { createFileIdentityVault, createSessionFileIdentityVault } from "@publicdomainrelay/market-identity-vault-file";
 import cliArgsEnv from "./cli-args-env.ts";
 
 /** Structural policy spec; matches @publicdomainrelay/policy-engine PolicySpec. */
@@ -53,6 +60,7 @@ const network = marketNetwork({
   ingressProxyHost: options.ingressProxyHost as string | undefined,
   relayUrls: options.relayUrl as string | undefined,
   firehoseUrls: options.firehoseUrl as string | undefined,
+  qrOrigin: options.qrOrigin as string | undefined,
 });
 const ingressProxyHost = network.ingressProxyHost;
 installMarketNetworkFetch({ network });
@@ -123,205 +131,217 @@ if (privateKeyHexPath && !resolvedPrivateKeyHex) {
   } catch { /* file missing -- will generate and save below */ }
 }
 
-let pds: RequesterPDS;
-let isOAuth = false;
-let _oauthAgentForDispose: { dispose(): void } | null = null;
+const identityName = options.marketIdentityName as string;
+const identityVaultMount = options.identityVaultMount as string;
+const stateDir = options.stateDir as string | undefined;
 const AUTO_REFRESH_THRESHOLD_MS = 3_600_000;
 
-function createSessionExpiredHandler(label: string) {
-  return (err: OAuthSessionExpiredError) => {
-    logger.error("oauth_session_expired_shutting_down", {
-      sessionPath: err.sessionPath,
-      label,
-      hint: "Restart the process to re-authenticate via QR code. The stale session file has been deleted.",
-    });
-    if (err.sessionPath) {
-      try { Deno.removeSync(err.sessionPath); } catch { /* ignore */ }
-    }
-    setTimeout(() => Deno.exit(1), 500);
-  };
+function cliKcpIdentityPrompt(): IdentityPrompt | undefined {
+  if (!options.marketIdentityKcpServer) return undefined;
+  const workspace = options.marketIdentityKcpWorkspace as string | undefined;
+  if (!workspace) throw new Error("--market-identity-kcp-server needs --market-identity-kcp-workspace");
+  const caFile = options.marketIdentityKcpCaCertFile as string | undefined;
+  return createKcpIdentityPrompt({
+    server: options.marketIdentityKcpServer as string,
+    workspace,
+    tokenFile: options.marketIdentityKcpTokenFile as string | undefined,
+    caCert: caFile ? Deno.readTextFileSync(caFile) : undefined,
+  });
 }
 
-if ((options.atprotoOauth as boolean) && (options.atprotoHandle as string | undefined)) {
-  // OAuth requester -- no local PDS, firehose-based discovery
-  const oauthHandle = await createOAuthRequester({
-    handle: options.atprotoHandle as string,
-    sessionPath: (options.oauthSessionPath as string) ||
-      `${Deno.env.get("HOME") ?? "/tmp"}/.cache/pdr-market/requester-oauth-session.json`,
+function loopbackPort(redirectUri: string | undefined): number {
+  const m = (redirectUri ?? "").match(/^https?:\/\/[^/]+:(\d+)/);
+  return m ? parseInt(m[1]) : 0;
+}
+
+const kcpIdentityPrompt = cliKcpIdentityPrompt();
+const cliMode: MarketIdentityMode | undefined = kcpIdentityPrompt ? undefined : cliIdentityMode({
+  mode: options.atprotoIdentityMode as string | undefined,
+  oauth: options.atprotoOauth as boolean,
+  oauthQr: options.atprotoOauthQr as boolean,
+  handle: options.atprotoHandle as string | undefined,
+});
+logger.info("requester_identity_mode", { mode: cliMode ?? "kcp", name: identityName });
+
+let identityVault: IdentityVault = createMemoryIdentityVault();
+let identityRefs = vaultRefs(identityName, { mode: cliMode ?? "localRepo" }, identityVaultMount);
+const ttyIdentityPrompt = kcpIdentityPrompt ? undefined : createTtyIdentityPrompt({
+  identity: cliMarketIdentity(identityName, {
+    mode: cliMode!,
+    handle: options.atprotoHandle as string | undefined,
+    association: options.skipQr ? "Skip" : "RequireApproval",
+  }),
+  logger,
+  callbackPort: loopbackPort(options.oauthRedirectUri as string | undefined),
+  deliverCallback: (params) => identityVault.write(callbackRef(identityRefs.session), params),
+});
+const identityPrompt: IdentityPrompt = kcpIdentityPrompt ?? ttyIdentityPrompt!;
+
+async function identityObject(): Promise<MarketIdentity & { spec: NonNullable<MarketIdentity["spec"]> }> {
+  let waiting = false;
+  while (true) {
+    const obj = await identityPrompt.get(identityName).catch((err) => {
+      logger.warn("requester_identity_read_failed", { name: identityName, error: String(err) });
+      return null;
+    });
+    if (obj?.spec) return obj as MarketIdentity & { spec: NonNullable<MarketIdentity["spec"]> };
+    if (!waiting) logger.info("requester_identity_waiting", { name: identityName, hint: "no MarketIdentity object with a spec yet" });
+    waiting = true;
+    await new Promise((r) => setTimeout(r, 1_000));
+  }
+}
+
+const identitySpec = (await identityObject()).spec;
+const identityMode: MarketIdentityMode = identitySpec.mode;
+identityRefs = vaultRefs(identityName, identitySpec, identityVaultMount);
+
+function baseIdentityVault(): IdentityVault {
+  if (options.identityVaultAddress) {
+    const caFile = options.identityVaultCaCertFile as string | undefined;
+    return createOpenBaoIdentityVault({
+      address: options.identityVaultAddress as string,
+      tokenFile: options.identityVaultTokenFile as string | undefined,
+      caCert: caFile ? Deno.readTextFileSync(caFile) : undefined,
+      namespace: options.identityVaultNamespace as string | undefined,
+    });
+  }
+  if (options.identityVaultFile) return createFileIdentityVault({ path: options.identityVaultFile as string });
+  if (stateDir) return createFileIdentityVault({ path: `${stateDir}/identity-vault.json` });
+  logger.warn("requester_identity_store_in_memory", { hint: "pass --state-dir to keep the sign-in across runs" });
+  return createMemoryIdentityVault();
+}
+
+const baseVault = baseIdentityVault();
+identityVault = options.oauthSessionFile
+  ? createSessionFileIdentityVault({ base: baseVault, ref: identityRefs.session, path: options.oauthSessionFile as string })
+  : baseVault;
+
+async function identityKeyHex(): Promise<string> {
+  const generated = async () => Array.from(await (await Secp256k1Keypair.create({ exportable: true })).export()).map((b) => b.toString(16).padStart(2, "0")).join("");
+  if (identityMode !== "localRepo" && identityMode !== "oauthQr") return resolvedPrivateKeyHex ?? await generated();
+  const existing = await identityVault.read(identityRefs.keys);
+  const held = typeof existing?.repoKeyHex === "string" ? existing.repoKeyHex : undefined;
+  if (held) {
+    if (resolvedPrivateKeyHex && resolvedPrivateKeyHex !== held) logger.warn("requester_identity_key_from_vault", { hint: "the identity vault's key wins over --private-key-hex" });
+    return held;
+  }
+  const hex = resolvedPrivateKeyHex ?? await generated();
+  await identityVault.write(identityRefs.keys, { ...(existing ?? {}), repoKeyHex: hex });
+  return hex;
+}
+
+const privateKeyHex = await identityKeyHex();
+
+function requesterPDS(keyHex: string) {
+  return createRequesterPDS({
+    logger,
+    serve,
+    privateKeyHex: keyHex,
+    plcDirectoryUrl: network.plcDirectoryUrl,
+    ingressProxyHost,
+    label,
+    storagePath: options.pdsStatePath as string | undefined,
+    skipIngress: !!options.noIngressProxy,
+  });
+}
+
+let localPds: Awaited<ReturnType<typeof createRequesterPDS>> | undefined;
+let browserRequester: OAuthRequesterHandle | undefined;
+
+async function openBrowserClient(): Promise<BrowserOAuthClient> {
+  const handle = identitySpec.handle ?? options.atprotoHandle as string | undefined;
+  if (!handle) throw new Error("mode oauthBrowser needs a handle: --atproto-handle or spec.handle");
+  const sessionPath = options.oauthSessionPath as string | undefined;
+  const { loadOrGenerateKeypair } = await import("@publicdomainrelay/market-atproto");
+  const requester = await createOAuthRequester({
+    handle,
+    sessionPath,
+    sessionStore: sessionPath ? undefined : vaultOAuthSessionStore(identityVault, identityRefs.session),
     clientId: options.oauthClientId as string | undefined,
     redirectUri: options.oauthRedirectUri as string | undefined,
     scope: REQUESTER_OAUTH_SCOPE.join(" "),
     plcDirectoryUrl: network.plcDirectoryUrl,
     logger,
-    attestationKp: await (async () => {
-      const kp = resolvedPrivateKeyHex
-        ? await (await import("@atproto/crypto")).Secp256k1Keypair.import(resolvedPrivateKeyHex, { exportable: true })
-        : await (await import("@atproto/crypto")).Secp256k1Keypair.create({ exportable: true });
-      const { loadOrGenerateKeypair } = await import("@publicdomainrelay/market-atproto");
-      const hex = Array.from(await kp.export()).map((b: number) => b.toString(16).padStart(2, "0")).join("");
-      return loadOrGenerateKeypair(hex);
-    })(),
-    privateKeyHex: resolvedPrivateKeyHex ?? "",
+    attestationKp: await loadOrGenerateKeypair(privateKeyHex),
+    privateKeyHex,
   });
+  browserRequester = requester;
+  return {
+    restore: () => requester.restore(),
+    startFlow: () => requester.startFlow(),
+    completeFlow: (params) => requester.completeFlow(params),
+    agent: { get did() { return requester.pds.did; } },
+  };
+}
 
-  const restored = await oauthHandle.restore();
-  if (!restored) {
-    const authUrl = await oauthHandle.startFlow();
-    const redirectUri = (options.oauthRedirectUri as string) || "http://127.0.0.1:0/callback";
-    const portMatch = redirectUri.match(/:(\d+)/);
-    const port = portMatch ? parseInt(portMatch[1]) : 0;
-    const cmd = Deno.build.os === "darwin" ? "open" : "xdg-open";
-    new Deno.Command(cmd, { args: [authUrl] }).spawn();
-    logger.info("oauth_browser_opened", { authUrl });
-    const { promise, shutdown } = startLoopbackCallbackServer(port);
-    const params = await promise;
-    shutdown();
-    await oauthHandle.completeFlow(params);
-  }
-  pds = oauthHandle.pds;
-  isOAuth = true;
-} else if ((options.atprotoOauthQr as boolean)) {
-  // QR-based OAuth -- scan with phone, session transferred via qr.fedfork.com
-  const qrSessionKey = (handle: string | undefined) => ({
-    sessionPath: options.oauthSessionFile as string | undefined,
-    label: "requester",
-    handle,
-  });
-  const kp = resolvedPrivateKeyHex
-    ? await Secp256k1Keypair.import(resolvedPrivateKeyHex, { exportable: true })
-    : await Secp256k1Keypair.create({ exportable: true });
-  // Register DID on PLC (needed for service auth JWT verification)
-  const plcClient = createPlcDirectoryClient({ plcDirectoryUrl: network.plcDirectoryUrl });
-  const genesisOp = await createGenesisOp({
-    rotationKeys: [kp.did()],
-    verificationMethods: { atproto: kp.did() },
-    sign: (bytes: Uint8Array) => kp.sign(bytes),
-  });
-  const plcDid = genesisOp.did;
-  const pollSigner = { did: () => plcDid, sign: (bytes: Uint8Array) => kp.sign(bytes) };
-  try {
-    await plcClient.resolve(plcDid);
-    logger.info("oauth_qr_did_resolved", { did: plcDid });
-  } catch (err) {
-    if (err instanceof PlcNotFoundError) {
-      await plcClient.submitOp(plcDid, genesisOp.op);
-      logger.info("oauth_qr_did_registered", { did: plcDid });
-    } else {
-      throw err;
-    }
-  }
+const identityHandle: MarketIdentityHandle = startMarketIdentityReconciler({
+  name: identityName,
+  prompt: identityPrompt,
+  vault: identityVault,
+  logger,
+  plcDirectoryUrl: network.plcDirectoryUrl,
+  qrOrigin: network.qrOrigin,
+  vaultMount: identityVaultMount,
+  autoRefreshThresholdMs: AUTO_REFRESH_THRESHOLD_MS,
+  oauthClientId: options.oauthSessionClientId as string | undefined,
+  localRepo: {
+    qrParam: "plc",
+    open: async (repoKeyHex: string) => {
+      localPds = await requesterPDS(repoKeyHex);
+      await localPds.beginServe();
+      return requesterAssociatingRepo(localPds);
+    },
+  },
+  oauthBrowser: { open: openBrowserClient },
+});
 
-  // Persist key for future runs
-  if (privateKeyHexPath) {
-    const hex = Array.from(await kp.export()).map((b: number) => b.toString(16).padStart(2, "0")).join("");
-    await Deno.writeTextFile(privateKeyHexPath, hex);
-  }
+async function signedIn() {
+  if (kcpIdentityPrompt) return await identityHandle.ready();
+  return await Promise.race([
+    identityHandle.ready(),
+    new Promise<never>((_, reject) => {
+      const poll = setInterval(async () => {
+        const obj = await identityPrompt.get(identityName);
+        if (obj?.status?.phase === "Failed") {
+          clearInterval(poll);
+          reject(new Error(`sign-in failed: ${obj.status.message ?? "unknown"}`));
+        }
+      }, 200);
+      identityHandle.ready().finally(() => clearInterval(poll));
+    }),
+  ]);
+}
 
-  // Try restoring saved OAuth QR session
-  let _restoredOAuthAgent: any = null;
-  let _session: any = null;
-  const _restoredAgent = await tryRestoreOAuthQRSession({
-    logger, ...qrSessionKey(options.atprotoHandle as string | undefined),
-    clientId: options.oauthSessionClientId as string | undefined,
-    autoRefreshThresholdMs: AUTO_REFRESH_THRESHOLD_MS,
-    // No onSessionExpired here -- restore handles expiry internally
-    // (delete file, return null -> falls through to QR auth).
-  });
-  if (_restoredAgent) {
-    _restoredOAuthAgent = _restoredAgent;
-    _oauthAgentForDispose = _restoredAgent;
-    isOAuth = true;
-  } else {
-    // Generate nonce for defense-in-depth POST auth
-    const oauthNonce = Array.from(crypto.getRandomValues(new Uint8Array(16)),
-      (b) => b.toString(16).padStart(2, "0")).join("");
+let ready: Awaited<ReturnType<typeof signedIn>>;
+try {
+  ready = await signedIn();
+} catch (err) {
+  logger.error("requester_sign_in_failed", { mode: identityMode, error: err instanceof Error ? err.message : String(err) });
+  await identityHandle.stop().catch(() => {});
+  ttyIdentityPrompt?.stop();
+  Deno.exit(1);
+}
 
-    // Show QR
-    const qrUrl = `${network.qrOrigin}/#oauth=${encodeURIComponent(plcDid)}&n=${oauthNonce}`;
-    process.stdout.write("\n" + "=".repeat(60) + "\n");
-    process.stdout.write("  Scan this QR code with your phone to authenticate:\n\n");
-    qrcode(qrUrl, { output: "console", ecl: "HIGH" });
-    process.stdout.write("\n  Or open this URL:\n  " + qrUrl + "\n");
-    process.stdout.write("=".repeat(60) + "\n\n");
-
-    logger.info("oauth_qr_awaiting_session", { did: plcDid });
-
-    // Poll for session
-    _session = await pollForOAuthSession({
-      cliDid: plcDid,
-      signer: pollSigner,
-      qrFedforkOrigin: network.qrOrigin,
-      logger,
-    });
-  }
-
-  // Create requester PDS for market handler infrastructure, but use OAuth agent
-  pds = await createRequesterPDS({
-    logger,
-    serve,
-    privateKeyHex: resolvedPrivateKeyHex,
-    plcDirectoryUrl: network.plcDirectoryUrl,
-    ingressProxyHost,
-    label,
-    storagePath: options.pdsStatePath as string | undefined,
-    skipIngress: !!options.noIngressProxy,
-  });
-
-  // Set OAuth agent on PDS
-  if (_restoredOAuthAgent) {
-    (pds as unknown as Record<string, unknown>).oauthAgent = _restoredOAuthAgent;
-    (pds as unknown as Record<string, unknown>).oauthSession = _restoredOAuthAgent.sessionData;
-    logger.info("oauth_qr_session_restored", { userDid: _restoredOAuthAgent.sessionData?.userDid });
-  } else {
-    const oauthAgent = await createOAuthAgentFromSession(_session, {
-      logger,
-      autoRefreshThresholdMs: AUTO_REFRESH_THRESHOLD_MS,
-      onSessionExpired: createSessionExpiredHandler("requester"),
-      saveSession: (s) => saveOAuthQRSession(s, qrSessionKey(s.handle)),
-    });
-    _oauthAgentForDispose = oauthAgent;
-    (pds as unknown as Record<string, unknown>).oauthAgent = oauthAgent;
-    (pds as unknown as Record<string, unknown>).oauthSession = _session;
-    await saveOAuthQRSession(_session, qrSessionKey(_session.handle));
-    logger.info("oauth_qr_session_ready", { userDid: _session.userDid, handle: _session.handle });
-  }
-
-  // Every market record is authored by the signed-in user, not the ephemeral
-  // repo. Shared with library embedders -- see applyOAuthAgentToRequesterPDS.
-  const _userAgent = (pds as unknown as Record<string, unknown>).oauthAgent as
-    | (import("@publicdomainrelay/atproto-helpers").AtprotoAgentLike & { sessionData: { userDid: string } })
-    | undefined;
-  if (_userAgent) {
-    const { applyOAuthAgentToRequesterPDS } = await import("@publicdomainrelay/requester-xrpc");
-    applyOAuthAgentToRequesterPDS(pds, _userAgent, {
-      log: (event, data) => logger.info(event, data),
-    });
-  }
-
-  isOAuth = true;
+let pds: RequesterPDS;
+const isOAuth = !localPds;
+if (localPds) {
+  pds = localPds;
+} else if (browserRequester) {
+  pds = browserRequester.pds;
 } else {
-  pds = await createRequesterPDS({
-    logger,
-    serve,
-    privateKeyHex: resolvedPrivateKeyHex,
-    plcDirectoryUrl: network.plcDirectoryUrl,
-    ingressProxyHost,
-    label,
-    storagePath: options.pdsStatePath as string | undefined,
-    skipIngress: !!options.noIngressProxy,
-  });
-  // Persist generated key to path for future runs.
-  if (privateKeyHexPath) {
-    try {
-      await Deno.writeTextFile(privateKeyHexPath, pds.privateKeyHex);
-      if (resolvedPrivateKeyHex) {
-        // Already had it -- rewrite same value (idempotent).
-      } else {
-        logger.info("private_key_generated_and_saved", { path: privateKeyHexPath });
-      }
-    } catch (err) {
-      logger.warn("private_key_save_failed", { path: privateKeyHexPath, error: String(err) });
-    }
+  pds = await requesterPDS(privateKeyHex);
+  const did = ready.did;
+  const userAgent = Object.assign(createDelegatingAgent(did, () => identityHandle.agent()), { sessionData: { userDid: did } });
+  applyOAuthAgentToRequesterPDS(pds, userAgent, { log: (event, data) => logger.info(event, data) });
+}
+logger.info("requester_identity_ready", { did: ready.did, handle: ready.handle, mode: identityMode, localRepo: !!localPds });
+
+if (privateKeyHexPath && (identityMode === "localRepo" || identityMode === "oauthQr")) {
+  try {
+    await Deno.writeTextFile(privateKeyHexPath, privateKeyHex);
+    if (!resolvedPrivateKeyHex) logger.info("private_key_generated_and_saved", { path: privateKeyHexPath });
+  } catch (err) {
+    logger.warn("private_key_save_failed", { path: privateKeyHexPath, error: String(err) });
   }
 }
 
@@ -343,90 +363,11 @@ const ownEventWatcher = eventStreams.watch({
   log: logger,
 });
 
-if (!isOAuth) {
-  await pds.beginServe();
-}
 // OAuth mode: the requester's market identity is the OAuth session user (every
 // market record is written as that user), NOT the ephemeral PDS keypair DID.
 const marketDid = (pds as unknown as { oauthSession?: { userDid?: string } }).oauthSession?.userDid ??
   pds.did;
 logger.info("requester_ready", { did: marketDid, ingressRef: isOAuth ? "(oauth)" : pds.ingressRef, ingressProxyHost });
-
-const BADGE_BLUE_KEYS_NSID = "com.publicdomainrelay.temp.badgeBlueKeys";
-let hasAssociation = false;
-if (!options.skipQr) {
-  if (isOAuth) {
-    // OAuth mode: check badgeBlueKeys on user's PDS via OAuth agent.
-    const oa = (pds as unknown as { oauthAgent?: { listRecords(did: string, coll: string, opts?: { limit?: number }): Promise<{ records: Array<{ value: Record<string, unknown> }> }> } }).oauthAgent;
-    const userDid = (pds as unknown as { oauthSession?: { userDid: string } }).oauthSession?.userDid;
-    if (oa && userDid) {
-      const result = await oa.listRecords(userDid, BADGE_BLUE_KEYS_NSID, { limit: 100 });
-      for (const rec of result.records) {
-        const v = rec.value as Record<string, unknown>;
-        if (v.challenge === userDid && v.service === "requester_associate" && v.keyId === pds.did) {
-          hasAssociation = true;
-          break;
-        }
-      }
-    }
-  } else {
-    let cursor: string | undefined;
-    do {
-      const result = await (pds as unknown as { api: { listRecords(did: string, coll: string, opts: { limit: number; cursor?: string }): Promise<{ records: Array<{ value: Record<string, unknown> }>; cursor?: string }> } }).api.listRecords(pds.did, BADGE_BLUE_KEYS_NSID, { limit: 100, cursor });
-      for (const rec of result.records) {
-        const v = rec.value as Record<string, unknown>;
-        if (v.challenge === pds.did && v.service === "requester_associate") {
-          hasAssociation = true;
-          break;
-        }
-      }
-      cursor = result.cursor;
-    } while (cursor && !hasAssociation);
-  }
-}
-
-// OAuth QR: user logged in as the operator account. The OAuth session
-// IS the association proof -- no second QR or badgeBlueKeys record needed.
-if (isOAuth) {
-  hasAssociation = true;
-}
-
-if (hasAssociation) {
-  logger.info("existing_association_found", { did: pds.did, hint: "skipping QR -- prior association exists" });
-}
-
-if (!options.skipQr && !hasAssociation) {
-  const qrUrl = `${network.qrOrigin}/#plc=${pds.did}`;
-  logger.info("qr_url", { url: qrUrl });
-  process.stdout.write("\n" + "=".repeat(60) + "\n");
-  process.stdout.write("  Scan this QR code with your phone to authenticate:\n\n");
-  qrcode(qrUrl, { output: "console", ecl: "HIGH" });
-  process.stdout.write("\n  Or open this URL:\n  " + qrUrl + "\n");
-  process.stdout.write("=".repeat(60) + "\n\n");
-
-  logger.info("waiting_for_association", {
-    hint: "Scan QR code, then confirm on your phone",
-    requesterDid: pds.did,
-  });
-  const callerDid = await pds.associateCalled;
-
-  let handle = callerDid;
-  try {
-    const idr = new IdResolver();
-    const doc = await idr.did.resolve(callerDid);
-    const aka = (doc as Record<string, unknown>)?.alsoKnownAs as string[] | undefined;
-    if (aka?.[0]) handle = aka[0].replace("at://", "");
-  } catch { /* use DID as fallback */ }
-
-  const answer = prompt(`Associate with ${handle}? [y/N] `);
-  if (!answer || !answer.toLowerCase().startsWith("y")) {
-    logger.info("association_rejected", { callerDid, handle });
-    pds.rejectAssociation(new Error("User rejected association"));
-    Deno.exit(0);
-  }
-  pds.approveAssociation();
-  logger.info("association_confirmed", { callerDid, handle });
-}
 
 const origLog = console.log.bind(console);
 const origErr = console.error.bind(console);
@@ -454,9 +395,9 @@ async function resumeConsole(): Promise<void> {
 
 function shutdown(): void {
   eventStreams.close();
-  _oauthAgentForDispose?.dispose();
   serve.shutdown();
-  Deno.exit();
+  ttyIdentityPrompt?.stop();
+  identityHandle.stop().finally(() => Deno.exit());
 }
 
 // Provisioning-only hold mode: the first SIGTERM/SIGINT releases the held VM

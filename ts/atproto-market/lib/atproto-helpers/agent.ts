@@ -583,7 +583,7 @@ export async function createRemoteAgent(opts: CreateRemoteAgentOpts): Promise<Re
 
 export interface CreateOAuthAgentOpts {
   handle: string;
-  sessionPath: string;
+  sessionPath?: string;
   sessionStore?: SessionStore;
   clientId?: string;
   redirectUri?: string;
@@ -619,7 +619,7 @@ export async function createOAuthAgent(opts: CreateOAuthAgentOpts): Promise<OAut
       token_endpoint_auth_method: "none",
     },
     stateStore: memoryStateStore(),
-    sessionStore: opts.sessionStore ?? jsonSessionStore(opts.sessionPath),
+    sessionStore: opts.sessionStore ?? jsonSessionStore(opts.sessionPath ?? ""),
     runtimeImplementation: webCryptoRuntime(),
     identityResolver: {
       resolve: async (identifier: string) => {

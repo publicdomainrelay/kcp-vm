@@ -1128,7 +1128,8 @@ export interface OAuthRequesterHandle {
 
 export interface CreateOAuthRequesterOpts {
   handle: string;
-  sessionPath: string;
+  sessionPath?: string;
+  sessionStore?: { get(key: string): Promise<unknown>; set(key: string, value: unknown): Promise<void>; del(key: string): Promise<void> };
   clientId?: string;
   redirectUri?: string;
   scope?: string;
@@ -1235,7 +1236,7 @@ export async function createOAuthRequester(opts: CreateOAuthRequesterOpts): Prom
       token_endpoint_auth_method: "none",
     },
     stateStore: memoryStateStore(),
-    sessionStore: jsonSessionStore(opts.sessionPath),
+    sessionStore: opts.sessionStore ? opts.sessionStore as never : jsonSessionStore(opts.sessionPath ?? ""),
     runtimeImplementation: webCryptoRuntime(),
     identityResolver: {
       resolve: async (identifier: string) => {

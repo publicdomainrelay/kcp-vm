@@ -48,9 +48,18 @@ export default {
     },
     "oauth-session-path": {
       type: "string" as const,
-      description: "Path to persist the OAuth session JSON",
+      description: "File the browser OAuth (--atproto-oauth) session is kept in; unset, it lives in the identity store at the MarketIdentity's sessionRef",
       env: "OAUTH_SESSION_PATH",
-      default: `${Deno.env.get("HOME") ?? Deno.env.get("USERPROFILE") ?? "/tmp"}/.cache/pdr-market/bidder-oauth-session.json`,
+    },
+    "state-dir": {
+      type: "string" as const,
+      description: "This bidder instance's state directory; its identity store (keys and sessions) is <state-dir>/identity-vault.json unless an identity vault is named. Never $HOME",
+      env: "STATE_DIR",
+    },
+    "qr-origin": {
+      type: "string" as const,
+      description: "QR relay origin the sign-in and association QR codes point at",
+      env: "QR_ORIGIN",
     },
     "ingress-proxy-host": {
       type: "string" as const,
@@ -271,12 +280,17 @@ export default {
     },
     "oauth-session-file": {
       type: "string" as const,
-      description: "Path to OAuth QR session file (overrides default cache path). When set with --atproto-oauth-qr, session is loaded from this file instead of the default ~/.cache/pdr-market/ location.",
+      description: "File the QR OAuth (--atproto-oauth-qr) session is kept in, as session JSON; unset, it lives in the identity store at the MarketIdentity's sessionRef",
       env: "OAUTH_SESSION_FILE",
+    },
+    "oauth-session-client-id": {
+      type: "string" as const,
+      description: "OAuth client_id a QR or delegated session was issued to; a refresh must use it. Omit for sessions obtained through qr.fedfork.com",
+      env: "OAUTH_SESSION_CLIENT_ID",
     },
     "skip-qr": {
       type: "boolean" as const,
-      description: "Skip QR code display and association prompt",
+      description: "localRepo: no association (the MarketIdentity's association is Skip); without it the association QR and approval are pending actions on the MarketIdentity",
       env: "SKIP_QR",
     },
     "associate-with": {

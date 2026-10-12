@@ -10,8 +10,9 @@ import type {
   AssociatingRepo,
   BrowserOAuthClient,
   IdentityVault,
+  SessionStore,
   MarketIdentity,
-  MarketIdentityObjects,
+  IdentityPrompt,
   MarketIdentityPendingAction,
   MarketIdentityPhase,
   MarketIdentityStatus,
@@ -32,7 +33,7 @@ import {
 
 export interface MarketIdentityReconcilerOptions {
   name: string;
-  objects: MarketIdentityObjects;
+  prompt: IdentityPrompt;
   vault: IdentityVault;
   logger: StructuredLoggerInterface;
   plcDirectoryUrl: string;
@@ -119,7 +120,7 @@ function deferred<T>(): Deferred<T> {
 }
 
 export function startMarketIdentityReconciler(opts: MarketIdentityReconcilerOptions): MarketIdentityHandle {
-  const { name, objects, vault, logger } = opts;
+  const { name, prompt, vault, logger } = opts;
   const watchMs = opts.watchIntervalMs ?? DEFAULT_WATCH_MS;
   const retryMs = opts.retryIntervalMs ?? opts.watchIntervalMs ?? DEFAULT_RETRY_MS;
   const now = opts.now ?? (() => new Date());
@@ -170,7 +171,7 @@ export function startMarketIdentityReconciler(opts: MarketIdentityReconcilerOpti
     let conds = status.conditions;
     for (const c of conditions) conds = setCondition(conds, { ...c, observedGeneration: generation }, now());
     status = stripUndefined({ ...fields, observedGeneration: generation, conditions: conds });
-    await objects.writeStatus(name, status);
+    await prompt.writeStatus(name, status);
   }
 
   function markReady(r: IdentityReady): void {
@@ -263,7 +264,10 @@ export function startMarketIdentityReconciler(opts: MarketIdentityReconcilerOpti
     const stored = await vault.read(sessionRef);
     if (!isSession(stored)) return null;
     const agent = await openSession(stored, sessionRef);
-    if (await sessionUsable(agent)) return agent;
+    if (await sessionUsable(agent)) {
+      logger.info("oauth_qr_session_restored", { name, userDid: stored.userDid, handle: stored.handle });
+      return agent;
+    }
     agent.dispose();
     await vault.remove(sessionRef);
     sessionLost = true;
@@ -397,7 +401,7 @@ export function startMarketIdentityReconciler(opts: MarketIdentityReconcilerOpti
     const callerHandle = await resolveHandle(callerDid);
     let asked = false;
     while (true) {
-      const fresh = await objects.get(name);
+      const fresh = await prompt.get(name);
       if (!fresh?.spec) throw new TerminalIdentityError(`marketidentity ${name} disappeared during an association`);
       generation = fresh.metadata?.generation as number | undefined;
       const decision = decideAssociation(fresh.spec, callerDid, callerHandle);
@@ -451,7 +455,7 @@ export function startMarketIdentityReconciler(opts: MarketIdentityReconcilerOpti
   async function waitForSpecChange(from: number | undefined): Promise<void> {
     while (true) {
       await sleep(watchMs);
-      const obj = await objects.get(name).catch(() => null);
+      const obj = await prompt.get(name).catch(() => null);
       if (obj && obj.metadata?.generation !== from) return;
     }
   }
@@ -460,7 +464,7 @@ export function startMarketIdentityReconciler(opts: MarketIdentityReconcilerOpti
     while (!signal.aborted) {
       let obj: MarketIdentity | null = null;
       try {
-        obj = await objects.get(name);
+        obj = await prompt.get(name);
         if (!obj?.spec) {
           await sleep(watchMs);
           continue;
@@ -553,13 +557,7 @@ export function requesterAssociatingRepo(pds: AssociationSource & { api: RecordL
   };
 }
 
-export interface VaultOAuthSessionStore {
-  get(key: string): Promise<unknown>;
-  set(key: string, value: unknown): Promise<void>;
-  del(key: string): Promise<void>;
-}
-
-export function vaultOAuthSessionStore(vault: IdentityVault, ref: VaultRef): VaultOAuthSessionStore {
+export function vaultOAuthSessionStore(vault: IdentityVault, ref: VaultRef): SessionStore {
   return {
     async get(key) {
       return (await vault.read(ref))?.[key];

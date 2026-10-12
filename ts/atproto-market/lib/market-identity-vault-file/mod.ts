@@ -11,6 +11,53 @@ function key(ref: VaultRef): string {
   return `${ref.mount}/${ref.path}`;
 }
 
+export interface SessionFileIdentityVaultOptions {
+  base: IdentityVault;
+  ref: VaultRef;
+  path: string;
+}
+
+async function writePrivate(path: string, text: string): Promise<void> {
+  const dir = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) || "/" : ".";
+  await Deno.mkdir(dir, { recursive: true, mode: 0o700 });
+  const tmp = `${path}.${crypto.randomUUID()}.tmp`;
+  await Deno.writeTextFile(tmp, text, { mode: PRIVATE_MODE, createNew: true });
+  await Deno.chmod(tmp, PRIVATE_MODE);
+  await Deno.rename(tmp, path);
+}
+
+export function createSessionFileIdentityVault(opts: SessionFileIdentityVaultOptions): IdentityVault {
+  const target = key(opts.ref);
+  const mine = (ref: VaultRef) => key(ref) === target;
+  return {
+    async read(ref) {
+      if (!mine(ref)) return await opts.base.read(ref);
+      let text: string;
+      try {
+        text = await Deno.readTextFile(opts.path);
+      } catch (err) {
+        if (err instanceof Deno.errors.NotFound) return null;
+        throw err;
+      }
+      if (!text.trim()) return null;
+      const parsed = JSON.parse(text);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
+    },
+    async write(ref, value) {
+      if (!mine(ref)) return await opts.base.write(ref, value);
+      await writePrivate(opts.path, JSON.stringify(value, null, 2) + "\n");
+    },
+    async remove(ref) {
+      if (!mine(ref)) return await opts.base.remove(ref);
+      try {
+        await Deno.remove(opts.path);
+      } catch (err) {
+        if (!(err instanceof Deno.errors.NotFound)) throw err;
+      }
+    },
+  };
+}
+
 export function createFileIdentityVault(opts: FileIdentityVaultOptions): IdentityVault {
   const path = opts.path;
   let queue: Promise<unknown> = Promise.resolve();

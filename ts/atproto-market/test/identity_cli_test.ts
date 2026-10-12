@@ -38,7 +38,7 @@ function spawnBidder(args: string[], env: Record<string, string>): Proc {
     stdout: "piped",
     stderr: "piped",
     clearEnv: true,
-    env: { ...Object.fromEntries(Object.entries(Deno.env.toObject()).filter(([k]) => !OPTION_ENV.test(k))), ...env },
+    env: { ...Object.fromEntries(Object.entries(Deno.env.toObject()).filter(([k]) => !OPTION_ENV.test(k))), DENO_DIR: Deno.env.get("DENO_DIR") ?? `${Deno.env.get("HOME")}/.cache/deno`, ...env },
   }).spawn();
   const lines: Array<Record<string, unknown>> = [];
   const raw: string[] = [];
@@ -144,7 +144,7 @@ Deno.test({
   const plc = await startPlcDirectory();
   const kcp = createFakeKcp("root:bob");
   const kcpServed = await kcp.serve();
-  const dispatcher = createRelayFactory({ hostname: "relay.localhost" }).createApp();
+  const dispatcher = createRelayFactory({ hostname: "relay.localhost", plcDirectoryUrl: plc.url }).createApp();
   const disp = await serveOnPort0(dispatcher.fetch);
   const dispPort = new URL(disp.url).port;
   const state = await Deno.makeTempDir({ prefix: "identity-cli-" });

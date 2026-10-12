@@ -58,9 +58,80 @@ export default {
     },
     "oauth-session-path": {
       type: "string" as const,
-      description: "Path to persist the OAuth session JSON",
+      description: "File the browser OAuth (--atproto-oauth) session is kept in; unset, it lives in the identity store at the MarketIdentity's sessionRef",
       env: "OAUTH_SESSION_PATH",
-      default: `${Deno.env.get("HOME") ?? Deno.env.get("USERPROFILE") ?? "/tmp"}/.cache/pdr-market/requester-oauth-session.json`,
+    },
+    "atproto-identity-mode": {
+      type: "string" as const,
+      description: "MarketIdentity mode: localRepo (in-process repo + association records), oauthQr, oauthBrowser, pdsAccount or oauthDelegated. Unset derives it: --atproto-oauth is oauthBrowser, --atproto-oauth-qr is oauthQr, anything else is localRepo",
+      env: "ATP_IDENTITY_MODE",
+    },
+    "market-identity-name": {
+      type: "string" as const,
+      description: "Name of the requester's MarketIdentity; names its vault paths and, with market-identity-kcp-server, the kcp object the sign-in follows",
+      env: "MARKET_IDENTITY_NAME",
+      default: "requester",
+    },
+    "market-identity-kcp-server": {
+      type: "string" as const,
+      description: "kcp server whose MarketIdentity object drives the sign-in (any mode; what the user must do is written to its status)",
+      env: "MARKET_IDENTITY_KCP_SERVER",
+    },
+    "market-identity-kcp-workspace": {
+      type: "string" as const,
+      description: "kcp workspace holding the MarketIdentity object",
+      env: "MARKET_IDENTITY_KCP_WORKSPACE",
+    },
+    "market-identity-kcp-token-file": {
+      type: "string" as const,
+      description: "File holding the bearer token for the kcp server, re-read on every call",
+      env: "MARKET_IDENTITY_KCP_TOKEN_FILE",
+    },
+    "market-identity-kcp-ca-cert-file": {
+      type: "string" as const,
+      description: "PEM CA bundle the kcp server's certificate chains to",
+      env: "MARKET_IDENTITY_KCP_CA_CERT_FILE",
+    },
+    "identity-vault-mount": {
+      type: "string" as const,
+      description: "Vault mount the requester's identity secrets live under",
+      env: "IDENTITY_VAULT_MOUNT",
+      default: "requester",
+    },
+    "identity-vault-file": {
+      type: "string" as const,
+      description: "Mode 600 JSON file used as the identity vault when no OpenBao is wired, keyed <mount>/<path>",
+      env: "IDENTITY_VAULT_FILE",
+    },
+    "identity-vault-address": {
+      type: "string" as const,
+      description: "OpenBao address used as the identity vault (KV v2)",
+      env: "IDENTITY_VAULT_ADDRESS",
+    },
+    "identity-vault-token-file": {
+      type: "string" as const,
+      description: "File holding the OpenBao token, re-read on every call",
+      env: "IDENTITY_VAULT_TOKEN_FILE",
+    },
+    "identity-vault-ca-cert-file": {
+      type: "string" as const,
+      description: "PEM CA bundle the OpenBao certificate chains to",
+      env: "IDENTITY_VAULT_CA_CERT_FILE",
+    },
+    "identity-vault-namespace": {
+      type: "string" as const,
+      description: "OpenBao namespace of the identity vault",
+      env: "IDENTITY_VAULT_NAMESPACE",
+    },
+    "state-dir": {
+      type: "string" as const,
+      description: "This requester invocation's state directory; its identity store (keys and sessions) is <state-dir>/identity-vault.json unless an identity vault is named. Never $HOME",
+      env: "STATE_DIR",
+    },
+    "qr-origin": {
+      type: "string" as const,
+      description: "QR relay origin the sign-in and association QR codes point at",
+      env: "QR_ORIGIN",
     },
     "ingress-proxy-host": {
       type: "string" as const,
@@ -210,7 +281,7 @@ export default {
     },
     "oauth-session-file": {
       type: "string" as const,
-      description: "Path to OAuth QR session file (overrides default cache path). When set with --atproto-oauth-qr, session is loaded from this file instead of the default ~/.cache/pdr-market/ location.",
+      description: "File the QR OAuth (--atproto-oauth-qr) session is kept in, as session JSON; unset, it lives in the identity store at the MarketIdentity's sessionRef",
       env: "OAUTH_SESSION_FILE",
     },
     "oauth-session-client-id": {
@@ -221,7 +292,7 @@ export default {
     },
     "skip-qr": {
       type: "boolean" as const,
-      description: "Skip QR code and association confirmation prompt",
+      description: "localRepo: no association (the MarketIdentity's association is Skip); without it the association QR and approval are pending actions on the MarketIdentity",
     },
     "skip-rbac": {
       type: "boolean" as const,

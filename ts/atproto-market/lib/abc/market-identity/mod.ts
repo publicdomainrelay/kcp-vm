@@ -2,7 +2,6 @@ import type {
   Condition,
   MarketIdentity,
   MarketIdentitySpec,
-  MarketIdentityStatus,
   VaultRef,
 } from "@publicdomainrelay/socialweb-computer-k8s-api";
 
@@ -25,6 +24,9 @@ export {
   MARKET_IDENTITY_MODES,
   MARKET_IDENTITY_RESOURCE,
 } from "@publicdomainrelay/socialweb-computer-k8s-api";
+
+export { findSecretMaterial } from "@publicdomainrelay/identity-prompt-abc";
+export type { IdentityPrompt } from "@publicdomainrelay/identity-prompt-abc";
 
 import { MARKET_IDENTITY_MODES, MARKET_IDENTITY_RESOURCE } from "@publicdomainrelay/socialweb-computer-k8s-api";
 import type { MarketIdentityMode } from "@publicdomainrelay/socialweb-computer-k8s-api";
@@ -63,15 +65,16 @@ export function cliMarketIdentity(
   };
 }
 
-export interface MarketIdentityObjects {
-  get(name: string): Promise<MarketIdentity | null>;
-  writeStatus(name: string, status: MarketIdentityStatus): Promise<void>;
-}
-
 export interface IdentityVault {
   read(ref: VaultRef): Promise<Record<string, unknown> | null>;
   write(ref: VaultRef, data: Record<string, unknown>): Promise<void>;
   remove(ref: VaultRef): Promise<void>;
+}
+
+export interface SessionStore {
+  get(key: string): Promise<unknown>;
+  set(key: string, value: unknown): Promise<void>;
+  del(key: string): Promise<void>;
 }
 
 export interface AssociatingRepo {
@@ -123,32 +126,6 @@ export function vaultRefs(name: string, spec: MarketIdentitySpec, mount: string)
     keys: spec.keysRef ?? { mount, path: `identity/${name}/keys` },
     session: spec.sessionRef ?? { mount, path: `identity/${name}/session` },
   };
-}
-
-const SECRET_KEY = /(token|jwt|password|passwd|secret|private|jwk|dpop|^code$|authorization_?code|keyhex|credential)/i;
-const JWT = /eyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\./;
-const LONG_HEX = /(^|[^0-9a-f])[0-9a-f]{64,}([^0-9a-f]|$)/i;
-const SECRET_PARAM = /[?&#](code|access_token|refresh_token|id_token|password|client_secret)=/i;
-const PEM_KEY = /-----BEGIN [A-Z ]*PRIVATE KEY-----/;
-
-export function findSecretMaterial(value: unknown, path = "$"): string[] {
-  if (typeof value === "string") {
-    if (JWT.test(value) || LONG_HEX.test(value) || SECRET_PARAM.test(value) || PEM_KEY.test(value)) return [path];
-    return [];
-  }
-  if (Array.isArray(value)) return value.flatMap((v, i) => findSecretMaterial(v, `${path}[${i}]`));
-  if (value && typeof value === "object") {
-    const obj = value as Record<string, unknown>;
-    const out: string[] = [];
-    if ("kty" in obj && "d" in obj) out.push(`${path}.d`);
-    for (const [k, v] of Object.entries(obj)) {
-      const p = `${path}.${k}`;
-      if (!k.endsWith("Ref") && SECRET_KEY.test(k)) out.push(p);
-      else out.push(...findSecretMaterial(v, p));
-    }
-    return out;
-  }
-  return [];
 }
 
 export function setCondition(
