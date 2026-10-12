@@ -1438,8 +1438,8 @@ items:
     risks:
       - "A cluster's store is adopted, never re-initialised (refused if PG_VERSION differs from the pin's major)."
       - "Logical replication needs wal_level=logical on the old server; set from the first start so a major upgrade needs no restart of the old server."
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M2-OPENBAO-SERVER
     milestone: M2
     title: An OpenBao server as a reconciled resource in its own unit (placed through a HostProcess), for the gateway's root vault and the bidder's vault
