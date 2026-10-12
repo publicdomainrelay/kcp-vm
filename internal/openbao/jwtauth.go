@@ -10,7 +10,8 @@ import (
 )
 
 type Mount struct {
-	Type string `json:"type"`
+	Type    string         `json:"type"`
+	Options map[string]any `json:"options"`
 }
 
 func (c *Client) SecretMounts(ctx context.Context) (map[string]Mount, error) {
@@ -42,6 +43,35 @@ func (c *Client) mounts(ctx context.Context, path string) (map[string]Mount, err
 		out[strings.Trim(name, "/")] = m
 	}
 	return out, nil
+}
+
+func (c *Client) DisableMount(ctx context.Context, path string) error {
+	_, err := c.do(ctx, http.MethodDelete, "sys/mounts/"+strings.Trim(path, "/"), nil)
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	return err
+}
+
+func (c *Client) TuneMount(ctx context.Context, path string, body map[string]any) error {
+	_, err := c.do(ctx, http.MethodPost, "sys/mounts/"+strings.Trim(path, "/")+"/tune", body)
+	return err
+}
+
+func (c *Client) CAPEM(ctx context.Context, pkiMount string) (string, error) {
+	path := strings.Trim(pkiMount, "/") + "/ca/pem"
+	status, body, err := c.request(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return "", err
+	}
+	if status < 200 || status > 299 {
+		return "", &ResponseError{Method: http.MethodGet, Path: path, Status: status, Body: strings.TrimSpace(string(body))}
+	}
+	pem := strings.TrimSpace(string(body))
+	if pem == "" {
+		return "", fmt.Errorf("openbao: %s holds no certificate", path)
+	}
+	return pem + "\n", nil
 }
 
 func (c *Client) EnableAuth(ctx context.Context, path, kind string) error {
