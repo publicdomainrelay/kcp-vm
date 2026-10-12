@@ -126,6 +126,8 @@ type Options struct {
 
 	RunsDir string
 
+	Deno string
+
 	ServiceDomain string
 
 	OpenBaoAddress string
