@@ -55,7 +55,7 @@ func seedFrom(fill, seed string, pins lockPins, epoch int64) error {
 			switch {
 			case info.IsDir():
 				return os.MkdirAll(dst, 0o755)
-			case volatile(d.Name()):
+			case volatile(d.Name()), sub == "npm" && d.Name() == "registry.json":
 				return nil
 			case info.Mode()&fs.ModeSymlink != 0:
 				t, err := os.Readlink(p)
@@ -72,11 +72,8 @@ func seedFrom(fill, seed string, pins lockPins, epoch int64) error {
 			if err != nil {
 				return err
 			}
-			switch {
-			case sub == "remote":
+			if sub == "remote" {
 				b = normalizeRemote(b, pins, epoch)
-			case d.Name() == "registry.json":
-				b = normalizePackument(b, pins)
 			}
 			return os.WriteFile(dst, b, mode)
 		})
@@ -154,39 +151,6 @@ func prunePackageMeta(body []byte, keep map[string]bool) []byte {
 	out, err := json.Marshal(doc)
 	if err != nil {
 		return body
-	}
-	return out
-}
-
-func normalizePackument(b []byte, pins lockPins) []byte {
-	doc, ok := decodeJSON(b)
-	if !ok {
-		return b
-	}
-	delete(doc, "time")
-	delete(doc, "_deno.etag")
-	name, _ := doc["name"].(string)
-	if keep := pins.npm[name]; len(keep) > 0 {
-		versions, _ := doc["versions"].(map[string]any)
-		pruned := map[string]any{}
-		for v, x := range versions {
-			if keep[v] {
-				pruned[v] = x
-			}
-		}
-		doc["versions"] = pruned
-		tags, _ := doc["dist-tags"].(map[string]any)
-		kept := map[string]any{}
-		for t, v := range tags {
-			if s, _ := v.(string); keep[s] {
-				kept[t] = v
-			}
-		}
-		doc["dist-tags"] = kept
-	}
-	out, err := json.Marshal(doc)
-	if err != nil {
-		return b
 	}
 	return out
 }

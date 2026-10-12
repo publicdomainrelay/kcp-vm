@@ -473,13 +473,11 @@ func fillCache(ctx context.Context, o BuildOptions, src string, fill denorun.Spe
 
 type lockFile struct {
 	JSR    map[string]json.RawMessage `json:"jsr"`
-	NPM    map[string]json.RawMessage `json:"npm"`
 	Remote map[string]string          `json:"remote"`
 }
 
 type lockPins struct {
 	jsr map[string]map[string]bool
-	npm map[string]map[string]bool
 }
 
 func splitNameVersion(key string) (string, string, bool) {
@@ -492,7 +490,7 @@ func splitNameVersion(key string) (string, string, bool) {
 }
 
 func classifyLocks(src string, locks []string, before map[string][]byte) ([]tsbundle.LockRecord, lockPins, error) {
-	pins := lockPins{jsr: map[string]map[string]bool{}, npm: map[string]map[string]bool{}}
+	pins := lockPins{jsr: map[string]map[string]bool{}}
 	recs := []tsbundle.LockRecord{}
 	for _, rel := range locks {
 		now, err := os.ReadFile(filepath.Join(src, filepath.FromSlash(rel)))
@@ -526,11 +524,6 @@ func classifyLocks(src string, locks []string, before map[string][]byte) ([]tsbu
 		for k := range lf.JSR {
 			if n, v, ok := splitNameVersion(k); ok {
 				addPin(pins.jsr, n, v)
-			}
-		}
-		for k := range lf.NPM {
-			if n, v, ok := splitNameVersion(k); ok {
-				addPin(pins.npm, n, v)
 			}
 		}
 	}
