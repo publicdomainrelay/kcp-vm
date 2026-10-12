@@ -65,6 +65,7 @@ import type {
 import { BidCollector, bidPayloadNsid, selectWinner } from "@publicdomainrelay/requester-abc";
 import {
   advanceContract,
+  CONTRACT_PHASES,
   createContractState,
   guestAddressKind,
   hasContract,
@@ -370,7 +371,7 @@ interface ContractWatch {
   setReceipt(receipt: RecordRef): void;
   bidsFor(rfpUri: string): CollectedBid[];
   receiptFor(acceptUri: string): FirehoseReceipt | undefined;
-  backfill(winnerDid: string): Promise<void>;
+  backfill(winnerDid: string, until?: "network" | "terminated"): Promise<void>;
   close(): void;
 }
 
@@ -619,13 +620,13 @@ function openContractWatch(opts: {
     receiptFor(acceptUri) {
       return discoveredReceipts.get(acceptUri);
     },
-    async backfill(winnerDid) {
+    async backfill(winnerDid, until = "network") {
       try {
         const pdsUrl = await pdsUrlOf(idResolver, winnerDid);
         if (!pdsUrl) return;
         const events = await listRecordsAll(pdsUrl, winnerDid, EVENT_NSID, { timeoutMs: 10_000 });
         for (const event of events) {
-          if (vmAddress || terminatedSettled) return;
+          if (terminatedSettled || (vmAddress && until === "network")) return;
           await onWrappedEvent(pdsUrl, event as FetchedRecord);
         }
       } catch (err) {
@@ -725,7 +726,36 @@ export type ComputeRequestOptions =
     recordResolver?: RecordResolver;
     receiptFinder?: ReceiptFinder;
     eventVerifier?: ComputeEventVerifier;
+    resume?: ContractState;
+    bidFinder?: BidFinder;
+    acceptFinder?: AcceptFinder;
   };
+
+export type BidFinder = (bidderDid: string, rfpUri: string) => Promise<CollectedBid[]>;
+
+export interface FoundAccept {
+  accept: RecordRef;
+  bid: RecordRef;
+}
+
+export type AcceptFinder = (rfpUri: string) => Promise<FoundAccept | null>;
+
+export function createRepoBidFinder(idResolver: IdResolver): BidFinder {
+  return async (bidderDid, rfpUri) => {
+    const pdsUrl = await pdsUrlOf(idResolver, bidderDid);
+    if (!pdsUrl) return [];
+    const found: CollectedBid[] = [];
+    for (const collection of [BID_NSID, BIDS_FREE_NSID]) {
+      const records = await listRecordsAll(pdsUrl, bidderDid, collection, { timeoutMs: 10_000 });
+      for (const rec of records) {
+        const val = rec.value as Record<string, unknown>;
+        if ((val.rfp as { uri?: string } | undefined)?.uri !== rfpUri || !rec.uri || !rec.cid) continue;
+        found.push({ did: bidderDid, uri: rec.uri, cid: rec.cid, record: val });
+      }
+    }
+    return found;
+  };
+}
 
 export interface FoundReceipt {
   uri: string;
@@ -825,7 +855,8 @@ export async function requestCompute(
   opts: ComputeRequestOptions = {},
   handlers: ComputeRequestHandlers = {},
 ): Promise<ComputeRequestHandle> {
-  const vmName = opts.vmName ?? defaultVmName();
+  const resume = opts.resume;
+  const vmName = resume?.vmName ?? opts.vmName ?? defaultVmName();
   const policySpec = opts.policy;
   const policyArgs = policySpec?.args ?? {};
   const bidWindowSec = bidWindowSecOf(policyArgs);
@@ -846,6 +877,7 @@ export async function requestCompute(
   const resolveRecord = opts.recordResolver ?? createIdRecordResolver(idResolver);
   const verifyReceipt = opts.receiptVerifier ?? createReceiptVerifier(resolveRecord);
   const findReceipt = opts.receiptFinder ?? createRepoReceiptFinder(idResolver);
+  const findBids = opts.bidFinder ?? createRepoBidFinder(idResolver);
 
   let capKeypair: Promise<Secp256k1Keypair> | null = null;
   const capabilitySigner: PrepareContext["signer"] = {
@@ -872,12 +904,32 @@ export async function requestCompute(
     }
     | undefined;
 
-  let state = createContractState({ vmName, requesterDid: pds.did, marketDid, at: nowIso() });
+  const findAccept: AcceptFinder = opts.acceptFinder ?? (async (rfpUri) => {
+    const listed = oauthAgent && marketDid !== pds.did
+      ? await oauthAgent.listRecords(marketDid, ACCEPT_NSID, { limit: 100 })
+      : await ownApi.listRecords(marketDid, ACCEPT_NSID);
+    const records = (listed?.records ?? []) as Array<{ uri: string; cid?: string; value: Record<string, unknown> }>;
+    for (const r of records) {
+      const rfp = r.value.rfp as { uri?: string } | undefined;
+      const bid = r.value.bid as { uri?: string; cid?: string } | undefined;
+      if (rfp?.uri !== rfpUri || !bid?.uri || !bid.cid || !r.cid) continue;
+      return { accept: { uri: r.uri, cid: r.cid }, bid: { uri: bid.uri, cid: bid.cid } };
+    }
+    return null;
+  });
+
+  let state = resume
+    ? patchContract(structuredClone(resume), { outcome: undefined, error: undefined })
+    : createContractState({ vmName, requesterDid: pds.did, marketDid, at: nowIso() });
   const latch = new ReturnLatch();
   let ended = false;
 
   const advance = (phase: ContractState["phase"], patch: ContractStatePatch) => {
-    state = advanceContract(state, phase, patch, nowIso());
+    if (CONTRACT_PHASES.indexOf(phase) < CONTRACT_PHASES.indexOf(state.phase)) {
+      state = patchContract(state, patch);
+      return;
+    }
+    state = advanceContract(state, phase, patch, state.timestamps[phase] ?? nowIso());
   };
 
   const runHandler = async <E, D extends FlowDecision | BidDecision>(
@@ -1014,7 +1066,9 @@ runcmd:
 `;
     }
 
-    const payload: RecordRef = opts.payloadFactory
+    const payload: RecordRef = resume?.payload
+      ? resume.payload
+      : opts.payloadFactory
       ? await opts.payloadFactory()
       : await pds.createRepoRecord(COMPUTE_VM_NSID, {
         $type: COMPUTE_VM_NSID,
@@ -1024,7 +1078,7 @@ runcmd:
         createdAt: nowIso(),
       });
     state = patchContract(state, { payload: { uri: payload.uri, cid: payload.cid } });
-    log("vm_record_created", { uri: payload.uri, cid: payload.cid });
+    log(resume?.payload ? "vm_record_resumed" : "vm_record_created", { uri: payload.uri, cid: payload.cid });
 
     const rfpRecord: Record<string, unknown> = {
       $type: RFP_NSID,
@@ -1142,17 +1196,21 @@ runcmd:
           workflow,
           policies: [{ name: canonical, args: policyArgs }],
         });
-        policyRef = await pds.createRepoRecord(nsid, record);
-        rfpRecord.policies = [{
-          $type: "com.atproto.repo.strongRef",
-          uri: policyRef.uri,
-          cid: policyRef.cid,
-        }];
-        log("policy_attached", {
-          policy: policySpec.name,
-          policyNsid: nsid,
-          policyUris: [policyRef.uri],
-        });
+        if (resume?.rfp) {
+          policyRef = resume.policy;
+        } else {
+          policyRef = await pds.createRepoRecord(nsid, record);
+          rfpRecord.policies = [{
+            $type: "com.atproto.repo.strongRef",
+            uri: policyRef.uri,
+            cid: policyRef.cid,
+          }];
+          log("policy_attached", {
+            policy: policySpec.name,
+            policyNsid: nsid,
+            policyUris: [policyRef.uri],
+          });
+        }
       } catch (err) {
         log("policy_create_error", { error: String(err) });
       }
@@ -1168,11 +1226,11 @@ runcmd:
       log,
     });
 
-    const rfp = await pds.createSignedRepoRecord(RFP_NSID, rfpRecord, pds.attestationKp, pds.did);
+    const rfp = resume?.rfp ?? await pds.createSignedRepoRecord(RFP_NSID, rfpRecord, pds.attestationKp, pds.did);
     const rfpUri = rfp.uri;
     const rfpCid = rfp.cid;
     watch.setRfp(rfpUri);
-    log("rfp_created", { uri: rfpUri, cid: rfpCid, hasPolicy: !!policyRef });
+    log(resume?.rfp ? "rfp_resumed" : "rfp_created", { uri: rfpUri, cid: rfpCid, hasPolicy: !!policyRef });
 
     let vouchedDids: string[] = [];
     try {
@@ -1260,7 +1318,8 @@ runcmd:
 
     const seen = new Set<string>();
     const rfpDeadlineMs = Math.max(5_000, bidWindowSec * 1_000);
-    await Promise.allSettled(filteredBidderDids.map((bidderDid) =>
+    const submitRfpTo = resume?.rfp ? [] : filteredBidderDids;
+    await Promise.allSettled(submitRfpTo.map((bidderDid) =>
       withDeadline(
         bidderDid,
         rfpDeadlineMs,
@@ -1359,85 +1418,125 @@ runcmd:
       return result;
     };
 
-    const bidDecisions = new Map<string, Promise<BidDecision>>();
-    const decideBid = (bid: CollectedBid): Promise<BidDecision> => {
-      let decision = bidDecisions.get(bid.uri);
-      if (!decision) {
-        decision = (async () => {
-          const startedAt = Date.now();
-          const d = await runHandler("onBid", handlers.onBid, { bid });
-          const result: BidDecision = d === "deny" ? "deny" : "accept";
-          log("bid_decide", {
-            uri: bid.uri,
-            bidderDid: bid.did,
-            decision: result,
-            durationMs: Date.now() - startedAt,
-          });
-          return result;
-        })();
-        bidDecisions.set(bid.uri, decision);
+    let resumedAccept: FoundAccept | null = null;
+    if (resume?.accept && resume.bid) {
+      resumedAccept = { accept: resume.accept, bid: resume.bid };
+    } else if (resume?.acceptPending) {
+      try {
+        resumedAccept = await findAccept(rfpUri);
+      } catch (err) {
+        log("accept_lookup_failed", { rfpUri, error: String(err) });
       }
-      return decision;
-    };
-
-    log("waiting_for_bids", { bidWindowSec, firstFree });
+      log("accept_pending_resolved", { rfpUri, bidUri: resume.acceptPending.bidUri, found: resumedAccept !== null });
+    }
 
     let earlyWinner: CollectedBid | undefined;
-    const collector = new BidCollector({
-      freeBidNsid: BIDS_FREE_NSID,
-      firstFree,
-      allow: async (bid) =>
-        (await decideBid(bid)) === "accept" && (await scopeGate(bid.did)).allow,
-      onEarlyWinner: (bid) => {
-        earlyWinner = bid;
-        log("first_free_winner", { uri: bid.uri, did: bid.did });
-      },
-    });
+    let bidCount = resume?.bids ?? 0;
+    let winner: CollectedBid;
+    if (resumedAccept) {
+      const found = resumedAccept;
+      const bidRecord = await resolveRecord(found.bid).catch((err): Record<string, unknown> => {
+        log("resumed_bid_unresolvable", { bidUri: found.bid.uri, error: String(err) });
+        return {};
+      });
+      winner = {
+        did: atUriAuthority(found.bid.uri),
+        uri: found.bid.uri,
+        cid: found.bid.cid,
+        record: {
+          ...(resume?.winner?.submitAccept ? { submitAccept: resume.winner.submitAccept } : {}),
+          ...bidRecord,
+        },
+      };
+      log("accept_resumed", { acceptUri: found.accept.uri, bidUri: found.bid.uri, winnerDid: winner.did });
+    } else {
+      if (resume?.rfp) {
+        const found = await Promise.allSettled(filteredBidderDids.map((did) => findBids(did, rfpUri)));
+        const backfilled = found.flatMap((r) => r.status === "fulfilled" ? r.value : []);
+        const known = pds.pendingBids.get(rfpUri) ?? [];
+        pds.pendingBids.set(rfpUri, [...known, ...backfilled.filter((b) => !known.some((k) => k.uri === b.uri))]);
+        log("bids_backfilled", { rfpUri, count: backfilled.length, bidders: filteredBidderDids.length });
+      }
+      const bidDecisions = new Map<string, Promise<BidDecision>>();
+      const decideBid = (bid: CollectedBid): Promise<BidDecision> => {
+        let decision = bidDecisions.get(bid.uri);
+        if (!decision) {
+          decision = (async () => {
+            const startedAt = Date.now();
+            const d = await runHandler("onBid", handlers.onBid, { bid });
+            const result: BidDecision = d === "deny" ? "deny" : "accept";
+            log("bid_decide", {
+              uri: bid.uri,
+              bidderDid: bid.did,
+              decision: result,
+              durationMs: Date.now() - startedAt,
+            });
+            return result;
+          })();
+          bidDecisions.set(bid.uri, decision);
+        }
+        return decision;
+      };
 
-    const notDenied = (bid: CollectedBid) => !deniedSet.has(bid.did);
-    const collect = () => {
-      collector.addAll((pds.pendingBids.get(rfpUri) ?? []).filter(notDenied));
-      collector.addAll(watch.bidsFor(rfpUri).filter(notDenied));
-      for (const bid of collector.all()) void decideBid(bid);
-    };
+      log("waiting_for_bids", { bidWindowSec, firstFree });
 
-    let windowTimer: ReturnType<typeof setTimeout> | undefined;
-    const windowElapsed = new Promise<void>((resolve) => {
-      windowTimer = setTimeout(resolve, bidWindowSec * 1000);
-    });
-    const poller = setInterval(collect, 250);
-    try {
-      await Promise.race([
-        windowElapsed,
-        ...(firstFree ? [collector.earlyWinner.then(() => {})] : []),
-      ]);
-    } finally {
-      clearInterval(poller);
-      if (windowTimer !== undefined) clearTimeout(windowTimer);
+      const collector = new BidCollector({
+        freeBidNsid: BIDS_FREE_NSID,
+        firstFree,
+        allow: async (bid) =>
+          (await decideBid(bid)) === "accept" && (await scopeGate(bid.did)).allow,
+        onEarlyWinner: (bid) => {
+          earlyWinner = bid;
+          log("first_free_winner", { uri: bid.uri, did: bid.did });
+        },
+      });
+
+      const notDenied = (bid: CollectedBid) => !deniedSet.has(bid.did);
+      const collect = () => {
+        collector.addAll((pds.pendingBids.get(rfpUri) ?? []).filter(notDenied));
+        collector.addAll(watch.bidsFor(rfpUri).filter(notDenied));
+        for (const bid of collector.all()) void decideBid(bid);
+      };
+
+      let windowTimer: ReturnType<typeof setTimeout> | undefined;
+      const windowElapsed = new Promise<void>((resolve) => {
+        windowTimer = setTimeout(resolve, bidWindowSec * 1000);
+      });
+      const poller = setInterval(collect, 250);
+      try {
+        await Promise.race([
+          windowElapsed,
+          ...(firstFree ? [collector.earlyWinner.then(() => {})] : []),
+        ]);
+      } finally {
+        clearInterval(poller);
+        if (windowTimer !== undefined) clearTimeout(windowTimer);
+      }
+
+      collect();
+      pds.pendingBids.delete(rfpUri);
+      const bids = collector.all();
+      bidCount = bids.length;
+      log("bids_collected", { count: bids.length, earlyExit: !!earlyWinner });
+
+      if (bids.length === 0) {
+        const error = `no bids received within ${bidWindowSec}s`;
+        log("no_bids", { event: "no_bids", error });
+        return await finish("no_bids", { error, bids: 0 });
+      }
+
+      const candidates: CollectedBid[] = [];
+      for (const bid of bids) {
+        if ((await decideBid(bid)) === "accept") candidates.push(bid);
+      }
+      if (candidates.length === 0) {
+        const error = `all ${bids.length} bids denied by onBid`;
+        log("bids_denied", { event: "bids_denied", error });
+        return await finish("bids_denied", { error, bids: bids.length });
+      }
+
+      winner = earlyWinner ?? selectWinner(candidates)!;
     }
-
-    collect();
-    pds.pendingBids.delete(rfpUri);
-    const bids = collector.all();
-    log("bids_collected", { count: bids.length, earlyExit: !!earlyWinner });
-
-    if (bids.length === 0) {
-      const error = `no bids received within ${bidWindowSec}s`;
-      log("no_bids", { event: "no_bids", error });
-      return await finish("no_bids", { error, bids: 0 });
-    }
-
-    const candidates: CollectedBid[] = [];
-    for (const bid of bids) {
-      if ((await decideBid(bid)) === "accept") candidates.push(bid);
-    }
-    if (candidates.length === 0) {
-      const error = `all ${bids.length} bids denied by onBid`;
-      log("bids_denied", { event: "bids_denied", error });
-      return await finish("bids_denied", { error, bids: bids.length });
-    }
-
-    const winner = earlyWinner ?? selectWinner(candidates)!;
     log("winner", { uri: winner.uri, did: winner.did, viaFirstFree: !!earlyWinner });
     const submitAcceptTarget = winner.record.submitAccept as string | undefined;
     advance("winner_selected", {
@@ -1446,7 +1545,7 @@ runcmd:
         did: winner.did,
         ...(submitAcceptTarget ? { submitAccept: submitAcceptTarget } : {}),
       },
-      bids: bids.length,
+      bids: bidCount,
     });
 
     const serviceName = vmName.trim() || "compute";
@@ -1471,7 +1570,7 @@ runcmd:
       }
     }
 
-    if (opts.rbac && !skipSsh) {
+    if (opts.rbac && !skipSsh && !resumedAccept) {
       if (wifConfig) {
         try {
           const rbacRecord = buildSshKeyRbacRecord({
@@ -1520,32 +1619,49 @@ runcmd:
       }
     }
 
-    if (policyRef && !earlyWinner) {
+    if (policyRef && !earlyWinner && !resumedAccept) {
       const evalResult = await evaluateCandidate(winner);
       if (!evalResult.allow) {
         log("policy_rejected", { violations: evalResult.violations, winnerDid: winner.did });
         return await finish("policy_rejected", {
           error: `winner rejected by policy: ${evalResult.violations.map((v) => v.msg).join("; ")}`,
-          bids: bids.length,
+          bids: bidCount,
         });
       }
     }
 
-    const accept = await pds.createSignedRepoRecord(
-      ACCEPT_NSID,
-      {
-        $type: ACCEPT_NSID,
-        rfp: { $type: "com.atproto.repo.strongRef", uri: rfpUri, cid: rfpCid },
-        bid: { $type: "com.atproto.repo.strongRef", uri: winner.uri, cid: winner.cid },
-        submitEvent: `${pds.did}#pdr_temp_compute_event`,
-        createdAt: nowIso(),
-      },
-      pds.attestationKp,
-      pds.did,
-    );
-    const acceptUri = accept.uri;
-    const acceptCid = accept.cid;
-    log("accept_created", { uri: acceptUri, cid: acceptCid });
+    let acceptUri: string;
+    let acceptCid: string;
+    if (resumedAccept) {
+      acceptUri = resumedAccept.accept.uri;
+      acceptCid = resumedAccept.accept.cid;
+    } else {
+      state = patchContract(state, { acceptPending: { bidUri: winner.uri } });
+      if (
+        await decideFlow("onAccepting", handlers.onAccepting, {
+          rfp: { uri: rfpUri, cid: rfpCid },
+          bid: { uri: winner.uri, cid: winner.cid },
+          winnerDid: winner.did,
+        })
+      ) {
+        return await finish("returned");
+      }
+      const accept = await pds.createSignedRepoRecord(
+        ACCEPT_NSID,
+        {
+          $type: ACCEPT_NSID,
+          rfp: { $type: "com.atproto.repo.strongRef", uri: rfpUri, cid: rfpCid },
+          bid: { $type: "com.atproto.repo.strongRef", uri: winner.uri, cid: winner.cid },
+          submitEvent: `${pds.did}#pdr_temp_compute_event`,
+          createdAt: nowIso(),
+        },
+        pds.attestationKp,
+        pds.did,
+      );
+      acceptUri = accept.uri;
+      acceptCid = accept.cid;
+      log("accept_created", { uri: acceptUri, cid: acceptCid });
+    }
 
     let receiptUri: string | undefined;
     let receiptCid: string | undefined;
@@ -1556,8 +1672,12 @@ runcmd:
       submitEventRef = found.submitEvent;
       watch.setReceipt({ uri: receiptUri ?? "", cid: receiptCid ?? "" });
     };
+    if (resume?.receipt) {
+      takeReceipt({ uri: resume.receipt.uri, cid: resume.receipt.cid, submitEvent: resume.submitEventRef });
+      log("receipt_resumed", { receiptUri, submitEventRef });
+    }
 
-    if (submitAcceptTarget) {
+    if (submitAcceptTarget && !receiptUri) {
       const target = await pds.resolveBidderEndpoint(submitAcceptTarget);
       if (target) {
         log("submitting_accept", { target: submitAcceptTarget });
@@ -1601,7 +1721,7 @@ runcmd:
       ...(submitEventRef ? { submitEventRef } : {}),
     });
 
-    advance("accepted", { accept: { uri: acceptUri, cid: acceptCid }, ...receiptPatch() });
+    advance("accepted", { accept: { uri: acceptUri, cid: acceptCid }, acceptPending: undefined, ...receiptPatch() });
     if (
       await decideFlow("onAccepted", handlers.onAccepted, {
         accept: { uri: acceptUri, cid: acceptCid },
@@ -1669,7 +1789,12 @@ runcmd:
       return await finish("receipt_invalid");
     }
 
-    const waited = await waitForAddress(watch, vmReadyTimeoutSec * 1000, latch);
+    const waited: AddressWait | null = state.vmAddress
+      ? {
+        kind: "network",
+        network: { address: state.vmAddress, kind: guestAddressKind(state.vmAddress), source: "resume" },
+      }
+      : await waitForAddress(watch, vmReadyTimeoutSec * 1000, latch);
     if (!waited) {
       if (latch.requested) return await finish("returned");
       log("vm_fqdn_timeout", { timeoutSec: vmReadyTimeoutSec });
@@ -1755,6 +1880,48 @@ export async function awaitComputeNetwork(
     }
     return next;
   } finally {
+    watch.close();
+  }
+}
+
+export interface AwaitComputeTerminationOptions {
+  logger?: StructuredLoggerInterface;
+  eventStreams?: EventStreamsClient;
+  plcUrl?: string;
+  backfill?: boolean;
+  signal?: AbortSignal;
+  eventVerifier?: ComputeEventVerifier;
+}
+
+export async function awaitComputeTermination(
+  pds: OnNetworkPds,
+  state: ContractState,
+  opts: AwaitComputeTerminationOptions = {},
+): Promise<ContractState | null> {
+  const log = flowLog(opts.logger);
+  if (isTerminated(state)) return state;
+  if (!state.receipt || opts.signal?.aborted) return null;
+  const watch = openContractWatch({
+    pds,
+    eventStreams: opts.eventStreams,
+    idResolver: new IdResolver({ plcUrl: opts.plcUrl }),
+    logger: opts.logger,
+    log,
+    verifyEvent: opts.eventVerifier,
+  });
+  const aborted = Promise.withResolvers<null>();
+  const onAbort = () => aborted.resolve(null);
+  opts.signal?.addEventListener("abort", onAbort, { once: true });
+  try {
+    watch.setReceipt(state.receipt);
+    watch.releaseNetwork();
+    log("termination_watch", { receiptUri: state.receipt.uri, winnerDid: state.winner?.did });
+    if (opts.backfill !== false && state.winner?.did) void watch.backfill(state.winner.did, "terminated");
+    const termination = await Promise.race([watch.terminated, aborted.promise]);
+    if (!termination) return null;
+    return patchContract(state, { termination });
+  } finally {
+    opts.signal?.removeEventListener("abort", onAbort);
     watch.close();
   }
 }

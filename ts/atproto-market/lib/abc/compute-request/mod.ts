@@ -64,6 +64,10 @@ export interface ContractTermination {
   request?: RecordRef;
 }
 
+export interface ContractAcceptPending {
+  bidUri: string;
+}
+
 export interface ContractState {
   version: typeof CONTRACT_STATE_VERSION;
   phase: ContractPhase;
@@ -75,6 +79,7 @@ export interface ContractState {
   policy?: RecordRef;
   bid?: RecordRef;
   winner?: ContractWinner;
+  acceptPending?: ContractAcceptPending;
   accept?: RecordRef;
   receipt?: RecordRef;
   receiptOk?: boolean;
@@ -291,6 +296,12 @@ export interface BidEvent {
   bid: BidView;
 }
 
+export interface AcceptingEvent {
+  rfp: RecordRef;
+  bid: RecordRef;
+  winnerDid: string;
+}
+
 export interface AcceptedEvent {
   accept: RecordRef;
   bid: RecordRef;
@@ -320,6 +331,7 @@ export type TerminatedEvent = ContractTermination;
 export interface ComputeRequestHandlers {
   onRfpSubmitted?: (event: RfpSubmittedEvent, state: ContractState) => Awaitable<FlowDecision>;
   onBid?: (event: BidEvent, state: ContractState) => Awaitable<BidDecision>;
+  onAccepting?: (event: AcceptingEvent, state: ContractState) => Awaitable<FlowDecision>;
   onAccepted?: (event: AcceptedEvent, state: ContractState) => Awaitable<FlowDecision>;
   onReceipt?: (event: ReceiptEvent, state: ContractState) => Awaitable<FlowDecision>;
   onNetwork?: (event: NetworkEvent, state: ContractState) => Awaitable<FlowDecision>;
