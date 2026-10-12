@@ -3,31 +3,28 @@ set -euo pipefail
 
 # Deploys the AT Protocol market topology: a PLC directory in root:global, a relay
 # in root:relay, a PDS in root:alice, and in root:bob a second PDS plus
-# MARKET_NETWORK_BIDDERS market bidders (bidder-1 .. bidder-N). Each DenoPod runs its
-# service as a supervised child process of its own deno entrypoint, because
-# these are CLI entrypoints that own their argv, not libraries.
+# MARKET_NETWORK_BIDDERS market bidders (bidder-1 .. bidder-N). Every service
+# DenoPod is rendered from the one service template, deploy/denopods/service.yaml:
+# 20-70 are its values (entry, cwd, args, env, state dir, explicit deno
+# permissions, probe), and the template's supervisor runs the entry on the
+# pinned deno from the TypeScript source root the deno runtime names.
 #
-# Every service binds port 0. The port it got reaches its DenoPod's
-# status.address (the service writes it to PORT_FILE in its run directory and
-# the provider reads it back), peers reach it by its cluster-local name through
-# the kcpdns shim, and the market-network set's waits capture status.address
-# wherever a port has to be rendered into another pod: the dispatcher's and its
-# TLS front's ports go into every bidder's argv, because the bidder hands them
-# to its guests.
+# Every service binds port 0. Its listeners reach its DenoPod's status.listeners
+# and status.address (the service writes LISTENERS_FILE and PORT_FILE in its run
+# directory and the provider reads them back), peers reach it by its
+# cluster-local name through the kcpdns shim, and the market-network set's waits
+# capture status.address wherever a port has to be rendered into another pod:
+# the dispatcher's and its TLS front's ports go into every bidder's argv,
+# because the bidder hands them to its guests.
 #
-# Requires the denoruntime set applied first (socialweb-computer apply --set
-# denoruntime). Every service runs from this repository's ts/ tree. See README.md
-# in this directory for what does and does not work between the services.
+# Requires a running core whose deno runtime reconciles DenoPods (socialweb-computer
+# dev up, which applies the denoruntime set). See README.md in this directory for
+# what does and does not work between the services.
 #
 # MARKET_NETWORK_ID       names this market network in its guests' container labels (default demo)
 # MARKET_NETWORK_DIR      this market network's state directory (default <repo>/.kcp-demo); keys, the
 #              guest CA and every pod's state directory live under it
 # MARKET_NETWORK_BIDDERS  how many bidders to run (default 1)
-# LOCK_DIR     where the services' copy of this repository's deno.lock lives
-#              (default MARKET_NETWORK_DIR/locks); no service writes the repository's lock
-# POD_DENO_DIR the module cache the services share (default $DENO_DIR or
-#              ~/.cache/deno); each service's Deno KV has an explicit path under
-#              MARKET_NETWORK_DIR/state, so sharing the cache never shares a store
 # ADDRESSES    file the read-back addresses are written to (default
 #              MARKET_NETWORK_DIR/addresses.env)
 # SOCIALWEB_COMPUTER the socialweb-computer binary that applies the set (default:
@@ -40,7 +37,6 @@ MARKET_NETWORK_ID=${MARKET_NETWORK_ID:-demo}
 MARKET_NETWORK_DIR=${MARKET_NETWORK_DIR:-$REPO/.kcp-demo}
 MARKET_NETWORK_BIDDERS=${MARKET_NETWORK_BIDDERS:-1}
 STATE_DIR=${STATE_DIR:-$MARKET_NETWORK_DIR/state}
-POD_DENO_DIR=${POD_DENO_DIR:-${DENO_DIR:-$HOME/.cache/deno}}
 ADDRESSES=${ADDRESSES:-$MARKET_NETWORK_DIR/addresses.env}
 KUBECTL=${KUBECTL:-kubectl}
 # kubectl caches discovery per server and the cache outlives a schema change: a
@@ -75,14 +71,6 @@ for bin in ts/atproto-market/hono-plc ts/atproto-market/hono-bidder ts/atproto-r
   [ -e "$REPO/$bin" ] || { echo "missing $REPO/$bin" >&2; exit 1; }
 done
 
-# A market network never writes into the repository's working tree. Every service runs with
-# --lock pointing at a copy of the repository's deno.lock under the market network, so the
-# committed lock still pins every integrity hash it holds while whatever deno
-# adds to it lands in the copy and goes with the market network.
-LOCK_DIR=${LOCK_DIR:-$MARKET_NETWORK_DIR/locks}
-mkdir -p "$LOCK_DIR"
-cp "$REPO/deno.lock" "$LOCK_DIR/deno.lock"
-
 # socialweb-computer-kcp: the bidder runs --compute-provider-firecracker. Every
 # input below is a path on this host or in the runner image, and none has a
 # default that would be right on another machine, so a missing one stops the
@@ -102,11 +90,15 @@ if [ -n "$missing" ]; then
 fi
 mkdir -p "$FC_WORK_ROOT"
 FC_EXTRA_ARGS=""
+FC_EXTRA_RUN=""
+FC_EXTRA_READ=""
+FC_EXTRA_WRITE=""
 if [ -n "${FC_VMRUNTIME_COMMAND:-}" ]; then
   for v in FC_NODEIMAGE FC_CONFIG FC_REPO_DIR FC_PREINSTALL FC_RUNNER_IMAGE; do
-    [ -n "${!v:-}" ] || printf -v "$v" '%s' "unused-with-vmruntime"
+    [ -n "${!v:-}" ] || printf -v "$v" '%s' "/unused-with-vmruntime"
   done
   FC_EXTRA_ARGS=",\"--compute-provider-firecracker-vmruntime-command\",$(jq -cn --arg v "$FC_VMRUNTIME_COMMAND" '$v')"
+  FC_EXTRA_RUN=",$(jq -c '.[0]' <<<"$FC_VMRUNTIME_COMMAND")"
 fi
 # Each guest's firecracker API socket lives in its work directory, and a unix
 # socket path cannot exceed 107 bytes; past that the guest dies at boot and its
@@ -199,11 +191,8 @@ write_values() {
     umask 077
     {
       echo "market-network:"
-      echo "  SourceRoot: $(q "$REPO")"
       echo "  NetworkID: $(q "$MARKET_NETWORK_ID")"
       echo "  StateDir: $(q "$STATE_DIR")"
-      echo "  DenoDir: $(q "$POD_DENO_DIR")"
-      echo "  LockDir: $(q "$LOCK_DIR")"
       echo "  GuestTLSDir: $(q "$GUEST_TLS_DIR")"
       echo "  PDSPrivateKeyHex: $(q "$key")"
       echo "  BobPDSPrivateKeyHex: $(q "$bob_key")"
@@ -229,6 +218,9 @@ write_values() {
       echo "    RunnerImage: $(q "$FC_RUNNER_IMAGE")"
       echo "    WorkRoot: $(q "$FC_WORK_ROOT")"
       echo "    ExtraArgs: '$FC_EXTRA_ARGS'"
+      echo "    ExtraRead: '$FC_EXTRA_READ'"
+      echo "    ExtraWrite: '$FC_EXTRA_WRITE'"
+      echo "    ExtraRun: '$FC_EXTRA_RUN'"
     } >"$VALUES.tmp"
     mv "$VALUES.tmp" "$VALUES"
   )

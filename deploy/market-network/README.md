@@ -86,8 +86,9 @@ a restart empties the hierarchy and every workload's certificate has to be
 reissued: restart OpenBao, restart the provider, and re-apply.
 
 The bidder is the exception: it declares no `--tls-cert-file` / `--tls-key-file`
-option and its parser rejects unknown flags, so `70-bidder.yaml` writes only
-`ca.pem` and gives the child the trust bundle, never a leaf.
+option and its parser rejects unknown flags, so `70-bidder.yaml` names
+`tls: trust`: the template writes only `ca.pem` and gives the child the trust
+bundle, never a leaf. The dispatcher is `tls: trust` too.
 
 Each service gained `--tls-cert-file` / `--tls-key-file`; `createServe` has taken
 `tcp.cert` and `tcp.key` since it was written, but nothing ever passed them, so
@@ -95,31 +96,55 @@ every service in the org had only ever served plain HTTP. TLS is what lets the
 relay reach the PDS: `resolvePdsIdentity` uses `https` unless given an
 insecure-HTTP escape hatch, and now it has nothing to escape from.
 
-## Running it
+## One service template
 
-```bash
-bash deploy/denokcp/start-kcp.sh      # kine and kcp on port 0, read back
-KUBECONFIG_PATH=$PWD/.kcp-demo/admin.kubeconfig bash deploy/denokcp/install-provider.sh
-bash deploy/denokcp/build-provider.sh ./deno-kcp-provider
-OPENBAO_DIR=$PWD/.kcp-demo/openbao bash deploy/denokcp/start-openbao.sh
-RUNS_DIR=$PWD/runs ./deno-kcp-provider --kubeconfig=$KUBECONFIG \
-  --openbao-addr http://$(cat .kcp-demo/openbao/bao.addr) --openbao-token root &
-START_OPENBAO=0 bash deploy/market-network/apply.sh
+Every service DenoPod (plc, relay, dispatcher, both PDSes, every bidder) is
+rendered from `deploy/denopods/service.yaml`. The files 20, 30, 35, 40, 60 and
+70 here are its values, not DenoPods:
+
+```
+name, entry (a name in deploy/ts-entries.yaml), cwd (relative to the
+TypeScript source root), stateDir, serviceAccount, tls (serve | trust | none),
+args, env, permissions, probe
 ```
 
-`apply.sh` starts OpenBao itself unless `START_OPENBAO=0`, and waits for each
-workspace's `OpenBao` object to report ready before it applies the workloads.
+The template's supervisor runs the entry on the pinned deno with
+`--no-code-cache --node-modules-dir=none --frozen` and the root `deno.lock`
+(plus `--cached-only` in production), from the source root the deno runtime
+names in `SOCIALWEB_TS_ROOT`, never from an absolute host path. Preloads are
+the kcpdns shim first, then the entry's own from `deploy/ts-entries.yaml`, and so
+are the `--unstable-*` flags. The child gets a clean environment: no `HOME` of
+the user (its `HOME` is its own state dir, `TMPDIR` is under it), `PORT_FILE`,
+`LISTENERS_FILE` and `STATUS_FILE` in its run directory, and the kcpdns keys.
 
-`accept.sh` is that whole sequence as one live acceptance, and one market test
-market network of several per host: it takes a market network slot (`SWC_MARKET_NETWORK_SLOTS`, default 4, flock
-under /var/tmp/socialweb-market-network-slots, refused below 3 GiB + 2.5 GiB per guest of
-MemAvailable), brings up its own kcp, kine, OpenBao and provider under
-`$MARKET_NETWORK_STATE/market-networks/$MARKET_NETWORK_ID` on port 0, runs `apply.sh` with `MARKET_NETWORK_BIDDERS`
-bidders, records every port and pid it read back in `market-network.json`, reaches each
-service on its own name and from the host, rents a firecracker guest through
-the RFP flow (guests under /var/tmp/swc-$MARKET_NETWORK_ID, labelled swc.market-network=$MARKET_NETWORK_ID), and
-tears the market network down, reporting anything left behind. It exits non-zero unless
-every check passed. Two market networks at once:
+Permissions are explicit. `-A` is refused; read and write are the source root,
+the run directory, the state dir and the paths the values name; `--allow-run`
+and `--allow-ffi` render only with a reason (the firecracker bidder names
+docker, ssh-keygen and the node image tool); every service is denied read and
+write of `/dev/kvm` and `$XDG_RUNTIME_DIR`. `internal/manifests` (`service.go`)
+checks all of this when it renders.
+
+Every DenoPod carries the `denopod.deno.computer/run` finalizer: the template
+renders it, and the deno runtime adds it to any DenoPod that lacks it before it
+starts a process, so deleting a DenoPod always stops its deno process.
+
+## Running it
+
+`accept.sh` is the way to run it: one live acceptance, and one market network of
+several per host. It takes a market network slot (`SWC_MARKET_NETWORK_SLOTS`,
+default 4, flock under /var/tmp/socialweb-market-network-slots, refused below
+3 GiB + 2.5 GiB per guest of MemAvailable), starts OpenBao on port 0, brings up
+its own dev instance (`socialweb-computer dev up --profile quick --host-backend
+proc --openbao-addr ...`: kine, kcp and the core, whose in-process deno runtime
+reconciles the DenoPods) under `$MARKET_NETWORK_STATE/market-networks/$MARKET_NETWORK_ID`,
+runs `apply.sh` with `MARKET_NETWORK_BIDDERS` bidders, records every port and
+pid it read back in `market-network.json`, checks every DenoPod's
+status.listeners and finalizer, reaches each service on its own name and from
+the host, rents a firecracker guest through the RFP flow (guests under
+/var/tmp/swc-$MARKET_NETWORK_ID, labelled swc.market-network=$MARKET_NETWORK_ID),
+and tears the market network down (DenoPods deleted first, then `dev down`),
+reporting anything left behind. It exits non-zero unless every check passed.
+Two market networks at once:
 
 ```bash
 MARKET_NETWORK_ID=network1 MARKET_NETWORK_BIDDERS=2 bash deploy/market-network/accept.sh &
@@ -127,10 +152,13 @@ MARKET_NETWORK_ID=network2 MARKET_NETWORK_BIDDERS=2 bash deploy/market-network/a
 wait
 ```
 
+`apply.sh` applies the market-network set into a running dev instance
+(`KUBECONFIG` its admin kubeconfig). It starts OpenBao itself unless
+`START_OPENBAO=0`, and waits for each workspace's `OpenBao` object to report
+ready before it applies the workloads.
+
 Every service runs from this repository: `ts/atproto-market`, `ts/atproto-relay`,
 `ts/hono-pds`, `ts/did-key-ingress-proxy` and the root `deno.json` and `deno.lock`.
-Building the provider needs a deno-kcp checkout (`DENO_KCP_DIR`) unless
-`DENO_KCP_PROVIDER` names a built one.
 
 ## How a name resolves
 
