@@ -618,7 +618,7 @@
     },
     "k3s-path": {
       "type": "string",
-      "description": "units roll cluster: the k3s executable the new slot runs (unset: the one the active slot runs)"
+      "description": "Absolute path of the k3s executable (serve gateway kcp in a dev build: every tenant cluster's k3s, never PATH; a release build runs its embedded k3s; units roll cluster: the k3s the new slot runs, unset keeps the one the active slot runs)"
     },
     "dumbpipe-path": {
       "type": "string",

@@ -77,6 +77,14 @@ const (
 	envExternalSecrets = "SOCIALWEB_CLUSTERPROVIDER_EXTERNAL_SECRETS"
 
 	envESOBundle = "SOCIALWEB_CLUSTERPROVIDER_ESO_BUNDLE"
+
+	envK3s = "SOCIALWEB_CLUSTERPROVIDER_K3S"
+
+	envKine = "SOCIALWEB_CLUSTERPROVIDER_KINE"
+
+	envBao = "SOCIALWEB_CLUSTERPROVIDER_BAO"
+
+	envPgDump = "SOCIALWEB_CLUSTERPROVIDER_PG_DUMP"
 )
 
 const DefaultESOManifestDir = "/opt/socialweb/deploy/eso"
@@ -164,6 +172,14 @@ type Config struct {
 
 	ESOBundle string
 
+	K3s string
+
+	Kine string
+
+	Bao string
+
+	PgDump string
+
 	DatastoreHasRow bool
 
 	ScaleHold time.Duration
@@ -209,6 +225,10 @@ func loadFor(get func(string) string, inv foldmain.Invocation) (Config, error) {
 		ESONamespace:           strings.TrimSpace(get(envESONamespace)),
 		ExternalSecrets:        strings.TrimSpace(get(envExternalSecrets)),
 		ESOBundle:              strings.TrimSpace(get(envESOBundle)),
+		K3s:                    strings.TrimSpace(get(envK3s)),
+		Kine:                   strings.TrimSpace(get(envKine)),
+		Bao:                    strings.TrimSpace(get(envBao)),
+		PgDump:                 strings.TrimSpace(get(envPgDump)),
 		GrantPath:              strings.TrimSpace(get(envGrant)),
 		Interval:               DefaultInterval,
 		LogLevel:               slog.LevelInfo,
@@ -394,6 +414,12 @@ func loadFor(get func(string) string, inv foldmain.Invocation) (Config, error) {
 					"ClusterRoles and webhook registration the group installs into the tenant before "+
 					"the pair starts. A join that accepted either empty would spawn a pair with nothing "+
 					"to run or a tenant serving none of its kinds", envExternalSecrets, envESOBundle)
+		}
+
+		for env, p := range cfg.pinnedExecutables() {
+			if p != "" && !filepath.IsAbs(p) {
+				return Config{}, fmt.Errorf("%s is %q, which is relative; it names a pinned executable by its absolute path, never by PATH", env, p)
+			}
 		}
 	}
 

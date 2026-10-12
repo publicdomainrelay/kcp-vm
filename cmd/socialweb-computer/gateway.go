@@ -17,7 +17,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/tsbundle"
 )
 
-var serveGatewayOptions = append([]string{backendOpt, "state-dir", "unit-prefix", "kcp-path", "kine-path", "postgres-root", "bao-path",
+var serveGatewayOptions = append([]string{backendOpt, "state-dir", "unit-prefix", "kcp-path", "kine-path", "k3s-path", "postgres-root", "bao-path",
 	"deno-path", "asset-cache", "ready-timeout", "kcp-front-address", "tls-front-address", "tls-cert-file", "tls-key-file",
 	"gateway-spec-file", "gateway-profile", "bootstrap-cluster", "bootstrap-account-did"}, devOnly(tsbundle.SourceRootOption)...)
 
@@ -31,7 +31,7 @@ func (a *app) optionalExe(ctx context.Context, vals clicfg.Values, name, option 
 func (a *app) gatewayExecutables(ctx context.Context, vals clicfg.Values) (map[string]devinstance.Executable, error) {
 	out := map[string]devinstance.Executable{}
 	for _, x := range []struct{ name, option string }{{gatewaykcp.ExeKcp, "kcp-path"}, {gatewaykcp.ExeKine, "kine-path"},
-		{gatewaykcp.ExeBao, "bao-path"}} {
+		{gatewaykcp.ExeBao, "bao-path"}, {gatewaykcp.ExeK3s, "k3s-path"}} {
 		e, err := a.optionalExe(ctx, vals, x.name, x.option)
 		if err != nil {
 			return nil, err

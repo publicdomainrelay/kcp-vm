@@ -11,6 +11,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devinstance"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostprocess"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpclient"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/pgunit"
 )
 
 const (
@@ -115,10 +116,18 @@ func (g *gateway) defaults(e *env, rec devinstance.Record, cert, key string) err
 	e.dflt("SOCIALWEB_CLUSTERPROVIDER_JOIN", DefaultJoin)
 	e.dflt("SOCIALWEB_CLUSTERPROVIDER_DATASTORE_HAS_ROW", "false")
 	for env, name := range map[string]string{"SOCIALWEB_CLUSTERPROVIDER_EXTERNAL_SECRETS": ExeExternalSecrets,
-		"SOCIALWEB_CLUSTERPROVIDER_ESO_BUNDLE": ExeESOBundle, "SOCIALWEB_CLUSTERPROVIDER_DUMBPIPE": ExeDumbpipe} {
+		"SOCIALWEB_CLUSTERPROVIDER_ESO_BUNDLE": ExeESOBundle, "SOCIALWEB_CLUSTERPROVIDER_DUMBPIPE": ExeDumbpipe,
+		"SOCIALWEB_CLUSTERPROVIDER_K3S": ExeK3s, "SOCIALWEB_CLUSTERPROVIDER_KINE": ExeKine, "SOCIALWEB_CLUSTERPROVIDER_BAO": ExeBao} {
 		if p := g.c.Executables[name].Path; p != "" {
 			e.dflt(env, p)
 		}
+	}
+	if root := g.c.Executables[ExePostgres].Path; root != "" {
+		in, err := pgunit.FromRoot(root)
+		if err != nil {
+			return err
+		}
+		e.dflt("SOCIALWEB_CLUSTERPROVIDER_PG_DUMP", in.Path("pg_dump"))
 	}
 	if h, err := os.Hostname(); err == nil {
 		e.dflt("SOCIALWEB_CLUSTERPROVIDER_HOST", h)

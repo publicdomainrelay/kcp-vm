@@ -715,8 +715,10 @@ lists.
 systemd-user`, the asset cache, and the two front addresses caddy proxies to (kcp front 127.0.0.1:6443,
 TLS front 127.0.0.1:8443; the web app front's 127.0.0.1:8788 is the prod Gateway spec's default), plus
 `unit-prefix` and `gateway-spec-file` when install is given them. A release gateway takes the clusterprovider's external-secrets
-binary, its bundle (the embedded asset `external-secrets-bundle`, the release's `external-secrets.yaml`) and
-dumbpipe from its own assets. `upgrade --binary --sha256` checks the digest, copies the
+binary, its bundle (the embedded asset `external-secrets-bundle`, the release's `external-secrets.yaml`),
+dumbpipe, and every tenant cluster's k3s, kine, bao and pg_dump from its own assets, each by the absolute
+path under `runtime/<sha256>/`; a release clusterprovider never looks in PATH (a dev build names k3s with
+`k3s-path`). `upgrade --binary --sha256` checks the digest, copies the
 binary to `bin/<sha>/`, runs its self-check, retargets `bin/current` (the old target becomes
 `bin/previous`) and restarts the core unit; every installed and transient unit is adopted, only the core
 gets a new InvocationID. `rollback` swaps `current` and `previous` and restarts. After either, `bin/<sha>/`

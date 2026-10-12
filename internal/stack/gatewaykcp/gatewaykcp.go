@@ -61,6 +61,7 @@ const (
 	ExeExternalSecrets = "external-secrets"
 	ExeESOBundle       = "external-secrets-bundle"
 	ExeDumbpipe        = "dumbpipe"
+	ExeK3s             = "k3s"
 	recordProfile      = bootstrap.ProfileProdlike
 	componentsReport   = "members"
 )

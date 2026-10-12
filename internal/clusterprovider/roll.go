@@ -391,8 +391,8 @@ func leaseHolders(ctx context.Context, core kubernetes.Interface) map[string]str
 	return out
 }
 
-func backupStore(ctx context.Context, s Store, dir string) error {
-	pgDump, err := exec.LookPath("pg_dump")
+func backupStore(ctx context.Context, cfg StackConfig, s Store, dir string) error {
+	pgDump, err := cfg.resolveExe("", cfg.PgDumpExec, "pg_dump")
 	if err != nil {
 		return fmt.Errorf("clusterprovider: a minor bump takes a pg_dump first and none is on this host: %w", err)
 	}
@@ -591,7 +591,7 @@ func (r *Roller) RollCluster(ctx context.Context, key string, req RollRequest) (
 			return fail(errors.New("clusterprovider: no store recorded for a minor bump's backup"))
 		}
 		dir := filepath.Join(spec.DataDir, BackupsDirName, time.Now().UTC().Format("20060102T150405Z"))
-		if err := backupStore(ctx, store, dir); err != nil {
+		if err := backupStore(ctx, r.Stack, store, dir); err != nil {
 			return fail(err)
 		}
 		rep.Backup = dir

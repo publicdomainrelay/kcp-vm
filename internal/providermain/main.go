@@ -187,6 +187,7 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 		Workspace:  cfg.HostProcessWorkspace,
 		Prefix:     cfg.UnitPrefix,
 		StateDir:   cfg.StateDir,
+		Resolve:    cfg.lookPath,
 		Log:        log,
 	})
 	if err != nil {
@@ -238,6 +239,10 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 		CloudControllerManagerExec: cfg.CloudControllerManagerExec,
 		FrontExec:                  cfg.FrontExec,
 		HostnameExec:               cfg.HostnameExec,
+		K3sExec:                    cfg.K3s,
+		KineExec:                   cfg.Kine,
+		PgDumpExec:                 cfg.PgDump,
+		LookPath:                   cfg.lookPath,
 		Slot:                       units.SlotState,
 		LinkSlot:                   units.LinkState,
 		ExternalSecrets:            externalSecretsFor(cfg),

@@ -83,6 +83,14 @@ type StackConfig struct {
 
 	HostnameExec []string
 
+	K3sExec string
+
+	KineExec string
+
+	PgDumpExec string
+
+	LookPath func(name string) (string, error)
+
 	LinkSlot func(cluster string, service v1alpha1.ClusterLinkService) LinkRecord
 
 	ExternalSecrets *ExternalSecrets
@@ -159,11 +167,11 @@ func (cfg StackConfig) SlotSpec(o materialiser.Observed, l materialiser.Leases, 
 	if store == "" {
 		return clusterstack.Spec{}, fmt.Errorf("%w (cluster %s)", ErrNoStore, cluster)
 	}
-	k3sExe, err := resolveExe(st.K3s, "k3s")
+	k3sExe, err := cfg.resolveExe(st.K3s, cfg.K3sExec, "k3s")
 	if err != nil {
 		return clusterstack.Spec{}, err
 	}
-	kineExe, err := resolveExe(st.Kine, "kine")
+	kineExe, err := cfg.resolveExe(st.Kine, cfg.KineExec, "kine")
 	if err != nil {
 		return clusterstack.Spec{}, err
 	}
@@ -212,14 +220,21 @@ func (cfg StackConfig) SlotSpec(o materialiser.Observed, l materialiser.Leases, 
 	return spec, nil
 }
 
-func resolveExe(path, name string) (string, error) {
+func (cfg StackConfig) resolveExe(path, configured, name string) (string, error) {
+	if path == "" {
+		path = configured
+	}
 	if path == "" {
 		path = name
 	}
 	if filepath.IsAbs(path) {
 		return path, nil
 	}
-	p, err := exec.LookPath(path)
+	look := cfg.LookPath
+	if look == nil {
+		look = exec.LookPath
+	}
+	p, err := look(path)
 	if err != nil {
 		return "", fmt.Errorf("clusterprovider: %s is not on this host: %w", path, err)
 	}
