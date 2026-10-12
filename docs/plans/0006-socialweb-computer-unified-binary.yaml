@@ -708,8 +708,8 @@ items:
       TestEveryEdgePortHasAReason, TestAServiceManifestWithoutAnExplicitPortIsAViolation.
     done_when: "in check.sh --fast and green; the ratchet's starting entry count recorded; 0008 M1-BED-PARALLEL, M4-TESTBED-PORT and M2-KCP-PORT0 each name the ratchet lines they delete in their evidence; the ratchet is empty when they are done."
     risks: ["A pattern scan misses a port built at runtime (string concatenation); the rendered-set scan after M2-TEMPLATE and each item's live two-instance test cover what the scan cannot."]
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M1-DEV-INSTANCE
     milestone: M1
     title: "`socialweb-computer dev up|down|status` per worktree - instance identity, XDG state keyed by instance, devsup per instance, port 0"
