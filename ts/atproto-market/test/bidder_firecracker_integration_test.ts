@@ -202,38 +202,15 @@ Deno.test({
   cleanups.push(() => plcCtl.abort());
   const plcDirectoryUrl = `http://localhost:${plcPort}`;
 
+  const fetchFailures: Array<{ url: string; cause: string }> = [];
   const { installFetchInterceptor } = await import("./fetch-interceptor.ts");
   const restoreFetch = installFetchInterceptor({
     realFetch: globalThis.fetch,
     plcDirectoryUrl,
     dispPort,
+    onFetchError: (failure) => fetchFailures.push(failure),
   });
   cleanups.push(restoreFetch);
-
-  // A bare "TypeError: fetch failed" says nothing about which call failed, and a
-  // resolver that cannot reach a PDS fails several steps before provisioning.
-  // Record every rejected fetch with its URL and the underlying cause.
-  const fetchFailures: Array<{ url: string; cause: string }> = [];
-  {
-    const patched = globalThis.fetch;
-    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = typeof input === "string"
-        ? input
-        : input instanceof URL
-        ? input.toString()
-        : input.url;
-      try {
-        return await patched(input, init);
-      } catch (err) {
-        const cause = (err as { cause?: unknown }).cause;
-        fetchFailures.push({ url, cause: cause === undefined ? String(err) : String(cause) });
-        throw err;
-      }
-    }) as typeof fetch;
-    cleanups.push(() => {
-      globalThis.fetch = patched;
-    });
-  }
 
   try {
     const bidderKeypair = await Secp256k1Keypair.create({ exportable: true });

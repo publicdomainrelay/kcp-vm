@@ -18,6 +18,8 @@ import { upgradeWebSocket } from "@hono/hono/deno";
 import { createLogger } from "@publicdomainrelay/logger";
 import { createRelayFactory } from "@publicdomainrelay/hono-factory-atproto-relay-xrpc";
 import { OFFERING_NSID } from "@publicdomainrelay/market-common";
+import { marketNetwork } from "@publicdomainrelay/market-network-common";
+import { installMarketNetworkFetch } from "@publicdomainrelay/market-network-fetch";
 
 Deno.test({
   name: "[integration] bidder PDS becomes discoverable after registry requestCrawl",
@@ -82,19 +84,10 @@ Deno.test({
 
   // -- fetch interception: https://reg.localhost -> local relay,
   // https://pds.localhost -> local fake PDS (downgrade scheme + add port).
-  const realFetch = globalThis.fetch;
-  const routes: Array<[string, number]> = [[relayHost, relayPort], [pdsHost, pdsPort]];
-  globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
-    let url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-    for (const [host, port] of routes) {
-      if (url.startsWith(`https://${host}`)) {
-        url = `http://127.0.0.1:${port}` + url.slice(`https://${host}`.length);
-        return realFetch(new Request(url, input instanceof Request ? input : init));
-      }
-    }
-    return realFetch(input as string | URL | Request, init);
-  }) as typeof fetch;
-  cleanups.push(() => { globalThis.fetch = realFetch; });
+  cleanups.push(installMarketNetworkFetch({
+    network: marketNetwork({ ingressProxyHost: `${relayHost}:${relayPort}` }),
+    hostPorts: { [pdsHost]: pdsPort },
+  }));
 
   // -- WebSocket interception: wss://pds.localhost -> ws://127.0.0.1:pdsPort.
   const RealWS = globalThis.WebSocket;
