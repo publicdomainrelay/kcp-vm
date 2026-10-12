@@ -10,11 +10,12 @@ platforms=()
 only=()
 
 usage() {
-  echo "usage: $0 [--platform linux/amd64|linux/arm64]... [--asset NAME]... [--print-pins]" >&2
+  echo "usage: $0 [--platform linux/amd64|linux/arm64]... [--asset NAME]... [--cache DIR] [--print-pins]" >&2
   echo "  downloads every pinned asset of versions.json, verifies its sha256 (and the upstream signature" >&2
   echo "  where one is published), repacks it as internal/assets/blobs/<goos>_<goarch>/<asset>.tar.zst and" >&2
   echo "  checks the unpacked tree against its treeSha256 pin. --print-pins prints the measured pins and" >&2
-  echo "  stages even when a tree pin is missing or differs, so versions.json can be updated." >&2
+  echo "  stages even when a tree pin is missing or differs, so versions.json can be updated. --cache keeps" >&2
+  echo "  the downloads (keyed by sha256) in DIR instead of internal/assets/blobs/.cache." >&2
   exit 2
 }
 
@@ -22,6 +23,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --platform) platforms+=("$2"); shift 2 ;;
     --asset) only+=("$2"); shift 2 ;;
+    --cache) cache="$2"; shift 2 ;;
     --print-pins) print_pins=1; shift ;;
     -h|--help) usage ;;
     *) usage ;;
