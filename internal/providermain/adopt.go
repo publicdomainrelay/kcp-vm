@@ -33,6 +33,10 @@ func (h *nodeHosts) adopt(ctx context.Context, cluster string) error {
 			"%s: %w -- a read that failed is not a workspace with no claims, and the next pass reads "+
 			"it again", target.Workspace, cluster, err)
 	}
+	claims, orphanErr := h.claimJoinedOrphans(ctx, cluster, claims)
+	if orphanErr != nil {
+		return errors.Join(orphanErr, h.adoptClaims(cluster, claims))
+	}
 	return errors.Join(h.adoptClaims(cluster, claims), h.reconcileVault(ctx, cluster, claims))
 }
 

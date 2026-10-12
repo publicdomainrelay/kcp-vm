@@ -969,8 +969,10 @@ func (h *nodeHosts) reconcile(ctx context.Context, cluster string) error {
 			"the claims that say which Nodes have no machine behind them", target.Workspace, err)
 	}
 	claims, orphanErr := h.claimJoinedOrphans(ctx, cluster, claims)
-	adoptErr := errors.Join(orphanErr, h.adoptClaims(cluster, claims), h.releaseStranded(ctx, cluster, claims),
-		h.reconcileVault(ctx, cluster, claims))
+	adoptErr := errors.Join(orphanErr, h.adoptClaims(cluster, claims), h.releaseStranded(ctx, cluster, claims))
+	if orphanErr == nil {
+		adoptErr = errors.Join(adoptErr, h.reconcileVault(ctx, cluster, claims))
+	}
 	released := map[string]string{}
 	for i := range claims {
 		if claims[i].Status.Phase == v1alpha1.NodeClaimReleased {
