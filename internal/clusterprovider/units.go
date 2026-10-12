@@ -364,11 +364,13 @@ func (h *UnitsHost) Unhealthy(ctx context.Context, key string) ([]string, error)
 		have[labelMember(members[i].Labels[LabelMember])] = &members[i]
 	}
 	var sick []string
-	if cp, err := h.readControlPlane(key); err == nil {
-		for _, m := range cp.Members {
-			if have[m.Name] == nil {
-				sick = append(sick, m.Name+": no HostProcess")
-			}
+	cp, err := h.readControlPlane(key)
+	if err != nil && len(members) > 0 {
+		sick = append(sick, ControlPlaneFile+": "+err.Error())
+	}
+	for _, m := range cp.Members {
+		if have[m.Name] == nil {
+			sick = append(sick, m.Name+": no HostProcess")
 		}
 	}
 	for _, o := range members {
@@ -606,6 +608,13 @@ func (h *UnitsHost) Spawn(ctx context.Context, key string, steps []procgroup.Ste
 	cp := ControlPlane{ActiveSlot: ActiveSlot, Slice: h.Slice(key), Store: store.Unit}
 	for _, st := range steps {
 		member := MemberName(st.Name)
+		cp.Members = append(cp.Members, ControlPlaneMember{Name: member, Unit: h.Unit(key, member), Object: ObjectName(key, member)})
+	}
+	if err := h.writeControlPlane(key, cp); err != nil {
+		return err
+	}
+	for i, st := range steps {
+		member := MemberName(st.Name)
 		if (st.Name == procgroup.ComponentKine || st.Name == procgroup.ComponentOpenBao) && !h.storeReady(ctx, key) {
 			return fmt.Errorf("%w (cluster %s, Postgres %s)", procgroup.ErrPostgresUnavailable, key, store.Object)
 		}
@@ -616,8 +625,7 @@ func (h *UnitsHost) Spawn(ctx context.Context, key string, steps []procgroup.Ste
 		if Verified(cur) {
 			h.c.Log.Info("cluster provider: member adopted", "cluster", key, "member", member, "unit", cur.Spec.Unit,
 				"invocation", cur.Status.Runtime.InvocationID)
-			cp.Members = append(cp.Members, ControlPlaneMember{Name: member, Unit: cur.Spec.Unit, Object: cur.Name,
-				InvocationID: cur.Status.Runtime.InvocationID})
+			cp.Members[i].InvocationID = cur.Status.Runtime.InvocationID
 			continue
 		}
 		spec := st.Spec
@@ -645,7 +653,7 @@ func (h *UnitsHost) Spawn(ctx context.Context, key string, steps []procgroup.Ste
 			return err
 		}
 		h.c.Log.Info("cluster provider: member ready", "cluster", key, "member", member, "unit", o.Spec.Unit, "invocation", inv)
-		cp.Members = append(cp.Members, ControlPlaneMember{Name: member, Unit: o.Spec.Unit, Object: o.Name, InvocationID: inv})
+		cp.Members[i].InvocationID = inv
 	}
 	return h.writeControlPlane(key, cp)
 }
