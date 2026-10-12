@@ -41,6 +41,7 @@ type WebApp struct {
 	FrontKubeconfig string
 	TSRoot          string
 	ClusterCADir    string
+	Env             map[string]string
 }
 
 func duration(d time.Duration) string {
@@ -326,7 +327,11 @@ func GatewayValues(o v1alpha1.Gateway, workspace, stateDir string, w WebApp, vau
 	}
 	v := manifests.Gateway{StateDir: stateDir, WebDir: filepath.Join(w.TSRoot, filepath.FromSlash(WebAppWebDir)),
 		GatewayWorkspace: workspace, GatewayName: o.Name, TLS: manifests.TLSNone, Vault: vault,
-		IdentityWorkspace: workspace + ":" + ComponentWorkspace, TestEnv: "{}"}
+		IdentityWorkspace: workspace + ":" + ComponentWorkspace}
+	env := map[string]string{}
+	for k, val := range w.Env {
+		env[k] = val
+	}
 	var trust []string
 	var extra []string
 	if n := o.Spec.Network; n != nil {
@@ -399,12 +404,13 @@ func GatewayValues(o v1alpha1.Gateway, workspace, stateDir string, w WebApp, vau
 			if err != nil {
 				return manifests.Gateway{}, err
 			}
-			env, err := json.Marshal(map[string]string{servicenames.TableExtraKey: string(raw)})
-			if err != nil {
-				return manifests.Gateway{}, err
-			}
-			v.TestEnv = string(env)
+			env[servicenames.TableExtraKey] = string(raw)
 		}
 	}
+	raw, err := json.Marshal(env)
+	if err != nil {
+		return manifests.Gateway{}, err
+	}
+	v.Env = string(raw)
 	return v, nil
 }

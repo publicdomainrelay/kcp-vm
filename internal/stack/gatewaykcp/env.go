@@ -146,3 +146,16 @@ func (g *gateway) defaults(e *env, rec devinstance.Record, cert, key string) err
 }
 
 func jsonMarshal(v any) ([]byte, error) { return json.Marshal(v) }
+
+var webAppProxyEnv = []string{"HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY"}
+
+func proxyEnv(environ []string) map[string]string {
+	e := newEnv(environ)
+	out := map[string]string{}
+	for _, k := range webAppProxyEnv {
+		if v := strings.TrimSpace(e.get(k)); v != "" {
+			out[k] = v
+		}
+	}
+	return out
+}
