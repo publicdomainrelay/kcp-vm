@@ -279,7 +279,7 @@ func (u *uninstaller) purge(units []hostsvc.UnitStatus, um UserManager) error {
 	}
 	if u.rec.created(StepStateDir) {
 		state := u.path(u.rec.StateDir)
-		if err := u.change("remove the state dir "+u.rec.StateDir, func() error { return os.RemoveAll(state) }); err != nil {
+		if err := u.change("remove the state dir "+u.rec.StateDir, func() error { return removeTree(state) }); err != nil {
 			return err
 		}
 	}
@@ -294,4 +294,14 @@ func (u *uninstaller) purge(units []hostsvc.UnitStatus, um UserManager) error {
 	}
 	u.removeCreatedDirs(func(string) bool { return true })
 	return nil
+}
+
+func removeTree(root string) error {
+	filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if d != nil && d.IsDir() {
+			os.Chmod(p, 0o700)
+		}
+		return nil
+	})
+	return os.RemoveAll(root)
 }
