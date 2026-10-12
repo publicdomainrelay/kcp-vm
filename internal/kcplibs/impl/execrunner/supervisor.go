@@ -3,17 +3,13 @@ package execrunner
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
-	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 )
 
@@ -85,10 +81,12 @@ type supervisor struct {
 	retainLimit int
 
 	seq atomic.Int64
+
+	unit string
 }
 
-func newSupervisor(prefix, runsDir, doneFile string) *supervisor {
-	return &supervisor{prefix: prefix, runsDir: runsDir, doneFile: doneFile, runs: map[string]*process{}, envs: map[string]map[string]string{}, retainLimit: retainedRunsLimit}
+func newSupervisor(prefix, runsDir, doneFile, unit string) *supervisor {
+	return &supervisor{prefix: prefix, runsDir: runsDir, doneFile: doneFile, unit: unit, runs: map[string]*process{}, envs: map[string]map[string]string{}, retainLimit: retainedRunsLimit}
 }
 
 func (s *supervisor) nextID() string {
@@ -138,7 +136,9 @@ func (s *supervisor) start(entry processSpec) (string, error) {
 	cmd.Env = append(os.Environ(), env...)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := host.prepare(cmd, s.unit); err != nil {
+		return abandon(err)
+	}
 	if err := cmd.Start(); err != nil {
 		return abandon(fmt.Errorf("execrunner: start %s process: %w", s.prefix, err))
 	}
@@ -153,7 +153,7 @@ func (s *supervisor) start(entry processSpec) (string, error) {
 		env:     entry.envMap,
 	}
 	if err := writeState(run); err != nil {
-		_ = syscall.Kill(-run.pid, syscall.SIGKILL)
+		host.killGroup(run.pid)
 		return abandon(err)
 	}
 	s.mu.Lock()
@@ -318,9 +318,7 @@ func (s *supervisor) stop(id string) error {
 	}
 	run.stopped.Store(true)
 	_ = writeState(run)
-	if run.pid > 0 {
-		_ = syscall.Kill(-run.pid, syscall.SIGKILL)
-	}
+	host.killGroup(run.pid)
 	if run.cmd != nil {
 		select {
 		case <-run.done:
@@ -373,53 +371,4 @@ func envPairs(env map[string]string) []string {
 		out = append(out, key+"="+value)
 	}
 	return out
-}
-
-func processAlive(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	err := syscall.Kill(pid, 0)
-	return err == nil || errors.Is(err, syscall.EPERM)
-}
-
-func startTicks(pid int) uint64 {
-	_, ticks, err := readProcessStat(pid)
-	if err != nil {
-		return 0
-	}
-	return ticks
-}
-
-func ownedByUs(pid int, ticks uint64) bool {
-	if pid <= 0 || ticks == 0 {
-		return false
-	}
-	_, current, err := readProcessStat(pid)
-	if err != nil {
-		return false
-	}
-	return current == ticks
-}
-
-func readProcessStat(pid int) (string, uint64, error) {
-	body, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
-	if err != nil {
-		return "", 0, err
-	}
-	line := string(body)
-	end := strings.LastIndex(line, ")")
-	if end < 0 || end+2 > len(line) {
-		return "", 0, errors.New("execrunner: unreadable process stat")
-	}
-	comm := line[strings.Index(line, "(")+1 : end]
-	fields := strings.Fields(line[end+2:])
-	if len(fields) < 20 {
-		return "", 0, errors.New("execrunner: short process stat")
-	}
-	ticks, err := strconv.ParseUint(fields[19], 10, 64)
-	if err != nil {
-		return "", 0, err
-	}
-	return comm, ticks, nil
 }
