@@ -11,11 +11,11 @@ spec:
     name: deno-runner
     namespace: default
   env:
-    SERVICE_ENTRY: "/home/johnandersen777/src/publicdomainrelay-kcp/hono-pds/main.ts"
-    SERVICE_CWD: "/home/johnandersen777/src/publicdomainrelay-kcp/hono-pds"
-    SERVICE_ARGS: '["--port","0","--hostname","127.0.0.1","--kv-path","__STATE_DIR__/bob-pds/kv.sqlite3"]'
+    SERVICE_ENTRY: "{{.OrgRoot}}/hono-pds/main.ts"
+    SERVICE_CWD: "{{.OrgRoot}}/hono-pds"
+    SERVICE_ARGS: '["--port","0","--hostname","127.0.0.1","--kv-path","{{.StateDir}}/bob-pds/kv.sqlite3"]'
     SERVICE_DENO_FLAGS: '["--node-modules-dir=none","--unstable-kv"]'
-    SERVICE_ENV: '{"PORT":"0","HOSTNAME":"127.0.0.1","PDS_PUBLIC_HOSTNAME":"pds.default.bob.svc.kcp.local","PDS_PLC_DIRECTORY_URL":"https://plc.default.global.svc.kcp.local","PDS_CRAWLERS":"https://relay.default.relay.svc.kcp.local","PDS_SUBSCRIBE_REPOS_FORMAT":"json","PDS_PRIVATE_KEY_HEX":"__BOB_PDS_PRIVATE_KEY_HEX__"}'
+    SERVICE_ENV: '{"PORT":"0","HOSTNAME":"127.0.0.1","PDS_PUBLIC_HOSTNAME":"pds.default.bob.svc.kcp.local","PDS_PLC_DIRECTORY_URL":"https://plc.default.global.svc.kcp.local","PDS_CRAWLERS":"https://relay.default.relay.svc.kcp.local","PDS_SUBSCRIBE_REPOS_FORMAT":"json","PDS_PRIVATE_KEY_HEX":"{{.BobPDSPrivateKeyHex}}"}'
     SERVICE_TLS: "true"
   script: |
     const entry = Deno.env.get("SERVICE_ENTRY") ?? "";
@@ -38,7 +38,7 @@ spec:
       HOME: Deno.env.get("HOME") ?? "",
       ...serviceEnv,
       PORT_FILE: `${runDir}/port-bound-to`,
-      DENO_DIR: "__DENO_DIR__",
+      DENO_DIR: "{{.DenoDir}}",
     };
 
     const caBundle = Deno.env.get("KCP_CA_BUNDLE") ?? "";

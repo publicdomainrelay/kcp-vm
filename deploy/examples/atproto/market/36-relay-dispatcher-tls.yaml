@@ -11,9 +11,9 @@ spec:
     name: deno-runner
     namespace: default
   env:
-    GUEST_TLS_DIR: "__GUEST_TLS_DIR__"
+    GUEST_TLS_DIR: "{{.GuestTLSDir}}"
     DISPATCHER_HOST: "relay.localhost"
-    DISPATCHER_PORT: "__DISPATCHER_PORT__"
+    DISPATCHER_PORT: "{{.DispatcherPort}}"
     TLS_PORT: "0"
   script: |
     const dir = Deno.env.get("GUEST_TLS_DIR") ?? "";

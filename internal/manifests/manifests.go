@@ -2,88 +2,191 @@ package manifests
 
 import (
 	"errors"
+	"fmt"
+	"io/fs"
+	"reflect"
+	"strings"
 
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"sigs.k8s.io/yaml"
+
+	"github.com/johnandersen777/socialweb-computer-kcp/deploy"
 )
+
+const IndexPath = "sets.yaml"
 
 var ErrMissingValue = errors.New("manifests: a value the template names is unset")
 
-var errStub = errors.New("manifests: not built")
-
 type Index struct {
-	Sets      []Set
-	Unapplied []Unapplied
+	Sets      []Set       `json:"sets"`
+	Unapplied []Unapplied `json:"unapplied"`
 }
 
-type Unapplied struct{ Path, Why string }
+type Unapplied struct {
+	Path string `json:"path"`
+	Why  string `json:"why"`
+}
 
 type Set struct {
-	Name, Summary, Values string
-	Phases                []Phase
+	Name    string  `json:"name"`
+	Summary string  `json:"summary"`
+	Values  string  `json:"values"`
+	Phases  []Phase `json:"phases"`
 }
 
 type Phase struct {
-	Name, Workspace string
-	Files           []File
-	Before, After   []Wait
+	Name      string `json:"name"`
+	Workspace string `json:"workspace"`
+	Files     []File `json:"files,omitempty"`
+	Before    []Wait `json:"before,omitempty"`
+	After     []Wait `json:"after,omitempty"`
 }
 
 type File struct {
-	Path, Each, As     string
-	Kinds, ExceptKinds []string
+	Path        string   `json:"path"`
+	Each        string   `json:"each,omitempty"`
+	As          string   `json:"as,omitempty"`
+	Kinds       []string `json:"kinds,omitempty"`
+	ExceptKinds []string `json:"exceptKinds,omitempty"`
 }
 
 type Wait struct {
-	Kind, Name, Workspace, For string
-	Capture                    *Capture
-	BestEffort                 bool
+	Kind       string   `json:"kind"`
+	Name       string   `json:"name,omitempty"`
+	Workspace  string   `json:"workspace,omitempty"`
+	For        string   `json:"for"`
+	Capture    *Capture `json:"capture,omitempty"`
+	BestEffort bool     `json:"bestEffort,omitempty"`
 }
 
-type Capture struct{ Into, From string }
-
-const (
-	CaptureAddressPort    = "AddressPort"
-	CaptureLogicalCluster = "LogicalCluster"
-)
-
-type Text struct {
-	Path string
-	Body []byte
+type Capture struct {
+	Into string `json:"into"`
+	From string `json:"from"`
 }
 
-type Object struct {
-	Path         string
-	Typed        any
-	Unstructured *unstructured.Unstructured
+func Load() (Index, error) {
+	b, err := fs.ReadFile(deploy.FS, IndexPath)
+	if err != nil {
+		return Index{}, fmt.Errorf("manifests: %w", err)
+	}
+	return Parse(b)
 }
 
-type Rendered struct {
-	Phase     Phase
-	Workspace string
-	Objects   []Object
+func Parse(b []byte) (Index, error) {
+	var ix Index
+	if err := yaml.UnmarshalStrict(b, &ix); err != nil {
+		return Index{}, fmt.Errorf("manifests: %s: %w", IndexPath, err)
+	}
+	if err := ix.validate(); err != nil {
+		return Index{}, fmt.Errorf("manifests: %s: %w", IndexPath, err)
+	}
+	return ix, nil
 }
 
-type None struct{}
-type PermissionInventory struct{ ProviderCluster string }
-type MarketIdentity struct{ Workspace string }
-type Bidder struct{ Name, PrivateKeyHex string }
-type Firecracker struct{ NodeImage, NodeBoot, Config, RepoDir, Preinstall, VMM, RunnerImage, WorkRoot string }
-type MarketBed struct {
-	OrgRoot, BedID, StateDir, DenoDir, GuestTLSDir string
-	PDSPrivateKeyHex, BobPDSPrivateKeyHex          string
-	Bidders                                        []Bidder
-	DispatcherPort, GuestTLSPort                   int
-	Firecracker                                    Firecracker
+func (ix Index) Set(name string) (Set, bool) {
+	for _, s := range ix.Sets {
+		if s.Name == name {
+			return s, true
+		}
+	}
+	return Set{}, false
 }
 
-func Load() (Index, error)                                      { return Index{}, errStub }
-func Parse(b []byte) (Index, error)                             { return Index{}, errStub }
-func (ix Index) Set(name string) (Set, bool)                    { return Set{}, false }
-func NewValues(name string) (any, error)                        { return nil, errStub }
-func (s Set) RenderText(p Phase, v any) (string, []Text, error) { return "", nil, errStub }
-func (s Set) RenderPhase(p Phase, v any) (Rendered, error)      { return Rendered{}, errStub }
-func (s Set) Render(v any) ([]Rendered, error)                  { return nil, errStub }
-func Decode(path string, body []byte) ([]Object, error)         { return nil, errStub }
-func SetCaptured(v any, c Capture, raw string) error            { return errStub }
-func AdaptedFiles() (map[string]bool, error)                    { return nil, errStub }
-func readFile(path string) ([]byte, error)                      { return nil, errStub }
+func (ix Index) Names() []string {
+	out := make([]string, 0, len(ix.Sets))
+	for _, s := range ix.Sets {
+		out = append(out, s.Name)
+	}
+	return out
+}
+
+func (ix Index) validate() error {
+	var problems []string
+	add := func(format string, args ...any) { problems = append(problems, fmt.Sprintf(format, args...)) }
+	sets := map[string]bool{}
+	for _, s := range ix.Sets {
+		if s.Name == "" || sets[s.Name] {
+			add("set %q is unnamed or named twice", s.Name)
+		}
+		sets[s.Name] = true
+		vt, ok := valueTypes[s.Values]
+		if !ok {
+			add("set %s: values %q is no values type (%s)", s.Name, s.Values, strings.Join(ValueTypeNames(), ", "))
+			continue
+		}
+		if len(s.Phases) == 0 {
+			add("set %s has no phase", s.Name)
+		}
+		phases := map[string]bool{}
+		for _, p := range s.Phases {
+			where := "set " + s.Name + " phase " + p.Name
+			if p.Name == "" || phases[p.Name] {
+				add("%s: unnamed or named twice", where)
+			}
+			phases[p.Name] = true
+			if p.Workspace == "" {
+				add("%s names no workspace", where)
+			}
+			if len(p.Files) == 0 && len(p.Before) == 0 && len(p.After) == 0 {
+				add("%s applies nothing and waits for nothing", where)
+			}
+			for _, f := range p.Files {
+				if _, err := fs.Stat(deploy.FS, f.Path); err != nil {
+					add("%s: %s is not in deploy.FS", where, f.Path)
+				}
+				if len(f.Kinds) > 0 && len(f.ExceptKinds) > 0 {
+					add("%s: %s names both kinds and exceptKinds", where, f.Path)
+				}
+				if (f.Each == "") != (f.As == "") {
+					add("%s: %s names each without as, or as without each", where, f.Path)
+				}
+				if f.Each != "" {
+					if fld, ok := vt().Elem().FieldByName(f.Each); !ok || fld.Type.Kind() != reflect.Slice {
+						add("%s: %s: each %s is no list field of %s", where, f.Path, f.Each, s.Values)
+					}
+				}
+			}
+			for _, w := range append(append([]Wait{}, p.Before...), p.After...) {
+				if err := w.check(vt().Elem()); err != nil {
+					add("%s: %v", where, err)
+				}
+			}
+		}
+	}
+	for _, u := range ix.Unapplied {
+		if _, err := fs.Stat(deploy.FS, u.Path); err != nil {
+			add("unapplied %s is not in deploy.FS", u.Path)
+		}
+		if strings.TrimSpace(u.Why) == "" {
+			add("unapplied %s gives no reason", u.Path)
+		}
+	}
+	if len(problems) > 0 {
+		return errors.New(strings.Join(problems, "; "))
+	}
+	return nil
+}
+
+func (w Wait) check(values reflect.Type) error {
+	k, ok := WaitKinds[w.Kind]
+	if !ok {
+		return fmt.Errorf("wait kind %q is not one of %v", w.Kind, waitKindNames())
+	}
+	from, ok := k.For[w.For]
+	if !ok {
+		return fmt.Errorf("a %s wait cannot be for %q", w.Kind, w.For)
+	}
+	if w.Kind == "APIBinding" && w.Name != "" {
+		return errors.New("an APIBinding wait is for every binding in its workspace and names none")
+	}
+	if w.Capture == nil {
+		return nil
+	}
+	if w.Capture.From != from || from == "" {
+		return fmt.Errorf("a %s %s wait cannot capture %q", w.Kind, w.For, w.Capture.From)
+	}
+	fld, ok := values.FieldByName(w.Capture.Into)
+	if !ok || fld.Type.Kind() != captureKinds[from] {
+		return fmt.Errorf("capture into %s: no %s field of that name", w.Capture.Into, captureKinds[from])
+	}
+	return nil
+}

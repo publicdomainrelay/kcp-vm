@@ -15,6 +15,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/manifests"
 )
 
 const providerWorkspacePath = "root:deno-provider"
@@ -143,6 +145,44 @@ type vendoredObject struct {
 	obj  Object
 }
 
+func renderedSetFiles(t *testing.T) map[string][]byte {
+	t.Helper()
+	ix, err := manifests.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := map[string]any{
+		"denoruntime": &manifests.None{},
+		"market-testbed": &manifests.MarketBed{
+			OrgRoot: "/org", BedID: "b", StateDir: "/s", DenoDir: "/d", GuestTLSDir: "/g",
+			PDSPrivateKeyHex: "aa", BobPDSPrivateKeyHex: "bb",
+			Bidders:        []manifests.Bidder{{Name: "bidder-1", Handle: "bidder-1.bob.test", PrivateKeyHex: "cc"}},
+			DispatcherPort: 40001, GuestTLSPort: 40002,
+			Firecracker: manifests.Firecracker{NodeImage: "/n", NodeBoot: "/b", Config: "/c", RepoDir: "/r",
+				Preinstall: "/p", VMM: "/v", RunnerImage: "i", WorkRoot: "/w"},
+		},
+	}
+	out := map[string][]byte{}
+	for name, v := range values {
+		s, ok := ix.Set(name)
+		if !ok {
+			t.Fatalf("sets.yaml names no set %s", name)
+		}
+		for _, p := range s.Phases {
+			_, texts, err := s.RenderText(p, v)
+			if err != nil {
+				t.Fatalf("set %s phase %s: %v", name, p.Name, err)
+			}
+			for _, tx := range texts {
+				if _, seen := out[tx.Path]; !seen {
+					out[tx.Path] = tx.Body
+				}
+			}
+		}
+	}
+	return out
+}
+
 func loadVendoredObjects(t *testing.T) []vendoredObject {
 	t.Helper()
 	root := repoRoot(t)
@@ -150,12 +190,19 @@ func loadVendoredObjects(t *testing.T) []vendoredObject {
 	if err != nil {
 		t.Fatalf("walking the vendored tree: %v", err)
 	}
+	rendered := renderedSetFiles(t)
 	var out []vendoredObject
 	for _, path := range tree {
 		if !strings.HasSuffix(path, ".yaml") && !strings.HasSuffix(path, ".yml") {
 			continue
 		}
-		objs, err := DecodeFile(filepath.Join(root, path))
+		var objs []Object
+		var err error
+		if body, ok := rendered[strings.TrimPrefix(path, "deploy/")]; ok {
+			objs, err = Decode(body)
+		} else {
+			objs, err = DecodeFile(filepath.Join(root, path))
+		}
 		if err != nil {
 			t.Errorf("%s does not decode as YAML: %v", path, err)
 			continue

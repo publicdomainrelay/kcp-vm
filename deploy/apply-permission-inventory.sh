@@ -8,7 +8,7 @@ PROVIDER_WORKSPACE=${PROVIDER_WORKSPACE:-root:socialweb-provider}
 PROVIDER_NAME=${PROVIDER_WORKSPACE##*:}
 AUDIT_LOG=${AUDIT_LOG:-/var/.kcp/audit.log}
 BOUNDARY_FILE=${BOUNDARY_FILE:-${AUDIT_LOG}.boundary}
-PLACEHOLDER=__PROVIDER_CLUSTER__
+PLACEHOLDER='{{.ProviderCluster}}'
 
 SUDO=""
 [[ "$(id -u)" == "0" || -r "$KUBECONFIG_PATH" ]] || SUDO=sudo

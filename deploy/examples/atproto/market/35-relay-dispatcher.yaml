@@ -11,8 +11,8 @@ spec:
     name: deno-runner
     namespace: default
   env:
-    SERVICE_ENTRY: "/home/johnandersen777/src/publicdomainrelay-kcp/did-key-ingress-proxy/hono-did-key-ingress-proxy/mod.ts"
-    SERVICE_CWD: "/home/johnandersen777/src/publicdomainrelay-kcp/did-key-ingress-proxy"
+    SERVICE_ENTRY: "{{.OrgRoot}}/did-key-ingress-proxy/hono-did-key-ingress-proxy/mod.ts"
+    SERVICE_CWD: "{{.OrgRoot}}/did-key-ingress-proxy"
     SERVICE_ARGS: '["--hostname","relay.localhost","--port","0","--additional-hosts","dispatcher.default.relay.svc.kcp.local,*","--plc-directory-url","https://plc.default.global.svc.kcp.local"]'
     SERVICE_DENO_FLAGS: '["--node-modules-dir=none"]'
     SERVICE_TLS: "true"
@@ -38,7 +38,7 @@ spec:
       HOME: Deno.env.get("HOME") ?? "",
       ...serviceEnv,
       PORT_FILE: `${runDir}/port-bound-to`,
-      DENO_DIR: "__DENO_DIR__",
+      DENO_DIR: "{{.DenoDir}}",
     };
 
     const caBundle = Deno.env.get("KCP_CA_BUNDLE") ?? "";

@@ -8,9 +8,9 @@ metadata:
 spec:
   restartPolicy: Always
   env:
-    SERVICE_ENTRY: "/home/johnandersen777/src/publicdomainrelay-kcp/atproto-relay/hono-atproto-relay/mod.ts"
-    SERVICE_CWD: "/home/johnandersen777/src/publicdomainrelay-kcp/atproto-relay"
-    SERVICE_ARGS: '["--port","0","--hostname","127.0.0.1","--kv-path","__STATE_DIR__/relay-relay/kv.sqlite3"]'
+    SERVICE_ENTRY: "{{.OrgRoot}}/atproto-relay/hono-atproto-relay/mod.ts"
+    SERVICE_CWD: "{{.OrgRoot}}/atproto-relay"
+    SERVICE_ARGS: '["--port","0","--hostname","127.0.0.1","--kv-path","{{.StateDir}}/relay-relay/kv.sqlite3"]'
     SERVICE_DENO_FLAGS: '["--node-modules-dir=none"]'
     SERVICE_ENV: '{"PORT":"0","HOSTNAME":"relay.default.relay.svc.kcp.local"}'
     SERVICE_TLS: "true"
@@ -35,7 +35,7 @@ spec:
       HOME: Deno.env.get("HOME") ?? "",
       ...serviceEnv,
       PORT_FILE: `${runDir}/port-bound-to`,
-      DENO_DIR: "__DENO_DIR__",
+      DENO_DIR: "{{.DenoDir}}",
     };
 
     const caBundle = Deno.env.get("KCP_CA_BUNDLE") ?? "";

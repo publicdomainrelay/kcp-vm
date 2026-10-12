@@ -19,8 +19,8 @@ func goldenBed() *MarketBed {
 		PDSPrivateKeyHex:    strings.Repeat("1", 64),
 		BobPDSPrivateKeyHex: strings.Repeat("2", 64),
 		Bidders: []Bidder{
-			{Name: "bidder-1", PrivateKeyHex: strings.Repeat("3", 64)},
-			{Name: "bidder-2", PrivateKeyHex: strings.Repeat("4", 64)},
+			{Name: "bidder-1", Handle: "bidder-1.bob.test", PrivateKeyHex: strings.Repeat("3", 64)},
+			{Name: "bidder-2", Handle: "bidder-2.bob.test", PrivateKeyHex: strings.Repeat("4", 64)},
 		},
 		DispatcherPort: 40001,
 		GuestTLSPort:   40002,
@@ -90,6 +90,7 @@ func TestAMissingValueIsARenderErrorNotAnEmptyField(t *testing.T) {
 		"DispatcherPort": func(b *MarketBed) { b.DispatcherPort = 0 },
 		"NodeImage":      func(b *MarketBed) { b.Firecracker.NodeImage = "" },
 		"PrivateKeyHex":  func(b *MarketBed) { b.Bidders[1].PrivateKeyHex = "" },
+		"Handle":         func(b *MarketBed) { b.Bidders[0].Handle = "" },
 		"Bidders":        func(b *MarketBed) { b.Bidders = nil },
 	}
 	for field, unset := range cases {
