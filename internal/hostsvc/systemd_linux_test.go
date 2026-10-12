@@ -497,7 +497,7 @@ func TestListNeverReturnsAnotherPrefixOrANotFoundUnit(t *testing.T) {
 	m := newTestManager(b, &fakeProcs{})
 	ctx := context.Background()
 	for _, n := range []string{"socialweb-vm-aaaa-one.service", "socialweb-vm-aaaa-two.service",
-		"socialweb-vm-aaaab-x.service", "socialweb-vm-bbbb-one.service", "socialweb-bed-1-vm-aaaa-one.service"} {
+		"socialweb-vm-aaaab-x.service", "socialweb-vm-bbbb-one.service", "socialweb-market-network-1-vm-aaaa-one.service"} {
 		if _, err := m.Start(ctx, vmSpec(n)); err != nil {
 			t.Fatal(err)
 		}

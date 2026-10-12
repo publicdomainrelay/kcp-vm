@@ -139,11 +139,11 @@ Deno.test("a guest's container carries the labels its bidder was given, so a swe
     const microvm = createFirecrackerMicrovm({
       backend: backendThatBoots(aSpec(workDir), written),
       runnerImage: RUNNER_IMAGE,
-      labels: { "swc.bed": "b3d00001" },
+      labels: { "swc.market-network": "b3d00001" },
     });
     await microvm.boot(aSpec(workDir));
     const run = written.find((line) => line.startsWith("run "))!;
-    assert(run.includes("--label swc.bed=b3d00001"), `run args carry no bed label: ${run}`);
+    assert(run.includes("--label swc.market-network=b3d00001"), `run args carry no market network label: ${run}`);
     assert(run.indexOf("--label") < run.indexOf(RUNNER_IMAGE), "the label is an option to run, not an argument to the image");
   } finally {
     await Deno.remove(root, { recursive: true }).catch(() => {});
@@ -166,11 +166,11 @@ Deno.test("a bidder given no labels starts guests with none", async () => {
 
 Deno.test("container labels parse from key=value pairs and refuse anything else", () => {
   assertEquals(parseLabels(""), {});
-  assertEquals(parseLabels("swc.bed=b3d00001"), { "swc.bed": "b3d00001" });
-  assertEquals(parseLabels(" swc.bed=b3d00001 , swc.bidder=bidder-2 "), { "swc.bed": "b3d00001", "swc.bidder": "bidder-2" });
+  assertEquals(parseLabels("swc.market-network=b3d00001"), { "swc.market-network": "b3d00001" });
+  assertEquals(parseLabels(" swc.market-network=b3d00001 , swc.bidder=bidder-2 "), { "swc.market-network": "b3d00001", "swc.bidder": "bidder-2" });
   let refused = false;
   try {
-    parseLabels("swc.bed");
+    parseLabels("swc.market-network");
   } catch {
     refused = true;
   }

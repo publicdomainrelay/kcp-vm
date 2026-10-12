@@ -3,7 +3,7 @@ set -eu
 
 # Builds the firecracker runner image in a build directory of its own and tags
 # it by the sha256 of everything that goes into it, so two builds never share a
-# build context and a rebuild never changes the image a running bed pinned.
+# build context and a rebuild never changes the image a running market network pinned.
 # Prints the content tag on stdout; everything else goes to stderr.
 #
 # NODEBOOT_SRC      the socialweb-computer-kcp checkout socialweb-nodeboot is built from (default the checkout holding this file)

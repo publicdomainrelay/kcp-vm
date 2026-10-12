@@ -403,7 +403,7 @@ func (c *Config) checkPlacement(get func(string) string) error {
 	default:
 		return fmt.Errorf(
 			"%s is %q, and %s is the only substrate implemented today: the local firecracker and "+
-				"qemu substrates were retired on %s (plan 0005 M1-MARKET-ONLY) and the market test bed "+
+				"qemu substrates were retired on %s (plan 0005 M1-MARKET-ONLY) and the market network "+
 				"replaces them -- a node is a VM rented from the compute market, born from the "+
 				"cloud-init its winning bidder applies, so nothing about it runs on this host. A name "+
 				"from before the retirement is refused rather than approximated: it would decide what "+

@@ -1,4 +1,4 @@
-package marketbed
+package marketnetwork
 
 import (
 	"bytes"
@@ -36,7 +36,7 @@ func loadRecord(t *testing.T) Record {
 	t.Helper()
 	r, err := LoadRecord(repoRoot(t))
 	if err != nil {
-		t.Fatalf("the vendored deno-kcp test bed has no readable record of where it came from: %v.\n\n"+
+		t.Fatalf("the vendored deno-kcp tree has no readable record of where it came from: %v.\n\n"+
 			"%s names the deno-kcp commit every file under %v was copied from and the sha256 of "+
 			"that commit's copy, so drift is a diff rather than an argument.", err, RecordPath, VendoredDirs)
 	}
@@ -153,8 +153,8 @@ func renderedSetFiles(t *testing.T) map[string][]byte {
 	}
 	values := map[string]any{
 		"denoruntime": &manifests.None{},
-		"market-testbed": &manifests.MarketBed{
-			SourceRoot: "/src", BedID: "b", StateDir: "/s", DenoDir: "/d", LockDir: "/l", GuestTLSDir: "/g",
+		"market-network": &manifests.MarketNetwork{
+			SourceRoot: "/src", NetworkID: "b", StateDir: "/s", DenoDir: "/d", LockDir: "/l", GuestTLSDir: "/g",
 			PDSPrivateKeyHex: "aa", BobPDSPrivateKeyHex: "bb",
 			Bidders:        []manifests.Bidder{{Name: "bidder-1", Handle: "bidder-1.bob.test", PrivateKeyHex: "cc"}},
 			DispatcherPort: 40001, GuestTLSPort: 40002,

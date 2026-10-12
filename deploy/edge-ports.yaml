@@ -15,7 +15,7 @@ edge_ports:
     files: ["scripts/deploy.sh", "deploy/container-entrypoint.sh", "internal/clicfg/options.json"]
     reason: >
       the gateway application's kcp front on 127.0.0.1:6443, which caddy proxies its kcp origin to
-      (0006 M2-KCP-FRONT); only the gateway's production config, never a bed or a dev instance.
+      (0006 M2-KCP-FRONT); only the gateway's production config, never a market network or a dev instance.
   - name: door
     port: 8788
     files: ["scripts/deploy.sh", "deploy/container-entrypoint.sh"]

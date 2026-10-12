@@ -22,9 +22,9 @@ type MarketIdentity struct {
 	Workspace string `json:",omitempty"`
 }
 
-type MarketBed struct {
+type MarketNetwork struct {
 	SourceRoot          string   `json:",omitempty"`
-	BedID               string   `json:",omitempty"`
+	NetworkID           string   `json:",omitempty"`
 	StateDir            string   `json:",omitempty"`
 	DenoDir             string   `json:",omitempty"`
 	LockDir             string   `json:",omitempty"`
@@ -59,7 +59,7 @@ var valueTypes = map[string]func() reflect.Type{
 	"None":                func() reflect.Type { return reflect.TypeOf(&None{}) },
 	"PermissionInventory": func() reflect.Type { return reflect.TypeOf(&PermissionInventory{}) },
 	"MarketIdentity":      func() reflect.Type { return reflect.TypeOf(&MarketIdentity{}) },
-	"MarketBed":           func() reflect.Type { return reflect.TypeOf(&MarketBed{}) },
+	"MarketNetwork":       func() reflect.Type { return reflect.TypeOf(&MarketNetwork{}) },
 }
 
 const (

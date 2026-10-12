@@ -177,13 +177,13 @@ requirements:
       - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:510-522
       - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:667
     behaviour: >-
-      A host address the requester already named (`<ip> relay.localhost`, the bed's guestHostAliases) is the
+      A host address the requester already named (`<ip> relay.localhost`, the market network's guestHostAliases) is the
       one the provider uses for every .localhost name: cloud-init resolves before the provider's runcmd can
       append a second line, so a different address would be the line that never wins.
     go_side:
       meets: no
       detail: >-
-        internal/marketbed passes relay.localhost aliases (live_m3_test.go) but no Go code reads them; the
+        internal/marketnetwork passes relay.localhost aliases (live_m3_test.go) but no Go code reads them; the
         kept rule lives in compute-provider-common and the constant pasta gateway must route to the address
         the requester named.
     parity_test:
@@ -310,9 +310,9 @@ requirements:
     go_side:
       meets: no
       detail: >-
-        No Go writer of the bid config; it is one of the parity boundary's outputs (M2-BACKPORT). The bed
+        No Go writer of the bid config; it is one of the parity boundary's outputs (M2-BACKPORT). The market network
         additionally links /root/secrets/firecracker to digitalocean.com in its base bootcmd
-        (internal/marketbed/live_m3_test.go), which the port must not need.
+        (internal/marketnetwork/live_m3_test.go), which the port must not need.
     parity_test:
       - TestParityTheBidConfigRecordEqualsTheProviders
       - ts/hono-compute-provider/test/firecracker_secrets_path_test.ts::"the firecracker bid config points the guest at the token the provisioning script writes"
@@ -322,18 +322,18 @@ requirements:
   - id: FC-GUEST-TLS-PORT-AND-CURLRC
     source:
       - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:524-559
-      - deploy/examples/atproto/market/market-requester/mod.ts:42-48
+      - deploy/market-network/market-requester/mod.ts:42-48
     behaviour: >-
-      With guestTlsPort set (a bed dispatcher off 443), every https://<name>.localhost URL without a port is
+      With guestTlsPort set (a market network dispatcher off 443), every https://<name>.localhost URL without a port is
       rewritten to :<guestTlsPort>, /root/.curlrc gets `resolve = *:<port>:<hostAddress>`, and every
       .localhost name gets a prepended runcmd line `<hostAddress> <name>` in /etc/hosts; a user_data that is
-      not YAML is refused. .curlrc reaches systemd units only when CURL_HOME is set, which the bed requester
+      not YAML is refused. .curlrc reaches systemd units only when CURL_HOME is set, which the market network requester
       does with `systemctl set-environment CURL_HOME=/root` in bootcmd.
     go_side:
       meets: partial
       detail: >-
-        internal/marketbed/live_m3_test.go:555 passes CURL_HOME=/root in the base bootcmd; there is no Go
-        composer (TypeScript enrichment), and under the port 0 rule the bed's edge port is still a known
+        internal/marketnetwork/live_m3_test.go:555 passes CURL_HOME=/root in the base bootcmd; there is no Go
+        composer (TypeScript enrichment), and under the port 0 rule the market network's edge port is still a known
         address handed to the enricher.
     parity_test:
       - TestParityTheGuestTlsPortRewriteHostsAndCurlrc

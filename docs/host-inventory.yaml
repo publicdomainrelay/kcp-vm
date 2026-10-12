@@ -18,7 +18,7 @@ fates:
   download-asset: fetched and sha256-verified, never installed from a package manager (served by the door, or a guest image pinned in versions.json and built by scripts/build-guest-image.sh)
   host-file: written by `socialweb-computer install` (root, once), never by hand
   host-prerequisite: the host must supply it and check-host probes it by name; the only fate that comes from the host
-  build-host: needed only on a build or development host (guest image build, market bed tooling), never on a gateway, bidder or requester runtime host
+  build-host: needed only on a build or development host (guest image build, market network tooling), never on a gateway, bidder or requester runtime host
   removed-legacy: deleted by design or legacy that is not ported; no runtime host needs it
 
 entries:
@@ -207,35 +207,35 @@ entries:
     kind: executable
     fate: build-host
     owner: 0007 M0-VM-USERNS
-    why: the market test bed's userns microvm (microvm-firecracker-userns) resolves the range account; M2-VM-RUNTIME does this in Go
+    why: the market network's userns microvm (microvm-firecracker-userns) resolves the range account; M2-VM-RUNTIME does this in Go
     from:
       - "ts/hono-compute-provider microvm-firecracker-userns"
   - name: systemd-run
     kind: executable
     fate: build-host
     owner: 0007 M0-VM-USERNS
-    why: the market test bed's userns microvm starts each VM unit with it; M2-VM-RUNTIME drives units over D-Bus
+    why: the market network's userns microvm starts each VM unit with it; M2-VM-RUNTIME drives units over D-Bus
     from:
       - "ts/hono-compute-provider microvm-firecracker-userns"
   - name: chmod
     kind: executable
     fate: build-host
     owner: 0007 M0-VM-USERNS
-    why: the market test bed's userns microvm opens staged runtime files to the slot uids; M2-VM-RUNTIME does this in Go
+    why: the market network's userns microvm opens staged runtime files to the slot uids; M2-VM-RUNTIME does this in Go
     from:
       - "ts/hono-compute-provider microvm-firecracker-userns"
   - name: setfacl
     kind: executable
     fate: build-host
     owner: 0007 M0-VM-USERNS
-    why: the market test bed's userns microvm grants the work dir to the account and the VMM uid; M2-VM-RUNTIME writes the ACL xattr in Go (nodevm.GrantUser)
+    why: the market network's userns microvm grants the work dir to the account and the VMM uid; M2-VM-RUNTIME writes the ACL xattr in Go (nodevm.GrantUser)
     from:
       - "ts/hono-compute-provider microvm-firecracker-userns"
   - name: env
     kind: executable
     fate: build-host
     owner: 0007 M0-VM-USERNS
-    why: the market test bed's userns microvm sets XDG_RUNTIME_DIR when it reaches another account's user manager through sudo
+    why: the market network's userns microvm sets XDG_RUNTIME_DIR when it reaches another account's user manager through sudo
     from:
       - "ts/hono-compute-provider microvm-firecracker-userns"
   - name: psql
@@ -552,10 +552,10 @@ entries:
   - name: git
     kind: executable
     fate: build-host
-    owner: 0008 M1-BED-PARALLEL, M1-TS-CLOSURE
-    why: internal/marketbed records the vendored deno-kcp commit of a market test bed; cmd/socialweb-tsbundle records each staged repo's commit and refuses a dirty one for a release; development and build hosts only
+    owner: 0008 M1-MARKET-NETWORK-PARALLEL, M1-TS-CLOSURE
+    why: internal/marketnetwork records the vendored deno-kcp commit of a market network; cmd/socialweb-tsbundle records each staged repo's commit and refuses a dirty one for a release; development and build hosts only
     from:
-      - "internal/marketbed/record.go"
+      - "internal/marketnetwork/record.go"
       - "internal/tsbundle/tsbuild/build.go"
   - name: debugfs
     kind: executable

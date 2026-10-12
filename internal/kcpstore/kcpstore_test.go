@@ -31,17 +31,17 @@ func TestKineRefusesARelativeExecutable(t *testing.T) {
 	}
 }
 
-func TestTheDevQuickProfileUsesSqliteAndTheBedProfilePostgres(t *testing.T) {
+func TestTheDevQuickProfileUsesSqliteAndTheMarketNetworkProfilePostgres(t *testing.T) {
 	cases := []struct {
 		role    Role
 		profile string
 		want    Kind
 	}{
 		{RoleGateway, "quick", KindKineSqlite},
-		{RoleGateway, "bed", KindKinePostgres},
+		{RoleGateway, "market-network", KindKinePostgres},
 		{RoleGateway, "prodlike", KindKinePostgres},
 		{RoleGateway, "", KindKinePostgres},
-		{RoleBidder, "bed", KindKineSqlite},
+		{RoleBidder, "market-network", KindKineSqlite},
 		{RoleBidder, "", KindKineSqlite},
 	}
 	for _, c := range cases {

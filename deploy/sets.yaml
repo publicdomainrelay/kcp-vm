@@ -161,14 +161,14 @@ sets:
             name: marketidentities
             for: IdentityValid
 
-  - name: market-testbed
-    summary: the AT Protocol market test bed - PLC, relay, dispatcher and its TLS front, two PDSes, N bidders and the verifier (was apply.sh); needs denoruntime and a running deno provider
-    values: MarketBed
+  - name: market-network
+    summary: the AT Protocol market network - PLC, relay, dispatcher and its TLS front, two PDSes, N bidders and the verifier (was apply.sh); needs denoruntime and a running deno provider
+    values: MarketNetwork
     phases:
       - name: workspaces
         workspace: root
         files:
-          - path: examples/atproto/market/00-workspaces.yaml
+          - path: market-network/00-workspaces.yaml
         after:
           - kind: Workspace
             for: Ready
@@ -178,44 +178,44 @@ sets:
           - kind: APIBinding
             for: Ready
         files:
-          - path: examples/atproto/market/10-rbac.yaml
+          - path: market-network/10-rbac.yaml
       - name: rbac-relay
         workspace: root:relay
         before:
           - kind: APIBinding
             for: Ready
         files:
-          - path: examples/atproto/market/10-rbac.yaml
+          - path: market-network/10-rbac.yaml
       - name: rbac-alice
         workspace: root:alice
         before:
           - kind: APIBinding
             for: Ready
         files:
-          - path: examples/atproto/market/10-rbac.yaml
+          - path: market-network/10-rbac.yaml
       - name: rbac-bob
         workspace: root:bob
         before:
           - kind: APIBinding
             for: Ready
         files:
-          - path: examples/atproto/market/10-rbac.yaml
+          - path: market-network/10-rbac.yaml
       - name: openbao-global
         workspace: root:global
         files:
-          - path: examples/atproto/market/15-openbao-global.yaml
+          - path: market-network/15-openbao-global.yaml
       - name: openbao-relay
         workspace: root:relay
         files:
-          - path: examples/atproto/market/15-openbao-relay.yaml
+          - path: market-network/15-openbao-relay.yaml
       - name: openbao-alice
         workspace: root:alice
         files:
-          - path: examples/atproto/market/15-openbao-alice.yaml
+          - path: market-network/15-openbao-alice.yaml
       - name: openbao-bob
         workspace: root:bob
         files:
-          - path: examples/atproto/market/15-openbao-bob.yaml
+          - path: market-network/15-openbao-bob.yaml
         after:
           - kind: OpenBao
             name: openbao
@@ -236,11 +236,11 @@ sets:
       - name: plc
         workspace: root:global
         files:
-          - path: examples/atproto/market/20-global-plc.yaml
+          - path: market-network/20-global-plc.yaml
       - name: dispatcher
         workspace: root:relay
         files:
-          - path: examples/atproto/market/35-relay-dispatcher.yaml
+          - path: market-network/35-relay-dispatcher.yaml
         after:
           - kind: DenoPod
             name: dispatcher
@@ -251,7 +251,7 @@ sets:
       - name: dispatcher-tls
         workspace: root:relay
         files:
-          - path: examples/atproto/market/36-relay-dispatcher-tls.yaml
+          - path: market-network/36-relay-dispatcher-tls.yaml
         after:
           - kind: DenoPod
             name: dispatcher-tls
@@ -262,11 +262,11 @@ sets:
       - name: alice-pds
         workspace: root:alice
         files:
-          - path: examples/atproto/market/40-alice-pds.yaml
+          - path: market-network/40-alice-pds.yaml
       - name: bob-pds
         workspace: root:bob
         files:
-          - path: examples/atproto/market/60-bob-pds.yaml
+          - path: market-network/60-bob-pds.yaml
         after:
           - kind: DenoPod
             name: pds
@@ -274,11 +274,11 @@ sets:
       - name: relay
         workspace: root:relay
         files:
-          - path: examples/atproto/market/30-relay-relay.yaml
+          - path: market-network/30-relay-relay.yaml
       - name: bidders
         workspace: root:bob
         files:
-          - path: examples/atproto/market/70-bidder.yaml
+          - path: market-network/70-bidder.yaml
             each: Bidders
             as: Bidder
       - name: verifier
@@ -294,7 +294,7 @@ sets:
             for: Address
             bestEffort: true
         files:
-          - path: examples/atproto/market/50-verifier.yaml
+          - path: market-network/50-verifier.yaml
 
 unapplied:
   - path: sets.yaml

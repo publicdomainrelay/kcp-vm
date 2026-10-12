@@ -9,14 +9,14 @@ import (
 	"testing"
 )
 
-func goldenBed() *MarketBed {
-	return &MarketBed{
+func goldenNetwork() *MarketNetwork {
+	return &MarketNetwork{
 		SourceRoot:          "/src/root",
-		BedID:               "bed1",
-		StateDir:            "/bed/state",
+		NetworkID:           "network1",
+		StateDir:            "/market-network/state",
 		DenoDir:             "/cache/deno",
-		LockDir:             "/bed/locks",
-		GuestTLSDir:         "/bed/guest-tls",
+		LockDir:             "/market-network/locks",
+		GuestTLSDir:         "/market-network/guest-tls",
 		PDSPrivateKeyHex:    strings.Repeat("1", 64),
 		BobPDSPrivateKeyHex: strings.Repeat("2", 64),
 		Bidders: []Bidder{
@@ -51,13 +51,13 @@ func mustSet(t *testing.T, name string) Set {
 	return s
 }
 
-func TestTheRenderedMarketBedEqualsWhatApplyShProduced(t *testing.T) {
-	want, err := os.ReadFile("testdata/market-testbed.golden")
+func TestTheRenderedMarketNetworkEqualsWhatApplyShProduced(t *testing.T) {
+	want, err := os.ReadFile("testdata/market-network.golden")
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := mustSet(t, "market-testbed")
-	values := goldenBed()
+	s := mustSet(t, "market-network")
+	values := goldenNetwork()
 	var got bytes.Buffer
 	for _, p := range s.Phases {
 		_, texts, err := s.RenderText(p, values)
@@ -79,24 +79,24 @@ func TestTheRenderedMarketBedEqualsWhatApplyShProduced(t *testing.T) {
 		t.Fatalf("rendered %d lines, apply.sh produced %d", len(gl), len(wl))
 	}
 	if _, err := s.Render(values); err != nil {
-		t.Fatalf("the golden bed does not decode strictly: %v", err)
+		t.Fatalf("the golden market network does not decode strictly: %v", err)
 	}
 }
 
 func TestAMissingValueIsARenderErrorNotAnEmptyField(t *testing.T) {
-	s := mustSet(t, "market-testbed")
-	cases := map[string]func(*MarketBed){
-		"StateDir":       func(b *MarketBed) { b.StateDir = "" },
-		"SourceRoot":     func(b *MarketBed) { b.SourceRoot = "" },
-		"LockDir":        func(b *MarketBed) { b.LockDir = "" },
-		"DispatcherPort": func(b *MarketBed) { b.DispatcherPort = 0 },
-		"NodeImage":      func(b *MarketBed) { b.Firecracker.NodeImage = "" },
-		"PrivateKeyHex":  func(b *MarketBed) { b.Bidders[1].PrivateKeyHex = "" },
-		"Handle":         func(b *MarketBed) { b.Bidders[0].Handle = "" },
-		"Bidders":        func(b *MarketBed) { b.Bidders = nil },
+	s := mustSet(t, "market-network")
+	cases := map[string]func(*MarketNetwork){
+		"StateDir":       func(b *MarketNetwork) { b.StateDir = "" },
+		"SourceRoot":     func(b *MarketNetwork) { b.SourceRoot = "" },
+		"LockDir":        func(b *MarketNetwork) { b.LockDir = "" },
+		"DispatcherPort": func(b *MarketNetwork) { b.DispatcherPort = 0 },
+		"NodeImage":      func(b *MarketNetwork) { b.Firecracker.NodeImage = "" },
+		"PrivateKeyHex":  func(b *MarketNetwork) { b.Bidders[1].PrivateKeyHex = "" },
+		"Handle":         func(b *MarketNetwork) { b.Bidders[0].Handle = "" },
+		"Bidders":        func(b *MarketNetwork) { b.Bidders = nil },
 	}
 	for field, unset := range cases {
-		values := goldenBed()
+		values := goldenNetwork()
 		unset(values)
 		_, err := s.Render(values)
 		if err == nil {
@@ -110,8 +110,8 @@ func TestAMissingValueIsARenderErrorNotAnEmptyField(t *testing.T) {
 }
 
 func TestAPhaseRenderedBeforeItsCaptureIsAMissingValue(t *testing.T) {
-	s := mustSet(t, "market-testbed")
-	values := goldenBed()
+	s := mustSet(t, "market-network")
+	values := goldenNetwork()
 	values.GuestTLSPort = 0
 	for _, p := range s.Phases {
 		_, _, err := s.RenderText(p, values)
@@ -193,7 +193,7 @@ func TestKindsSelectWhatAFileContributes(t *testing.T) {
 }
 
 func TestCaptureSetsTheTypedField(t *testing.T) {
-	b := goldenBed()
+	b := goldenNetwork()
 	if err := SetCaptured(b, Capture{Into: "DispatcherPort", From: CaptureAddressPort}, "127.0.0.1:51234"); err != nil {
 		t.Fatal(err)
 	}

@@ -1,4 +1,4 @@
-package marketbed
+package marketnetwork
 
 import (
 	"bytes"

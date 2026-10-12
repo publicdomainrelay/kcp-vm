@@ -1,4 +1,4 @@
-package marketbed
+package marketnetwork
 
 import (
 	"bufio"
@@ -24,7 +24,7 @@ var firecrackerInputs = []struct{ env, flag string }{
 	{"SOCIALWEB_FIRECRACKER_REPO_DIR", "FC_REPO_DIR"},
 }
 
-func newBedID(t *testing.T) string {
+func newNetworkID(t *testing.T) string {
 	t.Helper()
 	buf := make([]byte, 4)
 	if _, err := rand.Read(buf); err != nil {
@@ -34,29 +34,29 @@ func newBedID(t *testing.T) string {
 }
 
 func slotDir() string {
-	if dir := os.Getenv("BED_SLOT_DIR"); dir != "" {
+	if dir := os.Getenv("MARKET_NETWORK_SLOT_DIR"); dir != "" {
 		return dir
 	}
 	return DefaultSlotDir
 }
 
 func slotCount() int {
-	if n, err := strconv.Atoi(os.Getenv("SWC_BED_SLOTS")); err == nil && n > 0 {
+	if n, err := strconv.Atoi(os.Getenv("SWC_MARKET_NETWORK_SLOTS")); err == nil && n > 0 {
 		return n
 	}
 	return DefaultSlots
 }
 
-func testBedEnvFor(t *testing.T, bedID string, guests int) (string, string, []string) {
+func testNetworkEnvFor(t *testing.T, networkID string, guests int) (string, string, []string) {
 	t.Helper()
 	for _, bin := range []string{"kcp", "kine", "kubectl", "go", "python3", "curl", "openssl", "flock", "ss"} {
 		if _, err := exec.LookPath(bin); err != nil {
-			livegate.RequireLocal(t, "%s is not on PATH; the test bed's kcp and its scripts need it", bin)
+			livegate.RequireLocal(t, "%s is not on PATH; the market network's kcp and its scripts need it", bin)
 		}
 	}
 	for _, bin := range []string{"bao", "deno", "docker"} {
 		if _, err := exec.LookPath(bin); err != nil {
-			livegate.Require(t, "%s is not on PATH; the test bed's OpenBao, services or firecracker runner need it", bin)
+			livegate.Require(t, "%s is not on PATH; the market network's OpenBao, services or firecracker runner need it", bin)
 		}
 	}
 	if _, err := os.Stat("/dev/kvm"); err != nil {
@@ -78,31 +78,31 @@ func testBedEnvFor(t *testing.T, bedID string, guests int) (string, string, []st
 		t.Fatal(err)
 	}
 	if err := CheckMemory(string(meminfo), guests); err != nil {
-		livegate.Require(t, "not enough memory for another market bed: %v", err)
+		livegate.Require(t, "not enough memory for another market network: %v", err)
 	}
-	slot, err := TakeSlot(slotDir(), slotCount(), bedID)
+	slot, err := TakeSlot(slotDir(), slotCount(), networkID)
 	if err != nil {
-		livegate.Require(t, "no market bed slot free: %v", err)
+		livegate.Require(t, "no market network slot free: %v", err)
 	}
 	t.Cleanup(func() { _ = slot.Release() })
 
-	workRoot := FCWorkRootFor(bedID)
-	state := os.Getenv("BED_STATE")
+	workRoot := FCWorkRootFor(networkID)
+	state := os.Getenv("MARKET_NETWORK_STATE")
 	if state == "" {
 		state = t.TempDir()
 	}
 	env := append(append(os.Environ(), denoKcpEnv...),
-		"BED_ID="+bedID,
-		"BED_STATE="+state,
-		"BED_SLOT_HELD=1",
-		"BED_SLOT="+strconv.Itoa(slot.Index),
-		"BED_GUESTS="+strconv.Itoa(guests),
+		"MARKET_NETWORK_ID="+networkID,
+		"MARKET_NETWORK_STATE="+state,
+		"MARKET_NETWORK_SLOT_HELD=1",
+		"MARKET_NETWORK_SLOT="+strconv.Itoa(slot.Index),
+		"MARKET_NETWORK_GUESTS="+strconv.Itoa(guests),
 		"FC_WORK_ROOT="+workRoot,
 	)
 	for _, in := range firecrackerInputs {
 		v := os.Getenv(in.env)
 		if v == "" {
-			livegate.Require(t, "%s is unset; the test bed's bidder runs --compute-provider-firecracker and has "+
+			livegate.Require(t, "%s is unset; the market network's bidder runs --compute-provider-firecracker and has "+
 				"no default for it on this host", in.env)
 		}
 		env = append(env, in.flag+"="+v)
@@ -119,9 +119,9 @@ func testBedEnvFor(t *testing.T, bedID string, guests int) (string, string, []st
 	return root, workRoot, env
 }
 
-func testBedEnv(t *testing.T) (string, string, []string) {
+func testNetworkEnv(t *testing.T) (string, string, []string) {
 	t.Helper()
-	return testBedEnvFor(t, newBedID(t), 1)
+	return testNetworkEnvFor(t, newNetworkID(t), 1)
 }
 
 func liveBudget(t *testing.T, need time.Duration) context.Context {
@@ -139,7 +139,7 @@ func liveBudget(t *testing.T, need time.Duration) context.Context {
 	return ctx
 }
 
-type bedRun struct {
+type networkRun struct {
 	id      string
 	log     string
 	record  string
@@ -149,16 +149,16 @@ type bedRun struct {
 	verdict string
 }
 
-func runAccept(ctx context.Context, t *testing.T, root string, env []string, id string, logDir string) *bedRun {
-	r := &bedRun{id: id, log: filepath.Join(logDir, "accept-"+id+".log"), record: filepath.Join(logDir, "bed-"+id+".json")}
+func runAccept(ctx context.Context, t *testing.T, root string, env []string, id string, logDir string) *networkRun {
+	r := &networkRun{id: id, log: filepath.Join(logDir, "accept-"+id+".log"), record: filepath.Join(logDir, "market-network-"+id+".json")}
 	logFile, err := os.Create(r.log)
 	if err != nil {
 		r.err = err
 		return r
 	}
 	defer logFile.Close()
-	cmd := exec.CommandContext(ctx, "bash", filepath.Join(root, "deploy/examples/atproto/market/accept.sh"))
-	cmd.Env = append(env, "BED_RECORD_OUT="+r.record)
+	cmd := exec.CommandContext(ctx, "bash", filepath.Join(root, "deploy/market-network/accept.sh"))
+	cmd.Env = append(env, "MARKET_NETWORK_RECORD_OUT="+r.record)
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	cmd.WaitDelay = 2 * time.Minute
@@ -170,7 +170,7 @@ func runAccept(ctx context.Context, t *testing.T, root string, env []string, id 
 }
 
 func logDir(t *testing.T) string {
-	if dir := os.Getenv("MARKETBED_LOG_DIR"); dir != "" {
+	if dir := os.Getenv("MARKET_NETWORK_LOG_DIR"); dir != "" {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -179,15 +179,15 @@ func logDir(t *testing.T) string {
 	return t.TempDir()
 }
 
-func requireMarketPass(t *testing.T, r *bedRun) {
+func requireMarketPass(t *testing.T, r *networkRun) {
 	t.Helper()
 	for _, line := range r.results {
-		t.Logf("bed %s: %s", r.id, line)
+		t.Logf("market network %s: %s", r.id, line)
 	}
-	t.Logf("bed %s: accept.sh took %s, verdict %q, log %s", r.id, r.elapsed.Round(time.Second), r.verdict, r.log)
+	t.Logf("market network %s: accept.sh took %s, verdict %q, log %s", r.id, r.elapsed.Round(time.Second), r.verdict, r.log)
 	if r.err != nil || r.verdict != "accept: pass" {
 		tail, _ := exec.Command("tail", "-n", "80", r.log).Output()
-		t.Fatalf("market bed %s did not pass (%v):\n%s", r.id, r.err, tail)
+		t.Fatalf("market network %s did not pass (%v):\n%s", r.id, r.err, tail)
 	}
 	for _, want := range []string{"market guest onNetwork", "market contract released", "market guest gone"} {
 		found := false
@@ -197,30 +197,30 @@ func requireMarketPass(t *testing.T, r *bedRun) {
 			}
 		}
 		if !found {
-			t.Errorf("bed %s passed without a PASS line for %q; the firecracker market check did not run", r.id, want)
+			t.Errorf("market network %s passed without a PASS line for %q; the firecracker market check did not run", r.id, want)
 		}
 	}
 }
 
-func TestTheMarketTestBedRentsAFirecrackerGuestThroughTheRFPFlow(t *testing.T) {
-	livegate.Short(t, "this test brings up kcp, OpenBao, the deno-kcp provider and the whole market test bed, "+
+func TestTheMarketNetworkRentsAFirecrackerGuestThroughTheRFPFlow(t *testing.T) {
+	livegate.Short(t, "this test brings up kcp, OpenBao, the deno-kcp provider and the whole market network, "+
 		"and rents a firecracker guest through it: a skip is NOT a pass; drop -short, or set SOCIALWEB_REQUIRE_LIVE=1 to fail instead")
-	id := newBedID(t)
-	root, _, env := testBedEnvFor(t, id, 1)
+	id := newNetworkID(t)
+	root, _, env := testNetworkEnvFor(t, id, 1)
 	ctx := liveBudget(t, 35*time.Minute)
 	r := runAccept(ctx, t, root, env, id, logDir(t))
 	requireMarketPass(t, r)
 }
 
-func TestTwoBedsOnOneHostEachRentAGuestThroughTheRFPFlow(t *testing.T) {
-	livegate.Short(t, "this test brings up several whole market test beds on this host at once, each renting a "+
+func TestTwoNetworksOnOneHostEachRentAGuestThroughTheRFPFlow(t *testing.T) {
+	livegate.Short(t, "this test brings up several whole market networks on this host at once, each renting a "+
 		"firecracker guest through its own RFP flow: a skip is NOT a pass")
-	beds := 2
-	if n, err := strconv.Atoi(os.Getenv("MARKETBED_BEDS")); err == nil && n >= 2 {
-		beds = n
+	networks := 2
+	if n, err := strconv.Atoi(os.Getenv("MARKET_NETWORK_COUNT")); err == nil && n >= 2 {
+		networks = n
 	}
 	bidders := "2"
-	if v := os.Getenv("MARKETBED_BIDDERS"); v != "" {
+	if v := os.Getenv("MARKET_NETWORK_BIDDERS"); v != "" {
 		bidders = v
 	}
 	ctx := liveBudget(t, 40*time.Minute)
@@ -231,12 +231,12 @@ func TestTwoBedsOnOneHostEachRentAGuestThroughTheRFPFlow(t *testing.T) {
 		env  []string
 	}
 	var ready []prepared
-	for i := 0; i < beds; i++ {
-		id := newBedID(t)
-		root, _, env := testBedEnvFor(t, id, 1)
-		ready = append(ready, prepared{id: id, root: root, env: append(env, "BED_BIDDERS="+bidders)})
+	for i := 0; i < networks; i++ {
+		id := newNetworkID(t)
+		root, _, env := testNetworkEnvFor(t, id, 1)
+		ready = append(ready, prepared{id: id, root: root, env: append(env, "MARKET_NETWORK_BIDDERS="+bidders)})
 	}
-	runs := make([]*bedRun, len(ready))
+	runs := make([]*networkRun, len(ready))
 	var wg sync.WaitGroup
 	for i, p := range ready {
 		wg.Add(1)
@@ -246,26 +246,26 @@ func TestTwoBedsOnOneHostEachRentAGuestThroughTheRFPFlow(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	var records []Bed
+	var records []Network
 	for _, r := range runs {
 		requireMarketPass(t, r)
-		bed, err := LoadBed(r.record)
+		network, err := LoadNetwork(r.record)
 		if err != nil {
-			t.Fatalf("bed %s left no record: %v", r.id, err)
+			t.Fatalf("market network %s left no record: %v", r.id, err)
 		}
-		if err := bed.Validate(); err != nil {
-			t.Errorf("bed %s record: %v", r.id, err)
+		if err := network.Validate(); err != nil {
+			t.Errorf("market network %s record: %v", r.id, err)
 		}
-		if len(bed.Bidders) < 2 {
-			t.Errorf("bed %s ran %d bidders, want at least 2", r.id, len(bed.Bidders))
+		if len(network.Bidders) < 2 {
+			t.Errorf("market network %s ran %d bidders, want at least 2", r.id, len(network.Bidders))
 		}
-		t.Logf("bed %s: slot %d ports %v bidders %v readings %v", bed.ID, bed.Slot, bed.Ports(), bed.Bidders, bed.Readings)
-		records = append(records, bed)
+		t.Logf("market network %s: slot %d ports %v bidders %v readings %v", network.ID, network.Slot, network.Ports(), network.Bidders, network.Readings)
+		records = append(records, network)
 	}
 	for i := range records {
 		for j := i + 1; j < len(records); j++ {
 			if overlap := OverlappingPorts(records[i], records[j]); len(overlap) > 0 {
-				t.Errorf("beds %s and %s both recorded ports %v", records[i].ID, records[j].ID, overlap)
+				t.Errorf("market networks %s and %s both recorded ports %v", records[i].ID, records[j].ID, overlap)
 			}
 		}
 	}

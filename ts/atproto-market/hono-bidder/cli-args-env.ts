@@ -210,7 +210,7 @@ export default {
     },
     "compute-provider-firecracker-container-labels": {
       type: "string" as const,
-      description: "Docker labels put on every guest container, key=value[,key=value], e.g. swc.bed=<bed id>",
+      description: "Docker labels put on every guest container, key=value[,key=value], e.g. swc.market-network=<market network id>",
       env: "COMPUTE_PROVIDER_FIRECRACKER_CONTAINER_LABELS",
     },
     "compute-provider-firecracker-work-root": {

@@ -19,11 +19,11 @@ import (
 )
 
 const (
-	VMPrefix  = hostsvc.NamePrefix + "vm-"
-	BedPrefix = hostsvc.NamePrefix + "bed-"
-	BedVMPart = "-vm-"
-	EnvUnit   = "SWC_UNIT"
-	EnvInvoc  = "INVOCATION_ID"
+	VMPrefix            = hostsvc.NamePrefix + "vm-"
+	MarketNetworkPrefix = hostsvc.NamePrefix + "market-network-"
+	MarketNetworkVMPart = "-vm-"
+	EnvUnit             = "SWC_UNIT"
+	EnvInvoc            = "INVOCATION_ID"
 )
 
 var VMAssets = []string{"firecracker", "pasta"}
@@ -63,7 +63,7 @@ func IsVMUnit(name string) bool {
 	if strings.HasPrefix(name, VMPrefix) {
 		return true
 	}
-	return strings.HasPrefix(name, BedPrefix) && strings.Contains(strings.TrimPrefix(name, BedPrefix), BedVMPart)
+	return strings.HasPrefix(name, MarketNetworkPrefix) && strings.Contains(strings.TrimPrefix(name, MarketNetworkPrefix), MarketNetworkVMPart)
 }
 
 func Judge(units []Unit, pinned map[string]string) []Finding {
@@ -247,7 +247,7 @@ type Lister interface {
 func Collect(ctx context.Context, m Lister, h Host, devsup int) (Report, error) {
 	r := Report{Backend: m.Capabilities().Backend}
 	var statuses []hostsvc.UnitStatus
-	for _, prefix := range []string{VMPrefix, BedPrefix} {
+	for _, prefix := range []string{VMPrefix, MarketNetworkPrefix} {
 		st, err := m.List(ctx, prefix)
 		if err != nil {
 			return r, err

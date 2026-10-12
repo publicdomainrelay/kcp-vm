@@ -1,4 +1,4 @@
-package marketbed
+package marketnetwork
 
 import (
 	"errors"
@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestTwoBedsTakeDifferentSlots(t *testing.T) {
+func TestTwoNetworksTakeDifferentSlots(t *testing.T) {
 	dir := t.TempDir()
 	a, err := TakeSlot(dir, 4, "b3d00001")
 	if err != nil {
@@ -20,18 +20,18 @@ func TestTwoBedsTakeDifferentSlots(t *testing.T) {
 	}
 	defer b.Release()
 	if a.Index == b.Index {
-		t.Fatalf("both beds hold slot %d", a.Index)
+		t.Fatalf("both market networks hold slot %d", a.Index)
 	}
 	body, err := os.ReadFile(a.Path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(body), "b3d00001") {
-		t.Fatalf("slot file %s reads %q; it names the bed holding it for whoever is diagnosing a full host", a.Path, body)
+		t.Fatalf("slot file %s reads %q; it names the market network holding it for whoever is diagnosing a full host", a.Path, body)
 	}
 }
 
-func TestAFullHostRefusesAnotherBed(t *testing.T) {
+func TestAFullHostRefusesAnotherNetwork(t *testing.T) {
 	dir := t.TempDir()
 	var held []*Slot
 	for i := 0; i < 2; i++ {
@@ -55,7 +55,7 @@ func TestAFullHostRefusesAnotherBed(t *testing.T) {
 	held[1].Release()
 }
 
-func TestTheMemoryGuardRefusesBelowTheBedsBudget(t *testing.T) {
+func TestTheMemoryGuardRefusesBelowTheNetworksBudget(t *testing.T) {
 	meminfo := "MemTotal:       48000000 kB\nMemFree:         1000000 kB\nMemAvailable:    8000000 kB\n"
 	avail, err := MemAvailableKiB(meminfo)
 	if err != nil || avail != 8000000 {

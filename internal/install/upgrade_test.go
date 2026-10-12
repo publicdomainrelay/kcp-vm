@@ -10,20 +10,20 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostcontract"
 )
 
-type upgradeBed struct {
+type upgradeFixture struct {
 	o        UpgradeOptions
 	restarts [][]string
 	checks   []string
 }
 
-func newUpgradeBed(t *testing.T) (*upgradeBed, string) {
+func newUpgradeFixture(t *testing.T) (*upgradeFixture, string) {
 	t.Helper()
 	sys, root := newFakeHost(t, false)
 	if _, err := Install(context.Background(), opts(t, root, hostcontract.RoleBidder, "alice.example.com"), sys); err != nil {
 		t.Fatal(err)
 	}
 	state := filepath.Join(root, "var/lib/socialweb-computer/swc-bidder")
-	b := &upgradeBed{}
+	b := &upgradeFixture{}
 	b.o = UpgradeOptions{StateDir: state, Home: state,
 		SelfCheck: func(ctx context.Context, exe string, role hostcontract.Role, stateDir string) error {
 			b.checks = append(b.checks, exe+" "+string(role))
@@ -46,7 +46,7 @@ func digestOf(t *testing.T, p string) string {
 }
 
 func TestUpgradeRefusesABinaryWhoseManifestDoesNotMatch(t *testing.T) {
-	b, before := newUpgradeBed(t)
+	b, before := newUpgradeFixture(t)
 	b.o.Binary = fakeBinary(t, "core v2")
 	b.o.SHA256 = digestOf(t, fakeBinary(t, "core v2 tampered"))
 	if err := Upgrade(context.Background(), b.o); !errors.Is(err, ErrManifestMismatch) {
@@ -58,7 +58,7 @@ func TestUpgradeRefusesABinaryWhoseManifestDoesNotMatch(t *testing.T) {
 }
 
 func TestUpgradeRefusesABinaryWhoseSelfCheckFails(t *testing.T) {
-	b, before := newUpgradeBed(t)
+	b, before := newUpgradeFixture(t)
 	b.o.Binary = fakeBinary(t, "core v2")
 	b.o.SHA256 = digestOf(t, b.o.Binary)
 	b.o.SelfCheck = func(ctx context.Context, exe string, role hostcontract.Role, stateDir string) error {
@@ -73,7 +73,7 @@ func TestUpgradeRefusesABinaryWhoseSelfCheckFails(t *testing.T) {
 }
 
 func TestUpgradeThenRollbackRetargetsCurrentToPrevious(t *testing.T) {
-	b, v1 := newUpgradeBed(t)
+	b, v1 := newUpgradeFixture(t)
 	b.o.Binary = fakeBinary(t, "core v2")
 	b.o.SHA256 = digestOf(t, b.o.Binary)
 	if err := Upgrade(context.Background(), b.o); err != nil {
@@ -101,7 +101,7 @@ func TestUpgradeThenRollbackRetargetsCurrentToPrevious(t *testing.T) {
 }
 
 func TestRollbackWithoutAPreviousBinaryIsRefused(t *testing.T) {
-	b, before := newUpgradeBed(t)
+	b, before := newUpgradeFixture(t)
 	if err := Rollback(context.Background(), b.o); !errors.Is(err, ErrNoPrevious) {
 		t.Fatalf("rollback with no previous: %v", err)
 	}

@@ -1,4 +1,4 @@
-package marketbed
+package marketnetwork
 
 import (
 	"errors"
@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-const DefaultSlotDir = "/var/tmp/socialweb-bedslots"
+const DefaultSlotDir = "/var/tmp/socialweb-market-network-slots"
 
 const DefaultSlots = 4
 
@@ -18,7 +18,7 @@ const BaseBudgetKiB = 3 * 1024 * 1024
 
 const GuestBudgetKiB = 2560 * 1024
 
-var ErrNoFreeSlot = errors.New("every market bed slot on this host is held")
+var ErrNoFreeSlot = errors.New("every market network slot on this host is held")
 
 type Slot struct {
 	Index int
@@ -26,7 +26,7 @@ type Slot struct {
 	file  *os.File
 }
 
-func TakeSlot(dir string, slots int, bedID string) (*Slot, error) {
+func TakeSlot(dir string, slots int, networkID string) (*Slot, error) {
 	if slots <= 0 {
 		slots = DefaultSlots
 	}
@@ -51,7 +51,7 @@ func TakeSlot(dir string, slots int, bedID string) (*Slot, error) {
 			return nil, err
 		}
 		_ = f.Truncate(0)
-		_, _ = f.WriteAt([]byte(fmt.Sprintf("%s %d %s\n", bedID, os.Getpid(), time.Now().UTC().Format(time.RFC3339))), 0)
+		_, _ = f.WriteAt([]byte(fmt.Sprintf("%s %d %s\n", networkID, os.Getpid(), time.Now().UTC().Format(time.RFC3339))), 0)
 		return &Slot{Index: i, Path: path, file: f}, nil
 	}
 	return nil, fmt.Errorf("%w (%d slots under %s)", ErrNoFreeSlot, slots, dir)
@@ -90,7 +90,7 @@ func CheckMemory(meminfo string, guests int) error {
 		return err
 	}
 	if need := BudgetKiB(guests); avail < need {
-		return fmt.Errorf("MemAvailable is %d MiB and a bed with %d guest(s) needs %d MiB (3 GiB + 2.5 GiB per guest)",
+		return fmt.Errorf("MemAvailable is %d MiB and a market network with %d guest(s) needs %d MiB (3 GiB + 2.5 GiB per guest)",
 			avail/1024, guests, need/1024)
 	}
 	return nil

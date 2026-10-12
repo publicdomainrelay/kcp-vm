@@ -160,7 +160,7 @@ const verifyingSsh = {
     logger.info("market_requester_mismatch_probe", { refused: verdict.mismatchRefused, ready: refusedReady });
     return false;
   },
-  runSession: () => Promise.reject(new Error("the test-bed requester never opens a session")),
+  runSession: () => Promise.reject(new Error("the market network requester never opens a session")),
 };
 
 const userData = { base: "#cloud-config\n" + JSON.stringify(guestBase) };

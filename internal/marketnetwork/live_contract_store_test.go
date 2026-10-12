@@ -1,4 +1,4 @@
-package marketbed
+package marketnetwork
 
 import (
 	"bytes"
@@ -28,36 +28,36 @@ const (
 	requesterDoneWithin = 3 * time.Minute
 )
 
-type heldBed struct {
+type heldNetwork struct {
 	t        *testing.T
 	root     string
 	workRoot string
 	facts    map[string]string
 }
 
-func (h *heldBed) reading(format string, args ...any) {
+func (h *heldNetwork) reading(format string, args ...any) {
 	h.t.Log(time.Now().UTC().Format(time.RFC3339) + " " + fmt.Sprintf(format, args...))
 }
 
-func startHeldBed(t *testing.T) *heldBed {
+func startHeldNetwork(t *testing.T) *heldNetwork {
 	t.Helper()
-	root, workRoot, env := testBedEnv(t)
+	root, workRoot, env := testNetworkEnv(t)
 	requireTreesUnchangedAtCleanup(t, root)
-	facts := startHeldTestBed(t, root, env)
+	facts := startHeldTestNetwork(t, root, env)
 	if facts["CHECKS_FAILED"] != "0" {
-		t.Fatalf("the test bed came up with failing checks: %v", facts)
+		t.Fatalf("the market network came up with failing checks: %v", facts)
 	}
-	h := &heldBed{t: t, root: root, workRoot: workRoot, facts: facts}
-	h.reading("test bed %s held up: bidder %s, guests under %s", facts["BED_ID"], facts["BIDDER_DID"], workRoot)
+	h := &heldNetwork{t: t, root: root, workRoot: workRoot, facts: facts}
+	h.reading("market network %s held up: bidder %s, guests under %s", facts["MARKET_NETWORK_ID"], facts["BIDDER_DID"], workRoot)
 	return h
 }
 
-func (h *heldBed) kc(ws string, args ...string) cmdRun {
+func (h *heldNetwork) kc(ws string, args ...string) cmdRun {
 	base := []string{"kubectl", "--kubeconfig=" + h.facts["KUBECONFIG_PATH"], "--server=" + h.facts["KCP_SERVER"] + "/clusters/root:" + ws}
 	return cmdRun{t: h.t, args: append(base, args...)}
 }
 
-func (h *heldBed) podField(ws, name, field string) string {
+func (h *heldNetwork) podField(ws, name, field string) string {
 	return h.kc(ws, "get", "denopod", name, "-o", "jsonpath={.status."+field+"}").out()
 }
 
@@ -68,7 +68,7 @@ type bidderRun struct {
 	stdout   string
 }
 
-func (h *heldBed) bidderRun(name string) (bidderRun, bool) {
+func (h *heldNetwork) bidderRun(name string) (bidderRun, bool) {
 	run := h.podField("bob", name, "runID")
 	if run == "" || h.podField("bob", name, "ready") != "true" {
 		return bidderRun{}, false
@@ -95,7 +95,7 @@ func (h *heldBed) bidderRun(name string) (bidderRun, bool) {
 	}, true
 }
 
-func (h *heldBed) restartBidder(name string) bidderRun {
+func (h *heldNetwork) restartBidder(name string) bidderRun {
 	t := h.t
 	t.Helper()
 	before, ok := h.bidderRun(name)
@@ -145,7 +145,7 @@ func lineWith(path, want string) string {
 }
 
 type heldRequester struct {
-	h       *heldBed
+	h       *heldNetwork
 	control string
 	result  string
 	log     string
@@ -168,7 +168,7 @@ type requesterVerdict struct {
 	} `json:"terminated"`
 }
 
-func (h *heldBed) startRequester() *heldRequester {
+func (h *heldNetwork) startRequester() *heldRequester {
 	t := h.t
 	t.Helper()
 	dir := t.TempDir()
@@ -190,7 +190,7 @@ func (h *heldBed) startRequester() *heldRequester {
 	kcpdns := filepath.Join(f["RUNS_DIR"], ".kcpdns")
 	cmd := exec.Command("deno", "run", "-A", "--node-modules-dir=none", "--config", filepath.Join(h.root, "deno.json"), "--lock="+lock,
 		"--preload", filepath.Join(kcpdns, "shim.ts"),
-		filepath.Join(h.root, "deploy/examples/atproto/market/market-requester/mod.ts"),
+		filepath.Join(h.root, "deploy/market-network/market-requester/mod.ts"),
 		"--plc-directory-url", "https://127.0.0.1:"+f["PLC_PORT"],
 		"--ingress-proxy-host", "relay.localhost:"+f["DISPATCHER_PORT"],
 		"--bidder-dids", f["BIDDER_DIDS"],
@@ -220,7 +220,7 @@ func (h *heldBed) startRequester() *heldRequester {
 			t.Logf("requester log tail:\n%s", tail)
 		}
 	})
-	h.reading("requester started on the host: RFP to %s through the bed's dispatcher, holding the contract after onNetwork", f["BIDDER_DIDS"])
+	h.reading("requester started on the host: RFP to %s through the market network's dispatcher, holding the contract after onNetwork", f["BIDDER_DIDS"])
 	return r
 }
 
@@ -270,7 +270,7 @@ func (r *heldRequester) release() requesterVerdict {
 	return v
 }
 
-func (h *heldBed) waitGuestGone(guest string) time.Duration {
+func (h *heldNetwork) waitGuestGone(guest string) time.Duration {
 	t := h.t
 	t.Helper()
 	started := time.Now()
@@ -316,10 +316,10 @@ func powerOffGuest(t *testing.T, workRoot, guest string) string {
 }
 
 func TestARestartedBidderReleasesTheGuestItRentedBeforeTheRestart(t *testing.T) {
-	livegate.Short(t, "this test brings up a market test bed, rents a firecracker guest through the RFP flow, restarts "+
+	livegate.Short(t, "this test brings up a market network, rents a firecracker guest through the RFP flow, restarts "+
 		"the bidder and releases the guest with vm.delete: a skip is NOT a pass")
 	liveBudget(t, 45*time.Minute)
-	h := startHeldBed(t)
+	h := startHeldNetwork(t)
 	req := h.startRequester()
 	on := req.waitControl("onnetwork.json", heldOnNetworkWithin)
 	guest := waitNewGuest(t, h.workRoot, time.Minute)
@@ -359,10 +359,10 @@ func TestARestartedBidderReleasesTheGuestItRentedBeforeTheRestart(t *testing.T) 
 }
 
 func TestALateVmDeleteForAPoweredOffGuestAfterABidderRestartIsAlreadyTerminated(t *testing.T) {
-	livegate.Short(t, "this test brings up a market test bed, rents a firecracker guest through the RFP flow, powers it "+
+	livegate.Short(t, "this test brings up a market network, rents a firecracker guest through the RFP flow, powers it "+
 		"off, restarts the bidder and sends a late vm.delete: a skip is NOT a pass")
 	liveBudget(t, 45*time.Minute)
-	h := startHeldBed(t)
+	h := startHeldNetwork(t)
 	req := h.startRequester()
 	on := req.waitControl("onnetwork.json", heldOnNetworkWithin)
 	guest := waitNewGuest(t, h.workRoot, time.Minute)
@@ -424,7 +424,7 @@ func requireTreesUnchanged(t *testing.T, root string, before map[string]string) 
 	after := treeState(t, root)
 	for repo, was := range before {
 		if now := after[repo]; now != was {
-			t.Errorf("the bed changed the working tree of %s:\nbefore:\n%s\nafter:\n%s", filepath.Join(root, repo), was, now)
+			t.Errorf("the market network changed the working tree of %s:\nbefore:\n%s\nafter:\n%s", filepath.Join(root, repo), was, now)
 		}
 	}
 }
@@ -435,16 +435,16 @@ func requireTreesUnchangedAtCleanup(t *testing.T, root string) {
 	t.Cleanup(func() { requireTreesUnchanged(t, root, before) })
 }
 
-func TestABedRunLeavesTheWorkingTreeAsItFoundIt(t *testing.T) {
-	livegate.Short(t, "this test runs a whole market test bed, renting a firecracker guest through the RFP flow, and "+
+func TestANetworkRunLeavesTheWorkingTreeAsItFoundIt(t *testing.T) {
+	livegate.Short(t, "this test runs a whole market network, renting a firecracker guest through the RFP flow, and "+
 		"compares the working tree of this repository before and after: a skip is NOT a pass")
-	id := newBedID(t)
-	root, _, env := testBedEnvFor(t, id, 1)
+	id := newNetworkID(t)
+	root, _, env := testNetworkEnvFor(t, id, 1)
 	before := treeState(t, root)
 	ctx := liveBudget(t, 35*time.Minute)
 	r := runAccept(ctx, t, root, env, id, logDir(t))
 	requireMarketPass(t, r)
 	requireTreesUnchanged(t, root, before)
-	t.Logf("%s bed %s left the working tree of %s as it found it",
+	t.Logf("%s market network %s left the working tree of %s as it found it",
 		time.Now().UTC().Format(time.RFC3339), id, root)
 }

@@ -63,7 +63,7 @@ func runUnitsList(ctx context.Context, a *app, vals clicfg.Values, rest []string
 	defer p.manager.Close()
 	var all []hostsvc.UnitStatus
 	seen := map[string]bool{}
-	for _, prefix := range []string{"socialweb-vm-", "socialweb-bed-", "socialweb-bao-", "socialweb-kcp-", "socialweb-hp-", "socialweb-pg-", "socialweb-c-", "socialweb-computer-", "socialweb-probe-"} {
+	for _, prefix := range []string{"socialweb-vm-", "socialweb-market-network-", "socialweb-bao-", "socialweb-kcp-", "socialweb-hp-", "socialweb-pg-", "socialweb-c-", "socialweb-computer-", "socialweb-probe-"} {
 		st, err := p.manager.List(ctx, prefix)
 		if err != nil {
 			return a.fail(exitFailed, "units list: %v", err)

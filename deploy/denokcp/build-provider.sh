@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Builds the deno-kcp provider the vendored test bed runs, from the deno-kcp
+# Builds the deno-kcp provider the vendored market network runs, from the deno-kcp
 # checkout at exactly the commit vendor.json records, against kcp-libs at the
 # commit vendor.json records with this directory's kcp-libs-*.patch applied, so
 # the manifests and the controller that reconciles them always come from one

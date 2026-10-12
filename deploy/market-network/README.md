@@ -104,26 +104,26 @@ bash deploy/denokcp/build-provider.sh ./deno-kcp-provider
 OPENBAO_DIR=$PWD/.kcp-demo/openbao bash deploy/denokcp/start-openbao.sh
 RUNS_DIR=$PWD/runs ./deno-kcp-provider --kubeconfig=$KUBECONFIG \
   --openbao-addr http://$(cat .kcp-demo/openbao/bao.addr) --openbao-token root &
-START_OPENBAO=0 bash deploy/examples/atproto/market/apply.sh
+START_OPENBAO=0 bash deploy/market-network/apply.sh
 ```
 
 `apply.sh` starts OpenBao itself unless `START_OPENBAO=0`, and waits for each
 workspace's `OpenBao` object to report ready before it applies the workloads.
 
 `accept.sh` is that whole sequence as one live acceptance, and one market test
-bed of several per host: it takes a bed slot (`SWC_BED_SLOTS`, default 4, flock
-under /var/tmp/socialweb-bedslots, refused below 3 GiB + 2.5 GiB per guest of
+market network of several per host: it takes a market network slot (`SWC_MARKET_NETWORK_SLOTS`, default 4, flock
+under /var/tmp/socialweb-market-network-slots, refused below 3 GiB + 2.5 GiB per guest of
 MemAvailable), brings up its own kcp, kine, OpenBao and provider under
-`$BED_STATE/beds/$BED_ID` on port 0, runs `apply.sh` with `BED_BIDDERS`
-bidders, records every port and pid it read back in `bed.json`, reaches each
+`$MARKET_NETWORK_STATE/market-networks/$MARKET_NETWORK_ID` on port 0, runs `apply.sh` with `MARKET_NETWORK_BIDDERS`
+bidders, records every port and pid it read back in `market-network.json`, reaches each
 service on its own name and from the host, rents a firecracker guest through
-the RFP flow (guests under /var/tmp/swc-$BED_ID, labelled swc.bed=$BED_ID), and
-tears the bed down, reporting anything left behind. It exits non-zero unless
-every check passed. Two beds at once:
+the RFP flow (guests under /var/tmp/swc-$MARKET_NETWORK_ID, labelled swc.market-network=$MARKET_NETWORK_ID), and
+tears the market network down, reporting anything left behind. It exits non-zero unless
+every check passed. Two market networks at once:
 
 ```bash
-BED_ID=bed1 BED_BIDDERS=2 bash deploy/examples/atproto/market/accept.sh &
-BED_ID=bed2 BED_BIDDERS=2 bash deploy/examples/atproto/market/accept.sh &
+MARKET_NETWORK_ID=network1 MARKET_NETWORK_BIDDERS=2 bash deploy/market-network/accept.sh &
+MARKET_NETWORK_ID=network2 MARKET_NETWORK_BIDDERS=2 bash deploy/market-network/accept.sh &
 wait
 ```
 

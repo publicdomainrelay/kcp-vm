@@ -1,4 +1,4 @@
-package marketbed
+package marketnetwork
 
 import (
 	"bufio"
@@ -43,7 +43,7 @@ const (
 	m3GuestGoneWithin = 180 * time.Second
 )
 
-type m3Bed struct {
+type m3Network struct {
 	t        *testing.T
 	facts    map[string]string
 	gateway  string
@@ -61,13 +61,13 @@ type m3Bed struct {
 	fwd      map[string]int
 }
 
-func (b *m3Bed) reading(format string, args ...any) {
+func (b *m3Network) reading(format string, args ...any) {
 	line := time.Now().UTC().Format(time.RFC3339) + " " + fmt.Sprintf(format, args...)
 	b.readings = append(b.readings, line)
 	b.t.Log(line)
 }
 
-func newM3Bed(t *testing.T) (*m3Bed, string, time.Time) {
+func newM3Network(t *testing.T) (*m3Network, string, time.Time) {
 	t.Helper()
 	image := os.Getenv(m3ImageEnv)
 	if image == "" {
@@ -77,20 +77,20 @@ func newM3Bed(t *testing.T) (*m3Bed, string, time.Time) {
 	if err := exec.Command("docker", "image", "inspect", image).Run(); err != nil {
 		livegate.Require(t, "%s names %s, which is not in the local docker store", m3ImageEnv, image)
 	}
-	root, workRoot, env := testBedEnv(t)
+	root, workRoot, env := testNetworkEnv(t)
 
 	deadline, hasDeadline := t.Deadline()
 	if hasDeadline && time.Until(deadline) < 50*time.Minute {
 		t.Fatalf("this test needs up to 50 minutes and has %s; run go test with -timeout 70m", time.Until(deadline))
 	}
 
-	b := &m3Bed{t: t, image: image}
+	b := &m3Network{t: t, image: image}
 	env = marketImageEnv(t, env, workRoot)
-	b.facts = startHeldTestBed(t, root, env)
+	b.facts = startHeldTestNetwork(t, root, env)
 	if b.facts["CHECKS_FAILED"] != "0" {
-		t.Fatalf("the test bed came up with failing checks: %v", b.facts)
+		t.Fatalf("the market network came up with failing checks: %v", b.facts)
 	}
-	b.reading("test bed held up: bidder %s, guests under %s", b.facts["BIDDER_DID"], workRoot)
+	b.reading("market network held up: bidder %s, guests under %s", b.facts["BIDDER_DID"], workRoot)
 
 	b.issuers = bidderIssuers(t, b.facts["BIDDER_STDOUT"])
 	b.gateway = strings.TrimSpace(run(t, "docker", "network", "inspect", "bridge", "-f", "{{(index .IPAM.Config 0).Gateway}}"))
@@ -99,18 +99,18 @@ func newM3Bed(t *testing.T) (*m3Bed, string, time.Time) {
 	for _, key := range []string{"ALICE_PDS_PORT", "PLC_PORT"} {
 		port, err := strconv.Atoi(b.facts[key])
 		if err != nil {
-			t.Fatalf("the held test bed reported no %s: %v", key, b.facts)
+			t.Fatalf("the held market network reported no %s: %v", key, b.facts)
 		}
 		b.fwd[key] = forwardLoopback(t, b.gateway, port)
 	}
 	_, baoPort, _ := strings.Cut(b.facts["OPENBAO_ADDR"], ":")
 	port, err := strconv.Atoi(baoPort)
 	if err != nil || b.facts["DOOR_OPENBAO_TOKEN_FILE"] == "" {
-		t.Fatalf("the held test bed reported no OpenBao address or door token for the door's claim keys: %v", b.facts)
+		t.Fatalf("the held market network reported no OpenBao address or door token for the door's claim keys: %v", b.facts)
 	}
 	b.fwd["OPENBAO_PORT"] = forwardLoopback(t, b.gateway, port)
 	b.ownerDid = b.createOwner()
-	b.reading("owner %s created on the test bed PDS %s", b.ownerDid, b.ownerPDS)
+	b.reading("owner %s created on the market network PDS %s", b.ownerDid, b.ownerPDS)
 	b.key = kcpclient.AccountHash(b.ownerDid) + "-" + m3Cluster
 	b.home = "root:" + kcpclient.AccountHash(b.ownerDid) + ":" + m3Cluster
 	dataDir, err := clusterprovider.ClusterDataDir(m3ContainerState+"/clusterprovider", b.key)
@@ -140,9 +140,9 @@ func newM3Bed(t *testing.T) (*m3Bed, string, time.Time) {
 }
 
 func TestAMarketNodeJoinsATenantClusterThroughItsOpenBaoWithNoSsh(t *testing.T) {
-	livegate.Short(t, "this test brings up the market test bed and the real control-plane container, rents a "+
+	livegate.Short(t, "this test brings up the market network and the real control-plane container, rents a "+
 		"firecracker guest for a tenant workload through the door, and watches it join with no ssh: a skip is NOT a pass")
-	b, workRoot, linksAt := newM3Bed(t)
+	b, workRoot, linksAt := newM3Network(t)
 
 	appliedAt := time.Now()
 	b.tenant("apply", "-f", "-").stdin(workloadManifest()).must()
@@ -297,17 +297,17 @@ func run(t *testing.T, args ...string) string {
 	return cmdRun{t: t, args: args}.must()
 }
 
-func (b *m3Bed) kcp(workspace string, args ...string) cmdRun {
+func (b *m3Network) kcp(workspace string, args ...string) cmdRun {
 	base := []string{"docker", "exec", "-i", b.name, "kubectl", "--kubeconfig=" + m3KcpKubeconfig, "--server=" + m3KcpServer + workspace}
 	return cmdRun{t: b.t, args: append(base, args...)}
 }
 
-func (b *m3Bed) tenant(args ...string) cmdRun {
+func (b *m3Network) tenant(args ...string) cmdRun {
 	base := []string{"docker", "exec", "-i", b.name, "kubectl", "--kubeconfig=" + b.tenantKC}
 	return cmdRun{t: b.t, args: append(base, args...)}
 }
 
-func startHeldTestBed(t *testing.T, root string, env []string) map[string]string {
+func startHeldTestNetwork(t *testing.T, root string, env []string) map[string]string {
 	t.Helper()
 	hold := t.TempDir()
 	logPath := filepath.Join(t.TempDir(), "accept.log")
@@ -315,7 +315,7 @@ func startHeldTestBed(t *testing.T, root string, env []string) map[string]string
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command("bash", filepath.Join(root, "deploy/examples/atproto/market/accept.sh"))
+	cmd := exec.Command("bash", filepath.Join(root, "deploy/market-network/accept.sh"))
 	cmd.Env = append(env, "ACCEPT_HOLD_DIR="+hold)
 	cmd.Stdout, cmd.Stderr = logFile, logFile
 	if err := cmd.Start(); err != nil {
@@ -347,11 +347,11 @@ func startHeldTestBed(t *testing.T, root string, env []string) map[string]string
 		select {
 		case err := <-exited:
 			tail, _ := exec.Command("tail", "-n", "60", logPath).Output()
-			t.Fatalf("accept.sh exited before holding the test bed up (%v):\n%s", err, tail)
+			t.Fatalf("accept.sh exited before holding the market network up (%v):\n%s", err, tail)
 		case <-time.After(3 * time.Second):
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("the test bed was not up within 30 minutes; see %s", logPath)
+			t.Fatalf("the market network was not up within 30 minutes; see %s", logPath)
 		}
 	}
 }
@@ -382,7 +382,7 @@ func bidderIssuers(t *testing.T, stdout string) []string {
 	return issuers
 }
 
-func (b *m3Bed) ensureIssuerHost(issuer string) {
+func (b *m3Network) ensureIssuerHost(issuer string) {
 	if slices.Contains(b.issuers, issuer) {
 		return
 	}
@@ -486,7 +486,7 @@ func forwardLoopback(t *testing.T, gateway string, port int) int {
 	t.Helper()
 	l, err := net.Listen("tcp", gateway+":0")
 	if err != nil {
-		t.Fatalf("forwarding %s to the loopback-only test bed service on %d: %v", gateway, port, err)
+		t.Fatalf("forwarding %s to the loopback-only market network service on %d: %v", gateway, port, err)
 	}
 	var wg sync.WaitGroup
 	t.Cleanup(func() { _ = l.Close(); wg.Wait() })
@@ -522,7 +522,7 @@ func randomHex(t *testing.T, n int) string {
 	return hex.EncodeToString(b)
 }
 
-func (b *m3Bed) createOwner() string {
+func (b *m3Network) createOwner() string {
 	t := b.t
 	ca, err := os.ReadFile(b.facts["CA_PEM"])
 	if err != nil {
@@ -559,7 +559,7 @@ func writeFile(t *testing.T, path, content string) {
 	}
 }
 
-func (b *m3Bed) writeFiles() {
+func (b *m3Network) writeFiles() {
 	t := b.t
 	market, err := os.ReadFile(b.facts["CA_PEM"])
 	if err != nil {
@@ -587,7 +587,7 @@ func (b *m3Bed) writeFiles() {
 	writeFile(t, filepath.Join(b.files, "door-openbao-token"), strings.TrimSpace(string(token))+"\n")
 }
 
-func (b *m3Bed) startControlPlane() {
+func (b *m3Network) startControlPlane() {
 	t := b.t
 	_ = exec.Command("docker", "rm", "-f", b.name).Run()
 	args := []string{"docker", "run", "-d", "--name", b.name}
@@ -639,7 +639,7 @@ func (b *m3Bed) startControlPlane() {
 	}
 }
 
-func (b *m3Bed) createCluster() {
+func (b *m3Network) createCluster() {
 	acct := kcpclient.AccountHash(b.ownerDid)
 	b.kcp("root", "apply", "-f", "-").stdin(fmt.Sprintf(
 		"apiVersion: tenancy.kcp.io/v1alpha1\nkind: Workspace\nmetadata:\n  name: %s\nspec:\n  type:\n    name: account\n    path: root\n", acct)).must()
@@ -657,7 +657,7 @@ func (b *m3Bed) createCluster() {
 		"apiVersion: socialweb.computer/v1alpha1\nkind: Cluster\nmetadata:\n  name: %s\nspec:\n  account: %s\n  running: true\n", m3Cluster, b.ownerDid)).must()
 }
 
-func (b *m3Bed) waitLinksListening(within time.Duration) time.Time {
+func (b *m3Network) waitLinksListening(within time.Duration) time.Time {
 	b.waitTenant("both ClusterLinks Listening and the cluster Ready", within, func() bool {
 		for _, svc := range []string{"apiserver", "openbao"} {
 			if b.kcp(b.home, "get", "clusterlinks", b.key+"-"+svc, "-o", "jsonpath={.status.phase}").out() != "Listening" {
@@ -669,7 +669,7 @@ func (b *m3Bed) waitLinksListening(within time.Duration) time.Time {
 	return time.Now()
 }
 
-func (b *m3Bed) waitTenant(what string, within time.Duration, ok func() bool) {
+func (b *m3Network) waitTenant(what string, within time.Duration, ok func() bool) {
 	b.t.Helper()
 	end := time.Now().Add(within)
 	for !ok() {
@@ -701,7 +701,7 @@ func copyEvidence(t *testing.T, name, path string) {
 	t.Logf("evidence kept at %s", target)
 }
 
-func (b *m3Bed) dumpContainerLog() {
+func (b *m3Network) dumpContainerLog() {
 	out, err := exec.Command("docker", "logs", b.name).CombinedOutput()
 	if err != nil {
 		b.t.Logf("docker logs %s: %v", b.name, err)
@@ -719,7 +719,7 @@ func (b *m3Bed) dumpContainerLog() {
 	b.t.Logf("evidence kept at %s", target)
 }
 
-func (b *m3Bed) diagnose() string {
+func (b *m3Network) diagnose() string {
 	b.t.Helper()
 	var out strings.Builder
 	for _, c := range [][]string{
@@ -736,7 +736,7 @@ func (b *m3Bed) diagnose() string {
 	return out.String()
 }
 
-func (b *m3Bed) waitForClaim(within time.Duration) string {
+func (b *m3Network) waitForClaim(within time.Duration) string {
 	var name string
 	b.waitTenant("a NodeClaim of "+b.key, within, func() bool {
 		name = b.kcp(b.home, "get", "nodeclaims", "-o", "jsonpath={.items[0].metadata.name}").out()
@@ -745,11 +745,11 @@ func (b *m3Bed) waitForClaim(within time.Duration) string {
 	return name
 }
 
-func (b *m3Bed) claimField(node, path string) string {
+func (b *m3Network) claimField(node, path string) string {
 	return b.kcp(b.home, "get", "nodeclaim", node, "-o", "jsonpath="+path).out()
 }
 
-func (b *m3Bed) waitClaimJSON(node, path string, within time.Duration) string {
+func (b *m3Network) waitClaimJSON(node, path string, within time.Duration) string {
 	var v string
 	b.waitTenant("NodeClaim "+node+" "+path, within, func() bool {
 		v = b.claimField(node, path)
@@ -758,15 +758,15 @@ func (b *m3Bed) waitClaimJSON(node, path string, within time.Duration) string {
 	return v
 }
 
-func (b *m3Bed) logs() string {
+func (b *m3Network) logs() string {
 	return cmdRun{t: b.t, args: []string{"docker", "logs", b.name}}.out()
 }
 
-func (b *m3Bed) logsSince(at time.Time) string {
+func (b *m3Network) logsSince(at time.Time) string {
 	return cmdRun{t: b.t, args: []string{"docker", "logs", "--since", at.UTC().Format(time.RFC3339), b.name}}.out()
 }
 
-func (b *m3Bed) logLine(msg, node string) string {
+func (b *m3Network) logLine(msg, node string) string {
 	line := ""
 	for _, l := range strings.Split(b.logs(), "\n") {
 		if strings.Contains(l, msg) && strings.Contains(l, node) {
@@ -776,12 +776,12 @@ func (b *m3Bed) logLine(msg, node string) string {
 	return line
 }
 
-func (b *m3Bed) waitLog(msg, node string, within time.Duration) {
+func (b *m3Network) waitLog(msg, node string, within time.Duration) {
 	b.t.Helper()
 	b.waitTenant(fmt.Sprintf("log %q for %s", msg, node), within, func() bool { return b.logLine(msg, node) != "" })
 }
 
-func (b *m3Bed) assertLogOrder(first, then string) {
+func (b *m3Network) assertLogOrder(first, then string) {
 	logs := b.logs()
 	i, j := strings.Index(logs, first), strings.Index(logs, then)
 	if i < 0 || j < 0 || i > j {
@@ -789,7 +789,7 @@ func (b *m3Bed) assertLogOrder(first, then string) {
 	}
 }
 
-func (b *m3Bed) assertNoSsh(console string) {
+func (b *m3Network) assertNoSsh(console string) {
 	t := b.t
 	for _, l := range strings.Split(b.logs(), "\n") {
 		if !strings.Contains(l, `"prefix":"socialweb-computer-k8s"`) {

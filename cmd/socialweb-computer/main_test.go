@@ -106,7 +106,7 @@ func TestAPhaseSelectionTakesNamesAndOrderedRanges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, _ := ix.Set("market-testbed")
+	s, _ := ix.Set("market-network")
 	got, err := selectPhases(s, "workspaces..rbac-relay,verifier")
 	if err != nil {
 		t.Fatal(err)

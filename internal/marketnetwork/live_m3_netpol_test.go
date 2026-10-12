@@ -1,4 +1,4 @@
-package marketbed
+package marketnetwork
 
 import (
 	"fmt"
@@ -65,12 +65,12 @@ spec:
 `, netpolPolicy, netpolServer)
 }
 
-func (b *m3Bed) netpolFetch(ip string) (string, error) {
+func (b *m3Network) netpolFetch(ip string) (string, error) {
 	return b.tenant("exec", netpolClient, "-n", "default", "--", "wget", "-T", "3", "-qO-",
 		fmt.Sprintf("http://%s:%d/", ip, netpolPort)).exec()
 }
 
-func (b *m3Bed) netpolGuestReading(console string) string {
+func (b *m3Network) netpolGuestReading(console string) string {
 	var out strings.Builder
 	probe, err := b.tenant("exec", netpolClient, "-n", "default", "--", "sh", "-c",
 		"echo kernel.modprobe=$(cat /proc/sys/kernel/modprobe); grep -E '^(nf_tables|nft_[a-z_0-9]+|nfnetlink_log|xt_[A-Za-z_]+) ' /proc/modules | cut -d' ' -f1 | sort | tr '\\n' ' '").exec()
@@ -87,7 +87,7 @@ func (b *m3Bed) netpolGuestReading(console string) string {
 	return out.String()
 }
 
-func (b *m3Bed) assertNetworkPolicyEnforced(node, console string) {
+func (b *m3Network) assertNetworkPolicyEnforced(node, console string) {
 	t := b.t
 	b.tenant("apply", "-f", "-").stdin(netpolPodsManifest(node)).must()
 	t.Cleanup(func() {

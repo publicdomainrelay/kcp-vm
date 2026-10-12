@@ -1,6 +1,6 @@
 {
   "name": "market-requester",
-  "description": "Test-bed requester: one compute contract through RFP, bid, accept and cloud-init, released once the guest reports onNetwork, with no ssh session",
+  "description": "Market network requester: one compute contract through RFP, bid, accept and cloud-init, released once the guest reports onNetwork, with no ssh session",
   "options": {
     "plc-directory-url": {
       "type": "string",

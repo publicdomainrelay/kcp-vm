@@ -35,7 +35,7 @@ type Assets struct {
 
 func StoreFor(role Role, profile string) (Kind, error) {
 	switch profile {
-	case "", "quick", "bed", "prodlike":
+	case "", "quick", "market-network", "prodlike":
 	default:
 		return "", fmt.Errorf("kcpstore: unknown profile %q", profile)
 	}

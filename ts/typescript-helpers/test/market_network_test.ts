@@ -44,7 +44,7 @@ const callSites: CallSite[] = [
     input: {
       plcDirectoryUrl: PLC,
       ingressProxyHost: INGRESS,
-      caBundleRef: "/var/tmp/bed/guest-tls/ca.crt",
+      caBundleRef: "/var/tmp/market-network/guest-tls/ca.crt",
     },
   },
   {

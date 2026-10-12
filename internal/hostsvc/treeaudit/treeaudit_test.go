@@ -179,10 +179,10 @@ func TestOnTheProcBackendDevsupOutsideTheGroupIsNotAMemberAndAnAttributedCoreFai
 	}
 }
 
-func TestTheBedVMPrefixIsAudited(t *testing.T) {
+func TestTheMarketNetworkVMPrefixIsAudited(t *testing.T) {
 	for name, want := range map[string]bool{
-		"socialweb-vm-a-b.service": true, "socialweb-bed-x1-vm-a.service": true,
-		"socialweb-bed-x1-kcp-a.service": false, "socialweb-bao-a.service": false,
+		"socialweb-vm-a-b.service": true, "socialweb-market-network-x1-vm-a.service": true,
+		"socialweb-market-network-x1-kcp-a.service": false, "socialweb-bao-a.service": false,
 	} {
 		if IsVMUnit(name) != want {
 			t.Errorf("IsVMUnit(%s) = %v", name, !want)

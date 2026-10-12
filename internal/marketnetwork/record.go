@@ -1,4 +1,4 @@
-package marketbed
+package marketnetwork
 
 import (
 	"crypto/sha256"
@@ -15,7 +15,7 @@ import (
 
 const RecordPath = "deploy/denokcp/vendor.json"
 
-var VendoredDirs = []string{"deploy/denokcp", "deploy/examples/atproto/market"}
+var VendoredDirs = []string{"deploy/denokcp", "deploy/market-network"}
 
 type Record struct {
 	Repository string          `json:"repository"`

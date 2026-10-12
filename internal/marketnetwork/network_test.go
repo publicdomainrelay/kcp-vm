@@ -1,4 +1,4 @@
-package marketbed
+package marketnetwork
 
 import (
 	"os"
@@ -10,8 +10,8 @@ import (
 	"testing"
 )
 
-func aBed(id string, base int) Bed {
-	return Bed{
+func aNetwork(id string, base int) Network {
+	return Network{
 		ID:         id,
 		FCWorkRoot: FCWorkRootFor(id),
 		Processes: map[string]Proc{
@@ -30,63 +30,63 @@ func aBed(id string, base int) Bed {
 	}
 }
 
-func TestABedRecordNamesEveryPortItBound(t *testing.T) {
-	bed := aBed("b3d00001", 41000)
-	if err := bed.Validate(); err != nil {
+func TestANetworkRecordNamesEveryPortItBound(t *testing.T) {
+	network := aNetwork("b3d00001", 41000)
+	if err := network.Validate(); err != nil {
 		t.Fatalf("a complete record is refused: %v", err)
 	}
-	if got := len(bed.Ports()); got != 8 {
-		t.Fatalf("ports = %v, want the 3 control-plane ports and the 5 service ports", bed.Ports())
+	if got := len(network.Ports()); got != 8 {
+		t.Fatalf("ports = %v, want the 3 control-plane ports and the 5 service ports", network.Ports())
 	}
-	unbound := aBed("b3d00001", 41000)
+	unbound := aNetwork("b3d00001", 41000)
 	unbound.Services["global/plc"] = Proc{Address: "127.0.0.1:0"}
 	if err := unbound.Validate(); err == nil {
 		t.Fatal("a service that never reported its port is accepted")
 	}
-	twice := aBed("b3d00001", 41000)
+	twice := aNetwork("b3d00001", 41000)
 	twice.Services["bob/bidder-2"] = twice.Services["bob/bidder-1"]
 	if err := twice.Validate(); err == nil {
-		t.Fatal("two services of one bed on one port is accepted")
+		t.Fatal("two services of one market network on one port is accepted")
 	}
-	elsewhere := aBed("b3d00001", 41000)
+	elsewhere := aNetwork("b3d00001", 41000)
 	elsewhere.FCWorkRoot = "/var/lib/socialweb/guests"
 	if err := elsewhere.Validate(); err == nil {
-		t.Fatal("a bed whose guests share a work root with anything else is accepted")
+		t.Fatal("a market network whose guests share a work root with anything else is accepted")
 	}
 }
 
-func TestTwoBedRecordsLeaseDisjointPorts(t *testing.T) {
-	a, b := aBed("b3d00001", 41000), aBed("b3d00002", 42000)
+func TestTwoNetworkRecordsLeaseDisjointPorts(t *testing.T) {
+	a, b := aNetwork("b3d00001", 41000), aNetwork("b3d00002", 42000)
 	if overlap := OverlappingPorts(a, b); len(overlap) != 0 {
-		t.Fatalf("two beds on distinct ports report an overlap %v", overlap)
+		t.Fatalf("two market networks on distinct ports report an overlap %v", overlap)
 	}
-	clash := aBed("b3d00002", 42000)
+	clash := aNetwork("b3d00002", 42000)
 	clash.Services["global/plc"] = Proc{Address: "127.0.0.1:41004", Port: 41004}
 	if overlap := OverlappingPorts(a, clash); len(overlap) != 1 || overlap[0] != 41004 {
 		t.Fatalf("overlap = %v, want [41004]", overlap)
 	}
 }
 
-func TestLoadBedReadsWhatAcceptWrites(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "bed.json")
-	body := `{"bedId":"b3d00001","slot":1,"fcWorkRoot":"/var/tmp/swc-b3d00001","runnerImage":"localhost/socialweb-firecracker-runner:sha-0123456789ab",
+func TestLoadNetworkReadsWhatAcceptWrites(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "market-network.json")
+	body := `{"networkId":"b3d00001","slot":1,"fcWorkRoot":"/var/tmp/swc-b3d00001","runnerImage":"localhost/socialweb-firecracker-runner:sha-0123456789ab",
 "processes":{"kcp":{"pid":7,"port":41002}},"services":{"bob/bidder-1":{"address":"127.0.0.1:41007","port":41007,"pid":9}},
 "bidders":[{"name":"bidder-1","did":"did:plc:abc","port":41007}]}`
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	bed, err := LoadBed(path)
+	network, err := LoadNetwork(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bed.ID != "b3d00001" || bed.Slot != 1 || bed.Processes["kcp"].Port != 41002 || bed.Bidders[0].DID != "did:plc:abc" {
-		t.Fatalf("bed = %+v", bed)
+	if network.ID != "b3d00001" || network.Slot != 1 || network.Processes["kcp"].Port != 41002 || network.Bidders[0].DID != "did:plc:abc" {
+		t.Fatalf("market network = %+v", network)
 	}
 }
 
-func TestABedIDKeepsTheGuestSocketUnderTheUnixLimit(t *testing.T) {
+func TestANetworkIDKeepsTheGuestSocketUnderTheUnixLimit(t *testing.T) {
 	for _, id := range []string{"b3d00001", "abcdefghijkl"} {
-		if !ValidBedID(id) {
+		if !ValidNetworkID(id) {
 			t.Fatalf("%q is refused", id)
 		}
 		sock := filepath.Join(FCWorkRootFor(id), "fc-000000000000-00000000", "fc.sock")
@@ -95,31 +95,31 @@ func TestABedIDKeepsTheGuestSocketUnderTheUnixLimit(t *testing.T) {
 		}
 	}
 	for _, id := range []string{"", "B3D", "../x", "a b", strings.Repeat("a", 13)} {
-		if ValidBedID(id) {
-			t.Fatalf("%q is accepted as a bed id", id)
+		if ValidNetworkID(id) {
+			t.Fatalf("%q is accepted as a market network id", id)
 		}
 	}
 }
 
-var bedPortLiteral = regexp.MustCompile(`\b(258[3-9]|6443|23791|8200)\b`)
+var networkPortLiteral = regexp.MustCompile(`\b(258[3-9]|6443|23791|8200)\b`)
 
-func TestNoBedPortIsALiteral(t *testing.T) {
+func TestNoNetworkPortIsALiteral(t *testing.T) {
 	root := repoRoot(t)
 	var files []string
-	manifests, err := filepath.Glob(filepath.Join(root, "deploy/examples/atproto/market/*.yaml"))
+	manifests, err := filepath.Glob(filepath.Join(root, "deploy/market-network/*.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	files = append(files, manifests...)
 	for _, rel := range []string{
-		"deploy/examples/atproto/market/apply.sh",
-		"deploy/examples/atproto/market/accept.sh",
-		"deploy/examples/atproto/market/market-requester/mod.ts",
-		"deploy/examples/atproto/market/market-requester/cli-args-env.json",
+		"deploy/market-network/apply.sh",
+		"deploy/market-network/accept.sh",
+		"deploy/market-network/market-requester/mod.ts",
+		"deploy/market-network/market-requester/cli-args-env.json",
 		"deploy/denokcp/start-kcp.sh",
 		"deploy/denokcp/stop-kcp.sh",
 		"deploy/denokcp/start-openbao.sh",
-		"internal/marketbed/live_test.go",
+		"internal/marketnetwork/live_test.go",
 	} {
 		files = append(files, filepath.Join(root, rel))
 	}
@@ -129,9 +129,9 @@ func TestNoBedPortIsALiteral(t *testing.T) {
 			t.Fatal(err)
 		}
 		for i, line := range strings.Split(string(body), "\n") {
-			if bedPortLiteral.MatchString(line) {
+			if networkPortLiteral.MatchString(line) {
 				rel, _ := filepath.Rel(root, path)
-				t.Errorf("%s:%d names a fixed bed port, which a second bed on this host would collide on; bind 0 and read the port from bed.json: %s",
+				t.Errorf("%s:%d names a fixed market network port, which a second market network on this host would collide on; bind 0 and read the port from market-network.json: %s",
 					rel, i+1, strings.TrimSpace(line))
 			}
 		}
@@ -140,18 +140,18 @@ func TestNoBedPortIsALiteral(t *testing.T) {
 
 var serviceCwd = regexp.MustCompile(`SERVICE_CWD: "[^"]*/([^"/]+)"`)
 
-func TestNoBedServiceWritesTheRepositoryLock(t *testing.T) {
+func TestNoNetworkServiceWritesTheRepositoryLock(t *testing.T) {
 	root := repoRoot(t)
-	market := filepath.Join(root, "deploy/examples/atproto/market")
+	market := filepath.Join(root, "deploy/market-network")
 	apply, err := os.ReadFile(filepath.Join(market, "apply.sh"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(apply), `echo "  LockDir: $(q "$LOCK_DIR")"`) {
-		t.Error("apply.sh writes no LockDir value, so a service's --lock names no file under the bed")
+		t.Error("apply.sh writes no LockDir value, so a service's --lock names no file under the market network")
 	}
 	if !strings.Contains(string(apply), `cp "$REPO/deno.lock" "$LOCK_DIR/deno.lock"`) {
-		t.Error("apply.sh copies no deno.lock of this repository into the bed, which every service runs against")
+		t.Error("apply.sh copies no deno.lock of this repository into the market network, which every service runs against")
 	}
 	manifests, err := filepath.Glob(filepath.Join(market, "*.yaml"))
 	if err != nil {
@@ -182,7 +182,7 @@ func TestNoBedServiceWritesTheRepositoryLock(t *testing.T) {
 		}
 	}
 	if services < 5 {
-		t.Fatalf("found %d service manifests naming SERVICE_CWD; the bed has at least 5", services)
+		t.Fatalf("found %d service manifests naming SERVICE_CWD; the market network has at least 5", services)
 	}
 	accept, err := os.ReadFile(filepath.Join(market, "accept.sh"))
 	if err != nil {
@@ -190,7 +190,7 @@ func TestNoBedServiceWritesTheRepositoryLock(t *testing.T) {
 	}
 	for i, line := range strings.Split(string(accept), "\n") {
 		if strings.Contains(line, "deno run") && !strings.Contains(line, "--lock=") {
-			t.Errorf("accept.sh:%d runs deno with no --lock under the bed: %s", i+1, strings.TrimSpace(line))
+			t.Errorf("accept.sh:%d runs deno with no --lock under the market network: %s", i+1, strings.TrimSpace(line))
 		}
 	}
 }
@@ -207,6 +207,6 @@ func TestTheShellSlotAndTheGoSlotAreOneLock(t *testing.T) {
 	defer slot.Release()
 	err = exec.Command("bash", "-c", `exec 9>>"$1"; flock -n 9`, "_", slot.Path).Run()
 	if err == nil {
-		t.Fatal("accept.sh's flock took a slot the Go test bed holds")
+		t.Fatal("accept.sh's flock took a slot the Go test holds")
 	}
 }

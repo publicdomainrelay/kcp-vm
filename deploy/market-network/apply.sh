@@ -3,14 +3,14 @@ set -euo pipefail
 
 # Deploys the AT Protocol market topology: a PLC directory in root:global, a relay
 # in root:relay, a PDS in root:alice, and in root:bob a second PDS plus
-# BED_BIDDERS market bidders (bidder-1 .. bidder-N). Each DenoPod runs its
+# MARKET_NETWORK_BIDDERS market bidders (bidder-1 .. bidder-N). Each DenoPod runs its
 # service as a supervised child process of its own deno entrypoint, because
 # these are CLI entrypoints that own their argv, not libraries.
 #
 # Every service binds port 0. The port it got reaches its DenoPod's
 # status.address (the service writes it to PORT_FILE in its run directory and
 # the provider reads it back), peers reach it by its cluster-local name through
-# the kcpdns shim, and the market-testbed set's waits capture status.address
+# the kcpdns shim, and the market-network set's waits capture status.address
 # wherever a port has to be rendered into another pod: the dispatcher's and its
 # TLS front's ports go into every bidder's argv, because the bidder hands them
 # to its guests.
@@ -19,29 +19,29 @@ set -euo pipefail
 # denoruntime). Every service runs from this repository's ts/ tree. See README.md
 # in this directory for what does and does not work between the services.
 #
-# BED_ID       names this bed in its guests' container labels (default demo)
-# BED_DIR      this bed's state directory (default <repo>/.kcp-demo); keys, the
+# MARKET_NETWORK_ID       names this market network in its guests' container labels (default demo)
+# MARKET_NETWORK_DIR      this market network's state directory (default <repo>/.kcp-demo); keys, the
 #              guest CA and every pod's state directory live under it
-# BED_BIDDERS  how many bidders to run (default 1)
+# MARKET_NETWORK_BIDDERS  how many bidders to run (default 1)
 # LOCK_DIR     where the services' copy of this repository's deno.lock lives
-#              (default BED_DIR/locks); no service writes the repository's lock
+#              (default MARKET_NETWORK_DIR/locks); no service writes the repository's lock
 # POD_DENO_DIR the module cache the services share (default $DENO_DIR or
 #              ~/.cache/deno); each service's Deno KV has an explicit path under
-#              BED_DIR/state, so sharing the cache never shares a store
+#              MARKET_NETWORK_DIR/state, so sharing the cache never shares a store
 # ADDRESSES    file the read-back addresses are written to (default
-#              BED_DIR/addresses.env)
+#              MARKET_NETWORK_DIR/addresses.env)
 # SOCIALWEB_COMPUTER the socialweb-computer binary that applies the set (default:
-#              built from this repository into BED_DIR/bin)
+#              built from this repository into MARKET_NETWORK_DIR/bin)
 
 REPO=$(cd "$(dirname "$0")/../../../.." && pwd)
 DENOKCP_DIR=$REPO/deploy/denokcp
 MARKET_DIR=$(cd "$(dirname "$0")" && pwd)
-BED_ID=${BED_ID:-demo}
-BED_DIR=${BED_DIR:-$REPO/.kcp-demo}
-BED_BIDDERS=${BED_BIDDERS:-1}
-STATE_DIR=${STATE_DIR:-$BED_DIR/state}
+MARKET_NETWORK_ID=${MARKET_NETWORK_ID:-demo}
+MARKET_NETWORK_DIR=${MARKET_NETWORK_DIR:-$REPO/.kcp-demo}
+MARKET_NETWORK_BIDDERS=${MARKET_NETWORK_BIDDERS:-1}
+STATE_DIR=${STATE_DIR:-$MARKET_NETWORK_DIR/state}
 POD_DENO_DIR=${POD_DENO_DIR:-${DENO_DIR:-$HOME/.cache/deno}}
-ADDRESSES=${ADDRESSES:-$BED_DIR/addresses.env}
+ADDRESSES=${ADDRESSES:-$MARKET_NETWORK_DIR/addresses.env}
 KUBECTL=${KUBECTL:-kubectl}
 # kubectl caches discovery per server and the cache outlives a schema change: a
 # cached NAMESPACED=false makes it POST a namespaced resource without a
@@ -50,18 +50,18 @@ KUBECTL=${KUBECTL:-kubectl}
 KCACHE=${KCACHE:-$(mktemp -d)}
 trap 'rm -rf "$KCACHE"' EXIT
 KC() { "$KUBECTL" --cache-dir="$KCACHE" "$@"; }
-export KUBECONFIG=${KUBECONFIG:-$BED_DIR/admin.kubeconfig}
+export KUBECONFIG=${KUBECONFIG:-$MARKET_NETWORK_DIR/admin.kubeconfig}
 WAIT_SECONDS=${WAIT_SECONDS:-120}
-KEY_DIR=${KEY_DIR:-$BED_DIR/keys}
+KEY_DIR=${KEY_DIR:-$MARKET_NETWORK_DIR/keys}
 KEY_FILE=${KEY_FILE:-$KEY_DIR/alice-pds.hex}
 BOB_KEY_FILE=${BOB_KEY_FILE:-$KEY_DIR/bob-pds.hex}
 
 WORKSPACES="global relay alice bob"
 
-case "$BED_BIDDERS" in
-  ''|*[!0-9]*|0) echo "BED_BIDDERS must be a positive number, got '$BED_BIDDERS'" >&2; exit 1 ;;
+case "$MARKET_NETWORK_BIDDERS" in
+  ''|*[!0-9]*|0) echo "MARKET_NETWORK_BIDDERS must be a positive number, got '$MARKET_NETWORK_BIDDERS'" >&2; exit 1 ;;
 esac
-BIDDERS=$(seq -f 'bidder-%g' 1 "$BED_BIDDERS" | tr '\n' ' ')
+BIDDERS=$(seq -f 'bidder-%g' 1 "$MARKET_NETWORK_BIDDERS" | tr '\n' ' ')
 
 S=$(KC config view --minify -o jsonpath='{.clusters[0].cluster.server}')
 S=${S%%/clusters/*}
@@ -69,17 +69,17 @@ ROOT_SERVER="$S/clusters/root"
 
 echo "source root: $REPO"
 echo "root server: $ROOT_SERVER"
-echo "bed:         $BED_ID ($BED_DIR) bidders: $BIDDERS"
+echo "market network:         $MARKET_NETWORK_ID ($MARKET_NETWORK_DIR) bidders: $BIDDERS"
 
 for bin in ts/atproto-market/hono-plc ts/atproto-market/hono-bidder ts/atproto-relay/hono-atproto-relay ts/hono-pds ts/did-key-ingress-proxy/hono-did-key-ingress-proxy; do
   [ -e "$REPO/$bin" ] || { echo "missing $REPO/$bin" >&2; exit 1; }
 done
 
-# A bed never writes into the repository's working tree. Every service runs with
-# --lock pointing at a copy of the repository's deno.lock under the bed, so the
+# A market network never writes into the repository's working tree. Every service runs with
+# --lock pointing at a copy of the repository's deno.lock under the market network, so the
 # committed lock still pins every integrity hash it holds while whatever deno
-# adds to it lands in the copy and goes with the bed.
-LOCK_DIR=${LOCK_DIR:-$BED_DIR/locks}
+# adds to it lands in the copy and goes with the market network.
+LOCK_DIR=${LOCK_DIR:-$MARKET_NETWORK_DIR/locks}
 mkdir -p "$LOCK_DIR"
 cp "$REPO/deno.lock" "$LOCK_DIR/deno.lock"
 
@@ -95,7 +95,7 @@ for v in FC_NODEIMAGE FC_CONFIG FC_REPO_DIR FC_PREINSTALL FC_RUNNER_IMAGE FC_WOR
   [ -n "${!v:-}" ] || missing="$missing $v"
 done
 if [ -n "$missing" ]; then
-  echo "the firecracker bidder needs:$missing (see deploy/examples/atproto/market/accept.sh)" >&2
+  echo "the firecracker bidder needs:$missing (see deploy/market-network/accept.sh)" >&2
   exit 1
 fi
 mkdir -p "$FC_WORK_ROOT"
@@ -120,11 +120,11 @@ fi
 # bidder's --guest-tls-port. 36-relay-dispatcher-tls.yaml terminates that TLS
 # with a leaf for relay.localhost and *.relay.localhost signed by this CA, and
 # the requester has the guest trust the CA through its own user_data.
-GUEST_TLS_DIR=${GUEST_TLS_DIR:-$BED_DIR/guest-tls}
+GUEST_TLS_DIR=${GUEST_TLS_DIR:-$MARKET_NETWORK_DIR/guest-tls}
 if [ ! -s "$GUEST_TLS_DIR/relay.localhost.crt" ]; then
   mkdir -p "$GUEST_TLS_DIR"
   openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 30 \
-    -subj "/CN=market test bed guest CA" \
+    -subj "/CN=market network guest CA" \
     -addext "basicConstraints=critical,CA:TRUE" -addext "keyUsage=critical,keyCertSign,cRLSign" \
     -keyout "$GUEST_TLS_DIR/ca.key" -out "$GUEST_TLS_DIR/ca.crt" 2>/dev/null
   openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
@@ -143,7 +143,7 @@ fi
 # each workspace's namespace gets an intermediate signed by it. The provider has
 # to have been started against the same vault -- see deploy/denokcp/start-openbao.sh,
 # which binds port 0 and writes the address it got to OPENBAO_DIR/bao.addr.
-OPENBAO_DIR=${OPENBAO_DIR:-$BED_DIR/openbao}
+OPENBAO_DIR=${OPENBAO_DIR:-$MARKET_NETWORK_DIR/openbao}
 if [ "${START_OPENBAO:-1}" = "1" ]; then
   OPENBAO_DIR="$OPENBAO_DIR" bash "$DENOKCP_DIR/start-openbao.sh"
 fi
@@ -175,8 +175,8 @@ resolve_key() {
 key=$(resolve_key PDS_PRIVATE_KEY_HEX "$KEY_FILE" "PDS")
 bob_key=$(resolve_key BOB_PDS_PRIVATE_KEY_HEX "$BOB_KEY_FILE" "bob PDS")
 
-# Every manifest goes through the market-testbed set (deploy/sets.yaml): the
-# values below are typed fields of internal/manifests.MarketBed, a field left
+# Every manifest goes through the market-network set (deploy/sets.yaml): the
+# values below are typed fields of internal/manifests.MarketNetwork, a field left
 # unset is a render error rather than an empty string, and the set's waits
 # capture the dispatcher's and its TLS front's bound ports. socialweb-computer
 # applies it server side as field manager socialweb-computer; nothing here
@@ -184,21 +184,21 @@ bob_key=$(resolve_key BOB_PDS_PRIVATE_KEY_HEX "$BOB_KEY_FILE" "bob PDS")
 # because each bidder's account on bob's PDS has to exist before the bidder.
 SWC=${SOCIALWEB_COMPUTER:-}
 if [ -z "$SWC" ]; then
-  SWC=$BED_DIR/bin/socialweb-computer
+  SWC=$MARKET_NETWORK_DIR/bin/socialweb-computer
   mkdir -p "$(dirname "$SWC")"
   (cd "$REPO" && go build -o "$SWC" ./cmd/socialweb-computer)
 fi
 
 q() { printf '"%s"' "$1"; }
-VALUES=${VALUES:-$BED_DIR/values.yaml}
+VALUES=${VALUES:-$MARKET_NETWORK_DIR/values.yaml}
 mkdir -p "$(dirname "$VALUES")"
 write_values() {
   (
     umask 077
     {
-      echo "market-testbed:"
+      echo "market-network:"
       echo "  SourceRoot: $(q "$REPO")"
-      echo "  BedID: $(q "$BED_ID")"
+      echo "  NetworkID: $(q "$MARKET_NETWORK_ID")"
       echo "  StateDir: $(q "$STATE_DIR")"
       echo "  DenoDir: $(q "$POD_DENO_DIR")"
       echo "  LockDir: $(q "$LOCK_DIR")"
@@ -232,9 +232,9 @@ write_values() {
   )
 }
 apply_set() {
-  "$SWC" apply --set market-testbed --values "$VALUES" --phase "$1" --kcp-kubeconfig "$KUBECONFIG" \
+  "$SWC" apply --set market-network --values "$VALUES" --phase "$1" --kcp-kubeconfig "$KUBECONFIG" \
     --wait-timeout "${WAIT_SECONDS}s" >"$2"
-  echo "applied market-testbed phases $1; report in $2"
+  echo "applied market-network phases $1; report in $2"
 }
 addr_of() {
   KC --server="$S/clusters/root:$1" get denopod "$2" -o jsonpath='{.status.address}' 2>/dev/null || true
@@ -243,7 +243,7 @@ addr_of() {
 DISPATCHER_PORT=""
 GUEST_TLS_PORT=""
 write_values
-apply_set workspaces..relay "$BED_DIR/apply-report-1.json"
+apply_set workspaces..relay "$MARKET_NETWORK_DIR/apply-report-1.json"
 DISPATCHER_ADDRESS=$(addr_of relay dispatcher)
 DISPATCHER_TLS_ADDRESS=$(addr_of relay dispatcher-tls)
 DISPATCHER_PORT=${DISPATCHER_ADDRESS##*:}
@@ -254,12 +254,12 @@ echo "dispatcher: $DISPATCHER_ADDRESS  guest TLS front: $DISPATCHER_TLS_ADDRESS"
 # writes its offering, bids and receipts there, so the account has to exist
 # before the bidder starts. The password never enters kcp: it is generated
 # here, kept in a mode 600 vault file under the bidder's state directory (the
-# bed has no OpenBao KV wiring for a DenoPod yet), and the DenoPod names only
+# market network has no OpenBao KV wiring for a DenoPod yet), and the DenoPod names only
 # the file's path. A second run finds the file and signs in with it.
 BOB_PDS_NAME=pds.default.bob.svc.kcp.local
 BOB_PDS_ADDRESS=$(addr_of bob pds)
 BOB_PDS_PORT=${BOB_PDS_ADDRESS##*:}
-MARKET_CA=$BED_DIR/market-ca.pem
+MARKET_CA=$MARKET_NETWORK_DIR/market-ca.pem
 curl -sS --fail --max-time 10 --header "X-Vault-Token: root" "http://$OPENBAO_ADDR/v1/pki/ca/pem" -o "$MARKET_CA"
 bob_pds_post() {
   curl -sS --max-time 15 --cacert "$MARKET_CA" --resolve "$BOB_PDS_NAME:$BOB_PDS_PORT:127.0.0.1" \
@@ -332,7 +332,7 @@ done
 BIDDER_NAME=""
 
 write_values
-apply_set bidders..verifier "$BED_DIR/apply-report-2.json"
+apply_set bidders..verifier "$MARKET_NETWORK_DIR/apply-report-2.json"
 
 PODS="global/plc relay/relay relay/dispatcher relay/dispatcher-tls alice/pds bob/pds"
 for b in $BIDDERS; do PODS="$PODS bob/$b"; done

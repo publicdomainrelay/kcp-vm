@@ -15,18 +15,18 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/manifests"
 )
 
-func renderedBed(t *testing.T) map[string][]byte {
+func renderedNetwork(t *testing.T) map[string][]byte {
 	t.Helper()
 	ix, err := manifests.Load()
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, ok := ix.Set("market-testbed")
+	s, ok := ix.Set("market-network")
 	if !ok {
-		t.Fatal("deploy/sets.yaml names no market-testbed set")
+		t.Fatal("deploy/sets.yaml names no market-network set")
 	}
-	values := &manifests.MarketBed{
-		SourceRoot: "/src", BedID: "b", StateDir: "/s", DenoDir: "/d", LockDir: "/l", GuestTLSDir: "/g",
+	values := &manifests.MarketNetwork{
+		SourceRoot: "/src", NetworkID: "b", StateDir: "/s", DenoDir: "/d", LockDir: "/l", GuestTLSDir: "/g",
 		PDSPrivateKeyHex: "aa", BobPDSPrivateKeyHex: "bb",
 		Bidders:        []manifests.Bidder{{Name: "bidder-1", Handle: "bidder-1.bob.test", PrivateKeyHex: "cc"}},
 		DispatcherPort: 40001, GuestTLSPort: 40002,
@@ -37,7 +37,7 @@ func renderedBed(t *testing.T) map[string][]byte {
 	for _, p := range s.Phases {
 		_, texts, err := s.RenderText(p, values)
 		if err != nil {
-			t.Fatalf("market-testbed phase %s: %v", p.Name, err)
+			t.Fatalf("market-network phase %s: %v", p.Name, err)
 		}
 		for _, tx := range texts {
 			out[filepath.FromSlash("deploy/"+tx.Path)] = tx.Body
@@ -49,7 +49,7 @@ func renderedBed(t *testing.T) map[string][]byte {
 func denoPodManifests(t *testing.T, root string) map[string]v1alpha1.DenoPod {
 	t.Helper()
 	found := map[string]v1alpha1.DenoPod{}
-	rendered := renderedBed(t)
+	rendered := renderedNetwork(t)
 	err := filepath.WalkDir(filepath.Join(root, "deploy"), func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err

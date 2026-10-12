@@ -1,4 +1,4 @@
-package marketbed
+package marketnetwork
 
 import (
 	"os"
@@ -38,15 +38,15 @@ func guestDirs(workRoot string) []string {
 	return dirs
 }
 
-func (b *m3Bed) requireDurableClaimKeys() {
+func (b *m3Network) requireDurableClaimKeys() {
 	if strings.Contains(b.logs(), "claim_keys_in_memory") {
 		b.t.Fatalf("the door keeps its claim keys in memory, so a restart cannot resume an in-flight claim: %s",
 			b.logLine("claim_keys_in_memory", ""))
 	}
-	b.reading("door keeps each claim's secrets-server key in the bed's OpenBao (secret/socialweb-door/claims/*, its own token)")
+	b.reading("door keeps each claim's secrets-server key in the market network's OpenBao (secret/socialweb-door/claims/*, its own token)")
 }
 
-func (b *m3Bed) keepEvidence(workRoot, guest string) {
+func (b *m3Network) keepEvidence(workRoot, guest string) {
 	t := b.t
 	console := filepath.Join(workRoot, guest, "guest.console")
 	t.Cleanup(func() {
@@ -60,7 +60,7 @@ func (b *m3Bed) keepEvidence(workRoot, guest string) {
 	})
 }
 
-func (b *m3Bed) nodeReady(node string) string {
+func (b *m3Network) nodeReady(node string) string {
 	out, err := cmdRun{args: append([]string{"docker", "exec", "-i", b.name, "kubectl", "--kubeconfig=" + b.tenantKC},
 		"get", "node", node, "-o", `jsonpath={.status.conditions[?(@.type=="Ready")].status} {.status.conditions[?(@.type=="Ready")].lastTransitionTime}`)}.exec()
 	if err != nil {
@@ -69,13 +69,13 @@ func (b *m3Bed) nodeReady(node string) string {
 	return out
 }
 
-func (b *m3Bed) waitNodeReady(node string, within time.Duration) {
+func (b *m3Network) waitNodeReady(node string, within time.Duration) {
 	b.waitTenant("node "+node+" Ready", within, func() bool {
 		return strings.HasPrefix(b.nodeReady(node), "True")
 	})
 }
 
-func (b *m3Bed) releaseWorkload(node, guest string) {
+func (b *m3Network) releaseWorkload(node, guest string) {
 	t := b.t
 	b.tenant("delete", "deployment", m3Workload, "-n", "default").must()
 	b.waitLog("node_claim_released", node, 8*time.Minute)
@@ -93,10 +93,10 @@ func (b *m3Bed) releaseWorkload(node, guest string) {
 }
 
 func TestADoorRestartMidProvisioningStillJoinsTheNode(t *testing.T) {
-	livegate.Short(t, "this test brings up the market test bed and the real control-plane container, rents a "+
+	livegate.Short(t, "this test brings up the market network and the real control-plane container, rents a "+
 		"firecracker guest through the door, replaces the door after accept and before onNetwork, and watches the "+
 		"node join anyway: a skip is NOT a pass")
-	b, workRoot, _ := newM3Bed(t)
+	b, workRoot, _ := newM3Network(t)
 	b.requireDurableClaimKeys()
 
 	b.tenant("apply", "-f", "-").stdin(workloadManifest()).must()
@@ -182,7 +182,7 @@ type readySample struct {
 	value string
 }
 
-func (b *m3Bed) watchNodeKept(node, guest, uid string, until time.Time) []readySample {
+func (b *m3Network) watchNodeKept(node, guest, uid string, until time.Time) []readySample {
 	t := b.t
 	var samples []readySample
 	last := ""
@@ -217,10 +217,10 @@ func notReadyIn(samples []readySample) string {
 }
 
 func TestOurOwnOutageNeverCountsAgainstATenantNode(t *testing.T) {
-	livegate.Short(t, "this test brings up the market test bed and the real control-plane container, joins a market "+
+	livegate.Short(t, "this test brings up the market network and the real control-plane container, joins a market "+
 		"node, then takes our side of its path down (a cold start longer than the loss grace, and a link restart) and "+
 		"reads the NotReady clock: a skip is NOT a pass")
-	b, workRoot, _ := newM3Bed(t)
+	b, workRoot, _ := newM3Network(t)
 	b.tenant("apply", "-f", "-").stdin(workloadManifest()).must()
 	node := b.waitForClaim(5 * time.Minute)
 	guest := waitNewGuest(t, workRoot, 10*time.Minute)
