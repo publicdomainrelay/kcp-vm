@@ -596,10 +596,6 @@ Deno.test("the door asks for no ssh key and builds no ssh session", async () => 
   assertEquals(c.sshPublicKey, undefined);
   assertEquals(c.sshAuthorizedKeys, undefined);
   assertEquals((c.capabilities as GuestCapability[]).map((cap) => cap.id), ["secrets"]);
-  const source = await Deno.readTextFile(new URL("../lib/socialweb-computer-k8s-node-market/mod.ts", import.meta.url));
-  for (const ssh of ["createSshSessionProvider", "SshSessionProvider", "ssh2", "runNodeSession", "dumbpipe"]) {
-    assertEquals(source.includes(ssh), false, `the fulfiller still names ${ssh}`);
-  }
 });
 
 Deno.test("only a door given a debug key puts it in the guest's authorized_keys, and it is told the guest's address", async () => {

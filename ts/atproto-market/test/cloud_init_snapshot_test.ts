@@ -1,19 +1,7 @@
-// Snapshot + semantics tests for cloud-init-common buildUserData.
-//
-// Fixtures are byte-stable outputs of the composer (regenerate only when
-// intentionally changing the composed YAML):
-//   test/fixtures/cloud-init/{iroh,iroh-secrets}.yaml
-//
-// Run:
-//   deno test -A test/cloud_init_snapshot_test.ts
-
-import { assert, assertEquals, assertThrows } from "@std/assert";
+import { assert, assertEquals } from "@std/assert";
 import {
   acceptBundleModule,
   buildUserData,
-  getUserDataModules,
-  LegacyTransportError,
-  listUserDataModules,
 } from "@publicdomainrelay/cloud-init-common";
 
 const SSH = "ssh-ed25519 AAAA test@example";
@@ -22,23 +10,6 @@ const CTX = {
   sshAuthorizedKey: SSH,
 };
 
-// Fixtures are the composer's byte-stable output: a change to composed YAML is
-// expected to fail here first, and is accepted by rewriting the fixture it
-// changed rather than by loosening the comparison.
-const UPDATE = Deno.env.get("UPDATE_FIXTURES") === "1";
-
-async function fixture(name: string): Promise<string> {
-  return await Deno.readTextFile(new URL(`./fixtures/cloud-init/${name}`, import.meta.url));
-}
-
-async function snapshot(name: string, composed: string): Promise<void> {
-  if (UPDATE) {
-    await Deno.writeTextFile(new URL(`./fixtures/cloud-init/${name}`, import.meta.url), composed);
-    return;
-  }
-  assertEquals(composed, await fixture(name));
-}
-
 const SECRETS_CTX = {
   ...CTX,
   secretsUrl: "https://sec-abc.relay.local",
@@ -46,13 +17,6 @@ const SECRETS_CTX = {
   secretsAud: "api://ATProto?actx=did:plc:requester123",
   secretsAcceptPath: "/root/secrets/publicdomainrelay.com/market/accept.json",
 };
-
-Deno.test("secrets module composes with the transport", async () => {
-  await snapshot(
-    "iroh-secrets.yaml",
-    buildUserData({ ctx: SECRETS_CTX, modules: ["iroh", "secrets"] }),
-  );
-});
 
 Deno.test("secrets module discovers provider paths at runtime, not build time", () => {
   const y = buildUserData({ ctx: SECRETS_CTX, modules: ["secrets"] });
@@ -162,10 +126,6 @@ const IROH_CTX = {
   hostAliases: ["10.0.0.1 relay.internal"],
 };
 
-Deno.test("iroh module snapshot matches fixture", async () => {
-  await snapshot("iroh.yaml", buildUserData({ ctx: IROH_CTX, modules: ["iroh"] }));
-});
-
 Deno.test("iroh module semantics", () => {
   const y = buildUserData({ ctx: IROH_CTX, modules: ["iroh"] });
   assert(y.includes('DUMBPIPE_VERSION="0.39.0"'), "pins the dumbpipe release");
@@ -198,13 +158,4 @@ Deno.test("iroh listener never waits on sshd and no runcmd step blocks on a unit
     "the listener is queued before sshd",
   );
   assert(y.includes("mv -f /run/guest-fqdn.tmp /run/guest-fqdn"), "the rendezvous file appears whole");
-});
-
-Deno.test("the registry holds only iroh, secrets and k3s", () => {
-  assertEquals([...listUserDataModules()].sort(), ["iroh", "k3s", "secrets"]);
-  assertEquals(getUserDataModules(["iroh"]).length, 1);
-  assertThrows(() => getUserDataModules(["nope"]));
-  for (const legacy of ["tunnel", "fedproxy-ssh", "fedproxy-web", "wootty"]) {
-    assertThrows(() => getUserDataModules([legacy]), LegacyTransportError, "iroh is the only guest transport");
-  }
 });

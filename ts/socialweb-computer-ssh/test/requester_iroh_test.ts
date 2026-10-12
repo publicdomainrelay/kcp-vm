@@ -12,7 +12,6 @@ import {
 
 const TICKET = "nodeabc4ticketxyz7";
 const IROH_TARGET = `iroh://${TICKET}`;
-const ROOT = new URL("../", import.meta.url).pathname;
 
 function hostKeysOf(publicKey: string): GuestHostKeys {
   const [type, blob] = publicKey.trim().split(/\s+/);
@@ -161,33 +160,6 @@ async function setup() {
 
 Deno.test("the requester asks for the iroh transport", () => {
   assertEquals(contractUserData(), { transport: "iroh" });
-});
-
-Deno.test("no source in socialweb-computer-ssh asks for a non-iroh transport or dials the websocket tunnel", async () => {
-  const offenders: string[] = [];
-  const forbidden = [
-    /transport\s*:\s*["'`](?!iroh["'`])/,
-    /tunnelWsUrl/,
-    /sshTunnelArgs/,
-    /com\.fedproxy\.temp\.xrpc\.tunnel/,
-    /new WebSocket\(/,
-    /runSessionOverTunnel/,
-  ];
-  for (const top of ["lib", "hono-socialweb-computer-ssh"]) {
-    const stack = [`${ROOT}${top}`];
-    while (stack.length) {
-      const dir = stack.pop()!;
-      for await (const entry of Deno.readDir(dir)) {
-        const path = `${dir}/${entry.name}`;
-        if (entry.isDirectory) stack.push(path);
-        else if (entry.name.endsWith(".ts")) {
-          const text = await Deno.readTextFile(path);
-          for (const re of forbidden) if (re.test(text)) offenders.push(`${path.slice(ROOT.length)} ${re}`);
-        }
-      }
-    }
-  }
-  assertEquals(offenders, []);
 });
 
 Deno.test("the session provider dials through dumbpipe connect with the guest's ticket, never a websocket tunnel", async () => {

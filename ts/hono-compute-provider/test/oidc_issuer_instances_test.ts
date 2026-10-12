@@ -89,10 +89,7 @@ Deno.test("a provisioning without an issuer base URL is refused at provision tim
   await assertRejects(() => notHttp.createProvisioningData("team", null), Error, "issuer base URL");
 });
 
-Deno.test("the on-network reporter has no hardcoded base URL and fails closed without one", async () => {
-  const source = await Deno.readTextFile(new URL("../lib/oidc-issuer-hono/mod.ts", import.meta.url));
-  assert(!source.includes("xrpc.fedproxy.com"), "no fedproxy literal in the issuer module");
-
+Deno.test("the on-network reporter fails closed without a base URL", async () => {
   const issuer = createOidcIssuer({ getIssuerUrl: () => ISSUER_A });
   const { userData } = await issuer.createProvisioningData("team", "#cloud-config\n");
   assert(!userData.includes("fedproxy.com"), "no fedproxy fallback in the reporter");

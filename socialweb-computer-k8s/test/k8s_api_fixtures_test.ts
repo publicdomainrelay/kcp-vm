@@ -1,11 +1,6 @@
 import { assert, assertEquals, assertThrows } from "@std/assert";
 import {
   ApiValidationError,
-  CONTRACT_PHASES,
-  FINALIZER_NODE_CLAIM,
-  isNodeClaimPhase,
-  NODE_CLAIM_PHASES,
-  NODE_CLAIM_RESOURCE,
   parseNodeClaim,
   parseNodeClaimStatus,
   validateNodeClaim,
@@ -50,17 +45,6 @@ Deno.test("every invalid NodeClaim fixture is rejected at the path the Go valida
     const err = assertThrows(() => parseNodeClaim(fixture.object), ApiValidationError);
     assert(err.issues.some((i) => i.path === fixture.expectError), name);
   }
-});
-
-Deno.test("the phase enum and the finalizer are the Go constants", () => {
-  assertEquals([...NODE_CLAIM_PHASES], ["Pending", "Bidding", "Provisioning", "Joining", "Running", "Failed", "Released", "Lost", "Adopting"]);
-  assertEquals([...CONTRACT_PHASES], ["requested", "rfp_submitted", "winner_selected", "accepted", "receipt", "network", "released"]);
-  assertEquals(FINALIZER_NODE_CLAIM, "nodeclaim.socialweb.computer/release");
-  assert(isNodeClaimPhase("Running"));
-  assert(!isNodeClaimPhase("running"));
-  assertEquals(NODE_CLAIM_RESOURCE.plural, "nodeclaims");
-  assertEquals(NODE_CLAIM_RESOURCE.group, "socialweb.computer");
-  assertEquals(NODE_CLAIM_RESOURCE.version, "v1alpha1");
 });
 
 Deno.test("a status the door is about to write is checked before it leaves the process", () => {

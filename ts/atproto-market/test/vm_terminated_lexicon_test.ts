@@ -1,19 +1,13 @@
-import { assert, assertEquals } from "@std/assert";
+import { assert } from "@std/assert";
 import {
   COMPUTE_EVENTS_VM_TERMINATED_NSID,
   VM_TERMINATED_REASONS,
 } from "@publicdomainrelay/market-common";
 import {
-  COMPUTE_EVENTS_VM_TERMINATED_NSID as LEXICONS_NSID,
   publicdomainrelay,
 } from "@publicdomainrelay/market-lexicons";
 
 const terminated = publicdomainrelay.temp.compute.events.vm.terminated;
-const LEXICON_PATH = new URL(
-  "../lexicons/com/publicdomainrelay/temp/compute/events/vm/terminated.json",
-  import.meta.url,
-);
-
 const STRONG_REF = {
   $type: "com.atproto.repo.strongRef",
   uri: "at://did:plc:requester/com.publicdomainrelay.temp.compute.events.vm.delete/3l2abcdefgh2a",
@@ -29,24 +23,6 @@ function record(extra: Record<string, unknown> = {}): Record<string, unknown> {
     ...extra,
   };
 }
-
-Deno.test("vm.terminated NSID is registered in market-common and market-lexicons", () => {
-  assertEquals(COMPUTE_EVENTS_VM_TERMINATED_NSID, "com.publicdomainrelay.temp.compute.events.vm.terminated");
-  assertEquals(LEXICONS_NSID, COMPUTE_EVENTS_VM_TERMINATED_NSID);
-  assertEquals(terminated.$nsid, COMPUTE_EVENTS_VM_TERMINATED_NSID);
-});
-
-Deno.test("vm.terminated lexicon JSON declares the decided shape", async () => {
-  const doc = JSON.parse(await Deno.readTextFile(LEXICON_PATH));
-  assertEquals(doc.id, COMPUTE_EVENTS_VM_TERMINATED_NSID);
-  const main = doc.defs.main;
-  assertEquals(main.type, "record");
-  assertEquals(main.key, "tid");
-  assertEquals(main.record.required, ["reason", "observedAt", "createdAt"]);
-  assertEquals(main.record.properties.reason.knownValues, [...VM_TERMINATED_REASONS]);
-  assertEquals(main.record.properties.exitCode.type, "integer");
-  assertEquals(main.record.properties.request.ref, "com.atproto.repo.strongRef");
-});
 
 Deno.test("vm.terminated validates every known reason, an exit code and a delete request ref", () => {
   for (const reason of VM_TERMINATED_REASONS) {

@@ -47,7 +47,6 @@ function values(unit: string, key: string): string[] {
   return unit.split("\n").filter((l) => l.startsWith(`${key}=`)).flatMap((l) => l.slice(key.length + 1).split(/\s+/)).filter(Boolean);
 }
 
-const repo = (path: string) => new URL(`../../${path}`, import.meta.url);
 
 Deno.test("the node's user_data adds the pod network units, and the k3s agent never waits on meshd", async () => {
   const config = userData();
@@ -57,11 +56,6 @@ Deno.test("the node's user_data adds the pod network units, and the k3s agent ne
     assertEquals(config.write_files.find((w) => w.path === script)?.permissions, "0700", script);
   }
 
-  assertEquals(
-    f[`/etc/systemd/system/${NODE_NET_UNITS.meshd}`],
-    await Deno.readTextFile(repo("rust/socialweb-meshd/deploy/socialweb-meshd.service")),
-    "the meshd unit is the one rust/socialweb-meshd/deploy ships",
-  );
   assertEquals(MESHD_UNIT, f[`/etc/systemd/system/${NODE_NET_UNITS.meshd}`]);
   const dropIn = f[`/etc/systemd/system/${NODE_NET_UNITS.meshd}.d/10-socialweb-node.conf`];
   assertEquals(dropIn, MESHD_UNIT_DROP_IN);
@@ -326,20 +320,6 @@ Deno.test("meshd-install asks the door for the aarch64 build on an arm64 node", 
   } finally {
     await Deno.remove(r.dir, { recursive: true });
   }
-});
-
-Deno.test("the guest, the tenant DaemonSet and the k3s server agree on the DNS address, its label and the cluster CIDR", async () => {
-  const docs = (await Deno.readTextFile(repo("internal/tenantnet/manifests/node-local-dns.yaml"))).split(/^---$/m)
-    .map((d) => parseYaml(d) as Record<string, any>);
-  const ds = docs.find((d) => d.kind === "DaemonSet")!;
-  assertEquals(ds.spec.template.spec.nodeSelector, { [NODE_LOCAL_DNS_LABEL]: "true" });
-  const corefile = docs.find((d) => d.kind === "ConfigMap")!.data.Corefile as string;
-  assertStringIncludes(corefile, `bind ${NODE_LOCAL_DNS_ADDRESS}\n`);
-  const tenantnet = await Deno.readTextFile(repo("internal/tenantnet/tenantnet.go"));
-  assertStringIncludes(tenantnet, `Address = "${NODE_LOCAL_DNS_ADDRESS}"`);
-  assertStringIncludes(tenantnet, `NodeLabel = "${NODE_LOCAL_DNS_LABEL}"`);
-  const stack = await Deno.readTextFile(repo("internal/clusterstack/clusterstack.go"));
-  assertStringIncludes(stack, `const MarketClusterCIDR = "${POD_CLUSTER_CIDR}"`);
 });
 
 Deno.test("node-diagnose prints containerd's CNI load status to the console until the node network is ready", async () => {

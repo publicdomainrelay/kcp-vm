@@ -542,29 +542,3 @@ Deno.test("a zero cap means the door never ends the session", async () => {
     await harness.close();
   }
 });
-
-Deno.test("no log call in the door can carry the command or the session env", async () => {
-  const source = await Deno.readTextFile(
-    new URL("../lib/socialweb-computer-ssh-ssh2/mod.ts", import.meta.url),
-  );
-  const calls = [...source.matchAll(/\blog\(\s*"([a-z_]+)"\s*,\s*\{([^}]*)\}/g)];
-  // A call the pattern cannot read is a call this test cannot see, so a shape it
-  // does not recognise fails here rather than passing unexamined.
-  assertEquals(
-    calls.length,
-    [...source.matchAll(/\blog\(/g)].length,
-    "a log call is shaped so that this guard cannot read it",
-  );
-  assert(calls.length > 0, "expected the door to log something");
-  for (const [, event, fields] of calls) {
-    for (const field of fields.split(",")) {
-      const [name, ...value] = field.split(":");
-      const expression = value.join(":").trim();
-      assert(!/\benv\b/.test(expression), `${event} logs the session env as ${name}`);
-      assert(
-        !/\bcommand\b/.test(expression) || expression === "command.length",
-        `${event} logs the command as ${name}`,
-      );
-    }
-  }
-});

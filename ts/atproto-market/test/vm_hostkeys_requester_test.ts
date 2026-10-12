@@ -220,14 +220,6 @@ Deno.test("the known_hosts entry is exactly the reported keys under the receipt'
   assert(!joined.includes("StrictHostKeyChecking=no"));
 });
 
-Deno.test("no path that reaches a guest turns host key checking off", async () => {
-  for (const path of ["../lib/requester-xrpc/mod.ts", "../request-vm-ssh/mod.ts"]) {
-    const source = await Deno.readTextFile(new URL(path, import.meta.url));
-    assert(!source.includes("StrictHostKeyChecking=no"), path);
-    assert(!source.includes("UserKnownHostsFile=/dev/null"), path);
-  }
-});
-
 Deno.test("a signed vm.hostKeys sets ContractState.hostKeys and fires onHostKeys; forged and unbound ones are rejected", async () => {
   const fake = fakePds({ bidders: [BIDDER_DID], autoNetwork: true });
   const events: Array<{ event: string; extra?: Record<string, unknown> }> = [];

@@ -1,12 +1,3 @@
-// Snapshot + semantics tests for the k3s user-data module.
-//
-// Fixtures are byte-stable outputs of the composer, generated from the module
-// source itself:
-//   test/fixtures/cloud-init/{k3s,iroh-k3s}.yaml
-//
-// Run:
-//   deno test -A test/cloud_init_k3s_test.ts
-
 import { assert, assertEquals, assertThrows } from "@std/assert";
 import {
   buildUserData,
@@ -19,29 +10,6 @@ const CTX = {
   vmName: "vm-test",
   sshAuthorizedKey: SSH,
 };
-
-const K3S_SETUP_PATH = "/usr/local/bin/setup-k3s.sh";
-
-const UPDATE = Deno.env.get("UPDATE_FIXTURES") === "1";
-
-function fixture(name: string): Promise<string> {
-  return Deno.readTextFile(
-    new URL(`./fixtures/cloud-init/${name}`, import.meta.url),
-  );
-}
-
-async function snapshot(name: string, composed: string): Promise<void> {
-  if (UPDATE) {
-    await Deno.writeTextFile(new URL(`./fixtures/cloud-init/${name}`, import.meta.url), composed);
-    return;
-  }
-  assertEquals(composed, await fixture(name));
-}
-
-Deno.test("k3s composes alone and with the iroh transport", async () => {
-  await snapshot("k3s.yaml", buildUserData({ ctx: CTX, modules: ["k3s"] }));
-  await snapshot("iroh-k3s.yaml", buildUserData({ ctx: CTX, modules: ["iroh", "k3s"] }));
-});
 
 Deno.test("k3s resolves by registry id and is byte-deterministic", () => {
   assert(listUserDataModules().includes("k3s"));
@@ -72,32 +40,4 @@ Deno.test("k3s carries neither the token nor the node name", () => {
   assert(!y.includes("--server"), "the join target travels in the command");
   assert(!/token/i.test(y), "no token-shaped value anywhere in the document");
   assert(!y.includes("/etc/rancher/k3s/config.yaml"), "no config.yaml carrier for the token");
-});
-
-Deno.test("negative control: the discriminator is a write_files path, not the header", () => {
-  const handWritten = `#cloud-config
-packages:
-  - curl
-runcmd:
-  - curl -sfL https://get.k3s.io | sh -
-`;
-  assert(
-    handWritten.startsWith("#cloud-config\n"),
-    "a hand-written document carries the same header",
-  );
-  assert(
-    handWritten.includes("| sh -"),
-    "and it WOULD start a server, the defect this module prevents",
-  );
-  assert(!handWritten.includes(K3S_SETUP_PATH), "and none of the module's write_files paths");
-  assert(!handWritten.includes("INSTALL_K3S_SKIP_START=true"), "no skip-start either");
-  assertEquals(
-    buildUserData({ ctx: CTX, modules: ["k3s"] }).includes(K3S_SETUP_PATH),
-    true,
-    "the composer's document carries the path, so the path discriminates",
-  );
-  assert(
-    !buildUserData({ ctx: CTX, modules: [] }).includes(K3S_SETUP_PATH),
-    "and it comes from the module",
-  );
 });

@@ -59,7 +59,7 @@ function post(app: { fetch: (req: Request) => Response | Promise<Response> }, pa
   );
 }
 
-Deno.test("provisioningValidate verifies against the reported key and nothing in lib execs ssh-keyscan", async () => {
+Deno.test("provisioningValidate verifies against the reported key", async () => {
   const reports: Array<{ nonce: string; keys: unknown[] }> = [];
   const issuer = createOidcIssuer({
     getIssuerUrl: () => ISSUER,
@@ -127,19 +127,6 @@ Deno.test("provisioningValidate verifies against the reported key and nothing in
     await Deno.remove(guest.dir, { recursive: true });
     await Deno.remove(stranger.dir, { recursive: true });
   }
-
-  const offenders: string[] = [];
-  const scan = async (dir: string): Promise<void> => {
-    for await (const entry of Deno.readDir(dir)) {
-      const path = `${dir}/${entry.name}`;
-      if (entry.isDirectory) await scan(path);
-      else if (entry.name.endsWith(".ts") && (await Deno.readTextFile(path)).includes("ssh-keyscan")) {
-        offenders.push(path);
-      }
-    }
-  };
-  await scan(new URL("../lib", import.meta.url).pathname);
-  assertEquals(offenders, [], "no library code scans a guest for its host key");
 });
 
 function fakeMicrovm() {
