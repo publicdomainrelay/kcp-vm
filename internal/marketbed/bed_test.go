@@ -138,6 +138,63 @@ func TestNoBedPortIsALiteral(t *testing.T) {
 	}
 }
 
+var serviceCwd = regexp.MustCompile(`SERVICE_CWD: "[^"]*/([^"/]+)"`)
+
+func TestNoBedServiceWritesItsRepositorysLock(t *testing.T) {
+	root := repoRoot(t)
+	market := filepath.Join(root, "deploy/examples/atproto/market")
+	apply, err := os.ReadFile(filepath.Join(market, "apply.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(apply), `echo "  LockDir: $(q "$LOCK_DIR")"`) {
+		t.Error("apply.sh writes no LockDir value, so a service's --lock names no file under the bed")
+	}
+	manifests, err := filepath.Glob(filepath.Join(market, "*.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	services := 0
+	for _, path := range manifests {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		m := serviceCwd.FindStringSubmatch(string(body))
+		if m == nil {
+			continue
+		}
+		services++
+		repo := m[1]
+		want := `"--lock={{.LockDir}}/` + repo + `.lock"`
+		flags := ""
+		for _, line := range strings.Split(string(body), "\n") {
+			if strings.Contains(line, "SERVICE_DENO_FLAGS:") {
+				flags = line
+			}
+		}
+		if !strings.Contains(flags, want) {
+			t.Errorf("%s runs deno in %s with flags %q; without %s deno rewrites %s/deno.lock in the working tree",
+				filepath.Base(path), repo, strings.TrimSpace(flags), want, repo)
+		}
+		if !strings.Contains(string(apply), " "+repo+" ") && !strings.Contains(string(apply), " "+repo+";") {
+			t.Errorf("apply.sh copies no deno.lock of %s into the bed, which %s runs against", repo, filepath.Base(path))
+		}
+	}
+	if services < 5 {
+		t.Fatalf("found %d service manifests naming SERVICE_CWD; the bed has at least 5", services)
+	}
+	accept, err := os.ReadFile(filepath.Join(market, "accept.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, line := range strings.Split(string(accept), "\n") {
+		if strings.Contains(line, "deno run") && !strings.Contains(line, "--lock=") {
+			t.Errorf("accept.sh:%d runs deno with no --lock under the bed: %s", i+1, strings.TrimSpace(line))
+		}
+	}
+}
+
 func TestTheShellSlotAndTheGoSlotAreOneLock(t *testing.T) {
 	if _, err := exec.LookPath("flock"); err != nil {
 		t.Skip("no flock(1) on this host")

@@ -27,7 +27,8 @@ type MarketBed struct {
 	BedID               string   `json:",omitempty"`
 	StateDir            string   `json:",omitempty"`
 	DenoDir             string   `json:",omitempty"`
-	GuestTLSDir         string   `json:",omitempty"`
+	LockDir             string   `json:",omitempty"`
+	GuestTLSDir        string   `json:",omitempty"`
 	PDSPrivateKeyHex    string   `json:",omitempty"`
 	BobPDSPrivateKeyHex string   `json:",omitempty"`
 	Bidders             []Bidder `json:",omitempty"`

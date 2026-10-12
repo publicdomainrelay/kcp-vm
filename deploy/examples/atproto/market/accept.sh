@@ -291,7 +291,7 @@ own_guest_containers() {
 
 own_guest_dirs() {
   [ -d "$FC_WORK_ROOT" ] || return 0
-  find "$FC_WORK_ROOT" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort
+  find "$FC_WORK_ROOT" -mindepth 1 -maxdepth 1 -type d -name 'fc-*' -printf '%f\n' | sort
 }
 
 stop_own_guests() {
@@ -856,6 +856,26 @@ if [ -n "${ACCEPT_HOLD_DIR:-}" ]; then
   echo
   echo "== hold =="
   mkdir -p "$ACCEPT_HOLD_DIR"
+  # A door held against this bed keeps each in-flight claim's secrets-server
+  # key in the bed's own OpenBao, under a token that may touch nothing but
+  # secret/socialweb-door/claims/*.
+  DOOR_OPENBAO_TOKEN_FILE=$BED_DIR/door/openbao-token
+  mkdir -p "$BED_DIR/door"
+  door_bao() { BAO_ADDR="http://$OPENBAO_ADDR" BAO_TOKEN=root bao "$@"; }
+  if ! door_bao secrets list -format=json 2>/dev/null | grep -q '"secret/"'; then
+    door_bao secrets enable -path=secret kv-v2 >/dev/null
+  fi
+  door_bao policy write socialweb-door - >/dev/null <<'HCL'
+path "secret/data/socialweb-door/claims/*" {
+  capabilities = ["create", "read", "update", "delete"]
+}
+path "secret/metadata/socialweb-door/claims/*" {
+  capabilities = ["read", "list", "delete"]
+}
+HCL
+  door_bao token create -policy=socialweb-door -no-default-policy -ttl=24h -field=token >"$DOOR_OPENBAO_TOKEN_FILE.tmp"
+  chmod 0644 "$DOOR_OPENBAO_TOKEN_FILE.tmp"
+  mv "$DOOR_OPENBAO_TOKEN_FILE.tmp" "$DOOR_OPENBAO_TOKEN_FILE"
   {
     echo "ACCEPT_ROOT=$BED_DIR"
     echo "BED_ID=$BED_ID"
@@ -873,6 +893,11 @@ if [ -n "${ACCEPT_HOLD_DIR:-}" ]; then
     echo "HOST_IP=$HOST_IP"
     echo "KUBECONFIG_PATH=$KUBECONFIG_PATH"
     echo "PROVIDER_LOG=$PROVIDER_LOG"
+    echo "KCP_SERVER=$SERVER"
+    echo "RUNS_DIR=$BED_DIR/runs"
+    echo "STATE_DIR=$BED_DIR/state"
+    echo "OPENBAO_ADDR=$OPENBAO_ADDR"
+    echo "DOOR_OPENBAO_TOKEN_FILE=$DOOR_OPENBAO_TOKEN_FILE"
     echo "CHECKS_FAILED=$FAILED"
   } >"$ACCEPT_HOLD_DIR/facts.env.tmp"
   mv "$ACCEPT_HOLD_DIR/facts.env.tmp" "$ACCEPT_HOLD_DIR/facts.env"
@@ -898,6 +923,9 @@ echo "== market contract =="
 MARKET_RESULT=$BED_DIR/market-requester-result.json
 MARKET_LOG=$BED_DIR/market-requester.log
 guests_before=$(own_guest_dirs)
+REQUESTER_LOCK=$BED_DIR/locks/requester.lock
+mkdir -p "$BED_DIR/locks"
+cp "$ORG_ROOT/atproto-market/deno.lock" "$REQUESTER_LOCK" 2>/dev/null || rm -f "$REQUESTER_LOCK"
 echo "bidders: ${BIDDER_DIDS:-unknown}  guests reach the dispatcher at: ${HOST_IP:-unknown}"
 market_status=0
 start_sampler
@@ -907,7 +935,7 @@ if [ -n "$BIDDER_DIDS" ] && [ -n "$HOST_IP" ]; then
   requester() {
   (cd "$ORG_ROOT/atproto-market" && DENO_CERT="$CA_PEM" KCP_DNS_TABLE_FILE="$BED_DIR/runs/.kcpdns/table.json" \
     exec timeout "$MARKET_SECONDS" \
-    deno run -A --node-modules-dir=none --config "$ORG_ROOT/atproto-market/deno.json" \
+    deno run -A --node-modules-dir=none --config "$ORG_ROOT/atproto-market/deno.json" --lock="$REQUESTER_LOCK" \
       --preload "$BED_DIR/runs/.kcpdns/shim.ts" \
       "$MARKET_DIR/market-requester/mod.ts" \
       --plc-directory-url "https://127.0.0.1:$PLC_PORT" \

@@ -24,6 +24,8 @@ set -euo pipefail
 # BED_DIR      this bed's state directory (default <repo>/.kcp-demo); keys, the
 #              guest CA and every pod's state directory live under it
 # BED_BIDDERS  how many bidders to run (default 1)
+# LOCK_DIR     where each service's copy of its repository's deno.lock lives
+#              (default BED_DIR/locks); no service writes a repository's lock
 # POD_DENO_DIR the module cache the services share (default $DENO_DIR or
 #              ~/.cache/deno); each service's Deno KV has an explicit path under
 #              BED_DIR/state, so sharing the cache never shares a store
@@ -73,6 +75,20 @@ echo "bed:         $BED_ID ($BED_DIR) bidders: $BIDDERS"
 
 for bin in atproto-market/hono-plc atproto-market/hono-bidder atproto-relay/hono-atproto-relay hono-pds did-key-ingress-proxy/hono-did-key-ingress-proxy; do
   [ -e "$ORG_ROOT/$bin" ] || { echo "missing $ORG_ROOT/$bin" >&2; exit 1; }
+done
+
+# A bed never writes into a repository's working tree. Every service runs with
+# --lock pointing at a copy of its repository's deno.lock under the bed, so the
+# committed lock still pins every integrity hash it holds while whatever deno
+# adds to it lands in the copy and goes with the bed.
+LOCK_DIR=${LOCK_DIR:-$BED_DIR/locks}
+mkdir -p "$LOCK_DIR"
+for repo in atproto-market atproto-relay hono-pds did-key-ingress-proxy; do
+  if [ -s "$ORG_ROOT/$repo/deno.lock" ]; then
+    cp "$ORG_ROOT/$repo/deno.lock" "$LOCK_DIR/$repo.lock"
+  else
+    rm -f "$LOCK_DIR/$repo.lock"
+  fi
 done
 
 # socialweb-computer-kcp: the bidder runs --compute-provider-firecracker. Every
@@ -186,6 +202,7 @@ write_values() {
       echo "  BedID: $(q "$BED_ID")"
       echo "  StateDir: $(q "$STATE_DIR")"
       echo "  DenoDir: $(q "$POD_DENO_DIR")"
+      echo "  LockDir: $(q "$LOCK_DIR")"
       echo "  GuestTLSDir: $(q "$GUEST_TLS_DIR")"
       echo "  PDSPrivateKeyHex: $(q "$key")"
       echo "  BobPDSPrivateKeyHex: $(q "$bob_key")"

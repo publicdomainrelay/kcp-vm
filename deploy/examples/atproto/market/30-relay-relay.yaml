@@ -11,7 +11,7 @@ spec:
     SERVICE_ENTRY: "{{.OrgRoot}}/atproto-relay/hono-atproto-relay/mod.ts"
     SERVICE_CWD: "{{.OrgRoot}}/atproto-relay"
     SERVICE_ARGS: '["--port","0","--hostname","127.0.0.1","--kv-path","{{.StateDir}}/relay-relay/kv.sqlite3"]'
-    SERVICE_DENO_FLAGS: '["--node-modules-dir=none"]'
+    SERVICE_DENO_FLAGS: '["--node-modules-dir=none","--lock={{.LockDir}}/atproto-relay.lock"]'
     SERVICE_ENV: '{"PORT":"0","HOSTNAME":"relay.default.relay.svc.kcp.local"}'
     SERVICE_TLS: "true"
   script: |

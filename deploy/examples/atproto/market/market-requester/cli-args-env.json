@@ -52,6 +52,11 @@
       "description": "Where the JSON verdict is written",
       "env": "RESULT_FILE",
       "default": "./market-requester-result.json"
+    },
+    "control-dir": {
+      "type": "string",
+      "description": "Hold the contract after onNetwork: write onnetwork.json (and terminated.json when the bidder reports vm.terminated) here, and send vm.delete only once a file named release appears, even after a vm.terminated",
+      "env": "CONTROL_DIR"
     }
   }
 }

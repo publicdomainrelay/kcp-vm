@@ -11,7 +11,7 @@ spec:
     SERVICE_ENTRY: "{{.OrgRoot}}/atproto-market/hono-plc/mod.ts"
     SERVICE_CWD: "{{.OrgRoot}}/atproto-market"
     SERVICE_ARGS: '["--port","0","--hostname","127.0.0.1"]'
-    SERVICE_DENO_FLAGS: '["--node-modules-dir=none"]'
+    SERVICE_DENO_FLAGS: '["--node-modules-dir=none","--lock={{.LockDir}}/atproto-market.lock"]'
     SERVICE_ENV: '{"PORT":"0","HOSTNAME":"127.0.0.1"}'
     SERVICE_TLS: "true"
   script: |

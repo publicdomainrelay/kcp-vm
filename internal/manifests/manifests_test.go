@@ -15,6 +15,7 @@ func goldenBed() *MarketBed {
 		BedID:               "bed1",
 		StateDir:            "/bed/state",
 		DenoDir:             "/cache/deno",
+		LockDir:             "/bed/locks",
 		GuestTLSDir:         "/bed/guest-tls",
 		PDSPrivateKeyHex:    strings.Repeat("1", 64),
 		BobPDSPrivateKeyHex: strings.Repeat("2", 64),
@@ -87,6 +88,7 @@ func TestAMissingValueIsARenderErrorNotAnEmptyField(t *testing.T) {
 	cases := map[string]func(*MarketBed){
 		"StateDir":       func(b *MarketBed) { b.StateDir = "" },
 		"OrgRoot":        func(b *MarketBed) { b.OrgRoot = "" },
+		"LockDir":        func(b *MarketBed) { b.LockDir = "" },
 		"DispatcherPort": func(b *MarketBed) { b.DispatcherPort = 0 },
 		"NodeImage":      func(b *MarketBed) { b.Firecracker.NodeImage = "" },
 		"PrivateKeyHex":  func(b *MarketBed) { b.Bidders[1].PrivateKeyHex = "" },

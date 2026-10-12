@@ -10,7 +10,15 @@ import {
 import type { GuestHostKeys } from "@publicdomainrelay/requester-abc";
 import { marketNetwork } from "@publicdomainrelay/market-network-common";
 import { installMarketNetworkFetch } from "@publicdomainrelay/market-network-fetch";
+import { releaseCompute, requestCompute } from "@publicdomainrelay/compute-request-xrpc";
 import cliArgsEnv from "./cli-args-env.json" with { type: "json" };
+
+interface Termination {
+  reason: string;
+  exitCode?: number;
+  observedAt?: string;
+  receivedAt: string;
+}
 
 interface Verdict {
   ok: boolean;
@@ -31,6 +39,8 @@ interface Verdict {
   mismatchRefusedAt?: string;
   vmDeleteStatus?: number;
   vmDeleteOk?: boolean;
+  terminated?: Termination;
+  lateDelete?: boolean;
   totalMs: number;
   startedAt: string;
   finishedAt?: string;
@@ -46,6 +56,7 @@ const ingressProxyHost = options.ingressProxyHost as string | undefined;
 const bidderDids = splitList(options.bidderDids);
 const guestHostAliases = splitList(options.guestHostAliases);
 const resultFile = options.resultFile as string;
+const controlDir = options.controlDir as string | undefined;
 const vmReadyTimeoutSec = options.vmReadyTimeoutSec as number;
 const guestCaFile = options.guestCaFile as string | undefined;
 const guestCaPem = guestCaFile ? (await Deno.readTextFile(guestCaFile)).trim() : "";
@@ -152,6 +163,99 @@ const verifyingSsh = {
   runSession: () => Promise.reject(new Error("the test-bed requester never opens a session")),
 };
 
+const userData = { base: "#cloud-config\n" + JSON.stringify(guestBase) };
+
+async function writeControl(name: string, value: unknown): Promise<void> {
+  const path = `${controlDir}/${name}`;
+  await Deno.writeTextFile(`${path}.tmp`, JSON.stringify(value, null, 2) + "\n");
+  await Deno.rename(`${path}.tmp`, path);
+}
+
+async function released(): Promise<void> {
+  while (true) {
+    try {
+      await Deno.stat(`${controlDir}/release`);
+      return;
+    } catch {
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+  }
+}
+
+async function runHeld(): Promise<void> {
+  const vmName = `market-requester-${Date.now().toString(36)}`;
+  const { publicKey } = await ssh.generateKeypair(vmName);
+  const contract = await requestCompute(pds, {
+    logger,
+    ingressProxyHost: network.ingressProxyHost,
+    extraBidderDids: bidderDids,
+    guestHostAliases,
+    relayUrls: [],
+    vmReadyTimeoutSec,
+    vmName,
+    sshPublicKey: publicKey,
+    userData,
+  });
+  let state = contract.state;
+  verdict.winnerDid = state.winner?.did;
+  verdict.bids = state.bids;
+  verdict.receiptOk = state.receiptOk;
+  verdict.receiptUri = state.receipt?.uri;
+  if (!state.receiptOk || !state.vmAddress) {
+    verdict.reason = state.receiptOk
+      ? `the guest did not report onNetwork within ${vmReadyTimeoutSec}s`
+      : `no valid receipt (${state.outcome ?? state.error ?? state.phase})`;
+    if (state.receiptOk) await releaseCompute(pds, state, { logger, capabilities: contract.capabilities });
+    await contract.dispose();
+    return;
+  }
+  verdict.onNetwork = state.vmAddress;
+  verdict.onNetworkMs = Date.now() - started;
+  logger.info("market_requester_onnetwork", { target: state.vmAddress, ms: verdict.onNetworkMs });
+  await writeControl("onnetwork.json", {
+    vmAddress: state.vmAddress,
+    receiptUri: verdict.receiptUri,
+    winnerDid: verdict.winnerDid,
+    bids: verdict.bids,
+    onNetworkMs: verdict.onNetworkMs,
+    at: new Date().toISOString(),
+  });
+  void contract.terminated?.then(async (ended) => {
+    state = ended;
+    verdict.terminated = {
+      reason: ended.termination?.reason ?? "unknown",
+      ...(ended.termination?.exitCode !== undefined ? { exitCode: ended.termination.exitCode } : {}),
+      observedAt: ended.termination?.observedAt,
+      receivedAt: new Date().toISOString(),
+    };
+    logger.info("market_requester_terminated", { ...verdict.terminated });
+    await writeControl("terminated.json", verdict.terminated);
+  });
+  await released();
+  verdict.lateDelete = state.termination !== undefined;
+  await releaseCompute(pds, { ...state, termination: undefined }, { logger, capabilities: contract.capabilities });
+  await contract.dispose();
+  if (verdict.vmDeleteOk !== true) {
+    verdict.reason = `vm.delete was not accepted (status ${verdict.vmDeleteStatus})`;
+    return;
+  }
+  verdict.ok = true;
+  verdict.reason = verdict.lateDelete
+    ? `vm.delete after the bidder's vm.terminated (${verdict.terminated?.reason}) was accepted`
+    : "the held contract was released";
+}
+
+if (controlDir) {
+  try {
+    await runHeld();
+  } catch (err) {
+    verdict.reason = `contract threw: ${err instanceof Error ? err.message : String(err)}`;
+  }
+  await Promise.resolve(pds.dispose?.()).catch(() => undefined);
+  await Promise.resolve(serve.shutdown()).catch(() => undefined);
+  await finish(verdict.ok ? 0 : 1);
+}
+
 try {
   const result = await runComputeContract(pds, {
     logger,
@@ -161,7 +265,7 @@ try {
     relayUrls: [],
     vmReadyTimeoutSec,
     sshProvider: verifyingSsh,
-    userData: { base: "#cloud-config\n" + JSON.stringify(guestBase) },
+    userData,
   });
   verdict.winnerDid = result.winnerDid;
   verdict.bids = result.bids;

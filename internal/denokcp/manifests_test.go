@@ -26,7 +26,7 @@ func renderedBed(t *testing.T) map[string][]byte {
 		t.Fatal("deploy/sets.yaml names no market-testbed set")
 	}
 	values := &manifests.MarketBed{
-		OrgRoot: "/org", BedID: "b", StateDir: "/s", DenoDir: "/d", GuestTLSDir: "/g",
+		OrgRoot: "/org", BedID: "b", StateDir: "/s", DenoDir: "/d", LockDir: "/l", GuestTLSDir: "/g",
 		PDSPrivateKeyHex: "aa", BobPDSPrivateKeyHex: "bb",
 		Bidders:        []manifests.Bidder{{Name: "bidder-1", Handle: "bidder-1.bob.test", PrivateKeyHex: "cc"}},
 		DispatcherPort: 40001, GuestTLSPort: 40002,

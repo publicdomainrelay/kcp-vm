@@ -14,7 +14,7 @@ spec:
     SERVICE_ENTRY: "{{.OrgRoot}}/did-key-ingress-proxy/hono-did-key-ingress-proxy/mod.ts"
     SERVICE_CWD: "{{.OrgRoot}}/did-key-ingress-proxy"
     SERVICE_ARGS: '["--hostname","relay.localhost","--port","0","--additional-hosts","dispatcher.default.relay.svc.kcp.local,*","--plc-directory-url","https://plc.default.global.svc.kcp.local"]'
-    SERVICE_DENO_FLAGS: '["--node-modules-dir=none"]'
+    SERVICE_DENO_FLAGS: '["--node-modules-dir=none","--lock={{.LockDir}}/did-key-ingress-proxy.lock"]'
     SERVICE_TLS: "true"
     SERVICE_ENV: '{"PORT":"0"}'
   script: |
