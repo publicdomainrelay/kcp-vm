@@ -68,7 +68,32 @@ func workspacePhase(u *unstructured.Unstructured) string {
 	return p
 }
 
+func WaitHost(ctx context.Context, kubeconfig string, timeout time.Duration) error {
+	dc, err := clusterClient(kubeconfig, DevWorkspace)
+	if err != nil {
+		return err
+	}
+	deadline := time.Now().Add(timeout)
+	for {
+		_, err := dc.Resource(workspacesGVR).List(ctx, metav1.ListOptions{Limit: 1})
+		if err == nil {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("devinstance: the dev host's %s did not serve workspaces within %s: %w", DevWorkspace, timeout, err)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+}
+
 func EnsureChildWorkspace(ctx context.Context, kubeconfig, id string, timeout time.Duration) error {
+	if err := WaitHost(ctx, kubeconfig, timeout); err != nil {
+		return err
+	}
 	dc, err := clusterClient(kubeconfig, DevWorkspace)
 	if err != nil {
 		return err

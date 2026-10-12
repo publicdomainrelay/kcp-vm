@@ -502,6 +502,11 @@ func devUp(ctx context.Context, a *app, vals clicfg.Values, host bool) int {
 		return a.fail(exitFailed, "dev up: %v", err)
 	}
 	devinstance.ReadJSON(l.Record, &rec)
+	if host {
+		if err := devinstance.WaitHost(ctx, rec.AdminKubeconfig, readyTimeout); err != nil {
+			return a.fail(exitFailed, "dev host: %v", err)
+		}
+	}
 	ex := devinstance.Exports(rec, a.instanceLeases(l.ID))
 	if err := writeEnvFiles(l, ex); err != nil {
 		return a.fail(exitFailed, "dev up: %v", err)
