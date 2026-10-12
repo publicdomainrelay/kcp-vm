@@ -101,6 +101,8 @@ func (n Names) UnitPrefix() string { return n.base() }
 
 func (n Names) DevCore() string { return n.Prefix + "core-" + n.Key + "-dev" + hostsvc.ServiceSuffix }
 
+func (n Names) HostProcessPrefix() string { return n.Prefix + "hp-" + n.Key + "-" }
+
 func (n Names) CorePrefix() string { return n.Prefix + "core-" + n.Key + "-" }
 
 func (n Names) CoreSlice() string { return n.Prefix + "core-" + n.Key + ".slice" }

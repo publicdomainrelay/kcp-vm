@@ -11,6 +11,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/bootstrap"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devinstance"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostos"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostprocess"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/stack/denoruntime"
 )
@@ -90,6 +91,9 @@ func Run(ctx context.Context, cfg Config, m hostsvc.Manager) error {
 	}
 	if cfg.DenoRuntime != nil {
 		go denoruntime.Supervise(ctx, *cfg.DenoRuntime)
+	}
+	if len(rec.StandIns) == 0 && rec.AdminKubeconfig != "" {
+		go hostprocess.Supervise(ctx, HostProcessConfig(bcfg, rec, m, log))
 	}
 	t := time.NewTicker(CheckInterval)
 	defer t.Stop()

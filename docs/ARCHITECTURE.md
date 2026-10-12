@@ -6332,6 +6332,25 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   by name in a user manager (test prefix) in 6.4 s, and starting the core pulled pg, kine and the slot
   ahead of it.
 
+- **Host processes are HostProcess objects in the application's own kcp (plan 0006
+  M2-HOSTPROCESS-KIND, 2026-10-12).** Kind `HostProcess` (socialweb.computer/v1alpha1, export
+  `hostprocesses` in `root:socialweb-provider`, bound in `root` by the `hostprocesses` set; the bidder
+  WorkspaceType binds the same export). `status.runtime.backend` is a plain string, so the schema names
+  no backend. `internal/hostprocess` holds a pure reconciler (`Reconcile(Observed) Result`) and a
+  supervisor that runs inside the core (today the dev core; `serve gateway kcp` and `run bidder` start
+  it when they are built). Rules: adopt by unit name and InvocationID, never re-create; a manager that
+  does not answer is Unknown, never Lost; an object placed by another backend is
+  Lost(IdentityMismatch) and is never adopted; an identity mismatch on an active unit stops the unit
+  at once; a supervisor places only units under its own prefix `socialweb-hp-<key>-`, and stops a unit
+  of that prefix whose object is gone. `spec.placement: bootstrap` objects are read-only mirrors of the
+  bootstrap layer (`bootstrap-<role>`): the supervisor writes their status and never starts or stops
+  their unit, and a deleted mirror is written again on the next pass. Readings on hat-8: on a quick dev
+  instance `kubectl get hostprocesses` listed the five mirrors with pid, invocation and listener; a
+  stand-in object was placed on proc and kept its InvocationID across a kill -9 of the core; deleting
+  the front mirror left the front running; deleting the stand-in stopped its unit. On systemd-user
+  (test prefix, a separate workspace) a second supervisor process adopted the stand-in with the same
+  InvocationID and LimitsEnforced=True, and the delete stopped the unit.
+
 ## 16. Vocabulary
 
 | | |
