@@ -355,8 +355,8 @@ items:
     test_first: "test/user_data_enrichment_golden_test.ts (goldens captured from firecracker before the move); fails to compile before, passes after; the suite stays green."
     done_when: "golden test green; deno task test green."
     risks: ["Helpers closing over module state (jsrPort, nextIndex) stay in the impl and are passed in."]
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M1-QR-DEPLOY
     milestone: M1
     title: did-key-associator's deploy ships a self-contained backend, has a static-only mode and a dry-run
