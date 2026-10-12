@@ -42,7 +42,7 @@ func runVMM(ctx context.Context, params namespaceParams) error {
 		sink = io.MultiWriter(console, os.Stdout)
 	}
 	vmm.Stdout, vmm.Stderr = sink, sink
-	vmm.SysProcAttr = hostos.DetachProcess()
+	vmm.SysProcAttr = hostos.DieWithParent()
 	if err := vmm.Start(); err != nil {
 		return fmt.Errorf("nodefirecracker: starting %s: %w", params.VMM, err)
 	}
