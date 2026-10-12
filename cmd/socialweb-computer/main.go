@@ -48,9 +48,14 @@ type builtVerb struct {
 func builtVerbs() map[string]builtVerb {
 	return map[string]builtVerb{
 		"version":           {[]string{"json"}, runVersion},
-		"dev up":            {[]string{backendOpt, "instance", "state-dir", "profile", "kcp-path", "kine-path", "ready-timeout", "kcp-base-workspace"}, runDevUp},
+		"dev up":            {[]string{backendOpt, "instance", "state-dir", "profile", "kcp-path", "kine-path", "ready-timeout", "kcp-base-workspace", "fg", "keep-state"}, runDevUp},
 		"dev status":        {[]string{"instance", "state-dir"}, runDevStatus},
 		"dev down":          {[]string{"instance", "state-dir", "keep-state"}, runDevDown},
+		"dev ls":            {[]string{"state-dir"}, runDevLs},
+		"dev logs":          {[]string{"instance", "state-dir", "tail"}, runDevLogs},
+		"dev env":           {[]string{"instance", "state-dir", "json"}, runDevEnv},
+		"dev check":         {nil, runDevCheck},
+		"dev restart":       {[]string{"instance", "state-dir", "binary", "ready-timeout"}, runDevRestart},
 		"internal devsup":   {[]string{"state", "socket", "die-with", "instance"}, runDevsup},
 		"internal dev-core": {[]string{"instance-dir", "ready-timeout"}, runDevCore},
 	}
@@ -108,7 +113,7 @@ func run(ctx context.Context, args []string, env clicfg.Env, stdout, stderr io.W
 			}
 		}
 	}
-	vals, rest, err := spec.Resolve(verb.Path, names, rest, env, config, stderr)
+	vals, rest, err := spec.Resolve(verb.Path, names, flagsFirst(spec, rest), env, config, stderr)
 	if errors.Is(err, flag.ErrHelp) {
 		return exitOK
 	}
@@ -134,6 +139,31 @@ func run(ctx context.Context, args []string, env clicfg.Env, stdout, stderr io.W
 		return exitRefused
 	}
 	return built.run(ctx, a, vals, rest)
+}
+
+func flagsFirst(spec clicfg.Spec, args []string) []string {
+	var flags, words []string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			words = append(words, args[i+1:]...)
+			break
+		}
+		if !strings.HasPrefix(arg, "-") || arg == "-" {
+			words = append(words, arg)
+			continue
+		}
+		flags = append(flags, arg)
+		name := strings.TrimLeft(arg, "-")
+		if strings.Contains(name, "=") {
+			continue
+		}
+		if o, ok := spec.Options[name]; ok && o.Type != clicfg.TypeBoolean && i+1 < len(args) {
+			i++
+			flags = append(flags, args[i])
+		}
+	}
+	return append(flags, words...)
 }
 
 func (a *app) usage(w io.Writer, group string) {

@@ -28,11 +28,11 @@ func TestTwoWorktreesGetDistinctInstanceIDsAndShortSocketPaths(t *testing.T) {
 	base := t.TempDir()
 	a := worktree(t, filepath.Join(base, "one"), "socialweb-computer-kcp")
 	b := worktree(t, filepath.Join(base, "two"), "socialweb-computer-kcp")
-	ida, err := ID("", filepath.Join(a, "sub", "dir"))
+	ida, err := ID("", filepath.Join(a, "sub", "dir"), mapEnv{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	idb, err := ID("", b)
+	idb, err := ID("", b, mapEnv{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +54,7 @@ func TestTwoWorktreesGetDistinctInstanceIDsAndShortSocketPaths(t *testing.T) {
 
 func TestTheSocketPathOfTheLongestWorktreeIsUnder108Bytes(t *testing.T) {
 	long := "/" + strings.Repeat("d", 200)
-	id, err := ID("", t.TempDir())
+	id, err := ID("", t.TempDir(), mapEnv{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,10 +77,10 @@ func TestDevRefusesRoot(t *testing.T) {
 }
 
 func TestANamedInstanceIsValidated(t *testing.T) {
-	if _, err := ID("Bad Name", "/"); err == nil {
+	if _, err := ID("Bad Name", "/", mapEnv{}); err == nil {
 		t.Fatal("accepted")
 	}
-	if id, err := ID("proof-a", "/"); err != nil || id != "proof-a" {
+	if id, err := ID("proof-a", "/", mapEnv{}); err != nil || id != "proof-a" {
 		t.Fatal(id, err)
 	}
 }

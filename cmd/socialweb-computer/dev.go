@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -22,6 +23,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devsup"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostos"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/portallocator"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/versions"
 )
 
@@ -46,7 +48,7 @@ func (a *app) layout(vals clicfg.Values) (devinstance.Layout, error) {
 	if err != nil {
 		return devinstance.Layout{}, err
 	}
-	id, err := devinstance.ID(vals.String("instance"), cwd)
+	id, err := devinstance.ID(vals.String("instance"), cwd, a.env)
 	if err != nil {
 		return devinstance.Layout{}, err
 	}
@@ -61,6 +63,61 @@ func (a *app) layout(vals clicfg.Values) (devinstance.Layout, error) {
 	return devinstance.NewLayout(id, root, rt)
 }
 
+func (a *app) worktree(vals clicfg.Values) string {
+	if vals.String("instance") != "" {
+		return ""
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	real, err := filepath.EvalSymlinks(cwd)
+	if err != nil {
+		return ""
+	}
+	return devinstance.WorktreeRoot(real)
+}
+
+func (a *app) leases(id string) (*portallocator.Allocator, error) {
+	path, err := devinstance.LeasePath(a.env)
+	if err != nil {
+		return nil, err
+	}
+	return devinstance.OpenLeases(path, id)
+}
+
+func (a *app) instanceLeases(id string) []portallocator.Lease {
+	al, err := a.leases(id)
+	if err != nil {
+		a.log.Warn("the per-user lease file", "err", err.Error())
+		return nil
+	}
+	return al.Leases()
+}
+
+func writeEnvFiles(l devinstance.Layout, ex []devinstance.Export) error {
+	if err := os.WriteFile(filepath.Join(l.StateDir, devinstance.EnvFile), []byte(devinstance.ShellExports(ex)), 0o600); err != nil {
+		return err
+	}
+	return devinstance.WriteJSON(filepath.Join(l.StateDir, devinstance.EnvJSONFile), exportMap(ex))
+}
+
+func exportMap(ex []devinstance.Export) map[string]string {
+	out := map[string]string{}
+	for _, e := range ex {
+		out[e.Name] = e.Value
+	}
+	return out
+}
+
+func coreSpec(l devinstance.Layout, exe string, readyTimeout time.Duration) hostsvc.UnitSpec {
+	return hostsvc.UnitSpec{Name: l.CoreUnit(), Description: "dev core of " + l.ID,
+		Exec:    []string{exe, "internal", "dev-core", "--instance-dir", l.StateDir, "--ready-timeout", readyTimeout.String()},
+		WorkDir: l.StateDir, Slice: l.CoreSlice(), Restart: hostsvc.RestartOnFailure, KillSignal: syscall.SIGTERM,
+		StopTimeout: coreStopTimeout, After: []string{l.KcpUnit()},
+		Output: hostsvc.Output{StdoutFile: filepath.Join(l.Logs, "core.log"), StderrFile: filepath.Join(l.Logs, "core.log")}}
+}
+
 func selfExe() (string, error) {
 	p, err := os.Executable()
 	if err != nil {
@@ -70,6 +127,18 @@ func selfExe() (string, error) {
 }
 
 func checkExe(ctx context.Context, option, path string) (devinstance.Executable, error) {
+	e, err := hashExe(option, path)
+	if err != nil {
+		return e, err
+	}
+	vctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	out, _ := exec.CommandContext(vctx, path, "--version").CombinedOutput()
+	e.Version = strings.TrimSpace(string(out))
+	return e, nil
+}
+
+func hashExe(option, path string) (devinstance.Executable, error) {
 	if path == "" {
 		return devinstance.Executable{}, fmt.Errorf("%s is required in this dev build (an absolute path; never PATH)", option)
 	}
@@ -89,10 +158,7 @@ func checkExe(ctx context.Context, option, path string) (devinstance.Executable,
 	if _, err := io.Copy(h, f); err != nil {
 		return devinstance.Executable{}, err
 	}
-	vctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	out, _ := exec.CommandContext(vctx, path, "--version").CombinedOutput()
-	return devinstance.Executable{Path: path, SHA256: hex.EncodeToString(h.Sum(nil)), Version: strings.TrimSpace(string(out))}, nil
+	return devinstance.Executable{Path: path, SHA256: hex.EncodeToString(h.Sum(nil))}, nil
 }
 
 func lockFile(path string, wait time.Duration) (*os.File, error) {
@@ -130,14 +196,23 @@ func helloDevsup(ctx context.Context, l devinstance.Layout) (hostsvc.ProcClient,
 	return c, h, nil
 }
 
-func startOrAdoptDevsup(ctx context.Context, a *app, l devinstance.Layout, exe string) (hostsvc.ProcClient, devinstance.Devsup, error) {
+var errDevsupDetached = errors.New("the instance is already up with a detached devsup")
+
+func startOrAdoptDevsup(ctx context.Context, a *app, l devinstance.Layout, exe string, dieWith int) (hostsvc.ProcClient, devinstance.Devsup, error) {
 	if c, h, err := helloDevsup(ctx, l); err == nil {
+		if dieWith != 0 {
+			c.Close()
+			return nil, devinstance.Devsup{}, fmt.Errorf("%w (devsup pid %d); dev down it first, or run dev up without --fg", errDevsupDetached, h.PID)
+		}
 		return c, devinstance.Devsup{Instance: h.Instance, PID: h.PID, StartTicks: h.StartTicks, BootID: h.BootID, Adopted: true}, nil
 	}
 	if err := os.MkdirAll(l.SupState, 0o700); err != nil {
 		return nil, devinstance.Devsup{}, err
 	}
 	argv := []string{exe, "internal", "devsup", "--state", l.SupState, "--socket", l.Socket, "--instance", l.ID}
+	if dieWith != 0 {
+		argv = append(argv, "--die-with", strconv.Itoa(dieWith))
+	}
 	pid, err := devinstance.SpawnDetached(argv, filepath.Join(l.SupState, "devsup.log"))
 	if err != nil {
 		return nil, devinstance.Devsup{}, fmt.Errorf("starting devsup: %w", err)
@@ -172,6 +247,9 @@ type upReport struct {
 	ReadyAt         time.Time                         `json:"readyAt"`
 	Seconds         float64                           `json:"seconds"`
 	Env             map[string]string                 `json:"env"`
+	EnvFile         string                            `json:"envFile"`
+	Marker          string                            `json:"marker,omitempty"`
+	Foreground      bool                              `json:"foreground,omitempty"`
 	Executables     map[string]devinstance.Executable `json:"executables"`
 }
 
@@ -222,7 +300,16 @@ func runDevUp(ctx context.Context, a *app, vals clicfg.Values, rest []string) in
 	if err != nil {
 		return a.fail(exitFailed, "dev up: %v", err)
 	}
-	m, sup, err := startOrAdoptDevsup(ctx, a, l, exe)
+	fg := vals.Bool("fg")
+	dieWith := 0
+	if fg {
+		dieWith = os.Getpid()
+	}
+	m, sup, err := startOrAdoptDevsup(ctx, a, l, exe, dieWith)
+	if errors.Is(err, errDevsupDetached) {
+		lock.Close()
+		return a.fail(exitRefused, "dev up: %v", err)
+	}
 	if err != nil {
 		lock.Close()
 		return a.fail(exitFailed, "dev up: %v", err)
@@ -233,6 +320,7 @@ func runDevUp(ctx context.Context, a *app, vals clicfg.Values, rest []string) in
 		rec = devinstance.Record{Created: started}
 	}
 	rec.Layout, rec.Profile, rec.Backend, rec.Devsup = l, vals.String("profile"), hostsvc.BackendProc, sup
+	rec.Worktree = a.worktree(vals)
 	rec.BaseWorkspace = vals.String("kcp-base-workspace")
 	rec.Executables = map[string]devinstance.Executable{"kcp": kcpExe, "kine": kineExe, "socialweb-computer": {Path: exe}}
 	bcfg := bootstrap.Config{Layout: l, KcpPath: kcpExe.Path, KinePath: kineExe.Path, ReadyTimeout: readyTimeout, Log: a.log}
@@ -246,12 +334,7 @@ func runDevUp(ctx context.Context, a *app, vals clicfg.Values, rest []string) in
 		return a.fail(exitFailed, "dev up: %v", err)
 	}
 	lock.Close()
-	coreSpec := hostsvc.UnitSpec{Name: l.CoreUnit(), Description: "dev core of " + l.ID,
-		Exec:    []string{exe, "internal", "dev-core", "--instance-dir", l.StateDir, "--ready-timeout", readyTimeout.String()},
-		WorkDir: l.StateDir, Slice: l.CoreSlice(), Restart: hostsvc.RestartOnFailure, KillSignal: syscall.SIGTERM,
-		StopTimeout: coreStopTimeout, After: []string{l.KcpUnit()},
-		Output: hostsvc.Output{StdoutFile: filepath.Join(l.Logs, "core.log"), StderrFile: filepath.Join(l.Logs, "core.log")}}
-	cst, err := m.Start(ctx, coreSpec)
+	cst, err := m.Start(ctx, coreSpec(l, exe, readyTimeout))
 	if err != nil {
 		return a.fail(exitFailed, "dev up: placing the core: %v", err)
 	}
@@ -260,12 +343,34 @@ func runDevUp(ctx context.Context, a *app, vals clicfg.Values, rest []string) in
 		return a.fail(exitFailed, "dev up: %v", err)
 	}
 	devinstance.ReadJSON(l.Record, &rec)
+	ex := devinstance.Exports(rec, a.instanceLeases(l.ID))
+	if err := writeEnvFiles(l, ex); err != nil {
+		return a.fail(exitFailed, "dev up: %v", err)
+	}
+	marker := ""
+	if rec.Worktree != "" {
+		if err := devinstance.LinkMarker(rec.Worktree, l.StateDir); err != nil {
+			a.log.Warn("worktree marker", "err", err.Error())
+		} else {
+			marker = filepath.Join(rec.Worktree, devinstance.Marker)
+		}
+	}
 	ready := time.Now().UTC()
 	a.printJSON(upReport{Instance: l.ID, Profile: rec.Profile, StateDir: l.StateDir, Socket: l.Socket,
 		AdminKubeconfig: rec.AdminKubeconfig, KcpURL: rec.KcpURL, KineURL: rec.KineURL, Devsup: sup, Units: rec.Units,
 		Core: core, StartedAt: started, ReadyAt: ready, Seconds: ready.Sub(started).Seconds(),
-		Env: map[string]string{"KUBECONFIG": rec.AdminKubeconfig, "SOCIALWEB_KCP_BASE_WORKSPACE": rec.BaseWorkspace,
-			"SOCIALWEB_INSTANCE": l.ID}, Executables: rec.Executables})
+		Env: exportMap(ex), EnvFile: filepath.Join(l.StateDir, devinstance.EnvFile), Marker: marker, Foreground: fg,
+		Executables: rec.Executables})
+	if !fg {
+		return exitOK
+	}
+	a.log.Info("dev up --fg: the instance lives as long as this process; Ctrl-C is dev down", "instance", l.ID)
+	<-ctx.Done()
+	r := downInstance(context.Background(), a, l, vals.Bool("keep-state"))
+	a.printJSON(r)
+	if len(r.Remaining) > 0 {
+		return exitFailed
+	}
 	return exitOK
 }
 
@@ -299,7 +404,8 @@ type statusReport struct {
 		Units     []hostsvc.UnitStatus `json:"units,omitempty"`
 		Error     string               `json:"error,omitempty"`
 	} `json:"devsup"`
-	Ports map[string]int `json:"ports,omitempty"`
+	Ports  map[string]int        `json:"ports,omitempty"`
+	Leases []portallocator.Lease `json:"leases"`
 }
 
 func runDevStatus(ctx context.Context, a *app, vals clicfg.Values, rest []string) int {
@@ -307,7 +413,7 @@ func runDevStatus(ctx context.Context, a *app, vals clicfg.Values, rest []string
 	if err != nil {
 		return a.fail(exitRefused, "dev status: %v", err)
 	}
-	r := statusReport{Instance: l.ID}
+	r := statusReport{Instance: l.ID, Leases: a.instanceLeases(l.ID)}
 	var rec devinstance.Record
 	if err := devinstance.ReadJSON(l.Record, &rec); err == nil {
 		r.Found, r.Record = true, &rec
@@ -341,6 +447,8 @@ func runDevStatus(ctx context.Context, a *app, vals clicfg.Values, rest []string
 
 type downReport struct {
 	Instance       string               `json:"instance"`
+	LeasesReleased int                  `json:"leasesReleased"`
+	MarkerRemoved  bool                 `json:"markerRemoved"`
 	DevsupStopped  bool                 `json:"devsupStopped"`
 	DevsupPID      int                  `json:"devsupPID,omitempty"`
 	Swept          []devsup.SweepReport `json:"swept,omitempty"`
@@ -352,12 +460,10 @@ type downReport struct {
 }
 
 func runDevDown(ctx context.Context, a *app, vals clicfg.Values, rest []string) int {
-	started := time.Now()
 	l, err := a.layout(vals)
 	if err != nil {
 		return a.fail(exitRefused, "dev down: %v", err)
 	}
-	r := downReport{Instance: l.ID, LeftoverKilled: []int{}, Remaining: []int{}}
 	if _, err := os.Stat(l.StateDir); err == nil {
 		lock, err := lockFile(l.Lock, 2*time.Minute)
 		if err != nil {
@@ -365,6 +471,19 @@ func runDevDown(ctx context.Context, a *app, vals clicfg.Values, rest []string) 
 		}
 		defer lock.Close()
 	}
+	r := downInstance(ctx, a, l, vals.Bool("keep-state"))
+	a.printJSON(r)
+	if len(r.Remaining) > 0 {
+		return exitFailed
+	}
+	return exitOK
+}
+
+func downInstance(ctx context.Context, a *app, l devinstance.Layout, keepState bool) downReport {
+	started := time.Now()
+	r := downReport{Instance: l.ID, LeftoverKilled: []int{}, Remaining: []int{}}
+	var rec devinstance.Record
+	devinstance.ReadJSON(l.Record, &rec)
 	if c, h, err := helloDevsup(ctx, l); err == nil {
 		r.DevsupPID = h.PID
 		if err := c.Shutdown(ctx); err != nil {
@@ -392,17 +511,22 @@ func runDevDown(ctx context.Context, a *app, vals clicfg.Values, rest []string) 
 		r.RemovedRuntime = true
 		os.Remove(filepath.Dir(l.RuntimeDir))
 	}
-	if !vals.Bool("keep-state") {
+	if !keepState {
+		if rec.Worktree != "" {
+			r.MarkerRemoved = devinstance.UnlinkMarker(rec.Worktree, l.StateDir)
+		}
+		if al, err := a.leases(l.ID); err == nil {
+			r.LeasesReleased = len(al.Leases())
+			if err := al.ReleaseAll(); err != nil {
+				a.log.Warn("releasing the instance's leases", "err", err.Error())
+			}
+		}
 		if err := os.RemoveAll(l.StateDir); err == nil {
 			r.RemovedState = true
 		}
 	}
 	r.Seconds = time.Since(started).Seconds()
-	a.printJSON(r)
-	if len(r.Remaining) > 0 {
-		return exitFailed
-	}
-	return exitOK
+	return r
 }
 
 func runDevsup(ctx context.Context, a *app, vals clicfg.Values, rest []string) int {

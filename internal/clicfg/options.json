@@ -58,6 +58,20 @@
       "type": "boolean",
       "description": "dev down: keep the instance state directory"
     },
+    "fg": {
+      "type": "boolean",
+      "description": "dev up: keep the instance bound to this terminal; devsup dies with dev up and Ctrl-C is dev down"
+    },
+    "binary": {
+      "type": "string",
+      "description": "dev restart core: absolute path of the socialweb-computer executable the new core runs (this executable when unset)",
+      "env": "SOCIALWEB_DEV_CORE_BINARY"
+    },
+    "tail": {
+      "type": "number",
+      "description": "dev logs: print only the last N lines (0 prints the whole log)",
+      "default": 0
+    },
     "json": {
       "type": "boolean",
       "description": "Print JSON"

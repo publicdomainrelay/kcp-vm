@@ -67,7 +67,23 @@ func WorktreeRoot(dir string) string {
 	}
 }
 
-func ID(name, cwd string) (string, error) {
+func within(dir, root string) bool {
+	rel, err := filepath.Rel(root, dir)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+func readableName(root string, env Env) string {
+	task, _ := env.LookupEnv("TASK_NAME")
+	taskRoot, _ := env.LookupEnv("TASK_ROOT")
+	if task != "" && taskRoot != "" {
+		if real, err := filepath.EvalSymlinks(taskRoot); err == nil && within(root, real) {
+			return sanitize(task)
+		}
+	}
+	return sanitize(filepath.Base(root))
+}
+
+func ID(name, cwd string, env Env) (string, error) {
 	if name != "" {
 		if !namePattern.MatchString(name) {
 			return "", fmt.Errorf("devinstance: instance %q: want lower-case letters, digits and dashes, at most 40", name)
@@ -79,7 +95,7 @@ func ID(name, cwd string) (string, error) {
 		return "", err
 	}
 	root := WorktreeRoot(real)
-	return sanitize(filepath.Base(root)) + "-" + hash8(root), nil
+	return readableName(root, env) + "-" + hash8(root), nil
 }
 
 func Short(id string) string { return hash8("swc-instance:" + id) }
@@ -127,7 +143,7 @@ type Layout struct {
 
 func NewLayout(id, stateRoot, runtimeRoot string) (Layout, error) {
 	short := Short(id)
-	state := filepath.Join(stateRoot, "instances", id)
+	state := filepath.Join(DevRoot(stateRoot), id)
 	rt := filepath.Join(runtimeRoot, short)
 	l := Layout{
 		ID: id, Short: short, StateDir: state, RuntimeDir: rt,
@@ -197,6 +213,7 @@ type Devsup struct {
 
 type Record struct {
 	Layout          Layout                `json:"layout"`
+	Worktree        string                `json:"worktree,omitempty"`
 	Profile         string                `json:"profile"`
 	Backend         hostsvc.Backend       `json:"backend"`
 	BaseWorkspace   string                `json:"baseWorkspace"`
