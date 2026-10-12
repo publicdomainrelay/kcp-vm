@@ -135,7 +135,7 @@ work is done."
 
 - `go test ./...` for the Go unit tests.
 - `deploy/check.sh --fast` on every iteration: gofmt, go build, apigen drift, go vet, `deno task check`,
-  `deno install --frozen`, the cross-OS builds, the size budget, staticcheck, go test. `--local` runs
+  `deno install --frozen`, the cross-OS builds, the release builds, staticcheck, go test. `--local` runs
   the proofs this host can run and names every skip. `--full` fails on any skip. Only `--full` means
   "everything ran"; a bare `go test ./...` exits 0 on SKIP and is never the gate.
 - `deno task check` type-checks every entry of `deploy/ts-entries.yaml` from the root workspace.

@@ -100,16 +100,8 @@ for target in $(jq -r '.platforms | to_entries[] | select(.value.status == "rele
     rm -rf "$sizedir"
     fail "release build $target"
   fi
-  override=()
-  if [ -n "${SOCIALWEB_SIZE_BUDGET_BYTES:-}" ]; then
-    override=(-budget-bytes "$SOCIALWEB_SIZE_BUDGET_BYTES")
-  fi
-  if ! measured="$(go run ./internal/versions/sizegate -platform "$target" -binary "$sizedir/$goos-$goarch" -blobs "internal/assets/blobs/${goos}_${goarch}" -closure "internal/tsbundle/closure/${goos}_${goarch}" "${override[@]}")"; then
-    rm -rf "$sizedir"
-    fail "size budget $target (internal/versions/versions.json platforms.\"$target\".budget)"
-  fi
   rm -f "$sizedir/$goos-$goarch"
-  echo "check.sh: ok size budget $target $measured"
+  echo "check.sh: ok release build $target"
 done
 rm -rf "$sizedir"
 

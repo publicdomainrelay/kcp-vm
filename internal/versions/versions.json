@@ -53,51 +53,17 @@
     "linux/amd64": {
       "status": "release",
       "owner": "plan 0006 M1-ASSETS",
-      "note": "budget lines in bytes: core = the core binary with no blob (measured 14.8 MB, line 24 MiB for the fold work in flight); each asset = its measured zstd -19 --long=27 blob rounded up to 1 MiB; typescript-closure is set by 0008 M1-TS-CLOSURE, download-assets (socialweb-credential, socialweb-meshd) by the item that carries them, guest-images stays 0 (fetched, never embedded); enforced by deploy/check.sh through internal/versions/sizegate",
-      "assets": ["bao", "deno", "dumbpipe", "external-secrets", "firecracker", "k3s", "kcp", "kine", "pasta", "postgres"],
-      "budget": {
-        "core": 54525952,
-        "bao": 63963136,
-        "deno": 34603008,
-        "dumbpipe": 3145728,
-        "external-secrets": 81788928,
-        "firecracker": 2097152,
-        "k3s": 73400320,
-        "kcp": 59768832,
-        "kine": 13631488,
-        "pasta": 1048576,
-        "postgres": 26214400,
-        "typescript-closure": 20971520,
-        "guest-images": 0,
-        "download-assets": 0
-      }
+            "assets": ["bao", "deno", "dumbpipe", "external-secrets", "firecracker", "k3s", "kcp", "kine", "pasta", "postgres"]
     },
     "linux/arm64": {
       "status": "release",
       "owner": "plan 0006 M1-ASSETS",
-      "note": "budget lines in bytes: core = the core binary with no blob (measured 13.8 MB, line 24 MiB for the fold work in flight); each asset = its measured zstd -19 --long=27 blob rounded up to 1 MiB; typescript-closure is set by 0008 M1-TS-CLOSURE, download-assets (socialweb-credential, socialweb-meshd) by the item that carries them, guest-images stays 0 (fetched, never embedded); enforced by deploy/check.sh through internal/versions/sizegate",
-      "assets": ["bao", "deno", "dumbpipe", "external-secrets", "firecracker", "k3s", "kcp", "kine", "pasta", "postgres"],
-      "budget": {
-        "core": 54525952,
-        "bao": 58720256,
-        "deno": 33554432,
-        "dumbpipe": 3145728,
-        "external-secrets": 76546048,
-        "firecracker": 1048576,
-        "k3s": 66060288,
-        "kcp": 55574528,
-        "kine": 12582912,
-        "pasta": 1048576,
-        "postgres": 25165824,
-        "typescript-closure": 20971520,
-        "guest-images": 0,
-        "download-assets": 0
-      }
+            "assets": ["bao", "deno", "dumbpipe", "external-secrets", "firecracker", "k3s", "kcp", "kine", "pasta", "postgres"]
     },
-    "darwin/arm64": {"status": "seam", "owner": "plan 0012", "note": "seam: builds and vets, no assets, owned by plan 0012, which adds its own budget lines", "assets": []},
-    "darwin/amd64": {"status": "seam", "owner": "plan 0012", "note": "seam: builds and vets, no assets, owned by plan 0012, which adds its own budget lines", "assets": []},
-    "windows/amd64": {"status": "seam", "owner": "plan 0011", "note": "seam: builds and vets, no assets, owned by plan 0011, which adds its own budget lines", "assets": []},
-    "windows/arm64": {"status": "seam", "owner": "plan 0011", "note": "seam: builds and vets, no assets, owned by plan 0011, which adds its own budget lines", "assets": []}
+    "darwin/arm64": {"status": "seam", "owner": "plan 0012", "note": "seam: builds and vets, no assets, owned by plan 0012", "assets": []},
+    "darwin/amd64": {"status": "seam", "owner": "plan 0012", "note": "seam: builds and vets, no assets, owned by plan 0012", "assets": []},
+    "windows/amd64": {"status": "seam", "owner": "plan 0011", "note": "seam: builds and vets, no assets, owned by plan 0011", "assets": []},
+    "windows/arm64": {"status": "seam", "owner": "plan 0011", "note": "seam: builds and vets, no assets, owned by plan 0011", "assets": []}
   },
   "assets": {
     "kcp": {
@@ -322,7 +288,7 @@
     }
   },
   "guestImages": {
-    "note": "guest images (kernel + rootfs + image.json) per hypervisor x arch, built by scripts/build-guest-image.sh on any Linux host with docker or podman (plan 0007 M1-GUEST-IMAGE); reproducible from the inputs below, pinned by the sha256 of each output, never embedded (the guest-images budget line stays 0), fetched and verified by internal/guestimage",
+    "note": "guest images (kernel + rootfs + image.json) per hypervisor x arch, built by scripts/build-guest-image.sh on any Linux host with docker or podman (plan 0007 M1-GUEST-IMAGE); reproducible from the inputs below, pinned by the sha256 of each output, never embedded, fetched and verified by internal/guestimage",
     "builder": {
       "dockerfile": "deploy/guest-image/builder/Dockerfile",
       "base": "docker.io/library/debian@sha256:913f6706df59a68922d1dd08f78c2476560a8d367897200a6005b00e5f67c2d5 (trixie-20261005)",

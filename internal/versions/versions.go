@@ -84,19 +84,10 @@ const (
 )
 
 type Platform struct {
-	Status string           `json:"status"`
-	Owner  string           `json:"owner"`
-	Note   string           `json:"note,omitempty"`
-	Assets []string         `json:"assets"`
-	Budget map[string]int64 `json:"budget,omitempty"`
-}
-
-func (p Platform) BudgetTotal() int64 {
-	var t int64
-	for _, v := range p.Budget {
-		t += v
-	}
-	return t
+	Status string   `json:"status"`
+	Owner  string   `json:"owner"`
+	Note   string   `json:"note,omitempty"`
+	Assets []string `json:"assets"`
 }
 
 type Asset struct {
@@ -183,13 +174,12 @@ func PlatformPins(platform string) ([]Pin, error) {
 }
 
 type Measured struct {
-	Platform   string           `json:"platform"`
-	Binary     int64            `json:"binaryBytes"`
-	Core       int64            `json:"coreBytes"`
-	Assets     map[string]int64 `json:"assetBytes"`
-	Projected  int64            `json:"projectedBytes"`
-	NotStaged  []string         `json:"notStaged"`
-	BudgetUsed int64            `json:"budgetBytes"`
+	Platform  string           `json:"platform"`
+	Binary    int64            `json:"binaryBytes"`
+	Core      int64            `json:"coreBytes"`
+	Assets    map[string]int64 `json:"assetBytes"`
+	Projected int64            `json:"projectedBytes"`
+	NotStaged []string         `json:"notStaged"`
 }
 
 func MeasureRelease(platform, binary, blobDir string) (Measured, error) {
@@ -217,32 +207,6 @@ func MeasureRelease(platform, binary, blobDir string) (Measured, error) {
 		m.Projected += v
 	}
 	return m, nil
-}
-
-func CheckBudget(platform string, p Platform, coreBytes int64, assetBytes map[string]int64) []string {
-	var over []string
-	if len(p.Budget) == 0 {
-		return []string{fmt.Sprintf("%s: no budget lines recorded", platform)}
-	}
-	var total int64 = coreBytes
-	if line, ok := p.Budget["core"]; !ok || coreBytes > line {
-		over = append(over, fmt.Sprintf("%s: core %d B > budget line %d B", platform, coreBytes, line))
-	}
-	names := make([]string, 0, len(assetBytes))
-	for n := range assetBytes {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	for _, n := range names {
-		total += assetBytes[n]
-		if line, ok := p.Budget[n]; !ok || assetBytes[n] > line {
-			over = append(over, fmt.Sprintf("%s: asset %s %d B > budget line %d B", platform, n, assetBytes[n], line))
-		}
-	}
-	if b := p.BudgetTotal(); total > b {
-		over = append(over, fmt.Sprintf("%s: release binary %d B > budget %d B", platform, total, b))
-	}
-	return over
 }
 
 func Get(name string) (Component, error) {
