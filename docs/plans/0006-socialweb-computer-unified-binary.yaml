@@ -1383,8 +1383,8 @@ items:
     risks:
       - "systemd's EnvironmentFile cannot change ExecStart's executable path; the slot units name the content-addressed kcp asset path through a stable per-owner symlink retargeted only by a roll, measured and recorded."
       - "Installed units started at boot make kcp come back after a reboot while every VM is Lost (reboot = Lost, user 2026-10-11); that is the intended order: kcp first, then the core re-populates and marks VMs Lost(HostRebooted)."
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M2-POSTGRES
     milestone: M2
     kcp_use: "traditional-exception (virtual Kubernetes clusters project: tenant cluster stores; principle)"
