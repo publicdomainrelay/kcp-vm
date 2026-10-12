@@ -49,6 +49,7 @@ type MarketBidder struct {
 	ProviderRead     string
 	ProviderWrite    string
 	ProviderRun      string
+	DNSTableExtra    string
 }
 
 type BidderVault struct {

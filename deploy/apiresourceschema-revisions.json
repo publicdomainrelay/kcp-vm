@@ -17,13 +17,17 @@
   "v1alpha1-2.hostprocesses.socialweb.computer": "sha256:41bb54a5265809f640d83ab88d5642d247d1495d56bc55c3ce0d4b79ffda4901",
   "v1alpha1-2.marketbidders.socialweb.computer": "sha256:805911a8bb7966e7ca8ef8fd01c2583c1d88a1e81dc4fa44ecb7b709c3db2869",
   "v1alpha1-2.marketnetworks.socialweb.computer": "sha256:9948e6f68751d81f30f6b4f38fea15c3bb629041ad9342990751e5a4c88ebe2e",
+  "v1alpha1-2.marketrequesters.socialweb.computer": "sha256:e27fdfd5c3adfd247f2aa68985022031acb29b5639b85e53d2083994aa5788c7",
   "v1alpha1-2.nodeclaims.socialweb.computer": "sha256:23ffbeaac493044dc5d66ff5d221aac8c11ab493dc32cd24fa58d79d60d6bcb9",
   "v1alpha1-2.openbaoservers.socialweb.computer": "sha256:e31ad24a1b367213407b18cce5028265854ad8ee949c013769255ecd92cf0e2d",
   "v1alpha1-3.gateways.socialweb.computer": "sha256:93ae84b626f6a3539877139c318fafaa7bb48daa6691fb4a913a6cad3f673ca4",
   "v1alpha1-3.hostprocesses.socialweb.computer": "sha256:d1359fe7c6414c7bf8519cbc6a22e9b68f791482b3c48432d427268bd253ce10",
+  "v1alpha1-3.marketbidders.socialweb.computer": "sha256:7f1a79dbc99ee3dc78329b68813397ceba6731aa0aff3cf2d155fc58edf3cb9e",
+  "v1alpha1-3.marketnetworks.socialweb.computer": "sha256:7bcc4d30773dd2e5da5cc72ead2f12bc21bddffa217035bd053dc665c94dce00",
   "v1alpha1-3.nodeclaims.socialweb.computer": "sha256:e3cd19eb7d87769a3c1fbd5dead4dd09e8d3ddf502bb8fd97f9e831207a7ab4d",
   "v1alpha1-3.openbaoservers.socialweb.computer": "sha256:ee130e06fc1c4c86b69261918f1ac6a33c4635577e3318f8f40d3396b369451d",
   "v1alpha1-4.gateways.socialweb.computer": "sha256:873cc051907bf9e0feed4f4efe9896093d3a8fb95a750204cbd995b3523734b0",
   "v1alpha1-4.nodeclaims.socialweb.computer": "sha256:818c9804cb818436355ff6767af2f6078b5fee4f67d476884a0874e89c35bd9f",
+  "v1alpha1-5.gateways.socialweb.computer": "sha256:eb20d58fdec0e1c91d4305f0df338f88e02dad3fee7949004e00606d2d4b669d",
   "v1alpha1-5.nodeclaims.socialweb.computer": "sha256:d0273de8c1e37889aff6eba9fd9292c048a56cdc2a3ffd70b0a5b42e1abad0fe"
 }

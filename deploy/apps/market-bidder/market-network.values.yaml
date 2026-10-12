@@ -9,6 +9,7 @@ env:
   PORT: "0"
   SERVE_PORT: "0"
   PDS_STATE_PATH: "{{.StateDir}}/pds-state"
+  KCP_DNS_TABLE_EXTRA: {{.DNSTableExtra}}
 permissions:
   net: true
   env: true

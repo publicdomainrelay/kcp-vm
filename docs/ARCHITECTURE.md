@@ -6718,9 +6718,11 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   (the ownership scan: every 5 minutes, 30 s while one waits, at most 20 record lookups a pass, over the
   owners of the current claims) waits a grace of 10 minutes from when the web app started and is then
   released once (reason `unclaimed_after_join_grace`); the web app cannot see the provider's
-  path-up time, so the grace is long rather than rebased. A market-network Gateway names the network's
-  published hosts in `spec.marketNetwork.names` (schema revision 4), merged into the web app's DNS table,
-  because the network's DID documents name its PDSes by service name on port 443; every vault unit the
+  path-up time, so the grace is long rather than rebased. The market network value carries the
+  network's published names (`names`: each service name and its loopback address; MarketNetwork revision 3,
+  MarketBidder 3, MarketRequester 2, Gateway 5), copied onto every child root object and seeded into the
+  bidder's and the web app's DNS shim (`KCP_DNS_TABLE_EXTRA`), because the network's DID documents name its
+  PDSes by service name on port 443 and a child application reads another account's records there; every vault unit the
   core places carries the core's `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY` and `SSL_CERT_FILE`, and the web app the first three, so a cluster
   vault fetches a bidder's issuer the way the host's own outbound traffic does.
 

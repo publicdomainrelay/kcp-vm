@@ -18,6 +18,8 @@ type MarketNetworkValue struct {
 	GuestTlsUrl string `json:"guestTlsUrl,omitempty"`
 
 	CaBundleRef string `json:"caBundleRef,omitempty"`
+
+	Names []NetworkName `json:"names,omitempty"`
 }
 
 type ApplicationKind string
@@ -207,8 +209,6 @@ type GatewayMarketNetwork struct {
 	NodeGuestHostAliases []string `json:"nodeGuestHostAliases,omitempty"`
 
 	NodeUserDataBaseFile string `json:"nodeUserDataBaseFile,omitempty"`
-
-	Names []NetworkName `json:"names,omitempty"`
 }
 
 type NetworkName struct {

@@ -72,6 +72,15 @@ func BidderValues(spec v1alpha1.MarketBidderSpec, stateDir string, kcp BidderKcp
 	v := manifests.MarketBidder{StateDir: stateDir, Handle: spec.Identity.Handle, PdsUrl: spec.Identity.PdsUrl,
 		PlcDirectoryUrl: n.PlcDirectoryUrl, IngressProxyHost: n.IngressProxyHost, RelayUrls: strings.Join(n.RelayUrls, ","),
 		GuestTLSPort: tlsPort, CABundle: n.CaBundleRef, Policy: spec.Policy}
+	table, err := NamesTable(n.Names)
+	if err != nil {
+		return manifests.MarketBidder{}, err
+	}
+	quoted, err := json.Marshal(table)
+	if err != nil {
+		return manifests.MarketBidder{}, err
+	}
+	v.DNSTableExtra = string(quoted)
 	if err := providerValues(&v, spec, kcp); err != nil {
 		return manifests.MarketBidder{}, err
 	}

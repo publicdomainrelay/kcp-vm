@@ -2,11 +2,13 @@ package appctl
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 
@@ -17,6 +19,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devinstance"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpapply"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcplibs/common/kcp"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/manifests"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/stack/denoruntime"
 )
@@ -145,7 +148,25 @@ func NetworkValue(views map[string]podView, caBundle string) (v1alpha1.MarketNet
 		QrOrigin:         "",
 		GuestTlsUrl:      "https://" + GuestTLSHost + ":" + ports["relay/dispatcher-tls"],
 		CaBundleRef:      caBundle,
+		Names:            networkNames(views),
 	}, nil
+}
+
+func networkNames(views map[string]podView) []v1alpha1.NetworkName {
+	keys := make([]string, 0, len(views))
+	for k := range views {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var out []v1alpha1.NetworkName
+	for _, k := range keys {
+		ws, name, ok := strings.Cut(k, "/")
+		if !ok || views[k].Address == "" {
+			continue
+		}
+		out = append(out, v1alpha1.NetworkName{Name: name + ".default." + ws + ".svc." + kcp.DefaultServiceDomain, Address: views[k].Address})
+	}
+	return out
 }
 
 func (n *networks) caBundle(ctx context.Context, ob denoruntime.OpenBao) (string, error) {
@@ -411,4 +432,13 @@ func (n *networks) ensureApp(ctx context.Context, app v1alpha1.NetworkApp, value
 		out.Phase = v1alpha1.ApplicationPhasePending
 	}
 	return out
+}
+
+func NamesTable(names []v1alpha1.NetworkName) (string, error) {
+	table := map[string]string{}
+	for _, n := range names {
+		table[n.Name] = n.Address
+	}
+	raw, err := json.Marshal(table)
+	return string(raw), err
 }

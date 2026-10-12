@@ -391,6 +391,12 @@ export interface MarketNetworkValue {
   qrOrigin: string;
   guestTlsUrl?: string;
   caBundleRef?: string;
+  names?: NetworkName[];
+}
+
+export interface NetworkName {
+  name: string;
+  address: string;
 }
 
 export interface ApplicationComponent {
@@ -492,12 +498,6 @@ export interface GatewayMarketNetwork {
   ownerSessionsFile?: string;
   nodeGuestHostAliases?: string[];
   nodeUserDataBaseFile?: string;
-  names?: NetworkName[];
-}
-
-export interface NetworkName {
-  name: string;
-  address: string;
 }
 
 export interface ApiResource {
@@ -584,7 +584,7 @@ export const MARKET_NETWORK_RESOURCE: ApiResource = {
   listKind: "MarketNetworkList",
   plural: "marketnetworks",
   singular: "marketnetwork",
-  schema: "v1alpha1-2.marketnetworks.socialweb.computer",
+  schema: "v1alpha1-3.marketnetworks.socialweb.computer",
   export: "applications",
 };
 
@@ -595,7 +595,7 @@ export const MARKET_BIDDER_RESOURCE: ApiResource = {
   listKind: "MarketBidderList",
   plural: "marketbidders",
   singular: "marketbidder",
-  schema: "v1alpha1-2.marketbidders.socialweb.computer",
+  schema: "v1alpha1-3.marketbidders.socialweb.computer",
   export: "applications",
 };
 
@@ -606,7 +606,7 @@ export const MARKET_REQUESTER_RESOURCE: ApiResource = {
   listKind: "MarketRequesterList",
   plural: "marketrequesters",
   singular: "marketrequester",
-  schema: "v1alpha1-1.marketrequesters.socialweb.computer",
+  schema: "v1alpha1-2.marketrequesters.socialweb.computer",
   export: "applications",
 };
 
@@ -617,7 +617,7 @@ export const GATEWAY_RESOURCE: ApiResource = {
   listKind: "GatewayList",
   plural: "gateways",
   singular: "gateway",
-  schema: "v1alpha1-4.gateways.socialweb.computer",
+  schema: "v1alpha1-5.gateways.socialweb.computer",
   export: "applications",
 };
 
@@ -1369,12 +1369,6 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
   },
   "GatewayMarketNetwork": {
     "properties": {
-      "names": {
-        "items": {
-          "ref": "NetworkName"
-        },
-        "type": "array"
-      },
       "nodeGuestHostAliases": {
         "items": {
           "type": "string"
@@ -1764,6 +1758,12 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       },
       "ingressProxyHost": {
         "type": "string"
+      },
+      "names": {
+        "items": {
+          "ref": "NetworkName"
+        },
+        "type": "array"
       },
       "plcDirectoryUrl": {
         "type": "string"
@@ -3239,6 +3239,24 @@ export function parseMarketNetworkValue(value: unknown): MarketNetworkValue {
   return value;
 }
 
+export function validateNetworkName(value: unknown): ApiIssue[] {
+  return validate("NetworkName", value);
+}
+
+export function isNetworkName(value: unknown): value is NetworkName {
+  return validate("NetworkName", value).length === 0;
+}
+
+export function assertNetworkName(value: unknown): asserts value is NetworkName {
+  const issues = validate("NetworkName", value);
+  if (issues.length > 0) throw new ApiValidationError("NetworkName", issues);
+}
+
+export function parseNetworkName(value: unknown): NetworkName {
+  assertNetworkName(value);
+  return value;
+}
+
 export function validateApplicationComponent(value: unknown): ApiIssue[] {
   return validate("ApplicationComponent", value);
 }
@@ -3452,23 +3470,5 @@ export function assertGatewayMarketNetwork(value: unknown): asserts value is Gat
 
 export function parseGatewayMarketNetwork(value: unknown): GatewayMarketNetwork {
   assertGatewayMarketNetwork(value);
-  return value;
-}
-
-export function validateNetworkName(value: unknown): ApiIssue[] {
-  return validate("NetworkName", value);
-}
-
-export function isNetworkName(value: unknown): value is NetworkName {
-  return validate("NetworkName", value).length === 0;
-}
-
-export function assertNetworkName(value: unknown): asserts value is NetworkName {
-  const issues = validate("NetworkName", value);
-  if (issues.length > 0) throw new ApiValidationError("NetworkName", issues);
-}
-
-export function parseNetworkName(value: unknown): NetworkName {
-  assertNetworkName(value);
   return value;
 }

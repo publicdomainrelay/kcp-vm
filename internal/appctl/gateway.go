@@ -395,17 +395,13 @@ func GatewayValues(o v1alpha1.Gateway, workspace, stateDir string, w WebApp, vau
 		if v.TestRead, err = fragment(read); err != nil {
 			return manifests.Gateway{}, err
 		}
-		if len(m.Names) > 0 {
-			table := map[string]string{}
-			for _, n := range m.Names {
-				table[n.Name] = n.Address
-			}
-			raw, err := json.Marshal(table)
-			if err != nil {
-				return manifests.Gateway{}, err
-			}
-			env[servicenames.TableExtraKey] = string(raw)
+	}
+	if n := o.Spec.Network; n != nil && len(n.Names) > 0 {
+		table, err := NamesTable(n.Names)
+		if err != nil {
+			return manifests.Gateway{}, err
 		}
+		env[servicenames.TableExtraKey] = table
 	}
 	raw, err := json.Marshal(env)
 	if err != nil {
