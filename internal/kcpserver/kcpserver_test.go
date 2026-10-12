@@ -18,7 +18,7 @@ import (
 
 func cfg() SlotConfig {
 	return SlotConfig{Unit: "socialweb-kcp-abcd1234-slot-a.service", Exec: "/opt/kcp", Root: "/s/kcp/slot-a",
-		EtcdServers: "http://127.0.0.1:41234"}
+		EtcdServers: "http://127.0.0.1:41234", Shape: ShapeBlueGreen, FrontURL: "https://127.0.0.1:45001"}
 }
 
 func TestTheSlotArgvCarriesLeaderElectionAndPortZeroAndItsKine(t *testing.T) {
@@ -48,7 +48,7 @@ func TestKcpIsRefusedWithoutTheWorkspaceMountsGate(t *testing.T) {
 			cut = append(cut, a)
 		}
 	}
-	if err := CheckArgv(cut); err == nil || !strings.Contains(err.Error(), "WorkspaceMounts") {
+	if err := CheckArgv(cut, ShapeBlueGreen); err == nil || !strings.Contains(err.Error(), "WorkspaceMounts") {
 		t.Fatalf("%v", err)
 	}
 	c := cfg()

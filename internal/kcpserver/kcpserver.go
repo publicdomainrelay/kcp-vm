@@ -29,6 +29,8 @@ const SlotStopTimeout = 30 * time.Second
 
 const ShardAdminUser = "shard-admin"
 
+const ShardBaseURLFlag = "--shard-base-url="
+
 const AuditPolicy = `apiVersion: audit.k8s.io/v1
 kind: Policy
 
@@ -47,6 +49,7 @@ type SlotConfig struct {
 	EtcdServers string
 	FrontURL    string
 	Wants       []string
+	Shape       Shape
 }
 
 func SlotArgv(c SlotConfig) ([]string, error) {
@@ -59,26 +62,31 @@ func SlotArgv(c SlotConfig) ([]string, error) {
 	if c.EtcdServers == "" {
 		return nil, errors.New("kcpserver: a slot needs --etcd-servers (its kine); there is no embedded etcd")
 	}
+	if c.Shape != ShapeSingle && c.Shape != ShapeBlueGreen {
+		return nil, fmt.Errorf("kcpserver: slot shape %q: want %s (a bidder's one slot) or %s (the gateway's slots)", c.Shape, ShapeSingle, ShapeBlueGreen)
+	}
 	argv := []string{c.Exec, "start",
 		"--root-directory=" + c.Root,
 		"--etcd-servers=" + c.EtcdServers,
 		"--bind-address=127.0.0.1",
 		"--secure-port=0",
 		"--experimental-bind-free-port",
-		LeaderElection,
 		"--shutdown-delay-duration=2s",
 		WorkspaceMountsGate,
 		"--audit-policy-file=" + filepath.Join(c.Root, "audit-policy.yaml"),
 		"--audit-log-path=" + filepath.Join(c.Root, "audit.log"),
 		"--audit-log-maxsize=100", "--audit-log-maxage=0", "--audit-log-maxbackup=0",
 	}
-	if c.FrontURL != "" {
-		argv = append(argv, "--shard-base-url="+c.FrontURL)
+	if c.Shape == ShapeBlueGreen {
+		argv = append(argv, LeaderElection)
 	}
-	return argv, CheckArgv(argv)
+	if c.FrontURL != "" {
+		argv = append(argv, ShardBaseURLFlag+c.FrontURL)
+	}
+	return argv, CheckArgv(argv, c.Shape)
 }
 
-func CheckArgv(argv []string) error {
+func CheckArgv(argv []string, shape Shape) error {
 	has := func(want string) bool {
 		for _, a := range argv {
 			if a == want {
@@ -87,14 +95,34 @@ func CheckArgv(argv []string) error {
 		}
 		return false
 	}
+	hasPrefix := func(want string) bool {
+		for _, a := range argv {
+			if strings.HasPrefix(a, want) && len(a) > len(want) {
+				return true
+			}
+		}
+		return false
+	}
 	if !has(WorkspaceMountsGate) {
 		return fmt.Errorf("kcpserver: kcp refused without %s: every tenant's mounted API silently stops being served (versions.json kcp invariant)", WorkspaceMountsGate)
 	}
-	if !has(LeaderElection) {
-		return fmt.Errorf("kcpserver: kcp refused without %s", LeaderElection)
-	}
 	if !has("--secure-port=0") {
 		return errors.New("kcpserver: kcp refused on a fixed port: behind the edge every listener binds port 0")
+	}
+	if !hasPrefix(ShardBaseURLFlag) {
+		return fmt.Errorf("kcpserver: kcp refused without %s<front>: a slot that advertises its own port is cut by the next swap", ShardBaseURLFlag)
+	}
+	switch shape {
+	case ShapeBlueGreen:
+		if !has(LeaderElection) {
+			return fmt.Errorf("kcpserver: a blue/green slot refused without %s: two slots would both run every controller", LeaderElection)
+		}
+	case ShapeSingle:
+		if has(LeaderElection) {
+			return fmt.Errorf("kcpserver: a single slot refused with %s: no second slot exists and a restart would strand the controllers for the 60 s lease", LeaderElection)
+		}
+	default:
+		return fmt.Errorf("kcpserver: unknown slot shape %q", shape)
 	}
 	return nil
 }
@@ -113,7 +141,7 @@ func SlotSpec(c SlotConfig) (hostsvc.UnitSpec, error) {
 	}
 	return hostsvc.UnitSpec{
 		Name:        c.Unit,
-		Description: "kcp slot a of one application instance",
+		Description: "kcp slot of one application instance (" + string(c.Shape) + ")",
 		Exec:        argv,
 		WorkDir:     c.Root,
 		Slice:       c.Slice,
