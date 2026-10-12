@@ -24,7 +24,6 @@ import { createFirecrackerComputeProvider } from "@publicdomainrelay/compute-pro
 import { createFirecrackerNodeImage } from "@publicdomainrelay/node-image-firecracker";
 import { createFirecrackerMicrovm } from "@publicdomainrelay/microvm-firecracker";
 import { createDockerBackend } from "@publicdomainrelay/container-backend-docker";
-import { createOidcProvisioningEnricher } from "@publicdomainrelay/oidc-issuer-hono";
 import { createRbacProvisioner } from "@publicdomainrelay/rbac-atproto";
 import { Secp256k1Keypair } from "@atproto/crypto";
 import { IdResolver } from "@atproto/identity";
@@ -498,7 +497,7 @@ if (options.computeProviderDigitaloceanToken) {
       getIssuerUrl: () => relay.ingressUrl,
       digitaloceanBaseUrl: (options.computeProviderDigitaloceanBaseUrl as string) || "https://api.digitalocean.com",
       doToken: options.computeProviderDigitaloceanToken as string,
-      oidcProvisioner: createOidcProvisioningEnricher(() => relay.ingressUrl),
+      oidcProvisioning: true,
       rbacProvisioner: createRbacProvisioner(),
       acceptToContract,
       createSignedRepoRecord: (collection: string, record: Record<string, unknown>) =>
@@ -523,7 +522,7 @@ if (options.computeProviderLocal) {
   const localProvider = createLocalComputeProvider({
     logger, atproto: atproto as import("@publicdomainrelay/compute-provider-abc").ComputeAtproto, serve,
     getIssuerUrl: () => relay.ingressUrl,
-    oidcProvisioner: createOidcProvisioningEnricher(() => relay.ingressUrl),
+    oidcProvisioning: true,
     rbacProvisioner: createRbacProvisioner(),
     containerMode: options.computeProviderLocalMode as "vm" | "container" | undefined,
     vmImage: options.computeProviderLocalVmImage as string | undefined,
@@ -587,7 +586,7 @@ if (options.computeProviderFirecracker) {
     workRoot: options.computeProviderFirecrackerWorkRoot as string,
     rangeBase: options.computeProviderFirecrackerRangeBase as string | undefined,
     reuseStale: options.computeProviderFirecrackerReuseImage === true,
-    oidcProvisioner: createOidcProvisioningEnricher(() => relay.ingressUrl),
+    oidcProvisioning: true,
     rbacProvisioner: createRbacProvisioner(),
     guestTlsPort: options.guestTlsPort as number | undefined,
     createSignedRepoRecord: atproto.createSignedRepoRecord.bind(atproto),

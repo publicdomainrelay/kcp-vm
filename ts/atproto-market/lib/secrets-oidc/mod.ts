@@ -28,8 +28,8 @@ export interface CreateSecretsAuthorizerOpts {
 /**
  * Validates a guest's exchanged workload identity token against an in-memory
  * grant. The requester is not an OIDC issuer, so verification goes through the
- * provider's published JWKS -- never through oidc-issuer-hono's OIDCToken.validate,
- * which requires configureOidc() and would generate a signing key we never use.
+ * provider's published JWKS -- never through an oidc-issuer-hono issuer instance,
+ * which would generate a signing key we never use.
  */
 export function createSecretsAuthorizer(
   opts: CreateSecretsAuthorizerOpts = {},

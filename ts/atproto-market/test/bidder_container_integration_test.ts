@@ -37,7 +37,6 @@ import { createPlcDirectoryClient } from "@publicdomainrelay/did-plc";
 import { createMarketBidder } from "@publicdomainrelay/market-bidder";
 import { createComputeProviderHooks } from "@publicdomainrelay/market-bidder-compute";
 import { createLocalComputeProvider } from "@publicdomainrelay/compute-provider-local";
-import { createOidcProvisioningEnricher } from "@publicdomainrelay/oidc-issuer-hono";
 import type { ComputeAtproto } from "@publicdomainrelay/compute-provider-abc";
 import type { ContainerBackend } from "@publicdomainrelay/container-backend-abc";
 import { createContainerBackend } from "@publicdomainrelay/container-backend-container";
@@ -260,7 +259,7 @@ Deno.test({
       atproto: atproto as unknown as ComputeAtproto,
       serve: providerServe,
       getIssuerUrl: issuerUrl,
-      oidcProvisioner: createOidcProvisioningEnricher(issuerUrl),
+      oidcProvisioning: true,
       containerMode: "container",
       ingressProxyHost,
       caCertPem,
