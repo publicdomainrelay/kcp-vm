@@ -45,8 +45,21 @@ for (const p of providers) {
 
 const kcpIdentity = o.marketIdentityKcpServer as string | undefined;
 if (kcpIdentity && !o.marketIdentityKcpWorkspace) throw new Error("--market-identity-kcp-server needs --market-identity-kcp-workspace");
-const vault = o.identityVaultAddress
-  ? { kind: "openbao" as const, address: o.identityVaultAddress, tokenFile: o.identityVaultTokenFile, caCertFile: o.identityVaultCaCertFile, namespace: o.identityVaultNamespace }
+if (o.identityVaultOpenbaoServer && !o.identityVaultKcpServer) throw new Error("--identity-vault-openbao-server needs --identity-vault-kcp-server");
+const vaultServer = o.identityVaultOpenbaoServer
+  ? {
+    name: o.identityVaultOpenbaoServer as string,
+    client: o.identityVaultOpenbaoClient as string,
+    kcp: {
+      server: o.identityVaultKcpServer as string,
+      workspace: o.identityVaultKcpWorkspace as string | undefined,
+      tokenFile: o.identityVaultKcpTokenFile as string | undefined,
+      caCertFile: o.identityVaultKcpCaCertFile as string | undefined,
+    },
+  }
+  : undefined;
+const vault = o.identityVaultAddress || vaultServer
+  ? { kind: "openbao" as const, address: o.identityVaultAddress, tokenFile: o.identityVaultTokenFile, caCertFile: o.identityVaultCaCertFile, namespace: o.identityVaultNamespace, server: vaultServer }
   : o.identityVaultFile ? { kind: "file" as const, path: o.identityVaultFile } : undefined;
 const explicitMode = o.atprotoIdentityMode as string | undefined;
 const urlRepo = !kcpIdentity && cliIdentityMode({

@@ -82,6 +82,7 @@
     "./ts/atproto-market/lib/market-identity-memory",
     "./ts/atproto-market/lib/market-identity-vault-file",
     "./ts/atproto-market/lib/market-identity-vault-openbao",
+    "./ts/atproto-market/lib/openbao-server-kcp",
     "./ts/atproto-market/lib/operator-discovery-badge-blue-keys",
     "./ts/atproto-market/lib/requester-xrpc",
     "./ts/atproto-market/lib/scope-refresh-timers",

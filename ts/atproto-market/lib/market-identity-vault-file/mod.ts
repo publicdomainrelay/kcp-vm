@@ -55,6 +55,13 @@ export function createSessionFileIdentityVault(opts: SessionFileIdentityVaultOpt
         if (!(err instanceof Deno.errors.NotFound)) throw err;
       }
     },
+    async create(ref, value) {
+      if (!mine(ref)) return await opts.base.create(ref, value);
+      const held = await this.read(ref);
+      if (held) return held;
+      await writePrivate(opts.path, JSON.stringify(value, null, 2) + "\n");
+      return structuredClone(value);
+    },
   };
 }
 
@@ -118,6 +125,17 @@ export function createFileIdentityVault(opts: FileIdentityVaultOptions): Identit
         if (!(k in data)) return;
         delete data[k];
         await save(data);
+      });
+    },
+    create(ref, value) {
+      const k = key(ref);
+      return serialized(async () => {
+        const data = await load();
+        const held = data[k];
+        if (held && typeof held === "object") return structuredClone(held);
+        data[k] = structuredClone(value);
+        await save(data);
+        return structuredClone(value);
       });
     },
   };

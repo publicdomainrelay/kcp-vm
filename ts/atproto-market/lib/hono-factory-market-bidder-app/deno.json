@@ -35,6 +35,8 @@
     "@publicdomainrelay/market-network-fetch": "jsr:@publicdomainrelay/market-network-fetch@^0",
     "@publicdomainrelay/microvm-vmruntime": "jsr:@publicdomainrelay/microvm-vmruntime@^0",
     "@publicdomainrelay/oauth-scope": "jsr:@publicdomainrelay/oauth-scope@^0",
+    "@publicdomainrelay/oidc-issuer-abc": "jsr:@publicdomainrelay/oidc-issuer-abc@^0",
+    "@publicdomainrelay/openbao-server-kcp": "jsr:@publicdomainrelay/openbao-server-kcp@^0",
     "@publicdomainrelay/policy-engine-cli-options": "jsr:@publicdomainrelay/policy-engine-cli-options@^0",
     "@publicdomainrelay/rbac-atproto": "jsr:@publicdomainrelay/rbac-atproto@^0",
     "@publicdomainrelay/requester-xrpc": "jsr:@publicdomainrelay/requester-xrpc@^0",

@@ -183,6 +183,8 @@ export function createOidcIssuer(opts: OidcIssuerOptions): OidcIssuer {
     );
     const pem = await jose.exportPKCS8(generated.privateKey);
     await jwkStore.saveJwkPem(issuer, pem);
+    const kept = await jwkStore.getJwkPem(issuer);
+    if (kept && kept !== pem) return await signingKeyFromPem(kept);
     return generated;
   }
 

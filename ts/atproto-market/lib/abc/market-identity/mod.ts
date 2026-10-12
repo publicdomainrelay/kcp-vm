@@ -69,6 +69,7 @@ export interface IdentityVault {
   read(ref: VaultRef): Promise<Record<string, unknown> | null>;
   write(ref: VaultRef, data: Record<string, unknown>): Promise<void>;
   remove(ref: VaultRef): Promise<void>;
+  create(ref: VaultRef, data: Record<string, unknown>): Promise<Record<string, unknown>>;
 }
 
 export interface SessionStore {

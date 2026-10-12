@@ -2060,6 +2060,8 @@
           "jsr:@publicdomainrelay/market-network-fetch@0",
           "jsr:@publicdomainrelay/microvm-vmruntime@0",
           "jsr:@publicdomainrelay/oauth-scope@0",
+          "jsr:@publicdomainrelay/oidc-issuer-abc@0",
+          "jsr:@publicdomainrelay/openbao-server-kcp@0",
           "jsr:@publicdomainrelay/policy-engine-cli-options@0",
           "jsr:@publicdomainrelay/rbac-atproto@0",
           "jsr:@publicdomainrelay/requester-xrpc@0",
@@ -2151,6 +2153,11 @@
       "ts/atproto-market/lib/market-identity-vault-openbao": {
         "dependencies": [
           "jsr:@publicdomainrelay/market-identity-abc@0"
+        ]
+      },
+      "ts/atproto-market/lib/openbao-server-kcp": {
+        "dependencies": [
+          "jsr:@publicdomainrelay/compute-provider-kcp-common@0"
         ]
       },
       "ts/atproto-market/lib/operator-discovery-badge-blue-keys": {

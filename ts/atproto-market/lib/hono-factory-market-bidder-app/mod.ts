@@ -38,6 +38,9 @@ import { createMemoryIdentityVault } from "@publicdomainrelay/market-identity-me
 import { createKcpIdentityPrompt } from "@publicdomainrelay/identity-prompt-kcp";
 import { createTtyIdentityPrompt } from "@publicdomainrelay/identity-prompt-tty";
 import { createOpenBaoIdentityVault } from "@publicdomainrelay/market-identity-vault-openbao";
+import { createOpenBaoServerResolver } from "@publicdomainrelay/openbao-server-kcp";
+import type { ResolvedOpenBaoServer } from "@publicdomainrelay/openbao-server-kcp";
+import type { JwkStore } from "@publicdomainrelay/oidc-issuer-abc";
 import { createFileIdentityVault, createSessionFileIdentityVault } from "@publicdomainrelay/market-identity-vault-file";
 import { oauthClientMetadata } from "@publicdomainrelay/atproto-oauth-helpers";
 import { createBadgeBlueKeysRecord, loadOrGenerateKeypair } from "@publicdomainrelay/market-atproto";
@@ -61,8 +64,14 @@ export type MarketBidderIdentityPromptSpec =
   | { kind: "kcp"; server: string; workspace: string; tokenFile?: string; caCertFile?: string }
   | { kind: "tty"; mode?: string; oauth?: boolean; oauthQr?: boolean; skipAssociation?: boolean };
 
+export interface MarketBidderOpenBaoServerRef {
+  name: string;
+  client: string;
+  kcp: { server: string; workspace?: string; tokenFile?: string; caCertFile?: string };
+}
+
 export type MarketBidderIdentityVaultSpec =
-  | { kind: "openbao"; address: string; tokenFile?: string; caCertFile?: string; namespace?: string }
+  | { kind: "openbao"; address?: string; tokenFile?: string; caCertFile?: string; namespace?: string; server?: MarketBidderOpenBaoServerRef }
   | { kind: "file"; path: string };
 
 export interface MarketBidderIdentitySpec {
@@ -249,6 +258,28 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
   let bidderServe: ServeHandle | undefined;
   let crawlRelayUrls: string[] = [];
   let localRelayUrls: string[] = [];
+  let vaultMount = id.vaultMount;
+  let keyVault: IdentityVault | undefined;
+  const keysOutOfFiles = id.vault?.kind === "openbao";
+  const vaultServerRef = id.vault?.kind === "openbao" ? id.vault.server : undefined;
+  const resolveVaultServer: (() => Promise<ResolvedOpenBaoServer>) | undefined = vaultServerRef
+    ? (() => {
+      const resolve = createOpenBaoServerResolver({
+        server: vaultServerRef.kcp.server,
+        workspace: vaultServerRef.kcp.workspace,
+        tokenFile: vaultServerRef.kcp.tokenFile,
+        caCert: vaultServerRef.kcp.caCertFile ? Deno.readTextFileSync(vaultServerRef.kcp.caCertFile) : undefined,
+        name: vaultServerRef.name,
+        client: vaultServerRef.client,
+        onWaiting: (reason) => logger.info("bidder_vault_waiting", { openbaoserver: vaultServerRef.name, reason }),
+      });
+      return async () => {
+        const r = await resolve();
+        logger.info("bidder_vault_resolved", { openbaoserver: r.name, address: r.address, kvMount: r.kvMount, role: r.certLogin.role });
+        return r;
+      };
+    })()
+    : undefined;
 
   function kcpPrompt(): IdentityPrompt | undefined {
     if (id.prompt.kind !== "kcp") return undefined;
@@ -278,11 +309,18 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
     if (ports.identityVault) return ports.identityVault;
     if (id.vault && id.password) logger.warn("atproto_password_ignored", { hint: "the identity vault holds the password" });
     if (id.vault?.kind === "openbao") {
+      const resolve = resolveVaultServer;
       return createOpenBaoIdentityVault({
         address: id.vault.address,
         tokenFile: id.vault.tokenFile,
         caCert: id.vault.caCertFile ? Deno.readTextFileSync(id.vault.caCertFile) : undefined,
         namespace: id.vault.namespace,
+        endpoint: resolve
+          ? async () => {
+            const r = await resolve();
+            return { address: r.address, caCert: r.caCert, clientCert: r.clientCert, clientKey: r.clientKey, certLogin: r.certLogin };
+          }
+          : undefined,
       });
     }
     if (id.vault?.kind === "file") return createFileIdentityVault({ path: id.vault.path });
@@ -293,7 +331,7 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
   }
 
   async function readPrivateKeyHex(): Promise<string | undefined> {
-    if (id.privateKeyHex || !id.privateKeyHexPath) return id.privateKeyHex;
+    if (id.privateKeyHex || !id.privateKeyHexPath || keysOutOfFiles) return id.privateKeyHex;
     try {
       const content = (await Deno.readTextFile(id.privateKeyHexPath)).trim();
       if (!content) return undefined;
@@ -306,7 +344,7 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
 
   async function persistPrivateKeyHex(hex: string, given: string | undefined): Promise<void> {
     const path = id.privateKeyHexPath;
-    if (!path) return;
+    if (!path || keysOutOfFiles) return;
     try {
       await Deno.mkdir(path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : ".", { recursive: true });
       await Deno.writeTextFile(path, hex);
@@ -317,12 +355,45 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
   }
 
   async function ingressKeypair(role: string): Promise<Secp256k1Keypair> {
+    if (keyVault) {
+      const ref = { mount: vaultMount, path: `relay-keypair/${role}` };
+      const read = await keyVault.read(ref);
+      const held = typeof read?.privateKeyHex === "string"
+        ? read
+        : await keyVault.create(ref, { privateKeyHex: await generatedKeyHex() });
+      if (typeof held.privateKeyHex !== "string") throw new Error(`the vault's ${ref.mount}/${ref.path} holds no privateKeyHex`);
+      const kp = await Secp256k1Keypair.import(held.privateKeyHex, { exportable: true });
+      logger.info("bidder_ingress_key", { role, vault: `${ref.mount}/${ref.path}`, did: kp.did() });
+      return kp;
+    }
     if (!ingressKeyDir) return await Secp256k1Keypair.create({ exportable: true });
     await Deno.mkdir(ingressKeyDir, { recursive: true, mode: 0o700 });
     const path = `${ingressKeyDir}/${role}.jwk`;
     const kp = await Secp256k1Keypair.import(await loadOrCreateAttestationKeyHex(path), { exportable: true });
     logger.info("bidder_ingress_key", { role, path, did: kp.did() });
     return kp;
+  }
+
+  function oidcJwkStore(role: string): JwkStore | undefined {
+    const vault = keyVault;
+    if (!vault) return undefined;
+    const ref = { mount: vaultMount, path: `oidc-jwk/${role}` };
+    return {
+      async getJwkPem(issuer) {
+        const held = await vault.read(ref);
+        if (!held || typeof held.pem !== "string") return null;
+        if (held.issuer !== issuer) {
+          logger.warn("bidder_oidc_jwk_issuer_moved", { role, held: held.issuer, issuer, hint: "a new signing key is made for the new issuer" });
+          return null;
+        }
+        return held.pem;
+      },
+      async saveJwkPem(issuer, pem) {
+        const held = await vault.create(ref, { issuer, pem });
+        if (held.issuer !== issuer) await vault.write(ref, { issuer, pem });
+        logger.info("bidder_oidc_jwk_saved", { role, vault: `${ref.mount}/${ref.path}`, issuer });
+      },
+    };
   }
 
   async function openIngress(role: string): Promise<IngressRef> {
@@ -352,9 +423,14 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
       vault: !!id.vault,
     });
     logger.info("bidder_identity_mode", { mode: cliMode ?? "kcp", name: id.name });
+    if (resolveVaultServer) {
+      const r = await resolveVaultServer();
+      if (r.kvMount !== vaultMount) logger.info("bidder_vault_mount", { option: vaultMount, openbaoserver: r.kvMount });
+      vaultMount = r.kvMount;
+    }
 
     let identityVault: IdentityVault = createMemoryIdentityVault();
-    let refs = vaultRefs(id.name, { mode: cliMode ?? "localRepo" }, id.vaultMount);
+    let refs = vaultRefs(id.name, { mode: cliMode ?? "localRepo" }, vaultMount);
     if (cliMode && id.prompt.kind === "tty") {
       ttyPrompt = createTtyIdentityPrompt({
         identity: cliMarketIdentity(id.name, {
@@ -372,20 +448,24 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
 
     const identitySpec = (await identityObject(prompt)).spec;
     const mode: MarketIdentityMode = identitySpec.mode;
-    refs = vaultRefs(id.name, identitySpec, id.vaultMount);
+    refs = vaultRefs(id.name, identitySpec, vaultMount);
 
     const baseVault = baseIdentityVault(mode);
     if (mode === "pdsAccount" && id.password && !id.vault && !ports.identityVault) {
       logger.warn("atproto_password_from_options", { hint: "development only; production keeps the password in the identity vault" });
       await baseVault.write(refs.keys, { password: id.password });
     }
-    identityVault = id.oauth?.sessionFile
+    if (keysOutOfFiles && (id.oauth?.sessionFile || id.oauth?.sessionPath || id.privateKeyHexPath)) {
+      logger.warn("bidder_key_files_ignored", { hint: "with an OpenBao vault the repo key and the OAuth session live only in the vault" });
+    }
+    identityVault = id.oauth?.sessionFile && !keysOutOfFiles
       ? createSessionFileIdentityVault({ base: baseVault, ref: refs.session, path: id.oauth.sessionFile })
       : baseVault;
+    if (id.vault || ports.identityVault) keyVault = baseVault;
 
     const given = await readPrivateKeyHex();
     let privateKeyHex: string;
-    if (mode !== "localRepo" && mode !== "oauthQr") {
+    if (!keyVault && mode !== "localRepo" && mode !== "oauthQr") {
       privateKeyHex = given ?? await generatedKeyHex();
     } else {
       const existing = await identityVault.read(refs.keys);
@@ -406,7 +486,7 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
       logger,
       plcDirectoryUrl: network.plcDirectoryUrl,
       qrOrigin: network.qrOrigin,
-      vaultMount: id.vaultMount,
+      vaultMount,
       autoRefreshThresholdMs: AUTO_REFRESH_THRESHOLD_MS,
       oauthClientId: id.oauth?.sessionClientId,
       localRepo: repo.kind === "inproc"
@@ -433,7 +513,7 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
         open: async (): Promise<BrowserOAuthClient> => {
           const handle = identitySpec.handle ?? id.handle;
           if (!handle) throw new Error("mode oauthBrowser needs a handle: --atproto-handle or spec.handle");
-          const sessionPath = id.oauth?.sessionPath;
+          const sessionPath = keysOutOfFiles ? undefined : id.oauth?.sessionPath;
           const agent = await createOAuthAgent({
             handle,
             sessionPath,
@@ -531,6 +611,7 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
             getIssuerUrl: () => relay.ingressUrl,
             digitaloceanBaseUrl: p.baseUrl || "https://api.digitalocean.com",
             doToken: p.token,
+            oidcJwkStore: oidcJwkStore("digitalocean"),
             oidcProvisioning: true,
             rbacProvisioner: createRbacProvisioner(),
             acceptToContract,
@@ -557,6 +638,7 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
           oidcProvisioning: true,
           rbacProvisioner: createRbacProvisioner(),
           containerImage: p.containerImage,
+          oidcJwkStore: oidcJwkStore("local"),
           ingressProxyHost: network.ingressProxyHost,
           caCertPem: p.caCertPem,
           guestTlsPort,
@@ -578,6 +660,7 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
           getIssuerUrl: () => relay.ingressUrl,
           microvm: createVmruntimeMicrovm({ command: p.vmruntimeCommand, handle: id.handle ?? at.did, logger }),
           workRoot: p.workRoot,
+          oidcJwkStore: oidcJwkStore("firecracker"),
           oidcProvisioning: true,
           rbacProvisioner: createRbacProvisioner(),
           guestTlsPort,
@@ -597,6 +680,7 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
           credentials: { server: p.server, workspace: p.workspace, tokenFile: p.tokenFile, caFile: p.caFile },
           handle: p.handle,
           guestHostAddress: p.guestHostAddress,
+          oidcJwkStore: oidcJwkStore("kcp"),
           getIssuerUrl: () => relay.ingressUrl,
           guestTlsPort,
           oidcProvisioning: true,

@@ -23,6 +23,11 @@ export function createMemoryIdentityVault(): MemoryIdentityVault {
       data.delete(key(ref));
       return Promise.resolve();
     },
+    create(ref, value) {
+      const k = key(ref);
+      if (!data.has(k)) data.set(k, structuredClone(value));
+      return Promise.resolve(structuredClone(data.get(k)!));
+    },
     dump() {
       return JSON.stringify(Object.fromEntries(data));
     },

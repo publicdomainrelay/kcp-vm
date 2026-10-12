@@ -145,6 +145,37 @@ export default {
       description: "PEM CA bundle the OpenBao certificate chains to",
       env: "IDENTITY_VAULT_CA_CERT_FILE",
     },
+    "identity-vault-openbao-server": {
+      type: "string" as const,
+      description: "Name of the OpenBaoServer object beside this bidder; its status gives the vault's address, CA, client certificate and kv mount (the bidder's keys, relay keypairs, OIDC signing keys and sessions live there)",
+      env: "IDENTITY_VAULT_OPENBAO_SERVER",
+    },
+    "identity-vault-openbao-client": {
+      type: "string" as const,
+      description: "Client of that OpenBaoServer the bidder logs in as (its cert role and policy)",
+      env: "IDENTITY_VAULT_OPENBAO_CLIENT",
+      default: "bidder",
+    },
+    "identity-vault-kcp-server": {
+      type: "string" as const,
+      description: "kcp server holding the OpenBaoServer object (a /clusters/<workspace> URL, or a base URL with identity-vault-kcp-workspace)",
+      env: "IDENTITY_VAULT_KCP_SERVER",
+    },
+    "identity-vault-kcp-workspace": {
+      type: "string" as const,
+      description: "kcp workspace holding the OpenBaoServer object, when identity-vault-kcp-server is a base URL",
+      env: "IDENTITY_VAULT_KCP_WORKSPACE",
+    },
+    "identity-vault-kcp-token-file": {
+      type: "string" as const,
+      description: "File holding the bearer token for that kcp server, re-read on every call",
+      env: "IDENTITY_VAULT_KCP_TOKEN_FILE",
+    },
+    "identity-vault-kcp-ca-cert-file": {
+      type: "string" as const,
+      description: "PEM CA bundle that kcp server's certificate chains to",
+      env: "IDENTITY_VAULT_KCP_CA_CERT_FILE",
+    },
     "identity-vault-namespace": {
       type: "string" as const,
       description: "OpenBao namespace of the identity vault",
