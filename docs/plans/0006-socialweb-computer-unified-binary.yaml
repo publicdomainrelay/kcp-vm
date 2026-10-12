@@ -1566,8 +1566,8 @@ items:
     risks:
       - "kcp down = no reconcile; units keep running (they are not children of the supervisor) and are adopted when kcp returns. A crash-looping unit with restartPolicy Always is restarted by the backend (systemd Restart= / devsup), not by the reconciler."
       - "APIResourceSchema.spec is immutable; the first HostProcess revision is reviewed field by field against the two working backends before it is applied."
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M2-APP-CONTROLLER
     milestone: M2
     title: "Each application is ONE root object in its own kcp, rendered by the core into children; a MarketNetwork composes child applications, each with its OWN kcp"
