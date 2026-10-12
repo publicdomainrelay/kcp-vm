@@ -264,27 +264,6 @@ func (d *Resolver) Env(ctx context.Context, target ref.Ref, selfArgs, selfEnv st
 	return env
 }
 
-func MergeTable(baseJSON, extraJSON string) string {
-	table := map[string]string{}
-	if baseJSON != "" {
-		_ = json.Unmarshal([]byte(baseJSON), &table)
-	}
-	extra := map[string]string{}
-	if err := json.Unmarshal([]byte(extraJSON), &extra); err != nil {
-		return baseJSON
-	}
-	for k, v := range extra {
-		if _, ok := table[k]; !ok {
-			table[k] = v
-		}
-	}
-	body, err := json.Marshal(table)
-	if err != nil {
-		return baseJSON
-	}
-	return string(body)
-}
-
 func AdvertisedAddress(argsJSON, envJSON string) string {
 	port, host := advertised(argsJSON, envJSON)
 	if port == "" || port == "0" {

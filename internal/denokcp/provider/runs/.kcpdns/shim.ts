@@ -14,7 +14,15 @@ type Table = Record<string, string>;
 
 const DOMAIN: string = (Deno.env.get("KCP_SERVICE_DOMAIN") ?? "kcp.local");
 const SUFFIX = ".svc." + DOMAIN;
-const TABLE: Table = JSON.parse(Deno.env.get("KCP_DNS_TABLE") ?? "{}");
+function envTable(name: string): Table {
+  try {
+    return JSON.parse(Deno.env.get(name) ?? "{}");
+  } catch {
+    return {};
+  }
+}
+
+const TABLE: Table = { ...envTable("KCP_DNS_TABLE_EXTRA"), ...JSON.parse(Deno.env.get("KCP_DNS_TABLE") ?? "{}") };
 const TABLE_FILE: string = (() => {
   try {
     return Deno.env.get("KCP_DNS_TABLE_FILE") ?? "";
