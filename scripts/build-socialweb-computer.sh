@@ -77,20 +77,22 @@ want_go="$(git -C "$root" show "$commit:go.mod" | awk '$1=="toolchain"{print $2;
 if [ -z "$want_go" ]; then
   want_go="go$(git -C "$root" show "$commit:go.mod" | awk '$1=="go"{print $2; exit}')"
 fi
-have_go="$(GOTOOLCHAIN=local go env GOVERSION)"
-[ "$have_go" = "$want_go" ] || die "the host go is $have_go; commit $commit pins $want_go (GOTOOLCHAIN=local, no toolchain download)"
-
 cache="$build_root/cache"
 mkdir -p "$cache/assets" "$cache/gomod" "$cache/gocache" "$build_root/tmp"
 export TMPDIR="$build_root/tmp"
 export GOTMPDIR="$build_root/tmp"
 export GOMODCACHE="$cache/gomod"
 export GOCACHE="$cache/gocache"
-export GOTOOLCHAIN=local
 export GOFLAGS=-mod=readonly
-export GOENV=off
 export CGO_ENABLED=0
-unset GOOS GOARCH GOPATH SOURCE_DATE_EPOCH
+unset GOOS GOARCH GOPATH GOROOT SOURCE_DATE_EPOCH
+
+goroot="$(GOTOOLCHAIN="$want_go" go env GOROOT)" || die "cannot get the pinned toolchain $want_go"
+export PATH="$goroot/bin:$PATH"
+export GOTOOLCHAIN=local
+export GOENV=off
+have_go="$(go env GOVERSION)"
+[ "$have_go" = "$want_go" ] || die "the toolchain at $goroot is $have_go; commit $commit pins $want_go"
 
 checkout() {
   local tree="$1"
