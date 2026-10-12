@@ -60,6 +60,8 @@ type Options struct {
 
 	DeviceKeys DeviceKeyGranter
 
+	NodeClaimAgent *ServiceAccountRef
+
 	RestConfig *rest.Config
 
 	Transport http.RoundTripper
@@ -72,6 +74,7 @@ type Client struct {
 	host       string
 	publicHost string
 	deviceKeys DeviceKeyGranter
+	agent      *agent
 }
 
 var ErrNoDeviceKey = errors.New(
@@ -120,11 +123,15 @@ func New(opts Options) (*Client, error) {
 		return nil, err
 	}
 	codecs := serializer.NewCodecFactory(scheme).WithoutConversion()
-	return &Client{
+	c := &Client{
 		cfg: cfg, http: httpClient, codecs: codecs, host: cfg.Host,
 		publicHost: strings.TrimSuffix(opts.PublicHost, "/"),
 		deviceKeys: opts.DeviceKeys,
-	}, nil
+	}
+	if opts.NodeClaimAgent != nil {
+		c.agent = &agent{ref: opts.NodeClaimAgent}
+	}
+	return c, nil
 }
 
 func newScheme() (*runtime.Scheme, error) {
@@ -200,6 +207,9 @@ func (c *Client) ensure(ctx context.Context, permit revocation.Permit, name stri
 	if err := c.createGrant(ctx, AccountPath(did), IdentityRecordName(did), did); err != nil {
 		return fmt.Errorf("kcpclient: account identity record %s: %w", IdentityRecordName(did), err)
 	}
+	if err := c.grantAgent(ctx, AccountPath(did), AccountAgentRules()); err != nil {
+		return err
+	}
 	if err := c.createWorkspace(ctx, AccountPath(did), name, kcpv1alpha1.WorkspaceSpec{
 		Type: &kcpv1alpha1.WorkspaceTypeReference{Name: HomeWorkspaceType, Path: RootWorkspace},
 	}); err != nil {
@@ -211,7 +221,7 @@ func (c *Client) ensure(ctx context.Context, permit revocation.Permit, name stri
 	if _, err := c.createCluster(ctx, home, name, did); err != nil {
 		return fmt.Errorf("kcpclient: cluster %s: %w", home, err)
 	}
-	return nil
+	return c.grantAgent(ctx, home, HomeAgentRules())
 }
 
 var ErrNoMountURL = errors.New(

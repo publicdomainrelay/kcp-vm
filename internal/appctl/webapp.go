@@ -7,7 +7,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	authenticationv1 "k8s.io/api/authentication/v1"
@@ -34,17 +33,18 @@ const (
 	WebAppTokenFile      = "token"
 	WebAppTokenTTL       = 30 * time.Minute
 	WebAppTokenRenew     = 10 * time.Minute
-	ProviderWorkspace    = "root:socialweb-provider"
-	ClustersExport       = "clusters"
 	foreignAccountPrefix = "system:kcp:serviceaccount:"
 )
 
 var WorkspaceGVR = schema.GroupVersionResource{Group: "tenancy.kcp.io", Version: "v1alpha1", Resource: "workspaces"}
 
 type WebAppIdentity struct {
-	Kubeconfig        string
-	Dir               string
-	ClustersExportURL string
+	Kubeconfig string
+	Dir        string
+}
+
+func WebAppAccountRef() string {
+	return DefaultWorkspace + ":" + ComponentWorkspace + "/" + WebAppAccountNS + "/" + WebAppAccount
 }
 
 func WebAppKcpDir(instanceState string) string {
@@ -60,14 +60,6 @@ func WebAppRootRules(gateway string) []rbacv1.PolicyRule {
 		{NonResourceURLs: []string{"/"}, Verbs: []string{"access"}},
 		{APIGroups: []string{v1alpha1.GroupName}, Resources: []string{"gateways"}, ResourceNames: []string{gateway}, Verbs: []string{"get"}},
 		{APIGroups: []string{v1alpha1.GroupName}, Resources: []string{"openbaoservers"}, ResourceNames: []string{vaultlayout.RootServerName}, Verbs: []string{"get"}},
-	}
-}
-
-func WebAppProviderRules() []rbacv1.PolicyRule {
-	return []rbacv1.PolicyRule{
-		{NonResourceURLs: []string{"/"}, Verbs: []string{"access"}},
-		{APIGroups: []string{"apis.kcp.io"}, Resources: []string{"apiexports/content"}, ResourceNames: []string{ClustersExport},
-			Verbs: []string{"get", "list", "patch"}},
 	}
 }
 
@@ -119,11 +111,6 @@ func (ctl *Controller) logicalCluster(ctx context.Context, parent, name string) 
 	return cluster, nil
 }
 
-func splitPath(path string) (string, string) {
-	i := strings.LastIndex(path, ":")
-	return path[:max(i, 0)], path[i+1:]
-}
-
 func (ctl *Controller) grant(ctx context.Context, ws, owner, user string, rules []rbacv1.PolicyRule) error {
 	cs, err := kubernetes.NewForConfig(clusterConfig(ctl.restCfg, ws))
 	if err != nil {
@@ -166,17 +153,15 @@ func (ctl *Controller) grant(ctx context.Context, ws, owner, user string, rules 
 }
 
 func (ctl *Controller) revokeWebApp(ctx context.Context) error {
-	for _, ws := range []string{ctl.c.workspace(), ProviderWorkspace} {
-		cs, err := kubernetes.NewForConfig(clusterConfig(ctl.restCfg, ws))
-		if err != nil {
-			return err
-		}
-		if err := cs.RbacV1().ClusterRoleBindings().Delete(ctx, WebAppGrant, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
-			return err
-		}
-		if err := cs.RbacV1().ClusterRoles().Delete(ctx, WebAppGrant, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
-			return err
-		}
+	cs, err := kubernetes.NewForConfig(clusterConfig(ctl.restCfg, ctl.c.workspace()))
+	if err != nil {
+		return err
+	}
+	if err := cs.RbacV1().ClusterRoleBindings().Delete(ctx, WebAppGrant, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+		return err
+	}
+	if err := cs.RbacV1().ClusterRoles().Delete(ctx, WebAppGrant, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+		return err
 	}
 	return nil
 }
@@ -194,17 +179,8 @@ func (ctl *Controller) webAppIdentity(ctx context.Context, o v1alpha1.Gateway, o
 	if err := ctl.grant(ctx, ctl.c.workspace(), owner, user, WebAppRootRules(o.Name)); err != nil {
 		return WebAppIdentity{}, err
 	}
-	if err := ctl.grant(ctx, ProviderWorkspace, owner, user, WebAppProviderRules()); err != nil {
-		return WebAppIdentity{}, err
-	}
-	parent, name := splitPath(ProviderWorkspace)
-	provider, err := ctl.logicalCluster(ctx, parent, name)
-	if err != nil {
-		return WebAppIdentity{}, err
-	}
 	dir := WebAppKcpDir(ctl.c.Layout.StateDir)
-	id := WebAppIdentity{Kubeconfig: filepath.Join(dir, WebAppKubeconfigFile), Dir: dir,
-		ClustersExportURL: f.server + "/services/apiexport/" + provider + "/" + ClustersExport}
+	id := WebAppIdentity{Kubeconfig: filepath.Join(dir, WebAppKubeconfigFile), Dir: dir}
 	if err := ctl.webAppToken(ctx, dir); err != nil {
 		return WebAppIdentity{}, err
 	}
@@ -223,7 +199,7 @@ func (ctl *Controller) webAppIdentity(ctx context.Context, o v1alpha1.Gateway, o
 		}
 	}
 	ctl.c.log().Info("the web app's own kcp identity", "user", user, "workspace", ctl.c.workspace()+":"+ComponentWorkspace,
-		"clustersExport", id.ClustersExportURL, "kubeconfig", id.Kubeconfig)
+		"kubeconfig", id.Kubeconfig)
 	return id, nil
 }
 

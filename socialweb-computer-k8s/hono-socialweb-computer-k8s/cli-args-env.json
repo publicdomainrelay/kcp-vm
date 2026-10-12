@@ -120,11 +120,6 @@
       "description": "kubeconfig of this web app's own kcp identity (a ServiceAccount token, re-read from its tokenFile on every request); it reads the Gateway and the OpenBaoServer and writes MarketIdentities",
       "env": "KCP_KUBECONFIG"
     },
-    "kcp-clusters-export-url": {
-      "type": "string",
-      "description": "URL of the kcp virtual workspace of the clusters APIExport; with kcp-kubeconfig set, this web app lists and patches every cluster's NodeClaims and reads its ClusterLinks through it and fulfils them through the compute market",
-      "env": "KCP_CLUSTERS_EXPORT_URL"
-    },
     "kcp-context": {
       "type": "string",
       "description": "Context in the kcp kubeconfig to use; defaults to its current-context",
@@ -183,7 +178,7 @@
     },
     "market-identity-workspace": {
       "type": "string",
-      "description": "kcp workspace this web app writes one MarketIdentity (mode oauthDelegated) per signed-in account into; unset, it writes none",
+      "description": "kcp workspace this web app writes one MarketIdentity (mode oauthDelegated) per signed-in account into; with kcp-kubeconfig set, it also fulfils the NodeClaims in the home workspaces of those accounts through the compute market; unset, it does neither",
       "env": "MARKET_IDENTITY_WORKSPACE"
     },
     "openbao-addr": {

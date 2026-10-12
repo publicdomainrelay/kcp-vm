@@ -253,7 +253,7 @@ func (ctl *Controller) reconcileGateway(ctx context.Context, u *unstructured.Uns
 				st.Phase, st.Message = v1alpha1.ApplicationPhaseProvisioning, "the web app's kcp identity: "+err.Error()
 				return ctl.writeStatus(ctx, GatewayGVR, o.Name, st)
 			}
-			values.Kubeconfig, values.KcpDir, values.ClustersExportURL = id.Kubeconfig, id.Dir, id.ClustersExportURL
+			values.Kubeconfig, values.KcpDir = id.Kubeconfig, id.Dir
 			pods, err := ctl.applyProfile(ctx, GatewaySet, o.Spec.Profile, owner, true, &values)
 			if err != nil {
 				st.Phase, st.Message = v1alpha1.ApplicationPhaseProvisioning, "its components: "+err.Error()

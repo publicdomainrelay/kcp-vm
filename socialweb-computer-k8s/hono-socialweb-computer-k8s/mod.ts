@@ -288,8 +288,8 @@ const claimKeys = options.openbaoAddr
     ...(openBaoClient ? { fetch: (input, init) => fetch(input, { ...init, client: openBaoClient } as unknown as RequestInit) } : {}),
   })
   : createMemoryClaimKeyStore();
-const clustersExportUrl = options.kcpClustersExportUrl as string | undefined;
-if (!claimKeys.durable && kcpCredentials && clustersExportUrl) {
+const identityWorkspace = options.marketIdentityWorkspace as string | undefined;
+if (!claimKeys.durable && kcpCredentials && identityWorkspace) {
   logger.warn("claim_keys_in_memory", {
     next: "a restarted door cannot re-serve an in-flight claim's secrets URL, so its Bidding and " +
       "Provisioning claims are marked Failed and released on deletion; set openbao-addr to resume them",
@@ -297,10 +297,10 @@ if (!claimKeys.durable && kcpCredentials && clustersExportUrl) {
 }
 
 let fulfiller: MarketNodeFulfiller | null = null;
-if (kcpCredentials && clustersExportUrl) {
+if (kcpCredentials && identityWorkspace) {
   fulfiller = createMarketNodeFulfiller({
-    store: createKcpNodeClaimStore({ credentials: kcpCredentials, virtualWorkspace: clustersExportUrl }),
-    links: createKcpClusterLinkReader({ credentials: kcpCredentials, virtualWorkspace: clustersExportUrl }),
+    store: createKcpNodeClaimStore({ credentials: kcpCredentials, identityWorkspace }),
+    links: createKcpClusterLinkReader({ credentials: kcpCredentials }),
     requesterFor: (did) => accounts.requesterFor(did),
     plcUrl: options.plcDirectoryUrl as string,
     ingressProxyHost: options.ingressProxyHost as string,

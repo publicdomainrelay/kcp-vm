@@ -20,6 +20,7 @@ import {
   parseClusterLink,
   parseNodeClaim,
 } from "@publicdomainrelay/socialweb-computer-k8s-api";
+import { accountHashOf } from "@publicdomainrelay/socialweb-computer-k8s-common";
 
 export interface KcpCredentials {
   server: string;
@@ -75,8 +76,12 @@ export interface KcpRequestOptions {
 }
 
 export interface KcpNodeClaimStoreOptions extends KcpRequestOptions {
-  virtualWorkspace: string;
+  identityWorkspace: string;
+  homesTtlMs?: number;
 }
+
+const DEFAULT_HOMES_TTL_MS = 30_000;
+const UNREACHABLE_STATUSES = new Set([403, 404]);
 
 const DEFAULT_RETRY_AFTER_MS = 5_000;
 
@@ -170,13 +175,9 @@ export function toClusterLink(raw: unknown, workspace: string): ClusterLinkView 
   return { workspace, name, spec: link.spec, status: link.status ?? {} };
 }
 
-function virtualWorkspaceBase(opts: KcpNodeClaimStoreOptions): string {
-  return opts.virtualWorkspace.replace(/\/+$/, "");
-}
-
-export function createKcpClusterLinkReader(opts: KcpNodeClaimStoreOptions): ClusterLinkReader {
+export function createKcpClusterLinkReader(opts: KcpRequestOptions): ClusterLinkReader {
   const request = createKcpRequest(opts);
-  const base = virtualWorkspaceBase(opts);
+  const base = opts.credentials.server;
   const { group, version, plural } = CLUSTER_LINK_RESOURCE;
   return {
     async get(workspace, name) {
@@ -193,7 +194,47 @@ export function createKcpClusterLinkReader(opts: KcpNodeClaimStoreOptions): Clus
 
 export function createKcpNodeClaimStore(opts: KcpNodeClaimStoreOptions): NodeClaimStore {
   const request = createKcpRequest(opts);
-  const base = virtualWorkspaceBase(opts);
+  const base = opts.credentials.server;
+  const homesTtlMs = opts.homesTtlMs ?? DEFAULT_HOMES_TTL_MS;
+  let homesCache: { at: number; homes: string[] } | null = null;
+
+  async function reachable<T>(read: () => Promise<T>, fallback: T): Promise<T> {
+    try {
+      return await read();
+    } catch (err) {
+      if (err instanceof KcpRequestError && UNREACHABLE_STATUSES.has(err.status)) return fallback;
+      throw err;
+    }
+  }
+
+  async function accountDids(): Promise<string[]> {
+    const { group, version, plural } = MARKET_IDENTITY_RESOURCE;
+    const out = await request(`${base}/clusters/${opts.identityWorkspace}/apis/${group}/${version}/${plural}`) as {
+      items?: MarketIdentity[];
+    };
+    const dids = (out.items ?? []).map((i) => i.status?.did ?? i.metadata?.annotations?.[ACCOUNT_DID_ANNOTATION] ?? "");
+    return [...new Set(dids.filter(Boolean))];
+  }
+
+  async function accountPath(did: string): Promise<string> {
+    const sum = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(did)));
+    return `root:${accountHashOf(sum)}`;
+  }
+
+  async function homes(): Promise<string[]> {
+    if (homesCache && Date.now() - homesCache.at < homesTtlMs) return homesCache.homes;
+    const paths: string[] = [];
+    for (const did of await accountDids()) {
+      const account = await accountPath(did);
+      const out = await reachable(
+        () => request(`${base}/clusters/${account}/apis/tenancy.kcp.io/v1alpha1/workspaces`) as Promise<{ items?: { metadata: { name: string } }[] }>,
+        { items: [] },
+      );
+      for (const w of out.items ?? []) paths.push(`${account}:${w.metadata.name}`);
+    }
+    homesCache = { at: Date.now(), homes: paths };
+    return paths;
+  }
 
   function clusterPath(workspace: string, resource: string): string {
     return `${base}/clusters/${workspace}/apis/${NODE_CLAIM_RESOURCE.group}/${NODE_CLAIM_RESOURCE.version}/${NODE_CLAIM_RESOURCE.plural}${resource}`;
@@ -239,8 +280,12 @@ export function createKcpNodeClaimStore(opts: KcpNodeClaimStoreOptions): NodeCla
 
   return {
     async list() {
-      const out = await request(clusterPath("*", "")) as { items?: unknown[] };
-      return (out.items ?? []).map((item) => toNodeClaim(item));
+      const claims: NodeClaim[] = [];
+      for (const home of await homes()) {
+        const out = await reachable(() => request(clusterPath(home, "")) as Promise<{ items?: unknown[] }>, { items: [] });
+        for (const item of out.items ?? []) claims.push(toNodeClaim(item, home));
+      }
+      return claims;
     },
     async get(claim) {
       try {

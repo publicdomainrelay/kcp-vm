@@ -96,7 +96,6 @@ type Gateway struct {
 	WebDir            string `json:",omitempty"`
 	Kubeconfig        string `json:",omitempty"`
 	KcpDir            string `json:",omitempty"`
-	ClustersExportURL string `json:",omitempty"`
 	GatewayWorkspace  string `json:",omitempty"`
 	GatewayName       string `json:",omitempty"`
 	TLS               string `json:",omitempty"`

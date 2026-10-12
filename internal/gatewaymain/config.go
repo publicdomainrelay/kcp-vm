@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpclient"
 )
 
 const (
@@ -34,6 +36,8 @@ const (
 
 	envKCPPublicHost = "SOCIALWEB_GATEWAY_KCP_PUBLIC_HOST"
 	envPublicMintURL = "SOCIALWEB_GATEWAY_PUBLIC_MINT_URL"
+
+	envNodeClaimAgent = "SOCIALWEB_GATEWAY_NODECLAIM_AGENT"
 )
 
 const DevkeyRegistryNamespace = "default"
@@ -75,6 +79,8 @@ type Config struct {
 	KCPPublicHost string
 
 	PublicMintURL string
+
+	NodeClaimAgent *kcpclient.ServiceAccountRef
 
 	LogLevel slog.Level
 }
@@ -140,6 +146,9 @@ func load(get func(string) string) (Config, error) {
 	}
 	if cfg.PublicMintURL, err = optionalHTTPSURL(get, envPublicMintURL); err != nil {
 		return Config{}, err
+	}
+	if cfg.NodeClaimAgent, err = kcpclient.ParseServiceAccountRef(get(envNodeClaimAgent)); err != nil {
+		return Config{}, fmt.Errorf("%s: %w", envNodeClaimAgent, err)
 	}
 	if cfg.MintTTL, err = optionalDuration(get, envMintTTL); err != nil {
 		return Config{}, err

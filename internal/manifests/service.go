@@ -117,8 +117,8 @@ func (s Service) Check(entries map[string]tsbundle.EntrySpec) error {
 	if !path.IsAbs(s.StateDir) {
 		add("stateDir %q is not an absolute path", s.StateDir)
 	}
-	if !serviceName.MatchString(s.ServiceAccount) {
-		add("serviceAccount %q is not a DNS label; every service names the ServiceAccount its kcp tokens are minted for", s.ServiceAccount)
+	if s.ServiceAccount != "" && !serviceName.MatchString(s.ServiceAccount) {
+		add("serviceAccount %q is not a DNS label; a service that names a ServiceAccount gets kcp tokens minted for it", s.ServiceAccount)
 	}
 	switch s.TLS {
 	case TLSServe, TLSTrust, TLSNone:
@@ -235,7 +235,10 @@ func (s Service) TemplateData(entries map[string]tsbundle.EntrySpec) (map[string
 		return nil, fmt.Errorf("manifests: service %s binds a fixed port (%s); every service behind the edge binds port 0 and reports its listener",
 			s.Name, strings.Join(fixed, ", "))
 	}
-	sa := map[string]string{"name": s.ServiceAccount, "namespace": "default"}
+	var sa map[string]string
+	if s.ServiceAccount != "" {
+		sa = map[string]string{"name": s.ServiceAccount, "namespace": "default"}
+	}
 	tls := "false"
 	if s.TLS != TLSNone {
 		tls = "true"

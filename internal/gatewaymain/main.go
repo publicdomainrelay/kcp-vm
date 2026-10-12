@@ -118,10 +118,11 @@ func buildDeps(cfg Config) (Deps, error) {
 	}
 
 	client, err := kcpclient.New(kcpclient.Options{
-		Host:       cfg.KCPHost,
-		PublicHost: cfg.KCPPublicHost,
-		RestConfig: kcpRestConfig,
-		DeviceKeys: deviceKeys,
+		Host:           cfg.KCPHost,
+		PublicHost:     cfg.KCPPublicHost,
+		RestConfig:     kcpRestConfig,
+		DeviceKeys:     deviceKeys,
+		NodeClaimAgent: cfg.NodeClaimAgent,
 	})
 	if err != nil {
 		return Deps{}, err

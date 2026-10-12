@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/deploy"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/appctl"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devinstance"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostprocess"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpclient"
@@ -97,6 +98,7 @@ func (g *gateway) defaults(e *env, rec devinstance.Record, cert, key string) err
 	e.set("SOCIALWEB_KCP_HOST", rec.KcpURL)
 	e.set("SOCIALWEB_KCP_KUBECONFIG", g.memberKubeconfig())
 	e.set("SOCIALWEB_GATEWAY_MINT_KUBECONFIGS", mint)
+	e.set("SOCIALWEB_GATEWAY_NODECLAIM_AGENT", appctl.WebAppAccountRef())
 	e.dflt("SOCIALWEB_GATEWAY_ADDR", DefaultAddress)
 	e.dflt("SOCIALWEB_GATEWAY_AUDIENCES", DefaultAudience)
 	first, _, _ := strings.Cut(e.get("SOCIALWEB_GATEWAY_AUDIENCES"), ",")

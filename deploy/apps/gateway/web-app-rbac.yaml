@@ -11,7 +11,7 @@ metadata:
 rules:
   - apiGroups: ["socialweb.computer"]
     resources: ["marketidentities"]
-    verbs: ["create", "patch"]
+    verbs: ["create", "list", "patch"]
   - apiGroups: ["socialweb.computer"]
     resources: ["marketidentities/status"]
     verbs: ["patch"]
