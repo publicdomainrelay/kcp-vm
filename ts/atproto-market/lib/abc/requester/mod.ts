@@ -196,6 +196,15 @@ export interface RequesterPDS {
    */
   setOnNetworkResolved?(key: string, fn: (address: string) => void): void;
   clearOnNetworkResolved?(key: string): void;
+  setOnTerminated?(receiptUri: string, fn: (envelope: SubmittedComputeEvent) => void): void;
+  clearOnTerminated?(receiptUri: string): void;
+}
+
+export interface SubmittedComputeEvent {
+  uri: string;
+  cid: string;
+  record: Record<string, unknown>;
+  payload: Record<string, unknown>;
 }
 
 /**
@@ -206,8 +215,8 @@ export interface RequesterPDS {
  */
 export interface SshSessionProvider {
   generateKeypair(vmName: string): Promise<{ publicKey: string; privateKeyPath: string }>;
-  pollReady(privateKeyPath: string, target: string, timeoutMs: number): Promise<boolean>;
-  runSession(privateKeyPath: string, target: string, program: string): Promise<number>;
+  pollReady(privateKeyPath: string, target: string, timeoutMs: number, signal?: AbortSignal): Promise<boolean>;
+  runSession(privateKeyPath: string, target: string, program: string, signal?: AbortSignal): Promise<number>;
   /**
    * Everything the last non-interactive session printed, when the provider
    * captures it. Absent on providers that inherit stdio, so the flow treats a
@@ -247,6 +256,7 @@ export interface ContractFlowResult {
    * reaching into the guest over a side channel.
    */
   sshOutput?: string;
+  terminated?: { reason: string; exitCode?: number; observedAt: string };
 }
 
 export interface ConsoleBuffer {

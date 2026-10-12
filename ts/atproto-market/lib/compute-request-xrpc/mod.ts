@@ -15,6 +15,7 @@ import {
   COMPUTE_EVENTS_VM_DELETE_NSID,
   COMPUTE_EVENTS_VM_ONNETWORK_NSID,
   COMPUTE_EVENTS_VM_REGISTER_IDENTITY_NSID,
+  COMPUTE_EVENTS_VM_TERMINATED_NSID,
   COMPUTE_VM_NSID,
   EVENT_NSID,
   OFFERING_NSID,
@@ -67,13 +68,17 @@ import {
   createContractState,
   guestAddressKind,
   hasContract,
+  isTerminated,
   patchContract,
   receiptKeyOf,
   releaseTargetOf,
   ReturnLatch,
+  terminationOf,
 } from "@publicdomainrelay/compute-request-abc";
 import type {
   BidDecision,
+  ComputeEventEnvelope,
+  ContractTermination,
   ComputeRequestHandlers,
   ContractOutcome,
   ContractReleaser,
@@ -339,12 +344,28 @@ interface FirehoseReceipt {
 
 type OnNetworkPds = Pick<
   RequesterPDS,
-  "setOnNetworkResolved" | "clearOnNetworkResolved" | "resolveIrohNodeId"
+  | "setOnNetworkResolved"
+  | "clearOnNetworkResolved"
+  | "resolveIrohNodeId"
+  | "setOnTerminated"
+  | "clearOnTerminated"
 >;
+
+export type ComputeEventVerifier = (envelope: ComputeEventEnvelope) => Promise<boolean>;
+
+export function createComputeEventVerifier(): ComputeEventVerifier {
+  return async ({ uri, record }) =>
+    await verifyRecordSignatures({
+      record: stripResolved(record as never) as Record<string, unknown>,
+      repositoryDid: atUriAuthority(uri),
+    });
+}
 
 interface ContractWatch {
   readonly firehose: boolean;
   readonly address: Promise<NetworkEvent>;
+  readonly terminated: Promise<ContractTermination>;
+  releaseNetwork(): void;
   setRfp(uri: string): void;
   setReceipt(receipt: RecordRef): void;
   bidsFor(rfpUri: string): CollectedBid[];
@@ -359,12 +380,17 @@ function openContractWatch(opts: {
   idResolver: IdResolver;
   logger?: StructuredLoggerInterface;
   log: FlowLog;
+  verifyEvent?: ComputeEventVerifier;
 }): ContractWatch {
   const { pds, eventStreams, idResolver, logger, log } = opts;
+  const verifyEvent = opts.verifyEvent ?? createComputeEventVerifier();
   const discoveredBids = new Map<string, CollectedBid[]>();
   const discoveredReceipts = new Map<string, FirehoseReceipt>();
   const contractOnNetworkUris = new Set<string>();
   const addressReady = Promise.withResolvers<NetworkEvent>();
+  const terminatedReady = Promise.withResolvers<ContractTermination>();
+  let terminatedSettled = false;
+  let terminatedKey = "";
   let rfpUri = "";
   let receiptUri = "";
   let receiptCid = "";
@@ -409,9 +435,56 @@ function openContractWatch(opts: {
     return false;
   };
 
+  const onTerminatedEnvelope = async (envelope: ComputeEventEnvelope, source: string) => {
+    if (terminatedSettled || !receiptUri) return;
+    const bound = terminationOf(envelope, { uri: receiptUri, cid: receiptCid });
+    if (!bound.ok) {
+      log("vm_terminated_rejected", { eventUri: envelope.uri, source, reason: bound.reason });
+      return;
+    }
+    let sigOk = false;
+    try {
+      sigOk = await verifyEvent(envelope);
+    } catch (err) {
+      log("vm_terminated_verify_error", { eventUri: envelope.uri, source, error: String(err) });
+    }
+    if (!sigOk) {
+      log("vm_terminated_rejected", { eventUri: envelope.uri, source, reason: "signature invalid" });
+      return;
+    }
+    if (terminatedSettled) return;
+    terminatedSettled = true;
+    const t = bound.termination;
+    log("vm_terminated_by_bidder", {
+      receiptUri,
+      reason: t.reason,
+      exitCode: t.exitCode,
+      observedAt: t.observedAt,
+      request: t.request?.uri,
+      eventUri: t.event.uri,
+      source,
+    });
+    terminatedReady.resolve(t);
+  };
+
   const onWrappedEvent = async (pdsUrl: string, event: FetchedRecord) => {
-    if (!matchesReceipt(event.value.receipt as { uri?: string; cid?: string } | undefined)) return;
-    const payloadRef = event.value.payload as { uri?: string } | undefined;
+    const wrappedReceipt = event.value.receipt as { uri?: string; cid?: string } | undefined;
+    const wrappedPayload = event.value.payload as { uri?: string } | undefined;
+    if (
+      receiptUri && wrappedReceipt?.uri === receiptUri &&
+      wrappedPayload?.uri?.split("/")[3] === COMPUTE_EVENTS_VM_TERMINATED_NSID
+    ) {
+      const [, , payloadRepo, payloadColl] = wrappedPayload.uri.split("/");
+      const payload = await getRecordFrom(pdsUrl, payloadRepo, payloadColl, wrappedPayload.uri.split("/").pop()!);
+      if (!payload) return;
+      await onTerminatedEnvelope(
+        { uri: event.uri, cid: event.cid, record: event.value, payload: payload.value },
+        `firehose:${event.uri}`,
+      );
+      return;
+    }
+    if (!matchesReceipt(wrappedReceipt)) return;
+    const payloadRef = wrappedPayload;
     if (!payloadRef?.uri) return;
     if (payloadRef.uri.split("/")[3] !== COMPUTE_EVENTS_VM_ONNETWORK_NSID) return;
     contractOnNetworkUris.add(payloadRef.uri);
@@ -508,9 +581,18 @@ function openContractWatch(opts: {
     registeredKey = "";
   };
 
+  const clearTerminated = () => {
+    if (terminatedKey) pds.clearOnTerminated?.(terminatedKey);
+    terminatedKey = "";
+  };
+
   return {
     firehose: watcher !== undefined,
     address: addressReady.promise,
+    terminated: terminatedReady.promise,
+    releaseNetwork() {
+      clearRegistration();
+    },
     setRfp(uri) {
       rfpUri = uri;
     },
@@ -523,6 +605,12 @@ function openContractWatch(opts: {
       pds.setOnNetworkResolved?.(
         registeredKey,
         (address) => resolveGuestAddress(address, "submitEvent"),
+      );
+      clearTerminated();
+      terminatedKey = receiptUri;
+      pds.setOnTerminated?.(
+        terminatedKey,
+        (envelope) => void onTerminatedEnvelope(envelope, "submitEvent"),
       );
     },
     bidsFor(uri) {
@@ -537,7 +625,7 @@ function openContractWatch(opts: {
         if (!pdsUrl) return;
         const events = await listRecordsAll(pdsUrl, winnerDid, EVENT_NSID, { timeoutMs: 10_000 });
         for (const event of events) {
-          if (vmAddress) return;
+          if (vmAddress || terminatedSettled) return;
           await onWrappedEvent(pdsUrl, event as FetchedRecord);
         }
       } catch (err) {
@@ -546,21 +634,27 @@ function openContractWatch(opts: {
     },
     close() {
       clearRegistration();
+      clearTerminated();
       watcher?.close();
       watcher = undefined;
     },
   };
 }
 
+type AddressWait =
+  | { kind: "network"; network: NetworkEvent }
+  | { kind: "terminated"; termination: ContractTermination };
+
 async function waitForAddress(
   watch: ContractWatch,
   timeoutMs: number,
   latch?: ReturnLatch,
-): Promise<NetworkEvent | null> {
+): Promise<AddressWait | null> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
-      watch.address,
+      watch.address.then((network): AddressWait => ({ kind: "network", network })),
+      watch.terminated.then((termination): AddressWait => ({ kind: "terminated", termination })),
       new Promise<null>((resolve) => {
         timer = setTimeout(() => resolve(null), timeoutMs);
       }),
@@ -630,6 +724,7 @@ export type ComputeRequestOptions =
     receiptVerifier?: ReceiptVerifier;
     recordResolver?: RecordResolver;
     receiptFinder?: ReceiptFinder;
+    eventVerifier?: ComputeEventVerifier;
   };
 
 export interface FoundReceipt {
@@ -663,6 +758,7 @@ export interface ComputeRequestHandle {
   state: ContractState;
   capabilities: GuestCapability[];
   dispose(): Promise<void>;
+  terminated?: Promise<ContractState>;
 }
 
 type HandlerName = keyof ComputeRequestHandlers;
@@ -681,12 +777,18 @@ function capabilityHandle(
   state: ContractState,
   capabilities: GuestCapability[],
   log: FlowLog,
+  extra: { terminated?: Promise<ContractState>; close?: () => void } = {},
 ): ComputeRequestHandle {
   let disposed: Promise<void> | undefined;
   return {
     state,
     capabilities,
-    dispose: () => disposed ??= disposeAll(capabilities, log),
+    dispose: () =>
+      disposed ??= (async () => {
+        extra.close?.();
+        await disposeAll(capabilities, log);
+      })(),
+    ...(extra.terminated ? { terminated: extra.terminated } : {}),
   };
 }
 
@@ -706,6 +808,15 @@ export function flowViewOf(state: ContractState): Record<string, unknown> {
     submitEventRef: state.submitEventRef,
     receiptOk: state.receiptOk ?? false,
     bids: state.bids,
+    ...(state.termination
+      ? {
+        terminated: {
+          reason: state.termination.reason,
+          ...(state.termination.exitCode !== undefined ? { exitCode: state.termination.exitCode } : {}),
+          observedAt: state.termination.observedAt,
+        },
+      }
+      : {}),
   };
 }
 
@@ -807,6 +918,19 @@ export async function requestCompute(
     idResolver,
     logger,
     log,
+    verifyEvent: opts.eventVerifier,
+  });
+
+  const terminatedState = Promise.withResolvers<ContractState>();
+  void watch.terminated.then(async (termination) => {
+    state = patchContract(state, { termination });
+    latch.request("bidder_terminated");
+    try {
+      await handlers.onTerminated?.(termination, structuredClone(state));
+    } catch (err) {
+      log("compute_handler_failed", { handler: "onTerminated", error: String(err) });
+    }
+    terminatedState.resolve(structuredClone(state));
   });
 
   const finish = async (
@@ -814,16 +938,27 @@ export async function requestCompute(
     patch: ContractStatePatch = {},
   ): Promise<ComputeRequestHandle> => {
     ended = true;
-    watch.close();
+    if (isTerminated(state)) await terminatedState.promise;
     state = patchContract(state, { ...patch, outcome });
     if (outcome === "returned") {
       log("compute_request_returned", { phase: state.phase, by: latch.reason });
     }
     if (!hasContract(state)) {
+      watch.close();
       await disposeAll(capabilities, log);
       return capabilityHandle(structuredClone(state), [], log);
     }
-    return capabilityHandle(structuredClone(state), capabilities, log);
+    if (isTerminated(state)) {
+      watch.close();
+      return capabilityHandle(structuredClone(state), capabilities, log, {
+        terminated: terminatedState.promise,
+      });
+    }
+    watch.releaseNetwork();
+    return capabilityHandle(structuredClone(state), capabilities, log, {
+      terminated: terminatedState.promise,
+      close: () => watch.close(),
+    });
   };
 
   try {
@@ -1534,12 +1669,17 @@ runcmd:
       return await finish("receipt_invalid");
     }
 
-    const network = await waitForAddress(watch, vmReadyTimeoutSec * 1000, latch);
-    if (!network) {
+    const waited = await waitForAddress(watch, vmReadyTimeoutSec * 1000, latch);
+    if (!waited) {
       if (latch.requested) return await finish("returned");
       log("vm_fqdn_timeout", { timeoutSec: vmReadyTimeoutSec });
       return await finish("network_timeout");
     }
+    if (waited.kind === "terminated") {
+      await terminatedState.promise;
+      return await finish("returned");
+    }
+    const network = waited.network;
     advance("network", { vmAddress: network.address });
     if (await decideFlow("onNetwork", handlers.onNetwork, network)) return await finish("returned");
     return await finish(latch.requested ? "returned" : "complete");
@@ -1558,6 +1698,8 @@ export interface AwaitComputeNetworkOptions {
   timeoutMs?: number;
   backfill?: boolean;
   onNetwork?: ComputeRequestHandlers["onNetwork"];
+  onTerminated?: ComputeRequestHandlers["onTerminated"];
+  eventVerifier?: ComputeEventVerifier;
 }
 
 export async function awaitComputeNetwork(
@@ -1566,7 +1708,7 @@ export async function awaitComputeNetwork(
   opts: AwaitComputeNetworkOptions = {},
 ): Promise<ContractState> {
   const log = flowLog(opts.logger);
-  if (state.vmAddress) return state;
+  if (state.vmAddress || isTerminated(state)) return state;
   if (!state.receipt) {
     log("onnetwork_resume_skipped", { reason: "no receipt", phase: state.phase });
     return patchContract(state, { error: "no receipt to resume from" });
@@ -1577,17 +1719,31 @@ export async function awaitComputeNetwork(
     idResolver: new IdResolver({ plcUrl: opts.plcUrl }),
     logger: opts.logger,
     log,
+    verifyEvent: opts.eventVerifier,
   });
   try {
     watch.setReceipt(state.receipt);
     log("onnetwork_resume", { receiptUri: state.receipt.uri, winnerDid: state.winner?.did });
     if (opts.backfill !== false && state.winner?.did) void watch.backfill(state.winner.did);
     const timeoutMs = opts.timeoutMs ?? DEFAULT_VM_READY_TIMEOUT_SEC * 1000;
-    const network = await waitForAddress(watch, timeoutMs);
-    if (!network) {
+    const waited = await waitForAddress(watch, timeoutMs);
+    if (!waited) {
       log("vm_fqdn_timeout", { timeoutSec: timeoutMs / 1000 });
       return patchContract(state, { outcome: "network_timeout" });
     }
+    if (waited.kind === "terminated") {
+      const ended = patchContract(state, {
+        termination: waited.termination,
+        outcome: "returned",
+      });
+      try {
+        await opts.onTerminated?.(waited.termination, structuredClone(ended));
+      } catch (err) {
+        log("compute_handler_failed", { handler: "onTerminated", error: String(err) });
+      }
+      return ended;
+    }
+    const network = waited.network;
     const next = advanceContract(state, "network", {
       vmAddress: network.address,
       outcome: "complete",
@@ -1615,6 +1771,21 @@ export async function releaseCompute(
   opts: ReleaseComputeOptions = {},
 ): Promise<ContractState> {
   const log = flowLog(opts.logger);
+  if (isTerminated(state)) {
+    log("vm_delete_skipped", {
+      reason: "terminated_by_bidder",
+      terminatedReason: state.termination?.reason,
+      receiptUri: state.receipt?.uri,
+    });
+    for (const cap of opts.capabilities ?? []) {
+      try {
+        await cap.onRevoke?.();
+      } catch (err) {
+        log("capability_revoke_failed", { capability: cap.id, error: String(err) });
+      }
+    }
+    return state;
+  }
   const target = releaseTargetOf(state);
   if (!target) {
     log("vm_delete_skipped", {

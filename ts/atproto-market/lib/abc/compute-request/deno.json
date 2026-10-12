@@ -3,5 +3,7 @@
   "version": "0.0.0",
   "license": "Unlicense",
   "exports": "./mod.ts",
-  "imports": {}
+  "imports": {
+    "@publicdomainrelay/market-common": "jsr:@publicdomainrelay/market-common@^0"
+  }
 }

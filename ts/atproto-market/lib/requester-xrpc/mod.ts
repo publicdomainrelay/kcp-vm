@@ -19,7 +19,7 @@ import { OAuthClient } from "@atproto/oauth-client";
 import { webCryptoRuntime, memoryStateStore, jsonSessionStore } from "@publicdomainrelay/atproto-oauth-helpers";
 import type { AtprotoAgentLike } from "@publicdomainrelay/atproto-helpers";
 import type { InlineAttestation, AttestationKeypair, SubmitBidCallback } from "@publicdomainrelay/market-atproto";
-import { SUBMIT_BID_NSID, SUBMIT_EVENT_NSID } from "@publicdomainrelay/market-common";
+import { COMPUTE_EVENTS_VM_TERMINATED_NSID, SUBMIT_BID_NSID, SUBMIT_EVENT_NSID } from "@publicdomainrelay/market-common";
 import type { StrongRef } from "@publicdomainrelay/market-common";
 import { DUMBPIPE_VERSION_DEFAULT } from "@publicdomainrelay/cloud-init-common";
 import type {
@@ -29,6 +29,7 @@ import type {
   ContractFlowOptions,
   ContractFlowResult,
   SshSessionProvider,
+  SubmittedComputeEvent,
 } from "@publicdomainrelay/requester-abc";
 import type { LoggerInterface, StructuredLoggerInterface } from "@publicdomainrelay/logger";
 import type { ServeHandle, IngressRef } from "@publicdomainrelay/serve";
@@ -348,6 +349,7 @@ export async function createRequesterPDS(
   // failed". The receipt is the only thing in the event that identifies which
   // contract it belongs to.
   const onNetworkResolvers = new Map<string, (address: string) => void>();
+  const onTerminatedHandlers = new Map<string, (envelope: SubmittedComputeEvent) => void>();
 
   const submitEventHandler = createSubmitEventHandler({
     deps: {
@@ -402,6 +404,25 @@ export async function createRequesterPDS(
                 }
               }
             } catch { /* best-effort */ }
+          }
+        },
+        [COMPUTE_EVENTS_VM_TERMINATED_NSID]: async (ctx) => {
+          const { _uri: _u, _cid: _c, ...record } = ctx.event as unknown as Record<string, unknown>;
+          const receiptUri = (record.receipt as { uri?: string } | undefined)?.uri ?? "";
+          const handler = onTerminatedHandlers.get(receiptUri);
+          logger.info("vm.terminated received", { receiptUri, eventUri: ctx.uri, watched: !!handler });
+          if (!handler) return;
+          const payloadRef = record.payload as { uri?: string; cid?: string } | undefined;
+          if (!payloadRef?.uri) return;
+          try {
+            const resolved = await ctx.resolve.resolve({ uri: payloadRef.uri, cid: payloadRef.cid ?? "" }) as
+              | Record<string, unknown>
+              | null;
+            if (!resolved) return;
+            const { _uri: _pu, _cid: _pc, ...payload } = resolved;
+            handler({ uri: ctx.uri, cid: ctx.cid, record, payload });
+          } catch (err) {
+            logger.warn("vm.terminated payload unresolvable", { receiptUri, payloadUri: payloadRef.uri, error: String(err) });
           }
         },
       },
@@ -560,6 +581,10 @@ export async function createRequesterPDS(
     rejectAssociation: (err: Error) => { rejectAssociationApproved?.(err); },
     setOnNetworkResolved: (key: string, fn: (address: string) => void) => { onNetworkResolvers.set(key, fn); },
     clearOnNetworkResolved: (key: string) => { onNetworkResolvers.delete(key); },
+    setOnTerminated: (receiptUri: string, fn: (envelope: SubmittedComputeEvent) => void) => {
+      onTerminatedHandlers.set(receiptUri, fn);
+    },
+    clearOnTerminated: (receiptUri: string) => { onTerminatedHandlers.delete(receiptUri); },
     dispose: async () => { store.close(); },
   };
 }
@@ -632,12 +657,17 @@ export function createSshSessionProvider(
     privateKeyPath: string,
     fqdn: string,
     timeoutMs: number,
+    signal?: AbortSignal,
   ): Promise<boolean> {
     const proxyCmd = proxyCommandFor(fqdn);
     log("ssh_poll_start", { fqdn, proxyCmd: proxyCmd?.slice(0, 150), timeoutMs });
     const deadline = Date.now() + timeoutMs;
     let attempt = 0;
     while (Date.now() < deadline) {
+      if (signal?.aborted) {
+        log("vm_ssh_poll_aborted", { fqdn, attempt });
+        return false;
+      }
       attempt++;
       const sshArgs = [
         ...sshTunnelArgs(privateKeyPath, fqdn, proxyCmd),
@@ -651,8 +681,19 @@ export function createSshSessionProvider(
         args: sshArgs,
         stdout: "piped",
         stderr: "piped",
+        signal,
       });
-      const { code, stdout, stderr } = await cmd.output();
+      let output: Deno.CommandOutput;
+      try {
+        output = await cmd.output();
+      } catch (err) {
+        if (signal?.aborted) {
+          log("vm_ssh_poll_aborted", { fqdn, attempt });
+          return false;
+        }
+        throw err;
+      }
+      const { code, stdout, stderr } = output;
       if (code === 0) {
         log("vm_ssh_ready", { fqdn, attempt });
         return true;
@@ -661,7 +702,13 @@ export function createSshSessionProvider(
       const outText = new TextDecoder().decode(stdout).trim();
       const fullError = (errText + (outText ? " | stdout:" + outText : "")).slice(0, 400);
       log("vm_ssh_poll", { fqdn, attempt, code, error: errText.slice(0, 200), fullError });
-      await new Promise((r) => setTimeout(r, 5000));
+      await new Promise<void>((r) => {
+        const timer = setTimeout(r, 5000);
+        signal?.addEventListener("abort", () => {
+          clearTimeout(timer);
+          r();
+        }, { once: true });
+      });
     }
     log("vm_ssh_timeout", { fqdn, timeoutMs });
     return false;
@@ -671,6 +718,7 @@ export function createSshSessionProvider(
     privateKeyPath: string,
     fqdn: string,
     program: string,
+    signal?: AbortSignal,
   ): Promise<number> {
     const proxyCmd = proxyCommandFor(fqdn);
     const interactive = Deno.stdin.isTerminal();
@@ -678,7 +726,7 @@ export function createSshSessionProvider(
     lastOutput = "";
     if (interactive) {
       args.push("-tt", `root@${fqdn}`);
-      const cmd = new Deno.Command("ssh", { args, stdin: "inherit", stdout: "inherit", stderr: "inherit" });
+      const cmd = new Deno.Command("ssh", { args, stdin: "inherit", stdout: "inherit", stderr: "inherit", signal });
       const child = cmd.spawn();
       const { code } = await child.status;
       return code;
@@ -687,7 +735,7 @@ export function createSshSessionProvider(
     // Non-interactive: capture stdout/stderr while still live-streaming them,
     // so a caller can assert on what the guest printed (and the operator still
     // sees it) without a second, out-of-band read of the guest.
-    const cmd = new Deno.Command("ssh", { args, stdin: "inherit", stdout: "piped", stderr: "piped" });
+    const cmd = new Deno.Command("ssh", { args, stdin: "inherit", stdout: "piped", stderr: "piped", signal });
     const child = cmd.spawn();
     const pump = async (
       stream: ReadableStream<Uint8Array>,
@@ -927,14 +975,36 @@ export async function runComputeContract(
   }
 
   const contract = await requestCompute(pds, { ...opts, vmName, sshPublicKey });
-  const state = contract.state;
+  let state = contract.state;
   const result = contractFlowResultOf(state);
   if (state.outcome && NO_CONTRACT_OUTCOMES.includes(state.outcome)) {
     await contract.dispose();
     return result;
   }
 
-  if (!skipSsh && state.receiptOk) {
+  const bidderEnded = new AbortController();
+  if (state.termination) bidderEnded.abort();
+  void contract.terminated?.then((terminated) => {
+    if (bidderEnded.signal.aborted) return;
+    state = terminated;
+    log("vm_session_ended_by_bidder", {
+      receiptUri: terminated.receipt?.uri,
+      reason: terminated.termination?.reason,
+      exitCode: terminated.termination?.exitCode,
+      observedAt: terminated.termination?.observedAt,
+    });
+    bidderEnded.abort();
+  });
+
+  if (state.termination) {
+    log("vm_session_ended_by_bidder", {
+      receiptUri: state.receipt?.uri,
+      reason: state.termination.reason,
+      exitCode: state.termination.exitCode,
+      observedAt: state.termination.observedAt,
+    });
+    result.sshReady = false;
+  } else if (!skipSsh && state.receiptOk) {
     const vmAddress = state.vmAddress ?? "";
     if (!vmAddress) {
       result.sshReady = false;
@@ -942,23 +1012,36 @@ export async function runComputeContract(
       result.sshProxyCommand = opts.sshProxyCommandFn?.(vmAddress) ??
         sshProxyCommandFor(vmAddress, dumbpipePath);
       log("vm_ssh_waiting", { vmFqdn: vmAddress, sshProxyCommand: result.sshProxyCommand, timeoutSec: vmReadyTimeoutSec });
-      const ready = await sshProvider.pollReady(privateKeyPath, vmAddress, vmReadyTimeoutSec * 1000);
+      const ready = await sshProvider.pollReady(
+        privateKeyPath,
+        vmAddress,
+        vmReadyTimeoutSec * 1000,
+        bidderEnded.signal,
+      );
       result.sshReady = ready;
       if (!ready) {
-        log("vm_ssh_unavailable", { vmFqdn: vmAddress });
+        log("vm_ssh_unavailable", { vmFqdn: vmAddress, terminatedByBidder: bidderEnded.signal.aborted });
       } else if (opts.hold && opts.holdAbort) {
         log("vm_hold_started", { vmFqdn: vmAddress });
-        await waitForAbort(opts.holdAbort);
-        log("vm_hold_released", { vmFqdn: vmAddress });
+        await Promise.race([waitForAbort(opts.holdAbort), waitForAbort(bidderEnded.signal)]);
+        log("vm_hold_released", { vmFqdn: vmAddress, terminatedByBidder: bidderEnded.signal.aborted });
       } else {
         opts.onSshStart?.();
-        const code = await sshProvider.runSession(privateKeyPath, vmAddress, execProgram);
+        const code = await sshProvider.runSession(privateKeyPath, vmAddress, execProgram, bidderEnded.signal);
         await opts.onSshEnd?.();
         result.sshExitCode = code;
         result.sshOutput = sshProvider.lastSessionOutput?.();
         log("vm_ssh_session_exit", { vmFqdn: vmAddress, code });
       }
     }
+  }
+
+  if (state.termination) {
+    result.terminated = {
+      reason: state.termination.reason,
+      ...(state.termination.exitCode !== undefined ? { exitCode: state.termination.exitCode } : {}),
+      observedAt: state.termination.observedAt,
+    };
   }
 
   if (keepVm) {

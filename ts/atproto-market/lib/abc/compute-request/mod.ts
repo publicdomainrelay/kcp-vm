@@ -1,3 +1,5 @@
+import { COMPUTE_EVENTS_VM_TERMINATED_NSID, EVENT_NSID } from "@publicdomainrelay/market-common";
+
 export const CONTRACT_STATE_VERSION = 1;
 
 export const IROH_SCHEME = "iroh://";
@@ -53,6 +55,15 @@ export interface ContractRelease {
   status?: number;
 }
 
+export interface ContractTermination {
+  reason: string;
+  exitCode?: number;
+  observedAt: string;
+  event: RecordRef;
+  payload: RecordRef;
+  request?: RecordRef;
+}
+
 export interface ContractState {
   version: typeof CONTRACT_STATE_VERSION;
   phase: ContractPhase;
@@ -71,6 +82,7 @@ export interface ContractState {
   vmAddress?: string;
   bids?: number;
   release?: ContractRelease;
+  termination?: ContractTermination;
   outcome?: ContractOutcome;
   error?: string;
   timestamps: Partial<Record<ContractPhase, string>>;
@@ -128,6 +140,71 @@ export interface ReleaseTarget {
 export function releaseTargetOf(state: ContractState): ReleaseTarget | null {
   if (!state.receipt?.uri || !state.receipt?.cid || !state.submitEventRef) return null;
   return { receipt: state.receipt, submitEventRef: state.submitEventRef };
+}
+
+export function isTerminated(state: ContractState): boolean {
+  return state.termination !== undefined;
+}
+
+export interface ComputeEventEnvelope {
+  uri: string;
+  cid: string;
+  record: Record<string, unknown>;
+  payload: Record<string, unknown>;
+}
+
+export type TerminationBinding =
+  | { ok: true; termination: ContractTermination }
+  | { ok: false; reason: string };
+
+function authorityOf(uri: string): string {
+  return uri.replace("at://", "").split("/")[0] ?? "";
+}
+
+function collectionOf(uri: string): string {
+  return uri.replace("at://", "").split("/")[1] ?? "";
+}
+
+export function terminationOf(envelope: ComputeEventEnvelope, receipt: RecordRef): TerminationBinding {
+  const { record, payload } = envelope;
+  if (record.$type !== undefined && record.$type !== EVENT_NSID) {
+    return { ok: false, reason: "envelope is not a market.event" };
+  }
+  const receiptRef = record.receipt;
+  if (!isRecordRef(receiptRef)) return { ok: false, reason: "missing receipt ref" };
+  if (receiptRef.uri !== receipt.uri) return { ok: false, reason: "event names another receipt" };
+  const bidder = authorityOf(receipt.uri);
+  if (authorityOf(envelope.uri) !== bidder) {
+    return { ok: false, reason: "event not authored by the receipt's bidder" };
+  }
+  const payloadRef = record.payload;
+  if (!isRecordRef(payloadRef)) return { ok: false, reason: "missing payload ref" };
+  if (authorityOf(payloadRef.uri) !== bidder) {
+    return { ok: false, reason: "payload not in the bidder's repo" };
+  }
+  if (collectionOf(payloadRef.uri) !== COMPUTE_EVENTS_VM_TERMINATED_NSID) {
+    return { ok: false, reason: "payload is not vm.terminated" };
+  }
+  if (payload.$type !== undefined && payload.$type !== COMPUTE_EVENTS_VM_TERMINATED_NSID) {
+    return { ok: false, reason: "payload record is not vm.terminated" };
+  }
+  if (typeof payload.reason !== "string" || !payload.reason) return { ok: false, reason: "missing reason" };
+  if (typeof payload.observedAt !== "string" || !payload.observedAt) {
+    return { ok: false, reason: "missing observedAt" };
+  }
+  const exitCode = Number.isInteger(payload.exitCode) ? payload.exitCode as number : undefined;
+  const request = isRecordRef(payload.request) ? { uri: payload.request.uri, cid: payload.request.cid } : undefined;
+  return {
+    ok: true,
+    termination: {
+      reason: payload.reason,
+      ...(exitCode !== undefined ? { exitCode } : {}),
+      observedAt: payload.observedAt,
+      event: { uri: envelope.uri, cid: envelope.cid },
+      payload: { uri: payloadRef.uri, cid: payloadRef.cid },
+      ...(request ? { request } : {}),
+    },
+  };
 }
 
 export function receiptKeyOf(receipt: RecordRef): string {
@@ -238,6 +315,8 @@ export interface SecretsFetchedEvent {
   count: number;
 }
 
+export type TerminatedEvent = ContractTermination;
+
 export interface ComputeRequestHandlers {
   onRfpSubmitted?: (event: RfpSubmittedEvent, state: ContractState) => Awaitable<FlowDecision>;
   onBid?: (event: BidEvent, state: ContractState) => Awaitable<BidDecision>;
@@ -248,6 +327,7 @@ export interface ComputeRequestHandlers {
     event: SecretsFetchedEvent,
     state: ContractState,
   ) => Awaitable<FlowDecision>;
+  onTerminated?: (event: TerminatedEvent, state: ContractState) => Awaitable<void>;
 }
 
 export class ReturnLatch {
