@@ -35,6 +35,7 @@ import { createLocalComputeProvider } from "@publicdomainrelay/compute-provider-
 import { createFirecrackerComputeProvider } from "@publicdomainrelay/compute-provider-firecracker";
 import { createFirecrackerNodeImage } from "@publicdomainrelay/node-image-firecracker";
 import { createFirecrackerMicrovm, parseLabels } from "@publicdomainrelay/microvm-firecracker";
+import { createUsernsFirecrackerMicrovm } from "@publicdomainrelay/microvm-firecracker-userns";
 import { createDockerBackend } from "@publicdomainrelay/container-backend-docker";
 import { createRbacProvisioner } from "@publicdomainrelay/rbac-atproto";
 import { Secp256k1Keypair } from "@atproto/crypto";
@@ -543,12 +544,23 @@ if (options.computeProviderFirecracker) {
       preinstallPath: options.computeProviderFirecrackerPreinstall as string | undefined,
       logger,
     }),
-    microvm: createFirecrackerMicrovm({
-      backend: createDockerBackend(),
-      runnerImage: options.computeProviderFirecrackerRunnerImage as string,
-      labels: parseLabels((options.computeProviderFirecrackerContainerLabels as string | undefined) ?? ""),
-      logger,
-    }),
+    microvm: options.computeProviderFirecrackerUsernsStage
+      ? createUsernsFirecrackerMicrovm({
+        nodeboot: options.computeProviderFirecrackerNodeboot as string,
+        firecracker: options.computeProviderFirecrackerVmm as string,
+        stage: options.computeProviderFirecrackerUsernsStage as string,
+        account: options.computeProviderFirecrackerUsernsAccount as string | undefined,
+        runtimeDir: (options.computeProviderFirecrackerUsernsRuntimeDir as string | undefined) ??
+          `${options.computeProviderFirecrackerWorkRoot}-runtime`,
+        slotSize: options.computeProviderFirecrackerUsernsSlotSize as number | undefined,
+        logger,
+      })
+      : createFirecrackerMicrovm({
+        backend: createDockerBackend(),
+        runnerImage: options.computeProviderFirecrackerRunnerImage as string,
+        labels: parseLabels((options.computeProviderFirecrackerContainerLabels as string | undefined) ?? ""),
+        logger,
+      }),
     workRoot: options.computeProviderFirecrackerWorkRoot as string,
     rangeBase: options.computeProviderFirecrackerRangeBase as string | undefined,
     reuseStale: options.computeProviderFirecrackerReuseImage === true,

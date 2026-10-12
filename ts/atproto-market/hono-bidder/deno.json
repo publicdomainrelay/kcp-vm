@@ -31,6 +31,7 @@
     "@publicdomainrelay/compute-provider-firecracker": "jsr:@publicdomainrelay/compute-provider-firecracker@^0",
     "@publicdomainrelay/node-image-firecracker": "jsr:@publicdomainrelay/node-image-firecracker@^0",
     "@publicdomainrelay/microvm-firecracker": "jsr:@publicdomainrelay/microvm-firecracker@^0",
+    "@publicdomainrelay/microvm-firecracker-userns": "jsr:@publicdomainrelay/microvm-firecracker-userns@^0",
     "@publicdomainrelay/container-backend-docker": "jsr:@publicdomainrelay/container-backend-docker@^0"
   },
   "compile": {

@@ -218,6 +218,26 @@ export default {
       description: "Directory each guest gets a work directory under",
       env: "COMPUTE_PROVIDER_FIRECRACKER_WORK_ROOT",
     },
+    "compute-provider-firecracker-userns-stage": {
+      type: "string" as const,
+      description: "Path to swc-userns-stage; when set, each guest's VMM runs in a per-VM subuid user namespace in a transient unit of the range account's user manager, not in a container",
+      env: "COMPUTE_PROVIDER_FIRECRACKER_USERNS_STAGE",
+    },
+    "compute-provider-firecracker-userns-account": {
+      type: "string" as const,
+      description: "Account whose /etc/subuid range the per-VM user namespaces are carved from (default: this process's user)",
+      env: "COMPUTE_PROVIDER_FIRECRACKER_USERNS_ACCOUNT",
+    },
+    "compute-provider-firecracker-userns-runtime-dir": {
+      type: "string" as const,
+      description: "Directory the VMM, nodeboot, the stage and the image are staged in, readable by the per-VM uids",
+      env: "COMPUTE_PROVIDER_FIRECRACKER_USERNS_RUNTIME_DIR",
+    },
+    "compute-provider-firecracker-userns-slot-size": {
+      type: "number" as const,
+      description: "Subordinate ids each guest's user namespace maps",
+      env: "COMPUTE_PROVIDER_FIRECRACKER_USERNS_SLOT_SIZE",
+    },
     "compute-provider-firecracker-range-base": {
       type: "string" as const,
       description: "Base address guests are addressed from, one /30 each",
