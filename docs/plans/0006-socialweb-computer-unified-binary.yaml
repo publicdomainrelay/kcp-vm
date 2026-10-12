@@ -2104,8 +2104,8 @@ items:
     test_first: "check.sh --full step reproducible-build red with a timestamp injected into one build, then green."
     done_when: "two clean builds per linux platform byte-identical; manifest and sizes recorded."
     risks: []
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M5-FRESH-DEPLOY
     milestone: M5
     title: Prod gets the finished binary as a plain fresh deploy; the user runs it
