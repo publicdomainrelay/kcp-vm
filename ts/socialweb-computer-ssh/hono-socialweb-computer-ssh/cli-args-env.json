@@ -1,0 +1,191 @@
+{
+  "name": "socialweb-computer-ssh",
+  "description": "SSH front door and AT Protocol OAuth server for the compute market",
+  "options": {
+    "ssh-port": {
+      "type": "number",
+      "description": "TCP port for the SSH server (0 = ephemeral)",
+      "env": "SSH_PORT",
+      "default": 2222
+    },
+    "ssh-hostname": {
+      "type": "string",
+      "description": "Address the SSH server binds",
+      "env": "SSH_HOSTNAME",
+      "default": "127.0.0.1"
+    },
+    "ssh-public-host": {
+      "type": "string",
+      "description": "Hostname shown in the connect example. Defaults to the public origin's hostname. Set it when another name reaches this door, e.g. an apex domain that resolves to the same address.",
+      "env": "SSH_PUBLIC_HOST"
+    },
+    "http-port": {
+      "type": "number",
+      "description": "TCP port for the OAuth HTTP server",
+      "env": "HTTP_PORT",
+      "default": 8787
+    },
+    "serve-addr": {
+      "type": "string",
+      "description": "Address the OAuth HTTP server binds",
+      "env": "SERVE_ADDR",
+      "default": "127.0.0.1"
+    },
+    "state-dir": {
+      "type": "string",
+      "description": "Directory holding the OAuth session store, state store, and SSH host key",
+      "env": "STATE_DIR",
+      "default": ".socialweb-computer-ssh"
+    },
+    "host-key-path": {
+      "type": "string",
+      "description": "SSH host key path (generated if missing)",
+      "env": "HOST_KEY_PATH"
+    },
+    "default-command": {
+      "type": "string",
+      "description": "Command run in the guest when the client requests a shell without a command",
+      "env": "DEFAULT_COMMAND",
+      "default": "bash"
+    },
+    "vm-ready-timeout-sec": {
+      "type": "number",
+      "description": "Seconds to wait for the provisioned guest's SSH to come up",
+      "env": "VM_READY_TIMEOUT_SEC",
+      "default": 300
+    },
+    "plc-directory-url": {
+      "type": "string",
+      "description": "PLC directory used to resolve handles and DIDs",
+      "env": "PLC_DIRECTORY_URL",
+      "default": "https://plc.directory"
+    },
+    "associations-cache-ttl-sec": {
+      "type": "number",
+      "description": "Seconds a successful key association lookup is cached",
+      "env": "ASSOCIATIONS_CACHE_TTL_SEC",
+      "default": 300
+    },
+    "label": {
+      "type": "string",
+      "description": "Service name used in structured logs",
+      "env": "LABEL",
+      "default": "socialweb-computer-ssh"
+    },
+    "web-dir": {
+      "type": "string",
+      "description": "Directory served as the web UI",
+      "env": "WEB_DIR",
+      "default": "web"
+    },
+    "max-sessions": {
+      "type": "number",
+      "description": "Concurrent provisioning runs allowed across all clients; further exec requests are refused",
+      "env": "MAX_SESSIONS",
+      "default": 1000
+    },
+    "sessions-per-account": {
+      "type": "number",
+      "description": "Concurrent provisioning runs allowed for one account",
+      "env": "SESSIONS_PER_ACCOUNT",
+      "default": 1000
+    },
+    "max-connections": {
+      "type": "number",
+      "description": "Concurrent SSH connections accepted",
+      "env": "MAX_CONNECTIONS",
+      "default": 10000
+    },
+    "auth-timeout-sec": {
+      "type": "number",
+      "description": "Seconds an unauthenticated connection may stay open. Must outlast a first connection pausing at the host-key prompt and reading the banner.",
+      "env": "AUTH_TIMEOUT_SEC",
+      "default": 120
+    },
+    "session-max-sec": {
+      "type": "number",
+      "description": "Hard ceiling on one provisioning run, after which it is terminated",
+      "env": "SESSION_MAX_SEC",
+      "default": 3600
+    },
+    "oauth-client-id": {
+      "type": "string",
+      "description": "Fallback client_id to refresh as when a deposited session does not carry its own. Must be the exact URL the authorization server fetches, e.g. https://<host>/oauth-client-metadata.json. Normally unnecessary: the page sends the client_id its session was issued to.",
+      "env": "OAUTH_CLIENT_ID"
+    },
+    "public-origin": {
+      "type": "string",
+      "description": "Public origin this deployment is reached at, e.g. https://ssh.example.com. Set it when the app sits behind a TLS terminator: the client_id must be an https URL with no port, and a proxied request arrives as plain http. Omit on loopback.",
+      "env": "PUBLIC_ORIGIN"
+    },
+    "ingress-proxy-host": {
+      "type": "string",
+      "description": "XRPC relay dispatcher host the requester registers with and discovers bidders through",
+      "env": "INGRESS_PROXY_HOST",
+      "default": "xrpc.fedproxy.com"
+    },
+    "relay-url": {
+      "type": "string",
+      "description": "Comma-separated ATProto relay URLs for firehose bid and event discovery",
+      "env": "RELAY_URL"
+    },
+    "app-did": {
+      "type": "string",
+      "description": "This deployment's own DID, i.e. the repo its dev.cocore.app.registration record lives in. Defaults to did:web:<public-origin host>. Without --public-origin there is no app PDS at all, since a did:web is resolved by fetching /.well-known/did.json from that origin.",
+      "env": "APP_DID"
+    },
+    "app-handle": {
+      "type": "string",
+      "description": "Handle to declare in the DID document's alsoKnownAs. Defaults to the public origin's hostname. The handle is proved separately by a _atproto.<handle> TXT record pointing at this DID.",
+      "env": "APP_HANDLE"
+    },
+    "app-pds-key-path": {
+      "type": "string",
+      "description": "Secp256k1 key signing the app repo. Defaults to <state-dir>/app-pds-private-key. Generated if missing; losing it makes every commit unverifiable.",
+      "env": "APP_PDS_KEY_PATH"
+    },
+    "app-pds-kv-path": {
+      "type": "string",
+      "description": "Deno KV backing the app repo. Defaults to <state-dir>/app-pds.kv",
+      "env": "APP_PDS_KV_PATH"
+    },
+    "app-pds-crawlers": {
+      "type": "string",
+      "description": "Comma-separated relay URLs to announce app repo writes to. Only needed if co/core reads the registration record off a relay rather than fetching it from the PDS.",
+      "env": "APP_PDS_CRAWLERS"
+    },
+    "cocore-api-base-url": {
+      "type": "string",
+      "description": "Base URL the co/core pairing endpoints hang off. cocore.dev/api and appview.cocore.dev serve the same backend.",
+      "env": "COCORE_API_BASE_URL",
+      "default": "https://cocore.dev/api"
+    },
+    "cocore-app-name": {
+      "type": "string",
+      "description": "Name co/core shows on its approval screen and in the user's key list",
+      "env": "COCORE_APP_NAME",
+      "default": "socialweb-computer-ssh"
+    },
+    "cocore-return-url": {
+      "type": "string",
+      "description": "Where co/core sends the browser back after approval. Its host must serve /.well-known/cocore-app.json naming this app's DID. Defaults to the public origin.",
+      "env": "COCORE_RETURN_URL"
+    },
+    "tls-cert-file": {
+      "type": "string",
+      "description": "PEM certificate to serve TLS with; requires tls-key-file",
+      "env": "TLS_CERT_FILE"
+    },
+    "tls-key-file": {
+      "type": "string",
+      "description": "PEM private key to serve TLS with; requires tls-cert-file",
+      "env": "TLS_KEY_FILE"
+    },
+    "port-file": {
+      "type": "string",
+      "description": "File the bound TCP port is written to once listening (used with port 0)",
+      "env": "PORT_FILE",
+      "default": "./port-bound-to"
+    }
+  }
+}
