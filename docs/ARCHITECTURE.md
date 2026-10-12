@@ -6351,6 +6351,31 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   (test prefix, a separate workspace) a second supervisor process adopted the stand-in with the same
   InvocationID and LimitsEnforced=True, and the delete stopped the unit.
 
+- **An application's OpenBao is an OpenBaoServer object placed through a HostProcess (plan 0006
+  M2-OPENBAO-SERVER, 2026-10-12).** Kind `OpenBaoServer` (socialweb.computer/v1alpha1, in the
+  `hostprocesses` export). `internal/openbaoctl` runs in the core beside the HostProcess supervisor. It
+  owns one HostProcess child `bao-<name>` (unit `socialweb-hp-<key>-bao-<name>.service`, restartPolicy
+  OnFailure), renders the server config with `internal/rootvault` (mutual TLS from `internal/vaultcert`,
+  listener `127.0.0.1:0`), and reads the bound address from the child's `status.listeners` into
+  `status.address`. Key handling: no key, token or certificate is ever in a kcp object; `status.refs`
+  names files only. The unseal keys live in `<state>/openbaoservers/<name>/openbao/unseal-keys.json`
+  (0600, in a 0700 directory, written once with fsync before the first unseal, read only when no other
+  user can read it). The init root token is used once to apply the layout (cert auth at `cert`, role and
+  policy `socialweb-core` bound to the server's own client CA, kv-v2 at `secret`) and is revoked at once.
+  The core then logs in with its client certificate for a 15-minute token. If that login is refused, the
+  controller generates a root token from the unseal keys, applies the layout and revokes the token; the
+  listener therefore enables the unauthenticated generate-root endpoints, which still need the client
+  certificate and the unseal keys. A server whose storage is uninitialized while unseal keys exist is
+  Failed, never re-initialized. The HostProcess supervisor adopts a unit that its manager restarted in
+  place (restartPolicy OnFailure or Always) at the new invocation; before this it stopped such a unit as
+  an identity mismatch. The controller unseals on every pass that finds the server sealed and records
+  `status.unsealedInstance`. Readings on a quick dev instance (proc backend): created 07:17:49Z, Ready
+  07:17:59Z on 127.0.0.1:46009; no unseal key or token-like string in any OpenBaoServer or HostProcess
+  object; kill -9 of the bao main pid at 07:18:14.555Z, unsealed at the new invocation on 127.0.0.1:35737
+  at 07:18:18.889Z, and a KV value written before the kill read back; a dropped cert role was restored
+  through generate-root; `dev restart core` kept the bao invocation and did not unseal again; deleting
+  the object stopped the unit and kept the storage.
+
 ## 16. Vocabulary
 
 | | |
