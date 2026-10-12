@@ -263,8 +263,8 @@ items:
     test_first: "None (decision record)."
     done_when: "ARCHITECTURE subsection committed with these citations."
     risks: []
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M1-FC-INVENTORY
     milestone: M1
     title: Inventory what compute-provider-firecracker learned, as requirements the Go side must meet
