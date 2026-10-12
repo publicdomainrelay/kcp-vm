@@ -18,14 +18,13 @@ import (
 )
 
 const (
-	computeVMFixtureDir  = "../../testdata/computevm"
-	computeVMSchemaName  = "v1alpha1-1.computevms.socialweb.computer"
-	computeVMSchemaFile  = "deploy/computevm-apiresourceschema.yaml"
-	computeVMExportFile  = "deploy/computevm-apiexport.yaml"
-	bidderWorkspaceType  = "deploy/workspacetype-bidder.yaml"
-	computeVMFinalizer   = "computevm.socialweb.computer/release"
-	computeVMTypeScript  = "../hono-compute-provider/lib/common/compute-provider-kcp-common/mod.ts"
-	computeVMSiblingRepo = "../hono-compute-provider"
+	computeVMFixtureDir = "../../testdata/computevm"
+	computeVMSchemaName = "v1alpha1-1.computevms.socialweb.computer"
+	computeVMSchemaFile = "deploy/computevm-apiresourceschema.yaml"
+	computeVMExportFile = "deploy/computevm-apiexport.yaml"
+	bidderWorkspaceType = "deploy/workspacetype-bidder.yaml"
+	computeVMFinalizer  = "computevm.socialweb.computer/release"
+	computeVMTypeScript = ComputeProviderTSPackageDir + "/mod.ts"
 )
 
 func newComputeVM(t *testing.T) runtime.Object {
@@ -358,11 +357,7 @@ func TestTheBidderWorkspaceTypeBindsDenoruntimeComputeVMsAndHostProcesses(t *tes
 	}
 }
 
-func TestTheComputeVMTypeScriptLandsInTheComputeProviderWhenTheSiblingIsPresent(t *testing.T) {
-	sibling := filepath.Join(repoRoot, computeVMSiblingRepo)
-	if _, err := os.Stat(sibling); err != nil {
-		t.Skipf("%s is not checked out beside this repo, so the second TypeScript target is not generated", sibling)
-	}
+func TestTheComputeVMTypeScriptLandsInTheComputeProvider(t *testing.T) {
 	ts := string(generatedOutput(t, computeVMTypeScript))
 	for _, want := range []string{
 		"export interface ComputeVM {",
@@ -376,16 +371,16 @@ func TestTheComputeVMTypeScriptLandsInTheComputeProviderWhenTheSiblingIsPresent(
 	}
 	for _, absent := range []string{"NodeClaim", "MarketIdentity", "FINALIZER_CLUSTER"} {
 		if strings.Contains(ts, absent) {
-			t.Errorf("the compute provider's TypeScript carries %s, which only the door uses", absent)
+			t.Errorf("the compute provider's TypeScript carries %s, which only socialweb-computer-k8s uses", absent)
 		}
 	}
-	door := string(generatedOutput(t, TSPackageDir+"/mod.ts"))
-	if strings.Contains(door, "ComputeVM") || strings.Contains(door, "COMPUTE_VM") {
-		t.Error("the door's TypeScript carries ComputeVM; a gateway never reads a bidder's ComputeVMs")
+	k8sTS := string(generatedOutput(t, TSPackageDir+"/mod.ts"))
+	if strings.Contains(k8sTS, "ComputeVM") || strings.Contains(k8sTS, "COMPUTE_VM") {
+		t.Error("the socialweb-computer-k8s TypeScript carries ComputeVM; a gateway never reads a bidder's ComputeVMs")
 	}
 	fixtures := computeVMFixtures(t, "")
 	for _, path := range fixtures {
-		mirrored := "../hono-compute-provider/test/fixtures/computevm/" + filepath.Base(path)
+		mirrored := ComputeProviderDir + "/test/fixtures/computevm/" + filepath.Base(path)
 		want, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)

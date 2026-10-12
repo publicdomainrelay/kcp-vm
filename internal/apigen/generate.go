@@ -69,18 +69,6 @@ func Generate(root string) ([]Output, error) {
 }
 
 func generateTSTarget(root string, m *Model, target TSTarget) ([]Output, error) {
-	if target.Sibling != "" {
-		info, err := os.Stat(filepath.Join(root, filepath.FromSlash(target.Sibling)))
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil, nil
-		}
-		if err != nil {
-			return nil, err
-		}
-		if !info.IsDir() {
-			return nil, fmt.Errorf("%s is not a directory", target.Sibling)
-		}
-	}
 	sub, err := m.Subset(target.Exports)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", target.Dir, err)

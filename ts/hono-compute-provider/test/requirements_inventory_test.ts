@@ -1,12 +1,12 @@
 import { assert, assertEquals } from "@std/assert";
 import { parse } from "@std/yaml";
 
-const ORG_ROOT = new URL("../../", import.meta.url);
-const INVENTORY = new URL("socialweb-computer-kcp/docs/compute-provider-requirements.yaml", ORG_ROOT);
-const PLANS = new URL("socialweb-computer-kcp/docs/plans/", ORG_ROOT);
+const REPO_ROOT = new URL("../../../", import.meta.url);
+const INVENTORY = new URL("docs/compute-provider-requirements.yaml", REPO_ROOT);
+const PLANS = new URL("docs/plans/", REPO_ROOT);
 const INVENTORIED_SOURCES = [
-  "hono-compute-provider/lib/compute-provider-firecracker/mod.ts",
-  "hono-compute-provider/lib/microvm-firecracker/mod.ts",
+  "ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts",
+  "ts/hono-compute-provider/lib/microvm-firecracker/mod.ts",
 ];
 const STATUS = /^(port|removed-legacy|removed|superseded-by-(?:[0-9]{4}:)?[A-Z0-9]+(?:-[A-Z0-9]+)*)$/;
 const SOURCE = /^([A-Za-z0-9._/-]+)(?:@([0-9a-f]{7,40}))?:(\d+)(?:-(\d+))?$/;
@@ -59,7 +59,7 @@ async function uncovered(kind: (source: string) => string[]): Promise<string[]> 
   const covered = new Set((await inventory()).flatMap((r) => r.covers ?? []));
   const missing: string[] = [];
   for (const path of INVENTORIED_SOURCES) {
-    const source = await Deno.readTextFile(new URL(path, ORG_ROOT));
+    const source = await Deno.readTextFile(new URL(path, REPO_ROOT));
     for (const name of kind(source)) if (!covered.has(name)) missing.push(`${path}: ${name}`);
   }
   return missing;
@@ -85,9 +85,9 @@ Deno.test("every requirement names its id, source, behaviour, Go side, parity te
   }
 });
 
-async function gitText(repo: string, args: string[]): Promise<string | undefined> {
+async function gitText(args: string[]): Promise<string | undefined> {
   const out = await new Deno.Command("git", {
-    args: ["-C", new URL(`${repo}/`, ORG_ROOT).pathname, ...args],
+    args: ["-C", REPO_ROOT.pathname, ...args],
     stdout: "piped",
     stderr: "null",
   }).output().catch(() => undefined);
@@ -97,15 +97,14 @@ async function gitText(repo: string, args: string[]): Promise<string | undefined
 async function linesAt(path: string, commit: string | undefined): Promise<number | string> {
   if (!commit) {
     try {
-      return (await Deno.readTextFile(new URL(path, ORG_ROOT))).split("\n").length;
+      return (await Deno.readTextFile(new URL(path, REPO_ROOT))).split("\n").length;
     } catch (err) {
       return `${path} cannot be read: ${String(err)}`;
     }
   }
-  const [repo, ...rest] = path.split("/");
-  if (await gitText(repo, ["cat-file", "-e", `${commit}^{commit}`]) === undefined) return Infinity;
-  const text = await gitText(repo, ["show", `${commit}:${rest.join("/")}`]);
-  return text === undefined ? `${path} is not in ${repo} at ${commit}` : text.split("\n").length;
+  if (await gitText(["cat-file", "-e", `${commit}^{commit}`]) === undefined) return Infinity;
+  const text = await gitText(["show", `${commit}:${path}`]);
+  return text === undefined ? `${path} is not in the repository at ${commit}` : text.split("\n").length;
 }
 
 Deno.test("every source a requirement cites is a file and line that exist", async () => {

@@ -10,13 +10,12 @@ import (
 
 const TSPackageDir = "socialweb-computer-k8s/lib/common/socialweb-computer-k8s-api"
 
-const ComputeProviderSibling = "../hono-compute-provider"
+const ComputeProviderDir = "ts/hono-compute-provider"
 
-const ComputeProviderTSPackageDir = ComputeProviderSibling + "/lib/common/compute-provider-kcp-common"
+const ComputeProviderTSPackageDir = ComputeProviderDir + "/lib/common/compute-provider-kcp-common"
 
 type TSTarget struct {
 	Dir         string
-	Sibling     string
 	Exports     []string
 	Fixtures    string
 	FixturesDir string
@@ -26,10 +25,9 @@ var TSTargets = []TSTarget{
 	{Dir: TSPackageDir, Exports: []string{"clusters", "atprotoidentities", "marketidentities"}},
 	{
 		Dir:         ComputeProviderTSPackageDir,
-		Sibling:     ComputeProviderSibling,
 		Exports:     []string{"computevms"},
 		Fixtures:    "testdata/computevm",
-		FixturesDir: ComputeProviderSibling + "/test/fixtures/computevm",
+		FixturesDir: ComputeProviderDir + "/test/fixtures/computevm",
 	},
 }
 

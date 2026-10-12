@@ -11,14 +11,14 @@ gold_standard: >-
 parity_boundary: >-
   M2-BACKPORT: the VMSpec handed to vmruntime.Prepare, the seed drive's bytes, fc.json, the bid config
   record and the issuer's droplet view. One recorded RFP fixture (testdata/compute-parity/: vm record,
-  requester, accept bundle, contract) is run through hono-compute-provider/test/compute_parity_test.ts (the
+  requester, accept bundle, contract) is run through ts/hono-compute-provider/test/compute_parity_test.ts (the
   firecracker provider, microvm stubbed at that boundary) and internal/computevm/parity_test.go (the Go
   controller, unit start stubbed at the same boundary); names and addresses the fixture marks as allocated
   are excluded. A parity id written TestParityX names one case run by BOTH files against that fixture; any
   other id names the test file and case that proves the entry.
 fields:
   id: FC-<learning>
-  source: TypeScript file:line or file:start-end, relative to the org root
+  source: TypeScript file:line or file:start-end, relative to the root of this repository
   behaviour: what the TypeScript does and why, including the live reading that taught it
   go_side: "meets: yes | partial | no | not-applicable (the behaviour stays TypeScript by design), and where"
   parity_test: the test ids that will prove the Go side (or prove the removal)
@@ -34,7 +34,7 @@ legacy_decision: >-
 requirements:
   - id: FC-USERDATA-REQUIRED
     source:
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:634-645
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:634-645
     behaviour: >-
       An RFP with no user_data is refused before a name, a work dir or an address is allocated. On this
       provider the user_data IS the guest: a guest started without one reaches Running with no sshd, no
@@ -52,9 +52,9 @@ requirements:
 
   - id: FC-GUEST-NAME
     source:
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:116
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:151-162
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:646-647
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:116
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:151-162
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:646-647
     behaviour: >-
       A guest's name is fc-<12 hex of a hash of the requester DID>-<8 hex of a random UUID>. The one name is
       the providerId, the runner container's name, the work dir's last segment, the cloud-init instance-id
@@ -72,8 +72,8 @@ requirements:
 
   - id: FC-ENRICH-ORDER
     source:
-      - atproto-market/lib/market-bidder-compute/mod.ts:376-387
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:652-671
+      - ts/atproto-market/lib/market-bidder-compute/mod.ts:376-387
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:652-671
     behaviour: >-
       user_data is enriched in a fixed order, each step reading what the earlier ones wrote: (1) the bidder
       injects the accept bundle (with guest_onnetwork_url) before provision; (2) the OIDC enricher adds the
@@ -95,10 +95,10 @@ requirements:
 
   - id: FC-ENRICH-ONCE
     source:
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:322-348
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:524-559
-      - atproto-market/lib/common/cloud-init-common/mod.ts:168-214
-      - atproto-market/lib/common/cloud-init-common/mod.ts:276-345
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:322-348
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:524-559
+      - ts/atproto-market/lib/common/cloud-init-common/mod.ts:168-214
+      - ts/atproto-market/lib/common/cloud-init-common/mod.ts:276-345
     behaviour: >-
       The reporter and base_url steps detect themselves by marker (guest-onnetwork.service, the base_url
       path) and are idempotent; buildUserData dedupes write_files by path (later wins, first position keeps),
@@ -113,15 +113,15 @@ requirements:
         re-adoption or a re-Prepare reads the stored bytes and never enriches again.
     parity_test:
       - TestParityAReadoptedComputeVMKeepsItsSeedBytes
-      - hono-compute-provider/test/compute_parity_test.ts::"enrichment runs once per ComputeVM"
+      - ts/hono-compute-provider/test/compute_parity_test.ts::"enrichment runs once per ComputeVM"
     status: port
 
   - id: FC-ACCEPT-BUNDLE
     source:
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:164-170
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:937-938
-      - atproto-market/lib/common/cloud-init-common/mod.ts:346-369
-      - atproto-market/lib/market-bidder-compute/mod.ts:376-384
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:164-170
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:937-938
+      - ts/atproto-market/lib/common/cloud-init-common/mod.ts:346-369
+      - ts/atproto-market/lib/market-bidder-compute/mod.ts:376-384
     behaviour: >-
       The accept bundle {$type market.accept, accept, rfp, bid, bid_config (strongRef wrapper {uri, cid,
       value}), vm, guest_onnetwork_url} is written as JSON at the accept path (DEFAULT_ACCEPT_PATH_VM,
@@ -139,8 +139,8 @@ requirements:
 
   - id: FC-ONNETWORK-URL
     source:
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:172-182
-      - atproto-market/lib/market-bidder-compute/mod.ts:383
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:172-182
+      - ts/atproto-market/lib/market-bidder-compute/mod.ts:383
     behaviour: >-
       The guest reports to the URL in the bundle's guest_onnetwork_url (the bidder's own /v1/on-network,
       which holds the accept-to-receipt map and submits the wrapped event); with none, this provider's issuer
@@ -152,14 +152,14 @@ requirements:
         M4-BIDDER-VAULT). The port derivation from the tunnel subscriber's --ingress-proxy-host flag in
         guestOnNetworkUrl is legacy (FC-LEGACY-TUNNEL-MODULE).
     parity_test:
-      - hono-compute-provider/test/firecracker_onnetwork_reporter_test.ts::"the bundle's guest_onnetwork_url is what the guest reports to"
+      - ts/hono-compute-provider/test/firecracker_onnetwork_reporter_test.ts::"the bundle's guest_onnetwork_url is what the guest reports to"
       - TestParityTheSeedUserDataEqualsTheProvidersByteForByte
     status: port
     covers: [onNetworkUrlFromBundle]
 
   - id: FC-ONNETWORK-TARGETS
     source:
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:184-211
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:184-211
     behaviour: >-
       The report is tried at the URL as written and, when the user_data names `<ip> relay.localhost` and the
       URL's host is a .localhost name, again with curl --resolve <host>:<port>:<ip>: the guest's /etc/hosts
@@ -168,14 +168,14 @@ requirements:
       meets: not-applicable
       detail: TypeScript enrichment; on the Go side the address in the alias is the constant pasta gateway (FC-HOST-ADDRESS).
     parity_test:
-      - hono-compute-provider/test/firecracker_onnetwork_reporter_test.ts::"a relay name behind a dispatcher is also tried at the address the guest reaches it on"
+      - ts/hono-compute-provider/test/firecracker_onnetwork_reporter_test.ts::"a relay name behind a dispatcher is also tried at the address the guest reaches it on"
     status: port
     covers: [onNetworkTargets]
 
   - id: FC-REQUESTER-NAMED-HOST
     source:
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:510-522
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:667
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:510-522
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:667
     behaviour: >-
       A host address the requester already named (`<ip> relay.localhost`, the bed's guestHostAliases) is the
       one the provider uses for every .localhost name: cloud-init resolves before the provider's runcmd can
@@ -187,15 +187,15 @@ requirements:
         kept rule lives in compute-provider-common and the constant pasta gateway must route to the address
         the requester named.
     parity_test:
-      - hono-compute-provider/test/firecracker_network_test.ts::"a host address the requester already named is the one the guest is given"
+      - ts/hono-compute-provider/test/firecracker_network_test.ts::"a host address the requester already named is the one the guest is given"
       - TestParityARequesterNamedRelayAddressWins
     status: port
     covers: [addressTheRequesterNamed]
 
   - id: FC-HOST-ADDRESS
     source:
-      - hono-compute-provider/lib/microvm-firecracker/mod.ts:53-65
-      - hono-compute-provider/lib/microvm-firecracker/mod.ts:297-302
+      - ts/hono-compute-provider/lib/microvm-firecracker/mod.ts:53-65
+      - ts/hono-compute-provider/lib/microvm-firecracker/mod.ts:297-302
     behaviour: >-
       The address a guest dials this host at is the runner container's default bridge gateway
       (backend.defaultGateway()), not pasta's gateway, which is the container itself and answers nothing.
@@ -211,8 +211,8 @@ requirements:
 
   - id: FC-ONNETWORK-REPORTER-FALLBACK
     source:
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:213-304
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:338-348
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:213-304
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:338-348
     behaviour: >-
       When no OIDC enricher composed a reporter, the provider composes its own (two reporters would race to
       publish the same event): waits up to 180 s for /run/guest-fqdn, posts {acceptUri, acceptCid, address}
@@ -225,15 +225,15 @@ requirements:
         iroh.service, never posts a hostname (FC-OIDC-REPORTER-NO-HOSTNAME); its tunnel-subscriber ordering
         is FC-LEGACY-REPORTER-TUNNEL-ORDERING.
     parity_test:
-      - hono-compute-provider/test/firecracker_onnetwork_reporter_test.ts::"user_data that already reports the FQDN is left alone"
+      - ts/hono-compute-provider/test/firecracker_onnetwork_reporter_test.ts::"user_data that already reports the FQDN is left alone"
       - TestParityTheSeedUserDataEqualsTheProvidersByteForByte
     status: port
     covers: [onNetworkReporterModule, withOnNetworkReporter]
 
   - id: FC-ONNETWORK-BASE-URL
     source:
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:306-336
-      - hono-compute-provider/lib/oidc-issuer-hono/mod.ts:469-482
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:306-336
+      - ts/hono-compute-provider/lib/oidc-issuer-hono/mod.ts:469-482
     behaviour: >-
       With no issuer, the provider writes <SECRETS_PREFIX>/base_url (the report URL's origin, 0600) so the
       reporter does not fall back to the public dispatcher and 404. It is skipped whenever the user_data
@@ -243,14 +243,14 @@ requirements:
       meets: not-applicable
       detail: TypeScript enrichment; carried in the seed bytes.
     parity_test:
-      - hono-compute-provider/test/firecracker_onnetwork_reporter_test.ts::"the guest is told where to report, without an OIDC exchange having to succeed"
+      - ts/hono-compute-provider/test/firecracker_onnetwork_reporter_test.ts::"the guest is told where to report, without an OIDC exchange having to succeed"
     status: port
     covers: [withOnNetworkBaseUrl]
 
   - id: FC-OIDC-REPORTER-NO-HOSTNAME
     source:
-      - hono-compute-provider/lib/oidc-issuer-hono/mod.ts:484-541
-      - atproto-market/lib/abc/compute-request/mod.ts:269-275
+      - ts/hono-compute-provider/lib/oidc-issuer-hono/mod.ts:484-541
+      - ts/atproto-market/lib/abc/compute-request/mod.ts:269-275
     behaviour: >-
       Live hat-8 2026-10-11T23:53Z (hono-compute-provider 033a8c0, atproto-market 6099aac): the reporter
       waited 60 s and then posted $(hostname), and the requester polled wss://fc-1379be663dd9-762b64d5/ until
@@ -264,15 +264,15 @@ requirements:
       meets: not-applicable
       detail: TypeScript enricher; carried in the seed bytes.
     parity_test:
-      - hono-compute-provider/test/oidc_onnetwork_reporter_test.ts::"the oidc reporter never publishes the guest's hostname as its address"
-      - hono-compute-provider/test/oidc_onnetwork_reporter_test.ts::"the oidc reporter waits for the transport long enough for a slow boot and says why when it gives up"
-      - hono-compute-provider/test/compute_parity_test.ts::"the reporter has no fallback base URL"
-      - hono-compute-provider/test/oidc_issuer_instances_test.ts::"the on-network reporter has no hardcoded base URL and fails closed without one"
+      - ts/hono-compute-provider/test/oidc_onnetwork_reporter_test.ts::"the oidc reporter never publishes the guest's hostname as its address"
+      - ts/hono-compute-provider/test/oidc_onnetwork_reporter_test.ts::"the oidc reporter waits for the transport long enough for a slow boot and says why when it gives up"
+      - ts/hono-compute-provider/test/compute_parity_test.ts::"the reporter has no fallback base URL"
+      - ts/hono-compute-provider/test/oidc_issuer_instances_test.ts::"the on-network reporter has no hardcoded base URL and fails closed without one"
     status: port
 
   - id: FC-IROH-LISTENER-ORDERING
     source:
-      - atproto-market/lib/common/cloud-init-common/mod.ts:562-726
+      - ts/atproto-market/lib/common/cloud-init-common/mod.ts:562-726
     behaviour: >-
       Live hat-8 2026-10-11T23:53Z (atproto-market ad659c1): `systemctl enable --now ssh` in runcmd never
       returned and iroh.service was ordered After=ssh.service, so no ticket reached /run/guest-fqdn in time.
@@ -288,17 +288,17 @@ requirements:
         unit that orders iroh after ssh; dumbpipe is still fetched from GitHub at boot by setup-iroh.sh unless
         the image carries the pinned version.
     parity_test:
-      - atproto-market/test/cloud_init_snapshot_test.ts::"iroh listener never waits on sshd and no runcmd step blocks on a unit start"
+      - ts/atproto-market/test/cloud_init_snapshot_test.ts::"iroh listener never waits on sshd and no runcmd step blocks on a unit start"
       - TestParityTheSeedUserDataEqualsTheProvidersByteForByte
     status: port
 
   - id: FC-BID-CONFIG-TOKEN-PATH
     source:
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:27
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:35
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:659-675
-      - hono-compute-provider/lib/oidc-issuer-hono/mod.ts:460-465
-      - atproto-market/lib/common/cloud-init-common/mod.ts:362-490
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:27
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:35
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:659-675
+      - ts/hono-compute-provider/lib/oidc-issuer-hono/mod.ts:460-465
+      - ts/atproto-market/lib/common/cloud-init-common/mod.ts:362-490
     behaviour: >-
       The bid config record (com.publicdomainrelay.temp.compute.config.wif.simple) carries accept_path,
       issuer_uri, to_issue exchange-firecracker-oidc, actx (last segment of the bidder DID), and under
@@ -315,14 +315,14 @@ requirements:
         (internal/marketbed/live_m3_test.go), which the port must not need.
     parity_test:
       - TestParityTheBidConfigRecordEqualsTheProviders
-      - hono-compute-provider/test/firecracker_secrets_path_test.ts::"the firecracker bid config points the guest at the token the provisioning script writes"
+      - ts/hono-compute-provider/test/firecracker_secrets_path_test.ts::"the firecracker bid config points the guest at the token the provisioning script writes"
     status: port
     covers: [SECRETS_PREFIX, WIF_SIMPLE_NSID]
 
   - id: FC-GUEST-TLS-PORT-AND-CURLRC
     source:
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:524-559
-      - socialweb-computer-kcp/deploy/examples/atproto/market/market-requester/mod.ts:42-48
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:524-559
+      - deploy/examples/atproto/market/market-requester/mod.ts:42-48
     behaviour: >-
       With guestTlsPort set (a bed dispatcher off 443), every https://<name>.localhost URL without a port is
       rewritten to :<guestTlsPort>, /root/.curlrc gets `resolve = *:<port>:<hostAddress>`, and every
@@ -341,10 +341,10 @@ requirements:
 
   - id: FC-NETWORK-RANGE-INDEX
     source:
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:108-110
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:132-149
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:570
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:648
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:108-110
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:132-149
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:570
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:648
     behaviour: >-
       Each guest gets a /30 out of rangeBase (default 172.30.0.0): pasta .0, gateway .1, guest .2. The index
       is a process-local counter, never reused, 16384 blocks, exhausted rather than wrapped.
@@ -362,7 +362,7 @@ requirements:
 
   - id: FC-GUEST-MAC
     source:
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:118-130
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:118-130
     behaviour: >-
       The guest MAC is 06:00:<the guest IPv4's four octets in hex>, so the guest's network setup configures
       the address the host routed; it is derived only from an IPv4 address.
@@ -379,7 +379,7 @@ requirements:
 
   - id: FC-GUEST-IS-NOT-GATEWAY
     source:
-      - hono-compute-provider/lib/microvm-firecracker/mod.ts:202-208
+      - ts/hono-compute-provider/lib/microvm-firecracker/mod.ts:202-208
     behaviour: >-
       A guest addressed as its own gateway is refused before anything starts: it would ARP for itself and
       its frames would be answered by the interface that sent them.
@@ -392,8 +392,8 @@ requirements:
 
   - id: FC-RESOLVER-GATEWAY
     source:
-      - atproto-market/lib/common/cloud-init-common/mod.ts:117-129
-      - atproto-market/lib/common/cloud-init-common/mod.ts:287-319
+      - ts/atproto-market/lib/common/cloud-init-common/mod.ts:117-129
+      - ts/atproto-market/lib/common/cloud-init-common/mod.ts:287-319
     behaviour: >-
       /etc/resolv.conf names the DNS gateway first, then 1.1.1.1 and 9.9.9.9, then any nameserver a caller
       wrote; it is written in write_files and re-asserted last in bootcmd and in runcmd. The default gateway
@@ -410,7 +410,7 @@ requirements:
 
   - id: FC-PACKAGES-GUARD
     source:
-      - atproto-market/lib/common/cloud-init-common/mod.ts:207-249
+      - ts/atproto-market/lib/common/cloud-init-common/mod.ts:207-249
     behaviour: >-
       Packages the modules ask for leave cloud-init's apt module and become the first runcmd entry, a dpkg -s
       guard that runs apt only for what the image lacks; package_update is false; names are validated before
@@ -424,7 +424,7 @@ requirements:
 
   - id: FC-PREINSTALL-MANIFEST
     source:
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:350-508
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:350-508
     behaviour: >-
       The image's baked list is derived from module ids only (a module function is refused: it closes over
       one contract, e.g. its accept.json). A package, file or prepended command is baked only when the module
@@ -439,16 +439,16 @@ requirements:
         :140 chrootPreinstall; ensure.go:209 refuses an image that does not carry it). M1-GUEST-IMAGE bakes
         the manifest in scripts/build-guest-image.sh on a build host instead.
     parity_test:
-      - hono-compute-provider/test/preinstall_manifest_test.ts
+      - ts/hono-compute-provider/test/preinstall_manifest_test.ts
       - build-pipeline TestTheImageCarriesThePreinstallManifest
     status: port
     covers: [preinstallManifest, shellCommandLine]
 
   - id: FC-IMAGE-ENSURE
     source:
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:597-611
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:940-942
-      - hono-compute-provider/lib/node-image-firecracker/mod.ts:19-126
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:597-611
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:940-942
+      - ts/hono-compute-provider/lib/node-image-firecracker/mod.ts:19-126
     behaviour: >-
       `socialweb-nodeimage -ensure -json [-reuse-stale] [-preinstall p] -config c`; the last JSON line is
       the status {state present|built|reused, fingerprint, dir, config, rootfsMiB, ...}; a build that exits
@@ -469,8 +469,8 @@ requirements:
 
   - id: FC-IMAGE-REUSE-STALE
     source:
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:54
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:598-608
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:54
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:598-608
     behaviour: >-
       reuseStale lets a bidder boot an earlier image whose fingerprint differs from what the inputs name,
       with a warning node_image_reused {askedFor, using}.
@@ -486,7 +486,7 @@ requirements:
 
   - id: FC-IMAGE-PROVENANCE
     source:
-      - hono-compute-provider/lib/node-image-firecracker/mod.ts:73-109
+      - ts/hono-compute-provider/lib/node-image-firecracker/mod.ts:73-109
     behaviour: >-
       The image is built on the bidder from that host's own kernel and module tree by socialweb-nodeimage
       (root, chroot, apt, a go toolchain), so two bidders boot different kernels.
@@ -502,9 +502,9 @@ requirements:
 
   - id: FC-IMAGE-ROOTFS-SIZE
     source:
-      - hono-compute-provider/lib/node-image-firecracker/mod.ts:40-49
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:572
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:600
+      - ts/hono-compute-provider/lib/node-image-firecracker/mod.ts:40-49
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:572
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:600
     behaviour: >-
       ensure must report a positive rootfsMiB: a provider compares the contract's disk with it, and a
       template larger than the disk cannot be shrunk. The provider records it but does not yet use it.
@@ -519,10 +519,10 @@ requirements:
 
   - id: FC-DISK-FROM-CONTRACT
     source:
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:613-615
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:675
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:685
-      - hono-compute-provider/lib/microvm-firecracker/mod.ts:22
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:613-615
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:675
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:685
+      - ts/hono-compute-provider/lib/microvm-firecracker/mod.ts:22
     behaviour: >-
       The contract's disk is parsed like mem and passed as diskMib whatever the number; a spelling nothing
       parses leaves the guest at the image's own size.
@@ -534,14 +534,14 @@ requirements:
         debugfs/e2fsck/resize2fs leave the hosts (M2-VM-RUNTIME, M1-GUEST-IMAGE).
     parity_test:
       - TestParityTheVMSpecDiskEqualsTheContract
-      - hono-compute-provider/test/disk_semantics_test.ts::"a contract that asks for a bigger disk boots a guest grown to it"
+      - ts/hono-compute-provider/test/disk_semantics_test.ts::"a contract that asks for a bigger disk boots a guest grown to it"
       - internal/vmruntime TestTheSeedIsASeparateCidataDriveAndTheRootfsIsNotEdited
     status: port
 
   - id: FC-MEM-AND-VCPU
     source:
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:683-684
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:868-883
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:683-684
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:868-883
     behaviour: >-
       mem matches /^\s*(\d+)\s*([KMGT])?i?B?\s*$/i: no unit is MiB, K rounds to at least 1 MiB, G x 1024,
       T x 1024 x 1024; anything else leaves the image default. vcpu is passed only when it is a positive
@@ -554,14 +554,14 @@ requirements:
         Go parses identically.
     parity_test:
       - TestParityMemAndVcpuParseLikeTheProvider
-      - hono-compute-provider/test/firecracker_network_test.ts::"the memory an RFP asks for is read in the units the lexicon writes it in"
+      - ts/hono-compute-provider/test/firecracker_network_test.ts::"the memory an RFP asks for is read in the units the lexicon writes it in"
     status: port
     covers: [parseMemMiB]
 
   - id: FC-ISSUER-DROPLET-VIEW
     source:
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:608-614
-      - hono-compute-provider/lib/oidc-issuer-hono/mod.ts:710-745
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:608-614
+      - ts/hono-compute-provider/lib/oidc-issuer-hono/mod.ts:710-745
     behaviour: >-
       The issuer's droplet for a guest this process holds is {id, tags [oidc-sub:plc:<plc>,
       oidc-sub:role:<role>]}; /v1/oidc/prove builds the subject actx:<actx>:plc:<plc>:role:<role> from the
@@ -575,14 +575,14 @@ requirements:
         guest-reported (FC-GUEST-HOSTKEYS-REPORT), so the view carries no container name and no address.
     parity_test:
       - TestParityTheIssuersDropletViewEqualsTheProviders
-      - hono-compute-provider/test/oidc_hostkeys_test.ts::"a firecracker guest's proven host keys reach the bidder under its provider id; pasta forwards no inbound port"
+      - ts/hono-compute-provider/test/oidc_hostkeys_test.ts::"a firecracker guest's proven host keys reach the bidder under its provider id; pasta forwards no inbound port"
     status: port
     covers: [createFirecrackerComputeProvider]
 
   - id: FC-HOSTKEY-SCAN
     source:
-      - hono-compute-provider/lib/oidc-issuer-hono/mod.ts@a42b89f:106-152
-      - hono-compute-provider/lib/oidc-issuer-hono/mod.ts@a42b89f:576-599
+      - ts/hono-compute-provider/lib/oidc-issuer-hono/mod.ts@964f1fd44fef:106-152
+      - ts/hono-compute-provider/lib/oidc-issuer-hono/mod.ts@964f1fd44fef:576-599
     behaviour: >-
       provisioningValidate learned the guest's ed25519 host key by ssh-keyscan, through `container exec` into
       the runner container when the droplet named one, retrying 300 s, and checked the guest's prove-sshd
@@ -595,15 +595,15 @@ requirements:
         verifies the prove signature against the reported key bound to the same token (ssh-keygen -Y verify;
         the old check-novalidate never compared the signer with the scanned key).
     parity_test:
-      - hono-compute-provider/test/oidc_hostkeys_test.ts::"provisioningValidate verifies against the reported key and nothing in lib execs ssh-keyscan"
+      - ts/hono-compute-provider/test/oidc_hostkeys_test.ts::"provisioningValidate verifies against the reported key and nothing in lib execs ssh-keyscan"
     status: removed
 
   - id: FC-GUEST-HOSTKEYS-REPORT
     source:
-      - hono-compute-provider/lib/oidc-issuer-hono/mod.ts:551-600
-      - hono-compute-provider/lib/oidc-issuer-hono/mod.ts:672-708
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:616-644
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:739
+      - ts/hono-compute-provider/lib/oidc-issuer-hono/mod.ts:551-600
+      - ts/hono-compute-provider/lib/oidc-issuer-hono/mod.ts:672-708
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:616-644
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:739
     behaviour: >-
       The enricher writes the provisioning token to a 0600 file and composes cloud-init-common's
       hostKeysReporterModule (guest-hostkeys.service, ordered before provisioning-token.service): the guest
@@ -619,19 +619,19 @@ requirements:
         Planned with M4-ONNETWORK / M5-BIDDER-COMPONENTS: the guest-facing DenoPod serves /v1/host-keys beside
         /v1/on-network and the ComputeVM's nonce maps the report to its receipt; the seed carries the reporter.
     parity_test:
-      - hono-compute-provider/test/oidc_hostkeys_test.ts
-      - atproto-market/test/cloud_init_hostkeys_test.ts
-      - atproto-market/test/vm_hostkeys_bidder_test.ts
+      - ts/hono-compute-provider/test/oidc_hostkeys_test.ts
+      - ts/atproto-market/test/cloud_init_hostkeys_test.ts
+      - ts/atproto-market/test/vm_hostkeys_bidder_test.ts
     status: port
     covers: [guest_hostkeys_forwarded, guest_hostkeys_unknown_guest, guest_hostkeys_no_listener]
 
   - id: FC-PROVISIONING-EXCHANGE
     source:
-      - hono-compute-provider/lib/oidc-issuer-hono/mod.ts:426-575
-      - hono-compute-provider/lib/oidc-issuer-hono/mod.ts:680-714
-      - hono-compute-provider/lib/oidc-issuer-hono/mod.ts:602-611
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:652-654
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:695
+      - ts/hono-compute-provider/lib/oidc-issuer-hono/mod.ts:426-575
+      - ts/hono-compute-provider/lib/oidc-issuer-hono/mod.ts:680-714
+      - ts/hono-compute-provider/lib/oidc-issuer-hono/mod.ts:602-611
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:652-654
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:695
     behaviour: >-
       The enricher mints a 15-minute provisioning token (sub actx:<team>:role:provisioning:nonce:<n>) and
       composes provisioning-token.sh/.service: sign the token with the guest's ed25519 host key (namespace
@@ -644,14 +644,14 @@ requirements:
         Stays TypeScript (the issuer moves to the bidder's guest-facing DenoPod after M4-BIDDER-VAULT);
         carried in the seed bytes. The DigitalOcean /etc/shadow edit is harmless on firecracker.
     parity_test:
-      - hono-compute-provider/test/oidc_workload_identity_integration_test.ts
+      - ts/hono-compute-provider/test/oidc_workload_identity_integration_test.ts
       - TestParityTheSeedUserDataEqualsTheProvidersByteForByte
     status: port
 
   - id: FC-IN-MEMORY-STATE
     source:
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:566-570
-      - hono-compute-provider/lib/oidc-issuer-hono/mod.ts:65-78
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:566-570
+      - ts/hono-compute-provider/lib/oidc-issuer-hono/mod.ts:65-78
     behaviour: >-
       The guests map, the rbac refs, the watches, the address index and the issuer's nonce store live in
       process memory: a bidder restart forgets every running guest (no watch, no droplet view, no prove), and
@@ -668,7 +668,7 @@ requirements:
 
   - id: FC-OIDC-ISSUER-MOUNT
     source:
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:904-927
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:904-927
     behaviour: >-
       The provider mounts the OIDC issuer its own guests are told to call on its own serve when the relay
       connects (serviceUrl from ingressRef); without it /v1/oidc/prove answers 404, no accept bundle secrets
@@ -679,14 +679,14 @@ requirements:
         Stays TypeScript; decided 2026-10-12 the bidder's guest-facing endpoints (OIDC issuer, /v1/on-network)
         split into their own DenoPods after M4-BIDDER-VAULT.
     parity_test:
-      - hono-compute-provider/test/compute_provider_kcp_test.ts::"the issuer and the on-network route are mounted on the provider's serve"
+      - ts/hono-compute-provider/test/compute_provider_kcp_test.ts::"the issuer and the on-network route are mounted on the provider's serve"
     status: port
     covers: ["firecracker oidc issuer mounted"]
 
   - id: FC-ONNETWORK-ROUTE
     source:
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:32-45
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:807-863
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:32-45
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:807-863
     behaviour: >-
       POST /v1/on-network: an OIDC bearer the issuer validates; acceptUri and acceptCid required (400); the
       accept-to-contract map keyed `<acceptUri>#<acceptCid>` must know it (404 UnknownAccept); a vm.onNetwork
@@ -699,7 +699,7 @@ requirements:
         Kept by compute-provider-kcp, which also applies status.market {onNetworkUri, address, reportedAt}
         (M4-ONNETWORK).
     parity_test:
-      - hono-compute-provider/test/compute_provider_kcp_onnetwork_test.ts
+      - ts/hono-compute-provider/test/compute_provider_kcp_onnetwork_test.ts
     status: port
     covers:
       - ON_NETWORK_NSID
@@ -713,9 +713,9 @@ requirements:
 
   - id: FC-RBAC-RECORDS
     source:
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:70-82
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:714-724
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:749-755
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:70-82
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:714-724
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:749-755
     behaviour: >-
       After a boot, an rbac record for the guest's role and requester is created when a provisioner is
       configured; its ref is kept per guest and the record is deleted on destroy and on the guest's own
@@ -729,8 +729,8 @@ requirements:
 
   - id: FC-PROVISION-RESULT
     source:
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:673
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:726-745
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:673
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:726-745
     behaviour: >-
       provision returns providerId = the name and metadata {name, ip, mode firecracker, sshReady true,
       vmmPid, console, imageFingerprint}, logging provisioning microvm and microvm provisioned. sshReady is
@@ -745,9 +745,9 @@ requirements:
 
   - id: FC-BOOT-RESULT-JSON
     source:
-      - hono-compute-provider/lib/microvm-firecracker/mod.ts:28-38
-      - hono-compute-provider/lib/microvm-firecracker/mod.ts:132-163
-      - hono-compute-provider/lib/microvm-firecracker/mod.ts:262-275
+      - ts/hono-compute-provider/lib/microvm-firecracker/mod.ts:28-38
+      - ts/hono-compute-provider/lib/microvm-firecracker/mod.ts:132-163
+      - ts/hono-compute-provider/lib/microvm-firecracker/mod.ts:262-275
     behaviour: >-
       Boot is complete when result.json appears in the work dir with non-empty name, guest_ip, socket,
       console, work_dir and positive vmm_pid, pasta_pid (fingerprint optional); polled every 300 ms; logged
@@ -765,9 +765,9 @@ requirements:
 
   - id: FC-BOOT-TIMEOUT
     source:
-      - hono-compute-provider/lib/microvm-firecracker/mod.ts:77
-      - hono-compute-provider/lib/microvm-firecracker/mod.ts:276-295
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:689-694
+      - ts/hono-compute-provider/lib/microvm-firecracker/mod.ts:77
+      - ts/hono-compute-provider/lib/microvm-firecracker/mod.ts:276-295
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:689-694
     behaviour: >-
       A boot is bounded (180 s default): a runner that exits before reporting, a runner that vanished, or the
       deadline each fail the boot with the runner's last output, and the provider then stops the guest and
@@ -784,7 +784,7 @@ requirements:
 
   - id: FC-WORKDIR-TWO-WRITERS
     source:
-      - hono-compute-provider/lib/microvm-firecracker/mod.ts:210-222
+      - ts/hono-compute-provider/lib/microvm-firecracker/mod.ts:210-222
     behaviour: >-
       The work dir is written by the bidder (spec, result read) and by the runner as another uid (rootfs
       copy, seed, result), so it is chmod 0777.
@@ -800,8 +800,8 @@ requirements:
 
   - id: FC-RUNNER-CONTAINER
     source:
-      - hono-compute-provider/lib/microvm-firecracker/mod.ts:165-180
-      - hono-compute-provider/lib/microvm-firecracker/mod.ts:224-260
+      - ts/hono-compute-provider/lib/microvm-firecracker/mod.ts:165-180
+      - ts/hono-compute-provider/lib/microvm-firecracker/mod.ts:224-260
     behaviour: >-
       Each guest boots inside a privileged docker container (pasta sandboxes itself and no capability subset
       sufficed) holding /dev/kvm and /dev/net/tun, the image dir mounted read-only and the work dir mounted
@@ -814,15 +814,15 @@ requirements:
     parity_test:
       - internal/vmruntime TestTheVMUnitsTreeIsPastaAndTheStandInOnly
       - internal/vmruntime TestTwoVMUnitsMapDisjointSubRanges
-      - hono-compute-provider/test/microvm_work_dir_test.ts::"container labels parse from key=value pairs and refuse anything else"
+      - ts/hono-compute-provider/test/microvm_work_dir_test.ts::"container labels parse from key=value pairs and refuse anything else"
     status: superseded-by-M2-VM-RUNTIME
     covers: [createFirecrackerMicrovm, parseLabels]
 
   - id: FC-SEED-TRANSPORT
     source:
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:649
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:671
-      - hono-compute-provider/lib/microvm-firecracker/mod.ts:106-112
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:649
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:671
+      - ts/hono-compute-provider/lib/microvm-firecracker/mod.ts:106-112
     behaviour: >-
       user_data is a file in the work dir named by boot-spec.json; the runner (nodeboot) writes it into the
       rootfs copy as a NoCloud seed with debugfs.
@@ -838,9 +838,9 @@ requirements:
 
   - id: FC-CONSOLE
     source:
-      - hono-compute-provider/lib/microvm-firecracker/mod.ts:34
-      - hono-compute-provider/lib/microvm-firecracker/mod.ts:193-197
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:766-771
+      - ts/hono-compute-provider/lib/microvm-firecracker/mod.ts:34
+      - ts/hono-compute-provider/lib/microvm-firecracker/mod.ts:193-197
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:766-771
     behaviour: >-
       The console path is reported in the result; on exit the runner container's last log lines (tail 60,
       4000 chars, 2000 logged) go into the bidder's log with microvm_exited, so tenant console bytes reach the
@@ -856,7 +856,7 @@ requirements:
 
   - id: FC-GRACEFUL-STOP
     source:
-      - hono-compute-provider/lib/microvm-firecracker/mod.ts:303-318
+      - ts/hono-compute-provider/lib/microvm-firecracker/mod.ts:303-318
     behaviour: >-
       Stop is kill + rm of the runner container (SIGKILL): the guest is never asked to shut down.
     go_side:
@@ -871,11 +871,11 @@ requirements:
 
   - id: FC-GUEST-DEATH-WATCH
     source:
-      - hono-compute-provider/lib/microvm-firecracker/mod.ts:40-45
-      - hono-compute-provider/lib/microvm-firecracker/mod.ts:181-191
-      - hono-compute-provider/lib/microvm-firecracker/mod.ts:331-355
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:705-712
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:761-789
+      - ts/hono-compute-provider/lib/microvm-firecracker/mod.ts:40-45
+      - ts/hono-compute-provider/lib/microvm-firecracker/mod.ts:181-191
+      - ts/hono-compute-provider/lib/microvm-firecracker/mod.ts:331-355
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:705-712
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:761-789
     behaviour: >-
       Live E8 defect a (hat-8, fixed by hono-compute-provider 96147f0): a guest that powered off was never
       noticed. Now each guest's runner is polled every 5 s; when it exited or was removed the provider drops
@@ -892,15 +892,15 @@ requirements:
     parity_test:
       - internal/vmruntime TestAVMMThatExitsOnItsOwnEndsItsUnitAndLeavesNoProcess
       - internal/computevm TestAVMMExitObservedByWatchMakesTheComputeVMLostWithinOneEvent
-      - hono-compute-provider/test/firecracker_guest_lifecycle_test.ts::"a guest that dies on its own is reported gone, released and cleaned up"
+      - ts/hono-compute-provider/test/firecracker_guest_lifecycle_test.ts::"a guest that dies on its own is reported gone, released and cleaned up"
     status: port
     covers: [microvm_exited, microvm_exit_handling_failed, guest_gone_listener_failed]
 
   - id: FC-WORKDIR-REMOVAL
     source:
-      - hono-compute-provider/lib/microvm-firecracker/mod.ts:303-330
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:757-759
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:791-805
+      - ts/hono-compute-provider/lib/microvm-firecracker/mod.ts:303-330
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:757-759
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:791-805
     behaviour: >-
       Live E8 defect b (32 dirs, 63 GB on hat-8; fixed by 96147f0): work dirs were never removed. Now stop
       removes the work dir only after the runner is confirmed gone (kept while it exists: removing it under a
@@ -918,15 +918,15 @@ requirements:
       - internal/vmruntime TestCleanupRemovesTheWorkDirAndSocketForEveryTerminalOutcome
       - internal/computevm TestTheFinalizerStaysUntilTheWorkDirIsGoneForReleasedLostAndFailed
       - internal/computevm TestAWorkDirWithNoComputeVMAndNoUnitIsRemovedAfterTheGrace
-      - hono-compute-provider/test/firecracker_guest_lifecycle_test.ts::"a work directory is kept while its container still exists"
+      - ts/hono-compute-provider/test/firecracker_guest_lifecycle_test.ts::"a work directory is kept while its container still exists"
     status: port
     covers: [microvm_work_dir_removed, microvm_destroy_unknown]
 
   - id: FC-VM-TERMINATED
     source:
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:776
-      - atproto-market/lib/market-bidder-compute/mod.ts:58-69
-      - atproto-market/lib/market-bidder-compute/mod.ts:202-242
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:776
+      - ts/atproto-market/lib/market-bidder-compute/mod.ts:58-69
+      - ts/atproto-market/lib/market-bidder-compute/mod.ts:202-242
     behaviour: >-
       A GuestGone reason `runner container exited|removed` is mapped by the bidder to vm.terminated (exited
       with code 0 -> guest_poweroff, else vmm_exited), published as a signed market.event to submitEvent or
@@ -940,14 +940,14 @@ requirements:
         passed through compute-provider-kcp onGuestGone.
     parity_test:
       - internal/computevm TestEveryLostVerdictCarriesTheTerminatedReason
-      - hono-compute-provider/test/compute_provider_kcp_test.ts::"a ComputeVM going Lost fires onGuestGone with its reason"
+      - ts/hono-compute-provider/test/compute_provider_kcp_test.ts::"a ComputeVM going Lost fires onGuestGone with its reason"
     status: superseded-by-M4-TERMINATION-EVENT
 
   - id: FC-OAUTH-SCOPE-NEW-COLLECTIONS
     source:
-      - typescript-helpers/lib/oauth-scope/mod.ts:33-34
-      - typescript-helpers/lib/oauth-scope/mod.ts:139-150
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:833-847
+      - ts/typescript-helpers/lib/oauth-scope/mod.ts:33-34
+      - ts/typescript-helpers/lib/oauth-scope/mod.ts:139-150
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:833-847
     behaviour: >-
       Live hat-8 2026-10-12T01:32:39Z: the bidder's vm.terminated publish failed with 403 ScopeMissingError
       because the collection was not in BIDDER_OAUTH_SCOPE. Every collection the bidder writes (onNetwork,
@@ -960,18 +960,18 @@ requirements:
         Any record the Go-backed provider adds (vm.hostKeys first) follows the new-NSID checklist before a
         live run.
     parity_test:
-      - atproto-market/test/role_scope_coverage_test.ts
-      - did-key-associator/test/oauth_scope_drift_test.ts
+      - ts/atproto-market/test/role_scope_coverage_test.ts
+      - ts/did-key-associator/test/oauth_scope_drift_test.ts
     status: superseded-by-M1-PROTOCOL-CHECKLIST
 
   - id: FC-JSR-REGISTRY
     source:
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts@54d1b8f:614-629
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts@54d1b8f:710
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts@54d1b8f:719
-      - hono-compute-provider/lib/compute-provider-local/mod.ts@54d1b8f:614-632
-      - hono-compute-provider/lib/compute-provider-digitalocean/mod.ts@54d1b8f:151-162
-      - atproto-market/lib/common/cloud-init-common/mod.ts@b78adc1:1257-1263
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts@1fd0c5234b55:614-629
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts@1fd0c5234b55:710
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts@1fd0c5234b55:719
+      - ts/hono-compute-provider/lib/compute-provider-local/mod.ts@1fd0c5234b55:614-632
+      - ts/hono-compute-provider/lib/compute-provider-digitalocean/mod.ts@1fd0c5234b55:151-162
+      - ts/atproto-market/lib/common/cloud-init-common/mod.ts@d5b75305c3ba:1257-1263
     behaviour: >-
       The provider serves the workspace's unpublished packages from a host JSR registry on TCP port 0
       (0.0.0.0) and points the tunnel subscriber at it with JSR_URL, because jsr.io answers 404 for them.
@@ -981,15 +981,15 @@ requirements:
       detail: Removed, not ported (non-iroh guest transports stripped; the guest JSR registry goes with them).
     parity_test:
       - TestParityTheSeedNamesNoJsrUrlAndNoTunnelSubscriber
-      - hono-compute-provider/test/no_guest_jsr_registry_test.ts::"no guest JSR registry is served and no user_data names JSR_URL"
+      - ts/hono-compute-provider/test/no_guest_jsr_registry_test.ts::"no guest JSR registry is served and no user_data names JSR_URL"
     status: removed
     covers: ["jsr registry mounted on TCP"]
 
   - id: FC-LEGACY-TUNNEL-MODULE
     source:
-      - atproto-market/lib/common/cloud-init-common/mod.ts@b78adc1:370-433
-      - atproto-market/lib/common/cloud-init-common/mod.ts@b78adc1:1249-1255
-      - atproto-market/lib/market-bidder-compute/mod.ts@b78adc1:85-117
+      - ts/atproto-market/lib/common/cloud-init-common/mod.ts@d5b75305c3ba:370-433
+      - ts/atproto-market/lib/common/cloud-init-common/mod.ts@d5b75305c3ba:1249-1255
+      - ts/atproto-market/lib/market-bidder-compute/mod.ts@d5b75305c3ba:85-117
     behaviour: >-
       The tunnel module runs the deno tunnel subscriber that dials the relay dispatcher
       (--ingress-proxy-host) and writes the dispatcher FQDN to /run/guest-fqdn; guestOnNetworkUrl derives the
@@ -999,49 +999,49 @@ requirements:
       detail: Removed, not ported.
     parity_test:
       - TestParityTheSeedNamesNoJsrUrlAndNoTunnelSubscriber
-      - atproto-market/test/no_legacy_guest_transport_test.ts::"the user_data registry holds no tunnel, fedproxy-ssh, fedproxy-web or wootty module"
-      - atproto-market/test/market_bidder_guest_onnetwork_url_test.ts::"a guest reports to the relay's own /v1/on-network"
+      - ts/atproto-market/test/no_legacy_guest_transport_test.ts::"the user_data registry holds no tunnel, fedproxy-ssh, fedproxy-web or wootty module"
+      - ts/atproto-market/test/market_bidder_guest_onnetwork_url_test.ts::"a guest reports to the relay's own /v1/on-network"
     status: removed
 
   - id: FC-LEGACY-FEDPROXY-SSH
     source:
-      - atproto-market/lib/common/cloud-init-common/mod.ts@b78adc1:441-590
-      - atproto-market/lib/common/cloud-init-common/mod.ts@b78adc1:1238-1247
+      - ts/atproto-market/lib/common/cloud-init-common/mod.ts@d5b75305c3ba:441-590
+      - ts/atproto-market/lib/common/cloud-init-common/mod.ts@d5b75305c3ba:1238-1247
     behaviour: The fedproxy-ssh module (fedproxy client SSH transport through the relay).
     go_side:
       meets: not-applicable
       detail: Removed, not ported.
     parity_test:
-      - atproto-market/test/cloud_init_snapshot_test.ts::"the registry holds only iroh, secrets and k3s"
+      - ts/atproto-market/test/cloud_init_snapshot_test.ts::"the registry holds only iroh, secrets and k3s"
     status: removed
 
   - id: FC-LEGACY-FEDPROXY-WEB
     source:
-      - atproto-market/lib/common/cloud-init-common/mod.ts@b78adc1:593-647
+      - ts/atproto-market/lib/common/cloud-init-common/mod.ts@d5b75305c3ba:593-647
     behaviour: The fedproxy-web module (fedproxy client web ingress for a guest port).
     go_side:
       meets: not-applicable
       detail: Removed, not ported.
     parity_test:
-      - atproto-market/test/cloud_init_snapshot_test.ts::"the registry holds only iroh, secrets and k3s"
+      - ts/atproto-market/test/cloud_init_snapshot_test.ts::"the registry holds only iroh, secrets and k3s"
     status: removed
 
   - id: FC-LEGACY-WOOTTY
     source:
-      - atproto-market/lib/common/cloud-init-common/mod.ts@b78adc1:649-844
+      - ts/atproto-market/lib/common/cloud-init-common/mod.ts@d5b75305c3ba:649-844
     behaviour: The wootty terminal module (web terminal reached through fedproxy).
     go_side:
       meets: not-applicable
       detail: Removed, not ported.
     parity_test:
-      - atproto-market/test/cloud_init_snapshot_test.ts::"the registry holds only iroh, secrets and k3s"
+      - ts/atproto-market/test/cloud_init_snapshot_test.ts::"the registry holds only iroh, secrets and k3s"
     status: removed
 
   - id: FC-LEGACY-WEBSOCAT
     source:
-      - atproto-market/lib/requester-xrpc/mod.ts@b78adc1:602-631
-      - atproto-market/lib/requester-xrpc/mod.ts@b78adc1:868-912
-      - hono-compute-provider/lib/oidc-issuer-hono/mod.ts@54d1b8f:327
+      - ts/atproto-market/lib/requester-xrpc/mod.ts@d5b75305c3ba:602-631
+      - ts/atproto-market/lib/requester-xrpc/mod.ts@d5b75305c3ba:868-912
+      - ts/hono-compute-provider/lib/oidc-issuer-hono/mod.ts@1fd0c5234b55:327
     behaviour: >-
       The requester reaches a relay-FQDN guest with ssh ProxyCommand `websocat --binary wss://<fqdn>/`, and
       the provisioning script kicks setup-websocat.service after its token exchange.
@@ -1049,16 +1049,16 @@ requirements:
       meets: not-applicable
       detail: Removed, not ported; the requester's ssh path is iroh only, with known_hosts from vm.hostKeys (M4-HOST-KEYS).
     parity_test:
-      - atproto-market/test/vm_hostkeys_requester_test.ts
+      - ts/atproto-market/test/vm_hostkeys_requester_test.ts
       - TestParityTheSeedNamesNoJsrUrlAndNoTunnelSubscriber
-      - atproto-market/test/no_legacy_guest_transport_test.ts::"the ssh ProxyCommand for a non-iroh address is refused instead of a websocket bridge"
+      - ts/atproto-market/test/no_legacy_guest_transport_test.ts::"the ssh ProxyCommand for a non-iroh address is refused instead of a websocket bridge"
     status: removed
 
   - id: FC-LEGACY-RELAY-FQDN-ADDRESS
     source:
-      - atproto-market/lib/abc/compute-request/mod.ts@b78adc1:264-270
-      - atproto-market/lib/abc/compute-request/mod.ts:269-275
-      - atproto-market/lib/compute-request-xrpc/mod.ts:410-413
+      - ts/atproto-market/lib/abc/compute-request/mod.ts@d5b75305c3ba:264-270
+      - ts/atproto-market/lib/abc/compute-request/mod.ts:269-275
+      - ts/atproto-market/lib/compute-request-xrpc/mod.ts:410-413
     behaviour: >-
       A guest address that is not an iroh ticket or an IP is taken as a relay FQDN the requester polls over
       wss; a single-label name is a hostname and skipped.
@@ -1066,14 +1066,14 @@ requirements:
       meets: not-applicable
       detail: Removed, not ported; the only reportable guest address is iroh://<ticket>, and a dotted name is refused (guestAddressKind "refused").
     parity_test:
-      - atproto-market/test/no_legacy_guest_transport_test.ts::"a guest address that is a relay name is refused, only an iroh ticket is a guest address"
+      - ts/atproto-market/test/no_legacy_guest_transport_test.ts::"a guest address that is a relay name is refused, only an iroh ticket is a guest address"
     status: removed
 
   - id: FC-LEGACY-REPORTER-TUNNEL-ORDERING
     source:
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts@54d1b8f:296-297
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts@54d1b8f:316-318
-      - hono-compute-provider/lib/oidc-issuer-hono/mod.ts@54d1b8f:389-390
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts@1fd0c5234b55:296-297
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts@1fd0c5234b55:316-318
+      - ts/hono-compute-provider/lib/oidc-issuer-hono/mod.ts@1fd0c5234b55:389-390
     behaviour: >-
       The reporters are ordered After= and Wants= tunnel-subscriber.service and dump its journal on giving
       up.
@@ -1082,13 +1082,13 @@ requirements:
       detail: Removed, not ported; the reporter orders on iroh.service only (FC-IROH-LISTENER-ORDERING).
     parity_test:
       - TestParityTheSeedNamesNoJsrUrlAndNoTunnelSubscriber
-      - hono-compute-provider/test/no_guest_jsr_registry_test.ts::"the guest's on-network reporter waits on the iroh listener, never a tunnel subscriber"
+      - ts/hono-compute-provider/test/no_guest_jsr_registry_test.ts::"the guest's on-network reporter waits on the iroh listener, never a tunnel subscriber"
     status: removed
 
   - id: FC-LEGACY-PASTA-SSH-FORWARD
     source:
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts@a42b89f:111-113
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts@a42b89f:737
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts@964f1fd44fef:111-113
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts@964f1fd44fef:737
     behaviour: >-
       pasta was told to forward 0.0.0.0/22 in the runner's namespace to the guest's sshd, for the host-side
       keyscan and direct TCP probes.
@@ -1101,13 +1101,13 @@ requirements:
         proves the guest's host key through the reported key (FC-GUEST-HOSTKEYS-REPORT).
     parity_test:
       - internal/vmruntime TestTheVMUnitSpecPastaHasNoInboundForward
-      - hono-compute-provider/test/oidc_hostkeys_test.ts::"a firecracker guest's proven host keys reach the bidder under its provider id; pasta forwards no inbound port"
+      - ts/hono-compute-provider/test/oidc_hostkeys_test.ts::"a firecracker guest's proven host keys reach the bidder under its provider id; pasta forwards no inbound port"
     status: removed
 
   - id: FC-ADOPT-AFTER-RESTART
     source:
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:131
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:808-840
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:131
+      - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:808-840
     behaviour: >-
       After a bidder restart the provider adopts each guest its ContractStore names instead of booting it
       again: it reads the guest.json the provision wrote (with the host boot id), re-watches a runner that is

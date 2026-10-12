@@ -4,7 +4,6 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"os"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -187,16 +186,13 @@ func TestTheGeneratedFilesCoverEveryResourceAndExport(t *testing.T) {
 	for _, o := range outputs {
 		paths = append(paths, o.Path)
 	}
-	var want []string
-	if _, err := os.Stat(filepath.Join(repoRoot, computeVMSiblingRepo)); err == nil {
-		want = append(want, computeVMTypeScript)
-		fixtures, err := filepath.Glob(filepath.Join(computeVMFixtureDir, "*.json"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, f := range fixtures {
-			want = append(want, "../hono-compute-provider/test/fixtures/computevm/"+filepath.Base(f))
-		}
+	want := []string{computeVMTypeScript}
+	fixtures, err := filepath.Glob(filepath.Join(computeVMFixtureDir, "*.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range fixtures {
+		want = append(want, ComputeProviderDir+"/test/fixtures/computevm/"+filepath.Base(f))
 	}
 	want = append(want,
 		"deploy/apiresourceschema-revisions.json",
