@@ -54,6 +54,10 @@ echo "check.sh: ok apigen ($compared generated files, no drift from api/v1alpha1
 go vet ./... || fail "go vet"
 echo "check.sh: ok go vet"
 
+go test -count=1 -run 'TestNoFixedPortBehindTheEdge|TestTheRatchetListsOnlyViolationsThatStillExist|TestEveryEdgePortHasAReason|TestAServiceManifestWithoutAnExplicitPortIsAViolation' ./test \
+  || fail "no fixed ports behind the edge (deploy/edge-ports.yaml, deploy/fixed-ports-ratchet.yaml)"
+echo "check.sh: ok no fixed ports behind the edge ($(grep -c '^  - {file:' deploy/fixed-ports-ratchet.yaml) ratchet entries left)"
+
 crossfailed=""
 for target in darwin/arm64 darwin/amd64 windows/amd64 windows/arm64 linux/arm64; do
   goos="${target%/*}"

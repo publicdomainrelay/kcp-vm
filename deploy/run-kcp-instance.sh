@@ -5,7 +5,7 @@ BIN="${KCP_BIN:-/usr/local/bin/kcp}"
 
 INSTANCE="${KCP_INSTANCE:?set KCP_INSTANCE to a unique name for this instance, e.g. the worktree name}"
 PORT="${KCP_SECURE_PORT:?set KCP_SECURE_PORT to a port this instance owns, or 0 to bind any free port and read it back from ROOT/admin.kubeconfig}"
-KINE="${KCP_KINE_ENDPOINT:?set KCP_KINE_ENDPOINT to the kine this instance dials, e.g. http://127.0.0.1:20001; without it kcp starts an embedded etcd on the host-fixed 2379/2380, which no flag can move}"
+KINE="${KCP_KINE_ENDPOINT:?set KCP_KINE_ENDPOINT to the kine this instance dials, e.g. http://127.0.0.1:<the port kine reported>; without it kcp starts an embedded etcd on the host-fixed 2379/2380, which no flag can move}"
 
 ROOT="${KCP_ROOT_DIR:-$PWD/.kcp-$INSTANCE}"
 BIND="${KCP_BIND_ADDRESS:-127.0.0.1}"
