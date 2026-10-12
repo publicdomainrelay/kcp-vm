@@ -2084,8 +2084,8 @@ items:
     test_first: "TestAChildInstancesKcpSlotIsAHostProcessInItsParent, TestDeletingAChildInstanceWorkspaceStopsItsProcesses, TestAnInstanceTreeCannotBeNestedUnderAnotherInstance; behind livegate on proc. Red first."
     done_when: "two child instances under one parent on hat-8 listed and stopped through the parent's kcp; readings recorded."
     risks: ["A parent outage stops reconcile for every child (their units keep running under the parent's devsup)."]
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M4-BUILD
     milestone: M4
     title: Reproducible build of the one binary per linux platform
