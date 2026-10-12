@@ -1653,8 +1653,8 @@ items:
       TestNoNodebootOrNodeimageVerbInAReleaseBuild; red first.
     done_when: "the host install carries socialweb-computer alone; tests green."
     risks: ["A re-exec'd verb inherits the parent's env; the CCM's curated env is rebuilt explicitly."]
-    status: todo
-    evidence: []
+    status: doing
+    evidence:
   - id: M3-CLUSTER-UNITS
     milestone: M3
     kcp_use: "traditional-exception (virtual Kubernetes clusters project; principle)"
