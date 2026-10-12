@@ -195,6 +195,49 @@ entries:
     why: the VM unit's one-shot prep stage (tap, userns) that execs into pasta and firecracker; no socialweb-computer code stays in the VM's process tree
     from:
       - "plan 0007 M2-VM-RUNTIME"
+  - name: swc-userns-stage
+    kind: executable
+    fate: embedded-tool
+    owner: 0007 M0-VM-USERNS, M2-VM-RUNTIME
+    why: first word of each VM unit's ExecStart; creates the per-VM subuid user namespace through newuidmap/newgidmap and execs pasta; static, built reproducibly by scripts/build-userns-stage.sh, pinned in versions.json
+    from:
+      - "deploy/swc-userns-stage/stage.c"
+      - "ts/hono-compute-provider microvm-firecracker-userns"
+  - name: id
+    kind: executable
+    fate: build-host
+    owner: 0007 M0-VM-USERNS
+    why: the market test bed's userns microvm (microvm-firecracker-userns) resolves the range account; M2-VM-RUNTIME does this in Go
+    from:
+      - "ts/hono-compute-provider microvm-firecracker-userns"
+  - name: systemd-run
+    kind: executable
+    fate: build-host
+    owner: 0007 M0-VM-USERNS
+    why: the market test bed's userns microvm starts each VM unit with it; M2-VM-RUNTIME drives units over D-Bus
+    from:
+      - "ts/hono-compute-provider microvm-firecracker-userns"
+  - name: chmod
+    kind: executable
+    fate: build-host
+    owner: 0007 M0-VM-USERNS
+    why: the market test bed's userns microvm opens staged runtime files to the slot uids; M2-VM-RUNTIME does this in Go
+    from:
+      - "ts/hono-compute-provider microvm-firecracker-userns"
+  - name: setfacl
+    kind: executable
+    fate: build-host
+    owner: 0007 M0-VM-USERNS
+    why: the market test bed's userns microvm grants the work dir to the account and the VMM uid; M2-VM-RUNTIME writes the ACL xattr in Go (nodevm.GrantUser)
+    from:
+      - "ts/hono-compute-provider microvm-firecracker-userns"
+  - name: env
+    kind: executable
+    fate: build-host
+    owner: 0007 M0-VM-USERNS
+    why: the market test bed's userns microvm sets XDG_RUNTIME_DIR when it reaches another account's user manager through sudo
+    from:
+      - "ts/hono-compute-provider microvm-firecracker-userns"
   - name: psql
     kind: executable
     fate: replaced-by-go
@@ -993,6 +1036,8 @@ indirect:
     resolves: [sudo]
   - site: "socialweb-computer-kcp/ts/hono-compute-provider/lib/container-backend-docker/mod.ts: dockerBin"
     resolves: [docker]
+  - site: "socialweb-computer-kcp/ts/hono-compute-provider/lib/microvm-firecracker-userns/mod.ts: argv[0]"
+    resolves: [id, sudo, env, systemctl, systemd-run, cp, chmod, setfacl]
   - site: "socialweb-computer-kcp/ts/hono-compute-provider/lib/node-image-firecracker/mod.ts: binary"
     resolves: [socialweb-nodeimage]
   - site: "socialweb-computer-kcp/ts/deno-worker-sandbox/lib/sandbox-deno/bundler.ts: exe"

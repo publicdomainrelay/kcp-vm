@@ -311,6 +311,14 @@
       "pending": "plan 0007 M2-VM-RUNTIME writes cmd/socialweb-vmexec; it joins the linux asset sets then",
       "executables": {"socialweb-vmexec": "socialweb-vmexec"},
       "platforms": {}
+    },
+    "swc-userns-stage": {
+      "version": "this module",
+      "source": "deploy/swc-userns-stage/stage.c of this module, built by scripts/build-userns-stage.sh in the pinned guest builder image (gcc, static, libc-free, no build id); byte-reproducible, linux/amd64 sha256 d15e47035b9f5d5b970017f7051dd82eabeb2c3176fb2a0a3655c9a49e100332",
+      "verify": "rebuilt from this commit; the sha256 must equal the pin",
+      "pending": "plan 0007 M2-VM-RUNTIME puts it first in each VM unit's ExecStart; it joins the linux/amd64 asset set then (linux/arm64 needs an aarch64 entry stub)",
+      "executables": {"swc-userns-stage": "swc-userns-stage"},
+      "platforms": {}
     }
   },
   "guestImages": {

@@ -7,8 +7,11 @@ scripts and raw readings are in [vm-userns/](vm-userns/).
 ## Choice
 
 **Candidate A: `swc-userns-stage`, a 5.8 KB static, libc-free, single-threaded C
-program** ([vm-userns/stage/stage.c](vm-userns/stage/stage.c)). It is the first
-word of the VM unit's ExecStart:
+program** (`deploy/swc-userns-stage/stage.c`, built by
+`scripts/build-userns-stage.sh` in the pinned guest builder image; the build is
+byte-reproducible, linux/amd64 sha256 `d15e4703...`, pinned in
+`internal/versions/versions.json`). It is the first word of the VM unit's
+ExecStart:
 
 ```
 swc-userns-stage <outer-uid> <outer-gid> <count> <inner-id> /usr/bin/pasta [pasta args] -- /bin/sh -c 'exec "$0" "$@"' <vmexec/nodeboot> ...
@@ -107,19 +110,18 @@ work dir ACL: user::rwx user:test-0001:rwx user:656360:rwx group::--- other::---
   provisioning `prove` scanned the guest's sshd with `docker exec <container>`
   (no container here), and from inside pasta's namespace the guest IP is
   unreachable because pasta answers ARP for every address but its own, so
-  `172.30.0.2` resolves to pasta's MAC. The fix (bed 4): the issuer runs
-  `ssh-keyscan` through `guestNetExec` = `nsenter -t <ns pid> -U -n
-  --preserve-credentials --keep-caps` as the range account, which pins a /32
-  route via the bridge and a permanent neighbor entry for the MAC learned on
-  the tap before scanning.
+  `172.30.0.2` resolves to pasta's MAC. Run 4 scanned through
+  `nsenter -t <ns pid> -U -n --preserve-credentials --keep-caps` as the range
+  account, with a pinned /32 route via the bridge and a permanent neighbor
+  entry. main has since dropped the keyscan (the guest reports its host key),
+  so that path was not carried into the monorepo.
 
 ## Commands
 
 ```
 # stand-ins (as an account with a subuid range; here test-0001 stands in)
 sudo loginctl enable-linger test-0001        # its user manager must outlive sudo's session
-gcc -Os -static -nostdlib -ffreestanding -fno-stack-protector -fno-builtin -fno-pie -no-pie \
-    -o swc-userns-stage vm-userns/stage/stage.c
+scripts/build-userns-stage.sh --out ~/.tmp/userns-stage-build
 (cd vm-userns/gosrc && CGO_ENABLED=0 go build -o standin ./standin && CGO_ENABLED=0 go build -o gounshare ./gounshare)
 vm-userns/standin.sh <outdir>
 
@@ -129,10 +131,11 @@ BED_ID=vmuserns4 vm-userns/bed.sh             # accept.sh with FC_USERNS_*
 vm-userns/capture.sh /var/tmp/swc-vmuserns1 test-0001 <out>
 ```
 
-Provider path used: `hono-compute-provider/lib/microvm-firecracker-userns`
+Provider path used: `ts/hono-compute-provider/lib/microvm-firecracker-userns`
 (`createUsernsFirecrackerMicrovm`), selected in the bidder by
 `--compute-provider-firecracker-userns-stage` (+ `-account`, `-runtime-dir`,
-`-slot-size`); the bed passes them from `FC_USERNS_*`. It stages nodeboot,
+`-slot-size`); the market test bed passes them from `FC_USERNS_*` through the
+`Firecracker.ExtraArgs` value of the market-testbed set. It stages nodeboot,
 firecracker, the stage and the image (reflink) into a runtime dir the slot
 uids can read, grants the account and the VMM uid the work dir by ACL, and
 starts `socialweb-vm-<name>.service` in the account's user manager running

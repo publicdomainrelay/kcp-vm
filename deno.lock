@@ -1893,6 +1893,7 @@
           "jsr:@publicdomainrelay/market-identity-memory@0",
           "jsr:@publicdomainrelay/market-identity-vault-file@0",
           "jsr:@publicdomainrelay/market-identity-vault-openbao@0",
+          "jsr:@publicdomainrelay/microvm-firecracker-userns@0",
           "jsr:@publicdomainrelay/microvm-firecracker@0",
           "jsr:@publicdomainrelay/node-image-firecracker@0",
           "jsr:@publicdomainrelay/rbac-atproto@0",
@@ -2402,6 +2403,11 @@
       "ts/hono-compute-provider/lib/microvm-firecracker": {
         "dependencies": [
           "jsr:@publicdomainrelay/container-backend-abc@0"
+        ]
+      },
+      "ts/hono-compute-provider/lib/microvm-firecracker-userns": {
+        "dependencies": [
+          "jsr:@publicdomainrelay/microvm-firecracker@0"
         ]
       },
       "ts/hono-compute-provider/lib/node-image-firecracker": {
