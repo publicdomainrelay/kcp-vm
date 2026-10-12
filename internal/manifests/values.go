@@ -23,11 +23,8 @@ type MarketIdentity struct {
 }
 
 type MarketNetwork struct {
-	SourceRoot          string   `json:",omitempty"`
 	NetworkID           string   `json:",omitempty"`
 	StateDir            string   `json:",omitempty"`
-	DenoDir             string   `json:",omitempty"`
-	LockDir             string   `json:",omitempty"`
 	GuestTLSDir         string   `json:",omitempty"`
 	PDSPrivateKeyHex    string   `json:",omitempty"`
 	BobPDSPrivateKeyHex string   `json:",omitempty"`
@@ -53,6 +50,9 @@ type Firecracker struct {
 	RunnerImage string `json:",omitempty"`
 	WorkRoot    string `json:",omitempty"`
 	ExtraArgs   string
+	ExtraRead   string
+	ExtraWrite  string
+	ExtraRun    string
 }
 
 var valueTypes = map[string]func() reflect.Type{

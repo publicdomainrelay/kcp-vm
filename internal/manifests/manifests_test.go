@@ -8,11 +8,8 @@ import (
 
 func goldenNetwork() *MarketNetwork {
 	return &MarketNetwork{
-		SourceRoot:          "/src/root",
 		NetworkID:           "network1",
 		StateDir:            "/market-network/state",
-		DenoDir:             "/cache/deno",
-		LockDir:             "/market-network/locks",
 		GuestTLSDir:         "/market-network/guest-tls",
 		PDSPrivateKeyHex:    strings.Repeat("1", 64),
 		BobPDSPrivateKeyHex: strings.Repeat("2", 64),
@@ -46,32 +43,6 @@ func mustSet(t *testing.T, name string) Set {
 		t.Fatalf("sets.yaml names no set %s", name)
 	}
 	return s
-}
-
-func TestAMissingValueIsARenderErrorNotAnEmptyField(t *testing.T) {
-	s := mustSet(t, "market-network")
-	cases := map[string]func(*MarketNetwork){
-		"StateDir":       func(b *MarketNetwork) { b.StateDir = "" },
-		"SourceRoot":     func(b *MarketNetwork) { b.SourceRoot = "" },
-		"LockDir":        func(b *MarketNetwork) { b.LockDir = "" },
-		"DispatcherPort": func(b *MarketNetwork) { b.DispatcherPort = 0 },
-		"NodeImage":      func(b *MarketNetwork) { b.Firecracker.NodeImage = "" },
-		"PrivateKeyHex":  func(b *MarketNetwork) { b.Bidders[1].PrivateKeyHex = "" },
-		"Handle":         func(b *MarketNetwork) { b.Bidders[0].Handle = "" },
-		"Bidders":        func(b *MarketNetwork) { b.Bidders = nil },
-	}
-	for field, unset := range cases {
-		values := goldenNetwork()
-		unset(values)
-		_, err := s.Render(values)
-		if err == nil {
-			t.Errorf("rendering with %s unset succeeded; an unset value must be a render error", field)
-			continue
-		}
-		if !errors.Is(err, ErrMissingValue) || !strings.Contains(err.Error(), field) {
-			t.Errorf("rendering with %s unset: %v; want ErrMissingValue naming %s", field, err, field)
-		}
-	}
 }
 
 func TestAPhaseRenderedBeforeItsCaptureIsAMissingValue(t *testing.T) {

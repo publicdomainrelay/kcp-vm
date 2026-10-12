@@ -1,0 +1,195 @@
+apiVersion: deno.computer/v1alpha1
+kind: DenoPod
+metadata:
+  name: {{.Name}}
+  namespace: default
+  finalizers:
+    - denopod.deno.computer/run
+spec:
+  restartPolicy: Always
+  serviceAccount: {{.ServiceAccount}}
+  env:
+    SERVICE_ENTRY: {{.Entry}}
+    SERVICE_CWD: {{.Cwd}}
+    SERVICE_STATE_DIR: {{.StateDir}}
+    SERVICE_ARGS: {{.Args}}
+    SERVICE_ENV: {{.Env}}
+    SERVICE_PRELOADS: {{.Preloads}}
+    SERVICE_DENO_FLAGS: {{.DenoFlags}}
+    SERVICE_PERMISSIONS: {{.Permissions}}
+    SERVICE_TLS: {{.TLS}}
+    SERVICE_TLS_MODE: {{.TLSMode}}
+  script: |
+    const read = (key: string): string => Deno.env.get(key) ?? "";
+    const parsed = <T>(key: string, fallback: T): T => {
+      const raw = read(key);
+      return raw ? JSON.parse(raw) as T : fallback;
+    };
+    const fail = async (error: string): Promise<never> => {
+      await Deno.writeTextFile("result.json", JSON.stringify({ error }));
+      Deno.exit(2);
+    };
+    const dirOf = (p: string): string => p.slice(0, p.lastIndexOf("/")) || "/";
+
+    const root = read("SOCIALWEB_TS_ROOT");
+    const entry = read("SERVICE_ENTRY");
+    const cwd = read("SERVICE_CWD");
+    const stateDir = read("SERVICE_STATE_DIR");
+    if (!root) await fail("SOCIALWEB_TS_ROOT is unset; the deno runtime names the TypeScript source root");
+    if (!entry || !cwd || !stateDir) await fail("SERVICE_ENTRY, SERVICE_CWD and SERVICE_STATE_DIR are required");
+    const at = (p: string): string => `${root}/${p}`;
+
+    const args = parsed<string[]>("SERVICE_ARGS", []);
+    const serviceEnv = parsed<Record<string, string>>("SERVICE_ENV", {});
+    const preloads = parsed<string[]>("SERVICE_PRELOADS", []);
+    const denoFlags = parsed<string[]>("SERVICE_DENO_FLAGS", []);
+    const permissions = parsed<{
+      net?: boolean;
+      env?: boolean;
+      sys?: boolean;
+      read?: string[];
+      write?: string[];
+      run?: string[];
+      ffi?: string[];
+    }>("SERVICE_PERMISSIONS", {});
+
+    const runDir = Deno.cwd();
+    const tmpDir = `${stateDir}/tmp`;
+    await Deno.mkdir(tmpDir, { recursive: true });
+    const denoDir = read("DENO_DIR");
+    const shim = read("KCP_SHIM");
+    const table = read("KCP_DNS_TABLE_FILE");
+
+    const childEnv: Record<string, string> = { PORT: "0", ...serviceEnv };
+    for (const key of [
+      "PATH",
+      "KCP_DNS_TABLE",
+      "KCP_DNS_TABLE_FILE",
+      "KCP_TOKENS",
+      "KCP_TOKEN",
+      "KCP_SERVER",
+      "KCP_WORKSPACE",
+      "KCP_NAMESPACE",
+      "KCP_SERVICE_NAME",
+      "KCP_SERVICE_DOMAIN",
+    ]) {
+      const value = read(key);
+      if (value) childEnv[key] = value;
+    }
+    Object.assign(childEnv, {
+      HOME: stateDir,
+      TMPDIR: tmpDir,
+      DENO_DIR: denoDir,
+      PORT_FILE: `${runDir}/port-bound-to`,
+      LISTENERS_FILE: `${runDir}/listeners.json`,
+      STATUS_FILE: `${runDir}/status.json`,
+    });
+
+    const tlsMode = read("SERVICE_TLS_MODE");
+    const caBundle = read("KCP_CA_BUNDLE");
+    if (caBundle) {
+      await Deno.writeTextFile(`${runDir}/ca.pem`, caBundle);
+      childEnv.DENO_CERT = `${runDir}/ca.pem`;
+    } else if (read("DENO_CERT")) {
+      childEnv.DENO_CERT = `${runDir}/ca.pem`;
+    }
+    const cert = read("KCP_TLS_CERT");
+    const key = read("KCP_TLS_KEY");
+    if (tlsMode === "serve" && cert && key) {
+      await Deno.writeTextFile(`${runDir}/tls.crt`, cert);
+      await Deno.writeTextFile(`${runDir}/tls.key`, key, { mode: 0o600 });
+      args.push("--tls-cert-file", `${runDir}/tls.crt`, "--tls-key-file", `${runDir}/tls.key`);
+    }
+
+    const readable = [root, runDir, stateDir, ...(permissions.read ?? [])];
+    if (denoDir) readable.push(denoDir);
+    if (shim) readable.push(dirOf(shim));
+    if (table) readable.push(dirOf(table));
+    const writable = [runDir, stateDir, ...(permissions.write ?? [])];
+    const denied = ["/dev/kvm"];
+    const runtimeDir = read("XDG_RUNTIME_DIR");
+    if (runtimeDir) denied.push(runtimeDir);
+    const permissionFlags = [
+      `--allow-read=${readable.join(",")}`,
+      `--allow-write=${writable.join(",")}`,
+      `--deny-read=${denied.join(",")}`,
+      `--deny-write=${denied.join(",")}`,
+    ];
+    if (permissions.net) permissionFlags.push("--allow-net");
+    if (permissions.env) permissionFlags.push("--allow-env");
+    if (permissions.sys) permissionFlags.push("--allow-sys");
+    if (permissions.run?.length) permissionFlags.push(`--allow-run=${permissions.run.join(",")}`);
+    if (permissions.ffi?.length) permissionFlags.push(`--allow-ffi=${permissions.ffi.join(",")}`);
+
+    const runArgs = ["run", "--no-code-cache", "--node-modules-dir=none", "--frozen", `--lock=${at("deno.lock")}`];
+    if (read("SOCIALWEB_TS_MODE") === "production") runArgs.push("--cached-only");
+    runArgs.push(...permissionFlags, ...denoFlags);
+    if (shim) runArgs.push("--preload", shim);
+    for (const p of preloads) runArgs.push("--preload", at(p));
+    runArgs.push(at(entry), ...args);
+
+    const child = new Deno.Command(Deno.execPath(), {
+      args: runArgs,
+      cwd: at(cwd),
+      env: childEnv,
+      clearEnv: true,
+      stdin: "null",
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    const status = await child.spawn().status;
+    await Deno.writeTextFile("result.json", JSON.stringify({ exitCode: String(status.code) }));
+    Deno.exit(status.code);
+  permissions:
+    read:
+      allow: true
+      denyList:
+        - /dev/kvm
+    write:
+      allowList:
+        - result.json
+        - ca.pem
+        - tls.crt
+        - tls.key
+        - {{.StateDir}}
+      denyList:
+        - /dev/kvm
+    run:
+      allow: true
+    env:
+      allowList:
+        - SOCIALWEB_TS_ROOT
+        - SOCIALWEB_TS_MODE
+        - SERVICE_ENTRY
+        - SERVICE_CWD
+        - SERVICE_STATE_DIR
+        - SERVICE_ARGS
+        - SERVICE_ENV
+        - SERVICE_PRELOADS
+        - SERVICE_DENO_FLAGS
+        - SERVICE_PERMISSIONS
+        - SERVICE_TLS
+        - SERVICE_TLS_MODE
+        - DENO_DIR
+        - DENO_CERT
+        - PATH
+        - XDG_RUNTIME_DIR
+        - KCP_SHIM
+        - KCP_TLS_CERT
+        - KCP_TLS_KEY
+        - KCP_CA_BUNDLE
+        - KCP_SERVICE_NAME
+        - KCP_SERVICE_DOMAIN
+        - KCP_DNS_TABLE
+        - KCP_DNS_TABLE_FILE
+        - KCP_TOKENS
+        - KCP_TOKEN
+        - KCP_SERVER
+        - KCP_WORKSPACE
+        - KCP_NAMESPACE
+    noPrompt: true
+  readinessProbe:
+    command: {{.Probe}}
+    periodSeconds: 5
+    failureThreshold: 6
+    timeoutSeconds: 10

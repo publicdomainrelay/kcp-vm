@@ -263,10 +263,12 @@ sets:
         workspace: root:global
         files:
           - path: market-network/20-global-plc.yaml
+            template: denopods/service.yaml
       - name: dispatcher
         workspace: root:relay
         files:
           - path: market-network/35-relay-dispatcher.yaml
+            template: denopods/service.yaml
         after:
           - kind: DenoPod
             name: dispatcher
@@ -289,10 +291,12 @@ sets:
         workspace: root:alice
         files:
           - path: market-network/40-alice-pds.yaml
+            template: denopods/service.yaml
       - name: bob-pds
         workspace: root:bob
         files:
           - path: market-network/60-bob-pds.yaml
+            template: denopods/service.yaml
         after:
           - kind: DenoPod
             name: pds
@@ -301,10 +305,12 @@ sets:
         workspace: root:relay
         files:
           - path: market-network/30-relay-relay.yaml
+            template: denopods/service.yaml
       - name: bidders
         workspace: root:bob
         files:
           - path: market-network/70-bidder.yaml
+            template: denopods/service.yaml
             each: Bidders
             as: Bidder
       - name: verifier

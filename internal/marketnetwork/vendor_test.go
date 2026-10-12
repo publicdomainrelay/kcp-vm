@@ -43,7 +43,7 @@ func renderedSetFiles(t *testing.T) map[string][]byte {
 	values := map[string]any{
 		"denoruntime": &manifests.None{},
 		"market-network": &manifests.MarketNetwork{
-			SourceRoot: "/src", NetworkID: "b", StateDir: "/s", DenoDir: "/d", LockDir: "/l", GuestTLSDir: "/g",
+			NetworkID: "b", StateDir: "/s", GuestTLSDir: "/g",
 			PDSPrivateKeyHex: "aa", BobPDSPrivateKeyHex: "bb",
 			Bidders:        []manifests.Bidder{{Name: "bidder-1", Handle: "bidder-1.bob.test", PrivateKeyHex: "cc"}},
 			DispatcherPort: 40001, GuestTLSPort: 40002,

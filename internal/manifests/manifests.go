@@ -43,6 +43,7 @@ type Phase struct {
 
 type File struct {
 	Path        string   `json:"path"`
+	Template    string   `json:"template,omitempty"`
 	Each        string   `json:"each,omitempty"`
 	As          string   `json:"as,omitempty"`
 	Kinds       []string `json:"kinds,omitempty"`
@@ -132,6 +133,11 @@ func (ix Index) validate() error {
 			for _, f := range p.Files {
 				if _, err := fs.Stat(deploy.FS, f.Path); err != nil {
 					add("%s: %s is not in deploy.FS", where, f.Path)
+				}
+				if f.Template != "" {
+					if _, err := fs.Stat(deploy.FS, f.Template); err != nil {
+						add("%s: %s names template %s, which is not in deploy.FS", where, f.Path, f.Template)
+					}
 				}
 				if len(f.Kinds) > 0 && len(f.ExceptKinds) > 0 {
 					add("%s: %s names both kinds and exceptKinds", where, f.Path)

@@ -1,144 +1,29 @@
-apiVersion: deno.computer/v1alpha1
-kind: DenoPod
-metadata:
-  name: {{.Bidder.Name}}
-  namespace: default
-  finalizers:
-    - denopod.deno.computer/run
-spec:
-  restartPolicy: Always
-  serviceAccount:
-    name: deno-runner
-    namespace: default
-  env:
-    SERVICE_ENTRY: "{{.SourceRoot}}/ts/atproto-market/hono-bidder/mod.ts"
-    SERVICE_CWD: "{{.SourceRoot}}/ts/atproto-market"
-    # socialweb-computer-kcp: the market network's bidder rents firecracker guests
-    # booted from our nodeimage by socialweb-nodeboot, through the RFP flow.
-    # It shares the in-cluster PLC directory (by its cluster-local name, through
-    # the shim) and the market network's own dispatcher in root:relay, which guests
-    # reach through an /etc/hosts alias for relay.localhost on the dispatcher
-    # and TLS ports apply.sh read back from those pods' status.address. Every
-    # bidder of a market network is rendered from this file as bidder-<n>, with its own
-    # key, state directory and port. --policy open, because the default
-    # only-me refuses an RFP from a requester with no operator association and
-    # every identity here is minted per run; see docs/ARCHITECTURE.md. The
-    # bidder is a pdsAccount identity: it signs in to its own account on bob's
-    # PDS by the cluster-local name and writes its offering, bids and receipts
-    # there. apply.sh creates the account; the password is only in the mode 600
-    # vault file named here, never in this object.
-    # --contract-store-dir is the bidder's own: a restarted bidder answers
-    # vm.delete for the guests it rented, and the bidders of one market network share a
-    # work root but never load each other's contracts.
-    SERVICE_ARGS: '["--atproto-identity-mode","pdsAccount","--atproto-handle","{{.Bidder.Handle}}","--atproto-pds-url","https://pds.default.bob.svc.kcp.local","--identity-vault-file","{{.StateDir}}/bob-{{.Bidder.Name}}/identity-vault.json","--serve-port","0","--relay-url","https://relay.default.relay.svc.kcp.local","--plc-directory-url","https://plc.default.global.svc.kcp.local","--ingress-proxy-host","relay.localhost:{{.DispatcherPort}}","--policy","open","--compute-provider-firecracker","--compute-provider-firecracker-nodeimage","{{.Firecracker.NodeImage}}","--compute-provider-firecracker-nodeboot","{{.Firecracker.NodeBoot}}","--compute-provider-firecracker-config","{{.Firecracker.Config}}","--compute-provider-firecracker-repo-dir","{{.Firecracker.RepoDir}}","--compute-provider-firecracker-preinstall","{{.Firecracker.Preinstall}}","--compute-provider-firecracker-vmm","{{.Firecracker.VMM}}","--compute-provider-firecracker-runner-image","{{.Firecracker.RunnerImage}}","--compute-provider-firecracker-work-root","{{.Firecracker.WorkRoot}}","--compute-provider-firecracker-container-labels","swc.market-network={{.NetworkID}},swc.bidder={{.Bidder.Name}}","--compute-provider-firecracker-reuse-image","--contract-store-dir","{{.StateDir}}/bob-{{.Bidder.Name}}/contracts","--guest-tls-port","{{.GuestTLSPort}}"{{.Firecracker.ExtraArgs}}]'
-    SERVICE_DENO_FLAGS: '["--node-modules-dir=none","--lock={{.LockDir}}/deno.lock","--unstable-kv","--unstable-worker-options"]'
-    # SERVICE_TLS is true only so the provider injects KCP_CA_BUNDLE: the bidder
-    # fetches the PLC directory and the relay over https by their cluster-local
-    # names, so it needs the market CA, but it serves plain HTTP and never opens
-    # the leaf the provider also injects.
-    SERVICE_TLS: "true"
-    # The bidder binds port 0 and writes the port it got to PORT_FILE in its run
-    # directory; the provider reads it back into status.address, which is what
-    # its name resolves to and what its probe reaches.
-    SERVICE_ENV: '{"PORT":"0","SERVE_PORT":"0","REPO_PRIVATE_KEY_HEX":"{{.Bidder.PrivateKeyHex}}"}'
-  script: |
-    const entry = Deno.env.get("SERVICE_ENTRY") ?? "";
-    const cwd = Deno.env.get("SERVICE_CWD") ?? "";
-    const args: string[] = JSON.parse(Deno.env.get("SERVICE_ARGS") ?? "[]");
-    const denoFlags: string[] = JSON.parse(Deno.env.get("SERVICE_DENO_FLAGS") ?? "[]");
-    const serviceEnv: Record<string, string> = JSON.parse(Deno.env.get("SERVICE_ENV") ?? "{}");
-
-    if (!entry || !cwd) {
-      await Deno.writeTextFile(
-        "result.json",
-        JSON.stringify({ error: "SERVICE_ENTRY and SERVICE_CWD are required" }),
-      );
-      Deno.exit(2);
-    }
-
-    const runDir = Deno.cwd();
-    const childEnv: Record<string, string> = {
-      PATH: Deno.env.get("PATH") ?? "",
-      HOME: Deno.env.get("HOME") ?? "",
-      ...serviceEnv,
-    };
-
-    // The bidder serves plain HTTP, so this supervisor writes the trust bundle
-    // and nothing else: no tls.crt, no tls.key, no --tls-cert-file. The provider
-    // still injects KCP_TLS_CERT and KCP_TLS_KEY, and they are dropped here.
-    const caBundle = Deno.env.get("KCP_CA_BUNDLE") ?? "";
-    if (caBundle) {
-      const caPath = `${runDir}/ca.pem`;
-      await Deno.writeTextFile(caPath, caBundle);
-      childEnv.DENO_CERT = caPath;
-    }
-
-    // The bidder's Deno.Kv state and repo key belong in the run directory, which
-    // is the one place this pod may write, rather than under a HOME it does not
-    // control.
-    childEnv.PDS_STATE_PATH = "{{.StateDir}}/bob-{{.Bidder.Name}}/pds-state";
-    childEnv.REPO_PRIVATE_KEY_HEX_PATH = "{{.StateDir}}/bob-{{.Bidder.Name}}/repo-private-key.hex";
-    childEnv.OAUTH_SESSION_PATH = "{{.StateDir}}/bob-{{.Bidder.Name}}/oauth-session.json";
-    childEnv.PORT_FILE = `${runDir}/port-bound-to`;
-    childEnv.LISTENERS_FILE = `${runDir}/listeners.json`;
-    childEnv.STATUS_FILE = `${runDir}/status.json`;
-    childEnv.DENO_DIR = "{{.DenoDir}}";
-
-    // The bidder registers with the PLC directory and announces itself to the
-    // relay by their cluster-local names, resolved by the same shim this pod was
-    // probed with. A workload's own argv cannot carry --preload, so it is added
-    // here, before the entry module.
-    const shim = Deno.env.get("KCP_SHIM") ?? "";
-    if (shim) denoFlags.unshift("--preload", shim);
-
-    const child = new Deno.Command(Deno.execPath(), {
-      args: ["run", "-A", ...denoFlags, entry, ...args],
-      cwd,
-      env: childEnv,
-      stdin: "null",
-      stdout: "inherit",
-      stderr: "inherit",
-    });
-
-    const status = await child.spawn().status;
-    await Deno.writeTextFile("result.json", JSON.stringify({ exitCode: String(status.code) }));
-    Deno.exit(status.code);
-  permissions:
-    read:
-      allow: true
-    write:
-      allowList:
-        - result.json
-        - ca.pem
-    run:
-      allow: true
-    env:
-      allowList:
-        - SERVICE_ENTRY
-        - SERVICE_CWD
-        - SERVICE_ARGS
-        - SERVICE_DENO_FLAGS
-        - SERVICE_ENV
-        - SERVICE_TLS
-        - KCP_SHIM
-        - KCP_TLS_CERT
-        - KCP_TLS_KEY
-        - KCP_CA_BUNDLE
-        - KCP_SERVICE_NAME
-        - KCP_SERVICE_DOMAIN
-        - KCP_DNS_TABLE
-        - KCP_DNS_TABLE_FILE
-        - KCP_TOKENS
-        - KCP_SERVER
-        - KCP_NAMESPACE
-        - PATH
-        - HOME
-    noPrompt: true
-  readinessProbe:
-    command:
-      - kcpdns
-      - {{.Bidder.Name}}.default.bob.svc.kcp.local
-      - /oauth-client-metadata.json
-    periodSeconds: 5
-    failureThreshold: 6
-    timeoutSeconds: 10
+name: "{{.Bidder.Name}}"
+entry: hono-bidder
+cwd: ts/atproto-market
+stateDir: "{{.StateDir}}/bob-{{.Bidder.Name}}"
+serviceAccount: deno-runner
+tls: trust
+args: ["--atproto-identity-mode", "pdsAccount", "--atproto-handle", "{{.Bidder.Handle}}", "--atproto-pds-url", "https://pds.default.bob.svc.kcp.local", "--identity-vault-file", "{{.StateDir}}/bob-{{.Bidder.Name}}/identity-vault.json", "--serve-port", "0", "--relay-url", "https://relay.default.relay.svc.kcp.local", "--plc-directory-url", "https://plc.default.global.svc.kcp.local", "--ingress-proxy-host", "relay.localhost:{{.DispatcherPort}}", "--policy", "open", "--compute-provider-firecracker", "--compute-provider-firecracker-nodeimage", "{{.Firecracker.NodeImage}}", "--compute-provider-firecracker-nodeboot", "{{.Firecracker.NodeBoot}}", "--compute-provider-firecracker-config", "{{.Firecracker.Config}}", "--compute-provider-firecracker-repo-dir", "{{.Firecracker.RepoDir}}", "--compute-provider-firecracker-preinstall", "{{.Firecracker.Preinstall}}", "--compute-provider-firecracker-vmm", "{{.Firecracker.VMM}}", "--compute-provider-firecracker-runner-image", "{{.Firecracker.RunnerImage}}", "--compute-provider-firecracker-work-root", "{{.Firecracker.WorkRoot}}", "--compute-provider-firecracker-container-labels", "swc.market-network={{.NetworkID}},swc.bidder={{.Bidder.Name}}", "--compute-provider-firecracker-reuse-image", "--contract-store-dir", "{{.StateDir}}/bob-{{.Bidder.Name}}/contracts", "--guest-tls-port", "{{.GuestTLSPort}}"{{.Firecracker.ExtraArgs}}]
+env:
+  PORT: "0"
+  SERVE_PORT: "0"
+  REPO_PRIVATE_KEY_HEX: "{{.Bidder.PrivateKeyHex}}"
+  PDS_STATE_PATH: "{{.StateDir}}/bob-{{.Bidder.Name}}/pds-state"
+  REPO_PRIVATE_KEY_HEX_PATH: "{{.StateDir}}/bob-{{.Bidder.Name}}/repo-private-key.hex"
+  OAUTH_SESSION_PATH: "{{.StateDir}}/bob-{{.Bidder.Name}}/oauth-session.json"
+permissions:
+  net: true
+  env: true
+  sys: true
+  read: ["{{.Firecracker.NodeImage}}", "{{.Firecracker.Config}}", "{{.Firecracker.RepoDir}}", "{{.Firecracker.Preinstall}}", "{{.Firecracker.WorkRoot}}"{{.Firecracker.ExtraRead}}]
+  write: ["{{.Firecracker.WorkRoot}}"{{.Firecracker.ExtraWrite}}]
+  run:
+    allow: ["docker", "ssh-keygen", "{{.Firecracker.NodeImage}}"{{.Firecracker.ExtraRun}}]
+    reason: >-
+      the firecracker compute provider builds the guest image with the node image tool, boots each guest
+      in a docker runner container, and the guest OIDC issuer verifies ssh signatures with ssh-keygen; until
+      0007 M5-RUN-BIDDER makes compute-provider-kcp the bidder's provider
+probe:
+  host: "{{.Bidder.Name}}.default.bob.svc.kcp.local"
+  path: /oauth-client-metadata.json

@@ -26,6 +26,7 @@ import (
 
 	"github.com/johnandersen777/socialweb-computer-kcp/deploy"
 	denov1alpha1 "github.com/johnandersen777/socialweb-computer-kcp/internal/denokcp/api/v1alpha1"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/tsbundle"
 )
 
 const VendorRecordPath = "denokcp/vendor.json"
@@ -161,6 +162,7 @@ func (s Set) RenderText(p Phase, values any) (string, []Text, error) {
 		return "", nil, err
 	}
 	var out []Text
+	var entries map[string]tsbundle.EntrySpec
 	for _, f := range p.Files {
 		src, err := readFile(f.Path)
 		if err != nil {
@@ -179,10 +181,20 @@ func (s Set) RenderText(p Phase, values any) (string, []Text, error) {
 				scopes = append(scopes, scope)
 			}
 		}
+		if f.Template != "" && entries == nil {
+			if entries, err = LoadEntries(); err != nil {
+				return "", nil, err
+			}
+		}
 		for _, scope := range scopes {
 			body, err := execute(f.Path, string(src), scope)
 			if err != nil {
 				return "", nil, err
+			}
+			if f.Template != "" {
+				if body, err = renderService(f.Path, f.Template, body, entries); err != nil {
+					return "", nil, err
+				}
 			}
 			out = append(out, Text{Path: f.Path, Body: body})
 		}
