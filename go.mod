@@ -4,6 +4,8 @@ go 1.26.6
 
 require (
 	github.com/bluesky-social/indigo v0.0.0-20260903211445-41278964ec8e
+	github.com/coreos/go-systemd/v22 v22.7.0
+	github.com/godbus/dbus/v5 v5.1.0
 	github.com/golang-jwt/jwt/v5 v5.3.0
 	github.com/google/go-containerregistry v0.22.1
 	github.com/kcp-dev/sdk v0.33.1
