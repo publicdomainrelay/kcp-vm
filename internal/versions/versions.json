@@ -350,16 +350,17 @@
         "arch": "x86_64",
         "platform": "linux/amd64",
         "kernelConfig": "deploy/guest-kernel/firecracker-x86_64.config",
-        "bootArgs": ["console=ttyS0", "reboot=k", "panic=1", "pci=off", "i8042.noaux", "i8042.nomux", "i8042.dumbkbd", "root=/dev/vda", "rw", "rootfstype=ext4", "rootwait"],
+        "bootArgsWhy": "acpi=off: firecracker v1.13 describes its devices in an ACPI DSDT that upstream 6.1 fails to load (ACPI Error AE_BAD_PARAMETER During Region initialization, measured on this image), after which the virtio-mmio devices from the command line register but fail to probe (-22) and the guest waits for /dev/vda forever; with ACPI off the kernel takes firecracker's MP table and the virtio_mmio.device= arguments firecracker appends (CONFIG_VIRTIO_MMIO_CMDLINE_DEVICES)",
+        "bootArgs": ["console=ttyS0", "reboot=k", "panic=1", "pci=off", "acpi=off", "i8042.noaux", "i8042.nomux", "i8042.dumbkbd", "root=/dev/vda", "rw", "rootfstype=ext4", "rootwait"],
         "base": {
           "url": "https://cloud-images.ubuntu.com/releases/noble/release-20260926/ubuntu-24.04-server-cloudimg-amd64-root.tar.xz",
           "sha256": "820311e238ea34d76a8ca2643d6c01065212e9417109e7397d70472a236df261"
         },
         "sourceDateEpoch": 1790380800,
         "outputs": {
-          "vmlinux": {"sha256": "54f502dee2972cf9d524fda828a0e45b626f7d424c360df89214c1bba3aeebd9", "bytes": 43725000},
+          "vmlinux": {"sha256": "f868af0fcc53e3034323ae53bb66979d5810e71ffe9692333993b77990fca2d7", "bytes": 43726920},
           "rootfs.ext4": {"sha256": "f2096748f2f7de32f56dd90c2ba85a5e0688a5918ca86fa6ea9c1040c7922584", "bytes": 1543503872},
-          "image.json": {"sha256": "27346dde3ae99024ef08346a90d582163cf55ec4501a7dfa85d46856637d62f4", "bytes": 5806}
+          "image.json": {"sha256": "cf6567e8f382aff6c62b445592ca934f8acaa65b324e49fe132f683f254d94f6", "bytes": 5822}
         }
       },
       "firecracker-aarch64": {
@@ -374,9 +375,9 @@
         },
         "sourceDateEpoch": 1790380800,
         "outputs": {
-          "vmlinux": {"sha256": "b81a34572a58b32c01c9038880f2e5e7429f9ac8072038793cc7234aad72e81a", "bytes": 17420800},
+          "vmlinux": {"sha256": "70fb64c9b54af357f8db915c80ad25f547d87f877139d979cdfce366c29d18bd", "bytes": 17420800},
           "rootfs.ext4": {"sha256": "2094d5f25dc6735824f0a6c078f499f360347251f7d46e62afb73533e2e69420", "bytes": 1610612736},
-          "image.json": {"sha256": "e947b766c23983b089fb9331328951f31bed4c097322cb7d339a7e06eae73dbc", "bytes": 5850}
+          "image.json": {"sha256": "d25b56a556e77788987cb9a62f4c88d6dffea24456ba9272abb0634172da7554", "bytes": 5850}
         }
       }
     },
