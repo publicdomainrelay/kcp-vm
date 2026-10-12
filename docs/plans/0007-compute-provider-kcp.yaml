@@ -300,8 +300,11 @@ items:
       referenced by some requirement entry; red before the file exists.
     done_when: "inventory committed; test green; each entry names its parity test id."
     risks: ["The firecracker provider keeps moving; the test re-runs on every hono-compute-provider change so a new learning cannot land without an entry."]
-    status: todo
-    evidence: []
+    status: done
+    evidence:
+      - "socialweb-computer-kcp 48348e0 docs/compute-provider-requirements.yaml (55 entries: 31 port, 9 removed-legacy, 8 superseded-by-M2-VM-RUNTIME, 3 by M1-GUEST-IMAGE, 1 each by M2-CONTROLLER/M4-HOST-KEYS/M4-TERMINATION-EVENT/M1-PROTOCOL-CHECKLIST) + 5d36404 FC-ADOPT-AFTER-RESTART; hono-compute-provider ad73463/54d1b8f test/requirements_inventory_test.ts"
+      - "red: NotFound before the yaml existed; green 4/4 (--allow-read only); the test also checks every cited file:line exists and every superseded-by item exists in a plan; on 2026-10-12 it caught the contract-store merge's new readHostBootId and adopt events (red) until FC-ADOPT-AFTER-RESTART was added (green)"
+      - "Go-side gaps found: DEFAULT_DNS_GATEWAY 172.30.0.1 vs Go 172.16.0.x plan; oidc reporter falls back to https://xrpc.fedproxy.com (must fail closed); enrichment not idempotent (store enriched user_data on the ComputeVM); work dir 0777 must not be inherited (0700)"
   - id: M1-API
     milestone: M1
     title: ComputeVM in api/v1alpha1 with an OS-neutral status, generated schema, export, workspace type and TypeScript wire types
@@ -967,8 +970,11 @@ items:
       bidder restarted, then a late vm.delete answers 200 already-terminated. Red first.
     done_when: "suites green; both live readings recorded (UTC) with no leaked guest or work dir; pushed on main in atproto-market and hono-compute-provider."
     risks: ["A store written on a slow disk delays the accept ack by the fsync; measured and recorded."]
-    status: todo
-    evidence: []
+    status: doing
+    evidence:
+      - "merged to main 2026-10-12: atproto-market c78cf31 (ContractStore ABC, load before subscribe, save before ack, tombstones persisted, lib/market-bidder-contract-store-fs: one 0600 file per receipt, temp+fsync+rename+dir fsync, corrupt file refuses startup naming it; hono-bidder --contract-store-dir default <work-root>/contracts), hono-compute-provider ac3a1f5 (ComputeProvider.adopt, guest.json with host boot id, adopted guests re-watched, gone-at-adopt -> vmm_exited|host_reboot)"
+      - "tests red then green: market_bidder_contract_restore_test.ts 8/8 (red: vm.delete 400 unknown receipt, subscribe before load, ack before save), contract_store_fs_test.ts 7/7, firecracker_adopt_test.ts 4/4; regression 43 + 45 green; re-run on merged main 32/32 + 12/12"
+      - "left: the two live readings (in a market test bed once M1-BED-PARALLEL lands); known gap - a restart mid-provision ends the contract vmm_exited and a still-booting guest may leak (closed by the Go controller); fsync delay unmeasured"
   - id: M4-CONTRACT-RESTORE
     milestone: M4
     title: A restarted bidder rebuilds its contracts from the ComputeVMs and still honours vm.delete
