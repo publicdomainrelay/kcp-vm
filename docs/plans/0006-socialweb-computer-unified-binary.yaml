@@ -615,8 +615,12 @@ items:
       exec.LookPath and Deno.Command call sites); red before the file exists.
     done_when: "inventory committed, test green; no fate is 'from the host's package manager' except the stated host prerequisites (systemd, newuidmap/newgidmap), each checked by check-host."
     risks: ["The relocatable PostgreSQL 18 build is chosen by M0-PG-SOURCE (moved there 2026-10-12, third fold) and recorded here as an embedded asset; no container-era data dir has to open with it (fresh deploy, decided by the user 2026-10-12)."]
-    status: todo
-    evidence: []
+    status: done
+    evidence:
+      - "socialweb-computer-kcp df10e7c (task/inventory-cleanup), merged to main 77cb5cf 2026-10-12: docs/host-inventory.yaml, 114 entries + 27 resolved call sites; fates removed-legacy 25, build-host 23, replaced-by-go 18, embedded-server 11, host-prerequisite 11, linked 9, host-file 6, download-asset 5, embedded-child 3, embedded-tool 3"
+      - "TestEveryExecutableTheCodeExecsHasAFateInTheHostInventory red (no file) then green; scans exec call sites in non-test Go plus Deno.Command in this repo, atproto-market and hono-compute-provider, and both Dockerfiles; stale entries fail it"
+      - "host prerequisites beyond systemd/newuidmap/newgidmap are kernel features or requester-side tools (/dev/kvm, /dev/net/tun, cgroup v2; the requester's own ssh client; util-linux unshare only if M0-VM-USERNS picks it); each is checked by M2-HOST-CONTRACT's check-host, decided by Claude, user may veto. Also decided by Claude: ssh-keygen replaced by Go key generation (keys in the app's OpenBao), ESO bundle embedded, docker/wsl/Apple container CLI and websocat removed-legacy (2026-10-12 strip decision)"
+      - "go test ./... 58/58 ok and deploy/check.sh --fast exit 0 on merged main"
   - id: M1-STORE-CLEANUP
     milestone: M1
     title: Remove the rustfs/t4 store design's leftovers; the tenant store is kine over the cluster's own postgres
@@ -643,8 +647,11 @@ items:
       with the class removed.
     done_when: "the scan test green; `socialweb-vault` help lists no central-store option; check.sh --fast green."
     risks: ["A root vault that already holds secret/data/socialweb/store/rustfs keeps it until M3-BAO-SYNC's report lists it; no container-era vault is carried over (fresh deploy), so none is expected."]
-    status: todo
-    evidence: []
+    status: done
+    evidence:
+      - "socialweb-computer-kcp 8a43224 (task/inventory-cleanup), merged to main 77cb5cf 2026-10-12: vaultlayout central-store path/policy/class and the cluster-provider role's use removed; socialweb-vault SOCIALWEB_CENTRAL_STORE_* options, apply branch, centralStoreValues, externalStoreNamed, envClusterStore and their 4 tests removed; versions.json rustfs/t4 entries and kine bucket wording removed; portallocator wording fixed (the 9100-9103 reservation stays, origin untraced)"
+      - "TestNoRustfsOrT4NameOutsideTheStoreMeasurement and a kine-pin test red (~40 hits) then green; ARCHITECTURE sections 4 and 15 updated; section 5's registry/volume-commit 'not building' line struck (its only reason was the never-built store)"
+      - "go test ./... 58/58 ok and deploy/check.sh --fast exit 0 on merged main"
   - id: M1-PORT-LEASE-INSTANCE
     milestone: M1
     title: Port and subnet leases keyed by application instance, in one per-user lease file in dev, for the few ports the port-0 rule allows to be stable
