@@ -79,6 +79,7 @@ func builtVerbs() map[string]builtVerb {
 		"rollback":            {[]string{"state-dir"}, runRollback},
 		"units list":          {[]string{backendOpt, "instance", "state-dir", "asset-cache", "json"}, runUnitsList},
 		"units audit":         {[]string{backendOpt, "instance", "state-dir", "asset-cache", "json"}, runUnitsAudit},
+		"units roll kcp":      {[]string{backendOpt, "state-dir", "handle", "kcp-path", "kine-path", "planned-outage", "ready-timeout", "unit-prefix"}, runUnitsRollKcp},
 		"internal devsup":     {[]string{"state", "socket", "die-with", "instance"}, runDevsup},
 		"internal dev-core":   {append([]string{"instance-dir", "ready-timeout"}, devOnly(tsbundle.SourceRootOption)...), runDevCore},
 		"dev roll kcp":        {[]string{"instance", "state-dir", "ready-timeout"}, runDevRoll},

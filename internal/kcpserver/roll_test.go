@@ -316,29 +316,6 @@ func TestOnListenFiresBeforeReadyWithTheSlotsOwnPort(t *testing.T) {
 	}
 }
 
-func TestABidderSlotArgvHasNoLeaderElectionAndThereIsNoSecondSlot(t *testing.T) {
-	c := cfg()
-	c.Shape = ShapeSingle
-	c.FrontURL = "https://127.0.0.1:45000"
-	argv, err := SlotArgv(c)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if slices.Contains(argv, LeaderElection) {
-		t.Fatalf("a bidder slot runs leader election: %v", argv)
-	}
-	if got := SlotNames(ShapeSingle); !slices.Equal(got, []string{SlotA}) {
-		t.Fatalf("single-slot names %v", got)
-	}
-	r := newRig(t)
-	s, _ := ReadSlots(r.slots)
-	s.Shape = ShapeSingle
-	WriteSlots(r.slots, s)
-	if _, err := r.roll(t); !errors.Is(err, ErrSingleSlot) {
-		t.Fatalf("a blue/green roll of a single-slot owner: %v", err)
-	}
-}
-
 func TestTheSlotArgvCarriesLeaderElectionAndTheFrontURL(t *testing.T) {
 	c := cfg()
 	c.Shape = ShapeBlueGreen

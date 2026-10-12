@@ -106,6 +106,16 @@ func (b *sdBus) StartUnit(ctx context.Context, name string, ch chan<- string) er
 	return err
 }
 
+func (b *sdBus) EnableUnitFiles(ctx context.Context, names []string) error {
+	_, _, err := b.conn.EnableUnitFilesContext(ctx, names, false, false)
+	return err
+}
+
+func (b *sdBus) DisableUnitFiles(ctx context.Context, names []string) error {
+	_, err := b.conn.DisableUnitFilesContext(ctx, names, false)
+	return err
+}
+
 func (b *sdBus) StopUnit(ctx context.Context, name string, ch chan<- string) error {
 	_, err := b.conn.StopUnitContext(ctx, name, "replace", ch)
 	return err

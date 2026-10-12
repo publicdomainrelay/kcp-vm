@@ -11,6 +11,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clicfg"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devinstance"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpserver"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/versions"
 )
 
 const rollLockWait = 2 * time.Minute
@@ -45,9 +46,10 @@ func runDevRoll(ctx context.Context, a *app, vals clicfg.Values, rest []string) 
 	kcpExe := rec.Executables["kcp"]
 	if now, err := checkExe(ctx, "kcp-path", kcpExe.Path); err != nil {
 		return a.fail(exitRefused, "dev roll kcp: the recorded kcp executable: %v", err)
-	} else if now.SHA256 != kcpExe.SHA256 && now.Version != kcpExe.Version {
-		return a.fail(exitRefused, "dev roll kcp: %s changed from %q to %q; a roll between two kcp releases needs a kcpCompat record (M3-KCP-ROLL), only a same-version roll is built",
-			kcpExe.Path, kcpExe.Version, now.Version)
+	} else if compat, err := versions.KcpCompatRecords(); err != nil {
+		return a.fail(exitFailed, "dev roll kcp: %v", err)
+	} else if _, err := kcpserver.CheckPair(kcpserver.Asset(kcpExe), kcpserver.Asset(now), compat, false); err != nil {
+		return a.fail(exitRefused, "dev roll kcp: %s changed from %q to %q: %v", kcpExe.Path, kcpExe.Version, now.Version, err)
 	}
 	lock, err := lockFile(l.Lock, rollLockWait)
 	if err != nil {

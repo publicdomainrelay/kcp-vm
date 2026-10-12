@@ -124,7 +124,9 @@ func initdb(ctx context.Context, p Params) error {
 
 func (p Params) storeBackup() func(ctx context.Context) (string, error) {
 	if p.App.Store != table.StorePostgres {
-		return nil
+		return func(context.Context) (string, error) {
+			return kcpstore.BackupSqlite(p.KineDir(p.App.KineOf(p.App.Slots[0])), time.Now())
+		}
 	}
 	return func(ctx context.Context) (string, error) {
 		in, err := p.Postgres()

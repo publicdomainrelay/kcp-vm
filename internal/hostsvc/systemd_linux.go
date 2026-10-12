@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -360,6 +361,41 @@ func (m *systemd) Start(ctx context.Context, spec UnitSpec) (UnitStatus, error) 
 
 type unitStarter interface {
 	StartUnit(ctx context.Context, name string, ch chan<- string) error
+}
+
+type bootFiles interface {
+	EnableUnitFiles(ctx context.Context, names []string) error
+	DisableUnitFiles(ctx context.Context, names []string) error
+}
+
+func (m *systemd) SetBoot(ctx context.Context, enable, disable []string) error {
+	for _, n := range append(slices.Clone(enable), disable...) {
+		if err := ValidateName(n); err != nil {
+			return err
+		}
+		if err := m.owns(n); err != nil {
+			return err
+		}
+	}
+	ctx, cancel := withDeadline(ctx, m.timeout)
+	defer cancel()
+	return m.do(ctx, func(ctx context.Context, b bus) error {
+		s, ok := b.(bootFiles)
+		if !ok {
+			return fmt.Errorf("%w: this bus enables no unit file", ErrUnsupported)
+		}
+		if len(disable) > 0 {
+			if err := s.DisableUnitFiles(ctx, disable); err != nil {
+				return fmt.Errorf("hostsvc: disabling %v: %w", disable, err)
+			}
+		}
+		if len(enable) > 0 {
+			if err := s.EnableUnitFiles(ctx, enable); err != nil {
+				return fmt.Errorf("hostsvc: enabling %v: %w", enable, err)
+			}
+		}
+		return nil
+	})
 }
 
 func (m *systemd) StartInstalled(ctx context.Context, name string) (UnitStatus, error) {

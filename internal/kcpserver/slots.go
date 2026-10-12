@@ -24,8 +24,6 @@ const (
 
 const FrontStopTimeout = 10 * time.Second
 
-var ErrSingleSlot = errors.New("kcpserver: a single-slot owner has no second slot; its kcp upgrade is a short restart of slot a")
-
 var SharedFiles = []string{"apiserver.crt", "apiserver.key", "sa.key", ".admin-token-store", "admin.kubeconfig"}
 
 func SlotNames(s Shape) []string {

@@ -20,6 +20,18 @@ func StartInstalled(ctx context.Context, m Manager, name string) (UnitStatus, er
 	return s.StartInstalled(ctx, name)
 }
 
+type BootSetter interface {
+	SetBoot(ctx context.Context, enable, disable []string) error
+}
+
+func SetBoot(ctx context.Context, m Manager, enable, disable []string) error {
+	s, ok := m.(BootSetter)
+	if !ok {
+		return fmt.Errorf("%w: the %s backend starts nothing at boot", ErrUnsupported, m.Capabilities().Backend)
+	}
+	return s.SetBoot(ctx, enable, disable)
+}
+
 func StopUnit(ctx context.Context, m Manager, name string) error { return m.Stop(ctx, name) }
 
 func InstalledSpecPath(dir, name string) string { return filepath.Join(dir, name+".json") }

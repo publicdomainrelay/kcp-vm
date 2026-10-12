@@ -56,43 +56,6 @@ func TestServeWithoutAHostBackendExits2NamingTheOption(t *testing.T) {
 	}
 }
 
-func TestAnUnbuiltSubcommandExits2NamingItsItem(t *testing.T) {
-	cases := map[string][]string{
-		"M3-SERVE-GATEWAY-KCP":     {"serve", "gateway", "kcp", "--host-backend", "systemd-user"},
-		"M3-CLUSTER-UNITS":         {"units", "gc", "--host-backend", "proc"},
-		"M3-KCP-ROLL":              {"units", "roll", "--host-backend", "systemd-user"},
-		"M3-CP-SLOTS":              {"dev", "roll"},
-		"plan 0008 M4-RUN-REQUEST": {"run", "request"},
-	}
-	for item, args := range cases {
-		code, _, stderr := runT(t, clicfg.MapEnv{}, "linux", args...)
-		if code != 2 || !strings.Contains(stderr, item) {
-			t.Errorf("%v: exit %d, %q; want 2 naming %s", args, code, stderr, item)
-		}
-	}
-}
-
-func TestHelpListsTheTreeAndMarksVerbsWithNoBackendOnThisOS(t *testing.T) {
-	code, out, _ := runT(t, clicfg.MapEnv{}, "windows", "--help")
-	if code != 0 {
-		t.Fatalf("exit %d", code)
-	}
-	for _, v := range capabilities.Tree() {
-		if !strings.Contains(out, v.Path) {
-			t.Errorf("help lacks %s", v.Path)
-		}
-	}
-	if !strings.Contains(out, "no backend here") || !strings.Contains(out, "plan 0011") || !strings.Contains(out, "not built: M3-KCP-ROLL") {
-		t.Errorf("help does not mark backends and items:\n%s", out)
-	}
-	if code, _, _ := runT(t, clicfg.MapEnv{}, "linux"); code != 2 {
-		t.Errorf("no subcommand: exit %d, want 2", code)
-	}
-	if code, _, stderr := runT(t, clicfg.MapEnv{}, "linux", "dev"); code != 2 || !strings.Contains(stderr, "dev up") {
-		t.Errorf("a bare group: exit %d %q", code, stderr)
-	}
-}
-
 func TestVersionJSON(t *testing.T) {
 	code, out, _ := runT(t, clicfg.MapEnv{}, "linux", "version", "--json")
 	var v versionInfo

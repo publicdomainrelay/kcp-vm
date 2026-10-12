@@ -114,6 +114,12 @@ func (p Params) EnvFile(unit string) string { return filepath.Join(p.Dir, unit+h
 
 func (p Params) BackupsDir() string { return filepath.Join(p.Dir, kcpstore.BackupsDir) }
 
+func (p Params) SlotsFile() string { return filepath.Join(p.Dir, "kcp-slots.json") }
+
+func (p Params) SharedDir() string { return filepath.Join(p.Dir, "shared") }
+
+func (p Params) RollLock() string { return filepath.Join(p.Dir, "roll.lock") }
+
 func (p Params) storeConfig(unit string, in pgunit.Install) kcpstore.PostgresConfig {
 	return kcpstore.PostgresConfig{Unit: unit, Slice: p.App.Names().Slice(), Install: in, Data: p.PgData(), SocketDir: p.PgSocketDir()}
 }

@@ -2,14 +2,22 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
+	"time"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/assets"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/bootstrap"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/bootstrap/table"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clicfg"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/devinstance"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc/treeaudit"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/install"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpserver"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/versions"
 )
 
@@ -82,6 +90,66 @@ func runUnitsList(ctx context.Context, a *app, vals clicfg.Values, rest []string
 	}
 	for _, s := range all {
 		fmt.Fprintf(a.stdout, "%-56s %-12s %-10s pid %d\n", s.Name, s.State, s.SubState, s.MainPID)
+	}
+	return exitOK
+}
+
+func runUnitsRollKcp(ctx context.Context, a *app, vals clicfg.Values, rest []string) int {
+	if len(rest) != 0 {
+		return a.fail(exitRefused, "units roll kcp: unexpected arguments %v", rest)
+	}
+	if err := devinstance.RefuseRoot(os.Geteuid()); err != nil {
+		return a.fail(exitRefused, "units roll kcp: %v", err)
+	}
+	backend, err := hostsvc.ParseBackend(vals.String(backendOpt))
+	if err != nil {
+		return a.fail(exitRefused, "units roll kcp: %v", err)
+	}
+	if backend != hostsvc.BackendSystemdUser {
+		return a.fail(exitRefused, "units roll kcp: the installed kcp units are user units (--%s %s); a dev instance rolls with dev roll kcp", backendOpt, hostsvc.BackendSystemdUser)
+	}
+	state := vals.String("state-dir")
+	if state == "" || !filepath.IsAbs(state) {
+		return a.fail(exitRefused, "units roll kcp: --state-dir must name the installed state root (an absolute path)")
+	}
+	readyTimeout, err := time.ParseDuration(vals.String("ready-timeout"))
+	if err != nil {
+		return a.fail(exitRefused, "units roll kcp: ready-timeout: %v", err)
+	}
+	app := table.Gateway()
+	if h := vals.String("handle"); h != "" {
+		app = table.Bidder(h, install.HandleID(h))
+	}
+	prefix := vals.String("unit-prefix")
+	if prefix != "" {
+		if err := hostsvc.ValidatePrefix(prefix); err != nil {
+			return a.fail(exitRefused, "units roll kcp: unit-prefix: %v", err)
+		}
+		app.Prefix = prefix
+	}
+	compat, err := versions.KcpCompatRecords()
+	if err != nil {
+		return a.fail(exitFailed, "units roll kcp: %v", err)
+	}
+	p := bootstrap.InstallParams(app, state)
+	lock, err := lockFile(p.RollLock(), rollLockWait)
+	if err != nil {
+		return a.fail(exitFailed, "units roll kcp: %v", err)
+	}
+	defer lock.Close()
+	m, err := hostsvc.Open(ctx, hostsvc.Config{Backend: backend, UnitPrefix: prefix})
+	if err != nil {
+		return a.fail(exitFailed, "units roll kcp: %v", err)
+	}
+	defer m.Close()
+	rep, err := bootstrap.RollInstalled(ctx, m, p, bootstrap.InstalledRoll{Kcp: vals.String("kcp-path"), Kine: vals.String("kine-path"),
+		PlannedOutage: vals.Bool("planned-outage"), Compat: compat, ReadyTimeout: readyTimeout, Log: a.log})
+	a.printJSON(rep)
+	if errors.Is(err, kcpserver.ErrIncompatiblePair) {
+		return a.fail(exitRefused, "units roll kcp: %v", err)
+	}
+	if err != nil {
+		return a.fail(exitFailed, "units roll kcp: %v", err)
 	}
 	return exitOK
 }

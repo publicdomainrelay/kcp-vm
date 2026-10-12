@@ -66,12 +66,12 @@
     },
     "kcp-path": {
       "type": "string",
-      "description": "Absolute path of the kcp release executable (dev build: explicit, never PATH)",
+      "description": "Absolute path of the kcp release executable (dev build: explicit, never PATH; units roll kcp: the target asset, unset keeps the current one)",
       "env": "SOCIALWEB_KCP_PATH"
     },
     "kine-path": {
       "type": "string",
-      "description": "Absolute path of the kine executable (dev build: explicit, never PATH)",
+      "description": "Absolute path of the kine executable (dev build: explicit, never PATH; units roll kcp: the target asset, unset keeps the current one)",
       "env": "SOCIALWEB_KINE_PATH"
     },
     "bao-path": {
@@ -459,7 +459,7 @@
     },
     "handle": {
       "type": "string",
-      "description": "install bidder: the atproto handle(s) of the bidder instances, comma-separated; a re-run with another handle adds that instance. internal vm: the one bidder instance whose VMs these are",
+      "description": "install bidder: the atproto handle(s) of the bidder instances, comma-separated; a re-run with another handle adds that instance. internal vm: the one bidder instance whose VMs these are. units roll kcp: the one bidder handle whose kcp restarts (unset: the gateway)",
       "env": "SOCIALWEB_HANDLE"
     },
     "vm-runtime-dir": {
@@ -522,6 +522,15 @@
     "sha256": {
       "type": "string",
       "description": "upgrade: the published sha256 of --binary; a mismatch is refused"
+    },
+    "planned-outage": {
+      "type": "boolean",
+      "description": "units roll kcp: stop the old slot before the new one starts (the only path for a kcp pair without a storage-compatible kcpCompat record)"
+    },
+    "unit-prefix": {
+      "type": "string",
+      "description": "units roll kcp: the unit name prefix of the installed application (a test placement; socialweb- when unset)",
+      "env": "SOCIALWEB_UNIT_PREFIX"
     }
   }
 }
