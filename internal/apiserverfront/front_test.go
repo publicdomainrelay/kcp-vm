@@ -89,7 +89,7 @@ func ask(t *testing.T, c net.Conn, r *bufio.Reader, msg string) string {
 
 func TestTheFrontPicksTheBackendPerNewConnectionAndLeavesOpenOnesAlone(t *testing.T) {
 	a, b := startBackend(t, "a"), startBackend(t, "b")
-	f, addr := startFront(t, t.TempDir())
+	f, addr := startFront(t, testdirs.Short(t))
 	if _, err := f.SetBackend(a.addr()); err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +132,7 @@ func TestTheFrontPicksTheBackendPerNewConnectionAndLeavesOpenOnesAlone(t *testin
 
 func TestTheFrontNeverSwitchesByItselfWhenItsBackendDies(t *testing.T) {
 	a, b := startBackend(t, "a"), startBackend(t, "b")
-	f, addr := startFront(t, t.TempDir())
+	f, addr := startFront(t, testdirs.Short(t))
 	if _, err := f.SetBackend(a.addr()); err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +159,7 @@ func TestTheFrontNeverSwitchesByItselfWhenItsBackendDies(t *testing.T) {
 
 func TestTheBackendSurvivesAFrontRestartThroughItsStateFile(t *testing.T) {
 	a := startBackend(t, "a")
-	dir := t.TempDir()
+	dir := testdirs.Short(t)
 	f1, _ := startFront(t, dir)
 	if _, err := f1.SetBackend(a.addr()); err != nil {
 		t.Fatal(err)

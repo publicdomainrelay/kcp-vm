@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/testdirs"
 	"io"
 	"net"
 	"path/filepath"
@@ -63,7 +64,7 @@ func TestTheInheritedFDCountReadsListenFDsAndChecksListenPID(t *testing.T) {
 
 func TestAFrontRestartRefusesNoConnection(t *testing.T) {
 	backend := startBackend(t, "k")
-	dir := t.TempDir()
+	dir := testdirs.Short(t)
 	notify := filepath.Join(dir, "notify.sock")
 	mgr, err := net.ListenUnixgram("unixgram", &net.UnixAddr{Name: notify, Net: "unixgram"})
 	if err != nil {
