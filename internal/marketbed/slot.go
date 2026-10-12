@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -43,9 +42,10 @@ func TakeSlot(dir string, slots int, bedID string) (*Slot, error) {
 		if err != nil {
 			return nil, err
 		}
-		if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		busy, err := tryLock(f)
+		if err != nil || busy {
 			f.Close()
-			if errors.Is(err, syscall.EWOULDBLOCK) {
+			if busy {
 				continue
 			}
 			return nil, err
