@@ -379,8 +379,8 @@ items:
       process and `dev restart core`). Red first.
     done_when: "both green on hat-8 on systemd-user and on proc."
     risks: []
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M2-DENOPOD-LISTENERS
     milestone: M2
     title: Every DenoPod listener binds port 0 and its bound tcp, unix and relay addresses land in DenoPod status; peers resolve from status
