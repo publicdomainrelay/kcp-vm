@@ -881,8 +881,8 @@ items:
       - "The AppArmor profile must match the runtime path glob; check-host (M2-HOST-CONTRACT) verifies it is loaded and that the embedded pasta creates a user namespace."
       - "A subuid range another tool (podman, lxd) later claims overlaps ours; check-host re-reads both files and refuses an overlap by name."
       - "uninstall --purge deletes the bidder's vault and kcp store; it is the only command that does, and it prints what it will remove before acting."
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M2-HOST-UNITS
     milestone: M2
     title: "The systemd-user placement backend - long-lived children as transient SERVICES in the account's user manager, adopted never re-created"
@@ -1064,8 +1064,8 @@ items:
     risks:
       - "systemd 253 excludes Debian 12 and RHEL 9 (252, from memory; verified in this item) - see questions_for_user."
       - "Ubuntu 22.04 and older are unmeasured and refused until measured."
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M2-VM-TREE-AUDIT
     milestone: M2
     title: No socialweb-computer code in a running VM's process tree, audited from the unit's cgroup (systemd-user) or process group (proc)
@@ -1094,8 +1094,8 @@ items:
       TestAnAttributedDescendantRunningTheCoreBinaryFailsOnProc. Red first.
     done_when: "green; plan 0007's live tests call it (0007 ACC7-NO-RESIDENT-CODE)."
     risks: ["Hashing a large VMM exe on every pass is cost, not risk; the audit runs in tests and on demand, not every controller pass."]
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M2-KCP-STORE
     milestone: M2
     title: "kcp's own store - the gateway: one kine per slot over a dedicated postgres unit; a bidder: one kine on sqlite; both in the bootstrap layer, before kcp"
