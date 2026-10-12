@@ -287,8 +287,7 @@
     "swc-userns-stage": {
       "version": "this module",
       "source": "deploy/swc-userns-stage/stage.c of this module, built by scripts/build-userns-stage.sh in the pinned guest builder image (gcc, static, libc-free, no build id); byte-reproducible, linux/amd64 sha256 d15e47035b9f5d5b970017f7051dd82eabeb2c3176fb2a0a3655c9a49e100332",
-      "verify": "rebuilt from this commit; the sha256 must equal the pin",
-      "pending": "linux/arm64 needs an aarch64 entry stub in stage.c",
+      "verify": "rebuilt from this commit; the sha256 must equal the pin; linux/amd64 only until stage.c gains an aarch64 entry stub",
       "executables": {"swc-userns-stage": "swc-userns-stage"},
       "fetch": {
         "linux/amd64": {"kind": "script", "script": "scripts/build-userns-stage.sh", "sha256": "d15e47035b9f5d5b970017f7051dd82eabeb2c3176fb2a0a3655c9a49e100332", "members": {"swc-userns-stage": "swc-userns-stage"}}
