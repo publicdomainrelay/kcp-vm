@@ -311,6 +311,20 @@ open:
       A bidder seeded from its ContractStore answers vm.delete 200 and destroys once; three starts keep
       the same did, issuer URL and JWKS; restarts and an upgrade leave one jwt mount per bidder in the
       cluster vault.
+  - id: P7-M4-TERMINATION
+    title: DOING - the bidder tells the requester when and why a guest ended (vm.terminated).
+    body: >
+      DOING as P7-M1. Plan 0007 item M4-TERMINATION-EVENT (decided by the user 2026-10-12): new lexicon
+      com.publicdomainrelay.temp.compute.events.vm.terminated, bidder-authored, in the existing market.event
+      envelope; the only protocol addition of plan 0007 (ownership.not_owned, ACC7-NO-PROTOCOL-CHANGE).
+      TS side done in atproto-market pre-iroh (eb2aa82 lexicon, 7c4a8f4 bidder publish + vm.delete ack +
+      tombstone, bdd423b requester watch, onTerminated hook, ssh abort, no redundant vm.delete). Remaining:
+      the Go controller and compute-provider-kcp emit it from Lost verdicts at re-population and from unit
+      failure; the door acts on it in M3-NODE-LOSS-CLOCK / M6-*.
+    instrument: >
+      test/vm_terminated_{lexicon,bidder,requester}_test.ts green; live on the market bed a guest powered
+      off from inside ends request-vm-ssh within seconds (vm_session_ended_by_bidder) and no vm.delete is
+      sent; a late vm.delete answers 200 with 'already-terminated', never 'unknown receipt'.
   - id: P7-M5
     title: OPEN - run bidder as a user unit of the shared lingering bidder account, no docker, least-privilege deno.
     body: >

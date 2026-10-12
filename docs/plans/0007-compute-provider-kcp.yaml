@@ -16,7 +16,10 @@ revised: >
   defects of today's provider (VM death unnoticed; destroyed guests' work dirs never removed) named as what
   M2-VM-RUNTIME and M2-CONTROLLER must prevent, with tests and ACC7-NO-LEAK; new M3-NODE-LOSS-CLOCK (our own
   outage never counts against a tenant's node) and M6-CLAIM-RESUME (split from M6-GATEWAY-REPOPULATE: a
-  restarted door resumes Bidding and Provisioning claims, decided by the user 2026-10-12).
+  restarted door resumes Bidding and Provisioning claims, decided by the user 2026-10-12). 2026-10-12, the
+  user's decision of a bidder-authored termination event (user-decisions.md, 2026-10-12 line): new
+  M4-TERMINATION-EVENT; ownership.not_owned and ACC7-NO-PROTOCOL-CHANGE now allow exactly one protocol
+  addition, com.publicdomainrelay.temp.compute.events.vm.terminated.
 queued: >
   OPEN. The plan 0005 gate is satisfied: plan 0005 is complete with all 40 items done and its acceptance
   checks ACC-ZERO, ACC-MESH and ACC-NOSSH done with evidence (verified 2026-10-12). Only each item's own
@@ -61,9 +64,11 @@ ownership:
     libraries. Decided by the user 2026-10-07: anything in hono-compute-provider and atproto-market may be
     changed, committed only, never pushed.
   not_owned: >
-    The market protocol records and lexicons. This plan changes NO record, NSID or wire shape: the bid
-    config, receipt, onNetwork and vm.delete records stay what the firecracker provider writes. kcp objects
-    introduced here are local state of one host and are never published.
+    The market protocol records and lexicons. This plan changes no existing record, NSID or wire shape: the
+    bid config, receipt, onNetwork and vm.delete records stay what the firecracker provider writes. The only
+    protocol addition is the record com.publicdomainrelay.temp.compute.events.vm.terminated (decided by the
+    user 2026-10-12, M4-TERMINATION-EVENT), bidder-authored and carried in the existing market.event
+    envelope. kcp objects introduced here are local state of one host and are never published.
 research:
   measured_on: "2026-10-07; hono-compute-provider c06b2ad, atproto-market 117ab30, deno-kcp 25d10f92, kcp-libs f6911d2, this repo 13349d6. Lifecycle research and proofs 2026-10-09..11 against f0460fd and hono-compute-provider 4d7da59, see vm_lifecycle_2026_10_11"
   compute_provider_abc: "hono-compute-provider lib/abc/compute-provider/mod.ts:39-55 ComputeProvider {name, provision, destroy, createBidConfig, injectAcceptBundle, getDroplet?, setup?, teardown?} (OS-free; no TypeScript seam needed for other host OSes)"
@@ -547,6 +552,46 @@ items:
     risks: []
     status: todo
     evidence: []
+  - id: M4-TERMINATION-EVENT
+    milestone: M4
+    title: The bidder tells the requester when and why a guest ended - vm.terminated in the market.event envelope
+    depends_on: []
+    decision: >
+      Decided by the user 2026-10-12 (docs/research/2026-10-11-vm-lifecycle/user-decisions.md, 2026-10-12
+      line): new market lexicon com.publicdomainrelay.temp.compute.events.vm.terminated (record, key tid)
+      {reason (known values guest_poweroff, vmm_exited, oom, host_reboot, identity_mismatch,
+      deleted_on_request), exitCode?, observedAt, request? (strongRef to the requester's vm.delete it
+      acknowledges), createdAt}, written by the BIDDER in its own repo and wrapped in the existing
+      com.publicdomainrelay.temp.market.event envelope {receipt, payload, signatures (the bidder's inline
+      badge.blue signature)}, exactly like vm.onNetwork; submitted to the accept's submitEvent when it names
+      one, firehose otherwise. Requesters end the contract on it: the CLI ends the session and skips the
+      redundant vm.delete; the door claims the node Lost at once and re-RFPs (plan 0005 M3-NODE-LOSS through
+      M3-NODE-LOSS-CLOCK and the M6-* recovery items) instead of waiting for NotReady. Closes the requester
+      half of E8 defect 1 (live hat-8 2026-10-12T00:57Z: the bidder released a powered-off guest in ~4 s
+      after hono-compute-provider 96147f0 / atproto-market 148756b, but request-vm-ssh hung until closed by
+      hand and its vm.delete then hit 'submitEvent: unknown receipt' on the bidder's firehose path). Decided
+      by Claude, user may veto: the Go controller (M2-CONTROLLER) emits the same event, through the TS
+      provider's onGuestGone (M3-TS-PROVIDER), from every Lost verdict - at re-population (HostRebooted ->
+      host_reboot, UnitGone/UnitFailed/VMMExited -> vmm_exited, OOMKilled -> oom, IdentityMismatch ->
+      identity_mismatch) and from a unit failure seen through Watch - so a requester learns of a Lost
+      ComputeVM without polling; a requester's later vm.delete for it answers 200 (tombstone), never 'unknown
+      receipt'.
+    files: ["atproto-market/lexicons/com/publicdomainrelay/temp/compute/events/vm/terminated.json", "atproto-market/lib/common/market-lexicons, lib/common/market-common (NSID, VM_TERMINATED_REASONS)", "atproto-market/lib/abc/market-bidder (TerminatedReceipts)", "atproto-market/lib/market-bidder-compute (publish on onGuestGone and as the vm.delete ack)", "atproto-market/lib/abc/compute-request (terminationOf, ContractState.termination, onTerminated)", "atproto-market/lib/abc/requester (setOnTerminated, ssh abort signal)", "atproto-market/lib/compute-request-xrpc (contract watch)", "atproto-market/lib/requester-xrpc (submitEvent handler, runComputeContract)", "hono-compute-provider/lib/compute-provider-kcp (onGuestGone from ComputeVM Lost)", "internal/computevm (Lost reason to the provider)"]
+    test_first: >
+      atproto-market test/vm_terminated_lexicon_test.ts, test/vm_terminated_bidder_test.ts,
+      test/vm_terminated_requester_test.ts (red first, then green). Go side, still to write:
+      internal/computevm TestEveryLostVerdictCarriesTheTerminatedReason and
+      hono-compute-provider test/compute_provider_kcp_test.ts 'a ComputeVM going Lost fires onGuestGone with
+      its reason'; live on the market bed (guest born via runComputeContract): a guest powered off from inside
+      ends the requester's ssh within seconds with vm_session_ended_by_bidder and no vm.delete is submitted.
+    done_when: "TS side green (done); Go controller and compute-provider-kcp emit it from Lost verdicts at re-population and from unit failure, tests green; the live reading recorded with UTC timestamps."
+    risks: ["Tombstones are in memory: a bidder restarted between a guest's end and the requester's vm.delete answers 'unknown receipt' until M4-CONTRACT-RESTORE persists contracts (and with them the terminated set)."]
+    status: doing
+    evidence:
+      - "2026-10-12 atproto-market (branch pre-iroh) eb2aa82: lexicon terminated.json, generated market-lexicons types, COMPUTE_EVENTS_VM_TERMINATED_NSID and VM_TERMINATED_REASONS; test/vm_terminated_lexicon_test.ts red (missing exports) then 4/4 green."
+      - "2026-10-12 atproto-market 7c4a8f4: market-bidder-compute publishes a signed market.event wrapping vm.terminated from onGuestGone (terminatedReasonOf: 'runner container exited' code 0 -> guest_poweroff, else vmm_exited; oom, host_reboot, identity_mismatch passed through) and as the vm.delete ack (deleted_on_request + request strongRef), submitted to the accept's submitEvent, firehose otherwise; bounded TerminatedReceipts (1024) makes a late or duplicate vm.delete answer 200 (no 'unknown receipt', no second destroy or event); concurrent HTTP + firehose deliveries destroy once. test/vm_terminated_bidder_test.ts red (missing terminatedReasonOf/TerminatedReceipts/submitEventUrl) then 10/10 green; market_bidder_guest_gone_test.ts still green."
+      - "2026-10-12 atproto-market bdd423b: requester contract watch takes vm.terminated from submitEvent (RequesterPDS.setOnTerminated) and the firehose, binds it to the receipt and its bidder (compute-request-abc terminationOf) and verifies the envelope signature as receipt_verified does; sets ContractState.termination, fires handlers.onTerminated / awaitComputeNetwork onTerminated and the handle's terminated promise (phases and outcomes unchanged, so the door's mirrored types hold; outcome returned); releaseCompute skips the vm.delete (vm_delete_skipped reason terminated_by_bidder); runComputeContract aborts the ssh poll, session or hold (vm_session_ended_by_bidder) and returns result.terminated. test/vm_terminated_requester_test.ts red (missing terminationOf, onTerminated, termination) then 7/7 green, incl. forged (tampered, unsigned) and unbound (another repo, another receipt) events rejected; compute_request_test.ts and the door's node_market_test.ts (32) green; deno check hono-bidder/mod.ts and request-vm-ssh/mod.ts green."
+      - "Remaining (Go side): M2-CONTROLLER Lost verdicts and Watch unit failures -> compute-provider-kcp onGuestGone with the mapped reason; door acting on it is M3-NODE-LOSS-CLOCK / M6-*."
   - id: M5-RUN-BIDDER
     milestone: M5
     title: socialweb-computer run bidder as a user unit of the shared lingering bidder account, no docker, least-privilege deno
@@ -746,7 +791,7 @@ acceptance:
       status: todo
       evidence: []
     - id: ACC7-NO-PROTOCOL-CHANGE
-      text: The bid config, receipt, onNetwork and vm.delete records written in the runs are field-for-field the shapes the firecracker provider writes.
+      text: "The bid config, receipt, onNetwork and vm.delete records written in the runs are field-for-field the shapes the firecracker provider writes; the only protocol addition is com.publicdomainrelay.temp.compute.events.vm.terminated in the market.event envelope (M4-TERMINATION-EVENT, decided by the user 2026-10-12), written identically by both providers."
       status: todo
       evidence: []
     - id: ACC7-NOSSH
