@@ -157,6 +157,8 @@ export const DOOR_CLAIMS_KV_PREFIX = "socialweb-door/claims";
 
 export const CLAIM_SECRETS_INGRESS_KEY = "secrets-ingress";
 
+export const NODE_CLAIM_ADOPT_ANNOTATION = "socialweb.computer/adopt-joined-node";
+
 export function claimSecretsIngressKeyRef(claimName: string): string {
   return `${DOOR_CLAIMS_KV_PREFIX}/${claimName}/${CLAIM_SECRETS_INGRESS_KEY}`;
 }

@@ -3,6 +3,8 @@ import type { RequesterPDS } from "@publicdomainrelay/requester-abc";
 import {
   awaitComputeTermination,
   type ComputeRequestHandle,
+  findVmContract,
+  listVmRecords,
   releaseCompute,
   requestCompute,
 } from "@publicdomainrelay/compute-request-xrpc";
@@ -88,6 +90,11 @@ export interface MarketNodeFulfillerOptions {
   scopeRefresher?: ComputeRequestOptions["scopeRefresher"];
   claimKeys?: ClaimKeyStore;
   awaitTermination?: typeof awaitComputeTermination;
+  findContract?: typeof findVmContract;
+  listVms?: typeof listVmRecords;
+  ownershipScanIntervalMs?: number;
+  unclaimedGraceMs?: number;
+  now?: () => number;
   log?: Log;
 }
 
@@ -114,6 +121,14 @@ const IN_FLIGHT_PHASES: ReadonlySet<NodeClaimPhase> = new Set(["Bidding", "Provi
 const JOINED_PHASES: ReadonlySet<NodeClaimPhase> = new Set(["Joining", "Running"]);
 
 const RELEASE_REASON_CLAIM_DELETED = "claim_deleted";
+
+const RELEASE_REASON_UNCLAIMED = "unclaimed_after_join_grace";
+
+export const DEFAULT_OWNERSHIP_SCAN_INTERVAL_MS = 5 * 60_000;
+
+export const DEFAULT_UNCLAIMED_GRACE_MS = 10 * 60_000;
+
+export const UNCLAIMED_SCAN_LOOKUPS_PER_PASS = 20;
 
 export const OPENBAO_CA_RELATIVE_TO_CLUSTER_DIR = "openbao/tls/ca.crt";
 
@@ -293,6 +308,17 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
     createDefaultATProtoEventStreamsClient({ onlyRelays: opts.relayUrls?.length ? opts.relayUrls : undefined, log: quietLogger(log) }) as unknown as {
       close(): void;
     });
+
+  const findContract = opts.findContract ?? findVmContract;
+  const listVms = opts.listVms ?? listVmRecords;
+  const now = opts.now ?? Date.now;
+  const startedAt = now();
+  const scanEveryMs = opts.ownershipScanIntervalMs ?? DEFAULT_OWNERSHIP_SCAN_INTERVAL_MS;
+  const unclaimedGraceMs = opts.unclaimedGraceMs ?? DEFAULT_UNCLAIMED_GRACE_MS;
+  const settledVms = new Set<string>();
+  const unclaimedSince = new Map<string, number>();
+  let lastScan = Number.NEGATIVE_INFINITY;
+  let scanning: Promise<void> | null = null;
 
   const running = new Map<string, { deleted: AbortController; done: Promise<void> }>();
   const watching = new Map<string, { stop: AbortController; done: Promise<void> }>();
@@ -637,6 +663,142 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
     log("node_claim_orphaned", { claim: nodeClaimKey(claim), phase: claim.status.phase ?? null });
   }
 
+  function adoptJoined(claim: NodeClaim): void {
+    const key = nodeClaimKey(claim);
+    const deleted = new AbortController();
+    const done = (async () => {
+      try {
+        if (claim.status.phase !== "Adopting") {
+          await opts.store.replaceStatus(claim, {
+            ...claim.status,
+            phase: "Adopting",
+            message: "a joined Node with no claim: matching it to its receipt and vm.hostKeys record",
+          });
+        }
+        log("node_claim_adopting", { claim: key, node: claim.spec.nodeName });
+        const pds = await opts.requesterFor(claim.spec.ownerDid);
+        const found = await findContract(pds as never, claim.spec.nodeName, { plcUrl: opts.plcUrl, logger: claimLogger(key) });
+        const fresh = await opts.store.get(claim);
+        if (!fresh || fresh.deletionTimestamp || deleted.signal.aborted || stopping.signal.aborted) return;
+        const why = !found
+          ? "no receipt in the owner's records names this node"
+          : found.deleteSubmitted
+          ? "its receipt was already released with a vm.delete"
+          : isTerminated(found.state)
+          ? `its bidder reported the guest terminated (${found.state.termination?.reason})`
+          : !found.state.hostKeys
+          ? "its receipt has no bidder-signed vm.hostKeys record, the guest's signed identity"
+          : null;
+        if (found?.state.payload) settledVms.add(found.state.payload.uri);
+        if (why) {
+          const contract = found
+            ? claimContractOf(found.deleteSubmitted ? { ...found.state, phase: "released" } : found.state)
+            : fresh.status.contract;
+          await opts.store.replaceStatus(fresh, {
+            ...fresh.status,
+            phase: "Failed",
+            message: `the joined Node could not be adopted: ${why}`,
+            ...(contract ? { contract } : {}),
+          });
+          log("node_claim_adoption_refused", { claim: key, reason: why, receiptUri: found?.state.receipt?.uri ?? null });
+          return;
+        }
+        await opts.store.replaceStatus(fresh, {
+          ...fresh.status,
+          phase: "Running",
+          message: "adopted: the joined Node, its vault role and its receipt's vm.hostKeys record agree; no RFP and no vm.delete",
+          contract: claimContractOf(found!.state),
+        });
+        log("node_claim_adopted", {
+          claim: key,
+          receiptUri: found!.state.receipt?.uri ?? null,
+          winnerDid: found!.state.winner?.did ?? null,
+          hostKeys: found!.state.hostKeys?.keys.map((k) => k.fingerprint) ?? [],
+        });
+        watchTermination(fresh, found!.state);
+      } catch (err) {
+        log("node_claim_adoption_failed", { claim: key, error: String(err), next: "the next pass tries again" });
+      } finally {
+        running.delete(key);
+      }
+    })();
+    running.set(key, { deleted, done });
+  }
+
+  function claimsBlockingName(claims: NodeClaim[], owner: string, vmName: string): boolean {
+    return claims.some((c) => {
+      if (c.spec.ownerDid !== owner || c.spec.nodeName !== vmName) return false;
+      const phase = c.status.phase;
+      const settled = phase === "Running" || phase === "Joining" || phase === "Released" || phase === "Failed" ||
+        phase === "Lost";
+      return !settled || !contractStateOfClaim(c)?.payload;
+    });
+  }
+
+  async function scanUnclaimed(claims: NodeClaim[]): Promise<void> {
+    const claimedPayloads = new Set<string>();
+    const owners = new Set<string>();
+    for (const c of claims) {
+      owners.add(c.spec.ownerDid);
+      const payload = contractStateOfClaim(c)?.payload?.uri;
+      if (payload) claimedPayloads.add(payload);
+    }
+    let lookups = 0;
+    let waiting = 0;
+    for (const owner of owners) {
+      if (stopping.signal.aborted) return;
+      const pds = await opts.requesterFor(owner);
+      const vms = await listVms(pds as never, { plcUrl: opts.plcUrl });
+      for (const vm of vms) {
+        if (stopping.signal.aborted) return;
+        if (settledVms.has(vm.uri) || claimedPayloads.has(vm.uri) || claimsBlockingName(claims, owner, vm.vmName)) continue;
+        if (lookups >= UNCLAIMED_SCAN_LOOKUPS_PER_PASS) {
+          log("node_ownership_scan_bounded", { lookups, next: "the next scan continues" });
+          return;
+        }
+        lookups++;
+        const found = await findContract(pds as never, vm.vmName, { plcUrl: opts.plcUrl, payloadUri: vm.uri });
+        if (!found || found.deleteSubmitted || isTerminated(found.state) || found.state.release) {
+          settledVms.add(vm.uri);
+          unclaimedSince.delete(vm.uri);
+          continue;
+        }
+        const first = unclaimedSince.get(vm.uri) ?? now();
+        unclaimedSince.set(vm.uri, first);
+        const since = Math.max(first, startedAt);
+        if (now() - since < unclaimedGraceMs) {
+          waiting++;
+          log("node_receipt_unclaimed_waiting", {
+            owner,
+            vmName: vm.vmName,
+            receiptUri: found.state.receipt?.uri ?? null,
+            waitedMs: now() - since,
+            graceMs: unclaimedGraceMs,
+            next: "a joined Node of this name is claimed again by the cluster provider and adopted; otherwise " +
+              "the receipt is released once when the grace ends",
+          });
+          continue;
+        }
+        const next = await release(pds, found.state, { logger: claimLogger(`${owner}/${vm.vmName}`), reason: RELEASE_REASON_UNCLAIMED });
+        settledVms.add(vm.uri);
+        unclaimedSince.delete(vm.uri);
+        log("node_receipt_unclaimed_released", {
+          owner,
+          vmName: vm.vmName,
+          receiptUri: found.state.receipt?.uri ?? null,
+          ok: next.release?.ok ?? false,
+          error: next.error ?? null,
+        });
+      }
+    }
+    log("node_ownership_scan", { owners: owners.size, claims: claims.length, lookups, waiting, settled: settledVms.size });
+  }
+
+  function scanDue(): boolean {
+    const elapsed = now() - lastScan;
+    return elapsed >= scanEveryMs || (unclaimedSince.size > 0 && elapsed >= 30_000);
+  }
+
   async function pass(): Promise<void> {
     const claims = await opts.store.list();
     for (const claim of claims) {
@@ -648,7 +810,10 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
         }
         if (running.has(key) || stopping.signal.aborted) continue;
         const phase = claim.status.phase;
-        if (!phase || phase === "Pending") {
+        if (phase === "Adopting" || ((!phase || phase === "Pending") && claim.adoptJoinedNode)) {
+          if (!claim.finalizers.includes(FINALIZER_NODE_CLAIM)) await opts.store.addFinalizer(claim);
+          adoptJoined(claim);
+        } else if (!phase || phase === "Pending") {
           if (!claim.finalizers.includes(FINALIZER_NODE_CLAIM)) await opts.store.addFinalizer(claim);
           fulfil(claim);
         } else if (JOINED_PHASES.has(phase)) {
@@ -664,6 +829,12 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
       } catch (err) {
         log("node_claim_pass_failed", { claim: key, error: String(err) });
       }
+    }
+    if (!scanning && !stopping.signal.aborted && scanDue()) {
+      lastScan = now();
+      scanning = scanUnclaimed(claims).catch((err) => log("node_ownership_scan_failed", { error: String(err) })).finally(() => {
+        scanning = null;
+      });
     }
   }
 
@@ -686,6 +857,7 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
       stopping.abort();
       for (const w of watching.values()) w.stop.abort();
       await passing;
+      await scanning;
       await Promise.allSettled([...running.values()].map((r) => r.done));
       await Promise.allSettled([...watching.values()].map((w) => w.done));
     },

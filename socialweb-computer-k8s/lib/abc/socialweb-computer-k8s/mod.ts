@@ -12,6 +12,7 @@ export interface NodeClaim {
   resourceVersion?: string;
   deletionTimestamp?: string;
   finalizers: string[];
+  adoptJoinedNode?: boolean;
   spec: NodeClaimSpec;
   status: NodeClaimStatus;
 }

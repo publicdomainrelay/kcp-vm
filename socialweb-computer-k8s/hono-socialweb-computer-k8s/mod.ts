@@ -39,7 +39,8 @@ import {
   type DebugNodeHostKeys,
 } from "@publicdomainrelay/socialweb-computer-k8s-node-market";
 import { createOpenBaoClaimKeyStore } from "@publicdomainrelay/socialweb-computer-k8s-claim-keys-openbao";
-import { createMemoryClaimKeyStore } from "@publicdomainrelay/socialweb-computer-k8s-abc";
+import { type ClaimKeyStore, createMemoryClaimKeyStore } from "@publicdomainrelay/socialweb-computer-k8s-abc";
+import { createVaultClaimKeyStore } from "@publicdomainrelay/socialweb-computer-k8s-claim-keys-vault";
 import { createScopeCache } from "@publicdomainrelay/policy-engine-scope-cache";
 import { createScopeRefresher } from "@publicdomainrelay/scope-refresh-timers";
 import cliArgsEnv from "./cli-args-env.json" with { type: "json" };
@@ -81,7 +82,9 @@ const kcpCredentials: KcpCredentials | null = options.kcpKubeconfig
   ? parseKubeconfig(await Deno.readTextFile(options.kcpKubeconfig as string), options.kcpContext as string | undefined)
   : null;
 
-async function accountState(): Promise<{ sessionStore: SessionStore; requesterKeyHex: () => Promise<string> }> {
+async function accountState(): Promise<
+  { sessionStore: SessionStore; requesterKeyHex: () => Promise<string>; vaultClaimKeys?: ClaimKeyStore }
+> {
   if (!options.openbaoServer) {
     logger.warn("account_state_in_files", { stateDir, next: "set openbao-server to keep sessions and the requester key in the vault" });
     return {
@@ -125,10 +128,11 @@ async function accountState(): Promise<{ sessionStore: SessionStore; requesterKe
       },
     }),
     requesterKeyHex: () => loadOrCreateVaultKeyHex(vault, { mount: resolved.kvMount, path: "requester/key" }),
+    vaultClaimKeys: createVaultClaimKeyStore({ vault, mount: resolved.kvMount }),
   };
 }
 
-const { sessionStore, requesterKeyHex } = await accountState();
+const { sessionStore, requesterKeyHex, vaultClaimKeys } = await accountState();
 
 const accounts = createAccountRequesters({
   sessionStore,
@@ -287,7 +291,7 @@ const claimKeys = options.openbaoAddr
     token: async () => (await Deno.readTextFile(options.openbaoTokenFile as string)).trim(),
     ...(openBaoClient ? { fetch: (input, init) => fetch(input, { ...init, client: openBaoClient } as unknown as RequestInit) } : {}),
   })
-  : createMemoryClaimKeyStore();
+  : vaultClaimKeys ?? createMemoryClaimKeyStore();
 const clustersExportUrl = options.kcpClustersExportUrl as string | undefined;
 if (!claimKeys.durable && kcpCredentials && clustersExportUrl) {
   logger.warn("claim_keys_in_memory", {

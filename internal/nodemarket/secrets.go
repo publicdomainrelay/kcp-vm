@@ -50,6 +50,10 @@ type NodeSecretsReconciler interface {
 	Reconcile(ctx context.Context, live map[string]*v1alpha1.NodeClaimGrant) error
 }
 
+type NodeSecretsDeclared interface {
+	DeclaredNodes(ctx context.Context) (map[string]bool, error)
+}
+
 type Links interface {
 	ReadClusterLink(ctx context.Context, logicalCluster, name string) (*v1alpha1.ClusterLink, error)
 }

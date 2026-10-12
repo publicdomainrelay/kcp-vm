@@ -2165,3 +2165,117 @@ export async function releaseCompute(
   }
   return next;
 }
+
+export interface FindVmContractOptions {
+  plcUrl?: string;
+  logger?: StructuredLoggerInterface;
+  eventVerifier?: ComputeEventVerifier;
+  backfillTimeoutMs?: number;
+  payloadUri?: string;
+}
+
+export interface VmRecordView {
+  uri: string;
+  vmName: string;
+  createdAt: string;
+}
+
+async function ownRecords(pds: Pick<RequesterPDS, "did">, plcUrl: string | undefined) {
+  const idResolver = new IdResolver({ plcUrl });
+  const marketDid = (pds as unknown as { oauthSession?: { userDid?: string } }).oauthSession?.userDid ?? pds.did;
+  const ownPds = await pdsUrlOf(idResolver, marketDid);
+  if (!ownPds) throw new Error(`no PDS for ${marketDid}`);
+  return {
+    idResolver,
+    marketDid,
+    list: (collection: string) => listRecordsAll(ownPds, marketDid, collection, { timeoutMs: 10_000 }),
+  };
+}
+
+export async function listVmRecords(pds: Pick<RequesterPDS, "did">, opts: { plcUrl?: string } = {}): Promise<VmRecordView[]> {
+  const own = await ownRecords(pds, opts.plcUrl);
+  return (await own.list(COMPUTE_VM_NSID)).map((r) => ({
+    uri: r.uri,
+    vmName: String(r.value.role ?? ""),
+    createdAt: String(r.value.createdAt ?? ""),
+  }));
+}
+
+export interface FoundVmContract {
+  state: ContractState;
+  deleteSubmitted: boolean;
+}
+
+function refOf(value: unknown): { uri?: string; cid?: string } {
+  return (value ?? {}) as { uri?: string; cid?: string };
+}
+
+export async function findVmContract(
+  pds: OnNetworkPds & Pick<RequesterPDS, "did">,
+  vmName: string,
+  opts: FindVmContractOptions = {},
+): Promise<FoundVmContract | null> {
+  const log = flowLog(opts.logger);
+  const { idResolver, marketDid, list: own } = await ownRecords(pds, opts.plcUrl);
+  const vms = (await own(COMPUTE_VM_NSID)).filter((r) =>
+    r.value.role === vmName && (opts.payloadUri === undefined || r.uri === opts.payloadUri)
+  );
+  if (vms.length === 0) return null;
+  const rfps = await own(RFP_NSID);
+  const accepts = await own(ACCEPT_NSID);
+  const events = await own(EVENT_NSID);
+  const newestFirst = [...vms].sort((a, b) => String(b.value.createdAt ?? "").localeCompare(String(a.value.createdAt ?? "")));
+  for (const vm of newestFirst) {
+    const rfp = rfps.find((r) => refOf(r.value.payload).uri === vm.uri);
+    if (!rfp) continue;
+    const accept = accepts.find((r) => refOf(r.value.rfp).uri === rfp.uri);
+    const bid = refOf(accept?.value.bid);
+    if (!accept || !bid.uri || !bid.cid) continue;
+    const winnerDid = atUriAuthority(bid.uri);
+    const receipt = await createRepoReceiptFinder(idResolver)(winnerDid, accept.uri);
+    if (!receipt) continue;
+    let state = createContractState({ vmName, requesterDid: pds.did, marketDid, at: String(vm.value.createdAt ?? nowIso()) });
+    state = advanceContract(state, "receipt", {
+      payload: { uri: vm.uri, cid: vm.cid },
+      rfp: { uri: rfp.uri, cid: rfp.cid },
+      bid: { uri: bid.uri, cid: bid.cid },
+      winner: { did: winnerDid },
+      accept: { uri: accept.uri, cid: accept.cid },
+      receipt: { uri: receipt.uri, cid: receipt.cid },
+      ...(receipt.submitEvent ? { submitEventRef: receipt.submitEvent } : {}),
+    }, nowIso());
+    const deleteSubmitted = events.some((e) =>
+      refOf(e.value.receipt).uri === receipt.uri &&
+      (refOf(e.value.payload).uri ?? "").includes(`/${COMPUTE_EVENTS_VM_DELETE_NSID}/`)
+    );
+    const watch = openContractWatch({ pds, idResolver, logger: opts.logger, log, verifyEvent: opts.eventVerifier });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      watch.setReceipt(state.receipt!);
+      watch.releaseNetwork();
+      await Promise.race([
+        watch.backfill(winnerDid, "terminated"),
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, opts.backfillTimeoutMs ?? 20_000);
+        }),
+      ]);
+      const settled = <T>(p: Promise<T>) => Promise.race([p, Promise.resolve(undefined)]);
+      const termination = await settled(watch.terminated);
+      const hostKeys = await settled(watch.hostKeys);
+      state = patchContract(state, { ...(termination ? { termination } : {}), ...(hostKeys ? { hostKeys } : {}) });
+    } finally {
+      clearTimeout(timer);
+      watch.close();
+    }
+    log("vm_contract_found", {
+      vmName,
+      receiptUri: receipt.uri,
+      winnerDid,
+      hostKeys: state.hostKeys?.keys.length ?? 0,
+      terminated: state.termination?.reason ?? null,
+      deleteSubmitted,
+    });
+    return { state, deleteSubmitted };
+  }
+  return null;
+}

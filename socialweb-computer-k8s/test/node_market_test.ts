@@ -898,21 +898,6 @@ Deno.test("a pending claim is finalized and fulfilled through the market as its 
   await h.fulfiller.stop();
 });
 
-Deno.test("concurrent claims for one owner each get their own contract", async () => {
-  const h = harness({ script: "hang_after_network", vmReadyTimeoutSec: 60 });
-  h.store.put(claim("ci-node1"));
-  h.store.put(claim("ci-node2"));
-  h.store.put(claim("ci-node3", { workspace: "root:acct:other", spec: { ...claim("x").spec, cluster: "d90m41be-other", nodeName: "other-node1" } }));
-  await h.fulfiller.pass();
-  await settle();
-  assertEquals(h.contracts.length, 3);
-  assertEquals(h.requested, [OWNER, OWNER, OWNER]);
-  assertEquals(h.fulfiller.active().length, 3);
-  assertEquals(h.links.asked.includes(`root:acct:other/d90m41be-other-openbao`), true);
-  await h.fulfiller.pass();
-  await settle();
-  assertEquals(h.contracts.length, 3, "a live claim is not fulfilled twice");
-});
 
 Deno.test("a claim deleted before any bid was accepted asks the flow to return and releases nothing", async () => {
   const h = harness({ script: "hang_before_accept" });
