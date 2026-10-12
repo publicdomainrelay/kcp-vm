@@ -237,7 +237,9 @@ dev_up() {
 
 dev_down() {
   [ "$DEV_UP_STARTED" = "1" ] || return 0
-  "$SOCIALWEB_COMPUTER" dev down --instance "$INSTANCE" --state-dir "$DEV_STATE" >"$MARKET_NETWORK_DIR/dev-down.json" 2>&1 || {
+  local keep=()
+  [ "$KEEP_ACCEPT_ROOT" = "1" ] && keep=(--keep-state)
+  "$SOCIALWEB_COMPUTER" dev down --instance "$INSTANCE" --state-dir "$DEV_STATE" "${keep[@]}" >"$MARKET_NETWORK_DIR/dev-down.json" 2>&1 || {
     echo "dev down of $INSTANCE failed:" >&2
     tail -n 20 "$MARKET_NETWORK_DIR/dev-down.json" >&2 || true
   }
@@ -452,7 +454,7 @@ cleanup() {
   if [ -e "$FC_WORK_ROOT" ]; then
     echo "guest work root $FC_WORK_ROOT could not be removed" >&2
   fi
-  sleep 1
+  for _ in $(seq 1 20); do pgrep -f -- "$MARKET_NETWORK_DIR" >/dev/null 2>&1 || break; sleep 0.5; done
   teardown_report || true
   network_set "finishedAt=\"$(now)\"" "exitStatus=$status" || true
   if [ -n "$MARKET_NETWORK_RECORD_OUT" ]; then
@@ -544,6 +546,9 @@ SERVER=$(KC config view --minify -o jsonpath='{.clusters[0].cluster.server}')
 SERVER=${SERVER%%/clusters/*}
 network_set "timings.kcpReady=\"$(now)\""
 echo "instance: $INSTANCE  kcp: $SERVER  runs: $RUNS_DIR"
+"$SOCIALWEB_COMPUTER" apply --set denoruntime --kcp-kubeconfig "$KUBECONFIG_PATH" \
+  --wait-timeout "${WAIT_SECONDS}s" >"$MARKET_NETWORK_DIR/denoruntime-report.json"
+echo "the denoruntime set is applied (the core's deno runtime applies the same set as it starts)"
 
 echo
 echo "== apply =="
