@@ -1021,8 +1021,8 @@ items:
     test_first: "test/compute_provider_kcp_onnetwork_test.ts (address lands in status.market from on-network and host keys from host-keys; a failed status write still answers the guest 200); red first."
     done_when: "green."
     risks: []
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M4-TERMINATION-EVENT
     milestone: M4
     title: The bidder tells the requester when and why a guest ended - vm.terminated in the market.event envelope
