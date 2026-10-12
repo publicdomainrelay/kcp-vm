@@ -8,12 +8,15 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/apiserverfront"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/bootstrap/table"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devinstance"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpserver"
@@ -21,10 +24,6 @@ import (
 )
 
 const (
-	ProfileMinimal   = "minimal"
-	RoleKine         = "kine-a"
-	RoleFront        = "front"
-	RoleKcp          = "kcp-a"
 	PortPoll         = 20 * time.Millisecond
 	ReadyPoll        = 200 * time.Millisecond
 	FrontAddress     = "127.0.0.1:0"
@@ -34,27 +33,28 @@ const (
 )
 
 var unbuiltProfiles = map[string]string{
-	"quick":    "M2-BOOTSTRAP-LAYER",
-	"bed":      "M2-APP-CONTROLLER (a MarketNetwork composing child applications, each with its own kcp; today's bed is 0008 M1-BED-PARALLEL)",
-	"prodlike": "M2-BOOTSTRAP-LAYER and M2-KCP-STORE (kine on postgres)",
+	ProfileBed: "M2-APP-CONTROLLER (a MarketNetwork composing child applications, each with its own kcp; today's market test bed is 0008 M1-BED-PARALLEL)",
 }
 
 var ErrUnbuiltProfile = errors.New("bootstrap: profile not built yet")
 
 func CheckProfile(p string) error {
-	if p == ProfileMinimal {
+	if p == ProfileQuick || p == ProfileProdlike {
 		return nil
 	}
 	if item, ok := unbuiltProfiles[p]; ok {
-		return fmt.Errorf("%w: --profile %s is built by %s; --profile minimal (kine on sqlite + one kcp slot) is", ErrUnbuiltProfile, p, item)
+		return fmt.Errorf("%w: --profile %s is built by %s; quick (kine on sqlite) and prodlike (kine on postgres) are", ErrUnbuiltProfile, p, item)
 	}
-	return fmt.Errorf("bootstrap: unknown profile %q: want minimal (built) or quick, bed, prodlike", p)
+	return fmt.Errorf("bootstrap: unknown profile %q: want quick or prodlike (built) or bed", p)
 }
+
+func NeedsPostgres(profile string) bool { return profile == ProfileProdlike }
 
 type Config struct {
 	Layout       devinstance.Layout
 	KcpPath      string
 	KinePath     string
+	PostgresBin  string
 	Exe          string
 	FrontAddress string
 	ReadyTimeout time.Duration
@@ -63,15 +63,14 @@ type Config struct {
 	silent       map[string]bool
 }
 
-type Order struct {
-	Role string
-	Unit string
-}
+func SlotRole(slot string) string { return table.SlotRole(slot) }
 
-func SlotRole(slot string) string { return "kcp-" + slot }
-
-func Table(l devinstance.Layout) []Order {
-	return []Order{{RoleKine, l.KineUnit()}, {RoleFront, l.FrontUnit()}, {RoleKcp, l.SlotUnit(kcpserver.SlotA)}}
+func (c Config) App(rec *devinstance.Record) (table.App, error) {
+	apps, err := DevApps(rec.Profile, c.Layout)
+	if err != nil {
+		return table.App{}, err
+	}
+	return apps[0], nil
 }
 
 func (c Config) log() *slog.Logger {
@@ -94,25 +93,54 @@ func (c Config) onListen(name string, port int) {
 	}
 }
 
-func (c Config) frontSpec() (hostsvc.UnitSpec, error) {
-	l := c.Layout
-	return kcpserver.FrontSpec(kcpserver.FrontConfig{Unit: l.FrontUnit(), Slice: l.KcpSlice(), Exe: c.Exe, Owner: l.ID,
-		Address: c.frontAddress(), Control: l.FrontControl(), State: l.FrontState(), Log: filepath.Join(l.Logs, "front.log")})
+func (p Params) slotSpec(slot, frontURL string) (hostsvc.UnitSpec, string, error) {
+	spec, err := p.Spec(p.App.SlotEntry(slot), frontURL)
+	return spec, p.SlotRoot(slot), err
 }
 
-func (c Config) slotSpec(slot, kineURL, frontURL string) (hostsvc.UnitSpec, string, error) {
-	l := c.Layout
-	root := l.SlotRoot(slot)
-	spec, err := kcpserver.SlotSpec(kcpserver.SlotConfig{Unit: l.SlotUnit(slot), Slice: l.KcpSlice(), Exec: c.KcpPath,
-		Root: root, EtcdServers: kineURL, FrontURL: frontURL, Shape: kcpserver.ShapeBlueGreen,
-		Wants: []string{l.KineUnit()}})
-	if err != nil {
-		return hostsvc.UnitSpec{}, "", err
+func waitUnixSocket(ctx context.Context, path string) error {
+	for {
+		c, err := net.Dial("unix", path)
+		if err == nil {
+			c.Close()
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("bootstrap: %s never accepted a connection: %w (last: %v)", path, ctx.Err(), err)
+		case <-time.After(PortPoll):
+		}
 	}
-	spec.After = append(spec.After, l.FrontUnit())
-	log := filepath.Join(l.Logs, "kcp-"+slot+".log")
-	spec.Output = hostsvc.Output{StdoutFile: log, StderrFile: log}
-	return spec, root, nil
+}
+
+func initdb(ctx context.Context, p Params) error {
+	if _, err := os.Stat(filepath.Join(p.PgData(), "PG_VERSION")); err == nil {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(p.PgData()), 0o700); err != nil {
+		return err
+	}
+	argv := kcpstore.InitdbArgv(p.PostgresBin, p.PgData())
+	out, err := exec.CommandContext(ctx, argv[0], argv[1:]...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("bootstrap: initdb %s: %w\n%s", p.PgData(), err, out)
+	}
+	return nil
+}
+
+func waitPostgres(ctx context.Context, p Params) error {
+	argv := kcpstore.ReadyArgv(p.PostgresBin, p.PgSocketDir())
+	for {
+		out, err := exec.CommandContext(ctx, argv[0], argv[1:]...).CombinedOutput()
+		if err == nil && strings.TrimSpace(string(out)) == "1" {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("bootstrap: postgres on %s never answered select 1: %w (last: %s)", p.PgSocketDir(), ctx.Err(), out)
+		case <-time.After(ReadyPoll):
+		}
+	}
 }
 
 func RSSKiB(pid int) int64 {
@@ -247,9 +275,6 @@ func ensureUnit(ctx context.Context, m hostsvc.Manager, cfg Config, rec *devinst
 }
 
 func endpoint(role string, port int) string {
-	if role == RoleKine {
-		return "http://127.0.0.1:" + strconv.Itoa(port)
-	}
 	return "https://127.0.0.1:" + strconv.Itoa(port)
 }
 
@@ -312,47 +337,85 @@ func Ensure(ctx context.Context, m hostsvc.Manager, cfg Config, rec *devinstance
 	}
 	l := cfg.Layout
 	log := cfg.log()
-	for _, d := range []string{l.KineDir, l.KcpDir(), l.Logs, l.RuntimeDir} {
+	app, err := cfg.App(rec)
+	if err != nil {
+		return err
+	}
+	p := cfg.Params(app)
+	tbl, err := table.Table(app)
+	if err != nil {
+		return err
+	}
+	cfg.silent = map[string]bool{table.RolePostgres: true}
+	for _, s := range app.KineSlots() {
+		cfg.silent[table.KineRole(s)] = true
+		if err := os.MkdirAll(p.KineDir(s), 0o700); err != nil {
+			return err
+		}
+	}
+	for _, d := range []string{p.Dir, p.Logs, p.Run} {
 		if err := os.MkdirAll(d, 0o700); err != nil {
 			return err
 		}
 	}
-	kineSpec, err := kcpstore.KineSqliteSpec(kcpstore.KineConfig{Unit: l.KineUnit(), Slice: l.KcpSlice(), Exec: cfg.KinePath, Dir: l.KineDir})
-	if err != nil {
-		return err
-	}
-	kineSpec.Output = hostsvc.Output{StdoutFile: l.Logs + "/kine-a.log", StderrFile: l.Logs + "/kine-a.log"}
-	kine, kinePlaced, err := ensureUnit(ctx, m, cfg, rec, RoleKine, kineSpec, nil)
-	if err != nil {
-		return err
-	}
-	cfg.onListen(RoleKine, kine.Port)
-	rec.SetUnit(kine)
-	rec.KineURL = kine.Endpoint
-	frontSpec, err := cfg.frontSpec()
-	if err != nil {
-		return err
-	}
-	front, frontPlaced, err := ensureUnit(ctx, m, cfg, rec, RoleFront, frontSpec, nil)
-	if err != nil {
-		return err
-	}
-	cfg.onListen(RoleFront, front.Port)
-	rec.SetUnit(front)
-	frontURL := kcpserver.FrontURL(front.Port)
 	slots := readSlots(l)
-	if kinePlaced || frontPlaced {
-		why := "kine was placed again on a new port"
-		if frontPlaced {
-			why = "the front was placed again on a new port"
+	active := slots.Active
+	if !slices.Contains(app.Slots, active) {
+		active = app.Slots[0]
+	}
+	rctx, cancel := context.WithTimeout(ctx, cfg.ReadyTimeout)
+	defer cancel()
+	var kine, front devinstance.Unit
+	frontPlaced := false
+	for _, e := range tbl {
+		if e.Kind == table.KindSlot || e.Kind == table.KindCore {
+			continue
 		}
-		if err := stopRecordedSlots(ctx, m, cfg, rec, why); err != nil {
+		spec, err := p.Spec(e, "")
+		if err != nil {
+			return err
+		}
+		var before func() error
+		if e.Kind == table.KindStore {
+			if err := os.MkdirAll(p.PgSocketDir(), 0o700); err != nil {
+				return err
+			}
+			before = func() error { return initdb(ctx, p) }
+		}
+		u, placed, err := ensureUnit(ctx, m, cfg, rec, e.Role, spec, before)
+		if err != nil {
+			return err
+		}
+		switch e.Kind {
+		case table.KindStore:
+			if err := waitPostgres(rctx, p); err != nil {
+				return err
+			}
+			u.Endpoint = "unix://" + p.PgSocketDir()
+		case table.KindKine:
+			if err := waitUnixSocket(rctx, p.KineSocket(e.Slot)); err != nil {
+				return err
+			}
+			u.Endpoint = p.KineURL(e.Slot)
+			if e.Slot == app.KineOf(active) {
+				kine = u
+				rec.KineURL = u.Endpoint
+			}
+		case table.KindFront:
+			cfg.onListen(e.Role, u.Port)
+			front, frontPlaced = u, placed
+		}
+		u.RSSKiB = RSSKiB(u.Identity.PID)
+		rec.SetUnit(u)
+	}
+	frontURL := kcpserver.FrontURL(front.Port)
+	if frontPlaced {
+		if err := stopRecordedSlots(ctx, m, cfg, rec, "the front was placed again on a new port"); err != nil {
 			return err
 		}
 	}
-	active := slots.Active
 	role := SlotRole(active)
-	slotSpec, root, err := cfg.slotSpec(active, kine.Endpoint, frontURL)
+	slotSpec, root, err := p.slotSpec(active, frontURL)
 	if err != nil {
 		return err
 	}
@@ -376,8 +439,6 @@ func Ensure(ctx context.Context, m hostsvc.Manager, cfg Config, rec *devinstance
 		return err
 	}
 	cfg.onListen(role, kcp.Port)
-	rctx, cancel := context.WithTimeout(ctx, cfg.ReadyTimeout)
-	defer cancel()
 	var readyAt time.Time
 	if kcpserver.HasShared(l.SharedDir()) {
 		a, err := kcpserver.ReadSharedAdmin(l.SharedDir())
@@ -471,6 +532,11 @@ func Roll(ctx context.Context, m hostsvc.Manager, cfg Config, rec *devinstance.R
 	if err != nil {
 		return kcpserver.RollReport{}, fmt.Errorf("bootstrap: no kcp-slots.json; dev up first: %w", err)
 	}
+	app, err := cfg.App(rec)
+	if err != nil {
+		return kcpserver.RollReport{}, err
+	}
+	p := cfg.Params(app)
 	a, err := kcpserver.ReadSharedAdmin(l.SharedDir())
 	if err != nil {
 		return kcpserver.RollReport{}, err
@@ -488,7 +554,7 @@ func Roll(ctx context.Context, m hostsvc.Manager, cfg Config, rec *devinstance.R
 	rep, after, err := kcpserver.Roll(ctx, m, apiserverfront.Client{Path: l.FrontControl()}, admin, kcpserver.RollConfig{
 		SlotsFile: l.SlotsFile(), Shared: l.SharedDir(),
 		SpecFor: func(slot string) (hostsvc.UnitSpec, string, error) {
-			return cfg.slotSpec(slot, slots.KineURL, frontURL)
+			return p.slotSpec(slot, frontURL)
 		},
 		ReadyTimeout: cfg.ReadyTimeout, OnListen: cfg.OnListen, Log: cfg.log(),
 	})

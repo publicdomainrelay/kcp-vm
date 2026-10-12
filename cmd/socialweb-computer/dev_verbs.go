@@ -196,7 +196,11 @@ func runDevRestart(ctx context.Context, a *app, vals clicfg.Values, rest []strin
 		return a.fail(exitFailed, "dev restart: %v", err)
 	}
 	lock.Close()
-	st, err := m.Start(ctx, coreSpec(l, bin.Path, readyTimeout))
+	cspec, err := coreSpec(&rec, bin.Path, readyTimeout)
+	if err != nil {
+		return a.fail(exitFailed, "dev restart: %v", err)
+	}
+	st, err := m.Start(ctx, cspec)
 	if err != nil {
 		return a.fail(exitFailed, "dev restart: placing the core: %v", err)
 	}

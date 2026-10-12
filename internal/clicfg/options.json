@@ -47,8 +47,13 @@
     },
     "profile": {
       "type": "string",
-      "description": "Dev profile: minimal (kine on sqlite + one kcp slot); quick and prodlike land with M2-BOOTSTRAP-LAYER, bed with M2-APP-CONTROLLER",
+      "description": "Dev profile: quick (kine on sqlite + one kcp slot) or prodlike (kine on a postgres unit + one kcp slot); bed lands with M2-APP-CONTROLLER",
       "env": "SOCIALWEB_DEV_PROFILE"
+    },
+    "postgres-bin-dir": {
+      "type": "string",
+      "description": "dev up --profile prodlike: absolute directory holding the initdb, postgres and psql of kcp's store (dev build: explicit, never PATH)",
+      "env": "SOCIALWEB_POSTGRES_BIN_DIR"
     },
     "stand-ins": {
       "type": "string",

@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/bootstrap"
@@ -112,12 +111,24 @@ func exportMap(ex []devinstance.Export) map[string]string {
 	return out
 }
 
-func coreSpec(l devinstance.Layout, exe string, readyTimeout time.Duration) hostsvc.UnitSpec {
-	return hostsvc.UnitSpec{Name: l.CoreUnit(), Description: "dev core of " + l.ID,
-		Exec:    []string{exe, "internal", "dev-core", "--instance-dir", l.StateDir, "--ready-timeout", readyTimeout.String()},
-		WorkDir: l.StateDir, Slice: l.CoreSlice(), Restart: hostsvc.RestartOnFailure, KillSignal: syscall.SIGTERM,
-		StopTimeout: coreStopTimeout, After: []string{l.KcpUnit()},
-		Output: hostsvc.Output{StdoutFile: filepath.Join(l.Logs, "core.log"), StderrFile: filepath.Join(l.Logs, "core.log")}}
+func coreSpec(rec *devinstance.Record, exe string, readyTimeout time.Duration) (hostsvc.UnitSpec, error) {
+	return bootstrap.Config{Layout: rec.Layout, Exe: exe, ReadyTimeout: readyTimeout}.CoreSpec(rec)
+}
+
+func postgresBin(vals clicfg.Values, profile string) (devinstance.Executable, error) {
+	if !bootstrap.NeedsPostgres(profile) {
+		return devinstance.Executable{}, nil
+	}
+	dir := vals.String("postgres-bin-dir")
+	if dir == "" || !filepath.IsAbs(dir) {
+		return devinstance.Executable{}, fmt.Errorf("--profile %s runs kine on postgres: postgres-bin-dir must name the absolute directory holding initdb, postgres and psql (never PATH)", profile)
+	}
+	for _, n := range []string{"initdb", "postgres", "psql"} {
+		if _, err := hashExe("postgres-bin-dir", filepath.Join(dir, n)); err != nil {
+			return devinstance.Executable{}, err
+		}
+	}
+	return devinstance.Executable{Path: dir}, nil
 }
 
 func selfExe() (string, error) {
@@ -269,7 +280,7 @@ func runDevUp(ctx context.Context, a *app, vals clicfg.Values, rest []string) in
 	case profile != "" && standInsFile != "":
 		return a.fail(exitRefused, "dev up: --profile %s and --stand-ins name two bootstrap layers; pass one", profile)
 	case profile == "" && standInsFile == "":
-		return a.fail(exitRefused, "dev up: name a profile (--profile; built: minimal) or the units to place (--stand-ins)")
+		return a.fail(exitRefused, "dev up: name a profile (--profile; built: quick, prodlike) or the units to place (--stand-ins)")
 	case standInsFile != "":
 		s, err := bootstrap.ReadStandIns(standInsFile)
 		if err != nil {
@@ -286,6 +297,10 @@ func runDevUp(ctx context.Context, a *app, vals clicfg.Values, rest []string) in
 		return a.fail(exitRefused, "dev up: ready-timeout: %v", err)
 	}
 	var kcpExe, kineExe devinstance.Executable
+	pgExe, err := postgresBin(vals, profile)
+	if err != nil {
+		return a.fail(exitRefused, "dev up: %v", err)
+	}
 	if standIns == nil {
 		if kcpExe, err = a.devExe(ctx, vals, "kcp", "kcp-path"); err != nil {
 			return a.fail(exitRefused, "dev up: %v", err)
@@ -345,9 +360,10 @@ func runDevUp(ctx context.Context, a *app, vals clicfg.Values, rest []string) in
 	rec.Layout, rec.Profile, rec.Backend, rec.Devsup, rec.StandIns = l, profile, hostsvc.BackendProc, sup, standIns
 	rec.Worktree = a.worktree(vals)
 	rec.BaseWorkspace = vals.String("kcp-base-workspace")
-	rec.Executables = map[string]devinstance.Executable{"kcp": kcpExe, "kine": kineExe, denorun.Executable: denoExe, "socialweb-computer": {Path: exe}}
+	rec.Executables = map[string]devinstance.Executable{"kcp": kcpExe, "kine": kineExe, "postgres": pgExe, denorun.Executable: denoExe, "socialweb-computer": {Path: exe}}
 	rec.SourceRoot = sourceRoot
-	bcfg := bootstrap.Config{Layout: l, KcpPath: kcpExe.Path, KinePath: kineExe.Path, Exe: exe, ReadyTimeout: readyTimeout, Log: a.log}
+	bcfg := bootstrap.Config{Layout: l, KcpPath: kcpExe.Path, KinePath: kineExe.Path, PostgresBin: pgExe.Path, Exe: exe,
+		ReadyTimeout: readyTimeout, Log: a.log}
 	if err := bootstrap.Ensure(ctx, m, bcfg, &rec); err != nil {
 		devinstance.WriteJSON(l.Record, rec)
 		lock.Close()
@@ -358,7 +374,11 @@ func runDevUp(ctx context.Context, a *app, vals clicfg.Values, rest []string) in
 		return a.fail(exitFailed, "dev up: %v", err)
 	}
 	lock.Close()
-	cst, err := m.Start(ctx, coreSpec(l, exe, readyTimeout))
+	cspec, err := coreSpec(&rec, exe, readyTimeout)
+	if err != nil {
+		return a.fail(exitFailed, "dev up: %v", err)
+	}
+	cst, err := m.Start(ctx, cspec)
 	if err != nil {
 		return a.fail(exitFailed, "dev up: placing the core: %v", err)
 	}
@@ -452,7 +472,7 @@ func runDevStatus(ctx context.Context, a *app, vals clicfg.Values, rest []string
 	}
 	if c, h, err := helloDevsup(ctx, l); err == nil {
 		r.Devsup.Reachable, r.Devsup.Hello = true, &h
-		for _, prefix := range []string{"socialweb-kcp-" + l.Short + "-", "socialweb-core-" + l.Short + "-"} {
+		for _, prefix := range []string{l.Names().UnitPrefix(), l.Names().CorePrefix()} {
 			units, err := c.List(ctx, prefix)
 			if err != nil {
 				r.Devsup.Error = err.Error()

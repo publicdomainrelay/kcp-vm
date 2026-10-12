@@ -73,7 +73,7 @@ func Run(ctx context.Context, cfg Config, m hostsvc.Manager) error {
 	devinstance.ReadJSON(l.CoreRecord, &prev)
 	core := devinstance.Core{Generation: prev.Generation + 1, PID: os.Getpid(), InvocationID: os.Getenv("INVOCATION_ID"),
 		StartedAt: time.Now().UTC()}
-	bcfg := bootstrap.Config{Layout: l, KcpPath: rec.Executables["kcp"].Path, KinePath: rec.Executables["kine"].Path,
+	bcfg := bootstrap.Config{Layout: l, KcpPath: rec.Executables["kcp"].Path, KinePath: rec.Executables["kine"].Path, PostgresBin: rec.Executables["postgres"].Path,
 		Exe: rec.Executables["socialweb-computer"].Path, ReadyTimeout: cfg.ReadyTimeout, Log: log}
 	lk, err := lockRecord(l.Lock)
 	if err != nil {

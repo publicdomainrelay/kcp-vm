@@ -98,7 +98,7 @@ func (d *liveDev) run(t *testing.T, out any, args ...string) {
 
 func (d *liveDev) up(t *testing.T, id string) upReport {
 	var r upReport
-	d.run(t, &r, "dev", "up", "--instance", id, "--profile", "minimal")
+	d.run(t, &r, "dev", "up", "--instance", id, "--profile", "quick")
 	return r
 }
 
@@ -135,7 +135,7 @@ func TestTwoDevInstancesEachServeTheirOwnKcpOnPortZero(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			errs[i] = d.runE(&reports[i], "dev", "up", "--instance", id, "--profile", "minimal")
+			errs[i] = d.runE(&reports[i], "dev", "up", "--instance", id, "--profile", "quick")
 		}()
 	}
 	wg.Wait()

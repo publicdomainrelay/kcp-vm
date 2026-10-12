@@ -137,7 +137,7 @@ func TestThreeWorktreesEachReachTheirOwnKcpThroughDevEnv(t *testing.T) {
 			if i == 2 {
 				dir = filepath.Join(wt, "internal", "x")
 			}
-			errs[i] = d.runIn(dir, xdg, &ups[i], "dev", "up", "--profile", "minimal")
+			errs[i] = d.runIn(dir, xdg, &ups[i], "dev", "up", "--profile", "quick")
 		}()
 	}
 	wg.Wait()
@@ -293,7 +293,7 @@ type fgRun struct {
 func (d *liveDev) startFg(t *testing.T, id string, extraEnv []string) (fgRun, upReport) {
 	t.Helper()
 	r := fgRun{stdout: &bytes.Buffer{}, stderr: &bytes.Buffer{}}
-	r.cmd = exec.Command(d.bin, "dev", "up", "--fg", "--instance", id, "--profile", "minimal", "--state-dir", d.state)
+	r.cmd = exec.Command(d.bin, "dev", "up", "--fg", "--instance", id, "--profile", "quick", "--state-dir", d.state)
 	r.cmd.Env = append(append(os.Environ(), "SOCIALWEB_KCP_PATH="+d.kcp, "SOCIALWEB_KINE_PATH="+d.kine, "SOCIALWEB_DENO_PATH="+d.deno, tsbundle.SourceRootEnv+"="+d.source), extraEnv...)
 	r.cmd.Stdout, r.cmd.Stderr = r.stdout, r.stderr
 	if err := r.cmd.Start(); err != nil {
@@ -328,7 +328,7 @@ func TestDevUpInTheForegroundEndsWithItsTerminal(t *testing.T) {
 			t.Fatalf("up %+v", up)
 		}
 		var again bytes.Buffer
-		second := exec.Command(d.bin, "dev", "up", "--fg", "--instance", id, "--profile", "minimal", "--state-dir", d.state)
+		second := exec.Command(d.bin, "dev", "up", "--fg", "--instance", id, "--profile", "quick", "--state-dir", d.state)
 		second.Env = append(os.Environ(), "SOCIALWEB_KCP_PATH="+d.kcp, "SOCIALWEB_KINE_PATH="+d.kine, "SOCIALWEB_DENO_PATH="+d.deno, tsbundle.SourceRootEnv+"="+d.source)
 		second.Stderr = &again
 		if err := second.Run(); second.ProcessState.ExitCode() != 2 || !strings.Contains(again.String(), "already up") {

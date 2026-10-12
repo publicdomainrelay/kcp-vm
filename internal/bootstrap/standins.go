@@ -23,7 +23,7 @@ const (
 var standInRole = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,23}$`)
 
 func StandInUnit(l devinstance.Layout, role string) string {
-	return "socialweb-kcp-" + l.Short + "-" + role + hostsvc.ServiceSuffix
+	return l.Names().StandIn(role)
 }
 
 func ReadStandIns(path string) ([]devinstance.StandIn, error) {

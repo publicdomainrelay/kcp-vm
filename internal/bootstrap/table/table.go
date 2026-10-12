@@ -101,6 +101,8 @@ func (n Names) UnitPrefix() string { return n.base() }
 
 func (n Names) DevCore() string { return n.Prefix + "core-" + n.Key + "-dev" + hostsvc.ServiceSuffix }
 
+func (n Names) CorePrefix() string { return n.Prefix + "core-" + n.Key + "-" }
+
 func (n Names) CoreSlice() string { return n.Prefix + "core-" + n.Key + ".slice" }
 
 func (n Names) StandIn(role string) string { return n.base() + "-" + role + hostsvc.ServiceSuffix }
@@ -149,10 +151,16 @@ func (a App) KineSlots() []string {
 }
 
 func (a App) KineOf(slot string) string {
-	if a.Store == StorePostgres {
+	if a.Store == StorePostgres && slices.Contains(a.Slots, slot) {
 		return slot
 	}
 	return a.Slots[0]
+}
+
+func (a App) SlotEntry(slot string) Entry {
+	n := a.Names()
+	kine := n.Kine(a.KineOf(slot))
+	return Entry{Kind: KindSlot, Role: SlotRole(slot), Unit: n.Slot(slot), Slot: slot, After: []string{kine, n.Front()}, Wants: []string{kine}}
 }
 
 func (a App) CoreUnit() string {
@@ -181,9 +189,7 @@ func Table(a App) ([]Entry, error) {
 	}
 	out = append(out, Entry{Kind: KindFront, Role: RoleFront, Unit: n.Front()})
 	for _, s := range a.Slots {
-		kine := n.Kine(a.KineOf(s))
-		out = append(out, Entry{Kind: KindSlot, Role: SlotRole(s), Unit: n.Slot(s), Slot: s,
-			After: []string{kine, n.Front()}, Wants: []string{kine}})
+		out = append(out, a.SlotEntry(s))
 	}
 	var after, wants []string
 	for _, e := range out {
