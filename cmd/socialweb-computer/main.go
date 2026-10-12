@@ -14,6 +14,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/assets"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/capabilities"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clicfg"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc"
@@ -48,7 +49,7 @@ type builtVerb struct {
 func builtVerbs() map[string]builtVerb {
 	return map[string]builtVerb{
 		"version":           {[]string{"json"}, runVersion},
-		"dev up":            {[]string{backendOpt, "instance", "state-dir", "profile", "kcp-path", "kine-path", "ready-timeout", "kcp-base-workspace", "fg", "keep-state"}, runDevUp},
+		"dev up":            {[]string{backendOpt, "instance", "state-dir", "profile", "kcp-path", "kine-path", "asset-cache", "ready-timeout", "kcp-base-workspace", "fg", "keep-state"}, runDevUp},
 		"dev status":        {[]string{"instance", "state-dir"}, runDevStatus},
 		"dev down":          {[]string{"instance", "state-dir", "keep-state"}, runDevDown},
 		"dev ls":            {[]string{"state-dir"}, runDevLs},
@@ -56,6 +57,7 @@ func builtVerbs() map[string]builtVerb {
 		"dev env":           {[]string{"instance", "state-dir", "json"}, runDevEnv},
 		"dev check":         {nil, runDevCheck},
 		"dev restart":       {[]string{"instance", "state-dir", "binary", "ready-timeout"}, runDevRestart},
+		"dev gc":            {[]string{"asset-cache", "state-dir", "asset-gc-window"}, runDevGC},
 		"internal devsup":   {[]string{"state", "socket", "die-with", "instance"}, runDevsup},
 		"internal dev-core": {[]string{"instance-dir", "ready-timeout"}, runDevCore},
 	}
@@ -81,6 +83,10 @@ func run(ctx context.Context, args []string, env clicfg.Env, stdout, stderr io.W
 	}
 	a := &app{env: env, stdout: stdout, stderr: stderr, spec: spec, config: config, goos: goos, goarch: goarch,
 		log: slog.New(slog.NewJSONHandler(stderr, nil)).With("service", serviceName)}
+	if err := assets.Ready(); err != nil {
+		fmt.Fprintf(stderr, "%s: %v\n", serviceName, err)
+		return exitRefused
+	}
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
 		a.usage(stdout, "")
 		if len(args) == 0 {

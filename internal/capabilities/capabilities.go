@@ -73,7 +73,7 @@ func Tree() []Verb {
 		{Path: "dev check", Summary: "report the dev host prerequisites; never fixes them", Needs: []Need{NeedProc}},
 		{Path: "dev restart", Summary: "dev restart core [--binary path]: replace the dev core, adopting every other unit", Needs: []Need{NeedProc}},
 		{Path: "dev roll", Summary: "roll kcp or a cluster in a dev instance", BuiltBy: "M3-KCP-ROLL", Needs: []Need{NeedProc}},
-		{Path: "dev gc", Summary: "collect the per-user asset cache", BuiltBy: "M1-ASSETS", Needs: []Need{NeedProc}},
+		{Path: "dev gc", Summary: "collect the per-user asset cache (refused while a devsup of this user runs)", Needs: []Need{NeedProc}},
 		{Path: "serve gateway kcp", Summary: "the gateway application instance", BuiltBy: "M3-SERVE-GATEWAY-KCP", Needs: []Need{NeedHostBackend}},
 		{Path: "serve provider", Summary: "the cluster provider", BuiltBy: "M3-FOLD", Needs: []Need{NeedHostBackend}},
 		{Path: "run bidder", Summary: "a bidder application instance", BuiltBy: "plan 0007 M5-RUN-BIDDER", Needs: []Need{NeedHostBackend, NeedVMRuntime}},

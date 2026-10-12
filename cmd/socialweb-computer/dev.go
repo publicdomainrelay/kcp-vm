@@ -271,14 +271,14 @@ func runDevUp(ctx context.Context, a *app, vals clicfg.Values, rest []string) in
 	if err != nil {
 		return a.fail(exitRefused, "dev up: ready-timeout: %v", err)
 	}
-	kcpExe, err := checkExe(ctx, "kcp-path", vals.String("kcp-path"))
+	kcpExe, err := a.devExe(ctx, vals, "kcp", "kcp-path")
 	if err != nil {
 		return a.fail(exitRefused, "dev up: %v", err)
 	}
 	if want, err := versions.Get("kcp"); err == nil && want.Version != "" && !strings.Contains(kcpExe.Version, want.Version) {
 		return a.fail(exitRefused, "dev up: kcp-path %s reports %q; versions.json pins %s", kcpExe.Path, kcpExe.Version, want.Version)
 	}
-	kineExe, err := checkExe(ctx, "kine-path", vals.String("kine-path"))
+	kineExe, err := a.devExe(ctx, vals, "kine", "kine-path")
 	if err != nil {
 		return a.fail(exitRefused, "dev up: %v", err)
 	}

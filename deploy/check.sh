@@ -66,12 +66,37 @@ for target in darwin/arm64 darwin/amd64 windows/amd64 windows/arm64 linux/arm64;
     crossfailed="$crossfailed vet:$target"
     continue
   fi
+  if ! GOOS="$goos" GOARCH="$goarch" CGO_ENABLED=0 go build -tags release -o /dev/null ./cmd/socialweb-computer; then
+    crossfailed="$crossfailed release-build:$target"
+    continue
+  fi
   echo "check.sh: ok go build and go vet for $target"
 done
 if [ -n "$crossfailed" ]; then
   echo "check.sh: the tree must build and vet for every GOOS/GOARCH above; an OS-specific file needs its build tag and a twin for the other OSes (plans 0011, 0012)" >&2
   fail "cross-OS gate:$crossfailed"
 fi
+
+sizedir="$(mktemp -d)"
+for target in $(jq -r '.platforms | to_entries[] | select(.value.status == "release") | .key' internal/versions/versions.json); do
+  goos="${target%/*}"
+  goarch="${target#*/}"
+  if ! GOOS="$goos" GOARCH="$goarch" CGO_ENABLED=0 go build -tags release -trimpath -o "$sizedir/$goos-$goarch" ./cmd/socialweb-computer; then
+    rm -rf "$sizedir"
+    fail "release build $target"
+  fi
+  override=()
+  if [ -n "${SOCIALWEB_SIZE_BUDGET_BYTES:-}" ]; then
+    override=(-budget-bytes "$SOCIALWEB_SIZE_BUDGET_BYTES")
+  fi
+  if ! measured="$(go run ./internal/versions/sizegate -platform "$target" -binary "$sizedir/$goos-$goarch" -blobs "internal/assets/blobs/${goos}_${goarch}" "${override[@]}")"; then
+    rm -rf "$sizedir"
+    fail "size budget $target (internal/versions/versions.json platforms.\"$target\".budget)"
+  fi
+  rm -f "$sizedir/$goos-$goarch"
+  echo "check.sh: ok size budget $target $measured"
+done
+rm -rf "$sizedir"
 
 staticcheck ./... || fail staticcheck
 echo "check.sh: ok staticcheck"
@@ -109,6 +134,18 @@ rust_check() {
   fi
 }
 rust_check
+
+if [ "$run" != fast ]; then
+  hostplat="$(go env GOOS)_$(go env GOARCH)"
+  if [ -n "$(ls internal/assets/blobs/"$hostplat"/*.tar.zst 2>/dev/null)" ]; then
+    go test -tags release -count=1 -run TestEveryEmbeddedAssetExtractsAndVerifies ./internal/assets || fail "embedded assets extract and verify ($hostplat)"
+    echo "check.sh: ok embedded assets extract and verify ($hostplat)"
+  elif [ "$run" = full ]; then
+    fail "no staged blobs for $hostplat; --full extracts every embedded asset: run scripts/stage-assets.sh"
+  else
+    echo "check.sh: skipped embedded asset extraction (no staged blobs for $hostplat; run scripts/stage-assets.sh)"
+  fi
+fi
 
 case "$run" in
   fast)

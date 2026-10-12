@@ -9,6 +9,7 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.3.0
 	github.com/google/go-containerregistry v0.22.1
 	github.com/kcp-dev/sdk v0.33.1
+	github.com/klauspost/compress v1.19.2
 	github.com/openbao/openbao/api/v2 v2.3.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/prometheus/common v0.67.5
@@ -65,7 +66,6 @@ require (
 	github.com/ipfs/go-ipld-format v0.6.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/kcp-dev/logicalcluster/v3 v3.0.5 // indirect
-	github.com/klauspost/compress v1.19.2 // indirect
 	github.com/klauspost/cpuid/v2 v2.4.0 // indirect
 	github.com/kylelemons/godebug v1.1.0 // indirect
 	github.com/minio/sha256-simd v1.0.1 // indirect
