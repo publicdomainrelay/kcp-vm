@@ -23,6 +23,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devinstance"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devsup"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/portallocator"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/tsbundle"
 )
 
 const workspacesPath = "/clusters/root/apis/tenancy.kcp.io/v1alpha1/workspaces"
@@ -30,7 +31,7 @@ const workspacesPath = "/clusters/root/apis/tenancy.kcp.io/v1alpha1/workspaces"
 func (d *liveDev) runIn(dir string, extraEnv []string, out any, args ...string) error {
 	cmd := exec.Command(d.bin, append(args, "--state-dir", d.state)...)
 	cmd.Dir = dir
-	cmd.Env = append(append(os.Environ(), "SOCIALWEB_KCP_PATH="+d.kcp, "SOCIALWEB_KINE_PATH="+d.kine), extraEnv...)
+	cmd.Env = append(append(os.Environ(), "SOCIALWEB_KCP_PATH="+d.kcp, "SOCIALWEB_KINE_PATH="+d.kine, "SOCIALWEB_DENO_PATH="+d.deno, tsbundle.OrgRootEnv+"="+d.org), extraEnv...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
@@ -293,7 +294,7 @@ func (d *liveDev) startFg(t *testing.T, id string, extraEnv []string) (fgRun, up
 	t.Helper()
 	r := fgRun{stdout: &bytes.Buffer{}, stderr: &bytes.Buffer{}}
 	r.cmd = exec.Command(d.bin, "dev", "up", "--fg", "--instance", id, "--profile", "minimal", "--state-dir", d.state)
-	r.cmd.Env = append(append(os.Environ(), "SOCIALWEB_KCP_PATH="+d.kcp, "SOCIALWEB_KINE_PATH="+d.kine), extraEnv...)
+	r.cmd.Env = append(append(os.Environ(), "SOCIALWEB_KCP_PATH="+d.kcp, "SOCIALWEB_KINE_PATH="+d.kine, "SOCIALWEB_DENO_PATH="+d.deno, tsbundle.OrgRootEnv+"="+d.org), extraEnv...)
 	r.cmd.Stdout, r.cmd.Stderr = r.stdout, r.stderr
 	if err := r.cmd.Start(); err != nil {
 		t.Fatal(err)
@@ -328,7 +329,7 @@ func TestDevUpInTheForegroundEndsWithItsTerminal(t *testing.T) {
 		}
 		var again bytes.Buffer
 		second := exec.Command(d.bin, "dev", "up", "--fg", "--instance", id, "--profile", "minimal", "--state-dir", d.state)
-		second.Env = append(os.Environ(), "SOCIALWEB_KCP_PATH="+d.kcp, "SOCIALWEB_KINE_PATH="+d.kine)
+		second.Env = append(os.Environ(), "SOCIALWEB_KCP_PATH="+d.kcp, "SOCIALWEB_KINE_PATH="+d.kine, "SOCIALWEB_DENO_PATH="+d.deno, tsbundle.OrgRootEnv+"="+d.org)
 		second.Stderr = &again
 		if err := second.Run(); second.ProcessState.ExitCode() != 2 || !strings.Contains(again.String(), "already up") {
 			t.Fatalf("a second dev up --fg of a running instance: %v %q", err, again.String())

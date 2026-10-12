@@ -64,6 +64,11 @@
       "description": "Absolute path of the kine executable (dev build: explicit, never PATH)",
       "env": "SOCIALWEB_KINE_PATH"
     },
+    "deno-path": {
+      "type": "string",
+      "description": "Absolute path of the pinned deno the core runs every DenoPod on (dev build: explicit, never PATH; a release build extracts its embedded deno)",
+      "env": "SOCIALWEB_DENO_PATH"
+    },
     "ready-timeout": {
       "type": "string",
       "description": "How long dev up waits for kcp /readyz (Go duration)",

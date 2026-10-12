@@ -25,6 +25,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/providermain"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/tenantcredentialmain"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/tsbundle"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/vaultmain"
 )
 
@@ -57,14 +58,14 @@ type builtVerb struct {
 func builtVerbs() map[string]builtVerb {
 	return map[string]builtVerb{
 		"version":           {[]string{"json"}, runVersion},
-		"dev up":            {[]string{backendOpt, "instance", "state-dir", "profile", "stand-ins", "die-with", "kcp-path", "kine-path", "asset-cache", "ready-timeout", "kcp-base-workspace", "fg", "keep-state"}, runDevUp},
+		"dev up":            {append([]string{backendOpt, "instance", "state-dir", "profile", "stand-ins", "die-with", "kcp-path", "kine-path", "deno-path", "asset-cache", "ready-timeout", "kcp-base-workspace", "fg", "keep-state"}, devOnly(tsbundle.OrgRootOption)...), runDevUp},
 		"dev status":        {[]string{"instance", "state-dir"}, runDevStatus},
 		"dev down":          {[]string{"instance", "state-dir", "keep-state"}, runDevDown},
 		"dev ls":            {[]string{"state-dir"}, runDevLs},
 		"dev logs":          {[]string{"instance", "state-dir", "tail"}, runDevLogs},
 		"dev env":           {[]string{"instance", "state-dir", "json"}, runDevEnv},
 		"dev check":         {nil, runDevCheck},
-		"dev restart":       {[]string{"instance", "state-dir", "binary", "ready-timeout"}, runDevRestart},
+		"dev restart":       {append([]string{"instance", "state-dir", "binary", "ready-timeout"}, devOnly(tsbundle.OrgRootOption)...), runDevRestart},
 		"dev gc":            {[]string{"asset-cache", "state-dir", "asset-gc-window"}, runDevGC},
 		"apply":             {applyOptions, runApply},
 		"manifests list":    {[]string{"json"}, runManifestsList},
@@ -78,7 +79,7 @@ func builtVerbs() map[string]builtVerb {
 		"units list":        {[]string{backendOpt, "instance", "state-dir", "asset-cache", "json"}, runUnitsList},
 		"units audit":       {[]string{backendOpt, "instance", "state-dir", "asset-cache", "json"}, runUnitsAudit},
 		"internal devsup":   {[]string{"state", "socket", "die-with", "instance"}, runDevsup},
-		"internal dev-core": {[]string{"instance-dir", "ready-timeout"}, runDevCore},
+		"internal dev-core": {append([]string{"instance-dir", "ready-timeout"}, devOnly(tsbundle.OrgRootOption)...), runDevCore},
 		"dev roll kcp":      {[]string{"instance", "state-dir", "ready-timeout"}, runDevRoll},
 		"internal apiserver-front": {[]string{"owner", "kcp-front-address", "front-control", "front-state", "front-fd-store"},
 			runApiserverFront},

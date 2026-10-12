@@ -13,6 +13,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clicfg"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devcheck"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devinstance"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/tsbundle"
 )
 
 const helloTimeout = 2 * time.Second
@@ -184,6 +185,12 @@ func runDevRestart(ctx context.Context, a *app, vals clicfg.Values, rest []strin
 		rec.Executables = map[string]devinstance.Executable{}
 	}
 	rec.Executables["socialweb-computer"] = bin
+	if vals.String(tsbundle.OrgRootOption) != "" {
+		if rec.OrgRoot, err = closureOrgRoot(vals); err != nil {
+			lock.Close()
+			return a.fail(exitRefused, "dev restart: %v", err)
+		}
+	}
 	if err := devinstance.WriteJSON(l.Record, rec); err != nil {
 		lock.Close()
 		return a.fail(exitFailed, "dev restart: %v", err)

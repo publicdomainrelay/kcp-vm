@@ -233,6 +233,7 @@ type Record struct {
 	KcpURL          string                `json:"kcpURL"`
 	KineURL         string                `json:"kineURL"`
 	Executables     map[string]Executable `json:"executables"`
+	OrgRoot         string                `json:"orgRoot,omitempty"`
 	Ready           bool                  `json:"ready"`
 }
 

@@ -18,12 +18,14 @@ import (
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/bootstrap"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clicfg"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/denorun"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devcore"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devinstance"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devsup"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostos"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/portallocator"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/stack/denoruntime"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/versions"
 )
 
@@ -295,6 +297,14 @@ func runDevUp(ctx context.Context, a *app, vals clicfg.Values, rest []string) in
 			return a.fail(exitRefused, "dev up: %v", err)
 		}
 	}
+	denoExe, err := a.denoExe(ctx, vals)
+	if err != nil {
+		return a.fail(exitRefused, "dev up: %v", err)
+	}
+	orgRoot, err := closureOrgRoot(vals)
+	if err != nil {
+		return a.fail(exitRefused, "dev up: %v", err)
+	}
 	exe, err := selfExe()
 	if err != nil {
 		return a.fail(exitFailed, "dev up: %v", err)
@@ -335,7 +345,8 @@ func runDevUp(ctx context.Context, a *app, vals clicfg.Values, rest []string) in
 	rec.Layout, rec.Profile, rec.Backend, rec.Devsup, rec.StandIns = l, profile, hostsvc.BackendProc, sup, standIns
 	rec.Worktree = a.worktree(vals)
 	rec.BaseWorkspace = vals.String("kcp-base-workspace")
-	rec.Executables = map[string]devinstance.Executable{"kcp": kcpExe, "kine": kineExe, "socialweb-computer": {Path: exe}}
+	rec.Executables = map[string]devinstance.Executable{"kcp": kcpExe, "kine": kineExe, denorun.Executable: denoExe, "socialweb-computer": {Path: exe}}
+	rec.OrgRoot = orgRoot
 	bcfg := bootstrap.Config{Layout: l, KcpPath: kcpExe.Path, KinePath: kineExe.Path, Exe: exe, ReadyTimeout: readyTimeout, Log: a.log}
 	if err := bootstrap.Ensure(ctx, m, bcfg, &rec); err != nil {
 		devinstance.WriteJSON(l.Record, rec)
@@ -571,12 +582,17 @@ func runDevCore(ctx context.Context, a *app, vals clicfg.Values, rest []string) 
 	if err != nil {
 		return a.fail(exitRefused, "internal dev-core: ready-timeout: %v", err)
 	}
+	os.Setenv(denoruntime.WatchListEnv, "false")
+	deno, err := a.coreDenoRuntime(vals, rec, timeout)
+	if err != nil {
+		return a.fail(exitFailed, "internal dev-core: %v", err)
+	}
 	m, err := hostsvc.Open(ctx, procConfig(rec.Layout))
 	if err != nil {
 		return a.fail(exitFailed, "internal dev-core: %v", err)
 	}
 	defer m.Close()
-	if err := devcore.Run(ctx, devcore.Config{Layout: rec.Layout, ReadyTimeout: timeout, Log: a.log}, m); err != nil {
+	if err := devcore.Run(ctx, devcore.Config{Layout: rec.Layout, ReadyTimeout: timeout, Log: a.log, DenoRuntime: &deno}, m); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return exitOK
 		}
