@@ -33,7 +33,7 @@ set -euo pipefail
 # SOCIALWEB_COMPUTER the socialweb-computer binary that applies the set (default:
 #              built from this repository into MARKET_NETWORK_DIR/bin)
 
-REPO=$(cd "$(dirname "$0")/../../../.." && pwd)
+REPO=$(cd "$(dirname "$0")/../.." && pwd)
 DENOKCP_DIR=$REPO/deploy/denokcp
 MARKET_DIR=$(cd "$(dirname "$0")" && pwd)
 MARKET_NETWORK_ID=${MARKET_NETWORK_ID:-demo}

@@ -55,7 +55,7 @@ set -euo pipefail
 # that state from the cluster and, while no workload exists yet, restarts the
 # provider and runs apply.sh again, up to $MAX_ATTEMPTS times.
 
-REPO=$(cd "$(dirname "$0")/../../../.." && pwd)
+REPO=$(cd "$(dirname "$0")/../.." && pwd)
 DENOKCP_DIR=$REPO/deploy/denokcp
 MARKET_DIR=$(cd "$(dirname "$0")" && pwd)
 MARKET_NETWORK_STATE=${MARKET_NETWORK_STATE:-${TASK_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/swc-market-networks}}
