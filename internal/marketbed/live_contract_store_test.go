@@ -113,7 +113,11 @@ func (h *heldBed) restartBidder(name string) bidderRun {
 	if !ok {
 		t.Fatalf("bidder %s is not running and ready before its restart", name)
 	}
-	if err := syscall.Kill(before.pid, syscall.SIGTERM); err != nil {
+	proc, err := os.FindProcess(before.pid)
+	if err == nil {
+		err = proc.Signal(syscall.SIGTERM)
+	}
+	if err != nil {
 		t.Fatalf("stopping bidder %s (pid %d): %v", name, before.pid, err)
 	}
 	h.reading("bidder %s stopped (SIGTERM to pid %d, run %s, restarts %q); its DenoPod's restartPolicy Always starts it again",
