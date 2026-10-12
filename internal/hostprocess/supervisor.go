@@ -203,6 +203,10 @@ func (s *Supervisor) observe(ctx context.Context, o v1alpha1.HostProcess) Observ
 	rt := o.Status.Runtime
 	if rt != nil && rt.InvocationID != "" && rt.Backend == string(s.backend) && o.Spec.Placement != v1alpha1.HostProcessPlacementBootstrap &&
 		o.Status.Phase != v1alpha1.HostProcessPhaseLost {
+		if RestartedInPlace(o, obs.Unit) {
+			obs.Restarted = true
+			return obs
+		}
 		want := hostsvc.Identity{Unit: o.Spec.Unit, InvocationID: rt.InvocationID, PID: int(rt.Pid), StartTicks: uint64(rt.StartTicks),
 			BootID: rt.HostBootID, Backend: hostsvc.Backend(rt.Backend), Manager: rt.Manager}
 		c, err := m.Check(ctx, want)
@@ -231,6 +235,13 @@ func (s *Supervisor) apply(ctx context.Context, o v1alpha1.HostProcess, r Result
 		switch op.Kind {
 		case OpStart:
 			st, err := m.Start(ctx, op.Spec)
+			if err == nil && st.Adopted && st.State != hostsvc.Active && st.State != hostsvc.Activating {
+				log.Info("a loaded unit of this name is not running; resetting it before the start", "state", string(st.State), "result", st.Result)
+				if err = m.Stop(ctx, op.Unit); err == nil {
+					m.ResetFailed(ctx, op.Unit)
+					st, err = m.Start(ctx, op.Spec)
+				}
+			}
 			if err != nil {
 				r.Phase, r.Message = v1alpha1.HostProcessPhaseFailed, err.Error()
 				log.Warn("start", "err", err.Error())

@@ -3,6 +3,7 @@ package devcore
 import (
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"time"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
@@ -11,6 +12,8 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devinstance"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostprocess"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/pgunit"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/postgresctl"
 )
 
 const HostProcessApplyTimeout = 2 * time.Minute
@@ -58,4 +61,21 @@ func HostProcessConfig(bcfg bootstrap.Config, rec devinstance.Record, m hostsvc.
 		},
 		Mirrors:      func() []hostprocess.Mirror { return Mirrors(bcfg, l) },
 		ApplyTimeout: HostProcessApplyTimeout, Log: log}
+}
+
+func PostgresConfig(bcfg bootstrap.Config, rec devinstance.Record, log *slog.Logger) postgresctl.Config {
+	l := bcfg.Layout
+	ws := rec.BaseWorkspace
+	if ws == "" {
+		ws = hostprocess.DefaultWorkspace
+	}
+	root := rec.Executables["postgres"].Path
+	return postgresctl.Config{Kubeconfig: rec.AdminKubeconfig, Workspace: ws, Prefix: l.Names().HostProcessPrefix(),
+		Install: func() (pgunit.Install, error) {
+			if root == "" {
+				return pgunit.Install{}, fmt.Errorf("devcore: dev up was given no postgres-root")
+			}
+			return pgunit.FromRoot(root)
+		},
+		DataRoot: filepath.Join(l.StateDir, "postgres"), SocketRoot: l.RuntimeDir, LogDir: l.Logs, Log: log}
 }

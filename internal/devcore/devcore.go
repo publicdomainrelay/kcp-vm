@@ -13,6 +13,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostos"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostprocess"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/postgresctl"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/stack/denoruntime"
 )
 
@@ -74,7 +75,7 @@ func Run(ctx context.Context, cfg Config, m hostsvc.Manager) error {
 	devinstance.ReadJSON(l.CoreRecord, &prev)
 	core := devinstance.Core{Generation: prev.Generation + 1, PID: os.Getpid(), InvocationID: os.Getenv("INVOCATION_ID"),
 		StartedAt: time.Now().UTC()}
-	bcfg := bootstrap.Config{Layout: l, KcpPath: rec.Executables["kcp"].Path, KinePath: rec.Executables["kine"].Path, PostgresBin: rec.Executables["postgres"].Path,
+	bcfg := bootstrap.Config{Layout: l, KcpPath: rec.Executables["kcp"].Path, KinePath: rec.Executables["kine"].Path, PostgresRoot: rec.Executables["postgres"].Path,
 		Exe: rec.Executables["socialweb-computer"].Path, ReadyTimeout: cfg.ReadyTimeout, Log: log}
 	lk, err := lockRecord(l.Lock)
 	if err != nil {
@@ -94,6 +95,7 @@ func Run(ctx context.Context, cfg Config, m hostsvc.Manager) error {
 	}
 	if len(rec.StandIns) == 0 && rec.AdminKubeconfig != "" {
 		go hostprocess.Supervise(ctx, HostProcessConfig(bcfg, rec, m, log))
+		go postgresctl.Run(ctx, PostgresConfig(bcfg, rec, log))
 	}
 	t := time.NewTicker(CheckInterval)
 	defer t.Stop()
