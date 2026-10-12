@@ -18,12 +18,13 @@ const RecordPath = "deploy/denokcp/vendor.json"
 var VendoredDirs = []string{"deploy/denokcp", "deploy/examples/atproto/market"}
 
 type Record struct {
-	Repository string         `json:"repository"`
-	Ref        string         `json:"ref"`
-	Commit     string         `json:"commit"`
-	KcpLibs    string         `json:"kcpLibsCommit"`
-	Files      []VendoredFile `json:"files"`
-	Local      []LocalFile    `json:"local"`
+	Repository string          `json:"repository"`
+	Ref        string          `json:"ref"`
+	Commit     string          `json:"commit"`
+	KcpLibs    string          `json:"kcpLibsCommit"`
+	Fork       json.RawMessage `json:"fork"`
+	Files      []VendoredFile  `json:"files"`
+	Local      []LocalFile     `json:"local"`
 }
 
 type VendoredFile struct {
