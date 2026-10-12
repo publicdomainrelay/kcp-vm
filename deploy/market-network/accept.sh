@@ -44,10 +44,10 @@ set -euo pipefail
 #                   that reports them; the recorded upstream build reports none
 #                   until 0008 M2-DENOKCP-INPROC, so without it the check is
 #                   printed and not counted)
-# FC_USERNS_STAGE   swc-userns-stage path: guests boot in per-VM subuid user
-#                   namespaces in units of FC_USERNS_ACCOUNT (default: this
-#                   user), staged under FC_USERNS_RUNTIME_DIR; FC_NODEBOOT and
-#                   FC_VMM are then host paths (0007 M0-VM-USERNS)
+# FC_VMRUNTIME_COMMAND JSON argv of `socialweb-computer internal vm {verb} ...`:
+#                   guests are VM units of the Linux VM runtime (swc-userns-stage
+#                   -> pasta -> firecracker, pinned guest image), not runner
+#                   containers; no runner image is built (0007 M2-VM-RUNTIME)
 #
 # The provider is started here rather than by apply.sh, because a provider that
 # comes up before its APIExport virtual workspace endpoints are published
@@ -303,23 +303,24 @@ stop_own_guests() {
     echo "removing guest container $c (label swc.market-network=$MARKET_NETWORK_ID), left behind by this market network" >&2
     docker rm -f "$c" >/dev/null 2>&1 || true
   done
-  [ -n "${FC_USERNS_STAGE:-}" ] || return 0
-  for c in $(own_guest_dirs); do
-    userns_systemctl stop "socialweb-vm-$c.service" >/dev/null 2>&1 || true
+  [ -n "${FC_VMRUNTIME_COMMAND:-}" ] || return 0
+  local b n
+  for b in $BIDDERS; do
+    for n in $(vmruntime list "$b.bob.test" 2>/dev/null | jq -r '.[]?.name' 2>/dev/null); do
+      echo "stopping VM $n of $b, left behind by this bed" >&2
+      vmruntime stop "$b.bob.test" "$n" >/dev/null 2>&1 || true
+    done
   done
 }
 
-# FC_USERNS_STAGE set: guests run as transient units of FC_USERNS_ACCOUNT's
-# user manager (the account owning the subuid range), not as containers.
-userns_systemctl() {
-  local acct=${FC_USERNS_ACCOUNT:-$(id -un)}
-  if [ "$acct" = "$(id -un)" ]; then
-    systemctl --user "$@"
-  else
-    local uid
-    uid=$(id -u "$acct")
-    sudo -n -u "$acct" env XDG_RUNTIME_DIR="/run/user/$uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" systemctl --user "$@"
-  fi
+# FC_VMRUNTIME_COMMAND set: the bed reaches the VM runtime with the same argv
+# its bidders use, {verb} replaced, so teardown sees the units they started.
+vmruntime() {
+  local verb=$1 handle=$2
+  shift 2
+  local argv
+  mapfile -t argv < <(jq -r --arg v "$verb" '.[] | if . == "{verb}" then $v else . end' <<<"$FC_VMRUNTIME_COMMAND")
+  "${argv[@]}" --handle "$handle" "$@"
 }
 
 # Every pid in this market network: the provider and all its descendants (the pod scripts
@@ -448,7 +449,6 @@ cleanup() {
   fi
   ROOT="$MARKET_NETWORK_DIR/kcp" bash "$DENOKCP_DIR/stop-kcp.sh" >/dev/null || true
   rm -rf "$FC_WORK_ROOT" 2>/dev/null || true
-  [ -n "${FC_USERNS_RUNTIME_DIR:-}" ] && rm -rf "$FC_USERNS_RUNTIME_DIR" 2>/dev/null || true
   if [ -e "$FC_WORK_ROOT" ]; then
     echo "guest work root $FC_WORK_ROOT could not be removed" >&2
   fi
@@ -496,7 +496,10 @@ echo "memory: ${avail_mib} MiB available, market network budget ${need_mib} MiB"
 
 echo
 echo "== runner image =="
-if [ -n "$FC_RUNNER_IMAGE" ]; then
+if [ -n "${FC_VMRUNTIME_COMMAND:-}" ]; then
+  runner_id="none: VM runtime"
+  pinned=""
+elif [ -n "$FC_RUNNER_IMAGE" ]; then
   runner_id=$(docker image inspect -f '{{.Id}}' "$FC_RUNNER_IMAGE") || {
     echo "the firecracker runner image $FC_RUNNER_IMAGE is not in the local docker store" >&2
     exit 1
@@ -1042,6 +1045,17 @@ elif [ -z "$alive" ] && [ -z "$dirs" ]; then
   check "market guest gone" PASS "$new_guests: no running container labelled swc.market-network=$MARKET_NETWORK_ID and no work dir $(( GUEST_GONE_SECONDS - (gone_deadline - $(date +%s)) ))s after release"
 else
   check "market guest gone" FAIL "still running:${alive:- none} work dirs left:${dirs:- none} after ${GUEST_GONE_SECONDS}s"
+fi
+if [ -n "${FC_VMRUNTIME_COMMAND:-}" ]; then
+  left=""
+  for b in $BIDDERS; do
+    left="$left$(vmruntime list "$b.bob.test" 2>&1 | jq -r '.[]? | "\(.unit) loaded=\(.loaded) workDir=\(.workDir // "-")"' 2>/dev/null | tr '\n' ' ')"
+  done
+  if [ -z "${left// }" ]; then
+    check "VM runtime left nothing" PASS "no VM unit and no runtime work dir of $BIDDERS"
+  else
+    check "VM runtime left nothing" FAIL "$left"
+  fi
 fi
 fi
 

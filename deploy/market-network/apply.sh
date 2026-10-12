@@ -91,7 +91,9 @@ cp "$REPO/deno.lock" "$LOCK_DIR/deno.lock"
 FC_NODEBOOT=${FC_NODEBOOT:-/usr/local/bin/socialweb-nodeboot}
 FC_VMM=${FC_VMM:-/usr/local/bin/firecracker}
 missing=""
-for v in FC_NODEIMAGE FC_CONFIG FC_REPO_DIR FC_PREINSTALL FC_RUNNER_IMAGE FC_WORK_ROOT; do
+need="FC_NODEIMAGE FC_CONFIG FC_REPO_DIR FC_PREINSTALL FC_RUNNER_IMAGE FC_WORK_ROOT"
+[ -n "${FC_VMRUNTIME_COMMAND:-}" ] && need="FC_WORK_ROOT"
+for v in $need; do
   [ -n "${!v:-}" ] || missing="$missing $v"
 done
 if [ -n "$missing" ]; then
@@ -100,11 +102,11 @@ if [ -n "$missing" ]; then
 fi
 mkdir -p "$FC_WORK_ROOT"
 FC_EXTRA_ARGS=""
-if [ -n "${FC_USERNS_STAGE:-}" ]; then
-  FC_EXTRA_ARGS=",\"--compute-provider-firecracker-userns-stage\",\"$FC_USERNS_STAGE\""
-  [ -n "${FC_USERNS_ACCOUNT:-}" ] && FC_EXTRA_ARGS="$FC_EXTRA_ARGS,\"--compute-provider-firecracker-userns-account\",\"$FC_USERNS_ACCOUNT\""
-  [ -n "${FC_USERNS_RUNTIME_DIR:-}" ] && FC_EXTRA_ARGS="$FC_EXTRA_ARGS,\"--compute-provider-firecracker-userns-runtime-dir\",\"$FC_USERNS_RUNTIME_DIR\""
-  [ -n "${FC_USERNS_SLOT_SIZE:-}" ] && FC_EXTRA_ARGS="$FC_EXTRA_ARGS,\"--compute-provider-firecracker-userns-slot-size\",\"$FC_USERNS_SLOT_SIZE\""
+if [ -n "${FC_VMRUNTIME_COMMAND:-}" ]; then
+  for v in FC_NODEIMAGE FC_CONFIG FC_REPO_DIR FC_PREINSTALL FC_RUNNER_IMAGE; do
+    [ -n "${!v:-}" ] || printf -v "$v" '%s' "unused-with-vmruntime"
+  done
+  FC_EXTRA_ARGS=",\"--compute-provider-firecracker-vmruntime-command\",$(jq -cn --arg v "$FC_VMRUNTIME_COMMAND" '$v')"
 fi
 # Each guest's firecracker API socket lives in its work directory, and a unix
 # socket path cannot exceed 107 bytes; past that the guest dies at boot and its

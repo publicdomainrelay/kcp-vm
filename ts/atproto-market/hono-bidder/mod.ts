@@ -28,10 +28,9 @@ if (o.computeProviderFirecracker) {
     workRoot: o.computeProviderFirecrackerWorkRoot,
     preinstall: o.computeProviderFirecrackerPreinstall,
     containerLabels: o.computeProviderFirecrackerContainerLabels,
-    usernsStage: o.computeProviderFirecrackerUsernsStage,
-    usernsAccount: o.computeProviderFirecrackerUsernsAccount,
-    usernsRuntimeDir: o.computeProviderFirecrackerUsernsRuntimeDir,
-    usernsSlotSize: o.computeProviderFirecrackerUsernsSlotSize,
+    vmruntimeCommand: o.computeProviderFirecrackerVmruntimeCommand
+      ? JSON.parse(o.computeProviderFirecrackerVmruntimeCommand)
+      : undefined,
     rangeBase: o.computeProviderFirecrackerRangeBase,
     reuseImage: o.computeProviderFirecrackerReuseImage === true,
   });

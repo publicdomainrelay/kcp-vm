@@ -1,0 +1,10 @@
+{
+  "name": "@publicdomainrelay/microvm-vmruntime",
+  "version": "0.0.0",
+  "license": "Unlicense",
+  "exports": "./mod.ts",
+  "imports": {
+    "@publicdomainrelay/microvm-firecracker": "jsr:@publicdomainrelay/microvm-firecracker@^0",
+    "@publicdomainrelay/node-image-abc": "jsr:@publicdomainrelay/node-image-abc@^0"
+  }
+}

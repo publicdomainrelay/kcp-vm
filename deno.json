@@ -99,7 +99,7 @@
     "./ts/hono-compute-provider/lib/compute-provider-local",
     "./ts/hono-compute-provider/lib/container-backend-docker",
     "./ts/hono-compute-provider/lib/microvm-firecracker",
-    "./ts/hono-compute-provider/lib/microvm-firecracker-userns",
+    "./ts/hono-compute-provider/lib/microvm-vmruntime",
     "./ts/hono-compute-provider/lib/node-image-firecracker",
     "./ts/hono-compute-provider/lib/oidc-issuer-hono",
     "./ts/hono-compute-provider/lib/rbac-atproto",

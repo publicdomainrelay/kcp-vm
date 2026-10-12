@@ -54,7 +54,7 @@ import { createFirecrackerComputeProvider } from "@publicdomainrelay/compute-pro
 import { createComputeProviderKcpFactory } from "@publicdomainrelay/hono-factory-compute-provider-kcp";
 import { createFirecrackerNodeImage } from "@publicdomainrelay/node-image-firecracker";
 import { createFirecrackerMicrovm, parseLabels } from "@publicdomainrelay/microvm-firecracker";
-import { createUsernsFirecrackerMicrovm } from "@publicdomainrelay/microvm-firecracker-userns";
+import { createVmruntimeMicrovm, createVmruntimeNodeImage } from "@publicdomainrelay/microvm-vmruntime";
 import { createDockerBackend } from "@publicdomainrelay/container-backend-docker";
 import { createRbacProvisioner } from "@publicdomainrelay/rbac-atproto";
 import { Secp256k1Keypair } from "@atproto/crypto";
@@ -102,10 +102,7 @@ export interface FirecrackerProviderSpec {
   workRoot: string;
   preinstall?: string;
   containerLabels?: string;
-  usernsStage?: string;
-  usernsAccount?: string;
-  usernsRuntimeDir?: string;
-  usernsSlotSize?: number;
+  vmruntimeCommand?: string[];
   rangeBase?: string;
   reuseImage?: boolean;
 }
@@ -210,7 +207,11 @@ const REQUIRED_PROVIDER_FIELDS = {
 } as const;
 
 export function missingProviderFields(p: MarketBidderProviderSpec): string[] {
-  const required: readonly string[] = p.kind === "firecracker" || p.kind === "kcp" ? REQUIRED_PROVIDER_FIELDS[p.kind] : [];
+  const required: readonly string[] = p.kind === "firecracker" && p.vmruntimeCommand
+    ? ["workRoot"]
+    : p.kind === "firecracker" || p.kind === "kcp"
+    ? REQUIRED_PROVIDER_FIELDS[p.kind]
+    : [];
   const values = p as unknown as Record<string, unknown>;
   return required.filter((k) => !values[k]);
 }
@@ -590,23 +591,15 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
           atproto: computeAtproto,
           serve,
           getIssuerUrl: () => relay.ingressUrl,
-          image: createFirecrackerNodeImage({
+          image: p.vmruntimeCommand ? createVmruntimeNodeImage() : createFirecrackerNodeImage({
             binary: p.nodeimage,
             configPath: p.config,
             repoDir: p.repoDir,
             preinstallPath: p.preinstall,
             logger,
           }),
-          microvm: p.usernsStage
-            ? createUsernsFirecrackerMicrovm({
-              nodeboot: p.nodeboot,
-              firecracker: p.vmm,
-              stage: p.usernsStage,
-              account: p.usernsAccount,
-              runtimeDir: p.usernsRuntimeDir ?? `${p.workRoot}-runtime`,
-              slotSize: p.usernsSlotSize,
-              logger,
-            })
+          microvm: p.vmruntimeCommand
+            ? createVmruntimeMicrovm({ command: p.vmruntimeCommand, handle: id.handle ?? at.did, logger })
             : createFirecrackerMicrovm({
               backend: createDockerBackend(),
               runnerImage: p.runnerImage,
