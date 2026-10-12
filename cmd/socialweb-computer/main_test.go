@@ -108,7 +108,7 @@ func TestDevUpNeedsAProfileAndExplicitExecutables(t *testing.T) {
 		want string
 	}{
 		{[]string{"dev", "up", "--instance", "t1"}, "profile"},
-		{[]string{"dev", "up", "--instance", "t1", "--profile", "bed"}, "M2-BOOTSTRAP-LAYER"},
+		{[]string{"dev", "up", "--instance", "t1", "--profile", "prodlike"}, "M2-BOOTSTRAP-LAYER"},
 		{[]string{"dev", "up", "--instance", "t1", "--profile", "minimal"}, "kcp-path"},
 		{[]string{"dev", "up", "--instance", "t1", "--profile", "minimal", "--kcp-path", "kcp"}, "never looks in PATH"},
 		{[]string{"dev", "up", "--host-backend", "systemd-user", "--profile", "minimal"}, "devsup (proc)"},

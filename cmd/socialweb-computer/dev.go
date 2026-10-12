@@ -198,9 +198,9 @@ func helloDevsup(ctx context.Context, l devinstance.Layout) (hostsvc.ProcClient,
 
 var errDevsupDetached = errors.New("the instance is already up with a detached devsup")
 
-func startOrAdoptDevsup(ctx context.Context, a *app, l devinstance.Layout, exe string, dieWith int) (hostsvc.ProcClient, devinstance.Devsup, error) {
+func startOrAdoptDevsup(ctx context.Context, a *app, l devinstance.Layout, exe string, dieWith int, fg bool) (hostsvc.ProcClient, devinstance.Devsup, error) {
 	if c, h, err := helloDevsup(ctx, l); err == nil {
-		if dieWith != 0 {
+		if fg {
 			c.Close()
 			return nil, devinstance.Devsup{}, fmt.Errorf("%w (devsup pid %d); dev down it first, or run dev up without --fg", errDevsupDetached, h.PID)
 		}
@@ -261,26 +261,39 @@ func runDevUp(ctx context.Context, a *app, vals clicfg.Values, rest []string) in
 	if b := vals.String(backendOpt); b != "" && b != string(hostsvc.BackendProc) {
 		return a.fail(exitRefused, "dev up: host-backend=%s: dev places every unit under devsup (proc); systemd-user is for install", b)
 	}
-	if err := a.spec.Require(vals, "profile"); err != nil {
-		return a.fail(exitRefused, "dev up: %v (built: minimal)", err)
-	}
-	if err := bootstrap.CheckProfile(vals.String("profile")); err != nil {
-		return a.fail(exitRefused, "dev up: %v", err)
+	profile, standInsFile := vals.String("profile"), vals.String("stand-ins")
+	var standIns []devinstance.StandIn
+	switch {
+	case profile != "" && standInsFile != "":
+		return a.fail(exitRefused, "dev up: --profile %s and --stand-ins name two bootstrap layers; pass one", profile)
+	case profile == "" && standInsFile == "":
+		return a.fail(exitRefused, "dev up: name a profile (--profile; built: minimal) or the units to place (--stand-ins)")
+	case standInsFile != "":
+		s, err := bootstrap.ReadStandIns(standInsFile)
+		if err != nil {
+			return a.fail(exitRefused, "dev up: %v", err)
+		}
+		standIns, profile = s, bootstrap.ProfileStandIns
+	default:
+		if err := bootstrap.CheckProfile(profile); err != nil {
+			return a.fail(exitRefused, "dev up: %v", err)
+		}
 	}
 	readyTimeout, err := time.ParseDuration(vals.String("ready-timeout"))
 	if err != nil {
 		return a.fail(exitRefused, "dev up: ready-timeout: %v", err)
 	}
-	kcpExe, err := a.devExe(ctx, vals, "kcp", "kcp-path")
-	if err != nil {
-		return a.fail(exitRefused, "dev up: %v", err)
-	}
-	if want, err := versions.Get("kcp"); err == nil && want.Version != "" && !strings.Contains(kcpExe.Version, want.Version) {
-		return a.fail(exitRefused, "dev up: kcp-path %s reports %q; versions.json pins %s", kcpExe.Path, kcpExe.Version, want.Version)
-	}
-	kineExe, err := a.devExe(ctx, vals, "kine", "kine-path")
-	if err != nil {
-		return a.fail(exitRefused, "dev up: %v", err)
+	var kcpExe, kineExe devinstance.Executable
+	if standIns == nil {
+		if kcpExe, err = a.devExe(ctx, vals, "kcp", "kcp-path"); err != nil {
+			return a.fail(exitRefused, "dev up: %v", err)
+		}
+		if want, err := versions.Get("kcp"); err == nil && want.Version != "" && !strings.Contains(kcpExe.Version, want.Version) {
+			return a.fail(exitRefused, "dev up: kcp-path %s reports %q; versions.json pins %s", kcpExe.Path, kcpExe.Version, want.Version)
+		}
+		if kineExe, err = a.devExe(ctx, vals, "kine", "kine-path"); err != nil {
+			return a.fail(exitRefused, "dev up: %v", err)
+		}
 	}
 	exe, err := selfExe()
 	if err != nil {
@@ -301,11 +314,11 @@ func runDevUp(ctx context.Context, a *app, vals clicfg.Values, rest []string) in
 		return a.fail(exitFailed, "dev up: %v", err)
 	}
 	fg := vals.Bool("fg")
-	dieWith := 0
+	dieWith := vals.Int("die-with")
 	if fg {
 		dieWith = os.Getpid()
 	}
-	m, sup, err := startOrAdoptDevsup(ctx, a, l, exe, dieWith)
+	m, sup, err := startOrAdoptDevsup(ctx, a, l, exe, dieWith, fg)
 	if errors.Is(err, errDevsupDetached) {
 		lock.Close()
 		return a.fail(exitRefused, "dev up: %v", err)
@@ -319,7 +332,7 @@ func runDevUp(ctx context.Context, a *app, vals clicfg.Values, rest []string) in
 	if err := devinstance.ReadJSON(l.Record, &rec); err != nil {
 		rec = devinstance.Record{Created: started}
 	}
-	rec.Layout, rec.Profile, rec.Backend, rec.Devsup = l, vals.String("profile"), hostsvc.BackendProc, sup
+	rec.Layout, rec.Profile, rec.Backend, rec.Devsup, rec.StandIns = l, profile, hostsvc.BackendProc, sup, standIns
 	rec.Worktree = a.worktree(vals)
 	rec.BaseWorkspace = vals.String("kcp-base-workspace")
 	rec.Executables = map[string]devinstance.Executable{"kcp": kcpExe, "kine": kineExe, "socialweb-computer": {Path: exe}}

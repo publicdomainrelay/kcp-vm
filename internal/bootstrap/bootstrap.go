@@ -35,7 +35,7 @@ const (
 
 var unbuiltProfiles = map[string]string{
 	"quick":    "M2-BOOTSTRAP-LAYER",
-	"bed":      "M2-BOOTSTRAP-LAYER and M2-KCP-STORE (kine on postgres)",
+	"bed":      "M2-APP-CONTROLLER (a MarketNetwork composing child applications, each with its own kcp; today's bed is 0008 M1-BED-PARALLEL)",
 	"prodlike": "M2-BOOTSTRAP-LAYER and M2-KCP-STORE (kine on postgres)",
 }
 
@@ -60,6 +60,7 @@ type Config struct {
 	ReadyTimeout time.Duration
 	OnListen     func(name string, addr net.Addr)
 	Log          *slog.Logger
+	silent       map[string]bool
 }
 
 type Order struct {
@@ -162,6 +163,9 @@ func identifyUnit(ctx context.Context, m hostsvc.Manager, cfg Config, role, name
 	if placedAt.IsZero() {
 		placedAt = time.Now().UTC()
 	}
+	if cfg.silent[role] {
+		return devinstance.Unit{Role: role, Unit: name, Identity: id, Adopted: adopted, PlacedAt: placedAt, PortAt: time.Now().UTC()}, nil
+	}
 	pctx, cancel := context.WithTimeout(ctx, cfg.ReadyTimeout)
 	defer cancel()
 	port, err := hostsvc.WaitListenPort(pctx, id.PID, PortPoll)
@@ -193,7 +197,7 @@ func ensureUnit(ctx context.Context, m hostsvc.Manager, cfg Config, rec *devinst
 		case hostsvc.VerdictRunning:
 			u := *prev
 			u.Adopted = true
-			if port, err := hostsvc.ListenPort(u.Identity.PID); err == nil && port != u.Port {
+			if port, err := hostsvc.ListenPort(u.Identity.PID); err == nil && port != u.Port && !cfg.silent[role] {
 				log.Warn("an adopted unit listens on another port than recorded", "recorded", u.Port, "now", port)
 				u.Port = port
 				u.Endpoint = endpoint(role, port)
@@ -303,6 +307,9 @@ func HandoverStaleLease(ctx context.Context, admin *kcpserver.HTTPAdmin, log *sl
 }
 
 func Ensure(ctx context.Context, m hostsvc.Manager, cfg Config, rec *devinstance.Record) error {
+	if len(rec.StandIns) > 0 {
+		return ensureStandIns(ctx, m, cfg, rec)
+	}
 	l := cfg.Layout
 	log := cfg.log()
 	for _, d := range []string{l.KineDir, l.KcpDir(), l.Logs, l.RuntimeDir} {

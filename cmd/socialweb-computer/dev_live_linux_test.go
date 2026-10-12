@@ -107,7 +107,7 @@ func invocations(r upReport) map[string]string {
 	return out
 }
 
-func TestTwoInstancesOnOneHostShareNothing(t *testing.T) {
+func TestTwoDevInstancesEachServeTheirOwnKcpOnPortZero(t *testing.T) {
 	d := openLiveDev(t)
 	if d == nil {
 		return

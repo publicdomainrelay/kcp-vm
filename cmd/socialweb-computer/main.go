@@ -57,7 +57,7 @@ type builtVerb struct {
 func builtVerbs() map[string]builtVerb {
 	return map[string]builtVerb{
 		"version":           {[]string{"json"}, runVersion},
-		"dev up":            {[]string{backendOpt, "instance", "state-dir", "profile", "kcp-path", "kine-path", "asset-cache", "ready-timeout", "kcp-base-workspace", "fg", "keep-state"}, runDevUp},
+		"dev up":            {[]string{backendOpt, "instance", "state-dir", "profile", "stand-ins", "die-with", "kcp-path", "kine-path", "asset-cache", "ready-timeout", "kcp-base-workspace", "fg", "keep-state"}, runDevUp},
 		"dev status":        {[]string{"instance", "state-dir"}, runDevStatus},
 		"dev down":          {[]string{"instance", "state-dir", "keep-state"}, runDevDown},
 		"dev ls":            {[]string{"state-dir"}, runDevLs},

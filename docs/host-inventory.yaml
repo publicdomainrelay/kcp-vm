@@ -1005,6 +1005,8 @@ indirect:
     resolves: [kcp, kine]
   - site: "socialweb-computer-kcp/internal/hostsvc/hostsvctest/suite_linux.go: name"
     resolves: [sleep, sh]
+  - site: "socialweb-computer-kcp/internal/devstack/devstack.go: s.Bin"
+    resolves: [socialweb-computer-kcp-check-host]
   - site: "socialweb-computer-kcp/internal/denorun/denorun.go: deno"
     resolves: [deno]
   - site: "socialweb-computer-kcp/internal/denorun/denorun.go: argv[0]"
