@@ -21,7 +21,7 @@
       {"path": "internal/denokcp/policyengine", "from": "deno-kcp", "upstream": "internal/policyengine"},
       {"path": "internal/denokcp/policyworkflowpod", "from": "deno-kcp", "upstream": "internal/policyworkflowpod"},
       {"path": "internal/denokcp/policyworkflowrun", "from": "deno-kcp", "upstream": "internal/policyworkflowrun"},
-      {"path": "internal/denokcp/provider", "from": "deno-kcp", "upstream": "internal/provider", "added": ["listeners_test.go"]},
+      {"path": "internal/denokcp/provider", "from": "deno-kcp", "upstream": "internal/provider", "added": ["listeners_test.go", "restart_test.go"]},
       {"path": "internal/denokcp/trigger", "from": "deno-kcp", "upstream": "internal/trigger"},
       {"path": "internal/kcplibs/abc/joballoc", "from": "kcp-libs", "upstream": "abc/joballoc"},
       {"path": "internal/kcplibs/abc/pki", "from": "kcp-libs", "upstream": "abc/pki"},
