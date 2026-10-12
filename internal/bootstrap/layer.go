@@ -232,7 +232,7 @@ func Installed(p Params, frontURL string) ([]InstalledUnit, error) {
 	for _, e := range tbl {
 		if e.Kind == table.KindCore {
 			out = append(out, InstalledUnit{Entry: e, Unit: e.Unit, Path: filepath.Join(e.Unit+".d", DropInName),
-				File: hostsvc.InstalledFile{Unit: hostsvc.RenderDropIn(e.After, e.Wants)}})
+				File: hostsvc.InstalledFile{Unit: hostsvc.RenderDropIn(e.After, nil)}})
 			continue
 		}
 		pending := e.Kind == table.KindSlot && frontURL == ""
