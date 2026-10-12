@@ -2180,16 +2180,28 @@ export interface VmRecordView {
   createdAt: string;
 }
 
+const OWN_RECORDS_LIMIT = 10_000;
+
+type SessionLister = {
+  listRecords(repo: string, collection: string, opts?: { limit?: number }): Promise<{ records?: unknown } | undefined>;
+};
+
 async function ownRecords(pds: Pick<RequesterPDS, "did">, plcUrl: string | undefined) {
   const idResolver = new IdResolver({ plcUrl });
   const marketDid = (pds as unknown as { oauthSession?: { userDid?: string } }).oauthSession?.userDid ?? pds.did;
-  const ownPds = await pdsUrlOf(idResolver, marketDid);
-  if (!ownPds) throw new Error(`no PDS for ${marketDid}`);
-  return {
-    idResolver,
-    marketDid,
-    list: (collection: string) => listRecordsAll(ownPds, marketDid, collection, { timeoutMs: 10_000 }),
+  const oauthAgent = (pds as unknown as Record<string, unknown>).oauthAgent as SessionLister | undefined;
+  const ownApi = (pds as unknown as { api?: SessionLister }).api;
+  const session = oauthAgent && marketDid !== pds.did ? oauthAgent : ownApi;
+  const list = async (collection: string): Promise<FetchedRecord[]> => {
+    if (session) {
+      const listed = await session.listRecords(marketDid, collection, { limit: OWN_RECORDS_LIMIT });
+      return (listed?.records ?? []) as FetchedRecord[];
+    }
+    const ownPds = await pdsUrlOf(idResolver, marketDid);
+    if (!ownPds) throw new Error(`no PDS for ${marketDid}`);
+    return await listRecordsAll(ownPds, marketDid, collection, { limit: OWN_RECORDS_LIMIT, timeoutMs: 10_000 });
   };
+  return { idResolver, marketDid, list };
 }
 
 export async function listVmRecords(pds: Pick<RequesterPDS, "did">, opts: { plcUrl?: string } = {}): Promise<VmRecordView[]> {
