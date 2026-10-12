@@ -945,6 +945,14 @@ indirect:
     resolves: [psql]
   - site: "socialweb-computer-kcp/internal/nodefirecracker/namespace.go: params.VMM"
     resolves: [firecracker]
+  - site: "socialweb-computer-kcp/internal/kcplibs/impl/execrunner/supervisor.go: entry.binary"
+    resolves: [deno]
+  - site: "socialweb-computer-kcp/internal/kcplibs/impl/execrunner/supervisor.go: command[0]"
+    resolves: [deno]
+  - site: "socialweb-computer-kcp/internal/kcplibs/internal/livekcp/livekcp.go: Resolve(name)"
+    resolves: [kcp, kubectl]
+  - site: "socialweb-computer-kcp/internal/kcplibs/internal/livekcp/livekcp.go: name"
+    resolves: [kcp, kubectl]
   - site: "socialweb-computer-kcp/internal/processrunner/processrunner.go: argv[0]"
     resolves: [k3s, kine, bao, external-secrets, socialweb-cloud-controller-manager, dumbpipe, pasta]
   - site: "atproto-market/hono-bidder/mod.ts: cmd"
