@@ -212,6 +212,12 @@ signal (a setuid exec clears it). A Windows host has no Pdeathsig; a job object 
 in `internal/hostos/sysproc_windows.go`. Closed by plan 0005 M6-LIMITS (section 15); this was
 `NEXT.yaml` CCM-2, then a stated limit.
 
+Planned, not built (plan 0006 M3-CLUSTER-UNITS, revised 2026-10-11): the group moves into its own
+transient service in the gateway account's user manager, so a gateway restart or upgrade leaves it
+running; its members then die with the GROUP's supervisor rather than with the provider, and the
+cluster's postgres becomes its own unit ordered before the group. See "Host processes and the VM
+lifecycle" below.
+
 ### The External Secrets controller runs beside the control plane
 
 Until 2026-10-07 the External Secrets Operator was installed INTO each tenant cluster as three
@@ -416,6 +422,10 @@ the child's stdout — a full log disk must not SIGPIPE the apiserver.
 
 ### A market bidder is a template unit, one instance per account
 
+This is today's shape. Plan 0007 M5-RUN-BIDDER replaces it with a USER unit of one shared lingering
+account, no docker and no launcher script (see "Host processes and the VM lifecycle" below); until that
+lands, everything in this subsection is what runs.
+
 No bidder runs on prod (plan 0005 M0-PROD-BIDDER); both doors rely on bidders their users run. A
 host that runs them is prepared by `scripts/deploy-firecracker-bidder.sh` (over ssh, or `--local`
 through `sudo -n`; `--dry-run` prints every step) and runs one systemd SYSTEM template instance per
@@ -471,6 +481,69 @@ journalctl -u socialweb-computer-bidder@<handle> -f     # the QR and its qr.fedf
   `--private-key-hex-path` only after sign-in, so every restart before a scan registers a new
   did:plc on the PLC directory. Measured on hat-8 2026-10-07: the waiting instance's `secrets/` held no
   `bidder-key.hex`. That is atproto-market's to change, not this unit's.
+
+### Host processes and the VM lifecycle (planned: plans 0006, 0007, 0008)
+
+NOT BUILT. This subsection records the design plans 0006, 0007 and 0008 were revised to on 2026-10-11
+from `docs/research/2026-10-11-vm-lifecycle/` (the user's decisions, a Linux exploration of the plans,
+live proofs on hat-8 with systemd 259.9 and firecracker v1.13.1, and a three-OS lifecycle synthesis).
+Today's code is what the subsections above describe. Lines marked "user" are the user's decisions of
+2026-10-11; the rest are Claude's, open to the user's veto in the plan files.
+
+**Invariant: no socialweb-computer code in a running VM's process tree (user).** The service manager
+launches the VMM; our code only does one-shot prep before the unit starts, and the tiny `socialweb-vmexec`
+helper creates the tap and `execve`s firecracker, so after start a VM unit's cgroup holds exactly `pasta`
+and `firecracker`. Today it does not: `socialweb-nodeboot`'s namespace verb stays resident as
+firecracker's parent (`internal/nodefirecracker/namespace.go`), so a crash of it kills the guest and a
+rename-over upgrade can change code inside a booting chain. Plan 0006 M2-VM-TREE-AUDIT builds the
+instrument (every process in a VM unit's cgroup must hash to a pinned asset), and plan 0007's live tests
+run it after every boot, restart and upgrade.
+
+**Scope and platforms (user).** Headless servers; VMs survive a crash or upgrade of the core binary and a
+logout; a reboot is Lost (transient units live on tmpfs). Plans 0006-0008 execute on Linux only and build
+the cross-OS seams now: Go interfaces (`hostsvc`, `vmruntime`, `guestnet`), GOOS-tagged files, per-OS
+embedded assets compiled in only for the target OS, and a check.sh gate that builds and vets darwin and
+windows on every run. Windows is plan 0011 (Hyper-V HCS, SCM), macOS plan 0012 (vfkit, launchd).
+
+**Where processes live (user).** The gateway and the bidders each run in the USER manager of a dedicated
+lingering account (`socialweb`; one shared `swc-bidder` account for every bidder handle, units namespaced
+by handle). Long-lived children are transient SERVICES (never scopes) started over
+`$XDG_RUNTIME_DIR/systemd/private`: a VM per `socialweb-vm-<hid>-<name>.service`, the vaults
+(`socialweb-bao-root`, `socialweb-bao-<hid>`), each cluster's postgres (`socialweb-pg-<key>`) and its
+process group (`socialweb-cluster-<key>`, `After=` and `Wants=` the postgres unit, not `Requires=`), and
+kcp (`socialweb-kcp`) if plan 0006's spike chooses the out-of-process route. Postgres and OpenBaoServer
+stay CRDs (user). Deno processes stay plain children of the core unit and die with it. The core unit
+uses the default `KillMode=control-group`; transient units are separate cgroups, so no KillMode reaches
+them (proved: a unit survives restart, kill -9 and stop of its starter). Only cpu, memory and pids
+delegation is relied on (user); `AllowedCPUs` and `IOWeight` are not enforced in a user manager and are
+not used; VM units set `MemorySwapMax=0` with `MemoryMax` (otherwise the guest swaps) and live in their
+own slice, outside the `app.slice` Fedora's systemd-oomd watches. Minimum systemd 253 with each property
+probed by `check-host` (user); linger and, for bidders, the kvm group are set by a one-time root
+`install` step before the user manager first starts.
+
+**Adoption is a tri-state verdict (user).** A restarted core adopts units by name, never re-creates them.
+Identity is read from systemd and the kernel (unit, InvocationID, VMM pid and start ticks through a pidfd,
+`GetUnitByPIDFD`, firecracker's own `--id` from `GET /`), never from a file the child wrote. Only bus
+dial, auth or timeout errors and an unreachable API socket are Unknown (retried, never Lost). A changed
+boot id is Lost. A definite mismatch on an active unit is Lost and the unit is stopped at once.
+
+**Guest side (user).** Every guest gets the identical address plan inside its own pasta namespace and
+dials a constant host address, so there is no network-index allocator and user_data is final at
+create. Guest images (kernel + rootfs) are built in CI per hypervisor and arch, pinned by sha256 and
+fetched; bidders need no root, chroot, apt or Go toolchain. The guest console goes to a capped file in
+the VM's work dir and is deleted with it; tenant data never enters the host journal. Stop is graceful
+first: `SendCtrlAltDel` over the API socket, a grace window measured live through the RFP flow, then
+`KillSignal=SIGKILL` (firecracker, PID 1 of pasta's PID namespace, ignores SIGTERM); arm64 goes straight
+to SIGKILL. The bidder's deno runs with an explicit permission list, no `-A`, `/dev/kvm` and the user bus
+denied, which is the only boundary between it and the user manager it shares a uid with.
+
+**Stated limits.** One shared bidder account means a VMM escape reaches every handle's keys on that host
+(isolation between handles is by name and path only). Restarting `user@<uid>`, removing linger or
+`loginctl terminate-user` stops every unit and is treated as a reboot. How tenant control planes stay up
+across gateway restarts, upgrades and the prod cutover is NOT decided (plan 0006 M3-CP-CONTINUITY): the
+user's goal is that the gateway durably tracks which clusters own which market-rented VMs so nodes
+re-join after any restart, ideally with zero downtime by starting a new k3s control plane before stopping
+the old one.
 
 ## 6. CRDs and the API surface
 
@@ -2100,7 +2173,12 @@ number outside the range rather than returning one.
 
 ### The QEMU substrate
 
-`internal/nodeqemu` is a second substrate behind the same `nodeHost` seam, selected by
+**Historical.** Commit 9d85916 ("market only: the local substrates were retired") deleted
+`internal/nodeqemu` along with the other local substrates; no code in the tree boots a QEMU guest, and
+nodes come only from the market. What follows is kept as the record of the 2026-09-24 measurements and
+describes code that no longer exists.
+
+`internal/nodeqemu` was a second substrate behind the same `nodeHost` seam, selected by
 `SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE=qemu`. It boots the SAME image as firecracker — the kernel,
 the initramfs and the rootfs `internal/nodefirecracker.LoadImage` resolves from the builder's
 configuration — because a node image is a set of portable files, not a firecracker artifact. The
@@ -2222,6 +2300,31 @@ are not re-derived here; the qemu run above is the full-flow proof, not a re-mea
 
 ### The host platform
 
+**State of the code (read 2026-10-11 at f0460fd, linux-proofs E7).** `internal/hostos` has `_linux.go`
+and `_windows.go` files only. `GOOS=darwin go build ./...` FAILS: with no darwin files, `hostos.Lock`,
+`LocalPortRange`, `DieWithParent` and `portallocator`'s probe are undefined, blocking 23 packages.
+`GOOS=windows go build ./...` FAILS: `internal/nodevm/disk.go` uses `unix.IoctlFileClone` and
+`SEEK_DATA` with no build tag, blocking 10 packages, and `GOOS=windows go vet` also fails on an untagged
+`Setpgid` in `internal/apigen/live_upgrade_test.go`. `deploy/check.sh` builds and vets only the host OS,
+so nothing noticed. The capability predicates (`Firecracker`, `QEMU`, `NetworkMode`, `Accel`, including
+`AccelWHPX` in `caps_windows.go`) are dead since 9d85916 retired the local substrates; only
+`check-host` still reads them. `hostos.DetachProcess` is `Pdeathsig: SIGKILL` - it ties the VMM's life
+to its parent, the opposite of its name - and its one caller is the resident namespace verb.
+
+**Planned (plan 0006 M0-XOS-GATE, the first commit of that plan).** `internal/hostos` keeps only
+primitives (lock, process identity, boot id, port range, process attributes) with linux, darwin and
+windows files, darwin stubs returning `ErrUnsupported` until plan 0012; the reflink clone splits into
+`clone_linux.go` and `clone_other.go`; the capability predicates and `DetachProcess` are deleted and
+`check-host` reads the compiled backend registry instead; check.sh builds and vets darwin/arm64,
+darwin/amd64, windows/amd64, windows/arm64 and linux/arm64 on every run, and an import-boundary test
+keeps go-systemd, netlink and the firecracker client out of OS-neutral packages. The service-manager,
+VM-runtime and guest-network seams (`hostsvc`, `vmruntime`, `guestnet`) are Linux-only bodies behind
+interfaces; Windows (HCS, HNS, SCM) is plan 0011 and macOS (vfkit, launchd) is plan 0012. See section 5,
+"Host processes and the VM lifecycle".
+
+What follows is the 2026-09-24 design and measurement, kept as a record: the QEMU rows and the Windows
+column describe code that 9d85916 deleted or that never ran.
+
 The gateway is one binary per OS, and the substrate, the accelerator, the network, the process
 identity and the disk tooling are the host's, not the cluster's. `internal/hostos` is the single
 seam: capability predicates (`Name`, `Firecracker`, `QEMU`, `NetworkMode`, `Accel`) and portable
@@ -2269,9 +2372,10 @@ one process -- 210.86 s (firecracker 5.423 s, qemu 6.915 s) and 205.33 s (firecr
 13.489 s). Everything in this document that is measured was measured on Linux, and the Windows
 column above is **design and cross-compilation only**: no Windows binary
 was executed on this Linux host, so no Windows boot, no WHPX boot, no user-mode networking path and
-no Windows process-identity read has been observed to work. `GOOS=windows GOARCH=amd64 go build
-./...` and `go vet ./...` are clean, which proves the tree compiles and type-checks for Windows, and
-nothing more. The runtime paths that carry the most risk are the ones no compiler can check: the
+no Windows process-identity read has been observed to work. On 2026-09-24 `GOOS=windows GOARCH=amd64
+go build ./...` and `go vet ./...` were clean, which proved the tree compiled and type-checked for
+Windows, and nothing more; that is no longer true (7c4f741's untagged reflink clone broke it, see the
+state of the code above) and stays untrue until plan 0006 M0-XOS-GATE. The runtime paths that carry the most risk are the ones no compiler can check: the
 CIM/PowerShell command-line read (it shells out per lookup, and a localized or denied environment
 breaks it), `TerminateProcess` standing in for a graceful stop, `LockFileEx`'s byte-range lock
 against `flock`'s whole-file semantics, WHPX actually being available on a given Windows host, and
@@ -3180,8 +3284,10 @@ each milestone's instrument. ESO-4 closed the same day with M4-ESO-BESIDE and is
 its readings. Also on 2026-10-07 three plans were QUEUED behind plan 0005, and none of them starts
 until plan 0005 is complete and its acceptance checks ACC-ZERO, ACC-MESH and ACC-NOSSH pass on prod:
 plan 0006 (`docs/plans/0006-socialweb-computer-unified-binary.yaml`, P6-M0 through P6-M5) makes one Go
-binary, `socialweb-computer`, the entrypoint of the whole stack, with kcp linked in-process (the module
-moves onto kcp's Kubernetes fork, and kcp and its embedded etcd bind port 0 and report the bound ports),
+binary, `socialweb-computer`, the entrypoint of the whole stack, with kcp either linked in-process on
+kcp's Kubernetes fork or run as a patched release binary in its own unit (revised 2026-10-11: the user
+decides after the M0 spike measures both; on either route kcp and its embedded etcd bind port 0 and
+report the bound ports),
 every manifest in an embed.FS it templates and server-side applies from Go, no container at runtime
 (postgres and the OpenBao servers embedded and driven by CRDs, long-lived children in their own systemd
 units so an upgrade of the binary leaves them running), so `serve gateway kcp` on the host replaces
@@ -3194,8 +3300,12 @@ compute-provider-kcp beside the firecracker provider, whose learnings it backpor
 VMs are ComputeVM objects in the bidder's own kcp, booted unprivileged through the kvm group with no
 docker, each in its own systemd unit, and the bidder's keys live in an OpenBao beside it, so a bidder
 or a gateway can be upgraded while its VMs keep running and each re-populates what it owns afterwards,
-with no change to any market record. Each plan file holds its items' decisions, dependencies and the
-questions left for the user.
+with no change to any market record. On 2026-10-11 the three plans were revised to the VM-lifecycle
+decisions in section 5 ("Host processes and the VM lifecycle"): Linux execution with cross-OS seams, and
+the Windows and macOS bidders moved to plan 0011 (`docs/plans/0011-windows-bidder-hcs.yaml`, P11-M0
+through P11-M3) and plan 0012 (`docs/plans/0012-macos-bidder-vz.yaml`, P12-M0 through P12-M3), both
+QUEUED behind 0006 and 0007; the user has paused 0006-0008 while they are refined. Each plan file holds
+its items' decisions, dependencies and the questions left for the user.
 **The live backlog is `NEXT.yaml`, which this section mirrors:
 an item is written here when it is opened and moves to section 15, with its readings, when it is
 closed.** The practice that produced the batch is the one worth keeping: the artefact was run and each

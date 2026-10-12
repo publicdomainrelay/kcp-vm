@@ -173,92 +173,110 @@ open:
     instrument: >
       R0-REASSESS answered and recorded in the plan.
   - id: P6-M0
-    title: QUEUED - what linking kcp in-process breaks, and the one binary's size and platforms.
+    title: QUEUED (paused) - darwin/windows build gate, both kcp routes measured, the one binary's linux budget.
     body: >
-      QUEUED: starts only after plan 0005 is complete and ACC-ZERO, ACC-MESH and ACC-NOSSH pass on prod.
-      Plan 0006 (docs/plans/0006-socialweb-computer-unified-binary.yaml) items M0-KCP-SPIKE and
-      M0-SIZE-BUDGET. The user decided kcp is linked in-process and there is one binary; the spike sizes
-      the move onto kcp's Kubernetes fork (its go.mod replaces ~33 k8s.io modules) rather than choosing.
+      QUEUED: plan 0005 is complete, but the user paused plans 0006-0008 while they are refined. Plan 0006
+      (docs/plans/0006-socialweb-computer-unified-binary.yaml), revised 2026-10-11 from
+      docs/research/2026-10-11-vm-lifecycle/, items M0-XOS-GATE, M0-KCP-SPIKE, M0-SIZE-BUDGET. Linux only
+      with cross-OS seams (user, 2026-10-11): the first commit makes GOOS=darwin and GOOS=windows build and
+      vet (both broken today) and gates them in check.sh, deletes the dead WHPX/QEMU capability code and
+      hostos.DetachProcess. The kcp route (in-process on kcp's fork, or a patched release binary in its own
+      unit) is decided by the user after the spike measures both.
     instrument: >
-      A per-package breakage list from a scratch build on the fork, and the size budget enforced by
-      check.sh.
+      check.sh's cross-OS step red on today's tree then green; both kcp routes measured against the gate
+      and the user's route recorded; the linux size budget enforced by check.sh.
   - id: P6-M1
-    title: QUEUED - the module on kcp's fork, kcp in-process on port 0, verified assets, a host inventory.
+    title: QUEUED (paused) - CLI, host inventory, per-OS assets, content-addressed install, kcp in-process (if chosen).
     body: >
-      QUEUED behind plan 0005 as P6-M0. Plan 0006 items M1-CLI, M1-K8S-FORK, M1-KCP-INPROC,
-      M1-KCP-PORT0, M1-ASSETS, M1-HOST-INVENTORY. kcp's secure port and its embedded etcd (fixed
-      2379/2380 today) bind port 0 and report the bound ports through an OnListen callback.
+      QUEUED as P6-M0. Plan 0006 items M1-CLI, M1-HOST-INVENTORY, M1-ASSETS, M1-INSTALL, and on the
+      in-process route M1-K8S-FORK, M1-KCP-INPROC (closed as not chosen otherwise). Assets are embedded per
+      GOOS_GOARCH and collected only when no loaded unit names them; the core installs to bin/<sha256>/ with
+      current/previous symlinks; `install gateway|bidder` is the one root step (account, kvm before linger,
+      linger, delegation drop-in, AppArmor profile for the embedded pasta, node password, user unit).
     instrument: >
-      Two in-process kcps on port 0 in one test process get distinct ports and each admin kubeconfig
-      reaches its own; go test ./... green on the fork; every executable the code runs has a fate in
-      the host inventory.
+      Every executable the code runs has a fate in the host inventory; an extracted asset that no longer
+      matches its pin is replaced, not run; upgrade refuses a bad manifest and rollback retargets current.
   - id: P6-M2
-    title: QUEUED - long-lived children in their own systemd units, postgres and OpenBao as CRDs, manifests applied from Go.
+    title: QUEUED (paused) - user-manager units adopted never re-created, the host contract, the VM tree audit, kcp on port 0, postgres and OpenBao CRDs, apply from Go.
     body: >
-      QUEUED behind plan 0005 as P6-M0. Plan 0006 items M2-HOST-SCOPES, M2-POSTGRES, M2-OPENBAO-SERVER,
-      M2-MANIFESTS, M2-TEMPLATE, M2-APPLY; no container at runtime, so postgres and the vaults are
-      embedded and reconciled, and install-provider.sh, apply-permission-inventory.sh, the bootstrap
-      heredocs and apply.sh are replaced with no kubectl or yq.
+      QUEUED as P6-M0. Plan 0006 items M2-HOST-UNITS (was M2-HOST-SCOPES), M2-HOST-CONTRACT,
+      M2-VM-TREE-AUDIT, M2-KCP-UNIT (out-of-process route only), M2-KCP-PORT0 (was M1-KCP-PORT0),
+      M2-POSTGRES, M2-OPENBAO-SERVER, M2-MANIFESTS, M2-TEMPLATE, M2-APPLY. Transient SERVICES in the user
+      manager of a lingering account over the private socket with deadlines, PropExecStart(argv, false),
+      CollectMode=inactive, MemorySwapMax=0, no AllowedCPUs/IOWeight, own slice; systemd 253+ with probed
+      features; the invariant that no socialweb code runs in a VM unit, audited from its cgroup.
     instrument: >
-      A scoped child outlives its starter and is adopted by the next; a Postgres object survives its
-      controller's restart; a second apply of every set changes no resourceVersion.
+      A stand-in unit survives `systemctl --user restart`, kill -9, stop, daemon-reload and daemon-reexec of
+      its starter and is adopted; a failed unit's Result is readable until reset; the tree audit fails a core
+      binary in a VM unit; a Postgres object survives its controller's restart; a restarted bao is unsealed
+      on the next pass; a second apply of every set changes no resourceVersion.
   - id: P6-M3
-    title: QUEUED - serve gateway kcp on the host, verbs folded, control planes that survive an upgrade.
+    title: QUEUED (paused) - serve gateway kcp on the host with kcp first, cluster-group units ordered after postgres, the gateway as a user unit, control-plane continuity PENDING.
     body: >
-      QUEUED behind plan 0005 as P6-M0. Plan 0006 items M3-FOLD, M3-CLUSTER-SCOPES, M3-BAO-SYNC,
-      M3-SERVE-GATEWAY-KCP, M3-HOST-INSTALL. M3-BAO-SYNC carries plan 0005 M3-BAO-SYNC's rule to every
-      OpenBao the binary runs: backends, roles, policies and KV derived from live objects, reconciled
-      every pass and at startup and adoption, stale entries deleted, empty jwt mounts disabled.
+      QUEUED as P6-M0. Plan 0006 items M3-FOLD (nodeboot deleted, nodeimage to CI), M3-CLUSTER-UNITS (was
+      M3-CLUSTER-SCOPES; After= and Wants= on the cluster's postgres unit), M3-BAO-SYNC,
+      M3-SERVE-GATEWAY-KCP (order: kcp, sets, root vault, rest), M3-HOST-INSTALL (user unit, default
+      KillMode), M3-CP-CONTINUITY (PENDING the user's choice after
+      docs/research/2026-10-11-vm-lifecycle/control-plane-handover.md: drain first, raise NODE-LOSS grace,
+      accept loss, or blue/green k3s servers on a shared datastore).
     instrument: >
-      A zero-node market cluster's /readyz never fails across a kill and restart of the core process;
-      a vault seeded with stale mounts, roles, policies and KV is reduced to exactly the live set in one
-      pass; the host service on a state dir the container wrote serves the door and the same workspaces.
+      A zero-node market cluster's /readyz never fails across `systemctl --user restart` of the gateway unit
+      and an upgrade; a postgres restart does not stop its cluster group; a vault seeded with stale entries
+      is reduced to the live set in one pass; the host service on a state dir the container wrote serves the
+      door and the same workspaces; M3-CP-CONTINUITY has the user's recorded choice.
   - id: P6-M4
-    title: QUEUED - a reproducible static build within its size budget.
+    title: QUEUED (paused) - a reproducible static build per linux platform within its size budget.
     body: >
-      QUEUED behind plan 0005 as P6-M0. Plan 0006 item M4-BUILD.
+      QUEUED as P6-M0. Plan 0006 item M4-BUILD.
     instrument: >
       Two clean builds byte-identical; the binary within the budget in versions.json.
   - id: P6-M5
-    title: QUEUED - prod moves from the container to the host service; the user runs the cutover.
+    title: QUEUED (paused) - prod moves from the container to the host service; the user runs the cutover.
     body: >
-      QUEUED behind plan 0005 as P6-M0. Plan 0006 items M5-CUTOVER, M5-RETIRE and its acceptance checks
-      ACC6-ONE-BINARY, ACC6-STATE, ACC6-UPGRADE, ACC6-REPRO. No rehearsal; the rollback path is the
-      untouched docker volume and the old container, kept until M5-RETIRE.
+      QUEUED as P6-M0. Plan 0006 items M5-CUTOVER (depends on M3-CP-CONTINUITY), M5-RETIRE and its
+      acceptance checks ACC6-ONE-BINARY, ACC6-STATE, ACC6-UPGRADE, ACC6-BAO-SYNC, ACC6-REPRO, ACC6-XOS. No
+      rehearsal; the rollback path is the untouched docker volume and the old container, kept until
+      M5-RETIRE.
     instrument: >
       Post-cutover readings equal the pre-cutover ones: same workspaces, bindings, claims and ClusterLinks,
-      None nodes 0.
+      None nodes 0; the window recorded.
   - id: P7-M1
-    title: QUEUED - compute-provider-kcp's shape, and the firecracker provider's learnings inventoried.
+    title: QUEUED (paused) - compute-provider-kcp's shape, the lifecycle on record, the firecracker learnings inventoried, CI-built guest images.
     body: >
-      QUEUED: starts only after plan 0005 is complete and ACC-ZERO, ACC-MESH and ACC-NOSSH pass on prod,
-      and after the plan 0006 and 0008 items it names. Plan 0007
-      (docs/plans/0007-compute-provider-kcp.yaml) items M1-DECIDE, M1-FC-INVENTORY, M1-API,
-      M1-COMMON-EXTRACT. compute-provider-firecracker is the gold standard; both providers stay.
+      QUEUED: plan 0005 is complete, but the user paused plans 0006-0008; also waits on the plan 0006 and
+      0008 items it names. Plan 0007 (docs/plans/0007-compute-provider-kcp.yaml), revised 2026-10-11 from
+      docs/research/2026-10-11-vm-lifecycle/, items M1-DECIDE, M1-FC-INVENTORY, M1-API (OS-neutral status,
+      no network index: every guest has the identical address plan), M1-COMMON-EXTRACT, M1-GUEST-IMAGE
+      (kernel + rootfs per hypervisor x arch built in CI, pinned by sha256, fetched and verified).
+      compute-provider-firecracker is the gold standard; both providers stay.
     instrument: >
       Every exported function and logger event of the firecracker provider maps to a requirement entry;
-      ComputeVM fixtures round-trip through Go and TypeScript; enriched user_data byte-identical across
-      the extraction.
+      ComputeVM fixtures round-trip through Go and TypeScript with no backend enum; enriched user_data
+      byte-identical across the extraction; an image whose sha256 differs is refused.
   - id: P7-M2
-    title: QUEUED - the Go side at the firecracker provider's standard, unprivileged, no docker.
+    title: QUEUED (paused) - the VM runtime with no socialweb code in the VM's tree, parity with the firecracker provider, the Verdict controller.
     body: >
-      QUEUED behind plan 0005 as P7-M1. Plan 0007 items M2-BACKPORT, M2-UNPRIVILEGED-RUNNER,
-      M2-CONTROLLER. VMs boot through the kvm group, each in its own systemd unit, and the controller
-      re-populates from ComputeVM plus live VMM state.
+      QUEUED as P7-M1. Plan 0007 items M2-VM-RUNTIME (replaces the deleted M2-UNPRIVILEGED-RUNNER: one
+      transient service per VM, pasta -> /bin/sh trampoline -> socialweb-vmexec execve's firecracker
+      --config-file; graceful stop = SendCtrlAltDel, a grace window measured live, then KillSignal=SIGKILL;
+      arm64 straight to SIGKILL; console to a capped file in the work dir), M2-BACKPORT (parity at the VMSpec,
+      seed drive and fc.json; guest-reported host keys), M2-CONTROLLER (tri-state Verdict: identity mismatch
+      = Lost + StopUnit now, unreachable bus or socket = Unknown, boot id changed = Lost).
     instrument: >
-      Parity tests green on both providers; a guest boots as a non-root kvm-group user and outlives its
-      starter; a Lost guest is never booted again.
+      Parity tests green on both providers; a stand-in VMM unit's tree is pasta + the stand-in only and its
+      stop ends within TimeoutStopSec; one offline test per Verdict row; a Lost guest is never booted again.
   - id: P7-M3
-    title: QUEUED - the TypeScript provider and the bidder flag that selects it.
+    title: QUEUED (paused) - the TypeScript provider and the bidder flag that selects it.
     body: >
-      QUEUED behind plan 0005 as P7-M1. Plan 0007 items M3-TS-PROVIDER, M3-BIDDER-FLAG.
+      QUEUED as P7-M1. Plan 0007 items M3-TS-PROVIDER, M3-BIDDER-FLAG (adds the handle and the constant
+      guest host address).
     instrument: >
       Against a fake kcp, provision resolves on Running and destroy only after 404; createBidConfig
       equals the firecracker record.
   - id: P7-M4
-    title: QUEUED - a restarted bidder keeps its issuer, its keys and its contracts.
+    title: QUEUED (paused) - a restarted bidder keeps its issuer, its keys and its contracts.
     body: >
-      QUEUED behind plan 0005 as P7-M1. Plan 0007 items M4-BIDDER-VAULT, M4-BIDDER-BAO-SYNC,
+      QUEUED as P7-M1. Plan 0007 items M4-BIDDER-VAULT, M4-BIDDER-BAO-SYNC,
       M4-CONTRACT-RESTORE, M4-ONNETWORK. Live on hat-8 2026-10-07 a restarted bidder lost its receipts,
       vm.delete failed and the guest leaked; its issuer URL also moves, leaving one jwt mount per issuer
       in cluster vaults. The keys move into an OpenBao beside the bidder, reconciled against live
@@ -268,27 +286,31 @@ open:
       the same did, issuer URL and JWKS; restarts and an upgrade leave one jwt mount per bidder in the
       cluster vault.
   - id: P7-M5
-    title: QUEUED - run bidder end to end, with no docker.
+    title: QUEUED (paused) - run bidder as a user unit of the shared lingering bidder account, no docker, least-privilege deno.
     body: >
-      QUEUED behind plan 0005 as P7-M1. Plan 0007 item M5-RUN-BIDDER.
+      QUEUED as P7-M1. Plan 0007 item M5-RUN-BIDDER: one shared lingering account (swc-bidder) for all
+      handles, units namespaced by handle, kvm added before linger, default KillMode, the QR guard in Go,
+      the bidder DenoPod with no -A, --allow-run or --allow-ffi and /dev/kvm and $XDG_RUNTIME_DIR denied.
     instrument: >
-      The unit verifies and runs as a kvm-group member; the bidder DenoPod holds no kvm or unit-manager
-      access.
+      The bidder user unit verifies with no KillMode=mixed; deno in the bidder pod cannot open /dev/kvm or
+      dial the user bus or the systemd private socket.
   - id: P7-M6
-    title: QUEUED - bidder and gateway upgrades leave VMs running, and each side re-populates what it owns.
+    title: QUEUED (paused) - bidder and gateway upgrades leave VMs running, recovery cases, reboot = Lost, all through the RFP flow.
     body: >
-      QUEUED behind plan 0005 as P7-M1. Plan 0007 items M6-BIDDER-UPGRADE, M6-GATEWAY-REPOPULATE,
-      M6-LIVE-RECOVERY, M6-NOSSH-JOIN and its acceptance checks ACC7-*. The gateway rebuilds its
-      ownership from NodeClaims, receipts, market records and Nodes, including VMs bidders elsewhere
-      rented to it.
+      QUEUED as P7-M1. Plan 0007 items M6-BIDDER-UPGRADE (also measures the stop grace window),
+      M6-GATEWAY-REPOPULATE, M6-LIVE-RECOVERY (kill -9, systemctl restart, logout with linger, user-manager
+      restart = reboot semantics), M6-NOSSH-JOIN and its acceptance checks ACC7-* (incl.
+      ACC7-NO-RESIDENT-CODE). The gateway rebuilds its ownership from NodeClaims, receipts, market records
+      and Nodes, including VMs bidders elsewhere rented to it.
     instrument: >
       TestABidderUpgradeLeavesItsVMRunningAndStillReleasesIt and
-      TestAGatewayUpgradeKeepsEveryMarketNodeReadyAndOwned, through the RFP flow, with zero ssh sessions.
+      TestAGatewayUpgradeKeepsEveryMarketNodeReadyAndOwned, through the RFP flow, with zero ssh sessions and
+      the VM tree audit passing after every boot, restart and upgrade.
   - id: P8-M1
-    title: QUEUED - a pinned deno and the TypeScript closure inside the binary, run offline.
+    title: QUEUED (paused) - a pinned deno and the TypeScript closure inside the binary, run offline.
     body: >
-      QUEUED: starts only after plan 0005 is complete and ACC-ZERO, ACC-MESH and ACC-NOSSH pass on prod,
-      and after plan 0006 M1-ASSETS. Plan 0008 (docs/plans/0008-embedded-deno-and-typescript-denopods.yaml)
+      QUEUED: plan 0005 is complete, but the user paused plans 0006-0008; also waits on plan 0006
+      M1-ASSETS. Plan 0008 (docs/plans/0008-embedded-deno-and-typescript-denopods.yaml)
       items M1-DENO, M1-TS-SOURCE, M1-TS-CLOSURE. Production runs the embedded archive; other builds
       take the org root from SOCIALWEB_COMPUTER_ORG_ROOT or find it by walking up. DENO_DIR is keyed by
       the closure's sha256 and every run passes --no-code-cache (13349d6: a stale code cache ran old
@@ -297,28 +319,99 @@ open:
       An upgraded closure never runs the old code cache; an entry imported from jsr and npm runs with no
       network; two bundles of the same commits are byte-identical.
   - id: P8-M2
-    title: QUEUED - deno-kcp and kcp-libs forked into this repo and run in-process; one service DenoPod template.
+    title: QUEUED (paused) - deno-kcp and kcp-libs forked into this repo (runner build-tagged) and run in-process; one service DenoPod template with explicit permissions.
     body: >
-      QUEUED behind plan 0005 as P8-M1. Plan 0008 items M2-DENOKCP-FORK, M2-DENOKCP-INPROC,
-      M2-SERVICE-TEMPLATE.
+      QUEUED as P8-M1. Plan 0008 items M2-DENOKCP-FORK (execrunner's Setpgid moves into GOOS-tagged files so
+      the cross-OS gate stays green), M2-DENOKCP-INPROC (deno dies with the core user unit; tested with
+      `systemctl --user restart`, kill -9 and an upgrade), M2-SERVICE-TEMPLATE (required explicit
+      permissions, no -A, /dev/kvm and $XDG_RUNTIME_DIR denied; user 2026-10-11).
     instrument: >
-      A DenoPod applied to the in-process kcp runs on the embedded deno, and an upgrade restarts every
-      recorded DenoPod on the new closure exactly once.
+      A DenoPod applied to the kcp runs on the embedded deno; a restart, a kill and an upgrade each restart
+      every recorded DenoPod on the new closure exactly once; the template refuses -A.
   - id: P8-M3
-    title: QUEUED - the door runs as a DenoPod.
+    title: QUEUED (paused) - the door runs as a DenoPod.
     body: >
-      QUEUED behind plan 0005 as P8-M1. Plan 0008 item M3-DOOR-DENOPOD.
+      QUEUED as P8-M1. Plan 0008 item M3-DOOR-DENOPOD.
     instrument: >
       The door DenoPod serves /api/config and reads the same claims on a state dir the container wrote.
   - id: P8-M4
-    title: QUEUED - run gateway ssh, run request, and the market bed driven by socialweb-computer.
+    title: QUEUED (paused) - run gateway ssh, run request, and the market bed driven by socialweb-computer.
     body: >
-      QUEUED behind plan 0005 as P8-M1. Plan 0008 items M4-RUN-GATEWAY-SSH, M4-RUN-REQUEST,
-      M4-TESTBED-PORT and its acceptance checks ACC8-*. run request keeps its contracts as
-      ComputeContract objects in an in-process kcp.
+      QUEUED as P8-M1. Plan 0008 items M4-RUN-GATEWAY-SSH, M4-RUN-REQUEST, M4-TESTBED-PORT (bed units
+      named socialweb-bed-<runid>-..., never matched by production prefixes) and its acceptance checks
+      ACC8-*. run request keeps its contracts as ComputeContract objects in its own kcp on port 0.
     instrument: >
       The market bed's live test passes twice through `socialweb-computer testbed`, and `run request`
       reaches onNetwork, lists the contract, and releases it from a fresh process with vm.delete 200.
+  - id: P11-M0
+    title: QUEUED - Windows bidder spikes (plan 0011 M0).
+    body: >
+      QUEUED behind plans 0006 and 0007 (complete on Linux with ACC6-* and ACC7-* recorded) and the plan 0008
+      items 0011 names. Plan 0011 (docs/plans/0011-windows-bidder-hcs.yaml) items M0-REVISIT, M0-HOST-BASELINE,
+      M0-SCRATCH-BACKEND, M0-HCS-ACCOUNT, M0-HCS-SURVIVAL, M0-HCS-IDENTITY, M0-HNS-NETWORK, M0-COM-CONSOLE,
+      M0-BINARY-SWAP, M0-GATE. M0-REVISIT first: re-read what 0006/0007/0008 landed (hostsvc, vmruntime,
+      guestnet seams; the assets scheme; ComputeVM status) and amend 0011 before anything else.
+    instrument: >
+      M0-REVISIT's amendments recorded with the SHAs read; each spike's Windows reading recorded; M0-GATE's
+      go/no-go recorded.
+  - id: P11-M1
+    title: QUEUED - Windows HCS backend, HNS network, Hyper-V guest image, windows DenoPod runner, SCM host units.
+    body: >
+      QUEUED as P11-M0. Plan 0011 items M1-VMHOST-HCS, M1-NETWORK-HNS, M1-GUEST-IMAGE-HV,
+      M1-DENOPOD-RUNNER-WINDOWS, M1-HOSTUNIT-SCM, filling the Windows halves of the seams 0006/0007/0008
+      left as ErrUnsupported stubs.
+    instrument: >
+      Each item's tests green on the Windows host; the cross-OS gate still green on Linux.
+  - id: P11-M2
+    title: QUEUED - the Windows bidder as an SCM service, its installer, the versions/<sha> upgrade, a windows/amd64 release.
+    body: >
+      QUEUED as P11-M0. Plan 0011 items M2-BIDDER-SERVICE-WINDOWS, M2-INSTALLER-WINDOWS,
+      M2-BINARY-UPGRADE-WINDOWS, M2-RELEASE-WINDOWS.
+    instrument: >
+      The service installs and upgrades on the Windows host with a running VM untouched; a reproducible
+      windows/amd64 build within its budget.
+  - id: P11-M3
+    title: QUEUED - a live rent on Windows through the RFP flow; survival, release, reboot = Lost.
+    body: >
+      QUEUED as P11-M0. Plan 0011 items M3-LIVE-RENT, M3-LIVE-SURVIVE, M3-LIVE-REBOOT-LOST (then M4-DOCS):
+      a guest rented through requester -> RFP -> bid -> accept -> cloud-init on the Windows bidder, surviving a
+      bidder kill and upgrade, released by vm.delete, and Lost after a host reboot.
+    instrument: >
+      The three live readings recorded with UTC timestamps and zero ssh sessions.
+  - id: P12-M0
+    title: QUEUED - macOS bidder spikes (plan 0012 M0).
+    body: >
+      QUEUED behind plans 0006 and 0007 (complete on Linux with ACC6-* and ACC7-* recorded) and the plan 0008
+      items 0012 names. Plan 0012 (docs/plans/0012-macos-bidder-vz.yaml) items M0-REVISIT, M0-HOST-BASELINE,
+      M0-VFKIT-ASSET, M0-SCRATCH-BACKEND, M0-VZ-LIFETIME, M0-LAUNCHD-DOMAIN (headless, no login),
+      M0-REBOOT-LOST-POWER (reboot = Lost, power and FileVault), M0-PROC-IDENTITY (kinfo_proc),
+      M0-NETWORK-VZ (VZ NAT vs gvproxy), M0-ARCH-MODULES (arm64), M0-RESOURCES (admission), M0-GATE.
+    instrument: >
+      M0-REVISIT's amendments recorded with the SHAs read; each spike's macOS reading recorded; M0-GATE's
+      go/no-go recorded.
+  - id: P12-M1
+    title: QUEUED - vfkit launchd backend, the launchd broker, launchd host units, darwin network, arm64 guest image, darwin DenoPod runner, admission.
+    body: >
+      QUEUED as P12-M0. Plan 0012 items M1-VMHOST-VZ, M1-LAUNCHD-BROKER, M1-HOSTUNIT-LAUNCHD,
+      M1-NETWORK-DARWIN, M1-GUEST-IMAGE-ARM64, M1-DENOPOD-RUNNER-DARWIN, M1-ADMISSION-DARWIN.
+    instrument: >
+      Each item's tests green on the Mac; the cross-OS gate still green on Linux.
+  - id: P12-M2
+    title: QUEUED - the macOS bidder as a LaunchDaemon, its installer, the upgrade, a darwin/arm64 release.
+    body: >
+      QUEUED as P12-M0. Plan 0012 items M2-BIDDER-DAEMON-DARWIN, M2-INSTALLER-DARWIN,
+      M2-BINARY-UPGRADE-DARWIN, M2-RELEASE-DARWIN.
+    instrument: >
+      The daemon installs and upgrades on the Mac with a running VM untouched; a reproducible darwin/arm64
+      build within its budget.
+  - id: P12-M3
+    title: QUEUED - a live rent on macOS with no login through the RFP flow; survival, logout, release, reboot = Lost.
+    body: >
+      QUEUED as P12-M0. Plan 0012 items M3-LIVE-RENT, M3-LIVE-SURVIVE, M3-LIVE-REBOOT-LOST (then M4-DOCS): a
+      guest rented through requester -> RFP -> bid -> accept -> cloud-init on a Mac with nobody logged in,
+      surviving a bidder kill, an upgrade and a logout, released by vm.delete, and Lost after a reboot.
+    instrument: >
+      The live readings recorded with UTC timestamps and zero ssh sessions.
 
 limits:
   - title: A node cannot reach another node, so a cluster with more than one has no cluster DNS
