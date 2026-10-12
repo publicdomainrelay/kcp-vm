@@ -987,10 +987,8 @@ indirect:
     resolves: [k3s, kine, bao, external-secrets, socialweb-cloud-controller-manager, dumbpipe, pasta]
   - site: "socialweb-computer-kcp/socialweb-computer-k8s/lib/socialweb-computer-requester-inproc/bridge.ts: argv[0]"
     resolves: [dumbpipe]
-  - site: "atproto-market/hono-bidder/mod.ts: cmd"
+  - site: "atproto-market/lib/identity-prompt-tty/mod.ts: cmd"
     resolves: [open, cmd, xdg-open]
-  - site: "atproto-market/request-vm-ssh/mod.ts: cmd"
-    resolves: [open, xdg-open]
   - site: "hono-compute-provider/lib/container-backend-docker/mod.ts: bin"
     resolves: [docker, wsl, sudo]
   - site: "hono-compute-provider/lib/container-backend-docker/mod.ts: dockerBin"
