@@ -909,8 +909,8 @@ items:
       TestNoKeyOrSessionIsEverWrittenToAKcpObject (scans every object the bidder application writes).
     done_when: "green; on the market network the issuer URL logged before and after a bidder restart is identical."
     risks: ["The dispatcher must accept a reconnect under the same relay key after a crash (stale registration); measured on the market network."]
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M4-BIDDER-BAO-SYNC
     milestone: M4
     title: The bidder's OpenBao holds exactly what live ComputeVMs ask for, and key rotation never orphans a cluster's jwt mount
