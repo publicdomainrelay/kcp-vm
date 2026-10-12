@@ -1,0 +1,949 @@
+note: >
+  Plan 0006 M1-HOST-INVENTORY. Everything the control-plane container (deploy/control-plane-container/
+  Dockerfile, stages tools, controlplane and k8s), the bidder's firecracker runner image
+  (hono-compute-provider/hono-firecracker-standalone/Dockerfile) and the code's exec call sites supplied,
+  each with exactly one fate on a bare Linux host. Call sites scanned: exec.Command, exec.CommandContext,
+  exec.LookPath and syscall.Exec in non-test Go of this repo, and new Deno.Command in non-test TypeScript of
+  this repo (socialweb-computer-k8s included), atproto-market and hono-compute-provider. A computed first
+  argument is listed under indirect with every executable it resolves to. internal/versions
+  TestEveryExecutableTheCodeExecsHasAFateInTheHostInventory holds this file complete. Fates that name a
+  decision not yet in a plan item say so in why ("decided by Claude, user may veto").
+
+fates:
+  linked: compiled into the socialweb-computer core binary as a package or verb (go:embed for data files); nothing separate ships
+  embedded-server: an embedded per-GOOS_GOARCH asset (M1-ASSETS) run as its own long-running unit or HostProcess; driven_by names the CRD, or the core's local state, that starts it
+  embedded-child: an embedded asset run as a child of the core unit (deno and the TypeScript closure it runs)
+  embedded-tool: an embedded asset run to completion by the core or a unit's start stage
+  replaced-by-go: the job moves into Go in the core binary; the executable is never needed
+  download-asset: fetched and sha256-verified, never installed from a package manager (served by the door, or a guest image pinned in versions.json and built by scripts/build-guest-image.sh)
+  host-file: written by `socialweb-computer install` (root, once), never by hand
+  host-prerequisite: the host must supply it and check-host probes it by name; the only fate that comes from the host
+  build-host: needed only on a build or development host (guest image build, market bed tooling), never on a gateway, bidder or requester runtime host
+  removed-legacy: deleted by design or legacy that is not ported; no runtime host needs it
+
+entries:
+  - name: socialweb-gateway
+    kind: executable
+    fate: linked
+    owner: 0006 M1-CLI, M3-SERVE-GATEWAY-KCP
+    why: the gateway becomes `socialweb-computer serve gateway`
+    from:
+      - "image k8s COPY"
+  - name: socialweb-clusterprovider
+    kind: executable
+    fate: linked
+    owner: 0006 M1-CLI, M3-SERVE-GATEWAY-KCP
+    why: the cluster provider becomes a verb of the core binary
+    from:
+      - "image k8s COPY"
+  - name: socialweb-cloud-controller-manager
+    kind: executable
+    fate: linked
+    owner: 0006 M1-CLI, M3-CLUSTER-UNITS
+    why: a core-binary verb run as a member unit of each cluster's slice
+    from:
+      - "image k8s COPY"
+      - "internal/processrunner argv[0] via clusterstack CloudControllerManagerArgv"
+  - name: socialweb-vault
+    kind: executable
+    fate: linked
+    owner: 0006 M1-CLI, M2-OPENBAO-SERVER
+    why: apply-root and prepare-root become core verbs
+    from:
+      - "image k8s COPY"
+  - name: socialweb-tenantcredential
+    kind: executable
+    fate: linked
+    owner: 0006 M1-CLI
+    why: an internal re-exec verb of the core binary
+    from:
+      - "image k8s COPY"
+  - name: socialweb-computer-kcp-check-host
+    kind: executable
+    fate: linked
+    owner: 0006 M1-CLI, M2-HOST-CONTRACT
+    why: becomes `socialweb-computer check-host`; its SELinux probe execs its own copy, which is the core binary
+    from:
+      - "image controlplane COPY"
+      - "image nodeimage COPY"
+      - "check-host checks.go copyPath"
+  - name: container-entrypoint
+    kind: executable
+    fate: linked
+    owner: 0006 M2-BOOTSTRAP-LAYER, M3-SERVE-GATEWAY-KCP, M5-RETIRE
+    why: its sequence (root bao, kcp, apply-root, bootstrap applies, gateway, clusterprovider, socat, door) becomes the core's bootstrap layer and kcp-reconciled units; the shell script is deleted with the container path
+    from:
+      - "image k8s COPY of deploy/container-entrypoint.sh"
+  - name: kcp
+    kind: executable
+    fate: embedded-server
+    driven_by: the core, from local state (alternating blue/green slot units behind the core's own L4 front)
+    owner: 0006 M2-KCP-SLOTS, M1-ASSETS
+    why: the unpatched release v0.33.0 as a zstd asset, out of process (user decision 2026-10-12, kcp-spike.md route B)
+    from:
+      - "image controlplane COPY"
+      - "check-host checks.go path"
+  - name: kine
+    kind: executable
+    fate: embedded-server
+    driven_by: Cluster (a member unit of each cluster's slice); the core for kcp's own store
+    owner: 0006 M3-CLUSTER-UNITS, M2-KCP-STORE, M1-ASSETS
+    why: each cluster's store is kine over its own postgres; kcp's store is kine over a dedicated postgres unit
+    from:
+      - "image controlplane COPY"
+      - "check-host checks.go"
+      - "internal/processrunner argv[0] via clusterstack KineArgv"
+  - name: postgres
+    kind: executable
+    fate: embedded-server
+    driven_by: Postgres CRD (each cluster's postgres); the core for kcp's own postgres unit
+    owner: 0006 M2-POSTGRES, M2-KCP-STORE, M0-PG-SOURCE, M1-ASSETS
+    why: a relocatable PostgreSQL 18 set; the build (prebuilt vs from source) is M0-PG-SOURCE's pending choice
+    from:
+      - "image controlplane dnf postgresql-server"
+      - "internal/clusterprovider/postgres.go"
+      - "check-host postgres.go"
+  - name: bao
+    kind: executable
+    fate: embedded-server
+    driven_by: OpenBaoServer CRD (root and bidder vaults); Cluster for the per-cluster bao member unit
+    owner: 0006 M2-OPENBAO-SERVER, M3-CLUSTER-UNITS, M1-ASSETS
+    why: OpenBao v2.6.2 as an asset
+    from:
+      - "image controlplane COPY"
+      - "internal/processrunner argv[0] via clusterstack OpenBaoArgv"
+  - name: k3s
+    kind: executable
+    fate: embedded-server
+    driven_by: Cluster (a member unit of each cluster's slice, blue/green slots behind the per-cluster front)
+    owner: 0006 M3-CLUSTER-UNITS, M3-CP-SLOTS, M1-ASSETS
+    why: the tenant control plane; the guest image build also runs it for check-config, from the build host's own copy
+    from:
+      - "image controlplane COPY"
+      - "image nodeimage COPY"
+      - "check-host checks.go"
+      - "socialweb-nodeimage k3sdata.go"
+      - "internal/processrunner argv[0]"
+  - name: external-secrets
+    kind: executable
+    fate: embedded-server
+    driven_by: Cluster (controller and webhook, two member units of each cluster's slice)
+    owner: 0006 M3-CLUSTER-UNITS, M1-ASSETS
+    why: the digest-pinned upstream binary, now an asset instead of an image copy
+    from:
+      - "image controlplane COPY"
+      - "internal/processrunner argv[0] via clusterstack ExternalSecretsArgv"
+  - name: dumbpipe
+    kind: executable
+    fate: embedded-server
+    driven_by: ClusterLink (member units of each cluster's slice); the requester instance's tunnel HostProcess
+    owner: 0006 M3-CLUSTER-UNITS, M1-ASSETS, 0008 M4-RUN-REQUEST
+    why: the iroh transport, the only guest transport kept (user decision 2026-10-12); the requester's `which dumbpipe` lookup goes with the asset
+    from:
+      - "image k8s curl download"
+      - "internal/processrunner argv[0] via clusterlink.Argv"
+      - "atproto-market requester-xrpc ensureDumbpipe"
+  - name: firecracker
+    kind: executable
+    fate: embedded-server
+    driven_by: ComputeVM (the VM unit, launched directly by the service manager)
+    owner: 0007 M2-VM-RUNTIME, 0006 M1-ASSETS
+    why: no runner container; the VMM is the VM unit's own process
+    from:
+      - "runner image COPY"
+      - "check-host checks.go"
+      - "internal/nodefirecracker/namespace.go params.VMM"
+  - name: pasta
+    kind: executable
+    fate: embedded-server
+    driven_by: ComputeVM (the VM unit's network stage, in the VM's own user and network namespace)
+    owner: 0007 M2-VM-RUNTIME, 0006 M1-ASSETS, M1-INSTALL (AppArmor profile)
+    why: from passt; the constant pasta gateway replaces the network-index allocator
+    from:
+      - "runner image dnf passt"
+      - "check-host checks.go"
+      - "internal/processrunner argv[0] via nodeboot"
+  - name: deno
+    kind: executable
+    fate: embedded-child
+    owner: 0008 M1-DENO, 0006 M1-ASSETS
+    why: deno 2.9.3 run by the core as the DenoPod runtime (door, bidder, requester)
+    from:
+      - "image k8s curl download"
+  - name: initdb
+    kind: executable
+    fate: embedded-tool
+    owner: 0006 M2-POSTGRES, M0-PG-SOURCE
+    why: part of the relocatable postgres set, run once per data dir
+    from:
+      - "image controlplane dnf postgresql-server"
+      - "internal/clusterprovider/postgres.go"
+      - "check-host postgres.go"
+  - name: pg_dump
+    kind: executable
+    fate: embedded-tool
+    owner: 0006 M2-KCP-STORE, M3-CP-SLOTS, M0-PG-SOURCE
+    why: the dump taken before each kcp or k3s upgrade; joins the postgres asset set
+    from:
+      - "plan 0006 M2-KCP-STORE"
+  - name: socialweb-vmexec
+    kind: executable
+    fate: embedded-tool
+    owner: 0007 M2-VM-RUNTIME
+    why: the VM unit's one-shot prep stage (tap, userns) that execs into pasta and firecracker; no socialweb-computer code stays in the VM's process tree
+    from:
+      - "plan 0007 M2-VM-RUNTIME"
+  - name: psql
+    kind: executable
+    fate: replaced-by-go
+    owner: 0006 M2-POSTGRES
+    why: bootstrap rows and readiness go through pgx
+    from:
+      - "image controlplane dnf postgresql"
+      - "internal/clusterprovider/bootstraprows.go"
+      - "internal/clusterprovider/postgres.go"
+      - "check-host postgres.go"
+  - name: kubectl
+    kind: executable
+    fate: replaced-by-go
+    owner: 0006 M2-APPLY
+    why: every apply goes through internal/kcpapply (dynamic client, server-side apply)
+    from:
+      - "image controlplane COPY"
+      - "check-host checks.go"
+      - "deploy/container-entrypoint.sh"
+      - "deploy/install-provider.sh"
+  - name: yq
+    kind: executable
+    fate: replaced-by-go
+    owner: 0006 M2-APPLY, M2-TEMPLATE
+    why: manifest rendering and patching move into kcpapply and the template layer
+    from:
+      - "image k8s dnf yq"
+  - name: socat
+    kind: executable
+    fate: replaced-by-go
+    owner: 0006 M3-SERVE-GATEWAY-KCP
+    why: the TLS terminator becomes a crypto/tls proxy in the core
+    from:
+      - "image k8s dnf socat"
+      - "deploy/container-entrypoint.sh"
+  - name: openssl
+    kind: executable
+    fate: replaced-by-go
+    owner: 0006 M3-SERVE-GATEWAY-KCP
+    why: certificates are minted with crypto/x509
+    from:
+      - "image k8s dnf openssl"
+  - name: ip
+    kind: executable
+    fate: replaced-by-go
+    owner: 0007 M2-VM-RUNTIME
+    why: netlink in socialweb-vmexec; the identical per-guest address plan needs no host address scan
+    from:
+      - "image k8s dnf iproute"
+      - "runner image dnf iproute"
+      - "internal/nodevm/namespace.go"
+  - name: which
+    kind: executable
+    fate: replaced-by-go
+    owner: 0006 M1-ASSETS
+    why: assets are resolved by their extracted path, never searched on PATH; the requester's which dumbpipe/websocat goes
+    from:
+      - "image k8s dnf which"
+      - "atproto-market requester-xrpc ensureDumbpipe and ensureWebsocat"
+  - name: unzip
+    kind: executable
+    fate: replaced-by-go
+    owner: 0006 M1-ASSETS
+    why: only unpacked the deno release in the image build; assets are zstd blobs the core extracts
+    from:
+      - "image k8s dnf unzip"
+  - name: curl
+    kind: executable
+    fate: replaced-by-go
+    owner: 0006 M1-ASSETS
+    why: only fetched deno, dumbpipe and the ESO bundle at image build time; those are embedded assets now
+    from:
+      - "image esobundle and k8s RUN curl"
+  - name: ssh-keygen
+    kind: executable
+    fate: replaced-by-go
+    owner: 0007 M4-HOST-KEYS, 0008 M4-RUN-REQUEST
+    why: ed25519 keypairs are minted in-process with golang.org/x/crypto/ssh and kept in the application's own OpenBao (every key lives there, user decision 2026-10-12); decided by Claude, user may veto
+    from:
+      - "socialweb-computer-k8s door debugNodeSsh"
+      - "atproto-market requester-xrpc generateKeypair"
+      - "hono-compute-provider systemctl-shim"
+  - name: ssh
+    kind: executable
+    fate: host-prerequisite
+    owner: 0008 M4-RUN-REQUEST, M4-RUN-GATEWAY-SSH
+    why: the person's own OpenSSH client for the interactive session on a requester host (ProxyCommand over dumbpipe); not needed on gateway or bidder hosts
+    from:
+      - "atproto-market requester-xrpc"
+      - "image k8s dnf openssh-clients"
+  - name: newuidmap
+    kind: executable
+    fate: host-prerequisite
+    owner: 0007 M2-VM-RUNTIME, 0006 M2-HOST-CONTRACT
+    why: the distro's setuid helper (rootless podman's) maps each VM's subuid range; a setuid helper is never shipped as an asset; bidders only
+    from:
+      - "user decision 2026-10-12 per-VM subuid user namespaces"
+  - name: newgidmap
+    kind: executable
+    fate: host-prerequisite
+    owner: 0007 M2-VM-RUNTIME, 0006 M2-HOST-CONTRACT
+    why: as newuidmap, for the subgid range; bidders only
+    from:
+      - "user decision 2026-10-12 per-VM subuid user namespaces"
+  - name: unshare
+    kind: executable
+    fate: host-prerequisite
+    owner: 0007 M0-VM-USERNS, 0006 M2-HOST-CONTRACT
+    why: util-linux unshare >= 2.38, required only if M0-VM-USERNS chooses it for the userns stage; check-host already probes it
+    from:
+      - "check-host checks.go"
+  - name: systemd
+    kind: executable
+    fate: host-prerequisite
+    owner: 0006 M2-HOST-UNITS, M2-HOST-CONTRACT
+    why: systemd 253+ (GetUnitByPIDFD) with the user manager of a lingering account, reached over D-Bus; production installs only, the dev backend is proc
+    from:
+      - "user decision 2026-10-11 minimum systemd"
+  - name: netsh
+    kind: executable
+    fate: host-prerequisite
+    owner: 0011 M0-REVISIT
+    why: a Windows OS component read by internal/hostos portrange_windows.go; compiled only for GOOS=windows, outside this Linux plan
+    from:
+      - "internal/hostos/portrange_windows.go"
+  - name: netstat
+    kind: executable
+    fate: host-prerequisite
+    owner: 0011 M0-REVISIT
+    why: a Windows OS component read by internal/portscan scan_windows.go; compiled only for GOOS=windows
+    from:
+      - "internal/portscan/scan_windows.go"
+  - name: powershell
+    kind: executable
+    fate: host-prerequisite
+    owner: 0011 M0-REVISIT
+    why: a Windows OS component read by internal/hostos proc_windows.go; compiled only for GOOS=windows
+    from:
+      - "internal/hostos/proc_windows.go"
+  - name: socialweb-credential
+    kind: executable
+    fate: download-asset
+    owner: 0006 M1-ASSETS
+    why: four cross-builds the door serves as downloads; the gateway itself never runs it
+    from:
+      - "image k8s COPY"
+      - "image credentials stage"
+  - name: socialweb-meshd
+    kind: executable
+    fate: download-asset
+    owner: 0006 M1-ASSETS
+    why: two sha256-pinned builds (x86_64, aarch64) the door serves to market nodes
+    from:
+      - "image k8s COPY --from=meshd"
+  - name: socialweb-nodeinit
+    kind: executable
+    fate: download-asset
+    owner: 0007 M1-GUEST-IMAGE
+    why: the guest's init inside the guest image, which is built by scripts/build-guest-image.sh and fetched and verified by bidders
+    from:
+      - "image nodeimage stage"
+  - name: init
+    kind: executable
+    fate: download-asset
+    owner: 0007 M1-GUEST-IMAGE
+    why: /sbin/init inside the guest image, exec'd by socialweb-nodeinit in the guest
+    from:
+      - "cmd/socialweb-nodeinit/init.go syscall.Exec"
+  - name: busybox
+    kind: executable
+    fate: download-asset
+    owner: 0007 M1-GUEST-IMAGE
+    why: /bin/busybox inside the guest image (insmod in the guest's init)
+    from:
+      - "cmd/socialweb-nodeinit/init.go"
+  - name: socialweb-nodeimage
+    kind: executable
+    fate: build-host
+    owner: 0007 M1-GUEST-IMAGE
+    why: run only by scripts/build-guest-image.sh on a Linux build host; the bidder's node-image-firecracker exec of it goes, bidders fetch the image
+    from:
+      - "image nodeimage COPY"
+      - "hono-compute-provider node-image-firecracker binary"
+  - name: go
+    kind: executable
+    fate: build-host
+    owner: 0007 M1-GUEST-IMAGE
+    why: socialweb-nodeimage builds socialweb-nodeinit for the guest
+    from:
+      - "cmd/socialweb-nodeimage/build.go"
+  - name: zstd
+    kind: executable
+    fate: build-host
+    owner: 0007 M1-GUEST-IMAGE
+    why: guest image build only; runtime assets are zstd blobs the core decodes in Go
+    from:
+      - "cmd/socialweb-nodeimage/build.go"
+      - "image tools dnf zstd"
+  - name: xz
+    kind: executable
+    fate: build-host
+    owner: 0007 M1-GUEST-IMAGE
+    why: unpacks kernel modules during the guest image build
+    from:
+      - "cmd/socialweb-nodeimage/build.go"
+      - "image tools dnf xz"
+  - name: cpio
+    kind: executable
+    fate: build-host
+    owner: 0007 M1-GUEST-IMAGE
+    why: packs the guest initramfs during the image build
+    from:
+      - "cmd/socialweb-nodeimage/build.go"
+      - "image tools dnf cpio"
+  - name: du
+    kind: executable
+    fate: build-host
+    owner: 0007 M1-GUEST-IMAGE
+    why: sizes the rootfs during the image build
+    from:
+      - "cmd/socialweb-nodeimage/rootfs.go"
+  - name: chroot
+    kind: executable
+    fate: build-host
+    owner: 0007 M1-GUEST-IMAGE
+    why: runs the preinstall (apt-get) inside the rootfs during the image build
+    from:
+      - "cmd/socialweb-nodeimage/rootfs.go name"
+  - name: mount
+    kind: executable
+    fate: build-host
+    owner: 0007 M1-GUEST-IMAGE
+    why: image build only
+    from:
+      - "cmd/socialweb-nodeimage/rootfs.go name"
+  - name: umount
+    kind: executable
+    fate: build-host
+    owner: 0007 M1-GUEST-IMAGE
+    why: image build only
+    from:
+      - "cmd/socialweb-nodeimage/rootfs.go name"
+  - name: unsquashfs
+    kind: executable
+    fate: build-host
+    owner: 0007 M1-GUEST-IMAGE
+    why: unpacks the base rootfs during the image build
+    from:
+      - "cmd/socialweb-nodeimage/rootfs.go name"
+      - "image tools dnf squashfs-tools"
+  - name: cp
+    kind: executable
+    fate: build-host
+    owner: 0007 M1-GUEST-IMAGE
+    why: image build only
+    from:
+      - "cmd/socialweb-nodeimage/rootfs.go name"
+  - name: mkfs.ext4
+    kind: executable
+    fate: build-host
+    owner: 0007 M1-GUEST-IMAGE, M2-VM-RUNTIME
+    why: builds the rootfs image on the build host; its runtime use (internal/nodevm/disk.go seed disk) is deleted by design, the guest seed is a pure-Go NoCloud cidata drive (user decision 2026-10-12)
+    from:
+      - "cmd/socialweb-nodeimage/rootfs.go name"
+      - "internal/nodevm/disk.go"
+      - "hono-compute-provider qemu-standalone"
+  - name: git
+    kind: executable
+    fate: build-host
+    owner: 0008 M1-BED-PARALLEL
+    why: internal/marketbed records the vendored deno-kcp commit of a market test bed; development hosts only
+    from:
+      - "internal/marketbed/record.go"
+  - name: debugfs
+    kind: executable
+    fate: removed-legacy
+    owner: 0007 M2-VM-RUNTIME
+    why: deleted by design; the guest seed is a separate pure-Go cidata drive (user decision 2026-10-12)
+    from:
+      - "cmd/socialweb-nodeboot/main.go"
+  - name: e2fsck
+    kind: executable
+    fate: removed-legacy
+    owner: 0007 M2-VM-RUNTIME
+    why: deleted by design; the rootfs is copied as-is and the guest grows its own root
+    from:
+      - "cmd/socialweb-nodeboot/main.go"
+  - name: resize2fs
+    kind: executable
+    fate: removed-legacy
+    owner: 0007 M2-VM-RUNTIME
+    why: deleted by design; the guest grows its own root (growpart and resizefs in the guest)
+    from:
+      - "cmd/socialweb-nodeboot/main.go"
+  - name: socialweb-nodeboot
+    kind: executable
+    fate: removed-legacy
+    owner: 0007 M2-VM-RUNTIME
+    why: cmd/socialweb-nodeboot is deleted; the VM unit runs socialweb-vmexec, pasta and firecracker directly
+    from:
+      - "runner image COPY"
+      - "hono-compute-provider microvm-firecracker"
+  - name: entrypoint.sh
+    kind: executable
+    fate: removed-legacy
+    owner: 0007 M2-VM-RUNTIME
+    why: the runner container's entrypoint (chmod /dev/kvm, runuser nodeboot); no runner container on a bare host
+    from:
+      - "runner image COPY"
+  - name: docker
+    kind: executable
+    fate: removed-legacy
+    owner: 0007 M2-VM-RUNTIME, 0006 M5-RETIRE
+    why: no container at runtime (user decision 2026-10-07); the firecracker runner container and container-mode backends are not ported
+    from:
+      - "hono-compute-provider container-backend-docker"
+      - "oidc-issuer-hono containerCli"
+  - name: wsl
+    kind: executable
+    fate: removed-legacy
+    owner: 0011 M0-REVISIT
+    why: the Windows path of the docker backend; Windows bidders use HCS (plan 0011), not WSL docker
+    from:
+      - "hono-compute-provider container-backend-docker"
+  - name: container
+    kind: executable
+    fate: removed-legacy
+    owner: 0012 M0-REVISIT
+    why: Apple's container CLI is a container-mode backend, not the headless VM backend plan 0012 builds
+    from:
+      - "hono-compute-provider container-backend-container"
+      - "oidc-issuer-hono containerCli"
+  - name: sudo
+    kind: executable
+    fate: removed-legacy
+    owner: 0006 M1-INSTALL
+    why: nothing escalates at runtime; the one root step is `socialweb-computer install`, run as root by the operator (qemu-standalone's sudo sh/mksquashfs/tar/mount chain and the docker daemon start go with their backends)
+    from:
+      - "hono-compute-provider qemu-standalone"
+      - "container-backend-docker"
+  - name: qemu-system-x86_64
+    kind: executable
+    fate: removed-legacy
+    owner: 0006 M0-XOS-GATE
+    why: the QEMU substrate was retired (9d85916); check-host's QEMU capability code and hono-qemu-standalone go
+    from:
+      - "check-host platform.go"
+      - "hono-compute-provider qemu-standalone"
+  - name: skopeo
+    kind: executable
+    fate: removed-legacy
+    owner: 0006 M0-XOS-GATE
+    why: hono-qemu-standalone only
+    from:
+      - "hono-compute-provider qemu-standalone"
+  - name: truncate
+    kind: executable
+    fate: removed-legacy
+    owner: 0006 M0-XOS-GATE
+    why: hono-qemu-standalone only
+    from:
+      - "hono-compute-provider qemu-standalone"
+  - name: find
+    kind: executable
+    fate: removed-legacy
+    owner: 0006 M0-XOS-GATE
+    why: hono-qemu-standalone only
+    from:
+      - "hono-compute-provider qemu-standalone"
+  - name: ssh-keyscan
+    kind: executable
+    fate: removed-legacy
+    owner: 0007 M4-HOST-KEYS
+    why: the host-side scan is deleted; guests report their own host keys as vm.hostKeys
+    from:
+      - "hono-compute-provider oidc-issuer-hono getPublicKeyFromSshd"
+  - name: websocat
+    kind: executable
+    fate: removed-legacy
+    owner: user decision 2026-10-12 (multi-server-to-kcp.md section 7), no plan item yet
+    why: every non-iroh guest transport is stripped as legacy, websocat ProxyCommand paths included
+    from:
+      - "atproto-market requester-xrpc ensureWebsocat"
+  - name: xdg-open
+    kind: executable
+    fate: removed-legacy
+    owner: 0008 M4-RUN-REQUEST
+    why: sign-in becomes an identity CRD whose status carries the URL to visit (user decision 2026-10-12, Q2); nothing spawns a browser
+    from:
+      - "atproto-market hono-bidder"
+      - "request-vm-ssh"
+  - name: open
+    kind: executable
+    fate: removed-legacy
+    owner: 0008 M4-RUN-REQUEST
+    why: the darwin browser opener; as xdg-open
+    from:
+      - "atproto-market hono-bidder"
+      - "request-vm-ssh"
+  - name: cmd
+    kind: executable
+    fate: removed-legacy
+    owner: 0008 M4-RUN-REQUEST
+    why: the windows browser opener; as xdg-open
+    from:
+      - "atproto-market hono-bidder"
+  - name: systemctl
+    kind: executable
+    fate: removed-legacy
+    owner: 0006 M2-HOST-UNITS
+    why: units are driven over D-Bus (go-systemd), never the systemctl CLI; compute-provider-local's systemctl shim is a container-mode provider that is not ported
+    from:
+      - "hono-compute-provider compute-provider-local systemctl-shim"
+  - name: bash
+    kind: executable
+    fate: removed-legacy
+    owner: 0006 M2-HOST-UNITS
+    why: compute-provider-local's systemctl shim runs unit ExecStart lines through bash; not ported
+    from:
+      - "hono-compute-provider compute-provider-local systemctl-shim"
+  - name: cloud-init
+    kind: executable
+    fate: removed-legacy
+    owner: 0007 M1-GUEST-IMAGE
+    why: cloud-init runs only inside guests, from the guest image; compute-provider-local ran it on the host and is not ported
+    from:
+      - "hono-compute-provider compute-provider-local systemctl-shim"
+  - name: tail
+    kind: executable
+    fate: removed-legacy
+    owner: 0006 M2-HOST-UNITS
+    why: compute-provider-local's log follower; not ported, unit output goes to capped files
+    from:
+      - "hono-compute-provider compute-provider-local systemctl-shim"
+
+  - name: postgresql-server
+    kind: package
+    fate: embedded-server
+    driven_by: Postgres CRD; the core for kcp's own postgres unit
+    owner: 0006 M2-POSTGRES, M0-PG-SOURCE
+    why: replaced by the relocatable postgres asset set (postgres, initdb, pg_dump)
+    from:
+      - "image controlplane"
+  - name: postgresql
+    kind: package
+    fate: replaced-by-go
+    owner: 0006 M2-POSTGRES
+    why: supplied psql only; pgx replaces it
+    from:
+      - "image controlplane"
+  - name: yq
+    kind: package
+    fate: replaced-by-go
+    owner: 0006 M2-APPLY
+    why: see the yq executable
+    from:
+      - "image k8s"
+  - name: iproute
+    kind: package
+    fate: replaced-by-go
+    owner: 0007 M2-VM-RUNTIME
+    why: supplied ip; netlink in socialweb-vmexec replaces it
+    from:
+      - "image k8s"
+      - "runner image"
+  - name: socat
+    kind: package
+    fate: replaced-by-go
+    owner: 0006 M3-SERVE-GATEWAY-KCP
+    why: see the socat executable
+    from:
+      - "image k8s"
+  - name: openssl
+    kind: package
+    fate: replaced-by-go
+    owner: 0006 M3-SERVE-GATEWAY-KCP
+    why: see the openssl executable
+    from:
+      - "image k8s"
+  - name: unzip
+    kind: package
+    fate: replaced-by-go
+    owner: 0006 M1-ASSETS
+    why: see the unzip executable
+    from:
+      - "image k8s"
+  - name: which
+    kind: package
+    fate: replaced-by-go
+    owner: 0006 M1-ASSETS
+    why: see the which executable
+    from:
+      - "image k8s"
+  - name: openssh-clients
+    kind: package
+    fate: replaced-by-go
+    owner: 0007 M4-HOST-KEYS, 0008 M4-RUN-REQUEST
+    why: supplied ssh-keygen (replaced in Go) and ssh (a requester host's own client, inventoried as a host prerequisite executable); gateway and bidder hosts need neither
+    from:
+      - "image k8s"
+      - "runner image"
+  - name: passt
+    kind: package
+    fate: embedded-server
+    driven_by: ComputeVM (the VM unit's network stage)
+    owner: 0007 M2-VM-RUNTIME, 0006 M1-ASSETS
+    why: supplied pasta, now a pinned asset
+    from:
+      - "runner image"
+  - name: util-linux
+    kind: package
+    fate: removed-legacy
+    owner: 0007 M0-VM-USERNS
+    why: supplied runuser (runner entrypoint) and unshare; unshare is inventoried as a conditional host prerequisite executable, nothing else is used
+    from:
+      - "image controlplane"
+      - "runner image"
+  - name: procps-ng
+    kind: package
+    fate: removed-legacy
+    owner: 0006 M5-RETIRE
+    why: no exec site; container base utility
+    from:
+      - "image controlplane"
+  - name: hostname
+    kind: package
+    fate: removed-legacy
+    owner: 0006 M5-RETIRE
+    why: no exec site; container base utility
+    from:
+      - "image controlplane"
+  - name: coreutils
+    kind: package
+    fate: build-host
+    owner: 0007 M1-GUEST-IMAGE
+    why: the image build's du and cp; the runtime container's copy goes with the container (no exec site in the core)
+    from:
+      - "image tools"
+      - "image controlplane"
+  - name: findutils
+    kind: package
+    fate: build-host
+    owner: 0007 M1-GUEST-IMAGE
+    why: image build only; the runtime container's copy goes with the container
+    from:
+      - "image tools"
+      - "image controlplane"
+  - name: tar
+    kind: package
+    fate: build-host
+    owner: 0007 M1-GUEST-IMAGE
+    why: image build only; the runtime container's copy goes with the container
+    from:
+      - "image tools"
+      - "image controlplane"
+  - name: gzip
+    kind: package
+    fate: build-host
+    owner: 0007 M1-GUEST-IMAGE
+    why: image build only; the runtime container's copy goes with the container
+    from:
+      - "image tools"
+      - "image controlplane"
+  - name: squashfs-tools
+    kind: package
+    fate: build-host
+    owner: 0007 M1-GUEST-IMAGE
+    why: supplied unsquashfs for the image build
+    from:
+      - "image tools"
+  - name: cpio
+    kind: package
+    fate: build-host
+    owner: 0007 M1-GUEST-IMAGE
+    why: see the cpio executable
+    from:
+      - "image tools"
+  - name: xz
+    kind: package
+    fate: build-host
+    owner: 0007 M1-GUEST-IMAGE
+    why: see the xz executable
+    from:
+      - "image tools"
+  - name: zstd
+    kind: package
+    fate: build-host
+    owner: 0007 M1-GUEST-IMAGE
+    why: see the zstd executable
+    from:
+      - "image tools"
+  - name: e2fsprogs
+    kind: package
+    fate: build-host
+    owner: 0007 M1-GUEST-IMAGE, M2-VM-RUNTIME
+    why: mkfs.ext4 for the rootfs on the build host; its runtime tools (debugfs, e2fsck, resize2fs) are deleted by design
+    from:
+      - "image tools"
+      - "runner image"
+  - name: busybox
+    kind: package
+    fate: build-host
+    owner: 0007 M1-GUEST-IMAGE
+    why: copied into the guest image by the build; the guest's busybox is part of the downloaded image
+    from:
+      - "image tools"
+
+  - name: /etc/rancher/node/password
+    kind: file
+    fate: host-file
+    owner: 0006 M1-INSTALL
+    why: the k3s invariant (versions.json k3s); install writes it once, dev bind-mounts a per-instance copy in a userns
+    from:
+      - "image controlplane RUN"
+  - name: /etc/subuid
+    kind: file
+    fate: host-file
+    owner: 0006 M1-INSTALL, 0007 M2-VM-RUNTIME
+    why: install bidder reserves one subuid range for the shared lingering account
+    from:
+      - "user decision 2026-10-12 per-VM subuid user namespaces"
+  - name: /etc/subgid
+    kind: file
+    fate: host-file
+    owner: 0006 M1-INSTALL, 0007 M2-VM-RUNTIME
+    why: as /etc/subuid, for groups
+    from:
+      - "user decision 2026-10-12 per-VM subuid user namespaces"
+  - name: /etc/apparmor.d/socialweb-computer-pasta
+    kind: file
+    fate: host-file
+    owner: 0006 M1-INSTALL
+    why: Ubuntu 24.04+ userns restriction; the profile grants userns to the pinned pasta asset path (user decision 2026-10-11)
+    from:
+      - "user decision 2026-10-11 AppArmor"
+  - name: /var/lib/systemd/linger
+    kind: file
+    fate: host-file
+    owner: 0006 M1-INSTALL
+    why: install enables linger for the one shared account, so its user manager outlives logout
+    from:
+      - "user decision 2026-10-11 user manager of a lingering account"
+  - name: /var/lib/socialweb
+    kind: file
+    fate: host-file
+    owner: 0006 M1-INSTALL, M1-DEV-INSTANCE
+    why: the state dir (install creates it; dev uses a per-instance dir under the user's state home)
+    from:
+      - "image k8s RUN install -d"
+  - name: /opt/org-root
+    kind: file
+    fate: embedded-child
+    owner: 0008 M1-TS-CLOSURE
+    why: the door's TypeScript closure, embedded and run by the deno child
+    from:
+      - "image k8s COPY --from=k8stree"
+  - name: /opt/deno-dir
+    kind: file
+    fate: embedded-child
+    owner: 0008 M1-TS-CLOSURE, M1-DENO
+    why: the deno module cache, populated from the embedded closure
+    from:
+      - "image k8s RUN deno cache"
+  - name: /opt/socialweb/eso/external-secrets.yaml
+    kind: file
+    fate: linked
+    owner: 0006 M1-ASSETS
+    why: the ESO bundle pinned by bundleSha256, embedded in the core next to its pin; decided by Claude, user may veto
+    from:
+      - "image controlplane COPY --from=esobundle"
+  - name: /opt/socialweb/deploy
+    kind: file
+    fate: linked
+    owner: 0006 M2-MANIFESTS
+    why: the deploy manifests become the core's embedded manifest sets
+    from:
+      - "image k8s COPY deploy/"
+  - name: /dev/kvm
+    kind: file
+    fate: host-prerequisite
+    owner: 0006 M2-HOST-CONTRACT, M1-INSTALL (kvm group)
+    why: bidders only, reached through the kvm group, never handed to deno
+    from:
+      - "runner image entrypoint chmod"
+  - name: /dev/net/tun
+    kind: file
+    fate: host-prerequisite
+    owner: 0006 M2-HOST-CONTRACT
+    why: bidders only, for pasta's tap
+    from:
+      - "runner image entrypoint chmod"
+  - name: /sys/fs/cgroup
+    kind: file
+    fate: host-prerequisite
+    owner: 0006 M2-HOST-CONTRACT
+    why: a Linux kernel with cgroup v2 and cpu, memory and pids delegated to the user manager
+    from:
+      - "user decision 2026-10-11 gateway lifecycle manager"
+
+indirect:
+  - site: "socialweb-computer-kcp/cmd/socialweb-computer-kcp-check-host/checks.go: nodefirecracker.DefaultPasta"
+    resolves: [pasta]
+  - site: "socialweb-computer-kcp/cmd/socialweb-computer-kcp-check-host/checks.go: path"
+    resolves: [pasta, kubectl, kine, kcp]
+  - site: "socialweb-computer-kcp/cmd/socialweb-computer-kcp-check-host/checks.go: probe"
+    resolves: [unshare]
+  - site: "socialweb-computer-kcp/cmd/socialweb-computer-kcp-check-host/checks.go: f.firecracker"
+    resolves: [firecracker]
+  - site: "socialweb-computer-kcp/cmd/socialweb-computer-kcp-check-host/checks.go: f.k3s"
+    resolves: [k3s]
+  - site: "socialweb-computer-kcp/cmd/socialweb-computer-kcp-check-host/checks.go: onPath"
+    resolves: [k3s]
+  - site: "socialweb-computer-kcp/cmd/socialweb-computer-kcp-check-host/checks.go: copyPath"
+    resolves: [socialweb-computer-kcp-check-host]
+  - site: "socialweb-computer-kcp/cmd/socialweb-computer-kcp-check-host/platform.go: path"
+    resolves: [qemu-system-x86_64]
+  - site: "socialweb-computer-kcp/cmd/socialweb-computer-kcp-check-host/postgres.go: path"
+    resolves: [initdb, postgres, psql]
+  - site: "socialweb-computer-kcp/cmd/socialweb-computer-kcp-check-host/postgres.go: binaries[0]"
+    resolves: [initdb]
+  - site: "socialweb-computer-kcp/cmd/socialweb-nodeboot/main.go: name"
+    resolves: [e2fsck, resize2fs]
+  - site: "socialweb-computer-kcp/cmd/socialweb-nodeimage/k3sdata.go: cfg.K3sBinary"
+    resolves: [k3s]
+  - site: "socialweb-computer-kcp/cmd/socialweb-nodeimage/rootfs.go: name"
+    resolves: [cp, mkfs.ext4, mount, umount, chroot, unsquashfs]
+  - site: "socialweb-computer-kcp/internal/clusterprovider/bootstraprows.go: bin"
+    resolves: [psql]
+  - site: "socialweb-computer-kcp/internal/clusterprovider/postgres.go: name"
+    resolves: [initdb, postgres, psql]
+  - site: "socialweb-computer-kcp/internal/clusterprovider/postgres.go: initdb"
+    resolves: [initdb]
+  - site: "socialweb-computer-kcp/internal/clusterprovider/postgres.go: postgres"
+    resolves: [postgres]
+  - site: "socialweb-computer-kcp/internal/clusterprovider/postgres.go: psql"
+    resolves: [psql]
+  - site: "socialweb-computer-kcp/internal/nodefirecracker/namespace.go: params.VMM"
+    resolves: [firecracker]
+  - site: "socialweb-computer-kcp/internal/processrunner/processrunner.go: argv[0]"
+    resolves: [k3s, kine, bao, external-secrets, socialweb-cloud-controller-manager, dumbpipe, pasta]
+  - site: "atproto-market/hono-bidder/mod.ts: cmd"
+    resolves: [open, cmd, xdg-open]
+  - site: "atproto-market/request-vm-ssh/mod.ts: cmd"
+    resolves: [open, xdg-open]
+  - site: "hono-compute-provider/lib/container-backend-docker/mod.ts: bin"
+    resolves: [docker, wsl, sudo]
+  - site: "hono-compute-provider/lib/container-backend-docker/mod.ts: dockerBin"
+    resolves: [docker, wsl]
+  - site: "hono-compute-provider/lib/node-image-firecracker/mod.ts: binary"
+    resolves: [socialweb-nodeimage]
+  - site: "hono-compute-provider/lib/oidc-issuer-hono/mod.ts: containerCli"
+    resolves: [container, docker]
+  - site: "hono-compute-provider/lib/qemu-standalone/mod.ts: cmd"
+    resolves: [sudo, find, skopeo, mkfs.ext4, truncate, du, qemu-system-x86_64]
