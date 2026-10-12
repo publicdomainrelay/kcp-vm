@@ -2023,8 +2023,8 @@ items:
       TestTheGatewayUnitHasNoKillModeMixed; red first.
     done_when: "unit verifies; an upgrade on hat-8 swapped the binary with every cluster apiserver answering throughout."
     risks: ["deploy.sh needs the no-password key (SSH_KEY=~/.ssh/id_ed25519_no_password); kept as today."]
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M3-CP-CONTINUITY
     milestone: M3
     kcp_use: "traditional-exception (virtual Kubernetes clusters project; principle)"
