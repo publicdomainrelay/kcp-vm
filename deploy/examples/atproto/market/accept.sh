@@ -649,7 +649,7 @@ bidder_did() {
   local run did
   run=$(pod_field bob "$1" runID)
   [ -n "$run" ] || return 0
-  grep -h 'localPDS plc' "$BED_DIR/runs/$run/stdout.txt" 2>/dev/null | grep -o 'did:plc:[a-z2-7]\{24\}' | head -1 || true
+  grep -h '"event":"bidder_ready"' "$BED_DIR/runs/$run/stdout.txt" 2>/dev/null | grep -o 'did:plc:[a-z2-7]\{24\}' | head -1 || true
 }
 
 BIDDER_DIDS=""
@@ -788,6 +788,28 @@ for b in $BIDDERS; do
   fi
 done
 
+# Each bidder signed in to the account apply.sh created for it on bob's PDS,
+# and its offering is listed by that PDS rather than by a repo of its own.
+bob_pds_get() {
+  curl -sS --max-time 10 --cacert "$CA_PEM" --resolve "pds.default.bob.svc.kcp.local:$BOB_PDS_PORT:127.0.0.1" \
+    "https://pds.default.bob.svc.kcp.local:$BOB_PDS_PORT/xrpc/$1" 2>/dev/null || true
+}
+for b in $BIDDERS; do
+  account=$(cat "$BED_DIR/state/bob-$b/account.did" 2>/dev/null || true)
+  did=$(bidder_did "$b")
+  offerings=$(bob_pds_get "com.atproto.repo.listRecords?repo=$did&collection=com.publicdomainrelay.temp.market.offering" \
+    | python3 -c 'import json,sys
+try:
+    print(len(json.load(sys.stdin).get("records") or []))
+except Exception:
+    print(0)')
+  if [ -n "$account" ] && [ "$did" = "$account" ] && [ "${offerings:-0}" -gt 0 ]; then
+    check "$b account on bob pds" PASS "did=$did offerings on pds.default.bob=$offerings"
+  else
+    check "$b account on bob pds" FAIL "account=${account:-none} bidder=${did:-none} offerings on pds.default.bob=${offerings:-0}"
+  fi
+done
+
 # A pod that dies after startup passes a single read. Reading the long-running
 # pods again after a pause is what catches it.
 echo "waiting ${SETTLE_SECONDS}s, then reading the long-running pods again"
@@ -856,8 +878,10 @@ if [ -n "$BIDDER_DIDS" ] && [ -n "$HOST_IP" ]; then
   market_started=$(date +%s)
   bed_set "timings.requesterStarted=\"$(now)\""
   requester() {
-  (cd "$ORG_ROOT/atproto-market" && DENO_CERT="$CA_PEM" exec timeout "$MARKET_SECONDS" \
+  (cd "$ORG_ROOT/atproto-market" && DENO_CERT="$CA_PEM" KCP_DNS_TABLE_FILE="$BED_DIR/runs/.kcpdns/table.json" \
+    exec timeout "$MARKET_SECONDS" \
     deno run -A --node-modules-dir=none --config "$ORG_ROOT/atproto-market/deno.json" \
+      --preload "$BED_DIR/runs/.kcpdns/shim.ts" \
       "$MARKET_DIR/market-requester/mod.ts" \
       --plc-directory-url "https://127.0.0.1:$PLC_PORT" \
       --ingress-proxy-host "relay.localhost:$DISPATCHER_PORT" \
@@ -891,6 +915,16 @@ fi
 bed_set "contract.winnerDid=\"$(field winnerDid)\"" "contract.bids=\"$(field bids)\"" "contract.onNetworkMs=\"$(field onNetworkMs)\"" \
   "contract.onNetwork=\"$on_network\"" "contract.vmDeleteStatus=\"$(field vmDeleteStatus)\"" "contract.totalMs=\"$(field totalMs)\"" \
   "contract.startedAt=\"$(field startedAt)\"" "contract.finishedAt=\"$(field finishedAt)\""
+receipt_uri=$(field receiptUri)
+receipt_repo=$(printf '%s' "$receipt_uri" | sed -n 's|^at://\([^/]*\)/\([^/]*\)/\([^/]*\)$|\1|p')
+receipt_rkey=$(printf '%s' "$receipt_uri" | sed -n 's|^at://\([^/]*\)/\([^/]*\)/\([^/]*\)$|\3|p')
+receipt_code=$(http_code --cacert "$CA_PEM" --resolve "pds.default.bob.svc.kcp.local:$BOB_PDS_PORT:127.0.0.1" \
+  "https://pds.default.bob.svc.kcp.local:$BOB_PDS_PORT/xrpc/com.atproto.repo.getRecord?repo=$receipt_repo&collection=com.publicdomainrelay.temp.market.receipt&rkey=$receipt_rkey")
+if [ -n "$receipt_rkey" ] && [ "$receipt_code" = "200" ]; then
+  check "market receipt on bob pds" PASS "getRecord $receipt_uri -> $receipt_code"
+else
+  check "market receipt on bob pds" FAIL "getRecord ${receipt_uri:-<no receipt>} -> $receipt_code"
+fi
 if [ "$(field vmDeleteOk)" = "True" ] && [ "$market_status" -eq 0 ]; then
   check "market contract released" PASS "vm.delete status=$(field vmDeleteStatus) total=$(field totalMs)ms"
 else

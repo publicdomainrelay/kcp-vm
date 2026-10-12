@@ -195,6 +195,7 @@ bob_key=$(resolve_key BOB_PDS_PRIVATE_KEY_HEX "$BOB_KEY_FILE" "bob PDS")
 DISPATCHER_PORT=""
 GUEST_TLS_PORT=""
 BIDDER_NAME=""
+BIDDER_HANDLE=""
 bidder_key=""
 
 # Each pod's manifest carries its own placeholder, so one substitution pass can
@@ -206,6 +207,7 @@ apply_pod() {
       -e "s|__BOB_PDS_PRIVATE_KEY_HEX__|$bob_key|g" \
       -e "s|__BIDDER_PRIVATE_KEY_HEX__|$bidder_key|g" \
       -e "s|__BIDDER_NAME__|$BIDDER_NAME|g" \
+      -e "s|__BIDDER_HANDLE__|$BIDDER_HANDLE|g" \
       -e "s|__BED_ID__|$BED_ID|g" \
       -e "s|__STATE_DIR__|$STATE_DIR|g" \
       -e "s|__DENO_DIR__|$POD_DENO_DIR|g" \
@@ -288,14 +290,94 @@ echo "dispatcher: $DISPATCHER_ADDRESS  guest TLS front: $DISPATCHER_TLS_ADDRESS"
 apply_pod alice  40-alice-pds.yaml
 apply_pod bob    60-bob-pds.yaml
 apply_pod relay  30-relay-relay.yaml
+
+# Every bidder signs in to an account of its own on bob's PDS (pdsAccount) and
+# writes its offering, bids and receipts there, so the account has to exist
+# before the bidder starts. The password never enters kcp: it is generated
+# here, kept in a mode 600 vault file under the bidder's state directory (the
+# bed has no OpenBao KV wiring for a DenoPod yet), and the DenoPod names only
+# the file's path. A second run finds the file and signs in with it.
+BOB_PDS_NAME=pds.default.bob.svc.kcp.local
+BOB_PDS_ADDRESS=$(pod_address bob pds)
+BOB_PDS_PORT=${BOB_PDS_ADDRESS##*:}
+MARKET_CA=$BED_DIR/market-ca.pem
+curl -sS --fail --max-time 10 --header "X-Vault-Token: root" "http://$OPENBAO_ADDR/v1/pki/ca/pem" -o "$MARKET_CA"
+bob_pds_post() {
+  curl -sS --max-time 15 --cacert "$MARKET_CA" --resolve "$BOB_PDS_NAME:$BOB_PDS_PORT:127.0.0.1" \
+    --header 'content-type: application/json' --data-binary @- \
+    "https://$BOB_PDS_NAME:$BOB_PDS_PORT/xrpc/$1"
+}
+tries=0
+until curl -sS --fail --max-time 5 --cacert "$MARKET_CA" --resolve "$BOB_PDS_NAME:$BOB_PDS_PORT:127.0.0.1" \
+    -o /dev/null "https://$BOB_PDS_NAME:$BOB_PDS_PORT/xrpc/_health" 2>/dev/null; do
+  tries=$((tries + 1))
+  if [ "$tries" -ge "$WAIT_SECONDS" ]; then
+    echo "bob's PDS at $BOB_PDS_ADDRESS never answered /xrpc/_health within ${WAIT_SECONDS}s" >&2
+    exit 1
+  fi
+  sleep 1
+done
+
+ensure_bidder_account() {
+  local name=$1 handle=$2 dir=$3 vault password out did
+  vault=$dir/identity-vault.json
+  mkdir -p "$dir"
+  chmod 700 "$dir"
+  password=$(python3 -c 'import json,sys
+try:
+    print(json.load(open(sys.argv[1]))["bidder/identity/bidder/keys"]["password"])
+except Exception:
+    print("")' "$vault")
+  if [ -z "$password" ]; then
+    password=$(openssl rand -hex 24)
+    printf '%s' "$password" | python3 -c 'import json,os,sys
+path = sys.argv[1]
+data = {}
+if os.path.exists(path):
+    data = json.load(open(path))
+data["bidder/identity/bidder/keys"] = {"password": sys.stdin.read()}
+tmp = path + ".tmp"
+fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+os.write(fd, (json.dumps(data, indent=2) + "\n").encode())
+os.close(fd)
+os.chmod(tmp, 0o600)
+os.replace(tmp, path)' "$vault"
+  fi
+  out=$(printf '%s' "$password" | python3 -c 'import json,sys; print(json.dumps({"handle": sys.argv[1], "email": sys.argv[1] + "@bob.test", "password": sys.stdin.read()}))' "$handle" \
+    | bob_pds_post com.atproto.server.createAccount || true)
+  did=$(printf '%s' "$out" | python3 -c 'import json,sys
+try:
+    print(json.load(sys.stdin).get("did") or "")
+except Exception:
+    print("")')
+  if [ -z "$did" ]; then
+    out=$(printf '%s' "$password" | python3 -c 'import json,sys; print(json.dumps({"identifier": sys.argv[1], "password": sys.stdin.read()}))' "$handle" \
+      | bob_pds_post com.atproto.server.createSession || true)
+    did=$(printf '%s' "$out" | python3 -c 'import json,sys
+try:
+    print(json.load(sys.stdin).get("did") or "")
+except Exception:
+    print("")')
+  fi
+  if [ -z "$did" ]; then
+    echo "could not create or sign in to $handle on bob's PDS: $(printf '%s' "$out" | head -c 200)" >&2
+    return 1
+  fi
+  printf '%s\n' "$did" >"$dir/account.did"
+  echo "$name: account $handle on bob's PDS is $did (password in $vault)"
+}
+
 for BIDDER_NAME in $BIDDERS; do
   bidder_key=$(resolve_key "" "$KEY_DIR/$BIDDER_NAME.hex" "$BIDDER_NAME")
   if [ "$BIDDER_NAME" = "bidder-1" ] && [ -n "${BIDDER_PRIVATE_KEY_HEX:-}" ]; then
     bidder_key=$BIDDER_PRIVATE_KEY_HEX
   fi
+  BIDDER_HANDLE="$BIDDER_NAME.bob.test"
+  ensure_bidder_account "$BIDDER_NAME" "$BIDDER_HANDLE" "$STATE_DIR/bob-$BIDDER_NAME"
   apply_pod bob 70-bidder.yaml
 done
 BIDDER_NAME=""
+BIDDER_HANDLE=""
 bidder_key=""
 
 # The verifier reaches alice's PDS, the PLC directory and the relay, so a fixed
