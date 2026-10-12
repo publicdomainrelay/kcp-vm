@@ -1056,3 +1056,24 @@ requirements:
     parity_test:
       - internal/vmruntime TestTheVMUnitSpecPastaHasNoInboundForward
     status: removed-legacy
+
+  - id: FC-ADOPT-AFTER-RESTART
+    source:
+      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:131
+      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:808-840
+    behaviour: >-
+      After a bidder restart the provider adopts each guest its ContractStore names instead of booting it
+      again: it reads the guest.json the provision wrote (with the host boot id), re-watches a runner that is
+      still up and serves it to the OIDC issuer again; a guest whose runner is gone is reported gone
+      (vmm_exited, or host_reboot when the boot id changed) so the bidder emits vm.terminated. Added by
+      0007 M4-CONTRACT-STORE-FILE (hono-compute-provider ac3a1f5) after live restarts leaked guests.
+    go_side:
+      meets: partial
+      detail: >-
+        The ComputeVM controller re-adopts from ComputeVM objects plus live unit identity (Running|Lost|Unknown)
+        and compares the recorded boot id; the TypeScript store and guest.json are replaced by ComputeVM status.
+    parity_test:
+      - internal/computevm TestARunningComputeVMIsAdoptedAfterARestartNotBootedAgain
+      - internal/computevm TestABootIDChangeMarksEveryComputeVMLostAsHostReboot
+    status: superseded-by-M2-CONTROLLER
+    covers: [readHostBootId, microvm_adopt_unknown, microvm_adopted, microvm_gone_at_adopt]
