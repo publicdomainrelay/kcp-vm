@@ -251,12 +251,16 @@ pod_address() {
 for ws in $WORKSPACES; do
   apply_pod "$ws" "15-openbao-$ws.yaml" >/dev/null
 done
+# A provider that reconciles anything readies these within seconds, so this
+# wait is shorter than the others: it is how accept.sh learns, sooner, that a
+# provider started before its export endpoints and needs a restart.
+OPENBAO_WAIT_SECONDS=${OPENBAO_WAIT_SECONDS:-$WAIT_SECONDS}
 for ws in $WORKSPACES; do
   tries=0
   until [ "$(KC --server="$S/clusters/root:$ws" get openbao openbao -o jsonpath='{.status.ready}' 2>/dev/null)" = "true" ]; do
     tries=$((tries + 1))
-    if [ "$tries" -ge "$WAIT_SECONDS" ]; then
-      echo "the OpenBao namespace for root:$ws never became ready" >&2
+    if [ "$tries" -ge "$OPENBAO_WAIT_SECONDS" ]; then
+      echo "the OpenBao namespace for root:$ws never became ready within ${OPENBAO_WAIT_SECONDS}s" >&2
       KC --server="$S/clusters/root:$ws" get openbao openbao -o yaml >&2 || true
       exit 1
     fi
