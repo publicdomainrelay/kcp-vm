@@ -574,11 +574,10 @@
       "description": "serve gateway kcp: the TLS front's key (with tls-cert-file)",
       "env": "SOCIALWEB_TLS_KEY_FILE"
     },
-    "door-address": {
+    "gateway-spec-file": {
       "type": "string",
-      "description": "serve gateway kcp: listen address of the socialweb-computer-k8s web app (port 0 is read back into the Gateway status)",
-      "env": "SOCIALWEB_DOOR_ADDRESS",
-      "default": "127.0.0.1:0"
+      "description": "serve gateway kcp: a YAML GatewaySpec (network, bidderDids, options of the socialweb-computer-k8s web app, marketNetwork values) the Gateway root object is applied with; its profile is gateway-profile, and the PLC, the web app's gateway-audience and kcp-public-host default to SOCIALWEB_GATEWAY_PLC_URL, SOCIALWEB_GATEWAY_AUDIENCES and SOCIALWEB_GATEWAY_KCP_PUBLIC_HOST",
+      "env": "SOCIALWEB_GATEWAY_SPEC_FILE"
     },
     "gateway-profile": {
       "type": "string",

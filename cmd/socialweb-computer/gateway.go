@@ -10,14 +10,16 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/assets"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clicfg"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devinstance"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/devsup"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/stack/denoruntime"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/stack/gatewaykcp"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/tsbundle"
 )
 
 var serveGatewayOptions = append([]string{backendOpt, "state-dir", "unit-prefix", "kcp-path", "kine-path", "postgres-root", "bao-path",
 	"deno-path", "asset-cache", "ready-timeout", "kcp-front-address", "tls-front-address", "tls-cert-file", "tls-key-file",
-	"door-address", "gateway-profile", "bootstrap-cluster", "bootstrap-account-did"}, devOnly(tsbundle.SourceRootOption)...)
+	"gateway-spec-file", "gateway-profile", "bootstrap-cluster", "bootstrap-account-did"}, devOnly(tsbundle.SourceRootOption)...)
 
 func (a *app) optionalExe(ctx context.Context, vals clicfg.Values, name, option string) (devinstance.Executable, error) {
 	if !assets.Release() && vals.String(option) == "" {
@@ -96,12 +98,19 @@ func runServeGatewayKcp(ctx context.Context, a *app, vals clicfg.Values, rest []
 	if err != nil {
 		return a.fail(exitFailed, "%s: %v", verb, err)
 	}
-	profile := vals.String("gateway-profile")
+	base, err := gatewaykcp.ReadSpec(vals.String("gateway-spec-file"))
+	if err != nil {
+		return a.fail(exitRefused, "%s: %v", verb, err)
+	}
+	environ := os.Environ()
+	spec := gatewaykcp.Spec(base, vals.String("gateway-profile"), environ)
+	unit, _ := a.env.LookupEnv(devsup.EnvUnit)
+	os.Setenv(denoruntime.WatchListEnv, "false")
 	cfg := gatewaykcp.Config{StateDir: state, Prefix: prefix, Backend: backend, Executables: exes, Closure: closure,
-		Profile: profile, FrontAddress: vals.String("kcp-front-address"), TLSAddress: vals.String("tls-front-address"),
-		TLSCert: vals.String("tls-cert-file"), TLSKey: vals.String("tls-key-file"), DoorAddress: vals.String("door-address"),
+		Spec: spec, Unit: unit, FrontAddress: vals.String("kcp-front-address"), TLSAddress: vals.String("tls-front-address"),
+		TLSCert: vals.String("tls-cert-file"), TLSKey: vals.String("tls-key-file"),
 		BootstrapCluster: vals.String("bootstrap-cluster"), BootstrapAccountDID: vals.String("bootstrap-account-did"),
-		ReadyTimeout: readyTimeout, Environ: os.Environ(), Exe: exes[gatewaykcp.ExeCore].Path, Stderr: a.stderr, Log: a.log}
+		ReadyTimeout: readyTimeout, Environ: environ, Exe: exes[gatewaykcp.ExeCore].Path, Stderr: a.stderr, Log: a.log}
 	var m hostsvc.Manager
 	switch backend {
 	case hostsvc.BackendSystemdUser:

@@ -94,11 +94,7 @@ func (g *gateway) defaults(e *env, rec devinstance.Record, cert, key string) err
 	mint := filepath.Join(state, "mint")
 	os.MkdirAll(mint, 0o700)
 	e.set("SOCIALWEB_KCP_HOST", rec.KcpURL)
-	kc := filepath.Join(g.l.KcpDir(), MemberKubeconfig)
-	if err := writeMemberKubeconfig(g.l.SharedDir(), rec.KcpURL, kc); err != nil {
-		return err
-	}
-	e.set("SOCIALWEB_KCP_KUBECONFIG", kc)
+	e.set("SOCIALWEB_KCP_KUBECONFIG", g.memberKubeconfig())
 	e.set("SOCIALWEB_GATEWAY_MINT_KUBECONFIGS", mint)
 	e.dflt("SOCIALWEB_GATEWAY_ADDR", DefaultAddress)
 	e.dflt("SOCIALWEB_GATEWAY_AUDIENCES", DefaultAudience)

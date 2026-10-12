@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"sync"
 	"time"
 
@@ -34,6 +33,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/manifests"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/openbaoctl"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/providermain"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/stack/denoruntime"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/tlsfront"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/tsbundle"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/vaultlayout"
@@ -49,7 +49,6 @@ const (
 	Poll             = 500 * time.Millisecond
 	ListenerXRPC     = "xrpc"
 	ListenerTLS      = "tls"
-	ListenerDoor     = "door"
 	ComponentCore    = "core"
 	DefaultAddress   = "127.0.0.1:0"
 	ExeCore          = "socialweb-computer"
@@ -70,16 +69,16 @@ type Config struct {
 	Backend             hostsvc.Backend
 	Executables         map[string]devinstance.Executable
 	Closure             tsbundle.Prepared
-	Profile             string
+	Spec                v1alpha1.GatewaySpec
 	FrontAddress        string
 	TLSAddress          string
 	TLSCert             string
 	TLSKey              string
-	DoorAddress         string
 	BootstrapCluster    string
 	BootstrapAccountDID string
 	ReadyTimeout        time.Duration
 	Environ             []string
+	Unit                string
 	Exe                 string
 	Stderr              io.Writer
 	Log                 *slog.Logger
@@ -210,7 +209,10 @@ func Run(ctx context.Context, c Config, m hostsvc.Manager) error {
 	g := &gateway{c: c, l: l, reg: reg}
 	c.log().Info("the gateway application instance starts: lock, kcp store, kine, front, active slot, sets, root vault, members",
 		"state", c.StateDir, "prefix", l.UnitPrefix(), "backend", string(c.Backend), "units", app.Names().UnitPrefix())
+	deno := denoruntime.Config{StateDir: c.StateDir, Deno: c.Executables[ExeDeno].Path, Kubeconfig: l.FrontKubeconfig(), Closure: c.Closure,
+		Unit: c.Unit, ApplyTimeout: ApplyTimeout, Log: c.Log}
 	return devcore.Run(ctx, devcore.Config{Layout: l, ReadyTimeout: c.ReadyTimeout, Log: c.Log, Application: &app, FrontAddress: c.FrontAddress,
+		DenoRuntime: &deno, WebApp: &appctl.WebApp{Kubeconfig: g.memberKubeconfig(), TSRoot: c.Closure.Root},
 		Before: g.before, Members: g.members, Listeners: reg.report}, m)
 }
 
@@ -253,21 +255,26 @@ func (g *gateway) before(ctx context.Context, rec devinstance.Record) error {
 			return fmt.Errorf("gatewaykcp: applying the %s set: %w", name, err)
 		}
 	}
-	if err := applyRoot(ctx, restCfg, g.c.Profile); err != nil {
+	if err := writeMemberKubeconfig(g.l.SharedDir(), rec.KcpURL, g.memberKubeconfig()); err != nil {
 		return err
 	}
-	g.c.log().Info("the sets and the Gateway root object are applied", "sets", Sets, "profile", g.c.Profile,
+	if err := applyRoot(ctx, restCfg, g.c.Spec); err != nil {
+		return err
+	}
+	g.c.log().Info("the sets and the Gateway root object are applied", "sets", Sets, "profile", g.c.Spec.Profile,
 		"seconds", time.Since(started).Seconds())
 	return nil
 }
 
-func applyRoot(ctx context.Context, restCfg *rest.Config, profile string) error {
+func (g *gateway) memberKubeconfig() string { return filepath.Join(g.l.KcpDir(), MemberKubeconfig) }
+
+func applyRoot(ctx context.Context, restCfg *rest.Config, spec v1alpha1.GatewaySpec) error {
 	dc, err := dynamic.NewForConfig(clusterConfig(restCfg, appctl.DefaultWorkspace))
 	if err != nil {
 		return err
 	}
 	o := v1alpha1.Gateway{TypeMeta: metav1.TypeMeta{APIVersion: v1alpha1.GroupVersion.String(), Kind: string(v1alpha1.ApplicationKindGateway)},
-		ObjectMeta: metav1.ObjectMeta{Name: appctl.GatewayRootName}, Spec: v1alpha1.GatewaySpec{Profile: profile}}
+		ObjectMeta: metav1.ObjectMeta{Name: appctl.GatewayRootName}, Spec: spec}
 	m, err := runtime.DefaultUnstructuredConverter.ToUnstructured(&o)
 	if err != nil {
 		return err
@@ -404,8 +411,7 @@ func (g *gateway) members(ctx context.Context, rec devinstance.Record) error {
 	start(member{"clusterprovider", func(ctx context.Context) error {
 		return exitErr(providermain.Main(ctx, g.invocation(env, nil, "serve", "provider")))
 	}})
-	start(member{"door", func(ctx context.Context) error { return g.door(ctx, env, rec, gw) }})
-	log.Info("the gateway's members run in this process; the door is a deno child", "xrpc", gw)
+	log.Info("the gateway's members run in this process; the app controller renders the "+appctl.WebAppComponent+" web app as a DenoPod", "xrpc", gw)
 	err = <-ended
 	cancel()
 	if err == nil {
@@ -441,13 +447,4 @@ func (g *gateway) waitListener(ctx context.Context, ended <-chan error, name str
 
 func (g *gateway) invocation(e *env, args []string, verb ...string) foldmain.Invocation {
 	return foldmain.Invocation{Args: args, Getenv: e.get, Stdout: g.c.Stderr, Stderr: g.c.Stderr, Exe: g.c.Exe, Verb: verb}
-}
-
-func portOf(addr string) int {
-	_, p, err := net.SplitHostPort(addr)
-	if err != nil {
-		return 0
-	}
-	n, _ := strconv.Atoi(p)
-	return n
 }
