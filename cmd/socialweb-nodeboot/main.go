@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strconv"
@@ -16,7 +15,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostos"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/guestseed"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodefirecracker"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/noderecord"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodevm"
@@ -34,11 +33,14 @@ node: it joins nothing, it runs no agent of ours, and the only thing that makes 
 user-data the seed disk carries. That is the shape the market needs, where the requester's own
 cloud-init is the whole contract.
 
-The user-data reaches the guest on a second read-only disk, an ext4 labelled cidata holding
-user-data and meta-data at its root. cloud-init's NoCloud datasource looks for exactly that label on
-the block devices it can see, so nothing about how the guest is started has to change to carry it:
-no kernel argument, and no metadata service, which firecracker does not have. The same mkfs.ext4 -d
-that populates a directory into an ext4 without mounting it is what builds the seed.
+The user-data reaches the guest on a second read-only disk, a vfat labelled cidata holding
+user-data, meta-data and network-config at its root, written in Go into <work_dir>/cidata.img.
+cloud-init's NoCloud datasource looks for exactly that label on the block devices it can see, so
+nothing about how the guest is started has to change to carry it: no kernel argument, and no
+metadata service, which firecracker does not have. The root filesystem is copied from the image
+as-is and never edited on the host: when disk_mib is larger than the image, the copy is truncated
+up to it and the guest's own cloud-init grows the filesystem on first boot. No host filesystem
+tool runs here.
 
 Boot arguments and the machine size come from the image's own manifest, because the command line and
 the image are one artifact and a caller that kept its own copy would drift from the one the kernel
@@ -293,13 +295,14 @@ func Boot(specPath, resultPath string, foreground bool) error {
 	); err != nil {
 		return err
 	}
-	if err := writeSeed(s, filepath.Join(s.WorkDir, nodevm.RootfsName)); err != nil {
+	seed, err := writeSeed(s)
+	if err != nil {
 		return err
 	}
 	if err := growRootfs(s, filepath.Join(s.WorkDir, nodevm.RootfsName)); err != nil {
 		return err
 	}
-	paramsPath, err := writeNamespaceParams(s, guest, resultPath != "")
+	paramsPath, err := writeNamespaceParams(s, guest, seed, resultPath != "")
 	if err != nil {
 		return err
 	}
@@ -460,7 +463,9 @@ func networkConfig(network nodevm.Network) string {
 	return strings.Join(lines, "\n") + "\n"
 }
 
-const seedDirInImage = "/var/lib/cloud/seed/nocloud"
+const seedDriveName = "cidata.img"
+
+func seedDrivePath(workDir string) string { return filepath.Join(workDir, seedDriveName) }
 
 func growRootfs(s guestSpec, rootfsCopy string) error {
 	if s.DiskMiB <= 0 {
@@ -474,112 +479,46 @@ func growRootfs(s guestSpec, rootfsCopy string) error {
 	if info.Size() >= want {
 		return nil
 	}
-	if _, err := exec.LookPath("e2fsck"); err != nil {
-		return fmt.Errorf("this guest was asked for a %d MiB disk and the image's own root filesystem "+
-			"is %d MiB, and e2fsck is not on this host's PATH, so the copy cannot be grown to what "+
-			"the contract asked for: it would boot with a filesystem smaller than the contract says "+
-			"and fail to write under its own workload, with the reason inside the guest rather than "+
-			"here. This host is %s: %w", s.DiskMiB, info.Size()>>20, hostos.Name(), err)
-	}
-	if _, err := exec.LookPath("resize2fs"); err != nil {
-		return fmt.Errorf("this guest was asked for a %d MiB disk and resize2fs is not on this "+
-			"host's PATH, so the copy cannot be grown to it: %w", s.DiskMiB, err)
-	}
 	if err := os.Truncate(rootfsCopy, want); err != nil {
 		return fmt.Errorf("growing the guest's copy of the root filesystem to %d MiB: %w -- the copy "+
-			"is what the guest's /dev/vda is, so the device is only as big as this file", s.DiskMiB, err)
-	}
-	if err := runTool("e2fsck", "-f", "-y", rootfsCopy); err != nil {
-		return err
-	}
-	if err := runTool("resize2fs", rootfsCopy); err != nil {
-		return err
+			"is what the guest's /dev/vda is, so the device is only as big as this file, and the "+
+			"guest's own cloud-init grows the filesystem to the device on its first boot", s.DiskMiB, err)
 	}
 	return nil
 }
 
-func runTool(name string, args ...string) error {
-	cmd := exec.Command(name, args...)
-	raw, err := cmd.CombinedOutput()
-	if err != nil {
-		var exit *exec.ExitError
-		if errors.As(err, &exit) && name == "e2fsck" && exit.ExitCode() == 1 {
-			return nil
-		}
-		return fmt.Errorf("%s %s: %v: %s -- the guest's copy of the root filesystem is left as it "+
-			"was rather than booted at a size nothing has verified", name, strings.Join(args, " "),
-			err, strings.TrimSpace(string(raw)))
-	}
-	return nil
-}
-
-func writeSeed(s guestSpec, rootfsCopy string) error {
+func writeSeed(s guestSpec) (string, error) {
 	raw, err := os.ReadFile(s.UserDataFile)
 	if err != nil {
-		return fmt.Errorf("reading the guest's user-data at %s: %w -- this file is the whole "+
+		return "", fmt.Errorf("reading the guest's user-data at %s: %w -- this file is the whole "+
 			"contract the requester asked for, so a guest booted without it is one nothing has "+
 			"asked anything of and nothing would be installed in", s.UserDataFile, err)
 	}
 	if len(raw) == 0 {
-		return fmt.Errorf("the guest's user-data at %s is empty, and a seed that carries nothing is "+
+		return "", fmt.Errorf("the guest's user-data at %s is empty, and a seed that carries nothing is "+
 			"one cloud-init reads and does nothing with", s.UserDataFile)
 	}
 	meta := s.MetaData
 	if meta == "" {
 		meta = "instance-id: " + s.Name + "\nlocal-hostname: " + s.Name + "\n"
 	}
-	network := s.network()
-	documents := []struct{ name, body string }{
-		{"user-data", string(raw)},
-		{"meta-data", meta},
-		{"network-config", networkConfig(network)},
+	path := seedDrivePath(s.WorkDir)
+	if err := guestseed.WriteFile(path, guestseed.Seed{
+		UserData:      raw,
+		MetaData:      []byte(meta),
+		NetworkConfig: []byte(networkConfig(s.network())),
+	}); err != nil {
+		return "", fmt.Errorf("writing the seed drive for guest %s: %w", s.Name, err)
 	}
-	if _, err := exec.LookPath("debugfs"); err != nil {
-		return fmt.Errorf("debugfs is not on this host's PATH, and it is what writes the seed into "+
-			"the guest's copy of the root filesystem without mounting it. This host is %s. The seed "+
-			"is written into the copy rather than served over the network because cloud-init reads "+
-			"/var/lib/cloud/seed/nocloud during its local stage, before any interface exists: a seed "+
-			"fetched over HTTP needs the network that the seed is what configures, and this image "+
-			"has no DHCP to give the guest an address first: %w", hostos.Name(), err)
-	}
-	staging, err := os.MkdirTemp(s.WorkDir, "seed-")
-	if err != nil {
-		return fmt.Errorf("creating a directory to stage the seed in: %w", err)
-	}
-	defer os.RemoveAll(staging)
-	for _, doc := range documents {
-		if err := os.WriteFile(filepath.Join(staging, doc.name), []byte(doc.body), 0o644); err != nil {
-			return fmt.Errorf("staging %s for the seed: %w", doc.name, err)
-		}
-	}
-	for _, dir := range []string{"/var/lib/cloud", "/var/lib/cloud/seed", seedDirInImage} {
-		_ = debugfsRun(rootfsCopy, "mkdir "+dir)
-	}
-	for _, doc := range documents {
-		target := seedDirInImage + "/" + doc.name
-		_ = debugfsRun(rootfsCopy, "rm "+target)
-		if err := debugfsRun(rootfsCopy, "write "+filepath.Join(staging, doc.name)+" "+target); err != nil {
-			return fmt.Errorf("writing %s into %s at %s: %w -- a guest whose seed is incomplete "+
-				"reads it and does as much as it can, so a missing piece here shows up as a guest "+
-				"that never installs the thing the missing piece asked for",
-				doc.name, rootfsCopy, target, err)
-		}
-	}
-	return nil
+	return path, nil
 }
 
-func debugfsRun(image, command string) error {
-	cmd := exec.Command("debugfs", "-w", "-R", command, image)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("debugfs -w -R %q %s: %w: %s", command, image, err,
-			strings.TrimSpace(string(out)))
-	}
-	return nil
-}
-
-func writeNamespaceParams(s guestSpec, guest nodevm.Guest, consoleToStdout bool) (string, error) {
+func writeNamespaceParams(s guestSpec, guest nodevm.Guest, seed string, consoleToStdout bool) (string, error) {
 	network := s.network()
+	initramfs := filepath.Join(s.ImageDir, nodefirecracker.InitramfsName)
+	if _, err := os.Stat(initramfs); err != nil {
+		initramfs = ""
+	}
 	params := nodevm.NamespaceParams{
 		Kind: nodevm.KindFirecracker,
 
@@ -589,11 +528,11 @@ func writeNamespaceParams(s guestSpec, guest nodevm.Guest, consoleToStdout bool)
 
 		Kernel: filepath.Join(s.ImageDir, nodefirecracker.VMLinuxName),
 
-		Initramfs: filepath.Join(s.ImageDir, nodefirecracker.InitramfsName),
+		Initramfs: initramfs,
 
 		Rootfs: filepath.Join(s.WorkDir, nodevm.RootfsName),
 
-		NodeDisk: "",
+		NodeDisk: seed,
 
 		BootArgs: guest.CommandLine(),
 
