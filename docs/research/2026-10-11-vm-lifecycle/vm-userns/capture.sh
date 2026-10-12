@@ -30,9 +30,23 @@ while :; do
       echo "-- result.json"; cat "$d/result.json"
       echo "-- work dir ACL"; getfacl -p "$d" 2>/dev/null | grep -v '^#'
       echo "-- work files"; ls -ln "$d"
-      vmm=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["vmm_pid"])' "$d/result.json")
+      vmm=""
+      for p in $(cat "/sys/fs/cgroup$cg/cgroup.procs"); do
+        [ "$(cat "/proc/$p/comm")" = firecracker ] && vmm=$p
+      done
+      [ -n "$vmm" ] || { echo "no firecracker in the unit"; exit 1; }
       echo "-- VMM pid $vmm: exe=$(sudo -n readlink "/proc/$vmm/exe") fds:"
       sudo -n ls -l "/proc/$vmm/fd" | awk '{print $NF}' | grep -E 'kvm|tun|sock' | sort | uniq -c
+      echo "-- the guest's sshd from inside pasta's netns, as $ACCOUNT (nsenter -U -n into the VMM's namespaces)"
+      sudo -n -u "$ACCOUNT" nsenter -t "$vmm" -U -n --preserve-credentials ip -br addr 2>&1
+      sudo -n -u "$ACCOUNT" nsenter -t "$vmm" -U -n --preserve-credentials ip route 2>&1
+      gip=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["guest_ip"])' "$d/result.json")
+      for i in $(seq 1 40); do
+        ks=$(sudo -n -u "$ACCOUNT" nsenter -t "$vmm" -U -n --preserve-credentials ssh-keyscan -T 5 -t ed25519 -p 22 "$gip" 2>&1)
+        if grep -q ssh-ed25519 <<<"$ks"; then echo "attempt $i $(date -u +%H:%M:%SZ): $(grep ssh-ed25519 <<<"$ks" | cut -c1-80)"; break; fi
+        [ "$i" = 40 ] && echo "no key after 40 attempts: $ks"
+        sleep 5
+      done
       echo "-- VMM uid owns, outside the work dir:"
       vuid=$(stat -c %u "/proc/$vmm")
       sudo -n timeout 600 find / /home /var /opt -xdev -path "$ROOT" -prune -o -uid "$vuid" -print 2>/dev/null | head -5

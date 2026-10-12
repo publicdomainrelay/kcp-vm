@@ -1,6 +1,17 @@
-# stage with inner-id 0 (pasta started as root of the subuid namespace), 2026-10-12T04:49:15Z
-## pasta 
-## pasta --runas 0:0
-## same pasta binary outside pasta_exec_t (unconfined_u:object_r:user_tmp_t:s0)
+# pasta under swc-userns-stage, by inner id, 2026-10-12T04:53:20.270Z
+## inner0: inner=0 pasta=/usr/bin/pasta 
+Couldn't write to /proc/3621626/uid_map: Operation not permitted
+Couldn't configure user mappings
+Can't set GID to 0 in userns: Invalid argument
+(stand-in never ran)
+## inner0-runas0: inner=0 pasta=/usr/bin/pasta --runas 0:0
+Couldn't write to /proc/3621636/uid_map: Operation not permitted
+Couldn't configure user mappings
+Can't set GID to 0 in userns: Invalid argument
+(stand-in never ran)
+## inner0-unconfined-copy: inner=0 pasta=/var/tmp/swc-userns-spike/bin/pasta-copy 
 Can't run AVX2 build, using non-AVX2 version: No such file or directory
-         0          0          1
+uid_map=0 0 1 | tap=OK fctap0 persistent | kvm_open=OK api=12 err=errno 0
+## inner1000: inner=1000 pasta=/usr/bin/pasta 
+(no stderr)
+uid_map=0 1000 1 | tap=OK fctap0 persistent | kvm_open=OK api=12 err=errno 0
