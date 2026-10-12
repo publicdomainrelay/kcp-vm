@@ -12,7 +12,6 @@ import type { ComputeAtproto, ComputeProvider, GuestGone, VM } from "@publicdoma
 import { goneReasonOf } from "@publicdomainrelay/compute-provider-kcp-abc";
 import { createComputeProviderKcp, createKcpComputeVMClient } from "@publicdomainrelay/compute-provider-kcp";
 import { createComputeProviderKcpFactory } from "@publicdomainrelay/hono-factory-compute-provider-kcp";
-import { createComputeProviderFirecracker } from "@publicdomainrelay/compute-provider-firecracker";
 
 const KCP = "https://kcp.test";
 const WS = "root:bidders:bob";
@@ -374,25 +373,6 @@ Deno.test("destroy resolves only after kcp answers 404 for the ComputeVM, then d
   } finally {
     await provider.teardown!();
   }
-});
-
-Deno.test("createBidConfig writes exactly the record the firecracker provider writes", async () => {
-  const kcpAtproto = fakeAtproto();
-  const fcAtproto = fakeAtproto();
-  const provider = providerFor(new FakeKcp(), kcpAtproto);
-  const firecracker = createComputeProviderFirecracker({
-    logger: quiet,
-    atproto: fcAtproto,
-    image: {} as never,
-    microvm: {} as never,
-    workRoot: "/nonexistent",
-    getIssuerUrl: () => ISSUER,
-    serve: {} as never,
-  });
-  const ours = await provider.createBidConfig(NOW);
-  const theirs = await firecracker.createBidConfig(NOW);
-  assertEquals(kcpAtproto.created, fcAtproto.created);
-  assertEquals(ours, theirs);
 });
 
 Deno.test("setup() rebuilds getDroplet from the ComputeVMs this handle owns in kcp", async () => {

@@ -19,10 +19,10 @@ set -euo pipefail
 #   MARKET_NETWORK_DIR       $MARKET_NETWORK_STATE/market-networks/$MARKET_NETWORK_ID  (the dev instance
 #                 under dev/, OpenBao, keys, guest CA, per-pod state, market-network.json)
 #   market-network.json      every bound port and pid, the kcp/kine/OpenBao endpoints, the
-#                 pinned runner image, the bidders' DIDs, timings and readings
-#   FC_WORK_ROOT  /var/tmp/swc-$MARKET_NETWORK_ID (short: a guest's API socket stays under
-#                 the 107-byte unix socket limit), symlinked as MARKET_NETWORK_DIR/guests
-#   guests        docker label swc.market-network=$MARKET_NETWORK_ID; teardown sweeps by that label
+#                 bidders' DIDs, timings and readings
+#   FC_WORK_ROOT  /var/tmp/swc-$MARKET_NETWORK_ID, each guest's user_data and record,
+#                 symlinked as MARKET_NETWORK_DIR/guests
+#   guests        VM units of the bidders' handles (internal vm list); teardown stops them
 #   slot          flock on $MARKET_NETWORK_SLOT_DIR/<i>.lock, i < SWC_MARKET_NETWORK_SLOTS, held for
 #                 the market network's lifetime, refused below the free-memory budget
 #
@@ -37,14 +37,11 @@ set -euo pipefail
 # MARKET_NETWORK_GUEST_MIB     memory budget of one guest (default 2560)
 # MARKET_NETWORK_RECORD_OUT    copy the final market-network.json here before the market network directory goes
 # KEEP_ACCEPT_ROOT  1 keeps MARKET_NETWORK_DIR (logs, run directories) after the run
-# FC_RUNNER_IMAGE   runner image to pin by its image id; unset builds one with
-#                   ts/hono-compute-provider/hono-firecracker-standalone/build.sh
+# FC_VMRUNTIME_COMMAND required: JSON argv of `socialweb-computer internal vm {verb}`
+#                   with its options; every guest is a VM unit of the Linux VM
+#                   runtime (swc-userns-stage -> pasta -> firecracker, pinned image)
 # SOCIALWEB_KCP_PATH, SOCIALWEB_KINE_PATH, SOCIALWEB_DENO_PATH  the kcp, kine and
 #                   pinned deno the dev instance runs (default: found on PATH)
-# FC_VMRUNTIME_COMMAND JSON argv of `socialweb-computer internal vm {verb} ...`:
-#                   guests are VM units of the Linux VM runtime (swc-userns-stage
-#                   -> pasta -> firecracker, pinned guest image), not runner
-#                   containers; no runner image is built (0007 M2-VM-RUNTIME)
 #
 # OpenBao starts first, so the core's deno runtime is given its address when
 # dev up places the core; every DenoPod's serving certificate comes from it.
@@ -76,10 +73,12 @@ SETTLE_SECONDS=${SETTLE_SECONDS:-10}
 DELETE_SECONDS=${DELETE_SECONDS:-60}
 KEEP_ACCEPT_ROOT=${KEEP_ACCEPT_ROOT:-0}
 FC_WORK_ROOT=${FC_WORK_ROOT:-/var/tmp/swc-$MARKET_NETWORK_ID}
-FC_RUNNER_IMAGE=${FC_RUNNER_IMAGE:-}
-RUNNER_REPO=${RUNNER_REPO:-localhost/socialweb-firecracker-runner}
+if [ -z "${FC_VMRUNTIME_COMMAND:-}" ]; then
+  echo "FC_VMRUNTIME_COMMAND is required: the JSON argv of socialweb-computer internal vm {verb} with its options" >&2
+  exit 2
+fi
 # How long the requester waits for the guest to report onNetwork, how long the
-# whole contract may take, and how long a released guest's container may
+# whole contract may take, and how long a released guest's VM unit may
 # take to go away.
 VM_READY_SECONDS=${VM_READY_SECONDS:-900}
 MARKET_SECONDS=${MARKET_SECONDS:-1500}
@@ -195,11 +194,6 @@ mkdir -p "$MARKET_NETWORK_DIR" "$KCACHE" "$FC_WORK_ROOT"
 MARKET_NETWORK_OWNED=1
 rm -f "$MARKET_NETWORK_JSON"
 ln -sfn "$FC_WORK_ROOT" "$MARKET_NETWORK_DIR/guests"
-fc_sock="$FC_WORK_ROOT/fc-000000000000-00000000/fc.sock"
-if [ "${#fc_sock}" -gt 107 ]; then
-  echo "FC_WORK_ROOT $FC_WORK_ROOT is too long for a guest's API socket (${#fc_sock} bytes)" >&2
-  exit 2
-fi
 network_set "networkId=\"$MARKET_NETWORK_ID\"" "slot=$SLOT" "pid=$$" "startedAt=\"$(now)\"" "networkDir=\"$MARKET_NETWORK_DIR\"" \
   "sourceRoot=\"$REPO\"" "fcWorkRoot=\"$FC_WORK_ROOT\"" "kubeconfig=\"$KUBECONFIG_PATH\"" \
   "readings.memAvailableMiBAtStart=$avail_mib" "readings.budgetMiB=$need_mib"
@@ -290,36 +284,13 @@ delete_workloads() {
   done
 }
 
-# Guests carry the label swc.market-network=$MARKET_NETWORK_ID, so this finds every container this
-# market network's bidders started and nothing any other market network (or the production bidder)
-# did.
-own_guest_containers() {
-  docker ps -a -q --filter "label=swc.market-network=$MARKET_NETWORK_ID" 2>/dev/null || true
-}
-
 own_guest_dirs() {
   [ -d "$FC_WORK_ROOT" ] || return 0
   find "$FC_WORK_ROOT" -mindepth 1 -maxdepth 1 -type d -name 'fc-*' -printf '%f\n' | sort
 }
 
-stop_own_guests() {
-  local c
-  for c in $(own_guest_containers); do
-    echo "removing guest container $c (label swc.market-network=$MARKET_NETWORK_ID), left behind by this market network" >&2
-    docker rm -f "$c" >/dev/null 2>&1 || true
-  done
-  [ -n "${FC_VMRUNTIME_COMMAND:-}" ] || return 0
-  local b n
-  for b in $BIDDERS; do
-    for n in $(vmruntime list "$b.bob.test" 2>/dev/null | jq -r '.[]?.name' 2>/dev/null); do
-      echo "stopping VM $n of $b, left behind by this bed" >&2
-      vmruntime stop "$b.bob.test" "$n" >/dev/null 2>&1 || true
-    done
-  done
-}
-
-# FC_VMRUNTIME_COMMAND set: the bed reaches the VM runtime with the same argv
-# its bidders use, {verb} replaced, so teardown sees the units they started.
+# The bed reaches the VM runtime with the same argv its bidders use, {verb}
+# replaced, so it sees exactly the units and work dirs they started.
 vmruntime() {
   local verb=$1 handle=$2
   shift 2
@@ -328,13 +299,32 @@ vmruntime() {
   "${argv[@]}" --handle "$handle" "$@"
 }
 
-# Every pid in this market network: devsup and all its descendants (kine, kcp,
-# the core, the pod scripts and the services they run) and OpenBao.
-network_pids() {
-  local roots=""
-  [ -n "$DEVSUP_PID" ] && roots="$DEVSUP_PID"
-  [ -s "$OPENBAO_DIR/bao.pid" ] && roots="$roots $(cat "$OPENBAO_DIR/bao.pid")"
-  ps -eo pid=,ppid= | awk -v roots="$roots" '
+own_vm_entries() {
+  local b
+  for b in $BIDDERS; do
+    vmruntime list "$b.bob.test" 2>/dev/null | jq -r '.[]? | "\(.unit) loaded=\(.loaded) workDir=\(.workDir // "-")"' 2>/dev/null
+  done | tr '\n' ' '
+}
+
+own_vm_pids() {
+  local b
+  for b in $BIDDERS; do
+    vmruntime list "$b.bob.test" 2>/dev/null | jq -r '.[]? | select(.loaded) | .status.MainPID // empty' 2>/dev/null
+  done | tr '\n' ' '
+}
+
+stop_own_guests() {
+  local b n
+  for b in $BIDDERS; do
+    for n in $(vmruntime list "$b.bob.test" 2>/dev/null | jq -r '.[]?.name' 2>/dev/null); do
+      echo "stopping VM $n of $b, left behind by this market network" >&2
+      vmruntime stop "$b.bob.test" "$n" >/dev/null 2>&1 || true
+    done
+  done
+}
+
+descendants_of() {
+  ps -eo pid=,ppid= | awk -v roots="$1" '
     BEGIN { n = split(roots, r, " "); for (i = 1; i <= n; i++) keep[r[i]] = 1 }
     { parent[$1] = $2; pids[NR] = $1 }
     END {
@@ -347,23 +337,31 @@ network_pids() {
     }'
 }
 
-network_rss_kib() {
+rss_kib_of() {
   local pids
-  pids=$(network_pids | tr '\n' ',')
-  pids=${pids%,}
+  pids=$(echo $1 | tr ' ' ',')
   [ -n "$pids" ] || { echo 0; return; }
   ps -o rss= -p "$pids" 2>/dev/null | awk '{ s += $1 } END { print s + 0 }'
 }
 
+# Every pid in this market network: devsup and all its descendants (kine, kcp,
+# the core, the pod scripts and the services they run) and OpenBao.
+network_pids() {
+  local roots=""
+  [ -n "$DEVSUP_PID" ] && roots="$DEVSUP_PID"
+  [ -s "$OPENBAO_DIR/bao.pid" ] && roots="$roots $(cat "$OPENBAO_DIR/bao.pid")"
+  descendants_of "$roots"
+}
+
+network_rss_kib() {
+  rss_kib_of "$(network_pids | tr '\n' ' ')"
+}
+
 guest_mem_kib() {
-  local ids
-  ids=$(docker ps -q --filter "label=swc.market-network=$MARKET_NETWORK_ID" 2>/dev/null || true)
-  [ -n "$ids" ] || { echo 0; return; }
-  docker stats --no-stream --format '{{.MemUsage}}' $ids 2>/dev/null | awk '
-    { v = $1; u = v; gsub(/[0-9.]/, "", u); gsub(/[A-Za-z]/, "", v)
-      m = 1; if (u == "KiB" || u == "kB") m = 1; else if (u == "MiB" || u == "MB") m = 1024; else if (u == "GiB" || u == "GB") m = 1048576; else if (u == "B") m = 1 / 1024
-      s += v * m }
-    END { printf "%d\n", s }'
+  local roots
+  roots=$(own_vm_pids)
+  [ -n "${roots// }" ] || { echo 0; return; }
+  rss_kib_of "$(descendants_of "$roots" | tr '\n' ' ')"
 }
 
 SAMPLER_PID=""
@@ -373,7 +371,7 @@ start_sampler() {
   (
     while :; do
       echo "$(date +%s) $(network_rss_kib) $(guest_mem_kib)" >>"$out"
-      { docker ps -a --filter "label=swc.market-network=$MARKET_NETWORK_ID" --format '{{.Names}}' 2>/dev/null; own_guest_dirs; } >>"$MARKET_NETWORK_DIR/guests.seen"
+      own_guest_dirs >>"$MARKET_NETWORK_DIR/guests.seen"
       sleep 3
     done
   ) &
@@ -397,7 +395,7 @@ listening() {
 }
 
 teardown_report() {
-  local leftover_pids leftover_containers leftover_ports="" p
+  local leftover_pids leftover_vms leftover_ports="" p
   leftover_pids=$(
     {
       pgrep -f -- "$MARKET_NETWORK_DIR" 2>/dev/null || true
@@ -407,7 +405,7 @@ teardown_report() {
       done
     } | grep -vx "$$" | sort -u | tr '\n' ' '
   )
-  leftover_containers=$(own_guest_containers | tr '\n' ' ')
+  leftover_vms=$(own_vm_entries)
   for p in $(python3 - "$MARKET_NETWORK_JSON" <<'PY'
 import json, sys
 try:
@@ -423,12 +421,12 @@ PY
     listening "$p" && leftover_ports="$leftover_ports $p"
   done
   network_set "teardown.at=\"$(now)\"" "teardown.processes=\"${leftover_pids% }\"" \
-    "teardown.containers=\"${leftover_containers% }\"" "teardown.ports=\"${leftover_ports# }\"" \
+    "teardown.vms=\"${leftover_vms% }\"" "teardown.ports=\"${leftover_ports# }\"" \
     "teardown.fcWorkRootLeft=$([ -e "$FC_WORK_ROOT" ] && echo true || echo false)"
-  if [ -z "${leftover_pids// }" ] && [ -z "${leftover_containers// }" ] && [ -z "${leftover_ports// }" ] && [ ! -e "$FC_WORK_ROOT" ]; then
-    echo "teardown: clean (no processes, containers, ports or guest work root of market network $MARKET_NETWORK_ID left)"
+  if [ -z "${leftover_pids// }" ] && [ -z "${leftover_vms// }" ] && [ -z "${leftover_ports// }" ] && [ ! -e "$FC_WORK_ROOT" ]; then
+    echo "teardown: clean (no processes, VM units, ports or guest work root of market network $MARKET_NETWORK_ID left)"
   else
-    echo "teardown: LEFT processes=[${leftover_pids}] containers=[${leftover_containers}] ports=[${leftover_ports}] workroot=$([ -e "$FC_WORK_ROOT" ] && echo "$FC_WORK_ROOT")" >&2
+    echo "teardown: LEFT processes=[${leftover_pids}] vms=[${leftover_vms}] ports=[${leftover_ports}] workroot=$([ -e "$FC_WORK_ROOT" ] && echo "$FC_WORK_ROOT")" >&2
   fi
 }
 
@@ -496,31 +494,6 @@ echo "market network: $MARKET_NETWORK_ID  slot: $SLOT  dir: $MARKET_NETWORK_DIR"
 echo "guest work root: $FC_WORK_ROOT  bidders: $BIDDERS"
 echo "memory: ${avail_mib} MiB available, market network budget ${need_mib} MiB"
 
-echo
-echo "== runner image =="
-if [ -n "${FC_VMRUNTIME_COMMAND:-}" ]; then
-  runner_id="none: VM runtime"
-  pinned=""
-elif [ -n "$FC_RUNNER_IMAGE" ]; then
-  runner_id=$(docker image inspect -f '{{.Id}}' "$FC_RUNNER_IMAGE") || {
-    echo "the firecracker runner image $FC_RUNNER_IMAGE is not in the local docker store" >&2
-    exit 1
-  }
-  pinned="$RUNNER_REPO:sha-$(echo "${runner_id#sha256:}" | cut -c1-12)"
-  docker tag "$FC_RUNNER_IMAGE" "$pinned"
-else
-  mkdir -p "$MARKET_NETWORK_STATE/build"
-  pinned=$(
-    flock 8
-    RUNNER_BUILD_DIR="$MARKET_NETWORK_DIR/build/runner" NODEBOOT_SRC="${FC_REPO_DIR:?FC_REPO_DIR is required}" RUNNER_REPO="$RUNNER_REPO" \
-      sh "$REPO/ts/hono-compute-provider/hono-firecracker-standalone/build.sh"
-  ) 8>>"$MARKET_NETWORK_STATE/build/runner.lock"
-  rm -rf "$MARKET_NETWORK_DIR/build/runner"
-  runner_id=$(docker image inspect -f '{{.Id}}' "$pinned")
-fi
-FC_RUNNER_IMAGE=$pinned
-network_set "runnerImage=\"$FC_RUNNER_IMAGE\"" "runnerImageId=\"$runner_id\""
-echo "runner: $FC_RUNNER_IMAGE ($runner_id)"
 
 echo
 echo "== socialweb-computer =="
@@ -563,7 +536,7 @@ START_OPENBAO=0 \
 WAIT_SECONDS="$WAIT_SECONDS" \
 OPENBAO_WAIT_SECONDS="${OPENBAO_WAIT_SECONDS:-60}" \
 FC_WORK_ROOT="$FC_WORK_ROOT" \
-FC_RUNNER_IMAGE="$FC_RUNNER_IMAGE" \
+FC_VMRUNTIME_COMMAND="$FC_VMRUNTIME_COMMAND" \
 GUEST_TLS_DIR="$GUEST_TLS_DIR" \
   run_fg bash "$MARKET_DIR/apply.sh" || apply_status=$?
 
@@ -944,36 +917,23 @@ for g in $( { own_guest_dirs; cat "$MARKET_NETWORK_DIR/guests.seen" 2>/dev/null;
   esac
 done
 new_guests=${new_guests# }
-labelled=$(docker ps -a --filter "label=swc.market-network=$MARKET_NETWORK_ID" --format '{{.Names}}' 2>/dev/null | tr '\n' ' ')
 gone_deadline=$(( $(date +%s) + GUEST_GONE_SECONDS ))
 while :; do
-  alive=""
-  for c in $(docker ps -q --filter "label=swc.market-network=$MARKET_NETWORK_ID" 2>/dev/null); do alive="$alive $c"; done
+  alive=$(own_vm_entries)
   dirs=""
   for g in $new_guests; do [ -d "$FC_WORK_ROOT/$g" ] && dirs="$dirs $g"; done
-  [ -z "$alive" ] && [ -z "$dirs" ] && break
+  [ -z "${alive// }" ] && [ -z "$dirs" ] && break
   [ "$(date +%s)" -ge "$gone_deadline" ] && break
   sleep 2
 done
 stop_sampler
 network_set "contract.guests=\"$new_guests\""
 if [ -z "$new_guests" ]; then
-  check "market guest gone" FAIL "no guest of market network $MARKET_NETWORK_ID was seen (labelled containers: ${labelled:-none})"
-elif [ -z "$alive" ] && [ -z "$dirs" ]; then
-  check "market guest gone" PASS "$new_guests: no running container labelled swc.market-network=$MARKET_NETWORK_ID and no work dir $(( GUEST_GONE_SECONDS - (gone_deadline - $(date +%s)) ))s after release"
+  check "market guest gone" FAIL "no guest of market network $MARKET_NETWORK_ID was seen"
+elif [ -z "${alive// }" ] && [ -z "$dirs" ]; then
+  check "market guest gone" PASS "$new_guests: no VM unit, no runtime work dir of $BIDDERS and no guest work dir $(( GUEST_GONE_SECONDS - (gone_deadline - $(date +%s)) ))s after release"
 else
-  check "market guest gone" FAIL "still running:${alive:- none} work dirs left:${dirs:- none} after ${GUEST_GONE_SECONDS}s"
-fi
-if [ -n "${FC_VMRUNTIME_COMMAND:-}" ]; then
-  left=""
-  for b in $BIDDERS; do
-    left="$left$(vmruntime list "$b.bob.test" 2>&1 | jq -r '.[]? | "\(.unit) loaded=\(.loaded) workDir=\(.workDir // "-")"' 2>/dev/null | tr '\n' ' ')"
-  done
-  if [ -z "${left// }" ]; then
-    check "VM runtime left nothing" PASS "no VM unit and no runtime work dir of $BIDDERS"
-  else
-    check "VM runtime left nothing" FAIL "$left"
-  fi
+  check "market guest gone" FAIL "VM runtime still holds:${alive:- none} guest work dirs left:${dirs:- none} after ${GUEST_GONE_SECONDS}s"
 fi
 fi
 

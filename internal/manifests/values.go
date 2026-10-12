@@ -41,18 +41,9 @@ type Bidder struct {
 }
 
 type Firecracker struct {
-	NodeImage   string `json:",omitempty"`
-	NodeBoot    string `json:",omitempty"`
-	Config      string `json:",omitempty"`
-	RepoDir     string `json:",omitempty"`
-	Preinstall  string `json:",omitempty"`
-	VMM         string `json:",omitempty"`
-	RunnerImage string `json:",omitempty"`
-	WorkRoot    string `json:",omitempty"`
-	ExtraArgs   string
-	ExtraRead   string
-	ExtraWrite  string
-	ExtraRun    string
+	WorkRoot         string `json:",omitempty"`
+	VMRuntimeCommand string `json:",omitempty"`
+	VMRuntimeExec    string `json:",omitempty"`
 }
 
 var valueTypes = map[string]func() reflect.Type{

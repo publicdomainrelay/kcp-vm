@@ -4,8 +4,7 @@ import type {
   MicrovmExit,
   MicrovmResult,
   MicrovmSpec,
-} from "@publicdomainrelay/microvm-firecracker";
-import type { NodeImageStatus, NodeImageStore } from "@publicdomainrelay/node-image-abc";
+} from "@publicdomainrelay/microvm-abc";
 
 export interface VmruntimeOptions {
   command: string[];
@@ -127,7 +126,6 @@ export function createVmruntimeMicrovm(opts: VmruntimeOptions): Microvm {
         name: spec.name,
         fingerprint: ref.imageSha256,
         vmmPid: ref.pid,
-        pastaPid: 0,
         guestIp: ref.guestAddress,
         socket: ref.socket,
         console: `${ref.workDir}/console.log`,
@@ -178,20 +176,6 @@ export function createVmruntimeMicrovm(opts: VmruntimeOptions): Microvm {
         cancelled = true;
         if (timer !== undefined) clearTimeout(timer);
       };
-    },
-  };
-}
-
-export function createVmruntimeNodeImage(): NodeImageStore {
-  return {
-    name: "vmruntime",
-    ensure(): Promise<NodeImageStatus> {
-      return Promise.resolve({
-        state: "present",
-        fingerprint: "pinned",
-        dir: "vmruntime",
-        config: "versions.json",
-      });
     },
   };
 }

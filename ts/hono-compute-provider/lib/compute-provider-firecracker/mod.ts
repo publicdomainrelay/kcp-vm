@@ -1,11 +1,8 @@
 import { Hono } from "@hono/hono";
 import {
   addressTheRequesterNamed,
-  DEFAULT_GUEST_RANGE_BASE,
   EVENT_NSID,
-  type GuestNetwork,
   injectAcceptBundle,
-  networkFor,
   ON_NETWORK_NSID,
   parseMemMiB,
   pointGuestAtHost,
@@ -30,8 +27,7 @@ import type {
   VM,
 } from "@publicdomainrelay/compute-provider-abc";
 import { GuestHostKeysRelay } from "@publicdomainrelay/compute-provider-abc";
-import type { NodeImageStore } from "@publicdomainrelay/node-image-abc";
-import type { Microvm, MicrovmExit } from "@publicdomainrelay/microvm-firecracker";
+import type { Microvm, MicrovmExit } from "@publicdomainrelay/microvm-abc";
 import {
   createOidcIssuer,
   type HostKeysReported,
@@ -49,13 +45,10 @@ export interface GuestContractEntry {
 }
 
 export interface ComputeProviderFirecrackerCtx extends ComputeProviderCtx {
-  image: NodeImageStore;
   microvm: Microvm;
   workRoot: string;
   getIssuerUrl: () => string;
   acceptPathVm?: string;
-  rangeBase?: string;
-  reuseStale?: boolean;
   guestTlsPort?: number;
   oidcProvisioning?: boolean;
   oidcJwkStore?: JwkStore;
@@ -95,7 +88,6 @@ export interface ComputeProviderFirecrackerCtx extends ComputeProviderCtx {
 interface Guest {
   name: string;
   workDir: string;
-  network: GuestNetwork;
   userDataFile: string;
   /**
    * The requester's PLC and the role it asked for, kept because the issuer's
@@ -120,7 +112,6 @@ const BOOT_ID_PATH = "/proc/sys/kernel/random/boot_id";
 interface GuestRecord {
   version: 1;
   guest: Guest;
-  index: number;
   hostBootId: string;
 }
 
@@ -141,7 +132,7 @@ async function readGuestRecord(workDir: string): Promise<GuestRecord | undefined
   }
   try {
     const parsed = JSON.parse(raw) as GuestRecord;
-    if (parsed?.version !== 1 || typeof parsed.guest?.name !== "string" || typeof parsed.index !== "number") {
+    if (parsed?.version !== 1 || typeof parsed.guest?.name !== "string") {
       return undefined;
     }
     return parsed;
@@ -151,9 +142,8 @@ async function readGuestRecord(workDir: string): Promise<GuestRecord | undefined
 }
 
 export function createComputeProviderFirecracker(ctx: ComputeProviderFirecrackerCtx) {
-  const { logger, atproto, image, microvm, workRoot } = ctx;
+  const { logger, atproto, microvm, workRoot } = ctx;
   const acceptPathVm = ctx.acceptPathVm ?? DEFAULT_ACCEPT_PATH_VM;
-  const rangeBase = ctx.rangeBase ?? DEFAULT_GUEST_RANGE_BASE;
   const hostBootId = ctx.hostBootId ?? readHostBootId;
 
   const guests = new Map<string, Guest>();
@@ -193,35 +183,6 @@ export function createComputeProviderFirecracker(ctx: ComputeProviderFirecracker
   const rbacByProvider = new Map<string | number, StrongRef>();
   const watches = new Map<string, () => void>();
   const goneListeners = new Set<(gone: GuestGone) => void>();
-  let nextIndex = 0;
-  let imageDir: string | undefined;
-  let imageRootfsMiB: number | undefined;
-
-  /**
-   * The address a guest dials this host on. The relay name the requester put in
-   * the cloud-config is the host's own address as the guest sees it; a guest
-   * whose packets reach the gateway address instead can dial that.
-   */
-
-  async function ensureImage(): Promise<string> {
-    const status = await image.ensure({ reuseStale: ctx.reuseStale });
-    imageDir = status.dir;
-    imageRootfsMiB = status.rootfsMiB;
-    if (status.state === "reused") {
-      logger.warn("node_image_reused", {
-        askedFor: status.fingerprint,
-        using: status.reusedFrom,
-        dir: status.dir,
-      });
-      return status.dir;
-    }
-    logger.info("node_image_ready", { state: status.state, fingerprint: status.fingerprint, dir: status.dir });
-    return status.dir;
-  }
-
-  function diskTheGuestIsAskedFor(disk: string): number | undefined {
-    return parseMemMiB(disk);
-  }
 
   async function createBidConfig(nowIso: string): Promise<StrongRef> {
     const agentDid = atproto.getAgentDid();
@@ -254,19 +215,16 @@ export function createComputeProviderFirecracker(ctx: ComputeProviderFirecracker
     }
     const name = `fc-${shortId(requesterDid)}-${crypto.randomUUID().slice(0, 8)}`;
     const workDir = `${workRoot}/${name}`;
-    const index = nextIndex++;
-    const network = networkFor(rangeBase, index);
     const userDataFile = `${workDir}/user-data.yaml`;
     await Deno.mkdir(workDir, { recursive: true });
     const guest: Guest = {
       name,
       workDir,
-      network,
       userDataFile,
       requesterPlc: requesterDid.split(":").pop() ?? "",
       role: vm.role,
     };
-    const record: GuestRecord = { version: 1, guest, index, hostBootId: await hostBootId() };
+    const record: GuestRecord = { version: 1, guest, hostBootId: await hostBootId() };
     await Deno.writeTextFile(`${workDir}/${GUEST_RECORD}`, JSON.stringify(record, null, 2));
 
     const enriched = ctx.oidcProvisioning
@@ -277,32 +235,21 @@ export function createComputeProviderFirecracker(ctx: ComputeProviderFirecracker
       withOnNetworkReporter(enriched.userData, ctx.getIssuerUrl(), acceptPathVm),
       ctx.getIssuerUrl(),
     );
-    // Every name the guest resolves to this host is written against one address.
-    // A requester that already named one (the harness passes `guestHostAliases`)
-    // is kept: its line is in the document the guest boots with, and cloud-init
-    // resolves a name before this step's runcmd can append a second line for it,
-    // so the later line would be the one that never wins. With no such line, the
-    // host is at the container's own gateway, which is where a guest that leaves
-    // through pasta actually arrives -- see Microvm.hostAddressForGuest.
     const hostAddress = addressTheRequesterNamed(reported) ?? await ctx.microvm.hostAddressForGuest();
     const userData = pointGuestAtHost(reported, hostAddress, ctx.guestTlsPort);
     logger.info("guest_host_address", { name, hostAddress });
     await Deno.writeTextFile(userDataFile, userData);
 
-    logger.info("provisioning microvm", { name, guestIp: network.guestIp, cpus: vm.cpus, mem: vm.mem });
-    const dir = imageDir ?? (await ensureImage());
-    const diskMib = diskTheGuestIsAskedFor(vm.disk);
+    logger.info("provisioning microvm", { name, cpus: vm.cpus, mem: vm.mem });
     let booted;
     try {
       booted = await microvm.boot({
         name,
-        imageDir: dir,
         workDir,
         userDataFile,
         vcpu: typeof vm.cpus === "number" && vm.cpus > 0 ? vm.cpus : undefined,
         memMib: parseMemMiB(vm.mem),
-        diskMib,
-        network,
+        diskMib: parseMemMiB(vm.disk),
       });
     } catch (cause) {
       await microvm.stop(workDir).catch((err: unknown) =>
@@ -383,12 +330,9 @@ export function createComputeProviderFirecracker(ctx: ComputeProviderFirecracker
     const record = await readGuestRecord(workDir);
     const state = microvm.inspect ? await microvm.inspect(name) : { exists: true, running: true };
     if (state.running) {
-      if (record) {
-        guests.set(name, { ...record.guest, workDir });
-        nextIndex = Math.max(nextIndex, record.index + 1);
-      }
+      if (record) guests.set(name, { ...record.guest, workDir });
       watchGuest(name, name);
-      logger.info("microvm_adopted", { name, workDir, guestIp: record?.guest.network.guestIp });
+      logger.info("microvm_adopted", { name, workDir });
       return { state: "running" };
     }
     const bootNow = await hostBootId();
@@ -429,7 +373,7 @@ export function createComputeProviderFirecracker(ctx: ComputeProviderFirecracker
     await microvm.stop(workDir).catch((err: unknown) =>
       logger.warn("microvm_stop_failed", { name, error: String(err) })
     );
-    const gone: GuestGone = { id: name, reason: `runner container ${exit.reason}`, exitCode: exit.exitCode };
+    const gone: GuestGone = { id: name, reason: `vmm ${exit.reason}`, exitCode: exit.exitCode };
     for (const listener of goneListeners) {
       try {
         listener(gone);
@@ -520,7 +464,6 @@ export function createComputeProviderFirecracker(ctx: ComputeProviderFirecracker
   }
 
   return {
-    ensureImage,
     createBidConfig,
     provision,
     destroy,
@@ -556,9 +499,6 @@ export function createFirecrackerComputeProvider(ctx: ComputeProviderFirecracker
     injectAcceptBundle: (userData: string, bundle: Record<string, unknown>) =>
       injectAcceptBundle(userData, bundle, ctx.acceptPathVm ?? DEFAULT_ACCEPT_PATH_VM),
     getDroplet: inner.dropletForIssuer,
-    setup: async () => {
-      await inner.ensureImage();
-    },
   };
-  return { provider, ensureImage: inner.ensureImage, onConnected: inner.onConnected, oidcIssuer: inner.oidcIssuer };
+  return { provider, onConnected: inner.onConnected, oidcIssuer: inner.oidcIssuer };
 }

@@ -3,7 +3,7 @@ entry: hono-bidder
 stateDir: "{{.StateDir}}/bob-{{.Bidder.Name}}"
 serviceAccount: deno-runner
 tls: trust
-args: ["--atproto-identity-mode", "pdsAccount", "--atproto-handle", "{{.Bidder.Handle}}", "--atproto-pds-url", "https://pds.default.bob.svc.kcp.local", "--identity-vault-file", "{{.StateDir}}/bob-{{.Bidder.Name}}/identity-vault.json", "--serve-port", "0", "--relay-url", "https://relay.default.relay.svc.kcp.local", "--plc-directory-url", "https://plc.default.global.svc.kcp.local", "--ingress-proxy-host", "relay.localhost:{{.DispatcherPort}}", "--policy", "open", "--compute-provider-firecracker", "--compute-provider-firecracker-nodeimage", "{{.Firecracker.NodeImage}}", "--compute-provider-firecracker-nodeboot", "{{.Firecracker.NodeBoot}}", "--compute-provider-firecracker-config", "{{.Firecracker.Config}}", "--compute-provider-firecracker-repo-dir", "{{.Firecracker.RepoDir}}", "--compute-provider-firecracker-preinstall", "{{.Firecracker.Preinstall}}", "--compute-provider-firecracker-vmm", "{{.Firecracker.VMM}}", "--compute-provider-firecracker-runner-image", "{{.Firecracker.RunnerImage}}", "--compute-provider-firecracker-work-root", "{{.Firecracker.WorkRoot}}", "--compute-provider-firecracker-container-labels", "swc.market-network={{.NetworkID}},swc.bidder={{.Bidder.Name}}", "--compute-provider-firecracker-reuse-image", "--contract-store-dir", "{{.StateDir}}/bob-{{.Bidder.Name}}/contracts", "--guest-tls-port", "{{.GuestTLSPort}}"{{.Firecracker.ExtraArgs}}]
+args: ["--atproto-identity-mode", "pdsAccount", "--atproto-handle", "{{.Bidder.Handle}}", "--atproto-pds-url", "https://pds.default.bob.svc.kcp.local", "--identity-vault-file", "{{.StateDir}}/bob-{{.Bidder.Name}}/identity-vault.json", "--serve-port", "0", "--relay-url", "https://relay.default.relay.svc.kcp.local", "--plc-directory-url", "https://plc.default.global.svc.kcp.local", "--ingress-proxy-host", "relay.localhost:{{.DispatcherPort}}", "--policy", "open", "--compute-provider-firecracker", "--compute-provider-firecracker-work-root", "{{.Firecracker.WorkRoot}}", "--compute-provider-firecracker-vmruntime-command", {{.Firecracker.VMRuntimeCommand}}, "--contract-store-dir", "{{.StateDir}}/bob-{{.Bidder.Name}}/contracts", "--guest-tls-port", "{{.GuestTLSPort}}"]
 env:
   PORT: "0"
   SERVE_PORT: "0"
@@ -15,16 +15,15 @@ permissions:
   net: true
   env: true
   sys: true
-  read: ["{{.Firecracker.NodeImage}}", "{{.Firecracker.Config}}", "{{.Firecracker.RepoDir}}", "{{.Firecracker.Preinstall}}", "{{.Firecracker.WorkRoot}}"{{.Firecracker.ExtraRead}}]
-  write: ["{{.Firecracker.WorkRoot}}"{{.Firecracker.ExtraWrite}}]
+  read: ["{{.Firecracker.WorkRoot}}"]
+  write: ["{{.Firecracker.WorkRoot}}"]
   run:
-    allow: ["docker", "ssh-keygen", "bash", "deno", "{{.Firecracker.NodeImage}}"{{.Firecracker.ExtraRun}}]
+    allow: ["ssh-keygen", "bash", "deno", {{.Firecracker.VMRuntimeExec}}]
     reason: >-
-      the firecracker compute provider builds the guest image with the node image tool and boots each guest
-      in a docker runner container (until 0007 M5-RUN-BIDDER makes compute-provider-kcp the bidder's
-      provider), the guest OIDC issuer verifies ssh signatures with ssh-keygen, and the in-process policy
-      engine runs a policy workflow's run steps in bash and its actions as deno subprocesses (deno is the
-      pinned deno the template runs on)
+      the firecracker compute provider starts, inspects, stops and lists each guest's VM unit through the
+      Linux VM runtime command (socialweb-computer internal vm), the guest OIDC issuer verifies ssh
+      signatures with ssh-keygen, and the in-process policy engine runs a policy workflow's run steps in
+      bash and its actions as deno subprocesses (deno is the pinned deno the template runs on)
 probe:
   host: "{{.Bidder.Name}}.default.bob.svc.kcp.local"
   path: /oauth-client-metadata.json

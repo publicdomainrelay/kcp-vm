@@ -1,5 +1,5 @@
 {
-  "name": "@publicdomainrelay/node-image-abc",
+  "name": "@publicdomainrelay/microvm-abc",
   "version": "0.0.0",
   "license": "Unlicense",
   "exports": "./mod.ts"

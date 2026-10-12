@@ -52,10 +52,7 @@ import { createDigitalOceanComputeProvider } from "@publicdomainrelay/compute-pr
 import { createLocalComputeProvider } from "@publicdomainrelay/compute-provider-local";
 import { createFirecrackerComputeProvider } from "@publicdomainrelay/compute-provider-firecracker";
 import { createComputeProviderKcpFactory } from "@publicdomainrelay/hono-factory-compute-provider-kcp";
-import { createFirecrackerNodeImage } from "@publicdomainrelay/node-image-firecracker";
-import { createFirecrackerMicrovm, parseLabels } from "@publicdomainrelay/microvm-firecracker";
-import { createVmruntimeMicrovm, createVmruntimeNodeImage } from "@publicdomainrelay/microvm-vmruntime";
-import { createDockerBackend } from "@publicdomainrelay/container-backend-docker";
+import { createVmruntimeMicrovm } from "@publicdomainrelay/microvm-vmruntime";
 import { createRbacProvisioner } from "@publicdomainrelay/rbac-atproto";
 import { Secp256k1Keypair } from "@atproto/crypto";
 import { loadOrCreateAttestationKeyHex } from "@publicdomainrelay/utils-attestation-key";
@@ -93,18 +90,8 @@ export type MarketBidderRepoSpec = { kind: "inproc"; statePath?: string } | { ki
 
 export interface FirecrackerProviderSpec {
   kind: "firecracker";
-  nodeimage: string;
-  nodeboot: string;
-  config: string;
-  repoDir: string;
-  vmm: string;
-  runnerImage: string;
+  vmruntimeCommand: string[];
   workRoot: string;
-  preinstall?: string;
-  containerLabels?: string;
-  vmruntimeCommand?: string[];
-  rangeBase?: string;
-  reuseImage?: boolean;
 }
 
 export interface KcpProviderSpec {
@@ -202,14 +189,12 @@ function isCrawlRoot(u: string): boolean {
 }
 
 const REQUIRED_PROVIDER_FIELDS = {
-  firecracker: ["nodeimage", "nodeboot", "config", "repoDir", "vmm", "runnerImage", "workRoot"],
+  firecracker: ["vmruntimeCommand", "workRoot"],
   kcp: ["server", "workspace", "handle"],
 } as const;
 
 export function missingProviderFields(p: MarketBidderProviderSpec): string[] {
-  const required: readonly string[] = p.kind === "firecracker" && p.vmruntimeCommand
-    ? ["workRoot"]
-    : p.kind === "firecracker" || p.kind === "kcp"
+  const required: readonly string[] = p.kind === "firecracker" || p.kind === "kcp"
     ? REQUIRED_PROVIDER_FIELDS[p.kind]
     : [];
   const values = p as unknown as Record<string, unknown>;
@@ -591,24 +576,8 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
           atproto: computeAtproto,
           serve,
           getIssuerUrl: () => relay.ingressUrl,
-          image: p.vmruntimeCommand ? createVmruntimeNodeImage() : createFirecrackerNodeImage({
-            binary: p.nodeimage,
-            configPath: p.config,
-            repoDir: p.repoDir,
-            preinstallPath: p.preinstall,
-            logger,
-          }),
-          microvm: p.vmruntimeCommand
-            ? createVmruntimeMicrovm({ command: p.vmruntimeCommand, handle: id.handle ?? at.did, logger })
-            : createFirecrackerMicrovm({
-              backend: createDockerBackend(),
-              runnerImage: p.runnerImage,
-              labels: parseLabels(p.containerLabels ?? ""),
-              logger,
-            }),
+          microvm: createVmruntimeMicrovm({ command: p.vmruntimeCommand, handle: id.handle ?? at.did, logger }),
           workRoot: p.workRoot,
-          rangeBase: p.rangeBase,
-          reuseStale: p.reuseImage === true,
           oidcProvisioning: true,
           rbacProvisioner: createRbacProvisioner(),
           guestTlsPort,

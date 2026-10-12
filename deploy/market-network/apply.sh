@@ -21,7 +21,7 @@ set -euo pipefail
 # dev up, which applies the denoruntime set). See README.md in this directory for
 # what does and does not work between the services.
 #
-# MARKET_NETWORK_ID       names this market network in its guests' container labels (default demo)
+# MARKET_NETWORK_ID       names this market network (default demo)
 # MARKET_NETWORK_DIR      this market network's state directory (default <repo>/.kcp-demo); keys, the
 #              guest CA and every pod's state directory live under it
 # MARKET_NETWORK_BIDDERS  how many bidders to run (default 1)
@@ -71,17 +71,13 @@ for bin in ts/atproto-market/hono-plc ts/atproto-market/hono-bidder ts/atproto-r
   [ -e "$REPO/$bin" ] || { echo "missing $REPO/$bin" >&2; exit 1; }
 done
 
-# socialweb-computer-kcp: the bidder runs --compute-provider-firecracker. Every
-# input below is a path on this host or in the runner image, and none has a
-# default that would be right on another machine, so a missing one stops the
-# apply here rather than at the first RFP. FC_NODEBOOT and FC_VMM name paths
-# inside the runner image, which is what boots each guest.
-FC_NODEBOOT=${FC_NODEBOOT:-/usr/local/bin/socialweb-nodeboot}
-FC_VMM=${FC_VMM:-/usr/local/bin/firecracker}
+# The bidder runs --compute-provider-firecracker. Each guest is a VM unit of the
+# Linux VM runtime, started through FC_VMRUNTIME_COMMAND: the JSON argv of
+# `socialweb-computer internal vm {verb}` with its options. FC_WORK_ROOT holds
+# each guest's user_data and record. Neither has a default that would be right
+# on another machine, so a missing one stops the apply here, not at the first RFP.
 missing=""
-need="FC_NODEIMAGE FC_CONFIG FC_REPO_DIR FC_PREINSTALL FC_RUNNER_IMAGE FC_WORK_ROOT"
-[ -n "${FC_VMRUNTIME_COMMAND:-}" ] && need="FC_WORK_ROOT"
-for v in $need; do
+for v in FC_VMRUNTIME_COMMAND FC_WORK_ROOT; do
   [ -n "${!v:-}" ] || missing="$missing $v"
 done
 if [ -n "$missing" ]; then
@@ -89,25 +85,8 @@ if [ -n "$missing" ]; then
   exit 1
 fi
 mkdir -p "$FC_WORK_ROOT"
-FC_EXTRA_ARGS=""
-FC_EXTRA_RUN=""
-FC_EXTRA_READ=""
-FC_EXTRA_WRITE=""
-if [ -n "${FC_VMRUNTIME_COMMAND:-}" ]; then
-  for v in FC_NODEIMAGE FC_CONFIG FC_REPO_DIR FC_PREINSTALL FC_RUNNER_IMAGE; do
-    [ -n "${!v:-}" ] || printf -v "$v" '%s' "/unused-with-vmruntime"
-  done
-  FC_EXTRA_ARGS=",\"--compute-provider-firecracker-vmruntime-command\",$(jq -cn --arg v "$FC_VMRUNTIME_COMMAND" '$v')"
-  FC_EXTRA_RUN=",$(jq -c '.[0]' <<<"$FC_VMRUNTIME_COMMAND")"
-fi
-# Each guest's firecracker API socket lives in its work directory, and a unix
-# socket path cannot exceed 107 bytes; past that the guest dies at boot and its
-# work directory is removed, which reads as a bidder that never provisioned.
-fc_sock="$FC_WORK_ROOT/fc-000000000000-00000000/fc.sock"
-if [ "${#fc_sock}" -gt 107 ]; then
-  echo "FC_WORK_ROOT is too long: a guest's API socket would be ${#fc_sock} bytes ($fc_sock), over the 107-byte unix socket limit" >&2
-  exit 1
-fi
+FC_VMRUNTIME_ARG=$(jq -cn --arg v "$FC_VMRUNTIME_COMMAND" '$v')
+FC_VMRUNTIME_EXEC=$(jq -c '.[0]' <<<"$FC_VMRUNTIME_COMMAND")
 
 # socialweb-computer-kcp: a guest reaches the dispatcher only over https (its
 # OIDC proof and its onNetwork report), at <name>.relay.localhost on the
@@ -209,18 +188,9 @@ write_values() {
         echo "      PrivateKeyHex: $(q "$bidder_key")"
       done
       echo "  Firecracker:"
-      echo "    NodeImage: $(q "$FC_NODEIMAGE")"
-      echo "    NodeBoot: $(q "$FC_NODEBOOT")"
-      echo "    Config: $(q "$FC_CONFIG")"
-      echo "    RepoDir: $(q "$FC_REPO_DIR")"
-      echo "    Preinstall: $(q "$FC_PREINSTALL")"
-      echo "    VMM: $(q "$FC_VMM")"
-      echo "    RunnerImage: $(q "$FC_RUNNER_IMAGE")"
       echo "    WorkRoot: $(q "$FC_WORK_ROOT")"
-      echo "    ExtraArgs: '$FC_EXTRA_ARGS'"
-      echo "    ExtraRead: '$FC_EXTRA_READ'"
-      echo "    ExtraWrite: '$FC_EXTRA_WRITE'"
-      echo "    ExtraRun: '$FC_EXTRA_RUN'"
+      echo "    VMRuntimeCommand: '$FC_VMRUNTIME_ARG'"
+      echo "    VMRuntimeExec: '$FC_VMRUNTIME_EXEC'"
     } >"$VALUES.tmp"
     mv "$VALUES.tmp" "$VALUES"
   )

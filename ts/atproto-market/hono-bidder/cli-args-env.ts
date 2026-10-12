@@ -173,46 +173,6 @@ export default {
       type: "boolean" as const,
       description: "Enable the Firecracker compute provider",
     },
-    "compute-provider-firecracker-nodeimage": {
-      type: "string" as const,
-      description: "Path to the socialweb-nodeimage binary, which builds the image a guest boots from",
-      env: "COMPUTE_PROVIDER_FIRECRACKER_NODEIMAGE",
-    },
-    "compute-provider-firecracker-nodeboot": {
-      type: "string" as const,
-      description: "Path to the socialweb-nodeboot binary, which boots one guest",
-      env: "COMPUTE_PROVIDER_FIRECRACKER_NODEBOOT",
-    },
-    "compute-provider-firecracker-config": {
-      type: "string" as const,
-      description: "Path to the image builder's nodeimage.json",
-      env: "COMPUTE_PROVIDER_FIRECRACKER_CONFIG",
-    },
-    "compute-provider-firecracker-repo-dir": {
-      type: "string" as const,
-      description: "Path to the socialweb-computer-kcp checkout, which the image builder builds the guest agent from",
-      env: "COMPUTE_PROVIDER_FIRECRACKER_REPO_DIR",
-    },
-    "compute-provider-firecracker-preinstall": {
-      type: "string" as const,
-      description: "Path to the preinstall manifest naming the software baked into the image",
-      env: "COMPUTE_PROVIDER_FIRECRACKER_PREINSTALL",
-    },
-    "compute-provider-firecracker-vmm": {
-      type: "string" as const,
-      description: "Path to the firecracker binary",
-      env: "COMPUTE_PROVIDER_FIRECRACKER_VMM",
-    },
-    "compute-provider-firecracker-runner-image": {
-      type: "string" as const,
-      description: "Image each guest is booted in; it carries firecracker and socialweb-nodeboot and is given /dev/kvm",
-      env: "COMPUTE_PROVIDER_FIRECRACKER_RUNNER_IMAGE",
-    },
-    "compute-provider-firecracker-container-labels": {
-      type: "string" as const,
-      description: "Docker labels put on every guest container, key=value[,key=value], e.g. swc.market-network=<market network id>",
-      env: "COMPUTE_PROVIDER_FIRECRACKER_CONTAINER_LABELS",
-    },
     "compute-provider-firecracker-work-root": {
       type: "string" as const,
       description: "Directory each guest gets a work directory under",
@@ -220,13 +180,8 @@ export default {
     },
     "compute-provider-firecracker-vmruntime-command": {
       type: "string" as const,
-      description: "JSON argv of the VM runtime (socialweb-computer internal vm with its options); when set, each guest is a transient VM unit (swc-userns-stage -> pasta -> firecracker) started from the pinned guest image, not a container, and the node image, nodeboot, VMM and runner image options are not used",
+      description: "JSON argv of the VM runtime, socialweb-computer internal vm {verb} with its options; each guest is a transient VM unit (swc-userns-stage -> pasta -> firecracker) started from the pinned guest image",
       env: "COMPUTE_PROVIDER_FIRECRACKER_VMRUNTIME_COMMAND",
-    },
-    "compute-provider-firecracker-range-base": {
-      type: "string" as const,
-      description: "Base address guests are addressed from, one /30 each",
-      env: "COMPUTE_PROVIDER_FIRECRACKER_RANGE_BASE",
     },
     "compute-provider-kcp": {
       type: "boolean" as const,
@@ -272,10 +227,6 @@ export default {
       type: "string" as const,
       description: "Directory each of the bidder's dispatcher ingresses keeps its keypair in, so a restarted bidder registers the same subdomains its receipts and guests name (defaults to <contract store dir>/ingress when there is a contract store)",
       env: "INGRESS_KEY_DIR",
-    },
-    "compute-provider-firecracker-reuse-image": {
-      type: "boolean" as const,
-      description: "Use the image already in the store and skip the rebuild when the inputs have moved",
     },
     "compute-provider-deno-worker": {
       type: "boolean" as const,

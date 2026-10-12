@@ -122,7 +122,7 @@ the user (its `HOME` is its own state dir, `TMPDIR` is under it), `PORT_FILE`,
 Permissions are explicit. `-A` is refused; read and write are the source root,
 the run directory, the state dir and the paths the values name; `--allow-run`
 and `--allow-ffi` render only with a reason (the firecracker bidder names
-docker, ssh-keygen and the node image tool); every service is denied read and
+its VM runtime command, ssh-keygen, bash and deno); every service is denied read and
 write of `/dev/kvm` and `$XDG_RUNTIME_DIR`. `internal/manifests` (`service.go`)
 checks all of this when it renders.
 
@@ -142,8 +142,8 @@ reconciles the DenoPods) under `$MARKET_NETWORK_STATE/market-networks/$MARKET_NE
 runs `apply.sh` with `MARKET_NETWORK_BIDDERS` bidders, records every port and
 pid it read back in `market-network.json`, checks every DenoPod's
 status.listeners and finalizer, reaches each service on its own name and from
-the host, rents a firecracker guest through the RFP flow (guests under
-/var/tmp/swc-$MARKET_NETWORK_ID, labelled swc.market-network=$MARKET_NETWORK_ID),
+the host, rents a firecracker guest through the RFP flow (each guest a VM unit of the Linux VM runtime, FC_VMRUNTIME_COMMAND; its user_data and record under
+/var/tmp/swc-$MARKET_NETWORK_ID),
 and tears the market network down (DenoPods deleted first, then `dev down`),
 reporting anything left behind. It exits non-zero unless every check passed.
 Two market networks at once:

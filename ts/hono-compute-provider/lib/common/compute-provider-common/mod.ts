@@ -30,51 +30,6 @@ export const ON_NETWORK_BASE_URL_PATH = `${SECRETS_PREFIX}/base_url`;
 
 export const GUEST_CURLRC_PATH = "/root/.curlrc";
 
-export const GUEST_NETWORK_PREFIX_BITS = 30;
-
-export const DEFAULT_GUEST_RANGE_BASE = "172.30.0.0";
-
-export interface GuestNetwork {
-  guestIp: string;
-  gateway: string;
-  pastaIp: string;
-  prefix: number;
-  guestMac: string;
-}
-
-function octets(address: string): [number, number, number, number] {
-  const parts = address.split(".").map((p) => Number(p));
-  if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) {
-    throw new Error(`${address} is not an IPv4 address, and a guest's address and its MAC are derived from it`);
-  }
-  return parts as [number, number, number, number];
-}
-
-export function guestMacFor(address: string): string {
-  const [a, b, c, d] = octets(address);
-  const hex = (n: number) => n.toString(16).padStart(2, "0");
-  return `06:00:${hex(a)}:${hex(b)}:${hex(c)}:${hex(d)}`;
-}
-
-export function networkFor(base: string, index: number): GuestNetwork {
-  const [a, b, c] = octets(base);
-  if (index < 0 || index > 16383) {
-    throw new Error(
-      `guest index ${index} is outside the 16384 /30 blocks a range based at ${base} holds. The ` +
-        `addresses a host hands out are a bounded pool and the pool is exhausted rather than ` +
-        `wrapped: two guests sharing one range are two guests whose packets arrive at whichever ` +
-        `the host routes to.`,
-    );
-  }
-  const block = index * 4;
-  const third = c + Math.floor(block / 256);
-  const fourth = block % 256;
-  const pastaIp = `${a}.${b}.${third}.${fourth}`;
-  const gateway = `${a}.${b}.${third}.${fourth + 1}`;
-  const guestIp = `${a}.${b}.${third}.${fourth + 2}`;
-  return { guestIp, gateway, pastaIp, prefix: GUEST_NETWORK_PREFIX_BITS, guestMac: guestMacFor(guestIp) };
-}
-
 export function shortId(value: string): string {
   let h1 = 0xdeadbeef ^ value.length;
   let h2 = 0x41c6ce57 ^ value.length;

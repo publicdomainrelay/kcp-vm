@@ -10,8 +10,6 @@ import (
 
 const FCWorkRootBase = "/var/tmp/swc-"
 
-const unixSocketLimit = 107
-
 type Proc struct {
 	PID     int    `json:"pid,omitempty"`
 	Port    int    `json:"port,omitempty"`
@@ -25,22 +23,20 @@ type Bidder struct {
 }
 
 type Network struct {
-	ID            string            `json:"networkId"`
-	Slot          int               `json:"slot"`
-	PID           int               `json:"pid,omitempty"`
-	StartedAt     string            `json:"startedAt,omitempty"`
-	Dir           string            `json:"networkDir,omitempty"`
-	SourceRoot    string            `json:"sourceRoot,omitempty"`
-	FCWorkRoot    string            `json:"fcWorkRoot"`
-	RunnerImage   string            `json:"runnerImage,omitempty"`
-	RunnerImageID string            `json:"runnerImageId,omitempty"`
-	HostIP        string            `json:"hostIp,omitempty"`
-	Kubeconfig    string            `json:"kubeconfig,omitempty"`
-	Processes     map[string]Proc   `json:"processes,omitempty"`
-	Services      map[string]Proc   `json:"services,omitempty"`
-	Bidders       []Bidder          `json:"bidders,omitempty"`
-	Readings      map[string]any    `json:"readings,omitempty"`
-	Checks        map[string]string `json:"checks,omitempty"`
+	ID         string            `json:"networkId"`
+	Slot       int               `json:"slot"`
+	PID        int               `json:"pid,omitempty"`
+	StartedAt  string            `json:"startedAt,omitempty"`
+	Dir        string            `json:"networkDir,omitempty"`
+	SourceRoot string            `json:"sourceRoot,omitempty"`
+	FCWorkRoot string            `json:"fcWorkRoot"`
+	HostIP     string            `json:"hostIp,omitempty"`
+	Kubeconfig string            `json:"kubeconfig,omitempty"`
+	Processes  map[string]Proc   `json:"processes,omitempty"`
+	Services   map[string]Proc   `json:"services,omitempty"`
+	Bidders    []Bidder          `json:"bidders,omitempty"`
+	Readings   map[string]any    `json:"readings,omitempty"`
+	Checks     map[string]string `json:"checks,omitempty"`
 }
 
 var networkIDPattern = regexp.MustCompile(`^[a-z0-9]{1,12}$`)
@@ -51,10 +47,6 @@ func ValidNetworkID(id string) bool {
 
 func FCWorkRootFor(id string) string {
 	return FCWorkRootBase + id
-}
-
-func GuestSocketPath(workRoot string) string {
-	return workRoot + "/fc-000000000000-00000000/fc.sock"
 }
 
 func LoadNetwork(path string) (Network, error) {
@@ -88,9 +80,6 @@ func (b Network) Validate() error {
 	}
 	if b.FCWorkRoot != FCWorkRootFor(b.ID) {
 		return fmt.Errorf("market network %s keeps its guests under %s, not its own %s", b.ID, b.FCWorkRoot, FCWorkRootFor(b.ID))
-	}
-	if sock := GuestSocketPath(b.FCWorkRoot); len(sock) > unixSocketLimit {
-		return fmt.Errorf("a guest socket of market network %s would be %d bytes, over the %d-byte limit", b.ID, len(sock), unixSocketLimit)
 	}
 	owner := map[int]string{}
 	for _, group := range []struct {

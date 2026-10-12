@@ -19,20 +19,10 @@ if (o.computeProviderLocal) providers.push({ kind: "local", containerImage: o.co
 if (o.computeProviderFirecracker) {
   providers.push({
     kind: "firecracker",
-    nodeimage: o.computeProviderFirecrackerNodeimage,
-    nodeboot: o.computeProviderFirecrackerNodeboot,
-    config: o.computeProviderFirecrackerConfig,
-    repoDir: o.computeProviderFirecrackerRepoDir,
-    vmm: o.computeProviderFirecrackerVmm,
-    runnerImage: o.computeProviderFirecrackerRunnerImage,
     workRoot: o.computeProviderFirecrackerWorkRoot,
-    preinstall: o.computeProviderFirecrackerPreinstall,
-    containerLabels: o.computeProviderFirecrackerContainerLabels,
     vmruntimeCommand: o.computeProviderFirecrackerVmruntimeCommand
       ? JSON.parse(o.computeProviderFirecrackerVmruntimeCommand)
       : undefined,
-    rangeBase: o.computeProviderFirecrackerRangeBase,
-    reuseImage: o.computeProviderFirecrackerReuseImage === true,
   });
 }
 if (o.computeProviderKcp) {

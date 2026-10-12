@@ -5,7 +5,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"testing"
 )
 
@@ -80,23 +79,6 @@ func TestLoadNetworkReadsWhatAcceptWrites(t *testing.T) {
 	}
 	if network.ID != "b3d00001" || network.Slot != 1 || network.Processes["kcp"].Port != 41002 || network.Bidders[0].DID != "did:plc:abc" {
 		t.Fatalf("market network = %+v", network)
-	}
-}
-
-func TestANetworkIDKeepsTheGuestSocketUnderTheUnixLimit(t *testing.T) {
-	for _, id := range []string{"b3d00001", "abcdefghijkl"} {
-		if !ValidNetworkID(id) {
-			t.Fatalf("%q is refused", id)
-		}
-		sock := filepath.Join(FCWorkRootFor(id), "fc-000000000000-00000000", "fc.sock")
-		if len(sock) > 107 {
-			t.Fatalf("%s is %d bytes, over the 107-byte unix socket limit", sock, len(sock))
-		}
-	}
-	for _, id := range []string{"", "B3D", "../x", "a b", strings.Repeat("a", 13)} {
-		if ValidNetworkID(id) {
-			t.Fatalf("%q is accepted as a market network id", id)
-		}
 	}
 }
 

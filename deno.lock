@@ -2038,7 +2038,6 @@
           "jsr:@publicdomainrelay/compute-provider-digitalocean@0",
           "jsr:@publicdomainrelay/compute-provider-firecracker@0",
           "jsr:@publicdomainrelay/compute-provider-local@0",
-          "jsr:@publicdomainrelay/container-backend-docker@0",
           "jsr:@publicdomainrelay/did-key-ingress-proxy@0",
           "jsr:@publicdomainrelay/did-plc@0",
           "jsr:@publicdomainrelay/hono-factory-compute-provider-kcp@0",
@@ -2059,9 +2058,7 @@
           "jsr:@publicdomainrelay/market-identity-vault-openbao@0",
           "jsr:@publicdomainrelay/market-network-common@0",
           "jsr:@publicdomainrelay/market-network-fetch@0",
-          "jsr:@publicdomainrelay/microvm-firecracker@0",
           "jsr:@publicdomainrelay/microvm-vmruntime@0",
-          "jsr:@publicdomainrelay/node-image-firecracker@0",
           "jsr:@publicdomainrelay/oauth-scope@0",
           "jsr:@publicdomainrelay/policy-engine-cli-options@0",
           "jsr:@publicdomainrelay/rbac-atproto@0",
@@ -2375,8 +2372,7 @@
           "jsr:@publicdomainrelay/atproto-helpers@0",
           "jsr:@publicdomainrelay/compute-provider-abc@0",
           "jsr:@publicdomainrelay/compute-provider-common@0",
-          "jsr:@publicdomainrelay/microvm-firecracker@0",
-          "jsr:@publicdomainrelay/node-image-abc@0",
+          "jsr:@publicdomainrelay/microvm-abc@0",
           "jsr:@publicdomainrelay/oidc-issuer-abc@0",
           "jsr:@publicdomainrelay/oidc-issuer-hono@0",
           "jsr:@publicdomainrelay/secrets-common@0"
@@ -2419,20 +2415,9 @@
           "jsr:@publicdomainrelay/oidc-issuer-hono@0"
         ]
       },
-      "ts/hono-compute-provider/lib/microvm-firecracker": {
-        "dependencies": [
-          "jsr:@publicdomainrelay/container-backend-abc@0"
-        ]
-      },
       "ts/hono-compute-provider/lib/microvm-vmruntime": {
         "dependencies": [
-          "jsr:@publicdomainrelay/microvm-firecracker@0",
-          "jsr:@publicdomainrelay/node-image-abc@0"
-        ]
-      },
-      "ts/hono-compute-provider/lib/node-image-firecracker": {
-        "dependencies": [
-          "jsr:@publicdomainrelay/node-image-abc@0"
+          "jsr:@publicdomainrelay/microvm-abc@0"
         ]
       },
       "ts/hono-compute-provider/lib/oidc-issuer-hono": {
