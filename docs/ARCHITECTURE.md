@@ -6675,18 +6675,25 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   MarketIdentities and patch on their status, and the web app DenoPod runs as that account. Seen from
   another workspace the account is `system:kcp:serviceaccount:<root:app cluster>:default:socialweb-computer-k8s`
   (kcp GlobalServiceAccount); the app controller binds that user to get on its Gateway and on the
-  OpenBaoServer `root-vault` in `root`, and to get, list and patch on `apiexports/content` of the
-  `clusters` export in `root:socialweb-provider`. The web app lists and patches every cluster's NodeClaims
-  and reads ClusterLinks through that APIExport virtual workspace, so it no longer lists the root or
-  account workspaces. Account and cluster workspaces stay with the cluster gateway XRPC, which runs in the
-  core with admin. The app controller issues the account a 30 minute token into
+  OpenBaoServer `root-vault` in `root`. NodeClaims are granted per home: with
+  `SOCIALWEB_GATEWAY_NODECLAIM_AGENT` set (`serve gateway kcp` sets
+  `root:app/default/socialweb-computer-k8s`), the cluster gateway, when it creates a home, applies there a
+  grant to that user of get, list and patch on NodeClaims, patch on their status and get on ClusterLinks,
+  and names the home in a ConfigMap `<account>-<cluster>` labelled `socialweb.computer/nodeclaim-home` in
+  `root:app` namespace `default`, which the web app may list (`--kcp-workspace`). The web app finds the
+  homes there and reads each home's NodeClaims at `/clusters/<home>`; it lists no root or account
+  workspace and reads no Cluster or Node. Two narrower routes do not work in kcp 0.33: a grant on the
+  `clusters` export's virtual workspace (`apiexports/content`) cannot be scoped by resource, so it gave
+  every tenant's Clusters and Nodes too, and a foreign ServiceAccount cannot list workspaces in an
+  account workspace, because the tenancy.kcp.io export's maximal permission policy refuses a token
+  scoped to another logical cluster. The DenoPod names no ServiceAccount (the service template now
+  writes `spec.serviceAccount` only for a service that names one), so its process carries no
+  `KCP_TOKEN` or `KCP_TOKENS`. Account and cluster workspaces stay with the cluster gateway XRPC, which
+  runs in the core with admin. The app controller issues the account a 30 minute token into
   `components/socialweb-computer-k8s.kcp/token` and a new one 10 minutes later; the web app's kubeconfig
   names it as `tokenFile` and the web app reads it on every request. The DenoPod may read that directory,
-  the vault CA and its vault client directory, and nothing of the members' kubeconfig. Ceiling: the
-  export content grant covers every resource of the `clusters` export (Clusters, Nodes, NodeClaims,
-  ClusterLinks), so the web app can also read and patch Clusters and Nodes of every tenant; the upgrade is
-  a per-home grant on NodeClaims written by the cluster gateway when it creates a home. listClusters for
-  an account with no workspace yet answers `[]` instead of a 500. Readings on hat-8, test prefix
+  the vault CA and its vault client directory, and nothing of the members' kubeconfig. listClusters for
+  an account with no workspace yet answers `[]` instead of a 500. First readings (export grant) on hat-8, test prefix
   `socialweb-was-`, market-network profile, dev build, UTC: core started 10:34:47Z, Gateway Ready
   10:35:32Z, token issued 10:35:25Z; a fresh account listed `[]` at 10:35:52Z; a signed-in account
   created `demo` at 10:36:01Z and listed it at 10:36:02Z (listed Ready at 10:45:33Z). With the web app's token
@@ -6696,7 +6703,18 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   `root:app`, APIExports in `root:socialweb-provider`, AtprotoIdentities and workspaces in the account
   workspace, Clusters and secrets in the home addressed directly, and a NodeClaim delete through the
   export. The token was re-issued at 10:45:25Z (expiry 11:15:25Z), and at 10:45:33Z the web app wrote a
-  MarketIdentity and listed both accounts' clusters with it.
+  MarketIdentity and listed both accounts' clusters with it. Readings of the per-home grant, test prefix
+  `socialweb-wb-`, UTC: core started 11:11:00Z, Gateway Ready 11:11:52Z; a fresh account listed `[]` at
+  11:11:56Z; two accounts created `demo` and `cbox` at 11:12:03Z and 11:12:04Z and each listed only its
+  own, `demo` listed Ready at 11:13:50Z; the web app process had no `KCP_TOKEN` or `KCP_TOKENS`. With
+  the web app's token at 11:13:54Z: 200 on its Gateway, the root vault, the home index (2 ConfigMaps)
+  and NodeClaims in both homes, 404 on a dry-run status patch of a missing NodeClaim and on a missing
+  ClusterLink in both homes; 403 on Clusters (list, get, dry-run patch) and Nodes in both tenants'
+  homes, on a NodeClaim delete and a ClusterLink list there, on Clusters, Nodes and NodeClaims through
+  the export, on workspaces, AtprotoIdentities and secrets in both account workspaces, on
+  workspaces, OpenBaoServers and secrets listed in `root`, on MarketIdentities, DenoPods and secrets in
+  `root:app`, and on APIExports in
+  `root:socialweb-provider`.
 
 - **`socialweb-computer run request`: a fresh kcp per invocation whose state dir persists; the
   requester is a MarketRequester whose components carry out one ComputeContract (plan 0008
