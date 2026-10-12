@@ -13,9 +13,11 @@ usage: $0 [--platform linux/amd64|linux/arm64]... [--commit REV] [--build-root D
 Builds the release socialweb-computer binary (plan 0006 M4-BUILD) for each release platform of
 internal/versions/versions.json, twice, from clean checkouts of one commit, and refuses to publish a
 platform whose two builds differ by one byte. Each build stages every pinned asset with
-scripts/stage-assets.sh, builds the TypeScript closure with cmd/socialweb-tsbundle -release and the
-pinned deno of that platform, then runs go build -a -tags release with the go.mod toolchain,
-CGO_ENABLED=0, -trimpath, -buildvcs=true, GOPROXY=off.
+scripts/stage-assets.sh, builds the TypeScript closure once with cmd/socialweb-tsbundle -release and
+the pinned deno of the build host (the closure is source plus the deno cache, the same bytes for every
+platform; its entries are started on the build host), embeds it for every platform, then runs
+go build -a -tags release with the go.mod toolchain, CGO_ENABLED=0, -trimpath, -buildvcs=true,
+GOPROXY=off.
 
   --platform    a release platform; repeat for more (default: every release platform)
   --commit      the commit to build (default HEAD of this checkout; uncommitted changes are not built)
@@ -24,7 +26,7 @@ CGO_ENABLED=0, -trimpath, -buildvcs=true, GOPROXY=off.
 Layout under the build root:
   src/<n>                       the clean checkout of build n (1, 2)
   cache/{assets,gomod,gocache}  pinned downloads, the module cache, the go build cache
-  work/<n>/<goos>_<goarch>      the pinned deno and the closure staging of build n
+  work/<n>/closure              the pinned deno, socialweb-tsbundle and the closure staging of build n
   out/<commit>/<n>/<goos>_<goarch>  build n: socialweb-computer, its sha256, build.json, version.json
   release/<commit>              the agreed binaries socialweb-computer-<goos>-<goarch>, SHA256SUMS,
                                 reproducible.json and version-<goos>-<goarch>.{json,txt}
@@ -114,30 +116,37 @@ export GOPROXY=off
 export GOSUMDB=off
 
 build_once() {
-  local n="$1" tree="$build_root/src/$1" plat goos goarch key work out started tsb deno
+  local n="$1" tree="$build_root/src/$1" plat goos goarch key work out started deno
+  local hostplat closure_work
+  hostplat="$(go env GOHOSTOS)/$(go env GOHOSTARCH)"
   checkout "$tree"
   say "build $n: stage assets"
   local stage_args=()
   for plat in "${platforms[@]}"; do stage_args+=(--platform "$plat"); done
   (cd "$tree" && ./scripts/stage-assets.sh --cache "$cache/assets" "${stage_args[@]}")
+  if [ ! -f "$tree/internal/assets/blobs/${hostplat/\//_}/deno.tar.zst" ]; then
+    (cd "$tree" && ./scripts/stage-assets.sh --cache "$cache/assets" --platform "$hostplat" --asset deno)
+  fi
+  closure_work="$build_root/work/$n/closure"
+  chmod -R u+w "$closure_work" 2>/dev/null || true
+  rm -rf "$closure_work"
+  mkdir -p "$closure_work/deno"
+  zstd -dc "$tree/internal/assets/blobs/${hostplat/\//_}/deno.tar.zst" | tar -x -C "$closure_work/deno"
+  deno="$closure_work/deno/deno"
+  [ -x "$deno" ] || die "the staged deno blob for $hostplat holds no deno"
+  (cd "$tree" && go build -trimpath -o "$closure_work/socialweb-tsbundle" ./cmd/socialweb-tsbundle)
+  say "build $n: TypeScript closure (pinned deno $hostplat)"
+  (cd "$tree" && "$closure_work/socialweb-tsbundle" -source-root "$tree" -release -deno "$deno" \
+    -work "$closure_work/tsbundle" -out "$closure_work/out" >"$closure_work/tsbundle.json")
   for plat in "${platforms[@]}"; do
     goos="${plat%/*}"
     goarch="${plat#*/}"
     key="${goos}_${goarch}"
-    work="$build_root/work/$n/$key"
     out="$build_root/out/$commit/$n/$key"
     started="$(utc)"
-    chmod -R u+w "$work" 2>/dev/null || true
-    rm -rf "$work" "$out"
-    mkdir -p "$work/deno" "$out"
-    zstd -dc "$tree/internal/assets/blobs/$key/deno.tar.zst" | tar -x -C "$work/deno"
-    deno="$work/deno/deno"
-    [ -x "$deno" ] || die "the staged deno blob for $plat holds no deno"
-    tsb="$work/socialweb-tsbundle"
-    (cd "$tree" && GOOS="$goos" GOARCH="$goarch" go build -trimpath -o "$tsb" ./cmd/socialweb-tsbundle)
-    say "build $n $plat: TypeScript closure (deno $plat)"
-    (cd "$tree" && "$tsb" -source-root "$tree" -release -deno "$deno" -work "$work/tsbundle" \
-      -out "$tree/internal/tsbundle/closure/$key" >"$work/tsbundle.json")
+    rm -rf "$out"
+    mkdir -p "$out"
+    cp "$closure_work/out/"* "$tree/internal/tsbundle/closure/$key/"
     say "build $n $plat: go build"
     (cd "$tree" && GOOS="$goos" GOARCH="$goarch" go build -a -tags release -trimpath -buildvcs=true \
       -ldflags='-s -w -buildid=' -o "$out/socialweb-computer" ./cmd/socialweb-computer)
@@ -147,7 +156,7 @@ build_once() {
     "$out/socialweb-computer" version >"$out/version.txt"
     jq -n --arg commit "$commit" --arg platform "$plat" --argjson build "$n" --arg go "$have_go" \
       --arg started "$started" --arg finished "$(utc)" --arg sha256 "$(sha_of "$out/socialweb-computer")" \
-      --argjson closure "$(jq '{treeSha256, archiveBytes, entries: [.entries[] | {name, ok}]}' "$work/tsbundle.json")" \
+      --argjson closure "$(jq --arg p "$hostplat" '{treeSha256, builtAndStartedOn: $p, entries: [.entries[] | {name, ok}]}' "$closure_work/tsbundle.json")" \
       '{commit: $commit, platform: $platform, build: $build, go: $go, startedUtc: $started, finishedUtc: $finished, sha256: $sha256, typescriptClosure: $closure}' \
       >"$out/build.json"
     say "build $n $plat: sha256 $(sha_of "$out/socialweb-computer")"
