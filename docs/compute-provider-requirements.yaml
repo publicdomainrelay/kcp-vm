@@ -560,41 +560,70 @@ requirements:
 
   - id: FC-ISSUER-DROPLET-VIEW
     source:
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:89-102
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:888-902
-      - hono-compute-provider/lib/oidc-issuer-hono/mod.ts:695-708
+      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:608-614
+      - hono-compute-provider/lib/oidc-issuer-hono/mod.ts:710-745
     behaviour: >-
-      The issuer's droplet for a guest this process holds is {id, containerName, tags [oidc-sub:plc:<plc>,
-      oidc-sub:role:<role>], networks.v4 [{ip_address, type public}]}; /v1/oidc/prove builds the subject
-      actx:<actx>:plc:<plc>:role:<role> from the three-part oidc-sub tags and issues a token naming
-      droplet_id. An unknown id is undefined and the exchange is refused. containerName and networks exist
-      only for the host-side key scan (FC-HOSTKEY-SCAN).
+      The issuer's droplet for a guest this process holds is {id, tags [oidc-sub:plc:<plc>,
+      oidc-sub:role:<role>]}; /v1/oidc/prove builds the subject actx:<actx>:plc:<plc>:role:<role> from the
+      three-part oidc-sub tags and issues a token naming droplet_id. An unknown id is undefined and the
+      exchange is refused. containerName and networks went with the host-side key scan (FC-HOSTKEY-SCAN,
+      0007 M4-HOST-KEYS).
     go_side:
       meets: no
       detail: >-
-        Planned: the droplet view is read from the ComputeVM (requester PLC, role) and its host keys from
-        status.market (M2-BACKPORT boundary, M4-ONNETWORK); containerName and the address are dropped.
+        Planned: the droplet view is read from the ComputeVM (requester PLC, role); host keys are
+        guest-reported (FC-GUEST-HOSTKEYS-REPORT), so the view carries no container name and no address.
     parity_test:
       - TestParityTheIssuersDropletViewEqualsTheProviders
+      - hono-compute-provider/test/oidc_hostkeys_test.ts::"a firecracker guest's proven host keys reach the bidder under its provider id; pasta forwards no inbound port"
     status: port
     covers: [createFirecrackerComputeProvider]
 
   - id: FC-HOSTKEY-SCAN
     source:
-      - hono-compute-provider/lib/oidc-issuer-hono/mod.ts:106-152
-      - hono-compute-provider/lib/oidc-issuer-hono/mod.ts:577-600
+      - hono-compute-provider/lib/oidc-issuer-hono/mod.ts@a42b89f:106-152
+      - hono-compute-provider/lib/oidc-issuer-hono/mod.ts@a42b89f:576-599
     behaviour: >-
-      provisioningValidate learns the guest's ed25519 host key by ssh-keyscan, through `container exec` into
-      the runner container when the droplet names one, retrying 300 s, and checks the guest's prove-sshd
+      provisioningValidate learned the guest's ed25519 host key by ssh-keyscan, through `container exec` into
+      the runner container when the droplet named one, retrying 300 s, and checked the guest's prove-sshd
       signature over its provisioning token against it.
     go_side:
       meets: not-applicable
       detail: >-
-        Deleted, not ported (M2-BACKPORT). Decided 2026-10-12: host keys are guest-reported in a bidder-signed
-        vm.hostKeys record; provisioningValidate verifies against the reported key bound to the same token.
+        Deleted, not ported. Removed from the TypeScript by 0007 M4-HOST-KEYS: the guest reports its host keys
+        with a prove-sshd signature over its provisioning token (FC-GUEST-HOSTKEYS-REPORT) and provisioningValidate
+        verifies the prove signature against the reported key bound to the same token (ssh-keygen -Y verify;
+        the old check-novalidate never compared the signer with the scanned key).
     parity_test:
       - hono-compute-provider/test/oidc_hostkeys_test.ts::"provisioningValidate verifies against the reported key and nothing in lib execs ssh-keyscan"
-    status: superseded-by-M4-HOST-KEYS
+    status: removed
+
+  - id: FC-GUEST-HOSTKEYS-REPORT
+    source:
+      - hono-compute-provider/lib/oidc-issuer-hono/mod.ts:551-600
+      - hono-compute-provider/lib/oidc-issuer-hono/mod.ts:672-708
+      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:616-644
+      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:739
+    behaviour: >-
+      The enricher writes the provisioning token to a 0600 file and composes cloud-init-common's
+      hostKeysReporterModule (guest-hostkeys.service, ordered before provisioning-token.service): the guest
+      posts every /etc/ssh/ssh_host_*_key.pub with a prove-sshd signature over the token to <issuer>/v1/host-keys.
+      The issuer binds the ed25519 key to the token's nonce only when the signature verifies with it (403
+      otherwise; a different key for the same nonce 409), then the provider maps the nonce to the guest it
+      provisioned and hands {id, keys} to the bidder (ComputeProvider.onHostKeys), which publishes
+      vm.hostKeys; events guest_hostkeys_forwarded, guest_hostkeys_unknown_guest (404),
+      guest_hostkeys_no_listener (503).
+    go_side:
+      meets: no
+      detail: >-
+        Planned with M4-ONNETWORK / M5-BIDDER-COMPONENTS: the guest-facing DenoPod serves /v1/host-keys beside
+        /v1/on-network and the ComputeVM's nonce maps the report to its receipt; the seed carries the reporter.
+    parity_test:
+      - hono-compute-provider/test/oidc_hostkeys_test.ts
+      - atproto-market/test/cloud_init_hostkeys_test.ts
+      - atproto-market/test/vm_hostkeys_bidder_test.ts
+    status: port
+    covers: [guest_hostkeys_forwarded, guest_hostkeys_unknown_guest, guest_hostkeys_no_listener]
 
   - id: FC-PROVISIONING-EXCHANGE
     source:
@@ -1058,22 +1087,22 @@ requirements:
 
   - id: FC-LEGACY-PASTA-SSH-FORWARD
     source:
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:111-113
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:737
+      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts@a42b89f:111-113
+      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts@a42b89f:737
     behaviour: >-
-      pasta is told to forward 0.0.0.0/22 in the runner's namespace to the guest's sshd, for the host-side
+      pasta was told to forward 0.0.0.0/22 in the runner's namespace to the guest's sshd, for the host-side
       keyscan and direct TCP probes.
     go_side:
       meets: not-applicable
       detail: >-
         Removed, not ported: a guest is reached only over its own iroh endpoint (outbound dials, no inbound
-        port) and host keys are guest-reported; pasta gets no -t forward. Still in the TypeScript after
-        0008 M1-STRIP-LEGACY-TRANSPORTS: oidc-issuer-hono getPublicKeyFromSshd scans the guest's host key at
-        127.0.0.1:22 inside the runner container, which reaches the guest only through this forward, so the
-        TypeScript drops it with that scan (0007 M4-HOST-KEYS).
+        port) and host keys are guest-reported; pasta gets no -t forward. Removed from the TypeScript by 0007
+        M4-HOST-KEYS together with the host-side key scan it served (FC-HOSTKEY-SCAN); the OIDC token exchange
+        proves the guest's host key through the reported key (FC-GUEST-HOSTKEYS-REPORT).
     parity_test:
       - internal/vmruntime TestTheVMUnitSpecPastaHasNoInboundForward
-    status: removed-legacy
+      - hono-compute-provider/test/oidc_hostkeys_test.ts::"a firecracker guest's proven host keys reach the bidder under its provider id; pasta forwards no inbound port"
+    status: removed
 
   - id: FC-ADOPT-AFTER-RESTART
     source:

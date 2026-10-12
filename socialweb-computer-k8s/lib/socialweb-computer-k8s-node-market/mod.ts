@@ -11,6 +11,7 @@ import {
   CONTRACT_STATE_VERSION,
   type ContractState,
   type FlowDecision,
+  hostKeyAliasOf,
   isTerminated,
   parseContractState,
   releaseTargetOf,
@@ -90,9 +91,15 @@ export interface MarketNodeFulfillerOptions {
   log?: Log;
 }
 
+export interface DebugNodeHostKeys {
+  alias: string;
+  keys: Array<{ type: string; publicKey: string; fingerprint?: string }>;
+}
+
 export interface DebugNodeSsh {
   authorizedKey: string;
   onNetwork(claim: string, address: string): void;
+  onHostKeys?(claim: string, hostKeys: DebugNodeHostKeys): void;
 }
 
 export interface MarketNodeFulfiller {
@@ -536,6 +543,11 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
             opts.debugSsh?.onNetwork(spec.nodeName, event.address);
             await record(s, { fqdn: event.address });
             return stopWhenEnded();
+          },
+          onHostKeys: async (event, s) => {
+            if (s.receipt) opts.debugSsh?.onHostKeys?.(spec.nodeName, { alias: hostKeyAliasOf(s.receipt), keys: event.keys });
+            log("node_claim_host_keys", { claim: key, fingerprints: event.keys.map((k) => k.fingerprint) });
+            await record(s);
           },
           onSecretsFetched: async (_event, s): Promise<FlowDecision> => {
             if (fetched || ended()) return "return";
