@@ -356,7 +356,11 @@
           "sha256": "820311e238ea34d76a8ca2643d6c01065212e9417109e7397d70472a236df261"
         },
         "sourceDateEpoch": 1790380800,
-        "outputs": {}
+        "outputs": {
+          "vmlinux": {"sha256": "54f502dee2972cf9d524fda828a0e45b626f7d424c360df89214c1bba3aeebd9", "bytes": 43725000},
+          "rootfs.ext4": {"sha256": "f2096748f2f7de32f56dd90c2ba85a5e0688a5918ca86fa6ea9c1040c7922584", "bytes": 1543503872},
+          "image.json": {"sha256": "27346dde3ae99024ef08346a90d582163cf55ec4501a7dfa85d46856637d62f4", "bytes": 5806}
+        }
       },
       "firecracker-aarch64": {
         "hypervisor": "firecracker",
@@ -369,7 +373,11 @@
           "sha256": "2ef46c9c86debfe5b1f30460d5469c61216f7bb708f1a40652bf8e63df4a5f2e"
         },
         "sourceDateEpoch": 1790380800,
-        "outputs": {}
+        "outputs": {
+          "vmlinux": {"sha256": "b81a34572a58b32c01c9038880f2e5e7429f9ac8072038793cc7234aad72e81a", "bytes": 17420800},
+          "rootfs.ext4": {"sha256": "2094d5f25dc6735824f0a6c078f499f360347251f7d46e62afb73533e2e69420", "bytes": 1610612736},
+          "image.json": {"sha256": "e947b766c23983b089fb9331328951f31bed4c097322cb7d339a7e06eae73dbc", "bytes": 5850}
+        }
       }
     },
     "reserved": {
