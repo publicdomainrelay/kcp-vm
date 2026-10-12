@@ -13,6 +13,7 @@ require (
 	github.com/openbao/openbao/api/v2 v2.3.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/prometheus/common v0.67.5
+	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	golang.org/x/sys v0.47.0
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/api v0.36.4
@@ -89,7 +90,6 @@ require (
 	github.com/rivo/uniseg v0.2.0 // indirect
 	github.com/ryanuber/go-glob v1.0.0 // indirect
 	github.com/sirupsen/logrus v1.9.4 // indirect
-	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e // indirect
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/whyrusleeping/cbor-gen v0.2.1-0.20241030202151-b7a6831be65e // indirect
