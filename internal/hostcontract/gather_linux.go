@@ -65,7 +65,7 @@ func Gather(ctx context.Context, o Options) Facts {
 	} else {
 		f.ManagerControllers = strings.Fields(string(b))
 	}
-	_, err := os.Stat(filepath.Join("/var/lib/systemd/linger", f.Account))
+	_, err := os.Stat(filepath.Join(o.Getenv(StagedRootEnv), "/var/lib/systemd/linger", f.Account))
 	f.Linger = err == nil && f.Account != ""
 	if b, err := os.ReadFile("/proc/sys/kernel/random/boot_id"); err == nil {
 		f.BootID = strings.TrimSpace(string(b))

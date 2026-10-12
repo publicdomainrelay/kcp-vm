@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
 	"strings"
 
@@ -78,7 +79,7 @@ func runInstall(role hostcontract.Role) verbFunc {
 			}
 		}
 		rep, err := install.Install(ctx, install.Options{
-			Role: role, Handles: splitHandles(vals.String("handle")), Account: vals.String("account"),
+			Role: role, Handles: splitHandles(vals.String("handle")), Account: installAccount(vals, staged),
 			StateDir: vals.String("state-dir"), Binary: exe, VMSlots: vals.Int("vm-slots"), DryRun: dry,
 			AdoptAccount: vals.Bool("adopt-account"), HostBackend: vals.String(backendOpt), Out: a.stdout,
 			Root: root, Staged: staged, UnitPrefix: vals.String("unit-prefix"), Listen: listen,
@@ -112,7 +113,7 @@ func runUninstall(role hostcontract.Role) verbFunc {
 		if err != nil {
 			return installExit(a, verb, install.Report{}, err, false)
 		}
-		rep, err := install.Uninstall(ctx, install.UninstallOptions{Role: role, Account: vals.String("account"),
+		rep, err := install.Uninstall(ctx, install.UninstallOptions{Role: role, Account: installAccount(vals, staged),
 			Purge: vals.Bool("purge"), Force: vals.Bool("force"), Root: root, Staged: staged, Out: a.stdout}, sys)
 		return installExit(a, verb, rep, err, vals.Bool("json"))
 	}
@@ -167,4 +168,14 @@ func runRollback(ctx context.Context, a *app, vals clicfg.Values, rest []string)
 		return a.fail(code, "%v", err)
 	}
 	return exitOK
+}
+
+func installAccount(vals clicfg.Values, staged bool) string {
+	if a := vals.String("account"); a != "" || !staged {
+		return a
+	}
+	if u, err := user.Current(); err == nil {
+		return u.Username
+	}
+	return ""
 }

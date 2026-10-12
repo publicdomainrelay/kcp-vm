@@ -28,7 +28,7 @@ type UninstallOptions struct {
 
 func OwnsUnit(prefix, name string) bool {
 	if prefix != "" && prefix != RuntimePrefix {
-		return strings.HasPrefix(name, prefix)
+		return strings.HasPrefix(name, prefix) || name == strings.TrimSuffix(prefix, "-")+".slice"
 	}
 	return strings.HasPrefix(name, RuntimePrefix) || name == SliceUnit || strings.HasPrefix(name, RuntimeSliceTop+"-")
 }

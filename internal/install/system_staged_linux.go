@@ -220,6 +220,7 @@ func (s stagedSystem) User(ctx context.Context, a Account) (UserManager, error) 
 func (s stagedSystem) CheckHost(ctx context.Context, a Account, binary string, role hostcontract.Role, stateDir string) error {
 	cmd := exec.CommandContext(ctx, binary, "check-host", "-role", string(role), "-state-dir", stateDir)
 	cmd.Dir = stateDir
+	cmd.Env = append(os.Environ(), hostcontract.StagedRootEnv+"="+s.root)
 	cmd.Stdout, cmd.Stderr = s.out, s.out
 	return cmd.Run()
 }
@@ -343,6 +344,8 @@ func (u *stagedUser) DisableStop(ctx context.Context, units []string) error {
 
 func (u *stagedUser) Close() {
 	if u.prune() {
+		os.Remove(filepath.Join(u.runtime, WantsDir))
+		os.Remove(u.runtime)
 		u.liveUser.Reload(context.Background())
 	}
 	u.liveUser.Close()

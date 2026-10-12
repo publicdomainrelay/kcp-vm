@@ -21,6 +21,8 @@ const (
 	RoleBidder  Role = "bidder"
 )
 
+const StagedRootEnv = "SOCIALWEB_STAGED_ROOT"
+
 func ParseRole(s string) (Role, error) {
 	switch Role(s) {
 	case RoleGateway, RoleBidder:
