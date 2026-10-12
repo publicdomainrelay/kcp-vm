@@ -32,3 +32,8 @@ deno.lock
 /.cache/
 /.tempdir/
 port-bound-to
+
+/socialweb-computer
+/socialweb-tsbundle
+/socialweb-vmexec
+/cmd/*/socialweb-*
