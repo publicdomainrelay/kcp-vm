@@ -90,6 +90,7 @@ type Gateway struct {
 	ExtraRead         string
 	TestArgs          string
 	TestRead          string
+	TestEnv           string
 	IdentityWorkspace string `json:",omitempty"`
 	Vault             GatewayVault
 }

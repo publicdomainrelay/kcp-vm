@@ -207,6 +207,14 @@ type GatewayMarketNetwork struct {
 	NodeGuestHostAliases []string `json:"nodeGuestHostAliases,omitempty"`
 
 	NodeUserDataBaseFile string `json:"nodeUserDataBaseFile,omitempty"`
+
+	Names []NetworkName `json:"names,omitempty"`
+}
+
+type NetworkName struct {
+	Name string `json:"name"`
+
+	Address string `json:"address"`
 }
 
 type MarketNetwork struct {

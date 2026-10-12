@@ -14,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcplibs/factory/servicenames"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/manifests"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/openbaoctl"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/vaultlayout"
@@ -324,7 +325,7 @@ func GatewayValues(o v1alpha1.Gateway, workspace, stateDir string, w WebApp, vau
 	}
 	v := manifests.Gateway{StateDir: stateDir, WebDir: filepath.Join(w.TSRoot, filepath.FromSlash(WebAppWebDir)),
 		GatewayWorkspace: workspace, GatewayName: o.Name, TLS: manifests.TLSNone, Vault: vault,
-		IdentityWorkspace: workspace + ":" + ComponentWorkspace}
+		IdentityWorkspace: workspace + ":" + ComponentWorkspace, TestEnv: "{}"}
 	var trust []string
 	var extra []string
 	if n := o.Spec.Network; n != nil {
@@ -378,6 +379,21 @@ func GatewayValues(o v1alpha1.Gateway, workspace, stateDir string, w WebApp, vau
 		}
 		if v.TestRead, err = fragment(read); err != nil {
 			return manifests.Gateway{}, err
+		}
+		if len(m.Names) > 0 {
+			table := map[string]string{}
+			for _, n := range m.Names {
+				table[n.Name] = n.Address
+			}
+			raw, err := json.Marshal(table)
+			if err != nil {
+				return manifests.Gateway{}, err
+			}
+			env, err := json.Marshal(map[string]string{servicenames.TableExtraKey: string(raw)})
+			if err != nil {
+				return manifests.Gateway{}, err
+			}
+			v.TestEnv = string(env)
 		}
 	}
 	return v, nil

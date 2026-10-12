@@ -49,6 +49,9 @@ func (p *Provider) podEnv(ctx context.Context, ref Ref, tmpl *v1alpha1.DenoPodTe
 	for k, v := range services.Env(ctx, ref, tmpl.Env["SERVICE_ARGS"], tmpl.Env["SERVICE_ENV"], tmpl.ServiceAccount.DenoSpec()) {
 		env[k] = v
 	}
+	if extra := tmpl.Env[servicenames.TableExtraKey]; extra != "" {
+		env[servicenames.TableKey] = servicenames.MergeTable(env[servicenames.TableKey], extra)
+	}
 	// ponytail: the runner writes the trust bundle to ca.pem in the run
 	// directory, which is this process's working directory, so DENO_CERT is a
 	// relative path on purpose. Deno reads it at startup, which is the only
