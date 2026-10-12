@@ -1,0 +1,6 @@
+# stage with inner-id 0 (pasta started as root of the subuid namespace), 2026-10-12T04:49:15Z
+## pasta 
+## pasta --runas 0:0
+## same pasta binary outside pasta_exec_t (unconfined_u:object_r:user_tmp_t:s0)
+Can't run AVX2 build, using non-AVX2 version: No such file or directory
+         0          0          1

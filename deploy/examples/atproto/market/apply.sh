@@ -99,6 +99,13 @@ if [ -n "$missing" ]; then
   exit 1
 fi
 mkdir -p "$FC_WORK_ROOT"
+FC_EXTRA_ARGS=""
+if [ -n "${FC_USERNS_STAGE:-}" ]; then
+  FC_EXTRA_ARGS=",\"--compute-provider-firecracker-userns-stage\",\"$FC_USERNS_STAGE\""
+  [ -n "${FC_USERNS_ACCOUNT:-}" ] && FC_EXTRA_ARGS="$FC_EXTRA_ARGS,\"--compute-provider-firecracker-userns-account\",\"$FC_USERNS_ACCOUNT\""
+  [ -n "${FC_USERNS_RUNTIME_DIR:-}" ] && FC_EXTRA_ARGS="$FC_EXTRA_ARGS,\"--compute-provider-firecracker-userns-runtime-dir\",\"$FC_USERNS_RUNTIME_DIR\""
+  [ -n "${FC_USERNS_SLOT_SIZE:-}" ] && FC_EXTRA_ARGS="$FC_EXTRA_ARGS,\"--compute-provider-firecracker-userns-slot-size\",\"$FC_USERNS_SLOT_SIZE\""
+fi
 # Each guest's firecracker API socket lives in its work directory, and a unix
 # socket path cannot exceed 107 bytes; past that the guest dies at boot and its
 # work directory is removed, which reads as a bidder that never provisioned.
@@ -219,6 +226,7 @@ write_values() {
       echo "    VMM: $(q "$FC_VMM")"
       echo "    RunnerImage: $(q "$FC_RUNNER_IMAGE")"
       echo "    WorkRoot: $(q "$FC_WORK_ROOT")"
+      echo "    ExtraArgs: '$FC_EXTRA_ARGS'"
     } >"$VALUES.tmp"
     mv "$VALUES.tmp" "$VALUES"
   )

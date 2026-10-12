@@ -1,0 +1,6 @@
+-- added latency: 200 x exec /bin/true, direct vs through each stage (as test-0001)
+direct per_exec_us=405
+/home/johnandersen777/src/publicdomainrelay-kcp-tasks/vm-userns/socialweb-computer-kcp/docs/research/2026-10-11-vm-lifecycle/vm-userns/standin.sh: line 156: 2803494 Killed                     sudo -n -u "$RANGE_USER" setsid $(stage_argv "$cand" "$k") "${PA[@]}" >> "$rd.err" 2>&1 < /dev/null
+A per_exec_us=2211
+B per_exec_us=2567
+B2 per_exec_us=3354

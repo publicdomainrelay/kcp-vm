@@ -44,6 +44,10 @@ set -euo pipefail
 #                   that reports them; the recorded upstream build reports none
 #                   until 0008 M2-DENOKCP-INPROC, so without it the check is
 #                   printed and not counted)
+# FC_USERNS_STAGE   swc-userns-stage path: guests boot in per-VM subuid user
+#                   namespaces in units of FC_USERNS_ACCOUNT (default: this
+#                   user), staged under FC_USERNS_RUNTIME_DIR; FC_NODEBOOT and
+#                   FC_VMM are then host paths (0007 M0-VM-USERNS)
 #
 # The provider is started here rather than by apply.sh, because a provider that
 # comes up before its APIExport virtual workspace endpoints are published
@@ -299,6 +303,23 @@ stop_own_guests() {
     echo "removing guest container $c (label swc.bed=$BED_ID), left behind by this bed" >&2
     docker rm -f "$c" >/dev/null 2>&1 || true
   done
+  [ -n "${FC_USERNS_STAGE:-}" ] || return 0
+  for c in $(own_guest_dirs); do
+    userns_systemctl stop "socialweb-vm-$c.service" >/dev/null 2>&1 || true
+  done
+}
+
+# FC_USERNS_STAGE set: guests run as transient units of FC_USERNS_ACCOUNT's
+# user manager (the account owning the subuid range), not as containers.
+userns_systemctl() {
+  local acct=${FC_USERNS_ACCOUNT:-$(id -un)}
+  if [ "$acct" = "$(id -un)" ]; then
+    systemctl --user "$@"
+  else
+    local uid
+    uid=$(id -u "$acct")
+    sudo -n -u "$acct" env XDG_RUNTIME_DIR="/run/user/$uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" systemctl --user "$@"
+  fi
 }
 
 # Every pid in this bed: the provider and all its descendants (the pod scripts
@@ -427,6 +448,7 @@ cleanup() {
   fi
   ROOT="$BED_DIR/kcp" bash "$DENOKCP_DIR/stop-kcp.sh" >/dev/null || true
   rm -rf "$FC_WORK_ROOT" 2>/dev/null || true
+  [ -n "${FC_USERNS_RUNTIME_DIR:-}" ] && rm -rf "$FC_USERNS_RUNTIME_DIR" 2>/dev/null || true
   if [ -e "$FC_WORK_ROOT" ]; then
     echo "guest work root $FC_WORK_ROOT could not be removed" >&2
   fi

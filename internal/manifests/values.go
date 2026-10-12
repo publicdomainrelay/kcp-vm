@@ -52,6 +52,7 @@ type Firecracker struct {
 	VMM         string `json:",omitempty"`
 	RunnerImage string `json:",omitempty"`
 	WorkRoot    string `json:",omitempty"`
+	ExtraArgs   string
 }
 
 var valueTypes = map[string]func() reflect.Type{
