@@ -226,7 +226,10 @@ func TestFailedStepReapsEverythingBeforeIt(t *testing.T) {
 	_, err := Spawn(context.Background(), []Step{
 		step(t, standIn, logPath, readyWhenAnnounced),
 		step(t, ComponentOpenBao, logPath, readyWhenAnnounced),
-		step(t, ComponentKine, logPath, func(context.Context, *processrunner.Process) error {
+		step(t, ComponentKine, logPath, func(ctx context.Context, p *processrunner.Process) error {
+			if err := readyWhenAnnounced(ctx, p); err != nil {
+				return err
+			}
 			return boom
 		}),
 	}, Options{PostgresUp: postgresUp})
@@ -237,8 +240,8 @@ func TestFailedStepReapsEverythingBeforeIt(t *testing.T) {
 		t.Fatalf("the gate's error was swallowed: %v", err)
 	}
 	got := readOrder(t, logPath)
-	if len(got) != 2 || got[0] != "openbao" || got[1] != "stand-in" {
-		t.Fatalf("reap log = %v, want the two started components in reverse -- A PARTIALLY "+
+	if len(got) != 3 || got[0] != "kine" || got[1] != "openbao" || got[2] != "stand-in" {
+		t.Fatalf("reap log = %v, want the failed step and the two before it in reverse -- A PARTIALLY "+
 			"STARTED GROUP LEFT RUNNING IS A LEAK WITH A BOUND PORT AND A LIVE APISERVER", got)
 	}
 }
