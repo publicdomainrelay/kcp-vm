@@ -231,9 +231,15 @@ type Record struct {
 	KineURL         string                `json:"kineURL"`
 	Executables     map[string]Executable `json:"executables"`
 	SourceRoot      string                `json:"sourceRoot,omitempty"`
+	OpenBao         *OpenBao              `json:"openbao,omitempty"`
 	Ready           bool                  `json:"ready"`
 	Host            bool                  `json:"host,omitempty"`
 	Parent          *Parent               `json:"parent,omitempty"`
+}
+
+type OpenBao struct {
+	Address   string `json:"address"`
+	TokenFile string `json:"tokenFile"`
 }
 
 func (r *Record) Unit(role string) *Unit {

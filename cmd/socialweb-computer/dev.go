@@ -477,6 +477,15 @@ func devUp(ctx context.Context, a *app, vals clicfg.Values, host bool) int {
 		rec.Executables["bao"] = baoExe
 	}
 	rec.SourceRoot = sourceRoot
+	rec.OpenBao = nil
+	if addr := vals.String("openbao-addr"); addr != "" {
+		tokenFile := vals.String("openbao-token-file")
+		if !filepath.IsAbs(tokenFile) {
+			lock.Close()
+			return a.fail(exitRefused, "dev up: openbao-addr %s needs openbao-token-file as an absolute path, got %q", addr, tokenFile)
+		}
+		rec.OpenBao = &devinstance.OpenBao{Address: addr, TokenFile: tokenFile}
+	}
 	bcfg := bootstrap.Config{Layout: l, KcpPath: kcpExe.Path, KinePath: kineExe.Path, PostgresRoot: pgExe.Path, Exe: exe,
 		ReadyTimeout: readyTimeout, Log: a.log}
 	if err := bootstrap.Ensure(ctx, m, bcfg, &rec); err != nil {

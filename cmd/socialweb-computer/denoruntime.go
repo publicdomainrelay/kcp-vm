@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clicfg"
@@ -53,7 +55,15 @@ func (a *app) coreDenoRuntime(vals clicfg.Values, rec devinstance.Record, applyT
 	if err != nil {
 		return denoruntime.Config{}, err
 	}
+	var bao denoruntime.OpenBao
+	if rec.OpenBao != nil {
+		token, err := os.ReadFile(rec.OpenBao.TokenFile)
+		if err != nil {
+			return denoruntime.Config{}, fmt.Errorf("the OpenBao token for %s: %w", rec.OpenBao.Address, err)
+		}
+		bao = denoruntime.OpenBao{Address: rec.OpenBao.Address, Token: strings.TrimSpace(string(token))}
+	}
 	unit, _ := a.env.LookupEnv(devsup.EnvUnit)
 	return denoruntime.Config{StateDir: rec.Layout.StateDir, Deno: deno.Path, Kubeconfig: rec.Layout.FrontKubeconfig(),
-		Closure: prepared, Unit: unit, ApplyTimeout: applyTimeout, Log: a.log}, nil
+		Closure: prepared, Unit: unit, ApplyTimeout: applyTimeout, OpenBao: bao, Log: a.log}, nil
 }

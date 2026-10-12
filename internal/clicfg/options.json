@@ -84,6 +84,16 @@
       "description": "Absolute path of the pinned deno the core runs every DenoPod on (dev build: explicit, never PATH; a release build extracts its embedded deno)",
       "env": "SOCIALWEB_DENO_PATH"
     },
+    "openbao-addr": {
+      "type": "string",
+      "description": "dev up: URL of the OpenBao server the core's deno runtime provisions OpenBao namespaces in and issues DenoPod serving certificates from (unset: DenoPods serve plain HTTP)",
+      "env": "SOCIALWEB_OPENBAO_ADDR"
+    },
+    "openbao-token-file": {
+      "type": "string",
+      "description": "dev up: absolute path of the file holding the token for openbao-addr",
+      "env": "SOCIALWEB_OPENBAO_TOKEN_FILE"
+    },
     "ready-timeout": {
       "type": "string",
       "description": "How long dev up waits for kcp /readyz (Go duration)",
