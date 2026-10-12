@@ -58,6 +58,7 @@ var (
 	secretGVR = schema.GroupVersionResource{Version: "v1", Resource: "secrets"}
 	sizeRE    = regexp.MustCompile(`(?i)^\s*(\d+)\s*([KMGT])?i?B?\s*$`)
 	slotRE    = regexp.MustCompile(`slot=(\d+)`)
+	vmmExitRE = regexp.MustCompile(`Firecracker exiting[^\n]*exit_code=(\d+)`)
 )
 
 type Config struct {
@@ -527,6 +528,13 @@ func (ct *Controller) observe(ctx context.Context, o v1alpha1.ComputeVM) error {
 		}
 		reason := lostReason(obs.Reason, ex)
 		msg := obs.Detail
+		if reason == v1alpha1.ComputeVMLostUnitGone && ref.WorkDir != "" {
+			logs := tail(filepath.Join(ref.WorkDir, vmruntime.VMMLogFile), 4096) + tail(filepath.Join(ref.WorkDir, vmruntime.ConsoleFile), 4096)
+			if m := vmmExitRE.FindStringSubmatch(logs); m != nil {
+				reason = v1alpha1.ComputeVMLostVMMExited
+				msg = fmt.Sprintf("%s; the VMM logged %q", msg, m[0])
+			}
+		}
 		if ex != nil {
 			msg = fmt.Sprintf("%s; the unit watch saw it %s (result %s, exit code %d status %d)", msg, ex.State, ex.Result, ex.ExecMainCode, ex.ExecMainStatus)
 		}

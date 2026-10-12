@@ -203,6 +203,23 @@ export function withOnNetworkReporter(
   });
 }
 
+export const POWEROFF_ENDS_VM_PATH = "/usr/lib/systemd/system-shutdown/socialweb-poweroff-ends-vm.shutdown";
+
+export function withPoweroffEndsVm(userData: string): string {
+  if (userData.includes(POWEROFF_ENDS_VM_PATH)) return userData;
+  return buildUserData({
+    base: userData,
+    modules: [() => ({
+      write_files: [{
+        path: POWEROFF_ENDS_VM_PATH,
+        owner: "root:root",
+        permissions: "0755",
+        content: '#!/bin/sh\ncase "$1" in poweroff|halt) echo b > /proc/sysrq-trigger ;; esac\n',
+      }],
+    })],
+  });
+}
+
 export function addressTheRequesterNamed(userData: string): string | undefined {
   return /(\d+\.\d+\.\d+\.\d+)\s+relay\.localhost/.exec(userData)?.[1];
 }
