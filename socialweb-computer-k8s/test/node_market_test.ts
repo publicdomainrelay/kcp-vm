@@ -6,7 +6,14 @@ import {
   createMarketNodeFulfiller,
   defaultOpenBaoCAFile,
 } from "@publicdomainrelay/socialweb-computer-k8s-node-market";
-import type { ClusterLinkReader, ClusterLinkView, NodeClaim, NodeClaimStore } from "@publicdomainrelay/socialweb-computer-k8s-abc";
+import {
+  type ClaimKeyStore,
+  type ClusterLinkReader,
+  type ClusterLinkView,
+  createMemoryClaimKeyStore,
+  type NodeClaim,
+  type NodeClaimStore,
+} from "@publicdomainrelay/socialweb-computer-k8s-abc";
 import { FINALIZER_NODE_CLAIM, type NodeClaimStatus } from "@publicdomainrelay/socialweb-computer-k8s-api";
 import {
   NODE_BUNDLE_PATHS,
@@ -20,6 +27,7 @@ import {
   advanceContract,
   type ComputeRequestHandlers,
   type ContractState,
+  type ContractTermination,
   createContractState,
   type FlowDecision,
   patchContract,
@@ -48,6 +56,13 @@ const ACCEPT: RecordRef = { uri: `at://${OWNER}/market.accept/1`, cid: "acceptci
 const RECEIPT: RecordRef = { uri: `at://${BIDDER}/market.receipt/1`, cid: "receiptcid" };
 const SUBMIT = "https://bidder.test#submit_event";
 const GUEST = "iroh://guest-ticket";
+const TERMINATION: ContractTermination = {
+  reason: "guest_poweroff",
+  exitCode: 0,
+  observedAt: "2026-10-12T01:44:42.367Z",
+  event: { uri: `at://${BIDDER}/market.event/9`, cid: "terminatedevent" },
+  payload: { uri: `at://${BIDDER}/compute.events.vm.terminated/9`, cid: "terminatedpayload" },
+};
 
 function claim(name: string, overrides: Partial<NodeClaim> = {}): NodeClaim {
   return {
@@ -188,16 +203,28 @@ function readText(path: string): Promise<string> {
   return Promise.reject(new Deno.errors.NotFound(path));
 }
 
+function secretsUrlOf(privateKeyHex: string | undefined): string {
+  return `https://did-key-${privateKeyHex ? privateKeyHex.slice(0, 12) : "fresh"}.relay.test`;
+}
+
 class FakeSecretsCapabilities {
   bundles: SecretEntry[][] = [];
   grants: GrantVars[] = [];
   pathsAtGrant: string[][] = [];
+  keys: (string | undefined)[] = [];
+  served: string[] = [];
   disposed = 0;
-  factory = (secrets: SecretEntry[]): GuestCapability => {
+  factory = (secrets: SecretEntry[], _logger?: unknown, o?: { privateKeyHex?: string }): GuestCapability => {
     this.bundles.push(secrets);
+    this.keys.push(o?.privateKeyHex);
     return {
       id: "secrets",
       userDataModule: "secrets",
+      prepare: () => {
+        const secretsUrl = secretsUrlOf(o?.privateKeyHex);
+        this.served.push(secretsUrl);
+        return Promise.resolve({ ctx: { secretsUrl } });
+      },
       onContract: (vars) => {
         this.grants.push(vars);
         this.pathsAtGrant.push(secrets.map((s) => s.path));
@@ -210,13 +237,25 @@ class FakeSecretsCapabilities {
   };
 }
 
-type Script = "complete" | "no_fetch" | "no_bids" | "hang_after_receipt" | "hang_before_accept" | "hang_after_network";
+type Script =
+  | "complete"
+  | "no_fetch"
+  | "no_bids"
+  | "hang_after_receipt"
+  | "hang_before_accept"
+  | "hang_after_network"
+  | "hang_at_accepting"
+  | "terminate_after_receipt";
 
 interface Decisions {
   onSecretsFetched: FlowDecision[];
   onAccepted: FlowDecision[];
   onReceipt: FlowDecision[];
   grantAtAccept: (NodeClaimStatus["grant"] | undefined)[];
+  rfpsPosted?: number;
+  acceptsWritten?: number;
+  secretsAtRfp?: (NodeClaimStatus["secrets"] | undefined)[];
+  pendingAtAccept?: (string | undefined)[];
 }
 
 function scriptedRequest(script: Script, seen: Record<string, unknown>[], decisions: Decisions, store: FakeStore) {
@@ -232,14 +271,32 @@ function scriptedRequest(script: Script, seen: Record<string, unknown>[], decisi
     const handle = (state: ContractState) => ({ state, capabilities: caps, dispose });
     const returned = (s: ContractState) => handle(patchContract(s, { outcome: "returned" }));
     const stop = (d: FlowDecision | undefined) => d === "return";
-    let s = createContractState({ vmName: o.vmName as string, requesterDid: OWNER, marketDid: OWNER, at: AT });
-    s = advanceContract(s, "rfp_submitted", { payload: VM, rfp: RFP }, AT);
-    if (stop(await handlers.onRfpSubmitted?.({ rfp: RFP, payload: VM, bidderDids: [BIDDER] }, structuredClone(s)))) return returned(s);
+    for (const cap of caps) {
+      await cap.prepare?.({ vmName: o.vmName as string, requesterDid: OWNER, ingressProxyHost: "relay.test", signer: { did: () => OWNER, sign: () => Promise.resolve(new Uint8Array()) }, log: () => {} });
+    }
+    const resume = o.resume as ContractState | undefined;
+    let s = resume ?? createContractState({ vmName: o.vmName as string, requesterDid: OWNER, marketDid: OWNER, at: AT });
+    if (!resume?.rfp) {
+      decisions.rfpsPosted = (decisions.rfpsPosted ?? 0) + 1;
+      decisions.secretsAtRfp = [...(decisions.secretsAtRfp ?? []), store.claims.get(o.vmName as string)?.status.secrets];
+      s = advanceContract(s, "rfp_submitted", { payload: VM, rfp: RFP }, AT);
+    }
+    if (!resume?.accept) {
+      if (stop(await handlers.onRfpSubmitted?.({ rfp: RFP, payload: VM, bidderDids: [BIDDER] }, structuredClone(s)))) return returned(s);
+    }
     if (script === "no_bids") {
       await dispose();
       return { state: patchContract(s, { outcome: "no_bids", bids: 0 }), capabilities: [], dispose: () => Promise.resolve() };
     }
     if (script === "hang_before_accept") await new Promise(() => {});
+    if (!resume?.accept && !resume?.acceptPending) {
+      s = advanceContract(s, "winner_selected", { bid: BID, winner: { did: BIDDER } }, AT);
+      s = patchContract(s, { acceptPending: { bidUri: BID.uri } });
+      if (stop(await handlers.onAccepting?.({ rfp: RFP, bid: BID, winnerDid: BIDDER }, structuredClone(s)))) return returned(s);
+      decisions.pendingAtAccept = [...(decisions.pendingAtAccept ?? []), store.claims.get(o.vmName as string)?.status.contract?.acceptPending?.bidUri];
+      if (script === "hang_at_accepting") await new Promise(() => {});
+      decisions.acceptsWritten = (decisions.acceptsWritten ?? 0) + 1;
+    }
     const vars: GrantVars = {
       requesterDid: OWNER,
       role: o.vmName as string,
@@ -255,7 +312,14 @@ function scriptedRequest(script: Script, seen: Record<string, unknown>[], decisi
         continue;
       }
     }
-    s = advanceContract(s, "accepted", { accept: ACCEPT, bid: BID, winner: { did: BIDDER }, receipt: RECEIPT, submitEventRef: SUBMIT }, AT);
+    s = advanceContract(s, s.phase === "receipt" || s.phase === "network" ? s.phase : "accepted", {
+      accept: ACCEPT,
+      bid: BID,
+      winner: { did: BIDDER },
+      receipt: RECEIPT,
+      submitEventRef: SUBMIT,
+      acceptPending: undefined,
+    }, AT);
     decisions.grantAtAccept.push(store.claims.get(o.vmName as string)?.status.grant);
     const accepted = await handlers.onAccepted?.({ accept: ACCEPT, bid: BID, winnerDid: BIDDER }, structuredClone(s));
     decisions.onAccepted.push(accepted ?? "continue");
@@ -265,6 +329,11 @@ function scriptedRequest(script: Script, seen: Record<string, unknown>[], decisi
     decisions.onReceipt.push(receipt ?? "continue");
     if (stop(receipt)) return returned(s);
     if (script === "hang_after_receipt") await new Promise(() => {});
+    if (script === "terminate_after_receipt") {
+      s = patchContract(s, { termination: TERMINATION });
+      await handlers.onTerminated?.(TERMINATION, structuredClone(s));
+      return returned(s);
+    }
     s = advanceContract(s, "network", { vmAddress: GUEST }, AT);
     if (stop(await handlers.onNetwork?.({ address: GUEST, kind: "iroh-ticket", source: "test" }, structuredClone(s)))) return returned(s);
     if (script === "hang_after_network") await new Promise(() => {});
@@ -277,7 +346,34 @@ function scriptedRequest(script: Script, seen: Record<string, unknown>[], decisi
   };
 }
 
+class FakeTerminations {
+  watched: string[] = [];
+  aborted: string[] = [];
+  #waiting = new Map<string, { state: ContractState; resolve: (s: ContractState | null) => void }>();
+  await = (_pds: unknown, state: ContractState, o: { signal?: AbortSignal } = {}): Promise<ContractState | null> => {
+    this.watched.push(state.vmName);
+    return new Promise((resolve) => {
+      this.#waiting.set(state.vmName, { state, resolve });
+      o.signal?.addEventListener("abort", () => {
+        this.aborted.push(state.vmName);
+        this.#waiting.delete(state.vmName);
+        resolve(null);
+      }, { once: true });
+    });
+  };
+  terminate(name: string, termination: ContractTermination = TERMINATION) {
+    const waiting = this.#waiting.get(name);
+    this.#waiting.delete(name);
+    waiting?.resolve(patchContract(waiting.state, { termination }));
+  }
+  waiting(): string[] {
+    return [...this.#waiting.keys()];
+  }
+}
+
 interface HarnessOptions {
+  claimKeys?: ClaimKeyStore;
+  terminations?: FakeTerminations;
   script?: Script;
   bidderOk?: boolean;
   store?: FakeStore;
@@ -298,9 +394,13 @@ function harness(o: HarnessOptions = {}) {
   const requested: string[] = [];
   const contracts: Record<string, unknown>[] = [];
   const decisions: Decisions = { onSecretsFetched: [], onAccepted: [], onReceipt: [], grantAtAccept: [] };
+  const claimKeys = o.claimKeys ?? createMemoryClaimKeyStore();
+  const terminations = o.terminations ?? new FakeTerminations();
   const fulfiller = createMarketNodeFulfiller({
     store,
     links,
+    claimKeys,
+    awaitTermination: terminations.await as never,
     requesterFor: (did) => {
       requested.push(did);
       return Promise.resolve(pds as never);
@@ -315,7 +415,7 @@ function harness(o: HarnessOptions = {}) {
     ...(o.scopeRefresher ? { scopeRefresher: o.scopeRefresher as never } : {}),
     requestCompute: scriptedRequest(o.script ?? "complete", contracts, decisions, store) as never,
   });
-  return { store, pds, links, secrets, fulfiller, requested, contracts, decisions };
+  return { store, pds, links, secrets, fulfiller, requested, contracts, decisions, claimKeys, terminations };
 }
 
 async function settle() {
@@ -735,6 +835,7 @@ Deno.test("the door admits declared bidders and omits a policy it was not given"
     readText,
     eventStreams: () => ({ close() {} }),
     secretsCapability: new FakeSecretsCapabilities().factory,
+    awaitTermination: new FakeTerminations().await as never,
     extraBidderDids: ["did:plc:mine"],
     requestCompute: scriptedRequest("no_bids", contracts, { onSecretsFetched: [], onAccepted: [], onReceipt: [], grantAtAccept: [] }, store) as never,
   });
@@ -752,7 +853,7 @@ Deno.test("a pending claim is finalized and fulfilled through the market as its 
   await h.fulfiller.pass();
   await settle();
   assertEquals(h.store.claims.get("ci-node1")!.finalizers, [FINALIZER_NODE_CLAIM]);
-  assertEquals(h.requested, [OWNER]);
+  assertEquals([...new Set(h.requested)], [OWNER], "the contract and its termination watch both run as the owner");
   assertEquals(h.contracts.length, 1);
   assertEquals(h.contracts[0].vmName, "ci-node1");
   const contract = h.store.contract("ci-node1")!;
@@ -880,4 +981,180 @@ Deno.test("every contract shares the door's one scope refresher, so a bidder's v
   await settle();
   assertEquals(h.contracts.length, 2);
   for (const c of h.contracts) assertEquals(c.scopeRefresher, scopeRefresher);
+});
+
+Deno.test("the door keeps each claim's secrets-server key in its key store and records what it served before any RFP", async () => {
+  const h = harness({ script: "hang_after_receipt" });
+  h.store.put(claim("ci-node1"));
+  await h.fulfiller.pass();
+  await settle();
+  const stored = await h.claimKeys.read("ci-node1");
+  assert(stored, "no key was stored for the claim");
+  assertEquals(stored.keyRef, "socialweb-door/claims/ci-node1/secrets-ingress");
+  assertEquals(h.secrets.keys, [stored.privateKeyHex], "the secrets server was built from the stored key");
+  const secrets = h.store.claims.get("ci-node1")!.status.secrets!;
+  assertEquals(secrets.url, secretsUrlOf(stored.privateKeyHex));
+  assertEquals(secrets.keyRef, stored.keyRef);
+  assert(secrets.ingressDid.startsWith("did:key:z"), `ingressDid ${secrets.ingressDid}`);
+  assert(secrets.servedAt, "servedAt recorded");
+  assertEquals(h.decisions.secretsAtRfp?.[0]?.url, secrets.url, "the served URL is on the claim before the RFP that names it");
+});
+
+Deno.test("a door restarted during Provisioning re-serves the same secrets URL and the claim reaches Joining", async () => {
+  const store = new FakeStore();
+  const claimKeys = createMemoryClaimKeyStore();
+  store.put(claim("ci-node1"));
+  const before = harness({ store, claimKeys, script: "hang_after_receipt" });
+  await before.fulfiller.pass();
+  await settle();
+  assertEquals(store.phase("ci-node1"), "Provisioning");
+  const servedBefore = store.claims.get("ci-node1")!.status.secrets!;
+
+  const after = harness({ store, claimKeys });
+  await after.fulfiller.pass();
+  await settle();
+  assertEquals(after.contracts.length, 1, "the restarted door resumes the contract");
+  const resumed = after.contracts[0].resume as ContractState;
+  assertEquals(resumed.receipt, RECEIPT);
+  assertEquals(resumed.accept, ACCEPT);
+  assertEquals(after.secrets.served, [servedBefore.url], "the same secrets URL is served again");
+  assertEquals(store.claims.get("ci-node1")!.status.secrets!.url, servedBefore.url);
+  assertEquals(after.decisions.rfpsPosted ?? 0, 0, "no second RFP");
+  assertEquals(after.decisions.acceptsWritten ?? 0, 0, "no second accept");
+  assertEquals(after.secrets.grants.length, 1, "the guest's grant is installed again");
+  assertEquals(store.phase("ci-node1"), "Joining");
+  assertEquals(after.pds.deletions(), []);
+  await after.fulfiller.stop();
+});
+
+Deno.test("a door restarted during Bidding resumes the RFP it already posted and posts no second one", async () => {
+  const store = new FakeStore();
+  const claimKeys = createMemoryClaimKeyStore();
+  store.put(claim("ci-node1"));
+  const before = harness({ store, claimKeys, script: "hang_before_accept" });
+  await before.fulfiller.pass();
+  await settle();
+  assertEquals(store.phase("ci-node1"), "Bidding");
+  assertEquals(before.decisions.rfpsPosted, 1);
+
+  const after = harness({ store, claimKeys });
+  await after.fulfiller.pass();
+  await settle();
+  assertEquals((after.contracts[0].resume as ContractState).rfp, RFP);
+  assertEquals(after.decisions.rfpsPosted ?? 0, 0, "the RFP is not posted again");
+  assertEquals(after.decisions.acceptsWritten, 1);
+  assertEquals(after.secrets.served, [store.claims.get("ci-node1")!.status.secrets!.url]);
+  assertEquals(store.phase("ci-node1"), "Joining");
+  await after.fulfiller.stop();
+});
+
+Deno.test("a door restarted between accept intent and accept record completes or releases exactly once", async () => {
+  const store = new FakeStore();
+  const claimKeys = createMemoryClaimKeyStore();
+  store.put(claim("ci-node1"));
+  const before = harness({ store, claimKeys, script: "hang_at_accepting" });
+  await before.fulfiller.pass();
+  await settle();
+  assertEquals(before.decisions.pendingAtAccept, [BID.uri], "acceptPending was on the claim before the accept was written");
+  assertEquals(store.contract("ci-node1")?.acceptPending, { bidUri: BID.uri });
+  assertEquals(before.decisions.acceptsWritten ?? 0, 0);
+
+  const after = harness({ store, claimKeys });
+  await after.fulfiller.pass();
+  await settle();
+  assertEquals((after.contracts[0].resume as ContractState).acceptPending, { bidUri: BID.uri });
+  assertEquals((before.decisions.acceptsWritten ?? 0) + (after.decisions.acceptsWritten ?? 0), 0);
+  assertEquals(after.decisions.rfpsPosted ?? 0, 0);
+  assertEquals(store.contract("ci-node1")?.acceptPending, undefined, "the write-ahead is cleared once the accept is known");
+  assertEquals(store.contract("ci-node1")?.accept, ACCEPT);
+  assertEquals(store.phase("ci-node1"), "Joining");
+  assertEquals(after.pds.deletions(), []);
+
+  deleteClaim(store, "ci-node1");
+  await after.fulfiller.pass();
+  await settle();
+  await after.fulfiller.pass();
+  await settle();
+  assertEquals(after.pds.deletions().length, 1, "released exactly once");
+  await after.fulfiller.stop();
+});
+
+Deno.test("a door that writes no accept intent writes no accept", async () => {
+  const store = new FakeStore();
+  const original = store.replaceStatus.bind(store);
+  store.replaceStatus = (c, status) =>
+    status.contract?.acceptPending ? Promise.reject(new Error("422 refused")) : original(c, status);
+  const h = harness({ store });
+  store.put(claim("ci-node1"));
+  await h.fulfiller.pass();
+  await settle();
+  assertEquals(h.decisions.acceptsWritten ?? 0, 0);
+  assertEquals(store.contract("ci-node1")?.accept, undefined);
+  await h.fulfiller.stop();
+});
+
+Deno.test("a joined claim whose bidder reports the guest terminated goes Lost at once, and its deletion sends no vm.delete", async () => {
+  const h = harness();
+  h.store.put(claim("ci-node1"));
+  await h.fulfiller.pass();
+  await settle();
+  assertEquals(h.store.phase("ci-node1"), "Joining");
+  assertEquals(h.terminations.watched, ["ci-node1"], "a joined claim is watched for vm.terminated");
+  h.terminations.terminate("ci-node1");
+  await settle();
+  const status = h.store.claims.get("ci-node1")!.status;
+  assertEquals(status.phase, "Lost");
+  assertEquals(status.contract?.termination?.reason, "guest_poweroff");
+  assertStringIncludes(status.message!, "guest_poweroff");
+  assertEquals(h.contracts.length, 1, "the door itself posts no RFP; the replacement is a new claim");
+
+  await h.fulfiller.pass();
+  await settle();
+  assertEquals(h.contracts.length, 1, "a Lost claim is not fulfilled again");
+  deleteClaim(h.store, "ci-node1");
+  await h.fulfiller.pass();
+  await settle();
+  assertEquals(h.pds.deletions(), [], "the bidder already ended the guest; no vm.delete");
+  assertEquals(h.store.phase("ci-node1"), "Released");
+  assertEquals(h.store.claims.get("ci-node1")!.finalizers, []);
+  assertEquals(await h.claimKeys.read("ci-node1"), null, "the released claim's key is removed");
+  await h.fulfiller.stop();
+});
+
+Deno.test("a door restarted with Joining and Running claims watches each once and marks a terminated one Lost", async () => {
+  const store = new FakeStore();
+  const full = createContractState({ vmName: "ci-node1", requesterDid: OWNER, marketDid: OWNER, at: AT });
+  const contract = claimContractOf(advanceContract(full, "network", { accept: ACCEPT, receipt: RECEIPT, submitEventRef: SUBMIT }, AT));
+  store.put(claim("ci-node1", { finalizers: [FINALIZER_NODE_CLAIM], status: { phase: "Running", contract } }));
+  store.put(claim("ci-node2", { finalizers: [FINALIZER_NODE_CLAIM], status: { phase: "Joining", contract: { ...contract, vmName: "ci-node2" } } }));
+  const h = harness({ store });
+  await h.fulfiller.pass();
+  await settle();
+  await h.fulfiller.pass();
+  await settle();
+  assertEquals(h.terminations.watched.sort(), ["ci-node1", "ci-node2"]);
+  assertEquals(h.store.statuses, [], "watching writes nothing");
+  h.terminations.terminate("ci-node1", { ...TERMINATION, reason: "host_reboot" });
+  await settle();
+  assertEquals(store.phase("ci-node1"), "Lost");
+  assertEquals(store.phase("ci-node2"), "Joining");
+  assertEquals(h.pds.deletions(), []);
+  await h.fulfiller.stop();
+  assertEquals(h.terminations.aborted, ["ci-node2"], "stopping ends the remaining watch");
+  assertEquals(store.phase("ci-node2"), "Joining");
+});
+
+Deno.test("a guest terminated during provisioning ends its claim Lost, not Failed, and releases nothing", async () => {
+  const h = harness({ script: "terminate_after_receipt" });
+  h.store.put(claim("ci-node1"));
+  await h.fulfiller.pass();
+  await settle();
+  assertEquals(h.store.phase("ci-node1"), "Lost");
+  assertEquals(h.store.contract("ci-node1")?.termination?.reason, "guest_poweroff");
+  assertEquals(h.pds.deletions(), []);
+  deleteClaim(h.store, "ci-node1");
+  await h.fulfiller.pass();
+  await settle();
+  assertEquals(h.pds.deletions(), []);
+  assertEquals(h.store.phase("ci-node1"), "Released");
 });

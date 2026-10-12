@@ -1,20 +1,29 @@
+import { Secp256k1Keypair } from "@atproto/crypto";
 import type { RequesterPDS } from "@publicdomainrelay/requester-abc";
-import { type ComputeRequestHandle, releaseCompute, requestCompute } from "@publicdomainrelay/compute-request-xrpc";
+import {
+  awaitComputeTermination,
+  type ComputeRequestHandle,
+  releaseCompute,
+  requestCompute,
+} from "@publicdomainrelay/compute-request-xrpc";
 import {
   type ComputeRequestHandlers,
   CONTRACT_STATE_VERSION,
   type ContractState,
   type FlowDecision,
+  isTerminated,
   parseContractState,
   releaseTargetOf,
 } from "@publicdomainrelay/compute-request-abc";
-import type { GrantVars, GuestCapability } from "@publicdomainrelay/guest-capability-abc";
+import type { CapabilityPrepared, GrantVars, GuestCapability } from "@publicdomainrelay/guest-capability-abc";
 import { createSecretsCapability } from "@publicdomainrelay/guest-capability-secrets";
 import type { SecretEntry } from "@publicdomainrelay/secrets-common";
 import type { StructuredLoggerInterface } from "@publicdomainrelay/logger";
 import { createDefaultATProtoEventStreamsClient } from "@publicdomainrelay/atproto-event-streams-client";
 import {
+  type ClaimKeyStore,
   type ClusterLinkReader,
+  createMemoryClaimKeyStore,
   type NodeClaim,
   nodeClaimKey,
   type NodeClaimStore,
@@ -47,7 +56,11 @@ type ComputeReleaser = typeof releaseCompute;
 
 export type Log = (event: string, data?: Record<string, unknown>) => void;
 
-export type SecretsCapabilityFactory = (secrets: SecretEntry[], logger: StructuredLoggerInterface) => GuestCapability;
+export type SecretsCapabilityFactory = (
+  secrets: SecretEntry[],
+  logger: StructuredLoggerInterface,
+  opts: { privateKeyHex: string },
+) => GuestCapability;
 
 export interface MarketNodeFulfillerOptions {
   store: NodeClaimStore;
@@ -72,6 +85,8 @@ export interface MarketNodeFulfillerOptions {
   debugSsh?: DebugNodeSsh;
   scopeCache?: ComputeRequestOptions["scopeCache"];
   scopeRefresher?: ComputeRequestOptions["scopeRefresher"];
+  claimKeys?: ClaimKeyStore;
+  awaitTermination?: typeof awaitComputeTermination;
   log?: Log;
 }
 
@@ -87,7 +102,9 @@ export interface MarketNodeFulfiller {
   active(): string[];
 }
 
-const ORPHANED_PHASES: ReadonlySet<NodeClaimPhase> = new Set(["Bidding", "Provisioning"]);
+const IN_FLIGHT_PHASES: ReadonlySet<NodeClaimPhase> = new Set(["Bidding", "Provisioning"]);
+
+const JOINED_PHASES: ReadonlySet<NodeClaimPhase> = new Set(["Joining", "Running"]);
 
 const RELEASE_REASON_CLAIM_DELETED = "claim_deleted";
 
@@ -178,7 +195,20 @@ export function contractStateOfClaim(claim: NodeClaim): ContractState | null {
 }
 
 export function needsRelease(state: ContractState | null): state is ContractState {
-  return state !== null && state.phase !== "released" && releaseTargetOf(state) !== null;
+  return state !== null && state.phase !== "released" && !isTerminated(state) && releaseTargetOf(state) !== null;
+}
+
+export function lostMessage(state: ContractState): string {
+  const t = state.termination;
+  if (!t) return "the node's guest is gone";
+  const exit = t.exitCode !== undefined ? `, exit code ${t.exitCode}` : "";
+  return `the bidder reported the guest terminated (${t.reason}${exit}) at ${t.observedAt}; the node is ` +
+    "released without a vm.delete and replaced through a new claim and RFP";
+}
+
+async function freshKeyHex(): Promise<string> {
+  const keypair = await Secp256k1Keypair.create({ exportable: true });
+  return Array.from(await keypair.export(), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 function confirmedReleased(state: ContractState | null): boolean {
@@ -205,11 +235,18 @@ export function explainEnd(state: ContractState | null, facts: EndFacts = {}): s
 export function grantingCapability(
   inner: GuestCapability,
   beforeGrant: (vars: GrantVars) => Promise<void>,
+  afterPrepare?: (prepared: CapabilityPrepared | void) => Promise<void>,
 ): GuestCapability {
   return {
     id: inner.id,
     userDataModule: inner.userDataModule,
-    prepare: inner.prepare ? (ctx) => inner.prepare!(ctx) : undefined,
+    prepare: inner.prepare
+      ? async (ctx) => {
+        const prepared = await inner.prepare!(ctx);
+        await afterPrepare?.(prepared);
+        return prepared;
+      }
+      : undefined,
     async onContract(vars) {
       await beforeGrant(vars);
       await inner.onContract?.(vars);
@@ -239,8 +276,10 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
   const release = opts.releaseCompute ?? releaseCompute;
   const readText = opts.readText ?? ((p: string) => Deno.readTextFile(p));
   const openBaoCAFileOf = opts.openBaoCAFileOf ?? defaultOpenBaoCAFile;
-  const secretsCapability = opts.secretsCapability ??
-    ((secrets: SecretEntry[], logger: StructuredLoggerInterface) => createSecretsCapability({ secrets, logger }));
+  const secretsCapability: SecretsCapabilityFactory = opts.secretsCapability ??
+    ((secrets, logger, o) => createSecretsCapability({ secrets, logger, privateKeyHex: o.privateKeyHex }));
+  const claimKeys = opts.claimKeys ?? createMemoryClaimKeyStore();
+  const awaitTermination = opts.awaitTermination ?? awaitComputeTermination;
   const vmReadyTimeoutSec = opts.vmReadyTimeoutSec ?? 600;
   const joinModule = createK3sJoinModule(opts.meshd ? { meshd: opts.meshd } : {});
   const eventStreams = opts.eventStreams ?? (() =>
@@ -249,6 +288,7 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
     });
 
   const running = new Map<string, { deleted: AbortController; done: Promise<void> }>();
+  const watching = new Map<string, { stop: AbortController; done: Promise<void> }>();
   const stopping = new AbortController();
   let timer: ReturnType<typeof setInterval> | undefined;
   let passing: Promise<void> | null = null;
@@ -277,6 +317,63 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
     return { state: next, attempted: true };
   }
 
+  async function markLost(claim: NodeClaim, ended: ContractState): Promise<void> {
+    const key = nodeClaimKey(claim);
+    let recorded: NodeClaim | null;
+    try {
+      recorded = await opts.store.get(claim);
+    } catch (err) {
+      log("node_claim_lost_deferred", { claim: key, error: String(err) });
+      return;
+    }
+    if (!recorded || recorded.deletionTimestamp) return;
+    if (recorded.status.phase === "Lost" || recorded.status.phase === "Released") return;
+    const base = contractStateOfClaim(recorded) ?? ended;
+    await opts.store.replaceStatus(recorded, {
+      ...recorded.status,
+      phase: "Lost",
+      message: lostMessage(ended),
+      contract: claimContractOf({ ...base, termination: ended.termination }),
+    });
+    log("node_claim_lost", {
+      claim: key,
+      reason: ended.termination?.reason ?? null,
+      observedAt: ended.termination?.observedAt ?? null,
+      receiptUri: base.receipt?.uri ?? null,
+    });
+  }
+
+  function watchTermination(claim: NodeClaim, state: ContractState): void {
+    const key = nodeClaimKey(claim);
+    if (watching.has(key) || stopping.signal.aborted || !state.receipt || isTerminated(state)) return;
+    const stop = new AbortController();
+    const done = (async () => {
+      let streams: { close(): void } | null = null;
+      try {
+        const pds = await opts.requesterFor(claim.spec.ownerDid);
+        streams = eventStreams();
+        log("node_claim_termination_watch", { claim: key, receiptUri: state.receipt?.uri ?? null });
+        const ended = await awaitTermination(pds, state, {
+          signal: stop.signal,
+          eventStreams: streams as never,
+          plcUrl: opts.plcUrl,
+          logger: claimLogger(key),
+        });
+        if (ended && isTerminated(ended) && !stop.signal.aborted) await markLost(claim, ended);
+      } catch (err) {
+        log("node_claim_termination_watch_failed", { claim: key, error: String(err) });
+      } finally {
+        streams?.close();
+        watching.delete(key);
+      }
+    })();
+    watching.set(key, { stop, done });
+  }
+
+  function stopWatching(key: string): void {
+    watching.get(key)?.stop.abort();
+  }
+
   async function releaseDeleted(claim: NodeClaim): Promise<void> {
     const key = nodeClaimKey(claim);
     let recorded: NodeClaim | null;
@@ -297,20 +394,25 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
         : "the claim was deleted but the node's VM could not be confirmed released",
       contract: outcome.state ? { ...recorded.status.contract, ...claimContractOf(outcome.state) } : recorded.status.contract,
     }).catch((err) => log("node_claim_status_write_failed", { claim: key, error: String(err) }));
+    if (gone) {
+      await claimKeys.remove(recorded.spec.nodeName).catch((err) =>
+        log("node_claim_key_remove_failed", { claim: key, error: String(err) })
+      );
+    }
     await opts.store.removeFinalizer(recorded).catch((err) =>
       log("node_claim_finalizer_release_failed", { claim: key, error: String(err) })
     );
     log("node_claim_released", { claim: key, vmReleased: outcome.attempted, confirmed: gone });
   }
 
-  function fulfil(claim: NodeClaim): void {
+  function fulfil(claim: NodeClaim, resume: ContractState | null = null): void {
     const key = nodeClaimKey(claim);
     const deleted = new AbortController();
     const ended = () => deleted.signal.aborted || stopping.signal.aborted;
-    let status: NodeClaimStatus = { phase: "Bidding", contract: {} };
+    let status: NodeClaimStatus = resume ? structuredClone(claim.status) : { phase: "Bidding", contract: {} };
     let writes: Promise<unknown> = Promise.resolve();
     const write = (patch: Partial<NodeClaimStatus>): Promise<boolean> => {
-      status = { ...status, ...patch, contract: { ...status.contract, ...patch.contract } };
+      status = { ...status, ...patch, contract: patch.contract ?? status.contract };
       const snapshot = structuredClone(status);
       const result = writes.then(() => opts.store.replaceStatus(claim, snapshot)).then(
         () => true,
@@ -335,7 +437,11 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
       let fetched = false;
       const secretsFetched = Promise.withResolvers<void>();
       try {
-        await write({ phase: "Bidding", message: "requesting a node from the compute market" });
+        if (resume) {
+          log("node_claim_resumed", { claim: key, phase: claim.status.phase ?? null, contractPhase: resume.phase });
+        } else {
+          await write({ phase: "Bidding", message: "requesting a node from the compute market" });
+        }
         const spec = claim.spec;
         const clusterKey = await clusterKeyOfClaim(spec);
         const linkName = clusterLinkName(clusterKey, "openbao");
@@ -380,7 +486,18 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
               "the claim changes, because this ticket is the only thing the door was adding",
           });
         }
-        const capability = grantingCapability(secretsCapability(bundle, claimLogger(key)), async (vars) => {
+        const stored = await claimKeys.ensure(spec.nodeName, await freshKeyHex());
+        const ingressDid = (await Secp256k1Keypair.import(stored.privateKeyHex)).did();
+        const served = async (prepared: CapabilityPrepared | void) => {
+          const url = String(prepared?.ctx?.secretsUrl ?? "");
+          const secrets = { ingressDid, keyRef: stored.keyRef, url, servedAt: new Date().toISOString() };
+          if (!(await write({ secrets }))) {
+            throw new Error("the secrets server's served state could not be written to its claim");
+          }
+          log("node_claim_secrets_served", { claim: key, url, ingressDid, keyRef: stored.keyRef, resumed: resume !== null });
+        };
+        const inner = secretsCapability(bundle, claimLogger(key), { privateKeyHex: stored.privateKeyHex });
+        const capability = grantingCapability(inner, async (vars) => {
           const grant = await nodeGrantOf(spec, vars);
           if (!(await write({ grant }))) {
             const { grant: _unwritten, ...withoutGrant } = status;
@@ -391,7 +508,7 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
           const doc = nodeClaimDocument(clusterKey, spec.nodeName, await sha256Hex(vars.issuerUri));
           bundle.push({ path: NODE_CLAIM_DOC_PATH, value: `${JSON.stringify(doc)}\n` });
           log("node_claim_grant_written", { claim: key, issuer: grant.issuer, audience: grant.audience, jwtMount: doc.jwtMount });
-        });
+        }, served);
         const pds = await opts.requesterFor(spec.ownerDid);
         streams = eventStreams();
 
@@ -399,6 +516,13 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
           onRfpSubmitted: async (_event, s) => {
             await record(s);
             return stopWhenEnded();
+          },
+          onAccepting: async (_event, s): Promise<FlowDecision> => {
+            if (!(await record(s))) return "return";
+            return stopWhenEnded();
+          },
+          onTerminated: async (_event, s) => {
+            await record(s);
           },
           onAccepted: async (_event, s): Promise<FlowDecision> => {
             await record(s, { phase: "Provisioning", message: "a bid was accepted; the VM is booting" });
@@ -441,6 +565,7 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
           relayUrls: opts.relayUrls,
           eventStreams: streams as never,
           ...(opts.policy ? { policy: opts.policy } : {}),
+          ...(resume ? { resume } : {}),
           logger: claimLogger(key),
         } as Parameters<ComputeRequester>[1], handlers);
         state = handle.state;
@@ -460,8 +585,13 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
       await writes;
       if (deleted.signal.aborted) {
         await releaseDeleted(claim).catch((err) => log("node_claim_release_deferred", { claim: key, error: String(err) }));
+      } else if (state && isTerminated(state)) {
+        await write({ phase: "Lost", message: lostMessage(state) });
+        await writes;
+        log("node_claim_lost", { claim: key, reason: state.termination?.reason ?? null, during: "fulfil" });
       } else if (fetched) {
         log("node_claim_joining", { claim: key, outcome: state?.outcome ?? null });
+        if (state) watchTermination(claim, state);
       } else if (stopping.signal.aborted) {
         log("node_claim_left_for_restart", { claim: key, phase: status.phase ?? null });
       } else {
@@ -475,6 +605,7 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
   }
 
   async function settleDeleted(claim: NodeClaim): Promise<void> {
+    stopWatching(nodeClaimKey(claim));
     const live = running.get(nodeClaimKey(claim));
     if (live) {
       live.deleted.abort();
@@ -508,8 +639,15 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
         if (!phase || phase === "Pending") {
           if (!claim.finalizers.includes(FINALIZER_NODE_CLAIM)) await opts.store.addFinalizer(claim);
           fulfil(claim);
-        } else if (ORPHANED_PHASES.has(phase)) {
-          await markOrphaned(claim);
+        } else if (JOINED_PHASES.has(phase)) {
+          if (!watching.has(key)) {
+            const state = contractStateOfClaim(claim);
+            if (state) watchTermination(claim, state);
+          }
+        } else if (IN_FLIGHT_PHASES.has(phase)) {
+          const stored = claim.status.secrets?.keyRef ? await claimKeys.read(claim.spec.nodeName) : null;
+          if (stored) fulfil(claim, contractStateOfClaim(claim));
+          else await markOrphaned(claim);
         }
       } catch (err) {
         log("node_claim_pass_failed", { claim: key, error: String(err) });
@@ -534,8 +672,10 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
       if (timer !== undefined) clearInterval(timer);
       timer = undefined;
       stopping.abort();
+      for (const w of watching.values()) w.stop.abort();
       await passing;
       await Promise.allSettled([...running.values()].map((r) => r.done));
+      await Promise.allSettled([...watching.values()].map((w) => w.done));
     },
     active() {
       return [...running.keys()];

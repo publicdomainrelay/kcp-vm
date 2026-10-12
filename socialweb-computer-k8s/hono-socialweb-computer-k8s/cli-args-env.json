@@ -142,6 +142,27 @@
       "env": "NODE_POLL_INTERVAL_MS",
       "default": 2000
     },
+    "openbao-addr": {
+      "type": "string",
+      "description": "The application's OpenBao; when set, each in-flight NodeClaim's secrets-server key is kept there so a restarted door resumes Bidding and Provisioning claims instead of failing them",
+      "env": "SOCIALWEB_DOOR_OPENBAO_ADDR"
+    },
+    "openbao-token-file": {
+      "type": "string",
+      "description": "File holding the door's OpenBao token, read on every call so a rotated token is picked up",
+      "env": "SOCIALWEB_DOOR_OPENBAO_TOKEN_FILE"
+    },
+    "openbao-ca-file": {
+      "type": "string",
+      "description": "CA certificate the door trusts for its OpenBao",
+      "env": "SOCIALWEB_DOOR_OPENBAO_CA_FILE"
+    },
+    "openbao-kv-mount": {
+      "type": "string",
+      "description": "KV v2 mount the door's claim keys live under",
+      "env": "SOCIALWEB_DOOR_OPENBAO_KV_MOUNT",
+      "default": "secret"
+    },
     "debug-node-ssh-dir": {
       "type": "string",
       "description": "DEBUG ONLY: directory holding an ed25519 key the door generates once and adds to every market node's authorized_keys through its user_data; unset means nodes carry no key",

@@ -27,6 +27,8 @@ import {
   type MarketNodeFulfiller,
   meshdPinOf,
 } from "@publicdomainrelay/socialweb-computer-k8s-node-market";
+import { createOpenBaoClaimKeyStore } from "@publicdomainrelay/socialweb-computer-k8s-claim-keys-openbao";
+import { createMemoryClaimKeyStore } from "@publicdomainrelay/socialweb-computer-k8s-abc";
 import { createScopeCache } from "@publicdomainrelay/policy-engine-scope-cache";
 import { createScopeRefresher } from "@publicdomainrelay/scope-refresh-timers";
 import cliArgsEnv from "./cli-args-env.json" with { type: "json" };
@@ -185,6 +187,24 @@ const debugSsh = options.debugNodeSshDir ? await debugNodeSsh(options.debugNodeS
 const scopeCache = createScopeCache();
 const scopeRefresher = createScopeRefresher({ scopeCache });
 
+const openBaoClient = options.openbaoCaFile
+  ? Deno.createHttpClient({ caCerts: [await Deno.readTextFile(options.openbaoCaFile as string)] })
+  : null;
+const claimKeys = options.openbaoAddr
+  ? createOpenBaoClaimKeyStore({
+    address: options.openbaoAddr as string,
+    mount: options.openbaoKvMount as string,
+    token: async () => (await Deno.readTextFile(options.openbaoTokenFile as string)).trim(),
+    ...(openBaoClient ? { fetch: (input, init) => fetch(input, { ...init, client: openBaoClient } as unknown as RequestInit) } : {}),
+  })
+  : createMemoryClaimKeyStore();
+if (!claimKeys.durable && options.kcpKubeconfig) {
+  logger.warn("claim_keys_in_memory", {
+    next: "a restarted door cannot re-serve an in-flight claim's secrets URL, so its Bidding and " +
+      "Provisioning claims are marked Failed and released on deletion; set openbao-addr to resume them",
+  });
+}
+
 let fulfiller: MarketNodeFulfiller | null = null;
 if (options.kcpKubeconfig) {
   const credentials = parseKubeconfig(await Deno.readTextFile(options.kcpKubeconfig as string), options.kcpContext as string | undefined);
@@ -205,6 +225,7 @@ if (options.kcpKubeconfig) {
     ...(debugSsh ? { debugSsh } : {}),
     scopeCache,
     scopeRefresher,
+    claimKeys,
     log,
   });
 }

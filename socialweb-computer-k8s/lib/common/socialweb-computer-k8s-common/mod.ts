@@ -152,3 +152,11 @@ export function nodeClaimDocument(clusterKey: string, nodeName: string, issuerSh
     kvPath: nodeName,
   };
 }
+
+export const DOOR_CLAIMS_KV_PREFIX = "socialweb-door/claims";
+
+export const CLAIM_SECRETS_INGRESS_KEY = "secrets-ingress";
+
+export function claimSecretsIngressKeyRef(claimName: string): string {
+  return `${DOOR_CLAIMS_KV_PREFIX}/${claimName}/${CLAIM_SECRETS_INGRESS_KEY}`;
+}

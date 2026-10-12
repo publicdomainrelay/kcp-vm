@@ -1,4 +1,9 @@
-import type { ClusterPhaseResult, ClusterSummary, KubeconfigGrant } from "@publicdomainrelay/socialweb-computer-k8s-common";
+import {
+  claimSecretsIngressKeyRef,
+  type ClusterPhaseResult,
+  type ClusterSummary,
+  type KubeconfigGrant,
+} from "@publicdomainrelay/socialweb-computer-k8s-common";
 import type { ClusterLinkSpec, ClusterLinkStatus, NodeClaimSpec, NodeClaimStatus } from "@publicdomainrelay/socialweb-computer-k8s-api";
 
 export interface NodeClaim {
@@ -100,4 +105,39 @@ export interface PinnedDownload {
 export interface PinnedDownloads {
   list(): PinnedDownload[];
   get(sha256: string, name: string): Uint8Array<ArrayBuffer> | null;
+}
+
+export interface StoredClaimKey {
+  privateKeyHex: string;
+  keyRef: string;
+}
+
+export interface ClaimKeyStore {
+  readonly durable: boolean;
+  ensure(claimName: string, candidateHex: string): Promise<StoredClaimKey>;
+  read(claimName: string): Promise<StoredClaimKey | null>;
+  remove(claimName: string): Promise<void>;
+}
+
+export function createMemoryClaimKeyStore(): ClaimKeyStore {
+  const keys = new Map<string, string>();
+  const stored = (claimName: string, privateKeyHex: string): StoredClaimKey => ({
+    privateKeyHex,
+    keyRef: claimSecretsIngressKeyRef(claimName),
+  });
+  return {
+    durable: false,
+    ensure(claimName, candidateHex) {
+      if (!keys.has(claimName)) keys.set(claimName, candidateHex);
+      return Promise.resolve(stored(claimName, keys.get(claimName)!));
+    },
+    read(claimName) {
+      const hex = keys.get(claimName);
+      return Promise.resolve(hex === undefined ? null : stored(claimName, hex));
+    },
+    remove(claimName) {
+      keys.delete(claimName);
+      return Promise.resolve();
+    },
+  };
 }
