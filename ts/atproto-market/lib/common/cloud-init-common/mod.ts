@@ -8,44 +8,19 @@
 import { parse as yamlParse, stringify as yamlStringify } from "yaml";
 
 /**
- * Unified context for all built-in modules. Superset of the historical
- * CloudInitContext (fedproxy/websocat) and TunnelCloudInitContext (tunnel
- * subscriber). Modules read the fields they need; undefined fields render as
- * empty. Keep per-module doc comments listing which fields they use.
+ * Context for the built-in modules. Modules read the fields they need;
+ * undefined fields render as empty.
  */
 export interface CloudInitContext {
-  /** VM name / RBAC role; used as the fedproxy SERVICE name and ttyd rkey. */
+  /** VM name / RBAC role. */
   vmName: string;
-  /** Full DID (did:plc:...). fedproxy HANDLE for the fedproxy-ssh transport. */
-  didPlc?: string;
-  /** Bare PLC key (DID without the `did:plc:` prefix). */
-  didPlcKey?: string;
-  /** Relay FQDN (e.g. xrpc.fedproxy.com). fedproxy ATPRP_URL built from this. */
-  relayHost?: string;
-  /** Subdomain the relay registered for this requester. */
-  xrpcRelaySubdomain?: string;
   /** OpenSSH public key (single line) added to root's authorized_keys. */
   sshAuthorizedKey?: string;
 
-  // tunnel transport
-  /** host:port the guest dials outbound to reach the relay dispatcher. */
-  ingressProxyHost?: string;
-  /** Relay hostname used as the service-auth `aud` (did:web:<audHost>). */
-  audHost?: string;
-  /** Optional host:port of a local hono-jsr registry (sets Deno's JSR_URL). */
-  jsrUrl?: string;
-  /** Local TCP port the subscriber bridges relay tunnel bytes to. Default 22. */
+  /** Local TCP port the iroh listener forwards to. Default 22. */
   targetPort?: number;
-  /** Extra `/etc/hosts` entries ("<ip> <name>") so the guest can dial the dispatcher by name. */
+  /** Extra `/etc/hosts` entries ("<ip> <name>") so the guest can dial the requester and bidder by name. */
   hostAliases?: string[];
-
-  // fedproxy-web / wootty terminal
-  /** Short did:plc identity fedproxy-client uses as its SSH username (DNS-label safe). */
-  sshHandle?: string;
-  /** Port the terminal/ingress service listens on. Default 8080. */
-  listenPort?: number;
-  /** Origin serving the wootty-web tarball (e.g. https://ui.fedfork.com). */
-  woottyDistUrl?: string;
 
   // secrets
   /** Base URL of the requester's ephemeral secrets server (its relay ingress URL). */
@@ -66,22 +41,6 @@ export interface CloudInitContext {
   // iroh transport
   /** Pinned dumbpipe release the iroh module installs. Default 0.39.0. */
   dumbpipeVersion?: string;
-}
-
-/** Back-compat context for the tunnel-subscriber transport (historical buildTunnelUserData shape). */
-export interface TunnelCloudInitContext {
-  /** host:port the guest dials outbound to reach the relay dispatcher. */
-  ingressProxyHost: string;
-  /** Relay hostname used as the service-auth `aud` (did:web:<audHost>). */
-  audHost: string;
-  /** Optional host:port of a local hono-jsr registry (sets Deno's JSR_URL). */
-  jsrUrl?: string;
-  /** OpenSSH public key (single line) added to root's authorized_keys. */
-  sshAuthorizedKey: string;
-  /** Local TCP port the subscriber bridges relay tunnel bytes to. Default 22. */
-  targetPort?: number;
-  /** Extra `/etc/hosts` entries ("<ip> <name>") so the guest can dial the dispatcher by name. */
-  hostAliases?: string[];
 }
 
 export interface WriteFileEntry {
@@ -109,11 +68,6 @@ export interface UserDataPatch {
 
 export type UserDataModule = (ctx: Partial<CloudInitContext>) => UserDataPatch;
 
-/** Mirror atprp-ssh-relay's flattenLabel. Must stay in sync with cmd/atprp-ssh-relay/main.go:flattenLabel. */
-export function flattenLabel(s: string): string {
-  return s.replace(/[.:]/g, "-");
-}
-
 export const RESOLV_CONF_PATH = "/etc/resolv.conf";
 
 /** The pasta gateway every firecracker guest's provider forwards DNS through. */
@@ -139,10 +93,39 @@ export function registerUserDataModule(id: string, m: UserDataModule): void {
   registry.set(id, m);
 }
 
+export const GUEST_TRANSPORT_MODULE = "iroh";
+
+export const REMOVED_TRANSPORT_MODULES = ["tunnel", "fedproxy-ssh", "fedproxy-web", "wootty"];
+
+export class LegacyTransportError extends Error {
+  constructor(readonly transport: string) {
+    super(
+      `guest transport "${transport}" was removed (legacy-transport): ` +
+        `${GUEST_TRANSPORT_MODULE} is the only guest transport`,
+    );
+  }
+}
+
+export class RemovedTransportFlagError extends Error {
+  constructor(readonly flag: string) {
+    super(`--${flag} was removed (legacy-transport): ${GUEST_TRANSPORT_MODULE} is the only guest transport`);
+  }
+}
+
+export function removedTransportFlagsIn(
+  options: Record<string, unknown>,
+  flags: string[],
+): RemovedTransportFlagError[] {
+  return flags
+    .filter((flag) => options[flag.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase())] !== undefined)
+    .map((flag) => new RemovedTransportFlagError(flag));
+}
+
 /** Resolve a list of ids/module functions to functions; throws on unknown id. */
 export function getUserDataModules(ids: Array<string | UserDataModule>): UserDataModule[] {
   return ids.map((idOrFn) => {
     if (typeof idOrFn === "function") return idOrFn;
+    if (REMOVED_TRANSPORT_MODULES.includes(idOrFn)) throw new LegacyTransportError(idOrFn);
     const m = registry.get(idOrFn);
     if (!m) throw new Error(`unknown user-data module: ${idOrFn}`);
     return m;
@@ -360,488 +343,6 @@ export function acceptBundleModule(
   });
 }
 
-/**
- * tunnel — xrpc tunnel-subscriber transport. Guest sshd on :22; the subscriber
- * dials the relay outbound, registers its DID subdomain, bridges raw relay
- * tunnel bytes to sshd (no guest websocat). Requires ctx.ingressProxyHost,
- * ctx.audHost, ctx.sshAuthorizedKey. Optional: ctx.jsrUrl, ctx.targetPort,
- * ctx.hostAliases.
- */
-const tunnelModule: UserDataModule = (ctx) => {
-  const targetPort = ctx.targetPort ?? 22;
-  const aliases = (ctx.hostAliases ?? []).filter((a) => /^[\w.:-]+\s+[\w.-]+$/.test(a));
-  return {
-    apt: { preserve_sources_list: true },
-    packages: ["openssh-server"],
-    disable_root: false,
-    ssh_pwauth: false,
-    bootcmd: aliases.map((a) =>
-      ["sh", "-c", `grep -qxF '${a}' /etc/hosts || echo '${a}' >> /etc/hosts`]
-    ),
-    write_files: [
-      {
-        path: "/root/.ssh/authorized_keys",
-        owner: "root:root",
-        permissions: "0600",
-        content: `${ctx.sshAuthorizedKey ?? ""}\n`,
-      },
-      {
-        path: "/etc/ssh/sshd_config.d/10-tunnel.conf",
-        owner: "root:root",
-        permissions: "0644",
-        content: [
-          "# Key-only root login; reached through the xrpc relay tunnel (the",
-          "# compute-provider harness also TCP-probes :22 directly for readiness).",
-          "PermitRootLogin prohibit-password",
-          "PasswordAuthentication no",
-        ].join("\n") + "\n",
-      },
-      {
-        path: "/etc/systemd/system/tunnel-subscriber.service",
-        owner: "root:root",
-        permissions: "0644",
-        content: [
-          "[Unit]",
-          "Description=xrpc tunnel subscriber (ssh-over-relay)",
-          "After=network-online.target sshd.service ssh.service",
-          "Wants=network-online.target",
-          "",
-          "[Service]",
-          "Type=simple",
-          "User=root",
-          ...(ctx.jsrUrl ? [`Environment="JSR_URL=http://${ctx.jsrUrl}/"`] : []),
-          `ExecStart=/usr/local/bin/deno run -A jsr:@publicdomainrelay/hono-did-key-ingress-proxy-tunnel-subscriber --ingress-proxy-host ${ctx.ingressProxyHost ?? ""} --aud-host ${ctx.audHost ?? ""} --private-key-from-sshd-host-key /etc/ssh/ssh_host_ed25519_key --fqdn-file /run/guest-fqdn --target-host 127.0.0.1 --target-port ${targetPort}`,
-          "Restart=always",
-          "RestartSec=5",
-          "TimeoutStopSec=10",
-          "StandardOutput=journal",
-          "StandardError=journal",
-          "",
-          "[Install]",
-          "WantedBy=multi-user.target",
-          "",
-        ].join("\n"),
-      },
-    ],
-    runcmd: [
-      ["sh", "-c", "command -v deno || { apt-get update && apt-get install -y curl unzip; curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh; chmod 755 /usr/local/bin/deno; }"],
-      "systemctl daemon-reload",
-      "systemctl enable --now ssh || systemctl enable --now sshd",
-      "systemctl enable --now tunnel-subscriber.service",
-    ],
-  };
-};
-
-/**
- * fedproxy-ssh — websocat + fedproxy-client transport. sshd reachable through a
- * websocat ws->sshd bridge on loopback :8080, fronted by fedproxy-client.
- * Requires ctx.vmName, ctx.didPlc, ctx.relayHost, ctx.xrpcRelaySubdomain,
- * ctx.sshAuthorizedKey.
- */
-const fedproxySshModule: UserDataModule = (ctx) => {
-  const xrpcRelayFqdn = `${ctx.xrpcRelaySubdomain ?? ""}.${ctx.relayHost ?? ""}`;
-  return {
-    apt: { preserve_sources_list: true },
-    packages: ["openssh-server"],
-    disable_root: false,
-    ssh_pwauth: false,
-    write_files: [
-      {
-        path: "/root/.ssh/authorized_keys",
-        owner: "root:root",
-        permissions: "0600",
-        content: `${ctx.sshAuthorizedKey ?? ""}\n`,
-      },
-      {
-        path: "/etc/ssh/sshd_config.d/10-websocat.conf",
-        owner: "root:root",
-        permissions: "0644",
-        content: [
-          "# sshd reachable through websocat->fedproxy tunnel (loopback only).",
-          "ListenAddress 127.0.0.1",
-          "PermitRootLogin prohibit-password",
-          "PasswordAuthentication no",
-        ].join("\n") + "\n",
-      },
-      {
-        path: "/usr/local/bin/setup-websocat.sh",
-        owner: "root:root",
-        permissions: "0755",
-        content: `#!/bin/bash
-set -x
-
-STAMP=/var/lib/setup-websocat.done
-[ -f "\${STAMP}" ] && exit 0
-
-retry() {
-  n=0
-  delay=5
-  until "$@"; do
-    n=$((n + 1))
-    echo "command failed (attempt $n): $*; retrying in \${delay}s" >&2
-    sleep "$delay"
-  done
-}
-
-# fedproxy-client (fronts the websocat WebSocket listener).
-_arch=$(uname -m)
-case "$_arch" in x86_64|amd64) _arch=amd64 ;; aarch64|arm64) _arch=arm64 ;; esac
-_os=$(uname -s | tr '[:upper:]' '[:lower:]')
-retry sh -c "curl -sfL 'https://github.com/publicdomainrelay/atproto-reverse-proxy/releases/download/latest/atproto-reverse-proxy_\${_os}_\${_arch}.tar.gz' | tar -xvz -C /usr/local/bin"
-
-# websocat release binary (musl-static; ws <-> tcp bridge).
-case "$_arch" in amd64) _ws_arch=x86_64 ;; arm64) _ws_arch=aarch64 ;; esac
-retry sh -c "curl -sfL 'https://github.com/vi/websocat/releases/download/v1.13.0/websocat.\${_ws_arch}-unknown-linux-musl' -o /usr/local/bin/websocat"
-chmod +x /usr/local/bin/websocat
-
-systemctl enable websocat.service fedproxy-client.service
-systemctl start --no-block websocat.service fedproxy-client.service
-
-touch "\${STAMP}"
-`,
-      },
-      {
-        path: "/etc/systemd/system/websocat.service",
-        owner: "root:root",
-        permissions: "0644",
-        content: [
-          "[Unit]",
-          "Description=websocat ws->sshd bridge (fronted by fedproxy-client)",
-          "After=network-online.target sshd.service ssh.service",
-          "Wants=network-online.target",
-          "",
-          "[Service]",
-          "Type=simple",
-          "User=root",
-          `# WebSocket listener on loopback :8080 -> sshd on loopback :22.`,
-          `# fedproxy-client (SERVICE=${ctx.vmName ?? ""}, PORT=8080) forwards external WS here.`,
-          "ExecStart=/usr/local/bin/websocat --binary ws-l:127.0.0.1:8080 tcp:127.0.0.1:22",
-          "Restart=always",
-          "RestartSec=5",
-          "TimeoutStopSec=10",
-          "StandardOutput=journal",
-          "StandardError=journal",
-          "",
-          "[Install]",
-          "WantedBy=multi-user.target",
-          "",
-        ].join("\n"),
-      },
-      {
-        path: "/etc/systemd/system/setup-websocat.service",
-        owner: "root:root",
-        permissions: "0644",
-        content: [
-          "[Unit]",
-          "Description=First-boot websocat setup (install binaries)",
-          "After=network-online.target",
-          "Wants=network-online.target",
-          "ConditionPathExists=/root/secrets/digitalocean.com/serviceaccount/token",
-          "ConditionPathExists=!/var/lib/setup-websocat.done",
-          "",
-          "[Service]",
-          "Type=oneshot",
-          "User=root",
-          "ExecStart=/usr/local/bin/setup-websocat.sh",
-          "StandardOutput=journal",
-          "StandardError=journal",
-          "",
-          "[Install]",
-          "WantedBy=multi-user.target",
-          "",
-        ].join("\n"),
-      },
-      {
-        path: "/etc/systemd/system/setup-websocat.path",
-        owner: "root:root",
-        permissions: "0644",
-        content: [
-          "[Unit]",
-          "Description=Watch for DO service-account token then run setup-websocat",
-          "",
-          "[Path]",
-          "PathExists=/root/secrets/digitalocean.com/serviceaccount/token",
-          "Unit=setup-websocat.service",
-          "",
-          "[Install]",
-          "WantedBy=multi-user.target",
-          "",
-        ].join("\n"),
-      },
-      {
-        path: "/etc/systemd/system/fedproxy-client.service",
-        owner: "root:root",
-        permissions: "0644",
-        content: fedproxyClientUnit({
-          vmName: ctx.vmName ?? "",
-          handle: ctx.didPlc ?? "",
-          port: "8080",
-          atprpUrl: `https://${xrpcRelayFqdn}`,
-        }),
-      },
-    ],
-    runcmd: [
-      "systemctl daemon-reload",
-      "systemctl enable --now ssh || systemctl enable --now sshd",
-      "systemctl enable setup-websocat.path",
-      "systemctl start --no-block setup-websocat.path",
-    ],
-  };
-};
-
-/** fedproxy-client.service unit body shared by the fedproxy-ssh and fedproxy-web modules. */
-function fedproxyClientUnit(o: { vmName: string; handle: string; port: string; atprpUrl: string }): string {
-  return [
-    "[Unit]",
-    "Description=FedProxy Client Service",
-    "After=network-online.target",
-    "Wants=network-online.target",
-    "",
-    "[Service]",
-    "Type=simple",
-    "User=root",
-    "WorkingDirectory=/root",
-    `Environment="SERVICE=${o.vmName}"`,
-    "# SSH username the relay flattens into the host's handle segment.",
-    `Environment="HANDLE=${o.handle}"`,
-    `Environment="PORT=${o.port}"`,
-    `Environment="ATPRP_URL=${o.atprpUrl}"`,
-    "Environment=\"AUTH_PLUGIN=oidc\"",
-    "Environment=\"MARKET_ACCEPT_JSON_PATH=/root/secrets/publicdomainrelay.com/market/accept.json\"",
-    "ExecStart=/usr/local/bin/fedproxy-client",
-    "Restart=always",
-    "RestartSec=5",
-    "TimeoutStopSec=10",
-    "StandardOutput=journal",
-    "StandardError=journal",
-    "",
-    "[Install]",
-    "WantedBy=multi-user.target",
-    "",
-  ].join("\n");
-}
-
-/**
- * fedproxy-web — fedproxy-client ingress only (no sshd, no websocat): fronting
- * a browser terminal (pair with the wootty module). Requires ctx.vmName,
- * ctx.relayHost, ctx.xrpcRelaySubdomain. Uses ctx.sshHandle (falls back to
- * ctx.didPlc) and ctx.listenPort (default 8080).
- */
-const fedproxyWebModule: UserDataModule = (ctx) => {
-  const xrpcRelayFqdn = `${ctx.xrpcRelaySubdomain ?? ""}.${ctx.relayHost ?? ""}`;
-  const handle = ctx.sshHandle ?? ctx.didPlc ?? "";
-  const port = String(ctx.listenPort ?? 8080);
-  return {
-    write_files: [{
-      path: "/etc/systemd/system/fedproxy-client.service",
-      owner: "root:root",
-      permissions: "0644",
-      content: fedproxyClientUnit({
-        vmName: ctx.vmName ?? "",
-        handle,
-        port,
-        atprpUrl: `https://${xrpcRelayFqdn}`,
-      }),
-    }],
-  };
-};
-
-/**
- * wootty — WooTTY browser-terminal service + OIDC token handoff. Requires
- * ctx.vmName, ctx.didPlc, ctx.didPlcKey, ctx.relayHost, ctx.xrpcRelaySubdomain.
- * Optional: ctx.woottyDistUrl (default https://ui.fedfork.com), ctx.listenPort.
- * Pair with fedproxy-web. The setup script mints a get-ttyd-password scoped
- * token via the provider issuer (/v1/oidc/issue) and fetches the terminal
- * password from the browser relay getRecord (com.fedproxy.ttydCredentials).
- */
-const woottyModule: UserDataModule = (ctx) => {
-  const xrpcRelayFqdn = `${ctx.xrpcRelaySubdomain ?? ""}.${ctx.relayHost ?? ""}`;
-  const woottyDistUrl = ctx.woottyDistUrl ?? "https://ui.fedfork.com";
-  const port = ctx.listenPort ?? 8080;
-  return {
-    packages: ["tmux"],
-    users: [{
-      name: "agent",
-      gecos: "Policy Engine Agent",
-      primary_group: "agent",
-      groups: ["users"],
-      shell: "/bin/bash",
-      sudo: "ALL=(ALL) NOPASSWD:ALL",
-      lock_passwd: true,
-      no_user_group: false,
-    }],
-    disable_root: false,
-    ssh_pwauth: false,
-    write_files: [
-      {
-        path: "/usr/local/bin/setup-wootty.sh",
-        owner: "root:root",
-        permissions: "0755",
-        content: `#!/bin/bash
-set -x
-
-STAMP=/var/lib/setup-wootty.done
-[ -f "\${STAMP}" ] && exit 0
-
-# Identity of the requesting user, wired through from the SPA.
-DID_PLC="${ctx.didPlc ?? ""}"
-DID_PLC_KEY="${ctx.didPlcKey ?? ""}"
-
-URL=$(cat /root/secrets/digitalocean.com/serviceaccount/base_url)
-TEAM_UUID=$(cat /root/secrets/digitalocean.com/serviceaccount/team_uuid)
-ID_TOKEN=$(cat /root/secrets/digitalocean.com/serviceaccount/token)
-
-# Scope the minted token to exactly the ttyd-password role for this VM.
-SUBJECT="actx:\${TEAM_UUID}:plc:\${DID_PLC_KEY}:role:get-ttyd-password-${ctx.vmName ?? ""}"
-
-TOKEN=$(curl -sf \\
-  -H "Authorization: Bearer \${ID_TOKEN}" \\
-  -d@<(jq -n -c \\
-    --arg aud "api://ATProto?actx=\${DID_PLC}" \\
-    --arg sub "\${SUBJECT}" \\
-    --arg ttl 300 \\
-    '{aud: \$aud, sub: \$sub, ttl: (\$ttl | fromjson)}') \\
-  "\${URL}/v1/oidc/issue" \\
-  | jq -r .token)
-
-XRPC_RELAY_FQDN="${xrpcRelayFqdn}"
-
-# Fetch the WooTTY auth token from the browser relay. The relay's handler
-# OIDC-validates \${TOKEN} (full JWKS verify) before returning the record. The
-# record's .value.password is the single WooTTY auth token (one bearer token).
-mkdir -p /etc/wootty
-chown agent:agent /etc/wootty
-chmod 750 /etc/wootty
-PASSWORD=$(curl -sf \\
-  -H "Authorization: Bearer \${TOKEN}" \\
-  "https://\${XRPC_RELAY_FQDN}/xrpc/com.atproto.repo.getRecord?collection=com.fedproxy.ttydCredentials&rkey=${ctx.vmName ?? ""}" \\
-  | jq -r .value.password)
-
-# wootty.service runs as User=agent and reads this as an EnvironmentFile; the
-# SPA shows the user this same token (and opens the terminal with it in the URL
-# hash, which WooTTY exchanges once for the wootty_auth cookie).
-printf 'WOOTTY_AUTH_TOKEN=%s\\n' "\${PASSWORD}" > /etc/wootty/wootty.env
-chown agent:agent /etc/wootty/wootty.env
-chmod 600 /etc/wootty/wootty.env
-
-retry() {
-  n=0
-  delay=5
-  until "$@"; do
-    n=$((n + 1))
-    echo "command failed (attempt $n): $*; retrying in \${delay}s" >&2
-    sleep "$delay"
-  done
-}
-
-# Detect OS and architecture for the correct release archive.
-_os=$(uname -s | tr '[:upper:]' '[:lower:]')
-_arch=$(uname -m)
-case "$_arch" in x86_64|amd64) _arch=amd64 ;; aarch64|arm64) _arch=arm64 ;; esac
-
-retry sh -c "curl -sfL 'https://github.com/publicdomainrelay/atproto-reverse-proxy/releases/download/latest/atproto-reverse-proxy_\${_os}_\${_arch}.tar.gz' | tar -xvz -C /usr/local/bin"
-
-# Install the woottyd browser-terminal daemon (no apt package; pull the release
-# binary, mirroring the atproto-reverse-proxy pattern above).
-retry sh -c "curl -sfL 'https://github.com/icoretech/wootty/releases/download/wootty-v0.2.17/woottyd_0.2.17_\${_os}_\${_arch}.tar.gz' | tar -xvz -C /usr/local/bin woottyd"
-chmod +x /usr/local/bin/woottyd
-
-# The woottyd release binary ships NO web UI; build the wootty-web assets
-# ourselves and serve the tarball from the SPA origin. Extract it and point
-# WOOTTY_STATIC_DIR at it (wootty.service reads that env).
-mkdir -p /usr/local/share/wootty
-retry sh -c "curl -sfL '${woottyDistUrl}/wootty-web-dist.tar.gz' | tar -xz -C /usr/local/share/wootty"
-
-systemctl enable wootty fedproxy-client.service
-systemctl start --no-block wootty fedproxy-client.service
-
-touch "\${STAMP}"
-`,
-      },
-      {
-        path: "/etc/systemd/system/setup-wootty.service",
-        owner: "root:root",
-        permissions: "0644",
-        content: [
-          "[Unit]",
-          "Description=First-boot WooTTY setup (fetch token, install woottyd, publish SSH key)",
-          "After=network-online.target",
-          "Wants=network-online.target",
-          "ConditionPathExists=/root/secrets/digitalocean.com/serviceaccount/token",
-          "ConditionPathExists=!/var/lib/setup-wootty.done",
-          "",
-          "[Service]",
-          "Type=oneshot",
-          "User=root",
-          "ExecStart=/usr/local/bin/setup-wootty.sh",
-          "StandardOutput=journal",
-          "StandardError=journal",
-          "",
-          "[Install]",
-          "WantedBy=multi-user.target",
-          "",
-        ].join("\n"),
-      },
-      {
-        path: "/etc/systemd/system/setup-wootty.path",
-        owner: "root:root",
-        permissions: "0644",
-        content: [
-          "[Unit]",
-          "Description=Watch for DO service-account token then run setup-wootty",
-          "",
-          "[Path]",
-          "PathExists=/root/secrets/digitalocean.com/serviceaccount/token",
-          "Unit=setup-wootty.service",
-          "",
-          "[Install]",
-          "WantedBy=multi-user.target",
-          "",
-        ].join("\n"),
-      },
-      {
-        path: "/etc/systemd/system/wootty.service",
-        owner: "root:root",
-        permissions: "0644",
-        content: [
-          "[Unit]",
-          "Description=Policy Engine Service (WooTTY browser terminal)",
-          "After=network-online.target",
-          "Wants=network-online.target",
-          "",
-          "[Service]",
-          "Type=simple",
-          "User=agent",
-          "Group=agent",
-          "# Loopback bind; fedproxy-client fronts it. WOOTTY_AUTH_TOKEN comes from the",
-          "# env file written by setup-wootty.sh. WOOTTY_COMMAND=tmux preserves the",
-          "# ttyd-over-tmux behavior.",
-          "EnvironmentFile=/etc/wootty/wootty.env",
-          "Environment=\"WOOTTY_HOST=127.0.0.1\"",
-          `Environment="WOOTTY_PORT=${port}"`,
-          "Environment=\"WOOTTY_COMMAND=tmux\"",
-          "# Web UI assets fetched by setup-wootty.sh (release binary embeds none).",
-          "Environment=\"WOOTTY_STATIC_DIR=/usr/local/share/wootty/wootty-web\"",
-          "ExecStart=/usr/local/bin/woottyd run",
-          "Restart=always",
-          "RestartSec=5",
-          "TimeoutStopSec=10",
-          "StandardOutput=journal",
-          "StandardError=journal",
-          "",
-          "[Install]",
-          "WantedBy=multi-user.target",
-          "",
-        ].join("\n"),
-      },
-    ],
-    runcmd: [
-      "systemctl daemon-reload",
-      "systemctl enable setup-wootty.path",
-      "systemctl start --no-block setup-wootty.path",
-    ],
-  };
-};
 
 /**
  * secrets — fetch an operator-supplied secrets bundle from the requester's
@@ -1224,40 +725,6 @@ wait "\${DUMBPIPE_PID}"
   };
 };
 
-registerUserDataModule("tunnel", tunnelModule);
-registerUserDataModule("fedproxy-ssh", fedproxySshModule);
-registerUserDataModule("fedproxy-web", fedproxyWebModule);
-registerUserDataModule("wootty", woottyModule);
 registerUserDataModule("secrets", secretsModule);
 registerUserDataModule("k3s", k3sModule);
 registerUserDataModule("iroh", irohModule);
-
-// ---------------------------------------------------------------------------
-// Back-compat wrappers (deprecated)
-// ---------------------------------------------------------------------------
-
-/**
- * @deprecated Use buildUserData({ ctx, modules: ["fedproxy-ssh"] }). Kept for
- * one release so existing callers (and the hono-compute-provider integration
- * test) keep compiling. Fixes baked in: ListenAddress 127.0.0.1 and correct
- * ${STAMP} escaping (previously double-escaped to a literal `\${STAMP}`).
- */
-export function buildDefaultUserData(ctx: CloudInitContext): string {
-  return buildUserData({ ctx, modules: ["fedproxy-ssh"] });
-}
-
-/**
- * @deprecated Use buildUserData({ ctx, modules: ["tunnel"] }). Kept for one
- * release so existing callers keep compiling.
- */
-export function buildTunnelUserData(ctx: TunnelCloudInitContext): string {
-  return buildUserData({ ctx, modules: ["tunnel"] });
-}
-
-/** Inject JSR_URL into the tunnel-subscriber systemd unit in an existing cloud-init YAML. */
-export function injectJsrUrl(userData: string, jsrUrl: string): string {
-  return userData.replace(
-    /(ExecStart=\S*deno run .*tunnel-subscriber)/,
-    `Environment="JSR_URL=${jsrUrl}"\n      $1`,
-  );
-}

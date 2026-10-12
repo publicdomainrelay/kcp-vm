@@ -1,23 +1,21 @@
 # request-vm-ssh
 
-Request compute VM over RFP market, get SSH session tunneled through
-xrpc relay. Guest born from cloud-init only -- no hand-built
-provisioning.
+Request compute VM over RFP market, get an SSH session over the guest's own
+iroh endpoint. Guest born from cloud-init only -- no hand-built provisioning.
 
 Topology:
 
 ```
-ssh -> websocat ProxyCommand -> xrpc-relay -> tunnel-subscriber (guest) -> sshd:22
-       (host)                   (dispatch)     (xrpc tunnel agent)
+ssh -> dumbpipe connect <ticket> -> iroh -> dumbpipe listen-tcp (guest) -> sshd:22
+       (host ProxyCommand)                  (iroh UserDataModule)
 ```
 
-Fedproxy-client replaced by xrpc tunnel-subscriber. Guest websocat
-dropped -- subscriber speaks raw TCP to sshd. Host websocat stays (reference
-cli.ts pattern).
+iroh is the only guest transport. `--user-data-transport` and `--fedproxy-host`
+were removed (legacy-transport) and are refused.
 
 ## Quick start (local dev)
 
-4 terminals, all from org root.
+3 terminals, all from org root.
 
 ### 1. Relay
 
@@ -28,19 +26,7 @@ deno run -A hono-did-key-ingress-proxy/mod.ts \
   --port 5555
 ```
 
-### 2. JSR registry
-
-Guest pulls tunnel-subscriber at boot via `deno run jsr:`.
-
-```bash
-cd hono-jsr
-deno run -A hono-package-registry/main.ts \
-  --store local \
-  --base-dir .. \
-  --port 5556
-```
-
-### 3. Bidder
+### 2. Bidder
 
 ```bash
 cd atproto-market
@@ -54,13 +40,12 @@ deno run -A hono-bidder/mod.ts \
 
 Wait for: `{"message":"bidder ready","did":"did:plc:..."}`. Copy the DID.
 
-### 4. Request VM + SSH
+### 3. Request VM + SSH
 
 ```bash
 cd request-vm-ssh
-BIDDER_HANDLE_0000=<bidder-did-from-step-3> deno run -A mod.ts \
+BIDDER_HANDLE_0000=<bidder-did-from-step-2> deno run -A mod.ts \
   --relay-port 5555 \
-  --registry-port 5556 \
   --policy-args '{"bidWindowSec":8}' \
   --vm-ready-timeout-sec 300 \
   --keep-vm \
@@ -70,9 +55,9 @@ BIDDER_HANDLE_0000=<bidder-did-from-step-3> deno run -A mod.ts \
 Drops into interactive SSH when VM ready. `--exec` runs non-interactive command
 instead.
 
-### 5. Cleanup
+### 4. Cleanup
 
-Ctrl-C relay, registry, bidder. Remove leftover containers:
+Ctrl-C relay, bidder. Remove leftover containers:
 
 ```bash
 container ls -a | grep pdr- | awk '{print $1}' | xargs container rm -f
@@ -80,16 +65,16 @@ container ls -a | grep pdr- | awk '{print $1}' | xargs container rm -f
 
 ## How it works
 
-1. `request-vm-ssh` starts relay + JSR registry (or connects to existing)
+1. `request-vm-ssh` connects to the relay for its own ingress
 2. Creates requester PDS, registers DID with real PLC directory
 3. Discovers bidders from `BIDDER_HANDLE_NNNN` env vars
-4. Generates cloud-init via `buildTunnelUserData` (tunnel-subscriber replacing
-   fedproxy-client)
+4. Composes cloud-init with the `iroh` UserDataModule (dumbpipe listener in
+   front of the guest's sshd)
 5. Creates VM record + signed RFP, broadcasts to bidders
-6. Winning bidder provisions guest (container/VB) from cloud-init
-7. Guest boots: installs sshd, pulls tunnel-subscriber from JSR registry,
-   registers with relay, bridges relay tunnel to sshd:22
-8. Host opens SSH through `websocat ProxyCommand -> relay -> subscriber -> sshd`
+6. Winning bidder provisions guest (container/VM) from cloud-init
+7. Guest boots: installs sshd and dumbpipe, mints its iroh ticket and reports
+   it as `iroh://<ticket>` in vm.onNetwork
+8. Host opens SSH through `dumbpipe connect <ticket> -> guest dumbpipe -> sshd`
 
 ## Secrets (--secrets)
 
@@ -117,9 +102,8 @@ jq -n \
     {path: "/root/.npmrc", value: ("//registry.npmjs.org/:_authToken=" + $npm)}
   ]' > /tmp/secrets.json
 
-BIDDER_HANDLE_0000=<bidder-did-from-step-3> deno run -A mod.ts \
+BIDDER_HANDLE_0000=<bidder-did-from-step-2> deno run -A mod.ts \
   --relay-port 5555 \
-  --registry-port 5556 \
   --policy-args '{"bidWindowSec":8}' \
   --secrets /tmp/secrets.json \
   --exec 'cat /root/.cache/huggingface/token; exit'
@@ -263,7 +247,8 @@ reach your bidder, and only your bidder may fulfill your RFPs.
 | `--keep-vm` | false | Keep VM after exit |
 | `--exec` | `bash` | Program to run (non-interactive) |
 | `--relay-port` | auto | Relay dispatch port |
-| `--registry-port` | auto | JSR registry port |
+| `--user-data-transport` | -- | Removed (legacy-transport): refused; iroh is the only guest transport |
+| `--fedproxy-host` | -- | Removed (legacy-transport): refused |
 | `--bidder-dids` | -- | Additional bidder DIDs to include (comma-separated) |
 | `--secrets` | -- | Path to `[{"path","value"}]` JSON delivered to the guest over an ephemeral RBAC-gated server ([details](#secrets---secrets)) |
 | `--policy` | `only-me` | Policy name: `only-me`, `tangled-vouch`, `mutuals`, `open`, `bid-payload` |

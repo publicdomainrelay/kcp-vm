@@ -47,7 +47,7 @@ import {
   POLICY_TYPESCRIPT_NSID,
   type PolicyResult,
 } from "@publicdomainrelay/policy-engine-abc";
-import { buildUserData } from "@publicdomainrelay/cloud-init-common";
+import { buildUserData, GUEST_TRANSPORT_MODULE, LegacyTransportError } from "@publicdomainrelay/cloud-init-common";
 import type { CloudInitContext } from "@publicdomainrelay/cloud-init-common";
 import { buildSshKeyRbacRecord, FEDPROXY_RBAC_NSID } from "@publicdomainrelay/fedproxy-rbac-common";
 import { deriveGrantVars, isWifSimpleConfig } from "@publicdomainrelay/guest-capability-abc";
@@ -102,7 +102,12 @@ import { createBadgeBlueKeysOperatorDiscovery } from "@publicdomainrelay/operato
 type EventStreamsClient =
   import("@publicdomainrelay/atproto-event-streams-client").ATProtoEventStreamsClient;
 
-export const DEFAULT_TRANSPORT_MODULE = "iroh";
+export const DEFAULT_TRANSPORT_MODULE = GUEST_TRANSPORT_MODULE;
+
+export function assertGuestTransport(transport: unknown): void {
+  if (transport === undefined || transport === GUEST_TRANSPORT_MODULE) return;
+  throw new LegacyTransportError(String(transport));
+}
 export const DEFAULT_VM_DISK = "50G";
 export const DEFAULT_VM_READY_TIMEOUT_SEC = 300;
 export const RECEIPT_FIREHOSE_TIMEOUT_MS = 30_000;
@@ -402,8 +407,12 @@ function openContractWatch(opts: {
   const resolveGuestAddress = (address: string, source: string) => {
     if (!address || vmAddress) return;
     const kind = guestAddressKind(address);
+    if (kind === "refused") {
+      log("vm_onnetwork_address_refused", { address, kind, source, reason: "not an iroh ticket" });
+      return;
+    }
     if (kind === "ip" || kind === "hostname") {
-      log("vm_onnetwork_ip_skipped", { address, kind, source, hint: "waiting for guest ticket or FQDN" });
+      log("vm_onnetwork_ip_skipped", { address, kind, source, hint: "waiting for the guest's iroh ticket" });
       return;
     }
     vmAddress = address;
@@ -867,7 +876,8 @@ export async function requestCompute(
   const denyBidderDids = opts.denyBidderDids ?? [];
   const capabilities = opts.capabilities ?? [];
   const relayUrls = opts.relayUrls ?? (opts.relayUrl ? [opts.relayUrl] : []);
-  const transport = opts.userData?.transport ?? DEFAULT_TRANSPORT_MODULE;
+  assertGuestTransport(opts.userData?.transport);
+  const transport = DEFAULT_TRANSPORT_MODULE;
   const logger = opts.logger;
   const log = flowLog(logger);
   const scopeCache = opts.scopeCache;
@@ -1039,9 +1049,6 @@ export async function requestCompute(
       cloudInit = buildUserData({
         ctx: {
           vmName,
-          ingressProxyHost,
-          audHost: (opts.fedingressHost ? opts.fedingressHost.replace(/:\d+$/, "") : undefined) ||
-            ingressProxyHost.replace(/:\d+$/, ""),
           hostAliases: opts.guestHostAliases,
           sshAuthorizedKey: [opts.sshPublicKey, ...(opts.sshAuthorizedKeys ?? [])]
             .filter((k): k is string => !!k)

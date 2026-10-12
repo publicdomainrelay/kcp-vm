@@ -1,8 +1,8 @@
 // Snapshot + semantics tests for cloud-init-common buildUserData.
 //
-// Fixtures are byte-stable outputs of the composer (generated once during the
-// migration; regenerate only when intentionally changing the composed YAML):
-//   test/fixtures/cloud-init/{tunnel,fedproxy-ssh,fedproxy-web-wootty}.yaml
+// Fixtures are byte-stable outputs of the composer (regenerate only when
+// intentionally changing the composed YAML):
+//   test/fixtures/cloud-init/{iroh,iroh-secrets}.yaml
 //
 // Run:
 //   deno test -A test/cloud_init_snapshot_test.ts
@@ -10,26 +10,16 @@
 import { assert, assertEquals, assertThrows } from "@std/assert";
 import {
   acceptBundleModule,
-  buildDefaultUserData,
-  buildTunnelUserData,
   buildUserData,
   getUserDataModules,
-  injectJsrUrl,
+  LegacyTransportError,
   listUserDataModules,
 } from "@publicdomainrelay/cloud-init-common";
 
 const SSH = "ssh-ed25519 AAAA test@example";
 const CTX = {
   vmName: "vm-test",
-  didPlc: "did:plc:abc123",
-  didPlcKey: "abc123",
-  relayHost: "xrpc.fedproxy.com",
-  xrpcRelaySubdomain: "rly-xyz",
-  sshHandle: "did:plc:abc123",
-  woottyDistUrl: "https://ui.fedfork.com",
   sshAuthorizedKey: SSH,
-  ingressProxyHost: "relay.local:443",
-  audHost: "relay.local",
 };
 
 // Fixtures are the composer's byte-stable output: a change to composed YAML is
@@ -49,15 +39,6 @@ async function snapshot(name: string, composed: string): Promise<void> {
   assertEquals(composed, await fixture(name));
 }
 
-Deno.test("composer snapshots match fixtures", async () => {
-  await snapshot("tunnel.yaml", buildUserData({ ctx: CTX, modules: ["tunnel"] }));
-  await snapshot("fedproxy-ssh.yaml", buildUserData({ ctx: CTX, modules: ["fedproxy-ssh"] }));
-  await snapshot(
-    "fedproxy-web-wootty.yaml",
-    buildUserData({ ctx: CTX, modules: ["fedproxy-web", "wootty"] }),
-  );
-});
-
 const SECRETS_CTX = {
   ...CTX,
   secretsUrl: "https://sec-abc.relay.local",
@@ -68,8 +49,8 @@ const SECRETS_CTX = {
 
 Deno.test("secrets module composes with the transport", async () => {
   await snapshot(
-    "tunnel-secrets.yaml",
-    buildUserData({ ctx: SECRETS_CTX, modules: ["tunnel", "secrets"] }),
+    "iroh-secrets.yaml",
+    buildUserData({ ctx: SECRETS_CTX, modules: ["iroh", "secrets"] }),
   );
 });
 
@@ -114,46 +95,6 @@ Deno.test("secrets module carries no secret values", () => {
   assert(y.includes(SECRETS_CTX.secretsUrl), "only the fetch location is baked in");
 });
 
-Deno.test("bug fixes baked into fedproxy-ssh", () => {
-  const y = buildUserData({ ctx: CTX, modules: ["fedproxy-ssh"] });
-  assert(y.includes("ListenAddress 127.0.0.1"), "loopback-only sshd");
-  assert(!y.includes("ListenAddress 0.0.0.0"), "no 0.0.0.0 exposure");
-  assert(y.includes(`[ -f "\${STAMP}" ]`), "single-escaped ${STAMP}");
-  assert(!y.includes("\\${STAMP}"), "no double-escape backslash");
-  assert(y.startsWith("#cloud-config\n"));
-});
-
-Deno.test("tunnel has no ListenAddress (direct-TCP probe)", () => {
-  const y = buildUserData({ ctx: CTX, modules: ["tunnel"] });
-  assert(!y.includes("ListenAddress"));
-  assert(y.includes("tunnel-subscriber.service"));
-  assert(y.includes(`--target-port 22`));
-});
-
-Deno.test("sshd-touching modules install the sshd they configure", () => {
-  // The historical preset declared openssh-server (compute-contract-full-flow
-  // atproto-records.json:74); the registry dropped it while both modules kept
-  // writing /etc/ssh/sshd_config.d/* and enabling ssh/sshd.
-  for (const id of ["tunnel", "fedproxy-ssh"]) {
-    const y = buildUserData({ ctx: CTX, modules: [id] });
-    assert(y.includes("openssh-server"), `${id} installs the sshd it configures`);
-  }
-});
-
-Deno.test("wootty combo carries token handoff + hardening", () => {
-  const y = buildUserData({ ctx: CTX, modules: ["fedproxy-web", "wootty"] });
-  assert(y.includes("get-ttyd-password-vm-test"));
-  assert(y.includes("com.fedproxy.ttydCredentials"));
-  assert(y.includes("ssh_pwauth: false"));
-  assert(y.includes("disable_root: false"));
-  assert(y.includes("WOOTTY_AUTH_TOKEN"));
-});
-
-Deno.test("deprecated wrappers equal composer outputs", () => {
-  assertEquals(buildTunnelUserData({ ingressProxyHost: CTX.ingressProxyHost, audHost: CTX.audHost, sshAuthorizedKey: SSH }), buildUserData({ ctx: CTX, modules: ["tunnel"] }));
-  assertEquals(buildDefaultUserData({ vmName: CTX.vmName, didPlc: CTX.didPlc!, didPlcKey: CTX.didPlcKey!, relayHost: CTX.relayHost!, xrpcRelaySubdomain: CTX.xrpcRelaySubdomain!, sshAuthorizedKey: SSH }), buildUserData({ ctx: CTX, modules: ["fedproxy-ssh"] }));
-});
-
 Deno.test("merge semantics: base + module append, dedupe, override", () => {
   const base = `#cloud-config
 packages:
@@ -168,29 +109,28 @@ runcmd:
   const merged = buildUserData({
     ctx: CTX,
     base,
-    modules: ["tunnel"],
+    modules: ["iroh"],
   });
   // base preserved: its packages ride the guard the composer puts at the head
   // of runcmd, and cloud-init's own package list is gone
   assert(merged.includes('"curl"'), "the base's packages are not carried into the composed document");
   assert(merged.includes("/etc/base.conf"));
   assert(merged.includes("echo base"));
-  // tunnel appended
-  assert(merged.includes("tunnel-subscriber.service"));
+  assert(merged.includes("iroh.service"));
 
   // module write_file path dedupes with base (later wins), base entry kept
   const withOverride = buildUserData({
     ctx: CTX,
-    base: `write_files:\n  - path: /etc/systemd/system/tunnel-subscriber.service\n    content: base-unit\n`,
-    modules: ["tunnel"],
+    base: `write_files:\n  - path: /etc/systemd/system/iroh.service\n    content: base-unit\n`,
+    modules: ["iroh"],
   });
-  assertEquals((withOverride.match(/\/etc\/systemd\/system\/tunnel-subscriber\.service/g) ?? []).length, 1, "dedupe by path");
+  assertEquals((withOverride.match(/\/etc\/systemd\/system\/iroh\.service/g) ?? []).length, 1, "dedupe by path");
   assert(withOverride.includes("base-unit") === false, "module wins on dup path");
 
   // overrides beat modules
   const overridden = buildUserData({
     ctx: CTX,
-    modules: ["tunnel"],
+    modules: ["iroh"],
     overrides: { ssh_pwauth: true },
   });
   assert(overridden.includes("ssh_pwauth: true"));
@@ -211,15 +151,9 @@ Deno.test("runcmdPrepend ordering + acceptBundleModule", () => {
 });
 
 Deno.test("unparseable / empty base -> fresh build", () => {
-  const fresh = buildUserData({ ctx: CTX, modules: ["tunnel"] });
-  assertEquals(buildUserData({ ctx: CTX, base: "", modules: ["tunnel"] }), fresh);
-  assertEquals(buildUserData({ ctx: CTX, base: "not: [valid", modules: ["tunnel"] }), fresh);
-});
-
-Deno.test("injectJsrUrl adds JSR_URL env to tunnel unit", () => {
-  const y = buildUserData({ ctx: CTX, modules: ["tunnel"] });
-  const patched = injectJsrUrl(y, "jsr.local:8080");
-  assert(patched.includes(`Environment="JSR_URL=jsr.local:8080"`));
+  const fresh = buildUserData({ ctx: CTX, modules: ["iroh"] });
+  assertEquals(buildUserData({ ctx: CTX, base: "", modules: ["iroh"] }), fresh);
+  assertEquals(buildUserData({ ctx: CTX, base: "not: [valid", modules: ["iroh"] }), fresh);
 });
 
 const IROH_CTX = {
@@ -241,9 +175,7 @@ Deno.test("iroh module semantics", () => {
   assert(!y.includes("ListenAddress"), "no ListenAddress line");
   // The guest announces itself the way every other transport does: it leaves its
   // address in the rendezvous file the on-network reporter publishes to the
-  // market, and says which transport the address belongs to by its scheme. A
-  // reporting path of its own would be a second thing to keep working, and the
-  // one that exists already carries a hostname for the websocket transports.
+  // market, and says which transport the address belongs to by its scheme.
   assert(
     y.includes(`/run/guest-fqdn`),
     "leaves its address in the file the on-network reporter already publishes",
@@ -268,13 +200,11 @@ Deno.test("iroh listener never waits on sshd and no runcmd step blocks on a unit
   assert(y.includes("mv -f /run/guest-fqdn.tmp /run/guest-fqdn"), "the rendezvous file appears whole");
 });
 
-Deno.test("registry: built-ins present, unknown id throws", () => {
-  assert(listUserDataModules().includes("iroh"));
-  assert(listUserDataModules().includes("tunnel"));
-  assert(listUserDataModules().includes("fedproxy-ssh"));
-  assert(listUserDataModules().includes("fedproxy-web"));
-  assert(listUserDataModules().includes("wootty"));
-  assert(listUserDataModules().includes("secrets"));
-  assertEquals(getUserDataModules(["tunnel"]).length, 1);
+Deno.test("the registry holds only iroh, secrets and k3s", () => {
+  assertEquals([...listUserDataModules()].sort(), ["iroh", "k3s", "secrets"]);
+  assertEquals(getUserDataModules(["iroh"]).length, 1);
   assertThrows(() => getUserDataModules(["nope"]));
+  for (const legacy of ["tunnel", "fedproxy-ssh", "fedproxy-web", "wootty"]) {
+    assertThrows(() => getUserDataModules([legacy]), LegacyTransportError, "iroh is the only guest transport");
+  }
 });

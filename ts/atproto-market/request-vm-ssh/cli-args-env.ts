@@ -74,9 +74,7 @@ export default {
     },
     "fedproxy-host": {
       type: "string" as const,
-      description: "FedProxy SSH-tunnel host where the guest publishes itself for SSH (vmName--did-plc-<key>.<fedproxy-host>)",
-      env: "FEDPROXY_HOST",
-      default: "fedproxy.com",
+      description: "Removed (legacy-transport): iroh is the only guest transport; passing it is refused",
     },
     "label": {
       type: "string" as const,
@@ -178,7 +176,7 @@ export default {
     "guest-host-aliases": {
       type: "string" as const,
       description:
-        "Comma-separated /etc/hosts entries for the guest, each '<ip> <name>' (e.g. '192.168.64.1 relay.localhost'). Lets the guest dial a dispatcher whose name also resolves here, so the announced FQDN is reachable from both sides.",
+        "Comma-separated /etc/hosts entries for the guest, each '<ip> <name>' (e.g. '192.168.64.1 relay.localhost'). Lets the guest reach this requester and its bidder by a name that also resolves here.",
       env: "GUEST_HOST_ALIASES",
     },
     "user-data": {
@@ -188,8 +186,7 @@ export default {
     },
     "user-data-transport": {
       type: "string" as const,
-      description: "Transport module id for the composed cloud-init (default iroh; see cloud-init-common listUserDataModules)",
-      env: "USER_DATA_TRANSPORT",
+      description: "Removed (legacy-transport): iroh is the only guest transport; passing it is refused",
     },
     "secrets": {
       type: "string" as const,

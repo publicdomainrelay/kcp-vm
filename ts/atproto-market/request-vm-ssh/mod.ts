@@ -8,9 +8,8 @@ import {
   runComputeContract,
   createSshSessionProvider,
   ensureDumbpipe,
-  ensureWebsocat,
-  DEFAULT_TRANSPORT_MODULE,
 } from "@publicdomainrelay/requester-xrpc";
+import { removedTransportFlagsIn } from "@publicdomainrelay/cloud-init-common";
 import { pollForOAuthSession, createOAuthAgentFromSession, tryRestoreOAuthQRSession, saveOAuthQRSession, OAuthSessionExpiredError } from "@publicdomainrelay/atproto-helpers";
 import { startLoopbackCallbackServer } from "@publicdomainrelay/atproto-oauth-helpers";
 import { createPlcDirectoryClient, createGenesisOp, PlcClient, PlcNotFoundError } from "@publicdomainrelay/did-plc";
@@ -37,6 +36,12 @@ interface PolicySpec {
 let runtimeConfig: Record<string, unknown> | null = null;
 try { runtimeConfig = (await import("./config.json", { with: { type: "json" } })).default; } catch { /* optional */ }
 const { options } = await new Command("CONFIG_PATH_REQUEST_VM_SSH", cliArgsEnv, runtimeConfig).resolve();
+
+const removedFlags = removedTransportFlagsIn(options, ["user-data-transport", "fedproxy-host"]);
+if (removedFlags.length > 0) {
+  for (const err of removedFlags) console.error(err.message);
+  Deno.exit(2);
+}
 
 const label = (options.label as string) ?? "request-vm-ssh";
 const logger = createLogger({ serviceName: label });
@@ -104,22 +109,12 @@ if (secretsPath) {
   });
 }
 
-// Bootstrap the binary the selected transport's SSH path actually runs: the
-// default iroh transport reaches the guest with `dumbpipe connect <ticket>`,
-// while the websocket transports keep the websocat ProxyCommand.
-const transportModule = (options.userDataTransport as string | undefined) ??
-  DEFAULT_TRANSPORT_MODULE;
-let dumbpipePath: string | undefined;
-if (transportModule === "iroh") {
-  dumbpipePath = await ensureDumbpipe(logger);
-} else {
-  await ensureWebsocat(logger);
-}
+const dumbpipePath = await ensureDumbpipe(logger);
 logger.info("requester_starting", {
   label,
   ingressProxyHost,
   relayUrls,
-  transport: transportModule,
+  transport: "iroh",
 });
 
 const serve = createServe({
@@ -516,7 +511,6 @@ if (policyName) {
 const result = await runComputeContract(pds, {
   logger,
   ingressProxyHost,
-  fedingressHost: options.fedingressHost as string | undefined,
   plcUrl: (options.plcDirectoryUrl as string) || "https://plc.directory",
   guestHostAliases: ((options.guestHostAliases as string) || "")
     .split(",").map((s: string) => s.trim()).filter(Boolean),
@@ -534,9 +528,6 @@ const result = await runComputeContract(pds, {
   denyBidderDids,
   relayUrls,
   baseUserData,
-  userData: (options.userDataTransport as string | undefined)
-    ? { transport: options.userDataTransport as string }
-    : undefined,
   rbac,
   capabilities,
   policy,

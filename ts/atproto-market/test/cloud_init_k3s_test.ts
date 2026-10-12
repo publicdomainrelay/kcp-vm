@@ -2,7 +2,7 @@
 //
 // Fixtures are byte-stable outputs of the composer, generated from the module
 // source itself:
-//   test/fixtures/cloud-init/{k3s,tunnel-k3s}.yaml
+//   test/fixtures/cloud-init/{k3s,iroh-k3s}.yaml
 //
 // Run:
 //   deno test -A test/cloud_init_k3s_test.ts
@@ -17,14 +17,7 @@ import {
 const SSH = "ssh-ed25519 AAAA test@example";
 const CTX = {
   vmName: "vm-test",
-  didPlc: "did:plc:abc123",
-  didPlcKey: "abc123",
-  relayHost: "xrpc.fedproxy.com",
-  xrpcRelaySubdomain: "rly-xyz",
-  sshHandle: "did:plc:abc123",
   sshAuthorizedKey: SSH,
-  ingressProxyHost: "relay.local:443",
-  audHost: "relay.local",
 };
 
 const K3S_SETUP_PATH = "/usr/local/bin/setup-k3s.sh";
@@ -45,9 +38,9 @@ async function snapshot(name: string, composed: string): Promise<void> {
   assertEquals(composed, await fixture(name));
 }
 
-Deno.test("k3s composes alone and with the tunnel transport", async () => {
+Deno.test("k3s composes alone and with the iroh transport", async () => {
   await snapshot("k3s.yaml", buildUserData({ ctx: CTX, modules: ["k3s"] }));
-  await snapshot("tunnel-k3s.yaml", buildUserData({ ctx: CTX, modules: ["tunnel", "k3s"] }));
+  await snapshot("iroh-k3s.yaml", buildUserData({ ctx: CTX, modules: ["iroh", "k3s"] }));
 });
 
 Deno.test("k3s resolves by registry id and is byte-deterministic", () => {

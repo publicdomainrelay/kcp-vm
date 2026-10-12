@@ -24,7 +24,7 @@ import { assert } from "@std/assert";
 import { createLogger } from "@publicdomainrelay/logger";
 import { createServe } from "@publicdomainrelay/serve";
 import {
-  createRequesterPDS, ensureWebsocat, runComputeContract,
+  createRequesterPDS, runComputeContract,
 } from "@publicdomainrelay/requester-xrpc";
 
 // ===========================================================================
@@ -32,15 +32,6 @@ import {
 // ===========================================================================
 
 const encoder = new TextEncoder();
-
-async function hasCommand(cmd: string): Promise<boolean> {
-  try {
-    const { code } = await new Deno.Command("which", {
-      args: [cmd], stdout: "null", stderr: "null",
-    }).output();
-    return code === 0;
-  } catch { return false; }
-}
 
 async function probeRtt(url: string, timeoutMs = 5000): Promise<number | null> {
   try {
@@ -190,12 +181,6 @@ Deno.test({
   const logger = createLogger({ serviceName: "prod-only-me" });
   const cleanups: Array<() => void> = [];
 
-  await ensureWebsocat(logger).catch(() => {});
-  if (!(await hasCommand("websocat"))) {
-    console.log("[SKIP] websocat not installed");
-    return;
-  }
-
   await t.step("[bidder-prod-only-me] policy=only-me RFP flow", async () => {
     // -- Create requester PDS first -- its DID becomes the only-me operator --
     const requesterServe = createServe({ logger, tcp: { addr: "127.0.0.1", port: 0 } });
@@ -251,7 +236,6 @@ Deno.test({
     const result = await runComputeContract(requester, {
       logger,
       ingressProxyHost: PROD_DISPATCHER,
-      fedingressHost: PROD_FEDPROXY,
       rbac: true,
       skipSsh: true,
       keepVm: true,

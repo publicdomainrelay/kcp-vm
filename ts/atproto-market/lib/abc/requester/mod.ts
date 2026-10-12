@@ -49,11 +49,8 @@ export interface ContractFlowOptions {
   onSshEnd?: () => void | Promise<void>;
   /**
    * Overrides the ssh ProxyCommand per guest target. Without it the
-   * ProxyCommand follows the transport the flow selected: `dumbpipe connect
-   * <ticket>` for the default iroh transport, and `websocat --binary
-   * wss://<fqdn>` only for the explicitly selected tunnel or fedproxy-ssh
-   * transport. Lets tests and alternate ingress topologies rewrite the guest
-   * endpoint while keeping the RFP flow intact.
+   * ProxyCommand is `dumbpipe connect <ticket>` against the guest's iroh
+   * ticket, the only guest transport.
    */
   sshProxyCommandFn?: (target: string) => string;
   /**
@@ -62,28 +59,18 @@ export interface ContractFlowOptions {
    */
   ingressProxyHost?: string;
   /**
-   * FedProxy SSH-tunnel host: the raw ssh/tcp ingress where the guest's
-   * fedproxy-client publishes itself as <vmName>--did-plc-<key>.<fedingressHost>
-   * (e.g. fedproxy.com). Distinct from ingressProxyHost in production; the VM
-   * FQDN polled for SSH is derived from this. Defaults to fedproxy.com. In the
-   * hermetic test a single local relay serves both planes, so it is set to the
-   * test dispatcher host.
-   */
-  fedingressHost?: string;
-  /**
    * Pluggable user_data composition (see @publicdomainrelay/cloud-init-common
    * buildUserData). A caller-supplied base cloud-config is patched with the
-   * selected transport module plus any extra modules, so callers can add e.g.
-   * wootty-token-handoff style code without rebuilding the whole cloud-init.
+   * iroh transport module plus any extra modules.
    */
   userData?: {
     /** Caller-supplied base cloud-config (e.g. read from a --user-data file). */
     base?: string;
     /**
-     * Transport module id. Defaults to the iroh module id (the dumbpipe
-     * listener transport). See cloud-init-common listUserDataModules.
+     * Guest transport module id. iroh is the only guest transport; any other
+     * value is refused (legacy-transport).
      */
-    transport?: string;
+    transport?: "iroh";
     /** Extra modules appended after the transport module. */
     modules?: Array<string | import("@publicdomainrelay/cloud-init-common").UserDataModule>;
     /** Overrides winning over base + modules (e.g. scalar toggles). */
@@ -91,7 +78,7 @@ export interface ContractFlowOptions {
   };
   /**
    * @deprecated Use `userData.base` instead. When set and `userData.base` is
-   * unset, the default tunnel provisioning is patched into this base.
+   * unset, the iroh provisioning is patched into this base.
    */
   baseUserData?: string;
   /**
@@ -190,8 +177,7 @@ export interface RequesterPDS {
    * Register interest in a contract's guest transport address, keyed by that
    * contract's receipt. A requester serves many contracts concurrently, so the
    * key is what keeps one run's onNetwork from resolving another run's wait.
-   * The address is opaque (an iroh ticket for the default transport, a relay
-   * hostname for the websocket transports) and resolves at most once per key;
+   * The address is the guest's iroh ticket and resolves at most once per key;
    * a second address for the same contract is ignored.
    */
   setOnNetworkResolved?(key: string, fn: (address: string) => void): void;
@@ -209,9 +195,8 @@ export interface SubmittedComputeEvent {
 
 /**
  * The whole SSH surface the flow may assume. The address handed to pollReady
- * and runSession is the guest's transport address, not necessarily a DNS name:
- * an iroh ticket for the iroh transport and a relay hostname for the websocket
- * transports. The provider turns that address into a ProxyCommand.
+ * and runSession is the guest's iroh ticket (iroh://...), not a DNS name. The
+ * provider turns that address into a dumbpipe ProxyCommand.
  */
 export interface SshSessionProvider {
   generateKeypair(vmName: string): Promise<{ publicKey: string; privateKeyPath: string }>;

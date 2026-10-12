@@ -85,12 +85,12 @@ Deno.test("parse rejects what is not a contract state", () => {
 
 Deno.test("guest addresses are told apart by their shape", () => {
   assertEquals(guestAddressKind("iroh://abc"), "iroh-ticket");
-  assertEquals(guestAddressKind("vm--did-plc-x.relay.localhost"), "relay-fqdn");
+  assertEquals(guestAddressKind("vm--did-plc-x.relay.localhost"), "refused");
   assertEquals(guestAddressKind("172.17.0.3"), "ip");
   assertEquals(guestAddressKind("172.17.0.3:22"), "ip");
 });
 
-Deno.test("a guest's bare hostname is not a relay address", () => {
+Deno.test("a guest's bare hostname is not a guest address", () => {
   assertEquals(guestAddressKind("fc-1379be663dd9-762b64d5"), "hostname");
   assertEquals(guestAddressKind("guest"), "hostname");
 });

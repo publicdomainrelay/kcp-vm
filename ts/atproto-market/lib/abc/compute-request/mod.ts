@@ -266,12 +266,12 @@ export function parseContractState(input: string | unknown): ContractState {
   return o as unknown as ContractState;
 }
 
-export type GuestAddressKind = "iroh-ticket" | "relay-fqdn" | "ip" | "hostname";
+export type GuestAddressKind = "iroh-ticket" | "refused" | "ip" | "hostname";
 
 export function guestAddressKind(address: string): GuestAddressKind {
   if (/^\d{1,3}(\.\d{1,3}){3}(:\d+)?$/.test(address)) return "ip";
   if (address.startsWith(IROH_SCHEME)) return "iroh-ticket";
-  return address.includes(".") ? "relay-fqdn" : "hostname";
+  return address.includes(".") ? "refused" : "hostname";
 }
 
 export type FlowDecision = "continue" | "return";

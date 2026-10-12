@@ -3,6 +3,7 @@
   "license": "Unlicense",
   "imports": {
     "@publicdomainrelay/cli-args-env": "jsr:@publicdomainrelay/cli-args-env@^0",
+    "@publicdomainrelay/cloud-init-common": "jsr:@publicdomainrelay/cloud-init-common@^0",
     "@publicdomainrelay/logger": "jsr:@publicdomainrelay/logger@^0",
     "@publicdomainrelay/serve": "jsr:@publicdomainrelay/serve@^0",
     "@publicdomainrelay/requester-xrpc": "jsr:@publicdomainrelay/requester-xrpc@^0",

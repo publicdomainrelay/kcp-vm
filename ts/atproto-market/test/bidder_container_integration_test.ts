@@ -344,7 +344,7 @@ Deno.test({
     // without a ticket).
     assert(result.receiptOk === true, "receipt verification should pass");
     const unauthorized = logEvents.filter((e) =>
-      e.event.includes("401") || JSON.stringify(e.data).includes("401")
+      /\b401\b/.test(e.event) || /\b401\b/.test(JSON.stringify(e.data))
     );
     assert(
       unauthorized.length === 0,

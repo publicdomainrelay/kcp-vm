@@ -15,14 +15,7 @@ import { buildUserData } from "@publicdomainrelay/cloud-init-common";
 const SSH = "ssh-ed25519 AAAA test@example";
 const CTX = {
   vmName: "vm-test",
-  didPlc: "did:plc:abc123",
-  didPlcKey: "abc123",
-  relayHost: "xrpc.fedproxy.com",
-  xrpcRelaySubdomain: "rly-xyz",
-  sshHandle: "did:plc:abc123",
   sshAuthorizedKey: SSH,
-  ingressProxyHost: "relay.local:443",
-  audHost: "relay.local",
 };
 
 function section(y: string, key: string): string {
@@ -64,7 +57,7 @@ function resolvWriter(content: string) {
 }
 
 Deno.test("default request names the gateway first, then both public fallbacks", () => {
-  const y = buildUserData({ ctx: CTX, modules: ["tunnel"] });
+  const y = buildUserData({ ctx: CTX, modules: ["iroh"] });
   const resolver = resolvContent(y);
   assertEquals(resolver.split("\n")[0], "nameserver 172.30.0.1", "gateway first");
   assert(resolver.includes("nameserver 1.1.1.1"), "first fallback");
@@ -92,7 +85,7 @@ Deno.test("a caller-written resolver is not left empty or gateway-less", () => {
 });
 
 Deno.test("the resolver is written in write_files, bootcmd, and runcmd", () => {
-  const y = buildUserData({ ctx: CTX, modules: ["tunnel"] });
+  const y = buildUserData({ ctx: CTX, modules: ["iroh"] });
   assert(resolvContent(y).includes("nameserver 172.30.0.1"), "write_files entry");
   assert(section(y, "bootcmd").includes("> /etc/resolv.conf"), "bootcmd runs first");
   assert(section(y, "runcmd").includes("> /etc/resolv.conf"), "runcmd re-asserts late");
@@ -117,7 +110,7 @@ Deno.test("the runcmd re-assert is the last word, after any caller runcmd", () =
 Deno.test("gateway and fallbacks are configurable", () => {
   const y = buildUserData({
     ctx: CTX,
-    modules: ["tunnel"],
+    modules: ["iroh"],
     dnsGateway: "10.0.0.1",
     dnsFallbacks: ["8.8.8.8"],
   });
@@ -128,14 +121,14 @@ Deno.test("gateway and fallbacks are configurable", () => {
 
   const viaCtx = buildUserData({
     ctx: { ...CTX, dnsGateway: "10.0.0.1", dnsFallbacks: ["8.8.8.8"] },
-    modules: ["tunnel"],
+    modules: ["iroh"],
   });
   assertEquals(resolvContent(viaCtx).split("\n")[0], "nameserver 10.0.0.1");
 });
 
 Deno.test("the resolver does not disturb the transport the ssh door needs", () => {
-  const y = buildUserData({ ctx: CTX, modules: ["tunnel"] });
-  assert(y.includes("tunnel-subscriber.service"));
-  assert(y.includes("systemctl enable --now tunnel-subscriber.service"));
+  const y = buildUserData({ ctx: CTX, modules: ["iroh"] });
+  assert(y.includes("iroh.service"));
+  assert(y.includes("systemctl start --no-block iroh.service"));
   assert(y.includes("openssh-server"));
 });
