@@ -368,7 +368,8 @@ export interface OpenBaoJWTConfig {
 
 export interface OpenBaoPolicy {
   name: string;
-  rules: OpenBaoPolicyRule[];
+  rules?: OpenBaoPolicyRule[];
+  hcl?: string;
 }
 
 export interface OpenBaoPolicyRule {
@@ -1613,6 +1614,9 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
   },
   "OpenBaoPolicy": {
     "properties": {
+      "hcl": {
+        "type": "string"
+      },
       "name": {
         "type": "string"
       },
@@ -1624,8 +1628,7 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       }
     },
     "required": [
-      "name",
-      "rules"
+      "name"
     ],
     "type": "object"
   },

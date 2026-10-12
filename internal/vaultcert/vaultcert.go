@@ -31,10 +31,10 @@ const (
 	NodeCAFile   = "vault-ca.crt"
 	NodeMetaFile = "vault-client.json"
 
-	nodeCertTTL  = 24 * time.Hour
-	nodeMaxTTL   = 168 * time.Hour
-	nodeTokenTTL = "15m"
-	nodeTokenMax = "1h"
+	NodeCertTTL  = 24 * time.Hour
+	NodeMaxTTL   = 168 * time.Hour
+	NodeTokenTTL = "15m"
+	NodeTokenMax = "1h"
 
 	nodeFileMode = 0o600
 )
@@ -116,181 +116,37 @@ func Load(dir string) (ClientCertificate, error) {
 	return out, nil
 }
 
-func MintNodeCertificate(ctx context.Context, adminAddr, rootToken, nodeName, vaultAddr string, serverCAPEM []byte) (ClientCertificate, error) {
-	if err := vaultlayout.ValidateCertIdentity(nodeName); err != nil {
-		return ClientCertificate{}, err
-	}
-	return mint(ctx, adminAddr, rootToken, vaultAddr, serverCAPEM, nodeName,
-		vaultlayout.NodeCertRoleName(nodeName), vaultlayout.NodePolicyName(nodeName),
-		vaultlayout.NodeCertPolicyHCL(nodeName))
-}
-
-func MintESOCertificate(ctx context.Context, adminAddr, rootToken, identity, vaultAddr string, serverCAPEM []byte) (ClientCertificate, error) {
-	if err := vaultlayout.ValidateCertIdentity(identity); err != nil {
-		return ClientCertificate{}, err
-	}
-	return mint(ctx, adminAddr, rootToken, vaultAddr, serverCAPEM, identity,
-		vaultlayout.RoleESO, vaultlayout.PolicyESO, vaultlayout.ESOCertPolicyHCL())
-}
-
-func mint(ctx context.Context, adminAddr, rootToken, vaultAddr string, serverCAPEM []byte, commonName, role, policy, policyHCL string) (ClientCertificate, error) {
+func IssueESOCertificate(ctx context.Context, client *openbao.Client, vaultAddr string, serverCAPEM []byte) (ClientCertificate, error) {
 	if len(serverCAPEM) == 0 {
 		return ClientCertificate{}, errors.New(
 			"vaultcert: no vault server CA was given, so the certificate would carry no way to " +
 				"verify the vault it dials and every read would need server verification switched off")
 	}
-	pool, err := openbao.CertPoolFromPEM(serverCAPEM)
-	if err != nil {
-		return ClientCertificate{}, fmt.Errorf("vaultcert: the vault server CA to trust: %w", err)
-	}
-	clientCA, err := VaultClientCAPEM(ctx, adminAddr, rootToken, pool)
-	if err != nil {
-		return ClientCertificate{}, err
-	}
-	if err := EnsureCertAuth(ctx, adminAddr, rootToken, clientCA, pool); err != nil {
-		return ClientCertificate{}, err
-	}
-	client := openbao.New(adminAddr, rootToken, openbao.WithCACertPool(pool))
-	if err := client.PutPolicy(ctx, policy, policyHCL); err != nil {
-		return ClientCertificate{}, fmt.Errorf("vaultcert: writing policy %s: %w", policy, err)
-	}
-	if err := writeCertRole(ctx, newRawClient(adminAddr, rootToken, adminHTTPClient(pool)), clientCA, role, commonName, policy); err != nil {
-		return ClientCertificate{}, err
-	}
 	issued, err := client.IssueCert(ctx, PKIMount, PKIRoleNode, openbao.CertRequest{
-		CommonName: commonName,
-		TTL:        vaultTTLString(nodeCertTTL),
+		CommonName: vaultlayout.RoleESO,
+		TTL:        vaultTTLString(NodeCertTTL),
 	})
 	if err != nil {
-		return ClientCertificate{}, fmt.Errorf("vaultcert: issuing the certificate for %s from %s: %w", commonName, adminAddr, err)
+		return ClientCertificate{}, fmt.Errorf("vaultcert: issuing the certificate for %s: %w", vaultlayout.RoleESO, err)
 	}
 	if issued.Certificate == "" || issued.PrivateKey == "" {
-		return ClientCertificate{}, fmt.Errorf("vaultcert: the vault issued an incomplete certificate for %s", commonName)
+		return ClientCertificate{}, fmt.Errorf("vaultcert: the vault issued an incomplete certificate for %s", vaultlayout.RoleESO)
 	}
 	leaf, err := parseLeaf([]byte(issued.Certificate))
 	if err != nil {
 		return ClientCertificate{}, err
 	}
-	if leaf.Subject.CommonName != commonName {
-		return ClientCertificate{}, fmt.Errorf(
-			"vaultcert: the vault issued a certificate whose common name is %q, not %q, so the "+
-				"cert would authenticate as a different identity than the one that was minted",
-			leaf.Subject.CommonName, commonName)
+	if leaf.Subject.CommonName != vaultlayout.RoleESO {
+		return ClientCertificate{}, fmt.Errorf("vaultcert: the vault issued a certificate whose common name is %q, not %q",
+			leaf.Subject.CommonName, vaultlayout.RoleESO)
 	}
 	return ClientCertificate{
-		Metadata:    ClientMetadata{Identity: commonName, Role: role, VaultAddr: vaultAddr},
+		Metadata:    ClientMetadata{Identity: vaultlayout.RoleESO, Role: vaultlayout.RoleESO, VaultAddr: vaultAddr},
 		CertPEM:     []byte(issued.Certificate),
 		KeyPEM:      []byte(issued.PrivateKey),
 		ServerCAPEM: serverCAPEM,
 		Serial:      issued.Serial,
 	}, nil
-}
-
-func VaultClientCAPEM(ctx context.Context, adminAddr, rootToken string, pool *x509.CertPool) ([]byte, error) {
-	status, body, err := newRawClient(adminAddr, rootToken, adminHTTPClient(pool)).do(ctx, http.MethodGet, "pki/ca/pem", nil)
-	if err != nil {
-		return nil, err
-	}
-	if status == http.StatusNotFound || len(bytes.TrimSpace(body)) == 0 {
-		return nil, fmt.Errorf("%w (GET %s/v1/pki/ca/pem -> HTTP %d)", ErrNoVaultClientCA, adminAddr, status)
-	}
-	if status < 200 || status > 299 {
-		return nil, fmt.Errorf("vaultcert: GET %s/v1/pki/ca/pem -> HTTP %d: %s", adminAddr, status, strings.TrimSpace(string(body)))
-	}
-	certs, err := parseCertificates(body)
-	if err != nil || len(certs) == 0 {
-		return nil, fmt.Errorf("%w: pki/ca/pem holds no parsable certificate: %v", ErrNoVaultClientCA, err)
-	}
-	foundCA := false
-	for _, c := range certs {
-		if c.IsCA {
-			foundCA = true
-		}
-	}
-	if !foundCA {
-		return nil, fmt.Errorf("%w: pki/ca/pem holds %d certificate(s) and not one is a CA", ErrNoVaultClientCA, len(certs))
-	}
-	return body, nil
-}
-
-func EnsureCertAuth(ctx context.Context, adminAddr, rootToken string, clientCAPEM []byte, pool *x509.CertPool) error {
-	if len(clientCAPEM) == 0 {
-		return ErrNoVaultClientCA
-	}
-	admin := newRawClient(adminAddr, rootToken, adminHTTPClient(pool))
-	auths, err := admin.listData(ctx, "sys/auth")
-	if err != nil {
-		return err
-	}
-	if _, ok := auths[vaultlayout.CertAuthPath+"/"]; !ok {
-		status, body, err := admin.do(ctx, http.MethodPost, "sys/auth/"+vaultlayout.CertAuthPath, map[string]any{"type": "cert"})
-		if err != nil {
-			return err
-		}
-		if status < 200 || status > 299 {
-			return fmt.Errorf("vaultcert: enabling auth/%s -> HTTP %d: %s", vaultlayout.CertAuthPath, status, strings.TrimSpace(string(body)))
-		}
-	}
-	return writeNodePKIRole(ctx, admin)
-}
-
-func writeNodePKIRole(ctx context.Context, admin *rawClient) error {
-	status, body, err := admin.do(ctx, http.MethodPost, "pki/roles/"+PKIRoleNode, map[string]any{
-		"allow_any_name":    true,
-		"enforce_hostnames": false,
-		"require_cn":        true,
-		"client_flag":       true,
-		"server_flag":       false,
-		"key_type":          "ec",
-		"key_bits":          256,
-		"ttl":               vaultTTLString(nodeCertTTL),
-		"max_ttl":           vaultTTLString(nodeMaxTTL),
-	})
-	if err != nil {
-		return err
-	}
-	if status < 200 || status > 299 {
-		return fmt.Errorf("vaultcert: writing PKI role %s -> HTTP %d: %s", PKIRoleNode, status, strings.TrimSpace(string(body)))
-	}
-	return nil
-}
-
-func writeCertRole(ctx context.Context, admin *rawClient, clientCAPEM []byte, role, commonName, policy string) error {
-	status, body, err := admin.do(ctx, http.MethodPost, "auth/cert/certs/"+role, map[string]any{
-		"certificate":             string(clientCAPEM),
-		"allowed_common_names":    commonName,
-		"display_name":            commonName,
-		"token_policies":          []string{policy},
-		"token_ttl":               nodeTokenTTL,
-		"token_max_ttl":           nodeTokenMax,
-		"token_no_default_policy": true,
-	})
-	if err != nil {
-		return err
-	}
-	if status < 200 || status > 299 {
-		return fmt.Errorf("vaultcert: writing CERT role %s -> HTTP %d: %s", role, status, strings.TrimSpace(string(body)))
-	}
-	return nil
-}
-
-func WriteNodeSecret(ctx context.Context, adminAddr, rootToken, nodeName string, data map[string]any, serverCAPEM []byte) error {
-	if err := vaultlayout.ValidateCertIdentity(nodeName); err != nil {
-		return err
-	}
-	pool, err := openbao.CertPoolFromPEM(serverCAPEM)
-	if err != nil {
-		return fmt.Errorf("vaultcert: the vault server CA to trust: %w", err)
-	}
-	return openbao.New(adminAddr, rootToken, openbao.WithCACertPool(pool)).PutKV(ctx, vaultlayout.NodeSecretPath(nodeName), data)
-}
-
-func WriteESODemoSecret(ctx context.Context, adminAddr, rootToken string, data map[string]any, serverCAPEM []byte) error {
-	pool, err := openbao.CertPoolFromPEM(serverCAPEM)
-	if err != nil {
-		return fmt.Errorf("vaultcert: the vault server CA to trust: %w", err)
-	}
-	return openbao.New(adminAddr, rootToken, openbao.WithCACertPool(pool)).PutKV(ctx, vaultlayout.PathESODemo, data)
 }
 
 func (c ClientCertificate) Login(ctx context.Context) (string, error) {

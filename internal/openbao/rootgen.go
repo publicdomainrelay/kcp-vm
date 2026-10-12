@@ -16,6 +16,8 @@ func (c *Client) WithToken(token string) *Client {
 	return &out
 }
 
+func (c *Client) Token() string { return c.token }
+
 func (c *Client) LoginCert(ctx context.Context, mount, role string) (string, error) {
 	path := "auth/" + strings.Trim(mount, "/") + "/login"
 	status, body, err := c.request(ctx, http.MethodPost, path, map[string]any{"name": role})

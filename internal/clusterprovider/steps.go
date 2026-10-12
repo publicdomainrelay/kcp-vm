@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -115,9 +116,13 @@ func StepsFrom(spec clusterstack.Spec, leases materialiser.Leases, stack Stack) 
 		if err != nil {
 			return nil, err
 		}
+		ps := procgroup.Spec{Argv: argv, Env: stepEnv(spec, c), Log: log}
+		if c == procgroup.ComponentOpenBao {
+			ps.Listen = net.JoinHostPort(portallocator.LoopbackAdvertiseAddress, strconv.Itoa(bao.Port))
+		}
 		steps = append(steps, procgroup.Step{
 			Name:  c,
-			Spec:  procgroup.Spec{Argv: argv, Env: stepEnv(spec, c), Log: log},
+			Spec:  ps,
 			Ready: gate(c, spec, bao, api),
 		})
 	}
@@ -144,13 +149,6 @@ func gate(c procgroup.Component, spec clusterstack.Spec, bao, api portallocator.
 		defer cancel()
 		switch c {
 		case procgroup.ComponentOpenBao:
-			seal, err := EnsureVault(ctx, spec.DataDir, bao.Port)
-			if err != nil {
-				return err
-			}
-			if err := ApplyClusterVault(ctx, spec.DataDir, seal); err != nil {
-				return err
-			}
 			return waitOpenBao(ctx, spec.DataDir, bao.Port)
 		case procgroup.ComponentKine:
 			return waitDial(ctx, spec.KineListen)

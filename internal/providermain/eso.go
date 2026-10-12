@@ -48,18 +48,17 @@ func tenantAddOns(cfg Config, log *slog.Logger) func(context.Context, string, *r
 			"meaning", "every node may list Nodes for socialweb-meshd, and a node whose user_data carries "+
 				"the link-local DNS address runs its own CoreDNS there; both are ours and baseline",
 			"item", "plan 0005 M5-DNS, M5-MESHD")
-		seal, err := clusterprovider.ReadVaultSeal(dataDir)
-		if err != nil {
-			return fmt.Errorf("clusterprovider: reading the cluster vault's unseal material for the "+
-				"tenant add-ons of %s: %w", cluster, err)
-		}
 		bounded, cancel := context.WithTimeout(ctx, tenantAddOnTimeout)
 		defer cancel()
+		client, access, err := clusterprovider.ClusterVaultClient(bounded, dataDir)
+		if err != nil {
+			return fmt.Errorf("clusterprovider: logging in to the cluster vault for the tenant add-ons of %s: %w", cluster, err)
+		}
 		vaultURL, err := esovault.ApplyVaultStore(bounded, dyn, esovault.VaultStore{
 			Cluster:     cluster,
 			DataDir:     dataDir,
-			VaultPort:   seal.Port,
-			RootToken:   seal.RootToken,
+			VaultPort:   access.Port(),
+			Client:      client,
 			ManifestDir: cfg.ESOManifestDir,
 			Namespace:   kcpclient.TenantNamespace,
 		})

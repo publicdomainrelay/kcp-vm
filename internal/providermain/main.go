@@ -315,8 +315,8 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 		Log:                 log,
 		Substrate:           substrate,
 		Links:               claims,
-		NodeSecrets: func(clusterDir string) nodemarket.NodeSecrets {
-			return clusterprovider.NewNodeVault(clusterDir).WithLogger(log)
+		NodeSecrets: func(cluster, clusterDir string) nodemarket.NodeSecrets {
+			return clusterprovider.NewNodeVault(units, cluster, clusterDir).WithLogger(log)
 		},
 		Observe: nodeObserver.Observe,
 		PathUp: clusterPathUp(tenant, claims, func(ctx context.Context, cluster string) (string, error) {

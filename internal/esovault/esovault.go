@@ -10,6 +10,7 @@ import (
 	"k8s.io/client-go/dynamic"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/eso"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/openbao"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/vaultcert"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/vaultlayout"
 )
@@ -21,7 +22,7 @@ type VaultStore struct {
 
 	VaultPort int
 
-	RootToken string
+	Client *openbao.Client
 
 	ManifestDir string
 
@@ -33,9 +34,9 @@ func StoreVaultURL(vaultPort int) string {
 }
 
 func ApplyVaultStore(ctx context.Context, dyn dynamic.Interface, o VaultStore) (string, error) {
-	if o.DataDir == "" || o.VaultPort == 0 || o.RootToken == "" || o.Namespace == "" {
+	if o.DataDir == "" || o.VaultPort == 0 || o.Client == nil || o.Namespace == "" {
 		return "", errors.New("esovault: the vault-backed store needs the cluster's data dir, its vault's " +
-			"leased port and root token, and the tenant namespace the ExternalSecret is written into")
+			"leased port, a client logged in to it, and the tenant namespace the ExternalSecret is written into")
 	}
 	if err := eso.InstallOperator(ctx, dyn, nil); err != nil {
 		return "", fmt.Errorf("%w. The External Secrets controller runs beside the control plane and "+
@@ -48,15 +49,13 @@ func ApplyVaultStore(ctx context.Context, dyn dynamic.Interface, o VaultStore) (
 		return "", fmt.Errorf("esovault: the store for %s would be told to dial %s, and the vault that is "+
 			"running cannot present that host: %w", o.Cluster, vaultURL, err)
 	}
-	if err := vaultcert.WriteESODemoSecret(ctx, vaultURL, o.RootToken,
-		map[string]any{"demo": "openbao:" + o.Cluster}, vaultTLS.CAPEM); err != nil {
+	if err := o.Client.PutKV(ctx, vaultlayout.PathESODemo, map[string]any{"demo": "openbao:" + o.Cluster}); err != nil {
 		return "", fmt.Errorf("esovault: writing the demo value the tenant's ExternalSecret reads out of "+
 			"the cluster vault for %s: %w", o.Cluster, err)
 	}
-	cert, err := vaultcert.MintESOCertificate(ctx, vaultURL, o.RootToken,
-		vaultlayout.RoleESO, vaultURL, vaultTLS.CAPEM)
+	cert, err := vaultcert.IssueESOCertificate(ctx, o.Client, vaultURL, vaultTLS.CAPEM)
 	if err != nil {
-		return "", fmt.Errorf("esovault: minting the store's client certificate for %s: %w", o.Cluster, err)
+		return "", fmt.Errorf("esovault: issuing the store's client certificate for %s: %w", o.Cluster, err)
 	}
 	if err := eso.Apply(ctx, dyn, eso.Options{
 		ManifestDir:   o.ManifestDir,

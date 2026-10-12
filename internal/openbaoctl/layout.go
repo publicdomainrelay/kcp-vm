@@ -199,7 +199,13 @@ func desired(ctx context.Context, in layoutInput, ca caSource) (baosync.Desired,
 		if p.Name == CorePolicy {
 			return d, nil, fmt.Errorf("spec.declared.policies: %s is the controller's own policy", CorePolicy)
 		}
-		d.Policies = append(d.Policies, baosync.Policy{Name: p.Name, HCL: PolicyHCL(p.Rules)})
+		hcl := p.HCL
+		if hcl == "" {
+			hcl = PolicyHCL(p.Rules)
+		} else if len(p.Rules) > 0 {
+			return d, nil, fmt.Errorf("spec.declared.policies: %s carries both rules and hcl", p.Name)
+		}
+		d.Policies = append(d.Policies, baosync.Policy{Name: p.Name, HCL: hcl})
 	}
 	cas := map[string]string{}
 	for _, r := range decl.CertRoles {

@@ -28,6 +28,7 @@ import (
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostprocess"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/openbaoctl"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/pgunit"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/postgresctl"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/procgroup"
@@ -78,6 +79,7 @@ type UnitsHost struct {
 	c   UnitsConfig
 	hps dynamic.ResourceInterface
 	pgs dynamic.ResourceInterface
+	obs dynamic.ResourceInterface
 
 	mu     sync.Mutex
 	stores map[string]Store
@@ -164,7 +166,8 @@ func NewUnitsHost(c UnitsConfig) (*UnitsHost, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &UnitsHost{c: c, hps: dc.Resource(hostprocess.GVR), pgs: dc.Resource(postgresctl.GVR), stores: map[string]Store{}}, nil
+	return &UnitsHost{c: c, hps: dc.Resource(hostprocess.GVR), pgs: dc.Resource(postgresctl.GVR), obs: dc.Resource(openbaoctl.GVR),
+		stores: map[string]Store{}}, nil
 }
 
 func MemberName(c procgroup.Component) string {
@@ -368,7 +371,14 @@ func (h *UnitsHost) Unhealthy(ctx context.Context, key string) ([]string, error)
 	if err != nil && len(members) > 0 {
 		sick = append(sick, ControlPlaneFile+": "+err.Error())
 	}
+	vault := MemberName(procgroup.ComponentOpenBao)
 	for _, m := range cp.Members {
+		if m.Name == vault {
+			if why := h.vaultSick(ctx, key); why != "" {
+				sick = append(sick, m.Name+": "+why)
+			}
+			continue
+		}
 		if have[m.Name] == nil {
 			sick = append(sick, m.Name+": no HostProcess")
 		}
@@ -618,6 +628,24 @@ func (h *UnitsHost) Spawn(ctx context.Context, key string, steps []procgroup.Ste
 		if (st.Name == procgroup.ComponentKine || st.Name == procgroup.ComponentOpenBao) && !h.storeReady(ctx, key) {
 			return fmt.Errorf("%w (cluster %s, Postgres %s)", procgroup.ErrPostgresUnavailable, key, store.Object)
 		}
+		if st.Name == procgroup.ComponentOpenBao {
+			o, err := h.placeVault(ctx, key, st)
+			if err != nil {
+				return fmt.Errorf("clusterprovider: the vault of %s: %w", key, err)
+			}
+			if st.Ready != nil {
+				if err := st.Ready(ctx, unitMember{path: st.Spec.Log}); err != nil {
+					return fmt.Errorf("clusterprovider: the vault of %s never became ready: %w", key, err)
+				}
+			}
+			if o.Status.Runtime != nil {
+				cp.Members[i].InvocationID = o.Status.Runtime.Instance
+			}
+			cp.Members[i].Object = o.Name
+			h.c.Log.Info("cluster provider: vault ready and synced to its declaration", "cluster", key, "openbaoserver", o.Name,
+				"unit", o.Spec.Unit, "address", o.Status.Address)
+			continue
+		}
 		cur, err := h.member(ctx, key, member)
 		if err != nil {
 			return err
@@ -704,9 +732,6 @@ func (h *UnitsHost) Reap(ctx context.Context, key string) error {
 	if err != nil {
 		return err
 	}
-	if len(members) == 0 {
-		return nil
-	}
 	for _, o := range members {
 		if o.DeletionTimestamp != nil {
 			continue
@@ -714,6 +739,12 @@ func (h *UnitsHost) Reap(ctx context.Context, key string) error {
 		if err := h.hps.Delete(ctx, o.Name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
 			return err
 		}
+	}
+	if err := h.reapVault(ctx, key); err != nil {
+		return err
+	}
+	if len(members) == 0 {
+		return nil
 	}
 	h.c.Log.Info("cluster provider: the cluster's slice is stopped; waiting for every member to be inactive",
 		"cluster", key, "slice", h.Slice(key), "members", len(members))

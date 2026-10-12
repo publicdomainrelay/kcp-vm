@@ -126,7 +126,9 @@ type OpenBaoJWTConfig struct {
 type OpenBaoPolicy struct {
 	Name string `json:"name"`
 
-	Rules []OpenBaoPolicyRule `json:"rules"`
+	Rules []OpenBaoPolicyRule `json:"rules,omitempty"`
+
+	HCL string `json:"hcl,omitempty"`
 }
 
 type OpenBaoPolicyRule struct {

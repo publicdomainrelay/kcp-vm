@@ -252,7 +252,7 @@ type vaultLinkKeys struct {
 }
 
 func VaultLinkKeys(ctx context.Context, dataDir string, vaultPort int) (clusterlink.KeyStore, error) {
-	seal, err := ReadVaultSeal(dataDir)
+	client, _, err := clusterVault(ctx, dataDir)
 	if err != nil {
 		return nil, err
 	}
@@ -261,21 +261,7 @@ func VaultLinkKeys(ctx context.Context, dataDir string, vaultPort int) (clusterl
 		return nil, err
 	}
 	addr := VaultAddr(vaultPort)
-	store := &vaultLinkKeys{
-		client: openbao.New(addr, seal.RootToken, openbao.WithCACertPool(pool)),
-		admin:  newVaultAdmin(addr, seal.RootToken, pool),
-	}
-	exists, err := store.admin.mountExists(ctx, clusterlink.Mount)
-	if err != nil {
-		return nil, err
-	}
-	if !exists {
-		if err := store.client.EnableKV(ctx, clusterlink.Mount, 2); err != nil {
-			return nil, fmt.Errorf("clusterprovider: enabling the %s KV v2 mount in the cluster vault: %w",
-				clusterlink.Mount, err)
-		}
-	}
-	return store, nil
+	return &vaultLinkKeys{client: client, admin: newVaultAdmin(addr, client.Token(), pool)}, nil
 }
 
 func linkDataPath(path string) string { return clusterlink.Mount + "/data/" + strings.Trim(path, "/") }

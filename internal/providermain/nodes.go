@@ -187,7 +187,7 @@ type nodeHostsOptions struct {
 
 	Links nodemarket.Links
 
-	NodeSecrets func(clusterDir string) nodemarket.NodeSecrets
+	NodeSecrets func(cluster, clusterDir string) nodemarket.NodeSecrets
 
 	Now func() time.Time
 
@@ -1149,7 +1149,7 @@ func newNodeHostOf(substrate nodeSubstrate, opts nodeHostsOptions, log *slog.Log
 	server := fmt.Sprintf("https://%s:%d", opts.AdvertiseAddress, apiserverPort)
 	var secrets nodemarket.NodeSecrets
 	if opts.NodeSecrets != nil {
-		secrets = opts.NodeSecrets(clusterDir)
+		secrets = opts.NodeSecrets(cluster, clusterDir)
 	}
 	return substrate.NewNodeHost(nodeSubstrateOptions{
 		Cluster:          cluster,

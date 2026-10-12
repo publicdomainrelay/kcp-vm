@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
-	"os"
 	"path/filepath"
 
 	"k8s.io/client-go/kubernetes"
@@ -46,15 +44,6 @@ var ErrNoGuardSeam = errors.New(
 	"clusterprovider: this Stack puts no step before k3s, so materialiser.guardBeforeK3s " +
 		"would return the steps unchanged and the identity guard would SILENTLY NOT RUN -- " +
 		"a skipped guard and a satisfied one look identical from a green suite")
-
-var ErrOpenBaoConfigUnwritable = errors.New(
-	"clusterprovider: the OpenBao config could not be put on disk before the vault step ran. " +
-		"bao server takes exactly one config file and refuses to come up without it -- measured on " +
-		"v2.6.2, exit 1 with 'error loading configuration from <path>: stat <path>: no such file or " +
-		"directory' -- so a write that failed quietly would leave the vault failing at start for a " +
-		"reason that is not in the vault's own log")
-
-const openBaoConfigMode = 0o600
 
 type AdminClient func(ctx context.Context, cluster, apiserver string) (kubernetes.Interface, error)
 
@@ -202,9 +191,6 @@ func StepsFor(cfg StackConfig) materialiser.StepBuilder {
 				return nil, fmt.Errorf("%w (cluster %s)", ErrNoVaultStore, cluster)
 			}
 			spec.OpenBaoPostgresDSN = dsn
-			if err := WriteOpenBaoConfig(spec); err != nil {
-				return nil, err
-			}
 		}
 
 		if err := WriteKubeSchedulerConfig(spec); err != nil {
@@ -278,51 +264,4 @@ func leasePort(l materialiser.Leases, p portallocator.Purpose, cluster string) (
 		return 0, fmt.Errorf("%w: %s (cluster %s)", ErrNoLease, p, cluster)
 	}
 	return lease.Port, nil
-}
-
-func WriteOpenBaoConfig(spec clusterstack.Spec) error {
-	body, err := spec.OpenBaoServerConfig()
-	if err != nil {
-		return err
-	}
-	dir := filepath.Dir(spec.OpenBaoConfig)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("%w: the directory %s holding %s: %v", ErrOpenBaoConfigUnwritable,
-			dir, spec.OpenBaoConfig, err)
-	}
-
-	if info, err := os.Stat(spec.OpenBaoConfig); err == nil {
-		current, err := os.ReadFile(spec.OpenBaoConfig)
-		if err != nil {
-			return fmt.Errorf("%w: reading %s: %v", ErrOpenBaoConfigUnwritable, spec.OpenBaoConfig, err)
-		}
-		if string(current) == body && info.Mode().Perm() == openBaoConfigMode {
-			return nil
-		}
-	} else if !errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("%w: stat %s: %v", ErrOpenBaoConfigUnwritable, spec.OpenBaoConfig, err)
-	}
-
-	tmp, err := os.CreateTemp(dir, clusterstack.OpenBaoConfigFileName+".")
-	if err != nil {
-		return fmt.Errorf("%w: a temporary file beside %s: %v", ErrOpenBaoConfigUnwritable,
-			spec.OpenBaoConfig, err)
-	}
-	defer func() { _ = os.Remove(tmp.Name()) }()
-	if err := tmp.Chmod(openBaoConfigMode); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("%w: the mode of %s: %v", ErrOpenBaoConfigUnwritable, tmp.Name(), err)
-	}
-	if _, err := tmp.WriteString(body); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("%w: writing %s: %v", ErrOpenBaoConfigUnwritable, tmp.Name(), err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("%w: closing %s: %v", ErrOpenBaoConfigUnwritable, tmp.Name(), err)
-	}
-	if err := os.Rename(tmp.Name(), spec.OpenBaoConfig); err != nil {
-		return fmt.Errorf("%w: renaming %s over %s: %v", ErrOpenBaoConfigUnwritable, tmp.Name(),
-			spec.OpenBaoConfig, err)
-	}
-	return nil
 }

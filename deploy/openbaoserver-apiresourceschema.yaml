@@ -180,9 +180,10 @@ spec:
                             required:
                               - path
                               - capabilities
+                        hcl:
+                          type: string
                       required:
                         - name
-                        - rules
                   certRoles:
                     type: array
                     items:

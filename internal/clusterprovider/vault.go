@@ -23,20 +23,10 @@ import (
 )
 
 const (
-	VaultUnsealFileName = "unseal.json"
-
 	VaultPKIPath = "pki"
 
 	VaultPKIRoleTenant = "tenant-superuser"
-
-	vaultUnsealMode = 0o600
 )
-
-type VaultSeal struct {
-	Port      int      `json:"port"`
-	Keys      []string `json:"keys"`
-	RootToken string   `json:"root_token"`
-}
 
 func VaultAddr(port int) string {
 	return fmt.Sprintf("https://127.0.0.1:%d", port)
@@ -53,155 +43,6 @@ func vaultCA(dataDir string) (*x509.CertPool, error) {
 		return nil, fmt.Errorf("clusterprovider: the cluster vault's TLS CA at %s: %w", path, err)
 	}
 	return pool, nil
-}
-
-func vaultClient(dataDir string, port int, token string) (*openbao.Client, error) {
-	pool, err := vaultCA(dataDir)
-	if err != nil {
-		return nil, err
-	}
-	return openbao.New(VaultAddr(port), token, openbao.WithCACertPool(pool)), nil
-}
-
-func VaultUnsealPath(dataDir string) string {
-	return filepath.Join(clusterstack.OpenBaoDir(dataDir), VaultUnsealFileName)
-}
-
-func ReadVaultSeal(dataDir string) (VaultSeal, error) {
-	path := VaultUnsealPath(dataDir)
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return VaultSeal{}, fmt.Errorf("clusterprovider: reading the vault unseal material at %s: %w", path, err)
-	}
-	var seal VaultSeal
-	if err := json.Unmarshal(raw, &seal); err != nil {
-		return VaultSeal{}, fmt.Errorf("clusterprovider: the vault unseal material at %s is not JSON: %v", path, err)
-	}
-	if seal.RootToken == "" || len(seal.Keys) == 0 {
-		return VaultSeal{}, fmt.Errorf(
-			"clusterprovider: the vault unseal material at %s holds %d key(s) and a root token "+
-				"of length %d; an initialised vault with no key cannot be unsealed and with no "+
-				"root token cannot be applied", path, len(seal.Keys), len(seal.RootToken))
-	}
-	return seal, nil
-}
-
-func writeVaultSeal(dataDir string, seal VaultSeal) error {
-	path := VaultUnsealPath(dataDir)
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("clusterprovider: creating %s for the vault unseal material: %w", dir, err)
-	}
-	raw, err := json.Marshal(seal)
-	if err != nil {
-		return fmt.Errorf("clusterprovider: encoding the vault unseal material: %w", err)
-	}
-	tmp, err := os.CreateTemp(dir, VaultUnsealFileName+".*")
-	if err != nil {
-		return fmt.Errorf("clusterprovider: a temporary file beside %s: %w", path, err)
-	}
-	defer func() { _ = os.Remove(tmp.Name()) }()
-	if err := tmp.Chmod(vaultUnsealMode); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("clusterprovider: the mode of %s: %w", tmp.Name(), err)
-	}
-	if _, err := tmp.Write(raw); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("clusterprovider: writing %s: %w", tmp.Name(), err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("clusterprovider: closing %s: %w", tmp.Name(), err)
-	}
-	if err := os.Rename(tmp.Name(), path); err != nil {
-		return fmt.Errorf("clusterprovider: renaming %s over %s: %w", tmp.Name(), path, err)
-	}
-	return nil
-}
-
-func waitVaultProcess(ctx context.Context, dataDir string, port int) error {
-	ctx, cancel := context.WithTimeout(ctx, GateTimeout)
-	defer cancel()
-	client, err := vaultClient(dataDir, port, "")
-	if err != nil {
-		return err
-	}
-	last := "no answer"
-	return poll(ctx, func(ctx context.Context) (bool, error) {
-		if _, err := client.Health(ctx); err == nil {
-			return true, nil
-		} else {
-			last = err.Error()
-			return false, nil
-		}
-	}, func() error {
-		return &errNotReady{what: "the openbao process on " + VaultAddr(port), last: last}
-	})
-}
-
-func EnsureVault(ctx context.Context, dataDir string, port int) (VaultSeal, error) {
-	if err := waitVaultProcess(ctx, dataDir, port); err != nil {
-		return VaultSeal{}, err
-	}
-	addr := VaultAddr(port)
-	anon, err := vaultClient(dataDir, port, "")
-	if err != nil {
-		return VaultSeal{}, err
-	}
-	health, err := anon.Health(ctx)
-	if err != nil {
-		return VaultSeal{}, fmt.Errorf("clusterprovider: reading the vault's health at %s: %w", addr, err)
-	}
-
-	var seal VaultSeal
-	if !health.Initialized {
-		result, err := anon.Init(ctx, 1, 1)
-		if err != nil {
-			return VaultSeal{}, fmt.Errorf("clusterprovider: initialising the vault at %s: %w", addr, err)
-		}
-		if result.RootToken == "" || len(result.Keys) == 0 {
-			return VaultSeal{}, fmt.Errorf(
-				"clusterprovider: the vault at %s initialised without a root token or a key, so "+
-					"no later pass could unseal or apply it", addr)
-		}
-		seal = VaultSeal{Port: port, Keys: result.Keys, RootToken: result.RootToken}
-		if err := writeVaultSeal(dataDir, seal); err != nil {
-			return VaultSeal{}, err
-		}
-	} else {
-		seal, err = ReadVaultSeal(dataDir)
-		if err != nil {
-			return VaultSeal{}, err
-		}
-		seal.Port = port
-	}
-
-	client, err := vaultClient(dataDir, port, seal.RootToken)
-	if err != nil {
-		return seal, err
-	}
-	for _, key := range seal.Keys {
-		sealed, err := client.Sealed(ctx)
-		if err != nil {
-			return seal, fmt.Errorf("clusterprovider: reading the seal state of the vault at %s: %w", addr, err)
-		}
-		if !sealed {
-			break
-		}
-		if _, err := client.Unseal(ctx, key); err != nil {
-			return seal, fmt.Errorf("clusterprovider: unsealing the vault at %s: %w", addr, err)
-		}
-	}
-	sealed, err := client.Sealed(ctx)
-	if err != nil {
-		return seal, fmt.Errorf("clusterprovider: reading the seal state of the vault at %s: %w", addr, err)
-	}
-	if sealed {
-		return seal, fmt.Errorf(
-			"clusterprovider: the vault at %s is still sealed after all %d recorded unseal key(s), "+
-				"so the material at %s does not unseal the store at %s",
-			addr, len(seal.Keys), VaultUnsealPath(dataDir), clusterstack.OpenBaoStorageDir(dataDir))
-	}
-	return seal, nil
 }
 
 type vaultAdmin struct {
@@ -252,71 +93,6 @@ func (v *vaultAdmin) do(ctx context.Context, method, path string, body any) (int
 	return resp.StatusCode, data, nil
 }
 
-func (v *vaultAdmin) list(ctx context.Context, path string) (map[string]json.RawMessage, error) {
-	status, body, err := v.do(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return nil, err
-	}
-	if status < 200 || status > 299 {
-		return nil, fmt.Errorf("clusterprovider: GET /v1/%s -> HTTP %d: %s", path, status, strings.TrimSpace(string(body)))
-	}
-	var env struct {
-		Data map[string]json.RawMessage `json:"data"`
-	}
-	if err := json.Unmarshal(body, &env); err != nil {
-		return nil, fmt.Errorf("clusterprovider: GET /v1/%s was not JSON: %v", path, err)
-	}
-	return env.Data, nil
-}
-
-func (v *vaultAdmin) listNames(ctx context.Context, path string) ([]string, error) {
-	status, body, err := v.do(ctx, http.MethodGet, path+"?list=true", nil)
-	if err != nil {
-		return nil, err
-	}
-	if status < 200 || status > 299 {
-		return nil, fmt.Errorf("clusterprovider: LIST /v1/%s -> HTTP %d: %s", path, status, strings.TrimSpace(string(body)))
-	}
-	var env struct {
-		Data struct {
-			Keys []string `json:"keys"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(body, &env); err != nil {
-		return nil, fmt.Errorf("clusterprovider: LIST /v1/%s was not JSON: %v", path, err)
-	}
-	return env.Data.Keys, nil
-}
-
-func (v *vaultAdmin) mountExists(ctx context.Context, path string) (bool, error) {
-	mounts, err := v.list(ctx, "sys/mounts")
-	if err != nil {
-		return false, err
-	}
-	_, ok := mounts[strings.Trim(path, "/")+"/"]
-	return ok, nil
-}
-
-func (v *vaultAdmin) authExists(ctx context.Context, path string) (bool, error) {
-	auths, err := v.list(ctx, "sys/auth")
-	if err != nil {
-		return false, err
-	}
-	_, ok := auths[strings.Trim(path, "/")+"/"]
-	return ok, nil
-}
-
-func (v *vaultAdmin) post(ctx context.Context, path string, body map[string]any) error {
-	status, raw, err := v.do(ctx, http.MethodPost, path, body)
-	if err != nil {
-		return err
-	}
-	if status < 200 || status > 299 {
-		return fmt.Errorf("clusterprovider: POST /v1/%s -> HTTP %d: %s", path, status, strings.TrimSpace(string(raw)))
-	}
-	return nil
-}
-
 func vaultTTL(d time.Duration) string {
 	if d <= 0 {
 		return ""
@@ -337,140 +113,7 @@ func vaultKeyType(kind string) string {
 	}
 }
 
-// ponytail: apply is a straight replay of the layout on every bring-up; a cached marker for the structural half is the upgrade if a vault apply ever costs real time.
-func ApplyClusterVault(ctx context.Context, dataDir string, seal VaultSeal) error {
-	pool, err := vaultCA(dataDir)
-	if err != nil {
-		return err
-	}
-	addr := VaultAddr(seal.Port)
-	client := openbao.New(addr, seal.RootToken, openbao.WithCACertPool(pool))
-	admin := newVaultAdmin(addr, seal.RootToken, pool)
-	layout := vaultlayout.Default()
-
-	for _, m := range layout.Mounts {
-		if m.Vault != vaultlayout.Cluster {
-			continue
-		}
-		exists, err := admin.mountExists(ctx, m.Path)
-		if err != nil {
-			return err
-		}
-		if exists {
-			continue
-		}
-		switch m.Kind {
-		case vaultlayout.MountKV:
-			if err := client.EnableKV(ctx, strings.Trim(m.Path, "/"), 2); err != nil {
-				return fmt.Errorf("clusterprovider: enabling the %s KV mount in the cluster vault: %w", m.Path, err)
-			}
-		case vaultlayout.MountPKI:
-			if err := client.MountPKI(ctx, strings.Trim(m.Path, "/")); err != nil {
-				return fmt.Errorf("clusterprovider: enabling the %s PKI mount in the cluster vault: %w", m.Path, err)
-			}
-		}
-	}
-
-	exists, err := admin.mountExists(ctx, VaultPKIPath)
-	if err != nil {
-		return err
-	}
-	if !exists {
-		if err := client.MountPKI(ctx, VaultPKIPath); err != nil {
-			return fmt.Errorf("clusterprovider: enabling the %s PKI mount in the cluster vault: %w", VaultPKIPath, err)
-		}
-	}
-
-	for _, p := range layout.Policies {
-		if p.Vault != vaultlayout.Cluster {
-			continue
-		}
-		if err := client.PutPolicy(ctx, p.Name, p.HCL); err != nil {
-			return fmt.Errorf("clusterprovider: writing policy %s to the cluster vault: %w", p.Name, err)
-		}
-	}
-
-	exists, err = admin.authExists(ctx, "approle")
-	if err != nil {
-		return err
-	}
-	if !exists {
-		if err := client.EnableAppRole(ctx); err != nil {
-			return fmt.Errorf("clusterprovider: enabling AppRole in the cluster vault: %w", err)
-		}
-	}
-	for _, r := range layout.AppRoles {
-		if r.Vault != vaultlayout.Cluster {
-			continue
-		}
-		if err := client.WriteAppRole(ctx, r.Name, r.Policies, vaultTTL(r.TokenTTL)); err != nil {
-			return fmt.Errorf("clusterprovider: writing AppRole %s to the cluster vault: %w", r.Name, err)
-		}
-	}
-
-	for _, r := range layout.PKIRoles {
-		if err := writeLayoutPKIRole(ctx, admin, VaultPKIPath, r); err != nil {
-			return err
-		}
-	}
-	return writeTenantPKIRole(ctx, admin, VaultPKIPath)
-}
-
-func writeLayoutPKIRole(ctx context.Context, admin *vaultAdmin, mount string, r vaultlayout.PKIRole) error {
-	body := map[string]any{
-		"allowed_domains":    r.AllowedDomains,
-		"allow_subdomains":   r.AllowSubdomains,
-		"allow_bare_domains": r.AllowBareDomains,
-		"allow_ip_sans":      r.AllowIPSANs,
-		"enforce_hostnames":  r.EnforceHostnames,
-		"require_cn":         r.RequireCN,
-		"client_flag":        r.ClientAuth,
-		"server_flag":        r.ServerAuth,
-	}
-	if r.KeyType != "" {
-		body["key_type"] = vaultKeyType(r.KeyType)
-	}
-	if r.KeyBits > 0 {
-		body["key_bits"] = r.KeyBits
-	}
-	if len(r.KeyUsage) > 0 {
-		body["key_usage"] = strings.Join(r.KeyUsage, ",")
-	}
-	if ttl := vaultTTL(r.TTL); ttl != "" {
-		body["ttl"] = ttl
-	}
-	if max := vaultTTL(r.MaxTTL); max != "" {
-		body["max_ttl"] = max
-	}
-	path := strings.Trim(mount, "/") + "/roles/" + r.Name
-	if err := admin.post(ctx, path, body); err != nil {
-		return fmt.Errorf("clusterprovider: writing the layout PKI role %s: %w", r.Name, err)
-	}
-	return nil
-}
-
-// ponytail: the tenant superuser CN is not under the layout role's socialweb.local domain, so it needs its own role; fold it into the layout if vaultlayout ever grows a superuser PKI role.
-func writeTenantPKIRole(ctx context.Context, admin *vaultAdmin, mount string) error {
-	body := map[string]any{
-		"allow_any_name":    true,
-		"enforce_hostnames": false,
-		"client_flag":       true,
-		"server_flag":       false,
-		"require_cn":        true,
-		"key_type":          "ec",
-		"key_bits":          256,
-		"organization":      SuperuserOrganization,
-		"ttl":               "8760h",
-		"max_ttl":           "87600h",
-	}
-	path := strings.Trim(mount, "/") + "/roles/" + VaultPKIRoleTenant
-	if err := admin.post(ctx, path, body); err != nil {
-		return fmt.Errorf("clusterprovider: writing the tenant PKI role %s: %w", VaultPKIRoleTenant, err)
-	}
-	return nil
-}
-
-func ImportClientCA(ctx context.Context, dataDir string, seal VaultSeal) error {
+func ImportClientCA(ctx context.Context, dataDir string, client *openbao.Client) error {
 	tlsDir := clusterstack.TLSDir(dataDir)
 	certPEM, err := os.ReadFile(filepath.Join(tlsDir, clientCACertName))
 	if err != nil {
@@ -481,26 +124,16 @@ func ImportClientCA(ctx context.Context, dataDir string, seal VaultSeal) error {
 		return fmt.Errorf("clusterprovider: reading the cluster's client CA key for import into the vault: %w", err)
 	}
 	bundle := strings.TrimRight(string(certPEM), "\n") + "\n" + strings.TrimRight(string(keyPEM), "\n") + "\n"
-	pool, err := vaultCA(dataDir)
-	if err != nil {
-		return err
-	}
-	admin := newVaultAdmin(VaultAddr(seal.Port), seal.RootToken, pool)
-	path := strings.Trim(VaultPKIPath, "/") + "/config/ca"
-	if err := admin.post(ctx, path, map[string]any{"pem_bundle": bundle}); err != nil {
+	if err := client.Write(ctx, VaultPKIPath+"/config/ca", map[string]any{"pem_bundle": bundle}); err != nil {
 		return fmt.Errorf("clusterprovider: importing the cluster's client CA into the vault: %w", err)
 	}
 	return nil
 }
 
-func WriteBundleToVault(ctx context.Context, dataDir string, seal VaultSeal, b *identitybundle.Bundle) error {
+func WriteBundleToVault(ctx context.Context, client *openbao.Client, b *identitybundle.Bundle) error {
 	data := make(map[string]any, len(b.Entries))
 	for _, e := range b.Entries {
 		data[e.Path] = base64.StdEncoding.EncodeToString(e.Bytes)
-	}
-	client, err := vaultClient(dataDir, seal.Port, seal.RootToken)
-	if err != nil {
-		return err
 	}
 	if err := client.PutKV(ctx, vaultlayout.PathClusterIdentity, data); err != nil {
 		return fmt.Errorf("clusterprovider: writing the identity bundle into the cluster vault: %w", err)
@@ -508,11 +141,7 @@ func WriteBundleToVault(ctx context.Context, dataDir string, seal VaultSeal, b *
 	return nil
 }
 
-func ReadBundleFromVault(ctx context.Context, dataDir string, seal VaultSeal) (*identitybundle.Bundle, error) {
-	client, err := vaultClient(dataDir, seal.Port, seal.RootToken)
-	if err != nil {
-		return nil, err
-	}
+func ReadBundleFromVault(ctx context.Context, client *openbao.Client) (*identitybundle.Bundle, error) {
 	data, err := client.GetKV(ctx, vaultlayout.PathClusterIdentity)
 	if err != nil {
 		return nil, fmt.Errorf("clusterprovider: reading the identity bundle from the cluster vault: %w", err)
@@ -555,23 +184,18 @@ func CustodyClusterVault(ctx context.Context, o CustodyOptions) error {
 	if err != nil {
 		return err
 	}
-	seal, err := ReadVaultSeal(dataDir)
+	client, _, err := clusterVault(ctx, dataDir)
 	if err != nil {
 		return err
 	}
-	if err := ImportClientCA(ctx, dataDir, seal); err != nil {
+	if err := ImportClientCA(ctx, dataDir, client); err != nil {
 		return err
 	}
 	b, err := PersistedBundle(o.StateDir, o.Cluster)
 	if err != nil {
 		return err
 	}
-	if err := WriteBundleToVault(ctx, dataDir, seal, b); err != nil {
-		return err
-	}
-
-	client, err := vaultClient(dataDir, o.VaultPort, seal.RootToken)
-	if err != nil {
+	if err := WriteBundleToVault(ctx, client, b); err != nil {
 		return err
 	}
 	if token, err := os.ReadFile(TokenPath(dataDir)); err == nil {
@@ -624,25 +248,19 @@ func SeedBundleFromVault(ctx context.Context, stateDir, cluster string) error {
 	if err != nil {
 		return err
 	}
-	seal, err := ReadVaultSeal(dataDir)
+	if _, err := os.Stat(VaultAccessPath(dataDir)); errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("%w: %s names no way to the cluster vault", ErrNoVaultBundle, VaultAccessPath(dataDir))
+	}
+	client, a, err := clusterVault(ctx, dataDir)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("%w: %s holds no vault unseal material: %v", ErrNoVaultBundle,
-				VaultUnsealPath(dataDir), err)
-		}
 		return fmt.Errorf(
-			"clusterprovider: this cluster's vault unseal material is unreadable, so a bundle it "+
-				"may hold cannot be restored and falling back to the file tree would let k3s author "+
-				"NEW CAs under the same name: %w", err)
+			"clusterprovider: this cluster's vault is unreachable, so a bundle it may hold cannot be "+
+				"restored and falling back to the file tree would let k3s author NEW CAs under the same name: %w", err)
 	}
-	if seal.Port <= 0 {
-		return fmt.Errorf("%w: the vault custody for %s names no port", ErrNoVaultBundle, cluster)
-	}
-	addr := VaultAddr(seal.Port)
-	b, err := ReadBundleFromVault(ctx, dataDir, seal)
+	b, err := ReadBundleFromVault(ctx, client)
 	if err != nil {
 		if errors.Is(err, openbao.ErrNotFound) {
-			return fmt.Errorf("%w: the cluster vault at %s holds no %s", ErrNoVaultBundle, addr,
+			return fmt.Errorf("%w: the cluster vault at %s holds no %s", ErrNoVaultBundle, a.Address,
 				vaultlayout.PathClusterIdentity)
 		}
 		return err

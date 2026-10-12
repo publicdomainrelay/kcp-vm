@@ -44,6 +44,8 @@ type Spec struct {
 	EnvFiles []string
 
 	Log string
+
+	Listen string
 }
 
 type Member interface {

@@ -35,7 +35,7 @@ func (h *nodeHosts) reconcileVault(ctx context.Context, cluster string, claims [
 		return fmt.Errorf("clusterprovider: the data dir of %s, whose cluster OpenBao holds the roles, "+
 			"policies and secrets of its market nodes: %w", cluster, err)
 	}
-	reconciler, ok := h.opts.NodeSecrets(dir).(nodemarket.NodeSecretsReconciler)
+	reconciler, ok := h.opts.NodeSecrets(cluster, dir).(nodemarket.NodeSecretsReconciler)
 	if !ok {
 		return nil
 	}

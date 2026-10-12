@@ -236,9 +236,9 @@ func MintTenantCredentialForDataDir(ctx context.Context, dataDir, server string,
 	case CredentialSourceClusterCA:
 		return MintTenantCredential(o)
 	case CredentialSourceVaultIfSealed:
-		seal, err := ReadVaultSeal(dataDir)
-		if err == nil && seal.Port > 0 && seal.RootToken != "" {
-			return mintTenantCredentialFromVault(ctx, o, seal.Port, seal.RootToken)
+		client, a, err := clusterVault(ctx, dataDir)
+		if err == nil {
+			return mintTenantCredentialFromVault(ctx, o, client, a.Address)
 		}
 		return MintTenantCredential(o)
 	}
@@ -263,8 +263,7 @@ func MintTenantCredentialForDataDirAs(dataDir, server, commonName string, organi
 	})
 }
 
-func mintTenantCredentialFromVault(ctx context.Context, o CredentialOptions, port int, token string) (*rest.Config, error) {
-	addr := VaultAddr(port)
+func mintTenantCredentialFromVault(ctx context.Context, o CredentialOptions, client *openbao.Client, addr string) (*rest.Config, error) {
 	if o.DataDir == "" {
 		return nil, ErrNoCredentialDataDir
 	}
@@ -314,10 +313,6 @@ func mintTenantCredentialFromVault(ctx context.Context, o CredentialOptions, por
 			"credential that outlives it", ErrCredentialSign, caPath, caCert.NotAfter.UTC())
 	}
 
-	client, err := vaultClient(o.DataDir, port, token)
-	if err != nil {
-		return nil, err
-	}
 	issued, err := client.IssueCert(ctx, VaultPKIPath, VaultPKIRoleTenant, openbao.CertRequest{
 		CommonName: o.CommonName,
 		TTL:        vaultTTL(validFor),
