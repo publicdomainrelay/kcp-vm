@@ -17,6 +17,18 @@ export type ComputeVMPhase = typeof COMPUTE_VM_PHASES[number];
 export const COMPUTE_VM_LOST_REASONS = ["HostRebooted", "UnitGone", "UnitFailed", "OOMKilled", "VMMExited", "IdentityMismatch"] as const;
 export type ComputeVMLostReason = typeof COMPUTE_VM_LOST_REASONS[number];
 
+export const HOST_PROCESS_RESTART_POLICYS = ["Never", "OnFailure", "Always"] as const;
+export type HostProcessRestartPolicy = typeof HOST_PROCESS_RESTART_POLICYS[number];
+
+export const HOST_PROCESS_PLACEMENTS = ["supervisor", "bootstrap"] as const;
+export type HostProcessPlacement = typeof HOST_PROCESS_PLACEMENTS[number];
+
+export const HOST_PROCESS_PHASES = ["Pending", "Starting", "Running", "Stopping", "Stopped", "Failed", "Lost"] as const;
+export type HostProcessPhase = typeof HOST_PROCESS_PHASES[number];
+
+export const HOST_PROCESS_LOST_REASONS = ["HostRebooted", "UnitGone", "UnitFailed", "OOMKilled", "IdentityMismatch", "ManagerRestarted"] as const;
+export type HostProcessLostReason = typeof HOST_PROCESS_LOST_REASONS[number];
+
 export interface ObjectMeta {
   name?: string;
   generateName?: string;
@@ -133,6 +145,104 @@ export interface ComputeVMHostKey {
   fingerprint?: string;
 }
 
+export interface HostProcess {
+  apiVersion?: string;
+  kind?: string;
+  metadata?: ObjectMeta;
+  spec?: HostProcessSpec;
+  status?: HostProcessStatus;
+}
+
+export interface HostProcessSpec {
+  unit: string;
+  asset?: HostProcessAsset;
+  exec?: string;
+  argv?: string[];
+  env?: HostProcessEnv[];
+  workDir?: string;
+  output?: HostProcessOutput;
+  limits?: HostProcessLimits;
+  restartPolicy?: HostProcessRestartPolicy;
+  stop?: HostProcessStop;
+  after?: string[];
+  wants?: string[];
+  slice?: string;
+  privateHostname?: string;
+  fdStore?: number;
+  readiness?: HostProcessReadiness;
+  placement: HostProcessPlacement;
+}
+
+export interface HostProcessAsset {
+  name: string;
+  sha256: string;
+}
+
+export interface HostProcessEnv {
+  name: string;
+  value: string;
+}
+
+export interface HostProcessOutput {
+  stdout?: string;
+  stderr?: string;
+  capBytes?: number;
+}
+
+export interface HostProcessLimits {
+  memoryMax?: string;
+  cpuWeight?: number;
+  cpuQuotaPercent?: number;
+  tasksMax?: number;
+}
+
+export interface HostProcessStop {
+  signal?: string;
+  graceSeconds?: number;
+}
+
+export interface HostProcessReadiness {
+  exec?: string[];
+  tcp?: boolean;
+  httpPath?: string;
+  pgxSocketDir?: string;
+  unixSocket?: string;
+}
+
+export interface HostProcessStatus {
+  observedGeneration?: number;
+  phase?: HostProcessPhase;
+  lostReason?: HostProcessLostReason;
+  message?: string;
+  runtime?: HostProcessRuntime;
+  lastResult?: HostProcessResult;
+  listeners?: HostProcessListener[];
+  conditions?: Condition[];
+}
+
+export interface HostProcessRuntime {
+  backend: string;
+  unit: string;
+  invocationID?: string;
+  pid?: number;
+  startTicks?: number;
+  hostBootID?: string;
+  manager?: string;
+  activeSince?: string;
+}
+
+export interface HostProcessResult {
+  result?: string;
+  exitCode?: number;
+  signal?: string;
+  at?: string;
+}
+
+export interface HostProcessListener {
+  name: string;
+  address: string;
+}
+
 export interface ApiResource {
   group: string;
   version: string;
@@ -155,7 +265,18 @@ export const COMPUTE_VM_RESOURCE: ApiResource = {
   export: "computevms",
 };
 
-export const API_RESOURCES: readonly ApiResource[] = [COMPUTE_VM_RESOURCE];
+export const HOST_PROCESS_RESOURCE: ApiResource = {
+  group: "socialweb.computer",
+  version: "v1alpha1",
+  kind: "HostProcess",
+  listKind: "HostProcessList",
+  plural: "hostprocesses",
+  singular: "hostprocess",
+  schema: "v1alpha1-1.hostprocesses.socialweb.computer",
+  export: "hostprocesses",
+};
+
+export const API_RESOURCES: readonly ApiResource[] = [COMPUTE_VM_RESOURCE, HOST_PROCESS_RESOURCE];
 
 export type ApiTypeName =
   | "ComputeVM"
@@ -174,6 +295,22 @@ export type ApiTypeName =
   | "ComputeVMSpec"
   | "ComputeVMStatus"
   | "Condition"
+  | "HostProcess"
+  | "HostProcessAsset"
+  | "HostProcessEnv"
+  | "HostProcessLimits"
+  | "HostProcessListener"
+  | "HostProcessLostReason"
+  | "HostProcessOutput"
+  | "HostProcessPhase"
+  | "HostProcessPlacement"
+  | "HostProcessReadiness"
+  | "HostProcessRestartPolicy"
+  | "HostProcessResult"
+  | "HostProcessRuntime"
+  | "HostProcessSpec"
+  | "HostProcessStatus"
+  | "HostProcessStop"
   | "ObjectMeta";
 
 type Shape =
@@ -594,6 +731,338 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
     "open": true,
     "type": "object"
   },
+  "HostProcess": {
+    "properties": {
+      "apiVersion": {
+        "type": "string"
+      },
+      "kind": {
+        "type": "string"
+      },
+      "metadata": {
+        "ref": "ObjectMeta"
+      },
+      "spec": {
+        "ref": "HostProcessSpec"
+      },
+      "status": {
+        "ref": "HostProcessStatus"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "HostProcessAsset": {
+    "properties": {
+      "name": {
+        "type": "string"
+      },
+      "sha256": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "name",
+      "sha256"
+    ],
+    "type": "object"
+  },
+  "HostProcessEnv": {
+    "properties": {
+      "name": {
+        "type": "string"
+      },
+      "value": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "name",
+      "value"
+    ],
+    "type": "object"
+  },
+  "HostProcessLimits": {
+    "properties": {
+      "cpuQuotaPercent": {
+        "type": "integer"
+      },
+      "cpuWeight": {
+        "type": "integer"
+      },
+      "memoryMax": {
+        "type": "string"
+      },
+      "tasksMax": {
+        "type": "integer"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "HostProcessListener": {
+    "properties": {
+      "address": {
+        "type": "string"
+      },
+      "name": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "name",
+      "address"
+    ],
+    "type": "object"
+  },
+  "HostProcessLostReason": {
+    "enum": [
+      "HostRebooted",
+      "UnitGone",
+      "UnitFailed",
+      "OOMKilled",
+      "IdentityMismatch",
+      "ManagerRestarted"
+    ],
+    "type": "string"
+  },
+  "HostProcessOutput": {
+    "properties": {
+      "capBytes": {
+        "type": "integer"
+      },
+      "stderr": {
+        "type": "string"
+      },
+      "stdout": {
+        "type": "string"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "HostProcessPhase": {
+    "enum": [
+      "Pending",
+      "Starting",
+      "Running",
+      "Stopping",
+      "Stopped",
+      "Failed",
+      "Lost"
+    ],
+    "type": "string"
+  },
+  "HostProcessPlacement": {
+    "enum": [
+      "supervisor",
+      "bootstrap"
+    ],
+    "type": "string"
+  },
+  "HostProcessReadiness": {
+    "properties": {
+      "exec": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "httpPath": {
+        "type": "string"
+      },
+      "pgxSocketDir": {
+        "type": "string"
+      },
+      "tcp": {
+        "type": "boolean"
+      },
+      "unixSocket": {
+        "type": "string"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "HostProcessRestartPolicy": {
+    "enum": [
+      "Never",
+      "OnFailure",
+      "Always"
+    ],
+    "type": "string"
+  },
+  "HostProcessResult": {
+    "properties": {
+      "at": {
+        "type": "string"
+      },
+      "exitCode": {
+        "type": "integer"
+      },
+      "result": {
+        "type": "string"
+      },
+      "signal": {
+        "type": "string"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "HostProcessRuntime": {
+    "properties": {
+      "activeSince": {
+        "type": "string"
+      },
+      "backend": {
+        "type": "string"
+      },
+      "hostBootID": {
+        "type": "string"
+      },
+      "invocationID": {
+        "type": "string"
+      },
+      "manager": {
+        "type": "string"
+      },
+      "pid": {
+        "type": "integer"
+      },
+      "startTicks": {
+        "type": "integer"
+      },
+      "unit": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "backend",
+      "unit"
+    ],
+    "type": "object"
+  },
+  "HostProcessSpec": {
+    "properties": {
+      "after": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "argv": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "asset": {
+        "ref": "HostProcessAsset"
+      },
+      "env": {
+        "items": {
+          "ref": "HostProcessEnv"
+        },
+        "type": "array"
+      },
+      "exec": {
+        "type": "string"
+      },
+      "fdStore": {
+        "type": "integer"
+      },
+      "limits": {
+        "ref": "HostProcessLimits"
+      },
+      "output": {
+        "ref": "HostProcessOutput"
+      },
+      "placement": {
+        "ref": "HostProcessPlacement"
+      },
+      "privateHostname": {
+        "type": "string"
+      },
+      "readiness": {
+        "ref": "HostProcessReadiness"
+      },
+      "restartPolicy": {
+        "ref": "HostProcessRestartPolicy"
+      },
+      "slice": {
+        "type": "string"
+      },
+      "stop": {
+        "ref": "HostProcessStop"
+      },
+      "unit": {
+        "type": "string"
+      },
+      "wants": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "workDir": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "unit",
+      "placement"
+    ],
+    "type": "object"
+  },
+  "HostProcessStatus": {
+    "properties": {
+      "conditions": {
+        "items": {
+          "ref": "Condition"
+        },
+        "type": "array"
+      },
+      "lastResult": {
+        "ref": "HostProcessResult"
+      },
+      "listeners": {
+        "items": {
+          "ref": "HostProcessListener"
+        },
+        "type": "array"
+      },
+      "lostReason": {
+        "ref": "HostProcessLostReason"
+      },
+      "message": {
+        "type": "string"
+      },
+      "observedGeneration": {
+        "type": "integer"
+      },
+      "phase": {
+        "ref": "HostProcessPhase"
+      },
+      "runtime": {
+        "ref": "HostProcessRuntime"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "HostProcessStop": {
+    "properties": {
+      "graceSeconds": {
+        "type": "integer"
+      },
+      "signal": {
+        "type": "string"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
   "ObjectMeta": {
     "open": true,
     "type": "object"
@@ -867,5 +1336,293 @@ export function assertComputeVMHostKey(value: unknown): asserts value is Compute
 
 export function parseComputeVMHostKey(value: unknown): ComputeVMHostKey {
   assertComputeVMHostKey(value);
+  return value;
+}
+
+export function validateHostProcess(value: unknown): ApiIssue[] {
+  return validate("HostProcess", value);
+}
+
+export function isHostProcess(value: unknown): value is HostProcess {
+  return validate("HostProcess", value).length === 0;
+}
+
+export function assertHostProcess(value: unknown): asserts value is HostProcess {
+  const issues = validate("HostProcess", value);
+  if (issues.length > 0) throw new ApiValidationError("HostProcess", issues);
+}
+
+export function parseHostProcess(value: unknown): HostProcess {
+  assertHostProcess(value);
+  return value;
+}
+
+export function validateHostProcessSpec(value: unknown): ApiIssue[] {
+  return validate("HostProcessSpec", value);
+}
+
+export function isHostProcessSpec(value: unknown): value is HostProcessSpec {
+  return validate("HostProcessSpec", value).length === 0;
+}
+
+export function assertHostProcessSpec(value: unknown): asserts value is HostProcessSpec {
+  const issues = validate("HostProcessSpec", value);
+  if (issues.length > 0) throw new ApiValidationError("HostProcessSpec", issues);
+}
+
+export function parseHostProcessSpec(value: unknown): HostProcessSpec {
+  assertHostProcessSpec(value);
+  return value;
+}
+
+export function validateHostProcessAsset(value: unknown): ApiIssue[] {
+  return validate("HostProcessAsset", value);
+}
+
+export function isHostProcessAsset(value: unknown): value is HostProcessAsset {
+  return validate("HostProcessAsset", value).length === 0;
+}
+
+export function assertHostProcessAsset(value: unknown): asserts value is HostProcessAsset {
+  const issues = validate("HostProcessAsset", value);
+  if (issues.length > 0) throw new ApiValidationError("HostProcessAsset", issues);
+}
+
+export function parseHostProcessAsset(value: unknown): HostProcessAsset {
+  assertHostProcessAsset(value);
+  return value;
+}
+
+export function validateHostProcessEnv(value: unknown): ApiIssue[] {
+  return validate("HostProcessEnv", value);
+}
+
+export function isHostProcessEnv(value: unknown): value is HostProcessEnv {
+  return validate("HostProcessEnv", value).length === 0;
+}
+
+export function assertHostProcessEnv(value: unknown): asserts value is HostProcessEnv {
+  const issues = validate("HostProcessEnv", value);
+  if (issues.length > 0) throw new ApiValidationError("HostProcessEnv", issues);
+}
+
+export function parseHostProcessEnv(value: unknown): HostProcessEnv {
+  assertHostProcessEnv(value);
+  return value;
+}
+
+export function validateHostProcessOutput(value: unknown): ApiIssue[] {
+  return validate("HostProcessOutput", value);
+}
+
+export function isHostProcessOutput(value: unknown): value is HostProcessOutput {
+  return validate("HostProcessOutput", value).length === 0;
+}
+
+export function assertHostProcessOutput(value: unknown): asserts value is HostProcessOutput {
+  const issues = validate("HostProcessOutput", value);
+  if (issues.length > 0) throw new ApiValidationError("HostProcessOutput", issues);
+}
+
+export function parseHostProcessOutput(value: unknown): HostProcessOutput {
+  assertHostProcessOutput(value);
+  return value;
+}
+
+export function validateHostProcessLimits(value: unknown): ApiIssue[] {
+  return validate("HostProcessLimits", value);
+}
+
+export function isHostProcessLimits(value: unknown): value is HostProcessLimits {
+  return validate("HostProcessLimits", value).length === 0;
+}
+
+export function assertHostProcessLimits(value: unknown): asserts value is HostProcessLimits {
+  const issues = validate("HostProcessLimits", value);
+  if (issues.length > 0) throw new ApiValidationError("HostProcessLimits", issues);
+}
+
+export function parseHostProcessLimits(value: unknown): HostProcessLimits {
+  assertHostProcessLimits(value);
+  return value;
+}
+
+export function validateHostProcessRestartPolicy(value: unknown): ApiIssue[] {
+  return validate("HostProcessRestartPolicy", value);
+}
+
+export function isHostProcessRestartPolicy(value: unknown): value is HostProcessRestartPolicy {
+  return validate("HostProcessRestartPolicy", value).length === 0;
+}
+
+export function assertHostProcessRestartPolicy(value: unknown): asserts value is HostProcessRestartPolicy {
+  const issues = validate("HostProcessRestartPolicy", value);
+  if (issues.length > 0) throw new ApiValidationError("HostProcessRestartPolicy", issues);
+}
+
+export function parseHostProcessRestartPolicy(value: unknown): HostProcessRestartPolicy {
+  assertHostProcessRestartPolicy(value);
+  return value;
+}
+
+export function validateHostProcessStop(value: unknown): ApiIssue[] {
+  return validate("HostProcessStop", value);
+}
+
+export function isHostProcessStop(value: unknown): value is HostProcessStop {
+  return validate("HostProcessStop", value).length === 0;
+}
+
+export function assertHostProcessStop(value: unknown): asserts value is HostProcessStop {
+  const issues = validate("HostProcessStop", value);
+  if (issues.length > 0) throw new ApiValidationError("HostProcessStop", issues);
+}
+
+export function parseHostProcessStop(value: unknown): HostProcessStop {
+  assertHostProcessStop(value);
+  return value;
+}
+
+export function validateHostProcessReadiness(value: unknown): ApiIssue[] {
+  return validate("HostProcessReadiness", value);
+}
+
+export function isHostProcessReadiness(value: unknown): value is HostProcessReadiness {
+  return validate("HostProcessReadiness", value).length === 0;
+}
+
+export function assertHostProcessReadiness(value: unknown): asserts value is HostProcessReadiness {
+  const issues = validate("HostProcessReadiness", value);
+  if (issues.length > 0) throw new ApiValidationError("HostProcessReadiness", issues);
+}
+
+export function parseHostProcessReadiness(value: unknown): HostProcessReadiness {
+  assertHostProcessReadiness(value);
+  return value;
+}
+
+export function validateHostProcessPlacement(value: unknown): ApiIssue[] {
+  return validate("HostProcessPlacement", value);
+}
+
+export function isHostProcessPlacement(value: unknown): value is HostProcessPlacement {
+  return validate("HostProcessPlacement", value).length === 0;
+}
+
+export function assertHostProcessPlacement(value: unknown): asserts value is HostProcessPlacement {
+  const issues = validate("HostProcessPlacement", value);
+  if (issues.length > 0) throw new ApiValidationError("HostProcessPlacement", issues);
+}
+
+export function parseHostProcessPlacement(value: unknown): HostProcessPlacement {
+  assertHostProcessPlacement(value);
+  return value;
+}
+
+export function validateHostProcessStatus(value: unknown): ApiIssue[] {
+  return validate("HostProcessStatus", value);
+}
+
+export function isHostProcessStatus(value: unknown): value is HostProcessStatus {
+  return validate("HostProcessStatus", value).length === 0;
+}
+
+export function assertHostProcessStatus(value: unknown): asserts value is HostProcessStatus {
+  const issues = validate("HostProcessStatus", value);
+  if (issues.length > 0) throw new ApiValidationError("HostProcessStatus", issues);
+}
+
+export function parseHostProcessStatus(value: unknown): HostProcessStatus {
+  assertHostProcessStatus(value);
+  return value;
+}
+
+export function validateHostProcessPhase(value: unknown): ApiIssue[] {
+  return validate("HostProcessPhase", value);
+}
+
+export function isHostProcessPhase(value: unknown): value is HostProcessPhase {
+  return validate("HostProcessPhase", value).length === 0;
+}
+
+export function assertHostProcessPhase(value: unknown): asserts value is HostProcessPhase {
+  const issues = validate("HostProcessPhase", value);
+  if (issues.length > 0) throw new ApiValidationError("HostProcessPhase", issues);
+}
+
+export function parseHostProcessPhase(value: unknown): HostProcessPhase {
+  assertHostProcessPhase(value);
+  return value;
+}
+
+export function validateHostProcessLostReason(value: unknown): ApiIssue[] {
+  return validate("HostProcessLostReason", value);
+}
+
+export function isHostProcessLostReason(value: unknown): value is HostProcessLostReason {
+  return validate("HostProcessLostReason", value).length === 0;
+}
+
+export function assertHostProcessLostReason(value: unknown): asserts value is HostProcessLostReason {
+  const issues = validate("HostProcessLostReason", value);
+  if (issues.length > 0) throw new ApiValidationError("HostProcessLostReason", issues);
+}
+
+export function parseHostProcessLostReason(value: unknown): HostProcessLostReason {
+  assertHostProcessLostReason(value);
+  return value;
+}
+
+export function validateHostProcessRuntime(value: unknown): ApiIssue[] {
+  return validate("HostProcessRuntime", value);
+}
+
+export function isHostProcessRuntime(value: unknown): value is HostProcessRuntime {
+  return validate("HostProcessRuntime", value).length === 0;
+}
+
+export function assertHostProcessRuntime(value: unknown): asserts value is HostProcessRuntime {
+  const issues = validate("HostProcessRuntime", value);
+  if (issues.length > 0) throw new ApiValidationError("HostProcessRuntime", issues);
+}
+
+export function parseHostProcessRuntime(value: unknown): HostProcessRuntime {
+  assertHostProcessRuntime(value);
+  return value;
+}
+
+export function validateHostProcessResult(value: unknown): ApiIssue[] {
+  return validate("HostProcessResult", value);
+}
+
+export function isHostProcessResult(value: unknown): value is HostProcessResult {
+  return validate("HostProcessResult", value).length === 0;
+}
+
+export function assertHostProcessResult(value: unknown): asserts value is HostProcessResult {
+  const issues = validate("HostProcessResult", value);
+  if (issues.length > 0) throw new ApiValidationError("HostProcessResult", issues);
+}
+
+export function parseHostProcessResult(value: unknown): HostProcessResult {
+  assertHostProcessResult(value);
+  return value;
+}
+
+export function validateHostProcessListener(value: unknown): ApiIssue[] {
+  return validate("HostProcessListener", value);
+}
+
+export function isHostProcessListener(value: unknown): value is HostProcessListener {
+  return validate("HostProcessListener", value).length === 0;
+}
+
+export function assertHostProcessListener(value: unknown): asserts value is HostProcessListener {
+  const issues = validate("HostProcessListener", value);
+  if (issues.length > 0) throw new ApiValidationError("HostProcessListener", issues);
+}
+
+export function parseHostProcessListener(value: unknown): HostProcessListener {
+  assertHostProcessListener(value);
   return value;
 }

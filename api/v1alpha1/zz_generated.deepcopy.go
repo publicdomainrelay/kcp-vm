@@ -557,3 +557,103 @@ func (in *ComputeVMStatus) DeepCopyInto(out *ComputeVMStatus) {
 		out.Market = &market
 	}
 }
+
+func (in *HostProcess) DeepCopyInto(out *HostProcess) {
+	*out = *in
+	out.TypeMeta = in.TypeMeta
+	in.ObjectMeta.DeepCopyInto(&out.ObjectMeta)
+	in.Spec.DeepCopyInto(&out.Spec)
+	in.Status.DeepCopyInto(&out.Status)
+}
+
+func (in *HostProcess) DeepCopy() *HostProcess {
+	if in == nil {
+		return nil
+	}
+	out := new(HostProcess)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *HostProcess) DeepCopyObject() runtime.Object {
+	if c := in.DeepCopy(); c != nil {
+		return c
+	}
+	return nil
+}
+
+func (in *HostProcessList) DeepCopyInto(out *HostProcessList) {
+	*out = *in
+	out.TypeMeta = in.TypeMeta
+	in.ListMeta.DeepCopyInto(&out.ListMeta)
+	if in.Items != nil {
+		out.Items = make([]HostProcess, len(in.Items))
+		for i := range in.Items {
+			in.Items[i].DeepCopyInto(&out.Items[i])
+		}
+	}
+}
+
+func (in *HostProcessList) DeepCopy() *HostProcessList {
+	if in == nil {
+		return nil
+	}
+	out := new(HostProcessList)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *HostProcessList) DeepCopyObject() runtime.Object {
+	if c := in.DeepCopy(); c != nil {
+		return c
+	}
+	return nil
+}
+
+func (in *HostProcessSpec) DeepCopyInto(out *HostProcessSpec) {
+	*out = *in
+	if in.Asset != nil {
+		v := *in.Asset
+		out.Asset = &v
+	}
+	out.Argv = append([]string(nil), in.Argv...)
+	out.Env = append([]HostProcessEnv(nil), in.Env...)
+	if in.Output != nil {
+		v := *in.Output
+		out.Output = &v
+	}
+	if in.Limits != nil {
+		v := *in.Limits
+		out.Limits = &v
+	}
+	if in.Stop != nil {
+		v := *in.Stop
+		out.Stop = &v
+	}
+	out.After = append([]string(nil), in.After...)
+	out.Wants = append([]string(nil), in.Wants...)
+	if in.Readiness != nil {
+		v := *in.Readiness
+		v.Exec = append([]string(nil), in.Readiness.Exec...)
+		out.Readiness = &v
+	}
+}
+
+func (in *HostProcessStatus) DeepCopyInto(out *HostProcessStatus) {
+	*out = *in
+	if in.Runtime != nil {
+		v := *in.Runtime
+		out.Runtime = &v
+	}
+	if in.LastResult != nil {
+		v := *in.LastResult
+		out.LastResult = &v
+	}
+	out.Listeners = append([]HostProcessListener(nil), in.Listeners...)
+	if in.Conditions != nil {
+		out.Conditions = make([]metav1.Condition, len(in.Conditions))
+		for i := range in.Conditions {
+			in.Conditions[i].DeepCopyInto(&out.Conditions[i])
+		}
+	}
+}

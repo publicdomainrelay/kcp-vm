@@ -37,4 +37,12 @@ var APIResources = []APIResource{
 		{Name: "Requester", Type: "string", JSONPath: ".spec.requester.did"},
 		{Name: "Age", Type: "date", JSONPath: ".metadata.creationTimestamp"},
 	}},
+	{Kind: "HostProcess", Plural: "hostprocesses", Revision: 1, Export: "hostprocesses", Object: HostProcess{}, PrinterColumns: []PrinterColumn{
+		{Name: "Placement", Type: "string", JSONPath: ".spec.placement"},
+		{Name: "Phase", Type: "string", JSONPath: ".status.phase"},
+		{Name: "Backend", Type: "string", JSONPath: ".status.runtime.backend"},
+		{Name: "Unit", Type: "string", JSONPath: ".spec.unit"},
+		{Name: "PID", Type: "integer", JSONPath: ".status.runtime.pid"},
+		{Name: "Age", Type: "date", JSONPath: ".metadata.creationTimestamp"},
+	}},
 }

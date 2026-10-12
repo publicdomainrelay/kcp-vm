@@ -32,6 +32,8 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 		&MarketIdentityList{},
 		&ComputeVM{},
 		&ComputeVMList{},
+		&HostProcess{},
+		&HostProcessList{},
 	)
 	return nil
 }

@@ -25,7 +25,7 @@ var TSTargets = []TSTarget{
 	{Dir: TSPackageDir, Exports: []string{"clusters", "atprotoidentities", "marketidentities"}},
 	{
 		Dir:         ComputeProviderTSPackageDir,
-		Exports:     []string{"computevms"},
+		Exports:     []string{"computevms", "hostprocesses"},
 		Fixtures:    "testdata/computevm",
 		FixturesDir: ComputeProviderDir + "/test/fixtures/computevm",
 	},

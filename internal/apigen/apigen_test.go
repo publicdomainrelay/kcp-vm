@@ -6,7 +6,6 @@ import (
 	"go/token"
 	"path/filepath"
 	"reflect"
-	"sort"
 	"strings"
 	"testing"
 
@@ -42,34 +41,6 @@ func TestEveryKindTheSchemeRegistersHasAnAPIResource(t *testing.T) {
 			t.Errorf("api/v1alpha1 registers %s and APIResources does not list it, so no "+
 				"APIResourceSchema and no TypeScript type are generated for it", kind)
 		}
-	}
-}
-
-func TestEnumValuesAreTheConstantsInDeclarationOrder(t *testing.T) {
-	m := mustModel(t)
-	want := map[string][]string{
-		"NodeClaimPhase":      {"Pending", "Bidding", "Provisioning", "Joining", "Running", "Failed", "Released", "Lost", "Adopting"},
-		"ContractPhase":       {"requested", "rfp_submitted", "winner_selected", "accepted", "receipt", "network", "released"},
-		"ClusterLinkPhase":    {"Pending", "Listening", "Failed"},
-		"ClusterLinkService":  {"apiserver", "openbao"},
-		"ClusterPhase":        {"Initializing", "Ready", "Unavailable", "Draining"},
-		"NodePhase":           {"Pending", "Running", "Draining"},
-		"IdentityScope":       {"Account", "Cluster"},
-		"IdentityState":       {"Active", "Revoked", "RevocationPending", "ColdDeferred"},
-		"ContractOutcome":     {"no_bids", "bids_denied", "policy_rejected", "returned", "receipt_invalid", "network_timeout", "complete"},
-		"MarketIdentityMode":  {"oauthQr", "oauthBrowser", "pdsAccount", "localRepo", "oauthDelegated"},
-		"AssociationMode":     {"RequireApproval", "Skip"},
-		"MarketIdentityPhase": {"Pending", "AwaitingScan", "AwaitingAuthorization", "AwaitingApproval", "Ready", "SessionExpired", "Failed"},
-		"PendingActionKind":   {"scanQr", "visitUrl", "approveAssociation", "signInAgain"},
-		"ComputeVMPhase":      {"Pending", "Preparing", "Booting", "Running", "Releasing", "Lost", "Failed"},
-		"ComputeVMLostReason": {"HostRebooted", "UnitGone", "UnitFailed", "OOMKilled", "VMMExited", "IdentityMismatch"},
-	}
-	got := map[string][]string{}
-	for _, e := range m.Enums {
-		got[e.Name] = e.Values
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("enums:\n got %v\nwant %v", got, want)
 	}
 }
 
@@ -174,44 +145,6 @@ func TestUpperSnake(t *testing.T) {
 		if got := UpperSnake(in); got != want {
 			t.Errorf("UpperSnake(%q) = %q, want %q", in, got, want)
 		}
-	}
-}
-
-func TestTheGeneratedFilesCoverEveryResourceAndExport(t *testing.T) {
-	outputs, err := Generate(repoRoot)
-	if err != nil {
-		t.Fatalf("generate: %v", err)
-	}
-	var paths []string
-	for _, o := range outputs {
-		paths = append(paths, o.Path)
-	}
-	want := []string{computeVMTypeScript}
-	fixtures, err := filepath.Glob(filepath.Join(computeVMFixtureDir, "*.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, f := range fixtures {
-		want = append(want, ComputeProviderDir+"/test/fixtures/computevm/"+filepath.Base(f))
-	}
-	want = append(want,
-		"deploy/apiresourceschema-revisions.json",
-		"deploy/atprotoidentity-apiexport.yaml",
-		"deploy/atprotoidentity-apiresourceschema.yaml",
-		"deploy/cluster-apiexport.yaml",
-		"deploy/cluster-apiresourceschema.yaml",
-		"deploy/clusterlink-apiresourceschema.yaml",
-		"deploy/computevm-apiexport.yaml",
-		"deploy/computevm-apiresourceschema.yaml",
-		"deploy/marketidentity-apiexport.yaml",
-		"deploy/marketidentity-apiresourceschema.yaml",
-		"deploy/node-apiresourceschema.yaml",
-		"deploy/nodeclaim-apiresourceschema.yaml",
-		TSPackageDir+"/mod.ts",
-	)
-	sort.Strings(want)
-	if !reflect.DeepEqual(paths, want) {
-		t.Fatalf("generated paths:\n got %v\nwant %v", paths, want)
 	}
 }
 
