@@ -71,6 +71,9 @@ spec:
       "KCP_NAMESPACE",
       "KCP_SERVICE_NAME",
       "KCP_SERVICE_DOMAIN",
+      "SWC_UNIT",
+      "SWC_DEVSUP",
+      "INVOCATION_ID",
     ]) {
       const value = read(key);
       if (value) childEnv[key] = value;
@@ -197,6 +200,9 @@ spec:
         - KCP_SERVER
         - KCP_WORKSPACE
         - KCP_NAMESPACE
+        - SWC_UNIT
+        - SWC_DEVSUP
+        - INVOCATION_ID
     noPrompt: true
   readinessProbe:
     command: {{.Probe}}
