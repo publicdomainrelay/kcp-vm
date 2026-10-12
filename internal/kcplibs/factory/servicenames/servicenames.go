@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"net"
 	"os"
 	"path/filepath"
 	"slices"
@@ -279,13 +280,31 @@ func BoundAddress(argsJSON, envJSON string, port int32) string {
 
 func BoundListeners(argsJSON, envJSON string, port int32, reported []listeners.Listener) []listeners.Listener {
 	if len(reported) > 0 {
-		return reported
+		return advertisedOnLoopback(argsJSON, envJSON, reported)
 	}
 	address := BoundAddress(argsJSON, envJSON, port)
 	if address == "" {
 		return nil
 	}
 	return []listeners.Listener{{Name: listeners.DefaultTCPName, Kind: listeners.KindTCP, Address: address}}
+}
+
+func advertisedOnLoopback(argsJSON, envJSON string, reported []listeners.Listener) []listeners.Listener {
+	_, host := advertised(argsJSON, envJSON)
+	name := strings.ToLower(host)
+	if name != "localhost" && !strings.HasSuffix(name, ".localhost") {
+		return reported
+	}
+	out := make([]listeners.Listener, 0, len(reported))
+	for _, l := range reported {
+		if l.Kind == listeners.KindTCP {
+			if h, p, err := net.SplitHostPort(l.Address); err == nil && h == "127.0.0.1" {
+				l.Address = net.JoinHostPort(host, p)
+			}
+		}
+		out = append(out, l)
+	}
+	return out
 }
 
 var (

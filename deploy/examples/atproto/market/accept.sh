@@ -37,6 +37,13 @@ set -euo pipefail
 # KEEP_ACCEPT_ROOT  1 keeps BED_DIR (logs, run directories) after the run
 # FC_RUNNER_IMAGE   runner image to pin by its image id; unset builds one with
 #                   hono-compute-provider/hono-firecracker-standalone/build.sh
+# DENO_KCP_PROVIDER a provider binary to run instead of the deno-kcp build
+#                   vendor.json records
+# BED_REQUIRE_LISTENERS 1 fails the bed when a DenoPod's status.listeners is
+#                   empty (default 1 with DENO_KCP_PROVIDER, the owned provider
+#                   that reports them; the recorded upstream build reports none
+#                   until 0008 M2-DENOKCP-INPROC, so without it the check is
+#                   printed and not counted)
 #
 # The provider is started here rather than by apply.sh, because a provider that
 # comes up before its APIExport virtual workspace endpoints are published
@@ -76,6 +83,7 @@ MAX_ATTEMPTS=${MAX_ATTEMPTS:-3}
 # stops the provider that owns their processes.
 DELETE_SECONDS=${DELETE_SECONDS:-60}
 DENO_KCP_PROVIDER=${DENO_KCP_PROVIDER:-}
+BED_REQUIRE_LISTENERS=${BED_REQUIRE_LISTENERS:-${DENO_KCP_PROVIDER:+1}}
 KEEP_ACCEPT_ROOT=${KEEP_ACCEPT_ROOT:-0}
 FC_WORK_ROOT=${FC_WORK_ROOT:-/var/tmp/swc-$BED_ID}
 FC_RUNNER_IMAGE=${FC_RUNNER_IMAGE:-}
@@ -657,7 +665,8 @@ bidder_did() {
   local run did
   run=$(pod_field bob "$1" runID)
   [ -n "$run" ] || return 0
-  grep -h '"event":"bidder_ready"' "$BED_DIR/runs/$run/stdout.txt" 2>/dev/null | grep -o 'did:plc:[a-z2-7]\{24\}' | head -1 || true
+  [ -s "$BED_DIR/runs/$run/status.json" ] || return 0
+  python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("did",""))' "$BED_DIR/runs/$run/status.json" 2>/dev/null || true
 }
 
 BIDDER_DIDS=""
@@ -731,6 +740,15 @@ for entry in "${PODS[@]}"; do
     check "denopod root:$ws/$name" PASS "phase=Running ready=true address=$(pod_field "$ws" "$name" address)"
   else
     check "denopod root:$ws/$name" FAIL "phase=${phase:-missing} ready=${ready:-missing}"
+  fi
+  listeners=$(KC --server="$SERVER/clusters/root:$ws" get denopod "$name" \
+    -o jsonpath='{range .status.listeners[*]}{.name}={.kind}:{.address} {end}' 2>/dev/null || true)
+  if [ -n "${listeners// /}" ]; then
+    check "listeners root:$ws/$name" PASS "$listeners"
+  elif [ "$BED_REQUIRE_LISTENERS" = 1 ]; then
+    check "listeners root:$ws/$name" FAIL "status.listeners is empty"
+  else
+    RESULTS+=("$(printf '%-36s %-4s %s' "listeners root:$ws/$name" INFO "status.listeners is empty; this provider reports none (BED_REQUIRE_LISTENERS unset)")")
   fi
 done
 

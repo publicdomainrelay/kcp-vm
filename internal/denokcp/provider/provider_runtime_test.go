@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -23,7 +24,27 @@ func TestPodStatusPatchForcesManagedFieldsPresent(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertStatusFields(t, body, "phase", "runID", "restarts", "message", "exitCode", "ready", "address",
-		"startTime", "completionTime", "outputs", "conditions")
+		"listeners", "startTime", "completionTime", "outputs", "conditions")
+}
+
+func TestPodStatusPatchCarriesTheReportedListeners(t *testing.T) {
+	want := []v1alpha1.DenoPodListener{
+		{Name: "tcp", Kind: "tcp", Address: "127.0.0.1:40305"},
+		{Name: "relay", Kind: "relay", Address: "https://did-key-x.relay.localhost"},
+	}
+	body, err := podStatusPatch(v1alpha1.DenoPodStatus{Phase: v1alpha1.DenoPodRunning, Listeners: want})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var patch struct {
+		Status v1alpha1.DenoPodStatus `json:"status"`
+	}
+	if err := json.Unmarshal(body, &patch); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(patch.Status.Listeners, want) {
+		t.Fatalf("the status patch carries listeners %+v, want %+v", patch.Status.Listeners, want)
+	}
 }
 
 func TestRunStatusPatchForcesManagedFieldsPresent(t *testing.T) {

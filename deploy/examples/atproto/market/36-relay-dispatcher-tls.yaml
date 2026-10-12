@@ -21,6 +21,7 @@ spec:
     const upstreamPort = Deno.env.get("DISPATCHER_PORT") ?? "";
     const port = Number(Deno.env.get("TLS_PORT") ?? "0");
     const portFile = Deno.env.get("PORT_FILE") ?? "port-bound-to";
+    const listenersFile = Deno.env.get("LISTENERS_FILE") ?? "listeners.json";
     const cert = await Deno.readTextFile(`${dir}/relay.localhost.crt`);
     const key = await Deno.readTextFile(`${dir}/relay.localhost.key`);
 
@@ -33,6 +34,7 @@ spec:
       key,
       onListen: ({ hostname, port }) => {
         Deno.writeTextFileSync(portFile, String(port));
+        Deno.writeTextFileSync(listenersFile, JSON.stringify({ listeners: [{ name: "tcp", kind: "tcp", address: `${hostname}:${port}` }] }) + "\n");
         console.log(JSON.stringify({ event: "dispatcher_tls_listening", hostname, port, upstreamPort }));
       },
     }, async (req) => {
@@ -68,6 +70,7 @@ spec:
     write:
       allowList:
         - port-bound-to
+        - listeners.json
     net:
       allow: true
     env:
@@ -77,4 +80,5 @@ spec:
         - DISPATCHER_PORT
         - TLS_PORT
         - PORT_FILE
+        - LISTENERS_FILE
     noPrompt: true
