@@ -446,7 +446,7 @@ cleanup() {
 trap cleanup EXIT
 FG_PID=""
 on_signal() {
-  [ -n "$FG_PID" ] && kill -TERM "$FG_PID" 2>/dev/null
+  [ -n "$FG_PID" ] && kill -TERM $(descendants_of "$FG_PID") 2>/dev/null
   exit 130
 }
 trap on_signal INT TERM
