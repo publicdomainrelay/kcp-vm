@@ -502,8 +502,8 @@ items:
     test_first: "socialweb-computer-k8s test: a recreated door DenoPod with an EMPTY state dir serves an existing account session and the same requester DID; a scan finds no secret in the state dir or in any kcp object the door writes. Red first."
     done_when: "green; the door state dir holds no secret; pushed on main."
     risks: []
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M4-RUN-GATEWAY-SSH
     milestone: M4
     title: socialweb-computer run gateway ssh
