@@ -680,8 +680,8 @@ items:
       first.
     done_when: "tests green; check.sh --fast green."
     risks: ["A lease file shared by every instance of a user is a single point of contention; flock hold times are recorded under 50 concurrent leases."]
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M1-NO-FIXED-PORTS
     milestone: M1
     title: "Check: a test fails on any fixed port in a manifest or default behind the edge - a ratchet that only shrinks"
@@ -764,8 +764,8 @@ items:
     risks:
       - "logind KillUserProcesses=yes on a host kills a detached devsup at logout; dev check reports it and --fg is the documented alternative."
       - "Each application instance's kcp costs ~0.4-0.5 GB and ~6-9 s cold start (kcp-spike.md); measured per profile once M2-BOOTSTRAP-LAYER lands."
-    status: todo
-    evidence: []
+    status: doing
+    evidence:
   - id: M1-INSTALL
     milestone: M1
     title: "`socialweb-computer install bidder|gateway` - the one explicit, idempotent root step, with `uninstall`; content-addressed upgrade and rollback of the core binary"

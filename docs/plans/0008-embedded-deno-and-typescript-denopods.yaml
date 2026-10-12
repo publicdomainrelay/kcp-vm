@@ -341,8 +341,8 @@ items:
       the copy in the tree. Red until the copy exists.
     done_when: "go test ./internal/denokcp/... ./internal/kcplibs/... green; vendor record check green; GOOS=darwin and GOOS=windows build and vet green."
     risks: ["deno-kcp's third_party/openbao and baoembed (an openbao module-path trick) are not copied; the provider talks to a running bao over its API, which is what socialweb-computer runs."]
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M2-DENOKCP-INPROC
     milestone: M2
     title: The owned deno-kcp provider running inside socialweb-computer, upgradable without touching VMs
