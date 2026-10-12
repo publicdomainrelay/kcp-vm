@@ -89,12 +89,16 @@ func materialize(dir string) (string, string, string, error) {
 	return grant, audit, eso, nil
 }
 
-func (g *gateway) defaults(e *env, rec devinstance.Record, cert, key string) {
+func (g *gateway) defaults(e *env, rec devinstance.Record, cert, key string) error {
 	state := g.c.StateDir
 	mint := filepath.Join(state, "mint")
 	os.MkdirAll(mint, 0o700)
 	e.set("SOCIALWEB_KCP_HOST", rec.KcpURL)
-	e.set("SOCIALWEB_KCP_KUBECONFIG", rec.AdminKubeconfig)
+	kc := filepath.Join(g.l.KcpDir(), MemberKubeconfig)
+	if err := writeMemberKubeconfig(g.l.SharedDir(), rec.KcpURL, kc); err != nil {
+		return err
+	}
+	e.set("SOCIALWEB_KCP_KUBECONFIG", kc)
 	e.set("SOCIALWEB_GATEWAY_MINT_KUBECONFIGS", mint)
 	e.dflt("SOCIALWEB_GATEWAY_ADDR", DefaultAddress)
 	e.dflt("SOCIALWEB_GATEWAY_AUDIENCES", DefaultAudience)
@@ -127,6 +131,7 @@ func (g *gateway) defaults(e *env, rec devinstance.Record, cert, key string) {
 	}
 	e.set("SOCIALWEB_TLS_CERT_FILE", cert)
 	e.set("SOCIALWEB_TLS_KEY_FILE", key)
+	return nil
 }
 
 func jsonMarshal(v any) ([]byte, error) { return json.Marshal(v) }

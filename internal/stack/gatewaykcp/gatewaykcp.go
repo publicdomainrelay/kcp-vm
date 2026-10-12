@@ -349,7 +349,9 @@ func (g *gateway) members(ctx context.Context, rec devinstance.Record) error {
 		}
 	}
 	env := newEnv(g.c.Environ)
-	g.defaults(env, rec, cert, key)
+	if err := g.defaults(env, rec, cert, key); err != nil {
+		return err
+	}
 	access, err := g.rootVault(ctx, rec)
 	if err != nil {
 		return err

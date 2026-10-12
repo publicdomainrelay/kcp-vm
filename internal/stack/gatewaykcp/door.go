@@ -25,7 +25,7 @@ const (
 	doorPortPoll  = 100 * time.Millisecond
 )
 
-var doorPrograms = []string{"ssh-keygen", "dumbpipe"}
+var doorPrograms = []string{"ssh-keygen"}
 
 func (g *gateway) doorPermissions(state string, e *env) []string {
 	run := append([]string(nil), doorPrograms...)
@@ -68,7 +68,7 @@ func (g *gateway) door(ctx context.Context, base *env, rec devinstance.Record, g
 	e.set("GATEWAY_URL", "http://"+gw)
 	first, _, _ := strings.Cut(e.get("SOCIALWEB_GATEWAY_AUDIENCES"), ",")
 	e.dflt("GATEWAY_AUDIENCE", strings.TrimSpace(first))
-	e.dflt("KCP_KUBECONFIG", rec.AdminKubeconfig)
+	e.dflt("KCP_KUBECONFIG", base.get("SOCIALWEB_KCP_KUBECONFIG"))
 	e.dflt("PLC_DIRECTORY_URL", e.get("SOCIALWEB_GATEWAY_PLC_URL"))
 	if h := e.get("SOCIALWEB_GATEWAY_KCP_PUBLIC_HOST"); h != "" {
 		e.dflt("KCP_PUBLIC_HOST", h)
