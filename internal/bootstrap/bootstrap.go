@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
@@ -90,6 +91,20 @@ func (c Config) onListen(name string, port int) {
 func (p Params) slotSpec(slot, frontURL string) (hostsvc.UnitSpec, string, error) {
 	spec, err := p.Spec(p.App.SlotEntry(slot), frontURL)
 	return spec, p.SlotRoot(slot), err
+}
+
+func writeSlotEnv(p Params, spec hostsvc.UnitSpec) error {
+	if _, err := os.Stat(p.EnvFile(p.App.Names().Front())); err != nil {
+		return nil
+	}
+	f, err := hostsvc.RenderInstalled(spec, hostsvc.InstallOptions{EnvFile: p.EnvFile(spec.Name)})
+	if err != nil {
+		return err
+	}
+	if cur, err := os.ReadFile(f.EnvPath); err == nil && bytes.Equal(cur, f.Env) {
+		return nil
+	}
+	return writePrivate(f.EnvPath, f.Env)
 }
 
 func waitUnixSocket(ctx context.Context, path string) error {
@@ -424,6 +439,9 @@ func Ensure(ctx context.Context, m hostsvc.Manager, cfg Config, rec *devinstance
 		return err
 	}
 	if err := kcpserver.WriteAuditPolicy(root); err != nil {
+		return err
+	}
+	if err := writeSlotEnv(p, slotSpec); err != nil {
 		return err
 	}
 	seeded := false
