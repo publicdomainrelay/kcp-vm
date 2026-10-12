@@ -179,6 +179,13 @@ func (f *fakeBus) Version(ctx context.Context) (string, error) {
 	return f.version, nil
 }
 
+func (f *fakeBus) ManagerStarted(ctx context.Context) (uint64, error) {
+	if err := f.record(ctx, "ManagerStarted"); err != nil {
+		return 0, err
+	}
+	return 44216348, nil
+}
+
 func (f *fakeBus) Close() {
 	f.mu.Lock()
 	f.closed = true
@@ -607,5 +614,23 @@ func TestATransportErrorIsUnknownAndRedialsNextCall(t *testing.T) {
 	}
 	if dials != 2 {
 		t.Fatalf("%d dials, want 2", dials)
+	}
+}
+
+func TestOpenRefusesAnEmptyBackend(t *testing.T) {
+	_, err := Open(context.Background(), Config{})
+	if !errors.Is(err, ErrNoBackend) || !strings.Contains(err.Error(), "host-backend") {
+		t.Fatalf("Open with no backend: %v, want ErrNoBackend naming the option", err)
+	}
+	if _, err := Open(context.Background(), Config{Backend: "systemd"}); err == nil {
+		t.Fatalf("Open accepted an unknown backend")
+	}
+}
+
+func TestAProcIdentityIsLostOnSystemdUser(t *testing.T) {
+	m := newManager(func(ctx context.Context) (bus, error) { return newFakeBus(), nil }, &fakeProcs{boot: "b"}, time.Second)
+	obs, err := m.Check(context.Background(), Identity{Unit: "socialweb-vm-aaaa-one.service", BootID: "b", Backend: BackendProc})
+	if err != nil || obs.Verdict != VerdictLost || obs.Reason != LostIdentityMismatch || !strings.Contains(obs.Detail, "proc") {
+		t.Fatalf("a proc identity on systemd-user reads %+v %v", obs, err)
 	}
 }

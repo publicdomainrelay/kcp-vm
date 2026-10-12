@@ -32,13 +32,23 @@ type systemd struct {
 	dial    func(ctx context.Context) (bus, error)
 	procs   procs
 	timeout time.Duration
+	prefix  string
 
 	mu sync.Mutex
 	b  bus
 }
 
-func Open(ctx context.Context) (Manager, error) {
-	return OpenPrivate(ctx, PrivateSocketPath())
+func openSystemd(ctx context.Context, cfg Config) (Manager, error) {
+	path := cfg.SystemdPrivateSocket
+	if path == "" {
+		path = PrivateSocketPath()
+	}
+	m, err := OpenPrivate(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	m.(*systemd).prefix = cfg.Prefix()
+	return m, nil
 }
 
 func OpenPrivate(ctx context.Context, path string) (Manager, error) {
@@ -51,7 +61,66 @@ func OpenPrivate(ctx context.Context, path string) (Manager, error) {
 }
 
 func newManager(dial func(ctx context.Context) (bus, error), p procs, timeout time.Duration) *systemd {
-	return &systemd{dial: dial, procs: p, timeout: timeout}
+	return &systemd{dial: dial, procs: p, timeout: timeout, prefix: NamePrefix}
+}
+
+func (m *systemd) Capabilities() Capabilities {
+	return Capabilities{Backend: BackendSystemdUser, EnforcesLimits: true, OOMKillReported: true}
+}
+
+func (m *systemd) owns(name string) error {
+	if !strings.HasPrefix(name, m.prefix) {
+		return fmt.Errorf("hostsvc: unit %s is outside this manager's prefix %s", name, m.prefix)
+	}
+	return nil
+}
+
+func (m *systemd) managerID(ctx context.Context) (string, error) {
+	var started uint64
+	err := m.do(ctx, func(ctx context.Context, b bus) (err error) {
+		started, err = b.ManagerStarted(ctx)
+		return err
+	})
+	if err != nil {
+		return "", err
+	}
+	boot, err := m.procs.BootID()
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("systemd-user:%s:%d", boot, started), nil
+}
+
+func (m *systemd) StopSlice(ctx context.Context, slice string) error {
+	if err := ValidateSlice(slice); err != nil {
+		return err
+	}
+	ctx, cancel := withDeadline(ctx, m.timeout)
+	defer cancel()
+	ch := make(chan string, 1)
+	err := m.do(ctx, func(ctx context.Context, b bus) error { return b.StopUnit(ctx, slice, ch) })
+	if dbusErrorName(err) == errNoSuchUnit {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("hostsvc: stopping %s: %w", slice, err)
+	}
+	result, err := waitJob(ctx, ch)
+	if err != nil {
+		return fmt.Errorf("hostsvc: stopping %s: %w", slice, err)
+	}
+	if result != "done" {
+		return fmt.Errorf("hostsvc: the stop job of %s ended %q", slice, result)
+	}
+	return nil
+}
+
+// ponytail: Watch polls List every WatchPollInterval; upgrade path is Subscribe plus PropertiesChanged signals on the private socket.
+func (m *systemd) Watch(ctx context.Context, prefix string) (<-chan UnitEvent, error) {
+	if err := ValidatePrefix(prefix); err != nil {
+		return nil, err
+	}
+	return pollWatch(ctx, prefix, m.List)
 }
 
 func withDeadline(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
@@ -148,12 +217,16 @@ func unitProperties(spec UnitSpec) []sd.Property {
 		sd.PropDescription(desc),
 		sd.PropExecStart(spec.Exec, false),
 		str("Type", "exec"),
-		str("Restart", "no"),
 		str("CollectMode", "inactive"),
 		str("KillMode", "control-group"),
 		str("OOMPolicy", oom),
 		sd.PropSlice(slice),
 	}
+	restart := spec.Restart
+	if restart == "" {
+		restart = RestartNo
+	}
+	props = append(props, str("Restart", string(restart)))
 	if spec.KillSignal != 0 {
 		props = append(props, sd.Property{Name: "KillSignal", Value: dbus.MakeVariant(int32(spec.KillSignal))})
 	}
@@ -233,6 +306,12 @@ func (m *systemd) Start(ctx context.Context, spec UnitSpec) (UnitStatus, error) 
 	if err := ValidateSpec(spec); err != nil {
 		return UnitStatus{}, err
 	}
+	if err := m.owns(spec.Name); err != nil {
+		return UnitStatus{}, err
+	}
+	if err := RefuseUnsupported(m.Capabilities(), spec); err != nil {
+		return UnitStatus{}, err
+	}
 	ctx, cancel := withDeadline(ctx, m.timeout)
 	defer cancel()
 	props := unitProperties(spec)
@@ -282,7 +361,7 @@ func (m *systemd) Inspect(ctx context.Context, name string) (UnitStatus, error) 
 }
 
 func statusFrom(name string, up, sp map[string]any) UnitStatus {
-	st := UnitStatus{Name: name}
+	st := UnitStatus{Name: name, Backend: BackendSystemdUser}
 	str := func(m map[string]any, k string) string { s, _ := m[k].(string); return s }
 	if str(up, "LoadState") == "not-found" {
 		st.State = NotFound
@@ -409,7 +488,12 @@ func (m *systemd) Identify(ctx context.Context, name string, pid int) (Identity,
 		return Identity{}, fmt.Errorf("hostsvc: pid %d belongs to %s invocation %s, not %s invocation %s",
 			pid, unit, inv, name, st.InvocationID)
 	}
-	return Identity{Unit: name, InvocationID: inv, PID: pid, StartTicks: p.StartTicks(), BootID: boot}, nil
+	mgr, err := m.managerID(ctx)
+	if err != nil {
+		return Identity{}, fmt.Errorf("hostsvc: reading the manager identity: %w", err)
+	}
+	return Identity{Unit: name, InvocationID: inv, PID: pid, StartTicks: p.StartTicks(), BootID: boot,
+		Backend: BackendSystemdUser, Manager: mgr}, nil
 }
 
 func (m *systemd) Check(ctx context.Context, want Identity) (Observation, error) {
@@ -423,6 +507,22 @@ func (m *systemd) Check(ctx context.Context, want Identity) (Observation, error)
 	if boot != want.BootID {
 		return Observation{Verdict: VerdictLost, Reason: LostHostRebooted,
 			Detail: fmt.Sprintf("boot id %s, recorded %s", boot, want.BootID)}, nil
+	}
+	if obs, foreign := ForeignIdentity(m.Capabilities(), want); foreign {
+		return obs, nil
+	}
+	if want.Manager != "" {
+		mgr, err := m.managerID(ctx)
+		if errors.Is(err, ErrUnreachable) {
+			return Observation{Verdict: VerdictUnknown, Detail: err.Error()}, nil
+		}
+		if err != nil {
+			return Observation{Detail: err.Error()}, err
+		}
+		if mgr != want.Manager {
+			return Observation{Verdict: VerdictLost, Reason: LostUnitGone,
+				Detail: fmt.Sprintf("the user manager restarted (%s, recorded %s): every unit it held is gone", mgr, want.Manager)}, nil
+		}
 	}
 	st, err := m.Inspect(ctx, want.Unit)
 	if errors.Is(err, ErrUnreachable) {
