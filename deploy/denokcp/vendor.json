@@ -1,6 +1,6 @@
 {
   "repository": "github.com/johnandersen777/deno-kcp",
-  "ref": "task/bed-parallel",
+  "ref": "task/market-network-parallel",
   "commit": "940cba2672c75deccb81a4177733b27854b0a050",
   "kcpLibsCommit": "4351b774fc54787ceb1d81d0c58a60e25e33b204",
   "fork": {
