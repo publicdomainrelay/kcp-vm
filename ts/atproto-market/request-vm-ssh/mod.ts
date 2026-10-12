@@ -24,6 +24,8 @@ import type { GuestCapability } from "@publicdomainrelay/guest-capability-abc";
 import { qrcode } from "@libs/qrcode";
 import { IdResolver } from "@atproto/identity";
 import { Secp256k1Keypair } from "@atproto/crypto";
+import { marketNetwork } from "@publicdomainrelay/market-network-common";
+import { installMarketNetworkFetch } from "@publicdomainrelay/market-network-fetch";
 import cliArgsEnv from "./cli-args-env.ts";
 
 /** Structural policy spec; matches @publicdomainrelay/policy-engine PolicySpec. */
@@ -46,40 +48,24 @@ if (removedFlags.length > 0) {
 const label = (options.label as string) ?? "request-vm-ssh";
 const logger = createLogger({ serviceName: label });
 
-const ingressProxyHost = (options.ingressProxyHost as string) || "xrpc.fedproxy.com";
-
-// Auto-detect local dev: *.localhost isn't in DNS.  Patch fetch so the
-// requester can reach the bidder's PDS endpoints (also on *.localhost).
-if (ingressProxyHost.includes("localhost") || ingressProxyHost.startsWith("127.")) {
-  const patchPort = ingressProxyHost.includes(":") ? ingressProxyHost.split(":").pop()! : "80";
-  const realFetch = globalThis.fetch;
-  globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
-    let url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-    const m = url.match(/^https:\/\/([^/]+)(\/.*)?$/);
-    if (m && m[1].endsWith(".localhost")) {
-      let host = m[1];
-      if (!host.includes(":")) host = `${host}:${patchPort}`;
-      url = `http://${host}${m[2] ?? ""}`;
-      return realFetch(url, init);
-    }
-    return realFetch(input as string | URL | Request, init);
-  }) as typeof fetch;
-}
-const cliRelayUrl = options.relayUrl as string | undefined;
+const network = marketNetwork({
+  plcDirectoryUrl: options.plcDirectoryUrl as string | undefined,
+  ingressProxyHost: options.ingressProxyHost as string | undefined,
+  relayUrls: options.relayUrl as string | undefined,
+  firehoseUrls: options.firehoseUrl as string | undefined,
+});
+const ingressProxyHost = network.ingressProxyHost;
+installMarketNetworkFetch({ network });
 
 const firehoseMode = (options.firehoseMode as string) || "off";
-const firehoseUrl = (options.firehoseUrl as string) || "";
-const additionalRelays: string[] = [];
-if (cliRelayUrl) additionalRelays.push(cliRelayUrl);
-if (firehoseMode === "subscriberepos" && firehoseUrl) {
-  for (const u of firehoseUrl.split(",").map((s: string) => s.trim()).filter(Boolean)) {
-    additionalRelays.push(u);
-  }
-}
+const additionalRelays: string[] = [
+  ...network.relayUrls,
+  ...(firehoseMode === "subscriberepos" ? network.firehoseUrls : []),
+];
 
 const eventStreams = createDefaultATProtoEventStreamsClient({
   additionalRelays,
-  removeRelays: firehoseUrl ? DEFAULT_RELAY_URLS : undefined,
+  removeRelays: network.firehoseUrls.length > 0 ? DEFAULT_RELAY_URLS : undefined,
   log: logger,
 });
 const relayUrls = eventStreams.relays.map((r) => r.url);
@@ -165,7 +151,7 @@ if ((options.atprotoOauth as boolean) && (options.atprotoHandle as string | unde
     clientId: options.oauthClientId as string | undefined,
     redirectUri: options.oauthRedirectUri as string | undefined,
     scope: REQUESTER_OAUTH_SCOPE.join(" "),
-    plcDirectoryUrl: (options.plcDirectoryUrl as string) || "https://plc.directory",
+    plcDirectoryUrl: network.plcDirectoryUrl,
     logger,
     attestationKp: await (async () => {
       const kp = resolvedPrivateKeyHex
@@ -205,7 +191,7 @@ if ((options.atprotoOauth as boolean) && (options.atprotoHandle as string | unde
     ? await Secp256k1Keypair.import(resolvedPrivateKeyHex, { exportable: true })
     : await Secp256k1Keypair.create({ exportable: true });
   // Register DID on PLC (needed for service auth JWT verification)
-  const plcClient = createPlcDirectoryClient({ plcDirectoryUrl: (options.plcDirectoryUrl as string) || "https://plc.directory" });
+  const plcClient = createPlcDirectoryClient({ plcDirectoryUrl: network.plcDirectoryUrl });
   const genesisOp = await createGenesisOp({
     rotationKeys: [kp.did()],
     verificationMethods: { atproto: kp.did() },
@@ -251,7 +237,7 @@ if ((options.atprotoOauth as boolean) && (options.atprotoHandle as string | unde
       (b) => b.toString(16).padStart(2, "0")).join("");
 
     // Show QR
-    const qrUrl = `https://qr.fedfork.com/#oauth=${encodeURIComponent(plcDid)}&n=${oauthNonce}`;
+    const qrUrl = `${network.qrOrigin}/#oauth=${encodeURIComponent(plcDid)}&n=${oauthNonce}`;
     process.stdout.write("\n" + "=".repeat(60) + "\n");
     process.stdout.write("  Scan this QR code with your phone to authenticate:\n\n");
     qrcode(qrUrl, { output: "console", ecl: "HIGH" });
@@ -264,7 +250,7 @@ if ((options.atprotoOauth as boolean) && (options.atprotoHandle as string | unde
     _session = await pollForOAuthSession({
       cliDid: plcDid,
       signer: pollSigner,
-      qrFedforkOrigin: "https://qr.fedfork.com",
+      qrFedforkOrigin: network.qrOrigin,
       logger,
     });
   }
@@ -274,7 +260,7 @@ if ((options.atprotoOauth as boolean) && (options.atprotoHandle as string | unde
     logger,
     serve,
     privateKeyHex: resolvedPrivateKeyHex,
-    plcDirectoryUrl: (options.plcDirectoryUrl as string) || "https://plc.directory",
+    plcDirectoryUrl: network.plcDirectoryUrl,
     ingressProxyHost,
     label,
     storagePath: options.pdsStatePath as string | undefined,
@@ -318,7 +304,7 @@ if ((options.atprotoOauth as boolean) && (options.atprotoHandle as string | unde
     logger,
     serve,
     privateKeyHex: resolvedPrivateKeyHex,
-    plcDirectoryUrl: (options.plcDirectoryUrl as string) || "https://plc.directory",
+    plcDirectoryUrl: network.plcDirectoryUrl,
     ingressProxyHost,
     label,
     storagePath: options.pdsStatePath as string | undefined,
@@ -410,7 +396,7 @@ if (hasAssociation) {
 }
 
 if (!options.skipQr && !hasAssociation) {
-  const qrUrl = `https://qr.fedfork.com/#plc=${pds.did}`;
+  const qrUrl = `${network.qrOrigin}/#plc=${pds.did}`;
   logger.info("qr_url", { url: qrUrl });
   process.stdout.write("\n" + "=".repeat(60) + "\n");
   process.stdout.write("  Scan this QR code with your phone to authenticate:\n\n");
@@ -511,7 +497,7 @@ if (policyName) {
 const result = await runComputeContract(pds, {
   logger,
   ingressProxyHost,
-  plcUrl: (options.plcDirectoryUrl as string) || "https://plc.directory",
+  plcUrl: network.plcDirectoryUrl,
   guestHostAliases: ((options.guestHostAliases as string) || "")
     .split(",").map((s: string) => s.trim()).filter(Boolean),
   vmName: options.vmName as string | undefined,
