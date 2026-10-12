@@ -11,7 +11,7 @@ function delay(ms: number): Promise<void> {
 }
 
 Deno.test("the gha-lite trust snapshot resolves its lookups concurrently, once per DID", async () => {
-  const LATENCY_MS = 250;
+  const LATENCY_MS = 1000;
   const operatorLookups: string[] = [];
   const vouchLookups: string[] = [];
   const executor = new GhaLiteExecutor({ sandbox: { netOnly: false } });
