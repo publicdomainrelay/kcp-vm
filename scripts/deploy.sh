@@ -189,6 +189,15 @@ if ! grep -qE '^[[:space:]]*import[[:space:]]+/etc/caddy/sites/\*\.caddy' /etc/c
   cp /etc/caddy/Caddyfile "/etc/caddy/Caddyfile.bak.$(date +%s)"
   printf '\nimport /etc/caddy/sites/*.caddy\n' >> /etc/caddy/Caddyfile
 fi
+if ! grep -qE '^[[:space:]]*skip_install_trust[[:space:]]*$' /etc/caddy/Caddyfile; then
+  cp /etc/caddy/Caddyfile "/etc/caddy/Caddyfile.bak.$(date +%s).trust"
+  if [ "$(grep -vE '^[[:space:]]*(#|$)' /etc/caddy/Caddyfile | head -n1 | tr -d '[:space:]')" = "{" ]; then
+    awk '!done && /^[[:space:]]*\{[[:space:]]*$/ { print; print "\tskip_install_trust"; done = 1; next } { print }' /etc/caddy/Caddyfile > /etc/caddy/Caddyfile.trust
+  else
+    { printf '{\n\tskip_install_trust\n}\n\n'; cat /etc/caddy/Caddyfile; } > /etc/caddy/Caddyfile.trust
+  fi
+  mv /etc/caddy/Caddyfile.trust /etc/caddy/Caddyfile
+fi
 caddy validate --config /etc/caddy/Caddyfile >/dev/null
 systemctl reload caddy || systemctl restart caddy
 
