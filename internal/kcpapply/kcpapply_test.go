@@ -47,7 +47,7 @@ func managed(entries ...metav1.ManagedFieldsEntry) *unstructured.Unstructured {
 
 func entry(manager, op, fields string) metav1.ManagedFieldsEntry {
 	return metav1.ManagedFieldsEntry{Manager: manager, Operation: metav1.ManagedFieldsOperationType(op),
-		FieldsType: "FieldsV1", FieldsV1: &metav1.FieldsV1{Raw: []byte(fields)}}
+		FieldsType: "FieldsV1", FieldsV1: metav1.NewFieldsV1(fields)}
 }
 
 func TestManagerChangesNameEveryFieldWhoseOwnerMoves(t *testing.T) {

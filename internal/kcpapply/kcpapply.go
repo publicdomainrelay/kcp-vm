@@ -427,7 +427,7 @@ func owners(u *unstructured.Unstructured) map[string][]string {
 			continue
 		}
 		var tree map[string]any
-		if json.Unmarshal(m.FieldsV1.Raw, &tree) != nil {
+		if json.Unmarshal(m.FieldsV1.GetRawBytes(), &tree) != nil {
 			continue
 		}
 		who := fmt.Sprintf("%s (%s)", m.Manager, m.Operation)
