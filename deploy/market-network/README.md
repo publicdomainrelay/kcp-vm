@@ -189,6 +189,20 @@ finalizer deletes each child's root object, then the child's workspace in the
 network's kcp (the supervisor stops its kcp, kine, front and core), then the
 services and the OpenBao, before devsup stops.
 
+A requester invocation is a child application of the network too:
+
+```bash
+socialweb-computer run request --network mn1 --secrets secrets.json --hold --exec 'cat /root/x'
+socialweb-computer run request list
+socialweb-computer run request release <name>        # or resume <name>
+```
+
+`run request --network` adds a `MarketRequester` entry to `spec.apps[]`; the network places its kcp,
+copies the network value (with `hosts`, the network's service names and their loopback addresses, and
+the bidders' DIDs) onto its root object, and the CLI then talks only to the invocation's own kcp. At the
+end of a held invocation the entry is marked `stopped`: its kcp, kine and core stop and its state dir is
+kept until `release` or `resume` starts them again.
+
 `accept.sh` is the live acceptance, one market network of several per host. It
 takes a market network slot (`SWC_MARKET_NETWORK_SLOTS`, default 4, flock under
 /var/tmp/socialweb-market-network-slots, refused below 3 GiB + 768 MiB per child

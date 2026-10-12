@@ -6698,6 +6698,50 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   export. The token was re-issued at 10:45:25Z (expiry 11:15:25Z), and at 10:45:33Z the web app wrote a
   MarketIdentity and listed both accounts' clusters with it.
 
+- **`socialweb-computer run request`: a fresh kcp per invocation whose state dir persists; the
+  requester is a MarketRequester whose components carry out one ComputeContract (plan 0008
+  M4-RUN-REQUEST, 2026-10-12).** Kind `ComputeContract` (socialweb.computer/v1alpha1, export
+  `computecontracts`): spec {vmName, bidder allow and deny lists, ssh authorized keys, userData, policy
+  and its args, vmReadyTimeoutSec, secretsRef, release}, status {phase Pending, Requesting, Held,
+  Releasing, Released or Failed, message, secretsUrl, secretsFetchedAt, contract}; `status.contract` is
+  the ContractState shape `NodeClaim.status.contract` carries. A `MarketRequester` renders (set
+  `market-requester`) the ComputeContract and MarketIdentity bindings in `root`, its own OpenBaoServer
+  `requester` (file storage in the invocation's state dir), a ServiceAccount that reads and writes only
+  its MarketIdentity, ComputeContract and OpenBaoServer objects, the MarketIdentity `requester` from
+  `spec.identity` (mode default localRepo, the ephemeral-PDS mode; association RequireApproval unless
+  `--skip-qr`), and the requester DenoPod from `deploy/apps/market-requester/<profile>.values.yaml`
+  (profiles `market-network` and `default`). The DenoPod is `request-vm-ssh`, which refuses to start
+  outside a DenoPod: it signs in through its MarketIdentity, runs `requestCompute` for the
+  ComputeContract (resuming from `status.contract`), writes the status at each step, holds the contract
+  until `spec.release` and then sends `vm.delete`. Its repo key, sign-in session, the secrets bundle and
+  each contract's secrets-server key live only in its OpenBao, so a restarted kcp re-serves the same
+  secrets URL. The CLI never runs a requester itself: it starts the invocation's kcp, writes `--secrets`
+  into that OpenBao, creates the ComputeContract, renders the MarketIdentity's QR, URL and association
+  prompts (`internal/appcli`), waits for Held and the guest's secrets fetch, and runs ssh over the iroh
+  ticket (`dumbpipe connect`) with StrictHostKeyChecking=yes against the host keys the guest reported.
+  Without `--hold` it then sets `spec.release`, waits for Released and removes the invocation; with
+  `--hold` it stops the kcp and keeps its state dir. `run request release|resume <name>` start that same
+  kcp again from the state dir; `run request list` reads each `summary.json` and starts nothing. Every
+  request-vm-ssh option is mapped in `deploy/apps/option-map.yaml` (new targets `contract.*` and `cli`)
+  and passed after `--`. `--network <market network>` makes the invocation a child application of that
+  MarketNetwork (`spec.apps[]`, kind MarketRequester, profile `market-network`, identity localRepo with
+  association Skip, the network's bidder DIDs copied on); `spec.apps[].stopped` stops a child's kcp,
+  kine and core and keeps its state dir. Two things a kcp restarted from a kept state dir needs: the root
+  Shard object is pointed at the front the slot runs behind now (kcp keeps the first `--shard-base-url`
+  it was started with, and every APIExport virtual workspace URL follows it), and a child keeps its front
+  port across a stop. A Lost OpenBaoServer HostProcess is placed again on its storage, and stopping or
+  tearing down an instance stops the processes its units left behind (the deno service processes outlive
+  their core). The network value gained `hosts` (each network service name and the loopback address it
+  answers on): a child's shim never resolves the network's names, and the PDS name in a bidder's DID
+  document is one, so the one fetch adapter maps them. Reading on hat-8 (market network of one bidder,
+  guests as VM units of test-0001): network up 10:25:12Z to 10:26:36Z; `run request --network rrnet
+  --secrets` 10:26:36Z, the invocation's kcp cold in 18.1 s, RFP 10:27:17Z, receipt 10:27:18Z, host keys
+  10:27:34Z, the guest fetched its secrets 10:27:35Z, ssh read the secret file 10:27:39Z, kcp stopped with
+  its state kept 10:27:46Z; `release rr1` 10:27:50Z, kcp warm again in 13.1 s, vm.delete 200 10:28:19Z,
+  no VM unit or work dir left; a second invocation held 10:28:40Z to 10:29:42Z, `list` with no kcp
+  running, `resume rr2` 10:29:46Z (kcp again in 13 s, ssh to the same guest), vm.delete 200 10:30:15Z;
+  `dev down` 10:30:35Z to 10:30:54Z with no process left.
+
 ## 16. Vocabulary
 
 | | |
