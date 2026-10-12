@@ -4,7 +4,9 @@ import { parseKubeconfig } from "@publicdomainrelay/socialweb-computer-k8s-nodec
 const kubeconfig = Deno.env.get("KUBECONFIG");
 const instance = Deno.env.get("SOCIALWEB_INSTANCE");
 const kcpHost = Deno.env.get("SOCIALWEB_KCP_HOST");
-const peers = (Deno.env.get("SWC_DEV_PEERS") ?? "").split(",").filter((p) => p && p !== instance);
+const peers = (Deno.env.get("SWC_DEV_PEERS") ?? "").split(",").filter((p) =>
+  p && p !== instance
+);
 
 const WORKSPACES = "/clusters/root/apis/tenancy.kcp.io/v1alpha1/workspaces";
 
@@ -45,15 +47,34 @@ Deno.test({
           metadata: { name: own },
         }),
       });
-      assert(created.status === 201 || created.status === 409, `${created.status} ${created.text}`);
+      assert(
+        created.status === 201 || created.status === 409,
+        `${created.status} ${created.text}`,
+      );
       const list = await call(WORKSPACES);
       assertEquals(list.status, 200, list.text);
-      const names = (JSON.parse(list.text).items as { metadata: { name: string } }[]).map((w) => w.metadata.name);
-      assert(names.includes(own), `own marker ${own} missing from ${names.join(",")}`);
+      const names =
+        (JSON.parse(list.text).items as { metadata: { name: string } }[]).map((
+          w,
+        ) => w.metadata.name);
+      assert(
+        names.includes(own),
+        `own marker ${own} missing from ${names.join(",")}`,
+      );
       for (const peer of peers) {
-        assert(!names.includes(markerOf(peer)), `${instance} sees ${peer}'s marker: ${names.join(",")}`);
+        assert(
+          !names.includes(markerOf(peer)),
+          `${instance} sees ${peer}'s marker: ${names.join(",")}`,
+        );
       }
-      console.log(JSON.stringify({ instance, server: creds.server, workspaces: names, peersAbsent: peers }));
+      console.log(
+        JSON.stringify({
+          instance,
+          server: creds.server,
+          workspaces: names,
+          peersAbsent: peers,
+        }),
+      );
     } finally {
       client.close();
     }
