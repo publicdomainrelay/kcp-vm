@@ -32,6 +32,22 @@ type manifestShape struct {
 	Platforms  map[string]Platform  `json:"platforms"`
 	Assets     map[string]Asset     `json:"assets"`
 	Guest      GuestImageSet        `json:"guestImages"`
+	KcpCompat  []KcpCompat          `json:"kcpCompat"`
+}
+
+type KcpCompat struct {
+	From              string `json:"from"`
+	To                string `json:"to"`
+	StorageCompatible bool   `json:"storageCompatible"`
+	DiffSHA256        string `json:"diffSHA256"`
+}
+
+func KcpCompatRecords() ([]KcpCompat, error) {
+	m, err := load()
+	if err != nil {
+		return nil, err
+	}
+	return m.KcpCompat, nil
 }
 
 type GuestImageFile struct {
