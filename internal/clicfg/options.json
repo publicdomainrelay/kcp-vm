@@ -555,8 +555,46 @@
     },
     "unit-prefix": {
       "type": "string",
-      "description": "units roll kcp: the unit name prefix of the installed application (a test placement; socialweb- when unset)",
+      "description": "units roll kcp, serve gateway kcp: the unit name prefix of the installed application (a test placement; socialweb- when unset)",
       "env": "SOCIALWEB_UNIT_PREFIX"
+    },
+    "tls-front-address": {
+      "type": "string",
+      "description": "serve gateway kcp: listen address of the TLS front in front of the gateway's XRPC listener (an edge entry point; port 0 is read back into the Gateway status)",
+      "env": "SOCIALWEB_TLS_FRONT_ADDRESS",
+      "default": "127.0.0.1:0"
+    },
+    "tls-cert-file": {
+      "type": "string",
+      "description": "serve gateway kcp: the TLS front's certificate (with tls-key-file; unset, a self-signed one under <state>/tls)",
+      "env": "SOCIALWEB_TLS_CERT_FILE"
+    },
+    "tls-key-file": {
+      "type": "string",
+      "description": "serve gateway kcp: the TLS front's key (with tls-cert-file)",
+      "env": "SOCIALWEB_TLS_KEY_FILE"
+    },
+    "door-address": {
+      "type": "string",
+      "description": "serve gateway kcp: listen address of the socialweb-computer-k8s web app (port 0 is read back into the Gateway status)",
+      "env": "SOCIALWEB_DOOR_ADDRESS",
+      "default": "127.0.0.1:0"
+    },
+    "gateway-profile": {
+      "type": "string",
+      "description": "serve gateway kcp: the profile of the Gateway root object (prod or market-network)",
+      "env": "SOCIALWEB_GATEWAY_PROFILE",
+      "default": "prod"
+    },
+    "bootstrap-cluster": {
+      "type": "string",
+      "description": "serve gateway kcp: create this cluster (with its account and home workspaces) before the members start; unset creates none",
+      "env": "SOCIALWEB_BOOTSTRAP_CLUSTER"
+    },
+    "bootstrap-account-did": {
+      "type": "string",
+      "description": "serve gateway kcp: the account DID of bootstrap-cluster (did:web:example.com when unset)",
+      "env": "SOCIALWEB_BOOTSTRAP_ACCOUNT_DID"
     },
     "private-hostname": {
       "type": "string",

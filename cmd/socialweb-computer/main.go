@@ -92,6 +92,7 @@ func builtVerbs() map[string]builtVerb {
 		"internal vm inspect":    {vmOptions, runVM("inspect")},
 		"internal vm stop":       {vmOptions, runVM("stop")},
 		"internal vm list":       {vmOptions, runVM("list")},
+		"serve gateway kcp":      {serveGatewayOptions, runServeGatewayKcp},
 		"internal apiserver-front": {[]string{"owner", "kcp-front-address", "front-control", "front-state", "front-fd-store"},
 			runApiserverFront},
 	}

@@ -76,7 +76,7 @@ func Tree() []Verb {
 		{Path: "dev roll", Summary: "roll a dev instance's kcp (a tenant cluster rolls with units roll cluster)", Needs: []Need{NeedProc}},
 		{Path: "dev roll kcp", Summary: "blue/green kcp slot swap behind the instance's front", Needs: []Need{NeedProc}},
 		{Path: "dev gc", Summary: "collect the per-user asset cache (refused while a devsup of this user runs)", Needs: []Need{NeedProc}},
-		{Path: "serve gateway kcp", Summary: "the gateway application instance", BuiltBy: "M3-SERVE-GATEWAY-KCP", Needs: []Need{NeedHostBackend}},
+		{Path: "serve gateway kcp", Summary: "the gateway application instance: adopts or starts its kcp store, kine, front and active slot, applies its sets and its Gateway root object, then runs the root vault, the gateway, the TLS front, the clusterprovider and the door", Needs: []Need{NeedHostBackend}},
 		{Path: "serve gateway xrpc", Summary: "the XRPC gateway (socialweb-gateway; SOCIALWEB_GATEWAY_* env)"},
 		{Path: "serve provider", Summary: "the cluster provider (socialweb-clusterprovider; SOCIALWEB_CLUSTERPROVIDER_* env)"},
 		{Path: "run bidder", Summary: "a bidder application instance", BuiltBy: "plan 0007 M5-RUN-BIDDER", Needs: []Need{NeedHostBackend, NeedVMRuntime}},
