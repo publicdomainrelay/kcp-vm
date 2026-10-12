@@ -6620,6 +6620,30 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   afterwards (the old one went with the core unit's cgroup; the DenoPod started one new run), which
   listed `wa1` Ready.
 
+- **The web app's sessions and requester key live in the Gateway's root vault; each account is a
+  MarketIdentity; the Gateway's web app front holds the edge port (plan 0008 M3-DOOR-STATE-VAULT,
+  2026-10-12).** The OpenBaoServer `root-vault` has a second client, `socialweb-computer-k8s`, with its own
+  kvMount `socialweb-computer-k8s` and a policy on that mount only (a token of this client is refused on
+  `secret/`). The app controller renders the web app only once that client's certificate is in the
+  server's status, and grants it read of the CA and of its client directory. The web app finds the
+  OpenBaoServer through kcp (`--openbao-server root-vault`), logs in with its client certificate and keeps
+  each OAuth session at `<mount>/oauth-sessions/<did>` and its requester key at `<mount>/requester/key`,
+  behind the `SessionStore` port (`socialweb-computer-abc`; sibling stores
+  `socialweb-computer-oauth-session-fs` and `socialweb-computer-oauth-session-vault`) and a key port
+  (`key-file-fs`, `key-vault`). On each stored session it writes one MarketIdentity (mode
+  `oauthDelegated`, spec and status carry only the sessionRef) in `root:app`, where the gateway set binds
+  the `marketidentities` export; a removed session sets the phase SessionExpired. Its state dir holds no
+  secret. Edge port: the web app DenoPod binds port 0, and the Gateway's web app front (an L4 member of
+  the core, `internal/tlsfront` without TLS) listens on `spec.webAppFront`, 127.0.0.1:8788 in profile prod
+  (the address caddy reverse-proxies to, beside caddy 443 and the kcp front) and port 0 otherwise, and
+  forwards to the address the DenoPod reports; a web app restart on a new port is invisible to caddy.
+  Readings on hat-8, test prefix `socialweb-wa-`, market-network profile, UTC: fresh state 10:14:31Z to
+  Ready 10:15:26Z; a session deposited through the front at 10:15:29Z was in the vault (version 1) with
+  MarketIdentity `account-c6f141b2c8a0fbd5016d` Ready, and no session or key file existed under the state
+  dir; `systemctl --user restart` of the core at 10:15:56.8Z, and the same signed-in session listed the
+  account's clusters through the new web app process at 10:16:03.9Z; the cluster `wa2` it had created
+  was Ready at 10:17:09Z.
+
 ## 16. Vocabulary
 
 | | |
