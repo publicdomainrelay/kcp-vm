@@ -365,6 +365,23 @@ func TestTheSlotArgvCarriesLeaderElectionAndTheFrontURL(t *testing.T) {
 	}
 }
 
+func TestTheInProcessClientConfigIsTheFrontWithTheShardAdminToken(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "admin.kubeconfig")
+	front := "https://127.0.0.1:45000"
+	if err := WriteFrontKubeconfig(p, front, Admin{Token: "shard-token", CA: []byte("ca")}); err != nil {
+		t.Fatal(err)
+	}
+	for range 8 {
+		c, err := FrontRestConfig(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.Host != front || c.BearerToken != "shard-token" || string(c.CAData) != "ca" {
+			t.Fatalf("rest config host %q token %q: want the front base URL and the shard-admin token", c.Host, c.BearerToken)
+		}
+	}
+}
+
 func TestNoConsumerUsesTheVolatileKcpAdminContext(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "admin.kubeconfig")
 	front := "https://127.0.0.1:45000"

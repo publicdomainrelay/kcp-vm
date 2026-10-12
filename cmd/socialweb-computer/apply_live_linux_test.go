@@ -14,6 +14,7 @@ import (
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc/hostsvctest"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpapply"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpserver"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/manifests"
 )
 
@@ -79,7 +80,7 @@ func TestAChangedAPIResourceSchemaIsRefusedNotPatched(t *testing.T) {
 	if d == nil {
 		return
 	}
-	cfg, err := restConfigFromKubeconfig(up.AdminKubeconfig)
+	cfg, err := kcpserver.FrontRestConfig(up.AdminKubeconfig)
 	if err != nil {
 		t.Fatal(err)
 	}

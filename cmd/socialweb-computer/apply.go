@@ -184,14 +184,6 @@ func runManifestsRender(ctx context.Context, a *app, vals clicfg.Values, rest []
 	return exitOK
 }
 
-func restConfigFromKubeconfig(kubeconfig string) (*rest.Config, error) {
-	admin, err := kcpserver.ReadAdmin(kubeconfig)
-	if err != nil {
-		return nil, err
-	}
-	return &rest.Config{Host: admin.Server, BearerToken: admin.Token, TLSClientConfig: rest.TLSClientConfig{CAData: admin.CA}}, nil
-}
-
 func (a *app) applyConfig(vals clicfg.Values) (*rest.Config, error) {
 	kubeconfig := vals.String("kcp-kubeconfig")
 	if kubeconfig == "" {
@@ -201,7 +193,7 @@ func (a *app) applyConfig(vals clicfg.Values) (*rest.Config, error) {
 		}
 		kubeconfig = rec.AdminKubeconfig
 	}
-	return restConfigFromKubeconfig(kubeconfig)
+	return kcpserver.FrontRestConfig(kubeconfig)
 }
 
 func runApply(ctx context.Context, a *app, vals clicfg.Values, rest []string) int {

@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 )
@@ -49,6 +50,15 @@ func WriteFrontKubeconfig(path, front string, a Admin) error {
 	}
 	c.CurrentContext = RootCluster
 	return clientcmd.WriteToFile(*c, path)
+}
+
+func FrontRestConfig(kubeconfig string) (*rest.Config, error) {
+	a, err := ReadAdmin(kubeconfig)
+	if err != nil {
+		return nil, err
+	}
+	host, _, _ := strings.Cut(strings.TrimSuffix(a.Server, "/"), "/clusters/")
+	return &rest.Config{Host: host, BearerToken: a.Token, TLSClientConfig: rest.TLSClientConfig{CAData: a.CA}}, nil
 }
 
 type HTTPAdmin struct {
