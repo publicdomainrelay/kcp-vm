@@ -41,25 +41,28 @@ import (
 )
 
 const (
-	InstanceID       = "gateway"
-	FieldManager     = "socialweb-computer"
-	ApplyTimeout     = 3 * time.Minute
-	VaultTimeout     = 5 * time.Minute
-	ListenTimeout    = 2 * time.Minute
-	Poll             = 500 * time.Millisecond
-	ListenerXRPC     = "xrpc"
-	ListenerTLS      = "tls"
-	ListenerWebApp   = "web-app-front"
-	ComponentCore    = "core"
-	DefaultAddress   = "127.0.0.1:0"
-	ExeCore          = "socialweb-computer"
-	ExeKcp           = "kcp"
-	ExeKine          = "kine"
-	ExePostgres      = "postgres"
-	ExeBao           = "bao"
-	ExeDeno          = "deno"
-	recordProfile    = bootstrap.ProfileProdlike
-	componentsReport = "members"
+	InstanceID         = "gateway"
+	FieldManager       = "socialweb-computer"
+	ApplyTimeout       = 3 * time.Minute
+	VaultTimeout       = 5 * time.Minute
+	ListenTimeout      = 2 * time.Minute
+	Poll               = 500 * time.Millisecond
+	ListenerXRPC       = "xrpc"
+	ListenerTLS        = "tls"
+	ListenerWebApp     = "web-app-front"
+	ComponentCore      = "core"
+	DefaultAddress     = "127.0.0.1:0"
+	ExeCore            = "socialweb-computer"
+	ExeKcp             = "kcp"
+	ExeKine            = "kine"
+	ExePostgres        = "postgres"
+	ExeBao             = "bao"
+	ExeDeno            = "deno"
+	ExeExternalSecrets = "external-secrets"
+	ExeESOBundle       = "external-secrets-bundle"
+	ExeDumbpipe        = "dumbpipe"
+	recordProfile      = bootstrap.ProfileProdlike
+	componentsReport   = "members"
 )
 
 var Sets = []string{"provider", "permission-inventory", "hostprocesses", appctl.ManifestSet}

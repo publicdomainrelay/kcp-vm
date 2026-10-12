@@ -52,6 +52,19 @@ func (a *app) gatewayExecutables(ctx context.Context, vals clicfg.Values) (map[s
 		}
 		out[gatewaykcp.ExePostgres] = pg
 	}
+	if assets.Release() {
+		cache, err := a.assetCache(vals)
+		if err != nil {
+			return nil, err
+		}
+		for _, name := range []string{gatewaykcp.ExeExternalSecrets, gatewaykcp.ExeESOBundle, gatewaykcp.ExeDumbpipe} {
+			e, err := assets.Resolve(assets.Options{Cache: cache, Log: a.log}, name)
+			if err != nil {
+				return nil, err
+			}
+			out[name] = devinstance.Executable{Path: e.Path, Version: e.Version}
+		}
+	}
 	exe, err := selfExe()
 	if err != nil {
 		return nil, err

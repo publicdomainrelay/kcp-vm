@@ -53,12 +53,12 @@
     "linux/amd64": {
       "status": "release",
       "owner": "plan 0006 M1-ASSETS",
-            "assets": ["bao", "deno", "dumbpipe", "external-secrets", "firecracker", "k3s", "kcp", "kine", "pasta", "postgres", "socialweb-vmexec", "swc-userns-stage"]
+            "assets": ["bao", "deno", "dumbpipe", "external-secrets", "external-secrets-bundle", "firecracker", "k3s", "kcp", "kine", "pasta", "postgres", "socialweb-vmexec", "swc-userns-stage"]
     },
     "linux/arm64": {
       "status": "release",
       "owner": "plan 0006 M1-ASSETS",
-            "assets": ["bao", "deno", "dumbpipe", "external-secrets", "firecracker", "k3s", "kcp", "kine", "pasta", "postgres", "socialweb-vmexec"]
+            "assets": ["bao", "deno", "dumbpipe", "external-secrets", "external-secrets-bundle", "firecracker", "k3s", "kcp", "kine", "pasta", "postgres", "socialweb-vmexec"]
     },
     "darwin/arm64": {"status": "seam", "owner": "plan 0012", "note": "seam: builds and vets, no assets, owned by plan 0012", "assets": []},
     "darwin/amd64": {"status": "seam", "owner": "plan 0012", "note": "seam: builds and vets, no assets, owned by plan 0012", "assets": []},
@@ -148,6 +148,20 @@
       "platforms": {
         "linux/amd64": {"treeSha256": "b9d78696a060bc30f270731679d8222a1a4645f1c6f9c30aae647be6ef85d89e", "rawBytes": 8617456, "zstdBytes": 3097638},
         "linux/arm64": {"treeSha256": "92829aed18f366df3bd3a7295e28e1a225414a56819622c37693d02a8255ca91", "rawBytes": 7248832, "zstdBytes": 2854766}
+      }
+    },
+    "external-secrets-bundle": {
+      "version": "v2.11.0",
+      "source": "github.com/external-secrets/external-secrets release v2.11.0, its external-secrets.yaml (the bundle components.external-secrets.bundleSha256 pins)",
+      "verify": "sha256 pinned here, equal to components.external-secrets.bundleSha256",
+      "executables": {"external-secrets-bundle": "external-secrets.yaml"},
+      "fetch": {
+        "linux/amd64": {"kind": "file", "url": "https://github.com/external-secrets/external-secrets/releases/download/v2.11.0/external-secrets.yaml", "sha256": "c427124642886d240af8f28d294714a168d920ef8e5d55db14600e00ed0cfb80", "archive": "raw", "members": {"external-secrets.yaml": "external-secrets.yaml"}},
+        "linux/arm64": {"kind": "file", "url": "https://github.com/external-secrets/external-secrets/releases/download/v2.11.0/external-secrets.yaml", "sha256": "c427124642886d240af8f28d294714a168d920ef8e5d55db14600e00ed0cfb80", "archive": "raw", "members": {"external-secrets.yaml": "external-secrets.yaml"}}
+      },
+      "platforms": {
+        "linux/amd64": {"treeSha256": "6146cf4ed0df6f2f9f42a395c239143128e3ae727af949759666cb20babe3181", "rawBytes": 2007547, "zstdBytes": 47789},
+        "linux/arm64": {"treeSha256": "6146cf4ed0df6f2f9f42a395c239143128e3ae727af949759666cb20babe3181", "rawBytes": 2007547, "zstdBytes": 47789}
       }
     },
     "firecracker": {
