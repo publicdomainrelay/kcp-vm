@@ -202,3 +202,9 @@ const (
 
 	FieldManagerComputeVMProvider = "compute-provider-kcp"
 )
+
+const (
+	UserDataSecretNamespace = "default"
+
+	UserDataSecretKey = "user-data"
+)
