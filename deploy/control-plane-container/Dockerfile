@@ -42,7 +42,7 @@ RUN --mount=type=bind,from=goroot,target=/go/toolchain,ro \
     --mount=type=bind,from=gomod,target=/host-mod,ro \
     --mount=type=cache,id=gomod,target=/go/pkg/mod \
     --mount=type=cache,id=gocache,target=/go/cache \
-    sh -ec 'if [ ! -d /go/pkg/mod/k8s.io ]; then cp -a /host-mod/. /go/pkg/mod/; fi; go build -o /usr/local/bin/socialweb-computer-kcp-check-host ./cmd/socialweb-computer-kcp-check-host && go build -o /usr/local/bin/socialweb-nodeimage ./cmd/socialweb-nodeimage && go build -o /usr/local/bin/socialweb-gateway ./cmd/socialweb-gateway && go build -o /usr/local/bin/socialweb-credential ./cmd/socialweb-credential && go build -o /usr/local/bin/socialweb-clusterprovider ./cmd/socialweb-clusterprovider && go build -o /usr/local/bin/socialweb-cloud-controller-manager ./cmd/socialweb-cloud-controller-manager && go build -o /usr/local/bin/socialweb-vault ./cmd/socialweb-vault && go build -o /usr/local/bin/socialweb-tenantcredential ./cmd/socialweb-tenantcredential'
+    sh -ec 'if [ ! -d /go/pkg/mod/k8s.io ]; then cp -a /host-mod/. /go/pkg/mod/; fi; go build -o /usr/local/bin/socialweb-computer-kcp-check-host ./cmd/socialweb-computer-kcp-check-host && go build -o /usr/local/bin/socialweb-gateway ./cmd/socialweb-gateway && go build -o /usr/local/bin/socialweb-credential ./cmd/socialweb-credential && go build -o /usr/local/bin/socialweb-clusterprovider ./cmd/socialweb-clusterprovider && go build -o /usr/local/bin/socialweb-cloud-controller-manager ./cmd/socialweb-cloud-controller-manager && go build -o /usr/local/bin/socialweb-vault ./cmd/socialweb-vault && go build -o /usr/local/bin/socialweb-tenantcredential ./cmd/socialweb-tenantcredential'
 
 FROM gobuild AS credentials
 
@@ -51,54 +51,6 @@ RUN --mount=type=bind,from=goroot,target=/go/toolchain,ro \
     --mount=type=cache,id=gomod,target=/go/pkg/mod \
     --mount=type=cache,id=gocache,target=/go/cache \
     sh -ec 'mkdir -p /downloads; for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do os=${target%/*}; arch=${target#*/}; GOOS=$os GOARCH=$arch go build -ldflags "-s -w" -buildvcs=false -o /downloads/socialweb-credential-$os-$arch ./cmd/socialweb-credential; done; ls -la /downloads'
-
-FROM ${FEDORA} AS tools
-
-RUN dnf install -y --setopt=install_weak_deps=False \
-      squashfs-tools cpio xz zstd e2fsprogs busybox coreutils findutils tar gzip \
- && dnf clean all
-
-FROM tools AS nodeimage
-
-ARG NODEIMAGE_CONFIG=/home/johnandersen777/kcp-image/nodeimage.json
-
-ARG KCP_IMAGE=/home/johnandersen777/kcp-image
-ARG REPO=/home/johnandersen777/src/publicdomainrelay-kcp/socialweb-computer-kcp
-
-ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-
-COPY --from=binaries /k3s /usr/local/bin/k3s
-
-COPY --from=gobuild /usr/local/bin/socialweb-computer-kcp-check-host /usr/local/bin/socialweb-computer-kcp-check-host
-
-COPY --from=gobuild /usr/local/bin/socialweb-nodeimage /usr/local/bin/socialweb-nodeimage
-
-COPY go.mod go.sum ${REPO}/
-
-COPY cmd/socialweb-nodeinit ${REPO}/cmd/socialweb-nodeinit
-
-COPY api ${REPO}/api
-
-COPY internal ${REPO}/internal
-
-RUN mkdir -p ${KCP_IMAGE}/out ${KCP_IMAGE}/stage ${KCP_IMAGE}/cache
-
-COPY --from=kcpimage nodeimage.json ${NODEIMAGE_CONFIG}
-
-WORKDIR ${REPO}
-
-RUN --mount=type=bind,from=goroot,target=/go/toolchain,ro \
-    --mount=type=bind,from=gomod,target=/host-mod,ro \
-    --mount=type=cache,id=gomod,target=/go/pkg/mod \
-    --mount=type=cache,id=gocache,target=/go/cache \
-    --mount=type=bind,from=artifacts,target=${KCP_IMAGE}/artifacts,ro \
-    --mount=type=bind,from=bootdir,target=/boot,ro \
-    --mount=type=bind,from=modulesdir,target=/lib/modules,ro \
-    sh -ec 'set -e; if [ ! -d /go/pkg/mod/k8s.io ]; then cp -a /host-mod/. /go/pkg/mod/; fi; export PATH=/go/toolchain/bin:$PATH GOPATH=/go GOMODCACHE=/go/pkg/mod GOCACHE=/go/cache GOTOOLCHAIN=local GOFLAGS=-mod=mod; socialweb-computer-kcp-check-host -config "$0" -build; GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -buildvcs=false -o /tmp/socialweb-nodeinit ./cmd/socialweb-nodeinit; socialweb-nodeimage -config "$0" -init-asset /tmp/socialweb-nodeinit; mkdir -p /dist; for d in '"${KCP_IMAGE}"'/out/sha256-*; do cp -a "$d" /dist/; done; ls -la /dist' "$NODEIMAGE_CONFIG"
-
-FROM scratch AS extract
-
-COPY --from=nodeimage /dist/ /
 
 FROM ${FEDORA} AS controlplane
 

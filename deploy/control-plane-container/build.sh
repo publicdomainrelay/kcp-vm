@@ -5,14 +5,10 @@ REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 DOCKERFILE="$REPO/deploy/control-plane-container/Dockerfile"
 
 IMAGE="${KCP_CONTROLPLANE_IMAGE:-socialweb-control-plane:local}"
-NODEIMAGE_IMAGE="${KCP_NODEIMAGE_IMAGE:-socialweb-control-plane-nodeimage:local}"
-KCP_IMAGE_DIR="${KCP_IMAGE_DIR:-/home/johnandersen777/kcp-image}"
 BINARIES="${KCP_BINARIES_CONTEXT:-/var/tmp/socialweb-control-plane-binaries}"
 TOOLCHAIN="${KCP_GO_TOOLCHAIN:-$(go env GOROOT)}"
 MODCACHE="${KCP_GO_MODCACHE:-$(go env GOMODCACHE)}"
 BUILDCACHE="${KCP_GO_BUILDCACHE:-$(go env GOCACHE)}"
-EXPORT_DIR="${KCP_EXPORT_DIR:-}"
-BOOT="${KCP_BOOT_CONTEXT:-/var/tmp/socialweb-control-plane-boot}"
 
 target="${1:-controlplane}"
 DOOR="$REPO/socialweb-computer-k8s"
@@ -93,66 +89,31 @@ if [ "$target" = "k8s" ]; then
   exit 0
 fi
 
-for dir in "$TOOLCHAIN" "$MODCACHE" "$BUILDCACHE" "$KCP_IMAGE_DIR"; do
+for dir in "$TOOLCHAIN" "$MODCACHE" "$BUILDCACHE"; do
   [ -d "$dir" ] || { echo >&2 "no $dir on this host: this build reads it as a named context and cannot invent it"; exit 1; }
 done
 
-release="$(cat /proc/sys/kernel/osrelease)"
-install -d -m 0755 "$BOOT"
-for file in "vmlinuz-$release" "config-$release"; do
-  [ -r "/boot/$file" ] || { echo >&2 "no /boot/$file on this host: the guest boots this host's own kernel and the config k3s's check-config reads, and neither can be invented"; exit 1; }
-  install -m 0644 "/boot/$file" "$BOOT/$file"
-done
-echo "boot        $BOOT (vmlinuz-$release, config-$release: /boot as a context cannot be sent, it holds /boot/efi at mode 0700 and the CLI walks the whole tree)"
-
 stage_binaries
-
 
 echo "toolchain   $TOOLCHAIN"
 echo "modulecache $MODCACHE"
 echo "buildcache  $BUILDCACHE"
-echo "kcp-image   $KCP_IMAGE_DIR"
 echo "binaries    $BINARIES"
 echo "target      $target"
 
-build() {
-  docker buildx build \
-    --build-context "goroot=$TOOLCHAIN" \
-    --build-context "gomod=$MODCACHE" \
-    --build-context "gocache=$BUILDCACHE" \
-    --build-context "kcpimage=$KCP_IMAGE_DIR" \
-    --build-context "artifacts=$KCP_IMAGE_DIR/artifacts" \
-    --build-context "bootdir=$BOOT" \
-    --build-context "modulesdir=/lib/modules" \
-    --build-context "binaries=$BINARIES" \
-    --file "$DOCKERFILE" \
-    "$@"
-}
-
 case "$target" in
   controlplane)
-    build --target controlplane --tag "$IMAGE" --load "$REPO"
+    docker buildx build \
+      --build-context "goroot=$TOOLCHAIN" \
+      --build-context "gomod=$MODCACHE" \
+      --build-context "gocache=$BUILDCACHE" \
+      --build-context "binaries=$BINARIES" \
+      --file "$DOCKERFILE" \
+      --target controlplane --tag "$IMAGE" --load "$REPO"
     echo "built $IMAGE"
     ;;
-  nodeimage)
-    build --target nodeimage --progress=plain "$REPO"
-    ;;
-  nodeimage-image)
-    build --target nodeimage --tag "$NODEIMAGE_IMAGE" --load "$REPO"
-    echo "built $NODEIMAGE_IMAGE"
-    ;;
-  nodeimages)
-    build --target extract --progress=plain "$REPO"
-    ;;
-  extract)
-    : "${EXPORT_DIR:?set KCP_EXPORT_DIR to the image store the extracted artifact lands in}"
-    install -d -m 0755 "$EXPORT_DIR"
-    build --target extract --progress=plain --output "type=local,dest=$EXPORT_DIR" "$REPO"
-    echo "extracted into $EXPORT_DIR:"
-    ls -la "$EXPORT_DIR"
-    ;;
   *)
-    echo >&2 "unknown target $target: controlplane, nodeimage, nodeimage-image, nodeimages or extract"
+    echo >&2 "unknown target $target: controlplane or k8s"
     exit 1
     ;;
 esac

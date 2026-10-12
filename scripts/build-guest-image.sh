@@ -232,8 +232,8 @@ tar -xzf "$dp_tgz" -C "$tw/assets/unpack"
 [ -f "$tw/assets/unpack/${dp_member#./}" ] || die "the dumbpipe archive $dp_url holds no $dp_member"
 mv "$tw/assets/unpack/${dp_member#./}" "$tw/assets/dumbpipe.bin"
 
-nodeimage=(go run -C "$root" ./cmd/socialweb-nodeimage)
-"${nodeimage[@]}" -guest-rootfs -build "$root/deploy/guest-image/rootfs.json" -base "$base_tar" \
+nodeimage=(go run -C "$root" ./cmd/socialweb-computer nodeimage)
+"${nodeimage[@]}" guest-rootfs -build "$root/deploy/guest-image/rootfs.json" -base "$base_tar" \
   -asset "dumbpipe=$tw/assets/dumbpipe.bin" -source-date-epoch "$sde" \
   -out "$tw/rootfs.tar" -report "$tw/rootfs-report.json"
 rm -rf "$tw/assets"
@@ -256,7 +256,7 @@ in_builder -e FS_UUID="$uuid" -e SIZE_MIB="$size_mib" -e E2FSPROGS_FAKE_TIME="$s
 mv "$tw/fs/rootfs.ext4" "$out/$target/rootfs.ext4"
 rm -rf "$tw/fs" "$tw/rootfs.tar"
 
-"${nodeimage[@]}" -guest-manifest -target "$target" -dir "$out/$target" -report "$tw/rootfs-report.json"
+"${nodeimage[@]}" guest-manifest -target "$target" -dir "$out/$target" -report "$tw/rootfs-report.json"
 rm -f "$tw/rootfs-report.json"
 
 recorded="$(pin "$t.outputs | length")"

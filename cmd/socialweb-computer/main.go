@@ -98,7 +98,7 @@ type foldedVerb struct {
 }
 
 func foldedVerbs() map[string]foldedVerb {
-	return map[string]foldedVerb{
+	verbs := map[string]foldedVerb{
 		"serve gateway xrpc":                {nil, gatewaymain.Main},
 		"serve provider":                    {nil, providermain.Main},
 		"migrate":                           {[]string{"migrate"}, providermain.Main},
@@ -108,6 +108,10 @@ func foldedVerbs() map[string]foldedVerb {
 		"internal cloud-controller-manager": {nil, ccmmain.Main},
 		"internal tenantcredential":         {nil, tenantcredentialmain.Main},
 	}
+	for path, v := range devFoldedVerbs() {
+		verbs[path] = v
+	}
+	return verbs
 }
 
 func main() {

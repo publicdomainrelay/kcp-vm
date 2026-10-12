@@ -62,7 +62,7 @@ func Missing(v Verb, goos, goarch string) (string, bool) {
 }
 
 func Tree() []Verb {
-	return []Verb{
+	return append([]Verb{
 		{Path: "version", Summary: "print the build, its Go and its target (--json)"},
 		{Path: "dev up", Summary: "start (or adopt) an application instance under devsup: kine, a port-0 front and one kcp slot behind it (--profile minimal; --fg binds it to this terminal)", Needs: []Need{NeedProc}},
 		{Path: "dev host", Summary: "start (or adopt) the user's parent instance (dev-host): its own bootstrap layer under its own devsup; its root:dev:<instance> workspaces hold each child's HostProcess objects (dev up --parent dev-host)", Needs: []Need{NeedProc}},
@@ -110,7 +110,7 @@ func Tree() []Verb {
 		{Path: "internal apiserver-front", Summary: "the L4 front of kcp or a tenant apiserver", Hidden: true},
 		{Path: "internal cloud-controller-manager", Summary: "the tenant CCM, re-exec'd by the cluster provider", Hidden: true},
 		{Path: "internal tenantcredential", Summary: "mint a tenant credential (socialweb-tenantcredential)", Hidden: true},
-	}
+	}, devVerbs...)
 }
 
 func Find(args []string) (Verb, []string, bool) {
