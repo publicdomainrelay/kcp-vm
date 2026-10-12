@@ -90,3 +90,23 @@ func TestAClaimDeletedUnderAHeldNodeIsAnEnd(t *testing.T) {
 			"stays counted forever: the cluster never asks the market again", end)
 	}
 }
+
+func TestAClaimTheDoorMarkedLostIsAnEndThatIsNotTheMarketDeclining(t *testing.T) {
+	claims := &fakeClaims{}
+	host, err := New(testOptions(t, claims))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := host.Provision(context.Background()); err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+	claims.setContract(testWorkspace, testNodeName, v1alpha1.NodeClaimContract{RFPUri: "at://o/rfp/1"})
+	claims.setPhase(testWorkspace, testNodeName, v1alpha1.NodeClaimLost, "the bidder reported the guest terminated (guest_poweroff)")
+	end := host.End()
+	if !end.Lost || end.Declined || end.Message != "the bidder reported the guest terminated (guest_poweroff)" {
+		t.Fatalf("End = %+v, want a Lost end carrying the door's message and no market back-off", end)
+	}
+	if Adoptable(v1alpha1.NodeClaim{Status: v1alpha1.NodeClaimStatus{Phase: v1alpha1.NodeClaimLost}}) {
+		t.Fatal("a Lost claim is adoptable; its guest is gone and adopting it holds a node nothing runs")
+	}
+}

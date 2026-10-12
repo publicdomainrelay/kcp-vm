@@ -136,7 +136,8 @@ func (h *nodeHosts) releaseStranded(ctx context.Context, cluster string, claims 
 	for i := range claims {
 		claim := claims[i]
 		if claim.Spec.Cluster != cluster || claim.DeletionTimestamp != nil ||
-			claim.Status.Phase != v1alpha1.NodeClaimFailed || held[claim.Name] {
+			(claim.Status.Phase != v1alpha1.NodeClaimFailed && claim.Status.Phase != v1alpha1.NodeClaimLost) ||
+			held[claim.Name] {
 			continue
 		}
 		ordinal, ok := nodeOrdinalInName(prefix, claim.Name)

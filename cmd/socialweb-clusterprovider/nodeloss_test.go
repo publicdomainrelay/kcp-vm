@@ -346,3 +346,181 @@ func TestTheJoinGraceIsConfigurable(t *testing.T) {
 		t.Fatalf("NodeJoinGrace = %s, want 15m from SOCIALWEB_CLUSTERPROVIDER_NODE_JOIN_GRACE", cfg.NodeJoinGrace)
 	}
 }
+
+func TestAClaimTheDoorMarkedLostIsReleasedAtOnceNotAfterTheLossGrace(t *testing.T) {
+	f := newLossFixture(t)
+	ctx := context.Background()
+	f.registerNode(t, corev1.ConditionTrue, f.clock.Now().Add(-time.Minute))
+	if _, err := f.hosts.confirm(ctx, f.key); err != nil {
+		t.Fatalf("confirm while Ready: %v", err)
+	}
+	f.claims.setPhase(testHomePrefix+"liveweb", f.node, v1alpha1.NodeClaimLost)
+	outcome, err := f.hosts.confirm(ctx, f.key)
+	if err != nil {
+		t.Fatalf("confirm after the door marked the claim Lost: %v", err)
+	}
+	if f.claims.deletes != 1 || f.claims.held() != 0 || f.nodePresent(t) {
+		t.Fatalf("a claim the door marked Lost (the bidder reported its guest terminated) left deletes %d, "+
+			"held %d, Node present %v; want it released in the same pass, with no 90s NotReady wait",
+			f.claims.deletes, f.claims.held(), f.nodePresent(t))
+	}
+	if !slices.Equal(outcome.lost, []string{f.node}) || outcome.declinedReason() != "" {
+		t.Fatalf("the pass reported lost %v and declined %q; want the node lost and no market back-off, so "+
+			"the scale pass rents its replacement", outcome.lost, outcome.declinedReason())
+	}
+	if _, err := f.hosts.confirm(ctx, f.key); err != nil || f.claims.deletes != 1 {
+		t.Fatalf("a second pass deleted again (deletes %d, err %v)", f.claims.deletes, err)
+	}
+}
+
+type pathProbe struct {
+	mu sync.Mutex
+	up bool
+}
+
+func (p *pathProbe) set(up bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.up = up
+}
+
+func (p *pathProbe) PathUp(context.Context, string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.up
+}
+
+func newPathFixture(t *testing.T, startUp bool) (*lossFixture, *pathProbe) {
+	t.Helper()
+	probe := &pathProbe{up: startUp}
+	f := newLossFixture(t)
+	f.hosts.opts.PathUp = probe.PathUp
+	n, err := f.hosts.forCluster(f.key)
+	if err != nil {
+		t.Fatalf("forCluster: %v", err)
+	}
+	n.(*tenantNodes).opts.PathUp = probe.PathUp
+	return f, probe
+}
+
+func (f *lossFixture) confirmAt(t *testing.T, at time.Time) confirmOutcome {
+	t.Helper()
+	f.clock.set(at)
+	outcome, err := f.hosts.confirm(context.Background(), f.key)
+	if err != nil {
+		t.Fatalf("confirm at %s: %v", at.Format(time.RFC3339), err)
+	}
+	return outcome
+}
+
+func TestANodeNotReadyDuringOurLinkOutageIsKeptFor90sAfterTheLinkReturns(t *testing.T) {
+	f, probe := newPathFixture(t, true)
+	start := f.clock.Now()
+	f.registerNode(t, corev1.ConditionTrue, start.Add(-time.Minute))
+	f.confirmAt(t, start)
+	probe.set(false)
+	f.confirmAt(t, start.Add(5*time.Second))
+	wentNotReady := start.Add(45 * time.Second)
+	f.setReady(t, corev1.ConditionUnknown, wentNotReady)
+	for _, at := range []time.Duration{time.Minute, 3 * time.Minute, 5 * time.Minute} {
+		f.confirmAt(t, start.Add(at))
+		if f.claims.deletes != 0 {
+			t.Fatalf("%s into our own link outage a node NotReady since %s was released; our outage "+
+				"is never billed to a tenant's VM", at, wentNotReady.Format(time.RFC3339))
+		}
+	}
+	linkBack := start.Add(5*time.Minute + 10*time.Second)
+	probe.set(true)
+	f.confirmAt(t, linkBack)
+	f.confirmAt(t, linkBack.Add(89*time.Second))
+	if f.claims.deletes != 0 {
+		t.Fatalf("89s after our link returned the node was released (deletes %d); the NotReady clock "+
+			"counts from when our side of the path is back, not from its lastTransitionTime", f.claims.deletes)
+	}
+	outcome := f.confirmAt(t, linkBack.Add(90*time.Second))
+	if f.claims.deletes != 1 || !slices.Equal(outcome.lost, []string{f.node}) {
+		t.Fatalf("90s after our link returned a node still NotReady was kept (deletes %d, lost %v)",
+			f.claims.deletes, outcome.lost)
+	}
+}
+
+func TestANodeNotReadyDuringAClusterColdStartIsKeptFor90sAfterTheApiserverAnswers(t *testing.T) {
+	f, probe := newPathFixture(t, false)
+	start := f.clock.Now()
+	f.registerNode(t, corev1.ConditionUnknown, start.Add(-10*time.Minute))
+	f.confirmAt(t, start)
+	f.confirmAt(t, start.Add(10*time.Second))
+	if f.claims.deletes != 0 {
+		t.Fatalf("a node was released while its cluster's apiserver did not answer (deletes %d)", f.claims.deletes)
+	}
+	answered := start.Add(20 * time.Second)
+	probe.set(true)
+	f.confirmAt(t, answered)
+	f.confirmAt(t, answered.Add(89*time.Second))
+	if f.claims.deletes != 0 {
+		t.Fatalf("89s after a cold-started cluster's apiserver answered, a node NotReady since before the "+
+			"cold start was released (deletes %d)", f.claims.deletes)
+	}
+	f.confirmAt(t, answered.Add(90*time.Second))
+	if f.claims.deletes != 1 {
+		t.Fatalf("90s after the apiserver answered the node is still held (deletes %d)", f.claims.deletes)
+	}
+}
+
+func TestANodeNotReadyBeforeAProviderRestartIsStillReleasedOnTime(t *testing.T) {
+	f, _ := newPathFixture(t, true)
+	start := f.clock.Now()
+	f.registerNode(t, corev1.ConditionUnknown, start.Add(-100*time.Second))
+	outcome := f.confirmAt(t, start)
+	if f.claims.deletes != 1 || !slices.Equal(outcome.lost, []string{f.node}) {
+		t.Fatalf("a provider whose first look found its path up rebased a node Unknown for 100s to its own "+
+			"start (deletes %d, lost %v); the tenant's kcm kept running through our restart, so the "+
+			"transition is real and the node is released on time", f.claims.deletes, outcome.lost)
+	}
+}
+
+func TestTheJoinGraceIsRebasedToPathUpToo(t *testing.T) {
+	f, probe := newPathFixture(t, true)
+	start := f.clock.Now()
+	f.confirmAt(t, start)
+	probe.set(false)
+	f.confirmAt(t, start.Add(10*time.Second))
+	f.registerNode(t, corev1.ConditionFalse, start.Add(20*time.Second))
+	f.confirmAt(t, start.Add(3*time.Minute))
+	back := start.Add(4 * time.Minute)
+	probe.set(true)
+	f.confirmAt(t, back)
+	f.confirmAt(t, back.Add(NodeJoinGrace-time.Second))
+	if f.claims.deletes != 0 {
+		t.Fatalf("a never-Ready node registered during our outage was released %s after the path came "+
+			"back (deletes %d); the join grace counts from path up", NodeJoinGrace-time.Second, f.claims.deletes)
+	}
+	f.confirmAt(t, back.Add(NodeJoinGrace))
+	if f.claims.deletes != 1 {
+		t.Fatalf("the join grace from path up passed and the never-Ready node is still held (deletes %d)",
+			f.claims.deletes)
+	}
+}
+
+func TestAFlappingPathDoesNotPostponeReleaseForever(t *testing.T) {
+	f, probe := newPathFixture(t, true)
+	start := f.clock.Now()
+	f.registerNode(t, corev1.ConditionTrue, start.Add(-time.Hour))
+	f.confirmAt(t, start)
+	dead := start.Add(5 * time.Second)
+	f.setReady(t, corev1.ConditionUnknown, dead)
+	at := start
+	for i := 0; i < 60 && f.claims.deletes == 0; i++ {
+		at = at.Add(5 * time.Second)
+		probe.set(i%4 != 3)
+		f.confirmAt(t, at)
+	}
+	if f.claims.deletes != 1 {
+		t.Fatalf("a path that drops for one 5s pass in four never let a dead node go (deletes %d after "+
+			"%s); a blip shorter than the outage threshold is not our outage", f.claims.deletes, at.Sub(dead))
+	}
+	if at.Sub(dead) > NodeLossGrace+10*time.Second {
+		t.Fatalf("the flapping path postponed the release to %s after the node died, want about %s",
+			at.Sub(dead), NodeLossGrace)
+	}
+}

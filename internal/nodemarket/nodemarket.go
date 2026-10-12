@@ -242,7 +242,7 @@ func (h *Host) ConfirmJoined(ctx context.Context) error {
 	}
 	switch claim.Status.Phase {
 	case v1alpha1.NodeClaimJoining, v1alpha1.NodeClaimRunning:
-	case v1alpha1.NodeClaimFailed:
+	case v1alpha1.NodeClaimFailed, v1alpha1.NodeClaimLost:
 		return fmt.Errorf("nodemarket: node %s of %s: %s",
 			h.opts.NodeName, h.opts.Cluster, endedMessage(claim))
 	default:
@@ -263,6 +263,8 @@ type End struct {
 	Message string
 
 	Declined bool
+
+	Lost bool
 }
 
 func MarketDeclined(claim *v1alpha1.NodeClaim) bool {
@@ -290,7 +292,8 @@ func (h *Host) End() End {
 	if !endedClaimPhase(claim.Status.Phase) {
 		return End{}
 	}
-	return End{Message: endedMessage(claim), Declined: MarketDeclined(claim)}
+	return End{Message: endedMessage(claim), Declined: MarketDeclined(claim),
+		Lost: claim.Status.Phase == v1alpha1.NodeClaimLost}
 }
 
 func (h *Host) Terminal() string {
@@ -383,7 +386,8 @@ func (h *Host) read(ctx context.Context) (*v1alpha1.NodeClaim, error) {
 }
 
 func endedClaimPhase(phase v1alpha1.NodeClaimPhase) bool {
-	return phase == v1alpha1.NodeClaimFailed || phase == v1alpha1.NodeClaimReleased
+	return phase == v1alpha1.NodeClaimFailed || phase == v1alpha1.NodeClaimReleased ||
+		phase == v1alpha1.NodeClaimLost
 }
 
 func endedMessage(claim *v1alpha1.NodeClaim) string {
