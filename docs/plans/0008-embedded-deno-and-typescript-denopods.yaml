@@ -460,8 +460,8 @@ items:
       livegate, TestTwoPreloadsBothRunBeforeTheEntry; red first.
     done_when: "the market network's services start from the template on hat-8 with the probes of M1-MARKET-NETWORK run 9 passing."
     risks: []
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M3-DOOR-DENOPOD
     milestone: M3
     title: The door runs as a DenoPod
