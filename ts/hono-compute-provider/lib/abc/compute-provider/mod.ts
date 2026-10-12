@@ -58,6 +58,7 @@ export interface GuestHostKeysAck {
   ok: boolean;
   status?: number;
   reason?: string;
+  uri?: string;
 }
 
 export type GuestHostKeysHandler = (report: GuestHostKeysReport) => Promise<GuestHostKeysAck>;
@@ -106,6 +107,10 @@ export class GuestHostKeysRelay {
 
   bindNonce(nonce: string, id: string | number): void {
     if (nonce) this.#guestByNonce.set(nonce, id);
+  }
+
+  guestOf(nonce: string): string | number | undefined {
+    return this.#guestByNonce.get(nonce);
   }
 
   forget(id: string | number): void {

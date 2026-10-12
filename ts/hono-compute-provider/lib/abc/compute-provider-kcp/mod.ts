@@ -3,6 +3,7 @@ import {
   COMPUTE_VM_RESOURCE,
   type ComputeVM,
   type ComputeVMLostReason,
+  type ComputeVMMarket,
   type ComputeVMPhase,
   USER_DATA_SECRET_KEY,
   USER_DATA_SECRET_NAMESPACE,
@@ -74,6 +75,23 @@ export function computeVMFor(input: ComputeVMInput): ComputeVM {
       ...(input.reuseStale === undefined ? {} : { image: { reuseStale: input.reuseStale } }),
       ...(input.stopGraceSeconds === undefined ? {} : { stopGraceSeconds: input.stopGraceSeconds }),
     },
+  };
+}
+
+export function mergeMarketStatus(current: ComputeVMMarket | undefined, patch: ComputeVMMarket): ComputeVMMarket {
+  const merged: ComputeVMMarket = { ...(current ?? {}) };
+  for (const [key, value] of Object.entries(patch) as Array<[keyof ComputeVMMarket, unknown]>) {
+    if (value !== undefined) (merged as Record<string, unknown>)[key] = value;
+  }
+  return merged;
+}
+
+export function marketStatusFor(name: string, market: ComputeVMMarket): ComputeVM {
+  return {
+    apiVersion: COMPUTE_VM_API_VERSION,
+    kind: COMPUTE_VM_RESOURCE.kind,
+    metadata: { name },
+    status: { market },
   };
 }
 

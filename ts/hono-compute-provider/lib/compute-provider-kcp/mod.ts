@@ -28,6 +28,8 @@ import {
   goneOf,
   hasEnded,
   isReleasing,
+  marketStatusFor,
+  mergeMarketStatus,
   phaseOf,
   type UserDataSecret,
   userDataSecretFor,
@@ -37,6 +39,7 @@ import {
   assertComputeVM,
   COMPUTE_VM_RESOURCE,
   type ComputeVM,
+  type ComputeVMMarket,
   FIELD_MANAGER_COMPUTE_VM_PROVIDER,
   parseComputeVM,
   USER_DATA_SECRET_NAMESPACE,
@@ -79,6 +82,7 @@ export interface ComputeVMList {
 
 export interface KcpComputeVMClient {
   apply(vm: ComputeVM): Promise<ComputeVM>;
+  applyStatus(vm: ComputeVM): Promise<ComputeVM>;
   get(name: string): Promise<ComputeVM | null>;
   list(): Promise<ComputeVMList>;
   watch(resourceVersion: string, signal: AbortSignal): AsyncGenerator<ComputeVMWatchEvent>;
@@ -195,6 +199,9 @@ export function createKcpComputeVMClient(opts: KcpComputeVMClientOptions): KcpCo
       assertComputeVM(vm);
       return parseComputeVM(await request(`${item(vm.metadata!.name!)}${applyQuery}`, applyInit(vm)));
     },
+    async applyStatus(vm) {
+      return parseComputeVM(await request(`${item(vm.metadata!.name!)}/status${applyQuery}`, applyInit(vm)));
+    },
     async get(name) {
       const raw = await absentOn404(request(item(name)));
       return raw === null ? null : parseComputeVM(raw);
@@ -215,6 +222,43 @@ export function createKcpComputeVMClient(opts: KcpComputeVMClientOptions): KcpCo
     },
     async deleteSecret(name) {
       return (await absentOn404(request(secretItem(name), { method: "DELETE" }))) !== null;
+    },
+  };
+}
+
+export interface ComputeVMMarketRecorder {
+  record(name: string, patch: ComputeVMMarket): Promise<void>;
+}
+
+export function createComputeVMMarketRecorder(opts: {
+  client: KcpComputeVMClient;
+  logger: ComputeProviderCtx["logger"];
+}): ComputeVMMarketRecorder {
+  const chains = new Map<string, Promise<void>>();
+
+  async function write(name: string, patch: ComputeVMMarket): Promise<void> {
+    try {
+      const current = await opts.client.get(name);
+      if (!current) {
+        opts.logger.warn("computevm_market_status_no_object", { name, fields: Object.keys(patch) });
+        return;
+      }
+      const market = mergeMarketStatus(current.status?.market, patch);
+      await opts.client.applyStatus(marketStatusFor(name, market));
+      opts.logger.info("computevm_market_status_recorded", { name, fields: Object.keys(patch) });
+    } catch (err) {
+      opts.logger.warn("computevm_market_status_failed", { name, fields: Object.keys(patch), error: String(err) });
+    }
+  }
+
+  return {
+    record(name, patch) {
+      const next = (chains.get(name) ?? Promise.resolve()).then(() => write(name, patch));
+      chains.set(name, next);
+      next.finally(() => {
+        if (chains.get(name) === next) chains.delete(name);
+      });
+      return next;
     },
   };
 }

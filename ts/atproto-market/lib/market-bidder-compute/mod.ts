@@ -239,16 +239,20 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
         return { ok: false, status: 409, reason: "host keys already reported for this receipt" };
       }
       reportedHostKeys.set(contract.receiptUri, checked.keys);
+      let hostKeysUri: string | undefined;
       const published = await publishContractEvent(
         { key, receiptUri: contract.receiptUri, receiptCid: contract.receiptCid, submitEventUrl: contract.submitEventUrl },
         "vm.hostKeys",
-        () =>
-          createRepoRecord(COMPUTE_EVENTS_VM_HOST_KEYS_NSID, {
+        async () => {
+          const ref = await createRepoRecord(COMPUTE_EVENTS_VM_HOST_KEYS_NSID, {
             $type: COMPUTE_EVENTS_VM_HOST_KEYS_NSID,
             keys: checked.keys,
             observedAt: report.observedAt,
             createdAt: new Date().toISOString(),
-          }),
+          });
+          hostKeysUri = ref.uri;
+          return ref;
+        },
         { providerId, fingerprints: checked.keys.map((k) => k.fingerprint) },
         log,
       );
@@ -256,7 +260,7 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
         reportedHostKeys.delete(contract.receiptUri);
         return { ok: false, status: 502, reason: "vm.hostKeys could not be published" };
       }
-      return { ok: true };
+      return { ok: true, uri: hostKeysUri };
     }
     log("warn", "vm_hostkeys_no_contract", { providerId: report.id });
     return { ok: false, status: 404, reason: "no contract holds this guest" };

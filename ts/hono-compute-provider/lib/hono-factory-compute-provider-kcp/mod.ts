@@ -11,6 +11,7 @@ import {
 } from "@publicdomainrelay/compute-provider-abc";
 import {
   createComputeProviderKcp,
+  createComputeVMMarketRecorder,
   createKcpComputeVMClient,
   type KcpCredentials,
 } from "@publicdomainrelay/compute-provider-kcp";
@@ -71,11 +72,13 @@ export interface ComputeProviderKcpFactory {
 export function createComputeProviderKcpFactory(opts: ComputeProviderKcpFactoryOptions): ComputeProviderKcpFactory {
   const { logger, atproto } = opts;
   const hostKeys = new GuestHostKeysRelay();
+  const client = createKcpComputeVMClient({ credentials: opts.credentials, fetch: opts.fetch });
+  const market = createComputeVMMarketRecorder({ client, logger });
 
   const provider = createComputeProviderKcp({
     logger,
     atproto,
-    client: createKcpComputeVMClient({ credentials: opts.credentials, fetch: opts.fetch }),
+    client,
     handle: opts.handle,
     guestHostAddress: opts.guestHostAddress ?? GUEST_HOST_ADDRESS,
     getIssuerUrl: opts.getIssuerUrl,
@@ -97,6 +100,12 @@ export function createComputeProviderKcpFactory(opts: ComputeProviderKcpFactoryO
     if (ack.id === undefined) logger.warn("guest_hostkeys_unknown_guest", {});
     else if (ack.status === 503) logger.warn("guest_hostkeys_no_listener", { name: ack.id });
     else logger.info("guest_hostkeys_forwarded", { name: ack.id, ok: ack.ok, status: ack.status, reason: ack.reason });
+    if (ack.ok && ack.id !== undefined) {
+      void market.record(String(ack.id), {
+        hostKeys: report.keys.map((k) => ({ type: k.type, publicKey: k.publicKey, ...(k.fingerprint ? { fingerprint: k.fingerprint } : {}) })),
+        hostKeysUri: ack.uri,
+      });
+    }
     return ack;
   };
 
@@ -163,6 +172,17 @@ export function createComputeProviderKcpFactory(opts: ComputeProviderKcpFactoryO
         logger.info("guest.onNetwork recorded with event", { receiptKey: entry.receiptKey, uri: ref.uri });
       } else {
         logger.info("guest.onNetwork recorded (no event wrapper)", { uri: ref.uri, address: body.address });
+      }
+      const nonce = validated.claims?.["nonce"];
+      const name = typeof nonce === "string" ? hostKeys.guestOf(nonce) : undefined;
+      if (name === undefined) {
+        logger.warn("guest.onNetwork: no ComputeVM holds this token", { acceptKey });
+      } else {
+        void market.record(String(name), {
+          onNetworkUri: ref.uri,
+          address: typeof body.address === "string" ? body.address : undefined,
+          reportedAt: nowIso,
+        });
       }
       return c.json({ ok: true, uri: ref.uri, cid: ref.cid });
     });
