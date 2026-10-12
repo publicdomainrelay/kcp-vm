@@ -24,6 +24,8 @@ type EngineOptions struct {
 	ExtraEnv []string
 
 	Timeout time.Duration
+
+	Unit string
 }
 
 type Engine struct {
@@ -57,7 +59,7 @@ func NewEngine(opts EngineOptions) (*Engine, error) {
 	}
 	opts.ServerDir = serverDir
 	opts.RunsDir = runsDir
-	return &Engine{opts: opts, sup: newSupervisor("engine", runsDir, "")}, nil
+	return &Engine{opts: opts, sup: newSupervisor("engine", runsDir, "", opts.Unit)}, nil
 }
 
 func (e *Engine) Start(_ context.Context, req runner.EngineRequest) (string, error) {

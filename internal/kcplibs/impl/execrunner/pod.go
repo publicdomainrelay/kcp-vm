@@ -37,6 +37,8 @@ type PodOptions struct {
 	CAData []byte
 
 	TrustBundle func() []byte
+
+	Unit string
 }
 
 type Pod struct {
@@ -69,7 +71,7 @@ func NewPod(opts PodOptions) (*Pod, error) {
 		return nil, fmt.Errorf("execrunner: resolve RunsDir: %w", err)
 	}
 	opts.RunsDir = abs
-	return &Pod{opts: opts, sup: newSupervisor("pod", abs, "done.json")}, nil
+	return &Pod{opts: opts, sup: newSupervisor("pod", abs, "done.json", opts.Unit)}, nil
 }
 
 func (p *Pod) Start(_ context.Context, req runner.PodRequest) (string, error) {
