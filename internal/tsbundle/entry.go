@@ -42,7 +42,7 @@ func CheckEntries(entries []EntrySpec) error {
 		}
 		seen[e.Name] = true
 		for _, p := range append([]string{e.Path}, e.Preload...) {
-			if _, _, err := SplitRepo(p); err != nil {
+			if err := CleanPath(p); err != nil {
 				return fmt.Errorf("entry %s: %w", e.Name, err)
 			}
 		}
@@ -50,14 +50,19 @@ func CheckEntries(entries []EntrySpec) error {
 	return nil
 }
 
-func SplitRepo(p string) (string, string, error) {
+func CleanPath(p string) error {
 	clean := path.Clean(p)
 	if p == "" || path.IsAbs(clean) || clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || clean != p {
-		return "", "", fmt.Errorf("path %q is not a clean org-root-relative path", p)
+		return fmt.Errorf("path %q is not a clean path relative to the %s checkout", p, RepoName)
 	}
-	repo, rest, ok := strings.Cut(clean, "/")
-	if !ok {
-		return "", "", fmt.Errorf("path %q names no file inside a repo", p)
+	return nil
+}
+
+func StageUnit(p string) string {
+	first, rest, ok := strings.Cut(p, "/")
+	if !ok || first != VendorDir {
+		return first
 	}
-	return repo, rest, nil
+	origin, _, _ := strings.Cut(rest, "/")
+	return path.Join(first, origin)
 }

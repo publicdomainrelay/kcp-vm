@@ -36,18 +36,17 @@ const (
 )
 
 func configRoot(root, p string) string {
-	repo, rest, _ := tsbundle.SplitRepo(p)
-	dir := path.Dir(rest)
+	dir := path.Dir(p)
 	found := dir
 	for d := dir; ; d = path.Dir(d) {
-		if hasConfig(filepath.Join(root, repo, filepath.FromSlash(d))) {
+		if hasConfig(filepath.Join(root, filepath.FromSlash(d))) {
 			found = d
 		}
 		if d == "." {
 			break
 		}
 	}
-	return path.Join(repo, found)
+	return found
 }
 
 func resolveDirs(root string, entries []tsbundle.EntrySpec) ([]tsbundle.EntrySpec, error) {
@@ -59,7 +58,7 @@ func resolveDirs(root string, entries []tsbundle.EntrySpec) ([]tsbundle.EntrySpe
 		if len(e.Probe) == 0 {
 			e.Probe = slices.Clone(tsbundle.DefaultProbe)
 		}
-		if _, _, err := tsbundle.SplitRepo(e.Dir + "/x"); err != nil {
+		if err := tsbundle.CleanPath(path.Join(e.Dir, "x")); err != nil {
 			return nil, fmt.Errorf("tsbundle: entry %s dir: %w", e.Name, err)
 		}
 		out[i] = e
@@ -89,7 +88,7 @@ func LoadEntries(p string) ([]tsbundle.EntrySpec, error) {
 }
 
 type BuildOptions struct {
-	OrgRoot      string
+	Root         string
 	Entries      []tsbundle.EntrySpec
 	Deno         string
 	Release      bool
@@ -113,7 +112,7 @@ func Build(ctx context.Context, o BuildOptions) (tsbundle.Manifest, error) {
 	if err := tsbundle.CheckEntries(o.Entries); err != nil {
 		return m, fmt.Errorf("tsbundle: %w", err)
 	}
-	root, err := tsbundle.CheckOrgRoot(o.OrgRoot)
+	root, err := tsbundle.CheckCheckout(o.Root)
 	if err != nil {
 		return m, err
 	}
@@ -147,15 +146,15 @@ func Build(ctx context.Context, o BuildOptions) (tsbundle.Manifest, error) {
 	}
 	tree := filepath.Join(work, "tree")
 	src := filepath.Join(tree, tsbundle.SourceDir)
-	repos, epoch, err := stageRepos(ctx, o, root, src, prefixes)
+	repos, epoch, err := stageCheckout(ctx, o, root, src, prefixes)
 	if err != nil {
 		return m, err
 	}
 	if o.Epoch != 0 {
 		epoch = o.Epoch
 	}
-	o.logf("staged %d repos; filling one DENO_DIR", len(repos))
-	locks, before, err := snapshotLocks(src, prefixes)
+	o.logf("staged %d paths of %s; filling one DENO_DIR", len(prefixes), tsbundle.RepoName)
+	locks, before, err := snapshotLocks(src)
 	if err != nil {
 		return m, err
 	}
@@ -175,7 +174,7 @@ func Build(ctx context.Context, o BuildOptions) (tsbundle.Manifest, error) {
 			}
 		}
 		if len(bad) > 0 {
-			return m, fmt.Errorf("tsbundle: a release needs every lockfile committed and current; %s (commit the refreshed lockfile in its repo)", strings.Join(bad, ", "))
+			return m, fmt.Errorf("tsbundle: a release needs every lockfile committed and current; %s (run deno install at the checkout root and commit the refreshed %s)", strings.Join(bad, ", "), tsbundle.LockFile)
 		}
 	}
 	if err := seedFrom(filepath.Join(work, fillKey), filepath.Join(tree, tsbundle.SeedDir), pins, epoch); err != nil {
@@ -255,7 +254,7 @@ func graphFiles(ctx context.Context, o BuildOptions, root, denoDir string) ([]st
 				}
 				rel, err := filepath.Rel(root, filepath.FromSlash(u.Path))
 				if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-					return nil, fmt.Errorf("tsbundle: entry %s reaches %s outside the org root %s", e.Name, u.Path, root)
+					return nil, fmt.Errorf("tsbundle: entry %s reaches %s outside the checkout %s", e.Name, u.Path, root)
 				}
 				set[filepath.ToSlash(rel)] = true
 			}
@@ -270,48 +269,63 @@ func graphFiles(ctx context.Context, o BuildOptions, root, denoDir string) ([]st
 	return out, nil
 }
 
-func stagePrefixes(root string, files []string) (map[string][]string, error) {
-	byRepo := map[string][]string{}
+func stagePrefixes(root string, files []string) ([]string, error) {
+	set := map[string]bool{tsbundle.WorkspaceFile: true, tsbundle.LockFile: true}
 	for _, f := range files {
-		repo, rest, err := tsbundle.SplitRepo(f)
-		if err != nil {
+		if err := tsbundle.CleanPath(f); err != nil {
 			return nil, err
 		}
-		st, err := os.Lstat(filepath.Join(root, repo))
-		if err != nil {
-			return nil, err
-		}
-		if st.Mode()&fs.ModeSymlink != 0 || !st.IsDir() {
-			return nil, fmt.Errorf("tsbundle: repo %s is a symlink or not a directory; refused", repo)
-		}
-		prefix := path.Dir(rest)
-		for dir := path.Dir(rest); ; dir = path.Dir(dir) {
-			if hasConfig(filepath.Join(root, repo, filepath.FromSlash(dir))) {
-				prefix = dir
-			}
-			if dir == "." {
-				break
-			}
-		}
-		byRepo[repo] = append(byRepo[repo], prefix)
+		set[tsbundle.StageUnit(f)] = true
 	}
-	for repo, ps := range byRepo {
-		sort.Strings(ps)
-		var kept []string
-		for _, p := range ps {
-			covered := false
-			for _, k := range kept {
-				if k == "." || p == k || strings.HasPrefix(p, k+"/") {
-					covered = true
-				}
-			}
-			if !covered {
-				kept = append(kept, p)
+	members, err := workspaceMembers(root)
+	if err != nil {
+		return nil, err
+	}
+	for _, m := range members {
+		set[m] = true
+	}
+	ps := make([]string, 0, len(set))
+	for p := range set {
+		ps = append(ps, p)
+	}
+	sort.Strings(ps)
+	var kept []string
+	for _, p := range ps {
+		covered := false
+		for _, k := range kept {
+			if p == k || strings.HasPrefix(p, k+"/") {
+				covered = true
 			}
 		}
-		byRepo[repo] = kept
+		if !covered {
+			kept = append(kept, p)
+		}
 	}
-	return byRepo, nil
+	return kept, nil
+}
+
+type workspaceFile struct {
+	Workspace []string `json:"workspace"`
+}
+
+func workspaceMembers(root string) ([]string, error) {
+	b, err := os.ReadFile(filepath.Join(root, tsbundle.WorkspaceFile))
+	if err != nil {
+		return nil, err
+	}
+	var w workspaceFile
+	if err := json.Unmarshal(b, &w); err != nil {
+		return nil, fmt.Errorf("tsbundle: %s: %w", tsbundle.WorkspaceFile, err)
+	}
+	out := make([]string, 0, len(w.Workspace))
+	for _, m := range w.Workspace {
+		clean := path.Clean(m)
+		if err := tsbundle.CleanPath(clean); err != nil {
+			return nil, fmt.Errorf("tsbundle: %s workspace member: %w", tsbundle.WorkspaceFile, err)
+		}
+		out = append(out, clean)
+	}
+	return out, nil
 }
 
 func hasConfig(dir string) bool {
@@ -340,66 +354,49 @@ func pathspecs(prefixes []string) []string {
 	return append([]string{"--"}, prefixes...)
 }
 
-func stageRepos(ctx context.Context, o BuildOptions, root, src string, prefixes map[string][]string) ([]tsbundle.RepoRecord, int64, error) {
-	names := make([]string, 0, len(prefixes))
-	for r := range prefixes {
-		names = append(names, r)
+func stageCheckout(ctx context.Context, o BuildOptions, root, src string, prefixes []string) ([]tsbundle.RepoRecord, int64, error) {
+	head, err := gitOut(ctx, root, "rev-parse", "HEAD")
+	if err != nil {
+		return nil, 0, err
 	}
-	sort.Strings(names)
-	var recs []tsbundle.RepoRecord
-	var epoch int64
-	var dirtyErrs []string
-	for _, name := range names {
-		dir := filepath.Join(root, name)
-		ps := prefixes[name]
-		head, err := gitOut(ctx, dir, "rev-parse", "HEAD")
-		if err != nil {
-			return nil, 0, err
-		}
-		ct, err := gitOut(ctx, dir, "log", "-1", "--format=%ct", "HEAD")
-		if err != nil {
-			return nil, 0, err
-		}
-		if t, err := strconv.ParseInt(strings.TrimSpace(string(ct)), 10, 64); err == nil && t > epoch {
-			epoch = t
-		}
-		status, err := gitOut(ctx, dir, append([]string{"status", "--porcelain=v1", "--untracked-files=no"}, pathspecs(ps)...)...)
-		if err != nil {
-			return nil, 0, err
-		}
-		dirty := strings.TrimSpace(string(status)) != ""
-		if dirty && o.Release {
-			var paths []string
-			for _, l := range strings.Split(strings.TrimSpace(string(status)), "\n") {
-				if len(l) > 3 {
-					paths = append(paths, l[3:])
-				}
+	ct, err := gitOut(ctx, root, "log", "-1", "--format=%ct", "HEAD")
+	if err != nil {
+		return nil, 0, err
+	}
+	epoch, _ := strconv.ParseInt(strings.TrimSpace(string(ct)), 10, 64)
+	status, err := gitOut(ctx, root, append([]string{"status", "--porcelain=v1", "--untracked-files=no"}, pathspecs(prefixes)...)...)
+	if err != nil {
+		return nil, 0, err
+	}
+	dirty := strings.TrimSpace(string(status)) != ""
+	if dirty && o.Release {
+		var paths []string
+		for _, l := range strings.Split(strings.TrimRight(string(status), "\n"), "\n") {
+			if len(l) > 3 {
+				paths = append(paths, l[3:])
 			}
-			dirtyErrs = append(dirtyErrs, fmt.Sprintf("%s is dirty in its staged paths (%s)", name, strings.Join(paths, ", ")))
 		}
-		recs = append(recs, tsbundle.RepoRecord{Name: name, Commit: strings.TrimSpace(string(head)), Dirty: dirty, Prefixes: ps})
-		listing, err := gitOut(ctx, dir, append([]string{"ls-files", "-s", "-z"}, pathspecs(ps)...)...)
-		if err != nil {
-			return nil, 0, err
+		return nil, 0, fmt.Errorf("tsbundle: a release bundles a committed tree only: %s is dirty in its staged paths (%s)", tsbundle.RepoName, strings.Join(paths, ", "))
+	}
+	listing, err := gitOut(ctx, root, append([]string{"ls-files", "-s", "-z"}, pathspecs(prefixes)...)...)
+	if err != nil {
+		return nil, 0, err
+	}
+	for _, rec := range strings.Split(string(listing), "\x00") {
+		if rec == "" {
+			continue
 		}
-		for _, rec := range strings.Split(string(listing), "\x00") {
-			if rec == "" {
-				continue
-			}
-			meta, p, ok := strings.Cut(rec, "\t")
-			if !ok {
-				return nil, 0, fmt.Errorf("tsbundle: git ls-files %s: %q", name, rec)
-			}
-			mode, _, _ := strings.Cut(meta, " ")
-			if err := stageFile(filepath.Join(dir, filepath.FromSlash(p)), filepath.Join(src, name, filepath.FromSlash(p)), mode, o.Release); err != nil {
-				return nil, 0, fmt.Errorf("tsbundle: staging %s/%s: %w", name, p, err)
-			}
+		meta, p, ok := strings.Cut(rec, "\t")
+		if !ok {
+			return nil, 0, fmt.Errorf("tsbundle: git ls-files: %q", rec)
+		}
+		mode, _, _ := strings.Cut(meta, " ")
+		if err := stageFile(filepath.Join(root, filepath.FromSlash(p)), filepath.Join(src, filepath.FromSlash(p)), mode, o.Release); err != nil {
+			return nil, 0, fmt.Errorf("tsbundle: staging %s: %w", p, err)
 		}
 	}
-	if len(dirtyErrs) > 0 {
-		return nil, 0, fmt.Errorf("tsbundle: a release bundles committed trees only: %s", strings.Join(dirtyErrs, "; "))
-	}
-	return recs, epoch, nil
+	rec := tsbundle.RepoRecord{Name: tsbundle.RepoName, Commit: strings.TrimSpace(string(head)), Dirty: dirty, Prefixes: prefixes}
+	return []tsbundle.RepoRecord{rec}, epoch, nil
 }
 
 func stageFile(from, to, mode string, release bool) error {
@@ -430,27 +427,18 @@ func stageFile(from, to, mode string, release bool) error {
 	}
 }
 
-func snapshotLocks(src string, prefixes map[string][]string) ([]string, map[string][]byte, error) {
-	var locks []string
+func snapshotLocks(src string) ([]string, map[string][]byte, error) {
 	before := map[string][]byte{}
-	for repo, ps := range prefixes {
-		for _, p := range ps {
-			dir := filepath.Join(src, repo, filepath.FromSlash(p))
-			if !hasConfig(dir) {
-				continue
-			}
-			rel := path.Join(repo, p, "deno.lock")
-			locks = append(locks, rel)
-			b, err := os.ReadFile(filepath.Join(src, filepath.FromSlash(rel)))
-			if err == nil {
-				before[rel] = b
-			} else if !errors.Is(err, fs.ErrNotExist) {
-				return nil, nil, err
-			}
-		}
+	if !hasConfig(src) {
+		return nil, before, nil
 	}
-	sort.Strings(locks)
-	return locks, before, nil
+	b, err := os.ReadFile(filepath.Join(src, tsbundle.LockFile))
+	if err == nil {
+		before[tsbundle.LockFile] = b
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return nil, nil, err
+	}
+	return []string{tsbundle.LockFile}, before, nil
 }
 
 func fillCache(ctx context.Context, o BuildOptions, src string, fill denorun.Spec) error {

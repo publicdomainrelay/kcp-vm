@@ -1,26 +1,26 @@
 entries:
-  - name: door
-    path: socialweb-computer-kcp/socialweb-computer-k8s/hono-socialweb-computer-k8s/mod.ts
+  - name: hono-socialweb-computer-k8s
+    path: socialweb-computer-k8s/hono-socialweb-computer-k8s/mod.ts
     preload:
-      - socialweb-computer-kcp/socialweb-computer-k8s/hono-socialweb-computer-k8s/undici-preload.ts
+      - socialweb-computer-k8s/hono-socialweb-computer-k8s/undici-preload.ts
     unstable: [kv, worker-options]
   - name: hono-bidder
-    path: atproto-market/hono-bidder/mod.ts
+    path: ts/atproto-market/hono-bidder/mod.ts
     unstable: [kv, worker-options]
   - name: request-vm-ssh
-    path: atproto-market/request-vm-ssh/mod.ts
+    path: ts/atproto-market/request-vm-ssh/mod.ts
   - name: hono-socialweb-computer-ssh
-    path: socialweb-computer-ssh/hono-socialweb-computer-ssh/mod.ts
+    path: ts/socialweb-computer-ssh/hono-socialweb-computer-ssh/mod.ts
     unstable: [kv]
   - name: hono-plc
-    path: atproto-market/hono-plc/mod.ts
+    path: ts/atproto-market/hono-plc/mod.ts
   - name: hono-atproto-relay
-    path: atproto-relay/hono-atproto-relay/mod.ts
+    path: ts/atproto-relay/hono-atproto-relay/mod.ts
     unstable: [kv]
   - name: hono-did-key-ingress-proxy
-    path: did-key-ingress-proxy/hono-did-key-ingress-proxy/mod.ts
+    path: ts/did-key-ingress-proxy/hono-did-key-ingress-proxy/mod.ts
   - name: hono-pds
-    path: hono-pds/main.ts
+    path: ts/hono-pds/main.ts
     unstable: [kv]
   - name: did-key-associator-hono-backend
-    path: did-key-associator/hono-backend/mod.ts
+    path: ts/did-key-associator/hono-backend/mod.ts

@@ -10,12 +10,12 @@ import (
 )
 
 func Select(vals clicfg.Values, starts ...string) (Source, error) {
-	if dir := vals.String(OrgRootOption); dir != "" {
-		root, err := CheckOrgRoot(dir)
+	if dir := vals.String(SourceRootOption); dir != "" {
+		root, err := CheckCheckout(dir)
 		if err != nil {
 			return nil, err
 		}
-		return OrgRoot{Dir: root}, nil
+		return Checkout{Dir: root}, nil
 	}
 	if len(starts) == 0 {
 		if wd, err := os.Getwd(); err == nil {
@@ -25,11 +25,11 @@ func Select(vals clicfg.Values, starts ...string) (Source, error) {
 			starts = append(starts, filepath.Dir(exe))
 		}
 	}
-	root, err := FindOrgRoot(starts...)
+	root, err := FindCheckout(starts...)
 	if err != nil {
 		return nil, err
 	}
-	return OrgRoot{Dir: root}, nil
+	return Checkout{Dir: root}, nil
 }
 
-func Describe() Info { return Info{Kind: KindOrgRoot} }
+func Describe() Info { return Info{Kind: KindCheckout} }
