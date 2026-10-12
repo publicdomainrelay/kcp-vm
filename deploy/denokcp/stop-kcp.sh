@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #
-# Stop the local KCP and kine that deploy/start-kcp.sh started.
+# Stop the local KCP and kine that deploy/denokcp/start-kcp.sh started. ROOT
+# defaults to the same <repo>/.kcp-demo start-kcp.sh defaults to.
 #
 # Two ways to find them, because the pid files live inside the root directory and
 # that directory can be removed while the cluster is still running - which left
@@ -15,7 +16,7 @@
 #
 set -euo pipefail
 
-REPO=$(cd "$(dirname "$0")/.." && pwd)
+REPO=$(cd "$(dirname "$0")/../.." && pwd)
 ROOT=${ROOT:-$REPO/.kcp-demo}
 
 pids_for_root() {
@@ -74,3 +75,4 @@ stop_one() {
 
 stop_one kcp kcp
 stop_one kine kine
+rm -f "$ROOT/kcp.port" "$ROOT/kine.endpoint"

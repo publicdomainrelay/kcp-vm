@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -35,7 +36,6 @@ const (
 	m3WorkloadImage   = "rancher/mirrored-library-busybox:1.37.0"
 	m3PLCName         = "plc.default.global.svc.kcp.local"
 	m3OwnerPDSName    = "pds.default.alice.svc.kcp.local"
-	m3OwnerPDS        = "https://127.0.0.1:2583"
 	m3ContainerState  = "/var/lib/socialweb"
 	m3KcpKubeconfig   = "/var/lib/socialweb/kcp/admin.kubeconfig"
 	m3KcpServer       = "https://127.0.0.1:6443/clusters/"
@@ -57,6 +57,8 @@ type m3Bed struct {
 	home     string
 	tenantKC string
 	readings []string
+	ownerPDS string
+	fwd      map[string]int
 }
 
 func (b *m3Bed) reading(format string, args ...any) {
@@ -93,11 +95,17 @@ func TestAMarketNodeJoinsATenantClusterThroughItsOpenBaoWithNoSsh(t *testing.T) 
 
 	b.issuers = bidderIssuers(t, b.facts["BIDDER_STDOUT"])
 	b.gateway = strings.TrimSpace(run(t, "docker", "network", "inspect", "bridge", "-f", "{{(index .IPAM.Config 0).Gateway}}"))
-	for _, port := range []int{2583, 2587} {
-		forwardLoopback(t, b.gateway, port)
+	b.ownerPDS = "https://127.0.0.1:" + b.facts["ALICE_PDS_PORT"]
+	b.fwd = map[string]int{}
+	for _, key := range []string{"ALICE_PDS_PORT", "PLC_PORT"} {
+		port, err := strconv.Atoi(b.facts[key])
+		if err != nil {
+			t.Fatalf("the held test bed reported no %s: %v", key, b.facts)
+		}
+		b.fwd[key] = forwardLoopback(t, b.gateway, port)
 	}
 	b.ownerDid = b.createOwner()
-	b.reading("owner %s created on the test bed PDS %s", b.ownerDid, m3OwnerPDS)
+	b.reading("owner %s created on the test bed PDS %s", b.ownerDid, b.ownerPDS)
 	b.key = kcpclient.AccountHash(b.ownerDid) + "-" + m3Cluster
 	b.home = "root:" + kcpclient.AccountHash(b.ownerDid) + ":" + m3Cluster
 	dataDir, err := clusterprovider.ClusterDataDir(m3ContainerState+"/clusterprovider", b.key)
@@ -462,11 +470,11 @@ func marketImageEnv(t *testing.T, env []string, workRoot string) []string {
 	return out
 }
 
-func forwardLoopback(t *testing.T, gateway string, port int) {
+func forwardLoopback(t *testing.T, gateway string, port int) int {
 	t.Helper()
-	l, err := net.Listen("tcp", fmt.Sprintf("%s:%d", gateway, port))
+	l, err := net.Listen("tcp", gateway+":0")
 	if err != nil {
-		t.Fatalf("forwarding %s:%d to the loopback-only test bed service: %v", gateway, port, err)
+		t.Fatalf("forwarding %s to the loopback-only test bed service on %d: %v", gateway, port, err)
 	}
 	var wg sync.WaitGroup
 	t.Cleanup(func() { _ = l.Close(); wg.Wait() })
@@ -490,6 +498,7 @@ func forwardLoopback(t *testing.T, gateway string, port int) {
 			}()
 		}
 	}()
+	return l.Addr().(*net.TCPAddr).Port
 }
 
 func randomHex(t *testing.T, n int) string {
@@ -512,7 +521,7 @@ func (b *m3Bed) createOwner() string {
 	client := &http.Client{Timeout: 20 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool}}}
 	password := randomHex(t, 16)
 	body, _ := json.Marshal(map[string]string{"handle": "m3owner" + randomHex(t, 3), "password": password})
-	resp, err := client.Post(m3OwnerPDS+"/xrpc/com.atproto.server.createAccount", "application/json", bytes.NewReader(body))
+	resp, err := client.Post(b.ownerPDS+"/xrpc/com.atproto.server.createAccount", "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("creating the owner account: %v", err)
 	}
@@ -522,7 +531,7 @@ func (b *m3Bed) createOwner() string {
 	if resp.StatusCode != http.StatusOK || json.Unmarshal(data, &out) != nil || out.Did == "" {
 		t.Fatalf("createAccount answered %d %s", resp.StatusCode, data)
 	}
-	sessions, _ := json.Marshal(map[string]any{out.Did: map[string]string{"service": m3OwnerPDS, "identifier": out.Did, "password": password}})
+	sessions, _ := json.Marshal(map[string]any{out.Did: map[string]string{"service": b.ownerPDS, "identifier": out.Did, "password": password}})
 	b.files = t.TempDir()
 	if err := os.Chmod(b.files, 0o755); err != nil {
 		t.Fatal(err)
@@ -579,7 +588,7 @@ func (b *m3Bed) startControlPlane() {
 		"-e", "SOCIALWEB_CLUSTERPROVIDER_SCALE_MAX_NODES=1",
 		"-e", "SOCIALWEB_GATEWAY_PLC_URL=https://"+m3PLCName,
 		"-e", "PLC_DIRECTORY_URL=https://"+m3PLCName,
-		"-e", "INGRESS_PROXY_HOST=relay.localhost:2588",
+		"-e", "INGRESS_PROXY_HOST=relay.localhost:"+b.facts["DISPATCHER_PORT"],
 		"-e", "NODE_POLICY=",
 		"-e", "NODE_EXTRA_BIDDER_DIDS="+b.facts["BIDDER_DID"],
 		"-e", "VM_READY_TIMEOUT_SEC=900",
@@ -590,13 +599,15 @@ func (b *m3Bed) startControlPlane() {
 		"-e", "TEST_NODE_GUEST_HOST_ALIASES="+b.facts["HOST_IP"]+" relay.localhost",
 		b.image)...)
 	gw := b.gateway
+	alice, plc := strconv.Itoa(b.fwd["ALICE_PDS_PORT"]), strconv.Itoa(b.fwd["PLC_PORT"])
+	dispatcher, guestTLS := b.facts["DISPATCHER_PORT"], b.facts["GUEST_TLS_PORT"]
 	for _, s := range [][2]string{
-		{"TCP6-LISTEN:2583,ipv6only=0,fork,reuseaddr", gw + ":2583"},
-		{"TCP6-LISTEN:2588,ipv6only=0,fork,reuseaddr", gw + ":2588"},
-		{"TCP-LISTEN:443,bind=127.0.0.1,fork,reuseaddr", gw + ":2589"},
-		{"TCP6-LISTEN:443,bind=[::1],fork,reuseaddr", gw + ":2589"},
-		{"TCP-LISTEN:443,bind=127.0.0.2,fork,reuseaddr", gw + ":2587"},
-		{"TCP-LISTEN:443,bind=127.0.0.4,fork,reuseaddr", gw + ":2583"},
+		{"TCP6-LISTEN:" + b.facts["ALICE_PDS_PORT"] + ",ipv6only=0,fork,reuseaddr", gw + ":" + alice},
+		{"TCP6-LISTEN:" + dispatcher + ",ipv6only=0,fork,reuseaddr", gw + ":" + dispatcher},
+		{"TCP-LISTEN:443,bind=127.0.0.1,fork,reuseaddr", gw + ":" + guestTLS},
+		{"TCP6-LISTEN:443,bind=[::1],fork,reuseaddr", gw + ":" + guestTLS},
+		{"TCP-LISTEN:443,bind=127.0.0.2,fork,reuseaddr", gw + ":" + plc},
+		{"TCP-LISTEN:443,bind=127.0.0.4,fork,reuseaddr", gw + ":" + alice},
 	} {
 		run(t, "docker", "exec", "-d", "-u", "0", b.name, "socat", s[0], "TCP:"+s[1])
 	}

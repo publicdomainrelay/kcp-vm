@@ -13,13 +13,14 @@ spec:
   env:
     GUEST_TLS_DIR: "__GUEST_TLS_DIR__"
     DISPATCHER_HOST: "relay.localhost"
-    DISPATCHER_PORT: "2588"
-    TLS_PORT: "2589"
+    DISPATCHER_PORT: "__DISPATCHER_PORT__"
+    TLS_PORT: "0"
   script: |
     const dir = Deno.env.get("GUEST_TLS_DIR") ?? "";
     const base = Deno.env.get("DISPATCHER_HOST") ?? "relay.localhost";
-    const upstreamPort = Deno.env.get("DISPATCHER_PORT") ?? "2588";
-    const port = Number(Deno.env.get("TLS_PORT") ?? "2589");
+    const upstreamPort = Deno.env.get("DISPATCHER_PORT") ?? "";
+    const port = Number(Deno.env.get("TLS_PORT") ?? "0");
+    const portFile = Deno.env.get("PORT_FILE") ?? "port-bound-to";
     const cert = await Deno.readTextFile(`${dir}/relay.localhost.crt`);
     const key = await Deno.readTextFile(`${dir}/relay.localhost.key`);
 
@@ -30,8 +31,10 @@ spec:
       port,
       cert,
       key,
-      onListen: ({ hostname, port }) =>
-        console.log(JSON.stringify({ event: "dispatcher_tls_listening", hostname, port, upstreamPort })),
+      onListen: ({ hostname, port }) => {
+        Deno.writeTextFileSync(portFile, String(port));
+        console.log(JSON.stringify({ event: "dispatcher_tls_listening", hostname, port, upstreamPort }));
+      },
     }, async (req) => {
       const url = new URL(req.url);
       const host = hostOnly(url.host || (req.headers.get("host") ?? ""));
@@ -62,6 +65,9 @@ spec:
   permissions:
     read:
       allow: true
+    write:
+      allowList:
+        - port-bound-to
     net:
       allow: true
     env:
@@ -70,4 +76,5 @@ spec:
         - DISPATCHER_HOST
         - DISPATCHER_PORT
         - TLS_PORT
+        - PORT_FILE
     noPrompt: true

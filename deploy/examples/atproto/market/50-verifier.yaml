@@ -140,6 +140,7 @@ spec:
         - KCP_SHIM
         - KCP_SERVICE_DOMAIN
         - KCP_DNS_TABLE
+        - KCP_DNS_TABLE_FILE
         - KCP_TOKENS
         - KCP_SERVER
         - KCP_NAMESPACE

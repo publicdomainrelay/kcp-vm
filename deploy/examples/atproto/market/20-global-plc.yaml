@@ -10,9 +10,9 @@ spec:
   env:
     SERVICE_ENTRY: "/home/johnandersen777/src/publicdomainrelay-kcp/atproto-market/hono-plc/mod.ts"
     SERVICE_CWD: "/home/johnandersen777/src/publicdomainrelay-kcp/atproto-market"
-    SERVICE_ARGS: '["--port","2587","--hostname","127.0.0.1"]'
-    SERVICE_DENO_FLAGS: '[]'
-    SERVICE_ENV: '{"PORT":"2587","HOSTNAME":"127.0.0.1"}'
+    SERVICE_ARGS: '["--port","0","--hostname","127.0.0.1"]'
+    SERVICE_DENO_FLAGS: '["--node-modules-dir=none"]'
+    SERVICE_ENV: '{"PORT":"0","HOSTNAME":"127.0.0.1"}'
     SERVICE_TLS: "true"
   script: |
     const entry = Deno.env.get("SERVICE_ENTRY") ?? "";
@@ -34,6 +34,8 @@ spec:
       PATH: Deno.env.get("PATH") ?? "",
       HOME: Deno.env.get("HOME") ?? "",
       ...serviceEnv,
+      PORT_FILE: `${runDir}/port-bound-to`,
+      DENO_DIR: "__DENO_DIR__",
     };
 
     const caBundle = Deno.env.get("KCP_CA_BUNDLE") ?? "";
@@ -97,6 +99,7 @@ spec:
         - KCP_SERVICE_NAME
         - KCP_SERVICE_DOMAIN
         - KCP_DNS_TABLE
+        - KCP_DNS_TABLE_FILE
         - KCP_TOKENS
         - KCP_SERVER
         - KCP_NAMESPACE
