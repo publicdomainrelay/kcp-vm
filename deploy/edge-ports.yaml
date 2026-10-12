@@ -12,7 +12,7 @@ edge_ports:
       to the application fronts below (decided by the user 2026-10-12).
   - name: gateway-kcp-front
     port: 6443
-    files: ["scripts/deploy.sh", "deploy/container-entrypoint.sh"]
+    files: ["scripts/deploy.sh", "deploy/container-entrypoint.sh", "internal/clicfg/options.json"]
     reason: >
       the gateway application's kcp front on 127.0.0.1:6443, which caddy proxies its kcp origin to
       (0006 M2-KCP-FRONT); only the gateway's production config, never a bed or a dev instance.
