@@ -244,7 +244,7 @@ func (s *stack) tenant() {
 }
 
 func (s *stack) pods() dynamic.ResourceInterface {
-	return s.client(kcpserver.RootCluster+":"+tenant).Resource(gvrDenoPod).Namespace("default")
+	return s.client(kcpserver.RootCluster + ":" + tenant).Resource(gvrDenoPod).Namespace("default")
 }
 
 func (s *stack) createPod(name string) {
