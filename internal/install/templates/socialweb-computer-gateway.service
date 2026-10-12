@@ -1,0 +1,16 @@
+[Unit]
+Description=socialweb-computer gateway (serve gateway kcp)
+StartLimitIntervalSec=0
+
+[Service]
+Type=exec
+Slice=socialweb.slice
+WorkingDirectory={{.State}}
+Environment=CONFIG_PATH_SOCIALWEB_COMPUTER={{.State}}/config.json
+ExecStart={{.State}}/bin/current/socialweb-computer serve gateway kcp
+Restart=always
+RestartSec=5
+KillMode=control-group
+
+[Install]
+WantedBy=default.target

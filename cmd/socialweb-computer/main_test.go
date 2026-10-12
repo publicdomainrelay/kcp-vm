@@ -59,7 +59,7 @@ func TestServeWithoutAHostBackendExits2NamingTheOption(t *testing.T) {
 func TestAnUnbuiltSubcommandExits2NamingItsItem(t *testing.T) {
 	cases := map[string][]string{
 		"M3-SERVE-GATEWAY-KCP":     {"serve", "gateway", "kcp", "--host-backend", "systemd-user"},
-		"M1-INSTALL":               {"install", "bidder"},
+		"M1-INSTALL":               {"upgrade"},
 		"M3-KCP-ROLL":              {"units", "roll", "--host-backend", "systemd-user"},
 		"M3-CP-SLOTS":              {"dev", "roll"},
 		"plan 0008 M4-RUN-REQUEST": {"run", "request"},

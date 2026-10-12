@@ -299,6 +299,34 @@ entries:
     why: as newuidmap, for the subgid range; bidders only
     from:
       - "user decision 2026-10-12 per-VM subuid user namespaces"
+  - name: useradd
+    kind: executable
+    fate: host-prerequisite
+    owner: 0006 M1-INSTALL
+    why: the distro's shadow tool creates the one system account (socialweb or swc-bidder); only install, run as root, ever execs it
+    from:
+      - "user decision 2026-10-12 accounts are created only by install"
+  - name: userdel
+    kind: executable
+    fate: host-prerequisite
+    owner: 0006 M1-INSTALL
+    why: uninstall --purge deletes the account install created, and only that one
+    from:
+      - "user decision 2026-10-12 install with uninstall"
+  - name: gpasswd
+    kind: executable
+    fate: host-prerequisite
+    owner: 0006 M1-INSTALL
+    why: adds the bidder account to kvm before linger, and uninstall removes the membership install added
+    from:
+      - "user decision 2026-10-12 kvm before linger"
+  - name: apparmor_parser
+    kind: executable
+    fate: host-prerequisite
+    owner: 0006 M1-INSTALL, M2-HOST-CONTRACT
+    why: loads and unloads the socialweb-pasta profile only where AppArmor restricts unprivileged user namespaces (Ubuntu 24.04+)
+    from:
+      - "user decision 2026-10-11 AppArmor profile for the embedded pasta"
   - name: unshare
     kind: executable
     fate: host-prerequisite
@@ -989,3 +1017,5 @@ indirect:
     resolves: [socialweb-computer-kcp-check-host]
   - site: "socialweb-computer-kcp/internal/hostcontract/gather_linux.go: m.helper"
     resolves: [newuidmap, newgidmap]
+  - site: "socialweb-computer-kcp/internal/install/system_linux.go: binary"
+    resolves: [socialweb-computer-kcp-check-host]

@@ -412,7 +412,7 @@
     },
     "dry-run": {
       "type": "boolean",
-      "description": "apply: server-side dry run; reports every field whose manager would change and persists nothing"
+      "description": "apply: server-side dry run; reports every field whose manager would change and persists nothing. install: print the computed step list and change nothing"
     },
     "phase": {
       "type": "string",
@@ -422,6 +422,32 @@
       "type": "string",
       "description": "apply: how long each typed wait may take (Go duration)",
       "default": "2m"
+    },
+    "handle": {
+      "type": "string",
+      "description": "install bidder: the atproto handle(s) of the bidder instances, comma-separated; a re-run with another handle adds that instance",
+      "env": "SOCIALWEB_HANDLE"
+    },
+    "account": {
+      "type": "string",
+      "description": "install/uninstall: the system account (socialweb for a gateway, swc-bidder for bidders when unset)"
+    },
+    "vm-slots": {
+      "type": "number",
+      "description": "install bidder: VM slots of 65536 subordinate ids reserved in /etc/subuid and /etc/subgid",
+      "default": 256
+    },
+    "adopt-account": {
+      "type": "boolean",
+      "description": "install: take over an existing account no install record names (never needed for an account install created)"
+    },
+    "purge": {
+      "type": "boolean",
+      "description": "uninstall: also remove the state dir (vault, kcp store, keys) and the account install created"
+    },
+    "force": {
+      "type": "boolean",
+      "description": "uninstall: proceed while VM units are active (each stopped VM becomes Lost)"
     }
   }
 }

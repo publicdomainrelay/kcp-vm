@@ -21,6 +21,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clicfg"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/foldmain"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/gatewaymain"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostcontract"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/providermain"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/tenantcredentialmain"
@@ -68,6 +69,10 @@ func builtVerbs() map[string]builtVerb {
 		"apply":             {applyOptions, runApply},
 		"manifests list":    {[]string{"json"}, runManifestsList},
 		"manifests render":  {renderOptions, runManifestsRender},
+		"install gateway":   {installOptions, runInstall(hostcontract.RoleGateway)},
+		"install bidder":    {installOptions, runInstall(hostcontract.RoleBidder)},
+		"uninstall gateway": {uninstallOptions, runUninstall(hostcontract.RoleGateway)},
+		"uninstall bidder":  {uninstallOptions, runUninstall(hostcontract.RoleBidder)},
 		"units list":        {[]string{backendOpt, "instance", "state-dir", "asset-cache", "json"}, runUnitsList},
 		"units audit":       {[]string{backendOpt, "instance", "state-dir", "asset-cache", "json"}, runUnitsAudit},
 		"internal devsup":   {[]string{"state", "socket", "die-with", "instance"}, runDevsup},

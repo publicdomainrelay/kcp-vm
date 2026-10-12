@@ -1,0 +1,8 @@
+abi <abi/4.0>,
+include <tunables/global>
+
+profile socialweb-pasta {{.State}}/runtime/*/pasta flags=(unconfined) {
+  userns,
+
+  include if exists <local/socialweb-pasta>
+}
