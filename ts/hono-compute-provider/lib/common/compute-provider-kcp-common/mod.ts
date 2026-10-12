@@ -32,6 +32,9 @@ export type HostProcessLostReason = typeof HOST_PROCESS_LOST_REASONS[number];
 export const POSTGRES_PHASES = ["Pending", "Starting", "Ready", "Failed", "Deleting"] as const;
 export type PostgresPhase = typeof POSTGRES_PHASES[number];
 
+export const OPEN_BAO_SERVER_PHASES = ["Pending", "Starting", "Sealed", "Ready", "Failed"] as const;
+export type OpenBaoServerPhase = typeof OPEN_BAO_SERVER_PHASES[number];
+
 export interface ObjectMeta {
   name?: string;
   generateName?: string;
@@ -277,6 +280,61 @@ export interface PostgresStatus {
   conditions?: Condition[];
 }
 
+export interface OpenBaoServer {
+  apiVersion?: string;
+  kind?: string;
+  metadata?: ObjectMeta;
+  spec?: OpenBaoServerSpec;
+  status?: OpenBaoServerStatus;
+}
+
+export interface OpenBaoServerSpec {
+  asset?: HostProcessAsset;
+  exec?: string;
+  listen?: string;
+  init?: OpenBaoServerInit;
+  restartPolicy?: HostProcessRestartPolicy;
+}
+
+export interface OpenBaoServerInit {
+  shares?: number;
+  threshold?: number;
+}
+
+export interface OpenBaoServerStatus {
+  observedGeneration?: number;
+  phase?: OpenBaoServerPhase;
+  message?: string;
+  address?: string;
+  initialized?: boolean;
+  sealed?: boolean;
+  hostProcess?: string;
+  runtime?: OpenBaoServerRuntime;
+  unsealedInstance?: string;
+  unsealedAt?: string;
+  refs?: OpenBaoServerRefs;
+  conditions?: Condition[];
+}
+
+export interface OpenBaoServerRuntime {
+  backend?: string;
+  ref?: string;
+  instance?: string;
+  pid?: number;
+  startTime?: string;
+  hostBootID?: string;
+}
+
+export interface OpenBaoServerRefs {
+  unsealKeys?: string;
+  ca?: string;
+  clientCert?: string;
+  clientKey?: string;
+  certAuthMount?: string;
+  certAuthRole?: string;
+  kvMount?: string;
+}
+
 export interface ApiResource {
   group: string;
   version: string;
@@ -321,7 +379,18 @@ export const POSTGRES_RESOURCE: ApiResource = {
   export: "hostprocesses",
 };
 
-export const API_RESOURCES: readonly ApiResource[] = [COMPUTE_VM_RESOURCE, HOST_PROCESS_RESOURCE, POSTGRES_RESOURCE];
+export const OPEN_BAO_SERVER_RESOURCE: ApiResource = {
+  group: "socialweb.computer",
+  version: "v1alpha1",
+  kind: "OpenBaoServer",
+  listKind: "OpenBaoServerList",
+  plural: "openbaoservers",
+  singular: "openbaoserver",
+  schema: "v1alpha1-1.openbaoservers.socialweb.computer",
+  export: "hostprocesses",
+};
+
+export const API_RESOURCES: readonly ApiResource[] = [COMPUTE_VM_RESOURCE, HOST_PROCESS_RESOURCE, POSTGRES_RESOURCE, OPEN_BAO_SERVER_RESOURCE];
 
 export type ApiTypeName =
   | "ComputeVM"
@@ -357,6 +426,13 @@ export type ApiTypeName =
   | "HostProcessStatus"
   | "HostProcessStop"
   | "ObjectMeta"
+  | "OpenBaoServer"
+  | "OpenBaoServerInit"
+  | "OpenBaoServerPhase"
+  | "OpenBaoServerRefs"
+  | "OpenBaoServerRuntime"
+  | "OpenBaoServerSpec"
+  | "OpenBaoServerStatus"
   | "Postgres"
   | "PostgresPhase"
   | "PostgresSpec"
@@ -1116,6 +1192,166 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
     "open": true,
     "type": "object"
   },
+  "OpenBaoServer": {
+    "properties": {
+      "apiVersion": {
+        "type": "string"
+      },
+      "kind": {
+        "type": "string"
+      },
+      "metadata": {
+        "ref": "ObjectMeta"
+      },
+      "spec": {
+        "ref": "OpenBaoServerSpec"
+      },
+      "status": {
+        "ref": "OpenBaoServerStatus"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "OpenBaoServerInit": {
+    "properties": {
+      "shares": {
+        "type": "integer"
+      },
+      "threshold": {
+        "type": "integer"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "OpenBaoServerPhase": {
+    "enum": [
+      "Pending",
+      "Starting",
+      "Sealed",
+      "Ready",
+      "Failed"
+    ],
+    "type": "string"
+  },
+  "OpenBaoServerRefs": {
+    "properties": {
+      "ca": {
+        "type": "string"
+      },
+      "certAuthMount": {
+        "type": "string"
+      },
+      "certAuthRole": {
+        "type": "string"
+      },
+      "clientCert": {
+        "type": "string"
+      },
+      "clientKey": {
+        "type": "string"
+      },
+      "kvMount": {
+        "type": "string"
+      },
+      "unsealKeys": {
+        "type": "string"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "OpenBaoServerRuntime": {
+    "properties": {
+      "backend": {
+        "type": "string"
+      },
+      "hostBootID": {
+        "type": "string"
+      },
+      "instance": {
+        "type": "string"
+      },
+      "pid": {
+        "type": "integer"
+      },
+      "ref": {
+        "type": "string"
+      },
+      "startTime": {
+        "type": "string"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "OpenBaoServerSpec": {
+    "properties": {
+      "asset": {
+        "ref": "HostProcessAsset"
+      },
+      "exec": {
+        "type": "string"
+      },
+      "init": {
+        "ref": "OpenBaoServerInit"
+      },
+      "listen": {
+        "type": "string"
+      },
+      "restartPolicy": {
+        "ref": "HostProcessRestartPolicy"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "OpenBaoServerStatus": {
+    "properties": {
+      "address": {
+        "type": "string"
+      },
+      "conditions": {
+        "items": {
+          "ref": "Condition"
+        },
+        "type": "array"
+      },
+      "hostProcess": {
+        "type": "string"
+      },
+      "initialized": {
+        "type": "boolean"
+      },
+      "message": {
+        "type": "string"
+      },
+      "observedGeneration": {
+        "type": "integer"
+      },
+      "phase": {
+        "ref": "OpenBaoServerPhase"
+      },
+      "refs": {
+        "ref": "OpenBaoServerRefs"
+      },
+      "runtime": {
+        "ref": "OpenBaoServerRuntime"
+      },
+      "sealed": {
+        "type": "boolean"
+      },
+      "unsealedAt": {
+        "type": "string"
+      },
+      "unsealedInstance": {
+        "type": "string"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
   "Postgres": {
     "properties": {
       "apiVersion": {
@@ -1848,5 +2084,131 @@ export function assertPostgresPhase(value: unknown): asserts value is PostgresPh
 
 export function parsePostgresPhase(value: unknown): PostgresPhase {
   assertPostgresPhase(value);
+  return value;
+}
+
+export function validateOpenBaoServer(value: unknown): ApiIssue[] {
+  return validate("OpenBaoServer", value);
+}
+
+export function isOpenBaoServer(value: unknown): value is OpenBaoServer {
+  return validate("OpenBaoServer", value).length === 0;
+}
+
+export function assertOpenBaoServer(value: unknown): asserts value is OpenBaoServer {
+  const issues = validate("OpenBaoServer", value);
+  if (issues.length > 0) throw new ApiValidationError("OpenBaoServer", issues);
+}
+
+export function parseOpenBaoServer(value: unknown): OpenBaoServer {
+  assertOpenBaoServer(value);
+  return value;
+}
+
+export function validateOpenBaoServerSpec(value: unknown): ApiIssue[] {
+  return validate("OpenBaoServerSpec", value);
+}
+
+export function isOpenBaoServerSpec(value: unknown): value is OpenBaoServerSpec {
+  return validate("OpenBaoServerSpec", value).length === 0;
+}
+
+export function assertOpenBaoServerSpec(value: unknown): asserts value is OpenBaoServerSpec {
+  const issues = validate("OpenBaoServerSpec", value);
+  if (issues.length > 0) throw new ApiValidationError("OpenBaoServerSpec", issues);
+}
+
+export function parseOpenBaoServerSpec(value: unknown): OpenBaoServerSpec {
+  assertOpenBaoServerSpec(value);
+  return value;
+}
+
+export function validateOpenBaoServerInit(value: unknown): ApiIssue[] {
+  return validate("OpenBaoServerInit", value);
+}
+
+export function isOpenBaoServerInit(value: unknown): value is OpenBaoServerInit {
+  return validate("OpenBaoServerInit", value).length === 0;
+}
+
+export function assertOpenBaoServerInit(value: unknown): asserts value is OpenBaoServerInit {
+  const issues = validate("OpenBaoServerInit", value);
+  if (issues.length > 0) throw new ApiValidationError("OpenBaoServerInit", issues);
+}
+
+export function parseOpenBaoServerInit(value: unknown): OpenBaoServerInit {
+  assertOpenBaoServerInit(value);
+  return value;
+}
+
+export function validateOpenBaoServerStatus(value: unknown): ApiIssue[] {
+  return validate("OpenBaoServerStatus", value);
+}
+
+export function isOpenBaoServerStatus(value: unknown): value is OpenBaoServerStatus {
+  return validate("OpenBaoServerStatus", value).length === 0;
+}
+
+export function assertOpenBaoServerStatus(value: unknown): asserts value is OpenBaoServerStatus {
+  const issues = validate("OpenBaoServerStatus", value);
+  if (issues.length > 0) throw new ApiValidationError("OpenBaoServerStatus", issues);
+}
+
+export function parseOpenBaoServerStatus(value: unknown): OpenBaoServerStatus {
+  assertOpenBaoServerStatus(value);
+  return value;
+}
+
+export function validateOpenBaoServerPhase(value: unknown): ApiIssue[] {
+  return validate("OpenBaoServerPhase", value);
+}
+
+export function isOpenBaoServerPhase(value: unknown): value is OpenBaoServerPhase {
+  return validate("OpenBaoServerPhase", value).length === 0;
+}
+
+export function assertOpenBaoServerPhase(value: unknown): asserts value is OpenBaoServerPhase {
+  const issues = validate("OpenBaoServerPhase", value);
+  if (issues.length > 0) throw new ApiValidationError("OpenBaoServerPhase", issues);
+}
+
+export function parseOpenBaoServerPhase(value: unknown): OpenBaoServerPhase {
+  assertOpenBaoServerPhase(value);
+  return value;
+}
+
+export function validateOpenBaoServerRuntime(value: unknown): ApiIssue[] {
+  return validate("OpenBaoServerRuntime", value);
+}
+
+export function isOpenBaoServerRuntime(value: unknown): value is OpenBaoServerRuntime {
+  return validate("OpenBaoServerRuntime", value).length === 0;
+}
+
+export function assertOpenBaoServerRuntime(value: unknown): asserts value is OpenBaoServerRuntime {
+  const issues = validate("OpenBaoServerRuntime", value);
+  if (issues.length > 0) throw new ApiValidationError("OpenBaoServerRuntime", issues);
+}
+
+export function parseOpenBaoServerRuntime(value: unknown): OpenBaoServerRuntime {
+  assertOpenBaoServerRuntime(value);
+  return value;
+}
+
+export function validateOpenBaoServerRefs(value: unknown): ApiIssue[] {
+  return validate("OpenBaoServerRefs", value);
+}
+
+export function isOpenBaoServerRefs(value: unknown): value is OpenBaoServerRefs {
+  return validate("OpenBaoServerRefs", value).length === 0;
+}
+
+export function assertOpenBaoServerRefs(value: unknown): asserts value is OpenBaoServerRefs {
+  const issues = validate("OpenBaoServerRefs", value);
+  if (issues.length > 0) throw new ApiValidationError("OpenBaoServerRefs", issues);
+}
+
+export function parseOpenBaoServerRefs(value: unknown): OpenBaoServerRefs {
+  assertOpenBaoServerRefs(value);
   return value;
 }

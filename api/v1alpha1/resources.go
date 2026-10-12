@@ -52,4 +52,12 @@ var APIResources = []APIResource{
 		{Name: "PID", Type: "integer", JSONPath: ".status.runtime.pid"},
 		{Name: "Age", Type: "date", JSONPath: ".metadata.creationTimestamp"},
 	}},
+	{Kind: "OpenBaoServer", Plural: "openbaoservers", Revision: 1, Export: "hostprocesses", Object: OpenBaoServer{}, PrinterColumns: []PrinterColumn{
+		{Name: "Phase", Type: "string", JSONPath: ".status.phase"},
+		{Name: "Address", Type: "string", JSONPath: ".status.address"},
+		{Name: "Initialized", Type: "boolean", JSONPath: ".status.initialized"},
+		{Name: "Sealed", Type: "boolean", JSONPath: ".status.sealed"},
+		{Name: "Instance", Type: "string", JSONPath: ".status.runtime.instance"},
+		{Name: "Age", Type: "date", JSONPath: ".metadata.creationTimestamp"},
+	}},
 }

@@ -14,3 +14,8 @@ spec:
       schema: v1alpha1-1.postgreses.socialweb.computer
       storage:
         crd: {}
+    - group: socialweb.computer
+      name: openbaoservers
+      schema: v1alpha1-1.openbaoservers.socialweb.computer
+      storage:
+        crd: {}

@@ -729,3 +729,81 @@ func (in *PostgresStatus) DeepCopyInto(out *PostgresStatus) {
 		}
 	}
 }
+
+func (in *OpenBaoServer) DeepCopyInto(out *OpenBaoServer) {
+	*out = *in
+	out.TypeMeta = in.TypeMeta
+	in.ObjectMeta.DeepCopyInto(&out.ObjectMeta)
+	in.Spec.DeepCopyInto(&out.Spec)
+	in.Status.DeepCopyInto(&out.Status)
+}
+
+func (in *OpenBaoServer) DeepCopy() *OpenBaoServer {
+	if in == nil {
+		return nil
+	}
+	out := new(OpenBaoServer)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *OpenBaoServer) DeepCopyObject() runtime.Object {
+	if c := in.DeepCopy(); c != nil {
+		return c
+	}
+	return nil
+}
+
+func (in *OpenBaoServerList) DeepCopyInto(out *OpenBaoServerList) {
+	*out = *in
+	out.TypeMeta = in.TypeMeta
+	in.ListMeta.DeepCopyInto(&out.ListMeta)
+	if in.Items != nil {
+		out.Items = make([]OpenBaoServer, len(in.Items))
+		for i := range in.Items {
+			in.Items[i].DeepCopyInto(&out.Items[i])
+		}
+	}
+}
+
+func (in *OpenBaoServerList) DeepCopy() *OpenBaoServerList {
+	if in == nil {
+		return nil
+	}
+	out := new(OpenBaoServerList)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *OpenBaoServerList) DeepCopyObject() runtime.Object {
+	if c := in.DeepCopy(); c != nil {
+		return c
+	}
+	return nil
+}
+
+func (in *OpenBaoServerSpec) DeepCopyInto(out *OpenBaoServerSpec) {
+	*out = *in
+	if in.Asset != nil {
+		v := *in.Asset
+		out.Asset = &v
+	}
+}
+
+func (in *OpenBaoServerStatus) DeepCopyInto(out *OpenBaoServerStatus) {
+	*out = *in
+	if in.Runtime != nil {
+		v := *in.Runtime
+		out.Runtime = &v
+	}
+	if in.Refs != nil {
+		v := *in.Refs
+		out.Refs = &v
+	}
+	if in.Conditions != nil {
+		out.Conditions = make([]metav1.Condition, len(in.Conditions))
+		for i := range in.Conditions {
+			in.Conditions[i].DeepCopyInto(&out.Conditions[i])
+		}
+	}
+}

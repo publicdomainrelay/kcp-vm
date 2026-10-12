@@ -36,6 +36,8 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 		&HostProcessList{},
 		&Postgres{},
 		&PostgresList{},
+		&OpenBaoServer{},
+		&OpenBaoServerList{},
 	)
 	return nil
 }
