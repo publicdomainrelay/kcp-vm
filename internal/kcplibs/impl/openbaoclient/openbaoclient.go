@@ -211,7 +211,10 @@ func (c *Client) GenerateRoot(ctx context.Context, namespace, mount, commonName,
 func (c *Client) CASerial(ctx context.Context, namespace, mount string) (string, error) {
 	data, err := c.read(ctx, namespace, strings.Trim(mount, "/")+"/cert/ca")
 	if err != nil {
-		if errors.Is(err, ErrNotFound) {
+		var response *ResponseError
+		if errors.Is(err, ErrNotFound) ||
+			(errors.As(err, &response) && response.Status == http.StatusBadRequest &&
+				strings.Contains(response.Body, "no default issuer")) {
 			return "", fmt.Errorf("%w: %w: no CA at %s", pki.ErrNoAuthority, ErrNotFound, mount)
 		}
 		return "", err
