@@ -234,6 +234,11 @@ export default {
       description: "Directory the bidder keeps its contracts and terminated-receipt tombstones in, so a restart keeps answering vm.delete (defaults to <firecracker work root>/contracts when the Firecracker provider is enabled)",
       env: "CONTRACT_STORE_DIR",
     },
+    "ingress-key-dir": {
+      type: "string" as const,
+      description: "Directory each of the bidder's dispatcher ingresses keeps its keypair in, so a restarted bidder registers the same subdomains its receipts and guests name (defaults to <contract store dir>/ingress when there is a contract store)",
+      env: "INGRESS_KEY_DIR",
+    },
     "compute-provider-firecracker-reuse-image": {
       type: "boolean" as const,
       description: "Use the image already in the store and skip the rebuild when the inputs have moved",

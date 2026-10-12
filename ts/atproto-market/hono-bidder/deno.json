@@ -19,6 +19,7 @@
     "@publicdomainrelay/market-identity-vault-file": "jsr:@publicdomainrelay/market-identity-vault-file@^0",
     "@publicdomainrelay/market-bidder": "jsr:@publicdomainrelay/market-bidder@^0",
     "@publicdomainrelay/market-bidder-contract-store-fs": "jsr:@publicdomainrelay/market-bidder-contract-store-fs@^0",
+    "@publicdomainrelay/utils-attestation-key": "jsr:@publicdomainrelay/utils-attestation-key@^0",
     "@publicdomainrelay/market-bidder-worker": "jsr:@publicdomainrelay/market-bidder-worker@^0",
     "@publicdomainrelay/market-common": "jsr:@publicdomainrelay/market-common@^0",
     "@publicdomainrelay/firehose-watcher-abc": "jsr:@publicdomainrelay/firehose-watcher-abc@^0",

@@ -37,6 +37,7 @@ import { createFirecrackerMicrovm, parseLabels } from "@publicdomainrelay/microv
 import { createDockerBackend } from "@publicdomainrelay/container-backend-docker";
 import { createRbacProvisioner } from "@publicdomainrelay/rbac-atproto";
 import { Secp256k1Keypair } from "@atproto/crypto";
+import { loadOrCreateAttestationKeyHex } from "@publicdomainrelay/utils-attestation-key";
 import { IdResolver } from "@atproto/identity";
 import { qrcode } from "@libs/qrcode";
 import cliArgsEnv from "./cli-args-env.ts";
@@ -96,8 +97,17 @@ const statusFile = options.statusFile as string | undefined;
 
 // Each relay gets its own keypair so subscribers never share a subdomain/FQDN
 // on the dispatcher (collision would route everyone to the last connector).
-async function cliCreateIngress() {
-  const relayKeypair = await Secp256k1Keypair.create({ exportable: true });
+async function ingressKeypair(role: string): Promise<Secp256k1Keypair> {
+  if (!ingressKeyDir) return await Secp256k1Keypair.create({ exportable: true });
+  await Deno.mkdir(ingressKeyDir, { recursive: true, mode: 0o700 });
+  const path = `${ingressKeyDir}/${role}.jwk`;
+  const keypair = await Secp256k1Keypair.import(await loadOrCreateAttestationKeyHex(path), { exportable: true });
+  logger.info("bidder_ingress_key", { role, path, did: keypair.did() });
+  return keypair;
+}
+
+async function cliCreateIngress(role: string) {
+  const relayKeypair = await ingressKeypair(role);
   const bidderDid = ownPlcDid ?? atproto.did;
   const localSigner = {
     did: () => bidderDid,
@@ -554,6 +564,11 @@ if (privateKeyHexPath) {
   }
 }
 
+const contractStoreDir = (options.contractStoreDir as string | undefined) ||
+  (options.computeProviderFirecracker ? `${options.computeProviderFirecrackerWorkRoot}/contracts` : undefined);
+const ingressKeyDir = (options.ingressKeyDir as string | undefined) ||
+  (contractStoreDir ? `${contractStoreDir}/ingress` : undefined);
+
 const providers: MarketBidderProviderRef[] = [];
 const serves: ReturnType<typeof createServe>[] = [];
 let localProviderEnsureImage: (() => Promise<void>) | undefined;
@@ -561,7 +576,7 @@ let localProviderEnsureImage: (() => Promise<void>) | undefined;
 const acceptToContract = new Map<string, { receiptKey: string; receiptUri: string; receiptCid: string; submitEventUrl?: string }>();
 
 if (options.computeProviderDigitaloceanToken) {
-  const relay = await cliCreateIngress();
+  const relay = await cliCreateIngress("digitalocean");
   const serve = createServe({ logger, relays: [relay], listenersFile });
   serves.push(serve);
   providers.push(createComputeProviderHooks({
@@ -589,7 +604,7 @@ if (options.computeProviderDigitaloceanToken) {
 }
 
 if (options.computeProviderLocal) {
-  const relay = await cliCreateIngress();
+  const relay = await cliCreateIngress("local");
   const serve = createServe({ logger, relays: [relay], listenersFile });
   serves.push(serve);
   const localProvider = createLocalComputeProvider({
@@ -636,7 +651,7 @@ if (options.computeProviderFirecracker) {
         `without one of them would fail at the first RFP instead of at startup.`,
     );
   }
-  const relay = await cliCreateIngress();
+  const relay = await cliCreateIngress("firecracker");
   const serve = createServe({ logger, relays: [relay], listenersFile });
   serves.push(serve);
   const firecrackerProvider = createFirecrackerComputeProvider({
@@ -690,7 +705,7 @@ const offeringRefreshSec = (options.offeringRefreshSec as number) ?? 300;
 
 // Market factory gets its own relay/serve (own keypair -> own subdomain/FQDN).
 // Ingress only disabled when explicitly requested via --no-ingress-proxy.
-const bidderIngress = options.noIngressProxy ? undefined : await cliCreateIngress();
+const bidderIngress = options.noIngressProxy ? undefined : await cliCreateIngress("market");
 const bidderServe = createServe({
   logger,
   tcp: {
@@ -729,8 +744,6 @@ try {
   Deno.exit(2);
 }
 
-const contractStoreDir = (options.contractStoreDir as string | undefined) ||
-  (options.computeProviderFirecracker ? `${options.computeProviderFirecrackerWorkRoot}/contracts` : undefined);
 const contractStore = contractStoreDir ? createFsContractStore({ dir: contractStoreDir }) : undefined;
 if (contractStoreDir) logger.info("bidder_contract_store", { dir: contractStoreDir });
 
