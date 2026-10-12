@@ -678,7 +678,7 @@ func (s *server) start(spec hostsvc.UnitSpec) (hostsvc.UnitStatus, error) {
 	}
 	s.seq++
 	u := &unit{spec: spec, order: s.seq}
-	u.st = hostsvc.UnitStatus{Name: spec.Name, Backend: hostsvc.BackendProc}
+	u.st = hostsvc.UnitStatus{Name: spec.Name, Backend: hostsvc.BackendProc, Description: spec.Description}
 	s.units[spec.Name] = u
 	if err := s.openFDStore(u); err != nil {
 		delete(s.units, spec.Name)

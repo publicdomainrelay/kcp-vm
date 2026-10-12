@@ -151,6 +151,7 @@ type UnitStatus struct {
 	ExecMainStatus int32
 	ActiveSince    time.Time
 	Adopted        bool
+	Description    string
 	Backend        Backend
 }
 

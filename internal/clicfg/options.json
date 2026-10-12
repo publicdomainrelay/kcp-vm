@@ -449,8 +449,44 @@
     },
     "handle": {
       "type": "string",
-      "description": "install bidder: the atproto handle(s) of the bidder instances, comma-separated; a re-run with another handle adds that instance",
+      "description": "install bidder: the atproto handle(s) of the bidder instances, comma-separated; a re-run with another handle adds that instance. internal vm: the one bidder instance whose VMs these are",
       "env": "SOCIALWEB_HANDLE"
+    },
+    "vm-runtime-dir": {
+      "type": "string",
+      "description": "internal vm: the account's runtime dir; each VM's API socket lives under <dir>/swvm",
+      "env": "XDG_RUNTIME_DIR"
+    },
+    "guest-image-source": {
+      "type": "string",
+      "description": "internal vm: file:// or https:// base the pinned guest image (vmlinux, rootfs.ext4, image.json) is fetched from once and verified by sha256",
+      "env": "SOCIALWEB_GUEST_IMAGE_SOURCE"
+    },
+    "vm-stop-grace": {
+      "type": "string",
+      "description": "internal vm: how long a stop waits after SendCtrlAltDel before SIGKILL (Go duration; x86_64 only, arm64 kills at once)",
+      "env": "SOCIALWEB_VM_STOP_GRACE",
+      "default": "10s"
+    },
+    "userns-stage-path": {
+      "type": "string",
+      "description": "Absolute path of swc-userns-stage (dev build: explicit, never PATH)",
+      "env": "SOCIALWEB_USERNS_STAGE_PATH"
+    },
+    "pasta-path": {
+      "type": "string",
+      "description": "Absolute path of the pinned pasta (dev build: explicit, never PATH)",
+      "env": "SOCIALWEB_PASTA_PATH"
+    },
+    "vmexec-path": {
+      "type": "string",
+      "description": "Absolute path of socialweb-vmexec (dev build: explicit, never PATH)",
+      "env": "SOCIALWEB_VMEXEC_PATH"
+    },
+    "firecracker-path": {
+      "type": "string",
+      "description": "Absolute path of the pinned firecracker (dev build: explicit, never PATH)",
+      "env": "SOCIALWEB_FIRECRACKER_PATH"
     },
     "account": {
       "type": "string",

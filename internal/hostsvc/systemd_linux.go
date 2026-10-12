@@ -415,6 +415,7 @@ func statusFrom(name string, up, sp map[string]any) UnitStatus {
 	}
 	st.State = ActiveState(str(up, "ActiveState"))
 	st.SubState = str(up, "SubState")
+	st.Description = str(up, "Description")
 	st.Result = str(sp, "Result")
 	if inv, ok := up["InvocationID"].([]byte); ok {
 		st.InvocationID = hex.EncodeToString(inv)
