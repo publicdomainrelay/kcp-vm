@@ -4,6 +4,7 @@ import {
   applyOAuthAgentToRequesterPDS,
   createRequesterPDS,
   createSshSessionProvider,
+  DEFAULT_TRANSPORT_MODULE,
   ensureDumbpipe,
   runComputeContract,
 } from "@publicdomainrelay/requester-xrpc";
@@ -17,7 +18,16 @@ import type { AuthorizedAccount } from "@publicdomainrelay/socialweb-computer-co
 import { policyFromEnv, renderExecCommand, vmNameFromEnv } from "@publicdomainrelay/socialweb-computer-common";
 import { createIrohSessionProvider } from "./bridge.ts";
 
-export { createIrohSessionProvider, NonIrohGuestAddressError } from "./bridge.ts";
+export {
+  createIrohSessionProvider,
+  NonIrohGuestAddressError,
+  TERMINATED_SESSION_EXIT_CODE,
+} from "./bridge.ts";
+export type { GatewayLog, IrohSessionProviderOptions } from "./bridge.ts";
+
+export function contractUserData(): { transport: typeof DEFAULT_TRANSPORT_MODULE } {
+  return { transport: DEFAULT_TRANSPORT_MODULE };
+}
 
 export interface InProcessRequesterOptions {
   sessionStore: SessionStore;
@@ -71,6 +81,17 @@ export interface InProcessRequester extends ComputeCommandRunner {
 
 const encoder = new TextEncoder();
 
+export interface ContractTermination {
+  reason: string;
+  exitCode?: number;
+  observedAt: string;
+}
+
+export function explainTermination(terminated: ContractTermination): string {
+  const exit = terminated.exitCode !== undefined ? `, guest exit ${terminated.exitCode}` : "";
+  return `The VM was terminated by its bidder (${terminated.reason}${exit}, at ${terminated.observedAt}); the session ended.\n`;
+}
+
 /**
  * What to tell a client whose command never ran.
  *
@@ -80,11 +101,13 @@ const encoder = new TextEncoder();
  * all the client sees besides the exit status.
  */
 export function explainNoSession(
-  outcome: { event?: string; error?: string; sshReady?: boolean },
+  outcome: { event?: string; error?: string; sshReady?: boolean; terminated?: ContractTermination },
   ctx: { policy: string; bidWindowSec: unknown; vmReadyTimeoutSec?: number },
 ): string {
   const window = typeof ctx.bidWindowSec === "number" ? `${ctx.bidWindowSec}s` : "the bid window";
   const lines: string[] = [];
+
+  if (outcome.terminated) return explainTermination(outcome.terminated);
 
   if (outcome.event === "no_bids") {
     lines.push(
@@ -336,6 +359,7 @@ export function createInProcessRequester(opts: InProcessRequesterOptions): InPro
           sshProvider: await providerFor(io),
           policy: { name: policy, args: policyArgs },
           guestHostAliases: opts.guestHostAliases,
+          userData: contractUserData(),
           rbac: opts.rbac ?? false,
           capabilities,
           logger,
@@ -352,9 +376,19 @@ export function createInProcessRequester(opts: InProcessRequesterOptions): InPro
           error?: string;
           bids?: number;
           sshReady?: boolean;
+          terminated?: ContractTermination;
         };
 
-        if (typeof outcome.sshExitCode === "number") {
+        if (outcome.terminated) {
+          log("requester_terminated", {
+            did: account.did,
+            reason: outcome.terminated.reason,
+            exitCode: outcome.terminated.exitCode,
+            sshExitCode: outcome.sshExitCode,
+          });
+          await io.writeErr(encoder.encode(explainTermination(outcome.terminated)));
+          io.exit(typeof outcome.sshExitCode === "number" ? outcome.sshExitCode : 1);
+        } else if (typeof outcome.sshExitCode === "number") {
           log("requester_done", { did: account.did, code: outcome.sshExitCode });
           io.exit(outcome.sshExitCode);
         } else {
