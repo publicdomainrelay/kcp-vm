@@ -42,7 +42,7 @@ Go:
 | `api/` | the kcp API types; `go generate ./api/...` writes the schemas and the TypeScript wire types |
 | `deploy/` | manifests, sets, scripts, `check.sh`, `ts-entries.yaml` |
 | `docs/` | `ARCHITECTURE.md`, `plans/`, inventories, research notes |
-| `test/` | repository-wide Go tests (no comments, ASCII, fixed ports, the bidder deploy) |
+| `test/` | repository-wide Go tests (the auth chain, the bidder launcher and deploy) |
 | `rust/` | socialweb-meshd |
 
 TypeScript:
@@ -117,29 +117,29 @@ These rules come from the org-root CLAUDE.md. They apply to all TypeScript here.
   RFP cloud-init does not install. A test that needs a live guest drives `runComputeContract` against a
   local bidder (`ts/atproto-market/test/bidder_container_integration_test.ts` is the harness).
 
-## Tests: build features, do not maintain tests
+## Tests: no tests
 
-The user, 2026-10-12: "Do not let this project become about maintaining the codebase as it evolves.
-The only tests we should be writing are integration tests when we finally get to that point after most
-work is done."
+The user, 2026-10-12: "Stop writing tests except for integration tests when we finally get to that
+point / the end after we know it works in prod. Aka we know our scale to zero k3s on market rfp VMs
+works in prod."
 
-- Do not write unit tests. Do not work test-first. Ignore the `test_first` field of a plan item.
-- Do not repair an old test, a line citation or an inventory that a change makes stale. If your change
-  breaks a unit test or a documentation test, delete that test in the same commit.
-- The gate for a change: `go build ./...`, `go vet ./...`, `deno task check`, and the release closure
-  build below. Spend the rest of the time on the feature.
-- Integration tests come at the end, when most plan work is done: the market RFP flow with `--secrets`
-  from a requester to a VM, kcp-native. Only those get written.
+- No tests. Do not write unit tests, ratchets, allow-lists, inventories, golden files, snapshots,
+  source-grep checks, size lines or any other check of an arbitrary rule. Do not work test-first.
+  Ignore the `test_first` field of a plan item.
+- Do not repair an old test. If a change breaks an existing test, delete that test in the same commit.
+- Prod means: the new gateway started from the `socialweb-computer` binary, and the local
+  bobvmbuilder bidder on hat-8 running the new bidder from that same binary
+  (`socialweb-computer run bidder`).
+- Integration tests come only at the end: after a tenant k3s cluster on that gateway scales to zero
+  and gets nodes as market RFP VMs from that bidder. Only integration tests get written then.
+- A manual live run is proof, not a test.
 
 ## How to verify
 
-- `go test ./...` for the Go unit tests.
-- `deploy/check.sh --fast` on every iteration: gofmt, go build, apigen drift, go vet, `deno task check`,
-  `deno install --frozen`, the cross-OS builds, the release builds, staticcheck, go test. `--local` runs
-  the proofs this host can run and names every skip. `--full` fails on any skip. Only `--full` means
-  "everything ran"; a bare `go test ./...` exits 0 on SKIP and is never the gate.
+- `deploy/check.sh --fast` on every change: gofmt, go build, apigen generate and its diff (generated
+  code must match its source), go vet, `deno task check`, `deno install --frozen`, the cross-OS builds
+  and the release builds. `--local` and `--full` run the live proofs this host can run.
 - `deno task check` type-checks every entry of `deploy/ts-entries.yaml` from the root workspace.
-- `deno task test` runs the TypeScript tests. The offline RFP tests need docker.
 - The release closure: `go run ./cmd/socialweb-tsbundle -release -deno ~/.deno/bin/deno -out <dir>`.
   It needs a committed, clean tree and a current `deno.lock`, and it starts every entry offline.
 
@@ -190,8 +190,7 @@ work is done."
 ## Standing constraints
 
 - No comments in code except the `ponytail:` form naming a ceiling and its upgrade path, and
-  `//go:` directives. `test/nocomments_test.go` fails on any other comment and on any byte above
-  0x7F.
+  `//go:` directives.
 - ASCII only, everywhere, including this file and `docs/ARCHITECTURE.md`.
 - Decisions, measurements and invariants live in `docs/ARCHITECTURE.md`, never in code comments.
   An item opens in section 14 and moves to section 15, with its before/after readings, when it
@@ -214,7 +213,6 @@ and older notes use the short names below; read them as the real names.
 | the spine | the RFP flow: requester, RFP, bid, accept, cloud-init `user_data` |
 | the front | the stable entry point in front of a service: the kcp front before the kcp slots (0006 M2-KCP-SLOTS), the TLS front of the market network |
 | the edge | caddy and the other stable public entry points that keep a known port |
-| the ratchet | `deploy/fixed-ports-ratchet.yaml`, the list of fixed-port violations that may only get shorter |
 | a stand-in | a small test executable used in place of k3s, kine or postgres |
 | the soak | the last run against the real accounts (the bobvmbuilder bidder and alice), after the market network passes |
 | a gate | a check that must pass before an item or a merge goes on (`deploy/check.sh`, a plan's done_when) |

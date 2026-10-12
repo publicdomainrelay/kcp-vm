@@ -5,8 +5,8 @@ note: >
   each with exactly one fate on a bare Linux host. Call sites scanned: exec.Command, exec.CommandContext,
   exec.LookPath and syscall.Exec in non-test Go of this repo, and new Deno.Command in non-test TypeScript of
   this repo: socialweb-computer-k8s and every vendored repository under ts/. A computed first
-  argument is listed under indirect with every executable it resolves to. internal/versions
-  TestEveryExecutableTheCodeExecsHasAFateInTheHostInventory holds this file complete. Fates that name a
+  argument is listed under indirect with every executable it resolves to.
+  Fates that name a
   decision not yet in a plan item say so in why ("decided by Claude, user may veto").
 
 fates:

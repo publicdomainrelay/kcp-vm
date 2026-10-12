@@ -2234,10 +2234,9 @@ unit, `panic=abort`, stripped, with the checkout, registry and sysroot paths rem
 target directories on hat-8 produced identical bytes; identity across hosts is not measured, so the
 pin a user_data carries is the `.sha256` written next to the binary it ships. blake3 is forced to its
 pure-Rust backend because its NEON C includes libc headers and there is no aarch64 musl sysroot.
-`rust/dist/` is not committed. `deploy/check.sh` runs `cargo fmt --check` and `cargo test` in every
-mode (skipped with a reason without cargo; `--full` fails instead), and adds the network-namespace and
-k3s proofs in `--local`/`--full` when `sudo -n` works. `tests/no_comments.rs` holds the Rust sources
-to the same no-comments, ASCII-only rule as `test/nocomments_test.go`.
+`rust/dist/` is not committed. `deploy/check.sh` runs `cargo fmt --check` and `cargo test` in `--local`
+and `--full` (skipped with a reason without cargo; `--full` fails instead), and adds the network-namespace and
+k3s proofs in `--local`/`--full` when `sudo -n` works.
 
 **The integration** (plan 0005 M5-MESHD integration half, with M5-DNS below). Every guest piece is
 written by the door's guest module (`lib/cloud-init-plugin-k3s-join`) into the `user_data` the RFP
@@ -2351,8 +2350,7 @@ Pod's own node, so it needs no cross-node path at all, the mesh included.
 - *Why the label.* Decided by Claude, user may veto: the DaemonSet is applied in EVERY tenant
   regardless of substrate, and the label is what keeps it off a node that has no `169.254.20.10`
   (a guest-substrate node, a node that joined with an older user_data): there it would crash-loop on
-  `bind`. The address, the label and the cluster CIDR are held equal across Go and TypeScript by
-  `node_network_test.ts` "the guest, the tenant DaemonSet and the k3s server agree...".
+  `bind`. The address, the label and the cluster CIDR must stay equal across Go and TypeScript.
 - *Baseline, never intent.* The DaemonSet is applied by `socialweb-addons`, so the baseline measures
   it (`TestThePodNetworkAddOnsAreBaselineAndNeverIntent`, and live at zero nodes), and a DaemonSet is
   never intent anyway (section 10); its pod leaves its node idle for scale-in.
@@ -2587,12 +2585,11 @@ are not re-derived here; the qemu run above is the full-flow proof, not a re-mea
 Execution is Linux only; darwin and windows are seams that compile, vet and refuse by name. Plan 0006
 M0-XOS-GATE made that true and keeps it so: `deploy/check.sh` builds and vets the tree for darwin/arm64,
 darwin/amd64, windows/amd64, windows/arm64 and linux/arm64 on every run (default tags, so no embedded
-blob is needed), and `internal/xosgate` lists the OS-neutral packages (`api/...`, `clusterprovider`,
-`cloudprovider`, `nodeprovider`, `nodemarket`, `materialiser`, `kcpclient`, `tenantclient`, `gateway`;
-the `vmruntime` and `hostsvc` interfaces, `kcpapply` and the ComputeVM controller core join it as they
-land) with `go list -deps -json` for each of six GOOS/GOARCH pairs and fails on any import of go-systemd,
-netlink, the firecracker SDK, `internal/nodefirecracker` or `internal/fcapi`. A fixture importing
-go-systemd keeps that test honest. An untagged OS-specific file fails the gate on the commit that adds it.
+blob is needed). The OS-neutral packages (`api/...`, `clusterprovider`, `cloudprovider`,
+`nodeprovider`, `nodemarket`, `materialiser`, `kcpclient`, `tenantclient`, `gateway`; the `vmruntime`
+and `hostsvc` interfaces, `kcpapply` and the ComputeVM controller core) import no go-systemd, netlink,
+firecracker SDK, `internal/nodefirecracker` or `internal/fcapi`. An untagged OS-specific file fails the
+cross-OS build on the commit that adds it.
 
 `internal/hostos` is primitives only. Every darwin body that has no portable answer returns
 `"<what> is unsupported on darwin; see plan 0012"` wrapping `errors.ErrUnsupported`; nothing implements
@@ -3114,7 +3111,6 @@ internal/nodevm/       the substrate-neutral half of a node: its image, guest, n
 internal/nodefirecracker/ the firecracker half of a market guest's boot, on the bidder's host: the image, its manifest and the namespace child
 internal/nodemarket/   places a node as a claim on the COMPUTE MARKET: it writes a NodeClaim into the cluster's home workspace and returns, reads the claim's status for the join wait and its fatal message, and closes the node by deleting the claim and waiting for the door to destroy the machine
 internal/hostos/       the one platform seam, primitives only (locking, process identity, liveness, termination, command line, boot id, port range, SysProcAttr) with Linux, darwin and Windows files; darwin refuses with ErrUnsupported (plan 0012)
-internal/xosgate/      a test-only package: go list -deps -json per GOOS/GOARCH proves the OS-neutral packages import no Linux backend (go-systemd, netlink, firecracker)
 internal/denorun/      builds every deno argv: --no-code-cache and --node-modules-dir=none always, DENO_DIR = <state>/deno/<closure sha256>, production adds --cached-only --frozen and DENO_NO_UPDATE_CHECK=1 (plan 0008 M1-DENO)
 internal/tsbundle/     where the TypeScript comes from: the embedded closure (tar.zst + manifest, extracted read-only to <state>/ts/<sha256>/) in a release build, this checkout (SOCIALWEB_COMPUTER_SOURCE_ROOT, or the walk up to the directory that holds deno.json and deploy/ts-entries.yaml) in a dev build; internal/tsbundle/tsbuild (behind cmd/socialweb-tsbundle, never linked into the core) builds the closure from deploy/ts-entries.yaml (M1-TS-SOURCE, M1-TS-CLOSURE)
 internal/stack/denoruntime/ the owned deno-kcp provider (internal/denokcp) in-process in the core: the pinned deno, <state>/denokcp/runs, runner timeout disabled, the front kubeconfig with the shard-admin token, the denoruntime set applied first, SOCIALWEB_TS_ROOT/SOCIALWEB_TS_KEY and the closure-keyed DENO_DIR on every DenoPod; deno processes are plain children of the core unit (plan 0008 M2-DENOKCP-INPROC)
@@ -3444,9 +3440,9 @@ A change must not break any of these. Each exists because something failed.
     `auth/jwt-<12 hex>/login` as role `<node>`, reading `socialweb-nodes/data/<node>`.
 14. **A list failure is an error, never an empty observation.**
 15. **The state advances only on success.**
-16. **No comments in code.** Reasoning belongs in this document; `test/nocomments_test.go`'s
-    `TestNoCommentsAndASCII` fails on any comment that is not a `//go:` directive or a `ponytail:`
-    group, and on any byte above 0x7F.
+16. **No comments in code.** Reasoning belongs in this document. The only comments are `//go:`
+    directives and `ponytail:` groups, and every byte is ASCII. This is a written rule; no test
+    enforces it.
 17. **A gate must be able to fail.** A check whose failure and success look alike is not a check, and
     a probe that cannot fail proves nothing.
 18. **The substrate seam does not own the lifecycle.** Closing a node must not be the same act as
