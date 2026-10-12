@@ -143,7 +143,7 @@ func WaitNewHolder(ctx context.Context, admin ShardAdmin, old string, every time
 	}
 }
 
-func secs(a, b time.Time) float64 { return b.Sub(a).Round(time.Millisecond).Seconds() }
+func secs(a, b time.Time) float64 { return float64(b.Sub(a).Milliseconds()) / 1000 }
 
 func Roll(ctx context.Context, m hostsvc.Manager, front FrontSwitch, admin ShardAdmin, cfg RollConfig) (RollReport, Slots, error) {
 	cfg.defaults()

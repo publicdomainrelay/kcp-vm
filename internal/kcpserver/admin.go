@@ -148,8 +148,14 @@ func workspacesPath(parent string) string {
 	return "/clusters/" + parent + "/apis/tenancy.kcp.io/v1alpha1/workspaces"
 }
 
+const (
+	WorkspaceOwnerAnnotation = "experimental.tenancy.kcp.io/owner"
+	ShardAdminOwner          = `{"username":"shard-admin","groups":["system:masters"]}`
+)
+
 func (h *HTTPAdmin) CreateWorkspace(ctx context.Context, parent, name string) error {
-	obj := map[string]any{"apiVersion": "tenancy.kcp.io/v1alpha1", "kind": "Workspace", "metadata": map[string]any{"name": name}}
+	obj := map[string]any{"apiVersion": "tenancy.kcp.io/v1alpha1", "kind": "Workspace", "metadata": map[string]any{"name": name,
+		"annotations": map[string]string{WorkspaceOwnerAnnotation: ShardAdminOwner}}}
 	code, b, err := h.do(ctx, http.MethodPost, workspacesPath(parent), obj)
 	if err != nil {
 		return err

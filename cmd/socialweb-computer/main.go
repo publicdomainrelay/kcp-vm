@@ -67,6 +67,9 @@ func builtVerbs() map[string]builtVerb {
 		"dev gc":            {[]string{"asset-cache", "state-dir", "asset-gc-window"}, runDevGC},
 		"internal devsup":   {[]string{"state", "socket", "die-with", "instance"}, runDevsup},
 		"internal dev-core": {[]string{"instance-dir", "ready-timeout"}, runDevCore},
+		"dev roll kcp":      {[]string{"instance", "state-dir", "ready-timeout"}, runDevRoll},
+		"internal apiserver-front": {[]string{"owner", "kcp-front-address", "front-control", "front-state", "front-fd-store"},
+			runApiserverFront},
 	}
 }
 

@@ -22,6 +22,18 @@ type Config struct {
 	Log          *slog.Logger
 }
 
+func tryLockRecord(path string) (*os.File, bool) {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, false
+	}
+	if err := hostos.Lock(f, hostos.LockExclusive|hostos.LockNonBlocking); err != nil {
+		f.Close()
+		return nil, false
+	}
+	return f, true
+}
+
 func lockRecord(path string) (*os.File, error) {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
@@ -38,15 +50,6 @@ func lockRecord(path string) (*os.File, error) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-}
-
-func saveRecord(l devinstance.Layout, rec devinstance.Record) error {
-	f, err := lockRecord(l.Lock)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	return devinstance.WriteJSON(l.Record, rec)
 }
 
 func Run(ctx context.Context, cfg Config, m hostsvc.Manager) error {
@@ -69,8 +72,18 @@ func Run(ctx context.Context, cfg Config, m hostsvc.Manager) error {
 	core := devinstance.Core{Generation: prev.Generation + 1, PID: os.Getpid(), InvocationID: os.Getenv("INVOCATION_ID"),
 		StartedAt: time.Now().UTC()}
 	bcfg := bootstrap.Config{Layout: l, KcpPath: rec.Executables["kcp"].Path, KinePath: rec.Executables["kine"].Path,
-		ReadyTimeout: cfg.ReadyTimeout, Log: log}
-	if err := ensure(ctx, m, bcfg, l, &rec, &core, log); err != nil {
+		Exe: rec.Executables["socialweb-computer"].Path, ReadyTimeout: cfg.ReadyTimeout, Log: log}
+	lk, err := lockRecord(l.Lock)
+	if err != nil {
+		return err
+	}
+	if err := devinstance.ReadJSON(l.Record, &rec); err != nil {
+		lk.Close()
+		return fmt.Errorf("devcore: reading %s: %w", l.Record, err)
+	}
+	err = ensure(ctx, m, bcfg, l, &rec, &core, log)
+	lk.Close()
+	if err != nil {
 		return err
 	}
 	t := time.NewTicker(CheckInterval)
@@ -81,6 +94,16 @@ func Run(ctx context.Context, cfg Config, m hostsvc.Manager) error {
 			log.Info("core stopping", "generation", core.Generation)
 			return nil
 		case <-t.C:
+		}
+		lk, ok := tryLockRecord(l.Lock)
+		if !ok {
+			log.Info("a dev verb holds the instance; this check is skipped")
+			continue
+		}
+		if err := devinstance.ReadJSON(l.Record, &rec); err != nil {
+			lk.Close()
+			log.Error("re-reading the instance record", "err", err.Error())
+			continue
 		}
 		lost := false
 		core.Verdicts = nil
@@ -101,8 +124,10 @@ func Run(ctx context.Context, cfg Config, m hostsvc.Manager) error {
 			if err := ensure(ctx, m, bcfg, l, &rec, &core, log); err != nil {
 				log.Error("re-placing the bootstrap units", "err", err.Error())
 			}
+			lk.Close()
 			continue
 		}
+		lk.Close()
 		devinstance.WriteJSON(l.CoreRecord, core)
 	}
 }
@@ -119,7 +144,7 @@ func ensure(ctx context.Context, m hostsvc.Manager, bcfg bootstrap.Config, l dev
 	}
 	core.AdoptedAt = time.Now().UTC()
 	core.LastCheck = core.AdoptedAt
-	if err := saveRecord(l, *rec); err != nil {
+	if err := devinstance.WriteJSON(l.Record, *rec); err != nil {
 		return err
 	}
 	if err := devinstance.WriteJSON(l.CoreRecord, *core); err != nil {

@@ -60,7 +60,8 @@ func TestAnUnbuiltSubcommandExits2NamingItsItem(t *testing.T) {
 		"M3-SERVE-GATEWAY-KCP":     {"serve", "gateway", "kcp", "--host-backend", "systemd-user"},
 		"M2-APPLY":                 {"apply", "base"},
 		"M1-INSTALL":               {"install", "bidder"},
-		"M3-KCP-ROLL":              {"dev", "roll"},
+		"M3-KCP-ROLL":              {"units", "roll", "--host-backend", "systemd-user"},
+		"M3-CP-SLOTS":              {"dev", "roll"},
 		"plan 0008 M4-RUN-REQUEST": {"run", "request"},
 	}
 	for item, args := range cases {

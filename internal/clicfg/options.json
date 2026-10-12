@@ -60,6 +60,27 @@
       "env": "SOCIALWEB_READY_TIMEOUT",
       "default": "5m"
     },
+    "owner": {
+      "type": "string",
+      "description": "internal apiserver-front: the application instance (or cluster) whose front this is"
+    },
+    "kcp-front-address": {
+      "type": "string",
+      "description": "Listen address of kcp's L4 front: dev and bidders pass 127.0.0.1:0 (the port is read back); only the gateway's prod config.json sets 127.0.0.1:6443",
+      "env": "SOCIALWEB_KCP_FRONT_ADDRESS"
+    },
+    "front-control": {
+      "type": "string",
+      "description": "internal apiserver-front: the control socket the core sets the backend through (under 108 bytes)"
+    },
+    "front-state": {
+      "type": "string",
+      "description": "internal apiserver-front: the file holding the chosen backend across front restarts"
+    },
+    "front-fd-store": {
+      "type": "boolean",
+      "description": "internal apiserver-front: hand the listening socket to the service manager's fd store (NOTIFY_SOCKET) and take it back from LISTEN_FDS"
+    },
     "keep-state": {
       "type": "boolean",
       "description": "dev down: keep the instance state directory"

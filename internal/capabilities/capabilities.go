@@ -64,7 +64,7 @@ func Missing(v Verb, goos, goarch string) (string, bool) {
 func Tree() []Verb {
 	return []Verb{
 		{Path: "version", Summary: "print the build, its Go and its target (--json)"},
-		{Path: "dev up", Summary: "start (or adopt) an application instance under devsup: kine + one kcp slot (--profile minimal; --fg binds it to this terminal)", Needs: []Need{NeedProc}},
+		{Path: "dev up", Summary: "start (or adopt) an application instance under devsup: kine, a port-0 front and one kcp slot behind it (--profile minimal; --fg binds it to this terminal)", Needs: []Need{NeedProc}},
 		{Path: "dev status", Summary: "the instance record and its devsup units", Needs: []Need{NeedProc}},
 		{Path: "dev down", Summary: "stop every unit of the instance and remove its state (--keep-state keeps it)", Needs: []Need{NeedProc}},
 		{Path: "dev ls", Summary: "every dev instance under the state root, with its devsup reachability", Needs: []Need{NeedProc}},
@@ -72,7 +72,8 @@ func Tree() []Verb {
 		{Path: "dev env", Summary: "exports for shells and TS tools (KUBECONFIG, kcp URL, ports, leases; --json)", Needs: []Need{NeedProc}},
 		{Path: "dev check", Summary: "report the dev host prerequisites; never fixes them", Needs: []Need{NeedProc}},
 		{Path: "dev restart", Summary: "dev restart core [--binary path]: replace the dev core, adopting every other unit", Needs: []Need{NeedProc}},
-		{Path: "dev roll", Summary: "roll kcp or a cluster in a dev instance", BuiltBy: "M3-KCP-ROLL", Needs: []Need{NeedProc}},
+		{Path: "dev roll", Summary: "roll a tenant cluster's control plane in a dev instance", BuiltBy: "M3-CP-SLOTS", Needs: []Need{NeedProc}},
+		{Path: "dev roll kcp", Summary: "blue/green kcp slot swap behind the instance's front", Needs: []Need{NeedProc}},
 		{Path: "dev gc", Summary: "collect the per-user asset cache (refused while a devsup of this user runs)", Needs: []Need{NeedProc}},
 		{Path: "serve gateway kcp", Summary: "the gateway application instance", BuiltBy: "M3-SERVE-GATEWAY-KCP", Needs: []Need{NeedHostBackend}},
 		{Path: "serve gateway xrpc", Summary: "the XRPC gateway (socialweb-gateway; SOCIALWEB_GATEWAY_* env)"},
@@ -100,7 +101,7 @@ func Tree() []Verb {
 		{Path: "internal devsup", Summary: "the per-instance proc backend supervisor", Needs: []Need{NeedProc}, Hidden: true},
 		{Path: "internal dev-core", Summary: "the dev instance's core: adopts the bootstrap units and records them", Needs: []Need{NeedProc}, Hidden: true},
 		{Path: "internal ns-exec", Summary: "private hostname one-shot for the proc backend", BuiltBy: "M3-CP-SLOTS", Hidden: true},
-		{Path: "internal apiserver-front", Summary: "the L4 front of kcp or a tenant apiserver", BuiltBy: "M2-KCP-FRONT", Hidden: true},
+		{Path: "internal apiserver-front", Summary: "the L4 front of kcp or a tenant apiserver", Hidden: true},
 		{Path: "internal cloud-controller-manager", Summary: "the tenant CCM, re-exec'd by the cluster provider", Hidden: true},
 		{Path: "internal tenantcredential", Summary: "mint a tenant credential (socialweb-tenantcredential)", Hidden: true},
 	}
