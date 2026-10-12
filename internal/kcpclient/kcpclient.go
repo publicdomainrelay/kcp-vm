@@ -419,6 +419,9 @@ func (c *Client) clusterLabels(ctx context.Context, did string) ([]string, error
 	}
 	var list kcpv1alpha1.WorkspaceList
 	if err := r.Get().Resource("workspaces").Do(ctx).Into(&list); err != nil {
+		if _, rerr := c.readWorkspace(ctx, RootWorkspace, AccountHash(did)); apierrors.IsNotFound(rerr) {
+			return []string{}, nil
+		}
 		return nil, fmt.Errorf("kcpclient: list clusters for %s: %w", AccountPath(did), err)
 	}
 	names := make([]string, 0, len(list.Items))
