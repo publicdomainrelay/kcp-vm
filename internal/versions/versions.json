@@ -67,7 +67,7 @@
         "kine": 13631488,
         "pasta": 1048576,
         "postgres": 26214400,
-        "typescript-closure": 0,
+        "typescript-closure": 20971520,
         "guest-images": 0,
         "download-assets": 0
       }
@@ -89,7 +89,7 @@
         "kine": 12582912,
         "pasta": 1048576,
         "postgres": 25165824,
-        "typescript-closure": 0,
+        "typescript-closure": 20971520,
         "guest-images": 0,
         "download-assets": 0
       }

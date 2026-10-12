@@ -36,7 +36,10 @@ type Option struct {
 	Description string `json:"description"`
 	Env         string `json:"env,omitempty"`
 	Default     any    `json:"default,omitempty"`
+	Build       string `json:"build,omitempty"`
 }
+
+const BuildDev = "dev"
 
 type Spec struct {
 	Name        string            `json:"name"`
@@ -45,8 +48,21 @@ type Spec struct {
 }
 
 func Load() (Spec, error) {
-	return Parse(optionsJSON)
+	s, err := Parse(optionsJSON)
+	if err != nil {
+		return Spec{}, err
+	}
+	if releaseBuild {
+		for name, o := range s.Options {
+			if o.Build == BuildDev {
+				delete(s.Options, name)
+			}
+		}
+	}
+	return s, nil
 }
+
+func ReleaseBuild() bool { return releaseBuild }
 
 func Parse(b []byte) (Spec, error) {
 	var s Spec
@@ -58,6 +74,9 @@ func Parse(b []byte) (Spec, error) {
 		case TypeString, TypeNumber, TypeBoolean:
 		default:
 			return Spec{}, fmt.Errorf("clicfg: option %s has type %q: want string, number or boolean", name, o.Type)
+		}
+		if o.Build != "" && o.Build != BuildDev {
+			return Spec{}, fmt.Errorf("clicfg: option %s has build %q: want empty or %q", name, o.Build, BuildDev)
 		}
 		if o.Type == TypeBoolean && o.Default != nil {
 			return Spec{}, fmt.Errorf("clicfg: boolean option %s carries a default; a boolean is a flag", name)

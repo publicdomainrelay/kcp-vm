@@ -153,6 +153,10 @@ func safeLink(rel, target string) error {
 	return nil
 }
 
+func ExtractTar(r io.Reader, dir string) error { return extractTar(r, dir) }
+
+func RemoveTree(dir string) error { return removeTree(dir) }
+
 func extractTar(r io.Reader, dir string) error {
 	tr := tar.NewReader(r)
 	for {

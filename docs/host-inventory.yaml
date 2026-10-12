@@ -166,10 +166,12 @@ entries:
   - name: deno
     kind: executable
     fate: embedded-child
-    owner: 0008 M1-DENO, 0006 M1-ASSETS
-    why: deno 2.9.3 run by the core as the DenoPod runtime (door, bidder, requester)
+    owner: 0008 M1-DENO, M1-TS-CLOSURE, 0006 M1-ASSETS
+    why: deno 2.9.3 run by the core as the DenoPod runtime (door, bidder, requester); internal/denorun builds every argv; cmd/socialweb-tsbundle fills and probes the closure with it at build time
     from:
       - "image k8s curl download"
+      - "internal/denorun/denorun.go"
+      - "internal/tsbundle/build.go"
   - name: initdb
     kind: executable
     fate: embedded-tool
@@ -301,9 +303,11 @@ entries:
     kind: executable
     fate: host-prerequisite
     owner: 0007 M0-VM-USERNS, 0006 M2-HOST-CONTRACT
-    why: util-linux unshare >= 2.38, required only if M0-VM-USERNS chooses it for the userns stage; check-host already probes it
+    why: util-linux unshare >= 2.38, required only if M0-VM-USERNS chooses it for the userns stage; check-host already probes it; cmd/socialweb-tsbundle starts every closure entry under unshare -rn at build time
     from:
       - "check-host checks.go"
+      - "internal/tsbundle/build.go"
+      - "cmd/socialweb-tsbundle/main.go"
   - name: systemd
     kind: executable
     fate: host-prerequisite
@@ -477,10 +481,11 @@ entries:
   - name: git
     kind: executable
     fate: build-host
-    owner: 0008 M1-BED-PARALLEL
-    why: internal/marketbed records the vendored deno-kcp commit of a market test bed; development hosts only
+    owner: 0008 M1-BED-PARALLEL, M1-TS-CLOSURE
+    why: internal/marketbed records the vendored deno-kcp commit of a market test bed; cmd/socialweb-tsbundle records each staged repo's commit and refuses a dirty one for a release; development and build hosts only
     from:
       - "internal/marketbed/record.go"
+      - "internal/tsbundle/build.go"
   - name: debugfs
     kind: executable
     fate: removed-legacy
@@ -976,3 +981,9 @@ indirect:
     resolves: [kcp, kine]
   - site: "socialweb-computer-kcp/internal/hostsvc/hostsvctest/suite_linux.go: name"
     resolves: [sleep, sh]
+  - site: "socialweb-computer-kcp/internal/denorun/denorun.go: deno"
+    resolves: [deno]
+  - site: "socialweb-computer-kcp/internal/denorun/denorun.go: argv[0]"
+    resolves: [deno]
+  - site: "socialweb-computer-kcp/internal/tsbundle/build.go: o.Deno"
+    resolves: [deno]

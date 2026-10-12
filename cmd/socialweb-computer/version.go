@@ -9,6 +9,7 @@ import (
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/assets"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clicfg"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/tsbundle"
 )
 
 type versionInfo struct {
@@ -23,11 +24,12 @@ type versionInfo struct {
 	Release  bool            `json:"release"`
 	Assets   []assets.Listed `json:"assets"`
 	AssetsBy string          `json:"assetsBy"`
+	Closure  tsbundle.Info   `json:"typescriptClosure"`
 }
 
 func buildVersion(goos, goarch string) versionInfo {
 	v := versionInfo{Name: serviceName, Version: "(devel)", Go: runtime.Version(), GOOS: goos, GOARCH: goarch,
-		Release: assets.Release(), Assets: []assets.Listed{}}
+		Release: assets.Release(), Assets: []assets.Listed{}, Closure: tsbundle.Describe()}
 	if listed, err := assets.ListingFor(goos + "/" + goarch); err == nil {
 		v.Assets = listed
 	}
@@ -65,6 +67,11 @@ func runVersion(ctx context.Context, a *app, vals clicfg.Values, rest []string) 
 	fmt.Fprintf(a.stdout, "%s %s %s %s %s/%s\n", v.Name, v.Version, v.Revision, v.Go, v.GOOS, v.GOARCH)
 	for _, l := range v.Assets {
 		fmt.Fprintf(a.stdout, "  %s %s %s\n", l.Name, l.Version, l.SHA256)
+	}
+	if c := v.Closure; c.Embedded {
+		fmt.Fprintf(a.stdout, "  typescript-closure %s %d bytes (deno %s)\n", c.TreeSHA256, c.ArchiveBytes, c.Deno)
+	} else {
+		fmt.Fprintf(a.stdout, "  typescript-closure from the %s\n", c.Kind)
 	}
 	return exitOK
 }

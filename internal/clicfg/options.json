@@ -33,6 +33,12 @@
       "description": "Extraction root of embedded assets (dev: the per-user $XDG_CACHE_HOME/socialweb-computer/runtime when unset)",
       "env": "SOCIALWEB_ASSET_CACHE"
     },
+    "org-root": {
+      "type": "string",
+      "description": "dev builds: the org root whose TypeScript runs (holds typescript-helpers/, atproto-market/, socialweb-computer-kcp/ as real directories); unset walks up from the working directory, then the executable's. Release builds have no such option and run the embedded closure",
+      "env": "SOCIALWEB_COMPUTER_ORG_ROOT",
+      "build": "dev"
+    },
     "asset-gc-window": {
       "type": "string",
       "description": "dev gc: an asset dir used within this window is kept (Go duration)",
