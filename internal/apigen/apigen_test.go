@@ -4,8 +4,10 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -60,6 +62,8 @@ func TestEnumValuesAreTheConstantsInDeclarationOrder(t *testing.T) {
 		"AssociationMode":     {"RequireApproval", "Skip"},
 		"MarketIdentityPhase": {"Pending", "AwaitingScan", "AwaitingAuthorization", "AwaitingApproval", "Ready", "SessionExpired", "Failed"},
 		"PendingActionKind":   {"scanQr", "visitUrl", "approveAssociation", "signInAgain"},
+		"ComputeVMPhase":      {"Pending", "Preparing", "Booting", "Running", "Releasing", "Lost", "Failed"},
+		"ComputeVMLostReason": {"HostRebooted", "UnitGone", "UnitFailed", "OOMKilled", "VMMExited", "IdentityMismatch"},
 	}
 	got := map[string][]string{}
 	for _, e := range m.Enums {
@@ -183,19 +187,33 @@ func TestTheGeneratedFilesCoverEveryResourceAndExport(t *testing.T) {
 	for _, o := range outputs {
 		paths = append(paths, o.Path)
 	}
-	want := []string{
+	var want []string
+	if _, err := os.Stat(filepath.Join(repoRoot, computeVMSiblingRepo)); err == nil {
+		want = append(want, computeVMTypeScript)
+		fixtures, err := filepath.Glob(filepath.Join(computeVMFixtureDir, "*.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, f := range fixtures {
+			want = append(want, "../hono-compute-provider/test/fixtures/computevm/"+filepath.Base(f))
+		}
+	}
+	want = append(want,
 		"deploy/apiresourceschema-revisions.json",
 		"deploy/atprotoidentity-apiexport.yaml",
 		"deploy/atprotoidentity-apiresourceschema.yaml",
 		"deploy/cluster-apiexport.yaml",
 		"deploy/cluster-apiresourceschema.yaml",
 		"deploy/clusterlink-apiresourceschema.yaml",
+		"deploy/computevm-apiexport.yaml",
+		"deploy/computevm-apiresourceschema.yaml",
 		"deploy/marketidentity-apiexport.yaml",
 		"deploy/marketidentity-apiresourceschema.yaml",
 		"deploy/node-apiresourceschema.yaml",
 		"deploy/nodeclaim-apiresourceschema.yaml",
-		TSPackageDir + "/mod.ts",
-	}
+		TSPackageDir+"/mod.ts",
+	)
+	sort.Strings(want)
 	if !reflect.DeepEqual(paths, want) {
 		t.Fatalf("generated paths:\n got %v\nwant %v", paths, want)
 	}
