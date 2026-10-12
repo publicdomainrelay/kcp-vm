@@ -427,6 +427,7 @@ export interface NetworkAppStatus {
   phase?: ApplicationPhase;
   message?: string;
   did?: string;
+  components?: ApplicationComponent[];
   listeners?: ApplicationListener[];
 }
 
@@ -619,7 +620,7 @@ export const MARKET_NETWORK_RESOURCE: ApiResource = {
   listKind: "MarketNetworkList",
   plural: "marketnetworks",
   singular: "marketnetwork",
-  schema: "v1alpha1-3.marketnetworks.socialweb.computer",
+  schema: "v1alpha1-4.marketnetworks.socialweb.computer",
   export: "applications",
 };
 
@@ -2031,6 +2032,12 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
   },
   "NetworkAppStatus": {
     "properties": {
+      "components": {
+        "items": {
+          "ref": "ApplicationComponent"
+        },
+        "type": "array"
+      },
       "did": {
         "type": "string"
       },

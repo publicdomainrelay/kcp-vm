@@ -194,6 +194,9 @@ func (ctl *Controller) reconcileBidder(ctx context.Context, u *unstructured.Unst
 			}
 		}
 	}
+	if o.Spec.Kcp != nil {
+		st.Components = append(st.Components, ctl.guestComponents(ctx)...)
+	}
 	switch {
 	case allReady && st.Did != "":
 		st = ready(st, "every component is ready")

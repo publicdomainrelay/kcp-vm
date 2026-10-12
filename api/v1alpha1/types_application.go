@@ -277,6 +277,8 @@ type NetworkAppStatus struct {
 
 	Did string `json:"did,omitempty"`
 
+	Components []ApplicationComponent `json:"components,omitempty"`
+
 	Listeners []ApplicationListener `json:"listeners,omitempty"`
 }
 
