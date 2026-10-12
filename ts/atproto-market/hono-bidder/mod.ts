@@ -22,7 +22,7 @@ import { createDigitalOceanComputeProvider } from "@publicdomainrelay/compute-pr
 import { createLocalComputeProvider } from "@publicdomainrelay/compute-provider-local";
 import { createFirecrackerComputeProvider } from "@publicdomainrelay/compute-provider-firecracker";
 import { createFirecrackerNodeImage } from "@publicdomainrelay/node-image-firecracker";
-import { createFirecrackerMicrovm } from "@publicdomainrelay/microvm-firecracker";
+import { createFirecrackerMicrovm, parseLabels } from "@publicdomainrelay/microvm-firecracker";
 import { createDockerBackend } from "@publicdomainrelay/container-backend-docker";
 import { createRbacProvisioner } from "@publicdomainrelay/rbac-atproto";
 import { Secp256k1Keypair } from "@atproto/crypto";
@@ -581,6 +581,7 @@ if (options.computeProviderFirecracker) {
     microvm: createFirecrackerMicrovm({
       backend: createDockerBackend(),
       runnerImage: options.computeProviderFirecrackerRunnerImage as string,
+      labels: parseLabels((options.computeProviderFirecrackerContainerLabels as string | undefined) ?? ""),
       logger,
     }),
     workRoot: options.computeProviderFirecrackerWorkRoot as string,

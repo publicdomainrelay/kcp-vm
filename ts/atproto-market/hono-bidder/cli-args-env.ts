@@ -152,6 +152,11 @@ export default {
       description: "Image each guest is booted in; it carries firecracker and socialweb-nodeboot and is given /dev/kvm",
       env: "COMPUTE_PROVIDER_FIRECRACKER_RUNNER_IMAGE",
     },
+    "compute-provider-firecracker-container-labels": {
+      type: "string" as const,
+      description: "Docker labels put on every guest container, key=value[,key=value], e.g. swc.bed=<bed id>",
+      env: "COMPUTE_PROVIDER_FIRECRACKER_CONTAINER_LABELS",
+    },
     "compute-provider-firecracker-work-root": {
       type: "string" as const,
       description: "Directory each guest gets a work directory under",
