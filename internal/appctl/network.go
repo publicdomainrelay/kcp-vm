@@ -18,7 +18,6 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devinstance"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpapply"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/manifests"
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/stack/denoruntime"
 )
 
 const (
@@ -156,9 +155,13 @@ func NetworkValue(views map[string]podView, caBundle string) (v1alpha1.MarketNet
 	}, nil
 }
 
-func (n *networks) caBundle(ctx context.Context, ob denoruntime.OpenBao) (string, error) {
+func (n *networks) caBundle(ctx context.Context) (string, error) {
 	dir := NetworkStateDir(n.ctl.c.Layout.StateDir)
-	pki, err := pkiCA(ctx, ob)
+	v, err := n.vault(ctx)
+	if err != nil {
+		return "", err
+	}
+	pki, err := pkiCA(ctx, v)
 	if err != nil {
 		return "", err
 	}
@@ -267,11 +270,15 @@ func (n *networks) reconcile(ctx context.Context, u *unstructured.Unstructured) 
 		if left > 0 {
 			return write(v1alpha1.ApplicationPhaseDeleting, fmt.Sprintf("%d service(s) stopping", left))
 		}
-		if err := n.deleteOpenBao(ctx); err != nil {
+		gone, err := n.deleteVault(ctx)
+		if err != nil {
 			return err
 		}
+		if !gone {
+			return write(v1alpha1.ApplicationPhaseDeleting, "the OpenBaoServer "+NetworkVaultServer+" is stopping")
+		}
 		delete(n.applied, string(o.UID))
-		log.Info("the market network is gone: children, services and its OpenBao")
+		log.Info("the market network is gone: children, services and its OpenBaoServer")
 		return n.ctl.setFinalizer(ctx, MarketNetworkGVR, u, false)
 	}
 	if !hasFinalizer(u) {
@@ -281,10 +288,6 @@ func (n *networks) reconcile(ctx context.Context, u *unstructured.Unstructured) 
 	}
 	if o.Spec.Profile != NetworkProfile {
 		return write(v1alpha1.ApplicationPhaseFailed, fmt.Sprintf("profile %q: the built MarketNetwork profile is %s", o.Spec.Profile, NetworkProfile))
-	}
-	ob, err := n.ensureOpenBao(ctx)
-	if err != nil {
-		return write(v1alpha1.ApplicationPhaseProvisioning, "the network's OpenBao: "+err.Error())
 	}
 	if n.applied[string(o.UID)] != o.Generation {
 		values, err := n.values(o.Spec)
@@ -306,7 +309,7 @@ func (n *networks) reconcile(ctx context.Context, u *unstructured.Unstructured) 
 	if !servicesReady {
 		return write(v1alpha1.ApplicationPhaseProvisioning, "waiting for the network's services to report ready")
 	}
-	bundle, err := n.caBundle(ctx, ob)
+	bundle, err := n.caBundle(ctx)
 	if err != nil {
 		return write(v1alpha1.ApplicationPhaseProvisioning, "the network CA bundle: "+err.Error())
 	}

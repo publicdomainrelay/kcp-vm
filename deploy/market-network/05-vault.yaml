@@ -1,0 +1,49 @@
+apiVersion: socialweb.computer/v1alpha1
+kind: OpenBaoServer
+metadata:
+  name: network
+spec:
+  asset:
+    name: bao
+    sha256: ""
+  clients:
+    - name: denoruntime
+      policies: ["network-pki"]
+      tokenTTL: 768h
+      tokenMaxTTL: 768h
+  declared:
+    policies:
+      - name: network-pki
+        rules:
+          - path: sys/namespaces/*
+            capabilities: ["create", "read", "update", "delete", "list"]
+          - path: sys/mounts
+            capabilities: ["read"]
+          - path: sys/mounts/pki
+            capabilities: ["create", "read", "update"]
+          - path: pki/root/generate/internal
+            capabilities: ["create", "update"]
+          - path: pki/root/sign-intermediate
+            capabilities: ["create", "update"]
+          - path: pki/cert/ca
+            capabilities: ["read"]
+          - path: pki/ca_chain
+            capabilities: ["read"]
+          - path: pki/ca/pem
+            capabilities: ["read"]
+          - path: +/sys/mounts
+            capabilities: ["read"]
+          - path: +/sys/mounts/pki
+            capabilities: ["create", "read", "update"]
+          - path: +/pki/intermediate/generate/internal
+            capabilities: ["create", "update"]
+          - path: +/pki/intermediate/set-signed
+            capabilities: ["create", "update"]
+          - path: +/pki/cert/ca
+            capabilities: ["read"]
+          - path: +/pki/ca_chain
+            capabilities: ["read"]
+          - path: +/pki/roles/*
+            capabilities: ["create", "read", "update"]
+          - path: +/pki/issue/*
+            capabilities: ["create", "update"]

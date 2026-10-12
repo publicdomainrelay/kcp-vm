@@ -2,76 +2,31 @@ package appctl
 
 import (
 	"context"
-	"encoding/json"
+	"crypto/tls"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/dynamic"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpserver"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/openbao"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/stack/denoruntime"
 )
 
 const (
-	NetworkDir      = "network"
-	OpenBaoDir      = "openbao"
-	OpenBaoName     = "network-openbao"
-	OpenBaoAsset    = "bao"
-	addressFile     = "address"
-	tokenFile       = "token"
-	keysFile        = "unseal-keys.json"
-	configFile      = "bao.hcl"
-	OpenBaoWaitPoll = 200 * time.Millisecond
+	NetworkDir         = "network"
+	NetworkVaultServer = "network"
+	NetworkVaultClient = "denoruntime"
+	NetworkPKIMount    = "pki"
+	OpenBaoWaitPoll    = 200 * time.Millisecond
 )
 
-const openBaoConfig = `disable_mlock = true
-disable_clustering = true
-ui = false
-storage "inmem" {}
-listener "tcp" {
-  address     = "127.0.0.1:0"
-  tls_disable = true
-}
-`
-
 func NetworkStateDir(instanceState string) string { return filepath.Join(instanceState, NetworkDir) }
-
-func openBaoDir(instanceState string) string {
-	return filepath.Join(NetworkStateDir(instanceState), OpenBaoDir)
-}
-
-func NetworkOpenBao(instanceState string) func(context.Context) (denoruntime.OpenBao, error) {
-	dir := openBaoDir(instanceState)
-	return func(ctx context.Context) (denoruntime.OpenBao, error) {
-		for {
-			addr, aerr := os.ReadFile(filepath.Join(dir, addressFile))
-			tok, terr := os.ReadFile(filepath.Join(dir, tokenFile))
-			if aerr == nil && terr == nil {
-				ob := denoruntime.OpenBao{Address: strings.TrimSpace(string(addr)), Token: strings.TrimSpace(string(tok))}
-				if h, err := openbao.New(ob.Address, ob.Token).Health(ctx); err == nil && h.Initialized && !h.Sealed {
-					return ob, nil
-				}
-			}
-			select {
-			case <-ctx.Done():
-				return denoruntime.OpenBao{}, ctx.Err()
-			case <-time.After(OpenBaoWaitPoll):
-			}
-		}
-	}
-}
-
-type unsealKeys struct {
-	Keys      []string `json:"keys"`
-	RootToken string   `json:"rootToken"`
-}
 
 func writeSecret(path string, data []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
@@ -84,113 +39,140 @@ func writeSecret(path string, data []byte) error {
 	return os.Rename(tmp, path)
 }
 
-func (n *networks) openBaoSpec(dir string) v1alpha1.HostProcessSpec {
-	return v1alpha1.HostProcessSpec{Unit: n.ctl.c.Layout.Names().HostProcessPrefix() + OpenBaoName + ".service",
-		Asset: &v1alpha1.HostProcessAsset{Name: OpenBaoAsset}, Argv: []string{"server", "-config", filepath.Join(dir, configFile)},
-		WorkDir: dir, RestartPolicy: v1alpha1.HostProcessRestartOnFailure,
-		Output: &v1alpha1.HostProcessOutput{Stdout: filepath.Join(dir, "bao.log"), Stderr: filepath.Join(dir, "bao.log")},
-		Stop:   &v1alpha1.HostProcessStop{Signal: "SIGTERM", GraceSeconds: 10}, Placement: v1alpha1.HostProcessPlacementSupervisor}
+type networkVault struct {
+	address    string
+	certMount  string
+	certRole   string
+	caPEM      []byte
+	clientCert []byte
+	clientKey  []byte
 }
 
-func (n *networks) ensureOpenBao(ctx context.Context) (denoruntime.OpenBao, error) {
-	dir := openBaoDir(n.ctl.c.Layout.StateDir)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return denoruntime.OpenBao{}, err
+func readNetworkVault(ctx context.Context, ri dynamic.ResourceInterface) (networkVault, error) {
+	u, err := ri.Get(ctx, NetworkVaultServer, metav1.GetOptions{})
+	if err != nil {
+		return networkVault{}, err
 	}
-	if err := writeSecret(filepath.Join(dir, configFile), []byte(openBaoConfig)); err != nil {
-		return denoruntime.OpenBao{}, err
+	var o v1alpha1.OpenBaoServer
+	if err := fromUnstructured(u, &o); err != nil {
+		return networkVault{}, err
 	}
-	ri, err := n.ctl.client(n.ctl.c.workspace(), HostProcessGVR)
+	st := o.Status
+	if st.Phase != v1alpha1.OpenBaoServerPhaseReady || st.Address == "" || st.Refs == nil {
+		return networkVault{}, fmt.Errorf("the OpenBaoServer %s is %s, not Ready", NetworkVaultServer, st.Phase)
+	}
+	var c v1alpha1.OpenBaoServerClientRefs
+	for _, x := range st.Clients {
+		if x.Name == NetworkVaultClient {
+			c = x
+		}
+	}
+	if c.ClientCert == "" {
+		return networkVault{}, fmt.Errorf("the OpenBaoServer %s reports no client %s yet", NetworkVaultServer, NetworkVaultClient)
+	}
+	v := networkVault{address: st.Address, certMount: c.CertAuthMount, certRole: c.CertAuthRole}
+	for _, f := range []struct {
+		dst *[]byte
+		ref string
+	}{{&v.caPEM, st.Refs.CA}, {&v.clientCert, c.ClientCert}, {&v.clientKey, c.ClientKey}} {
+		if *f.dst, err = os.ReadFile(fileRef(f.ref)); err != nil {
+			return networkVault{}, err
+		}
+	}
+	return v, nil
+}
+
+func (v networkVault) client(token string) (*openbao.Client, error) {
+	pool, err := openbao.CertPoolFromPEM(v.caPEM)
+	if err != nil {
+		return nil, err
+	}
+	cert, err := tls.X509KeyPair(v.clientCert, v.clientKey)
+	if err != nil {
+		return nil, err
+	}
+	return openbao.New(v.address, token, openbao.WithCACertPool(pool), openbao.WithClientCertificate(cert)), nil
+}
+
+func NetworkOpenBao(kubeconfig, workspace string) func(context.Context) (denoruntime.OpenBao, error) {
+	if workspace == "" {
+		workspace = DefaultWorkspace
+	}
+	return func(ctx context.Context) (denoruntime.OpenBao, error) {
+		for {
+			ob, err := networkOpenBao(ctx, kubeconfig, workspace)
+			if err == nil {
+				return ob, nil
+			}
+			select {
+			case <-ctx.Done():
+				return denoruntime.OpenBao{}, ctx.Err()
+			case <-time.After(OpenBaoWaitPoll):
+			}
+		}
+	}
+}
+
+func networkOpenBao(ctx context.Context, kubeconfig, workspace string) (denoruntime.OpenBao, error) {
+	restCfg, err := kcpserver.FrontRestConfig(kubeconfig)
 	if err != nil {
 		return denoruntime.OpenBao{}, err
 	}
-	cur, err := ri.Get(ctx, OpenBaoName, metav1.GetOptions{})
+	dc, err := dynamic.NewForConfig(clusterConfig(restCfg, workspace))
+	if err != nil {
+		return denoruntime.OpenBao{}, err
+	}
+	v, err := readNetworkVault(ctx, dc.Resource(OpenBaoServerGVR))
+	if err != nil {
+		return denoruntime.OpenBao{}, err
+	}
+	c, err := v.client("")
+	if err != nil {
+		return denoruntime.OpenBao{}, err
+	}
+	token, err := c.LoginCert(ctx, v.certMount, v.certRole)
+	if err != nil {
+		return denoruntime.OpenBao{}, err
+	}
+	return denoruntime.OpenBao{Address: v.address, Token: token, CACert: v.caPEM, ClientCert: v.clientCert, ClientKey: v.clientKey}, nil
+}
+
+func (n *networks) vault(ctx context.Context) (networkVault, error) {
+	ri, err := n.ctl.client(n.ctl.c.workspace(), OpenBaoServerGVR)
+	if err != nil {
+		return networkVault{}, err
+	}
+	return readNetworkVault(ctx, ri)
+}
+
+func (n *networks) deleteVault(ctx context.Context) (bool, error) {
+	ri, err := n.ctl.client(n.ctl.c.workspace(), OpenBaoServerGVR)
+	if err != nil {
+		return false, err
+	}
+	u, err := ri.Get(ctx, NetworkVaultServer, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
-		u, err := toUnstructured(&v1alpha1.HostProcess{ObjectMeta: metav1.ObjectMeta{Name: OpenBaoName}, Spec: n.openBaoSpec(dir)}, "HostProcess")
-		if err != nil {
-			return denoruntime.OpenBao{}, err
-		}
-		if cur, err = ri.Create(ctx, u, metav1.CreateOptions{FieldManager: FieldManager}); err != nil {
-			return denoruntime.OpenBao{}, err
-		}
-		n.ctl.c.log().Info("declared the network's OpenBao", "hostprocess", OpenBaoName)
-	} else if err != nil {
-		return denoruntime.OpenBao{}, err
+		return true, nil
 	}
-	var hp v1alpha1.HostProcess
-	if err := fromUnstructured(cur, &hp); err != nil {
-		return denoruntime.OpenBao{}, err
-	}
-	if hp.Status.Phase != v1alpha1.HostProcessPhaseRunning || len(hp.Status.Listeners) == 0 {
-		return denoruntime.OpenBao{}, fmt.Errorf("the network's OpenBao is %s, not yet listening", hp.Status.Phase)
-	}
-	addr := "http://" + hp.Status.Listeners[0].Address
-	client := openbao.New(addr, "")
-	h, err := client.Health(ctx)
 	if err != nil {
-		return denoruntime.OpenBao{}, err
+		return false, err
 	}
-	keysPath := filepath.Join(dir, keysFile)
-	var k unsealKeys
-	if !h.Initialized {
-		res, err := client.Init(ctx, 1, 1)
-		if err != nil {
-			return denoruntime.OpenBao{}, err
-		}
-		k = unsealKeys{Keys: res.Keys, RootToken: res.RootToken}
-		b, _ := json.Marshal(k)
-		if err := writeSecret(keysPath, b); err != nil {
-			return denoruntime.OpenBao{}, err
-		}
-		n.ctl.c.log().Info("initialised the network's OpenBao (in-memory storage)", "address", addr)
-	} else {
-		b, err := os.ReadFile(keysPath)
-		if err != nil {
-			return denoruntime.OpenBao{}, fmt.Errorf("the network's OpenBao is initialised and %s is unreadable: %w", keysPath, err)
-		}
-		if err := json.Unmarshal(b, &k); err != nil || len(k.Keys) == 0 {
-			return denoruntime.OpenBao{}, fmt.Errorf("%s holds no unseal key", keysPath)
+	if u.GetDeletionTimestamp() == nil {
+		if err := ri.Delete(ctx, NetworkVaultServer, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+			return false, err
 		}
 	}
-	if h.Sealed || !h.Initialized {
-		if _, err := client.Unseal(ctx, k.Keys[0]); err != nil {
-			return denoruntime.OpenBao{}, err
-		}
-	}
-	if err := writeSecret(filepath.Join(dir, tokenFile), []byte(k.RootToken+"\n")); err != nil {
-		return denoruntime.OpenBao{}, err
-	}
-	if err := writeSecret(filepath.Join(dir, addressFile), []byte(addr+"\n")); err != nil {
-		return denoruntime.OpenBao{}, err
-	}
-	return denoruntime.OpenBao{Address: addr, Token: k.RootToken}, nil
+	return false, nil
 }
 
-func (n *networks) deleteOpenBao(ctx context.Context) error {
-	ri, err := n.ctl.client(n.ctl.c.workspace(), HostProcessGVR)
-	if err != nil {
-		return err
-	}
-	if err := ri.Delete(ctx, OpenBaoName, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
-		return err
-	}
-	return nil
-}
-
-func pkiCA(ctx context.Context, ob denoruntime.OpenBao) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ob.Address+"/v1/pki/ca/pem", nil)
+func pkiCA(ctx context.Context, v networkVault) ([]byte, error) {
+	c, err := v.client("")
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("X-Vault-Token", ob.Token)
-	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	pem, err := c.CAPEM(ctx, NetworkPKIMount)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("the network's PKI root CA: %w", err)
 	}
-	defer resp.Body.Close()
-	b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode != http.StatusOK || !strings.Contains(string(b), "BEGIN CERTIFICATE") {
-		return nil, fmt.Errorf("the network's PKI root CA: %d %s", resp.StatusCode, strings.TrimSpace(string(b)))
-	}
-	return b, nil
+	return []byte(pem), nil
 }
