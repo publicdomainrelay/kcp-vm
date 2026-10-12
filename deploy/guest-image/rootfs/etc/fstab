@@ -1,0 +1,1 @@
+LABEL=cloudimg-rootfs	/	ext4	discard,errors=remount-ro	0 1

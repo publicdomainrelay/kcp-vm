@@ -2,7 +2,6 @@
   "packages": [
     "cloud-init",
     "jq",
-    "unzip",
     "ca-certificates",
     "curl",
     "iptables",

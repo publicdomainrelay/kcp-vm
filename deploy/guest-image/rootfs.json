@@ -1,0 +1,18 @@
+{
+  "preinstall": "../bidder/preinstall-market.json",
+  "overlay": "rootfs",
+  "remove": [
+    "/etc/ssh/ssh_host_*",
+    "/var/lib/cloud/**",
+    "/var/log/cloud-init*",
+    "/var/cache/apt/*.bin",
+    "/var/lib/apt/lists/*_*"
+  ],
+  "assets": {
+    "/usr/local/bin/dumbpipe": "dumbpipe"
+  },
+  "runs": {
+    "8a1b58dd67c32c937c4c3257ece9dcbcbd53d87c92e1749906da49a6489bc49b": "cloud-init --version: the base carries cloud-init, checked in its dpkg status",
+    "fe76a87a62dc5484bc6e777dc04b55c15c3f2eebd2bf7345f9788fbec438b140": "dumbpipe v0.39.0: baked from the versions.json dumbpipe pin of the image's arch as the asset /usr/local/bin/dumbpipe, with dumbpipe.version from the overlay"
+  }
+}
