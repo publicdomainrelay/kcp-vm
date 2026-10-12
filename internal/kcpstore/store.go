@@ -35,7 +35,7 @@ type Assets struct {
 
 func StoreFor(role Role, profile string) (Kind, error) {
 	switch profile {
-	case "", "minimal", "quick", "bed", "prodlike":
+	case "", "quick", "bed", "prodlike":
 	default:
 		return "", fmt.Errorf("kcpstore: unknown profile %q", profile)
 	}
@@ -43,7 +43,7 @@ func StoreFor(role Role, profile string) (Kind, error) {
 	case RoleBidder:
 		return KindKineSqlite, nil
 	case RoleGateway:
-		if profile == "minimal" || profile == "quick" {
+		if profile == "quick" {
 			return KindKineSqlite, nil
 		}
 		return KindKinePostgres, nil
