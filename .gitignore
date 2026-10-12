@@ -37,3 +37,5 @@ port-bound-to
 /socialweb-tsbundle
 /socialweb-vmexec
 /cmd/*/socialweb-*
+.tempdir/
+.cache/
