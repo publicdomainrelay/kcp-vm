@@ -68,6 +68,8 @@ func builtVerbs() map[string]builtVerb {
 		"apply":             {applyOptions, runApply},
 		"manifests list":    {[]string{"json"}, runManifestsList},
 		"manifests render":  {renderOptions, runManifestsRender},
+		"units list":        {[]string{backendOpt, "instance", "state-dir", "asset-cache", "json"}, runUnitsList},
+		"units audit":       {[]string{backendOpt, "instance", "state-dir", "asset-cache", "json"}, runUnitsAudit},
 		"internal devsup":   {[]string{"state", "socket", "die-with", "instance"}, runDevsup},
 		"internal dev-core": {[]string{"instance-dir", "ready-timeout"}, runDevCore},
 		"dev roll kcp":      {[]string{"instance", "state-dir", "ready-timeout"}, runDevRoll},
