@@ -1,0 +1,14 @@
+host=hat-8 7.2.9-200.fc44.x86_64 selinux=Enforcing 2026-10-12T04:28:59.658Z
+range_user=test-0001 uid=1002 subuid=655360:65536 subgid=655360 slot_size=32768
+invoking_user=johnandersen777 subuid_entry=0
+crw-rw-rw-. 1 root kvm  10, 232 Oct 11 21:28 /dev/kvm
+crw-rw-rw-. 1 root root 10, 200 Oct 11 15:31 /dev/net/tun
+-rwxr-xr-x. 1 root root   43320 Apr 28 17:00 /usr/bin/newgidmap
+-rwxr-xr-x. 1 root root   39208 Apr 28 17:00 /usr/bin/newuidmap
+/usr/bin/newuidmap cap_setuid=ep
+/usr/bin/newgidmap cap_setgid=ep
+unshare from util-linux 2.41.5
+pasta 0^20261002.gcba3570-1.fc44.x86_64
+-- G: Go process unshare(CLONE_NEWUSER)
+threads=5 unshare(CLONE_NEWUSER)=invalid argument
+-- stage size 5848 bytes sha256 3e48292995a81be0

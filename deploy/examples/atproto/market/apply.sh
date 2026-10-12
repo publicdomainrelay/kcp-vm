@@ -88,6 +88,13 @@ if [ -n "$missing" ]; then
   exit 1
 fi
 mkdir -p "$FC_WORK_ROOT"
+FC_EXTRA_ARGS=""
+if [ -n "${FC_USERNS_STAGE:-}" ]; then
+  FC_EXTRA_ARGS=",\"--compute-provider-firecracker-userns-stage\",\"$FC_USERNS_STAGE\""
+  [ -n "${FC_USERNS_ACCOUNT:-}" ] && FC_EXTRA_ARGS="$FC_EXTRA_ARGS,\"--compute-provider-firecracker-userns-account\",\"$FC_USERNS_ACCOUNT\""
+  [ -n "${FC_USERNS_RUNTIME_DIR:-}" ] && FC_EXTRA_ARGS="$FC_EXTRA_ARGS,\"--compute-provider-firecracker-userns-runtime-dir\",\"$FC_USERNS_RUNTIME_DIR\""
+  [ -n "${FC_USERNS_SLOT_SIZE:-}" ] && FC_EXTRA_ARGS="$FC_EXTRA_ARGS,\"--compute-provider-firecracker-userns-slot-size\",\"$FC_USERNS_SLOT_SIZE\""
+fi
 # Each guest's firecracker API socket lives in its work directory, and a unix
 # socket path cannot exceed 107 bytes; past that the guest dies at boot and its
 # work directory is removed, which reads as a bidder that never provisioned.
@@ -219,6 +226,7 @@ apply_pod() {
       -e "s|__FC_VMM__|$FC_VMM|g" \
       -e "s|__FC_RUNNER_IMAGE__|$FC_RUNNER_IMAGE|g" \
       -e "s|__FC_WORK_ROOT__|$FC_WORK_ROOT|g" \
+      -e "s|__FC_EXTRA_ARGS__|$FC_EXTRA_ARGS|g" \
       -e "s|__GUEST_TLS_DIR__|$GUEST_TLS_DIR|g" \
       "$MARKET_DIR/$file" \
     | KC --server="$S/clusters/root:$ws" apply --validate=false -f -

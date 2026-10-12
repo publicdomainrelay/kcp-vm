@@ -134,6 +134,8 @@ type guestSpec struct {
 
 	InstanceTimeoutSec int `json:"instance_timeout_sec"`
 
+	VMMUID int `json:"vmm_uid"`
+
 	Network networkSpec `json:"network"`
 }
 
@@ -302,6 +304,13 @@ func Boot(specPath, resultPath string, foreground bool) error {
 	paramsPath, err := writeNamespaceParams(s, guest, resultPath != "")
 	if err != nil {
 		return err
+	}
+	if s.VMMUID > 0 {
+		if err := nodevm.GrantVMMFiles(s.WorkDir, s.VMMUID); err != nil {
+			return fmt.Errorf("granting the VMM's uid %d its work files: %w -- the VMM runs in a user "+
+				"namespace of its own and reaches the files of this work directory only by these entries",
+				s.VMMUID, err)
+		}
 	}
 	self, err := os.Executable()
 	if err != nil {

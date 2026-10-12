@@ -1,0 +1,5 @@
+-- files owned by the slot uids on this host (expect none)
+uid 656360: none
+uid 689128: none
+-- AVC denials since 21:28:59
+<no matches>

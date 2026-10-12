@@ -208,7 +208,7 @@ func WriteInstance(path string, pid int, startNanos int64) error {
 		return fmt.Errorf("nodevm: encoding the VMM's pid: %w", err)
 	}
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
+	if err := os.WriteFile(tmp, raw, 0o644); err != nil {
 		return fmt.Errorf("nodevm: writing the VMM's pid to %s: %w -- the parent waits for "+
 			"this file to know which process to record, and without it the VMM runs with no record "+
 			"and no later gateway can name, check or reap it", tmp, err)
