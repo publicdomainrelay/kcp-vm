@@ -12,6 +12,7 @@ var ErrUnsupported = errors.New("execrunner: no process runner for this OS")
 type processHost interface {
 	prepare(cmd *exec.Cmd, unit string) error
 	killGroup(pid int)
+	termGroup(pid int)
 	alive(pid int) bool
 	startTicks(pid int) uint64
 }
