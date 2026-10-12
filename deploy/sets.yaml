@@ -252,6 +252,8 @@ unapplied:
     why: this index
   - path: audit-policy.yaml
     why: an audit.k8s.io Policy file a k3s apiserver reads at start through --audit-policy-file, never an object
+  - path: ts-entries.yaml
+    why: the TypeScript closure entries cmd/socialweb-tsbundle bundles (plan 0008 M1-TS-CLOSURE), a build input, never an object
   - path: kcp-audit-policy.yaml
     why: the Policy file kcp reads at start through --audit-policy-file (run-kcp-instance.sh, the image), never an object
   - path: tenant-grant.yaml

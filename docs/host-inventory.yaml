@@ -171,7 +171,7 @@ entries:
     from:
       - "image k8s curl download"
       - "internal/denorun/denorun.go"
-      - "internal/tsbundle/build.go"
+      - "internal/tsbundle/tsbuild/build.go"
   - name: initdb
     kind: executable
     fate: embedded-tool
@@ -306,7 +306,7 @@ entries:
     why: util-linux unshare >= 2.38, required only if M0-VM-USERNS chooses it for the userns stage; check-host already probes it; cmd/socialweb-tsbundle starts every closure entry under unshare -rn at build time
     from:
       - "check-host checks.go"
-      - "internal/tsbundle/build.go"
+      - "internal/tsbundle/tsbuild/build.go"
       - "cmd/socialweb-tsbundle/main.go"
   - name: systemd
     kind: executable
@@ -485,7 +485,7 @@ entries:
     why: internal/marketbed records the vendored deno-kcp commit of a market test bed; cmd/socialweb-tsbundle records each staged repo's commit and refuses a dirty one for a release; development and build hosts only
     from:
       - "internal/marketbed/record.go"
-      - "internal/tsbundle/build.go"
+      - "internal/tsbundle/tsbuild/build.go"
   - name: debugfs
     kind: executable
     fate: removed-legacy
@@ -985,5 +985,5 @@ indirect:
     resolves: [deno]
   - site: "socialweb-computer-kcp/internal/denorun/denorun.go: argv[0]"
     resolves: [deno]
-  - site: "socialweb-computer-kcp/internal/tsbundle/build.go: o.Deno"
+  - site: "socialweb-computer-kcp/internal/tsbundle/tsbuild/build.go: o.Deno"
     resolves: [deno]

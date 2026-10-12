@@ -1,4 +1,4 @@
-package tsbundle
+package tsbuild
 
 import (
 	"bytes"
@@ -24,6 +24,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/denorun"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/tsbundle"
 )
 
 const (
@@ -34,29 +35,8 @@ const (
 	fillKey       = "0000000000000000000000000000000000000000000000000000000000000000"
 )
 
-var DefaultProbe = []string{"--help"}
-
-type EntrySpec struct {
-	Name          string `json:"name" yaml:"name"`
-	Dir           string `json:"dir" yaml:"dir,omitempty"`
-	denorun.Entry `yaml:",inline"`
-	Probe         []string `json:"probe" yaml:"probe,omitempty"`
-}
-
-func (e EntrySpec) At(base string) (string, denorun.Entry) {
-	abs := func(p string) string { return filepath.Join(base, filepath.FromSlash(p)) }
-	en := denorun.Entry{Path: abs(e.Path), Unstable: e.Unstable}
-	for _, p := range e.Preload {
-		en.Preload = append(en.Preload, abs(p))
-	}
-	if e.Config != "" {
-		en.Config = abs(e.Config)
-	}
-	return abs(e.Dir), en
-}
-
 func configRoot(root, p string) string {
-	repo, rest, _ := splitRepo(p)
+	repo, rest, _ := tsbundle.SplitRepo(p)
 	dir := path.Dir(rest)
 	found := dir
 	for d := dir; ; d = path.Dir(d) {
@@ -70,16 +50,16 @@ func configRoot(root, p string) string {
 	return path.Join(repo, found)
 }
 
-func resolveDirs(root string, entries []EntrySpec) ([]EntrySpec, error) {
-	out := make([]EntrySpec, len(entries))
+func resolveDirs(root string, entries []tsbundle.EntrySpec) ([]tsbundle.EntrySpec, error) {
+	out := make([]tsbundle.EntrySpec, len(entries))
 	for i, e := range entries {
 		if e.Dir == "" {
 			e.Dir = configRoot(root, e.Path)
 		}
 		if len(e.Probe) == 0 {
-			e.Probe = slices.Clone(DefaultProbe)
+			e.Probe = slices.Clone(tsbundle.DefaultProbe)
 		}
-		if _, _, err := splitRepo(e.Dir + "/x"); err != nil {
+		if _, _, err := tsbundle.SplitRepo(e.Dir + "/x"); err != nil {
 			return nil, fmt.Errorf("tsbundle: entry %s dir: %w", e.Name, err)
 		}
 		out[i] = e
@@ -88,10 +68,10 @@ func resolveDirs(root string, entries []EntrySpec) ([]EntrySpec, error) {
 }
 
 type entriesFile struct {
-	Entries []EntrySpec `yaml:"entries"`
+	Entries []tsbundle.EntrySpec `yaml:"entries"`
 }
 
-func LoadEntries(p string) ([]EntrySpec, error) {
+func LoadEntries(p string) ([]tsbundle.EntrySpec, error) {
 	b, err := os.ReadFile(p)
 	if err != nil {
 		return nil, err
@@ -102,46 +82,15 @@ func LoadEntries(p string) ([]EntrySpec, error) {
 	if err := dec.Decode(&f); err != nil {
 		return nil, fmt.Errorf("tsbundle: %s: %w", p, err)
 	}
-	if err := checkEntries(f.Entries); err != nil {
+	if err := tsbundle.CheckEntries(f.Entries); err != nil {
 		return nil, fmt.Errorf("tsbundle: %s: %w", p, err)
 	}
 	return f.Entries, nil
 }
 
-func checkEntries(entries []EntrySpec) error {
-	if len(entries) == 0 {
-		return errors.New("no entries")
-	}
-	seen := map[string]bool{}
-	for _, e := range entries {
-		if e.Name == "" || seen[e.Name] {
-			return fmt.Errorf("entry name %q is empty or repeated", e.Name)
-		}
-		seen[e.Name] = true
-		for _, p := range append([]string{e.Path}, e.Preload...) {
-			if _, _, err := splitRepo(p); err != nil {
-				return fmt.Errorf("entry %s: %w", e.Name, err)
-			}
-		}
-	}
-	return nil
-}
-
-func splitRepo(p string) (string, string, error) {
-	clean := path.Clean(p)
-	if p == "" || path.IsAbs(clean) || clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || clean != p {
-		return "", "", fmt.Errorf("path %q is not a clean org-root-relative path", p)
-	}
-	repo, rest, ok := strings.Cut(clean, "/")
-	if !ok {
-		return "", "", fmt.Errorf("path %q names no file inside a repo", p)
-	}
-	return repo, rest, nil
-}
-
 type BuildOptions struct {
 	OrgRoot      string
-	Entries      []EntrySpec
+	Entries      []tsbundle.EntrySpec
 	Deno         string
 	Release      bool
 	Offline      bool
@@ -159,12 +108,12 @@ func (o BuildOptions) logf(format string, args ...any) {
 	}
 }
 
-func Build(ctx context.Context, o BuildOptions) (Manifest, error) {
-	var m Manifest
-	if err := checkEntries(o.Entries); err != nil {
+func Build(ctx context.Context, o BuildOptions) (tsbundle.Manifest, error) {
+	var m tsbundle.Manifest
+	if err := tsbundle.CheckEntries(o.Entries); err != nil {
 		return m, fmt.Errorf("tsbundle: %w", err)
 	}
-	root, err := CheckOrgRoot(o.OrgRoot)
+	root, err := tsbundle.CheckOrgRoot(o.OrgRoot)
 	if err != nil {
 		return m, err
 	}
@@ -197,7 +146,7 @@ func Build(ctx context.Context, o BuildOptions) (Manifest, error) {
 		return m, err
 	}
 	tree := filepath.Join(work, "tree")
-	src := filepath.Join(tree, SourceDir)
+	src := filepath.Join(tree, tsbundle.SourceDir)
 	repos, epoch, err := stageRepos(ctx, o, root, src, prefixes)
 	if err != nil {
 		return m, err
@@ -229,7 +178,7 @@ func Build(ctx context.Context, o BuildOptions) (Manifest, error) {
 			return m, fmt.Errorf("tsbundle: a release needs every lockfile committed and current; %s (commit the refreshed lockfile in its repo)", strings.Join(bad, ", "))
 		}
 	}
-	if err := seedFrom(filepath.Join(work, fillKey), filepath.Join(tree, SeedDir), pins, epoch); err != nil {
+	if err := seedFrom(filepath.Join(work, fillKey), filepath.Join(tree, tsbundle.SeedDir), pins, epoch); err != nil {
 		return m, err
 	}
 	archive, pm, err := Pack(tree, epoch)
@@ -324,7 +273,7 @@ func graphFiles(ctx context.Context, o BuildOptions, root, denoDir string) ([]st
 func stagePrefixes(root string, files []string) (map[string][]string, error) {
 	byRepo := map[string][]string{}
 	for _, f := range files {
-		repo, rest, err := splitRepo(f)
+		repo, rest, err := tsbundle.SplitRepo(f)
 		if err != nil {
 			return nil, err
 		}
@@ -391,13 +340,13 @@ func pathspecs(prefixes []string) []string {
 	return append([]string{"--"}, prefixes...)
 }
 
-func stageRepos(ctx context.Context, o BuildOptions, root, src string, prefixes map[string][]string) ([]RepoRecord, int64, error) {
+func stageRepos(ctx context.Context, o BuildOptions, root, src string, prefixes map[string][]string) ([]tsbundle.RepoRecord, int64, error) {
 	names := make([]string, 0, len(prefixes))
 	for r := range prefixes {
 		names = append(names, r)
 	}
 	sort.Strings(names)
-	var recs []RepoRecord
+	var recs []tsbundle.RepoRecord
 	var epoch int64
 	var dirtyErrs []string
 	for _, name := range names {
@@ -428,7 +377,7 @@ func stageRepos(ctx context.Context, o BuildOptions, root, src string, prefixes 
 			}
 			dirtyErrs = append(dirtyErrs, fmt.Sprintf("%s is dirty in its staged paths (%s)", name, strings.Join(paths, ", ")))
 		}
-		recs = append(recs, RepoRecord{Name: name, Commit: strings.TrimSpace(string(head)), Dirty: dirty, Prefixes: ps})
+		recs = append(recs, tsbundle.RepoRecord{Name: name, Commit: strings.TrimSpace(string(head)), Dirty: dirty, Prefixes: ps})
 		listing, err := gitOut(ctx, dir, append([]string{"ls-files", "-s", "-z"}, pathspecs(ps)...)...)
 		if err != nil {
 			return nil, 0, err
@@ -475,9 +424,9 @@ func stageFile(from, to, mode string, release bool) error {
 		}
 		return os.Symlink(t, to)
 	case mode == "100755":
-		return copyFile(from, to, 0o755)
+		return tsbundle.CopyFile(from, to, 0o755)
 	default:
-		return copyFile(from, to, 0o644)
+		return tsbundle.CopyFile(from, to, 0o644)
 	}
 }
 
@@ -554,9 +503,9 @@ func splitNameVersion(key string) (string, string, bool) {
 	return key[:i], v, true
 }
 
-func classifyLocks(src string, locks []string, before map[string][]byte) ([]LockRecord, lockPins, error) {
+func classifyLocks(src string, locks []string, before map[string][]byte) ([]tsbundle.LockRecord, lockPins, error) {
 	pins := lockPins{jsr: map[string]map[string]bool{}, npm: map[string]map[string]bool{}}
-	recs := []LockRecord{}
+	recs := []tsbundle.LockRecord{}
 	for _, rel := range locks {
 		now, err := os.ReadFile(filepath.Join(src, filepath.FromSlash(rel)))
 		if errors.Is(err, fs.ErrNotExist) {
@@ -581,7 +530,7 @@ func classifyLocks(src string, locks []string, before map[string][]byte) ([]Lock
 				}
 			}
 		}
-		recs = append(recs, LockRecord{Path: rel, State: state})
+		recs = append(recs, tsbundle.LockRecord{Path: rel, State: state})
 		var lf lockFile
 		if err := json.Unmarshal(now, &lf); err != nil {
 			return nil, pins, fmt.Errorf("tsbundle: %s: %w", rel, err)
@@ -607,12 +556,12 @@ func addPin(m map[string]map[string]bool, name, version string) {
 	m[name][version] = true
 }
 
-func probe(ctx context.Context, o BuildOptions, work string, archive []byte, m Manifest) ([]EntryRecord, error) {
+func probe(ctx context.Context, o BuildOptions, work string, archive []byte, m tsbundle.Manifest) ([]tsbundle.EntryRecord, error) {
 	bundle := filepath.Join(work, "probe-bundle")
 	if err := WriteBundle(bundle, archive, m); err != nil {
 		return nil, err
 	}
-	p, err := Embedded{FS: os.DirFS(bundle), Dir: "."}.Prepare(filepath.Join(work, "probe-state"))
+	p, err := tsbundle.Embedded{FS: os.DirFS(bundle), Dir: "."}.Prepare(filepath.Join(work, "probe-state"))
 	if err != nil {
 		return nil, err
 	}
@@ -620,9 +569,9 @@ func probe(ctx context.Context, o BuildOptions, work string, archive []byte, m M
 	if err := os.MkdirAll(home, 0o700); err != nil {
 		return nil, err
 	}
-	recs := make([]EntryRecord, 0, len(o.Entries))
+	recs := make([]tsbundle.EntryRecord, 0, len(o.Entries))
 	for _, e := range o.Entries {
-		rec := EntryRecord{EntrySpec: e}
+		rec := tsbundle.EntryRecord{EntrySpec: e}
 		pctx, cancel := context.WithTimeout(ctx, o.ProbeTimeout)
 		cmd, err := p.Spec(o.Deno, e, e.Probe).Command(pctx, []string{"HOME=" + home})
 		if err != nil {

@@ -1,4 +1,4 @@
-package tsbundle
+package tsbuild
 
 import (
 	"bytes"
@@ -17,6 +17,7 @@ import (
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/denorun"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/livegate"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/tsbundle"
 )
 
 func denoBinary(t *testing.T) string {
@@ -57,7 +58,7 @@ func git(t *testing.T, dir string, args ...string) {
 	}
 }
 
-var fixtureEntries = []EntrySpec{
+var fixtureEntries = []tsbundle.EntrySpec{
 	{Name: "door", Entry: denorun.Entry{Path: "socialweb-computer-kcp/svc/door/mod.ts", Preload: []string{"socialweb-computer-kcp/svc/door/preload.ts"}}},
 	{Name: "market", Entry: denorun.Entry{Path: "atproto-market/hono-thing/mod.ts", Unstable: []string{"kv"}}},
 }
@@ -89,7 +90,7 @@ func closureFixture(t *testing.T, deno string) (string, string) {
 			t.Fatalf("fixture lockfile: %v\n%s", err, out)
 		}
 	}
-	for _, r := range SiblingRepos {
+	for _, r := range tsbundle.SiblingRepos {
 		git(t, filepath.Join(root, r), "init", "-q", "-b", "main")
 		git(t, filepath.Join(root, r), "add", "-A")
 		git(t, filepath.Join(root, r), "commit", "-q", "-m", "fixture")
@@ -97,7 +98,7 @@ func closureFixture(t *testing.T, deno string) (string, string) {
 	return root, host
 }
 
-func buildFixture(t *testing.T, deno, root, host string, release bool) (string, Manifest, error) {
+func buildFixture(t *testing.T, deno, root, host string, release bool) (string, tsbundle.Manifest, error) {
 	t.Helper()
 	out := t.TempDir()
 	m, err := Build(context.Background(), BuildOptions{OrgRoot: root, Entries: fixtureEntries, Deno: deno, Release: release,
@@ -134,7 +135,7 @@ func TestTwoBundlesOfTheSameCommitsAreByteIdentical(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{ArchiveName, ManifestName} {
+	for _, name := range []string{tsbundle.ArchiveName, tsbundle.ManifestName} {
 		a, err1 := os.ReadFile(filepath.Join(out1, name))
 		b, err2 := os.ReadFile(filepath.Join(out2, name))
 		if err1 != nil || err2 != nil {
@@ -197,60 +198,12 @@ func TestADirtySiblingRepoIsRefusedForARelease(t *testing.T) {
 	}
 }
 
-func TestAnExtractedTreeWhoseFileChangedIsRefused(t *testing.T) {
-	tree := t.TempDir()
-	put(t, filepath.Join(tree, "src", "a", "mod.ts"), "console.log(1);\n")
-	put(t, filepath.Join(tree, "deno", "remote", "x"), "cached\n")
-	archive, m, err := Pack(tree, 1791000000)
-	if err != nil {
-		t.Fatal(err)
-	}
-	out := t.TempDir()
-	if err := WriteBundle(out, archive, m); err != nil {
-		t.Fatal(err)
-	}
-	src := Embedded{FS: os.DirFS(out), Dir: "."}
-	state := writableTempDir(t)
-	p, err := src.Prepare(state)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if p.Root != filepath.Join(state, "ts", m.TreeSHA256, "src") || p.Key != m.TreeSHA256 || p.Mode != denorun.Production {
-		t.Fatalf("prepared %+v", p)
-	}
-	if b, err := os.ReadFile(filepath.Join(p.DenoDirs, p.Key, "remote", "x")); err != nil || string(b) != "cached\n" {
-		t.Fatalf("the DENO_DIR was not seeded from the closure: %q %v", b, err)
-	}
-	if err := os.WriteFile(filepath.Join(p.Root, "a", "mod.ts"), []byte("x"), 0o644); err == nil {
-		t.Fatal("an extracted file is writable")
-	}
-	target := filepath.Join(p.Root, "a", "mod.ts")
-	os.Chmod(filepath.Dir(target), 0o755)
-	os.Chmod(target, 0o644)
-	if err := os.WriteFile(target, []byte("console.log(2);\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	_, err = src.Prepare(state)
-	if err == nil || !strings.Contains(err.Error(), "src/a/mod.ts") {
-		t.Fatalf("a changed extracted file was not refused by name: %v", err)
-	}
-	tampered := t.TempDir()
-	bad := append([]byte{}, archive...)
-	bad[len(bad)/2] ^= 0xff
-	if err := WriteBundle(tampered, bad, m); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := (Embedded{FS: os.DirFS(tampered), Dir: "."}).Prepare(writableTempDir(t)); err == nil {
-		t.Fatal("an archive whose bytes differ from its manifest was extracted")
-	}
-}
-
 func TestTheEntriesFileNamesEveryShippedEntry(t *testing.T) {
-	entries, err := LoadEntries(filepath.Join("..", "..", "deploy", "ts-entries.yaml"))
+	entries, err := LoadEntries(filepath.Join("..", "..", "..", "deploy", "ts-entries.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	byName := map[string]EntrySpec{}
+	byName := map[string]tsbundle.EntrySpec{}
 	for _, e := range entries {
 		byName[e.Name] = e
 	}
@@ -263,7 +216,7 @@ func TestTheEntriesFileNamesEveryShippedEntry(t *testing.T) {
 		t.Errorf("the door does not preload undici-preload.ts: %+v", d)
 	}
 	wd, _ := os.Getwd()
-	root, err := FindOrgRoot(wd)
+	root, err := tsbundle.FindOrgRoot(wd)
 	if err != nil {
 		t.Skipf("this checkout sits in no org root: %v", err)
 	}

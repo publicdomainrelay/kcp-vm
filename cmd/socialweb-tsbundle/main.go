@@ -16,6 +16,7 @@ import (
 	"syscall"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/tsbundle"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/tsbundle/tsbuild"
 )
 
 type summary struct {
@@ -72,7 +73,7 @@ func run(ctx context.Context, orgRoot, entries, deno, out, work string, release,
 	if entries == "" {
 		entries = filepath.Join(root, "socialweb-computer-kcp", "deploy", "ts-entries.yaml")
 	}
-	specs, err := tsbundle.LoadEntries(entries)
+	specs, err := tsbuild.LoadEntries(entries)
 	if err != nil {
 		return err
 	}
@@ -100,7 +101,7 @@ func run(ctx context.Context, orgRoot, entries, deno, out, work string, release,
 	if allow != "" {
 		hosts = strings.Split(allow, ",")
 	}
-	m, err := tsbundle.Build(ctx, tsbundle.BuildOptions{OrgRoot: root, Entries: specs, Deno: deno, Release: release, Offline: offline,
+	m, err := tsbuild.Build(ctx, tsbuild.BuildOptions{OrgRoot: root, Entries: specs, Deno: deno, Release: release, Offline: offline,
 		Epoch: sde, Work: work, Out: out, AllowImport: hosts, Log: os.Stderr})
 	if err != nil {
 		return err

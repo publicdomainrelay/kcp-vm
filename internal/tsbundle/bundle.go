@@ -1,7 +1,6 @@
 package tsbundle
 
 import (
-	"archive/tar"
 	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
@@ -15,8 +14,6 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
-	"strings"
-	"time"
 
 	"github.com/klauspost/compress/zstd"
 
@@ -75,103 +72,7 @@ type Manifest struct {
 	Files           []FileRecord  `json:"files"`
 }
 
-func Pack(tree string, epoch int64) ([]byte, Manifest, error) {
-	m := Manifest{Format: FormatVersion, SourceDateEpoch: epoch, Repos: []RepoRecord{}, Entries: []EntryRecord{}, Lockfiles: []LockRecord{}, Files: []FileRecord{}}
-	var raw bytes.Buffer
-	zw, err := zstd.NewWriter(&raw, zstd.WithEncoderLevel(zstd.SpeedBestCompression), zstd.WithEncoderConcurrency(1))
-	if err != nil {
-		return nil, m, err
-	}
-	tw := tar.NewWriter(zw)
-	mtime := time.Unix(epoch, 0).UTC()
-	err = filepath.WalkDir(tree, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(tree, p)
-		if err != nil || rel == "." {
-			return err
-		}
-		rel = filepath.ToSlash(rel)
-		info, err := os.Lstat(p)
-		if err != nil {
-			return err
-		}
-		hdr := &tar.Header{Name: rel, ModTime: mtime}
-		rec := FileRecord{Path: rel}
-		switch {
-		case info.IsDir():
-			hdr.Typeflag, hdr.Name, hdr.Mode = tar.TypeDir, rel+"/", 0o755
-		case info.Mode()&fs.ModeSymlink != 0:
-			target, err := os.Readlink(p)
-			if err != nil {
-				return err
-			}
-			target = filepath.ToSlash(target)
-			if err := safeLink(rel, target); err != nil {
-				return err
-			}
-			hdr.Typeflag, hdr.Linkname, hdr.Mode = tar.TypeSymlink, target, 0o777
-			rec.Kind, rec.Target = "l", target
-		case info.Mode().IsRegular():
-			hdr.Typeflag, hdr.Size, hdr.Mode = tar.TypeReg, info.Size(), 0o444
-			rec.Kind = "f"
-			if info.Mode().Perm()&0o111 != 0 {
-				hdr.Mode, rec.Kind = 0o555, "x"
-			}
-			sum, err := fileSHA256(p)
-			if err != nil {
-				return err
-			}
-			rec.SHA256 = sum
-		default:
-			return fmt.Errorf("tsbundle: %s is neither a file, a directory nor a symlink", p)
-		}
-		if err := tw.WriteHeader(hdr); err != nil {
-			return err
-		}
-		if hdr.Typeflag == tar.TypeDir {
-			return nil
-		}
-		m.Files = append(m.Files, rec)
-		if hdr.Typeflag != tar.TypeReg {
-			return nil
-		}
-		f, err := os.Open(p)
-		if err != nil {
-			return err
-		}
-		defer f.Close()
-		_, err = io.Copy(tw, f)
-		return err
-	})
-	if err != nil {
-		zw.Close()
-		return nil, m, err
-	}
-	if err := errors.Join(tw.Close(), zw.Close()); err != nil {
-		return nil, m, err
-	}
-	if m.TreeSHA256, err = assets.TreeDigest(tree); err != nil {
-		return nil, m, err
-	}
-	sum := sha256.Sum256(raw.Bytes())
-	m.ArchiveSHA256, m.ArchiveBytes = hex.EncodeToString(sum[:]), int64(raw.Len())
-	return raw.Bytes(), m, nil
-}
-
-func safeLink(rel, target string) error {
-	if path.IsAbs(target) {
-		return fmt.Errorf("tsbundle: symlink %s -> %s is absolute", rel, target)
-	}
-	joined := path.Clean(path.Join(path.Dir(rel), target))
-	if joined == ".." || strings.HasPrefix(joined, "../") {
-		return fmt.Errorf("tsbundle: symlink %s -> %s escapes the closure", rel, target)
-	}
-	return nil
-}
-
-func fileSHA256(p string) (string, error) {
+func FileSHA256(p string) (string, error) {
 	f, err := os.Open(p)
 	if err != nil {
 		return "", err
@@ -182,19 +83,6 @@ func fileSHA256(p string) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
-}
-
-func (m Manifest) Marshal() ([]byte, error) {
-	b, err := json.Marshal(m)
-	if err != nil {
-		return nil, err
-	}
-	zw, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedBestCompression), zstd.WithEncoderConcurrency(1))
-	if err != nil {
-		return nil, err
-	}
-	defer zw.Close()
-	return zw.EncodeAll(append(b, '\n'), nil), nil
 }
 
 func UnmarshalManifest(b []byte) (Manifest, error) {
@@ -210,20 +98,6 @@ func UnmarshalManifest(b []byte) (Manifest, error) {
 	}
 	err = json.Unmarshal(raw, &m)
 	return m, err
-}
-
-func WriteBundle(out string, archive []byte, m Manifest) error {
-	b, err := m.Marshal()
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(out, 0o755); err != nil {
-		return err
-	}
-	if err := os.WriteFile(filepath.Join(out, ArchiveName), archive, 0o644); err != nil {
-		return err
-	}
-	return os.WriteFile(filepath.Join(out, ManifestName), b, 0o644)
 }
 
 type Embedded struct {
@@ -351,7 +225,7 @@ func Verify(dir string, m Manifest) error {
 				return fmt.Errorf("tsbundle: extracted closure symlink %s changed; refused (remove %s to extract again)", f.Path, dir)
 			}
 		default:
-			sum, serr := fileSHA256(p)
+			sum, serr := FileSHA256(p)
 			exec := info.Mode().Perm()&0o111 != 0
 			if serr != nil || sum != f.SHA256 || exec != (f.Kind == "x") {
 				return fmt.Errorf("tsbundle: extracted closure file %s changed (sha256 %s, manifest %s); refused (remove %s to extract again)", f.Path, sum, f.SHA256, dir)
@@ -415,12 +289,12 @@ func copyTree(from, to string) error {
 			if info.Mode().Perm()&0o111 != 0 {
 				mode = 0o755
 			}
-			return copyFile(p, dst, mode)
+			return CopyFile(p, dst, mode)
 		}
 	})
 }
 
-func copyFile(from, to string, mode os.FileMode) error {
+func CopyFile(from, to string, mode os.FileMode) error {
 	in, err := os.Open(from)
 	if err != nil {
 		return err

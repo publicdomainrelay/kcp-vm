@@ -1,4 +1,4 @@
-package tsbundle
+package tsbuild
 
 import (
 	"bytes"
