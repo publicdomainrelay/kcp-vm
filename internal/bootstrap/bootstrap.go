@@ -33,7 +33,7 @@ const (
 )
 
 var unbuiltProfiles = map[string]string{
-	ProfileBed: "M2-APP-CONTROLLER (a MarketNetwork composing child applications, each with its own kcp; today's market test bed is 0008 M1-BED-PARALLEL)",
+	ProfileMarketNetwork: "M2-APP-CONTROLLER (a MarketNetwork composing child applications, each with its own kcp)",
 }
 
 var ErrUnbuiltProfile = errors.New("bootstrap: profile not built yet")
@@ -45,7 +45,7 @@ func CheckProfile(p string) error {
 	if item, ok := unbuiltProfiles[p]; ok {
 		return fmt.Errorf("%w: --profile %s is built by %s; quick (kine on sqlite) and prodlike (kine on postgres) are", ErrUnbuiltProfile, p, item)
 	}
-	return fmt.Errorf("bootstrap: unknown profile %q: want quick or prodlike (built) or bed", p)
+	return fmt.Errorf("bootstrap: unknown profile %q: want quick or prodlike (built) or market-network", p)
 }
 
 func NeedsPostgres(profile string) bool { return profile == ProfileProdlike }

@@ -15,15 +15,15 @@ import (
 )
 
 const (
-	ProfileQuick     = "quick"
-	ProfileProdlike  = "prodlike"
-	ProfileBed       = "bed"
-	CoreStopTimeout  = 10 * time.Second
-	CoreName         = "socialweb-computer"
-	DropInName       = "socialweb-bootstrap.conf"
-	InstallFrontAddr = "127.0.0.1:0"
-	BedBidderKey     = "b1"
-	PendingFrontURL  = "https://front.pending.invalid"
+	ProfileQuick         = "quick"
+	ProfileProdlike      = "prodlike"
+	ProfileMarketNetwork = "market-network"
+	CoreStopTimeout      = 10 * time.Second
+	CoreName             = "socialweb-computer"
+	DropInName           = "socialweb-bootstrap.conf"
+	InstallFrontAddr     = "127.0.0.1:0"
+	NetworkBidderKey     = "b1"
+	PendingFrontURL      = "https://front.pending.invalid"
 )
 
 type Params struct {
@@ -55,12 +55,12 @@ func DevApps(profile string, l devinstance.Layout) ([]table.App, error) {
 		return []table.App{table.Dev(l.Short, table.StoreSqlite)}, nil
 	case ProfileProdlike:
 		return []table.App{table.Dev(l.Short, table.StorePostgres)}, nil
-	case ProfileBed:
-		child := table.App{Role: table.RoleBidder, Key: l.Short + "-" + BedBidderKey, Store: table.StoreSqlite,
+	case ProfileMarketNetwork:
+		child := table.App{Role: table.RoleBidder, Key: l.Short + "-" + NetworkBidderKey, Store: table.StoreSqlite,
 			Slots: []string{table.SlotA}, DevCore: true}
 		return []table.App{table.Dev(l.Short, table.StorePostgres), child}, nil
 	}
-	return nil, fmt.Errorf("bootstrap: unknown profile %q: want quick, prodlike or bed", profile)
+	return nil, fmt.Errorf("bootstrap: unknown profile %q: want quick, prodlike or market-network", profile)
 }
 
 func (c Config) Params(a table.App) Params {

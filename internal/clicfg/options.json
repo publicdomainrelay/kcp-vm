@@ -47,7 +47,7 @@
     },
     "profile": {
       "type": "string",
-      "description": "Dev profile: quick (kine on sqlite + one kcp slot) or prodlike (kine on a postgres unit + one kcp slot); bed lands with M2-APP-CONTROLLER",
+      "description": "Dev profile: quick (kine on sqlite + one kcp slot) or prodlike (kine on a postgres unit + one kcp slot); market-network lands with M2-APP-CONTROLLER",
       "env": "SOCIALWEB_DEV_PROFILE"
     },
     "postgres-bin-dir": {

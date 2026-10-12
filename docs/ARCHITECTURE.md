@@ -6323,7 +6323,7 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   `<state>/kcp/<unit>.env` argument files and the core's `After=`/`Wants=` drop-in that install writes
   (systemd-user, started by name through `hostsvc.StartInstalled`, enabled for boot). Dev profiles:
   `quick` is kine on sqlite, `prodlike` is kine on a postgres unit (unix socket only, initdb one-shot
-  before the unit starts); `bed` waits for M2-APP-CONTROLLER. Kine binds `unix://<run>/kine-<slot>.sock`
+  before the unit starts); `market-network` waits for M2-APP-CONTROLLER. Kine binds `unix://<run>/kine-<slot>.sock`
   instead of TCP port 0 (decided by Claude, accepted by the lead): the address is stable across
   restarts, so a slot's `--etcd-servers` in its env file stays right when the user manager restarts kine
   at boot without the core, and no TCP port is opened at all. Readings on hat-8: `dev up --profile
