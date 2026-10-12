@@ -3,6 +3,7 @@ import { IdResolver } from "@atproto/identity";
 import { Secp256k1Keypair } from "@atproto/crypto";
 import { Agent, CredentialSession } from "@atproto/api";
 import { OAuthClient } from "@atproto/oauth-client";
+import type { SessionStore } from "@atproto/oauth-client";
 import { webCryptoRuntime, memoryStateStore, jsonSessionStore } from "@publicdomainrelay/atproto-oauth-helpers";
 import type { StructuredLoggerInterface } from "@publicdomainrelay/logger";
 import type { RepoApi, WriteOp } from "@publicdomainrelay/atproto-repo-abc";
@@ -507,6 +508,7 @@ export async function createRemoteAgent(opts: CreateRemoteAgentOpts): Promise<At
 export interface CreateOAuthAgentOpts {
   handle: string;
   sessionPath: string;
+  sessionStore?: SessionStore;
   clientId?: string;
   redirectUri?: string;
   scope?: string;
@@ -541,7 +543,7 @@ export async function createOAuthAgent(opts: CreateOAuthAgentOpts): Promise<OAut
       token_endpoint_auth_method: "none",
     },
     stateStore: memoryStateStore(),
-    sessionStore: jsonSessionStore(opts.sessionPath),
+    sessionStore: opts.sessionStore ?? jsonSessionStore(opts.sessionPath),
     runtimeImplementation: webCryptoRuntime(),
     identityResolver: {
       resolve: async (identifier: string) => {
@@ -710,6 +712,7 @@ export async function pollForOAuthSession(opts: {
   pollIntervalMs?: number;
   timeoutMs?: number;
   logger?: StructuredLoggerInterface;
+  signal?: AbortSignal;
 }): Promise<OAuthSessionData> {
   const origin = opts.qrFedforkOrigin.replace(/\/+$/, "");
   const pollIntervalMs = opts.pollIntervalMs ?? 3_000;
@@ -718,6 +721,7 @@ export async function pollForOAuthSession(opts: {
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {
+    opts.signal?.throwIfAborted();
     const token = await signServiceAuth(opts.signer, {
       aud: `did:web:${new URL(origin).host}`,
       lxm: "com.fedfork.atprotoOauthQR",
@@ -726,6 +730,7 @@ export async function pollForOAuthSession(opts: {
 
     const res = await fetch(`${origin}/xrpc/com.fedfork.atprotoOauthQR`, {
       headers: { authorization: `Bearer ${token}` },
+      signal: opts.signal,
     });
 
     if (res.ok) {
@@ -741,7 +746,18 @@ export async function pollForOAuthSession(opts: {
       // Not ready yet (404: no session stored; 401: session not yet posted, backend
       // can't verify the service auth JWT because no entry exists for this DID)
       log?.debug?.("oauth_qr_poll", { status: res.status });
-      await new Promise((r) => setTimeout(r, pollIntervalMs));
+      await res.body?.cancel();
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          opts.signal?.removeEventListener("abort", onAbort);
+          resolve();
+        }, pollIntervalMs);
+        const onAbort = () => {
+          clearTimeout(timer);
+          reject(opts.signal?.reason);
+        };
+        opts.signal?.addEventListener("abort", onAbort, { once: true });
+      });
       continue;
     }
 
