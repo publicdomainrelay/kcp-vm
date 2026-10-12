@@ -48,6 +48,7 @@ var fieldDeclarations = map[string]fieldDeclaration{
 	"image_cache_dir":      {Role: writtenByTheBuild},
 	"init_package":         {Role: readByTheBuild, Covers: []string{"initPackage", "initPackageDigest"}},
 	"init_binary":          {Role: readByTheBuild, Covers: []string{"initBinary", "initBinaryDigest"}},
+	"init_asset":           {Role: readByTheBuild, Covers: []string{"initBinary", "initBinaryDigest"}},
 	"preinstall":           {Role: readByTheBuild, Covers: []string{"preinstall", "preinstallDigest"}},
 	"init_go_flags":        {Role: readByTheBuild, Covers: []string{"initGoFlags"}},
 	"k3s_binary":           {Role: readByTheBuild, Covers: []string{"k3sBinary", "k3sBinaryDigest"}},

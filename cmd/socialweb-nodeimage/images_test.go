@@ -1,7 +1,9 @@
 package main
 
 import (
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -13,8 +15,8 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/tarball"
 )
 
-// ponytail: the guest init is built once and copied per fixture; building it
-// inside every validConfig call cost ~25s of the fast loop. Build the fixture
+// ponytail: the guest init asset is built once and copied per fixture; building
+// it inside every validConfig call cost ~25s of the fast loop. Build the fixture
 // afresh if a test ever needs to mutate the toolchain inputs.
 var (
 	initBuildOnce sync.Once
@@ -29,8 +31,13 @@ func cachedInit() (string, error) {
 			initBuildErr = err
 			return
 		}
-		bin := filepath.Join(dir, "kcpinit")
-		initBuildErr = buildInit(Config{InitPackage: "./cmd/socialweb-nodeinit", InitBinary: bin})
+		bin := filepath.Join(dir, "socialweb-nodeinit")
+		cmd := exec.Command("go", "build", "-trimpath", "-buildvcs=false", "-o", bin, "../socialweb-nodeinit")
+		cmd.Env = append(os.Environ(), "GOOS=linux", "GOARCH=amd64", "CGO_ENABLED=0")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			initBuildErr = fmt.Errorf("building the guest init asset: %v: %s", err, out)
+			return
+		}
 		initBuildBin = bin
 	})
 	return initBuildBin, initBuildErr
@@ -92,6 +99,11 @@ func validConfig(t *testing.T) Config {
 	if err := copyCachedInit(init); err != nil {
 		t.Fatalf("building the guest's init for this fixture: %v", err)
 	}
+	asset, err := cachedInit()
+	if err != nil {
+		t.Fatalf("building the guest's init asset: %v", err)
+	}
+	cfg.InitAsset = asset
 	return cfg
 }
 

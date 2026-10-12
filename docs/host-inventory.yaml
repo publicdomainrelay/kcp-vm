@@ -380,9 +380,10 @@ entries:
     kind: executable
     fate: build-host
     owner: 0007 M1-GUEST-IMAGE
-    why: socialweb-nodeimage builds socialweb-nodeinit for the guest
+    why: the build host builds the socialweb-nodeinit asset (Dockerfile nodeimage stage, scripts/deploy-firecracker-bidder.sh); socialweb-nodeimage copies it (-init-asset) and runs no toolchain (0006 M3-FOLD)
     from:
-      - "cmd/socialweb-nodeimage/build.go"
+      - "deploy/control-plane-container/Dockerfile nodeimage stage"
+      - "scripts/deploy-firecracker-bidder.sh"
   - name: sleep
     kind: executable
     fate: build-host
@@ -907,25 +908,25 @@ entries:
       - "user decision 2026-10-11 gateway lifecycle manager"
 
 indirect:
-  - site: "socialweb-computer-kcp/cmd/socialweb-computer-kcp-check-host/checks.go: nodefirecracker.DefaultPasta"
+  - site: "socialweb-computer-kcp/internal/checkhostmain/checks.go: nodefirecracker.DefaultPasta"
     resolves: [pasta]
-  - site: "socialweb-computer-kcp/cmd/socialweb-computer-kcp-check-host/checks.go: path"
+  - site: "socialweb-computer-kcp/internal/checkhostmain/checks.go: path"
     resolves: [pasta, kubectl, kine, kcp]
-  - site: "socialweb-computer-kcp/cmd/socialweb-computer-kcp-check-host/checks.go: probe"
+  - site: "socialweb-computer-kcp/internal/checkhostmain/checks.go: probe"
     resolves: [unshare]
-  - site: "socialweb-computer-kcp/cmd/socialweb-computer-kcp-check-host/checks.go: f.firecracker"
+  - site: "socialweb-computer-kcp/internal/checkhostmain/checks.go: f.firecracker"
     resolves: [firecracker]
-  - site: "socialweb-computer-kcp/cmd/socialweb-computer-kcp-check-host/checks.go: f.k3s"
+  - site: "socialweb-computer-kcp/internal/checkhostmain/checks.go: f.k3s"
     resolves: [k3s]
-  - site: "socialweb-computer-kcp/cmd/socialweb-computer-kcp-check-host/checks.go: onPath"
+  - site: "socialweb-computer-kcp/internal/checkhostmain/checks.go: onPath"
     resolves: [k3s]
-  - site: "socialweb-computer-kcp/cmd/socialweb-computer-kcp-check-host/checks.go: copyPath"
+  - site: "socialweb-computer-kcp/internal/checkhostmain/checks.go: copyPath"
     resolves: [socialweb-computer-kcp-check-host]
-  - site: "socialweb-computer-kcp/cmd/socialweb-computer-kcp-check-host/platform.go: path"
+  - site: "socialweb-computer-kcp/internal/checkhostmain/platform.go: path"
     resolves: [qemu-system-x86_64]
-  - site: "socialweb-computer-kcp/cmd/socialweb-computer-kcp-check-host/postgres.go: path"
+  - site: "socialweb-computer-kcp/internal/checkhostmain/postgres.go: path"
     resolves: [initdb, postgres, psql]
-  - site: "socialweb-computer-kcp/cmd/socialweb-computer-kcp-check-host/postgres.go: binaries[0]"
+  - site: "socialweb-computer-kcp/internal/checkhostmain/postgres.go: binaries[0]"
     resolves: [initdb]
   - site: "socialweb-computer-kcp/cmd/socialweb-nodeboot/main.go: name"
     resolves: [e2fsck, resize2fs]

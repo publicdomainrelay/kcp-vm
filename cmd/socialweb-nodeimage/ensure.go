@@ -93,13 +93,16 @@ func buildTheImageTheConfigurationNames(
 	return nil
 }
 
-func Ensure(configPath string, reuseStale bool, asJSON bool, preinstallPath string, presentOnly bool) error {
+func Ensure(configPath string, reuseStale bool, asJSON bool, preinstallPath string, presentOnly bool, initAsset string) error {
 	if configPath == "" {
 		return fmt.Errorf("-config is required: the name of the image to ask for is derived from the " +
 			"inputs a configuration reads, and there is no configuration here to derive it from")
 	}
 	cfg, err := LoadConfig(configPath)
 	if err != nil {
+		return err
+	}
+	if err := cfg.overrideInitAsset(initAsset); err != nil {
 		return err
 	}
 	if strings.TrimSpace(preinstallPath) != "" {

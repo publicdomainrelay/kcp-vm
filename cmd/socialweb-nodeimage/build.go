@@ -121,30 +121,38 @@ func buildConfigOf(cfg Config) nodefirecracker.BuildConfig {
 }
 
 func buildInit(cfg Config) error {
+	if strings.TrimSpace(cfg.InitAsset) == "" {
+		return fmt.Errorf("socialweb-nodeimage: no guest init asset: set init_asset in the config or " +
+			"pass -init-asset with the path of a socialweb-nodeinit built for the guest (GOOS=linux " +
+			"GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -buildvcs=false plus the config's " +
+			"init_go_flags, from init_package). The image builder copies the guest's PID 1 from that " +
+			"asset and never runs a Go toolchain itself; a release build carries the asset embedded " +
+			"(plan 0006 M1-ASSETS)")
+	}
+	src, err := os.Stat(cfg.InitAsset)
+	if err != nil {
+		return fmt.Errorf("socialweb-nodeimage: the guest init asset %s: %w", cfg.InitAsset, err)
+	}
+	if !src.Mode().IsRegular() {
+		return fmt.Errorf("socialweb-nodeimage: the guest init asset %s is not a regular file", cfg.InitAsset)
+	}
+	if dst, err := os.Stat(cfg.InitBinary); err == nil && os.SameFile(src, dst) {
+		return nil
+	}
 	if err := os.MkdirAll(filepath.Dir(cfg.InitBinary), 0o755); err != nil {
 		return fmt.Errorf("socialweb-nodeimage: creating %s: %w", filepath.Dir(cfg.InitBinary), err)
 	}
-	packageDir, err := nodefirecracker.ResolveInitPackage(cfg.InitPackage)
-	if err != nil {
+	tmp := cfg.InitBinary + ".asset-tmp"
+	if err := copyFile(cfg.InitAsset, tmp, 0o755); err != nil {
 		return err
 	}
-	args := append([]string{"build", "-trimpath"}, cfg.InitGoFlags...)
-	args = append(args, "-buildvcs=false", "-o", cfg.InitBinary, ".")
-	cmd := exec.Command("go", args...)
-	cmd.Dir = packageDir
-	cmd.Env = append(os.Environ(), "GOOS=linux", "GOARCH=amd64", "CGO_ENABLED=0")
-	raw, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("socialweb-nodeimage: building the guest's init (%s -> %s): %v: %s -- "+
-			"the guest's PID 1 is a static build for the guest, because the initramfs runs before "+
-			"any root filesystem exists and nothing can load an interpreter for it. The build is "+
-			"always told -buildvcs=false, whatever "+
-			"init_go_flags say: the init's bytes are an INPUT of the image's name "+
-			"(internal/nodefirecracker folds the binary's digest in), and `go build` otherwise "+
-			"stamps the state of this git working tree into them -- so an edit anywhere in the "+
-			"repository while a build is running moves the name of an image whose inputs did not "+
-			"change. An image's name must follow its inputs and not the tree around them", cfg.InitPackage, cfg.InitBinary, err,
-			strings.TrimSpace(string(raw)))
+	if err := os.Chmod(tmp, 0o755); err != nil {
+		os.Remove(tmp)
+		return fmt.Errorf("socialweb-nodeimage: %w", err)
+	}
+	if err := os.Rename(tmp, cfg.InitBinary); err != nil {
+		os.Remove(tmp)
+		return fmt.Errorf("socialweb-nodeimage: placing the guest init at %s: %w", cfg.InitBinary, err)
 	}
 	return nil
 }

@@ -52,7 +52,7 @@ func TestEnsureRefusesAnImageThatRecordsNoPreinstallWhenOneIsNamed(t *testing.T)
 	without.Preinstall = ""
 	reused := writeImageUnderItsName(t, without, nameOf(t, without))
 
-	err := Ensure(cfg.Path, true, true, preinstall, false)
+	err := Ensure(cfg.Path, true, true, preinstall, false, "")
 	if err == nil {
 		t.Fatalf("the image in %s records no preinstall and the preinstall manifest %s was named, "+
 			"and it was handed back anyway: the manifest is digested into the image's name, so an "+
@@ -77,7 +77,7 @@ func TestEnsureRefusesAnImageThatRecordsAPreinstallWhenNoneIsNamed(t *testing.T)
 	withPreinstall.Preinstall = writePreinstallManifest(t)
 	reused := writeImageUnderItsName(t, withPreinstall, nameOf(t, withPreinstall))
 
-	err := Ensure(cfg.Path, true, true, "", false)
+	err := Ensure(cfg.Path, true, true, "", false, "")
 	if err == nil {
 		t.Fatalf("the image in %s records the preinstall manifest %s and this run named none, and "+
 			"it was handed back anyway: the manifest is digested into the image's name, so this "+
@@ -101,7 +101,7 @@ func TestEnsureUsesAnImageThatRecordsThePreinstallTheInputsName(t *testing.T) {
 	withPreinstall.Preinstall = preinstall
 	dir := writeImageUnderItsName(t, withPreinstall, nameOf(t, withPreinstall))
 
-	if err := Ensure(cfg.Path, true, true, preinstall, false); err != nil {
+	if err := Ensure(cfg.Path, true, true, preinstall, false, ""); err != nil {
 		t.Fatalf("the image in %s records exactly the preinstall manifest these inputs name, and it "+
 			"was refused: %v", dir, err)
 	}
@@ -113,7 +113,7 @@ func TestPresentOnlySaysAbsentAndBuildsNothing(t *testing.T) {
 	preinstall := writePreinstallManifest(t)
 
 	out, err := captureStdout(t, func() error {
-		return Ensure(cfg.Path, false, true, preinstall, true)
+		return Ensure(cfg.Path, false, true, preinstall, true, "")
 	})
 	if err == nil {
 		t.Fatal("-present-only answered a store that holds no image at all without refusing: a run " +
@@ -150,7 +150,7 @@ func TestPresentOnlySaysPresentForTheImageTheInputsName(t *testing.T) {
 	dir := writeImageUnderItsName(t, withPreinstall, nameOf(t, withPreinstall))
 
 	out, err := captureStdout(t, func() error {
-		return Ensure(cfg.Path, false, true, preinstall, true)
+		return Ensure(cfg.Path, false, true, preinstall, true, "")
 	})
 	if err != nil {
 		t.Fatalf("-present-only refused the image in %s, which is the whole build of exactly these "+

@@ -157,7 +157,7 @@ func TestAnImageUnderTheNameItsInputsGiveItIsNotBuiltAgain(t *testing.T) {
 			"mystery", fromMemory, fromDisk)
 	}
 
-	mainErr := Main(cfg.Path)
+	mainErr := Main(cfg.Path, "")
 	digestAfter, digestErr := fileDigestOf(cfg.InitBinary)
 	if mainErr != nil && digestErr == nil && digestAfter != digestBefore {
 		livegate.Require(t, "the init binary changed UNDER this run, from %s to %s, and the "+
@@ -205,7 +205,7 @@ func TestAConfigurationThatChangedIsNeverGivenTheImageBuiltBeforeIt(t *testing.T
 			"image does not carry and whose kube-proxy leaves 10.43.0.1:443 without an address, and " +
 			"nothing says which image caused it")
 	}
-	err := Main(changed.Path)
+	err := Main(changed.Path, "")
 	if err == nil {
 		t.Fatal("a run over a changed configuration returned cleanly without building, so it " +
 			"treated the image built from the older configuration as the one this configuration " +
@@ -230,7 +230,7 @@ func TestABuildThatDoesNotFinishLeavesNoNameToAskFor(t *testing.T) {
 	writeConfigFile(t, cfg)
 	fingerprint := nameOf(t, cfg)
 
-	err := Main(cfg.Path)
+	err := Main(cfg.Path, "")
 	if err == nil {
 		t.Fatal("a build whose module tree is absent returned cleanly")
 	}
@@ -288,7 +288,7 @@ func TestAnImageWhoseNameItsRecordDoesNotHashToIsRefusedInBothDirections(t *test
 		t.Fatalf("writing the manifest: %v", err)
 	}
 
-	err = Main(cfg.Path)
+	err = Main(cfg.Path, "")
 	if err == nil {
 		t.Fatal("a directory named by one set of inputs and holding the record of another was " +
 			"consumed as the image this configuration names")
@@ -339,7 +339,7 @@ func TestAnImageThatRecordsNothingAboutItsInputsIsNotTheOneAskedFor(t *testing.T
 			"image this configuration names: an absent record proves nothing, and the image built " +
 			"before a configuration gained kernel modules looks exactly like one built after")
 	}
-	if err := Main(cfg.Path); err == nil {
+	if err := Main(cfg.Path, ""); err == nil {
 		t.Fatal("a run over a store whose only image records nothing returned cleanly without " +
 			"building")
 	}
@@ -396,7 +396,7 @@ func TestAnInputThatCannotBeReadIsNotAnInputThatHasNotChanged(t *testing.T) {
 		t.Fatalf("removing the base image: %v", err)
 	}
 
-	err := Main(cfg.Path)
+	err := Main(cfg.Path, "")
 	if err == nil {
 		t.Fatal("a run whose base image cannot be read returned cleanly, so it reported the image " +
 			"as the one this configuration names on the strength of an input it never read")

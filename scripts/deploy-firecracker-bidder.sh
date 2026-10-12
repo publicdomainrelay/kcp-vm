@@ -189,6 +189,7 @@ LOCAL_PREINSTALL="${LOCAL_PREINSTALL:-${PROJECT_DIR}/deploy/bidder/preinstall-ma
 LOCAL_INIT_BINARY="${LOCAL_INIT_BINARY:-${BUILD_HOST_HOME}/kcp-image/kcpinit}"
 LOCAL_INIT_PACKAGE="${LOCAL_INIT_PACKAGE:-${ORG_ROOT}/socialweb-computer-kcp/cmd/socialweb-nodeinit}"
 LOCAL_NODEIMAGE_BIN="${LOCAL_NODEIMAGE_BIN:-${BUILD_HOST_HOME}/kcp-image/socialweb-nodeimage}"
+LOCAL_INIT_ASSET="${LOCAL_INIT_ASSET:-${BUILD_HOST_HOME}/kcp-image/socialweb-nodeinit}"
 LOCAL_DENO="${LOCAL_DENO:-$(command -v deno || true)}"
 
 RUNNER_IMAGE="${RUNNER_IMAGE:-localhost/socialweb-firecracker-runner:local}"
@@ -365,6 +366,11 @@ CGO_ENABLED=0 go build -C "${ORG_ROOT}/socialweb-computer-kcp" \
 ensure_field() { python3 -c 'import json,sys;print(json.loads(sys.argv[1]).get(sys.argv[2]) or "")' "${ENSURE_JSON}" "$1"; }
 cfg_field() { python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))[sys.argv[2]])' "${LOCAL_CONFIG}" "$1"; }
 
+say "building the guest init asset socialweb-nodeinit"
+mapfile -t INIT_GO_FLAGS < <(python3 -c 'import json,sys;[print(f) for f in json.load(open(sys.argv[1])).get("init_go_flags") or []]' "${LOCAL_CONFIG}")
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -C "${LOCAL_INIT_PACKAGE}" -trimpath \
+  "${INIT_GO_FLAGS[@]}" -buildvcs=false -o "${LOCAL_INIT_ASSET}" .
+
 # Which image to ship is the build host's own answer to a question asked in two
 # steps, because the build that answers it needs root and the question has to be
 # read as the invoking user:
@@ -394,7 +400,7 @@ say "resolving the image the current inputs name on the build host"
 LOCAL_GO_MOD="${ORG_ROOT}/socialweb-computer-kcp/go.mod"
 LOCAL_STAGE_DIR="$(cfg_field stage_dir)"
 ASK_THE_STORE=("${LOCAL_NODEIMAGE_BIN}" -ensure -json -present-only \
-  -preinstall "${LOCAL_PREINSTALL}" -config "${LOCAL_CONFIG}")
+  -preinstall "${LOCAL_PREINSTALL}" -config "${LOCAL_CONFIG}" -init-asset "${LOCAL_INIT_ASSET}")
 
 # The toolchain the build under sudo runs on, derived from the go line go.mod
 # carries rather than pinned here: a go directive that moves and a path that does
@@ -429,7 +435,7 @@ fi
 BUILD_THE_IMAGE_AS_ROOT=(sudo -n env -u TMPDIR "PATH=${TOOLCHAIN}/bin:${PATH}" \
   "GOROOT=${TOOLCHAIN}" GOTOOLCHAIN=local GOPATH=/root/go GOCACHE=/root/.cache/go-build \
   GOFLAGS=-mod=mod "${LOCAL_NODEIMAGE_BIN}" -ensure -json \
-  -preinstall "${LOCAL_PREINSTALL}" -config "${LOCAL_CONFIG}")
+  -preinstall "${LOCAL_PREINSTALL}" -config "${LOCAL_CONFIG}" -init-asset "${LOCAL_INIT_ASSET}")
 
 # The answer is read with the question's own error kept aside: "the store does
 # not hold it" is one answer and a configuration the builder refuses is another,

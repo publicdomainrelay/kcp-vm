@@ -94,7 +94,7 @@ RUN --mount=type=bind,from=goroot,target=/go/toolchain,ro \
     --mount=type=bind,from=artifacts,target=${KCP_IMAGE}/artifacts,ro \
     --mount=type=bind,from=bootdir,target=/boot,ro \
     --mount=type=bind,from=modulesdir,target=/lib/modules,ro \
-    sh -ec 'set -e; if [ ! -d /go/pkg/mod/k8s.io ]; then cp -a /host-mod/. /go/pkg/mod/; fi; export PATH=/go/toolchain/bin:$PATH GOPATH=/go GOMODCACHE=/go/pkg/mod GOCACHE=/go/cache GOTOOLCHAIN=local GOFLAGS=-mod=mod; socialweb-computer-kcp-check-host -config "$0" -build; socialweb-nodeimage -config "$0"; mkdir -p /dist; for d in '"${KCP_IMAGE}"'/out/sha256-*; do cp -a "$d" /dist/; done; ls -la /dist' "$NODEIMAGE_CONFIG"
+    sh -ec 'set -e; if [ ! -d /go/pkg/mod/k8s.io ]; then cp -a /host-mod/. /go/pkg/mod/; fi; export PATH=/go/toolchain/bin:$PATH GOPATH=/go GOMODCACHE=/go/pkg/mod GOCACHE=/go/cache GOTOOLCHAIN=local GOFLAGS=-mod=mod; socialweb-computer-kcp-check-host -config "$0" -build; GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -buildvcs=false -o /tmp/socialweb-nodeinit ./cmd/socialweb-nodeinit; socialweb-nodeimage -config "$0" -init-asset /tmp/socialweb-nodeinit; mkdir -p /dist; for d in '"${KCP_IMAGE}"'/out/sha256-*; do cp -a "$d" /dist/; done; ls -la /dist' "$NODEIMAGE_CONFIG"
 
 FROM scratch AS extract
 

@@ -35,6 +35,8 @@ type Config struct {
 
 	InitBinary string `json:"init_binary"`
 
+	InitAsset string `json:"init_asset"`
+
 	InitGoFlags []string `json:"init_go_flags"`
 
 	K3sBinary string `json:"k3s_binary"`
@@ -81,7 +83,7 @@ func LoadConfig(path string) (Config, error) {
 		return Config{}, err
 	}
 	root := filepath.Dir(path)
-	for _, p := range []*string{&cfg.InitBinary, &cfg.StageDir, &cfg.OutDir, &cfg.ImageCacheDir, &cfg.Preinstall} {
+	for _, p := range []*string{&cfg.InitBinary, &cfg.InitAsset, &cfg.StageDir, &cfg.OutDir, &cfg.ImageCacheDir, &cfg.Preinstall} {
 		if *p == "" || filepath.IsAbs(*p) {
 			continue
 		}
@@ -113,6 +115,18 @@ func LoadConfig(path string) (Config, error) {
 			resolution.Version, resolution.Origin, resolution.Source, resolution.Config, resolution.Modules)
 	}
 	return cfg, nil
+}
+
+func (c *Config) overrideInitAsset(path string) error {
+	if strings.TrimSpace(path) == "" {
+		return nil
+	}
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("socialweb-nodeimage: resolving the guest init asset at %s: %w", path, err)
+	}
+	c.InitAsset = absolute
+	return nil
 }
 
 func (c Config) VMMName() string {

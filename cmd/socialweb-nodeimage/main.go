@@ -11,8 +11,8 @@ import (
 
 const usage = `socialweb-nodeimage - build the artifacts a node boots from
 
-  socialweb-nodeimage -config nodeimage.json
-  socialweb-nodeimage -ensure -config nodeimage.json [-reuse-stale] [-json]
+  socialweb-nodeimage -config nodeimage.json [-init-asset socialweb-nodeinit]
+  socialweb-nodeimage -ensure -config nodeimage.json [-reuse-stale] [-json] [-init-asset socialweb-nodeinit]
   socialweb-nodeimage -config nodeimage.json -gc [-retain N] [-keep <fingerprint>]...
 
 The image is named by its inputs, and the VMM is one of them. The configuration is fingerprinted --
@@ -127,10 +127,11 @@ func main() {
 	reuseStale := flag.Bool("reuse-stale", false, "with -ensure: use an image already in the store instead of building the one the config names")
 	asJSON := flag.Bool("json", false, "with -ensure: print one line of JSON describing what was found, built or reused")
 	preinstall := flag.String("preinstall", "", "path to a preinstall manifest, overriding the one the config names")
+	initAsset := flag.String("init-asset", "", "path to a prebuilt socialweb-nodeinit the image carries as its init, overriding the config's init_asset")
 	presentOnly := flag.Bool("present-only", false, "with -ensure: answer whether the store already holds the exact image the config names, and build nothing")
 	flag.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 	flag.Parse()
-	run := Main
+	run := func(configPath string) error { return Main(configPath, *initAsset) }
 	switch {
 	case *presentOnly && !*ensure:
 		run = func(string) error {
@@ -150,7 +151,7 @@ func main() {
 		run = func(configPath string) error { return MainGC(configPath, keep, *retain) }
 	case *ensure:
 		run = func(configPath string) error {
-			return Ensure(configPath, *reuseStale, *asJSON, *preinstall, *presentOnly)
+			return Ensure(configPath, *reuseStale, *asJSON, *preinstall, *presentOnly, *initAsset)
 		}
 	case *preinstall != "":
 		run = func(string) error {
@@ -171,7 +172,7 @@ func main() {
 	}
 }
 
-func Main(configPath string) error {
+func Main(configPath string, initAsset string) error {
 	if configPath == "" {
 		return fmt.Errorf("-config is required: the paths an image is built from are this host's " +
 			"own kernel, module tree and base image, and none of them has a default that would be " +
@@ -179,6 +180,9 @@ func Main(configPath string) error {
 	}
 	cfg, err := LoadConfig(configPath)
 	if err != nil {
+		return err
+	}
+	if err := cfg.overrideInitAsset(initAsset); err != nil {
 		return err
 	}
 	return withStageDirHeld(cfg, func() error {
