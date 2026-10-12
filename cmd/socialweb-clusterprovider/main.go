@@ -325,6 +325,13 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 			return clusterprovider.NewNodeVault(clusterDir).WithLogger(log)
 		},
 		Observe: nodeObserver.Observe,
+		PathUp: clusterPathUp(tenant, claims, func(ctx context.Context, cluster string) (string, error) {
+			target, err := claimClusterFor(registry, cluster)(ctx)
+			if err != nil {
+				return "", err
+			}
+			return target.Workspace, nil
+		}),
 	})
 	if err != nil {
 		return Deps{}, err

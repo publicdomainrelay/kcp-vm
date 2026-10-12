@@ -196,6 +196,8 @@ type nodeHostsOptions struct {
 	NodeJoinGrace time.Duration
 
 	Observe observeCluster
+
+	PathUp func(ctx context.Context, cluster string) bool
 }
 
 const NodeLossGrace = 90 * time.Second
@@ -303,6 +305,7 @@ type tenantNodes struct {
 	joined        map[string]bool
 	notReadySince map[string]time.Time
 	readySeen     map[string]bool
+	path          pathClock
 }
 
 type heldNode struct {
@@ -376,13 +379,30 @@ func (n *tenantNodes) Provision(ctx context.Context) error {
 
 func (n *tenantNodes) confirmHeld(ctx context.Context) (confirmOutcome, error) {
 	var outcome confirmOutcome
+	pathUp := true
+	if n.opts.PathUp != nil {
+		pathUp = n.opts.PathUp(ctx, n.cluster)
+	}
 	n.mu.Lock()
+	n.path.observe(pathUp, n.opts.now())
 	held := n.heldNodesLocked()
 	n.mu.Unlock()
 
 	var problems []error
 	for _, node := range held {
-		if end := guestEnd(node.host); end.Message != "" {
+		if end := guestEnd(node.host); end.Lost {
+			n.log.Warn("cluster provider: the door marked a market node's claim Lost because its bidder "+
+				"reported the guest terminated, so it is released now rather than after the NotReady "+
+				"grace; its pods reschedule and the scale pass rents a replacement if the work still "+
+				"needs one", "cluster", n.cluster, "node", node.name, "reason", end.Message)
+			if err := n.teardownHeld(ctx, node); err != nil {
+				problems = append(problems, err)
+				continue
+			}
+			n.clearNotReady(node.name)
+			outcome.lost = append(outcome.lost, node.name)
+			continue
+		} else if end.Message != "" {
 			next := "the claim is released and the next pass may ask the market again"
 			if end.Declined {
 				outcome.declined = append(outcome.declined, node.name)
@@ -470,6 +490,9 @@ func (n *tenantNodes) lost(node *corev1.Node) (bool, time.Time) {
 	now := n.opts.now()
 	n.mu.Lock()
 	defer n.mu.Unlock()
+	if n.path.holding() {
+		return false, time.Time{}
+	}
 	grace := n.opts.nodeLossGrace()
 	if !n.readySeen[node.Name] && ready.Status == corev1.ConditionFalse {
 		grace = n.opts.nodeJoinGrace()
@@ -486,6 +509,7 @@ func (n *tenantNodes) lost(node *corev1.Node) (bool, time.Time) {
 		}
 		since = first
 	}
+	since = n.path.rebase(since)
 	return now.Sub(since) >= grace, since
 }
 
@@ -626,7 +650,8 @@ func (n *tenantNodes) nextOrdinal(ctx context.Context) (int, error) {
 }
 
 func endedClaimPhase(phase v1alpha1.NodeClaimPhase) bool {
-	return phase == v1alpha1.NodeClaimFailed || phase == v1alpha1.NodeClaimReleased
+	return phase == v1alpha1.NodeClaimFailed || phase == v1alpha1.NodeClaimReleased ||
+		phase == v1alpha1.NodeClaimLost
 }
 
 func (n *tenantNodes) Teardown(ctx context.Context) error {
