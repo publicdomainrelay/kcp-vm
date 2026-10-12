@@ -244,8 +244,8 @@ items:
       each guest born via runComputeContract; both pass; no ssh to a guest). Red first.
     done_when: "the two-bed live run passes on hat-8 with its readings (ports, run ids, guest names, UTC); M1-TESTBED's accept checks still pass on one bed; 0006 M1-NO-FIXED-PORTS' ratchet holds no bed entry."
     risks: ["Two beds double the guests on hat-8 (memory, /dev/kvm); the run records host memory before and after and refuses a third bed when free memory is below the bed's guest budget."]
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M1-SSH-GATEWAY-IROH
     milestone: M1
     title: "EARLY: the ssh gateway (socialweb-computer-ssh) reaches guests over iroh like request-vm-ssh, so nothing asks for the legacy tunnel transport"
