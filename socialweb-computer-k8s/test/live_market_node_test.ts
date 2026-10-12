@@ -603,30 +603,14 @@ Deno.test({
   cleanups.push(() => dispatcherCtl.abort());
   const ingressProxyHost = `relay.localhost:${dispPort}`;
 
+  const fetchFailures: Array<{ url: string; cause: string }> = [];
   const restoreFetch = installFetchInterceptor({
     realFetch: globalThis.fetch,
     plcDirectoryUrl: plcLocalUrl,
     dispPort,
+    onFetchError: (failure) => fetchFailures.push(failure),
   });
   cleanups.push(restoreFetch);
-
-  const fetchFailures: Array<{ url: string; cause: string }> = [];
-  {
-    const patched = globalThis.fetch;
-    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-      try {
-        return await patched(input, init);
-      } catch (err) {
-        const cause = (err as { cause?: unknown }).cause;
-        fetchFailures.push({ url, cause: cause === undefined ? String(err) : String(cause) });
-        throw err;
-      }
-    }) as typeof fetch;
-    cleanups.push(() => {
-      globalThis.fetch = patched;
-    });
-  }
 
   let providerId: string | number | undefined;
   let firecracker: ReturnType<typeof createFirecrackerComputeProvider> | undefined;
