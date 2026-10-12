@@ -67,9 +67,8 @@ func (b *m3Bed) reading(format string, args ...any) {
 	b.t.Log(line)
 }
 
-func TestAMarketNodeJoinsATenantClusterThroughItsOpenBaoWithNoSsh(t *testing.T) {
-	livegate.Short(t, "this test brings up the market test bed and the real control-plane container, rents a "+
-		"firecracker guest for a tenant workload through the door, and watches it join with no ssh: a skip is NOT a pass")
+func newM3Bed(t *testing.T) (*m3Bed, string, time.Time) {
+	t.Helper()
 	image := os.Getenv(m3ImageEnv)
 	if image == "" {
 		livegate.Require(t, "%s is unset; build the control-plane image from this tree with "+
@@ -104,6 +103,12 @@ func TestAMarketNodeJoinsATenantClusterThroughItsOpenBaoWithNoSsh(t *testing.T) 
 		}
 		b.fwd[key] = forwardLoopback(t, b.gateway, port)
 	}
+	_, baoPort, _ := strings.Cut(b.facts["OPENBAO_ADDR"], ":")
+	port, err := strconv.Atoi(baoPort)
+	if err != nil || b.facts["DOOR_OPENBAO_TOKEN_FILE"] == "" {
+		t.Fatalf("the held test bed reported no OpenBao address or door token for the door's claim keys: %v", b.facts)
+	}
+	b.fwd["OPENBAO_PORT"] = forwardLoopback(t, b.gateway, port)
 	b.ownerDid = b.createOwner()
 	b.reading("owner %s created on the test bed PDS %s", b.ownerDid, b.ownerPDS)
 	b.key = kcpclient.AccountHash(b.ownerDid) + "-" + m3Cluster
@@ -131,6 +136,13 @@ func TestAMarketNodeJoinsATenantClusterThroughItsOpenBaoWithNoSsh(t *testing.T) 
 	b.createCluster()
 	linksAt := b.waitLinksListening(5 * time.Minute)
 	b.reading("cluster %s Ready, ClusterLinks %s-apiserver and %s-openbao Listening", b.key, b.key, b.key)
+	return b, workRoot, linksAt
+}
+
+func TestAMarketNodeJoinsATenantClusterThroughItsOpenBaoWithNoSsh(t *testing.T) {
+	livegate.Short(t, "this test brings up the market test bed and the real control-plane container, rents a "+
+		"firecracker guest for a tenant workload through the door, and watches it join with no ssh: a skip is NOT a pass")
+	b, workRoot, linksAt := newM3Bed(t)
 
 	appliedAt := time.Now()
 	b.tenant("apply", "-f", "-").stdin(workloadManifest()).must()
@@ -568,6 +580,11 @@ func (b *m3Bed) writeFiles() {
 	}
 	data, _ := json.Marshal(base)
 	writeFile(t, filepath.Join(b.files, "node-base.yaml"), "#cloud-config\n"+string(data)+"\n")
+	token, err := os.ReadFile(b.facts["DOOR_OPENBAO_TOKEN_FILE"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(b.files, "door-openbao-token"), strings.TrimSpace(string(token))+"\n")
 }
 
 func (b *m3Bed) startControlPlane() {
@@ -597,6 +614,8 @@ func (b *m3Bed) startControlPlane() {
 		"-e", "TEST_OWNER_SESSIONS_FILE=/m3/owner.json",
 		"-e", "TEST_NODE_USER_DATA_BASE_FILE=/m3/node-base.yaml",
 		"-e", "TEST_NODE_GUEST_HOST_ALIASES="+b.facts["HOST_IP"]+" relay.localhost",
+		"-e", "SOCIALWEB_DOOR_OPENBAO_ADDR=http://"+b.gateway+":"+strconv.Itoa(b.fwd["OPENBAO_PORT"]),
+		"-e", "SOCIALWEB_DOOR_OPENBAO_TOKEN_FILE=/m3/door-openbao-token",
 		b.image)...)
 	gw := b.gateway
 	alice, plc := strconv.Itoa(b.fwd["ALICE_PDS_PORT"]), strconv.Itoa(b.fwd["PLC_PORT"])
