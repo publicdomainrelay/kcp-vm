@@ -243,6 +243,41 @@ export default {
       description: "Base address guests are addressed from, one /30 each",
       env: "COMPUTE_PROVIDER_FIRECRACKER_RANGE_BASE",
     },
+    "compute-provider-kcp": {
+      type: "boolean" as const,
+      description: "Enable the kcp compute provider: each guest is a ComputeVM in this bidder's own kcp, booted by its ComputeVM controller",
+      env: "COMPUTE_PROVIDER_KCP",
+    },
+    "compute-provider-kcp-server": {
+      type: "string" as const,
+      description: "kcp server of this bidder's own kcp, where the kcp provider writes ComputeVMs",
+      env: "KCP_SERVER",
+    },
+    "compute-provider-kcp-workspace": {
+      type: "string" as const,
+      description: "kcp workspace the ComputeVMs live in",
+      env: "KCP_WORKSPACE",
+    },
+    "compute-provider-kcp-token-file": {
+      type: "string" as const,
+      description: "File holding the bearer token for the kcp server, re-read on every call",
+      env: "COMPUTE_PROVIDER_KCP_TOKEN_FILE",
+    },
+    "compute-provider-kcp-ca-file": {
+      type: "string" as const,
+      description: "PEM CA bundle the kcp server's certificate chains to",
+      env: "COMPUTE_PROVIDER_KCP_CA_FILE",
+    },
+    "compute-provider-kcp-handle": {
+      type: "string" as const,
+      description: "Owner handle written to every ComputeVM's spec.owner.handle; the controller namespaces units and work dirs by it",
+      env: "COMPUTE_PROVIDER_KCP_HANDLE",
+    },
+    "compute-provider-kcp-guest-host-address": {
+      type: "string" as const,
+      description: "Address every guest dials to reach this host; unset, the constant guest host address of the ComputeVM API",
+      env: "COMPUTE_PROVIDER_KCP_GUEST_HOST_ADDRESS",
+    },
     "contract-store-dir": {
       type: "string" as const,
       description: "Directory the bidder keeps its contracts and terminated-receipt tombstones in, so a restart keeps answering vm.delete (defaults to <firecracker work root>/contracts when the Firecracker provider is enabled)",

@@ -14,6 +14,7 @@ import {
   createKcpComputeVMClient,
   type KcpCredentials,
 } from "@publicdomainrelay/compute-provider-kcp";
+import { GUEST_HOST_ADDRESS } from "@publicdomainrelay/compute-provider-kcp-common";
 import type { JwkStore, NonceStore, OidcIssuer } from "@publicdomainrelay/oidc-issuer-abc";
 import { createOidcIssuer, type HostKeysReported } from "@publicdomainrelay/oidc-issuer-hono";
 
@@ -35,7 +36,7 @@ export interface ComputeProviderKcpFactoryOptions extends ComputeProviderCtx {
   credentials: KcpCredentials;
   fetch?: typeof fetch;
   handle: string;
-  guestHostAddress: string;
+  guestHostAddress?: string;
   getIssuerUrl: () => string;
   acceptPathVm?: string;
   guestTlsPort?: number;
@@ -76,7 +77,7 @@ export function createComputeProviderKcpFactory(opts: ComputeProviderKcpFactoryO
     atproto,
     client: createKcpComputeVMClient({ credentials: opts.credentials, fetch: opts.fetch }),
     handle: opts.handle,
-    guestHostAddress: opts.guestHostAddress,
+    guestHostAddress: opts.guestHostAddress ?? GUEST_HOST_ADDRESS,
     getIssuerUrl: opts.getIssuerUrl,
     acceptPathVm: opts.acceptPathVm,
     guestTlsPort: opts.guestTlsPort,

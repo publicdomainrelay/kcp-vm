@@ -33,6 +33,7 @@ import { createPlcDirectoryClient } from "@publicdomainrelay/did-plc";
 import { createDigitalOceanComputeProvider } from "@publicdomainrelay/compute-provider-digitalocean";
 import { createLocalComputeProvider } from "@publicdomainrelay/compute-provider-local";
 import { createFirecrackerComputeProvider } from "@publicdomainrelay/compute-provider-firecracker";
+import { createComputeProviderKcpFactory } from "@publicdomainrelay/hono-factory-compute-provider-kcp";
 import { createFirecrackerNodeImage } from "@publicdomainrelay/node-image-firecracker";
 import { createFirecrackerMicrovm, parseLabels } from "@publicdomainrelay/microvm-firecracker";
 import { createUsernsFirecrackerMicrovm } from "@publicdomainrelay/microvm-firecracker-userns";
@@ -574,6 +575,47 @@ if (options.computeProviderFirecracker) {
   providers.push(createComputeProviderHooks({
     provider: firecrackerProvider.provider,
   }));
+  await serve.beginServe();
+}
+
+if (options.computeProviderKcp) {
+  const required: Array<[string, unknown]> = [
+    ["--compute-provider-kcp-server", options.computeProviderKcpServer],
+    ["--compute-provider-kcp-workspace", options.computeProviderKcpWorkspace],
+    ["--compute-provider-kcp-handle", options.computeProviderKcpHandle],
+  ];
+  const missing = required.filter(([, value]) => !value).map(([flag]) => flag);
+  if (missing.length > 0) {
+    throw new Error(
+      `the kcp provider is enabled and ${missing.join(", ")} ${missing.length === 1 ? "is" : "are"} not set. ` +
+        `The provider writes each guest as a ComputeVM into this bidder's own kcp workspace under its owner ` +
+        `handle; without them it would fail at the first RFP instead of at startup.`,
+    );
+  }
+  const relay = await cliCreateIngress("kcp");
+  const serve = createServe({ logger, relays: [relay], listenersFile });
+  serves.push(serve);
+  const kcp = createComputeProviderKcpFactory({
+    logger,
+    atproto: atproto as import("@publicdomainrelay/compute-provider-abc").ComputeAtproto,
+    serve,
+    credentials: {
+      server: options.computeProviderKcpServer as string,
+      workspace: options.computeProviderKcpWorkspace as string,
+      tokenFile: options.computeProviderKcpTokenFile as string | undefined,
+      caFile: options.computeProviderKcpCaFile as string | undefined,
+    },
+    handle: options.computeProviderKcpHandle as string,
+    guestHostAddress: options.computeProviderKcpGuestHostAddress as string | undefined,
+    getIssuerUrl: () => relay.ingressUrl,
+    guestTlsPort: options.guestTlsPort as number | undefined,
+    oidcProvisioning: true,
+    rbacProvisioner: createRbacProvisioner(),
+    createSignedRepoRecord: atproto.createSignedRepoRecord.bind(atproto),
+    callService: atproto.callService.bind(atproto),
+    acceptToContract,
+  });
+  providers.push(createComputeProviderHooks({ provider: kcp.provider }));
   await serve.beginServe();
 }
 

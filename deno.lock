@@ -1880,6 +1880,7 @@
           "jsr:@publicdomainrelay/firehose-watcher-abc@0",
           "jsr:@publicdomainrelay/firehose-watcher-jetstream@0",
           "jsr:@publicdomainrelay/firehose-watcher-subscriberepos@0",
+          "jsr:@publicdomainrelay/hono-factory-compute-provider-kcp@0",
           "jsr:@publicdomainrelay/identity-prompt-kcp@0",
           "jsr:@publicdomainrelay/identity-prompt-tty@0",
           "jsr:@publicdomainrelay/logger@0",
@@ -2395,6 +2396,7 @@
           "jsr:@hono/hono@4",
           "jsr:@publicdomainrelay/compute-provider-abc@0",
           "jsr:@publicdomainrelay/compute-provider-common@0",
+          "jsr:@publicdomainrelay/compute-provider-kcp-common@0",
           "jsr:@publicdomainrelay/compute-provider-kcp@0",
           "jsr:@publicdomainrelay/oidc-issuer-abc@0",
           "jsr:@publicdomainrelay/oidc-issuer-hono@0"
