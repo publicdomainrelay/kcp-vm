@@ -2300,58 +2300,44 @@ are not re-derived here; the qemu run above is the full-flow proof, not a re-mea
 
 ### The host platform
 
-**State of the code (read 2026-10-11 at f0460fd, linux-proofs E7).** `internal/hostos` has `_linux.go`
-and `_windows.go` files only. `GOOS=darwin go build ./...` FAILS: with no darwin files, `hostos.Lock`,
-`LocalPortRange`, `DieWithParent` and `portallocator`'s probe are undefined, blocking 23 packages.
-`GOOS=windows go build ./...` FAILS: `internal/nodevm/disk.go` uses `unix.IoctlFileClone` and
-`SEEK_DATA` with no build tag, blocking 10 packages, and `GOOS=windows go vet` also fails on an untagged
-`Setpgid` in `internal/apigen/live_upgrade_test.go`. `deploy/check.sh` builds and vets only the host OS,
-so nothing noticed. The capability predicates (`Firecracker`, `QEMU`, `NetworkMode`, `Accel`, including
-`AccelWHPX` in `caps_windows.go`) are dead since 9d85916 retired the local substrates; only
-`check-host` still reads them. `hostos.DetachProcess` is `Pdeathsig: SIGKILL` - it ties the VMM's life
-to its parent, the opposite of its name - and its one caller is the resident namespace verb.
+Execution is Linux only; darwin and windows are seams that compile, vet and refuse by name. Plan 0006
+M0-XOS-GATE made that true and keeps it so: `deploy/check.sh` builds and vets the tree for darwin/arm64,
+darwin/amd64, windows/amd64, windows/arm64 and linux/arm64 on every run (default tags, so no embedded
+blob is needed), and `internal/xosgate` lists the OS-neutral packages (`api/...`, `clusterprovider`,
+`cloudprovider`, `nodeprovider`, `nodemarket`, `materialiser`, `kcpclient`, `tenantclient`, `gateway`;
+the `vmruntime` and `hostsvc` interfaces, `kcpapply` and the ComputeVM controller core join it as they
+land) with `go list -deps -json` for each of six GOOS/GOARCH pairs and fails on any import of go-systemd,
+netlink, the firecracker SDK, `internal/nodefirecracker` or `internal/fcapi`. A fixture importing
+go-systemd keeps that test honest. An untagged OS-specific file fails the gate on the commit that adds it.
 
-**Planned (plan 0006 M0-XOS-GATE, the first commit of that plan).** `internal/hostos` keeps only
-primitives (lock, process identity, boot id, port range, process attributes) with linux, darwin and
-windows files, darwin stubs returning `ErrUnsupported` until plan 0012; the reflink clone splits into
-`clone_linux.go` and `clone_other.go`; the capability predicates and `DetachProcess` are deleted and
-`check-host` reads the compiled backend registry instead; check.sh builds and vets darwin/arm64,
-darwin/amd64, windows/amd64, windows/arm64 and linux/arm64 on every run, and an import-boundary test
-keeps go-systemd, netlink and the firecracker client out of OS-neutral packages. The service-manager,
-VM-runtime and guest-network seams (`hostsvc`, `vmruntime`, `guestnet`) are Linux-only bodies behind
-interfaces; Windows (HCS, HNS, SCM) is plan 0011 and macOS (vfkit, launchd) is plan 0012. See section 5,
-"Host processes and the VM lifecycle".
+`internal/hostos` is primitives only. Every darwin body that has no portable answer returns
+`"<what> is unsupported on darwin; see plan 0012"` wrapping `errors.ErrUnsupported`; nothing implements
+macOS or Windows VM behaviour.
 
-What follows is the 2026-09-24 design and measurement, kept as a record: the QEMU rows and the Windows
-column describe code that 9d85916 deleted or that never ran.
+| seam | Linux | darwin (plan 0012) | Windows (plan 0011) |
+|---|---|---|---|
+| `hostos` lock (`lock_unix.go`, `lock_windows.go`) | `flock` | `flock` (same file, `//go:build unix`) | `LockFileEx`/`UnlockFileEx` |
+| `hostos` process identity (`proc_*.go`) | `/proc/<pid>/stat` start ticks and `/proc/<pid>/cmdline`; `kill(pid, 0)`, `SIGTERM`, `SIGKILL`, `SIGHUP` | refuses: ErrUnsupported | `OpenProcess` + `GetProcessTimes`, the command line via CIM, `TerminateProcess`; no reload |
+| `hostos.BootID` (`bootid_*.go`) | `/proc/sys/kernel/random/boot_id` | refuses | refuses |
+| `hostos.LocalPortRange` (`portrange_*.go`) | `/proc/sys/net/ipv4/ip_local_port_range` | refuses | `netsh int ipv4 show dynamicport tcp`, falling back to 49152-65535 |
+| `hostos` process attributes (`sysproc_*.go`) | `DieWithParent` is `Pdeathsig: SIGKILL`; `NewProcessGroup` is `Setpgid` | `Setpgid`; `DieWithParent` is empty (ponytail: no Pdeathsig) | `CREATE_NEW_PROCESS_GROUP`; `DieWithParent` is empty (ponytail: a job object) |
+| `portallocator` probe (`probe_*.go`) | listen with `SO_REUSEADDR` 0 | every probe refuses | plain listen |
+| `portscan` (`scan_*.go`) | `/proc/net` and `/proc/<pid>/cmdline` | refuses | `netstat -ano` and the command line via CIM |
+| `nodevm` rootfs clone (`clone_linux.go`, `clone_other.go`) | `FICLONE` reflink, else a `SEEK_DATA`/`SEEK_HOLE` sparse copy | plain copy | plain copy |
+| `socialweb-nodeimage` stage lock (`buildlock_*.go`) | `flock` | refuses | refuses |
+| `check-host` VM runtime (`vmruntime_*.go`) | firecracker | "no VM runtime compiled", the Linux-only checks NOT APPLICABLE | the same |
 
-The gateway is one binary per OS, and the substrate, the accelerator, the network, the process
-identity and the disk tooling are the host's, not the cluster's. `internal/hostos` is the single
-seam: capability predicates (`Name`, `Firecracker`, `QEMU`, `NetworkMode`, `Accel`) and portable
-primitives, with `_linux.go` and `_windows.go` implementations. Nothing else in the tree reaches
-for `syscall.Flock`, `syscall.Kill`, `/proc/<pid>/stat`, `Pdeathsig` or `Setpgid`; the packages that
-used to are routed through the seam, and the Linux implementation is the previous behaviour.
+The capability predicates (`Firecracker`, `QEMU`, `NetworkMode`, `Accel`, `AccelWHPX`) were deleted with
+this gate: 9d85916 had retired nodeqemu and the local substrates, and only `check-host` still read them.
+`check-host` names the VM runtime compiled into the build until plan 0007's `vmruntime` registry
+replaces that file. `hostos.DetachProcess` was deleted: it was `Pdeathsig: SIGKILL` under a name that
+said the opposite; its one caller, the resident namespace verb, uses `DieWithParent` until plan 0007
+M2-VM-RUNTIME deletes the verb. The service-manager, VM-runtime and guest-network seams (`hostsvc`,
+`vmruntime`, `guestnet`) are Linux-only bodies behind interfaces; Windows (HCS, HNS, SCM) is plan 0011
+and macOS (vfkit, launchd) is plan 0012. See section 5, "Host processes and the VM lifecycle".
 
-| | Linux | Windows |
-|---|---|---|
-| substrates | firecracker and qemu | **qemu only**. Firecracker is a KVM guest and exists only on Linux, so `checkPlacement` and `nodeSubstrateFor` refuse the name on a Windows host, naming the host and why, rather than counting a node that was never booted |
-| accelerator | `kvm` when `/dev/kvm` exists, with `-cpu host`; `tcg` otherwise | `whpx` with a `tcg` fallback (`-machine q35,accel=whpx:tcg`); no `-cpu host`, because the guest is not the host's CPU under WHPX and the flag is untestable here |
-| network | pasta: a fresh user and network namespace, a tap bridged onto pasta's own link; the guest dials the first usable address of the cluster's leased range | qemu user-mode (slirp): no namespace, no pasta, no tap and no bridge; the guest is `10.0.2.15/24`, its gateway is `10.0.2.2`, and the guest dials `10.0.2.2`, which slirp maps to the host's loopback where the apiserver already binds. The per-node subnet lease is not taken; `nodevm.UserNetwork` supplies the fixed network |
-| process identity | `/proc/<pid>/stat` start time plus `/proc/<pid>/cmdline`, so a reused pid is NOT OURS and is never signalled | `OpenProcess` + `GetProcessTimes` creation time plus the command line via the Windows management interface, decomposed by `CommandLineToArgv`; a reused pid is refused the same way |
-| liveness and stop | `kill(pid, 0)`, `SIGTERM`, `SIGKILL` | `GetExitCodeProcess`, `TerminateProcess` |
-| process groups | `Setpgid`; `Pdeathsig` on the VMM | `CREATE_NEW_PROCESS_GROUP`; no `Pdeathsig` equivalent, so the VMM is not signalled by the parent's death |
-| file locking | `flock` | `LockFileEx`/`UnlockFileEx` |
-| local port range | `/proc/sys/net/ipv4/ip_local_port_range` | `netsh int ipv4 show dynamicport tcp`, falling back to the documented 49152-65535 when the command or its localized output cannot be read |
-| rootfs clone | pure-Go copy, on both | pure-Go copy, on both |
-| rootfs filesystem | `mkfs.ext4` from the distribution | `mkfs.ext4` must be provided by the operator (an e2fsprogs toolchain on PATH); a missing one is refused with the platform named |
-| node image build | this host's own `/boot` kernel and `/lib/modules` tree | requires the kernel and module tree handed in, because there is no `/boot` or `/lib/modules` of this host's kernel; the builder and its checks report those inputs NOT APPLICABLE on Windows |
-
-**What is refused on Windows, and where.** Firecracker is refused at `checkPlacement` and again at
-`nodeSubstrateFor`. A missing `mkfs.ext4` is refused where a node disk is built. The guest half of
-`socialweb-nodeagent` (`init`, `agent`) is a Linux build by construction — it mounts the node disk
-and switches root inside the guest — so a non-Linux build of that binary refuses those verbs and
-carries only the host side. The node image's kernel and module inputs are reported NOT APPLICABLE by
-`check-host` on a platform that has neither.
+What follows is the 2026-09-24 measurement, kept as a record: the qemu substrate it measured was
+deleted in 9d85916.
 
 **What was observed, and what was not.** On 2026-09-24 the four-step proof was run on this Linux host
 as the capability matrix: `TestTheFourStepProofRunsThroughTheCompositionRoot` ran both substrates in
@@ -2374,8 +2360,8 @@ column above is **design and cross-compilation only**: no Windows binary
 was executed on this Linux host, so no Windows boot, no WHPX boot, no user-mode networking path and
 no Windows process-identity read has been observed to work. On 2026-09-24 `GOOS=windows GOARCH=amd64
 go build ./...` and `go vet ./...` were clean, which proved the tree compiled and type-checked for
-Windows, and nothing more; that is no longer true (7c4f741's untagged reflink clone broke it, see the
-state of the code above) and stays untrue until plan 0006 M0-XOS-GATE. The runtime paths that carry the most risk are the ones no compiler can check: the
+Windows, and nothing more; 7c4f741's untagged reflink clone broke that, and plan 0006 M0-XOS-GATE
+restored it and gates it. The runtime paths that carry the most risk are the ones no compiler can check: the
 CIM/PowerShell command-line read (it shells out per lookup, and a localized or denied environment
 breaks it), `TerminateProcess` standing in for a graceful stop, `LockFileEx`'s byte-range lock
 against `flock`'s whole-file semantics, WHPX actually being available on a given Windows host, and
@@ -2843,7 +2829,8 @@ internal/nodeprovider/ derives a node's DNS-1123 name from the (cluster label, n
 internal/nodevm/       the substrate-neutral half of a node: its image, guest, network and namespace parameters, the pasta link wiring, the identity disk, the rootfs clone and the /proc identity scan. Used by `socialweb-nodeboot`, which boots a MARKET guest on the bidder's host
 internal/nodefirecracker/ the firecracker half of a market guest's boot, on the bidder's host: the image, its manifest and the namespace child
 internal/nodemarket/   places a node as a claim on the COMPUTE MARKET: it writes a NodeClaim into the cluster's home workspace and returns, reads the claim's status for the join wait and its fatal message, and closes the node by deleting the claim and waiting for the door to destroy the machine
-internal/hostos/       the one platform seam: capability predicates and the portable primitives (locking, process identity, liveness, termination, command line, port range, SysProcAttr) with Linux and Windows implementations
+internal/hostos/       the one platform seam, primitives only (locking, process identity, liveness, termination, command line, boot id, port range, SysProcAttr) with Linux, darwin and Windows files; darwin refuses with ErrUnsupported (plan 0012)
+internal/xosgate/      a test-only package: go list -deps -json per GOOS/GOARCH proves the OS-neutral packages import no Linux backend (go-systemd, netlink, firecracker)
 internal/plcresolver/  resolves a did:plc or did:web to its key IDs for the revocation sweep; NXDOMAIN is an outage, not an absence
 internal/plcsweep/     the periodic pass that lists DIDs, resolves them and revokes those whose keys are gone
 internal/sweepkcp/     the kcp side of that sweep: build the account worklist from workspaces and AtprotoIdentity records, write the deny, plan the fan-out
