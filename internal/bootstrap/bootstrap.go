@@ -30,6 +30,7 @@ const (
 	FrontAddress     = "127.0.0.1:0"
 	LeaseStaleAfter  = 6 * time.Second
 	LeaseWatchWindow = 12 * time.Second
+	RestartSettle    = 3 * time.Second
 )
 
 var unbuiltProfiles = map[string]string{
@@ -129,13 +130,64 @@ func RSSKiB(pid int) int64 {
 	return 0
 }
 
+func Observe(ctx context.Context, m hostsvc.Manager, want hostsvc.Identity) (hostsvc.Observation, bool, error) {
+	st, err := m.Inspect(ctx, want.Unit)
+	deadline := time.Now().Add(RestartSettle)
+	for err == nil && st.State == hostsvc.Activating && time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return hostsvc.Observation{}, false, ctx.Err()
+		case <-time.After(PortPoll):
+		}
+		st, err = m.Inspect(ctx, want.Unit)
+	}
+	if err == nil && st.State == hostsvc.Activating {
+		return hostsvc.Observation{Verdict: hostsvc.VerdictUnknown, Status: st,
+			Detail: fmt.Sprintf("%s is still activating after %s", want.Unit, RestartSettle)}, false, nil
+	}
+	if err == nil && st.State == hostsvc.Active && st.InvocationID != "" && want.InvocationID != "" &&
+		st.InvocationID != want.InvocationID && st.MainPID > 0 {
+		return hostsvc.Observation{Verdict: hostsvc.VerdictRunning, Status: st,
+			Detail: fmt.Sprintf("%s was restarted in place by its manager (invocation %s, recorded %s)", want.Unit, st.InvocationID, want.InvocationID)}, true, nil
+	}
+	obs, err := m.Check(ctx, want)
+	return obs, false, err
+}
+
+func identifyUnit(ctx context.Context, m hostsvc.Manager, cfg Config, role, name string, adopted bool, placedAt time.Time) (devinstance.Unit, error) {
+	id, err := m.Identify(ctx, name, 0)
+	if err != nil {
+		return devinstance.Unit{}, err
+	}
+	if placedAt.IsZero() {
+		placedAt = time.Now().UTC()
+	}
+	pctx, cancel := context.WithTimeout(ctx, cfg.ReadyTimeout)
+	defer cancel()
+	port, err := hostsvc.WaitListenPort(pctx, id.PID, PortPoll)
+	if err != nil {
+		return devinstance.Unit{}, fmt.Errorf("bootstrap: reading the bound port of %s (pid %d): %w", name, id.PID, err)
+	}
+	return devinstance.Unit{Role: role, Unit: name, Identity: id, Port: port, Endpoint: endpoint(role, port),
+		Adopted: adopted, PlacedAt: placedAt, PortAt: time.Now().UTC()}, nil
+}
+
 func ensureUnit(ctx context.Context, m hostsvc.Manager, cfg Config, rec *devinstance.Record, role string, spec hostsvc.UnitSpec,
 	beforeStart func() error) (devinstance.Unit, bool, error) {
 	log := cfg.log().With("role", role, "unit", spec.Name)
 	if prev := rec.Unit(role); prev != nil && prev.Identity.Unit == spec.Name {
-		obs, err := m.Check(ctx, prev.Identity)
+		obs, restarted, err := Observe(ctx, m, prev.Identity)
 		if err != nil {
 			return devinstance.Unit{}, false, fmt.Errorf("bootstrap: checking %s: %w", spec.Name, err)
+		}
+		if restarted {
+			u, err := identifyUnit(ctx, m, cfg, role, spec.Name, true, obs.Status.ActiveSince)
+			if err != nil {
+				return devinstance.Unit{}, false, err
+			}
+			log.Info("restarted in place by its manager; adopting the new invocation", "pid", u.Identity.PID,
+				"invocation", u.Identity.InvocationID, "port", u.Port, "recordedPort", prev.Port)
+			return u, false, nil
 		}
 		switch obs.Verdict {
 		case hostsvc.VerdictRunning:
@@ -181,24 +233,12 @@ func ensureUnit(ctx context.Context, m hostsvc.Manager, cfg Config, rec *devinst
 			return devinstance.Unit{}, false, err
 		}
 	}
-	id, err := m.Identify(ctx, spec.Name, 0)
+	u, err := identifyUnit(ctx, m, cfg, role, spec.Name, st.Adopted, st.ActiveSince)
 	if err != nil {
 		return devinstance.Unit{}, false, err
 	}
-	placedAt := st.ActiveSince
-	if placedAt.IsZero() {
-		placedAt = time.Now().UTC()
-	}
-	pctx, cancel := context.WithTimeout(ctx, cfg.ReadyTimeout)
-	defer cancel()
-	port, err := hostsvc.WaitListenPort(pctx, id.PID, PortPoll)
-	if err != nil {
-		return devinstance.Unit{}, false, fmt.Errorf("bootstrap: reading the bound port of %s (pid %d): %w", spec.Name, id.PID, err)
-	}
-	u := devinstance.Unit{Role: role, Unit: spec.Name, Identity: id, Port: port, Endpoint: endpoint(role, port),
-		Adopted: st.Adopted, PlacedAt: placedAt, PortAt: time.Now().UTC()}
-	log.Info("placed", "pid", id.PID, "invocation", id.InvocationID, "port", port, "adopted", st.Adopted,
-		"portAfter", u.PortAt.Sub(placedAt).String())
+	log.Info("placed", "pid", u.Identity.PID, "invocation", u.Identity.InvocationID, "port", u.Port, "adopted", st.Adopted,
+		"portAfter", u.PortAt.Sub(u.PlacedAt).String())
 	return u, !st.Adopted, nil
 }
 

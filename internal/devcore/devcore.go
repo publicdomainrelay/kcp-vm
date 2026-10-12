@@ -108,9 +108,15 @@ func Run(ctx context.Context, cfg Config, m hostsvc.Manager) error {
 		lost := false
 		core.Verdicts = nil
 		for _, u := range rec.Units {
-			obs, err := m.Check(ctx, u.Identity)
+			obs, restarted, err := bootstrap.Observe(ctx, m, u.Identity)
 			if err != nil {
 				log.Error("check", "unit", u.Unit, "err", err.Error())
+				continue
+			}
+			if restarted {
+				lost = true
+				log.Warn("unit restarted in place by devsup; re-identifying it", "unit", u.Unit, "detail", obs.Detail)
+				core.Verdicts = append(core.Verdicts, fmt.Sprintf("%s=Restarted", u.Unit))
 				continue
 			}
 			core.Verdicts = append(core.Verdicts, fmt.Sprintf("%s=%s %s", u.Unit, obs.Verdict, obs.Reason))
