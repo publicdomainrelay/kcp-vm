@@ -85,6 +85,15 @@ if (guestDiagnoseUrl) {
   ]];
 }
 
+const guestCloudConfigFile = options.guestCloudConfigFile as string | undefined;
+if (guestCloudConfigFile) {
+  const extra = JSON.parse(await Deno.readTextFile(guestCloudConfigFile)) as Record<string, unknown>;
+  for (const [key, value] of Object.entries(extra)) {
+    const held = guestBase[key];
+    guestBase[key] = Array.isArray(held) && Array.isArray(value) ? [...held, ...value] : value;
+  }
+}
+
 const started = Date.now();
 const verdict: Verdict = { ok: false, reason: "not finished", totalMs: 0, startedAt: new Date(started).toISOString() };
 

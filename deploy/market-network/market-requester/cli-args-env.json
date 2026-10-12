@@ -37,6 +37,11 @@
       "description": "URL the guest fetches verbosely at the end of cloud-init, its output in the console",
       "env": "GUEST_DIAGNOSE_URL"
     },
+    "guest-cloud-config-file": {
+      "type": "string",
+      "description": "JSON cloud-config merged into the guest's base user_data: its bootcmd, runcmd and write_files entries are appended, any other key is set",
+      "env": "GUEST_CLOUD_CONFIG_FILE"
+    },
     "guest-journal-to-console": {
       "type": "boolean",
       "description": "Have the guest's journal forwarded to its serial console, so its units' output lands in the console the bidder keeps"
