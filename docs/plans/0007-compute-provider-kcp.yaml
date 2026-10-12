@@ -231,8 +231,8 @@ items:
     risks:
       - "Fedora's pasta SELinux policy may deny pasta inside an unprivileged user namespace the trampoline does not cover; recorded with the denial, and the profile change (install-time) named."
       - "The RFP-flow guest needs the live market bed on hat-8; until 0008 M1-BED-PARALLEL lands the run is serialized with every other bed run."
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M1-DECIDE
     milestone: M1
     title: Record the ComputeVM-plus-Go-controller design and the VM lifecycle in ARCHITECTURE
