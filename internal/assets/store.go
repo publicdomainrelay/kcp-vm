@@ -106,10 +106,6 @@ func (s Store) Ensure(pin versions.Pin, open BlobSource) (string, error) {
 		}
 		return "", fmt.Errorf("assets: placing %s: %w", dst, err)
 	}
-	got, err = TreeDigest(dst)
-	if err != nil || got != pin.TreeSHA256 {
-		return "", fmt.Errorf("assets: %s changed while it was placed (got %s, %v)", dst, got, err)
-	}
 	return dst, nil
 }
 
