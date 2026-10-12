@@ -9,11 +9,10 @@ import {
   runComputeContract,
 } from "@publicdomainrelay/requester-xrpc";
 import type { RequesterPDS, SshSessionProvider } from "@publicdomainrelay/requester-abc";
-import type { SessionStore } from "@publicdomainrelay/socialweb-computer-oauth-session-fs";
+import type { SessionStore } from "@publicdomainrelay/socialweb-computer-abc";
 import type { CommandIo, ComputeCommandRunner } from "@publicdomainrelay/socialweb-computer-abc";
 import { createServe } from "@publicdomainrelay/serve";
 import type { GuestCapability } from "@publicdomainrelay/guest-capability-abc";
-import { loadOrCreateKeyHex } from "@publicdomainrelay/key-file-fs";
 import type { AuthorizedAccount } from "@publicdomainrelay/socialweb-computer-common";
 import { policyFromEnv, renderExecCommand, vmNameFromEnv } from "@publicdomainrelay/socialweb-computer-common";
 import { createIrohSessionProvider } from "./bridge.ts";
@@ -31,15 +30,7 @@ export function contractUserData(): { transport: typeof DEFAULT_TRANSPORT_MODULE
 
 export interface InProcessRequesterOptions {
   sessionStore: SessionStore;
-  /**
-   * Persisted secp256k1 hex for the requester's own DID. Created if absent.
-   *
-   * The attestation key that signs RFPs has to be verifiable, which means it has
-   * to be published -- so the requester keeps an ephemeral DID on PLC whose
-   * document carries it, exactly as the CLI does. Persisting the key means that
-   * DID is registered once rather than per run.
-   */
-  requesterKeyPath: string;
+  requesterKeyHex: () => Promise<string>;
   plcDirectoryUrl?: string;
   ingressProxyHost?: string;
   relayUrls?: string[];
@@ -145,7 +136,7 @@ export function explainNoSession(
 
 export interface AccountRequestersOptions {
   sessionStore: SessionStore;
-  requesterKeyPath: string;
+  requesterKeyHex: () => Promise<string>;
   plcDirectoryUrl?: string;
   ingressProxyHost?: string;
   oauthClientId?: string;
@@ -204,7 +195,7 @@ export function createAccountRequesters(opts: AccountRequestersOptions): Account
         const pds = await createRequesterPDS({
           logger,
           serve: requesterServe,
-          privateKeyHex: await loadOrCreateKeyHex(opts.requesterKeyPath),
+          privateKeyHex: await opts.requesterKeyHex(),
           plcDirectoryUrl: plcUrl,
           ingressProxyHost: opts.ingressProxyHost,
           label: "socialweb-computer-ssh",

@@ -94,6 +94,10 @@ apps:
       - {name: gateway-kcp-workspace, to: profile}
       - {name: gateway-kcp-name, to: profile}
       - {name: gateway-kcp-listener, to: options}
+      - {name: openbao-server, to: profile}
+      - {name: openbao-client, to: profile}
+      - {name: openbao-server-workspace, to: profile}
+      - {name: market-identity-workspace, to: profile}
       - {name: label, to: options}
       - {name: public-origin, to: options}
       - {name: oauth-client-id, to: options}

@@ -32,6 +32,8 @@ const (
 	GatewayApp            = "gateway"
 	WebAppComponent       = "socialweb-computer-k8s"
 	WebAppWebDir          = "socialweb-computer-k8s/web"
+	WebAppVaultClient     = "socialweb-computer-k8s"
+	WebAppVaultMount      = "socialweb-computer-k8s"
 )
 
 type WebApp struct {
@@ -108,7 +110,8 @@ func RootVaultDeclared() *v1alpha1.OpenBaoServerDeclared {
 
 func RootVaultSpec() v1alpha1.OpenBaoServerSpec {
 	return v1alpha1.OpenBaoServerSpec{Asset: &v1alpha1.HostProcessAsset{Name: RootVaultAsset},
-		Clients:  []v1alpha1.OpenBaoServerClient{{Name: vaultlayout.RootClient, Policies: []string{vaultlayout.PolicyRootWriter}}},
+		Clients: []v1alpha1.OpenBaoServerClient{{Name: vaultlayout.RootClient, Policies: []string{vaultlayout.PolicyRootWriter}},
+			{Name: WebAppVaultClient, KVMount: WebAppVaultMount}},
 		Declared: RootVaultDeclared()}
 }
 
@@ -226,10 +229,14 @@ func (ctl *Controller) reconcileGateway(ctx context.Context, u *unstructured.Uns
 	}
 	st.Listeners = append(st.Listeners, core...)
 	webAppReady := true
-	if ctl.c.WebApp != nil {
+	webAppVault, haveVault := WebAppVaultOf(vault)
+	if ctl.c.WebApp != nil && !haveVault {
+		webAppReady = false
+	}
+	if ctl.c.WebApp != nil && haveVault {
 		ws := ctl.c.workspace() + ":" + ComponentWorkspace
 		if ctl.applied[string(o.UID)] != o.Generation {
-			values, err := GatewayValues(o, ctl.c.workspace(), ComponentStateDir(ctl.c.Layout.StateDir, WebAppComponent), *ctl.c.WebApp)
+			values, err := GatewayValues(o, ctl.c.workspace(), ComponentStateDir(ctl.c.Layout.StateDir, WebAppComponent), *ctl.c.WebApp, webAppVault)
 			if err != nil {
 				st.Phase, st.Message = v1alpha1.ApplicationPhaseFailed, err.Error()
 				return ctl.writeStatus(ctx, GatewayGVR, o.Name, st)
@@ -287,12 +294,26 @@ func listJSON(items []string) (string, error) {
 	return string(b), err
 }
 
-func GatewayValues(o v1alpha1.Gateway, workspace, stateDir string, w WebApp) (manifests.Gateway, error) {
+func WebAppVaultOf(o *v1alpha1.OpenBaoServer) (manifests.GatewayVault, bool) {
+	if o == nil || !RootVaultSynced(o) || o.Status.Refs == nil || o.Status.Refs.CA == "" {
+		return manifests.GatewayVault{}, false
+	}
+	for _, c := range o.Status.Clients {
+		if c.Name == WebAppVaultClient && c.ClientCert != "" {
+			return manifests.GatewayVault{Server: o.Name, Client: c.Name, CA: fileRef(o.Status.Refs.CA),
+				ClientDir: filepath.Dir(fileRef(c.ClientCert))}, true
+		}
+	}
+	return manifests.GatewayVault{}, false
+}
+
+func GatewayValues(o v1alpha1.Gateway, workspace, stateDir string, w WebApp, vault manifests.GatewayVault) (manifests.Gateway, error) {
 	if !filepath.IsAbs(w.Kubeconfig) || !filepath.IsAbs(w.TSRoot) {
 		return manifests.Gateway{}, fmt.Errorf("appctl: the %s web app needs an absolute kcp kubeconfig and TypeScript root", WebAppComponent)
 	}
 	v := manifests.Gateway{StateDir: stateDir, WebDir: filepath.Join(w.TSRoot, filepath.FromSlash(WebAppWebDir)), Kubeconfig: w.Kubeconfig,
-		GatewayWorkspace: workspace, GatewayName: o.Name, TLS: manifests.TLSNone}
+		GatewayWorkspace: workspace, GatewayName: o.Name, TLS: manifests.TLSNone, Vault: vault,
+		IdentityWorkspace: workspace + ":" + ComponentWorkspace}
 	var trust []string
 	var extra []string
 	if n := o.Spec.Network; n != nil {

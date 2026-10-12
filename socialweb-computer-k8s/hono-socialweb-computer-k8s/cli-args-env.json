@@ -159,6 +159,28 @@
       "env": "NODE_POLL_INTERVAL_MS",
       "default": 2000
     },
+    "openbao-server": {
+      "type": "string",
+      "description": "Name of the OpenBaoServer object (in openbao-server-workspace, read through kcp-kubeconfig) whose client openbao-client holds this web app's OAuth sessions and requester key; unset, they are files in state-dir",
+      "env": "OPENBAO_SERVER"
+    },
+    "openbao-client": {
+      "type": "string",
+      "description": "Client of the OpenBaoServer this web app logs in as with its client certificate; its kvMount holds the sessions and the requester key",
+      "env": "OPENBAO_CLIENT",
+      "default": "socialweb-computer-k8s"
+    },
+    "openbao-server-workspace": {
+      "type": "string",
+      "description": "kcp workspace of the OpenBaoServer object",
+      "env": "OPENBAO_SERVER_WORKSPACE",
+      "default": "root"
+    },
+    "market-identity-workspace": {
+      "type": "string",
+      "description": "kcp workspace this web app writes one MarketIdentity (mode oauthDelegated) per signed-in account into; unset, it writes none",
+      "env": "MARKET_IDENTITY_WORKSPACE"
+    },
     "openbao-addr": {
       "type": "string",
       "description": "The application's OpenBao; when set, each in-flight NodeClaim's secrets-server key is kept there so a restarted door resumes Bidding and Provisioning claims instead of failing them",

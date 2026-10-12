@@ -2,7 +2,7 @@ import { createFactory } from "@hono/hono/factory";
 import type { SessionVerifier } from "@publicdomainrelay/socialweb-computer-abc";
 import type { OAuthSessionData } from "@publicdomainrelay/socialweb-computer-common";
 import { COCORE_APP_WELL_KNOWN_PATH } from "@publicdomainrelay/socialweb-computer-common";
-import type { SessionStore } from "@publicdomainrelay/socialweb-computer-oauth-session-fs";
+import type { SessionStore } from "@publicdomainrelay/socialweb-computer-abc";
 
 export interface WebFactoryOptions {
   sessionStore: SessionStore;

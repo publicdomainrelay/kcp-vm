@@ -11,6 +11,11 @@ import {
   FINALIZER_NODE_CLAIM,
   GATEWAY_RESOURCE,
   type Gateway,
+  MARKET_IDENTITY_RESOURCE,
+  type MarketIdentity,
+  type MarketIdentitySpec,
+  type MarketIdentityStatus,
+  type VaultRef,
   NODE_CLAIM_RESOURCE,
   parseClusterLink,
   parseNodeClaim,
@@ -296,5 +301,121 @@ export function createKcpGatewayListenerUrl(opts: KcpListenerUrlOptions): () => 
     if (!found) throw new Error(`gateway ${opts.workspace}:${opts.name} reports no ${opts.listener} listener in its status`);
     cached = { at: Date.now(), url: `${found.kind === "https" ? "https" : "http"}://${found.address}` };
     return cached.url;
+  };
+}
+
+export function createKcpFetch(credentials: KcpCredentials): typeof fetch {
+  const client = credentials.ca || credentials.cert
+    ? Deno.createHttpClient({
+      caCerts: credentials.ca ? [credentials.ca] : undefined,
+      ...(credentials.cert && credentials.key ? { cert: credentials.cert, key: credentials.key } : {}),
+    })
+    : undefined;
+  return (input, init) => {
+    const headers = new Headers(init?.headers);
+    if (credentials.token) headers.set("authorization", `Bearer ${credentials.token}`);
+    return fetch(input, { ...init, headers, ...(client ? { client } : {}) } as RequestInit);
+  };
+}
+
+export interface KcpMarketIdentitiesOptions {
+  credentials: KcpCredentials;
+  workspace: string;
+  fetch?: typeof fetch;
+  timeoutMs?: number;
+}
+
+export interface AccountSignIn {
+  did: string;
+  handle?: string;
+  pdsUrl?: string;
+  sessionRef: VaultRef;
+}
+
+export interface KcpMarketIdentities {
+  nameOf(did: string): Promise<string>;
+  signedIn(account: AccountSignIn): Promise<string>;
+  signedOut(did: string, sessionRef: VaultRef): Promise<void>;
+}
+
+const ACCOUNT_DID_ANNOTATION = "socialweb.computer/did";
+
+export function createKcpMarketIdentities(opts: KcpMarketIdentitiesOptions): KcpMarketIdentities {
+  const request = createKcpRequest(opts);
+  const { group, version, plural, kind } = MARKET_IDENTITY_RESOURCE;
+  const base = `${opts.credentials.server}/clusters/${opts.workspace}/apis/${group}/${version}/${plural}`;
+
+  async function nameOf(did: string): Promise<string> {
+    const sum = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(did)));
+    return `account-${Array.from(sum.slice(0, 10), (b) => b.toString(16).padStart(2, "0")).join("")}`;
+  }
+
+  async function mergePatch(url: string, body: unknown): Promise<void> {
+    await request(url, {
+      method: "PATCH",
+      headers: { "content-type": "application/merge-patch+json" },
+      body: JSON.stringify(body),
+    });
+  }
+
+  async function upsert(name: string, did: string, spec: MarketIdentitySpec): Promise<void> {
+    const object: MarketIdentity = {
+      apiVersion: `${group}/${version}`,
+      kind,
+      metadata: { name, annotations: { [ACCOUNT_DID_ANNOTATION]: did } },
+      spec,
+    };
+    try {
+      await request(base, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(object) });
+    } catch (err) {
+      if (!(err instanceof KcpRequestError) || err.status !== 409) throw err;
+      await mergePatch(`${base}/${name}`, { spec });
+    }
+  }
+
+  return {
+    nameOf,
+    async signedIn(account) {
+      const name = await nameOf(account.did);
+      await upsert(name, account.did, {
+        mode: "oauthDelegated",
+        handle: account.handle,
+        pdsUrl: account.pdsUrl,
+        sessionRef: account.sessionRef,
+      });
+      const status: MarketIdentityStatus = {
+        phase: "Ready",
+        did: account.did,
+        handle: account.handle,
+        pdsUrl: account.pdsUrl,
+        sessionRef: account.sessionRef,
+        message: "the web app holds this account's OAuth session in its vault",
+        conditions: [{
+          type: "SignedIn",
+          status: "True",
+          reason: "SessionDeposited",
+          message: "an OAuth session is in the vault at the session ref",
+          lastTransitionTime: new Date().toISOString().replace(/\.\d+Z$/, "Z"),
+        }],
+      };
+      await mergePatch(`${base}/${name}/status`, { status });
+      return name;
+    },
+    async signedOut(did, sessionRef) {
+      const name = await nameOf(did);
+      try {
+        await mergePatch(`${base}/${name}/status`, {
+          status: {
+            phase: "SessionExpired",
+            did,
+            sessionRef,
+            message: "the web app holds no OAuth session for this account; sign in again",
+            pendingAction: { kind: "signInAgain" },
+          },
+        });
+      } catch (err) {
+        if (!(err instanceof KcpRequestError) || err.status !== 404) throw err;
+      }
+    },
   };
 }

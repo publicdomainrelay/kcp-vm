@@ -112,7 +112,7 @@ const serve = createServe({
 // connections share a refresh lock instead of racing a single-use token.
 const runner = createInProcessRequester({
   sessionStore,
-  requesterKeyPath: `${stateDir}/requester-private-key`,
+  requesterKeyHex: () => loadOrCreateKeyHex(`${stateDir}/requester-private-key`),
   plcDirectoryUrl: options.plcDirectoryUrl as string,
   ingressProxyHost: options.ingressProxyHost as string,
   relayUrls,

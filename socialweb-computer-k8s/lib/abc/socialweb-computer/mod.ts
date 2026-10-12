@@ -125,3 +125,26 @@ export interface CocorePairing {
   token(did: string): Promise<CocoreToken | undefined>;
 }
 
+
+export interface SessionStore {
+  get(did: string): Promise<OAuthSessionData | undefined>;
+  set(did: string, session: OAuthSessionData): Promise<void>;
+  del(did: string): Promise<void>;
+  withAccount<T>(did: string, fn: () => Promise<T>): Promise<T>;
+}
+
+export type AccountLock = <T>(did: string, fn: () => Promise<T>) => Promise<T>;
+
+export function createAccountLock(): AccountLock {
+  const locks = new Map<string, Promise<unknown>>();
+  return <T>(did: string, fn: () => Promise<T>): Promise<T> => {
+    const prior = locks.get(did) ?? Promise.resolve();
+    const run = prior.then(fn, fn);
+    const chained = run.catch(() => {});
+    locks.set(did, chained);
+    void chained.then(() => {
+      if (locks.get(did) === chained) locks.delete(did);
+    });
+    return run;
+  };
+}

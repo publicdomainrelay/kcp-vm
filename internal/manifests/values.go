@@ -77,17 +77,26 @@ var valueTypes = map[string]func() reflect.Type{
 }
 
 type Gateway struct {
-	StateDir         string `json:",omitempty"`
-	WebDir           string `json:",omitempty"`
-	Kubeconfig       string `json:",omitempty"`
-	GatewayWorkspace string `json:",omitempty"`
-	GatewayName      string `json:",omitempty"`
-	TLS              string `json:",omitempty"`
-	Trust            string `json:",omitempty"`
-	ExtraArgs        string
-	ExtraRead        string
-	TestArgs         string
-	TestRead         string
+	StateDir          string `json:",omitempty"`
+	WebDir            string `json:",omitempty"`
+	Kubeconfig        string `json:",omitempty"`
+	GatewayWorkspace  string `json:",omitempty"`
+	GatewayName       string `json:",omitempty"`
+	TLS               string `json:",omitempty"`
+	Trust             string `json:",omitempty"`
+	ExtraArgs         string
+	ExtraRead         string
+	TestArgs          string
+	TestRead          string
+	IdentityWorkspace string `json:",omitempty"`
+	Vault             GatewayVault
+}
+
+type GatewayVault struct {
+	Server    string `json:",omitempty"`
+	Client    string `json:",omitempty"`
+	CA        string `json:",omitempty"`
+	ClientDir string `json:",omitempty"`
 }
 
 const (

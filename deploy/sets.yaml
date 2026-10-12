@@ -251,7 +251,7 @@ sets:
             template: denopods/service.yaml
 
   - name: gateway
-    summary: the components of a Gateway application in its own kcp - the root:app workspace and, per profile, the socialweb-computer-k8s web app DenoPod rendered from deploy/apps/gateway/<profile>.values.yaml (a phase named <component>@<profile> belongs to that profile only); its root vault is the OpenBaoServer root-vault the app controller declares; applied by internal/appctl
+    summary: the components of a Gateway application in its own kcp - the root:app workspace, the MarketIdentity schema bound there (one MarketIdentity per web app account) and, per profile, the socialweb-computer-k8s web app DenoPod rendered from deploy/apps/gateway/<profile>.values.yaml (a phase named <component>@<profile> belongs to that profile only); its root vault is the OpenBaoServer root-vault the app controller declares; applied by internal/appctl
     values: Gateway
     phases:
       - name: workspace
@@ -268,6 +268,22 @@ sets:
             for: Ready
         files:
           - path: market-network/10-rbac.yaml
+      - name: identity-schemas
+        workspace: root:socialweb-provider
+        files:
+          - path: marketidentity-apiresourceschema.yaml
+          - path: marketidentity-apiexport.yaml
+        after:
+          - kind: APIExport
+            name: marketidentities
+            for: IdentityValid
+      - name: identity-binding
+        workspace: root:app
+        files:
+          - path: apps/gateway/marketidentities-binding.yaml
+        after:
+          - kind: APIBinding
+            for: Ready
       - name: socialweb-computer-k8s@prod
         workspace: root:app
         files:
