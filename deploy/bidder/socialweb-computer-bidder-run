@@ -78,8 +78,8 @@ if [ -n "${BIDDER_PRELOAD:-}" ]; then
   argv+=(--preload "${BIDDER_PRELOAD}")
 fi
 argv+=(
-  --config "${BIDDER_CODE_DIR}/atproto-market/deno.json"
-  "${BIDDER_CODE_DIR}/atproto-market/hono-bidder/mod.ts"
+  --config "${BIDDER_CODE_DIR}/deno.json"
+  "${BIDDER_CODE_DIR}/ts/atproto-market/hono-bidder/mod.ts"
   --service-name "socialweb-computer-bidder"
   --atproto-oauth-qr
   --oauth-session-file "${session}"

@@ -43,13 +43,13 @@ set -euo pipefail
 # com.publicdomainrelay.temp.compute.vm records, bids on them, and on accept
 # boots a Firecracker guest from the node image this repo builds. The guest is
 # born from the requester's cloud-init user_data -- the provider refuses an RFP
-# with no user_data (hono-compute-provider lib/compute-provider-firecracker/mod.ts:403)
+# with no user_data (ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts)
 # -- so nothing here hand-assembles a guest.
 #
 # WHY NOTHING HERE HAND-PLACES A GUEST
 #
-# The provider boots each guest inside a container (hono-compute-provider
-# acd09b0). That container is the only thing that needs /dev/kvm, /dev/net/tun,
+# The provider boots each guest inside a container
+# (ts/hono-compute-provider/lib/compute-provider-firecracker). That container is the only thing that needs /dev/kvm, /dev/net/tun,
 # pasta and the firecracker binary, so all of them ride inside the runner image
 # rather than being installed on this host. The host needs one runtime: docker,
 # which is what lib/container-backend-docker drives.
@@ -88,17 +88,17 @@ set -euo pipefail
 # "discover" for its kernel is shipped with the paths the build host's ensure
 # resolved them to.
 #
-# WHY A SEPARATE ORG-ROOT COPY, AND A DENO OF ITS OWN
+# WHY A SEPARATE CODE COPY, AND A DENO OF ITS OWN
 #
 # A host may already run services out of /opt/org-root, and their deploys
-# replace that tree wholesale. This one does not: it ships the import closure of
-# atproto-market/hono-bidder into its own prefix, and the build host's deno
-# binary beside it, so a deploy here cannot change what any other service reads
-# on its next restart, and the bidder runs on the deno the code was run with.
+# replace that tree wholesale. This one does not: it ships this repository's
+# TypeScript tree (deno.json, deno.lock, ts/, socialweb-computer-k8s/) into its
+# own prefix, and the build host's deno binary beside it, so a deploy here cannot
+# change what any other service reads on its next restart, and the bidder runs
+# on the deno the code was run with.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-ORG_ROOT="${ORG_ROOT:-$(dirname "$PROJECT_DIR")}"
 BUILD_HOST_HOME="${HOME}"
 
 # -- Target --------------------------------------------------------------------
@@ -143,7 +143,7 @@ BIDDER_POLICY_ARGS="${BIDDER_POLICY_ARGS:-{\"bidWindowSec\":8,\"firstFree\":true
 
 # Derived remote paths. Everything shared by every instance lives under
 # HOST_DIR, which is the unit's one ReadWritePaths= beside its own StateDirectory.
-CODE_DIR="${PREFIX}/org-root"
+CODE_DIR="${PREFIX}/socialweb-computer-kcp"
 DIST_DIR="${PREFIX}/dist"
 DENO_BIN="${PREFIX}/bin/deno"
 BIN_DIR="${HOST_DIR}/bin"
@@ -157,7 +157,7 @@ SHIM_PATH="${HOST_DIR}/undici-shim.ts"
 
 # Paths as the RUNNER CONTAINER sees them. The provider only checks that the
 # --compute-provider-firecracker-vmm and -nodeboot flags are non-empty
-# (atproto-market hono-bidder/mod.ts:545-564); the VMM it actually execs is
+# (ts/atproto-market/hono-bidder/mod.ts); the VMM it actually execs is
 # microvm-firecracker's DEFAULT_FIRECRACKER, /usr/local/bin/firecracker, resolved
 # inside the container. Naming the in-container paths keeps the two honest about
 # each other.
@@ -187,7 +187,7 @@ MANAGE_DOCKER_DAEMON="${MANAGE_DOCKER_DAEMON:-yes}"
 LOCAL_CONFIG="${LOCAL_CONFIG:-${BUILD_HOST_HOME}/kcp-image/nodeimage-market.json}"
 LOCAL_PREINSTALL="${LOCAL_PREINSTALL:-${PROJECT_DIR}/deploy/bidder/preinstall-market.json}"
 LOCAL_INIT_BINARY="${LOCAL_INIT_BINARY:-${BUILD_HOST_HOME}/kcp-image/kcpinit}"
-LOCAL_INIT_PACKAGE="${LOCAL_INIT_PACKAGE:-${ORG_ROOT}/socialweb-computer-kcp/cmd/socialweb-nodeinit}"
+LOCAL_INIT_PACKAGE="${LOCAL_INIT_PACKAGE:-${PROJECT_DIR}/cmd/socialweb-nodeinit}"
 LOCAL_NODEIMAGE_BIN="${LOCAL_NODEIMAGE_BIN:-${BUILD_HOST_HOME}/kcp-image/socialweb-nodeimage}"
 LOCAL_INIT_ASSET="${LOCAL_INIT_ASSET:-${BUILD_HOST_HOME}/kcp-image/socialweb-nodeinit}"
 LOCAL_DENO="${LOCAL_DENO:-$(command -v deno || true)}"
@@ -299,43 +299,6 @@ rsync_to() {
   fi
 }
 
-# The code the bidder runs. atproto-market/deno.json resolves every
-# @publicdomainrelay/* import by relative path into a sibling repo, so the
-# closure is the set of repos that map reaches -- computed rather than listed, so
-# a new sibling import is shipped instead of failing at startup. The set is tens
-# of MB; the whole org root is 12 GB, which is why it is not shipped wholesale.
-code_closure() {
-  python3 - "${ORG_ROOT}" <<'PY'
-import json, os, sys
-root = sys.argv[1]
-seen, queue, dirs = set(), ["atproto-market/deno.json"], set()
-while queue:
-    cfg = queue.pop(0)
-    if cfg in seen:
-        continue
-    seen.add(cfg)
-    path = os.path.join(root, cfg)
-    try:
-        with open(path) as fh:
-            doc = json.load(fh)
-    except OSError:
-        continue
-    values = list((doc.get("imports") or {}).values()) + list(doc.get("workspace") or [])
-    for value in values:
-        if not isinstance(value, str) or not value.startswith("."):
-            continue
-        target = os.path.normpath(os.path.join(os.path.dirname(path), value))
-        rel = os.path.relpath(target, root)
-        if rel.startswith(".."):
-            continue
-        dirs.add(rel.split(os.sep)[0])
-        nxt = os.path.join(target, "deno.json")
-        if os.path.exists(nxt):
-            queue.append(os.path.relpath(nxt, root))
-print("\n".join(sorted(dirs)))
-PY
-}
-
 # -- Local preflight -----------------------------------------------------------
 say "checking the build host"
 echo "target       ${TARGET_NAME}"
@@ -349,7 +312,7 @@ fi
 [ -n "${LOCAL_DENO}" ] || { echo "no deno on the build host's PATH; set LOCAL_DENO" >&2; exit 1; }
 LOCAL_DENO="$(readlink -f "${LOCAL_DENO}")"
 for required in "${LOCAL_CONFIG}" "${LOCAL_PREINSTALL}" "${LOCAL_INIT_BINARY}" \
-                "${LOCAL_INIT_PACKAGE}" "${LOCAL_DENO}" "${ORG_ROOT}/atproto-market/deno.json"; do
+                "${LOCAL_INIT_PACKAGE}" "${LOCAL_DENO}" "${PROJECT_DIR}/deno.json" "${PROJECT_DIR}/deno.lock"; do
   [ -e "${required}" ] || { echo "missing on the build host: ${required}" >&2; exit 1; }
 done
 
@@ -360,7 +323,7 @@ done
 # Always rebuilt: a binary left from an older tree reads an older config schema
 # and refuses the current one.
 say "building socialweb-nodeimage"
-CGO_ENABLED=0 go build -C "${ORG_ROOT}/socialweb-computer-kcp" \
+CGO_ENABLED=0 go build -C "${PROJECT_DIR}" \
   -o "${LOCAL_NODEIMAGE_BIN}" ./cmd/socialweb-nodeimage
 
 ensure_field() { python3 -c 'import json,sys;print(json.loads(sys.argv[1]).get(sys.argv[2]) or "")' "${ENSURE_JSON}" "$1"; }
@@ -397,7 +360,7 @@ GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -C "${LOCAL_INIT_PACKAGE}" -trimp
 # the target, where the build host's busybox is an input of the name and the two
 # hosts can never agree on one; the target is held to the name resolved here.
 say "resolving the image the current inputs name on the build host"
-LOCAL_GO_MOD="${ORG_ROOT}/socialweb-computer-kcp/go.mod"
+LOCAL_GO_MOD="${PROJECT_DIR}/go.mod"
 LOCAL_STAGE_DIR="$(cfg_field stage_dir)"
 ASK_THE_STORE=("${LOCAL_NODEIMAGE_BIN}" -ensure -json -present-only \
   -preinstall "${LOCAL_PREINSTALL}" -config "${LOCAL_CONFIG}" -init-asset "${LOCAL_INIT_ASSET}")
@@ -534,8 +497,8 @@ for required in "${LOCAL_KERNEL}" "${LOCAL_KERNEL_CONFIG}" "${LOCAL_MODULES}" \
 done
 
 # The runner image: fedora + passt + e2fsprogs + iproute + firecracker +
-# socialweb-nodeboot (hono-compute-provider/hono-firecracker-standalone/Dockerfile),
-# built by `deno task build:firecracker-runner` in hono-compute-provider.
+# socialweb-nodeboot (ts/hono-compute-provider/hono-firecracker-standalone/Dockerfile),
+# built by ts/hono-compute-provider/hono-firecracker-standalone/build.sh.
 LOCAL_RUNNER_ID=""
 if docker image inspect "${RUNNER_IMAGE}" >/dev/null 2>&1; then
   LOCAL_RUNNER_ID="$(docker image inspect --format '{{json .RootFS.Layers}}' "${RUNNER_IMAGE}")"
@@ -543,7 +506,7 @@ elif ${DRY_RUN}; then
   LOCAL_RUNNER_ID="<missing here>"
 else
   echo "the runner image ${RUNNER_IMAGE} is not present here. Build it with:" >&2
-  echo "  cd ${ORG_ROOT}/hono-compute-provider && deno task build:firecracker-runner" >&2
+  echo "  RUNNER_IMAGE=${RUNNER_IMAGE} sh ${PROJECT_DIR}/ts/hono-compute-provider/hono-firecracker-standalone/build.sh" >&2
   exit 1
 fi
 echo "runner image ${RUNNER_IMAGE}"
@@ -718,14 +681,13 @@ echo "account ${SERVICE_USER} ready"
 REMOTE
 
 # -- Ship ----------------------------------------------------------------------
-say "shipping the code the bidder imports, and the deno that runs it"
-CLOSURE="$(code_closure)"
-echo "${CLOSURE}" | sed 's/^/  /'
-while read -r repo; do
-  [ -n "${repo}" ] || continue
-  rsync_to "code ${repo}" "${ORG_ROOT}/${repo}/" "${CODE_DIR}/${repo}/" \
-    --delete --chown=root:root --exclude node_modules --exclude .git --exclude .codegraph
-done <<< "${CLOSURE}"
+say "shipping the TypeScript tree the bidder runs, and the deno that runs it"
+rsync_to "workspace" "${PROJECT_DIR}/deno.json" "${CODE_DIR}/deno.json" --chown=root:root
+rsync_to "lockfile" "${PROJECT_DIR}/deno.lock" "${CODE_DIR}/deno.lock" --chown=root:root
+for tree in ts socialweb-computer-k8s; do
+  rsync_to "code ${tree}" "${PROJECT_DIR}/${tree}/" "${CODE_DIR}/${tree}/" \
+    --delete --chown=root:root --exclude node_modules --exclude .codegraph --exclude web/downloads
+done
 rsync_to "deno" "${LOCAL_DENO}" "${DENO_BIN}" --copy-links --chown=root:root --chmod=F755
 
 say "shipping the image store (${FINGERPRINT})"
@@ -902,8 +864,8 @@ place "${DIST_DIR}/common.env" "${COMMON_ENV}" 0644
 # that is otherwise converged.
 runuser -u "${SERVICE_USER}" -- env HOME="${HOST_DIR}" DENO_DIR="${DENO_DIR_REMOTE}" \
   "${DENO_BIN}" cache --node-modules-dir=none --unstable-kv --unstable-worker-options \
-  --config "${CODE_DIR}/atproto-market/deno.json" \
-  "${CODE_DIR}/atproto-market/hono-bidder/mod.ts" >/dev/null 2>&1 \
+  --config "${CODE_DIR}/deno.json" \
+  "${CODE_DIR}/ts/atproto-market/hono-bidder/mod.ts" >/dev/null 2>&1 \
   && echo "module cache warm" || echo "module cache NOT warmed; the first start fetches"
 
 systemctl daemon-reload

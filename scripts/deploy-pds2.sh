@@ -14,15 +14,15 @@ set -euo pipefail
 #
 # WHY THE CODE COMES FROM THE HOST'S OWN TREE
 #
-# The unit runs hono-pds, whose deno.json resolves every @publicdomainrelay/*
-# import by relative path into a sibling repo, so the shipped set is the import
-# closure of the PDS CLI. That closure is computed here rather than listed, so a
-# new sibling import is shipped instead of failing at startup.
+# The unit runs ts/hono-pds/main.ts out of a socialweb-computer-kcp checkout. Its
+# @publicdomainrelay/* imports resolve through the root deno.json workspace, so
+# the shipped set is that workspace: deno.json, deno.lock, ts/ and
+# socialweb-computer-k8s/.
 #
-# The tree it is copied from is a variable (SOURCE_ROOT, default /opt/org-root)
-# and it is the one already on this host. That is not a shortcut: the version of
-# hono-pds in this repo keeps accounts in a `new Map` (hono-pds
-# lib/atproto-repo-deno/account-store.ts), so every restart would erase the
+# The tree it is copied from is a variable (SOURCE_ROOT, default
+# /opt/socialweb-computer-kcp) and it is the one already on this host. That is not a shortcut: the version of
+# hono-pds in this repo keeps accounts in a `new Map`
+# (ts/hono-pds/lib/atproto-repo-deno/account-store.ts), so every restart would erase the
 # account and every re-run of this script would mint a second did:plc for one
 # handle. The tree already on the host persists accounts to Deno KV
 # (accountStorage in main.ts, "accounts" prefix in account-store.ts). A tree
@@ -58,10 +58,9 @@ HANDLE="test.pds2.socialweb.computer"
 ACCOUNT_EMAIL="test@pds2.socialweb.computer"
 PORT="8794"
 PREFIX="/opt/socialweb-pds2"
-SOURCE_ROOT="/opt/org-root"
-ENTRY_REPO="hono-pds"
-ENTRY_CONFIG="hono-pds/deno.json"
-ENTRYPOINT="hono-pds/main.ts"
+SOURCE_ROOT="/opt/socialweb-computer-kcp"
+ENTRY_CONFIG="deno.json"
+ENTRYPOINT="ts/hono-pds/main.ts"
 STATE_DIR="/var/lib/pds2"
 DENO="/usr/local/bin/deno"
 PLC_DIRECTORY_URL="https://plc.directory"
@@ -107,7 +106,6 @@ ACCOUNT_EMAIL='${ACCOUNT_EMAIL}'
 PORT='${PORT}'
 PREFIX='${PREFIX}'
 SOURCE_ROOT='${SOURCE_ROOT}'
-ENTRY_REPO='${ENTRY_REPO}'
 ENTRY_CONFIG='${ENTRY_CONFIG}'
 ENTRYPOINT='${ENTRYPOINT}'
 STATE_DIR='${STATE_DIR}'
@@ -145,58 +143,26 @@ say "checking ${SSH_TARGET}"
 remote 'test "$(id -u)" = 0 && echo "root on $(hostname)"'
 
 # ── The PDS answers on the loopback port before Caddy is told about it ────────
-say "shipping the PDS import closure to ${PREFIX} and starting ${SERVICE_NAME}"
+say "shipping the PDS workspace to ${PREFIX} and starting ${SERVICE_NAME}"
 remote_script "install ${SERVICE_NAME}" <<REMOTE
 set -euo pipefail
 
-for tool in rsync python3 openssl curl jq useradd runuser; do
+for tool in rsync openssl curl jq useradd runuser; do
   command -v "\$tool" >/dev/null 2>&1 || { echo "missing on the host: \$tool" >&2; exit 1; }
 done
 [ -x "\${DENO}" ] || { echo "no deno at \${DENO}" >&2; exit 1; }
-[ -d "\${SOURCE_ROOT}/\${ENTRY_REPO}" ] || {
-  echo "no tree at \${SOURCE_ROOT}/\${ENTRY_REPO}" >&2; exit 1; }
-
-# The closure: walk deno.json imports and workspace members that point at a
-# sibling directory, and collect the top-level repo each one lands in.
-closure="\$(python3 - "\${SOURCE_ROOT}" "\${ENTRY_CONFIG}" <<'PY'
-import json, os, sys
-root, entry = sys.argv[1], sys.argv[2]
-seen, queue, dirs = set(), [entry], {entry.split(os.sep)[0]}
-while queue:
-    cfg = queue.pop(0)
-    if cfg in seen:
-        continue
-    seen.add(cfg)
-    try:
-        with open(os.path.join(root, cfg)) as fh:
-            doc = json.load(fh)
-    except OSError:
-        continue
-    values = list((doc.get("imports") or {}).values()) + list(doc.get("workspace") or [])
-    for value in values:
-        if not isinstance(value, str) or not value.startswith("."):
-            continue
-        target = os.path.normpath(os.path.join(os.path.dirname(cfg), value))
-        if target.startswith(".."):
-            continue
-        dirs.add(target.split(os.sep)[0])
-        nxt = os.path.join(target, "deno.json")
-        if os.path.exists(os.path.join(root, nxt)):
-            queue.append(nxt)
-print("\n".join(sorted(dirs)))
-PY
-)"
-[ -n "\${closure}" ] || { echo "the import closure of \${ENTRY_CONFIG} is empty" >&2; exit 1; }
-echo "closure: \$(echo \${closure} | tr '\n' ' ')"
+[ -f "\${SOURCE_ROOT}/\${ENTRY_CONFIG}" ] && [ -f "\${SOURCE_ROOT}/\${ENTRYPOINT}" ] || {
+  echo "no socialweb-computer-kcp checkout at \${SOURCE_ROOT}" >&2; exit 1; }
 
 install -d -m 0755 "\${PREFIX}"
-for repo in \${closure}; do
-  rsync -a --delete "\${SOURCE_ROOT}/\${repo}/" "\${PREFIX}/\${repo}/"
+cp "\${SOURCE_ROOT}/deno.json" "\${SOURCE_ROOT}/deno.lock" "\${PREFIX}/"
+for tree in ts socialweb-computer-k8s; do
+  rsync -a --delete --exclude node_modules --exclude web/downloads "\${SOURCE_ROOT}/\${tree}/" "\${PREFIX}/\${tree}/"
 done
 
 # Refuse a tree whose accounts do not survive a restart. See the header.
-grep -q 'accountStorage' "\${PREFIX}/\${ENTRY_REPO}/main.ts" || {
-  echo "\${PREFIX}/\${ENTRY_REPO} keeps accounts in memory (no accountStorage in main.ts)." >&2
+grep -q 'accountStorage' "\${PREFIX}/\${ENTRYPOINT}" || {
+  echo "\${PREFIX}/\${ENTRYPOINT} keeps accounts in memory (no accountStorage)." >&2
   echo "Accounts would vanish on every restart and every re-run of this deploy would" >&2
   echo "mint a second did:plc for \${HANDLE}. Ship a tree that persists them." >&2
   exit 1
@@ -237,7 +203,7 @@ chmod 0644 "\${CONFIG_PATH}"
 # copied from the tree on first run, updated there afterwards, and pointed at
 # with --lock. Pinning survives; the tree stays read-only.
 if [ ! -f "\${STATE_DIR}/deno.lock" ]; then
-  cp "\$(dirname "\${PREFIX}/\${ENTRY_CONFIG}")/deno.lock" "\${STATE_DIR}/deno.lock"
+  cp "\${PREFIX}/deno.lock" "\${STATE_DIR}/deno.lock"
 fi
 chown "\${SERVICE_USER}:\${SERVICE_USER}" "\${STATE_DIR}/deno.lock"
 chmod 0644 "\${STATE_DIR}/deno.lock"
@@ -479,7 +445,7 @@ echo "handle     ${HANDLE}"
 echo "account    $(cat ${DID_FILE})"
 echo "password   ${PASSWORD_FILE}  (0600, root; never printed)"
 echo "state      ${STATE_DIR}  (deno dir, config, pds.env, pds.kv, account-did)"
-echo "code       ${PREFIX}  (import closure of ${ENTRY_CONFIG}, copied from ${SOURCE_ROOT})"
+echo "code       ${PREFIX}  (the ${ENTRY_CONFIG} workspace, copied from ${SOURCE_ROOT})"
 echo
 echo "verify:"
 echo "  curl -fsS https://${ORIGIN}/xrpc/_health"

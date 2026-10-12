@@ -15,7 +15,6 @@ EXPORT_DIR="${KCP_EXPORT_DIR:-}"
 BOOT="${KCP_BOOT_CONTEXT:-/var/tmp/socialweb-control-plane-boot}"
 
 target="${1:-controlplane}"
-ORG_ROOT="$(cd "$REPO/.." && pwd)"
 DOOR="$REPO/socialweb-computer-k8s"
 K8S_TREE="${KCP_K8S_TREE_CONTEXT:-/var/tmp/socialweb-k8s-tree}"
 
@@ -40,28 +39,16 @@ stage_binaries() {
 }
 
 stage_door_tree() {
-  command -v deno >/dev/null || { echo >&2 "no deno on PATH: the door's source tree is found by asking deno what it imports"; exit 1; }
-  command -v rsync >/dev/null || { echo >&2 "no rsync on PATH: the door's source tree is staged with it"; exit 1; }
-  repos="$(cd "$DOOR" && deno info --json hono-socialweb-computer-k8s/mod.ts | deno eval --ext=ts '
-    const root = new URL(Deno.args[0] + "/", "file:///").href;
-    const j = JSON.parse(await new Response(Deno.stdin.readable).text());
-    const s = new Set<string>();
-    for (const m of j.modules) if (m.specifier?.startsWith(root)) s.add(m.specifier.slice(root.length).split("/")[0]);
-    console.log([...s].sort().join(" "));' "$ORG_ROOT")"
-  [ -n "$repos" ] || { echo >&2 "deno reported no local imports for the door: refusing to build an image with no source"; exit 1; }
-  install -d -m 0755 "$K8S_TREE"
-  for repo in $repos; do
-    if [ "$repo" = "$(basename "$REPO")" ]; then
-      install -d -m 0755 "$K8S_TREE/$repo"
-      rsync -a --delete --exclude node_modules --exclude web/downloads "$DOOR/" "$K8S_TREE/$repo/socialweb-computer-k8s/"
-    else
-      rsync -a --delete --exclude .git --exclude node_modules --exclude .claude "$ORG_ROOT/$repo/" "$K8S_TREE/$repo/"
-    fi
-    echo "door tree   $repo"
-  done
+  command -v rsync >/dev/null || { echo >&2 "no rsync on PATH: the socialweb-computer-k8s source tree is staged with it"; exit 1; }
+  dst="$K8S_TREE/socialweb-computer-kcp"
+  install -d -m 0755 "$dst"
   for stale in "$K8S_TREE"/*; do
-    case " $repos " in *" $(basename "$stale") "*) ;; *) rm -rf "$stale" ;; esac
+    [ "$stale" = "$dst" ] || rm -rf "$stale"
   done
+  install -m 0644 "$REPO/deno.json" "$REPO/deno.lock" "$dst/"
+  rsync -a --delete --exclude node_modules "$REPO/ts/" "$dst/ts/"
+  rsync -a --delete --exclude node_modules --exclude web/downloads "$DOOR/" "$dst/socialweb-computer-k8s/"
+  echo "k8s tree    deno.json deno.lock ts socialweb-computer-k8s"
 }
 
 MESHD="${KCP_MESHD_CONTEXT:-/var/tmp/socialweb-control-plane-meshd}"

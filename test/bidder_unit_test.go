@@ -194,14 +194,6 @@ func runBidderDeployDryRun(t *testing.T) string {
 	t.Helper()
 	root := repoRoot(t)
 	home := t.TempDir()
-	org := filepath.Join(home, "org-root")
-	if err := os.MkdirAll(filepath.Join(org, "atproto-market"), 0o755); err != nil {
-		t.Fatalf("creating %s: %v", org, err)
-	}
-	writeFileIn(t, filepath.Join(org, "atproto-market"), "deno.json", "{}\n")
-	if err := os.Symlink(root, filepath.Join(org, "socialweb-computer-kcp")); err != nil {
-		t.Fatalf("linking the tree under test into %s: %v", org, err)
-	}
 	deno := writeFileIn(t, home, "deno", "#!/bin/sh\nexit 0\n")
 	if err := os.Chmod(deno, 0o755); err != nil {
 		t.Fatal(err)
@@ -256,7 +248,6 @@ func runBidderDeployDryRun(t *testing.T) string {
 		t.Fatal(err)
 	}
 	cmd.Env = envWith(map[string]string{
-		"ORG_ROOT":            org,
 		"LOCAL_DENO":          deno,
 		"LOCAL_CONFIG":        config,
 		"LOCAL_PREINSTALL":    preinstall,
@@ -331,7 +322,7 @@ func runLauncherIn(t *testing.T, state, instance string, lines string, linger st
 		"PATH=" + os.Getenv("PATH"),
 		"STATE_DIRECTORY=" + state,
 		"BIDDER_DENO=" + fake,
-		"BIDDER_CODE_DIR=/opt/example/org-root",
+		"BIDDER_CODE_DIR=/opt/example/socialweb-computer-kcp",
 		"BIDDER_HOST_DIR=/var/lib/example/host",
 		"BIDDER_SERVE_ADDR=127.0.0.1",
 		"BIDDER_SERVE_PORT=0",
