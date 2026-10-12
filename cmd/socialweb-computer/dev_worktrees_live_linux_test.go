@@ -212,7 +212,7 @@ func TestThreeWorktreesEachReachTheirOwnKcpThroughDevEnv(t *testing.T) {
 		for i := range trees {
 			cmd := exec.Command(deno, "test", "-A", "--node-modules-dir=none", "test/dev_env_kcp_test.ts")
 			cmd.Dir = k8s
-			cmd.Env = append(os.Environ(), "SWC_DEV_PEERS="+strings.Join(peers, ","))
+			cmd.Env = append(os.Environ(), "NO_COLOR=1", "SWC_DEV_PEERS="+strings.Join(peers, ","))
 			for k, v := range envs[i] {
 				cmd.Env = append(cmd.Env, k+"="+v)
 			}
@@ -281,4 +281,98 @@ func TestThreeWorktreesEachReachTheirOwnKcpThroughDevEnv(t *testing.T) {
 	if all := al.AllLeases(); len(all) != 0 {
 		t.Fatalf("leases left after dev down: %+v", all)
 	}
+}
+
+type fgRun struct {
+	cmd    *exec.Cmd
+	stdout *bytes.Buffer
+	stderr *bytes.Buffer
+}
+
+func (d *liveDev) startFg(t *testing.T, id string, extraEnv []string) (fgRun, upReport) {
+	t.Helper()
+	r := fgRun{stdout: &bytes.Buffer{}, stderr: &bytes.Buffer{}}
+	r.cmd = exec.Command(d.bin, "dev", "up", "--fg", "--instance", id, "--profile", "minimal", "--state-dir", d.state)
+	r.cmd.Env = append(append(os.Environ(), "SOCIALWEB_KCP_PATH="+d.kcp, "SOCIALWEB_KINE_PATH="+d.kine), extraEnv...)
+	r.cmd.Stdout, r.cmd.Stderr = r.stdout, r.stderr
+	if err := r.cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Minute)
+	for {
+		var up upReport
+		if dec := json.NewDecoder(bytes.NewReader(r.stdout.Bytes())); dec.Decode(&up) == nil && up.Instance == id {
+			return r, up
+		}
+		if time.Now().After(deadline) || r.cmd.ProcessState != nil {
+			r.cmd.Process.Kill()
+			t.Fatalf("dev up --fg never reported ready:\n%s\n%s", r.stdout, r.stderr)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+func TestDevUpInTheForegroundEndsWithItsTerminal(t *testing.T) {
+	d := openLiveDev(t)
+	if d == nil {
+		return
+	}
+	xdg := []string{"XDG_STATE_HOME=" + filepath.Join(t.TempDir(), "xdg-state")}
+	id := "tfg-" + strings.ToLower(fmt.Sprintf("%x", time.Now().UnixNano()&0xffffff))
+	t.Cleanup(func() { exec.Command(d.bin, "dev", "down", "--instance", id, "--state-dir", d.state).Run() })
+
+	t.Run("CtrlCIsDevDown", func(t *testing.T) {
+		r, up := d.startFg(t, id, xdg)
+		if !up.Foreground {
+			t.Fatalf("up %+v", up)
+		}
+		var again bytes.Buffer
+		second := exec.Command(d.bin, "dev", "up", "--fg", "--instance", id, "--profile", "minimal", "--state-dir", d.state)
+		second.Env = append(os.Environ(), "SOCIALWEB_KCP_PATH="+d.kcp, "SOCIALWEB_KINE_PATH="+d.kine)
+		second.Stderr = &again
+		if err := second.Run(); second.ProcessState.ExitCode() != 2 || !strings.Contains(again.String(), "already up") {
+			t.Fatalf("a second dev up --fg of a running instance: %v %q", err, again.String())
+		}
+		t0 := time.Now()
+		r.cmd.Process.Signal(os.Interrupt)
+		if err := r.cmd.Wait(); err != nil {
+			t.Fatalf("dev up --fg after Ctrl-C: %v\n%s", err, r.stderr)
+		}
+		if left := devsup.InstanceProcesses(id); len(left) > 0 {
+			t.Fatalf("processes left after Ctrl-C: %v", left)
+		}
+		if _, err := os.Stat(up.StateDir); !os.IsNotExist(err) {
+			t.Fatalf("state left after Ctrl-C: %v", err)
+		}
+		t.Logf("reading %s Ctrl-C of dev up --fg %s: down in %s", time.Now().UTC().Format(time.RFC3339), id, time.Since(t0).Round(time.Millisecond))
+	})
+
+	t.Run("KillingTheTerminalProcessKillsTheInstance", func(t *testing.T) {
+		r, up := d.startFg(t, id, xdg)
+		pids := []int{up.Devsup.PID, up.Core.PID}
+		for _, u := range up.Units {
+			pids = append(pids, u.Identity.PID)
+		}
+		t0 := time.Now()
+		r.cmd.Process.Kill()
+		r.cmd.Wait()
+		alive := func() []int {
+			var out []int
+			for _, p := range pids {
+				if devsup.Alive(p) {
+					out = append(out, p)
+				}
+			}
+			return append(out, devsup.InstanceProcesses(id)...)
+		}
+		deadline := time.Now().Add(30 * time.Second)
+		for len(alive()) > 0 && time.Now().Before(deadline) {
+			time.Sleep(50 * time.Millisecond)
+		}
+		if left := alive(); len(left) > 0 {
+			t.Fatalf("pids %v outlived kill -9 of dev up --fg by 30s", left)
+		}
+		t.Logf("reading %s kill -9 of dev up --fg %s: devsup %d, the core and %d units gone in %s", time.Now().UTC().Format(time.RFC3339), id,
+			up.Devsup.PID, len(up.Units), time.Since(t0).Round(time.Millisecond))
+	})
 }
