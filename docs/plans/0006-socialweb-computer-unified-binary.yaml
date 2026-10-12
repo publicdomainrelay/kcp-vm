@@ -1293,7 +1293,7 @@ items:
     risks:
       - "kine serves watches written through ANOTHER kine on its next poll (1 s ticker; 0.27-0.42 s measured); during an overlap a client may see a sub-second lag, recorded, not a failure."
       - "Both slots run the apiserver's compactor; the compare-and-swap on compact_rev_key makes one win per interval (kcp-blue-green.md 3); nothing to coordinate."
-    status: doing
+    status: done
     evidence:
   - id: M2-KCP-PORT0
     milestone: M2
