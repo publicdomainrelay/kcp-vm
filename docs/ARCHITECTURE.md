@@ -603,9 +603,8 @@ Today's code is what the subsections above describe. Lines marked "user" are the
 **Invariant: no socialweb-computer code in a running VM's process tree (user).** The service manager
 launches the VMM; our code only does one-shot prep before the unit starts, and the tiny `socialweb-vmexec`
 helper creates the tap and `execve`s firecracker, so after start a VM unit's cgroup holds exactly `pasta`
-and `firecracker`. Today it does not: `socialweb-nodeboot`'s namespace verb stays resident as
-firecracker's parent (`internal/nodefirecracker/namespace.go`), so a crash of it kills the guest and a
-rename-over upgrade can change code inside a booting chain. Plan 0006 M2-VM-TREE-AUDIT builds the
+and `firecracker`. This holds since 0006 M3-FOLD: `socialweb-nodeboot` and its resident namespace verb
+are deleted, and the firecracker provider's only path is the VM unit of `internal/vmruntime`. Plan 0006 M2-VM-TREE-AUDIT builds the
 instrument (every process in a VM unit's cgroup must hash to a pinned asset), and plan 0007's live tests
 run it after every boot, restart and upgrade.
 
@@ -3106,8 +3105,10 @@ internal/${concept}/   one package per concern; the interface declared where con
 internal/atprotoauth/  verifies an atproto service-auth token for one XRPC method: signature, audience, method, admitted DID methods and a 5-minute lifetime cap
 internal/execplugin/   the client-go exec credential plugin: mint, on-disk cache, refuse an empty or already-expired token
 internal/nodeprovider/ derives a node's DNS-1123 name from the (cluster label, node id) pair
-internal/nodevm/       the substrate-neutral half of a node: its image, guest, network and namespace parameters, the pasta link wiring, the identity disk, the rootfs clone and the /proc identity scan. Used by `socialweb-nodeboot`, which boots a MARKET guest on the bidder's host
-internal/nodefirecracker/ the firecracker half of a market guest's boot, on the bidder's host: the image, its manifest and the namespace child
+internal/nodevm/       what is left of the node half after 0006 M3-FOLD: the image and guest types, the VMM names and the per-node k3s password file
+internal/nodefirecracker/ the old host-built node image, its manifest and input fingerprint, read only by check-host's build report until 0006 M5-RETIRE
+internal/vmruntime/    the Linux VM runtime: one-shot prep and one transient VM unit per guest (swc-userns-stage -> pasta -> socialweb-vmexec -> firecracker); `socialweb-computer internal vm start|inspect|stop|list` is its CLI, and the bidder's firecracker provider drives it (0007 M2-VM-RUNTIME)
+internal/nodeimagemain/ the two Go steps of scripts/build-guest-image.sh, `socialweb-computer nodeimage guest-rootfs|guest-manifest`, compiled only into a dev build (0006 M3-FOLD)
 internal/nodemarket/   places a node as a claim on the COMPUTE MARKET: it writes a NodeClaim into the cluster's home workspace and returns, reads the claim's status for the join wait and its fatal message, and closes the node by deleting the claim and waiting for the door to destroy the machine
 internal/hostos/       the one platform seam, primitives only (locking, process identity, liveness, termination, command line, boot id, port range, SysProcAttr) with Linux, darwin and Windows files; darwin refuses with ErrUnsupported (plan 0012)
 internal/denorun/      builds every deno argv: --no-code-cache and --node-modules-dir=none always, DENO_DIR = <state>/deno/<closure sha256>, production adds --cached-only --frozen and DENO_NO_UPDATE_CHECK=1 (plan 0008 M1-DENO)
@@ -3119,7 +3120,7 @@ internal/sweepkcp/     the kcp side of that sweep: build the account worklist fr
 internal/foldmain/     the Invocation a folded binary runs with (args, env, stdio, the resolved bin/<sha>/ path, the verb words) and the re-exec argv it builds
 internal/${binary}main/ the body of a folded host binary (gatewaymain, providermain, vaultmain, checkhostmain, ccmmain, tenantcredentialmain) behind Main(ctx, Invocation) int; socialweb-computer dispatches its verb to it with the raw args, and the clusterprovider re-execs the CCM as `<bin/sha path> internal cloud-controller-manager` with the CCM's three-variable env rebuilt explicitly (0006 M3-FOLD)
 cmd/socialweb-computer/ the multi-call CLI; every host verb lives here
-cmd/${binary}/         a one-line shim `os.Exit(<pkg>.Main(context.Background(), foldmain.OS()))` kept only while the container build compiles it (0006 M5-RETIRE deletes both); socialweb-nodeboot (runner image, deleted by 0007 M2-VM-RUNTIME), socialweb-nodeimage (build host; copies the socialweb-nodeinit asset, never runs go), socialweb-nodeinit (guest), socialweb-credential (download asset) and socialweb-apigen (go generate) stay standalone
+cmd/${binary}/         a one-line shim `os.Exit(<pkg>.Main(context.Background(), foldmain.OS()))` kept only while the container build compiles it (0006 M5-RETIRE deletes both); socialweb-vmexec (VM-unit asset), socialweb-credential (download asset), socialweb-tsbundle and socialweb-apigen (build tools) stay standalone; socialweb-nodeboot, socialweb-nodeimage and socialweb-nodeinit are deleted (0006 M3-FOLD)
 deploy/                install scripts, manifests, the audit policy
 rust/                  a cargo workspace; rust/socialweb-meshd is the per-node pod mesh daemon that runs INSIDE a market guest (section 9), rust/build.sh its static musl build
 ```
@@ -3151,15 +3152,14 @@ of them would hand that cluster the other's data. It is a one-way move — a dow
 names and starts from an empty state dir — and the cost of the node names changing with the key is
 recorded in section 15.
 
-Binaries: `socialweb-clusterprovider`, `socialweb-gateway`, `socialweb-credential`,
-`socialweb-nodeimage`, `socialweb-nodeinit` and `socialweb-computer-kcp-check-host`; outside
-`cmd/`, `rust/build.sh` builds `socialweb-meshd`, which runs inside a market guest beside the k3s agent.
-`socialweb-nodeimage` and `socialweb-nodeinit` are the node side of the seam:
-`socialweb-nodeimage` builds a node image and is a TOOL, never a controller, because provisioning
-must not be coupled to a boot plus a bootstrap; `socialweb-nodeinit` is the guest's PID 1 from the
-initramfs and nothing else (plan 0005 M1-AGENT-SPLIT: the `agent` verb that mounted a node's identity
-disk is gone, because a market guest has no identity disk and the unit that ran it failed on every
-boot). That tool is also a BUILD STAGE rather than a step anyone schedules, and the last binary is the
+Binaries: `socialweb-computer` (the gateway, the clusterprovider, the vault and check-host are its
+verbs), `socialweb-credential` and `socialweb-vmexec`; outside `cmd/`, `rust/build.sh` builds
+`socialweb-meshd`, which runs inside a market guest beside the k3s agent. The guest image is built off
+the bidder by `scripts/build-guest-image.sh`, whose Go steps are the dev-build verbs `socialweb-computer
+nodeimage guest-rootfs|guest-manifest`; it is a TOOL, never a controller, because provisioning must not
+be coupled to a boot plus a bootstrap, and the image boots `root=/dev/vda` with no initramfs init
+(0006 M3-FOLD deleted `socialweb-nodeboot`, `socialweb-nodeimage` and `socialweb-nodeinit`). The image
+build is a BUILD STAGE rather than a step anyone schedules, and check-host is the
 host contract itself: it is what the host and the control-plane container are both measured against,
 and its answer is what separates "this host cannot run this" from "this container must be handed
 this". The one placement is `internal/nodemarket`, whose node is a claim rather than a process; the

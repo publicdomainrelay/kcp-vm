@@ -331,11 +331,11 @@ orientation:
     cmd/${binary}/         the CLI layer; nothing else builds a binary
     deploy/                install scripts, manifests, audit policy, the control-plane container
   dependencies: "api <- internal <- cmd, one way. A new substrate or transport is a NEW PACKAGE, not a branch inside an existing one."
-  binaries: [socialweb-clusterprovider, socialweb-gateway, socialweb-credential, socialweb-nodeimage, socialweb-nodeinit, socialweb-computer-kcp-check-host, socialweb-nodeboot]
+  binaries: [socialweb-computer, socialweb-credential, socialweb-vmexec, socialweb-clusterprovider, socialweb-gateway, socialweb-vault, socialweb-computer-kcp-check-host]
   key_packages:
-    internal/nodefirecracker: the firecracker half of a market guest's boot, on the bidder's host (image, manifest, namespace child)
+    internal/vmruntime: the Linux VM runtime a bidder boots each firecracker guest with (socialweb-computer internal vm); internal/nodefirecracker keeps only the old image store check-host reads
     internal/nodemarket: the one node path, a NodeClaim the door fulfils under the owner's atproto session
-    internal/noderecord: pid + start time + cmdline-identity record and reap; reap-never-adopt
+    internal/noderecord: reads the node records a retired local substrate left, for the startup sweep
     internal/kernelmodules: the builder's module check, shared by the builder and check-host
     internal/subnetallocator: pool 10.100.0.0/16 -> /24 per cluster
     internal/liveports: flock port rendezvous for concurrent proofs

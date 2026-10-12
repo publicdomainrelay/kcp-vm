@@ -118,9 +118,8 @@ deploy/control-plane-container/build.sh controlplane
 ```
 
 Targets: `controlplane` (the control-plane half, which is what `run-container.sh` builds and tags
-`socialweb-control-plane:local`), `nodeimage` and `nodeimages` (the node image stages), `extract`
-(write the built node images to a directory). The node-image stage caches on its own inputs, so a
-rebuild after editing unrelated Go is seconds, not minutes.
+`socialweb-control-plane:local`) and `k8s`. Guest images are not built here: `scripts/build-guest-image.sh`
+builds them on a Linux build host and `internal/versions/versions.json` pins them.
 
 ## Gate
 
@@ -215,9 +214,9 @@ KCP_INSTANCE=dev KCP_SECURE_PORT=6444 KCP_KINE_ENDPOINT=http://127.0.0.1:20001 \
 | `socialweb-gateway` | the front door: device-key minting and the XRPC surface |
 | `socialweb-credential` | the kubeconfig exec plugin the gateway hands a tenant |
 | `socialweb-vault` | applies the root vault layout (init, unseal, mounts, policies, roles, secrets) |
-| `socialweb-nodeinit` | the guest's PID 1, from the initramfs: mounts `/dev/vda` and `switch_root`s into it |
-| `socialweb-nodeimage` | builds a node image from the operator's configuration |
 | `socialweb-computer-kcp-check-host` | the host-contract probe above |
+| `socialweb-computer` | the one host binary; the gateway, the clusterprovider, the vault and check-host are its verbs, and a dev build adds `nodeimage guest-rootfs` and `nodeimage guest-manifest`, the two Go steps of `scripts/build-guest-image.sh` |
+| `socialweb-vmexec` | the tiny VM-unit asset: creates the tap and bridge in pasta's namespace and execs firecracker |
 
 ## Substrates
 
@@ -230,9 +229,9 @@ atproto OAuth session, and the winning bidder boots the guest from the requester
 The local `firecracker` and `qemu` substrates were retired on 2026-10-07 (plan
 [`0005-zero-ssh-market-nodes.yaml`](docs/plans/0005-zero-ssh-market-nodes.yaml), M1-MARKET-ONLY);
 their code, their tests and their deployment paths are gone, and a configuration that still names
-one is refused at startup by a message that says so. The VMM code the bidder still needs
-(`internal/nodevm`, `internal/nodefirecracker`'s image and manifest halves, `socialweb-nodeboot`) is
-kept: it is what boots the guest the market rents, on the bidder's host rather than this one.
+one is refused at startup by a message that says so. A bidder boots the guest the market rents as
+a VM unit of the Linux VM runtime (`internal/vmruntime`, `socialweb-computer internal vm`), on the
+bidder's host rather than this one; `socialweb-nodeboot` and its runner container are deleted.
 
 ## Where things are
 

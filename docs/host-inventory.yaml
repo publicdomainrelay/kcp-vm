@@ -6,6 +6,9 @@ note: >
   exec.LookPath and syscall.Exec in non-test Go of this repo, and new Deno.Command in non-test TypeScript of
   this repo: socialweb-computer-k8s and every vendored repository under ts/. A computed first
   argument is listed under indirect with every executable it resolves to.
+  The runner image, its Dockerfile, the container's nodeimage stage, cmd/socialweb-nodeboot,
+  cmd/socialweb-nodeimage and cmd/socialweb-nodeinit are deleted (0006 M3-FOLD); a "from" naming one of
+  them records where the executable used to come from.
   Fates that name a
   decision not yet in a plan item say so in why ("decided by Claude, user may veto").
 
@@ -43,7 +46,7 @@ entries:
     why: a core-binary verb run as a member unit of each cluster's slice
     from:
       - "image k8s COPY"
-      - "internal/processrunner argv[0] via clusterstack CloudControllerManagerArgv"
+      - "HostProcess member unit argv via clusterstack CloudControllerManagerArgv"
   - name: socialweb-vault
     kind: executable
     fate: linked
@@ -92,7 +95,7 @@ entries:
     from:
       - "image controlplane COPY"
       - "check-host checks.go"
-      - "internal/processrunner argv[0] via clusterstack KineArgv"
+      - "HostProcess member unit argv via clusterstack KineArgv"
   - name: postgres
     kind: executable
     fate: embedded-server
@@ -111,19 +114,19 @@ entries:
     why: OpenBao v2.6.2 as an asset
     from:
       - "image controlplane COPY"
-      - "internal/processrunner argv[0] via clusterstack OpenBaoArgv"
+      - "HostProcess member unit argv via clusterstack OpenBaoArgv"
   - name: k3s
     kind: executable
     fate: embedded-server
     driven_by: Cluster (a member unit of each cluster's slice, blue/green slots behind the per-cluster front)
     owner: 0006 M3-CLUSTER-UNITS, M3-CP-SLOTS, M1-ASSETS
-    why: the tenant control plane; the guest image build also runs it for check-config, from the build host's own copy
+    why: the tenant control plane
     from:
       - "image controlplane COPY"
       - "image nodeimage COPY"
       - "check-host checks.go"
       - "socialweb-nodeimage k3sdata.go"
-      - "internal/processrunner argv[0]"
+      - "HostProcess member unit argv"
   - name: external-secrets
     kind: executable
     fate: embedded-server
@@ -132,7 +135,7 @@ entries:
     why: the digest-pinned upstream binary, now an asset instead of an image copy
     from:
       - "image controlplane COPY"
-      - "internal/processrunner argv[0] via clusterstack ExternalSecretsArgv"
+      - "HostProcess member unit argv via clusterstack ExternalSecretsArgv"
   - name: dumbpipe
     kind: executable
     fate: embedded-server
@@ -141,7 +144,7 @@ entries:
     why: the iroh transport, the only guest transport kept (user decision 2026-10-12); the requester's `which dumbpipe` lookup goes with the asset
     from:
       - "image k8s curl download"
-      - "internal/processrunner argv[0] via clusterlink.Argv"
+      - "HostProcess member unit argv via clusterlink.Argv"
       - "ts/atproto-market requester-xrpc ensureDumbpipe"
   - name: firecracker
     kind: executable
@@ -152,7 +155,7 @@ entries:
     from:
       - "runner image COPY"
       - "check-host checks.go"
-      - "internal/nodefirecracker/namespace.go params.VMM"
+      - "internal/vmruntime firecracker_linux.go VM unit argv (socialweb-vmexec execs it)"
   - name: pasta
     kind: executable
     fate: embedded-server
@@ -162,7 +165,7 @@ entries:
     from:
       - "runner image dnf passt"
       - "check-host checks.go"
-      - "internal/processrunner argv[0] via nodeboot"
+      - "internal/vmruntime firecracker_linux.go VM unit argv"
   - name: deno
     kind: executable
     fate: embedded-child
@@ -396,41 +399,42 @@ entries:
       - "image k8s COPY --from=meshd"
   - name: socialweb-nodeinit
     kind: executable
-    fate: download-asset
-    owner: 0007 M1-GUEST-IMAGE
-    why: the guest's init inside the guest image, which is built by scripts/build-guest-image.sh and fetched and verified by bidders
+    fate: removed-legacy
+    owner: 0006 M3-FOLD, 0007 M1-GUEST-IMAGE
+    why: the initramfs init of the deleted host-side image build; the pinned guest image boots root=/dev/vda with everything built in and carries no initramfs, so cmd/socialweb-nodeinit is deleted
     from:
       - "image nodeimage stage"
   - name: init
     kind: executable
     fate: download-asset
     owner: 0007 M1-GUEST-IMAGE
-    why: /sbin/init inside the guest image, exec'd by socialweb-nodeinit in the guest
+    why: /sbin/init inside the guest image, started by the guest kernel from root=/dev/vda
     from:
       - "cmd/socialweb-nodeinit/init.go syscall.Exec"
   - name: busybox
     kind: executable
-    fate: download-asset
-    owner: 0007 M1-GUEST-IMAGE
-    why: /bin/busybox inside the guest image (insmod in the guest's init)
+    fate: removed-legacy
+    owner: 0006 M3-FOLD, 0007 M1-GUEST-IMAGE
+    why: the insmod of the deleted initramfs init; the guest kernel has every driver built in
     from:
       - "cmd/socialweb-nodeinit/init.go"
   - name: socialweb-nodeimage
     kind: executable
     fate: build-host
-    owner: 0007 M1-GUEST-IMAGE
-    why: run only by scripts/build-guest-image.sh on a Linux build host; the bidder's node-image-firecracker exec of it goes, bidders fetch the image
+    owner: 0006 M3-FOLD, 0007 M1-GUEST-IMAGE
+    why: folded into the dev-build verbs `socialweb-computer nodeimage guest-rootfs|guest-manifest` (internal/nodeimagemain, absent from a release build), run only by scripts/build-guest-image.sh on a Linux build host; cmd/socialweb-nodeimage and the bidder's node-image-firecracker exec of it are deleted, bidders fetch the pinned image
     from:
       - "image nodeimage COPY"
       - "ts/hono-compute-provider node-image-firecracker binary"
+      - "scripts/build-guest-image.sh go run ./cmd/socialweb-computer nodeimage"
   - name: go
     kind: executable
     fate: build-host
     owner: 0007 M1-GUEST-IMAGE
-    why: the build host builds the socialweb-nodeinit asset (Dockerfile nodeimage stage, scripts/deploy-firecracker-bidder.sh); socialweb-nodeimage copies it (-init-asset) and runs no toolchain (0006 M3-FOLD)
+    why: scripts/build-guest-image.sh runs the nodeimage verbs with go run on the build host
     from:
       - "deploy/control-plane-container/Dockerfile nodeimage stage"
-      - "scripts/deploy-firecracker-bidder.sh"
+      - "scripts/build-guest-image.sh"
   - name: sleep
     kind: executable
     fate: build-host
@@ -447,9 +451,9 @@ entries:
       - "internal/hostsvc/hostsvctest/suite_linux.go bin"
   - name: zstd
     kind: executable
-    fate: build-host
-    owner: 0007 M1-GUEST-IMAGE
-    why: guest image build only; runtime assets are zstd blobs the core decodes in Go
+    fate: removed-legacy
+    owner: 0006 M3-FOLD
+    why: used only by the deleted host-side image build (cmd/socialweb-nodeimage); runtime assets are zstd blobs the core decodes in Go
     from:
       - "cmd/socialweb-nodeimage/build.go"
       - "image tools dnf zstd"
@@ -457,51 +461,52 @@ entries:
     kind: executable
     fate: build-host
     owner: 0007 M1-GUEST-IMAGE
-    why: unpacks kernel modules during the guest image build
+    why: scripts/build-guest-image.sh decompresses the pinned kernel source and base root tarball
     from:
       - "cmd/socialweb-nodeimage/build.go"
       - "image tools dnf xz"
+      - "scripts/build-guest-image.sh"
   - name: cpio
     kind: executable
-    fate: build-host
-    owner: 0007 M1-GUEST-IMAGE
-    why: packs the guest initramfs during the image build
+    fate: removed-legacy
+    owner: 0006 M3-FOLD
+    why: packed the initramfs of the deleted host-side image build; the guest image has no initramfs
     from:
       - "cmd/socialweb-nodeimage/build.go"
       - "image tools dnf cpio"
   - name: du
     kind: executable
-    fate: build-host
-    owner: 0007 M1-GUEST-IMAGE
-    why: sizes the rootfs during the image build
+    fate: removed-legacy
+    owner: 0006 M3-FOLD
+    why: sized the rootfs of the deleted host-side image build; nodeimage guest-rootfs reports the data size in Go
     from:
       - "cmd/socialweb-nodeimage/rootfs.go"
   - name: chroot
     kind: executable
-    fate: build-host
-    owner: 0007 M1-GUEST-IMAGE
-    why: runs the preinstall (apt-get) inside the rootfs during the image build
+    fate: removed-legacy
+    owner: 0006 M3-FOLD
+    why: ran the preinstall of the deleted host-side image build; nodeimage guest-rootfs composes the rootfs tar in Go
     from:
       - "cmd/socialweb-nodeimage/rootfs.go name"
   - name: mount
     kind: executable
-    fate: build-host
-    owner: 0007 M1-GUEST-IMAGE
-    why: image build only
+    fate: removed-legacy
+    owner: 0006 M3-FOLD
+    why: used only by the deleted host-side image build
     from:
       - "cmd/socialweb-nodeimage/rootfs.go name"
   - name: umount
     kind: executable
-    fate: build-host
-    owner: 0007 M1-GUEST-IMAGE
-    why: image build only
+    fate: removed-legacy
+    owner: 0006 M3-FOLD
+    why: used only by the deleted host-side image build
     from:
       - "cmd/socialweb-nodeimage/rootfs.go name"
   - name: unsquashfs
     kind: executable
-    fate: build-host
-    owner: 0007 M1-GUEST-IMAGE
-    why: unpacks the base rootfs during the image build
+    fate: removed-legacy
+    owner: 0006 M3-FOLD
+    why: unpacked the squashfs base of the deleted host-side image build; the pinned base is a root tarball
     from:
       - "cmd/socialweb-nodeimage/rootfs.go name"
       - "image tools dnf squashfs-tools"
@@ -509,18 +514,20 @@ entries:
     kind: executable
     fate: build-host
     owner: 0007 M1-GUEST-IMAGE
-    why: image build only
+    why: scripts/build-guest-image.sh copies the kernel config and outputs on the build host
     from:
       - "cmd/socialweb-nodeimage/rootfs.go name"
+      - "scripts/build-guest-image.sh"
   - name: mkfs.ext4
     kind: executable
     fate: build-host
     owner: 0007 M1-GUEST-IMAGE, M2-VM-RUNTIME
-    why: builds the rootfs image on the build host; its runtime use (internal/nodevm/disk.go seed disk) is deleted by design, the guest seed is a pure-Go NoCloud cidata drive (user decision 2026-10-12)
+    why: mke2fs builds the rootfs image inside the pinned builder container of scripts/build-guest-image.sh; no runtime use, the guest seed is a pure-Go NoCloud cidata drive (user decision 2026-10-12)
     from:
       - "cmd/socialweb-nodeimage/rootfs.go name"
       - "internal/nodevm/disk.go"
       - "ts/hono-compute-provider qemu-standalone (removed 2026-10-12)"
+      - "scripts/build-guest-image.sh mke2fs"
   - name: git
     kind: executable
     fate: build-host
@@ -974,10 +981,6 @@ indirect:
     resolves: [initdb, postgres, psql]
   - site: "socialweb-computer-kcp/internal/checkhostmain/postgres.go: binaries[0]"
     resolves: [initdb]
-  - site: "socialweb-computer-kcp/cmd/socialweb-nodeimage/k3sdata.go: cfg.K3sBinary"
-    resolves: [k3s]
-  - site: "socialweb-computer-kcp/cmd/socialweb-nodeimage/rootfs.go: name"
-    resolves: [cp, mkfs.ext4, mount, umount, chroot, unsquashfs]
   - site: "socialweb-computer-kcp/internal/clusterprovider/bootstraprows.go: bin"
     resolves: [psql]
   - site: "socialweb-computer-kcp/internal/clusterprovider/postgres.go: name"
@@ -988,8 +991,6 @@ indirect:
     resolves: [postgres]
   - site: "socialweb-computer-kcp/internal/clusterprovider/postgres.go: psql"
     resolves: [psql]
-  - site: "socialweb-computer-kcp/internal/nodefirecracker/namespace.go: params.VMM"
-    resolves: [firecracker]
   - site: "socialweb-computer-kcp/internal/kcplibs/impl/execrunner/supervisor.go: entry.binary"
     resolves: [deno]
   - site: "socialweb-computer-kcp/internal/kcplibs/impl/execrunner/supervisor.go: command[0]"
@@ -998,8 +999,6 @@ indirect:
     resolves: [kcp, kubectl]
   - site: "socialweb-computer-kcp/internal/kcplibs/internal/livekcp/livekcp.go: name"
     resolves: [kcp, kubectl]
-  - site: "socialweb-computer-kcp/internal/processrunner/processrunner.go: argv[0]"
-    resolves: [k3s, kine, bao, external-secrets, socialweb-cloud-controller-manager, dumbpipe, pasta]
   - site: "socialweb-computer-kcp/socialweb-computer-k8s/lib/socialweb-computer-requester-inproc/bridge.ts: argv[0]"
     resolves: [dumbpipe]
   - site: "socialweb-computer-kcp/ts/atproto-market/lib/identity-prompt-tty/mod.ts: cmd"
@@ -1012,8 +1011,6 @@ indirect:
     resolves: [socialweb-computer]
   - site: "socialweb-computer-kcp/cmd/socialweb-vmexec/main.go: p.VMM"
     resolves: [firecracker]
-  - site: "socialweb-computer-kcp/ts/hono-compute-provider/lib/node-image-firecracker/mod.ts: binary"
-    resolves: [socialweb-nodeimage]
   - site: "socialweb-computer-kcp/ts/deno-worker-sandbox/lib/sandbox-deno/bundler.ts: exe"
     resolves: [deno]
   - site: "socialweb-computer-kcp/ts/policy-engine/lib/policies/deno-typescript/bundle/build-bundle.ts: Deno.execPath("
