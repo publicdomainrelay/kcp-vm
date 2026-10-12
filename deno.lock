@@ -2041,6 +2041,8 @@
           "jsr:@publicdomainrelay/compute-provider-abc@0",
           "jsr:@publicdomainrelay/compute-provider-digitalocean@0",
           "jsr:@publicdomainrelay/compute-provider-firecracker@0",
+          "jsr:@publicdomainrelay/compute-provider-kcp-abc@0",
+          "jsr:@publicdomainrelay/compute-provider-kcp@0",
           "jsr:@publicdomainrelay/compute-provider-local@0",
           "jsr:@publicdomainrelay/did-key-ingress-proxy@0",
           "jsr:@publicdomainrelay/did-plc@0",
@@ -2052,6 +2054,7 @@
           "jsr:@publicdomainrelay/market-bidder-abc@0",
           "jsr:@publicdomainrelay/market-bidder-compute@0",
           "jsr:@publicdomainrelay/market-bidder-contract-store-fs@0",
+          "jsr:@publicdomainrelay/market-bidder-contract-store-kcp@0",
           "jsr:@publicdomainrelay/market-bidder-worker@0",
           "jsr:@publicdomainrelay/market-bidder@0",
           "jsr:@publicdomainrelay/market-common@0",
@@ -2126,6 +2129,14 @@
       "ts/atproto-market/lib/market-bidder-compute": {
         "dependencies": [
           "jsr:@publicdomainrelay/policy-engine-abc@0"
+        ]
+      },
+      "ts/atproto-market/lib/market-bidder-contract-store-kcp": {
+        "dependencies": [
+          "jsr:@publicdomainrelay/compute-provider-kcp-abc@0",
+          "jsr:@publicdomainrelay/compute-provider-kcp-common@0",
+          "jsr:@publicdomainrelay/compute-provider-kcp@0",
+          "jsr:@publicdomainrelay/market-bidder-abc@0"
         ]
       },
       "ts/atproto-market/lib/market-bidder-worker": {

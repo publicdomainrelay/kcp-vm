@@ -8,6 +8,9 @@ import type { MarketBidder } from "@publicdomainrelay/market-bidder";
 import type { MarketBidderProviderRef } from "@publicdomainrelay/market-bidder-abc";
 import { createComputeProviderHooks } from "@publicdomainrelay/market-bidder-compute";
 import { createFsContractStore } from "@publicdomainrelay/market-bidder-contract-store-fs";
+import { createKcpContractStore } from "@publicdomainrelay/market-bidder-contract-store-kcp";
+import type { KcpComputeVMClient } from "@publicdomainrelay/compute-provider-kcp";
+import type { ComputeVMAccepts } from "@publicdomainrelay/compute-provider-kcp-abc";
 import { createComputeProviderDenoWorker, createWorkerProviderHooks } from "@publicdomainrelay/market-bidder-worker";
 import {
   createATProto,
@@ -257,6 +260,7 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
   let bidderServe: ServeHandle | undefined;
   let crawlRelayUrls: string[] = [];
   let localRelayUrls: string[] = [];
+  let kcpContracts: { client: KcpComputeVMClient; accepts: ComputeVMAccepts; handle: string } | undefined;
   let vaultMount = id.vaultMount;
   let keyVault: IdentityVault | undefined;
   const keysOutOfFiles = id.vault?.kind === "openbao";
@@ -713,7 +717,9 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
           createSignedRepoRecord: signed,
           callService,
           acceptToContract,
+          contractStoreReleases: true,
         });
+        kcpContracts = { client: kcp.client, accepts: kcp.accepts, handle: p.handle };
         await serve.beginServe();
         return createComputeProviderHooks({ provider: kcp.provider });
       }
@@ -792,8 +798,11 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
 
     const marketRelay = spec.market.ingressProxy ? await openIngress("market") : undefined;
     bidderServe = openMarketServe(marketRelay);
-    const contractStore = contractStoreDir ? createFsContractStore({ dir: contractStoreDir }) : undefined;
-    if (contractStoreDir) logger.info("bidder_contract_store", { dir: contractStoreDir });
+    const fsStore = contractStoreDir ? createFsContractStore({ dir: contractStoreDir }) : undefined;
+    const contractStore = kcpContracts
+      ? createKcpContractStore({ ...kcpContracts, tombstones: fsStore ?? { load: () => Promise.resolve({ contracts: [], tombstones: [] }), saveTombstone: () => Promise.resolve() }, logger })
+      : fsStore;
+    if (contractStoreDir) logger.info("bidder_contract_store", { dir: contractStoreDir, contracts: kcpContracts ? "ComputeVM spec.contract" : "files", tombstones: "files" });
     const refreshSec = spec.market.offeringRefreshSec ?? 300;
 
     bidder = await createMarketBidder({

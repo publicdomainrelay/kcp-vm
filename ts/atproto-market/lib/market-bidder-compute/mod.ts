@@ -530,6 +530,7 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
             ),
             _uri: payloadRef.uri,
             _cid: payloadRef.cid,
+            _accept: { uri: acceptUri, cid: acceptCid },
           };
           const result = await computeProvider.provision(vmWithBundle as Parameters<ComputeProvider["provision"]>[0], issuerDid);
           provisionIp = (result.metadata?.ip) as string | undefined;

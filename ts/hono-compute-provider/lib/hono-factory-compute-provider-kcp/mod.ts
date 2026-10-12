@@ -14,9 +14,10 @@ import {
   createComputeVMMarketRecorder,
   createKcpComputeVMClient,
   type GuestVault,
+  type KcpComputeVMClient,
   type KcpCredentials,
 } from "@publicdomainrelay/compute-provider-kcp";
-import { GUEST_PROVISIONING } from "@publicdomainrelay/compute-provider-kcp-abc";
+import { ComputeVMAccepts, GUEST_PROVISIONING } from "@publicdomainrelay/compute-provider-kcp-abc";
 import { GUEST_HOST_ADDRESS } from "@publicdomainrelay/compute-provider-kcp-common";
 import { createKvNonceStore, type JwkStore, type NonceStore, type OidcIssuer } from "@publicdomainrelay/oidc-issuer-abc";
 import { createOidcIssuer, type HostKeysReported } from "@publicdomainrelay/oidc-issuer-hono";
@@ -51,6 +52,7 @@ export interface ComputeProviderKcpFactoryOptions extends ComputeProviderCtx {
   oidcProvisioning?: boolean;
   oidcJwkStore?: JwkStore;
   oidcNonceStore?: NonceStore;
+  contractStoreReleases?: boolean;
   rbacProvisioner?: RbacProvisioner;
   acceptToContract?: Map<string, GuestContractEntry>;
   createSignedRepoRecord?: (
@@ -69,6 +71,8 @@ export interface ComputeProviderKcpFactoryOptions extends ComputeProviderCtx {
 export interface ComputeProviderKcpFactory {
   provider: ComputeProvider;
   oidcIssuer: OidcIssuer;
+  client: KcpComputeVMClient;
+  accepts: ComputeVMAccepts;
   createApp(): Hono;
 }
 
@@ -77,6 +81,7 @@ export function createComputeProviderKcpFactory(opts: ComputeProviderKcpFactoryO
   const nonceStore = opts.oidcNonceStore ?? createKvNonceStore({ kv: opts.guestVault.kv, ...GUEST_PROVISIONING });
   const hostKeys = new GuestHostKeysRelay((nonce) => nonceStore.dropletOfNonce(nonce));
   const client = createKcpComputeVMClient({ credentials: opts.credentials, fetch: opts.fetch });
+  const accepts = new ComputeVMAccepts();
   const market = createComputeVMMarketRecorder({ client, logger });
 
   const provider = createComputeProviderKcp({
@@ -98,6 +103,8 @@ export function createComputeProviderKcpFactory(opts: ComputeProviderKcpFactoryO
       : undefined,
     hostKeys,
     rbacProvisioner: opts.rbacProvisioner,
+    accepts,
+    contractStoreReleases: opts.contractStoreReleases,
   });
 
   const forwardHostKeys = async (report: HostKeysReported): Promise<GuestHostKeysAck> => {
@@ -213,5 +220,5 @@ export function createComputeProviderKcpFactory(opts: ComputeProviderKcpFactoryO
     logger.info("compute-provider-kcp guest routes mounted", { ingressRef, handle: opts.handle });
   });
 
-  return { provider, oidcIssuer, createApp };
+  return { provider, oidcIssuer, client, accepts, createApp };
 }

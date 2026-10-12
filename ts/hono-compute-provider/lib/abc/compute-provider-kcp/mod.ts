@@ -216,3 +216,68 @@ export class ComputeVMCache {
     return change;
   }
 }
+
+export function acceptKeyOf(accept: { uri: string; cid: string } | undefined): string | undefined {
+  return accept?.uri && accept.cid ? `${accept.uri}#${accept.cid}` : undefined;
+}
+
+export function contractReceiptOf(vm: ComputeVM | undefined): string | undefined {
+  return vm?.spec?.contract?.receiptUri || undefined;
+}
+
+interface AcceptSlot {
+  settled: boolean;
+  name?: string;
+  waiters: Array<(name: string | undefined) => void>;
+}
+
+export class ComputeVMAccepts {
+  readonly #slots = new Map<string, AcceptSlot>();
+
+  #slot(key: string): AcceptSlot {
+    let slot = this.#slots.get(key);
+    if (!slot) {
+      slot = { settled: false, waiters: [] };
+      this.#slots.set(key, slot);
+    }
+    return slot;
+  }
+
+  #settle(key: string, name: string | undefined): void {
+    const slot = this.#slot(key);
+    slot.settled = true;
+    slot.name = name;
+    for (const w of slot.waiters.splice(0)) w(name);
+  }
+
+  applied(key: string | undefined, name: string): void {
+    if (key) this.#settle(key, name);
+  }
+
+  failed(key: string | undefined): void {
+    if (key && !this.#slot(key).settled) this.#settle(key, undefined);
+  }
+
+  wait(key: string, signal?: AbortSignal): Promise<string | undefined> {
+    const slot = this.#slot(key);
+    if (slot.settled) return Promise.resolve(slot.name);
+    return new Promise((resolve) => {
+      const done = (name: string | undefined) => {
+        signal?.removeEventListener("abort", abandon);
+        resolve(name);
+      };
+      const abandon = () => {
+        slot.waiters = slot.waiters.filter((w) => w !== done);
+        resolve(undefined);
+      };
+      if (signal?.aborted) return resolve(undefined);
+      slot.waiters.push(done);
+      signal?.addEventListener("abort", abandon, { once: true });
+    });
+  }
+
+  forget(key: string): void {
+    const slot = this.#slots.get(key);
+    if (slot && slot.waiters.length === 0) this.#slots.delete(key);
+  }
+}

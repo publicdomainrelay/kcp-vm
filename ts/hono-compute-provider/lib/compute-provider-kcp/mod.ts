@@ -21,8 +21,12 @@ import type {
   VM,
 } from "@publicdomainrelay/compute-provider-abc";
 import {
+  acceptKeyOf,
+  COMPUTE_VM_API_VERSION,
+  ComputeVMAccepts,
   ComputeVMCache,
   type ComputeVMChange,
+  contractReceiptOf,
   computeVMFor,
   dropletOf,
   endedMessage,
@@ -40,7 +44,9 @@ import {
   assertComputeVM,
   COMPUTE_VM_RESOURCE,
   type ComputeVM,
+  type ComputeVMContract,
   type ComputeVMMarket,
+  FIELD_MANAGER_COMPUTE_VM_CONTRACT,
   FIELD_MANAGER_COMPUTE_VM_PROVIDER,
   parseComputeVM,
 } from "@publicdomainrelay/compute-provider-kcp-common";
@@ -87,6 +93,7 @@ export interface KcpComputeVMClient {
   list(): Promise<ComputeVMList>;
   watch(resourceVersion: string, signal: AbortSignal): AsyncGenerator<ComputeVMWatchEvent>;
   delete(name: string): Promise<boolean>;
+  applyContract(name: string, contract: ComputeVMContract): Promise<ComputeVM | null>;
 }
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
@@ -101,6 +108,7 @@ export function createKcpComputeVMClient(opts: KcpComputeVMClientOptions): KcpCo
   const { group, version, plural } = COMPUTE_VM_RESOURCE;
   const vmBase = `${server}/clusters/${creds.workspace}/apis/${group}/${version}/${plural}`;
   const applyQuery = `?fieldManager=${encodeURIComponent(FIELD_MANAGER_COMPUTE_VM_PROVIDER)}&force=true`;
+  const contractQuery = `?fieldManager=${encodeURIComponent(FIELD_MANAGER_COMPUTE_VM_CONTRACT)}&force=true`;
   let httpClient: Promise<Deno.HttpClient | undefined> | undefined;
 
   function clientForCa(): Promise<Deno.HttpClient | undefined> {
@@ -198,6 +206,12 @@ export function createKcpComputeVMClient(opts: KcpComputeVMClientOptions): KcpCo
     async applyStatus(vm) {
       return parseComputeVM(await request(`${item(vm.metadata!.name!)}/status${applyQuery}`, applyInit(vm)));
     },
+    async applyContract(name, contract) {
+      if (!(await absentOn404(request(item(name))))) return null;
+      const body = { apiVersion: COMPUTE_VM_API_VERSION, kind: COMPUTE_VM_RESOURCE.kind, metadata: { name }, spec: { contract } };
+      const raw = await absentOn404(request(`${item(name)}${contractQuery}`, applyInit(body)));
+      return raw === null ? null : parseComputeVM(raw);
+    },
     async get(name) {
       const raw = await absentOn404(request(item(name)));
       return raw === null ? null : parseComputeVM(raw);
@@ -274,6 +288,8 @@ export interface ComputeProviderKcpCtx extends ComputeProviderCtx {
   provisioningEnricher?: OidcProvisioningEnricher;
   hostKeys?: GuestHostKeysRelay;
   rbacProvisioner?: RbacProvisioner;
+  accepts?: ComputeVMAccepts;
+  contractStoreReleases?: boolean;
 }
 
 const DEFAULT_BOOT_TIMEOUT_MS = 300_000;
@@ -323,6 +339,10 @@ export function createComputeProviderKcp(ctx: ComputeProviderKcpCtx): ComputePro
   async function releaseGone(name: string, vm: ComputeVM | undefined): Promise<void> {
     ctx.hostKeys?.forget(name);
     await releaseRbac(name);
+    if (ctx.contractStoreReleases && contractReceiptOf(vm)) {
+      logger.info("computevm_kept_for_its_contract", { name, receiptUri: contractReceiptOf(vm), phase: phaseOf(vm) });
+      return;
+    }
     if (vm && vm.metadata?.deletionTimestamp === undefined) {
       await client.delete(name).catch((err: unknown) =>
         logger.warn("computevm_release_failed", { name, error: String(err) })
@@ -510,6 +530,16 @@ export function createComputeProviderKcp(ctx: ComputeProviderKcpCtx): ComputePro
   }
 
   async function provision(vm: VM, requesterDid: string): Promise<ProvisionResult> {
+    const acceptKey = acceptKeyOf(vm._accept);
+    try {
+      return await provisionGuest(vm, requesterDid, acceptKey);
+    } catch (err) {
+      ctx.accepts?.failed(acceptKey);
+      throw err;
+    }
+  }
+
+  async function provisionGuest(vm: VM, requesterDid: string, acceptKey: string | undefined): Promise<ProvisionResult> {
     if (!vm.user_data) {
       throw new Error(
         `an RFP for ${vm.role} arrived with no user_data. On this provider the user_data IS the ` +
@@ -545,6 +575,7 @@ export function createComputeProviderKcp(ctx: ComputeProviderKcpCtx): ComputePro
       await enriched.associateWithDroplet(name);
       applied = await client.apply(desired);
       cache.upsert(applied);
+      ctx.accepts?.applied(acceptKey, name);
       logger.info("computevm_applied", { name, handle, guestHostAddress: hostAddress, cpus: vm.cpus, mem: vm.mem });
       const running = await untilRunning(name);
       provisioning.delete(name);
