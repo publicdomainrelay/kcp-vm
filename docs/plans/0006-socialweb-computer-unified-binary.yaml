@@ -1628,8 +1628,8 @@ items:
     risks:
       - "Each child kcp costs ~0.4-0.5 GB and 6-9 s cold start (kcp-spike.md); the user chose strict over the cheaper nested shape. A market network's memory (network + N bidders + gateway + requester invocations) is measured here and bounds how many market networks one host runs (0008 M1-MARKET-NETWORK-PARALLEL's free-memory refusal)."
       - "APIResourceSchema.spec is immutable; the four kinds' first revision is reviewed against option-map.yaml before it is applied."
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M3-FOLD
     milestone: M3
     title: Fold every host-side Go binary into verbs; delete the resident VM wrapper
