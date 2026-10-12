@@ -11,10 +11,16 @@ revised: >
   a capped file; graceful stop then SIGKILL; tri-state Verdict with mismatch = Lost + stop now. New:
   M1-GUEST-IMAGE, M2-VM-RUNTIME (replaces M2-UNPRIVILEGED-RUNNER, deleted). Dependencies on 0006 renamed
   (M2-HOST-SCOPES -> M2-HOST-UNITS, M3-CLUSTER-SCOPES -> M3-CLUSTER-UNITS, M1-KCP-PORT0 -> M2-KCP-PORT0).
+  2026-10-12, folded from user-decisions.md (2026-10-12 lines), control-plane-handover.md and linux-proofs.md
+  E8: the live CtrlAltDel stop measurement (0.21 s, idle guest) recorded on M2-VM-RUNTIME; the two live
+  defects of today's provider (VM death unnoticed; destroyed guests' work dirs never removed) named as what
+  M2-VM-RUNTIME and M2-CONTROLLER must prevent, with tests and ACC7-NO-LEAK; new M3-NODE-LOSS-CLOCK (our own
+  outage never counts against a tenant's node) and M6-CLAIM-RESUME (split from M6-GATEWAY-REPOPULATE: a
+  restarted door resumes Bidding and Provisioning claims, decided by the user 2026-10-12).
 queued: >
-  QUEUED. Plan 0005 is complete (2026-10-10, NEXT.yaml P5), but the user paused plans 0006, 0007 and 0008
-  while they are refined; no item below moves to doing until the user says so. Items also wait on the plan
-  0006 and 0008 items named in depends_on.
+  OPEN. The plan 0005 gate is satisfied: plan 0005 is complete with all 40 items done and its acceptance
+  checks ACC-ZERO, ACC-MESH and ACC-NOSSH done with evidence (verified 2026-10-12). Only each item's own
+  depends_on (within this plan and on plans 0006 and 0008) now governs when it starts.
 source: >
   The user's request of 2026-10-07: from what the bidder's firecracker compute provider taught us, build
   compute-provider-kcp. Its TypeScript half is a ComputeProvider the bidder uses, configured
@@ -35,7 +41,8 @@ state_rules:
     then pass, hat-8 readings with UTC timestamps).
   - Open items are mirrored in NEXT.yaml (P7-*).
   - A decision marked "decided by Claude, user may veto" was not confirmed by the user; one marked
-    "decided by the user 2026-10-07" or "decided by the user 2026-10-11" was.
+    "decided by the user 2026-10-07", "decided by the user 2026-10-11" or "decided by the user 2026-10-12"
+    was.
   - An item names its dependencies in depends_on; an item may not start while one of them is not done.
     Cross-plan dependencies are written <plan>:<item id>.
   - >
@@ -88,6 +95,13 @@ research:
       - "E2: PropExecStart(argv, false) + CollectMode=inactive keeps a crashed VM's Result; MemoryMax needs MemorySwapMax=0 or the guest swaps; OOMPolicy=stop gives Result=oom-kill; AllowedCPUs and IOWeight are not enforced in the user manager"
       - "E3: Lost = ESRCH, start-ticks mismatch, UnixProcessIdUnknown, NoUnitForPID, NoSuchUnit; Unknown = only dial/auth/timeout; GetUnitByPIDFD works on the VMM child as well as on MainPID"
       - "E1: StartTransientUnit on an existing name fails 'already loaded': a restarted bidder adopts, never re-creates"
+    live_e8_2026_10_12:
+      - "E8, live through the RFP flow (alice-request.sh -> socialweb-computer-bidder@bobvmbuilder.bsky.social on hat-8, firecracker provider, runner-container era, guest fc-1379be663dd9-6e867147): PUT /actions SendCtrlAltDel at 00:06:21.6827Z, the guest ran systemd shutdown to reboot.target, 'Firecracker exiting successfully. exit_code=0' at 00:06:21.8913Z: 0.21 s for an IDLE guest. The guest kernel had CONFIG_SERIO_I8042=y and CONFIG_KEYBOARD_ATKBD=y; ctrl-alt-del.target -> reboot.target, which firecracker treats as VM exit. The grace window with a workload (k3s agent + pods) is still to be measured."
+      - "E8 defect 1 (VM death unnoticed): after firecracker exited, the nodeboot parents stayed alive and the runner container stayed Up; the bidder never noticed the VM died and the requester's ssh session hung until closed by hand (then vm.delete 200)."
+      - "E8 defect 2 (work dirs leak): destroyed guests' work dirs are never removed: 32 dirs, 63 GB on disk (1.6 TB apparent, sparse rootfs) on hat-8."
+    control_plane_handover_2026_10_11:
+      - "docs/research/2026-10-11-vm-lifecycle/control-plane-handover.md 7: Joining/Running claims are durable (NodeClaim status.contract + status.grant + the cluster vault); Bidding/Provisioning die with the door only because the per-contract secrets-server keypair and grant are in memory (atproto-market lib/guest-capability-secrets/mod.ts:50-75); the accept written just before a crash is a VM no claim names (ARCHITECTURE section 9)"
+      - "control-plane-handover.md 6: NODE-LOSS needs no rebase across a kcp/door/provider restart (the tenant's kcm keeps writing real transitions) but DOES when our side of the path was down (cluster cold start, link restart, front restart): count from max(lastTransitionTime, pathUpSince)"
 items:
   - id: M1-DECIDE
     milestone: M1
@@ -134,7 +148,10 @@ items:
       (constant pasta gateway, not the runner container's gateway), console capture (capped file), graceful
       stop, image provenance (CI-built, not host-built), seed transport (a drive, not debugfs), the guest
       host keys (guest-reported, not a host-side scan in the guest's namespace), and a boot timeout with no
-      result.json (no resident writer: Running is read from firecracker GET /).
+      result.json (no resident writer: Running is read from firecracker GET /). Added 2026-10-12: the two E8
+      live defects of today's provider (a VMM that exits is not noticed; destroyed guests' work dirs are never
+      removed) are recorded as requirements the Go side must NOT inherit, with M2-VM-RUNTIME's and
+      M2-CONTROLLER's tests as their parity tests.
     files: ["docs/compute-provider-requirements.yaml"]
     test_first: >
       hono-compute-provider test/requirements_inventory_test.ts: every exported function and every
@@ -264,19 +281,35 @@ items:
       versions.json) for the unit to go inactive, then StopUnit (SIGKILL to the cgroup); aarch64 StopUnit at
       once; then record Result, ResetFailedUnit, remove the work dir and socket. The resident namespace verb,
       nodevm.RunNamespace, WriteNamespaceRecord, FindVMM, WriteInstance and cmd/socialweb-nodeboot are
-      deleted.
+      deleted. Live measurement (linux-proofs E8, 2026-10-12, through the RFP flow): SendCtrlAltDel -> firecracker
+      exit 0 took 0.21 s on an IDLE guest (the guest's ctrl-alt-del.target -> reboot.target, which firecracker
+      treats as VM exit); the grace window with a k3s workload is still to measure (M6-BIDDER-UPGRADE). Two live
+      defects of today's provider (E8) this runtime must make impossible, decided by Claude, user may veto:
+      (a) VM death unnoticed - after firecracker exited, the nodeboot parents and the runner container stayed
+      up and the bidder never noticed. Here the VMM is the only child of pasta in the unit: when firecracker
+      exits for ANY reason (guest reboot or poweroff, CtrlAltDel, crash, kill) pasta exits and the unit goes
+      inactive or failed with nothing of the VM left in its cgroup; Inspect reports that on the next call, and
+      Runtime exposes a Watch (D-Bus PropertiesChanged on the unit's ActiveState) so the controller learns it
+      within seconds instead of a pass interval. (b) Work dirs never removed - 32 dirs, 63 GB on hat-8. Here
+      Stop and Cleanup remove the work dir (rootfs clone, cidata, console and vmm logs) and the API socket
+      for every terminal outcome (released, Lost, Failed, boot timeout), and List reports work dirs under
+      <state>/handles/<hid>/vms/ so the controller can collect any with no ComputeVM (M2-CONTROLLER).
     files: ["internal/vmruntime/", "internal/guestnet/", "internal/guestdisk/", "internal/fcapi/", "cmd/socialweb-vmexec/", "internal/nodevm, internal/nodefirecracker (deleted or reduced)", "cmd/socialweb-nodeboot (deleted)", "docs/bidder-host.md (kvm group via `install bidder`)"]
     test_first: >
       Offline: TestPrepareWritesASeedDriveAndFcJsonAndNoHostToolIsExecd, TestTheVMUnitSpecHasSigkillSwapZeroAndNoIgnoreFailure,
       TestTheApiSocketPathIsUnder108BytesAndUnlinkedFirst, TestStopSendsCtrlAltDelThenWaitsTheGraceThenStopsTheUnit
-      (fake fc API and fake hostsvc, x86_64), TestStopOnAarch64GoesStraightToStopUnit, TestTheConsoleFileIsCappedByRotation.
+      (fake fc API and fake hostsvc, x86_64), TestStopOnAarch64GoesStraightToStopUnit, TestTheConsoleFileIsCappedByRotation,
+      TestCleanupRemovesTheWorkDirAndSocketForEveryTerminalOutcome (released, Lost, Failed, boot timeout).
       Behind livegate on hat-8 with stand-ins (a stand-in VMM that ignores SIGTERM like firecracker, pinned as
       a test asset; never a guest): TestTheVMUnitsTreeIsPastaAndTheStandInOnly (0006:M2-VM-TREE-AUDIT passes),
-      TestAStopOfAVMMThatIgnoresSigtermEndsWithinTimeoutStopSec, TestTheVMUnitSurvivesSystemctlRestartOfTheBidderUnit.
-      Red first.
-    done_when: "offline and stand-in tests green; a real guest's boot, stop grace and tree audit are proved by M6-BIDDER-UPGRADE through the RFP flow."
+      TestAStopOfAVMMThatIgnoresSigtermEndsWithinTimeoutStopSec, TestTheVMUnitSurvivesSystemctlRestartOfTheBidderUnit,
+      TestAVMMThatExitsOnItsOwnEndsItsUnitAndLeavesNoProcess (the stand-in exits 0 and, separately, is killed:
+      the unit is inactive/failed, its cgroup is empty, pasta is gone, and Watch reported it within 2 s - E8
+      defect a). Red first.
+    done_when: "offline and stand-in tests green; a real guest's boot, stop grace, tree audit and the no-leak readings are proved by M6-BIDDER-UPGRADE through the RFP flow."
     risks:
-      - "The grace window depends on the guest image's shutdown path; until M6 measures it, a 10 s placeholder is used and recorded as such."
+      - "E8 measured 0.21 s from SendCtrlAltDel to exit on an IDLE guest; the grace with a k3s workload is unmeasured, so a 10 s placeholder stays the default until M6-BIDDER-UPGRADE records the loaded value."
+      - "The CI kernel (M1-GUEST-IMAGE) must keep CONFIG_SERIO_I8042 and CONFIG_KEYBOARD_ATKBD (E8's guest had both) or SendCtrlAltDel does nothing and every stop waits the full grace."
       - "pasta's mapped-gateway flag differs across pasta versions; the flag is pinned against the pinned pasta asset's own --help in this item."
     status: todo
     evidence: []
@@ -330,14 +363,26 @@ items:
       socialweb-vm-<hid>- of THIS handle and no ComputeVM is reported and stopped after a 10-minute grace;
       units of other handles on the shared account and of beds (socialweb-bed-*) are never touched (name
       filter in hostsvc.List). A user-manager restart, linger removal or `loginctl terminate-user` leaves no
-      units: every ComputeVM goes Lost(UnitGone), the same as a reboot.
+      units: every ComputeVM goes Lost(UnitGone), the same as a reboot. Against the two E8 live defects
+      (2026-10-12; decided by Claude, user may veto): (a) a VM that dies is noticed - the controller consumes
+      vmruntime Watch, so a unit going inactive or failed while its ComputeVM is not Releasing becomes
+      Lost(VMMExited | UnitFailed | OOMKilled) within seconds, not at the next pass; the provider learns it
+      from the ComputeVM watch (M3-TS-PROVIDER), and the requester's side replaces the node through plan 0005
+      M3-NODE-LOSS. (b) nothing of a VM outlives it - the finalizer is removed only after the work dir and the
+      API socket are gone (Cleanup verified by stat), for a Lost or Failed ComputeVM as well as a released
+      one; a work dir under <state>/handles/<hid>/vms/ with no ComputeVM of this handle and no unit is
+      removed after the same 10-minute grace as an orphan unit, and every removal is logged with its size.
     files: ["internal/computevm/", "internal/stack/bidder"]
     test_first: >
       Offline (fake hostsvc, fake fc API, fake kcp), one test per Verdict row, plus
       TestAnUnreachableBusIsUnknownNeverLost, TestAnUnreachableApiSocketWithMatchingIdentityIsUnknown,
       TestIdentityMismatchStopsTheUnitImmediately, TestABootIDChangeMakesEveryVMLostWithoutStartingAnything,
       TestALostGuestIsNeverBootedAgain, TestDeletingAComputeVMStopsGracefullyAndRemovesItsWorkDirBeforeTheFinalizerGoes,
-      TestAnotherHandlesUnitIsNeverTouched, TestABedUnitIsNeverTouched. Red first.
+      TestAnotherHandlesUnitIsNeverTouched, TestABedUnitIsNeverTouched,
+      TestAVMMExitObservedByWatchMakesTheComputeVMLostWithinOneEvent (E8 defect a),
+      TestTheFinalizerStaysUntilTheWorkDirIsGoneForReleasedLostAndFailed and
+      TestAWorkDirWithNoComputeVMAndNoUnitIsRemovedAfterTheGrace (E8 defect b; a fake vms/ tree seeded with
+      32 orphan dirs is empty after one pass past the grace, another handle's dirs untouched). Red first.
     done_when: "offline tests green; live proofs are M6-*."
     risks: ["A false Lost costs a tenant a VM (LXD shipped this bug); every Lost row names a definite answer from the kernel or systemd, and the tests pin that transport errors never reach a Lost row."]
     status: todo
@@ -381,6 +426,34 @@ items:
     test_first: "test/bidder_cli_kcp_provider_test.ts: --compute-provider-kcp without a server, handle or guest host address refuses at startup naming the missing options; red first."
     done_when: "test green; existing bidder tests green."
     risks: []
+    status: todo
+    evidence: []
+  - id: M3-NODE-LOSS-CLOCK
+    milestone: M3
+    title: Our own outage never counts against a tenant's node - the NODE-LOSS clock counts only from when our side of the path is back up
+    depends_on: []
+    decision: >
+      Decided by Claude, user may veto (control-plane-handover.md 6, Q-H6): plan 0005 M3-NODE-LOSS releases a
+      market node whose Ready is False/Unknown for 90 s, timed from the tenant Node's lastTransitionTime
+      (cmd/socialweb-clusterprovider/nodes.go:194-223). When OUR side of the path was down (a cluster cold
+      start, a link restart, a front restart, a user-manager restart of the gateway), that clock bills our
+      outage to the tenant's VM. NotReady time now counts from max(lastTransitionTime, pathUpSince), where
+      pathUpSince is, per cluster, when the provider last saw BOTH the cluster's apiserver answer /readyz at
+      status.URL (the front port after 0006:M3-APISERVER-FRONT) AND both ClusterLinks Listening, after any
+      moment either was not; held in memory, and a provider start counts as path-up for the clusters it
+      brings up or adopts. No rebase across a kcp, door or provider restart alone: the tenant's kcm keeps
+      running and writes real transitions, so a node that died then is released on time. The never-Ready
+      join grace (2 m, config.go:51) is rebased the same way.
+    files: ["cmd/socialweb-clusterprovider/nodes.go (loss rule)", "internal/clusterprovider (pathUpSince per cluster from the readyz probe and ClusterLink phases)"]
+    test_first: >
+      cmd/socialweb-clusterprovider (fake clock, fake tenant, fake links):
+      TestANodeNotReadyDuringOurLinkOutageIsKeptFor90sAfterTheLinkReturns,
+      TestANodeNotReadyDuringAClusterColdStartIsKeptFor90sAfterTheApiserverAnswers,
+      TestANodeNotReadyBeforeAProviderRestartIsStillReleasedOnTime,
+      TestTheJoinGraceIsRebasedToPathUpToo, TestAFlappingPathDoesNotPostponeReleaseForever. Red first (today
+      the first two release at 90 s from lastTransitionTime).
+    done_when: "offline tests green; the bed reading is taken by 0006:M3-CP-CONTINUITY's cold-start test."
+    risks: ["A path that flaps keeps resetting pathUpSince and would never release a really dead node; pathUpSince only moves forward after the path was continuously up for 30 s, and a test pins it."]
     status: todo
     evidence: []
   - id: M4-BIDDER-VAULT
@@ -522,42 +595,82 @@ items:
       POST accepted, the tree audit passes again, then releaseCompute's vm.delete 200 with the graceful stop
       timed. Decided by the user 2026-10-11: the stop grace window is measured live here through the RFP flow
       (time from SendCtrlAltDel to the unit going inactive, over at least five releases) and recorded; the
-      measured value (with margin) becomes the default stopGraceSeconds in versions.json.
+      measured value (with margin) becomes the default stopGraceSeconds in versions.json. E8 (2026-10-12)
+      already read 0.21 s on an IDLE guest; the readings here are taken with the k3s agent joined and pods
+      running, which is the window that sets the default. After each release: no unit, no cgroup and no
+      work dir of the released VM remain (E8 defects a and b; ACC7-NO-LEAK).
     files: ["internal/marketbed/live_test.go (TestABidderUpgradeLeavesItsVMRunningAndStillReleasesIt)", "internal/versions/versions.json (stop grace)"]
     test_first: "The live test, red until upgrade and re-population exist (today the guest leaks on restart)."
-    done_when: "PASS recorded with UTC timestamps; grace readings recorded; zero ssh sessions to the guest."
+    done_when: "PASS recorded with UTC timestamps; grace readings under a k3s workload recorded; vms/ work-dir count equals live ComputeVMs after every release; zero ssh sessions to the guest."
     risks: ["Needs the bidder account in kvm and the bed's fixed ports free on hat-8."]
+    status: todo
+    evidence: []
+  - id: M6-CLAIM-RESUME
+    milestone: M6
+    title: A restarted door resumes Bidding and Provisioning claims - per-claim secrets-server key in OpenBao, served state on the NodeClaim
+    depends_on: []
+    decision: >
+      Split from M6-GATEWAY-REPOPULATE 2026-10-12. Decided by the user 2026-10-12: in-flight (Bidding,
+      Provisioning) claims resume across a door restart, with a per-claim secrets-server key in OpenBao and
+      served-state on the NodeClaim. Today the per-contract secrets server's Secp256k1 keypair, ingress
+      subdomain and grant live in memory (atproto-market lib/guest-capability-secrets/mod.ts:50-75), so a
+      restarted door marks those claims Failed (socialweb-computer-k8s node-market ORPHANED_PHASES, :487-495)
+      and the guest's user_data names a secrets URL nobody serves. Decided by Claude, user may veto
+      (control-plane-handover.md 7): (1) the keypair is created once per claim in the cluster's OpenBao at KV
+      socialweb-door/claims/<claim>/secrets-ingress with check-and-set 0 (a losing writer takes the winner's
+      value, the clusterlink EnsureKey pattern), so the ingress subdomain and the URL in the guest's user_data
+      are a function of that key; (2) NodeClaim status.secrets {ingressDid, keyRef, url, servedAt} records
+      what was served; (3) on restart the door re-creates the ingress from the key, rebuilds the authorizer
+      grant from status.grant and the bundle (ticket, CA, claim.json are deterministic), and resumes
+      awaitComputeNetwork, so the claim reaches Joining; (4) write-ahead status.contract.acceptPending
+      {bidUri} before the accept record is written, so a restart between accept intent and accept record
+      looks for an accept naming that RFP in the requester's repo and completes or releases exactly once.
+      One NodeClaim schema revision carries status.secrets, acceptPending and M6-GATEWAY-REPOPULATE's
+      Orphaned phase (APIResourceSchema.spec is immutable; versions.json our-crds). The KV path is in
+      0006:M3-BAO-SYNC's desired set (live claim -> kept; claim gone -> deleted). Bidding/Provisioning leave
+      ORPHANED_PHASES.
+    files: ["atproto-market/lib/guest-capability-secrets (key loader instead of a fresh keypair)", "socialweb-computer-k8s/lib/socialweb-computer-k8s-node-market (resume path, acceptPending)", "api/v1alpha1 NodeClaim (status.secrets, status.contract.acceptPending; one schema revision)", "socialweb-computer-k8s door OpenBao key store"]
+    test_first: >
+      socialweb-computer-k8s test/node_market_test.ts: 'a door restarted during Provisioning re-serves the
+      same secrets URL and the claim reaches Joining', 'a door restarted during Bidding resumes the RFP it
+      already posted and posts no second one', 'a door restarted between accept intent and accept record
+      completes or releases exactly once'; atproto-market test: 'a secrets server built from a stored key
+      answers on the same ingress subdomain'. On the market bed (node born via runComputeContract):
+      TestADoorRestartMidProvisioningStillJoinsTheNode (the door process killed after accept and before
+      onNetwork; the node joins, one claim, one receipt, no vm.delete). Red first (today the claim is marked
+      Failed).
+    done_when: "unit tests green; the bed test green with UTC readings; no claim in Bidding or Provisioning is failed by a door restart."
+    risks: ["The dispatcher must accept a re-registration of the same ingress key after a crash (stale registration); measured on the bed, the M4-BIDDER-VAULT risk."]
     status: todo
     evidence: []
   - id: M6-GATEWAY-REPOPULATE
     milestone: M6
     title: After an upgrade the gateway re-populates every VM it owns, including ones rented from bidders elsewhere
-    depends_on: ["0008:M3-DOOR-DENOPOD", "0006:M3-CLUSTER-UNITS", M4-BIDDER-VAULT]
+    depends_on: ["0008:M3-DOOR-DENOPOD", "0006:M3-CLUSTER-UNITS", M4-BIDDER-VAULT, M6-CLAIM-RESUME]
     decision: >
       Decided by the user 2026-10-07: the gateway's core binary and deno processes are upgradable while VMs
       keep running, and afterwards it re-populates which VMs it owns from NodeClaims, receipts and market
-      records. The user's 2026-10-11 goal (pending design in 0006:M3-CP-CONTINUITY): the gateway durably tracks
-      which clusters own which market-rented VMs, so nodes re-join their control planes after any restart or
-      upgrade. Decided by Claude, user may veto: the door builds one ownership table at start and on a timer
-      from (1) every NodeClaim's status.contract, (2) the accept records its requester repos wrote and the
-      vm.delete events they submitted, (3) the receipts in the winners' repos that reference those accepts,
-      (4) onNetwork records, and (5) the tenant clusters' Node objects. Rules: a receipt with a claim and a
-      joined Node is adopted (no write); a receipt with a claim and no Node follows plan 0005 M3-NODE-LOSS
-      (90 s, then release); a receipt with NO claim (claim lost while the VM lives) gets a claim written in
-      phase Orphaned and is released by releaseCompute unless its Node is joined, in which case it is adopted;
-      a vm.delete already submitted is never submitted twice. A restart no longer fails Bidding and
-      Provisioning claims: the door's ingress keypair moves into the cluster OpenBao (stable secrets-server
-      URL, the M4-BIDDER-VAULT pattern) and the secrets capability's served state is read back from the
-      claim, so awaitComputeNetwork resumes them. Control planes stay up across the upgrade
-      (0006:M3-CLUSTER-UNITS), so joined nodes stay Ready.
-    files: ["socialweb-computer-k8s/lib/socialweb-computer-k8s-node-market (ownership table, Orphaned phase)", "api/v1alpha1 NodeClaim (phase Orphaned: a schema revision and export re-point)", "atproto-market/lib (requester record listing helpers)", "socialweb-computer-k8s door ingress key loader"]
+      records. Decided by the user 2026-10-12: control-plane continuity across upgrades of the finished system
+      is blue/green behind a per-cluster front (0006:M3-CP-CONTINUITY), and in-flight claims resume
+      (M6-CLAIM-RESUME). Decided by Claude, user may veto: the door builds one ownership table at start and on
+      a timer from (1) every NodeClaim's status.contract, (2) the accept records its requester repos wrote
+      and the vm.delete events they submitted, (3) the receipts in the winners' repos that reference those
+      accepts, (4) onNetwork records, and (5) the tenant clusters' Node objects. The record scan (2)-(4) runs
+      only for claims carrying status.contract.acceptPending and for receipts with no claim at all; every
+      other claim is resolved from the claim alone. Rules: a receipt with a claim and a joined Node is
+      adopted (no write); a receipt with a claim and no Node follows plan 0005 M3-NODE-LOSS with the rebased
+      clock (M3-NODE-LOSS-CLOCK); a receipt with NO claim (claim lost while the VM lives) gets a claim
+      written in phase Orphaned and is released by releaseCompute unless its Node is joined, in which case it
+      is adopted; a vm.delete already submitted is never submitted twice. Control planes stay up across the
+      upgrade (0006:M3-CLUSTER-UNITS), so joined nodes stay Ready.
+    files: ["socialweb-computer-k8s/lib/socialweb-computer-k8s-node-market (ownership table, Orphaned phase)", "api/v1alpha1 NodeClaim (phase Orphaned, in M6-CLAIM-RESUME's schema revision)", "atproto-market/lib (requester record listing helpers)"]
     test_first: >
       socialweb-computer-k8s test/node_market_test.ts: 'a door restarted with a receipt that has no claim
-      writes an Orphaned claim and releases it once', 'a door restarted during Provisioning resumes the
-      claim to Joining', 'a restarted door never submits a second vm.delete'; behind livegate on the bed:
-      TestAGatewayUpgradeKeepsEveryMarketNodeReadyAndOwned. Red first.
+      writes an Orphaned claim and releases it once', 'the record scan touches only acceptPending claims and
+      unclaimed receipts', 'a restarted door never submits a second vm.delete'; on the market bed (nodes born
+      via runComputeContract): TestAGatewayUpgradeKeepsEveryMarketNodeReadyAndOwned. Red first.
     done_when: "unit tests green; live: a two-node market cluster stays Ready across a gateway upgrade, both claims adopted, no RFP and no vm.delete sent by the restart."
-    risks: ["Listing market records across winners' repos is network-bound; the table is built from claims first and the record scan only fills gaps, bounded per pass."]
+    risks: ["Listing market records across winners' repos is network-bound; the table is built from claims first and the record scan only fills the acceptPending and unclaimed gaps, bounded per pass."]
     status: todo
     evidence: []
   - id: M6-LIVE-RECOVERY
@@ -602,7 +715,9 @@ semantics:
   bidder_core_binary_upgraded_or_killed: "kcp (in-process route), the controller and the deno processes stop with the bidder unit (control-group); VM units, the vault unit and kcp's unit (out-of-process route) are separate cgroups and keep running; on start the controller re-populates by the Verdict (unit, InvocationID, firecracker pid + start ticks, GET / id and state)."
   bidder_logout: "with linger, logging out of every session changes nothing."
   user_manager_stops: "user@<uid> restart, `loginctl terminate-user`, or linger removed: every unit stops; treated as a reboot - every ComputeVM Lost(UnitGone), none booted again."
-  gateway_upgraded: "control planes in their own units keep serving; the door re-populates its ownership table from claims, receipts, market records and Nodes; joined nodes stay Ready; no RFP and no vm.delete is caused by the restart."
+  gateway_upgraded: "control planes in their own member units keep serving (0006:M3-CLUSTER-UNITS); k3s/kine upgrades are blue/green slots behind the per-cluster front (0006:M3-CP-SLOTS); the door resumes Bidding and Provisioning claims (M6-CLAIM-RESUME) and re-populates its ownership table from claims, receipts, market records and Nodes; joined nodes stay Ready; no RFP and no vm.delete is caused by the restart."
+  our_path_down: "a cluster cold start, link restart or front restart is our outage: NotReady time counts only from when the apiserver and both ClusterLinks are back (M3-NODE-LOSS-CLOCK), so it never releases a tenant's node whose path returns."
+  vmm_exits_on_its_own: "guest reboot, poweroff, crash or kill: firecracker exits, pasta exits, the unit is inactive or failed with nothing left in its cgroup; the controller sees it through Watch within seconds, marks the ComputeVM Lost, and the requester replaces the node (plan 0005 M3-NODE-LOSS); the work dir is removed before the finalizer goes."
   kcp_state_lost_on_a_bidder: "every socialweb-vm unit of this handle becomes an orphan and is stopped after its grace; its receipts can no longer be honoured - a stated limit; the bidder state dir is durable state, backed up with its vault."
   host_reboots: "transient units are gone, so every VM is gone; on start every ComputeVM whose hostBootID differs is Lost(HostRebooted) without probing; the requester replaces them through new RFPs (plan 0005 M3-NODE-LOSS) and releases the old receipts, which delete the Lost ComputeVMs."
   identity_mismatch: "an active unit whose InvocationID, VMM pid, start ticks or firecracker id differs from the record is Lost(IdentityMismatch) and its unit is stopped at once; an unreachable bus or API socket is Unknown and retried, never Lost."
@@ -636,6 +751,14 @@ acceptance:
       evidence: []
     - id: ACC7-NOSSH
       text: Zero ssh sessions to any guest in every log of every run of this plan.
+      status: todo
+      evidence: []
+    - id: ACC7-NO-LEAK
+      text: "In every live run, a VMM that exits on its own makes its ComputeVM Lost within seconds and leaves no process, and after every release, Lost or Failed outcome the bidder's vms/ directory holds exactly the live ComputeVMs' work dirs (the two E8 defects of 2026-10-12 never reproduce)."
+      status: todo
+      evidence: []
+    - id: ACC7-CLAIM-RESUME
+      text: "A door restarted while a claim is Bidding or Provisioning (node born via runComputeContract on the market bed) resumes it to Joining with the same secrets URL, one RFP, one receipt and no vm.delete (decided by the user 2026-10-12)."
       status: todo
       evidence: []
 questions_for_user:

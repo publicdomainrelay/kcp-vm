@@ -11,9 +11,19 @@ revised: >
     control-plane continuity at cutover left PENDING for the user (M3-CP-CONTINUITY). Renamed: M2-HOST-SCOPES
     -> M2-HOST-UNITS, M3-CLUSTER-SCOPES -> M3-CLUSTER-UNITS, M1-KCP-PORT0 -> M2-KCP-PORT0. New: M0-XOS-GATE,
     M1-INSTALL, M2-KCP-UNIT, M2-HOST-CONTRACT, M2-VM-TREE-AUDIT, M3-CP-CONTINUITY.
+    2026-10-12, folded from user-decisions.md (2026-10-12 lines) and control-plane-handover.md: no backwards
+    compatibility, migration, cutover, rollback or prod-downtime planning until the finished solution exists,
+    and the gateway runs no containers, so M5-CUTOVER becomes M5-FRESH-DEPLOY (a plain fresh deploy of the
+    finished binary) and M5-RETIRE deletes the container path with no waiting period; tenant control-plane
+    upgrades are blue/green behind a per-cluster front (decided by the user 2026-10-12): M3-CLUSTER-UNITS
+    rewritten to a systemd slice of member units, new M3-APISERVER-FRONT, M3-CP-SLOTS, M3-LINK-HANDOVER,
+    M2-POSTGRES amended with its upgrade paths, M3-CP-CONTINUITY rewritten to continuity for upgrades of the
+    finished system; new M1-STORE-CLEANUP (rustfs/t4 leftovers). Container-state tests (a state dir the
+    container wrote, Fedora data dirs from prod, kubectl-applied objects) removed from items this fold owns.
 queued: >
-  QUEUED. Plan 0005 is complete (2026-10-10, NEXT.yaml P5), but the user paused plans 0006, 0007 and 0008
-  while they are refined; no item below moves to doing until the user says so.
+  OPEN. The plan 0005 gate is satisfied: plan 0005 is complete with all 40 items done and its acceptance
+  checks ACC-ZERO, ACC-MESH and ACC-NOSSH done with evidence (verified 2026-10-12). Only each item's own
+  depends_on (within this plan and across plans) now governs when it starts.
 source: >
   The user's request of 2026-10-07: take the test setup (the vendored deno-kcp market bed) and expand it
   into a prod environment, so one Go binary, socialweb-computer, is the entrypoint for the whole stack;
@@ -27,9 +37,14 @@ source: >
   plan executes on Linux only and builds the cross-OS seams (Windows is plan 0011, macOS plan 0012); VMs
   survive a core crash, upgrade and logout, a reboot is Lost; no socialweb-computer code is in a running
   VM's process tree; the gateway and the bidder each live in the USER manager of a lingering account; the
-  in-process kcp of 2026-10-07 is re-opened and decided after the M0 spike, both routes carried. This plan
+  in-process kcp of 2026-10-07 is re-opened and decided after the M0 spike, both routes carried. On
+  2026-10-12 the user decided: no backwards compatibility, migration, cutover, rollback or prod-downtime
+  planning until the finished solution exists (the 2026-10-07 "user runs the prod cutover" becomes a fresh
+  deploy of the finished binary); the gateway runs no containers; tenant control-plane upgrades are
+  blue/green behind a per-cluster front, each cluster a systemd slice of member units. This plan
   holds the Go binary, kcp, assets, the install and upgrade layout, host processes as units and reconciled
-  resources, programmatic apply, the gateway composition, the build and the prod move. The embedded deno,
+  resources, programmatic apply, the gateway composition, control-plane continuity across upgrades, the
+  build and the fresh prod deploy. The embedded deno,
   the TypeScript closure and DenoPods are plan 0008; the compute provider and VM lifecycle are plan 0007.
 state_rules:
   - This file is the only state. Every step updates status and evidence.
@@ -38,7 +53,12 @@ state_rules:
     then pass, prod or hat-8 readings with UTC timestamps).
   - Open items are mirrored in NEXT.yaml (P6-*).
   - A decision marked "decided by Claude, user may veto" was not confirmed by the user; one marked
-    "decided by the user 2026-10-07" or "decided by the user 2026-10-11" was.
+    "decided by the user 2026-10-07", "decided by the user 2026-10-11" or "decided by the user 2026-10-12"
+    was.
+  - >
+    No backwards compatibility (decided by the user 2026-10-12): no item plans a migration of container-era
+    state, a cutover, a rollback to the container, or prod downtime handling until the finished solution
+    exists. Continuity is planned only for upgrades of the finished system (M3-CP-CONTINUITY).
   - An item names its dependencies in depends_on; an item may not start while one of them is not done.
     Cross-plan dependencies are written <plan>:<item id>.
   - >
@@ -51,8 +71,11 @@ state_rules:
     and windows get stubs returning ErrUnsupported until plans 0012 and 0011 replace them. check.sh proves on
     every run that GOOS=darwin and GOOS=windows build and vet (M0-XOS-GATE).
   - >
-    RFP flow is the spine (org-root CLAUDE.md). This plan boots no guest. Live tests of unit mechanics use
-    stand-in executables in transient units (not guests); any live guest is plan 0007's market-bed tests.
+    RFP flow is the spine (org-root CLAUDE.md). This plan boots no guest by any path of its own. Live tests
+    of unit and control-plane mechanics use stand-in executables in transient units (k3s, kine and postgres
+    processes, never a guest). A live proof that needs a market node runs on the market bed
+    (internal/marketbed), where the node exists only because the bed's requester ran runComputeContract
+    (RFP -> bid -> accept -> cloud-init user_data) against a local bidder.
 ownership:
   owned: >
     All code in socialweb-computer-kcp, the prod deployment on socialweb.computer, the vendored deno-kcp
@@ -107,6 +130,17 @@ research:
       - "E6: os.Executable() after a rename-over returns the path, so re-exec runs the NEW build (version skew inside a booting chain); after a delete it is ENOENT; install to immutable content-addressed paths"
       - "E7: GOOS=darwin build fails (internal/hostos has no darwin files; 23 packages blocked); GOOS=windows build fails (internal/nodevm/disk.go untagged unix.IoctlFileClone/SEEK_DATA; 10 packages blocked); GOOS=windows vet also fails on internal/apigen/live_upgrade_test.go:71 Setpgid; deploy/check.sh:30,54 builds and vets only the host GOOS"
       - "code today: internal/hostos/caps_{linux,windows}.go (Firecracker/QEMU/NetworkMode/Accel incl. AccelWHPX) are dead since 9d85916 retired nodeqemu and the local substrates, read only by cmd/socialweb-computer-kcp-check-host (platform.go:14-88, checks.go:23, config.go:197); hostos.DetachProcess (sysproc_linux.go:10) is Pdeathsig SIGKILL, i.e. it ATTACHES the VMM's life to its parent, used only by internal/nodefirecracker/namespace.go:45"
+      - "E8 (live, RFP flow, 2026-10-12): see plan 0007 research; firecracker CtrlAltDel -> exit 0.21 s on an idle guest"
+    control_plane_handover_2026_10_11:
+      file: "docs/research/2026-10-11-vm-lifecycle/control-plane-handover.md (design, procedures, Q-H1..Q-H9)"
+      measured_on_stand_ins:
+        - "hat-8, stand-ins only (PostgreSQL 18.6, two kine v0.17.1 on one database, two k3s v1.36.4+k3s1 --disable-agent, a ~100-line L4 front): a second server with the same token file and its own data dir and kine reconciled the bootstrap data from the datastore, had byte-identical server-ca, client-ca, request-header-ca, service.key and server/token, and served the first server's admin client certificate 2.2 s after start"
+        - "front switched to green, blue SIGTERMed: blue exited in 0.10 s; authenticated /readyz through the front every 200 ms: 515 polls, 0 failures; fake Node lease heartbeats 0 failures, Node stayed Ready; kcm/scheduler/ccm leases moved to green 16-18 s later (15 s lease)"
+        - "the kubernetes EndpointSlice read (advertise address, advertise port) throughout: k3s passes --advertise-port to its apiserver, so a split advertise port (the front's) is honoured"
+        - "hazards: the kube-system/k3s wrangler leader lease uses the OS hostname as identity (--node-name does not change it), so two slots on one host BOTH lead k3s's own controllers during the overlap; the market kube-scheduler runs leaderElect false (internal/clusterstack/scheduler.go:51-52, 1cbf945); k3s exits 0.1 s after SIGTERM, so exec/attach/log streams through it reset on any swap"
+        - "two kine on one postgres: the normal k3s HA shape; unique (name, prev_revision) is the compare; no compaction leader (the apiserver compacts with a CAS); a kine schema migration takes ACCESS EXCLUSIVE, so a migrating kine bump is its own tested step"
+      decided_2026_10_12: "user-decisions.md: blue/green behind a front, each cluster a systemd slice of member units, new k3s+kine slot beside the old on the same postgres, front swaps, old stops; scheduler and k3s leader election fixed; idle-first swaps; link keeps its iroh key"
+      code_today_store: "internal/clusterprovider/stack.go:39-43 (ErrNoStore): k3s dials kine at http://127.0.0.1:<kine lease> (DaemonURL); kine's --endpoint is the cluster's own postgres DSN (cmd/socialweb-clusterprovider/main.go:370-375 storeEndpoint, unless SOCIALWEB_CLUSTERPROVIDER_STORE_ENDPOINT names an operator store); measured against k3s v1.36.4+k3s1 the S3 form is refused ('unknown driver') and a t4 endpoint makes k3s start its OWN kine. Leftover rustfs/t4 names: internal/vaultlayout PathCentralStore, PolicyCentralStore, ClassCentralStore; cmd/socialweb-vault SOCIALWEB_CENTRAL_STORE_* and its apply branch; internal/portallocator/portallocator.go:200 message; internal/versions/versions.json rustfs and t4 entries (M1-STORE-CLEANUP)"
 items:
   - id: M0-XOS-GATE
     milestone: M0
@@ -207,8 +241,9 @@ items:
       The rest decided by Claude, user may veto: serve provider, vault prepare-root|apply-root, migrate,
       apply <set> [--set k=v] [--dry-run], manifests list|render <set>, check-host, version [--json],
       install gateway|bidder (M1-INSTALL), upgrade, rollback (M1-INSTALL), units list|audit|gc|roll
-      (M2-HOST-UNITS, M2-VM-TREE-AUDIT, M3-CLUSTER-UNITS), internal <verb> (re-exec targets:
-      cloud-controller-manager, tenantcredential, cluster-group). There is no nodeboot or nodeboot-namespace
+      (M2-HOST-UNITS, M2-VM-TREE-AUDIT, M3-CLUSTER-UNITS, M3-CP-SLOTS), internal <verb> (re-exec targets:
+      cloud-controller-manager, tenantcredential, apiserver-front (M3-APISERVER-FRONT); there is no
+      cluster-group supervisor verb, M3-CLUSTER-UNITS). There is no nodeboot or nodeboot-namespace
       verb (deleted, M3-FOLD; plan 0007 M2-VM-RUNTIME) and nodeimage exists only under the `dev` tag (plan
       0007 M1-GUEST-IMAGE). The CLI tree is identical on every OS; a verb whose backend is not compiled for
       this GOOS exits 2 naming the plan that builds it ("run bidder: no VM runtime on darwin/arm64 in this
@@ -318,8 +353,9 @@ items:
       of the bidder's runner image, and every executable the Go and TypeScript code execs (the list above
       plus each Deno.Command target), each with one fate: linked (kcp, in-process route), embedded server in
       its own unit driven by a CRD (postgres -> M2-POSTGRES, the root and bidder vaults -> M2-OPENBAO-SERVER,
-      kcp on the out-of-process route -> M2-KCP-UNIT), embedded member of a cluster-group unit (k3s, kine,
-      the per-cluster bao, external-secrets, dumbpipe), embedded VM-unit asset (firecracker, pasta,
+      kcp on the out-of-process route -> M2-KCP-UNIT), embedded asset run as a member unit of a cluster's
+      slice (k3s, kine, the per-cluster bao, external-secrets, dumbpipe; M3-CLUSTER-UNITS), core-binary verb
+      run as a member unit (the apiserver front, the CCM), embedded VM-unit asset (firecracker, pasta,
       socialweb-vmexec), embedded child of the core unit (deno), replaced by Go (socat -> crypto/tls proxy,
       yq and kubectl -> kcpapply, openssl -> crypto/x509, psql -> pgx, ip -> netlink in vmexec,
       which/unzip/curl -> gone), deleted by design (debugfs, e2fsck, resize2fs, mkfs.ext4, cpio, du, xz,
@@ -334,7 +370,35 @@ items:
       internal/versions TestEveryExecutableTheCodeExecsHasAFateInTheHostInventory (scans exec.Command,
       exec.LookPath and Deno.Command call sites); red before the file exists.
     done_when: "inventory committed, test green; no fate is 'from the host's package manager'."
-    risks: ["The relocatable PostgreSQL 18 build (M2-POSTGRES) must match the Fedora-18 data dirs on prod; its source is chosen here with a measurement."]
+    risks: ["The relocatable PostgreSQL 18 build (M2-POSTGRES) is chosen here with a measurement; no container-era data dir has to open with it (fresh deploy, decided by the user 2026-10-12)."]
+    status: todo
+    evidence: []
+  - id: M1-STORE-CLEANUP
+    milestone: M1
+    title: Remove the rustfs/t4 store design's leftovers; the tenant store is kine over the cluster's own postgres
+    depends_on: []
+    decision: >
+      Decided by Claude, user may veto (2026-10-12 fold): the code stores every tenant cluster as kine over
+      that cluster's own postgres (k3s dials kine; internal/clusterprovider/stack.go:39-43 records that k3s
+      refuses the S3 form and that a t4 endpoint makes k3s start its own kine), and ARCHITECTURE section 4 now
+      says so with the rustfs/t4 design marked historical. The leftovers that still name it are deleted:
+      internal/vaultlayout PathCentralStore, PolicyCentralStore, ClassCentralStore and every entry using them
+      (the policy, the root consumer's policy list, the secret-class table); cmd/socialweb-vault's
+      SOCIALWEB_CENTRAL_STORE_{ENDPOINT,BUCKET,ACCESS_KEY,SECRET_KEY} options, centralStoreValues and the
+      ClassCentralStore branch of apply.go; the rustfs wording in internal/portallocator/portallocator.go:200;
+      the rustfs and t4 entries of internal/versions/versions.json and the 'bucket' wording of its kine
+      invariant. stack.go's ErrNoStore text stays (it is the measurement that rules the S3 form out).
+      ARCHITECTURE sections 4, 6 (the Kine row) and 7 (the root vault's central-store paragraph) were
+      corrected by the 2026-10-12 fold and are re-read in this change; section 5's "Not building ... a
+      registry plus volume-commit machinery" line, whose reason was S3-backed PVs on the rustfs, gets a reason
+      that holds or is struck.
+    files: ["internal/vaultlayout/vaultlayout.go", "cmd/socialweb-vault (config.go, sources.go, apply.go)", "internal/portallocator/portallocator.go", "internal/versions/versions.json", "docs/ARCHITECTURE.md sections 5, 6, 7"]
+    test_first: >
+      internal/versions TestNoRustfsOrT4NameOutsideTheStoreMeasurement (scans non-test Go and versions.json;
+      allows only stack.go's ErrNoStore), red on today's tree; vaultlayout's existing Validate test stays green
+      with the class removed.
+    done_when: "the scan test green; `socialweb-vault` help lists no central-store option; check.sh --fast green."
+    risks: ["A root vault that already holds secret/data/socialweb/store/rustfs keeps it until M3-BAO-SYNC's report lists it; no container-era vault is carried over (fresh deploy), so none is expected."]
     status: todo
     evidence: []
   - id: M1-INSTALL
@@ -347,7 +411,7 @@ items:
       Decided by Claude, user may veto (exploration A-x-upgrade, linux-proofs E6): (1) Layout under the
       account's state dir: bin/<sha256>/socialweb-computer, bin/current and bin/previous symlinks,
       runtime/<sha256>/ (M1-ASSETS). A unit's ExecStart names bin/current only for the core unit; anything
-      the core starts (cluster-group units) names the resolved bin/<sha256>/ path
+      the core starts (cluster member units) names the resolved bin/<sha256>/ path
       (filepath.EvalSymlinks(os.Executable()) once at start), so no rename-over ever changes code inside a
       running chain. (2) `upgrade --binary <path>`: verify the manifest and sha256 (signature later), copy to
       bin/<sha>/, run `<new> self-check` (version --json, asset extract + verify, check-host), refuse on any
@@ -386,7 +450,7 @@ items:
       github.com/coreos/go-systemd/v22/dbus (pure Go, CGO_ENABLED=0; sdjournal is cgo and not used) and
       unsupported_other.go (`//go:build !linux`) returning ErrUnsupported (plan 0011 adds scm_windows.go, plan
       0012 launchd_darwin.go). Each long-lived child that must outlive the core (a VM, plan 0007; a postgres;
-      an OpenBao; a cluster group, M3-CLUSTER-UNITS; kcp on the out-of-process route) is a transient SERVICE
+      an OpenBao; each member of a cluster's slice, M3-CLUSTER-UNITS; kcp on the out-of-process route) is a transient SERVICE
       started by StartTransientUnit - never a scope, because a scope adopts a pid the starter forked and makes
       our code its parent. Rules: connect over $XDG_RUNTIME_DIR/systemd/private with a custom dialer (EXTERNAL
       auth, no Hello; go-systemd has no user private-socket constructor); every call carries a context with a
@@ -438,7 +502,8 @@ items:
       "log in again", which does not refresh a lingering manager), /dev/net/tun usable, the embedded
       runtime/<sha>/pasta creates a user+net namespace and execs through the /bin/sh trampoline (SELinux
       pasta_t may not exec our binaries directly, linux-proofs E4-sel), the AppArmor profile loaded where
-      AppArmor restricts userns; oomd's monitored cgroups reported. The written contract is
+      AppArmor restricts userns; oomd's monitored cgroups reported; for the gateway, the user manager's fd
+      store (M3-APISERVER-FRONT) and the k3s slot hostname mechanism (M3-CP-SLOTS). The written contract is
       docs/host-contract.md.
     files: ["cmd/socialweb-computer check-host (host contract checks)", "docs/host-contract.md"]
     test_first: >
@@ -539,8 +604,8 @@ items:
       Decided by the user 2026-10-07: postgres is embedded and is a reconciled resource, not a container
       package. Decided by the user 2026-10-11: KEEP the Postgres CRD with its own unit. Decided by Claude,
       user may veto: a pinned relocatable PostgreSQL 18 linux build (amd64, arm64; source chosen in
-      M1-HOST-INVENTORY between a prebuilt relocatable set and a CI build from source, with locale/ICU and
-      glibc collation versions measured against prod's Fedora-18 data dirs), extracted by internal/assets.
+      M1-HOST-INVENTORY between a prebuilt relocatable set and a CI build from source, its locale/ICU and
+      glibc collation versions recorded in versions.json), extracted by internal/assets.
       Kind Postgres (socialweb.computer/v1alpha1, export hostprocesses, apigen-generated) with spec {version,
       port (0 = leased), dataDir, listen 127.0.0.1, deleteData} and an OS-neutral status {phase, port,
       runtime {backend, ref, instance, pid, startTime, hostBootID}, message}. The controller runs initdb
@@ -555,15 +620,31 @@ items:
       postgres and psql from PATH) creates a Postgres object in the cluster's home workspace and waits for
       Ready; psql calls (bootstraprows.go:28, postgres.go:364) become pgx; clearStalePid/pidIsOurPostmaster
       (postgres.go:222-257) are replaced by unit identity. Postgres refuses root; the gateway account is not
-      root (M1-INSTALL).
+      root (M1-INSTALL). Upgrades of the finished system (amended 2026-10-12 from control-plane-handover.md
+      5(e), decided by Claude, user may veto): a MINOR upgrade (new pin, same major, same collation versions)
+      is a unit restart with the new ExecStart (fast shutdown + start, seconds; kine and bao reconnect); a
+      MAJOR upgrade is logical replication into a NEW Postgres object of the new major, then a write freeze
+      of 1-2 s: stop the cluster's kine slot units (M3-CP-SLOTS), wait for catch-up, setval('kine_id_seq',
+      max(id)) on the new primary (sequences are not replicated by logical replication before PG 19, verified
+      for the target major in this item), switch the DSN of kine and bao, start kine; below a size bound
+      measured here, dump/restore under the same write freeze instead. A pin whose collation provider version
+      differs from the one a data dir was initdb'd with is treated as a major-class change (reindex or
+      replication), never opened silently. Before every k3s MINOR bump M3-CP-SLOTS takes a pg_dump of the
+      k3s and openbao databases. Readiness and ordering against the cluster's member units:
+      M3-CLUSTER-UNITS.
     files: ["api/v1alpha1/postgres_types.go", "internal/postgresctl/", "internal/clusterprovider/postgres.go, bootstraprows.go", "deploy/sets.yaml (hostprocesses)"]
     test_first: >
       Behind livegate: internal/postgresctl TestAPostgresObjectBecomesAServerOnItsReportedPortAndSurvivesItsControllersRestart,
       TestAPostgresUnitRestartedBySystemdIsReprobedAndStaysReady,
-      TestAnExistingFedora18DataDirOpensWithNoCollationMismatch (a copy of a prod-shaped data dir);
-      internal/clusterprovider TestTheClusterStoreIsAPostgresObjectNotAProcessGroupMember. Red first.
-    done_when: "a market cluster reaches Ready on hat-8 with its store as a Postgres object; no postgres or psql binary from the host is on the path."
-    risks: ["Existing clusters' data dirs were initdb'd by Fedora's PostgreSQL 18; the embedded build must be the same major version and its catalog and collations compatible; a cluster's store is adopted, never re-initialised (refused if PG_VERSION differs)."]
+      TestAMinorUpgradeIsAUnitRestartAndKineReconnects (a stand-in kine polled through the restart; SELECT 1
+      and a kine write succeed after it), TestAMajorUpgradeByLogicalReplicationKeepsEveryKineRowAndTheSequence
+      (stand-in data: rows and kine_id_seq equal after the switch, writes resume past max(id)),
+      TestADataDirFromAnotherCollationVersionIsRefusedNotOpened; internal/clusterprovider
+      TestTheClusterStoreIsAPostgresObjectNotAProcessGroupMember. Red first.
+    done_when: "a market cluster reaches Ready on hat-8 with its store as a Postgres object; no postgres or psql binary from the host is on the path; the minor and major upgrade tests green with their write-freeze durations recorded."
+    risks:
+      - "A cluster's store is adopted, never re-initialised (refused if PG_VERSION differs from the pin's major)."
+      - "Logical replication needs wal_level=logical on the old server; set from the first start so a major upgrade needs no restart of the old server."
     status: todo
     evidence: []
   - id: M2-OPENBAO-SERVER
@@ -591,7 +672,7 @@ items:
       TestAVaultRestartedBySystemdIsUnsealedOnTheNextPass (kill -9 the bao main pid; Restart=on-failure brings
       it back sealed; one pass later it is unsealed). Red first.
     done_when: "green; the gateway's root vault comes up as an object on hat-8."
-    risks: ["Two writers of the root vault layout (the old apply-root and the controller) during migration; the controller calls apply-root's code, never a copy."]
+    risks: ["One writer of the root vault layout: the controller calls apply-root's code, never a copy."]
     status: todo
     evidence: []
   - id: M2-MANIFESTS
@@ -631,14 +712,14 @@ items:
     decision: >
       internal/kcpapply: dynamic client, ApplyPatchType, field manager socialweb-computer, Force (tenant.go
       precedent); workspace by /clusters/<path>; fresh discovery per phase; typed waits; APIResourceSchemas
-      create-only and compared (immutable spec); kubectl client-side-applied objects adopted with Force and
-      their last-applied annotation removed; `apply --dry-run` reports every field whose manager changes. It
+      create-only and compared (immutable spec); no kubectl-applied object is adopted (fresh deploy, decided
+      by the user 2026-10-12); `apply --dry-run` reports every field whose manager changes. It
       takes a rest.Config from internal/kcpserver on either route (the loopback config in-process, the admin
       kubeconfig of the unit out-of-process), no kubeconfig path in its API.
     files: ["internal/kcpapply/", "cmd/socialweb-computer apply"]
     test_first: >
       Behind livegate: TestApplyingTheProviderSetTwiceChangesNothingTheSecondTime,
-      TestAnObjectKubectlAppliedIsAdoptedWithoutLosingAField, TestAChangedAPIResourceSchemaIsRefusedNotPatched.
+      TestAChangedAPIResourceSchemaIsRefusedNotPatched.
     done_when: "install-provider.sh, apply-permission-inventory.sh, the denokcp install and apply.sh each reproduced object for object; no kubectl or yq anywhere."
     risks: ["apply-permission-inventory.sh's yq subject/grant split (:52-53) and DRY_RUN server mode must be kept."]
     status: todo
@@ -658,7 +739,7 @@ items:
       socialweb-nodeinit is a GUEST binary and belongs to the image pipeline, not the host asset set. Built
       separately but carried inside the binary as download assets: socialweb-credential (four platforms),
       socialweb-meshd (two arches). socialweb-apigen stays a go generate tool. Folded cmd/ keep a one-line
-      main for one release, then M5-RETIRE deletes them.
+      main only while the container build still compiles them; M5-RETIRE deletes both together.
     files: ["cmd/socialweb-computer", "cmd/socialweb-*/main.go (shims)", "internal/clusterprovider (exec path defaults)", "cmd/socialweb-nodeboot (deleted with plan 0007 M2-VM-RUNTIME)"]
     test_first: >
       TestEveryFoldedBinaryIsAVerbWithTheSameUsageAndExitCodes, TestTheClusterProviderSpawnsTheCCMAsAReExecOfItsResolvedPath,
@@ -669,41 +750,180 @@ items:
     evidence: []
   - id: M3-CLUSTER-UNITS
     milestone: M3
-    title: Each cluster's process group is a transient service in the gateway's user manager, ordered after its postgres unit
+    title: Each cluster is a systemd slice of member units in the gateway's user manager, ordered after its postgres unit; a core upgrade restarts none of them
     depends_on: [M2-HOST-UNITS, M2-POSTGRES, M1-INSTALL]
     decision: >
-      Decided by the user 2026-10-11: cluster groups are transient services in the gateway account's user
-      manager; KEEP the Postgres CRD and add explicit ordering and readiness between a cluster's postgres
-      unit and its cluster-group unit for start, adoption and restart. Decided by Claude, user may veto
-      (exploration A-x-ordering): socialweb-cluster-<clusterKey>.service, ExecStart =
-      bin/<core-sha>/socialweb-computer internal cluster-group --cluster <key> (the group supervisor:
-      socialweb code, allowed - the invariant is about VMs), After=socialweb-pg-<key>.service and
-      Wants=socialweb-pg-<key>.service - NOT Requires or BindsTo, so a postgres crash or restart does not
-      cascade-stop the control plane - Restart=on-failure. Members (openbao, kine, k3s, ccm, eso-webhook,
-      eso, the two dumbpipe links) keep Pdeathsig SIGKILL INSIDE the group: they die with the group
-      supervisor, not with the core (plan 0005 M6-LIMITS restated). Start (fresh): clusterprovider ensures the
-      Postgres object -> Ready{port, instance} -> starts the group unit with the pg port in its params; the
-      supervisor still gates openbao and kine on its own PostgresUp probe (ErrPostgresUnavailable kept).
-      Adoption (core restart or upgrade): group active + pg active -> adopt both, no writes; group active +
-      pg missing or failed -> start pg only (kine and bao reconnect; measured); group missing + pg Ready ->
-      start the group; both missing (reboot, or user manager restarted) -> start pg, then the group. A pg
-      restart by systemd changes its InvocationID; postgresctl re-probes; bao's behaviour on losing its
-      postgresql storage connection is measured. Teardown: stop the group, wait inactive, then stop pg (the
-      controller sequences it). Port leases after adoption are attributed from the unit's cgroup.procs, not
-      pid cmdlines (internal/portscan), so a restarted provider never re-leases a live group's port. A core
-      upgrade does NOT restart groups (they keep the old bin/<sha>, which GC keeps); `units roll clusters`
-      restarts groups one at a time later (policy in questions_for_user; continuity of control planes across
-      that roll and the cutover is M3-CP-CONTINUITY). ARCHITECTURE section 5 is updated in the same change.
-    files: ["internal/clusterprovider (group unit, adoption)", "internal/procgroup", "internal/hostsvc", "internal/portscan (cgroup attribution)", "cmd/socialweb-computer internal cluster-group, units roll"]
+      Decided by the user 2026-10-11: cluster processes live in the gateway account's user manager; KEEP the
+      Postgres CRD and add explicit ordering and readiness between a cluster's postgres unit and the rest of
+      the cluster for start, adoption and restart. Decided by the user 2026-10-12 (replaces the 2026-10-11
+      "one cluster-group unit with a resident supervisor"): each cluster is a systemd SLICE of member units,
+      so blue/green control-plane upgrades (M3-APISERVER-FRONT, M3-CP-SLOTS) need no resident supervisor and
+      a core upgrade restarts nothing. Decided by Claude, user may veto (control-plane-handover.md 8.1): the
+      slice is socialweb-cluster-<key>.slice (the key unit-name-escaped, so a dash in it adds no slice level)
+      holding one transient SERVICE per member, named socialweb-c-<key>-<member>.service: front
+      (M3-APISERVER-FRONT), kine@<slot> and k3s@<slot> (slot a until M3-CP-SLOTS adds b), bao, link-apiserver,
+      link-openbao, ccm, eso, esowh. Ordering: kine@<slot> and bao are After= and Wants=
+      socialweb-pg-<key>.service - NOT Requires or BindsTo, so a postgres crash or restart does not
+      cascade-stop the control plane; k3s@<slot> is After=/Wants= its kine@<slot>; ccm, eso and esowh
+      After=/Wants= the front (or k3s@a before the front exists). Every member Restart=on-failure (links
+      Restart=always, M3-LINK-HANDOVER), PropExecStart(argv, false), CollectMode=inactive. Members whose
+      code is the core binary (ccm, front) name the resolved bin/<sha>/ path, so a core upgrade never
+      changes code inside a running member. The reconcile loop is the supervisor (ARCHITECTURE section 5
+      already says so); there is no `internal cluster-group` verb and no Pdeathsig inside the cluster (units
+      own lifetime); plan 0005 M6-LIMITS' guarantee is restated as "every member is a unit of its cluster's
+      slice". A host-local record <dataDir>/controlplane.json {activeSlot, slots {a, b: k3s version, kine
+      version, ports, unit names, InvocationIDs}, front {port, backend}} is written by the reconciler and read
+      at adoption before kcp is consulted. Start (fresh): clusterprovider ensures the Postgres object ->
+      Ready{port, instance} -> starts the members in order with the pg port in their params; kine and bao
+      still gate on the PostgresUp probe (ErrPostgresUnavailable kept). Adoption (core restart or upgrade)
+      per member, by unit name + InvocationID + controlplane.json: active -> adopt, no write; missing or
+      failed -> start that member only (record Result first, then ResetFailedUnit); pg missing -> start pg,
+      members reconnect; everything missing (reboot, or the user manager restarted) -> cold start in order.
+      A bao whose InvocationID changed is unsealed on the next pass (M2-OPENBAO-SERVER rule); its behaviour
+      on losing its postgresql storage connection is measured here. Teardown: stop the slice, wait every
+      member inactive, then stop pg. Port leases after adoption are attributed from each member unit's
+      cgroup.procs, not pid cmdlines (internal/portscan), so a restarted provider never re-leases a live
+      member's port. Version changes of members are M3-CP-SLOTS (k3s, kine), M3-LINK-HANDOVER (dumbpipe),
+      M2-POSTGRES (postgres); ccm, eso and esowh roll by stop/start (no election, seconds without their
+      loops). ARCHITECTURE section 5 "The per-cluster process group" is rewritten in the same change.
+    files: ["internal/clusterprovider (member units, adoption, controlplane.json)", "internal/procgroup (retired for clusters or reduced to the order table)", "internal/hostsvc (slices)", "internal/portscan (cgroup attribution)", "cmd/socialweb-computer units roll", "docs/ARCHITECTURE.md section 5"]
     test_first: >
-      Offline (fake hostsvc): TestAdoptionStartsOnlyTheMissingHalf (four cases), TestTeardownStopsTheGroupBeforeItsPostgres,
-      TestALeaseHeldByALiveGroupUnitIsNeverReleased. Behind livegate on hat-8:
-      TestAGatewayRestartLeavesEveryClusterApiserverAnswering (a zero-node market cluster's /readyz polled
-      every 200 ms across `systemctl --user restart` of the gateway unit AND an `upgrade` to a different
-      binary: no failed poll, group InvocationID unchanged), TestAPostgresRestartDoesNotStopItsClusterGroup.
-      Red first.
-    done_when: "green on hat-8; across the restart and the upgrade the provider logs adoption, not respawn, for every cluster."
-    risks: ["Changes plan 0005 M6-LIMITS's 'every member dies with the provider' to 'with its group supervisor'."]
+      Offline (fake hostsvc): TestEveryMemberIsAUnitOfItsClustersSliceWithWantsNotRequiresOnPostgres,
+      TestAdoptionStartsOnlyTheMissingMembers (all active; pg missing; one member failed; everything missing),
+      TestTeardownStopsTheSliceBeforeItsPostgres, TestALeaseHeldByALiveMemberUnitIsNeverReleased,
+      TestNoClusterMemberIsSpawnedWithPdeathsig, TestADashInTheClusterKeyAddsNoSliceLevel. Behind livegate
+      on hat-8 with stand-ins (real postgres, kine, k3s --disable-agent, bao; no guest):
+      TestACoreRestartAndUpgradeLeaveEveryClusterMemberWithItsInvocationID (a zero-node market-shaped
+      cluster's /readyz on status.URL polled every 200 ms across `systemctl --user restart` of the gateway
+      unit AND an `upgrade` to a different binary: no failed poll), TestAPostgresRestartDoesNotStopItsClusterMembers,
+      TestAKilledMemberIsRestartedBySystemdAndAdoptedNotDuplicated. On the market bed (node joined via
+      runComputeContract): TestAGatewayUpgradeKeepsAMarketNodeReady (no Ready transition, no claim write, no
+      vm.delete). Red first.
+    done_when: "green on hat-8 and the bed; across the restart and the upgrade the provider logs adoption, not respawn, for every member of every cluster."
+    risks:
+      - "Changes plan 0005 M6-LIMITS's 'every member dies with the provider' to 'every member is a unit of its cluster's slice'."
+      - "A user-manager restart, linger removal or reboot removes every transient unit: every cluster cold-starts; 0007:M3-NODE-LOSS-CLOCK keeps that outage off tenants' nodes."
+      - "The bed's gateway must run this tree's clusterprovider in the user manager; if the bed cannot yet host the member units, the bed test waits for 0008:M4-TESTBED-PORT and that is recorded."
+    status: todo
+    evidence: []
+  - id: M3-APISERVER-FRONT
+    milestone: M3
+    title: A per-cluster L4 front owns the apiserver port; k3s moves behind it on slot ports
+    depends_on: [M3-CLUSTER-UNITS]
+    decision: >
+      Decided by the user 2026-10-12: a per-cluster TCP front owns the existing apiserver port, so guest
+      tickets, node secrets, kubeconfigs and status.URL are unchanged across control-plane swaps. Decided by
+      Claude, user may veto (control-plane-handover.md 4, Q-H2): `internal apiserver-front --cluster <key>`
+      (Go, in the core binary, ~150 lines) runs as member unit socialweb-c-<key>-front and binds
+      BindAddress:<k3s-secure lease port> - the number k3s binds today - so dumbpipe's --host, every node
+      secret's apiserverPort, status.URL, every kubeconfig and the advertise port keep their value. k3s slots
+      take new leases k3s-slot-a and k3s-slot-b (width 2 each) plus per-slot controller ports and a per-slot
+      kine lease. The backend is chosen per NEW connection from a state the reconciler sets over a control
+      socket in the cluster's data dir (path < 108 bytes); open connections stay on their backend until it
+      closes them (that is the drain). Pure TCP passthrough: TLS stays end to end with k3s (its serving SANs
+      already cover 127.0.0.1 and the advertise address). The front never fails over by itself (auto-failover
+      would hide a dead green). Its listening socket is kept in systemd's fd store (FDSTORE=1,
+      FileDescriptorStoreMax=1) so a front restart refuses no connection and only resets open ones; check-host
+      probes fd-store support in the user manager (M2-HOST-CONTRACT). Every slot runs --advertise-address
+      <identical> --advertise-port <front port>; slot listen ports are never advertised; the provider's admin
+      client, the CCM, ESO and the kcp mount (status.URL) name the front port. AssertMarketAdvertiseInvariant
+      (internal/clusterprovider/steps.go:164-174) is rewritten: advertise port == front port, advertise
+      address identical across slots, no slot listen port in the kubernetes EndpointSlice. ARCHITECTURE
+      section 8 (Ports) is updated in the same change.
+    files: ["cmd/socialweb-computer internal apiserver-front", "internal/apiserverfront/", "internal/clusterprovider (front member, slot leases, AssertMarketAdvertiseInvariant)", "internal/portallocator (k3s-slot-a/b, per-slot purposes)", "docs/ARCHITECTURE.md section 8"]
+    test_first: >
+      Offline: TestTheFrontPicksTheBackendPerNewConnectionAndLeavesOpenOnesAlone,
+      TestTheFrontNeverSwitchesByItselfWhenItsBackendDies, TestTheAdvertiseInvariantRefusesASlotListenPort.
+      Behind livegate on hat-8 with stand-ins (two k3s --disable-agent on their own kine over one postgres; no
+      guest): TestTheFrontSwitchFailsNoPoll (authenticated /readyz every 200 ms through the front across
+      switch + SIGTERM of the old slot: 0 failures - control-plane-handover.md 2.1 as a test),
+      TestEverySlotAdvertisesTheFrontPair (EndpointSlice == (advertise address, front port) with one, two and
+      the remaining slot), TestAFrontRestartRefusesNoConnection (fd store). On the market bed (node via
+      runComputeContract): TestAMarketNodeStaysReadyAcrossAFrontSwitch (the EndpointSlice never empties, no
+      Ready transition). Red first.
+    done_when: "green on hat-8 and the bed; the front unit's port equals the k3s-secure lease the cluster had before the change."
+    risks:
+      - "User-manager fd-store support is unverified on the target systemd; without it a front restart has a refused-connection window of its restart time, recorded."
+      - "On graceful stop the lease endpoint reconciler may RemoveEndpoints for the shared IP; not observed (k3s exits in 0.1 s), asserted on the bed."
+    status: todo
+    evidence: []
+  - id: M3-CP-SLOTS
+    milestone: M3
+    title: Blue/green k3s+kine slots per cluster on the same postgres, swapped behind the front, idle first
+    depends_on: [M3-APISERVER-FRONT, M2-POSTGRES]
+    decision: >
+      Decided by the user 2026-10-12: a new k3s+kine slot starts beside the old on the same postgres, the
+      front swaps, the old stops; market kube-scheduler leader election ON with a short lease; the k3s
+      hostname leader-lease problem solved; idle-first swaps. Procedure (control-plane-handover.md 5(a)),
+      decided by Claude, user may veto: (1) preconditions: target k3s minor in {active, active+1}; target >=
+      every joined guest's minor and <= guest minor + 3; cluster Ready; EndpointSlice == (advertise address,
+      front port). (2) Idle first (Q-H4, decided by Claude, user may veto): the swap waits while any
+      non-kube-system pod is Running on a market node, up to a bounded deferral (default 30 min), then
+      proceeds as blue/green; a cluster at zero nodes swaps at once. (3) Minor bump: pg_dump of the k3s and
+      openbao databases to <dataDir>/backups/<ts> first (exit 0, size > 0); minors one at a time; rollback
+      only within the same minor (Q-H8, decided by Claude, user may veto). (4) Lease the green ports; start
+      kine@green (target kine) on the same DSN (log 'tables and indexes are up to date'; no lock wait > 2 s
+      on the active kine); start k3s@green with identical cluster flags, the same token file, the same
+      advertise pair and its own data dir; gate: green CA hash == active CA hash, /readyz 200 on the green
+      port with the admin cert, first kube-system Deployment listed. (5) Persist controlplane.json
+      (activeSlot=green) BEFORE the front switch is acknowledged; switch; immediately stop k3s@blue (exits in
+      ~0.1 s) and kine@blue. (6) Watch 60 s: kcm/scheduler/ccm leases held by green, agent tunnels back (an
+      exec into one pod per node), ClusterLinks Listening, every held Node Ready with no transition. (7) Keep
+      blue's data dir and unit definition for a same-minor rollback (the same procedure reversed). Scheduler:
+      internal/clusterstack/scheduler.go renders leaderElect true with leaseDuration 4s, renewDeadline 3s,
+      retryPeriod 1s (reverts 1cbf945's false; first-pod delay after scale from zero up to ~4 s, measured).
+      k3s hostname lease: wrangler's kube-system/k3s lease identity is os.Hostname(), so each k3s slot runs
+      with its own UTS hostname swc-<key12>-<slot>: systemd ProtectHostname=private:<name> on the slot unit
+      where the host's systemd supports it in a user manager, else a one-shot `internal uts-exec` that
+      enters a user+UTS namespace, sethostname()s and execve's k3s (no resident code); the mechanism is
+      measured in this item and probed by check-host. A kine bump is its own green slot; one whose release
+      notes name a schema migration (ACCESS EXCLUSIVE) gets a stand-in test with old+new kine on one database
+      before it ships. Triggered by `units roll cluster <key> --k3s <version> [--kine <version>]` and by the
+      reconciler when versions.json pins change.
+    files: ["internal/clusterprovider (slots, swap procedure, idle check)", "internal/clusterstack/scheduler.go (leaderElect)", "internal/clusterstack (per-slot argv, hostname)", "cmd/socialweb-computer units roll cluster", "internal/versions/versions.json (k3s and kine pins, skew rule)"]
+    test_first: >
+      Offline: TestASwapIsDeferredWhileWorkRunsUpToTheBoundThenProceeds, TestAZeroNodeClusterSwapsAtOnce,
+      TestAMinorSkipIsRefused, TestATargetOlderThanAGuestOrMoreThanThreeMinorsNewerIsRefused,
+      TestControlplaneJsonIsPersistedBeforeTheFrontSwitchIsAcknowledged, TestTheMarketSchedulerElectsWithAShortLease,
+      TestAMinorBumpTakesAPgDumpFirst. Behind livegate on hat-8 with stand-ins (no guest):
+      TestAGreenSlotSharesCAAndTokenWithBlue, TestTwoSlotsOnOneHostNeverBothHoldTheK3sLease,
+      TestTheSchedulerIsNotDoubledDuringOverlap (two slots and a fake Node: one kube-scheduler lease holder,
+      one bind per pod), TestAPatchSwapFailsNoPollThroughTheFront. On the market bed (node via
+      runComputeContract): TestABlueGreenSwapKeepsAMarketNodeReadyAndExecWorksAfter (no NotReady, no claim
+      change, no vm.delete; EndpointSlice never empties; exec into the node's pod succeeds within N s of the
+      swap, N = the measured agent tunnel reconnect, recorded). Red first.
+    done_when: "green on hat-8 and the bed; a k3s patch swap's readings recorded (poll failures 0, lease handover seconds, tunnel reconnect seconds, first-pod delay with the 4 s lease)."
+    risks:
+      - "k3s's own wrangler lease is 45 s; after blue stops, green's k3s controllers (addons, helm) may wait up to 45 s unless blue releases on cancel - measured."
+      - "exec/attach/log streams through blue reset on every swap; that is why swaps are idle-first."
+      - "If neither hostname mechanism works in the user manager, this item is blocked and the user is asked; switch-then-stop alone is not accepted as solving the lease collision."
+    status: todo
+    evidence: []
+  - id: M3-LINK-HANDOVER
+    milestone: M3
+    title: A cluster link keeps its iroh key across restarts and replacements; a dead link is restarted
+    depends_on: [M3-CLUSTER-UNITS]
+    decision: >
+      Decided by the user 2026-10-12: the link keeps its iroh key (cluster vault KV socialweb-links/<service>,
+      CAS-0, never regenerated); the dumbpipe duplicate-endpoint behaviour is measured. Decided by Claude, user
+      may veto (control-plane-handover.md 4): a link is never re-pointed for a k3s swap (its target is the
+      front). Link units Restart=always with the same IROH_SECRET, closing ARCHITECTURE section 5's stated
+      limit that a link that dies is not restarted. A dumbpipe pin bump starts the new listener with the same
+      key on the link's second UDP lease (each link gets two), waits for its printed ticket naming the key,
+      then stops the old one. Measured on the bed for the pinned dumbpipe v0.39.0: whether iroh-relay promotes
+      the newer connection of a duplicated endpoint id (SameEndpointIdConnected), how long a guest's
+      connect-tcp takes to reach the new process, and the discovery record's last-writer-wins delay. If the
+      measurement shows dials lost, the replacement falls back to stop-then-start (seconds; the loss clock is
+      rebased by 0007:M3-NODE-LOSS-CLOCK) and that is recorded here.
+    files: ["internal/clusterprovider/links.go (link units, second UDP lease, replacement)", "internal/clusterlink", "internal/portallocator (second link lease)"]
+    test_first: >
+      Offline (fake vault, fake hostsvc): TestALinkUnitRestartsWithTheSameKey, TestTheReplacementListenerTakesTheOtherUDPLease.
+      Behind livegate on hat-8 with two real dumbpipe listeners and a dumbpipe connect-tcp client process (no
+      guest): TestTwoListenersWithOneKeyServeAndTheNewerTakesNewDials. On the market bed (node via
+      runComputeContract): TestALinkReplacedWithTheSameKeyKeepsTheNodeReady (ClusterLink stays Listening,
+      ticket byte-identical, the node's Lease renewal gap recorded). Red first.
+    done_when: "green; the relay-promotion and discovery timings for the pinned dumbpipe recorded with UTC timestamps."
+    risks: ["n0's public relays must run the promotion behaviour; the measurement names the relay used."]
     status: todo
     evidence: []
   - id: M3-BAO-SYNC
@@ -718,14 +938,15 @@ items:
       live objects; the reconciler lists actual auth mounts, roles, ACL policies and KV paths under the
       prefixes it owns, creates what is missing, deletes what no live object asks for, and disables a
       jwt-* auth mount left with no role. It runs every pass, at controller startup, at adoption of a
-      server or cluster group after a restart or upgrade, and whenever a vault unit's InvocationID changed
+      server or cluster's member units after a restart or upgrade, and whenever a vault unit's InvocationID changed
       (it restarted while the core was down; M2-OPENBAO-SERVER unseals first), so a crash between a release
       and its revoke is repaired by the next pass. Owned prefixes only: a mount, policy or path outside them
-      is reported, never touched. Applied to: (1) each cluster's OpenBao, a member of the cluster-group unit
+      is reported, never touched. Applied to: (1) each cluster's OpenBao, a member unit of the cluster's slice
       (M3-CLUSTER-UNITS): the plan 0005 M3-BAO-SYNC rule moves into internal/baosync unchanged (per live
       claim with a grant: mount jwt-<sha12(issuer)>, role <node>, policy node-<node>, KV
       socialweb-nodes/<node>; plus the ClusterLink keys in socialweb-links and the ESO cert role, derived
-      from the cluster's live ClusterLinks and its ESO pair); (2) the gateway's root vault (OpenBaoServer
+      from the cluster's live ClusterLinks and its ESO pair; plus each live claim's door secrets-ingress key
+      socialweb-door/claims/<claim>, 0007:M6-CLAIM-RESUME); (2) the gateway's root vault (OpenBaoServer
       object): internal/vaultlayout's static layout plus per-cluster and per-account entries derived from
       live Cluster and AtprotoIdentity objects; an entry for a deleted cluster or revoked identity is
       removed. The layout's static paths (vaultlayout.go Path* constants) are owned too: a path the layout
@@ -757,20 +978,21 @@ items:
       Ready -> the provider, permission-inventory and hostprocesses sets -> the root OpenBaoServer Ready
       (adopt or start the unit, unseal, apply-root) -> bootstrap-cluster when asked -> migrate -> the
       gateway (in-process) -> the TLS front (Go crypto/tls proxy replacing socat, decided by Claude, user may
-      veto) -> the clusterprovider (in-process; adopts Postgres units, then cluster-group units, M3-CLUSTER-UNITS)
+      veto) -> the clusterprovider (in-process; adopts Postgres units, then each cluster's member units, M3-CLUSTER-UNITS)
       -> the door (a deno child with today's argv and env until 0008:M3-DOOR-DENOPOD moves it into a DenoPod,
       with explicit deno permissions, 0008:M2-SERVICE-TEMPLATE). kcp needs nothing from the vault and nothing
       between bao and apply-root needs kcp (exploration F8), so only a fresh host's bring-up order changes; on
       a running host every unit is already up. Any in-process member failing ends the process with exit 1;
       the core unit (Restart=always, StartLimit tuned, M3-HOST-INSTALL) restarts it; deno children die with
-      the core unit; units (kcp out-of-process, vaults, stores, cluster groups) are adopted on the next start
-      rather than restarted.
+      the core unit; units (kcp out-of-process, vaults, stores, cluster member units) are adopted on the next
+      start rather than restarted. No container-era state dir is opened (fresh deploy, decided by the user
+      2026-10-12).
     files: ["internal/stack/gatewaykcp/", "cmd/socialweb-gateway and cmd/socialweb-clusterprovider bodies moved into run(ctx, cfg)"]
     test_first: >
       TestServeGatewayKcpStartsKcpBeforeTheRootVaultAndDiesWithAnyInProcessMember (fake members record the
-      order) and, behind livegate, TestServeGatewayKcpOnAStateDirTheContainerWroteServesTheDoorAndTheSameWorkspaces
-      (state dir produced on hat-8 by the current image, then opened by the host process). Red first.
-    done_when: "same workspaces, bindings and claims; door /api/config 200; scale passes None nodes 0; no shell, kubectl, yq, socat or docker in the process tree."
+      order) and, behind livegate, TestServeGatewayKcpOnAnEmptyStateDirServesTheDoorAndABootstrapCluster
+      followed by TestServeGatewayKcpRestartedOnItsOwnStateDirListsTheSameWorkspacesAndClaims. Red first.
+    done_when: "on an empty state dir: door /api/config 200, the bootstrap cluster Ready, scale passes None nodes 0; after a restart the same workspaces, bindings and claims; no shell, kubectl, yq, socat or docker in the process tree."
     risks: ["On the in-process route kcp, gateway and clusterprovider share one address space: a panic ends all three and kcp restarts with the core; the blast radius equals today's container restart. On the out-of-process route kcp keeps serving."]
     status: todo
     evidence: []
@@ -799,20 +1021,37 @@ items:
     evidence: []
   - id: M3-CP-CONTINUITY
     milestone: M3
-    title: Control-plane continuity across gateway restarts, upgrades and the cutover - PENDING the user's choice
-    depends_on: []
+    title: Control-plane continuity across upgrades and restarts of the finished system, proved end to end on the market bed
+    depends_on: [M3-CLUSTER-UNITS, M3-APISERVER-FRONT, M3-CP-SLOTS, M3-LINK-HANDOVER, M2-POSTGRES, M3-HOST-INSTALL, "0007:M3-NODE-LOSS-CLOCK", "0007:M6-CLAIM-RESUME"]
     decision: >
-      Pending: user to choose after docs/research/2026-10-11-vm-lifecycle/control-plane-handover.md;
-      candidates: drain first, raise NODE-LOSS grace, accept loss, blue/green k3s servers on a shared
-      datastore. The user's stated goal (2026-10-11): the gateway durably tracks which clusters own which
-      market-rented VMs, so after any restart or upgrade the nodes re-join their control planes; ideally ZERO
-      downtime for clusters by bringing up a new k3s control-plane process and shutting down the old one.
-      Not designed here. When the user chooses, this item's decision, files, tests and depends_on are
-      written, and M3-CLUSTER-UNITS' roll policy and M5-CUTOVER are amended to match.
-    files: ["pending"]
-    test_first: "pending the user's choice."
-    done_when: "the user's choice recorded here with the research file's commit, and this item rewritten into buildable work (or split)."
-    risks: ["The cutover (M5-CUTOVER) cold-starts every control plane outside the container; without a chosen answer that window may exceed plan 0005 M3-NODE-LOSS's 90 s and release market nodes."]
+      Decided by the user 2026-10-12: continuity is planned only for upgrades of the finished system (no
+      cutover, no container); tenant control-plane upgrades are blue/green behind a per-cluster front. The
+      user's goal (2026-10-11): the gateway durably tracks which clusters own which market-rented VMs, so
+      after any restart or upgrade the nodes re-join their control planes, with zero downtime for clusters.
+      Ownership model, decided by Claude, user may veto (control-plane-handover.md 7): the owner of a VM is
+      exactly one NodeClaim (claim name = tenant Node name = guest vmName; market records are evidence, the
+      claim is the index); the owner of a control plane is the host (member units + controlplane.json +
+      leases.json; the Cluster CR is desired state and status mirror); join material is the cluster vault,
+      keyed by claim name, link keys never regenerated; liveness is the tenant Node judged by the rebased
+      loss clock (0007:M3-NODE-LOSS-CLOCK); a restart adopts, never reaps; the door resumes Bidding and
+      Provisioning claims (0007:M6-CLAIM-RESUME, decided by the user 2026-10-12). Upgrade kinds and the item
+      that makes each continuous: core binary (M3-CLUSTER-UNITS adoption; ccm stop/start; front restart from
+      the fd store), k3s and kine (M3-CP-SLOTS), dumbpipe (M3-LINK-HANDOVER), postgres minor and major
+      (M2-POSTGRES), bao pin (unit restart + unseal on the new InvocationID; joined nodes need no bao, new
+      joins and ESO wait), ESO pin (stop/start, no election). kcp upgrades are NOT covered here: they follow
+      the same front pattern through caddy (user 2026-10-12) and are folded into the kcp items after the
+      pending kcp blue/green research. This item builds no new mechanism; it is the end-to-end proof.
+    files: ["internal/marketbed/live_test.go (continuity tests)", "docs/ARCHITECTURE.md section 5 (stated limits rewritten to the built design)"]
+    test_first: >
+      On the market bed (node joined via runComputeContract, RFP -> bid -> accept -> cloud-init):
+      TestEveryUpgradeKindKeepsAMarketNodeReadyAndOwned (in sequence: core upgrade, k3s patch swap, dumbpipe
+      replacement, postgres minor restart, bao restart; /readyz through the front polled every 200 ms with the
+      failure count recorded per step and 0 for the core upgrade and the k3s swap; no Ready transition, no
+      claim deleted, no RFP, no vm.delete) and TestAColdStartOfEveryClusterReleasesNoNodeWhosePathReturns
+      (`systemctl --user stop` of every member unit, then the gateway restarted: every cluster cold-starts,
+      the node is kept because its path returns within the rebased clock). Red first.
+    done_when: "both bed tests green with readings recorded (UTC); ACC6-UPGRADE and ACC6-CP-SWAP recorded."
+    risks: ["A user-manager restart or reboot of the gateway host is a cold start of every cluster; the rebased clock bounds its cost, it is not zero-downtime."]
     status: todo
     evidence: []
   - id: M4-BUILD
@@ -834,55 +1073,65 @@ items:
     risks: []
     status: todo
     evidence: []
-  - id: M5-CUTOVER
+  - id: M5-FRESH-DEPLOY
     milestone: M5
-    title: Prod moves from the container to the host service; the user runs it
+    title: Prod gets the finished binary as a plain fresh deploy; the user runs it
     depends_on: [M3-HOST-INSTALL, M4-BUILD, M3-CP-CONTINUITY]
     decision: >
-      Decided by the user 2026-10-07: the user runs the cutover, no rehearsal. Prepared here: a cutover
-      script that runs `install gateway` (account, linger enabled BEFORE the first start, node password,
-      user unit), stops the container (no docker rm, no volume change), COPIES the volume's data
-      (/var/lib/docker/volumes/socialweb-k8s-state/_data) to the account's state dir with ownership moved
-      from uid 1000 to the socialweb account (postgres data dirs 0700 owned by the running uid, bao file
-      storage likewise), installs the binary through `upgrade` and starts the unit. Cluster groups and their
-      postgres units are first started by the new process (they were container children), so the window
-      includes every control plane's cold start; how that window is handled is M3-CP-CONTINUITY's pending
-      choice. Rollback path kept: stop the unit and `docker start socialweb-k8s` on the untouched volume; the
-      old image is not deleted until M5-RETIRE. kcp is the same v0.33.0 on either route, so the copied root
-      opens unchanged.
-    files: ["scripts/cutover-to-host.sh", "scripts/rollback-to-container.sh"]
-    test_first: "test/cutover_script_test.go TestTheCutoverCopiesAndNeverMovesTheVolume and TestTheCutoverEnablesLingerBeforeTheFirstStart (fake docker, fake loginctl and a temp volume dir); red first."
-    done_when: "the user ran it; post-cutover readings recorded: same workspaces, bindings, claims, ClusterLinks, None nodes 0; the window recorded."
-    risks: ["The window is stop to door /api/config 200 plus every control plane's cold start; it is not zero, because one kcp root admits one server."]
+      Was M5-CUTOVER (container volume copy, rollback to the container, 7-day retire), void since 2026-10-12.
+      Decided by the user 2026-10-12: no backwards compatibility, migration, cutover, rollback or
+      prod-downtime planning until the finished solution exists; the gateway runs no containers; the finished
+      binary is deployed fresh. Decided by the user 2026-10-07 and kept: the user runs it. Prepared here:
+      scripts/deploy.sh (host mode, M3-HOST-INSTALL) on the prod host runs `install gateway` (account, linger
+      enabled BEFORE the first start, node password, user unit), places the binary through `upgrade
+      --binary`, and starts the unit on an EMPTY state dir; serve gateway kcp brings up kcp, the root vault
+      and the door (M3-SERVE-GATEWAY-KCP) and the bootstrap cluster named by the deployment's config. No
+      volume copy, no ownership move, no rollback-to-container script, no state preservation: no
+      container-era workspace, cluster, claim or key is read.
+    files: ["scripts/deploy.sh (fresh install path)", "deploy/host/ (prod config.json for the gateway)"]
+    test_first: >
+      test/deploy_script_test.go TestTheDeployInstallsOnAnEmptyStateDirAndRunsNoDocker and
+      TestTheDeployEnablesLingerBeforeTheFirstStart (fake ssh, fake loginctl, temp state dir); red first.
+    done_when: "the user ran it; readings recorded: door /api/config 200, the bootstrap cluster Ready, an idle cluster reads None nodes 0, ACC6-ONE-BINARY and ACC6-STATE recorded."
+    risks: ["Container-era tenants, clusters and market VMs are not carried over and nothing is planned for them (decided by the user 2026-10-12); what happens to them is the user's call when running it."]
     status: todo
     evidence: []
   - id: M5-RETIRE
     milestone: M5
-    title: Delete the container path seven days after the cutover
-    depends_on: [M5-CUTOVER]
+    title: Delete the container path
+    depends_on: [M5-FRESH-DEPLOY]
     decision: >
-      Delete deploy/control-plane-container/, deploy/container-entrypoint.sh, deploy/install-provider.sh,
-      deploy/apply-permission-inventory.sh, deploy/denokcp/install-provider.sh, run-container.sh, the folded
-      cmd/ shims and the old image on prod (with the user). Seven days decided by Claude, user may veto.
-    files: ["the files listed", "docs/ARCHITECTURE.md sections 5 and 12"]
+      Decided by the user 2026-10-12: the container path is simply deleted, no waiting period. Delete
+      deploy/control-plane-container/, deploy/container-entrypoint.sh, deploy/run-container.sh,
+      deploy/container.env.example, the docker-based pieces of
+      scripts/deploy.sh (docker save/load, docker rm/run, the docker install), deploy/install-provider.sh,
+      deploy/apply-permission-inventory.sh, deploy/denokcp/install-provider.sh and the folded cmd/ shims, in
+      one change right after M5-FRESH-DEPLOY's readings; the old image on prod is removed with the user.
+    files: ["the files listed", "scripts/deploy.sh", "docs/ARCHITECTURE.md sections 5 and 12"]
     test_first: "TestNothingInTheRepoInvokesKubectlDockerOrSocatOutsideTestAssets; red while they exist."
     done_when: "files gone; check.sh --full green; ARCHITECTURE updated."
-    risks: ["accept.sh keeps kubectl until 0008:M4-TESTBED-PORT; it is a test asset."]
+    risks:
+      - "accept.sh keeps kubectl until 0008:M4-TESTBED-PORT; it is a test asset."
+      - "M1-CLI's TestEveryEnvVariableTheEntrypointReadsIsAnOptionsEnvName parses container-entrypoint.sh and container.env.example; it is rewritten in this change to read options.json alone."
     status: todo
     evidence: []
 acceptance:
-  where: "hat-8 for every proof; prod readings after the user's cutover"
+  where: "hat-8 and the market bed for every proof (live guests only through runComputeContract); prod readings after the user's fresh deploy"
   checks:
     - id: ACC6-ONE-BINARY
-      text: "Prod's gateway runs socialweb-computer alone as a user unit of the lingering socialweb account, plus the user units and children it started from its extracted assets (kcp on the out-of-process route, postgres, bao, cluster groups with k3s, kine, external-secrets, dumbpipe, deno); no container, shell, kubectl, yq or socat."
+      text: "Prod's gateway runs socialweb-computer alone as a user unit of the lingering socialweb account, plus the user units and children it started from its extracted assets (kcp on the out-of-process route, postgres, bao, each cluster's slice of member units: front, k3s, kine, external-secrets, dumbpipe; deno); no container, shell, kubectl, yq or socat."
       status: todo
       evidence: []
     - id: ACC6-STATE
-      text: After the cutover the same workspaces, APIBindings (same bound schema revisions), ClusterLinks and NodeClaims list as before it, and an idle cluster reads None nodes 0.
+      text: "After the fresh deploy (no container-era state), the door answers /api/config 200, the bootstrap cluster is Ready with its ClusterLinks Listening, an idle cluster reads None nodes 0, and a restart of the core lists the same workspaces, APIBindings, ClusterLinks and NodeClaims as before it."
       status: todo
       evidence: []
     - id: ACC6-UPGRADE
-      text: "An upgrade of the binary on the gateway host keeps every tenant apiserver answering and every market node Ready throughout; every cluster-group, postgres and vault unit keeps its InvocationID; on the out-of-process route kcp's unit keeps its InvocationID, on the in-process route kcp's restart window is recorded."
+      text: "An upgrade of the binary on the gateway host keeps every tenant apiserver answering through its front and every market node Ready throughout; every cluster member unit, postgres and vault unit keeps its InvocationID; on the out-of-process route kcp's unit keeps its InvocationID, on the in-process route kcp's restart window is recorded."
+      status: todo
+      evidence: []
+    - id: ACC6-CP-SWAP
+      text: "A k3s/kine slot swap on a cluster with a market node (born via runComputeContract on the market bed) fails no /readyz poll through the front, causes no Ready transition, no claim change and no vm.delete; the front port, guest tickets, node secrets and kubeconfigs are unchanged, and the two slots never both held kube-system/k3s (decided by the user 2026-10-12)."
       status: todo
       evidence: []
     - id: ACC6-BAO-SYNC
@@ -899,7 +1148,5 @@ acceptance:
       evidence: []
 questions_for_user:
   - "kcp route, after M0-KCP-SPIKE records its numbers: in-process on kcp's fork, or the patched release binary in its own unit? Recommended: out-of-process unless the spike shows the fork's fallout fixed within one day, go test green on the fork, and two in-process kcps working - out-of-process keeps kcp up across core upgrades and avoids moving the whole module onto 1.37-alpha."
-  - "Cluster-group roll policy: a core upgrade does NOT restart cluster groups (they keep the old binary); `units roll clusters` restarts them one at a time later, each restart inside plan 0005's 90 s NodeLoss grace. Recommended: yes, until M3-CP-CONTINUITY's answer replaces it."
-  - "Control-plane continuity across restarts, upgrades and the cutover (M3-CP-CONTINUITY): pending your choice after docs/research/2026-10-11-vm-lifecycle/control-plane-handover.md (drain first, raise NODE-LOSS grace, accept loss, or blue/green k3s servers on a shared datastore)."
   - "Hosts whose user@ delegation lacks cpu (stock systemd delegates memory and pids only): `install` writes a user@<uid>.service drop-in `Delegate=cpu memory pids`. Recommended: yes; without it CPUQuota is accepted and silently unenforced."
   - "systemd 253 as the floor (decided 2026-10-11) refuses Debian 12 and RHEL 9 (both ship 252, to be verified in M2-HOST-CONTRACT). Recommended: accept; support there would mean dropping GetUnitByPIDFD for our own pidfd + cgroup check."

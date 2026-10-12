@@ -10,7 +10,7 @@ Module `github.com/johnandersen777/socialweb-computer-kcp`, Go. CRDs in API grou
 ## 1. The objective, stated once
 
 ```
-kcp + openbao + kine + rustfs + embedded-postgres + k3s, as gateway-side processes.
+kcp + openbao + kine + embedded-postgres + k3s, as gateway-side processes.
 A tenant cluster's k3s NODES scale to zero while the kcp + k3s CONTROL PLANE stays live.
 ```
 
@@ -122,7 +122,31 @@ Same reconcile loop in both states.
 
 ## 4. The store
 
-`kine` plus `t4` over the central `rustfs`, bucket per tenant, prefix per cluster.
+**Each cluster's store is `kine` over that cluster's own postgres.** k3s is started with
+`--datastore-endpoint http://127.0.0.1:<kine lease>` (`clusterprovider.DaemonURL`) and dials kine as an
+etcd endpoint; kine's `--endpoint` is the cluster's postgres DSN (`cmd/socialweb-clusterprovider/main.go`
+`storeEndpoint`: the per-cluster postgres registry, unless `SOCIALWEB_CLUSTERPROVIDER_STORE_ENDPOINT`
+names an operator-supplied store for every cluster). The same postgres also holds the cluster vault's
+storage (`internal/clusterstack/openbao.go`). k3s is never pointed at a bucket: measured against
+k3s v1.36.4+k3s1, the S3 form is refused at startup with `unknown driver`, and a `t4` endpoint makes k3s
+start its OWN kine against the bucket instead of dialing ours - two writers on one store
+(`internal/clusterprovider/stack.go:39-43`, `ErrNoStore`).
+
+**Historical, not built: `kine` plus `t4` over a central `rustfs`, bucket per tenant, prefix per
+cluster.** That was the original design of this section. The code never ran it, and its leftovers are
+cleanup owned by plan 0006 M1-STORE-CLEANUP: `internal/vaultlayout` `PathCentralStore`
+(`secret/data/socialweb/store/rustfs`), `PolicyCentralStore` (`store-rustfs`) and `ClassCentralStore`;
+`cmd/socialweb-vault`'s `SOCIALWEB_CENTRAL_STORE_*` options and their apply branch; the rustfs wording of
+the `internal/portallocator` shared-port message; the `rustfs` and `t4` entries of
+`internal/versions/versions.json`.
+
+**Several kine over one database are the k3s HA shape, and plan 0006 relies on it.** Measured on
+stand-ins (`docs/research/2026-10-11-vm-lifecycle/control-plane-handover.md` 2-3): two k3s servers, each
+with its own kine on one postgres and the same token, share CAs and service-account key and both serve;
+kine's unique `(name, prev_revision)` is the compare, so a racing second write fails like an etcd compare.
+Planned, not built (plan 0006 M3-CP-SLOTS, decided by the user 2026-10-12): a k3s/kine upgrade starts a
+second slot beside the first on the same postgres for the seconds of a swap behind a per-cluster front.
+Section 1's "one apiserver per store" is the rule outside that overlap.
 
 atproto is the durable **mirror**, not the datastore: it cannot be one. No compare-and-swap, no
 durable watch (the sequencer resets `seq` to 0 on restart), no compaction, and every write is a
@@ -160,8 +184,9 @@ Everything is either a controller-runtime reconcile loop or a deploy config. No 
 k3s's bundled `bridge`/`host-local`/`portmap`; the cross-node half is component 10), a CAPI provider, an OIDC issuer, an ATProto
 bridge, a syncer, a virtual workspace, a second reverse proxy, a reachability substrate, an underlay,
 a warm node pool, an admission plugin (RBAC already enforces the identity classes exactly),
-a registry plus volume-commit machinery (S3-backed PVs ride the CSI driver on the central rustfs,
-so there is nothing to commit).
+a registry plus volume-commit machinery (this was rejected when the design had S3-backed PVs on a
+central rustfs; that store was never built - section 4 - and plan 0006 M1-STORE-CLEANUP revisits this
+line).
 
 ### The per-cluster process group
 
@@ -212,11 +237,11 @@ signal (a setuid exec clears it). A Windows host has no Pdeathsig; a job object 
 in `internal/hostos/sysproc_windows.go`. Closed by plan 0005 M6-LIMITS (section 15); this was
 `NEXT.yaml` CCM-2, then a stated limit.
 
-Planned, not built (plan 0006 M3-CLUSTER-UNITS, revised 2026-10-11): the group moves into its own
-transient service in the gateway account's user manager, so a gateway restart or upgrade leaves it
-running; its members then die with the GROUP's supervisor rather than with the provider, and the
-cluster's postgres becomes its own unit ordered before the group. See "Host processes and the VM
-lifecycle" below.
+Planned, not built (plan 0006 M3-CLUSTER-UNITS, revised 2026-10-12 by the user's decision): each
+cluster becomes a systemd slice of member units in the gateway account's user manager (front, kine and
+k3s per slot, bao, the two links, ccm, eso, esowh), with no resident supervisor and no Pdeathsig, so a
+gateway restart or upgrade restarts none of them; the cluster's postgres is its own unit ordered before
+the members. See "Host processes and the VM lifecycle" below.
 
 ### The External Secrets controller runs beside the control plane
 
@@ -510,7 +535,8 @@ lingering account (`socialweb`; one shared `swc-bidder` account for every bidder
 by handle). Long-lived children are transient SERVICES (never scopes) started over
 `$XDG_RUNTIME_DIR/systemd/private`: a VM per `socialweb-vm-<hid>-<name>.service`, the vaults
 (`socialweb-bao-root`, `socialweb-bao-<hid>`), each cluster's postgres (`socialweb-pg-<key>`) and its
-process group (`socialweb-cluster-<key>`, `After=` and `Wants=` the postgres unit, not `Requires=`), and
+member units in `socialweb-cluster-<key>.slice` (kine and bao `After=` and `Wants=` the postgres unit, not
+`Requires=`; user 2026-10-12), and
 kcp (`socialweb-kcp`) if plan 0006's spike chooses the out-of-process route. Postgres and OpenBaoServer
 stay CRDs (user). Deno processes stay plain children of the core unit and die with it. The core unit
 uses the default `KillMode=control-group`; transient units are separate cgroups, so no KillMode reaches
@@ -539,11 +565,21 @@ denied, which is the only boundary between it and the user manager it shares a u
 
 **Stated limits.** One shared bidder account means a VMM escape reaches every handle's keys on that host
 (isolation between handles is by name and path only). Restarting `user@<uid>`, removing linger or
-`loginctl terminate-user` stops every unit and is treated as a reboot. How tenant control planes stay up
-across gateway restarts, upgrades and the prod cutover is NOT decided (plan 0006 M3-CP-CONTINUITY): the
-user's goal is that the gateway durably tracks which clusters own which market-rented VMs so nodes
-re-join after any restart, ideally with zero downtime by starting a new k3s control plane before stopping
-the old one.
+`loginctl terminate-user` stops every unit and is treated as a reboot.
+
+**Control-plane continuity across upgrades (user, 2026-10-12).** There is no cutover: the finished binary
+is deployed fresh and the container path is deleted (plan 0006 M5-FRESH-DEPLOY, M5-RETIRE); no
+backwards compatibility, migration, rollback or prod-downtime handling is planned before the finished
+solution exists, and the gateway runs no containers. Continuity is for upgrades of the finished system:
+a per-cluster TCP front owns the existing apiserver port (guest tickets, node secrets, kubeconfigs and
+`status.URL` never change); a k3s/kine upgrade starts a new slot beside the old on the same postgres,
+the front swaps, the old stops, idle clusters first (plan 0006 M3-APISERVER-FRONT, M3-CP-SLOTS); the market
+kube-scheduler elects a leader with a short lease and each slot has its own hostname so k3s's own leader
+lease never has two holders; a cluster link keeps its iroh key across restarts (M3-LINK-HANDOVER); a
+restarted door resumes Bidding and Provisioning claims from a per-claim secrets-server key in the cluster
+OpenBao (plan 0007 M6-CLAIM-RESUME); and NODE-LOSS counts only time when our own path was up (plan 0007
+M3-NODE-LOSS-CLOCK). Design and measurements: `docs/research/2026-10-11-vm-lifecycle/control-plane-handover.md`.
+kcp upgrades follow the same front pattern through caddy; research pending.
 
 ## 6. CRDs and the API surface
 
@@ -556,7 +592,7 @@ compatibility promise.
 | **Cluster** | the mount object - `is-mount` annotation, `status.URL`/`phase`, `Draining`, conditions, `status.nodeExpiry` | cluster provider, from an XRPC lifecycle call - never a kubectl apply | no |
 | **Vault** | OpenBao, per ON cluster over its own embedded-postgres | system | no |
 | **Postgres** | embedded-postgres - the vault's store and the one per-cluster local state | system | no |
-| **Kine** | kine plus t4 to central S3 | system | no |
+| **Kine** | not a CRD today: kine is a member of each cluster's process group over that cluster's own postgres (section 4; the "kine plus t4 to central S3" row was the unbuilt rustfs design) | system | no |
 | **Node** | one node. The only bound on leaks | node provider | no |
 | **NodeClaim** | one node RENTED FROM THE COMPUTE MARKET for a cluster, as that cluster's owner. Carries paths (`tokenFile`, `nodePasswordFile`, `serverCAFile`) and never a secret; the door in the sibling Deno process is the only writer of its `status` | cluster provider, spec and metadata only | no |
 | **ClusterLink** | one iroh listener in front of a cluster's apiserver or vault, named `<clusterKey>-apiserver` / `<clusterKey>-openbao` in the cluster's home workspace. `spec` {cluster (the key), service, targetPort}; `status` {phase `Pending`/`Listening`/`Failed`, endpointId (64 hex), did (did:key), ticket (id-only, a function of the key: byte-stable), message}. Never carries the secret | cluster provider, spec and status | no |
@@ -4489,8 +4525,9 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   ADR 0020), kept at `secret/data/socialweb/kcp/admin`; kcp's adopted mechanism-B material - the
   `client-ca` certificate kcp is handed as `--client-ca-file` (ADR 0027) and the `.admin-token-store`
   hash of the `shard-admin` token, at `secret/data/socialweb/kcp/client-ca` and
-  `secret/data/socialweb/kcp/admin-token-store`; the central rustfs S3 credentials the per-cluster
-  `kine` store rides (section 4), at `secret/data/socialweb/store/rustfs`; the deployment's ATProto
+  `secret/data/socialweb/kcp/admin-token-store`; a central-store credentials slot at
+  `secret/data/socialweb/store/rustfs` left from the unbuilt rustfs design - no `kine` rides it, each
+  cluster's store is its own postgres (section 4), and plan 0006 M1-STORE-CLEANUP deletes it; the deployment's ATProto
   device-key audience and registry binding (`SOCIALWEB_GATEWAY_DEVICE_KEY_AUDIENCE`,
   `SOCIALWEB_GATEWAY_DEVKEY_REGISTRY`), at `secret/data/socialweb/devicekey`; and the container TLS
   terminator's operator certificate and key (`SOCIALWEB_CONTAINER_TLS_{CERT,KEY}`), at

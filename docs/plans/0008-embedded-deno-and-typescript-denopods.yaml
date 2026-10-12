@@ -11,9 +11,9 @@ revised: >
   M2-DENOKCP-INPROC no longer depends on 0006:M1-KCP-INPROC; kill -9-only restart tests widened to
   `systemctl --user restart` and an upgrade; test-bed units get their own prefix.
 queued: >
-  QUEUED. Plan 0005 is complete (2026-10-10, NEXT.yaml P5), but the user paused plans 0006, 0007 and 0008
-  while they are refined; no item below moves to doing until the user says so. Its items also wait on the
-  plan 0006 items named in depends_on.
+  OPEN. The plan 0005 gate is satisfied: plan 0005 is complete with all 40 items done and its acceptance
+  checks ACC-ZERO, ACC-MESH and ACC-NOSSH done with evidence (verified 2026-10-12). Only each item's own
+  depends_on (within this plan and on plans 0006 and 0007) now governs when it starts.
 source: >
   Split out of plan 0006 (same user request of 2026-10-07): Go and TypeScript are both first class in
   socialweb-computer. The binary carries a pinned deno and the TypeScript codebase; every long-running
@@ -232,7 +232,7 @@ items:
     files: ["internal/stack/gatewaykcp", "deploy/denopods/door.values.yaml", "deploy/sets.yaml"]
     test_first: "Behind livegate: TestTheDoorDenoPodServesApiConfigAndReadsTheSameClaims; red while the door is a child process."
     done_when: "on hat-8 the door DenoPod serves /api/config and lists the same claims."
-    risks: ["The door's per-process secrets server for guests in flight (plan 0005 M3-NODE-LOSS) is made durable by plan 0007 M6-GATEWAY-REPOPULATE; until then a door restart still fails Bidding/Provisioning claims."]
+    risks: ["The door's per-process secrets server for guests in flight (plan 0005 M3-NODE-LOSS) is made durable by plan 0007 M6-CLAIM-RESUME (split from M6-GATEWAY-REPOPULATE 2026-10-12); until then a door restart still fails Bidding/Provisioning claims."]
     status: todo
     evidence: []
   - id: M4-RUN-GATEWAY-SSH
