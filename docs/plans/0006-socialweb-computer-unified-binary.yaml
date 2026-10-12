@@ -407,8 +407,8 @@ items:
       - "k3s barely compresses (79 MB -> 73 MB); it is linux-only and stays in the linux builds regardless."
       - "kcp is the largest asset after compression with bao (~59 MB and ~64 MB zstd); the gateway (blue/green slots) and every bidder (one slot per handle on kine-sqlite, decided by the user 2026-10-12) carry it."
       - "The relocatable PostgreSQL 18 set (M0-PG-SOURCE) is a budget line of its own; its size is recorded there per platform."
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M0-PG-SOURCE
     milestone: M0
     title: "Spike: where a pinned relocatable PostgreSQL 18 per linux platform comes from, for the gateway's kcp store and the tenant stores; choice and sha256 pins recorded"
@@ -580,8 +580,8 @@ items:
       against a naive extractor.
     done_when: "every inventoried linux asset extracts and verifies; `version --json` lists each with version and sha256; cross-OS gate still green with no blobs present."
     risks: ["The state dir, never /tmp (a 24 GiB tmpfs on hat-8, nosuid), holds the runtime."]
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M1-HOST-INVENTORY
     milestone: M1
     title: Everything the container and the bidder host supplied, each given a fate on a bare Linux host
