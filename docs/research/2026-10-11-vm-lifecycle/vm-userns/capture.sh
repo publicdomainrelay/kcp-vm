@@ -19,6 +19,12 @@ while :; do
     [ -s "$d/result.json" ] || continue
     name=$(basename "$d")
     unit=socialweb-vm-$name.service
+    (
+      while [ -d "$d" ]; do
+        sudo -n cat "$d/guest.console" >"$OUT.console.tmp" 2>/dev/null && mv "$OUT.console.tmp" "$OUT.console"
+        sleep 15
+      done
+    ) &
     {
       echo "== $(date -u +%Y-%m-%dT%H:%M:%SZ) guest $name unit $unit (user manager of $ACCOUNT)"
       sc show -p ActiveState,MainPID,ControlGroup,ExecMainStartTimestamp "$unit"
@@ -42,7 +48,8 @@ while :; do
       sudo -n -u "$ACCOUNT" nsenter -t "$vmm" -U -n --preserve-credentials ip route 2>&1
       gip=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["guest_ip"])' "$d/result.json")
       for i in $(seq 1 40); do
-        ks=$(sudo -n -u "$ACCOUNT" nsenter -t "$vmm" -U -n --preserve-credentials ssh-keyscan -T 5 -t ed25519 -p 22 "$gip" 2>&1)
+        ks=$(sudo -n -u "$ACCOUNT" nsenter -t "$vmm" -U -n --preserve-credentials --keep-caps /bin/sh -c \
+          'mac=$(bridge fdb show brport fctap0 | awk "!/permanent/ {print \$1; exit}"); ip route replace "$1/32" dev br0 src 172.30.0.0; ip neigh replace "$1" lladdr "$mac" dev br0 nud permanent; ssh-keyscan -T 5 -t ed25519 -p 22 "$1"' sh "$gip" 2>&1)
         if grep -q ssh-ed25519 <<<"$ks"; then echo "attempt $i $(date -u +%H:%M:%SZ): $(grep ssh-ed25519 <<<"$ks" | cut -c1-80)"; break; fi
         [ "$i" = 40 ] && echo "no key after 40 attempts: $ks"
         sleep 5
@@ -53,6 +60,7 @@ while :; do
       echo "-- AVC since $T0"
       sudo -n ausearch -m avc,user_avc -ts "$T0" 2>&1 | grep -v '^----' | head -10
     } >"$OUT" 2>&1
+    wait
     exit 0
   done
   sleep 2

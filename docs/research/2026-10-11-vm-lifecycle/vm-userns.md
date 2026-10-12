@@ -65,9 +65,10 @@ Readings: [readings/](vm-userns/readings/) (`host.txt`, `unit-*.txt`,
 1. **The stage must not hand pasta inner uid 0.** pasta confined as `pasta_t`,
    started as root of the subuid namespace, fails with
    `Couldn't write to /proc/<pid>/uid_map: Operation not permitted` /
-   `Can't set GID to 0 in userns` (with or without `--runas`), no AVC logged
-   (dontaudit). The same binary copied out of `pasta_exec_t` works, so it is
-   the policy. Started as a non-root inner uid it behaves as a rootless pasta
+   `Can't set GID to 0 in userns` (with or without `--runas`); audit shows
+   `avc: denied { setfcap } ... scontext=pasta_t tclass=cap_userns` (mapping
+   uid 0 of a child namespace needs CAP_SETFCAP in the parent). The same
+   binary copied out of `pasta_exec_t` works, so it is the policy. Started as a non-root inner uid it behaves as a rootless pasta
    does: its own namespace maps `0 -> inner`. So the stage takes `inner-id`
    (1000 here), and the VMM's host uid is `base + k*size + inner`.
 2. pasta replaces a child's stdout/stderr that is a journal socket with
@@ -81,7 +82,36 @@ Readings: [readings/](vm-userns/readings/) (`host.txt`, `unit-*.txt`,
 
 ## RFP-flow guest
 
-RFP_GUEST_PLACEHOLDER
+Bed `vmuserns4`, 2026-10-12T05:32Z: `accept.sh` (one bidder, one guest)
+**pass** - requester -> RFP -> bid -> accept -> cloud-init user_data, guest
+`onNetwork` after 16.3 s, contract released (vm.delete 200), work dir and unit
+gone 2 s after release. Readings: [readings/rfp-guest-vmuserns4.txt](vm-userns/readings/rfp-guest-vmuserns4.txt),
+[readings/bed-vmuserns4.txt](vm-userns/readings/bed-vmuserns4.txt).
+
+```
+unit socialweb-vm-fc-4bff2e6ff04b-08c79884.service in test-0001's user manager
+ pid     ppid    host uid  comm              uid_map seen from the host
+ 755789  (mgr)   1002      socialweb-nodeboot  0 0 4294967295      (-foreground, today's resident; M2 deletes it)
+ 755977  755789  656360    pasta               0 656360 1
+ 756008  755977  656360    nodeboot ns verb    0 656360 1
+ 756327  756008  656360    firecracker         0 656360 1          fds: /dev/kvm, kvm-vm, 2 vcpus, /dev/net/tun
+work dir ACL: user::rwx user:test-0001:rwx user:656360:rwx group::--- other::---
+```
+
+- unit start -> nodeboot result (VMM running): 0.84 s; `prove` (ssh-keyscan of
+  the guest's host key) 0.3 s.
+- No AVC during the run. The VMM uid owns, outside the work dir, only the
+  stand-in readings files written by the same slot uid earlier (none of the
+  bidder's).
+- Beds 1-3 failed for provider-path reasons, not the namespace: the
+  provisioning `prove` scanned the guest's sshd with `docker exec <container>`
+  (no container here), and from inside pasta's namespace the guest IP is
+  unreachable because pasta answers ARP for every address but its own, so
+  `172.30.0.2` resolves to pasta's MAC. The fix (bed 4): the issuer runs
+  `ssh-keyscan` through `guestNetExec` = `nsenter -t <ns pid> -U -n
+  --preserve-credentials --keep-caps` as the range account, which pins a /32
+  route via the bridge and a permanent neighbor entry for the MAC learned on
+  the tap before scanning.
 
 ## Commands
 
@@ -95,7 +125,7 @@ vm-userns/standin.sh <outdir>
 
 # one guest through the RFP flow in this task's bed
 eval "$(scripts/task-tree.ts env vm-userns)"
-vm-userns/bed.sh                              # accept.sh with BED_ID=vmuserns1 and FC_USERNS_*
+BED_ID=vmuserns4 vm-userns/bed.sh             # accept.sh with FC_USERNS_*
 vm-userns/capture.sh /var/tmp/swc-vmuserns1 test-0001 <out>
 ```
 
@@ -129,6 +159,19 @@ loginctl enable-linger swc-bidder
 plus `/usr/bin/newuidmap` and `/usr/bin/newgidmap` (shadow-utils, setuid or
 `cap_setuid`/`cap_setgid`), which check-host must verify. Candidate A needs
 nothing else.
+
+Harness-only deviations on hat-8 (not the design): the bidder (uid 1000) and
+the range account (test-0001) differ, so the provider starts units through
+`sudo -n -u test-0001 systemd-run --user` (sudo exits once the unit is queued,
+it is not in the VM's tree) and stages nodeboot, firecracker, the stage and the
+image under `/var/tmp/swc-<bed>-rt` because the bidder's home is 0700. Linger
+was enabled for test-0001 for the runs and disabled afterwards. With
+swc-bidder owning its own range, the units go to its own user manager and
+neither hop exists. Slot size was 32768 because the only range holds 65536.
+
+Not changed here (left to the plan owner): M2-VM-RUNTIME's decision text,
+which should name `swc-userns-stage <base> <gbase> <count> <inner-id>` with a
+non-zero inner id as the userns stage.
 
 ## Fallback
 
