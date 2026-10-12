@@ -1951,8 +1951,8 @@ items:
     risks:
       - "No published kcp version-skew policy for replicas of one shard; the storage-compatibility record is our own check, and a pair it misjudges is caught only by the probe step - hence the pg_dump first."
       - "N+1 rewrites kcp's own phase-0/1 objects at start while N still leads controllers for the seconds before the flip and the lease delete; harmless only for storage-compatible pairs, which is why other pairs take the planned outage."
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M3-SERVE-GATEWAY-KCP
     milestone: M3
     title: socialweb-computer serve gateway kcp replaces container-entrypoint.sh, on the host, kcp first
