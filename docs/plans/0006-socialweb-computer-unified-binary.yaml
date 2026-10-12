@@ -487,8 +487,11 @@ items:
       options.json exists.
     done_when: "--help lists the tree and marks verbs with no backend on this OS; unbuilt subcommands exit 2 naming the item; check.sh --fast green."
     risks: ["A second config system beside cli-args-env.json; options.json mirrors its JSON shape exactly."]
-    status: todo
-    evidence: []
+    status: done
+    evidence:
+      - "task/binary-base merged to main a107b5a 2026-10-12 (socialweb-computer-kcp f2d6b8c CLI + dev up|status|down, 7e3e54f readings, 5fb7cb2): cmd/socialweb-computer multi-call CLI over internal/clicfg (flag > env > config > default, options.json mirroring cli-args-env), host-backend required with no default; --help lists the tree marking unbuilt verbs with the item that builds them; unbuilt verbs exit 2 naming it"
+      - "clicfg red 03:07:51Z (empty options.json) green 03:07:52Z; CLI exit-code tests; merged main go test ./... 66/66 ok, check.sh --fast exit 0 (darwin/windows build+vet green)"
+      - "deviations: version --json shows (devel) without vcs in a task tree and assets empty until M1-ASSETS; the app-verb contract scan lands with M2-APP-CONTROLLER"
   - id: M1-K8S-FORK
     milestone: M1
     title: "route: in-process - move this module onto kcp's Kubernetes fork and own the vendored kcp source"
@@ -986,8 +989,12 @@ items:
     risks:
       - "devsup is a resident process of ours that is pasta's parent in dev; it is outside every unit's process group (as systemd is outside a unit's cgroup), so the VM tree audit stays meaningful (M2-VM-TREE-AUDIT is made backend-aware)."
       - "Pdeathsig fires when the creating THREAD exits; devsup keeps the locked-thread trick of processrunner.go:138-147."
-    status: todo
-    evidence: []
+    status: done
+    evidence:
+      - "task/binary-base 6078bc8 merged to main a107b5a 2026-10-12: internal/hostsvc proc backend + `internal devsup` (per-instance supervisor over a unix socket under $XDG_RUNTIME_DIR/swc/<id8>/, real parent of every unit, adoption by pid + start ticks across a core restart, everything dies with devsup or dev down)"
+      - "proc conformance: 12/15 red against a stub devsup 03:00:50Z, green 14 + 1 skipped (limits: proc does not enforce them, declared in Capabilities) 03:02:30Z, stable x5; wired into check.sh --fast (exit 0 on merged main)"
+      - "live hat-8 03:20:42Z: two instances (kine + one kcp slot each) up in parallel, ready 11.2 s; kine/kcp bound ports read back from /proc 55/82 ms after start; core kill -9 at 03:21:07.729Z re-adopted kine and kcp 120 ms later (same pids/InvocationIDs); dev up on a running instance adopts in 0.2 s; dev down 3.4 s leaves no process/listener/socket/dir; killing devsup takes its units with it and dev down sweeps the records (TestTwoInstancesOnOneHostShareNothing 17.4 s); readings in docs/research/2026-10-11-vm-lifecycle/binary-base-readings.md"
+      - "known gap: a grandchild in a unit's group survives a devsup kill -9 until the next devsup or dev down sweeps it"
   - id: M2-HOST-CONFORMANCE
     milestone: M2
     title: One hostsvc.Manager contract suite, run against proc on every check.sh --fast and against systemd-user behind livegate
@@ -1011,8 +1018,11 @@ items:
     test_first: "TestEveryManagerMethodHasAContractCase (reflects over the Manager interface) red first; then each case red against a stub backend."
     done_when: "the suite exists and is green on systemd-user on hat-8 (readings with UTC times); no Manager method without a case. The proc half is wired into check.sh --fast and turned green by M2-HOST-BACKEND-PROC, which depends on this item."
     risks: ["A case that passes on proc and fails on systemd-user (or the reverse) is a backend difference to declare in Capabilities, never a skipped assertion."]
-    status: todo
-    evidence: []
+    status: done
+    evidence:
+      - "task/binary-base 6078bc8 merged to main a107b5a 2026-10-12: one contract suite for hostsvc.Manager run against any backend; no Manager method without a case"
+      - "systemd-user behind livegate on hat-8 2026-10-12T03:05:44Z: 14 passed, manager-restart case skipped (restarting user@ ends the login session); proc half green in check.sh --fast (M2-HOST-BACKEND-PROC)"
+      - "backend differences declared in Capabilities, not skipped: FDStore and PrivateHostname false on both (ns-exec not built yet), proc does not enforce limits; systemd Watch polls every 250 ms; systemd manager identity = boot id + manager start timestamp (init.scope has no InvocationID)"
   - id: M2-HOST-CONTRACT
     milestone: M2
     title: The Linux host contract, probed by check-host, refused by name
