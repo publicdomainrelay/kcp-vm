@@ -23,6 +23,43 @@ export interface ActiveContract {
   receiptUri?: string;
   receiptCid?: string;
   acceptedAt?: string;
+  submitEventUrl?: string;
+}
+
+export interface TerminatedReceipt {
+  acceptAuthor: string;
+  reason: string;
+  at: string;
+}
+
+export const DEFAULT_TERMINATED_RECEIPTS_CAPACITY = 1024;
+
+export class TerminatedReceipts {
+  readonly #entries = new Map<string, TerminatedReceipt>();
+
+  constructor(readonly capacity: number = DEFAULT_TERMINATED_RECEIPTS_CAPACITY) {}
+
+  get size(): number {
+    return this.#entries.size;
+  }
+
+  has(receiptUri: string): boolean {
+    return this.#entries.has(receiptUri);
+  }
+
+  get(receiptUri: string): TerminatedReceipt | undefined {
+    return this.#entries.get(receiptUri);
+  }
+
+  add(receiptUri: string, entry: TerminatedReceipt): void {
+    this.#entries.delete(receiptUri);
+    this.#entries.set(receiptUri, entry);
+    while (this.#entries.size > this.capacity) {
+      const oldest = this.#entries.keys().next().value;
+      if (oldest === undefined) break;
+      this.#entries.delete(oldest);
+    }
+  }
 }
 
 export interface ContractEvent {

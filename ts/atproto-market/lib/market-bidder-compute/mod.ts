@@ -28,6 +28,7 @@ import type {
   ContractEvent,
   MarketBidderProviderRef,
 } from "@publicdomainrelay/market-bidder-abc";
+import { TerminatedReceipts } from "@publicdomainrelay/market-bidder-abc";
 import {
   BID_NSID,
   RECEIPT_NSID,
@@ -38,8 +39,48 @@ import {
   SUBMIT_EVENT_LXM,
   strongRef,
   type Logger,
+  type StrongRef,
 } from "@publicdomainrelay/market-common";
-import { COMPUTE_VM_NSID, COMPUTE_EVENTS_VM_DELETE_NSID, COMPUTE_EVENTS_VM_ONNETWORK_NSID } from "@publicdomainrelay/market-common";
+import {
+  COMPUTE_VM_NSID,
+  COMPUTE_EVENTS_VM_DELETE_NSID,
+  COMPUTE_EVENTS_VM_ONNETWORK_NSID,
+  COMPUTE_EVENTS_VM_TERMINATED_NSID,
+  VM_TERMINATED_REASONS,
+  type VmTerminatedReason,
+} from "@publicdomainrelay/market-common";
+
+export interface VmTermination {
+  reason: VmTerminatedReason;
+  exitCode?: number;
+}
+
+export function terminatedReasonOf(gone: GuestGone): VmTermination {
+  const exitCode = Number.isInteger(gone.exitCode) ? gone.exitCode : undefined;
+  const withCode = (reason: VmTerminatedReason): VmTermination =>
+    exitCode === undefined ? { reason } : { reason, exitCode };
+  const known = VM_TERMINATED_REASONS.find((r) => r === gone.reason);
+  if (known) return withCode(known);
+  if (/\boom\b|out of memory/i.test(gone.reason)) return withCode("oom");
+  if (/reboot/i.test(gone.reason)) return withCode("host_reboot");
+  if (/identity/i.test(gone.reason)) return withCode("identity_mismatch");
+  if (/exited/i.test(gone.reason) && exitCode === 0) return withCode("guest_poweroff");
+  return withCode("vmm_exited");
+}
+
+interface TerminationTarget {
+  key: string;
+  receiptUri: string;
+  receiptCid: string;
+  submitEventUrl?: string;
+}
+
+interface TerminationFields {
+  reason: VmTerminatedReason;
+  exitCode?: number;
+  observedAt: string;
+  request?: StrongRef;
+}
 
 /**
  * The URL a guest is told to report its tunnel FQDN to, carried in the accept
@@ -102,6 +143,7 @@ export interface VmBidderDeps {
   callService: (endpointUrl: string, nsid: string, lxm: string, body: Record<string, unknown>) => Promise<{ status: number; ok: boolean; body: unknown }>;
   resolve: RecordResolver;
   acceptToContract?: Map<string, import("@publicdomainrelay/market-bidder-abc").GuestContractEntry>;
+  terminatedReceipts?: TerminatedReceipts;
 }
 
 function refKey(ref: { uri: string; cid: string }): string {
@@ -120,23 +162,74 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
   } = deps;
 
   const registered = new Set<string>();
+  const tombstones = deps.terminatedReceipts ?? new TerminatedReceipts();
+  const terminating = new Map<string, Promise<void>>();
+
+  const publishTerminated = async (
+    target: TerminationTarget,
+    fields: TerminationFields,
+    cbLog: Logger,
+  ): Promise<void> => {
+    try {
+      const { uri: payloadUri, cid: payloadCid } = await createRepoRecord(COMPUTE_EVENTS_VM_TERMINATED_NSID, {
+        $type: COMPUTE_EVENTS_VM_TERMINATED_NSID,
+        reason: fields.reason,
+        ...(fields.exitCode !== undefined ? { exitCode: fields.exitCode } : {}),
+        observedAt: fields.observedAt,
+        ...(fields.request ? { request: fields.request } : {}),
+        createdAt: new Date().toISOString(),
+      });
+      const { uri: eventUri, cid: eventCid, record: eventRecord } = await createSignedRepoRecord(EVENT_NSID, {
+        $type: EVENT_NSID,
+        receipt: strongRef(target.receiptUri, target.receiptCid),
+        payload: strongRef(payloadUri, payloadCid),
+      }, did);
+      cbLog("info", "vm.terminated event created on PDS (firehose)", {
+        receiptKey: target.key, reason: fields.reason, exitCode: fields.exitCode, eventUri,
+      });
+      if (!target.submitEventUrl) return;
+      const res = await callService(target.submitEventUrl, SUBMIT_EVENT_NSID, SUBMIT_EVENT_LXM, {
+        uri: eventUri, cid: eventCid, record: eventRecord,
+      });
+      cbLog("info", "vm.terminated event submitted to requester", {
+        receiptKey: target.key, status: res.status, ok: res.ok,
+      });
+    } catch (err) {
+      cbLog("error", "vm.terminated event failed", { receiptKey: target.key, error: String(err) });
+    }
+  };
 
   const releaseGoneGuest = async (gone: GuestGone): Promise<void> => {
+    const observedAt = new Date().toISOString();
     for (const [key, contract] of activeContracts) {
       const providerId = await contract.providerIdPromise?.catch(() => undefined);
       if (providerId === undefined || String(providerId) !== String(gone.id)) continue;
       if (!activeContracts.has(key)) return;
+      if (contract.receiptUri && terminating.has(contract.receiptUri)) return;
       activeContracts.delete(key);
+      const termination = terminatedReasonOf(gone);
+      if (contract.receiptUri) {
+        tombstones.add(contract.receiptUri, {
+          acceptAuthor: contract.acceptAuthor, reason: termination.reason, at: observedAt,
+        });
+      }
       log("warn", "bidder_guest_gone", {
         receiptKey: key, providerId, reason: gone.reason, exitCode: gone.exitCode,
-        remaining: activeContracts.size,
+        terminatedReason: termination.reason, remaining: activeContracts.size,
       });
       onContractChange?.({
         type: "terminated", key,
         receiptUri: contract.receiptUri!, receiptCid: contract.receiptCid!,
         acceptAuthor: contract.acceptAuthor, acceptedAt: contract.acceptedAt!,
-        terminatedAt: new Date().toISOString(), providerId,
+        terminatedAt: observedAt, providerId,
       });
+      if (contract.receiptUri && contract.receiptCid) {
+        await publishTerminated(
+          { key, receiptUri: contract.receiptUri, receiptCid: contract.receiptCid, submitEventUrl: contract.submitEventUrl },
+          { ...termination, observedAt },
+          log,
+        );
+      }
       return;
     }
     log("info", "bidder_guest_gone_no_contract", { providerId: gone.id, reason: gone.reason });
@@ -340,6 +433,7 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
       receiptUri,
       receiptCid,
       acceptedAt: nowIso,
+      submitEventUrl: (accept as { submitEvent?: string }).submitEvent,
     });
 
     onContractChange?.({ type: "accepted", key: rk, receiptUri, receiptCid, acceptAuthor: issuerDid, acceptedAt: nowIso });
@@ -432,8 +526,21 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
       }
     }
     if (!contractKey) {
-      ctx.log("warn", "submitEvent: unknown receipt", { receiptKey: rk });
-      return { status: 400, body: { error: "InvalidRequest", message: "unknown receipt" } };
+      const tombstone = tombstones.get(receiptRef.uri);
+      if (!tombstone) {
+        ctx.log("warn", "submitEvent: unknown receipt", { receiptKey: rk });
+        return { status: 400, body: { error: "InvalidRequest", message: "unknown receipt" } };
+      }
+      if (tombstone.acceptAuthor !== ctx.issuerDid) {
+        ctx.log("warn", "submitEvent: issuerDid mismatch", {
+          expected: tombstone.acceptAuthor, got: ctx.issuerDid,
+        });
+        return { status: 403, body: { error: "Forbidden", message: "not the accept author" } };
+      }
+      ctx.log("info", "submitEvent: vm.delete for already-terminated receipt", {
+        receiptKey: rk, reason: tombstone.reason, terminatedAt: tombstone.at,
+      });
+      return { body: { ok: true, alreadyTerminated: true, reason: tombstone.reason } };
     }
 
     const contract = activeContracts.get(contractKey)!;
@@ -444,50 +551,86 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
       return { status: 403, body: { error: "Forbidden", message: "not the accept author" } };
     }
 
-    const reason = "vm.delete event received";
-    const providerId = await contract.providerIdPromise;
-
-    let destroyed = false;
-    if (providerId !== undefined) {
-      try {
-        await computeProvider.destroy(providerId);
-        ctx.log("info", "submitEvent: VM destroyed", { providerId, reason });
-        destroyed = true;
-      } catch (err) {
-        ctx.log("error", "submitEvent: failed to destroy VM", {
-          providerId, error: String(err),
-        });
-      }
-      if (computeProvider.teardown) {
-        computeProvider.teardown().then(() =>
-          log("info", "bidder_compute_provider_teardown_done", { did }),
-        );
-      }
-    } else {
-      destroyed = true; // no VM existed, clean by definition
+    const receiptUri = contract.receiptUri ?? receiptRef.uri;
+    const inFlight = terminating.get(receiptUri);
+    if (inFlight) {
+      ctx.log("info", "submitEvent: vm.delete already in progress", { receiptKey: contractKey });
+      await inFlight;
+      return { body: { ok: true, alreadyTerminated: true } };
     }
+    const done = Promise.withResolvers<void>();
+    terminating.set(receiptUri, done.promise);
 
-    if (destroyed) {
+    try {
+      const reason = "vm.delete event received";
+      const providerId = await contract.providerIdPromise;
+
+      let destroyed = false;
+      if (providerId !== undefined) {
+        try {
+          await computeProvider.destroy(providerId);
+          ctx.log("info", "submitEvent: VM destroyed", { providerId, reason });
+          destroyed = true;
+        } catch (err) {
+          ctx.log("error", "submitEvent: failed to destroy VM", {
+            providerId, error: String(err),
+          });
+        }
+        if (computeProvider.teardown) {
+          computeProvider.teardown().then(() =>
+            log("info", "bidder_compute_provider_teardown_done", { did }),
+          );
+        }
+      } else {
+        destroyed = true;
+      }
+
+      if (!destroyed) {
+        onContractChange?.({
+          type: "termination-failed", key: rk,
+          receiptUri: contract.receiptUri!, receiptCid: contract.receiptCid!,
+          acceptAuthor: contract.acceptAuthor, acceptedAt: contract.acceptedAt!,
+          terminatedAt: new Date().toISOString(), providerId,
+        });
+        ctx.log("warn", "submitEvent: vm not deleted -- contract kept for retry", {
+          receiptKey: rk, remaining: activeContracts.size,
+        });
+        return { body: { ok: true } };
+      }
+
+      const observedAt = new Date().toISOString();
+      tombstones.add(receiptUri, {
+        acceptAuthor: contract.acceptAuthor, reason: "deleted_on_request", at: observedAt,
+      });
       onContractChange?.({
         type: "terminated", key: contractKey,
         receiptUri: contract.receiptUri!, receiptCid: contract.receiptCid!,
         acceptAuthor: contract.acceptAuthor, acceptedAt: contract.acceptedAt!,
-        terminatedAt: new Date().toISOString(), providerId,
+        terminatedAt: observedAt, providerId,
       });
       activeContracts.delete(contractKey);
       ctx.log("info", "submitEvent: vm deleted", {
         receiptKey: contractKey, remaining: activeContracts.size,
       });
-    } else {
-      onContractChange?.({
-        type: "termination-failed", key: rk,
-        receiptUri: contract.receiptUri!, receiptCid: contract.receiptCid!,
-        acceptAuthor: contract.acceptAuthor, acceptedAt: contract.acceptedAt!,
-        terminatedAt: new Date().toISOString(), providerId,
-      });
-      ctx.log("warn", "submitEvent: vm not deleted -- contract kept for retry", {
-        receiptKey: rk, remaining: activeContracts.size,
-      });
+
+      const deleteRef = ctx.event.payload as { uri?: string; cid?: string } | undefined;
+      void publishTerminated(
+        {
+          key: contractKey,
+          receiptUri,
+          receiptCid: contract.receiptCid ?? receiptRef.cid,
+          submitEventUrl: contract.submitEventUrl,
+        },
+        {
+          reason: "deleted_on_request",
+          observedAt,
+          ...(deleteRef?.uri && deleteRef.cid ? { request: strongRef(deleteRef.uri, deleteRef.cid) } : {}),
+        },
+        ctx.log,
+      );
+    } finally {
+      terminating.delete(receiptUri);
+      done.resolve();
     }
 
     return { body: { ok: true } };
