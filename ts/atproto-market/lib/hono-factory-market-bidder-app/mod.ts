@@ -67,7 +67,7 @@ export type MarketBidderIdentityPromptSpec =
 export interface MarketBidderOpenBaoServerRef {
   name: string;
   client: string;
-  kcp: { server: string; workspace?: string; tokenFile?: string; caCertFile?: string };
+  kcp: { server: string; workspace?: string; token?: string; tokenFile?: string; caCertFile?: string };
 }
 
 export type MarketBidderIdentityVaultSpec =
@@ -268,6 +268,7 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
         server: vaultServerRef.kcp.server,
         workspace: vaultServerRef.kcp.workspace,
         tokenFile: vaultServerRef.kcp.tokenFile,
+        token: vaultServerRef.kcp.token,
         caCert: vaultServerRef.kcp.caCertFile ? Deno.readTextFileSync(vaultServerRef.kcp.caCertFile) : undefined,
         name: vaultServerRef.name,
         client: vaultServerRef.client,

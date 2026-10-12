@@ -240,6 +240,44 @@ dev_down() {
   DEV_UP_STARTED=0
 }
 
+BAO_PATH=${BAO_PATH:-$(command -v bao || true)}
+HOSTPROCESSES_PID=""
+HOSTPROCESSES_LOG=$MARKET_NETWORK_DIR/hostprocesses.log
+HOSTPROCESSES_UNIT_PREFIX=socialweb-hp-$MARKET_NETWORK_ID-
+
+start_hostprocesses() {
+  "$SOCIALWEB_COMPUTER" internal hostprocesses --host-backend systemd-user --instance "$MARKET_NETWORK_ID" \
+    --state-dir "$MARKET_NETWORK_DIR/hostprocesses" --kcp-kubeconfig "$KUBECONFIG_PATH" \
+    --kcp-base-workspace root:bob --bao-path "$BAO_PATH" >>"$HOSTPROCESSES_LOG" 2>&1 &
+  HOSTPROCESSES_PID=$!
+  network_set "processes.hostprocesses.pid=$HOSTPROCESSES_PID"
+}
+
+# The OpenBaoServers go first, while their controller runs: it deletes each
+# server's HostProcess and the supervisor stops the unit. Whatever unit of this
+# market network is still loaded after that is stopped by name.
+stop_hostprocesses() {
+  local deadline units
+  if [ -n "${SERVER:-}" ] && [ -n "$HOSTPROCESSES_PID" ]; then
+    KC --server="$SERVER/clusters/root:bob" delete openbaoservers --all --ignore-not-found --wait=false >/dev/null 2>&1 || true
+    deadline=$(( $(date +%s) + DELETE_SECONDS ))
+    while [ -n "$(KC --server="$SERVER/clusters/root:bob" get hostprocesses -o name 2>/dev/null || true)" ]; do
+      [ "$(date +%s)" -ge "$deadline" ] && break
+      sleep 2
+    done
+  fi
+  if [ -n "$HOSTPROCESSES_PID" ] && kill -0 "$HOSTPROCESSES_PID" 2>/dev/null; then
+    kill "$HOSTPROCESSES_PID" 2>/dev/null || true
+    wait "$HOSTPROCESSES_PID" 2>/dev/null || true
+  fi
+  HOSTPROCESSES_PID=""
+  units=$(systemctl --user list-units --all --plain --no-legend "${HOSTPROCESSES_UNIT_PREFIX}*" 2>/dev/null | awk '{print $1}')
+  for u in $units; do
+    systemctl --user stop "$u" >/dev/null 2>&1 || true
+    systemctl --user reset-failed "$u" >/dev/null 2>&1 || true
+  done
+}
+
 denopod_exists_any() {
   local ws names
   for ws in $WORKSPACES; do
@@ -438,6 +476,7 @@ cleanup() {
   fi
   stop_sampler
   delete_workloads
+  stop_hostprocesses
   dev_down
   stop_own_guests
   if [ -s "$OPENBAO_DIR/bao.pid" ]; then
@@ -524,6 +563,15 @@ echo "instance: $INSTANCE  kcp: $SERVER  runs: $RUNS_DIR"
 echo "the denoruntime set is applied (the core's deno runtime applies the same set as it starts)"
 
 echo
+echo "== bidder vaults =="
+# Each bidder's OpenBao is an OpenBaoServer in root:bob. This process runs the
+# HostProcess supervisor and the OpenBaoServer controller against root:bob of
+# this market network's kcp, and places each bao as a systemd user unit named
+# after the market network, so it outlives a bidder restart.
+start_hostprocesses
+echo "hostprocesses: pid $HOSTPROCESSES_PID, units ${HOSTPROCESSES_UNIT_PREFIX}*, log $HOSTPROCESSES_LOG"
+
+echo
 echo "== apply =="
 apply_status=0
 KUBECONFIG="$KUBECONFIG_PATH" \
@@ -538,6 +586,7 @@ OPENBAO_WAIT_SECONDS="${OPENBAO_WAIT_SECONDS:-60}" \
 FC_WORK_ROOT="$FC_WORK_ROOT" \
 FC_VMRUNTIME_COMMAND="$FC_VMRUNTIME_COMMAND" \
 GUEST_TLS_DIR="$GUEST_TLS_DIR" \
+BAO_PATH="$BAO_PATH" \
   run_fg bash "$MARKET_DIR/apply.sh" || apply_status=$?
 
 # apply.sh failing is not a reason to skip the checks: what came up and what did
@@ -812,6 +861,8 @@ HCL
     echo "STATE_DIR=$MARKET_NETWORK_DIR/state"
     echo "OPENBAO_ADDR=$OPENBAO_ADDR"
     echo "DOOR_OPENBAO_TOKEN_FILE=$DOOR_OPENBAO_TOKEN_FILE"
+    echo "HOSTPROCESSES_LOG=$HOSTPROCESSES_LOG"
+    echo "HOSTPROCESSES_UNIT_PREFIX=$HOSTPROCESSES_UNIT_PREFIX"
     echo "CHECKS_FAILED=$FAILED"
   } >"$ACCEPT_HOLD_DIR/facts.env.tmp"
   mv "$ACCEPT_HOLD_DIR/facts.env.tmp" "$ACCEPT_HOLD_DIR/facts.env"

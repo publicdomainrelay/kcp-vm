@@ -155,6 +155,13 @@ bob_key=$(resolve_key BOB_PDS_PRIVATE_KEY_HEX "$BOB_KEY_FILE" "bob PDS")
 # applies it server side as field manager socialweb-computer; nothing here
 # runs kubectl apply or sed over a manifest. The set runs in two halves
 # because each bidder's account on bob's PDS has to exist before the bidder.
+BAO_PATH=${BAO_PATH:-$(command -v bao || true)}
+case "$BAO_PATH" in
+  /*) ;;
+  *) echo "each bidder's OpenBaoServer runs bao: put it on PATH or set BAO_PATH to its absolute path" >&2; exit 1 ;;
+esac
+VAULT_STATE_DIR=${VAULT_STATE_DIR:-$MARKET_NETWORK_DIR/hostprocesses}
+
 SWC=${SOCIALWEB_COMPUTER:-}
 if [ -z "$SWC" ]; then
   SWC=$MARKET_NETWORK_DIR/bin/socialweb-computer
@@ -177,15 +184,12 @@ write_values() {
       echo "  BobPDSPrivateKeyHex: $(q "$bob_key")"
       [ -n "$DISPATCHER_PORT" ] && echo "  DispatcherPort: $DISPATCHER_PORT"
       [ -n "$GUEST_TLS_PORT" ] && echo "  GuestTLSPort: $GUEST_TLS_PORT"
+      echo "  BaoPath: $(q "$BAO_PATH")"
+      echo "  VaultStateDir: $(q "$VAULT_STATE_DIR")"
       echo "  Bidders:"
       for BIDDER_NAME in $BIDDERS; do
-        bidder_key=$(resolve_key "" "$KEY_DIR/$BIDDER_NAME.hex" "$BIDDER_NAME")
-        if [ "$BIDDER_NAME" = "bidder-1" ] && [ -n "${BIDDER_PRIVATE_KEY_HEX:-}" ]; then
-          bidder_key=$BIDDER_PRIVATE_KEY_HEX
-        fi
         echo "    - Name: $(q "$BIDDER_NAME")"
         echo "      Handle: $(q "$BIDDER_NAME.bob.test")"
-        echo "      PrivateKeyHex: $(q "$bidder_key")"
       done
       echo "  Firecracker:"
       echo "    WorkRoot: $(q "$FC_WORK_ROOT")"
@@ -214,12 +218,17 @@ DISPATCHER_PORT=${DISPATCHER_ADDRESS##*:}
 GUEST_TLS_PORT=${DISPATCHER_TLS_ADDRESS##*:}
 echo "dispatcher: $DISPATCHER_ADDRESS  guest TLS front: $DISPATCHER_TLS_ADDRESS"
 
+# Each bidder's own OpenBao comes first: an OpenBaoServer in root:bob, run by
+# the socialweb-computer internal hostprocesses process accept.sh started
+# against this kcp, with client bidder on kv mount bidder.
+apply_set bidder-hostprocesses..bidder-vaults "$MARKET_NETWORK_DIR/apply-report-vaults.json"
+
 # Every bidder signs in to an account of its own on bob's PDS (pdsAccount) and
 # writes its offering, bids and receipts there, so the account has to exist
 # before the bidder starts. The password never enters kcp: it is generated
-# here, kept in a mode 600 vault file under the bidder's state directory (the
-# market network has no OpenBao KV wiring for a DenoPod yet), and the DenoPod names only
-# the file's path. A second run finds the file and signs in with it.
+# here and written into the bidder's own OpenBao, as client bidder, with the
+# client certificate the OpenBaoServer's status names; the DenoPod names only
+# the OpenBaoServer. A second run reads it back and signs in with it.
 BOB_PDS_NAME=pds.default.bob.svc.kcp.local
 BOB_PDS_ADDRESS=$(addr_of bob pds)
 BOB_PDS_PORT=${BOB_PDS_ADDRESS##*:}
@@ -241,30 +250,47 @@ until curl -sS --fail --max-time 5 --cacert "$MARKET_CA" --resolve "$BOB_PDS_NAM
   sleep 1
 done
 
+# bidder_vault <bidder> <GET|POST> <kv path>: one KV v2 request to the bidder's
+# own OpenBao as its client bidder (a POST reads its body from stdin). The
+# address and the file refs come from the OpenBaoServer's status; the token is
+# logged in with the client certificate and revoked after the request.
+bidder_vault() {
+  local name=$1 method=$2 path=$3 refs addr ca cert key certmount role mount token status=0
+  refs=$(KC --server="$S/clusters/root:bob" get openbaoserver "$name" -o json | python3 -c 'import json,sys
+o = json.load(sys.stdin)["status"]
+c = [c for c in o.get("clients") or [] if c["name"] == "bidder"][0]
+strip = lambda r: r[len("file:"):] if r.startswith("file:") else ""
+print(o["address"], strip(o["refs"]["ca"]), strip(c["clientCert"]), strip(c["clientKey"]), c["certAuthMount"], c["certAuthRole"], c["kvMount"])') || return 1
+  read -r addr ca cert key certmount role mount <<<"$refs"
+  bao_curl() { curl -sS --max-time 10 --cacert "$ca" --cert "$cert" --key "$key" "$@"; }
+  token=$(bao_curl --fail --data "{\"name\":\"$role\"}" "$addr/v1/auth/$certmount/login" \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin)["auth"]["client_token"])') || return 1
+  if [ "$method" = GET ]; then
+    bao_curl --header "X-Vault-Token: $token" "$addr/v1/$mount/data/$path" || status=$?
+  else
+    bao_curl --fail --header "X-Vault-Token: $token" --header 'content-type: application/json' --data-binary @- \
+      -o /dev/null "$addr/v1/$mount/data/$path" || status=$?
+  fi
+  bao_curl --header "X-Vault-Token: $token" --request POST -o /dev/null "$addr/v1/auth/token/revoke-self" || true
+  return "$status"
+}
+
 ensure_bidder_account() {
-  local name=$1 handle=$2 dir=$3 vault password out did
-  vault=$dir/identity-vault.json
+  local name=$1 handle=$2 dir=$3 password out did
   mkdir -p "$dir"
   chmod 700 "$dir"
-  password=$(python3 -c 'import json,sys
+  password=$(bidder_vault "$name" GET identity/bidder/keys | python3 -c 'import json,sys
 try:
-    print(json.load(open(sys.argv[1]))["bidder/identity/bidder/keys"]["password"])
+    print(json.load(sys.stdin)["data"]["data"].get("password") or "")
 except Exception:
-    print("")' "$vault")
+    print("")')
   if [ -z "$password" ]; then
     password=$(openssl rand -hex 24)
-    printf '%s' "$password" | python3 -c 'import json,os,sys
-path = sys.argv[1]
-data = {}
-if os.path.exists(path):
-    data = json.load(open(path))
-data["bidder/identity/bidder/keys"] = {"password": sys.stdin.read()}
-tmp = path + ".tmp"
-fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-os.write(fd, (json.dumps(data, indent=2) + "\n").encode())
-os.close(fd)
-os.chmod(tmp, 0o600)
-os.replace(tmp, path)' "$vault"
+    printf '%s' "$password" | python3 -c 'import json,sys; print(json.dumps({"options": {"cas": 0}, "data": {"password": sys.stdin.read()}}))' \
+      | bidder_vault "$name" POST identity/bidder/keys || {
+        echo "could not write $name's account password into its OpenBao" >&2
+        return 1
+      }
   fi
   out=$(printf '%s' "$password" | python3 -c 'import json,sys; print(json.dumps({"handle": sys.argv[1], "email": sys.argv[1] + "@bob.test", "password": sys.stdin.read()}))' "$handle" \
     | bob_pds_post com.atproto.server.createAccount || true)
@@ -287,7 +313,7 @@ except Exception:
     return 1
   fi
   printf '%s\n' "$did" >"$dir/account.did"
-  echo "$name: account $handle on bob's PDS is $did (password in $vault)"
+  echo "$name: account $handle on bob's PDS is $did (password in its OpenBao, OpenBaoServer root:bob/$name)"
 }
 
 for BIDDER_NAME in $BIDDERS; do

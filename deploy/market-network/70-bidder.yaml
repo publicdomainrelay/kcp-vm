@@ -3,19 +3,16 @@ entry: hono-bidder
 stateDir: "{{.StateDir}}/bob-{{.Bidder.Name}}"
 serviceAccount: deno-runner
 tls: trust
-args: ["--atproto-identity-mode", "pdsAccount", "--atproto-handle", "{{.Bidder.Handle}}", "--atproto-pds-url", "https://pds.default.bob.svc.kcp.local", "--identity-vault-file", "{{.StateDir}}/bob-{{.Bidder.Name}}/identity-vault.json", "--serve-port", "0", "--relay-url", "https://relay.default.relay.svc.kcp.local", "--plc-directory-url", "https://plc.default.global.svc.kcp.local", "--ingress-proxy-host", "relay.localhost:{{.DispatcherPort}}", "--policy", "open", "--compute-provider-firecracker", "--compute-provider-firecracker-work-root", "{{.Firecracker.WorkRoot}}", "--compute-provider-firecracker-vmruntime-command", {{.Firecracker.VMRuntimeCommand}}, "--contract-store-dir", "{{.StateDir}}/bob-{{.Bidder.Name}}/contracts", "--guest-tls-port", "{{.GuestTLSPort}}"]
+args: ["--atproto-identity-mode", "pdsAccount", "--atproto-handle", "{{.Bidder.Handle}}", "--atproto-pds-url", "https://pds.default.bob.svc.kcp.local", "--identity-vault-openbao-server", "{{.Bidder.Name}}", "--serve-port", "0", "--relay-url", "https://relay.default.relay.svc.kcp.local", "--plc-directory-url", "https://plc.default.global.svc.kcp.local", "--ingress-proxy-host", "relay.localhost:{{.DispatcherPort}}", "--policy", "open", "--compute-provider-firecracker", "--compute-provider-firecracker-work-root", "{{.Firecracker.WorkRoot}}", "--compute-provider-firecracker-vmruntime-command", {{.Firecracker.VMRuntimeCommand}}, "--contract-store-dir", "{{.StateDir}}/bob-{{.Bidder.Name}}/contracts", "--guest-tls-port", "{{.GuestTLSPort}}"]
 env:
   PORT: "0"
   SERVE_PORT: "0"
-  REPO_PRIVATE_KEY_HEX: "{{.Bidder.PrivateKeyHex}}"
   PDS_STATE_PATH: "{{.StateDir}}/bob-{{.Bidder.Name}}/pds-state"
-  REPO_PRIVATE_KEY_HEX_PATH: "{{.StateDir}}/bob-{{.Bidder.Name}}/repo-private-key.hex"
-  OAUTH_SESSION_PATH: "{{.StateDir}}/bob-{{.Bidder.Name}}/oauth-session.json"
 permissions:
   net: true
   env: true
   sys: true
-  read: ["{{.Firecracker.WorkRoot}}"]
+  read: ["{{.Firecracker.WorkRoot}}", "{{.VaultStateDir}}/openbaoservers/{{.Bidder.Name}}/openbao/tls/ca.crt", "{{.VaultStateDir}}/openbaoservers/{{.Bidder.Name}}/openbao/clients/bidder"]
   write: ["{{.Firecracker.WorkRoot}}"]
   run:
     allow: ["ssh-keygen", "bash", "deno", {{.Firecracker.VMRuntimeExec}}]

@@ -306,6 +306,22 @@ sets:
         files:
           - path: market-network/30-relay-relay.yaml
             template: denopods/service.yaml
+      - name: bidder-hostprocesses
+        workspace: root:bob
+        files:
+          - path: hostprocesses-binding.yaml
+        after:
+          - kind: APIBinding
+            for: Ready
+      - name: bidder-vaults
+        workspace: root:bob
+        files:
+          - path: market-network/65-bidder-openbao.yaml
+            each: Bidders
+            as: Bidder
+        after:
+          - kind: OpenBaoServer
+            for: Ready
       - name: bidders
         workspace: root:bob
         files:

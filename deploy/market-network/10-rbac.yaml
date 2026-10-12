@@ -12,6 +12,9 @@ rules:
   - apiGroups: ["deno.computer"]
     resources: ["denopods"]
     verbs: ["get", "list"]
+  - apiGroups: ["socialweb.computer"]
+    resources: ["openbaoservers"]
+    verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

@@ -31,6 +31,10 @@ var WaitKinds = map[string]WaitKind{
 		Namespaced: true,
 		For:        map[string]string{"Ready": ""},
 	},
+	"OpenBaoServer": {
+		Resource: schema.GroupVersionResource{Group: "socialweb.computer", Version: "v1alpha1", Resource: "openbaoservers"},
+		For:      map[string]string{"Ready": ""},
+	},
 	"DenoPod": {
 		Resource:   schema.GroupVersionResource{Group: "deno.computer", Version: "v1alpha1", Resource: "denopods"},
 		Namespaced: true,
@@ -67,6 +71,8 @@ func (w Wait) Met(u *unstructured.Unstructured) (bool, string) {
 	case "APIExport/IdentityValid":
 		return conditionTrue(u, "IdentityValid"), ""
 	case "APIBinding/Ready":
+		return conditionTrue(u, "Ready"), ""
+	case "OpenBaoServer/Ready":
 		return conditionTrue(u, "Ready"), ""
 	case "OpenBao/Ready":
 		ready, _, _ := unstructured.NestedBool(u.Object, "status", "ready")

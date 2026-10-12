@@ -158,8 +158,13 @@ export default {
     },
     "identity-vault-kcp-server": {
       type: "string" as const,
-      description: "kcp server holding the OpenBaoServer object (a /clusters/<workspace> URL, or a base URL with identity-vault-kcp-workspace)",
-      env: "IDENTITY_VAULT_KCP_SERVER",
+      description: "kcp server holding the OpenBaoServer object (a /clusters/<workspace> URL, or a base URL with identity-vault-kcp-workspace); a DenoPod's own KCP_SERVER",
+      env: "KCP_SERVER",
+    },
+    "identity-vault-kcp-token": {
+      type: "string" as const,
+      description: "Bearer token for that kcp server; a DenoPod's own service account token",
+      env: "KCP_TOKEN",
     },
     "identity-vault-kcp-workspace": {
       type: "string" as const,

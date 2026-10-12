@@ -54,6 +54,7 @@ const vaultServer = o.identityVaultOpenbaoServer
       server: o.identityVaultKcpServer as string,
       workspace: o.identityVaultKcpWorkspace as string | undefined,
       tokenFile: o.identityVaultKcpTokenFile as string | undefined,
+      token: o.identityVaultKcpToken as string | undefined,
       caCertFile: o.identityVaultKcpCaCertFile as string | undefined,
     },
   }

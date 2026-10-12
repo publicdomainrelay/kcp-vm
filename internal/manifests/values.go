@@ -31,13 +31,14 @@ type MarketNetwork struct {
 	Bidders             []Bidder `json:",omitempty"`
 	DispatcherPort      int      `json:",omitempty"`
 	GuestTLSPort        int      `json:",omitempty"`
+	BaoPath             string   `json:",omitempty"`
+	VaultStateDir       string   `json:",omitempty"`
 	Firecracker         Firecracker
 }
 
 type Bidder struct {
-	Name          string `json:",omitempty"`
-	Handle        string `json:",omitempty"`
-	PrivateKeyHex string `json:",omitempty"`
+	Name   string `json:",omitempty"`
+	Handle string `json:",omitempty"`
 }
 
 type Firecracker struct {
