@@ -224,7 +224,10 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
   });
 
   const publicVouchResolver: VouchResolver = createTangledGraphVouchResolver({
-    listRecords: (repo, coll) => listRecordsPublic(idResolver, repo, coll),
+    listRecords: async (repo, coll) =>
+      repo === atproto.did
+        ? ((await atproto.listRecords(repo, coll, { limit: 100 }))?.records as Array<{ uri: string; value: Record<string, unknown> }>) ?? []
+        : listRecordsPublic(idResolver, repo, coll),
     log: (level, msg, meta) => logger[level as "info" | "warn"]?.(msg, meta),
   });
 
@@ -378,7 +381,7 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
 
   async function beginServe(): Promise<void> {
     await loadContracts();
-    const recordResolver = createRecordResolver(idResolver);
+    const recordResolver = createRecordResolver(idResolver, atproto);
 
     // Policy engine: registry (record $type -> executor), evaluator, and the
     // bidder's own scope gate. The scope gate is the hot-path engagement check:

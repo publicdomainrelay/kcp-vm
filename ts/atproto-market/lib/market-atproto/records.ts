@@ -158,10 +158,20 @@ export function startOfferingRefresh(opts: {
   return { stop: () => clearInterval(timer) };
 }
 
-export function createRecordResolver(idResolver: IdResolver): RecordResolver {
+export interface OwnRepo {
+  did: string;
+  getRecord(did: string, collection: string, rkey: string): Promise<{ uri: string; cid: string; value: Record<string, unknown> } | null>;
+}
+
+export function createRecordResolver(idResolver: IdResolver, own?: OwnRepo): RecordResolver {
   return {
     async resolve<T>(ref: RecordRef): Promise<Resolved<T>> {
       const { repo, collection, rkey } = parseAtUri(ref.uri);
+      if (own && repo === own.did) {
+        const rec = await own.getRecord(repo, collection, rkey);
+        if (!rec) throw new Error(`getRecord failed: ${ref.uri} is not in the own repo`);
+        return { ...rec.value, _uri: rec.uri, _cid: rec.cid || ref.cid } as Resolved<T>;
+      }
       const doc = await idResolver.did.resolve(repo);
       if (!doc) throw new Error(`could not resolve did ${repo}`);
       const pds = getPdsEndpoint(doc);
