@@ -9,7 +9,13 @@ revised: >
   core USER unit and die with it (control-group); explicit deno permissions in the service template, no -A;
   kcp on either route (0006 M0-KCP-SPIKE), so dependencies name 0006:M2-KCP-PORT0 (was M1-KCP-PORT0) and
   M2-DENOKCP-INPROC no longer depends on 0006:M1-KCP-INPROC; kill -9-only restart tests widened to
-  `systemctl --user restart` and an upgrade; test-bed units get their own prefix.
+  `systemctl --user restart` and an upgrade; test-bed units get their own prefix. 2026-10-12, from
+  user-decisions.md (the kcp line of 2026-10-12) and 0006's M0-KCP-SPIKE: the kcp route is out of process
+  (blue/green slot units of the unpatched release kcp behind our own front; 0006 M2-KCP-SLOTS), so
+  M2-DENOKCP-FORK depends on 0006:M0-KCP-SPIKE and 0006:M0-XOS-GATE instead of 0006:M1-K8S-FORK (closed,
+  route not chosen) and builds on k8s.io v0.36.4; every kcp client config is the front URL with the
+  shard-admin context; M3-DOOR-DENOPOD's test no longer reads a state dir the container wrote (fresh
+  deploy, decided by the user 2026-10-12). The dev/test run mode (dev-run-mode.md) is folded separately.
 queued: >
   OPEN. The plan 0005 gate is satisfied: plan 0005 is complete with all 40 items done and its acceptance
   checks ACC-ZERO, ACC-MESH and ACC-NOSSH done with evidence (verified 2026-10-12). Only each item's own
@@ -27,7 +33,8 @@ state_rules:
     then pass, hat-8 or prod readings with UTC timestamps).
   - Open items are mirrored in NEXT.yaml (P8-*).
   - A decision marked "decided by Claude, user may veto" was not confirmed by the user; one marked
-    "decided by the user 2026-10-07" or "decided by the user 2026-10-11" was.
+    "decided by the user 2026-10-07", "decided by the user 2026-10-11" or "decided by the user 2026-10-12"
+    was.
   - >
     RFP flow is the spine (org-root CLAUDE.md). The market bed's guests come up only through `run bidder`
     and the requester's RFP, bid, accept and cloud-init user_data; no item boots a guest any other way.
@@ -139,16 +146,18 @@ items:
   - id: M2-DENOKCP-FORK
     milestone: M2
     title: Fork deno-kcp and kcp-libs into this repo and own them
-    depends_on: ["0006:M1-K8S-FORK"]
+    depends_on: ["0006:M0-KCP-SPIKE", "0006:M0-XOS-GATE"]
     decision: >
       Decided by the user 2026-10-07: fork/vendor the deno-kcp provider into this repo and own the copy.
       Decided by Claude, user may veto: deno-kcp's api, internal/provider, internal/denopod, denojob,
       denorun and the rest it needs, and the kcp-libs packages they import, are copied into
       internal/denokcp/... and internal/kcplibs/... with import paths rewritten, the carried
       kcp-libs-no-default-issuer.patch applied as an ordinary commit, and deploy/denokcp/vendor.json
-      recording the upstream commits they started from. They build with the rest of the module: on kcp's
-      Kubernetes fork on the in-process kcp route, on today's k8s.io v0.36.4 on the out-of-process route
-      (0006 M0-KCP-SPIKE; 0006:M1-K8S-FORK is closed as not chosen in that case). The CRDs (DenoPod,
+      recording the upstream commits they started from. They build with the rest of the module on today's
+      k8s.io v0.36.4: the kcp route is out of process (decided by the user 2026-10-12, 0006 M0-KCP-SPIKE), so
+      0006:M1-K8S-FORK is closed as not chosen and this item needs only the route record and the cross-OS
+      gate (0006:M0-XOS-GATE) its build-tagged runner must keep green (M0-KCP-SPIKE also measured deno-kcp
+      25d10f92 and kcp-libs f6911d2 green on the fork, so either module graph builds). The CRDs (DenoPod,
       OpenBao, ...) keep their group deno.computer so existing manifests and the test bed apply unchanged.
       Upstream is no longer followed automatically; a later upstream change is pulled by a recorded
       cherry-pick. Cross-OS seam (decided by the user 2026-10-11): kcp-libs impl/execrunner's process
@@ -173,7 +182,8 @@ items:
       internal/stack/denoruntime runs the provider in-process with: deno-bin the extracted deno, runs-dir
       <state>/denokcp/runs, the runner timeout NEGATIVE (disabled; services are long-running and a
       DenoPod that wants a limit sets activeDeadlineSeconds), and the kcp client config internal/kcpserver
-      hands back on either kcp route. Upgrade semantics (decided by the user 2026-10-07: the core binary and
+      hands back (the kcp front URL with the shard-admin context, 0006 M2-KCP-SLOTS; never the per-start
+      kcp-admin token, so a kcp slot roll does not invalidate it). Upgrade semantics (decided by the user 2026-10-07: the core binary and
       its deno processes are upgradable while VMs keep running; decided by the user 2026-10-11: the core runs
       as a user unit of a lingering account): deno processes are plain children in the core unit's cgroup
       and die with it on any stop, restart or crash of the core (default KillMode=control-group; linux-proofs
@@ -230,8 +240,12 @@ items:
       --allow-run it needs is named with its reason). A door restart (upgrade) must not cost a node; what the
       door must re-populate after one is plan 0007 M6-GATEWAY-REPOPULATE.
     files: ["internal/stack/gatewaykcp", "deploy/denopods/door.values.yaml", "deploy/sets.yaml"]
-    test_first: "Behind livegate: TestTheDoorDenoPodServesApiConfigAndReadsTheSameClaims; red while the door is a child process."
-    done_when: "on hat-8 the door DenoPod serves /api/config and lists the same claims."
+    test_first: >
+      Behind livegate, on a FRESH state dir (no container-era state is ever opened; fresh deploy, decided by
+      the user 2026-10-12): TestTheDoorDenoPodServesApiConfigAndKeepsItsClaimsAcrossACoreRestart (claims the
+      door DenoPod wrote before `systemctl --user restart` of the gateway unit are listed by the restarted
+      door DenoPod, unchanged); red while the door is a child process.
+    done_when: "on hat-8 the door DenoPod serves /api/config on a fresh state dir and lists, after a core restart, the claims it wrote before it."
     risks: ["The door's per-process secrets server for guests in flight (plan 0005 M3-NODE-LOSS) is made durable by plan 0007 M6-CLAIM-RESUME (split from M6-GATEWAY-REPOPULATE 2026-10-12); until then a door restart still fails Bidding/Provisioning claims."]
     status: todo
     evidence: []
@@ -240,7 +254,7 @@ items:
     title: socialweb-computer run gateway ssh
     depends_on: [M2-SERVICE-TEMPLATE, "0006:M2-KCP-PORT0"]
     decision: >
-      kcp on port 0 (either route, 0006:M2-KCP-PORT0) under <state-dir>/kcp, the owned deno-kcp provider, one DenoPod running
+      kcp on port 0 (0006 slot shape behind a port-0 front, 0006:M2-KCP-PORT0) under <state-dir>/kcp, the owned deno-kcp provider, one DenoPod running
       hono-socialweb-computer-ssh/mod.ts with its cli-args-env options passed through; its json-file-store
       state under <state-dir>/ssh-door so a DenoPod recreate keeps it. Decided by Claude, user may veto.
     files: ["internal/stack/gatewayssh", "deploy/denopods/ssh-door.values.yaml"]
@@ -258,7 +272,7 @@ items:
       (socialweb.computer/v1alpha1, export computecontracts, apigen) with spec {vm request, bidder
       allow/deny lists, policy refs, keepUntil} and status.contract = the same ContractState fields
       NodeClaim.status.contract carries (plan 0005 M2-CODEGEN), so the requester core writes one shape for
-      both. `run request` starts a kcp on port 0 (either route) under ~/.local/state/socialweb-computer and a
+      both. `run request` starts a kcp on port 0 (0006:M2-KCP-PORT0) under ~/.local/state/socialweb-computer and a
       DenoPod (or, for a one-shot, a deno child) running a thin CLI hono-compute-request in atproto-market
       (CLAUDE.md CLI layer) over compute-request-xrpc requestCompute, awaitComputeNetwork and
       releaseCompute; every handler awaits a status write (the M2-CLAIM-RECEIPT pattern). Subcommands:
@@ -279,8 +293,8 @@ items:
     title: The market test bed driven by socialweb-computer instead of accept.sh and apply.sh
     depends_on: [M2-SERVICE-TEMPLATE, "0006:M2-APPLY", "0006:M2-KCP-PORT0"]
     decision: >
-      `socialweb-computer testbed up|accept|down`: kcp on port 0 on either route (the bed's kine is no longer
-      needed), an OpenBaoServer object for the bed's dev vault, the denoruntime and market-testbed sets, the
+      `socialweb-computer testbed up|accept|down`: kcp on port 0 (0006:M2-KCP-PORT0; its store and process
+      placement follow the dev run mode once dev-run-mode.md is folded), an OpenBaoServer object for the bed's dev vault, the denoruntime and market-testbed sets, the
       same checks as accept.sh run 9. The bed's bidder is `run bidder` (0007 M5-RUN-BIDDER) and its guests
       come up only through the requester's RFP, bid, accept and cloud-init. Decided by Claude, user may veto
       (2026-10-11): every unit a bed starts is named socialweb-bed-<runid>-... so no production prefix

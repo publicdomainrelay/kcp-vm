@@ -537,15 +537,29 @@ by handle). Long-lived children are transient SERVICES (never scopes) started ov
 (`socialweb-bao-root`, `socialweb-bao-<hid>`), each cluster's postgres (`socialweb-pg-<key>`) and its
 member units in `socialweb-cluster-<key>.slice` (kine and bao `After=` and `Wants=` the postgres unit, not
 `Requires=`; user 2026-10-12), and
-kcp (`socialweb-kcp`) if plan 0006's spike chooses the out-of-process route. Postgres and OpenBaoServer
+kcp as alternating blue/green slot units (`socialweb-kcp-<owner>-a|b`) of the unpatched release kcp
+v0.33.0 asset, each on its own kine over a dedicated postgres unit on a unix socket
+(`socialweb-kcp-<owner>-pg`, started by the core before kcp, not a CRD object), behind our own L4 front
+(`socialweb-kcp-<owner>-front`, 127.0.0.1:6443 on the gateway; user 2026-10-12, after plan 0006's
+M0-KCP-SPIKE, `docs/research/2026-10-11-vm-lifecycle/kcp-spike.md`). Postgres and OpenBaoServer
 stay CRDs (user). Deno processes stay plain children of the core unit and die with it. The core unit
 uses the default `KillMode=control-group`; transient units are separate cgroups, so no KillMode reaches
 them (proved: a unit survives restart, kill -9 and stop of its starter). Only cpu, memory and pids
 delegation is relied on (user); `AllowedCPUs` and `IOWeight` are not enforced in a user manager and are
 not used; VM units set `MemorySwapMax=0` with `MemoryMax` (otherwise the guest swaps) and live in their
 own slice, outside the `app.slice` Fedora's systemd-oomd watches. Minimum systemd 253 with each property
-probed by `check-host` (user); linger and, for bidders, the kvm group are set by a one-time root
-`install` step before the user manager first starts.
+probed by `check-host` (user).
+
+**One explicit root step (user, 2026-10-12).** Production setup is `socialweb-computer install
+bidder|gateway`, idempotent, with `uninstall`: it creates the account (never created on demand anywhere
+else), for bidders one subuid/subgid range and kvm membership, the `user@` cpu delegation drop-in, the
+AppArmor profile for the embedded pasta where AppArmor restricts user namespaces, the gateway's
+`/etc/rancher/node/password`, the content-addressed binary, `socialweb.slice` and the core unit file, then
+linger (after the group and the drop-in, so the user manager starts with them). Every other unit (kcp
+pg/kine/slots/front, the vaults, cluster slices and members, VM units) is a transient unit the core
+creates at runtime and adopts by name. systemd is for production installs only; a systemd-free dev/test
+run mode is designed separately (`docs/research/2026-10-11-vm-lifecycle/dev-run-mode.md`). Plan 0006
+M1-INSTALL enumerates both lists.
 
 **Adoption is a tri-state verdict (user).** A restarted core adopts units by name, never re-creates them.
 Identity is read from systemd and the kernel (unit, InvocationID, VMM pid and start ticks through a pidfd,
@@ -556,16 +570,27 @@ boot id is Lost. A definite mismatch on an active unit is Lost and the unit is s
 **Guest side (user).** Every guest gets the identical address plan inside its own pasta namespace and
 dials a constant host address, so there is no network-index allocator and user_data is final at
 create. Guest images (kernel + rootfs) are built in CI per hypervisor and arch, pinned by sha256 and
-fetched; bidders need no root, chroot, apt or Go toolchain. The guest console goes to a capped file in
+fetched; bidders need no root, chroot, apt or Go toolchain. The seed is a separate pure-Go NoCloud cidata
+drive, the rootfs is copied as-is and the guest grows its own root, so no host runs debugfs, e2fsck or
+resize2fs (user 2026-10-12). Guest SSH host keys are generated in the guest and reported by it, with proof
+of possession, in a bidder-signed `vm.hostKeys` record replicating `vm.onNetwork`; every ssh to a guest
+verifies them with `StrictHostKeyChecking=yes`, and no host scans a guest (user 2026-10-12; plan 0007
+M4-HOST-KEYS). The guest console goes to a capped file in
 the VM's work dir and is deleted with it; tenant data never enters the host journal. Stop is graceful
 first: `SendCtrlAltDel` over the API socket, a grace window measured live through the RFP flow, then
 `KillSignal=SIGKILL` (firecracker, PID 1 of pasta's PID namespace, ignores SIGTERM); arm64 goes straight
 to SIGKILL. The bidder's deno runs with an explicit permission list, no `-A`, `/dev/kvm` and the user bus
 denied, which is the only boundary between it and the user manager it shares a uid with.
 
-**Stated limits.** One shared bidder account means a VMM escape reaches every handle's keys on that host
-(isolation between handles is by name and path only). Restarting `user@<uid>`, removing linger or
-`loginctl terminate-user` stops every unit and is treated as a reboot.
+**VM isolation without on-demand accounts (user, 2026-10-12).** The bidder account is shared by every
+handle, but each VM unit runs pasta and firecracker in its own user namespace mapped to a distinct 65536-id
+sub-range of the account's reserved subuid/subgid range (the rootless-podman pattern through `newuidmap`),
+with access to exactly its own work files by ACL, so a VMM escape lands in an unprivileged uid that owns no
+bidder file (plan 0007 M2-VM-RUNTIME).
+
+**Stated limits.** Handles on one bidder host still share a uid for their cores and deno processes;
+deno's permission sandbox is the boundary between a bidder's deno and its user manager. Restarting
+`user@<uid>`, removing linger or `loginctl terminate-user` stops every unit and is treated as a reboot.
 
 **Control-plane continuity across upgrades (user, 2026-10-12).** There is no cutover: the finished binary
 is deployed fresh and the container path is deleted (plan 0006 M5-FRESH-DEPLOY, M5-RETIRE); no
@@ -579,7 +604,14 @@ lease never has two holders; a cluster link keeps its iroh key across restarts (
 restarted door resumes Bidding and Provisioning claims from a per-claim secrets-server key in the cluster
 OpenBao (plan 0007 M6-CLAIM-RESUME); and NODE-LOSS counts only time when our own path was up (plan 0007
 M3-NODE-LOSS-CLOCK). Design and measurements: `docs/research/2026-10-11-vm-lifecycle/control-plane-handover.md`.
-kcp upgrades follow the same front pattern through caddy; research pending.
+kcp upgrades follow the same pattern behind our own front, not caddy (user 2026-10-12): slots run
+`--enable-leader-election` and `--shard-base-url` = the front, a new slot gets the five shared root files
+and starts beside the old on the same kine -> postgres store, the front flips after `/readyz` on the new
+slot's own port, the old slot exits, and the Lease `kube-system/kcp-controllers` is deleted so the new
+slot leads at once (61 s gap without it, measured); a pg_dump precedes every roll, and kcp release pairs
+whose storage versions or bootstrap schemas differ take a planned short outage instead (plan 0006
+M2-KCP-SLOTS, M3-KCP-ROLL; `kcp-blue-green.md`). caddy stays public TLS only, is never reconfigured by a
+swap, and any caddy config we render pins `install_trust false`.
 
 ## 6. CRDs and the API surface
 
@@ -3307,10 +3339,10 @@ each milestone's instrument. ESO-4 closed the same day with M4-ESO-BESIDE and is
 its readings. Also on 2026-10-07 three plans were QUEUED behind plan 0005, and none of them starts
 until plan 0005 is complete and its acceptance checks ACC-ZERO, ACC-MESH and ACC-NOSSH pass on prod:
 plan 0006 (`docs/plans/0006-socialweb-computer-unified-binary.yaml`, P6-M0 through P6-M5) makes one Go
-binary, `socialweb-computer`, the entrypoint of the whole stack, with kcp either linked in-process on
-kcp's Kubernetes fork or run as a patched release binary in its own unit (revised 2026-10-11: the user
-decides after the M0 spike measures both; on either route kcp and its embedded etcd bind port 0 and
-report the bound ports),
+binary, `socialweb-computer`, the entrypoint of the whole stack, with kcp run out of process as
+blue/green slot units of the unpatched release binary on kine -> postgres behind our own front, every
+slot on port 0 with the bound port read from its listening socket (decided by the user 2026-10-12 after
+the M0 spike measured both the in-process fork and this route),
 every manifest in an embed.FS it templates and server-side applies from Go, no container at runtime
 (postgres and the OpenBao servers embedded and driven by CRDs, long-lived children in their own systemd
 units so an upgrade of the binary leaves them running), so `serve gateway kcp` on the host replaces

@@ -19,7 +19,17 @@ revised: >
   restarted door resumes Bidding and Provisioning claims, decided by the user 2026-10-12). 2026-10-12, the
   user's decision of a bidder-authored termination event (user-decisions.md, 2026-10-12 line): new
   M4-TERMINATION-EVENT; ownership.not_owned and ACC7-NO-PROTOCOL-CHANGE now allow exactly one protocol
-  addition, com.publicdomainrelay.temp.compute.events.vm.terminated.
+  addition, com.publicdomainrelay.temp.compute.events.vm.terminated. 2026-10-12 (second fold), the user's
+  answers to this plan's questions (user-decisions.md, 2026-10-12 lines): per-VM subuid user namespaces
+  replace the shared-account blast-radius limit (M2-VM-RUNTIME, with the range reserved by
+  0006:M1-INSTALL); the seed is a separate pure-Go NoCloud cidata drive and the guest grows its own root
+  (M2-VM-RUNTIME, M1-GUEST-IMAGE; no debugfs/e2fsck/resize2fs on hosts); guest SSH host keys are
+  guest-reported through a new record replicating onNetwork and verified by the requester and the gateway
+  with StrictHostKeyChecking yes (new M4-HOST-KEYS, taking the host-key parts of M4-ONNETWORK and
+  M2-BACKPORT; a second protocol addition). M1-API no longer depends on 0006:M1-K8S-FORK (closed, route not
+  chosen). Orphan receipts (user 2026-10-12): adopted first with a usage check through a new claim phase
+  Adopting (M6-GATEWAY-REPOPULATE). M4-TERMINATION-EVENT's live reading recorded (still doing for the Go
+  side). Answered questions removed; none is left open.
 queued: >
   OPEN. The plan 0005 gate is satisfied: plan 0005 is complete with all 40 items done and its acceptance
   checks ACC-ZERO, ACC-MESH and ACC-NOSSH done with evidence (verified 2026-10-12). Only each item's own
@@ -66,9 +76,12 @@ ownership:
   not_owned: >
     The market protocol records and lexicons. This plan changes no existing record, NSID or wire shape: the
     bid config, receipt, onNetwork and vm.delete records stay what the firecracker provider writes. The only
-    protocol addition is the record com.publicdomainrelay.temp.compute.events.vm.terminated (decided by the
-    user 2026-10-12, M4-TERMINATION-EVENT), bidder-authored and carried in the existing market.event
-    envelope. kcp objects introduced here are local state of one host and are never published.
+    protocol additions are two bidder-authored records carried in the existing market.event envelope:
+    com.publicdomainrelay.temp.compute.events.vm.terminated (decided by the user 2026-10-12,
+    M4-TERMINATION-EVENT) and com.publicdomainrelay.temp.compute.events.vm.hostKeys (decided by the user
+    2026-10-12: guest-reported SSH host keys replicating onNetwork; the separate NSID rather than new
+    onNetwork fields decided by Claude, user may veto; M4-HOST-KEYS). kcp objects introduced here are local
+    state of one host and are never published.
 research:
   measured_on: "2026-10-07; hono-compute-provider c06b2ad, atproto-market 117ab30, deno-kcp 25d10f92, kcp-libs f6911d2, this repo 13349d6. Lifecycle research and proofs 2026-10-09..11 against f0460fd and hono-compute-provider 4d7da59, see vm_lifecycle_2026_10_11"
   compute_provider_abc: "hono-compute-provider lib/abc/compute-provider/mod.ts:39-55 ComputeProvider {name, provision, destroy, createBidConfig, injectAcceptBundle, getDroplet?, setup?, teardown?} (OS-free; no TypeScript seam needed for other host OSes)"
@@ -125,7 +138,12 @@ items:
       active unit = Lost + StopUnit immediately and an unreachable bus or socket = Unknown, never Lost;
       graceful stop (SendCtrlAltDel, grace, then SIGKILL); identical guest network per guest; CI-built
       images; console to a capped file in the work dir, never the host journal; explicit deno permissions
-      for the bidder; and the shared-account limit (isolation between handles is by name and path only).
+      for the bidder. Decided by the user 2026-10-12, also recorded: per-VM subuid user namespaces (each VM
+      unit's pasta and firecracker run in their own user namespace mapped to a distinct sub-range of the
+      account's reserved subuid/subgid range, so a VMM escape lands in an unprivileged uid that owns no
+      bidder file; Unix accounts are never created on demand); the seed is a separate cidata drive and the
+      guest grows its own root; guest SSH host keys are guest-reported and verified, never scanned from the
+      host (M4-HOST-KEYS).
     files: ["docs/ARCHITECTURE.md (section 5 subsection 'Host processes and the VM lifecycle')"]
     test_first: "None (decision record)."
     done_when: "ARCHITECTURE subsection committed with these citations."
@@ -152,7 +170,9 @@ items:
       user may veto), each a requirement that changes with no container: the host address a guest dials
       (constant pasta gateway, not the runner container's gateway), console capture (capped file), graceful
       stop, image provenance (CI-built, not host-built), seed transport (a drive, not debugfs), the guest
-      host keys (guest-reported, not a host-side scan in the guest's namespace), and a boot timeout with no
+      host keys (guest-reported, not a host-side scan in the guest's namespace: today oidc-issuer-hono
+      getPublicKeyFromSshd, mod.ts:446-483, runs ssh-keyscan through `container exec` for provisioningValidate,
+      :520-544; M4-HOST-KEYS), and a boot timeout with no
       result.json (no resident writer: Running is read from firecracker GET /). Added 2026-10-12: the two E8
       live defects of today's provider (a VMM that exits is not noticed; destroyed guests' work dirs are never
       removed) are recorded as requirements the Go side must NOT inherit, with M2-VM-RUNTIME's and
@@ -169,7 +189,7 @@ items:
   - id: M1-API
     milestone: M1
     title: ComputeVM in api/v1alpha1 with an OS-neutral status, generated schema, export, workspace type and TypeScript wire types
-    depends_on: [M1-DECIDE, "0006:M1-K8S-FORK"]
+    depends_on: [M1-DECIDE, "0005:M2-CODEGEN", "0006:M2-MANIFESTS"]
     decision: >
       Go types are the source of truth (plan 0005 M2-CODEGEN). ComputeVM spec: vm {cpus, mem, disk, role},
       owner {handle} (shared account, decided by the user 2026-10-11: the controller and GC namespace by
@@ -184,11 +204,14 @@ items:
       hypervisor}, runtime {backend (free string, no enum), ref, instance, pid, startTime (opaque string),
       hostBootID, vmmID}, workDir, bootedAt, message, conditions (Prepared, Started, RuntimeObserved
       True|False|Unknown, GuestReported) - Unknown is a CONDITION, the phase stays what it was; the provider
-      owns market {onNetworkUri, address, hostKeys[], reportedAt}. Finalizer computevm.socialweb.computer/release;
+      owns market {onNetworkUri, address, hostKeys[] {type, publicKey, fingerprint}, hostKeysUri,
+      reportedAt} (host keys from the guest's own report, M4-HOST-KEYS). Finalizer computevm.socialweb.computer/release;
       printer columns phase, guestIP, requester, age. Export computevms; WorkspaceType bidder binds
       denoruntime, computevms and hostprocesses (for the bidder's OpenBaoServer). apigen's second TypeScript
       target writes hono-compute-provider/lib/common/compute-provider-kcp-common/mod.ts, drift-checked when
-      the sibling is present.
+      the sibling is present. Dependencies (repointed 2026-10-12 from 0006:M1-K8S-FORK, closed as route not
+      chosen): the schema, export and TS wire types come from the existing apigen pipeline (0005:M2-CODEGEN,
+      done) on today's k8s.io v0.36.4; the bidder set lives in deploy/sets.yaml (0006:M2-MANIFESTS).
     files: ["api/v1alpha1/computevm_types.go", "api/v1alpha1/resources.go", "internal/apigen", "deploy/*computevm*.yaml, deploy/workspacetype-bidder.yaml", "deploy/sets.yaml (bidder)", "hono-compute-provider/lib/common/compute-provider-kcp-common/"]
     test_first: "TestComputeVMRoundTripsThroughTheSharedFixtures (Go and the generated TS validator), TestTheComputeVMSchemaIsRevisionLocked, TestTheComputeVMSchemaHasNoBackendEnumAndNoNetworkIndex; red first."
     done_when: "check.sh --fast green with apigen no drift; both fixture suites green."
@@ -222,9 +245,13 @@ items:
       arch, pinned by sha256, shipped as assets; bidders need no root, chroot, apt or go toolchain. Decided by
       Claude, user may veto: targets firecracker-x86_64 and firecracker-aarch64 here (hyperv-x86_64 is plan
       0011, vz-arm64 plan 0012). Each image = a kernel with a pinned config (virtio-mmio; i8042 + atkbd on
-      x86_64 so SendCtrlAltDel reaches the guest), a raw ext4 rootfs with cloud-init (NoCloud datasource,
-      resize_rootfs/growpart enabled so the guest grows its own fs to the disk size the controller truncates
-      to), the guest init socialweb-nodeinit (a guest binary, built here, not a host asset), the preinstall
+      x86_64 so SendCtrlAltDel reaches the guest), a raw ext4 rootfs with cloud-init (NoCloud datasource read
+      from the separate cidata drive the controller attaches, and resize_rootfs/growpart enabled so the guest
+      grows its own root to the disk size the controller truncates the copy to - decided by the user
+      2026-10-12: the rootfs is copied as-is and debugfs/e2fsck/resize2fs leave the hosts), NO SSH host key
+      baked in (cloud-init's ssh module generates fresh keys on each guest's first boot, ssh_deletekeys on,
+      so every guest's keys are its own and are what M4-HOST-KEYS reports), the guest init socialweb-nodeinit
+      (a guest binary, built here, not a host asset), the preinstall
       manifest of M1-FC-INVENTORY baked in, and a manifest {hypervisor, arch, kernel sha256, rootfs sha256,
       inputs}. cmd/socialweb-nodeimage moves to the build pipeline (scripts/build-guest-image.sh, run by CI;
       a `dev`-tag verb remains for local builds); the host's /boot kernel stops being an input, so every
@@ -236,7 +263,8 @@ items:
     test_first: >
       internal/guestimage TestAnImageWhoseShaDiffersIsRefused and TestAnImageIsFetchedOnceAndReusedByHash;
       build-pipeline TestTheGuestKernelConfigHasTheGracefulStopAndVirtioMmioDrivers (reads the pinned
-      config); red first.
+      config) and TestTheRootfsCarriesNoSshHostKeyAndEnablesGrowpart (reads the built image's file list and
+      cloud.cfg); red first.
     done_when: "both images built by CI twice with equal sha256; pins recorded; a bidder host fetches and verifies them with no root."
     risks:
       - "A raw ext4 rootfs with no partition table must grow through cloud-init's resizefs on /dev/vda; unproven, measured in the first M6 run (df inside the guest reported through onNetwork or the guest's own log), with a partitioned image as the fallback."
@@ -260,12 +288,37 @@ items:
       Verdict, LostReason; ForHost() picks the backend compiled for GOOS) with firecracker_linux.go composing
       hostsvc, internal/guestnet (pasta_linux.go), internal/guestdisk (clone_linux.go FICLONE with copy
       fallback, truncate, seed.go pure-Go NoCloud cidata drive) and internal/fcapi (firecracker client over
-      the unix socket + config writer), plus unsupported_other.go. Prep is one-shot in the controller: clone
+      the unix socket + config writer), plus unsupported_other.go. Seed, decided by the user 2026-10-12: a
+      SEPARATE pure-Go NoCloud cidata drive (vfat or iso9660 labelled cidata, written without any host tool);
+      the rootfs is copied as-is (reflink clone) and only truncated to the contract's disk; the guest grows
+      its own root (M1-GUEST-IMAGE); debugfs, e2fsck and resize2fs are not run on, or needed by, any host.
+      Prep is one-shot in the controller: clone
       the rootfs, truncate to the contract's disk, write cidata.img (user-data, meta-data), fc.json
       (boot-source, drives rootfs + cidata, machine-config, network-interfaces host_dev_name fctap0 + MAC),
       params.json; the work dir is <state>/handles/<hid>/vms/<name> (0700, one uid); the API socket is
-      $XDG_RUNTIME_DIR/swvm/<short-id>.sock (< 108 bytes, unlinked before start). Unit
-      socialweb-vm-<hid>-<name>.service (hid = first 10 hex of sha256(handle)): ExecStart =
+      $XDG_RUNTIME_DIR/swvm/<short-id>.sock (< 108 bytes, unlinked before start). Per-VM user namespace,
+      decided by the user 2026-10-12 (replaces the shared-account blast-radius limit): `install bidder`
+      (0006:M1-INSTALL) reserves ONE subuid AND subgid range for the shared account (65536 ids x 256 slots);
+      each VM unit runs pasta and firecracker in its own user namespace mapped to its own 65536-id sub-range
+      (inside 0..65535 -> host base + k*65536 ..), the rootless-podman pattern through the distro's setuid
+      newuidmap/newgidmap, so a VMM escape lands in an unprivileged host uid that owns nothing. Decided by
+      Claude, user may veto: the slot k is the lowest index not named by any loaded socialweb-vm-* unit of
+      the ACCOUNT (every handle shares the range), chosen under an flock on <state>/vmslots.lock held until
+      StartTransientUnit returns (two handles' controllers never pick the same slot), and carried in the
+      unit's argv, so adoption reads it back from the unit and no counter is persisted. The VMM's host uid
+      gets access to exactly its own work files by POSIX ACL entries the controller sets in prep (an owner
+      may name any uid in an ACL; no chown, no privilege): rw on rootfs.ext4, r on cidata.img and fc.json, x
+      on the path to the work dir and the API socket dir (incl. $XDG_RUNTIME_DIR), rwx on its socket dir;
+      nothing else under the account's home, state dir, vault or another VM's dir names a slot uid. The
+      supplementary kvm group is retained across the userns entry (no setgroups call), so /dev/kvm opens by
+      group. The first stage of ExecStart is a one-shot that creates the user namespace, has the maps written
+      by newuidmap/newgidmap and execve's pasta inside it, leaving no process behind (the util-linux
+      `unshare --map-users` pattern: a short-lived helper child writes the maps and exits);
+      unshare(CLONE_NEWUSER) refuses a multi-threaded caller, so which binary runs that stage - a
+      single-threaded entry of socialweb-vmexec built for it, or the host's util-linux unshare >= 2.38 as a
+      stated host prerequisite beside newuidmap - is measured in this item and recorded. Unit
+      socialweb-vm-<hid>-<name>.service (hid = first 10 hex of sha256(handle)): ExecStart = <userns stage,
+      slot k> --
       runtime/<pasta-sha>/pasta --config-net (the identical address plan; host address = pasta's mapped
       gateway, constant) -- /bin/sh -c 'exec "$0" "$1"' runtime/<vmexec-sha>/socialweb-vmexec params.json (the
       trampoline SELinux requires); socialweb-vmexec (new tiny asset, cmd/socialweb-vmexec) creates the
@@ -299,14 +352,23 @@ items:
       Stop and Cleanup remove the work dir (rootfs clone, cidata, console and vmm logs) and the API socket
       for every terminal outcome (released, Lost, Failed, boot timeout), and List reports work dirs under
       <state>/handles/<hid>/vms/ so the controller can collect any with no ComputeVM (M2-CONTROLLER).
-    files: ["internal/vmruntime/", "internal/guestnet/", "internal/guestdisk/", "internal/fcapi/", "cmd/socialweb-vmexec/", "internal/nodevm, internal/nodefirecracker (deleted or reduced)", "cmd/socialweb-nodeboot (deleted)", "docs/bidder-host.md (kvm group via `install bidder`)"]
+    files: ["internal/vmruntime/", "internal/guestnet/", "internal/guestdisk/", "internal/fcapi/", "internal/vmruntime/subids_linux.go (slot choice, flock, ACL grants)", "cmd/socialweb-vmexec/ (tap stage; userns stage if chosen)", "internal/nodevm, internal/nodefirecracker (deleted or reduced)", "cmd/socialweb-nodeboot (deleted)", "docs/bidder-host.md (kvm group and subuid range via `install bidder`)"]
     test_first: >
       Offline: TestPrepareWritesASeedDriveAndFcJsonAndNoHostToolIsExecd, TestTheVMUnitSpecHasSigkillSwapZeroAndNoIgnoreFailure,
       TestTheApiSocketPathIsUnder108BytesAndUnlinkedFirst, TestStopSendsCtrlAltDelThenWaitsTheGraceThenStopsTheUnit
       (fake fc API and fake hostsvc, x86_64), TestStopOnAarch64GoesStraightToStopUnit, TestTheConsoleFileIsCappedByRotation,
-      TestCleanupRemovesTheWorkDirAndSocketForEveryTerminalOutcome (released, Lost, Failed, boot timeout).
+      TestCleanupRemovesTheWorkDirAndSocketForEveryTerminalOutcome (released, Lost, Failed, boot timeout),
+      TestTheSubRangeSlotIsTheLowestNotNamedByAnyLoadedVMUnitOfTheAccount (another handle's units count),
+      TestTwoConcurrentPreparesNeverPickTheSameSlot, TestPrepareGrantsTheSlotUidItsOwnWorkFilesByACLAndNothingElse,
+      TestTheSeedIsASeparateCidataDriveAndTheRootfsIsNotEdited (fc.json lists two drives; the rootfs bytes
+      equal the image's up to its original size).
       Behind livegate on hat-8 with stand-ins (a stand-in VMM that ignores SIGTERM like firecracker, pinned as
-      a test asset; never a guest): TestTheVMUnitsTreeIsPastaAndTheStandInOnly (0006:M2-VM-TREE-AUDIT passes),
+      a test asset; never a guest): TestTwoVMUnitsMapDisjointSubRanges (two stand-in VM units:
+      /proc/<vmm>/uid_map and gid_map name disjoint sub-ranges inside the account's reserved range),
+      TestTheVMMUidOwnsNoBidderFile (no file under the account's home and state dir is owned by either
+      stand-in VMM's host uid; from inside the stand-in, opening the bidder vault dir, the kcp state and the
+      other VM's rootfs is EACCES while its own rootfs opens and /dev/kvm opens by group),
+      TestTheVMUnitsTreeIsPastaAndTheStandInOnly (0006:M2-VM-TREE-AUDIT passes; the userns stage is gone),
       TestAStopOfAVMMThatIgnoresSigtermEndsWithinTimeoutStopSec, TestTheVMUnitSurvivesSystemctlRestartOfTheBidderUnit,
       TestAVMMThatExitsOnItsOwnEndsItsUnitAndLeavesNoProcess (the stand-in exits 0 and, separately, is killed:
       the unit is inactive/failed, its cgroup is empty, pasta is gone, and Watch reported it within 2 s - E8
@@ -316,6 +378,8 @@ items:
       - "E8 measured 0.21 s from SendCtrlAltDel to exit on an IDLE guest; the grace with a k3s workload is unmeasured, so a 10 s placeholder stays the default until M6-BIDDER-UPGRADE records the loaded value."
       - "The CI kernel (M1-GUEST-IMAGE) must keep CONFIG_SERIO_I8042 and CONFIG_KEYBOARD_ATKBD (E8's guest had both) or SendCtrlAltDel does nothing and every stop waits the full grace."
       - "pasta's mapped-gateway flag differs across pasta versions; the flag is pinned against the pinned pasta asset's own --help in this item."
+      - "pasta inside an already-unprivileged user namespace (mapped to a subuid) still has to create its net namespace and the tap; proved with the stand-in first, and the SELinux pasta_t trampoline (linux-proofs E4) re-measured under the extra namespace."
+      - "Whether firecracker's jailer-free run inside a subuid namespace keeps /dev/kvm by the retained supplementary group on every target distro is measured; if a distro drops it, the fallback is an ACL entry on /dev/kvm for the reserved range, written by install, recorded as a deviation."
     status: todo
     evidence: []
   - id: M2-BACKPORT
@@ -333,14 +397,14 @@ items:
       controller (its unit start stubbed at the same boundary); the outputs must be equal field for field,
       except names and addresses the fixture marks as allocated. No guest is booted by the parity test. Pure
       enrichment stays TypeScript (compute-provider-common, applied by compute-provider-kcp before the
-      ComputeVM is written); the Go side owns image, disk, seed, unit, stop. Guest host keys become
-      GUEST-REPORTED (decided by Claude, user may veto): a cloud-init module in cloud-init-common's registry
-      posts the host-key fingerprints with onNetwork, the droplet view reads them from status.market; no host
-      code enters the guest's namespace (delivered by user_data, the RFP spine).
-    files: ["internal/vmruntime", "internal/computevm", "testdata/compute-parity/", "hono-compute-provider/test/compute_parity_test.ts", "internal/computevm/parity_test.go", "hono-compute-provider/lib/cloud-init-common (host-key reporter module)"]
+      ComputeVM is written); the Go side owns image, disk, seed, unit, stop. Guest host keys are NOT part of
+      this backport: the firecracker provider's host-side ssh-keyscan is deleted rather than ported, and the
+      guest-reported keys, their record and their verification are M4-HOST-KEYS (decided by the user
+      2026-10-12); the droplet view reads them from status.market.
+    files: ["internal/vmruntime", "internal/computevm", "testdata/compute-parity/", "hono-compute-provider/test/compute_parity_test.ts", "internal/computevm/parity_test.go"]
     test_first: "Both parity tests, run against the same fixture, red on every requirement the Go side misses (the failure list is the evidence); then green."
     done_when: "every inventory entry marked met with its parity test green on both sides."
-    risks: ["The guest-reported host keys arrive after boot; the droplet view shows none until onNetwork, which the parity fixture records as the expected shape."]
+    risks: ["The guest-reported host keys arrive after boot (M4-HOST-KEYS); the droplet view shows none until the guest's report, which the parity fixture records as the expected shape."]
     status: todo
     evidence: []
   - id: M2-CONTROLLER
@@ -540,14 +604,16 @@ items:
     evidence: []
   - id: M4-ONNETWORK
     milestone: M4
-    title: onNetwork, including the guest-reported host keys, is recorded on the ComputeVM as well as in the market record
-    depends_on: [M3-TS-PROVIDER]
+    title: onNetwork and the guest's host-key report are recorded on the ComputeVM as well as in the market records
+    depends_on: [M3-TS-PROVIDER, M4-HOST-KEYS]
     decision: >
       The factory's POST /v1/on-network keeps firecracker's behaviour and also applies status.market
-      {onNetworkUri, address, hostKeys[], reportedAt} under fieldManager compute-provider-kcp; the host keys
-      come from the guest's own report (M2-BACKPORT). A failed status write never fails the guest's request.
+      {onNetworkUri, address, reportedAt} under fieldManager compute-provider-kcp; its POST /v1/host-keys
+      (M4-HOST-KEYS, same route shape) applies status.market {hostKeys[], hostKeysUri}. The host keys come
+      only from the guest's own report; nothing here scans the guest. A failed status write never fails the
+      guest's request.
     files: ["hono-compute-provider/lib/hono-factory-compute-provider-kcp"]
-    test_first: "test/compute_provider_kcp_onnetwork_test.ts (address and host keys land in status.market; a failed status write still answers the guest 200); red first."
+    test_first: "test/compute_provider_kcp_onnetwork_test.ts (address lands in status.market from on-network and host keys from host-keys; a failed status write still answers the guest 200); red first."
     done_when: "green."
     risks: []
     status: todo
@@ -592,6 +658,71 @@ items:
       - "2026-10-12 atproto-market 7c4a8f4: market-bidder-compute publishes a signed market.event wrapping vm.terminated from onGuestGone (terminatedReasonOf: 'runner container exited' code 0 -> guest_poweroff, else vmm_exited; oom, host_reboot, identity_mismatch passed through) and as the vm.delete ack (deleted_on_request + request strongRef), submitted to the accept's submitEvent, firehose otherwise; bounded TerminatedReceipts (1024) makes a late or duplicate vm.delete answer 200 (no 'unknown receipt', no second destroy or event); concurrent HTTP + firehose deliveries destroy once. test/vm_terminated_bidder_test.ts red (missing terminatedReasonOf/TerminatedReceipts/submitEventUrl) then 10/10 green; market_bidder_guest_gone_test.ts still green."
       - "2026-10-12 atproto-market bdd423b: requester contract watch takes vm.terminated from submitEvent (RequesterPDS.setOnTerminated) and the firehose, binds it to the receipt and its bidder (compute-request-abc terminationOf) and verifies the envelope signature as receipt_verified does; sets ContractState.termination, fires handlers.onTerminated / awaitComputeNetwork onTerminated and the handle's terminated promise (phases and outcomes unchanged, so the door's mirrored types hold; outcome returned); releaseCompute skips the vm.delete (vm_delete_skipped reason terminated_by_bidder); runComputeContract aborts the ssh poll, session or hold (vm_session_ended_by_bidder) and returns result.terminated. test/vm_terminated_requester_test.ts red (missing terminationOf, onTerminated, termination) then 7/7 green, incl. forged (tampered, unsigned) and unbound (another repo, another receipt) events rejected; compute_request_test.ts and the door's node_market_test.ts (32) green; deno check hono-bidder/mod.ts and request-vm-ssh/mod.ts green."
       - "Remaining (Go side): M2-CONTROLLER Lost verdicts and Watch unit failures -> compute-provider-kcp onGuestGone with the mapped reason; door acting on it is M3-NODE-LOSS-CLOCK / M6-*."
+      - "live reading, hat-8 2026-10-12, through the RFP flow (alice-request.sh -> socialweb-computer-bidder@bobvmbuilder.bsky.social, firecracker provider): CtrlAltDel 01:44:39.873Z; microvm_exited 01:44:42.367Z; work dir removed / bidder_guest_gone 01:44:44.897Z; vm.terminated created on the PDS 01:44:44.976Z and submitted to the requester 01:44:45.125Z; requester vm_terminated_by_bidder, vm_session_ended_by_bidder and vm_delete_skipped 01:44:45.429Z. 5.6 s from guest poweroff to session end, no vm.delete sent. Earlier, 01:33:07Z: a late vm.delete answered 'vm.delete for already-terminated receipt' on both the submitEvent and firehose paths (tombstone idempotency seen live)."
+      - "prerequisites that landed for the live run: typescript-helpers 5b071fe added the vm.terminated scope to the bidder role set (before it, publish failed 01:32:39Z with 403 ScopeMissingError); did-key-associator 3cde452 regenerated the QR client scope, only its static files deployed to qr.fedfork.com at 01:41:55Z; the bidder re-signed in via QR at 01:43:50Z. Any new bidder-authored NSID (M4-HOST-KEYS) needs the same two scope changes and a re-sign-in."
+      - "status stays doing: the Go controller and compute-provider-kcp must still emit vm.terminated from Lost verdicts and unit failures (tests named in test_first)."
+  - id: M4-HOST-KEYS
+    milestone: M4
+    title: Guest SSH host keys are guest-reported in a bidder-signed vm.hostKeys record and every ssh to a guest verifies them - no host-side scan, no TOFU
+    depends_on: []
+    decision: >
+      Decided by the user 2026-10-12: guest SSH host keys are guest-reported, replicating how onNetwork works:
+      new atproto record(s) plus plumbing so the requester receives the host key(s) with the ssh command;
+      request-vm-ssh and the gateway/door validate against the sent key as the known host key (no TOFU, no
+      host-side scan). Decided by Claude, user may veto: ONE new record
+      com.publicdomainrelay.temp.compute.events.vm.hostKeys (record, key tid) {keys [{type (ssh-ed25519,
+      ecdsa-sha2-nistp256, ssh-rsa), publicKey (the base64 blob of a known_hosts line), fingerprint
+      (SHA256:...)}], observedAt, createdAt}, written by the BIDDER in its own repo and wrapped in the
+      existing com.publicdomainrelay.temp.market.event envelope {receipt, payload, signatures (the bidder's
+      inline signature)}, submitted to the accept's submitEvent when it names one, firehose otherwise -
+      exactly the vm.onNetwork and vm.terminated (M4-TERMINATION-EVENT) path. A separate NSID rather than new
+      fields on onNetwork, because (a) onNetwork's shape stays field-for-field what the firecracker provider
+      writes (ACC7-NO-PROTOCOL-CHANGE), (b) the keys exist only after cloud-init's ssh module, which is not
+      the moment the network report fires, and (c) vm.terminated set the precedent of a new event NSID in the
+      same envelope. Guest side (delivered only by user_data, the RFP spine): a hostKeysReporterModule in
+      atproto-market lib/common/cloud-init-common's registry runs after cloud-init's ssh module, reads
+      /etc/ssh/ssh_host_*_key.pub (the guest image bakes no host key, M1-GUEST-IMAGE), signs its single-use
+      provisioning token with the ed25519 host key (`ssh-keygen -Y sign -n prove-sshd`, the proof today's
+      provisioning exchange already uses) and POSTs {keys, signature, token} to the bidder's /v1/host-keys
+      (same base URL and auth as /v1/on-network). Bidder side: the report is accepted only with a valid
+      proof of possession over the token the bidder issued for that guest (so only the guest born from that
+      user_data can report), at most once per receipt (a second, different report is refused and logged),
+      then published as vm.hostKeys. The host-side scan is deleted: hono-compute-provider
+      lib/oidc-issuer-hono getPublicKeyFromSshd (mod.ts:446-483, ssh-keyscan, through `container exec` into
+      the runner container) goes, and provisioningValidate (:520-544) verifies the guest's signature against
+      the reported ed25519 key bound to the same token. Requester side: the contract watch takes vm.hostKeys
+      like vm.terminated (envelope signature verified, bound to the receipt and its bidder; forged or unbound
+      events rejected) into ContractState.hostKeys; sshTunnelArgs (atproto-market lib/requester-xrpc/mod.ts:609-620,
+      today StrictHostKeyChecking=no and UserKnownHostsFile=/dev/null) writes a per-contract known_hosts with
+      exactly the reported keys under a HostKeyAlias derived from the receipt and passes
+      StrictHostKeyChecking=yes; request-vm-ssh waits (bounded) for the keys and refuses to ssh without them.
+      Gateway side: the door keeps ContractState.hostKeys on the NodeClaim (in the one NodeClaim schema
+      revision of M6-CLAIM-RESUME) and every ssh command it prints or runs (today
+      socialweb-computer-k8s hono-socialweb-computer-k8s/mod.ts:177, StrictHostKeyChecking=no) and the ssh
+      door (0008:M4-RUN-GATEWAY-SSH) use the same known_hosts + StrictHostKeyChecking=yes. The record is also
+      the guest's signed identity in M6-GATEWAY-REPOPULATE's adoption match. Both providers emit it (the
+      firecracker provider now; compute-provider-kcp through M4-ONNETWORK). Like vm.terminated, the new NSID
+      needs its scope in the bidder role set (typescript-helpers) and the QR client scope
+      (did-key-associator), and the bidder re-signs in.
+    files: ["atproto-market/lexicons/com/publicdomainrelay/temp/compute/events/vm/hostKeys.json", "atproto-market/lib/common/market-lexicons, lib/common/market-common (NSID)", "atproto-market/lib/common/cloud-init-common (hostKeysReporterModule)", "atproto-market/lib/market-bidder-compute (POST /v1/host-keys, proof check, publish)", "atproto-market/lib/abc/compute-request, lib/compute-request-xrpc (hostKeysOf, ContractState.hostKeys)", "atproto-market/lib/requester-xrpc (sshTunnelArgs known_hosts + StrictHostKeyChecking=yes)", "atproto-market/request-vm-ssh", "hono-compute-provider/lib/oidc-issuer-hono (scan deleted, reported key verified)", "hono-compute-provider/lib/compute-provider-firecracker", "socialweb-computer-k8s door (NodeClaim hostKeys, ssh command)", "typescript-helpers (bidder role scope)", "did-key-associator (QR client scope)"]
+    test_first: >
+      atproto-market test/vm_hostkeys_lexicon_test.ts; test/vm_hostkeys_bidder_test.ts (a report without a
+      valid signature over the issued token is refused; a second, different report for the receipt is
+      refused; the published record is wrapped and signed and goes to submitEvent, firehose otherwise);
+      test/vm_hostkeys_requester_test.ts (forged and unbound events rejected; ContractState.hostKeys set;
+      sshTunnelArgs carries StrictHostKeyChecking=yes and a known_hosts holding exactly the reported keys; no
+      ssh is attempted without keys); cloud-init-common test (the module renders after the ssh module and
+      posts keys + signature); hono-compute-provider test 'provisioningValidate verifies against the reported
+      key and nothing in lib execs ssh-keyscan'. Live on the market bed, guest born via runComputeContract
+      (alice-request.sh -> RFP -> bid -> accept -> cloud-init): request-vm-ssh connects with
+      StrictHostKeyChecking=yes against the reported key, and the same run with a known_hosts holding a
+      different key fails host-key verification and never authenticates. Red first.
+    done_when: "TS suites green; the live reading recorded with UTC timestamps (keys reported, record created and submitted, ssh verified); no ssh-keyscan and no StrictHostKeyChecking=no left on any path that reaches a guest."
+    risks:
+      - "A guest that never reports keys cannot be ssh'd; that is the intended fail-closed behaviour, and the requester logs which receipt is missing its report."
+      - "Keys are fixed for a guest's life (no rekey on a live guest); a rebuilt guest is a new receipt."
+    status: todo
+    evidence: []
   - id: M5-RUN-BIDDER
     milestone: M5
     title: socialweb-computer run bidder as a user unit of the shared lingering bidder account, no docker, least-privilege deno
@@ -600,12 +731,15 @@ items:
       Decided by the user 2026-10-11: ONE shared lingering account (swc-bidder) for all bidder handles, units
       namespaced by handle; the bidder lives in that account's USER manager; explicit deno permissions for the
       bidder (no -A, no --allow-run, no /dev/kvm, no D-Bus socket path), enforced in the DenoPod template and
-      tested. `socialweb-computer install bidder` (0006:M1-INSTALL) creates the account, adds it to kvm BEFORE
-      linger and the first user@ start, enables linger, installs the user unit file
-      socialweb-computer-bidder@.service. `run bidder --handle <h>` (ExecStart=<state>/bin/current/socialweb-computer
+      tested. `socialweb-computer install bidder --handle <h>` (0006:M1-INSTALL, the one explicit root step,
+      decided by the user 2026-10-12) creates the account (never created on demand anywhere else), reserves
+      its subuid/subgid range for per-VM user namespaces (M2-VM-RUNTIME), adds it to kvm BEFORE linger and the
+      first user@ start, writes the delegation drop-in, enables linger, installs the user unit file
+      socialweb-computer-bidder@.service and enables the handle's instance. `run bidder --handle <h>` (ExecStart=<state>/bin/current/socialweb-computer
       run bidder --handle %i; Restart=always; default KillMode=control-group - the 2026-10-07 KillMode=mixed is
       removed: VM and vault units are separate cgroups and survive any KillMode, and mixed would SIGKILL deno
-      with no graceful stop): kcp on port 0 (either route), the owned deno-kcp provider, the bidder set
+      with no graceful stop): the handle's kcp slots on kine -> postgres behind a port-0 front
+      (0006:M2-KCP-SLOTS, M2-KCP-PORT0), the owned deno-kcp provider, the bidder set
       (computevms, hostprocesses, workspace root:bidder, a ServiceAccount limited to computevms,
       computevms/status and Secrets there), the bidder vault, token rotation, the ComputeVM controller, and the
       bidder DenoPod with --compute-provider-kcp and every operator option. The DenoPod's deno argv grants no
@@ -624,7 +758,7 @@ items:
       TestDenoInTheBidderPodCannotOpenDevKvmOrDialTheUserBus (a probe entry in the pod: Deno.open('/dev/kvm')
       and a unix connect to $XDG_RUNTIME_DIR/systemd/private and the bus are PermissionDenied). Red first.
     done_when: "tests green; on hat-8 the unit runs under the shared account and `kubectl get computevms` on its kcp answers."
-    risks: ["Stated limit (decided by the user 2026-10-11, shared account): handles on one host share a uid, so a VMM escape reaches every handle's keys there; see questions_for_user."]
+    risks: ["Handles on one host still share a uid for their cores and deno processes (shared account, decided by the user 2026-10-11); a VMM escape no longer reaches them, because each VMM runs in its own subuid sub-range owning no bidder file (decided by the user 2026-10-12, M2-VM-RUNTIME). deno's permission sandbox remains the only boundary between a bidder's deno and its own user manager."]
     status: todo
     evidence: []
   - id: M6-BIDDER-UPGRADE
@@ -671,7 +805,8 @@ items:
       {bidUri} before the accept record is written, so a restart between accept intent and accept record
       looks for an accept naming that RFP in the requester's repo and completes or releases exactly once.
       One NodeClaim schema revision carries status.secrets, acceptPending and M6-GATEWAY-REPOPULATE's
-      Orphaned phase (APIResourceSchema.spec is immutable; versions.json our-crds). The KV path is in
+      Adopting phase and M4-HOST-KEYS' ContractState.hostKeys (APIResourceSchema.spec is immutable;
+      versions.json our-crds). The KV path is in
       0006:M3-BAO-SYNC's desired set (live claim -> kept; claim gone -> deleted). Bidding/Provisioning leave
       ORPHANED_PHASES.
     files: ["atproto-market/lib/guest-capability-secrets (key loader instead of a fresh keypair)", "socialweb-computer-k8s/lib/socialweb-computer-k8s-node-market (resume path, acceptPending)", "api/v1alpha1 NodeClaim (status.secrets, status.contract.acceptPending; one schema revision)", "socialweb-computer-k8s door OpenBao key store"]
@@ -691,7 +826,7 @@ items:
   - id: M6-GATEWAY-REPOPULATE
     milestone: M6
     title: After an upgrade the gateway re-populates every VM it owns, including ones rented from bidders elsewhere
-    depends_on: ["0008:M3-DOOR-DENOPOD", "0006:M3-CLUSTER-UNITS", M4-BIDDER-VAULT, M6-CLAIM-RESUME]
+    depends_on: ["0008:M3-DOOR-DENOPOD", "0006:M3-CLUSTER-UNITS", M4-BIDDER-VAULT, M6-CLAIM-RESUME, M4-HOST-KEYS, M3-NODE-LOSS-CLOCK]
     decision: >
       Decided by the user 2026-10-07: the gateway's core binary and deno processes are upgradable while VMs
       keep running, and afterwards it re-populates which VMs it owns from NodeClaims, receipts and market
@@ -704,17 +839,33 @@ items:
       only for claims carrying status.contract.acceptPending and for receipts with no claim at all; every
       other claim is resolved from the claim alone. Rules: a receipt with a claim and a joined Node is
       adopted (no write); a receipt with a claim and no Node follows plan 0005 M3-NODE-LOSS with the rebased
-      clock (M3-NODE-LOSS-CLOCK); a receipt with NO claim (claim lost while the VM lives) gets a claim
-      written in phase Orphaned and is released by releaseCompute unless its Node is joined, in which case it
-      is adopted; a vm.delete already submitted is never submitted twice. Control planes stay up across the
-      upgrade (0006:M3-CLUSTER-UNITS), so joined nodes stay Ready.
-    files: ["socialweb-computer-k8s/lib/socialweb-computer-k8s-node-market (ownership table, Orphaned phase)", "api/v1alpha1 NodeClaim (phase Orphaned, in M6-CLAIM-RESUME's schema revision)", "atproto-market/lib (requester record listing helpers)"]
+      clock (M3-NODE-LOSS-CLOCK); a vm.delete already submitted is never submitted twice. A receipt with NO
+      claim (the claim lost while the VM lives) is ADOPTED FIRST with a usage check (decided by the user
+      2026-10-12, replacing the 2026-10-11 release-unless-joined default): the door writes a claim in the new
+      phase Adopting and matches the guest to a tenant Node only when all three agree - the Node's name equals
+      the guest name (vmName) in the door's own compute.vm record for that receipt, the cluster's OpenBao
+      holds role node-<name>, and the receipt's bidder-signed vm.hostKeys record (M4-HOST-KEYS, verified
+      and bound to the receipt) is present as the guest's signed identity; any disagreement is no match.
+      Then: joined and Ready -> adopted into that cluster (the claim moves to the phase a joined claim has,
+      no vm.delete, no RFP); not joined, but its user_data targets a cluster that still exists (the cluster
+      named by the ticket and claim.json the door's vm record carried) -> wait the join grace (the 2 m
+      never-Ready grace, rebased to pathUpSince by M3-NODE-LOSS-CLOCK) and adopt on join; the cluster is
+      gone, or the grace passes with no join -> release once (releaseCompute, one vm.delete). Control planes
+      stay up across the upgrade (0006:M3-CLUSTER-UNITS), so joined nodes stay Ready.
+    files: ["socialweb-computer-k8s/lib/socialweb-computer-k8s-node-market (ownership table, Adopting phase, adoption match)", "api/v1alpha1 NodeClaim (phase Adopting, in M6-CLAIM-RESUME's schema revision)", "atproto-market/lib (requester record listing helpers)"]
     test_first: >
-      socialweb-computer-k8s test/node_market_test.ts: 'a door restarted with a receipt that has no claim
-      writes an Orphaned claim and releases it once', 'the record scan touches only acceptPending claims and
-      unclaimed receipts', 'a restarted door never submits a second vm.delete'; on the market bed (nodes born
-      via runComputeContract): TestAGatewayUpgradeKeepsEveryMarketNodeReadyAndOwned. Red first.
-    done_when: "unit tests green; live: a two-node market cluster stays Ready across a gateway upgrade, both claims adopted, no RFP and no vm.delete sent by the restart."
+      socialweb-computer-k8s test/node_market_test.ts: 'an unclaimed receipt whose guest is joined and Ready
+      is adopted into that cluster with no vm.delete and no RFP', 'an unclaimed receipt not yet joined whose
+      user_data targets a live cluster waits the join grace and is adopted on join', 'an unclaimed receipt
+      whose cluster is gone is released exactly once', 'an unclaimed receipt with no join within the grace is
+      released exactly once', 'a Node whose name matches but whose vault role or vm.hostKeys record does not
+      is never adopted', 'the join grace counts from pathUpSince after our own outage', 'the record scan
+      touches only acceptPending claims and unclaimed receipts', 'a restarted door never submits a second
+      vm.delete'; on the market bed (nodes born via runComputeContract):
+      TestAGatewayUpgradeKeepsEveryMarketNodeReadyAndOwned and TestAnUnclaimedJoinedNodeIsAdoptedNotReleased
+      (the NodeClaim object of a joined node removed through the kcp API with its finalizer stripped, then a
+      door restart: the claim returns via Adopting, the node stays Ready, no vm.delete). Red first.
+    done_when: "unit tests green; live: a two-node market cluster stays Ready across a gateway upgrade, both claims adopted, no RFP and no vm.delete sent by the restart; the unclaimed-joined-node bed reading recorded (UTC)."
     risks: ["Listing market records across winners' repos is network-bound; the table is built from claims first and the record scan only fills the acceptPending and unclaimed gaps, bounded per pass."]
     status: todo
     evidence: []
@@ -757,7 +908,7 @@ items:
     evidence: []
 semantics:
   bidder_deno_restarts_or_upgrades: "DenoPods restart on the new closure; setup() rebuilds getDroplet from ComputeVMs; ContractStore seeds activeContracts; the vault keeps the did, issuer URL and keys; VMs never notice."
-  bidder_core_binary_upgraded_or_killed: "kcp (in-process route), the controller and the deno processes stop with the bidder unit (control-group); VM units, the vault unit and kcp's unit (out-of-process route) are separate cgroups and keep running; on start the controller re-populates by the Verdict (unit, InvocationID, firecracker pid + start ticks, GET / id and state)."
+  bidder_core_binary_upgraded_or_killed: "the controller and the deno processes stop with the bidder unit (control-group); VM units, the vault unit and the handle's kcp units (pg, kine, slot, front; 0006:M2-KCP-SLOTS, route decided 2026-10-12) are separate cgroups and keep running; on start the controller re-populates by the Verdict (unit, InvocationID, firecracker pid + start ticks, GET / id and state)."
   bidder_logout: "with linger, logging out of every session changes nothing."
   user_manager_stops: "user@<uid> restart, `loginctl terminate-user`, or linger removed: every unit stops; treated as a reboot - every ComputeVM Lost(UnitGone), none booted again."
   gateway_upgraded: "control planes in their own member units keep serving (0006:M3-CLUSTER-UNITS); k3s/kine upgrades are blue/green slots behind the per-cluster front (0006:M3-CP-SLOTS); the door resumes Bidding and Provisioning claims (M6-CLAIM-RESUME) and re-populates its ownership table from claims, receipts, market records and Nodes; joined nodes stay Ready; no RFP and no vm.delete is caused by the restart."
@@ -791,11 +942,19 @@ acceptance:
       status: todo
       evidence: []
     - id: ACC7-NO-PROTOCOL-CHANGE
-      text: "The bid config, receipt, onNetwork and vm.delete records written in the runs are field-for-field the shapes the firecracker provider writes; the only protocol addition is com.publicdomainrelay.temp.compute.events.vm.terminated in the market.event envelope (M4-TERMINATION-EVENT, decided by the user 2026-10-12), written identically by both providers."
+      text: "The bid config, receipt, onNetwork and vm.delete records written in the runs are field-for-field the shapes the firecracker provider writes; the only protocol additions are com.publicdomainrelay.temp.compute.events.vm.terminated (M4-TERMINATION-EVENT) and com.publicdomainrelay.temp.compute.events.vm.hostKeys (M4-HOST-KEYS), both bidder-authored in the market.event envelope (decided by the user 2026-10-12), written identically by both providers."
       status: todo
       evidence: []
     - id: ACC7-NOSSH
-      text: Zero ssh sessions to any guest in every log of every run of this plan.
+      text: "Zero ssh sessions to any guest by bidder, gateway, join or test-harness code in every log of every run of this plan; the only ssh to a guest is the requester's own session (request-vm-ssh through the relay ProxyCommand) in M4-HOST-KEYS' live proof, named in its evidence."
+      status: todo
+      evidence: []
+    - id: ACC7-HOST-KEYS
+      text: "Every ssh to a guest (request-vm-ssh, the door's ssh command, the ssh door) runs with StrictHostKeyChecking=yes against the guest-reported keys of the receipt's vm.hostKeys record, a wrong key fails verification, and no ssh-keyscan runs on any host (decided by the user 2026-10-12)."
+      status: todo
+      evidence: []
+    - id: ACC7-VM-USERNS
+      text: "In every live run, each VM unit's pasta and firecracker run in their own subuid sub-range of the account's reserved range, no two live VMs share a sub-range, and no file of the bidder (state dir, vault, kcp store, other VMs) is owned by or readable by a VMM's host uid (decided by the user 2026-10-12)."
       status: todo
       evidence: []
     - id: ACC7-NO-LEAK
@@ -806,8 +965,4 @@ acceptance:
       text: "A door restarted while a claim is Bidding or Provisioning (node born via runComputeContract on the market bed) resumes it to Joining with the same secrets URL, one RFP, one receipt and no vm.delete (decided by the user 2026-10-12)."
       status: todo
       evidence: []
-questions_for_user:
-  - "A receipt the gateway finds with no NodeClaim gets an Orphaned claim and is released unless its Node is joined (then adopted). Is release the right default for an unclaimed, unjoined VM?"
-  - "Seed transport: a separate pure-Go NoCloud cidata drive plus in-guest resize, removing debugfs, e2fsck and resize2fs from hosts (M2-VM-RUNTIME, M1-GUEST-IMAGE)? Recommended: yes; it is also the only shape that ports to Hyper-V (0011) and VZ (0012)."
-  - "Guest host keys become guest-reported (a cloud-init module posts fingerprints with onNetwork) instead of a host-side scan inside the guest's namespace (M2-BACKPORT, M4-ONNETWORK)? Recommended: yes; no host code then enters a guest's namespace."
-  - "Stated limit of the shared bidder account: handles on one host share a uid, so a VMM escape reaches every handle's keys on that host. Accept as a documented limit of this plan, with per-VM subordinate-uid isolation (pasta's userns mapped to a subuid) as a later hardening plan? Recommended: accept + later plan."
+questions_for_user: []
