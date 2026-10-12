@@ -1,0 +1,144 @@
+apiVersion: apis.kcp.io/v1alpha1
+kind: APIResourceSchema
+metadata:
+  name: v1alpha1-1.marketidentities.socialweb.computer
+spec:
+  group: socialweb.computer
+  names:
+    kind: MarketIdentity
+    listKind: MarketIdentityList
+    plural: marketidentities
+    singular: marketidentity
+  scope: Cluster
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      schema:
+        type: object
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            properties:
+              mode:
+                type: string
+                enum:
+                  - oauthQr
+                  - oauthBrowser
+                  - pdsAccount
+                  - localRepo
+                  - oauthDelegated
+              handle:
+                type: string
+              pdsUrl:
+                type: string
+              association:
+                type: string
+                enum:
+                  - RequireApproval
+                  - Skip
+              associateWith:
+                type: string
+              approvedAssociations:
+                type: array
+                items:
+                  type: string
+              rejectedAssociations:
+                type: array
+                items:
+                  type: string
+              keysRef:
+                type: object
+                properties:
+                  mount:
+                    type: string
+                  path:
+                    type: string
+                required:
+                  - mount
+                  - path
+              sessionRef:
+                type: object
+                properties:
+                  mount:
+                    type: string
+                  path:
+                    type: string
+                required:
+                  - mount
+                  - path
+            required:
+              - mode
+          status:
+            type: object
+            properties:
+              phase:
+                type: string
+                enum:
+                  - Pending
+                  - AwaitingScan
+                  - AwaitingAuthorization
+                  - AwaitingApproval
+                  - Ready
+                  - SessionExpired
+                  - Failed
+              observedGeneration:
+                type: integer
+                format: int64
+              did:
+                type: string
+              handle:
+                type: string
+              pdsUrl:
+                type: string
+              serviceDid:
+                type: string
+              pendingAction:
+                type: object
+                properties:
+                  kind:
+                    type: string
+                    enum:
+                      - scanQr
+                      - visitUrl
+                      - approveAssociation
+                      - signInAgain
+                  url:
+                    type: string
+                  callerDid:
+                    type: string
+                  handle:
+                    type: string
+                  expiresAt:
+                    type: string
+                required:
+                  - kind
+              associations:
+                type: array
+                items:
+                  type: string
+              sessionRef:
+                type: object
+                properties:
+                  mount:
+                    type: string
+                  path:
+                    type: string
+                required:
+                  - mount
+                  - path
+              message:
+                type: string
+              conditions:
+                type: array
+                items:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true

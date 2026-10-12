@@ -361,3 +361,94 @@ func (in *ClusterLinkList) DeepCopyObject() runtime.Object {
 	}
 	return nil
 }
+
+func (in *MarketIdentity) DeepCopyInto(out *MarketIdentity) {
+	*out = *in
+	out.TypeMeta = in.TypeMeta
+	in.ObjectMeta.DeepCopyInto(&out.ObjectMeta)
+	in.Spec.DeepCopyInto(&out.Spec)
+	in.Status.DeepCopyInto(&out.Status)
+}
+
+func (in *MarketIdentity) DeepCopy() *MarketIdentity {
+	if in == nil {
+		return nil
+	}
+	out := new(MarketIdentity)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *MarketIdentity) DeepCopyObject() runtime.Object {
+	if c := in.DeepCopy(); c != nil {
+		return c
+	}
+	return nil
+}
+
+func (in *MarketIdentityList) DeepCopyInto(out *MarketIdentityList) {
+	*out = *in
+	out.TypeMeta = in.TypeMeta
+	in.ListMeta.DeepCopyInto(&out.ListMeta)
+	if in.Items != nil {
+		out.Items = make([]MarketIdentity, len(in.Items))
+		for i := range in.Items {
+			in.Items[i].DeepCopyInto(&out.Items[i])
+		}
+	}
+}
+
+func (in *MarketIdentityList) DeepCopy() *MarketIdentityList {
+	if in == nil {
+		return nil
+	}
+	out := new(MarketIdentityList)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *MarketIdentityList) DeepCopyObject() runtime.Object {
+	if c := in.DeepCopy(); c != nil {
+		return c
+	}
+	return nil
+}
+
+func (in *MarketIdentitySpec) DeepCopyInto(out *MarketIdentitySpec) {
+	*out = *in
+	if in.ApprovedAssociations != nil {
+		out.ApprovedAssociations = append([]string(nil), in.ApprovedAssociations...)
+	}
+	if in.RejectedAssociations != nil {
+		out.RejectedAssociations = append([]string(nil), in.RejectedAssociations...)
+	}
+	if in.KeysRef != nil {
+		ref := *in.KeysRef
+		out.KeysRef = &ref
+	}
+	if in.SessionRef != nil {
+		ref := *in.SessionRef
+		out.SessionRef = &ref
+	}
+}
+
+func (in *MarketIdentityStatus) DeepCopyInto(out *MarketIdentityStatus) {
+	*out = *in
+	if in.PendingAction != nil {
+		action := *in.PendingAction
+		out.PendingAction = &action
+	}
+	if in.Associations != nil {
+		out.Associations = append([]string(nil), in.Associations...)
+	}
+	if in.SessionRef != nil {
+		ref := *in.SessionRef
+		out.SessionRef = &ref
+	}
+	if in.Conditions != nil {
+		out.Conditions = make([]metav1.Condition, len(in.Conditions))
+		for i := range in.Conditions {
+			in.Conditions[i].DeepCopyInto(&out.Conditions[i])
+		}
+	}
+}

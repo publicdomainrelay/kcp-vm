@@ -7,6 +7,8 @@ export const CONDITION_REACHABLE = "Reachable";
 export const CONDITION_REVOCATION_PENDING = "RevocationPending";
 export const CONDITION_IDENTITY_VERIFICATION_FAILED = "IdentityVerificationFailed";
 export const FINALIZER_CLUSTER = "cluster.socialweb.computer/teardown";
+export const CONDITION_SIGNED_IN = "SignedIn";
+export const CONDITION_ASSOCIATED = "Associated";
 export const CONDITION_NODE_JOINED = "NodeJoined";
 export const FINALIZER_NODE = "node.socialweb.computer/teardown";
 export const FINALIZER_NODE_CLAIM = "nodeclaim.socialweb.computer/release";
@@ -37,6 +39,18 @@ export type IdentityScope = typeof IDENTITY_SCOPES[number];
 
 export const IDENTITY_STATES = ["Active", "Revoked", "RevocationPending", "ColdDeferred"] as const;
 export type IdentityState = typeof IDENTITY_STATES[number];
+
+export const MARKET_IDENTITY_MODES = ["oauthQr", "oauthBrowser", "pdsAccount", "localRepo", "oauthDelegated"] as const;
+export type MarketIdentityMode = typeof MARKET_IDENTITY_MODES[number];
+
+export const ASSOCIATION_MODES = ["RequireApproval", "Skip"] as const;
+export type AssociationMode = typeof ASSOCIATION_MODES[number];
+
+export const MARKET_IDENTITY_PHASES = ["Pending", "AwaitingScan", "AwaitingAuthorization", "AwaitingApproval", "Ready", "SessionExpired", "Failed"] as const;
+export type MarketIdentityPhase = typeof MARKET_IDENTITY_PHASES[number];
+
+export const PENDING_ACTION_KINDS = ["scanQr", "visitUrl", "approveAssociation", "signInAgain"] as const;
+export type PendingActionKind = typeof PENDING_ACTION_KINDS[number];
 
 export interface ObjectMeta {
   name?: string;
@@ -250,6 +264,53 @@ export interface AtprotoIdentityStatus {
   conditions?: Condition[];
 }
 
+export interface MarketIdentity {
+  apiVersion?: string;
+  kind?: string;
+  metadata?: ObjectMeta;
+  spec?: MarketIdentitySpec;
+  status?: MarketIdentityStatus;
+}
+
+export interface MarketIdentitySpec {
+  mode: MarketIdentityMode;
+  handle?: string;
+  pdsUrl?: string;
+  association?: AssociationMode;
+  associateWith?: string;
+  approvedAssociations?: string[];
+  rejectedAssociations?: string[];
+  keysRef?: VaultRef;
+  sessionRef?: VaultRef;
+}
+
+export interface VaultRef {
+  mount: string;
+  path: string;
+}
+
+export interface MarketIdentityStatus {
+  phase?: MarketIdentityPhase;
+  observedGeneration?: number;
+  did?: string;
+  handle?: string;
+  pdsUrl?: string;
+  serviceDid?: string;
+  pendingAction?: MarketIdentityPendingAction;
+  associations?: string[];
+  sessionRef?: VaultRef;
+  message?: string;
+  conditions?: Condition[];
+}
+
+export interface MarketIdentityPendingAction {
+  kind: PendingActionKind;
+  url?: string;
+  callerDid?: string;
+  handle?: string;
+  expiresAt?: string;
+}
+
 export interface ApiResource {
   group: string;
   version: string;
@@ -316,9 +377,21 @@ export const ATPROTO_IDENTITY_RESOURCE: ApiResource = {
   export: "atprotoidentities",
 };
 
-export const API_RESOURCES: readonly ApiResource[] = [CLUSTER_RESOURCE, NODE_RESOURCE, NODE_CLAIM_RESOURCE, CLUSTER_LINK_RESOURCE, ATPROTO_IDENTITY_RESOURCE];
+export const MARKET_IDENTITY_RESOURCE: ApiResource = {
+  group: "socialweb.computer",
+  version: "v1alpha1",
+  kind: "MarketIdentity",
+  listKind: "MarketIdentityList",
+  plural: "marketidentities",
+  singular: "marketidentity",
+  schema: "v1alpha1-1.marketidentities.socialweb.computer",
+  export: "marketidentities",
+};
+
+export const API_RESOURCES: readonly ApiResource[] = [CLUSTER_RESOURCE, NODE_RESOURCE, NODE_CLAIM_RESOURCE, CLUSTER_LINK_RESOURCE, ATPROTO_IDENTITY_RESOURCE, MARKET_IDENTITY_RESOURCE];
 
 export type ApiTypeName =
+  | "AssociationMode"
   | "AtprotoIdentity"
   | "AtprotoIdentitySpec"
   | "AtprotoIdentityStatus"
@@ -341,6 +414,12 @@ export type ApiTypeName =
   | "ContractWinner"
   | "IdentityScope"
   | "IdentityState"
+  | "MarketIdentity"
+  | "MarketIdentityMode"
+  | "MarketIdentityPendingAction"
+  | "MarketIdentityPhase"
+  | "MarketIdentitySpec"
+  | "MarketIdentityStatus"
   | "Node"
   | "NodeClaim"
   | "NodeClaimContract"
@@ -353,7 +432,9 @@ export type ApiTypeName =
   | "NodeSpec"
   | "NodeStatus"
   | "ObjectMeta"
-  | "RecordRef";
+  | "PendingActionKind"
+  | "RecordRef"
+  | "VaultRef";
 
 type Shape =
   | { type: "string"; enum?: readonly string[] }
@@ -468,6 +549,13 @@ export function validate(typeName: ApiTypeName, value: unknown): ApiIssue[] {
 }
 
 const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
+  "AssociationMode": {
+    "enum": [
+      "RequireApproval",
+      "Skip"
+    ],
+    "type": "string"
+  },
   "AtprotoIdentity": {
     "properties": {
       "apiVersion": {
@@ -816,6 +904,158 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
     ],
     "type": "string"
   },
+  "MarketIdentity": {
+    "properties": {
+      "apiVersion": {
+        "type": "string"
+      },
+      "kind": {
+        "type": "string"
+      },
+      "metadata": {
+        "ref": "ObjectMeta"
+      },
+      "spec": {
+        "ref": "MarketIdentitySpec"
+      },
+      "status": {
+        "ref": "MarketIdentityStatus"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "MarketIdentityMode": {
+    "enum": [
+      "oauthQr",
+      "oauthBrowser",
+      "pdsAccount",
+      "localRepo",
+      "oauthDelegated"
+    ],
+    "type": "string"
+  },
+  "MarketIdentityPendingAction": {
+    "properties": {
+      "callerDid": {
+        "type": "string"
+      },
+      "expiresAt": {
+        "type": "string"
+      },
+      "handle": {
+        "type": "string"
+      },
+      "kind": {
+        "ref": "PendingActionKind"
+      },
+      "url": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "kind"
+    ],
+    "type": "object"
+  },
+  "MarketIdentityPhase": {
+    "enum": [
+      "Pending",
+      "AwaitingScan",
+      "AwaitingAuthorization",
+      "AwaitingApproval",
+      "Ready",
+      "SessionExpired",
+      "Failed"
+    ],
+    "type": "string"
+  },
+  "MarketIdentitySpec": {
+    "properties": {
+      "approvedAssociations": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "associateWith": {
+        "type": "string"
+      },
+      "association": {
+        "ref": "AssociationMode"
+      },
+      "handle": {
+        "type": "string"
+      },
+      "keysRef": {
+        "ref": "VaultRef"
+      },
+      "mode": {
+        "ref": "MarketIdentityMode"
+      },
+      "pdsUrl": {
+        "type": "string"
+      },
+      "rejectedAssociations": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "sessionRef": {
+        "ref": "VaultRef"
+      }
+    },
+    "required": [
+      "mode"
+    ],
+    "type": "object"
+  },
+  "MarketIdentityStatus": {
+    "properties": {
+      "associations": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "conditions": {
+        "items": {
+          "ref": "Condition"
+        },
+        "type": "array"
+      },
+      "did": {
+        "type": "string"
+      },
+      "handle": {
+        "type": "string"
+      },
+      "message": {
+        "type": "string"
+      },
+      "observedGeneration": {
+        "type": "integer"
+      },
+      "pdsUrl": {
+        "type": "string"
+      },
+      "pendingAction": {
+        "ref": "MarketIdentityPendingAction"
+      },
+      "phase": {
+        "ref": "MarketIdentityPhase"
+      },
+      "serviceDid": {
+        "type": "string"
+      },
+      "sessionRef": {
+        "ref": "VaultRef"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
   "Node": {
     "properties": {
       "apiVersion": {
@@ -1113,6 +1353,15 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
     "open": true,
     "type": "object"
   },
+  "PendingActionKind": {
+    "enum": [
+      "scanQr",
+      "visitUrl",
+      "approveAssociation",
+      "signInAgain"
+    ],
+    "type": "string"
+  },
   "RecordRef": {
     "properties": {
       "cid": {
@@ -1125,6 +1374,21 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
     "required": [
       "uri",
       "cid"
+    ],
+    "type": "object"
+  },
+  "VaultRef": {
+    "properties": {
+      "mount": {
+        "type": "string"
+      },
+      "path": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "mount",
+      "path"
     ],
     "type": "object"
   }
@@ -1721,5 +1985,167 @@ export function assertIdentityState(value: unknown): asserts value is IdentitySt
 
 export function parseIdentityState(value: unknown): IdentityState {
   assertIdentityState(value);
+  return value;
+}
+
+export function validateMarketIdentity(value: unknown): ApiIssue[] {
+  return validate("MarketIdentity", value);
+}
+
+export function isMarketIdentity(value: unknown): value is MarketIdentity {
+  return validate("MarketIdentity", value).length === 0;
+}
+
+export function assertMarketIdentity(value: unknown): asserts value is MarketIdentity {
+  const issues = validate("MarketIdentity", value);
+  if (issues.length > 0) throw new ApiValidationError("MarketIdentity", issues);
+}
+
+export function parseMarketIdentity(value: unknown): MarketIdentity {
+  assertMarketIdentity(value);
+  return value;
+}
+
+export function validateMarketIdentitySpec(value: unknown): ApiIssue[] {
+  return validate("MarketIdentitySpec", value);
+}
+
+export function isMarketIdentitySpec(value: unknown): value is MarketIdentitySpec {
+  return validate("MarketIdentitySpec", value).length === 0;
+}
+
+export function assertMarketIdentitySpec(value: unknown): asserts value is MarketIdentitySpec {
+  const issues = validate("MarketIdentitySpec", value);
+  if (issues.length > 0) throw new ApiValidationError("MarketIdentitySpec", issues);
+}
+
+export function parseMarketIdentitySpec(value: unknown): MarketIdentitySpec {
+  assertMarketIdentitySpec(value);
+  return value;
+}
+
+export function validateMarketIdentityMode(value: unknown): ApiIssue[] {
+  return validate("MarketIdentityMode", value);
+}
+
+export function isMarketIdentityMode(value: unknown): value is MarketIdentityMode {
+  return validate("MarketIdentityMode", value).length === 0;
+}
+
+export function assertMarketIdentityMode(value: unknown): asserts value is MarketIdentityMode {
+  const issues = validate("MarketIdentityMode", value);
+  if (issues.length > 0) throw new ApiValidationError("MarketIdentityMode", issues);
+}
+
+export function parseMarketIdentityMode(value: unknown): MarketIdentityMode {
+  assertMarketIdentityMode(value);
+  return value;
+}
+
+export function validateAssociationMode(value: unknown): ApiIssue[] {
+  return validate("AssociationMode", value);
+}
+
+export function isAssociationMode(value: unknown): value is AssociationMode {
+  return validate("AssociationMode", value).length === 0;
+}
+
+export function assertAssociationMode(value: unknown): asserts value is AssociationMode {
+  const issues = validate("AssociationMode", value);
+  if (issues.length > 0) throw new ApiValidationError("AssociationMode", issues);
+}
+
+export function parseAssociationMode(value: unknown): AssociationMode {
+  assertAssociationMode(value);
+  return value;
+}
+
+export function validateVaultRef(value: unknown): ApiIssue[] {
+  return validate("VaultRef", value);
+}
+
+export function isVaultRef(value: unknown): value is VaultRef {
+  return validate("VaultRef", value).length === 0;
+}
+
+export function assertVaultRef(value: unknown): asserts value is VaultRef {
+  const issues = validate("VaultRef", value);
+  if (issues.length > 0) throw new ApiValidationError("VaultRef", issues);
+}
+
+export function parseVaultRef(value: unknown): VaultRef {
+  assertVaultRef(value);
+  return value;
+}
+
+export function validateMarketIdentityStatus(value: unknown): ApiIssue[] {
+  return validate("MarketIdentityStatus", value);
+}
+
+export function isMarketIdentityStatus(value: unknown): value is MarketIdentityStatus {
+  return validate("MarketIdentityStatus", value).length === 0;
+}
+
+export function assertMarketIdentityStatus(value: unknown): asserts value is MarketIdentityStatus {
+  const issues = validate("MarketIdentityStatus", value);
+  if (issues.length > 0) throw new ApiValidationError("MarketIdentityStatus", issues);
+}
+
+export function parseMarketIdentityStatus(value: unknown): MarketIdentityStatus {
+  assertMarketIdentityStatus(value);
+  return value;
+}
+
+export function validateMarketIdentityPhase(value: unknown): ApiIssue[] {
+  return validate("MarketIdentityPhase", value);
+}
+
+export function isMarketIdentityPhase(value: unknown): value is MarketIdentityPhase {
+  return validate("MarketIdentityPhase", value).length === 0;
+}
+
+export function assertMarketIdentityPhase(value: unknown): asserts value is MarketIdentityPhase {
+  const issues = validate("MarketIdentityPhase", value);
+  if (issues.length > 0) throw new ApiValidationError("MarketIdentityPhase", issues);
+}
+
+export function parseMarketIdentityPhase(value: unknown): MarketIdentityPhase {
+  assertMarketIdentityPhase(value);
+  return value;
+}
+
+export function validateMarketIdentityPendingAction(value: unknown): ApiIssue[] {
+  return validate("MarketIdentityPendingAction", value);
+}
+
+export function isMarketIdentityPendingAction(value: unknown): value is MarketIdentityPendingAction {
+  return validate("MarketIdentityPendingAction", value).length === 0;
+}
+
+export function assertMarketIdentityPendingAction(value: unknown): asserts value is MarketIdentityPendingAction {
+  const issues = validate("MarketIdentityPendingAction", value);
+  if (issues.length > 0) throw new ApiValidationError("MarketIdentityPendingAction", issues);
+}
+
+export function parseMarketIdentityPendingAction(value: unknown): MarketIdentityPendingAction {
+  assertMarketIdentityPendingAction(value);
+  return value;
+}
+
+export function validatePendingActionKind(value: unknown): ApiIssue[] {
+  return validate("PendingActionKind", value);
+}
+
+export function isPendingActionKind(value: unknown): value is PendingActionKind {
+  return validate("PendingActionKind", value).length === 0;
+}
+
+export function assertPendingActionKind(value: unknown): asserts value is PendingActionKind {
+  const issues = validate("PendingActionKind", value);
+  if (issues.length > 0) throw new ApiValidationError("PendingActionKind", issues);
+}
+
+export function parsePendingActionKind(value: unknown): PendingActionKind {
+  assertPendingActionKind(value);
   return value;
 }

@@ -2,6 +2,7 @@
   "v1alpha1-1.atprotoidentities.socialweb.computer": "sha256:eb746531bc047741eb16a95b087655397eb90782138b09f66ecaeff7be9ccaf1",
   "v1alpha1-1.clusterlinks.socialweb.computer": "sha256:fcb7eece32ca2b8d3795ee0aed8c5c8ec12ad0f415fbc7d1bc2949f5b872635f",
   "v1alpha1-1.clusters.socialweb.computer": "sha256:f9d3db4257743b74e296e67bd414383a901731cce78cbf2e82e558ba4da85ceb",
+  "v1alpha1-1.marketidentities.socialweb.computer": "sha256:4f11f4a1242105222a00211c1c313016ad017658fddf862f71a9b219d4c0e723",
   "v1alpha1-1.nodeclaims.socialweb.computer": "sha256:fa207932b2f18db9f73b6c6e3c23c0c7400a94b5db5aafab4c9d6783d1b5ed18",
   "v1alpha1-1.nodes.socialweb.computer": "sha256:de91abff17763f0223c864bec37f04ca9479c911d320af81126551c0eafd125c",
   "v1alpha1-2.nodeclaims.socialweb.computer": "sha256:23ffbeaac493044dc5d66ff5d221aac8c11ab493dc32cd24fa58d79d60d6bcb9",

@@ -28,6 +28,8 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 		&AtprotoIdentityList{},
 		&ClusterLink{},
 		&ClusterLinkList{},
+		&MarketIdentity{},
+		&MarketIdentityList{},
 	)
 	return nil
 }
