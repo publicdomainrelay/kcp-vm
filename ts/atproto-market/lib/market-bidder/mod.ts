@@ -47,14 +47,17 @@ import type {
   CallbackFactoryDeps,
   CallbackSet,
   ContractEvent,
+  ContractStore,
   MarketBidderProviderRef,
   PolicyExecOptions,
 } from "@publicdomainrelay/market-bidder-abc";
+import { activeContractOf, TerminatedReceipts } from "@publicdomainrelay/market-bidder-abc";
 export type {
   ActiveContract,
   CallbackFactoryDeps,
   CallbackSet,
   ContractEvent,
+  ContractStore,
   MarketBidderProviderRef,
 };
 
@@ -87,7 +90,8 @@ export interface MarketBidderConfig {
   teardown?(): Promise<void>;
   callbackFactory?: (deps: CallbackFactoryDeps) => CallbackSet | Promise<CallbackSet>;
   /** Fires on contract lifecycle changes (accepted, provisioned, terminated). */
-  onContractChange?: (event: ContractEvent) => void;
+  onContractChange?: (event: ContractEvent) => void | Promise<void>;
+  contractStore?: ContractStore;
   /** Registry name of the policy gating which RFPs the bidder responds to. */
   policy?: string | null;
   /** Arguments handed to that policy. */
@@ -174,6 +178,40 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
   const log = logAdapter(logger);
   const activeContracts = new Map<string, ActiveContract>();
   const acceptToContract = config.acceptToContract ?? new Map<string, import("@publicdomainrelay/market-bidder-abc").GuestContractEntry>();
+  const terminatedReceipts = new TerminatedReceipts();
+  const contractStore = config.contractStore;
+  const saveContractChange = contractStore || onContractChange
+    ? async (event: ContractEvent): Promise<void> => {
+      await contractStore?.save(event);
+      await onContractChange?.(event);
+    }
+    : undefined;
+
+  async function loadContracts(): Promise<void> {
+    if (!contractStore) return;
+    const stored = await contractStore.load();
+    const sorted = [...stored.tombstones].sort((a, b) => a.at.localeCompare(b.at));
+    for (const t of sorted) {
+      terminatedReceipts.add(t.receiptUri, { acceptAuthor: t.acceptAuthor, reason: t.reason, at: t.at });
+      if (t.acceptUri && t.acceptCid && t.receiptCid) {
+        acceptToContract.set(`${t.acceptUri}#${t.acceptCid}`, {
+          receiptKey: `${t.receiptUri}#${t.receiptCid}`, receiptUri: t.receiptUri, receiptCid: t.receiptCid,
+        });
+      }
+    }
+    let restored = 0;
+    for (const c of stored.contracts) {
+      if (terminatedReceipts.has(c.receiptUri)) continue;
+      activeContracts.set(c.key, activeContractOf(c));
+      if (c.acceptUri && c.acceptCid) {
+        acceptToContract.set(`${c.acceptUri}#${c.acceptCid}`, {
+          receiptKey: c.key, receiptUri: c.receiptUri, receiptCid: c.receiptCid, submitEventUrl: c.submitEventUrl,
+        });
+      }
+      restored++;
+    }
+    logger.info("bidder_contracts_loaded", { contracts: restored, tombstones: terminatedReceipts.size });
+  }
   const idResolver = atproto.idResolver;
   let offeringRefresher: OfferingRefreshHandle | null = null;
 
@@ -339,6 +377,7 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
   }
 
   async function beginServe(): Promise<void> {
+    await loadContracts();
     const recordResolver = createRecordResolver(idResolver);
 
     // Policy engine: registry (record $type -> executor), evaluator, and the
@@ -391,7 +430,9 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
       deleteRecord: atproto.deleteRecord,
       callService: atproto.callService,
       resolve: recordResolver,
-      onContractChange,
+      onContractChange: saveContractChange,
+      terminatedReceipts,
+      saveTombstone: contractStore ? (t) => contractStore.saveTombstone(t) : undefined,
       policyExec: config.policyExec,
       getVouchedDids,
       resolveOperatorDid,
@@ -404,12 +445,14 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
     await setup?.();
 
     const merged: CallbackSet = {};
+    const restores: Array<() => Promise<void>> = [];
     // Dedup accept dispatch: push XRPC and firehose watcher both deliver the
     // same accept record. Once either path processes it, the other must skip.
     const acceptedUris = new Map<string, number>();
     let acceptSweepCounter = 0;
     for (const p of providers ?? []) {
       const cb = p.buildCallbacks(deps);
+      if (cb.restore) restores.push(() => cb.restore!());
       if (cb.rfpCallbacks) {
         merged.rfpCallbacks = deepMergeCallbacks(merged.rfpCallbacks ?? {}, cb.rfpCallbacks);
       }
@@ -426,10 +469,13 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
 
     if (callbackFactory) {
       const cb = await callbackFactory(deps);
+      if (cb.restore) restores.push(() => cb.restore!());
       if (cb.rfpCallbacks) merged.rfpCallbacks = deepMergeCallbacks(merged.rfpCallbacks ?? {}, cb.rfpCallbacks);
       if (cb.onAccept) merged.onAccept = merged.onAccept ?? cb.onAccept;
       if (cb.eventCallbacks) merged.eventCallbacks = deepMergeCallbacks(merged.eventCallbacks ?? {}, cb.eventCallbacks);
     }
+
+    for (const restore of restores) await restore();
 
     // Wrap merged.onAccept so the same acceptUri is never processed twice --
     // push XRPC and firehose watcher converge on this single callback.

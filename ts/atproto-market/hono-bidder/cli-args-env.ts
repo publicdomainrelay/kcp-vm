@@ -162,6 +162,11 @@ export default {
       description: "Base address guests are addressed from, one /30 each",
       env: "COMPUTE_PROVIDER_FIRECRACKER_RANGE_BASE",
     },
+    "contract-store-dir": {
+      type: "string" as const,
+      description: "Directory the bidder keeps its contracts and terminated-receipt tombstones in, so a restart keeps answering vm.delete (defaults to <firecracker work root>/contracts when the Firecracker provider is enabled)",
+      env: "CONTRACT_STORE_DIR",
+    },
     "compute-provider-firecracker-reuse-image": {
       type: "boolean" as const,
       description: "Use the image already in the store and skip the rebuild when the inputs have moved",

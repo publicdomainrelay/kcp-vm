@@ -13,6 +13,7 @@
     "@publicdomainrelay/logger": "jsr:@publicdomainrelay/logger@^0",
     "@publicdomainrelay/market-atproto": "jsr:@publicdomainrelay/market-atproto@^0",
     "@publicdomainrelay/market-bidder": "jsr:@publicdomainrelay/market-bidder@^0",
+    "@publicdomainrelay/market-bidder-contract-store-fs": "jsr:@publicdomainrelay/market-bidder-contract-store-fs@^0",
     "@publicdomainrelay/market-bidder-worker": "jsr:@publicdomainrelay/market-bidder-worker@^0",
     "@publicdomainrelay/market-common": "jsr:@publicdomainrelay/market-common@^0",
     "@publicdomainrelay/firehose-watcher-abc": "jsr:@publicdomainrelay/firehose-watcher-abc@^0",

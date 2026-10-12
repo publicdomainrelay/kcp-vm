@@ -22,8 +22,12 @@ export interface ActiveContract {
   acceptAuthor: string;
   receiptUri?: string;
   receiptCid?: string;
+  acceptUri?: string;
+  acceptCid?: string;
   acceptedAt?: string;
   submitEventUrl?: string;
+  provider?: string;
+  restored?: boolean;
 }
 
 export interface TerminatedReceipt {
@@ -67,10 +71,76 @@ export interface ContractEvent {
   key: string;
   receiptUri: string;
   receiptCid: string;
+  acceptUri?: string;
+  acceptCid?: string;
   acceptAuthor: string;
   acceptedAt: string;
   terminatedAt?: string;
   providerId?: string | number;
+  provider?: string;
+  submitEventUrl?: string;
+}
+
+export interface StoredContract {
+  key: string;
+  receiptUri: string;
+  receiptCid: string;
+  acceptUri?: string;
+  acceptCid?: string;
+  acceptAuthor: string;
+  acceptedAt: string;
+  providerId?: string | number;
+  provider?: string;
+  submitEventUrl?: string;
+}
+
+export interface Tombstone extends TerminatedReceipt {
+  receiptUri: string;
+  receiptCid?: string;
+  acceptUri?: string;
+  acceptCid?: string;
+}
+
+export interface StoredContracts {
+  contracts: StoredContract[];
+  tombstones: Tombstone[];
+}
+
+export interface ContractStore {
+  load(): Promise<StoredContracts>;
+  save(event: ContractEvent): Promise<void>;
+  saveTombstone(tombstone: Tombstone): Promise<void>;
+}
+
+export function storedContractOf(event: ContractEvent): StoredContract {
+  const stored: StoredContract = {
+    key: event.key,
+    receiptUri: event.receiptUri,
+    receiptCid: event.receiptCid,
+    acceptAuthor: event.acceptAuthor,
+    acceptedAt: event.acceptedAt,
+  };
+  if (event.acceptUri !== undefined) stored.acceptUri = event.acceptUri;
+  if (event.acceptCid !== undefined) stored.acceptCid = event.acceptCid;
+  if (event.providerId !== undefined) stored.providerId = event.providerId;
+  if (event.provider !== undefined) stored.provider = event.provider;
+  if (event.submitEventUrl !== undefined) stored.submitEventUrl = event.submitEventUrl;
+  return stored;
+}
+
+export function activeContractOf(stored: StoredContract): ActiveContract {
+  return {
+    providerIdPromise: Promise.resolve(stored.providerId),
+    acceptAuthor: stored.acceptAuthor,
+    receiptUri: stored.receiptUri,
+    receiptCid: stored.receiptCid,
+    acceptUri: stored.acceptUri,
+    acceptCid: stored.acceptCid,
+    acceptedAt: stored.acceptedAt,
+    submitEventUrl: stored.submitEventUrl,
+    provider: stored.provider,
+    restored: true,
+  };
 }
 
 export interface CallbackSet {
@@ -78,6 +148,7 @@ export interface CallbackSet {
   onAccept?: SubmitAcceptCallback;
   eventCallbacks?: EventCallbacks;
   eventBackground?: boolean;
+  restore?(): Promise<void>;
 }
 
 export interface CallbackFactoryDeps {
@@ -90,7 +161,9 @@ export interface CallbackFactoryDeps {
   ingressProxyHost: string;
   log: Logger;
   activeContracts: Map<string, ActiveContract>;
-  onContractChange?: (event: ContractEvent) => void;
+  onContractChange?: (event: ContractEvent) => void | Promise<void>;
+  terminatedReceipts?: TerminatedReceipts;
+  saveTombstone?: (tombstone: Tombstone) => Promise<void>;
   createRecord: (collection: string, record: Record<string, unknown>) => Promise<StrongRef>;
   createRepoRecord: (collection: string, record: Record<string, unknown>) => Promise<{ uri: string; cid: string }>;
   createSignedRepoRecord: (collection: string, record: Record<string, unknown>, issuer?: string) => Promise<{ uri: string; cid: string; record: Record<string, unknown> }>;

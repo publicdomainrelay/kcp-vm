@@ -6,6 +6,7 @@ import { createIngress } from "@publicdomainrelay/did-key-ingress-proxy";
 import { createMarketBidder } from "@publicdomainrelay/market-bidder";
 import type { MarketBidderProviderRef } from "@publicdomainrelay/market-bidder-abc";
 import { createComputeProviderHooks } from "@publicdomainrelay/market-bidder-compute";
+import { createFsContractStore } from "@publicdomainrelay/market-bidder-contract-store-fs";
 import { createComputeProviderDenoWorker, createWorkerProviderHooks } from "@publicdomainrelay/market-bidder-worker";
 import { createATProto, createLocalPDSAgent, createRemoteAgent, createOAuthAgent, createOAuthAgentFromSession, pollForOAuthSession, tryRestoreOAuthQRSession, saveOAuthQRSession, OAuthSessionExpiredError } from "@publicdomainrelay/atproto-helpers";
 import type { LocalPDSAgent } from "@publicdomainrelay/atproto-helpers";
@@ -654,8 +655,14 @@ try {
   Deno.exit(2);
 }
 
+const contractStoreDir = (options.contractStoreDir as string | undefined) ||
+  (options.computeProviderFirecracker ? `${options.computeProviderFirecrackerWorkRoot}/contracts` : undefined);
+const contractStore = contractStoreDir ? createFsContractStore({ dir: contractStoreDir }) : undefined;
+if (contractStoreDir) logger.info("bidder_contract_store", { dir: contractStoreDir });
+
 const bidder = await createMarketBidder({
   logger, atproto, providers, relay: bidderIngress,
+  contractStore,
   eventStreams,
   offeringRefreshMs: offeringRefreshSec > 0 ? offeringRefreshSec * 1000 : undefined,
   serve: bidderServe,
