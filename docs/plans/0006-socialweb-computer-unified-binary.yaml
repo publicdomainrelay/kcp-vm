@@ -1469,8 +1469,8 @@ items:
       it back sealed; one pass later it is unsealed). Red first.
     done_when: "green; the gateway's root vault comes up as an object on hat-8."
     risks: ["One writer of the root vault layout: the controller calls apply-root's code, never a copy."]
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M2-MANIFESTS
     milestone: M2
     title: Every YAML the stack applies lives in one embed.FS, grouped into named, ordered sets
