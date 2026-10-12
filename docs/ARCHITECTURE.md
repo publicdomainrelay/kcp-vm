@@ -6473,10 +6473,9 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   a key in the `socialweb-nodes` KV scope. `NodeVault` edits that declaration in kcp and waits for the
   sync; the cluster provider's own token can only write the paths it writes (k3s KV, node and link KV,
   pki/config/ca, two pki issue roles). The root token of the cluster vault is no longer kept anywhere.
-  Not yet: the gateway's root vault (`internal/vaultmain`, `vault prepare-root|apply-root`) still keeps
-  its root token in its unseal file; it becomes an OpenBaoServer with M3-SERVE-GATEWAY-KCP, whose
-  `spec.declared` is vaultlayout's root layout, and apply-root shrinks to the pki root generation and
-  KV writes done as a client. Readings on a quick dev instance (proc backend), UTC: a standalone
+  The gateway's root vault followed with M3-SERVE-GATEWAY-KCP: it is the OpenBaoServer `root-vault`,
+  `spec.declared` is vaultlayout's root layout, and apply-root is only the pki root generation and the
+  KV writes, done as its client `gateway`. Readings on a quick dev instance (proc backend), UTC: a standalone
   server, hand drift at 08:26:30.583Z (policy `intruder` added, approle role `batch` deleted, auth
   `userpass` enabled) undone at 08:26:30.823Z; `socialweb-core` deleted by hand at 08:27:14.637Z,
   restored through generate-root at 08:27:16.547Z; `spec.listen` changed at 08:26:48.618Z, restarted in
@@ -6539,8 +6538,8 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   template; a phase named `<component>@<profile>` belongs to one profile and a DenoPod the profile omits
   is deleted. The bidder's core keeps the PDS account password in that vault, signs up on the PDS its
   root object names, and gives the DenoPod a token that can read only OpenBaoServer objects of its own
-  kcp. `MarketRequester` and `Gateway` are accepted root objects with no components yet (0008
-  M4-RUN-REQUEST, 0006 M3-SERVE-GATEWAY-KCP and 0008 M3-DOOR-DENOPOD add them). A `MarketNetwork` runs
+  kcp. `MarketRequester` is an accepted root object with no components yet (0008 M4-RUN-REQUEST adds
+  them); a `Gateway` renders its root vault (0006 M3-SERVE-GATEWAY-KCP, below). A `MarketNetwork` runs
   its OpenBao as a HostProcess (in-memory storage, one unseal key in a mode 600 file; the core's deno
   runtime waits for it), the `market-network` set's services as DenoPods, and one child per
   `spec.apps[]`: the child's bootstrap layer (quick shape: kine, one kcp slot on port 0, the front, its
@@ -6564,6 +6563,40 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   85 s; network RSS steady 4.45 GB with three children; the requester rented a guest through the RFP
   flow 09:06:17Z, 2 bids, onNetwork after 19.7 s, ssh host key verified, vm.delete 200 at 09:06:37Z;
   `dev down` 09:06:40Z to 09:07:00Z; teardown clean (no process, VM unit, port or work dir left).
+
+- **`socialweb-computer serve gateway kcp` is the gateway application instance; it replaces
+  container-entrypoint.sh (plan 0006 M3-SERVE-GATEWAY-KCP, 2026-10-12).** `internal/stack/gatewaykcp`
+  runs the core of `internal/devcore` for the application `table.Gateway()` (its unit prefix may be a
+  test prefix, `--unit-prefix`) on either backend. Order: lock `<state>/kcp/core.lock`; the kcp store,
+  the active slot's kine, the front and the active slot, each adopted by its recorded InvocationID or
+  started (a loaded installed unit is started by name); the provider, permission-inventory,
+  hostprocesses and applications sets through the front; the `Gateway gateway` root object (profile
+  prod or market-network); then the supervisors. The app controller renders the Gateway into the
+  OpenBaoServer `root-vault` (the root layout of `internal/vaultlayout` as `spec.declared`, client
+  `gateway` with policy `root-writer`); the core waits for it Ready and synced, generates the pki root
+  and writes the root KV entries as that client (`vault apply-root`). No root token and no unseal file
+  of the root vault exist; `vault prepare-root` is gone. Then, in process: the migration, the gateway
+  (XRPC on 127.0.0.1:0), a Go crypto/tls front that proxies to it (replaces socat; a self-signed
+  certificate under `<state>/tls` unless `--tls-cert-file`), the clusterprovider (its HostProcess
+  objects under the core's prefix), and the socialweb-computer-k8s web app as a deno child with explicit
+  permissions (port 0 read from its port file). Each listener is reported in the Gateway's
+  `status.listeners`. The members reach kcp as kcp-admin through a kubeconfig rewritten from the shared
+  material: a workspace created as shard-admin records no creator and the account WorkspaceType's
+  apibinding initializer never finishes. The gateway resolves DIDs through `SOCIALWEB_GATEWAY_PLC_URL`
+  (a loopback PLC through a plain dialer). Any in-process member ending ends the core with exit 1; the
+  deno child dies with the core's unit; every other unit is adopted on the next start. Readings on
+  hat-8, systemd-user, test prefix `socialweb-sgw-` in the account's user manager, a local PLC and PDS,
+  UTC: empty state dir 09:30:30Z to kcp Ready 09:30:50Z, sets and root object 09:30:57Z, root vault
+  initialized 09:31:17Z, root layout applied and the door listening 09:31:18Z (48 s); a graceful restart
+  adopted every unit and served again in 1.3 s; a tenant cluster created through the web app's
+  `/api/clusters/create` at 09:33:58Z was Ready at 09:35:58Z as member units (Postgres, kine, k3s slot a,
+  apiserver front, OpenBao, CCM, ESO, two links) behind its apiserver front, `kubectl get ns` answered
+  through the front and through the web app's kubeconfig (kcp mount, socialweb-credential); kill -9 of
+  the core at 09:36:53.561Z, the next core served again at 09:36:57.855Z, all 18 other units kept
+  their InvocationIDs and the cluster stayed Ready (no condition transition). Not here: the Gateway
+  child of a MarketNetwork still runs a dev core (its root vault renders, its members do not), the
+  door's TEST_* seams are still env variables, and the door moves into a DenoPod with 0008
+  M3-DOOR-DENOPOD.
 
 ## 16. Vocabulary
 
