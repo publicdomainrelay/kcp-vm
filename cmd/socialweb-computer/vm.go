@@ -173,21 +173,21 @@ func (a *app) instanceVMRuntime(ctx context.Context, rec devinstance.Record) (vm
 	return rt, m, nil
 }
 
-func (a *app) downVMs(ctx context.Context, rec devinstance.Record) []string {
+func (a *app) downVMs(ctx context.Context, rec devinstance.Record) ([]string, []string) {
 	if rec.VM == nil {
-		return nil
+		return nil, nil
 	}
 	rt, m, err := a.instanceVMRuntime(ctx, rec)
 	if err != nil {
 		a.log.Warn("the VM runtime of the instance; its VMs are not stopped here", "err", err.Error())
-		return []string{err.Error()}
+		return nil, []string{err.Error()}
 	}
 	defer m.Close()
 	listed, err := rt.List(ctx, rec.VM.Handle)
 	if err != nil {
-		return []string{err.Error()}
+		return nil, []string{err.Error()}
 	}
-	var left []string
+	var stopped, left []string
 	for _, l := range listed {
 		ref, err := rt.Load(rec.VM.Handle, l.Name)
 		if err != nil {
@@ -198,12 +198,13 @@ func (a *app) downVMs(ctx context.Context, rec devinstance.Record) []string {
 			left = append(left, l.Unit+": "+err.Error())
 			continue
 		}
+		stopped = append(stopped, l.Unit)
 		a.log.Info("VM stopped with its instance", "unit", l.Unit, "graceful", res.Graceful, "result", res.Result)
 	}
 	if err := m.StopSlice(ctx, vmruntime.SliceName(rec.VM.Handle)); err != nil {
 		left = append(left, err.Error())
 	}
-	return left
+	return stopped, left
 }
 
 func runVM(verb string) verbFunc {
