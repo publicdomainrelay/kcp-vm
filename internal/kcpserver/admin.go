@@ -108,6 +108,56 @@ func (h *HTTPAdmin) do(ctx context.Context, method, path string, body any) (int,
 	return resp.StatusCode, b, nil
 }
 
+const rootShardPath = "/clusters/root/apis/core.kcp.io/v1alpha1/shards/root"
+
+func (h *HTTPAdmin) SyncRootShard(ctx context.Context) (bool, error) {
+	code, b, err := h.do(ctx, http.MethodGet, rootShardPath, nil)
+	if err != nil {
+		return false, err
+	}
+	if code != http.StatusOK {
+		return false, fmt.Errorf("kcpserver: reading the root shard: %d %s", code, b)
+	}
+	var s struct {
+		Spec map[string]any `json:"spec"`
+	}
+	if err := json.Unmarshal(b, &s); err != nil {
+		return false, err
+	}
+	keys := []string{"baseURL", "externalURL", "virtualWorkspaceURL"}
+	same := true
+	for _, k := range keys {
+		same = same && s.Spec[k] == h.Front
+	}
+	if same {
+		return false, nil
+	}
+	spec := map[string]string{}
+	for _, k := range keys {
+		spec[k] = h.Front
+	}
+	body, err := json.Marshal(map[string]any{"spec": spec})
+	if err != nil {
+		return false, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, h.Front+rootShardPath, bytes.NewReader(body))
+	if err != nil {
+		return false, err
+	}
+	req.Header.Set("Authorization", "Bearer "+h.Admin.Token)
+	req.Header.Set("Content-Type", "application/merge-patch+json")
+	resp, err := h.http.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	out, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode != http.StatusOK {
+		return false, fmt.Errorf("kcpserver: pointing the root shard at %s: %d %s", h.Front, resp.StatusCode, out)
+	}
+	return true, nil
+}
+
 func leasePath() string {
 	return "/clusters/" + SystemAdminCluster + "/apis/coordination.k8s.io/v1/namespaces/" + ControllerLeaseNamespace +
 		"/leases/" + ControllerLeaseName

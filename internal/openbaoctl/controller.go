@@ -431,6 +431,15 @@ func (c *Controller) reconcile(ctx context.Context, o v1alpha1.OpenBaoServer) v1
 		st.Runtime = &v1alpha1.OpenBaoServerRuntime{Backend: rt.Backend, Ref: rt.Unit, Instance: rt.InvocationID, Pid: rt.Pid,
 			StartTime: rt.ActiveSince, HostBootID: rt.HostBootID}
 	}
+	if child.Status.Phase == v1alpha1.HostProcessPhaseLost && (child.Status.LostReason == v1alpha1.HostProcessLostUnitGone ||
+		child.Status.LostReason == v1alpha1.HostProcessLostHostRebooted) && child.DeletionTimestamp == nil {
+		if err := c.children.Delete(ctx, child.Name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+			return fail("HostProcess %s is Lost (%s) and deleting it failed: %v", child.Name, child.Status.LostReason, err)
+		}
+		log.Info("the server's HostProcess was Lost; it is placed again on the same storage", "hostprocess", child.Name,
+			"reason", child.Status.LostReason)
+		return starting("HostProcess %s was Lost (%s); placing it again from its storage", child.Name, child.Status.LostReason)
+	}
 	switch child.Status.Phase {
 	case v1alpha1.HostProcessPhaseFailed, v1alpha1.HostProcessPhaseLost:
 		return fail("HostProcess %s is %s %s: %s", child.Name, child.Status.Phase, child.Status.LostReason, child.Status.Message)

@@ -522,6 +522,13 @@ func Ensure(ctx context.Context, m hostsvc.Manager, cfg Config, rec *devinstance
 	if err != nil {
 		return fmt.Errorf("bootstrap: pointing the front at %s: %w", backend, err)
 	}
+	if admin, err := kcpserver.NewHTTPAdmin(a, frontURL); err == nil {
+		if moved, err := admin.SyncRootShard(ctx); err != nil {
+			log.Warn("pointing the root shard at the front", "front", frontURL, "err", err.Error())
+		} else if moved {
+			log.Info("the root shard advertises the front it runs behind now", "front", frontURL)
+		}
+	}
 	if kcpPlaced || prevInvocation != kcp.Identity.InvocationID {
 		admin, err := kcpserver.NewHTTPAdmin(a, frontURL)
 		if err != nil {
