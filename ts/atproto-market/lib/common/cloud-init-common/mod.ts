@@ -1171,7 +1171,8 @@ done
 if [ -n "\${TICKET}" ]; then
   printf 'iroh://%s\\n' "\${TICKET}" > "\${TICKET_FILE}"
   chmod 0600 "\${TICKET_FILE}"
-  printf 'iroh://%s\\n' "\${TICKET}" > /run/guest-fqdn
+  printf 'iroh://%s\\n' "\${TICKET}" > /run/guest-fqdn.tmp
+  mv -f /run/guest-fqdn.tmp /run/guest-fqdn
 fi
 
 wait "\${DUMBPIPE_PID}"
@@ -1184,7 +1185,7 @@ wait "\${DUMBPIPE_PID}"
       content: [
         "[Unit]",
         "Description=iroh dumbpipe listener in front of local sshd",
-        "After=network-online.target sshd.service ssh.service",
+        "After=network-online.target",
         "Wants=network-online.target",
         "",
         "[Service]",
@@ -1216,8 +1217,9 @@ wait "\${DUMBPIPE_PID}"
     runcmd: [
       "/usr/local/bin/setup-iroh.sh",
       "systemctl daemon-reload",
-      "systemctl enable --now ssh || systemctl enable --now sshd",
-      "systemctl enable --now iroh.service",
+      "systemctl enable iroh.service",
+      "systemctl start --no-block iroh.service",
+      "systemctl enable --now --no-block ssh || systemctl enable --now --no-block sshd",
     ],
   };
 };

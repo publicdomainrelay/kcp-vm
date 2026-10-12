@@ -256,6 +256,18 @@ Deno.test("iroh module semantics", () => {
   assert(!y.includes("iroh-report.path"), "no path unit of its own");
 });
 
+Deno.test("iroh listener never waits on sshd and no runcmd step blocks on a unit start", () => {
+  const y = buildUserData({ ctx: IROH_CTX, modules: ["iroh"] });
+  const unit = y.slice(y.indexOf("Description=iroh dumbpipe listener")).split("\n").map((l) => l.trim());
+  assertEquals(unit.find((l) => l.startsWith("After=")), "After=network-online.target");
+  assert(!/systemctl enable --now (?!--no-block)/.test(y), "every unit start in runcmd is --no-block");
+  assert(
+    y.indexOf("systemctl start --no-block iroh.service") < y.indexOf("--no-block ssh"),
+    "the listener is queued before sshd",
+  );
+  assert(y.includes("mv -f /run/guest-fqdn.tmp /run/guest-fqdn"), "the rendezvous file appears whole");
+});
+
 Deno.test("registry: built-ins present, unknown id throws", () => {
   assert(listUserDataModules().includes("iroh"));
   assert(listUserDataModules().includes("tunnel"));
