@@ -30,6 +30,7 @@ type bus interface {
 	ListUnitsByPatterns(ctx context.Context, patterns []string) ([]sd.UnitStatus, error)
 	UnitByPIDFD(ctx context.Context, fd int) (string, string, error)
 	Version(ctx context.Context) (string, error)
+	ManagerStarted(ctx context.Context) (uint64, error)
 	Close()
 }
 
@@ -147,6 +148,21 @@ func (b *sdBus) Version(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("hostsvc: the manager's Version is a %T, not a string", v.Value())
 	}
 	return s, nil
+}
+
+func (b *sdBus) ManagerStarted(ctx context.Context) (uint64, error) {
+	var v dbus.Variant
+	err := b.raw.Object(systemdDest, systemdPath).
+		CallWithContext(ctx, "org.freedesktop.DBus.Properties.Get", 0, managerIfc, "UserspaceTimestampMonotonic").
+		Store(&v)
+	if err != nil {
+		return 0, err
+	}
+	n, ok := v.Value().(uint64)
+	if !ok {
+		return 0, fmt.Errorf("hostsvc: the manager's UserspaceTimestampMonotonic is a %T, not a uint64", v.Value())
+	}
+	return n, nil
 }
 
 func (b *sdBus) Close() {

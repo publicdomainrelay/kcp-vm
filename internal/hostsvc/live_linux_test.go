@@ -42,7 +42,7 @@ func TestMain(m *testing.M) {
 func runStarter() int {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	m, err := Open(ctx)
+	m, err := Open(ctx, Config{Backend: BackendSystemdUser})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
@@ -88,7 +88,7 @@ func openLive(t *testing.T) *live {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	m, err := Open(ctx)
+	m, err := Open(ctx, Config{Backend: BackendSystemdUser})
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
