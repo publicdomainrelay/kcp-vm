@@ -202,7 +202,7 @@ entries:
     kind: executable
     fate: linked
     owner: 0007 M2-VM-RUNTIME
-    why: the bidder's vmruntime microvm runs `socialweb-computer internal vm` (one-shot prep, unit start, inspect, stop) until 0007 M2-CONTROLLER reconciles ComputeVMs in the core
+    why: the firecracker provider's vmruntime microvm runs `socialweb-computer internal vm` (one-shot prep, unit start, inspect, stop); the kcp provider's guests are booted by the ComputeVM controller in the core of the bidder's own instance (0007 M2-CONTROLLER)
     from:
       - "ts/hono-compute-provider microvm-vmruntime"
   - name: swc-userns-stage

@@ -68,7 +68,12 @@ export function computeVMFor(input: ComputeVMInput): ComputeVM {
     kind: COMPUTE_VM_RESOURCE.kind,
     metadata: { name: input.name },
     spec: {
-      vm: { cpus: input.vm.cpus, mem: input.vm.mem, disk: input.vm.disk, role: input.vm.role },
+      vm: {
+        cpus: typeof input.vm.cpus === "number" && input.vm.cpus > 0 ? input.vm.cpus : 0,
+        mem: typeof input.vm.mem === "string" ? input.vm.mem : "",
+        disk: typeof input.vm.disk === "string" ? input.vm.disk : "",
+        role: input.vm.role ?? "",
+      },
       owner: { handle: input.handle },
       userDataSecret: userDataSecretName(input.name),
       requester: { did: input.requesterDid },

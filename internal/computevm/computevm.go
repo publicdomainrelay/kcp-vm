@@ -28,6 +28,7 @@ import (
 	"k8s.io/client-go/rest"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/guestimage"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/guestnet"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostprocess"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc"
@@ -461,11 +462,11 @@ func (ct *Controller) boot(ctx context.Context, o v1alpha1.ComputeVM) error {
 		}
 		mem, err := ParseMiB(o.Spec.VM.Mem)
 		if err != nil {
-			return ct.fail(ctx, o, st, err)
+			log.Info("spec.vm.mem does not parse; the guest gets the image's own memory", "mem", o.Spec.VM.Mem)
 		}
 		disk, err := ParseMiB(o.Spec.VM.Disk)
 		if err != nil {
-			return ct.fail(ctx, o, st, err)
+			log.Info("spec.vm.disk does not parse; the guest keeps the image's own disk size", "disk", o.Spec.VM.Disk)
 		}
 		st.Phase, st.Message = v1alpha1.ComputeVMPhasePreparing, "image ensure, rootfs clone, seed drive"
 		if err := ct.writeStatus(ctx, o, st); err != nil {
@@ -477,7 +478,12 @@ func (ct *Controller) boot(ctx context.Context, o v1alpha1.ComputeVM) error {
 		if err != nil {
 			return ct.fail(ctx, o, st, err)
 		}
-		log.Info("prepared", "workDir", prep.WorkDir, "vcpu", prep.Vcpu, "memMiB", prep.MemMiB, "diskMiB", disk, "seconds", time.Since(started).Seconds())
+		var imageMiB int64
+		if fi, err := os.Stat(filepath.Join(prep.ImageDir, guestimage.RootfsName)); err == nil {
+			imageMiB = fi.Size() >> 20
+		}
+		log.Info("prepared", "workDir", prep.WorkDir, "vcpu", prep.Vcpu, "memMiB", prep.MemMiB, "diskMiB", disk, "imageRootfsMiB", imageMiB,
+			"diskKeptAtImageSize", int64(disk) <= imageMiB, "seconds", time.Since(started).Seconds())
 		setCondition(&st, o.Generation, v1alpha1.ConditionPrepared, metav1.ConditionTrue, "Prepared", prep.WorkDir)
 		p = prep
 		slot, err = rt.Reserve(ctx, p, ct.placer(o))
@@ -662,6 +668,11 @@ func (ct *Controller) release(ctx context.Context, cur *unstructured.Unstructure
 	if err := ct.teardown(ctx, o.Name, ref.Unit); err != nil {
 		return err
 	}
+	if fresh, err := ct.vms.Get(ctx, o.Name, metav1.GetOptions{}); err == nil {
+		cur = fresh
+	} else if apierrors.IsNotFound(err) {
+		return nil
+	}
 	if err := ct.setFinalizer(ctx, cur, ct.vms, false); err != nil {
 		return err
 	}
@@ -699,7 +710,10 @@ func (ct *Controller) reconcile(ctx context.Context, name string) error {
 		return ct.release(ctx, cur, o)
 	}
 	if !slices.Contains(o.Finalizers, v1alpha1.FinalizerComputeVM) {
-		return ct.setFinalizer(ctx, cur, ct.vms, true)
+		if err := ct.setFinalizer(ctx, cur, ct.vms, true); err != nil {
+			return err
+		}
+		return ct.reconcile(ctx, name)
 	}
 	ct.mu.Lock()
 	ct.slice = true
@@ -747,6 +761,17 @@ func (ct *Controller) collect(ctx context.Context, have map[string]bool) {
 	seen := map[string]bool{}
 	for _, l := range listed {
 		if have[l.Name] {
+			continue
+		}
+		if l.WorkDir == "" {
+			ct.mu.Lock()
+			known := ct.foreign[l.Unit]
+			ct.foreign[l.Unit] = true
+			ct.mu.Unlock()
+			if !known {
+				log.Info("a VM unit of this handle with no work dir under this instance; another instance's, left alone", "unit", l.Unit,
+					"state", string(l.Status.State))
+			}
 			continue
 		}
 		seen[l.Name] = true

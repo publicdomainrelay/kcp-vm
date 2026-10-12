@@ -173,8 +173,13 @@ export function createComputeProviderKcpFactory(opts: ComputeProviderKcpFactoryO
       } else {
         logger.info("guest.onNetwork recorded (no event wrapper)", { uri: ref.uri, address: body.address });
       }
+      const dropletId = validated.claims?.["droplet_id"];
       const nonce = validated.claims?.["nonce"];
-      const name = typeof nonce === "string" ? hostKeys.guestOf(nonce) : undefined;
+      const name = typeof dropletId === "string" && dropletId
+        ? dropletId
+        : typeof nonce === "string"
+        ? hostKeys.guestOf(nonce)
+        : undefined;
       if (name === undefined) {
         logger.warn("guest.onNetwork: no ComputeVM holds this token", { acceptKey });
       } else {
