@@ -30,14 +30,14 @@ import (
 )
 
 const (
-	BidderVaultServer  = "bidder"
-	BidderVaultClient  = "bidder"
-	identityKeysPath   = "identity/bidder/keys"
-	passwordBytes      = 24
-	vaultTokenFile     = "vault-kcp.token"
-	vaultKcpCAFile     = "vault-kcp-ca.pem"
-	vaultTokenTTL      = 30 * 24 * time.Hour
-	vaultTokenRenew    = 7 * 24 * time.Hour
+	BidderVaultServer = "bidder"
+	BidderVaultClient = "bidder"
+	identityKeysPath  = "identity/bidder/keys"
+	passwordBytes     = 24
+	vaultTokenFile    = "vault-kcp.token"
+	vaultKcpCAFile    = "vault-kcp-ca.pem"
+	vaultTokenTTL     = 30 * 24 * time.Hour
+	vaultTokenRenew   = 7 * 24 * time.Hour
 )
 
 var OpenBaoServerGVR = schema.GroupVersionResource{Group: v1alpha1.GroupName, Version: v1alpha1.Version, Resource: "openbaoservers"}
