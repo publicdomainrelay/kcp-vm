@@ -127,8 +127,10 @@ BED_ID=bed2 BED_BIDDERS=2 bash deploy/examples/atproto/market/accept.sh &
 wait
 ```
 
-Requires the sibling repositories `atproto-market`, `atproto-relay`, `hono-pds`
-and `typescript-helpers`.
+Every service runs from this repository: `ts/atproto-market`, `ts/atproto-relay`,
+`ts/hono-pds`, `ts/did-key-ingress-proxy` and the root `deno.json` and `deno.lock`.
+Building the provider needs a deno-kcp checkout (`DENO_KCP_DIR`) unless
+`DENO_KCP_PROVIDER` names a built one.
 
 ## How a name resolves
 
