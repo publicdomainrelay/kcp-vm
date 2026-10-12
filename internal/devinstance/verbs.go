@@ -140,6 +140,7 @@ type logName struct {
 
 func logNames(l Layout) []logName {
 	return []logName{
+		{"pg", l.Names().Store(), filepath.Join(l.Logs, "pg.log")},
 		{"kine-a", l.KineUnit(), filepath.Join(l.Logs, "kine-a.log")},
 		{"front", l.FrontUnit(), filepath.Join(l.Logs, "front.log")},
 		{"kcp-a", l.KcpUnit(), filepath.Join(l.Logs, "kcp-a.log")},

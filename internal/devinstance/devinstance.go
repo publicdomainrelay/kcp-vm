@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/bootstrap/table"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc"
 )
 
@@ -165,21 +166,17 @@ func NewLayout(id, stateRoot, runtimeRoot string) (Layout, error) {
 
 func (l Layout) UnitPrefix() string { return hostsvc.NamePrefix }
 
-func (l Layout) KineUnit() string {
-	return "socialweb-kcp-" + l.Short + "-kine-a" + hostsvc.ServiceSuffix
-}
+func (l Layout) Names() table.Names { return table.DevNames(l.Short) }
 
-func (l Layout) KcpUnit() string {
-	return "socialweb-kcp-" + l.Short + "-slot-a" + hostsvc.ServiceSuffix
-}
+func (l Layout) KineUnit() string { return l.Names().Kine(table.SlotA) }
 
-func (l Layout) CoreUnit() string {
-	return "socialweb-core-" + l.Short + "-dev" + hostsvc.ServiceSuffix
-}
+func (l Layout) KcpUnit() string { return l.Names().Slot(table.SlotA) }
 
-func (l Layout) KcpSlice() string { return "socialweb-kcp-" + l.Short + ".slice" }
+func (l Layout) CoreUnit() string { return l.Names().DevCore() }
 
-func (l Layout) CoreSlice() string { return "socialweb-core-" + l.Short + ".slice" }
+func (l Layout) KcpSlice() string { return l.Names().Slice() }
+
+func (l Layout) CoreSlice() string { return l.Names().CoreSlice() }
 
 func (l Layout) AdminKubeconfig() string { return filepath.Join(l.KcpRoot, "admin.kubeconfig") }
 

@@ -2,21 +2,15 @@ package devinstance
 
 import (
 	"path/filepath"
-
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc"
 )
 
 func (l Layout) KcpDir() string { return filepath.Join(l.StateDir, "kcp") }
 
 func (l Layout) SlotRoot(slot string) string { return filepath.Join(l.KcpDir(), "slot-"+slot) }
 
-func (l Layout) SlotUnit(slot string) string {
-	return "socialweb-kcp-" + l.Short + "-slot-" + slot + hostsvc.ServiceSuffix
-}
+func (l Layout) SlotUnit(slot string) string { return l.Names().Slot(slot) }
 
-func (l Layout) FrontUnit() string {
-	return "socialweb-kcp-" + l.Short + "-front" + hostsvc.ServiceSuffix
-}
+func (l Layout) FrontUnit() string { return l.Names().Front() }
 
 func (l Layout) FrontControl() string { return filepath.Join(l.RuntimeDir, "front.sock") }
 

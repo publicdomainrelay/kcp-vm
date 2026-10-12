@@ -5,13 +5,14 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
 
 func TestTheBidderKcpStoreIsOneKineOnSqliteAndNoPostgres(t *testing.T) {
-	spec, err := KineSqliteSpec(KineConfig{Unit: "socialweb-kcp-abcd1234-kine-a.service", Slice: "socialweb-kcp-abcd1234.slice",
-		Exec: "/opt/kine", Dir: "/s/kcp/kine-a"})
+	spec, err := KineSqliteSpec(KineConfig{Unit: "socialweb-kcp-abcd1234-kine@a.service", Slice: "socialweb-kcp-abcd1234.slice",
+		Exec: "/opt/kine", Dir: "/s/kcp/kine-a", Socket: "/run/user/1000/swc/abcd1234/kine-a.sock"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -19,8 +20,44 @@ func TestTheBidderKcpStoreIsOneKineOnSqliteAndNoPostgres(t *testing.T) {
 	if !strings.Contains(argv, "--endpoint sqlite:///s/kcp/kine-a/kine.db") || strings.Contains(argv, "postgres") {
 		t.Fatalf("argv %s", argv)
 	}
-	if !slices.Contains(spec.Exec, "127.0.0.1:0") || !slices.Contains(spec.Exec, "--metrics-bind-address=0") {
-		t.Fatalf("kine must bind port 0 and serve no metrics port: %s", argv)
+	if !slices.Contains(spec.Exec, "unix:///run/user/1000/swc/abcd1234/kine-a.sock") || !slices.Contains(spec.Exec, "--metrics-bind-address=0") ||
+		strings.Contains(argv, "127.0.0.1") {
+		t.Fatalf("kine must listen on its unix socket and serve no TCP port: %s", argv)
+	}
+}
+
+func TestKineOnPostgresDialsTheStoresSocketAndListensOnAUnixSocket(t *testing.T) {
+	spec, err := KinePostgresSpec(KineConfig{Unit: "socialweb-kcp-gw-kine@b.service", Slice: "socialweb-kcp-gw.slice",
+		Exec: "/opt/kine", Dir: "/s/kcp/kine-b", Socket: "/s/kcp/run/kine-b.sock", PostgresSocketDir: "/s/kcp/run/pg"}, "socialweb-kcp-gw-pg.service")
+	if err != nil {
+		t.Fatal(err)
+	}
+	argv := strings.Join(spec.Exec, " ")
+	if !strings.Contains(argv, "--endpoint postgres://kcp@localhost/kine?host=/s/kcp/run/pg&sslmode=disable") ||
+		!strings.Contains(argv, "--listen-address unix:///s/kcp/run/kine-b.sock") || strings.Contains(argv, "127.0.0.1") {
+		t.Fatalf("argv %s", argv)
+	}
+	if !slices.Equal(spec.Wants, []string{"socialweb-kcp-gw-pg.service"}) || !slices.Equal(spec.After, spec.Wants) {
+		t.Fatalf("kine is After= and Wants= (never Requires=) its postgres: %+v", spec)
+	}
+	if _, err := KineSqliteArgv(KineConfig{Exec: "/opt/kine", Dir: "/s", Socket: "/" + strings.Repeat("x", 120)}); err == nil {
+		t.Fatal("a kine socket path over the sun_path limit was accepted")
+	}
+}
+
+func TestThePgUnitHasNoTcpListener(t *testing.T) {
+	spec, err := PostgresSpec(PostgresConfig{Unit: "socialweb-kcp-gw-pg.service", Slice: "socialweb-kcp-gw.slice", BinDir: "/opt/pg/bin",
+		Data: "/s/kcp/pg/data", SocketDir: "/s/kcp/run/pg"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	argv := strings.Join(spec.Exec, " ")
+	if spec.Exec[0] != "/opt/pg/bin/postgres" || !strings.Contains(argv, "-c listen_addresses=") || strings.Contains(argv, "listen_addresses=*") ||
+		!strings.Contains(argv, "-c unix_socket_directories=/s/kcp/run/pg") || spec.KillSignal != syscall.SIGINT {
+		t.Fatalf("spec %+v", spec)
+	}
+	if _, err := PostgresSpec(PostgresConfig{Unit: "socialweb-kcp-gw-pg.service", BinDir: "/opt/pg/bin", Data: "/d", SocketDir: "/" + strings.Repeat("y", 110)}); err == nil {
+		t.Fatal("a socket directory whose socket path is over the sun_path limit was accepted")
 	}
 }
 
@@ -36,12 +73,10 @@ func TestTheDevQuickProfileUsesSqliteAndTheBedProfilePostgres(t *testing.T) {
 		profile string
 		want    Kind
 	}{
-		{RoleGateway, "minimal", KindKineSqlite},
 		{RoleGateway, "quick", KindKineSqlite},
 		{RoleGateway, "bed", KindKinePostgres},
 		{RoleGateway, "prodlike", KindKinePostgres},
 		{RoleGateway, "", KindKinePostgres},
-		{RoleBidder, "minimal", KindKineSqlite},
 		{RoleBidder, "bed", KindKineSqlite},
 		{RoleBidder, "", KindKineSqlite},
 	}
@@ -50,6 +85,9 @@ func TestTheDevQuickProfileUsesSqliteAndTheBedProfilePostgres(t *testing.T) {
 		if err != nil || got != c.want {
 			t.Errorf("%s/%q: %s %v, want %s", c.role, c.profile, got, err, c.want)
 		}
+	}
+	if _, err := StoreFor(RoleGateway, "minimal"); err == nil {
+		t.Error("the minimal profile is gone; quick is the sqlite profile")
 	}
 	if _, err := StoreFor(RoleGateway, "nope"); err == nil {
 		t.Error("an unknown profile chose a store")
