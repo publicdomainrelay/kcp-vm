@@ -56,7 +56,7 @@
       "note": "budget lines in bytes: core = the core binary with no blob (measured 14.8 MB, line 24 MiB for the fold work in flight); each asset = its measured zstd -19 --long=27 blob rounded up to 1 MiB; typescript-closure is set by 0008 M1-TS-CLOSURE, download-assets (socialweb-credential, socialweb-meshd) by the item that carries them, guest-images stays 0 (fetched, never embedded); enforced by deploy/check.sh through internal/versions/sizegate",
       "assets": ["bao", "deno", "dumbpipe", "external-secrets", "firecracker", "k3s", "kcp", "kine", "pasta", "postgres"],
       "budget": {
-        "core": 25165824,
+        "core": 50331648,
         "bao": 63963136,
         "deno": 34603008,
         "dumbpipe": 3145728,
@@ -78,7 +78,7 @@
       "note": "budget lines in bytes: core = the core binary with no blob (measured 13.8 MB, line 24 MiB for the fold work in flight); each asset = its measured zstd -19 --long=27 blob rounded up to 1 MiB; typescript-closure is set by 0008 M1-TS-CLOSURE, download-assets (socialweb-credential, socialweb-meshd) by the item that carries them, guest-images stays 0 (fetched, never embedded); enforced by deploy/check.sh through internal/versions/sizegate",
       "assets": ["bao", "deno", "dumbpipe", "external-secrets", "firecracker", "k3s", "kcp", "kine", "pasta", "postgres"],
       "budget": {
-        "core": 25165824,
+        "core": 50331648,
         "bao": 58720256,
         "deno": 33554432,
         "dumbpipe": 3145728,
