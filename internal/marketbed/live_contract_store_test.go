@@ -332,6 +332,7 @@ func TestARestartedBidderReleasesTheGuestItRentedBeforeTheRestart(t *testing.T) 
 	guest := waitNewGuest(t, h.workRoot, time.Minute)
 	h.reading("guest %s onNetwork at %v after %vms: receipt %v from %v", guest, on["vmAddress"], on["onNetworkMs"], on["receiptUri"], on["winnerDid"])
 
+	before, _ := h.bidderRun("bidder-1")
 	after := h.restartBidder("bidder-1")
 	if !guestRunning(guest) {
 		t.Fatalf("guest %s stopped across the bidder restart", guest)
@@ -347,13 +348,21 @@ func TestARestartedBidderReleasesTheGuestItRentedBeforeTheRestart(t *testing.T) 
 	if v.VMDeleteStatus != http.StatusOK || !v.VMDeleteOK || !v.OK || v.LateDelete {
 		t.Fatalf("vm.delete after the bidder restart: %+v; want 200 for a live contract", v)
 	}
-	if line := lineWith(after.stdout, "submitEvent: VM destroyed"); line == "" {
-		t.Fatalf("the restarted bidder's log %s has no VM destroyed line for the vm.delete", after.stdout)
-	} else {
-		h.reading("restarted bidder destroyed the guest: %s", line)
-	}
+	t.Cleanup(func() {
+		if t.Failed() {
+			copyEvidence(t, "contract-store-bidder-before.txt", before.stdout)
+			copyEvidence(t, "contract-store-bidder-after.txt", after.stdout)
+		}
+	})
 	took := h.waitGuestGone(guest)
 	h.reading("guest %s container and work dir %s gone %s after vm.delete", guest, filepath.Join(h.workRoot, guest), took.Round(time.Second))
+	for _, want := range []string{"submitEvent: VM destroyed", "submitEvent: vm deleted"} {
+		line := lineWith(after.stdout, want)
+		if line == "" {
+			t.Fatalf("the restarted bidder's log %s has no %q line for the vm.delete", after.stdout, want)
+		}
+		h.reading("restarted bidder: %s", line)
+	}
 }
 
 func TestALateVmDeleteForAPoweredOffGuestAfterABidderRestartIsAlreadyTerminated(t *testing.T) {
