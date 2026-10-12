@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostos"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kernelmodules"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/liveports"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodefirecracker"
@@ -20,7 +19,7 @@ func run(f facts) []Result {
 		results = append(results, configResult(f))
 	}
 	results = append(results, platformResult(), qemuResult(f))
-	if hostos.Firecracker() {
+	if compiledVMRuntime() != "" {
 		results = append(results,
 			kernelResult(f),
 			kernelConfigResult(f),

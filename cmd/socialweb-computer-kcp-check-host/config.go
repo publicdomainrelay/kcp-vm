@@ -194,7 +194,7 @@ func readFacts(configPath string) (facts, error) {
 		password:    envOr(envNodePassword, "/etc/rancher/node/password"),
 		inContainer: inContainer(),
 	}
-	if hostos.Firecracker() {
+	if compiledVMRuntime() != "" {
 		release, err := kernelRelease()
 		if err != nil {
 			return facts{}, err

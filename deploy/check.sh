@@ -54,6 +54,25 @@ echo "check.sh: ok apigen ($compared generated files, no drift from api/v1alpha1
 go vet ./... || fail "go vet"
 echo "check.sh: ok go vet"
 
+crossfailed=""
+for target in darwin/arm64 darwin/amd64 windows/amd64 windows/arm64 linux/arm64; do
+  goos="${target%/*}"
+  goarch="${target#*/}"
+  if ! GOOS="$goos" GOARCH="$goarch" go build ./...; then
+    crossfailed="$crossfailed build:$target"
+    continue
+  fi
+  if ! GOOS="$goos" GOARCH="$goarch" go vet ./...; then
+    crossfailed="$crossfailed vet:$target"
+    continue
+  fi
+  echo "check.sh: ok go build and go vet for $target"
+done
+if [ -n "$crossfailed" ]; then
+  echo "check.sh: the tree must build and vet for every GOOS/GOARCH above; an OS-specific file needs its build tag and a twin for the other OSes (plans 0011, 0012)" >&2
+  fail "cross-OS gate:$crossfailed"
+fi
+
 staticcheck ./... || fail staticcheck
 echo "check.sh: ok staticcheck"
 

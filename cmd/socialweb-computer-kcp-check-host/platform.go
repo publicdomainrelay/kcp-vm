@@ -4,25 +4,23 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostos"
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodevm"
 )
 
 func platformResult() Result {
-	substrates := []string{nodevm.VMMQEMU}
-	detail := fmt.Sprintf("this host is %s. It can place nodes with %s; the guest network is %s and "+
-		"the accelerator is %s. ", hostos.Name(), strings.Join(substrates, " and "),
-		hostos.NetworkMode(), hostos.Accel())
-	if hostos.Firecracker() {
+	host := runtime.GOOS + "/" + runtime.GOARCH
+	vmm := compiledVMRuntime()
+	if vmm == "" {
 		return Result{Label: "host.platform", Kind: Holds,
-			Detail: detail + "Firecracker is available here too, so both substrates are run."}
+			Detail: fmt.Sprintf("this host is %s, and no VM runtime is compiled into this build for it "+
+				"(macOS is plan 0012, Windows is plan 0011), so the checks below that belong to a VM "+
+				"runtime are NOT APPLICABLE.", host)}
 	}
 	return Result{Label: "host.platform", Kind: Holds,
-		Detail: detail + "Firecracker is a KVM guest and it exists only on Linux, so firecracker " +
-			"cannot run here at all: the checks below that are firecracker's are NOT APPLICABLE, " +
-			"and qemu is the only substrate this host supports."}
+		Detail: fmt.Sprintf("this host is %s, and the VM runtime compiled into this build is %s.", host, vmm)}
 }
 
 func qemuResult(f facts) Result {
@@ -38,8 +36,8 @@ func qemuResult(f facts) Result {
 				fmt.Sprintf("no qemu binary is named in %s and none is on PATH. A qemu node is one "+
 					"qemu-system process per node, started by the gateway, so without the binary "+
 					"there is no node on this substrate at all: name it in %s, or point that at the "+
-					"config's qemu field. Acceleration here would be %s",
-					envQEMU, envQEMU, hostos.Accel())}
+					"config's qemu field",
+					envQEMU, envQEMU)}
 	}
 	info, err := os.Stat(path)
 	if err != nil {
@@ -55,9 +53,7 @@ func qemuResult(f facts) Result {
 			detail += fmt.Sprintf(", and it answers %s", line)
 		}
 	}
-	return Result{Label: "host.qemu", Kind: Holds,
-		Detail: detail + fmt.Sprintf(". Acceleration on this host is %s and the guest network is %s",
-			hostos.Accel(), hostos.NetworkMode())}
+	return Result{Label: "host.qemu", Kind: Holds, Detail: detail}
 }
 
 func linuxOnlyResults() []Result {
@@ -65,7 +61,7 @@ func linuxOnlyResults() []Result {
 	return []Result{
 		{Label: "host.kernel", Kind: NotApplicable,
 			Detail: reason + "the kernel a node's guest boots is the BUILD host's own kernel, " +
-				"extracted from /boot. A Windows host has none, so a node image must be built on " +
+				"extracted from /boot. This host has none, so a node image must be built on " +
 				"Linux, or the kernel and its module tree handed in, before a guest can boot."},
 		{Label: "host.kernel-config", Kind: NotApplicable,
 			Detail: reason + "/boot/config-<release> is read by k3s's own check-config inside the " +
@@ -77,18 +73,15 @@ func linuxOnlyResults() []Result {
 			Detail: reason + "the module index this check resolves names against is the Linux " +
 				"module tree's."},
 		{Label: "host.egress-pasta", Kind: NotApplicable,
-			Detail: reason + "Windows has no pasta and no network namespaces. A qemu node there " +
-				"uses qemu's own user-mode networking (slirp), which needs no host interface, tap " +
-				"or privilege."},
+			Detail: reason + "pasta and network namespaces are Linux mechanisms, and no guest " +
+				"network provider is compiled into this build for this platform."},
 		{Label: "host.user-namespace", Kind: NotApplicable,
 			Detail: reason + "user namespaces are a Linux mechanism pasta builds each guest's " +
-				"namespace from, and the user-mode network path does not use them."},
+				"namespace from."},
 		{Label: "host.kvm", Kind: NotApplicable,
-			Detail: reason + "/dev/kvm is Linux's accelerator. This host's qemu uses " +
-				hostos.Accel() + ", so a firecracker node cannot run here."},
+			Detail: reason + "/dev/kvm is Linux's accelerator, so a firecracker node cannot run here."},
 		{Label: "host.firecracker", Kind: NotApplicable,
-			Detail: reason + "Firecracker is a KVM guest and it exists only on Linux; this host " +
-				"places nodes with qemu only."},
+			Detail: reason + "Firecracker is a KVM guest and it exists only on Linux."},
 		{Label: "host.selinux", Kind: NotApplicable,
 			Detail: reason + "SELinux is a Linux mechanism, and the guest runs with it off " +
 				"regardless, so there is nothing to check here."},

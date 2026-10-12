@@ -7,10 +7,6 @@ import (
 	"syscall"
 )
 
-func DetachProcess() *syscall.SysProcAttr {
-	return &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL}
-}
-
 func DieWithParent() *syscall.SysProcAttr {
 	return &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL}
 }
