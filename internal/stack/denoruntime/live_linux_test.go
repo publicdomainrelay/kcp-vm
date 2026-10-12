@@ -25,6 +25,7 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
 
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/denokcp/api/v1alpha1"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/denorun"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devinstance"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc"
@@ -249,7 +250,7 @@ func (s *stack) pods() dynamic.ResourceInterface {
 func (s *stack) createPod(name string) {
 	s.t.Helper()
 	pod := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "deno.computer/v1alpha1", "kind": "DenoPod",
-		"metadata": map[string]any{"name": name, "namespace": "default"},
+		"metadata": map[string]any{"name": name, "namespace": "default", "finalizers": []any{v1alpha1.FinalizerDenoPod}},
 		"spec": map[string]any{"script": podScript, "restartPolicy": "Always",
 			"permissions": map[string]any{"env": map[string]any{"allow": true}, "read": map[string]any{"allow": true}, "noPrompt": true}}}}
 	s.eventually("DenoPod "+name+" is created (the tenant's denoruntime binding)", settleFor, func() (bool, string) {
@@ -388,7 +389,7 @@ func (s *stack) settle(names []string, key, marker string, before map[string]pod
 			}
 		}
 		if len(procs) != len(names) {
-			return false, fmt.Sprintf("%d deno processes under %s for %d DenoPods: %+v", len(procs), s.runsDir(), len(names), procs)
+			return false, fmt.Sprintf("%d deno processes under %s for %d DenoPods: runs %v", len(procs), s.runsDir(), len(names), runIDs(procs))
 		}
 		got = settled{States: states, Procs: procs}
 		return true, ""
@@ -412,6 +413,14 @@ func pidsGone(pids []int) (bool, string) {
 		}
 	}
 	return true, ""
+}
+
+func runIDs(ps []denoProc) []string {
+	var out []string
+	for _, p := range ps {
+		out = append(out, fmt.Sprintf("%s(pid %d)", p.RunID, p.PID))
+	}
+	return out
 }
 
 func pidsOf(ps []denoProc) []int {
@@ -588,15 +597,17 @@ func TestAnUpgradeRestartsEveryRecordedDenoPodOnTheNewClosureExactlyOnce(t *test
 			}
 		}},
 	}
+	curKey, curMarker := keyA, "A"
 	for _, c := range cases {
 		gone := names[0]
 		s.deletePod(gone)
 		names = names[1:]
-		got = s.settle(names, c.key, c.marker, nil)
+		got = s.settle(names, curKey, curMarker, nil)
 		old := pidsOf(got.Procs)
 		c.trigger()
 		s.eventually("no deno process of the old core after "+c.name, time.Minute, func() (bool, string) { return pidsGone(old) })
 		got = s.settle(names, c.key, c.marker, got.States)
+		curKey, curMarker = c.key, c.marker
 		t.Logf("reading %s: %s: deleted %s stayed gone, old deno pids %v gone, new %v on closure %s", time.Now().UTC().Format(time.RFC3339),
 			c.name, gone, old, pidsOf(got.Procs), c.marker)
 	}
