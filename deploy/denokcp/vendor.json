@@ -12,7 +12,7 @@
     "patches": [
       {"patch": "deploy/denokcp/kcp-libs-no-default-issuer.patch", "from": "kcp-libs", "root": "internal/kcplibs"}
     ],
-    "local": ["internal/denokcp/fork.go", "internal/denokcp/fork_test.go", "internal/denokcp/manifests_test.go", "internal/kcplibs/common/listeners/listeners.go", "internal/kcplibs/common/listeners/listeners_test.go"],
+    "local": ["internal/denokcp/fork.go", "internal/denokcp/fork_test.go", "internal/kcplibs/common/listeners/listeners.go", "internal/kcplibs/common/listeners/listeners_test.go"],
     "packages": [
       {"path": "internal/denokcp/api/v1alpha1", "from": "deno-kcp", "upstream": "api/v1alpha1"},
       {"path": "internal/denokcp/denojob", "from": "deno-kcp", "upstream": "internal/denojob"},
