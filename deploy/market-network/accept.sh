@@ -42,8 +42,18 @@ set -euo pipefail
 # KEEP_ACCEPT_ROOT  1 keeps MARKET_NETWORK_DIR after the run
 # SOCIALWEB_KCP_PATH, SOCIALWEB_KINE_PATH, SOCIALWEB_DENO_PATH, SOCIALWEB_BAO_PATH
 #                   the kcp, kine, pinned deno and bao the instance runs (default: PATH)
-# FC_VMRUNTIME_COMMAND required: JSON argv of `socialweb-computer internal vm {verb}` with its
-#                   options; every guest is a VM unit of the Linux VM runtime
+# FC_VMRUNTIME_COMMAND required unless BIDDER_KCP_IMAGE_SOURCE: JSON argv of `socialweb-computer
+#                   internal vm {verb}` with its options; every guest is a VM unit of the Linux VM runtime
+# BIDDER_KCP_IMAGE_SOURCE  every MarketBidder gets spec.kcp: the ComputeVM controller in the
+#                   bidder's own core boots its guests from this guest image source and the bidder
+#                   runs --compute-provider-kcp (0007 M2-CONTROLLER); the VM runtime's paths come
+#                   from SOCIALWEB_USERNS_STAGE_PATH, SOCIALWEB_PASTA_PATH, SOCIALWEB_VMEXEC_PATH and
+#                   SOCIALWEB_FIRECRACKER_PATH; run it as the account with the subordinate id range
+# BIDDER_KCP_VM_HOST_BACKEND  placement backend of the VM units (default systemd-user)
+# BIDDER_KCP_HANDLE  owner handle of each bidder's ComputeVMs, {app} replaced by the bidder's
+#                   name (default {app}.bob.test); unique per worktree on a shared account
+# ACCEPT_GUEST_POWEROFF_SEC  the guest powers itself off this long after cloud-init; the
+#                   requester holds the contract and must get vm.terminated and send no vm.delete
 
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 MARKET_DIR=$(cd "$(dirname "$0")" && pwd)
@@ -71,10 +81,14 @@ NETWORK_SECONDS=${NETWORK_SECONDS:-900}
 SETTLE_SECONDS=${SETTLE_SECONDS:-10}
 KEEP_ACCEPT_ROOT=${KEEP_ACCEPT_ROOT:-0}
 FC_WORK_ROOT=${FC_WORK_ROOT:-/var/tmp/swc-$MARKET_NETWORK_ID}
-if [ -z "${FC_VMRUNTIME_COMMAND:-}" ]; then
-  echo "FC_VMRUNTIME_COMMAND is required: the JSON argv of socialweb-computer internal vm {verb} with its options" >&2
+BIDDER_KCP_IMAGE_SOURCE=${BIDDER_KCP_IMAGE_SOURCE:-}
+BIDDER_KCP_VM_HOST_BACKEND=${BIDDER_KCP_VM_HOST_BACKEND:-systemd-user}
+BIDDER_KCP_HANDLE=${BIDDER_KCP_HANDLE:-{app\}.bob.test}
+if [ -z "${FC_VMRUNTIME_COMMAND:-}" ] && [ -z "$BIDDER_KCP_IMAGE_SOURCE" ]; then
+  echo "FC_VMRUNTIME_COMMAND is required: the JSON argv of socialweb-computer internal vm {verb} with its options (or BIDDER_KCP_IMAGE_SOURCE)" >&2
   exit 2
 fi
+FC_VMRUNTIME_COMMAND=${FC_VMRUNTIME_COMMAND:-}
 VM_READY_SECONDS=${VM_READY_SECONDS:-900}
 MARKET_SECONDS=${MARKET_SECONDS:-1500}
 GUEST_GONE_SECONDS=${GUEST_GONE_SECONDS:-180}
@@ -274,7 +288,40 @@ dev_down() {
   DEV_UP_STARTED=0
 }
 
+kcp_handle() { printf '%s' "${BIDDER_KCP_HANDLE//\{app\}/$1}"; }
+handle_id() { printf '%s' "$1" | sha256sum | cut -c1-10; }
+
+# A --compute-provider-kcp bidder's VM units and its per-handle slice, in this
+# account's user manager.
+kcp_units() {
+  local b hid
+  for b in $BIDDERS; do
+    hid=$(handle_id "$(kcp_handle "$b")")
+    systemctl --user list-units --all --plain --no-legend "socialweb-vm-$hid-*" "socialweb-b-$hid.slice" 2>/dev/null | awk '{print $1}'
+  done | tr '\n' ' '
+}
+
+# What a --compute-provider-kcp bidder left in its own instance: ComputeVMs and
+# their HostProcess children in its kcp, VM units and the slice, work dirs.
+bidder_kcp_left() {
+  local b vms dirs units left=""
+  for b in $BIDDERS; do
+    vms=$({ CKC "$b" get computevms -o name 2>&1; CKC "$b" get hostprocesses -l socialweb.computer/computevm -o name 2>&1; } |
+      grep -v '^No resources found' | tr '\n' ' ' || true)
+    dirs=$(find "$NET_STATE/apps/dev/$(status_get "status.apps.$b.instance")/handles/$(handle_id "$(kcp_handle "$b")")/vms" \
+      -mindepth 1 -maxdepth 1 2>/dev/null | tr '\n' ' ' || true)
+    [ -n "${vms// }${dirs// }" ] && left="$left $b: computevms=[${vms% }] workdirs=[${dirs% }]"
+  done
+  units=$(kcp_units)
+  [ -n "${units// }" ] && left="$left units=[${units% }]"
+  echo "${left# }"
+}
+
 own_vm_entries() {
+  if [ -n "$BIDDER_KCP_IMAGE_SOURCE" ]; then
+    kcp_units
+    return
+  fi
   local b
   for b in $BIDDERS; do
     vmruntime list "$b.bob.test" 2>/dev/null | jq -r '.[]? | "\(.unit) loaded=\(.loaded) workDir=\(.workDir // "-")"' 2>/dev/null
@@ -294,6 +341,7 @@ own_guest_dirs() {
 }
 
 vmruntime() {
+  [ -n "$FC_VMRUNTIME_COMMAND" ] || return 0
   local verb=$1 handle=$2
   shift 2
   local argv
@@ -469,12 +517,12 @@ echo "memory: ${avail_mib} MiB available, market network budget ${need_mib} MiB"
 # the guest work root. They reach each bidder only as fields of its MarketBidder
 # root object, which the network composes from these values.
 APP_VALUES=$MARKET_NETWORK_DIR/app-values.yaml
-python3 - "$APP_VALUES" "$FC_WORK_ROOT" "$FC_VMRUNTIME_COMMAND" <<'PY'
-import json, sys
-out, work, vmruntime = sys.argv[1:]
-with open(out, "w") as f:
-    json.dump({"bidder": {"firecracker": {"workRoot": work, "vmruntimeCommand": json.loads(vmruntime)}}}, f, indent=2)
-PY
+if [ -n "$BIDDER_KCP_IMAGE_SOURCE" ]; then
+  jq -n --arg s "$BIDDER_KCP_IMAGE_SOURCE" --arg b "$BIDDER_KCP_VM_HOST_BACKEND" --arg h "$BIDDER_KCP_HANDLE" \
+    '{bidder: {kcp: {guestImageSource: $s, vmHostBackend: $b, handle: $h}}}' >"$APP_VALUES"
+else
+  jq -n --arg w "$FC_WORK_ROOT" --argjson v "$FC_VMRUNTIME_COMMAND" '{bidder: {firecracker: {workRoot: $w, vmruntimeCommand: $v}}}' >"$APP_VALUES"
+fi
 
 echo
 echo "== socialweb-computer =="
@@ -805,6 +853,10 @@ start_sampler
 if [ -n "${BIDDER_DIDS//,/}" ] && [ -n "$HOST_IP" ] && [ -n "$PLC_URL" ]; then
   market_started=$(date +%s)
   network_set "timings.requesterStarted=\"$(now)\""
+  poweroff_args=()
+  if [ -n "${ACCEPT_GUEST_POWEROFF_SEC:-}" ]; then
+    poweroff_args=(--guest-poweroff-after-sec "$ACCEPT_GUEST_POWEROFF_SEC" --hold-until-terminated)
+  fi
   requester() {
   (cd "$REPO/ts/atproto-market" && DENO_CERT="$CA_BUNDLE" KCP_DNS_TABLE_FILE="$RUNS_DIR/.kcpdns/table.json" \
     exec timeout "$MARKET_SECONDS" \
@@ -820,6 +872,7 @@ if [ -n "${BIDDER_DIDS//,/}" ] && [ -n "$HOST_IP" ] && [ -n "$PLC_URL" ]; then
       --guest-journal-to-console \
       --guest-diagnose-url "$GUEST_TLS_URL/.well-known/did.json" \
       --vm-ready-timeout-sec "$VM_READY_SECONDS" \
+      "${poweroff_args[@]}" \
       --result-file "$MARKET_RESULT") >"$MARKET_LOG" 2>&1
   }
   run_fg requester || market_status=$?
@@ -863,11 +916,37 @@ if [ -n "$receipt_rkey" ] && [ "$receipt_code" = "200" ]; then
 else
   check "market receipt on bob pds" FAIL "getRecord ${receipt_uri:-<no receipt>} -> $receipt_code"
 fi
-if [ "$(field vmDeleteOk)" = "True" ] && [ "$market_status" -eq 0 ]; then
+if [ -n "${ACCEPT_GUEST_POWEROFF_SEC:-}" ]; then
+  terminated=$(jq -r '(.terminated // {}) | to_entries | map("\(.key)=\(.value)") | join(" ")' "$MARKET_RESULT" 2>/dev/null || true)
+  case "$terminated" in
+    *reason=guest_poweroff*|*reason=vmm_exited*)
+      if [ -z "$(field vmDeleteStatus)" ] && [ "$market_status" -eq 0 ]; then
+        check "market guest terminated" PASS "the guest powered itself off; vm.terminated $terminated; no vm.delete sent"
+      else
+        check "market guest terminated" FAIL "vm.terminated $terminated but vm.delete status=$(field vmDeleteStatus) exit=$market_status"
+      fi ;;
+    *) check "market guest terminated" FAIL "no vm.terminated with guest_poweroff or vmm_exited (${terminated:-none}) reason=$(field reason)" ;;
+  esac
+elif [ "$(field vmDeleteOk)" = "True" ] && [ "$market_status" -eq 0 ]; then
   check "market contract released" PASS "vm.delete status=$(field vmDeleteStatus) total=$(field totalMs)ms"
 else
   check "market contract released" FAIL "vm.delete status=$(field vmDeleteStatus) reason=$(field reason)"
 fi
+if [ -n "$BIDDER_KCP_IMAGE_SOURCE" ]; then
+  gone_deadline=$(( $(date +%s) + GUEST_GONE_SECONDS ))
+  while :; do
+    left=$(bidder_kcp_left)
+    [ -z "$left" ] && break
+    [ "$(date +%s)" -ge "$gone_deadline" ] && break
+    sleep 2
+  done
+  stop_sampler
+  if [ -z "$left" ]; then
+    check "bidder kcp left nothing" PASS "no ComputeVM, no HostProcess child, no VM unit, no slice socialweb-b-<hid>.slice and no work dir of $BIDDERS $(( GUEST_GONE_SECONDS - (gone_deadline - $(date +%s)) ))s after the contract ended"
+  else
+    check "bidder kcp left nothing" FAIL "$left"
+  fi
+else
 new_guests=""
 for g in $( { own_guest_dirs; cat "$MARKET_NETWORK_DIR/guests.seen" 2>/dev/null; } | sort -u); do
   case " $(echo $guests_before) $new_guests " in
@@ -895,6 +974,7 @@ elif [ -z "$alive" ] && [ -z "$dirs" ]; then
   check "market guest gone" PASS "$new_guests: no VM unit loaded and no work dir after release"
 else
   check "market guest gone" FAIL "still running:${alive:- none} work dirs left:${dirs:- none} after ${GUEST_GONE_SECONDS}s"
+fi
 fi
 if [ -n "${FC_VMRUNTIME_COMMAND:-}" ]; then
   left=""
