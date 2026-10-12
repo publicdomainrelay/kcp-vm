@@ -13,12 +13,7 @@
     "kine": {
       "version": "v0.17.1",
       "how": "go install github.com/k3s-io/kine@v0.17.1 -- CGO_ENABLED=1",
-      "invariant": "kine IS the store, and k3s must DIAL it rather than consume its bucket: an empty --datastore-endpoint makes k3s start its own sqlite and a BRAND-NEW cluster, silently. It also ships no prebuilt release for every target, so CGO_ENABLED=1 is part of the recipe rather than an optimisation."
-    },
-    "rustfs": {
-      "version": "1.0.0",
-      "how": "release binary",
-      "invariant": "NO writable second instance, ever. t4's fence is an S3 conditional write INSIDE the bucket, so a writable replica is a split brain by construction (ADR 0026 R15)."
+      "invariant": "kine IS the store, its --endpoint the cluster's own postgres, and k3s must DIAL kine's address rather than open a store itself: an empty --datastore-endpoint makes k3s start its own sqlite and a BRAND-NEW cluster, silently. It also ships no prebuilt release for every target, so CGO_ENABLED=1 is part of the recipe rather than an optimisation."
     },
     "embedded-postgres": {
       "version": "the host's own binaries: initdb/postgres/psql on PATH, PostgreSQL 18.x",
@@ -47,11 +42,6 @@
       "version": "socialweb.computer/v1alpha1",
       "how": "api/v1alpha1/groupversion_info.go",
       "invariant": "v1alpha1 means NO COMPATIBILITY PROMISE, which is true of the promise and FALSE OF THE COST: in kcp a schema cannot be changed in place, and identityHash DETERMINES THE ETCD PREFIX -- change it and every stored object reads from an EMPTY PREFIX. MEASURED in addition: APIResourceSchema.spec is IMMUTABLE, so an added enum or field is a NEW schema revision (v1alpha1-<Revision>.<plural>.<group>, Revision in api/v1alpha1/resources.go, guarded by deploy/apiresourceschema-revisions.json) and the exports must be re-pointed; the identity hash survives a re-point, and MEASURED on kcp v0.33.0 (internal/apigen live upgrade proof) the re-point DOES reach an already-bound APIBinding: its boundResources move to the new schema within seconds and fields the old schema pruned then persist. And `Cluster` and `Node` ride ONE export, `clusters`, because a WorkspaceType's defaultAPIBindings names an export and the test that guards it requires every entry to equal that export's name. A phase written through the main resource is DISCARDED when the schema declares a status subresource -- the node provider's writes must go through /status."
-    },
-    "t4": {
-      "version": null,
-      "how": "compiled into kine",
-      "invariant": "t4 is NOT a separate binary and has NO PINNED VERSION ANYWHERE -- it is a kine backend selected by endpoint scheme, so pinning kine pins t4. Its fence is an S3 CONDITIONAL WRITE INSIDE THE BUCKET, which is why a WRITABLE SECOND rustfs is a split brain by construction and failover must never fail back (ADR 0026 R15). Note single-node t4 NEVER TOUCHES THE LEADER LOCK (node.go:657 -- no peer address means roleSingle), so the multi-node shape is a different exercise."
     },
     "one-node-per-host": {
       "version": null,

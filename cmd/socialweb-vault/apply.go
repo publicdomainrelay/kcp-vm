@@ -325,37 +325,6 @@ func planRootSecrets(layout vaultlayout.Layout, cfg Config) ([]sourcedSecret, er
 				"tls.crt": string(cert),
 				"tls.key": string(key),
 			}})
-		case vaultlayout.ClassCentralStore:
-			set := 0
-			for _, v := range centralStoreValues(cfg) {
-				if v != "" {
-					set++
-				}
-			}
-			switch {
-			case set == 4:
-				out = append(out, sourcedSecret{Path: s.Path, Data: map[string]any{
-					"endpoint":   cfg.CentralStoreEndpoint,
-					"bucket":     cfg.CentralStoreBucket,
-					"access-key": cfg.CentralStoreAccessKey,
-					"secret-key": cfg.CentralStoreSecretKey,
-				}})
-			case set > 0:
-				return nil, fmt.Errorf("socialweb-vault: only %d of the four central store settings "+
-					"are present, and %s, %s, %s and %s must be set together: a partial store is one "+
-					"kine writes to with credentials it cannot use",
-					set, envCentralStoreEndpoint, envCentralStoreBucket,
-					envCentralStoreAccessKey, envCentralStoreSecretKey)
-			case externalStoreNamed():
-				out = append(out, sourcedSecret{Path: s.Path, Required: true, Reason: fmt.Sprintf(
-					"%s names an external store, so %s, %s, %s and %s are all required",
-					envClusterStore, envCentralStoreEndpoint, envCentralStoreBucket,
-					envCentralStoreAccessKey, envCentralStoreSecretKey)})
-			default:
-				out = append(out, sourcedSecret{Path: s.Path, NotApplicable: true, Reason: fmt.Sprintf(
-					"no external store is named (%s is unset), so this deployment does not use the "+
-						"central store and its credentials are not needed", envClusterStore)})
-			}
 		default:
 			out = append(out, sourcedSecret{Path: s.Path, Required: true, Reason: fmt.Sprintf(
 				"class %s has no producer in this container", s.Class)})

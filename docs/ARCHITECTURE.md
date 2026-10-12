@@ -212,12 +212,13 @@ start its OWN kine against the bucket instead of dialing ours - two writers on o
 (`internal/clusterprovider/stack.go:39-43`, `ErrNoStore`).
 
 **Historical, not built: `kine` plus `t4` over a central `rustfs`, bucket per tenant, prefix per
-cluster.** That was the original design of this section. The code never ran it, and its leftovers are
-cleanup owned by plan 0006 M1-STORE-CLEANUP: `internal/vaultlayout` `PathCentralStore`
-(`secret/data/socialweb/store/rustfs`), `PolicyCentralStore` (`store-rustfs`) and `ClassCentralStore`;
-`cmd/socialweb-vault`'s `SOCIALWEB_CENTRAL_STORE_*` options and their apply branch; the rustfs wording of
-the `internal/portallocator` shared-port message; the `rustfs` and `t4` entries of
-`internal/versions/versions.json`.
+cluster.** That was the original design of this section. The code never ran it, and plan 0006
+M1-STORE-CLEANUP deleted its leftovers: the root vault's central-store path
+(`secret/data/socialweb/store/rustfs`), policy (`store-rustfs`) and secret class in
+`internal/vaultlayout`; `cmd/socialweb-vault`'s four central-store options and their apply branch; the
+rustfs wording of the `internal/portallocator` shared-port message; the `rustfs` and `t4` entries of
+`internal/versions/versions.json`. `internal/versions` `TestNoRustfsOrT4NameOutsideTheStoreMeasurement`
+keeps those names out of non-test Go and the pins, allowing only `stack.go`'s `ErrNoStore` measurement.
 
 **Several kine over one database are the k3s HA shape, and plan 0006 relies on it.** Measured on
 stand-ins (`docs/research/2026-10-11-vm-lifecycle/control-plane-handover.md` 2-3): two k3s servers, each
@@ -267,10 +268,10 @@ HostProcesses, and listeners behind the edge bind port 0.
 **Not building**, each rejected on evidence: a CNI plugin (the market path writes a conflist for
 k3s's bundled `bridge`/`host-local`/`portmap`; the cross-node half is component 10), a CAPI provider, an OIDC issuer, an ATProto
 bridge, a syncer, a virtual workspace, a second reverse proxy, a reachability substrate, an underlay,
-a warm node pool, an admission plugin (RBAC already enforces the identity classes exactly),
-a registry plus volume-commit machinery (this was rejected when the design had S3-backed PVs on a
-central rustfs; that store was never built - section 4 - and plan 0006 M1-STORE-CLEANUP revisits this
-line).
+a warm node pool, an admission plugin (RBAC already enforces the identity classes exactly). A
+registry plus volume-commit machinery was struck from this list by plan 0006 M1-STORE-CLEANUP: its
+only reason was S3-backed PVs on the central rustfs that was never built (section 4), so it is
+neither built nor rejected on evidence.
 
 ### The per-cluster process group
 
@@ -4672,8 +4673,8 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   `client-ca` certificate kcp is handed as `--client-ca-file` (ADR 0027) and the `.admin-token-store`
   hash of the `shard-admin` token, at `secret/data/socialweb/kcp/client-ca` and
   `secret/data/socialweb/kcp/admin-token-store`; a central-store credentials slot at
-  `secret/data/socialweb/store/rustfs` left from the unbuilt rustfs design - no `kine` rides it, each
-  cluster's store is its own postgres (section 4), and plan 0006 M1-STORE-CLEANUP deletes it; the deployment's ATProto
+  `secret/data/socialweb/store/rustfs` left from the unbuilt rustfs design - no `kine` rode it, each
+  cluster's store is its own postgres (section 4), and plan 0006 M1-STORE-CLEANUP deleted it; the deployment's ATProto
   device-key audience and registry binding (`SOCIALWEB_GATEWAY_DEVICE_KEY_AUDIENCE`,
   `SOCIALWEB_GATEWAY_DEVKEY_REGISTRY`), at `secret/data/socialweb/devicekey`; and the container TLS
   terminator's operator certificate and key (`SOCIALWEB_CONTAINER_TLS_{CERT,KEY}`), at
@@ -5082,10 +5083,10 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   fired and the class would have kept reading as a gap. The real source is the root vault's own PKI CA
   at `pki/ca/pem`, the CA the `kcp-client` role issues the gateway's certificate from
   (`cmd/socialweb-vault/sources.go:48`). The token store is written as the hex key `token-hash`.
-  `central-store-credentials` is required only when `SOCIALWEB_CLUSTERPROVIDER_STORE_ENDPOINT` names an
-  external store and is otherwise reported NOT-APPLICABLE on a distinct line, never as the silent
-  "not written"; a partial set of the four variables is a hard error, because a half-configured store
-  is not a store. Readings: `apply-root` logs 0 `root secret not written`; `client-ca` reads back
+  `central-store-credentials` was required only when `SOCIALWEB_CLUSTERPROVIDER_STORE_ENDPOINT` named an
+  external store and was otherwise reported NOT-APPLICABLE on a distinct line, never as the silent
+  "not written"; a partial set of the four variables was a hard error, because a half-configured store
+  is not a store. The class and its four variables were deleted by plan 0006 M1-STORE-CLEANUP. Readings: `apply-root` logs 0 `root secret not written`; `client-ca` reads back
   byte-identical to `pki/ca/pem`; `admin-token-store` equals `xxd -p .admin-token-store`; deleting that
   file exits 1 naming the path. The correction is the entry: an item is a claim about where a fact
   lives, and this one named a file that `kcp` does not write.
