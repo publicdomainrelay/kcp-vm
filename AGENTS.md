@@ -142,6 +142,11 @@ works in prod."
 - `deno task check` type-checks every entry of `deploy/ts-entries.yaml` from the root workspace.
 - The release closure: `go run ./cmd/socialweb-tsbundle -release -deno ~/.deno/bin/deno -out <dir>`.
   It needs a committed, clean tree and a current `deno.lock`, and it starts every entry offline.
+- The release binary: `scripts/build-socialweb-computer.sh` builds one commit twice per linux release
+  platform from clean checkouts (every asset staged and pinned, the closure, `-tags release`) and
+  publishes a platform only when both builds are byte-identical. Checkouts, caches and outputs stay
+  under `~/.tmp/socialweb-computer-build`; `release/<commit>/` holds the binaries and `SHA256SUMS`
+  that `install` and `upgrade --binary --sha256` take.
 
 ## Where and how to work
 
