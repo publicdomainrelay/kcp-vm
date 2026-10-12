@@ -31,13 +31,16 @@ go build ./... || fail "go build"
 echo "check.sh: ok go build"
 
 gen="$(mktemp -d)"
-go run ./cmd/socialweb-apigen -root . -out "$gen" || { rm -rf "$gen"; fail "apigen"; }
+genrepo="$gen/repo"
+generatedlist="$(go run ./cmd/socialweb-apigen -root . -list)" || { rm -rf "$gen"; fail "apigen"; }
+go run ./cmd/socialweb-apigen -root . -out "$genrepo" || { rm -rf "$gen"; fail "apigen"; }
 drift=0
 compared=0
-for generated in $(cd "$gen" && find . -type f | sort); do
-  rel="${generated#./}"
+siblings=0
+for rel in $generatedlist; do
   compared=$((compared + 1))
-  if ! diff -u "$rel" "$gen/$rel" >&2; then
+  case "$rel" in ../*) siblings=$((siblings + 1)) ;; esac
+  if ! diff -u "$rel" "$genrepo/$rel" >&2; then
     drift=1
   fi
 done
@@ -49,7 +52,7 @@ if [ "$drift" -ne 0 ]; then
   echo "check.sh: the files above are generated from api/v1alpha1 and differ from what it generates now; run: go generate ./api/..." >&2
   fail "apigen drift"
 fi
-echo "check.sh: ok apigen ($compared generated files, no drift from api/v1alpha1)"
+echo "check.sh: ok apigen ($compared generated files, $siblings in sibling repos, no drift from api/v1alpha1)"
 
 go vet ./... || fail "go vet"
 echo "check.sh: ok go vet"

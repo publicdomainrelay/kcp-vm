@@ -58,13 +58,14 @@ func (s *Schema) Required() []string {
 }
 
 type Resource struct {
-	Kind     string
-	ListKind string
-	Plural   string
-	Singular string
-	Revision int
-	Export   string
-	Schema   *Schema
+	Kind           string
+	ListKind       string
+	Plural         string
+	Singular       string
+	Revision       int
+	Export         string
+	Schema         *Schema
+	PrinterColumns []v1alpha1.PrinterColumn
 }
 
 func (r Resource) SchemaName(group, version string) string {
@@ -79,6 +80,7 @@ type Enum struct {
 type Constant struct {
 	Name  string
 	Value string
+	File  string
 }
 
 type Model struct {
@@ -89,6 +91,7 @@ type Model struct {
 	Order     []string
 	Enums     []Enum
 	Constants []Constant
+	TypeFiles map[string]string
 }
 
 var (
@@ -103,7 +106,7 @@ func APISourceDir(root string) string {
 }
 
 func BuildV1alpha1(root string) (*Model, error) {
-	consts, enumValues, err := readConstants(APISourceDir(root))
+	consts, enumValues, typeFiles, err := readConstants(APISourceDir(root))
 	if err != nil {
 		return nil, err
 	}
@@ -113,6 +116,7 @@ func BuildV1alpha1(root string) (*Model, error) {
 			Version:   v1alpha1.Version,
 			Named:     map[string]*Schema{},
 			Constants: consts,
+			TypeFiles: typeFiles,
 		},
 		enumValues: enumValues,
 	}
@@ -131,17 +135,60 @@ func BuildV1alpha1(root string) (*Model, error) {
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", r.Kind, err)
 		}
+		for _, c := range r.PrinterColumns {
+			if err := checkColumn(root, c); err != nil {
+				return nil, fmt.Errorf("%s: printer column %s: %w", r.Kind, c.Name, err)
+			}
+		}
 		b.model.Resources = append(b.model.Resources, Resource{
-			Kind:     r.Kind,
-			ListKind: r.Kind + "List",
-			Plural:   r.Plural,
-			Singular: strings.ToLower(r.Kind),
-			Revision: r.Revision,
-			Export:   r.Export,
-			Schema:   root,
+			Kind:           r.Kind,
+			ListKind:       r.Kind + "List",
+			Plural:         r.Plural,
+			Singular:       strings.ToLower(r.Kind),
+			Revision:       r.Revision,
+			Export:         r.Export,
+			Schema:         root,
+			PrinterColumns: r.PrinterColumns,
 		})
 	}
 	return b.model, nil
+}
+
+var columnTypes = map[string]string{
+	"string":  TypeString,
+	"integer": TypeInteger,
+	"boolean": TypeBoolean,
+	"date":    TypeString,
+}
+
+func checkColumn(root *Schema, c v1alpha1.PrinterColumn) error {
+	want, ok := columnTypes[c.Type]
+	if !ok {
+		return fmt.Errorf("type %q is not one of string, integer, boolean, date", c.Type)
+	}
+	if !strings.HasPrefix(c.JSONPath, ".") {
+		return fmt.Errorf("jsonPath %q does not start with a dot", c.JSONPath)
+	}
+	s := root
+	for _, name := range strings.Split(c.JSONPath[1:], ".") {
+		if s.Ref == RefObjectMeta {
+			return nil
+		}
+		var next *Schema
+		for _, p := range s.Properties {
+			if p.Name == name {
+				next = p.Schema
+			}
+		}
+		if next == nil {
+			return fmt.Errorf("jsonPath %q names no field %s", c.JSONPath, name)
+		}
+		s = next
+	}
+	if s.Type != want {
+		return fmt.Errorf("jsonPath %q is a %s, the column says %s", c.JSONPath, s.Type, c.Type)
+	}
+	return nil
 }
 
 type builder struct {
@@ -284,10 +331,10 @@ func (b *builder) schema(t reflect.Type) (*Schema, error) {
 	}
 }
 
-func readConstants(dir string) ([]Constant, map[string][]string, error) {
+func readConstants(dir string) ([]Constant, map[string][]string, map[string]string, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	var files []string
 	for _, e := range entries {
@@ -301,13 +348,21 @@ func readConstants(dir string) ([]Constant, map[string][]string, error) {
 	fset := token.NewFileSet()
 	var consts []Constant
 	enums := map[string][]string{}
+	typeFiles := map[string]string{}
 	for _, path := range files {
 		f, err := parser.ParseFile(fset, path, nil, 0)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
+		file := filepath.Base(path)
 		for _, decl := range f.Decls {
 			gen, ok := decl.(*ast.GenDecl)
+			if ok && gen.Tok == token.TYPE {
+				for _, spec := range gen.Specs {
+					typeFiles[spec.(*ast.TypeSpec).Name.Name] = file
+				}
+				continue
+			}
 			if !ok || gen.Tok != token.CONST {
 				continue
 			}
@@ -323,7 +378,7 @@ func readConstants(dir string) ([]Constant, map[string][]string, error) {
 					}
 					value, err := strconv.Unquote(lit.Value)
 					if err != nil {
-						return nil, nil, fmt.Errorf("%s: %w", fset.Position(lit.Pos()), err)
+						return nil, nil, nil, fmt.Errorf("%s: %w", fset.Position(lit.Pos()), err)
 					}
 					if ident, ok := vs.Type.(*ast.Ident); ok {
 						enums[ident.Name] = append(enums[ident.Name], value)
@@ -332,10 +387,10 @@ func readConstants(dir string) ([]Constant, map[string][]string, error) {
 					if vs.Type != nil {
 						continue
 					}
-					consts = append(consts, Constant{Name: name.Name, Value: value})
+					consts = append(consts, Constant{Name: name.Name, Value: value, File: file})
 				}
 			}
 		}
 	}
-	return consts, enums, nil
+	return consts, enums, typeFiles, nil
 }

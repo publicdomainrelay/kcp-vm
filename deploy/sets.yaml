@@ -98,6 +98,24 @@ sets:
             workspace: root:deno-provider
             for: IdentityValid
 
+  - name: bidder
+    summary: the ComputeVM schema and export beside the provider's, and the bidder WorkspaceType binding denoruntime, computevms and hostprocesses (plan 0007 M1-API); needs the provider workspace and denoruntime
+    values: None
+    phases:
+      - name: schemas
+        workspace: root:socialweb-provider
+        files:
+          - path: computevm-apiresourceschema.yaml
+          - path: computevm-apiexport.yaml
+        after:
+          - kind: APIExport
+            name: computevms
+            for: IdentityValid
+      - name: workspacetypes
+        workspace: root
+        files:
+          - path: workspacetype-bidder.yaml
+
   - name: market-identity
     summary: the MarketIdentity schema and export in an application's own workspace (plan 0007 M1-MARKET-IDENTITY)
     values: MarketIdentity

@@ -464,3 +464,96 @@ func (in *MarketIdentityStatus) DeepCopyInto(out *MarketIdentityStatus) {
 		}
 	}
 }
+
+func (in *ComputeVM) DeepCopyInto(out *ComputeVM) {
+	*out = *in
+	out.TypeMeta = in.TypeMeta
+	in.ObjectMeta.DeepCopyInto(&out.ObjectMeta)
+	in.Spec.DeepCopyInto(&out.Spec)
+	in.Status.DeepCopyInto(&out.Status)
+}
+
+func (in *ComputeVM) DeepCopy() *ComputeVM {
+	if in == nil {
+		return nil
+	}
+	out := new(ComputeVM)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *ComputeVM) DeepCopyObject() runtime.Object {
+	if c := in.DeepCopy(); c != nil {
+		return c
+	}
+	return nil
+}
+
+func (in *ComputeVMList) DeepCopyInto(out *ComputeVMList) {
+	*out = *in
+	out.TypeMeta = in.TypeMeta
+	in.ListMeta.DeepCopyInto(&out.ListMeta)
+	if in.Items != nil {
+		out.Items = make([]ComputeVM, len(in.Items))
+		for i := range in.Items {
+			in.Items[i].DeepCopyInto(&out.Items[i])
+		}
+	}
+}
+
+func (in *ComputeVMList) DeepCopy() *ComputeVMList {
+	if in == nil {
+		return nil
+	}
+	out := new(ComputeVMList)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *ComputeVMList) DeepCopyObject() runtime.Object {
+	if c := in.DeepCopy(); c != nil {
+		return c
+	}
+	return nil
+}
+
+func (in *ComputeVMSpec) DeepCopyInto(out *ComputeVMSpec) {
+	*out = *in
+	if in.Contract != nil {
+		contract := *in.Contract
+		out.Contract = &contract
+	}
+	if in.Image != nil {
+		image := *in.Image
+		out.Image = &image
+	}
+}
+
+func (in *ComputeVMStatus) DeepCopyInto(out *ComputeVMStatus) {
+	*out = *in
+	if in.Network != nil {
+		network := *in.Network
+		out.Network = &network
+	}
+	if in.Image != nil {
+		image := *in.Image
+		out.Image = &image
+	}
+	if in.Runtime != nil {
+		rt := *in.Runtime
+		out.Runtime = &rt
+	}
+	if in.Conditions != nil {
+		out.Conditions = make([]metav1.Condition, len(in.Conditions))
+		for i := range in.Conditions {
+			in.Conditions[i].DeepCopyInto(&out.Conditions[i])
+		}
+	}
+	if in.Market != nil {
+		market := *in.Market
+		if in.Market.HostKeys != nil {
+			market.HostKeys = append([]ComputeVMHostKey(nil), in.Market.HostKeys...)
+		}
+		out.Market = &market
+	}
+}
