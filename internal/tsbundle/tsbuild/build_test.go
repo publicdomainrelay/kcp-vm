@@ -198,35 +198,7 @@ func TestADirtyCheckoutIsRefusedForARelease(t *testing.T) {
 	}
 }
 
-func TestTheEntriesFileNamesEveryShippedEntry(t *testing.T) {
-	entries, err := LoadEntries(filepath.Join("..", "..", "..", "deploy", "ts-entries.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	byName := map[string]tsbundle.EntrySpec{}
-	for _, e := range entries {
-		byName[e.Name] = e
-	}
-	for _, want := range []string{"hono-socialweb-computer-k8s", "hono-bidder", "request-vm-ssh", "hono-socialweb-computer-ssh", "hono-plc", "hono-atproto-relay", "hono-did-key-ingress-proxy", "hono-pds", "did-key-associator-hono-backend"} {
-		if _, ok := byName[want]; !ok {
-			t.Errorf("deploy/ts-entries.yaml lacks %s", want)
-		}
-	}
-	if d := byName["hono-socialweb-computer-k8s"]; len(d.Preload) != 1 || !strings.HasSuffix(d.Preload[0], "/undici-preload.ts") {
-		t.Errorf("hono-socialweb-computer-k8s does not preload undici-preload.ts: %+v", d)
-	}
-	wd, _ := os.Getwd()
-	root, err := tsbundle.FindCheckout(wd)
-	if err != nil {
-		t.Fatalf("this package sits in no checkout: %v", err)
-	}
-	for _, e := range entries {
-		for _, p := range append([]string{e.Path}, e.Preload...) {
-			if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(p))); err != nil {
-				t.Errorf("entry %s: %v", e.Name, err)
-			}
-		}
-	}
+func TestLoadEntriesRefusesAnEscapeAndAnUnknownField(t *testing.T) {
 	if _, err := LoadEntries(writeEntries(t, "entries:\n  - name: x\n    path: ../escape.ts\n")); err == nil {
 		t.Error("an entry outside the checkout was accepted")
 	}

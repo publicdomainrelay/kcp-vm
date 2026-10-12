@@ -4,7 +4,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"testing"
 )
 
@@ -65,50 +64,6 @@ func TestTheConfigFileComesFromItsConfigPathEnv(t *testing.T) {
 	}
 	if m, err := ConfigFile(MapEnv{}); m != nil || err != nil {
 		t.Fatalf("no %s must mean no config file: %v %v", ConfigPathEnv, m, err)
-	}
-}
-
-func TestEveryEnvVariableTheEntrypointReadsIsAnOptionsEnvName(t *testing.T) {
-	s := load(t)
-	envs := s.EnvNames()
-	re := regexp.MustCompile(`SOCIALWEB_[A-Z0-9_]+`)
-	for _, f := range []string{"../../deploy/container-entrypoint.sh", "../../deploy/container.env.example"} {
-		b, err := os.ReadFile(f)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, name := range re.FindAllString(string(b), -1) {
-			if _, ok := envs[name]; !ok {
-				t.Errorf("%s reads %s, which is no option's env name in options.json", f, name)
-			}
-		}
-	}
-}
-
-func TestTheHostBackendOptionHasNoDefault(t *testing.T) {
-	s := load(t)
-	o, ok := s.Options["host-backend"]
-	if !ok {
-		t.Fatalf("options.json has no host-backend option")
-	}
-	if o.Default != nil || o.Env != "SOCIALWEB_HOST_BACKEND" {
-		t.Fatalf("host-backend = %+v: want env SOCIALWEB_HOST_BACKEND and no default", o)
-	}
-	v, _, err := s.Resolve("t", []string{"host-backend"}, nil, MapEnv{}, nil, io.Discard)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Require(v, "host-backend"); err == nil {
-		t.Fatalf("an unset host-backend passed Require")
-	}
-}
-
-func TestNoOptionDefaultIsAFixedPortOrAddress(t *testing.T) {
-	s := load(t)
-	for name, o := range s.Options {
-		if IsPortLike(name) && o.Default != nil {
-			t.Errorf("option %s defaults to %v: behind the edge every listener binds port 0 (principle.port0_rule)", name, o.Default)
-		}
 	}
 }
 

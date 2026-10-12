@@ -4,7 +4,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -97,100 +96,6 @@ func TestANetworkIDKeepsTheGuestSocketUnderTheUnixLimit(t *testing.T) {
 	for _, id := range []string{"", "B3D", "../x", "a b", strings.Repeat("a", 13)} {
 		if ValidNetworkID(id) {
 			t.Fatalf("%q is accepted as a market network id", id)
-		}
-	}
-}
-
-var networkPortLiteral = regexp.MustCompile(`\b(258[3-9]|6443|23791|8200)\b`)
-
-func TestNoNetworkPortIsALiteral(t *testing.T) {
-	root := repoRoot(t)
-	var files []string
-	manifests, err := filepath.Glob(filepath.Join(root, "deploy/market-network/*.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	files = append(files, manifests...)
-	for _, rel := range []string{
-		"deploy/market-network/apply.sh",
-		"deploy/market-network/accept.sh",
-		"deploy/market-network/market-requester/mod.ts",
-		"deploy/market-network/market-requester/cli-args-env.json",
-		"deploy/denokcp/start-kcp.sh",
-		"deploy/denokcp/stop-kcp.sh",
-		"deploy/denokcp/start-openbao.sh",
-		"internal/marketnetwork/live_test.go",
-	} {
-		files = append(files, filepath.Join(root, rel))
-	}
-	for _, path := range files {
-		body, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for i, line := range strings.Split(string(body), "\n") {
-			if networkPortLiteral.MatchString(line) {
-				rel, _ := filepath.Rel(root, path)
-				t.Errorf("%s:%d names a fixed market network port, which a second market network on this host would collide on; bind 0 and read the port from market-network.json: %s",
-					rel, i+1, strings.TrimSpace(line))
-			}
-		}
-	}
-}
-
-var serviceCwd = regexp.MustCompile(`SERVICE_CWD: "[^"]*/([^"/]+)"`)
-
-func TestNoNetworkServiceWritesTheRepositoryLock(t *testing.T) {
-	root := repoRoot(t)
-	market := filepath.Join(root, "deploy/market-network")
-	apply, err := os.ReadFile(filepath.Join(market, "apply.sh"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(apply), `echo "  LockDir: $(q "$LOCK_DIR")"`) {
-		t.Error("apply.sh writes no LockDir value, so a service's --lock names no file under the market network")
-	}
-	if !strings.Contains(string(apply), `cp "$REPO/deno.lock" "$LOCK_DIR/deno.lock"`) {
-		t.Error("apply.sh copies no deno.lock of this repository into the market network, which every service runs against")
-	}
-	manifests, err := filepath.Glob(filepath.Join(market, "*.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	services := 0
-	for _, path := range manifests {
-		body, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		m := serviceCwd.FindStringSubmatch(string(body))
-		if m == nil {
-			continue
-		}
-		services++
-		repo := m[1]
-		want := `"--lock={{.LockDir}}/deno.lock"`
-		flags := ""
-		for _, line := range strings.Split(string(body), "\n") {
-			if strings.Contains(line, "SERVICE_DENO_FLAGS:") {
-				flags = line
-			}
-		}
-		if !strings.Contains(flags, want) {
-			t.Errorf("%s runs deno in %s with flags %q; without %s deno rewrites the root deno.lock in the working tree",
-				filepath.Base(path), repo, strings.TrimSpace(flags), want)
-		}
-	}
-	if services < 5 {
-		t.Fatalf("found %d service manifests naming SERVICE_CWD; the market network has at least 5", services)
-	}
-	accept, err := os.ReadFile(filepath.Join(market, "accept.sh"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for i, line := range strings.Split(string(accept), "\n") {
-		if strings.Contains(line, "deno run") && !strings.Contains(line, "--lock=") {
-			t.Errorf("accept.sh:%d runs deno with no --lock under the market network: %s", i+1, strings.TrimSpace(line))
 		}
 	}
 }

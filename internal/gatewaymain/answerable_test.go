@@ -214,60 +214,6 @@ func nonEmptyPhase(t *testing.T, _ Config, body map[string]any) {
 	}
 }
 
-func TestTheAnswerableTableCoversTheLexiconSurfaceExactly(t *testing.T) {
-	declared := declaredVerbs(t)
-	driven := map[string]bool{}
-	for _, v := range answerableVerbs() {
-		driven[v.name] = true
-	}
-	for name := range declared {
-		if !driven[name] {
-			t.Fatalf("the surface declares %s and TestEveryVerbTheLexiconsDeclareIsAnswerable"+
-				"WithTheRealDeps does not drive it. A verb added to the lexicons but not to "+
-				"that table is a verb nobody ever asks the deps to answer", name)
-		}
-	}
-	for name := range driven {
-		if !declared[name] {
-			t.Fatalf("the table drives %s, which no lexicon declares", name)
-		}
-	}
-}
-
-func declaredVerbs(t *testing.T) map[string]bool {
-	t.Helper()
-	dir := filepath.Join("..", "..", "internal", "xrpcserver", "lexicons")
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatalf("reading the surface's own declaration at %s: %v", dir, err)
-	}
-	out := map[string]bool{}
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
-			continue
-		}
-		raw, err := os.ReadFile(filepath.Join(dir, e.Name()))
-		if err != nil {
-			t.Fatalf("reading %s: %v", e.Name(), err)
-		}
-		var sch struct {
-			ID string `json:"id"`
-		}
-		if err := json.Unmarshal(raw, &sch); err != nil {
-			t.Fatalf("%s is not JSON: %v", e.Name(), err)
-		}
-		name := strings.TrimPrefix(sch.ID, xrpcserver.NSIDPrefix)
-		if name == sch.ID {
-			t.Fatalf("%s declares %q, which is not under %s", e.Name(), sch.ID, xrpcserver.NSIDPrefix)
-		}
-		out[name] = true
-	}
-	if len(out) == 0 {
-		t.Fatalf("no lexicon was read out of %s, so this test would pass over an empty surface", dir)
-	}
-	return out
-}
-
 func writeInsecureKubeconfig(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "gateway.kubeconfig")

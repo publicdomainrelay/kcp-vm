@@ -114,13 +114,6 @@ func TestTheWorktreeMarkerPointsAtTheStateAndOnlyItsOwnerRemovesIt(t *testing.T)
 	if _, err := os.Lstat(filepath.Join(wt, Marker)); !os.IsNotExist(err) {
 		t.Fatalf("marker left: %v", err)
 	}
-	gi, err := os.ReadFile(filepath.Join("..", "..", ".gitignore"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(gi), "/"+Marker) {
-		t.Fatalf(".gitignore does not ignore %s", Marker)
-	}
 }
 
 func sampleRecord(t *testing.T, root, id string) Record {

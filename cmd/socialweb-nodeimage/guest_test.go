@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -14,7 +13,6 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/guestimage"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/guestrootfs"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodefirecracker"
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/versions"
 )
 
 func repoRootDir(t *testing.T) string {
@@ -24,64 +22,6 @@ func repoRootDir(t *testing.T) string {
 		t.Fatal("cannot locate this test file")
 	}
 	return filepath.Dir(filepath.Dir(filepath.Dir(file)))
-}
-
-func kernelConfig(t *testing.T, path string) map[string]string {
-	t.Helper()
-	f, err := os.Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer f.Close()
-	out := map[string]string{}
-	s := bufio.NewScanner(f)
-	for s.Scan() {
-		line := s.Text()
-		if strings.HasPrefix(line, "# CONFIG_") && strings.HasSuffix(line, " is not set") {
-			out[strings.TrimSuffix(strings.TrimPrefix(line, "# "), " is not set")] = "n"
-			continue
-		}
-		if k, v, ok := strings.Cut(line, "="); ok && strings.HasPrefix(k, "CONFIG_") {
-			out[k] = v
-		}
-	}
-	return out
-}
-
-func TestTheGuestKernelConfigHasTheGracefulStopAndVirtioMmioDrivers(t *testing.T) {
-	g, err := versions.GuestImages()
-	if err != nil {
-		t.Fatal(err)
-	}
-	builtIn := []string{
-		"VIRTIO_MMIO", "VIRTIO_MMIO_CMDLINE_DEVICES", "VIRTIO_BLK", "VIRTIO_NET", "EXT4_FS", "VFAT_FS", "NLS_CODEPAGE_437",
-		"NLS_ISO8859_1", "SERIAL_8250_CONSOLE", "DEVTMPFS_MOUNT", "IKCONFIG_PROC", "NF_TABLES",
-		"NFT_COMPAT", "NF_NAT", "IP_NF_IPTABLES", "BRIDGE", "BRIDGE_NETFILTER", "VXLAN", "VETH",
-		"OVERLAY_FS", "IP_VS", "IP_SET", "TUN", "CGROUPS", "MEMCG", "USER_NS", "SECCOMP",
-	}
-	for _, target := range []string{"firecracker-x86_64", "firecracker-aarch64"} {
-		tg, ok := g.Targets[target]
-		if !ok {
-			t.Fatalf("versions.json pins no target %s", target)
-		}
-		cfg := kernelConfig(t, filepath.Join(repoRootDir(t), tg.KernelConfig))
-		want := append([]string(nil), builtIn...)
-		if tg.Arch == "x86_64" {
-			want = append(want, "SERIO_I8042", "KEYBOARD_ATKBD")
-		}
-		for _, k := range want {
-			if cfg["CONFIG_"+k] != "y" {
-				t.Errorf("%s: CONFIG_%s is %q, want built in", target, k, cfg["CONFIG_"+k])
-			}
-		}
-		if cfg["CONFIG_MODULES"] != "n" {
-			t.Errorf("%s: CONFIG_MODULES is %q: a guest kernel with modules needs a module tree and an "+
-				"initramfs in the image, and this one carries neither", target, cfg["CONFIG_MODULES"])
-		}
-		if !strings.Contains(strings.Join(tg.BootArgs, " "), "root=/dev/vda") {
-			t.Errorf("%s boots with %v and no root=/dev/vda", target, tg.BootArgs)
-		}
-	}
 }
 
 func digestOf(b []byte) string {

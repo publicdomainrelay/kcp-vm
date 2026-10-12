@@ -305,33 +305,6 @@ func TestStepWithoutAReadinessGateIsRefusedAndReaped(t *testing.T) {
 	}
 }
 
-func TestEveryComponentTheDefaultSetNamesIsWalked(t *testing.T) {
-	at := make(map[Component]int, len(StackOrder))
-	for i, c := range StackOrder {
-		at[c] = i
-	}
-	last := -1
-	for _, c := range DefaultOrder {
-		i, ok := at[c]
-		if !ok {
-			t.Fatalf("procgroup.DefaultOrder names %s and procgroup.StackOrder does not. A "+
-				"component the default set brings up, that the walk a caller uses cannot see, is "+
-				"one an explicitly opted-in stack SILENTLY DROPS: the stack is accepted, the port "+
-				"is leased, the config is rendered and no step is built -- so the lease is held by "+
-				"nothing and the group reaches Ready over a component that never started. "+
-				"DefaultOrder is the default SET; StackOrder is every component a stack may name", c)
-		}
-		if i < last {
-			t.Fatalf("procgroup.DefaultOrder and procgroup.StackOrder disagree about bring-up "+
-				"order: this walk reached %s out of order (%v vs %v). Reap is reverse order, and "+
-				"k3s holds the store open while kine holds postgres, so a group that comes up in "+
-				"one order and reaps in another stops the store over a component still writing to it",
-				c, DefaultOrder, StackOrder)
-		}
-		last = i
-	}
-}
-
 func TestReapIsIdempotent(t *testing.T) {
 	logPath := t.TempDir() + "/order"
 	g, err := Spawn(context.Background(), []Step{

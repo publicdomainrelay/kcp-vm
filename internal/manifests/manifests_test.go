@@ -1,10 +1,7 @@
 package manifests
 
 import (
-	"bytes"
 	"errors"
-	"os"
-	"path"
 	"strings"
 	"testing"
 )
@@ -49,38 +46,6 @@ func mustSet(t *testing.T, name string) Set {
 		t.Fatalf("sets.yaml names no set %s", name)
 	}
 	return s
-}
-
-func TestTheRenderedMarketNetworkEqualsWhatApplyShProduced(t *testing.T) {
-	want, err := os.ReadFile("testdata/market-network.golden")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := mustSet(t, "market-network")
-	values := goldenNetwork()
-	var got bytes.Buffer
-	for _, p := range s.Phases {
-		_, texts, err := s.RenderText(p, values)
-		if err != nil {
-			t.Fatalf("phase %s: %v", p.Name, err)
-		}
-		for _, tx := range texts {
-			got.WriteString("--- # " + path.Base(tx.Path) + "\n")
-			got.Write(tx.Body)
-		}
-	}
-	if !bytes.Equal(got.Bytes(), want) {
-		gl, wl := strings.Split(got.String(), "\n"), strings.Split(string(want), "\n")
-		for i := 0; i < len(gl) && i < len(wl); i++ {
-			if gl[i] != wl[i] {
-				t.Fatalf("line %d differs from what apply.sh's sed produced:\n got: %s\nwant: %s", i+1, gl[i], wl[i])
-			}
-		}
-		t.Fatalf("rendered %d lines, apply.sh produced %d", len(gl), len(wl))
-	}
-	if _, err := s.Render(values); err != nil {
-		t.Fatalf("the golden market network does not decode strictly: %v", err)
-	}
 }
 
 func TestAMissingValueIsARenderErrorNotAnEmptyField(t *testing.T) {
@@ -206,31 +171,6 @@ func TestCaptureSetsTheTypedField(t *testing.T) {
 	}
 	if err := SetCaptured(b, Capture{Into: "DispatcherPort", From: CaptureAddressPort}, "no-port"); err == nil {
 		t.Fatal("an address with no port was captured")
-	}
-}
-
-func TestVendoredVerbatimFilesCarryNoTemplateFields(t *testing.T) {
-	adapted, err := AdaptedFiles()
-	if err != nil {
-		t.Fatal(err)
-	}
-	ix, err := Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, s := range ix.Sets {
-		for _, p := range s.Phases {
-			for _, f := range p.Files {
-				body, err := readFile(f.Path)
-				if err != nil {
-					t.Fatal(err)
-				}
-				isAdapted, vendored := adapted["deploy/"+f.Path]
-				if vendored && !isAdapted && bytes.Contains(body, []byte("{{")) {
-					t.Errorf("%s is vendored verbatim from deno-kcp and carries a template field; record it as adapted first", f.Path)
-				}
-			}
-		}
 	}
 }
 

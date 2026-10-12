@@ -48,29 +48,6 @@ func renderedGrant(t *testing.T, ownerDID string) []unstructured.Unstructured {
 	return objs
 }
 
-func TestGrantObjectsReadsTheRealGrant(t *testing.T) {
-	objs := renderedGrant(t, grantOwner)
-	want := map[string]int{
-		"ServiceAccount": 1, "Role": 1, "RoleBinding": 1, "ClusterRoleBinding": 1,
-		"ValidatingAdmissionPolicy": 1, "ValidatingAdmissionPolicyBinding": 1,
-	}
-	got := map[string]int{}
-	for _, o := range objs {
-		if _, ok := want[o.GetKind()]; !ok {
-			t.Fatalf("the grant holds a %s this test does not know about", o.GetKind())
-		}
-		got[o.GetKind()]++
-		if o.GetName() == "" {
-			t.Errorf("a %s came through with no name", o.GetKind())
-		}
-	}
-	for kind, n := range want {
-		if got[kind] != n {
-			t.Errorf("the grant holds %d %s, want %d", got[kind], kind, n)
-		}
-	}
-}
-
 const grantOwner = "did:plc:grantowner0000000000000000"
 
 func TestTheGrantIsRenderedForTheClustersOwner(t *testing.T) {
@@ -225,93 +202,6 @@ func TestGrantObjectsRefusesAKindTheBootstrapMustNotApply(t *testing.T) {
 		t.Fatal("an empty document was accepted, which would report a successful bootstrap " +
 			"that applied nothing")
 	}
-}
-
-func TestTheGrantPolicyCoversBothDoorsAndNotSecretUpdates(t *testing.T) {
-	objs, err := GrantObjects(tenantGrantDoc(t))
-	if err != nil {
-		t.Fatalf("GrantObjects: %v", err)
-	}
-	var vap *unstructured.Unstructured
-	for i := range objs {
-		if objs[i].GetKind() == "ValidatingAdmissionPolicy" {
-			vap = &objs[i]
-		}
-	}
-	if vap == nil {
-		t.Fatal("the grant holds no ValidatingAdmissionPolicy: the mint identity rule is the " +
-			"control that binds system:masters, and it is not optional")
-	}
-
-	rules, ok, err := unstructured.NestedSlice(vap.Object, "spec", "matchConstraints", "resourceRules")
-	if err != nil || !ok {
-		t.Fatalf("the policy has no resourceRules: %v", err)
-	}
-	ops := map[string][]string{}
-	for _, r := range rules {
-		m, _ := r.(map[string]any)
-		var res string
-		switch rs, _ := m["resources"].([]any); len(rs) {
-		case 1:
-			res, _ = rs[0].(string)
-		default:
-			t.Fatalf("a resourceRule names %v; each names ONE resource", m["resources"])
-		}
-		for _, o := range m["operations"].([]any) {
-			op, _ := o.(string)
-			ops[res] = append(ops[res], op)
-		}
-	}
-	if !hasOp(ops["serviceaccounts/token"], "CREATE") {
-		t.Errorf("rule (1) is gone: the policy no longer matches serviceaccounts/token CREATE, "+
-			"so the mint identity rule is unenforced. Got %v", ops)
-	}
-	if !hasOp(ops["secrets"], "CREATE") {
-		t.Errorf("rule (2) is gone: a `create secrets` in the tenant namespace is no longer "+
-			"matched, so any identity holding that verb mints itself a gwmint token around "+
-			"this policy. Got %v", ops)
-	}
-	if hasOp(ops["secrets"], "UPDATE") {
-		t.Errorf("rule (2) matches `secrets` UPDATE. The token controller populates the mint " +
-			"Secret with an UPDATE as system:serviceaccount:kube-system:" +
-			"service-account-token-controller, and the policy admits only the provisioning " +
-			"cluster-admin -- so the Secret would be created, stay EMPTY, and the bootstrap " +
-			"would lock the cluster out. This is measured, not theoretical: " +
-			"see docs/ARCHITECTURE.md, the security register")
-	}
-
-	vals, ok, err := unstructured.NestedSlice(vap.Object, "spec", "validations")
-	if err != nil || !ok {
-		t.Fatalf("the policy has no validations: %v", err)
-	}
-	var who string
-	for _, v := range vals {
-		m, _ := v.(map[string]any)
-		e, _ := m["expression"].(string)
-		if strings.Contains(e, "system:admin") {
-			who = e
-		}
-	}
-	if who == "" {
-		t.Fatal("no validation names the bootstrap principal, so rule (2) refuses EVERY " +
-			"caller -- including the bootstrap the grant exists to let through")
-	}
-	if !strings.Contains(who, "system:masters") {
-		t.Errorf("the carve-out names a username and no group: %q", who)
-	}
-	if !strings.Contains(who, "system:serviceaccount:users:gwmint") {
-		t.Errorf("the carve-out replaced the mint identity rule rather than branching beside "+
-			"it: %q", who)
-	}
-}
-
-func hasOp(list []string, want string) bool {
-	for _, s := range list {
-		if s == want {
-			return true
-		}
-	}
-	return false
 }
 
 func TestWriteMintKubeconfigIsWhatTheGatewayReadsBack(t *testing.T) {

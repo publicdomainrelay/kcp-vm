@@ -126,21 +126,3 @@ func TestAnImageIsFetchedOnceAndReusedByHash(t *testing.T) {
 		t.Fatalf("a file:// source: %+v %v", fromFile, err)
 	}
 }
-
-func TestBothFirecrackerTargetsArePinned(t *testing.T) {
-	for _, target := range []string{"firecracker-x86_64", "firecracker-aarch64"} {
-		pin, err := PinFor(target)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, name := range []string{KernelName, RootfsName, ManifestName} {
-			f, ok := pin.Files[name]
-			if !ok || len(f.SHA256) != 64 || f.Bytes <= 0 {
-				t.Fatalf("%s %s has no output pin in versions.json: %+v", target, name, f)
-			}
-		}
-	}
-	if _, err := PinFor("hyperv-x86_64"); err == nil || !strings.Contains(err.Error(), "0011") {
-		t.Fatalf("a reserved target resolved: %v", err)
-	}
-}

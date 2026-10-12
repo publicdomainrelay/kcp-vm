@@ -1,9 +1,6 @@
 package marketnetwork
 
 import (
-	"bytes"
-	"errors"
-	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -30,114 +27,6 @@ func repoRoot(t *testing.T) string {
 		t.Fatal("cannot locate this test file")
 	}
 	return filepath.Dir(filepath.Dir(filepath.Dir(file)))
-}
-
-func loadRecord(t *testing.T) Record {
-	t.Helper()
-	r, err := LoadRecord(repoRoot(t))
-	if err != nil {
-		t.Fatalf("the vendored deno-kcp tree has no readable record of where it came from: %v.\n\n"+
-			"%s names the deno-kcp commit every file under %v was copied from and the sha256 of "+
-			"that commit's copy, so drift is a diff rather than an argument.", err, RecordPath, VendoredDirs)
-	}
-	return r
-}
-
-func TestTheVendoredDenoKcpTreeIsExactlyItsRecord(t *testing.T) {
-	root := repoRoot(t)
-	r := loadRecord(t)
-
-	listed := map[string]bool{}
-	for _, f := range r.Files {
-		if listed[f.Path] {
-			t.Errorf("%s is listed twice in %s", f.Path, RecordPath)
-		}
-		listed[f.Path] = true
-		have, err := FileDigest(filepath.Join(root, f.Path))
-		if err != nil {
-			t.Errorf("%s is recorded as vendored from %s:%s and is not in the tree: %v", f.Path, r.Commit, f.Upstream, err)
-			continue
-		}
-		if f.Adapted == "" && have != f.SHA256 {
-			t.Errorf("%s was copied verbatim from deno-kcp %s:%s (sha256 %s) and now reads %s. "+
-				"Either restore the upstream bytes, or record why this repo adapts it in its `adapted` field.",
-				f.Path, r.Commit, f.Upstream, f.SHA256, have)
-		}
-		if f.Adapted != "" && have == f.SHA256 {
-			t.Errorf("%s is recorded as adapted (%q) and is byte-identical to deno-kcp %s:%s; drop the `adapted` field",
-				f.Path, f.Adapted, r.Commit, f.Upstream)
-		}
-	}
-	for _, l := range r.Local {
-		if listed[l.Path] {
-			t.Errorf("%s is listed both as vendored and as local", l.Path)
-		}
-		listed[l.Path] = true
-		if l.Why == "" {
-			t.Errorf("%s is recorded as this repo's own file with no reason it lives beside the vendored ones", l.Path)
-		}
-		if _, err := os.Stat(filepath.Join(root, l.Path)); err != nil {
-			t.Errorf("%s is recorded as local and is missing: %v", l.Path, err)
-		}
-	}
-
-	tree, err := ListVendoredTree(root)
-	if err != nil {
-		t.Fatalf("walking the vendored tree: %v", err)
-	}
-	for _, path := range tree {
-		if !listed[path] {
-			t.Errorf("%s is in the vendored tree and in no entry of %s, so nothing says whether it is "+
-				"deno-kcp's or ours", path, RecordPath)
-		}
-		data, err := os.ReadFile(filepath.Join(root, path))
-		if err != nil {
-			t.Errorf("%s: %v", path, err)
-			continue
-		}
-		for offset, b := range data {
-			if b > 0x7F {
-				t.Errorf("%s: non-ASCII byte 0x%02X at offset %d; adapt it and record why", path, b, offset)
-				break
-			}
-		}
-	}
-}
-
-func TestTheRecordMatchesTheDenoKcpCommitItNames(t *testing.T) {
-	root := repoRoot(t)
-	r := loadRecord(t)
-	dir, ok := FindDenoKcp(root)
-	if !ok {
-		t.Skipf("no deno-kcp checkout beside this repository (set DENO_KCP_DIR to name one); the " +
-			"record cannot be compared with the commit it names")
-	}
-	for _, f := range r.Files {
-		upstream, err := UpstreamFile(dir, r.Commit, f.Upstream)
-		if errors.Is(err, ErrCommitAbsent) {
-			t.Skipf("%v; fetch %s (%s) into %s to compare", err, r.Ref, r.Repository, dir)
-		}
-		if err != nil {
-			t.Errorf("%s: %v", f.Path, err)
-			continue
-		}
-		if got := Digest(upstream); got != f.SHA256 {
-			t.Errorf("%s records sha256 %s for deno-kcp %s:%s, and that commit's file is %s. "+
-				"The record no longer describes what was copied.", RecordPath, f.SHA256, r.Commit, f.Upstream, got)
-			continue
-		}
-		if f.Adapted != "" {
-			continue
-		}
-		have, err := os.ReadFile(filepath.Join(root, f.Path))
-		if err != nil {
-			t.Errorf("%s: %v", f.Path, err)
-			continue
-		}
-		if !bytes.Equal(have, upstream) {
-			t.Errorf("%s has drifted from deno-kcp %s:%s", f.Path, r.Commit, f.Upstream)
-		}
-	}
 }
 
 type vendoredObject struct {

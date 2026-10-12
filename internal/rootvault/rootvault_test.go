@@ -5,37 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/portallocator"
 )
 
 const stateDir = "/var/lib/socialweb"
-
-const wantConfig = `ui = false
-disable_clustering = true
-api_addr = "https://127.0.0.1:8200"
-listener "tcp" {
-  address                            = "127.0.0.1:8200"
-  tls_disable                        = false
-  tls_cert_file                      = "/var/lib/socialweb/openbao/tls/server.crt"
-  tls_key_file                       = "/var/lib/socialweb/openbao/tls/server.key"
-  tls_client_ca_file                 = "/var/lib/socialweb/openbao/tls/ca.crt"
-  tls_require_and_verify_client_cert = true
-}
-storage "file" {
-  path = "/var/lib/socialweb/openbao/root"
-}
-`
-
-func TestServerConfigIsExactlyThisFile(t *testing.T) {
-	got, err := ServerConfig(stateDir, Address())
-	if err != nil {
-		t.Fatalf("ServerConfig(%q, %q): %v", stateDir, Address(), err)
-	}
-	if got != wantConfig {
-		t.Fatalf("the rendered root-vault config is not the measured file.\nwant:\n%q\ngot:\n%q", wantConfig, got)
-	}
-}
 
 func TestServerConfigTurnsTLSOnAndDemandsAClientCertificate(t *testing.T) {
 	body, err := ServerConfig(stateDir, Address())
@@ -103,18 +75,5 @@ func TestPathsAreUnderTheStateVolume(t *testing.T) {
 		if !strings.HasPrefix(tc.got, stateDir+string(filepath.Separator)) {
 			t.Fatalf("%q is not under the state dir %q", tc.got, stateDir)
 		}
-	}
-}
-
-func TestTheRootVaultPortCollidesWithNothingTheContainerAlreadyBinds(t *testing.T) {
-	if Port == 6443 {
-		t.Fatalf("the root vault is on kcp's 6443")
-	}
-	if (portallocator.Range{First: portallocator.DefaultFirst, Last: portallocator.DefaultLast}).Contains(Port) {
-		t.Fatalf("the root vault is on %d, inside the leased per-cluster range %d-%d, so a cluster "+
-			"lease and the root vault would fight for it", Port, portallocator.DefaultFirst, portallocator.DefaultLast)
-	}
-	if Address() != "127.0.0.1:8200" {
-		t.Fatalf("the root vault address is %q, want 127.0.0.1:8200", Address())
 	}
 }

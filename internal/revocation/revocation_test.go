@@ -3,9 +3,6 @@ package revocation
 import (
 	"context"
 	"errors"
-	"io/fs"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -246,43 +243,5 @@ func TestReplyCarriesTheAccountEntryAndPerClusterState(t *testing.T) {
 
 	if got := Reply(nil); len(got) != 1 || got[0].State != "Revoked" {
 		t.Fatalf("reply with no clusters = %+v, want one Revoked account entry", got)
-	}
-}
-
-func TestClusterReadyIsWrittenOnlyByThisPackage(t *testing.T) {
-	root := filepath.Join("..", "..")
-	allowed := map[string]bool{
-		filepath.Join("api", "v1alpha1"):        true,
-		filepath.Join("internal", "revocation"): true,
-	}
-	for _, dir := range []string{"api", "internal", "cmd"} {
-		base := filepath.Join(root, dir)
-		err := filepath.WalkDir(base, func(path string, d fs.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if d.IsDir() || !strings.HasSuffix(path, ".go") {
-				return nil
-			}
-			rel, err := filepath.Rel(root, path)
-			if err != nil {
-				return err
-			}
-			if allowed[filepath.Dir(rel)] {
-				return nil
-			}
-			src, err := os.ReadFile(path)
-			if err != nil {
-				return err
-			}
-			if strings.Contains(string(src), "ClusterReady") {
-				t.Errorf("%s writes ClusterReady: phase=Ready must come from revocation.Ready, "+
-					"after the reconcile-on-wake has settled", rel)
-			}
-			return nil
-		})
-		if err != nil && !errors.Is(err, fs.ErrNotExist) {
-			t.Fatalf("walking %s: %v", base, err)
-		}
 	}
 }

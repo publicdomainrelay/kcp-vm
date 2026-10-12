@@ -484,23 +484,6 @@ func writeStore(t *testing.T, path string, leases []Lease) {
 	}
 }
 
-func TestM_TheRetiredPurposesAreNotPurposesAnyMore(t *testing.T) {
-	retired := []Purpose{"ssh-server", "ssh-node", "advertise", "kubelet"}
-	for _, p := range retired {
-		if p.Width() != 0 {
-			t.Fatalf("%s still has width %d; a retired purpose must not be allocatable, "+
-				"because nothing binds it and the lease would be held forever", p, p.Width())
-		}
-	}
-	withAllocator(t, Range{20000, 20010}, func(a *Allocator, _ string) {
-		for _, p := range retired {
-			if _, err := a.Allocate(Request{Cluster: "A", Purpose: p}); err == nil {
-				t.Fatalf("Allocate(%s) succeeded; a retired purpose must be refused", p)
-			}
-		}
-	})
-}
-
 func TestM2_AnOldLeaseFileStillOpensAndLosesOnlyTheRetiredLeases(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "ports.json")

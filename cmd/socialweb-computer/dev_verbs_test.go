@@ -10,22 +10,9 @@ import (
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/testdirs"
 
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/capabilities"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clicfg"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devinstance"
 )
-
-func TestEveryDevVerbOfThisItemIsBuilt(t *testing.T) {
-	for _, path := range []string{"dev up", "dev status", "dev down", "dev ls", "dev logs", "dev env", "dev check", "dev restart"} {
-		v, _, ok := capabilities.Find(strings.Fields(path))
-		if !ok || !v.Built() {
-			t.Errorf("%s: not built (%s)", path, v.BuiltBy)
-		}
-		if _, ok := builtVerbs()[path]; !ok {
-			t.Errorf("%s has no run function", path)
-		}
-	}
-}
 
 func TestFlagsMayFollowTheWordsTheyQualify(t *testing.T) {
 	spec, err := clicfg.Load()

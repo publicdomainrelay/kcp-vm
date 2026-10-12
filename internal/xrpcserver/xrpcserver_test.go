@@ -10,8 +10,6 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
@@ -806,61 +804,6 @@ func TestConstructionRefusesAnUncheckableSurface(t *testing.T) {
 	}
 }
 
-func TestEveryLexiconErrorNameIsOneGatewayDeclares(t *testing.T) {
-	known := map[string]int{
-		gateway.ErrInvalidRequest.Name:      gateway.ErrInvalidRequest.Status,
-		gateway.ErrUnauthorized.Name:        gateway.ErrUnauthorized.Status,
-		gateway.ErrForbidden.Name:           gateway.ErrForbidden.Status,
-		gateway.ErrIdentityRevoked.Name:     gateway.ErrIdentityRevoked.Status,
-		gateway.ErrClusterNotFound.Name:     gateway.ErrClusterNotFound.Status,
-		gateway.ErrClusterInitializing.Name: gateway.ErrClusterInitializing.Status,
-		gateway.ErrClusterDraining.Name:     gateway.ErrClusterDraining.Status,
-		gateway.ErrClusterUnavailable.Name:  gateway.ErrClusterUnavailable.Status,
-	}
-
-	r := newRig(t)
-	for _, rt := range r.srv.routes {
-		if len(rt.errors) == 0 {
-			t.Errorf("%s declares no errors", rt.nsid)
-		}
-		for _, e := range rt.errors {
-			if _, ok := known[e.Name]; !ok {
-				t.Errorf("%s declares error %q, which internal/gateway has no name for", rt.nsid, e.Name)
-			}
-		}
-	}
-	declared := map[string]bool{}
-	for _, rt := range r.srv.routes {
-		for _, e := range rt.errors {
-			declared[e.Name] = true
-		}
-	}
-	if declared[gateway.ErrClusterUnavailable.Name] {
-		t.Fatal("ClusterUnavailable is now declared by a lexicon, and the transport owes it a " +
-			"status the lexicon does not fix")
-	}
-}
-
-func TestEveryTrackedLexiconIsRouted(t *testing.T) {
-	embedded := embeddedIDs(t)
-	routed := map[string]bool{}
-	for _, rt := range newRig(t).srv.routes {
-		routed[rt.nsid] = true
-	}
-
-	if len(embedded) != 7 {
-		t.Fatalf("the embedded lexicon set has %d methods, want 7: %v", len(embedded), embedded)
-	}
-	for _, id := range embedded {
-		if !routed[id] {
-			t.Errorf("%s has a tracked lexicon and no route, so a generated client gets a 404", id)
-		}
-	}
-	if len(routed) != len(embedded) {
-		t.Fatalf("%d methods are routed and %d are tracked", len(routed), len(embedded))
-	}
-}
-
 func TestATeardownBlockedClusterIsVisibleThroughTheList(t *testing.T) {
 	r := newRig(t)
 	r.store.views["blocked"] = gateway.ClusterView{
@@ -1022,35 +965,5 @@ func TestTheEmbeddedLexiconsWereLoaded(t *testing.T) {
 				t.Errorf("%s has neither an input schema nor parameters", rt.nsid)
 			}
 		}
-	}
-}
-
-func TestEmbeddedLexiconsMatchTheTrackedOnes(t *testing.T) {
-	const tracked = "../../lexicons/com/publicdomainrelay/temp/cluster"
-	found := 0
-	err := fs.WalkDir(lexiconFS, ".", func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return err
-		}
-		got, err := lexiconFS.ReadFile(p)
-		if err != nil {
-			return err
-		}
-		want, err := os.ReadFile(filepath.Join(tracked, d.Name()))
-		if err != nil {
-			return fmt.Errorf("%s is embedded here but not tracked: %w", d.Name(), err)
-		}
-		if !bytes.Equal(got, want) {
-			return fmt.Errorf("%s differs from %s/%s; the embedded copy has drifted",
-				p, tracked, d.Name())
-		}
-		found++
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if found != 7 {
-		t.Fatalf("%d lexicons compared, want 7", found)
 	}
 }

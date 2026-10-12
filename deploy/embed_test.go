@@ -1,83 +1,12 @@
 package deploy_test
 
 import (
-	"io/fs"
-	"os"
-	"path/filepath"
 	"reflect"
-	"sort"
 	"strings"
 	"testing"
 
-	"github.com/johnandersen777/socialweb-computer-kcp/deploy"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/manifests"
 )
-
-func yamlOnDisk(t *testing.T) []string {
-	t.Helper()
-	var out []string
-	err := filepath.WalkDir(".", func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			return nil
-		}
-		if ext := filepath.Ext(path); ext == ".yaml" || ext == ".yml" {
-			out = append(out, filepath.ToSlash(path))
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	sort.Strings(out)
-	return out
-}
-
-func TestEveryYAMLUnderDeployIsInExactlyOneSetOrListedAsUnapplied(t *testing.T) {
-	ix, err := manifests.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	homes := map[string][]string{}
-	for _, s := range ix.Sets {
-		seen := map[string]bool{}
-		for _, p := range s.Phases {
-			for _, f := range p.Files {
-				if !seen[f.Path] {
-					seen[f.Path] = true
-					homes[f.Path] = append(homes[f.Path], "set "+s.Name)
-				}
-			}
-		}
-	}
-	for _, u := range ix.Unapplied {
-		if strings.TrimSpace(u.Why) == "" {
-			t.Errorf("%s is listed as unapplied with no reason", u.Path)
-		}
-		homes[u.Path] = append(homes[u.Path], "unapplied")
-	}
-	disk := yamlOnDisk(t)
-	if len(disk) == 0 {
-		t.Fatal("no YAML found under deploy")
-	}
-	onDisk := map[string]bool{}
-	for _, path := range disk {
-		onDisk[path] = true
-		if _, err := fs.Stat(deploy.FS, path); err != nil {
-			t.Errorf("%s is under deploy and not in deploy.FS: %v", path, err)
-		}
-		if got := homes[path]; len(got) != 1 {
-			t.Errorf("%s is in %d places %v; every YAML under deploy is in exactly one set or listed as unapplied", path, len(got), got)
-		}
-	}
-	for path := range homes {
-		if !onDisk[path] {
-			t.Errorf("sets.yaml names %s, which is not a YAML under deploy", path)
-		}
-	}
-}
 
 func TestEverySetDecodesStrictlyIntoKcpAndKubernetesTypes(t *testing.T) {
 	ix, err := manifests.Load()

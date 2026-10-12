@@ -327,10 +327,6 @@ unapplied:
     why: this index
   - path: audit-policy.yaml
     why: an audit.k8s.io Policy file a k3s apiserver reads at start through --audit-policy-file, never an object
-  - path: edge-ports.yaml
-    why: the fixed ports allowed at the public edge, read by test/no_fixed_ports_test.go (plan 0006 M1-NO-FIXED-PORTS), never an object
-  - path: fixed-ports-ratchet.yaml
-    why: the shrink-only list of fixed ports the tree still names, read by test/no_fixed_ports_test.go (plan 0006 M1-NO-FIXED-PORTS), never an object
   - path: ts-entries.yaml
     why: the TypeScript closure entries cmd/socialweb-tsbundle bundles (plan 0008 M1-TS-CLOSURE), a build input, never an object
   - path: kcp-audit-policy.yaml

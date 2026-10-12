@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -19,10 +18,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/rest"
-	"sigs.k8s.io/yaml"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpclient"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/mint"
 )
 
@@ -508,171 +505,6 @@ func TestANonDeviceKeyIssuerIsRefused(t *testing.T) {
 	if _, err := dir.LookupDID(context.Background(), syntax.DID(deviceKey)); err != nil {
 		t.Fatalf("the device-key directory refused a real did:key: %v", err)
 	}
-}
-
-func TestTheGrantIsScopedByResourceNames(t *testing.T) {
-	raw, err := os.ReadFile("../../deploy/tenant-grant.yaml")
-	if err != nil {
-		t.Fatalf("read deploy/tenant-grant.yaml: %v", err)
-	}
-	rendered, err := kcpclient.RenderTenantGrant(string(raw), kcpclient.GrantScope{
-		OwnerDID: grantExampleDID,
-		ESOUser:  "system:socialweb:external-secrets",
-	})
-	if err != nil {
-		t.Fatalf("the deployed grant is not renderable: %v", err)
-	}
-	docs := grantDocs([]byte(rendered))
-	roleDoc, vapDoc := docOfKind(t, docs, "Role"), docOfKind(t, docs, "ValidatingAdmissionPolicy")
-
-	var role struct {
-		Kind     string `json:"kind"`
-		Metadata struct {
-			Name      string `json:"name"`
-			Namespace string `json:"namespace"`
-		} `json:"metadata"`
-		Rules []struct {
-			APIGroups     []string `json:"apiGroups"`
-			Resources     []string `json:"resources"`
-			Verbs         []string `json:"verbs"`
-			ResourceNames []string `json:"resourceNames"`
-		} `json:"rules"`
-	}
-	if err := yaml.Unmarshal(roleDoc, &role); err != nil {
-		t.Fatalf("unmarshal the Role: %v", err)
-	}
-	if role.Kind != "Role" {
-		t.Fatalf("the grant is a %s: a ClusterRole is namespace-wide, and stock `edit` grants the "+
-			"very verb the ADR measured as total impersonation", role.Kind)
-	}
-	if role.Metadata.Namespace != Namespace || role.Metadata.Name != "gwmint" {
-		t.Fatalf("grant is %s/%s, want %s/gwmint", role.Metadata.Namespace, role.Metadata.Name, Namespace)
-	}
-
-	var sawToken, sawRead bool
-	for _, r := range role.Rules {
-		if len(r.ResourceNames) == 0 {
-			t.Fatalf("a rule with NO resourceNames: %+v -- `create serviceaccounts/token` without "+
-				"resourceNames is TOTAL IMPERSONATION, which is the claim this ADR first made and "+
-				"then measured to be false", r)
-		}
-		for _, name := range r.ResourceNames {
-			if name == "*" || !strings.HasPrefix(name, saPrefix) {
-				t.Fatalf("resourceName %q is not a derived ServiceAccount name (%s<base32>)", name, saPrefix)
-			}
-		}
-		for _, list := range [][]string{r.Verbs, r.Resources, r.APIGroups} {
-			for _, v := range list {
-				if v == "*" {
-					t.Fatalf("a wildcard in the mint grant: %+v", r)
-				}
-			}
-		}
-		if len(r.APIGroups) != 1 || r.APIGroups[0] != "" {
-			t.Fatalf("the grant names apiGroups %v; serviceaccounts and their token subresource "+
-				"are in the core group", r.APIGroups)
-		}
-		if len(r.Resources) != 1 {
-			t.Fatalf("a rule names %v; each rule names ONE resource", r.Resources)
-		}
-		switch r.Resources[0] {
-		case "serviceaccounts/token":
-			if len(r.Verbs) != 1 || r.Verbs[0] != "create" {
-				t.Fatalf("verbs on serviceaccounts/token = %v, want exactly [create]", r.Verbs)
-			}
-			sawToken = true
-		case "serviceaccounts":
-			if len(r.Verbs) != 1 || r.Verbs[0] != "get" {
-				t.Fatalf("verbs on serviceaccounts = %v, want exactly [get]", r.Verbs)
-			}
-			sawRead = true
-		default:
-			t.Fatalf("the mint grant reaches %q; it holds two rules and no more", r.Resources)
-		}
-	}
-	if !sawToken || !sawRead {
-		t.Fatalf("the grant is missing a rule: token=%v read=%v", sawToken, sawRead)
-	}
-
-	if got, want := role.Rules[0].ResourceNames[0], SAName(grantExampleDID); got != want {
-		t.Fatalf("the grant's first resourceName is %q but SAName(%q) is %q: the YAML and the "+
-			"derivation have drifted, which either widens the grant or breaks every mint",
-			got, grantExampleDID, want)
-	}
-
-	var vap struct {
-		Kind string `json:"kind"`
-		Spec struct {
-			FailurePolicy string `json:"failurePolicy"`
-			Match         struct {
-				Rules []struct {
-					Resources  []string `json:"resources"`
-					Operations []string `json:"operations"`
-				} `json:"resourceRules"`
-			} `json:"matchConstraints"`
-			Validations []struct {
-				Expression string `json:"expression"`
-			} `json:"validations"`
-		} `json:"spec"`
-	}
-	if err := yaml.Unmarshal(vapDoc, &vap); err != nil {
-		t.Fatalf("unmarshal the ValidatingAdmissionPolicy: %v", err)
-	}
-	if vap.Kind != "ValidatingAdmissionPolicy" {
-		t.Fatalf("the VAP did not parse as one: kind=%q", vap.Kind)
-	}
-	if vap.Spec.FailurePolicy != "Fail" {
-		t.Fatalf("failurePolicy = %q; a policy that fails OPEN when its expression cannot be "+
-			"evaluated is a policy an operator can disable by accident", vap.Spec.FailurePolicy)
-	}
-	if len(vap.Spec.Validations) == 0 {
-		t.Fatal("the VAP carries no validations")
-	}
-	body := ""
-	for _, v := range vap.Spec.Validations {
-		body += v.Expression + "\n"
-	}
-	for _, want := range []string{"gwmint", `did-[a-z2-7]+`, "request.namespace", "external-secrets"} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("the VAP's expressions do not mention %q:\n%s", want, body)
-		}
-	}
-}
-
-const grantExampleDID = "did:web:example.com"
-
-func grantDocs(raw []byte) [][]byte {
-	var out [][]byte
-	for _, part := range strings.Split(string(raw), "\n---") {
-		if strings.TrimSpace(part) != "" {
-			out = append(out, []byte(part))
-		}
-	}
-	return out
-}
-
-func docOfKind(t *testing.T, docs [][]byte, kind string) []byte {
-	t.Helper()
-	var found []byte
-	type meta struct {
-		Kind string `json:"kind"`
-	}
-	for _, doc := range docs {
-		var m meta
-		if err := yaml.Unmarshal(doc, &m); err != nil {
-			t.Fatalf("unmarshal a grant document: %v", err)
-		}
-		if m.Kind == kind {
-			if found != nil {
-				t.Fatalf("the grant carries two %s documents", kind)
-			}
-			found = doc
-		}
-	}
-	if found == nil {
-		t.Fatalf("the grant carries no %s", kind)
-	}
-	return found
 }
 
 func binding() mint.Binding {

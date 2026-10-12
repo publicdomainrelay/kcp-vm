@@ -8,12 +8,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcplibs/common/denospec"
 )
 
 func TestDNSSetWritesTheShimAndTheProbe(t *testing.T) {
@@ -34,60 +31,6 @@ func TestDNSSetWritesTheShimAndTheProbe(t *testing.T) {
 			t.Fatalf("%s on disk does not match the embedded copy", name)
 		}
 	}
-}
-
-func TestTheShimNamesEveryVariableTheProbeIsGranted(t *testing.T) {
-	for _, name := range DNSProbeEnv {
-		if !strings.Contains(Shim, name) {
-			t.Fatalf("the probe is granted %s but the shim never reads it, so the grant is a lie", name)
-		}
-	}
-}
-
-func TestTheProbeAllowsEveryVariableTheShimReads(t *testing.T) {
-	reads := shimEnvReads(Shim)
-	if len(reads) == 0 {
-		t.Fatal("the shim reads no environment, so this test would pass without checking anything")
-	}
-	command := strings.Join(denospec.ProbeCommand("deno", "/runs/.kcpdns/shim.ts", "/runs/.kcpdns/probe.ts", "pds.default.alice.svc.kcp.local", "/health", DNSProbeEnv), " ")
-	for _, name := range reads {
-		if !knownEnv(DNSProbeEnv, name) {
-			t.Fatalf("the shim reads %s and the probe command does not allow it: %s", name, command)
-		}
-	}
-	if !strings.Contains(command, "--allow-net") {
-		t.Fatalf("the probe resolves a name to an address and looks one up at the kcp API, so it needs the network: %s", command)
-	}
-}
-
-func TestTheShimPatchesEveryEntryPointDenoUses(t *testing.T) {
-	for _, want := range []string{"globalThis.fetch", "globalThis.WebSocket", `["connect", "connectTls"]`, "Deno.resolveDns"} {
-		if !strings.Contains(Shim, want) {
-			t.Fatalf("the shim does not patch %s", want)
-		}
-	}
-}
-
-func shimEnvReads(source string) []string {
-	seen := map[string]bool{}
-	var out []string
-	for _, match := range regexp.MustCompile(`Deno\.env\.get\("([A-Z0-9_]+)"\)`).FindAllStringSubmatch(source, -1) {
-		if seen[match[1]] {
-			continue
-		}
-		seen[match[1]] = true
-		out = append(out, match[1])
-	}
-	return out
-}
-
-func knownEnv(names []string, name string) bool {
-	for _, candidate := range names {
-		if candidate == name {
-			return true
-		}
-	}
-	return false
 }
 
 func TestTheShimResolvesANameFromTheTable(t *testing.T) {

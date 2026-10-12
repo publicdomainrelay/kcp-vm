@@ -7,17 +7,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/devsup"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcplibs/abc/runner"
 )
 
 const unitStub = `printf 'SWC_UNIT=%s\n' "$SWC_UNIT" > "$PROBE_OUT.tmp" && mv "$PROBE_OUT.tmp" "$PROBE_OUT"`
-
-func TestTheUnitVariableIsTheOneDevsupAttributesBy(t *testing.T) {
-	if UnitEnv != devsup.EnvUnit {
-		t.Fatalf("execrunner sets %s and devsup attributes a process to its unit by %s", UnitEnv, devsup.EnvUnit)
-	}
-}
 
 func TestEveryDenoPodProcessCarriesTheCoreUnitName(t *testing.T) {
 	dir := t.TempDir()

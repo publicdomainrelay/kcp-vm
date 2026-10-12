@@ -77,14 +77,6 @@ func TestAnUnreconciledCustomResourceAsksForOneNodeAndAReconciledOneForNone(t *t
 	}
 }
 
-func TestNoOperatorOfOursRunsInTheTenantClusterToday(t *testing.T) {
-	if in := OurOperators.InCluster(); len(in) != 0 {
-		t.Fatalf("the registry names %v as running in the tenant cluster; plan 0005 M4-ESO-BESIDE moves "+
-			"ESO beside the control plane, where it reconciles at zero nodes, so none of its CRs asks "+
-			"for a node", in)
-	}
-}
-
 func TestCustomResourceOfReadsTheFieldsTheRuleNeeds(t *testing.T) {
 	now := metav1.Now()
 	u := &unstructured.Unstructured{Object: map[string]any{

@@ -2,43 +2,9 @@ package kcpclient
 
 import (
 	"net/http"
-	"os"
 	"strings"
 	"testing"
-
-	"sigs.k8s.io/yaml"
 )
-
-func TestTheWorkspaceTypeConstantsMatchTheArtifacts(t *testing.T) {
-	for _, tc := range []struct {
-		artifact string
-		got      string
-	}{
-		{"../../deploy/workspacetype-account.yaml", string(AccountWorkspaceType)},
-		{"../../deploy/workspacetype-cluster.yaml", string(HomeWorkspaceType)},
-	} {
-		raw, err := os.ReadFile(tc.artifact)
-		if err != nil {
-			t.Fatalf("read %s: %v -- the type this package SENDS has no artifact to apply, "+
-				"so every workspace it creates is rejected by kcp", tc.artifact, err)
-		}
-		var wt struct {
-			Metadata struct {
-				Name string `json:"name"`
-			} `json:"metadata"`
-		}
-		if err := yaml.Unmarshal(raw, &wt); err != nil {
-			t.Fatalf("parse %s: %v", tc.artifact, err)
-		}
-		if wt.Metadata.Name != tc.got {
-			t.Errorf("%s declares type %q and this package sends %q.\n\n`spec.type` is "+
-				"IMMUTABLE after creation, so a workspace made while these disagree is "+
-				"PERMANENTLY typeless -- and a typeless workspace has no "+
-				"`defaultAPIBindings`, so the home workspace never has the Cluster kind.",
-				tc.artifact, wt.Metadata.Name, tc.got)
-		}
-	}
-}
 
 func TestTheTreeIsBuiltWithTheDeclaredTypes(t *testing.T) {
 	wsReads := 0

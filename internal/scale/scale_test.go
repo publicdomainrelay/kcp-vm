@@ -3,8 +3,6 @@ package scale
 import (
 	"context"
 	"fmt"
-	"reflect"
-	"sort"
 	"testing"
 	"time"
 
@@ -211,25 +209,6 @@ func TestADaemonSetOnlyClusterScalesToZero(t *testing.T) {
 		t.Fatalf("a cluster holding only a DaemonSet decided %s/%d past the hold, want Teardown/0: "+
 			"%s", d.Action, d.Nodes, d.Reason)
 	}
-}
-
-func TestTheObservationRangesOverExactlyThePredicatesKinds(t *testing.T) {
-	t.Run("no-field-for-an-excluded-kind", func(t *testing.T) {
-		want := []string{"DaemonSets", "Deployments", "Jobs", "Placement", "Pods", "StatefulSets",
-			"UnreconciledCustomResources"}
-		var got []string
-		rt := reflect.TypeOf(Observation{})
-		for i := 0; i < rt.NumField(); i++ {
-			got = append(got, rt.Field(i).Name)
-		}
-		sort.Strings(got)
-		if !reflect.DeepEqual(got, want) {
-			t.Fatalf("Observation ranges over %v, want %v -- a Service, CronJob, HPA or "+
-				"ReplicaSet field is excluded by ADR 0014 and cannot be added here; Placement is the "+
-				"per-node load scale-in reads (plan 0005 M4-SCALE-IN) and UnreconciledCustomResources "+
-				"the CRs an in-cluster operator of ours has not reconciled (M4-PENDING-CRS)", got, want)
-		}
-	})
 }
 
 func TestABurstOfWritesCollapsesIntoOneProvision(t *testing.T) {

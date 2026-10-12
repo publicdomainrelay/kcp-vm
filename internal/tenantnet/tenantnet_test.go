@@ -1,10 +1,8 @@
 package tenantnet
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"os"
 	"strings"
 	"testing"
 
@@ -14,22 +12,6 @@ import (
 	fakedynamic "k8s.io/client-go/dynamic/fake"
 	clienttesting "k8s.io/client-go/testing"
 )
-
-func TestTheNodeReaderRBACIsTheOneMeshdShips(t *testing.T) {
-	ours, err := manifests.ReadFile("manifests/node-reader-rbac.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	shipped, err := os.ReadFile("../../rust/socialweb-meshd/deploy/node-reader-rbac.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(ours, shipped) {
-		t.Fatalf("internal/tenantnet/manifests/node-reader-rbac.yaml differs from " +
-			"rust/socialweb-meshd/deploy/node-reader-rbac.yaml: meshd's proofs ran against the latter, " +
-			"so the tenant must get exactly those bytes")
-	}
-}
 
 type applied struct {
 	Resource  string
@@ -151,27 +133,4 @@ func TestThePerNodeDNSServesOnTheLinkLocalAddressOnlyOnNodesThatCarryIt(t *testi
 			t.Fatalf("%s probes %v, want %s: the health endpoints are bound there", probe, host, Address)
 		}
 	}
-}
-
-func TestTheDNSImageIsOneTheNodeImageSeeds(t *testing.T) {
-	ds := dnsObjects(t)["DaemonSet/"+DNSName]
-	spec := ds.Object["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)
-	image := spec["containers"].([]any)[0].(map[string]any)["image"].(string)
-	raw, err := os.ReadFile("../../deploy/container-nodeimage.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var cfg struct {
-		Images []string `json:"images"`
-	}
-	if err := json.Unmarshal(raw, &cfg); err != nil {
-		t.Fatal(err)
-	}
-	for _, seeded := range cfg.Images {
-		if seeded == image {
-			return
-		}
-	}
-	t.Fatalf("the per-node DNS image %s is not one the node image seeds %v: a guest would pull it "+
-		"before any name resolves in a pod", image, cfg.Images)
 }

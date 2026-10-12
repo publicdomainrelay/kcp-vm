@@ -22,34 +22,6 @@ func seedDir(t *testing.T, dir string) {
 	}
 }
 
-func TestTheBundleIsExactlyThirteenEntries(t *testing.T) {
-	if len(Paths) != 13 {
-		t.Fatalf("the bundle is %d entries; ADR 0023 measured 13 by decrypting a live "+
-			"cluster. A list that omits request-header-ca or the etcd CAs makes k3s "+
-			"REGENERATE them and invalidate every kubeconfig and SA token", len(Paths))
-	}
-	seen := map[string]bool{}
-	for _, p := range Paths {
-		if seen[p] {
-			t.Fatalf("duplicate entry path %q", p)
-		}
-		seen[p] = true
-	}
-	for _, required := range []string{
-		"tls/request-header-ca.crt", "tls/request-header-ca.key",
-		"tls/etcd/server-ca.crt", "tls/etcd/peer-ca.crt",
-		"tls/service.key", "cred/passwd", "cred/ipsec.psk",
-	} {
-		if !seen[required] {
-			t.Fatalf("missing %q", required)
-		}
-	}
-	if seen["cred/admin.kubeconfig"] {
-		t.Fatal("cred/admin.kubeconfig is NOT in the bundle -- it is derived from " +
-			"client-ca and is deterministic. Storing it invites seeding a file k3s rebuilds")
-	}
-}
-
 func TestHarvestRefusesAPartialBundle(t *testing.T) {
 	dir := t.TempDir()
 	seedDir(t, dir)

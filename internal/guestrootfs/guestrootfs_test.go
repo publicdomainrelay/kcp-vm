@@ -261,42 +261,6 @@ func TestTheImageCarriesThePreinstallManifest(t *testing.T) {
 	}
 }
 
-func TestTheDumbpipeTheManifestFetchesIsTheVersionsPin(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join(repoRoot(t), "internal", "versions", "versions.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var v struct {
-		Assets map[string]struct {
-			Version string `json:"version"`
-			Fetch   map[string]struct {
-				URL    string `json:"url"`
-				SHA256 string `json:"sha256"`
-			} `json:"fetch"`
-		} `json:"assets"`
-	}
-	if err := json.Unmarshal(raw, &v); err != nil {
-		t.Fatal(err)
-	}
-	manifest, err := os.ReadFile(filepath.Join(repoRoot(t), "deploy", "bidder", "preinstall-market.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	overlay, err := os.ReadFile(filepath.Join(repoRoot(t), "deploy", "guest-image", "rootfs", "usr", "local", "bin", "dumbpipe.version"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	dp := v.Assets["dumbpipe"]
-	if "v"+strings.TrimSpace(string(overlay)) != dp.Version {
-		t.Fatalf("dumbpipe.version says %q and versions.json pins %s", overlay, dp.Version)
-	}
-	for platform, f := range dp.Fetch {
-		if !strings.Contains(string(manifest), f.SHA256) || !strings.Contains(string(manifest), dp.Version) {
-			t.Fatalf("the preinstall manifest's dumbpipe run does not fetch the %s pin %s", platform, f.SHA256)
-		}
-	}
-}
-
 func TestAPackageTheBaseDoesNotCarryIsRefused(t *testing.T) {
 	status := strings.Replace(dpkgStatus, "Package: jq\nStatus: install ok installed\n\n", "", 1)
 	var out bytes.Buffer

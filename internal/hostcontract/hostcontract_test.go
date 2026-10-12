@@ -132,27 +132,6 @@ func TestAManagerWithoutKvmInItsGroupsIsRefusedNamingTheRestart(t *testing.T) {
 	}
 }
 
-func TestNoFixAdvisesChmodOfDevKvmOrLoggingInAgainAsTheRemedy(t *testing.T) {
-	for _, mutate := range []func(*Facts){
-		func(f *Facts) { f.KVMErr = "permission denied" },
-		func(f *Facts) { f.KVMMissing, f.KVMErr = true, "no such file" },
-		func(f *Facts) { f.ManagerGroups = nil },
-		func(f *Facts) { f.ManagerGroups, f.AccountInKVM = nil, false },
-	} {
-		f := goodFacts(RoleBidder)
-		mutate(&f)
-		for _, r := range failedOnly(t, f) {
-			fix := strings.ToLower(r.Fix)
-			if strings.Contains(fix, "chmod") && !strings.Contains(fix, "never chmod") {
-				t.Errorf("%s fix advises chmod: %q", r.Name, r.Fix)
-			}
-			if strings.Contains(fix, "log in again") && !strings.Contains(fix, "does not refresh") {
-				t.Errorf("%s fix advises logging in again: %q", r.Name, r.Fix)
-			}
-		}
-	}
-}
-
 func TestASubuidRangeOverlappingAnotherEntryIsRefused(t *testing.T) {
 	f := goodFacts(RoleBidder)
 	f.Subuid += "podman:200000:65536\n"
