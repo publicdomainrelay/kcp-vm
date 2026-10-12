@@ -200,7 +200,7 @@ items:
       TestADirtySiblingRepoIsRefusedForARelease; red first.
     done_when: "archive built; size recorded (feeds 0006:M0-SIZE-BUDGET); every entry starts offline from the extracted tree."
     risks: ["The door today runs with node_modules (nodeModulesDir auto); its suite is run under --node-modules-dir=none before the switch."]
-    status: doing
+    status: done
     evidence:
   - id: M1-BED-PARALLEL
     milestone: M1
