@@ -31,6 +31,7 @@ const C = {
   ACCEPT: "com.publicdomainrelay.temp.market.accept",
   VM_DELETE: "com.publicdomainrelay.temp.compute.events.vm.delete",
   VM_ON_NETWORK: "com.publicdomainrelay.temp.compute.events.vm.onNetwork",
+  VM_TERMINATED: "com.publicdomainrelay.temp.compute.events.vm.terminated",
   BADGE_BLUE_KEYS: "com.publicdomainrelay.temp.badgeBlueKeys",
   FEDPROXY_RBAC: "com.fedproxy.rbac",
   FEDPROXY_SSH_PUBLIC_KEY: "com.fedproxy.sshPublicKey",
@@ -75,6 +76,7 @@ const COLLECTIONS: Record<string, readonly string[]> = {
   [C.ACCEPT]: ["create"],
   [C.VM_DELETE]: ["create"],
   [C.VM_ON_NETWORK]: ["create"],
+  [C.VM_TERMINATED]: ["create"],
   [C.BADGE_BLUE_KEYS]: ["create", "delete"],
   [C.FEDPROXY_RBAC]: ["create", "update"],
   [C.FEDPROXY_SSH_PUBLIC_KEY]: ["create"],
@@ -140,7 +142,7 @@ export const BIDDER_OAUTH_SCOPE: string[] = dedupeScopes(
   collectionScopes(
     [
       C.RBAC_DID, C.BID, C.BIDS_FREE, C.RECEIPT, C.EVENT, C.CONFIG_WIF_SIMPLE,
-      C.COMPUTE_VM, C.RFP, C.ACCEPT, C.VM_DELETE, C.VM_ON_NETWORK,
+      C.COMPUTE_VM, C.RFP, C.ACCEPT, C.VM_DELETE, C.VM_ON_NETWORK, C.VM_TERMINATED,
       C.FEDPROXY_RBAC, C.BIDDER_ASSOCIATION,
       C.POLICY_GHA_LITE, C.POLICY_TYPESCRIPT,
     ],

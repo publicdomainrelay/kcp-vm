@@ -61,6 +61,12 @@ Deno.test("every token is in unified spec form", () => {
   assertEquals(OAUTH_SCOPE[0], "atproto");
 });
 
+Deno.test("the bidder may create vm.terminated, the event it publishes when a guest ends", () => {
+  assert(
+    BIDDER_OAUTH_SCOPE.includes("repo:com.publicdomainrelay.temp.compute.events.vm.terminated?action=create"),
+  );
+});
+
 Deno.test("dedupeScopes dedups and preserves order", () => {
   assertEquals(dedupeScopes(["a", "b"], ["b", "c"], []), ["a", "b", "c"]);
 });
