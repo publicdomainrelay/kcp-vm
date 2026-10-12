@@ -618,6 +618,7 @@ func (in *HostProcessSpec) DeepCopyInto(out *HostProcessSpec) {
 	}
 	out.Argv = append([]string(nil), in.Argv...)
 	out.Env = append([]HostProcessEnv(nil), in.Env...)
+	out.EnvFiles = append([]string(nil), in.EnvFiles...)
 	if in.Output != nil {
 		v := *in.Output
 		out.Output = &v

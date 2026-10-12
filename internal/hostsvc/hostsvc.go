@@ -126,6 +126,7 @@ type UnitSpec struct {
 	Description     string
 	Exec            []string
 	Env             []string
+	EnvFiles        []string
 	WorkDir         string
 	Output          Output
 	Limits          Limits

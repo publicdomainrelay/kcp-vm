@@ -1,7 +1,7 @@
 apiVersion: apis.kcp.io/v1alpha1
 kind: APIResourceSchema
 metadata:
-  name: v1alpha1-1.hostprocesses.socialweb.computer
+  name: v1alpha1-2.hostprocesses.socialweb.computer
 spec:
   group: socialweb.computer
   names:
@@ -58,6 +58,10 @@ spec:
                   required:
                     - name
                     - value
+              envFiles:
+                type: array
+                items:
+                  type: string
               workDir:
                 type: string
               output:

@@ -165,6 +165,7 @@ export interface HostProcessSpec {
   exec?: string;
   argv?: string[];
   env?: HostProcessEnv[];
+  envFiles?: string[];
   workDir?: string;
   output?: HostProcessOutput;
   limits?: HostProcessLimits;
@@ -364,7 +365,7 @@ export const HOST_PROCESS_RESOURCE: ApiResource = {
   listKind: "HostProcessList",
   plural: "hostprocesses",
   singular: "hostprocess",
-  schema: "v1alpha1-1.hostprocesses.socialweb.computer",
+  schema: "v1alpha1-2.hostprocesses.socialweb.computer",
   export: "hostprocesses",
 };
 
@@ -1088,6 +1089,12 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       "env": {
         "items": {
           "ref": "HostProcessEnv"
+        },
+        "type": "array"
+      },
+      "envFiles": {
+        "items": {
+          "type": "string"
         },
         "type": "array"
       },

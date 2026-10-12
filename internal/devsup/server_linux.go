@@ -708,6 +708,7 @@ func (s *server) unitEnv(u *unit, inv string) []string {
 		env = append(env, EnvInstance+"="+s.o.Instance)
 	}
 	env = append(env, u.spec.Env...)
+	env = append(env, hostsvc.ReadEnvFiles(u.spec.EnvFiles)...)
 	return append(env, EnvUnit+"="+u.spec.Name, EnvDevsup+"="+s.id, EnvInvocation+"="+inv)
 }
 

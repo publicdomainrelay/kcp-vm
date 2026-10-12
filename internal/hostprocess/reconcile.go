@@ -88,6 +88,7 @@ func UnitSpec(o v1alpha1.HostProcess, exec string) (hostsvc.UnitSpec, error) {
 	for _, e := range s.Env {
 		spec.Env = append(spec.Env, e.Name+"="+e.Value)
 	}
+	spec.EnvFiles = append([]string(nil), s.EnvFiles...)
 	if s.Output != nil {
 		spec.Output = hostsvc.Output{StdoutFile: s.Output.Stdout, StderrFile: s.Output.Stderr}
 	}

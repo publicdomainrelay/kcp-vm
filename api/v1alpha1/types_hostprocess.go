@@ -48,6 +48,8 @@ type HostProcessSpec struct {
 
 	Env []HostProcessEnv `json:"env,omitempty"`
 
+	EnvFiles []string `json:"envFiles,omitempty"`
+
 	WorkDir string `json:"workDir,omitempty"`
 
 	Output *HostProcessOutput `json:"output,omitempty"`

@@ -198,6 +198,11 @@ func dbusErrorName(err error) string {
 	return ""
 }
 
+type envFile struct {
+	Path          string
+	IgnoreMissing bool
+}
+
 func unitProperties(spec UnitSpec) []sd.Property {
 	desc := spec.Description
 	if desc == "" {
@@ -247,6 +252,13 @@ func unitProperties(spec UnitSpec) []sd.Property {
 	}
 	if len(spec.Env) > 0 {
 		props = append(props, sd.Property{Name: "Environment", Value: dbus.MakeVariant(spec.Env)})
+	}
+	if len(spec.EnvFiles) > 0 {
+		files := make([]envFile, 0, len(spec.EnvFiles))
+		for _, f := range spec.EnvFiles {
+			files = append(files, envFile{Path: f})
+		}
+		props = append(props, sd.Property{Name: "EnvironmentFiles", Value: dbus.MakeVariant(files)})
 	}
 	if spec.WorkDir != "" {
 		props = append(props, str("WorkingDirectory", spec.WorkDir))
