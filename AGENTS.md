@@ -117,6 +117,20 @@ These rules come from the org-root CLAUDE.md. They apply to all TypeScript here.
   RFP cloud-init does not install. A test that needs a live guest drives `runComputeContract` against a
   local bidder (`ts/atproto-market/test/bidder_container_integration_test.ts` is the harness).
 
+## Tests: build features, do not maintain tests
+
+The user, 2026-10-12: "Do not let this project become about maintaining the codebase as it evolves.
+The only tests we should be writing are integration tests when we finally get to that point after most
+work is done."
+
+- Do not write unit tests. Do not work test-first. Ignore the `test_first` field of a plan item.
+- Do not repair an old test, a line citation or an inventory that a change makes stale. If your change
+  breaks a unit test or a documentation test, delete that test in the same commit.
+- The gate for a change: `go build ./...`, `go vet ./...`, `deno task check`, and the release closure
+  build below. Spend the rest of the time on the feature.
+- Integration tests come at the end, when most plan work is done: the market RFP flow with `--secrets`
+  from a requester to a VM, kcp-native. Only those get written.
+
 ## How to verify
 
 - `go test ./...` for the Go unit tests.
