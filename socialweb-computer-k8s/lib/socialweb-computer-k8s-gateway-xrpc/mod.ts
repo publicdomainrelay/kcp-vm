@@ -9,7 +9,7 @@ import {
 } from "@publicdomainrelay/socialweb-computer-k8s-common";
 
 export interface XrpcClusterGatewayOptions {
-  gatewayUrl: string;
+  gatewayUrl: string | (() => Promise<string>);
   audience: string;
   serviceAuth: ServiceAuthSource;
   fetch?: typeof fetch;
@@ -19,7 +19,8 @@ export interface XrpcClusterGatewayOptions {
 const QUERIES: ReadonlySet<string> = new Set([CLUSTER_NSID.listClusters]);
 
 export function createXrpcClusterGateway(opts: XrpcClusterGatewayOptions): ClusterGateway {
-  const base = opts.gatewayUrl.replace(/\/+$/, "");
+  const gatewayUrl = opts.gatewayUrl;
+  const base = async () => (typeof gatewayUrl === "string" ? gatewayUrl : await gatewayUrl()).replace(/\/+$/, "");
   const doFetch = opts.fetch ?? fetch;
   const timeoutMs = opts.timeoutMs ?? 30_000;
 
@@ -33,7 +34,7 @@ export function createXrpcClusterGateway(opts: XrpcClusterGatewayOptions): Clust
     const query = QUERIES.has(nsid);
     let res: Response;
     try {
-      res = await doFetch(`${base}/xrpc/${nsid}`, {
+      res = await doFetch(`${await base()}/xrpc/${nsid}`, {
         method: query ? "GET" : "POST",
         headers: {
           authorization: `Bearer ${token}`,

@@ -19,7 +19,9 @@ import {
 import { loadPinnedDownloads } from "@publicdomainrelay/socialweb-computer-k8s-downloads-fs";
 import {
   createKcpClusterLinkReader,
+  createKcpGatewayListenerUrl,
   createKcpNodeClaimStore,
+  type KcpCredentials,
   parseKubeconfig,
 } from "@publicdomainrelay/socialweb-computer-k8s-nodeclaim-kcp";
 import {
@@ -83,8 +85,23 @@ const accounts = createAccountRequesters({
   log,
 });
 
+const kcpCredentials: KcpCredentials | null = options.kcpKubeconfig
+  ? parseKubeconfig(await Deno.readTextFile(options.kcpKubeconfig as string), options.kcpContext as string | undefined)
+  : null;
+
+function gatewayUrl(): string | (() => Promise<string>) {
+  if (options.gatewayUrl) return options.gatewayUrl as string;
+  if (!kcpCredentials) throw new Error("set gateway-url, or kcp-kubeconfig to read the cluster gateway's listener from its Gateway object");
+  return createKcpGatewayListenerUrl({
+    credentials: kcpCredentials,
+    workspace: options.gatewayKcpWorkspace as string,
+    name: options.gatewayKcpName as string,
+    listener: options.gatewayKcpListener as string,
+  });
+}
+
 const gateway = createXrpcClusterGateway({
-  gatewayUrl: options.gatewayUrl as string,
+  gatewayUrl: gatewayUrl(),
   audience: options.gatewayAudience as string,
   serviceAuth: {
     async serviceAuth(did, aud, lxm) {
@@ -225,11 +242,10 @@ if (!claimKeys.durable && options.kcpKubeconfig) {
 }
 
 let fulfiller: MarketNodeFulfiller | null = null;
-if (options.kcpKubeconfig) {
-  const credentials = parseKubeconfig(await Deno.readTextFile(options.kcpKubeconfig as string), options.kcpContext as string | undefined);
+if (kcpCredentials) {
   fulfiller = createMarketNodeFulfiller({
-    store: createKcpNodeClaimStore({ credentials }),
-    links: createKcpClusterLinkReader({ credentials }),
+    store: createKcpNodeClaimStore({ credentials: kcpCredentials }),
+    links: createKcpClusterLinkReader({ credentials: kcpCredentials }),
     requesterFor: (did) => accounts.requesterFor(did),
     plcUrl: options.plcDirectoryUrl as string,
     ingressProxyHost: options.ingressProxyHost as string,

@@ -56,9 +56,26 @@
     },
     "gateway-url": {
       "type": "string",
-      "description": "Base URL of the cluster gateway XRPC surface",
-      "env": "GATEWAY_URL",
-      "default": "http://127.0.0.1:8080"
+      "description": "Base URL of the cluster gateway XRPC surface; unset, it is read from the listeners in the status of the Gateway object gateway-kcp-name in gateway-kcp-workspace through kcp-kubeconfig",
+      "env": "GATEWAY_URL"
+    },
+    "gateway-kcp-workspace": {
+      "type": "string",
+      "description": "kcp workspace of the Gateway object whose status names the cluster gateway's XRPC listener",
+      "env": "GATEWAY_KCP_WORKSPACE",
+      "default": "root"
+    },
+    "gateway-kcp-name": {
+      "type": "string",
+      "description": "Name of the Gateway object whose status names the cluster gateway's XRPC listener",
+      "env": "GATEWAY_KCP_NAME",
+      "default": "gateway"
+    },
+    "gateway-kcp-listener": {
+      "type": "string",
+      "description": "Name of the cluster gateway's XRPC listener in the Gateway status",
+      "env": "GATEWAY_KCP_LISTENER",
+      "default": "xrpc"
     },
     "gateway-audience": {
       "type": "string",

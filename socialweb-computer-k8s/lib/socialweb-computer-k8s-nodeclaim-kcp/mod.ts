@@ -9,6 +9,8 @@ import {
   assertNodeClaimStatus,
   CLUSTER_LINK_RESOURCE,
   FINALIZER_NODE_CLAIM,
+  GATEWAY_RESOURCE,
+  type Gateway,
   NODE_CLAIM_RESOURCE,
   parseClusterLink,
   parseNodeClaim,
@@ -266,5 +268,33 @@ export function createKcpNodeClaimStore(opts: KcpNodeClaimStoreOptions): NodeCla
     removeFinalizer(claim) {
       return editFinalizers(claim, (cur) => cur.includes(FINALIZER_NODE_CLAIM) ? cur.filter((f) => f !== FINALIZER_NODE_CLAIM) : null);
     },
+  };
+}
+
+export interface KcpListenerUrlOptions {
+  credentials: KcpCredentials;
+  workspace: string;
+  name: string;
+  listener: string;
+  fetch?: typeof fetch;
+  timeoutMs?: number;
+  cacheMs?: number;
+}
+
+const DEFAULT_LISTENER_CACHE_MS = 5_000;
+
+export function createKcpGatewayListenerUrl(opts: KcpListenerUrlOptions): () => Promise<string> {
+  const request = createKcpRequest(opts);
+  const { group, version, plural } = GATEWAY_RESOURCE;
+  const url = `${opts.credentials.server}/clusters/${opts.workspace}/apis/${group}/${version}/${plural}/${encodeURIComponent(opts.name)}`;
+  const cacheMs = opts.cacheMs ?? DEFAULT_LISTENER_CACHE_MS;
+  let cached: { at: number; url: string } | null = null;
+  return async () => {
+    if (cached && Date.now() - cached.at < cacheMs) return cached.url;
+    const gateway = await request(url) as Gateway;
+    const found = gateway.status?.listeners?.find((l) => l.name === opts.listener && l.address);
+    if (!found) throw new Error(`gateway ${opts.workspace}:${opts.name} reports no ${opts.listener} listener in its status`);
+    cached = { at: Date.now(), url: `${found.kind === "https" ? "https" : "http"}://${found.address}` };
+    return cached.url;
   };
 }
