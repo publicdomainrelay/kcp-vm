@@ -18,8 +18,6 @@ const (
 
 	VMMFirecracker = "firecracker"
 	VMMQEMU        = "qemu"
-
-	InitVerb = "init"
 )
 
 func NormalizeVMM(name string) (string, error) {
