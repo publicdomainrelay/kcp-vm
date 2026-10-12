@@ -311,7 +311,6 @@ func Compose(base io.Reader, spec Spec, out io.Writer) (Report, error) {
 			}
 		}
 		h.PAXRecords = pax
-		h.Xattrs = nil
 		h.Format = tar.FormatUnknown
 		if pax != nil {
 			h.Format = tar.FormatPAX
