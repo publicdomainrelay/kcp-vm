@@ -869,10 +869,11 @@ fi
 # requester on the host (market-requester/mod.ts, runComputeContract) sends a
 # signed RFP to the bed's bidders through the bed's dispatcher; they bid, the
 # requester accepts one, and the winner boots a firecracker guest from the
-# cloud-init user_data the requester composed. The guest reports onNetwork
-# through the bed's relay, the requester releases the contract with vm.delete
-# without ever opening a session to it, and the guest's container and work
-# directory must then be gone.
+# cloud-init user_data the requester composed. The guest reports onNetwork and
+# its ssh host keys through the bed's relay; the requester reaches it over iroh
+# with StrictHostKeyChecking=yes against the reported key, checks that a
+# known_hosts holding another key is refused, releases the contract with
+# vm.delete, and the guest's container and work directory must then be gone.
 if [ -z "${ACCEPT_HOLD_DIR:-}" ]; then
 echo
 echo "== market contract =="
@@ -919,6 +920,16 @@ if [ -n "$on_network" ]; then
   check "market guest onNetwork" PASS "after $(field onNetworkMs)ms: ${on_network:0:60} winner=$(field winnerDid) bids=$(field bids)"
 else
   check "market guest onNetwork" FAIL "bidders=${BIDDER_DIDS:-unknown} exit=$market_status reason=$(field reason)"
+fi
+if [ "$(field sshVerified)" = "True" ]; then
+  check "market guest ssh host key" PASS "StrictHostKeyChecking=yes against the reported key at $(field sshVerifiedAt): $(field hostKeyFingerprints)"
+else
+  check "market guest ssh host key" FAIL "reported=$(field hostKeyFingerprints) reason=$(field reason)"
+fi
+if [ "$(field mismatchRefused)" = "True" ]; then
+  check "market guest ssh mismatch" PASS "a known_hosts with another key failed host-key verification at $(field mismatchRefusedAt)"
+else
+  check "market guest ssh mismatch" FAIL "reason=$(field reason)"
 fi
 bed_set "contract.winnerDid=\"$(field winnerDid)\"" "contract.bids=\"$(field bids)\"" "contract.onNetworkMs=\"$(field onNetworkMs)\"" \
   "contract.onNetwork=\"$on_network\"" "contract.vmDeleteStatus=\"$(field vmDeleteStatus)\"" "contract.totalMs=\"$(field totalMs)\"" \

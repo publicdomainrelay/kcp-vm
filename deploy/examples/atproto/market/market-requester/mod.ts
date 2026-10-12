@@ -4,8 +4,10 @@ import { createServe } from "@publicdomainrelay/serve";
 import {
   createRequesterPDS,
   createSshSessionProvider,
+  ensureDumbpipe,
   runComputeContract,
 } from "@publicdomainrelay/requester-xrpc";
+import type { GuestHostKeys } from "@publicdomainrelay/requester-abc";
 import cliArgsEnv from "./cli-args-env.json" with { type: "json" };
 
 interface Verdict {
@@ -18,6 +20,13 @@ interface Verdict {
   receiptUri?: string;
   onNetwork?: string;
   onNetworkMs?: number;
+  hostKeyFingerprints?: string[];
+  hostKeyAlias?: string;
+  sshCommand?: string;
+  sshVerified?: boolean;
+  sshVerifiedAt?: string;
+  mismatchRefused?: boolean;
+  mismatchRefusedAt?: string;
   vmDeleteStatus?: number;
   vmDeleteOk?: boolean;
   totalMs: number;
@@ -95,11 +104,14 @@ globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
 }) as typeof fetch;
 
 const base = createLogger({ serviceName: "market-requester" });
+let hostKeyMismatchSeen = false;
 const logger: StructuredLoggerInterface = {
   debug: (m, d) => base.debug(m, d),
   warn: (m, d) => base.warn(m, d),
   error: (m, d) => base.error(m, d),
   info: (m, d) => {
+    if (m === "vm_ssh_host_key_mismatch") hostKeyMismatchSeen = true;
+    if (m === "vm_ssh_waiting" && d) verdict.sshCommand = d.sshCommand as string | undefined;
     if (m === "vm_delete_result" && d) {
       verdict.vmDeleteStatus = d.status as number;
       verdict.vmDeleteOk = d.ok as boolean;
@@ -119,14 +131,33 @@ const pds = await createRequesterPDS({
 await pds.beginServe();
 verdict.requesterDid = pds.did;
 
-const ssh = createSshSessionProvider(logger);
-const noSsh = {
+const ssh = createSshSessionProvider(logger, { dumbpipePath: await ensureDumbpipe(logger) });
+
+async function forgedHostKeys(alias: string): Promise<GuestHostKeys> {
+  const forged = await ssh.generateKeypair("forged-host-key");
+  const [type, publicKey] = forged.publicKey.split(/\s+/);
+  return { alias, keys: [{ type, publicKey }] };
+}
+
+const verifyingSsh = {
   generateKeypair: (vmName: string) => ssh.generateKeypair(vmName),
-  pollReady: (_key: string, target: string) => {
+  pollReady: async (key: string, target: string, timeoutMs: number, signal?: AbortSignal, hostKeys?: GuestHostKeys) => {
     verdict.onNetwork = target;
     verdict.onNetworkMs = Date.now() - started;
-    logger.info("market_requester_onnetwork", { target, ms: verdict.onNetworkMs });
-    return Promise.resolve(false);
+    verdict.hostKeyFingerprints = hostKeys?.keys.map((k) => `${k.type} ${k.fingerprint}`);
+    verdict.hostKeyAlias = hostKeys?.alias;
+    logger.info("market_requester_onnetwork", { target, ms: verdict.onNetworkMs, hostKeys: verdict.hostKeyFingerprints });
+    if (!hostKeys) return false;
+    verdict.sshVerified = await ssh.pollReady(key, target, timeoutMs, signal, hostKeys);
+    verdict.sshVerifiedAt = new Date().toISOString();
+    logger.info("market_requester_ssh_verified", { ok: verdict.sshVerified, alias: hostKeys.alias });
+    if (!verdict.sshVerified) return false;
+    hostKeyMismatchSeen = false;
+    const refusedReady = await ssh.pollReady(key, target, 60_000, signal, await forgedHostKeys(hostKeys.alias));
+    verdict.mismatchRefused = !refusedReady && hostKeyMismatchSeen;
+    verdict.mismatchRefusedAt = new Date().toISOString();
+    logger.info("market_requester_mismatch_probe", { refused: verdict.mismatchRefused, ready: refusedReady });
+    return false;
   },
   runSession: () => Promise.reject(new Error("the test-bed requester never opens a session")),
 };
@@ -139,7 +170,7 @@ try {
     guestHostAliases,
     relayUrls: [],
     vmReadyTimeoutSec,
-    sshProvider: noSsh,
+    sshProvider: verifyingSsh,
     userData: { base: "#cloud-config\n" + JSON.stringify(guestBase) },
   });
   verdict.winnerDid = result.winnerDid;
@@ -149,10 +180,13 @@ try {
   if (result.error) verdict.reason = `contract error: ${result.error}`;
   else if (!result.receiptOk) verdict.reason = "no valid receipt";
   else if (!verdict.onNetwork) verdict.reason = `the guest did not report onNetwork within ${vmReadyTimeoutSec}s`;
+  else if (!verdict.hostKeyFingerprints) verdict.reason = "the guest's vm.hostKeys never arrived";
+  else if (!verdict.sshVerified) verdict.reason = "ssh with StrictHostKeyChecking=yes against the reported key failed";
+  else if (!verdict.mismatchRefused) verdict.reason = "ssh with a different known host key was not refused";
   else if (verdict.vmDeleteOk !== true) verdict.reason = `vm.delete was not accepted (status ${verdict.vmDeleteStatus})`;
   else {
     verdict.ok = true;
-    verdict.reason = "guest reported onNetwork and the contract was released";
+    verdict.reason = "guest reported onNetwork and host keys, ssh verified them, a mismatch was refused, and the contract was released";
   }
 } catch (err) {
   verdict.reason = `contract threw: ${err instanceof Error ? err.message : String(err)}`;
