@@ -231,11 +231,11 @@ func unseal(ctx context.Context, client *openbao.Client, k UnsealKeys) error {
 	return fmt.Errorf("still sealed after %d keys", k.Threshold)
 }
 
-func (c *Controller) layoutWithCore(ctx context.Context, client *openbao.Client, keysPath string, caPEM []byte) (string, error) {
+func (c *Controller) layoutWithCore(ctx context.Context, client *openbao.Client, keysPath string, in layoutInput) (string, error) {
 	core, err := loginCore(ctx, client)
 	if err == nil {
 		defer core.RevokeSelf(context.WithoutCancel(ctx))
-		return "the cert-auth core token applied the layout", ensureLayout(ctx, core, caPEM)
+		return "the cert-auth core token applied the layout", applyLayout(ctx, core, in)
 	}
 	if !loginRefused(err) {
 		return "", err
@@ -250,7 +250,7 @@ func (c *Controller) layoutWithCore(ctx context.Context, client *openbao.Client,
 	}
 	root := client.WithToken(tok)
 	defer root.RevokeSelf(context.WithoutCancel(ctx))
-	return "cert login was refused; a root token generated from the unseal keys applied the layout and was revoked", ensureLayout(ctx, root, caPEM)
+	return "cert login was refused; a root token generated from the unseal keys applied the layout and was revoked", applyLayout(ctx, root, in)
 }
 
 func (c *Controller) reconcile(ctx context.Context, o v1alpha1.OpenBaoServer) v1alpha1.OpenBaoServerStatus {
@@ -290,11 +290,29 @@ func (c *Controller) reconcile(ctx context.Context, o v1alpha1.OpenBaoServer) v1
 	if listen == "" {
 		listen = DefaultListen
 	}
+	if err := checkClients(o.Spec.Clients); err != nil {
+		return fail("spec.clients: %v", err)
+	}
 	tlsm, err := vaultcert.EnsureRootVaultTLS(dir, rootvault.LoopbackHost)
 	if err != nil {
 		return fail("mutual TLS material: %v", err)
 	}
-	body, err := rootvault.ServerConfigWith(dir, listen, rootvault.ServerOptions{UnauthedGenerateRoot: true})
+	clientsCA, err := vaultcert.EnsureOpenBaoClientsCA(dir, tlsm.CAPEM)
+	if err != nil {
+		return fail("the clients CA: %v", err)
+	}
+	st.Clients = nil
+	for _, cl := range o.Spec.Clients {
+		m, err := clientsCA.EnsureClient(dir, cl.Name)
+		if err != nil {
+			return fail("client %s: %v", cl.Name, err)
+		}
+		st.Clients = append(st.Clients, v1alpha1.OpenBaoServerClientRefs{Name: cl.Name, CertAuthMount: CertAuthMount,
+			CertAuthRole: cl.Name, Policy: ClientPolicy(cl.Name), KVMount: cl.KVMount, ClientCert: "file:" + m.CertFile,
+			ClientKey: "file:" + m.KeyFile})
+	}
+	layout := layoutInput{caPEM: tlsm.CAPEM, clientsCAPEM: clientsCA.CAPEM, clients: o.Spec.Clients}
+	body, err := rootvault.ServerConfigWith(dir, listen, rootvault.ServerOptions{UnauthedGenerateRoot: true, ClientCAFile: clientsCA.BundlePath})
 	if err != nil {
 		return fail("%v", err)
 	}
@@ -359,7 +377,7 @@ func (c *Controller) reconcile(ctx context.Context, o v1alpha1.OpenBaoServer) v1
 		}
 		st.UnsealedInstance, st.UnsealedAt = instance, time.Now().UTC().Format(time.RFC3339Nano)
 		root := client.WithToken(res.RootToken)
-		lerr := ensureLayout(ctx, root, tlsm.CAPEM)
+		lerr := applyLayout(ctx, root, layout)
 		if err := root.RevokeSelf(ctx); err != nil {
 			log.Warn("revoking the initial root token", "err", err.Error())
 		} else {
@@ -368,7 +386,7 @@ func (c *Controller) reconcile(ctx context.Context, o v1alpha1.OpenBaoServer) v1
 		if lerr != nil {
 			condition(&st, gen, ConditionLayout, false, "LayoutFailed", lerr.Error())
 		} else {
-			condition(&st, gen, ConditionLayout, true, "Applied", "cert auth, the core policy and kv-v2 at "+KVMount)
+			condition(&st, gen, ConditionLayout, true, "Applied", layoutSummary(layout))
 		}
 	} else if h.Sealed {
 		k, err := ReadUnsealKeys(keysPath)
@@ -382,7 +400,7 @@ func (c *Controller) reconcile(ctx context.Context, o v1alpha1.OpenBaoServer) v1
 		log.Info("unsealed", "instance", instance, "address", addr)
 	}
 	if !layoutDone(st, gen) {
-		how, err := c.layoutWithCore(ctx, client, keysPath, tlsm.CAPEM)
+		how, err := c.layoutWithCore(ctx, client, keysPath, layout)
 		if err != nil {
 			condition(&st, gen, ConditionLayout, false, "LayoutFailed", err.Error())
 		} else {

@@ -789,6 +789,9 @@ func (in *OpenBaoServerSpec) DeepCopyInto(out *OpenBaoServerSpec) {
 		v := *in.Asset
 		out.Asset = &v
 	}
+	if in.Clients != nil {
+		out.Clients = append([]OpenBaoServerClient(nil), in.Clients...)
+	}
 }
 
 func (in *OpenBaoServerStatus) DeepCopyInto(out *OpenBaoServerStatus) {
@@ -800,6 +803,9 @@ func (in *OpenBaoServerStatus) DeepCopyInto(out *OpenBaoServerStatus) {
 	if in.Refs != nil {
 		v := *in.Refs
 		out.Refs = &v
+	}
+	if in.Clients != nil {
+		out.Clients = append([]OpenBaoServerClientRefs(nil), in.Clients...)
 	}
 	if in.Conditions != nil {
 		out.Conditions = make([]metav1.Condition, len(in.Conditions))

@@ -295,11 +295,19 @@ export interface OpenBaoServerSpec {
   listen?: string;
   init?: OpenBaoServerInit;
   restartPolicy?: HostProcessRestartPolicy;
+  clients?: OpenBaoServerClient[];
 }
 
 export interface OpenBaoServerInit {
   shares?: number;
   threshold?: number;
+}
+
+export interface OpenBaoServerClient {
+  name: string;
+  kvMount: string;
+  tokenTTL?: string;
+  tokenMaxTTL?: string;
 }
 
 export interface OpenBaoServerStatus {
@@ -314,6 +322,7 @@ export interface OpenBaoServerStatus {
   unsealedInstance?: string;
   unsealedAt?: string;
   refs?: OpenBaoServerRefs;
+  clients?: OpenBaoServerClientRefs[];
   conditions?: Condition[];
 }
 
@@ -334,6 +343,16 @@ export interface OpenBaoServerRefs {
   certAuthMount?: string;
   certAuthRole?: string;
   kvMount?: string;
+}
+
+export interface OpenBaoServerClientRefs {
+  name: string;
+  certAuthMount?: string;
+  certAuthRole?: string;
+  policy?: string;
+  kvMount?: string;
+  clientCert?: string;
+  clientKey?: string;
 }
 
 export interface ApiResource {
@@ -387,7 +406,7 @@ export const OPEN_BAO_SERVER_RESOURCE: ApiResource = {
   listKind: "OpenBaoServerList",
   plural: "openbaoservers",
   singular: "openbaoserver",
-  schema: "v1alpha1-1.openbaoservers.socialweb.computer",
+  schema: "v1alpha1-2.openbaoservers.socialweb.computer",
   export: "hostprocesses",
 };
 
@@ -428,6 +447,8 @@ export type ApiTypeName =
   | "HostProcessStop"
   | "ObjectMeta"
   | "OpenBaoServer"
+  | "OpenBaoServerClient"
+  | "OpenBaoServerClientRefs"
   | "OpenBaoServerInit"
   | "OpenBaoServerPhase"
   | "OpenBaoServerRefs"
@@ -1220,6 +1241,56 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
     "required": [],
     "type": "object"
   },
+  "OpenBaoServerClient": {
+    "properties": {
+      "kvMount": {
+        "type": "string"
+      },
+      "name": {
+        "type": "string"
+      },
+      "tokenMaxTTL": {
+        "type": "string"
+      },
+      "tokenTTL": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "name",
+      "kvMount"
+    ],
+    "type": "object"
+  },
+  "OpenBaoServerClientRefs": {
+    "properties": {
+      "certAuthMount": {
+        "type": "string"
+      },
+      "certAuthRole": {
+        "type": "string"
+      },
+      "clientCert": {
+        "type": "string"
+      },
+      "clientKey": {
+        "type": "string"
+      },
+      "kvMount": {
+        "type": "string"
+      },
+      "name": {
+        "type": "string"
+      },
+      "policy": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "name"
+    ],
+    "type": "object"
+  },
   "OpenBaoServerInit": {
     "properties": {
       "shares": {
@@ -1298,6 +1369,12 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       "asset": {
         "ref": "HostProcessAsset"
       },
+      "clients": {
+        "items": {
+          "ref": "OpenBaoServerClient"
+        },
+        "type": "array"
+      },
       "exec": {
         "type": "string"
       },
@@ -1318,6 +1395,12 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
     "properties": {
       "address": {
         "type": "string"
+      },
+      "clients": {
+        "items": {
+          "ref": "OpenBaoServerClientRefs"
+        },
+        "type": "array"
       },
       "conditions": {
         "items": {
@@ -2151,6 +2234,24 @@ export function parseOpenBaoServerInit(value: unknown): OpenBaoServerInit {
   return value;
 }
 
+export function validateOpenBaoServerClient(value: unknown): ApiIssue[] {
+  return validate("OpenBaoServerClient", value);
+}
+
+export function isOpenBaoServerClient(value: unknown): value is OpenBaoServerClient {
+  return validate("OpenBaoServerClient", value).length === 0;
+}
+
+export function assertOpenBaoServerClient(value: unknown): asserts value is OpenBaoServerClient {
+  const issues = validate("OpenBaoServerClient", value);
+  if (issues.length > 0) throw new ApiValidationError("OpenBaoServerClient", issues);
+}
+
+export function parseOpenBaoServerClient(value: unknown): OpenBaoServerClient {
+  assertOpenBaoServerClient(value);
+  return value;
+}
+
 export function validateOpenBaoServerStatus(value: unknown): ApiIssue[] {
   return validate("OpenBaoServerStatus", value);
 }
@@ -2220,5 +2321,23 @@ export function assertOpenBaoServerRefs(value: unknown): asserts value is OpenBa
 
 export function parseOpenBaoServerRefs(value: unknown): OpenBaoServerRefs {
   assertOpenBaoServerRefs(value);
+  return value;
+}
+
+export function validateOpenBaoServerClientRefs(value: unknown): ApiIssue[] {
+  return validate("OpenBaoServerClientRefs", value);
+}
+
+export function isOpenBaoServerClientRefs(value: unknown): value is OpenBaoServerClientRefs {
+  return validate("OpenBaoServerClientRefs", value).length === 0;
+}
+
+export function assertOpenBaoServerClientRefs(value: unknown): asserts value is OpenBaoServerClientRefs {
+  const issues = validate("OpenBaoServerClientRefs", value);
+  if (issues.length > 0) throw new ApiValidationError("OpenBaoServerClientRefs", issues);
+}
+
+export function parseOpenBaoServerClientRefs(value: unknown): OpenBaoServerClientRefs {
+  assertOpenBaoServerClientRefs(value);
   return value;
 }

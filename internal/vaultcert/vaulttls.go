@@ -340,6 +340,10 @@ func signLeaf(now time.Time, caKey *ecdsa.PrivateKey, caCert *x509.Certificate, 
 }
 
 func newVaultTLSCA(now time.Time) (*ecdsa.PrivateKey, *x509.Certificate, []byte, error) {
+	return newNamedCA(now, vaultTLSCACommonName)
+}
+
+func newNamedCA(now time.Time, commonName string) (*ecdsa.PrivateKey, *x509.Certificate, []byte, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("vaultcert: generating the vault TLS CA key: %w", err)
@@ -351,7 +355,7 @@ func newVaultTLSCA(now time.Time) (*ecdsa.PrivateKey, *x509.Certificate, []byte,
 	serial.Add(serial, big.NewInt(1))
 	template := &x509.Certificate{
 		SerialNumber:          serial,
-		Subject:               pkix.Name{CommonName: vaultTLSCACommonName},
+		Subject:               pkix.Name{CommonName: commonName},
 		NotBefore:             now.Add(-time.Hour),
 		NotAfter:              now.Add(vaultTLSValidity),
 		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign | x509.KeyUsageDigitalSignature,

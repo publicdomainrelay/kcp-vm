@@ -25,6 +25,14 @@ const (
 
 	CAName = "ca.crt"
 
+	ClientsCAName = "clients-ca.crt"
+
+	ClientsCAKeyName = "clients-ca.key"
+
+	ClientCABundleName = "client-cas.crt"
+
+	ClientsDirName = "clients"
+
 	UnsealKeysName = "unseal-keys.json"
 
 	LoopbackHost = "127.0.0.1"
@@ -102,12 +110,34 @@ func ClientKeyPath(stateDir string) string {
 	return filepath.Join(TLSDir(stateDir), ClientKeyName)
 }
 
+func ClientsCAPath(stateDir string) string {
+	return filepath.Join(TLSDir(stateDir), ClientsCAName)
+}
+
+func ClientsCAKeyPath(stateDir string) string {
+	return filepath.Join(TLSDir(stateDir), ClientsCAKeyName)
+}
+
+func ClientCABundlePath(stateDir string) string {
+	return filepath.Join(TLSDir(stateDir), ClientCABundleName)
+}
+
+func AppClientCertPath(stateDir, name string) string {
+	return filepath.Join(Dir(stateDir), ClientsDirName, name, ClientCertName)
+}
+
+func AppClientKeyPath(stateDir, name string) string {
+	return filepath.Join(Dir(stateDir), ClientsDirName, name, ClientKeyName)
+}
+
 func UnsealKeysPath(stateDir string) string {
 	return filepath.Join(Dir(stateDir), UnsealKeysName)
 }
 
 type ServerOptions struct {
 	UnauthedGenerateRoot bool
+
+	ClientCAFile string
 }
 
 func ServerConfig(stateDir, addr string) (string, error) {
@@ -128,6 +158,10 @@ func ServerConfigWith(stateDir, addr string, o ServerOptions) (string, error) {
 	if o.UnauthedGenerateRoot {
 		extra = "  disable_unauthed_generate_root_endpoints = false\n"
 	}
+	clientCA := TLSCAPath(stateDir)
+	if o.ClientCAFile != "" {
+		clientCA = o.ClientCAFile
+	}
 	return fmt.Sprintf(configTemplate, addr,
-		ServerCertPath(stateDir), ServerKeyPath(stateDir), TLSCAPath(stateDir), StorageDir(stateDir), extra), nil
+		ServerCertPath(stateDir), ServerKeyPath(stateDir), clientCA, StorageDir(stateDir), extra), nil
 }

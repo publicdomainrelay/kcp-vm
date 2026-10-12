@@ -29,6 +29,18 @@ type OpenBaoServerSpec struct {
 	Init OpenBaoServerInit `json:"init,omitempty"`
 
 	RestartPolicy HostProcessRestartPolicy `json:"restartPolicy,omitempty"`
+
+	Clients []OpenBaoServerClient `json:"clients,omitempty"`
+}
+
+type OpenBaoServerClient struct {
+	Name string `json:"name"`
+
+	KVMount string `json:"kvMount"`
+
+	TokenTTL string `json:"tokenTTL,omitempty"`
+
+	TokenMaxTTL string `json:"tokenMaxTTL,omitempty"`
 }
 
 type OpenBaoServerInit struct {
@@ -74,7 +86,25 @@ type OpenBaoServerStatus struct {
 
 	Refs *OpenBaoServerRefs `json:"refs,omitempty"`
 
+	Clients []OpenBaoServerClientRefs `json:"clients,omitempty"`
+
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+}
+
+type OpenBaoServerClientRefs struct {
+	Name string `json:"name"`
+
+	CertAuthMount string `json:"certAuthMount,omitempty"`
+
+	CertAuthRole string `json:"certAuthRole,omitempty"`
+
+	Policy string `json:"policy,omitempty"`
+
+	KVMount string `json:"kvMount,omitempty"`
+
+	ClientCert string `json:"clientCert,omitempty"`
+
+	ClientKey string `json:"clientKey,omitempty"`
 }
 
 type OpenBaoServerRuntime struct {

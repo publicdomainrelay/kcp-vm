@@ -1,7 +1,7 @@
 apiVersion: apis.kcp.io/v1alpha1
 kind: APIResourceSchema
 metadata:
-  name: v1alpha1-1.openbaoservers.socialweb.computer
+  name: v1alpha1-2.openbaoservers.socialweb.computer
 spec:
   group: socialweb.computer
   names:
@@ -57,6 +57,22 @@ spec:
                   - Never
                   - OnFailure
                   - Always
+              clients:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                    kvMount:
+                      type: string
+                    tokenTTL:
+                      type: string
+                    tokenMaxTTL:
+                      type: string
+                  required:
+                    - name
+                    - kvMount
           status:
             type: object
             properties:
@@ -118,6 +134,27 @@ spec:
                     type: string
                   kvMount:
                     type: string
+              clients:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                    certAuthMount:
+                      type: string
+                    certAuthRole:
+                      type: string
+                    policy:
+                      type: string
+                    kvMount:
+                      type: string
+                    clientCert:
+                      type: string
+                    clientKey:
+                      type: string
+                  required:
+                    - name
               conditions:
                 type: array
                 items:
