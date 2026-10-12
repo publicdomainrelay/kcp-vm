@@ -116,7 +116,7 @@ fi
 
 in_builder() {
   "$container" run --rm --network none --user "$(id -u):$(id -g)" --security-opt label=disable \
-    -e HOME=/build -e SOURCE_DATE_EPOCH="$sde" "$@"
+    -e HOME=/build -e LANG=C.UTF-8 -e LC_ALL=C.UTF-8 -e SOURCE_DATE_EPOCH="$sde" "$@"
 }
 
 ksrc="$(fetch_pinned "$(pin '.guestImages.kernel.source.url')" "$(pin '.guestImages.kernel.source.sha256')")"
@@ -190,9 +190,11 @@ dp_url="$(pin ".assets.dumbpipe.fetch[\"$platform\"].url")"
 dp_sha="$(pin ".assets.dumbpipe.fetch[\"$platform\"].sha256")"
 dp_member="$(pin ".assets.dumbpipe.fetch[\"$platform\"].members | to_entries[] | select(.value == \"dumbpipe\") | .key")"
 dp_tgz="$(fetch_pinned "$dp_url" "$dp_sha")"
-mkdir -p "$tw/assets"
-tar -xzf "$dp_tgz" -C "$tw/assets" "$dp_member"
-mv "$tw/assets/$dp_member" "$tw/assets/dumbpipe.bin"
+rm -rf "$tw/assets"
+mkdir -p "$tw/assets/unpack"
+tar -xzf "$dp_tgz" -C "$tw/assets/unpack"
+[ -f "$tw/assets/unpack/${dp_member#./}" ] || die "the dumbpipe archive $dp_url holds no $dp_member"
+mv "$tw/assets/unpack/${dp_member#./}" "$tw/assets/dumbpipe.bin"
 
 nodeimage=(go run -C "$root" ./cmd/socialweb-nodeimage)
 "${nodeimage[@]}" -guest-rootfs -build "$root/deploy/guest-image/rootfs.json" -base "$base_tar" \
