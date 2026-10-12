@@ -635,8 +635,8 @@ items:
       - "pasta's mapped-gateway flag differs across pasta versions; the flag is pinned against the pinned pasta asset's own --help in this item."
       - "pasta inside an already-unprivileged user namespace (mapped to a subuid) still has to create its net namespace and the tap; proved with the stand-in first, and the SELinux pasta_t trampoline (linux-proofs E4) re-measured under the extra namespace."
       - "Whether firecracker's jailer-free run inside a subuid namespace keeps /dev/kvm by the retained supplementary group on every target distro is measured; if a distro drops it, the fallback is an ACL entry on /dev/kvm for the reserved range, written by install, recorded as a deviation."
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M2-BACKPORT
     milestone: M2
     title: Bring the Go side to the firecracker provider's standard, proved by parity tests
