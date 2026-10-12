@@ -22,7 +22,7 @@ type TSTarget struct {
 }
 
 var TSTargets = []TSTarget{
-	{Dir: TSPackageDir, Exports: []string{"clusters", "atprotoidentities", "marketidentities"}},
+	{Dir: TSPackageDir, Exports: []string{"clusters", "atprotoidentities", "marketidentities", "applications"}},
 	{
 		Dir:         ComputeProviderTSPackageDir,
 		Exports:     []string{"computevms", "hostprocesses"},

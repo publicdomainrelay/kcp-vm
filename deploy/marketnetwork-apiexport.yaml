@@ -1,0 +1,26 @@
+apiVersion: apis.kcp.io/v1alpha2
+kind: APIExport
+metadata:
+  name: applications
+spec:
+  resources:
+    - group: socialweb.computer
+      name: marketnetworks
+      schema: v1alpha1-1.marketnetworks.socialweb.computer
+      storage:
+        crd: {}
+    - group: socialweb.computer
+      name: marketbidders
+      schema: v1alpha1-1.marketbidders.socialweb.computer
+      storage:
+        crd: {}
+    - group: socialweb.computer
+      name: marketrequesters
+      schema: v1alpha1-1.marketrequesters.socialweb.computer
+      storage:
+        crd: {}
+    - group: socialweb.computer
+      name: gateways
+      schema: v1alpha1-1.gateways.socialweb.computer
+      storage:
+        crd: {}

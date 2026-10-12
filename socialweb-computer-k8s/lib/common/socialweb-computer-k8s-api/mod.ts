@@ -52,6 +52,12 @@ export type MarketIdentityPhase = typeof MARKET_IDENTITY_PHASES[number];
 export const PENDING_ACTION_KINDS = ["scanQr", "visitUrl", "approveAssociation", "signInAgain"] as const;
 export type PendingActionKind = typeof PENDING_ACTION_KINDS[number];
 
+export const APPLICATION_KINDS = ["MarketBidder", "MarketRequester", "Gateway"] as const;
+export type ApplicationKind = typeof APPLICATION_KINDS[number];
+
+export const APPLICATION_PHASES = ["Pending", "Provisioning", "Ready", "Deleting", "Failed"] as const;
+export type ApplicationPhase = typeof APPLICATION_PHASES[number];
+
 export interface ObjectMeta {
   name?: string;
   generateName?: string;
@@ -325,6 +331,152 @@ export interface MarketIdentityPendingAction {
   expiresAt?: string;
 }
 
+export interface MarketNetwork {
+  apiVersion?: string;
+  kind?: string;
+  metadata?: ObjectMeta;
+  spec?: MarketNetworkSpec;
+  status?: MarketNetworkStatus;
+}
+
+export interface MarketNetworkSpec {
+  profile: string;
+  guestLabel?: string;
+  apps?: NetworkApp[];
+}
+
+export interface NetworkApp {
+  name: string;
+  kind: ApplicationKind;
+  profile: string;
+  policy?: string;
+  firecracker?: FirecrackerProvider;
+  options?: ApplicationOption[];
+}
+
+export interface FirecrackerProvider {
+  workRoot: string;
+  vmruntimeCommand: string[];
+}
+
+export interface ApplicationOption {
+  name: string;
+  value?: string;
+}
+
+export interface MarketNetworkStatus {
+  observedGeneration?: number;
+  phase?: ApplicationPhase;
+  message?: string;
+  network?: MarketNetworkValue;
+  components?: ApplicationComponent[];
+  listeners?: ApplicationListener[];
+  apps?: NetworkAppStatus[];
+  conditions?: Condition[];
+}
+
+export interface MarketNetworkValue {
+  plcDirectoryUrl: string;
+  ingressProxyHost: string;
+  relayUrls: string[];
+  firehoseUrls: string[];
+  qrOrigin: string;
+  guestTlsUrl?: string;
+  caBundleRef?: string;
+}
+
+export interface ApplicationComponent {
+  kind: string;
+  name: string;
+  workspace: string;
+  phase?: string;
+  ready: boolean;
+}
+
+export interface ApplicationListener {
+  component: string;
+  name: string;
+  kind: string;
+  address: string;
+}
+
+export interface NetworkAppStatus {
+  name: string;
+  kind: ApplicationKind;
+  instance?: string;
+  kcpUrl?: string;
+  kcpRoot?: string;
+  phase?: ApplicationPhase;
+  message?: string;
+  did?: string;
+  listeners?: ApplicationListener[];
+}
+
+export interface MarketBidder {
+  apiVersion?: string;
+  kind?: string;
+  metadata?: ObjectMeta;
+  spec?: MarketBidderSpec;
+  status?: ApplicationStatus;
+}
+
+export interface MarketBidderSpec {
+  profile: string;
+  network?: MarketNetworkValue;
+  identity: ApplicationIdentity;
+  policy?: string;
+  firecracker?: FirecrackerProvider;
+  options?: ApplicationOption[];
+}
+
+export interface ApplicationIdentity {
+  mode: MarketIdentityMode;
+  handle?: string;
+  pdsUrl?: string;
+}
+
+export interface ApplicationStatus {
+  observedGeneration?: number;
+  phase?: ApplicationPhase;
+  message?: string;
+  profile?: string;
+  did?: string;
+  components?: ApplicationComponent[];
+  listeners?: ApplicationListener[];
+  conditions?: Condition[];
+}
+
+export interface MarketRequester {
+  apiVersion?: string;
+  kind?: string;
+  metadata?: ObjectMeta;
+  spec?: MarketRequesterSpec;
+  status?: ApplicationStatus;
+}
+
+export interface MarketRequesterSpec {
+  profile: string;
+  network?: MarketNetworkValue;
+  identity: ApplicationIdentity;
+  bidderDids?: string[];
+  options?: ApplicationOption[];
+}
+
+export interface Gateway {
+  apiVersion?: string;
+  kind?: string;
+  metadata?: ObjectMeta;
+  spec?: GatewaySpec;
+  status?: ApplicationStatus;
+}
+
+export interface GatewaySpec {
+  profile: string;
+  network?: MarketNetworkValue;
+  bidderDids?: string[];
+  options?: ApplicationOption[];
+}
+
 export interface ApiResource {
   group: string;
   version: string;
@@ -402,9 +554,60 @@ export const MARKET_IDENTITY_RESOURCE: ApiResource = {
   export: "marketidentities",
 };
 
-export const API_RESOURCES: readonly ApiResource[] = [CLUSTER_RESOURCE, NODE_RESOURCE, NODE_CLAIM_RESOURCE, CLUSTER_LINK_RESOURCE, ATPROTO_IDENTITY_RESOURCE, MARKET_IDENTITY_RESOURCE];
+export const MARKET_NETWORK_RESOURCE: ApiResource = {
+  group: "socialweb.computer",
+  version: "v1alpha1",
+  kind: "MarketNetwork",
+  listKind: "MarketNetworkList",
+  plural: "marketnetworks",
+  singular: "marketnetwork",
+  schema: "v1alpha1-1.marketnetworks.socialweb.computer",
+  export: "applications",
+};
+
+export const MARKET_BIDDER_RESOURCE: ApiResource = {
+  group: "socialweb.computer",
+  version: "v1alpha1",
+  kind: "MarketBidder",
+  listKind: "MarketBidderList",
+  plural: "marketbidders",
+  singular: "marketbidder",
+  schema: "v1alpha1-1.marketbidders.socialweb.computer",
+  export: "applications",
+};
+
+export const MARKET_REQUESTER_RESOURCE: ApiResource = {
+  group: "socialweb.computer",
+  version: "v1alpha1",
+  kind: "MarketRequester",
+  listKind: "MarketRequesterList",
+  plural: "marketrequesters",
+  singular: "marketrequester",
+  schema: "v1alpha1-1.marketrequesters.socialweb.computer",
+  export: "applications",
+};
+
+export const GATEWAY_RESOURCE: ApiResource = {
+  group: "socialweb.computer",
+  version: "v1alpha1",
+  kind: "Gateway",
+  listKind: "GatewayList",
+  plural: "gateways",
+  singular: "gateway",
+  schema: "v1alpha1-1.gateways.socialweb.computer",
+  export: "applications",
+};
+
+export const API_RESOURCES: readonly ApiResource[] = [CLUSTER_RESOURCE, NODE_RESOURCE, NODE_CLAIM_RESOURCE, CLUSTER_LINK_RESOURCE, ATPROTO_IDENTITY_RESOURCE, MARKET_IDENTITY_RESOURCE, MARKET_NETWORK_RESOURCE, MARKET_BIDDER_RESOURCE, MARKET_REQUESTER_RESOURCE, GATEWAY_RESOURCE];
 
 export type ApiTypeName =
+  | "ApplicationComponent"
+  | "ApplicationIdentity"
+  | "ApplicationKind"
+  | "ApplicationListener"
+  | "ApplicationOption"
+  | "ApplicationPhase"
+  | "ApplicationStatus"
   | "AssociationMode"
   | "AtprotoIdentity"
   | "AtprotoIdentitySpec"
@@ -428,14 +631,27 @@ export type ApiTypeName =
   | "ContractTermination"
   | "ContractTimestamps"
   | "ContractWinner"
+  | "FirecrackerProvider"
+  | "Gateway"
+  | "GatewaySpec"
   | "IdentityScope"
   | "IdentityState"
+  | "MarketBidder"
+  | "MarketBidderSpec"
   | "MarketIdentity"
   | "MarketIdentityMode"
   | "MarketIdentityPendingAction"
   | "MarketIdentityPhase"
   | "MarketIdentitySpec"
   | "MarketIdentityStatus"
+  | "MarketNetwork"
+  | "MarketNetworkSpec"
+  | "MarketNetworkStatus"
+  | "MarketNetworkValue"
+  | "MarketRequester"
+  | "MarketRequesterSpec"
+  | "NetworkApp"
+  | "NetworkAppStatus"
   | "Node"
   | "NodeClaim"
   | "NodeClaimContract"
@@ -565,6 +781,143 @@ export function validate(typeName: ApiTypeName, value: unknown): ApiIssue[] {
 }
 
 const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
+  "ApplicationComponent": {
+    "properties": {
+      "kind": {
+        "type": "string"
+      },
+      "name": {
+        "type": "string"
+      },
+      "phase": {
+        "type": "string"
+      },
+      "ready": {
+        "type": "boolean"
+      },
+      "workspace": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "kind",
+      "name",
+      "workspace",
+      "ready"
+    ],
+    "type": "object"
+  },
+  "ApplicationIdentity": {
+    "properties": {
+      "handle": {
+        "type": "string"
+      },
+      "mode": {
+        "ref": "MarketIdentityMode"
+      },
+      "pdsUrl": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "mode"
+    ],
+    "type": "object"
+  },
+  "ApplicationKind": {
+    "enum": [
+      "MarketBidder",
+      "MarketRequester",
+      "Gateway"
+    ],
+    "type": "string"
+  },
+  "ApplicationListener": {
+    "properties": {
+      "address": {
+        "type": "string"
+      },
+      "component": {
+        "type": "string"
+      },
+      "kind": {
+        "type": "string"
+      },
+      "name": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "component",
+      "name",
+      "kind",
+      "address"
+    ],
+    "type": "object"
+  },
+  "ApplicationOption": {
+    "properties": {
+      "name": {
+        "type": "string"
+      },
+      "value": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "name"
+    ],
+    "type": "object"
+  },
+  "ApplicationPhase": {
+    "enum": [
+      "Pending",
+      "Provisioning",
+      "Ready",
+      "Deleting",
+      "Failed"
+    ],
+    "type": "string"
+  },
+  "ApplicationStatus": {
+    "properties": {
+      "components": {
+        "items": {
+          "ref": "ApplicationComponent"
+        },
+        "type": "array"
+      },
+      "conditions": {
+        "items": {
+          "ref": "Condition"
+        },
+        "type": "array"
+      },
+      "did": {
+        "type": "string"
+      },
+      "listeners": {
+        "items": {
+          "ref": "ApplicationListener"
+        },
+        "type": "array"
+      },
+      "message": {
+        "type": "string"
+      },
+      "observedGeneration": {
+        "type": "integer"
+      },
+      "phase": {
+        "ref": "ApplicationPhase"
+      },
+      "profile": {
+        "type": "string"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
   "AssociationMode": {
     "enum": [
       "RequireApproval",
@@ -949,6 +1302,71 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
     ],
     "type": "object"
   },
+  "FirecrackerProvider": {
+    "properties": {
+      "vmruntimeCommand": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "workRoot": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "workRoot",
+      "vmruntimeCommand"
+    ],
+    "type": "object"
+  },
+  "Gateway": {
+    "properties": {
+      "apiVersion": {
+        "type": "string"
+      },
+      "kind": {
+        "type": "string"
+      },
+      "metadata": {
+        "ref": "ObjectMeta"
+      },
+      "spec": {
+        "ref": "GatewaySpec"
+      },
+      "status": {
+        "ref": "ApplicationStatus"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "GatewaySpec": {
+    "properties": {
+      "bidderDids": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "network": {
+        "ref": "MarketNetworkValue"
+      },
+      "options": {
+        "items": {
+          "ref": "ApplicationOption"
+        },
+        "type": "array"
+      },
+      "profile": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "profile"
+    ],
+    "type": "object"
+  },
   "IdentityScope": {
     "enum": [
       "Account",
@@ -964,6 +1382,57 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       "ColdDeferred"
     ],
     "type": "string"
+  },
+  "MarketBidder": {
+    "properties": {
+      "apiVersion": {
+        "type": "string"
+      },
+      "kind": {
+        "type": "string"
+      },
+      "metadata": {
+        "ref": "ObjectMeta"
+      },
+      "spec": {
+        "ref": "MarketBidderSpec"
+      },
+      "status": {
+        "ref": "ApplicationStatus"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "MarketBidderSpec": {
+    "properties": {
+      "firecracker": {
+        "ref": "FirecrackerProvider"
+      },
+      "identity": {
+        "ref": "ApplicationIdentity"
+      },
+      "network": {
+        "ref": "MarketNetworkValue"
+      },
+      "options": {
+        "items": {
+          "ref": "ApplicationOption"
+        },
+        "type": "array"
+      },
+      "policy": {
+        "type": "string"
+      },
+      "profile": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "profile",
+      "identity"
+    ],
+    "type": "object"
   },
   "MarketIdentity": {
     "properties": {
@@ -1115,6 +1584,249 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       }
     },
     "required": [],
+    "type": "object"
+  },
+  "MarketNetwork": {
+    "properties": {
+      "apiVersion": {
+        "type": "string"
+      },
+      "kind": {
+        "type": "string"
+      },
+      "metadata": {
+        "ref": "ObjectMeta"
+      },
+      "spec": {
+        "ref": "MarketNetworkSpec"
+      },
+      "status": {
+        "ref": "MarketNetworkStatus"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "MarketNetworkSpec": {
+    "properties": {
+      "apps": {
+        "items": {
+          "ref": "NetworkApp"
+        },
+        "type": "array"
+      },
+      "guestLabel": {
+        "type": "string"
+      },
+      "profile": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "profile"
+    ],
+    "type": "object"
+  },
+  "MarketNetworkStatus": {
+    "properties": {
+      "apps": {
+        "items": {
+          "ref": "NetworkAppStatus"
+        },
+        "type": "array"
+      },
+      "components": {
+        "items": {
+          "ref": "ApplicationComponent"
+        },
+        "type": "array"
+      },
+      "conditions": {
+        "items": {
+          "ref": "Condition"
+        },
+        "type": "array"
+      },
+      "listeners": {
+        "items": {
+          "ref": "ApplicationListener"
+        },
+        "type": "array"
+      },
+      "message": {
+        "type": "string"
+      },
+      "network": {
+        "ref": "MarketNetworkValue"
+      },
+      "observedGeneration": {
+        "type": "integer"
+      },
+      "phase": {
+        "ref": "ApplicationPhase"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "MarketNetworkValue": {
+    "properties": {
+      "caBundleRef": {
+        "type": "string"
+      },
+      "firehoseUrls": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "guestTlsUrl": {
+        "type": "string"
+      },
+      "ingressProxyHost": {
+        "type": "string"
+      },
+      "plcDirectoryUrl": {
+        "type": "string"
+      },
+      "qrOrigin": {
+        "type": "string"
+      },
+      "relayUrls": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      }
+    },
+    "required": [
+      "plcDirectoryUrl",
+      "ingressProxyHost",
+      "relayUrls",
+      "firehoseUrls",
+      "qrOrigin"
+    ],
+    "type": "object"
+  },
+  "MarketRequester": {
+    "properties": {
+      "apiVersion": {
+        "type": "string"
+      },
+      "kind": {
+        "type": "string"
+      },
+      "metadata": {
+        "ref": "ObjectMeta"
+      },
+      "spec": {
+        "ref": "MarketRequesterSpec"
+      },
+      "status": {
+        "ref": "ApplicationStatus"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "MarketRequesterSpec": {
+    "properties": {
+      "bidderDids": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "identity": {
+        "ref": "ApplicationIdentity"
+      },
+      "network": {
+        "ref": "MarketNetworkValue"
+      },
+      "options": {
+        "items": {
+          "ref": "ApplicationOption"
+        },
+        "type": "array"
+      },
+      "profile": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "profile",
+      "identity"
+    ],
+    "type": "object"
+  },
+  "NetworkApp": {
+    "properties": {
+      "firecracker": {
+        "ref": "FirecrackerProvider"
+      },
+      "kind": {
+        "ref": "ApplicationKind"
+      },
+      "name": {
+        "type": "string"
+      },
+      "options": {
+        "items": {
+          "ref": "ApplicationOption"
+        },
+        "type": "array"
+      },
+      "policy": {
+        "type": "string"
+      },
+      "profile": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "name",
+      "kind",
+      "profile"
+    ],
+    "type": "object"
+  },
+  "NetworkAppStatus": {
+    "properties": {
+      "did": {
+        "type": "string"
+      },
+      "instance": {
+        "type": "string"
+      },
+      "kcpRoot": {
+        "type": "string"
+      },
+      "kcpUrl": {
+        "type": "string"
+      },
+      "kind": {
+        "ref": "ApplicationKind"
+      },
+      "listeners": {
+        "items": {
+          "ref": "ApplicationListener"
+        },
+        "type": "array"
+      },
+      "message": {
+        "type": "string"
+      },
+      "name": {
+        "type": "string"
+      },
+      "phase": {
+        "ref": "ApplicationPhase"
+      }
+    },
+    "required": [
+      "name",
+      "kind"
+    ],
     "type": "object"
   },
   "Node": {
@@ -2247,5 +2959,365 @@ export function assertPendingActionKind(value: unknown): asserts value is Pendin
 
 export function parsePendingActionKind(value: unknown): PendingActionKind {
   assertPendingActionKind(value);
+  return value;
+}
+
+export function validateMarketNetwork(value: unknown): ApiIssue[] {
+  return validate("MarketNetwork", value);
+}
+
+export function isMarketNetwork(value: unknown): value is MarketNetwork {
+  return validate("MarketNetwork", value).length === 0;
+}
+
+export function assertMarketNetwork(value: unknown): asserts value is MarketNetwork {
+  const issues = validate("MarketNetwork", value);
+  if (issues.length > 0) throw new ApiValidationError("MarketNetwork", issues);
+}
+
+export function parseMarketNetwork(value: unknown): MarketNetwork {
+  assertMarketNetwork(value);
+  return value;
+}
+
+export function validateMarketNetworkSpec(value: unknown): ApiIssue[] {
+  return validate("MarketNetworkSpec", value);
+}
+
+export function isMarketNetworkSpec(value: unknown): value is MarketNetworkSpec {
+  return validate("MarketNetworkSpec", value).length === 0;
+}
+
+export function assertMarketNetworkSpec(value: unknown): asserts value is MarketNetworkSpec {
+  const issues = validate("MarketNetworkSpec", value);
+  if (issues.length > 0) throw new ApiValidationError("MarketNetworkSpec", issues);
+}
+
+export function parseMarketNetworkSpec(value: unknown): MarketNetworkSpec {
+  assertMarketNetworkSpec(value);
+  return value;
+}
+
+export function validateNetworkApp(value: unknown): ApiIssue[] {
+  return validate("NetworkApp", value);
+}
+
+export function isNetworkApp(value: unknown): value is NetworkApp {
+  return validate("NetworkApp", value).length === 0;
+}
+
+export function assertNetworkApp(value: unknown): asserts value is NetworkApp {
+  const issues = validate("NetworkApp", value);
+  if (issues.length > 0) throw new ApiValidationError("NetworkApp", issues);
+}
+
+export function parseNetworkApp(value: unknown): NetworkApp {
+  assertNetworkApp(value);
+  return value;
+}
+
+export function validateApplicationKind(value: unknown): ApiIssue[] {
+  return validate("ApplicationKind", value);
+}
+
+export function isApplicationKind(value: unknown): value is ApplicationKind {
+  return validate("ApplicationKind", value).length === 0;
+}
+
+export function assertApplicationKind(value: unknown): asserts value is ApplicationKind {
+  const issues = validate("ApplicationKind", value);
+  if (issues.length > 0) throw new ApiValidationError("ApplicationKind", issues);
+}
+
+export function parseApplicationKind(value: unknown): ApplicationKind {
+  assertApplicationKind(value);
+  return value;
+}
+
+export function validateFirecrackerProvider(value: unknown): ApiIssue[] {
+  return validate("FirecrackerProvider", value);
+}
+
+export function isFirecrackerProvider(value: unknown): value is FirecrackerProvider {
+  return validate("FirecrackerProvider", value).length === 0;
+}
+
+export function assertFirecrackerProvider(value: unknown): asserts value is FirecrackerProvider {
+  const issues = validate("FirecrackerProvider", value);
+  if (issues.length > 0) throw new ApiValidationError("FirecrackerProvider", issues);
+}
+
+export function parseFirecrackerProvider(value: unknown): FirecrackerProvider {
+  assertFirecrackerProvider(value);
+  return value;
+}
+
+export function validateApplicationOption(value: unknown): ApiIssue[] {
+  return validate("ApplicationOption", value);
+}
+
+export function isApplicationOption(value: unknown): value is ApplicationOption {
+  return validate("ApplicationOption", value).length === 0;
+}
+
+export function assertApplicationOption(value: unknown): asserts value is ApplicationOption {
+  const issues = validate("ApplicationOption", value);
+  if (issues.length > 0) throw new ApiValidationError("ApplicationOption", issues);
+}
+
+export function parseApplicationOption(value: unknown): ApplicationOption {
+  assertApplicationOption(value);
+  return value;
+}
+
+export function validateMarketNetworkStatus(value: unknown): ApiIssue[] {
+  return validate("MarketNetworkStatus", value);
+}
+
+export function isMarketNetworkStatus(value: unknown): value is MarketNetworkStatus {
+  return validate("MarketNetworkStatus", value).length === 0;
+}
+
+export function assertMarketNetworkStatus(value: unknown): asserts value is MarketNetworkStatus {
+  const issues = validate("MarketNetworkStatus", value);
+  if (issues.length > 0) throw new ApiValidationError("MarketNetworkStatus", issues);
+}
+
+export function parseMarketNetworkStatus(value: unknown): MarketNetworkStatus {
+  assertMarketNetworkStatus(value);
+  return value;
+}
+
+export function validateApplicationPhase(value: unknown): ApiIssue[] {
+  return validate("ApplicationPhase", value);
+}
+
+export function isApplicationPhase(value: unknown): value is ApplicationPhase {
+  return validate("ApplicationPhase", value).length === 0;
+}
+
+export function assertApplicationPhase(value: unknown): asserts value is ApplicationPhase {
+  const issues = validate("ApplicationPhase", value);
+  if (issues.length > 0) throw new ApiValidationError("ApplicationPhase", issues);
+}
+
+export function parseApplicationPhase(value: unknown): ApplicationPhase {
+  assertApplicationPhase(value);
+  return value;
+}
+
+export function validateMarketNetworkValue(value: unknown): ApiIssue[] {
+  return validate("MarketNetworkValue", value);
+}
+
+export function isMarketNetworkValue(value: unknown): value is MarketNetworkValue {
+  return validate("MarketNetworkValue", value).length === 0;
+}
+
+export function assertMarketNetworkValue(value: unknown): asserts value is MarketNetworkValue {
+  const issues = validate("MarketNetworkValue", value);
+  if (issues.length > 0) throw new ApiValidationError("MarketNetworkValue", issues);
+}
+
+export function parseMarketNetworkValue(value: unknown): MarketNetworkValue {
+  assertMarketNetworkValue(value);
+  return value;
+}
+
+export function validateApplicationComponent(value: unknown): ApiIssue[] {
+  return validate("ApplicationComponent", value);
+}
+
+export function isApplicationComponent(value: unknown): value is ApplicationComponent {
+  return validate("ApplicationComponent", value).length === 0;
+}
+
+export function assertApplicationComponent(value: unknown): asserts value is ApplicationComponent {
+  const issues = validate("ApplicationComponent", value);
+  if (issues.length > 0) throw new ApiValidationError("ApplicationComponent", issues);
+}
+
+export function parseApplicationComponent(value: unknown): ApplicationComponent {
+  assertApplicationComponent(value);
+  return value;
+}
+
+export function validateApplicationListener(value: unknown): ApiIssue[] {
+  return validate("ApplicationListener", value);
+}
+
+export function isApplicationListener(value: unknown): value is ApplicationListener {
+  return validate("ApplicationListener", value).length === 0;
+}
+
+export function assertApplicationListener(value: unknown): asserts value is ApplicationListener {
+  const issues = validate("ApplicationListener", value);
+  if (issues.length > 0) throw new ApiValidationError("ApplicationListener", issues);
+}
+
+export function parseApplicationListener(value: unknown): ApplicationListener {
+  assertApplicationListener(value);
+  return value;
+}
+
+export function validateNetworkAppStatus(value: unknown): ApiIssue[] {
+  return validate("NetworkAppStatus", value);
+}
+
+export function isNetworkAppStatus(value: unknown): value is NetworkAppStatus {
+  return validate("NetworkAppStatus", value).length === 0;
+}
+
+export function assertNetworkAppStatus(value: unknown): asserts value is NetworkAppStatus {
+  const issues = validate("NetworkAppStatus", value);
+  if (issues.length > 0) throw new ApiValidationError("NetworkAppStatus", issues);
+}
+
+export function parseNetworkAppStatus(value: unknown): NetworkAppStatus {
+  assertNetworkAppStatus(value);
+  return value;
+}
+
+export function validateMarketBidder(value: unknown): ApiIssue[] {
+  return validate("MarketBidder", value);
+}
+
+export function isMarketBidder(value: unknown): value is MarketBidder {
+  return validate("MarketBidder", value).length === 0;
+}
+
+export function assertMarketBidder(value: unknown): asserts value is MarketBidder {
+  const issues = validate("MarketBidder", value);
+  if (issues.length > 0) throw new ApiValidationError("MarketBidder", issues);
+}
+
+export function parseMarketBidder(value: unknown): MarketBidder {
+  assertMarketBidder(value);
+  return value;
+}
+
+export function validateMarketBidderSpec(value: unknown): ApiIssue[] {
+  return validate("MarketBidderSpec", value);
+}
+
+export function isMarketBidderSpec(value: unknown): value is MarketBidderSpec {
+  return validate("MarketBidderSpec", value).length === 0;
+}
+
+export function assertMarketBidderSpec(value: unknown): asserts value is MarketBidderSpec {
+  const issues = validate("MarketBidderSpec", value);
+  if (issues.length > 0) throw new ApiValidationError("MarketBidderSpec", issues);
+}
+
+export function parseMarketBidderSpec(value: unknown): MarketBidderSpec {
+  assertMarketBidderSpec(value);
+  return value;
+}
+
+export function validateApplicationIdentity(value: unknown): ApiIssue[] {
+  return validate("ApplicationIdentity", value);
+}
+
+export function isApplicationIdentity(value: unknown): value is ApplicationIdentity {
+  return validate("ApplicationIdentity", value).length === 0;
+}
+
+export function assertApplicationIdentity(value: unknown): asserts value is ApplicationIdentity {
+  const issues = validate("ApplicationIdentity", value);
+  if (issues.length > 0) throw new ApiValidationError("ApplicationIdentity", issues);
+}
+
+export function parseApplicationIdentity(value: unknown): ApplicationIdentity {
+  assertApplicationIdentity(value);
+  return value;
+}
+
+export function validateApplicationStatus(value: unknown): ApiIssue[] {
+  return validate("ApplicationStatus", value);
+}
+
+export function isApplicationStatus(value: unknown): value is ApplicationStatus {
+  return validate("ApplicationStatus", value).length === 0;
+}
+
+export function assertApplicationStatus(value: unknown): asserts value is ApplicationStatus {
+  const issues = validate("ApplicationStatus", value);
+  if (issues.length > 0) throw new ApiValidationError("ApplicationStatus", issues);
+}
+
+export function parseApplicationStatus(value: unknown): ApplicationStatus {
+  assertApplicationStatus(value);
+  return value;
+}
+
+export function validateMarketRequester(value: unknown): ApiIssue[] {
+  return validate("MarketRequester", value);
+}
+
+export function isMarketRequester(value: unknown): value is MarketRequester {
+  return validate("MarketRequester", value).length === 0;
+}
+
+export function assertMarketRequester(value: unknown): asserts value is MarketRequester {
+  const issues = validate("MarketRequester", value);
+  if (issues.length > 0) throw new ApiValidationError("MarketRequester", issues);
+}
+
+export function parseMarketRequester(value: unknown): MarketRequester {
+  assertMarketRequester(value);
+  return value;
+}
+
+export function validateMarketRequesterSpec(value: unknown): ApiIssue[] {
+  return validate("MarketRequesterSpec", value);
+}
+
+export function isMarketRequesterSpec(value: unknown): value is MarketRequesterSpec {
+  return validate("MarketRequesterSpec", value).length === 0;
+}
+
+export function assertMarketRequesterSpec(value: unknown): asserts value is MarketRequesterSpec {
+  const issues = validate("MarketRequesterSpec", value);
+  if (issues.length > 0) throw new ApiValidationError("MarketRequesterSpec", issues);
+}
+
+export function parseMarketRequesterSpec(value: unknown): MarketRequesterSpec {
+  assertMarketRequesterSpec(value);
+  return value;
+}
+
+export function validateGateway(value: unknown): ApiIssue[] {
+  return validate("Gateway", value);
+}
+
+export function isGateway(value: unknown): value is Gateway {
+  return validate("Gateway", value).length === 0;
+}
+
+export function assertGateway(value: unknown): asserts value is Gateway {
+  const issues = validate("Gateway", value);
+  if (issues.length > 0) throw new ApiValidationError("Gateway", issues);
+}
+
+export function parseGateway(value: unknown): Gateway {
+  assertGateway(value);
+  return value;
+}
+
+export function validateGatewaySpec(value: unknown): ApiIssue[] {
+  return validate("GatewaySpec", value);
+}
+
+export function isGatewaySpec(value: unknown): value is GatewaySpec {
+  return validate("GatewaySpec", value).length === 0;
+}
+
+export function assertGatewaySpec(value: unknown): asserts value is GatewaySpec {
+  const issues = validate("GatewaySpec", value);
+  if (issues.length > 0) throw new ApiValidationError("GatewaySpec", issues);
+}
+
+export function parseGatewaySpec(value: unknown): GatewaySpec {
+  assertGatewaySpec(value);
   return value;
 }
