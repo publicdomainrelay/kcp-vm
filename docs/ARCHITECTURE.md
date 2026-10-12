@@ -6760,6 +6760,58 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   running, `resume rr2` 10:29:46Z (kcp again in 13 s, ssh to the same guest), vm.delete 200 10:30:15Z;
   `dev down` 10:30:35Z to 10:30:54Z with no process left.
 
+- **The bidder's OpenBao holds exactly what its live ComputeVMs ask for (plan 0007 M4-BIDDER-BAO-SYNC,
+  2026-10-12).** Each guest's material lives under `guests/<computevm>/` in the bidder client's kv mount:
+  `user-data` (the whole cloud-init user_data, which carries the provisioning token) and `provisioning`
+  (the OIDC nonce, the guest-reported ed25519 host key, `consumedAt` once `/v1/oidc/prove` used it). The
+  ComputeVM names its user data as `spec.userData.vault {server, mount, path}`; no kcp Secret holds it,
+  and the ComputeVM controller reads it as vault client `computevm` (policy on
+  `bidder/data/guests/+/user-data`, read only). Every controller pass writes the names of the live
+  ComputeVMs of its handle into the OpenBaoServer's `spec.declared.kv` scope `bidder/guests` (grace 2m);
+  the openbaoctl sync removes an undeclared entry with everything under it once it is older than the
+  grace, so a guest's material written before its ComputeVM is never lost to a race. The issuer's nonce
+  store and reported host keys (`NonceStore`, now asynchronous) are that vault entry, with an in-memory
+  nonce index rebuilt by listing on a miss. The bidder's kcp token is ServiceAccount `bidder`
+  (OpenBaoServers get/list, ComputeVMs and their status), minted by appctl for 1h and renewed every 20m,
+  used for both the vault resolver and compute-provider-kcp; the core no longer writes the shard-admin
+  token. `MarketBidder.spec.signingKeyRotation` raised adds a new RSA signing key in the vault and keeps
+  the old one published (`previous[].publishUntil` = rotation + 25h); the issuer reloads its key set every
+  30 s (or at once for an unknown kid), signs with the newest, verifies by kid and publishes all keys in
+  its JWKS, so the issuer URL and every running guest's tokens survive. Relay-keypair rotation (which
+  moves the issuer URL) has no command. In a market network the issuer's RBAC lookup of the bidder's own
+  records reaches the PDS its DID document names through the network value's host table. Reading on hat-8, a market network with a spec.kcp bidder (guests
+  as VM units of test-0001): before the rent the vault listed no guest; onNetwork 13:28:53.6Z, the guest's
+  `provisioning` and `user-data` entries listed at 13:28:54.4Z; the guest's token exchange at
+  /v1/oidc/issue answered 200 at 13:29:05Z and 13:29:20Z (key slsC6N); rotation 1 written at 13:29:23Z,
+  the issuer loaded key dxnyMU at 13:29:35Z with slsC6N still published, and the guest's pre-rotation
+  token (kid slsC6N) was exchanged with 200 for tokens signed by dxnyMU at 13:29:35Z, 13:29:50Z and
+  13:30:05Z; vm.delete 200 at 13:30:09.8Z, ComputeVM gone 13:30:13.9Z, the guest's vault entries gone
+  13:30:59.4Z (the grace counted from the guest's last write at boot); teardown clean.
+
+- **A restarted kcp bidder rebuilds its contracts from its ComputeVMs (plan 0007 M4-CONTRACT-RESTORE,
+  2026-10-12).** The contract lives on the ComputeVM: `spec.contract` (receipt, accept, acceptedAt,
+  submitEvent) under field manager `compute-provider-kcp-contract`, written by
+  `market-bidder-contract-store-kcp` once the guest's ComputeVM exists (compute-provider-kcp reports the
+  ComputeVM it applied for an accept) and before the receipt is acknowledged, and again at `provisioned`.
+  `load()` returns one contract per owned ComputeVM that carries one (acceptAuthor = `spec.requester.did`,
+  providerId = its name) and deletes an owned ComputeVM that no contract names (the bidder stopped between
+  creating it and recording its receipt). Decision (the conflict with M4-TERMINATION-EVENT): the tombstone
+  stays in the bidder's contract store files (`<state>/contracts/tombstones`, TTL 30 days) and the
+  ComputeVM goes; compute-provider-kcp no longer deletes a Lost or Failed ComputeVM that carries a
+  contract, the store deletes it on the `terminated` event, which market-bidder sends only after the
+  tombstone is saved, so a crash between a guest's end and its tombstone leaves the ComputeVM for the next
+  start to tombstone. Keeping a terminated ComputeVM until acknowledged was rejected: requesters skip
+  vm.delete after vm.terminated, so it would hold the guest's work dir until a TTL. Reading on hat-8 (same
+  market network): a guest rented, onNetwork 13:31:17.6Z; kill -9 of the bidder's core and its bidder
+  process 13:31:17.8Z; the restarted bidder loaded 1 contract from its ComputeVMs and adopted the running
+  guest at 13:31:18.9Z; vm.delete 200 at 13:31:26.7Z, ComputeVM gone 13:31:30.8Z. A second guest powered
+  itself off, vm.terminated (vmm_exited) at 13:32:41.9Z, its ComputeVM deleted after the tombstone was
+  written (gone 13:32:44.9Z); kill -9 of core and bidder 13:32:45.2Z; the restarted bidder loaded 0
+  contracts and 3 tombstones at 13:32:46.2Z; the late vm.delete at 13:32:54.3Z answered 200 (already
+  terminated). Seen and not fixed here: a SIGKILLed core leaves its bidder DenoPod process running while
+  the new core starts another, and the old one's close drops the new one's dispatcher registration (a
+  vm.delete then gets 404); the reading kills both.
+
 ## 16. Vocabulary
 
 | | |
