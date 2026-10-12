@@ -27,12 +27,14 @@ import {
   advanceContract,
   type ComputeRequestHandlers,
   type ContractState,
+  type ContractHostKeys,
   type ContractTermination,
   createContractState,
   type FlowDecision,
   patchContract,
   type RecordRef,
 } from "@publicdomainrelay/compute-request-abc";
+import { hostKeyAliasOf } from "@publicdomainrelay/compute-request-abc";
 import type { GrantVars, GuestCapability } from "@publicdomainrelay/guest-capability-abc";
 import type { SecretEntry } from "@publicdomainrelay/secrets-common";
 import { buildUserData, type UserDataModule } from "@publicdomainrelay/cloud-init-common";
@@ -62,6 +64,17 @@ const TERMINATION: ContractTermination = {
   observedAt: "2026-10-12T01:44:42.367Z",
   event: { uri: `at://${BIDDER}/market.event/9`, cid: "terminatedevent" },
   payload: { uri: `at://${BIDDER}/compute.events.vm.terminated/9`, cid: "terminatedpayload" },
+};
+
+const HOST_KEYS: ContractHostKeys = {
+  keys: [{
+    type: "ssh-ed25519",
+    publicKey: "AAAAC3NzaC1lZDI1NTE5AAAAIGWqx0pQ7m3nB9P2cCjv1xTt0lI7yU6m0O4m8r1yqk8H",
+    fingerprint: "SHA256:3kQ0d2xv1Y8Yb1oQe1c8v0m4m4b3tC2Yp5x9yA7mJ0c",
+  }],
+  observedAt: "2026-10-12T01:44:00.000Z",
+  event: { uri: `at://${BIDDER}/market.event/8`, cid: "hostkeysevent" },
+  payload: { uri: `at://${BIDDER}/compute.events.vm.hostKeys/8`, cid: "hostkeyspayload" },
 };
 
 function claim(name: string, overrides: Partial<NodeClaim> = {}): NodeClaim {
@@ -336,6 +349,8 @@ function scriptedRequest(script: Script, seen: Record<string, unknown>[], decisi
     }
     s = advanceContract(s, "network", { vmAddress: GUEST }, AT);
     if (stop(await handlers.onNetwork?.({ address: GUEST, kind: "iroh-ticket", source: "test" }, structuredClone(s)))) return returned(s);
+    s = patchContract(s, { hostKeys: HOST_KEYS });
+    await handlers.onHostKeys?.(HOST_KEYS, structuredClone(s));
     if (script === "hang_after_network") await new Promise(() => {});
     if (script === "complete") {
       const decision = await handlers.onSecretsFetched?.({ capability: "secrets", subject: SUBJECT, count: 3 }, structuredClone(s));
@@ -381,7 +396,11 @@ interface HarnessOptions {
   links?: FakeLinks;
   vmReadyTimeoutSec?: number;
   meshd?: MeshdPin;
-  debugSsh?: { authorizedKey: string; onNetwork(claim: string, address: string): void };
+  debugSsh?: {
+    authorizedKey: string;
+    onNetwork(claim: string, address: string): void;
+    onHostKeys?(claim: string, hostKeys: { alias: string; keys: Array<{ type: string; publicKey: string }> }): void;
+  };
   scopeCache?: unknown;
   scopeRefresher?: unknown;
 }
@@ -595,6 +614,25 @@ Deno.test("only a door given a debug key puts it in the guest's authorized_keys,
   assertEquals(c.sshPublicKey, undefined);
   assertEquals(seen.length > 0, true, "the debug hook never heard the guest's network address");
   assertEquals(seen[0][0], "ci-node1");
+});
+
+Deno.test("the guest's reported host keys are kept on the claim and handed to the debug ssh as its known host", async () => {
+  const known: Array<[string, string, string[]]> = [];
+  const h = harness({
+    debugSsh: {
+      authorizedKey: "ssh-ed25519 AAAAdebug debug",
+      onNetwork: () => {},
+      onHostKeys: (claim, hostKeys) => known.push([claim, hostKeys.alias, hostKeys.keys.map((k) => k.publicKey)]),
+    },
+  });
+  h.store.put(claim("ci-node1"));
+  await h.fulfiller.pass();
+  await settle();
+  assertEquals(h.store.contract("ci-node1")?.hostKeys, HOST_KEYS);
+  assertEquals(known, [["ci-node1", hostKeyAliasOf(RECEIPT), [HOST_KEYS.keys[0].publicKey]]]);
+  const restored = contractStateOfClaim(h.store.claims.get("ci-node1")!);
+  assertEquals(restored?.hostKeys, HOST_KEYS);
+  await h.fulfiller.stop();
 });
 
 Deno.test("the user_data the door asks for renders without any secret value", async () => {

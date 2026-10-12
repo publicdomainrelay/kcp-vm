@@ -26,6 +26,7 @@ import {
   createMarketNodeFulfiller,
   type MarketNodeFulfiller,
   meshdPinOf,
+  type DebugNodeHostKeys,
 } from "@publicdomainrelay/socialweb-computer-k8s-node-market";
 import { createOpenBaoClaimKeyStore } from "@publicdomainrelay/socialweb-computer-k8s-claim-keys-openbao";
 import { createMemoryClaimKeyStore } from "@publicdomainrelay/socialweb-computer-k8s-abc";
@@ -168,16 +169,34 @@ async function debugNodeSsh(dir: string) {
   }
   const authorizedKey = (await Deno.readTextFile(`${privateKeyPath}.pub`)).trim();
   logger.warn("debug_node_ssh_enabled", { privateKeyPath, authorizedKey });
+  const tickets = new Map<string, string>();
+  const knownHosts = new Map<string, { alias: string; file: string }>();
+  const announce = (claim: string) => {
+    const ticket = tickets.get(claim);
+    const known = knownHosts.get(claim);
+    if (!ticket || !known) return;
+    logger.warn("debug_node_ssh", {
+      claim,
+      privateKeyPath,
+      knownHostsFile: known.file,
+      ssh: `ssh -i ${privateKeyPath} -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=${known.file} -o GlobalKnownHostsFile=/dev/null -o HostKeyAlias=${known.alias} -o ProxyCommand='dumbpipe connect ${ticket}' root@${known.alias}`,
+    });
+  };
   return {
     authorizedKey,
     onNetwork(claim: string, address: string) {
       const ticket = address.replace(/^iroh:\/\//, "");
       if (ticket === address) return;
-      logger.warn("debug_node_ssh", {
-        claim,
-        privateKeyPath,
-        ssh: `ssh -i ${privateKeyPath} -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ProxyCommand='dumbpipe connect ${ticket}' root@${claim}`,
-      });
+      tickets.set(claim, ticket);
+      announce(claim);
+    },
+    onHostKeys(claim: string, hostKeys: DebugNodeHostKeys) {
+      const file = `${dir}/known_hosts.${hostKeys.alias}`;
+      const lines = hostKeys.keys.map((k) => `${hostKeys.alias} ${k.type} ${k.publicKey}\n`).join("");
+      Deno.writeTextFile(file, lines, { mode: 0o600 }).then(() => {
+        knownHosts.set(claim, { alias: hostKeys.alias, file });
+        announce(claim);
+      }).catch((err) => logger.warn("debug_node_ssh_known_hosts_failed", { claim, file, error: String(err) }));
     },
   };
 }
