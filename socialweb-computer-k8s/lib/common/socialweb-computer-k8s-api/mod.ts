@@ -58,6 +58,9 @@ export type ApplicationKind = typeof APPLICATION_KINDS[number];
 export const APPLICATION_PHASES = ["Pending", "Provisioning", "Ready", "Deleting", "Failed"] as const;
 export type ApplicationPhase = typeof APPLICATION_PHASES[number];
 
+export const COMPUTE_CONTRACT_PHASES = ["Pending", "Requesting", "Held", "Releasing", "Released", "Failed"] as const;
+export type ComputeContractPhase = typeof COMPUTE_CONTRACT_PHASES[number];
+
 export interface ObjectMeta {
   name?: string;
   generateName?: string;
@@ -353,6 +356,7 @@ export interface NetworkApp {
   firecracker?: FirecrackerProvider;
   kcp?: KcpProvider;
   options?: ApplicationOption[];
+  stopped?: boolean;
 }
 
 export interface FirecrackerProvider {
@@ -391,6 +395,12 @@ export interface MarketNetworkValue {
   qrOrigin: string;
   guestTlsUrl?: string;
   caBundleRef?: string;
+  hosts?: NetworkHost[];
+}
+
+export interface NetworkHost {
+  name: string;
+  address: string;
 }
 
 export interface ApplicationComponent {
@@ -442,6 +452,7 @@ export interface ApplicationIdentity {
   mode: MarketIdentityMode;
   handle?: string;
   pdsUrl?: string;
+  association?: AssociationMode;
 }
 
 export interface ApplicationStatus {
@@ -469,6 +480,36 @@ export interface MarketRequesterSpec {
   identity: ApplicationIdentity;
   bidderDids?: string[];
   options?: ApplicationOption[];
+}
+
+export interface ComputeContract {
+  apiVersion?: string;
+  kind?: string;
+  metadata?: ObjectMeta;
+  spec?: ComputeContractSpec;
+  status?: ComputeContractStatus;
+}
+
+export interface ComputeContractSpec {
+  vmName?: string;
+  bidderDids?: string[];
+  denyBidderDids?: string[];
+  sshAuthorizedKeys?: string[];
+  userData?: string;
+  policy?: string;
+  policyArgs?: string;
+  vmReadyTimeoutSec?: number;
+  secretsRef?: VaultRef;
+  release?: boolean;
+}
+
+export interface ComputeContractStatus {
+  observedGeneration?: number;
+  phase?: ComputeContractPhase;
+  message?: string;
+  secretsUrl?: string;
+  secretsFetchedAt?: string;
+  contract?: NodeClaimContract;
 }
 
 export interface Gateway {
@@ -578,7 +619,7 @@ export const MARKET_NETWORK_RESOURCE: ApiResource = {
   listKind: "MarketNetworkList",
   plural: "marketnetworks",
   singular: "marketnetwork",
-  schema: "v1alpha1-2.marketnetworks.socialweb.computer",
+  schema: "v1alpha1-3.marketnetworks.socialweb.computer",
   export: "applications",
 };
 
@@ -589,7 +630,7 @@ export const MARKET_BIDDER_RESOURCE: ApiResource = {
   listKind: "MarketBidderList",
   plural: "marketbidders",
   singular: "marketbidder",
-  schema: "v1alpha1-2.marketbidders.socialweb.computer",
+  schema: "v1alpha1-3.marketbidders.socialweb.computer",
   export: "applications",
 };
 
@@ -600,8 +641,19 @@ export const MARKET_REQUESTER_RESOURCE: ApiResource = {
   listKind: "MarketRequesterList",
   plural: "marketrequesters",
   singular: "marketrequester",
-  schema: "v1alpha1-1.marketrequesters.socialweb.computer",
+  schema: "v1alpha1-2.marketrequesters.socialweb.computer",
   export: "applications",
+};
+
+export const COMPUTE_CONTRACT_RESOURCE: ApiResource = {
+  group: "socialweb.computer",
+  version: "v1alpha1",
+  kind: "ComputeContract",
+  listKind: "ComputeContractList",
+  plural: "computecontracts",
+  singular: "computecontract",
+  schema: "v1alpha1-1.computecontracts.socialweb.computer",
+  export: "computecontracts",
 };
 
 export const GATEWAY_RESOURCE: ApiResource = {
@@ -611,11 +663,11 @@ export const GATEWAY_RESOURCE: ApiResource = {
   listKind: "GatewayList",
   plural: "gateways",
   singular: "gateway",
-  schema: "v1alpha1-3.gateways.socialweb.computer",
+  schema: "v1alpha1-4.gateways.socialweb.computer",
   export: "applications",
 };
 
-export const API_RESOURCES: readonly ApiResource[] = [CLUSTER_RESOURCE, NODE_RESOURCE, NODE_CLAIM_RESOURCE, CLUSTER_LINK_RESOURCE, ATPROTO_IDENTITY_RESOURCE, MARKET_IDENTITY_RESOURCE, MARKET_NETWORK_RESOURCE, MARKET_BIDDER_RESOURCE, MARKET_REQUESTER_RESOURCE, GATEWAY_RESOURCE];
+export const API_RESOURCES: readonly ApiResource[] = [CLUSTER_RESOURCE, NODE_RESOURCE, NODE_CLAIM_RESOURCE, CLUSTER_LINK_RESOURCE, ATPROTO_IDENTITY_RESOURCE, MARKET_IDENTITY_RESOURCE, MARKET_NETWORK_RESOURCE, MARKET_BIDDER_RESOURCE, MARKET_REQUESTER_RESOURCE, COMPUTE_CONTRACT_RESOURCE, GATEWAY_RESOURCE];
 
 export type ApiTypeName =
   | "ApplicationComponent"
@@ -638,6 +690,10 @@ export type ApiTypeName =
   | "ClusterPhase"
   | "ClusterSpec"
   | "ClusterStatus"
+  | "ComputeContract"
+  | "ComputeContractPhase"
+  | "ComputeContractSpec"
+  | "ComputeContractStatus"
   | "Condition"
   | "ContractAcceptPending"
   | "ContractHostKey"
@@ -671,6 +727,7 @@ export type ApiTypeName =
   | "MarketRequesterSpec"
   | "NetworkApp"
   | "NetworkAppStatus"
+  | "NetworkHost"
   | "Node"
   | "NodeClaim"
   | "NodeClaimContract"
@@ -828,6 +885,9 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
   },
   "ApplicationIdentity": {
     "properties": {
+      "association": {
+        "ref": "AssociationMode"
+      },
       "handle": {
         "type": "string"
       },
@@ -1140,6 +1200,107 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       },
       "phase": {
         "ref": "ClusterPhase"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "ComputeContract": {
+    "properties": {
+      "apiVersion": {
+        "type": "string"
+      },
+      "kind": {
+        "type": "string"
+      },
+      "metadata": {
+        "ref": "ObjectMeta"
+      },
+      "spec": {
+        "ref": "ComputeContractSpec"
+      },
+      "status": {
+        "ref": "ComputeContractStatus"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "ComputeContractPhase": {
+    "enum": [
+      "Pending",
+      "Requesting",
+      "Held",
+      "Releasing",
+      "Released",
+      "Failed"
+    ],
+    "type": "string"
+  },
+  "ComputeContractSpec": {
+    "properties": {
+      "bidderDids": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "denyBidderDids": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "policy": {
+        "type": "string"
+      },
+      "policyArgs": {
+        "type": "string"
+      },
+      "release": {
+        "type": "boolean"
+      },
+      "secretsRef": {
+        "ref": "VaultRef"
+      },
+      "sshAuthorizedKeys": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "userData": {
+        "type": "string"
+      },
+      "vmName": {
+        "type": "string"
+      },
+      "vmReadyTimeoutSec": {
+        "type": "integer"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "ComputeContractStatus": {
+    "properties": {
+      "contract": {
+        "ref": "NodeClaimContract"
+      },
+      "message": {
+        "type": "string"
+      },
+      "observedGeneration": {
+        "type": "integer"
+      },
+      "phase": {
+        "ref": "ComputeContractPhase"
+      },
+      "secretsFetchedAt": {
+        "type": "string"
+      },
+      "secretsUrl": {
+        "type": "string"
       }
     },
     "required": [],
@@ -1749,6 +1910,12 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       "guestTlsUrl": {
         "type": "string"
       },
+      "hosts": {
+        "items": {
+          "ref": "NetworkHost"
+        },
+        "type": "array"
+      },
       "ingressProxyHost": {
         "type": "string"
       },
@@ -1850,6 +2017,9 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       },
       "profile": {
         "type": "string"
+      },
+      "stopped": {
+        "type": "boolean"
       }
     },
     "required": [
@@ -1895,6 +2065,21 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
     "required": [
       "name",
       "kind"
+    ],
+    "type": "object"
+  },
+  "NetworkHost": {
+    "properties": {
+      "address": {
+        "type": "string"
+      },
+      "name": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "name",
+      "address"
     ],
     "type": "object"
   },
@@ -3211,6 +3396,24 @@ export function parseMarketNetworkValue(value: unknown): MarketNetworkValue {
   return value;
 }
 
+export function validateNetworkHost(value: unknown): ApiIssue[] {
+  return validate("NetworkHost", value);
+}
+
+export function isNetworkHost(value: unknown): value is NetworkHost {
+  return validate("NetworkHost", value).length === 0;
+}
+
+export function assertNetworkHost(value: unknown): asserts value is NetworkHost {
+  const issues = validate("NetworkHost", value);
+  if (issues.length > 0) throw new ApiValidationError("NetworkHost", issues);
+}
+
+export function parseNetworkHost(value: unknown): NetworkHost {
+  assertNetworkHost(value);
+  return value;
+}
+
 export function validateApplicationComponent(value: unknown): ApiIssue[] {
   return validate("ApplicationComponent", value);
 }
@@ -3370,6 +3573,78 @@ export function assertMarketRequesterSpec(value: unknown): asserts value is Mark
 
 export function parseMarketRequesterSpec(value: unknown): MarketRequesterSpec {
   assertMarketRequesterSpec(value);
+  return value;
+}
+
+export function validateComputeContract(value: unknown): ApiIssue[] {
+  return validate("ComputeContract", value);
+}
+
+export function isComputeContract(value: unknown): value is ComputeContract {
+  return validate("ComputeContract", value).length === 0;
+}
+
+export function assertComputeContract(value: unknown): asserts value is ComputeContract {
+  const issues = validate("ComputeContract", value);
+  if (issues.length > 0) throw new ApiValidationError("ComputeContract", issues);
+}
+
+export function parseComputeContract(value: unknown): ComputeContract {
+  assertComputeContract(value);
+  return value;
+}
+
+export function validateComputeContractSpec(value: unknown): ApiIssue[] {
+  return validate("ComputeContractSpec", value);
+}
+
+export function isComputeContractSpec(value: unknown): value is ComputeContractSpec {
+  return validate("ComputeContractSpec", value).length === 0;
+}
+
+export function assertComputeContractSpec(value: unknown): asserts value is ComputeContractSpec {
+  const issues = validate("ComputeContractSpec", value);
+  if (issues.length > 0) throw new ApiValidationError("ComputeContractSpec", issues);
+}
+
+export function parseComputeContractSpec(value: unknown): ComputeContractSpec {
+  assertComputeContractSpec(value);
+  return value;
+}
+
+export function validateComputeContractStatus(value: unknown): ApiIssue[] {
+  return validate("ComputeContractStatus", value);
+}
+
+export function isComputeContractStatus(value: unknown): value is ComputeContractStatus {
+  return validate("ComputeContractStatus", value).length === 0;
+}
+
+export function assertComputeContractStatus(value: unknown): asserts value is ComputeContractStatus {
+  const issues = validate("ComputeContractStatus", value);
+  if (issues.length > 0) throw new ApiValidationError("ComputeContractStatus", issues);
+}
+
+export function parseComputeContractStatus(value: unknown): ComputeContractStatus {
+  assertComputeContractStatus(value);
+  return value;
+}
+
+export function validateComputeContractPhase(value: unknown): ApiIssue[] {
+  return validate("ComputeContractPhase", value);
+}
+
+export function isComputeContractPhase(value: unknown): value is ComputeContractPhase {
+  return validate("ComputeContractPhase", value).length === 0;
+}
+
+export function assertComputeContractPhase(value: unknown): asserts value is ComputeContractPhase {
+  const issues = validate("ComputeContractPhase", value);
+  if (issues.length > 0) throw new ApiValidationError("ComputeContractPhase", issues);
+}
+
+export function parseComputeContractPhase(value: unknown): ComputeContractPhase {
+  assertComputeContractPhase(value);
   return value;
 }
 

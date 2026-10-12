@@ -1,0 +1,362 @@
+apiVersion: apis.kcp.io/v1alpha1
+kind: APIResourceSchema
+metadata:
+  name: v1alpha1-1.computecontracts.socialweb.computer
+spec:
+  group: socialweb.computer
+  names:
+    kind: ComputeContract
+    listKind: ComputeContractList
+    plural: computecontracts
+    singular: computecontract
+  scope: Cluster
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      schema:
+        type: object
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            properties:
+              vmName:
+                type: string
+              bidderDids:
+                type: array
+                items:
+                  type: string
+              denyBidderDids:
+                type: array
+                items:
+                  type: string
+              sshAuthorizedKeys:
+                type: array
+                items:
+                  type: string
+              userData:
+                type: string
+              policy:
+                type: string
+              policyArgs:
+                type: string
+              vmReadyTimeoutSec:
+                type: integer
+              secretsRef:
+                type: object
+                properties:
+                  mount:
+                    type: string
+                  path:
+                    type: string
+                required:
+                  - mount
+                  - path
+              release:
+                type: boolean
+          status:
+            type: object
+            properties:
+              observedGeneration:
+                type: integer
+                format: int64
+              phase:
+                type: string
+                enum:
+                  - Pending
+                  - Requesting
+                  - Held
+                  - Releasing
+                  - Released
+                  - Failed
+              message:
+                type: string
+              secretsUrl:
+                type: string
+              secretsFetchedAt:
+                type: string
+              contract:
+                type: object
+                properties:
+                  vmUri:
+                    type: string
+                  rfpUri:
+                    type: string
+                  acceptUri:
+                    type: string
+                  receiptUri:
+                    type: string
+                  receiptCid:
+                    type: string
+                  submitEventRef:
+                    type: string
+                  version:
+                    type: integer
+                  phase:
+                    type: string
+                    enum:
+                      - requested
+                      - rfp_submitted
+                      - winner_selected
+                      - accepted
+                      - receipt
+                      - network
+                      - released
+                  vmName:
+                    type: string
+                  requesterDid:
+                    type: string
+                  marketDid:
+                    type: string
+                  payload:
+                    type: object
+                    properties:
+                      uri:
+                        type: string
+                      cid:
+                        type: string
+                    required:
+                      - uri
+                      - cid
+                  rfp:
+                    type: object
+                    properties:
+                      uri:
+                        type: string
+                      cid:
+                        type: string
+                    required:
+                      - uri
+                      - cid
+                  policy:
+                    type: object
+                    properties:
+                      uri:
+                        type: string
+                      cid:
+                        type: string
+                    required:
+                      - uri
+                      - cid
+                  bid:
+                    type: object
+                    properties:
+                      uri:
+                        type: string
+                      cid:
+                        type: string
+                    required:
+                      - uri
+                      - cid
+                  winner:
+                    type: object
+                    properties:
+                      did:
+                        type: string
+                      submitAccept:
+                        type: string
+                    required:
+                      - did
+                  acceptPending:
+                    type: object
+                    properties:
+                      bidUri:
+                        type: string
+                    required:
+                      - bidUri
+                  accept:
+                    type: object
+                    properties:
+                      uri:
+                        type: string
+                      cid:
+                        type: string
+                    required:
+                      - uri
+                      - cid
+                  receipt:
+                    type: object
+                    properties:
+                      uri:
+                        type: string
+                      cid:
+                        type: string
+                    required:
+                      - uri
+                      - cid
+                  receiptOk:
+                    type: boolean
+                  vmAddress:
+                    type: string
+                  bids:
+                    type: integer
+                  release:
+                    type: object
+                    properties:
+                      event:
+                        type: object
+                        properties:
+                          uri:
+                            type: string
+                          cid:
+                            type: string
+                        required:
+                          - uri
+                          - cid
+                      payload:
+                        type: object
+                        properties:
+                          uri:
+                            type: string
+                          cid:
+                            type: string
+                        required:
+                          - uri
+                          - cid
+                      ok:
+                        type: boolean
+                      status:
+                        type: integer
+                    required:
+                      - event
+                      - payload
+                      - ok
+                  termination:
+                    type: object
+                    properties:
+                      reason:
+                        type: string
+                      exitCode:
+                        type: integer
+                      observedAt:
+                        type: string
+                      event:
+                        type: object
+                        properties:
+                          uri:
+                            type: string
+                          cid:
+                            type: string
+                        required:
+                          - uri
+                          - cid
+                      payload:
+                        type: object
+                        properties:
+                          uri:
+                            type: string
+                          cid:
+                            type: string
+                        required:
+                          - uri
+                          - cid
+                      request:
+                        type: object
+                        properties:
+                          uri:
+                            type: string
+                          cid:
+                            type: string
+                        required:
+                          - uri
+                          - cid
+                    required:
+                      - reason
+                      - observedAt
+                      - event
+                      - payload
+                  hostKeys:
+                    type: object
+                    properties:
+                      keys:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            type:
+                              type: string
+                            publicKey:
+                              type: string
+                            fingerprint:
+                              type: string
+                          required:
+                            - type
+                            - publicKey
+                            - fingerprint
+                      observedAt:
+                        type: string
+                      event:
+                        type: object
+                        properties:
+                          uri:
+                            type: string
+                          cid:
+                            type: string
+                        required:
+                          - uri
+                          - cid
+                      payload:
+                        type: object
+                        properties:
+                          uri:
+                            type: string
+                          cid:
+                            type: string
+                        required:
+                          - uri
+                          - cid
+                    required:
+                      - keys
+                      - observedAt
+                      - event
+                      - payload
+                  outcome:
+                    type: string
+                    enum:
+                      - no_bids
+                      - bids_denied
+                      - policy_rejected
+                      - returned
+                      - receipt_invalid
+                      - network_timeout
+                      - complete
+                  error:
+                    type: string
+                  timestamps:
+                    type: object
+                    properties:
+                      requested:
+                        type: string
+                      rfp_submitted:
+                        type: string
+                      winner_selected:
+                        type: string
+                      accepted:
+                        type: string
+                      receipt:
+                        type: string
+                      network:
+                        type: string
+                      released:
+                        type: string
+      additionalPrinterColumns:
+        - name: Phase
+          type: string
+          jsonPath: .status.phase
+        - name: Contract
+          type: string
+          jsonPath: .status.contract.phase
+        - name: Winner
+          type: string
+          jsonPath: .status.contract.winner.did
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp

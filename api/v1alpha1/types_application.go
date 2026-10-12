@@ -18,6 +18,14 @@ type MarketNetworkValue struct {
 	GuestTlsUrl string `json:"guestTlsUrl,omitempty"`
 
 	CaBundleRef string `json:"caBundleRef,omitempty"`
+
+	Hosts []NetworkHost `json:"hosts,omitempty"`
+}
+
+type NetworkHost struct {
+	Name string `json:"name"`
+
+	Address string `json:"address"`
 }
 
 type ApplicationKind string
@@ -56,6 +64,8 @@ type ApplicationIdentity struct {
 	Handle string `json:"handle,omitempty"`
 
 	PdsUrl string `json:"pdsUrl,omitempty"`
+
+	Association AssociationMode `json:"association,omitempty"`
 }
 
 type FirecrackerProvider struct {
@@ -246,6 +256,8 @@ type NetworkApp struct {
 	Kcp *KcpProvider `json:"kcp,omitempty"`
 
 	Options []ApplicationOption `json:"options,omitempty"`
+
+	Stopped bool `json:"stopped,omitempty"`
 }
 
 type NetworkAppStatus struct {

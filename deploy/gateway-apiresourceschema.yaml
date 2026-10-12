@@ -1,7 +1,7 @@
 apiVersion: apis.kcp.io/v1alpha1
 kind: APIResourceSchema
 metadata:
-  name: v1alpha1-3.gateways.socialweb.computer
+  name: v1alpha1-4.gateways.socialweb.computer
 spec:
   group: socialweb.computer
   names:
@@ -51,6 +51,18 @@ spec:
                     type: string
                   caBundleRef:
                     type: string
+                  hosts:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                        address:
+                          type: string
+                      required:
+                        - name
+                        - address
                 required:
                   - plcDirectoryUrl
                   - ingressProxyHost
