@@ -9,7 +9,7 @@ set -euo pipefail
 #
 #   build-provider.sh OUT
 #
-# DENO_KCP_DIR   the deno-kcp checkout (default $ORG_ROOT/deno-kcp)
+# DENO_KCP_DIR   the deno-kcp checkout (default a deno-kcp directory beside this repository)
 # KCP_LIBS_DIR   the kcp-libs checkout (default the deno-kcp checkout's sibling)
 # DENO_KCP_REF   build a different deno-kcp commit than the one recorded
 # KCP_LIBS_REF   build against a different kcp-libs commit than the one recorded
@@ -30,8 +30,7 @@ set -euo pipefail
 OUT=${1:?usage: build-provider.sh OUT}
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$HERE/../.." && pwd)
-ORG_ROOT=${ORG_ROOT:-$(cd "$REPO/.." && pwd)}
-DENO_KCP_DIR=${DENO_KCP_DIR:-$ORG_ROOT/deno-kcp}
+DENO_KCP_DIR=${DENO_KCP_DIR:-$(cd "$REPO/.." && pwd)/deno-kcp}
 KCP_LIBS_DIR=${KCP_LIBS_DIR:-$(cd "$DENO_KCP_DIR/.." && pwd)/kcp-libs}
 
 recorded() {

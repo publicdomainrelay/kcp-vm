@@ -11,10 +11,10 @@ spec:
     name: deno-runner
     namespace: default
   env:
-    SERVICE_ENTRY: "{{.OrgRoot}}/hono-pds/main.ts"
-    SERVICE_CWD: "{{.OrgRoot}}/hono-pds"
+    SERVICE_ENTRY: "{{.SourceRoot}}/ts/hono-pds/main.ts"
+    SERVICE_CWD: "{{.SourceRoot}}/ts/hono-pds"
     SERVICE_ARGS: '["--port","0","--hostname","127.0.0.1","--kv-path","{{.StateDir}}/alice-pds/kv.sqlite3"]'
-    SERVICE_DENO_FLAGS: '["--node-modules-dir=none","--lock={{.LockDir}}/hono-pds.lock","--unstable-kv"]'
+    SERVICE_DENO_FLAGS: '["--node-modules-dir=none","--lock={{.LockDir}}/deno.lock","--unstable-kv"]'
     SERVICE_ENV: '{"PORT":"0","HOSTNAME":"127.0.0.1","PDS_PUBLIC_HOSTNAME":"pds.default.alice.svc.kcp.local","PDS_PLC_DIRECTORY_URL":"https://plc.default.global.svc.kcp.local","PDS_CRAWLERS":"https://relay.default.relay.svc.kcp.local","PDS_SUBSCRIBE_REPOS_FORMAT":"json","PDS_PRIVATE_KEY_HEX":"{{.PDSPrivateKeyHex}}"}'
     SERVICE_TLS: "true"
   script: |

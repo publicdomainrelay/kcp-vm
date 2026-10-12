@@ -16,16 +16,15 @@ set -euo pipefail
 # to its guests.
 #
 # Requires the denoruntime set applied first (socialweb-computer apply --set
-# denoruntime) and the sibling repositories checked out: atproto-market, atproto-relay,
-# hono-pds, did-key-ingress-proxy, typescript-helpers. See README.md in this
-# directory for what does and does not work between the services.
+# denoruntime). Every service runs from this repository's ts/ tree. See README.md
+# in this directory for what does and does not work between the services.
 #
 # BED_ID       names this bed in its guests' container labels (default demo)
 # BED_DIR      this bed's state directory (default <repo>/.kcp-demo); keys, the
 #              guest CA and every pod's state directory live under it
 # BED_BIDDERS  how many bidders to run (default 1)
-# LOCK_DIR     where each service's copy of its repository's deno.lock lives
-#              (default BED_DIR/locks); no service writes a repository's lock
+# LOCK_DIR     where the services' copy of this repository's deno.lock lives
+#              (default BED_DIR/locks); no service writes the repository's lock
 # POD_DENO_DIR the module cache the services share (default $DENO_DIR or
 #              ~/.cache/deno); each service's Deno KV has an explicit path under
 #              BED_DIR/state, so sharing the cache never shares a store
@@ -37,7 +36,6 @@ set -euo pipefail
 REPO=$(cd "$(dirname "$0")/../../../.." && pwd)
 DENOKCP_DIR=$REPO/deploy/denokcp
 MARKET_DIR=$(cd "$(dirname "$0")" && pwd)
-ORG_ROOT=${ORG_ROOT:-$(cd "$REPO/.." && pwd)}
 BED_ID=${BED_ID:-demo}
 BED_DIR=${BED_DIR:-$REPO/.kcp-demo}
 BED_BIDDERS=${BED_BIDDERS:-1}
@@ -69,27 +67,21 @@ S=$(KC config view --minify -o jsonpath='{.clusters[0].cluster.server}')
 S=${S%%/clusters/*}
 ROOT_SERVER="$S/clusters/root"
 
-echo "org root:    $ORG_ROOT"
+echo "source root: $REPO"
 echo "root server: $ROOT_SERVER"
 echo "bed:         $BED_ID ($BED_DIR) bidders: $BIDDERS"
 
-for bin in atproto-market/hono-plc atproto-market/hono-bidder atproto-relay/hono-atproto-relay hono-pds did-key-ingress-proxy/hono-did-key-ingress-proxy; do
-  [ -e "$ORG_ROOT/$bin" ] || { echo "missing $ORG_ROOT/$bin" >&2; exit 1; }
+for bin in ts/atproto-market/hono-plc ts/atproto-market/hono-bidder ts/atproto-relay/hono-atproto-relay ts/hono-pds ts/did-key-ingress-proxy/hono-did-key-ingress-proxy; do
+  [ -e "$REPO/$bin" ] || { echo "missing $REPO/$bin" >&2; exit 1; }
 done
 
-# A bed never writes into a repository's working tree. Every service runs with
-# --lock pointing at a copy of its repository's deno.lock under the bed, so the
+# A bed never writes into the repository's working tree. Every service runs with
+# --lock pointing at a copy of the repository's deno.lock under the bed, so the
 # committed lock still pins every integrity hash it holds while whatever deno
 # adds to it lands in the copy and goes with the bed.
 LOCK_DIR=${LOCK_DIR:-$BED_DIR/locks}
 mkdir -p "$LOCK_DIR"
-for repo in atproto-market atproto-relay hono-pds did-key-ingress-proxy; do
-  if [ -s "$ORG_ROOT/$repo/deno.lock" ]; then
-    cp "$ORG_ROOT/$repo/deno.lock" "$LOCK_DIR/$repo.lock"
-  else
-    rm -f "$LOCK_DIR/$repo.lock"
-  fi
-done
+cp "$REPO/deno.lock" "$LOCK_DIR/deno.lock"
 
 # socialweb-computer-kcp: the bidder runs --compute-provider-firecracker. Every
 # input below is a path on this host or in the runner image, and none has a
@@ -198,7 +190,7 @@ write_values() {
     umask 077
     {
       echo "market-testbed:"
-      echo "  OrgRoot: $(q "$ORG_ROOT")"
+      echo "  SourceRoot: $(q "$REPO")"
       echo "  BedID: $(q "$BED_ID")"
       echo "  StateDir: $(q "$STATE_DIR")"
       echo "  DenoDir: $(q "$POD_DENO_DIR")"

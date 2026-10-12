@@ -30,7 +30,7 @@ type Bed struct {
 	PID           int               `json:"pid,omitempty"`
 	StartedAt     string            `json:"startedAt,omitempty"`
 	Dir           string            `json:"bedDir,omitempty"`
-	OrgRoot       string            `json:"orgRoot,omitempty"`
+	SourceRoot    string            `json:"sourceRoot,omitempty"`
 	FCWorkRoot    string            `json:"fcWorkRoot"`
 	RunnerImage   string            `json:"runnerImage,omitempty"`
 	RunnerImageID string            `json:"runnerImageId,omitempty"`

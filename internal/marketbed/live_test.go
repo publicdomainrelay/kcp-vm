@@ -24,26 +24,6 @@ var firecrackerInputs = []struct{ env, flag string }{
 	{"SOCIALWEB_FIRECRACKER_REPO_DIR", "FC_REPO_DIR"},
 }
 
-var orgSiblings = []string{"deno-kcp", "kcp-libs", "atproto-market", "atproto-relay", "hono-pds",
-	"typescript-helpers", "did-key-ingress-proxy", "hono-compute-provider"}
-
-func findOrgRoot(start string) (string, bool) {
-	if dir := os.Getenv("ORG_ROOT"); dir != "" {
-		return dir, isDir(filepath.Join(dir, "atproto-market"))
-	}
-	dir := start
-	for {
-		if isDir(filepath.Join(dir, "atproto-market")) && isDir(filepath.Join(dir, "deno-kcp")) {
-			return dir, true
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return "", false
-		}
-		dir = parent
-	}
-}
-
 func newBedID(t *testing.T) string {
 	t.Helper()
 	buf := make([]byte, 4)
@@ -84,16 +64,13 @@ func testBedEnvFor(t *testing.T, bedID string, guests int) (string, string, []st
 	}
 
 	root := repoRoot(t)
-	org, ok := findOrgRoot(root)
-	if !ok {
-		livegate.Require(t, "no org root holding atproto-market and deno-kcp above %s; set ORG_ROOT", root)
-	}
-	for _, s := range orgSiblings {
-		st, err := os.Lstat(filepath.Join(org, s))
-		if err != nil || !st.IsDir() {
-			livegate.Require(t, "%s/%s is not a real directory; the bidder serves its siblings to the guest from "+
-				"the org root and a symlinked sibling reads as absent", org, s)
+	var denoKcpEnv []string
+	if os.Getenv("DENO_KCP_PROVIDER") == "" {
+		dir, ok := FindDenoKcp(root)
+		if !ok {
+			livegate.Require(t, "no deno-kcp checkout to build the provider from above %s; set DENO_KCP_DIR or DENO_KCP_PROVIDER", root)
 		}
+		denoKcpEnv = append(denoKcpEnv, "DENO_KCP_DIR="+dir)
 	}
 
 	meminfo, err := os.ReadFile("/proc/meminfo")
@@ -114,8 +91,7 @@ func testBedEnvFor(t *testing.T, bedID string, guests int) (string, string, []st
 	if state == "" {
 		state = t.TempDir()
 	}
-	env := append(os.Environ(),
-		"ORG_ROOT="+org,
+	env := append(append(os.Environ(), denoKcpEnv...),
 		"BED_ID="+bedID,
 		"BED_STATE="+state,
 		"BED_SLOT_HELD=1",

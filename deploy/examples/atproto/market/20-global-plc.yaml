@@ -8,10 +8,10 @@ metadata:
 spec:
   restartPolicy: Always
   env:
-    SERVICE_ENTRY: "{{.OrgRoot}}/atproto-market/hono-plc/mod.ts"
-    SERVICE_CWD: "{{.OrgRoot}}/atproto-market"
+    SERVICE_ENTRY: "{{.SourceRoot}}/ts/atproto-market/hono-plc/mod.ts"
+    SERVICE_CWD: "{{.SourceRoot}}/ts/atproto-market"
     SERVICE_ARGS: '["--port","0","--hostname","127.0.0.1"]'
-    SERVICE_DENO_FLAGS: '["--node-modules-dir=none","--lock={{.LockDir}}/atproto-market.lock"]'
+    SERVICE_DENO_FLAGS: '["--node-modules-dir=none","--lock={{.LockDir}}/deno.lock"]'
     SERVICE_ENV: '{"PORT":"0","HOSTNAME":"127.0.0.1"}'
     SERVICE_TLS: "true"
   script: |

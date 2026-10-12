@@ -23,7 +23,7 @@ type MarketIdentity struct {
 }
 
 type MarketBed struct {
-	OrgRoot             string   `json:",omitempty"`
+	SourceRoot          string   `json:",omitempty"`
 	BedID               string   `json:",omitempty"`
 	StateDir            string   `json:",omitempty"`
 	DenoDir             string   `json:",omitempty"`

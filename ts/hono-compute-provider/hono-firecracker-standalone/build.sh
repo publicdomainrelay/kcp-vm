@@ -6,14 +6,14 @@ set -eu
 # build context and a rebuild never changes the image a running bed pinned.
 # Prints the content tag on stdout; everything else goes to stderr.
 #
-# NODEBOOT_SRC      the socialweb-computer-kcp checkout socialweb-nodeboot is built from
+# NODEBOOT_SRC      the socialweb-computer-kcp checkout socialweb-nodeboot is built from (default the checkout holding this file)
 # FIRECRACKER       the firecracker binary copied into the image
 # RUNNER_REPO       the repository part of the tag (default localhost/socialweb-firecracker-runner)
 # RUNNER_BUILD_DIR  the build context (default a temp dir, removed after)
 # RUNNER_IMAGE      an extra tag to put on the result (optional)
 
 HERE=$(cd "$(dirname "$0")" && pwd)
-NODEBOOT_SRC=${NODEBOOT_SRC:-$HERE/../../socialweb-computer-kcp}
+NODEBOOT_SRC=${NODEBOOT_SRC:-$(cd "$HERE/../../.." && pwd)}
 FIRECRACKER=${FIRECRACKER:-$HOME/kcp-image/artifacts/bin/firecracker}
 RUNNER_REPO=${RUNNER_REPO:-localhost/socialweb-firecracker-runner}
 BUILD_DIR=${RUNNER_BUILD_DIR:-}

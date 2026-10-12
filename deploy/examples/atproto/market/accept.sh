@@ -36,7 +36,7 @@ set -euo pipefail
 # BED_RECORD_OUT    copy the final bed.json here before the bed directory goes
 # KEEP_ACCEPT_ROOT  1 keeps BED_DIR (logs, run directories) after the run
 # FC_RUNNER_IMAGE   runner image to pin by its image id; unset builds one with
-#                   hono-compute-provider/hono-firecracker-standalone/build.sh
+#                   ts/hono-compute-provider/hono-firecracker-standalone/build.sh
 # DENO_KCP_PROVIDER a provider binary to run instead of the deno-kcp build
 #                   vendor.json records
 # BED_REQUIRE_LISTENERS 1 fails the bed when a DenoPod's status.listeners is
@@ -54,7 +54,6 @@ set -euo pipefail
 REPO=$(cd "$(dirname "$0")/../../../.." && pwd)
 DENOKCP_DIR=$REPO/deploy/denokcp
 MARKET_DIR=$(cd "$(dirname "$0")" && pwd)
-ORG_ROOT=${ORG_ROOT:-$(cd "$REPO/.." && pwd)}
 BED_STATE=${BED_STATE:-${TASK_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/swc-beds}}
 BED_ID=${BED_ID:-$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n')}
 if ! [[ "$BED_ID" =~ ^[a-z0-9]{1,12}$ ]]; then
@@ -214,7 +213,7 @@ if [ "${#fc_sock}" -gt 107 ]; then
   exit 2
 fi
 bed_set "bedId=\"$BED_ID\"" "slot=$SLOT" "pid=$$" "startedAt=\"$(now)\"" "bedDir=\"$BED_DIR\"" \
-  "orgRoot=\"$ORG_ROOT\"" "fcWorkRoot=\"$FC_WORK_ROOT\"" "kubeconfig=\"$KUBECONFIG_PATH\"" \
+  "sourceRoot=\"$REPO\"" "fcWorkRoot=\"$FC_WORK_ROOT\"" "kubeconfig=\"$KUBECONFIG_PATH\"" \
   "readings.memAvailableMiBAtStart=$avail_mib" "readings.budgetMiB=$need_mib"
 
 KC() { "$KUBECTL" --kubeconfig="$KUBECONFIG_PATH" --cache-dir="$KCACHE" "$@"; }
@@ -487,7 +486,7 @@ else
   pinned=$(
     flock 8
     RUNNER_BUILD_DIR="$BED_DIR/build/runner" NODEBOOT_SRC="${FC_REPO_DIR:?FC_REPO_DIR is required}" RUNNER_REPO="$RUNNER_REPO" \
-      sh "$ORG_ROOT/hono-compute-provider/hono-firecracker-standalone/build.sh"
+      sh "$REPO/ts/hono-compute-provider/hono-firecracker-standalone/build.sh"
   ) 8>>"$BED_STATE/build/runner.lock"
   rm -rf "$BED_DIR/build/runner"
   runner_id=$(docker image inspect -f '{{.Id}}' "$pinned")
@@ -525,7 +524,7 @@ if [ -z "$DENO_KCP_PROVIDER" ]; then
   (
     flock 8
     if [ ! -x "$DENO_KCP_PROVIDER" ]; then
-      ORG_ROOT="$ORG_ROOT" WORK_DIR="$BED_DIR/deno-kcp-src" \
+      WORK_DIR="$BED_DIR/deno-kcp-src" \
         bash "$DENOKCP_DIR/build-provider.sh" "$DENO_KCP_PROVIDER.tmp"
       mv "$DENO_KCP_PROVIDER.tmp" "$DENO_KCP_PROVIDER"
       rm -rf "$BED_DIR/deno-kcp-src"
@@ -583,7 +582,6 @@ while :; do
   attempt=$((attempt + 1))
   echo "apply attempt $attempt of $MAX_ATTEMPTS"
   apply_status=0
-  ORG_ROOT="$ORG_ROOT" \
   KUBECONFIG="$KUBECONFIG_PATH" \
   SOCIALWEB_COMPUTER="$SOCIALWEB_COMPUTER" \
   BED_ID="$BED_ID" \
@@ -925,7 +923,7 @@ MARKET_LOG=$BED_DIR/market-requester.log
 guests_before=$(own_guest_dirs)
 REQUESTER_LOCK=$BED_DIR/locks/requester.lock
 mkdir -p "$BED_DIR/locks"
-cp "$ORG_ROOT/atproto-market/deno.lock" "$REQUESTER_LOCK" 2>/dev/null || rm -f "$REQUESTER_LOCK"
+cp "$REPO/deno.lock" "$REQUESTER_LOCK"
 echo "bidders: ${BIDDER_DIDS:-unknown}  guests reach the dispatcher at: ${HOST_IP:-unknown}"
 market_status=0
 start_sampler
@@ -933,9 +931,9 @@ if [ -n "$BIDDER_DIDS" ] && [ -n "$HOST_IP" ]; then
   market_started=$(date +%s)
   bed_set "timings.requesterStarted=\"$(now)\""
   requester() {
-  (cd "$ORG_ROOT/atproto-market" && DENO_CERT="$CA_PEM" KCP_DNS_TABLE_FILE="$BED_DIR/runs/.kcpdns/table.json" \
+  (cd "$REPO/ts/atproto-market" && DENO_CERT="$CA_PEM" KCP_DNS_TABLE_FILE="$BED_DIR/runs/.kcpdns/table.json" \
     exec timeout "$MARKET_SECONDS" \
-    deno run -A --node-modules-dir=none --config "$ORG_ROOT/atproto-market/deno.json" --lock="$REQUESTER_LOCK" \
+    deno run -A --node-modules-dir=none --config "$REPO/deno.json" --lock="$REQUESTER_LOCK" \
       --preload "$BED_DIR/runs/.kcpdns/shim.ts" \
       "$MARKET_DIR/market-requester/mod.ts" \
       --plc-directory-url "https://127.0.0.1:$PLC_PORT" \

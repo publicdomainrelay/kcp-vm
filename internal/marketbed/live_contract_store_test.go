@@ -31,7 +31,6 @@ const (
 type heldBed struct {
 	t        *testing.T
 	root     string
-	org      string
 	workRoot string
 	facts    map[string]string
 }
@@ -40,25 +39,15 @@ func (h *heldBed) reading(format string, args ...any) {
 	h.t.Log(time.Now().UTC().Format(time.RFC3339) + " " + fmt.Sprintf(format, args...))
 }
 
-func envValue(env []string, key string) string {
-	for i := len(env) - 1; i >= 0; i-- {
-		if v, ok := strings.CutPrefix(env[i], key+"="); ok {
-			return v
-		}
-	}
-	return ""
-}
-
 func startHeldBed(t *testing.T) *heldBed {
 	t.Helper()
 	root, workRoot, env := testBedEnv(t)
-	org := envValue(env, "ORG_ROOT")
-	requireTreesUnchangedAtCleanup(t, org)
+	requireTreesUnchangedAtCleanup(t, root)
 	facts := startHeldTestBed(t, root, env)
 	if facts["CHECKS_FAILED"] != "0" {
 		t.Fatalf("the test bed came up with failing checks: %v", facts)
 	}
-	h := &heldBed{t: t, root: root, org: org, workRoot: workRoot, facts: facts}
+	h := &heldBed{t: t, root: root, workRoot: workRoot, facts: facts}
 	h.reading("test bed %s held up: bidder %s, guests under %s", facts["BED_ID"], facts["BIDDER_DID"], workRoot)
 	return h
 }
@@ -188,9 +177,9 @@ func (h *heldBed) startRequester() *heldRequester {
 	if err := os.MkdirAll(r.control, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	market := filepath.Join(h.org, "atproto-market")
+	market := filepath.Join(h.root, "ts", "atproto-market")
 	lock := filepath.Join(dir, "requester.lock")
-	if body, err := os.ReadFile(filepath.Join(market, "deno.lock")); err == nil {
+	if body, err := os.ReadFile(filepath.Join(h.root, "deno.lock")); err == nil {
 		writeFile(t, lock, string(body))
 	}
 	logFile, err := os.Create(r.log)
@@ -199,7 +188,7 @@ func (h *heldBed) startRequester() *heldRequester {
 	}
 	f := h.facts
 	kcpdns := filepath.Join(f["RUNS_DIR"], ".kcpdns")
-	cmd := exec.Command("deno", "run", "-A", "--node-modules-dir=none", "--config", filepath.Join(market, "deno.json"), "--lock="+lock,
+	cmd := exec.Command("deno", "run", "-A", "--node-modules-dir=none", "--config", filepath.Join(h.root, "deno.json"), "--lock="+lock,
 		"--preload", filepath.Join(kcpdns, "shim.ts"),
 		filepath.Join(h.root, "deploy/examples/atproto/market/market-requester/mod.ts"),
 		"--plc-directory-url", "https://127.0.0.1:"+f["PLC_PORT"],
@@ -408,12 +397,11 @@ func TestALateVmDeleteForAPoweredOffGuestAfterABidderRestartIsAlreadyTerminated(
 	}
 }
 
-func treeState(t *testing.T, org string) map[string]string {
+func treeState(t *testing.T, root string) map[string]string {
 	t.Helper()
-	repos := append([]string{".", "socialweb-computer-kcp"}, orgSiblings...)
 	state := map[string]string{}
-	for _, repo := range repos {
-		dir := filepath.Join(org, repo)
+	for _, repo := range []string{"."} {
+		dir := filepath.Join(root, repo)
 		if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
 			continue
 		}
@@ -431,33 +419,32 @@ func treeState(t *testing.T, org string) map[string]string {
 	return state
 }
 
-func requireTreesUnchanged(t *testing.T, org string, before map[string]string) {
+func requireTreesUnchanged(t *testing.T, root string, before map[string]string) {
 	t.Helper()
-	after := treeState(t, org)
+	after := treeState(t, root)
 	for repo, was := range before {
 		if now := after[repo]; now != was {
-			t.Errorf("the bed changed the working tree of %s:\nbefore:\n%s\nafter:\n%s", filepath.Join(org, repo), was, now)
+			t.Errorf("the bed changed the working tree of %s:\nbefore:\n%s\nafter:\n%s", filepath.Join(root, repo), was, now)
 		}
 	}
 }
 
-func requireTreesUnchangedAtCleanup(t *testing.T, org string) {
+func requireTreesUnchangedAtCleanup(t *testing.T, root string) {
 	t.Helper()
-	before := treeState(t, org)
-	t.Cleanup(func() { requireTreesUnchanged(t, org, before) })
+	before := treeState(t, root)
+	t.Cleanup(func() { requireTreesUnchanged(t, root, before) })
 }
 
-func TestABedRunLeavesEveryRepositoryWorkingTreeAsItFoundIt(t *testing.T) {
+func TestABedRunLeavesTheWorkingTreeAsItFoundIt(t *testing.T) {
 	livegate.Short(t, "this test runs a whole market test bed, renting a firecracker guest through the RFP flow, and "+
-		"compares every org repository's working tree before and after: a skip is NOT a pass")
+		"compares the working tree of this repository before and after: a skip is NOT a pass")
 	id := newBedID(t)
 	root, _, env := testBedEnvFor(t, id, 1)
-	org := envValue(env, "ORG_ROOT")
-	before := treeState(t, org)
+	before := treeState(t, root)
 	ctx := liveBudget(t, 35*time.Minute)
 	r := runAccept(ctx, t, root, env, id, logDir(t))
 	requireMarketPass(t, r)
-	requireTreesUnchanged(t, org, before)
-	t.Logf("%s bed %s left the working trees of %d repositories under %s as it found them",
-		time.Now().UTC().Format(time.RFC3339), id, len(before), org)
+	requireTreesUnchanged(t, root, before)
+	t.Logf("%s bed %s left the working tree of %s as it found it",
+		time.Now().UTC().Format(time.RFC3339), id, root)
 }

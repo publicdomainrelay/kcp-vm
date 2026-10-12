@@ -140,7 +140,7 @@ func TestNoBedPortIsALiteral(t *testing.T) {
 
 var serviceCwd = regexp.MustCompile(`SERVICE_CWD: "[^"]*/([^"/]+)"`)
 
-func TestNoBedServiceWritesItsRepositorysLock(t *testing.T) {
+func TestNoBedServiceWritesTheRepositoryLock(t *testing.T) {
 	root := repoRoot(t)
 	market := filepath.Join(root, "deploy/examples/atproto/market")
 	apply, err := os.ReadFile(filepath.Join(market, "apply.sh"))
@@ -149,6 +149,9 @@ func TestNoBedServiceWritesItsRepositorysLock(t *testing.T) {
 	}
 	if !strings.Contains(string(apply), `echo "  LockDir: $(q "$LOCK_DIR")"`) {
 		t.Error("apply.sh writes no LockDir value, so a service's --lock names no file under the bed")
+	}
+	if !strings.Contains(string(apply), `cp "$REPO/deno.lock" "$LOCK_DIR/deno.lock"`) {
+		t.Error("apply.sh copies no deno.lock of this repository into the bed, which every service runs against")
 	}
 	manifests, err := filepath.Glob(filepath.Join(market, "*.yaml"))
 	if err != nil {
@@ -166,7 +169,7 @@ func TestNoBedServiceWritesItsRepositorysLock(t *testing.T) {
 		}
 		services++
 		repo := m[1]
-		want := `"--lock={{.LockDir}}/` + repo + `.lock"`
+		want := `"--lock={{.LockDir}}/deno.lock"`
 		flags := ""
 		for _, line := range strings.Split(string(body), "\n") {
 			if strings.Contains(line, "SERVICE_DENO_FLAGS:") {
@@ -174,11 +177,8 @@ func TestNoBedServiceWritesItsRepositorysLock(t *testing.T) {
 			}
 		}
 		if !strings.Contains(flags, want) {
-			t.Errorf("%s runs deno in %s with flags %q; without %s deno rewrites %s/deno.lock in the working tree",
-				filepath.Base(path), repo, strings.TrimSpace(flags), want, repo)
-		}
-		if !strings.Contains(string(apply), " "+repo+" ") && !strings.Contains(string(apply), " "+repo+";") {
-			t.Errorf("apply.sh copies no deno.lock of %s into the bed, which %s runs against", repo, filepath.Base(path))
+			t.Errorf("%s runs deno in %s with flags %q; without %s deno rewrites the root deno.lock in the working tree",
+				filepath.Base(path), repo, strings.TrimSpace(flags), want)
 		}
 	}
 	if services < 5 {

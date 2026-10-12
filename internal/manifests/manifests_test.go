@@ -11,7 +11,7 @@ import (
 
 func goldenBed() *MarketBed {
 	return &MarketBed{
-		OrgRoot:             "/org/root",
+		SourceRoot:          "/src/root",
 		BedID:               "bed1",
 		StateDir:            "/bed/state",
 		DenoDir:             "/cache/deno",
@@ -87,7 +87,7 @@ func TestAMissingValueIsARenderErrorNotAnEmptyField(t *testing.T) {
 	s := mustSet(t, "market-testbed")
 	cases := map[string]func(*MarketBed){
 		"StateDir":       func(b *MarketBed) { b.StateDir = "" },
-		"OrgRoot":        func(b *MarketBed) { b.OrgRoot = "" },
+		"SourceRoot":     func(b *MarketBed) { b.SourceRoot = "" },
 		"LockDir":        func(b *MarketBed) { b.LockDir = "" },
 		"DispatcherPort": func(b *MarketBed) { b.DispatcherPort = 0 },
 		"NodeImage":      func(b *MarketBed) { b.Firecracker.NodeImage = "" },
