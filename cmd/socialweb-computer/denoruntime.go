@@ -29,12 +29,12 @@ func (a *app) denoExe(ctx context.Context, vals clicfg.Values) (devinstance.Exec
 	return e, denorun.CheckVersion(e.Path)
 }
 
-func closureOrgRoot(vals clicfg.Values, starts ...string) (string, error) {
+func closureSourceRoot(vals clicfg.Values, starts ...string) (string, error) {
 	src, err := tsbundle.Select(vals, starts...)
 	if err != nil {
 		return "", fmt.Errorf("the TypeScript closure: %w", err)
 	}
-	if o, ok := src.(tsbundle.OrgRoot); ok {
+	if o, ok := src.(tsbundle.Checkout); ok {
 		return o.Dir, nil
 	}
 	return "", nil
@@ -45,7 +45,7 @@ func (a *app) coreDenoRuntime(vals clicfg.Values, rec devinstance.Record, applyT
 	if deno.Path == "" {
 		return denoruntime.Config{}, errors.New("the instance records no deno; dev up records the pinned deno (deno-path in a dev build)")
 	}
-	src, err := tsbundle.Select(vals, rec.OrgRoot)
+	src, err := tsbundle.Select(vals, rec.SourceRoot)
 	if err != nil {
 		return denoruntime.Config{}, fmt.Errorf("the TypeScript closure: %w", err)
 	}

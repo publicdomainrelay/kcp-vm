@@ -185,8 +185,8 @@ func runDevRestart(ctx context.Context, a *app, vals clicfg.Values, rest []strin
 		rec.Executables = map[string]devinstance.Executable{}
 	}
 	rec.Executables["socialweb-computer"] = bin
-	if vals.String(tsbundle.OrgRootOption) != "" {
-		if rec.OrgRoot, err = closureOrgRoot(vals); err != nil {
+	if vals.String(tsbundle.SourceRootOption) != "" {
+		if rec.SourceRoot, err = closureSourceRoot(vals); err != nil {
 			lock.Close()
 			return a.fail(exitRefused, "dev restart: %v", err)
 		}

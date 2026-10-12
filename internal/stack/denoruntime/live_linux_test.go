@@ -46,7 +46,7 @@ const (
 	tenant     = "denoruntime-tenant"
 	settleFor  = 3 * time.Minute
 	holdFor    = 8 * time.Second
-	markerFile = "socialweb-computer-kcp/marker.txt"
+	markerFile = "marker.txt"
 )
 
 var (
@@ -55,7 +55,7 @@ var (
 )
 
 const podScript = `const root = Deno.env.get("SOCIALWEB_TS_ROOT") ?? "";
-const marker = (await Deno.readTextFile(root + "/socialweb-computer-kcp/marker.txt")).trim();
+const marker = (await Deno.readTextFile(root + "/marker.txt")).trim();
 console.log(JSON.stringify({ marker, key: Deno.env.get("SOCIALWEB_TS_KEY") }));
 setInterval(() => {}, 3600000);
 `
@@ -94,15 +94,20 @@ func liveExe(env, name string) string {
 	return abs
 }
 
-func orgRoot(t *testing.T, marker string) string {
+func sourceRoot(t *testing.T, marker string) string {
 	t.Helper()
-	d := filepath.Join(t.TempDir(), "org-"+marker)
-	for _, r := range tsbundle.SiblingRepos {
-		if err := os.MkdirAll(filepath.Join(d, r), 0o755); err != nil {
+	d := filepath.Join(t.TempDir(), "checkout-"+marker)
+	files := map[string]string{tsbundle.WorkspaceFile: "{}\n", tsbundle.EntriesFile: "entries: []\n", markerFile: marker + "\n"}
+	for name, body := range files {
+		p := filepath.Join(d, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := os.WriteFile(filepath.Join(d, markerFile), []byte(marker+"\n"), 0o644); err != nil {
+	if _, err := tsbundle.CheckCheckout(d); err != nil {
 		t.Fatal(err)
 	}
 	return d
@@ -128,7 +133,7 @@ func (s *stack) build(name string, flags ...string) string {
 	return out
 }
 
-func openStack(t *testing.T, org string) *stack {
+func openStack(t *testing.T, source string) *stack {
 	t.Helper()
 	livegate.Short(t, "this test runs real kcp, kine and deno processes under devsup and a core that runs the deno runtime")
 	exes := map[string]string{"SOCIALWEB_KCP_PATH": liveExe("SOCIALWEB_KCP_PATH", "kcp"), "SOCIALWEB_KINE_PATH": liveExe("SOCIALWEB_KINE_PATH", "kine"),
@@ -153,7 +158,7 @@ func openStack(t *testing.T, org string) *stack {
 	for env, p := range exes {
 		s.env = append(s.env, env+"="+p)
 	}
-	s.env = append(s.env, tsbundle.OrgRootEnv+"="+org)
+	s.env = append(s.env, tsbundle.SourceRootEnv+"="+source)
 	t.Cleanup(func() { s.runE(nil, "dev", "down", "--instance", s.id) })
 	s.run(&s.up, "dev", "up", "--instance", s.id, "--profile", "minimal")
 	s.base, err = kcpserver.FrontRestConfig(s.up.AdminKubeconfig)
@@ -453,14 +458,14 @@ func (s *stack) corePID() int {
 }
 
 func TestADenoPodAppliedToTheKcpRunsOnTheEmbeddedDeno(t *testing.T) {
-	org := orgRoot(t, "A")
-	s := openStack(t, org)
+	src := sourceRoot(t, "A")
+	s := openStack(t, src)
 	if s == nil {
 		return
 	}
 	s.tenant()
 	s.createPod("svc")
-	got := s.settle([]string{"svc"}, closureKey(t, org), "A", nil)
+	got := s.settle([]string{"svc"}, closureKey(t, src), "A", nil)
 	p := got.Procs[0]
 	deno, err := filepath.EvalSymlinks(s.up.Executables["deno"].Path)
 	if err != nil {
@@ -480,12 +485,12 @@ func TestADenoPodAppliedToTheKcpRunsOnTheEmbeddedDeno(t *testing.T) {
 }
 
 func TestAKilledCoreLeavesNoDenoProcessOnTheProcBackend(t *testing.T) {
-	org := orgRoot(t, "A")
-	s := openStack(t, org)
+	src := sourceRoot(t, "A")
+	s := openStack(t, src)
 	if s == nil {
 		return
 	}
-	key := closureKey(t, org)
+	key := closureKey(t, src)
 	s.tenant()
 	names := []string{"svc-1", "svc-2", "svc-3"}
 	for _, n := range names {
@@ -521,12 +526,12 @@ func TestAnUpgradeRestartsEveryRecordedDenoPodOnTheNewClosureExactlyOnce(t *test
 		livegate.RequireLocal(t, "the user manager's private socket %s is missing: %v", hostsvc.PrivateSocketPath(), err)
 		return
 	}
-	orgA, orgB := orgRoot(t, "A"), orgRoot(t, "B")
-	s := openStack(t, orgA)
+	srcA, srcB := sourceRoot(t, "A"), sourceRoot(t, "B")
+	s := openStack(t, srcA)
 	if s == nil {
 		return
 	}
-	keyA, keyB := closureKey(t, orgA), closureKey(t, orgB)
+	keyA, keyB := closureKey(t, srcA), closureKey(t, srcB)
 	if keyA == keyB {
 		t.Fatal("the two closures share a key")
 	}
@@ -568,13 +573,13 @@ func TestAnUpgradeRestartsEveryRecordedDenoPodOnTheNewClosureExactlyOnce(t *test
 		Env:     []string{"SWC_UNIT=" + unit},
 		WorkDir: s.up.StateDir, Slice: slice, Restart: hostsvc.RestartAlways, KillSignal: syscall.SIGTERM, StopTimeout: 20 * time.Second,
 		Output: hostsvc.Output{StdoutFile: filepath.Join(s.up.StateDir, "logs", "core.log"), StderrFile: filepath.Join(s.up.StateDir, "logs", "core.log")}}
-	recordOrgRoot := func(org string) {
+	recordSourceRoot := func(source string) {
 		t.Helper()
 		var rec devinstance.Record
 		if err := devinstance.ReadJSON(filepath.Join(s.up.StateDir, "instance.json"), &rec); err != nil {
 			t.Fatal(err)
 		}
-		rec.OrgRoot = org
+		rec.SourceRoot = source
 		if err := devinstance.WriteJSON(filepath.Join(s.up.StateDir, "instance.json"), rec); err != nil {
 			t.Fatal(err)
 		}
@@ -633,7 +638,7 @@ func TestAnUpgradeRestartsEveryRecordedDenoPodOnTheNewClosureExactlyOnce(t *test
 				t.Fatal(err)
 			}
 			sd.ResetFailed(ctx, unit)
-			recordOrgRoot(orgB)
+			recordSourceRoot(srcB)
 			if _, err := sd.Start(ctx, spec); err != nil {
 				t.Fatal(err)
 			}

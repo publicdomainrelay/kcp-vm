@@ -301,7 +301,7 @@ func runDevUp(ctx context.Context, a *app, vals clicfg.Values, rest []string) in
 	if err != nil {
 		return a.fail(exitRefused, "dev up: %v", err)
 	}
-	orgRoot, err := closureOrgRoot(vals)
+	sourceRoot, err := closureSourceRoot(vals)
 	if err != nil {
 		return a.fail(exitRefused, "dev up: %v", err)
 	}
@@ -346,7 +346,7 @@ func runDevUp(ctx context.Context, a *app, vals clicfg.Values, rest []string) in
 	rec.Worktree = a.worktree(vals)
 	rec.BaseWorkspace = vals.String("kcp-base-workspace")
 	rec.Executables = map[string]devinstance.Executable{"kcp": kcpExe, "kine": kineExe, denorun.Executable: denoExe, "socialweb-computer": {Path: exe}}
-	rec.OrgRoot = orgRoot
+	rec.SourceRoot = sourceRoot
 	bcfg := bootstrap.Config{Layout: l, KcpPath: kcpExe.Path, KinePath: kineExe.Path, Exe: exe, ReadyTimeout: readyTimeout, Log: a.log}
 	if err := bootstrap.Ensure(ctx, m, bcfg, &rec); err != nil {
 		devinstance.WriteJSON(l.Record, rec)

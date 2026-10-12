@@ -24,12 +24,12 @@ import (
 )
 
 type liveDev struct {
-	bin   string
-	state string
-	kcp   string
-	kine  string
-	deno  string
-	org   string
+	bin    string
+	state  string
+	kcp    string
+	kine   string
+	deno   string
+	source string
 }
 
 func openLiveDev(t *testing.T) *liveDev {
@@ -46,12 +46,12 @@ func openLiveDev(t *testing.T) *liveDev {
 		livegate.RequireLocal(t, "XDG_RUNTIME_DIR is unset")
 		return nil
 	}
-	org, err := tsbundle.FindOrgRoot(".")
+	source, err := tsbundle.FindCheckout(".")
 	if err != nil {
-		livegate.RequireLocal(t, "no org root above this package: %v", err)
+		livegate.RequireLocal(t, "no socialweb-computer-kcp checkout above this package: %v", err)
 		return nil
 	}
-	d.org = org
+	d.source = source
 	dir := t.TempDir()
 	d.bin = filepath.Join(dir, "socialweb-computer")
 	if out, err := exec.Command("go", "build", "-o", d.bin, ".").CombinedOutput(); err != nil {
@@ -75,7 +75,7 @@ func testExe(env, name string) string {
 
 func (d *liveDev) runE(out any, args ...string) error {
 	cmd := exec.Command(d.bin, append(args, "--state-dir", d.state)...)
-	cmd.Env = append(os.Environ(), "SOCIALWEB_KCP_PATH="+d.kcp, "SOCIALWEB_KINE_PATH="+d.kine, "SOCIALWEB_DENO_PATH="+d.deno, tsbundle.OrgRootEnv+"="+d.org)
+	cmd.Env = append(os.Environ(), "SOCIALWEB_KCP_PATH="+d.kcp, "SOCIALWEB_KINE_PATH="+d.kine, "SOCIALWEB_DENO_PATH="+d.deno, tsbundle.SourceRootEnv+"="+d.source)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {

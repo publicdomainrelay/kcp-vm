@@ -22,7 +22,7 @@ const (
 	RunnerTimeout     = time.Duration(-1)
 	TSRootEnv         = "SOCIALWEB_TS_ROOT"
 	TSKeyEnv          = "SOCIALWEB_TS_KEY"
-	PolicyEngineEntry = "policy-engine/lib/policy-engine-server-gha-lite"
+	PolicyEngineEntry = "ts/policy-engine/lib/policy-engine-server-gha-lite"
 	RetryAfter        = 2 * time.Second
 	WatchListEnv      = "KUBE_FEATURE_WatchListClient"
 )
