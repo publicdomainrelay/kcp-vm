@@ -267,7 +267,7 @@ sets:
           - kind: APIBinding
             for: Ready
         files:
-          - path: market-network/10-rbac.yaml
+          - path: apps/gateway/web-app-rbac.yaml
       - name: identity-schemas
         workspace: root:socialweb-provider
         files:

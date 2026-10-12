@@ -1,15 +1,15 @@
 name: socialweb-computer-k8s
 entry: hono-socialweb-computer-k8s
 stateDir: "{{.StateDir}}"
-serviceAccount: deno-runner
+serviceAccount: socialweb-computer-k8s
 tls: {{.TLS}}
 trust: {{.Trust}}
-args: ["--http-port", "0", "--serve-addr", "127.0.0.1", "--state-dir", "{{.StateDir}}", "--web-dir", "{{.WebDir}}", "--kcp-kubeconfig", "{{.Kubeconfig}}", "--gateway-kcp-workspace", "{{.GatewayWorkspace}}", "--gateway-kcp-name", "{{.GatewayName}}", "--openbao-server", "{{.Vault.Server}}", "--openbao-client", "{{.Vault.Client}}", "--openbao-server-workspace", "{{.GatewayWorkspace}}", "--market-identity-workspace", "{{.IdentityWorkspace}}"{{.ExtraArgs}}{{.TestArgs}}]
+args: ["--http-port", "0", "--serve-addr", "127.0.0.1", "--state-dir", "{{.StateDir}}", "--web-dir", "{{.WebDir}}", "--kcp-kubeconfig", "{{.Kubeconfig}}", "--kcp-clusters-export-url", "{{.ClustersExportURL}}", "--gateway-kcp-workspace", "{{.GatewayWorkspace}}", "--gateway-kcp-name", "{{.GatewayName}}", "--openbao-server", "{{.Vault.Server}}", "--openbao-client", "{{.Vault.Client}}", "--openbao-server-workspace", "{{.GatewayWorkspace}}", "--market-identity-workspace", "{{.IdentityWorkspace}}"{{.ExtraArgs}}{{.TestArgs}}]
 permissions:
   net: true
   env: true
   sys: true
-  read: ["{{.Kubeconfig}}", "{{.Vault.CA}}", "{{.Vault.ClientDir}}"{{.ExtraRead}}{{.TestRead}}]
+  read: ["{{.KcpDir}}", "{{.Vault.CA}}", "{{.Vault.ClientDir}}"{{.ExtraRead}}{{.TestRead}}]
   run:
     allow: ["ssh-keygen"]
     reason: >-

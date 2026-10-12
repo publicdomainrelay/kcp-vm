@@ -37,8 +37,8 @@ const (
 )
 
 type WebApp struct {
-	Kubeconfig string
-	TSRoot     string
+	FrontKubeconfig string
+	TSRoot          string
 }
 
 func duration(d time.Duration) string {
@@ -194,6 +194,9 @@ func (ctl *Controller) reconcileGateway(ctx context.Context, u *unstructured.Uns
 			return err
 		}
 		if left == 0 {
+			if err := ctl.revokeWebApp(ctx); err != nil {
+				return err
+			}
 			if left, err = ctl.deleteVaults(ctx, owner); err != nil {
 				return err
 			}
@@ -245,6 +248,12 @@ func (ctl *Controller) reconcileGateway(ctx context.Context, u *unstructured.Uns
 				st.Phase, st.Message = v1alpha1.ApplicationPhaseProvisioning, "its workspace: "+err.Error()
 				return ctl.writeStatus(ctx, GatewayGVR, o.Name, st)
 			}
+			id, err := ctl.webAppIdentity(ctx, o, owner, *ctl.c.WebApp)
+			if err != nil {
+				st.Phase, st.Message = v1alpha1.ApplicationPhaseProvisioning, "the web app's kcp identity: "+err.Error()
+				return ctl.writeStatus(ctx, GatewayGVR, o.Name, st)
+			}
+			values.Kubeconfig, values.KcpDir, values.ClustersExportURL = id.Kubeconfig, id.Dir, id.ClustersExportURL
 			pods, err := ctl.applyProfile(ctx, GatewaySet, o.Spec.Profile, owner, true, &values)
 			if err != nil {
 				st.Phase, st.Message = v1alpha1.ApplicationPhaseProvisioning, "its components: "+err.Error()
@@ -255,6 +264,8 @@ func (ctl *Controller) reconcileGateway(ctx context.Context, u *unstructured.Uns
 			}
 			ctl.applied[string(o.UID)] = o.Generation
 			ctl.c.log().Info("applied the Gateway's components", "name", o.Name, "profile", o.Spec.Profile, "denopods", pods)
+		} else if err := ctl.webAppToken(ctx, WebAppKcpDir(ctl.c.Layout.StateDir)); err != nil {
+			return err
 		}
 		pods, err := ctl.ownedPods(ctx, ws, owner)
 		if err != nil {
@@ -308,10 +319,10 @@ func WebAppVaultOf(o *v1alpha1.OpenBaoServer) (manifests.GatewayVault, bool) {
 }
 
 func GatewayValues(o v1alpha1.Gateway, workspace, stateDir string, w WebApp, vault manifests.GatewayVault) (manifests.Gateway, error) {
-	if !filepath.IsAbs(w.Kubeconfig) || !filepath.IsAbs(w.TSRoot) {
-		return manifests.Gateway{}, fmt.Errorf("appctl: the %s web app needs an absolute kcp kubeconfig and TypeScript root", WebAppComponent)
+	if !filepath.IsAbs(w.FrontKubeconfig) || !filepath.IsAbs(w.TSRoot) {
+		return manifests.Gateway{}, fmt.Errorf("appctl: the %s web app needs an absolute kcp front kubeconfig and TypeScript root", WebAppComponent)
 	}
-	v := manifests.Gateway{StateDir: stateDir, WebDir: filepath.Join(w.TSRoot, filepath.FromSlash(WebAppWebDir)), Kubeconfig: w.Kubeconfig,
+	v := manifests.Gateway{StateDir: stateDir, WebDir: filepath.Join(w.TSRoot, filepath.FromSlash(WebAppWebDir)),
 		GatewayWorkspace: workspace, GatewayName: o.Name, TLS: manifests.TLSNone, Vault: vault,
 		IdentityWorkspace: workspace + ":" + ComponentWorkspace}
 	var trust []string

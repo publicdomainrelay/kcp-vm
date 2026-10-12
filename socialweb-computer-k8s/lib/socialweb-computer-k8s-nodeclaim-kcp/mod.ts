@@ -24,6 +24,7 @@ import {
 export interface KcpCredentials {
   server: string;
   token?: string;
+  tokenFile?: string;
   cert?: string;
   key?: string;
   ca?: string;
@@ -33,7 +34,10 @@ interface KubeconfigDoc {
   "current-context"?: string;
   contexts?: { name: string; context: { cluster: string; user: string } }[];
   clusters?: { name: string; cluster: { server: string; "certificate-authority-data"?: string } }[];
-  users?: { name: string; user: { token?: string; "client-certificate-data"?: string; "client-key-data"?: string } }[];
+  users?: {
+    name: string;
+    user: { token?: string; tokenFile?: string; "client-certificate-data"?: string; "client-key-data"?: string };
+  }[];
 }
 
 function fromBase64(data: string | undefined): string | undefined {
@@ -52,22 +56,27 @@ export function parseKubeconfig(text: string, contextName?: string): KcpCredenti
   return {
     server: server.origin,
     token: user.token,
+    tokenFile: user.tokenFile,
     cert: fromBase64(user["client-certificate-data"]),
     key: fromBase64(user["client-key-data"]),
     ca: fromBase64(cluster["certificate-authority-data"]),
   };
 }
 
-export interface KcpNodeClaimStoreOptions {
+export async function bearerOf(credentials: KcpCredentials): Promise<string | undefined> {
+  if (credentials.tokenFile) return (await Deno.readTextFile(credentials.tokenFile)).trim();
+  return credentials.token;
+}
+
+export interface KcpRequestOptions {
   credentials: KcpCredentials;
   fetch?: typeof fetch;
   timeoutMs?: number;
-  homesTtlMs?: number;
 }
 
-const DEFAULT_HOMES_TTL_MS = 30_000;
-
-const NO_HOMES_TTL_MS = 0;
+export interface KcpNodeClaimStoreOptions extends KcpRequestOptions {
+  virtualWorkspace: string;
+}
 
 const DEFAULT_RETRY_AFTER_MS = 5_000;
 
@@ -111,7 +120,7 @@ export function toNodeClaim(raw: unknown, fallbackWorkspace?: string): NodeClaim
 
 type KcpRequest = (url: string, init?: RequestInit) => Promise<unknown>;
 
-function createKcpRequest(opts: KcpNodeClaimStoreOptions): KcpRequest {
+function createKcpRequest(opts: KcpRequestOptions): KcpRequest {
   const creds = opts.credentials;
   const timeoutMs = opts.timeoutMs ?? 15_000;
   const baseFetch = opts.fetch ?? fetch;
@@ -135,7 +144,8 @@ function createKcpRequest(opts: KcpNodeClaimStoreOptions): KcpRequest {
     }
     const headers = new Headers(init.headers);
     headers.set("accept", "application/json");
-    if (creds.token) headers.set("authorization", `Bearer ${creds.token}`);
+    const bearer = await bearerOf(creds);
+    if (bearer) headers.set("authorization", `Bearer ${bearer}`);
     const res = await baseFetch(url, {
       ...init,
       headers,
@@ -160,12 +170,17 @@ export function toClusterLink(raw: unknown, workspace: string): ClusterLinkView 
   return { workspace, name, spec: link.spec, status: link.status ?? {} };
 }
 
+function virtualWorkspaceBase(opts: KcpNodeClaimStoreOptions): string {
+  return opts.virtualWorkspace.replace(/\/+$/, "");
+}
+
 export function createKcpClusterLinkReader(opts: KcpNodeClaimStoreOptions): ClusterLinkReader {
   const request = createKcpRequest(opts);
+  const base = virtualWorkspaceBase(opts);
   const { group, version, plural } = CLUSTER_LINK_RESOURCE;
   return {
     async get(workspace, name) {
-      const url = `${opts.credentials.server}/clusters/${workspace}/apis/${group}/${version}/${plural}/${encodeURIComponent(name)}`;
+      const url = `${base}/clusters/${workspace}/apis/${group}/${version}/${plural}/${encodeURIComponent(name)}`;
       try {
         return toClusterLink(await request(url), workspace);
       } catch (err) {
@@ -177,39 +192,15 @@ export function createKcpClusterLinkReader(opts: KcpNodeClaimStoreOptions): Clus
 }
 
 export function createKcpNodeClaimStore(opts: KcpNodeClaimStoreOptions): NodeClaimStore {
-  const creds = opts.credentials;
   const request = createKcpRequest(opts);
-  const homesTtlMs = opts.homesTtlMs ?? DEFAULT_HOMES_TTL_MS;
-  let homesCache: { at: number; homes: string[] } | null = null;
+  const base = virtualWorkspaceBase(opts);
 
   function clusterPath(workspace: string, resource: string): string {
-    return `${creds.server}/clusters/${workspace}/apis/${NODE_CLAIM_RESOURCE.group}/${NODE_CLAIM_RESOURCE.version}/${NODE_CLAIM_RESOURCE.plural}${resource}`;
+    return `${base}/clusters/${workspace}/apis/${NODE_CLAIM_RESOURCE.group}/${NODE_CLAIM_RESOURCE.version}/${NODE_CLAIM_RESOURCE.plural}${resource}`;
   }
 
   async function itemUrl(claim: Pick<NodeClaim, "workspace" | "name">, sub = ""): Promise<string> {
     return clusterPath(claim.workspace, `/${encodeURIComponent(claim.name)}${sub}`);
-  }
-
-  interface WorkspaceList {
-    items?: { metadata: { name: string }; spec?: { type?: { name?: string } } }[];
-  }
-
-  async function childrenOf(workspace: string): Promise<string[]> {
-    const out = await request(
-      `${creds.server}/clusters/${workspace}/apis/tenancy.kcp.io/v1alpha1/workspaces`,
-    ) as WorkspaceList;
-    return (out.items ?? []).map((w) => w.metadata.name);
-  }
-
-  async function homes(): Promise<string[]> {
-    if (homesCache && Date.now() - homesCache.at < homesTtlMs) return homesCache.homes;
-    const paths: string[] = [];
-    for (const account of await childrenOf("root")) {
-      const accountPath = `root:${account}`;
-      for (const home of await childrenOf(accountPath)) paths.push(`${accountPath}:${home}`);
-    }
-    if (homesTtlMs > NO_HOMES_TTL_MS) homesCache = { at: Date.now(), homes: paths };
-    return paths;
   }
 
   async function jsonPatch(url: string, ops: unknown[]): Promise<unknown> {
@@ -248,12 +239,8 @@ export function createKcpNodeClaimStore(opts: KcpNodeClaimStoreOptions): NodeCla
 
   return {
     async list() {
-      const claims: NodeClaim[] = [];
-      for (const home of await homes()) {
-        const out = await request(clusterPath(home, "")) as { items?: unknown[] };
-        for (const item of out.items ?? []) claims.push(toNodeClaim(item, home));
-      }
-      return claims;
+      const out = await request(clusterPath("*", "")) as { items?: unknown[] };
+      return (out.items ?? []).map((item) => toNodeClaim(item));
     },
     async get(claim) {
       try {
@@ -276,13 +263,10 @@ export function createKcpNodeClaimStore(opts: KcpNodeClaimStoreOptions): NodeCla
   };
 }
 
-export interface KcpListenerUrlOptions {
-  credentials: KcpCredentials;
+export interface KcpListenerUrlOptions extends KcpRequestOptions {
   workspace: string;
   name: string;
   listener: string;
-  fetch?: typeof fetch;
-  timeoutMs?: number;
   cacheMs?: number;
 }
 
@@ -311,18 +295,16 @@ export function createKcpFetch(credentials: KcpCredentials): typeof fetch {
       ...(credentials.cert && credentials.key ? { cert: credentials.cert, key: credentials.key } : {}),
     })
     : undefined;
-  return (input, init) => {
+  return async (input, init) => {
     const headers = new Headers(init?.headers);
-    if (credentials.token) headers.set("authorization", `Bearer ${credentials.token}`);
-    return fetch(input, { ...init, headers, ...(client ? { client } : {}) } as RequestInit);
+    const bearer = await bearerOf(credentials);
+    if (bearer) headers.set("authorization", `Bearer ${bearer}`);
+    return await fetch(input, { ...init, headers, ...(client ? { client } : {}) } as RequestInit);
   };
 }
 
-export interface KcpMarketIdentitiesOptions {
-  credentials: KcpCredentials;
+export interface KcpMarketIdentitiesOptions extends KcpRequestOptions {
   workspace: string;
-  fetch?: typeof fetch;
-  timeoutMs?: number;
 }
 
 export interface AccountSignIn {

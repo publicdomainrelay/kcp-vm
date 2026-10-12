@@ -231,7 +231,7 @@ func Run(ctx context.Context, c Config, m hostsvc.Manager) error {
 	deno := denoruntime.Config{StateDir: c.StateDir, Deno: c.Executables[ExeDeno].Path, Kubeconfig: l.FrontKubeconfig(), Closure: c.Closure,
 		Unit: c.Unit, ApplyTimeout: ApplyTimeout, Log: c.Log}
 	return devcore.Run(ctx, devcore.Config{Layout: l, ReadyTimeout: c.ReadyTimeout, Log: c.Log, Application: &app, FrontAddress: c.FrontAddress,
-		DenoRuntime: &deno, WebApp: &appctl.WebApp{Kubeconfig: g.memberKubeconfig(), TSRoot: c.Closure.Root},
+		DenoRuntime: &deno, WebApp: &appctl.WebApp{FrontKubeconfig: g.memberKubeconfig(), TSRoot: c.Closure.Root},
 		OnComponents: reg.components, Before: g.before, Members: g.members, Listeners: reg.report}, m)
 }
 

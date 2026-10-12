@@ -117,8 +117,13 @@
     },
     "kcp-kubeconfig": {
       "type": "string",
-      "description": "kcp admin kubeconfig; when set, this door fulfils NodeClaims through the compute market",
+      "description": "kubeconfig of this web app's own kcp identity (a ServiceAccount token, re-read from its tokenFile on every request); it reads the Gateway and the OpenBaoServer and writes MarketIdentities",
       "env": "KCP_KUBECONFIG"
+    },
+    "kcp-clusters-export-url": {
+      "type": "string",
+      "description": "URL of the kcp virtual workspace of the clusters APIExport; with kcp-kubeconfig set, this web app lists and patches every cluster's NodeClaims and reads its ClusterLinks through it and fulfils them through the compute market",
+      "env": "KCP_CLUSTERS_EXPORT_URL"
     },
     "kcp-context": {
       "type": "string",
