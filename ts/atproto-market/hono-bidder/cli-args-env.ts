@@ -342,5 +342,15 @@ export default {
       env: "PORT_FILE",
       default: "./port-bound-to",
     },
+    "listeners-file": {
+      type: "string" as const,
+      description: "File every bound listener (tcp, unix, relay) is reported to as JSON once listening",
+      env: "LISTENERS_FILE",
+    },
+    "status-file": {
+      type: "string" as const,
+      description: "File the bidder's DID, relay ingress and serve port are written to as JSON once it is ready",
+      env: "STATUS_FILE",
+    },
   },
 };

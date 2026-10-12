@@ -26,12 +26,14 @@ function fakeServe(): ServeHandle {
   return {
     app: new Hono(),
     tcpPort: 0,
-    addRelay: () => {},
+    addRelay: () => Promise.resolve(),
     onConnected: (cb) => { onConnectedCbs.push(cb as () => void | Promise<void>); },
     beginServe: async () => {
       for (const cb of onConnectedCbs) await cb("did:web:test.localhost");
     },
     shutdown: () => {},
+    listenersWritten: () => Promise.resolve(),
+    listeners: [],
   };
 }
 

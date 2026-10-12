@@ -87,6 +87,8 @@ const plcDirectoryUrl = network.plcDirectoryUrl;
 let ownPlcDid: string | undefined;
 
 installMarketNetworkFetch({ network });
+const listenersFile = options.listenersFile as string | undefined;
+const statusFile = options.statusFile as string | undefined;
 
 // --ca-cert-pem / --guest-tls-port are threaded to the compute provider so
 // guests trust and reach the TLS dispatcher listener for OIDC (HTTPS-only).
@@ -175,7 +177,7 @@ let identityHandle: MarketIdentityHandle | undefined;
 let localRepoAgent: LocalPDSAgent | undefined;
 
 async function openLocalRepoAgent(repoKeypair: Secp256k1Keypair): Promise<LocalPDSAgent> {
-  const pdsServe = createServe({ logger });
+  const pdsServe = createServe({ logger, listenersFile });
   const agent = await createLocalPDSAgent({
     logger, keypair: repoKeypair,
     serve: pdsServe,
@@ -560,7 +562,7 @@ const acceptToContract = new Map<string, { receiptKey: string; receiptUri: strin
 
 if (options.computeProviderDigitaloceanToken) {
   const relay = await cliCreateIngress();
-  const serve = createServe({ logger, relays: [relay] });
+  const serve = createServe({ logger, relays: [relay], listenersFile });
   serves.push(serve);
   providers.push(createComputeProviderHooks({
     provider: createDigitalOceanComputeProvider({
@@ -588,7 +590,7 @@ if (options.computeProviderDigitaloceanToken) {
 
 if (options.computeProviderLocal) {
   const relay = await cliCreateIngress();
-  const serve = createServe({ logger, relays: [relay] });
+  const serve = createServe({ logger, relays: [relay], listenersFile });
   serves.push(serve);
   const localProvider = createLocalComputeProvider({
     logger, atproto: atproto as import("@publicdomainrelay/compute-provider-abc").ComputeAtproto, serve,
@@ -635,7 +637,7 @@ if (options.computeProviderFirecracker) {
     );
   }
   const relay = await cliCreateIngress();
-  const serve = createServe({ logger, relays: [relay] });
+  const serve = createServe({ logger, relays: [relay], listenersFile });
   serves.push(serve);
   const firecrackerProvider = createFirecrackerComputeProvider({
     logger,
@@ -699,6 +701,7 @@ const bidderServe = createServe({
   },
   unix: (options.serveUnix as string | undefined) ? { socketPath: options.serveUnix as string } : undefined,
   portFile: options.portFile as string | undefined,
+  listenersFile,
   relays: bidderIngress ? [bidderIngress] : [],
 });
 
@@ -764,13 +767,19 @@ Deno.addSignalListener("SIGTERM", shutdown);
 
 await bidder.beginServe();
 
-// Machine-readable line for test harness subprocess spawn
-console.log(JSON.stringify({
-  event: "bidder_ready",
+const bidderStatus = {
   did: atproto.did,
   ingressRef: bidderIngress?.ingressRef,
   servePort: bidderServe.tcpPort,
-}));
+};
+
+if (statusFile) {
+  await Deno.writeTextFile(`${statusFile}.tmp`, JSON.stringify(bidderStatus) + "\n");
+  await Deno.rename(`${statusFile}.tmp`, statusFile);
+  logger.info("bidder_status_written", { path: statusFile, ...bidderStatus });
+}
+
+console.log(JSON.stringify({ event: "bidder_ready", ...bidderStatus }));
 
 const BADGE_BLUE_KEYS_NSID = "com.publicdomainrelay.temp.badgeBlueKeys";
 let hasAssociation = false;
