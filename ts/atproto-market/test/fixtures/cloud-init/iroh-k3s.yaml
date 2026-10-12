@@ -1,0 +1,190 @@
+#cloud-config
+apt:
+  preserve_sources_list: true
+write_files:
+  - path: /root/.ssh/authorized_keys
+    owner: root:root
+    permissions: "0600"
+    content: |
+      ssh-ed25519 AAAA test@example
+  - path: /etc/ssh/sshd_config.d/10-iroh.conf
+    owner: root:root
+    permissions: "0644"
+    content: |
+      # Key-only root login; reached over the guest's own iroh endpoint (the
+      # compute-provider harness also TCP-probes :22 directly for readiness).
+      PermitRootLogin prohibit-password
+      PasswordAuthentication no
+  - path: /usr/local/bin/setup-iroh.sh
+    owner: root:root
+    permissions: "0755"
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+
+      STAMP=/var/lib/setup-iroh.done
+      [ -f "${STAMP}" ] && exit 0
+
+      DUMBPIPE_VERSION="0.39.0"
+
+      if [ -x /usr/local/bin/dumbpipe ] && [ "$(cat /usr/local/bin/dumbpipe.version 2>/dev/null)" = "${DUMBPIPE_VERSION}" ]; then
+        touch "${STAMP}"
+        exit 0
+      fi
+
+      # dumbpipe ships linux tarballs for x86_64 and aarch64 only.
+      case "$(uname -m)" in
+        x86_64|amd64) _arch=x86_64 ;;
+        aarch64|arm64) _arch=aarch64 ;;
+        *) echo "unsupported machine type for dumbpipe: $(uname -m)" >&2; exit 1 ;;
+      esac
+
+      URL="https://github.com/n0-computer/dumbpipe/releases/download/v${DUMBPIPE_VERSION}/dumbpipe-v${DUMBPIPE_VERSION}-linux-${_arch}.tar.gz"
+
+      TMP="$(mktemp -d)"
+      trap 'rm -rf "${TMP}"' EXIT
+
+      # Bounded retry: the archive carries only ./dumbpipe, so the whole archive is
+      # extracted into TMP and the ./dumbpipe it produced is moved into place.
+      for attempt in $(seq 1 5); do
+        if curl -fsSL "${URL}" -o "${TMP}/dumbpipe.tar.gz" \
+            && tar -xzf "${TMP}/dumbpipe.tar.gz" -C "${TMP}"; then
+          install -m 0755 "${TMP}/dumbpipe" /usr/local/bin/dumbpipe
+          touch "${STAMP}"
+          exit 0
+        fi
+        echo "dumbpipe install failed (attempt ${attempt}): ${URL}" >&2
+        sleep 5
+      done
+
+      echo "dumbpipe install failed after 5 attempts: ${URL}" >&2
+      exit 1
+  - path: /usr/local/bin/iroh-listener.sh
+    owner: root:root
+    permissions: "0755"
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+
+      # One persistent endpoint secret: regenerating it would change the endpoint id
+      # and therefore the ticket on every restart.
+      SECRET_FILE=/root/.iroh-secret
+      if [ ! -s "${SECRET_FILE}" ]; then
+        umask 077
+        head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "${SECRET_FILE}"
+        chmod 0600 "${SECRET_FILE}"
+      fi
+      IROH_SECRET="$(cat "${SECRET_FILE}")"
+      export IROH_SECRET
+
+      TICKET_FILE=/run/guest-iroh-ticket
+      LOG=/run/guest-iroh.log
+      rm -f "${TICKET_FILE}" "${LOG}"
+
+      # No --verbose: it appends a second, short-ticket line. The last connect-tcp
+      # line's final field is the full ticket.
+      /usr/local/bin/dumbpipe listen-tcp --host 127.0.0.1:22 2>>"${LOG}" &
+      DUMBPIPE_PID=$!
+
+      TICKET=""
+      for _ in $(seq 1 300); do
+        if [ -s "${LOG}" ]; then
+          TICKET="$(grep -a 'connect-tcp' "${LOG}" | tail -n 1 | awk '{print $NF}')"
+        fi
+        if [ -n "${TICKET}" ]; then
+          break
+        fi
+        if ! kill -0 "${DUMBPIPE_PID}" 2>/dev/null; then
+          break
+        fi
+        sleep 1
+      done
+
+      if [ -n "${TICKET}" ]; then
+        printf 'iroh://%s\n' "${TICKET}" > "${TICKET_FILE}"
+        chmod 0600 "${TICKET_FILE}"
+        printf 'iroh://%s\n' "${TICKET}" > /run/guest-fqdn.tmp
+        mv -f /run/guest-fqdn.tmp /run/guest-fqdn
+      fi
+
+      wait "${DUMBPIPE_PID}"
+  - path: /etc/systemd/system/iroh.service
+    owner: root:root
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=iroh dumbpipe listener in front of local sshd
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Type=simple
+      User=root
+      ExecStart=/usr/local/bin/iroh-listener.sh
+      Restart=always
+      RestartSec=5
+      TimeoutStopSec=10
+      StandardOutput=journal
+      StandardError=journal
+
+      [Install]
+      WantedBy=multi-user.target
+  - path: /usr/local/bin/setup-k3s.sh
+    owner: root:root
+    permissions: "0755"
+    content: |
+      #!/bin/bash
+      set -eux -o pipefail
+
+      STAMP=/var/lib/setup-k3s.done
+      [ -f "${STAMP}" ] && exit 0
+
+      if [ -x /usr/local/bin/k3s ] && /usr/local/bin/k3s --version 2>/dev/null | grep -qF 'v1.36.4+k3s1'; then
+        /usr/local/bin/k3s --version
+        touch "${STAMP}"
+        exit 0
+      fi
+
+      command -v curl >/dev/null || { apt-get update && apt-get install -y curl ca-certificates; }
+
+      curl -sfL https://get.k3s.io -o /tmp/k3s-install.sh
+      INSTALL_K3S_VERSION=v1.36.4+k3s1 \
+        INSTALL_K3S_SKIP_START=true \
+        INSTALL_K3S_SKIP_ENABLE=true \
+        sh /tmp/k3s-install.sh
+
+      /usr/local/bin/k3s --version
+
+      touch "${STAMP}"
+  - path: /etc/resolv.conf
+    owner: root:root
+    permissions: "0644"
+    content: |
+      nameserver 172.30.0.1
+      nameserver 1.1.1.1
+      nameserver 9.9.9.9
+      options timeout:2 attempts:3
+bootcmd:
+  - |-
+    printf '%s' 'nameserver 172.30.0.1
+    nameserver 1.1.1.1
+    nameserver 9.9.9.9
+    options timeout:2 attempts:3
+    ' > /etc/resolv.conf
+runcmd:
+  - sh -c 'missing=""; for p in "openssh-server"; do dpkg -s "$p" >/dev/null 2>&1 || missing="$missing $p"; done; [ -z "$missing" ] || { apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends -o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confdef $missing; }'
+  - /usr/local/bin/setup-iroh.sh
+  - systemctl daemon-reload
+  - systemctl enable iroh.service
+  - systemctl start --no-block iroh.service
+  - systemctl enable --now --no-block ssh || systemctl enable --now --no-block sshd
+  - /usr/local/bin/setup-k3s.sh
+  - |-
+    printf '%s' 'nameserver 172.30.0.1
+    nameserver 1.1.1.1
+    nameserver 9.9.9.9
+    options timeout:2 attempts:3
+    ' > /etc/resolv.conf
+disable_root: false
+ssh_pwauth: false
+package_update: false

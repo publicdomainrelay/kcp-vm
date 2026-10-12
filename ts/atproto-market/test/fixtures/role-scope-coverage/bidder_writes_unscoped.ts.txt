@@ -1,0 +1,9 @@
+const { uri, cid } = await atproto.createRepoRecord(
+  COMPUTE_EVENTS_VM_TERMINATED_NSID,
+  { $type: COMPUTE_EVENTS_VM_TERMINATED_NSID, createdAt: nowIso },
+);
+await atproto.createRecord("com.publicdomainrelay.temp.compute.events.vm.fixtureUnscoped", {
+  $type: "com.publicdomainrelay.temp.compute.events.vm.fixtureUnscoped",
+  createdAt: nowIso,
+});
+await atproto.createRepoRecord(collection, record);
