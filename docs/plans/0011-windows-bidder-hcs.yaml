@@ -5,7 +5,7 @@ queued: >
   0007 (docs/plans/0007-compute-provider-kcp.yaml) are complete on Linux, every item done with evidence
   and their acceptance checks ACC6-* and ACC7-* recorded, and after the plan 0008
   (docs/plans/0008-embedded-deno-and-typescript-denopods.yaml) items M1-DENO, M1-TS-CLOSURE,
-  M2-DENOKCP-FORK, M2-DENOKCP-INPROC, M2-SERVICE-TEMPLATE and M4-TESTBED-PORT are done. Then M0-REVISIT
+  M2-DENOKCP-FORK, M2-DENOKCP-INPROC, M2-SERVICE-TEMPLATE and M4-MARKET-NETWORK-PORT are done. Then M0-REVISIT
   runs first; no other item may move to doing before it is done. Every item is executed ON a Windows
   host (decided by the user 2026-10-11); the executor works on that host, not on hat-8.
 source: >
@@ -102,7 +102,7 @@ items:
       files and which ones are stubs for windows, the per-OS asset pipeline (internal/assets, how a
       windows-only asset is staged and pinned in versions.json), the ComputeVM schema (status.runtime and
       its field managers), the ComputeVM controller's re-population rule, the install and upgrade flow
-      (versions/<sha256>/, GC of runtime/<sha256>/), the DenoPod runner, the market test bed command and
+      (versions/<sha256>/, GC of runtime/<sha256>/), the DenoPod runner, the market network command and
       plan 0006 M0-SIZE-BUDGET's platform matrix (it said darwin carries client modes only and named no
       windows target; both are superseded by the user's 2026-10-11 decisions). Then amend THIS file: item
       ids, decisions, depends_on (cross-plan ids to the real landed ids), files (real package paths) and
@@ -163,7 +163,7 @@ items:
       pure-Go path; a compute system document with Owner socialweb-computer-<handle>,
       ShouldTerminateOnLastHandleClosed false, Chipset.LinuxKernelDirect, two SCSI attachments, one network
       adapter on an HNS endpoint, ComPorts 0 to a named pipe; HcsGrantVmAccess on every file. Driven by
-      runComputeContract against the market bed or, if the bed does not yet run on Windows (M0-HOST-BASELINE),
+      runComputeContract against the market network or, if the market network does not yet run on Windows (M0-HOST-BASELINE),
       against the canonical harness shape of ts/atproto-market/test/bidder_container_integration_test.ts with
       the bidder pointed at its local dispatcher. The guest reaches onNetwork and the requester's tunnel
       answers; zero ssh.
@@ -507,15 +507,15 @@ items:
   - id: M3-LIVE-RENT
     milestone: M3
     title: A guest rented through the RFP flow from a Windows bidder, zero ssh
-    depends_on: [M2-INSTALLER-WINDOWS, "0008:M4-TESTBED-PORT"]
+    depends_on: [M2-INSTALLER-WINDOWS, "0008:M4-MARKET-NETWORK-PORT"]
     decision: >
-      On the Windows host, with the installed bidder service and the market bed (0008's testbed command,
-      or the canonical TS harness if M0 recorded the bed cannot run on Windows): runComputeContract posts
+      On the Windows host, with the installed bidder service and the market network (0008's market network command,
+      or the canonical TS harness if M0 recorded the market network cannot run on Windows): runComputeContract posts
       compute.vm and a signed market.rfp, the Windows bidder bids, the requester accepts, the guest is born
       from cloud-init user_data in an HCS system, reaches onNetwork, and the requester reaches it only
       through the relay tunnel. Read: ComputeVM Running with status.runtime {hcs, Id, RuntimeId}; the bid
       config, receipt and onNetwork records field-for-field the shapes the firecracker provider writes.
-    files: ["internal/marketbed/live_test.go (TestAWindowsBidderRentsAnHcsGuestThroughTheRFPFlow, windows tag)"]
+    files: ["internal/marketnetwork/live_test.go (TestAWindowsBidderRentsAnHcsGuestThroughTheRFPFlow, windows tag)"]
     test_first: "The live test, red until M2 exists."
     done_when: "PASS with UTC timestamps on the Windows host; zero ssh sessions in every log."
     risks: []
@@ -531,7 +531,7 @@ items:
       `socialweb-computer upgrade --binary <a build with a different closure>`, same reads plus every
       DenoPod on the new closure; then releaseCompute's vm.delete answered 200, the ComputeVM gone,
       HcsEnumerateComputeSystems by Owner empty, the endpoint and the work dir's VHDs gone.
-    files: ["internal/marketbed/live_test.go (TestAWindowsBidderKilledAndUpgradedKeepsItsVmAndStillReleasesIt)"]
+    files: ["internal/marketnetwork/live_test.go (TestAWindowsBidderKilledAndUpgradedKeepsItsVmAndStillReleasesIt)"]
     test_first: "That test, red until M2 exists."
     done_when: "PASS readings recorded with UTC timestamps; zero ssh sessions."
     risks: []
@@ -547,7 +547,7 @@ items:
       Id), no compute system is created for it, and the requester's releaseCompute of that receipt gets
       vm.delete 200 and the Lost ComputeVM and its work dir are deleted. The requester-side replacement
       through a new RFP is plan 0005 M3-NODE-LOSS's and is not re-proved here.
-    files: ["internal/marketbed/live_test.go (TestAWindowsHostRebootLeavesLostComputeVMsThatStillRelease, a two-phase test resumed after boot)"]
+    files: ["internal/marketnetwork/live_test.go (TestAWindowsHostRebootLeavesLostComputeVMsThatStillRelease, a two-phase test resumed after boot)"]
     test_first: "That test, red until M2 exists."
     done_when: "PASS readings recorded: pre-reboot Running, post-reboot Lost, no new HCS system, release 200."
     risks: ["If the HNS network is non-persistent it must be recreated before the controller allocates; the installer's network is persistent unless M0 decided otherwise."]

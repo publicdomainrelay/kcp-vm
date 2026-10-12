@@ -44,7 +44,7 @@ revised: >
   M4-CONTRACT-RESTORE. M4-HOST-KEYS follows the checklist. No item renamed.
   2026-10-12 (fourth fold), the user's paradigm correction (0006 `principle`): new `principle` block here (a
   bidder handle is an application instance with its own kcp; modes are profiles; applications meet only over
-  the market protocol), a bed-per-workstream state rule, M5-RUN-BIDDER restated per application instance,
+  the market protocol), a market-network-per-workstream state rule, M5-RUN-BIDDER restated per application instance,
   NodeClaim/tenant-node items tagged `kcp_use: traditional-exception`. No item added or renamed.
   2026-10-12 (fifth fold), from docs/research/2026-10-11-vm-lifecycle/multi-server-to-kcp.md and the user's
   answers to its section 7 (user-decisions.md 2026-10-12; plan 0006 principle.decomposition), which override
@@ -83,11 +83,11 @@ principle:
     clusters project is the one traditional use.
   in_this_plan:
     - "A bidder handle is an application instance = its own kcp (one slot on kine-sqlite behind a port-0 front) + the bidder manifest set + a profile. Its state is ComputeVM, OpenBaoServer and HostProcess objects in that kcp; its components (the bidder deno, the vault, each VM unit) are DenoPods and HostProcesses reconciled from them. Two handles on one host never share a kcp; the host is only where they run (/dev/kvm, the shared account, the subuid range stay about the machine)."
-    - "Modes are profiles over the one bidder manifest set: OAuth QR mode against a real account has no PDS pod; the market test bed profile gives the bidder its own PDS pod. No mode is a separate code path."
+    - "Modes are profiles over the one bidder manifest set: OAuth QR mode against a real account has no PDS pod; the market network profile gives the bidder its own PDS pod. No mode is a separate code path."
     - "The bidder and its requesters/gateways talk ONLY over the atproto market protocol (RFP, bid, accept, receipts, onNetwork, vm.hostKeys, vm.terminated). A requester never reads a bidder's ComputeVMs and the gateway never reads them either; what crosses applications is a market record."
     - "Every bidder listener behind the edge binds port 0 and reports into its kcp object's status (0006 principle.port0_rule)."
     - "kcp_use: traditional-exception marks the items that serve the virtual Kubernetes clusters project (NodeClaims, tenant nodes): M3-NODE-LOSS-CLOCK, M6-CLAIM-RESUME, M6-GATEWAY-REPOPULATE, M6-NOSSH-JOIN."
-    - "Fifth fold (user 2026-10-12, 0006 principle.decomposition): the bidder is a MarketBidder root object in its own kcp (0006 M2-APP-CONTROLLER), also inside a market bed, where the bed's MarketNetwork applies it into the bidder's own kcp and copies the network values onto it. Its sign-in is a MarketIdentity (M1-MARKET-IDENTITY) whose pending actions the foreground CLI renders; every hono-bidder option maps to a root-object field or profile; hono-bidder runs only as a DenoPod entry (kcp only) from M5-RUN-BIDDER on; its keys, relay keypairs, OIDC JWK and OAuth session live only in its OpenBao (M4-BIDDER-VAULT); its guest-facing endpoints become their own DenoPod (M5-BIDDER-COMPONENTS); guests are reached over iroh only."
+    - "Fifth fold (user 2026-10-12, 0006 principle.decomposition): the bidder is a MarketBidder root object in its own kcp (0006 M2-APP-CONTROLLER), also inside a market network, where the market network's MarketNetwork applies it into the bidder's own kcp and copies the network values onto it. Its sign-in is a MarketIdentity (M1-MARKET-IDENTITY) whose pending actions the foreground CLI renders; every hono-bidder option maps to a root-object field or profile; hono-bidder runs only as a DenoPod entry (kcp only) from M5-RUN-BIDDER on; its keys, relay keypairs, OIDC JWK and OAuth session live only in its OpenBao (M4-BIDDER-VAULT); its guest-facing endpoints become their own DenoPod (M5-BIDDER-COMPONENTS); guests are reached over iroh only."
 state_rules:
   - TypeScript lives in this repository (decided by the user 2026-10-12): the closure's ten repositories were vendored with their history under ts/<repository>/ and the originals are frozen; a path this plan names under ts/ is changed here, never in the original.
   - Item status (todo, doing, done, blocked) lives here; the git history is the evidence. No evidence lists are added (user, 2026-10-12).
@@ -115,11 +115,11 @@ state_rules:
     and tests; a bidder's kcp is one slot on kine-sqlite. Dev adds no provisioning path: a dev instance's
     guests come up only through runComputeContract against that instance's bidder.
   - >
-    Bed per workstream (decided by the user 2026-10-12; 0006 state rule). This plan's live tests run in the
-    task's own market test bed (a git worktree of this repository; 0008 M1-BED-PARALLEL, later
-    `dev up --profile bed`), with the bed's own bidders and
+    Market network per workstream (decided by the user 2026-10-12; 0006 state rule). This plan's live tests run in the
+    task's own market network (a git worktree of this repository; 0008 M1-MARKET-NETWORK-PARALLEL, later
+    `dev up --profile market-network`), with the market network's own bidders and
     requesters. The shared real bidder (bobvmbuilder on hat-8) and alice are a final soak only, after the
-    bed tests pass.
+    market network tests pass.
   - >
     Every org repo works on `main` and is pushed to GitHub as work lands (decided by the user 2026-10-12):
     atproto-market, hono-compute-provider, typescript-helpers, did-key-associator and socialweb-computer-k8s
@@ -130,7 +130,7 @@ state_rules:
     live run publishes it.
 ownership:
   owned: >
-    All code in socialweb-computer-kcp, the vendored deno-kcp test bed, and the atproto-market requester
+    All code in socialweb-computer-kcp, the vendored deno-kcp market network, and the atproto-market requester
     libraries. Decided by the user 2026-10-07: anything in hono-compute-provider and atproto-market may be
     changed; decided by the user 2026-10-12: committed on main and pushed to GitHub as work lands (replaces
     "committed only, never pushed"). Also changed by this plan, same rule: typescript-helpers (oauth-scope
@@ -186,11 +186,11 @@ research:
   multi_server_to_kcp_2026_10_12:
     file: "docs/research/2026-10-11-vm-lifecycle/multi-server-to-kcp.md (atproto-market, hono-compute-provider and socialweb-computer-kcp as on disk 2026-10-12, swck 5a030ec)"
     findings_that_change_items:
-      - "F1 (-> M3-BIDDER-ACCOUNT-PDS, M5-RUN-BIDDER): the bed's bidder does NOT use the bed's root:bob PDS DenoPod - 70-bidder.yaml:24 passes no handle, so it runs its own in-process repo (createLocalPDSAgent) served through the dispatcher, and bob's hono-pds is only probed for readiness (accept.sh:412-414). The handle+password path also builds a LOCAL repo (hono-bidder/mod.ts:262-282)."
+      - "F1 (-> M3-BIDDER-ACCOUNT-PDS, M5-RUN-BIDDER): the market network's bidder does NOT use the market network's root:bob PDS DenoPod - 70-bidder.yaml:24 passes no handle, so it runs its own in-process repo (createLocalPDSAgent) served through the dispatcher, and bob's hono-pds is only probed for readiness (accept.sh:412-414). The handle+password path also builds a LOCAL repo (hono-bidder/mod.ts:262-282)."
       - "F1 (-> M3-BIDDER-ACCOUNT-PDS): --atproto-pds-url (hono-bidder/cli-args-env.ts:76-81) is read nowhere, and createRemoteAgent is imported but never called (hono-bidder/mod.ts:10)."
       - "F3 (-> M4-BIDDER-VAULT): a fresh relay keypair per relay per process (hono-bidder/mod.ts:103-113, :104) - the market relay, each provider's relay and the in-process repo's relay - so every ingressRef and the OIDC issuer URL move on each restart; the bidder runs 1 + P relays (+1 for an in-process repo), not one."
       - "F3 (-> M3-OIDC-ISSUER-INSTANCE): oidc-issuer-hono's signing key store is in memory AND module-global (lib/oidc-issuer-hono/mod.ts:42-57; configureOidc :63-77 is called by every createOidcIssuer :616), so two providers in one process overwrite each other's issuer URL getter."
-      - "F2 (-> M1-MARKET-IDENTITY): interactive steps are stdout/stdin and cannot run in a pod - the QR printed (hono-bidder/mod.ts:229-234, :720-726), association a prompt('[y/N]') on stdin (:348, :743; request-vm-ssh :430), browser OAuth spawns xdg-open (:166-171), an expired session deletes its file and Deno.exit(1) (:122-135); a DenoPod has stdin null (70-bidder.yaml:85), so the bed passes --skip-qr."
+      - "F2 (-> M1-MARKET-IDENTITY): interactive steps are stdout/stdin and cannot run in a pod - the QR printed (hono-bidder/mod.ts:229-234, :720-726), association a prompt('[y/N]') on stdin (:348, :743; request-vm-ssh :430), browser OAuth spawns xdg-open (:166-171), an expired session deletes its file and Deno.exit(1) (:122-135); a DenoPod has stdin null (70-bidder.yaml:85), so the market network passes --skip-qr."
       - "F6 (-> M5-RUN-BIDDER, 0008 M2-SERVICE-TEMPLATE): per-user state under $HOME is shared by every instance (private-key-hex-path and pds-state-path defaults computed with Deno.env.get in cli-args-env.ts:235-246; oauth-qr-session.ts:9-20)."
       - "F9 (-> M3-BIDDER-COMPOSER): hono-bidder/mod.ts is an 825-line CLI composing every server; the in-process harnesses (atproto-market test/*_integration_test.ts) re-compose the same parts by hand."
       - "Guest transports (user 2026-10-12): the guest JSR registry (compute-provider-firecracker :574-590, a TCP 0.0.0.0:0 listener per firecracker/local provider) and every non-iroh transport are stripped (0008 M1-STRIP-LEGACY-TRANSPORTS), so the Go side inherits none of them."
@@ -230,7 +230,7 @@ items:
     done_when: "the stage chosen and recorded with readings; the fallback's status recorded; M2-VM-RUNTIME's decision updated to name the stage."
     risks:
       - "Fedora's pasta SELinux policy may deny pasta inside an unprivileged user namespace the trampoline does not cover; recorded with the denial, and the profile change (install-time) named."
-      - "The RFP-flow guest needs the live market bed on hat-8; until 0008 M1-BED-PARALLEL lands the run is serialized with every other bed run."
+      - "The RFP-flow guest needs the live market network on hat-8; until 0008 M1-MARKET-NETWORK-PARALLEL lands the run is serialized with every other market network run."
     status: done
     evidence:
   - id: M1-DECIDE
@@ -241,7 +241,7 @@ items:
       Decided by the user 2026-10-07: a typed ComputeVM CRD reconciled by a Go controller, not a DenoPod
       per VM. The bidder runs as a DenoPod and writes ComputeVMs; kcp lists running VMs. Reasons kept on
       record: deleting a DenoPod SIGKILLs its group (supervisor.go:156,:322) so no release runs; the 5m
-      runner timeout (pod.go:17) killed the bed's bidder mid-contract (run 4); DenoPod status has no typed
+      runner timeout (pod.go:17) killed the market network's bidder mid-contract (run 4); DenoPod status has no typed
       guest fields; booting needs /dev/kvm reach the TypeScript sandbox must not hold. Also recorded, decided
       by the user 2026-10-11: no socialweb-computer code in a running VM's process tree (the VMM is launched
       by the user manager; our code is one-shot prep; the vmexec helper execve's away); every VM is one
@@ -501,7 +501,7 @@ items:
       user's choice): given a pendingAction url naming a hono-pds authorization request, a helper completes
       it through hono-pds's session minting (hono-pds lib/atproto-oauth-server-deno createSessionInjector,
       mod.ts:147) for a test account, so the oauthQr, oauthBrowser and pdsAccount modes complete with no
-      human; inside a bed the QR relay is the MarketNetwork's qr DenoPod (0006 M2-APP-CONTROLLER).
+      human; inside a market network the QR relay is the MarketNetwork's qr DenoPod (0006 M2-APP-CONTROLLER).
     files: ["api/v1alpha1/marketidentity_types.go", "internal/apigen (schema, export, TS wire types)", "ts/atproto-market/lib/abc/identity-prompt/", "ts/atproto-market/lib/identity-prompt-kcp/", "ts/atproto-market/lib/identity-prompt-memory/", "ts/atproto-market/lib/identity-prompt-tty/", "ts/atproto-market/hono-bidder/mod.ts and request-vm-ssh/mod.ts (interactive steps through the port)", "ts/atproto-market/test/helpers (hono-pds session-minting driver)", "internal/appcli/ (pendingAction renderer)"]
     test_first: >
       atproto-market against a fake kcp: 'the QR url appears in status.pendingAction and the scan completes
@@ -510,8 +510,8 @@ items:
       process stays up', 'no MarketIdentity write carries a key, token, DPoP key or code' (scans every status
       and spec write); Go: TestTheMarketIdentitySchemaHasNoSecretField,
       TestTheRendererShowsTheQrAndReturnsWhenReady (fake kcp). Red first.
-    done_when: "green; on a market bed the bidder DenoPod runs without --skip-qr and its association is approved through the identity object (UTC reading); pushed on main in atproto-market."
-    risks: ["Until 0008 M4-TESTBED-PORT gives each bed application its own kcp, the bed bidder's MarketIdentity lives in today's shared bed kcp (its DenoPod's KCP_WORKSPACE); the port writes wherever its DenoPod's kcp is, so nothing changes when it moves."]
+    done_when: "green; on a market network the bidder DenoPod runs without --skip-qr and its association is approved through the identity object (UTC reading); pushed on main in atproto-market."
+    risks: ["Until 0008 M4-MARKET-NETWORK-PORT gives each market network application its own kcp, the market network bidder's MarketIdentity lives in today's shared market network kcp (its DenoPod's KCP_WORKSPACE); the port writes wherever its DenoPod's kcp is, so nothing changes when it moves."]
     status: done
     evidence:
   - id: M2-VM-RUNTIME
@@ -534,7 +534,7 @@ items:
       Decided by the user 2026-10-07: no docker for VM runners; unprivileged through /dev/kvm via the kvm
       group, never chmod. Decided by the user 2026-10-11: no socialweb code in the VM's process tree; ONE
       shared lingering account; identical guest network; console to a capped file; graceful stop first
-      (SendCtrlAltDel over the API socket, a grace window measured live on the market bed, then the unit
+      (SendCtrlAltDel over the API socket, a grace window measured live on the market network, then the unit
       stops with KillSignal=SIGKILL; x86_64 only, arm64 goes straight to SIGKILL until a guest-side shutdown
       path exists). Decided by Claude, user may veto (exploration B1-B3, linux-proofs E1-E5): internal/vmruntime
       (interface Runtime {Capabilities, Prepare, Start, Inspect, Stop, List, Cleanup}; VMSpec, RuntimeRef,
@@ -695,7 +695,7 @@ items:
       booted again (decided by the user 2026-10-07: replaced through a new RFP; plan 0005 M3-NODE-LOSS does
       that from the requester side), and the receipt stays releasable. Orphans: a unit with prefix
       socialweb-vm-<hid>- of THIS handle and no ComputeVM is reported and stopped after a 10-minute grace;
-      units of other handles on the shared account and of beds (socialweb-bed-*) are never touched (name
+      units of other handles on the shared account and of market networks (socialweb-market-network-*) are never touched (name
       filter in hostsvc.List). A user-manager restart, linger removal or `loginctl terminate-user` leaves no
       units: every ComputeVM goes Lost(UnitGone), the same as a reboot. Against the two E8 live defects
       (2026-10-12; decided by Claude, user may veto): (a) a VM that dies is noticed - the controller consumes
@@ -712,7 +712,7 @@ items:
       TestAnUnreachableBusIsUnknownNeverLost, TestAnUnreachableApiSocketWithMatchingIdentityIsUnknown,
       TestIdentityMismatchStopsTheUnitImmediately, TestABootIDChangeMakesEveryVMLostWithoutStartingAnything,
       TestALostGuestIsNeverBootedAgain, TestDeletingAComputeVMStopsGracefullyAndRemovesItsWorkDirBeforeTheFinalizerGoes,
-      TestAnotherHandlesUnitIsNeverTouched, TestABedUnitIsNeverTouched,
+      TestAnotherHandlesUnitIsNeverTouched, TestANetworkUnitIsNeverTouched,
       TestAVMMExitObservedByWatchMakesTheComputeVMLostWithinOneEvent (E8 defect a),
       TestTheFinalizerStaysUntilTheWorkDirIsGoneForReleasedLostAndFailed and
       TestAWorkDirWithNoComputeVMAndNoUnitIsRemovedAfterTheGrace (E8 defect b; a fake vms/ tree seeded with
@@ -770,17 +770,17 @@ items:
     evidence:
   - id: M3-BIDDER-ACCOUNT-PDS
     milestone: M3
-    title: hono-bidder signs in to a real PDS account by handle and password, so a bed bidder uses its own PDS pod
+    title: hono-bidder signs in to a real PDS account by handle and password, so a market network bidder uses its own PDS pod
     depends_on: []
     decision: >
       Fifth fold 2026-10-12 (multi-server-to-kcp.md finding F1; decided by Claude, user may veto, within the
-      user's principle that a bed bidder has its own PDS pod): today --atproto-handle/--atproto-password
+      user's principle that a market network bidder has its own PDS pod): today --atproto-handle/--atproto-password
       builds a LOCAL repo (hono-bidder/mod.ts:262-282), --atproto-pds-url is read nowhere
-      (cli-args-env.ts:76-81) and createRemoteAgent is imported but never called (:10), so the bed's bidder
+      (cli-args-env.ts:76-81) and createRemoteAgent is imported but never called (:10), so the market network's bidder
       ignores the root:bob PDS DenoPod (70-bidder.yaml:24; accept.sh:412-414 only probes it). That path
       becomes a remote-PDS session (createRemoteAgent against --atproto-pds-url, MarketIdentity mode
       pdsAccount): records go to that PDS, the bidder serves no repo, its market endpoints stay on its own
-      relay. The bed profile's bidder uses its own PDS DenoPod; production stays QR on the user's PDS; the
+      relay. The market-network profile's bidder uses its own PDS DenoPod; production stays QR on the user's PDS; the
       in-process repo (localRepo, the ephemeral-PDS mode the user keeps) stays for dev-local and the
       harness. The password is a vault value, never a kcp field (M4-BIDDER-VAULT; until then the existing
       option path).
@@ -828,9 +828,9 @@ items:
       is NO standalone mode (decided by the user 2026-10-12: kcp only): the DenoPod template (0008
       M2-SERVICE-TEMPLATE) sets the spec for one component; the in-process harnesses call the factory with an
       all-inproc spec instead of composing by hand (they are library tests, not runs; decided by Claude, user
-      may veto), so a component split cannot pass the harness and fail the bed. It composes nothing the strip
+      may veto), so a component split cannot pass the harness and fail the market network. It composes nothing the strip
       deleted (no guest JSR registry, no non-iroh transport). bidder_prod_integration_test.ts, which spawns
-      the CLI against real plc.directory and xrpc.fedproxy.com, is moved onto a bed or deleted (bed per
+      the CLI against real plc.directory and xrpc.fedproxy.com, is moved onto a market network or deleted (market network per
       workstream; no real account in a workstream test). The `bidder_ready` stdout line stays only until
       0008 M2-DENOPOD-LISTENERS' report replaces every reader of it.
     files: ["ts/atproto-market/lib/hono-factory-market-bidder-app/", "ts/atproto-market/hono-bidder/mod.ts", "ts/atproto-market/test/*_integration_test.ts"]
@@ -868,13 +868,13 @@ items:
       TestANodeNotReadyBeforeAProviderRestartIsStillReleasedOnTime,
       TestTheJoinGraceIsRebasedToPathUpToo, TestAFlappingPathDoesNotPostponeReleaseForever. Red first (today
       the first two release at 90 s from lastTransitionTime).
-    done_when: "offline tests green; the bed reading is taken by 0006:M3-CP-CONTINUITY's cold-start test."
+    done_when: "offline tests green; the market network reading is taken by 0006:M3-CP-CONTINUITY's cold-start test."
     risks: ["A path that flaps keeps resetting pathUpSince and would never release a really dead node; pathUpSince only moves forward after the path was continuously up for 30 s, and a test pins it."]
     status: done
     evidence:
       - "task/door-resilience merged to main 2026-10-12: socialweb-computer-kcp a02387e/2a8b90d/7791f6d (rebased to f4dd567). The NotReady timer lives in the Go clusterprovider: each pass checks the tenant apiserver /readyz and that both cluster links are Listening; while that path is down no node is released; after an outage of >=30 s or a cold start the 90 s timer and 2 m join grace count from when the path came back; a provider start finding the path up does not reset the timer (decided by Claude, user may veto: reset only after an outage >=30 s so a flapping path still releases a dead node)"
       - "5 new Go tests red then green, 2 guard tests (provider restart, flapping path) green before and after; merged main go test ./... 66/66 ok, check.sh --fast exit 0"
-      - "left: cold-start and link-restart NotReady readings live in a market test bed with a tenant cluster (nodes via runComputeContract)"
+      - "left: cold-start and link-restart NotReady readings live in a market network with a tenant cluster (nodes via runComputeContract)"
   - id: M4-BIDDER-VAULT
     milestone: M4
     title: The bidder's keys live in an OpenBao beside it, so its identity and issuer survive restarts
@@ -907,8 +907,8 @@ items:
       TestAQrSessionSurvivesABidderPodRecreateWithoutARescan (the session read back from the vault),
       TestEveryRelayOfTheBidderKeepsItsIngressAcrossARestart (market, each provider, repo) and
       TestNoKeyOrSessionIsEverWrittenToAKcpObject (scans every object the bidder application writes).
-    done_when: "green; on the market bed the issuer URL logged before and after a bidder restart is identical."
-    risks: ["The dispatcher must accept a reconnect under the same relay key after a crash (stale registration); measured on the bed."]
+    done_when: "green; on the market network the issuer URL logged before and after a bidder restart is identical."
+    risks: ["The dispatcher must accept a reconnect under the same relay key after a crash (stale registration); measured on the market network."]
     status: todo
     evidence: []
   - id: M4-BIDDER-BAO-SYNC
@@ -936,7 +936,7 @@ items:
     test_first: >
       internal/stack/bidder TestTheBidderVaultSeededWithStaleGuestEntriesIsReducedToTheLiveComputeVMs,
       TestASigningKeyRotationKeepsTheIssuerUrlAndTokensSignedBeforeItStillValidate,
-      TestARelayKeyRotationIsRefusedWhileAGuestRuns; behind livegate on the bed:
+      TestARelayKeyRotationIsRefusedWhileAGuestRuns; behind livegate on the market network:
       TestBidderRestartsAndUpgradesLeaveOneJwtMountPerBidderInTheClusterVault (three restarts and one
       upgrade of the bidder while its node stays joined: the cluster vault holds one jwt-* mount for it).
       Red first (today every restart adds a mount).
@@ -987,7 +987,7 @@ items:
     evidence:
       - "merged to main 2026-10-12: atproto-market c78cf31 (ContractStore ABC, load before subscribe, save before ack, tombstones persisted, lib/market-bidder-contract-store-fs: one 0600 file per receipt, temp+fsync+rename+dir fsync, corrupt file refuses startup naming it; hono-bidder --contract-store-dir default <work-root>/contracts), hono-compute-provider ac3a1f5 (ComputeProvider.adopt, guest.json with host boot id, adopted guests re-watched, gone-at-adopt -> vmm_exited|host_reboot)"
       - "tests red then green: market_bidder_contract_restore_test.ts 8/8 (red: vm.delete 400 unknown receipt, subscribe before load, ack before save), contract_store_fs_test.ts 7/7, firecracker_adopt_test.ts 4/4; regression 43 + 45 green; re-run on merged main 32/32 + 12/12"
-      - "left: the two live readings (in a market test bed once M1-BED-PARALLEL lands); known gap - a restart mid-provision ends the contract vmm_exited and a still-booting guest may leak (closed by the Go controller); fsync delay unmeasured"
+      - "left: the two live readings (in a market network once M1-MARKET-NETWORK-PARALLEL lands); known gap - a restart mid-provision ends the contract vmm_exited and a still-booting guest may leak (closed by the Go controller); fsync delay unmeasured"
   - id: M4-CONTRACT-RESTORE
     milestone: M4
     title: A restarted bidder rebuilds its contracts from the ComputeVMs and still honours vm.delete
@@ -1053,7 +1053,7 @@ items:
       test/vm_terminated_requester_test.ts (red first, then green). Go side, still to write:
       internal/computevm TestEveryLostVerdictCarriesTheTerminatedReason and
       hono-compute-provider test/compute_provider_kcp_test.ts 'a ComputeVM going Lost fires onGuestGone with
-      its reason'; live on the market bed (guest born via runComputeContract): a guest powered off from inside
+      its reason'; live on the market network (guest born via runComputeContract): a guest powered off from inside
       ends the requester's ssh within seconds with vm_session_ended_by_bidder and no vm.delete is submitted.
     done_when: "TS side green (done); Go controller and compute-provider-kcp emit it from Lost verdicts at re-population and from unit failure, tests green; the live reading recorded with UTC timestamps."
     risks: ["Tombstones are in memory: a bidder restarted between a guest's end and the requester's vm.delete answers 'unknown receipt' until M4-CONTRACT-STORE-FILE persists contracts and the terminated set (split out 2026-10-12 to land now)."]
@@ -1127,7 +1127,7 @@ items:
       sshTunnelArgs carries StrictHostKeyChecking=yes and a known_hosts holding exactly the reported keys; no
       ssh is attempted without keys); cloud-init-common test (the module renders after the ssh module and
       posts keys + signature); hono-compute-provider test 'provisioningValidate verifies against the reported
-      key and nothing in lib execs ssh-keyscan'. Live on the market bed, guest born via runComputeContract
+      key and nothing in lib execs ssh-keyscan'. Live on the market network, guest born via runComputeContract
       (alice-request.sh -> RFP -> bid -> accept -> cloud-init): request-vm-ssh connects with
       StrictHostKeyChecking=yes against the reported key, and the same run with a known_hosts holding a
       different key fails host-key verification and never authenticates. Red first.
@@ -1145,9 +1145,9 @@ items:
       Fifth fold 2026-10-12 (multi-server-to-kcp.md 4.3, 5.2, gap G2; the user's decisions of 2026-10-12:
       every option kept kcp-native, sign-in as an identity object, kcp only, secrets only in OpenBao): `run
       bidder` follows 0006 M1-CLI's application-verb contract - it applies a MarketBidder root object (0006
-      M2-APP-CONTROLLER) with --profile prod-qr|bed|dev-local into the handle's kcp and watches it. prod-qr
-      renders no PDS and a MarketIdentity in mode oauthQr; bed renders the bidder's own PDS DenoPod and mode
-      pdsAccount (M3-BIDDER-ACCOUNT-PDS; finding F1: today's bed bidder ignores bob's PDS); dev-local renders
+      M2-APP-CONTROLLER) with --profile prod-qr|market network|dev-local into the handle's kcp and watches it. prod-qr
+      renders no PDS and a MarketIdentity in mode oauthQr; market network renders the bidder's own PDS DenoPod and mode
+      pdsAccount (M3-BIDDER-ACCOUNT-PDS; finding F1: today's market network bidder ignores bob's PDS); dev-local renders
       mode localRepo (the ephemeral-PDS mode, kept by the user). Every hono-bidder option is a MarketBidder
       field or a profile (0006 M2-APP-CONTROLLER's option map). The foreground renders MarketIdentity pending
       actions (QR, association approval, session expired; M1-MARKET-IDENTITY's renderer) and returns when
@@ -1155,13 +1155,13 @@ items:
       exits 2 naming `socialweb-computer run bidder` when started without its DenoPod's kcp environment, and
       the standalone launcher (deploy/bidder/socialweb-computer-bidder-run), the identity-prompt-tty impl and
       the org-root bob-bidder.sh path are deleted in the same change. State paths move out of $HOME (finding
-      F6) into the instance's state dir and vault. Inside a market bed the bidder is a child application
-      whose MarketBidder the bed's MarketNetwork applies into the bidder's own kcp with the network values
-      copied on (0006 M2-APP-CONTROLLER); the bed's bidder runs the firecracker provider until this item makes
-      compute-provider-kcp the default member, then the bed profile switches.
+      F6) into the instance's state dir and vault. Inside a market network the bidder is a child application
+      whose MarketBidder the market network's MarketNetwork applies into the bidder's own kcp with the network values
+      copied on (0006 M2-APP-CONTROLLER); the market network's bidder runs the firecracker provider until this item makes
+      compute-provider-kcp the default member, then the market-network profile switches.
       Principle (user 2026-10-12, 0006 `principle`): each bidder handle is one application instance - its own
       kcp, the bidder manifest set and a profile (production QR mode against the handle's real account: no
-      PDS pod; the market-bed profile: its own PDS pod). Handles on one host share the machine (the account,
+      PDS pod; the market-network profile: its own PDS pod). Handles on one host share the machine (the account,
       /dev/kvm, the subuid range), never a kcp, and reach requesters and gateways only over the atproto
       market protocol. Third fold 2026-10-12 (decided by the user): the handle's kcp is ONE slot on kine-sqlite behind a
       port-0 front, in the bootstrap layer (installed units socialweb-kcp-<hid>-kine@a, socialweb-kcp-<hid>@a,
@@ -1205,7 +1205,7 @@ items:
       and a unix connect to $XDG_RUNTIME_DIR/systemd/private and the bus are PermissionDenied); on proc in a
       dev instance: TestDenoInTheBidderPodCannotDialTheDevsupSocket and TestRunBidderOnProcNeedsNoAccount;
       TestRunBidderWithoutAHostBackendExits2. Fifth fold: TestRunBidderRendersTheQrFromStatusAndReturnsWhenReady,
-      TestRunBidderSwitchingProfileFromBedToProdQrRemovesThePdsDenoPod, and atproto-market 'hono-bidder
+      TestRunBidderSwitchingProfileFromNetworkToProdQrRemovesThePdsDenoPod, and atproto-market 'hono-bidder
       outside a DenoPod exits 2 naming socialweb-computer run bidder'. Red first.
     done_when: "tests green; on hat-8 the unit runs under the shared account and `kubectl get computevms` on its kcp answers."
     risks: ["Handles on one host still share a uid for their cores and deno processes (shared account, decided by the user 2026-10-11); a VMM escape no longer reaches them, because each VMM runs in its own subuid sub-range owning no bidder file (decided by the user 2026-10-12, M2-VM-RUNTIME). deno's permission sandbox remains the only boundary between a bidder's deno and its own user manager."]
@@ -1228,7 +1228,7 @@ items:
       stripped with every non-iroh guest path (0008 M1-STRIP-LEGACY-TRANSPORTS, decided by the user
       2026-10-12). The MarketBidder profiles render the guest DenoPods (0006 M2-APP-CONTROLLER).
     files: ["hono-compute-provider/hono-bidder-guest/ (thin CLI over lib/hono-factory-compute-provider-kcp)", "deploy/apps/bidder/*.values.yaml"]
-    test_first: "Behind livegate on a market bed (guest born via runComputeContract): TestABidderCoreRestartLeavesTheGuestIssuerAndOnNetworkServing (the core DenoPod restarted while the guest runs: the issuer URL and JWKS unchanged, a token issued before validates after, the next onNetwork POST accepted). Red first."
+    test_first: "Behind livegate on a market network (guest born via runComputeContract): TestABidderCoreRestartLeavesTheGuestIssuerAndOnNetworkServing (the core DenoPod restarted while the guest runs: the issuer URL and JWKS unchanged, a token issued before validates after, the next onNetwork POST accepted). Red first."
     done_when: "green with readings (UTC); pushed on main in hono-compute-provider."
     risks: []
     status: todo
@@ -1236,9 +1236,9 @@ items:
   - id: M6-BIDDER-UPGRADE
     milestone: M6
     title: Upgrade the bidder's binary and deno processes while its VMs keep running; measure the stop grace
-    depends_on: [M5-RUN-BIDDER, "0008:M4-TESTBED-PORT"]
+    depends_on: [M5-RUN-BIDDER, "0008:M4-MARKET-NETWORK-PORT"]
     decision: >
-      Decided by the user 2026-10-07. On the market bed with run bidder: rent a guest through the RFP flow
+      Decided by the user 2026-10-07. On the market network with run bidder: rent a guest through the RFP flow
       (requester runComputeContract -> RFP -> bid -> accept -> cloud-init); 0006:M2-VM-TREE-AUDIT passes on its
       unit; then `socialweb-computer upgrade --binary <a build with a different closure>`; read: the guest's
       unit never restarted (same InvocationID, firecracker pid and start ticks), every DenoPod restarted on
@@ -1254,10 +1254,10 @@ items:
       different kcp asset while the guest runs - the VM unit's InvocationID, firecracker pid and start ticks
       unchanged, the ComputeVM re-adopted Running, the kcp-down seconds recorded, the guest's next onNetwork
       accepted.
-    files: ["internal/marketbed/live_test.go (TestABidderUpgradeLeavesItsVMRunningAndStillReleasesIt)", "internal/versions/versions.json (stop grace)"]
+    files: ["internal/marketnetwork/live_test.go (TestABidderUpgradeLeavesItsVMRunningAndStillReleasesIt)", "internal/versions/versions.json (stop grace)"]
     test_first: "The live test, red until upgrade and re-population exist (today the guest leaks on restart)."
     done_when: "PASS recorded with UTC timestamps; grace readings under a k3s workload recorded; vms/ work-dir count equals live ComputeVMs after every release; zero ssh sessions to the guest."
-    risks: ["Needs the bidder account in kvm; the bed's fixed ports are gone once 0008:M1-BED-PARALLEL lands (a dependency of 0008:M4-TESTBED-PORT)."]
+    risks: ["Needs the bidder account in kvm; the market network's fixed ports are gone once 0008:M1-MARKET-NETWORK-PARALLEL lands (a dependency of 0008:M4-MARKET-NETWORK-PORT)."]
     status: todo
     evidence: []
   - id: M6-CLAIM-RESUME
@@ -1292,17 +1292,17 @@ items:
       same secrets URL and the claim reaches Joining', 'a door restarted during Bidding resumes the RFP it
       already posted and posts no second one', 'a door restarted between accept intent and accept record
       completes or releases exactly once'; atproto-market test: 'a secrets server built from a stored key
-      answers on the same ingress subdomain'. On the market bed (node born via runComputeContract):
+      answers on the same ingress subdomain'. On the market network (node born via runComputeContract):
       TestADoorRestartMidProvisioningStillJoinsTheNode (the door process killed after accept and before
       onNetwork; the node joins, one claim, one receipt, no vm.delete). Red first (today the claim is marked
       Failed).
-    done_when: "unit tests green; the bed test green with UTC readings; no claim in Bidding or Provisioning is failed by a door restart."
-    risks: ["The dispatcher must accept a re-registration of the same ingress key after a crash (stale registration); measured on the bed, the M4-BIDDER-VAULT risk."]
+    done_when: "unit tests green; the market network test green with UTC readings; no claim in Bidding or Provisioning is failed by a door restart."
+    risks: ["The dispatcher must accept a re-registration of the same ingress key after a crash (stale registration); measured on the market network, the M4-BIDDER-VAULT risk."]
     status: done
     evidence:
       - "task/door-resilience merged to main 2026-10-12: NodeClaim schema revision 4 (phases Lost and Adopting, status.secrets, contract.acceptPending, contract.termination; export re-pointed, TS types regenerated); per-claim secrets-ingress key written once (CAS 0) at secret/socialweb-door/claims/<claim>/secrets-ingress through a new OpenBao store (in-memory fallback) with door options openbao-addr/-token-file/-ca-file/-kv-mount; served URL recorded before the RFP, acceptPending before the accept; a restarted door holding the key resumes Bidding/Provisioning claims (no second RFP/accept, same secrets URL, grant re-installed, network wait resumed, reaches Joining); also vm.terminated: a terminated guest ends its claim Lost at once, released with no vm.delete, one replacement rented. atproto-market aed08e45/95b5ea6 (rebased to 1c4073b)"
       - "tests red then green: atproto-market stored-key secrets 1/1, resume 7/7, 77 related green; door node_market 8 new red, 40/40 on merged main; OpenBao store 4/4; full door suite 142 passed (1 live skipped); three deliberate regressions each caught"
-      - "left: prod door OpenBao token + policy for secret/socialweb-door/claims/* (until then the in-memory store, so a restart still fails in-flight claims); TestADoorRestartMidProvisioningStillJoinsTheNode and a live guest poweroff (Lost, one replacement RFP, no vm.delete) in a market test bed; M4-HOST-KEYS hostKeys needs a further NodeClaim schema revision"
+      - "left: prod door OpenBao token + policy for secret/socialweb-door/claims/* (until then the in-memory store, so a restart still fails in-flight claims); TestADoorRestartMidProvisioningStillJoinsTheNode and a live guest poweroff (Lost, one replacement RFP, no vm.delete) in a market network; M4-HOST-KEYS hostKeys needs a further NodeClaim schema revision"
   - id: M6-GATEWAY-REPOPULATE
     milestone: M6
     kcp_use: "traditional-exception (virtual Kubernetes clusters project: NodeClaims; 0006 principle)"
@@ -1342,20 +1342,20 @@ items:
       released exactly once', 'a Node whose name matches but whose vault role or vm.hostKeys record does not
       is never adopted', 'the join grace counts from pathUpSince after our own outage', 'the record scan
       touches only acceptPending claims and unclaimed receipts', 'a restarted door never submits a second
-      vm.delete'; on the market bed (nodes born via runComputeContract):
+      vm.delete'; on the market network (nodes born via runComputeContract):
       TestAGatewayUpgradeKeepsEveryMarketNodeReadyAndOwned and TestAnUnclaimedJoinedNodeIsAdoptedNotReleased
       (the NodeClaim object of a joined node removed through the kcp API with its finalizer stripped, then a
       door restart: the claim returns via Adopting, the node stays Ready, no vm.delete). Red first.
-    done_when: "unit tests green; live: a two-node market cluster stays Ready across a gateway upgrade, both claims adopted, no RFP and no vm.delete sent by the restart; the unclaimed-joined-node bed reading recorded (UTC)."
+    done_when: "unit tests green; live: a two-node market cluster stays Ready across a gateway upgrade, both claims adopted, no RFP and no vm.delete sent by the restart; the unclaimed-joined-node market network reading recorded (UTC)."
     risks: ["Listing market records across winners' repos is network-bound; the table is built from claims first and the record scan only fills the acceptPending and unclaimed gaps, bounded per pass."]
     status: todo
     evidence: []
   - id: M6-LIVE-RECOVERY
     milestone: M6
     title: A killed, restarted or logged-out bidder still releases the VM it rented; a user-manager restart is a reboot
-    depends_on: [M5-RUN-BIDDER, "0008:M4-TESTBED-PORT"]
+    depends_on: [M5-RUN-BIDDER, "0008:M4-MARKET-NETWORK-PORT"]
     decision: >
-      On the market bed, each case after renting a guest through the RFP flow: (a) `systemctl --user kill -s
+      On the market network, each case after renting a guest through the RFP flow: (a) `systemctl --user kill -s
       KILL` of the bidder unit's main process and its automatic restart; (b) `systemctl --user restart` of
       the bidder unit; (c) every login session of the bidder account ended with linger on. Each reads:
       ComputeVM Running with the same unit InvocationID and firecracker pid + start ticks, the tree audit
@@ -1366,10 +1366,10 @@ items:
       M3-NODE-LOSS) and releases the old receipt, which deletes the Lost ComputeVM. Case (a) is written first
       against the firecracker provider before M4-CONTRACT-STORE-FILE, where it fails (vm.delete refused, guest
       leaks; seen live 2026-10-12T01:31Z).
-    files: ["internal/marketbed/live_test.go (TestAKilledBidderStillReleasesTheVMItRentedBeforeTheKill, TestARestartedBidderAdoptsItsVM, TestALoggedOutLingeringBidderKeepsItsVM, TestAUserManagerRestartMakesEveryVMLostAndTheRequesterReplacesIt)"]
+    files: ["internal/marketnetwork/live_test.go (TestAKilledBidderStillReleasesTheVMItRentedBeforeTheKill, TestARestartedBidderAdoptsItsVM, TestALoggedOutLingeringBidderKeepsItsVM, TestAUserManagerRestartMakesEveryVMLostAndTheRequesterReplacesIt)"]
     test_first: "Case (a): FAIL with the firecracker provider today (recorded), PASS with it after M4-CONTRACT-STORE-FILE and with compute-provider-kcp after M4-CONTRACT-RESTORE; cases (b)-(d) red until M5-RUN-BIDDER."
     done_when: "readings recorded for all four cases; zero ssh sessions."
-    risks: ["Case (d) stops every unit of the account on hat-8, including any other bed's; it runs on a dedicated test account."]
+    risks: ["Case (d) stops every unit of the account on hat-8, including any other market network's; it runs on a dedicated test account."]
     status: todo
     evidence: []
   - id: M6-NOSSH-JOIN
@@ -1403,7 +1403,7 @@ semantics:
   identity_mismatch: "an active unit whose InvocationID, VMM pid, start ticks or firecracker id differs from the record is Lost(IdentityMismatch) and its unit is stopped at once; an unreachable bus or API socket is Unknown and retried, never Lost."
   vm_delete: "bidder onVmDelete -> provider.destroy -> DELETE ComputeVM -> finalizer: SendCtrlAltDel (x86_64), grace, StopUnit with SIGKILL, work dir (console included) removed -> 404 -> 200 to the requester."
 acceptance:
-  where: hat-8 market bed, then a door-driven join
+  where: hat-8 market network, then a door-driven join
   checks:
     - id: ACC7-SOURCE-OF-TRUTH
       text: "`kubectl get computevms` on the bidder's kcp lists exactly the guests whose VMMs run, before and after a kill and after an upgrade of the bidder."
@@ -1446,7 +1446,7 @@ acceptance:
       status: todo
       evidence: []
     - id: ACC7-CLAIM-RESUME
-      text: "A door restarted while a claim is Bidding or Provisioning (node born via runComputeContract on the market bed) resumes it to Joining with the same secrets URL, one RFP, one receipt and no vm.delete (decided by the user 2026-10-12)."
+      text: "A door restarted while a claim is Bidding or Provisioning (node born via runComputeContract on the market network) resumes it to Joining with the same secrets URL, one RFP, one receipt and no vm.delete (decided by the user 2026-10-12)."
       status: todo
       evidence: []
     - id: ACC7-SCOPES

@@ -24,7 +24,7 @@ state_rules:
 ownership:
   owned: >
     All code in socialweb-computer-kcp, the prod deployment on socialweb.computer, the vendored
-    deno-kcp test bed, the atproto-market requester libraries, the bidder install on hat-8, and the
+    deno-kcp market network, the atproto-market requester libraries, the bidder install on hat-8, and the
     GitLab fixture this plan creates.
   not_owned: >
     The market protocol records and lexicons, and the core architecture: kcp in front of

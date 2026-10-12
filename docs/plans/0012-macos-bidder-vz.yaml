@@ -5,7 +5,7 @@ queued: >
   0007 (docs/plans/0007-compute-provider-kcp.yaml) are complete on Linux, every item done with evidence
   and their acceptance checks ACC6-* and ACC7-* recorded, and after the plan 0008
   (docs/plans/0008-embedded-deno-and-typescript-denopods.yaml) items M1-DENO, M1-TS-CLOSURE,
-  M2-DENOKCP-FORK, M2-DENOKCP-INPROC, M2-SERVICE-TEMPLATE and M4-TESTBED-PORT are done. Then M0-REVISIT
+  M2-DENOKCP-FORK, M2-DENOKCP-INPROC, M2-SERVICE-TEMPLATE and M4-MARKET-NETWORK-PORT are done. Then M0-REVISIT
   runs first; no other item may move to doing before it is done. Every item is executed ON a macOS host
   with Apple Silicon (decided by the user 2026-10-11); the executor works on that host, not on hat-8.
 source: >
@@ -102,7 +102,7 @@ items:
       for darwin, the per-OS asset pipeline (how a darwin-only asset is staged, pinned and, for vfkit,
       signed), the ComputeVM schema (status.runtime and its field managers), the controller's
       re-population rule, the install and upgrade flow (versions/<sha256>/, GC of runtime/<sha256>/), the
-      DenoPod runner, the market test bed command, and 0006 M0-SIZE-BUDGET's platform matrix (darwin as
+      DenoPod runner, the market network command, and 0006 M0-SIZE-BUDGET's platform matrix (darwin as
       client-only is superseded). Then amend THIS file: ids, decisions, depends_on (real landed cross-plan
       ids), files (real package paths) and the acceptance checks. A seam gap a darwin backend needs is
       written as a new item here, never patched silently.
@@ -175,7 +175,7 @@ items:
       labelled cidata (the nodeboot shape) written in pure Go; vfkit started as a launchd job in the
       system domain with UserName set (bootstrapped with sudo in this scratch item only; the real domain
       is M0-LAUNCHD-DOMAIN's decision), --restful-uri on a unix socket in the work dir, virtio-serial to a
-      log file, VZ NAT networking. Driven by runComputeContract against the market bed or, if the bed does
+      log file, VZ NAT networking. Driven by runComputeContract against the market network or, if the market network does
       not yet run on macOS, the canonical harness shape of ts/atproto-market/test/bidder_container_integration_test.ts
       with the bidder pointed at its dispatcher. The guest reaches onNetwork; zero ssh.
     files: ["scratch branch only: internal/vmhost (vfkit scratch backend), the arm64 kernel config, the raw disk writer; evidence names the branch and SHA"]
@@ -562,7 +562,7 @@ items:
   - id: M3-LIVE-RENT
     milestone: M3
     title: A guest rented through the RFP flow from a macOS bidder, nobody logged in, zero ssh
-    depends_on: [M2-INSTALLER-DARWIN, "0008:M4-TESTBED-PORT"]
+    depends_on: [M2-INSTALLER-DARWIN, "0008:M4-MARKET-NETWORK-PORT"]
     decision: >
       On the Mac after a reboot with no console login (FileVault per the user's answer): runComputeContract
       posts compute.vm (with the arch the user's decision allows) and a signed market.rfp, the Mac bidder
@@ -571,7 +571,7 @@ items:
       Running with status.runtime {vfkit, label, instance, pid, startTime}; the bid config, receipt and
       onNetwork records field-for-field the firecracker provider's shapes (plus only what the user's arch
       decision adds).
-    files: ["internal/marketbed/live_test.go (TestAMacBidderRentsAVfkitGuestThroughTheRFPFlow, darwin tag)"]
+    files: ["internal/marketnetwork/live_test.go (TestAMacBidderRentsAVfkitGuestThroughTheRFPFlow, darwin tag)"]
     test_first: "The live test, red until M2 exists."
     done_when: "PASS with UTC timestamps; `who` empty at the time of the rent; zero ssh sessions."
     risks: []
@@ -588,7 +588,7 @@ items:
       closure>`, same reads plus every DenoPod on the new closure; then releaseCompute's vm.delete 200, the
       ComputeVM gone, no job with the VM's label prefix, no vfkit or gvproxy process for it, the work dir
       gone.
-    files: ["internal/marketbed/live_test.go (TestAMacBidderKilledUpgradedAndLoggedOutKeepsItsVmAndStillReleasesIt)"]
+    files: ["internal/marketnetwork/live_test.go (TestAMacBidderKilledUpgradedAndLoggedOutKeepsItsVmAndStillReleasesIt)"]
     test_first: "That test, red until M2 exists."
     done_when: "PASS readings recorded with UTC timestamps; zero ssh sessions."
     risks: []
@@ -604,7 +604,7 @@ items:
       no job is submitted for it, a leftover plist in the state dir is removed, and releaseCompute of that
       receipt gets vm.delete 200 and the Lost ComputeVM and its work dir are deleted. The requester-side
       replacement is plan 0005 M3-NODE-LOSS's and is not re-proved here.
-    files: ["internal/marketbed/live_test.go (TestAMacRebootLeavesLostComputeVMsThatStillRelease, two-phase)"]
+    files: ["internal/marketnetwork/live_test.go (TestAMacRebootLeavesLostComputeVMsThatStillRelease, two-phase)"]
     test_first: "That test, red until M2 exists."
     done_when: "PASS readings: pre-reboot Running, post-reboot Lost, no vfkit, release 200."
     risks: []

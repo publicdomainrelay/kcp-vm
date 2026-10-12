@@ -9,7 +9,7 @@ revised: >
   core USER unit and die with it (control-group); explicit deno permissions in the service template, no -A;
   kcp on either route (0006 M0-KCP-SPIKE), so dependencies name 0006:M2-KCP-PORT0 (was M1-KCP-PORT0) and
   M2-DENOKCP-INPROC no longer depends on 0006:M1-KCP-INPROC; kill -9-only restart tests widened to
-  `systemctl --user restart` and an upgrade; test-bed units get their own prefix. 2026-10-12, from
+  `systemctl --user restart` and an upgrade; market network units get their own prefix. 2026-10-12, from
   user-decisions.md (the kcp line of 2026-10-12) and 0006's M0-KCP-SPIKE: the kcp route is out of process
   (blue/green slot units of the unpatched release kcp behind our own front; 0006 M2-KCP-SLOTS), so
   M2-DENOKCP-FORK depends on 0006:M0-KCP-SPIKE and 0006:M0-XOS-GATE instead of 0006:M1-K8S-FORK (closed,
@@ -19,12 +19,12 @@ revised: >
   2026-10-12 (third fold), the user's decisions: the dev run mode is kcp-native now (0006 state rule;
   HostProcess objects on systemd-user or proc, a bootstrap layer below kcp, one kcp per dev instance), so
   M2-DENOKCP-INPROC proves "deno dies with the core" on both backends and M2-DENOKCP-FORK's runner sets the
-  devsup attribution env; M4-TESTBED-PORT drops the fixed bed ports 2583-2589 and the one-bed lock and
-  becomes `dev up --profile bed`; new M1-BED-PARALLEL makes today's bed run N per host EARLY, because live
+  devsup attribution env; M4-MARKET-NETWORK-PORT drops the fixed market network ports 2583-2589 and the one-network-per-host lock and
+  becomes `dev up --profile market-network`; new M1-MARKET-NETWORK-PARALLEL makes today's market network run N per host EARLY, because live
   tests collide on fixed ports until it lands; every org repo works on main and is pushed (state rule,
   ownership). No item renamed.
   2026-10-12 (fourth fold), the user's paradigm correction (0006 `principle`): new `principle` block, a
-  bed-per-workstream state rule; M1-BED-PARALLEL names the runner's port-file read-back (port-audit.md
+  market-network-per-workstream state rule; M1-MARKET-NETWORK-PARALLEL names the runner's port-file read-back (port-audit.md
   blocker 1) and the fixed-port ratchet (0006 M1-NO-FIXED-PORTS); M3-DOOR-DENOPOD's 8788 marked an edge
   exception; M4-RUN-REQUEST restated as an application instance. No item added or renamed.
   2026-10-12 (fifth fold), from docs/research/2026-10-11-vm-lifecycle/multi-server-to-kcp.md and the user's
@@ -33,13 +33,13 @@ revised: >
   like request-vm-ssh) then M1-STRIP-LEGACY-TRANSPORTS (every non-iroh guest transport removed across
   atproto-market, hono-compute-provider and socialweb-computer-ssh, the guest JSR registry with them; the
   ssh gateway's Live market CI green throughout), M2-DENOPOD-LISTENERS, M2-MARKET-NETWORK,
-  M3-DOOR-STATE-VAULT. Changed: M1-TS-CLOSURE (the bed's qr entry), M1-BED-PARALLEL (decision text only:
-  port read-back from the port file, never log lines; per-run state for the bidder; the DID from the bed
-  record; today's shared-kcp bed recorded as transitional), M2-SERVICE-TEMPLATE, M4-RUN-GATEWAY-SSH (after
+  M3-DOOR-STATE-VAULT. Changed: M1-TS-CLOSURE (the market network's qr entry), M1-MARKET-NETWORK-PARALLEL (decision text only:
+  port read-back from the port file, never log lines; per-run state for the bidder; the DID from the market network
+  record; today's shared-kcp market network recorded as transitional), M2-SERVICE-TEMPLATE, M4-RUN-GATEWAY-SSH (after
   the iroh port and the strip), M4-RUN-REQUEST (reworked: a fresh kcp per invocation with a durable state
   dir, `release|resume <name>` restart that kcp; the research's persistent requester app is NOT taken),
-  M4-TESTBED-PORT (the strict bed: a MarketNetwork application whose children each run their own kcp; the
-  research's nested-workspace bed is rejected). No item renamed or removed; no status or evidence changed.
+  M4-MARKET-NETWORK-PORT (the strict market network: a MarketNetwork application whose children each run their own kcp; the
+  research's nested-workspace market network is rejected). No item renamed or removed; no status or evidence changed.
 queued: >
   OPEN. The plan 0005 gate is satisfied: plan 0005 is complete with all 40 items done and its acceptance
   checks ACC-ZERO, ACC-MESH and ACC-NOSSH done with evidence (verified 2026-10-12). Only each item's own
@@ -56,12 +56,12 @@ principle:
     0006 `principle`): kcp is a core part of APPLICATIONS; the virtual Kubernetes clusters project is the one
     traditional use.
   in_this_plan:
-    - "DenoPods are how an application's TypeScript components become objects of that application's own kcp. An application instance (the gateway with its door, a bidder handle, a requester `run request`, a market test bed) = its own kcp + a manifest set (DenoPod values over M2-SERVICE-TEMPLATE) + a profile."
-    - "Modes are profiles over one manifest set, rendered by 0006 M2-TEMPLATE: a bidder in OAuth QR mode against a real account has no PDS pod; a bidder in the market test bed has its own PDS pod."
+    - "DenoPods are how an application's TypeScript components become objects of that application's own kcp. An application instance (the gateway with its door, a bidder handle, a requester `run request`, a market network) = its own kcp + a manifest set (DenoPod values over M2-SERVICE-TEMPLATE) + a profile."
+    - "Modes are profiles over one manifest set, rendered by 0006 M2-TEMPLATE: a bidder in OAuth QR mode against a real account has no PDS pod; a bidder in the market network has its own PDS pod."
     - "Applications talk to each other ONLY over the atproto market protocol, never by sharing a kcp: a DenoPod never reads another application instance's objects, and the servicenames table a pod resolves through holds only its own instance's services."
     - "Every DenoPod listener behind the edge binds port 0; the runner reads the pod's port file and records status.address; peers resolve by service name through kcp (0006 principle.port0_rule; port-audit.md ranked blocker 1). Only edge entry points keep known addresses (the door's 8788 behind caddy)."
-    - "The market test bed (deploy/examples/atproto/market) is the seed of this model and the vehicle for parallel workstreams: M1-BED-PARALLEL and M4-TESTBED-PORT are what every workstream tests in."
-    - "How today's multi-server deno processes split into DenoPods per application is folded (fifth fold 2026-10-12; 0006 principle.decomposition): one root object per application (0006 M2-APP-CONTROLLER); STRICT kcp per application, inside a bed too (the bed is a MarketNetwork application whose children each run their own kcp, M4-TESTBED-PORT); every listener reports into DenoPod.status.listeners (M2-DENOPOD-LISTENERS); network values only through the composer and one fetch adapter (M2-MARKET-NETWORK); the requester is a fresh kcp per invocation with a durable state dir (M4-RUN-REQUEST); secrets only in each application's OpenBao (M3-DOOR-STATE-VAULT for the door); iroh is the only guest transport (M1-SSH-GATEWAY-IROH, then M1-STRIP-LEGACY-TRANSPORTS)."
+    - "The market network (deploy/market-network) is the seed of this model and the vehicle for parallel workstreams: M1-MARKET-NETWORK-PARALLEL and M4-MARKET-NETWORK-PORT are what every workstream tests in."
+    - "How today's multi-server deno processes split into DenoPods per application is folded (fifth fold 2026-10-12; 0006 principle.decomposition): one root object per application (0006 M2-APP-CONTROLLER); STRICT kcp per application, inside a market network too (the market network is a MarketNetwork application whose children each run their own kcp, M4-MARKET-NETWORK-PORT); every listener reports into DenoPod.status.listeners (M2-DENOPOD-LISTENERS); network values only through the composer and one fetch adapter (M2-MARKET-NETWORK); the requester is a fresh kcp per invocation with a durable state dir (M4-RUN-REQUEST); secrets only in each application's OpenBao (M3-DOOR-STATE-VAULT for the door); iroh is the only guest transport (M1-SSH-GATEWAY-IROH, then M1-STRIP-LEGACY-TRANSPORTS)."
 state_rules:
   - TypeScript lives in this repository (decided by the user 2026-10-12): the closure's ten repositories were vendored with their history under ts/<repository>/ and the originals are frozen; a path this plan names under ts/ is changed here, never in the original.
   - Item status (todo, doing, done, blocked) lives here; the git history is the evidence. No evidence lists are added (user, 2026-10-12).
@@ -72,7 +72,7 @@ state_rules:
     "decided by the user 2026-10-07", "decided by the user 2026-10-11" or "decided by the user 2026-10-12"
     was.
   - >
-    RFP flow is the spine (org-root CLAUDE.md). The market bed's guests come up only through `run bidder`
+    RFP flow is the spine (org-root CLAUDE.md). The market network's guests come up only through `run bidder`
     and the requester's RFP, bid, accept and cloud-init user_data; no item boots a guest any other way.
   - >
     Linux only (decided by the user 2026-10-11). OS-specific process code (Setpgid, Pdeathsig) lives in
@@ -82,20 +82,20 @@ state_rules:
     Cross-plan dependencies are written <plan>:<item id>.
   - >
     Dev run mode is kcp-native now (decided by the user 2026-10-12; 0006 state rule): every test harness
-    and every bed passes host-backend=proc and runs inside its own dev instance (0006 M1-DEV-INSTANCE); a
+    and every market network passes host-backend=proc and runs inside its own dev instance (0006 M1-DEV-INSTANCE); a
     production-shaped run passes systemd-user. DenoPods stay children of the core on both backends.
   - >
-    Bed per workstream (decided by the user 2026-10-12; 0006 state rule). Each workstream's live tests run
-    in the task's own market test bed: a git worktree of this repository (on its own branch) brings up
+    Market network per workstream (decided by the user 2026-10-12; 0006 state rule). Each workstream's live tests run
+    in the task's own market network: a git worktree of this repository (on its own branch) brings up
     its own isolated atproto network (fake PLC, relay, PDSes,
-    ingress proxy, bidders, requesters) through M1-BED-PARALLEL now and `dev up --profile bed` later. No
+    ingress proxy, bidders, requesters) through M1-MARKET-NETWORK-PARALLEL now and `dev up --profile market-network` later. No
     workstream test uses a real account or the shared real bidder; bobvmbuilder + alice are a final soak
     only.
   - >
     Every org repo works on `main` and is pushed to GitHub as work lands (decided by the user 2026-10-12).
 ownership:
   owned: >
-    All code in socialweb-computer-kcp, the prod deployment, the vendored deno-kcp test bed, the
+    All code in socialweb-computer-kcp, the prod deployment, the vendored deno-kcp market network, the
     atproto-market requester libraries, and (decided by the user 2026-10-07) the forked copies of
     deno-kcp and kcp-libs this plan brings into the repo. hono-compute-provider and atproto-market may
     be changed by commit on main, pushed to GitHub as work lands (decided by the user 2026-10-12; replaces
@@ -115,24 +115,24 @@ research:
     - "commit 13349d6: on hat-8 a bidder restarted onto new hono-compute-provider code kept writing the old provider's bid_config token path and booting the old node image until its DENO_DIR v8_code_cache_v2 was moved aside (2026-10-07T22:22Z); the launcher now runs deno with --no-code-cache (deploy/bidder/socialweb-computer-bidder-run). A shared, long-lived DENO_DIR can run stale code after an upgrade."
     - "the same launcher runs the bidder with --node-modules-dir=none, so the bidder runs from the global DENO_DIR without a node_modules tree"
   deno_kcp:
-    commit: "deno-kcp 25d10f92 (local), test bed vendored at f5b7c10c; kcp-libs f6911d2"
+    commit: "deno-kcp 25d10f92 (local), market network vendored at f5b7c10c; kcp-libs f6911d2"
     findings:
       - "cmd/deno-kcp-provider/main.go:17 imports internal/provider (not importable from another module); :75-109 flags incl. pod-timeout 5m and token-ttl 1h"
       - "go.mod:85 replace kcp-libs => ../kcp-libs; deploy/denokcp/kcp-libs-no-default-issuer.patch is carried here today"
       - "kcp-libs impl/execrunner/supervisor.go:141 Setpgid without Pdeathsig, :220-229 state.json, :249-268 and :394 recover a run by pid and start ticks, :156 and :322 stop is SIGKILL of the group; pod.go:61-62 maps only Timeout 0 to 5m and :101-105 enforces only > 0; pod.go:184-196 injects KCP_TOKEN, KCP_SERVER, KCP_WORKSPACE"
-      - "the test bed's DenoPods name host paths: 70-bidder.yaml:14-15 SERVICE_ENTRY/SERVICE_CWD under /home/johnandersen777/src/publicdomainrelay-kcp, rewritten by apply.sh:171; :35-92 the supervisor script every service repeats; :78-79 prepends --preload KCP_SHIM"
+      - "the market network's DenoPods name host paths: 70-bidder.yaml:14-15 SERVICE_ENTRY/SERVICE_CWD under /home/johnandersen777/src/publicdomainrelay-kcp, rewritten by apply.sh:171; :35-92 the supervisor script every service repeats; :78-79 prepends --preload KCP_SHIM"
   ts_closure_measured:
     - "deno info --json over the door, hono-bidder and the ssh door on 2026-10-07: 389 local files, 1842618 bytes, across atproto-market, deno-worker-sandbox, did-key-ingress-proxy, hono-compute-provider, hono-jsr, hono-pds, policy-engine, typescript-helpers, socialweb-computer-kcp, socialweb-computer-ssh; 234-237 remote modules and 211-261 npm packages per entry; atproto-market/node_modules 143 MiB on disk"
     - "deno 2.9.3 (Dockerfile:142, hat-8 host); `deno run --help`: --preload takes a list of files"
   multi_server_to_kcp_2026_10_12:
     file: "docs/research/2026-10-11-vm-lifecycle/multi-server-to-kcp.md (sections 2.2-2.9, 4.4-4.10)"
     findings_that_change_items:
-      - "F2 (-> 0007 M1-MARKET-IDENTITY, M4-RUN-REQUEST): interactive stdin/stdout steps cannot run in a pod - the bed's DenoPods have stdin null (70-bidder.yaml:85) and pass --skip-qr; request-vm-ssh's association prompt is on stdin (:430)."
-      - "F5 (-> M2-DENOPOD-LISTENERS, M2-MARKET-NETWORK, M1-BED-PARALLEL): peers are found by fixed ports (2583-2589), stdout scraping (accept.sh:463-467 greps `localPDS plc` for the bidder DID; tests read the `bidder_ready` line, hono-bidder/mod.ts:686-691), four fetch patches (hono-bidder :74-95, request-vm-ssh :48-60, market-requester :82-95, test/fetch-interceptor.ts) and a shim that reads OTHER workspaces on a miss (bed README.md:128-130)."
+      - "F2 (-> 0007 M1-MARKET-IDENTITY, M4-RUN-REQUEST): interactive stdin/stdout steps cannot run in a pod - the market network's DenoPods have stdin null (70-bidder.yaml:85) and pass --skip-qr; request-vm-ssh's association prompt is on stdin (:430)."
+      - "F5 (-> M2-DENOPOD-LISTENERS, M2-MARKET-NETWORK, M1-MARKET-NETWORK-PARALLEL): peers are found by fixed ports (2583-2589), stdout scraping (accept.sh:463-467 greps `localPDS plc` for the bidder DID; tests read the `bidder_ready` line, hono-bidder/mod.ts:686-691), four fetch patches (hono-bidder :74-95, request-vm-ssh :48-60, market-requester :82-95, test/fetch-interceptor.ts) and a shim that reads OTHER workspaces on a miss (market network README.md:128-130)."
       - "F6 (-> M2-SERVICE-TEMPLATE): per-user state under $HOME is shared by every instance (port-audit B11); a DenoPod must not pass HOME through."
       - "F7 (-> M4-RUN-REQUEST): request-vm-ssh in QR mode never begins its ephemeral repo's serve (:365-367), so the QR requester has no repo component."
       - "F8 (-> M3-DOOR-STATE-VAULT): the door keeps NodeClaims in kcp, but its OAuth sessions (oauth-sessions.json, door mod.ts:50), requester key (requester-key.hex, :72) and per-claim secrets keys (node-market :383) are a file, a hex file and process memory."
-      - "Today's bed puts four applications in ONE kcp (workspaces root:global, root:relay, root:alice, root:bob; bed README.md:7-22), which the user's strict rule (2026-10-12) forbids; M4-TESTBED-PORT retires it, M1-BED-PARALLEL only parallelises it."
+      - "Today's market network puts four applications in ONE kcp (workspaces root:global, root:relay, root:alice, root:bob; market network README.md:7-22), which the user's strict rule (2026-10-12) forbids; M4-MARKET-NETWORK-PORT retires it, M1-MARKET-NETWORK-PARALLEL only parallelises it."
 items:
   - id: M1-DENO
     milestone: M1
@@ -186,8 +186,8 @@ items:
     decision: >
       cmd/socialweb-tsbundle (build tool, not shipped) reads deploy/ts-entries.yaml (the door and its
       undici-preload.ts, hono-bidder, hono-socialweb-computer-ssh, the request CLI of M4-RUN-REQUEST, the
-      test bed's hono-plc, hono-atproto-relay, hono-did-key-ingress-proxy and hono-pds, and
-      did-key-associator's hono-backend for the bed's qr DenoPod, 0006 M2-APP-CONTROLLER), stages each
+      market network's hono-plc, hono-atproto-relay, hono-did-key-ingress-proxy and hono-pds, and
+      did-key-associator's hono-backend for the market network's qr DenoPod, 0006 M2-APP-CONTROLLER), stages each
       needed sibling repo in org-root layout, fills one DENO_DIR with `deno install --frozen
       --node-modules-dir=none --entrypoint` per entry (the flag the bidder launcher already runs with,
       13349d6, so no node_modules symlink tree is shipped), runs each entry once with --cached-only, and
@@ -203,48 +203,48 @@ items:
     risks: ["The door today runs with node_modules (nodeModulesDir auto); its suite is run under --node-modules-dir=none before the switch."]
     status: done
     evidence:
-  - id: M1-BED-PARALLEL
+  - id: M1-MARKET-NETWORK-PARALLEL
     milestone: M1
-    title: "EARLY: today's market bed runs N per host - no fixed ports, no one-bed check - so live tests in parallel worktrees stop colliding"
+    title: "EARLY: today's market network runs N per host - no fixed ports, no one-network-per-host check - so live tests in parallel worktrees stop colliding"
     depends_on: ["0006:M1-PORT-LEASE-INSTANCE"]
     decision: >
-      Decided by the user 2026-10-12: live tests collide on fixed ports until the dev-instance / testbed-port
-      items land, so those come early; M4-TESTBED-PORT drops the fixed ports 2583-2589 and the one-bed lock.
-      Decided by Claude, user may veto: this item does that for TODAY's bed (internal/marketbed driving the
-      vendored deno-kcp bed, accept.sh and apply.sh) without waiting for M4-TESTBED-PORT's long dependency
-      chain. Every fixed bed port - the services' 2583-2589 (internal/marketbed/live_test.go:18; the vendored
+      Decided by the user 2026-10-12: live tests collide on fixed ports until the dev-instance / market-network-port
+      items land, so those come early; M4-MARKET-NETWORK-PORT drops the fixed ports 2583-2589 and the one-network-per-host lock.
+      Decided by Claude, user may veto: this item does that for TODAY's market network (internal/marketnetwork driving the
+      vendored deno-kcp market network, accept.sh and apply.sh) without waiting for M4-MARKET-NETWORK-PORT's long dependency
+      chain. Every fixed market network port - the services' 2583-2589 (internal/marketnetwork/live_test.go:18; the vendored
       manifests; accept.sh), the deno-kcp kcp 6443 and kine 23791 (deploy/denokcp/start-kcp.sh:5-6, already
       env-overridable), and every place that names them (live_m3_test.go:38-41, :96, :582-599) - is read from
-      a per-run bed record whose ports are leased from the per-user lease file keyed by instance
+      a per-run market network record whose ports are leased from the per-user lease file keyed by instance
       (0006:M1-PORT-LEASE-INSTANCE; instance = the dev instance id once 0006:M1-DEV-INSTANCE lands, the
       worktree-derived id before) or bound at 0 and read back from the port file the service writes on
-      onListen (never a log line); the bed's *.localhost names stay, resolved per bed. Port 0 is the rule, leases the exception
+      onListen (never a log line); the market network's *.localhost names stay, resolved per market network. Port 0 is the rule, leases the exception
       (0006 principle.port0_rule, user 2026-10-12): the first change is port-audit.md ranked blocker 1 (B2) -
       the deno-kcp runner reads each pod's <runDir>/port-bound-to (PORT_FILE set per run, B3), records it as
       the DenoPod's status.address, and servicenames builds the table from status.address, so peers resolve
-      by service name through the bed's kcp and never by a configured port. Every literal this item removes
-      deletes its line from 0006 M1-NO-FIXED-PORTS' ratchet. This item is what makes 'bed per workstream'
-      (state rule) possible: each task tree's live tests run in its own bed. The livegate "port held by another process"
-      refusal (live_test.go:115) is replaced by the lease. Bed units and processes carry the run id
-      (socialweb-bed-<runid>-...), so two beds never touch each other's processes. Guests still come up only
-      through the bed's requester (runComputeContract -> RFP -> bid -> accept -> cloud-init) against the
-      bed's own bidder; the bed adds no provisioning path.
+      by service name through the market network's kcp and never by a configured port. Every literal this item removes
+      deletes its line from 0006 M1-NO-FIXED-PORTS' ratchet. This item is what makes 'market network per workstream'
+      (state rule) possible: each task tree's live tests run in its own market network. The livegate "port held by another process"
+      refusal (live_test.go:115) is replaced by the lease. Market network units and processes carry the run id
+      (socialweb-market-network-<runid>-...), so two market networks never touch each other's processes. Guests still come up only
+      through the market network's requester (runComputeContract -> RFP -> bid -> accept -> cloud-init) against the
+      market network's own bidder; the market network adds no provisioning path.
       Fifth fold 2026-10-12 (multi-server-to-kcp.md 6, decided by Claude, user may veto; status and evidence
       untouched): the port file this item reads back is the precursor of M2-DENOPOD-LISTENERS' listener
-      report (tcp, unix and relay ingress URLs), which replaces it once the owned runner exists; the bed
+      report (tcp, unix and relay ingress URLs), which replaces it once the owned runner exists; the market network
       bidder's key, repo KV and session live in its per-run dir, never $HOME defaults (port-audit B11); and
-      accept.sh reads the bidder DID from the bed record (written from the bidder's report), not by grepping
-      its stdout (accept.sh:463-467). Today's bed keeps its four applications in ONE kcp and its shim reads
+      accept.sh reads the bidder DID from the market network record (written from the bidder's report), not by grepping
+      its stdout (accept.sh:463-467). Today's market network keeps its four applications in ONE kcp and its shim reads
       other workspaces (README.md:128-130), which the user's strict rule of 2026-10-12 forbids; this item
-      only parallelises that bed and adds no new cross-application coupling, and M4-TESTBED-PORT retires it.
-    files: ["internal/marketbed/ (bed record, leases, live tests read ports from it)", "deploy/denokcp/start-kcp.sh (ports from the record)", "deploy/examples/atproto/market/ (manifests templated on ports; accept.sh, apply.sh read the record)", "deploy/denokcp/vendor.json (adapted files recorded)"]
+      only parallelises that market network and adds no new cross-application coupling, and M4-MARKET-NETWORK-PORT retires it.
+    files: ["internal/marketnetwork/ (market network record, leases, live tests read ports from it)", "deploy/denokcp/start-kcp.sh (ports from the record)", "deploy/market-network/ (manifests templated on ports; accept.sh, apply.sh read the record)", "deploy/denokcp/vendor.json (adapted files recorded)"]
     test_first: >
-      internal/marketbed TestNoBedPortIsALiteral (scans the bed's Go, shell and manifests for 2583-2589, 6443
-      and 23791 outside the record; red on today's tree), TestTwoBedRecordsLeaseDisjointPorts; behind
-      livegate on hat-8: TestTwoBedsOnOneHostEachRentAGuestThroughTheRFPFlow (two worktrees' beds at once,
+      internal/marketnetwork TestNoNetworkPortIsALiteral (scans the market network's Go, shell and manifests for 2583-2589, 6443
+      and 23791 outside the record; red on today's tree), TestTwoNetworkRecordsLeaseDisjointPorts; behind
+      livegate on hat-8: TestTwoNetworksOnOneHostEachRentAGuestThroughTheRFPFlow (two worktrees' market networks at once,
       each guest born via runComputeContract; both pass; no ssh to a guest). Red first.
-    done_when: "the two-bed live run passes on hat-8 with its readings (ports, run ids, guest names, UTC); M1-TESTBED's accept checks still pass on one bed; 0006 M1-NO-FIXED-PORTS' ratchet holds no bed entry."
-    risks: ["Two beds double the guests on hat-8 (memory, /dev/kvm); the run records host memory before and after and refuses a third bed when free memory is below the bed's guest budget."]
+    done_when: "the live run of two market networks passes on hat-8 with its readings (ports, run ids, guest names, UTC); M1-MARKET-NETWORK's accept checks still pass on one market network; 0006 M1-NO-FIXED-PORTS' ratchet holds no market network entry."
+    risks: ["Two market networks double the guests on hat-8 (memory, /dev/kvm); the run records host memory before and after and refuses a third market network when free memory is below the market network's guest budget."]
     status: done
     evidence:
   - id: M1-SSH-GATEWAY-IROH
@@ -305,7 +305,7 @@ items:
       compute-contract-full-flow/ names websocat, fedproxy-client, wootty or JSR_URL); hono-compute-provider
       'no guest JSR registry is served and no user_data names JSR_URL'; socialweb-computer-ssh 'no transport
       other than iroh is requested'. Red on today's tree.
-    done_when: "the three scan tests green; every suite of the three repos green; the ssh gateway's Live market workflow green after the change (run URL, UTC); one market-bed run (guest via runComputeContract) reaches an ssh session over iroh; pushed on main in all three repos."
+    done_when: "the three scan tests green; every suite of the three repos green; the ssh gateway's Live market workflow green after the change (run URL, UTC); one market network run (guest via runComputeContract) reaches an ssh session over iroh; pushed on main in all three repos."
     risks: ["Plan 0012's research lists the legacy modules and forwards the JSR registry per VM (0012 lines on cloud-init-common and the guest-facing services); its M0-REVISIT re-reads them (NEXT.yaml open_notes)."]
     status: done
     evidence:
@@ -324,7 +324,7 @@ items:
       0006:M1-K8S-FORK is closed as not chosen and this item needs only the route record and the cross-OS
       gate (0006:M0-XOS-GATE) its build-tagged runner must keep green (M0-KCP-SPIKE also measured deno-kcp
       25d10f92 and kcp-libs f6911d2 green on the fork, so either module graph builds). The CRDs (DenoPod,
-      OpenBao, ...) keep their group deno.computer so existing manifests and the test bed apply unchanged.
+      OpenBao, ...) keep their group deno.computer so existing manifests and the market network apply unchanged.
       Upstream is no longer followed automatically; a later upstream change is pulled by a recorded
       cherry-pick. Cross-OS seam (decided by the user 2026-10-11): kcp-libs impl/execrunner's process
       attributes (supervisor.go:141 Setpgid, untagged today, which breaks GOOS=windows) move into
@@ -390,7 +390,7 @@ items:
       within 0006 principle.port0_rule): createServe (typescript-helpers lib/serve/mod.ts:63-179, the one place
       a "report my listeners" hook belongs) gains a listener report written on onListen and after each relay
       connects: <runDir>/listeners.json {name: url} (tcp URL, unix path, relay ingressUrl), superseding the
-      single port-bound-to file M1-BED-PARALLEL reads. The owned runner reads it on observe into
+      single port-bound-to file M1-MARKET-NETWORK-PARALLEL reads. The owned runner reads it on observe into
       DenoPod.status.listeners[] (the DenoPod status has Outputs and Ready but no address today,
       deno-kcp/api/v1alpha1/types_denopod.go:48-68); servicenames.AdvertisedAddress prefers it (port-audit
       B2), and the DNS table is re-read on a miss (KCP_DNS_TABLE_FILE) from the pod's OWN application's
@@ -403,7 +403,7 @@ items:
       typescript-helpers serve test: a port-0 tcp serve with one relay writes both URLs to the report; Go:
       TestADenoPodOnPortZeroIsResolvedByItsReportedAddress, TestNoServiceManifestNamesAPort,
       TestTheDnsTableHoldsOnlyTheOwnApplicationsServices. Red first.
-    done_when: "green; the bed's services run on port 0 and every probe and peer lookup uses status; pushed on main in typescript-helpers."
+    done_when: "green; the market network's services run on port 0 and every probe and peer lookup uses status; pushed on main in typescript-helpers."
     risks: []
     status: done
     evidence:
@@ -417,13 +417,13 @@ items:
       Claude, user may veto: the packages). typescript-helpers lib/common/market-network-common (the value:
       plcDirectoryUrl, ingressProxyHost, relayUrls, firehoseUrls, qrOrigin, guestTlsUrl, caBundleRef, the
       *.localhost rewrite) and lib/market-network-fetch (the one fetch adapter) replace the four patches -
-      hono-bidder/mod.ts:74-95, request-vm-ssh/mod.ts:48-60, the bed's market-requester/mod.ts:82-95 and
+      hono-bidder/mod.ts:74-95, request-vm-ssh/mod.ts:48-60, the market network's market-requester/mod.ts:82-95 and
       atproto-market test/fetch-interceptor.ts. Under kcp the service template renders the value from the
       application's root object (copied there by its composer, 0006 M2-APP-CONTROLLER; for a production app
       by its profile), never from another application's objects; a value is never discovered by reading
       another workspace or kcp. The Go MarketNetwork kind's value fields (0006 M2-APP-CONTROLLER) mirror the
       type field for field (apigen TS target, drift-checked).
-    files: ["ts/typescript-helpers/lib/common/market-network-common/", "ts/typescript-helpers/lib/market-network-fetch/", "ts/atproto-market/hono-bidder/mod.ts, request-vm-ssh/mod.ts, test/fetch-interceptor.ts", "deploy/examples/atproto/market/market-requester/mod.ts"]
+    files: ["ts/typescript-helpers/lib/common/market-network-common/", "ts/typescript-helpers/lib/market-network-fetch/", "ts/atproto-market/hono-bidder/mod.ts, request-vm-ssh/mod.ts, test/fetch-interceptor.ts", "deploy/market-network/market-requester/mod.ts"]
     test_first: "one table test: https://x.relay.localhost and https://plc.directory/<did> resolve identically through the adapter for every call site's inputs; a grep test that no fetch patch is left outside the adapter. Red until the adapter exists."
     done_when: "no fetch patch left outside the adapter (grep test green); pushed on main in typescript-helpers and atproto-market."
     risks: []
@@ -439,13 +439,13 @@ items:
       through it); it renders a component spec (0007 M3-BIDDER-COMPOSER), the MarketNetwork value
       (M2-MARKET-NETWORK) and the listener report path (M2-DENOPOD-LISTENERS); no port, no HOME passthrough
       (finding F6), and stdin is never read (interactive steps are MarketIdentity status, 0007
-      M1-MARKET-IDENTITY). A firecracker-provider bed bidder names --allow-run (docker, its runner
+      M1-MARKET-IDENTITY). A firecracker-provider market network bidder names --allow-run (docker, its runner
       containers) with that reason until 0007 M5-RUN-BIDDER makes compute-provider-kcp its provider.
-      deploy/denopods/service.yaml renders the supervisor script the test bed repeats (70-bidder.yaml:35-92)
+      deploy/denopods/service.yaml renders the supervisor script the market network repeats (70-bidder.yaml:35-92)
       from typed fields: entry and cwd relative to the TypeScript source root (M1-TS-SOURCE; never an
       absolute host path), args, deno flags (always --no-code-cache), env, permissions, probe,
       restartPolicy Always. Preloads: KCP_SHIM first, then the service's own (the door's undici-preload.ts).
-      The test bed's 20-70 manifests become values for this template; vendored originals stay records.
+      The market network's 20-70 manifests become values for this template; vendored originals stay records.
       Permissions (decided by the user 2026-10-11: explicit deno permissions, no -A, no --allow-run, no
       /dev/kvm, no D-Bus socket path, enforced in the DenoPod template and tested): `permissions` is a
       required typed list per service; the template refuses -A/--allow-all; --allow-run and --allow-ffi
@@ -458,7 +458,7 @@ items:
       TestEveryServiceDenoPodNamesItsEntryRelativeToTheSourceRoot, TestTheTemplateRefusesAllowAll,
       TestEveryRenderedServiceDeniesDevKvmAndTheRuntimeDir, TestAllowRunRendersOnlyWithAReason and, behind
       livegate, TestTwoPreloadsBothRunBeforeTheEntry; red first.
-    done_when: "the market bed's services start from the template on hat-8 with the probes of M1-TESTBED run 9 passing."
+    done_when: "the market network's services start from the template on hat-8 with the probes of M1-MARKET-NETWORK run 9 passing."
     risks: []
     status: todo
     evidence: []
@@ -562,10 +562,10 @@ items:
       StrictHostKeyChecking=yes. Subcommands: run request [--wait onNetwork] [--ssh], run request list (reads
       each state/<invocation>/summary.json written from root status at exit, starting no kcp), run request
       release <name>, run request resume <name> (both restart the invocation's kcp and the requester DenoPod
-      resumes from the ComputeContract, including one accepted before the stop). In a market bed, `run
-      request --bed <instance>` asks the bed's MarketNetwork to add this invocation as a child application
+      resumes from the ComputeContract, including one accepted before the stop). In a market network, `run
+      request --market-network <instance>` asks the market network's MarketNetwork to add this invocation as a child application
       (0006 M2-APP-CONTROLLER), so the network values are copied onto its root object and its state dir sits
-      under the bed's state; the CLI then talks to the invocation's kcp exactly as outside a bed. The
+      under the market network's state; the CLI then talks to the invocation's kcp exactly as outside a market network. The
       org-root alice-request.sh path and the identity-prompt-tty impl are deleted with this item. Everything
       goes through the RFP flow.
     files: ["api/v1alpha1/computecontract_types.go", "atproto-market/hono-compute-request/", "ts/atproto-market/request-vm-ssh/ (reduced to the DenoPod entry)", "ts/atproto-market/lib (a ComputeContract store over kcp REST, beside the door's nodeclaim-kcp; requester key and session stores over OpenBao)", "internal/stack/request (per-invocation bootstrap, state/<invocation>, summary.json)", "internal/bootstrap (requester role row)", "deploy/apps/requester/*.values.yaml", "deploy/ts-entries.yaml"]
@@ -577,52 +577,52 @@ items:
       TestReleaseRestartsTheInvocationsKcpFromItsStateDir (the kcp stopped after onNetwork; release starts it
       again from state/<invocation>, the ComputeContract and its vault keys read back, one vm.delete),
       TestRunRequestListStartsNoKcp, TestNoRequesterKeyOrSessionIsInAKcpObject. Red first.
-    done_when: "tests green; on the market bed `run request --bed` reaches onNetwork and an ssh session over iroh, `run request list` shows it with no kcp running, `release <name>` restarts the invocation's kcp, gets vm.delete 200 and the guest is gone (UTC readings, cold kcp seconds per invocation recorded)."
+    done_when: "tests green; on the market network `run request --market-network` reaches onNetwork and an ssh session over iroh, `run request list` shows it with no kcp running, `release <name>` restarts the invocation's kcp, gets vm.delete 200 and the guest is gone (UTC readings, cold kcp seconds per invocation recorded)."
     risks: ["A fresh kcp per invocation costs 6-9 s cold start and ~0.4-0.5 GB while it runs (kcp-spike.md); the user chose it over a persistent requester app (2026-10-12); the reading is recorded so the cost is visible."]
     status: todo
     evidence: []
-  - id: M4-TESTBED-PORT
+  - id: M4-MARKET-NETWORK-PORT
     milestone: M4
-    title: The market test bed driven by socialweb-computer instead of accept.sh and apply.sh
-    depends_on: [M2-SERVICE-TEMPLATE, M1-BED-PARALLEL, "0006:M2-APPLY", "0006:M2-KCP-PORT0", "0006:M1-DEV-INSTANCE", "0006:M2-BOOTSTRAP-LAYER", "0006:M2-HOSTPROCESS-KIND", "0006:M2-APP-CONTROLLER", M2-DENOPOD-LISTENERS, M2-MARKET-NETWORK, M4-RUN-REQUEST, "0007:M1-MARKET-IDENTITY", "0007:M3-BIDDER-ACCOUNT-PDS", "0007:M3-BIDDER-COMPOSER"]
+    title: The market network driven by socialweb-computer instead of accept.sh and apply.sh
+    depends_on: [M2-SERVICE-TEMPLATE, M1-MARKET-NETWORK-PARALLEL, "0006:M2-APPLY", "0006:M2-KCP-PORT0", "0006:M1-DEV-INSTANCE", "0006:M2-BOOTSTRAP-LAYER", "0006:M2-HOSTPROCESS-KIND", "0006:M2-APP-CONTROLLER", M2-DENOPOD-LISTENERS, M2-MARKET-NETWORK, M4-RUN-REQUEST, "0007:M1-MARKET-IDENTITY", "0007:M3-BIDDER-ACCOUNT-PDS", "0007:M3-BIDDER-COMPOSER"]
     decision: >
-      Fifth fold 2026-10-12 (decided by the user: STRICT kcp per application, inside a bed too; cross-app
+      Fifth fold 2026-10-12 (decided by the user: STRICT kcp per application, inside a market network too; cross-app
       discovery only through composer-copied values; the shim resolves only within its own application;
-      overrides the research's nested-workspace bed): `testbed up` = `dev up --profile bed`, whose dev instance IS a MarketNetwork
+      overrides the research's nested-workspace market network): `market-network up` = `dev up --profile market-network`, whose dev instance IS a MarketNetwork
       application (0006 M2-APP-CONTROLLER, M1-DEV-INSTANCE): its own kcp runs the shared atproto services
       (plc, relay, dispatcher, dispatcher-tls, qr, the verifier) as DenoPods, and it composes N MarketBidder
       children (each with its own kcp and its own PDS DenoPod, MarketIdentity mode pdsAccount, 0007
       M3-BIDDER-ACCOUNT-PDS; firecracker provider until 0007 M5-RUN-BIDDER) and requester invocations (`run
-      request --bed`, M4-RUN-REQUEST), plus a Gateway child for m3-shaped runs. Each child learns the network
+      request --market-network`, M4-RUN-REQUEST), plus a Gateway child for m3-shaped runs. Each child learns the network
       only from the values copied onto its root object; no bidder or requester reads the network's kcp, and
       the shim never resolves another application's name (today's cross-workspace lookup, README.md:128-130,
-      is deleted with the vendored bed). System tests start applications only through one helper,
-      internal/apptest.Start(t, app, profile, values) (a fresh child of a test bed or a fresh dev instance),
+      is deleted with the vendored market network). System tests start applications only through one helper,
+      internal/apptest.Start(t, app, profile, values) (a fresh child of a market network or a fresh dev instance),
       and read DIDs and URLs from root status, never stdout (accept.sh's DID grep and the bidder_ready line
-      go; M2-DENOPOD-LISTENERS). N bidders = N bidder applications, N beds = N dev instances. Sign-in in the
-      bed is driven through MarketIdentity status and hono-pds's session minting (0007 M1-MARKET-IDENTITY),
+      go; M2-DENOPOD-LISTENERS). N bidders = N bidder applications, N market networks = N dev instances. Sign-in in the
+      market network is driven through MarketIdentity status and hono-pds's session minting (0007 M1-MARKET-IDENTITY),
       never --skip-qr.
-      Principle (user 2026-10-12): the bed is the seed of the application-instance model - a composition of
-      application instances (its atproto network, bidders each with their own PDS pod under the bed profile,
+      Principle (user 2026-10-12): the market network is the seed of the application-instance model - a composition of
+      application instances (its atproto network, bidders each with their own PDS pod under the market-network profile,
       requesters) brought up by applying manifest sets, each instance talking to the others only over the
       market protocol; how its services split into instances is the fifth-fold paragraph above. Third fold 2026-10-12 (decided by the user: dev run mode kcp-native now; drop the fixed ports 2583-2589
-      and the one-bed lock): `testbed up` = `dev up --profile bed` (0006 M1-DEV-INSTANCE, M2-BOOTSTRAP-LAYER:
-      the instance's own kcp on kine -> postgres behind a port-0 front, host-backend=proc), then the bed's
-      sets; every bed service port renders to 0 and is read back from the service's listener report (the
-      leases of M1-BED-PARALLEL are kept only for ports that must be stable within a run); there is no lock
-      file and no one-bed rule; N beds run on one host, one per dev instance.
-      `socialweb-computer testbed up|accept|down`: kcp on port 0 (0006:M2-KCP-PORT0), an OpenBaoServer object for the bed's dev vault, the denoruntime and market-testbed sets, the
-      same checks as accept.sh run 9. The bed's bidders are MarketBidder child applications (on the
+      and the one-network-per-host lock): `market-network up` = `dev up --profile market-network` (0006 M1-DEV-INSTANCE, M2-BOOTSTRAP-LAYER:
+      the instance's own kcp on kine -> postgres behind a port-0 front, host-backend=proc), then the market network's
+      sets; every market network service port renders to 0 and is read back from the service's listener report (the
+      leases of M1-MARKET-NETWORK-PARALLEL are kept only for ports that must be stable within a run); there is no lock
+      file and no one-network-per-host rule; N market networks run on one host, one per dev instance.
+      `socialweb-computer market-network up|accept|down`: kcp on port 0 (0006:M2-KCP-PORT0), an OpenBaoServer object for the market network's dev vault, the denoruntime and market-network sets, the
+      same checks as accept.sh run 9. The market network's bidders are MarketBidder child applications (on the
       firecracker provider until 0007 M5-RUN-BIDDER, then `run bidder`'s compute-provider-kcp) and their
       guests come up only through a requester invocation's RFP, bid, accept and cloud-init. Decided by Claude, user may veto
-      (2026-10-11): every unit a bed starts is named socialweb-bed-<runid>-... so no production prefix
-      (socialweb-vm-<hid>-, socialweb-bao-, socialweb-pg-, socialweb-cluster-) ever matches it, and a bed on
+      (2026-10-11): every unit a market network starts is named socialweb-market-network-<runid>-... so no production prefix
+      (socialweb-vm-<hid>-, socialweb-bao-, socialweb-pg-, socialweb-cluster-) ever matches it, and a market network on
       hat-8 never adopts, audits or garbage-collects a real bidder's units on the same account (or the
-      reverse); under proc the bed's units are its own devsup's, which already separates them. accept.sh and
+      reverse); under proc the market network's units are its own devsup's, which already separates them. accept.sh and
       apply.sh are deleted after two passes.
-    files: ["internal/stack/testbed", "internal/marketbed/live_test.go", "deploy/examples/atproto/market/accept.sh, apply.sh (deleted at the end)"]
-    test_first: "TestTheMarketTestBedRentsAFirecrackerGuestThroughTheRFPFlow switched to the subcommand; TestTwoBedsOnOneHostEachRentAGuestThroughTheRFPFlow through `testbed up` in two dev instances (two requesters, two bidders; guests only via runComputeContract); fifth fold: TestNoTwoApplicationsInABedShareAKcp (network, every bidder, the gateway and each requester invocation: distinct kcp roots and fronts), TestABedSystemTestReadsTheBidderDidFromRootStatusNotStdout, TestTheBedBidderSignsInThroughItsIdentityObjectWithoutSkipQr; red until it exists."
-    done_when: "two PASS readings through the subcommand with accept.sh run 9's check list, and one two-bed reading on hat-8 (UTC); 0006 M1-NO-FIXED-PORTS' ratchet holds no testbed entry."
+    files: ["internal/stack/market network", "internal/marketnetwork/live_test.go", "deploy/market-network/accept.sh, apply.sh (deleted at the end)"]
+    test_first: "TestTheMarketNetworkRentsAFirecrackerGuestThroughTheRFPFlow switched to the subcommand; TestTwoNetworksOnOneHostEachRentAGuestThroughTheRFPFlow through `market-network up` in two dev instances (two requesters, two bidders; guests only via runComputeContract); fifth fold: TestNoTwoApplicationsInANetworkShareAKcp (network, every bidder, the gateway and each requester invocation: distinct kcp roots and fronts), TestANetworkSystemTestReadsTheBidderDidFromRootStatusNotStdout, TestTheNetworkBidderSignsInThroughItsIdentityObjectWithoutSkipQr; red until it exists."
+    done_when: "two PASS readings through the subcommand with accept.sh run 9's check list, and one reading of two market networks on hat-8 (UTC); 0006 M1-NO-FIXED-PORTS' ratchet holds no market network entry."
     risks: []
     status: todo
     evidence: []
