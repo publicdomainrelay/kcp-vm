@@ -5,7 +5,7 @@ set -euo pipefail
 # in root:relay, a PDS in root:alice, and in root:bob a second PDS plus
 # MARKET_NETWORK_BIDDERS market bidders (bidder-1 .. bidder-N). Every service
 # DenoPod is rendered from the one service template, deploy/denopods/service.yaml:
-# 20-70 are its values (entry, cwd, args, env, state dir, explicit deno
+# 20-70 are its values (entry, state dir, args, env, explicit deno
 # permissions, probe), and the template's supervisor runs the entry on the
 # pinned deno from the TypeScript source root the deno runtime names.
 #

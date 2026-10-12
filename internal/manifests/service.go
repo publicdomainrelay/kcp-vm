@@ -33,7 +33,6 @@ var (
 type Service struct {
 	Name           string              `json:"name"`
 	Entry          string              `json:"entry"`
-	Cwd            string              `json:"cwd"`
 	StateDir       string              `json:"stateDir"`
 	ServiceAccount string              `json:"serviceAccount"`
 	TLS            string              `json:"tls"`
@@ -114,9 +113,6 @@ func (s Service) Check(entries map[string]tsbundle.EntrySpec) error {
 	if _, ok := entries[s.Entry]; !ok {
 		add("entry %q is no entry of deploy/%s; a service runs only what the closure ships", s.Entry, EntriesPath)
 	}
-	if err := relativeToSourceRoot(s.Cwd); err != nil {
-		add("cwd: %v", err)
-	}
 	if !path.IsAbs(s.StateDir) {
 		add("stateDir %q is not an absolute path", s.StateDir)
 	}
@@ -143,13 +139,6 @@ func (s Service) Check(entries map[string]tsbundle.EntrySpec) error {
 		return fmt.Errorf("manifests: service %s: %s", s.Name, strings.Join(problems, "; "))
 	}
 	return nil
-}
-
-func relativeToSourceRoot(p string) error {
-	if p == "." {
-		return nil
-	}
-	return tsbundle.CleanPath(p)
 }
 
 func (p *ServicePermissions) check() error {
@@ -253,7 +242,7 @@ func (s Service) TemplateData(entries map[string]tsbundle.EntrySpec) (map[string
 		}
 		data[key] = text
 	}
-	for key, v := range map[string]any{"Entry": e.Path, "Cwd": s.Cwd, "StateDir": s.StateDir, "TLS": tls, "TLSMode": s.TLS} {
+	for key, v := range map[string]any{"Entry": e.Path, "StateDir": s.StateDir, "TLS": tls, "TLSMode": s.TLS} {
 		text, err := jsonText(v)
 		if err != nil {
 			return nil, err

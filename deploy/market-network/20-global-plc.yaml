@@ -1,6 +1,5 @@
 name: plc
 entry: hono-plc
-cwd: ts/atproto-market
 stateDir: "{{.StateDir}}/global-plc"
 serviceAccount: deno-runner
 tls: serve

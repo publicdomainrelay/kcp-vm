@@ -1,6 +1,5 @@
 name: "{{.Bidder.Name}}"
 entry: hono-bidder
-cwd: ts/atproto-market
 stateDir: "{{.StateDir}}/bob-{{.Bidder.Name}}"
 serviceAccount: deno-runner
 tls: trust
@@ -19,11 +18,13 @@ permissions:
   read: ["{{.Firecracker.NodeImage}}", "{{.Firecracker.Config}}", "{{.Firecracker.RepoDir}}", "{{.Firecracker.Preinstall}}", "{{.Firecracker.WorkRoot}}"{{.Firecracker.ExtraRead}}]
   write: ["{{.Firecracker.WorkRoot}}"{{.Firecracker.ExtraWrite}}]
   run:
-    allow: ["docker", "ssh-keygen", "{{.Firecracker.NodeImage}}"{{.Firecracker.ExtraRun}}]
+    allow: ["docker", "ssh-keygen", "bash", "deno", "{{.Firecracker.NodeImage}}"{{.Firecracker.ExtraRun}}]
     reason: >-
-      the firecracker compute provider builds the guest image with the node image tool, boots each guest
-      in a docker runner container, and the guest OIDC issuer verifies ssh signatures with ssh-keygen; until
-      0007 M5-RUN-BIDDER makes compute-provider-kcp the bidder's provider
+      the firecracker compute provider builds the guest image with the node image tool and boots each guest
+      in a docker runner container (until 0007 M5-RUN-BIDDER makes compute-provider-kcp the bidder's
+      provider), the guest OIDC issuer verifies ssh signatures with ssh-keygen, and the in-process policy
+      engine runs a policy workflow's run steps in bash and its actions as deno subprocesses (deno is the
+      pinned deno the template runs on)
 probe:
   host: "{{.Bidder.Name}}.default.bob.svc.kcp.local"
   path: /oauth-client-metadata.json

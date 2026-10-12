@@ -1,6 +1,5 @@
 name: pds
 entry: hono-pds
-cwd: ts/hono-pds
 stateDir: "{{.StateDir}}/alice-pds"
 serviceAccount: deno-runner
 tls: serve

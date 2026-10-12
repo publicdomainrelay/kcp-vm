@@ -1,6 +1,5 @@
 name: relay
 entry: hono-atproto-relay
-cwd: ts/atproto-relay
 stateDir: "{{.StateDir}}/relay-relay"
 serviceAccount: deno-runner
 tls: serve

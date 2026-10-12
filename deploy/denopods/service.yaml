@@ -10,7 +10,6 @@ spec:
   serviceAccount: {{.ServiceAccount}}
   env:
     SERVICE_ENTRY: {{.Entry}}
-    SERVICE_CWD: {{.Cwd}}
     SERVICE_STATE_DIR: {{.StateDir}}
     SERVICE_ARGS: {{.Args}}
     SERVICE_ENV: {{.Env}}
@@ -33,10 +32,9 @@ spec:
 
     const root = read("SOCIALWEB_TS_ROOT");
     const entry = read("SERVICE_ENTRY");
-    const cwd = read("SERVICE_CWD");
     const stateDir = read("SERVICE_STATE_DIR");
     if (!root) await fail("SOCIALWEB_TS_ROOT is unset; the deno runtime names the TypeScript source root");
-    if (!entry || !cwd || !stateDir) await fail("SERVICE_ENTRY, SERVICE_CWD and SERVICE_STATE_DIR are required");
+    if (!entry || !stateDir) await fail("SERVICE_ENTRY and SERVICE_STATE_DIR are required");
     const at = (p: string): string => `${root}/${p}`;
 
     const args = parsed<string[]>("SERVICE_ARGS", []);
@@ -101,7 +99,7 @@ spec:
       args.push("--tls-cert-file", `${runDir}/tls.crt`, "--tls-key-file", `${runDir}/tls.key`);
     }
 
-    const readable = [root, runDir, stateDir, ...(permissions.read ?? [])];
+    const readable = [root, runDir, stateDir, dirOf(Deno.execPath()), ...(permissions.read ?? [])];
     if (denoDir) readable.push(denoDir);
     if (shim) readable.push(dirOf(shim));
     if (table) readable.push(dirOf(table));
@@ -118,10 +116,18 @@ spec:
     if (permissions.net) permissionFlags.push("--allow-net");
     if (permissions.env) permissionFlags.push("--allow-env");
     if (permissions.sys) permissionFlags.push("--allow-sys");
-    if (permissions.run?.length) permissionFlags.push(`--allow-run=${permissions.run.join(",")}`);
+    const programs = (permissions.run ?? []).map((p) => p === "deno" ? Deno.execPath() : p);
+    if (programs.length) permissionFlags.push(`--allow-run=${programs.join(",")}`);
     if (permissions.ffi?.length) permissionFlags.push(`--allow-ffi=${permissions.ffi.join(",")}`);
 
-    const runArgs = ["run", "--no-code-cache", "--node-modules-dir=none", "--frozen", `--lock=${at("deno.lock")}`];
+    const runArgs = [
+      "run",
+      "--no-code-cache",
+      "--node-modules-dir=none",
+      `--config=${at("deno.json")}`,
+      "--frozen",
+      `--lock=${at("deno.lock")}`,
+    ];
     if (read("SOCIALWEB_TS_MODE") === "production") runArgs.push("--cached-only");
     runArgs.push(...permissionFlags, ...denoFlags);
     if (shim) runArgs.push("--preload", shim);
@@ -130,7 +136,7 @@ spec:
 
     const child = new Deno.Command(Deno.execPath(), {
       args: runArgs,
-      cwd: at(cwd),
+      cwd: stateDir,
       env: childEnv,
       clearEnv: true,
       stdin: "null",
@@ -161,7 +167,6 @@ spec:
         - SOCIALWEB_TS_ROOT
         - SOCIALWEB_TS_MODE
         - SERVICE_ENTRY
-        - SERVICE_CWD
         - SERVICE_STATE_DIR
         - SERVICE_ARGS
         - SERVICE_ENV

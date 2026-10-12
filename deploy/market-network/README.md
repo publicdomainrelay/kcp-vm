@@ -103,15 +103,17 @@ rendered from `deploy/denopods/service.yaml`. The files 20, 30, 35, 40, 60 and
 70 here are its values, not DenoPods:
 
 ```
-name, entry (a name in deploy/ts-entries.yaml), cwd (relative to the
-TypeScript source root), stateDir, serviceAccount, tls (serve | trust | none),
-args, env, permissions, probe
+name, entry (a name in deploy/ts-entries.yaml), stateDir, serviceAccount,
+tls (serve | trust | none), args, env, permissions, probe
 ```
 
 The template's supervisor runs the entry on the pinned deno with
-`--no-code-cache --node-modules-dir=none --frozen` and the root `deno.lock`
-(plus `--cached-only` in production), from the source root the deno runtime
-names in `SOCIALWEB_TS_ROOT`, never from an absolute host path. Preloads are
+`--no-code-cache --node-modules-dir=none --frozen`, the root `deno.json` and
+`deno.lock` (plus `--cached-only` in production), from the source root the deno
+runtime names in `SOCIALWEB_TS_ROOT`, never from an absolute host path. Its
+working directory is its state dir, never the source tree: the policy engine
+inside the bidder writes `.cache` and `.tempdir` into its working directory, and
+a production source tree is read-only. Preloads are
 the kcpdns shim first, then the entry's own from `deploy/ts-entries.yaml`, and so
 are the `--unstable-*` flags. The child gets a clean environment: no `HOME` of
 the user (its `HOME` is its own state dir, `TMPDIR` is under it), `PORT_FILE`,

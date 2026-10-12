@@ -1,6 +1,5 @@
 name: dispatcher
 entry: hono-did-key-ingress-proxy
-cwd: ts/did-key-ingress-proxy
 stateDir: "{{.StateDir}}/relay-dispatcher"
 serviceAccount: deno-runner
 tls: trust
