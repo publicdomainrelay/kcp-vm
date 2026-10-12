@@ -395,6 +395,27 @@
       "type": "string",
       "description": "Root vault address",
       "env": "SOCIALWEB_ROOTVAULT_ADDR"
+    },
+    "set": {
+      "type": "string",
+      "description": "apply, manifests render: the manifest sets, comma-separated, in order (manifests list names them)"
+    },
+    "values": {
+      "type": "string",
+      "description": "apply, manifests render: a YAML or JSON file of typed values keyed by set name, decoded strictly"
+    },
+    "dry-run": {
+      "type": "boolean",
+      "description": "apply: server-side dry run; reports every field whose manager would change and persists nothing"
+    },
+    "phase": {
+      "type": "string",
+      "description": "apply, manifests render: only this phase of each set"
+    },
+    "wait-timeout": {
+      "type": "string",
+      "description": "apply: how long each typed wait may take (Go duration)",
+      "default": "2m"
     }
   }
 }
