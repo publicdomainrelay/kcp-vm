@@ -1,7 +1,7 @@
 apiVersion: apis.kcp.io/v1alpha1
 kind: APIResourceSchema
 metadata:
-  name: v1alpha1-2.openbaoservers.socialweb.computer
+  name: v1alpha1-3.openbaoservers.socialweb.computer
 spec:
   group: socialweb.computer
   names:
@@ -66,13 +66,272 @@ spec:
                       type: string
                     kvMount:
                       type: string
+                    policies:
+                      type: array
+                      items:
+                        type: string
                     tokenTTL:
                       type: string
                     tokenMaxTTL:
                       type: string
                   required:
                     - name
-                    - kvMount
+              unit:
+                type: string
+              slice:
+                type: string
+              after:
+                type: array
+                items:
+                  type: string
+              wants:
+                type: array
+                items:
+                  type: string
+              log:
+                type: string
+              storage:
+                type: object
+                properties:
+                  postgres:
+                    type: object
+                    properties:
+                      socketDir:
+                        type: string
+                      user:
+                        type: string
+                      database:
+                        type: string
+                    required:
+                      - socketDir
+                      - user
+                      - database
+              tls:
+                type: object
+                properties:
+                  certFile:
+                    type: string
+                  keyFile:
+                    type: string
+                  caFile:
+                    type: string
+                  clientCertOptional:
+                    type: boolean
+                required:
+                  - certFile
+                  - keyFile
+                  - caFile
+              declared:
+                type: object
+                properties:
+                  secretMounts:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        path:
+                          type: string
+                        type:
+                          type: string
+                        maxLeaseTTL:
+                          type: string
+                      required:
+                        - path
+                        - type
+                  authMounts:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        path:
+                          type: string
+                        type:
+                          type: string
+                        jwt:
+                          type: object
+                          properties:
+                            discoveryURL:
+                              type: string
+                            boundIssuer:
+                              type: string
+                          required:
+                            - discoveryURL
+                      required:
+                        - path
+                        - type
+                  policies:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                        rules:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              path:
+                                type: string
+                              capabilities:
+                                type: array
+                                items:
+                                  type: string
+                            required:
+                              - path
+                              - capabilities
+                      required:
+                        - name
+                        - rules
+                  certRoles:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        mount:
+                          type: string
+                        name:
+                          type: string
+                        commonNames:
+                          type: array
+                          items:
+                            type: string
+                        caFromPKI:
+                          type: string
+                        policies:
+                          type: array
+                          items:
+                            type: string
+                        tokenTTL:
+                          type: string
+                        tokenMaxTTL:
+                          type: string
+                        noDefaultPolicy:
+                          type: boolean
+                      required:
+                        - mount
+                        - name
+                        - commonNames
+                        - caFromPKI
+                        - policies
+                  jwtRoles:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        mount:
+                          type: string
+                        name:
+                          type: string
+                        roleType:
+                          type: string
+                        boundSubject:
+                          type: string
+                        boundAudiences:
+                          type: array
+                          items:
+                            type: string
+                        userClaim:
+                          type: string
+                        policies:
+                          type: array
+                          items:
+                            type: string
+                        tokenTTL:
+                          type: string
+                      required:
+                        - mount
+                        - name
+                        - boundSubject
+                        - boundAudiences
+                        - userClaim
+                        - policies
+                  appRoles:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        mount:
+                          type: string
+                        name:
+                          type: string
+                        policies:
+                          type: array
+                          items:
+                            type: string
+                        tokenTTL:
+                          type: string
+                        tokenMaxTTL:
+                          type: string
+                        secretIDTTL:
+                          type: string
+                      required:
+                        - name
+                        - policies
+                  pkiRoles:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        mount:
+                          type: string
+                        name:
+                          type: string
+                        allowedDomains:
+                          type: array
+                          items:
+                            type: string
+                        allowSubdomains:
+                          type: boolean
+                        allowBareDomains:
+                          type: boolean
+                        allowAnyName:
+                          type: boolean
+                        allowIPSANs:
+                          type: boolean
+                        enforceHostnames:
+                          type: boolean
+                        requireCN:
+                          type: boolean
+                        clientFlag:
+                          type: boolean
+                        serverFlag:
+                          type: boolean
+                        keyType:
+                          type: string
+                        keyBits:
+                          type: integer
+                          format: int32
+                        keyUsage:
+                          type: array
+                          items:
+                            type: string
+                        organization:
+                          type: array
+                          items:
+                            type: string
+                        ttl:
+                          type: string
+                        maxTTL:
+                          type: string
+                      required:
+                        - mount
+                        - name
+                  kv:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        mount:
+                          type: string
+                        prefix:
+                          type: string
+                        keys:
+                          type: array
+                          items:
+                            type: string
+                      required:
+                        - mount
           status:
             type: object
             properties:
@@ -155,6 +414,28 @@ spec:
                       type: string
                   required:
                     - name
+              sync:
+                type: object
+                properties:
+                  observedGeneration:
+                    type: integer
+                    format: int64
+                  syncedAt:
+                    type: string
+                  lastChangeAt:
+                    type: string
+                  lastChange:
+                    type: string
+                  declared:
+                    type: string
+                  pending:
+                    type: array
+                    items:
+                      type: string
+                  conflicts:
+                    type: array
+                    items:
+                      type: string
               conditions:
                 type: array
                 items:

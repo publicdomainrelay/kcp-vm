@@ -1,6 +1,8 @@
 package v1alpha1
 
 import (
+	"encoding/json"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
@@ -784,13 +786,13 @@ func (in *OpenBaoServerList) DeepCopyObject() runtime.Object {
 }
 
 func (in *OpenBaoServerSpec) DeepCopyInto(out *OpenBaoServerSpec) {
-	*out = *in
-	if in.Asset != nil {
-		v := *in.Asset
-		out.Asset = &v
+	b, err := json.Marshal(in)
+	if err == nil {
+		*out = OpenBaoServerSpec{}
+		err = json.Unmarshal(b, out)
 	}
-	if in.Clients != nil {
-		out.Clients = append([]OpenBaoServerClient(nil), in.Clients...)
+	if err != nil {
+		*out = *in
 	}
 }
 
@@ -806,6 +808,12 @@ func (in *OpenBaoServerStatus) DeepCopyInto(out *OpenBaoServerStatus) {
 	}
 	if in.Clients != nil {
 		out.Clients = append([]OpenBaoServerClientRefs(nil), in.Clients...)
+	}
+	if in.Sync != nil {
+		v := *in.Sync
+		v.Pending = append([]string(nil), in.Sync.Pending...)
+		v.Conflicts = append([]string(nil), in.Sync.Conflicts...)
+		out.Sync = &v
 	}
 	if in.Conditions != nil {
 		out.Conditions = make([]metav1.Condition, len(in.Conditions))

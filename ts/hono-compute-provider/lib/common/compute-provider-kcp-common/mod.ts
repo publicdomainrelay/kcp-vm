@@ -298,6 +298,14 @@ export interface OpenBaoServerSpec {
   init?: OpenBaoServerInit;
   restartPolicy?: HostProcessRestartPolicy;
   clients?: OpenBaoServerClient[];
+  unit?: string;
+  slice?: string;
+  after?: string[];
+  wants?: string[];
+  log?: string;
+  storage?: OpenBaoServerStorage;
+  tls?: OpenBaoServerTLS;
+  declared?: OpenBaoServerDeclared;
 }
 
 export interface OpenBaoServerInit {
@@ -307,9 +315,122 @@ export interface OpenBaoServerInit {
 
 export interface OpenBaoServerClient {
   name: string;
-  kvMount: string;
+  kvMount?: string;
+  policies?: string[];
   tokenTTL?: string;
   tokenMaxTTL?: string;
+}
+
+export interface OpenBaoServerStorage {
+  postgres?: OpenBaoServerPostgres;
+}
+
+export interface OpenBaoServerPostgres {
+  socketDir: string;
+  user: string;
+  database: string;
+}
+
+export interface OpenBaoServerTLS {
+  certFile: string;
+  keyFile: string;
+  caFile: string;
+  clientCertOptional?: boolean;
+}
+
+export interface OpenBaoServerDeclared {
+  secretMounts?: OpenBaoSecretMount[];
+  authMounts?: OpenBaoAuthMount[];
+  policies?: OpenBaoPolicy[];
+  certRoles?: OpenBaoCertRole[];
+  jwtRoles?: OpenBaoJWTRole[];
+  appRoles?: OpenBaoAppRole[];
+  pkiRoles?: OpenBaoPKIRole[];
+  kv?: OpenBaoKVScope[];
+}
+
+export interface OpenBaoSecretMount {
+  path: string;
+  type: string;
+  maxLeaseTTL?: string;
+}
+
+export interface OpenBaoAuthMount {
+  path: string;
+  type: string;
+  jwt?: OpenBaoJWTConfig;
+}
+
+export interface OpenBaoJWTConfig {
+  discoveryURL: string;
+  boundIssuer?: string;
+}
+
+export interface OpenBaoPolicy {
+  name: string;
+  rules: OpenBaoPolicyRule[];
+}
+
+export interface OpenBaoPolicyRule {
+  path: string;
+  capabilities: string[];
+}
+
+export interface OpenBaoCertRole {
+  mount: string;
+  name: string;
+  commonNames: string[];
+  caFromPKI: string;
+  policies: string[];
+  tokenTTL?: string;
+  tokenMaxTTL?: string;
+  noDefaultPolicy?: boolean;
+}
+
+export interface OpenBaoJWTRole {
+  mount: string;
+  name: string;
+  roleType?: string;
+  boundSubject: string;
+  boundAudiences: string[];
+  userClaim: string;
+  policies: string[];
+  tokenTTL?: string;
+}
+
+export interface OpenBaoAppRole {
+  mount?: string;
+  name: string;
+  policies: string[];
+  tokenTTL?: string;
+  tokenMaxTTL?: string;
+  secretIDTTL?: string;
+}
+
+export interface OpenBaoPKIRole {
+  mount: string;
+  name: string;
+  allowedDomains?: string[];
+  allowSubdomains?: boolean;
+  allowBareDomains?: boolean;
+  allowAnyName?: boolean;
+  allowIPSANs?: boolean;
+  enforceHostnames?: boolean;
+  requireCN?: boolean;
+  clientFlag?: boolean;
+  serverFlag?: boolean;
+  keyType?: string;
+  keyBits?: number;
+  keyUsage?: string[];
+  organization?: string[];
+  ttl?: string;
+  maxTTL?: string;
+}
+
+export interface OpenBaoKVScope {
+  mount: string;
+  prefix?: string;
+  keys?: string[];
 }
 
 export interface OpenBaoServerStatus {
@@ -325,6 +446,7 @@ export interface OpenBaoServerStatus {
   unsealedAt?: string;
   refs?: OpenBaoServerRefs;
   clients?: OpenBaoServerClientRefs[];
+  sync?: OpenBaoServerSync;
   conditions?: Condition[];
 }
 
@@ -355,6 +477,16 @@ export interface OpenBaoServerClientRefs {
   kvMount?: string;
   clientCert?: string;
   clientKey?: string;
+}
+
+export interface OpenBaoServerSync {
+  observedGeneration?: number;
+  syncedAt?: string;
+  lastChangeAt?: string;
+  lastChange?: string;
+  declared?: string;
+  pending?: string[];
+  conflicts?: string[];
 }
 
 export interface ApiResource {
@@ -408,7 +540,7 @@ export const OPEN_BAO_SERVER_RESOURCE: ApiResource = {
   listKind: "OpenBaoServerList",
   plural: "openbaoservers",
   singular: "openbaoserver",
-  schema: "v1alpha1-2.openbaoservers.socialweb.computer",
+  schema: "v1alpha1-3.openbaoservers.socialweb.computer",
   export: "hostprocesses",
 };
 
@@ -448,15 +580,30 @@ export type ApiTypeName =
   | "HostProcessStatus"
   | "HostProcessStop"
   | "ObjectMeta"
+  | "OpenBaoAppRole"
+  | "OpenBaoAuthMount"
+  | "OpenBaoCertRole"
+  | "OpenBaoJWTConfig"
+  | "OpenBaoJWTRole"
+  | "OpenBaoKVScope"
+  | "OpenBaoPKIRole"
+  | "OpenBaoPolicy"
+  | "OpenBaoPolicyRule"
+  | "OpenBaoSecretMount"
   | "OpenBaoServer"
   | "OpenBaoServerClient"
   | "OpenBaoServerClientRefs"
+  | "OpenBaoServerDeclared"
   | "OpenBaoServerInit"
   | "OpenBaoServerPhase"
+  | "OpenBaoServerPostgres"
   | "OpenBaoServerRefs"
   | "OpenBaoServerRuntime"
   | "OpenBaoServerSpec"
   | "OpenBaoServerStatus"
+  | "OpenBaoServerStorage"
+  | "OpenBaoServerSync"
+  | "OpenBaoServerTLS"
   | "Postgres"
   | "PostgresPhase"
   | "PostgresSpec"
@@ -1228,6 +1375,296 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
     "open": true,
     "type": "object"
   },
+  "OpenBaoAppRole": {
+    "properties": {
+      "mount": {
+        "type": "string"
+      },
+      "name": {
+        "type": "string"
+      },
+      "policies": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "secretIDTTL": {
+        "type": "string"
+      },
+      "tokenMaxTTL": {
+        "type": "string"
+      },
+      "tokenTTL": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "name",
+      "policies"
+    ],
+    "type": "object"
+  },
+  "OpenBaoAuthMount": {
+    "properties": {
+      "jwt": {
+        "ref": "OpenBaoJWTConfig"
+      },
+      "path": {
+        "type": "string"
+      },
+      "type": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "path",
+      "type"
+    ],
+    "type": "object"
+  },
+  "OpenBaoCertRole": {
+    "properties": {
+      "caFromPKI": {
+        "type": "string"
+      },
+      "commonNames": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "mount": {
+        "type": "string"
+      },
+      "name": {
+        "type": "string"
+      },
+      "noDefaultPolicy": {
+        "type": "boolean"
+      },
+      "policies": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "tokenMaxTTL": {
+        "type": "string"
+      },
+      "tokenTTL": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "mount",
+      "name",
+      "commonNames",
+      "caFromPKI",
+      "policies"
+    ],
+    "type": "object"
+  },
+  "OpenBaoJWTConfig": {
+    "properties": {
+      "boundIssuer": {
+        "type": "string"
+      },
+      "discoveryURL": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "discoveryURL"
+    ],
+    "type": "object"
+  },
+  "OpenBaoJWTRole": {
+    "properties": {
+      "boundAudiences": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "boundSubject": {
+        "type": "string"
+      },
+      "mount": {
+        "type": "string"
+      },
+      "name": {
+        "type": "string"
+      },
+      "policies": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "roleType": {
+        "type": "string"
+      },
+      "tokenTTL": {
+        "type": "string"
+      },
+      "userClaim": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "mount",
+      "name",
+      "boundSubject",
+      "boundAudiences",
+      "userClaim",
+      "policies"
+    ],
+    "type": "object"
+  },
+  "OpenBaoKVScope": {
+    "properties": {
+      "keys": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "mount": {
+        "type": "string"
+      },
+      "prefix": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "mount"
+    ],
+    "type": "object"
+  },
+  "OpenBaoPKIRole": {
+    "properties": {
+      "allowAnyName": {
+        "type": "boolean"
+      },
+      "allowBareDomains": {
+        "type": "boolean"
+      },
+      "allowIPSANs": {
+        "type": "boolean"
+      },
+      "allowSubdomains": {
+        "type": "boolean"
+      },
+      "allowedDomains": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "clientFlag": {
+        "type": "boolean"
+      },
+      "enforceHostnames": {
+        "type": "boolean"
+      },
+      "keyBits": {
+        "type": "integer"
+      },
+      "keyType": {
+        "type": "string"
+      },
+      "keyUsage": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "maxTTL": {
+        "type": "string"
+      },
+      "mount": {
+        "type": "string"
+      },
+      "name": {
+        "type": "string"
+      },
+      "organization": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "requireCN": {
+        "type": "boolean"
+      },
+      "serverFlag": {
+        "type": "boolean"
+      },
+      "ttl": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "mount",
+      "name"
+    ],
+    "type": "object"
+  },
+  "OpenBaoPolicy": {
+    "properties": {
+      "name": {
+        "type": "string"
+      },
+      "rules": {
+        "items": {
+          "ref": "OpenBaoPolicyRule"
+        },
+        "type": "array"
+      }
+    },
+    "required": [
+      "name",
+      "rules"
+    ],
+    "type": "object"
+  },
+  "OpenBaoPolicyRule": {
+    "properties": {
+      "capabilities": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "path": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "path",
+      "capabilities"
+    ],
+    "type": "object"
+  },
+  "OpenBaoSecretMount": {
+    "properties": {
+      "maxLeaseTTL": {
+        "type": "string"
+      },
+      "path": {
+        "type": "string"
+      },
+      "type": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "path",
+      "type"
+    ],
+    "type": "object"
+  },
   "OpenBaoServer": {
     "properties": {
       "apiVersion": {
@@ -1257,6 +1694,12 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       "name": {
         "type": "string"
       },
+      "policies": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
       "tokenMaxTTL": {
         "type": "string"
       },
@@ -1265,8 +1708,7 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       }
     },
     "required": [
-      "name",
-      "kvMount"
+      "name"
     ],
     "type": "object"
   },
@@ -1299,6 +1741,60 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
     ],
     "type": "object"
   },
+  "OpenBaoServerDeclared": {
+    "properties": {
+      "appRoles": {
+        "items": {
+          "ref": "OpenBaoAppRole"
+        },
+        "type": "array"
+      },
+      "authMounts": {
+        "items": {
+          "ref": "OpenBaoAuthMount"
+        },
+        "type": "array"
+      },
+      "certRoles": {
+        "items": {
+          "ref": "OpenBaoCertRole"
+        },
+        "type": "array"
+      },
+      "jwtRoles": {
+        "items": {
+          "ref": "OpenBaoJWTRole"
+        },
+        "type": "array"
+      },
+      "kv": {
+        "items": {
+          "ref": "OpenBaoKVScope"
+        },
+        "type": "array"
+      },
+      "pkiRoles": {
+        "items": {
+          "ref": "OpenBaoPKIRole"
+        },
+        "type": "array"
+      },
+      "policies": {
+        "items": {
+          "ref": "OpenBaoPolicy"
+        },
+        "type": "array"
+      },
+      "secretMounts": {
+        "items": {
+          "ref": "OpenBaoSecretMount"
+        },
+        "type": "array"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
   "OpenBaoServerInit": {
     "properties": {
       "shares": {
@@ -1320,6 +1816,25 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       "Failed"
     ],
     "type": "string"
+  },
+  "OpenBaoServerPostgres": {
+    "properties": {
+      "database": {
+        "type": "string"
+      },
+      "socketDir": {
+        "type": "string"
+      },
+      "user": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "socketDir",
+      "user",
+      "database"
+    ],
+    "type": "object"
   },
   "OpenBaoServerRefs": {
     "properties": {
@@ -1374,6 +1889,12 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
   },
   "OpenBaoServerSpec": {
     "properties": {
+      "after": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
       "asset": {
         "ref": "HostProcessAsset"
       },
@@ -1382,6 +1903,9 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
           "ref": "OpenBaoServerClient"
         },
         "type": "array"
+      },
+      "declared": {
+        "ref": "OpenBaoServerDeclared"
       },
       "exec": {
         "type": "string"
@@ -1392,8 +1916,29 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       "listen": {
         "type": "string"
       },
+      "log": {
+        "type": "string"
+      },
       "restartPolicy": {
         "ref": "HostProcessRestartPolicy"
+      },
+      "slice": {
+        "type": "string"
+      },
+      "storage": {
+        "ref": "OpenBaoServerStorage"
+      },
+      "tls": {
+        "ref": "OpenBaoServerTLS"
+      },
+      "unit": {
+        "type": "string"
+      },
+      "wants": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
       }
     },
     "required": [],
@@ -1440,6 +1985,9 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       "sealed": {
         "type": "boolean"
       },
+      "sync": {
+        "ref": "OpenBaoServerSync"
+      },
       "unsealedAt": {
         "type": "string"
       },
@@ -1450,6 +1998,70 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
     "required": [
       "initialized",
       "sealed"
+    ],
+    "type": "object"
+  },
+  "OpenBaoServerStorage": {
+    "properties": {
+      "postgres": {
+        "ref": "OpenBaoServerPostgres"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "OpenBaoServerSync": {
+    "properties": {
+      "conflicts": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "declared": {
+        "type": "string"
+      },
+      "lastChange": {
+        "type": "string"
+      },
+      "lastChangeAt": {
+        "type": "string"
+      },
+      "observedGeneration": {
+        "type": "integer"
+      },
+      "pending": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "syncedAt": {
+        "type": "string"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "OpenBaoServerTLS": {
+    "properties": {
+      "caFile": {
+        "type": "string"
+      },
+      "certFile": {
+        "type": "string"
+      },
+      "clientCertOptional": {
+        "type": "boolean"
+      },
+      "keyFile": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "certFile",
+      "keyFile",
+      "caFile"
     ],
     "type": "object"
   },
@@ -2260,6 +2872,258 @@ export function parseOpenBaoServerClient(value: unknown): OpenBaoServerClient {
   return value;
 }
 
+export function validateOpenBaoServerStorage(value: unknown): ApiIssue[] {
+  return validate("OpenBaoServerStorage", value);
+}
+
+export function isOpenBaoServerStorage(value: unknown): value is OpenBaoServerStorage {
+  return validate("OpenBaoServerStorage", value).length === 0;
+}
+
+export function assertOpenBaoServerStorage(value: unknown): asserts value is OpenBaoServerStorage {
+  const issues = validate("OpenBaoServerStorage", value);
+  if (issues.length > 0) throw new ApiValidationError("OpenBaoServerStorage", issues);
+}
+
+export function parseOpenBaoServerStorage(value: unknown): OpenBaoServerStorage {
+  assertOpenBaoServerStorage(value);
+  return value;
+}
+
+export function validateOpenBaoServerPostgres(value: unknown): ApiIssue[] {
+  return validate("OpenBaoServerPostgres", value);
+}
+
+export function isOpenBaoServerPostgres(value: unknown): value is OpenBaoServerPostgres {
+  return validate("OpenBaoServerPostgres", value).length === 0;
+}
+
+export function assertOpenBaoServerPostgres(value: unknown): asserts value is OpenBaoServerPostgres {
+  const issues = validate("OpenBaoServerPostgres", value);
+  if (issues.length > 0) throw new ApiValidationError("OpenBaoServerPostgres", issues);
+}
+
+export function parseOpenBaoServerPostgres(value: unknown): OpenBaoServerPostgres {
+  assertOpenBaoServerPostgres(value);
+  return value;
+}
+
+export function validateOpenBaoServerTLS(value: unknown): ApiIssue[] {
+  return validate("OpenBaoServerTLS", value);
+}
+
+export function isOpenBaoServerTLS(value: unknown): value is OpenBaoServerTLS {
+  return validate("OpenBaoServerTLS", value).length === 0;
+}
+
+export function assertOpenBaoServerTLS(value: unknown): asserts value is OpenBaoServerTLS {
+  const issues = validate("OpenBaoServerTLS", value);
+  if (issues.length > 0) throw new ApiValidationError("OpenBaoServerTLS", issues);
+}
+
+export function parseOpenBaoServerTLS(value: unknown): OpenBaoServerTLS {
+  assertOpenBaoServerTLS(value);
+  return value;
+}
+
+export function validateOpenBaoServerDeclared(value: unknown): ApiIssue[] {
+  return validate("OpenBaoServerDeclared", value);
+}
+
+export function isOpenBaoServerDeclared(value: unknown): value is OpenBaoServerDeclared {
+  return validate("OpenBaoServerDeclared", value).length === 0;
+}
+
+export function assertOpenBaoServerDeclared(value: unknown): asserts value is OpenBaoServerDeclared {
+  const issues = validate("OpenBaoServerDeclared", value);
+  if (issues.length > 0) throw new ApiValidationError("OpenBaoServerDeclared", issues);
+}
+
+export function parseOpenBaoServerDeclared(value: unknown): OpenBaoServerDeclared {
+  assertOpenBaoServerDeclared(value);
+  return value;
+}
+
+export function validateOpenBaoSecretMount(value: unknown): ApiIssue[] {
+  return validate("OpenBaoSecretMount", value);
+}
+
+export function isOpenBaoSecretMount(value: unknown): value is OpenBaoSecretMount {
+  return validate("OpenBaoSecretMount", value).length === 0;
+}
+
+export function assertOpenBaoSecretMount(value: unknown): asserts value is OpenBaoSecretMount {
+  const issues = validate("OpenBaoSecretMount", value);
+  if (issues.length > 0) throw new ApiValidationError("OpenBaoSecretMount", issues);
+}
+
+export function parseOpenBaoSecretMount(value: unknown): OpenBaoSecretMount {
+  assertOpenBaoSecretMount(value);
+  return value;
+}
+
+export function validateOpenBaoAuthMount(value: unknown): ApiIssue[] {
+  return validate("OpenBaoAuthMount", value);
+}
+
+export function isOpenBaoAuthMount(value: unknown): value is OpenBaoAuthMount {
+  return validate("OpenBaoAuthMount", value).length === 0;
+}
+
+export function assertOpenBaoAuthMount(value: unknown): asserts value is OpenBaoAuthMount {
+  const issues = validate("OpenBaoAuthMount", value);
+  if (issues.length > 0) throw new ApiValidationError("OpenBaoAuthMount", issues);
+}
+
+export function parseOpenBaoAuthMount(value: unknown): OpenBaoAuthMount {
+  assertOpenBaoAuthMount(value);
+  return value;
+}
+
+export function validateOpenBaoJWTConfig(value: unknown): ApiIssue[] {
+  return validate("OpenBaoJWTConfig", value);
+}
+
+export function isOpenBaoJWTConfig(value: unknown): value is OpenBaoJWTConfig {
+  return validate("OpenBaoJWTConfig", value).length === 0;
+}
+
+export function assertOpenBaoJWTConfig(value: unknown): asserts value is OpenBaoJWTConfig {
+  const issues = validate("OpenBaoJWTConfig", value);
+  if (issues.length > 0) throw new ApiValidationError("OpenBaoJWTConfig", issues);
+}
+
+export function parseOpenBaoJWTConfig(value: unknown): OpenBaoJWTConfig {
+  assertOpenBaoJWTConfig(value);
+  return value;
+}
+
+export function validateOpenBaoPolicy(value: unknown): ApiIssue[] {
+  return validate("OpenBaoPolicy", value);
+}
+
+export function isOpenBaoPolicy(value: unknown): value is OpenBaoPolicy {
+  return validate("OpenBaoPolicy", value).length === 0;
+}
+
+export function assertOpenBaoPolicy(value: unknown): asserts value is OpenBaoPolicy {
+  const issues = validate("OpenBaoPolicy", value);
+  if (issues.length > 0) throw new ApiValidationError("OpenBaoPolicy", issues);
+}
+
+export function parseOpenBaoPolicy(value: unknown): OpenBaoPolicy {
+  assertOpenBaoPolicy(value);
+  return value;
+}
+
+export function validateOpenBaoPolicyRule(value: unknown): ApiIssue[] {
+  return validate("OpenBaoPolicyRule", value);
+}
+
+export function isOpenBaoPolicyRule(value: unknown): value is OpenBaoPolicyRule {
+  return validate("OpenBaoPolicyRule", value).length === 0;
+}
+
+export function assertOpenBaoPolicyRule(value: unknown): asserts value is OpenBaoPolicyRule {
+  const issues = validate("OpenBaoPolicyRule", value);
+  if (issues.length > 0) throw new ApiValidationError("OpenBaoPolicyRule", issues);
+}
+
+export function parseOpenBaoPolicyRule(value: unknown): OpenBaoPolicyRule {
+  assertOpenBaoPolicyRule(value);
+  return value;
+}
+
+export function validateOpenBaoCertRole(value: unknown): ApiIssue[] {
+  return validate("OpenBaoCertRole", value);
+}
+
+export function isOpenBaoCertRole(value: unknown): value is OpenBaoCertRole {
+  return validate("OpenBaoCertRole", value).length === 0;
+}
+
+export function assertOpenBaoCertRole(value: unknown): asserts value is OpenBaoCertRole {
+  const issues = validate("OpenBaoCertRole", value);
+  if (issues.length > 0) throw new ApiValidationError("OpenBaoCertRole", issues);
+}
+
+export function parseOpenBaoCertRole(value: unknown): OpenBaoCertRole {
+  assertOpenBaoCertRole(value);
+  return value;
+}
+
+export function validateOpenBaoJWTRole(value: unknown): ApiIssue[] {
+  return validate("OpenBaoJWTRole", value);
+}
+
+export function isOpenBaoJWTRole(value: unknown): value is OpenBaoJWTRole {
+  return validate("OpenBaoJWTRole", value).length === 0;
+}
+
+export function assertOpenBaoJWTRole(value: unknown): asserts value is OpenBaoJWTRole {
+  const issues = validate("OpenBaoJWTRole", value);
+  if (issues.length > 0) throw new ApiValidationError("OpenBaoJWTRole", issues);
+}
+
+export function parseOpenBaoJWTRole(value: unknown): OpenBaoJWTRole {
+  assertOpenBaoJWTRole(value);
+  return value;
+}
+
+export function validateOpenBaoAppRole(value: unknown): ApiIssue[] {
+  return validate("OpenBaoAppRole", value);
+}
+
+export function isOpenBaoAppRole(value: unknown): value is OpenBaoAppRole {
+  return validate("OpenBaoAppRole", value).length === 0;
+}
+
+export function assertOpenBaoAppRole(value: unknown): asserts value is OpenBaoAppRole {
+  const issues = validate("OpenBaoAppRole", value);
+  if (issues.length > 0) throw new ApiValidationError("OpenBaoAppRole", issues);
+}
+
+export function parseOpenBaoAppRole(value: unknown): OpenBaoAppRole {
+  assertOpenBaoAppRole(value);
+  return value;
+}
+
+export function validateOpenBaoPKIRole(value: unknown): ApiIssue[] {
+  return validate("OpenBaoPKIRole", value);
+}
+
+export function isOpenBaoPKIRole(value: unknown): value is OpenBaoPKIRole {
+  return validate("OpenBaoPKIRole", value).length === 0;
+}
+
+export function assertOpenBaoPKIRole(value: unknown): asserts value is OpenBaoPKIRole {
+  const issues = validate("OpenBaoPKIRole", value);
+  if (issues.length > 0) throw new ApiValidationError("OpenBaoPKIRole", issues);
+}
+
+export function parseOpenBaoPKIRole(value: unknown): OpenBaoPKIRole {
+  assertOpenBaoPKIRole(value);
+  return value;
+}
+
+export function validateOpenBaoKVScope(value: unknown): ApiIssue[] {
+  return validate("OpenBaoKVScope", value);
+}
+
+export function isOpenBaoKVScope(value: unknown): value is OpenBaoKVScope {
+  return validate("OpenBaoKVScope", value).length === 0;
+}
+
+export function assertOpenBaoKVScope(value: unknown): asserts value is OpenBaoKVScope {
+  const issues = validate("OpenBaoKVScope", value);
+  if (issues.length > 0) throw new ApiValidationError("OpenBaoKVScope", issues);
+}
+
+export function parseOpenBaoKVScope(value: unknown): OpenBaoKVScope {
+  assertOpenBaoKVScope(value);
+  return value;
+}
+
 export function validateOpenBaoServerStatus(value: unknown): ApiIssue[] {
   return validate("OpenBaoServerStatus", value);
 }
@@ -2347,5 +3211,23 @@ export function assertOpenBaoServerClientRefs(value: unknown): asserts value is 
 
 export function parseOpenBaoServerClientRefs(value: unknown): OpenBaoServerClientRefs {
   assertOpenBaoServerClientRefs(value);
+  return value;
+}
+
+export function validateOpenBaoServerSync(value: unknown): ApiIssue[] {
+  return validate("OpenBaoServerSync", value);
+}
+
+export function isOpenBaoServerSync(value: unknown): value is OpenBaoServerSync {
+  return validate("OpenBaoServerSync", value).length === 0;
+}
+
+export function assertOpenBaoServerSync(value: unknown): asserts value is OpenBaoServerSync {
+  const issues = validate("OpenBaoServerSync", value);
+  if (issues.length > 0) throw new ApiValidationError("OpenBaoServerSync", issues);
+}
+
+export function parseOpenBaoServerSync(value: unknown): OpenBaoServerSync {
+  assertOpenBaoServerSync(value);
   return value;
 }

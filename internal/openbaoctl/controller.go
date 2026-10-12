@@ -3,6 +3,8 @@ package openbaoctl
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"os"
@@ -21,6 +23,7 @@ import (
 	"k8s.io/client-go/rest"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/baosync"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostprocess"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpserver"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/openbao"
@@ -42,7 +45,8 @@ const (
 	ConditionReady       = "Ready"
 	ConditionInitialized = "Initialized"
 	ConditionUnsealed    = "Unsealed"
-	ConditionLayout      = "LayoutReady"
+	ConditionSynced      = "Synced"
+	LogCapBytes          = 64 << 20
 )
 
 var GVR = schema.GroupVersionResource{Group: v1alpha1.GroupName, Version: v1alpha1.Version, Resource: "openbaoservers"}
@@ -97,12 +101,35 @@ func ServerDir(stateDir, name string) string { return filepath.Join(stateDir, Di
 
 func ChildName(name string) string { return ChildPrefix + name }
 
-func (c *Controller) unit(name string) string { return c.c.Prefix + ChildPrefix + name + ".service" }
+func (c *Controller) unit(o v1alpha1.OpenBaoServer) string {
+	if o.Spec.Unit != "" {
+		return o.Spec.Unit
+	}
+	return c.c.Prefix + ChildPrefix + o.Name + ".service"
+}
 
-func refs(dir string) *v1alpha1.OpenBaoServerRefs {
-	return &v1alpha1.OpenBaoServerRefs{UnsealKeys: "file:" + rootvault.UnsealKeysPath(dir), CA: "file:" + rootvault.TLSCAPath(dir),
+func refs(dir string, t *v1alpha1.OpenBaoServerTLS) *v1alpha1.OpenBaoServerRefs {
+	ca := rootvault.TLSCAPath(dir)
+	if t != nil {
+		ca = t.CAFile
+	}
+	return &v1alpha1.OpenBaoServerRefs{UnsealKeys: "file:" + rootvault.UnsealKeysPath(dir), CA: "file:" + ca,
 		ClientCert: "file:" + rootvault.ClientCertPath(dir), ClientKey: "file:" + rootvault.ClientKeyPath(dir),
 		CertAuthMount: CertAuthMount, CertAuthRole: CertAuthRole, KVMount: KVMount}
+}
+
+func restartKey(config []byte, files ...string) string {
+	h := sha256.New()
+	h.Write(config)
+	for _, f := range files {
+		if f == "" {
+			continue
+		}
+		b, _ := os.ReadFile(f)
+		h.Write([]byte(f))
+		h.Write(b)
+	}
+	return hex.EncodeToString(h.Sum(nil))[:16]
 }
 
 func toServer(u *unstructured.Unstructured) (v1alpha1.OpenBaoServer, error) {
@@ -128,24 +155,30 @@ func unstructuredOf(o any, kind string) (*unstructured.Unstructured, error) {
 	return u, nil
 }
 
-func (c *Controller) childSpec(o v1alpha1.OpenBaoServer, dir string) v1alpha1.HostProcessSpec {
+func (c *Controller) childSpec(o v1alpha1.OpenBaoServer, dir, key string) v1alpha1.HostProcessSpec {
 	rp := o.Spec.RestartPolicy
 	if rp == "" {
 		rp = v1alpha1.HostProcessRestartOnFailure
 	}
-	spec := v1alpha1.HostProcessSpec{Unit: c.unit(o.Name), Exec: o.Spec.Exec, Argv: []string{"server", "-config", rootvault.ConfigPath(dir)},
+	spec := v1alpha1.HostProcessSpec{Unit: c.unit(o), Exec: o.Spec.Exec, Argv: []string{"server", "-config", rootvault.ConfigPath(dir)},
 		WorkDir: rootvault.Dir(dir), RestartPolicy: rp, Stop: &v1alpha1.HostProcessStop{Signal: "SIGTERM", GraceSeconds: 15},
-		Placement: v1alpha1.HostProcessPlacementSupervisor}
+		Placement: v1alpha1.HostProcessPlacementSupervisor, Slice: o.Spec.Slice, RestartKey: key,
+		After: append([]string(nil), o.Spec.After...), Wants: append([]string(nil), o.Spec.Wants...)}
 	if o.Spec.Asset != nil {
 		a := *o.Spec.Asset
 		spec.Asset = &a
+	}
+	if o.Spec.Log != "" {
+		spec.Output = &v1alpha1.HostProcessOutput{Stdout: o.Spec.Log, Stderr: o.Spec.Log, CapBytes: LogCapBytes}
 	}
 	return spec
 }
 
 func sameChild(a, b v1alpha1.HostProcessSpec) bool {
 	return a.Unit == b.Unit && a.Exec == b.Exec && slices.Equal(a.Argv, b.Argv) && a.WorkDir == b.WorkDir &&
-		a.RestartPolicy == b.RestartPolicy && a.Placement == b.Placement && fmt.Sprint(a.Asset) == fmt.Sprint(b.Asset)
+		a.RestartPolicy == b.RestartPolicy && a.Placement == b.Placement && fmt.Sprint(a.Asset) == fmt.Sprint(b.Asset) &&
+		a.Slice == b.Slice && slices.Equal(a.After, b.After) && slices.Equal(a.Wants, b.Wants) && a.RestartKey == b.RestartKey &&
+		fmt.Sprint(a.Output) == fmt.Sprint(b.Output)
 }
 
 func (c *Controller) ensureChild(ctx context.Context, o v1alpha1.OpenBaoServer, want v1alpha1.HostProcessSpec) (v1alpha1.HostProcess, error) {
@@ -213,11 +246,6 @@ func condition(st *v1alpha1.OpenBaoServerStatus, gen int64, t string, ok bool, r
 	meta.SetStatusCondition(&st.Conditions, metav1.Condition{Type: t, Status: s, Reason: reason, Message: msg, ObservedGeneration: gen})
 }
 
-func layoutDone(st v1alpha1.OpenBaoServerStatus, gen int64) bool {
-	c := meta.FindStatusCondition(st.Conditions, ConditionLayout)
-	return c != nil && c.Status == metav1.ConditionTrue && c.ObservedGeneration == gen
-}
-
 func unseal(ctx context.Context, client *openbao.Client, k UnsealKeys) error {
 	for i := 0; i < k.Threshold; i++ {
 		sealed, err := client.Unseal(ctx, k.Keys[i])
@@ -231,26 +259,87 @@ func unseal(ctx context.Context, client *openbao.Client, k UnsealKeys) error {
 	return fmt.Errorf("still sealed after %d keys", k.Threshold)
 }
 
-func (c *Controller) layoutWithCore(ctx context.Context, client *openbao.Client, keysPath string, in layoutInput) (string, error) {
+type synced struct {
+	report  baosync.Report
+	pending []string
+	how     string
+	desired baosync.Desired
+}
+
+func syncWith(ctx context.Context, admin, anon *openbao.Client, in layoutInput) (synced, error) {
+	d, pending, err := desired(ctx, in, pkiCA(anon))
+	if err != nil {
+		return synced{}, err
+	}
+	rep, err := baosync.Sync(ctx, admin, d)
+	return synced{report: rep, pending: pending, desired: d}, err
+}
+
+func (c *Controller) syncCore(ctx context.Context, client *openbao.Client, keysPath string, in layoutInput) (synced, error) {
 	core, err := loginCore(ctx, client)
 	if err == nil {
-		defer core.RevokeSelf(context.WithoutCancel(ctx))
-		return "the cert-auth core token applied the layout", applyLayout(ctx, core, in)
-	}
-	if !loginRefused(err) {
-		return "", err
+		s, serr := syncWith(ctx, core, client, in)
+		core.RevokeSelf(context.WithoutCancel(ctx))
+		if serr == nil || !permissionDenied(serr) {
+			s.how = "the core's cert-auth token"
+			return s, serr
+		}
+		err = serr
+	} else if !loginRefused(err) {
+		return synced{}, err
 	}
 	k, kerr := ReadUnsealKeys(keysPath)
 	if kerr != nil {
-		return "", fmt.Errorf("cert login refused (%v) and %w", err, kerr)
+		return synced{}, fmt.Errorf("the core cannot reconcile (%v) and %w", err, kerr)
 	}
 	tok, gerr := client.GenerateRoot(ctx, k.Keys, k.Threshold)
 	if gerr != nil {
-		return "", fmt.Errorf("cert login refused (%v) and %w", err, gerr)
+		return synced{}, fmt.Errorf("the core cannot reconcile (%v) and %w", err, gerr)
 	}
 	root := client.WithToken(tok)
 	defer root.RevokeSelf(context.WithoutCancel(ctx))
-	return "cert login was refused; a root token generated from the unseal keys applied the layout and was revoked", applyLayout(ctx, root, in)
+	s, serr := syncWith(ctx, root, client, in)
+	s.how = fmt.Sprintf("a root token generated from the unseal keys and revoked after the pass, because the core's own token could not reconcile (%v)", err)
+	return s, serr
+}
+
+func recordSync(st *v1alpha1.OpenBaoServerStatus, gen int64, s synced, err error, log *slog.Logger) {
+	prev := st.Sync
+	next := &v1alpha1.OpenBaoServerSync{ObservedGeneration: gen}
+	if prev != nil {
+		next.SyncedAt, next.LastChange, next.LastChangeAt = prev.SyncedAt, prev.LastChange, prev.LastChangeAt
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if err != nil {
+		st.Sync = next
+		if prev != nil {
+			next.Declared, next.Pending, next.Conflicts = prev.Declared, prev.Pending, prev.Conflicts
+		}
+		condition(st, gen, ConditionSynced, false, "SyncFailed", err.Error())
+		log.Warn("the reconcile of the server against its declaration did not run", "err", err.Error())
+		return
+	}
+	next.Declared, next.Pending, next.Conflicts = s.desired.String(), s.pending, s.report.Conflicts
+	if s.report.Changed() {
+		next.LastChange, next.LastChangeAt = s.report.Summary(), now
+		ops := make([]string, 0, len(s.report.Applied))
+		for _, o := range s.report.Applied {
+			ops = append(ops, o.String()+" ("+o.Why+")")
+		}
+		log.Info("the server is brought back to its declaration", "at", now, "ops", ops, "by", s.how)
+	}
+	if prev == nil || prev.ObservedGeneration != gen || s.report.Changed() {
+		next.SyncedAt = now
+	}
+	st.Sync = next
+	switch {
+	case s.report.Err != nil:
+		condition(st, gen, ConditionSynced, false, "ApplyFailed", s.report.Summary())
+	case len(s.report.Conflicts) > 0:
+		condition(st, gen, ConditionSynced, false, "Conflict", strings.Join(s.report.Conflicts, "; "))
+	default:
+		condition(st, gen, ConditionSynced, true, "InSync", "the server holds exactly its declaration: "+s.desired.String())
+	}
 }
 
 func (c *Controller) reconcile(ctx context.Context, o v1alpha1.OpenBaoServer) v1alpha1.OpenBaoServerStatus {
@@ -261,7 +350,7 @@ func (c *Controller) reconcile(ctx context.Context, o v1alpha1.OpenBaoServer) v1
 	st.ObservedGeneration = gen
 	dir := ServerDir(c.c.StateDir, o.Name)
 	st.HostProcess = ChildName(o.Name)
-	st.Refs = refs(dir)
+	st.Refs = refs(dir, o.Spec.TLS)
 	fail := func(format string, args ...any) v1alpha1.OpenBaoServerStatus {
 		st.Phase, st.Message = v1alpha1.OpenBaoServerPhaseFailed, fmt.Sprintf(format, args...)
 		condition(&st, gen, ConditionReady, false, "Failed", st.Message)
@@ -290,8 +379,11 @@ func (c *Controller) reconcile(ctx context.Context, o v1alpha1.OpenBaoServer) v1
 	if listen == "" {
 		listen = DefaultListen
 	}
-	if err := checkClients(o.Spec.Clients); err != nil {
+	if err := checkClients(o.Spec.Clients, o.Spec.Declared); err != nil {
 		return fail("spec.clients: %v", err)
+	}
+	if o.Spec.Unit != "" && !strings.HasPrefix(o.Spec.Unit, c.c.Prefix) {
+		return fail("spec.unit %s is not under this controller's prefix %s", o.Spec.Unit, c.c.Prefix)
 	}
 	tlsm, err := vaultcert.EnsureRootVaultTLS(dir, rootvault.LoopbackHost)
 	if err != nil {
@@ -308,11 +400,15 @@ func (c *Controller) reconcile(ctx context.Context, o v1alpha1.OpenBaoServer) v1
 			return fail("client %s: %v", cl.Name, err)
 		}
 		st.Clients = append(st.Clients, v1alpha1.OpenBaoServerClientRefs{Name: cl.Name, CertAuthMount: CertAuthMount,
-			CertAuthRole: cl.Name, Policy: ClientPolicy(cl.Name), KVMount: cl.KVMount, ClientCert: "file:" + m.CertFile,
+			CertAuthRole: cl.Name, Policy: strings.Join(clientTokenPolicies(cl), ","), KVMount: cl.KVMount, ClientCert: "file:" + m.CertFile,
 			ClientKey: "file:" + m.KeyFile})
 	}
-	layout := layoutInput{caPEM: tlsm.CAPEM, clientsCAPEM: clientsCA.CAPEM, clients: o.Spec.Clients}
-	body, err := rootvault.ServerConfigWith(dir, listen, rootvault.ServerOptions{UnauthedGenerateRoot: true, ClientCAFile: clientsCA.BundlePath})
+	layout := layoutInput{caPEM: tlsm.CAPEM, clientsCAPEM: clientsCA.CAPEM, clients: o.Spec.Clients, declared: o.Spec.Declared}
+	opts, err := serverOptions(o.Spec, clientsCA.BundlePath)
+	if err != nil {
+		return fail("%v", err)
+	}
+	body, err := rootvault.ServerConfigWith(dir, listen, opts)
 	if err != nil {
 		return fail("%v", err)
 	}
@@ -322,7 +418,12 @@ func (c *Controller) reconcile(ctx context.Context, o v1alpha1.OpenBaoServer) v1
 	if err := writeIfChanged(rootvault.ConfigPath(dir), []byte(body), 0o600); err != nil {
 		return fail("server config: %v", err)
 	}
-	child, err := c.ensureChild(ctx, o, c.childSpec(o, dir))
+	certFile := opts.CertFile
+	if certFile == "" {
+		certFile = rootvault.ServerCertPath(dir)
+	}
+	key := restartKey([]byte(body), certFile, caFile(o.Spec, dir), clientsCA.BundlePath)
+	child, err := c.ensureChild(ctx, o, c.childSpec(o, dir, key))
 	if err != nil {
 		return fail("HostProcess %s: %v", ChildName(o.Name), err)
 	}
@@ -340,12 +441,25 @@ func (c *Controller) reconcile(ctx context.Context, o v1alpha1.OpenBaoServer) v1
 	if len(child.Status.Listeners) == 0 {
 		return starting("HostProcess %s runs and reports no bound address yet", child.Name)
 	}
+	if child.Status.RestartKey != key {
+		return starting("HostProcess %s restarts in place for its new config (restartKey %s)", child.Name, key)
+	}
 	addr := "https://" + child.Status.Listeners[0].Address
 	tlsConf, err := tlsm.ClientTLSConfig()
 	if err != nil {
 		return fail("%v", err)
 	}
-	client := openbao.New(addr, "", openbao.WithCACertPool(tlsConf.RootCAs), openbao.WithClientCertificate(tlsConf.Certificates[0]))
+	pool := tlsConf.RootCAs
+	if o.Spec.TLS != nil {
+		raw, err := os.ReadFile(o.Spec.TLS.CAFile)
+		if err != nil {
+			return fail("spec.tls.caFile: %v", err)
+		}
+		if pool, err = openbao.CertPoolFromPEM(raw); err != nil {
+			return fail("spec.tls.caFile %s: %v", o.Spec.TLS.CAFile, err)
+		}
+	}
+	client := openbao.New(addr, "", openbao.WithCACertPool(pool), openbao.WithClientCertificate(tlsConf.Certificates[0]))
 	h, err := client.Health(ctx)
 	if err != nil {
 		return starting("the server at %s does not answer yet: %v", addr, err)
@@ -377,17 +491,14 @@ func (c *Controller) reconcile(ctx context.Context, o v1alpha1.OpenBaoServer) v1
 		}
 		st.UnsealedInstance, st.UnsealedAt = instance, time.Now().UTC().Format(time.RFC3339Nano)
 		root := client.WithToken(res.RootToken)
-		lerr := applyLayout(ctx, root, layout)
+		s, serr := syncWith(ctx, root, client, layout)
+		s.how = "the initial root token"
 		if err := root.RevokeSelf(ctx); err != nil {
 			log.Warn("revoking the initial root token", "err", err.Error())
 		} else {
 			log.Info("the initial root token is revoked; the core logs in with its client certificate")
 		}
-		if lerr != nil {
-			condition(&st, gen, ConditionLayout, false, "LayoutFailed", lerr.Error())
-		} else {
-			condition(&st, gen, ConditionLayout, true, "Applied", layoutSummary(layout))
-		}
+		recordSync(&st, gen, s, serr, log)
 	} else if h.Sealed {
 		k, err := ReadUnsealKeys(keysPath)
 		if err != nil {
@@ -399,14 +510,8 @@ func (c *Controller) reconcile(ctx context.Context, o v1alpha1.OpenBaoServer) v1
 		st.UnsealedInstance, st.UnsealedAt = instance, time.Now().UTC().Format(time.RFC3339Nano)
 		log.Info("unsealed", "instance", instance, "address", addr)
 	}
-	if !layoutDone(st, gen) {
-		how, err := c.layoutWithCore(ctx, client, keysPath, layout)
-		if err != nil {
-			condition(&st, gen, ConditionLayout, false, "LayoutFailed", err.Error())
-		} else {
-			condition(&st, gen, ConditionLayout, true, "Applied", how)
-		}
-	}
+	s, serr := c.syncCore(ctx, client, keysPath, layout)
+	recordSync(&st, gen, s, serr, log)
 	h, err = client.Health(ctx)
 	if err != nil {
 		return starting("the server at %s stopped answering: %v", addr, err)

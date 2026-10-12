@@ -5,25 +5,39 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sort"
+	"strings"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/baosync"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/openbao"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/vaultcert"
 )
 
 const (
-	CertAuthMount = "cert"
-	CertAuthRole  = "socialweb-core"
-	CorePolicy    = "socialweb-core"
-	KVMount       = "secret"
-	CoreTokenTTL  = "15m"
-	CoreTokenMax  = "1h"
-
-	corePolicyHCL = `path "*" {
-  capabilities = ["create", "read", "update", "delete", "list", "sudo"]
-}
-`
+	CertAuthMount  = "cert"
+	CertAuthRole   = "socialweb-core"
+	CorePolicy     = "socialweb-core"
+	KVMount        = "secret"
+	CoreTokenTTL   = "15m"
+	CoreTokenMax   = "1h"
+	AppRoleMount   = "approle"
+	DefaultJWTRole = "jwt"
 )
+
+var CorePolicyRules = []v1alpha1.OpenBaoPolicyRule{
+	{Path: "sys/auth", Capabilities: []string{"read"}},
+	{Path: "sys/auth/*", Capabilities: []string{"create", "read", "update", "delete", "sudo"}},
+	{Path: "sys/mounts", Capabilities: []string{"read"}},
+	{Path: "sys/mounts/*", Capabilities: []string{"create", "read", "update", "delete"}},
+	{Path: "sys/policies/acl/*", Capabilities: []string{"create", "read", "update", "delete", "list"}},
+	{Path: "auth/+/certs/*", Capabilities: []string{"create", "read", "update", "delete", "list"}},
+	{Path: "auth/+/role/*", Capabilities: []string{"create", "read", "update", "delete", "list"}},
+	{Path: "auth/+/config", Capabilities: []string{"create", "read", "update"}},
+	{Path: "+/config", Capabilities: []string{"read"}},
+	{Path: "+/roles/*", Capabilities: []string{"create", "read", "update", "delete", "list"}},
+	{Path: "+/metadata/*", Capabilities: []string{"delete", "list"}},
+}
 
 var (
 	clientNamePattern  = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
@@ -32,123 +46,239 @@ var (
 
 func ClientPolicy(name string) string { return "client-" + name }
 
-func clientPolicyHCL(mount string) string {
-	return fmt.Sprintf(`path "%[1]s/data/*" {
-  capabilities = ["create", "read", "update", "patch", "delete"]
-}
-path "%[1]s/metadata/*" {
-  capabilities = ["read", "delete", "list"]
-}
-`, mount)
+func clientPolicyRules(mount string) []v1alpha1.OpenBaoPolicyRule {
+	return []v1alpha1.OpenBaoPolicyRule{
+		{Path: mount + "/data/*", Capabilities: []string{"create", "read", "update", "patch", "delete"}},
+		{Path: mount + "/metadata/*", Capabilities: []string{"read", "delete", "list"}},
+	}
 }
 
-func checkClients(clients []v1alpha1.OpenBaoServerClient) error {
+func PolicyHCL(rules []v1alpha1.OpenBaoPolicyRule) string {
+	var b strings.Builder
+	for _, r := range rules {
+		caps := make([]string, len(r.Capabilities))
+		for i, c := range r.Capabilities {
+			caps[i] = `"` + c + `"`
+		}
+		fmt.Fprintf(&b, "path \"%s\" {\n  capabilities = [%s]\n}\n", r.Path, strings.Join(caps, ", "))
+	}
+	return b.String()
+}
+
+func declaredPolicies(d *v1alpha1.OpenBaoServerDeclared) map[string]bool {
+	out := map[string]bool{}
+	if d != nil {
+		for _, p := range d.Policies {
+			out[p.Name] = true
+		}
+	}
+	return out
+}
+
+func checkClients(clients []v1alpha1.OpenBaoServerClient, declared *v1alpha1.OpenBaoServerDeclared) error {
 	names, mounts := map[string]bool{}, map[string]bool{}
+	policies := declaredPolicies(declared)
 	for _, c := range clients {
 		if !clientNamePattern.MatchString(c.Name) || c.Name == CertAuthRole {
 			return fmt.Errorf("client name %q: lower case letters, digits and dashes, and never %s", c.Name, CertAuthRole)
 		}
-		if !clientNamePattern.MatchString(c.KVMount) || reservedMountNames[c.KVMount] {
+		if c.KVMount == "" && len(c.Policies) == 0 {
+			return fmt.Errorf("client %s: names neither a kvMount of its own nor a declared policy, so its token could do nothing", c.Name)
+		}
+		if c.KVMount != "" && (!clientNamePattern.MatchString(c.KVMount) || reservedMountNames[c.KVMount]) {
 			return fmt.Errorf("client %s: kvMount %q is not a mount of its own (never %s, %s or a system mount)", c.Name, c.KVMount, KVMount, CertAuthMount)
 		}
-		if names[c.Name] || mounts[c.KVMount] {
+		for _, p := range c.Policies {
+			if !policies[p] {
+				return fmt.Errorf("client %s: policy %q is not among spec.declared.policies", c.Name, p)
+			}
+		}
+		if names[c.Name] || (c.KVMount != "" && mounts[c.KVMount]) {
 			return fmt.Errorf("client %s: names and kvMounts are each used once", c.Name)
 		}
-		names[c.Name], mounts[c.KVMount] = true, true
+		names[c.Name] = true
+		if c.KVMount != "" {
+			mounts[c.KVMount] = true
+		}
 	}
 	return nil
 }
 
-func ensureClients(ctx context.Context, admin *openbao.Client, clientsCAPEM []byte, clients []v1alpha1.OpenBaoServerClient) error {
-	if len(clients) == 0 {
-		return nil
+func clientTokenPolicies(c v1alpha1.OpenBaoServerClient) []string {
+	var out []string
+	if c.KVMount != "" {
+		out = append(out, ClientPolicy(c.Name))
 	}
-	mounts, err := admin.SecretMounts(ctx)
-	if err != nil {
-		return err
-	}
-	for _, c := range clients {
-		if _, ok := mounts[c.KVMount]; !ok {
-			if err := admin.EnableKV(ctx, c.KVMount, 2); err != nil {
-				return fmt.Errorf("client %s: enabling kv-v2 at %s: %w", c.Name, c.KVMount, err)
-			}
-		}
-		if err := admin.PutPolicy(ctx, ClientPolicy(c.Name), clientPolicyHCL(c.KVMount)); err != nil {
-			return fmt.Errorf("client %s: writing its policy: %w", c.Name, err)
-		}
-		ttl, maxTTL := c.TokenTTL, c.TokenMaxTTL
-		if ttl == "" {
-			ttl = CoreTokenTTL
-		}
-		if maxTTL == "" {
-			maxTTL = CoreTokenMax
-		}
-		if err := admin.Write(ctx, "auth/"+CertAuthMount+"/certs/"+c.Name, map[string]any{
-			"certificate":          string(clientsCAPEM),
-			"allowed_common_names": []string{vaultcert.OpenBaoClientCommonName(c.Name)},
-			"token_policies":       []string{ClientPolicy(c.Name)},
-			"token_ttl":            ttl,
-			"token_max_ttl":        maxTTL,
-		}); err != nil {
-			return fmt.Errorf("client %s: writing its cert role: %w", c.Name, err)
-		}
-	}
-	return nil
+	return append(out, c.Policies...)
 }
 
 type layoutInput struct {
 	caPEM        []byte
 	clientsCAPEM []byte
 	clients      []v1alpha1.OpenBaoServerClient
+	declared     *v1alpha1.OpenBaoServerDeclared
 }
 
-func layoutSummary(in layoutInput) string {
-	s := "cert auth, the core policy and kv-v2 at " + KVMount
-	for _, c := range in.clients {
-		s += fmt.Sprintf("; client %s: policy %s on kv-v2 %s, cert role %s", c.Name, ClientPolicy(c.Name), c.KVMount, c.Name)
+func or(v, dflt string) string {
+	if v == "" {
+		return dflt
 	}
-	return s
+	return v
 }
 
-func applyLayout(ctx context.Context, admin *openbao.Client, in layoutInput) error {
-	if err := ensureLayout(ctx, admin, in.caPEM); err != nil {
-		return err
-	}
-	return ensureClients(ctx, admin, in.clientsCAPEM, in.clients)
-}
-
-func ensureLayout(ctx context.Context, admin *openbao.Client, caPEM []byte) error {
-	auths, err := admin.AuthMounts(ctx)
-	if err != nil {
-		return err
-	}
-	if _, ok := auths[CertAuthMount]; !ok {
-		if err := admin.EnableAuth(ctx, CertAuthMount, "cert"); err != nil {
-			return fmt.Errorf("enabling cert auth: %w", err)
+func put(m map[string]any, k string, v any) {
+	switch x := v.(type) {
+	case string:
+		if x == "" {
+			return
 		}
+	case []string:
+		if len(x) == 0 {
+			return
+		}
+	case int32:
+		if x == 0 {
+			return
+		}
+		v = int(x)
 	}
-	if err := admin.PutPolicy(ctx, CorePolicy, corePolicyHCL); err != nil {
-		return fmt.Errorf("writing the %s policy: %w", CorePolicy, err)
-	}
-	if err := admin.Write(ctx, "auth/"+CertAuthMount+"/certs/"+CertAuthRole, map[string]any{
-		"certificate":          string(caPEM),
+	m[k] = v
+}
+
+type caSource func(ctx context.Context, pkiMount string) (string, error)
+
+func desired(ctx context.Context, in layoutInput, ca caSource) (baosync.Desired, []string, error) {
+	var d baosync.Desired
+	var pending []string
+	d.AuthMounts = append(d.AuthMounts, baosync.AuthMount{Path: CertAuthMount, Type: baosync.AuthCert})
+	d.SecretMounts = append(d.SecretMounts, baosync.SecretMount{Path: KVMount, Type: baosync.MountKV2})
+	d.Policies = append(d.Policies, baosync.Policy{Name: CorePolicy, HCL: PolicyHCL(CorePolicyRules)})
+	d.Objects = append(d.Objects, baosync.Object{Path: "auth/" + CertAuthMount + "/certs/" + CertAuthRole, Data: map[string]any{
+		"certificate":          string(in.caPEM),
 		"allowed_common_names": []string{vaultcert.RootVaultClientCommonName},
 		"token_policies":       []string{CorePolicy},
 		"token_ttl":            CoreTokenTTL,
 		"token_max_ttl":        CoreTokenMax,
-	}); err != nil {
-		return fmt.Errorf("writing the %s cert role: %w", CertAuthRole, err)
+	}})
+	for _, c := range in.clients {
+		if c.KVMount != "" {
+			d.SecretMounts = append(d.SecretMounts, baosync.SecretMount{Path: c.KVMount, Type: baosync.MountKV2})
+			d.Policies = append(d.Policies, baosync.Policy{Name: ClientPolicy(c.Name), HCL: PolicyHCL(clientPolicyRules(c.KVMount))})
+		}
+		d.Objects = append(d.Objects, baosync.Object{Path: "auth/" + CertAuthMount + "/certs/" + c.Name, Data: map[string]any{
+			"certificate":          string(in.clientsCAPEM),
+			"allowed_common_names": []string{vaultcert.OpenBaoClientCommonName(c.Name)},
+			"token_policies":       clientTokenPolicies(c),
+			"token_ttl":            or(c.TokenTTL, CoreTokenTTL),
+			"token_max_ttl":        or(c.TokenMaxTTL, CoreTokenMax),
+		}})
 	}
-	mounts, err := admin.SecretMounts(ctx)
-	if err != nil {
-		return err
+	decl := in.declared
+	if decl == nil {
+		return d, nil, nil
 	}
-	if _, ok := mounts[KVMount]; !ok {
-		if err := admin.EnableKV(ctx, KVMount, 2); err != nil {
-			return fmt.Errorf("enabling kv-v2 at %s: %w", KVMount, err)
+	for _, m := range decl.SecretMounts {
+		if strings.Trim(m.Path, "/") == KVMount && m.Type == baosync.MountKV2 {
+			continue
+		}
+		d.SecretMounts = append(d.SecretMounts, baosync.SecretMount{Path: strings.Trim(m.Path, "/"), Type: m.Type, MaxLeaseTTL: m.MaxLeaseTTL})
+	}
+	for _, m := range decl.AuthMounts {
+		p := strings.Trim(m.Path, "/")
+		if p != CertAuthMount || m.Type != baosync.AuthCert {
+			d.AuthMounts = append(d.AuthMounts, baosync.AuthMount{Path: p, Type: m.Type})
+		}
+		if m.JWT != nil {
+			d.Objects = append(d.Objects, baosync.Object{Path: "auth/" + p + "/config", Data: map[string]any{
+				"oidc_discovery_url": m.JWT.DiscoveryURL,
+				"bound_issuer":       or(m.JWT.BoundIssuer, m.JWT.DiscoveryURL),
+			}})
 		}
 	}
-	return nil
+	for _, p := range decl.Policies {
+		if p.Name == CorePolicy {
+			return d, nil, fmt.Errorf("spec.declared.policies: %s is the controller's own policy", CorePolicy)
+		}
+		d.Policies = append(d.Policies, baosync.Policy{Name: p.Name, HCL: PolicyHCL(p.Rules)})
+	}
+	cas := map[string]string{}
+	for _, r := range decl.CertRoles {
+		mount := strings.Trim(r.Mount, "/")
+		if mount == CertAuthMount && r.Name == CertAuthRole {
+			return d, nil, fmt.Errorf("spec.declared.certRoles: %s is the controller's own role", CertAuthRole)
+		}
+		pem, ok := cas[r.CAFromPKI]
+		if !ok {
+			var err error
+			pem, err = ca(ctx, r.CAFromPKI)
+			if err != nil {
+				return d, nil, err
+			}
+			cas[r.CAFromPKI] = pem
+		}
+		if pem == "" {
+			pending = append(pending, fmt.Sprintf("cert role %s/%s waits for a CA in the %s mount", mount, r.Name, r.CAFromPKI))
+			continue
+		}
+		data := map[string]any{"certificate": pem, "allowed_common_names": r.CommonNames, "token_policies": r.Policies,
+			"token_no_default_policy": r.NoDefaultPolicy}
+		put(data, "token_ttl", r.TokenTTL)
+		put(data, "token_max_ttl", r.TokenMaxTTL)
+		d.Objects = append(d.Objects, baosync.Object{Path: "auth/" + mount + "/certs/" + r.Name, Data: data})
+	}
+	for _, r := range decl.JWTRoles {
+		data := map[string]any{"role_type": or(r.RoleType, DefaultJWTRole), "bound_subject": r.BoundSubject,
+			"bound_audiences": r.BoundAudiences, "user_claim": r.UserClaim, "token_policies": r.Policies}
+		put(data, "token_ttl", r.TokenTTL)
+		d.Objects = append(d.Objects, baosync.Object{Path: "auth/" + strings.Trim(r.Mount, "/") + "/role/" + r.Name, Data: data})
+	}
+	for _, r := range decl.AppRoles {
+		data := map[string]any{"token_policies": r.Policies}
+		put(data, "token_ttl", r.TokenTTL)
+		put(data, "token_max_ttl", r.TokenMaxTTL)
+		put(data, "secret_id_ttl", r.SecretIDTTL)
+		d.Objects = append(d.Objects, baosync.Object{Path: "auth/" + or(strings.Trim(r.Mount, "/"), AppRoleMount) + "/role/" + r.Name, Data: data})
+	}
+	for _, r := range decl.PKIRoles {
+		data := map[string]any{"allow_subdomains": r.AllowSubdomains, "allow_bare_domains": r.AllowBareDomains,
+			"allow_any_name": r.AllowAnyName, "allow_ip_sans": r.AllowIPSANs, "enforce_hostnames": r.EnforceHostnames,
+			"require_cn": r.RequireCN, "client_flag": r.ClientFlag, "server_flag": r.ServerFlag}
+		put(data, "allowed_domains", r.AllowedDomains)
+		put(data, "key_type", r.KeyType)
+		put(data, "key_bits", r.KeyBits)
+		put(data, "key_usage", r.KeyUsage)
+		put(data, "organization", r.Organization)
+		put(data, "ttl", r.TTL)
+		put(data, "max_ttl", r.MaxTTL)
+		d.Objects = append(d.Objects, baosync.Object{Path: strings.Trim(r.Mount, "/") + "/roles/" + r.Name, Data: data})
+	}
+	for _, s := range decl.KV {
+		keys := append([]string(nil), s.Keys...)
+		sort.Strings(keys)
+		d.KV = append(d.KV, baosync.KVScope{Mount: strings.Trim(s.Mount, "/"), Prefix: s.Prefix, Keys: keys})
+	}
+	return d, pending, nil
+}
+
+func pkiCA(c *openbao.Client) caSource {
+	return func(ctx context.Context, mount string) (string, error) {
+		if mount == "" {
+			return "", errors.New("a cert role names no caFromPKI mount")
+		}
+		mounts, err := c.SecretMounts(ctx)
+		if err != nil {
+			return "", err
+		}
+		if m, ok := mounts[strings.Trim(mount, "/")]; !ok || m.Type != baosync.MountPKI {
+			return "", nil
+		}
+		pem, err := c.CAPEM(ctx, mount)
+		var re *openbao.ResponseError
+		if err != nil && (errors.As(err, &re) && (re.Status == 404 || re.Status == 400) || strings.Contains(err.Error(), "holds no certificate")) {
+			return "", nil
+		}
+		return pem, err
+	}
 }
 
 func loginCore(ctx context.Context, c *openbao.Client) (*openbao.Client, error) {
@@ -165,4 +295,9 @@ func loginRefused(err error) bool {
 		return false
 	}
 	return re.Status == 400 || re.Status == 403 || re.Status == 404
+}
+
+func permissionDenied(err error) bool {
+	var re *openbao.ResponseError
+	return errors.As(err, &re) && re.Status == 403
 }

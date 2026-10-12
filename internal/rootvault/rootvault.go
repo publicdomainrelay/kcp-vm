@@ -6,6 +6,7 @@ import (
 	"net"
 	"path/filepath"
 	"strconv"
+	"strings"
 )
 
 const (
@@ -38,23 +39,9 @@ const (
 	LoopbackHost = "127.0.0.1"
 
 	Port = 8200
-
-	configTemplate = `ui = false
-disable_clustering = true
-api_addr = "https://%[1]s"
-listener "tcp" {
-  address                            = "%[1]s"
-  tls_disable                        = false
-  tls_cert_file                      = "%[2]s"
-  tls_key_file                       = "%[3]s"
-  tls_client_ca_file                 = "%[4]s"
-  tls_require_and_verify_client_cert = true
-%[6]s}
-storage "file" {
-  path = "%[5]s"
-}
-`
 )
+
+var ErrConfigValue = errors.New("rootvault: a config value carries a quote, a backslash or a line break and would end its HCL string")
 
 var ErrStateDirEmpty = errors.New(
 	"rootvault: StateDir is required. The root vault holds the cross-deployment credentials, and " +
@@ -138,6 +125,14 @@ type ServerOptions struct {
 	UnauthedGenerateRoot bool
 
 	ClientCAFile string
+
+	CertFile string
+
+	KeyFile string
+
+	ClientCertOptional bool
+
+	PostgresDSN string
 }
 
 func ServerConfig(stateDir, addr string) (string, error) {
@@ -154,14 +149,37 @@ func ServerConfigWith(stateDir, addr string, o ServerOptions) (string, error) {
 	if addr == "" {
 		addr = Address()
 	}
-	extra := ""
-	if o.UnauthedGenerateRoot {
-		extra = "  disable_unauthed_generate_root_endpoints = false\n"
+	cert, key := ServerCertPath(stateDir), ServerKeyPath(stateDir)
+	if o.CertFile != "" || o.KeyFile != "" {
+		cert, key = o.CertFile, o.KeyFile
 	}
 	clientCA := TLSCAPath(stateDir)
 	if o.ClientCAFile != "" {
 		clientCA = o.ClientCAFile
 	}
-	return fmt.Sprintf(configTemplate, addr,
-		ServerCertPath(stateDir), ServerKeyPath(stateDir), clientCA, StorageDir(stateDir), extra), nil
+	for _, v := range []string{addr, cert, key, clientCA, o.PostgresDSN} {
+		if strings.ContainsAny(v, "\"\\\n\r") {
+			return "", fmt.Errorf("%w (%q)", ErrConfigValue, v)
+		}
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "ui = false\ndisable_clustering = true\napi_addr = \"https://%s\"\nlistener \"tcp\" {\n", addr)
+	fmt.Fprintf(&b, "  address                            = \"%s\"\n", addr)
+	b.WriteString("  tls_disable                        = false\n")
+	fmt.Fprintf(&b, "  tls_cert_file                      = \"%s\"\n", cert)
+	fmt.Fprintf(&b, "  tls_key_file                       = \"%s\"\n", key)
+	if !o.ClientCertOptional {
+		fmt.Fprintf(&b, "  tls_client_ca_file                 = \"%s\"\n", clientCA)
+		b.WriteString("  tls_require_and_verify_client_cert = true\n")
+	}
+	if o.UnauthedGenerateRoot {
+		b.WriteString("  disable_unauthed_generate_root_endpoints = false\n")
+	}
+	b.WriteString("}\n")
+	if o.PostgresDSN != "" {
+		fmt.Fprintf(&b, "storage \"postgresql\" {\n  connection_url = \"%s\"\n}\n", o.PostgresDSN)
+	} else {
+		fmt.Fprintf(&b, "storage \"file\" {\n  path = \"%s\"\n}\n", StorageDir(stateDir))
+	}
+	return b.String(), nil
 }
