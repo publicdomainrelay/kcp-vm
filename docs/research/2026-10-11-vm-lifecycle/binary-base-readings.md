@@ -4,7 +4,7 @@ Evidence for plan 0006 M1-CLI, M2-HOST-CONFORMANCE, M2-HOST-BACKEND-PROC and the
 M1-DEV-INSTANCE / M2-KCP-STORE / M2-KCP-SLOTS / M2-KCP-PORT0 / M2-BOOTSTRAP-LAYER. The plan files are not
 edited here; the lead folds these lines into their evidence. Executables: kcp `/usr/local/bin/kcp`
 v1.36.0+kcp-v0.33.0 sha256 0929a16b...; kine `/usr/local/bin/kine` (the v0.17.1 build; reports `dev (HEAD)`)
-sha256 de323745... Another task tree's bed (kcp + kine on port 0) ran on the host during every reading.
+sha256 de323745... Another task tree's market network (kcp + kine on port 0) ran on the host during every reading.
 
 ## Red -> green (UTC)
 

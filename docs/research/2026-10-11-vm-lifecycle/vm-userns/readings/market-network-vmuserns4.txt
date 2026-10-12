@@ -1,6 +1,6 @@
-bed: vmuserns4  slot: 2  dir: /home/johnandersen777/.local/state/swc-tasks/vm-userns/beds/vmuserns4
+market network: vmuserns4  slot: 2  dir: /home/johnandersen777/.local/state/swc-tasks/vm-userns/market-networks/vmuserns4
 guest work root: /var/tmp/swc-vmuserns4  bidders: bidder-1
-memory: 37351 MiB available, bed budget 5632 MiB
+memory: 37351 MiB available, market network budget 5632 MiB
 
 == runner image ==
 runner: localhost/socialweb-firecracker-runner:sha-958bfd24dd4d (sha256:958bfd24dd4d21c973f8d0ea0592dbcfd34b932413106eb38f0a80a6a3addcf6)
@@ -9,7 +9,7 @@ runner: localhost/socialweb-firecracker-runner:sha-958bfd24dd4d (sha256:958bfd24
 kcp ready
 kcp port: 44427
 kine endpoint: http://127.0.0.1:46793
-kubeconfig: /home/johnandersen777/.local/state/swc-tasks/vm-userns/beds/vmuserns4/kcp/admin.kubeconfig
+kubeconfig: /home/johnandersen777/.local/state/swc-tasks/vm-userns/market-networks/vmuserns4/kcp/admin.kubeconfig
 
 == provider workspace and schemas ==
 workspace.tenancy.kcp.io/deno-provider created
@@ -44,7 +44,7 @@ policyworkflowruns   aa2859c66100442fdc41005892ed3fd31ec7dffdd27d3a64b827cb9018d
 provider: /home/johnandersen777/.local/state/swc-tasks/vm-userns/build/deno-kcp-provider-940cba2672c7-4351b774fc54-bf33d26fd9e4
 
 == openbao ==
-started /usr/local/bin/bao (pid 686537), log /home/johnandersen777/.local/state/swc-tasks/vm-userns/beds/vmuserns4/openbao/bao.log
+started /usr/local/bin/bao (pid 686537), log /home/johnandersen777/.local/state/swc-tasks/vm-userns/market-networks/vmuserns4/openbao/bao.log
 openbao is up at http://127.0.0.1:34933
 
 start the provider against it with:
@@ -63,8 +63,8 @@ endpoints: https://127.0.0.1:44427/services/apiexport/293lrqkjmdxmf5rr/denorunti
 apply attempt 1 of 3
 org root:    /home/johnandersen777/src/publicdomainrelay-kcp-tasks/vm-userns
 root server: https://127.0.0.1:44427/clusters/root
-bed:         vmuserns4 (/home/johnandersen777/.local/state/swc-tasks/vm-userns/beds/vmuserns4) bidders: bidder-1 
-generated the guest TLS CA and the relay.localhost leaf in /home/johnandersen777/.local/state/swc-tasks/vm-userns/beds/vmuserns4/guest-tls
+market network:         vmuserns4 (/home/johnandersen777/.local/state/swc-tasks/vm-userns/market-networks/vmuserns4) bidders: bidder-1 
+generated the guest TLS CA and the relay.localhost leaf in /home/johnandersen777/.local/state/swc-tasks/vm-userns/market-networks/vmuserns4/guest-tls
 workspace.tenancy.kcp.io/global unchanged
 workspace.tenancy.kcp.io/relay unchanged
 workspace.tenancy.kcp.io/alice unchanged
@@ -73,8 +73,8 @@ workspace root:global Ready
 workspace root:relay Ready
 workspace root:alice Ready
 workspace root:bob Ready
-generated a PDS signing key at /home/johnandersen777/.local/state/swc-tasks/vm-userns/beds/vmuserns4/keys/alice-pds.hex
-generated a bob PDS signing key at /home/johnandersen777/.local/state/swc-tasks/vm-userns/beds/vmuserns4/keys/bob-pds.hex
+generated a PDS signing key at /home/johnandersen777/.local/state/swc-tasks/vm-userns/market-networks/vmuserns4/keys/alice-pds.hex
+generated a bob PDS signing key at /home/johnandersen777/.local/state/swc-tasks/vm-userns/market-networks/vmuserns4/keys/bob-pds.hex
 the OpenBao namespace for root:global never became ready within 60s
 apiVersion: deno.computer/v1alpha1
 kind: OpenBao
@@ -97,7 +97,7 @@ no workload exists and nothing reconciled within 30s; restarting the provider an
 apply attempt 2 of 3
 org root:    /home/johnandersen777/src/publicdomainrelay-kcp-tasks/vm-userns
 root server: https://127.0.0.1:44427/clusters/root
-bed:         vmuserns4 (/home/johnandersen777/.local/state/swc-tasks/vm-userns/beds/vmuserns4) bidders: bidder-1 
+market network:         vmuserns4 (/home/johnandersen777/.local/state/swc-tasks/vm-userns/market-networks/vmuserns4) bidders: bidder-1 
 workspace.tenancy.kcp.io/global unchanged
 workspace.tenancy.kcp.io/relay unchanged
 workspace.tenancy.kcp.io/alice unchanged
@@ -117,7 +117,7 @@ dispatcher: relay.localhost:40647  guest TLS front: 127.0.0.1:36797
 denopod.deno.computer/pds created
 denopod.deno.computer/pds created
 denopod.deno.computer/relay created
-generated a bidder-1 signing key at /home/johnandersen777/.local/state/swc-tasks/vm-userns/beds/vmuserns4/keys/bidder-1.hex
+generated a bidder-1 signing key at /home/johnandersen777/.local/state/swc-tasks/vm-userns/market-networks/vmuserns4/keys/bidder-1.hex
 denopod.deno.computer/bidder-1 created
 denopod.deno.computer/verifier created
 root:global  plc             phase=Running ready=true address=127.0.0.1:43765
@@ -153,7 +153,7 @@ authorities:
   root:alice alice.default serial=6F:A7:B4:FE:31:91:30:7D:45:77:7A:F2:C2:FC:5E:B9:06:13:AC:B4
   root:bob bob.default serial=09:41:A3:7B:F6:96:0C:A0:BA:05:23:09:CE:33:F5:CE:76:DC:28:74
 
-addresses (also in /home/johnandersen777/.local/state/swc-tasks/vm-userns/beds/vmuserns4/addresses.env):
+addresses (also in /home/johnandersen777/.local/state/swc-tasks/vm-userns/market-networks/vmuserns4/addresses.env):
   PLC_ADDRESS=127.0.0.1:43765
   RELAY_ADDRESS=127.0.0.1:39477
   DISPATCHER_ADDRESS=relay.localhost:40647
@@ -179,7 +179,7 @@ waiting 10s, then reading the long-running pods again
 
 == market contract ==
 bidders: did:plc:wo5z7phlf6trp67a3i4w7gpq  guests reach the dispatcher at: 192.168.0.20
-requester exit=0 after 18s, log /home/johnandersen777/.local/state/swc-tasks/vm-userns/beds/vmuserns4/market-requester.log
+requester exit=0 after 18s, log /home/johnandersen777/.local/state/swc-tasks/vm-userns/market-networks/vmuserns4/market-requester.log
 
 results:
   check                                result evidence
@@ -192,7 +192,7 @@ results:
   denopod root:bob/pds                 PASS phase=Running ready=true address=127.0.0.1:46769
   denopod root:bob/bidder-1            PASS phase=Running ready=true address=127.0.0.1:43561
   denopod root:alice/verifier          PASS phase=Succeeded
-  bed record                           PASS every service reported its own port (7 services)
+  market network record                           PASS every service reported its own port (7 services)
   bob pds on its name                  PASS ready=true probe=kcpdns pds.default.bob.svc.kcp.local /xrpc/_health
   bob pds on the host                  PASS GET https://pds.default.bob.svc.kcp.local:46769/xrpc/_health -> 200
   bidder-1 on its name                 PASS ready=true probe=kcpdns bidder-1.default.bob.svc.kcp.local /oauth-client-metadata.json
@@ -206,9 +206,9 @@ results:
   still up root:bob/bidder-1           PASS phase=Running ready=true after 10s
   market guest onNetwork               PASS after 16345ms: iroh://endpointacxvlxdvtojvvbhugupbzleq3tdmyyx32fzowbbqzgqo5 winner=did:plc:wo5z7phlf6trp67a3i4w7gpq bids=1
   market contract released             PASS vm.delete status=200 total=16457ms
-  market guest gone                    PASS fc-4bff2e6ff04b-08c79884: no running container labelled swc.bed=vmuserns4 and no work dir 2s after release
+  market guest gone                    PASS fc-4bff2e6ff04b-08c79884: no running container labelled swc.market-network=vmuserns4 and no work dir 2s after release
 
-bed record: /home/johnandersen777/.local/state/swc-tasks/vm-userns/beds/vmuserns4/bed.json
+market network record: /home/johnandersen777/.local/state/swc-tasks/vm-userns/market-networks/vmuserns4/market-network.json
 accept: pass
 teardown: LEFT processes=[671945 766929 766968 766970 ] containers=[] ports=[] workroot=
-kept /home/johnandersen777/.local/state/swc-tasks/vm-userns/beds/vmuserns4
+kept /home/johnandersen777/.local/state/swc-tasks/vm-userns/market-networks/vmuserns4

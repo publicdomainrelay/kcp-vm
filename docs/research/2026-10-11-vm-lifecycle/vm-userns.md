@@ -85,11 +85,11 @@ Readings: [readings/](vm-userns/readings/) (`host.txt`, `unit-*.txt`,
 
 ## RFP-flow guest
 
-Bed `vmuserns4`, 2026-10-12T05:32Z: `accept.sh` (one bidder, one guest)
+Market network `vmuserns4`, 2026-10-12T05:32Z: `accept.sh` (one bidder, one guest)
 **pass** - requester -> RFP -> bid -> accept -> cloud-init user_data, guest
 `onNetwork` after 16.3 s, contract released (vm.delete 200), work dir and unit
 gone 2 s after release. Readings: [readings/rfp-guest-vmuserns4.txt](vm-userns/readings/rfp-guest-vmuserns4.txt),
-[readings/bed-vmuserns4.txt](vm-userns/readings/bed-vmuserns4.txt).
+[readings/market-network-vmuserns4.txt](vm-userns/readings/market-network-vmuserns4.txt).
 
 ```
 unit socialweb-vm-fc-4bff2e6ff04b-08c79884.service in test-0001's user manager
@@ -106,7 +106,7 @@ work dir ACL: user::rwx user:test-0001:rwx user:656360:rwx group::--- other::---
 - No AVC during the run. The VMM uid owns, outside the work dir, only the
   stand-in readings files written by the same slot uid earlier (none of the
   bidder's).
-- Beds 1-3 failed for provider-path reasons, not the namespace: the
+- Market networks 1-3 failed for provider-path reasons, not the namespace: the
   provisioning `prove` scanned the guest's sshd with `docker exec <container>`
   (no container here), and from inside pasta's namespace the guest IP is
   unreachable because pasta answers ARP for every address but its own, so
@@ -125,17 +125,17 @@ scripts/build-userns-stage.sh --out ~/.tmp/userns-stage-build
 (cd vm-userns/gosrc && CGO_ENABLED=0 go build -o standin ./standin && CGO_ENABLED=0 go build -o gounshare ./gounshare)
 vm-userns/standin.sh <outdir>
 
-# one guest through the RFP flow in this task's bed
+# one guest through the RFP flow in this task's market network
 eval "$(scripts/task-tree.ts env vm-userns)"
-BED_ID=vmuserns4 vm-userns/bed.sh             # accept.sh with FC_USERNS_*
+MARKET_NETWORK_ID=vmuserns4 vm-userns/market-network.sh             # accept.sh with FC_USERNS_*
 vm-userns/capture.sh /var/tmp/swc-vmuserns1 test-0001 <out>
 ```
 
 Provider path used: `ts/hono-compute-provider/lib/microvm-firecracker-userns`
 (`createUsernsFirecrackerMicrovm`), selected in the bidder by
 `--compute-provider-firecracker-userns-stage` (+ `-account`, `-runtime-dir`,
-`-slot-size`); the market test bed passes them from `FC_USERNS_*` through the
-`Firecracker.ExtraArgs` value of the market-testbed set. It stages nodeboot,
+`-slot-size`); the market network passes them from `FC_USERNS_*` through the
+`Firecracker.ExtraArgs` value of the market-network set. It stages nodeboot,
 firecracker, the stage and the image (reflink) into a runtime dir the slot
 uids can read, grants the account and the VMM uid the work dir by ACL, and
 starts `socialweb-vm-<name>.service` in the account's user manager running
@@ -167,7 +167,7 @@ Harness-only deviations on hat-8 (not the design): the bidder (uid 1000) and
 the range account (test-0001) differ, so the provider starts units through
 `sudo -n -u test-0001 systemd-run --user` (sudo exits once the unit is queued,
 it is not in the VM's tree) and stages nodeboot, firecracker, the stage and the
-image under `/var/tmp/swc-<bed>-rt` because the bidder's home is 0700. Linger
+image under `/var/tmp/swc-<market network>-rt` because the bidder's home is 0700. Linger
 was enabled for test-0001 for the runs and disabled afterwards. With
 swc-bidder owning its own range, the units go to its own user manager and
 neither hop exists. Slot size was 32768 because the only range holds 65536.

@@ -329,7 +329,7 @@ M2-UNPRIVILEGED-RUNNER
   --config-file <work>/fc.json --api-sock <work>/fc.sock)`. Process tree after start: pasta -> firecracker.
 - [C] Test "boot through the RFP-flow fixture's boot-spec from a child process": boots a guest outside
   runComputeContract -> violates the RFP-spine rule. Split: (a) unit mechanics with a stand-in exec (not
-  a guest) - allowed; (b) any real guest only via the market bed (M6-*).
+  a guest) - allowed; (b) any real guest only via the market network (M6-*).
 - [M] kvm group: in a user manager, supplementary groups are fixed when user@UID starts. Adding the
   account to kvm later requires restarting user@UID = killing every VM (equivalent to reboot). `install
   bidder` must add kvm BEFORE linger/first start; check-host must detect "account in kvm per
@@ -347,7 +347,7 @@ M2-CONTROLLER
   Lost). Rewrite as the Verdict table (A-x-verdict).
 - [C] "A socialweb-vm-* unit of this bidder with no ComputeVM is reported and stopped after a 10-minute
   grace" - keep, but with shared account "this bidder" = unit name prefix `socialweb-vm-<handle-id>-`;
-  also units of OTHER handles on the same account are never touched (name filter), and units of beds
+  also units of OTHER handles on the same account are never touched (name filter), and units of market networks
   /tests use a distinct prefix.
 - [M] Mismatch policy (decision 3): Lost + StopUnit immediately (no grace) - add test.
 - [M] Reboot detection: ComputeVM.status.runtime.hostBootID != /proc/sys/kernel/random/boot_id -> Lost
@@ -403,8 +403,8 @@ reboot".
   with KillMode=control-group. [M] DENO_DIR per closure sha under the account's state dir; GC same rule
   as runtime/.
 - M2-SERVICE-TEMPLATE: [M] permissions field must default to least privilege (no -A), see M5-RUN-BIDDER.
-- M4-TESTBED-PORT: the bed's guests must come up through `run bidder` (RFP flow) - fine; [M] bed units
-  use a distinct unit-name prefix (`socialweb-bed-<pid>-...`) so a bed on hat-8 never collides with a
+- M4-MARKET-NETWORK-PORT: the market network's guests must come up through `run bidder` (RFP flow) - fine; [M] market network units
+  use a distinct unit-name prefix (`socialweb-market-network-<pid>-...`) so a market network on hat-8 never collides with a
   real bidder on the same account.
 
 ### Cross-cutting topics
@@ -530,8 +530,8 @@ A-x-tests (RFP-spine respecting):
 - Live unit mechanics (livegate, hat-8): stand-in executables (sleep/python) in transient units under
   the real user manager - NOT guests, so allowed. Covers restart/upgrade/daemon-reload/daemon-reexec/
   failed-result visibility/OOM/limits/prefix isolation/GC.
-- Any live GUEST only through the market bed: requester runComputeContract -> RFP -> bid -> accept ->
-  cloud-init, with `run bidder` as the bidder (0008 M4-TESTBED-PORT). Delete/rewrite every item test
+- Any live GUEST only through the market network: requester runComputeContract -> RFP -> bid -> accept ->
+  cloud-init, with `run bidder` as the bidder (0008 M4-MARKET-NETWORK-PORT). Delete/rewrite every item test
   that boots from a boot-spec or a fixture user_data (0007 M2-UNPRIVILEGED-RUNNER).
 - Cross-OS: compile+vet gates only (B7).
 
@@ -796,7 +796,7 @@ B9. Naming (shared bidder account, handle-namespaced)
 - `socialweb-vm-<hid>-<name>.service`, `socialweb-bao-<hid>.service`, slice `socialweb-b-<hid>.slice`
 - gateway: `socialweb-kcp.service` (if out-of-process), `socialweb-bao-root.service`,
   `socialweb-pg-<clusterKey>.service`, `socialweb-cluster-<clusterKey>.service`
-- test beds: `socialweb-bed-<runid>-...` never matched by production prefixes.
+- market networks: `socialweb-market-network-<runid>-...` never matched by production prefixes.
 
 ---------------------------------------------------------------------------------------------------------
 
@@ -845,15 +845,15 @@ nodeboot fold (part of M3-FOLD) deleted.
 | M1-GUEST-IMAGE (new, L) | CI-built images per hypervisor x arch, pinned kernel config (virtio-mmio, i8042/atkbd x86, gpio-keys arm64, cloud-init resize_rootfs), fetched+verified by guestimage | moves nodeimage off bidders | [0006:M1-ASSETS] | TestAnImageWhoseShaDiffersIsRefused; build: TestTheGuestKernelConfigHasTheGracefulStopDrivers |
 | M2-VM-RUNTIME (new, replaces M2-UNPRIVILEGED-RUNNER, L) | vmruntime firecracker_linux: prep in controller, seed drive, vmexec + execve, pasta wrap, unit properties (B3), Verdict (A-x-verdict), graceful stop | | [0006:M2-HOST-UNITS, 0006:M1-ASSETS, M1-GUEST-IMAGE] | offline: one test per Verdict row, TestIdentityMismatchStopsTheUnitImmediately, TestAnUnreachableBusIsUnknownNeverLost; live stand-in: TestTheVMUnitsProcessTreeHasNoSocialwebCode (stand-in VMM binary, assert /proc tree = pasta -> stand-in) |
 | M2-BACKPORT (amended) | parity boundary = VMSpec + seed bytes + fc.json; host keys guest-reported | | [M1-FC-INVENTORY, M1-COMMON-EXTRACT, M2-VM-RUNTIME] | as before |
-| M2-CONTROLLER (amended) | Verdict table, boot-id Lost, mismatch stop, failed-unit reset, handle-prefixed orphan GC (10 min), never other handles/beds | | [M1-API, M2-VM-RUNTIME, 0006:M2-APPLY] (0008 fork optional) | as before + TestABootIDChangeMakesEveryVMLostWithoutStartingAnything, TestAnotherHandlesUnitIsNeverTouched |
+| M2-CONTROLLER (amended) | Verdict table, boot-id Lost, mismatch stop, failed-unit reset, handle-prefixed orphan GC (10 min), never other handles/market networks | | [M1-API, M2-VM-RUNTIME, 0006:M2-APPLY] (0008 fork optional) | as before + TestABootIDChangeMakesEveryVMLostWithoutStartingAnything, TestAnotherHandlesUnitIsNeverTouched |
 | M3-TS-PROVIDER | + two-phase or constant host address; least-privilege deno permissions | | [M1-API, M1-COMMON-EXTRACT] | as before |
 | M3-BIDDER-FLAG | + handle + guest-host-address options | | [M3-TS-PROVIDER] | as before |
 | M4-BIDDER-VAULT | unit `socialweb-bao-<hid>`; unseal on InvocationID change | | [M3-BIDDER-FLAG, 0006:M2-OPENBAO-SERVER] | as before |
 | M4-BIDDER-BAO-SYNC, M4-CONTRACT-RESTORE | unchanged | | | |
 | M4-ONNETWORK | + guest-reported host keys into status.market | | [M3-TS-PROVIDER] | |
 | M5-RUN-BIDDER (rewritten) | user unit `socialweb-computer-bidder@<handle>` in shared `swc-bidder` account (linger, kvm before first start), default KillMode, QR guard in Go, DenoPod without -A | | [M2-CONTROLLER, M3-BIDDER-FLAG, M4-*, 0008:M2-SERVICE-TEMPLATE, kcp item, 0006:M1-INSTALL] | TestTheBidderUserUnitVerifies, TestTheBidderDenoPodArgvGrantsNoRunFfiOrBusOrKvm, live TestDenoInTheBidderPodCannotOpenDevKvm |
-| M6-BIDDER-UPGRADE | via `upgrade` + `systemctl --user restart`, market bed | | [M5-RUN-BIDDER, 0008:M4-TESTBED-PORT] | as before |
-| M6-LIVE-RECOVERY (amended) | cases: kill -9, systemctl restart, logout-with-linger; all via market bed | | same | |
+| M6-BIDDER-UPGRADE | via `upgrade` + `systemctl --user restart`, market network | | [M5-RUN-BIDDER, 0008:M4-MARKET-NETWORK-PORT] | as before |
+| M6-LIVE-RECOVERY (amended) | cases: kill -9, systemctl restart, logout-with-linger; all via market network | | same | |
 | M6-NOSSH-JOIN, M6-GATEWAY-REPOPULATE | unchanged (dep renamed 0006:M3-CLUSTER-UNITS) | | | |
 
 Deleted in 0007: M2-UNPRIVILEGED-RUNNER (-> M2-VM-RUNTIME; its guest-boot test deleted as an RFP-spine

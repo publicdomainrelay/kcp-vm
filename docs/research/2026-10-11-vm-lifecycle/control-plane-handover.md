@@ -53,7 +53,7 @@ must be measured before it is relied on.
 6. **Recommendation:** blue/green slots behind a front for every recurring k3s/kine/supervisor
    upgrade (new items M3-APISERVER-FRONT, M3-CP-SLOTS); members as units under a per-cluster slice
    instead of one supervisor unit; swap a cluster when idle if possible, else blue/green; for the
-   ONE-TIME container->host cutover, a **guarded cold restart** (measured on the market bed first,
+   ONE-TIME container->host cutover, a **guarded cold restart** (measured on the market network first,
    NODE-LOSS clock rebased to "path up") rather than a host-side takeover of a live container -
    cost/risk in section 8.3.
 
@@ -297,7 +297,7 @@ not add it - the LB's reconnect behaviour is what moves agents from blue to gree
 
 Endpoint removal on shutdown: the lease reconciler keys master leases by IP and calls
 `RemoveEndpoints` on graceful stop [S k8s lease.go]; both slots share the IP, so a graceful blue could
-blank the Endpoints until green's next reconcile. Not observed (blue's 0.1 s exit) [M]; the bed test
+blank the Endpoints until green's next reconcile. Not observed (blue's 0.1 s exit) [M]; the market network test
 must still assert the slice never empties [U].
 
 ### 2.6 Kubelets, watches and NotReady across a swap
@@ -320,7 +320,7 @@ must still assert the slice never empties [U].
   when blue stops, every exec/attach stream through it ends. GitLab's kubernetes executor drives jobs
   through exec/attach [U: measure whether an in-flight job fails on a stream reset]. Consequence:
   swap when idle (zero nodes or no running runner pods) where possible; otherwise switch and stop
-  blue immediately so tunnels move within one reconnect backoff [U: measure the backoff on the bed].
+  blue immediately so tunnels move within one reconnect backoff [U: measure the backoff on the market network].
 
 ---------------------------------------------------------------------------------------------------
 
@@ -342,7 +342,7 @@ must still assert the slice never empties [U].
   [S kine pgsql.go; M "Database tables and indexes are up to date"]. An ALTER takes an ACCESS
   EXCLUSIVE lock, so a NEW kine starting beside an OLD one can stall the old one's writes for the
   migration. Rule: a kine bump is its own green slot, and its release notes are read for schema
-  changes; a bump that migrates gets a bed test with old+new kine on one database first. kine has no
+  changes; a bump that migrates gets a market network test with old+new kine on one database first. kine has no
   downgrade path once it migrated.
 - Pairing: one kine per slot (kine@a with k3s@a). It keeps the kine version a property of the slot,
   lets a slot die without taking the other's store connection, and costs one leased port per slot.
@@ -382,7 +382,7 @@ connections per endpoint id; a newer connection with the same id becomes active 
 moves relayed dials to the new process while open QUIC connections finish on the old. Unverified for
 our pin: dumbpipe v0.39.0's iroh version must already carry this relay behaviour, n0's public relays
 must run it, and discovery (signed address record published per process) is last-writer-wins
-[S iroh docs] [U all three: bed test]. The second process cannot bind the same UDP link port, so it
+[S iroh docs] [U all three: market network test]. The second process cannot bind the same UDP link port, so it
 takes the other slot's link lease (or a random port; the published ticket carries no address).
 
 Alternatives considered: (a) restart dumbpipe pointing at green - every client's connection drops at
@@ -443,7 +443,7 @@ which Pdeathsig forbids. That is the main argument for 8.1's member-units refine
 ### (c) the one-time container -> host cutover
 
 Recommended: **guarded cold restart** (8.3). Steps:
-1. Bed rehearsal (once): `internal/marketbed` with a market node joined through runComputeContract;
+1. Market network rehearsal (once): `internal/marketnetwork` with a market node joined through runComputeContract;
    stop the control-plane container; start the host core on a copy of its state; record
    time-to-Ready per cluster, time until the node's Lease renews, Ready transitions, exec success.
 2. Ship NODE-LOSS rebase (M3-NODE-LOSS-CLOCK) and the front + slot layout in the host core FIRST, so
@@ -469,7 +469,7 @@ its cost is visible (8.3 rejects it for a one-time event):
    127.0.0.1:<k3s-secure> and now reaches green. Check: (a)7.
 5. Host `link-apiserver` and `link-openbao` with the same keys (read from the container's vault on
    loopback with the root token), new UDP ports; then kill the container's links (4. relay handover).
-   Check: a guest-side dial (the bed) through the published ticket reaches the host process.
+   Check: a guest-side dial (the market network) through the published ticket reaches the host process.
 6. Vault: stop the container's bao, start the host bao on the same storage and port (no HA lock, so
    never two at once), unseal. Check `/v1/sys/health`, a node-secret read.
 7. Postgres: add `host replication postgres 127.0.0.1/32 scram-sha-256` to the container pg_hba and
@@ -481,7 +481,7 @@ its cost is visible (8.3 rejects it for a one-time event):
    match or `REINDEX` the openbao table after promotion; kine's `name` is `COLLATE "C"` and is safe.
 8. Stop kcp/gateway/door in the container, copy the kcp root and door state, `docker stop`; start the
    host core; it adopts the units. kcp/door downtime remains (section 6).
-Cost: a cutover tool that drives all of the above per cluster + a rehearsal on the bed + failure
+Cost: a cutover tool that drives all of the above per cluster + a rehearsal on the market network + failure
 handling for a half-moved cluster. Risk: the frozen provider, a half-moved cluster on any failure,
 a root-owned copy step mid-flight.
 
@@ -615,7 +615,7 @@ Proposed ownership model (decided by Claude, user may veto):
   test_first: >-
     Behind livegate, stand-ins only: TestACoreRestartLeavesEveryClusterUnitWithItsInvocationID
     (systemctl --user restart of the gateway unit + a binary swap; /readyz through the front polled
-    every 200 ms, no failure). On the market bed (node joined via runComputeContract):
+    every 200 ms, no failure). On the market network (node joined via runComputeContract):
     TestAGatewayUpgradeKeepsAMarketNodeReady (no Ready transition, no claim write, no vm.delete).
 - id: M3-APISERVER-FRONT
   title: A per-cluster L4 front holds the apiserver port; k3s moves behind it
@@ -641,7 +641,7 @@ Proposed ownership model (decided by Claude, user may veto):
     lease collision is bounded by switch-then-stop.
   test_first: >-
     Stand-ins: TestAGreenSlotSharesCAAndTokenWithBlue, TestTheSchedulerIsNotDoubledDuringOverlap.
-    Bed (node via runComputeContract): TestABlueGreenSwapKeepsAMarketNodeReadyAndExecWorksAfter
+    Market network (node via runComputeContract): TestABlueGreenSwapKeepsAMarketNodeReadyAndExecWorksAfter
     (no NotReady, no claim change; exec into the node's pod succeeds within N s of the swap - N is
     the measured agent tunnel backoff).
 - id: M3-LINK-HANDOVER
@@ -651,16 +651,16 @@ Proposed ownership model (decided by Claude, user may veto):
     Measure, then decide: start the new listener with the same IROH_SECRET on another UDP port, wait
     for its ticket, stop the old one. Fixes the stated limit that a dead link is never restarted.
   test_first: >-
-    Bed: TestALinkReplacedWithTheSameKeyKeepsTheNodeReady (guest's connect-tcp dials across the
+    Market network: TestALinkReplacedWithTheSameKeyKeepsTheNodeReady (guest's connect-tcp dials across the
     swap; relay promotion and discovery timing recorded for the pinned dumbpipe).
 - id: M5-CUTOVER                  # amended
   decision_add: >-
-    Recommended (8.3): guarded cold restart, rehearsed once on the market bed, after
+    Recommended (8.3): guarded cold restart, rehearsed once on the market network, after
     M3-CP-SLOTS and M3-NODE-LOSS-CLOCK ship in the host core; window chosen when most clusters are
     at zero nodes. The host-side takeover of a frozen container is documented, not built.
   depends_on_add: [M3-APISERVER-FRONT, 0007:M3-NODE-LOSS-CLOCK]
   test_first_add: >-
-    Bed: TestAContainerToHostCutoverKeepsAMarketNodeOwned (control-plane container stopped, host
+    Market network: TestAContainerToHostCutoverKeepsAMarketNodeOwned (control-plane container stopped, host
     core started on the copied state: claim adopted, Node Ready within 50 s, no vm.delete).
 - id: M2-POSTGRES                 # amended
   decision_add: >-
@@ -688,14 +688,14 @@ Proposed ownership model (decided by Claude, user may veto):
   test_first: >-
     test/node_market_test.ts: 'a door restarted during Provisioning re-serves the same secrets URL
     and the claim reaches Joining', 'a door restarted between accept intent and accept record
-    completes or releases exactly once'; bed: TestADoorRestartMidProvisioningStillJoinsTheNode
+    completes or releases exactly once'; market network: TestADoorRestartMidProvisioningStillJoinsTheNode
     (node born via runComputeContract). Red first.
 - id: M6-GATEWAY-REPOPULATE       # amended
   depends_on_add: [M6-CLAIM-RESUME, 0006:M3-CLUSTER-UNITS]
   decision_change: the record scan only covers claims with acceptPending or no claim at all.
 ```
 
-All live tests stay on the RFP spine: a node exists only because the bed's requester ran
+All live tests stay on the RFP spine: a node exists only because the market network's requester ran
 `runComputeContract` (RFP -> bid -> accept -> cloud-init) against a local bidder; control-plane
 stand-in tests start k3s/kine/postgres processes only, never a guest.
 
@@ -706,7 +706,7 @@ stand-in tests start k3s/kine/postgres processes only, never a guest.
 | Drain first (release every market node) | low code | none to ownership | running jobs killed; nodes re-rented after |
 | Raise grace for the window | trivial | stale VMs live longer if really lost | none if path recovers |
 | Accept loss (plain cold restart) | none | depends on path recovery < ~140 s | API outage for the window; nodes probably Ready |
-| **Guarded cold restart** (rebased clock + bed rehearsal + idle window) | M3-NODE-LOSS-CLOCK (small) + one bed run | low: a node is released only if it was really unreachable 90 s after our path was back | API outage for the window (tens of seconds per cluster + kcp/door); exec streams reset |
+| **Guarded cold restart** (rebased clock + market network rehearsal + idle window) | M3-NODE-LOSS-CLOCK (small) + one market network run | low: a node is released only if it was really unreachable 90 s after our path was back | API outage for the window (tens of seconds per cluster + kcp/door); exec streams reset |
 | Blue/green takeover of a live container | a one-shot cutover tool, freeze trick, per-cluster rollback states, a rehearsal | medium-high: half-moved clusters, frozen provider, root copy mid-flight | apiservers up; kcp/door still restart, so the mount is down anyway |
 
 **Recommend the guarded cold restart.** The mount outage (kcp/door restart) cannot be avoided in the

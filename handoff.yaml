@@ -33,7 +33,7 @@ state_at_handoff:
     artifact-gated skips); `--full` needs the live artifacts and exits non-zero naming what is
     missing without them. The privileged rig that used to carry the live gate
     (`deploy/test-rig`) was deleted on 2026-10-07 with the local substrates (plan 0005
-    M1-MARKET-ONLY); the market test bed is what boots a real guest now.
+    M1-MARKET-ONLY); the market network is what boots a real guest now.
   deployment: >
     The deployment is ONE container: `deploy/run-container.sh` builds the image and starts it
     detached as `socialweb`, and `deploy/wait-ready.sh socialweb 300` returns 0 when the cluster

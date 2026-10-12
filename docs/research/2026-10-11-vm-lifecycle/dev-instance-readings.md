@@ -4,7 +4,7 @@ Evidence for plan 0006 M1-PORT-LEASE-INSTANCE and the parts of M1-DEV-INSTANCE t
 (dev ls|logs|env|check|restart, --fg, the .swc-dev marker, per-instance state layout, per-task ids). The plan
 files are not edited here; the lead folds these lines into their evidence. Executables: kcp
 `/usr/local/bin/kcp` v1.36.0+kcp-v0.33.0, kine `/usr/local/bin/kine` (v0.17.1 build), as in
-binary-base-readings.md. Another task tree's bed ran on the host during every reading.
+binary-base-readings.md. Another task tree's market network ran on the host during every reading.
 
 ## Decisions taken while building (user may veto)
 

@@ -17,19 +17,19 @@ Plans 0006, 0007 and 0008 are organized by it (each carries a `principle:` block
 in plan 0006):
 
 - **An application instance = its own kcp + a manifest set + a profile.** A bidder handle, a requester
-  `run request`, the gateway, a market test bed, a dev instance. kcp belongs to the application
+  `run request`, the gateway, a market network, a dev instance. kcp belongs to the application
   instance, never to a machine; a host is only where instances run, and any number run on one host.
 - **Application state = kcp objects** in that instance's kcp: ComputeVM, ComputeContract, NodeClaim,
   OpenBaoServer, Postgres, DenoPod, HostProcess.
 - **Application components** (the servers that live today inside one deno or Go process) = DenoPods and
   HostProcesses reconciled from those objects.
 - **Modes = profiles over one manifest set.** A bidder in OAuth QR mode against a real account has no
-  PDS pod; a bidder in the market test bed has its own PDS pod.
+  PDS pod; a bidder in the market network has its own PDS pod.
 - **Composition = applying manifest sets, or nesting instances as workspaces** (a parent's workspace
   holds a child instance's HostProcess objects; the child keeps its own kcp).
 - **Applications talk to each other only over the atproto market protocol**, never by sharing a kcp.
-- **The market test bed** (`deploy/examples/atproto/market`) is the seed of this model and the vehicle
-  for parallel workstreams: each workstream's live tests run in its own bed, brought up in its own
+- **The market network** (`deploy/market-network`) is the seed of this model and the vehicle
+  for parallel workstreams: each workstream's live tests run in its own market network, brought up in its own
   git worktree of this repository; the shared real bidder
   (bobvmbuilder) and alice are a final soak only.
 - **The one traditional use** is the virtual Kubernetes clusters project this document mostly
@@ -58,10 +58,10 @@ only), `install`, the host contract, and the bootstrap layer that runs an instan
 - **One root object per application** in its own kcp - MarketBidder, MarketRequester, Gateway,
   MarketNetwork (plan 0006 M2-APP-CONTROLLER). Its spec carries the application's options and profile; the
   core renders the profile into owned children, and a profile switch deletes what the new profile omits.
-- **Strict kcp per application, inside a market bed too.** The bed is itself an application,
+- **Strict kcp per application, inside a market network too.** The market network is itself an application,
   MarketNetwork: its kcp runs the shared atproto services (PLC, relay, dispatchers, PDSes, the QR relay)
   and holds each child application's bootstrap layer as HostProcess objects, so every bidder, gateway and
-  requester invocation in the bed runs its own kcp. Children learn the network only from values the
+  requester invocation in the market network runs its own kcp. Children learn the network only from values the
   composer copies onto their root objects; the DNS shim resolves only its own application's names.
 - **Every CLI option stays, kcp-native.** Each hono-bidder and request-vm-ssh option becomes a root-object
   field or a profile (only legacy guest transports are removed). Sign-in is an object, MarketIdentity
@@ -660,7 +660,7 @@ production, devsup units in dev, mirrored into kcp read-only once it answers (th
 pattern). `host-backend` is required with no default. `socialweb-computer dev up|down|status` runs one
 instance per worktree with no root, no install and no systemd: state under
 `$XDG_STATE_HOME/socialweb-computer/dev/<instance>/`, its own kcp on port 0 (gateway store sqlite for
-quick runs, postgres for the bed and prod-like profiles), leases keyed by instance, the k3s node password
+quick runs, postgres for the market network and prod-like profiles), leases keyed by instance, the k3s node password
 bind-mounted in a per-instance user namespace, AppArmor reported not fixed, one uid for every role.
 Instances nest as kcp workspaces (one kcp per application instance; a parent instance that holds its
 children's processes later; applications never share a kcp, section 0). Guests in dev still come
@@ -763,7 +763,7 @@ above. `ud:N` = line N of `docs/research/2026-10-11-vm-lifecycle/user-decisions.
   rotate it; the rotation itself lands with the bidder DenoPod stack (M5-RUN-BIDDER).
 - **DenoPod-per-VM was rejected, on evidence.** Deleting a DenoPod SIGKILLs its process group with no
   release step (kcp-libs `impl/execrunner/supervisor.go:322`, also `:156`); the runner's 5-minute
-  `DefaultPodTimeout` (`impl/execrunner/pod.go:17`, enforced in `Observe` `:101-104`) killed the bed's bidder
+  `DefaultPodTimeout` (`impl/execrunner/pod.go:17`, enforced in `Observe` `:101-104`) killed the market network's bidder
   mid-contract (run 4), and a VM lives as long as its contract; DenoPod status is `State`, `ExitCode`,
   `Message`, `Outputs` (`abc/runner/runner.go:40-48`), with no typed guest fields; booting needs `/dev/kvm`
   (today a privileged runner container per guest, hono-compute-provider
@@ -1297,7 +1297,7 @@ the vault again. Not deployed at the time of writing: the live reading (`bao aut
 Every per-cluster port is leased from `internal/portallocator`, ADR 0026. Persisted per host. These
 leases are the virtual-clusters exception to section 0's port 0 rule (a tenant cluster's apiserver and
 link ports must stay stable across restarts); every other listener behind the edge binds port 0 and
-reports its address into its kcp object (plans 0006 M2-KCP-PORT0, M1-NO-FIXED-PORTS; 0008 M1-BED-PARALLEL).
+reports its address into its kcp object (plans 0006 M2-KCP-PORT0, M1-NO-FIXED-PORTS; 0008 M1-MARKET-NETWORK-PARALLEL).
 
 | purpose | for |
 |---|---|
@@ -1401,7 +1401,7 @@ keeps them removed:
 | | |
 |---|---|
 | **a market guest** | **THE node path.** The node is a VM rented from the COMPUTE MARKET through a `NodeClaim` the clusterprovider writes and the market door fulfils under the cluster owner's own atproto OAuth session. **`internal/nodemarket`**, `SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE=market`. NOT a guest of this host: no subnet lease, no pasta, no VMM, no node image and no `/dev/kvm` is involved. The clusterprovider's whole part in the node is the claim; the door bids, wins, boots the guest from the winning bidder's cloud-init and writes the phase back; the guest itself dials the cluster's OpenBao and apiserver through the cluster's ClusterLinks and binds the advertised address (`SOCIALWEB_CLUSTERPROVIDER_MARKET_ADVERTISE_ADDRESS`, default `198.18.255.254`) on its own loopback (section 9, "A market node joins through its cluster's OpenBao, never through ssh"). Confirming is the tenant Node appearing for a claim the door left `Joining`, not a local process being alive |
-| **a guest of this host** | RETIRED 2026-10-07. A VM this host started itself -- `firecracker` or `qemu` behind the same `scale.Nodes` seam, each a VMM in its own network namespace, booting a node image built here and joining through an agent the image carried. Both values were refused and deleted (plan 0005 M1-MARKET-ONLY): the market path with a local bidder covers the same test bed, so a second way to place a node was a second way to be wrong about where a node is. What the guest half still needs survives where the bidder uses it -- `internal/nodevm`, `internal/nodefirecracker`'s image, manifest and namespace halves, `socialweb-nodeboot`, `socialweb-nodeimage` -- because that is what boots the guest the MARKET rents, on the bidder's host |
+| **a guest of this host** | RETIRED 2026-10-07. A VM this host started itself -- `firecracker` or `qemu` behind the same `scale.Nodes` seam, each a VMM in its own network namespace, booting a node image built here and joining through an agent the image carried. Both values were refused and deleted (plan 0005 M1-MARKET-ONLY): the market path with a local bidder covers the same market network, so a second way to place a node was a second way to be wrong about where a node is. What the guest half still needs survives where the bidder uses it -- `internal/nodevm`, `internal/nodefirecracker`'s image, manifest and namespace halves, `socialweb-nodeboot`, `socialweb-nodeimage` -- because that is what boots the guest the MARKET rents, on the bidder's host |
 | **local process** | a `k3s agent` child process, `internal/nodelocal`, behind the same `scale.Nodes` seam. REFUTED as the substrate, three ways, all measured: `k3s agent` is fatal as a non-root user (`agent requires additional privilege if not run with --rootless`); it needs root for `/run/k3s/containerd`, `/var/lib/kubelet/device-plugins`, `127.0.0.1:6444` and the host `KUBE-*` chains, none of which `--data-dir` moves; and postgres is fatal AS root (`initdb: cannot be run as root`), so a host that runs the store cannot run a node |
 
 **`SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE` accepts exactly one value, `market`, and every other name is
@@ -1510,7 +1510,7 @@ the rootfs did not have.** The guest boots the build host's Fedora kernel, built
 whose modprobe is `/usr/sbin/modprobe` only. Every `request_module()` the kernel makes -- the
 autoload of an nf_tables expression, an xt match, a logger -- exec'd a path that did not exist, so the
 only modules a guest ever had were the ones `systemd-modules-load` or a userspace `modprobe` on PATH
-loaded. Measured on the local market test bed (`internal/marketbed` live M3 gate):
+loaded. Measured on the local market network (`internal/marketnetwork` live M3 gate):
 `/proc/sys/kernel/modprobe` read `/usr/bin/modprobe` from a pod, `nft_limit` and `nft_log` were not
 in `/proc/modules`, and kube-router's network policy controller aborted every sync with
 `iptables-restore v1.8.10 (nf_tables): line 61: RULE_APPEND failed (No such file or directory): rule
@@ -2077,8 +2077,8 @@ runcmd; none is a dependency of the agent except the DNS link and the masquerade
   `authorized_keys` is empty. The door no longer downloads dumbpipe, and `node-apiserver-host` is gone
   from its options.
 
-**MEASURED locally end to end, 2026-10-07** (`internal/marketbed/TestAMarketNodeJoinsATenantClusterThroughItsOpenBaoWithNoSsh`,
-PASS 753.57s, finished 23:55:13Z; the vendored market test bed held up by `accept.sh`'s `ACCEPT_HOLD_DIR`,
+**MEASURED locally end to end, 2026-10-07** (`internal/marketnetwork/TestAMarketNodeJoinsATenantClusterThroughItsOpenBaoWithNoSsh`,
+PASS 753.57s, finished 23:55:13Z; the vendored market network held up by `accept.sh`'s `ACCEPT_HOLD_DIR`,
 and the deployed control-plane container `socialweb-k8s:m3live` built from the tree running against it, so
 prod's own entrypoint and provider are what was measured). One Deployment on a tenant cluster took the
 whole path: both ClusterLinks Listening and the cluster Ready 23:49:18Z, the claim written 23:49:21Z after
@@ -3273,14 +3273,14 @@ qemu image at `sha256-e356da745efe1dab4b6c233045f33b491cc7cfe0851fdaa5856501991a
 run, 122 s wall.
 
 **The live gate's privileged rig is GONE with the local substrates (plan 0005 M1-MARKET-ONLY), and
-the market test bed is what replaced it.** `deploy/test-rig` and `cmd/socialweb-rig-inputs` existed to
+the market network is what replaced it.** `deploy/test-rig` and `cmd/socialweb-rig-inputs` existed to
 boot the product's own `computer` image with `/dev/kvm` and `/dev/net/tun` and run
 `SOCIALWEB_REQUIRE_LIVE=1 go test ./...` inside it, deriving the tenant inputs from the running
 product rather than asking for them. Every one of those inputs was an input to a node this host
 STARTED: the image directories, the agent, the store and the two image configurations were resolved
 with `internal/nodefirecracker.LoadImage`, and the rig's whole reason to exist was that no local
-substrate has a test bed of its own. The market has one: `deploy/examples/atproto/market` with
-`internal/marketbed` runs a local dispatcher, a bidder and a requester, and the guest is born from the
+substrate has a market network of its own. The market has one: `deploy/market-network` with
+`internal/marketnetwork` runs a local dispatcher, a bidder and a requester, and the guest is born from the
 RFP flow this project exists for — the same flow production uses, rather than a rig standing beside
 it. The gate itself is unchanged and still takes a live cluster:
 `SOCIALWEB_REQUIRE_LIVE=1 go test ./...`, where a skip is a failure.
@@ -3310,18 +3310,18 @@ inventing one. A live boot adds `/dev/kvm`. The rig derives everything else, and
 is what keeps a missing kernel, module tree or base image from becoming an image that silently boots
 the wrong userspace.
 
-### The market test bed (vendored deno-kcp)
+### The market network (vendored deno-kcp)
 
-**The live market test bed is deno-kcp's AT Protocol market example, vendored into this repository
-and run on kcp, with a firecracker bidder on our nodeimage.** Plan 0005 item M1-TESTBED; the user
+**The live market network is deno-kcp's AT Protocol market example, vendored into this repository
+and run on kcp, with a firecracker bidder on our nodeimage.** Plan 0005 item M1-MARKET-NETWORK; the user
 chose vendoring over building in deno-kcp. `deploy/denokcp/` holds deno-kcp's APIResourceSchemas,
 APIExports and WorkspaceTypes (DenoPod, OpenBao and the rest of the `denoruntime` and
 `policyworkflowruns` exports the `denoruntime` workspace type binds) and its kcp, OpenBao and
-install scripts; `deploy/examples/atproto/market/` holds the market example as of deno-kcp PR 2
+install scripts; `deploy/market-network/` holds the market example as of deno-kcp PR 2
 (branch `pr-2`, commit `f5b7c10c`), which added bob's PDS and the bidder. `deploy/denokcp/vendor.json`
 records that commit, the kcp-libs commit the provider is built against (`f6911d23`), the upstream
 path and sha256 of every vendored file, why each adapted file differs, and why each file of ours
-lives beside them. `internal/marketbed` checks it offline: every file in the two directories is
+lives beside them. `internal/marketnetwork` checks it offline: every file in the two directories is
 either vendored or ours and recorded, a verbatim file is byte-identical to its recorded upstream,
 every file is ASCII, every manifest decodes strictly into the kcp and Kubernetes types and every
 `deno.computer` object validates against the vendored schema (a field kube would prune is a failure),
@@ -3350,11 +3350,11 @@ host         market-requester/mod.ts (runComputeContract)
 
 **Which PLC and which dispatcher (decided by Claude, user may veto).** Upstream pr-2's bidder
 used `plc.directory` and `xrpc.fedproxy.com`, so every run registered a fresh did:plc in the public
-directory (run 2 below registered `did:plc:lm4cljto7fyrug2xgjvsefh3`). The test bed's bidder and
+directory (run 2 below registered `did:plc:lm4cljto7fyrug2xgjvsefh3`). The market network's bidder and
 requester use the in-cluster PLC instead, by the loopback address its OpenBao leaf carries
 (`https://127.0.0.1:2587`), because the requester runs on the host where cluster-local names do not
 resolve, and both trust the market CA through `DENO_CERT`. They share a dispatcher of the test
-bed's own, `35-relay-dispatcher.yaml`, named `relay.localhost:2588`, which is the shape the bidder's
+market network's own, `35-relay-dispatcher.yaml`, named `relay.localhost:2588`, which is the shape the bidder's
 and requester's local-dev paths already understand (`https://*.localhost` downgraded to the plain
 port). Nothing in a run reaches a public market service. A guest reaches the dispatcher only over
 https, for its OIDC proof and its onNetwork report, so the bidder runs `--guest-tls-port 2589` and
@@ -3367,7 +3367,7 @@ guest trust that CA (`ca_certs`), names the host for `relay.localhost` (`guestHo
 systemd unit has no `HOME`, so without it the guest's `provisioning-token.service` dialled its own
 loopback (runs 5 to 7). The bidder runs `--policy open`: the default `only-me` refuses an RFP from a
 requester with no operator association (run 3, HTTP 403 `scope filter declined`), and every identity
-in the test bed is minted per run.
+in the market network is minted per run.
 
 **The market contract, with no session to the guest.** `market-requester/mod.ts` creates a
 requester PDS, runs `runComputeContract` against the bidder's DID (read from the bidder's own
@@ -3386,16 +3386,16 @@ no root or intermediate was ever generated (run 1: 0 of 17 checks; carried as
 default) stops every deno process, long-running DenoPods included, so the bidder restarted mid-contract
 and forgot it (run 4); and a provider started before any workspace binds its exports reconciles
 nothing, so `accept.sh` now creates the workspaces before starting it, while the upstream restart
-remains for the race that is left. The test bed replaces the in-process local dispatcher plus fake PLC
+remains for the race that is left. The market network replaces the in-process local dispatcher plus fake PLC
 of `socialweb-computer-k8s/test/live_market_node_test.ts` as the market harness for live tests; that
 test still owns the loopback-k3s join through the door's reverse forward until M3 moves the join off
-ssh, and is retired with it. `internal/marketbed`'s
-`TestTheMarketTestBedRentsAFirecrackerGuestThroughTheRFPFlow` drives `accept.sh` behind livegate: it
+ssh, and is retired with it. `internal/marketnetwork`'s
+`TestTheMarketNetworkRentsAFirecrackerGuestThroughTheRFPFlow` drives `accept.sh` behind livegate: it
 skips without `SOCIALWEB_LOCAL`/`SOCIALWEB_REQUIRE_LIVE`, skips under `--local` and fails under
 `--full` when the firecracker inputs (`SOCIALWEB_FIRECRACKER_NODEIMAGE`, `_CONFIG`, `_REPO_DIR`,
 `_RUNNER_IMAGE`), `/dev/kvm`, a deno-kcp checkout (DENO_KCP_DIR) or ports 2583 to 2589 are
 missing, and needs `go test -timeout 60m`, which `deploy/check.sh --local`/`--full` now pass. Its guests'
-work root is a short directory under `/var/tmp` (`MARKETBED_WORK_ROOT_BASE`), not the test's temp
+work root is a short directory under `/var/tmp` (`MARKET_NETWORK_WORK_ROOT_BASE`), not the test's temp
 dir: each guest's firecracker API socket lives in its work directory, a unix socket path cannot exceed
 107 bytes, and under `t.TempDir()` the first run's guest died at boot, its work directory was removed,
 and the run read as a bidder that never provisioned. `apply.sh` refuses such a work root up front.
@@ -3553,7 +3553,7 @@ written from the code rather than from the request that produced it, and each na
 On 2026-10-06 MARKET-2 was opened and CLOSED inside the same window, by the k8s door's tenant
 credential work, and is in section 15 with its readings. On 2026-10-07 ESO-4 was opened by the
 baseline work, and plan 0005 (`docs/plans/0005-zero-ssh-market-nodes.yaml`) opened P5-M1 through
-P5-M6: the vendored deno-kcp test bed and a market-only node path, an event-driven requester whose
+P5-M6: the vendored deno-kcp market network and a market-only node path, an event-driven requester whose
 contracts outlive the door, guests that join without ssh through cluster links and the cluster's
 OpenBao, per-node scale-in with ESO beside the control plane, a pod mesh with per-node DNS, and the
 old stated limits fixed. The plan file holds each item's decision and evidence; `NEXT.yaml` names
@@ -3587,14 +3587,14 @@ its items' decisions, dependencies and the questions left for the user. On 2026-
 was folded as kcp-native now (section 5, "Host processes and the VM lifecycle"), with new items for the
 proc backend, the contract suite, dev instances, the bootstrap layer and the HostProcess kind, and
 `NEXT.yaml` gained an `execution_order` block (critical path, startable waves, parallel worktrees, live
-hat-8 needs) and the early bed item P8-M1-BED. Later on 2026-10-12 the user's paradigm correction became
+hat-8 needs) and the early market network item P8-M1-MARKET-NETWORK. Later on 2026-10-12 the user's paradigm correction became
 the plans' organizing principle (section 0): one kcp per application instance, never per machine;
 modes as profiles over one manifest set; applications meeting only over the atproto market protocol;
 port 0 behind the edge with addresses held in kcp (new check item 0006 M1-NO-FIXED-PORTS); every
-workstream testing in its own market bed; the virtual clusters project the one traditional use. Later
+workstream testing in its own market network; the virtual clusters project the one traditional use. Later
 the same day the decomposition of today's multi-server processes into application instances was folded
 (section 0; `multi-server-to-kcp.md` with the user's answers): one root object per application (0006
-M2-APP-CONTROLLER), strict kcp per application inside a bed too, sign-in as a MarketIdentity (0007
+M2-APP-CONTROLLER), strict kcp per application inside a market network too, sign-in as a MarketIdentity (0007
 M1-MARKET-IDENTITY, early), kcp only, a fresh kcp per requester invocation with a durable state dir (0008
 M4-RUN-REQUEST), secrets only in each application's OpenBao, listener reports in DenoPod status (0008
 M2-DENOPOD-LISTENERS), one network value and fetch adapter (0008 M2-MARKET-NETWORK), and iroh as the only
@@ -3650,12 +3650,12 @@ being tidied away, because a number without its condition is how the 332-second 
 refutation.
 
 - **NetworkPolicies were not enforced on market nodes; fixed in the image builder on 2026-10-10.
-  PROVEN ON THE LOCAL TEST BED, prod pending (plan 0005 M5-NETPOL).** Prod read over debug ssh at
+  PROVEN ON THE LOCAL MARKET NETWORK, prod pending (plan 0005 M5-NETPOL).** Prod read over debug ssh at
   02:02Z: kube-router's `Aborting sync ... RULE_APPEND failed (No such file or directory)`. Root cause:
   the Fedora kernel execs `/usr/bin/modprobe` for every on-demand module load and the Ubuntu rootfs
   has modprobe only at `/usr/sbin/modprobe`, so `nft_limit` and `nft_log`, which iptables-nft 1.8.10
   needs for kube-router's `-j NFLOG -m limit` rule, never loaded (section 9's module derivation, "Why
-  nothing loaded on demand"). Before: test bed gate, image `sha256-51e20605`, `kernel.modprobe` =
+  nothing loaded on demand"). Before: market network gate, image `sha256-51e20605`, `kernel.modprobe` =
   `/usr/bin/modprobe`, no `nft_limit`/`nft_log` in `/proc/modules`, every policy sync aborted, a
   deny-all ingress policy left the server answering for the full 2 min. After: image
   `sha256-9b6879e3` built by the fixed builder (`/usr/bin/modprobe -> /usr/sbin/modprobe` in the
@@ -3691,7 +3691,7 @@ refutation.
   and content, which is the point: an image's name is a hash of what its build read.
   `cmd/socialweb-rig-inputs` and `deploy/test-rig` existed only to hand the local substrates their
   `/dev/kvm`, `/dev/net/tun`, two images and a live gate, and were deleted with them; the market test
-  bed (`deploy/examples/atproto/market`, `internal/marketbed`) is what proves a node end to end now,
+  market network (`deploy/market-network`, `internal/marketnetwork`) is what proves a node end to end now,
   and it proves it through the RFP flow this project exists for.
 
 - **A cluster's kubeconfig mount child is written from the Cluster CR's `status.URL`, by a kcp system

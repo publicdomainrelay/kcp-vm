@@ -72,7 +72,7 @@ a 130-line Go program), scratch dir deleted afterwards. No guest, no container, 
 | kcp for local dev: kine on sqlite + kcp, fixed 23791 and 6443, pid files, stale-port refusal | deno-kcp deploy/start-kcp.sh:4-6, :57, :74 | Fixed ports: one per host. Dev mode replaces it with port 0 (kcp-spike.md:82-103 shows the bound port is readable with no kcp patch). |
 | Port leases: carve 20000-29999, one lease file, key (cluster, purpose); Lease already has Instance and Account fields | portallocator.go:18-19, :99-109, :145-148, :169-172, :346-357 | Two instances with two lease files can lease the same not-yet-bound port (probe-then-bind race). Must key by instance and share one per-user lease file in dev. |
 | Live-test port blocks locked under /var/tmp/socialweb-liveports | liveports.go:67, :92-118 | Already parallel-safe for proofs; unchanged. |
-| Market bed on fixed 2583-2589, accept.sh | internal/marketbed/live_test.go:18, :147; 0008 M4-TESTBED-PORT ("a second bed on the host is refused by a lock file", plan 0008:287-289) | The one thing that forbids N beds per host. |
+| Market network on fixed 2583-2589, accept.sh | internal/marketnetwork/live_test.go:18, :147; 0008 M4-MARKET-NETWORK-PORT ("a second market network on the host is refused by a lock file", plan 0008:287-289) | The one thing that forbids N market networks per host. |
 
 Production decisions that dev mode must not undercut [P][R]: units in the USER manager of a lingering
 account (user-decisions.md:7); one shared bidder account (:10); kcp out of process as blue/green slots on
@@ -91,7 +91,7 @@ R1. No root, no `install`, no systemd, no lingering account, no unit files. Runs
 R2. N instances on one host from N worktrees (or N instances from one worktree with `--instance`), with
     no collision on:
     - ports: port 0 everywhere a port is not part of a durable contract (kcp slots, kcp front, kine,
-      postgres, bao, door, PDS/relay/bed services, k3s slot ports, front ports). Where a port must be
+      postgres, bao, door, PDS/relay/market network services, k3s slot ports, front ports). Where a port must be
       stable across restarts inside an instance (a cluster's front port: guest tickets and node secrets
       name it, 0006 M3-APISERVER-FRONT), it is leased from ONE per-user lease file keyed by
       (instance, cluster, purpose), so instances see each other's leases;
@@ -113,9 +113,9 @@ R3. Fast: `dev up` on a warm instance (kcp root and store exist) is bounded by k
     largest TimeoutStopSec (10 s for VMs, 0007 M2-VM-RUNTIME). Core rebuild + restart does not restart
     kcp, postgres, cluster members or guests.
 
-R4. Usable from `go test` (hermetic: a crashed test leaves nothing running) and from live market-bed
+R4. Usable from `go test` (hermetic: a crashed test leaves nothing running) and from live market-network
     runs (RFP flow: requester -> RFP -> bid -> accept -> cloud-init user_data; guests reached only through
-    the relay). Dev mode adds no provisioning path of its own: a bed instance runs `run bidder` with the
+    the relay). Dev mode adds no provisioning path of its own: a market network instance runs `run bidder` with the
     proc backend and its guests come up only through `runComputeContract`.
 
 R5. Same code paths as prod above the `Manager` seam: the ComputeVM verdict table (0007 M2-CONTROLLER),
@@ -293,7 +293,7 @@ fixes). Guests exist only through `runComputeContract` against the instance's bi
 
 - kcp: blue/green slot units `socialweb-kcp@a|b` (prod shape, user-decisions.md:22) on kine. Store in dev:
   kine -> sqlite in the instance dir by default (kcp-spike.md:73-76: within noise of postgres), kine ->
-  a postgres unit with `--profile prodlike` and in the bed profile. Slots bind `--secure-port=0
+  a postgres unit with `--profile prodlike` and in the market-network profile. Slots bind `--secure-port=0
   --experimental-bind-free-port`; the core reads the slot's single LISTEN socket from /proc (kcp-spike.md
   :96-100, no kcp patch). The kcp front binds port 0 in dev (prod keeps 127.0.0.1:6443 behind caddy) and
   reports its port through the same OnListen callback; `--shard-base-url` names the front's bound port,
@@ -331,7 +331,7 @@ Options weighed:
 
 Requirement that makes all three cheap: no role assumes it owns `root`. Every component takes
 `kcp-base-workspace` (default `root`; prod unchanged) and creates/binds under it (`<base>:bidder`, the
-gateway's provider workspaces, the bed's workspaces). kcp workspace paths nest
+gateway's provider workspaces, the market network's workspaces). kcp workspace paths nest
 `/clusters/<parent>:<child>` and WorkspaceTypes constrain allowed parents/children
 (limitAllowedParents/limitAllowedChildren) [W kcp workspaces, kcp workspace types], so a `dev-instance`
 WorkspaceType with `limitAllowedChildren` keeps instance trees from being nested into each other by
@@ -350,9 +350,9 @@ two kcps (prod topology; ~1 GB per instance); `--kcp-shared-roles` puts both rol
   `$XDG_STATE_HOME/socialweb-computer/ports/leases.json` under its existing flock (:227-243), with a
   carve per user that does not overlap the live-test blocks (liveports.go:33-56). Prod keeps one lease
   file per account. subnetallocator gets the same key change.
-- Bed services: the vendored manifests' fixed 2583-2589 (marketbed/live_test.go:18) become template
-  fields rendered to 0, each service reporting its port via a port file/onListen that the bed reads; the
-  bed's lock file goes.
+- Market network services: the vendored manifests' fixed 2583-2589 (marketnetwork/live_test.go:18) become template
+  fields rendered to 0, each service reporting its port via a port file/onListen that the market network reads; the
+  market network's lock file goes.
 
 ### 4.6 Go interfaces
 
@@ -421,7 +421,7 @@ func Open(ctx context.Context, cfg Config) (Manager, error)
 - `internal/clicfg/options.json` (0006 M1-CLI) gains `host-backend` (no default; env
   `SOCIALWEB_HOST_BACKEND`), `instance`, `kcp-base-workspace` (default `root`), `state-dir` (default
   resolved by install/dev), `asset-cache`.
-- `socialweb-computer dev up [--profile quick|bed|prodlike] [--instance x] [--fg]`: resolve instance ->
+- `socialweb-computer dev up [--profile quick|market network|prodlike] [--instance x] [--fg]`: resolve instance ->
   flock `<state>/instance.lock` -> start or adopt devsup -> place the role units (core role(s) as units of
   devsup, like the prod core is a unit of the user manager) -> wait readiness -> print `dev env`.
 - `dev down [--keep-state]`, `dev status` (units, ports, kcp URLs, from devsup or the on-disk records),
@@ -429,7 +429,7 @@ func Open(ctx context.Context, cfg Config) (Manager, error)
   workspace, ports, for shells and TS tools), `dev restart core [--binary path]` (rebuild loop: units
   adopted), `dev roll kcp|cluster <key>`, `dev check` (host prerequisites of R8, no fixes), `dev gc`
   (asset cache, only when no devsup of this user is running).
-- `testbed up|accept|down` (0008 M4-TESTBED-PORT) = `dev up --profile bed` + the accept checks.
+- `market-network up|accept|down` (0008 M4-MARKET-NETWORK-PORT) = `dev up --profile market-network` + the accept checks.
 - Running `serve gateway kcp --host-backend=proc --instance x` by hand is allowed (that is what devsup
   runs); there is no hidden mode switch.
 
@@ -449,7 +449,7 @@ func Open(ctx context.Context, cfg Config) (Manager, error)
 - Tier 2 (kcp integration): `internal/devstack.Start(t, profile)` -> devsup (die-with test) + kcp slot
   on port 0 + base workspace; or `SWC_TEST_KCP=<kubeconfig>` to reuse a shared test kcp with a per-test
   `root:t:<rand>` workspace.
-- Tier 3 (market bed): `dev up --profile bed` per worktree; guests only via `runComputeContract`.
+- Tier 3 (market network): `dev up --profile market-network` per worktree; guests only via `runComputeContract`.
 - Parallel proof: `TestTwoInstancesOnOneHostShareNothing` (two devstacks in one test: distinct ports,
   dirs, sockets, kcps; stopping one leaves the other's InvocationIDs unchanged).
 
@@ -525,9 +525,9 @@ lingering and delegation checks (dev check reports the dev subset). `dev` refuse
 
 ### 0008
 
-- CHANGE `M4-TESTBED-PORT`: drop the fixed 2583-2589 and the one-bed lock (plan 0008:287-289); bed
-  service ports render to 0 and are read back; `testbed up` = `dev up --profile bed`; test
-  TestTwoBedsOnOneHostEachRentAGuestThroughTheRFPFlow (two instances, two requesters, two bidders; guests
+- CHANGE `M4-MARKET-NETWORK-PORT`: drop the fixed 2583-2589 and the one-network-per-host lock (plan 0008:287-289); market network
+  service ports render to 0 and are read back; `market-network up` = `dev up --profile market-network`; test
+  TestTwoNetworksOnOneHostEachRentAGuestThroughTheRFPFlow (two instances, two requesters, two bidders; guests
   only via runComputeContract).
 - CHANGE `M2-DENOKCP-INPROC`: "deno processes die with the core" is proved on both backends; on proc via
   devsup's subreaper attribution (execrunner children are in their own process groups and have no
@@ -619,8 +619,8 @@ killed, scratch dir removed.
 - Q4. `host-backend` with no default (required everywhere; install writes systemd-user, dev passes proc), or
   default systemd-user? **Recommended: no default** - a forgotten flag in a worktree must not drop
   prod-named units into the login user manager.
-- Q5. Dev kcp store: kine-sqlite by default and kine-postgres in the bed/prodlike profiles, or postgres
-  always (prod parity)? **Recommended: sqlite for quick, postgres for bed and prodlike.**
+- Q5. Dev kcp store: kine-sqlite by default and kine-postgres in the market network/prodlike profiles, or postgres
+  always (prod parity)? **Recommended: sqlite for quick, postgres for market network and prodlike.**
 - Q6. k3s's `/etc/rancher/node/password` in dev: bind-mount an instance-owned file in a user+mount
   namespace via `internal ns-exec` (no root), or require a one-time root-created host file shared by all
   instances? **Recommended: ns-exec** (it is the same one-shot M3-CP-SLOTS needs for the hostname).
@@ -651,7 +651,7 @@ Web:
 
 Repo (main d6e1881): internal/hostsvc/{hostsvc.go, identity_linux.go, busdial_linux.go, systemd_linux.go},
 internal/processrunner/processrunner.go, internal/procgroup/procgroup.go, internal/hostos/sysproc_*.go,
-internal/portallocator/portallocator.go, internal/liveports/liveports.go, internal/marketbed/live_test.go,
+internal/portallocator/portallocator.go, internal/liveports/liveports.go, internal/marketnetwork/live_test.go,
 cmd/socialweb-clusterprovider/main.go:117-124, docs/plans/0006, 0007, 0008,
 docs/research/2026-10-11-vm-lifecycle/{user-decisions.md, kcp-spike.md, kcp-blue-green.md, linux-proofs.md};
 ../kcp-libs impl/execrunner/supervisor.go, abc/runner/runner.go; ../deno-kcp internal/denopod/denopod.go,

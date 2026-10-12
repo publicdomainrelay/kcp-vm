@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
-# Records the first RFP-flow guest of a bed whose VMM runs under
+# Records the first RFP-flow guest of a market network whose VMM runs under
 # swc-userns-stage: the unit's processes, each one's host uid and uid_map, the
 # work directory's ACL, and the AVC denials since the capture began.
 #

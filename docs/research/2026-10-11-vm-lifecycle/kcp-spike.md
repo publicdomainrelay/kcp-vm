@@ -34,7 +34,7 @@ The go.mod on this branch carries the full replace set; `go mod tidy` resolved i
 | `go vet ./...` | ok | ok |
 | `GOOS=darwin go build ./...` | fails: processrunner, portallocator, subnetallocator (undefined hostos.*) | identical (pre-existing, M0-XOS-GATE) |
 | `GOOS=windows go build ./...` | fails: nodevm | identical |
-| `go test ./... -count=1` (offline) | 60 pkgs: 54 ok, 6 no-test/skip; 1438 pass, 0 fail, 64 skip | 61 pkgs (+ the spike cmd): 1438 pass, **0 fork-caused failures**. The one failure seen, `test.TestNoCommentsAndASCII`, was the spike file's own header comment, removed. One skip-vs-pass difference (`marketbed.TestTheRecordMatchesTheDenoKcpCommitItNames`) is the baseline worktree's location, not the fork |
+| `go test ./... -count=1` (offline) | 60 pkgs: 54 ok, 6 no-test/skip; 1438 pass, 0 fail, 64 skip | 61 pkgs (+ the spike cmd): 1438 pass, **0 fork-caused failures**. The one failure seen, `test.TestNoCommentsAndASCII`, was the spike file's own header comment, removed. One skip-vs-pass difference (`marketnetwork.TestTheRecordMatchesTheDenoKcpCommitItNames`) is the baseline worktree's location, not the fork |
 | deno-kcp 25d10f92 | - | build ok, 10/10 test pkgs ok |
 | kcp-libs f6911d2 | - | build ok, 37/37 test pkgs ok |
 | socialweb-gateway binary | 26,823,317 B | 26,841,109 B (+17.8 KB) |

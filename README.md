@@ -160,8 +160,8 @@ a pass in any mode: `--local` names every skip it takes, and `--full` fails on t
 
 ## The full live gate
 
-The strict gate needs a tenant cluster and a real guest. The market test bed is where that is driven
-now: the vendored `deploy/examples/atproto/market` tree runs a local dispatcher, a bidder and a
+The strict gate needs a tenant cluster and a real guest. The market network is where that is driven
+now: the vendored `deploy/market-network` tree runs a local dispatcher, a bidder and a
 requester, and the guest is born from the RFP flow rather than from any rig this repo hosts. The
 privileged rig that used to do it here (`deploy/test-rig`, and `cmd/socialweb-rig-inputs` with it)
 existed only to boot the local substrates with `/dev/kvm` and `/dev/net/tun`, and was deleted with

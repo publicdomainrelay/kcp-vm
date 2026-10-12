@@ -16,7 +16,7 @@ atproto-market, `hcp` = hono-compute-provider, `door` = swck/socialweb-computer-
 ## 0. Answer in one screen
 
 The lens (user, 2026-10-12): kcp is part of each APPLICATION, not infrastructure. A bidder, a requester
-(`run request`), the gateway, and a dev or test market bed are each an application instance that carries its
+(`run request`), the gateway, and a dev or test market network are each an application instance that carries its
 own kcp as its runtime. Application state is kcp objects; the servers that today share one deno process
 become DenoPods (TypeScript, die with the core) or HostProcesses (outlive the core) reconciled from those
 objects; a MODE is a manifest set plus a profile; composition is applying sets or nesting workspaces.
@@ -37,24 +37,24 @@ What the code does today (section 2):
    (:161-177), firehose watchers for RFP/accept/event/trust collections (am/lib/market-bidder/mod.ts:517-586),
    the offering refresh timer (:635-663), OAuth token auto-refresh, and startup one-shots (PLC genesis,
    requestCrawl, relay visibility polling, :787-825).
-2. **The user's example is half true today.** The bed's bidder does NOT use the bed's `root:bob` PDS
+2. **The user's example is half true today.** The market network's bidder does NOT use the market network's `root:bob` PDS
    DenoPod: 70-bidder.yaml:24 passes no handle, so the bidder runs its own in-process repo
    (createLocalPDSAgent) served through the dispatcher; bob's hono-pds is only probed for readiness
    (accept.sh:412-414). The "remote PDS login" path is dead code: `--atproto-handle/--atproto-password`
    also builds a LOCAL repo (mod.ts:262-282), `--atproto-pds-url` (cli-args-env.ts:76-81) is read nowhere,
-   and createRemoteAgent is imported but never called (mod.ts:10). So "QR bidder uses the user's PDS, bed
+   and createRemoteAgent is imported but never called (mod.ts:10). So "QR bidder uses the user's PDS, market network
    bidder uses its own PDS pod" needs one code change (M3-BIDDER-ACCOUNT-PDS below) before a profile can
    express it.
 3. **Interactive steps are stdout/stdin**: the QR is printed (mod.ts:229-234, :720-726), association is a
    `prompt("[y/N]")` on stdin (:348, :743), browser OAuth spawns xdg-open (:166-171), and an expired session
-   deletes the file and `Deno.exit(1)` (:122-135). A DenoPod has stdin null (70-bidder.yaml:85), so the bed
+   deletes the file and `Deno.exit(1)` (:122-135). A DenoPod has stdin null (70-bidder.yaml:85), so the market network
    must pass `--skip-qr`. Under kcp these become object status/spec (pending actions) that the foreground
    CLI or the door renders.
 4. **Identity and addresses move on every restart**: a fresh relay keypair per relay per process
    (mod.ts:103-113, :104) so every ingressRef and the OIDC issuer URL change; the OIDC signing key store is
    in memory AND module-global (hcp/lib/oidc-issuer-hono/mod.ts:42-57, configureOidc :63-77 called by every
    createOidcIssuer :616), so two providers in one process overwrite each other's issuer URL getter.
-5. **Peers are found by fixed ports, log scraping and four ad-hoc fetch patches**: bed ports 2583-2589 in
+5. **Peers are found by fixed ports, log scraping and four ad-hoc fetch patches**: market network ports 2583-2589 in
    manifests and accept.sh; accept.sh finds the bidder DID by grepping `localPDS plc` out of stdout
    (accept.sh:463-467); tests read a `bidder_ready` stdout line (mod.ts:686-691); `*.localhost` and
    plc.directory are rewritten by hand in hono-bidder (:74-95), request-vm-ssh (:48-60), market-requester
@@ -64,7 +64,7 @@ What the code does today (section 2):
    secrets servers are a JSON file, a hex file and process memory (:50, :72; node-market mod.ts:383).
 
 Proposal (sections 4-5), in one paragraph: each application has ONE root object in its base workspace
-(MarketBidder, MarketRequester, Gateway, MarketNetwork for a bed's shared atproto services) whose spec is
+(MarketBidder, MarketRequester, Gateway, MarketNetwork for a market network's shared atproto services) whose spec is
 today's cli-args-env options minus the network, plus a MarketIdentity (new kind: who the app is on atproto
 and how it signs in) and a MarketNetwork value (where PLC, relay, dispatcher and QR origin are). The core's
 app controller renders the root object's profile into children (DenoPods, HostProcesses, OpenBaoServer,
@@ -78,8 +78,8 @@ verb starts a server itself. `deno run hono-bidder` without kcp keeps working as
 
 ## 1. Vocabulary used below
 
-- **Application**: a bidder, a requester, the gateway, a market network (a bed's PLC + relay + dispatcher +
-  PDSes), or a bed (a composition of the others). One instance = one base workspace in a kcp + one set +
+- **Application**: a bidder, a requester, the gateway, a market network (a market network's PLC + relay + dispatcher +
+  PDSes), or a market network (a composition of the others). One instance = one base workspace in a kcp + one set +
   one profile.
 - **The application's kcp**: the kcp URL + base workspace its core is given (`kcp-base-workspace`, already
   an option in 0006 M1-CLI and required by 0006 M2-BOOTSTRAP-LAYER "no role assumes it owns root"). A
@@ -88,7 +88,7 @@ verb starts a server itself. `deno run hono-bidder` without kcp keeps working as
   to its own subtree, so "never share a kcp" holds at the API: no app can read another app's objects.
 - **Component**: one of today's in-process servers or loops, now a reconciled child (DenoPod, HostProcess,
   OpenBaoServer, ComputeVM, ComputeContract) or a deliberate in-process part of another component.
-- **Profile**: a typed values file selecting the components and their values for one mode (prod-qr, bed,
+- **Profile**: a typed values file selecting the components and their values for one mode (prod-qr, market network,
   dev-local, harness).
 - **Surface**: what a human or another app touches: CLI flags/cli-args-env options, the foreground CLI's
   rendering of status (QR, prompts), the door UI, xrpc endpoints on the market protocol.
@@ -113,7 +113,7 @@ verb starts a server itself. `deno run hono-bidder` without kcp keeps working as
 | provider: firecracker | :546-600 | serve + relay; OIDC issuer mounted onConnected (hcp .../compute-provider-firecracker/mod.ts:904-925); /v1/on-network (:807-861); JSR registry TCP 0.0.0.0:0 (:579-588); per-guest docker runner containers (microvm-firecracker) | `--compute-provider-firecracker` (+7 required paths, :547-565) |
 | provider: deno worker | :602-613 | no serve; Workers in-process | `--compute-provider-deno-worker` |
 | market serve | :619-631 | TCP `--serve-addr:--serve-port` (default 0), optional unix socket, optional TLS, `--port-file`, + market relay (fresh keypair) | `--no-ingress-proxy` drops the relay |
-| oauth client metadata route | :634-641 | GET on market serve | always (it is also the bed's readiness probe, 70-bidder.yaml:123-130) |
+| oauth client metadata route | :634-641 | GET on market serve | always (it is also the market network's readiness probe, 70-bidder.yaml:123-130) |
 | market bidder | :657-670 -> am/lib/market-bidder/mod.ts | market factory routes (:472), /v1/on-network (:475), watches BADGE_BLUE_KEYS/VOUCH/ASSOCIATION, RFP, ACCEPT, EVENT (:517-586), offering refresh timer (:635-663), activeContracts in memory (:175) | always |
 | signals | :672-681 | SIGINT/SIGTERM -> shutdown | always |
 | test handshake | :686-691 | `{"event":"bidder_ready", did, ingressRef, servePort}` on stdout | always |
@@ -130,7 +130,7 @@ modes), qr.fedfork.com (QR modes), docker (runner containers), /dev/kvm through 
 
 Modes in the wild: production `socialweb-computer-bidder@<handle>` (swck/deploy/bidder/
 socialweb-computer-bidder-run:75-111: QR, firecracker, `--pds-state-path` passed but unused in QR mode),
-org-root `bob-bidder.sh` (QR, firecracker or local container), the bed DenoPod (70-bidder.yaml:24: local key,
+org-root `bob-bidder.sh` (QR, firecracker or local container), the market network DenoPod (70-bidder.yaml:24: local key,
 `--skip-qr`, `--policy open`, firecracker, fixed ports), and the in-process harnesses (2.9).
 
 ### 2.2 request-vm-ssh (am/request-vm-ssh/mod.ts, 555 lines; 40 options)
@@ -156,13 +156,13 @@ memory only. Modes: QR (`alice-request.sh`: `--no-ingress-proxy --firehose-mode 
 --atproto-oauth-qr`), browser OAuth, local key; per run `--hold`, `--keep-vm`, `--skip-ssh`, `--exec`,
 `--user-data-transport iroh|websocket`, `--secrets`.
 
-### 2.3 market-requester, the bed's requester (swck/deploy/examples/atproto/market/market-requester/mod.ts, 163 lines)
+### 2.3 market-requester, the market network's requester (swck/deploy/market-network/market-requester/mod.ts, 163 lines)
 
 fetch patch (:82-95); serve TCP 127.0.0.1:0 (:111); createRequesterPDS local key (:112-119); a no-ssh
 session provider that records onNetwork and never connects (:122-132); runComputeContract (:135-144);
 verdict to `--result-file` (:69-75). Run on the host by accept.sh:497-516 with the fixed
 `--plc-directory-url https://127.0.0.1:2587 --ingress-proxy-host relay.localhost:2588` and a bidder DID
-scraped from the bidder's stdout (:463-467). It is the RFP spine of every bed run.
+scraped from the bidder's stdout (:463-467). It is the RFP spine of every market network run.
 
 ### 2.4 The gateway today (container) and the door
 
@@ -177,7 +177,7 @@ The door (door/hono-socialweb-computer-k8s/mod.ts, 240 lines):
 | part | file:line | listener / relay / loop / state |
 |---|---|---|
 | state dir | :43-45 | `oauth-sessions.json` (:50), `requester-key.hex` (:72) |
-| test seams | :53-67 | TEST_OWNER_SESSIONS_FILE (password sessions on the bed's alice PDS, live_m3_test.go:36-41), TEST_NODE_GUEST_HOST_ALIASES, TEST_NODE_USER_DATA_BASE_FILE |
+| test seams | :53-67 | TEST_OWNER_SESSIONS_FILE (password sessions on the market network's alice PDS, live_m3_test.go:36-41), TEST_NODE_GUEST_HOST_ALIASES, TEST_NODE_USER_DATA_BASE_FILE |
 | per-account requesters | :69-80 -> lib/socialweb-computer-requester-inproc/mod.ts:155, :172-183 | one createRequesterPDS per account, each its own serve on 127.0.0.1:0 + relay; per-account event streams (:288-316) |
 | gateway client | :82-93 | service auth minted per account |
 | serve | :115-124 | TCP `--http-port` (8788 in the container), port file |
@@ -188,11 +188,11 @@ The door (door/hono-socialweb-computer-k8s/mod.ts, 240 lines):
 
 ### 2.5 The atproto network services (each a single-server CLI today)
 
-| CLI | file:line | listener | state | bed DenoPod |
+| CLI | file:line | listener | state | market network DenoPod |
 |---|---|---|---|---|
 | hono-plc | am/hono-plc/mod.ts:16-41 | TCP 2587 default, port-file ./port-bound-to | MemoryPlcStore (in memory) | 20-global-plc.yaml |
 | hono-atproto-relay | atproto-relay/hono-atproto-relay/mod.ts:56-68 | TCP 2584 | relay index | 30-relay-relay.yaml |
-| dispatcher (did-key-ingress-proxy) | did-key-ingress-proxy/hono-did-key-ingress-proxy/mod.ts:58-80 | TCP 8080 default, optional unix; served twice in the bed (plain 2588, TLS 2589 for guests, 35/36-*.yaml) | subscribers in memory: a restart drops every app's registration until its relay reconnects | 35, 36 |
+| dispatcher (did-key-ingress-proxy) | did-key-ingress-proxy/hono-did-key-ingress-proxy/mod.ts:58-80 | TCP 8080 default, optional unix; served twice in the market network (plain 2588, TLS 2589 for guests, 35/36-*.yaml) | subscribers in memory: a restart drops every app's registration until its relay reconnects | 35, 36 |
 | dispatcher subscriber CLI | .../hono-did-key-ingress-proxy-subscriber/mod.ts:51-57 | relay client, password login | keypair file | none |
 | hono-pds | hono-pds/main.ts:33, :61, :120-128 | TCP 2583/2585, OAuth authorization server built in (:61) | DenoKvStorage.create() with no path (Deno's default KV location, port-audit B15) | 40-alice-pds, 60-bob-pds |
 | QR session relay (qr.fedfork.com) | did-key-associator/hono-backend/mod.ts:117-122, :147-239, :251-258 | TCP | Deno KV (KV_PATH via Deno.env.get) | none (external in every mode) |
@@ -217,7 +217,7 @@ starts a PDS by hand); socialweb-computer-ssh/hono-socialweb-computer-ssh (later
 - createRequesterPDS (requester-xrpc:168), guest-capability-secrets (:50-75), oidc-issuer-hono (module
   globals :53-77).
 
-### 2.8 The bed (swck/deploy/examples/atproto/market)
+### 2.8 The market network (swck/deploy/market-network)
 
 Four workspaces root:global (PLC), root:relay (relay, dispatcher, dispatcher-tls), root:alice (PDS, verifier),
 root:bob (PDS, bidder), each with a deno-kcp OpenBao object for its TLS intermediate (README.md:7-22). Every
@@ -227,7 +227,7 @@ DNS table from peers' SERVICE_ARGS (README.md:119-137) and, on a miss, by readin
 token per workspace (README.md:128-130): discovery crosses workspace boundaries today. apply.sh renders with
 sed (port-audit B10); accept.sh starts kcp, kine, OpenBao and the provider on probe-then-bound ports
 (:76-91), applies, checks every pod, scrapes the bidder DID from stdout (:463-467) and runs market-requester
-(:497-516). internal/marketbed/live_test.go drives accept.sh (:147) behind the one-bed port check
+(:497-516). internal/marketnetwork/live_test.go drives accept.sh (:147) behind the one-network-per-host port check
 (:18, :112-120); live_m3_test.go adds the control-plane container with socat bridges to the fixed ports
 (:564-600).
 
@@ -250,7 +250,7 @@ same libraries the CLIs use, but each composition is hand-written again.
 
 | # | finding | evidence | consequence |
 |---|---|---|---|
-| F1 | bed bidder ignores bob's PDS; password path builds a local repo; pds-url unused | 70-bidder.yaml:24; mod.ts:10, :262-282; cli-args-env.ts:76-81; accept.sh:412-414 | a "bed bidder with its own PDS pod" profile needs M3-BIDDER-ACCOUNT-PDS |
+| F1 | market network bidder ignores bob's PDS; password path builds a local repo; pds-url unused | 70-bidder.yaml:24; mod.ts:10, :262-282; cli-args-env.ts:76-81; accept.sh:412-414 | a "market network bidder with its own PDS pod" profile needs M3-BIDDER-ACCOUNT-PDS |
 | F2 | interactive QR/association/browser via stdout/stdin/xdg-open; expiry exits the process | mod.ts:133, :166-171, :229-234, :348, :743; request-vm-ssh :430 | MarketIdentity pending actions rendered by the foreground CLI / door |
 | F3 | fresh relay keypair per relay per process; OIDC key in memory and module-global | mod.ts:104; oidc-issuer-hono:42-77, :616 | 0007 M4-BIDDER-VAULT must cover every relay key; new M3-OIDC-ISSUER-INSTANCE |
 | F4 | one TCP serve + a TCP JSR registry per firecracker/local provider (0.0.0.0:0) and 1 + P relays per bidder process | 2.1 | per-component status.listeners; a guest-facing component split is possible once keys are in the vault |
@@ -265,25 +265,25 @@ same libraries the CLIs use, but each composition is hand-written again.
 
 ### 3.1 Bidder
 
-| component (today's in-process part) | prod-qr (hat-8 bidder@handle) | bed (70-bidder.yaml) | container harness (test) | dev-local (bob-bidder.sh, standalone deno) |
+| component (today's in-process part) | prod-qr (hat-8 bidder@handle) | market network (70-bidder.yaml) | container harness (test) | dev-local (bob-bidder.sh, standalone deno) |
 |---|---|---|---|---|
-| identity | user account via QR OAuth + own did:plc for service auth | local key, own did:plc on the bed PLC | local key on fake PLC | QR (default) or local key |
+| identity | user account via QR OAuth + own did:plc for service auth | local key, own did:plc on the market network PLC | local key on fake PLC | QR (default) or local key |
 | repo | user's PDS (remote) | in-process repo via dispatcher relay (bob PDS pod unused) | in-process repo, relay-only | user's PDS or in-process repo |
 | market serve + relay | yes, fixed serve port from launcher | yes, port 2586 | yes, port 0 | yes, port 0 |
 | provider(s) | firecracker (docker runner) | firecracker | local container | firecracker or local |
 | provider serve + relay + OIDC + on-network | yes | yes | yes | yes |
 | guest JSR registry | yes (0.0.0.0:0) | yes | yes (container provider) | yes |
 | loopback OAuth callback | no (QR) | no | no | only `--atproto-oauth` |
-| firehose / event streams | default relays + jetstream | bed relay | none (direct) | per flags |
+| firehose / event streams | default relays + jetstream | market network relay | none (direct) | per flags |
 | association prompt | no (QR) | skipped (`--skip-qr`) | n/a | yes in local-key mode |
-| external | plc.directory, dispatcher, relays, user PDS, qr.fedfork.com, docker, kvm | bed PLC, bed dispatcher(+tls), bed relay, docker, kvm | none (all in process) | as prod |
+| external | plc.directory, dispatcher, relays, user PDS, qr.fedfork.com, docker, kvm | market network PLC, market network dispatcher(+tls), market network relay, docker, kvm | none (all in process) | as prod |
 | state | key, session, guests dir; in-memory contracts | run dir (key, repo KV) | memory | $HOME/.cache/pdr-market |
 
 ### 3.2 Requester
 
-| component | prod-qr (alice-request.sh) | browser OAuth | bed (market-requester) | door (per account) | harness |
+| component | prod-qr (alice-request.sh) | browser OAuth | market network (market-requester) | door (per account) | harness |
 |---|---|---|---|---|---|
-| identity | user account via QR + own did:plc | user account | local key on bed PLC | user's door OAuth session (or test password session on alice PDS) | local key, fake PLC |
+| identity | user account via QR + own did:plc | user account | local key on market network PLC | user's door OAuth session (or test password session on alice PDS) | local key, fake PLC |
 | repo | none served (F7) | none | in-process repo + relay | in-process repo per account + relay | in-process |
 | contract watcher (firehose / submitEvent) | yes | yes | yes | yes | yes |
 | per-contract secrets server + relay | if `--secrets` | if `--secrets` | no | yes (join secrets) | per test |
@@ -292,16 +292,16 @@ same libraries the CLIs use, but each composition is hand-written again.
 
 ### 3.3 Gateway
 
-| component | prod (container today -> `serve gateway kcp`) | m3 bed (live_m3_test.go) | dev quick |
+| component | prod (container today -> `serve gateway kcp`) | m3 market network (live_m3_test.go) | dev quick |
 |---|---|---|---|
 | kcp (bootstrap) | blue/green slots, pg, front 127.0.0.1:6443 (0006) | container kcp | sqlite single slot |
 | root vault | OpenBaoServer | container bao | dev vault |
 | socialweb-gateway, clusterprovider (Go, in-process) | yes | yes | yes |
 | tenant clusters (traditional kcp use, 4.6) | per claim | one (m3) | stand-ins |
-| door | DenoPod (0008 M3) on 8788 behind caddy | in container, socat bridges to bed | DenoPod port 0 |
+| door | DenoPod (0008 M3) on 8788 behind caddy | in container, socat bridges to market network | DenoPod port 0 |
 | door accounts | real users' OAuth sessions | TEST_OWNER_SESSIONS_FILE on alice PDS | test sessions |
 | market node fulfiller | yes | yes | yes |
-| external | real PLC/relay/dispatcher, user PDSes, bidders on the market | the bed network + bed bidder | a bed |
+| external | real PLC/relay/dispatcher, user PDSes, bidders on the market | the market network network + market network bidder | a market network |
 
 ## 4. Decomposition proposal
 
@@ -342,12 +342,12 @@ CLI and the door need one status to watch.
 ### 4.3 Bidder application
 
 Objects in its base workspace (prod: the handle's own kcp, one slot on kine-sqlite, 0006/0007 decided;
-bed: `<bed>:apps:bidder-<n>`):
+market network: `<market network>:apps:bidder-<n>`):
 
-| object | reconciled by | prod-qr | bed | dev-local |
+| object | reconciled by | prod-qr | market network | dev-local |
 |---|---|---|---|---|
 | MarketBidder `bidder` (root) | core app controller (Go) | yes | yes | yes |
-| MarketIdentity `self` | bidder core DenoPod (signing needs the session in-process) | mode oauthQr | mode pdsAccount (bed PDS) or localRepo | oauthQr or localRepo |
+| MarketIdentity `self` | bidder core DenoPod (signing needs the session in-process) | mode oauthQr | mode pdsAccount (market network PDS) or localRepo | oauthQr or localRepo |
 | OpenBaoServer `vault` (HostProcess) | core (0006 M2-OPENBAO-SERVER, 0007 M4-BIDDER-VAULT) | yes | yes (dev vault) | yes |
 | DenoPod `bidder` (hono-bidder core: market serve + relay, market bidder loops, provider + its relay, OIDC issuer, on-network) | owned deno-kcp provider | yes | yes | yes |
 | DenoPod `pds` (hono-pds) | provider | NO (user's PDS) | yes, the bidder's account | no |
@@ -369,7 +369,7 @@ default member (0007 M3-BIDDER-FLAG).
 lens the requester is a persistent application, not a per-invocation kcp: `run request` adopts the user's
 requester app (one slot on kine-sqlite like the bidder; bootstrap layer) and applies ComputeContracts to it.
 
-| object | reconciled by | prod-qr | bed |
+| object | reconciled by | prod-qr | market network |
 |---|---|---|---|
 | MarketRequester `requester` (root) | core app controller | yes | yes |
 | MarketIdentity `self` | requester DenoPod | oauthQr (no repo served, F7) | localRepo or pdsAccount (alice PDS) |
@@ -384,20 +384,20 @@ the same decision the door gets in 0007 M6-CLAIM-RESUME.
 
 ### 4.5 Gateway application
 
-| object | reconciled by | prod | bed (m3) |
+| object | reconciled by | prod | market network (m3) |
 |---|---|---|---|
 | Gateway `gateway` (root) | core | yes | yes |
 | bootstrap: kcp pg, kine, slots, front | installed units / devsup (0006 M2-BOOTSTRAP-LAYER) | yes | sqlite or pg |
 | OpenBaoServer `root-vault` | core | yes | yes |
 | socialweb-gateway, clusterprovider | in-process Go (0006 M3-SERVE-GATEWAY-KCP) | yes | yes |
 | DenoPod `door` (web, cluster API, downloads, per-account requesters, node fulfiller) | provider (0008 M3-DOOR-DENOPOD) | yes | yes |
-| MarketIdentity per door account (mode oauthDelegated: the door holds the user's session) | door DenoPod | yes | password sessions on the bed PDS |
+| MarketIdentity per door account (mode oauthDelegated: the door holds the user's session) | door DenoPod | yes | password sessions on the market network PDS |
 | NodeClaim (the gateway's contracts) | door node fulfiller | yes | yes |
 
 Door state moves: oauth-sessions.json and requester-key.hex into the root vault (new 0008 M3-DOOR-STATE-VAULT);
 per-claim secrets keys stay 0007 M6-CLAIM-RESUME. A later split of the node fulfiller (a NodeClaim
 reconciler) from the web door into its own DenoPod is natural under 4.1 (b) but not needed now (question Q8).
-The TEST_* seams (door mod.ts:53-67) become values of the gateway's bed profile instead of env variables.
+The TEST_* seams (door mod.ts:53-67) become values of the gateway's market-network profile instead of env variables.
 
 ### 4.6 The exception: virtual Kubernetes clusters (traditional kcp use)
 
@@ -407,20 +407,20 @@ workspace (0006 M3-CLUSTER-UNITS, M3-CP-SLOTS). Nothing in this document's appli
 The only meeting point is the NodeClaim: the gateway application rents market nodes for those clusters as an
 ordinary requester over the atproto market protocol.
 
-### 4.7 The market network application and the bed
+### 4.7 The market network application and the market network
 
-The bed's shared atproto services are one application, MarketNetwork, whose components are DenoPods `plc`
+The market network's shared atproto services are one application, MarketNetwork, whose components are DenoPods `plc`
 (hono-plc), `relay` (hono-atproto-relay), `dispatcher` and `dispatcher-tls` (hono-did-key-ingress-proxy),
 optional `pds-<name>` (hono-pds), and the verifier DenoJob. Its status publishes the URLs other apps need
 (plcDirectoryUrl, relay URL, ingressProxyHost, guest TLS URL, CA bundle ref, PDS URLs per account).
 
-`dev up --profile bed` = compose: apply MarketNetwork into `<instance>:apps:network`, then N MarketBidders
+`dev up --profile market-network` = compose: apply MarketNetwork into `<instance>:apps:network`, then N MarketBidders
 into `<instance>:apps:bidder-<n>` and one MarketRequester into `<instance>:apps:requester` (plus a Gateway
 into `<instance>:apps:gateway` for m3-shaped runs). The composer copies the network's status URLs into each
 app's MarketNetwork VALUE; no app reads the network's workspace (today's shim does, README.md:128-130).
 Inside one app, components resolve each other by service name through the shim; across apps only through
-those values and the atproto protocol. The bed adds no provisioning path: guests come up only through the
-requester app's ComputeContract -> runComputeContract -> RFP -> bid -> accept -> cloud-init against a bed
+those values and the atproto protocol. The market network adds no provisioning path: guests come up only through the
+requester app's ComputeContract -> runComputeContract -> RFP -> bid -> accept -> cloud-init against a market network
 bidder app.
 
 ### 4.8 How components find each other
@@ -436,7 +436,7 @@ bidder app.
 - Only stable public edge entry points keep known addresses (caddy 443, the gateway's kcp front 6443, the
   door's 8788 behind caddy) - the user's port 0 rule of 2026-10-12.
 - One `market-network` adapter (typescript-helpers, used by atproto-market, socialweb-computer-k8s and the
-  bed requester) replaces the four fetch patches: it takes the MarketNetwork value (or flags in standalone
+  market network requester) replaces the four fetch patches: it takes the MarketNetwork value (or flags in standalone
   mode) and does the `https://*.localhost` and plc.directory rewrites in one tested place.
 
 ### 4.9 Where keys and sessions live
@@ -459,22 +459,22 @@ $HOME defaults computed inside options files.
 
 - Go system tests use one helper, `internal/apptest.Start(t, app, profile, values)`: create a fresh
   workspace under the dev instance's base (`<instance>:t:<test>-<rand>`), apply the app's set with the
-  profile, wait for the root object's Ready, return its status (URLs, DIDs). A bed test is
-  `apptest.Start(t, "bed", ...)`, which composes 4.7. Deleting the workspace removes everything.
-- N parallel beds = N dev instances (0006 M1-DEV-INSTANCE, one kcp each); N bidders in one bed = N bidder
-  apps in that bed. Nesting under a parent (0006 M4-DEV-PARENT-KCP) is the later, cheaper shape for many
-  short beds.
+  profile, wait for the root object's Ready, return its status (URLs, DIDs). A market network test is
+  `apptest.Start(t, "market-network", ...)`, which composes 4.7. Deleting the workspace removes everything.
+- N parallel market networks = N dev instances (0006 M1-DEV-INSTANCE, one kcp each); N bidders in one market network = N bidder
+  apps in that market network. Nesting under a parent (0006 M4-DEV-PARENT-KCP) is the later, cheaper shape for many
+  short market networks.
 - The RFP spine is unchanged: every live guest in such a test comes from the requester app's
-  ComputeContract (runComputeContract) against a bed bidder app.
+  ComputeContract (runComputeContract) against a market network bidder app.
 - TypeScript in-process harnesses (2.9) stay as fast library tests, but compose through the same composer
-  the DenoPods use (M3-BIDDER-COMPOSER), so a component split cannot pass the harness and fail the bed.
+  the DenoPods use (M3-BIDDER-COMPOSER), so a component split cannot pass the harness and fail the market network.
 
 ## 5. CLI and surface model
 
 ### 5.1 One pattern for "a CLI asks kcp for X and kcp reconciles it"
 
 1. Resolve the app instance: `--kcp-base-workspace` + either its own kcp (standalone app: adopt or start the
-   bootstrap layer, 0006 M2-BOOTSTRAP-LAYER) or an enclosing app's kcp (`dev`, bed composer).
+   bootstrap layer, 0006 M2-BOOTSTRAP-LAYER) or an enclosing app's kcp (`dev`, market network composer).
 2. Server-side apply the root object (spec from cli-args-env-equivalent options + `--profile`), field
    manager = the verb.
 3. Watch the root object's status; render pending actions (MarketIdentity.status.pendingAction: QR url,
@@ -489,11 +489,11 @@ $HOME defaults computed inside options files.
 | CLI | its kcp holds | reconciled by | components per profile |
 |---|---|---|---|
 | `socialweb-computer run bidder --handle h --profile prod-qr` | MarketBidder, MarketIdentity(oauthQr), OpenBaoServer, DenoPod bidder, ComputeVMs (+HostProcesses) | core: app controller, supervisor, ComputeVM controller, deno-kcp provider | bidder core, vault, VMs; no PDS |
-| `run bidder --profile bed` (inside `dev up --profile bed`) | as above + DenoPod pds, MarketIdentity(pdsAccount) | same | + PDS pod; network values from the bed |
+| `run bidder --profile market-network` (inside `dev up --profile market-network`) | as above + DenoPod pds, MarketIdentity(pdsAccount) | same | + PDS pod; network values from the market network |
 | `run bidder --profile dev-local` | as prod-qr, local-key identity allowed | same | bidder core, vault, VMs |
-| `socialweb-computer run request [--ssh] [--profile qr|bed]` | MarketRequester, MarketIdentity, OpenBaoServer, DenoPod requester, ComputeContracts | core + requester DenoPod | requester; ssh in the CLI process |
-| `socialweb-computer serve gateway kcp [--profile prod|bed]` | Gateway, OpenBaoServer root, DenoPod door, NodeClaims, door MarketIdentities; plus the traditional cluster objects | core (gateway + clusterprovider in-process), door DenoPod | door, vault, Go members; clusters per claim |
-| `socialweb-computer dev up --profile bed` | the instance's base with the composed apps (4.7) | the instance's core | network app, N bidder apps, requester app (+ gateway) |
+| `socialweb-computer run request [--ssh] [--profile qr|market network]` | MarketRequester, MarketIdentity, OpenBaoServer, DenoPod requester, ComputeContracts | core + requester DenoPod | requester; ssh in the CLI process |
+| `socialweb-computer serve gateway kcp [--profile prod|market network]` | Gateway, OpenBaoServer root, DenoPod door, NodeClaims, door MarketIdentities; plus the traditional cluster objects | core (gateway + clusterprovider in-process), door DenoPod | door, vault, Go members; clusters per claim |
+| `socialweb-computer dev up --profile market-network` | the instance's base with the composed apps (4.7) | the instance's core | network app, N bidder apps, requester app (+ gateway) |
 | `deno run hono-bidder` / `request-vm-ssh` / `hono-socialweb-computer-k8s` (no kcp) | nothing | nothing (library composition) | all components in one process, file-backed stores, flags instead of MarketNetwork |
 
 ### 5.3 Standalone deno without kcp: keep it, as the library composition
@@ -531,8 +531,8 @@ Gaps in the current plans (what none of them says today):
   the QR guard to Go but not the QR itself.
 - G3 0007 M4-BIDDER-VAULT names repo-key, relay-keypair and oidc-jwk (singular) but the bidder has 1 + P
   relays (F4) and the QR session is not named.
-- G4 The bed's "bidder with its own PDS" profile is impossible today (F1).
-- G5 Port 0 has no reporting path into kcp status (0008 M1-BED-PARALLEL says "read back where the service
+- G4 The market network's "bidder with its own PDS" profile is impossible today (F1).
+- G5 Port 0 has no reporting path into kcp status (0008 M1-MARKET-NETWORK-PARALLEL says "read back where the service
   reports its port (onListen logs)", which is log scraping).
 - G6 No plan retires the four fetch patches or the cross-workspace shim lookup (F5).
 - G7 0008 M4-RUN-REQUEST starts a kcp per invocation; under the lens the requester is a persistent app.
@@ -542,11 +542,11 @@ Gaps in the current plans (what none of them says today):
   would fork the code paths between standalone, harness and DenoPod.
 - G10 oidc-issuer-hono's module-global state (F3) blocks both multiple providers per process and the guest
   component split.
-- G11 Tests: 0008 M4-TESTBED-PORT replaces accept.sh but not the log scraping, and no helper makes "apply a
+- G11 Tests: 0008 M4-MARKET-NETWORK-PORT replaces accept.sh but not the log scraping, and no helper makes "apply a
   set into a fresh workspace" the one way system tests start apps.
 
 Item deltas (decisions "decided by Claude, user may veto" unless marked; every live test keeps the RFP
-spine: guests only via runComputeContract against a bed bidder):
+spine: guests only via runComputeContract against a market network bidder):
 
 ```yaml
 - plan: "0006"
@@ -557,16 +557,16 @@ spine: guests only via runComputeContract against a bed bidder):
   depends_on: [M2-APPLY, M2-TEMPLATE, M2-HOSTPROCESS-KIND, "0008:M2-DENOPOD-LISTENERS"]
   decision: >
     The user's 2026-10-12 paradigm: an application instance (bidder, requester, gateway, market network,
-    bed) is its own kcp (a base workspace) + manifest set + profile; state is objects; components are
+    market network) is its own kcp (a base workspace) + manifest set + profile; state is objects; components are
     children. Kinds MarketBidder, MarketRequester, Gateway, MarketNetwork (socialweb.computer/v1alpha1,
     apigen) with spec = the app's options (cli-args-env one-to-one, network excluded) + profile, status =
     phase, conditions, did, aggregated listeners. internal/appctl: a pure reconciler (deno-kcp denopod.go
     style) rendering deploy/apps/<app>/<profile>.values.yaml through M2-TEMPLATE into owned children
     (ownerReferences, field manager appctl); a child the active profile omits is deleted. Apps never read
-    outside their base workspace; cross-app values come only from the composer (M1-DEV-INSTANCE bed).
+    outside their base workspace; cross-app values come only from the composer (M1-DEV-INSTANCE market network).
   files: ["api/v1alpha1/app_types.go", "internal/appctl/", "deploy/apps/", "deploy/sets.yaml"]
   test_first: >
-    Offline (fake kcp): TestSwitchingABidderFromBedToProdQrDeletesItsPdsDenoPod,
+    Offline (fake kcp): TestSwitchingABidderFromNetworkToProdQrDeletesItsPdsDenoPod,
     TestDeletingTheRootObjectRemovesEveryComponent, TestRootStatusCarriesEveryChildsReportedListener,
     TestAnAppCredentialCannotListAnotherAppsWorkspace. Red first.
   done_when: "tests green; `kubectl get marketbidders` in a dev instance shows did and listeners."
@@ -584,31 +584,31 @@ spine: guests only via runComputeContract against a bed bidder):
   change: CHANGED
   id: M1-DEV-INSTANCE
   delta: >
-    `dev up --profile bed` composes apps (4.7): MarketNetwork into <instance>:apps:network, N MarketBidders
+    `dev up --profile market-network` composes apps (4.7): MarketNetwork into <instance>:apps:network, N MarketBidders
     (--bidders N, default 1), one MarketRequester, optional Gateway (--with-gateway), each in its own nested
     base workspace; the composer copies the network's status URLs into each app's MarketNetwork value. New
-    tests TestABedBidderLearnsThePlcOnlyFromItsNetworkValue and TestTwoBidderAppsInOneBedShareNoWorkspace.
+    tests TestANetworkBidderLearnsThePlcOnlyFromItsNetworkValue and TestTwoBidderAppsInOneNetworkShareNoWorkspace.
 
 - plan: "0006"
   change: CHANGED
   id: M3-SERVE-GATEWAY-KCP
   delta: >
-    The gateway is a Gateway root object with profiles prod and bed; the door's TEST_* seams (door
-    mod.ts:53-67) become bed-profile values; the traditional cluster objects are named as the exception
+    The gateway is a Gateway root object with profiles prod and market-network; the door's TEST_* seams (door
+    mod.ts:53-67) become market-network profile values; the traditional cluster objects are named as the exception
     (multi-server-to-kcp.md 4.6). depends_on adds M2-APP-CONTROLLER.
 
 - plan: "0007"
   change: NEW
   id: M3-BIDDER-ACCOUNT-PDS
   milestone: M3
-  title: hono-bidder signs in to a real PDS account by handle and password, so a bed bidder can use its own PDS pod
+  title: hono-bidder signs in to a real PDS account by handle and password, so a market network bidder can use its own PDS pod
   depends_on: []
   decision: >
     Today --atproto-handle/--atproto-password builds a local repo (hono-bidder/mod.ts:262-282),
     --atproto-pds-url is unused (cli-args-env.ts:76-81) and createRemoteAgent is never called (:10). Make
     that path a remote-PDS session (createRemoteAgent against --atproto-pds-url): records go to that PDS,
-    the bidder serves no repo, its market endpoints stay on its own relay. The bed's bidder profile uses the
-    bed PDS (today's bob pod); prod stays QR on the user's PDS; the local repo stays for dev-local and the
+    the bidder serves no repo, its market endpoints stay on its own relay. The market network's bidder profile uses the
+    market network PDS (today's bob pod); prod stays QR on the user's PDS; the local repo stays for dev-local and the
     harness.
   files: ["atproto-market/hono-bidder/mod.ts", "atproto-market/lib/atproto-helpers (remote agent)", "atproto-market/test/bidder_remote_pds_account_test.ts"]
   test_first: >
@@ -671,7 +671,7 @@ spine: guests only via runComputeContract against a bed bidder):
     TS against a fake kcp: the QR URL appears in status.pendingAction, an approval patched into spec
     completes association, an expired session sets SessionExpired and the process stays up. Go:
     TestRunBidderRendersTheQrFromStatusAndReturnsWhenReady. Red first.
-  done_when: "green; on a bed the bidder DenoPod runs without --skip-qr and the association is approved through the CLI."
+  done_when: "green; on a market network the bidder DenoPod runs without --skip-qr and the association is approved through the CLI."
 
 - plan: "0007"
   change: CHANGED
@@ -686,8 +686,8 @@ spine: guests only via runComputeContract against a bed bidder):
   change: CHANGED
   id: M5-RUN-BIDDER
   delta: >
-    `run bidder` applies a MarketBidder root object (0006 M2-APP-CONTROLLER) with --profile prod-qr|bed|
-    dev-local and watches it; prod-qr renders no PDS, bed renders the PDS pod and a pdsAccount identity
+    `run bidder` applies a MarketBidder root object (0006 M2-APP-CONTROLLER) with --profile prod-qr|market network|
+    dev-local and watches it; prod-qr renders no PDS, market network renders the PDS pod and a pdsAccount identity
     (M3-BIDDER-ACCOUNT-PDS); the foreground renders MarketIdentity pending actions. depends_on adds
     "0006:M2-APP-CONTROLLER", M4-MARKET-IDENTITY.
 
@@ -703,7 +703,7 @@ spine: guests only via runComputeContract against a bed bidder):
     over the embedded closure. The bidder core keeps the market relay and loops. A core restart or upgrade
     no longer moves or interrupts what guests dial.
   files: ["hono-compute-provider/hono-bidder-guest (thin CLI)", "deploy/apps/bidder/*.values.yaml"]
-  test_first: "Behind livegate on a bed (guest via runComputeContract): TestABidderCoreRestartLeavesTheGuestIssuerAndRegistryServing. Red first."
+  test_first: "Behind livegate on a market network (guest via runComputeContract): TestABidderCoreRestartLeavesTheGuestIssuerAndRegistryServing. Red first."
   done_when: "green with readings (UTC)."
 
 - plan: "0008"
@@ -722,7 +722,7 @@ spine: guests only via runComputeContract against a bed bidder):
   test_first: >
     typescript-helpers serve test: a port-0 tcp serve with one relay writes both URLs; Go:
     TestADenoPodOnPortZeroIsResolvedByItsReportedAddress, TestNoServiceManifestNamesAPort. Red first.
-  done_when: "green; the bed's services run on port 0 and every probe uses status."
+  done_when: "green; the market network's services run on port 0 and every probe uses status."
 
 - plan: "0008"
   change: NEW
@@ -741,11 +741,11 @@ spine: guests only via runComputeContract against a bed bidder):
 
 - plan: "0008"
   change: CHANGED
-  id: M1-BED-PARALLEL
+  id: M1-MARKET-NETWORK-PARALLEL
   delta: >
     Port read-back goes through M2-DENOPOD-LISTENERS' report file, not onListen log lines; the bidder's
     key, repo KV and session live in its run dir (port-audit B11); accept.sh reads the bidder DID from the
-    bed record written from status, not from stdout (accept.sh:463-467).
+    market network record written from status, not from stdout (accept.sh:463-467).
 
 - plan: "0008"
   change: CHANGED
@@ -780,21 +780,21 @@ spine: guests only via runComputeContract against a bed bidder):
 
 - plan: "0008"
   change: CHANGED
-  id: M4-TESTBED-PORT
+  id: M4-MARKET-NETWORK-PORT
   delta: >
-    `testbed up` = `dev up --profile bed` composing apps (4.7); system tests start apps only through
+    `market-network up` = `dev up --profile market-network` composing apps (4.7); system tests start apps only through
     internal/apptest.Start(t, app, profile) in a fresh nested workspace and read DIDs and URLs from root
     status (no stdout scraping); N bidders = N bidder apps. depends_on adds "0006:M2-APP-CONTROLLER".
 ```
 
 ## 7. Questions for the user (recommended answers)
 
-1. **Bed composition: one kcp per bed with each app in a nested base workspace, or a kcp per app inside the
-   bed?** Recommended: nested (one kcp per dev instance, as decided; each app ~0.4-0.5 GB cheaper); prod
+1. **Market network composition: one kcp per market network with each app in a nested base workspace, or a kcp per app inside the
+   market network?** Recommended: nested (one kcp per dev instance, as decided; each app ~0.4-0.5 GB cheaper); prod
    apps run their own kcp; app code is identical through kcp-base-workspace, and credentials are scoped per
    app subtree.
-2. **The bed bidder's repo: a PDS-pod account (needs M3-BIDDER-ACCOUNT-PDS) or keep today's in-process
-   repo?** Recommended: PDS-pod account in the bed profile (it is what the user described and exercises a
+2. **The market network bidder's repo: a PDS-pod account (needs M3-BIDDER-ACCOUNT-PDS) or keep today's in-process
+   repo?** Recommended: PDS-pod account in the market-network profile (it is what the user described and exercises a
    remote-repo code path like prod's QR); keep the in-process repo for dev-local and the harness.
 3. **Keep `deno run hono-bidder` / `request-vm-ssh` working without kcp?** Recommended: yes, as the library
    composition with file-backed stores; no embedded kcp in TypeScript.
@@ -826,7 +826,7 @@ spine: guests only via runComputeContract against a bed bidder):
   socialweb-computer-k8s/lib/socialweb-computer-requester-inproc/mod.ts,
   socialweb-computer-k8s/lib/socialweb-computer-k8s-node-market/mod.ts, deploy/container-entrypoint.sh,
   cmd/socialweb-gateway/main.go, deploy/bidder/socialweb-computer-bidder-run,
-  deploy/examples/atproto/market/{README.md,70-bidder.yaml,*.yaml,accept.sh,market-requester/mod.ts},
-  internal/marketbed/{live_test.go,live_m3_test.go}, api/v1alpha1/{resources.go,types_atprotoidentity.go},
+  deploy/market-network/{README.md,70-bidder.yaml,*.yaml,accept.sh,market-requester/mod.ts},
+  internal/marketnetwork/{live_test.go,live_m3_test.go}, api/v1alpha1/{resources.go,types_atprotoidentity.go},
   docs/plans/0006-0008, docs/research/2026-10-11-vm-lifecycle/{user-decisions.md,port-audit.md,dev-run-mode.md}.
 - org root: alice-request.sh, bob-bidder.sh (untracked dev scripts).

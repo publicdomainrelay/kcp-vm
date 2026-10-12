@@ -28,7 +28,7 @@ needs the argument behind it. Do not read it end to end.
 | Env the gateway reads | `internal/gatewaymain/config.go`, `deploy/socialweb-gateway.env.example` |
 | How to run the one-container stack | `deploy/run-container.sh`, `deploy/container.env.example` |
 | What a host must hand the container | `socialweb-computer-kcp-check-host`, `docs/ARCHITECTURE.md` section 9 |
-| The market test bed | `deploy/examples/atproto/market/README.md` |
+| The market network | `deploy/market-network/README.md` |
 | The operator handoff | `handoff.yaml` |
 
 ## Layout
@@ -209,14 +209,13 @@ and older notes use the short names below; read them as the real names.
 | --- | --- |
 | the door | the socialweb-computer-k8s web app, `socialweb-computer-k8s/hono-socialweb-computer-k8s` |
 | the ssh door | `ts/socialweb-computer-ssh/hono-socialweb-computer-ssh` |
-| the bed | the market test bed, `deploy/examples/atproto/market` (`apply.sh`, `accept.sh`) |
 | the core | the `socialweb-computer` binary process that runs kcp and supervises the DenoPods and HostProcesses |
 | a fold, folded | one pass that merged a set of decisions into the plans (for example "fifth fold 2026-10-12") |
 | the spine | the RFP flow: requester, RFP, bid, accept, cloud-init `user_data` |
-| the front | the stable entry point in front of a service: the kcp front before the kcp slots (0006 M2-KCP-SLOTS), the TLS front of the market test bed |
+| the front | the stable entry point in front of a service: the kcp front before the kcp slots (0006 M2-KCP-SLOTS), the TLS front of the market network |
 | the edge | caddy and the other stable public entry points that keep a known port |
 | the ratchet | `deploy/fixed-ports-ratchet.yaml`, the list of fixed-port violations that may only get shorter |
 | a stand-in | a small test executable used in place of k3s, kine or postgres |
-| the soak | the last run against the real accounts (the bobvmbuilder bidder and alice), after the market test bed passes |
+| the soak | the last run against the real accounts (the bobvmbuilder bidder and alice), after the market network passes |
 | a gate | a check that must pass before an item or a merge goes on (`deploy/check.sh`, a plan's done_when) |
 | the seed | the first example that a model grows from |
