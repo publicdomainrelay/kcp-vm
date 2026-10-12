@@ -1,8 +1,40 @@
-# AT Protocol services and a market bidder on kcp, over TLS, by name
+# The market network: a MarketNetwork application and its child applications
 
-Four KCP workspaces, plus a verifier that drives them. Each workspace also
-carries an `OpenBao` object naming the OpenBao namespace that serves it, which is
-where its DenoPods' serving certificates are issued from:
+A market network is one application, `MarketNetwork`, in its own kcp:
+
+```
+socialweb-computer dev up --profile market-network [--bidders N] [--with-gateway] --app-values <file>
+```
+
+`dev up` brings up the instance's bootstrap layer (kine, kcp behind its front,
+the core) and applies one root object, `MarketNetwork network`, into its kcp.
+The core's application controller (`internal/appctl`) renders it:
+
+- an OpenBao for the services' certificates, as a HostProcess (`network-openbao`);
+- the shared atproto services as DenoPods of the network's kcp (the
+  `market-network` set: the files 20-60 here);
+- one child application per `spec.apps[]` entry: `bidder-1` .. `bidder-N`
+  (`MarketBidder`) and, with `--with-gateway`, `gateway` (`Gateway`).
+
+Each child application runs its OWN kcp. Its bootstrap layer (kine, one kcp
+slot on port 0, the front, its core) is HostProcess objects in the network's
+kcp, in `root:dev:<child>`, placed by the network's supervisor; its core holds a
+token valid only in that workspace. Once the child's kcp answers, the network
+server-side applies the child's root object (`MarketBidder app`) into the
+child's kcp with the MarketNetwork value (`status.network`: plcDirectoryUrl,
+ingressProxyHost, relayUrls, firehoseUrls, qrOrigin, guestTlsUrl, caBundleRef)
+copied onto it, and reads back only the child's root status (did, listeners,
+phase). That copy is the only way a child learns the network: no child reads the
+network's kcp, and the child's DNS shim resolves only its own application's
+names. The child's core renders its root object into components
+(`deploy/apps/market-bidder/<profile>.values.yaml` through the service template:
+the bidder DenoPod in the child's `root:app`).
+
+The network value names loopback addresses (`https://127.0.0.1:<port>`,
+`relay.localhost:<port>`) read back from the services' status, and a CA bundle
+(the network PKI root and the guest TLS CA) the children trust.
+
+The network's own services, by name inside the network:
 
 ```
 root:global   DenoPod/plc            hono-plc            :0  plc.default.global.svc.kcp.local
@@ -12,7 +44,15 @@ root:relay    DenoPod/dispatcher-tls guests' TLS front   :0  dispatcher-tls.defa
 root:alice    DenoPod/pds            hono-pds            :0  pds.default.alice.svc.kcp.local
 root:alice    DenoPod/verifier       the end-to-end check
 root:bob      DenoPod/pds            hono-pds            :0  pds.default.bob.svc.kcp.local
-root:bob      DenoPod/bidder-<n>     hono-bidder         :0  bidder-<n>.default.bob.svc.kcp.local
+```
+
+Each bidder has its own OpenBao, an OpenBaoServer `bidder` in its own kcp
+(`deploy/apps/market-bidder/vault.yaml`), placed by its own core. The bidder's
+core generates the account password into that vault (client `bidder`, kv mount
+`bidder`), signs up for an account of its own on bob's PDS (MarketIdentity mode
+pdsAccount, the PDS URL from its root object), and hands the DenoPod a token
+that can read only OpenBaoServer objects of its own kcp. No password or key is
+in a kcp object, and the network never touches a child's vault.
 
 Every service binds port 0. It writes the port it got to PORT_FILE in its run
 directory, the provider reads it back into the DenoPod's status.address, and
@@ -64,11 +104,11 @@ why the workloads' certificates come from OpenBao instead, and why a
 `CertificateAuthority`-shaped thing had to live somewhere that survives a
 provider restart:
 
-```bash
-bash deploy/denokcp/start-openbao.sh  # development mode, in-memory, port 0
-./deno-kcp-provider --kubeconfig=... \
-  --openbao-addr http://$(cat .kcp-openbao/bao.addr) --openbao-token root
-```
+The network's OpenBao is a HostProcess of the network's own kcp
+(`network-openbao`: in-memory storage, one listener on 127.0.0.1:0, no
+clustering). The application controller initialises it with one unseal key,
+kept with the root token in a mode 600 file of the network's state, and the
+core's deno runtime waits for it before it issues any certificate.
 
 The root CA lives in OpenBao's root namespace; each workspace's `OpenBao` object
 gives its namespace an intermediate signed by that root; and each DenoPod is
@@ -81,14 +121,16 @@ the root and kcp's CA**, written as `ca.pem` in the run directory with
 API server. `DENO_CERT` is read at startup, which is why it is injected rather
 than installed from inside the script.
 
-OpenBao in development mode is in-memory, like the PLC directory and the PDS, so
-a restart empties the hierarchy and every workload's certificate has to be
-reissued: restart OpenBao, restart the provider, and re-apply.
+The network's OpenBao is in-memory, like the PLC directory and the PDS, so a
+restart empties the hierarchy and every workload's certificate has to be
+reissued: take the network down and up again.
 
 The bidder is the exception: it declares no `--tls-cert-file` / `--tls-key-file`
-option and its parser rejects unknown flags, so `70-bidder.yaml` names
-`tls: trust`: the template writes only `ca.pem` and gives the child the trust
-bundle, never a leaf. The dispatcher is `tls: trust` too.
+option and its parser rejects unknown flags, so
+`deploy/apps/market-bidder/market-network.values.yaml` names `tls: trust` and
+`trust: [<caBundleRef>]`: the template writes only `ca.pem` (its own kcp's CA
+plus the network's CA bundle) and never a leaf. The dispatcher is `tls: trust`
+too.
 
 Each service gained `--tls-cert-file` / `--tls-key-file`; `createServe` has taken
 `tcp.cert` and `tcp.key` since it was written, but nothing ever passed them, so
@@ -99,8 +141,9 @@ insecure-HTTP escape hatch, and now it has nothing to escape from.
 ## One service template
 
 Every service DenoPod (plc, relay, dispatcher, both PDSes, every bidder) is
-rendered from `deploy/denopods/service.yaml`. The files 20, 30, 35, 40, 60 and
-70 here are its values, not DenoPods:
+rendered from `deploy/denopods/service.yaml`. The files 20, 30, 35, 40 and 60
+here and `deploy/apps/market-bidder/market-network.values.yaml` are its values,
+not DenoPods:
 
 ```
 name, entry (a name in deploy/ts-entries.yaml), stateDir, serviceAccount,
@@ -132,19 +175,31 @@ starts a process, so deleting a DenoPod always stops its deno process.
 
 ## Running it
 
-`accept.sh` is the way to run it: one live acceptance, and one market network of
-several per host. It takes a market network slot (`SWC_MARKET_NETWORK_SLOTS`,
-default 4, flock under /var/tmp/socialweb-market-network-slots, refused below
-3 GiB + 2.5 GiB per guest of MemAvailable), starts OpenBao on port 0, brings up
-its own dev instance (`socialweb-computer dev up --profile quick --host-backend
-proc --openbao-addr ...`: kine, kcp and the core, whose in-process deno runtime
-reconciles the DenoPods) under `$MARKET_NETWORK_STATE/market-networks/$MARKET_NETWORK_ID`,
-runs `apply.sh` with `MARKET_NETWORK_BIDDERS` bidders, records every port and
-pid it read back in `market-network.json`, checks every DenoPod's
-status.listeners and finalizer, reaches each service on its own name and from
-the host, rents a firecracker guest through the RFP flow (each guest a VM unit of the Linux VM runtime, FC_VMRUNTIME_COMMAND; its user_data and record under
-/var/tmp/swc-$MARKET_NETWORK_ID),
-and tears the market network down (DenoPods deleted first, then `dev down`),
+By hand:
+
+```bash
+socialweb-computer dev up --instance mn1 --profile market-network --bidders 2 \
+  --host-backend proc --app-values app-values.yaml   # bidder.firecracker: workRoot, vmruntimeCommand
+socialweb-computer dev down --instance mn1           # deletes the MarketNetwork first
+```
+
+`dev up` prints the MarketNetwork object with its status (the network value,
+each child's kcp, phase and did). `dev down` deletes the MarketNetwork, whose
+finalizer deletes each child's root object, then the child's workspace in the
+network's kcp (the supervisor stops its kcp, kine, front and core), then the
+services and the OpenBao, before devsup stops.
+
+`accept.sh` is the live acceptance, one market network of several per host. It
+takes a market network slot (`SWC_MARKET_NETWORK_SLOTS`, default 4, flock under
+/var/tmp/socialweb-market-network-slots, refused below 3 GiB + 768 MiB per child
++ 2.5 GiB per guest of MemAvailable), writes the bidders' provider inputs to
+`app-values.yaml`, runs `dev up --profile market-network --bidders
+$MARKET_NETWORK_BIDDERS` under `$MARKET_NETWORK_STATE/market-networks/$MARKET_NETWORK_ID`,
+records every port and pid in `market-network.json`, checks every service
+DenoPod's status.listeners and finalizer, that every child runs its own kcp, that
+each bidder's DenoPod got the PLC URL from its root object, rents a firecracker
+guest through the RFP flow (each guest a VM unit of the Linux VM runtime,
+FC_VMRUNTIME_COMMAND; its user_data and record under /var/tmp/swc-$MARKET_NETWORK_ID), and runs `dev down`,
 reporting anything left behind. It exits non-zero unless every check passed.
 Two market networks at once:
 
@@ -153,11 +208,6 @@ MARKET_NETWORK_ID=network1 MARKET_NETWORK_BIDDERS=2 bash deploy/market-network/a
 MARKET_NETWORK_ID=network2 MARKET_NETWORK_BIDDERS=2 bash deploy/market-network/accept.sh &
 wait
 ```
-
-`apply.sh` applies the market-network set into a running dev instance
-(`KUBECONFIG` its admin kubeconfig). It starts OpenBao itself unless
-`START_OPENBAO=0`, and waits for each workspace's `OpenBao` object to report
-ready before it applies the workloads.
 
 Every service runs from this repository: `ts/atproto-market`, `ts/atproto-relay`,
 `ts/hono-pds`, `ts/did-key-ingress-proxy` and the root `deno.json` and `deno.lock`.
@@ -187,7 +237,7 @@ way to make the name resolve; every leaf carries `127.0.0.1` for that reason.
 - **Order matters, and only for the shim.** A workload's table is written once,
   at start. The relay subscribes to the PDS over a WebSocket, and `WebSocket` is
   constructed synchronously so it cannot fall back to discovery the way `fetch`
-  does -- so a relay started before the PDS never learns it. `apply.sh` applies
+  does -- so a relay started before the PDS never learns it. The market-network set applies
   the PDS first.
 - **The env allowList is load-bearing.** The preload runs inside the workload's
   process, so a CR that does not allow the shim's keys leaves it unable to read
@@ -195,7 +245,7 @@ way to make the name resolve; every leaf carries `127.0.0.1` for that reason.
 - **kubectl caches discovery per server, and the cache outlives a schema
   change.** A cached `NAMESPACED=false` makes kubectl POST a namespaced resource
   without a namespace, which kcp answers with a NotFound naming only the
-  resource. `apply.sh` uses a throwaway cache dir.
+  resource. `accept.sh` uses a throwaway cache dir.
 - **Waiting for a resource to be listable is not waiting for its binding to be
   Ready.** A binding that is not Ready lists empty but rejects creates.
 - **kcp does not send the bookmark a client-go streaming list needs**, so an
@@ -207,7 +257,7 @@ way to make the name resolve; every leaf carries `127.0.0.1` for that reason.
 - **A namespace with no `OpenBao` object serves plain HTTP.** `SERVICE_TLS=true`
   is not enough on its own: the provider finds the authority by looking for the
   single `OpenBao` object in the pod's namespace, and a namespace that names two
-  is refused rather than guessed at. `apply.sh` waits for each object to report
+  is refused rather than guessed at. The market-network set waits for each object to report
   ready before it applies the workloads, which is the state to check first when a
   service comes up without TLS.
 

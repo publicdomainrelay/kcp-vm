@@ -187,8 +187,64 @@ sets:
             name: marketidentities
             for: IdentityValid
 
+  - name: applications
+    summary: the MarketNetwork, MarketBidder, MarketRequester and Gateway schemas and their export in the provider workspace and its binding in root, applied by every core so each application's root object lives in its own kcp (plan 0006 M2-APP-CONTROLLER); needs the provider workspace
+    values: None
+    phases:
+      - name: schemas
+        workspace: root:socialweb-provider
+        files:
+          - path: marketnetwork-apiresourceschema.yaml
+          - path: marketbidder-apiresourceschema.yaml
+          - path: marketrequester-apiresourceschema.yaml
+          - path: gateway-apiresourceschema.yaml
+          - path: marketnetwork-apiexport.yaml
+        after:
+          - kind: APIExport
+            name: applications
+            for: IdentityValid
+      - name: bindings
+        workspace: root
+        files:
+          - path: applications-binding.yaml
+        after:
+          - kind: APIBinding
+            for: Ready
+
+  - name: market-bidder
+    summary: the components of a MarketBidder application in its own kcp - its own OpenBaoServer and the account that reads it in root, the root:app workspace and, per profile, the bidder DenoPod rendered from deploy/apps/market-bidder/<profile>.values.yaml (a phase named <component>@<profile> belongs to that profile only); applied by internal/appctl
+    values: MarketBidder
+    phases:
+      - name: vault
+        workspace: root
+        files:
+          - path: apps/market-bidder/vault.yaml
+        after:
+          - kind: OpenBaoServer
+            name: bidder
+            for: Ready
+      - name: workspace
+        workspace: root
+        files:
+          - path: apps/workspace-app.yaml
+        after:
+          - kind: Workspace
+            for: Ready
+      - name: rbac
+        workspace: root:app
+        before:
+          - kind: APIBinding
+            for: Ready
+        files:
+          - path: market-network/10-rbac.yaml
+      - name: bidder@market-network
+        workspace: root:app
+        files:
+          - path: apps/market-bidder/market-network.values.yaml
+            template: denopods/service.yaml
+
   - name: market-network
-    summary: the AT Protocol market network - PLC, relay, dispatcher and its TLS front, two PDSes, N bidders and the verifier (was apply.sh); needs denoruntime and a running deno provider
+    summary: the shared services of a MarketNetwork application - PLC, relay, dispatcher and its TLS front, two PDSes and the verifier - applied by its reconciler (internal/appctl); the bidders are child applications with their own kcp; needs denoruntime and a running deno provider
     values: MarketNetwork
     phases:
       - name: workspaces
@@ -306,29 +362,6 @@ sets:
         files:
           - path: market-network/30-relay-relay.yaml
             template: denopods/service.yaml
-      - name: bidder-hostprocesses
-        workspace: root:bob
-        files:
-          - path: hostprocesses-binding.yaml
-        after:
-          - kind: APIBinding
-            for: Ready
-      - name: bidder-vaults
-        workspace: root:bob
-        files:
-          - path: market-network/65-bidder-openbao.yaml
-            each: Bidders
-            as: Bidder
-        after:
-          - kind: OpenBaoServer
-            for: Ready
-      - name: bidders
-        workspace: root:bob
-        files:
-          - path: market-network/70-bidder.yaml
-            template: denopods/service.yaml
-            each: Bidders
-            as: Bidder
       - name: verifier
         workspace: root:alice
         before:
@@ -349,6 +382,10 @@ unapplied:
     why: this index
   - path: audit-policy.yaml
     why: an audit.k8s.io Policy file a k3s apiserver reads at start through --audit-policy-file, never an object
+  - path: apps/option-map.yaml
+    why: maps every cli-args-env option of hono-bidder and request-vm-ssh to a root-object field, the network value, a profile, the state dir, a listener report, the options passthrough or a legacy-transport removal; internal/appctl reads it to accept spec.options (plan 0006 M2-APP-CONTROLLER)
+  - path: apps/market-network/market-network.values.yaml
+    why: the market-network profile's NetworkApp defaults for each bidder and the gateway, merged with dev up's app-values into the MarketNetwork spec by internal/appctl, never an object
   - path: ts-entries.yaml
     why: the TypeScript closure entries cmd/socialweb-tsbundle bundles (plan 0008 M1-TS-CLOSURE), a build input, never an object
   - path: kcp-audit-policy.yaml

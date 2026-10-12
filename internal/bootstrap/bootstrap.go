@@ -3,7 +3,6 @@ package bootstrap
 import (
 	"bufio"
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -32,20 +31,11 @@ const (
 	RestartSettle    = 3 * time.Second
 )
 
-var unbuiltProfiles = map[string]string{
-	ProfileMarketNetwork: "M2-APP-CONTROLLER (a MarketNetwork composing child applications, each with its own kcp)",
-}
-
-var ErrUnbuiltProfile = errors.New("bootstrap: profile not built yet")
-
 func CheckProfile(p string) error {
-	if p == ProfileQuick || p == ProfileProdlike {
+	if p == ProfileQuick || p == ProfileProdlike || p == ProfileMarketNetwork {
 		return nil
 	}
-	if item, ok := unbuiltProfiles[p]; ok {
-		return fmt.Errorf("%w: --profile %s is built by %s; quick (kine on sqlite) and prodlike (the gateway shape: postgres, one kine per slot, blue/green slots) are", ErrUnbuiltProfile, p, item)
-	}
-	return fmt.Errorf("bootstrap: unknown profile %q: want quick or prodlike (built) or market-network", p)
+	return fmt.Errorf("bootstrap: unknown profile %q: want quick, prodlike or market-network", p)
 }
 
 func NeedsPostgres(profile string) bool { return profile == ProfileProdlike }

@@ -15,6 +15,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/appctl"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/assets"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/bootstrap"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clicfg"
@@ -289,6 +291,7 @@ type upReport struct {
 	Marker          string                            `json:"marker,omitempty"`
 	Foreground      bool                              `json:"foreground,omitempty"`
 	Executables     map[string]devinstance.Executable `json:"executables"`
+	Network         *v1alpha1.MarketNetwork           `json:"network,omitempty"`
 }
 
 func runDevUp(ctx context.Context, a *app, vals clicfg.Values, rest []string) int {
@@ -362,6 +365,25 @@ func devUp(ctx context.Context, a *app, vals clicfg.Values, host bool) int {
 			return a.fail(exitRefused, "dev up: %v", err)
 		}
 	}
+	composes := profile == bootstrap.ProfileMarketNetwork
+	if composes && (host || parent != "") {
+		return a.fail(exitRefused, "%s: --profile %s is an application of its own whose children get their own kcp; it neither nests under a parent nor is a dev host", verb, profile)
+	}
+	var networkOverlay []byte
+	if f := vals.String("app-values"); f != "" {
+		if !composes {
+			return a.fail(exitRefused, "dev up: app-values names values for the children of --profile %s", bootstrap.ProfileMarketNetwork)
+		}
+		b, err := os.ReadFile(f)
+		if err != nil {
+			return a.fail(exitRefused, "dev up: app-values: %v", err)
+		}
+		networkOverlay = b
+	}
+	networkTimeout, err := time.ParseDuration(vals.String("network-timeout"))
+	if err != nil {
+		return a.fail(exitRefused, "dev up: network-timeout: %v", err)
+	}
 	readyTimeout, err := time.ParseDuration(vals.String("ready-timeout"))
 	if err != nil {
 		return a.fail(exitRefused, "dev up: ready-timeout: %v", err)
@@ -391,7 +413,7 @@ func devUp(ctx context.Context, a *app, vals clicfg.Values, host bool) int {
 		return a.fail(exitRefused, "dev up: %v", err)
 	}
 	var baoExe devinstance.Executable
-	if standIns == nil && (assets.Release() || vals.String("bao-path") != "") {
+	if standIns == nil && (assets.Release() || vals.String("bao-path") != "" || composes) {
 		if baoExe, err = a.devExe(ctx, vals, "bao", "bao-path"); err != nil {
 			return a.fail(exitRefused, "dev up: %v", err)
 		}
@@ -407,6 +429,12 @@ func devUp(ctx context.Context, a *app, vals clicfg.Values, host bool) int {
 	l, err := a.layoutOf(name, vals)
 	if err != nil {
 		return a.fail(exitRefused, "%s: %v", verb, err)
+	}
+	var networkSpec v1alpha1.MarketNetworkSpec
+	if composes {
+		if networkSpec, err = appctl.NetworkSpec(l.ID, vals.Int("bidders"), vals.Bool("with-gateway"), networkOverlay); err != nil {
+			return a.fail(exitRefused, "dev up: %v", err)
+		}
 	}
 	var par *devinstance.Parent
 	var parentHello hostsvc.ProcHello
@@ -466,7 +494,7 @@ func devUp(ctx context.Context, a *app, vals clicfg.Values, host bool) int {
 		rec = devinstance.Record{Created: started}
 	}
 	rec.Layout, rec.Profile, rec.Backend, rec.Devsup, rec.StandIns = l, profile, hostsvc.BackendProc, sup, standIns
-	rec.Host, rec.Parent = host, par
+	rec.Host, rec.Parent = host || composes, par
 	rec.Worktree = a.worktree(vals)
 	if host {
 		rec.Worktree = ""
@@ -511,9 +539,29 @@ func devUp(ctx context.Context, a *app, vals clicfg.Values, host bool) int {
 		return a.fail(exitFailed, "dev up: %v", err)
 	}
 	devinstance.ReadJSON(l.Record, &rec)
-	if host {
+	if host || composes {
 		if err := devinstance.WaitHost(ctx, rec.AdminKubeconfig, readyTimeout); err != nil {
-			return a.fail(exitFailed, "dev host: %v", err)
+			return a.fail(exitFailed, "%s: %v", verb, err)
+		}
+	}
+	var network *v1alpha1.MarketNetwork
+	if composes {
+		if err := appctl.ApplyNetwork(ctx, rec.AdminKubeconfig, networkSpec, readyTimeout); err != nil {
+			return a.fail(exitFailed, "dev up: %v", err)
+		}
+		a.log.Info("the MarketNetwork root object is applied; its core composes the children", "bidders", vals.Int("bidders"),
+			"gateway", vals.Bool("with-gateway"), "apps", len(networkSpec.Apps))
+		o, err := appctl.WaitNetwork(ctx, rec.AdminKubeconfig, networkTimeout, func(st v1alpha1.MarketNetworkStatus) {
+			var apps []string
+			for _, ap := range st.Apps {
+				apps = append(apps, ap.Name+"="+string(ap.Phase))
+			}
+			a.log.Info("market network", "phase", string(st.Phase), "message", st.Message, "apps", strings.Join(apps, " "))
+		})
+		network = &o
+		if err != nil {
+			a.printJSON(network)
+			return a.fail(exitFailed, "dev up: %v", err)
 		}
 	}
 	ex := devinstance.Exports(rec, a.instanceLeases(l.ID))
@@ -533,7 +581,7 @@ func devUp(ctx context.Context, a *app, vals clicfg.Values, host bool) int {
 		AdminKubeconfig: rec.AdminKubeconfig, KcpURL: rec.KcpURL, KineURL: rec.KineURL, Devsup: sup, Units: rec.Units,
 		Core: core, StartedAt: started, ReadyAt: ready, Seconds: ready.Sub(started).Seconds(),
 		Env: exportMap(ex), EnvFile: filepath.Join(l.StateDir, devinstance.EnvFile), Marker: marker, Foreground: fg,
-		Executables: rec.Executables})
+		Executables: rec.Executables, Network: network})
 	if !fg {
 		return exitOK
 	}
@@ -661,6 +709,13 @@ func downInstance(ctx context.Context, a *app, l devinstance.Layout, keepState b
 	r := downReport{Instance: l.ID, LeftoverKilled: []int{}, Remaining: []int{}}
 	var rec devinstance.Record
 	devinstance.ReadJSON(l.Record, &rec)
+	if rec.Profile == bootstrap.ProfileMarketNetwork && rec.AdminKubeconfig != "" {
+		if err := appctl.DeleteNetwork(ctx, rec.AdminKubeconfig, devsupExitTimeout); err != nil {
+			a.log.Warn("deleting the MarketNetwork before devsup stops; devsup stops what is left", "err", err.Error())
+		} else {
+			a.log.Info("the MarketNetwork is deleted: its children, their kcps and its services are gone")
+		}
+	}
 	if rec.Parent != nil {
 		r.Remaining = downChild(ctx, a, l, *rec.Parent)
 		r.DevsupPID = rec.Devsup.PID
@@ -780,6 +835,9 @@ func runDevCore(ctx context.Context, a *app, vals clicfg.Values, rest []string) 
 	deno, err := a.coreDenoRuntime(vals, rec, timeout)
 	if err != nil {
 		return a.fail(exitFailed, "internal dev-core: %v", err)
+	}
+	if rec.Profile == bootstrap.ProfileMarketNetwork && rec.OpenBao == nil {
+		deno.OpenBaoFrom = appctl.NetworkOpenBao(rec.Layout.StateDir)
 	}
 	m, err := a.instanceManager(ctx, rec)
 	if err != nil {

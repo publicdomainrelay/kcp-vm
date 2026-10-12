@@ -36,6 +36,7 @@ type Config struct {
 	Unit         string
 	ApplyTimeout time.Duration
 	OpenBao      OpenBao
+	OpenBaoFrom  func(context.Context) (OpenBao, error)
 	Log          *slog.Logger
 }
 
@@ -118,6 +119,14 @@ func Run(ctx context.Context, c Config) error {
 		return err
 	}
 	log := c.log()
+	if c.OpenBao.Address == "" && c.OpenBaoFrom != nil {
+		log.Info("the deno runtime waits for its application's OpenBao before it issues any DenoPod certificate")
+		ob, err := c.OpenBaoFrom(ctx)
+		if err != nil {
+			return err
+		}
+		c.OpenBao = ob
+	}
 	restCfg, err := kcpserver.FrontRestConfig(c.Kubeconfig)
 	if err != nil {
 		return err

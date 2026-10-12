@@ -58,7 +58,7 @@ type builtVerb struct {
 func builtVerbs() map[string]builtVerb {
 	return map[string]builtVerb{
 		"version":                {[]string{"json"}, runVersion},
-		"dev up":                 {append([]string{backendOpt, "instance", "state-dir", "profile", "stand-ins", "parent", "die-with", "kcp-path", "kine-path", "postgres-root", "deno-path", "bao-path", "openbao-addr", "openbao-token-file", "asset-cache", "ready-timeout", "kcp-base-workspace", "fg", "keep-state"}, devOnly(tsbundle.SourceRootOption)...), runDevUp},
+		"dev up":                 {append([]string{backendOpt, "instance", "state-dir", "profile", "bidders", "with-gateway", "app-values", "network-timeout", "stand-ins", "parent", "die-with", "kcp-path", "kine-path", "postgres-root", "deno-path", "bao-path", "openbao-addr", "openbao-token-file", "asset-cache", "ready-timeout", "kcp-base-workspace", "fg", "keep-state"}, devOnly(tsbundle.SourceRootOption)...), runDevUp},
 		"dev host":               {append([]string{backendOpt, "instance", "state-dir", "profile", "die-with", "kcp-path", "kine-path", "postgres-root", "deno-path", "bao-path", "asset-cache", "ready-timeout", "kcp-base-workspace", "fg", "keep-state"}, devOnly(tsbundle.SourceRootOption)...), runDevHost},
 		"dev status":             {[]string{"instance", "state-dir"}, runDevStatus},
 		"dev down":               {[]string{"instance", "state-dir", "keep-state"}, runDevDown},

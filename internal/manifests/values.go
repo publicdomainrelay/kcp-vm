@@ -23,22 +23,38 @@ type MarketIdentity struct {
 }
 
 type MarketNetwork struct {
-	NetworkID           string   `json:",omitempty"`
-	StateDir            string   `json:",omitempty"`
-	GuestTLSDir         string   `json:",omitempty"`
-	PDSPrivateKeyHex    string   `json:",omitempty"`
-	BobPDSPrivateKeyHex string   `json:",omitempty"`
-	Bidders             []Bidder `json:",omitempty"`
-	DispatcherPort      int      `json:",omitempty"`
-	GuestTLSPort        int      `json:",omitempty"`
-	BaoPath             string   `json:",omitempty"`
-	VaultStateDir       string   `json:",omitempty"`
-	Firecracker         Firecracker
+	NetworkID           string `json:",omitempty"`
+	StateDir            string `json:",omitempty"`
+	GuestTLSDir         string `json:",omitempty"`
+	PDSPrivateKeyHex    string `json:",omitempty"`
+	BobPDSPrivateKeyHex string `json:",omitempty"`
+	DispatcherPort      int    `json:",omitempty"`
+	GuestTLSPort        int    `json:",omitempty"`
 }
 
-type Bidder struct {
-	Name   string `json:",omitempty"`
-	Handle string `json:",omitempty"`
+type MarketBidder struct {
+	StateDir         string `json:",omitempty"`
+	Handle           string `json:",omitempty"`
+	PdsUrl           string `json:",omitempty"`
+	PlcDirectoryUrl  string `json:",omitempty"`
+	IngressProxyHost string `json:",omitempty"`
+	RelayUrls        string `json:",omitempty"`
+	GuestTLSPort     int    `json:",omitempty"`
+	CABundle         string `json:",omitempty"`
+	Policy           string `json:",omitempty"`
+	Vault            BidderVault
+	Firecracker      Firecracker
+	ExtraArgs        string
+}
+
+type BidderVault struct {
+	Server    string `json:",omitempty"`
+	Client    string `json:",omitempty"`
+	KcpServer string `json:",omitempty"`
+	TokenFile string `json:",omitempty"`
+	KcpCAFile string `json:",omitempty"`
+	CA        string `json:",omitempty"`
+	ClientDir string `json:",omitempty"`
 }
 
 type Firecracker struct {
@@ -52,6 +68,7 @@ var valueTypes = map[string]func() reflect.Type{
 	"PermissionInventory": func() reflect.Type { return reflect.TypeOf(&PermissionInventory{}) },
 	"MarketIdentity":      func() reflect.Type { return reflect.TypeOf(&MarketIdentity{}) },
 	"MarketNetwork":       func() reflect.Type { return reflect.TypeOf(&MarketNetwork{}) },
+	"MarketBidder":        func() reflect.Type { return reflect.TypeOf(&MarketBidder{}) },
 }
 
 const (

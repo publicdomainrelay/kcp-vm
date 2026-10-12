@@ -8,6 +8,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/appctl"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/bootstrap"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devinstance"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostos"
@@ -98,6 +99,7 @@ func Run(ctx context.Context, cfg Config, m hostsvc.Manager) error {
 		go hostprocess.Supervise(ctx, HostProcessConfig(bcfg, rec, m, log))
 		go openbaoctl.Supervise(ctx, OpenBaoServerConfig(bcfg, rec, log))
 		go postgresctl.Run(ctx, PostgresConfig(bcfg, rec, log))
+		go appctl.Supervise(ctx, AppConfig(bcfg, rec, m, log))
 	}
 	if rec.Host && rec.AdminKubeconfig != "" {
 		go devinstance.RunHost(ctx, devinstance.HostConfig{Kubeconfig: rec.AdminKubeconfig, Manager: m, Own: devinstance.Prefixes(l.ID), Log: log})

@@ -36,6 +36,7 @@ type Service struct {
 	StateDir       string              `json:"stateDir"`
 	ServiceAccount string              `json:"serviceAccount"`
 	TLS            string              `json:"tls"`
+	Trust          []string            `json:"trust,omitempty"`
 	Args           []string            `json:"args"`
 	Env            map[string]string   `json:"env,omitempty"`
 	Permissions    *ServicePermissions `json:"permissions"`
@@ -123,6 +124,11 @@ func (s Service) Check(entries map[string]tsbundle.EntrySpec) error {
 	case TLSServe, TLSTrust, TLSNone:
 	default:
 		add("tls %q is not one of %s, %s, %s", s.TLS, TLSServe, TLSTrust, TLSNone)
+	}
+	for _, t := range s.Trust {
+		if !path.IsAbs(t) || strings.Contains(t, ",") {
+			add("trust names absolute PEM files without commas, got %q", t)
+		}
 	}
 	for k := range s.Env {
 		if slices.Contains(templateOwnedEnv, k) {
@@ -249,7 +255,11 @@ func (s Service) TemplateData(entries map[string]tsbundle.EntrySpec) (map[string
 		}
 		data[key] = text
 	}
-	for key, v := range map[string]any{"Args": args, "Env": env, "Preloads": preloads, "DenoFlags": flags, "Permissions": s.Permissions.wire()} {
+	trust := s.Trust
+	if trust == nil {
+		trust = []string{}
+	}
+	for key, v := range map[string]any{"Args": args, "Env": env, "Preloads": preloads, "DenoFlags": flags, "Permissions": s.Permissions.wire(), "Trust": trust} {
 		text, err := quoted(v)
 		if err != nil {
 			return nil, err

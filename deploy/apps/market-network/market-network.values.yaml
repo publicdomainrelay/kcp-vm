@@ -1,0 +1,7 @@
+bidder:
+  kind: MarketBidder
+  profile: market-network
+  policy: open
+gateway:
+  kind: Gateway
+  profile: market-network

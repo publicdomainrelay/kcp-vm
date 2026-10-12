@@ -23,7 +23,6 @@ const (
 	CoreName             = "socialweb-computer"
 	DropInName           = "socialweb-bootstrap.conf"
 	InstallFrontAddr     = "127.0.0.1:0"
-	NetworkBidderKey     = "b1"
 	PendingFrontURL      = "https://front.pending.invalid"
 )
 
@@ -52,14 +51,10 @@ type InstalledUnit struct {
 
 func DevApps(profile string, l devinstance.Layout) ([]table.App, error) {
 	switch profile {
-	case ProfileQuick:
+	case ProfileQuick, ProfileMarketNetwork:
 		return []table.App{table.Dev(l.Short, table.StoreSqlite)}, nil
 	case ProfileProdlike:
 		return []table.App{table.Dev(l.Short, table.StorePostgres)}, nil
-	case ProfileMarketNetwork:
-		child := table.App{Role: table.RoleBidder, Key: l.Short + "-" + NetworkBidderKey, Store: table.StoreSqlite,
-			Slots: []string{table.SlotA}, DevCore: true}
-		return []table.App{table.Dev(l.Short, table.StorePostgres), child}, nil
 	}
 	return nil, fmt.Errorf("bootstrap: unknown profile %q: want quick, prodlike or market-network", profile)
 }

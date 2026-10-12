@@ -1,0 +1,39 @@
+apiVersion: socialweb.computer/v1alpha1
+kind: OpenBaoServer
+metadata:
+  name: bidder
+spec:
+  asset:
+    name: bao
+    sha256: ""
+  clients:
+    - name: bidder
+      kvMount: bidder
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: bidder-vault
+  namespace: default
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: bidder-vault-read
+rules:
+  - apiGroups: ["socialweb.computer"]
+    resources: ["openbaoservers"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: bidder-vault-read
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: bidder-vault-read
+subjects:
+  - kind: ServiceAccount
+    name: bidder-vault
+    namespace: default

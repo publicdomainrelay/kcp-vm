@@ -1,0 +1,220 @@
+package appctl
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net"
+	"net/url"
+	"strings"
+
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+
+	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/manifests"
+)
+
+const (
+	BidderSet       = "market-bidder"
+	BidderComponent = "bidder"
+	BidderApp       = "market-bidder"
+	DefaultPolicy   = "open"
+)
+
+func fragment(items []string) (string, error) {
+	if len(items) == 0 {
+		return "", nil
+	}
+	var b strings.Builder
+	for _, it := range items {
+		q, err := json.Marshal(it)
+		if err != nil {
+			return "", err
+		}
+		b.WriteString(",")
+		b.Write(q)
+	}
+	return b.String(), nil
+}
+
+func portOf(rawURL string) (int, error) {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return 0, err
+	}
+	_, p, err := net.SplitHostPort(u.Host)
+	if err != nil {
+		return 0, fmt.Errorf("%s names no port", rawURL)
+	}
+	var n int
+	if _, err := fmt.Sscanf(p, "%d", &n); err != nil || n <= 0 {
+		return 0, fmt.Errorf("%s names no port", rawURL)
+	}
+	return n, nil
+}
+
+func BidderValues(spec v1alpha1.MarketBidderSpec, stateDir string) (manifests.MarketBidder, error) {
+	n := spec.Network
+	if n == nil {
+		return manifests.MarketBidder{}, errors.New("appctl: the MarketBidder names no network value; its composer or its profile sets spec.network")
+	}
+	if spec.Firecracker == nil {
+		return manifests.MarketBidder{}, errors.New("appctl: the MarketBidder names no provider (spec.firecracker)")
+	}
+	if n.GuestTlsUrl == "" {
+		return manifests.MarketBidder{}, errors.New("appctl: the network value names no guestTlsUrl; a bidder hands guests the dispatcher's TLS front")
+	}
+	tlsPort, err := portOf(n.GuestTlsUrl)
+	if err != nil {
+		return manifests.MarketBidder{}, fmt.Errorf("appctl: network guestTlsUrl: %w", err)
+	}
+	fc := spec.Firecracker
+	if len(fc.VmruntimeCommand) == 0 || fc.WorkRoot == "" {
+		return manifests.MarketBidder{}, errors.New("appctl: spec.firecracker names no workRoot or no vmruntimeCommand")
+	}
+	cmd, err := json.Marshal(fc.VmruntimeCommand)
+	if err != nil {
+		return manifests.MarketBidder{}, err
+	}
+	cmdArg, err := json.Marshal(string(cmd))
+	if err != nil {
+		return manifests.MarketBidder{}, err
+	}
+	exec, err := json.Marshal(fc.VmruntimeCommand[0])
+	if err != nil {
+		return manifests.MarketBidder{}, err
+	}
+	v := manifests.MarketBidder{StateDir: stateDir, Handle: spec.Identity.Handle, PdsUrl: spec.Identity.PdsUrl,
+		PlcDirectoryUrl: n.PlcDirectoryUrl, IngressProxyHost: n.IngressProxyHost, RelayUrls: strings.Join(n.RelayUrls, ","),
+		GuestTLSPort: tlsPort, CABundle: n.CaBundleRef, Policy: spec.Policy,
+		Firecracker: manifests.Firecracker{WorkRoot: fc.WorkRoot, VMRuntimeCommand: string(cmdArg), VMRuntimeExec: string(exec)}}
+	if v.Policy == "" {
+		v.Policy = DefaultPolicy
+	}
+	var extra []string
+	if len(n.FirehoseUrls) > 0 {
+		extra = append(extra, "--firehose-url", strings.Join(n.FirehoseUrls, ","))
+	}
+	if n.QrOrigin != "" {
+		extra = append(extra, "--qr-origin", n.QrOrigin)
+	}
+	opts, err := OptionArgs(BidderApp, spec.Options)
+	if err != nil {
+		return manifests.MarketBidder{}, err
+	}
+	extra = append(extra, opts...)
+	if v.ExtraArgs, err = fragment(extra); err != nil {
+		return manifests.MarketBidder{}, err
+	}
+	return v, nil
+}
+
+func ready(status v1alpha1.ApplicationStatus, msg string) v1alpha1.ApplicationStatus {
+	status.Phase, status.Message = v1alpha1.ApplicationPhaseReady, msg
+	return status
+}
+
+func (ctl *Controller) reconcileBidder(ctx context.Context, u *unstructured.Unstructured) error {
+	var o v1alpha1.MarketBidder
+	if err := fromUnstructured(u, &o); err != nil {
+		return err
+	}
+	owner := ownerOf(u)
+	ws := ctl.c.workspace() + ":" + ComponentWorkspace
+	st := v1alpha1.ApplicationStatus{ObservedGeneration: o.Generation, Profile: o.Spec.Profile}
+	if u.GetDeletionTimestamp() != nil {
+		left, err := ctl.deletePods(ctx, ws, owner, nil)
+		if err != nil {
+			return err
+		}
+		if left == 0 {
+			if left, err = ctl.deleteVaults(ctx, owner); err != nil {
+				return err
+			}
+		}
+		if left > 0 {
+			st.Phase, st.Message = v1alpha1.ApplicationPhaseDeleting, fmt.Sprintf("%d component(s) stopping", left)
+			return ctl.writeStatus(ctx, MarketBidderGVR, o.Name, st)
+		}
+		delete(ctl.applied, string(o.UID))
+		return ctl.setFinalizer(ctx, MarketBidderGVR, u, false)
+	}
+	if !hasFinalizer(u) {
+		if err := ctl.setFinalizer(ctx, MarketBidderGVR, u, true); err != nil {
+			return err
+		}
+	}
+	if ctl.applied[string(o.UID)] != o.Generation {
+		values, err := BidderValues(o.Spec, ComponentStateDir(ctl.c.Layout.StateDir, BidderComponent))
+		if err != nil {
+			st.Phase, st.Message = v1alpha1.ApplicationPhaseFailed, err.Error()
+			return ctl.writeStatus(ctx, MarketBidderGVR, o.Name, st)
+		}
+		st.Phase, st.Message = v1alpha1.ApplicationPhaseProvisioning, "applying its own OpenBaoServer and workspace"
+		ctl.writeStatus(ctx, MarketBidderGVR, o.Name, st)
+		if _, err := ctl.applyProfile(ctx, BidderSet, o.Spec.Profile, owner, false, &values); err != nil {
+			st.Message = err.Error()
+			return ctl.writeStatus(ctx, MarketBidderGVR, o.Name, st)
+		}
+		vault, err := ctl.bidderVault(ctx, o.Spec, values.StateDir)
+		if err != nil {
+			st.Message = "its vault and its PDS account: " + err.Error()
+			return ctl.writeStatus(ctx, MarketBidderGVR, o.Name, st)
+		}
+		values.Vault = vault
+		st.Message = "applying the " + o.Spec.Profile + " components"
+		ctl.writeStatus(ctx, MarketBidderGVR, o.Name, st)
+		pods, err := ctl.applyProfile(ctx, BidderSet, o.Spec.Profile, owner, true, &values)
+		if err != nil {
+			st.Phase, st.Message = v1alpha1.ApplicationPhaseProvisioning, err.Error()
+			return ctl.writeStatus(ctx, MarketBidderGVR, o.Name, st)
+		}
+		if _, err := ctl.deletePods(ctx, ws, owner, pods); err != nil {
+			return err
+		}
+		ctl.applied[string(o.UID)] = o.Generation
+		ctl.c.log().Info("applied a MarketBidder's components", "name", o.Name, "profile", o.Spec.Profile, "denopods", pods,
+			"plc", o.Spec.Network.PlcDirectoryUrl)
+	}
+	pods, err := ctl.ownedPods(ctx, ws, owner)
+	if err != nil {
+		return err
+	}
+	allReady := len(pods) > 0
+	for i := range pods {
+		v := podViewOf(ws, &pods[i])
+		st.Components = append(st.Components, v.component())
+		st.Listeners = append(st.Listeners, v.Listeners...)
+		allReady = allReady && v.Ready
+		if v.Name == BidderComponent {
+			if did, _ := ctl.runStatus(v.RunID)["did"].(string); did != "" {
+				st.Did = did
+			}
+		}
+	}
+	switch {
+	case allReady && st.Did != "":
+		st = ready(st, "every component is ready")
+	default:
+		st.Phase, st.Message = v1alpha1.ApplicationPhaseProvisioning, "waiting for the components to report ready and the bidder its did"
+	}
+	return ctl.writeStatus(ctx, MarketBidderGVR, o.Name, st)
+}
+
+func (ctl *Controller) reconcilePassive(kind v1alpha1.ApplicationKind) func(context.Context, *unstructured.Unstructured) error {
+	gvr, _ := GVRFor(kind)
+	item := map[v1alpha1.ApplicationKind]string{
+		v1alpha1.ApplicationKindMarketRequester: "0008 M4-RUN-REQUEST (the requester DenoPod and its ComputeContracts)",
+		v1alpha1.ApplicationKindGateway:         "0006 M3-SERVE-GATEWAY-KCP and 0008 M3-DOOR-DENOPOD (the door DenoPod and the gateway's Go members)",
+	}[kind]
+	return func(ctx context.Context, u *unstructured.Unstructured) error {
+		if u.GetDeletionTimestamp() != nil {
+			return ctl.setFinalizer(ctx, gvr, u, false)
+		}
+		gen, _, _ := unstructured.NestedInt64(u.Object, "metadata", "generation")
+		profile, _, _ := unstructured.NestedString(u.Object, "spec", "profile")
+		st := v1alpha1.ApplicationStatus{ObservedGeneration: gen, Profile: profile, Components: []v1alpha1.ApplicationComponent{}}
+		return ctl.writeStatus(ctx, gvr, u.GetName(), ready(st, "this application's own kcp holds its root object; its components land with "+item))
+	}
+}

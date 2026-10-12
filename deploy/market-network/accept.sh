@@ -1,53 +1,51 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Live acceptance for the AT Protocol market example, as one market network of
-# possibly several on this host.
+# Live acceptance of one market network, of possibly several on this host.
 #
-# A market network is a fully isolated atproto network: its own dev instance
-# (socialweb-computer dev up: kine, kcp and the core, whose in-process deno
-# runtime reconciles every DenoPod), its own OpenBao, a fake PLC, a relay, the
-# dispatcher and its TLS front, two PDSes, MARKET_NETWORK_BIDDERS firecracker
-# bidders and a host-side requester that rents a guest through the RFP flow
-# (runComputeContract -> RFP -> bid -> accept -> cloud-init). It exits 0 only
-# when every check passed.
+# A market network is a MarketNetwork application: `socialweb-computer dev up
+# --profile market-network` brings up its own dev instance (kine, kcp and the
+# core) and applies its root object. The core's application controller runs the
+# shared atproto services (PLC, relay, dispatcher and its TLS front, two PDSes,
+# the verifier) as DenoPods of the network's own kcp, an OpenBao for their
+# certificates as a HostProcess, and composes MARKET_NETWORK_BIDDERS MarketBidder
+# child applications. Each child runs its own kcp (its bootstrap layer is
+# HostProcess objects in the network's kcp, root:dev:<child>) and learns the
+# network only from the MarketNetwork value the composer copies onto its root
+# object. A host-side requester then rents a guest through the RFP flow
+# (runComputeContract -> RFP -> bid -> accept -> cloud-init) and releases it.
+# It exits 0 only when every check passed.
 #
-# Nothing a market network starts has a fixed port. kcp, kine and OpenBao bind 0 and are
-# read back; every service binds 0 and is read back from its DenoPod's
-# status.listeners and status.address. Everything a market network owns hangs off MARKET_NETWORK_ID:
+# Nothing a market network starts has a fixed port: every listener binds 0 and
+# is read back from kcp status. Everything a market network owns hangs off
+# MARKET_NETWORK_ID:
 #
-#   MARKET_NETWORK_DIR       $MARKET_NETWORK_STATE/market-networks/$MARKET_NETWORK_ID  (the dev instance
-#                 under dev/, OpenBao, keys, guest CA, per-pod state, market-network.json)
-#   market-network.json      every bound port and pid, the kcp/kine/OpenBao endpoints, the
-#                 bidders' DIDs, timings and readings
-#   FC_WORK_ROOT  /var/tmp/swc-$MARKET_NETWORK_ID, each guest's user_data and record,
-#                 symlinked as MARKET_NETWORK_DIR/guests
-#   guests        VM units of the bidders' handles (internal vm list); teardown stops them
-#   slot          flock on $MARKET_NETWORK_SLOT_DIR/<i>.lock, i < SWC_MARKET_NETWORK_SLOTS, held for
-#                 the market network's lifetime, refused below the free-memory budget
+#   MARKET_NETWORK_DIR       $MARKET_NETWORK_STATE/market-networks/$MARKET_NETWORK_ID
+#   market-network.json      every bound port and pid, the kcp endpoints, the
+#                            children's kcps, the bidders' DIDs, timings, readings
+#   FC_WORK_ROOT             /var/tmp/swc-$MARKET_NETWORK_ID
+#   guests                   VM units of the bidders' handles (internal vm list); teardown stops them
+#   slot                     flock on $MARKET_NETWORK_SLOT_DIR/<i>.lock
 #
 # MARKET_NETWORK_ID            [a-z0-9]{1,12} (default 8 random hex)
 # MARKET_NETWORK_STATE         default $TASK_STATE_DIR, else $XDG_STATE_HOME/swc-market-networks
-# MARKET_NETWORK_BIDDERS       bidders in this market network (default 1)
+# MARKET_NETWORK_BIDDERS       bidder child applications (default 1)
+# MARKET_NETWORK_GATEWAY       1 also composes a Gateway child application
 # MARKET_NETWORK_GUESTS        guests this market network may hold at once, for the memory budget (default 1)
 # SWC_MARKET_NETWORK_SLOTS     market networks this host runs at once (default 4)
 # MARKET_NETWORK_SLOT_DIR      default /var/tmp/socialweb-market-network-slots
-# MARKET_NETWORK_SLOT          a slot the caller already holds (MARKET_NETWORK_SLOT_HELD=1): skip taking one
-# MARKET_NETWORK_BASE_MIB      memory budget of a market network without guests (default 3072)
+# MARKET_NETWORK_SLOT          a slot the caller already holds (MARKET_NETWORK_SLOT_HELD=1)
+# MARKET_NETWORK_BASE_MIB      memory budget of the network without children (default 3072)
+# MARKET_NETWORK_CHILD_MIB     memory budget of one child application (default 768)
 # MARKET_NETWORK_GUEST_MIB     memory budget of one guest (default 2560)
-# MARKET_NETWORK_RECORD_OUT    copy the final market-network.json here before the market network directory goes
-# KEEP_ACCEPT_ROOT  1 keeps MARKET_NETWORK_DIR (logs, run directories) after the run
-# FC_VMRUNTIME_COMMAND required: JSON argv of `socialweb-computer internal vm {verb}`
-#                   with its options; every guest is a VM unit of the Linux VM
-#                   runtime (swc-userns-stage -> pasta -> firecracker, pinned image)
-# SOCIALWEB_KCP_PATH, SOCIALWEB_KINE_PATH, SOCIALWEB_DENO_PATH  the kcp, kine and
-#                   pinned deno the dev instance runs (default: found on PATH)
-#
-# OpenBao starts first, so the core's deno runtime is given its address when
-# dev up places the core; every DenoPod's serving certificate comes from it.
+# MARKET_NETWORK_RECORD_OUT    copy the final market-network.json here
+# KEEP_ACCEPT_ROOT  1 keeps MARKET_NETWORK_DIR after the run
+# SOCIALWEB_KCP_PATH, SOCIALWEB_KINE_PATH, SOCIALWEB_DENO_PATH, SOCIALWEB_BAO_PATH
+#                   the kcp, kine, pinned deno and bao the instance runs (default: PATH)
+# FC_VMRUNTIME_COMMAND required: JSON argv of `socialweb-computer internal vm {verb}` with its
+#                   options; every guest is a VM unit of the Linux VM runtime
 
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
-DENOKCP_DIR=$REPO/deploy/denokcp
 MARKET_DIR=$(cd "$(dirname "$0")" && pwd)
 MARKET_NETWORK_STATE=${MARKET_NETWORK_STATE:-${TASK_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/swc-market-networks}}
 MARKET_NETWORK_ID=${MARKET_NETWORK_ID:-$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n')}
@@ -59,51 +57,45 @@ MARKET_NETWORK_DIR=${ACCEPT_ROOT:-$MARKET_NETWORK_STATE/market-networks/$MARKET_
 ACCEPT_ROOT=$MARKET_NETWORK_DIR
 MARKET_NETWORK_JSON=$MARKET_NETWORK_DIR/market-network.json
 MARKET_NETWORK_BIDDERS=${MARKET_NETWORK_BIDDERS:-1}
+MARKET_NETWORK_GATEWAY=${MARKET_NETWORK_GATEWAY:-0}
 MARKET_NETWORK_GUESTS=${MARKET_NETWORK_GUESTS:-1}
 SWC_MARKET_NETWORK_SLOTS=${SWC_MARKET_NETWORK_SLOTS:-4}
 MARKET_NETWORK_SLOT_DIR=${MARKET_NETWORK_SLOT_DIR:-/var/tmp/socialweb-market-network-slots}
 MARKET_NETWORK_BASE_MIB=${MARKET_NETWORK_BASE_MIB:-3072}
+MARKET_NETWORK_CHILD_MIB=${MARKET_NETWORK_CHILD_MIB:-768}
 MARKET_NETWORK_GUEST_MIB=${MARKET_NETWORK_GUEST_MIB:-2560}
 MARKET_NETWORK_RECORD_OUT=${MARKET_NETWORK_RECORD_OUT:-}
 KUBECTL=${KUBECTL:-kubectl}
 WAIT_SECONDS=${WAIT_SECONDS:-240}
+NETWORK_SECONDS=${NETWORK_SECONDS:-900}
 SETTLE_SECONDS=${SETTLE_SECONDS:-10}
-# How long the EXIT trap waits for the deleted DenoPods to go away before it
-# takes the dev instance down.
-DELETE_SECONDS=${DELETE_SECONDS:-60}
 KEEP_ACCEPT_ROOT=${KEEP_ACCEPT_ROOT:-0}
 FC_WORK_ROOT=${FC_WORK_ROOT:-/var/tmp/swc-$MARKET_NETWORK_ID}
 if [ -z "${FC_VMRUNTIME_COMMAND:-}" ]; then
   echo "FC_VMRUNTIME_COMMAND is required: the JSON argv of socialweb-computer internal vm {verb} with its options" >&2
   exit 2
 fi
-# How long the requester waits for the guest to report onNetwork, how long the
-# whole contract may take, and how long a released guest's VM unit may
-# take to go away.
 VM_READY_SECONDS=${VM_READY_SECONDS:-900}
 MARKET_SECONDS=${MARKET_SECONDS:-1500}
 GUEST_GONE_SECONDS=${GUEST_GONE_SECONDS:-180}
-GUEST_TLS_DIR=${GUEST_TLS_DIR:-$MARKET_NETWORK_DIR/guest-tls}
 
-WORKSPACES="global relay alice bob"
 BIDDERS=$(seq -f 'bidder-%g' 1 "$MARKET_NETWORK_BIDDERS" | tr '\n' ' ')
 BIDDERS=${BIDDERS% }
 
 DEV_STATE=$MARKET_NETWORK_DIR/dev
-INSTANCE=market-network-$MARKET_NETWORK_ID
+INSTANCE=mn-$MARKET_NETWORK_ID
 KUBECONFIG_PATH=""
+NET_STATE=""
 RUNS_DIR=""
 CORE_LOG=""
 DEVSUP_PID=""
+SERVER=""
 KCACHE=$MARKET_NETWORK_DIR/.kubectl-cache
-OPENBAO_DIR=$MARKET_NETWORK_DIR/openbao
+STATUS_JSON=$MARKET_NETWORK_DIR/network-status.json
 MARKET_NETWORK_OWNED=0
 
 now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
-# market-network.json is rewritten whole on every change (write, then rename), so a reader
-# never sees half a record. Each argument is key.path=value; a value that
-# parses as JSON is stored as that, anything else as a string.
 network_set() {
   python3 - "$MARKET_NETWORK_JSON" "$@" <<'PY'
 import json, os, sys
@@ -145,6 +137,24 @@ print(node if not isinstance(node, (dict, list)) else json.dumps(node))
 PY
 }
 
+# One value out of the MarketNetwork object dev up reported and the checks
+# re-read: a dotted path, list elements selected by name (apps.bidder-1.did).
+status_get() {
+  python3 - "$STATUS_JSON" "$1" <<'PY'
+import json, sys
+try:
+    node = json.load(open(sys.argv[1]))
+    for part in sys.argv[2].split("."):
+        if isinstance(node, list):
+            node = next(x for x in node if x.get("name") == part)
+        else:
+            node = node[part]
+except Exception:
+    node = ""
+print(node if not isinstance(node, (dict, list)) else json.dumps(node))
+PY
+}
+
 mem_available_mib() {
   awk '/^MemAvailable:/ { print int($2 / 1024) }' /proc/meminfo
 }
@@ -157,12 +167,10 @@ if [ -s "$MARKET_NETWORK_JSON" ]; then
   fi
 fi
 
-# The slot comes before anything is started, and so does the memory check: a
-# market network refused here leaves nothing behind.
-need_mib=$(( MARKET_NETWORK_BASE_MIB + MARKET_NETWORK_GUESTS * MARKET_NETWORK_GUEST_MIB ))
+need_mib=$(( MARKET_NETWORK_BASE_MIB + MARKET_NETWORK_BIDDERS * MARKET_NETWORK_CHILD_MIB + MARKET_NETWORK_GUESTS * MARKET_NETWORK_GUEST_MIB ))
 avail_mib=$(mem_available_mib)
 if [ "$avail_mib" -lt "$need_mib" ]; then
-  echo "refused: MemAvailable is ${avail_mib} MiB and market network $MARKET_NETWORK_ID needs ${need_mib} MiB (${MARKET_NETWORK_BASE_MIB} MiB + ${MARKET_NETWORK_GUESTS} guest(s) x ${MARKET_NETWORK_GUEST_MIB} MiB)" >&2
+  echo "refused: MemAvailable is ${avail_mib} MiB and market network $MARKET_NETWORK_ID needs ${need_mib} MiB" >&2
   exit 3
 fi
 if [ "${MARKET_NETWORK_SLOT_HELD:-0}" = "1" ]; then
@@ -184,8 +192,7 @@ else
     exec 9>&-
   done
   if [ -z "$SLOT" ]; then
-    echo "refused: every one of the $SWC_MARKET_NETWORK_SLOTS market network slots under $MARKET_NETWORK_SLOT_DIR is held:" >&2
-    cat "$MARKET_NETWORK_SLOT_DIR"/*.lock >&2 2>/dev/null || true
+    echo "refused: every one of the $SWC_MARKET_NETWORK_SLOTS market network slots under $MARKET_NETWORK_SLOT_DIR is held" >&2
     exit 3
   fi
 fi
@@ -195,7 +202,7 @@ MARKET_NETWORK_OWNED=1
 rm -f "$MARKET_NETWORK_JSON"
 ln -sfn "$FC_WORK_ROOT" "$MARKET_NETWORK_DIR/guests"
 network_set "networkId=\"$MARKET_NETWORK_ID\"" "slot=$SLOT" "pid=$$" "startedAt=\"$(now)\"" "networkDir=\"$MARKET_NETWORK_DIR\"" \
-  "sourceRoot=\"$REPO\"" "fcWorkRoot=\"$FC_WORK_ROOT\"" "kubeconfig=\"$KUBECONFIG_PATH\"" \
+  "sourceRoot=\"$REPO\"" "fcWorkRoot=\"$FC_WORK_ROOT\"" "devInstance=\"$INSTANCE\"" \
   "readings.memAvailableMiBAtStart=$avail_mib" "readings.budgetMiB=$need_mib"
 
 KC() { "$KUBECTL" --kubeconfig="$KUBECONFIG_PATH" --cache-dir="$KCACHE" "$@"; }
@@ -206,135 +213,65 @@ exe_path() {
   [ -n "$p" ] && readlink -f "$p"
 }
 
+# The admin kubeconfig of a child application's own kcp: the network holds it
+# because the network created the child; the checks below read the child's
+# root object and its components through it.
+child_kubeconfig() {
+  echo "$NET_STATE/apps/dev/$(status_get "status.apps.$1.instance")/kcp/admin.kubeconfig"
+}
+CKC() {
+  local app=$1
+  shift
+  "$KUBECTL" --kubeconfig="$(child_kubeconfig "$app")" --cache-dir="$KCACHE" "$@"
+}
+
 DEV_UP_STARTED=0
 dev_up() {
-  local report=$MARKET_NETWORK_DIR/dev-up.json
+  local report=$MARKET_NETWORK_DIR/dev-up.json gateway=()
   DEV_UP_STARTED=1
+  [ "$MARKET_NETWORK_GATEWAY" = "1" ] && gateway=(--with-gateway)
+  local rc=0
   SOCIALWEB_KCP_PATH=${SOCIALWEB_KCP_PATH:-$(exe_path kcp)} \
   SOCIALWEB_KINE_PATH=${SOCIALWEB_KINE_PATH:-$(exe_path kine)} \
   SOCIALWEB_DENO_PATH=${SOCIALWEB_DENO_PATH:-$(exe_path deno)} \
+  SOCIALWEB_BAO_PATH=${SOCIALWEB_BAO_PATH:-$(exe_path bao)} \
   SOCIALWEB_COMPUTER_SOURCE_ROOT="$REPO" \
-    "$SOCIALWEB_COMPUTER" dev up --instance "$INSTANCE" --state-dir "$DEV_STATE" --profile quick \
-      --host-backend proc --openbao-addr "http://$OPENBAO_ADDR" --openbao-token-file "$OPENBAO_DIR/token" \
-      --ready-timeout "${WAIT_SECONDS}s" >"$report"
-  KUBECONFIG_PATH=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["adminKubeconfig"])' "$report")
+    "$SOCIALWEB_COMPUTER" dev up --instance "$INSTANCE" --state-dir "$DEV_STATE" --profile market-network \
+      --bidders "$MARKET_NETWORK_BIDDERS" "${gateway[@]}" --app-values "$APP_VALUES" \
+      --host-backend proc --ready-timeout "${WAIT_SECONDS}s" --network-timeout "${NETWORK_SECONDS}s" \
+      >"$report" 2>"$MARKET_NETWORK_DIR/dev-up.log" || rc=$?
   local state
-  state=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["stateDir"])' "$report")
-  DEVSUP_PID=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["devsup"]["pid"])' "$report")
+  state=$DEV_STATE/dev/$INSTANCE
+  KUBECONFIG_PATH=$state/kcp/admin.kubeconfig
+  NET_STATE=$state
   RUNS_DIR=$state/denokcp/runs
   CORE_LOG=$state/logs/core.log
-  network_set "kubeconfig=\"$KUBECONFIG_PATH\"" "devInstance=\"$INSTANCE\"" "devStateDir=\"$state\"" \
-    "processes.devsup.pid=$DEVSUP_PID" \
-    "processes.kcp.address=\"$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["kcpURL"])' "$report")\"" \
-    "processes.kine.address=\"$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["kineURL"])' "$report")\""
+  DEVSUP_PID=$(python3 -c 'import json,sys
+try:
+    print(json.load(open(sys.argv[1]))["devsup"]["pid"])
+except Exception:
+    print("")' "$report")
+  if [ -z "$DEVSUP_PID" ]; then
+    DEVSUP_PID=$(python3 -c 'import json,sys
+try:
+    print(json.load(open(sys.argv[1]))["pid"])
+except Exception:
+    print("")' "$state/sup/devsup.json" 2>/dev/null || true)
+  fi
+  network_set "kubeconfig=\"$KUBECONFIG_PATH\"" "devStateDir=\"$state\"" "processes.devsup.pid=${DEVSUP_PID:-0}" \
+    "timings.devUpExit=$rc"
+  return "$rc"
 }
 
 dev_down() {
   [ "$DEV_UP_STARTED" = "1" ] || return 0
   local keep=()
   [ "$KEEP_ACCEPT_ROOT" = "1" ] && keep=(--keep-state)
-  "$SOCIALWEB_COMPUTER" dev down --instance "$INSTANCE" --state-dir "$DEV_STATE" "${keep[@]}" >"$MARKET_NETWORK_DIR/dev-down.json" 2>&1 || {
+  "$SOCIALWEB_COMPUTER" dev down --instance "$INSTANCE" --state-dir "$DEV_STATE" "${keep[@]}" >"$MARKET_NETWORK_DIR/dev-down.json" 2>"$MARKET_NETWORK_DIR/dev-down.log" || {
     echo "dev down of $INSTANCE failed:" >&2
-    tail -n 20 "$MARKET_NETWORK_DIR/dev-down.json" >&2 || true
+    tail -n 20 "$MARKET_NETWORK_DIR/dev-down.log" >&2 || true
   }
   DEV_UP_STARTED=0
-}
-
-BAO_PATH=${BAO_PATH:-$(command -v bao || true)}
-HOSTPROCESSES_PID=""
-HOSTPROCESSES_LOG=$MARKET_NETWORK_DIR/hostprocesses.log
-HOSTPROCESSES_UNIT_PREFIX=socialweb-hp-$MARKET_NETWORK_ID-
-
-start_hostprocesses() {
-  "$SOCIALWEB_COMPUTER" internal hostprocesses --host-backend systemd-user --instance "$MARKET_NETWORK_ID" \
-    --state-dir "$MARKET_NETWORK_DIR/hostprocesses" --kcp-kubeconfig "$KUBECONFIG_PATH" \
-    --kcp-base-workspace root:bob --bao-path "$BAO_PATH" >>"$HOSTPROCESSES_LOG" 2>&1 &
-  HOSTPROCESSES_PID=$!
-  network_set "processes.hostprocesses.pid=$HOSTPROCESSES_PID"
-}
-
-# The OpenBaoServers go first, while their controller runs: it deletes each
-# server's HostProcess and the supervisor stops the unit. Whatever unit of this
-# market network is still loaded after that is stopped by name.
-stop_hostprocesses() {
-  local deadline units
-  if [ -n "${SERVER:-}" ] && [ -n "$HOSTPROCESSES_PID" ]; then
-    KC --server="$SERVER/clusters/root:bob" delete openbaoservers --all --ignore-not-found --wait=false >/dev/null 2>&1 || true
-    deadline=$(( $(date +%s) + DELETE_SECONDS ))
-    while [ -n "$(KC --server="$SERVER/clusters/root:bob" get hostprocesses -o name 2>/dev/null || true)" ]; do
-      [ "$(date +%s)" -ge "$deadline" ] && break
-      sleep 2
-    done
-  fi
-  if [ -n "$HOSTPROCESSES_PID" ] && kill -0 "$HOSTPROCESSES_PID" 2>/dev/null; then
-    kill "$HOSTPROCESSES_PID" 2>/dev/null || true
-    wait "$HOSTPROCESSES_PID" 2>/dev/null || true
-  fi
-  HOSTPROCESSES_PID=""
-  units=$(systemctl --user list-units --all --plain --no-legend "${HOSTPROCESSES_UNIT_PREFIX}*" 2>/dev/null | awk '{print $1}')
-  for u in $units; do
-    systemctl --user stop "$u" >/dev/null 2>&1 || true
-    systemctl --user reset-failed "$u" >/dev/null 2>&1 || true
-  done
-}
-
-denopod_exists_any() {
-  local ws names
-  for ws in $WORKSPACES; do
-    names=$(KC --server="$SERVER/clusters/root:$ws" get denopods -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || true)
-    if [ -n "$names" ]; then
-      return 0
-    fi
-  done
-  return 1
-}
-
-openbao_ready_any() {
-  local ws
-  for ws in $WORKSPACES; do
-    if [ "$(KC --server="$SERVER/clusters/root:$ws" get openbao openbao -o jsonpath='{.status.ready}' 2>/dev/null || true)" = "true" ]; then
-      return 0
-    fi
-  done
-  return 1
-}
-
-# Delete every DenoPod in every workspace through kcp first -- the
-# denopod.deno.computer/run finalizer, which the deno runtime puts on every
-# DenoPod, stops each process, and it only runs while the core is up -- wait,
-# bounded, for the objects to disappear, and only then take the dev instance
-# down (which also kills whatever is left of the core's deno processes). This
-# does nothing when the cluster was never reached, so it never touches a kcp it
-# did not start.
-delete_workloads() {
-  [ -n "${SERVER:-}" ] || return 0
-  local ws deadline
-  for ws in $WORKSPACES; do
-    KC --server="$SERVER/clusters/root:$ws" delete denopods --all --ignore-not-found --wait=false >/dev/null 2>&1 || true
-  done
-  deadline=$(( $(date +%s) + DELETE_SECONDS ))
-  while denopod_exists_any; do
-    if [ "$(date +%s)" -ge "$deadline" ]; then
-      echo "workloads did not disappear within ${DELETE_SECONDS}s; taking the dev instance down anyway" >&2
-      return 0
-    fi
-    sleep 2
-  done
-}
-
-own_guest_dirs() {
-  [ -d "$FC_WORK_ROOT" ] || return 0
-  find "$FC_WORK_ROOT" -mindepth 1 -maxdepth 1 -type d -name 'fc-*' -printf '%f\n' | sort
-}
-
-# The bed reaches the VM runtime with the same argv its bidders use, {verb}
-# replaced, so it sees exactly the units and work dirs they started.
-vmruntime() {
-  local verb=$1 handle=$2
-  shift 2
-  local argv
-  mapfile -t argv < <(jq -r --arg v "$verb" '.[] | if . == "{verb}" then $v else . end' <<<"$FC_VMRUNTIME_COMMAND")
-  "${argv[@]}" --handle "$handle" "$@"
 }
 
 own_vm_entries() {
@@ -351,11 +288,23 @@ own_vm_pids() {
   done | tr '\n' ' '
 }
 
+own_guest_dirs() {
+  [ -d "$FC_WORK_ROOT" ] || return 0
+  find "$FC_WORK_ROOT" -mindepth 1 -maxdepth 1 -type d -name 'fc-*' -printf '%f\n' | sort
+}
+
+vmruntime() {
+  local verb=$1 handle=$2
+  shift 2
+  local argv
+  mapfile -t argv < <(jq -r --arg v "$verb" '.[] | if . == "{verb}" then $v else . end' <<<"$FC_VMRUNTIME_COMMAND")
+  "${argv[@]}" --handle "$handle" "$@"
+}
+
 stop_own_guests() {
   local b n
   for b in $BIDDERS; do
     for n in $(vmruntime list "$b.bob.test" 2>/dev/null | jq -r '.[]?.name' 2>/dev/null); do
-      echo "stopping VM $n of $b, left behind by this market network" >&2
       vmruntime stop "$b.bob.test" "$n" >/dev/null 2>&1 || true
     done
   done
@@ -375,20 +324,16 @@ descendants_of() {
     }'
 }
 
+network_pids() {
+  [ -n "$DEVSUP_PID" ] || return 0
+  descendants_of "$DEVSUP_PID"
+}
+
 rss_kib_of() {
   local pids
   pids=$(echo $1 | tr ' ' ',')
   [ -n "$pids" ] || { echo 0; return; }
   ps -o rss= -p "$pids" 2>/dev/null | awk '{ s += $1 } END { print s + 0 }'
-}
-
-# Every pid in this market network: devsup and all its descendants (kine, kcp,
-# the core, the pod scripts and the services they run) and OpenBao.
-network_pids() {
-  local roots=""
-  [ -n "$DEVSUP_PID" ] && roots="$DEVSUP_PID"
-  [ -s "$OPENBAO_DIR/bao.pid" ] && roots="$roots $(cat "$OPENBAO_DIR/bao.pid")"
-  descendants_of "$roots"
 }
 
 network_rss_kib() {
@@ -450,7 +395,7 @@ try:
     r = json.load(open(sys.argv[1]))
 except Exception:
     r = {}
-for group in ("processes", "services"):
+for group in ("processes", "services", "apps"):
     for v in (r.get(group) or {}).values():
         if isinstance(v, dict) and v.get("port"):
             print(v["port"])
@@ -475,22 +420,11 @@ cleanup() {
     exit "$status"
   fi
   stop_sampler
-  delete_workloads
-  stop_hostprocesses
+  network_set "timings.downStarted=\"$(now)\"" || true
   dev_down
+  network_set "timings.downFinished=\"$(now)\"" || true
   stop_own_guests
-  if [ -s "$OPENBAO_DIR/bao.pid" ]; then
-    local bao_pid
-    bao_pid=$(cat "$OPENBAO_DIR/bao.pid")
-    if [ -n "$bao_pid" ] && kill -0 "$bao_pid" 2>/dev/null; then
-      kill "$bao_pid" 2>/dev/null || true
-      for _ in $(seq 1 40); do kill -0 "$bao_pid" 2>/dev/null || break; sleep 0.25; done
-    fi
-  fi
   rm -rf "$FC_WORK_ROOT" 2>/dev/null || true
-  if [ -e "$FC_WORK_ROOT" ]; then
-    echo "guest work root $FC_WORK_ROOT could not be removed" >&2
-  fi
   for _ in $(seq 1 20); do pgrep -f -- "$MARKET_NETWORK_DIR" >/dev/null 2>&1 || break; sleep 0.5; done
   teardown_report || true
   network_set "finishedAt=\"$(now)\"" "exitStatus=$status" || true
@@ -517,9 +451,6 @@ on_signal() {
 }
 trap on_signal INT TERM
 
-# Long steps run as a background job the shell waits on, because bash defers a
-# trapped signal until a foreground child returns: a market network told to stop while
-# apply.sh or the requester runs would otherwise keep running until it does.
 run_fg() {
   "$@" &
   FG_PID=$!
@@ -529,10 +460,21 @@ run_fg() {
   return "$rc"
 }
 
-echo "market network: $MARKET_NETWORK_ID  slot: $SLOT  dir: $MARKET_NETWORK_DIR"
-echo "guest work root: $FC_WORK_ROOT  bidders: $BIDDERS"
+echo "market network: $MARKET_NETWORK_ID  instance: $INSTANCE  slot: $SLOT  dir: $MARKET_NETWORK_DIR"
+echo "guest work root: $FC_WORK_ROOT  bidders: $BIDDERS  gateway: $MARKET_NETWORK_GATEWAY"
 echo "memory: ${avail_mib} MiB available, market network budget ${need_mib} MiB"
 
+
+# Every bidder child gets the same provider inputs: the VM runtime command and
+# the guest work root. They reach each bidder only as fields of its MarketBidder
+# root object, which the network composes from these values.
+APP_VALUES=$MARKET_NETWORK_DIR/app-values.yaml
+python3 - "$APP_VALUES" "$FC_WORK_ROOT" "$FC_VMRUNTIME_COMMAND" <<'PY'
+import json, sys
+out, work, vmruntime = sys.argv[1:]
+with open(out, "w") as f:
+    json.dump({"bidder": {"firecracker": {"workRoot": work, "vmruntimeCommand": json.loads(vmruntime)}}}, f, indent=2)
+PY
 
 echo
 echo "== socialweb-computer =="
@@ -544,53 +486,17 @@ fi
 echo "binary: $SOCIALWEB_COMPUTER"
 
 echo
-echo "== openbao =="
-OPENBAO_DIR="$OPENBAO_DIR" bash "$DENOKCP_DIR/start-openbao.sh"
-OPENBAO_ADDR=$(cat "$OPENBAO_DIR/bao.addr")
-(umask 077 && printf '%s\n' "${OPENBAO_TOKEN:-root}" >"$OPENBAO_DIR/token")
-network_set "processes.openbao.pid=$(cat "$OPENBAO_DIR/bao.pid")" "processes.openbao.port=${OPENBAO_ADDR##*:}" \
-  "processes.openbao.address=\"$OPENBAO_ADDR\""
-
-echo
-echo "== dev instance =="
-dev_up
-SERVER=$(KC config view --minify -o jsonpath='{.clusters[0].cluster.server}')
+echo "== dev up --profile market-network =="
+network_set "timings.devUpStarted=\"$(now)\""
+up_status=0
+dev_up || up_status=$?
+network_set "timings.devUpFinished=\"$(now)\""
+SERVER=$(KC config view --minify -o jsonpath='{.clusters[0].cluster.server}' 2>/dev/null || true)
 SERVER=${SERVER%%/clusters/*}
-network_set "timings.kcpReady=\"$(now)\""
-echo "instance: $INSTANCE  kcp: $SERVER  runs: $RUNS_DIR"
-"$SOCIALWEB_COMPUTER" apply --set denoruntime --kcp-kubeconfig "$KUBECONFIG_PATH" \
-  --wait-timeout "${WAIT_SECONDS}s" >"$MARKET_NETWORK_DIR/denoruntime-report.json"
-echo "the denoruntime set is applied (the core's deno runtime applies the same set as it starts)"
+KC get marketnetwork network -o json >"$STATUS_JSON" 2>/dev/null || echo '{}' >"$STATUS_JSON"
+echo "dev up exit=$up_status  kcp: $SERVER  phase: $(status_get status.phase)  $(status_get status.message)"
+tail -n 5 "$MARKET_NETWORK_DIR/dev-up.log" 2>/dev/null | cut -c1-300 || true
 
-echo
-echo "== bidder vaults =="
-# Each bidder's OpenBao is an OpenBaoServer in root:bob. This process runs the
-# HostProcess supervisor and the OpenBaoServer controller against root:bob of
-# this market network's kcp, and places each bao as a systemd user unit named
-# after the market network, so it outlives a bidder restart.
-start_hostprocesses
-echo "hostprocesses: pid $HOSTPROCESSES_PID, units ${HOSTPROCESSES_UNIT_PREFIX}*, log $HOSTPROCESSES_LOG"
-
-echo
-echo "== apply =="
-apply_status=0
-KUBECONFIG="$KUBECONFIG_PATH" \
-SOCIALWEB_COMPUTER="$SOCIALWEB_COMPUTER" \
-MARKET_NETWORK_ID="$MARKET_NETWORK_ID" \
-MARKET_NETWORK_DIR="$MARKET_NETWORK_DIR" \
-MARKET_NETWORK_BIDDERS="$MARKET_NETWORK_BIDDERS" \
-OPENBAO_DIR="$OPENBAO_DIR" \
-START_OPENBAO=0 \
-WAIT_SECONDS="$WAIT_SECONDS" \
-OPENBAO_WAIT_SECONDS="${OPENBAO_WAIT_SECONDS:-60}" \
-FC_WORK_ROOT="$FC_WORK_ROOT" \
-FC_VMRUNTIME_COMMAND="$FC_VMRUNTIME_COMMAND" \
-GUEST_TLS_DIR="$GUEST_TLS_DIR" \
-BAO_PATH="$BAO_PATH" \
-  run_fg bash "$MARKET_DIR/apply.sh" || apply_status=$?
-
-# apply.sh failing is not a reason to skip the checks: what came up and what did
-# not is the evidence, and it is read the same way either way.
 echo
 echo "== record =="
 
@@ -598,8 +504,6 @@ pod_field() {
   KC --server="$SERVER/clusters/root:$1" get denopod "$2" -o jsonpath="{.status.$3}" 2>/dev/null || true
 }
 
-# A pod's run directory is named by its status.runID; its state.json holds the
-# pid of the pod script, whose child is the service itself.
 record_pod() {
   local ws=$1 name=$2 address run pod_pid child=""
   address=$(pod_field "$ws" "$name" address)
@@ -615,62 +519,41 @@ record_pod() {
 }
 
 PODS=("global plc" "relay relay" "relay dispatcher" "relay dispatcher-tls" "alice pds" "bob pds")
-for b in $BIDDERS; do PODS+=("bob $b"); done
 for entry in "${PODS[@]}"; do
   set -- $entry
   record_pod "$1" "$2"
 done
 
-bidder_did() {
-  local run did
-  run=$(pod_field bob "$1" runID)
-  [ -n "$run" ] || return 0
-  [ -s "$RUNS_DIR/$run/status.json" ] || return 0
-  python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("did",""))' "$RUNS_DIR/$run/status.json" 2>/dev/null || true
-}
-
+APPS=$BIDDERS
+[ "$MARKET_NETWORK_GATEWAY" = "1" ] && APPS="$APPS gateway"
 BIDDER_DIDS=""
-bidders_json="["
-for b in $BIDDERS; do
-  did=""
-  for _ in $(seq 1 60); do
-    did=$(bidder_did "$b")
-    [ -n "$did" ] && break
-    sleep 2
-  done
-  address=$(pod_field bob "$b" address)
-  BIDDER_DIDS="${BIDDER_DIDS:+$BIDDER_DIDS,}$did"
-  bidders_json="$bidders_json{\"name\":\"$b\",\"did\":\"$did\",\"port\":${address##*:}},"
+for app in $APPS; do
+  kcp_url=$(status_get "status.apps.$app.kcpUrl")
+  network_set "apps.$app.instance=\"$(status_get "status.apps.$app.instance")\"" "apps.$app.kcpUrl=\"$kcp_url\"" \
+    "apps.$app.port=${kcp_url##*:}" "apps.$app.kcpRoot=\"$(status_get "status.apps.$app.kcpRoot")\"" \
+    "apps.$app.phase=\"$(status_get "status.apps.$app.phase")\"" "apps.$app.did=\"$(status_get "status.apps.$app.did")\""
 done
-bidders_json="${bidders_json%,}]"
-network_set "bidders=$bidders_json"
+for b in $BIDDERS; do
+  did=$(status_get "status.apps.$b.did")
+  BIDDER_DIDS="${BIDDER_DIDS:+$BIDDER_DIDS,}$did"
+done
+network_set "network=$(status_get status.network)"
 HOST_IP=${HOST_IP:-$(ip -4 route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p')}
 network_set "hostIp=\"$HOST_IP\""
-PLC_PORT=$(network_get "services.global/plc.port")
-DISPATCHER_PORT=$(network_get "services.relay/dispatcher.port")
-GUEST_TLS_PORT=$(network_get "services.relay/dispatcher-tls.port")
+PLC_URL=$(status_get status.network.plcDirectoryUrl)
+INGRESS_HOST=$(status_get status.network.ingressProxyHost)
+GUEST_TLS_URL=$(status_get status.network.guestTlsUrl)
+CA_BUNDLE=$(status_get status.network.caBundleRef)
+PLC_PORT=${PLC_URL##*:}
+DISPATCHER_PORT=${INGRESS_HOST##*:}
+GUEST_TLS_PORT=${GUEST_TLS_URL##*:}
 BOB_PDS_PORT=$(network_get "services.bob/pds.port")
-echo "plc=$PLC_PORT dispatcher=$DISPATCHER_PORT guest-tls=$GUEST_TLS_PORT bob-pds=$BOB_PDS_PORT bidders=$BIDDER_DIDS"
+echo "plc=$PLC_URL ingress=$INGRESS_HOST guest-tls=$GUEST_TLS_URL ca=$CA_BUNDLE bidders=$BIDDER_DIDS"
 network_set "readings.rssSteadyNetworkKiB=$(network_rss_kib)" "readings.pids=\"$(network_pids | sort -n | tr '\n' ' ')\""
 
 echo
 echo "== checks =="
 
-# The market CA -- the root every workspace's intermediate chains to -- read from
-# the PKI mount in OpenBao's root namespace. A workload serves its intermediate
-# alongside its leaf, so this one file is enough to verify any of the https
-# listeners below.
-CA_PEM=$MARKET_NETWORK_DIR/market-ca.pem
-if ! curl -sS --fail --header "X-Vault-Token: root" \
-    "http://$OPENBAO_ADDR/v1/pki/ca/pem" -o "$CA_PEM" 2>/dev/null || [ ! -s "$CA_PEM" ]; then
-  echo "could not read the market CA from http://$OPENBAO_ADDR/v1/pki/ca/pem; the https host checks below cannot verify the leaf" >&2
-fi
-
-# The status curl printed, and 000 exactly once when the fetch failed.
-# Verification stays on: the leaf is signed by the workspace's OpenBao
-# authority for the service's cluster-local name, which does not resolve on the
-# host, so the caller passes --cacert with the market CA and --resolve to the
-# loopback address and port the pod reported.
 http_code() {
   local code
   code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "$@" 2>/dev/null) || true
@@ -680,15 +563,15 @@ http_code() {
 RESULTS=()
 FAILED=0
 check() {
-  RESULTS+=("$(printf '%-36s %-4s %s' "$1" "$2" "$3")")
+  RESULTS+=("$(printf '%-40s %-4s %s' "$1" "$2" "$3")")
   network_set "checks.${1//[ .]/_}=\"$2\"" || true
   [ "$2" = "PASS" ] || FAILED=1
 }
 
-if [ "$apply_status" -eq 0 ]; then
-  check "apply.sh" PASS "exit=$apply_status"
+if [ "$up_status" -eq 0 ] && [ "$(status_get status.phase)" = "Ready" ]; then
+  check "dev up --profile market-network" PASS "exit=0 MarketNetwork Ready: $(status_get status.message)"
 else
-  check "apply.sh" FAIL "exit=$apply_status"
+  check "dev up --profile market-network" FAIL "exit=$up_status phase=$(status_get status.phase): $(status_get status.message)"
 fi
 
 for entry in "${PODS[@]}"; do
@@ -722,13 +605,34 @@ else
   check "denopod root:alice/verifier" FAIL "phase=${vphase:-missing}"
 fi
 
-# Every port the market network recorded is non-zero and its own: a market network whose services
-# reported nothing, or two of whose services claim one port, is not a market network.
+# No two applications share a kcp: the network and every child each report
+# their own kcp front and their own slot root.
+own_kcp=$(python3 - "$STATUS_JSON" "$SERVER" "$NET_STATE" <<'PY'
+import json, sys
+s = json.load(open(sys.argv[1])).get("status") or {}
+fronts = {sys.argv[2]: "network"}
+roots = {sys.argv[3] + "/kcp/slot-a": "network"}
+for a in s.get("apps") or []:
+    u, r = a.get("kcpUrl"), a.get("kcpRoot")
+    if not u or not r:
+        print(f"{a.get('name')} reports no kcp"); sys.exit()
+    if u in fronts or r in roots:
+        print(f"{a.get('name')} shares a kcp with {fronts.get(u) or roots.get(r)}"); sys.exit()
+    fronts[u], roots[r] = a["name"], a["name"]
+print("")
+PY
+)
+if [ -z "$own_kcp" ]; then
+  check "every application its own kcp" PASS "network $SERVER and $(echo $APPS | wc -w) children, distinct fronts and slot roots"
+else
+  check "every application its own kcp" FAIL "$own_kcp"
+fi
+
 record_problem=$(python3 - "$MARKET_NETWORK_JSON" <<'PY'
 import json, sys
 r = json.load(open(sys.argv[1]))
 owner = {}
-for group in ("processes", "services"):
+for group in ("processes", "services", "apps"):
     for name, v in (r.get(group) or {}).items():
         port = int(v.get("port") or 0)
         if group == "services" and port <= 0:
@@ -741,19 +645,12 @@ print("")
 PY
 )
 if [ -z "$record_problem" ]; then
-  check "market network record" PASS "every service reported its own port ($(python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); print(len(r.get("services",{})))' "$MARKET_NETWORK_JSON") services)"
+  check "market network record" PASS "every service and child reported its own port"
 else
   check "market network record" FAIL "$record_problem"
 fi
 
-ready=$(pod_field bob pds ready)
-if [ "$ready" = "true" ]; then
-  check "bob pds on its name" PASS "ready=true probe=kcpdns pds.default.bob.svc.kcp.local /xrpc/_health"
-else
-  check "bob pds on its name" FAIL "ready=${ready:-missing} probe=kcpdns pds.default.bob.svc.kcp.local /xrpc/_health"
-fi
-
-code=$(http_code --cacert "$CA_PEM" --resolve "pds.default.bob.svc.kcp.local:$BOB_PDS_PORT:127.0.0.1" \
+code=$(http_code --cacert "$CA_BUNDLE" --resolve "pds.default.bob.svc.kcp.local:$BOB_PDS_PORT:127.0.0.1" \
   "https://pds.default.bob.svc.kcp.local:$BOB_PDS_PORT/xrpc/_health")
 if [ "$code" = "200" ]; then
   check "bob pds on the host" PASS "GET https://pds.default.bob.svc.kcp.local:$BOB_PDS_PORT/xrpc/_health -> $code"
@@ -761,46 +658,75 @@ else
   check "bob pds on the host" FAIL "GET https://pds.default.bob.svc.kcp.local:$BOB_PDS_PORT/xrpc/_health -> $code"
 fi
 
+bidder_pod_field() {
+  CKC "$1" --server="$(status_get "status.apps.$1.kcpUrl")/clusters/root:app" get denopod bidder -o jsonpath="{$2}" 2>/dev/null || true
+}
+
 for b in $BIDDERS; do
-  ready=$(pod_field bob "$b" ready)
-  if [ "$ready" = "true" ]; then
-    check "$b on its name" PASS "ready=true probe=kcpdns $b.default.bob.svc.kcp.local /oauth-client-metadata.json"
+  rphase=$(CKC "$b" get marketbidder app -o jsonpath='{.status.phase}' 2>/dev/null || true)
+  rdid=$(CKC "$b" get marketbidder app -o jsonpath='{.status.did}' 2>/dev/null || true)
+  if [ "$rphase" = "Ready" ] && [ -n "$rdid" ]; then
+    check "$b root object" PASS "MarketBidder app in its own kcp: phase=Ready did=$rdid"
   else
-    check "$b on its name" FAIL "ready=${ready:-missing} probe=kcpdns $b.default.bob.svc.kcp.local"
+    check "$b root object" FAIL "phase=${rphase:-missing} did=${rdid:-none}"
   fi
-  port=$(network_get "services.bob/$b.port")
-  code=$(http_code "http://127.0.0.1:$port/oauth-client-metadata.json")
-  if [ "$code" = "200" ]; then
-    check "$b on the host" PASS "GET http://127.0.0.1:$port/oauth-client-metadata.json -> $code"
+  root_plc=$(CKC "$b" get marketbidder app -o jsonpath='{.spec.network.plcDirectoryUrl}' 2>/dev/null || true)
+  pod_plc=$(bidder_pod_field "$b" .spec.env.SERVICE_ARGS | python3 -c 'import json,sys
+try:
+    a = json.loads(sys.stdin.read())
+    print(a[a.index("--plc-directory-url") + 1])
+except Exception:
+    print("")')
+  if [ -n "$root_plc" ] && [ "$root_plc" = "$PLC_URL" ] && [ "$pod_plc" = "$root_plc" ]; then
+    check "$b plc from its root object" PASS "network value $PLC_URL = root spec.network.plcDirectoryUrl = its DenoPod's --plc-directory-url"
   else
-    check "$b on the host" FAIL "GET http://127.0.0.1:$port/oauth-client-metadata.json -> $code"
+    check "$b plc from its root object" FAIL "network=$PLC_URL root=${root_plc:-none} denopod=${pod_plc:-none}"
+  fi
+  phase=$(bidder_pod_field "$b" .status.phase)
+  ready=$(bidder_pod_field "$b" .status.ready)
+  listeners=$(bidder_pod_field "$b" '.status.listeners[*].address')
+  if [ "$phase" = "Running" ] && [ "$ready" = "true" ] && [ -n "$listeners" ]; then
+    check "$b denopod" PASS "root:app/bidder in its own kcp Running ready listeners=$listeners"
+  else
+    check "$b denopod" FAIL "phase=${phase:-missing} ready=${ready:-missing} listeners=${listeners:-none}"
+  fi
+  addr=$(bidder_pod_field "$b" '.status.listeners[?(@.kind=="tcp")].address')
+  code=$(http_code "http://${addr:-127.0.0.1:0}/oauth-client-metadata.json")
+  if [ "$code" = "200" ]; then
+    check "$b on the host" PASS "GET http://$addr/oauth-client-metadata.json -> $code"
+  else
+    check "$b on the host" FAIL "GET http://${addr:-none}/oauth-client-metadata.json -> $code"
   fi
 done
+if [ "$MARKET_NETWORK_GATEWAY" = "1" ]; then
+  gphase=$(CKC gateway get gateway app -o jsonpath='{.status.phase}' 2>/dev/null || true)
+  gplc=$(CKC gateway get gateway app -o jsonpath='{.spec.network.plcDirectoryUrl}' 2>/dev/null || true)
+  if [ "$gphase" = "Ready" ] && [ "$gplc" = "$PLC_URL" ]; then
+    check "gateway root object" PASS "Gateway app in its own kcp: phase=Ready network plc=$gplc"
+  else
+    check "gateway root object" FAIL "phase=${gphase:-missing} plc=${gplc:-none}"
+  fi
+fi
 
-# Each bidder signed in to the account apply.sh created for it on bob's PDS,
-# and its offering is listed by that PDS rather than by a repo of its own.
 bob_pds_get() {
-  curl -sS --max-time 10 --cacert "$CA_PEM" --resolve "pds.default.bob.svc.kcp.local:$BOB_PDS_PORT:127.0.0.1" \
+  curl -sS --max-time 10 --cacert "$CA_BUNDLE" --resolve "pds.default.bob.svc.kcp.local:$BOB_PDS_PORT:127.0.0.1" \
     "https://pds.default.bob.svc.kcp.local:$BOB_PDS_PORT/xrpc/$1" 2>/dev/null || true
 }
 for b in $BIDDERS; do
-  account=$(cat "$MARKET_NETWORK_DIR/state/bob-$b/account.did" 2>/dev/null || true)
-  did=$(bidder_did "$b")
+  did=$(status_get "status.apps.$b.did")
   offerings=$(bob_pds_get "com.atproto.repo.listRecords?repo=$did&collection=com.publicdomainrelay.temp.market.offering" \
     | python3 -c 'import json,sys
 try:
     print(len(json.load(sys.stdin).get("records") or []))
 except Exception:
     print(0)')
-  if [ -n "$account" ] && [ "$did" = "$account" ] && [ "${offerings:-0}" -gt 0 ]; then
+  if [ -n "$did" ] && [ "${offerings:-0}" -gt 0 ]; then
     check "$b account on bob pds" PASS "did=$did offerings on pds.default.bob=$offerings"
   else
-    check "$b account on bob pds" FAIL "account=${account:-none} bidder=${did:-none} offerings on pds.default.bob=${offerings:-0}"
+    check "$b account on bob pds" FAIL "did=${did:-none} offerings on pds.default.bob=${offerings:-0}"
   fi
 done
 
-# A pod that dies after startup passes a single read. Reading the long-running
-# pods again after a pause is what catches it.
 echo "waiting ${SETTLE_SECONDS}s, then reading the long-running pods again"
 sleep "$SETTLE_SECONDS"
 for entry in "${PODS[@]}"; do
@@ -814,41 +740,28 @@ for entry in "${PODS[@]}"; do
     check "still up root:$ws/$name" FAIL "phase=${phase:-missing} ready=${ready:-missing} after ${SETTLE_SECONDS}s"
   fi
 done
+for b in $BIDDERS; do
+  ready=$(bidder_pod_field "$b" .status.ready)
+  if [ "$ready" = "true" ]; then
+    check "still up $b" PASS "ready=true after ${SETTLE_SECONDS}s"
+  else
+    check "still up $b" FAIL "ready=${ready:-missing} after ${SETTLE_SECONDS}s"
+  fi
+done
 
 if [ -n "${ACCEPT_HOLD_DIR:-}" ]; then
   echo
   echo "== hold =="
   mkdir -p "$ACCEPT_HOLD_DIR"
-  # A door held against this market network keeps each in-flight claim's secrets-server
-  # key in the market network's own OpenBao, under a token that may touch nothing but
-  # secret/socialweb-door/claims/*.
-  DOOR_OPENBAO_TOKEN_FILE=$MARKET_NETWORK_DIR/door/openbao-token
-  mkdir -p "$MARKET_NETWORK_DIR/door"
-  door_bao() { BAO_ADDR="http://$OPENBAO_ADDR" BAO_TOKEN=root bao "$@"; }
-  if ! door_bao secrets list -format=json 2>/dev/null | grep -q '"secret/"'; then
-    door_bao secrets enable -path=secret kv-v2 >/dev/null
-  fi
-  door_bao policy write socialweb-door - >/dev/null <<'HCL'
-path "secret/data/socialweb-door/claims/*" {
-  capabilities = ["create", "read", "update", "delete"]
-}
-path "secret/metadata/socialweb-door/claims/*" {
-  capabilities = ["read", "list", "delete"]
-}
-HCL
-  door_bao token create -policy=socialweb-door -no-default-policy -ttl=24h -field=token >"$DOOR_OPENBAO_TOKEN_FILE.tmp"
-  chmod 0644 "$DOOR_OPENBAO_TOKEN_FILE.tmp"
-  mv "$DOOR_OPENBAO_TOKEN_FILE.tmp" "$DOOR_OPENBAO_TOKEN_FILE"
   {
     echo "ACCEPT_ROOT=$MARKET_NETWORK_DIR"
     echo "MARKET_NETWORK_ID=$MARKET_NETWORK_ID"
     echo "MARKET_NETWORK_JSON=$MARKET_NETWORK_JSON"
-    echo "CA_PEM=$CA_PEM"
-    echo "GUEST_TLS_DIR=$GUEST_TLS_DIR"
+    echo "CA_PEM=$CA_BUNDLE"
+    echo "GUEST_TLS_DIR=$NET_STATE/network/guest-tls"
     echo "FC_WORK_ROOT=$FC_WORK_ROOT"
     echo "BIDDER_DID=${BIDDER_DIDS%%,*}"
     echo "BIDDER_DIDS=$BIDDER_DIDS"
-    echo "BIDDER_STDOUT=$RUNS_DIR/$(pod_field bob bidder-1 runID)/stdout.txt"
     echo "PLC_PORT=$PLC_PORT"
     echo "DISPATCHER_PORT=$DISPATCHER_PORT"
     echo "GUEST_TLS_PORT=$GUEST_TLS_PORT"
@@ -858,11 +771,6 @@ HCL
     echo "CORE_LOG=$CORE_LOG"
     echo "KCP_SERVER=$SERVER"
     echo "RUNS_DIR=$RUNS_DIR"
-    echo "STATE_DIR=$MARKET_NETWORK_DIR/state"
-    echo "OPENBAO_ADDR=$OPENBAO_ADDR"
-    echo "DOOR_OPENBAO_TOKEN_FILE=$DOOR_OPENBAO_TOKEN_FILE"
-    echo "HOSTPROCESSES_LOG=$HOSTPROCESSES_LOG"
-    echo "HOSTPROCESSES_UNIT_PREFIX=$HOSTPROCESSES_UNIT_PREFIX"
     echo "CHECKS_FAILED=$FAILED"
   } >"$ACCEPT_HOLD_DIR/facts.env.tmp"
   mv "$ACCEPT_HOLD_DIR/facts.env.tmp" "$ACCEPT_HOLD_DIR/facts.env"
@@ -873,15 +781,15 @@ HCL
   echo "released after the hold"
 fi
 
-# socialweb-computer-kcp: one compute contract through the market network. A
-# requester on the host (market-requester/mod.ts, runComputeContract) sends a
-# signed RFP to the market network's bidders through the market network's dispatcher; they bid, the
-# requester accepts one, and the winner boots a firecracker guest from the
-# cloud-init user_data the requester composed. The guest reports onNetwork and
-# its ssh host keys through the market network's relay; the requester reaches it over iroh
-# with StrictHostKeyChecking=yes against the reported key, checks that a
-# known_hosts holding another key is refused, releases the contract with
-# vm.delete, and the guest's container and work directory must then be gone.
+# One compute contract through the market network: a host-side requester
+# (market-requester/mod.ts, runComputeContract; a requester child application
+# is 0008 M4-RUN-REQUEST) sends a signed RFP to the bidders the MarketNetwork
+# status names, they bid, the requester accepts one, and the winner boots a
+# guest from the cloud-init user_data the requester composed. The guest reports
+# onNetwork and its ssh host keys through the network's relay; the requester
+# reaches it over iroh with StrictHostKeyChecking=yes, checks that a known_hosts
+# holding another key is refused, releases the contract with vm.delete, and the
+# guest must then be gone.
 if [ -z "${ACCEPT_HOLD_DIR:-}" ]; then
 echo
 echo "== market contract =="
@@ -894,23 +802,23 @@ cp "$REPO/deno.lock" "$REQUESTER_LOCK"
 echo "bidders: ${BIDDER_DIDS:-unknown}  guests reach the dispatcher at: ${HOST_IP:-unknown}"
 market_status=0
 start_sampler
-if [ -n "$BIDDER_DIDS" ] && [ -n "$HOST_IP" ]; then
+if [ -n "${BIDDER_DIDS//,/}" ] && [ -n "$HOST_IP" ] && [ -n "$PLC_URL" ]; then
   market_started=$(date +%s)
   network_set "timings.requesterStarted=\"$(now)\""
   requester() {
-  (cd "$REPO/ts/atproto-market" && DENO_CERT="$CA_PEM" KCP_DNS_TABLE_FILE="$RUNS_DIR/.kcpdns/table.json" \
+  (cd "$REPO/ts/atproto-market" && DENO_CERT="$CA_BUNDLE" KCP_DNS_TABLE_FILE="$RUNS_DIR/.kcpdns/table.json" \
     exec timeout "$MARKET_SECONDS" \
     deno run -A --node-modules-dir=none --config "$REPO/deno.json" --lock="$REQUESTER_LOCK" \
       --preload "$RUNS_DIR/.kcpdns/shim.ts" \
       "$MARKET_DIR/market-requester/mod.ts" \
-      --plc-directory-url "https://127.0.0.1:$PLC_PORT" \
-      --ingress-proxy-host "relay.localhost:$DISPATCHER_PORT" \
+      --plc-directory-url "$PLC_URL" \
+      --ingress-proxy-host "$INGRESS_HOST" \
       --bidder-dids "$BIDDER_DIDS" \
       --guest-host-aliases "$HOST_IP relay.localhost" \
-      --guest-ca-file "$GUEST_TLS_DIR/ca.crt" \
+      --guest-ca-file "$NET_STATE/network/guest-tls/ca.crt" \
       --guest-curl-home /root \
       --guest-journal-to-console \
-      --guest-diagnose-url "https://relay.localhost:$GUEST_TLS_PORT/.well-known/did.json" \
+      --guest-diagnose-url "$GUEST_TLS_URL/.well-known/did.json" \
       --vm-ready-timeout-sec "$VM_READY_SECONDS" \
       --result-file "$MARKET_RESULT") >"$MARKET_LOG" 2>&1
   }
@@ -948,7 +856,7 @@ network_set "contract.winnerDid=\"$(field winnerDid)\"" "contract.bids=\"$(field
 receipt_uri=$(field receiptUri)
 receipt_repo=$(printf '%s' "$receipt_uri" | sed -n 's|^at://\([^/]*\)/\([^/]*\)/\([^/]*\)$|\1|p')
 receipt_rkey=$(printf '%s' "$receipt_uri" | sed -n 's|^at://\([^/]*\)/\([^/]*\)/\([^/]*\)$|\3|p')
-receipt_code=$(http_code --cacert "$CA_PEM" --resolve "pds.default.bob.svc.kcp.local:$BOB_PDS_PORT:127.0.0.1" \
+receipt_code=$(http_code --cacert "$CA_BUNDLE" --resolve "pds.default.bob.svc.kcp.local:$BOB_PDS_PORT:127.0.0.1" \
   "https://pds.default.bob.svc.kcp.local:$BOB_PDS_PORT/xrpc/com.atproto.repo.getRecord?repo=$receipt_repo&collection=com.publicdomainrelay.temp.market.receipt&rkey=$receipt_rkey")
 if [ -n "$receipt_rkey" ] && [ "$receipt_code" = "200" ]; then
   check "market receipt on bob pds" PASS "getRecord $receipt_uri -> $receipt_code"
@@ -970,27 +878,40 @@ done
 new_guests=${new_guests# }
 gone_deadline=$(( $(date +%s) + GUEST_GONE_SECONDS ))
 while :; do
-  alive=$(own_vm_entries)
+  alive=""
+  alive=$(own_vm_entries | tr ' ' '\n' | grep -c 'loaded=true' || true)
+  [ "$alive" = "0" ] && alive=""
   dirs=""
   for g in $new_guests; do [ -d "$FC_WORK_ROOT/$g" ] && dirs="$dirs $g"; done
-  [ -z "${alive// }" ] && [ -z "$dirs" ] && break
+  [ -z "$alive" ] && [ -z "$dirs" ] && break
   [ "$(date +%s)" -ge "$gone_deadline" ] && break
   sleep 2
 done
 stop_sampler
 network_set "contract.guests=\"$new_guests\""
 if [ -z "$new_guests" ]; then
-  check "market guest gone" FAIL "no guest of market network $MARKET_NETWORK_ID was seen"
-elif [ -z "${alive// }" ] && [ -z "$dirs" ]; then
-  check "market guest gone" PASS "$new_guests: no VM unit, no runtime work dir of $BIDDERS and no guest work dir $(( GUEST_GONE_SECONDS - (gone_deadline - $(date +%s)) ))s after release"
+  check "market guest gone" FAIL "no guest of market network $MARKET_NETWORK_ID was seen "
+elif [ -z "$alive" ] && [ -z "$dirs" ]; then
+  check "market guest gone" PASS "$new_guests: no VM unit loaded and no work dir after release"
 else
-  check "market guest gone" FAIL "VM runtime still holds:${alive:- none} guest work dirs left:${dirs:- none} after ${GUEST_GONE_SECONDS}s"
+  check "market guest gone" FAIL "still running:${alive:- none} work dirs left:${dirs:- none} after ${GUEST_GONE_SECONDS}s"
+fi
+if [ -n "${FC_VMRUNTIME_COMMAND:-}" ]; then
+  left=""
+  for b in $BIDDERS; do
+    left="$left$(vmruntime list "$b.bob.test" 2>&1 | jq -r '.[]? | "\(.unit) loaded=\(.loaded) workDir=\(.workDir // "-")"' 2>/dev/null | tr '\n' ' ')"
+  done
+  if [ -z "${left// }" ]; then
+    check "VM runtime left nothing" PASS "no VM unit and no runtime work dir of $BIDDERS"
+  else
+    check "VM runtime left nothing" FAIL "$left"
+  fi
 fi
 fi
 
 echo
 echo "results:"
-printf '  %-36s %-4s %s\n' "check" "result" "evidence"
+printf '  %-40s %-4s %s\n' "check" "result" "evidence"
 for line in "${RESULTS[@]}"; do
   echo "  $line"
 done
@@ -998,21 +919,7 @@ done
 if [ "$FAILED" -ne 0 ]; then
   echo
   echo "core log, tail of $CORE_LOG:"
-  tail -n 40 "$CORE_LOG" || true
-  echo
-  echo "status of the pods that are not Running and ready:"
-  for entry in "${PODS[@]}" "alice verifier"; do
-    set -- $entry
-    ws=$1; name=$2
-    phase=$(pod_field "$ws" "$name" phase)
-    ready=$(pod_field "$ws" "$name" ready)
-    if [ "$phase" = "Running" ] && [ "$ready" = "true" ] || [ "$phase" = "Succeeded" ]; then
-      continue
-    fi
-    echo "root:$ws $name:"
-    KC --server="$SERVER/clusters/root:$ws" get denopod "$name" -o jsonpath='{.status}' 2>&1 | sed 's/^/  /' || true
-    echo
-  done
+  tail -n 40 "$CORE_LOG" | cut -c1-400 || true
 fi
 
 echo

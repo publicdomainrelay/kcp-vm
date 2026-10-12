@@ -47,8 +47,29 @@
     },
     "profile": {
       "type": "string",
-      "description": "Dev profile: quick (kine on sqlite + one kcp slot) or prodlike (the gateway shape: a postgres unit, one kine per kcp slot on it, blue/green slots a and b behind the front); market-network lands with M2-APP-CONTROLLER",
+      "description": "Dev profile: quick (kine on sqlite + one kcp slot), prodlike (the gateway shape: a postgres unit, one kine per kcp slot on it, blue/green slots a and b behind the front) or market-network (a quick-shaped instance whose MarketNetwork root object runs the shared atproto services and composes child applications, each with its own kcp)",
       "env": "SOCIALWEB_DEV_PROFILE"
+    },
+    "bidders": {
+      "type": "number",
+      "description": "dev up --profile market-network: how many MarketBidder child applications the network composes (bidder-1 .. bidder-N), each with its own kcp",
+      "env": "SOCIALWEB_DEV_BIDDERS",
+      "default": 1
+    },
+    "with-gateway": {
+      "type": "boolean",
+      "description": "dev up --profile market-network: also compose a Gateway child application with its own kcp"
+    },
+    "app-values": {
+      "type": "string",
+      "description": "dev up --profile market-network: a YAML file merged over deploy/apps/market-network/market-network.values.yaml (keys bidder and gateway: the NetworkApp fields every bidder or the gateway gets, e.g. bidder.firecracker)",
+      "env": "SOCIALWEB_DEV_APP_VALUES"
+    },
+    "network-timeout": {
+      "type": "string",
+      "description": "dev up --profile market-network: how long dev up waits for the MarketNetwork and every child application to report Ready (Go duration)",
+      "env": "SOCIALWEB_DEV_NETWORK_TIMEOUT",
+      "default": "15m"
     },
     "parent": {
       "type": "string",

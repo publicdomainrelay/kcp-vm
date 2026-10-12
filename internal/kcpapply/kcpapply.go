@@ -51,10 +51,19 @@ const (
 )
 
 type Options struct {
-	DryRun      bool
-	WaitTimeout time.Duration
-	Poll        time.Duration
-	Log         *slog.Logger
+	DryRun       bool
+	WaitTimeout  time.Duration
+	Poll         time.Duration
+	FieldManager string
+	Labels       map[string]string
+	Log          *slog.Logger
+}
+
+func (a *Applier) fieldManager() string {
+	if a.opts.FieldManager != "" {
+		return a.opts.FieldManager
+	}
+	return FieldManager
 }
 
 type FieldChange struct {
@@ -318,6 +327,17 @@ func (a *Applier) applyOne(ctx context.Context, ri dynamic.ResourceInterface, u 
 	if u.GetKind() == schemaKind {
 		return a.applySchema(ctx, ri, u, live, c)
 	}
+	if len(a.opts.Labels) > 0 {
+		u = u.DeepCopy()
+		labels := u.GetLabels()
+		if labels == nil {
+			labels = map[string]string{}
+		}
+		for k, v := range a.opts.Labels {
+			labels[k] = v
+		}
+		u.SetLabels(labels)
+	}
 	if live == nil && u.GroupVersionKind().Group == tenancyv1alpha1.SchemeGroupVersion.Group && u.GetKind() == "Workspace" {
 		stamped, err := a.stampOwner(ctx, u)
 		if err != nil {
@@ -331,7 +351,7 @@ func (a *Applier) applyOne(ctx context.Context, ri dynamic.ResourceInterface, u 
 	}
 	force := true
 	got, err := ri.Patch(ctx, u.GetName(), types.ApplyPatchType, body,
-		metav1.PatchOptions{FieldManager: FieldManager, Force: &force, DryRun: a.dryRun()})
+		metav1.PatchOptions{FieldManager: a.fieldManager(), Force: &force, DryRun: a.dryRun()})
 	if err != nil {
 		return c, err
 	}
@@ -383,7 +403,7 @@ func (a *Applier) stampOwner(ctx context.Context, u *unstructured.Unstructured) 
 
 func (a *Applier) applySchema(ctx context.Context, ri dynamic.ResourceInterface, u, live *unstructured.Unstructured, c Change) (Change, error) {
 	if live == nil {
-		got, err := ri.Create(ctx, u, metav1.CreateOptions{FieldManager: FieldManager, DryRun: a.dryRun()})
+		got, err := ri.Create(ctx, u, metav1.CreateOptions{FieldManager: a.fieldManager(), DryRun: a.dryRun()})
 		if err != nil {
 			return c, err
 		}

@@ -18,6 +18,7 @@ spec:
     SERVICE_PERMISSIONS: {{.Permissions}}
     SERVICE_TLS: {{.TLS}}
     SERVICE_TLS_MODE: {{.TLSMode}}
+    SERVICE_TRUST_FILES: {{.Trust}}
   script: |
     const read = (key: string): string => Deno.env.get(key) ?? "";
     const parsed = <T>(key: string, fallback: T): T => {
@@ -84,9 +85,12 @@ spec:
     });
 
     const tlsMode = read("SERVICE_TLS_MODE");
-    const caBundle = read("KCP_CA_BUNDLE");
+    const trustFiles = parsed<string[]>("SERVICE_TRUST_FILES", []);
+    const trusted: string[] = [];
+    for (const f of trustFiles) trusted.push((await Deno.readTextFile(f)).trim());
+    const caBundle = [read("KCP_CA_BUNDLE").trim(), ...trusted].filter(Boolean).join("\n");
     if (caBundle) {
-      await Deno.writeTextFile(`${runDir}/ca.pem`, caBundle);
+      await Deno.writeTextFile(`${runDir}/ca.pem`, caBundle + "\n");
       childEnv.DENO_CERT = `${runDir}/ca.pem`;
     } else if (read("DENO_CERT")) {
       childEnv.DENO_CERT = `${runDir}/ca.pem`;
@@ -175,6 +179,7 @@ spec:
         - SERVICE_PERMISSIONS
         - SERVICE_TLS
         - SERVICE_TLS_MODE
+        - SERVICE_TRUST_FILES
         - DENO_DIR
         - DENO_CERT
         - PATH
