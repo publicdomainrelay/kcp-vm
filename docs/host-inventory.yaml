@@ -955,6 +955,8 @@ indirect:
     resolves: [kcp, kubectl]
   - site: "socialweb-computer-kcp/internal/processrunner/processrunner.go: argv[0]"
     resolves: [k3s, kine, bao, external-secrets, socialweb-cloud-controller-manager, dumbpipe, pasta]
+  - site: "socialweb-computer-kcp/socialweb-computer-k8s/lib/socialweb-computer-requester-inproc/bridge.ts: argv[0]"
+    resolves: [dumbpipe]
   - site: "atproto-market/hono-bidder/mod.ts: cmd"
     resolves: [open, cmd, xdg-open]
   - site: "atproto-market/request-vm-ssh/mod.ts: cmd"

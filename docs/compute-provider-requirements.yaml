@@ -785,8 +785,9 @@ requirements:
     parity_test:
       - internal/vmruntime TestTheVMUnitsTreeIsPastaAndTheStandInOnly
       - internal/vmruntime TestTwoVMUnitsMapDisjointSubRanges
+      - hono-compute-provider/test/microvm_work_dir_test.ts::"container labels parse from key=value pairs and refuse anything else"
     status: superseded-by-M2-VM-RUNTIME
-    covers: [createFirecrackerMicrovm]
+    covers: [createFirecrackerMicrovm, parseLabels]
 
   - id: FC-SEED-TRANSPORT
     source:
