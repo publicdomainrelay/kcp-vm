@@ -25,3 +25,5 @@ deno.lock
 /socialweb-nodeimage
 /kata-containers/
 /streamplace/
+/third_party/kcp/
+/third_party/embeddedetcd/
