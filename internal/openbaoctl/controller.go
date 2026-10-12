@@ -1,0 +1,505 @@
+package openbaoctl
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"time"
+
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/rest"
+
+	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostprocess"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpserver"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/openbao"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/rootvault"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/vaultcert"
+)
+
+const (
+	DefaultInterval  = 5 * time.Second
+	RetryAfter       = 2 * time.Second
+	PassTimeout      = 60 * time.Second
+	DefaultListen    = rootvault.LoopbackHost + ":0"
+	DefaultShares    = 1
+	DefaultThreshold = 1
+	DirName          = "openbaoservers"
+	ChildPrefix      = "bao-"
+	OwnerLabel       = "socialweb.computer/openbaoserver"
+
+	ConditionReady       = "Ready"
+	ConditionInitialized = "Initialized"
+	ConditionUnsealed    = "Unsealed"
+	ConditionLayout      = "LayoutReady"
+)
+
+var GVR = schema.GroupVersionResource{Group: v1alpha1.GroupName, Version: v1alpha1.Version, Resource: "openbaoservers"}
+
+type Config struct {
+	Kubeconfig string
+	Workspace  string
+	StateDir   string
+	Prefix     string
+	Interval   time.Duration
+	Log        *slog.Logger
+}
+
+type Controller struct {
+	c        Config
+	servers  dynamic.ResourceInterface
+	children dynamic.ResourceInterface
+}
+
+func (c Config) log() *slog.Logger {
+	if c.Log == nil {
+		return slog.New(slog.DiscardHandler)
+	}
+	return c.Log.With("component", "openbaoserver")
+}
+
+func New(c Config) (*Controller, error) {
+	if !filepath.IsAbs(c.StateDir) {
+		return nil, fmt.Errorf("openbaoctl: StateDir %q must be absolute", c.StateDir)
+	}
+	if c.Prefix == "" {
+		return nil, fmt.Errorf("openbaoctl: a unit prefix is required; a controller places only its own instance's servers")
+	}
+	restCfg, err := kcpserver.FrontRestConfig(c.Kubeconfig)
+	if err != nil {
+		return nil, err
+	}
+	ws := c.Workspace
+	if ws == "" {
+		ws = hostprocess.DefaultWorkspace
+	}
+	cfg := rest.CopyConfig(restCfg)
+	cfg.Host = strings.TrimSuffix(cfg.Host, "/") + "/clusters/" + ws
+	dc, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return &Controller{c: c, servers: dc.Resource(GVR), children: dc.Resource(hostprocess.GVR)}, nil
+}
+
+func ServerDir(stateDir, name string) string { return filepath.Join(stateDir, DirName, name) }
+
+func ChildName(name string) string { return ChildPrefix + name }
+
+func (c *Controller) unit(name string) string { return c.c.Prefix + ChildPrefix + name + ".service" }
+
+func refs(dir string) *v1alpha1.OpenBaoServerRefs {
+	return &v1alpha1.OpenBaoServerRefs{UnsealKeys: "file:" + rootvault.UnsealKeysPath(dir), CA: "file:" + rootvault.TLSCAPath(dir),
+		ClientCert: "file:" + rootvault.ClientCertPath(dir), ClientKey: "file:" + rootvault.ClientKeyPath(dir),
+		CertAuthMount: CertAuthMount, CertAuthRole: CertAuthRole, KVMount: KVMount}
+}
+
+func toServer(u *unstructured.Unstructured) (v1alpha1.OpenBaoServer, error) {
+	var o v1alpha1.OpenBaoServer
+	err := runtime.DefaultUnstructuredConverter.FromUnstructured(u.Object, &o)
+	return o, err
+}
+
+func toChild(u *unstructured.Unstructured) (v1alpha1.HostProcess, error) {
+	var o v1alpha1.HostProcess
+	err := runtime.DefaultUnstructuredConverter.FromUnstructured(u.Object, &o)
+	return o, err
+}
+
+func unstructuredOf(o any, kind string) (*unstructured.Unstructured, error) {
+	m, err := runtime.DefaultUnstructuredConverter.ToUnstructured(o)
+	if err != nil {
+		return nil, err
+	}
+	u := &unstructured.Unstructured{Object: m}
+	u.SetAPIVersion(v1alpha1.GroupVersion.String())
+	u.SetKind(kind)
+	return u, nil
+}
+
+func (c *Controller) childSpec(o v1alpha1.OpenBaoServer, dir string) v1alpha1.HostProcessSpec {
+	rp := o.Spec.RestartPolicy
+	if rp == "" {
+		rp = v1alpha1.HostProcessRestartOnFailure
+	}
+	spec := v1alpha1.HostProcessSpec{Unit: c.unit(o.Name), Exec: o.Spec.Exec, Argv: []string{"server", "-config", rootvault.ConfigPath(dir)},
+		WorkDir: rootvault.Dir(dir), RestartPolicy: rp, Stop: &v1alpha1.HostProcessStop{Signal: "SIGTERM", GraceSeconds: 15},
+		Placement: v1alpha1.HostProcessPlacementSupervisor}
+	if o.Spec.Asset != nil {
+		a := *o.Spec.Asset
+		spec.Asset = &a
+	}
+	return spec
+}
+
+func sameChild(a, b v1alpha1.HostProcessSpec) bool {
+	return a.Unit == b.Unit && a.Exec == b.Exec && slices.Equal(a.Argv, b.Argv) && a.WorkDir == b.WorkDir &&
+		a.RestartPolicy == b.RestartPolicy && a.Placement == b.Placement && fmt.Sprint(a.Asset) == fmt.Sprint(b.Asset)
+}
+
+func (c *Controller) ensureChild(ctx context.Context, o v1alpha1.OpenBaoServer, want v1alpha1.HostProcessSpec) (v1alpha1.HostProcess, error) {
+	name := ChildName(o.Name)
+	cur, err := c.children.Get(ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		hp := v1alpha1.HostProcess{ObjectMeta: metav1.ObjectMeta{Name: name, Labels: map[string]string{OwnerLabel: o.Name},
+			OwnerReferences: []metav1.OwnerReference{{APIVersion: v1alpha1.GroupVersion.String(), Kind: "OpenBaoServer", Name: o.Name,
+				UID: o.UID, Controller: new(true)}}}, Spec: want}
+		u, err := unstructuredOf(&hp, "HostProcess")
+		if err != nil {
+			return v1alpha1.HostProcess{}, err
+		}
+		got, err := c.children.Create(ctx, u, metav1.CreateOptions{})
+		if err != nil {
+			return v1alpha1.HostProcess{}, err
+		}
+		c.c.log().Info("placed the server's HostProcess", "openbaoserver", o.Name, "hostprocess", name, "unit", want.Unit)
+		return toChild(got)
+	}
+	if err != nil {
+		return v1alpha1.HostProcess{}, err
+	}
+	hp, err := toChild(cur)
+	if err != nil {
+		return hp, err
+	}
+	if hp.Labels[OwnerLabel] != o.Name {
+		return hp, fmt.Errorf("HostProcess %s exists and is not owned by OpenBaoServer %s", name, o.Name)
+	}
+	if !sameChild(hp.Spec, want) {
+		hp.Spec = want
+		u, err := unstructuredOf(&hp, "HostProcess")
+		if err != nil {
+			return hp, err
+		}
+		got, err := c.children.Update(ctx, u, metav1.UpdateOptions{})
+		if err != nil {
+			return hp, err
+		}
+		return toChild(got)
+	}
+	return hp, nil
+}
+
+func writeIfChanged(path string, data []byte, mode os.FileMode) error {
+	if cur, err := os.ReadFile(path); err == nil && bytes.Equal(cur, data) {
+		return os.Chmod(path, mode)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, mode); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+func condition(st *v1alpha1.OpenBaoServerStatus, gen int64, t string, ok bool, reason, msg string) {
+	s := metav1.ConditionFalse
+	if ok {
+		s = metav1.ConditionTrue
+	}
+	meta.SetStatusCondition(&st.Conditions, metav1.Condition{Type: t, Status: s, Reason: reason, Message: msg, ObservedGeneration: gen})
+}
+
+func layoutDone(st v1alpha1.OpenBaoServerStatus, gen int64) bool {
+	c := meta.FindStatusCondition(st.Conditions, ConditionLayout)
+	return c != nil && c.Status == metav1.ConditionTrue && c.ObservedGeneration == gen
+}
+
+func unseal(ctx context.Context, client *openbao.Client, k UnsealKeys) error {
+	for i := 0; i < k.Threshold; i++ {
+		sealed, err := client.Unseal(ctx, k.Keys[i])
+		if err != nil {
+			return fmt.Errorf("unsealing with key %d of %d: %w", i+1, k.Threshold, err)
+		}
+		if !sealed {
+			return nil
+		}
+	}
+	return fmt.Errorf("still sealed after %d keys", k.Threshold)
+}
+
+func (c *Controller) layoutWithCore(ctx context.Context, client *openbao.Client, keysPath string, caPEM []byte) (string, error) {
+	core, err := loginCore(ctx, client)
+	if err == nil {
+		defer core.RevokeSelf(context.WithoutCancel(ctx))
+		return "the cert-auth core token applied the layout", ensureLayout(ctx, core, caPEM)
+	}
+	if !loginRefused(err) {
+		return "", err
+	}
+	k, kerr := ReadUnsealKeys(keysPath)
+	if kerr != nil {
+		return "", fmt.Errorf("cert login refused (%v) and %w", err, kerr)
+	}
+	tok, gerr := client.GenerateRoot(ctx, k.Keys, k.Threshold)
+	if gerr != nil {
+		return "", fmt.Errorf("cert login refused (%v) and %w", err, gerr)
+	}
+	root := client.WithToken(tok)
+	defer root.RevokeSelf(context.WithoutCancel(ctx))
+	return "cert login was refused; a root token generated from the unseal keys applied the layout and was revoked", ensureLayout(ctx, root, caPEM)
+}
+
+func (c *Controller) reconcile(ctx context.Context, o v1alpha1.OpenBaoServer) v1alpha1.OpenBaoServerStatus {
+	log := c.c.log().With("openbaoserver", o.Name)
+	var st v1alpha1.OpenBaoServerStatus
+	o.Status.DeepCopyInto(&st)
+	gen := o.Generation
+	st.ObservedGeneration = gen
+	dir := ServerDir(c.c.StateDir, o.Name)
+	st.HostProcess = ChildName(o.Name)
+	st.Refs = refs(dir)
+	fail := func(format string, args ...any) v1alpha1.OpenBaoServerStatus {
+		st.Phase, st.Message = v1alpha1.OpenBaoServerPhaseFailed, fmt.Sprintf(format, args...)
+		condition(&st, gen, ConditionReady, false, "Failed", st.Message)
+		log.Warn("failed", "msg", st.Message)
+		return st
+	}
+	starting := func(format string, args ...any) v1alpha1.OpenBaoServerStatus {
+		st.Phase, st.Message, st.Address = v1alpha1.OpenBaoServerPhaseStarting, fmt.Sprintf(format, args...), ""
+		condition(&st, gen, ConditionReady, false, "Starting", st.Message)
+		return st
+	}
+	shares, threshold := int(o.Spec.Init.Shares), int(o.Spec.Init.Threshold)
+	if shares == 0 {
+		shares = DefaultShares
+	}
+	if threshold == 0 {
+		threshold = DefaultThreshold
+	}
+	if threshold > shares {
+		return fail("init.threshold %d is over init.shares %d", threshold, shares)
+	}
+	if o.Spec.Asset == nil && o.Spec.Exec == "" {
+		return fail("name the bao executable: spec.asset (name bao) or spec.exec (an absolute path)")
+	}
+	listen := o.Spec.Listen
+	if listen == "" {
+		listen = DefaultListen
+	}
+	tlsm, err := vaultcert.EnsureRootVaultTLS(dir, rootvault.LoopbackHost)
+	if err != nil {
+		return fail("mutual TLS material: %v", err)
+	}
+	body, err := rootvault.ServerConfigWith(dir, listen, rootvault.ServerOptions{UnauthedGenerateRoot: true})
+	if err != nil {
+		return fail("%v", err)
+	}
+	if err := os.MkdirAll(rootvault.StorageDir(dir), 0o700); err != nil {
+		return fail("storage dir: %v", err)
+	}
+	if err := writeIfChanged(rootvault.ConfigPath(dir), []byte(body), 0o600); err != nil {
+		return fail("server config: %v", err)
+	}
+	child, err := c.ensureChild(ctx, o, c.childSpec(o, dir))
+	if err != nil {
+		return fail("HostProcess %s: %v", ChildName(o.Name), err)
+	}
+	if rt := child.Status.Runtime; rt != nil {
+		st.Runtime = &v1alpha1.OpenBaoServerRuntime{Backend: rt.Backend, Ref: rt.Unit, Instance: rt.InvocationID, Pid: rt.Pid,
+			StartTime: rt.ActiveSince, HostBootID: rt.HostBootID}
+	}
+	switch child.Status.Phase {
+	case v1alpha1.HostProcessPhaseFailed, v1alpha1.HostProcessPhaseLost:
+		return fail("HostProcess %s is %s %s: %s", child.Name, child.Status.Phase, child.Status.LostReason, child.Status.Message)
+	case v1alpha1.HostProcessPhaseRunning:
+	default:
+		return starting("HostProcess %s is %q: %s", child.Name, child.Status.Phase, child.Status.Message)
+	}
+	if len(child.Status.Listeners) == 0 {
+		return starting("HostProcess %s runs and reports no bound address yet", child.Name)
+	}
+	addr := "https://" + child.Status.Listeners[0].Address
+	tlsConf, err := tlsm.ClientTLSConfig()
+	if err != nil {
+		return fail("%v", err)
+	}
+	client := openbao.New(addr, "", openbao.WithCACertPool(tlsConf.RootCAs), openbao.WithClientCertificate(tlsConf.Certificates[0]))
+	h, err := client.Health(ctx)
+	if err != nil {
+		return starting("the server at %s does not answer yet: %v", addr, err)
+	}
+	st.Address = addr
+	keysPath := rootvault.UnsealKeysPath(dir)
+	instance := ""
+	if st.Runtime != nil {
+		instance = st.Runtime.Instance
+	}
+	if !h.Initialized {
+		if _, err := os.Lstat(keysPath); err == nil {
+			return fail("the storage at %s is not initialized and unseal keys already exist at %s: refusing to initialize over them",
+				rootvault.StorageDir(dir), keysPath)
+		}
+		res, err := client.Init(ctx, shares, threshold)
+		if err != nil {
+			return fail("init: %v", err)
+		}
+		k := UnsealKeys{Threshold: threshold, Shares: shares, Keys: res.KeysBase64}
+		if err := WriteUnsealKeys(keysPath, k); err != nil {
+			return fail("initialized, and writing the unseal keys to %s failed (%v): the storage at %s cannot be unsealed again",
+				keysPath, err, rootvault.StorageDir(dir))
+		}
+		log.Info("initialized; unseal keys written to the state dir (0600), never to kcp", "shares", shares, "threshold", threshold,
+			"keys", st.Refs.UnsealKeys)
+		if err := unseal(ctx, client, k); err != nil {
+			return fail("%v", err)
+		}
+		st.UnsealedInstance, st.UnsealedAt = instance, time.Now().UTC().Format(time.RFC3339Nano)
+		root := client.WithToken(res.RootToken)
+		lerr := ensureLayout(ctx, root, tlsm.CAPEM)
+		if err := root.RevokeSelf(ctx); err != nil {
+			log.Warn("revoking the initial root token", "err", err.Error())
+		} else {
+			log.Info("the initial root token is revoked; the core logs in with its client certificate")
+		}
+		if lerr != nil {
+			condition(&st, gen, ConditionLayout, false, "LayoutFailed", lerr.Error())
+		} else {
+			condition(&st, gen, ConditionLayout, true, "Applied", "cert auth, the core policy and kv-v2 at "+KVMount)
+		}
+	} else if h.Sealed {
+		k, err := ReadUnsealKeys(keysPath)
+		if err != nil {
+			return fail("sealed: %v", err)
+		}
+		if err := unseal(ctx, client, k); err != nil {
+			return fail("%v", err)
+		}
+		st.UnsealedInstance, st.UnsealedAt = instance, time.Now().UTC().Format(time.RFC3339Nano)
+		log.Info("unsealed", "instance", instance, "address", addr)
+	}
+	if !layoutDone(st, gen) {
+		how, err := c.layoutWithCore(ctx, client, keysPath, tlsm.CAPEM)
+		if err != nil {
+			condition(&st, gen, ConditionLayout, false, "LayoutFailed", err.Error())
+		} else {
+			condition(&st, gen, ConditionLayout, true, "Applied", how)
+		}
+	}
+	h, err = client.Health(ctx)
+	if err != nil {
+		return starting("the server at %s stopped answering: %v", addr, err)
+	}
+	st.Initialized, st.Sealed = h.Initialized, h.Sealed
+	condition(&st, gen, ConditionInitialized, h.Initialized, "Health", "")
+	condition(&st, gen, ConditionUnsealed, !h.Sealed, "Health", "")
+	if !h.Initialized || h.Sealed {
+		st.Phase, st.Message = v1alpha1.OpenBaoServerPhaseSealed, "sealed"
+		condition(&st, gen, ConditionReady, false, "Sealed", st.Message)
+		return st
+	}
+	st.Phase, st.Message = v1alpha1.OpenBaoServerPhaseReady, "initialized and unsealed"
+	condition(&st, gen, ConditionReady, true, "Ready", st.Message)
+	return st
+}
+
+func (c *Controller) writeStatus(ctx context.Context, cur *unstructured.Unstructured, o v1alpha1.OpenBaoServer, st v1alpha1.OpenBaoServerStatus) error {
+	o.Status = st
+	u, err := unstructuredOf(&o, "OpenBaoServer")
+	if err != nil {
+		return err
+	}
+	if fmt.Sprint(cur.Object["status"]) == fmt.Sprint(u.Object["status"]) {
+		return nil
+	}
+	u.SetResourceVersion(cur.GetResourceVersion())
+	_, err = c.servers.UpdateStatus(ctx, u, metav1.UpdateOptions{})
+	return err
+}
+
+func (c *Controller) sweep(ctx context.Context, live map[string]bool) {
+	list, err := c.children.List(ctx, metav1.ListOptions{LabelSelector: OwnerLabel})
+	if err != nil {
+		return
+	}
+	for _, it := range list.Items {
+		owner := it.GetLabels()[OwnerLabel]
+		if live[owner] {
+			continue
+		}
+		if err := c.children.Delete(ctx, it.GetName(), metav1.DeleteOptions{}); err == nil {
+			c.c.log().Info("the OpenBaoServer is gone; its HostProcess is deleted and the supervisor stops the unit; the storage stays",
+				"openbaoserver", owner, "hostprocess", it.GetName())
+		}
+	}
+}
+
+func (c *Controller) Pass(ctx context.Context) error {
+	list, err := c.servers.List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return err
+	}
+	live := map[string]bool{}
+	for i := range list.Items {
+		cur := &list.Items[i]
+		o, err := toServer(cur)
+		if err != nil {
+			c.c.log().Warn("decoding", "name", cur.GetName(), "err", err.Error())
+			continue
+		}
+		if o.DeletionTimestamp != nil {
+			continue
+		}
+		live[o.Name] = true
+		pctx, cancel := context.WithTimeout(ctx, PassTimeout)
+		st := c.reconcile(pctx, o)
+		cancel()
+		if err := c.writeStatus(ctx, cur, o, st); err != nil && !apierrors.IsConflict(err) {
+			c.c.log().Warn("writing status", "name", o.Name, "err", err.Error())
+		}
+	}
+	c.sweep(ctx, live)
+	return nil
+}
+
+func (c *Controller) Run(ctx context.Context) error {
+	interval := c.c.Interval
+	if interval == 0 {
+		interval = DefaultInterval
+	}
+	c.c.log().Info("the OpenBaoServer controller runs in the core", "workspace", c.c.Workspace, "stateDir", c.c.StateDir)
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		if err := c.Pass(ctx); err != nil {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-t.C:
+		}
+	}
+}
+
+func Supervise(ctx context.Context, c Config) {
+	log := c.log()
+	for {
+		ctl, err := New(c)
+		if err == nil {
+			err = ctl.Run(ctx)
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		log.Info("the OpenBaoServer controller waits; starting it again", "err", fmt.Sprint(err), "after", RetryAfter.String())
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(RetryAfter):
+		}
+	}
+}

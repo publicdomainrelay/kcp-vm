@@ -60,9 +60,9 @@ type OpenBaoServerStatus struct {
 
 	Address string `json:"address,omitempty"`
 
-	Initialized bool `json:"initialized,omitempty"`
+	Initialized bool `json:"initialized"`
 
-	Sealed bool `json:"sealed,omitempty"`
+	Sealed bool `json:"sealed"`
 
 	HostProcess string `json:"hostProcess,omitempty"`
 

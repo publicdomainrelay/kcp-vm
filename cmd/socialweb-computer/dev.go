@@ -341,6 +341,12 @@ func runDevUp(ctx context.Context, a *app, vals clicfg.Values, rest []string) in
 	if err != nil {
 		return a.fail(exitRefused, "dev up: %v", err)
 	}
+	var baoExe devinstance.Executable
+	if standIns == nil && (assets.Release() || vals.String("bao-path") != "") {
+		if baoExe, err = a.devExe(ctx, vals, "bao", "bao-path"); err != nil {
+			return a.fail(exitRefused, "dev up: %v", err)
+		}
+	}
 	exe, err := selfExe()
 	if err != nil {
 		return a.fail(exitFailed, "dev up: %v", err)
@@ -382,6 +388,9 @@ func runDevUp(ctx context.Context, a *app, vals clicfg.Values, rest []string) in
 	rec.Worktree = a.worktree(vals)
 	rec.BaseWorkspace = vals.String("kcp-base-workspace")
 	rec.Executables = map[string]devinstance.Executable{"kcp": kcpExe, "kine": kineExe, "postgres": pgExe, denorun.Executable: denoExe, "socialweb-computer": {Path: exe}}
+	if baoExe.Path != "" {
+		rec.Executables["bao"] = baoExe
+	}
 	rec.SourceRoot = sourceRoot
 	bcfg := bootstrap.Config{Layout: l, KcpPath: kcpExe.Path, KinePath: kineExe.Path, PostgresRoot: pgExe.Path, Exe: exe,
 		ReadyTimeout: readyTimeout, Log: a.log}

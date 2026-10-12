@@ -15,7 +15,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/rootvault"
 )
 
-const rootVaultTLSClientCommonName = "socialweb-rootvault-client"
+const RootVaultClientCommonName = "socialweb-rootvault-client"
 
 var ErrNoRootVaultTLSStateDir = errors.New(
 	"vaultcert: the root vault's TLS material is derived from the state dir, and an empty one " +
@@ -152,7 +152,7 @@ func generateRootVaultTLS(v RootVaultTLS, dns []string, ips []netip.Addr) (RootV
 	if err != nil {
 		return RootVaultTLS{}, err
 	}
-	clientPEM, clientKeyPEM, err := signLeaf(now, caKey, caCert, rootVaultTLSClientCommonName,
+	clientPEM, clientKeyPEM, err := signLeaf(now, caKey, caCert, RootVaultClientCommonName,
 		x509.ExtKeyUsageClientAuth, nil, nil)
 	if err != nil {
 		return RootVaultTLS{}, err

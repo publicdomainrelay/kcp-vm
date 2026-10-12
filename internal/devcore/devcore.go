@@ -13,6 +13,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostos"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostprocess"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/openbaoctl"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/postgresctl"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/stack/denoruntime"
 )
@@ -95,6 +96,7 @@ func Run(ctx context.Context, cfg Config, m hostsvc.Manager) error {
 	}
 	if len(rec.StandIns) == 0 && rec.AdminKubeconfig != "" {
 		go hostprocess.Supervise(ctx, HostProcessConfig(bcfg, rec, m, log))
+		go openbaoctl.Supervise(ctx, OpenBaoServerConfig(bcfg, rec, log))
 		go postgresctl.Run(ctx, PostgresConfig(bcfg, rec, log))
 	}
 	t := time.NewTicker(CheckInterval)

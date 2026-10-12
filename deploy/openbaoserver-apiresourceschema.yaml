@@ -123,6 +123,9 @@ spec:
                 items:
                   type: object
                   x-kubernetes-preserve-unknown-fields: true
+            required:
+              - initialized
+              - sealed
       additionalPrinterColumns:
         - name: Phase
           type: string

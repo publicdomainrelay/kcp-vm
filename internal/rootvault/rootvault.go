@@ -25,6 +25,8 @@ const (
 
 	CAName = "ca.crt"
 
+	UnsealKeysName = "unseal-keys.json"
+
 	LoopbackHost = "127.0.0.1"
 
 	Port = 8200
@@ -39,7 +41,7 @@ listener "tcp" {
   tls_key_file                       = "%[3]s"
   tls_client_ca_file                 = "%[4]s"
   tls_require_and_verify_client_cert = true
-}
+%[6]s}
 storage "file" {
   path = "%[5]s"
 }
@@ -100,7 +102,19 @@ func ClientKeyPath(stateDir string) string {
 	return filepath.Join(TLSDir(stateDir), ClientKeyName)
 }
 
+func UnsealKeysPath(stateDir string) string {
+	return filepath.Join(Dir(stateDir), UnsealKeysName)
+}
+
+type ServerOptions struct {
+	UnauthedGenerateRoot bool
+}
+
 func ServerConfig(stateDir, addr string) (string, error) {
+	return ServerConfigWith(stateDir, addr, ServerOptions{})
+}
+
+func ServerConfigWith(stateDir, addr string, o ServerOptions) (string, error) {
 	if stateDir == "" {
 		return "", ErrStateDirEmpty
 	}
@@ -110,6 +124,10 @@ func ServerConfig(stateDir, addr string) (string, error) {
 	if addr == "" {
 		addr = Address()
 	}
+	extra := ""
+	if o.UnauthedGenerateRoot {
+		extra = "  disable_unauthed_generate_root_endpoints = false\n"
+	}
 	return fmt.Sprintf(configTemplate, addr,
-		ServerCertPath(stateDir), ServerKeyPath(stateDir), TLSCAPath(stateDir), StorageDir(stateDir)), nil
+		ServerCertPath(stateDir), ServerKeyPath(stateDir), TLSCAPath(stateDir), StorageDir(stateDir), extra), nil
 }

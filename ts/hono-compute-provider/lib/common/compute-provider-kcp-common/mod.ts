@@ -306,8 +306,8 @@ export interface OpenBaoServerStatus {
   phase?: OpenBaoServerPhase;
   message?: string;
   address?: string;
-  initialized?: boolean;
-  sealed?: boolean;
+  initialized: boolean;
+  sealed: boolean;
   hostProcess?: string;
   runtime?: OpenBaoServerRuntime;
   unsealedInstance?: string;
@@ -1349,7 +1349,10 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
         "type": "string"
       }
     },
-    "required": [],
+    "required": [
+      "initialized",
+      "sealed"
+    ],
     "type": "object"
   },
   "Postgres": {

@@ -12,6 +12,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devinstance"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostprocess"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/openbaoctl"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/pgunit"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/postgresctl"
 )
@@ -78,4 +79,9 @@ func PostgresConfig(bcfg bootstrap.Config, rec devinstance.Record, log *slog.Log
 			return pgunit.FromRoot(root)
 		},
 		DataRoot: filepath.Join(l.StateDir, "postgres"), SocketRoot: l.RuntimeDir, LogDir: l.Logs, Log: log}
+}
+
+func OpenBaoServerConfig(bcfg bootstrap.Config, rec devinstance.Record, log *slog.Logger) openbaoctl.Config {
+	hp := HostProcessConfig(bcfg, rec, nil, log)
+	return openbaoctl.Config{Kubeconfig: hp.Kubeconfig, Workspace: hp.Workspace, StateDir: bcfg.Layout.StateDir, Prefix: hp.Prefix, Log: log}
 }

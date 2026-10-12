@@ -69,6 +69,11 @@
       "description": "Absolute path of the kine executable (dev build: explicit, never PATH)",
       "env": "SOCIALWEB_KINE_PATH"
     },
+    "bao-path": {
+      "type": "string",
+      "description": "Absolute path of the OpenBao bao executable an OpenBaoServer with asset bao runs (dev build: explicit, never PATH, optional; a release build extracts its embedded bao)",
+      "env": "SOCIALWEB_BAO_PATH"
+    },
     "deno-path": {
       "type": "string",
       "description": "Absolute path of the pinned deno the core runs every DenoPod on (dev build: explicit, never PATH; a release build extracts its embedded deno)",
