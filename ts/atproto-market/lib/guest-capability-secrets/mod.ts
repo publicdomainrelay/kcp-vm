@@ -25,6 +25,7 @@ export interface CreateSecretsCapabilityOpts {
   logger: StructuredLoggerInterface;
   route?: string;
   acceptPathVm?: string;
+  privateKeyHex?: string;
 }
 
 /**
@@ -49,7 +50,9 @@ export function createSecretsCapability(
     userDataModule: "secrets",
 
     async prepare(ctx: PrepareContext): Promise<CapabilityPrepared> {
-      const keypair = await Secp256k1Keypair.create({ exportable: true });
+      const keypair = opts.privateKeyHex
+        ? await Secp256k1Keypair.import(opts.privateKeyHex, { exportable: true })
+        : await Secp256k1Keypair.create({ exportable: true });
       relay = createIngress({
         logger,
         ingressProxyHost: ctx.ingressProxyHost,
@@ -77,6 +80,8 @@ export function createSecretsCapability(
         secretsUrl,
         route,
         count: opts.secrets.length,
+        ingressDid: keypair.did(),
+        storedKey: opts.privateKeyHex !== undefined,
       });
 
       return {
