@@ -67,6 +67,7 @@ type Config struct {
 	Record       func() (devinstance.Record, error)
 	ReadyTimeout time.Duration
 	Interval     time.Duration
+	Listeners    func(owner string) []v1alpha1.ApplicationListener
 	Log          *slog.Logger
 }
 
@@ -208,7 +209,7 @@ func (ctl *Controller) Pass(ctx context.Context) {
 		{MarketNetworkGVR, ctl.network.reconcile},
 		{MarketBidderGVR, ctl.reconcileBidder},
 		{MarketRequesterGVR, ctl.reconcilePassive(v1alpha1.ApplicationKindMarketRequester)},
-		{GatewayGVR, ctl.reconcilePassive(v1alpha1.ApplicationKindGateway)},
+		{GatewayGVR, ctl.reconcileGateway},
 	} {
 		ri, err := ctl.client(ctl.c.workspace(), k.gvr)
 		if err != nil {

@@ -107,7 +107,6 @@ func foldedVerbs() map[string]foldedVerb {
 		"serve gateway xrpc":                {nil, gatewaymain.Main},
 		"serve provider":                    {nil, providermain.Main},
 		"migrate":                           {[]string{"migrate"}, providermain.Main},
-		"vault prepare-root":                {[]string{"prepare-root"}, vaultmain.Main},
 		"vault apply-root":                  {[]string{"apply-root"}, vaultmain.Main},
 		"check-host":                        {nil, checkhostmain.Main},
 		"internal cloud-controller-manager": {nil, ccmmain.Main},

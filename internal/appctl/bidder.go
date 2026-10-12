@@ -204,7 +204,6 @@ func (ctl *Controller) reconcilePassive(kind v1alpha1.ApplicationKind) func(cont
 	gvr, _ := GVRFor(kind)
 	item := map[v1alpha1.ApplicationKind]string{
 		v1alpha1.ApplicationKindMarketRequester: "0008 M4-RUN-REQUEST (the requester DenoPod and its ComputeContracts)",
-		v1alpha1.ApplicationKindGateway:         "0006 M3-SERVE-GATEWAY-KCP and 0008 M3-DOOR-DENOPOD (the door DenoPod and the gateway's Go members)",
 	}[kind]
 	return func(ctx context.Context, u *unstructured.Unstructured) error {
 		if u.GetDeletionTimestamp() != nil {

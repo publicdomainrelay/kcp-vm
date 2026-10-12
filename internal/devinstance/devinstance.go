@@ -140,6 +140,7 @@ type Layout struct {
 	Logs       string `json:"logs"`
 	KineDir    string `json:"kineDir"`
 	KcpRoot    string `json:"kcpRoot"`
+	Prefix     string `json:"prefix,omitempty"`
 }
 
 func NewLayout(id, stateRoot, runtimeRoot string) (Layout, error) {
@@ -164,9 +165,14 @@ func NewLayout(id, stateRoot, runtimeRoot string) (Layout, error) {
 	return l, nil
 }
 
-func (l Layout) UnitPrefix() string { return hostsvc.NamePrefix }
+func (l Layout) UnitPrefix() string {
+	if l.Prefix != "" {
+		return l.Prefix
+	}
+	return hostsvc.NamePrefix
+}
 
-func (l Layout) Names() table.Names { return table.DevNames(l.Short) }
+func (l Layout) Names() table.Names { return table.Names{Prefix: l.UnitPrefix(), Key: l.Short} }
 
 func (l Layout) KineUnit() string { return l.Names().Kine(table.SlotA) }
 

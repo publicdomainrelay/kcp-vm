@@ -8,8 +8,10 @@ import (
 	"os"
 	"time"
 
+	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/appctl"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/bootstrap"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/bootstrap/table"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/computevm"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devinstance"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostos"
@@ -28,6 +30,11 @@ type Config struct {
 	Log          *slog.Logger
 	DenoRuntime  *denoruntime.Config
 	ComputeVM    *computevm.Config
+	Application  *table.App
+	FrontAddress string
+	Before       func(ctx context.Context, rec devinstance.Record) error
+	Members      func(ctx context.Context, rec devinstance.Record) error
+	Listeners    func(owner string) []v1alpha1.ApplicationListener
 }
 
 func tryLockRecord(path string) (*os.File, bool) {
@@ -80,7 +87,7 @@ func Run(ctx context.Context, cfg Config, m hostsvc.Manager) error {
 	core := devinstance.Core{Generation: prev.Generation + 1, PID: os.Getpid(), InvocationID: os.Getenv("INVOCATION_ID"),
 		StartedAt: time.Now().UTC()}
 	bcfg := bootstrap.Config{Layout: l, KcpPath: rec.Executables["kcp"].Path, KinePath: rec.Executables["kine"].Path, PostgresRoot: rec.Executables["postgres"].Path,
-		Exe: rec.Executables["socialweb-computer"].Path, ReadyTimeout: cfg.ReadyTimeout, Log: log}
+		Exe: rec.Executables["socialweb-computer"].Path, ReadyTimeout: cfg.ReadyTimeout, Application: cfg.Application, FrontAddress: cfg.FrontAddress, Log: log}
 	lk, err := lockRecord(l.Lock)
 	if err != nil {
 		return err
@@ -93,6 +100,11 @@ func Run(ctx context.Context, cfg Config, m hostsvc.Manager) error {
 	lk.Close()
 	if err != nil {
 		return err
+	}
+	if cfg.Before != nil {
+		if err := cfg.Before(ctx, rec); err != nil {
+			return err
+		}
 	}
 	if cfg.DenoRuntime != nil {
 		go denoruntime.Supervise(ctx, *cfg.DenoRuntime)
@@ -109,7 +121,13 @@ func Run(ctx context.Context, cfg Config, m hostsvc.Manager) error {
 		}
 		go openbaoctl.Supervise(ctx, OpenBaoServerConfig(bcfg, rec, log))
 		go postgresctl.Run(ctx, PostgresConfig(bcfg, rec, log))
-		go appctl.Supervise(ctx, AppConfig(bcfg, rec, m, log))
+		ac := AppConfig(bcfg, rec, m, log)
+		ac.Listeners = cfg.Listeners
+		go appctl.Supervise(ctx, ac)
+	}
+	members := make(chan error, 1)
+	if cfg.Members != nil {
+		go func() { members <- cfg.Members(ctx, rec) }()
 	}
 	if rec.Host && rec.AdminKubeconfig != "" {
 		go devinstance.RunHost(ctx, devinstance.HostConfig{Kubeconfig: rec.AdminKubeconfig, Manager: m, Own: devinstance.Prefixes(l.ID), Log: log})
@@ -121,6 +139,15 @@ func Run(ctx context.Context, cfg Config, m hostsvc.Manager) error {
 		case <-ctx.Done():
 			log.Info("core stopping", "generation", core.Generation)
 			return nil
+		case err := <-members:
+			if ctx.Err() != nil {
+				return nil
+			}
+			if err == nil {
+				err = errors.New("devcore: an in-process member returned")
+			}
+			log.Error("an in-process member ended; the core exits", "err", err.Error())
+			return err
 		case <-t.C:
 		}
 		lk, ok := tryLockRecord(l.Lock)

@@ -51,6 +51,12 @@ func DoorClaimSecretsIngressPath(claim string) string {
 }
 
 const (
+	RootServerName   = "root-vault"
+	RootClient       = "gateway"
+	PolicyRootWriter = "root-writer"
+)
+
+const (
 	PolicyKCPRuntime         = "kcp-runtime"
 	PolicyKCPAdminTokenStore = "kcp-admin-token-store"
 	PolicyKCPCA              = "kcp-ca"

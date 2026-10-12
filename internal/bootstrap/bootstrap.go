@@ -49,6 +49,7 @@ type Config struct {
 	FrontAddress string
 	ReadyTimeout time.Duration
 	OnListen     func(name string, addr net.Addr)
+	Application  *table.App
 	Log          *slog.Logger
 	silent       map[string]bool
 }
@@ -56,6 +57,9 @@ type Config struct {
 func SlotRole(slot string) string { return table.SlotRole(slot) }
 
 func (c Config) App(rec *devinstance.Record) (table.App, error) {
+	if c.Application != nil {
+		return *c.Application, nil
+	}
 	apps, err := DevApps(rec.Profile, c.Layout)
 	if err != nil {
 		return table.App{}, err
@@ -257,6 +261,12 @@ func ensureUnit(ctx context.Context, m hostsvc.Manager, cfg Config, rec *devinst
 		}
 		if st, err = m.Start(ctx, spec); err != nil {
 			return devinstance.Unit{}, false, err
+		}
+		if st.Adopted && st.State != hostsvc.Active {
+			log.Info("an installed unit of this name is loaded; starting it by name")
+			if st, err = hostsvc.StartInstalled(ctx, m, spec.Name); err != nil {
+				return devinstance.Unit{}, false, err
+			}
 		}
 	}
 	u, err := identifyUnit(ctx, m, cfg, role, spec.Name, st.Adopted, st.ActiveSince)
