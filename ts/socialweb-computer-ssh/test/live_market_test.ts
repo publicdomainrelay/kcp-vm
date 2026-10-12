@@ -13,8 +13,7 @@
 // subprocess running the local container compute provider.
 //
 // Run: deno test -A test/live_market_test.ts
-// Needs a running container runtime (Apple `container` on darwin, docker
-// elsewhere); the test skips loudly without one.
+// Needs a running docker; the test skips loudly without one.
 
 import { assert } from "@std/assert";
 import { Hono } from "@hono/hono";
@@ -28,7 +27,6 @@ import { createRelayFactory as createDispatcherFactory } from "@publicdomainrela
 import { createRelayFactory as createAtprotoRelayFactory } from "@publicdomainrelay/hono-factory-atproto-relay-xrpc";
 import type { SessionInjector } from "@publicdomainrelay/atproto-oauth-server-abc";
 import type { ContainerBackend } from "@publicdomainrelay/container-backend-abc";
-import { createContainerBackend } from "@publicdomainrelay/container-backend-container";
 import { createDockerBackend } from "@publicdomainrelay/container-backend-docker";
 import { generateLocalhostTlsCert } from "@publicdomainrelay/tls-localhost";
 import { createAtprotoKeyAuthorizer } from "@publicdomainrelay/socialweb-computer-atproto";
@@ -204,9 +202,7 @@ function sshExec(
 }
 
 Deno.test("[live] ssh into a market VM provisioned through the RFP flow", async () => {
-  const backend: ContainerBackend = Deno.build.os === "darwin"
-    ? createContainerBackend()
-    : createDockerBackend();
+  const backend: ContainerBackend = createDockerBackend();
   if (!(await backend.ensureRunning())) {
     console.log(`[SKIP] container backend not available (${Deno.build.os})`);
     return;

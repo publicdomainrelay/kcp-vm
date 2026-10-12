@@ -21,7 +21,6 @@ import { createRelayFactory as createDispatcherFactory } from "@publicdomainrela
 import { createRelayFactory as createAtprotoRelayFactory } from "@publicdomainrelay/hono-factory-atproto-relay-xrpc";
 import type { SessionInjector } from "@publicdomainrelay/atproto-oauth-server-abc";
 import type { ContainerBackend } from "@publicdomainrelay/container-backend-abc";
-import { createContainerBackend } from "@publicdomainrelay/container-backend-container";
 import { createDockerBackend } from "@publicdomainrelay/container-backend-docker";
 import { generateLocalhostTlsCert } from "@publicdomainrelay/tls-localhost";
 
@@ -254,9 +253,7 @@ Deno.test({
   // 1a. Container backend -- the guest is provisioned locally, so without a
   // running runtime there is nothing to SSH into and the test cannot mean
   // anything. Skip loudly rather than assert against a phantom guest.
-  const backend: ContainerBackend = Deno.build.os === "darwin"
-    ? createContainerBackend()
-    : createDockerBackend();
+  const backend: ContainerBackend = createDockerBackend();
   if (!(await backend.ensureRunning())) {
     console.log(`[SKIP] container backend not available (${Deno.build.os})`);
     return;

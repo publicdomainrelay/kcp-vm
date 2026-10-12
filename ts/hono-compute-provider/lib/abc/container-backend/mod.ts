@@ -1,7 +1,7 @@
 import type { CliResult } from "@publicdomainrelay/container-backend-common";
 
 export interface ContainerBackend {
-  readonly type: "docker" | "container";
+  readonly type: "docker";
   readonly bin: string;
 
   /** Raw command via backend binary. */

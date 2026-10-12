@@ -18,13 +18,7 @@ import type { ContainerBackend } from "@publicdomainrelay/container-backend-abc"
 import { createOidcIssuer, type JwkStore, type NonceStore } from "@publicdomainrelay/oidc-issuer-hono";
 import { Hono } from "@hono/hono";
 import type { ServeHandle } from "@publicdomainrelay/serve";
-
-// Direct import needed for internal QEMU VM provisioning path.
-// This is not an ABC violation: VM provisioning (QEMU + KVM) fundamentally
-// requires Docker. It is separate from the container management abstraction.
 import { createDockerBackend } from "@publicdomainrelay/container-backend-docker";
-import { createContainerBackend } from "@publicdomainrelay/container-backend-container";
-import { qemuCacheDir } from "@publicdomainrelay/qemu-standalone";
 
 function didWebToHttps(didOrUrl: string): string {
   return didOrUrl.startsWith("did:web:") ? "https://" + didOrUrl.slice("did:web:".length) : didOrUrl;
@@ -35,10 +29,7 @@ export interface ComputeProviderLocalCtx extends ComputeProviderCtx {
   serve: ServeHandle;
   getIssuerUrl: () => string;
   acceptPathVm?: string;
-  containerMode?: "vm" | "container";
-  vmImage?: string;
   containerImage?: string;
-  cacheDir?: string;
   containerBackend?: ContainerBackend;
   oidcProvisioning?: boolean;
   oidcJwkStore?: JwkStore;
@@ -357,8 +348,7 @@ export async function runContainer(
     "--name", containerName,
     "--memory", memory,
   ];
-  // --memory-swap is docker-only; container backend sets memory as VM limit
-  if (backend.type === "docker") runArgs.push("--memory-swap", memory);
+  runArgs.push("--memory-swap", memory);
   runArgs.push(
     "-v", `${udFile}:/tmp/user-data:ro`,
     "-v", `${epFile}:/entrypoint.sh:ro`,
@@ -411,150 +401,6 @@ export async function runContainer(
   return { ip, containerName, gateway };
 }
 
-async function provisionVM(
-  vm: VM,
-  containerName: string,
-  user_data: string,
-  ds: DropletSpec,
-  cacheDir: string,
-  vmImage: string,
-  log: Logger,
-): Promise<{ ip: string; sshReady: boolean }> {
-  const docker = createDockerBackend();
-  log("info", "provisioning VM", { containerName, image: vmImage });
-
-  await docker.pullImage(vmImage);
-
-  const udFile = `${cacheDir}/ud-${containerName}.yaml`;
-  await Deno.writeTextFile(udFile, user_data);
-
-  await docker.rm(containerName).catch(() => {});
-
-  const { code, stderr } = await docker.command([
-    "run", "-d",
-    "--name", containerName,
-    "--privileged",
-    "--memory", "6g",
-    "--memory-swap", "6g",
-    "--device", "/dev/kvm",
-    "-v", `${cacheDir}:/root/.cache/simple-qemu`,
-    "-v", `${udFile}:/tmp/user-data:ro`,
-    "-e", "USER_DATA_FILE=/tmp/user-data",
-    vmImage,
-    `--distro=${ds.image ?? "ubuntu"}`,
-  ]);
-
-  if (code !== 0) {
-    throw new Error(`docker run failed for ${containerName}: ${stderr}`);
-  }
-
-  await new Promise((r) => setTimeout(r, 2_000));
-
-  let ip = "0.0.0.0";
-  try {
-    ip = await docker.inspectIp(containerName);
-    log("info", "VM container IP", { containerName, ip });
-  } catch {
-    log("warn", "could not get VM container IP", { containerName });
-  }
-
-  const sshReady = await pollSsh(ip, 22, POLL_TIMEOUT_MS);
-  if (!sshReady) {
-    log("warn", "SSH not ready within timeout", { containerName, ip });
-  }
-
-  return { ip, sshReady };
-}
-
-export interface SpawnVMOpts {
-  droplet: Record<string, unknown>;
-  userData: string;
-  vmImage: string;
-  containerMode: boolean;
-  containerImage: string;
-  cacheDir: string;
-  log: LoggerInterface;
-  backend: ContainerBackend;
-  distro?: Distro;
-}
-
-export async function spawnVM(opts: SpawnVMOpts): Promise<void> {
-  const { droplet, userData, vmImage, containerMode, containerImage, cacheDir, log, backend } = opts;
-  const containerName = `droplet-${droplet["id"]}`;
-
-  if (containerMode) {
-    try {
-      const distro = (droplet["image"] as Record<string, string>)?.slug ?? opts.distro ?? "ubuntu";
-      const info = await runContainer(backend, userData, {
-        distro: distro as Distro,
-        containerName,
-        imageTag: containerImage,
-        onIp(ip: string, name: string) {
-          droplet["networks"] = { v4: [{ ip_address: ip, type: "public" }] };
-          droplet["containerName"] = name;
-        },
-      });
-      droplet["networks"] = { v4: [{ ip_address: info.ip, type: "public" }] };
-      droplet["containerName"] = info.containerName;
-      droplet["status"] = "active";
-      log.info("container droplet ready", { droplet_id: droplet["id"], ip: info.ip });
-    } catch (err) {
-      droplet["status"] = "off";
-      log.error("container spawn failed", { droplet_id: droplet["id"], error: String(err) });
-    }
-    return;
-  }
-
-  await Deno.mkdir(cacheDir, { recursive: true });
-  const udFile = await Deno.makeTempFile({ dir: cacheDir, prefix: "userdata-", suffix: ".yaml" });
-  await Deno.writeTextFile(udFile, userData);
-
-  const docker = createDockerBackend();
-  await docker.rm(containerName).catch(() => {});
-
-  const distro = (droplet["image"] as Record<string, string>)?.slug ?? "ubuntu";
-
-  const { code } = await docker.command([
-    "run", "-d",
-    "--name", containerName,
-    "--memory", "6g",
-    "--memory-swap", "6g",
-    "--device", "/dev/kvm",
-    "-v", `${cacheDir}:/root/.cache/simple-qemu`,
-    "-v", `${udFile}:/tmp/user-data:ro`,
-    "-e", "USER_DATA_FILE=/tmp/user-data",
-    vmImage,
-    `--distro=${distro}`,
-  ], { inherit: true });
-
-  if (code !== 0) {
-    droplet["status"] = "off";
-    await Deno.remove(udFile).catch(() => {});
-    return;
-  }
-
-  (async () => {
-    try {
-      await new Promise((r) => setTimeout(r, 2_000));
-      const ip = await docker.inspectIp(containerName);
-      log.info("container IP assigned", { droplet_id: droplet["id"], ip });
-      const up = await pollSsh(ip);
-      if (up) {
-        droplet["networks"] = { v4: [{ ip_address: ip, type: "public" }] };
-        droplet["containerName"] = containerName;
-        droplet["status"] = "active";
-        log.info("SSH ready", { droplet_id: droplet["id"], ip });
-      } else {
-        log.warn("SSH timeout", { droplet_id: droplet["id"], ip });
-      }
-    } catch (err) {
-      log.error("IP/SSH probe failed", { droplet_id: droplet["id"], error: String(err) });
-    } finally {
-      await Deno.remove(udFile).catch(() => {});
-    }
-  })();
-}
-
 export function injectAcceptBundle(
   userData: string,
   bundle: Record<string, unknown>,
@@ -592,21 +438,11 @@ export function createComputeProviderLocal(ctx: ComputeProviderLocalCtx) {
     nonceStore: ctx.oidcNonceStore,
     log,
   });
-  const backend: ContainerBackend = ctx.containerBackend ??
-    (Deno.build.os === "darwin" ? createContainerBackend() : createDockerBackend());
+  const backend: ContainerBackend = ctx.containerBackend ?? createDockerBackend();
   const acceptPathVm = ctx.acceptPathVm ?? DEFAULT_ACCEPT_PATH_VM;
-  const containerMode = ctx.containerMode ??
-    (Deno.env.get("CONTAINER_MODE") === "true" ? "container" : undefined) ??
-    "container";
-  const vmImage = ctx.vmImage ??
-    Deno.env.get("VM_IMAGE") ??
-    "atcr.io/johnandersen777.bsky.social/ccripoc-qemu-runner";
   const containerImage = ctx.containerImage ??
     Deno.env.get("CONTAINER_IMAGE") ??
     "container-runner-ubuntu:latest";
-  const cacheDir = ctx.cacheDir ??
-    Deno.env.get("CACHE_DIR") ??
-    qemuCacheDir();
   serve.onConnected(async (ingressRef) => {
     const serviceUrl = didWebToHttps(ingressRef);
     serve.app.route("/", oidcIssuer.app as never);
@@ -690,7 +526,6 @@ export function createComputeProviderLocal(ctx: ComputeProviderLocalCtx) {
     const rfpRkey = (vm._uri ?? "").split("/")[4] ?? "unknown";
     const containerName = `pdr-${containerRequesterPlc}-${rfpRkey}-${shortUuid()}`;
 
-    await Deno.mkdir(cacheDir, { recursive: true });
 
     let rbacRef: StrongRef | undefined;
     if (rbacProvisioner) {
@@ -796,75 +631,47 @@ export function createComputeProviderLocal(ctx: ComputeProviderLocalCtx) {
 
     enriched.associateWithDroplet(containerName);
 
-    if (containerMode === "container") {
-      logger.info("provisioning container", {
-        containerName,
-        image: containerImage,
-      });
-
-  const info = await runContainer(backend, enrichedUserData, {
-        distro: (ds.image as Distro | undefined) ?? "ubuntu",
-        containerName,
-        imageTag: containerImage,
-        onIp: (ip, name) => {
-          droplet.networks.v4 = [{ ip_address: ip, type: "public" }];
-          droplet.containerName = name;
-        },
-      });
-
-      droplet.networks.v4 = [{ ip_address: info.ip, type: "public" }];
-      droplet.containerName = info.containerName;
-
-      // Stream container logs to structured logger for debugging guest boot.
-      if (ctx.debugLogContainerOutput) {
-        (async () => {
-          const stream = backend.logStream(info.containerName);
-          const reader = stream.getReader();
-          try {
-            while (true) {
-              const { value, done } = await reader.read();
-              if (done) break;
-              logger.warn("container_log", { containerName: info.containerName, line: value });
-            }
-          } catch { /* container stopped or error — best-effort */ }
-        })().catch(() => {});
-      }
-
-      return {
-        result: {
-          providerId: containerName,
-          metadata: {
-            containerName,
-            ip: info.ip,
-            mode: "container",
-            sshReady: true,
-          },
-        },
-        rbacRef,
-      };
-    }
-
-    const { ip, sshReady } = await provisionVM(
-      vm,
+    logger.info("provisioning container", {
       containerName,
-      enrichedUserData,
-      ds,
-      cacheDir,
-      vmImage,
-      log,
-    );
+      image: containerImage,
+    });
 
-    droplet.networks.v4 = [{ ip_address: ip, type: "public" }];
-    droplet.containerName = containerName;
+    const info = await runContainer(backend, enrichedUserData, {
+      distro: (ds.image as Distro | undefined) ?? "ubuntu",
+      containerName,
+      imageTag: containerImage,
+      onIp: (ip, name) => {
+        droplet.networks.v4 = [{ ip_address: ip, type: "public" }];
+        droplet.containerName = name;
+      },
+    });
+
+    droplet.networks.v4 = [{ ip_address: info.ip, type: "public" }];
+    droplet.containerName = info.containerName;
+
+    // Stream container logs to structured logger for debugging guest boot.
+    if (ctx.debugLogContainerOutput) {
+      (async () => {
+        const stream = backend.logStream(info.containerName);
+        const reader = stream.getReader();
+        try {
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            logger.warn("container_log", { containerName: info.containerName, line: value });
+          }
+        } catch { /* container stopped or error — best-effort */ }
+      })().catch(() => {});
+    }
 
     return {
       result: {
         providerId: containerName,
         metadata: {
           containerName,
-          ip,
-          mode: "vm",
-          sshReady,
+          ip: info.ip,
+          mode: "container",
+          sshReady: true,
         },
       },
       rbacRef,
@@ -898,7 +705,6 @@ export function createComputeProviderLocal(ctx: ComputeProviderLocalCtx) {
   }
 
   async function ensureImage(distro: Distro = "ubuntu"): Promise<void> {
-    if (containerMode !== "container") return;
     await buildContainerImage(backend, distro);
   }
 

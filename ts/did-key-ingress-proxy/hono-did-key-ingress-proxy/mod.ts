@@ -28,17 +28,7 @@ let additionalHosts: string[];
 if (configuredExtra.includes("*")) {
   additionalHosts = ["*"];
 } else {
-  // Always accept 127.0.0.1 + auto-detect container/docker gateway so the guest
-  // can reach the relay control endpoints.  macOS container uses 192.168.64.1,
-  // Docker uses 172.17.0.1.  The gateway is the host address the guest dials.
   const defaultHosts: string[] = ["127.0.0.1"];
-  try {
-    const { createContainerBackend } = await import("@publicdomainrelay/container-backend-container");
-    const be = createContainerBackend();
-    if (await be.isRunning()) {
-      defaultHosts.push(await be.defaultGateway());
-    }
-  } catch { /* container backend not available */ }
   try {
     const { createDockerBackend } = await import("@publicdomainrelay/container-backend-docker");
     const be = createDockerBackend();

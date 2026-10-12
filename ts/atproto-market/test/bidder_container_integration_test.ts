@@ -39,7 +39,6 @@ import { createComputeProviderHooks } from "@publicdomainrelay/market-bidder-com
 import { createLocalComputeProvider } from "@publicdomainrelay/compute-provider-local";
 import type { ComputeAtproto } from "@publicdomainrelay/compute-provider-abc";
 import type { ContainerBackend } from "@publicdomainrelay/container-backend-abc";
-import { createContainerBackend } from "@publicdomainrelay/container-backend-container";
 import { createDockerBackend } from "@publicdomainrelay/container-backend-docker";
 import { createRelayFactory } from "@publicdomainrelay/hono-factory-did-key-ingress-proxy-xrpc";
 import { createRequesterPDS, runComputeContract } from "@publicdomainrelay/requester-xrpc";
@@ -153,9 +152,7 @@ Deno.test({
 
   const cleanups: Array<() => void> = [];
 
-  const backend: ContainerBackend = Deno.build.os === "darwin"
-    ? createContainerBackend()
-    : createDockerBackend();
+  const backend: ContainerBackend = createDockerBackend();
   if (!(await backend.ensureRunning())) {
     // The acceptance suite needs a container runtime: there is no guest to
     // reach otherwise. Skipping loudly beats asserting against a phantom guest.
@@ -260,7 +257,6 @@ Deno.test({
       serve: providerServe,
       getIssuerUrl: issuerUrl,
       oidcProvisioning: true,
-      containerMode: "container",
       ingressProxyHost,
       caCertPem,
       guestTlsPort: dispTlsPort,

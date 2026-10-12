@@ -155,25 +155,10 @@ export default {
       type: "boolean" as const,
       description: "Enable local compute provider",
     },
-    "compute-provider-local-mode": {
-      type: "string" as const,
-      description: "Local provider mode: container or vm (default: container)",
-      env: "COMPUTE_PROVIDER_LOCAL_MODE",
-    },
-    "compute-provider-local-vm-image": {
-      type: "string" as const,
-      description: "Local provider VM image",
-      env: "COMPUTE_PROVIDER_LOCAL_VM_IMAGE",
-    },
     "compute-provider-local-container-image": {
       type: "string" as const,
       description: "Local provider container image",
       env: "COMPUTE_PROVIDER_LOCAL_CONTAINER_IMAGE",
-    },
-    "compute-provider-local-cache-dir": {
-      type: "string" as const,
-      description: "Local provider cache directory",
-      env: "COMPUTE_PROVIDER_LOCAL_CACHE_DIR",
     },
     "compute-provider-firecracker": {
       type: "boolean" as const,

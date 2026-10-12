@@ -212,7 +212,6 @@ Deno.test({
         "--ingress-proxy-host", PROD_DISPATCHER,
         "--plc-directory-url", PROD_PLC,
         "--compute-provider-local",
-        "--compute-provider-local-mode", "container",
         "--serve-port", "0",
         "--skip-qr",
         "--policy", "open",

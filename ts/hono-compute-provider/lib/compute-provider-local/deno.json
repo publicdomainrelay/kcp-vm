@@ -14,7 +14,6 @@
     "@publicdomainrelay/atproto-helpers": "jsr:@publicdomainrelay/atproto-helpers@^0",
     "@publicdomainrelay/oidc-issuer-hono": "jsr:@publicdomainrelay/oidc-issuer-hono@^0",
     "@publicdomainrelay/serve": "jsr:@publicdomainrelay/serve@^0",
-    "@publicdomainrelay/qemu-standalone": "jsr:@publicdomainrelay/qemu-standalone@^0",
     "yaml": "npm:yaml@^2.7.0"
   }
 }
