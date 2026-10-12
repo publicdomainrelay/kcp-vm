@@ -1721,8 +1721,8 @@ items:
       - "Changes plan 0005 M6-LIMITS's 'every member dies with the provider' to 'every member is a unit of its cluster's slice'."
       - "A user-manager restart, linger removal or reboot removes every transient unit: every cluster cold-starts; 0007:M3-NODE-LOSS-CLOCK keeps that outage off tenants' nodes."
       - "The market network's gateway must run this tree's clusterprovider in the user manager; if the market network cannot yet host the member units, the market network test waits for 0008:M4-MARKET-NETWORK-PORT and that is recorded."
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M3-APISERVER-FRONT
     milestone: M3
     kcp_use: "traditional-exception (virtual Kubernetes clusters project; principle)"
