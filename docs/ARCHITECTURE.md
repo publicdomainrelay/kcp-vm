@@ -6698,6 +6698,32 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   export. The token was re-issued at 10:45:25Z (expiry 11:15:25Z), and at 10:45:33Z the web app wrote a
   MarketIdentity and listed both accounts' clusters with it.
 
+- **The gateway re-populates every VM it owns after an upgrade or restart (plan 0007
+  M6-GATEWAY-REPOPULATE, 2026-10-12).** A claim is the index of a rented VM; a restart adopts it and
+  rents nothing. Joined claims (Joining, Running) are adopted by both halves: the cluster provider holds
+  them again (`adoptClaims`, every pass) and the web app watches each one for vm.terminated. In-flight
+  claims (Bidding, Provisioning) resume, because each claim's secrets-ingress key now lives in the root
+  vault (the web app's client `socialweb-computer-k8s`, KV `socialweb-door/claims/<claim>/secrets-ingress`,
+  `socialweb-computer-k8s-claim-keys-vault`) instead of memory. A VM whose claim is gone is found from
+  both sides, and only when they agree is it adopted: the cluster provider writes a claim again
+  (annotation `socialweb.computer/adopt-joined-node`, the spec rebuilt as at provision) for a tenant Node
+  that is Ready, named `<cluster>-node<N>`, has no claim, and still has a role in the cluster vault's
+  declaration; the web app moves that claim to Adopting, reads the owner's own repo through its session
+  (`findVmContract`: the newest `compute.vm` record whose role is the node name, its RFP, its accept, the
+  winner's receipt, then the winner's events for vm.hostKeys and vm.terminated and the owner's for a
+  vm.delete) and writes Running with the contract only when a receipt exists, no vm.delete was sent, the
+  guest is not terminated and the receipt has a bidder-signed vm.hostKeys record; otherwise the claim is
+  Failed with the reason, and the provider's teardown releases it at most once. The cluster vault keeps
+  an adopted node's JWT grant while the claim carries none. A receipt with no claim and no joined Node
+  (the ownership scan: every 5 minutes, 30 s while one waits, at most 20 record lookups a pass, over the
+  owners of the current claims) waits a grace of 10 minutes from when the web app started and is then
+  released once (reason `unclaimed_after_join_grace`); the web app cannot see the provider's
+  path-up time, so the grace is long rather than rebased. A market-network Gateway names the network's
+  published hosts in `spec.marketNetwork.names` (schema revision 4), merged into the web app's DNS table,
+  because the network's DID documents name its PDSes by service name on port 443; every vault unit the
+  core places carries the core's `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY` and `SSL_CERT_FILE`, so a cluster
+  vault fetches a bidder's issuer the way the host's own outbound traffic does.
+
 ## 16. Vocabulary
 
 | | |
