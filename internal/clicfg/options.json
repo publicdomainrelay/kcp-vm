@@ -410,7 +410,7 @@
     },
     "phase": {
       "type": "string",
-      "description": "apply, manifests render: only this phase of each set"
+      "description": "apply, manifests render: only these phases of each set, comma-separated names or first..last ranges in set order"
     },
     "wait-timeout": {
       "type": "string",

@@ -218,6 +218,10 @@ sets:
         workspace: root:bob
         files:
           - path: examples/atproto/market/60-bob-pds.yaml
+        after:
+          - kind: DenoPod
+            name: pds
+            for: Address
       - name: relay
         workspace: root:relay
         files:

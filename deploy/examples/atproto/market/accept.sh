@@ -499,7 +499,13 @@ bed_set "processes.kcp.pid=$(cat "$BED_DIR/kcp/kcp.pid")" "processes.kcp.port=$K
 
 echo
 echo "== provider workspace and schemas =="
-KUBECONFIG_PATH="$KUBECONFIG_PATH" bash "$DENOKCP_DIR/install-provider.sh"
+SOCIALWEB_COMPUTER=${SOCIALWEB_COMPUTER:-$BED_DIR/bin/socialweb-computer}
+if [ ! -x "$SOCIALWEB_COMPUTER" ]; then
+  mkdir -p "$(dirname "$SOCIALWEB_COMPUTER")"
+  (cd "$REPO" && go build -o "$SOCIALWEB_COMPUTER" ./cmd/socialweb-computer)
+fi
+"$SOCIALWEB_COMPUTER" apply --set denoruntime --kcp-kubeconfig "$KUBECONFIG_PATH" \
+  --wait-timeout "${WAIT_SECONDS}s" >"$BED_DIR/denoruntime-report.json"
 
 echo
 echo "== provider build =="
@@ -538,7 +544,8 @@ echo
 echo "== export endpoints =="
 SERVER=$(KC config view --minify -o jsonpath='{.clusters[0].cluster.server}')
 SERVER=${SERVER%%/clusters/*}
-KC --server="$SERVER/clusters/root" apply --validate=false -f "$MARKET_DIR/00-workspaces.yaml"
+"$SOCIALWEB_COMPUTER" apply --set market-testbed --phase workspaces --kcp-kubeconfig "$KUBECONFIG_PATH" \
+  --wait-timeout "${WAIT_SECONDS}s" >"$BED_DIR/workspaces-report.json"
 urls=""
 for _ in $(seq 1 120); do
   urls=$(KC --server="$SERVER/clusters/root:deno-provider" \
@@ -570,6 +577,7 @@ while :; do
   apply_status=0
   ORG_ROOT="$ORG_ROOT" \
   KUBECONFIG="$KUBECONFIG_PATH" \
+  SOCIALWEB_COMPUTER="$SOCIALWEB_COMPUTER" \
   BED_ID="$BED_ID" \
   BED_DIR="$BED_DIR" \
   BED_BIDDERS="$BED_BIDDERS" \

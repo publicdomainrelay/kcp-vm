@@ -103,15 +103,10 @@ func selectSets(vals clicfg.Values) ([]manifests.Set, map[string]any, error) {
 			return nil, nil, err
 		}
 		delete(raw, s.Name)
-		if phase := vals.String("phase"); phase != "" {
-			var only []manifests.Phase
-			for _, p := range s.Phases {
-				if p.Name == phase {
-					only = append(only, p)
-				}
-			}
-			if len(only) == 0 {
-				return nil, nil, fmt.Errorf("set %s has no phase %q", s.Name, phase)
+		if sel := vals.String("phase"); sel != "" {
+			only, err := selectPhases(s, sel)
+			if err != nil {
+				return nil, nil, err
 			}
 			s.Phases = only
 		}
@@ -127,6 +122,43 @@ func selectSets(vals clicfg.Values) ([]manifests.Set, map[string]any, error) {
 		return nil, nil, fmt.Errorf("the values file names %v, which --set does not apply", extra)
 	}
 	return sets, values, nil
+}
+
+func selectPhases(s manifests.Set, sel string) ([]manifests.Phase, error) {
+	index := map[string]int{}
+	for i, p := range s.Phases {
+		index[p.Name] = i
+	}
+	pick := make([]bool, len(s.Phases))
+	for _, item := range strings.Split(sel, ",") {
+		from, to, isRange := strings.Cut(strings.TrimSpace(item), "..")
+		if !isRange {
+			to = from
+		}
+		i, ok := index[from]
+		j, ok2 := index[to]
+		if !ok || !ok2 || j < i {
+			return nil, fmt.Errorf("set %s has no phase or ordered phase range %q (phases %v)", s.Name, item, phaseNames(s))
+		}
+		for k := i; k <= j; k++ {
+			pick[k] = true
+		}
+	}
+	var out []manifests.Phase
+	for i, p := range s.Phases {
+		if pick[i] {
+			out = append(out, p)
+		}
+	}
+	return out, nil
+}
+
+func phaseNames(s manifests.Set) []string {
+	out := make([]string, 0, len(s.Phases))
+	for _, p := range s.Phases {
+		out = append(out, p.Name)
+	}
+	return out
 }
 
 func runManifestsRender(ctx context.Context, a *app, vals clicfg.Values, rest []string) int {

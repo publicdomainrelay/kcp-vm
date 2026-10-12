@@ -10,12 +10,13 @@ set -euo pipefail
 # Every service binds port 0. The port it got reaches its DenoPod's
 # status.address (the service writes it to PORT_FILE in its run directory and
 # the provider reads it back), peers reach it by its cluster-local name through
-# the kcpdns shim, and this script reads status.address wherever a port has to
-# be rendered into another pod: the dispatcher's and its TLS front's ports go
-# into every bidder's argv, because the bidder hands them to its guests.
+# the kcpdns shim, and the market-testbed set's waits capture status.address
+# wherever a port has to be rendered into another pod: the dispatcher's and its
+# TLS front's ports go into every bidder's argv, because the bidder hands them
+# to its guests.
 #
-# Requires the provider to be installed first (deploy/denokcp/install-provider.sh)
-# and the sibling repositories checked out: atproto-market, atproto-relay,
+# Requires the denoruntime set applied first (socialweb-computer apply --set
+# denoruntime) and the sibling repositories checked out: atproto-market, atproto-relay,
 # hono-pds, did-key-ingress-proxy, typescript-helpers. See README.md in this
 # directory for what does and does not work between the services.
 #
@@ -28,6 +29,8 @@ set -euo pipefail
 #              BED_DIR/state, so sharing the cache never shares a store
 # ADDRESSES    file the read-back addresses are written to (default
 #              BED_DIR/addresses.env)
+# SOCIALWEB_COMPUTER the socialweb-computer binary that applies the set (default:
+#              built from this repository into BED_DIR/bin)
 
 REPO=$(cd "$(dirname "$0")/../../../.." && pwd)
 DENOKCP_DIR=$REPO/deploy/denokcp
@@ -121,41 +124,6 @@ if [ ! -s "$GUEST_TLS_DIR/relay.localhost.crt" ]; then
   echo "generated the guest TLS CA and the relay.localhost leaf in $GUEST_TLS_DIR" >&2
 fi
 
-KC --server="$ROOT_SERVER" apply --validate=false -f "$MARKET_DIR/00-workspaces.yaml"
-
-for ws in $WORKSPACES; do
-  tries=0
-  until [ "$(KC --server="$ROOT_SERVER" get workspace "$ws" -o jsonpath='{.status.phase}' 2>/dev/null)" = "Ready" ]; do
-    tries=$((tries + 1))
-    if [ "$tries" -ge "$WAIT_SECONDS" ]; then
-      echo "workspace root:$ws did not reach Ready within ${WAIT_SECONDS}s" >&2
-      exit 1
-    fi
-    sleep 1
-  done
-  echo "workspace root:$ws Ready"
-done
-
-for ws in $WORKSPACES; do
-  tenant="$S/clusters/root:$ws"
-  tries=0
-  # Waiting for the resource to be listable is not enough: a binding that is not
-  # Ready yet will list an empty list but reject a create, which is how this
-  # first failed. Wait for every binding to report Ready, without assuming how
-  # many there are.
-  until status=$(KC --server="$tenant" get apibindings -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null) &&
-    [ -n "$status" ] && [ "${status#*False}" = "$status" ]; do
-    tries=$((tries + 1))
-    if [ "$tries" -ge "$WAIT_SECONDS" ]; then
-      echo "the API bindings in root:$ws never became Ready; is the provider running?" >&2
-      KC --server="$tenant" get apibindings >&2 || true
-      exit 1
-    fi
-    sleep 1
-  done
-  KC --server="$tenant" apply --validate=false -f "$MARKET_DIR/10-rbac.yaml" >/dev/null
-done
-
 # The certificates come from OpenBao: the root CA lives in its root namespace and
 # each workspace's namespace gets an intermediate signed by it. The provider has
 # to have been started against the same vault -- see deploy/denokcp/start-openbao.sh,
@@ -192,104 +160,78 @@ resolve_key() {
 key=$(resolve_key PDS_PRIVATE_KEY_HEX "$KEY_FILE" "PDS")
 bob_key=$(resolve_key BOB_PDS_PRIVATE_KEY_HEX "$BOB_KEY_FILE" "bob PDS")
 
+# Every manifest goes through the market-testbed set (deploy/sets.yaml): the
+# values below are typed fields of internal/manifests.MarketBed, a field left
+# unset is a render error rather than an empty string, and the set's waits
+# capture the dispatcher's and its TLS front's bound ports. socialweb-computer
+# applies it server side as field manager socialweb-computer; nothing here
+# runs kubectl apply or sed over a manifest. The set runs in two halves
+# because each bidder's account on bob's PDS has to exist before the bidder.
+SWC=${SOCIALWEB_COMPUTER:-}
+if [ -z "$SWC" ]; then
+  SWC=$BED_DIR/bin/socialweb-computer
+  mkdir -p "$(dirname "$SWC")"
+  (cd "$REPO" && go build -o "$SWC" ./cmd/socialweb-computer)
+fi
+
+q() { printf '"%s"' "$1"; }
+VALUES=${VALUES:-$BED_DIR/values.yaml}
+mkdir -p "$(dirname "$VALUES")"
+write_values() {
+  (
+    umask 077
+    {
+      echo "market-testbed:"
+      echo "  OrgRoot: $(q "$ORG_ROOT")"
+      echo "  BedID: $(q "$BED_ID")"
+      echo "  StateDir: $(q "$STATE_DIR")"
+      echo "  DenoDir: $(q "$POD_DENO_DIR")"
+      echo "  GuestTLSDir: $(q "$GUEST_TLS_DIR")"
+      echo "  PDSPrivateKeyHex: $(q "$key")"
+      echo "  BobPDSPrivateKeyHex: $(q "$bob_key")"
+      [ -n "$DISPATCHER_PORT" ] && echo "  DispatcherPort: $DISPATCHER_PORT"
+      [ -n "$GUEST_TLS_PORT" ] && echo "  GuestTLSPort: $GUEST_TLS_PORT"
+      echo "  Bidders:"
+      for BIDDER_NAME in $BIDDERS; do
+        bidder_key=$(resolve_key "" "$KEY_DIR/$BIDDER_NAME.hex" "$BIDDER_NAME")
+        if [ "$BIDDER_NAME" = "bidder-1" ] && [ -n "${BIDDER_PRIVATE_KEY_HEX:-}" ]; then
+          bidder_key=$BIDDER_PRIVATE_KEY_HEX
+        fi
+        echo "    - Name: $(q "$BIDDER_NAME")"
+        echo "      Handle: $(q "$BIDDER_NAME.bob.test")"
+        echo "      PrivateKeyHex: $(q "$bidder_key")"
+      done
+      echo "  Firecracker:"
+      echo "    NodeImage: $(q "$FC_NODEIMAGE")"
+      echo "    NodeBoot: $(q "$FC_NODEBOOT")"
+      echo "    Config: $(q "$FC_CONFIG")"
+      echo "    RepoDir: $(q "$FC_REPO_DIR")"
+      echo "    Preinstall: $(q "$FC_PREINSTALL")"
+      echo "    VMM: $(q "$FC_VMM")"
+      echo "    RunnerImage: $(q "$FC_RUNNER_IMAGE")"
+      echo "    WorkRoot: $(q "$FC_WORK_ROOT")"
+    } >"$VALUES.tmp"
+    mv "$VALUES.tmp" "$VALUES"
+  )
+}
+apply_set() {
+  "$SWC" apply --set market-testbed --values "$VALUES" --phase "$1" --kcp-kubeconfig "$KUBECONFIG" \
+    --wait-timeout "${WAIT_SECONDS}s" >"$2"
+  echo "applied market-testbed phases $1; report in $2"
+}
+addr_of() {
+  KC --server="$S/clusters/root:$1" get denopod "$2" -o jsonpath='{.status.address}' 2>/dev/null || true
+}
+
 DISPATCHER_PORT=""
 GUEST_TLS_PORT=""
-BIDDER_NAME=""
-BIDDER_HANDLE=""
-bidder_key=""
-
-# Each pod's manifest carries its own placeholder, so one substitution pass can
-# never hand two pods the same key.
-apply_pod() {
-  local ws=$1 file=$2
-  sed -e "s|/home/johnandersen777/src/publicdomainrelay-kcp|$ORG_ROOT|g" \
-      -e "s|__PDS_PRIVATE_KEY_HEX__|$key|g" \
-      -e "s|__BOB_PDS_PRIVATE_KEY_HEX__|$bob_key|g" \
-      -e "s|__BIDDER_PRIVATE_KEY_HEX__|$bidder_key|g" \
-      -e "s|__BIDDER_NAME__|$BIDDER_NAME|g" \
-      -e "s|__BIDDER_HANDLE__|$BIDDER_HANDLE|g" \
-      -e "s|__BED_ID__|$BED_ID|g" \
-      -e "s|__STATE_DIR__|$STATE_DIR|g" \
-      -e "s|__DENO_DIR__|$POD_DENO_DIR|g" \
-      -e "s|__DISPATCHER_PORT__|$DISPATCHER_PORT|g" \
-      -e "s|__GUEST_TLS_PORT__|$GUEST_TLS_PORT|g" \
-      -e "s|__FC_NODEIMAGE__|$FC_NODEIMAGE|g" \
-      -e "s|__FC_NODEBOOT__|$FC_NODEBOOT|g" \
-      -e "s|__FC_CONFIG__|$FC_CONFIG|g" \
-      -e "s|__FC_REPO_DIR__|$FC_REPO_DIR|g" \
-      -e "s|__FC_PREINSTALL__|$FC_PREINSTALL|g" \
-      -e "s|__FC_VMM__|$FC_VMM|g" \
-      -e "s|__FC_RUNNER_IMAGE__|$FC_RUNNER_IMAGE|g" \
-      -e "s|__FC_WORK_ROOT__|$FC_WORK_ROOT|g" \
-      -e "s|__GUEST_TLS_DIR__|$GUEST_TLS_DIR|g" \
-      "$MARKET_DIR/$file" \
-    | KC --server="$S/clusters/root:$ws" apply --validate=false -f -
-}
-
-# The address a pod's process reported binding, once it has. Bounded by
-# WAIT_SECONDS; an empty answer is the caller's failure to report.
-pod_address() {
-  local ws=$1 name=$2 deadline address
-  deadline=$(( $(date +%s) + WAIT_SECONDS ))
-  while :; do
-    address=$(KC --server="$S/clusters/root:$ws" get denopod "$name" -o jsonpath='{.status.address}' 2>/dev/null || true)
-    if [ -n "$address" ]; then
-      echo "$address"
-      return 0
-    fi
-    if [ "$(date +%s)" -ge "$deadline" ]; then
-      echo "root:$ws $name never reported the address it bound within ${WAIT_SECONDS}s" >&2
-      KC --server="$S/clusters/root:$ws" get denopod "$name" -o jsonpath='{.status}' >&2 2>/dev/null || true
-      return 1
-    fi
-    sleep 1
-  done
-}
-
-# Each workspace's namespace names the OpenBao namespace that serves it. This
-# goes before the workloads so the authority exists by the time one asks for a
-# certificate, which is also the state an operator wants to see when a workload
-# does not come up serving TLS.
-for ws in $WORKSPACES; do
-  apply_pod "$ws" "15-openbao-$ws.yaml" >/dev/null
-done
-# A provider that reconciles anything readies these within seconds, so this
-# wait is shorter than the others: it is how accept.sh learns, sooner, that a
-# provider started before its export endpoints and needs a restart.
-OPENBAO_WAIT_SECONDS=${OPENBAO_WAIT_SECONDS:-$WAIT_SECONDS}
-for ws in $WORKSPACES; do
-  tries=0
-  until [ "$(KC --server="$S/clusters/root:$ws" get openbao openbao -o jsonpath='{.status.ready}' 2>/dev/null)" = "true" ]; do
-    tries=$((tries + 1))
-    if [ "$tries" -ge "$OPENBAO_WAIT_SECONDS" ]; then
-      echo "the OpenBao namespace for root:$ws never became ready within ${OPENBAO_WAIT_SECONDS}s" >&2
-      KC --server="$S/clusters/root:$ws" get openbao openbao -o yaml >&2 || true
-      exit 1
-    fi
-    sleep 1
-  done
-  echo "root:$ws OpenBao authority ready"
-done
-
-# Order still matters for one reason: a pod's own argv can only carry a port
-# that is already known. The dispatcher and its TLS front come up first because
-# every bidder's argv names their ports (the bidder writes them into its
-# guests' user_data). Everything else finds its peers by name, through a table
-# the provider rewrites as each pod reports the port it bound.
-apply_pod global 20-global-plc.yaml
-# socialweb-computer-kcp: the market's XRPC dispatcher, which the bidder, the
-# requester and every guest register with. It resolves did:plc signers through
-# the PLC directory above.
-apply_pod relay  35-relay-dispatcher.yaml
-DISPATCHER_ADDRESS=$(pod_address relay dispatcher)
+write_values
+apply_set workspaces..relay "$BED_DIR/apply-report-1.json"
+DISPATCHER_ADDRESS=$(addr_of relay dispatcher)
+DISPATCHER_TLS_ADDRESS=$(addr_of relay dispatcher-tls)
 DISPATCHER_PORT=${DISPATCHER_ADDRESS##*:}
-apply_pod relay  36-relay-dispatcher-tls.yaml
-DISPATCHER_TLS_ADDRESS=$(pod_address relay dispatcher-tls)
 GUEST_TLS_PORT=${DISPATCHER_TLS_ADDRESS##*:}
 echo "dispatcher: $DISPATCHER_ADDRESS  guest TLS front: $DISPATCHER_TLS_ADDRESS"
-apply_pod alice  40-alice-pds.yaml
-apply_pod bob    60-bob-pds.yaml
-apply_pod relay  30-relay-relay.yaml
 
 # Every bidder signs in to an account of its own on bob's PDS (pdsAccount) and
 # writes its offering, bids and receipts there, so the account has to exist
@@ -298,7 +240,7 @@ apply_pod relay  30-relay-relay.yaml
 # bed has no OpenBao KV wiring for a DenoPod yet), and the DenoPod names only
 # the file's path. A second run finds the file and signs in with it.
 BOB_PDS_NAME=pds.default.bob.svc.kcp.local
-BOB_PDS_ADDRESS=$(pod_address bob pds)
+BOB_PDS_ADDRESS=$(addr_of bob pds)
 BOB_PDS_PORT=${BOB_PDS_ADDRESS##*:}
 MARKET_CA=$BED_DIR/market-ca.pem
 curl -sS --fail --max-time 10 --header "X-Vault-Token: root" "http://$OPENBAO_ADDR/v1/pki/ca/pem" -o "$MARKET_CA"
@@ -368,41 +310,12 @@ except Exception:
 }
 
 for BIDDER_NAME in $BIDDERS; do
-  bidder_key=$(resolve_key "" "$KEY_DIR/$BIDDER_NAME.hex" "$BIDDER_NAME")
-  if [ "$BIDDER_NAME" = "bidder-1" ] && [ -n "${BIDDER_PRIVATE_KEY_HEX:-}" ]; then
-    bidder_key=$BIDDER_PRIVATE_KEY_HEX
-  fi
-  BIDDER_HANDLE="$BIDDER_NAME.bob.test"
-  ensure_bidder_account "$BIDDER_NAME" "$BIDDER_HANDLE" "$STATE_DIR/bob-$BIDDER_NAME"
-  apply_pod bob 70-bidder.yaml
+  ensure_bidder_account "$BIDDER_NAME" "$BIDDER_NAME.bob.test" "$STATE_DIR/bob-$BIDDER_NAME"
 done
 BIDDER_NAME=""
-BIDDER_HANDLE=""
-bidder_key=""
 
-# The verifier reaches alice's PDS, the PLC directory and the relay, so a fixed
-# sleep in front of a pod whose restartPolicy is Never waits for nothing. What is
-# waited for instead is the provider's own verdict on alice's PDS -- phase
-# Running with ready true is the readiness probe resolving
-# pds.default.alice.svc.kcp.local through the shim and answering on
-# /xrpc/_health -- and the relay's reported address, because the verifier
-# watches the relay over a WebSocket. The wait shares the bounded WAIT_SECONDS
-# deadline used everywhere else, and when it expires the verifier is created
-# anyway, so the run reports a verifier that could not reach its peers instead
-# of stopping here.
-verifier_deadline=$(( $(date +%s) + WAIT_SECONDS ))
-while :; do
-  phase=$(KC --server="$S/clusters/root:alice" get denopod pds -o jsonpath='{.status.phase}' 2>/dev/null || true)
-  ready=$(KC --server="$S/clusters/root:alice" get denopod pds -o jsonpath='{.status.ready}' 2>/dev/null || true)
-  relay=$(KC --server="$S/clusters/root:relay" get denopod relay -o jsonpath='{.status.address}' 2>/dev/null || true)
-  [ "$phase" = "Running" ] && [ "$ready" = "true" ] && [ -n "$relay" ] && break
-  if [ "$(date +%s)" -ge "$verifier_deadline" ]; then
-    echo "alice pds never reported Running and ready (or the relay no address) within ${WAIT_SECONDS}s; creating the verifier anyway so the run reports it" >&2
-    break
-  fi
-  sleep 2
-done
-apply_pod alice  50-verifier.yaml
+write_values
+apply_set bidders..verifier "$BED_DIR/apply-report-2.json"
 
 PODS="global/plc relay/relay relay/dispatcher relay/dispatcher-tls alice/pds bob/pds"
 for b in $BIDDERS; do PODS="$PODS bob/$b"; done
@@ -421,9 +334,6 @@ for entry in $PODS; do
   printf 'root:%-7s %-15s phase=%s ready=%s address=%s\n' "$ws" "$name" "${phase:-unknown}" "${ready:-unknown}" "${address:-none}"
 done
 
-addr_of() {
-  KC --server="$S/clusters/root:$1" get denopod "$2" -o jsonpath='{.status.address}' 2>/dev/null || true
-}
 mkdir -p "$(dirname "$ADDRESSES")"
 {
   echo "PLC_ADDRESS=$(addr_of global plc)"
