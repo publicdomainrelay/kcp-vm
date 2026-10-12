@@ -262,38 +262,34 @@ func TestOurOwnOutageNeverCountsAgainstATenantNode(t *testing.T) {
 	run(t, append([]string{"docker", "exec", b.name, "kill"}, pids...)...)
 	b.reading("link restart: killed the apiserver ClusterLink process %v (127.0.0.1:%s)", pids, apiserverPort)
 	link := b.key + "-apiserver"
-	sawDown := ""
-	end := time.Now().Add(5 * time.Minute)
-	for {
-		phase := b.kcp(b.home, "get", "clusterlinks", link, "-o", "jsonpath={.status.phase}").out()
-		if phase != "Listening" && sawDown == "" {
-			sawDown = phase + " at " + time.Now().UTC().Format(time.RFC3339)
-		}
-		if phase == "Listening" && (sawDown != "" || time.Since(linkDownAt) > time.Minute) {
-			break
-		}
-		if time.Now().After(end) {
-			t.Fatalf("ClusterLink %s not Listening again within 5m of its process being killed", link)
-		}
-		time.Sleep(2 * time.Second)
+	b.waitTenant("ClusterLink "+link+" out of Listening", time.Minute, func() bool {
+		return b.kcp(b.home, "get", "clusterlinks", link, "-o", "jsonpath={.status.phase}").out() != "Listening"
+	})
+	b.reading("link outage: %s reads %q; the provider does not respawn a dead link, so our side stays down",
+		link, b.kcp(b.home, "get", "clusterlinks", link, "-o", "jsonpath={.status.phase}").out())
+	samples = b.watchNodeKept(node, guest, uid, linkDownAt.Add(m3ClockWatchAfter))
+	notReady := notReadyIn(samples)
+	if notReady == "none" {
+		t.Fatalf("node %s never read NotReady during a %s apiserver link outage, so the clock was not exercised", node, m3ClockWatchAfter)
 	}
-	linkUp := b.waitLinksListening(5 * time.Minute)
-	b.reading("link restart: %s left Listening (%s), path up again %s after the kill", link, orNone(sawDown), linkUp.Sub(linkDownAt).Round(time.Second))
-	samples = b.watchNodeKept(node, guest, uid, linkUp.Add(m3ClockWatchAfter))
 	if strings.Contains(b.logsSince(linkDownAt), "NotReady past the loss grace") {
 		t.Fatalf("the provider released a node for NotReady time that ran while its link was down: %s",
 			b.logLine("NotReady past the loss grace", node))
 	}
+	b.reading("link outage reading: link down %s, node NotReady since %s, kept past the %s loss grace while the path was down",
+		time.Since(linkDownAt).Round(time.Second), notReady, m3NodeLossGrace)
+
+	b.startControlPlane()
+	linkUp := b.waitLinksListening(10 * time.Minute)
+	b.reading("link outage: control plane restarted to bring the link back; path up %s after the kill", linkUp.Sub(linkDownAt).Round(time.Second))
+	samples = b.watchNodeKept(node, guest, uid, linkUp.Add(m3ClockWatchAfter))
+	if strings.Contains(b.logsSince(linkUp), "NotReady past the loss grace") {
+		t.Fatalf("the provider released a node within the loss grace after the path came back: %s",
+			b.logLine("NotReady past the loss grace", node))
+	}
 	b.waitNodeReady(node, 3*time.Minute)
-	b.reading("link restart reading: path down %s, first NotReady seen %s, node kept and Ready %s after path up",
-		linkUp.Sub(linkDownAt).Round(time.Second), notReadyIn(samples), m3ClockWatchAfter)
+	b.reading("link outage reading: NotReady since %s (more than %s before the path came back), kept and Ready %s after path up; Ready transitions after: %s",
+		notReady, m3NodeLossGrace, m3ClockWatchAfter, notReadyIn(samples))
 
 	b.releaseWorkload(node, guest)
-}
-
-func orNone(s string) string {
-	if s == "" {
-		return "not observed between polls"
-	}
-	return s
 }
