@@ -158,7 +158,7 @@ type result struct {
 func main() {
 	specPath := flag.String("spec", "", "path to the guest spec")
 	resultPath := flag.String("result", "", "write the result JSON here as well as to stdout")
-	foreground := flag.Bool("foreground", false, "stay up until signalled, so a container hosting this guest lives as long as the guest does")
+	foreground := flag.Bool("foreground", false, "stay up until signalled or until the guest's VMM exits, so a container hosting this guest lives exactly as long as the guest does")
 	stop := flag.Bool("stop", false, "stop the guest whose work directory is named by -work-dir")
 	workDir := flag.String("work-dir", "", "the work directory of the guest to stop")
 	flag.Usage = func() { fmt.Fprint(os.Stderr, usage) }
@@ -381,12 +381,18 @@ func Boot(specPath, resultPath string, foreground bool) error {
 	if !foreground {
 		return nil
 	}
-	<-ctx.Done()
-	fmt.Printf("stopping guest %s\n", s.Name)
-	if err := Stop(s.WorkDir); err != nil {
-		return err
+	select {
+	case <-ctx.Done():
+		fmt.Printf("stopping guest %s\n", s.Name)
+		return Stop(s.WorkDir)
+	case <-exited:
+		fmt.Printf("guest %s exited: the process hosting its VMM is gone\n", s.Name)
+		if err := proc.Wait(); err != nil {
+			return fmt.Errorf("guest %s exited on its own: %w. Its output follows:\n%s",
+				s.Name, err, proc.Output())
+		}
+		return nil
 	}
-	return nil
 }
 
 func awaitInstance(
