@@ -619,10 +619,14 @@ export function sshTunnelArgs(
   ];
 }
 
+export function dumbpipeConnectArgv(target: string, dumbpipePath?: string): string[] | undefined {
+  if (!target.startsWith(IROH_SCHEME)) return undefined;
+  return [dumbpipePath ?? "dumbpipe", "connect", target.slice(IROH_SCHEME.length)];
+}
+
 export function sshProxyCommandFor(target: string, dumbpipePath?: string): string {
-  if (target.startsWith(IROH_SCHEME)) {
-    return `${dumbpipePath ?? "dumbpipe"} connect ${target.slice(IROH_SCHEME.length)}`;
-  }
+  const argv = dumbpipeConnectArgv(target, dumbpipePath);
+  if (argv) return argv.join(" ");
   return `websocat --binary ${tunnelWsUrl(target)}`;
 }
 

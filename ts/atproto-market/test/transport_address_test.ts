@@ -1,5 +1,5 @@
 import { assert, assertEquals } from "@std/assert";
-import { IROH_SCHEME, sshProxyCommandFor } from "@publicdomainrelay/requester-xrpc";
+import { dumbpipeConnectArgv, IROH_SCHEME, sshProxyCommandFor } from "@publicdomainrelay/requester-xrpc";
 
 // A guest announces one address on one report -- the on-network event every
 // transport has always used -- and the address says which transport it belongs
@@ -37,4 +37,22 @@ Deno.test("a hostname is never read as a ticket, however it is spelled", () => {
   // dot in it would be a ticket to anyone guessing from the shape alone. The
   // scheme is what decides.
   assert(sshProxyCommandFor("localhost").startsWith("websocat --binary"));
+});
+
+Deno.test("an in-process dialer gets the same dumbpipe argv the ProxyCommand runs", () => {
+  assertEquals(dumbpipeConnectArgv(`${IROH_SCHEME}${TICKET}`), ["dumbpipe", "connect", TICKET]);
+  assertEquals(
+    dumbpipeConnectArgv(`${IROH_SCHEME}${TICKET}`, "/opt/dumbpipe"),
+    ["/opt/dumbpipe", "connect", TICKET],
+  );
+  assertEquals(
+    sshProxyCommandFor(`${IROH_SCHEME}${TICKET}`, "/opt/dumbpipe"),
+    dumbpipeConnectArgv(`${IROH_SCHEME}${TICKET}`, "/opt/dumbpipe")!.join(" "),
+  );
+});
+
+Deno.test("a non-iroh address has no dumbpipe argv", () => {
+  assertEquals(dumbpipeConnectArgv("did-key-abc.xrpc.fedproxy.com"), undefined);
+  assertEquals(dumbpipeConnectArgv("localhost"), undefined);
+  assertEquals(dumbpipeConnectArgv("10.0.0.2:22"), undefined);
 });
