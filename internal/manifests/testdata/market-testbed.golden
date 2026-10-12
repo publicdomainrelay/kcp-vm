@@ -236,6 +236,7 @@ spec:
       HOME: Deno.env.get("HOME") ?? "",
       ...serviceEnv,
       PORT_FILE: `${runDir}/port-bound-to`,
+      LISTENERS_FILE: `${runDir}/listeners.json`,
       DENO_DIR: "/cache/deno",
     };
 
@@ -356,6 +357,7 @@ spec:
       HOME: Deno.env.get("HOME") ?? "",
       ...serviceEnv,
       PORT_FILE: `${runDir}/port-bound-to`,
+      LISTENERS_FILE: `${runDir}/listeners.json`,
       DENO_DIR: "/cache/deno",
     };
 
@@ -444,6 +446,7 @@ spec:
     const upstreamPort = Deno.env.get("DISPATCHER_PORT") ?? "";
     const port = Number(Deno.env.get("TLS_PORT") ?? "0");
     const portFile = Deno.env.get("PORT_FILE") ?? "port-bound-to";
+    const listenersFile = Deno.env.get("LISTENERS_FILE") ?? "listeners.json";
     const cert = await Deno.readTextFile(`${dir}/relay.localhost.crt`);
     const key = await Deno.readTextFile(`${dir}/relay.localhost.key`);
 
@@ -456,6 +459,7 @@ spec:
       key,
       onListen: ({ hostname, port }) => {
         Deno.writeTextFileSync(portFile, String(port));
+        Deno.writeTextFileSync(listenersFile, JSON.stringify({ listeners: [{ name: "tcp", kind: "tcp", address: `${hostname}:${port}` }] }) + "\n");
         console.log(JSON.stringify({ event: "dispatcher_tls_listening", hostname, port, upstreamPort }));
       },
     }, async (req) => {
@@ -491,6 +495,7 @@ spec:
     write:
       allowList:
         - port-bound-to
+        - listeners.json
     net:
       allow: true
     env:
@@ -500,6 +505,7 @@ spec:
         - DISPATCHER_PORT
         - TLS_PORT
         - PORT_FILE
+        - LISTENERS_FILE
     noPrompt: true
 --- # 40-alice-pds.yaml
 apiVersion: deno.computer/v1alpha1
@@ -542,6 +548,7 @@ spec:
       HOME: Deno.env.get("HOME") ?? "",
       ...serviceEnv,
       PORT_FILE: `${runDir}/port-bound-to`,
+      LISTENERS_FILE: `${runDir}/listeners.json`,
       DENO_DIR: "/cache/deno",
     };
 
@@ -662,6 +669,7 @@ spec:
       HOME: Deno.env.get("HOME") ?? "",
       ...serviceEnv,
       PORT_FILE: `${runDir}/port-bound-to`,
+      LISTENERS_FILE: `${runDir}/listeners.json`,
       DENO_DIR: "/cache/deno",
     };
 
@@ -779,6 +787,7 @@ spec:
       HOME: Deno.env.get("HOME") ?? "",
       ...serviceEnv,
       PORT_FILE: `${runDir}/port-bound-to`,
+      LISTENERS_FILE: `${runDir}/listeners.json`,
       DENO_DIR: "/cache/deno",
     };
 
@@ -938,6 +947,8 @@ spec:
     childEnv.REPO_PRIVATE_KEY_HEX_PATH = "/bed/state/bob-bidder-1/repo-private-key.hex";
     childEnv.OAUTH_SESSION_PATH = "/bed/state/bob-bidder-1/oauth-session.json";
     childEnv.PORT_FILE = `${runDir}/port-bound-to`;
+    childEnv.LISTENERS_FILE = `${runDir}/listeners.json`;
+    childEnv.STATUS_FILE = `${runDir}/status.json`;
     childEnv.DENO_DIR = "/cache/deno";
 
     // The bidder registers with the PLC directory and announces itself to the
@@ -1078,6 +1089,8 @@ spec:
     childEnv.REPO_PRIVATE_KEY_HEX_PATH = "/bed/state/bob-bidder-2/repo-private-key.hex";
     childEnv.OAUTH_SESSION_PATH = "/bed/state/bob-bidder-2/oauth-session.json";
     childEnv.PORT_FILE = `${runDir}/port-bound-to`;
+    childEnv.LISTENERS_FILE = `${runDir}/listeners.json`;
+    childEnv.STATUS_FILE = `${runDir}/status.json`;
     childEnv.DENO_DIR = "/cache/deno";
 
     // The bidder registers with the PLC directory and announces itself to the
