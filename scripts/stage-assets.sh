@@ -279,7 +279,7 @@ stage_debs() {
   esac
 }
 
-go build -o "$work/assetpack" "$root/internal/assets/assetpack"
+(cd "$root" && go build -o "$work/assetpack" ./internal/assets/assetpack)
 
 failed=0
 for plat in "${platforms[@]}"; do

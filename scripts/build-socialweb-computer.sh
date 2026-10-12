@@ -119,7 +119,7 @@ build_once() {
   say "build $n: stage assets"
   local stage_args=()
   for plat in "${platforms[@]}"; do stage_args+=(--platform "$plat"); done
-  "$tree/scripts/stage-assets.sh" --cache "$cache/assets" "${stage_args[@]}"
+  (cd "$tree" && ./scripts/stage-assets.sh --cache "$cache/assets" "${stage_args[@]}")
   for plat in "${platforms[@]}"; do
     goos="${plat%/*}"
     goarch="${plat#*/}"
