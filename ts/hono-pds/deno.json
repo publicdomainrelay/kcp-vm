@@ -1,0 +1,41 @@
+{
+  "workspace": [
+    "lib/common",
+    "lib/common/oauth-server-common",
+    "lib/abc/atproto-repo",
+    "lib/abc/atproto-oauth-server",
+    "lib/atproto-repo-deno",
+    "lib/atproto-oauth-server-deno",
+    "lib/hono-factory-atproto-repo-deno"
+  ],
+  "nodeModulesDir": "auto",
+  "imports": {
+    "@hono/hono": "jsr:@hono/hono@^4",
+    "@atproto/crypto": "npm:@atproto/crypto@^0.5.0",
+    "@atproto/identity": "npm:@atproto/identity@^0.5.0",
+    "@std/assert": "jsr:@std/assert@^1",
+    "@publicdomainrelay/hono-error-middleware": "../typescript-helpers/lib/hono-error-middleware/mod.ts",
+    "@publicdomainrelay/logger": "../typescript-helpers/lib/logger/mod.ts",
+    "@publicdomainrelay/serve": "../typescript-helpers/lib/serve/mod.ts",
+    "@publicdomainrelay/cli-args-env": "../typescript-helpers/lib/cli-args-env/mod.ts",
+    "@publicdomainrelay/sandbox-abc": "../deno-worker-sandbox/lib/abc/sandbox/mod.ts",
+    "@publicdomainrelay/sandbox-common": "../deno-worker-sandbox/lib/common/sandbox-common/mod.ts",
+    "@publicdomainrelay/event-bus": "../typescript-helpers/lib/event-bus/mod.ts",
+    "@publicdomainrelay/sandbox-deno": "../deno-worker-sandbox/lib/sandbox-deno/mod.ts"
+  },
+  "tasks": {
+    "check": "deno check lib/common/mod.ts lib/common/oauth-server-common/mod.ts lib/abc/atproto-repo/mod.ts lib/abc/atproto-oauth-server/mod.ts lib/atproto-repo-deno/mod.ts lib/atproto-oauth-server-deno/mod.ts lib/hono-factory-atproto-repo-deno/mod.ts",
+    "test": "deno test --allow-net --allow-env --allow-read --allow-write --allow-run --unstable-kv --unstable-worker-options test/",
+    "test:sandbox": "deno test --allow-net --allow-env --allow-read --allow-write --unstable-kv --unstable-worker-options test/conformance/sandbox-conformance.test.ts",
+    "test:conformance": "deno test --allow-net --allow-env --unstable-kv test/conformance/",
+    "test:integration": "deno test --allow-net --allow-env test/integration_test.ts",
+    "test:cli": "deno test --allow-run --allow-read test/cli_smoke_test.ts",
+    "fmt": "deno fmt"
+  },
+  "compile": {
+    "include": ["cli-args-env.json", "config.json"]
+  },
+  "fmt": {
+    "lineWidth": 100
+  }
+}
