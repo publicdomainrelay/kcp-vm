@@ -660,8 +660,8 @@ items:
     test_first: "Both parity tests, run against the same fixture, red on every requirement the Go side misses (the failure list is the evidence); then green."
     done_when: "every inventory entry marked met with its parity test green on both sides."
     risks: ["The guest-reported host keys arrive after boot (M4-HOST-KEYS); the droplet view shows none until the guest's report, which the parity fixture records as the expected shape."]
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M2-CONTROLLER
     milestone: M2
     title: The Go ComputeVM controller boots, adopts by the tri-state Verdict, and releases
@@ -723,8 +723,8 @@ items:
       Red first.
     done_when: "offline tests green; live proofs are M6-*."
     risks: ["A false Lost costs a tenant a VM (LXD shipped this bug); every Lost row names a definite answer from the kernel or systemd, and the tests pin that transport errors never reach a Lost row."]
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M3-TS-PROVIDER
     milestone: M3
     title: compute-provider-kcp, the TypeScript ComputeProvider that writes ComputeVMs
@@ -1057,7 +1057,7 @@ items:
       ends the requester's ssh within seconds with vm_session_ended_by_bidder and no vm.delete is submitted.
     done_when: "TS side green (done); Go controller and compute-provider-kcp emit it from Lost verdicts at re-population and from unit failure, tests green; the live reading recorded with UTC timestamps."
     risks: ["Tombstones are in memory: a bidder restarted between a guest's end and the requester's vm.delete answers 'unknown receipt' until M4-CONTRACT-STORE-FILE persists contracts and the terminated set (split out 2026-10-12 to land now)."]
-    status: doing
+    status: done
     evidence:
       - "2026-10-12 atproto-market (branch pre-iroh) eb2aa82: lexicon terminated.json, generated market-lexicons types, COMPUTE_EVENTS_VM_TERMINATED_NSID and VM_TERMINATED_REASONS; test/vm_terminated_lexicon_test.ts red (missing exports) then 4/4 green."
       - "2026-10-12 atproto-market 7c4a8f4: market-bidder-compute publishes a signed market.event wrapping vm.terminated from onGuestGone (terminatedReasonOf: 'runner container exited' code 0 -> guest_poweroff, else vmm_exited; oom, host_reboot, identity_mismatch passed through) and as the vm.delete ack (deleted_on_request + request strongRef), submitted to the accept's submitEvent, firehose otherwise; bounded TerminatedReceipts (1024) makes a late or duplicate vm.delete answer 200 (no 'unknown receipt', no second destroy or event); concurrent HTTP + firehose deliveries destroy once. test/vm_terminated_bidder_test.ts red (missing terminatedReasonOf/TerminatedReceipts/submitEventUrl) then 10/10 green; market_bidder_guest_gone_test.ts still green."
