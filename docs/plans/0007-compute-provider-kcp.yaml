@@ -869,7 +869,7 @@ items:
       the first two release at 90 s from lastTransitionTime).
     done_when: "offline tests green; the bed reading is taken by 0006:M3-CP-CONTINUITY's cold-start test."
     risks: ["A path that flaps keeps resetting pathUpSince and would never release a really dead node; pathUpSince only moves forward after the path was continuously up for 30 s, and a test pins it."]
-    status: doing
+    status: done
     evidence:
       - "task/door-resilience merged to main 2026-10-12: socialweb-computer-kcp a02387e/2a8b90d/7791f6d (rebased to f4dd567). The NotReady timer lives in the Go clusterprovider: each pass checks the tenant apiserver /readyz and that both cluster links are Listening; while that path is down no node is released; after an outage of >=30 s or a cold start the 90 s timer and 2 m join grace count from when the path came back; a provider start finding the path up does not reset the timer (decided by Claude, user may veto: reset only after an outage >=30 s so a flapping path still releases a dead node)"
       - "5 new Go tests red then green, 2 guard tests (provider restart, flapping path) green before and after; merged main go test ./... 66/66 ok, check.sh --fast exit 0"
@@ -982,7 +982,7 @@ items:
       bidder restarted, then a late vm.delete answers 200 already-terminated. Red first.
     done_when: "suites green; both live readings recorded (UTC) with no leaked guest or work dir; pushed on main in atproto-market and hono-compute-provider."
     risks: ["A store written on a slow disk delays the accept ack by the fsync; measured and recorded."]
-    status: doing
+    status: done
     evidence:
       - "merged to main 2026-10-12: atproto-market c78cf31 (ContractStore ABC, load before subscribe, save before ack, tombstones persisted, lib/market-bidder-contract-store-fs: one 0600 file per receipt, temp+fsync+rename+dir fsync, corrupt file refuses startup naming it; hono-bidder --contract-store-dir default <work-root>/contracts), hono-compute-provider ac3a1f5 (ComputeProvider.adopt, guest.json with host boot id, adopted guests re-watched, gone-at-adopt -> vmm_exited|host_reboot)"
       - "tests red then green: market_bidder_contract_restore_test.ts 8/8 (red: vm.delete 400 unknown receipt, subscribe before load, ack before save), contract_store_fs_test.ts 7/7, firecracker_adopt_test.ts 4/4; regression 43 + 45 green; re-run on merged main 32/32 + 12/12"
@@ -1297,7 +1297,7 @@ items:
       Failed).
     done_when: "unit tests green; the bed test green with UTC readings; no claim in Bidding or Provisioning is failed by a door restart."
     risks: ["The dispatcher must accept a re-registration of the same ingress key after a crash (stale registration); measured on the bed, the M4-BIDDER-VAULT risk."]
-    status: doing
+    status: done
     evidence:
       - "task/door-resilience merged to main 2026-10-12: NodeClaim schema revision 4 (phases Lost and Adopting, status.secrets, contract.acceptPending, contract.termination; export re-pointed, TS types regenerated); per-claim secrets-ingress key written once (CAS 0) at secret/socialweb-door/claims/<claim>/secrets-ingress through a new OpenBao store (in-memory fallback) with door options openbao-addr/-token-file/-ca-file/-kv-mount; served URL recorded before the RFP, acceptPending before the accept; a restarted door holding the key resumes Bidding/Provisioning claims (no second RFP/accept, same secrets URL, grant re-installed, network wait resumed, reaches Joining); also vm.terminated: a terminated guest ends its claim Lost at once, released with no vm.delete, one replacement rented. atproto-market aed08e45/95b5ea6 (rebased to 1c4073b)"
       - "tests red then green: atproto-market stored-key secrets 1/1, resume 7/7, 77 related green; door node_market 8 new red, 40/40 on merged main; OpenBao store 4/4; full door suite 142 passed (1 live skipped); three deliberate regressions each caught"
