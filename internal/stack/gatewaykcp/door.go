@@ -85,7 +85,7 @@ func (g *gateway) door(ctx context.Context, base *env, rec devinstance.Record, g
 	}
 	defer logf.Close()
 	cmd.Stdout, cmd.Stderr = logf, logf
-	cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGTERM}
+	dieWithCore(cmd)
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
 	cmd.WaitDelay = doorStopGrace
 	if err := cmd.Start(); err != nil {
