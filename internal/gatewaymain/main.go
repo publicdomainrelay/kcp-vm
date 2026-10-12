@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -62,7 +64,7 @@ func run(ctx context.Context, inv foldmain.Invocation) error {
 		"xrpc", xrpcserver.XRPCPrefix,
 		"mint", xrpcserver.MintPath,
 	)
-	return serve(ctx, cfg, g, log)
+	return serve(ctx, cfg, g, log, inv)
 }
 
 func buildDeps(cfg Config) (Deps, error) {
@@ -158,6 +160,20 @@ func buildDeps(cfg Config) (Deps, error) {
 
 const plcTimeout = 10 * time.Second
 
+const ListenerName = "xrpc"
+
+func loopbackURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	if u.Hostname() == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(u.Hostname())
+	return ip != nil && ip.IsLoopback()
+}
+
 func directory(cfg Config) (identity.Directory, error) {
 	hardened := identity.DefaultDirectory()
 	cached, ok := hardened.(*identity.CacheDirectory)
@@ -166,8 +182,17 @@ func directory(cfg Config) (identity.Directory, error) {
 			"indigo's identity.DefaultDirectory() is a %T, not a *identity.CacheDirectory, so its "+
 				"revalidation window cannot be set", hardened)
 	}
+	inner := cached.Inner
+	if base, ok := inner.(*identity.BaseDirectory); ok && cfg.PLCURL != "" && cfg.PLCURL != identity.DefaultPLCURL {
+		own := &identity.BaseDirectory{PLCURL: strings.TrimSuffix(cfg.PLCURL, "/"), HTTPClient: base.HTTPClient,
+			TryAuthoritativeDNS: base.TryAuthoritativeDNS, SkipDNSDomainSuffixes: base.SkipDNSDomainSuffixes, UserAgent: base.UserAgent}
+		if loopbackURL(own.PLCURL) {
+			own.HTTPClient = http.Client{Timeout: plcTimeout}
+		}
+		inner = own
+	}
 	return identity.NewCacheDirectory(
-		cached.Inner,
+		inner,
 		directoryCacheCapacity,
 		cfg.DirectoryCacheTTL,
 		cfg.DirectoryCacheTTL,
@@ -175,16 +200,21 @@ func directory(cfg Config) (identity.Directory, error) {
 	), nil
 }
 
-func serve(ctx context.Context, cfg Config, g *Gateway, log *slog.Logger) error {
+func serve(ctx context.Context, cfg Config, g *Gateway, log *slog.Logger, inv foldmain.Invocation) error {
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	server := &http.Server{
-		Addr:              cfg.Addr,
 		Handler:           g.Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 	}
+	ln, err := net.Listen("tcp", cfg.Addr)
+	if err != nil {
+		return err
+	}
+	log.Info("listening", "addr", ln.Addr().String())
+	inv.Listened(ListenerName, ln.Addr())
 
 	var background sync.WaitGroup
 	background.Add(1)
@@ -196,7 +226,7 @@ func serve(ctx context.Context, cfg Config, g *Gateway, log *slog.Logger) error 
 	}()
 
 	served := make(chan error, 1)
-	go func() { served <- server.ListenAndServe() }()
+	go func() { served <- server.Serve(ln) }()
 
 	var serveErr error
 	select {

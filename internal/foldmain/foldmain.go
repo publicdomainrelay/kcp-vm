@@ -2,6 +2,7 @@ package foldmain
 
 import (
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 )
@@ -13,6 +14,7 @@ type Invocation struct {
 	Stderr io.Writer
 	Exe    string
 	Verb   []string
+	Listen func(name string, addr net.Addr)
 }
 
 func OS() Invocation {
@@ -54,4 +56,10 @@ func (i Invocation) Env(name string) string {
 		return ""
 	}
 	return i.Getenv(name)
+}
+
+func (i Invocation) Listened(name string, addr net.Addr) {
+	if i.Listen != nil {
+		i.Listen(name, addr)
+	}
 }
