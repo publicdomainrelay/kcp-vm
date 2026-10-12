@@ -38,7 +38,7 @@ type Observed struct {
 func RestartedInPlace(o v1alpha1.HostProcess, st hostsvc.UnitStatus) bool {
 	rt := o.Status.Runtime
 	return rt != nil && rt.InvocationID != "" && o.Spec.RestartPolicy != "" && o.Spec.RestartPolicy != v1alpha1.HostProcessRestartNever &&
-		(st.State == hostsvc.Active && st.MainPID > 0 || st.State == hostsvc.Activating) && st.InvocationID != "" && st.InvocationID != rt.InvocationID
+		(st.State == hostsvc.Activating || st.State == hostsvc.Active && st.MainPID > 0 && st.InvocationID != "" && st.InvocationID != rt.InvocationID)
 }
 
 type Result struct {

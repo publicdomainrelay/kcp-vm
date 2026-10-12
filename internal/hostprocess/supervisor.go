@@ -284,6 +284,8 @@ func (s *Supervisor) apply(ctx context.Context, o v1alpha1.HostProcess, r Result
 		} else {
 			next.Status.Listeners = nil
 		}
+	} else {
+		next.Status.Listeners = nil
 	}
 	if r.Phase == v1alpha1.HostProcessPhaseStopped || r.Phase == v1alpha1.HostProcessPhaseFailed || r.Phase == v1alpha1.HostProcessPhaseLost {
 		if st, err := m.Inspect(ctx, o.Spec.Unit); err == nil && st.State != hostsvc.NotFound {
