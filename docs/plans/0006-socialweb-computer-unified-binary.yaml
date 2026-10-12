@@ -1998,8 +1998,8 @@ items:
       followed by TestServeGatewayKcpRestartedOnItsOwnStateDirListsTheSameWorkspacesAndClaims. Red first.
     done_when: "on an empty state dir: door /api/config 200, the bootstrap cluster Ready, scale passes None nodes 0; after a restart the same workspaces, bindings and claims; no shell, kubectl, yq, socat or docker in the process tree."
     risks: ["A panic in the core ends the gateway and the clusterprovider (one address space) but not kcp: its slot, kine, pg and front are their own units and keep serving kcp.socialweb.computer across the core's restart (route decided 2026-10-12)."]
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M3-HOST-INSTALL
     milestone: M3
     title: The gateway as a USER unit of the lingering socialweb account, and an upgrade that is a content-addressed swap
