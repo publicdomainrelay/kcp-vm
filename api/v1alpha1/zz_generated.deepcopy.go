@@ -657,3 +657,75 @@ func (in *HostProcessStatus) DeepCopyInto(out *HostProcessStatus) {
 		}
 	}
 }
+
+func (in *Postgres) DeepCopyInto(out *Postgres) {
+	*out = *in
+	out.TypeMeta = in.TypeMeta
+	in.ObjectMeta.DeepCopyInto(&out.ObjectMeta)
+	in.Spec.DeepCopyInto(&out.Spec)
+	in.Status.DeepCopyInto(&out.Status)
+}
+
+func (in *Postgres) DeepCopy() *Postgres {
+	if in == nil {
+		return nil
+	}
+	out := new(Postgres)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *Postgres) DeepCopyObject() runtime.Object {
+	if c := in.DeepCopy(); c != nil {
+		return c
+	}
+	return nil
+}
+
+func (in *PostgresList) DeepCopyInto(out *PostgresList) {
+	*out = *in
+	out.TypeMeta = in.TypeMeta
+	in.ListMeta.DeepCopyInto(&out.ListMeta)
+	if in.Items != nil {
+		out.Items = make([]Postgres, len(in.Items))
+		for i := range in.Items {
+			in.Items[i].DeepCopyInto(&out.Items[i])
+		}
+	}
+}
+
+func (in *PostgresList) DeepCopy() *PostgresList {
+	if in == nil {
+		return nil
+	}
+	out := new(PostgresList)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *PostgresList) DeepCopyObject() runtime.Object {
+	if c := in.DeepCopy(); c != nil {
+		return c
+	}
+	return nil
+}
+
+func (in *PostgresSpec) DeepCopyInto(out *PostgresSpec) {
+	*out = *in
+	out.Databases = append([]string(nil), in.Databases...)
+	out.Settings = append([]string(nil), in.Settings...)
+}
+
+func (in *PostgresStatus) DeepCopyInto(out *PostgresStatus) {
+	*out = *in
+	if in.Runtime != nil {
+		v := *in.Runtime
+		out.Runtime = &v
+	}
+	if in.Conditions != nil {
+		out.Conditions = make([]metav1.Condition, len(in.Conditions))
+		for i := range in.Conditions {
+			in.Conditions[i].DeepCopyInto(&out.Conditions[i])
+		}
+	}
+}

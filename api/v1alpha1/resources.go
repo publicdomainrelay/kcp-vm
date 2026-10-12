@@ -45,4 +45,11 @@ var APIResources = []APIResource{
 		{Name: "PID", Type: "integer", JSONPath: ".status.runtime.pid"},
 		{Name: "Age", Type: "date", JSONPath: ".metadata.creationTimestamp"},
 	}},
+	{Kind: "Postgres", Plural: "postgreses", Revision: 1, Export: "hostprocesses", Object: Postgres{}, PrinterColumns: []PrinterColumn{
+		{Name: "Phase", Type: "string", JSONPath: ".status.phase"},
+		{Name: "Version", Type: "string", JSONPath: ".status.version"},
+		{Name: "Socket", Type: "string", JSONPath: ".status.socketDir"},
+		{Name: "PID", Type: "integer", JSONPath: ".status.runtime.pid"},
+		{Name: "Age", Type: "date", JSONPath: ".metadata.creationTimestamp"},
+	}},
 }

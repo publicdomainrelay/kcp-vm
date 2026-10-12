@@ -127,13 +127,14 @@ sets:
           - path: workspacetype-bidder.yaml
 
   - name: hostprocesses
-    summary: the HostProcess schema and export in the provider workspace and its binding in root, applied by every core so the application's own kcp holds its host processes and the bootstrap mirrors (plan 0006 M2-HOSTPROCESS-KIND); needs the provider workspace
+    summary: the HostProcess and Postgres schemas and their export in the provider workspace and its binding in root, applied by every core so the application's own kcp holds its host processes, the bootstrap mirrors and its postgres servers (plan 0006 M2-HOSTPROCESS-KIND, M2-POSTGRES); needs the provider workspace
     values: None
     phases:
       - name: schemas
         workspace: root:socialweb-provider
         files:
           - path: hostprocess-apiresourceschema.yaml
+          - path: postgres-apiresourceschema.yaml
           - path: hostprocess-apiexport.yaml
         after:
           - kind: APIExport

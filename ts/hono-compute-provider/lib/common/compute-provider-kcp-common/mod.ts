@@ -29,6 +29,9 @@ export type HostProcessPhase = typeof HOST_PROCESS_PHASES[number];
 export const HOST_PROCESS_LOST_REASONS = ["HostRebooted", "UnitGone", "UnitFailed", "OOMKilled", "IdentityMismatch", "ManagerRestarted"] as const;
 export type HostProcessLostReason = typeof HOST_PROCESS_LOST_REASONS[number];
 
+export const POSTGRES_PHASES = ["Pending", "Starting", "Ready", "Failed", "Deleting"] as const;
+export type PostgresPhase = typeof POSTGRES_PHASES[number];
+
 export interface ObjectMeta {
   name?: string;
   generateName?: string;
@@ -243,6 +246,37 @@ export interface HostProcessListener {
   address: string;
 }
 
+export interface Postgres {
+  apiVersion?: string;
+  kind?: string;
+  metadata?: ObjectMeta;
+  spec?: PostgresSpec;
+  status?: PostgresStatus;
+}
+
+export interface PostgresSpec {
+  version?: string;
+  dataDir?: string;
+  databases?: string[];
+  settings?: string[];
+  deleteData?: boolean;
+}
+
+export interface PostgresStatus {
+  observedGeneration?: number;
+  phase?: PostgresPhase;
+  message?: string;
+  version?: string;
+  dataDir?: string;
+  socketDir?: string;
+  user?: string;
+  dsn?: string;
+  hostProcess?: string;
+  runtime?: HostProcessRuntime;
+  readyAt?: string;
+  conditions?: Condition[];
+}
+
 export interface ApiResource {
   group: string;
   version: string;
@@ -276,7 +310,18 @@ export const HOST_PROCESS_RESOURCE: ApiResource = {
   export: "hostprocesses",
 };
 
-export const API_RESOURCES: readonly ApiResource[] = [COMPUTE_VM_RESOURCE, HOST_PROCESS_RESOURCE];
+export const POSTGRES_RESOURCE: ApiResource = {
+  group: "socialweb.computer",
+  version: "v1alpha1",
+  kind: "Postgres",
+  listKind: "PostgresList",
+  plural: "postgreses",
+  singular: "postgres",
+  schema: "v1alpha1-1.postgreses.socialweb.computer",
+  export: "hostprocesses",
+};
+
+export const API_RESOURCES: readonly ApiResource[] = [COMPUTE_VM_RESOURCE, HOST_PROCESS_RESOURCE, POSTGRES_RESOURCE];
 
 export type ApiTypeName =
   | "ComputeVM"
@@ -311,7 +356,11 @@ export type ApiTypeName =
   | "HostProcessSpec"
   | "HostProcessStatus"
   | "HostProcessStop"
-  | "ObjectMeta";
+  | "ObjectMeta"
+  | "Postgres"
+  | "PostgresPhase"
+  | "PostgresSpec"
+  | "PostgresStatus";
 
 type Shape =
   | { type: "string"; enum?: readonly string[] }
@@ -1066,6 +1115,109 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
   "ObjectMeta": {
     "open": true,
     "type": "object"
+  },
+  "Postgres": {
+    "properties": {
+      "apiVersion": {
+        "type": "string"
+      },
+      "kind": {
+        "type": "string"
+      },
+      "metadata": {
+        "ref": "ObjectMeta"
+      },
+      "spec": {
+        "ref": "PostgresSpec"
+      },
+      "status": {
+        "ref": "PostgresStatus"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "PostgresPhase": {
+    "enum": [
+      "Pending",
+      "Starting",
+      "Ready",
+      "Failed",
+      "Deleting"
+    ],
+    "type": "string"
+  },
+  "PostgresSpec": {
+    "properties": {
+      "dataDir": {
+        "type": "string"
+      },
+      "databases": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "deleteData": {
+        "type": "boolean"
+      },
+      "settings": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "version": {
+        "type": "string"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "PostgresStatus": {
+    "properties": {
+      "conditions": {
+        "items": {
+          "ref": "Condition"
+        },
+        "type": "array"
+      },
+      "dataDir": {
+        "type": "string"
+      },
+      "dsn": {
+        "type": "string"
+      },
+      "hostProcess": {
+        "type": "string"
+      },
+      "message": {
+        "type": "string"
+      },
+      "observedGeneration": {
+        "type": "integer"
+      },
+      "phase": {
+        "ref": "PostgresPhase"
+      },
+      "readyAt": {
+        "type": "string"
+      },
+      "runtime": {
+        "ref": "HostProcessRuntime"
+      },
+      "socketDir": {
+        "type": "string"
+      },
+      "user": {
+        "type": "string"
+      },
+      "version": {
+        "type": "string"
+      }
+    },
+    "required": [],
+    "type": "object"
   }
 };
 
@@ -1624,5 +1776,77 @@ export function assertHostProcessListener(value: unknown): asserts value is Host
 
 export function parseHostProcessListener(value: unknown): HostProcessListener {
   assertHostProcessListener(value);
+  return value;
+}
+
+export function validatePostgres(value: unknown): ApiIssue[] {
+  return validate("Postgres", value);
+}
+
+export function isPostgres(value: unknown): value is Postgres {
+  return validate("Postgres", value).length === 0;
+}
+
+export function assertPostgres(value: unknown): asserts value is Postgres {
+  const issues = validate("Postgres", value);
+  if (issues.length > 0) throw new ApiValidationError("Postgres", issues);
+}
+
+export function parsePostgres(value: unknown): Postgres {
+  assertPostgres(value);
+  return value;
+}
+
+export function validatePostgresSpec(value: unknown): ApiIssue[] {
+  return validate("PostgresSpec", value);
+}
+
+export function isPostgresSpec(value: unknown): value is PostgresSpec {
+  return validate("PostgresSpec", value).length === 0;
+}
+
+export function assertPostgresSpec(value: unknown): asserts value is PostgresSpec {
+  const issues = validate("PostgresSpec", value);
+  if (issues.length > 0) throw new ApiValidationError("PostgresSpec", issues);
+}
+
+export function parsePostgresSpec(value: unknown): PostgresSpec {
+  assertPostgresSpec(value);
+  return value;
+}
+
+export function validatePostgresStatus(value: unknown): ApiIssue[] {
+  return validate("PostgresStatus", value);
+}
+
+export function isPostgresStatus(value: unknown): value is PostgresStatus {
+  return validate("PostgresStatus", value).length === 0;
+}
+
+export function assertPostgresStatus(value: unknown): asserts value is PostgresStatus {
+  const issues = validate("PostgresStatus", value);
+  if (issues.length > 0) throw new ApiValidationError("PostgresStatus", issues);
+}
+
+export function parsePostgresStatus(value: unknown): PostgresStatus {
+  assertPostgresStatus(value);
+  return value;
+}
+
+export function validatePostgresPhase(value: unknown): ApiIssue[] {
+  return validate("PostgresPhase", value);
+}
+
+export function isPostgresPhase(value: unknown): value is PostgresPhase {
+  return validate("PostgresPhase", value).length === 0;
+}
+
+export function assertPostgresPhase(value: unknown): asserts value is PostgresPhase {
+  const issues = validate("PostgresPhase", value);
+  if (issues.length > 0) throw new ApiValidationError("PostgresPhase", issues);
+}
+
+export function parsePostgresPhase(value: unknown): PostgresPhase {
+  assertPostgresPhase(value);
   return value;
 }

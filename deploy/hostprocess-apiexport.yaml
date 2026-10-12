@@ -9,3 +9,8 @@ spec:
       schema: v1alpha1-1.hostprocesses.socialweb.computer
       storage:
         crd: {}
+    - group: socialweb.computer
+      name: postgreses
+      schema: v1alpha1-1.postgreses.socialweb.computer
+      storage:
+        crd: {}

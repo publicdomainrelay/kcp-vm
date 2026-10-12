@@ -34,6 +34,8 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 		&ComputeVMList{},
 		&HostProcess{},
 		&HostProcessList{},
+		&Postgres{},
+		&PostgresList{},
 	)
 	return nil
 }
