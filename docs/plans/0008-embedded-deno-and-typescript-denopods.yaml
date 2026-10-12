@@ -63,6 +63,7 @@ principle:
     - "The market test bed (deploy/examples/atproto/market) is the seed of this model and the vehicle for parallel workstreams: M1-BED-PARALLEL and M4-TESTBED-PORT are what every workstream tests in."
     - "How today's multi-server deno processes split into DenoPods per application is folded (fifth fold 2026-10-12; 0006 principle.decomposition): one root object per application (0006 M2-APP-CONTROLLER); STRICT kcp per application, inside a bed too (the bed is a MarketNetwork application whose children each run their own kcp, M4-TESTBED-PORT); every listener reports into DenoPod.status.listeners (M2-DENOPOD-LISTENERS); network values only through the composer and one fetch adapter (M2-MARKET-NETWORK); the requester is a fresh kcp per invocation with a durable state dir (M4-RUN-REQUEST); secrets only in each application's OpenBao (M3-DOOR-STATE-VAULT for the door); iroh is the only guest transport (M1-SSH-GATEWAY-IROH, then M1-STRIP-LEGACY-TRANSPORTS)."
 state_rules:
+  - TypeScript lives in this repository (decided by the user 2026-10-12): the closure's ten repositories were vendored with their history under ts/<repository>/ and the originals are frozen; a path this plan names under ts/ is changed here, never in the original.
   - Item status (todo, doing, done, blocked) lives here; the git history is the evidence. No evidence lists are added (user, 2026-10-12).
   - status is one of todo, doing, done, blocked.
   - An item is done when its done_when holds on main; the commits say how.
@@ -85,8 +86,8 @@ state_rules:
     production-shaped run passes systemd-user. DenoPods stay children of the core on both backends.
   - >
     Bed per workstream (decided by the user 2026-10-12; 0006 state rule). Each workstream's live tests run
-    in the task's own market test bed: a task tree from the org root's `./scripts/task-tree.ts`
-    (docs/task-tree.md in the org root) brings up its own isolated atproto network (fake PLC, relay, PDSes,
+    in the task's own market test bed: a git worktree of this repository (on its own branch) brings up
+    its own isolated atproto network (fake PLC, relay, PDSes,
     ingress proxy, bidders, requesters) through M1-BED-PARALLEL now and `dev up --profile bed` later. No
     workstream test uses a real account or the shared real bidder; bobvmbuilder + alice are a final soak
     only.
@@ -165,7 +166,7 @@ items:
       walks up ../ until the org root is found. Details decided by Claude, user may veto: the variable is
       SOCIALWEB_COMPUTER_ORG_ROOT (an option in internal/clicfg); the walk starts at the working
       directory, then at the executable's directory, and stops at the first directory holding
-      typescript-helpers/, atproto-market/ and socialweb-computer-kcp/ as real directories; a symlinked
+      ts/typescript-helpers/, ts/atproto-market/ and socialweb-computer-kcp/ as real directories; a symlinked
       sibling is refused by name, because the live market test proved a symlinked sibling is not a
       directory to Deno.readDir and the guest's tunnel then 404s. Non-production runs allow network
       module fetches into a DENO_DIR keyed by the org root path. Production is the build without the
@@ -263,7 +264,7 @@ items:
       changes; its kcp-native move stays M4-RUN-GATEWAY-SSH, after this work. The Live market workflow
       (socialweb-computer-ssh .github/workflows/live.yml, `deno task test:live`) stays green throughout.
       Guests still come up only through runComputeContract (RFP spine); the gateway adds no transport.
-    files: ["socialweb-computer-ssh/lib/socialweb-computer-requester-inproc/mod.ts", "socialweb-computer-ssh/test/ (iroh session provider)", "atproto-market/lib (iroh session helper, if shared)"]
+    files: ["socialweb-computer-k8s/lib/socialweb-computer-requester-inproc/mod.ts", "ts/socialweb-computer-ssh/test/ (iroh session provider)", "ts/atproto-market/lib (iroh session helper, if shared)"]
     test_first: >
       socialweb-computer-ssh unit test 'the requester asks for the iroh transport and its session provider
       dials through the iroh ProxyCommand, never a websocket tunnel' (red on today's tunnel transport); then
@@ -297,7 +298,7 @@ items:
       bidder_prod_integration_test, hono-compute-provider preinstall_manifest_test) are cut to iroh or deleted,
       each with its reason in the commit message. Guests still come up only through cloud-init user_data from
       the RFP flow; iroh is installed by the iroh UserDataModule.
-    files: ["atproto-market/lib/common/cloud-init-common/mod.ts", "atproto-market/lib/requester-xrpc/mod.ts", "atproto-market/lib/compute-contract-gateway-xrpc/mod.ts", "atproto-market/request-vm-ssh/ (mod.ts, cli-args-env.ts)", "atproto-market/compute-contract-full-flow/", "atproto-market/test/no_legacy_guest_transport_test.ts", "hono-compute-provider/lib/compute-provider-firecracker/mod.ts", "hono-compute-provider/test/", "socialweb-computer-ssh/test/"]
+    files: ["ts/atproto-market/lib/common/cloud-init-common/mod.ts", "ts/atproto-market/lib/requester-xrpc/mod.ts", "atproto-market/lib/compute-contract-gateway-xrpc/mod.ts", "ts/atproto-market/request-vm-ssh/ (mod.ts, cli-args-env.ts)", "atproto-market/compute-contract-full-flow/", "ts/atproto-market/test/no_legacy_guest_transport_test.ts", "ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts", "ts/hono-compute-provider/test/", "ts/socialweb-computer-ssh/test/"]
     test_first: >
       atproto-market test/no_legacy_guest_transport_test.ts (listUserDataModules() names no tunnel,
       fedproxy-ssh, fedproxy-web or wootty module; no source under lib/, request-vm-ssh/ or
@@ -397,7 +398,7 @@ items:
       never passes HOME. Readiness, a DID or a port is never read from stdout: the `bidder_ready` line
       (hono-bidder/mod.ts:686-691) and accept.sh's DID grep (:463-467) are replaced by status (the bidder's
       did is a root-status field, 0006 M2-APP-CONTROLLER).
-    files: ["typescript-helpers/lib/serve/mod.ts", "internal/denokcp (runner, status.listeners)", "internal/kcplibs/factory/servicenames"]
+    files: ["ts/typescript-helpers/lib/serve/mod.ts", "internal/denokcp (runner, status.listeners)", "internal/kcplibs/factory/servicenames"]
     test_first: >
       typescript-helpers serve test: a port-0 tcp serve with one relay writes both URLs to the report; Go:
       TestADenoPodOnPortZeroIsResolvedByItsReportedAddress, TestNoServiceManifestNamesAPort,
@@ -422,7 +423,7 @@ items:
       by its profile), never from another application's objects; a value is never discovered by reading
       another workspace or kcp. The Go MarketNetwork kind's value fields (0006 M2-APP-CONTROLLER) mirror the
       type field for field (apigen TS target, drift-checked).
-    files: ["typescript-helpers/lib/common/market-network-common/", "typescript-helpers/lib/market-network-fetch/", "atproto-market/hono-bidder/mod.ts, request-vm-ssh/mod.ts, test/fetch-interceptor.ts", "deploy/examples/atproto/market/market-requester/mod.ts"]
+    files: ["ts/typescript-helpers/lib/common/market-network-common/", "ts/typescript-helpers/lib/market-network-fetch/", "ts/atproto-market/hono-bidder/mod.ts, request-vm-ssh/mod.ts, test/fetch-interceptor.ts", "deploy/examples/atproto/market/market-requester/mod.ts"]
     test_first: "one table test: https://x.relay.localhost and https://plc.directory/<did> resolve identically through the adapter for every call site's inputs; a grep test that no fetch patch is left outside the adapter. Red until the adapter exists."
     done_when: "no fetch patch left outside the adapter (grep test green); pushed on main in typescript-helpers and atproto-market."
     risks: []
@@ -567,7 +568,7 @@ items:
       under the bed's state; the CLI then talks to the invocation's kcp exactly as outside a bed. The
       org-root alice-request.sh path and the identity-prompt-tty impl are deleted with this item. Everything
       goes through the RFP flow.
-    files: ["api/v1alpha1/computecontract_types.go", "atproto-market/hono-compute-request/", "atproto-market/request-vm-ssh/ (reduced to the DenoPod entry)", "atproto-market/lib (a ComputeContract store over kcp REST, beside the door's nodeclaim-kcp; requester key and session stores over OpenBao)", "internal/stack/request (per-invocation bootstrap, state/<invocation>, summary.json)", "internal/bootstrap (requester role row)", "deploy/apps/requester/*.values.yaml", "deploy/ts-entries.yaml"]
+    files: ["api/v1alpha1/computecontract_types.go", "atproto-market/hono-compute-request/", "ts/atproto-market/request-vm-ssh/ (reduced to the DenoPod entry)", "ts/atproto-market/lib (a ComputeContract store over kcp REST, beside the door's nodeclaim-kcp; requester key and session stores over OpenBao)", "internal/stack/request (per-invocation bootstrap, state/<invocation>, summary.json)", "internal/bootstrap (requester role row)", "deploy/apps/requester/*.values.yaml", "deploy/ts-entries.yaml"]
     test_first: >
       atproto-market test/compute_request_cli_test.ts: against fakes, the entry writes status.contract at
       onRfpSubmitted, onAccepted and onReceipt, and `release` from a fresh process submits exactly one

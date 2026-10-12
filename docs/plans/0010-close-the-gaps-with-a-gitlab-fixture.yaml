@@ -13,6 +13,7 @@ relation_to_other_plans: >
   plan 0007 and G4-DEAD-SUBSTRATE may overlap plan 0006's module work; R0-REASSESS decides which plan
   owns each overlap so nothing is done twice.
 state_rules:
+  - TypeScript lives in this repository (decided by the user 2026-10-12): the closure's ten repositories were vendored with their history under ts/<repository>/ and the originals are frozen; a path this plan names under ts/ is changed here, never in the original.
   - This file is the only state for plan 0010. Every step updates status and evidence.
   - status is one of todo, doing, done, blocked.
   - An item is done only when its evidence is recorded (commit SHAs, test names watched to fail and

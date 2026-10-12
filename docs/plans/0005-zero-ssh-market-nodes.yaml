@@ -4,6 +4,7 @@ source: >
   Decided with the user on 2026-10-07 in a question-by-question session after prod was found pinned
   at six market nodes for 7.5 idle hours. goal.txt carries the same content in compressed form.
 state_rules:
+  - TypeScript lives in this repository (decided by the user 2026-10-12): the closure's ten repositories were vendored with their history under ts/<repository>/ and the originals are frozen; a path this plan names under ts/ is changed here, never in the original.
   - This file is the only state. Every step updates status and evidence.
   - status is one of todo, doing, done, blocked.
   - An item is done only when its evidence is recorded (commit SHAs, test names watched to fail and

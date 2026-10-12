@@ -29,8 +29,8 @@ in plan 0006):
   holds a child instance's HostProcess objects; the child keeps its own kcp).
 - **Applications talk to each other only over the atproto market protocol**, never by sharing a kcp.
 - **The market test bed** (`deploy/examples/atproto/market`) is the seed of this model and the vehicle
-  for parallel workstreams: each workstream's live tests run in its own bed, brought up in its own task
-  tree (`./scripts/task-tree.ts`, `docs/task-tree.md` in the org root); the shared real bidder
+  for parallel workstreams: each workstream's live tests run in its own bed, brought up in its own
+  git worktree of this repository; the shared real bidder
   (bobvmbuilder) and alice are a final soak only.
 - **The one traditional use** is the virtual Kubernetes clusters project this document mostly
   describes (sections 1-4, 9-11): tenant k3s `--disable-agent` control planes fronted by kcp
@@ -3116,7 +3116,7 @@ internal/nodemarket/   places a node as a claim on the COMPUTE MARKET: it writes
 internal/hostos/       the one platform seam, primitives only (locking, process identity, liveness, termination, command line, boot id, port range, SysProcAttr) with Linux, darwin and Windows files; darwin refuses with ErrUnsupported (plan 0012)
 internal/xosgate/      a test-only package: go list -deps -json per GOOS/GOARCH proves the OS-neutral packages import no Linux backend (go-systemd, netlink, firecracker)
 internal/denorun/      builds every deno argv: --no-code-cache and --node-modules-dir=none always, DENO_DIR = <state>/deno/<closure sha256>, production adds --cached-only --frozen and DENO_NO_UPDATE_CHECK=1 (plan 0008 M1-DENO)
-internal/tsbundle/     where the TypeScript comes from: the embedded closure (tar.zst + manifest, extracted read-only to <state>/ts/<sha256>/) in a release build, the org root (SOCIALWEB_COMPUTER_ORG_ROOT or the walk up to typescript-helpers/, atproto-market/, socialweb-computer-kcp/) in a dev build; internal/tsbundle/tsbuild (behind cmd/socialweb-tsbundle, never linked into the core) builds the closure from deploy/ts-entries.yaml (M1-TS-SOURCE, M1-TS-CLOSURE)
+internal/tsbundle/     where the TypeScript comes from: the embedded closure (tar.zst + manifest, extracted read-only to <state>/ts/<sha256>/) in a release build, this checkout (SOCIALWEB_COMPUTER_SOURCE_ROOT, or the walk up to the directory that holds deno.json and deploy/ts-entries.yaml) in a dev build; internal/tsbundle/tsbuild (behind cmd/socialweb-tsbundle, never linked into the core) builds the closure from deploy/ts-entries.yaml (M1-TS-SOURCE, M1-TS-CLOSURE)
 internal/plcresolver/  resolves a did:plc or did:web to its key IDs for the revocation sweep; NXDOMAIN is an outage, not an absence
 internal/plcsweep/     the periodic pass that lists DIDs, resolves them and revokes those whose keys are gone
 internal/sweepkcp/     the kcp side of that sweep: build the account worklist from workspaces and AtprotoIdentity records, write the deny, plan the fan-out
@@ -3392,7 +3392,7 @@ ssh, and is retired with it. `internal/marketbed`'s
 `TestTheMarketTestBedRentsAFirecrackerGuestThroughTheRFPFlow` drives `accept.sh` behind livegate: it
 skips without `SOCIALWEB_LOCAL`/`SOCIALWEB_REQUIRE_LIVE`, skips under `--local` and fails under
 `--full` when the firecracker inputs (`SOCIALWEB_FIRECRACKER_NODEIMAGE`, `_CONFIG`, `_REPO_DIR`,
-`_RUNNER_IMAGE`), `/dev/kvm`, the org root's real sibling directories or ports 2583 to 2589 are
+`_RUNNER_IMAGE`), `/dev/kvm`, a deno-kcp checkout (DENO_KCP_DIR) or ports 2583 to 2589 are
 missing, and needs `go test -timeout 60m`, which `deploy/check.sh --local`/`--full` now pass. Its guests'
 work root is a short directory under `/var/tmp` (`MARKETBED_WORK_ROOT_BASE`), not the test's temp
 dir: each guest's firecracker API socket lives in its work directory, a unix socket path cannot exceed
@@ -5786,7 +5786,7 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   the rate actually tracks is CONCURRENCY: 0 failures in 60 sequential generations, 1 in 240 across
   four concurrent probe processes, and 1 of 4 concurrent `deno task test` suites against 0 of 5
   sequential ones. Production does not use that path at all - the requester shells out to the real
-  `ssh-keygen` into a per-VM temp dir (`atproto-market/lib/requester-xrpc/mod.ts:749`) - so this was
+  `ssh-keygen` into a per-VM temp dir (`ts/atproto-market/lib/requester-xrpc/mod.ts:749`) - so this was
   ever only the test's own key.
   The fix is a fixed test keypair for the fake guest, which removes the generator and the randomness
   together. Closing reading: SIX concurrent `deno task test` suites, 65 passed each; the same six-way

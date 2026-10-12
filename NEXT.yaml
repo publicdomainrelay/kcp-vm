@@ -517,7 +517,7 @@ open:
       OPEN: the plan 0005 gate is satisfied (ACC-ZERO, ACC-MESH, ACC-NOSSH done); items start per their
       depends_on, incl. plan 0006 M1-ASSETS. Plan 0008 (docs/plans/0008-embedded-deno-and-typescript-denopods.yaml)
       items M1-DENO, M1-TS-SOURCE, M1-TS-CLOSURE. Production runs the embedded archive; other builds
-      take the org root from SOCIALWEB_COMPUTER_ORG_ROOT or find it by walking up. DENO_DIR is keyed by
+      take this checkout from SOCIALWEB_COMPUTER_SOURCE_ROOT or find it by walking up. DENO_DIR is keyed by
       the closure's sha256 and every run passes --no-code-cache (13349d6: a stale code cache ran old
       bidder code after a restart).
     instrument: >

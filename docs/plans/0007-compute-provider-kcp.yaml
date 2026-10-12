@@ -89,6 +89,7 @@ principle:
     - "kcp_use: traditional-exception marks the items that serve the virtual Kubernetes clusters project (NodeClaims, tenant nodes): M3-NODE-LOSS-CLOCK, M6-CLAIM-RESUME, M6-GATEWAY-REPOPULATE, M6-NOSSH-JOIN."
     - "Fifth fold (user 2026-10-12, 0006 principle.decomposition): the bidder is a MarketBidder root object in its own kcp (0006 M2-APP-CONTROLLER), also inside a market bed, where the bed's MarketNetwork applies it into the bidder's own kcp and copies the network values onto it. Its sign-in is a MarketIdentity (M1-MARKET-IDENTITY) whose pending actions the foreground CLI renders; every hono-bidder option maps to a root-object field or profile; hono-bidder runs only as a DenoPod entry (kcp only) from M5-RUN-BIDDER on; its keys, relay keypairs, OIDC JWK and OAuth session live only in its OpenBao (M4-BIDDER-VAULT); its guest-facing endpoints become their own DenoPod (M5-BIDDER-COMPONENTS); guests are reached over iroh only."
 state_rules:
+  - TypeScript lives in this repository (decided by the user 2026-10-12): the closure's ten repositories were vendored with their history under ts/<repository>/ and the originals are frozen; a path this plan names under ts/ is changed here, never in the original.
   - Item status (todo, doing, done, blocked) lives here; the git history is the evidence. No evidence lists are added (user, 2026-10-12).
   - status is one of todo, doing, done, blocked.
   - An item is done when its done_when holds on main; the commits say how.
@@ -115,8 +116,8 @@ state_rules:
     guests come up only through runComputeContract against that instance's bidder.
   - >
     Bed per workstream (decided by the user 2026-10-12; 0006 state rule). This plan's live tests run in the
-    task's own market test bed (a task tree from the org root's `./scripts/task-tree.ts`, docs/task-tree.md
-    in the org root; 0008 M1-BED-PARALLEL, later `dev up --profile bed`), with the bed's own bidders and
+    task's own market test bed (a git worktree of this repository; 0008 M1-BED-PARALLEL, later
+    `dev up --profile bed`), with the bed's own bidders and
     requesters. The shared real bidder (bobvmbuilder on hat-8) and alice are a final soak only, after the
     bed tests pass.
   - >
@@ -326,11 +327,11 @@ items:
       reportedAt} (host keys from the guest's own report, M4-HOST-KEYS). Finalizer computevm.socialweb.computer/release;
       printer columns phase, guestIP, requester, age. Export computevms; WorkspaceType bidder binds
       denoruntime, computevms and hostprocesses (for the bidder's OpenBaoServer). apigen's second TypeScript
-      target writes hono-compute-provider/lib/common/compute-provider-kcp-common/mod.ts, drift-checked when
+      target writes ts/hono-compute-provider/lib/common/compute-provider-kcp-common/mod.ts, drift-checked when
       the sibling is present. Dependencies (repointed 2026-10-12 from 0006:M1-K8S-FORK, closed as route not
       chosen): the schema, export and TS wire types come from the existing apigen pipeline (0005:M2-CODEGEN,
       done) on today's k8s.io v0.36.4; the bidder set lives in deploy/sets.yaml (0006:M2-MANIFESTS).
-    files: ["api/v1alpha1/computevm_types.go", "api/v1alpha1/resources.go", "internal/apigen", "deploy/*computevm*.yaml, deploy/workspacetype-bidder.yaml", "deploy/sets.yaml (bidder)", "hono-compute-provider/lib/common/compute-provider-kcp-common/"]
+    files: ["api/v1alpha1/computevm_types.go", "api/v1alpha1/resources.go", "internal/apigen", "deploy/*computevm*.yaml, deploy/workspacetype-bidder.yaml", "deploy/sets.yaml (bidder)", "ts/hono-compute-provider/lib/common/compute-provider-kcp-common/"]
     test_first: "TestComputeVMRoundTripsThroughTheSharedFixtures (Go and the generated TS validator), TestTheComputeVMSchemaIsRevisionLocked, TestTheComputeVMSchemaHasNoBackendEnumAndNoNetworkIndex; red first."
     done_when: "check.sh --fast green with apigen no drift; both fixture suites green."
     risks: ["APIResourceSchema.spec is immutable; the first revision is reviewed field by field, including that no Linux-only field (unit, pasta pid, API socket) is in it."]
@@ -351,7 +352,7 @@ items:
       2026-10-12: injectJsrUrl and the guest JSR registry belong to a stripped legacy path (0008
       M1-STRIP-LEGACY-TRANSPORTS, decided by the user 2026-10-12); whichever of the two items lands second
       makes sure they are not in compute-provider-common.
-    files: ["hono-compute-provider/lib/common/compute-provider-common/mod.ts", "hono-compute-provider/lib/compute-provider-firecracker/mod.ts", "hono-compute-provider/deno.json"]
+    files: ["ts/hono-compute-provider/lib/common/compute-provider-common/mod.ts", "ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts", "hono-compute-provider/deno.json"]
     test_first: "test/user_data_enrichment_golden_test.ts (goldens captured from firecracker before the move); fails to compile before, passes after; the suite stays green."
     done_when: "golden test green; deno task test green."
     risks: ["Helpers closing over module state (jsrPort, nextIndex) stay in the impl and are passed in."]
@@ -364,7 +365,7 @@ items:
     decision: >
       Decided by the user 2026-10-12: did-key-associator/scripts/deploy.sh is broken and an item owns fixing
       it. Reading (2026-10-12): it scp's hono-backend/mod.ts alone to /opt/qr-fedfork/mod.ts and runs `deno
-      run -A --unstable-kv mod.ts` (deploy.sh:21, :48, :63), but the backend imports ../typescript-helpers/*
+      run -A --unstable-kv mod.ts` (deploy.sh:21, :48, :63), but the backend imports ts/typescript-helpers/*
       and ./cli-args-env.json (did-key-associator 4b3db9c moved its config to the CLI), so running the script
       would take the QR backend at qr.fedfork.com down. On 2026-10-12 only the static files were deployed by
       hand (01:41:55Z), with a backup at /root/qr-static-backup/20261012T014155Z on the host. Decided by Claude,
@@ -412,7 +413,7 @@ items:
       by scanning the NSID constants those packages pass; a second check in did-key-associator asserts
       generated/oauth-scope.js equals what its generator produces from the current typescript-helpers (no
       drift). M4-HOST-KEYS (vm.hostKeys) is the first NSID to follow it.
-    files: ["atproto-market/docs/new-nsid-checklist.md", "atproto-market/test/role_scope_coverage_test.ts", "did-key-associator/test/oauth_scope_drift_test.ts", "typescript-helpers (role sets, read only here)"]
+    files: ["atproto-market/docs/new-nsid-checklist.md", "ts/atproto-market/test/role_scope_coverage_test.ts", "did-key-associator/test/oauth_scope_drift_test.ts", "typescript-helpers (role sets, read only here)"]
     test_first: >
       atproto-market test/role_scope_coverage_test.ts red with a fixture collection written by the bidder and
       missing from its role set, then green on the tree (vm.terminated included); did-key-associator
@@ -501,7 +502,7 @@ items:
       it through hono-pds's session minting (hono-pds lib/atproto-oauth-server-deno createSessionInjector,
       mod.ts:147) for a test account, so the oauthQr, oauthBrowser and pdsAccount modes complete with no
       human; inside a bed the QR relay is the MarketNetwork's qr DenoPod (0006 M2-APP-CONTROLLER).
-    files: ["api/v1alpha1/marketidentity_types.go", "internal/apigen (schema, export, TS wire types)", "atproto-market/lib/abc/identity-prompt/", "atproto-market/lib/identity-prompt-kcp/", "atproto-market/lib/identity-prompt-memory/", "atproto-market/lib/identity-prompt-tty/", "atproto-market/hono-bidder/mod.ts and request-vm-ssh/mod.ts (interactive steps through the port)", "atproto-market/test/helpers (hono-pds session-minting driver)", "internal/appcli/ (pendingAction renderer)"]
+    files: ["api/v1alpha1/marketidentity_types.go", "internal/apigen (schema, export, TS wire types)", "ts/atproto-market/lib/abc/identity-prompt/", "ts/atproto-market/lib/identity-prompt-kcp/", "ts/atproto-market/lib/identity-prompt-memory/", "ts/atproto-market/lib/identity-prompt-tty/", "ts/atproto-market/hono-bidder/mod.ts and request-vm-ssh/mod.ts (interactive steps through the port)", "ts/atproto-market/test/helpers (hono-pds session-minting driver)", "internal/appcli/ (pendingAction renderer)"]
     test_first: >
       atproto-market against a fake kcp: 'the QR url appears in status.pendingAction and the scan completes
       through the hono-pds session-minting driver', 'an approval patched into spec completes the association
@@ -655,7 +656,7 @@ items:
       this backport: the firecracker provider's host-side ssh-keyscan is deleted rather than ported, and the
       guest-reported keys, their record and their verification are M4-HOST-KEYS (decided by the user
       2026-10-12); the droplet view reads them from status.market.
-    files: ["internal/vmruntime", "internal/computevm", "testdata/compute-parity/", "hono-compute-provider/test/compute_parity_test.ts", "internal/computevm/parity_test.go"]
+    files: ["internal/vmruntime", "internal/computevm", "testdata/compute-parity/", "ts/hono-compute-provider/test/compute_parity_test.ts", "internal/computevm/parity_test.go"]
     test_first: "Both parity tests, run against the same fixture, red on every requirement the Go side misses (the failure list is the evidence); then green."
     done_when: "every inventory entry marked met with its parity test green on both sides."
     risks: ["The guest-reported host keys arrive after boot (M4-HOST-KEYS); the droplet view shows none until the guest's report, which the parity fixture records as the expected shape."]
@@ -743,7 +744,7 @@ items:
       side rotates (TokenRequest every TTL/2) because the DenoPod env token expires after 1h (deno-kcp
       main.go:89). It runs under the bidder DenoPod's explicit permissions (M5-RUN-BIDDER). Decided by Claude,
       user may veto.
-    files: ["hono-compute-provider/lib/compute-provider-kcp/", "hono-compute-provider/lib/hono-factory-compute-provider-kcp/", "hono-compute-provider/deno.json", "internal/stack/bidder (token file)"]
+    files: ["ts/hono-compute-provider/lib/compute-provider-kcp/", "ts/hono-compute-provider/lib/hono-factory-compute-provider-kcp/", "hono-compute-provider/deno.json", "internal/stack/bidder (token file)"]
     test_first: "test/compute_provider_kcp_test.ts against a fake kcp: provision resolves on Running; destroy only after 404; createBidConfig equals firecracker's; setup() rebuilds getDroplet; the user_data Secret is written once. Red first."
     done_when: "unit suite green; deno check of hono-bidder green."
     risks: ["If watch is unavailable through the workspace path, bounded polling; which one was used is recorded."]
@@ -761,7 +762,7 @@ items:
       address every guest dials). A wiring block shaped like firecracker's (hono-bidder/mod.ts:546-597).
       Auto-configuration means run bidder's DenoPod template sets them; the bidder does not sniff its
       environment. Both providers stay selectable (decided by the user 2026-10-07).
-    files: ["atproto-market/hono-bidder/cli-args-env.ts", "atproto-market/hono-bidder/mod.ts", "atproto-market/hono-bidder/deno.json"]
+    files: ["ts/atproto-market/hono-bidder/cli-args-env.ts", "ts/atproto-market/hono-bidder/mod.ts", "ts/atproto-market/hono-bidder/deno.json"]
     test_first: "test/bidder_cli_kcp_provider_test.ts: --compute-provider-kcp without a server, handle or guest host address refuses at startup naming the missing options; red first."
     done_when: "test green; existing bidder tests green."
     risks: []
@@ -783,7 +784,7 @@ items:
       in-process repo (localRepo, the ephemeral-PDS mode the user keeps) stays for dev-local and the
       harness. The password is a vault value, never a kcp field (M4-BIDDER-VAULT; until then the existing
       option path).
-    files: ["atproto-market/hono-bidder/mod.ts", "atproto-market/lib/atproto-helpers (remote agent)", "atproto-market/test/bidder_remote_pds_account_test.ts"]
+    files: ["ts/atproto-market/hono-bidder/mod.ts", "ts/atproto-market/lib/atproto-helpers (remote agent)", "atproto-market/test/bidder_remote_pds_account_test.ts"]
     test_first: >
       atproto-market test/bidder_remote_pds_account_test.ts on the container harness with an in-process
       hono-pds factory account: the bidder's offering is listed by that PDS's listRecords, the bidder serves
@@ -803,7 +804,7 @@ items:
       a bidder with two providers serves the last one's issuer URL from both, and the issuer cannot move into
       its own component. The state moves into the issuer instance; JwkStore stays injectable (M4-BIDDER-VAULT
       plugs the OpenBao store in). A prerequisite of M5-BIDDER-COMPONENTS (decided by the user 2026-10-12).
-    files: ["hono-compute-provider/lib/oidc-issuer-hono/mod.ts", "hono-compute-provider/test/oidc_issuer_instances_test.ts"]
+    files: ["ts/hono-compute-provider/lib/oidc-issuer-hono/mod.ts", "ts/hono-compute-provider/test/oidc_issuer_instances_test.ts"]
     test_first: "two createOidcIssuer in one process: each discovery document and JWKS names its own issuer, and a token from one does not verify at the other. Red today."
     done_when: "green; provider suites green; pushed on main in hono-compute-provider."
     risks: []
@@ -832,7 +833,7 @@ items:
       the CLI against real plc.directory and xrpc.fedproxy.com, is moved onto a bed or deleted (bed per
       workstream; no real account in a workstream test). The `bidder_ready` stdout line stays only until
       0008 M2-DENOPOD-LISTENERS' report replaces every reader of it.
-    files: ["atproto-market/lib/hono-factory-market-bidder-app/", "atproto-market/hono-bidder/mod.ts", "atproto-market/test/*_integration_test.ts"]
+    files: ["ts/atproto-market/lib/hono-factory-market-bidder-app/", "ts/atproto-market/hono-bidder/mod.ts", "ts/atproto-market/test/*_integration_test.ts"]
     test_first: >
       A composer test: the all-inproc spec reproduces today's listener and relay set minus the stripped
       components (names compared), a spec with repo: url builds no in-process repo, two providers in one spec
@@ -898,7 +899,7 @@ items:
       policy bidder-read through a token file the Go side renews; hono-bidder's cliCreateIngress takes a
       keypair loader, oidc-issuer-hono a JwkStore, and the bidder's repo key a loader, each backed by that KV.
       Applies to both providers when run under run bidder.
-    files: ["internal/stack/bidder (vault object, token file)", "atproto-market/hono-bidder/mod.ts (loaders)", "hono-compute-provider/lib/oidc-issuer-hono (JwkStore over OpenBao) or a sibling jwk-store-openbao package"]
+    files: ["internal/stack/bidder (vault object, token file)", "ts/atproto-market/hono-bidder/mod.ts (loaders)", "ts/hono-compute-provider/lib/oidc-issuer-hono (JwkStore over OpenBao) or a sibling jwk-store-openbao package"]
     test_first: >
       Behind livegate: TestABidderRestartedTwiceKeepsItsDidItsIssuerUrlAndItsJwks (three starts against
       one state dir; the logged did, issuer URL and JWKS are identical, and a token issued before the
@@ -931,7 +932,7 @@ items:
       cluster; it is a separate explicit command, refused while any ComputeVM is Running unless --drain,
       which waits for each guest to be released. Clusters drop the old mount through 0005 M3-BAO-SYNC's rule
       (a jwt-* mount with no role left is disabled) once its last node is released, never earlier.
-    files: ["internal/stack/bidder (bidder vault reconcile, rotation subcommands)", "internal/baosync (bidder desired set)", "hono-compute-provider/lib/oidc-issuer-hono (JWKS with overlapping keys)"]
+    files: ["internal/stack/bidder (bidder vault reconcile, rotation subcommands)", "internal/baosync (bidder desired set)", "ts/hono-compute-provider/lib/oidc-issuer-hono (JWKS with overlapping keys)"]
     test_first: >
       internal/stack/bidder TestTheBidderVaultSeededWithStaleGuestEntriesIsReducedToTheLiveComputeVMs,
       TestASigningKeyRotationKeepsTheIssuerUrlAndTokensSignedBeforeItStillValidate,
@@ -969,7 +970,7 @@ items:
       On load, a stored contract whose guest is gone (the provider's own probe) is tombstoned with
       vmm_exited and released once. No market record changes; both providers stay (decided by the user
       2026-10-07); the ComputeVM-backed store for compute-provider-kcp stays M4-CONTRACT-RESTORE.
-    files: ["atproto-market/lib/abc/market-bidder/mod.ts (ContractStore, Tombstone)", "atproto-market/lib/market-bidder/mod.ts (load before subscribe, awaited save)", "atproto-market/lib/market-bidder-compute/mod.ts (tombstones through the store)", "atproto-market/lib/market-bidder-contract-store-fs/ (new impl package)", "atproto-market/hono-bidder/mod.ts and cli-args-env (store path option)", "hono-compute-provider/lib/compute-provider-firecracker (guest probe on load)"]
+    files: ["ts/atproto-market/lib/abc/market-bidder/mod.ts (ContractStore, Tombstone)", "ts/atproto-market/lib/market-bidder/mod.ts (load before subscribe, awaited save)", "ts/atproto-market/lib/market-bidder-compute/mod.ts (tombstones through the store)", "ts/atproto-market/lib/market-bidder-contract-store-fs/ (new impl package)", "ts/atproto-market/hono-bidder/mod.ts and cli-args-env (store path option)", "ts/hono-compute-provider/lib/compute-provider-firecracker (guest probe on load)"]
     test_first: >
       atproto-market test/market_bidder_contract_restore_test.ts: a bidder seeded from a ContractStore
       answers vm.delete for that receipt with 200 and destroys once (today 400 unknown receipt); 'a tombstone
@@ -998,7 +999,7 @@ items:
       ContractStore on ComputeVM spec.contract in compute-provider-kcp, seeding providerIdPromise =
       Promise.resolve(name) and acceptToContract, with tombstones from Lost/released ComputeVMs. No market
       record changes.
-    files: ["hono-compute-provider/lib/compute-provider-kcp (ContractStore over ComputeVMs)"]
+    files: ["ts/hono-compute-provider/lib/compute-provider-kcp (ContractStore over ComputeVMs)"]
     test_first: >
       atproto-market test/market_bidder_contract_restore_test.ts run against the ComputeVM-backed store (fake
       kcp): a bidder seeded from it answers vm.delete with 200 and destroys once; red first.
@@ -1016,7 +1017,7 @@ items:
       (M4-HOST-KEYS, same route shape) applies status.market {hostKeys[], hostKeysUri}. The host keys come
       only from the guest's own report; nothing here scans the guest. A failed status write never fails the
       guest's request.
-    files: ["hono-compute-provider/lib/hono-factory-compute-provider-kcp"]
+    files: ["ts/hono-compute-provider/lib/hono-factory-compute-provider-kcp"]
     test_first: "test/compute_provider_kcp_onnetwork_test.ts (address lands in status.market from on-network and host keys from host-keys; a failed status write still answers the guest 200); red first."
     done_when: "green."
     risks: []
@@ -1046,7 +1047,7 @@ items:
       identity_mismatch) and from a unit failure seen through Watch - so a requester learns of a Lost
       ComputeVM without polling; a requester's later vm.delete for it answers 200 (tombstone), never 'unknown
       receipt'.
-    files: ["atproto-market/lexicons/com/publicdomainrelay/temp/compute/events/vm/terminated.json", "atproto-market/lib/common/market-lexicons, lib/common/market-common (NSID, VM_TERMINATED_REASONS)", "atproto-market/lib/abc/market-bidder (TerminatedReceipts)", "atproto-market/lib/market-bidder-compute (publish on onGuestGone and as the vm.delete ack)", "atproto-market/lib/abc/compute-request (terminationOf, ContractState.termination, onTerminated)", "atproto-market/lib/abc/requester (setOnTerminated, ssh abort signal)", "atproto-market/lib/compute-request-xrpc (contract watch)", "atproto-market/lib/requester-xrpc (submitEvent handler, runComputeContract)", "hono-compute-provider/lib/compute-provider-kcp (onGuestGone from ComputeVM Lost)", "internal/computevm (Lost reason to the provider)"]
+    files: ["ts/atproto-market/lexicons/com/publicdomainrelay/temp/compute/events/vm/terminated.json", "ts/atproto-market/lib/common/market-lexicons, lib/common/market-common (NSID, VM_TERMINATED_REASONS)", "ts/atproto-market/lib/abc/market-bidder (TerminatedReceipts)", "ts/atproto-market/lib/market-bidder-compute (publish on onGuestGone and as the vm.delete ack)", "ts/atproto-market/lib/abc/compute-request (terminationOf, ContractState.termination, onTerminated)", "ts/atproto-market/lib/abc/requester (setOnTerminated, ssh abort signal)", "ts/atproto-market/lib/compute-request-xrpc (contract watch)", "ts/atproto-market/lib/requester-xrpc (submitEvent handler, runComputeContract)", "ts/hono-compute-provider/lib/compute-provider-kcp (onGuestGone from ComputeVM Lost)", "internal/computevm (Lost reason to the provider)"]
     test_first: >
       atproto-market test/vm_terminated_lexicon_test.ts, test/vm_terminated_bidder_test.ts,
       test/vm_terminated_requester_test.ts (red first, then green). Go side, still to write:
@@ -1117,7 +1118,7 @@ items:
       iroh (dumbpipe) ProxyCommand; the per-contract known_hosts and StrictHostKeyChecking=yes are written
       once, on that path (the websocat ProxyCommand of sshTunnelArgs is deleted, not fixed), so the
       requester half lands after the strip (execution_order shared files).
-    files: ["atproto-market/lexicons/com/publicdomainrelay/temp/compute/events/vm/hostKeys.json", "atproto-market/lib/common/market-lexicons, lib/common/market-common (NSID)", "atproto-market/lib/common/cloud-init-common (hostKeysReporterModule)", "atproto-market/lib/market-bidder-compute (POST /v1/host-keys, proof check, publish)", "atproto-market/lib/abc/compute-request, lib/compute-request-xrpc (hostKeysOf, ContractState.hostKeys)", "atproto-market/lib/requester-xrpc (sshTunnelArgs known_hosts + StrictHostKeyChecking=yes)", "atproto-market/request-vm-ssh", "hono-compute-provider/lib/oidc-issuer-hono (scan deleted, reported key verified)", "hono-compute-provider/lib/compute-provider-firecracker", "socialweb-computer-k8s door (NodeClaim hostKeys, ssh command)", "typescript-helpers (bidder role scope)", "did-key-associator (QR client scope)"]
+    files: ["ts/atproto-market/lexicons/com/publicdomainrelay/temp/compute/events/vm/hostKeys.json", "ts/atproto-market/lib/common/market-lexicons, lib/common/market-common (NSID)", "ts/atproto-market/lib/common/cloud-init-common (hostKeysReporterModule)", "ts/atproto-market/lib/market-bidder-compute (POST /v1/host-keys, proof check, publish)", "ts/atproto-market/lib/abc/compute-request, lib/compute-request-xrpc (hostKeysOf, ContractState.hostKeys)", "ts/atproto-market/lib/requester-xrpc (sshTunnelArgs known_hosts + StrictHostKeyChecking=yes)", "ts/atproto-market/request-vm-ssh", "ts/hono-compute-provider/lib/oidc-issuer-hono (scan deleted, reported key verified)", "ts/hono-compute-provider/lib/compute-provider-firecracker", "socialweb-computer-k8s door (NodeClaim hostKeys, ssh command)", "typescript-helpers (bidder role scope)", "did-key-associator (QR client scope)"]
     test_first: >
       atproto-market test/vm_hostkeys_lexicon_test.ts; test/vm_hostkeys_bidder_test.ts (a report without a
       valid signature over the issued token is refused; a second, different report for the receipt is
@@ -1285,7 +1286,7 @@ items:
       versions.json our-crds). The KV path is in
       0006:M3-BAO-SYNC's desired set (live claim -> kept; claim gone -> deleted). Bidding/Provisioning leave
       ORPHANED_PHASES.
-    files: ["atproto-market/lib/guest-capability-secrets (key loader instead of a fresh keypair)", "socialweb-computer-k8s/lib/socialweb-computer-k8s-node-market (resume path, acceptPending)", "api/v1alpha1 NodeClaim (status.secrets, status.contract.acceptPending; one schema revision)", "socialweb-computer-k8s door OpenBao key store"]
+    files: ["ts/atproto-market/lib/guest-capability-secrets (key loader instead of a fresh keypair)", "socialweb-computer-k8s/lib/socialweb-computer-k8s-node-market (resume path, acceptPending)", "api/v1alpha1 NodeClaim (status.secrets, status.contract.acceptPending; one schema revision)", "socialweb-computer-k8s door OpenBao key store"]
     test_first: >
       socialweb-computer-k8s test/node_market_test.ts: 'a door restarted during Provisioning re-serves the
       same secrets URL and the claim reaches Joining', 'a door restarted during Bidding resumes the RFP it
@@ -1332,7 +1333,7 @@ items:
       never-Ready grace, rebased to pathUpSince by M3-NODE-LOSS-CLOCK) and adopt on join; the cluster is
       gone, or the grace passes with no join -> release once (releaseCompute, one vm.delete). Control planes
       stay up across the upgrade (0006:M3-CLUSTER-UNITS), so joined nodes stay Ready.
-    files: ["socialweb-computer-k8s/lib/socialweb-computer-k8s-node-market (ownership table, Adopting phase, adoption match)", "api/v1alpha1 NodeClaim (phase Adopting, in M6-CLAIM-RESUME's schema revision)", "atproto-market/lib (requester record listing helpers)"]
+    files: ["socialweb-computer-k8s/lib/socialweb-computer-k8s-node-market (ownership table, Adopting phase, adoption match)", "api/v1alpha1 NodeClaim (phase Adopting, in M6-CLAIM-RESUME's schema revision)", "ts/atproto-market/lib (requester record listing helpers)"]
     test_first: >
       socialweb-computer-k8s test/node_market_test.ts: 'an unclaimed receipt whose guest is joined and Ready
       is adopted into that cluster with no vm.delete and no RFP', 'an unclaimed receipt not yet joined whose

@@ -25,6 +25,7 @@ source: >
   code only does one-shot preparation (disks, the job's plist, its submission) and later inspects and
   stops the job. All code, docs, architecture and plan items are changeable; the best solution wins.
 state_rules:
+  - TypeScript lives in this repository (decided by the user 2026-10-12): the closure's ten repositories were vendored with their history under ts/<repository>/ and the originals are frozen; a path this plan names under ts/ is changed here, never in the original.
   - This file is the only state. Every step updates status and evidence.
   - status is one of todo, doing, done, blocked.
   - An item is done only when its evidence is recorded (commit SHAs, test names watched to fail and
@@ -175,7 +176,7 @@ items:
       system domain with UserName set (bootstrapped with sudo in this scratch item only; the real domain
       is M0-LAUNCHD-DOMAIN's decision), --restful-uri on a unix socket in the work dir, virtio-serial to a
       log file, VZ NAT networking. Driven by runComputeContract against the market bed or, if the bed does
-      not yet run on macOS, the canonical harness shape of atproto-market/test/bidder_container_integration_test.ts
+      not yet run on macOS, the canonical harness shape of ts/atproto-market/test/bidder_container_integration_test.ts
       with the bidder pointed at its dispatcher. The guest reaches onNetwork; zero ssh.
     files: ["scratch branch only: internal/vmhost (vfkit scratch backend), the arm64 kernel config, the raw disk writer; evidence names the branch and SHA"]
     test_first: >

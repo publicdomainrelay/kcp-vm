@@ -155,6 +155,7 @@ principle:
       - "Components (decided by the user 2026-10-12): the bidder's guest-facing endpoints (OIDC issuer, /v1/on-network, behind the provider relay) become their own DenoPods after 0007 M4-BIDDER-VAULT and M3-OIDC-ISSUER-INSTANCE (0007 M5-BIDDER-COMPONENTS). The door's node fulfiller stays in the door DenoPod for now and is revisited after 0007 M6-CLAIM-RESUME (decided by Claude, user may veto; 0008 M3-DOOR-STATE-VAULT)."
       - "Every listener reports into status (0008 M2-DENOPOD-LISTENERS: tcp, unix and relay ingress URLs in DenoPod.status.listeners), so no test or peer scrapes stdout for a DID, a port or a readiness line."
 state_rules:
+  - TypeScript lives in this repository (decided by the user 2026-10-12): the closure's ten repositories were vendored with their history under ts/<repository>/ and the originals are frozen; a path this plan names under ts/ is changed here, never in the original.
   - Item status (todo, doing, done, blocked) lives here; the git history is the evidence. No evidence lists are added (user, 2026-10-12).
   - status is one of todo, doing, done, blocked.
   - An item is done when its done_when holds on main; the commits say how.
@@ -205,8 +206,8 @@ state_rules:
     advisory and never overrides depends_on.
   - >
     Bed per workstream (decided by the user 2026-10-12; principle above). Every workstream's live tests run
-    in the task's OWN market test bed: a task tree made by the org root's `./scripts/task-tree.ts`
-    (docs/task-tree.md in the org root) brings up its own fully isolated atproto network - fake PLC, relay,
+    in the task's OWN market test bed: a git worktree of this repository (on its own branch) brings up
+    its own fully isolated atproto network - fake PLC, relay,
     PDSes, ingress proxy, bidders, requesters - through 0008 M1-BED-PARALLEL now and `dev up --profile bed`
     (M1-DEV-INSTANCE, 0008 M4-TESTBED-PORT) later. No workstream live test uses a real account or the
     shared real bidder. The shared real bidder (socialweb-computer-bidder@bobvmbuilder.bsky.social on

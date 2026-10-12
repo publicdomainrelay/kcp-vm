@@ -25,6 +25,7 @@ source: >
   (disks, network endpoint, the create call) and later opens, inspects and stops the system by id. All
   code, docs, architecture and plan items are changeable; the best solution wins.
 state_rules:
+  - TypeScript lives in this repository (decided by the user 2026-10-12): the closure's ten repositories were vendored with their history under ts/<repository>/ and the originals are frozen; a path this plan names under ts/ is changed here, never in the original.
   - This file is the only state. Every step updates status and evidence.
   - status is one of todo, doing, done, blocked.
   - An item is done only when its evidence is recorded (commit SHAs, test names watched to fail and
@@ -71,7 +72,7 @@ research:
     - "cmd/socialweb-nodeimage/main.go:42-45 the image builder extracts THIS host's own kernel and module tree; a Windows host has neither, so a Windows bidder's guest kernel and rootfs must be built elsewhere and carried as assets"
     - "kcp-libs impl/execrunner/supervisor.go:141 SysProcAttr{Setpgid: true}: the DenoPod runner does not compile for GOOS=windows (syscall.SysProcAttr has no Setpgid there), so plan 0008's forked runner needs a Windows half before run bidder can exist on Windows"
     - "atproto-market lib/common/cloud-init-common/mod.ts:110 UserDataModule, :135-153 the registry, :1225-1231 the registered modules; the guest-side modules detect arch with uname -m (:487-494, :739-746, :1101-1108), so an amd64 Windows guest is the arch every module already serves"
-    - "atproto-market lib/requester-xrpc/mod.ts:881 runComputeContract; atproto-market/test/bidder_container_integration_test.ts:132 the canonical local harness (local dispatcher, fake PLC, bidder, requester)"
+    - "atproto-market lib/requester-xrpc/mod.ts:881 runComputeContract; ts/atproto-market/test/bidder_container_integration_test.ts:132 the canonical local harness (local dispatcher, fake PLC, bidder, requester)"
     - "atproto-market lexicons/com/publicdomainrelay/temp/compute/vm.json:19-45 compute.vm has cpus, mem, disk, network, location, role, user_data and NO arch field"
   hcs:
     - "HCS ComputeSystem document carries Owner and ShouldTerminateOnLastHandleClosed (hcsshim internal/hcs/schema2/compute_system.go; https://learn.microsoft.com/en-us/virtualization/api/hcs/schemareference). hcsshim's own utility VMs set ShouldTerminateOnLastHandleClosed: true (hcsshim internal/uvm/create.go:413) and default Owner to the executable name (:230-246), so the false setting this plan depends on is not the path hcsshim exercises."
@@ -163,7 +164,7 @@ items:
       ShouldTerminateOnLastHandleClosed false, Chipset.LinuxKernelDirect, two SCSI attachments, one network
       adapter on an HNS endpoint, ComPorts 0 to a named pipe; HcsGrantVmAccess on every file. Driven by
       runComputeContract against the market bed or, if the bed does not yet run on Windows (M0-HOST-BASELINE),
-      against the canonical harness shape of atproto-market/test/bidder_container_integration_test.ts with
+      against the canonical harness shape of ts/atproto-market/test/bidder_container_integration_test.ts with
       the bidder pointed at its local dispatcher. The guest reaches onNetwork and the requester's tunnel
       answers; zero ssh.
     files: ["scratch branch only: internal/vmhost (hcs scratch backend), the kernel config, the disk writer; evidence names the branch and SHA"]
