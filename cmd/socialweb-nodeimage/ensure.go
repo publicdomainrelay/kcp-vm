@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/guestimage"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodefirecracker"
 )
 
@@ -97,6 +98,11 @@ func Ensure(configPath string, reuseStale bool, asJSON bool, preinstallPath stri
 	if configPath == "" {
 		return fmt.Errorf("-config is required: the name of the image to ask for is derived from the " +
 			"inputs a configuration reads, and there is no configuration here to derive it from")
+	}
+	if gc, ok, err := guestImageConfigAt(configPath); err != nil {
+		return err
+	} else if ok {
+		return ensureGuestAndReport(configPath, gc, asJSON, preinstallPath, presentOnly)
 	}
 	cfg, err := LoadConfig(configPath)
 	if err != nil {
@@ -254,4 +260,29 @@ func refusedNothingToReuse(cfg Config, fingerprint string) error {
 		"the name exists to prevent, so this is refused rather than guessed. Build it "+
 		"(socialweb-nodeimage -ensure -config %s) or point -config at the configuration the images "+
 		"in %s were built from", cfg.OutDir, cfg.Path, fingerprint, cfg.VMMName(), cfg.Path, cfg.OutDir)
+}
+
+func ensureGuestAndReport(configPath string, gc guestImageConfig, asJSON bool, preinstallPath string, presentOnly bool) error {
+	absolute, err := filepath.Abs(configPath)
+	if err != nil {
+		return fmt.Errorf("socialweb-nodeimage: %w", err)
+	}
+	pin, err := guestimage.PinFor(gc.Target)
+	if err != nil {
+		return err
+	}
+	result, err := ensureGuest(absolute, gc, pin, preinstallPath, presentOnly)
+	if err != nil && result.State != stateAbsent {
+		return err
+	}
+	if asJSON {
+		raw, merr := json.Marshal(result)
+		if merr != nil {
+			return fmt.Errorf("socialweb-nodeimage: %w", merr)
+		}
+		fmt.Printf("%s\n", raw)
+	} else {
+		fmt.Printf("%s %s\n  target   %s\n  source   %s\n", result.State, result.Dir, gc.Target, gc.Source)
+	}
+	return err
 }

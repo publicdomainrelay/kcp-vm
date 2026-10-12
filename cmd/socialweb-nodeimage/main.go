@@ -14,6 +14,18 @@ const usage = `socialweb-nodeimage - build the artifacts a node boots from
   socialweb-nodeimage -config nodeimage.json [-init-asset socialweb-nodeinit]
   socialweb-nodeimage -ensure -config nodeimage.json [-reuse-stale] [-json] [-init-asset socialweb-nodeinit]
   socialweb-nodeimage -config nodeimage.json -gc [-retain N] [-keep <fingerprint>]...
+  socialweb-nodeimage -ensure -json -config guest-image.json [-preinstall manifest.json]
+  socialweb-nodeimage -guest-rootfs -build rootfs.json -base base.tar -asset dumbpipe=<path> \
+      -source-date-epoch N -out rootfs.tar -report report.json
+  socialweb-nodeimage -guest-manifest -target firecracker-x86_64 -dir <out> -report report.json
+
+A configuration holding {"guest_image": {"target", "store", "source"}} names a PINNED guest image
+(versions.json .guestImages, built by scripts/build-guest-image.sh on a build host). -ensure fetches
+it from source (file:// or https://) into store/<hypervisor>/<arch>/<image.json sha256>/, verifies
+every file against its pin, refuses a mismatch, and re-hashes a stored copy before reporting it;
+it builds nothing, runs no tool and needs no root. -preinstall is then checked against what the
+image baked. -guest-rootfs and -guest-manifest are the build pipeline's steps, run by
+scripts/build-guest-image.sh.
 
 The image is named by its inputs, and the VMM is one of them. The configuration is fingerprinted --
 its VMM, its module lists, the image references it seeds, the kernel, the kernel config, the base
@@ -129,10 +141,27 @@ func main() {
 	preinstall := flag.String("preinstall", "", "path to a preinstall manifest, overriding the one the config names")
 	initAsset := flag.String("init-asset", "", "path to a prebuilt socialweb-nodeinit the image carries as its init, overriding the config's init_asset")
 	presentOnly := flag.Bool("present-only", false, "with -ensure: answer whether the store already holds the exact image the config names, and build nothing")
+	guestRootfs := flag.Bool("guest-rootfs", false, "build pipeline: compose the guest rootfs tar from -base and -build")
+	guestManifest := flag.Bool("guest-manifest", false, "build pipeline: write image.json for the guest image in -dir")
+	build := flag.String("build", "", "with -guest-rootfs: the rootfs build file (deploy/guest-image/rootfs.json)")
+	base := flag.String("base", "", "with -guest-rootfs: the pinned base root tarball, decompressed")
+	assets := assetFlags{}
+	flag.Var(assets, "asset", "with -guest-rootfs: name=path of an asset the build bakes; repeatable")
+	sourceDateEpoch := flag.Int64("source-date-epoch", 0, "with -guest-rootfs: the timestamp every entry is clamped to")
+	out := flag.String("out", "", "with -guest-rootfs: the composed tar")
+	report := flag.String("report", "", "with -guest-rootfs or -guest-manifest: the rootfs report")
+	target := flag.String("target", "", "with -guest-manifest: the guest image target in versions.json")
+	dir := flag.String("dir", "", "with -guest-manifest: the directory holding vmlinux and rootfs.ext4")
 	flag.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 	flag.Parse()
 	run := func(configPath string) error { return Main(configPath, *initAsset) }
 	switch {
+	case *guestRootfs:
+		run = func(string) error {
+			return GuestRootfs(*build, *base, assets, *sourceDateEpoch, *out, *report)
+		}
+	case *guestManifest:
+		run = func(string) error { return GuestManifest(*target, *dir, *report) }
 	case *presentOnly && !*ensure:
 		run = func(string) error {
 			return fmt.Errorf("-present-only asks a question about -ensure -- whether the store " +
@@ -177,6 +206,9 @@ func Main(configPath string, initAsset string) error {
 		return fmt.Errorf("-config is required: the paths an image is built from are this host's " +
 			"own kernel, module tree and base image, and none of them has a default that would be " +
 			"right on another machine")
+	}
+	if err := refuseGuestImageConfig(configPath, "a build from a configuration"); err != nil {
+		return err
 	}
 	cfg, err := LoadConfig(configPath)
 	if err != nil {

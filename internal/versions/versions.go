@@ -31,6 +31,51 @@ type manifestShape struct {
 	Components map[string]Component `json:"components"`
 	Platforms  map[string]Platform  `json:"platforms"`
 	Assets     map[string]Asset     `json:"assets"`
+	Guest      GuestImageSet        `json:"guestImages"`
+}
+
+type GuestImageFile struct {
+	SHA256 string `json:"sha256"`
+	Bytes  int64  `json:"bytes"`
+}
+
+type GuestImageInput struct {
+	URL    string `json:"url"`
+	SHA256 string `json:"sha256"`
+}
+
+type GuestImageTarget struct {
+	Hypervisor      string                    `json:"hypervisor"`
+	Arch            string                    `json:"arch"`
+	Platform        string                    `json:"platform"`
+	KernelConfig    string                    `json:"kernelConfig"`
+	BootArgs        []string                  `json:"bootArgs"`
+	Base            GuestImageInput           `json:"base"`
+	SourceDateEpoch int64                     `json:"sourceDateEpoch"`
+	Outputs         map[string]GuestImageFile `json:"outputs"`
+}
+
+type GuestImageKernel struct {
+	Version string                     `json:"version"`
+	Source  GuestImageInput            `json:"source"`
+	Config  map[string]json.RawMessage `json:"config"`
+	Reason  string                     `json:"reason"`
+}
+
+type GuestImageSet struct {
+	Note     string                      `json:"note"`
+	Builder  map[string]string           `json:"builder"`
+	Kernel   GuestImageKernel            `json:"kernel"`
+	Targets  map[string]GuestImageTarget `json:"targets"`
+	Reserved map[string]string           `json:"reserved"`
+}
+
+func GuestImages() (GuestImageSet, error) {
+	m, err := load()
+	if err != nil {
+		return GuestImageSet{}, err
+	}
+	return m.Guest, nil
 }
 
 const (

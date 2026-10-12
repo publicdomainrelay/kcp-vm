@@ -518,21 +518,21 @@ entries:
     kind: executable
     fate: removed-legacy
     owner: 0007 M2-VM-RUNTIME
-    why: deleted by design; the guest seed is a separate pure-Go cidata drive (user decision 2026-10-12)
+    why: deleted by design; the guest seed is a separate pure-Go cidata drive (user decision 2026-10-12), internal/guestseed, attached by nodeboot since M1-GUEST-IMAGE
     from:
       - "cmd/socialweb-nodeboot/main.go"
   - name: e2fsck
     kind: executable
     fate: removed-legacy
     owner: 0007 M2-VM-RUNTIME
-    why: deleted by design; the rootfs is copied as-is and the guest grows its own root
+    why: deleted by design; the rootfs is copied as-is and the guest grows its own root (gone from nodeboot since M1-GUEST-IMAGE)
     from:
       - "cmd/socialweb-nodeboot/main.go"
   - name: resize2fs
     kind: executable
     fate: removed-legacy
     owner: 0007 M2-VM-RUNTIME
-    why: deleted by design; the guest grows its own root (growpart and resizefs in the guest)
+    why: deleted by design; the guest grows its own root (growpart and resizefs in the guest; gone from nodeboot since M1-GUEST-IMAGE)
     from:
       - "cmd/socialweb-nodeboot/main.go"
   - name: socialweb-nodeboot
@@ -834,7 +834,7 @@ entries:
     kind: package
     fate: build-host
     owner: 0007 M1-GUEST-IMAGE, M2-VM-RUNTIME
-    why: mkfs.ext4 for the rootfs on the build host; its runtime tools (debugfs, e2fsck, resize2fs) are deleted by design
+    why: mkfs.ext4 for the rootfs on the build host (scripts/build-guest-image.sh runs mke2fs -d <tar> inside the pinned builder image); its runtime tools (debugfs, e2fsck, resize2fs) are deleted by design
     from:
       - "image tools"
       - "runner image"
@@ -959,8 +959,6 @@ indirect:
     resolves: [initdb, postgres, psql]
   - site: "socialweb-computer-kcp/internal/checkhostmain/postgres.go: binaries[0]"
     resolves: [initdb]
-  - site: "socialweb-computer-kcp/cmd/socialweb-nodeboot/main.go: name"
-    resolves: [e2fsck, resize2fs]
   - site: "socialweb-computer-kcp/cmd/socialweb-nodeimage/k3sdata.go: cfg.K3sBinary"
     resolves: [k3s]
   - site: "socialweb-computer-kcp/cmd/socialweb-nodeimage/rootfs.go: name"

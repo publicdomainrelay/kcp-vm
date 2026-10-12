@@ -312,5 +312,69 @@
       "executables": {"socialweb-vmexec": "socialweb-vmexec"},
       "platforms": {}
     }
+  },
+  "guestImages": {
+    "note": "guest images (kernel + rootfs + image.json) per hypervisor x arch, built by scripts/build-guest-image.sh on any Linux host with docker or podman (plan 0007 M1-GUEST-IMAGE); reproducible from the inputs below, pinned by the sha256 of each output, never embedded (the guest-images budget line stays 0), fetched and verified by internal/guestimage",
+    "builder": {
+      "dockerfile": "deploy/guest-image/builder/Dockerfile",
+      "base": "docker.io/library/debian@sha256:913f6706df59a68922d1dd08f78c2476560a8d367897200a6005b00e5f67c2d5 (trixie-20261005)",
+      "snapshot": "20261005T000000Z",
+      "how": "the kernel compile and mke2fs -d <tar> run in this image with --network none, as the calling uid; apt resolves against snapshot.debian.org at the pinned time, so the toolchain is the same on every build host"
+    },
+    "kernel": {
+      "version": "6.1.189",
+      "source": {
+        "url": "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.1.189.tar.xz",
+        "sha256": "3ec834a2fefc9a08aac62f993525d7acd10163db6f01d63b4549cbff3f5c9439"
+      },
+      "config": {
+        "from": "firecracker v1.13.1 resources/guest_configs: microvm-kernel-ci-<arch>-6.1.config + ci.config (the configs firecracker tests its guests with), then deploy/guest-kernel/socialweb.config, resolved by make olddefconfig and committed as deploy/guest-kernel/firecracker-<arch>.config; the build refuses a config olddefconfig would change",
+        "firecracker-x86_64": {
+          "url": "https://raw.githubusercontent.com/firecracker-microvm/firecracker/v1.13.1/resources/guest_configs/microvm-kernel-ci-x86_64-6.1.config",
+          "sha256": "391d8d498f89e56b391be5ea4a7501ebc44e6d094331ecaabdefed1da6b28a96"
+        },
+        "firecracker-aarch64": {
+          "url": "https://raw.githubusercontent.com/firecracker-microvm/firecracker/v1.13.1/resources/guest_configs/microvm-kernel-ci-aarch64-6.1.config",
+          "sha256": "c8fb8c37144278287a6adcb517cfd3359f6db008618137100aa7a76716bd0662"
+        },
+        "ci": {
+          "url": "https://raw.githubusercontent.com/firecracker-microvm/firecracker/v1.13.1/resources/guest_configs/ci.config",
+          "sha256": "2305c6dfa1866e2a8a6c38d0ca6f4b43adea4d4a99539b67e275a6a89278e9d5"
+        }
+      },
+      "reason": "the guest kernel is a pinned build, never a host's /boot kernel: every bidder boots the same kernel whatever its distro, so a guest behaves the same on every host and a host upgrade changes nothing inside a guest. Upstream longterm 6.1 with firecracker's own guest config: virtio-mmio, virtio-blk/net, ext4 and (x86_64) i8042 + atkbd so SendCtrlAltDel reaches the guest; socialweb.config adds vfat for the cidata seed, nf_tables/xtables/ip_set/ip_vs, bridge, vxlan, veth, overlay and tun for k3s and the guest's own iptables, and /proc/config.gz. Everything is built in (no modules), so the image needs no module tree and no initramfs, and the guest init socialweb-nodeinit (which only loaded virtio_mmio from an initramfs) is not baked."
+    },
+    "targets": {
+      "firecracker-x86_64": {
+        "hypervisor": "firecracker",
+        "arch": "x86_64",
+        "platform": "linux/amd64",
+        "kernelConfig": "deploy/guest-kernel/firecracker-x86_64.config",
+        "bootArgs": ["console=ttyS0", "reboot=k", "panic=1", "pci=off", "i8042.noaux", "i8042.nomux", "i8042.dumbkbd", "root=/dev/vda", "rw", "rootfstype=ext4", "rootwait"],
+        "base": {
+          "url": "https://cloud-images.ubuntu.com/releases/noble/release-20260926/ubuntu-24.04-server-cloudimg-amd64-root.tar.xz",
+          "sha256": "820311e238ea34d76a8ca2643d6c01065212e9417109e7397d70472a236df261"
+        },
+        "sourceDateEpoch": 1790380800,
+        "outputs": {}
+      },
+      "firecracker-aarch64": {
+        "hypervisor": "firecracker",
+        "arch": "aarch64",
+        "platform": "linux/arm64",
+        "kernelConfig": "deploy/guest-kernel/firecracker-aarch64.config",
+        "bootArgs": ["keep_bootcon", "console=ttyS0", "reboot=k", "panic=1", "root=/dev/vda", "rw", "rootfstype=ext4", "rootwait"],
+        "base": {
+          "url": "https://cloud-images.ubuntu.com/releases/noble/release-20260926/ubuntu-24.04-server-cloudimg-arm64-root.tar.xz",
+          "sha256": "2ef46c9c86debfe5b1f30460d5469c61216f7bb708f1a40652bf8e63df4a5f2e"
+        },
+        "sourceDateEpoch": 1790380800,
+        "outputs": {}
+      }
+    },
+    "reserved": {
+      "hyperv-x86_64": "plan 0011",
+      "vz-arm64": "plan 0012"
+    }
   }
 }

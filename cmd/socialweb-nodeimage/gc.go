@@ -237,6 +237,9 @@ func MainGC(configPath string, keep []string, retain int) error {
 			"resolves to, and a node that booted from one of the others would lose the image it is "+
 			"running from", retain)
 	}
+	if err := refuseGuestImageConfig(configPath, "-gc"); err != nil {
+		return err
+	}
 	cfg, err := LoadConfig(configPath)
 	if err != nil {
 		return err
