@@ -40,6 +40,7 @@ func Cases() []Case {
 		{"ManagerRestartLosesEveryUnit", []string{"Check"}, caseManagerRestart},
 		{"LimitsGatedOnEnforcesLimits", []string{"Start", "Capabilities"}, caseLimits},
 		{"FDStoreGatedOnCapability", []string{"Start", "Capabilities"}, caseFDStore},
+		{"FDStoreKeepsTheListenerAcrossACrash", []string{"Start", "Inspect", "Capabilities"}, caseFDStoreAcrossACrash},
 		{"PrivateHostnameGatedOnCapability", []string{"Start", "Capabilities"}, casePrivateHostname},
 	}
 }
@@ -55,6 +56,10 @@ func bin(t *testing.T, name string) string {
 		t.Fatal(err)
 	}
 	return abs
+}
+
+func ctxTimeout(d time.Duration) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), d)
 }
 
 func ctx(t *testing.T) context.Context {

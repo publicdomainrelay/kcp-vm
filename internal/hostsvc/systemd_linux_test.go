@@ -634,3 +634,17 @@ func TestAProcIdentityIsLostOnSystemdUser(t *testing.T) {
 		t.Fatalf("a proc identity on systemd-user reads %+v %v", obs, err)
 	}
 }
+
+func TestAnFDStoreUnitGetsFileDescriptorStoreMaxAndMainNotifyAccess(t *testing.T) {
+	if !newManager(nil, nil, time.Second).Capabilities().FDStore {
+		t.Fatalf("the systemd-user backend does not declare its fd store")
+	}
+	m := propMap(unitProperties(UnitSpec{Name: "socialweb-kcp-x-front.service", Exec: []string{"/bin/true"}, FDStore: 1}))
+	if m["FileDescriptorStoreMax"] != uint32(1) || m["NotifyAccess"] != "main" {
+		t.Fatalf("FileDescriptorStoreMax=%#v NotifyAccess=%#v, want 1 and main", m["FileDescriptorStoreMax"], m["NotifyAccess"])
+	}
+	none := propMap(unitProperties(UnitSpec{Name: "socialweb-kcp-x-a.service", Exec: []string{"/bin/true"}}))
+	if _, ok := none["FileDescriptorStoreMax"]; ok {
+		t.Fatalf("FileDescriptorStoreMax set on a unit without an fd store")
+	}
+}

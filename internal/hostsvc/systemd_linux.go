@@ -65,7 +65,7 @@ func newManager(dial func(ctx context.Context) (bus, error), p procs, timeout ti
 }
 
 func (m *systemd) Capabilities() Capabilities {
-	return Capabilities{Backend: BackendSystemdUser, EnforcesLimits: true, OOMKillReported: true}
+	return Capabilities{Backend: BackendSystemdUser, EnforcesLimits: true, OOMKillReported: true, FDStore: true}
 }
 
 func (m *systemd) owns(name string) error {
@@ -262,6 +262,10 @@ func unitProperties(spec UnitSpec) []sd.Property {
 	}
 	if len(spec.Wants) > 0 {
 		props = append(props, sd.PropWants(spec.Wants...))
+	}
+	if spec.FDStore > 0 {
+		props = append(props, sd.Property{Name: "FileDescriptorStoreMax", Value: dbus.MakeVariant(uint32(spec.FDStore))},
+			str("NotifyAccess", "main"))
 	}
 	return props
 }

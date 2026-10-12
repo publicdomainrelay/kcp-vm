@@ -28,6 +28,9 @@ const (
 )
 
 func TestMain(m *testing.M) {
+	if hostsvctest.FDStoreHelper() {
+		os.Exit(hostsvctest.FDStoreHelperMain())
+	}
 	if state := os.Getenv(envTestState); state != "" {
 		die, _ := strconv.Atoi(os.Getenv(envTestDie))
 		if os.Getenv(envTestStub) == "1" {
@@ -183,9 +186,18 @@ func procHarness(t *testing.T, stub bool) hostsvctest.Harness {
 			d.kill()
 			d.start(t)
 		},
-		Prefix:      "socialweb-test-" + key + "-",
-		SlicePrefix: "socialweb-test" + key,
+		Prefix:        "socialweb-test-" + key + "-",
+		SlicePrefix:   "socialweb-test" + key,
+		FDStoreHelper: fdStoreHelper,
 	}
+}
+
+func fdStoreHelper(t *testing.T) ([]string, []string) {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return []string{exe, "-test.run=^$"}, nil
 }
 
 func TestTheProcBackendPassesTheContract(t *testing.T) {

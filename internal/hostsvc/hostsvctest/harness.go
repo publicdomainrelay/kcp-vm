@@ -14,6 +14,7 @@ type Harness struct {
 	SkipManagerRestart string
 	Prefix             string
 	SlicePrefix        string
+	FDStoreHelper      func(t *testing.T) (argv []string, env []string)
 }
 
 type Case struct {

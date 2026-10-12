@@ -83,5 +83,5 @@ func (r ProcResponse) Error() error {
 }
 
 func ProcCapabilities() Capabilities {
-	return Capabilities{Backend: BackendProc}
+	return Capabilities{Backend: BackendProc, FDStore: true}
 }

@@ -40,6 +40,7 @@ type unit struct {
 	exited      chan struct{}
 	restarts    []time.Time
 	restartT    *time.Timer
+	store       *fdStore
 }
 
 type watcher struct {
@@ -452,6 +453,8 @@ func (s *server) collect(u *unit) {
 	if cur, ok := s.units[u.spec.Name]; ok && cur == u {
 		delete(s.units, u.spec.Name)
 	}
+	u.store.release()
+	u.store = nil
 	os.Remove(s.recordPath(u.spec.Name))
 }
 
@@ -677,6 +680,10 @@ func (s *server) start(spec hostsvc.UnitSpec) (hostsvc.UnitStatus, error) {
 	u := &unit{spec: spec, order: s.seq}
 	u.st = hostsvc.UnitStatus{Name: spec.Name, Backend: hostsvc.BackendProc}
 	s.units[spec.Name] = u
+	if err := s.openFDStore(u); err != nil {
+		delete(s.units, spec.Name)
+		return u.st, err
+	}
 	if err := s.launch(u); err != nil {
 		return u.st, err
 	}
@@ -733,7 +740,15 @@ func (s *server) launch(u *unit) error {
 		dir = "/"
 	}
 	inv := newID()
-	attr := &os.ProcAttr{Dir: dir, Env: s.unitEnv(u, inv), Files: []*os.File{null, out, errf},
+	env := s.unitEnv(u, inv)
+	files := []*os.File{null, out, errf}
+	if u.store != nil {
+		env = append(env, EnvNotifySocket+"="+u.store.path)
+		stored, listenEnv := u.store.launchFiles()
+		files = append(files, stored...)
+		env = append(env, listenEnv...)
+	}
+	attr := &os.ProcAttr{Dir: dir, Env: env, Files: files,
 		Sys: &syscall.SysProcAttr{Setpgid: true, Pdeathsig: syscall.SIGKILL}}
 	reply := make(chan spawnResult, 1)
 	s.spawn <- spawnReq{argv: u.spec.Exec, attr: attr, reply: reply}
