@@ -65,6 +65,7 @@ func Tree() []Verb {
 	return []Verb{
 		{Path: "version", Summary: "print the build, its Go and its target (--json)"},
 		{Path: "dev up", Summary: "start (or adopt) an application instance under devsup: kine, a port-0 front and one kcp slot behind it (--profile minimal; --fg binds it to this terminal)", Needs: []Need{NeedProc}},
+		{Path: "dev host", Summary: "start (or adopt) the user's parent instance (dev-host): its own bootstrap layer under its own devsup; its root:dev:<instance> workspaces hold each child's HostProcess objects (dev up --parent dev-host)", Needs: []Need{NeedProc}},
 		{Path: "dev status", Summary: "the instance record and its devsup units", Needs: []Need{NeedProc}},
 		{Path: "dev down", Summary: "stop every unit of the instance and remove its state (--keep-state keeps it)", Needs: []Need{NeedProc}},
 		{Path: "dev ls", Summary: "every dev instance under the state root, with its devsup reachability", Needs: []Need{NeedProc}},

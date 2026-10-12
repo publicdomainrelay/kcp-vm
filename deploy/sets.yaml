@@ -149,6 +149,30 @@ sets:
           - kind: APIBinding
             for: Ready
 
+  - name: dev-host
+    summary: the dev-instances and dev-instance WorkspaceTypes and the root:dev workspace of a dev host, whose root:dev:<instance> workspaces hold each child instance's HostProcess objects (plan 0006 M4-DEV-PARENT-KCP); needs the hostprocesses set
+    values: None
+    phases:
+      - name: workspacetypes
+        workspace: root
+        before:
+          - kind: APIExport
+            name: hostprocesses
+            workspace: root:socialweb-provider
+            for: IdentityValid
+        files:
+          - path: workspacetype-dev-instance.yaml
+            kinds: [WorkspaceType]
+      - name: workspace
+        workspace: root
+        files:
+          - path: workspacetype-dev-instance.yaml
+            kinds: [Workspace]
+        after:
+          - kind: Workspace
+            name: dev
+            for: Ready
+
   - name: market-identity
     summary: the MarketIdentity schema and export in an application's own workspace (plan 0007 M1-MARKET-IDENTITY)
     values: MarketIdentity

@@ -232,6 +232,8 @@ type Record struct {
 	Executables     map[string]Executable `json:"executables"`
 	SourceRoot      string                `json:"sourceRoot,omitempty"`
 	Ready           bool                  `json:"ready"`
+	Host            bool                  `json:"host,omitempty"`
+	Parent          *Parent               `json:"parent,omitempty"`
 }
 
 func (r *Record) Unit(role string) *Unit {

@@ -99,6 +99,9 @@ func Run(ctx context.Context, cfg Config, m hostsvc.Manager) error {
 		go openbaoctl.Supervise(ctx, OpenBaoServerConfig(bcfg, rec, log))
 		go postgresctl.Run(ctx, PostgresConfig(bcfg, rec, log))
 	}
+	if rec.Host && rec.AdminKubeconfig != "" {
+		go devinstance.RunHost(ctx, devinstance.HostConfig{Kubeconfig: rec.AdminKubeconfig, Manager: m, Own: devinstance.Prefixes(l.ID), Log: log})
+	}
 	t := time.NewTicker(CheckInterval)
 	defer t.Stop()
 	for {

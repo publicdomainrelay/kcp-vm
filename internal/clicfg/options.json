@@ -50,6 +50,11 @@
       "description": "Dev profile: quick (kine on sqlite + one kcp slot) or prodlike (the gateway shape: a postgres unit, one kine per kcp slot on it, blue/green slots a and b behind the front); market-network lands with M2-APP-CONTROLLER",
       "env": "SOCIALWEB_DEV_PROFILE"
     },
+    "parent": {
+      "type": "string",
+      "description": "dev up: the dev host instance (dev host; dev-host by default there) whose kcp holds this instance's bootstrap units as HostProcess objects in root:dev:<instance>, placed by the parent's supervisor; unset runs the instance under its own devsup",
+      "env": "SOCIALWEB_DEV_PARENT"
+    },
     "postgres-root": {
       "type": "string",
       "description": "dev up: absolute root of the extracted postgres asset tree (versions.json postgres) that runs kcp's store in prodlike and every Postgres object (dev build: explicit, never PATH; a release build extracts its embedded postgres)",

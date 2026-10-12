@@ -79,10 +79,14 @@ func envWord(s string) string {
 
 func Exports(rec Record, leases []portallocator.Lease) []Export {
 	l := rec.Layout
+	socket := l.Socket
+	if rec.Parent != nil {
+		socket = rec.Parent.Socket
+	}
 	out := []Export{
 		{"SOCIALWEB_INSTANCE", l.ID},
 		{"SOCIALWEB_DEV_STATE_DIR", l.StateDir},
-		{"SOCIALWEB_DEVSUP_SOCKET", l.Socket},
+		{"SOCIALWEB_DEVSUP_SOCKET", socket},
 		{"KUBECONFIG", rec.AdminKubeconfig},
 		{"SOCIALWEB_KCP_KUBECONFIG", rec.AdminKubeconfig},
 		{"SOCIALWEB_KCP_HOST", rec.KcpURL},

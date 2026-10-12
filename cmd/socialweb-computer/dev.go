@@ -47,11 +47,15 @@ func (a *app) printJSON(v any) {
 }
 
 func (a *app) layout(vals clicfg.Values) (devinstance.Layout, error) {
+	return a.layoutOf(vals.String("instance"), vals)
+}
+
+func (a *app) layoutOf(name string, vals clicfg.Values) (devinstance.Layout, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return devinstance.Layout{}, err
 	}
-	id, err := devinstance.ID(vals.String("instance"), cwd, a.env)
+	id, err := devinstance.ID(name, cwd, a.env)
 	if err != nil {
 		return devinstance.Layout{}, err
 	}
@@ -288,14 +292,59 @@ type upReport struct {
 }
 
 func runDevUp(ctx context.Context, a *app, vals clicfg.Values, rest []string) int {
+	return devUp(ctx, a, vals, false)
+}
+
+func runDevHost(ctx context.Context, a *app, vals clicfg.Values, rest []string) int {
+	return devUp(ctx, a, vals, true)
+}
+
+func (a *app) parentOf(ctx context.Context, vals clicfg.Values, child devinstance.Layout) (devinstance.Parent, hostsvc.ProcHello, error) {
+	pl, err := a.layoutOf(vals.String("parent"), vals)
+	if err != nil {
+		return devinstance.Parent{}, hostsvc.ProcHello{}, err
+	}
+	if pl.ID == child.ID {
+		return devinstance.Parent{}, hostsvc.ProcHello{}, fmt.Errorf("instance %s cannot be its own parent", child.ID)
+	}
+	var prec devinstance.Record
+	if err := devinstance.ReadJSON(pl.Record, &prec); err != nil {
+		return devinstance.Parent{}, hostsvc.ProcHello{}, fmt.Errorf("parent %s has no instance record (dev host first): %w", pl.ID, err)
+	}
+	if !prec.Host || !prec.Ready || prec.AdminKubeconfig == "" {
+		return devinstance.Parent{}, hostsvc.ProcHello{}, fmt.Errorf("instance %s is not a ready dev host (dev host --instance %s)", pl.ID, pl.ID)
+	}
+	if prec.Parent != nil {
+		return devinstance.Parent{}, hostsvc.ProcHello{}, fmt.Errorf("parent %s is itself a child; instance trees do not nest", pl.ID)
+	}
+	c, h, err := helloDevsup(ctx, pl)
+	if err != nil {
+		return devinstance.Parent{}, hostsvc.ProcHello{}, fmt.Errorf("the devsup of parent %s: %w", pl.ID, err)
+	}
+	c.Close()
+	return devinstance.Parent{ID: pl.ID, Socket: pl.Socket, Kubeconfig: prec.AdminKubeconfig, Workspace: devinstance.ChildWorkspace(child.ID)}, h, nil
+}
+
+func devUp(ctx context.Context, a *app, vals clicfg.Values, host bool) int {
 	started := time.Now().UTC()
+	verb := "dev up"
+	if host {
+		verb = "dev host"
+	}
 	if err := devinstance.RefuseRoot(os.Geteuid()); err != nil {
-		return a.fail(exitRefused, "dev up: %v", err)
+		return a.fail(exitRefused, "%s: %v", verb, err)
 	}
 	if b := vals.String(backendOpt); b != "" && b != string(hostsvc.BackendProc) {
-		return a.fail(exitRefused, "dev up: host-backend=%s: dev places every unit under devsup (proc); systemd-user is for install", b)
+		return a.fail(exitRefused, "%s: host-backend=%s: dev places every unit under devsup (proc); systemd-user is for install", verb, b)
 	}
 	profile, standInsFile := vals.String("profile"), vals.String("stand-ins")
+	parent := vals.String("parent")
+	if host && profile == "" {
+		profile = bootstrap.ProfileQuick
+	}
+	if parent != "" && standInsFile != "" {
+		return a.fail(exitRefused, "dev up: --parent places the bootstrap layer through the parent's kcp; stand-ins have no kcp")
+	}
 	var standIns []devinstance.StandIn
 	switch {
 	case profile != "" && standInsFile != "":
@@ -351,9 +400,22 @@ func runDevUp(ctx context.Context, a *app, vals clicfg.Values, rest []string) in
 	if err != nil {
 		return a.fail(exitFailed, "dev up: %v", err)
 	}
-	l, err := a.layout(vals)
+	name := vals.String("instance")
+	if host && name == "" {
+		name = devinstance.HostID
+	}
+	l, err := a.layoutOf(name, vals)
 	if err != nil {
-		return a.fail(exitRefused, "dev up: %v", err)
+		return a.fail(exitRefused, "%s: %v", verb, err)
+	}
+	var par *devinstance.Parent
+	var parentHello hostsvc.ProcHello
+	if parent != "" {
+		p, h, err := a.parentOf(ctx, vals, l)
+		if err != nil {
+			return a.fail(exitRefused, "dev up: --parent %s: %v", parent, err)
+		}
+		par, parentHello = &p, h
 	}
 	for _, d := range []string{l.StateDir, l.RuntimeDir, l.Logs} {
 		if err := os.MkdirAll(d, 0o700); err != nil {
@@ -370,14 +432,33 @@ func runDevUp(ctx context.Context, a *app, vals clicfg.Values, rest []string) in
 	if fg {
 		dieWith = os.Getpid()
 	}
-	m, sup, err := startOrAdoptDevsup(ctx, a, l, exe, dieWith, fg)
-	if errors.Is(err, errDevsupDetached) {
-		lock.Close()
-		return a.fail(exitRefused, "dev up: %v", err)
-	}
-	if err != nil {
-		lock.Close()
-		return a.fail(exitFailed, "dev up: %v", err)
+	var m hostsvc.Manager
+	var sup devinstance.Devsup
+	if par != nil {
+		if err := devinstance.EnsureChildWorkspace(ctx, par.Kubeconfig, l.ID, devinstance.ChildWorkspaceReady); err != nil {
+			lock.Close()
+			return a.fail(exitFailed, "dev up: %v", err)
+		}
+		r, err := devinstance.OpenRemote(ctx, *par, a.log)
+		if err != nil {
+			lock.Close()
+			return a.fail(exitFailed, "dev up: %v", err)
+		}
+		m = r
+		sup = devinstance.Devsup{Instance: parentHello.Instance, PID: parentHello.PID, StartTicks: parentHello.StartTicks,
+			BootID: parentHello.BootID, Adopted: true}
+		a.log.Info("the bootstrap layer is placed through the parent's kcp", "parent", par.ID, "workspace", par.Workspace)
+	} else {
+		c, s, err := startOrAdoptDevsup(ctx, a, l, exe, dieWith, fg)
+		if errors.Is(err, errDevsupDetached) {
+			lock.Close()
+			return a.fail(exitRefused, "%s: %v", verb, err)
+		}
+		if err != nil {
+			lock.Close()
+			return a.fail(exitFailed, "%s: %v", verb, err)
+		}
+		m, sup = c, s
 	}
 	defer m.Close()
 	var rec devinstance.Record
@@ -385,7 +466,11 @@ func runDevUp(ctx context.Context, a *app, vals clicfg.Values, rest []string) in
 		rec = devinstance.Record{Created: started}
 	}
 	rec.Layout, rec.Profile, rec.Backend, rec.Devsup, rec.StandIns = l, profile, hostsvc.BackendProc, sup, standIns
+	rec.Host, rec.Parent = host, par
 	rec.Worktree = a.worktree(vals)
+	if host {
+		rec.Worktree = ""
+	}
 	rec.BaseWorkspace = vals.String("kcp-base-workspace")
 	rec.Executables = map[string]devinstance.Executable{"kcp": kcpExe, "kine": kineExe, "postgres": pgExe, denorun.Executable: denoExe, "socialweb-computer": {Path: exe}}
 	if baoExe.Path != "" {
@@ -500,7 +585,11 @@ func runDevStatus(ctx context.Context, a *app, vals clicfg.Values, rest []string
 	if err := devinstance.ReadJSON(l.CoreRecord, &core); err == nil {
 		r.Core = &core
 	}
-	if c, h, err := helloDevsup(ctx, l); err == nil {
+	sl := l
+	if rec.Parent != nil {
+		sl.Socket = rec.Parent.Socket
+	}
+	if c, h, err := helloDevsup(ctx, sl); err == nil {
 		r.Devsup.Reachable, r.Devsup.Hello = true, &h
 		for _, prefix := range []string{l.Names().UnitPrefix(), l.Names().CorePrefix()} {
 			units, err := c.List(ctx, prefix)
@@ -558,7 +647,10 @@ func downInstance(ctx context.Context, a *app, l devinstance.Layout, keepState b
 	r := downReport{Instance: l.ID, LeftoverKilled: []int{}, Remaining: []int{}}
 	var rec devinstance.Record
 	devinstance.ReadJSON(l.Record, &rec)
-	if c, h, err := helloDevsup(ctx, l); err == nil {
+	if rec.Parent != nil {
+		r.Remaining = downChild(ctx, a, l, *rec.Parent)
+		r.DevsupPID = rec.Devsup.PID
+	} else if c, h, err := helloDevsup(ctx, l); err == nil {
 		r.DevsupPID = h.PID
 		if err := c.Shutdown(ctx); err != nil {
 			a.log.Warn("devsup shutdown", "err", err.Error())
@@ -603,6 +695,44 @@ func downInstance(ctx context.Context, a *app, l devinstance.Layout, keepState b
 	return r
 }
 
+func downChild(ctx context.Context, a *app, l devinstance.Layout, p devinstance.Parent) []int {
+	if err := devinstance.DeleteChildWorkspace(ctx, p.Kubeconfig, l.ID); err != nil {
+		a.log.Warn("deleting the child workspace in the parent", "parent", p.ID, "err", err.Error())
+	} else {
+		a.log.Info("deleted the child workspace in the parent; its supervisor stops the units", "parent", p.ID, "workspace", p.Workspace)
+	}
+	m, err := hostsvc.Open(ctx, hostsvc.Config{Backend: hostsvc.BackendProc, ProcSocket: p.Socket})
+	if err != nil {
+		a.log.Info("the parent devsup is unreachable; nothing of this child runs there", "parent", p.ID, "err", err.Error())
+		return []int{}
+	}
+	defer m.Close()
+	deadline := time.Now().Add(devsupExitTimeout)
+	for {
+		units, err := devinstance.ChildUnits(ctx, m, l.ID)
+		var live []int
+		for _, u := range units {
+			if u.State == hostsvc.Active || u.State == hostsvc.Activating || u.State == hostsvc.Deactivating {
+				live = append(live, u.MainPID)
+			}
+		}
+		if err == nil && len(live) == 0 {
+			return []int{}
+		}
+		if time.Now().After(deadline) {
+			return live
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+func (a *app) instanceManager(ctx context.Context, rec devinstance.Record) (hostsvc.Manager, error) {
+	if rec.Parent != nil {
+		return devinstance.OpenRemote(ctx, *rec.Parent, a.log)
+	}
+	return hostsvc.Open(ctx, procConfig(rec.Layout))
+}
+
 func runDevsup(ctx context.Context, a *app, vals clicfg.Values, rest []string) int {
 	if err := devinstance.RefuseRoot(os.Geteuid()); err != nil {
 		return a.fail(exitRefused, "internal devsup: %v", err)
@@ -637,7 +767,7 @@ func runDevCore(ctx context.Context, a *app, vals clicfg.Values, rest []string) 
 	if err != nil {
 		return a.fail(exitFailed, "internal dev-core: %v", err)
 	}
-	m, err := hostsvc.Open(ctx, procConfig(rec.Layout))
+	m, err := a.instanceManager(ctx, rec)
 	if err != nil {
 		return a.fail(exitFailed, "internal dev-core: %v", err)
 	}

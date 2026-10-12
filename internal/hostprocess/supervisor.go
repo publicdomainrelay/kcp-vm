@@ -54,6 +54,8 @@ type Config struct {
 	Workspace    string
 	Manager      hostsvc.Manager
 	Prefix       string
+	Prefixes     []string
+	Bound        bool
 	Resolve      func(v1alpha1.HostProcessAsset) (string, error)
 	Mirrors      func() []Mirror
 	Interval     time.Duration
@@ -74,6 +76,26 @@ func (c Config) log() *slog.Logger {
 		return slog.New(slog.DiscardHandler)
 	}
 	return c.Log.With("component", "hostprocess")
+}
+
+func (c Config) prefixes() []string {
+	if c.Prefix == "" {
+		return c.Prefixes
+	}
+	return append([]string{c.Prefix}, c.Prefixes...)
+}
+
+func (c Config) prefixOf(unit string) string {
+	ps := c.prefixes()
+	for _, p := range ps {
+		if strings.HasPrefix(unit, p) {
+			return p
+		}
+	}
+	if len(ps) == 0 {
+		return ""
+	}
+	return ps[0]
 }
 
 func (c Config) workspace() string {
@@ -113,8 +135,10 @@ func New(ctx context.Context, c Config) (*Supervisor, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := applySets(ctx, c, restCfg); err != nil {
-		return nil, err
+	if !c.Bound {
+		if err := applySets(ctx, c, restCfg); err != nil {
+			return nil, err
+		}
 	}
 	cfg := rest.CopyConfig(restCfg)
 	cfg.Host = strings.TrimSuffix(cfg.Host, "/") + "/clusters/" + c.workspace()
@@ -187,7 +211,7 @@ func (s *Supervisor) syncMirrors(ctx context.Context) {
 
 func (s *Supervisor) observe(ctx context.Context, o v1alpha1.HostProcess) Observed {
 	m := s.c.Manager
-	obs := Observed{Object: o, Backend: s.backend, Prefix: s.c.Prefix, Deleting: o.DeletionTimestamp != nil}
+	obs := Observed{Object: o, Backend: s.backend, Prefix: s.c.prefixOf(o.Spec.Unit), Deleting: o.DeletionTimestamp != nil}
 	if o.Spec.Placement == v1alpha1.HostProcessPlacementBootstrap {
 		obs.Prefix = ""
 	}
@@ -334,8 +358,8 @@ func (s *Supervisor) Pass(ctx context.Context) error {
 			s.c.log().Warn("writing status", "name", o.Name, "err", err.Error())
 		}
 	}
-	if s.c.Prefix != "" {
-		units, err := s.c.Manager.List(ctx, s.c.Prefix)
+	for _, prefix := range s.c.prefixes() {
+		units, err := s.c.Manager.List(ctx, prefix)
 		if err == nil {
 			for _, u := range units {
 				if !s.placed[u.Name] && s.listed {
@@ -360,7 +384,7 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		interval = DefaultInterval
 	}
 	s.c.log().Info("the HostProcess supervisor runs in the core", "workspace", s.c.workspace(), "backend", string(s.backend),
-		"prefix", s.c.Prefix)
+		"prefixes", s.c.prefixes())
 	t := time.NewTicker(interval)
 	defer t.Stop()
 	for {
