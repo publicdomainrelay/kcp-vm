@@ -1,0 +1,219 @@
+package kcpserver
+
+import (
+	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
+	"time"
+
+	"k8s.io/client-go/tools/clientcmd"
+
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc"
+)
+
+const WorkspaceMountsGate = "--feature-gates=WorkspaceMounts=true"
+
+const LeaderElection = "--enable-leader-election"
+
+const SlotStopTimeout = 30 * time.Second
+
+const ShardAdminUser = "shard-admin"
+
+const AuditPolicy = `apiVersion: audit.k8s.io/v1
+kind: Policy
+
+omitStages:
+  - RequestReceived
+
+rules:
+  - level: Metadata
+`
+
+type SlotConfig struct {
+	Unit        string
+	Slice       string
+	Exec        string
+	Root        string
+	EtcdServers string
+	FrontURL    string
+	Wants       []string
+}
+
+func SlotArgv(c SlotConfig) ([]string, error) {
+	if !filepath.IsAbs(c.Exec) {
+		return nil, fmt.Errorf("kcpserver: the kcp executable must be an absolute path, got %q (dev builds take it from kcp-path, never PATH)", c.Exec)
+	}
+	if !filepath.IsAbs(c.Root) {
+		return nil, errors.New("kcpserver: the slot root directory must be absolute")
+	}
+	if c.EtcdServers == "" {
+		return nil, errors.New("kcpserver: a slot needs --etcd-servers (its kine); there is no embedded etcd")
+	}
+	argv := []string{c.Exec, "start",
+		"--root-directory=" + c.Root,
+		"--etcd-servers=" + c.EtcdServers,
+		"--bind-address=127.0.0.1",
+		"--secure-port=0",
+		"--experimental-bind-free-port",
+		LeaderElection,
+		"--shutdown-delay-duration=2s",
+		WorkspaceMountsGate,
+		"--audit-policy-file=" + filepath.Join(c.Root, "audit-policy.yaml"),
+		"--audit-log-path=" + filepath.Join(c.Root, "audit.log"),
+		"--audit-log-maxsize=100", "--audit-log-maxage=0", "--audit-log-maxbackup=0",
+	}
+	if c.FrontURL != "" {
+		argv = append(argv, "--shard-base-url="+c.FrontURL)
+	}
+	return argv, CheckArgv(argv)
+}
+
+func CheckArgv(argv []string) error {
+	has := func(want string) bool {
+		for _, a := range argv {
+			if a == want {
+				return true
+			}
+		}
+		return false
+	}
+	if !has(WorkspaceMountsGate) {
+		return fmt.Errorf("kcpserver: kcp refused without %s: every tenant's mounted API silently stops being served (versions.json kcp invariant)", WorkspaceMountsGate)
+	}
+	if !has(LeaderElection) {
+		return fmt.Errorf("kcpserver: kcp refused without %s", LeaderElection)
+	}
+	if !has("--secure-port=0") {
+		return errors.New("kcpserver: kcp refused on a fixed port: behind the edge every listener binds port 0")
+	}
+	return nil
+}
+
+func WriteAuditPolicy(root string) error {
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(root, "audit-policy.yaml"), []byte(AuditPolicy), 0o600)
+}
+
+func SlotSpec(c SlotConfig) (hostsvc.UnitSpec, error) {
+	argv, err := SlotArgv(c)
+	if err != nil {
+		return hostsvc.UnitSpec{}, err
+	}
+	return hostsvc.UnitSpec{
+		Name:        c.Unit,
+		Description: "kcp slot a of one application instance",
+		Exec:        argv,
+		WorkDir:     c.Root,
+		Slice:       c.Slice,
+		Restart:     hostsvc.RestartOnFailure,
+		KillSignal:  syscall.SIGTERM,
+		StopTimeout: SlotStopTimeout,
+		After:       c.Wants,
+		Wants:       c.Wants,
+	}, nil
+}
+
+type Admin struct {
+	Token  string
+	CA     []byte
+	Server string
+}
+
+func ReadAdmin(kubeconfig string) (Admin, error) {
+	cfg, err := clientcmd.LoadFromFile(kubeconfig)
+	if err != nil {
+		return Admin{}, err
+	}
+	var a Admin
+	if u, ok := cfg.AuthInfos[ShardAdminUser]; ok && u.Token != "" {
+		a.Token = u.Token
+	}
+	for name, ctx := range cfg.Contexts {
+		if ctx.AuthInfo != ShardAdminUser && !(a.Token == "" && name == cfg.CurrentContext) {
+			continue
+		}
+		if cl, ok := cfg.Clusters[ctx.Cluster]; ok {
+			a.CA, a.Server = cl.CertificateAuthorityData, cl.Server
+		}
+		if a.Token == "" {
+			if u, ok := cfg.AuthInfos[ctx.AuthInfo]; ok {
+				a.Token = u.Token
+			}
+		}
+		break
+	}
+	if a.Token == "" || len(a.CA) == 0 {
+		return Admin{}, fmt.Errorf("kcpserver: %s holds no %s token and CA yet", kubeconfig, ShardAdminUser)
+	}
+	return a, nil
+}
+
+func PortOf(server string) (int, error) {
+	u, err := url.Parse(server)
+	if err != nil {
+		return 0, err
+	}
+	return strconv.Atoi(u.Port())
+}
+
+func Readyz(ctx context.Context, port int, a Admin) (int, string, error) {
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(a.CA) {
+		return 0, "", errors.New("kcpserver: the kubeconfig CA does not parse")
+	}
+	c := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{
+		TLSClientConfig: &tls.Config{RootCAs: pool, ServerName: "127.0.0.1"}}}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://127.0.0.1:"+strconv.Itoa(port)+"/readyz", nil)
+	if err != nil {
+		return 0, "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+a.Token)
+	resp, err := c.Do(req)
+	if err != nil {
+		return 0, "", err
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	return resp.StatusCode, strings.TrimSpace(string(b)), nil
+}
+
+func WaitReady(ctx context.Context, port int, kubeconfig string, notBefore time.Time, every time.Duration) (time.Time, error) {
+	var last error
+	for {
+		fi, err := os.Stat(kubeconfig)
+		switch {
+		case err != nil:
+			last = err
+		case fi.ModTime().Before(notBefore.Add(-time.Second)):
+			last = fmt.Errorf("%s predates this start", kubeconfig)
+		default:
+			a, err := ReadAdmin(kubeconfig)
+			if err != nil {
+				last = err
+				break
+			}
+			code, body, err := Readyz(ctx, port, a)
+			if err == nil && code == http.StatusOK {
+				return time.Now().UTC(), nil
+			}
+			last = fmt.Errorf("readyz on 127.0.0.1:%d: %d %q %v", port, code, body, err)
+		}
+		select {
+		case <-ctx.Done():
+			return time.Time{}, fmt.Errorf("kcpserver: not ready: %v (%w)", last, ctx.Err())
+		case <-time.After(every):
+		}
+	}
+}

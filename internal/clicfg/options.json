@@ -1,0 +1,359 @@
+{
+  "name": "socialweb-computer",
+  "description": "socialweb-computer: one multi-call binary whose subcommand tree is the stack",
+  "options": {
+    "host-backend": {
+      "type": "string",
+      "description": "Placement backend for long-lived host processes: systemd-user (installs) or proc (dev, tests). Required: no default, never probed",
+      "env": "SOCIALWEB_HOST_BACKEND"
+    },
+    "instance": {
+      "type": "string",
+      "description": "Application instance id (dev: derived from the worktree when unset)",
+      "env": "SOCIALWEB_INSTANCE"
+    },
+    "state-dir": {
+      "type": "string",
+      "description": "State root; resolved by install or dev, no default here",
+      "env": "SOCIALWEB_STATE_DIR"
+    },
+    "instance-dir": {
+      "type": "string",
+      "description": "State directory of one application instance (the dev core reads its instance.json there)",
+      "env": "SOCIALWEB_INSTANCE_DIR"
+    },
+    "kcp-base-workspace": {
+      "type": "string",
+      "description": "Workspace every role addresses its objects under",
+      "env": "SOCIALWEB_KCP_BASE_WORKSPACE",
+      "default": "root"
+    },
+    "asset-cache": {
+      "type": "string",
+      "description": "Extraction root of embedded assets",
+      "env": "SOCIALWEB_ASSET_CACHE"
+    },
+    "profile": {
+      "type": "string",
+      "description": "Dev profile: minimal (kine on sqlite + one kcp slot); quick, bed and prodlike land with M2-BOOTSTRAP-LAYER",
+      "env": "SOCIALWEB_DEV_PROFILE"
+    },
+    "kcp-path": {
+      "type": "string",
+      "description": "Absolute path of the kcp release executable (dev build: explicit, never PATH)",
+      "env": "SOCIALWEB_KCP_PATH"
+    },
+    "kine-path": {
+      "type": "string",
+      "description": "Absolute path of the kine executable (dev build: explicit, never PATH)",
+      "env": "SOCIALWEB_KINE_PATH"
+    },
+    "ready-timeout": {
+      "type": "string",
+      "description": "How long dev up waits for kcp /readyz (Go duration)",
+      "env": "SOCIALWEB_READY_TIMEOUT",
+      "default": "5m"
+    },
+    "keep-state": {
+      "type": "boolean",
+      "description": "dev down: keep the instance state directory"
+    },
+    "json": {
+      "type": "boolean",
+      "description": "Print JSON"
+    },
+    "state": {
+      "type": "string",
+      "description": "internal devsup: the supervisor state directory"
+    },
+    "socket": {
+      "type": "string",
+      "description": "internal devsup: the unix socket path (under 108 bytes)"
+    },
+    "die-with": {
+      "type": "number",
+      "description": "internal devsup: stop every unit and exit when this pid exits (0 = never)",
+      "default": 0
+    },
+    "clusterprovider-advertise-address": {
+      "type": "string",
+      "description": "Address tenant nodes dial for the cluster control plane",
+      "env": "SOCIALWEB_CLUSTERPROVIDER_ADVERTISE_ADDRESS"
+    },
+    "clusterprovider-audit-policy": {
+      "type": "string",
+      "description": "Audit policy file for tenant apiservers",
+      "env": "SOCIALWEB_CLUSTERPROVIDER_AUDIT_POLICY"
+    },
+    "clusterprovider-cloud-controller-manager": {
+      "type": "string",
+      "description": "Path of the cloud-controller-manager executable",
+      "env": "SOCIALWEB_CLUSTERPROVIDER_CLOUD_CONTROLLER_MANAGER"
+    },
+    "clusterprovider-datastore-has-row": {
+      "type": "boolean",
+      "description": "The tenant datastore already holds rows (skip the fresh-store check)",
+      "env": "SOCIALWEB_CLUSTERPROVIDER_DATASTORE_HAS_ROW"
+    },
+    "clusterprovider-dumbpipe": {
+      "type": "string",
+      "description": "Path of the dumbpipe executable",
+      "env": "SOCIALWEB_CLUSTERPROVIDER_DUMBPIPE"
+    },
+    "clusterprovider-eso-bundle": {
+      "type": "string",
+      "description": "External Secrets Operator manifest bundle",
+      "env": "SOCIALWEB_CLUSTERPROVIDER_ESO_BUNDLE"
+    },
+    "clusterprovider-external-secrets": {
+      "type": "string",
+      "description": "Path of the external-secrets executable",
+      "env": "SOCIALWEB_CLUSTERPROVIDER_EXTERNAL_SECRETS"
+    },
+    "clusterprovider-firecracker": {
+      "type": "string",
+      "description": "Path of the firecracker executable",
+      "env": "SOCIALWEB_CLUSTERPROVIDER_FIRECRACKER"
+    },
+    "clusterprovider-grant": {
+      "type": "string",
+      "description": "Tenant grant manifest",
+      "env": "SOCIALWEB_CLUSTERPROVIDER_GRANT"
+    },
+    "clusterprovider-host": {
+      "type": "string",
+      "description": "Host name the clusterprovider records",
+      "env": "SOCIALWEB_CLUSTERPROVIDER_HOST"
+    },
+    "clusterprovider-image-config": {
+      "type": "string",
+      "description": "Node image config file",
+      "env": "SOCIALWEB_CLUSTERPROVIDER_IMAGE_CONFIG"
+    },
+    "clusterprovider-image-out-dir": {
+      "type": "string",
+      "description": "Node image output directory",
+      "env": "SOCIALWEB_CLUSTERPROVIDER_IMAGE_OUT_DIR"
+    },
+    "clusterprovider-join": {
+      "type": "string",
+      "description": "Cluster the clusterprovider joins",
+      "env": "SOCIALWEB_CLUSTERPROVIDER_JOIN"
+    },
+    "clusterprovider-lease-path": {
+      "type": "string",
+      "description": "Port and subnet lease file",
+      "env": "SOCIALWEB_CLUSTERPROVIDER_LEASE_PATH"
+    },
+    "clusterprovider-network": {
+      "type": "string",
+      "description": "Tenant network mode",
+      "env": "SOCIALWEB_CLUSTERPROVIDER_NETWORK"
+    },
+    "clusterprovider-node-agent": {
+      "type": "string",
+      "description": "Path of the node agent executable",
+      "env": "SOCIALWEB_CLUSTERPROVIDER_NODE_AGENT"
+    },
+    "clusterprovider-node-disk-mib": {
+      "type": "number",
+      "description": "Node disk size in MiB",
+      "env": "SOCIALWEB_CLUSTERPROVIDER_NODE_DISK_MIB"
+    },
+    "clusterprovider-port-range": {
+      "type": "string",
+      "description": "Leased port range (lo-hi)",
+      "env": "SOCIALWEB_CLUSTERPROVIDER_PORT_RANGE"
+    },
+    "clusterprovider-qemu": {
+      "type": "string",
+      "description": "Path of the qemu executable",
+      "env": "SOCIALWEB_CLUSTERPROVIDER_QEMU"
+    },
+    "clusterprovider-state-dir": {
+      "type": "string",
+      "description": "Clusterprovider state directory",
+      "env": "SOCIALWEB_CLUSTERPROVIDER_STATE_DIR"
+    },
+    "clusterprovider-substrate": {
+      "type": "string",
+      "description": "Node substrate (market, ...)",
+      "env": "SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE"
+    },
+    "container-account": {
+      "type": "string",
+      "description": "Account handle of the container-era bootstrap",
+      "env": "SOCIALWEB_CONTAINER_ACCOUNT"
+    },
+    "container-account-did": {
+      "type": "string",
+      "description": "Account DID of the container-era bootstrap",
+      "env": "SOCIALWEB_CONTAINER_ACCOUNT_DID"
+    },
+    "container-bootstrap": {
+      "type": "boolean",
+      "description": "Run the container-era bootstrap",
+      "env": "SOCIALWEB_CONTAINER_BOOTSTRAP"
+    },
+    "container-cluster": {
+      "type": "string",
+      "description": "Cluster the container-era bootstrap creates",
+      "env": "SOCIALWEB_CONTAINER_CLUSTER"
+    },
+    "container-door": {
+      "type": "string",
+      "description": "Door mode of the container-era entrypoint",
+      "env": "SOCIALWEB_CONTAINER_DOOR"
+    },
+    "container-door-addr": {
+      "type": "string",
+      "description": "Door listen address",
+      "env": "SOCIALWEB_CONTAINER_DOOR_ADDR"
+    },
+    "container-door-dir": {
+      "type": "string",
+      "description": "Door directory",
+      "env": "SOCIALWEB_CONTAINER_DOOR_DIR"
+    },
+    "container-door-port": {
+      "type": "number",
+      "description": "Door listen port (edge; no default here)",
+      "env": "SOCIALWEB_CONTAINER_DOOR_PORT"
+    },
+    "container-home": {
+      "type": "string",
+      "description": "Home workspace of the container-era bootstrap",
+      "env": "SOCIALWEB_CONTAINER_HOME"
+    },
+    "container-kcp-bind": {
+      "type": "string",
+      "description": "kcp bind address of the container-era entrypoint",
+      "env": "SOCIALWEB_CONTAINER_KCP_BIND"
+    },
+    "container-tls-cert": {
+      "type": "string",
+      "description": "TLS certificate file",
+      "env": "SOCIALWEB_CONTAINER_TLS_CERT"
+    },
+    "container-tls-dir": {
+      "type": "string",
+      "description": "TLS directory",
+      "env": "SOCIALWEB_CONTAINER_TLS_DIR"
+    },
+    "container-tls-key": {
+      "type": "string",
+      "description": "TLS key file",
+      "env": "SOCIALWEB_CONTAINER_TLS_KEY"
+    },
+    "container-tls-port": {
+      "type": "number",
+      "description": "TLS listen port (edge; no default here)",
+      "env": "SOCIALWEB_CONTAINER_TLS_PORT"
+    },
+    "deploy-dir": {
+      "type": "string",
+      "description": "Deploy directory (manifests, policies)",
+      "env": "SOCIALWEB_DEPLOY_DIR"
+    },
+    "device-key": {
+      "type": "string",
+      "description": "Device key handed to the credential exec plugin",
+      "env": "SOCIALWEB_DEVICE_KEY"
+    },
+    "gateway-addr": {
+      "type": "string",
+      "description": "Gateway listen address",
+      "env": "SOCIALWEB_GATEWAY_ADDR"
+    },
+    "gateway-audiences": {
+      "type": "string",
+      "description": "Accepted service-auth audiences (comma separated)",
+      "env": "SOCIALWEB_GATEWAY_AUDIENCES"
+    },
+    "gateway-device-key-audience": {
+      "type": "string",
+      "description": "Audience of device-key tokens",
+      "env": "SOCIALWEB_GATEWAY_DEVICE_KEY_AUDIENCE"
+    },
+    "gateway-device-key-exec-command": {
+      "type": "string",
+      "description": "Credential exec plugin command",
+      "env": "SOCIALWEB_GATEWAY_DEVICE_KEY_EXEC_COMMAND"
+    },
+    "gateway-device-key-exec-env-name": {
+      "type": "string",
+      "description": "Env name the exec plugin reads the device key from",
+      "env": "SOCIALWEB_GATEWAY_DEVICE_KEY_EXEC_ENV_NAME"
+    },
+    "gateway-device-key-max-ttl": {
+      "type": "string",
+      "description": "Upper bound of a device-key credential TTL",
+      "env": "SOCIALWEB_GATEWAY_DEVICE_KEY_MAX_TTL"
+    },
+    "gateway-device-key-ttl": {
+      "type": "string",
+      "description": "Device-key credential TTL",
+      "env": "SOCIALWEB_GATEWAY_DEVICE_KEY_TTL"
+    },
+    "gateway-devkey-registry": {
+      "type": "string",
+      "description": "Workspace of the device-key registry",
+      "env": "SOCIALWEB_GATEWAY_DEVKEY_REGISTRY"
+    },
+    "gateway-kcp-public-host": {
+      "type": "string",
+      "description": "Public host name of kcp",
+      "env": "SOCIALWEB_GATEWAY_KCP_PUBLIC_HOST"
+    },
+    "gateway-mint-kubeconfigs": {
+      "type": "string",
+      "description": "Directory of minted kubeconfigs",
+      "env": "SOCIALWEB_GATEWAY_MINT_KUBECONFIGS"
+    },
+    "gateway-plc-url": {
+      "type": "string",
+      "description": "PLC directory URL",
+      "env": "SOCIALWEB_GATEWAY_PLC_URL"
+    },
+    "gateway-public-mint-url": {
+      "type": "string",
+      "description": "Public URL of the credential mint",
+      "env": "SOCIALWEB_GATEWAY_PUBLIC_MINT_URL"
+    },
+    "kcp-audit-log": {
+      "type": "string",
+      "description": "kcp audit log path",
+      "env": "SOCIALWEB_KCP_AUDIT_LOG"
+    },
+    "kcp-audit-policy": {
+      "type": "string",
+      "description": "kcp audit policy file",
+      "env": "SOCIALWEB_KCP_AUDIT_POLICY"
+    },
+    "kcp-host": {
+      "type": "string",
+      "description": "kcp URL consumers dial",
+      "env": "SOCIALWEB_KCP_HOST"
+    },
+    "kcp-kubeconfig": {
+      "type": "string",
+      "description": "kcp admin kubeconfig",
+      "env": "SOCIALWEB_KCP_KUBECONFIG"
+    },
+    "kcp-root": {
+      "type": "string",
+      "description": "kcp root directory",
+      "env": "SOCIALWEB_KCP_ROOT"
+    },
+    "kubectl": {
+      "type": "string",
+      "description": "Path of kubectl (replaced by kcpapply, M1-HOST-INVENTORY)",
+      "env": "SOCIALWEB_KUBECTL"
+    },
+    "rootvault-addr": {
+      "type": "string",
+      "description": "Root vault address",
+      "env": "SOCIALWEB_ROOTVAULT_ADDR"
+    }
+  }
+}

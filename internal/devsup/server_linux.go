@@ -285,6 +285,8 @@ func (s *server) exited(pid int, ws unix.WaitStatus) {
 		result = "signal"
 	}
 	u.st.ExecMainCode, u.st.ExecMainStatus, u.st.Result = code, status, result
+	s.log.Info("unit exited", "unit", u.spec.Name, "pid", pid, "result", result, "code", code, "status", status,
+		"stopping", u.stopping, "ranFor", time.Since(u.st.ActiveSince).Round(time.Millisecond).String())
 	u.st.MainPID = 0
 	close(u.exited)
 	u.exited = nil
@@ -814,6 +816,7 @@ func (s *server) stop(name string) error {
 	for _, pid := range s.members(name, inv, pgid) {
 		syscall.Kill(pid, syscall.SIGKILL)
 	}
+	s.log.Info("unit stopped", "unit", name, "signal", sig.String(), "took", time.Since(deadline.Add(-grace)).Round(time.Millisecond).String())
 	return nil
 }
 
