@@ -3,6 +3,10 @@ kind: WorkspaceType
 metadata:
   name: dev-instances
 spec:
+  extend:
+    with:
+      - name: universal
+        path: root
   defaultChildWorkspaceType:
     name: dev-instance
     path: root
@@ -16,6 +20,10 @@ kind: WorkspaceType
 metadata:
   name: dev-instance
 spec:
+  extend:
+    with:
+      - name: universal
+        path: root
   limitAllowedParents:
     types:
       - name: dev-instances

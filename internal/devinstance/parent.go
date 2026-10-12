@@ -76,7 +76,7 @@ func EnsureChildWorkspace(ctx context.Context, kubeconfig, id string, timeout ti
 	ws := dc.Resource(workspacesGVR)
 	o := &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "tenancy.kcp.io/v1alpha1", "kind": "Workspace",
-		"metadata": map[string]any{"name": id},
+		"metadata": map[string]any{"name": id, "annotations": map[string]any{kcpserver.WorkspaceOwnerAnnotation: kcpserver.ShardAdminOwner}},
 		"spec":     map[string]any{"type": map[string]any{"name": ChildWorkspaceType, "path": "root"}},
 	}}
 	if _, err := ws.Create(ctx, o, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
@@ -92,14 +92,17 @@ func EnsureChildWorkspace(ctx context.Context, kubeconfig, id string, timeout ti
 		if err == nil && cur.GetDeletionTimestamp() != nil {
 			return fmt.Errorf("devinstance: workspace %s is being deleted in the parent; wait for it to go, then dev up again", ChildWorkspace(id))
 		}
-		ready := err == nil && workspacePhase(cur) == "Ready"
-		if ready {
+		phase := ""
+		if err == nil {
+			phase = workspacePhase(cur)
+		}
+		if phase == "Ready" {
 			if _, err = child.Resource(hostprocess.GVR).List(ctx, metav1.ListOptions{Limit: 1}); err == nil {
 				return nil
 			}
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("devinstance: workspace %s did not become Ready with the HostProcess API bound within %s: %v", ChildWorkspace(id), timeout, err)
+			return fmt.Errorf("devinstance: workspace %s did not become Ready with the HostProcess API bound within %s (phase %q): %v", ChildWorkspace(id), timeout, phase, err)
 		}
 		select {
 		case <-ctx.Done():
