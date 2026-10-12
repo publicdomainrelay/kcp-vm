@@ -1,5 +1,5 @@
 import { parse as yamlParse, stringify as yamlStringify } from "npm:yaml@^2.7.0";
-import { acceptBundleModule, buildUserData } from "@publicdomainrelay/cloud-init-common";
+import { acceptBundleModule, buildUserData, POWEROFF_ENDS_VM_MODULE } from "@publicdomainrelay/cloud-init-common";
 import type { Logger, LoggerInterface, StructuredLoggerInterface } from "@publicdomainrelay/logger";
 import type {
   ComputeAtproto,
@@ -408,7 +408,7 @@ export function injectAcceptBundle(
 ): string {
   return buildUserData({
     base: userData,
-    modules: [acceptBundleModule(acceptPathVm, bundle)],
+    modules: [acceptBundleModule(acceptPathVm, bundle), POWEROFF_ENDS_VM_MODULE],
   });
 }
 

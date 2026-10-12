@@ -1,5 +1,5 @@
 import { parse as yamlParse, stringify as yamlStringify } from "yaml";
-import { acceptBundleModule, buildUserData, getUserDataModules } from "@publicdomainrelay/cloud-init-common";
+import { acceptBundleModule, buildUserData, getUserDataModules, POWEROFF_ENDS_VM_MODULE } from "@publicdomainrelay/cloud-init-common";
 import type {
   CloudInitContext,
   UserDataModule,
@@ -65,7 +65,7 @@ export function injectAcceptBundle(
   bundle: Record<string, unknown>,
   acceptPathVm: string = DEFAULT_ACCEPT_PATH_VM,
 ): string {
-  return buildUserData({ base: userData, modules: [acceptBundleModule(acceptPathVm, bundle)] });
+  return buildUserData({ base: userData, modules: [acceptBundleModule(acceptPathVm, bundle), POWEROFF_ENDS_VM_MODULE] });
 }
 
 export function onNetworkUrlFromBundle(userData: string, fallback: string): string {
@@ -200,23 +200,6 @@ export function withOnNetworkReporter(
   return buildUserData({
     base: userData,
     modules: [onNetworkReporterModule(onNetworkTargets(userData, fallbackUrl), acceptPathVm)],
-  });
-}
-
-export const POWEROFF_ENDS_VM_PATH = "/usr/lib/systemd/system-shutdown/socialweb-poweroff-ends-vm.shutdown";
-
-export function withPoweroffEndsVm(userData: string): string {
-  if (userData.includes(POWEROFF_ENDS_VM_PATH)) return userData;
-  return buildUserData({
-    base: userData,
-    modules: [() => ({
-      write_files: [{
-        path: POWEROFF_ENDS_VM_PATH,
-        owner: "root:root",
-        permissions: "0755",
-        content: '#!/bin/sh\ncase "$1" in poweroff|halt) echo b > /proc/sysrq-trigger ;; esac\n',
-      }],
-    })],
   });
 }
 

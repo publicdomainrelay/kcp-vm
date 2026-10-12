@@ -817,6 +817,22 @@ export function hostKeysReporterModule(opts: HostKeysReporterOptions): UserDataM
   });
 }
 
+export const POWEROFF_ENDS_VM_MODULE = "poweroff-ends-vm";
+export const POWEROFF_ENDS_VM_PATH = "/usr/lib/systemd/system-shutdown/socialweb-poweroff-ends-vm.shutdown";
+
+export const poweroffEndsVmModule: UserDataModule = () => ({
+  write_files: [{
+    path: POWEROFF_ENDS_VM_PATH,
+    owner: "root:root",
+    permissions: "0755",
+    content: "#!/bin/sh\n" +
+      "case \"$1\" in poweroff|halt) ;; *) exit 0 ;; esac\n" +
+      "[ -e /sys/class/dmi/id/sys_vendor ] && exit 0\n" +
+      "echo b > /proc/sysrq-trigger\n",
+  }],
+});
+
 registerUserDataModule("secrets", secretsModule);
 registerUserDataModule("k3s", k3sModule);
 registerUserDataModule("iroh", irohModule);
+registerUserDataModule(POWEROFF_ENDS_VM_MODULE, poweroffEndsVmModule);

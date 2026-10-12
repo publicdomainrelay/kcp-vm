@@ -1,4 +1,4 @@
-import { acceptBundleModule, buildUserData } from "@publicdomainrelay/cloud-init-common";
+import { acceptBundleModule, buildUserData, POWEROFF_ENDS_VM_MODULE } from "@publicdomainrelay/cloud-init-common";
 import { ON_BEHALF_OF_HEADER } from "@publicdomainrelay/compute-provider-common";
 import type { StructuredLoggerInterface } from "@publicdomainrelay/logger";
 import type {
@@ -71,7 +71,7 @@ export function injectAcceptBundle(
 ): string {
   return buildUserData({
     base: userData,
-    modules: [acceptBundleModule(acceptPathVm, bundle)],
+    modules: [acceptBundleModule(acceptPathVm, bundle), POWEROFF_ENDS_VM_MODULE],
   });
 }
 

@@ -7,7 +7,6 @@ import {
   WIF_SIMPLE_NSID,
   withOnNetworkBaseUrl,
   withOnNetworkReporter,
-  withPoweroffEndsVm,
 } from "@publicdomainrelay/compute-provider-common";
 import type {
   AdoptResult,
@@ -538,7 +537,7 @@ export function createComputeProviderKcp(ctx: ComputeProviderKcpCtx): ComputePro
     const issuerUrl = ctx.getIssuerUrl();
     const reported = withOnNetworkBaseUrl(withOnNetworkReporter(enriched.userData, issuerUrl, acceptPathVm), issuerUrl);
     const hostAddress = addressTheRequesterNamed(reported) ?? ctx.guestHostAddress;
-    const userData = withPoweroffEndsVm(pointGuestAtHost(reported, hostAddress, ctx.guestTlsPort));
+    const userData = pointGuestAtHost(reported, hostAddress, ctx.guestTlsPort);
     const desired = computeVMFor({
       name,
       handle,
