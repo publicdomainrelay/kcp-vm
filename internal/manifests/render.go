@@ -24,6 +24,7 @@ import (
 	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 	"sigs.k8s.io/yaml"
 
+	swcv1alpha1 "github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
 	"github.com/johnandersen777/socialweb-computer-kcp/deploy"
 	denov1alpha1 "github.com/johnandersen777/socialweb-computer-kcp/internal/denokcp/api/v1alpha1"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/tsbundle"
@@ -64,6 +65,7 @@ var typedKinds = map[schema.GroupVersionKind]func() any{
 	{Group: "admissionregistration.k8s.io", Version: "v1", Kind: "ValidatingAdmissionPolicyBinding"}: func() any { return &admissionregistrationv1.ValidatingAdmissionPolicyBinding{} },
 	{Group: "deno.computer", Version: "v1alpha1", Kind: "DenoPod"}:                                   func() any { return &denov1alpha1.DenoPod{} },
 	{Group: "deno.computer", Version: "v1alpha1", Kind: "OpenBao"}:                                   func() any { return &denov1alpha1.OpenBao{} },
+	{Group: "socialweb.computer", Version: "v1alpha1", Kind: "OpenBaoServer"}:                        func() any { return &swcv1alpha1.OpenBaoServer{} },
 }
 
 func readFile(path string) ([]byte, error) {
