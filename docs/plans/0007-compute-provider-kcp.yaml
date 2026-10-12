@@ -790,8 +790,8 @@ items:
       no repo, and runComputeContract still reaches receipt and onNetwork. Red today.
     done_when: "green; existing bidder tests green; pushed on main in atproto-market."
     risks: []
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M3-OIDC-ISSUER-INSTANCE
     milestone: M3
     title: oidc-issuer-hono keeps no module-global state, so two issuers in one process keep their own issuer URL and key
