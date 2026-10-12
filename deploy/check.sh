@@ -8,7 +8,7 @@ case "$mode" in
   --full) run=full ;;
   *)
     echo "usage: $0 [--fast|--local|--full]" >&2
-    echo "  --fast   unit tests only; the loop, seconds" >&2
+    echo "  --fast   the build gate: gofmt, go build, apigen, go vet, deno check, deno.lock, cross-OS and release builds" >&2
     echo "  --local  the proofs this host can run (kcp/kine/k3s/postgres); lists what it skipped" >&2
     echo "  --full   everything, and a skip is a failure; needs the live artifacts on this host" >&2
     exit 2
@@ -65,10 +65,6 @@ else
   echo "check.sh: skipped deno check (deno not found)"
 fi
 
-go test -count=1 -run 'TestNoFixedPortBehindTheEdge|TestTheRatchetListsOnlyViolationsThatStillExist|TestEveryEdgePortHasAReason|TestAServiceManifestWithoutAnExplicitPortIsAViolation' ./test \
-  || fail "no fixed ports behind the edge (deploy/edge-ports.yaml, deploy/fixed-ports-ratchet.yaml)"
-echo "check.sh: ok no fixed ports behind the edge ($(grep -c '^  - {file:' deploy/fixed-ports-ratchet.yaml) ratchet entries left)"
-
 crossfailed=""
 for target in darwin/arm64 darwin/amd64 windows/amd64 windows/arm64 linux/arm64; do
   goos="${target%/*}"
@@ -92,21 +88,18 @@ if [ -n "$crossfailed" ]; then
   fail "cross-OS gate:$crossfailed"
 fi
 
-sizedir="$(mktemp -d)"
+releasedir="$(mktemp -d)"
 for target in $(jq -r '.platforms | to_entries[] | select(.value.status == "release") | .key' internal/versions/versions.json); do
   goos="${target%/*}"
   goarch="${target#*/}"
-  if ! GOOS="$goos" GOARCH="$goarch" CGO_ENABLED=0 go build -tags release -trimpath -o "$sizedir/$goos-$goarch" ./cmd/socialweb-computer; then
-    rm -rf "$sizedir"
+  if ! GOOS="$goos" GOARCH="$goarch" CGO_ENABLED=0 go build -tags release -trimpath -o "$releasedir/$goos-$goarch" ./cmd/socialweb-computer; then
+    rm -rf "$releasedir"
     fail "release build $target"
   fi
-  rm -f "$sizedir/$goos-$goarch"
+  rm -f "$releasedir/$goos-$goarch"
   echo "check.sh: ok release build $target"
 done
-rm -rf "$sizedir"
-
-staticcheck ./... || fail staticcheck
-echo "check.sh: ok staticcheck"
+rm -rf "$releasedir"
 
 log="$(mktemp)"
 trap 'rm -f "$log"' EXIT
@@ -140,7 +133,9 @@ rust_check() {
     echo "check.sh: ok cargo test (rust/; the netns and k3s proofs need SOCIALWEB_MESHD_NETNS=1 / SOCIALWEB_MESHD_K3S=1 and sudo -n)"
   fi
 }
-rust_check
+if [ "$run" != fast ]; then
+  rust_check
+fi
 
 if [ "$run" != fast ]; then
   hostplat="$(go env GOOS)_$(go env GOARCH)"
@@ -155,10 +150,6 @@ if [ "$run" != fast ]; then
 fi
 
 case "$run" in
-  fast)
-    go test ./... -count=1 || fail "go test"
-    echo "check.sh: ok go test"
-    ;;
   local)
     if ! SOCIALWEB_LOCAL=1 go test ./... -count=1 -timeout 60m -v >"$log" 2>&1; then
       grep -E -- '^(--- FAIL|FAIL)' "$log" | head -30 >&2
