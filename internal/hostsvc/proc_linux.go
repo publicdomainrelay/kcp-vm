@@ -14,12 +14,21 @@ import (
 )
 
 type proc struct {
-	socket string
-	prefix string
+	socket    string
+	prefix    string
+	installed string
+}
+
+func (p *proc) StartInstalled(ctx context.Context, name string) (UnitStatus, error) {
+	spec, err := ReadInstalledSpec(p.installed, name)
+	if err != nil {
+		return UnitStatus{}, err
+	}
+	return p.Start(ctx, spec)
 }
 
 func openProc(ctx context.Context, cfg Config) (Manager, error) {
-	p := &proc{socket: cfg.ProcSocket, prefix: cfg.Prefix()}
+	p := &proc{socket: cfg.ProcSocket, prefix: cfg.Prefix(), installed: cfg.InstalledDir}
 	if _, err := p.Hello(ctx); err != nil {
 		return nil, err
 	}

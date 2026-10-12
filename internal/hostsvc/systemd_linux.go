@@ -346,6 +346,48 @@ func (m *systemd) Start(ctx context.Context, spec UnitSpec) (UnitStatus, error) 
 	return st, nil
 }
 
+type unitStarter interface {
+	StartUnit(ctx context.Context, name string, ch chan<- string) error
+}
+
+func (m *systemd) StartInstalled(ctx context.Context, name string) (UnitStatus, error) {
+	if err := ValidateName(name); err != nil {
+		return UnitStatus{}, err
+	}
+	if err := m.owns(name); err != nil {
+		return UnitStatus{}, err
+	}
+	ctx, cancel := withDeadline(ctx, m.timeout)
+	defer cancel()
+	if st, err := m.Inspect(ctx, name); err == nil && st.State == Active {
+		st.Adopted = true
+		return st, nil
+	}
+	ch := make(chan string, 1)
+	err := m.do(ctx, func(ctx context.Context, b bus) error {
+		s, ok := b.(unitStarter)
+		if !ok {
+			return fmt.Errorf("%w: this bus starts no installed unit", ErrUnsupported)
+		}
+		return s.StartUnit(ctx, name, ch)
+	})
+	if err != nil {
+		return UnitStatus{}, fmt.Errorf("hostsvc: starting the installed unit %s: %w", name, err)
+	}
+	result, err := waitJob(ctx, ch)
+	if err != nil {
+		return UnitStatus{}, fmt.Errorf("hostsvc: starting the installed unit %s: %w", name, err)
+	}
+	st, err := m.Inspect(ctx, name)
+	if err != nil {
+		return st, err
+	}
+	if result != "done" {
+		return st, fmt.Errorf("hostsvc: the start job of the installed unit %s ended %q (state %s, result %s)", name, result, st.State, st.Result)
+	}
+	return st, nil
+}
+
 func (m *systemd) Inspect(ctx context.Context, name string) (UnitStatus, error) {
 	if err := ValidateName(name); err != nil {
 		return UnitStatus{}, err

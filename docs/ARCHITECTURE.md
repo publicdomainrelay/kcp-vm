@@ -6312,6 +6312,26 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   read on prod was not reproduced here and the backoff is a bound on the worst case rather than a
   measured cause.
 
+- **The bootstrap layer is one table, and kine listens on a unix socket (plan 0006 M2-BOOTSTRAP-LAYER,
+  2026-10-12).** `internal/bootstrap/table` lists the units that must run before kcp exists, per
+  application instance, in the order store, kine, front, slot, core. The gateway is
+  `socialweb-kcp-gw-pg`, `socialweb-kcp-gw-kine@a|b`, `socialweb-kcp-gw-front`, `socialweb-kcp-gw@a|b`
+  and `socialweb-computer-gateway`; a bidder handle is `socialweb-kcp-<hid>-kine@a`,
+  `socialweb-kcp-<hid>-front`, `socialweb-kcp-<hid>@a` and `socialweb-computer-bidder@<handle>`; a dev
+  instance is the gateway shape keyed by its short id with one slot. The same table renders the
+  devsup unit specs that `socialweb-computer dev up` places (proc) and the user unit files, the
+  `<state>/kcp/<unit>.env` argument files and the core's `After=`/`Wants=` drop-in that install writes
+  (systemd-user, started by name through `hostsvc.StartInstalled`, enabled for boot). Dev profiles:
+  `quick` is kine on sqlite, `prodlike` is kine on a postgres unit (unix socket only, initdb one-shot
+  before the unit starts); `bed` waits for M2-APP-CONTROLLER. Kine binds `unix://<run>/kine-<slot>.sock`
+  instead of TCP port 0 (decided by Claude, accepted by the lead): the address is stable across
+  restarts, so a slot's `--etcd-servers` in its env file stays right when the user manager restarts kine
+  at boot without the core, and no TCP port is opened at all. Readings on hat-8: `dev up --profile
+  quick` 11.2 s cold to a Ready kcp for each of two instances in parallel; `dev up --profile prodlike`
+  18.6 s cold, RSS pg 33 MB, kine 58 MB, front 33 MB, kcp 442 MB; the installed postgres layer started
+  by name in a user manager (test prefix) in 6.4 s, and starting the core pulled pg, kine and the slot
+  ahead of it.
+
 ## 16. Vocabulary
 
 | | |

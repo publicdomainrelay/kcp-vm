@@ -101,6 +101,11 @@ func (b *sdBus) StartTransientUnit(ctx context.Context, name string, props []sd.
 	return err
 }
 
+func (b *sdBus) StartUnit(ctx context.Context, name string, ch chan<- string) error {
+	_, err := b.conn.StartUnitContext(ctx, name, "replace", ch)
+	return err
+}
+
 func (b *sdBus) StopUnit(ctx context.Context, name string, ch chan<- string) error {
 	_, err := b.conn.StopUnitContext(ctx, name, "replace", ch)
 	return err

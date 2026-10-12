@@ -211,6 +211,11 @@ func (u *liveUser) EnableNow(ctx context.Context, units []string) error {
 	return nil
 }
 
+func (u *liveUser) Enable(ctx context.Context, units []string) error {
+	_, _, err := u.conn.EnableUnitFilesContext(ctx, units, false, false)
+	return err
+}
+
 func (u *liveUser) DisableStop(ctx context.Context, units []string) error {
 	for _, unit := range units {
 		if err := u.Stop(ctx, unit); err != nil {

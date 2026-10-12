@@ -138,8 +138,19 @@ func (u *uninstaller) remove(host string) error {
 
 func (u *uninstaller) removeUnitFiles(units []hostsvc.UnitStatus, um UserManager) error {
 	for _, f := range u.rec.UnitFiles {
+		if filepath.Base(filepath.Dir(f)) != WantsDir && !strings.HasSuffix(filepath.Dir(f), ".d") {
+			link := filepath.Join(filepath.Dir(f), WantsDir, filepath.Base(f))
+			if _, err := os.Lstat(u.path(link)); err == nil {
+				if err := u.remove(link); err != nil {
+					return err
+				}
+			}
+		}
 		if err := u.remove(f); err != nil {
 			return err
+		}
+		if strings.HasSuffix(filepath.Dir(f), ".d") {
+			os.Remove(u.path(filepath.Dir(f)))
 		}
 	}
 	u.rec.UnitFiles = nil

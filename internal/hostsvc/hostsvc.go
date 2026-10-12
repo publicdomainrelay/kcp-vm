@@ -58,6 +58,7 @@ type Config struct {
 	UnitPrefix           string
 	SystemdPrivateSocket string
 	ProcSocket           string
+	InstalledDir         string
 }
 
 func (c Config) Prefix() string {

@@ -23,6 +23,7 @@ const (
 	DropInName       = "socialweb-bootstrap.conf"
 	InstallFrontAddr = "127.0.0.1:0"
 	BedBidderKey     = "b1"
+	PendingFrontURL  = "https://front.pending.invalid"
 )
 
 type Params struct {
@@ -222,13 +223,21 @@ func Installed(p Params, frontURL string) ([]InstalledUnit, error) {
 				File: hostsvc.InstalledFile{Unit: hostsvc.RenderDropIn(e.After, e.Wants)}})
 			continue
 		}
-		spec, err := p.Spec(e, frontURL)
+		pending := e.Kind == table.KindSlot && frontURL == ""
+		url := frontURL
+		if pending {
+			url = PendingFrontURL
+		}
+		spec, err := p.Spec(e, url)
 		if err != nil {
 			return nil, err
 		}
 		f, err := hostsvc.RenderInstalled(spec, hostsvc.InstallOptions{EnvFile: p.EnvFile(e.Unit)})
 		if err != nil {
 			return nil, err
+		}
+		if pending {
+			f.Env = nil
 		}
 		out = append(out, InstalledUnit{Entry: e, Unit: e.Unit, Path: e.Unit, Exec: spec.Exec[0], File: f})
 	}

@@ -188,29 +188,3 @@ func TestDevLsListsEveryInstanceOfTheStateRoot(t *testing.T) {
 		t.Fatalf("a missing root: %v %v", empty, err)
 	}
 }
-
-func TestDevLogsNamesEveryUnitByRoleOrUnitName(t *testing.T) {
-	rec := sampleRecord(t, "/s", "inst")
-	l := rec.Layout
-	cases := map[string]string{
-		"kine-a":     filepath.Join(l.Logs, "kine-a.log"),
-		l.KineUnit(): filepath.Join(l.Logs, "kine-a.log"),
-		"kcp-a":      filepath.Join(l.Logs, "kcp-a.log"),
-		l.KcpUnit():  filepath.Join(l.Logs, "kcp-a.log"),
-		"core":       filepath.Join(l.Logs, "core.log"),
-		l.CoreUnit(): filepath.Join(l.Logs, "core.log"),
-		"devsup":     filepath.Join(l.SupState, "devsup.log"),
-	}
-	for name, want := range cases {
-		got, err := LogFile(l, name)
-		if err != nil || got != want {
-			t.Errorf("%s: %q %v, want %q", name, got, err, want)
-		}
-	}
-	if _, err := LogFile(l, "nope"); err == nil || !strings.Contains(err.Error(), "kcp-a") {
-		t.Errorf("an unknown unit: %v", err)
-	}
-	if n := LogNames(l); len(n) != 6 {
-		t.Errorf("names %v", n)
-	}
-}

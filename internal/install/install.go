@@ -817,6 +817,12 @@ func (in *installer) unitFiles() error {
 		in.rec.addUnitFile(filepath.Join(dir, n))
 		any = any || changed
 	}
+	boot, bootChanged, err := in.bootstrapFiles(dir)
+	if err != nil {
+		return err
+	}
+	names = append(names, boot...)
+	any = any || bootChanged
 	in.unitsUp = !any
 	if any {
 		in.step(StepUnitFiles, OutcomeCreated, strings.Join(names, " "))
@@ -881,6 +887,9 @@ func (in *installer) enable() error {
 		return nil
 	}
 	if err := in.change("systemctl --user daemon-reload as "+in.o.Account, func() error { return um.Reload(in.ctx) }); err != nil {
+		return err
+	}
+	if err := in.enableBootstrap(um); err != nil {
 		return err
 	}
 	if len(todo) > 0 {

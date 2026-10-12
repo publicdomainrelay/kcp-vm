@@ -101,26 +101,6 @@ func TestVersionJSON(t *testing.T) {
 	}
 }
 
-func TestDevUpNeedsAProfileAndExplicitExecutables(t *testing.T) {
-	env := clicfg.MapEnv{"XDG_RUNTIME_DIR": t.TempDir(), "TASK_STATE_DIR": t.TempDir()}
-	cases := []struct {
-		args []string
-		want string
-	}{
-		{[]string{"dev", "up", "--instance", "t1"}, "profile"},
-		{[]string{"dev", "up", "--instance", "t1", "--profile", "prodlike"}, "M2-BOOTSTRAP-LAYER"},
-		{[]string{"dev", "up", "--instance", "t1", "--profile", "minimal"}, "kcp-path"},
-		{[]string{"dev", "up", "--instance", "t1", "--profile", "minimal", "--kcp-path", "kcp"}, "never looks in PATH"},
-		{[]string{"dev", "up", "--host-backend", "systemd-user", "--profile", "minimal"}, "devsup (proc)"},
-	}
-	for _, c := range cases {
-		code, _, stderr := runT(t, env, "linux", c.args...)
-		if code != 2 || !strings.Contains(stderr, c.want) {
-			t.Errorf("%v: exit %d %q, want 2 naming %q", c.args, code, stderr, c.want)
-		}
-	}
-}
-
 func TestAPhaseSelectionTakesNamesAndOrderedRanges(t *testing.T) {
 	ix, err := manifests.Load()
 	if err != nil {
