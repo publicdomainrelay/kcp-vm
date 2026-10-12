@@ -1165,7 +1165,7 @@ items:
       - "A kine schema migration takes ACCESS EXCLUSIVE (control-plane-handover.md); a kine bump for the gateway's kcp is rolled like a kcp slot (M3-KCP-ROLL) with old and new kine on one database tested first; on a bidder it is part of the short restart."
       - "Per-handle stores on a bidder: kine + one kcp + front per handle, ~0.45 GB (kcp-spike.md: kcp 378-409 MB, kine 54-62 MB); recorded per handle in M2-KCP-PORT0's readings."
       - "A sqlite kine restart is a store outage for the bidder's kcp; accepted, because the bidder's kcp restart is already a short outage that VMs never notice (decided by the user 2026-10-12)."
-    status: doing
+    status: done
     evidence:
   - id: M2-KCP-FRONT
     milestone: M2
