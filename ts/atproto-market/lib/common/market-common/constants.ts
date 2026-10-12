@@ -35,3 +35,15 @@ export { $nsid as COMPUTE_EVENTS_VM_STARTED_NSID } from "../market-lexicons/com/
 export const REGISTER_IDENTITY_NSID = "com.publicdomainrelay.temp.market.registerIdentity";
 export { $nsid as COMPUTE_EVENTS_VM_REGISTER_IDENTITY_NSID } from "../market-lexicons/com/publicdomainrelay/temp/compute/events/vm/registerIdentity.ts";
 
+export { $nsid as COMPUTE_EVENTS_VM_TERMINATED_NSID } from "../market-lexicons/com/publicdomainrelay/temp/compute/events/vm/terminated.ts";
+
+export const VM_TERMINATED_REASONS = [
+  "guest_poweroff",
+  "vmm_exited",
+  "oom",
+  "host_reboot",
+  "identity_mismatch",
+  "deleted_on_request",
+] as const;
+
+export type VmTerminatedReason = typeof VM_TERMINATED_REASONS[number];
