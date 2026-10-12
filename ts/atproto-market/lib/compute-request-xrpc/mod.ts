@@ -375,8 +375,8 @@ function openContractWatch(opts: {
   const resolveGuestAddress = (address: string, source: string) => {
     if (!address || vmAddress) return;
     const kind = guestAddressKind(address);
-    if (kind === "ip") {
-      log("vm_onnetwork_ip_skipped", { address, source, hint: "waiting for guest ticket or FQDN" });
+    if (kind === "ip" || kind === "hostname") {
+      log("vm_onnetwork_ip_skipped", { address, kind, source, hint: "waiting for guest ticket or FQDN" });
       return;
     }
     vmAddress = address;

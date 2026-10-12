@@ -90,6 +90,11 @@ Deno.test("guest addresses are told apart by their shape", () => {
   assertEquals(guestAddressKind("172.17.0.3:22"), "ip");
 });
 
+Deno.test("a guest's bare hostname is not a relay address", () => {
+  assertEquals(guestAddressKind("fc-1379be663dd9-762b64d5"), "hostname");
+  assertEquals(guestAddressKind("guest"), "hostname");
+});
+
 Deno.test("the return latch fires once and remembers who asked", async () => {
   const latch = new ReturnLatch();
   assertEquals(latch.apply("continue", "onAccepted"), false);

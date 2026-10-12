@@ -184,11 +184,12 @@ export function parseContractState(input: string | unknown): ContractState {
   return o as unknown as ContractState;
 }
 
-export type GuestAddressKind = "iroh-ticket" | "relay-fqdn" | "ip";
+export type GuestAddressKind = "iroh-ticket" | "relay-fqdn" | "ip" | "hostname";
 
 export function guestAddressKind(address: string): GuestAddressKind {
   if (/^\d{1,3}(\.\d{1,3}){3}(:\d+)?$/.test(address)) return "ip";
-  return address.startsWith(IROH_SCHEME) ? "iroh-ticket" : "relay-fqdn";
+  if (address.startsWith(IROH_SCHEME)) return "iroh-ticket";
+  return address.includes(".") ? "relay-fqdn" : "hostname";
 }
 
 export type FlowDecision = "continue" | "return";
