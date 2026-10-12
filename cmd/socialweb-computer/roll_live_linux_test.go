@@ -124,10 +124,10 @@ type watcher struct {
 	watchErrs []string
 }
 
-const workspacesPath = "/clusters/root/apis/tenancy.kcp.io/v1alpha1/workspaces"
+const rollWorkspacesPath = "/clusters/root/apis/tenancy.kcp.io/v1alpha1/workspaces"
 
 func (c *frontClient) listRV(ctx context.Context) (string, error) {
-	resp, err := c.get(ctx, c.http, workspacesPath)
+	resp, err := c.get(ctx, c.http, rollWorkspacesPath)
 	if err != nil {
 		return "", err
 	}
@@ -169,7 +169,7 @@ func startWatcher(c *frontClient) *watcher {
 				w.lastRV = rv
 				w.mu.Unlock()
 			}
-			resp, err := c.get(ctx, c.watch, workspacesPath+"?watch=1&resourceVersion="+rv)
+			resp, err := c.get(ctx, c.watch, rollWorkspacesPath+"?watch=1&resourceVersion="+rv)
 			if err != nil {
 				w.mu.Lock()
 				w.watchErrs = append(w.watchErrs, utc()+" "+err.Error())

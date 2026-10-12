@@ -68,7 +68,7 @@ func Tree() []Verb {
 		{Path: "dev status", Summary: "the instance record and its devsup units", Needs: []Need{NeedProc}},
 		{Path: "dev down", Summary: "stop every unit of the instance and remove its state (--keep-state keeps it)", Needs: []Need{NeedProc}},
 		{Path: "dev ls", Summary: "every dev instance under the state root, with its devsup reachability", Needs: []Need{NeedProc}},
-		{Path: "dev logs", Summary: "a unit's log: dev logs <kine-a|kcp-a|core|devsup> [--tail N]", Needs: []Need{NeedProc}},
+		{Path: "dev logs", Summary: "a unit's log: dev logs <kine-a|front|kcp-a|kcp-b|core|devsup> [--tail N]", Needs: []Need{NeedProc}},
 		{Path: "dev env", Summary: "exports for shells and TS tools (KUBECONFIG, kcp URL, ports, leases; --json)", Needs: []Need{NeedProc}},
 		{Path: "dev check", Summary: "report the dev host prerequisites; never fixes them", Needs: []Need{NeedProc}},
 		{Path: "dev restart", Summary: "dev restart core [--binary path]: replace the dev core, adopting every other unit", Needs: []Need{NeedProc}},

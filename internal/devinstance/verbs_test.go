@@ -210,7 +210,7 @@ func TestDevLogsNamesEveryUnitByRoleOrUnitName(t *testing.T) {
 	if _, err := LogFile(l, "nope"); err == nil || !strings.Contains(err.Error(), "kcp-a") {
 		t.Errorf("an unknown unit: %v", err)
 	}
-	if n := LogNames(l); len(n) != 4 {
+	if n := LogNames(l); len(n) != 6 {
 		t.Errorf("names %v", n)
 	}
 }
