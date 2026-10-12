@@ -53,12 +53,12 @@
     "linux/amd64": {
       "status": "release",
       "owner": "plan 0006 M1-ASSETS",
-            "assets": ["bao", "deno", "dumbpipe", "external-secrets", "firecracker", "k3s", "kcp", "kine", "pasta", "postgres"]
+            "assets": ["bao", "deno", "dumbpipe", "external-secrets", "firecracker", "k3s", "kcp", "kine", "pasta", "postgres", "socialweb-vmexec", "swc-userns-stage"]
     },
     "linux/arm64": {
       "status": "release",
       "owner": "plan 0006 M1-ASSETS",
-            "assets": ["bao", "deno", "dumbpipe", "external-secrets", "firecracker", "k3s", "kcp", "kine", "pasta", "postgres"]
+            "assets": ["bao", "deno", "dumbpipe", "external-secrets", "firecracker", "k3s", "kcp", "kine", "pasta", "postgres", "socialweb-vmexec"]
     },
     "darwin/arm64": {"status": "seam", "owner": "plan 0012", "note": "seam: builds and vets, no assets, owned by plan 0012", "assets": []},
     "darwin/amd64": {"status": "seam", "owner": "plan 0012", "note": "seam: builds and vets, no assets, owned by plan 0012", "assets": []},
@@ -272,19 +272,30 @@
     },
     "socialweb-vmexec": {
       "version": "this module",
-      "source": "cmd/socialweb-vmexec of this module, cross-built per platform",
-      "verify": "built from this commit",
-      "pending": "plan 0007 M2-VM-RUNTIME writes cmd/socialweb-vmexec; it joins the linux asset sets then",
+      "source": "cmd/socialweb-vmexec of this module: CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags='-s -w -buildid=' per platform, with the go.mod toolchain",
+      "verify": "rebuilt from this commit; the unpacked tree must equal the treeSha256 pin, so a change to cmd/socialweb-vmexec or internal/guestnet re-pins it",
       "executables": {"socialweb-vmexec": "socialweb-vmexec"},
-      "platforms": {}
+      "fetch": {
+        "linux/amd64": {"kind": "go", "package": "./cmd/socialweb-vmexec", "members": {"socialweb-vmexec": "socialweb-vmexec"}},
+        "linux/arm64": {"kind": "go", "package": "./cmd/socialweb-vmexec", "members": {"socialweb-vmexec": "socialweb-vmexec"}}
+      },
+      "platforms": {
+        "linux/amd64": {"treeSha256": "0f7b4bad18b29539bcdcee8fd76180441d0c66bea1bdb2f0d5c595d4f99dff25", "rawBytes": 2326654, "zstdBytes": 880276},
+        "linux/arm64": {"treeSha256": "ca840d4843577978a2adae5ff964bbecef1f40b8f0d87d6b64c2d60a11bc5621", "rawBytes": 2293886, "zstdBytes": 788101}
+      }
     },
     "swc-userns-stage": {
       "version": "this module",
       "source": "deploy/swc-userns-stage/stage.c of this module, built by scripts/build-userns-stage.sh in the pinned guest builder image (gcc, static, libc-free, no build id); byte-reproducible, linux/amd64 sha256 d15e47035b9f5d5b970017f7051dd82eabeb2c3176fb2a0a3655c9a49e100332",
       "verify": "rebuilt from this commit; the sha256 must equal the pin",
-      "pending": "plan 0007 M2-VM-RUNTIME puts it first in each VM unit's ExecStart; it joins the linux/amd64 asset set then (linux/arm64 needs an aarch64 entry stub)",
+      "pending": "linux/arm64 needs an aarch64 entry stub in stage.c",
       "executables": {"swc-userns-stage": "swc-userns-stage"},
-      "platforms": {}
+      "fetch": {
+        "linux/amd64": {"kind": "script", "script": "scripts/build-userns-stage.sh", "sha256": "d15e47035b9f5d5b970017f7051dd82eabeb2c3176fb2a0a3655c9a49e100332", "members": {"swc-userns-stage": "swc-userns-stage"}}
+      },
+      "platforms": {
+        "linux/amd64": {"treeSha256": "99e3ed4cbb177d456dc4c64fd4f79cbea69b40c977f30c166f9b62e1a4e66653", "rawBytes": 8928, "zstdBytes": 1344}
+      }
     }
   },
   "guestImages": {
@@ -334,7 +345,7 @@
         "outputs": {
           "vmlinux": {"sha256": "f868af0fcc53e3034323ae53bb66979d5810e71ffe9692333993b77990fca2d7", "bytes": 43726920},
           "rootfs.ext4": {"sha256": "f2096748f2f7de32f56dd90c2ba85a5e0688a5918ca86fa6ea9c1040c7922584", "bytes": 1543503872},
-          "image.json": {"sha256": "cf6567e8f382aff6c62b445592ca934f8acaa65b324e49fe132f683f254d94f6", "bytes": 5822}
+          "image.json": {"sha256": "f2f39859672a803fcc975bb285ba60e81ebae284027d6fc29e771c8394f58638", "bytes": 5822}
         }
       },
       "firecracker-aarch64": {
@@ -351,7 +362,7 @@
         "outputs": {
           "vmlinux": {"sha256": "70fb64c9b54af357f8db915c80ad25f547d87f877139d979cdfce366c29d18bd", "bytes": 17420800},
           "rootfs.ext4": {"sha256": "2094d5f25dc6735824f0a6c078f499f360347251f7d46e62afb73533e2e69420", "bytes": 1610612736},
-          "image.json": {"sha256": "d25b56a556e77788987cb9a62f4c88d6dffea24456ba9272abb0634172da7554", "bytes": 5850}
+          "image.json": {"sha256": "54996591408083f3d5e782ae67061fafc7cda3251bac537c15de73edc266af9f", "bytes": 5850}
         }
       }
     },

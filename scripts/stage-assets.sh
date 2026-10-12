@@ -173,6 +173,26 @@ stage_oci() {
   copy_members "$x/u" "$tree" "$(echo "$spec" | jq -c .members)"
 }
 
+stage_script() {
+  local spec="$1" tree="$2" x="$3" script want out
+  script="$root/$(echo "$spec" | jq -r .script)"
+  want="$(echo "$spec" | jq -r .sha256)"
+  mkdir -p "$x/u"
+  "$script" --out "$x/u" >&2
+  out="$x/u/$(echo "$spec" | jq -r '.members | keys[0]')"
+  [ "$(sha_of "$out")" = "$want" ] || die "$script built $(sha_of "$out"), pinned $want"
+  copy_members "$x/u" "$tree" "$(echo "$spec" | jq -c .members)"
+}
+
+stage_go() {
+  local spec="$1" tree="$2" x="$3" plat="$4" pkg
+  pkg="$(echo "$spec" | jq -r .package)"
+  mkdir -p "$x/u"
+  (cd "$root" && CGO_ENABLED=0 GOOS="${plat%/*}" GOARCH="${plat#*/}" go build -trimpath -buildvcs=false \
+    -ldflags='-s -w -buildid=' -o "$x/u/$(echo "$spec" | jq -r '.members | keys[0]')" "$pkg")
+  copy_members "$x/u" "$tree" "$(echo "$spec" | jq -c .members)"
+}
+
 deb_arch() { case "$1" in linux/amd64) echo amd64 ;; linux/arm64) echo arm64 ;; *) die "no deb arch for $1" ;; esac; }
 
 repo_index() {
@@ -277,6 +297,8 @@ for plat in "${platforms[@]}"; do
       file) stage_file "$spec" "$tree" "$x" ;;
       oci) stage_oci "$spec" "$tree" "$x" "$plat" ;;
       debs) stage_debs "$asset" "$spec" "$tree" "$x" "$plat" ;;
+      script) stage_script "$spec" "$tree" "$x" ;;
+      go) stage_go "$spec" "$tree" "$x" "$plat" ;;
       *) die "$asset: unknown fetch kind" ;;
     esac
     digest="$("$work/assetpack" digest "$tree")"
