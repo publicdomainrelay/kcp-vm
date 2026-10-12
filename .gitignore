@@ -14,7 +14,7 @@ staging_src_k8s.io_*.go
 
 node_modules/
 deno.lock
-!socialweb-computer-k8s/deno.lock
+!/deno.lock
 .DS_Store
 
 .claude/

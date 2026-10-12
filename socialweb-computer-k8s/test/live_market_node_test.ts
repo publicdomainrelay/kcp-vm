@@ -46,7 +46,7 @@ import { requestCompute } from "@publicdomainrelay/compute-request-xrpc";
 import { createMarketNodeFulfiller } from "@publicdomainrelay/socialweb-computer-k8s-node-market";
 import type { NodeClaim, NodeClaimStore } from "@publicdomainrelay/socialweb-computer-k8s-abc";
 import { FINALIZER_NODE_CLAIM, type NodeClaimStatus } from "@publicdomainrelay/socialweb-computer-k8s-api";
-import { installFetchInterceptor } from "../../../atproto-market/test/fetch-interceptor.ts";
+import { installFetchInterceptor } from "../../ts/atproto-market/test/fetch-interceptor.ts";
 
 const ENV = {
   nodeimage: "SOCIALWEB_FIRECRACKER_NODEIMAGE",

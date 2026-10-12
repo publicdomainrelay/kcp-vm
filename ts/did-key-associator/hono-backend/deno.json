@@ -1,0 +1,10 @@
+{
+  "version": "0.0.0",
+  "license": "Unlicense",
+  "compile": {
+    "include": ["cli-args-env.json"]
+  },
+  "publish": {
+    "include": ["cli-args-env.json"]
+  }
+}
