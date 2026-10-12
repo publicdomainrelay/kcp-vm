@@ -1,7 +1,7 @@
 apiVersion: apis.kcp.io/v1alpha1
 kind: APIResourceSchema
 metadata:
-  name: v1alpha1-3.marketbidders.socialweb.computer
+  name: v1alpha1-4.marketbidders.socialweb.computer
 spec:
   group: socialweb.computer
   names:
@@ -119,6 +119,9 @@ spec:
                     format: int32
                 required:
                   - guestImageSource
+              signingKeyRotation:
+                type: integer
+                format: int32
               options:
                 type: array
                 items:

@@ -12,6 +12,7 @@ export type VM = {
   location?: { country?: string; region?: string };
   _uri?: string;
   _cid?: string;
+  _accept?: { uri: string; cid: string };
 };
 
 export interface DropletSpec {
@@ -101,16 +102,24 @@ export interface RbacProvisioner {
   }): Promise<{ uri: string } | undefined>;
 }
 
+export type GuestOfNonce = (nonce: string) => Promise<string | number | undefined>;
+
 export class GuestHostKeysRelay {
   readonly #guestByNonce = new Map<string, string | number>();
   #handler: GuestHostKeysHandler | undefined;
+
+  constructor(readonly resolve?: GuestOfNonce) {}
 
   bindNonce(nonce: string, id: string | number): void {
     if (nonce) this.#guestByNonce.set(nonce, id);
   }
 
-  guestOf(nonce: string): string | number | undefined {
-    return this.#guestByNonce.get(nonce);
+  async guestOf(nonce: string): Promise<string | number | undefined> {
+    const held = this.#guestByNonce.get(nonce);
+    if (held !== undefined || !this.resolve) return held;
+    const found = await this.resolve(nonce);
+    if (found !== undefined) this.#guestByNonce.set(nonce, found);
+    return found;
   }
 
   forget(id: string | number): void {
@@ -125,7 +134,7 @@ export class GuestHostKeysRelay {
   }
 
   async forward(report: { nonce: string; keys: GuestHostKey[] }, observedAt: string): Promise<GuestHostKeysAck & { id?: string | number }> {
-    const id = this.#guestByNonce.get(report.nonce);
+    const id = await this.guestOf(report.nonce);
     if (id === undefined) return { ok: false, status: 404, reason: "no guest holds this provisioning token" };
     if (!this.#handler) return { ok: false, status: 503, reason: "no bidder listens for host keys", id };
     return { ...(await this.#handler({ id, keys: report.keys, observedAt })), id };

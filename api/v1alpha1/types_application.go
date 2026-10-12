@@ -152,6 +152,8 @@ type MarketBidderSpec struct {
 
 	Kcp *KcpProvider `json:"kcp,omitempty"`
 
+	SigningKeyRotation int32 `json:"signingKeyRotation,omitempty"`
+
 	Options []ApplicationOption `json:"options,omitempty"`
 }
 

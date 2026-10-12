@@ -445,6 +445,7 @@ export interface MarketBidderSpec {
   policy?: string;
   firecracker?: FirecrackerProvider;
   kcp?: KcpProvider;
+  signingKeyRotation?: number;
   options?: ApplicationOption[];
 }
 
@@ -630,7 +631,7 @@ export const MARKET_BIDDER_RESOURCE: ApiResource = {
   listKind: "MarketBidderList",
   plural: "marketbidders",
   singular: "marketbidder",
-  schema: "v1alpha1-3.marketbidders.socialweb.computer",
+  schema: "v1alpha1-4.marketbidders.socialweb.computer",
   export: "applications",
 };
 
@@ -1653,6 +1654,9 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       },
       "profile": {
         "type": "string"
+      },
+      "signingKeyRotation": {
+        "type": "integer"
       }
     },
     "required": [

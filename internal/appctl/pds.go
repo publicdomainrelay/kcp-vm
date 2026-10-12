@@ -32,7 +32,6 @@ import (
 const (
 	BidderVaultServer  = "bidder"
 	BidderVaultClient  = "bidder"
-	BidderVaultAccount = "bidder-vault"
 	identityKeysPath   = "identity/bidder/keys"
 	passwordBytes      = 24
 	vaultTokenFile     = "vault-kcp.token"
@@ -209,10 +208,7 @@ func (ctl *Controller) bidderVault(ctx context.Context, spec v1alpha1.MarketBidd
 		return vault, err
 	}
 	ctl.c.log().Info("the bidder's PDS account", "handle", spec.Identity.Handle, "pds", spec.Identity.PdsUrl, "did", did)
-	tokenPath, caPath, err := ctl.vaultReaderToken(ctx, stateDir, BidderVaultAccount)
-	if err != nil {
-		return vault, err
-	}
+	tokenPath, caPath := BidderTokenPaths(stateDir)
 	vault.KcpServer = strings.TrimSuffix(ctl.restCfg.Host, "/") + "/clusters/" + ctl.c.workspace()
 	vault.TokenFile, vault.KcpCAFile = tokenPath, caPath
 	return vault, nil

@@ -14,6 +14,7 @@
   "v1alpha1-1.nodes.socialweb.computer": "sha256:de91abff17763f0223c864bec37f04ca9479c911d320af81126551c0eafd125c",
   "v1alpha1-1.openbaoservers.socialweb.computer": "sha256:6ce642daf68a3dc1b351178d3b2746687d2f68f3e1353d53f5f39fe756140640",
   "v1alpha1-1.postgreses.socialweb.computer": "sha256:3895974b2e443b4d06fbb5423d70372230507f93eb0c422583fa3db185c141a1",
+  "v1alpha1-2.computevms.socialweb.computer": "sha256:4cad0b5b2ca79f9bef3bf6c4da1f707c3890dae831afe741e933e89a08d55a3a",
   "v1alpha1-2.gateways.socialweb.computer": "sha256:c1a9c4f4d0cfafaf72854a9fce0b3333b3a3407b65102f6f49ca734a40e89045",
   "v1alpha1-2.hostprocesses.socialweb.computer": "sha256:41bb54a5265809f640d83ab88d5642d247d1495d56bc55c3ce0d4b79ffda4901",
   "v1alpha1-2.marketbidders.socialweb.computer": "sha256:805911a8bb7966e7ca8ef8fd01c2583c1d88a1e81dc4fa44ecb7b709c3db2869",
@@ -28,6 +29,8 @@
   "v1alpha1-3.nodeclaims.socialweb.computer": "sha256:e3cd19eb7d87769a3c1fbd5dead4dd09e8d3ddf502bb8fd97f9e831207a7ab4d",
   "v1alpha1-3.openbaoservers.socialweb.computer": "sha256:ee130e06fc1c4c86b69261918f1ac6a33c4635577e3318f8f40d3396b369451d",
   "v1alpha1-4.gateways.socialweb.computer": "sha256:8ab626fc73c94488dfd3eed4976f0fc197c3316514e87f632158e860f4e8bbc1",
+  "v1alpha1-4.marketbidders.socialweb.computer": "sha256:7c33b4ed858d0393eca82c0a7e72805fa70dc7697380f934587db2d59b0dada8",
   "v1alpha1-4.nodeclaims.socialweb.computer": "sha256:818c9804cb818436355ff6767af2f6078b5fee4f67d476884a0874e89c35bd9f",
+  "v1alpha1-4.openbaoservers.socialweb.computer": "sha256:5f33545f2bc1185b1eea32b6c05ce9122155a79cc3b68bbce2c80335d9a608f2",
   "v1alpha1-5.nodeclaims.socialweb.computer": "sha256:d0273de8c1e37889aff6eba9fd9292c048a56cdc2a3ffd70b0a5b42e1abad0fe"
 }

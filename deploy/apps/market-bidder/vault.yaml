@@ -9,31 +9,45 @@ spec:
   clients:
     - name: bidder
       kvMount: bidder
+    - name: computevm
+      policies: ["computevm-guest-user-data"]
+  declared:
+    policies:
+      - name: computevm-guest-user-data
+        rules:
+          - path: bidder/data/guests/+/user-data
+            capabilities: ["read"]
 ---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: bidder-vault
+  name: bidder
   namespace: default
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: bidder-vault-read
+  name: bidder
 rules:
   - apiGroups: ["socialweb.computer"]
     resources: ["openbaoservers"]
     verbs: ["get", "list"]
+  - apiGroups: ["socialweb.computer"]
+    resources: ["computevms"]
+    verbs: ["get", "list", "watch", "create", "patch", "update", "delete"]
+  - apiGroups: ["socialweb.computer"]
+    resources: ["computevms/status"]
+    verbs: ["get", "patch", "update"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: bidder-vault-read
+  name: bidder
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: bidder-vault-read
+  name: bidder
 subjects:
   - kind: ServiceAccount
-    name: bidder-vault
+    name: bidder
     namespace: default

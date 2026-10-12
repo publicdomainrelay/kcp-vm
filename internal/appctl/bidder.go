@@ -142,12 +142,14 @@ func (ctl *Controller) reconcileBidder(ctx context.Context, u *unstructured.Unst
 			return err
 		}
 	}
+	stateDir := ComponentStateDir(ctl.c.Layout.StateDir, BidderComponent)
 	if ctl.applied[string(o.UID)] != o.Generation {
 		var kcp BidderKcp
 		if rec, err := ctl.c.Record(); err == nil {
 			kcp = BidderKcpOf(rec)
 		}
-		values, err := BidderValues(o.Spec, ComponentStateDir(ctl.c.Layout.StateDir, BidderComponent), kcp)
+		kcp.TokenFile, kcp.CAFile = BidderTokenPaths(stateDir)
+		values, err := BidderValues(o.Spec, stateDir, kcp)
 		if err != nil {
 			st.Phase, st.Message = v1alpha1.ApplicationPhaseFailed, err.Error()
 			return ctl.writeStatus(ctx, MarketBidderGVR, o.Name, st)
@@ -156,6 +158,10 @@ func (ctl *Controller) reconcileBidder(ctx context.Context, u *unstructured.Unst
 		ctl.writeStatus(ctx, MarketBidderGVR, o.Name, st)
 		if _, err := ctl.applyProfile(ctx, BidderSet, o.Spec.Profile, owner, false, &values); err != nil {
 			st.Message = err.Error()
+			return ctl.writeStatus(ctx, MarketBidderGVR, o.Name, st)
+		}
+		if err := ctl.bidderToken(ctx, values.StateDir); err != nil {
+			st.Message = "its kcp token: " + err.Error()
 			return ctl.writeStatus(ctx, MarketBidderGVR, o.Name, st)
 		}
 		vault, err := ctl.bidderVault(ctx, o.Spec, values.StateDir)
@@ -177,6 +183,12 @@ func (ctl *Controller) reconcileBidder(ctx context.Context, u *unstructured.Unst
 		ctl.applied[string(o.UID)] = o.Generation
 		ctl.c.log().Info("applied a MarketBidder's components", "name", o.Name, "profile", o.Spec.Profile, "denopods", pods,
 			"plc", o.Spec.Network.PlcDirectoryUrl)
+	}
+	if err := ctl.bidderToken(ctx, stateDir); err != nil {
+		ctl.c.log().Warn("renewing the bidder's kcp token", "name", o.Name, "err", err.Error())
+	}
+	if err := ctl.rotateSigningKey(ctx, o); err != nil {
+		ctl.c.log().Warn("rotating the bidder's OIDC signing key", "name", o.Name, "err", err.Error())
 	}
 	pods, err := ctl.ownedPods(ctx, ws, owner)
 	if err != nil {

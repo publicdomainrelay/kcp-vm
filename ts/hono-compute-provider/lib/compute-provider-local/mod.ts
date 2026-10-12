@@ -565,7 +565,7 @@ export function createComputeProviderLocal(ctx: ComputeProviderLocalCtx) {
     });
     const enriched = ctx.oidcProvisioning
       ? await oidcIssuer.provisioningEnricher.enrich(user_data, agentDidPlc)
-      : { userData: user_data, nonce: "", associateWithDroplet: () => {} };
+      : { userData: user_data, nonce: "", associateWithDroplet: () => Promise.resolve() };
     hostKeys.bindNonce(enriched.nonce, containerName);
     let enrichedUserData = enriched.userData;
 
@@ -629,7 +629,7 @@ export function createComputeProviderLocal(ctx: ComputeProviderLocalCtx) {
       }
     }
 
-    enriched.associateWithDroplet(containerName);
+    await enriched.associateWithDroplet(containerName);
 
     logger.info("provisioning container", {
       containerName,

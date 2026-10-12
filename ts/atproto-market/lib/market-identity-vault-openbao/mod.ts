@@ -153,6 +153,17 @@ export function createOpenBaoIdentityVault(opts: OpenBaoIdentityVaultOptions): I
       if (!res.ok && res.status !== 404) return await fail(res, `remove ${mount}/${path}`);
       await res.body?.cancel();
     },
+    async list(ref) {
+      const { mount, path } = checkedRef(ref);
+      const res = await call("LIST", `${mount}/metadata/${path}`);
+      if (res.status === 404) {
+        await res.body?.cancel();
+        return [];
+      }
+      if (!res.ok) return await fail(res, `list ${mount}/${path}`);
+      const out = await res.json() as { data?: { keys?: unknown } };
+      return Array.isArray(out.data?.keys) ? out.data.keys.filter((k): k is string => typeof k === "string") : [];
+    },
     async create(ref, data) {
       const { mount, path } = checkedRef(ref);
       const res = await call("POST", `${mount}/data/${path}`, { options: { cas: 0 }, data });

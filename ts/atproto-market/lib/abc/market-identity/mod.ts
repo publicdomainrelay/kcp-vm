@@ -70,6 +70,19 @@ export interface IdentityVault {
   write(ref: VaultRef, data: Record<string, unknown>): Promise<void>;
   remove(ref: VaultRef): Promise<void>;
   create(ref: VaultRef, data: Record<string, unknown>): Promise<Record<string, unknown>>;
+  list(ref: VaultRef): Promise<string[]>;
+}
+
+export function childrenOf(keys: Iterable<string>, dir: string): string[] {
+  const prefix = dir.replace(/\/+$/, "") + "/";
+  const out = new Set<string>();
+  for (const k of keys) {
+    if (!k.startsWith(prefix)) continue;
+    const rest = k.slice(prefix.length);
+    const slash = rest.indexOf("/");
+    if (rest) out.add(slash < 0 ? rest : rest.slice(0, slash + 1));
+  }
+  return [...out].sort();
 }
 
 export interface SessionStore {

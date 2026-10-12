@@ -229,6 +229,8 @@ type OpenBaoKVScope struct {
 	Prefix string `json:"prefix,omitempty"`
 
 	Keys []string `json:"keys,omitempty"`
+
+	Grace string `json:"grace,omitempty"`
 }
 
 type OpenBaoServerInit struct {

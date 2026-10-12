@@ -102,6 +102,7 @@ type Controller struct {
 	c       Config
 	restCfg *rest.Config
 	applied map[string]int64
+	rotated map[string]int64
 	written map[string]string
 	network *networks
 }
@@ -147,7 +148,7 @@ func New(c Config) (*Controller, error) {
 	if err != nil {
 		return nil, err
 	}
-	ctl := &Controller{c: c, restCfg: restCfg, applied: map[string]int64{}, written: map[string]string{}}
+	ctl := &Controller{c: c, restCfg: restCfg, applied: map[string]int64{}, rotated: map[string]int64{}, written: map[string]string{}}
 	ctl.network = newNetworks(ctl)
 	return ctl, nil
 }

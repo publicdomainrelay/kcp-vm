@@ -5,8 +5,11 @@ import {
   type ComputeVMLostReason,
   type ComputeVMMarket,
   type ComputeVMPhase,
-  USER_DATA_SECRET_KEY,
-  USER_DATA_SECRET_NAMESPACE,
+  type ComputeVMVaultRef,
+  GUEST_PROVISIONING_ENTRY,
+  GUEST_USER_DATA_ENTRY,
+  GUEST_USER_DATA_KEY,
+  GUEST_VAULT_PREFIX,
 } from "@publicdomainrelay/compute-provider-kcp-common";
 
 export type GuestGoneReason = "host_reboot" | "vmm_exited" | "oom" | "identity_mismatch";
@@ -49,8 +52,27 @@ export function endedMessage(name: string, vm: ComputeVM): string {
   return `ComputeVM ${name} ended ${status.phase ?? "without a phase"}${why ? ` (${why})` : ""}`;
 }
 
-export function userDataSecretName(name: string): string {
-  return `${name}-user-data`;
+export function guestVaultPath(name: string, entry: string): string {
+  return `${GUEST_VAULT_PREFIX}/${name}/${entry}`;
+}
+
+export function userDataPath(name: string): string {
+  return guestVaultPath(name, GUEST_USER_DATA_ENTRY);
+}
+
+export function userDataEntry(userData: string): Record<string, unknown> {
+  return { [GUEST_USER_DATA_KEY]: userData };
+}
+
+export const GUEST_PROVISIONING = { prefix: GUEST_VAULT_PREFIX, entry: GUEST_PROVISIONING_ENTRY } as const;
+
+export interface GuestVaultRef {
+  server: string;
+  mount: string;
+}
+
+export function userDataRefFor(name: string, vault: GuestVaultRef): ComputeVMVaultRef {
+  return { server: vault.server, mount: vault.mount, path: userDataPath(name) };
 }
 
 export interface ComputeVMInput {
@@ -58,6 +80,7 @@ export interface ComputeVMInput {
   handle: string;
   vm: Pick<VM, "cpus" | "mem" | "disk" | "role">;
   requesterDid: string;
+  vault: GuestVaultRef;
   reuseStale?: boolean;
   stopGraceSeconds?: number;
 }
@@ -75,7 +98,7 @@ export function computeVMFor(input: ComputeVMInput): ComputeVM {
         role: input.vm.role ?? "",
       },
       owner: { handle: input.handle },
-      userDataSecret: userDataSecretName(input.name),
+      userData: { vault: userDataRefFor(input.name, input.vault) },
       requester: { did: input.requesterDid },
       ...(input.reuseStale === undefined ? {} : { image: { reuseStale: input.reuseStale } }),
       ...(input.stopGraceSeconds === undefined ? {} : { stopGraceSeconds: input.stopGraceSeconds }),
@@ -97,55 +120,6 @@ export function marketStatusFor(name: string, market: ComputeVMMarket): ComputeV
     kind: COMPUTE_VM_RESOURCE.kind,
     metadata: { name },
     status: { market },
-  };
-}
-
-export interface OwnerReference {
-  apiVersion: string;
-  kind: string;
-  name: string;
-  uid: string;
-  blockOwnerDeletion?: boolean;
-}
-
-export interface UserDataSecret {
-  apiVersion: "v1";
-  kind: "Secret";
-  metadata: { name: string; namespace: string; ownerReferences: OwnerReference[] };
-  type: "Opaque";
-  data: Record<string, string>;
-}
-
-const BASE64_CHUNK = 0x8000;
-
-export function base64Of(text: string): string {
-  const bytes = new TextEncoder().encode(text);
-  let binary = "";
-  for (let i = 0; i < bytes.length; i += BASE64_CHUNK) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + BASE64_CHUNK));
-  }
-  return btoa(binary);
-}
-
-export function userDataSecretFor(owner: ComputeVM, userData: string): UserDataSecret {
-  const name = owner.metadata?.name;
-  const uid = owner.metadata?.uid;
-  if (!name || !uid) {
-    throw new Error(
-      `the user_data Secret is owned by its ComputeVM, and the ComputeVM kcp answered with carries ` +
-        `${name ? "no uid" : "no name"}, so the Secret would outlive it`,
-    );
-  }
-  return {
-    apiVersion: "v1",
-    kind: "Secret",
-    metadata: {
-      name: owner.spec?.userDataSecret ?? userDataSecretName(name),
-      namespace: USER_DATA_SECRET_NAMESPACE,
-      ownerReferences: [{ apiVersion: COMPUTE_VM_API_VERSION, kind: COMPUTE_VM_RESOURCE.kind, name, uid }],
-    },
-    type: "Opaque",
-    data: { [USER_DATA_SECRET_KEY]: base64Of(userData) },
   };
 }
 

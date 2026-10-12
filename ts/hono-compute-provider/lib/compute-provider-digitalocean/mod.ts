@@ -271,7 +271,7 @@ export function createComputeProviderDigitalOcean(ctx: ComputeProviderDigitalOce
     const doctx = await cachedDoctx();
     const enriched = ctx.oidcProvisioning
       ? await oidcIssuer.provisioningEnricher.enrich(user_data, doctx.teamUuid)
-      : { userData: user_data, nonce: "", associateWithDroplet: (_id: string) => {} };
+      : { userData: user_data, nonce: "", associateWithDroplet: (_id: string) => Promise.resolve() };
 
     const enrichedUserData = enriched.userData;
 
@@ -335,7 +335,7 @@ export function createComputeProviderDigitalOcean(ctx: ComputeProviderDigitalOce
       });
     }
     // Associate nonce with droplet ID (not name) for getDroplet lookup
-    enriched.associateWithDroplet(String(providerId));
+    await enriched.associateWithDroplet(String(providerId));
     hostKeys.bindNonce(enriched.nonce, providerId);
 
     return { json, rbacRef };

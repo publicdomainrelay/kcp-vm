@@ -229,7 +229,7 @@ export function createComputeProviderFirecracker(ctx: ComputeProviderFirecracker
 
     const enriched = ctx.oidcProvisioning
       ? await oidcIssuer.provisioningEnricher.enrich(vm.user_data, atproto.getAgentDid().split(":").slice(-1)[0])
-      : { userData: vm.user_data, nonce: "", associateWithDroplet: (_id: string) => {} };
+      : { userData: vm.user_data, nonce: "", associateWithDroplet: (_id: string) => Promise.resolve() };
     hostKeys.bindNonce(enriched.nonce, name);
     const reported = withOnNetworkBaseUrl(
       withOnNetworkReporter(enriched.userData, ctx.getIssuerUrl(), acceptPathVm),
@@ -257,7 +257,7 @@ export function createComputeProviderFirecracker(ctx: ComputeProviderFirecracker
       );
       throw cause;
     }
-    enriched.associateWithDroplet(name);
+    await enriched.associateWithDroplet(name);
     guests.set(name, guest);
     watchGuest(name, booted.container);
 

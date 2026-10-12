@@ -31,7 +31,7 @@ var APIResources = []APIResource{
 	{Kind: "ClusterLink", Plural: "clusterlinks", Revision: 1, Export: "clusters", Object: ClusterLink{}},
 	{Kind: "AtprotoIdentity", Plural: "atprotoidentities", Revision: 1, Export: "atprotoidentities", Object: AtprotoIdentity{}},
 	{Kind: "MarketIdentity", Plural: "marketidentities", Revision: 1, Export: "marketidentities", Object: MarketIdentity{}},
-	{Kind: "ComputeVM", Plural: "computevms", Revision: 1, Export: "computevms", Object: ComputeVM{}, PrinterColumns: []PrinterColumn{
+	{Kind: "ComputeVM", Plural: "computevms", Revision: 2, Export: "computevms", Object: ComputeVM{}, PrinterColumns: []PrinterColumn{
 		{Name: "Phase", Type: "string", JSONPath: ".status.phase"},
 		{Name: "GuestIP", Type: "string", JSONPath: ".status.network.guestIP"},
 		{Name: "Requester", Type: "string", JSONPath: ".spec.requester.did"},
@@ -52,7 +52,7 @@ var APIResources = []APIResource{
 		{Name: "PID", Type: "integer", JSONPath: ".status.runtime.pid"},
 		{Name: "Age", Type: "date", JSONPath: ".metadata.creationTimestamp"},
 	}},
-	{Kind: "OpenBaoServer", Plural: "openbaoservers", Revision: 3, Export: "hostprocesses", Object: OpenBaoServer{}, PrinterColumns: []PrinterColumn{
+	{Kind: "OpenBaoServer", Plural: "openbaoservers", Revision: 4, Export: "hostprocesses", Object: OpenBaoServer{}, PrinterColumns: []PrinterColumn{
 		{Name: "Phase", Type: "string", JSONPath: ".status.phase"},
 		{Name: "Address", Type: "string", JSONPath: ".status.address"},
 		{Name: "Initialized", Type: "boolean", JSONPath: ".status.initialized"},
@@ -66,7 +66,7 @@ var APIResources = []APIResource{
 		{Name: "PLC", Type: "string", JSONPath: ".status.network.plcDirectoryUrl"},
 		{Name: "Age", Type: "date", JSONPath: ".metadata.creationTimestamp"},
 	}},
-	{Kind: "MarketBidder", Plural: "marketbidders", Revision: 3, Export: "applications", Object: MarketBidder{}, PrinterColumns: []PrinterColumn{
+	{Kind: "MarketBidder", Plural: "marketbidders", Revision: 4, Export: "applications", Object: MarketBidder{}, PrinterColumns: []PrinterColumn{
 		{Name: "Profile", Type: "string", JSONPath: ".spec.profile"},
 		{Name: "Phase", Type: "string", JSONPath: ".status.phase"},
 		{Name: "DID", Type: "string", JSONPath: ".status.did"},

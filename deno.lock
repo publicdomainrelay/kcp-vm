@@ -2422,6 +2422,7 @@
           "jsr:@hono/hono@4",
           "jsr:@publicdomainrelay/compute-provider-abc@0",
           "jsr:@publicdomainrelay/compute-provider-common@0",
+          "jsr:@publicdomainrelay/compute-provider-kcp-abc@0",
           "jsr:@publicdomainrelay/compute-provider-kcp-common@0",
           "jsr:@publicdomainrelay/compute-provider-kcp@0",
           "jsr:@publicdomainrelay/oidc-issuer-abc@0",

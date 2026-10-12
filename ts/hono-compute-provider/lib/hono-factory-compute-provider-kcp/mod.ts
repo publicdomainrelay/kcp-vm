@@ -13,10 +13,12 @@ import {
   createComputeProviderKcp,
   createComputeVMMarketRecorder,
   createKcpComputeVMClient,
+  type GuestVault,
   type KcpCredentials,
 } from "@publicdomainrelay/compute-provider-kcp";
+import { GUEST_PROVISIONING } from "@publicdomainrelay/compute-provider-kcp-abc";
 import { GUEST_HOST_ADDRESS } from "@publicdomainrelay/compute-provider-kcp-common";
-import type { JwkStore, NonceStore, OidcIssuer } from "@publicdomainrelay/oidc-issuer-abc";
+import { createKvNonceStore, type JwkStore, type NonceStore, type OidcIssuer } from "@publicdomainrelay/oidc-issuer-abc";
 import { createOidcIssuer, type HostKeysReported } from "@publicdomainrelay/oidc-issuer-hono";
 
 export interface GuestContractEntry {
@@ -37,6 +39,7 @@ export interface ComputeProviderKcpFactoryOptions extends ComputeProviderCtx {
   credentials: KcpCredentials;
   fetch?: typeof fetch;
   handle: string;
+  guestVault: GuestVault;
   guestHostAddress?: string;
   getIssuerUrl: () => string;
   acceptPathVm?: string;
@@ -71,7 +74,8 @@ export interface ComputeProviderKcpFactory {
 
 export function createComputeProviderKcpFactory(opts: ComputeProviderKcpFactoryOptions): ComputeProviderKcpFactory {
   const { logger, atproto } = opts;
-  const hostKeys = new GuestHostKeysRelay();
+  const nonceStore = opts.oidcNonceStore ?? createKvNonceStore({ kv: opts.guestVault.kv, ...GUEST_PROVISIONING });
+  const hostKeys = new GuestHostKeysRelay((nonce) => nonceStore.dropletOfNonce(nonce));
   const client = createKcpComputeVMClient({ credentials: opts.credentials, fetch: opts.fetch });
   const market = createComputeVMMarketRecorder({ client, logger });
 
@@ -80,6 +84,7 @@ export function createComputeProviderKcpFactory(opts: ComputeProviderKcpFactoryO
     atproto,
     client,
     handle: opts.handle,
+    guestVault: opts.guestVault,
     guestHostAddress: opts.guestHostAddress ?? GUEST_HOST_ADDRESS,
     getIssuerUrl: opts.getIssuerUrl,
     acceptPathVm: opts.acceptPathVm,
@@ -114,7 +119,7 @@ export function createComputeProviderKcpFactory(opts: ComputeProviderKcpFactoryO
     getDroplet: (id: string) => provider.getDroplet?.(id),
     onHostKeys: forwardHostKeys,
     store: opts.oidcJwkStore,
-    nonceStore: opts.oidcNonceStore,
+    nonceStore,
     log: (level: string, msg: string, extra?: Record<string, unknown>) => {
       const at = level as "info" | "warn" | "error" | "debug";
       if (typeof logger?.[at] === "function") logger[at](msg, extra);
@@ -178,7 +183,7 @@ export function createComputeProviderKcpFactory(opts: ComputeProviderKcpFactoryO
       const name = typeof dropletId === "string" && dropletId
         ? dropletId
         : typeof nonce === "string"
-        ? hostKeys.guestOf(nonce)
+        ? await hostKeys.guestOf(nonce)
         : undefined;
       if (name === undefined) {
         logger.warn("guest.onNetwork: no ComputeVM holds this token", { acceptKey });

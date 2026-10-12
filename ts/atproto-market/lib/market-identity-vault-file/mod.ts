@@ -1,4 +1,4 @@
-import type { IdentityVault, VaultRef } from "@publicdomainrelay/market-identity-abc";
+import { childrenOf, type IdentityVault, type VaultRef } from "@publicdomainrelay/market-identity-abc";
 
 export interface FileIdentityVaultOptions {
   path: string;
@@ -61,6 +61,11 @@ export function createSessionFileIdentityVault(opts: SessionFileIdentityVaultOpt
       if (held) return held;
       await writePrivate(opts.path, JSON.stringify(value, null, 2) + "\n");
       return structuredClone(value);
+    },
+    async list(ref) {
+      const held = await opts.base.list(ref);
+      const own = childrenOf([target], key(ref));
+      return [...new Set([...held, ...own])].sort();
     },
   };
 }
@@ -137,6 +142,10 @@ export function createFileIdentityVault(opts: FileIdentityVaultOptions): Identit
         await save(data);
         return structuredClone(value);
       });
+    },
+    list(ref) {
+      const k = key(ref);
+      return serialized(async () => childrenOf(Object.keys(await load()), k));
     },
   };
 }

@@ -19,6 +19,7 @@ export function parseAudience(aud: string): { actx: string; api: string } {
 export interface JwkStore {
   getJwkPem(issuer: string): string | null | Promise<string | null>;
   saveJwkPem(issuer: string, pem: string): void | Promise<void>;
+  getPublishedJwkPems?(issuer: string): string[] | Promise<string[]>;
 }
 
 export interface OIDCTokenData {
@@ -31,8 +32,116 @@ export interface OIDCTokenData {
 }
 
 export interface NonceStore {
-  createProvisioningNonce(nonce: string, dropletId: string): void;
-  getProvisioningNonceDropletId(nonce: string): string;
+  createProvisioningNonce(nonce: string, dropletId: string): Promise<void>;
+  getProvisioningNonceDropletId(nonce: string): Promise<string>;
+  dropletOfNonce(nonce: string): Promise<string | undefined>;
+  bindReportedHostKey(nonce: string, publicKey: string): Promise<string>;
+  reportedHostKey(nonce: string): Promise<string | undefined>;
+}
+
+export interface GuestKv {
+  read(path: string): Promise<Record<string, unknown> | null>;
+  write(path: string, data: Record<string, unknown>): Promise<void>;
+  list(path: string): Promise<string[]>;
+  remove(path: string): Promise<void>;
+}
+
+export interface KvNonceStoreOptions {
+  kv: GuestKv;
+  prefix: string;
+  entry: string;
+  now?: () => Date;
+}
+
+interface ProvisioningEntry {
+  nonce: string;
+  hostKey?: string;
+  consumedAt?: string;
+}
+
+function entryOf(raw: Record<string, unknown> | null): ProvisioningEntry | null {
+  if (!raw || typeof raw.nonce !== "string" || !raw.nonce) return null;
+  return {
+    nonce: raw.nonce,
+    ...(typeof raw.hostKey === "string" ? { hostKey: raw.hostKey } : {}),
+    ...(typeof raw.consumedAt === "string" ? { consumedAt: raw.consumedAt } : {}),
+  };
+}
+
+export function createKvNonceStore(opts: KvNonceStoreOptions): NonceStore {
+  const { kv, prefix, entry } = opts;
+  const now = opts.now ?? (() => new Date());
+  const guestByNonce = new Map<string, string>();
+  const chains = new Map<string, Promise<unknown>>();
+  const pathOf = (id: string) => `${prefix}/${id}/${entry}`;
+
+  function serial<T>(id: string, work: () => Promise<T>): Promise<T> {
+    const next = (chains.get(id) ?? Promise.resolve()).catch(() => {}).then(work);
+    chains.set(id, next);
+    next.finally(() => {
+      if (chains.get(id) === next) chains.delete(id);
+    }).catch(() => {});
+    return next;
+  }
+
+  async function guestOf(nonce: string): Promise<string | undefined> {
+    const held = guestByNonce.get(nonce);
+    if (held !== undefined) return held;
+    for (const name of await kv.list(prefix)) {
+      const id = name.replace(/\/+$/, "");
+      if (!id || [...guestByNonce.values()].includes(id)) continue;
+      const found = entryOf(await kv.read(pathOf(id)));
+      if (found) guestByNonce.set(found.nonce, id);
+    }
+    return guestByNonce.get(nonce);
+  }
+
+  async function entryFor(nonce: string): Promise<{ id: string; entry: ProvisioningEntry } | undefined> {
+    const id = await guestOf(nonce);
+    if (id === undefined) return undefined;
+    const found = entryOf(await kv.read(pathOf(id)));
+    if (!found || found.nonce !== nonce) {
+      guestByNonce.delete(nonce);
+      return undefined;
+    }
+    return { id, entry: found };
+  }
+
+  return {
+    async createProvisioningNonce(nonce, dropletId) {
+      await serial(dropletId, async () => {
+        await kv.write(pathOf(dropletId), { nonce });
+        guestByNonce.set(nonce, dropletId);
+      });
+    },
+    async getProvisioningNonceDropletId(nonce) {
+      const id = await guestOf(nonce);
+      if (id === undefined) throw new Error(`Nonce ${nonce} not found`);
+      return await serial(id, async () => {
+        const found = entryOf(await kv.read(pathOf(id)));
+        if (!found || found.nonce !== nonce || found.consumedAt) throw new Error(`Nonce ${nonce} not found`);
+        await kv.write(pathOf(id), { ...found, consumedAt: now().toISOString() });
+        return id;
+      });
+    },
+    async dropletOfNonce(nonce) {
+      return (await entryFor(nonce))?.id;
+    },
+    async bindReportedHostKey(nonce, publicKey) {
+      const id = await guestOf(nonce);
+      if (id === undefined) throw new Error("no guest holds this provisioning token");
+      return await serial(id, async () => {
+        const found = entryOf(await kv.read(pathOf(id)));
+        if (!found || found.nonce !== nonce) throw new Error("no guest holds this provisioning token");
+        if (found.hostKey) return found.hostKey;
+        await kv.write(pathOf(id), { ...found, hostKey: publicKey });
+        return publicKey;
+      });
+    },
+    async reportedHostKey(nonce) {
+      return (await entryFor(nonce))?.entry.hostKey;
+    },
+  };
 }
 
 export interface ProvisioningDataInit {
@@ -42,7 +151,7 @@ export interface ProvisioningDataInit {
 }
 
 export interface ProvisioningData extends ProvisioningDataInit {
-  associateWithDroplet(dropletId: string): void;
+  associateWithDroplet(dropletId: string): Promise<void>;
 }
 
 export type DropletGetter = (
@@ -82,6 +191,7 @@ export interface OidcIssuerOptions {
   trustedIssuerUrls?: string[];
   defaultTtlSeconds?: number;
   reportedHostKeyWaitMs?: number;
+  keyRefreshMs?: number;
   onHostKeys?: (report: HostKeysReported) => Promise<HostKeysReportAck>;
 }
 
@@ -96,7 +206,7 @@ export interface OidcProvisioningEnricher {
   enrich(userData: string | null, teamUuid: string): Promise<{
     userData: string;
     nonce: string;
-    associateWithDroplet(dropletId: string): void;
+    associateWithDroplet(dropletId: string): Promise<void>;
   }>;
 }
 

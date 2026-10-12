@@ -32,9 +32,9 @@ import {
   marketStatusFor,
   mergeMarketStatus,
   phaseOf,
-  type UserDataSecret,
-  userDataSecretFor,
-  userDataSecretName,
+  userDataEntry,
+  userDataPath,
+  type GuestVaultRef,
 } from "@publicdomainrelay/compute-provider-kcp-abc";
 import {
   assertComputeVM,
@@ -43,9 +43,8 @@ import {
   type ComputeVMMarket,
   FIELD_MANAGER_COMPUTE_VM_PROVIDER,
   parseComputeVM,
-  USER_DATA_SECRET_NAMESPACE,
 } from "@publicdomainrelay/compute-provider-kcp-common";
-import type { OidcProvisioningEnricher } from "@publicdomainrelay/oidc-issuer-abc";
+import type { GuestKv, OidcProvisioningEnricher } from "@publicdomainrelay/oidc-issuer-abc";
 import { parseAtUri } from "@publicdomainrelay/atproto-helpers";
 import { DEFAULT_ACCEPT_PATH_VM } from "@publicdomainrelay/secrets-common";
 
@@ -88,8 +87,6 @@ export interface KcpComputeVMClient {
   list(): Promise<ComputeVMList>;
   watch(resourceVersion: string, signal: AbortSignal): AsyncGenerator<ComputeVMWatchEvent>;
   delete(name: string): Promise<boolean>;
-  applySecret(secret: UserDataSecret): Promise<void>;
-  deleteSecret(name: string): Promise<boolean>;
 }
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
@@ -103,7 +100,6 @@ export function createKcpComputeVMClient(opts: KcpComputeVMClientOptions): KcpCo
   const server = creds.server.replace(/\/+$/, "");
   const { group, version, plural } = COMPUTE_VM_RESOURCE;
   const vmBase = `${server}/clusters/${creds.workspace}/apis/${group}/${version}/${plural}`;
-  const secretBase = `${server}/clusters/${creds.workspace}/api/v1/namespaces/${USER_DATA_SECRET_NAMESPACE}/secrets`;
   const applyQuery = `?fieldManager=${encodeURIComponent(FIELD_MANAGER_COMPUTE_VM_PROVIDER)}&force=true`;
   let httpClient: Promise<Deno.HttpClient | undefined> | undefined;
 
@@ -160,7 +156,6 @@ export function createKcpComputeVMClient(opts: KcpComputeVMClientOptions): KcpCo
   }
 
   const item = (name: string) => `${vmBase}/${encodeURIComponent(name)}`;
-  const secretItem = (name: string) => `${secretBase}/${encodeURIComponent(name)}`;
 
   async function* watch(resourceVersion: string, signal: AbortSignal): AsyncGenerator<ComputeVMWatchEvent> {
     const query = new URLSearchParams({
@@ -218,12 +213,6 @@ export function createKcpComputeVMClient(opts: KcpComputeVMClientOptions): KcpCo
     async delete(name) {
       return (await absentOn404(request(item(name), { method: "DELETE" }))) !== null;
     },
-    async applySecret(secret) {
-      await request(`${secretItem(secret.metadata.name)}${applyQuery}`, applyInit(secret));
-    },
-    async deleteSecret(name) {
-      return (await absentOn404(request(secretItem(name), { method: "DELETE" }))) !== null;
-    },
   };
 }
 
@@ -264,9 +253,14 @@ export function createComputeVMMarketRecorder(opts: {
   };
 }
 
+export interface GuestVault extends GuestVaultRef {
+  kv: GuestKv;
+}
+
 export interface ComputeProviderKcpCtx extends ComputeProviderCtx {
   client: KcpComputeVMClient;
   handle: string;
+  guestVault: GuestVault;
   guestHostAddress: string;
   getIssuerUrl: () => string;
   acceptPathVm?: string;
@@ -334,9 +328,6 @@ export function createComputeProviderKcp(ctx: ComputeProviderKcpCtx): ComputePro
         logger.warn("computevm_release_failed", { name, error: String(err) })
       );
     }
-    await client.deleteSecret(userDataSecretName(name)).catch((err: unknown) =>
-      logger.warn("computevm_user_data_release_failed", { name, error: String(err) })
-    );
   }
 
   function reportGone(name: string, vm: ComputeVM | undefined): void {
@@ -499,7 +490,6 @@ export function createComputeProviderKcp(ctx: ComputeProviderKcpCtx): ComputePro
     await client.delete(name).catch((err: unknown) =>
       logger.warn("computevm_release_failed", { name, error: String(err) })
     );
-    await client.deleteSecret(userDataSecretName(name)).catch(() => false);
   }
 
   async function createBidConfig(nowIso: string): Promise<StrongRef> {
@@ -532,7 +522,7 @@ export function createComputeProviderKcp(ctx: ComputeProviderKcpCtx): ComputePro
     const teamUuid = atproto.getAgentDid().split(":").slice(-1)[0];
     const enriched = ctx.provisioningEnricher
       ? await ctx.provisioningEnricher.enrich(vm.user_data, teamUuid)
-      : { userData: vm.user_data, nonce: "", associateWithDroplet: (_id: string) => {} };
+      : { userData: vm.user_data, nonce: "", associateWithDroplet: (_id: string) => Promise.resolve() };
     ctx.hostKeys?.bindNonce(enriched.nonce, name);
     const issuerUrl = ctx.getIssuerUrl();
     const reported = withOnNetworkBaseUrl(withOnNetworkReporter(enriched.userData, issuerUrl, acceptPathVm), issuerUrl);
@@ -543,6 +533,7 @@ export function createComputeProviderKcp(ctx: ComputeProviderKcpCtx): ComputePro
       handle,
       vm,
       requesterDid,
+      vault: { server: ctx.guestVault.server, mount: ctx.guestVault.mount },
       reuseStale: ctx.reuseStale,
       stopGraceSeconds: ctx.stopGraceSeconds,
     });
@@ -550,10 +541,10 @@ export function createComputeProviderKcp(ctx: ComputeProviderKcpCtx): ComputePro
     provisioning.add(name);
     let applied: ComputeVM | undefined;
     try {
+      await ctx.guestVault.kv.write(userDataPath(name), userDataEntry(userData));
+      await enriched.associateWithDroplet(name);
       applied = await client.apply(desired);
       cache.upsert(applied);
-      await client.applySecret(userDataSecretFor(applied, userData));
-      enriched.associateWithDroplet(name);
       logger.info("computevm_applied", { name, handle, guestHostAddress: hostAddress, cpus: vm.cpus, mem: vm.mem });
       const running = await untilRunning(name);
       provisioning.delete(name);
@@ -600,9 +591,6 @@ export function createComputeProviderKcp(ctx: ComputeProviderKcpCtx): ComputePro
     ctx.hostKeys?.forget(name);
     await releaseRbac(name);
     if (await client.delete(name)) await untilAbsent(name);
-    await client.deleteSecret(userDataSecretName(name)).catch((err: unknown) =>
-      logger.warn("computevm_user_data_release_failed", { name, error: String(err) })
-    );
     logger.info("computevm_released", { name });
   }
 

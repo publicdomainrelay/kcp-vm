@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -80,9 +79,7 @@ func BidderKcpOf(rec devinstance.Record) BidderKcp {
 	if ws == "" {
 		ws = DefaultWorkspace
 	}
-	dir := devinstance.BidderDir(rec.Layout)
-	return BidderKcp{Server: host, Workspace: ws, TokenFile: filepath.Join(dir, devinstance.BidderTokenFile),
-		CAFile: filepath.Join(dir, devinstance.BidderCAFile)}
+	return BidderKcp{Server: host, Workspace: ws}
 }
 
 func providerValues(v *manifests.MarketBidder, spec v1alpha1.MarketBidderSpec, kcp BidderKcp) error {

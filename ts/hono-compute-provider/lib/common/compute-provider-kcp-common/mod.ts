@@ -7,9 +7,12 @@ export const CONDITION_GUEST_REPORTED = "GuestReported";
 export const FINALIZER_COMPUTE_VM = "computevm.socialweb.computer/release";
 export const FIELD_MANAGER_COMPUTE_VM_CONTROLLER = "computevm-controller";
 export const FIELD_MANAGER_COMPUTE_VM_PROVIDER = "compute-provider-kcp";
+export const FIELD_MANAGER_COMPUTE_VM_CONTRACT = "compute-provider-kcp-contract";
 export const GUEST_HOST_ADDRESS = "192.0.2.1";
-export const USER_DATA_SECRET_NAMESPACE = "default";
-export const USER_DATA_SECRET_KEY = "user-data";
+export const GUEST_VAULT_PREFIX = "guests";
+export const GUEST_USER_DATA_ENTRY = "user-data";
+export const GUEST_USER_DATA_KEY = "userData";
+export const GUEST_PROVISIONING_ENTRY = "provisioning";
 
 export const COMPUTE_VM_PHASES = ["Pending", "Preparing", "Booting", "Running", "Releasing", "Lost", "Failed"] as const;
 export type ComputeVMPhase = typeof COMPUTE_VM_PHASES[number];
@@ -64,7 +67,7 @@ export interface ComputeVM {
 export interface ComputeVMSpec {
   vm: ComputeVMShape;
   owner: ComputeVMOwner;
-  userDataSecret: string;
+  userData: ComputeVMUserData;
   requester: ComputeVMRequester;
   contract?: ComputeVMContract;
   image?: ComputeVMImageRequest;
@@ -80,6 +83,16 @@ export interface ComputeVMShape {
 
 export interface ComputeVMOwner {
   handle: string;
+}
+
+export interface ComputeVMUserData {
+  vault: ComputeVMVaultRef;
+}
+
+export interface ComputeVMVaultRef {
+  server: string;
+  mount: string;
+  path: string;
 }
 
 export interface ComputeVMRequester {
@@ -432,6 +445,7 @@ export interface OpenBaoKVScope {
   mount: string;
   prefix?: string;
   keys?: string[];
+  grace?: string;
 }
 
 export interface OpenBaoServerStatus {
@@ -508,7 +522,7 @@ export const COMPUTE_VM_RESOURCE: ApiResource = {
   listKind: "ComputeVMList",
   plural: "computevms",
   singular: "computevm",
-  schema: "v1alpha1-1.computevms.socialweb.computer",
+  schema: "v1alpha1-2.computevms.socialweb.computer",
   export: "computevms",
 };
 
@@ -541,7 +555,7 @@ export const OPEN_BAO_SERVER_RESOURCE: ApiResource = {
   listKind: "OpenBaoServerList",
   plural: "openbaoservers",
   singular: "openbaoserver",
-  schema: "v1alpha1-3.openbaoservers.socialweb.computer",
+  schema: "v1alpha1-4.openbaoservers.socialweb.computer",
   export: "hostprocesses",
 };
 
@@ -563,6 +577,8 @@ export type ApiTypeName =
   | "ComputeVMShape"
   | "ComputeVMSpec"
   | "ComputeVMStatus"
+  | "ComputeVMUserData"
+  | "ComputeVMVaultRef"
   | "Condition"
   | "HostProcess"
   | "HostProcessAsset"
@@ -967,8 +983,8 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       "stopGraceSeconds": {
         "type": "integer"
       },
-      "userDataSecret": {
-        "type": "string"
+      "userData": {
+        "ref": "ComputeVMUserData"
       },
       "vm": {
         "ref": "ComputeVMShape"
@@ -977,7 +993,7 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
     "required": [
       "vm",
       "owner",
-      "userDataSecret",
+      "userData",
       "requester"
     ],
     "type": "object"
@@ -1022,6 +1038,36 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       }
     },
     "required": [],
+    "type": "object"
+  },
+  "ComputeVMUserData": {
+    "properties": {
+      "vault": {
+        "ref": "ComputeVMVaultRef"
+      }
+    },
+    "required": [
+      "vault"
+    ],
+    "type": "object"
+  },
+  "ComputeVMVaultRef": {
+    "properties": {
+      "mount": {
+        "type": "string"
+      },
+      "path": {
+        "type": "string"
+      },
+      "server": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "server",
+      "mount",
+      "path"
+    ],
     "type": "object"
   },
   "Condition": {
@@ -1525,6 +1571,9 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
   },
   "OpenBaoKVScope": {
     "properties": {
+      "grace": {
+        "type": "string"
+      },
       "keys": {
         "items": {
           "type": "string"
@@ -2242,6 +2291,42 @@ export function assertComputeVMOwner(value: unknown): asserts value is ComputeVM
 
 export function parseComputeVMOwner(value: unknown): ComputeVMOwner {
   assertComputeVMOwner(value);
+  return value;
+}
+
+export function validateComputeVMUserData(value: unknown): ApiIssue[] {
+  return validate("ComputeVMUserData", value);
+}
+
+export function isComputeVMUserData(value: unknown): value is ComputeVMUserData {
+  return validate("ComputeVMUserData", value).length === 0;
+}
+
+export function assertComputeVMUserData(value: unknown): asserts value is ComputeVMUserData {
+  const issues = validate("ComputeVMUserData", value);
+  if (issues.length > 0) throw new ApiValidationError("ComputeVMUserData", issues);
+}
+
+export function parseComputeVMUserData(value: unknown): ComputeVMUserData {
+  assertComputeVMUserData(value);
+  return value;
+}
+
+export function validateComputeVMVaultRef(value: unknown): ApiIssue[] {
+  return validate("ComputeVMVaultRef", value);
+}
+
+export function isComputeVMVaultRef(value: unknown): value is ComputeVMVaultRef {
+  return validate("ComputeVMVaultRef", value).length === 0;
+}
+
+export function assertComputeVMVaultRef(value: unknown): asserts value is ComputeVMVaultRef {
+  const issues = validate("ComputeVMVaultRef", value);
+  if (issues.length > 0) throw new ApiValidationError("ComputeVMVaultRef", issues);
+}
+
+export function parseComputeVMVaultRef(value: unknown): ComputeVMVaultRef {
+  assertComputeVMVaultRef(value);
   return value;
 }
 

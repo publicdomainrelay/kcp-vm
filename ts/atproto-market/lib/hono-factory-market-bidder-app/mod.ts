@@ -40,7 +40,7 @@ import { createTtyIdentityPrompt } from "@publicdomainrelay/identity-prompt-tty"
 import { createOpenBaoIdentityVault } from "@publicdomainrelay/market-identity-vault-openbao";
 import { createOpenBaoServerResolver } from "@publicdomainrelay/openbao-server-kcp";
 import type { ResolvedOpenBaoServer } from "@publicdomainrelay/openbao-server-kcp";
-import type { JwkStore } from "@publicdomainrelay/oidc-issuer-abc";
+import type { GuestKv, JwkStore } from "@publicdomainrelay/oidc-issuer-abc";
 import { createFileIdentityVault, createSessionFileIdentityVault } from "@publicdomainrelay/market-identity-vault-file";
 import { oauthClientMetadata } from "@publicdomainrelay/atproto-oauth-helpers";
 import { createBadgeBlueKeysRecord, loadOrGenerateKeypair } from "@publicdomainrelay/market-atproto";
@@ -390,10 +390,34 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
       },
       async saveJwkPem(issuer, pem) {
         const held = await vault.create(ref, { issuer, pem });
-        if (held.issuer !== issuer) await vault.write(ref, { issuer, pem });
+        if (held.issuer !== issuer) await vault.write(ref, { issuer, pem, rotation: held.rotation ?? 0 });
         logger.info("bidder_oidc_jwk_saved", { role, vault: `${ref.mount}/${ref.path}`, issuer });
       },
+      async getPublishedJwkPems(issuer) {
+        const held = await vault.read(ref);
+        if (!held || held.issuer !== issuer || !Array.isArray(held.previous)) return [];
+        const now = Date.now();
+        return held.previous.flatMap((p: unknown) => {
+          const k = p as { pem?: unknown; publishUntil?: unknown };
+          return typeof k.pem === "string" && Date.parse(String(k.publishUntil)) > now ? [k.pem] : [];
+        });
+      },
     };
+  }
+
+  function guestVault(): { kv: GuestKv; server: string; mount: string } {
+    const vault = keyVault;
+    if (!vault || !vaultServerRef) {
+      throw new Error("the kcp provider keeps each guest's user data and provisioning record in the bidder's OpenBao; start the bidder with --identity-vault-openbao-server");
+    }
+    const ref = (path: string) => ({ mount: vaultMount, path });
+    const kv: GuestKv = {
+      read: (path) => vault.read(ref(path)),
+      write: (path, data) => vault.write(ref(path), data),
+      list: (path) => vault.list(ref(path)),
+      remove: (path) => vault.remove(ref(path)),
+    };
+    return { kv, server: vaultServerRef.name, mount: vaultMount };
   }
 
   async function openIngress(role: string): Promise<IngressRef> {
@@ -679,6 +703,7 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
           serve,
           credentials: { server: p.server, workspace: p.workspace, tokenFile: p.tokenFile, caFile: p.caFile },
           handle: p.handle,
+          guestVault: guestVault(),
           guestHostAddress: p.guestHostAddress,
           oidcJwkStore: oidcJwkStore("kcp"),
           getIssuerUrl: () => relay.ingressUrl,

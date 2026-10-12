@@ -24,7 +24,7 @@ type ComputeVMSpec struct {
 
 	Owner ComputeVMOwner `json:"owner"`
 
-	UserDataSecret string `json:"userDataSecret"`
+	UserData ComputeVMUserData `json:"userData"`
 
 	Requester ComputeVMRequester `json:"requester"`
 
@@ -33,6 +33,18 @@ type ComputeVMSpec struct {
 	Image *ComputeVMImageRequest `json:"image,omitempty"`
 
 	StopGraceSeconds int32 `json:"stopGraceSeconds,omitempty"`
+}
+
+type ComputeVMUserData struct {
+	Vault ComputeVMVaultRef `json:"vault"`
+}
+
+type ComputeVMVaultRef struct {
+	Server string `json:"server"`
+
+	Mount string `json:"mount"`
+
+	Path string `json:"path"`
 }
 
 type ComputeVMShape struct {
@@ -201,12 +213,18 @@ const (
 	FieldManagerComputeVMController = "computevm-controller"
 
 	FieldManagerComputeVMProvider = "compute-provider-kcp"
+
+	FieldManagerComputeVMContract = "compute-provider-kcp-contract"
 )
 
 const GuestHostAddress = "192.0.2.1"
 
 const (
-	UserDataSecretNamespace = "default"
+	GuestVaultPrefix = "guests"
 
-	UserDataSecretKey = "user-data"
+	GuestUserDataEntry = "user-data"
+
+	GuestUserDataKey = "userData"
+
+	GuestProvisioningEntry = "provisioning"
 )

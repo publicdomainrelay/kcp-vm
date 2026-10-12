@@ -2,7 +2,6 @@ package computevm
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -35,6 +34,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpapply"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpserver"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/manifests"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/openbaoctl"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/vmruntime"
 )
 
@@ -55,7 +55,6 @@ const (
 
 var (
 	GVR       = schema.GroupVersionResource{Group: v1alpha1.GroupName, Version: v1alpha1.Version, Resource: "computevms"}
-	secretGVR = schema.GroupVersionResource{Version: "v1", Resource: "secrets"}
 	sizeRE    = regexp.MustCompile(`(?i)^\s*(\d+)\s*([KMGT])?i?B?\s*$`)
 	slotRE    = regexp.MustCompile(`slot=(\d+)`)
 	vmmExitRE = regexp.MustCompile(`Firecracker exiting[^\n]*exit_code=(\d+)`)
@@ -69,6 +68,9 @@ type Config struct {
 	Manager     hostsvc.Manager
 	Interval    time.Duration
 	OrphanGrace time.Duration
+	VaultServer string
+	VaultClient string
+	VaultMount  string
 	Log         *slog.Logger
 }
 
@@ -76,7 +78,7 @@ type Controller struct {
 	c       Config
 	vms     dynamic.ResourceInterface
 	hps     dynamic.ResourceInterface
-	secrets dynamic.ResourceInterface
+	servers dynamic.ResourceInterface
 	kick    chan string
 
 	mu      sync.Mutex
@@ -84,6 +86,7 @@ type Controller struct {
 	exits   map[string]hostsvc.UnitStatus
 	orphans map[string]time.Time
 	foreign map[string]bool
+	logins  map[string]vaultLogin
 	slice   bool
 }
 
@@ -127,9 +130,9 @@ func New(ctx context.Context, c Config) (*Controller, error) {
 		return nil, err
 	}
 	return &Controller{c: c, vms: dc.Resource(GVR), hps: dc.Resource(hostprocess.GVR),
-		secrets: dc.Resource(secretGVR).Namespace(v1alpha1.UserDataSecretNamespace), kick: make(chan string, 256),
+		servers: dc.Resource(openbaoctl.GVR), kick: make(chan string, 256),
 		busy: map[string]bool{}, exits: map[string]hostsvc.UnitStatus{}, orphans: map[string]time.Time{}, foreign: map[string]bool{},
-		slice: true}, nil
+		logins: map[string]vaultLogin{}, slice: true}, nil
 }
 
 func applySets(ctx context.Context, c Config, restCfg *rest.Config) error {
@@ -361,29 +364,6 @@ func tail(path string, n int64) string {
 	return string(b)
 }
 
-func (ct *Controller) userData(ctx context.Context, o v1alpha1.ComputeVM) (string, bool, error) {
-	name := o.Spec.UserDataSecret
-	if name == "" {
-		return "", false, fmt.Errorf("spec.userDataSecret is empty; the user_data is the whole guest")
-	}
-	u, err := ct.secrets.Get(ctx, name, metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
-		return "", false, nil
-	}
-	if err != nil {
-		return "", false, err
-	}
-	enc, _, _ := unstructured.NestedString(u.Object, "data", v1alpha1.UserDataSecretKey)
-	raw, err := base64.StdEncoding.DecodeString(enc)
-	if err != nil {
-		return "", false, fmt.Errorf("secret %s key %s: %w", name, v1alpha1.UserDataSecretKey, err)
-	}
-	if len(raw) == 0 {
-		return "", false, fmt.Errorf("secret %s holds no %s", name, v1alpha1.UserDataSecretKey)
-	}
-	return string(raw), true, nil
-}
-
 func runningStatus(st v1alpha1.ComputeVMStatus, gen int64, ref vmruntime.RuntimeRef) v1alpha1.ComputeVMStatus {
 	st.Phase, st.LostReason = v1alpha1.ComputeVMPhaseRunning, ""
 	st.Network = &v1alpha1.ComputeVMNetwork{GuestIP: ref.GuestAddress, HostAddress: ref.HostAddress, Prefix: guestnet.Prefix, MAC: guestnet.GuestMAC}
@@ -458,7 +438,7 @@ func (ct *Controller) boot(ctx context.Context, o v1alpha1.ComputeVM) error {
 			return ct.fail(ctx, o, st, err)
 		}
 		if !ok {
-			st.Phase, st.Message = v1alpha1.ComputeVMPhasePending, "waiting for the user_data Secret "+o.Spec.UserDataSecret
+			st.Phase, st.Message = v1alpha1.ComputeVMPhasePending, "waiting for the user data at "+o.Spec.UserData.Vault.Server+" "+o.Spec.UserData.Vault.Mount+"/"+o.Spec.UserData.Vault.Path
 			return ct.writeStatus(ctx, o, st)
 		}
 		mem, err := ParseMiB(o.Spec.VM.Mem)
@@ -858,6 +838,9 @@ func (ct *Controller) Pass(ctx context.Context) error {
 		}
 		ct.dispatch(ctx, name)
 	}
+	if err := ct.declareGuests(ctx, have); err != nil {
+		ct.c.log().Warn("declaring the live ComputeVMs' guest material in the bidder's vault", "err", err.Error())
+	}
 	ct.collect(ctx, have)
 	return nil
 }
@@ -944,24 +927,4 @@ func Run(ctx context.Context, c Config) {
 		case <-time.After(RetryAfter):
 		}
 	}
-}
-
-func WriteCredentials(kubeconfig, dir, tokenFile, caFile string) error {
-	a, err := kcpserver.ReadAdmin(kubeconfig)
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-	for name, body := range map[string][]byte{tokenFile: []byte(a.Token + "\n"), caFile: a.CA} {
-		path := filepath.Join(dir, name)
-		if err := os.WriteFile(path+".tmp", body, 0o600); err != nil {
-			return err
-		}
-		if err := os.Rename(path+".tmp", path); err != nil {
-			return err
-		}
-	}
-	return nil
 }

@@ -1,4 +1,4 @@
-import type { IdentityVault, VaultRef } from "@publicdomainrelay/market-identity-abc";
+import { childrenOf, type IdentityVault, type VaultRef } from "@publicdomainrelay/market-identity-abc";
 
 export interface MemoryIdentityVault extends IdentityVault {
   dump(): string;
@@ -27,6 +27,9 @@ export function createMemoryIdentityVault(): MemoryIdentityVault {
       const k = key(ref);
       if (!data.has(k)) data.set(k, structuredClone(value));
       return Promise.resolve(structuredClone(data.get(k)!));
+    },
+    list(ref) {
+      return Promise.resolve(childrenOf(data.keys(), key(ref)));
     },
     dump() {
       return JSON.stringify(Object.fromEntries(data));

@@ -73,16 +73,27 @@ export function createMemoryJwkStore(): JwkStore {
 
 export function createMemoryNonceStore(): NonceStore {
   const m = new Map<string, string>();
+  const hostKeys = new Map<string, string>();
   return {
     createProvisioningNonce: (nonce, dropletId) => {
       m.set(nonce, dropletId);
+      return Promise.resolve();
     },
     getProvisioningNonceDropletId: (nonce) => {
       const id = m.get(nonce);
-      if (id === undefined) throw new Error(`Nonce ${nonce} not found`);
+      if (id === undefined) return Promise.reject(new Error(`Nonce ${nonce} not found`));
       m.delete(nonce);
-      return id;
+      hostKeys.delete(nonce);
+      return Promise.resolve(id);
     },
+    dropletOfNonce: (nonce) => Promise.resolve(m.get(nonce)),
+    bindReportedHostKey: (nonce, publicKey) => {
+      const held = hostKeys.get(nonce);
+      if (held !== undefined) return Promise.resolve(held);
+      hostKeys.set(nonce, publicKey);
+      return Promise.resolve(publicKey);
+    },
+    reportedHostKey: (nonce) => Promise.resolve(hostKeys.get(nonce)),
   };
 }
 
@@ -90,6 +101,7 @@ const DEFAULT_TOKEN_TTL_SECONDS = 60 * 60 * 24;
 const DEFAULT_NONCE_LEN = 64;
 const DEFAULT_PROVISIONING_TTL_SECONDS = 60 * 15;
 const DEFAULT_REPORTED_HOST_KEY_WAIT_MS = 300_000;
+const DEFAULT_KEY_REFRESH_MS = 30_000;
 
 export const PROVISIONING_TOKEN_PATH = "/root/secrets/publicdomainrelay.com/provisioning/token";
 
@@ -166,16 +178,46 @@ export function createOidcIssuer(opts: OidcIssuerOptions): OidcIssuer {
   const trustedIssuerUrls = [...(opts.trustedIssuerUrls ?? [])];
   const defaultTtlSeconds = opts.defaultTtlSeconds ?? DEFAULT_TOKEN_TTL_SECONDS;
   const reportedHostKeyWaitMs = opts.reportedHostKeyWaitMs ?? DEFAULT_REPORTED_HOST_KEY_WAIT_MS;
-  const reportedHostKeys = new Map<string, string>();
+  const keyRefreshMs = opts.keyRefreshMs ?? DEFAULT_KEY_REFRESH_MS;
   const remoteJwks = new Map<string, ReturnType<typeof jose.createRemoteJWKSet>>();
 
-  let signingKey: Promise<CryptoKeyPair> | null = null;
-  let publicJwk: Promise<jose.JWK> | null = null;
+  interface LoadedKey {
+    pem: string;
+    pair: CryptoKeyPair;
+    jwk: jose.JWK;
+  }
+  interface KeySet {
+    current: LoadedKey;
+    published: LoadedKey[];
+    loadedAt: number;
+  }
 
-  async function loadOrGenerateSigningKey(): Promise<CryptoKeyPair> {
-    const issuer = getIssuerUrl();
+  let keySet: KeySet | null = null;
+  let loading: Promise<KeySet> | null = null;
+  const loadedByPem = new Map<string, Promise<LoadedKey>>();
+
+  async function loadKey(pem: string, pair?: CryptoKeyPair): Promise<LoadedKey> {
+    const keys = pair ?? await signingKeyFromPem(pem);
+    const jwk = await jose.exportJWK(keys.publicKey);
+    jwk.use = "sig";
+    jwk.alg = "RS256";
+    jwk.kid = await jose.calculateJwkThumbprint(jwk);
+    return { pem, pair: keys, jwk };
+  }
+
+  function keyOf(pem: string, pair?: CryptoKeyPair): Promise<LoadedKey> {
+    let loaded = loadedByPem.get(pem);
+    if (!loaded) {
+      loaded = loadKey(pem, pair);
+      loadedByPem.set(pem, loaded);
+      loaded.catch(() => loadedByPem.delete(pem));
+    }
+    return loaded;
+  }
+
+  async function currentKey(issuer: string): Promise<LoadedKey> {
     const storedPem = await jwkStore.getJwkPem(issuer);
-    if (storedPem) return await signingKeyFromPem(storedPem);
+    if (storedPem) return await keyOf(storedPem);
     const generated = await crypto.subtle.generateKey(
       { name: "RSASSA-PKCS1-v1_5", modulusLength: 4096, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
       true,
@@ -184,33 +226,64 @@ export function createOidcIssuer(opts: OidcIssuerOptions): OidcIssuer {
     const pem = await jose.exportPKCS8(generated.privateKey);
     await jwkStore.saveJwkPem(issuer, pem);
     const kept = await jwkStore.getJwkPem(issuer);
-    if (kept && kept !== pem) return await signingKeyFromPem(kept);
-    return generated;
+    if (kept && kept !== pem) return await keyOf(kept);
+    return await keyOf(pem, generated);
   }
 
-  function getSigningKey(): Promise<CryptoKeyPair> {
-    signingKey ??= loadOrGenerateSigningKey().catch((err) => {
-      signingKey = null;
-      throw err;
-    });
-    return signingKey;
+  async function loadKeySet(previous: KeySet | null): Promise<KeySet> {
+    const issuer = getIssuerUrl();
+    const current = await currentKey(issuer);
+    const publishedPems = (await jwkStore.getPublishedJwkPems?.(issuer)) ?? [];
+    const published = await Promise.all(publishedPems.filter((p) => p && p !== current.pem).map((p) => keyOf(p)));
+    if (previous && previous.current.pem !== current.pem) {
+      log("info", "oidc signing key rotated", { kid: current.jwk.kid, retired: previous.current.jwk.kid, published: published.map((k) => k.jwk.kid) });
+    }
+    for (const pem of [...loadedByPem.keys()]) {
+      if (pem !== current.pem && !publishedPems.includes(pem)) loadedByPem.delete(pem);
+    }
+    return { current, published, loadedAt: Date.now() };
   }
 
-  async function derivePublicJwk(): Promise<jose.JWK> {
-    const keys = await getSigningKey();
-    const jwk = await jose.exportJWK(keys.publicKey);
-    jwk.use = "sig";
-    jwk.alg = "RS256";
-    jwk.kid = await jose.calculateJwkThumbprint(jwk);
-    return jwk;
+  function getKeySet(force = false): Promise<KeySet> {
+    if (keySet && !force && Date.now() - keySet.loadedAt < keyRefreshMs) return Promise.resolve(keySet);
+    loading ??= loadKeySet(keySet)
+      .then((set) => {
+        keySet = set;
+        return set;
+      })
+      .catch((err) => {
+        if (!keySet) throw err;
+        log("warn", "oidc signing keys not refreshed; the loaded set stays", { error: String(err) });
+        return keySet;
+      })
+      .finally(() => {
+        loading = null;
+      });
+    return loading;
   }
 
-  function getPublicJwk(): Promise<jose.JWK> {
-    publicJwk ??= derivePublicJwk().catch((err) => {
-      publicJwk = null;
-      throw err;
-    });
-    return publicJwk;
+  async function getSigningKey(): Promise<CryptoKeyPair> {
+    return (await getKeySet()).current.pair;
+  }
+
+  async function getPublicJwk(): Promise<jose.JWK> {
+    return (await getKeySet()).current.jwk;
+  }
+
+  async function verificationKeys(kid: string | undefined): Promise<LoadedKey[]> {
+    let set = await getKeySet();
+    let all = [set.current, ...set.published];
+    if (kid && !all.some((k) => k.jwk.kid === kid)) {
+      set = await getKeySet(true);
+      all = [set.current, ...set.published];
+    }
+    const matching = kid ? all.filter((k) => k.jwk.kid === kid) : [];
+    return matching.length > 0 ? matching : all;
+  }
+
+  async function publishedJwks(): Promise<jose.JWK[]> {
+    const set = await getKeySet();
+    return [set.current.jwk, ...set.published.map((k) => k.jwk)];
   }
 
   function getRemoteJwks(jwksUri: string) {
@@ -246,8 +319,9 @@ export function createOidcIssuer(opts: OidcIssuerOptions): OidcIssuer {
     claims: Record<string, unknown>,
     api = "DigitalOcean",
   ): Promise<OIDCTokenData> {
-    const keys = await getSigningKey();
-    const jwk = await getPublicJwk();
+    const { current } = await getKeySet();
+    const keys = current.pair;
+    const jwk = current.jwk;
     const issuerUrl = getIssuerUrl();
     let audience = `api://${api}?actx=${actx}`;
 
@@ -305,8 +379,8 @@ export function createOidcIssuer(opts: OidcIssuerOptions): OidcIssuer {
       try {
         let jwks: jose.JWTVerifyGetKey;
         if (issuer === issuerUrl) {
-          const keys = await getSigningKey();
-          jwks = keys.publicKey as unknown as jose.JWTVerifyGetKey;
+          const [key] = await verificationKeys(jose.decodeProtectedHeader(token).kid);
+          jwks = key.pair.publicKey as unknown as jose.JWTVerifyGetKey;
         } else {
           const openidConfig = await fetch(`${issuer}/.well-known/openid-configuration`).then((r) => r.json()) as {
             jwks_uri: string;
@@ -536,9 +610,9 @@ WantedBy=multi-user.target
       nonce,
       token,
       userData: finalUserData,
-      associateWithDroplet(dropletId: string): void {
+      async associateWithDroplet(dropletId: string): Promise<void> {
         if (!dropletId) return;
-        nonceStore.createProvisioningNonce(nonce, dropletId);
+        await nonceStore.createProvisioningNonce(nonce, dropletId);
       },
     };
   }
@@ -557,18 +631,22 @@ WantedBy=multi-user.target
     }
     const valid = await validateSshSignature(`ssh-ed25519 ${ed25519PublicKey}`, signature, token);
     if (!valid) throw new UnauthorizedException("signature over the provisioning token does not verify with the reported key");
-    const bound = reportedHostKeys.get(nonce);
-    if (bound !== undefined && bound !== ed25519PublicKey) {
+    let bound: string;
+    try {
+      bound = await nonceStore.bindReportedHostKey(nonce, ed25519PublicKey);
+    } catch (err) {
+      throw new UnauthorizedException(err instanceof Error ? err.message : String(err));
+    }
+    if (bound !== ed25519PublicKey) {
       throw new HostKeyConflictException("a different host key was already reported for this provisioning token");
     }
-    reportedHostKeys.set(nonce, ed25519PublicKey);
     return nonce;
   }
 
   async function reportedHostKeyFor(nonce: string): Promise<string> {
     const deadline = Date.now() + reportedHostKeyWaitMs;
     for (;;) {
-      const key = reportedHostKeys.get(nonce);
+      const key = await nonceStore.reportedHostKey(nonce);
       if (key) return key;
       if (Date.now() >= deadline) {
         throw new UnauthorizedException("the guest has not reported its host key for this provisioning token");
@@ -589,7 +667,6 @@ WantedBy=multi-user.target
     const dropletId = await nonceStore.getProvisioningNonceDropletId(nonce);
     const droplet = await getDroplet(dropletId);
     if (!droplet) throw new Error(`droplet ${dropletId} not found`);
-    reportedHostKeys.delete(nonce);
     return { oidcToken, droplet };
   }
 
@@ -627,8 +704,7 @@ WantedBy=multi-user.target
   });
 
   app.get("/.well-known/jwks", async (c) => {
-    const jwk = await getPublicJwk();
-    return c.json({ keys: [jwk] });
+    return c.json({ keys: await publishedJwks() });
   });
 
   app.use("/v1/oidc/issue", async (c, next) => {

@@ -116,9 +116,6 @@ func Run(ctx context.Context, cfg Config, m hostsvc.Manager) error {
 		if cfg.ComputeVM != nil {
 			c := *cfg.ComputeVM
 			c.Kubeconfig, c.Workspace = rec.AdminKubeconfig, HostProcessConfig(bcfg, rec, m, log).Workspace
-			if err := computevm.WriteCredentials(rec.AdminKubeconfig, devinstance.BidderDir(l), devinstance.BidderTokenFile, devinstance.BidderCAFile); err != nil {
-				log.Error("writing the bidder kcp credential", "err", err.Error())
-			}
 			go computevm.Run(ctx, c)
 		}
 		go openbaoctl.Supervise(ctx, OpenBaoServerConfig(bcfg, rec, log))
