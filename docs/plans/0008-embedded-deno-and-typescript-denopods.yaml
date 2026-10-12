@@ -404,7 +404,7 @@ items:
       TestTheDnsTableHoldsOnlyTheOwnApplicationsServices. Red first.
     done_when: "green; the bed's services run on port 0 and every probe and peer lookup uses status; pushed on main in typescript-helpers."
     risks: []
-    status: doing
+    status: done
     evidence:
   - id: M2-MARKET-NETWORK
     milestone: M2
