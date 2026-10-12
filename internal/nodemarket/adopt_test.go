@@ -28,7 +28,7 @@ func seedClaim(claims *fakeClaims, phase v1alpha1.NodeClaimPhase, grant *v1alpha
 }
 
 func TestAnAdoptedJoinedHostRewritesNoSecretAndLogsInFromTheGrant(t *testing.T) {
-	for _, phase := range []v1alpha1.NodeClaimPhase{v1alpha1.NodeClaimJoining, v1alpha1.NodeClaimRunning} {
+	for _, phase := range []v1alpha1.NodeClaimPhase{v1alpha1.NodeClaimRunning} {
 		t.Run(string(phase), func(t *testing.T) {
 			opts, claims, secrets, links, _ := secretOptions(t)
 			links.listen(testWorkspace, "liveweb-apiserver", "ticket")
@@ -62,6 +62,12 @@ func TestAnAdoptedJoinedHostRewritesNoSecretAndLogsInFromTheGrant(t *testing.T) 
 }
 
 func TestAnAdoptedClaimTheGuestHasNotFetchedYetGetsItsSecretWritten(t *testing.T) {
+	for _, phase := range []v1alpha1.NodeClaimPhase{v1alpha1.NodeClaimProvisioning, v1alpha1.NodeClaimJoining} {
+		t.Run(string(phase), func(t *testing.T) { adoptedClaimGetsItsSecretWritten(t, phase) })
+	}
+}
+
+func adoptedClaimGetsItsSecretWritten(t *testing.T, phase v1alpha1.NodeClaimPhase) {
 	opts, claims, secrets, links, _ := secretOptions(t)
 	links.listen(testWorkspace, "liveweb-apiserver", "ticket")
 	links.listen(testWorkspace, "liveweb-openbao", "openbao-ticket")
@@ -71,7 +77,7 @@ func TestAnAdoptedClaimTheGuestHasNotFetchedYetGetsItsSecretWritten(t *testing.T
 	if _, err := nodevm.MintOrReadNodePassword(nodevm.NodePasswordPath(opts.DataDir)); err != nil {
 		t.Fatalf("minting the node password: %v", err)
 	}
-	claim := seedClaim(claims, v1alpha1.NodeClaimProvisioning, nil)
+	claim := seedClaim(claims, phase, nil)
 	host, err := New(opts)
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -83,8 +89,10 @@ func TestAnAdoptedClaimTheGuestHasNotFetchedYetGetsItsSecretWritten(t *testing.T
 		t.Fatalf("SyncSecrets: %v", err)
 	}
 	if _, ok := secrets.secret(testNodeName); !ok || len(secrets.policies) != 0 || claims.writes != 0 {
-		t.Fatalf("an adopted Provisioning claim: secret written %v, policies %v, claim writes %d; want "+
-			"the secret written (the previous process may have held it back) and nothing else", ok,
+		t.Fatalf("an adopted %s claim: secret written %v, policies %v, claim writes %d; want the secret "+
+			"written (the previous process may have held it back, and Joining only says the guest has its "+
+			"contract secrets: it reads its join secret from the cluster OpenBao after that, and the "+
+			"instance token in it rotated with the restart) and nothing else", phase, ok,
 			secrets.policies, claims.writes)
 	}
 }

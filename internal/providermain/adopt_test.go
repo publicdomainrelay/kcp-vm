@@ -217,10 +217,11 @@ func TestARestartedProviderAdoptsItsJoiningAndRunningNodesOnceEach(t *testing.T)
 		t.Fatalf("adopting wrote %d claims and deleted %d; want none of either", f.claims.writes-f.writes,
 			f.claims.deletes)
 	}
-	if len(f.after.policies) != 0 || len(f.after.secrets) != 0 || len(f.after.revokes) != 0 {
-		t.Fatalf("the restarted provider wrote policies %v, secrets %v and revoked %v; the guests already "+
-			"fetched their secrets, so nothing in OpenBao is written again", f.after.policies,
-			f.after.secrets, f.after.revokes)
+	if len(f.after.policies) != 0 || !slices.Equal(f.after.secrets, []string{f.node(1)}) || len(f.after.revokes) != 0 {
+		t.Fatalf("the restarted provider wrote policies %v, secrets %v and revoked %v; want only the "+
+			"Joining node's join secret, once: Joining says the guest has its contract secrets, not "+
+			"that it has read its join secret, and the instance token in that secret rotated with the "+
+			"restart; the Running node's is spent", f.after.policies, f.after.secrets, f.after.revokes)
 	}
 	if f.claim(1).Status.Phase != v1alpha1.NodeClaimJoining || f.claim(2).Status.Phase != v1alpha1.NodeClaimRunning {
 		t.Fatalf("the adopted claims read %q and %q afterwards", f.claim(1).Status.Phase, f.claim(2).Status.Phase)

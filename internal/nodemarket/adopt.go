@@ -16,8 +16,8 @@ func Adoptable(claim v1alpha1.NodeClaim) bool {
 	return claim.DeletionTimestamp == nil && !endedClaimPhase(claim.Status.Phase)
 }
 
-func SecretFetched(phase v1alpha1.NodeClaimPhase) bool {
-	return phase == v1alpha1.NodeClaimJoining || phase == v1alpha1.NodeClaimRunning
+func JoinSecretSpent(phase v1alpha1.NodeClaimPhase) bool {
+	return phase == v1alpha1.NodeClaimRunning
 }
 
 func (h *Host) Adopt(claim v1alpha1.NodeClaim) error {
@@ -33,7 +33,7 @@ func (h *Host) Adopt(claim v1alpha1.NodeClaim) error {
 	}
 	h.provisioned = true
 	h.policyWritten = true
-	h.secretWritten = SecretFetched(claim.Status.Phase)
+	h.secretWritten = JoinSecretSpent(claim.Status.Phase)
 	h.heldBack = ""
 	h.granted = nil
 	h.log().Info("nodemarket: adopted a live claim a previous provider process wrote",
