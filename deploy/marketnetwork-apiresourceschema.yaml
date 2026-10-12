@@ -1,7 +1,7 @@
 apiVersion: apis.kcp.io/v1alpha1
 kind: APIResourceSchema
 metadata:
-  name: v1alpha1-1.marketnetworks.socialweb.computer
+  name: v1alpha1-2.marketnetworks.socialweb.computer
 spec:
   group: socialweb.computer
   names:
@@ -61,6 +61,20 @@ spec:
                       required:
                         - workRoot
                         - vmruntimeCommand
+                    kcp:
+                      type: object
+                      properties:
+                        handle:
+                          type: string
+                        vmHostBackend:
+                          type: string
+                        guestImageSource:
+                          type: string
+                        stopGraceSeconds:
+                          type: integer
+                          format: int32
+                      required:
+                        - guestImageSource
                     options:
                       type: array
                       items:

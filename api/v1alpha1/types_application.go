@@ -64,6 +64,16 @@ type FirecrackerProvider struct {
 	VmruntimeCommand []string `json:"vmruntimeCommand"`
 }
 
+type KcpProvider struct {
+	Handle string `json:"handle,omitempty"`
+
+	VmHostBackend string `json:"vmHostBackend,omitempty"`
+
+	GuestImageSource string `json:"guestImageSource"`
+
+	StopGraceSeconds int32 `json:"stopGraceSeconds,omitempty"`
+}
+
 type ApplicationListener struct {
 	Component string `json:"component"`
 
@@ -129,6 +139,8 @@ type MarketBidderSpec struct {
 	Policy string `json:"policy,omitempty"`
 
 	Firecracker *FirecrackerProvider `json:"firecracker,omitempty"`
+
+	Kcp *KcpProvider `json:"kcp,omitempty"`
 
 	Options []ApplicationOption `json:"options,omitempty"`
 }
@@ -218,6 +230,8 @@ type NetworkApp struct {
 	Policy string `json:"policy,omitempty"`
 
 	Firecracker *FirecrackerProvider `json:"firecracker,omitempty"`
+
+	Kcp *KcpProvider `json:"kcp,omitempty"`
 
 	Options []ApplicationOption `json:"options,omitempty"`
 }

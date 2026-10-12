@@ -351,12 +351,20 @@ export interface NetworkApp {
   profile: string;
   policy?: string;
   firecracker?: FirecrackerProvider;
+  kcp?: KcpProvider;
   options?: ApplicationOption[];
 }
 
 export interface FirecrackerProvider {
   workRoot: string;
   vmruntimeCommand: string[];
+}
+
+export interface KcpProvider {
+  handle?: string;
+  vmHostBackend?: string;
+  guestImageSource: string;
+  stopGraceSeconds?: number;
 }
 
 export interface ApplicationOption {
@@ -426,6 +434,7 @@ export interface MarketBidderSpec {
   identity: ApplicationIdentity;
   policy?: string;
   firecracker?: FirecrackerProvider;
+  kcp?: KcpProvider;
   options?: ApplicationOption[];
 }
 
@@ -561,7 +570,7 @@ export const MARKET_NETWORK_RESOURCE: ApiResource = {
   listKind: "MarketNetworkList",
   plural: "marketnetworks",
   singular: "marketnetwork",
-  schema: "v1alpha1-1.marketnetworks.socialweb.computer",
+  schema: "v1alpha1-2.marketnetworks.socialweb.computer",
   export: "applications",
 };
 
@@ -572,7 +581,7 @@ export const MARKET_BIDDER_RESOURCE: ApiResource = {
   listKind: "MarketBidderList",
   plural: "marketbidders",
   singular: "marketbidder",
-  schema: "v1alpha1-1.marketbidders.socialweb.computer",
+  schema: "v1alpha1-2.marketbidders.socialweb.computer",
   export: "applications",
 };
 
@@ -636,6 +645,7 @@ export type ApiTypeName =
   | "GatewaySpec"
   | "IdentityScope"
   | "IdentityState"
+  | "KcpProvider"
   | "MarketBidder"
   | "MarketBidderSpec"
   | "MarketIdentity"
@@ -1383,6 +1393,26 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
     ],
     "type": "string"
   },
+  "KcpProvider": {
+    "properties": {
+      "guestImageSource": {
+        "type": "string"
+      },
+      "handle": {
+        "type": "string"
+      },
+      "stopGraceSeconds": {
+        "type": "integer"
+      },
+      "vmHostBackend": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "guestImageSource"
+    ],
+    "type": "object"
+  },
   "MarketBidder": {
     "properties": {
       "apiVersion": {
@@ -1411,6 +1441,9 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       },
       "identity": {
         "ref": "ApplicationIdentity"
+      },
+      "kcp": {
+        "ref": "KcpProvider"
       },
       "network": {
         "ref": "MarketNetworkValue"
@@ -1763,6 +1796,9 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
     "properties": {
       "firecracker": {
         "ref": "FirecrackerProvider"
+      },
+      "kcp": {
+        "ref": "KcpProvider"
       },
       "kind": {
         "ref": "ApplicationKind"
@@ -3049,6 +3085,24 @@ export function assertFirecrackerProvider(value: unknown): asserts value is Fire
 
 export function parseFirecrackerProvider(value: unknown): FirecrackerProvider {
   assertFirecrackerProvider(value);
+  return value;
+}
+
+export function validateKcpProvider(value: unknown): ApiIssue[] {
+  return validate("KcpProvider", value);
+}
+
+export function isKcpProvider(value: unknown): value is KcpProvider {
+  return validate("KcpProvider", value).length === 0;
+}
+
+export function assertKcpProvider(value: unknown): asserts value is KcpProvider {
+  const issues = validate("KcpProvider", value);
+  if (issues.length > 0) throw new ApiValidationError("KcpProvider", issues);
+}
+
+export function parseKcpProvider(value: unknown): KcpProvider {
+  assertKcpProvider(value);
   return value;
 }
 
