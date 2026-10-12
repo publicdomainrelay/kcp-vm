@@ -68,6 +68,7 @@ type Config struct {
 	ReadyTimeout time.Duration
 	Interval     time.Duration
 	Listeners    func(owner string) []v1alpha1.ApplicationListener
+	WebApp       *WebApp
 	Log          *slog.Logger
 }
 

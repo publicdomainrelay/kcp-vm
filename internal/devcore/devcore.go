@@ -35,6 +35,7 @@ type Config struct {
 	Before       func(ctx context.Context, rec devinstance.Record) error
 	Members      func(ctx context.Context, rec devinstance.Record) error
 	Listeners    func(owner string) []v1alpha1.ApplicationListener
+	WebApp       *appctl.WebApp
 }
 
 func tryLockRecord(path string) (*os.File, bool) {
@@ -122,7 +123,7 @@ func Run(ctx context.Context, cfg Config, m hostsvc.Manager) error {
 		go openbaoctl.Supervise(ctx, OpenBaoServerConfig(bcfg, rec, log))
 		go postgresctl.Run(ctx, PostgresConfig(bcfg, rec, log))
 		ac := AppConfig(bcfg, rec, m, log)
-		ac.Listeners = cfg.Listeners
+		ac.Listeners, ac.WebApp = cfg.Listeners, cfg.WebApp
 		go appctl.Supervise(ctx, ac)
 	}
 	members := make(chan error, 1)

@@ -78,6 +78,45 @@ apps:
       - {name: port-file, to: listener}
       - {name: listeners-file, to: listener}
       - {name: status-file, to: listener}
+  - app: gateway
+    entry: hono-socialweb-computer-k8s
+    options:
+      - {name: http-port, to: listener}
+      - {name: serve-addr, to: listener}
+      - {name: port-file, to: listener}
+      - {name: tls-cert-file, to: profile}
+      - {name: tls-key-file, to: profile}
+      - {name: state-dir, to: state}
+      - {name: web-dir, to: profile}
+      - {name: kcp-kubeconfig, to: profile}
+      - {name: kcp-context, to: options}
+      - {name: gateway-url, to: options}
+      - {name: gateway-kcp-workspace, to: profile}
+      - {name: gateway-kcp-name, to: profile}
+      - {name: gateway-kcp-listener, to: options}
+      - {name: label, to: options}
+      - {name: public-origin, to: options}
+      - {name: oauth-client-id, to: options}
+      - {name: plc-directory-url, to: network.plcDirectoryUrl}
+      - {name: ingress-proxy-host, to: network.ingressProxyHost}
+      - {name: relay-url, to: network.relayUrls}
+      - {name: gateway-audience, to: options}
+      - {name: kcp-public-host, to: options}
+      - {name: kubeconfig-max-ttl-sec, to: options}
+      - {name: downloads-subdir, to: options}
+      - {name: node-extra-bidder-dids, to: spec.bidderDids}
+      - {name: node-policy, to: options}
+      - {name: node-policy-args, to: options}
+      - {name: vm-ready-timeout-sec, to: options}
+      - {name: node-poll-interval-ms, to: options}
+      - {name: openbao-addr, to: options}
+      - {name: openbao-token-file, to: state}
+      - {name: openbao-ca-file, to: options}
+      - {name: openbao-kv-mount, to: options}
+      - {name: debug-node-ssh-dir, to: state}
+      - {name: test-owner-sessions-file, to: spec.marketNetwork.ownerSessionsFile}
+      - {name: test-node-guest-host-aliases, to: spec.marketNetwork.nodeGuestHostAliases}
+      - {name: test-node-user-data-base-file, to: spec.marketNetwork.nodeUserDataBaseFile}
   - app: market-requester
     entry: request-vm-ssh
     options:

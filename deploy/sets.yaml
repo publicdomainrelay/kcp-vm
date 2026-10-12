@@ -250,6 +250,35 @@ sets:
           - path: apps/market-bidder/market-network.values.yaml
             template: denopods/service.yaml
 
+  - name: gateway
+    summary: the components of a Gateway application in its own kcp - the root:app workspace and, per profile, the socialweb-computer-k8s web app DenoPod rendered from deploy/apps/gateway/<profile>.values.yaml (a phase named <component>@<profile> belongs to that profile only); its root vault is the OpenBaoServer root-vault the app controller declares; applied by internal/appctl
+    values: Gateway
+    phases:
+      - name: workspace
+        workspace: root
+        files:
+          - path: apps/workspace-app.yaml
+        after:
+          - kind: Workspace
+            for: Ready
+      - name: rbac
+        workspace: root:app
+        before:
+          - kind: APIBinding
+            for: Ready
+        files:
+          - path: market-network/10-rbac.yaml
+      - name: socialweb-computer-k8s@prod
+        workspace: root:app
+        files:
+          - path: apps/gateway/prod.values.yaml
+            template: denopods/service.yaml
+      - name: socialweb-computer-k8s@market-network
+        workspace: root:app
+        files:
+          - path: apps/gateway/market-network.values.yaml
+            template: denopods/service.yaml
+
   - name: market-network
     summary: the shared services of a MarketNetwork application - PLC, relay, dispatcher and its TLS front, two PDSes and the verifier - applied by its reconciler (internal/appctl); the bidders are child applications with their own kcp; needs denoruntime and a running deno provider
     values: MarketNetwork

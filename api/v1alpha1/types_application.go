@@ -195,6 +195,16 @@ type GatewaySpec struct {
 	BidderDids []string `json:"bidderDids,omitempty"`
 
 	Options []ApplicationOption `json:"options,omitempty"`
+
+	MarketNetwork *GatewayMarketNetwork `json:"marketNetwork,omitempty"`
+}
+
+type GatewayMarketNetwork struct {
+	OwnerSessionsFile string `json:"ownerSessionsFile,omitempty"`
+
+	NodeGuestHostAliases []string `json:"nodeGuestHostAliases,omitempty"`
+
+	NodeUserDataBaseFile string `json:"nodeUserDataBaseFile,omitempty"`
 }
 
 type MarketNetwork struct {

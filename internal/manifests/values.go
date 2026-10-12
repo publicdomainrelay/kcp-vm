@@ -73,6 +73,21 @@ var valueTypes = map[string]func() reflect.Type{
 	"MarketIdentity":      func() reflect.Type { return reflect.TypeOf(&MarketIdentity{}) },
 	"MarketNetwork":       func() reflect.Type { return reflect.TypeOf(&MarketNetwork{}) },
 	"MarketBidder":        func() reflect.Type { return reflect.TypeOf(&MarketBidder{}) },
+	"Gateway":             func() reflect.Type { return reflect.TypeOf(&Gateway{}) },
+}
+
+type Gateway struct {
+	StateDir         string `json:",omitempty"`
+	WebDir           string `json:",omitempty"`
+	Kubeconfig       string `json:",omitempty"`
+	GatewayWorkspace string `json:",omitempty"`
+	GatewayName      string `json:",omitempty"`
+	TLS              string `json:",omitempty"`
+	Trust            string `json:",omitempty"`
+	ExtraArgs        string
+	ExtraRead        string
+	TestArgs         string
+	TestRead         string
 }
 
 const (

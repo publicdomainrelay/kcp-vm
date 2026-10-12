@@ -13,6 +13,7 @@
   "v1alpha1-1.nodes.socialweb.computer": "sha256:de91abff17763f0223c864bec37f04ca9479c911d320af81126551c0eafd125c",
   "v1alpha1-1.openbaoservers.socialweb.computer": "sha256:6ce642daf68a3dc1b351178d3b2746687d2f68f3e1353d53f5f39fe756140640",
   "v1alpha1-1.postgreses.socialweb.computer": "sha256:3895974b2e443b4d06fbb5423d70372230507f93eb0c422583fa3db185c141a1",
+  "v1alpha1-2.gateways.socialweb.computer": "sha256:c1a9c4f4d0cfafaf72854a9fce0b3333b3a3407b65102f6f49ca734a40e89045",
   "v1alpha1-2.hostprocesses.socialweb.computer": "sha256:41bb54a5265809f640d83ab88d5642d247d1495d56bc55c3ce0d4b79ffda4901",
   "v1alpha1-2.marketbidders.socialweb.computer": "sha256:805911a8bb7966e7ca8ef8fd01c2583c1d88a1e81dc4fa44ecb7b709c3db2869",
   "v1alpha1-2.marketnetworks.socialweb.computer": "sha256:9948e6f68751d81f30f6b4f38fea15c3bb629041ad9342990751e5a4c88ebe2e",

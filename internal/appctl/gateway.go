@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/manifests"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/openbaoctl"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/vaultlayout"
 )
@@ -26,7 +28,16 @@ const (
 	rootVaultPKIMaxTTL    = 8760 * time.Hour
 	ProfileGatewayProd    = "prod"
 	ProfileGatewayNetwork = "market-network"
+	GatewaySet            = "gateway"
+	GatewayApp            = "gateway"
+	WebAppComponent       = "socialweb-computer-k8s"
+	WebAppWebDir          = "socialweb-computer-k8s/web"
 )
+
+type WebApp struct {
+	Kubeconfig string
+	TSRoot     string
+}
 
 func duration(d time.Duration) string {
 	if d <= 0 {
@@ -175,9 +186,14 @@ func (ctl *Controller) reconcileGateway(ctx context.Context, u *unstructured.Uns
 	owner := ownerOf(u)
 	st := v1alpha1.ApplicationStatus{ObservedGeneration: o.Generation, Profile: o.Spec.Profile, Components: []v1alpha1.ApplicationComponent{}}
 	if u.GetDeletionTimestamp() != nil {
-		left, err := ctl.deleteVaults(ctx, owner)
+		left, err := ctl.deletePods(ctx, ctl.c.workspace()+":"+ComponentWorkspace, owner, nil)
 		if err != nil {
 			return err
+		}
+		if left == 0 {
+			if left, err = ctl.deleteVaults(ctx, owner); err != nil {
+				return err
+			}
 		}
 		if left > 0 {
 			st.Phase, st.Message = v1alpha1.ApplicationPhaseDeleting, fmt.Sprintf("%d component(s) stopping", left)
@@ -204,16 +220,128 @@ func (ctl *Controller) reconcileGateway(ctx context.Context, u *unstructured.Uns
 	vaultReady := RootVaultSynced(vault)
 	st.Components = append(st.Components, v1alpha1.ApplicationComponent{Kind: "OpenBaoServer", Name: vault.Name,
 		Workspace: ctl.c.workspace(), Phase: string(vault.Status.Phase), Ready: vaultReady})
+	var core []v1alpha1.ApplicationListener
 	if ctl.c.Listeners != nil {
-		st.Listeners = ctl.c.Listeners(owner)
+		core = ctl.c.Listeners(owner)
+	}
+	st.Listeners = append(st.Listeners, core...)
+	webAppReady := true
+	if ctl.c.WebApp != nil {
+		ws := ctl.c.workspace() + ":" + ComponentWorkspace
+		if ctl.applied[string(o.UID)] != o.Generation {
+			values, err := GatewayValues(o, ctl.c.workspace(), ComponentStateDir(ctl.c.Layout.StateDir, WebAppComponent), *ctl.c.WebApp)
+			if err != nil {
+				st.Phase, st.Message = v1alpha1.ApplicationPhaseFailed, err.Error()
+				return ctl.writeStatus(ctx, GatewayGVR, o.Name, st)
+			}
+			if _, err := ctl.applyProfile(ctx, GatewaySet, o.Spec.Profile, owner, false, &values); err != nil {
+				st.Phase, st.Message = v1alpha1.ApplicationPhaseProvisioning, "its workspace: "+err.Error()
+				return ctl.writeStatus(ctx, GatewayGVR, o.Name, st)
+			}
+			pods, err := ctl.applyProfile(ctx, GatewaySet, o.Spec.Profile, owner, true, &values)
+			if err != nil {
+				st.Phase, st.Message = v1alpha1.ApplicationPhaseProvisioning, "its components: "+err.Error()
+				return ctl.writeStatus(ctx, GatewayGVR, o.Name, st)
+			}
+			if _, err := ctl.deletePods(ctx, ws, owner, pods); err != nil {
+				return err
+			}
+			ctl.applied[string(o.UID)] = o.Generation
+			ctl.c.log().Info("applied the Gateway's components", "name", o.Name, "profile", o.Spec.Profile, "denopods", pods)
+		}
+		pods, err := ctl.ownedPods(ctx, ws, owner)
+		if err != nil {
+			return err
+		}
+		webAppReady = len(pods) > 0
+		for i := range pods {
+			v := podViewOf(ws, &pods[i])
+			st.Components = append(st.Components, v.component())
+			st.Listeners = append(st.Listeners, v.Listeners...)
+			webAppReady = webAppReady && v.Ready && len(v.Listeners) > 0
+		}
 	}
 	switch {
 	case !vaultReady:
 		st.Phase, st.Message = v1alpha1.ApplicationPhaseProvisioning, "waiting for the root vault to be Ready and synced"
-	case ctl.c.Listeners != nil && len(st.Listeners) == 0:
+	case ctl.c.Listeners != nil && len(core) == 0:
 		st.Phase, st.Message = v1alpha1.ApplicationPhaseProvisioning, "the root vault is Ready; waiting for the core's members to report their listeners"
+	case !webAppReady:
+		st.Phase, st.Message = v1alpha1.ApplicationPhaseProvisioning, "waiting for the "+WebAppComponent+" DenoPod to be ready and report its listener"
 	default:
-		st = ready(st, "the root vault is Ready and every member reported its listener")
+		st = ready(st, "the root vault is Ready and every member and component reported its listener")
 	}
 	return ctl.writeStatus(ctx, GatewayGVR, o.Name, st)
+}
+
+func listJSON(items []string) (string, error) {
+	if items == nil {
+		items = []string{}
+	}
+	b, err := json.Marshal(items)
+	return string(b), err
+}
+
+func GatewayValues(o v1alpha1.Gateway, workspace, stateDir string, w WebApp) (manifests.Gateway, error) {
+	if !filepath.IsAbs(w.Kubeconfig) || !filepath.IsAbs(w.TSRoot) {
+		return manifests.Gateway{}, fmt.Errorf("appctl: the %s web app needs an absolute kcp kubeconfig and TypeScript root", WebAppComponent)
+	}
+	v := manifests.Gateway{StateDir: stateDir, WebDir: filepath.Join(w.TSRoot, filepath.FromSlash(WebAppWebDir)), Kubeconfig: w.Kubeconfig,
+		GatewayWorkspace: workspace, GatewayName: o.Name, TLS: manifests.TLSNone}
+	var trust []string
+	var extra []string
+	if n := o.Spec.Network; n != nil {
+		if n.CaBundleRef != "" {
+			v.TLS, trust = manifests.TLSTrust, []string{n.CaBundleRef}
+		}
+		if n.PlcDirectoryUrl != "" {
+			extra = append(extra, "--plc-directory-url", n.PlcDirectoryUrl)
+		}
+		if n.IngressProxyHost != "" {
+			extra = append(extra, "--ingress-proxy-host", n.IngressProxyHost)
+		}
+		if len(n.RelayUrls) > 0 {
+			extra = append(extra, "--relay-url", strings.Join(n.RelayUrls, ","))
+		}
+	}
+	if len(o.Spec.BidderDids) > 0 {
+		extra = append(extra, "--node-extra-bidder-dids", strings.Join(o.Spec.BidderDids, ","))
+	}
+	opts, err := OptionArgs(GatewayApp, o.Spec.Options)
+	if err != nil {
+		return manifests.Gateway{}, err
+	}
+	extra = append(extra, opts...)
+	if v.Trust, err = listJSON(trust); err != nil {
+		return manifests.Gateway{}, err
+	}
+	if v.ExtraArgs, err = fragment(extra); err != nil {
+		return manifests.Gateway{}, err
+	}
+	if m := o.Spec.MarketNetwork; m != nil {
+		if o.Spec.Profile != ProfileGatewayNetwork {
+			return manifests.Gateway{}, fmt.Errorf("appctl: spec.marketNetwork is a value of the %s profile only, not of %s", ProfileGatewayNetwork, o.Spec.Profile)
+		}
+		var args, read []string
+		for _, f := range [][2]string{{"--test-owner-sessions-file", m.OwnerSessionsFile}, {"--test-node-user-data-base-file", m.NodeUserDataBaseFile}} {
+			flag, file := f[0], f[1]
+			if file == "" {
+				continue
+			}
+			if !filepath.IsAbs(file) {
+				return manifests.Gateway{}, fmt.Errorf("appctl: spec.marketNetwork names %q, not an absolute path", file)
+			}
+			args, read = append(args, flag, file), append(read, file)
+		}
+		if len(m.NodeGuestHostAliases) > 0 {
+			args = append(args, "--test-node-guest-host-aliases", strings.Join(m.NodeGuestHostAliases, ","))
+		}
+		if v.TestArgs, err = fragment(args); err != nil {
+			return manifests.Gateway{}, err
+		}
+		if v.TestRead, err = fragment(read); err != nil {
+			return manifests.Gateway{}, err
+		}
+	}
+	return v, nil
 }

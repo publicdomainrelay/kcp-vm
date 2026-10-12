@@ -1,0 +1,20 @@
+name: socialweb-computer-k8s
+entry: hono-socialweb-computer-k8s
+stateDir: "{{.StateDir}}"
+serviceAccount: deno-runner
+tls: {{.TLS}}
+trust: {{.Trust}}
+args: ["--http-port", "0", "--serve-addr", "127.0.0.1", "--state-dir", "{{.StateDir}}", "--web-dir", "{{.WebDir}}", "--kcp-kubeconfig", "{{.Kubeconfig}}", "--gateway-kcp-workspace", "{{.GatewayWorkspace}}", "--gateway-kcp-name", "{{.GatewayName}}"{{.ExtraArgs}}]
+permissions:
+  net: true
+  env: true
+  sys: true
+  read: ["{{.Kubeconfig}}"{{.ExtraRead}}]
+  run:
+    allow: ["ssh-keygen"]
+    reason: >-
+      the requester's ssh session provider and the debug node key (debug-node-ssh-dir) generate ed25519
+      keys with ssh-keygen
+probe:
+  host: socialweb-computer-k8s.default.app.svc.kcp.local
+  path: /oauth-client-metadata.json

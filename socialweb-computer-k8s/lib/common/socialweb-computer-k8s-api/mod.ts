@@ -484,6 +484,13 @@ export interface GatewaySpec {
   network?: MarketNetworkValue;
   bidderDids?: string[];
   options?: ApplicationOption[];
+  marketNetwork?: GatewayMarketNetwork;
+}
+
+export interface GatewayMarketNetwork {
+  ownerSessionsFile?: string;
+  nodeGuestHostAliases?: string[];
+  nodeUserDataBaseFile?: string;
 }
 
 export interface ApiResource {
@@ -603,7 +610,7 @@ export const GATEWAY_RESOURCE: ApiResource = {
   listKind: "GatewayList",
   plural: "gateways",
   singular: "gateway",
-  schema: "v1alpha1-1.gateways.socialweb.computer",
+  schema: "v1alpha1-2.gateways.socialweb.computer",
   export: "applications",
 };
 
@@ -642,6 +649,7 @@ export type ApiTypeName =
   | "ContractWinner"
   | "FirecrackerProvider"
   | "Gateway"
+  | "GatewayMarketNetwork"
   | "GatewaySpec"
   | "IdentityScope"
   | "IdentityState"
@@ -1351,6 +1359,24 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
     "required": [],
     "type": "object"
   },
+  "GatewayMarketNetwork": {
+    "properties": {
+      "nodeGuestHostAliases": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "nodeUserDataBaseFile": {
+        "type": "string"
+      },
+      "ownerSessionsFile": {
+        "type": "string"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
   "GatewaySpec": {
     "properties": {
       "bidderDids": {
@@ -1358,6 +1384,9 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
           "type": "string"
         },
         "type": "array"
+      },
+      "marketNetwork": {
+        "ref": "GatewayMarketNetwork"
       },
       "network": {
         "ref": "MarketNetworkValue"
@@ -3373,5 +3402,23 @@ export function assertGatewaySpec(value: unknown): asserts value is GatewaySpec 
 
 export function parseGatewaySpec(value: unknown): GatewaySpec {
   assertGatewaySpec(value);
+  return value;
+}
+
+export function validateGatewayMarketNetwork(value: unknown): ApiIssue[] {
+  return validate("GatewayMarketNetwork", value);
+}
+
+export function isGatewayMarketNetwork(value: unknown): value is GatewayMarketNetwork {
+  return validate("GatewayMarketNetwork", value).length === 0;
+}
+
+export function assertGatewayMarketNetwork(value: unknown): asserts value is GatewayMarketNetwork {
+  const issues = validate("GatewayMarketNetwork", value);
+  if (issues.length > 0) throw new ApiValidationError("GatewayMarketNetwork", issues);
+}
+
+export function parseGatewayMarketNetwork(value: unknown): GatewayMarketNetwork {
+  assertGatewayMarketNetwork(value);
   return value;
 }
