@@ -35,6 +35,8 @@ const (
 	MirrorLabel      = "socialweb.computer/placement"
 	ConditionReady   = "Ready"
 	ConditionLimits  = "LimitsEnforced"
+
+	AnnotationDescription = "socialweb.computer/unit-description"
 )
 
 var GVR = schema.GroupVersionResource{Group: v1alpha1.GroupName, Version: v1alpha1.Version, Resource: "hostprocesses"}
@@ -60,6 +62,9 @@ type Config struct {
 	Mirrors      func() []Mirror
 	Interval     time.Duration
 	ApplyTimeout time.Duration
+	Selector     string
+	KeepOrphans  bool
+	Name         string
 	Log          *slog.Logger
 }
 
@@ -74,6 +79,9 @@ type Supervisor struct {
 func (c Config) log() *slog.Logger {
 	if c.Log == nil {
 		return slog.New(slog.DiscardHandler)
+	}
+	if c.Name != "" {
+		return c.Log.With("component", "hostprocess", "supervisor", c.Name)
 	}
 	return c.Log.With("component", "hostprocess")
 }
@@ -349,7 +357,7 @@ func equalStatus(a, b any) bool { return fmt.Sprint(a) == fmt.Sprint(b) }
 
 func (s *Supervisor) Pass(ctx context.Context) error {
 	s.syncMirrors(ctx)
-	list, err := s.client.List(ctx, metav1.ListOptions{})
+	list, err := s.client.List(ctx, metav1.ListOptions{LabelSelector: s.c.Selector})
 	if err != nil {
 		return err
 	}
@@ -368,6 +376,9 @@ func (s *Supervisor) Pass(ctx context.Context) error {
 		}
 	}
 	for _, prefix := range s.c.prefixes() {
+		if s.c.KeepOrphans {
+			break
+		}
 		units, err := s.c.Manager.List(ctx, prefix)
 		if err == nil {
 			for _, u := range units {

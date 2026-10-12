@@ -3,6 +3,7 @@ package hostprocess
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -82,7 +83,11 @@ func UnitSpec(o v1alpha1.HostProcess, exec string) (hostsvc.UnitSpec, error) {
 	if exec == "" {
 		return hostsvc.UnitSpec{}, fmt.Errorf("hostprocess %s: neither an exec path nor a resolvable asset", o.Name)
 	}
-	spec := hostsvc.UnitSpec{Name: s.Unit, Description: "HostProcess " + o.Name, Exec: append([]string{exec}, s.Argv...),
+	desc := "HostProcess " + o.Name
+	if d := o.Annotations[AnnotationDescription]; d != "" {
+		desc = d
+	}
+	spec := hostsvc.UnitSpec{Name: s.Unit, Description: desc, Exec: append([]string{exec}, s.Argv...),
 		WorkDir: s.WorkDir, Slice: s.Slice, Restart: restart(s.RestartPolicy), After: s.After, Wants: s.Wants,
 		PrivateHostname: s.PrivateHostname, FDStore: int(s.FdStore), KillSignal: syscall.SIGTERM}
 	for _, e := range s.Env {
@@ -99,6 +104,13 @@ func UnitSpec(o v1alpha1.HostProcess, exec string) (hostsvc.UnitSpec, error) {
 	if s.Limits != nil {
 		spec.Limits = hostsvc.Limits{CPUWeight: uint64(s.Limits.CpuWeight), CPUQuotaPercent: int(s.Limits.CpuQuotaPercent),
 			TasksMax: uint64(s.Limits.TasksMax)}
+		if s.Limits.MemoryMax != "" {
+			n, err := strconv.ParseUint(s.Limits.MemoryMax, 10, 64)
+			if err != nil {
+				return hostsvc.UnitSpec{}, fmt.Errorf("hostprocess %s: limits.memoryMax %q is not a byte count", o.Name, s.Limits.MemoryMax)
+			}
+			spec.Limits.MemoryMax = n
+		}
 	}
 	return spec, hostsvc.ValidateSpec(spec)
 }
@@ -202,6 +214,13 @@ func Reconcile(o Observed) Result {
 		return Result{Phase: v1alpha1.HostProcessPhaseRunning, Identify: true, Message: "an active unit of this name is adopted"}
 	case hostsvc.Activating:
 		return Result{Phase: v1alpha1.HostProcessPhaseStarting, Identify: true}
+	}
+	if obj.Spec.RestartPolicy == v1alpha1.HostProcessRestartNever && obj.Status.Phase != "" && obj.Status.Phase != v1alpha1.HostProcessPhasePending {
+		if o.Unit.State == hostsvc.Failed {
+			return Result{Phase: v1alpha1.HostProcessPhaseLost, LostReason: v1alpha1.HostProcessLostUnitFailed,
+				Message: fmt.Sprintf("the unit failed (result %s) before it was identified; restartPolicy Never places it once", o.Unit.Result)}
+		}
+		return Result{Phase: v1alpha1.HostProcessPhaseStopped, Message: "the unit ended before it was identified; restartPolicy Never places it once"}
 	}
 	spec, err := UnitSpec(obj, o.Exec)
 	if err != nil {
