@@ -766,8 +766,8 @@ items:
     test_first: "test/bidder_cli_kcp_provider_test.ts: --compute-provider-kcp without a server, handle or guest host address refuses at startup naming the missing options; red first."
     done_when: "test green; existing bidder tests green."
     risks: []
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M3-BIDDER-ACCOUNT-PDS
     milestone: M3
     title: hono-bidder signs in to a real PDS account by handle and password, so a bed bidder uses its own PDS pod
