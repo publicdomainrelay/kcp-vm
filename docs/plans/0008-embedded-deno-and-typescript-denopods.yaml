@@ -426,8 +426,8 @@ items:
     test_first: "one table test: https://x.relay.localhost and https://plc.directory/<did> resolve identically through the adapter for every call site's inputs; a grep test that no fetch patch is left outside the adapter. Red until the adapter exists."
     done_when: "no fetch patch left outside the adapter (grep test green); pushed on main in typescript-helpers and atproto-market."
     risks: []
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M2-SERVICE-TEMPLATE
     milestone: M2
     title: One service DenoPod template instead of a supervisor script per manifest
