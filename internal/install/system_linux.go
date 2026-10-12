@@ -267,3 +267,30 @@ func (s liveSystem) CheckHost(ctx context.Context, a Account, binary string, rol
 	cmd.Stdout, cmd.Stderr = s.out, s.out
 	return cmd.Run()
 }
+
+func SelfCheck(ctx context.Context, exe string, role hostcontract.Role, stateDir string) error {
+	for _, args := range [][]string{{"version", "--json"}, {"check-host", "-role", string(role), "-state-dir", stateDir}} {
+		if b, err := exec.CommandContext(ctx, exe, args...).CombinedOutput(); err != nil {
+			return fmt.Errorf("%s %v: %w: %s", exe, args, err, b)
+		}
+	}
+	return nil
+}
+
+func RestartOwnUnits(ctx context.Context, units []string) error {
+	um, err := liveSystem{}.User(ctx, Account{UID: os.Getuid()})
+	if err != nil {
+		return err
+	}
+	defer um.Close()
+	u := um.(*liveUser)
+	for _, unit := range units {
+		if err := waitJob(ctx, unit, func(ch chan<- string) error {
+			_, err := u.conn.RestartUnitContext(ctx, unit, "replace", ch)
+			return err
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}

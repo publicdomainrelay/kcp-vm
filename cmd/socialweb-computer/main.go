@@ -73,6 +73,8 @@ func builtVerbs() map[string]builtVerb {
 		"install bidder":    {installOptions, runInstall(hostcontract.RoleBidder)},
 		"uninstall gateway": {uninstallOptions, runUninstall(hostcontract.RoleGateway)},
 		"uninstall bidder":  {uninstallOptions, runUninstall(hostcontract.RoleBidder)},
+		"upgrade":           {upgradeOptions, runUpgrade},
+		"rollback":          {[]string{"state-dir"}, runRollback},
 		"units list":        {[]string{backendOpt, "instance", "state-dir", "asset-cache", "json"}, runUnitsList},
 		"units audit":       {[]string{backendOpt, "instance", "state-dir", "asset-cache", "json"}, runUnitsAudit},
 		"internal devsup":   {[]string{"state", "socket", "die-with", "instance"}, runDevsup},

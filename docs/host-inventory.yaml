@@ -1019,3 +1019,5 @@ indirect:
     resolves: [newuidmap, newgidmap]
   - site: "socialweb-computer-kcp/internal/install/system_linux.go: binary"
     resolves: [socialweb-computer-kcp-check-host]
+  - site: "socialweb-computer-kcp/internal/install/system_linux.go: exe"
+    resolves: [socialweb-computer-kcp-check-host]

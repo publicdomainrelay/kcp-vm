@@ -1,7 +1,6 @@
 package install
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -18,7 +17,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"text/template"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostcontract"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc"
@@ -530,20 +528,18 @@ func (in *installer) kvm() error {
 		ErrManagerWithoutKVM, in.acct.UID, pid, in.o.Account, KVMGroup, in.acct.UID)
 }
 
-func render(name string, data any) ([]byte, error) {
+const statePlaceholder = "{{.State}}"
+
+func render(name string, data unitData) ([]byte, error) {
 	raw, err := templates.ReadFile("templates/" + name)
 	if err != nil {
 		return nil, err
 	}
-	t, err := template.New(name).Option("missingkey=error").Parse(string(raw))
-	if err != nil {
-		return nil, err
+	out := strings.ReplaceAll(string(raw), statePlaceholder, data.State)
+	if strings.Contains(out, "{{") {
+		return nil, fmt.Errorf("install: template %s has a placeholder other than %s", name, statePlaceholder)
 	}
-	var b bytes.Buffer
-	if err := t.Execute(&b, data); err != nil {
-		return nil, err
-	}
-	return b.Bytes(), nil
+	return []byte(out), nil
 }
 
 type unitData struct {
@@ -566,7 +562,7 @@ func RenderUnits(role hostcontract.Role, state string) (map[string][]byte, error
 	return out, nil
 }
 
-func DropIn() ([]byte, error) { return render(DropInName, nil) }
+func DropIn() ([]byte, error) { return render(DropInName, unitData{}) }
 
 func AppArmorProfile(state string) ([]byte, error) {
 	return render(hostcontract.AppArmorProfileName, unitData{State: state})

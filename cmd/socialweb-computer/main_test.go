@@ -59,7 +59,7 @@ func TestServeWithoutAHostBackendExits2NamingTheOption(t *testing.T) {
 func TestAnUnbuiltSubcommandExits2NamingItsItem(t *testing.T) {
 	cases := map[string][]string{
 		"M3-SERVE-GATEWAY-KCP":     {"serve", "gateway", "kcp", "--host-backend", "systemd-user"},
-		"M1-INSTALL":               {"upgrade"},
+		"M3-CLUSTER-UNITS":         {"units", "gc", "--host-backend", "proc"},
 		"M3-KCP-ROLL":              {"units", "roll", "--host-backend", "systemd-user"},
 		"M3-CP-SLOTS":              {"dev", "roll"},
 		"plan 0008 M4-RUN-REQUEST": {"run", "request"},
@@ -82,7 +82,7 @@ func TestHelpListsTheTreeAndMarksVerbsWithNoBackendOnThisOS(t *testing.T) {
 			t.Errorf("help lacks %s", v.Path)
 		}
 	}
-	if !strings.Contains(out, "no backend here") || !strings.Contains(out, "plan 0011") || !strings.Contains(out, "not built: M1-INSTALL") {
+	if !strings.Contains(out, "no backend here") || !strings.Contains(out, "plan 0011") || !strings.Contains(out, "not built: M3-KCP-ROLL") {
 		t.Errorf("help does not mark backends and items:\n%s", out)
 	}
 	if code, _, _ := runT(t, clicfg.MapEnv{}, "linux"); code != 2 {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/user"
 	"strings"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clicfg"
@@ -16,13 +17,6 @@ import (
 var installOptions = []string{backendOpt, "handle", "account", "state-dir", "vm-slots", "dry-run", "adopt-account", "json"}
 
 var uninstallOptions = []string{"account", "purge", "force", "json"}
-
-func roleOf(verb string) hostcontract.Role {
-	if strings.HasSuffix(verb, " bidder") {
-		return hostcontract.RoleBidder
-	}
-	return hostcontract.RoleGateway
-}
 
 func splitHandles(s string) []string {
 	var out []string
@@ -97,4 +91,55 @@ func runUninstall(role hostcontract.Role) verbFunc {
 			Purge: vals.Bool("purge"), Force: vals.Bool("force"), Out: a.stdout}, sys)
 		return installExit(a, verb, rep, err, vals.Bool("json"))
 	}
+}
+
+var upgradeOptions = []string{"binary", "sha256", "state-dir"}
+
+func (a *app) upgradeOptions(verb string, vals clicfg.Values) (install.UpgradeOptions, error) {
+	if os.Geteuid() == 0 {
+		return install.UpgradeOptions{}, fmt.Errorf("%s runs as the installed account, never as root", verb)
+	}
+	state := vals.String("state-dir")
+	if state == "" {
+		return install.UpgradeOptions{}, fmt.Errorf("%s: --state-dir (SOCIALWEB_STATE_DIR) names the account's state dir; the core unit's config.json carries it", verb)
+	}
+	u, err := user.Current()
+	if err != nil {
+		return install.UpgradeOptions{}, err
+	}
+	return install.UpgradeOptions{StateDir: state, Home: u.HomeDir, Out: a.stdout, SelfCheck: install.SelfCheck, Restart: install.RestartOwnUnits}, nil
+}
+
+func runUpgrade(ctx context.Context, a *app, vals clicfg.Values, rest []string) int {
+	o, err := a.upgradeOptions("upgrade", vals)
+	if err != nil {
+		return a.fail(exitRefused, "%v", err)
+	}
+	o.Binary, o.SHA256 = vals.String("binary"), vals.String("sha256")
+	if o.Binary == "" {
+		return a.fail(exitRefused, "upgrade: --binary names the new socialweb-computer executable")
+	}
+	if err := install.Upgrade(ctx, o); err != nil {
+		code := exitFailed
+		if errors.Is(err, install.ErrManifestMismatch) || errors.Is(err, install.ErrSelfCheck) {
+			code = exitRefused
+		}
+		return a.fail(code, "%v", err)
+	}
+	return exitOK
+}
+
+func runRollback(ctx context.Context, a *app, vals clicfg.Values, rest []string) int {
+	o, err := a.upgradeOptions("rollback", vals)
+	if err != nil {
+		return a.fail(exitRefused, "%v", err)
+	}
+	if err := install.Rollback(ctx, o); err != nil {
+		code := exitFailed
+		if errors.Is(err, install.ErrNoPrevious) {
+			code = exitRefused
+		}
+		return a.fail(code, "%v", err)
+	}
+	return exitOK
 }

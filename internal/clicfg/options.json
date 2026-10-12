@@ -97,7 +97,7 @@
     },
     "binary": {
       "type": "string",
-      "description": "dev restart core: absolute path of the socialweb-computer executable the new core runs (this executable when unset)",
+      "description": "dev restart core and upgrade: absolute path of the socialweb-computer executable to run next (dev restart: this executable when unset)",
       "env": "SOCIALWEB_DEV_CORE_BINARY"
     },
     "tail": {
@@ -448,6 +448,10 @@
     "force": {
       "type": "boolean",
       "description": "uninstall: proceed while VM units are active (each stopped VM becomes Lost)"
+    },
+    "sha256": {
+      "type": "string",
+      "description": "upgrade: the published sha256 of --binary; a mismatch is refused"
     }
   }
 }
