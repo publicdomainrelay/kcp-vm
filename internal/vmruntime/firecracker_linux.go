@@ -584,11 +584,23 @@ func (r *firecracker) Load(handle, name string) (RuntimeRef, error) {
 	return ref, json.Unmarshal(raw, &ref)
 }
 
-func (r *firecracker) lock() (func(), error) {
-	if err := os.MkdirAll(r.cfg.StateDir, 0o700); err != nil {
-		return nil, fmt.Errorf("vmruntime: %w", err)
+func (r *firecracker) slotLockPath() (string, error) {
+	account := filepath.Join("/run/user", strconv.Itoa(os.Getuid()))
+	if st, err := os.Stat(account); err == nil && st.IsDir() {
+		return filepath.Join(account, "socialweb-vmslots.lock"), nil
 	}
-	f, err := os.OpenFile(filepath.Join(r.cfg.StateDir, "vmslots.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err := os.MkdirAll(r.cfg.StateDir, 0o700); err != nil {
+		return "", fmt.Errorf("vmruntime: %w", err)
+	}
+	return filepath.Join(r.cfg.StateDir, "vmslots.lock"), nil
+}
+
+func (r *firecracker) lock() (func(), error) {
+	path, err := r.slotLockPath()
+	if err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("vmruntime: %w", err)
 	}
