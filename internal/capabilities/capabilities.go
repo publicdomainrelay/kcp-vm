@@ -108,6 +108,7 @@ func Tree() []Verb {
 		{Path: "internal vm stop", Summary: "stop one VM (CtrlAltDel, the grace, then SIGKILL) and remove its work dir", Needs: []Need{NeedHostBackend, NeedVMRuntime}, Hidden: true},
 		{Path: "internal vm list", Summary: "the VM units and work dirs of one handle", Needs: []Need{NeedHostBackend, NeedVMRuntime}, Hidden: true},
 		{Path: "internal apiserver-front", Summary: "the L4 front of kcp or a tenant apiserver", Hidden: true},
+		{Path: "internal hostprocesses", Summary: "the HostProcess supervisor and the OpenBaoServer controller against a kcp the caller names (a market network's bidder vaults until plan 0007 M5-RUN-BIDDER)", Needs: []Need{NeedSystemdUser}, Hidden: true},
 		{Path: "internal cloud-controller-manager", Summary: "the tenant CCM, re-exec'd by the cluster provider", Hidden: true},
 		{Path: "internal tenantcredential", Summary: "mint a tenant credential (socialweb-tenantcredential)", Hidden: true},
 	}, devVerbs...)
