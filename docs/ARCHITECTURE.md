@@ -6644,6 +6644,36 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   account's clusters through the new web app process at 10:16:03.9Z; the cluster `wa2` it had created
   was Ready at 10:17:09Z.
 
+- **The web app reaches kcp as its own ServiceAccount with a short-lived token, never as kcp-admin
+  (lead decision, 2026-10-12).** The web app faces the internet behind caddy; it used to read the
+  members' kubeconfig, which is kcp-admin, so one compromise of it controlled every workspace. Now the
+  gateway set applies the ServiceAccount `socialweb-computer-k8s` in `root:app` with create and patch on
+  MarketIdentities and patch on their status, and the web app DenoPod runs as that account. Seen from
+  another workspace the account is `system:kcp:serviceaccount:<root:app cluster>:default:socialweb-computer-k8s`
+  (kcp GlobalServiceAccount); the app controller binds that user to get on its Gateway and on the
+  OpenBaoServer `root-vault` in `root`, and to get, list and patch on `apiexports/content` of the
+  `clusters` export in `root:socialweb-provider`. The web app lists and patches every cluster's NodeClaims
+  and reads ClusterLinks through that APIExport virtual workspace, so it no longer lists the root or
+  account workspaces. Account and cluster workspaces stay with the cluster gateway XRPC, which runs in the
+  core with admin. The app controller issues the account a 30 minute token into
+  `components/socialweb-computer-k8s.kcp/token` and a new one 10 minutes later; the web app's kubeconfig
+  names it as `tokenFile` and the web app reads it on every request. The DenoPod may read that directory,
+  the vault CA and its vault client directory, and nothing of the members' kubeconfig. Ceiling: the
+  export content grant covers every resource of the `clusters` export (Clusters, Nodes, NodeClaims,
+  ClusterLinks), so the web app can also read and patch Clusters and Nodes of every tenant; the upgrade is
+  a per-home grant on NodeClaims written by the cluster gateway when it creates a home. listClusters for
+  an account with no workspace yet answers `[]` instead of a 500. Readings on hat-8, test prefix
+  `socialweb-was-`, market-network profile, dev build, UTC: core started 10:34:47Z, Gateway Ready
+  10:35:32Z, token issued 10:35:25Z; a fresh account listed `[]` at 10:35:52Z; a signed-in account
+  created `demo` at 10:36:01Z and listed it at 10:36:02Z (listed Ready at 10:45:33Z). With the web app's token
+  at 10:36:24Z: 200 on its Gateway, the root vault and NodeClaims and ClusterLinks through the export,
+  404 on a dry-run status patch of a missing NodeClaim through the export; 403 on listing root
+  workspaces, listing OpenBaoServers or secrets in `root`, DenoPods and a MarketIdentity list in
+  `root:app`, APIExports in `root:socialweb-provider`, AtprotoIdentities and workspaces in the account
+  workspace, Clusters and secrets in the home addressed directly, and a NodeClaim delete through the
+  export. The token was re-issued at 10:45:25Z (expiry 11:15:25Z), and at 10:45:33Z the web app wrote a
+  MarketIdentity and listed both accounts' clusters with it.
+
 ## 16. Vocabulary
 
 | | |
