@@ -6371,6 +6371,34 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   through generate-root; `dev restart core` kept the bao invocation and did not unseal again; deleting
   the object stopped the unit and kept the storage.
 
+- **`units roll kcp` rolls the installed kcp units (plan 0006 M3-KCP-ROLL, 2026-10-12).** One procedure,
+  `kcpserver.Roll`, serves `dev roll kcp` (proc, specs started by devsup) and `units roll kcp`
+  (systemd-user, the installed units of the bootstrap layer started by name). The installed placement
+  (`bootstrap.RollInstalled`) starts `<prefix>kcp-<key>-kine@<new>` and waits for its socket, writes the
+  new slot's env file with the front URL from kcp-slots.json, retargets `kcp/bin/kcp` and `kcp/bin/kine`
+  to the target assets just before the new slot starts (and back if the roll aborts before the flip),
+  starts `<prefix>kcp-<key>@<new>`, and after the probe stops the old kine and moves boot enablement to
+  the new slot and kine. Version rule: the same asset or the same kcp release is blue/green; two
+  releases are blue/green only when `versions.json` `kcpCompat` records the pair storage-compatible
+  (`scripts/kcp-compat.sh <from> <to>` on the build host: CRD served/storage versions, the spec sha256 of
+  every APIResourceSchema and the schemas of every APIExport in config/crds, system-crds, root-phase0,
+  root and shard); any other pair is refused (exit 2) and takes `--planned-outage` (pg_dump, stop the
+  old slot, start the new one, flip; an abort restarts the old slot on the old assets). A single-slot
+  kcp (a bidder handle, `--handle`) always rolls as that short restart of slot a, after a copy of its
+  sqlite store, with no lease step (a single slot runs no leader election). Records: v0.33.0 -> v0.33.1
+  compatible (empty diff), v0.32.5 -> v0.33.0 not (the cache and migration exports were renamed).
+  Readings on hat-8, a gateway-shaped instance placed as installed user units under the test prefix
+  `socialweb-kcproll-` in the account's user manager, probed through the front every 100 ms with a new
+  connection per request: same-asset roll a -> b 07:55:02.41Z-07:55:14.74Z (ready 5.84 s, old exit
+  3.14 s, lease 3.03 s, probe 0.31 s), 1418 requests, 0 failures, 0 refused; v0.33.0 -> v0.33.1 b -> a
+  07:56:28.89Z-07:56:41.28Z (ready 6.24 s, lease 2.42 s), 1144 requests, 0 failures, 0 refused, the new
+  slot's /proc/<pid>/exe the v0.33.1 asset; a stub reporting v0.32.5 refused with nothing changed;
+  `--planned-outage` back to v0.33.0 a -> b 07:57:40.03Z-07:57:50.96Z, kcp down 9.16 s (500/504
+  through the front, 0 refused); same asset b -> a 07:59:16.20Z-07:59:26.79Z, lease 0.83 s, 860
+  requests, 0 failures, 0 refused; a bidder-shaped instance restarted to v0.33.1 with kcp down 10.40 s.
+  Not covered here: a crashed slot outside a roll is still seen by the dev core's 5 s unit check (the
+  6.3 s outage of M2-KCP-SLOTS); the roll waits on the stop job of the old slot and never polls unit state.
+
 ## 16. Vocabulary
 
 | | |
