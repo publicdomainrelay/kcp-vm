@@ -5,11 +5,22 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
 const MemberKubeconfig = "members.kubeconfig"
+
+func memberRestConfig(path string) (*rest.Config, error) {
+	cfg, err := clientcmd.BuildConfigFromFlags("", path)
+	if err != nil {
+		return nil, err
+	}
+	cfg.Host, _, _ = strings.Cut(strings.TrimSuffix(cfg.Host, "/"), "/clusters/")
+	return cfg, nil
+}
 
 func writeMemberKubeconfig(sharedDir, frontURL, out string) error {
 	cfg, err := clientcmd.LoadFromFile(filepath.Join(sharedDir, "admin.kubeconfig"))
