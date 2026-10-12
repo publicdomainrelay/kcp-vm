@@ -5,6 +5,8 @@ package denoruntime_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -28,8 +30,10 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/denokcp/api/v1alpha1"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/denorun"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devinstance"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostcontract"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc/hostsvctest"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/install"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpapply"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpserver"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/livegate"
@@ -113,10 +117,10 @@ func closureKey(t *testing.T, root string) string {
 	return k
 }
 
-func (s *stack) build(name string) string {
+func (s *stack) build(name string, flags ...string) string {
 	s.t.Helper()
 	out := filepath.Join(s.dir, name)
-	cmd := exec.Command("go", "build", "-o", out, "./cmd/socialweb-computer")
+	cmd := exec.Command("go", append(append([]string{"build", "-o", out}, flags...), "./cmd/socialweb-computer")...)
 	cmd.Dir = s.repo
 	if b, err := cmd.CombinedOutput(); err != nil {
 		s.t.Fatalf("go build: %v\n%s", err, b)
@@ -406,6 +410,15 @@ func (s *stack) settle(names []string, key, marker string, before map[string]pod
 	return got
 }
 
+func fileSHA256(p string) (string, error) {
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:]), nil
+}
+
 func pidsGone(pids []int) (bool, string) {
 	for _, pid := range pids {
 		if syscall.Kill(pid, 0) == nil {
@@ -517,7 +530,24 @@ func TestAnUpgradeRestartsEveryRecordedDenoPodOnTheNewClosureExactlyOnce(t *test
 	if keyA == keyB {
 		t.Fatal("the two closures share a key")
 	}
-	binB := s.build("socialweb-computer-b")
+	binB := s.build("socialweb-computer-b", "-trimpath")
+	account := filepath.Join(s.dir, "account")
+	current := filepath.Join(account, "bin", "current", install.CoreName)
+	upgrade := func(bin string) {
+		t.Helper()
+		sum, err := fileSHA256(bin)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = install.Upgrade(context.Background(), install.UpgradeOptions{StateDir: account, Home: filepath.Join(s.dir, "home"), Binary: bin, SHA256: sum,
+			SelfCheck: func(ctx context.Context, exe string, _ hostcontract.Role, _ string) error {
+				return exec.CommandContext(ctx, exe, "version", "--json").Run()
+			},
+			Restart: func(context.Context, []string) error { return nil }})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 	ctx := context.Background()
 	key := hostsvctest.RandomKey()
 	prefix := "socialweb-test-" + key + "-"
@@ -533,12 +563,21 @@ func TestAnUpgradeRestartsEveryRecordedDenoPodOnTheNewClosureExactlyOnce(t *test
 		sd.StopSlice(ctx, slice)
 		sd.Close()
 	})
-	spec := func(bin, org string) hostsvc.UnitSpec {
-		return hostsvc.UnitSpec{Name: unit, Description: "denoruntime test core " + s.id,
-			Exec:    []string{bin, "internal", "dev-core", "--instance-dir", s.up.StateDir, "--org-root", org},
-			Env:     []string{"SWC_UNIT=" + unit},
-			WorkDir: s.up.StateDir, Slice: slice, Restart: hostsvc.RestartAlways, KillSignal: syscall.SIGTERM, StopTimeout: 20 * time.Second,
-			Output: hostsvc.Output{StdoutFile: filepath.Join(s.up.StateDir, "logs", "core.log"), StderrFile: filepath.Join(s.up.StateDir, "logs", "core.log")}}
+	spec := hostsvc.UnitSpec{Name: unit, Description: "denoruntime test core " + s.id,
+		Exec:    []string{current, "internal", "dev-core", "--instance-dir", s.up.StateDir},
+		Env:     []string{"SWC_UNIT=" + unit},
+		WorkDir: s.up.StateDir, Slice: slice, Restart: hostsvc.RestartAlways, KillSignal: syscall.SIGTERM, StopTimeout: 20 * time.Second,
+		Output: hostsvc.Output{StdoutFile: filepath.Join(s.up.StateDir, "logs", "core.log"), StderrFile: filepath.Join(s.up.StateDir, "logs", "core.log")}}
+	recordOrgRoot := func(org string) {
+		t.Helper()
+		var rec devinstance.Record
+		if err := devinstance.ReadJSON(filepath.Join(s.up.StateDir, "instance.json"), &rec); err != nil {
+			t.Fatal(err)
+		}
+		rec.OrgRoot = org
+		if err := devinstance.WriteJSON(filepath.Join(s.up.StateDir, "instance.json"), rec); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	s.tenant()
@@ -562,7 +601,8 @@ func TestAnUpgradeRestartsEveryRecordedDenoPodOnTheNewClosureExactlyOnce(t *test
 		t.Fatal(err)
 	}
 	s.eventually("no deno process of the devsup core", time.Minute, func() (bool, string) { return pidsGone(old) })
-	if _, err := sd.Start(ctx, spec(s.bin, orgA)); err != nil {
+	upgrade(s.bin)
+	if _, err := sd.Start(ctx, spec); err != nil {
 		t.Fatal(err)
 	}
 	got = s.settle(names, keyA, "A", got.States)
@@ -588,11 +628,13 @@ func TestAnUpgradeRestartsEveryRecordedDenoPodOnTheNewClosureExactlyOnce(t *test
 			}
 		}},
 		{"upgrade to a build with a different closure", keyB, "B", func() {
+			upgrade(binB)
 			if err := sd.Stop(ctx, unit); err != nil {
 				t.Fatal(err)
 			}
 			sd.ResetFailed(ctx, unit)
-			if _, err := sd.Start(ctx, spec(binB, orgB)); err != nil {
+			recordOrgRoot(orgB)
+			if _, err := sd.Start(ctx, spec); err != nil {
 				t.Fatal(err)
 			}
 		}},
