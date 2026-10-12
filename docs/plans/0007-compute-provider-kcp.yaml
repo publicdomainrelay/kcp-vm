@@ -942,8 +942,8 @@ items:
       Red first (today every restart adds a mount).
     done_when: "tests green; the cluster-vault reading on hat-8 recorded: one jwt-* mount per bidder with a live node."
     risks: ["oidc-issuer-hono publishes a single key today; overlapping keys change its JWKS shape, which OpenBao's JWT auth already accepts (it verifies by kid)."]
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M4-CONTRACT-STORE-FILE
     milestone: M4
     title: "NOW: a restarted TypeScript bidder keeps its receipts and tombstones - market-bidder ContractStore load()/save and a file-backed store in compute-provider-firecracker"
@@ -1005,8 +1005,8 @@ items:
       kcp): a bidder seeded from it answers vm.delete with 200 and destroys once; red first.
     done_when: "green for the ComputeVM store; existing market-bidder suite green."
     risks: []
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M4-ONNETWORK
     milestone: M4
     title: onNetwork and the guest's host-key report are recorded on the ComputeVM as well as in the market records
