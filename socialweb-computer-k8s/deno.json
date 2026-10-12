@@ -39,6 +39,8 @@
     "ssh2": "npm:ssh2@^1.16.0",
     "@publicdomainrelay/cli-args-env": "../../typescript-helpers/lib/cli-args-env/mod.ts",
     "@publicdomainrelay/logger": "../../typescript-helpers/lib/logger/mod.ts",
+    "@publicdomainrelay/market-network-common": "../../typescript-helpers/lib/common/market-network-common/mod.ts",
+    "@publicdomainrelay/market-network-fetch": "../../typescript-helpers/lib/market-network-fetch/mod.ts",
     "@publicdomainrelay/oauth-scope": "../../typescript-helpers/lib/oauth-scope/mod.ts",
     "@publicdomainrelay/serve": "../../typescript-helpers/lib/serve/mod.ts",
     "@publicdomainrelay/event-bus": "../../typescript-helpers/lib/event-bus/mod.ts",

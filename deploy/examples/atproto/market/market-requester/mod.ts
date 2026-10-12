@@ -8,6 +8,8 @@ import {
   runComputeContract,
 } from "@publicdomainrelay/requester-xrpc";
 import type { GuestHostKeys } from "@publicdomainrelay/requester-abc";
+import { marketNetwork } from "@publicdomainrelay/market-network-common";
+import { installMarketNetworkFetch } from "@publicdomainrelay/market-network-fetch";
 import cliArgsEnv from "./cli-args-env.json" with { type: "json" };
 
 interface Verdict {
@@ -88,20 +90,8 @@ if (!plcDirectoryUrl || !ingressProxyHost || bidderDids.length === 0) {
   await finish(2);
 }
 
-const localPort = ingressProxyHost!.includes(":") ? ingressProxyHost!.split(":").pop()! : "80";
-const realFetch = globalThis.fetch;
-globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
-  const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-  const m = url.match(/^https:\/\/([^/]+)(\/.*)?$/);
-  if (m && (m[1].endsWith(".localhost") || m[1].includes(".localhost:"))) {
-    const host = m[1].includes(":") ? m[1] : `${m[1]}:${localPort}`;
-    return realFetch(`http://${host}${m[2] ?? ""}`, input instanceof Request ? input : init);
-  }
-  if (url.startsWith("https://plc.directory/")) {
-    return realFetch(plcDirectoryUrl + url.slice("https://plc.directory".length), init);
-  }
-  return realFetch(input, init);
-}) as typeof fetch;
+const network = marketNetwork({ plcDirectoryUrl, ingressProxyHost, caBundleRef: guestCaFile });
+installMarketNetworkFetch({ network });
 
 const base = createLogger({ serviceName: "market-requester" });
 let hostKeyMismatchSeen = false;
@@ -124,8 +114,8 @@ const serve = createServe({ logger, tcp: { addr: "127.0.0.1", port: 0 } });
 const pds = await createRequesterPDS({
   logger,
   serve,
-  plcDirectoryUrl: plcDirectoryUrl!,
-  ingressProxyHost: ingressProxyHost!,
+  plcDirectoryUrl: network.plcDirectoryUrl,
+  ingressProxyHost: network.ingressProxyHost,
   label: "market-requester",
 });
 await pds.beginServe();
@@ -165,7 +155,7 @@ const verifyingSsh = {
 try {
   const result = await runComputeContract(pds, {
     logger,
-    ingressProxyHost: ingressProxyHost!,
+    ingressProxyHost: network.ingressProxyHost,
     extraBidderDids: bidderDids,
     guestHostAliases,
     relayUrls: [],
