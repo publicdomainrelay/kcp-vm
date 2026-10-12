@@ -43,7 +43,7 @@ func CheckProfile(p string) error {
 		return nil
 	}
 	if item, ok := unbuiltProfiles[p]; ok {
-		return fmt.Errorf("%w: --profile %s is built by %s; quick (kine on sqlite) and prodlike (kine on postgres) are", ErrUnbuiltProfile, p, item)
+		return fmt.Errorf("%w: --profile %s is built by %s; quick (kine on sqlite) and prodlike (the gateway shape: postgres, one kine per slot, blue/green slots) are", ErrUnbuiltProfile, p, item)
 	}
 	return fmt.Errorf("bootstrap: unknown profile %q: want quick or prodlike (built) or market-network", p)
 }
@@ -120,6 +120,19 @@ func initdb(ctx context.Context, p Params) error {
 	}
 	_, err = in.Initdb(ctx, p.storeConfig("", in).Server())
 	return err
+}
+
+func (p Params) storeBackup() func(ctx context.Context) (string, error) {
+	if p.App.Store != table.StorePostgres {
+		return nil
+	}
+	return func(ctx context.Context) (string, error) {
+		in, err := p.Postgres()
+		if err != nil {
+			return "", err
+		}
+		return in.Dump(ctx, p.PgSocketDir(), kcpstore.PostgresUser, kcpstore.KineDatabase, p.BackupsDir(), time.Now())
+	}
 }
 
 func waitPostgres(ctx context.Context, p Params) error {
@@ -473,7 +486,7 @@ func Ensure(ctx context.Context, m hostsvc.Manager, cfg Config, rec *devinstance
 	slots.Front = kcpserver.FrontRecord{Unit: front.Unit, Address: "127.0.0.1:" + strconv.Itoa(front.Port), Port: front.Port,
 		Control: l.FrontControl(), PID: front.Identity.PID}
 	slots.Slots[active] = kcpserver.SlotRecord{Unit: kcp.Unit, Root: root, Port: kcp.Port, PID: kcp.Identity.PID,
-		InvocationID: kcp.Identity.InvocationID, Exec: cfg.KcpPath, StartedAt: kcp.PlacedAt, ReadyAt: kcp.ReadyAt}
+		InvocationID: kcp.Identity.InvocationID, Exec: cfg.KcpPath, Kine: kine.Endpoint, StartedAt: kcp.PlacedAt, ReadyAt: kcp.ReadyAt}
 	for _, other := range kcpserver.SlotNames(kcpserver.ShapeBlueGreen) {
 		if other != active {
 			delete(slots.Slots, other)
@@ -545,6 +558,8 @@ func Roll(ctx context.Context, m hostsvc.Manager, cfg Config, rec *devinstance.R
 		SpecFor: func(slot string) (hostsvc.UnitSpec, string, error) {
 			return p.slotSpec(slot, frontURL)
 		},
+		KineFor:      func(slot string) string { return p.KineURL(app.KineOf(slot)) },
+		Backup:       p.storeBackup(),
 		ReadyTimeout: cfg.ReadyTimeout, OnListen: cfg.OnListen, Log: cfg.log(),
 	})
 	if after.Active == rep.To && rep.NewUnit != "" {

@@ -49,6 +49,7 @@ type SlotRecord struct {
 	PID          int       `json:"pid"`
 	InvocationID string    `json:"invocationID"`
 	Exec         string    `json:"exec,omitempty"`
+	Kine         string    `json:"kine,omitempty"`
 	SHA256       string    `json:"sha256,omitempty"`
 	Version      string    `json:"version,omitempty"`
 	StartedAt    time.Time `json:"startedAt,omitzero"`

@@ -41,6 +41,8 @@ type RollConfig struct {
 	SlotsFile    string
 	Shared       string
 	SpecFor      func(slot string) (hostsvc.UnitSpec, string, error)
+	KineFor      func(slot string) string
+	Backup       func(ctx context.Context) (string, error)
 	ListenPort   func(ctx context.Context, pid int) (int, error)
 	OnListen     func(name string, addr net.Addr)
 	Poll         time.Duration
@@ -55,6 +57,8 @@ type RollReport struct {
 	From                 string    `json:"from"`
 	To                   string    `json:"to"`
 	OldUnit              string    `json:"oldUnit"`
+	StoreBackup          string    `json:"storeBackup,omitempty"`
+	BackupSeconds        float64   `json:"backupSeconds,omitempty"`
 	NewUnit              string    `json:"newUnit"`
 	OldPort              int       `json:"oldPort"`
 	NewPort              int       `json:"newPort"`
@@ -165,6 +169,14 @@ func Roll(ctx context.Context, m hostsvc.Manager, front FrontSwitch, admin Shard
 	if l, err := admin.Lease(ctx); err == nil {
 		rep.OldHolder = l.Holder
 	}
+	if cfg.Backup != nil {
+		path, err := cfg.Backup(ctx)
+		if err != nil {
+			return rep, s, fmt.Errorf("kcpserver: the store backup before the roll: %w", err)
+		}
+		rep.StoreBackup, rep.BackupSeconds = path, secs(rep.StartedAt, time.Now().UTC())
+		log.Info("store backed up before the roll", "path", path, "seconds", rep.BackupSeconds)
+	}
 	spec, root, err := cfg.SpecFor(to)
 	if err != nil {
 		return rep, s, err
@@ -214,6 +226,12 @@ func Roll(ctx context.Context, m hostsvc.Manager, front FrontSwitch, admin Shard
 	}
 	s.Slots[to] = SlotRecord{Unit: spec.Name, Root: root, Port: port, PID: st.MainPID, InvocationID: st.InvocationID,
 		Exec: spec.Exec[0], StartedAt: rep.StartedAt, ReadyAt: rep.ReadyAt}
+	if cfg.KineFor != nil {
+		rec := s.Slots[to]
+		rec.Kine = cfg.KineFor(to)
+		s.Slots[to] = rec
+		s.KineURL = rec.Kine
+	}
 	s.Active = to
 	if err := WriteSlots(cfg.SlotsFile, s); err != nil {
 		s = prev

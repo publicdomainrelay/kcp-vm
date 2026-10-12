@@ -72,7 +72,11 @@ func Bidder(handle, hid string) App {
 }
 
 func Dev(key, store string) App {
-	return App{Role: RoleGateway, Key: key, Store: store, Slots: []string{SlotA}, DevCore: true}
+	slots := []string{SlotA}
+	if store == StorePostgres {
+		slots = []string{SlotA, SlotB}
+	}
+	return App{Role: RoleGateway, Key: key, Store: store, Slots: slots, DevCore: true}
 }
 
 func DevNames(key string) Names { return Names{Prefix: hostsvc.NamePrefix, Key: key} }
