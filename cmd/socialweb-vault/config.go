@@ -10,18 +10,14 @@ import (
 )
 
 const (
-	envAddr                  = "SOCIALWEB_ROOTVAULT_ADDR"
-	envStateDir              = "SOCIALWEB_STATE_DIR"
-	envKCPKubeconfig         = "SOCIALWEB_KCP_KUBECONFIG"
-	envDeviceKeyAudience     = "SOCIALWEB_GATEWAY_DEVICE_KEY_AUDIENCE"
-	envDevkeyRegistry        = "SOCIALWEB_GATEWAY_DEVKEY_REGISTRY"
-	envDeviceKeyExecEnvName  = "SOCIALWEB_GATEWAY_DEVICE_KEY_EXEC_ENV_NAME"
-	envContainerTLSCert      = "SOCIALWEB_CONTAINER_TLS_CERT"
-	envContainerTLSKey       = "SOCIALWEB_CONTAINER_TLS_KEY"
-	envCentralStoreEndpoint  = "SOCIALWEB_CENTRAL_STORE_ENDPOINT"
-	envCentralStoreBucket    = "SOCIALWEB_CENTRAL_STORE_BUCKET"
-	envCentralStoreAccessKey = "SOCIALWEB_CENTRAL_STORE_ACCESS_KEY"
-	envCentralStoreSecretKey = "SOCIALWEB_CENTRAL_STORE_SECRET_KEY"
+	envAddr                 = "SOCIALWEB_ROOTVAULT_ADDR"
+	envStateDir             = "SOCIALWEB_STATE_DIR"
+	envKCPKubeconfig        = "SOCIALWEB_KCP_KUBECONFIG"
+	envDeviceKeyAudience    = "SOCIALWEB_GATEWAY_DEVICE_KEY_AUDIENCE"
+	envDevkeyRegistry       = "SOCIALWEB_GATEWAY_DEVKEY_REGISTRY"
+	envDeviceKeyExecEnvName = "SOCIALWEB_GATEWAY_DEVICE_KEY_EXEC_ENV_NAME"
+	envContainerTLSCert     = "SOCIALWEB_CONTAINER_TLS_CERT"
+	envContainerTLSKey      = "SOCIALWEB_CONTAINER_TLS_KEY"
 )
 
 const (
@@ -43,11 +39,6 @@ type Config struct {
 
 	ContainerTLSCert string
 	ContainerTLSKey  string
-
-	CentralStoreEndpoint  string
-	CentralStoreBucket    string
-	CentralStoreAccessKey string
-	CentralStoreSecretKey string
 }
 
 func Load() (Config, error) { return load(os.Getenv) }
@@ -91,10 +82,5 @@ func load(get func(string) string) (Config, error) {
 
 		ContainerTLSCert: strings.TrimSpace(get(envContainerTLSCert)),
 		ContainerTLSKey:  strings.TrimSpace(get(envContainerTLSKey)),
-
-		CentralStoreEndpoint:  strings.TrimSpace(get(envCentralStoreEndpoint)),
-		CentralStoreBucket:    strings.TrimSpace(get(envCentralStoreBucket)),
-		CentralStoreAccessKey: strings.TrimSpace(get(envCentralStoreAccessKey)),
-		CentralStoreSecretKey: strings.TrimSpace(get(envCentralStoreSecretKey)),
 	}, nil
 }

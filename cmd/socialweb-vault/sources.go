@@ -13,8 +13,7 @@ import (
 )
 
 const (
-	envKCPRootDir   = "SOCIALWEB_KCP_ROOT"
-	envClusterStore = "SOCIALWEB_CLUSTERPROVIDER_STORE_ENDPOINT"
+	envKCPRootDir = "SOCIALWEB_KCP_ROOT"
 )
 
 func kcpRootDir(cfg Config) string {
@@ -83,17 +82,4 @@ func fetchPKICAPEM(ctx context.Context, client *api, mount string) (string, erro
 			"client certificate at all", path)
 	}
 	return pem, nil
-}
-
-func externalStoreNamed() bool {
-	return strings.TrimSpace(os.Getenv(envClusterStore)) != ""
-}
-
-func centralStoreValues(cfg Config) []string {
-	return []string{
-		cfg.CentralStoreEndpoint,
-		cfg.CentralStoreBucket,
-		cfg.CentralStoreAccessKey,
-		cfg.CentralStoreSecretKey,
-	}
 }

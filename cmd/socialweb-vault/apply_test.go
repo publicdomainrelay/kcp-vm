@@ -95,7 +95,6 @@ func TestPlanRootSecretsNamesEveryMissingSource(t *testing.T) {
 	for _, path := range []string{
 		vaultlayout.PathKCPAdminTokenStore,
 		vaultlayout.PathKCPClientCA,
-		vaultlayout.PathCentralStore,
 		vaultlayout.PathContainerTLS,
 	} {
 		if byPath[path].Reason == "" {

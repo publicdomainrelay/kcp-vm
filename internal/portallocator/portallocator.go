@@ -197,7 +197,7 @@ func Open(cfg Config) (*Allocator, error) {
 		if rng.Overlaps(shared) {
 			return nil, &RangeConflictError{Range: rng,
 				Reason: "swallows a port the GATEWAY owns once for the whole host, outside the allocator",
-				Detail: fmt.Sprintf("%s is outside the per-cluster space; the kcp secure port, kcp's etcd and rustfs must never be handed to a cluster", shared),
+				Detail: fmt.Sprintf("%s is outside the per-cluster space; the kcp secure port (6443), kcp's etcd (2379-2380) and 9100-9103 are the gateway's once per host and must never be handed to a cluster", shared),
 			}
 		}
 	}
