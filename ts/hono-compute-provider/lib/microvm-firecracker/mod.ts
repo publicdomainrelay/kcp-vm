@@ -1,0 +1,377 @@
+import type { ContainerBackend } from "@publicdomainrelay/container-backend-abc";
+
+export interface MicrovmNetwork {
+  guestIp: string;
+  prefix: number;
+  gateway: string;
+  pastaIp: string;
+  interface?: string;
+  tap?: string;
+  bridge?: string;
+  guestMac?: string;
+}
+
+export interface MicrovmSpec {
+  name: string;
+  imageDir: string;
+  workDir: string;
+  userDataFile: string;
+  vcpu?: number;
+  memMib?: number;
+
+  diskMib?: number;
+  instanceTimeoutSec?: number;
+  pastaArgs?: string[];
+  network: MicrovmNetwork;
+}
+
+export interface MicrovmResult {
+  name: string;
+  fingerprint: string;
+  vmmPid: number;
+  pastaPid: number;
+  guestIp: string;
+  socket: string;
+  console: string;
+  workDir: string;
+  container: string;
+}
+
+export interface MicrovmExit {
+  container: string;
+  reason: "exited" | "removed";
+  exitCode?: number;
+  logs: string;
+}
+
+export interface MicrovmContainerState {
+  exists: boolean;
+  running: boolean;
+  exitCode?: number;
+}
+
+export interface Microvm {
+  readonly name: string;
+  boot(spec: MicrovmSpec): Promise<MicrovmResult>;
+  stop(workDir: string): Promise<void>;
+  watch(container: string, onExit: (exit: MicrovmExit) => void): () => void;
+  inspect?(container: string): Promise<MicrovmContainerState>;
+
+  /**
+   * The address a guest of this microvm reaches THIS HOST at.
+   *
+   * A guest's loopback is its own, so the names it resolves to the host -- the
+   * issuer it exchanges a provisioning token with, the bidder it reports its
+   * iroh ticket to -- have to be written against an
+   * address that leaves the guest. The guest's traffic leaves through pasta
+   * into the container this module starts it in, and that container reaches
+   * the host at its default gateway, so that is the address: pasta's own
+   * gateway is a different machine entirely, the container, and naming it
+   * gives the guest a host that answers nothing.
+   */
+  hostAddressForGuest(): Promise<string>;
+}
+
+export interface FirecrackerMicrovmOptions {
+  backend: ContainerBackend;
+  runnerImage: string;
+  labels?: Record<string, string>;
+  firecrackerPath?: string;
+  bootTimeoutMs?: number;
+  watchIntervalMs?: number;
+  logger?: { info(event: string, extra?: Record<string, unknown>): void };
+}
+
+const DEFAULT_BOOT_TIMEOUT_MS = 180_000;
+const DEFAULT_WATCH_INTERVAL_MS = 5_000;
+const NO_SUCH_CONTAINER = /no such (object|container)|not found/i;
+const DEFAULT_FIRECRACKER = "/usr/local/bin/firecracker";
+
+interface WireSpec {
+  name: string;
+  image_dir: string;
+  work_dir: string;
+  firecracker: string;
+  user_data_file: string;
+  vcpu?: number;
+  mem_mib?: number;
+
+  disk_mib?: number;
+  instance_timeout_sec?: number;
+  pasta_args?: string[];
+  network: {
+    guest_ip: string;
+    prefix: number;
+    gateway: string;
+    pasta_ip: string;
+    interface?: string;
+    tap?: string;
+    bridge?: string;
+    guest_mac?: string;
+  };
+}
+
+function toWire(spec: MicrovmSpec, firecracker: string): WireSpec {
+  return {
+    name: spec.name,
+    image_dir: spec.imageDir,
+    work_dir: spec.workDir,
+    firecracker,
+    user_data_file: spec.userDataFile,
+    vcpu: spec.vcpu,
+    mem_mib: spec.memMib,
+
+    disk_mib: spec.diskMib,
+    instance_timeout_sec: spec.instanceTimeoutSec,
+    pasta_args: spec.pastaArgs,
+    network: {
+      guest_ip: spec.network.guestIp,
+      prefix: spec.network.prefix,
+      gateway: spec.network.gateway,
+      pasta_ip: spec.network.pastaIp,
+      interface: spec.network.interface,
+      tap: spec.network.tap,
+      bridge: spec.network.bridge,
+      guest_mac: spec.network.guestMac,
+    },
+  };
+}
+
+function parseResult(raw: string, container: string, source: string): MicrovmResult {
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(raw) as Record<string, unknown>;
+  } catch (cause) {
+    throw new Error(`${source} is not the JSON a guest's result is: ${raw.slice(0, 400)}`, { cause });
+  }
+  for (const field of ["name", "guest_ip", "socket", "console", "work_dir"]) {
+    if (typeof parsed[field] !== "string" || parsed[field] === "") {
+      throw new Error(`${source} carries no ${field}: ${raw.slice(0, 400)}`);
+    }
+  }
+  for (const field of ["vmm_pid", "pasta_pid"]) {
+    if (typeof parsed[field] !== "number" || parsed[field] <= 0) {
+      throw new Error(
+        `${source} gives ${field} as ${String(parsed[field])}, and a pid that is not a positive ` +
+          `number names no process, so the guest behind it could never be stopped or inspected`,
+      );
+    }
+  }
+  return {
+    name: parsed.name as string,
+    fingerprint: typeof parsed.fingerprint === "string" ? parsed.fingerprint : "",
+    vmmPid: parsed.vmm_pid as number,
+    pastaPid: parsed.pasta_pid as number,
+    guestIp: parsed.guest_ip as string,
+    socket: parsed.socket as string,
+    console: parsed.console as string,
+    workDir: parsed.work_dir as string,
+    container,
+  };
+}
+
+export function parseLabels(spec: string): Record<string, string> {
+  const labels: Record<string, string> = {};
+  for (const pair of spec.split(",").map((p) => p.trim()).filter((p) => p.length > 0)) {
+    const at = pair.indexOf("=");
+    if (at <= 0) throw new Error(`container label ${JSON.stringify(pair)} is not key=value`);
+    labels[pair.slice(0, at)] = pair.slice(at + 1);
+  }
+  return labels;
+}
+
+export function createFirecrackerMicrovm(opts: FirecrackerMicrovmOptions): Microvm {
+  if (!opts.runnerImage) {
+    throw new Error(
+      "createFirecrackerMicrovm needs the image the guest is booted in. The guest is a firecracker " +
+        "microVM, and booting one needs /dev/kvm, /dev/net/tun and a privileged container for the " +
+        "namespaces pasta sandboxes itself into. This process does not run with those, and must " +
+        "not: it runs where the bidder runs. The container is given them instead, one per guest, " +
+        "exactly as the QEMU provider and the local provider already do.",
+    );
+  }
+  const backend = opts.backend;
+  const runnerImage = opts.runnerImage;
+  const bootTimeoutMs = opts.bootTimeoutMs ?? DEFAULT_BOOT_TIMEOUT_MS;
+  const watchIntervalMs = opts.watchIntervalMs ?? DEFAULT_WATCH_INTERVAL_MS;
+  const firecracker = opts.firecrackerPath ?? DEFAULT_FIRECRACKER;
+  const labelArgs = Object.entries(opts.labels ?? {}).flatMap(([key, value]) => ["--label", `${key}=${value}`]);
+
+  async function containerState(name: string): Promise<MicrovmContainerState> {
+    const inspected = await backend.command(["inspect", "-f", "{{.State.Running}} {{.State.ExitCode}}", name])
+      .catch((err: unknown) => ({ code: -1, stdout: "", stderr: String(err) }));
+    if (inspected.code !== 0) {
+      if (NO_SUCH_CONTAINER.test(inspected.stderr)) return { exists: false, running: false };
+      throw new Error(`inspecting container ${name} failed: ${inspected.stderr.trim()}`);
+    }
+    const [running, exitCode] = inspected.stdout.trim().split(/\s+/);
+    const code = Number(exitCode);
+    return { exists: true, running: running === "true", exitCode: Number.isFinite(code) ? code : undefined };
+  }
+
+  async function containerLogs(name: string, tail = 60): Promise<string> {
+    const out = await backend.command(["logs", "--tail", String(tail), name]).catch(() => null);
+    if (out === null) return "(logs unavailable)";
+    return `${out.stdout}\n${out.stderr}`.trim().slice(-4000);
+  }
+
+  return {
+    name: "firecracker",
+    async boot(spec: MicrovmSpec): Promise<MicrovmResult> {
+      if (spec.network.guestIp === spec.network.gateway) {
+        throw new Error(
+          `guest ${spec.name} would be addressed as its own gateway (${spec.network.guestIp}). The ` +
+            `gateway is the address the guest dials this host on, so a guest holding it ARPs for ` +
+            `itself and the frames it sends are answered by the interface it sent them from.`,
+        );
+      }
+      const container = spec.name;
+      const specPath = `${spec.workDir}/boot-spec.json`;
+      const resultPath = `${spec.workDir}/result.json`;
+      await Deno.mkdir(spec.workDir, { recursive: true });
+      // The work directory is written from both sides: the bidder writes the spec
+      // and reads the result, and the guest's launcher writes the copy of the
+      // rootfs, the seed and the result — as an unprivileged user of its own, since
+      // pasta started as root drops whoever starts the VMM to nobody. The two are
+      // different uids, and the directory is created by whichever runs first, so it
+      // is opened to both here rather than left at what one side's umask happened
+      // to make it.
+      await Deno.chmod(spec.workDir, 0o777);
+      await Deno.writeTextFile(specPath, JSON.stringify(toWire(spec, firecracker), null, 2));
+      await Deno.remove(resultPath).catch(() => {});
+
+      // The image directory and the work directory are mounted at the paths they
+      // already have, so the spec means the same thing inside the container as
+      // out of it: a guest's socket and console are named in the result, and the
+      // caller reads them from this side.
+      const runArgs = [
+        "run", "-d",
+        "--name", container,
+        "--device", "/dev/kvm",
+        "--device", "/dev/net/tun",
+        // Privileged, because the launcher runs pasta and pasta sandboxes itself:
+        // it clones into a user, pid and mount namespace of its own, mounts a fresh
+        // /proc there and remakes / private before it starts the VMM. Measured on
+        // the host that boots these guests, no subset of capabilities does it --
+        // --cap-add NET_ADMIN, + SYS_ADMIN, + SETUID and SETGID all die at
+        // "Failed to remount /: Permission denied" and then "Failed to sandbox
+        // process, exiting", which is pasta refusing to run a VMM it could not
+        // contain, while --privileged gets through every one of those steps. The
+        // sibling providers that boot a VM in a container (compute-provider-local,
+        // qemu-standalone) are privileged for the same reason.
+        "--privileged",
+        ...labelArgs,
+        "-v", `${spec.imageDir}:${spec.imageDir}:ro`,
+        "-v", `${spec.workDir}:${spec.workDir}`,
+        runnerImage,
+        // The runner image's entrypoint is what execs the launcher, as the
+        // unprivileged user it has to run as; naming it again here would arrive
+        // as a positional argument and stop the launcher's own flag parsing.
+        "-spec", specPath, "-result", resultPath, "-foreground",
+      ];
+      const started = await backend.command(runArgs);
+      if (started.code !== 0) {
+        throw new Error(
+          `starting the container that boots guest ${spec.name} failed: ${started.stderr.trim()} ` +
+            `-- the guest is only ever a process inside a container, because booting one needs ` +
+            `/dev/kvm, /dev/net/tun and a privileged container for the namespaces pasta sandboxes ` +
+            `itself into, and the bidder does not run with those`,
+        );
+      }
+
+      const deadline = Date.now() + bootTimeoutMs;
+      while (Date.now() < deadline) {
+        try {
+          const raw = await Deno.readTextFile(resultPath);
+          const result = parseResult(raw, container, resultPath);
+          opts.logger?.info("microvm_booted", {
+            name: result.name,
+            container,
+            guestIp: result.guestIp,
+            fingerprint: result.fingerprint,
+          });
+          return result;
+        } catch (err) {
+          if (!(err instanceof Deno.errors.NotFound)) throw err;
+        }
+        const running = await backend.command(["inspect", "-f", "{{.State.Running}}", container]);
+        if (running.code === 0 && running.stdout.trim() === "false") {
+          throw new Error(
+            `the container that boots guest ${spec.name} exited before it reported a guest, so no ` +
+              `guest exists. Its output:\n${await containerLogs(container)}`,
+          );
+        }
+        if (running.code !== 0) {
+          throw new Error(
+            `guest ${spec.name} has no container named ${container} and no result at ${resultPath}, ` +
+              `so it neither booted nor reported why: ${running.stderr.trim()}`,
+          );
+        }
+        await new Promise((r) => setTimeout(r, 300));
+      }
+      throw new Error(
+        `guest ${spec.name} had not reported a result ${bootTimeoutMs}ms after its container ` +
+          `started. Its output:\n${await containerLogs(container)}`,
+      );
+    },
+    inspect: containerState,
+    hostAddressForGuest(): Promise<string> {
+      // This module starts the guest's container without a --network flag, so it
+      // lands on the runtime's default bridge and the host is that bridge's
+      // gateway. Both facts live here, so they cannot drift apart.
+      return backend.defaultGateway();
+    },
+    async stop(workDir: string): Promise<void> {
+      let container = "";
+      try {
+        const raw = await Deno.readTextFile(`${workDir}/result.json`);
+        container = (JSON.parse(raw) as { name?: string }).name ?? "";
+      } catch {
+        container = "";
+      }
+      if (!container) {
+        container = workDir.split("/").filter((p) => p !== "").pop() ?? "";
+      }
+      if (!container) {
+        throw new Error(`cannot tell which container holds the guest whose work directory is ${workDir}`);
+      }
+      await backend.kill(container).catch(() => {});
+      await backend.rm(container).catch(() => {});
+      const state = await containerState(container);
+      if (state.exists) {
+        throw new Error(
+          `container ${container} still exists after kill and rm, so the work directory ${workDir} it ` +
+            `mounts is kept: removing it under a live guest deletes the disk the guest is running on`,
+        );
+      }
+      await Deno.remove(workDir, { recursive: true }).catch((err: unknown) => {
+        if (!(err instanceof Deno.errors.NotFound)) throw err;
+      });
+      opts.logger?.info("microvm_work_dir_removed", { container, workDir });
+    },
+    watch(container: string, onExit: (exit: MicrovmExit) => void): () => void {
+      let cancelled = false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const schedule = () => {
+        if (cancelled) return;
+        timer = setTimeout(check, watchIntervalMs);
+        Deno.unrefTimer(Number(timer));
+      };
+      const check = async () => {
+        timer = undefined;
+        if (cancelled) return;
+        const state = await containerState(container).catch(() => undefined);
+        if (cancelled) return;
+        if (state === undefined || state.running) return schedule();
+        cancelled = true;
+        const logs = state.exists ? await containerLogs(container) : "";
+        onExit({ container, reason: state.exists ? "exited" : "removed", exitCode: state.exitCode, logs });
+      };
+      schedule();
+      return () => {
+        cancelled = true;
+        if (timer !== undefined) clearTimeout(timer);
+      };
+    },
+  };
+}

@@ -1,0 +1,9 @@
+{
+  "name": "@publicdomainrelay/microvm-firecracker",
+  "version": "0.0.0",
+  "license": "Unlicense",
+  "exports": "./mod.ts",
+  "imports": {
+    "@publicdomainrelay/container-backend-abc": "jsr:@publicdomainrelay/container-backend-abc@^0"
+  }
+}
