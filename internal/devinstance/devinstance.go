@@ -203,6 +203,13 @@ type Unit struct {
 	StartedTo string           `json:"startToReady,omitempty"`
 }
 
+type StandIn struct {
+	Role    string   `json:"role"`
+	Exec    []string `json:"exec"`
+	Env     []string `json:"env,omitempty"`
+	Listens bool     `json:"listens,omitempty"`
+}
+
 type Devsup struct {
 	Instance   string `json:"instance"`
 	PID        int    `json:"pid"`
@@ -220,6 +227,7 @@ type Record struct {
 	Created         time.Time             `json:"created"`
 	Updated         time.Time             `json:"updated"`
 	Devsup          Devsup                `json:"devsup"`
+	StandIns        []StandIn             `json:"standIns,omitempty"`
 	Units           []Unit                `json:"units"`
 	AdminKubeconfig string                `json:"adminKubeconfig"`
 	KcpURL          string                `json:"kcpURL"`

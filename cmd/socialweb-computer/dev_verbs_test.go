@@ -64,6 +64,24 @@ func TestTheDevVerbsOfAnInstanceThatIsNotUpSayDevUpFirst(t *testing.T) {
 	}
 }
 
+func TestDevUpProfileBedExits2NamingTheAppController(t *testing.T) {
+	env := devEnv(t)
+	code, _, stderr := runT(t, env, "linux", "dev", "up", "--instance", "t1", "--profile", "bed")
+	if code != 2 || !strings.Contains(stderr, "M2-APP-CONTROLLER") {
+		t.Fatalf("dev up --profile bed: exit %d %q", code, stderr)
+	}
+	code, _, stderr = runT(t, env, "linux", "dev", "up", "--instance", "t1")
+	if code != 2 || !strings.Contains(stderr, "profile") || !strings.Contains(stderr, "stand-ins") {
+		t.Fatalf("dev up naming neither a profile nor stand-ins: exit %d %q", code, stderr)
+	}
+	f := filepath.Join(t.TempDir(), "s.json")
+	os.WriteFile(f, []byte(`[{"role":"x","exec":["/bin/true"]}]`), 0o600)
+	code, _, stderr = runT(t, env, "linux", "dev", "up", "--instance", "t1", "--profile", "minimal", "--stand-ins", f)
+	if code != 2 || !strings.Contains(stderr, "stand-ins") {
+		t.Fatalf("dev up with a profile and stand-ins: exit %d %q", code, stderr)
+	}
+}
+
 func TestDevEnvPrintsTheInstancesExportsForShellsAndJSON(t *testing.T) {
 	env := devEnv(t)
 	root, _ := devinstance.StateRoot("", env)

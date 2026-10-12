@@ -47,8 +47,12 @@
     },
     "profile": {
       "type": "string",
-      "description": "Dev profile: minimal (kine on sqlite + one kcp slot); quick, bed and prodlike land with M2-BOOTSTRAP-LAYER",
+      "description": "Dev profile: minimal (kine on sqlite + one kcp slot); quick and prodlike land with M2-BOOTSTRAP-LAYER, bed with M2-APP-CONTROLLER",
       "env": "SOCIALWEB_DEV_PROFILE"
+    },
+    "stand-ins": {
+      "type": "string",
+      "description": "dev up: a JSON file naming the units to place instead of a profile's bootstrap layer, in order ([{role, exec, env, listens}]); the instance then has no kcp (tests place stand-ins this way)"
     },
     "kcp-path": {
       "type": "string",
@@ -119,7 +123,7 @@
     },
     "die-with": {
       "type": "number",
-      "description": "internal devsup: stop every unit and exit when this pid exits (0 = never)",
+      "description": "internal devsup and dev up: stop every unit and exit when this pid exits (0 = never; a test passes its own pid)",
       "default": 0
     },
     "clusterprovider-advertise-address": {

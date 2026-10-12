@@ -58,11 +58,14 @@ func TestOnlyTheMinimalProfileIsBuiltAndTheOthersNameTheirItem(t *testing.T) {
 	if err := CheckProfile(ProfileMinimal); err != nil {
 		t.Fatal(err)
 	}
-	for _, p := range []string{"quick", "bed", "prodlike"} {
+	for p, item := range map[string]string{"quick": "M2-BOOTSTRAP-LAYER", "prodlike": "M2-BOOTSTRAP-LAYER", "bed": "M2-APP-CONTROLLER"} {
 		err := CheckProfile(p)
-		if !errors.Is(err, ErrUnbuiltProfile) || !strings.Contains(err.Error(), "M2-BOOTSTRAP-LAYER") {
-			t.Errorf("%s: %v", p, err)
+		if !errors.Is(err, ErrUnbuiltProfile) || !strings.Contains(err.Error(), item) {
+			t.Errorf("%s: %v, want it to name %s", p, err, item)
 		}
+	}
+	if err := CheckProfile("bed"); strings.Contains(err.Error(), "M2-BOOTSTRAP-LAYER") {
+		t.Errorf("bed is composed by M2-APP-CONTROLLER, not the bootstrap layer: %v", err)
 	}
 	if err := CheckProfile("nope"); err == nil || errors.Is(err, ErrUnbuiltProfile) {
 		t.Errorf("unknown profile: %v", err)
