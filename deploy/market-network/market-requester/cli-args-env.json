@@ -58,6 +58,15 @@
       "env": "RESULT_FILE",
       "default": "./market-requester-result.json"
     },
+    "guest-poweroff-after-sec": {
+      "type": "number",
+      "description": "The guest's user_data has it power itself off this long after cloud-init's runcmd, from inside (systemd-run --on-active, then systemctl poweroff)",
+      "env": "GUEST_POWEROFF_AFTER_SEC"
+    },
+    "hold-until-terminated": {
+      "type": "boolean",
+      "description": "After the ssh checks, hold the contract until the bidder reports vm.terminated (bounded by vm-ready-timeout-sec); the run passes only when vm.terminated arrived and no vm.delete was sent"
+    },
     "control-dir": {
       "type": "string",
       "description": "Hold the contract after onNetwork: write onnetwork.json (and terminated.json when the bidder reports vm.terminated) here, and send vm.delete only once a file named release appears, even after a vm.terminated",

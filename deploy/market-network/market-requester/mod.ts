@@ -77,13 +77,26 @@ if (guestJournalToConsole) {
 }
 if (guestBootcmd.length > 0) guestBase.bootcmd = guestBootcmd;
 const guestDiagnoseUrl = options.guestDiagnoseUrl as string | undefined;
+const guestRuncmd: string[][] = [];
 if (guestDiagnoseUrl) {
-  guestBase.runcmd = [[
+  guestRuncmd.push([
     "sh",
     "-c",
     `systemctl show-environment; cat /root/.curlrc; curl -v --max-time 10 ${guestDiagnoseUrl} 2>&1 | tail -n 25`,
-  ]];
+  ]);
 }
+const guestPoweroffAfterSec = options.guestPoweroffAfterSec as number | undefined;
+if (guestPoweroffAfterSec !== undefined) {
+  guestRuncmd.push([
+    "systemd-run",
+    `--on-active=${Math.max(1, Math.round(guestPoweroffAfterSec))}`,
+    "--unit=market-requester-poweroff",
+    "systemctl",
+    "poweroff",
+  ]);
+}
+if (guestRuncmd.length > 0) guestBase.runcmd = guestRuncmd;
+const holdUntilTerminated = options.holdUntilTerminated === true;
 
 const guestCloudConfigFile = options.guestCloudConfigFile as string | undefined;
 if (guestCloudConfigFile) {
@@ -167,7 +180,7 @@ const verifyingSsh = {
     verdict.mismatchRefused = !refusedReady && hostKeyMismatchSeen;
     verdict.mismatchRefusedAt = new Date().toISOString();
     logger.info("market_requester_mismatch_probe", { refused: verdict.mismatchRefused, ready: refusedReady });
-    return false;
+    return holdUntilTerminated;
   },
   runSession: () => Promise.reject(new Error("the market network requester never opens a session")),
 };
@@ -275,18 +288,29 @@ try {
     vmReadyTimeoutSec,
     sshProvider: verifyingSsh,
     userData,
+    ...(holdUntilTerminated ? { hold: true, holdAbort: AbortSignal.timeout(vmReadyTimeoutSec * 1000) } : {}),
   });
   verdict.winnerDid = result.winnerDid;
   verdict.bids = result.bids;
   verdict.receiptOk = result.receiptOk;
   verdict.receiptUri = result.receiptUri;
+  if (result.terminated) {
+    verdict.terminated = { ...result.terminated, receivedAt: new Date().toISOString() };
+    logger.info("market_requester_terminated", { ...verdict.terminated });
+  }
   if (result.error) verdict.reason = `contract error: ${result.error}`;
   else if (!result.receiptOk) verdict.reason = "no valid receipt";
   else if (!verdict.onNetwork) verdict.reason = `the guest did not report onNetwork within ${vmReadyTimeoutSec}s`;
   else if (!verdict.hostKeyFingerprints) verdict.reason = "the guest's vm.hostKeys never arrived";
   else if (!verdict.sshVerified) verdict.reason = "ssh with StrictHostKeyChecking=yes against the reported key failed";
   else if (!verdict.mismatchRefused) verdict.reason = "ssh with a different known host key was not refused";
-  else if (verdict.vmDeleteOk !== true) verdict.reason = `vm.delete was not accepted (status ${verdict.vmDeleteStatus})`;
+  else if (holdUntilTerminated && !verdict.terminated) verdict.reason = "the hold ended with no vm.terminated from the bidder";
+  else if (holdUntilTerminated && verdict.vmDeleteStatus !== undefined) {
+    verdict.reason = `a vm.delete was sent (status ${verdict.vmDeleteStatus}) after vm.terminated`;
+  } else if (holdUntilTerminated) {
+    verdict.ok = true;
+    verdict.reason = `the guest powered itself off; the bidder reported vm.terminated (${verdict.terminated?.reason}) and no vm.delete was sent`;
+  } else if (verdict.vmDeleteOk !== true) verdict.reason = `vm.delete was not accepted (status ${verdict.vmDeleteStatus})`;
   else {
     verdict.ok = true;
     verdict.reason = "guest reported onNetwork and host keys, ssh verified them, a mismatch was refused, and the contract was released";
