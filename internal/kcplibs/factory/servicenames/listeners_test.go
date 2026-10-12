@@ -80,6 +80,28 @@ func TestBoundListenersPreferTheReportAndFallBackToThePortFile(t *testing.T) {
 	}
 }
 
+func TestALoopbackListenerIsAdvertisedUnderTheServicesLocalhostName(t *testing.T) {
+	reported := []listeners.Listener{
+		{Name: "tcp", Kind: listeners.KindTCP, Address: "127.0.0.1:35051"},
+		{Name: "relay", Kind: listeners.KindRelay, Address: "https://did-key-x.relay.localhost"},
+	}
+	got := BoundListeners(`["--hostname","relay.localhost","--port","0"]`, "", 35051, reported)
+	want := []listeners.Listener{
+		{Name: "tcp", Kind: listeners.KindTCP, Address: "relay.localhost:35051"},
+		{Name: "relay", Kind: listeners.KindRelay, Address: "https://did-key-x.relay.localhost"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("BoundListeners = %+v, want %+v: a service that checks Host is dialled by its own .localhost name", got, want)
+	}
+	if !reflect.DeepEqual(reported[0].Address, "127.0.0.1:35051") {
+		t.Fatalf("BoundListeners rewrote the caller's report in place: %+v", reported)
+	}
+	got = BoundListeners("", `{"HOSTNAME":"relay.default.relay.svc.kcp.local"}`, 42517, reported[:1])
+	if !reflect.DeepEqual(got, reported[:1]) {
+		t.Fatalf("BoundListeners = %+v, a name that is not a .localhost name does not resolve to loopback and is not advertised", got)
+	}
+}
+
 func TestFixedPortsNamesEveryPortAPodWouldBind(t *testing.T) {
 	cases := []struct {
 		env  map[string]string

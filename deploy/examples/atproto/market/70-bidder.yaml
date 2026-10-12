@@ -77,6 +77,8 @@ spec:
     childEnv.REPO_PRIVATE_KEY_HEX_PATH = "{{.StateDir}}/bob-{{.Bidder.Name}}/repo-private-key.hex";
     childEnv.OAUTH_SESSION_PATH = "{{.StateDir}}/bob-{{.Bidder.Name}}/oauth-session.json";
     childEnv.PORT_FILE = `${runDir}/port-bound-to`;
+    childEnv.LISTENERS_FILE = `${runDir}/listeners.json`;
+    childEnv.STATUS_FILE = `${runDir}/status.json`;
     childEnv.DENO_DIR = "{{.DenoDir}}";
 
     // The bidder registers with the PLC directory and announces itself to the

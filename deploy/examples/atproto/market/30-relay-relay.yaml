@@ -35,6 +35,7 @@ spec:
       HOME: Deno.env.get("HOME") ?? "",
       ...serviceEnv,
       PORT_FILE: `${runDir}/port-bound-to`,
+      LISTENERS_FILE: `${runDir}/listeners.json`,
       DENO_DIR: "{{.DenoDir}}",
     };
 

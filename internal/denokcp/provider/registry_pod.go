@@ -56,6 +56,11 @@ func podStatusPatch(st v1alpha1.DenoPodStatus) ([]byte, error) {
 	} else {
 		status["outputs"] = nil
 	}
+	if st.Listeners != nil {
+		status["listeners"] = st.Listeners
+	} else {
+		status["listeners"] = nil
+	}
 	if st.Conditions != nil {
 		status["conditions"] = st.Conditions
 	} else {
