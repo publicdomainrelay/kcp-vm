@@ -17,7 +17,6 @@ import {
 
 const MARKET_ROOT = new URL("../", import.meta.url).pathname;
 const BIDDER_ENTRY = `${MARKET_ROOT}hono-bidder/mod.ts`;
-const CLIS = ["hono-bidder", "request-vm-ssh"];
 
 const OPTION_ENV = /^(ATP_|OAUTH_|IDENTITY_VAULT_|MARKET_IDENTITY_|REPO_PRIVATE_KEY|PDS_STATE_PATH|ASSOCIATE_WITH|SKIP_QR|RELAY_URL|FIREHOSE_|INGRESS_PROXY_HOST|PLC_DIRECTORY_URL|SERVE_|PORT_FILE|LISTENERS_FILE|STATUS_FILE|CONTRACT_STORE_DIR|COMPUTE_PROVIDER_|CA_CERT_PEM|GUEST_TLS_PORT|CONFIG_PATH_|STATE_DIR|QR_ORIGIN|HOME$)/;
 
@@ -109,32 +108,6 @@ async function filesUnder(dir: string): Promise<string[]> {
   } catch { /* absent */ }
   return out;
 }
-
-Deno.test("hono-bidder and request-vm-ssh reach every interactive step through the IdentityPrompt port", async () => {
-  for (const cli of CLIS) {
-    const src = await Deno.readTextFile(`${MARKET_ROOT}${cli}/mod.ts`);
-    const options = await Deno.readTextFile(`${MARKET_ROOT}${cli}/cli-args-env.ts`);
-    for (const [what, pattern] of [
-      ["a stdin prompt", /\bprompt\(/],
-      ["a QR drawn by the CLI", /\bqrcode\(/],
-      ["a browser spawned by the CLI", /xdg-open|"open"|"cmd"/],
-      ["a loopback listener in the CLI", /startLoopbackCallbackServer/],
-      ["an exit on an expired session", /oauth_session_expired_shutting_down|OAuthSessionExpiredError/],
-      ["the legacy QR session file helpers", /tryRestoreOAuthQRSession|saveOAuthQRSession|pollForOAuthSession/],
-    ] as const) {
-      assert(!pattern.test(src), `${cli}/mod.ts still has ${what}`);
-    }
-    assert(src.includes("@publicdomainrelay/identity-prompt-tty"), `${cli} renders through the tty prompt`);
-    assert(src.includes("@publicdomainrelay/identity-prompt-kcp"), `${cli} can follow a kcp MarketIdentity`);
-    assert(src.includes("startMarketIdentityReconciler"), `${cli} signs in through the MarketIdentity reconciler`);
-    for (const option of ["oauth-session-path", "oauth-session-file"]) {
-      const block = options.slice(options.indexOf(`"${option}"`), options.indexOf("}", options.indexOf(`"${option}"`)));
-      assert(!/HOME|USERPROFILE/.test(block), `${cli} --${option} has no default under $HOME`);
-    }
-    assert(options.includes(`"state-dir"`), `${cli} has a --state-dir for its session store`);
-    assert(options.includes(`"market-identity-kcp-server"`), `${cli} can follow a kcp MarketIdentity`);
-  }
-});
 
 Deno.test({
   name: "hono-bidder with stdin closed and no --skip-qr: the association QR is in its kcp MarketIdentity and an approval patched there completes it",

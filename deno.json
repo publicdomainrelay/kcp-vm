@@ -141,6 +141,7 @@
     "./socialweb-computer-k8s/lib/hono-factory-socialweb-computer-oauth",
     "./ts/atproto-market/lib/hono-factory-did-plc-directory",
     "./ts/atproto-market/lib/hono-factory-market-atproto",
+    "./ts/atproto-market/lib/hono-factory-market-bidder-app",
     "./ts/atproto-market/lib/hono-factory-secrets-oidc",
     "./ts/atproto-relay/lib/hono-factory-atproto-relay-xrpc",
     "./ts/did-key-ingress-proxy/lib/hono-factory-did-key-ingress-proxy-subscriber-xrpc",
