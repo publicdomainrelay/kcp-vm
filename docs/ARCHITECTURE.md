@@ -6528,6 +6528,43 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   onNetwork after 19.5 s, released 08:14:01.28Z (vm.delete 200), no VM unit, runtime work dir or
   guest work dir left 4 s after release; teardown clean at 08:14:12Z.
 
+- **Each application is one root object in its own kcp; a market network is a MarketNetwork that
+  composes child applications, each with its own kcp (plan 0006 M2-APP-CONTROLLER, 2026-10-12).**
+  Kinds `MarketNetwork`, `MarketBidder`, `MarketRequester` and `Gateway` (socialweb.computer/v1alpha1,
+  export `applications`, bound in `root` by the `applications` set every core applies). The network
+  value `MarketNetworkValue` mirrors the TypeScript `MarketNetwork` of `market-network-common` field for
+  field and is generated into the socialweb-computer-k8s API package. `internal/appctl` runs in every
+  dev core. A `MarketBidder` renders into its own OpenBaoServer `bidder` (root) and, per profile, the
+  bidder DenoPod in `root:app` from `deploy/apps/market-bidder/<profile>.values.yaml` through the service
+  template; a phase named `<component>@<profile>` belongs to one profile and a DenoPod the profile omits
+  is deleted. The bidder's core keeps the PDS account password in that vault, signs up on the PDS its
+  root object names, and gives the DenoPod a token that can read only OpenBaoServer objects of its own
+  kcp. `MarketRequester` and `Gateway` are accepted root objects with no components yet (0008
+  M4-RUN-REQUEST, 0006 M3-SERVE-GATEWAY-KCP and 0008 M3-DOOR-DENOPOD add them). A `MarketNetwork` runs
+  its OpenBao as a HostProcess (in-memory storage, one unseal key in a mode 600 file; the core's deno
+  runtime waits for it), the `market-network` set's services as DenoPods, and one child per
+  `spec.apps[]`: the child's bootstrap layer (quick shape: kine, one kcp slot on port 0, the front, its
+  core) is HostProcess objects in `root:dev:<child>` of the network's kcp, placed by the network's
+  supervisor, and the child's core holds a ServiceAccount token valid only in that workspace. The
+  network applies the child's root object with the network value copied onto it and reads back only the
+  child's root status; that copy is the only discovery between applications. The value names loopback
+  addresses read back from the services' status (`https://127.0.0.1:<port>`, `relay.localhost:<port>`)
+  and a CA bundle (the network PKI root and the guest TLS CA), because a child's DNS shim resolves only
+  its own application's names. For the same reason the bidder reads its own records through its own
+  repo session rather than through the PDS name in its DID document. Every hono-bidder and
+  request-vm-ssh option is mapped in `deploy/apps/option-map.yaml` to a root-object field, the network
+  value, a profile, the state dir, a listener report, the `options` passthrough or a legacy-transport
+  removal; `spec.options` accepts only options mapped to the passthrough. `dev up --profile
+  market-network [--bidders N] [--with-gateway] --app-values <file>` brings it up; `dev down` deletes the
+  MarketNetwork first (children, then services, then the OpenBao). Not built here: a QR DenoPod in the
+  network (the network value's `qrOrigin` is empty; pdsAccount bidders need none), MarketIdentity
+  objects as children, a bidder-owned PDS (bidders sign in to the network's bob PDS). Reading on hat-8
+  (`accept.sh`, 2 bidders and a gateway, guests as VM units of test-0001's user manager): `dev up`
+  09:04:30Z to Ready 09:06:01Z (91 s, the network, its services and three child kcps); one-bidder bring-up
+  85 s; network RSS steady 4.45 GB with three children; the requester rented a guest through the RFP
+  flow 09:06:17Z, 2 bids, onNetwork after 19.7 s, ssh host key verified, vm.delete 200 at 09:06:37Z;
+  `dev down` 09:06:40Z to 09:07:00Z; teardown clean (no process, VM unit, port or work dir left).
+
 ## 16. Vocabulary
 
 | | |
