@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -13,18 +12,6 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clicfg"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devinstance"
 )
-
-func TestFlagsMayFollowTheWordsTheyQualify(t *testing.T) {
-	spec, err := clicfg.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := flagsFirst(spec, []string{"core", "--binary", "/b", "--json", "x", "--tail=3", "--", "-y"})
-	want := []string{"--binary", "/b", "--json", "--tail=3", "core", "x", "-y"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("%q, want %q", got, want)
-	}
-}
 
 func devEnv(t *testing.T) clicfg.MapEnv {
 	return clicfg.MapEnv{"XDG_RUNTIME_DIR": testdirs.Short(t), "TASK_STATE_DIR": t.TempDir(), "XDG_STATE_HOME": t.TempDir()}

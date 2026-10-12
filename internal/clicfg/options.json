@@ -632,6 +632,35 @@
       "type": "string",
       "description": "units roll cluster: how long a swap waits for no non-kube-system pod Running on a market node before it proceeds anyway (Go duration)",
       "default": "30m"
+    },
+    "network": {
+      "type": "string",
+      "description": "run request: the market network instance (dev up --profile market-network) whose MarketNetwork hosts this invocation as a child application; unset, the invocation is a standalone requester instance under <state-dir>/requests"
+    },
+    "name": {
+      "type": "string",
+      "description": "run request: the invocation's name, a DNS label (default req-<UTC time>); release and resume take it as their argument"
+    },
+    "secrets": {
+      "type": "string",
+      "description": "run request: a secrets bundle file ([{\"path\": \"/abs/path\", \"value\": ...}]); it is written only into the invocation's own OpenBao, the guest fetches it at boot and it never enters a kcp object"
+    },
+    "hold": {
+      "type": "boolean",
+      "description": "run request, resume: keep the contract held when this process ends; its kcp stops and run request release|resume <name> starts it again from its state dir"
+    },
+    "exec": {
+      "type": "string",
+      "description": "run request, resume: run this program over ssh on the guest (StrictHostKeyChecking=yes against the host keys the guest reported) instead of an interactive session"
+    },
+    "skip-ssh": {
+      "type": "boolean",
+      "description": "run request, resume: do not open an ssh session once the guest is on the network"
+    },
+    "contract-timeout": {
+      "type": "string",
+      "description": "run request: how long the CLI waits for the contract to reach the guest's onNetwork and host keys, and for a release (Go duration)",
+      "default": "30m"
     }
   }
 }

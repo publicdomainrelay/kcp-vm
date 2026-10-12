@@ -112,6 +112,18 @@ func (v Values) Has(name string) bool {
 
 func (v Values) Source(name string) string { return v.source[name] }
 
+func (v Values) With(name string, val any) Values {
+	out := Values{vals: map[string]any{}, source: map[string]string{}}
+	for k, x := range v.vals {
+		out.vals[k] = x
+	}
+	for k, x := range v.source {
+		out.source[k] = x
+	}
+	out.vals[name], out.source[name] = val, SourceFlag
+	return out
+}
+
 func (v Values) String(name string) string {
 	switch x := v.vals[name].(type) {
 	case string:

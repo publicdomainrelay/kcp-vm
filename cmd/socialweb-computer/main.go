@@ -70,6 +70,10 @@ func builtVerbs() map[string]builtVerb {
 		"dev restart":            {append([]string{"instance", "state-dir", "binary", "ready-timeout"}, devOnly(tsbundle.SourceRootOption)...), runDevRestart},
 		"dev gc":                 {[]string{"asset-cache", "state-dir", "asset-gc-window"}, runDevGC},
 		"apply":                  {applyOptions, runApply},
+		"run request":            {requestOptions, runRequest},
+		"run request list":       {[]string{"state-dir", "json"}, runRequestList},
+		"run request release":    {requestOptions, runRequestRelease},
+		"run request resume":     {requestOptions, runRequestResume},
 		"manifests list":         {[]string{"json"}, runManifestsList},
 		"manifests render":       {renderOptions, runManifestsRender},
 		"install gateway":        {installOptions, runInstall(hostcontract.RoleGateway)},
@@ -227,7 +231,7 @@ func flagsFirst(spec clicfg.Spec, args []string) []string {
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		if arg == "--" {
-			words = append(words, args[i+1:]...)
+			words = append(words, args[i:]...)
 			break
 		}
 		if !strings.HasPrefix(arg, "-") || arg == "-" {

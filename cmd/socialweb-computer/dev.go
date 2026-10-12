@@ -293,6 +293,7 @@ type upReport struct {
 	Foreground      bool                              `json:"foreground,omitempty"`
 	Executables     map[string]devinstance.Executable `json:"executables"`
 	Network         *v1alpha1.MarketNetwork           `json:"network,omitempty"`
+	layout          devinstance.Layout
 }
 
 func runDevUp(ctx context.Context, a *app, vals clicfg.Values, rest []string) int {
@@ -329,17 +330,17 @@ func (a *app) parentOf(ctx context.Context, vals clicfg.Values, child devinstanc
 	return devinstance.Parent{ID: pl.ID, Socket: pl.Socket, Kubeconfig: prec.AdminKubeconfig, Workspace: devinstance.ChildWorkspace(child.ID)}, h, nil
 }
 
-func devUp(ctx context.Context, a *app, vals clicfg.Values, host bool) int {
+func bringUp(ctx context.Context, a *app, vals clicfg.Values, host bool) (upReport, int) {
 	started := time.Now().UTC()
 	verb := "dev up"
 	if host {
 		verb = "dev host"
 	}
 	if err := devinstance.RefuseRoot(os.Geteuid()); err != nil {
-		return a.fail(exitRefused, "%s: %v", verb, err)
+		return upReport{}, a.fail(exitRefused, "%s: %v", verb, err)
 	}
 	if b := vals.String(backendOpt); b != "" && b != string(hostsvc.BackendProc) {
-		return a.fail(exitRefused, "%s: host-backend=%s: dev places every unit under devsup (proc); systemd-user is for install", verb, b)
+		return upReport{}, a.fail(exitRefused, "%s: host-backend=%s: dev places every unit under devsup (proc); systemd-user is for install", verb, b)
 	}
 	profile, standInsFile := vals.String("profile"), vals.String("stand-ins")
 	parent := vals.String("parent")
@@ -347,81 +348,81 @@ func devUp(ctx context.Context, a *app, vals clicfg.Values, host bool) int {
 		profile = bootstrap.ProfileQuick
 	}
 	if parent != "" && standInsFile != "" {
-		return a.fail(exitRefused, "dev up: --parent places the bootstrap layer through the parent's kcp; stand-ins have no kcp")
+		return upReport{}, a.fail(exitRefused, "dev up: --parent places the bootstrap layer through the parent's kcp; stand-ins have no kcp")
 	}
 	var standIns []devinstance.StandIn
 	switch {
 	case profile != "" && standInsFile != "":
-		return a.fail(exitRefused, "dev up: --profile %s and --stand-ins name two bootstrap layers; pass one", profile)
+		return upReport{}, a.fail(exitRefused, "dev up: --profile %s and --stand-ins name two bootstrap layers; pass one", profile)
 	case profile == "" && standInsFile == "":
-		return a.fail(exitRefused, "dev up: name a profile (--profile; built: quick, prodlike) or the units to place (--stand-ins)")
+		return upReport{}, a.fail(exitRefused, "dev up: name a profile (--profile; built: quick, prodlike) or the units to place (--stand-ins)")
 	case standInsFile != "":
 		s, err := bootstrap.ReadStandIns(standInsFile)
 		if err != nil {
-			return a.fail(exitRefused, "dev up: %v", err)
+			return upReport{}, a.fail(exitRefused, "dev up: %v", err)
 		}
 		standIns, profile = s, bootstrap.ProfileStandIns
 	default:
 		if err := bootstrap.CheckProfile(profile); err != nil {
-			return a.fail(exitRefused, "dev up: %v", err)
+			return upReport{}, a.fail(exitRefused, "dev up: %v", err)
 		}
 	}
 	composes := profile == bootstrap.ProfileMarketNetwork
 	if composes && (host || parent != "") {
-		return a.fail(exitRefused, "%s: --profile %s is an application of its own whose children get their own kcp; it neither nests under a parent nor is a dev host", verb, profile)
+		return upReport{}, a.fail(exitRefused, "%s: --profile %s is an application of its own whose children get their own kcp; it neither nests under a parent nor is a dev host", verb, profile)
 	}
 	var networkOverlay []byte
 	if f := vals.String("app-values"); f != "" {
 		if !composes {
-			return a.fail(exitRefused, "dev up: app-values names values for the children of --profile %s", bootstrap.ProfileMarketNetwork)
+			return upReport{}, a.fail(exitRefused, "dev up: app-values names values for the children of --profile %s", bootstrap.ProfileMarketNetwork)
 		}
 		b, err := os.ReadFile(f)
 		if err != nil {
-			return a.fail(exitRefused, "dev up: app-values: %v", err)
+			return upReport{}, a.fail(exitRefused, "dev up: app-values: %v", err)
 		}
 		networkOverlay = b
 	}
 	networkTimeout, err := time.ParseDuration(vals.String("network-timeout"))
 	if err != nil {
-		return a.fail(exitRefused, "dev up: network-timeout: %v", err)
+		return upReport{}, a.fail(exitRefused, "dev up: network-timeout: %v", err)
 	}
 	readyTimeout, err := time.ParseDuration(vals.String("ready-timeout"))
 	if err != nil {
-		return a.fail(exitRefused, "dev up: ready-timeout: %v", err)
+		return upReport{}, a.fail(exitRefused, "dev up: ready-timeout: %v", err)
 	}
 	var kcpExe, kineExe devinstance.Executable
 	pgExe, err := a.postgresRoot(vals, profile)
 	if err != nil {
-		return a.fail(exitRefused, "dev up: %v", err)
+		return upReport{}, a.fail(exitRefused, "dev up: %v", err)
 	}
 	if standIns == nil {
 		if kcpExe, err = a.devExe(ctx, vals, "kcp", "kcp-path"); err != nil {
-			return a.fail(exitRefused, "dev up: %v", err)
+			return upReport{}, a.fail(exitRefused, "dev up: %v", err)
 		}
 		if want, err := versions.Get("kcp"); err == nil && want.Version != "" && !strings.Contains(kcpExe.Version, want.Version) {
-			return a.fail(exitRefused, "dev up: kcp-path %s reports %q; versions.json pins %s", kcpExe.Path, kcpExe.Version, want.Version)
+			return upReport{}, a.fail(exitRefused, "dev up: kcp-path %s reports %q; versions.json pins %s", kcpExe.Path, kcpExe.Version, want.Version)
 		}
 		if kineExe, err = a.devExe(ctx, vals, "kine", "kine-path"); err != nil {
-			return a.fail(exitRefused, "dev up: %v", err)
+			return upReport{}, a.fail(exitRefused, "dev up: %v", err)
 		}
 	}
 	denoExe, err := a.denoExe(ctx, vals)
 	if err != nil {
-		return a.fail(exitRefused, "dev up: %v", err)
+		return upReport{}, a.fail(exitRefused, "dev up: %v", err)
 	}
 	sourceRoot, err := closureSourceRoot(vals)
 	if err != nil {
-		return a.fail(exitRefused, "dev up: %v", err)
+		return upReport{}, a.fail(exitRefused, "dev up: %v", err)
 	}
 	var baoExe devinstance.Executable
 	if standIns == nil && (assets.Release() || vals.String("bao-path") != "" || composes) {
 		if baoExe, err = a.devExe(ctx, vals, "bao", "bao-path"); err != nil {
-			return a.fail(exitRefused, "dev up: %v", err)
+			return upReport{}, a.fail(exitRefused, "dev up: %v", err)
 		}
 	}
 	exe, err := selfExe()
 	if err != nil {
-		return a.fail(exitFailed, "dev up: %v", err)
+		return upReport{}, a.fail(exitFailed, "dev up: %v", err)
 	}
 	name := vals.String("instance")
 	if host && name == "" {
@@ -429,12 +430,12 @@ func devUp(ctx context.Context, a *app, vals clicfg.Values, host bool) int {
 	}
 	l, err := a.layoutOf(name, vals)
 	if err != nil {
-		return a.fail(exitRefused, "%s: %v", verb, err)
+		return upReport{}, a.fail(exitRefused, "%s: %v", verb, err)
 	}
 	var networkSpec v1alpha1.MarketNetworkSpec
 	if composes {
 		if networkSpec, err = appctl.NetworkSpec(l.ID, vals.Int("bidders"), vals.Bool("with-gateway"), networkOverlay); err != nil {
-			return a.fail(exitRefused, "dev up: %v", err)
+			return upReport{}, a.fail(exitRefused, "dev up: %v", err)
 		}
 	}
 	var par *devinstance.Parent
@@ -442,19 +443,19 @@ func devUp(ctx context.Context, a *app, vals clicfg.Values, host bool) int {
 	if parent != "" {
 		p, h, err := a.parentOf(ctx, vals, l)
 		if err != nil {
-			return a.fail(exitRefused, "dev up: --parent %s: %v", parent, err)
+			return upReport{}, a.fail(exitRefused, "dev up: --parent %s: %v", parent, err)
 		}
 		par, parentHello = &p, h
 	}
 	for _, d := range []string{l.StateDir, l.RuntimeDir, l.Logs} {
 		if err := os.MkdirAll(d, 0o700); err != nil {
-			return a.fail(exitFailed, "dev up: %v", err)
+			return upReport{}, a.fail(exitFailed, "dev up: %v", err)
 		}
 		os.Chmod(d, 0o700)
 	}
 	lock, err := lockFile(l.Lock, 30*time.Second)
 	if err != nil {
-		return a.fail(exitFailed, "dev up: %v", err)
+		return upReport{}, a.fail(exitFailed, "dev up: %v", err)
 	}
 	fg := vals.Bool("fg")
 	dieWith := vals.Int("die-with")
@@ -466,12 +467,12 @@ func devUp(ctx context.Context, a *app, vals clicfg.Values, host bool) int {
 	if par != nil {
 		if err := devinstance.EnsureChildWorkspace(ctx, par.Kubeconfig, l.ID, devinstance.ChildWorkspaceReady); err != nil {
 			lock.Close()
-			return a.fail(exitFailed, "dev up: %v", err)
+			return upReport{}, a.fail(exitFailed, "dev up: %v", err)
 		}
 		r, err := devinstance.OpenRemote(ctx, *par, a.log)
 		if err != nil {
 			lock.Close()
-			return a.fail(exitFailed, "dev up: %v", err)
+			return upReport{}, a.fail(exitFailed, "dev up: %v", err)
 		}
 		m = r
 		sup = devinstance.Devsup{Instance: parentHello.Instance, PID: parentHello.PID, StartTicks: parentHello.StartTicks,
@@ -481,11 +482,11 @@ func devUp(ctx context.Context, a *app, vals clicfg.Values, host bool) int {
 		c, s, err := startOrAdoptDevsup(ctx, a, l, exe, dieWith, fg)
 		if errors.Is(err, errDevsupDetached) {
 			lock.Close()
-			return a.fail(exitRefused, "%s: %v", verb, err)
+			return upReport{}, a.fail(exitRefused, "%s: %v", verb, err)
 		}
 		if err != nil {
 			lock.Close()
-			return a.fail(exitFailed, "%s: %v", verb, err)
+			return upReport{}, a.fail(exitFailed, "%s: %v", verb, err)
 		}
 		m, sup = c, s
 	}
@@ -511,7 +512,7 @@ func devUp(ctx context.Context, a *app, vals clicfg.Values, host bool) int {
 		tokenFile := vals.String("openbao-token-file")
 		if !filepath.IsAbs(tokenFile) {
 			lock.Close()
-			return a.fail(exitRefused, "dev up: openbao-addr %s needs openbao-token-file as an absolute path, got %q", addr, tokenFile)
+			return upReport{}, a.fail(exitRefused, "dev up: openbao-addr %s needs openbao-token-file as an absolute path, got %q", addr, tokenFile)
 		}
 		rec.OpenBao = &devinstance.OpenBao{Address: addr, TokenFile: tokenFile}
 	}
@@ -520,14 +521,14 @@ func devUp(ctx context.Context, a *app, vals clicfg.Values, host bool) int {
 		vmExes, err := a.devVMExecutables(vals)
 		if err != nil {
 			lock.Close()
-			return a.fail(exitRefused, "%s: %v", verb, err)
+			return upReport{}, a.fail(exitRefused, "%s: %v", verb, err)
 		}
 		for name, e := range vmExes {
 			rec.Executables[name] = e
 		}
 		if rec.VM, err = a.devVM(vals, l); err != nil {
 			lock.Close()
-			return a.fail(exitRefused, "%s: %v", verb, err)
+			return upReport{}, a.fail(exitRefused, "%s: %v", verb, err)
 		}
 	}
 	bcfg := bootstrap.Config{Layout: l, KcpPath: kcpExe.Path, KinePath: kineExe.Path, PostgresRoot: pgExe.Path, Exe: exe,
@@ -535,35 +536,35 @@ func devUp(ctx context.Context, a *app, vals clicfg.Values, host bool) int {
 	if err := bootstrap.Ensure(ctx, m, bcfg, &rec); err != nil {
 		devinstance.WriteJSON(l.Record, rec)
 		lock.Close()
-		return a.fail(exitFailed, "dev up: %v", err)
+		return upReport{}, a.fail(exitFailed, "dev up: %v", err)
 	}
 	if err := devinstance.WriteJSON(l.Record, rec); err != nil {
 		lock.Close()
-		return a.fail(exitFailed, "dev up: %v", err)
+		return upReport{}, a.fail(exitFailed, "dev up: %v", err)
 	}
 	lock.Close()
 	cspec, err := coreSpec(&rec, exe, readyTimeout)
 	if err != nil {
-		return a.fail(exitFailed, "dev up: %v", err)
+		return upReport{}, a.fail(exitFailed, "dev up: %v", err)
 	}
 	cst, err := m.Start(ctx, cspec)
 	if err != nil {
-		return a.fail(exitFailed, "dev up: placing the core: %v", err)
+		return upReport{}, a.fail(exitFailed, "dev up: placing the core: %v", err)
 	}
 	core, err := waitCore(ctx, l, cst.InvocationID, readyTimeout)
 	if err != nil {
-		return a.fail(exitFailed, "dev up: %v", err)
+		return upReport{}, a.fail(exitFailed, "dev up: %v", err)
 	}
 	devinstance.ReadJSON(l.Record, &rec)
 	if host || composes {
 		if err := devinstance.WaitHost(ctx, rec.AdminKubeconfig, readyTimeout); err != nil {
-			return a.fail(exitFailed, "%s: %v", verb, err)
+			return upReport{}, a.fail(exitFailed, "%s: %v", verb, err)
 		}
 	}
 	var network *v1alpha1.MarketNetwork
 	if composes {
 		if err := appctl.ApplyNetwork(ctx, rec.AdminKubeconfig, networkSpec, readyTimeout); err != nil {
-			return a.fail(exitFailed, "dev up: %v", err)
+			return upReport{}, a.fail(exitFailed, "dev up: %v", err)
 		}
 		a.log.Info("the MarketNetwork root object is applied; its core composes the children", "bidders", vals.Int("bidders"),
 			"gateway", vals.Bool("with-gateway"), "apps", len(networkSpec.Apps))
@@ -577,12 +578,12 @@ func devUp(ctx context.Context, a *app, vals clicfg.Values, host bool) int {
 		network = &o
 		if err != nil {
 			a.printJSON(network)
-			return a.fail(exitFailed, "dev up: %v", err)
+			return upReport{}, a.fail(exitFailed, "dev up: %v", err)
 		}
 	}
 	ex := devinstance.Exports(rec, a.instanceLeases(l.ID))
 	if err := writeEnvFiles(l, ex); err != nil {
-		return a.fail(exitFailed, "dev up: %v", err)
+		return upReport{}, a.fail(exitFailed, "dev up: %v", err)
 	}
 	marker := ""
 	if rec.Worktree != "" {
@@ -593,19 +594,27 @@ func devUp(ctx context.Context, a *app, vals clicfg.Values, host bool) int {
 		}
 	}
 	ready := time.Now().UTC()
-	a.printJSON(upReport{Instance: l.ID, Profile: rec.Profile, StateDir: l.StateDir, Socket: l.Socket,
+	return upReport{Instance: l.ID, Profile: rec.Profile, StateDir: l.StateDir, Socket: l.Socket,
 		AdminKubeconfig: rec.AdminKubeconfig, KcpURL: rec.KcpURL, KineURL: rec.KineURL, Devsup: sup, Units: rec.Units,
 		Core: core, StartedAt: started, ReadyAt: ready, Seconds: ready.Sub(started).Seconds(),
 		Env: exportMap(ex), EnvFile: filepath.Join(l.StateDir, devinstance.EnvFile), Marker: marker, Foreground: fg,
-		Executables: rec.Executables, Network: network})
-	if !fg {
+		Executables: rec.Executables, Network: network, layout: l}, exitOK
+}
+
+func devUp(ctx context.Context, a *app, vals clicfg.Values, host bool) int {
+	r, code := bringUp(ctx, a, vals, host)
+	if code != exitOK {
+		return code
+	}
+	a.printJSON(r)
+	if !r.Foreground {
 		return exitOK
 	}
-	a.log.Info("dev up --fg: the instance lives as long as this process; Ctrl-C is dev down", "instance", l.ID)
+	a.log.Info("dev up --fg: the instance lives as long as this process; Ctrl-C is dev down", "instance", r.layout.ID)
 	<-ctx.Done()
-	r := downInstance(context.Background(), a, l, vals.Bool("keep-state"))
-	a.printJSON(r)
-	if len(r.Remaining) > 0 {
+	d := downInstance(context.Background(), a, r.layout, vals.Bool("keep-state"))
+	a.printJSON(d)
+	if len(d.Remaining) > 0 {
 		return exitFailed
 	}
 	return exitOK
@@ -755,6 +764,9 @@ func downInstance(ctx context.Context, a *app, l devinstance.Layout, keepState b
 	}
 	if pids := devsup.KillInstance(l.ID); len(pids) > 0 {
 		r.LeftoverKilled = pids
+	}
+	if pids := appctl.KillUnder(l.StateDir, 5*time.Second); len(pids) > 0 {
+		r.LeftoverKilled = append(r.LeftoverKilled, pids...)
 	}
 	time.Sleep(100 * time.Millisecond)
 	if left := devsup.InstanceProcesses(l.ID); len(left) > 0 {
