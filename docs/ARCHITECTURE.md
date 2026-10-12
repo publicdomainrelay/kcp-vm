@@ -723,7 +723,8 @@ swap, and any caddy config we render pins `install_trust false`.
 
 ### compute-provider-kcp: a ComputeVM per guest, reconciled by a Go controller (plan 0007 M1-DECIDE)
 
-NOT BUILT (plan 0007 M1-API, M2-VM-RUNTIME, M2-CONTROLLER, M3-TS-PROVIDER are todo). This is the decision
+PARTLY BUILT: the ComputeVM API (M1-API) and the TypeScript provider (M3-TS-PROVIDER, hono-compute-provider
+`lib/compute-provider-kcp`) exist; M2-VM-RUNTIME and M2-CONTROLLER are todo. This is the decision
 record of plan 0007 M1-DECIDE, read through section 0; the host mechanics it relies on are the subsection
 above. `ud:N` = line N of `docs/research/2026-10-11-vm-lifecycle/user-decisions.md`; `lp:N` = line N of
 `linux-proofs.md` in the same dir. Code citations are at socialweb-computer-kcp d439c1f, hono-compute-provider
@@ -743,6 +744,23 @@ above. `ud:N` = line N of `docs/research/2026-10-11-vm-lifecycle/user-decisions.
   lostReason, runtime {backend as a free string, ref, instance, pid, startTime, hostBootID, vmmID}, network,
   image, conditions, market) so the Windows and macOS backends (plans 0011, 0012) need no schema revision
   (`lifecycle-synthesis.md:43`).
+- **What the TypeScript provider writes and reads (plan 0007 M3-TS-PROVIDER; decided by Claude, user may
+  veto).** Packages `compute-provider-kcp-abc` (pure: the objects, the reason map, the cache),
+  `compute-provider-kcp` (kcp REST, no Hono) and `hono-factory-compute-provider-kcp` (OIDC issuer and
+  `POST /v1/on-network` mounted in `serve.onConnected`). provision enriches user_data once with the constant
+  guest host address, server-side applies the ComputeVM (field manager `compute-provider-kcp`), then applies
+  its user_data Secret once: namespace `default`, key `user-data` (`UserDataSecretNamespace`,
+  `UserDataSecretKey` in `api/v1alpha1`), ownerReference to the ComputeVM so kcp's garbage collector removes
+  it with the VM. It resolves on phase Running and fails on Lost, Failed, deletion or the boot timeout,
+  deleting what it applied. destroy deletes and returns only once kcp answers 404 (the controller's finalizer
+  held until the work dir is gone), then drops the Secret. State is one list+watch of the bidder's
+  ComputeVMs filtered by `spec.owner.handle`, filled by `setup()`; when kcp refuses or drops the watch it
+  re-lists every `resyncBackoffMs` (logged as `computevm_sync_mode`). A ComputeVM moving to Lost or Failed
+  (or vanishing) that the provider did not delete fires `onGuestGone` once, reason HostRebooted ->
+  host_reboot, OOMKilled -> oom, IdentityMismatch -> identity_mismatch, every other -> vmm_exited
+  (M4-TERMINATION-EVENT), and the provider then deletes it so the finalizer releases the work dir. adopt
+  answers from the same cache. The kcp token is read from `tokenFile` on every request so the Go side can
+  rotate it; the rotation itself lands with the bidder DenoPod stack (M5-RUN-BIDDER).
 - **DenoPod-per-VM was rejected, on evidence.** Deleting a DenoPod SIGKILLs its process group with no
   release step (kcp-libs `impl/execrunner/supervisor.go:322`, also `:156`); the runner's 5-minute
   `DefaultPodTimeout` (`impl/execrunner/pod.go:17`, enforced in `Observe` `:101-104`) killed the bed's bidder
