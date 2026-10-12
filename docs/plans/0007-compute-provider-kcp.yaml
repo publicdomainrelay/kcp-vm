@@ -841,8 +841,8 @@ items:
       the RFP flow. Red first.
     done_when: "hono-bidder/mod.ts under 150 lines; every bidder test green; pushed on main in atproto-market."
     risks: []
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M3-NODE-LOSS-CLOCK
     milestone: M3
     kcp_use: "traditional-exception (virtual Kubernetes clusters project: tenant nodes; 0006 principle)"
