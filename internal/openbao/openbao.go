@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 )
 
 var (
@@ -181,7 +182,34 @@ func (c *Client) EnableKV(ctx context.Context, path string, version int) error {
 	if version == 2 {
 		body["options"] = map[string]any{"version": strconv.Itoa(version)}
 	}
-	return c.enableMount(ctx, path, body)
+	if err := c.enableMount(ctx, path, body); err != nil {
+		return err
+	}
+	if version != 2 {
+		return nil
+	}
+	return c.waitKVUpgraded(ctx, path)
+}
+
+const kvUpgradePoll = 50 * time.Millisecond
+
+const kvUpgradeLimit = 30 * time.Second
+
+func (c *Client) waitKVUpgraded(ctx context.Context, path string) error {
+	ctx, cancel := context.WithTimeout(ctx, kvUpgradeLimit)
+	defer cancel()
+	for {
+		_, err := c.do(ctx, http.MethodGet, strings.Trim(path, "/")+"/config", nil)
+		var re *ResponseError
+		if err == nil || !errors.As(err, &re) || !strings.Contains(re.Body, "Upgrading from non-versioned to versioned data") {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("openbao: kv mount %q still upgrading to version 2: %w", path, ctx.Err())
+		case <-time.After(kvUpgradePoll):
+		}
+	}
 }
 
 func (c *Client) EnableTransit(ctx context.Context, path string) error {
