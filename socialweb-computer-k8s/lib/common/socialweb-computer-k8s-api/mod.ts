@@ -17,7 +17,7 @@ export type ClusterPhase = typeof CLUSTER_PHASES[number];
 export const NODE_PHASES = ["Pending", "Running", "Draining"] as const;
 export type NodePhase = typeof NODE_PHASES[number];
 
-export const NODE_CLAIM_PHASES = ["Pending", "Bidding", "Provisioning", "Joining", "Running", "Failed", "Released"] as const;
+export const NODE_CLAIM_PHASES = ["Pending", "Bidding", "Provisioning", "Joining", "Running", "Failed", "Released", "Lost", "Adopting"] as const;
 export type NodeClaimPhase = typeof NODE_CLAIM_PHASES[number];
 
 export const CONTRACT_PHASES = ["requested", "rfp_submitted", "winner_selected", "accepted", "receipt", "network", "released"] as const;
@@ -121,6 +121,7 @@ export interface NodeClaimStatus {
   fqdn?: string;
   message?: string;
   grant?: NodeClaimGrant;
+  secrets?: NodeClaimSecrets;
 }
 
 export interface NodeClaimContract {
@@ -140,12 +141,14 @@ export interface NodeClaimContract {
   policy?: RecordRef;
   bid?: RecordRef;
   winner?: ContractWinner;
+  acceptPending?: ContractAcceptPending;
   accept?: RecordRef;
   receipt?: RecordRef;
   receiptOk?: boolean;
   vmAddress?: string;
   bids?: number;
   release?: ContractRelease;
+  termination?: ContractTermination;
   outcome?: ContractOutcome;
   error?: string;
   timestamps?: ContractTimestamps;
@@ -161,11 +164,24 @@ export interface ContractWinner {
   submitAccept?: string;
 }
 
+export interface ContractAcceptPending {
+  bidUri: string;
+}
+
 export interface ContractRelease {
   event: RecordRef;
   payload: RecordRef;
   ok: boolean;
   status?: number;
+}
+
+export interface ContractTermination {
+  reason: string;
+  exitCode?: number;
+  observedAt: string;
+  event: RecordRef;
+  payload: RecordRef;
+  request?: RecordRef;
 }
 
 export interface ContractTimestamps {
@@ -183,6 +199,13 @@ export interface NodeClaimGrant {
   subject: string;
   audience: string;
   role?: string;
+}
+
+export interface NodeClaimSecrets {
+  ingressDid: string;
+  keyRef: string;
+  url: string;
+  servedAt?: string;
 }
 
 export interface ClusterLink {
@@ -267,7 +290,7 @@ export const NODE_CLAIM_RESOURCE: ApiResource = {
   listKind: "NodeClaimList",
   plural: "nodeclaims",
   singular: "nodeclaim",
-  schema: "v1alpha1-3.nodeclaims.socialweb.computer",
+  schema: "v1alpha1-4.nodeclaims.socialweb.computer",
   export: "clusters",
 };
 
@@ -309,9 +332,11 @@ export type ApiTypeName =
   | "ClusterSpec"
   | "ClusterStatus"
   | "Condition"
+  | "ContractAcceptPending"
   | "ContractOutcome"
   | "ContractPhase"
   | "ContractRelease"
+  | "ContractTermination"
   | "ContractTimestamps"
   | "ContractWinner"
   | "IdentityScope"
@@ -321,6 +346,7 @@ export type ApiTypeName =
   | "NodeClaimContract"
   | "NodeClaimGrant"
   | "NodeClaimPhase"
+  | "NodeClaimSecrets"
   | "NodeClaimSpec"
   | "NodeClaimStatus"
   | "NodePhase"
@@ -647,6 +673,17 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
     "open": true,
     "type": "object"
   },
+  "ContractAcceptPending": {
+    "properties": {
+      "bidUri": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "bidUri"
+    ],
+    "type": "object"
+  },
   "ContractOutcome": {
     "enum": [
       "no_bids",
@@ -690,6 +727,35 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       "event",
       "payload",
       "ok"
+    ],
+    "type": "object"
+  },
+  "ContractTermination": {
+    "properties": {
+      "event": {
+        "ref": "RecordRef"
+      },
+      "exitCode": {
+        "type": "integer"
+      },
+      "observedAt": {
+        "type": "string"
+      },
+      "payload": {
+        "ref": "RecordRef"
+      },
+      "reason": {
+        "type": "string"
+      },
+      "request": {
+        "ref": "RecordRef"
+      }
+    },
+    "required": [
+      "reason",
+      "observedAt",
+      "event",
+      "payload"
     ],
     "type": "object"
   },
@@ -797,6 +863,9 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       "accept": {
         "ref": "RecordRef"
       },
+      "acceptPending": {
+        "ref": "ContractAcceptPending"
+      },
       "acceptUri": {
         "type": "string"
       },
@@ -851,6 +920,9 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       "submitEventRef": {
         "type": "string"
       },
+      "termination": {
+        "ref": "ContractTermination"
+      },
       "timestamps": {
         "ref": "ContractTimestamps"
       },
@@ -903,9 +975,33 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       "Joining",
       "Running",
       "Failed",
-      "Released"
+      "Released",
+      "Lost",
+      "Adopting"
     ],
     "type": "string"
+  },
+  "NodeClaimSecrets": {
+    "properties": {
+      "ingressDid": {
+        "type": "string"
+      },
+      "keyRef": {
+        "type": "string"
+      },
+      "servedAt": {
+        "type": "string"
+      },
+      "url": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "ingressDid",
+      "keyRef",
+      "url"
+    ],
+    "type": "object"
   },
   "NodeClaimSpec": {
     "properties": {
@@ -968,6 +1064,9 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       },
       "phase": {
         "ref": "NodeClaimPhase"
+      },
+      "secrets": {
+        "ref": "NodeClaimSecrets"
       }
     },
     "required": [],
@@ -1319,6 +1418,24 @@ export function parseContractWinner(value: unknown): ContractWinner {
   return value;
 }
 
+export function validateContractAcceptPending(value: unknown): ApiIssue[] {
+  return validate("ContractAcceptPending", value);
+}
+
+export function isContractAcceptPending(value: unknown): value is ContractAcceptPending {
+  return validate("ContractAcceptPending", value).length === 0;
+}
+
+export function assertContractAcceptPending(value: unknown): asserts value is ContractAcceptPending {
+  const issues = validate("ContractAcceptPending", value);
+  if (issues.length > 0) throw new ApiValidationError("ContractAcceptPending", issues);
+}
+
+export function parseContractAcceptPending(value: unknown): ContractAcceptPending {
+  assertContractAcceptPending(value);
+  return value;
+}
+
 export function validateContractRelease(value: unknown): ApiIssue[] {
   return validate("ContractRelease", value);
 }
@@ -1334,6 +1451,24 @@ export function assertContractRelease(value: unknown): asserts value is Contract
 
 export function parseContractRelease(value: unknown): ContractRelease {
   assertContractRelease(value);
+  return value;
+}
+
+export function validateContractTermination(value: unknown): ApiIssue[] {
+  return validate("ContractTermination", value);
+}
+
+export function isContractTermination(value: unknown): value is ContractTermination {
+  return validate("ContractTermination", value).length === 0;
+}
+
+export function assertContractTermination(value: unknown): asserts value is ContractTermination {
+  const issues = validate("ContractTermination", value);
+  if (issues.length > 0) throw new ApiValidationError("ContractTermination", issues);
+}
+
+export function parseContractTermination(value: unknown): ContractTermination {
+  assertContractTermination(value);
   return value;
 }
 
@@ -1388,6 +1523,24 @@ export function assertNodeClaimGrant(value: unknown): asserts value is NodeClaim
 
 export function parseNodeClaimGrant(value: unknown): NodeClaimGrant {
   assertNodeClaimGrant(value);
+  return value;
+}
+
+export function validateNodeClaimSecrets(value: unknown): ApiIssue[] {
+  return validate("NodeClaimSecrets", value);
+}
+
+export function isNodeClaimSecrets(value: unknown): value is NodeClaimSecrets {
+  return validate("NodeClaimSecrets", value).length === 0;
+}
+
+export function assertNodeClaimSecrets(value: unknown): asserts value is NodeClaimSecrets {
+  const issues = validate("NodeClaimSecrets", value);
+  if (issues.length > 0) throw new ApiValidationError("NodeClaimSecrets", issues);
+}
+
+export function parseNodeClaimSecrets(value: unknown): NodeClaimSecrets {
+  assertNodeClaimSecrets(value);
   return value;
 }
 

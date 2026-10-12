@@ -55,6 +55,10 @@ const (
 	NodeClaimFailed NodeClaimPhase = "Failed"
 
 	NodeClaimReleased NodeClaimPhase = "Released"
+
+	NodeClaimLost NodeClaimPhase = "Lost"
+
+	NodeClaimAdopting NodeClaimPhase = "Adopting"
 )
 
 type NodeClaimContract struct {
@@ -90,6 +94,8 @@ type NodeClaimContract struct {
 
 	Winner *ContractWinner `json:"winner,omitempty"`
 
+	AcceptPending *ContractAcceptPending `json:"acceptPending,omitempty"`
+
 	Accept *RecordRef `json:"accept,omitempty"`
 
 	Receipt *RecordRef `json:"receipt,omitempty"`
@@ -101,6 +107,8 @@ type NodeClaimContract struct {
 	Bids *int `json:"bids,omitempty"`
 
 	Release *ContractRelease `json:"release,omitempty"`
+
+	Termination *ContractTermination `json:"termination,omitempty"`
 
 	Outcome ContractOutcome `json:"outcome,omitempty"`
 
@@ -157,6 +165,24 @@ type ContractWinner struct {
 	SubmitAccept string `json:"submitAccept,omitempty"`
 }
 
+type ContractAcceptPending struct {
+	BidUri string `json:"bidUri"`
+}
+
+type ContractTermination struct {
+	Reason string `json:"reason"`
+
+	ExitCode *int `json:"exitCode,omitempty"`
+
+	ObservedAt string `json:"observedAt"`
+
+	Event RecordRef `json:"event"`
+
+	Payload RecordRef `json:"payload"`
+
+	Request *RecordRef `json:"request,omitempty"`
+}
+
 type ContractRelease struct {
 	Event RecordRef `json:"event"`
 
@@ -193,6 +219,18 @@ type NodeClaimStatus struct {
 	Message string `json:"message,omitempty"`
 
 	Grant *NodeClaimGrant `json:"grant,omitempty"`
+
+	Secrets *NodeClaimSecrets `json:"secrets,omitempty"`
+}
+
+type NodeClaimSecrets struct {
+	IngressDid string `json:"ingressDid"`
+
+	KeyRef string `json:"keyRef"`
+
+	URL string `json:"url"`
+
+	ServedAt string `json:"servedAt,omitempty"`
 }
 
 type NodeClaimGrant struct {

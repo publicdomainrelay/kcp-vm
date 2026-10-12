@@ -47,7 +47,7 @@ func TestEveryKindTheSchemeRegistersHasAnAPIResource(t *testing.T) {
 func TestEnumValuesAreTheConstantsInDeclarationOrder(t *testing.T) {
 	m := mustModel(t)
 	want := map[string][]string{
-		"NodeClaimPhase":     {"Pending", "Bidding", "Provisioning", "Joining", "Running", "Failed", "Released"},
+		"NodeClaimPhase":     {"Pending", "Bidding", "Provisioning", "Joining", "Running", "Failed", "Released", "Lost", "Adopting"},
 		"ContractPhase":      {"requested", "rfp_submitted", "winner_selected", "accepted", "receipt", "network", "released"},
 		"ClusterLinkPhase":   {"Pending", "Listening", "Failed"},
 		"ClusterLinkService": {"apiserver", "openbao"},

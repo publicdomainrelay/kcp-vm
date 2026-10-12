@@ -53,7 +53,7 @@ Deno.test("every invalid NodeClaim fixture is rejected at the path the Go valida
 });
 
 Deno.test("the phase enum and the finalizer are the Go constants", () => {
-  assertEquals([...NODE_CLAIM_PHASES], ["Pending", "Bidding", "Provisioning", "Joining", "Running", "Failed", "Released"]);
+  assertEquals([...NODE_CLAIM_PHASES], ["Pending", "Bidding", "Provisioning", "Joining", "Running", "Failed", "Released", "Lost", "Adopting"]);
   assertEquals([...CONTRACT_PHASES], ["requested", "rfp_submitted", "winner_selected", "accepted", "receipt", "network", "released"]);
   assertEquals(FINALIZER_NODE_CLAIM, "nodeclaim.socialweb.computer/release");
   assert(isNodeClaimPhase("Running"));
