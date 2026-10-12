@@ -239,10 +239,14 @@ func (u *liveUser) List(ctx context.Context) ([]hostsvc.UnitStatus, error) {
 }
 
 func (u *liveUser) Stop(ctx context.Context, unit string) error {
-	return waitJob(ctx, unit, func(ch chan<- string) error {
+	err := waitJob(ctx, unit, func(ch chan<- string) error {
 		_, err := u.conn.StopUnitContext(ctx, unit, "replace", ch)
 		return err
 	})
+	if err == nil {
+		u.conn.ResetFailedUnitContext(ctx, unit)
+	}
+	return err
 }
 
 func (u *liveUser) Close() { u.conn.Close() }
