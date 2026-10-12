@@ -4,13 +4,13 @@
   "license": "Unlicense",
   "exports": "./mod.ts",
   "imports": {
-    "@publicdomainrelay/policy-engine-abc": "../../../policy-engine/lib/abc/policy-engine/mod.ts",
-    "@publicdomainrelay/policy-engine-evaluator": "../../../policy-engine/lib/policy-engine-evaluator/mod.ts",
-    "@publicdomainrelay/policy-engine-scope-cache": "../../../policy-engine/lib/policy-engine-scope-cache/mod.ts",
-    "@publicdomainrelay/policy-engine-executor-gha-lite": "../../../policy-engine/lib/policy-engine-executor-gha-lite/mod.ts",
-    "@publicdomainrelay/policy-engine-executor-typescript": "../../../policy-engine/lib/policy-engine-executor-typescript/mod.ts",
-    "@publicdomainrelay/policy-deno-typescript": "../../../policy-engine/lib/policies/deno-typescript/mod.ts",
-    "@publicdomainrelay/policy-deno-typescript-shared": "../../../policy-engine/lib/policies/deno-typescript-shared/mod.ts",
-    "@publicdomainrelay/policies-gha-lite": "../../../policy-engine/lib/policies/gha-lite/mod.ts"
+    "@publicdomainrelay/policy-engine-abc": "jsr:@publicdomainrelay/policy-engine-abc@^0",
+    "@publicdomainrelay/policy-engine-evaluator": "jsr:@publicdomainrelay/policy-engine-evaluator@^0",
+    "@publicdomainrelay/policy-engine-scope-cache": "jsr:@publicdomainrelay/policy-engine-scope-cache@^0",
+    "@publicdomainrelay/policy-engine-executor-gha-lite": "jsr:@publicdomainrelay/policy-engine-executor-gha-lite@^0",
+    "@publicdomainrelay/policy-engine-executor-typescript": "jsr:@publicdomainrelay/policy-engine-executor-typescript@^0",
+    "@publicdomainrelay/policy-deno-typescript": "jsr:@publicdomainrelay/policy-deno-typescript@^0",
+    "@publicdomainrelay/policy-deno-typescript-shared": "jsr:@publicdomainrelay/policy-deno-typescript-shared@^0",
+    "@publicdomainrelay/policies-gha-lite": "jsr:@publicdomainrelay/policies-gha-lite@^0"
   }
 }

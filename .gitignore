@@ -28,3 +28,7 @@ deno.lock
 /streamplace/
 
 /.swc-dev
+
+/.cache/
+/.tempdir/
+port-bound-to

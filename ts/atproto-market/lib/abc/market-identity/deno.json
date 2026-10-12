@@ -4,6 +4,6 @@
   "license": "Unlicense",
   "exports": "./mod.ts",
   "imports": {
-    "@publicdomainrelay/socialweb-computer-k8s-api": "../../../../socialweb-computer-kcp/socialweb-computer-k8s/lib/common/socialweb-computer-k8s-api/mod.ts"
+    "@publicdomainrelay/socialweb-computer-k8s-api": "jsr:@publicdomainrelay/socialweb-computer-k8s-api@^0"
   }
 }
