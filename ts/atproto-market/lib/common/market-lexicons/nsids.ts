@@ -59,6 +59,7 @@ export const REGISTER_IDENTITY_NSID = "com.publicdomainrelay.temp.market.registe
 export const COMPUTE_EVENTS_VM_ONNETWORK_NSID = "com.publicdomainrelay.temp.compute.events.vm.onNetwork";
 export const COMPUTE_EVENTS_VM_STARTED_NSID = "com.publicdomainrelay.temp.compute.events.vm.started";
 export const COMPUTE_EVENTS_VM_TERMINATED_NSID = "com.publicdomainrelay.temp.compute.events.vm.terminated";
+export const COMPUTE_EVENTS_VM_HOST_KEYS_NSID = "com.publicdomainrelay.temp.compute.events.vm.hostKeys";
 export const COMPUTE_EVENTS_VM_REGISTER_IDENTITY_NSID = "com.publicdomainrelay.temp.compute.events.vm.registerIdentity";
 export const GUEST_ONNETWORK_NSID = "com.publicdomainrelay.temp.guest.onNetwork";
 export const GUEST_REGISTER_IDENTITY_NSID = "com.publicdomainrelay.temp.guest.registerIdentity";

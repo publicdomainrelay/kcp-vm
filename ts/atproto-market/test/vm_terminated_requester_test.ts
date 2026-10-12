@@ -1,6 +1,7 @@
 import { assert, assertEquals } from "@std/assert";
 import {
   COMPUTE_EVENTS_VM_DELETE_NSID,
+  COMPUTE_EVENTS_VM_HOST_KEYS_NSID,
   COMPUTE_EVENTS_VM_TERMINATED_NSID,
   EVENT_NSID,
   RFP_NSID,
@@ -69,6 +70,36 @@ async function signedTerminated(opts: {
   };
 }
 
+async function signedHostKeys(): Promise<ComputeEventEnvelope> {
+  envelopeSeq++;
+  const payloadRef = {
+    $type: "com.atproto.repo.strongRef",
+    uri: `at://${BIDDER_DID}/${COMPUTE_EVENTS_VM_HOST_KEYS_NSID}/p${envelopeSeq}`,
+    cid: `bafyhostkeyspayload${envelopeSeq}`,
+  };
+  const record: Record<string, unknown> = {
+    $type: EVENT_NSID,
+    receipt: { $type: "com.atproto.repo.strongRef", uri: RECEIPT.uri, cid: RECEIPT.cid },
+    payload: payloadRef,
+  };
+  const entry = await attestationFor(bidderKp, BIDDER_DID).sign({ record, repository: BIDDER_DID });
+  return {
+    uri: `at://${BIDDER_DID}/${EVENT_NSID}/e${envelopeSeq}`,
+    cid: `bafyhostkeysevent${envelopeSeq}`,
+    record: { ...record, signatures: [toStorableEntry(entry as never)] },
+    payload: {
+      $type: COMPUTE_EVENTS_VM_HOST_KEYS_NSID,
+      keys: [{
+        type: "ssh-ed25519",
+        publicKey: "AAAAC3NzaC1lZDI1NTE5AAAAIGWqx0pQ7m3nB9P2cCjv1xTt0lI7yU6m0O4m8r1yqk8H",
+        fingerprint: "SHA256:3kQ0d2xv1Y8Yb1oQe1c8v0m4m4b3tC2Yp5x9yA7mJ0c",
+      }],
+      observedAt: "2026-10-12T00:57:03.000Z",
+      createdAt: "2026-10-12T00:57:04.000Z",
+    },
+  };
+}
+
 function quietLogger(events: Array<{ event: string; extra?: Record<string, unknown> }> = []): StructuredLoggerInterface {
   const push = (event: string, extra?: Record<string, unknown>) => {
     events.push({ event, extra });
@@ -76,7 +107,7 @@ function quietLogger(events: Array<{ event: string; extra?: Record<string, unkno
   return { info: push, warn: push, error: push, debug: push } as unknown as StructuredLoggerInterface;
 }
 
-function fakePds(opts: { bidders?: string[]; autoNetwork?: boolean } = {}) {
+function fakePds(opts: { bidders?: string[]; autoNetwork?: boolean; autoHostKeys?: boolean } = {}) {
   const calls: Array<{ nsid: string; body: Record<string, unknown> }> = [];
   const records: Array<{ collection: string; uri: string; cid: string; record: Record<string, unknown> }> = [];
   const onNetwork = new Map<string, (address: string) => void>();
@@ -132,6 +163,10 @@ function fakePds(opts: { bidders?: string[]; autoNetwork?: boolean } = {}) {
     clearOnTerminated: (receiptUri: string) => {
       onTerminated.delete(receiptUri);
     },
+    setOnHostKeys: (_receiptUri: string, fn: (envelope: ComputeEventEnvelope) => void) => {
+      if (opts.autoHostKeys) setTimeout(async () => fn(await signedHostKeys()), 0);
+    },
+    clearOnHostKeys: () => {},
   };
   return {
     pds: pds as unknown as RequesterPDS,
@@ -303,8 +338,38 @@ Deno.test("releaseCompute does not submit a vm.delete for a contract the bidder 
   assert(events.some((e) => e.event === "vm_delete_skipped" && e.extra?.reason === "terminated_by_bidder"));
 });
 
-Deno.test("runComputeContract stops waiting on ssh when the bidder terminates the guest", async () => {
+Deno.test("runComputeContract stops waiting for host keys when the bidder terminates the guest", async () => {
   const fake = fakePds({ bidders: [BIDDER_DID], autoNetwork: true });
+  const events: Array<{ event: string; extra?: Record<string, unknown> }> = [];
+  let polled = false;
+  const sshProvider: SshSessionProvider = {
+    generateKeypair: () => Promise.resolve({ publicKey: "ssh-ed25519 AAAAfake test", privateKeyPath: "/nonexistent" }),
+    pollReady: () => {
+      polled = true;
+      return Promise.resolve(false);
+    },
+    runSession: () => Promise.resolve(0),
+  };
+  const started = Date.now();
+  setTimeout(async () => {
+    while (fake.terminatedKeys().length === 0 && Date.now() - started < 10_000) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    await new Promise((r) => setTimeout(r, 200));
+    fake.fireTerminated(await signedTerminated({ exitCode: 0 }));
+  }, 0);
+  const result = await runComputeContract(fake.pds, {
+    ...baseOpts(fake, { logger: quietLogger(events) }),
+    sshProvider,
+  } as never);
+  assert(Date.now() - started < 10_000, `host-key wait ended promptly (${Date.now() - started}ms)`);
+  assertEquals(polled, false, "no ssh without host keys");
+  assertEquals(result.sshReady, false);
+  assertEquals(result.terminated?.reason, "guest_poweroff");
+});
+
+Deno.test("runComputeContract stops waiting on ssh when the bidder terminates the guest", async () => {
+  const fake = fakePds({ bidders: [BIDDER_DID], autoNetwork: true, autoHostKeys: true });
   const events: Array<{ event: string; extra?: Record<string, unknown> }> = [];
   let aborted = false;
   const sshProvider: SshSessionProvider = {

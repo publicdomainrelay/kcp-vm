@@ -45,6 +45,7 @@ export interface ContractFlowOptions {
    */
   sshAuthorizedKeys?: string[];
   vmReadyTimeoutSec?: number;
+  hostKeysTimeoutSec?: number;
   onSshStart?: () => void;
   onSshEnd?: () => void | Promise<void>;
   /**
@@ -184,6 +185,8 @@ export interface RequesterPDS {
   clearOnNetworkResolved?(key: string): void;
   setOnTerminated?(receiptUri: string, fn: (envelope: SubmittedComputeEvent) => void): void;
   clearOnTerminated?(receiptUri: string): void;
+  setOnHostKeys?(receiptUri: string, fn: (envelope: SubmittedComputeEvent) => void): void;
+  clearOnHostKeys?(receiptUri: string): void;
 }
 
 export interface SubmittedComputeEvent {
@@ -193,6 +196,11 @@ export interface SubmittedComputeEvent {
   payload: Record<string, unknown>;
 }
 
+export interface GuestHostKeys {
+  alias: string;
+  keys: Array<{ type: string; publicKey: string; fingerprint?: string }>;
+}
+
 /**
  * The whole SSH surface the flow may assume. The address handed to pollReady
  * and runSession is the guest's iroh ticket (iroh://...), not a DNS name. The
@@ -200,8 +208,20 @@ export interface SubmittedComputeEvent {
  */
 export interface SshSessionProvider {
   generateKeypair(vmName: string): Promise<{ publicKey: string; privateKeyPath: string }>;
-  pollReady(privateKeyPath: string, target: string, timeoutMs: number, signal?: AbortSignal): Promise<boolean>;
-  runSession(privateKeyPath: string, target: string, program: string, signal?: AbortSignal): Promise<number>;
+  pollReady(
+    privateKeyPath: string,
+    target: string,
+    timeoutMs: number,
+    signal?: AbortSignal,
+    hostKeys?: GuestHostKeys,
+  ): Promise<boolean>;
+  runSession(
+    privateKeyPath: string,
+    target: string,
+    program: string,
+    signal?: AbortSignal,
+    hostKeys?: GuestHostKeys,
+  ): Promise<number>;
   /**
    * Everything the last non-interactive session printed, when the provider
    * captures it. Absent on providers that inherit stdio, so the flow treats a
@@ -233,6 +253,9 @@ export interface ContractFlowResult {
    * never attempted SSH.
    */
   sshProxyCommand?: string;
+  sshHostKeyAlias?: string;
+  hostKeyFingerprints?: string[];
+  sshCommand?: string;
   sshReady?: boolean;
   sshExitCode?: number;
   /**

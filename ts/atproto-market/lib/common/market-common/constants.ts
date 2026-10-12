@@ -47,3 +47,13 @@ export const VM_TERMINATED_REASONS = [
 ] as const;
 
 export type VmTerminatedReason = typeof VM_TERMINATED_REASONS[number];
+
+export { $nsid as COMPUTE_EVENTS_VM_HOST_KEYS_NSID } from "../market-lexicons/com/publicdomainrelay/temp/compute/events/vm/hostKeys.ts";
+
+export const VM_HOST_KEY_TYPES = [
+  "ssh-ed25519",
+  "ecdsa-sha2-nistp256",
+  "ssh-rsa",
+] as const;
+
+export type VmHostKeyType = typeof VM_HOST_KEY_TYPES[number];

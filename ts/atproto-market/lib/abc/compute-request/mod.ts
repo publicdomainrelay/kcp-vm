@@ -1,4 +1,9 @@
-import { COMPUTE_EVENTS_VM_TERMINATED_NSID, EVENT_NSID } from "@publicdomainrelay/market-common";
+import {
+  COMPUTE_EVENTS_VM_HOST_KEYS_NSID,
+  COMPUTE_EVENTS_VM_TERMINATED_NSID,
+  EVENT_NSID,
+  MAX_VM_HOST_KEYS,
+} from "@publicdomainrelay/market-common";
 
 export const CONTRACT_STATE_VERSION = 1;
 
@@ -64,6 +69,19 @@ export interface ContractTermination {
   request?: RecordRef;
 }
 
+export interface ContractHostKey {
+  type: string;
+  publicKey: string;
+  fingerprint: string;
+}
+
+export interface ContractHostKeys {
+  keys: ContractHostKey[];
+  observedAt: string;
+  event: RecordRef;
+  payload: RecordRef;
+}
+
 export interface ContractAcceptPending {
   bidUri: string;
 }
@@ -88,6 +106,7 @@ export interface ContractState {
   bids?: number;
   release?: ContractRelease;
   termination?: ContractTermination;
+  hostKeys?: ContractHostKeys;
   outcome?: ContractOutcome;
   error?: string;
   timestamps: Partial<Record<ContractPhase, string>>;
@@ -170,7 +189,9 @@ function collectionOf(uri: string): string {
   return uri.replace("at://", "").split("/")[1] ?? "";
 }
 
-export function terminationOf(envelope: ComputeEventEnvelope, receipt: RecordRef): TerminationBinding {
+type BoundPayload = { ok: true; payloadRef: RecordRef } | { ok: false; reason: string };
+
+function boundEventPayload(envelope: ComputeEventEnvelope, receipt: RecordRef, nsid: string, name: string): BoundPayload {
   const { record, payload } = envelope;
   if (record.$type !== undefined && record.$type !== EVENT_NSID) {
     return { ok: false, reason: "envelope is not a market.event" };
@@ -187,12 +208,20 @@ export function terminationOf(envelope: ComputeEventEnvelope, receipt: RecordRef
   if (authorityOf(payloadRef.uri) !== bidder) {
     return { ok: false, reason: "payload not in the bidder's repo" };
   }
-  if (collectionOf(payloadRef.uri) !== COMPUTE_EVENTS_VM_TERMINATED_NSID) {
-    return { ok: false, reason: "payload is not vm.terminated" };
+  if (collectionOf(payloadRef.uri) !== nsid) {
+    return { ok: false, reason: `payload is not ${name}` };
   }
-  if (payload.$type !== undefined && payload.$type !== COMPUTE_EVENTS_VM_TERMINATED_NSID) {
-    return { ok: false, reason: "payload record is not vm.terminated" };
+  if (payload.$type !== undefined && payload.$type !== nsid) {
+    return { ok: false, reason: `payload record is not ${name}` };
   }
+  return { ok: true, payloadRef: { uri: payloadRef.uri, cid: payloadRef.cid } };
+}
+
+export function terminationOf(envelope: ComputeEventEnvelope, receipt: RecordRef): TerminationBinding {
+  const bound = boundEventPayload(envelope, receipt, COMPUTE_EVENTS_VM_TERMINATED_NSID, "vm.terminated");
+  if (!bound.ok) return bound;
+  const { payload } = envelope;
+  const payloadRef = bound.payloadRef;
   if (typeof payload.reason !== "string" || !payload.reason) return { ok: false, reason: "missing reason" };
   if (typeof payload.observedAt !== "string" || !payload.observedAt) {
     return { ok: false, reason: "missing observedAt" };
@@ -210,6 +239,58 @@ export function terminationOf(envelope: ComputeEventEnvelope, receipt: RecordRef
       ...(request ? { request } : {}),
     },
   };
+}
+
+export type HostKeysBinding =
+  | { ok: true; hostKeys: ContractHostKeys }
+  | { ok: false; reason: string };
+
+const HOST_KEY_TYPE = /^[a-z0-9][a-z0-9.@-]{0,63}$/;
+const HOST_KEY_BLOB = /^[A-Za-z0-9+/]{16,4096}={0,2}$/;
+const HOST_KEY_FINGERPRINT = /^SHA256:[A-Za-z0-9+/]{43}$/;
+
+export function hostKeysOf(envelope: ComputeEventEnvelope, receipt: RecordRef): HostKeysBinding {
+  const bound = boundEventPayload(envelope, receipt, COMPUTE_EVENTS_VM_HOST_KEYS_NSID, "vm.hostKeys");
+  if (!bound.ok) return bound;
+  const { payload } = envelope;
+  if (typeof payload.observedAt !== "string" || !payload.observedAt) {
+    return { ok: false, reason: "missing observedAt" };
+  }
+  const raw = payload.keys;
+  if (!Array.isArray(raw) || raw.length === 0 || raw.length > MAX_VM_HOST_KEYS) {
+    return { ok: false, reason: "keys is not a non-empty array" };
+  }
+  const keys: ContractHostKey[] = [];
+  for (const k of raw) {
+    const { type, publicKey, fingerprint } = (k ?? {}) as Record<string, unknown>;
+    if (typeof type !== "string" || !HOST_KEY_TYPE.test(type)) return { ok: false, reason: "malformed key type" };
+    if (typeof publicKey !== "string" || !HOST_KEY_BLOB.test(publicKey)) {
+      return { ok: false, reason: "malformed public key" };
+    }
+    if (typeof fingerprint !== "string" || !HOST_KEY_FINGERPRINT.test(fingerprint)) {
+      return { ok: false, reason: "malformed fingerprint" };
+    }
+    keys.push({ type, publicKey, fingerprint });
+  }
+  return {
+    ok: true,
+    hostKeys: {
+      keys,
+      observedAt: payload.observedAt,
+      event: { uri: envelope.uri, cid: envelope.cid },
+      payload: bound.payloadRef,
+    },
+  };
+}
+
+export function hostKeyAliasOf(receipt: RecordRef): string {
+  const clean = (v: string) => v.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  const rkey = receipt.uri.split("/").pop() ?? "";
+  return `swc-guest-${clean(authorityOf(receipt.uri))}-${clean(rkey)}`;
+}
+
+export function knownHostsOf(alias: string, keys: Array<{ type: string; publicKey: string }>): string {
+  return keys.map((k) => `${alias} ${k.type} ${k.publicKey}\n`).join("");
 }
 
 export function receiptKeyOf(receipt: RecordRef): string {
@@ -328,6 +409,8 @@ export interface SecretsFetchedEvent {
 
 export type TerminatedEvent = ContractTermination;
 
+export type HostKeysEvent = ContractHostKeys;
+
 export interface ComputeRequestHandlers {
   onRfpSubmitted?: (event: RfpSubmittedEvent, state: ContractState) => Awaitable<FlowDecision>;
   onBid?: (event: BidEvent, state: ContractState) => Awaitable<BidDecision>;
@@ -340,6 +423,7 @@ export interface ComputeRequestHandlers {
     state: ContractState,
   ) => Awaitable<FlowDecision>;
   onTerminated?: (event: TerminatedEvent, state: ContractState) => Awaitable<void>;
+  onHostKeys?: (event: HostKeysEvent, state: ContractState) => Awaitable<void>;
 }
 
 export class ReturnLatch {

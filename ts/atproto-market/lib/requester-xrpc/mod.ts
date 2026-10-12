@@ -19,7 +19,12 @@ import { OAuthClient } from "@atproto/oauth-client";
 import { webCryptoRuntime, memoryStateStore, jsonSessionStore } from "@publicdomainrelay/atproto-oauth-helpers";
 import type { AtprotoAgentLike } from "@publicdomainrelay/atproto-helpers";
 import type { InlineAttestation, AttestationKeypair, SubmitBidCallback } from "@publicdomainrelay/market-atproto";
-import { COMPUTE_EVENTS_VM_TERMINATED_NSID, SUBMIT_BID_NSID, SUBMIT_EVENT_NSID } from "@publicdomainrelay/market-common";
+import {
+  COMPUTE_EVENTS_VM_HOST_KEYS_NSID,
+  COMPUTE_EVENTS_VM_TERMINATED_NSID,
+  SUBMIT_BID_NSID,
+  SUBMIT_EVENT_NSID,
+} from "@publicdomainrelay/market-common";
 import type { StrongRef } from "@publicdomainrelay/market-common";
 import { DUMBPIPE_VERSION_DEFAULT } from "@publicdomainrelay/cloud-init-common";
 import type {
@@ -28,6 +33,7 @@ import type {
   CollectedBid,
   ContractFlowOptions,
   ContractFlowResult,
+  GuestHostKeys,
   SshSessionProvider,
   SubmittedComputeEvent,
 } from "@publicdomainrelay/requester-abc";
@@ -35,8 +41,8 @@ import type { LoggerInterface, StructuredLoggerInterface } from "@publicdomainre
 import type { ServeHandle, IngressRef } from "@publicdomainrelay/serve";
 import { ASSOCIATE_CONFIRM_NSID, BADGE_BLUE_KEYS_NSID } from "@publicdomainrelay/market-lexicons";
 import { verifyServiceAuth } from "@publicdomainrelay/market-atproto";
-import { IROH_SCHEME, NO_CONTRACT_OUTCOMES } from "@publicdomainrelay/compute-request-abc";
-import type { ContractState } from "@publicdomainrelay/compute-request-abc";
+import { hostKeyAliasOf, IROH_SCHEME, knownHostsOf, NO_CONTRACT_OUTCOMES } from "@publicdomainrelay/compute-request-abc";
+import type { ContractHostKeys, ContractState } from "@publicdomainrelay/compute-request-abc";
 import {
   assertGuestTransport,
   DEFAULT_VM_READY_TIMEOUT_SEC,
@@ -351,6 +357,31 @@ export async function createRequesterPDS(
   // contract it belongs to.
   const onNetworkResolvers = new Map<string, (address: string) => void>();
   const onTerminatedHandlers = new Map<string, (envelope: SubmittedComputeEvent) => void>();
+  const onHostKeysHandlers = new Map<string, (envelope: SubmittedComputeEvent) => void>();
+
+  const forwardComputeEvent = (
+    label: string,
+    handlers: Map<string, (envelope: SubmittedComputeEvent) => void>,
+  ) =>
+  async (ctx: { event: unknown; uri: string; cid: string; resolve: { resolve(ref: { uri: string; cid: string }): Promise<unknown> } }) => {
+    const { _uri: _u, _cid: _c, ...record } = ctx.event as Record<string, unknown>;
+    const receiptUri = (record.receipt as { uri?: string } | undefined)?.uri ?? "";
+    const handler = handlers.get(receiptUri);
+    logger.info(`${label} received`, { receiptUri, eventUri: ctx.uri, watched: !!handler });
+    if (!handler) return;
+    const payloadRef = record.payload as { uri?: string; cid?: string } | undefined;
+    if (!payloadRef?.uri) return;
+    try {
+      const resolved = await ctx.resolve.resolve({ uri: payloadRef.uri, cid: payloadRef.cid ?? "" }) as
+        | Record<string, unknown>
+        | null;
+      if (!resolved) return;
+      const { _uri: _pu, _cid: _pc, ...payload } = resolved;
+      handler({ uri: ctx.uri, cid: ctx.cid, record, payload });
+    } catch (err) {
+      logger.warn(`${label} payload unresolvable`, { receiptUri, payloadUri: payloadRef.uri, error: String(err) });
+    }
+  };
 
   const submitEventHandler = createSubmitEventHandler({
     deps: {
@@ -403,25 +434,8 @@ export async function createRequesterPDS(
             } catch { /* best-effort */ }
           }
         },
-        [COMPUTE_EVENTS_VM_TERMINATED_NSID]: async (ctx) => {
-          const { _uri: _u, _cid: _c, ...record } = ctx.event as unknown as Record<string, unknown>;
-          const receiptUri = (record.receipt as { uri?: string } | undefined)?.uri ?? "";
-          const handler = onTerminatedHandlers.get(receiptUri);
-          logger.info("vm.terminated received", { receiptUri, eventUri: ctx.uri, watched: !!handler });
-          if (!handler) return;
-          const payloadRef = record.payload as { uri?: string; cid?: string } | undefined;
-          if (!payloadRef?.uri) return;
-          try {
-            const resolved = await ctx.resolve.resolve({ uri: payloadRef.uri, cid: payloadRef.cid ?? "" }) as
-              | Record<string, unknown>
-              | null;
-            if (!resolved) return;
-            const { _uri: _pu, _cid: _pc, ...payload } = resolved;
-            handler({ uri: ctx.uri, cid: ctx.cid, record, payload });
-          } catch (err) {
-            logger.warn("vm.terminated payload unresolvable", { receiptUri, payloadUri: payloadRef.uri, error: String(err) });
-          }
-        },
+        [COMPUTE_EVENTS_VM_TERMINATED_NSID]: forwardComputeEvent("vm.terminated", onTerminatedHandlers),
+        [COMPUTE_EVENTS_VM_HOST_KEYS_NSID]: forwardComputeEvent("vm.hostKeys", onHostKeysHandlers),
       },
     },
     background: true,
@@ -582,6 +596,10 @@ export async function createRequesterPDS(
       onTerminatedHandlers.set(receiptUri, fn);
     },
     clearOnTerminated: (receiptUri: string) => { onTerminatedHandlers.delete(receiptUri); },
+    setOnHostKeys: (receiptUri: string, fn: (envelope: SubmittedComputeEvent) => void) => {
+      onHostKeysHandlers.set(receiptUri, fn);
+    },
+    clearOnHostKeys: (receiptUri: string) => { onHostKeysHandlers.delete(receiptUri); },
     dispose: async () => { store.close(); },
   };
 }
@@ -596,16 +614,45 @@ export class NonIrohGuestAddressError extends Error {
   }
 }
 
-export function sshProxyArgs(privateKeyPath: string, proxyCommand: string): string[] {
+export interface KnownHostsTarget {
+  alias: string;
+  knownHostsFile: string;
+}
+
+export function sshProxyArgs(privateKeyPath: string, proxyCommand: string, known: KnownHostsTarget): string[] {
   return [
     "-o", `ProxyCommand=${proxyCommand}`,
     "-o", `IdentityFile=${privateKeyPath}`,
     "-o", "IdentitiesOnly=yes",
-    "-o", "StrictHostKeyChecking=no",
-    "-o", "UserKnownHostsFile=/dev/null",
+    "-o", "StrictHostKeyChecking=yes",
+    "-o", `UserKnownHostsFile=${known.knownHostsFile}`,
+    "-o", "GlobalKnownHostsFile=/dev/null",
+    "-o", `HostKeyAlias=${known.alias}`,
+    "-o", "CheckHostIP=no",
     "-o", "LogLevel=ERROR",
   ];
 }
+
+export function knownHostsFileFor(privateKeyPath: string, alias: string): string {
+  const dir = privateKeyPath.includes("/") ? privateKeyPath.slice(0, privateKeyPath.lastIndexOf("/")) : ".";
+  return `${dir}/known_hosts.${alias}`;
+}
+
+export async function writeKnownHosts(privateKeyPath: string, hostKeys: GuestHostKeys): Promise<KnownHostsTarget> {
+  const knownHostsFile = knownHostsFileFor(privateKeyPath, hostKeys.alias);
+  await Deno.writeTextFile(knownHostsFile, knownHostsOf(hostKeys.alias, hostKeys.keys), { mode: 0o600 });
+  return { alias: hostKeys.alias, knownHostsFile };
+}
+
+function shellQuote(arg: string): string {
+  return /^[A-Za-z0-9_./=:@-]+$/.test(arg) ? arg : `'${arg.replace(/'/g, `'\\''`)}'`;
+}
+
+export function sshCommandFor(privateKeyPath: string, known: KnownHostsTarget, proxyCommand: string): string {
+  return ["ssh", ...sshProxyArgs(privateKeyPath, proxyCommand, known), `root@${known.alias}`].map(shellQuote).join(" ");
+}
+
+const HOST_KEY_MISMATCH = /Host key verification failed|REMOTE HOST IDENTIFICATION HAS CHANGED|No .* host key is known/;
 
 export function dumbpipeConnectArgv(target: string, dumbpipePath?: string): string[] | undefined {
   if (!target.startsWith(IROH_SCHEME)) return undefined;
@@ -650,7 +697,13 @@ export function createSshSessionProvider(
     fqdn: string,
     timeoutMs: number,
     signal?: AbortSignal,
+    hostKeys?: GuestHostKeys,
   ): Promise<boolean> {
+    if (!hostKeys || hostKeys.keys.length === 0) {
+      log("vm_ssh_refused_no_host_keys", { fqdn });
+      return false;
+    }
+    const known = await writeKnownHosts(privateKeyPath, hostKeys);
     const proxyCmd = proxyCommandFor(fqdn);
     log("ssh_poll_start", { fqdn, proxyCmd: proxyCmd?.slice(0, 150), timeoutMs });
     const deadline = Date.now() + timeoutMs;
@@ -662,7 +715,7 @@ export function createSshSessionProvider(
       }
       attempt++;
       const sshArgs = [
-        ...sshProxyArgs(privateKeyPath, proxyCmd),
+        ...sshProxyArgs(privateKeyPath, proxyCmd, known),
         "-o", "BatchMode=yes",
         "-o", "ConnectTimeout=10",
         `root@${fqdn}`,
@@ -694,6 +747,10 @@ export function createSshSessionProvider(
       const outText = new TextDecoder().decode(stdout).trim();
       const fullError = (errText + (outText ? " | stdout:" + outText : "")).slice(0, 400);
       log("vm_ssh_poll", { fqdn, attempt, code, error: errText.slice(0, 200), fullError });
+      if (HOST_KEY_MISMATCH.test(errText)) {
+        log("vm_ssh_host_key_mismatch", { fqdn, alias: known.alias, knownHostsFile: known.knownHostsFile });
+        return false;
+      }
       await new Promise<void>((r) => {
         const timer = setTimeout(r, 5000);
         signal?.addEventListener("abort", () => {
@@ -711,10 +768,16 @@ export function createSshSessionProvider(
     fqdn: string,
     program: string,
     signal?: AbortSignal,
+    hostKeys?: GuestHostKeys,
   ): Promise<number> {
+    if (!hostKeys || hostKeys.keys.length === 0) {
+      log("vm_ssh_refused_no_host_keys", { fqdn });
+      return 255;
+    }
+    const known = await writeKnownHosts(privateKeyPath, hostKeys);
     const proxyCmd = proxyCommandFor(fqdn);
     const interactive = Deno.stdin.isTerminal();
-    const args = [...sshProxyArgs(privateKeyPath, proxyCmd)];
+    const args = [...sshProxyArgs(privateKeyPath, proxyCmd, known)];
     lastOutput = "";
     if (interactive) {
       args.push("-tt", `root@${fqdn}`);
@@ -872,6 +935,28 @@ export function contractFlowResultOf(state: ContractState): ContractFlowResult {
   return { event: "compute_request_complete", ...flowViewOf(state) } as ContractFlowResult;
 }
 
+async function awaitReportedHostKeys(
+  known: ContractHostKeys | undefined,
+  pending: Promise<ContractHostKeys> | undefined,
+  timeoutMs: number,
+  signal: AbortSignal,
+): Promise<ContractHostKeys | undefined> {
+  if (known) return known;
+  if (!pending || signal.aborted) return undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      pending,
+      new Promise<undefined>((resolve) => {
+        timer = setTimeout(() => resolve(undefined), timeoutMs);
+        signal.addEventListener("abort", () => resolve(undefined), { once: true });
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 export async function runComputeContract(
   pds: RequesterPDS,
   opts: ContractFlowOptions & {
@@ -949,17 +1034,50 @@ export async function runComputeContract(
     result.sshReady = false;
   } else if (!skipSsh && state.receiptOk) {
     const vmAddress = state.vmAddress ?? "";
+    const reported = vmAddress
+      ? await awaitReportedHostKeys(
+        state.hostKeys,
+        contract.hostKeys,
+        (opts.hostKeysTimeoutSec ?? vmReadyTimeoutSec) * 1000,
+        bidderEnded.signal,
+      )
+      : undefined;
     if (!vmAddress) {
       result.sshReady = false;
+    } else if (!reported) {
+      log("vm_hostkeys_missing", {
+        receiptUri: state.receipt?.uri,
+        vmFqdn: vmAddress,
+        terminatedByBidder: bidderEnded.signal.aborted,
+        hint: "the guest never reported its ssh host keys; refusing to ssh without them",
+      });
+      result.sshReady = false;
     } else {
+      const hostKeys: GuestHostKeys = { alias: hostKeyAliasOf(state.receipt!), keys: reported.keys };
       result.sshProxyCommand = opts.sshProxyCommandFn?.(vmAddress) ??
         sshProxyCommandFor(vmAddress, dumbpipePath);
-      log("vm_ssh_waiting", { vmFqdn: vmAddress, sshProxyCommand: result.sshProxyCommand, timeoutSec: vmReadyTimeoutSec });
+      result.sshHostKeyAlias = hostKeys.alias;
+      result.hostKeyFingerprints = reported.keys.map((k) => k.fingerprint);
+      try {
+        const known = await writeKnownHosts(privateKeyPath, hostKeys);
+        result.sshCommand = sshCommandFor(privateKeyPath, known, result.sshProxyCommand);
+      } catch (err) {
+        log("vm_known_hosts_not_written", { privateKeyPath, error: String(err) });
+      }
+      log("vm_ssh_waiting", {
+        vmFqdn: vmAddress,
+        sshProxyCommand: result.sshProxyCommand,
+        sshHostKeyAlias: hostKeys.alias,
+        hostKeyFingerprints: result.hostKeyFingerprints,
+        sshCommand: result.sshCommand,
+        timeoutSec: vmReadyTimeoutSec,
+      });
       const ready = await sshProvider.pollReady(
         privateKeyPath,
         vmAddress,
         vmReadyTimeoutSec * 1000,
         bidderEnded.signal,
+        hostKeys,
       );
       result.sshReady = ready;
       if (!ready) {
@@ -970,7 +1088,7 @@ export async function runComputeContract(
         log("vm_hold_released", { vmFqdn: vmAddress, terminatedByBidder: bidderEnded.signal.aborted });
       } else {
         opts.onSshStart?.();
-        const code = await sshProvider.runSession(privateKeyPath, vmAddress, execProgram, bidderEnded.signal);
+        const code = await sshProvider.runSession(privateKeyPath, vmAddress, execProgram, bidderEnded.signal, hostKeys);
         await opts.onSshEnd?.();
         result.sshExitCode = code;
         result.sshOutput = sshProvider.lastSessionOutput?.();

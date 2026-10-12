@@ -7,7 +7,12 @@ import type { IdResolver } from "@atproto/identity";
 import { createAttestationCid, type RecordMap } from "@atiproto/atproto-attestation";
 import type { RepoApi } from "@publicdomainrelay/atproto-repo-abc";
 import { signServiceAuth } from "@publicdomainrelay/atproto-repo-deno";
-import type { ComputeProvider, GuestGone } from "@publicdomainrelay/compute-provider-abc";
+import type {
+  ComputeProvider,
+  GuestGone,
+  GuestHostKeysAck,
+  GuestHostKeysReport,
+} from "@publicdomainrelay/compute-provider-abc";
 import {
   attestationFor,
   toStorableEntry,
@@ -47,7 +52,11 @@ import {
   COMPUTE_EVENTS_VM_DELETE_NSID,
   COMPUTE_EVENTS_VM_ONNETWORK_NSID,
   COMPUTE_EVENTS_VM_TERMINATED_NSID,
+  COMPUTE_EVENTS_VM_HOST_KEYS_NSID,
   VM_TERMINATED_REASONS,
+  checkHostKeys,
+  sameHostKeys,
+  type VmHostKey,
   type VmTerminatedReason,
 } from "@publicdomainrelay/market-common";
 
@@ -154,38 +163,103 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
   const tombstones = deps.terminatedReceipts ?? new TerminatedReceipts();
   const terminating = new Map<string, Promise<void>>();
 
+  const publishContractEvent = async (
+    target: TerminationTarget,
+    label: string,
+    writePayload: () => Promise<{ uri: string; cid: string }>,
+    logFields: Record<string, unknown>,
+    cbLog: Logger,
+  ): Promise<boolean> => {
+    try {
+      const { uri: payloadUri, cid: payloadCid } = await writePayload();
+      const { uri: eventUri, cid: eventCid, record: eventRecord } = await createSignedRepoRecord(EVENT_NSID, {
+        $type: EVENT_NSID,
+        receipt: strongRef(target.receiptUri, target.receiptCid),
+        payload: strongRef(payloadUri, payloadCid),
+      }, did);
+      cbLog("info", `${label} event created on PDS (firehose)`, { receiptKey: target.key, ...logFields, eventUri });
+      if (!target.submitEventUrl) return true;
+      const res = await callService(target.submitEventUrl, SUBMIT_EVENT_NSID, SUBMIT_EVENT_LXM, {
+        uri: eventUri, cid: eventCid, record: eventRecord,
+      });
+      cbLog("info", `${label} event submitted to requester`, {
+        receiptKey: target.key, status: res.status, ok: res.ok,
+      });
+      return true;
+    } catch (err) {
+      cbLog("error", `${label} event failed`, { receiptKey: target.key, error: String(err) });
+      return false;
+    }
+  };
+
   const publishTerminated = async (
     target: TerminationTarget,
     fields: TerminationFields,
     cbLog: Logger,
   ): Promise<void> => {
-    try {
-      const { uri: payloadUri, cid: payloadCid } = await createRepoRecord(COMPUTE_EVENTS_VM_TERMINATED_NSID, {
+    await publishContractEvent(target, "vm.terminated", () =>
+      createRepoRecord(COMPUTE_EVENTS_VM_TERMINATED_NSID, {
         $type: COMPUTE_EVENTS_VM_TERMINATED_NSID,
         reason: fields.reason,
         ...(fields.exitCode !== undefined ? { exitCode: fields.exitCode } : {}),
         observedAt: fields.observedAt,
         ...(fields.request ? { request: fields.request } : {}),
         createdAt: new Date().toISOString(),
-      });
-      const { uri: eventUri, cid: eventCid, record: eventRecord } = await createSignedRepoRecord(EVENT_NSID, {
-        $type: EVENT_NSID,
-        receipt: strongRef(target.receiptUri, target.receiptCid),
-        payload: strongRef(payloadUri, payloadCid),
-      }, did);
-      cbLog("info", "vm.terminated event created on PDS (firehose)", {
-        receiptKey: target.key, reason: fields.reason, exitCode: fields.exitCode, eventUri,
-      });
-      if (!target.submitEventUrl) return;
-      const res = await callService(target.submitEventUrl, SUBMIT_EVENT_NSID, SUBMIT_EVENT_LXM, {
-        uri: eventUri, cid: eventCid, record: eventRecord,
-      });
-      cbLog("info", "vm.terminated event submitted to requester", {
-        receiptKey: target.key, status: res.status, ok: res.ok,
-      });
-    } catch (err) {
-      cbLog("error", "vm.terminated event failed", { receiptKey: target.key, error: String(err) });
+      }), { reason: fields.reason, exitCode: fields.exitCode }, cbLog);
+  };
+
+  const reportedHostKeys = new Map<string, VmHostKey[]>();
+
+  const acceptHostKeys = async (report: GuestHostKeysReport): Promise<GuestHostKeysAck> => {
+    const checked = await checkHostKeys(report.keys);
+    if (!checked.ok) {
+      log("warn", "vm_hostkeys_refused", { providerId: report.id, reason: checked.reason });
+      return { ok: false, status: 400, reason: checked.reason };
     }
+    if (!checked.keys.some((k) => k.type === "ssh-ed25519")) {
+      log("warn", "vm_hostkeys_refused", { providerId: report.id, reason: "no ssh-ed25519 key" });
+      return { ok: false, status: 400, reason: "no ssh-ed25519 key" };
+    }
+    for (const [key, contract] of activeContracts) {
+      const providerId = await contract.providerIdPromise?.catch(() => undefined);
+      if (providerId === undefined || String(providerId) !== String(report.id)) continue;
+      if (!contract.receiptUri || !contract.receiptCid) {
+        return { ok: false, status: 409, reason: "contract has no receipt" };
+      }
+      const earlier = reportedHostKeys.get(contract.receiptUri);
+      if (earlier) {
+        if (sameHostKeys(earlier, checked.keys)) {
+          log("info", "vm_hostkeys_duplicate_report", { receiptUri: contract.receiptUri, providerId });
+          return { ok: true };
+        }
+        log("warn", "vm_hostkeys_second_report_refused", {
+          receiptUri: contract.receiptUri, providerId,
+          reported: earlier.map((k) => k.fingerprint), refused: checked.keys.map((k) => k.fingerprint),
+        });
+        return { ok: false, status: 409, reason: "host keys already reported for this receipt" };
+      }
+      reportedHostKeys.set(contract.receiptUri, checked.keys);
+      const published = await publishContractEvent(
+        { key, receiptUri: contract.receiptUri, receiptCid: contract.receiptCid, submitEventUrl: contract.submitEventUrl },
+        "vm.hostKeys",
+        () =>
+          createRepoRecord(COMPUTE_EVENTS_VM_HOST_KEYS_NSID, {
+            $type: COMPUTE_EVENTS_VM_HOST_KEYS_NSID,
+            keys: checked.keys,
+            observedAt: report.observedAt,
+            createdAt: new Date().toISOString(),
+          }),
+        { providerId, fingerprints: checked.keys.map((k) => k.fingerprint) },
+        log,
+      );
+      if (!published) {
+        reportedHostKeys.delete(contract.receiptUri);
+        return { ok: false, status: 502, reason: "vm.hostKeys could not be published" };
+      }
+      return { ok: true };
+    }
+    log("warn", "vm_hostkeys_no_contract", { providerId: report.id });
+    return { ok: false, status: 404, reason: "no contract holds this guest" };
   };
 
   const saveChange = async (event: ContractEvent, cbLog: Logger): Promise<void> => {
@@ -283,6 +357,8 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
       }
     }
   };
+
+  computeProvider.onHostKeys?.(acceptHostKeys);
 
   computeProvider.onGuestGone?.((gone) => {
     releaseGoneGuest(gone).catch((err: unknown) =>

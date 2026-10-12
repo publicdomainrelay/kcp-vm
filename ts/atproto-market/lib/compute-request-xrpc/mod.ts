@@ -16,6 +16,7 @@ import {
   COMPUTE_EVENTS_VM_ONNETWORK_NSID,
   COMPUTE_EVENTS_VM_REGISTER_IDENTITY_NSID,
   COMPUTE_EVENTS_VM_TERMINATED_NSID,
+  COMPUTE_EVENTS_VM_HOST_KEYS_NSID,
   COMPUTE_VM_NSID,
   EVENT_NSID,
   OFFERING_NSID,
@@ -74,11 +75,13 @@ import {
   receiptKeyOf,
   releaseTargetOf,
   ReturnLatch,
+  hostKeysOf,
   terminationOf,
 } from "@publicdomainrelay/compute-request-abc";
 import type {
   BidDecision,
   ComputeEventEnvelope,
+  ContractHostKeys,
   ContractTermination,
   ComputeRequestHandlers,
   ContractOutcome,
@@ -355,6 +358,8 @@ type OnNetworkPds = Pick<
   | "resolveIrohNodeId"
   | "setOnTerminated"
   | "clearOnTerminated"
+  | "setOnHostKeys"
+  | "clearOnHostKeys"
 >;
 
 export type ComputeEventVerifier = (envelope: ComputeEventEnvelope) => Promise<boolean>;
@@ -371,6 +376,7 @@ interface ContractWatch {
   readonly firehose: boolean;
   readonly address: Promise<NetworkEvent>;
   readonly terminated: Promise<ContractTermination>;
+  readonly hostKeys: Promise<ContractHostKeys>;
   releaseNetwork(): void;
   setRfp(uri: string): void;
   setReceipt(receipt: RecordRef): void;
@@ -397,6 +403,9 @@ function openContractWatch(opts: {
   const terminatedReady = Promise.withResolvers<ContractTermination>();
   let terminatedSettled = false;
   let terminatedKey = "";
+  const hostKeysReady = Promise.withResolvers<ContractHostKeys>();
+  let hostKeysSettled = false;
+  let hostKeysKey = "";
   let rfpUri = "";
   let receiptUri = "";
   let receiptCid = "";
@@ -477,6 +486,35 @@ function openContractWatch(opts: {
     terminatedReady.resolve(t);
   };
 
+  const onHostKeysEnvelope = async (envelope: ComputeEventEnvelope, source: string) => {
+    if (hostKeysSettled || !receiptUri) return;
+    const bound = hostKeysOf(envelope, { uri: receiptUri, cid: receiptCid });
+    if (!bound.ok) {
+      log("vm_hostkeys_rejected", { eventUri: envelope.uri, source, reason: bound.reason });
+      return;
+    }
+    let sigOk = false;
+    try {
+      sigOk = await verifyEvent(envelope);
+    } catch (err) {
+      log("vm_hostkeys_verify_error", { eventUri: envelope.uri, source, error: String(err) });
+    }
+    if (!sigOk) {
+      log("vm_hostkeys_rejected", { eventUri: envelope.uri, source, reason: "signature invalid" });
+      return;
+    }
+    if (hostKeysSettled) return;
+    hostKeysSettled = true;
+    log("vm_hostkeys_received", {
+      receiptUri,
+      fingerprints: bound.hostKeys.keys.map((k) => `${k.type} ${k.fingerprint}`),
+      observedAt: bound.hostKeys.observedAt,
+      eventUri: bound.hostKeys.event.uri,
+      source,
+    });
+    hostKeysReady.resolve(bound.hostKeys);
+  };
+
   const onWrappedEvent = async (pdsUrl: string, event: FetchedRecord) => {
     const wrappedReceipt = event.value.receipt as { uri?: string; cid?: string } | undefined;
     const wrappedPayload = event.value.payload as { uri?: string } | undefined;
@@ -488,6 +526,19 @@ function openContractWatch(opts: {
       const payload = await getRecordFrom(pdsUrl, payloadRepo, payloadColl, wrappedPayload.uri.split("/").pop()!);
       if (!payload) return;
       await onTerminatedEnvelope(
+        { uri: event.uri, cid: event.cid, record: event.value, payload: payload.value },
+        `firehose:${event.uri}`,
+      );
+      return;
+    }
+    if (
+      receiptUri && wrappedReceipt?.uri === receiptUri &&
+      wrappedPayload?.uri?.split("/")[3] === COMPUTE_EVENTS_VM_HOST_KEYS_NSID
+    ) {
+      const [, , payloadRepo, payloadColl] = wrappedPayload.uri.split("/");
+      const payload = await getRecordFrom(pdsUrl, payloadRepo, payloadColl, wrappedPayload.uri.split("/").pop()!);
+      if (!payload) return;
+      await onHostKeysEnvelope(
         { uri: event.uri, cid: event.cid, record: event.value, payload: payload.value },
         `firehose:${event.uri}`,
       );
@@ -596,10 +647,16 @@ function openContractWatch(opts: {
     terminatedKey = "";
   };
 
+  const clearHostKeys = () => {
+    if (hostKeysKey) pds.clearOnHostKeys?.(hostKeysKey);
+    hostKeysKey = "";
+  };
+
   return {
     firehose: watcher !== undefined,
     address: addressReady.promise,
     terminated: terminatedReady.promise,
+    hostKeys: hostKeysReady.promise,
     releaseNetwork() {
       clearRegistration();
     },
@@ -622,6 +679,12 @@ function openContractWatch(opts: {
         terminatedKey,
         (envelope) => void onTerminatedEnvelope(envelope, "submitEvent"),
       );
+      clearHostKeys();
+      hostKeysKey = receiptUri;
+      pds.setOnHostKeys?.(
+        hostKeysKey,
+        (envelope) => void onHostKeysEnvelope(envelope, "submitEvent"),
+      );
     },
     bidsFor(uri) {
       return discoveredBids.get(uri) ?? [];
@@ -635,7 +698,7 @@ function openContractWatch(opts: {
         if (!pdsUrl) return;
         const events = await listRecordsAll(pdsUrl, winnerDid, EVENT_NSID, { timeoutMs: 10_000 });
         for (const event of events) {
-          if (terminatedSettled || (vmAddress && until === "network")) return;
+          if (terminatedSettled || (vmAddress && hostKeysSettled && until === "network")) return;
           await onWrappedEvent(pdsUrl, event as FetchedRecord);
         }
       } catch (err) {
@@ -645,6 +708,7 @@ function openContractWatch(opts: {
     close() {
       clearRegistration();
       clearTerminated();
+      clearHostKeys();
       watcher?.close();
       watcher = undefined;
     },
@@ -798,6 +862,7 @@ export interface ComputeRequestHandle {
   capabilities: GuestCapability[];
   dispose(): Promise<void>;
   terminated?: Promise<ContractState>;
+  hostKeys?: Promise<ContractHostKeys>;
 }
 
 type HandlerName = keyof ComputeRequestHandlers;
@@ -816,7 +881,7 @@ function capabilityHandle(
   state: ContractState,
   capabilities: GuestCapability[],
   log: FlowLog,
-  extra: { terminated?: Promise<ContractState>; close?: () => void } = {},
+  extra: { terminated?: Promise<ContractState>; hostKeys?: Promise<ContractHostKeys>; close?: () => void } = {},
 ): ComputeRequestHandle {
   let disposed: Promise<void> | undefined;
   return {
@@ -828,6 +893,7 @@ function capabilityHandle(
         await disposeAll(capabilities, log);
       })(),
     ...(extra.terminated ? { terminated: extra.terminated } : {}),
+    ...(extra.hostKeys ? { hostKeys: extra.hostKeys } : {}),
   };
 }
 
@@ -995,6 +1061,16 @@ export async function requestCompute(
     terminatedState.resolve(structuredClone(state));
   });
 
+  const hostKeysState = watch.hostKeys.then(async (hostKeys) => {
+    state = patchContract(state, { hostKeys });
+    try {
+      await handlers.onHostKeys?.(hostKeys, structuredClone(state));
+    } catch (err) {
+      log("compute_handler_failed", { handler: "onHostKeys", error: String(err) });
+    }
+    return hostKeys;
+  });
+
   const finish = async (
     outcome: ContractOutcome,
     patch: ContractStatePatch = {},
@@ -1019,6 +1095,7 @@ export async function requestCompute(
     watch.releaseNetwork();
     return capabilityHandle(structuredClone(state), capabilities, log, {
       terminated: terminatedState.promise,
+      hostKeys: hostKeysState,
       close: () => watch.close(),
     });
   };
@@ -1928,6 +2005,53 @@ export async function awaitComputeTermination(
     if (!termination) return null;
     return patchContract(state, { termination });
   } finally {
+    opts.signal?.removeEventListener("abort", onAbort);
+    watch.close();
+  }
+}
+
+export interface AwaitComputeHostKeysOptions {
+  logger?: StructuredLoggerInterface;
+  eventStreams?: EventStreamsClient;
+  plcUrl?: string;
+  timeoutMs?: number;
+  backfill?: boolean;
+  signal?: AbortSignal;
+  eventVerifier?: ComputeEventVerifier;
+}
+
+export async function awaitComputeHostKeys(
+  pds: OnNetworkPds,
+  state: ContractState,
+  opts: AwaitComputeHostKeysOptions = {},
+): Promise<ContractState> {
+  const log = flowLog(opts.logger);
+  if (state.hostKeys || !state.receipt || isTerminated(state) || opts.signal?.aborted) return state;
+  const watch = openContractWatch({
+    pds,
+    eventStreams: opts.eventStreams,
+    idResolver: new IdResolver({ plcUrl: opts.plcUrl }),
+    logger: opts.logger,
+    log,
+    verifyEvent: opts.eventVerifier,
+  });
+  const stop = Promise.withResolvers<null>();
+  const onAbort = () => stop.resolve(null);
+  opts.signal?.addEventListener("abort", onAbort, { once: true });
+  const timer = setTimeout(() => stop.resolve(null), opts.timeoutMs ?? DEFAULT_VM_READY_TIMEOUT_SEC * 1000);
+  try {
+    watch.setReceipt(state.receipt);
+    watch.releaseNetwork();
+    log("hostkeys_watch", { receiptUri: state.receipt.uri, winnerDid: state.winner?.did });
+    if (opts.backfill !== false && state.winner?.did) void watch.backfill(state.winner.did, "terminated");
+    const hostKeys = await Promise.race([watch.hostKeys, stop.promise]);
+    if (!hostKeys) {
+      log("vm_hostkeys_missing", { receiptUri: state.receipt.uri });
+      return state;
+    }
+    return patchContract(state, { hostKeys });
+  } finally {
+    clearTimeout(timer);
     opts.signal?.removeEventListener("abort", onAbort);
     watch.close();
   }

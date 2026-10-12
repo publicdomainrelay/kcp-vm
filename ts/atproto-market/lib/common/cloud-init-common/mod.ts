@@ -725,6 +725,98 @@ wait "\${DUMBPIPE_PID}"
   };
 };
 
+export const HOST_KEYS_REPORTER_SCRIPT = "/usr/local/bin/send-hostkeys.sh";
+export const HOST_KEYS_REPORTER_UNIT = "guest-hostkeys.service";
+
+export interface HostKeysReporterOptions {
+  url: string;
+  tokenPath: string;
+  sshDir?: string;
+  attempts?: number;
+  retryDelaySec?: number;
+}
+
+export function hostKeysReporterScript(opts: HostKeysReporterOptions): string {
+  const sshDir = opts.sshDir ?? "/etc/ssh";
+  const attempts = opts.attempts ?? 60;
+  const delay = opts.retryDelaySec ?? 5;
+  return [
+    "#!/usr/bin/env bash",
+    "set -uo pipefail",
+    `URL="${opts.url}"`,
+    `TOKEN_PATH="${opts.tokenPath}"`,
+    `SSH_DIR="${sshDir}"`,
+    'OUT="${TMPDIR:-/tmp}/guest-hostkeys.out"',
+    'ERR="${TMPDIR:-/tmp}/guest-hostkeys.err"',
+    'ED25519="${SSH_DIR}/ssh_host_ed25519_key"',
+    "for _ in $(seq 1 150); do",
+    '  [ -f "${ED25519}" ] && [ -f "${ED25519}.pub" ] && [ -s "${TOKEN_PATH}" ] && break',
+    "  sleep 2",
+    "done",
+    'if [ ! -f "${ED25519}" ]; then echo "guest-hostkeys: no ${ED25519}"; exit 1; fi',
+    'if [ ! -s "${TOKEN_PATH}" ]; then echo "guest-hostkeys: no provisioning token at ${TOKEN_PATH}"; exit 1; fi',
+    'TOKEN="$(cat "${TOKEN_PATH}")"',
+    "KEYS='[]'",
+    'for PUB in "${SSH_DIR}"/ssh_host_*_key.pub; do',
+    '  [ -f "${PUB}" ] || continue',
+    '  read -r TYPE BLOB _ < "${PUB}"',
+    '  FP="$(ssh-keygen -l -E sha256 -f "${PUB}" | awk \'{print $2}\')"',
+    '  KEYS="$(jq -c --arg t "${TYPE}" --arg k "${BLOB}" --arg f "${FP}" \'. + [{type: $t, publicKey: $k, fingerprint: $f}]\' <<<"${KEYS}")"',
+    "done",
+    'SIG="$(printf \'%s\' "${TOKEN}" | ssh-keygen -Y sign -n prove-sshd -f "${ED25519}")"',
+    'if [ -z "${SIG}" ]; then echo "guest-hostkeys: signing the token failed"; exit 1; fi',
+    'PAYLOAD="$(jq -nc --argjson keys "${KEYS}" --arg token "${TOKEN}" --arg sig "${SIG}" \'{keys: $keys, token: $token, signature: $sig}\')"',
+    'echo "guest-hostkeys: reporting $(jq -r \'[.[] | .type + " " + .fingerprint] | join(", ")\' <<<"${KEYS}")"',
+    `for _ in $(seq 1 ${attempts}); do`,
+    '  CODE="$(curl -sS -m 20 -o "${OUT}" -w \'%{http_code}\' -X POST "${URL}" -H \'Content-Type: application/json\' -d "${PAYLOAD}" 2>>"${ERR}" || echo 000)"',
+    '  echo "guest-hostkeys: http ${CODE} ${URL}"',
+    '  if [ "${CODE}" = "200" ]; then echo "guest-hostkeys: reported"; exit 0; fi',
+    '  case "${CODE}" in 400|403|409) echo "guest-hostkeys: refused: $(cat "${OUT}" 2>/dev/null)"; exit 1 ;; esac',
+    `  sleep ${delay}`,
+    "done",
+    'echo "guest-hostkeys: gave up; last response: $(cat "${OUT}" 2>/dev/null)"',
+    "exit 1",
+    "",
+  ].join("\n");
+}
+
+export function hostKeysReporterModule(opts: HostKeysReporterOptions): UserDataModule {
+  const unit = [
+    "[Unit]",
+    "Description=Report this guest's SSH host keys to its bidder",
+    "After=network-online.target ssh.service",
+    "Wants=network-online.target",
+    "",
+    "[Service]",
+    "Type=oneshot",
+    "RemainAfterExit=yes",
+    "TimeoutStartSec=900",
+    `ExecStart=${HOST_KEYS_REPORTER_SCRIPT}`,
+    "StandardOutput=journal+console",
+    "StandardError=journal+console",
+    "",
+    "[Install]",
+    "WantedBy=multi-user.target",
+    "",
+  ].join("\n");
+  return () => ({
+    write_files: [
+      {
+        path: HOST_KEYS_REPORTER_SCRIPT,
+        owner: "root:root",
+        permissions: "0700",
+        content: hostKeysReporterScript(opts),
+      },
+      { path: `/etc/systemd/system/${HOST_KEYS_REPORTER_UNIT}`, owner: "root:root", permissions: "0644", content: unit },
+    ],
+    runcmdPrepend: [
+      "systemctl daemon-reload",
+      `systemctl enable ${HOST_KEYS_REPORTER_UNIT}`,
+      `systemctl start --no-block ${HOST_KEYS_REPORTER_UNIT}`,
+    ],
+  });
+}
+
 registerUserDataModule("secrets", secretsModule);
 registerUserDataModule("k3s", k3sModule);
 registerUserDataModule("iroh", irohModule);
