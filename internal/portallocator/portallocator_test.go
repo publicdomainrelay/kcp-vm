@@ -477,7 +477,7 @@ func writeStore(t *testing.T, path string, leases []Lease) {
 	t.Helper()
 	a := &Allocator{path: path, leases: map[leaseKey]Lease{}, now: time.Now}
 	for _, l := range leases {
-		a.leases[leaseKey{l.Cluster, l.Purpose}] = l
+		a.leases[leaseKey{l.AppInstance, l.Cluster, l.Purpose}] = l
 	}
 	if err := a.save(); err != nil {
 		t.Fatalf("writeStore: %v", err)

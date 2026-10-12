@@ -17,6 +17,9 @@ import (
 const (
 	DefaultFirst = 20000
 	DefaultLast  = 29999
+
+	DevFirst = 15000
+	DevLast  = 19999
 )
 
 type Range struct {
@@ -105,6 +108,8 @@ type Lease struct {
 
 	Instance string `json:"instance,omitempty"`
 
+	AppInstance string `json:"appInstance,omitempty"`
+
 	AllocatedAt time.Time `json:"allocatedAt"`
 }
 
@@ -120,6 +125,8 @@ type leaseFile struct {
 type Config struct {
 	LeasePath string
 
+	AppInstance string
+
 	Range Range
 
 	Ephemeral *Range
@@ -132,6 +139,7 @@ type Config struct {
 }
 
 type Allocator struct {
+	app   string
 	path  string
 	rng   Range
 	probe func(int) bool
@@ -143,6 +151,7 @@ type Allocator struct {
 }
 
 type leaseKey struct {
+	app     string
 	cluster string
 	purpose Purpose
 }
@@ -203,6 +212,7 @@ func Open(cfg Config) (*Allocator, error) {
 	}
 
 	a := &Allocator{
+		app:    cfg.AppInstance,
 		path:   cfg.LeasePath,
 		rng:    rng,
 		probe:  cfg.Probe,
@@ -271,7 +281,7 @@ func (a *Allocator) readFile() (map[leaseKey]Lease, error) {
 		if retiredPurposes[l.Purpose] {
 			continue
 		}
-		leases[leaseKey{l.Cluster, l.Purpose}] = l
+		leases[leaseKey{l.AppInstance, l.Cluster, l.Purpose}] = l
 	}
 	return leases, nil
 }
@@ -305,7 +315,7 @@ func (a *Allocator) Allocate(req Request) (Lease, error) {
 			return errors.New(strings.Join(found, "; "))
 		}
 
-		key := leaseKey{req.Cluster, req.Purpose}
+		key := leaseKey{a.app, req.Cluster, req.Purpose}
 		if held, ok := a.leases[key]; ok {
 			held.Instance = req.Instance
 			a.leases[key] = held
@@ -327,6 +337,7 @@ func (a *Allocator) Allocate(req Request) (Lease, error) {
 			Cluster:     req.Cluster,
 			Account:     req.Account,
 			Instance:    req.Instance,
+			AppInstance: a.app,
 			AllocatedAt: a.now(),
 		}
 		a.leases[key] = lease
@@ -375,7 +386,7 @@ func (a *Allocator) Release(cluster string) error {
 			return err
 		}
 		for key := range a.leases {
-			if key.cluster == cluster {
+			if key.app == a.app && key.cluster == cluster {
 				delete(a.leases, key)
 			}
 		}
@@ -390,7 +401,7 @@ func (a *Allocator) ReleasePurpose(cluster string, purpose Purpose) error {
 		if err := a.load(); err != nil {
 			return err
 		}
-		key := leaseKey{cluster, purpose}
+		key := leaseKey{a.app, cluster, purpose}
 		if _, ok := a.leases[key]; !ok {
 			return nil
 		}
@@ -399,18 +410,48 @@ func (a *Allocator) ReleasePurpose(cluster string, purpose Purpose) error {
 	})
 }
 
+func (a *Allocator) AppInstance() string { return a.app }
+
 func (a *Allocator) Leases() []Lease {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.refresh()
+	return a.own()
+}
+
+func (a *Allocator) AllLeases() []Lease {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.refresh()
 	return a.snapshot()
 }
 
+func (a *Allocator) ReleaseAll() error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.withLock(hostos.LockExclusive, func() error {
+		if err := a.load(); err != nil {
+			return err
+		}
+		n := 0
+		for key := range a.leases {
+			if key.app == a.app {
+				delete(a.leases, key)
+				n++
+			}
+		}
+		if n == 0 {
+			return nil
+		}
+		return a.save()
+	})
+}
+
 func (a *Allocator) PortFor(cluster string, purpose Purpose) (Lease, bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.refresh()
-	l, ok := a.leases[leaseKey{cluster, purpose}]
+	l, ok := a.leases[leaseKey{a.app, cluster, purpose}]
 	return l, ok
 }
 
@@ -430,15 +471,15 @@ func (a *Allocator) Rekey(legacy, key string) (int, error) {
 			return err
 		}
 		for held, l := range a.leases {
-			if l.Cluster != legacy {
+			if held.app != a.app || l.Cluster != legacy {
 				continue
 			}
-			if _, taken := a.leases[leaseKey{key, held.purpose}]; taken {
+			if _, taken := a.leases[leaseKey{a.app, key, held.purpose}]; taken {
 				continue
 			}
 			delete(a.leases, held)
 			l.Cluster = key
-			a.leases[leaseKey{key, held.purpose}] = l
+			a.leases[leaseKey{a.app, key, held.purpose}] = l
 			moved++
 		}
 		if moved == 0 {
@@ -460,9 +501,9 @@ func (a *Allocator) Reclaim(known map[string]bool) ([]Lease, error) {
 		if err := a.load(); err != nil {
 			return err
 		}
-		freed = LeasesToReclaim(a.snapshot(), known, a.now(), a.grace)
+		freed = LeasesToReclaim(a.own(), known, a.now(), a.grace)
 		for _, l := range freed {
-			delete(a.leases, leaseKey{l.Cluster, l.Purpose})
+			delete(a.leases, leaseKey{l.AppInstance, l.Cluster, l.Purpose})
 		}
 		if len(freed) == 0 {
 			return nil
@@ -485,6 +526,16 @@ func LeasesToReclaim(leases []Lease, known map[string]bool, now time.Time, grace
 			continue
 		}
 		out = append(out, l)
+	}
+	return out
+}
+
+func (a *Allocator) own() []Lease {
+	var out []Lease
+	for _, l := range a.snapshot() {
+		if l.AppInstance == a.app {
+			out = append(out, l)
+		}
 	}
 	return out
 }

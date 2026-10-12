@@ -133,3 +133,32 @@ func TestABlockWithEverySlotHeldRefuses(t *testing.T) {
 			"nothing else in this suite reproduces", err)
 	}
 }
+
+func TestTheDevCarveDoesNotOverlapTheLiveTestBlocks(t *testing.T) {
+	dev := DevCarve.Span()
+	if dev.First != portallocator.DevFirst || dev.Last != portallocator.DevLast {
+		t.Fatalf("liveports.DevCarve is %s and portallocator's dev carve is %d-%d", dev, portallocator.DevFirst, portallocator.DevLast)
+	}
+	found := false
+	for _, s := range Reserved {
+		if s == DevCarve {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the dev carve is not in Reserved, so a new block could be placed over it")
+	}
+	for _, b := range Blocks {
+		if dev.Overlaps(b.Span()) {
+			t.Fatalf("the dev carve %s overlaps %s %s", dev, b.What, b.Span())
+		}
+	}
+	for _, s := range Probed {
+		if dev.Overlaps(s.Span()) {
+			t.Fatalf("the dev carve %s overlaps %s %s", dev, s.What, s.Span())
+		}
+	}
+	if dev.Overlaps(DefaultCarve.Span()) {
+		t.Fatalf("the dev carve %s overlaps the production default carve %s", dev, DefaultCarve.Span())
+	}
+}

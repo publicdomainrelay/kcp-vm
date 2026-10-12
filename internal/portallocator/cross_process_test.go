@@ -18,6 +18,8 @@ const (
 	childRange    = "PORTALLOCATOR_CROSS_PROCESS_RANGE"
 	childName     = "PORTALLOCATOR_CROSS_PROCESS_NAME"
 	childBarrier  = "PORTALLOCATOR_CROSS_PROCESS_BARRIER"
+	childApp      = "PORTALLOCATOR_CROSS_PROCESS_APP"
+	childCluster  = "PORTALLOCATOR_CROSS_PROCESS_CLUSTER"
 )
 
 const childPortLine = "PORTALLOCATOR_CHILD_PORT="
@@ -42,10 +44,11 @@ func runChild() {
 	}
 	none := Range{}
 	a, err := Open(Config{
-		LeasePath: leasePath,
-		Range:     rng,
-		Ephemeral: &none,
-		Probe:     func(int) bool { return false },
+		LeasePath:   leasePath,
+		AppInstance: os.Getenv(childApp),
+		Range:       rng,
+		Ephemeral:   &none,
+		Probe:       func(int) bool { return false },
 	})
 	if err != nil {
 		fail("child %s: Open(%s, %s): %v", os.Getenv(childName), leasePath, rng, err)
@@ -61,7 +64,11 @@ func runChild() {
 		}
 	}
 
-	lease, err := a.Allocate(Request{Cluster: os.Getenv(childName), Account: "did:" + os.Getenv(childName), Instance: "1", Purpose: PurposeKine})
+	cluster := os.Getenv(childCluster)
+	if cluster == "" {
+		cluster = os.Getenv(childName)
+	}
+	lease, err := a.Allocate(Request{Cluster: cluster, Account: "did:" + cluster, Instance: "1", Purpose: PurposeKine})
 	if err != nil {
 		fail("child %s: Allocate: %v", os.Getenv(childName), err)
 	}
@@ -82,9 +89,11 @@ func parseChildRange(raw string) (Range, error) {
 }
 
 type kid struct {
-	name  string
-	lease string
-	rng   Range
+	name    string
+	lease   string
+	rng     Range
+	app     string
+	cluster string
 }
 
 func runKids(t *testing.T, kids []kid) []int {
@@ -104,6 +113,8 @@ func runKids(t *testing.T, kids []kid) []int {
 			childName+"="+k.name,
 			childLease+"="+k.lease,
 			childRange+"="+k.rng.String(),
+			childApp+"="+k.app,
+			childCluster+"="+k.cluster,
 			childBarrier+"="+dir,
 		)
 		cmd.Stdout = &out
@@ -169,8 +180,8 @@ func TestCrossProcessOneStoreTwoProcessesGetDistinctPorts(t *testing.T) {
 	rng := Range{20000, 29999}
 
 	ports := runKids(t, []kid{
-		{"alpha", store, rng},
-		{"beta", store, rng},
+		{name: "alpha", lease: store, rng: rng},
+		{name: "beta", lease: store, rng: rng},
 	})
 	if ports[0] == ports[1] {
 		t.Fatalf("two processes sharing one lease file both got port %d: findFree is lowest-first, "+
@@ -200,8 +211,8 @@ func TestCrossProcessSeparateStoresCollideAndTheCarveIsTheFix(t *testing.T) {
 	dir := t.TempDir()
 	same := Range{20000, 29999}
 	ports := runKids(t, []kid{
-		{"alpha", filepath.Join(dir, "alpha.json"), same},
-		{"beta", filepath.Join(dir, "beta.json"), same},
+		{name: "alpha", lease: filepath.Join(dir, "alpha.json"), rng: same},
+		{name: "beta", lease: filepath.Join(dir, "beta.json"), rng: same},
 	})
 	if ports[0] != ports[1] {
 		t.Fatalf("two processes with separate empty stores and the same carve got %d and %d; "+
@@ -216,8 +227,8 @@ func TestCrossProcessSeparateStoresCollideAndTheCarveIsTheFix(t *testing.T) {
 
 	dir2 := t.TempDir()
 	carved := runKids(t, []kid{
-		{"alpha", filepath.Join(dir2, "alpha.json"), Range{20000, 20999}},
-		{"beta", filepath.Join(dir2, "beta.json"), Range{21000, 21999}},
+		{name: "alpha", lease: filepath.Join(dir2, "alpha.json"), rng: Range{20000, 20999}},
+		{name: "beta", lease: filepath.Join(dir2, "beta.json"), rng: Range{21000, 21999}},
 	})
 	if carved[0] == carved[1] {
 		t.Fatalf("disjoint carves still collided on %d", carved[0])

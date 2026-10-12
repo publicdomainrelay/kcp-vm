@@ -50,7 +50,13 @@ var (
 		Width: portallocator.DefaultLast - portallocator.DefaultFirst + 1,
 	}
 
-	Reserved = []Span{DefaultCarve}
+	DevCarve = Span{
+		What:  "the per-user dev lease carve",
+		First: portallocator.DevFirst,
+		Width: portallocator.DevLast - portallocator.DevFirst + 1,
+	}
+
+	Reserved = []Span{DefaultCarve, DevCarve}
 )
 
 var ErrNoSlot = errors.New(

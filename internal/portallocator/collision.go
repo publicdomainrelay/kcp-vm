@@ -41,6 +41,10 @@ func FindDuplicatePorts(leases []Lease) []string {
 		}
 		names := make([]string, 0, len(claimants))
 		for _, c := range claimants {
+			if c.AppInstance != "" {
+				names = append(names, fmt.Sprintf("%s (%s, instance %s)", c.Cluster, c.Purpose, c.AppInstance))
+				continue
+			}
 			names = append(names, fmt.Sprintf("%s (%s)", c.Cluster, c.Purpose))
 		}
 		out = append(out, fmt.Sprintf(

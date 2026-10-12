@@ -115,6 +115,7 @@ func addOffset(addr netip.Addr, off uint32) netip.Addr {
 
 type Lease struct {
 	Cluster     string
+	AppInstance string
 	Block       netip.Prefix
 	AllocatedAt time.Time
 }
@@ -171,23 +172,32 @@ type Request struct {
 type Config struct {
 	LeasePath string
 
+	AppInstance string
+
 	HostNetworks func() ([]HostNetwork, error)
 
 	Now func() time.Time
 }
 
+type leaseKey struct {
+	app     string
+	cluster string
+}
+
 type Allocator struct {
+	app   string
 	path  string
 	pool  Pool
 	hosts func() ([]HostNetwork, error)
 	now   func() time.Time
 
 	mu     sync.Mutex
-	leases map[string]Lease
+	leases map[leaseKey]Lease
 }
 
 type leaseRecord struct {
 	Cluster     string    `json:"cluster"`
+	AppInstance string    `json:"appInstance,omitempty"`
 	Block       string    `json:"block"`
 	AllocatedAt time.Time `json:"allocatedAt"`
 }
@@ -214,11 +224,12 @@ func openWithPool(cfg Config, pool Pool) (*Allocator, error) {
 		return nil, err
 	}
 	a := &Allocator{
+		app:    cfg.AppInstance,
 		path:   cfg.LeasePath,
 		pool:   pool,
 		hosts:  cfg.HostNetworks,
 		now:    cfg.Now,
-		leases: map[string]Lease{},
+		leases: map[leaseKey]Lease{},
 	}
 	if a.hosts == nil {
 		a.hosts = HostNetworks
@@ -269,10 +280,10 @@ func (a *Allocator) load() error {
 	return nil
 }
 
-func (a *Allocator) readFile() (map[string]Lease, error) {
+func (a *Allocator) readFile() (map[leaseKey]Lease, error) {
 	data, err := os.ReadFile(a.path)
 	if errors.Is(err, os.ErrNotExist) {
-		return map[string]Lease{}, nil
+		return map[leaseKey]Lease{}, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("subnetallocator: reading the lease file %s: %w", a.path, err)
@@ -300,7 +311,7 @@ func (a *Allocator) readFile() (map[string]Lease, error) {
 			"release the leases in that file by hand, with the clusters they belong to named in it",
 			a.path, f.Pool, a.pool.Masked())
 	}
-	leases := make(map[string]Lease, len(f.Leases))
+	leases := make(map[leaseKey]Lease, len(f.Leases))
 	for _, r := range f.Leases {
 		if r.Cluster == "" {
 			return nil, fmt.Errorf("subnetallocator: the lease file %s records a range %q held by no "+
@@ -333,7 +344,7 @@ func (a *Allocator) readFile() (map[string]Lease, error) {
 				"their nodes alike. Refusing to start rather than leasing around a record that "+
 				"covers ground this build cannot see", a.path, block, r.Cluster, a.pool.Masked())
 		}
-		if prev, ok := leases[r.Cluster]; ok {
+		if prev, ok := leases[leaseKey{r.AppInstance, r.Cluster}]; ok {
 			return nil, fmt.Errorf("subnetallocator: the lease file %s names cluster %s twice, at %s "+
 				"and at %s. One of those two ranges is held by nobody and the pool walk will hand it "+
 				"to the next cluster, whose nodes are then addressed inside a range this cluster's "+
@@ -342,7 +353,7 @@ func (a *Allocator) readFile() (map[string]Lease, error) {
 				"actually addressed in and a guess here renumbers a running cluster",
 				a.path, r.Cluster, prev.Block, block)
 		}
-		leases[r.Cluster] = Lease{Cluster: r.Cluster, Block: block, AllocatedAt: r.AllocatedAt}
+		leases[leaseKey{r.AppInstance, r.Cluster}] = Lease{Cluster: r.Cluster, AppInstance: r.AppInstance, Block: block, AllocatedAt: r.AllocatedAt}
 	}
 	return leases, nil
 }
@@ -355,6 +366,7 @@ func (a *Allocator) save() error {
 	for _, l := range a.snapshot() {
 		records = append(records, leaseRecord{
 			Cluster:     l.Cluster,
+			AppInstance: l.AppInstance,
 			Block:       l.Block.Masked().String(),
 			AllocatedAt: l.AllocatedAt,
 		})
@@ -397,16 +409,16 @@ func (a *Allocator) Rekey(legacy, key string) (int, error) {
 		if err := a.load(); err != nil {
 			return err
 		}
-		held, ok := a.leases[legacy]
+		held, ok := a.leases[leaseKey{a.app, legacy}]
 		if !ok {
 			return nil
 		}
-		if _, taken := a.leases[key]; taken {
+		if _, taken := a.leases[leaseKey{a.app, key}]; taken {
 			return nil
 		}
-		delete(a.leases, legacy)
+		delete(a.leases, leaseKey{a.app, legacy})
 		held.Cluster = key
-		a.leases[key] = held
+		a.leases[leaseKey{a.app, key}] = held
 		moved = 1
 		return a.save()
 	})
@@ -437,7 +449,7 @@ func (a *Allocator) Allocate(req Request) (Lease, error) {
 			return errors.New(strings.Join(found, "; "))
 		}
 
-		if held, ok := a.leases[req.Cluster]; ok {
+		if held, ok := a.leases[leaseKey{a.app, req.Cluster}]; ok {
 			granted = held
 			return nil
 		}
@@ -463,12 +475,13 @@ func (a *Allocator) Allocate(req Request) (Lease, error) {
 			case err == nil:
 				lease := Lease{
 					Cluster:     req.Cluster,
+					AppInstance: a.app,
 					Block:       candidate,
 					AllocatedAt: a.now(),
 				}
-				a.leases[req.Cluster] = lease
+				a.leases[leaseKey{a.app, req.Cluster}] = lease
 				if saveErr := a.save(); saveErr != nil {
-					delete(a.leases, req.Cluster)
+					delete(a.leases, leaseKey{a.app, req.Cluster})
 					return saveErr
 				}
 				granted = lease
@@ -515,26 +528,39 @@ func (a *Allocator) Release(cluster string) error {
 		if err := a.load(); err != nil {
 			return err
 		}
-		if _, ok := a.leases[cluster]; !ok {
+		if _, ok := a.leases[leaseKey{a.app, cluster}]; !ok {
 			return nil
 		}
-		delete(a.leases, cluster)
+		delete(a.leases, leaseKey{a.app, cluster})
 		return a.save()
 	})
 }
 
-func (a *Allocator) Leases() []Lease {
+func (a *Allocator) AllLeases() []Lease {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.refresh()
 	return a.snapshot()
 }
 
+func (a *Allocator) Leases() []Lease {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.refresh()
+	var out []Lease
+	for _, l := range a.snapshot() {
+		if l.AppInstance == a.app {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
 func (a *Allocator) LeaseFor(cluster string) (Lease, bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.refresh()
-	l, ok := a.leases[cluster]
+	l, ok := a.leases[leaseKey{a.app, cluster}]
 	return l, ok
 }
 
