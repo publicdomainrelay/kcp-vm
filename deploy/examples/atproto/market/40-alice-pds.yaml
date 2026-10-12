@@ -13,9 +13,9 @@ spec:
   env:
     SERVICE_ENTRY: "/home/johnandersen777/src/publicdomainrelay-kcp/hono-pds/main.ts"
     SERVICE_CWD: "/home/johnandersen777/src/publicdomainrelay-kcp/hono-pds"
-    SERVICE_ARGS: '["--port","2583","--hostname","127.0.0.1"]'
-    SERVICE_DENO_FLAGS: '["--unstable-kv"]'
-    SERVICE_ENV: '{"PORT":"2583","HOSTNAME":"127.0.0.1","PDS_PUBLIC_HOSTNAME":"pds.default.alice.svc.kcp.local","PDS_PLC_DIRECTORY_URL":"https://plc.default.global.svc.kcp.local","PDS_CRAWLERS":"https://127.0.0.1:2584","PDS_SUBSCRIBE_REPOS_FORMAT":"json","PDS_PRIVATE_KEY_HEX":"__PDS_PRIVATE_KEY_HEX__"}'
+    SERVICE_ARGS: '["--port","0","--hostname","127.0.0.1","--kv-path","__STATE_DIR__/alice-pds/kv.sqlite3"]'
+    SERVICE_DENO_FLAGS: '["--node-modules-dir=none","--unstable-kv"]'
+    SERVICE_ENV: '{"PORT":"0","HOSTNAME":"127.0.0.1","PDS_PUBLIC_HOSTNAME":"pds.default.alice.svc.kcp.local","PDS_PLC_DIRECTORY_URL":"https://plc.default.global.svc.kcp.local","PDS_CRAWLERS":"https://relay.default.relay.svc.kcp.local","PDS_SUBSCRIBE_REPOS_FORMAT":"json","PDS_PRIVATE_KEY_HEX":"__PDS_PRIVATE_KEY_HEX__"}'
     SERVICE_TLS: "true"
   script: |
     const entry = Deno.env.get("SERVICE_ENTRY") ?? "";
@@ -37,6 +37,8 @@ spec:
       PATH: Deno.env.get("PATH") ?? "",
       HOME: Deno.env.get("HOME") ?? "",
       ...serviceEnv,
+      PORT_FILE: `${runDir}/port-bound-to`,
+      DENO_DIR: "__DENO_DIR__",
     };
 
     const caBundle = Deno.env.get("KCP_CA_BUNDLE") ?? "";
@@ -100,6 +102,7 @@ spec:
         - KCP_SERVICE_NAME
         - KCP_SERVICE_DOMAIN
         - KCP_DNS_TABLE
+        - KCP_DNS_TABLE_FILE
         - KCP_TOKENS
         - KCP_SERVER
         - KCP_NAMESPACE

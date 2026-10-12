@@ -5,12 +5,19 @@ carries an `OpenBao` object naming the OpenBao namespace that serves it, which i
 where its DenoPods' serving certificates are issued from:
 
 ```
-root:global   DenoPod/plc       hono-plc            :2587  plc.default.global.svc.kcp.local
-root:relay    DenoPod/relay     hono-atproto-relay  :2584  relay.default.relay.svc.kcp.local
-root:alice    DenoPod/pds       hono-pds            :2583  pds.default.alice.svc.kcp.local
-root:alice    DenoPod/verifier  the end-to-end check
-root:bob      DenoPod/pds       hono-pds            :2585  pds.default.bob.svc.kcp.local
-root:bob      DenoPod/bidder    hono-bidder         :2586  bidder.default.bob.svc.kcp.local
+root:global   DenoPod/plc            hono-plc            :0  plc.default.global.svc.kcp.local
+root:relay    DenoPod/relay          hono-atproto-relay  :0  relay.default.relay.svc.kcp.local
+root:relay    DenoPod/dispatcher     ingress proxy       :0  dispatcher.default.relay.svc.kcp.local
+root:relay    DenoPod/dispatcher-tls guests' TLS front   :0  dispatcher-tls.default.relay.svc.kcp.local
+root:alice    DenoPod/pds            hono-pds            :0  pds.default.alice.svc.kcp.local
+root:alice    DenoPod/verifier       the end-to-end check
+root:bob      DenoPod/pds            hono-pds            :0  pds.default.bob.svc.kcp.local
+root:bob      DenoPod/bidder-<n>     hono-bidder         :0  bidder-<n>.default.bob.svc.kcp.local
+
+Every service binds port 0. It writes the port it got to PORT_FILE in its run
+directory, the provider reads it back into the DenoPod's status.address, and
+peers reach it by name through the kcpdns table the provider rewrites as ports
+are reported.
 
 OpenBao objects, one per workspace, each naming the OpenBao namespace that holds
 its intermediate CA:
@@ -58,9 +65,9 @@ why the workloads' certificates come from OpenBao instead, and why a
 provider restart:
 
 ```bash
-bash deploy/start-openbao.sh          # development mode, in-memory
+bash deploy/denokcp/start-openbao.sh  # development mode, in-memory, port 0
 ./deno-kcp-provider --kubeconfig=... \
-  --openbao-addr http://127.0.0.1:8200 --openbao-token root
+  --openbao-addr http://$(cat .kcp-openbao/bao.addr) --openbao-token root
 ```
 
 The root CA lives in OpenBao's root namespace; each workspace's `OpenBao` object
@@ -91,26 +98,33 @@ insecure-HTTP escape hatch, and now it has nothing to escape from.
 ## Running it
 
 ```bash
-bash deploy/start-kcp.sh
-KUBECONFIG_PATH=$PWD/.kcp-demo/admin.kubeconfig bash deploy/install-provider.sh
-go build -o deno-kcp-provider ./cmd/deno-kcp-provider
-bash deploy/start-openbao.sh
+bash deploy/denokcp/start-kcp.sh      # kine and kcp on port 0, read back
+KUBECONFIG_PATH=$PWD/.kcp-demo/admin.kubeconfig bash deploy/denokcp/install-provider.sh
+bash deploy/denokcp/build-provider.sh ./deno-kcp-provider
+OPENBAO_DIR=$PWD/.kcp-demo/openbao bash deploy/denokcp/start-openbao.sh
 RUNS_DIR=$PWD/runs ./deno-kcp-provider --kubeconfig=$KUBECONFIG \
-  --openbao-addr http://127.0.0.1:8200 --openbao-token root &
-bash deploy/examples/atproto/market/apply.sh
+  --openbao-addr http://$(cat .kcp-demo/openbao/bao.addr) --openbao-token root &
+START_OPENBAO=0 bash deploy/examples/atproto/market/apply.sh
 ```
 
 `apply.sh` starts OpenBao itself unless `START_OPENBAO=0`, and waits for each
 workspace's `OpenBao` object to report ready before it applies the workloads.
 
-`accept.sh` is that whole sequence as one live acceptance: it brings up its own
-kcp, kine, OpenBao and provider under a throwaway `$ACCEPT_ROOT` on ports the
-kernel hands out, runs `apply.sh`, then reads every DenoPod back and reaches each
-service on its own name and from the host, and exits non-zero unless every check
-passed:
+`accept.sh` is that whole sequence as one live acceptance, and one market test
+bed of several per host: it takes a bed slot (`SWC_BED_SLOTS`, default 4, flock
+under /var/tmp/socialweb-bedslots, refused below 3 GiB + 2.5 GiB per guest of
+MemAvailable), brings up its own kcp, kine, OpenBao and provider under
+`$BED_STATE/beds/$BED_ID` on port 0, runs `apply.sh` with `BED_BIDDERS`
+bidders, records every port and pid it read back in `bed.json`, reaches each
+service on its own name and from the host, rents a firecracker guest through
+the RFP flow (guests under /var/tmp/swc-$BED_ID, labelled swc.bed=$BED_ID), and
+tears the bed down, reporting anything left behind. It exits non-zero unless
+every check passed. Two beds at once:
 
 ```bash
-bash deploy/examples/atproto/market/accept.sh
+BED_ID=bed1 BED_BIDDERS=2 bash deploy/examples/atproto/market/accept.sh &
+BED_ID=bed2 BED_BIDDERS=2 bash deploy/examples/atproto/market/accept.sh &
+wait
 ```
 
 Requires the sibling repositories `atproto-market`, `atproto-relay`, `hono-pds`
