@@ -255,7 +255,7 @@ HostProcesses, and listeners behind the edge bind port 0.
 | # | Component | Layer | Why it exists |
 |---|---|---|---|
 | 1 | `Cluster` CRD - the mount object | Go | Carries `status.URL` and `status.phase`, which are the real contract. Owns `Draining`, `conditions[TenantPathShut]`, `conditions[Reachable]`, `status.nodeExpiry` |
-| 2 | **Materialiser** - controller watching kcp with a host selector | Go | Spawns and reaps the per-cluster process group. This IS the gateway's supervisor |
+| 2 | **Materialiser** - controller watching kcp with a host selector | Go | Places and stops each cluster's member units through HostProcess objects. This IS the gateway's supervisor |
 | 3 | Cluster provider | Go | Owns the `Cluster` CR lifecycle: mints the instance token, fetches the identity bundle, sets `status.URL` once the apiserver answers. ONE process serves EVERY cluster in the kcp tree, and a cluster is named inside it by its home workspace, not by the bare name the owner chose |
 | 4 | Node provider | Go | Watches the home workspace for intent, actuates one node, writes `Node` state |
 | 5 | kcp provider workspace | YAML | `APIResourceSchema` plus `APIExport` for our CRDs; tenants `APIBinding` |
@@ -274,60 +274,63 @@ registry plus volume-commit machinery was struck from this list by plan 0006 M1-
 only reason was S3-backed PVs on the central rustfs that was never built (section 4), so it is
 neither built nor rejected on evidence.
 
-### The per-cluster process group
+### The per-cluster slice of member units
+
+Plan 0006 M3-CLUSTER-UNITS (decided by the user 2026-10-12; the rest decided by Claude, user may veto).
+Each cluster is a slice of member units. The cluster provider never forks a member: it writes one
+HostProcess object per member into the gateway's own kcp (workspace `root` unless
+`SOCIALWEB_CLUSTERPROVIDER_HOSTPROCESS_WORKSPACE` says otherwise), and the HostProcess supervisor in
+the core places it on systemd-user (production) or under devsup (proc, dev). The reconcile loop is
+still the only supervisor; there is no cluster-group verb and no Pdeathsig. A core or provider
+restart or upgrade restarts no member.
 
 ```
-embedded-postgres  ->  openbao  ->  kine  ->  k3s server --disable-agent  ->  cloud-controller-manager
-                   ->  external-secrets-webhook  ->  external-secrets  ->  apiserver-link  ->  openbao-link
+<prefix>pg-<store>.service                 the cluster's Postgres object (M2-POSTGRES), unix socket only
+<prefix>cluster-<key with - as _>.slice    one slice per cluster
+  <prefix>c-<key>-bao.service              After/Wants the pg unit
+  <prefix>c-<key>-kine@a.service           After/Wants the pg unit
+  <prefix>c-<key>-k3s@a.service            After/Wants kine@a
+  <prefix>c-<key>-ccm.service              After/Wants k3s@a
+  <prefix>c-<key>-esowh.service            After/Wants k3s@a
+  <prefix>c-<key>-eso.service              After/Wants k3s@a
+  <prefix>c-<key>-link-apiserver.service   After/Wants k3s@a, Restart=always
+  <prefix>c-<key>-link-openbao.service     After/Wants bao, Restart=always
 ```
 
-The two links are appended by `StepsFor` after every `StackOrder` member when
-`StackConfig.Links` is set (section "The cluster links" below); they are not in `StackOrder`
-because they are not stack components a `clusterstack.Spec` renders an argv for.
-
-That order is `procgroup.StackOrder` — every component a stack may name, in bring-up order — and
-reap is reverse order. It is deliberately a DIFFERENT list from `procgroup.DefaultOrder`, which is the
-default SET (postgres, kine, k3s, cloud-controller-manager). One list was doing both jobs until the vault made them come apart:
-`StepsFrom` walked `DefaultOrder` as a whitelist, so removing the vault from the default set would
-have made an explicitly opted-in stack lease its port, render its config and **spawn nothing** — a
-vault that is configured, leased and never started. The two lists are pinned against drifting by a
-test asserting every member of `DefaultOrder` appears in `StackOrder`, in order. There is deliberately
-**no
-supervisor process**: the reconcile loop is the supervisor.
-
-The cloud controller manager follows k3s, and its position is the whole reason it is a member
-at all (the External Secrets pair, below, follows it for the same reason). It is useless without an apiserver, so it comes after `k3s server`; a step placed before k3s
-would also move the seam `ErrNoGuardSeam` protects, which is why the guard's own rule is that the
-identity check rides a step ahead of k3s and nothing else may be inserted between. Reverse-order reap
-therefore stops the controller FIRST, which is what is wanted: a controller that outlives the
-apiserver it reconciles against is a loop of connection errors during every teardown. It is
-PORTLESS — it dials the apiserver and listens on nothing — so `portallocator` gained no purpose and
-no lease for it, and invariant 8's bookkeeping about who holds one does not grow. Its credential,
-its cluster and its instance-file path ride `Spec.Env` and never argv (invariants 3 and 13), and its
-readiness gate is its own `phase=Ready` log line, taken once its Node informer has synced: it binds
-no port, so that line is the only signal it can offer, and it is a positive marker that can fail.
-
-A portless member is not swept, and it no longer needs to be: every process-group member dies with
-the provider. The startup sweep (`internal/providermain/nodesweep.go`, and the leased-port
-scan in `startup.go`) finds a previous gateway's survivors by the record or the port they leave and
-the argv they were started with; a step that binds no port and leaves no record is invisible to it,
-and the cloud controller manager is exactly that, deliberately, because its work is to reconcile
-Node objects against the instance snapshot rather than to own a node. A sweep by PID alone would
-find every process on the host, and a pid record can be reused. So the member is made unable to
-survive instead: `procgroup.Spawn` sets `processrunner.Spec.DieWithParent` on every step, which
-spawns the child with `Pdeathsig: SIGKILL` from a goroutine that holds `runtime.LockOSThread` for
-the child's whole life. The thread matters: Linux delivers the parent-death signal when the THREAD
-that forked the child exits, not the process, and a Go thread can exit under a healthy provider. The
-sweep is kept unchanged for the members that bind ports, as a backstop for a member that escapes the
-signal (a setuid exec clears it). A Windows host has no Pdeathsig; a job object is the upgrade, named
-in `internal/hostos/sysproc_windows.go`. Closed by plan 0005 M6-LIMITS (section 15); this was
-`NEXT.yaml` CCM-2, then a stated limit.
-
-Planned, not built (plan 0006 M3-CLUSTER-UNITS, revised 2026-10-12 by the user's decision): each
-cluster becomes a systemd slice of member units in the gateway account's user manager (front, kine and
-k3s per slot, bao, the two links, ccm, eso, esowh), with no resident supervisor and no Pdeathsig, so a
-gateway restart or upgrade restarts none of them; the cluster's postgres is its own unit ordered before
-the members. See "Host processes and the VM lifecycle" below.
+- **Names.** `<prefix>` is `SOCIALWEB_CLUSTERPROVIDER_UNIT_PREFIX`: `socialweb-` in production, the
+  dev instance's HostProcess prefix in dev (`dev env` prints it). The key's dashes become `_` in the
+  slice name, so a dash in a key adds no slice level. The HostProcess object of a member is
+  `c-<key>-<member>` (`@` becomes `-`), labelled `socialweb.computer/cluster` and
+  `socialweb.computer/member`, with the finalizer `socialweb.computer/cluster-member`.
+- **Wants, not Requires.** kine and bao want the pg unit and are ordered after it; a postgres crash or
+  restart does not stop them. They also gate on the Postgres object being Ready before they are placed
+  (`procgroup.ErrPostgresUnavailable`).
+- **Bring-up.** `internal/clusterprovider/units.go` (`UnitsHost`) walks the steps in
+  `procgroup.StackOrder` order and then the two links. For each member: run its Prepare, write its
+  HostProcess, wait for Running, run its readiness gate against the member's log file, then record the
+  gated invocation in the annotation `socialweb.computer/verified-invocation`. A member whose object is
+  Running with that invocation is adopted and not touched. `<dataDir>/controlplane.json` records the
+  active slot, the slice, the store unit and each member's unit and invocation.
+- **Readiness follows member health.** A pass first asks the host which members are unhealthy: a
+  missing object, a phase other than Running, or a running invocation that differs from the verified
+  one (the member was restarted by its unit's restart policy). A Ready cluster with an unhealthy member
+  is written `Initializing` with Ready=False, reason `MembersUnhealthy`, naming the members. The next
+  pass re-places the missing or lost members and re-runs the gate of every unverified one (a restarted
+  bao is unsealed there), then the cluster is Ready again once the apiserver answers. A killed link is
+  therefore never hidden behind a Ready cluster.
+- **Adoption.** On start the provider lists each cluster's member objects and logs them as adopted; it
+  reaps nothing and spawns nothing over them. Leases are kept as long as the Cluster CR is.
+- **Teardown.** Spec.running false, or a deleted Cluster: every member object is deleted, the
+  supervisor stops each unit, and the provider waits until every member is Stopped before it drops
+  the finalizers. A deleted cluster then loses its Postgres object (its data directory is kept); an OFF
+  cluster keeps it.
+- **Secrets.** A link's key reaches dumbpipe through `spec.envFiles` of its HostProcess: a 0600 file
+  under the cluster's data dir. The key is never written into a kcp object.
+- **Not yet.** The per-cluster OpenBao is still a member (`bao`) gated by the cluster provider; the
+  OpenBaoServer kind (M2-OPENBAO-SERVER) can take it over in `UnitsHost.memberSpec`. Member code that
+  is the core binary (ccm) names the running executable, not a `bin/<sha>/` path; that is
+  M3-HOST-INSTALL. Port attribution by cgroup (`internal/portscan`) is not needed while nothing reaps
+  by port.
 
 ### The External Secrets controller runs beside the control plane
 
@@ -448,20 +451,16 @@ plan's `m3_contract` already fixed it (names, mount, path, env var, encoding).
   07) for a datagram purpose and the TCP tables for every other, and attributes the socket to the
   cluster by the argv. A lease file written before links existed derives its restart argv without
   them (`StackConfig.WithoutUnleasedLinks`); the next bring-up leases them.
-- **Status.** A reporter goroutine per link writes the `ClusterLink` `Listening` (spec
+- **Status.** The link's readiness gate writes the `ClusterLink` `Listening` (spec
   cluster/service/targetPort, status endpointId/did/ticket) with retries, so a kcp outage never reaps
-  a cluster. When the listener exits it writes status only (never a create): `Failed` with the exit
-  and the last 600 bytes of output if the group is still live, `Pending` "the cluster's process
-  group was stopped" if the group was reaped (`LocalHost.Live` is false by then). The home workspace
-  is found from the cluster key through the registry, as a NodeClaim's is.
+  a cluster. A dead link is a member unit with Restart=always; while it is down or not yet re-verified
+  the cluster is not Ready (section "The per-cluster slice of member units").
 - **Teardown.** A deleted cluster's two ClusterLinks are deleted after its group is reaped (both the
   all-clusters path and a pass that removes the finalizer). An OFF cluster keeps them: it comes back as
   the same endpoints. The keys stay in the vault's data and go with it.
-- **Stated limits.** A link that dies after bring-up is NOT restarted: it reads `Failed` until the
-  group is next brought up (provider restart, or the cluster switched off and on), the same as any
-  other member dying today. The allocator probes a link port for TCP, not UDP, so a foreign UDP
-  holder of a leased port makes dumbpipe exit at bind and the bring-up fail with dumbpipe's bind error
-  in the gate message. The IPv6 socket takes a random port.
+- **Stated limits.** The allocator probes a link port for TCP, not UDP, so a foreign UDP holder of a
+  leased port makes dumbpipe exit at bind and the bring-up fail with dumbpipe's bind error in the gate
+  message. The IPv6 socket takes a random port. Handing a link over without a gap is M3-LINK-HANDOVER.
 
 ### The vault's config is rendered, not shipped
 

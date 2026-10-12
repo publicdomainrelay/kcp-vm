@@ -193,6 +193,10 @@ func (h *UnitsHost) Unit(key, member string) string {
 	return h.c.Prefix + "c-" + key + "-" + member + ".service"
 }
 
+func memberLabel(member string) string { return strings.ReplaceAll(member, "@", ".") }
+
+func labelMember(label string) string { return strings.Replace(label, ".", "@", 1) }
+
 func ObjectName(key, member string) string {
 	return "c-" + key + "-" + strings.ReplaceAll(member, "@", "-")
 }
@@ -357,7 +361,7 @@ func (h *UnitsHost) Unhealthy(ctx context.Context, key string) ([]string, error)
 	}
 	have := map[string]*v1alpha1.HostProcess{}
 	for i := range members {
-		have[members[i].Labels[LabelMember]] = &members[i]
+		have[labelMember(members[i].Labels[LabelMember])] = &members[i]
 	}
 	var sick []string
 	if cp, err := h.readControlPlane(key); err == nil {
@@ -368,7 +372,7 @@ func (h *UnitsHost) Unhealthy(ctx context.Context, key string) ([]string, error)
 		}
 	}
 	for _, o := range members {
-		name := o.Labels[LabelMember]
+		name := labelMember(o.Labels[LabelMember])
 		switch {
 		case o.DeletionTimestamp != nil:
 			sick = append(sick, name+": stopping")
@@ -393,7 +397,7 @@ func (h *UnitsHost) Adoption(ctx context.Context, key string) ([]string, error) 
 		if o.Status.Runtime != nil {
 			inv = o.Status.Runtime.InvocationID
 		}
-		out = append(out, fmt.Sprintf("%s=%s invocation=%s verified=%t", o.Labels[LabelMember], o.Status.Phase, inv, Verified(&o)))
+		out = append(out, fmt.Sprintf("%s=%s invocation=%s verified=%t", labelMember(o.Labels[LabelMember]), o.Status.Phase, inv, Verified(&o)))
 	}
 	slices.Sort(out)
 	return out, nil
@@ -516,7 +520,7 @@ func (h *UnitsHost) place(ctx context.Context, key, member string, cur *v1alpha1
 			rotateLog(want.Output.Stdout)
 		}
 		o := v1alpha1.HostProcess{ObjectMeta: metav1.ObjectMeta{Name: name,
-			Labels:     map[string]string{LabelCluster: key, LabelMember: member},
+			Labels:     map[string]string{LabelCluster: key, LabelMember: memberLabel(member)},
 			Finalizers: []string{MemberFinalizer}}, Spec: want}
 		u, err := encodeObj(&o, "HostProcess")
 		if err != nil {
