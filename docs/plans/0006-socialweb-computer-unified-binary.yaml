@@ -440,8 +440,8 @@ items:
     risks:
       - "A prebuilt set whose glibc floor is newer than a target distro is refused there by check-host; the fallback build sets the floor."
       - "zonky jars are a Java ecosystem artefact; their checksums are maven's, recorded as such."
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M1-CLI
     milestone: M1
     title: cmd/socialweb-computer, a multi-call CLI whose subcommand tree is the stack
