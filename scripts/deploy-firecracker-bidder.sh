@@ -567,6 +567,7 @@ cfg["module_source"] = inputs + "/modules"
 cfg["base_image"] = inputs + "/base/ubuntu-24.04.squashfs"
 cfg["k3s_binary"] = inputs + "/k3s/k3s"
 cfg["init_binary"] = inputs + "/init/kcpinit"
+cfg["init_asset"] = inputs + "/init/kcpinit"
 cfg["init_package"] = inputs + "/init-package"
 cfg["stage_dir"] = stage
 cfg["out_dir"] = store
