@@ -334,8 +334,8 @@ items:
     test_first: "TestComputeVMRoundTripsThroughTheSharedFixtures (Go and the generated TS validator), TestTheComputeVMSchemaIsRevisionLocked, TestTheComputeVMSchemaHasNoBackendEnumAndNoNetworkIndex; red first."
     done_when: "check.sh --fast green with apigen no drift; both fixture suites green."
     risks: ["APIResourceSchema.spec is immutable; the first revision is reviewed field by field, including that no Linux-only field (unit, pasta pid, API socket) is in it."]
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M1-COMMON-EXTRACT
     milestone: M1
     title: Move the firecracker provider's pure user_data and network functions into compute-provider-common
