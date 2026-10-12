@@ -7,5 +7,6 @@
   "v1alpha1-1.nodes.socialweb.computer": "sha256:de91abff17763f0223c864bec37f04ca9479c911d320af81126551c0eafd125c",
   "v1alpha1-2.nodeclaims.socialweb.computer": "sha256:23ffbeaac493044dc5d66ff5d221aac8c11ab493dc32cd24fa58d79d60d6bcb9",
   "v1alpha1-3.nodeclaims.socialweb.computer": "sha256:e3cd19eb7d87769a3c1fbd5dead4dd09e8d3ddf502bb8fd97f9e831207a7ab4d",
-  "v1alpha1-4.nodeclaims.socialweb.computer": "sha256:818c9804cb818436355ff6767af2f6078b5fee4f67d476884a0874e89c35bd9f"
+  "v1alpha1-4.nodeclaims.socialweb.computer": "sha256:818c9804cb818436355ff6767af2f6078b5fee4f67d476884a0874e89c35bd9f",
+  "v1alpha1-5.nodeclaims.socialweb.computer": "sha256:d0273de8c1e37889aff6eba9fd9292c048a56cdc2a3ffd70b0a5b42e1abad0fe"
 }

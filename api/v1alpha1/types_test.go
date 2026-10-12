@@ -273,3 +273,46 @@ func TestNodeClaimResumeFieldsAreTheDoorsWireContract(t *testing.T) {
 		t.Fatalf("DeepCopy aliased the termination or secrets")
 	}
 }
+
+func TestNodeClaimHostKeysAreTheDoorsWireContract(t *testing.T) {
+	raw, err := json.Marshal(&NodeClaimStatus{
+		Contract: NodeClaimContract{
+			HostKeys: &ContractHostKeys{
+				Keys: []ContractHostKey{{
+					Type: "ssh-ed25519", PublicKey: "AAAAC3NzaC1lZDI1NTE5AAAAI", Fingerprint: "SHA256:x",
+				}},
+				ObservedAt: "2026-10-12T00:00:00Z",
+				Event:      RecordRef{URI: "at://b/event/2", CID: "e"},
+				Payload:    RecordRef{URI: "at://b/hostKeys/1", CID: "p"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	contract, _ := got["contract"].(map[string]any)
+	hostKeys, _ := contract["hostKeys"].(map[string]any)
+	for _, field := range []string{"keys", "observedAt", "event", "payload"} {
+		if _, ok := hostKeys[field]; !ok {
+			t.Errorf("status.contract.hostKeys.%s is missing from the wire form. got: %v", field, hostKeys)
+		}
+	}
+	keys, _ := hostKeys["keys"].([]any)
+	key, _ := keys[0].(map[string]any)
+	for _, field := range []string{"type", "publicKey", "fingerprint"} {
+		if _, ok := key[field]; !ok {
+			t.Errorf("status.contract.hostKeys.keys[0].%s is missing from the wire form. got: %v", field, key)
+		}
+	}
+	dup := &NodeClaimStatus{Contract: NodeClaimContract{HostKeys: &ContractHostKeys{Keys: []ContractHostKey{{Type: "a"}}}}}
+	var copied NodeClaimStatus
+	dup.DeepCopyInto(&copied)
+	copied.Contract.HostKeys.Keys[0].Type = "b"
+	if dup.Contract.HostKeys.Keys[0].Type != "a" {
+		t.Fatalf("DeepCopy aliased the host keys")
+	}
+}
