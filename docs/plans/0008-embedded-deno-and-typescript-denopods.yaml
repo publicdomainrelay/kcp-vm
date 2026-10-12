@@ -579,8 +579,8 @@ items:
       TestRunRequestListStartsNoKcp, TestNoRequesterKeyOrSessionIsInAKcpObject. Red first.
     done_when: "tests green; on the market network `run request --market-network` reaches onNetwork and an ssh session over iroh, `run request list` shows it with no kcp running, `release <name>` restarts the invocation's kcp, gets vm.delete 200 and the guest is gone (UTC readings, cold kcp seconds per invocation recorded)."
     risks: ["A fresh kcp per invocation costs 6-9 s cold start and ~0.4-0.5 GB while it runs (kcp-spike.md); the user chose it over a persistent requester app (2026-10-12); the reading is recorded so the cost is visible."]
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M4-MARKET-NETWORK-PORT
     milestone: M4
     title: The market network driven by socialweb-computer instead of accept.sh and apply.sh
