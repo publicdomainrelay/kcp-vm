@@ -6398,6 +6398,19 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   requests, 0 failures, 0 refused; a bidder-shaped instance restarted to v0.33.1 with kcp down 10.40 s.
   Not covered here: a crashed slot outside a roll is still seen by the dev core's 5 s unit check (the
   6.3 s outage of M2-KCP-SLOTS); the roll waits on the stop job of the old slot and never polls unit state.
+- **One firecracker path, and no host binary beside `socialweb-computer` (plan 0006 M3-FOLD,
+  2026-10-12).** `socialweb-nodeboot` (the resident VM wrapper), `socialweb-nodeimage` and
+  `socialweb-nodeinit` are deleted. The bidder's firecracker provider runs every guest as a VM unit of
+  `internal/vmruntime` through `--compute-provider-firecracker-vmruntime-command` (required); the docker
+  runner container, the node image exec and their options, the guest range allocator and the
+  `microvm-firecracker` and `node-image-firecracker` packages are gone, and the microvm interface lives
+  in `microvm-abc`. The guest image's two Go build steps are `socialweb-computer nodeimage
+  guest-rootfs|guest-manifest`, compiled only without the release tag. What check-host's build report
+  still reads of the old node image store (`internal/nodefirecracker`, `internal/kernelmodules`) stays
+  until 0006 M5-RETIRE. Reading: a market network on hat-8 (bidder VM units in test-0001's user
+  manager, linger on for the run only) rented a firecracker guest through the RFP flow 08:13:40.94Z,
+  onNetwork after 19.5 s, released 08:14:01.28Z (vm.delete 200), no VM unit, runtime work dir or
+  guest work dir left 4 s after release; teardown clean at 08:14:12Z.
 
 ## 16. Vocabulary
 
