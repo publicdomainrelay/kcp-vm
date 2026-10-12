@@ -1896,8 +1896,8 @@ items:
     risks:
       - "A reconcile that deletes from a wrong desired set (for example a claim list that failed to load) would revoke live nodes; an empty or failed listing of live objects aborts the pass instead of reading as 'nothing is live'."
       - "Plan 0005 M3-BAO-SYNC landed first; this item moves its code into internal/baosync without changing behaviour, proved by its existing test."
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M3-KCP-ROLL
     milestone: M3
     title: "`units roll kcp` - a new kcp slot beside the old on the same store, the front flips, the old stops, the controller lease handed over"
