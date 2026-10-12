@@ -1,0 +1,19 @@
+apiVersion: apis.kcp.io/v1alpha2
+kind: APIBinding
+metadata:
+  name: denoruntime
+spec:
+  reference:
+    export:
+      path: root:deno-provider
+      name: denoruntime
+---
+apiVersion: apis.kcp.io/v1alpha2
+kind: APIBinding
+metadata:
+  name: policyworkflowruns
+spec:
+  reference:
+    export:
+      path: root:deno-provider
+      name: policyworkflowruns

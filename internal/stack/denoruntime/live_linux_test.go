@@ -29,8 +29,10 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devinstance"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc/hostsvctest"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpapply"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpserver"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/livegate"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/manifests"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/stack/denoruntime"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/tsbundle"
 )
@@ -221,9 +223,13 @@ func (s *stack) tenant() {
 	root := s.client(kcpserver.RootCluster).Resource(gvrWorkspace)
 	ws := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "tenancy.kcp.io/v1alpha1", "kind": "Workspace",
 		"metadata": map[string]any{"name": tenant}, "spec": map[string]any{"type": map[string]any{"name": "denoruntime", "path": "root"}}}}
-	s.eventually("the tenant workspace is created (the core applied the denoruntime WorkspaceType)", settleFor, func() (bool, string) {
-		_, err := root.Create(ctx, ws, metav1.CreateOptions{})
-		return err == nil || apierrors.IsAlreadyExists(err), fmt.Sprint(err)
+	ap, err := kcpapply.New(s.base, kcpapply.Options{})
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	s.eventually("the tenant workspace is applied (the core applied the denoruntime WorkspaceType)", settleFor, func() (bool, string) {
+		_, err := ap.ApplyObjects(ctx, kcpserver.RootCluster, []manifests.Object{{Path: "tenant.yaml", Unstructured: ws}})
+		return err == nil, fmt.Sprint(err)
 	})
 	s.eventually("the tenant workspace is Ready", settleFor, func() (bool, string) {
 		got, err := root.Get(ctx, tenant, metav1.GetOptions{})
@@ -231,7 +237,8 @@ func (s *stack) tenant() {
 			return false, err.Error()
 		}
 		phase, _, _ := unstructured.NestedString(got.Object, "status", "phase")
-		return phase == "Ready", "phase " + phase
+		status, _ := json.Marshal(got.Object["status"])
+		return phase == "Ready", "status " + string(status)
 	})
 }
 

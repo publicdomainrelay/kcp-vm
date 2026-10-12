@@ -12,6 +12,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devinstance"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostos"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/stack/denoruntime"
 )
 
 const CheckInterval = 5 * time.Second
@@ -20,6 +21,7 @@ type Config struct {
 	Layout       devinstance.Layout
 	ReadyTimeout time.Duration
 	Log          *slog.Logger
+	DenoRuntime  *denoruntime.Config
 }
 
 func tryLockRecord(path string) (*os.File, bool) {
@@ -85,6 +87,9 @@ func Run(ctx context.Context, cfg Config, m hostsvc.Manager) error {
 	lk.Close()
 	if err != nil {
 		return err
+	}
+	if cfg.DenoRuntime != nil {
+		go denoruntime.Supervise(ctx, *cfg.DenoRuntime)
 	}
 	t := time.NewTicker(CheckInterval)
 	defer t.Stop()

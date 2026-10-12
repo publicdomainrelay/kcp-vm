@@ -97,6 +97,13 @@ sets:
             name: denoruntime
             workspace: root:deno-provider
             for: IdentityValid
+      - name: bindings
+        workspace: root:deno-provider
+        files:
+          - path: denoruntime-provider-bindings.yaml
+        after:
+          - kind: APIBinding
+            for: Ready
 
   - name: bidder
     summary: the ComputeVM schema and export beside the provider's, and the bidder WorkspaceType binding denoruntime, computevms and hostprocesses (plan 0007 M1-API); needs the provider workspace and denoruntime
