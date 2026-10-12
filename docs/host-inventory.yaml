@@ -383,6 +383,20 @@ entries:
     why: socialweb-nodeimage builds socialweb-nodeinit for the guest
     from:
       - "cmd/socialweb-nodeimage/build.go"
+  - name: sleep
+    kind: executable
+    fate: build-host
+    owner: 0006 M2-HOST-CONFORMANCE
+    why: a stand-in unit of the hostsvc.Manager contract suite (internal/hostsvc/hostsvctest), run only by go test on a development host
+    from:
+      - "internal/hostsvc/hostsvctest/suite_linux.go bin"
+  - name: sh
+    kind: executable
+    fate: build-host
+    owner: 0006 M2-HOST-CONFORMANCE
+    why: the stand-in shell of the contract suite's failing, restarting and setsid-descendant units, run only by go test on a development host
+    from:
+      - "internal/hostsvc/hostsvctest/suite_linux.go bin"
   - name: zstd
     kind: executable
     fate: build-host
@@ -947,3 +961,7 @@ indirect:
     resolves: [container, docker]
   - site: "hono-compute-provider/lib/qemu-standalone/mod.ts: cmd"
     resolves: [sudo, find, skopeo, mkfs.ext4, truncate, du, qemu-system-x86_64]
+  - site: "socialweb-computer-kcp/cmd/socialweb-computer/dev.go: path"
+    resolves: [kcp, kine]
+  - site: "socialweb-computer-kcp/internal/hostsvc/hostsvctest/suite_linux.go: name"
+    resolves: [sleep, sh]
