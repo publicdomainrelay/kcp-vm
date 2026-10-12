@@ -433,17 +433,79 @@ export async function createLocalPDSAgent(opts: CreateLocalPDSAgentOpts): Promis
   };
 }
 
+export function createDelegatingAgent(did: string, current: () => AtprotoAgentLike | null): AtprotoAgentLike {
+  const live = (): AtprotoAgentLike => {
+    const a = current();
+    if (!a) throw new Error(`identity ${did} is not signed in`);
+    if (a.did !== did) throw new Error(`identity signed in as ${a.did}, not ${did}`);
+    return a;
+  };
+  async function write(action: "create" | "update", repo: string, collection: string, rkey: string, record: Record<string, unknown>) {
+    const a = live();
+    if (action === "create" && a.createRecord) return await a.createRecord(repo, collection, rkey, record);
+    if (action === "update" && a.putRecord) return await a.putRecord(repo, collection, rkey, record);
+    await a.applyWrites(repo, [{ action, collection, rkey, record }]);
+    const rec = await a.getRecord(repo, collection, rkey);
+    return { uri: `at://${repo}/${collection}/${rkey}`, cid: rec?.cid ?? "" };
+  }
+  return {
+    did,
+    signer: { did: () => did, sign: (bytes: Uint8Array) => live().signer.sign(bytes) },
+    applyWrites: (d: string, writes: WriteOp[]) => live().applyWrites(d, writes),
+    getRecord: (d: string, collection: string, rkey: string) => live().getRecord(d, collection, rkey),
+    listRecords: (d: string, collection: string, opts?: { limit?: number }) => live().listRecords(d, collection, opts),
+    getServiceAuth: (aud: string, lxm?: string) => {
+      const a = live();
+      return a.getServiceAuth ? a.getServiceAuth(aud, lxm) : signServiceAuth(a.signer, { aud, lxm });
+    },
+    createRecord: (repo: string, collection: string, rkey: string, record: Record<string, unknown>) => write("create", repo, collection, rkey, record),
+    putRecord: (repo: string, collection: string, rkey: string, record: Record<string, unknown>) => write("update", repo, collection, rkey, record),
+  };
+}
+
+export interface KeypairPlcDidOpts {
+  keypair: Secp256k1Keypair;
+  attestationDid: string;
+  plcDirectoryUrl: string;
+  logger?: StructuredLoggerInterface;
+}
+
+export async function registerKeypairPlcDid(opts: KeypairPlcDidOpts): Promise<string> {
+  const { keypair } = opts;
+  const genesis = await createGenesisOp({
+    rotationKeys: [keypair.did()],
+    verificationMethods: { atproto: keypair.did(), attestation: opts.attestationDid },
+    sign: (bytes: Uint8Array) => keypair.sign(bytes),
+  });
+  const plc = new PlcClient({ baseUrl: opts.plcDirectoryUrl });
+  try {
+    await plc.resolve(genesis.did);
+    opts.logger?.info("keypair_plc_did_resolved", { did: genesis.did });
+  } catch (err) {
+    if (!(err instanceof PlcNotFoundError)) throw err;
+    await plc.submitOp(genesis.did, genesis.op);
+    opts.logger?.info("keypair_plc_did_registered", { did: genesis.did });
+  }
+  return genesis.did;
+}
+
 export interface CreateRemoteAgentOpts {
   handle: string;
   password: string;
   pdsUrl: string;
 }
 
-export async function createRemoteAgent(opts: CreateRemoteAgentOpts): Promise<AtprotoAgentLike> {
+export interface RemoteAgent extends AtprotoAgentLike {
+  pdsUrl: string;
+  handle: string;
+}
+
+export async function createRemoteAgent(opts: CreateRemoteAgentOpts): Promise<RemoteAgent> {
   const session = new CredentialSession(new URL(opts.pdsUrl));
   await session.login({ identifier: opts.handle, password: opts.password });
   const agent = new Agent(session);
   const did = session.did ?? "";
+  if (!did) throw new Error(`signed in to ${opts.pdsUrl} as ${opts.handle} but the session carries no DID`);
 
   const signer = {
     did: () => did,
@@ -455,6 +517,20 @@ export async function createRemoteAgent(opts: CreateRemoteAgentOpts): Promise<At
   return {
     did,
     signer,
+    pdsUrl: opts.pdsUrl,
+    handle: session.session?.handle ?? opts.handle,
+    async getServiceAuth(aud: string, lxm?: string): Promise<string> {
+      const res = await agent.com.atproto.server.getServiceAuth({ aud, lxm });
+      return res.data.token;
+    },
+    async createRecord(repo: string, collection: string, rkey: string, record: Record<string, unknown>) {
+      const res = await agent.com.atproto.repo.createRecord({ repo, collection, rkey, record, validate: false });
+      return { uri: res.data.uri, cid: res.data.cid ?? "" };
+    },
+    async putRecord(repo: string, collection: string, rkey: string, record: Record<string, unknown>) {
+      const res = await agent.com.atproto.repo.putRecord({ repo, collection, rkey, record, validate: false });
+      return { uri: res.data.uri, cid: res.data.cid ?? "" };
+    },
     async applyWrites(repo: string, writes: WriteOp[]): Promise<CommitEvent> {
       const res = await agent.com.atproto.repo.applyWrites({
         repo,

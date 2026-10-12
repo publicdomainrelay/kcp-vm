@@ -63,21 +63,83 @@ export default {
       description: "AT Protocol relay URL for requestCrawl registration and bidder discovery",
       env: "RELAY_URL",
     },
+    "atproto-identity-mode": {
+      type: "string" as const,
+      description: "MarketIdentity mode: pdsAccount (sign in to --atproto-pds-url as --atproto-handle, records go to that PDS), localRepo (in-process repo + association records), oauthQr, oauthBrowser or oauthDelegated. Unset derives it: --atproto-oauth is oauthBrowser, --atproto-oauth-qr is oauthQr, a handle with a password or an identity vault is pdsAccount, anything else is localRepo",
+      env: "ATP_IDENTITY_MODE",
+    },
     "atproto-handle": {
       type: "string" as const,
-      description: "AT Protocol handle for remote PDS login",
+      description: "AT Protocol handle of the bidder's account",
       env: "ATP_HANDLE",
     },
     "atproto-password": {
       type: "string" as const,
-      description: "AT Protocol password for remote PDS login",
+      description: "Account password for pdsAccount mode, development only; in production the password lives in the identity vault at <identity-vault-mount>/identity/<market-identity-name>/keys under the key password",
       env: "ATP_PASSWORD",
     },
     "atproto-pds-url": {
       type: "string" as const,
-      description: "AT Protocol PDS URL for remote login",
+      description: "PDS the pdsAccount mode signs in to and writes the bidder's records to",
       env: "ATP_PDS_URL",
       default: "https://bsky.social",
+    },
+    "market-identity-name": {
+      type: "string" as const,
+      description: "Name of the bidder's MarketIdentity; names its vault paths and, with market-identity-kcp-server, the kcp object the sign-in follows",
+      env: "MARKET_IDENTITY_NAME",
+      default: "bidder",
+    },
+    "market-identity-kcp-server": {
+      type: "string" as const,
+      description: "kcp server whose MarketIdentity object drives the sign-in (any mode; what the user must do is written to its status); requires an identity vault",
+      env: "MARKET_IDENTITY_KCP_SERVER",
+    },
+    "market-identity-kcp-workspace": {
+      type: "string" as const,
+      description: "kcp workspace holding the MarketIdentity object",
+      env: "MARKET_IDENTITY_KCP_WORKSPACE",
+    },
+    "market-identity-kcp-token-file": {
+      type: "string" as const,
+      description: "File holding the bearer token for the kcp server, re-read on every call",
+      env: "MARKET_IDENTITY_KCP_TOKEN_FILE",
+    },
+    "market-identity-kcp-ca-cert-file": {
+      type: "string" as const,
+      description: "PEM CA bundle the kcp server's certificate chains to",
+      env: "MARKET_IDENTITY_KCP_CA_CERT_FILE",
+    },
+    "identity-vault-mount": {
+      type: "string" as const,
+      description: "Vault mount the bidder's identity secrets live under",
+      env: "IDENTITY_VAULT_MOUNT",
+      default: "bidder",
+    },
+    "identity-vault-file": {
+      type: "string" as const,
+      description: "Mode 600 JSON file used as the identity vault when no OpenBao is wired, keyed <mount>/<path>",
+      env: "IDENTITY_VAULT_FILE",
+    },
+    "identity-vault-address": {
+      type: "string" as const,
+      description: "OpenBao address used as the identity vault (KV v2)",
+      env: "IDENTITY_VAULT_ADDRESS",
+    },
+    "identity-vault-token-file": {
+      type: "string" as const,
+      description: "File holding the OpenBao token, re-read on every call",
+      env: "IDENTITY_VAULT_TOKEN_FILE",
+    },
+    "identity-vault-ca-cert-file": {
+      type: "string" as const,
+      description: "PEM CA bundle the OpenBao certificate chains to",
+      env: "IDENTITY_VAULT_CA_CERT_FILE",
+    },
+    "identity-vault-namespace": {
+      type: "string" as const,
+      description: "OpenBao namespace of the identity vault",
+      env: "IDENTITY_VAULT_NAMESPACE",
     },
     "compute-provider-digitalocean-token": {
       type: "string" as const,

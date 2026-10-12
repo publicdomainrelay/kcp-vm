@@ -22,8 +22,46 @@ export type {
 export {
   CONDITION_ASSOCIATED,
   CONDITION_SIGNED_IN,
+  MARKET_IDENTITY_MODES,
   MARKET_IDENTITY_RESOURCE,
 } from "@publicdomainrelay/socialweb-computer-k8s-api";
+
+import { MARKET_IDENTITY_MODES, MARKET_IDENTITY_RESOURCE } from "@publicdomainrelay/socialweb-computer-k8s-api";
+import type { MarketIdentityMode } from "@publicdomainrelay/socialweb-computer-k8s-api";
+
+export interface CliIdentityFlags {
+  mode?: string;
+  oauth?: boolean;
+  oauthQr?: boolean;
+  handle?: string;
+  password?: boolean;
+  vault?: boolean;
+}
+
+export function cliIdentityMode(flags: CliIdentityFlags): MarketIdentityMode {
+  if (flags.mode) {
+    if (!(MARKET_IDENTITY_MODES as readonly string[]).includes(flags.mode)) {
+      throw new Error(`unknown identity mode ${JSON.stringify(flags.mode)}; one of ${MARKET_IDENTITY_MODES.join(", ")}`);
+    }
+    return flags.mode as MarketIdentityMode;
+  }
+  if (flags.oauth) return "oauthBrowser";
+  if (flags.oauthQr) return "oauthQr";
+  if (flags.handle && (flags.password || flags.vault)) return "pdsAccount";
+  return "localRepo";
+}
+
+export function cliMarketIdentity(
+  name: string,
+  spec: MarketIdentitySpec,
+): MarketIdentity {
+  return {
+    apiVersion: `${MARKET_IDENTITY_RESOURCE.group}/${MARKET_IDENTITY_RESOURCE.version}`,
+    kind: MARKET_IDENTITY_RESOURCE.kind,
+    metadata: { name, generation: 1 },
+    spec,
+  };
+}
 
 export interface MarketIdentityObjects {
   get(name: string): Promise<MarketIdentity | null>;
