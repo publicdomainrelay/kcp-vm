@@ -37,8 +37,28 @@ func vaultTLSFor() func(string, ...string) (clusterprovider.VaultTLS, error) {
 		if err != nil {
 			return clusterprovider.VaultTLS{}, err
 		}
+		if err := publishCA(clusterstack.PublicOpenBaoCAPath(dataDir), tls.CAPEM); err != nil {
+			return clusterprovider.VaultTLS{}, err
+		}
 		return clusterprovider.VaultTLS{CertFile: tls.CertFile, KeyFile: tls.KeyFile, CAPEM: tls.CAPEM}, nil
 	}
+}
+
+func publishCA(path string, pem []byte) error {
+	if len(pem) == 0 {
+		return nil
+	}
+	if old, err := os.ReadFile(path); err == nil && string(old) == string(pem) {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, pem, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 const nodeID = "node1"

@@ -150,6 +150,14 @@ export function defaultOpenBaoCAFile(spec: NodeClaimSpec): string {
   return `${dir}/${OPENBAO_CA_RELATIVE_TO_CLUSTER_DIR}`;
 }
 
+export function publishedOpenBaoCAFile(caDir: string): (spec: NodeClaimSpec) => string {
+  return (spec) => {
+    const dir = spec.tokenFile.replace(/\/+[^/]*$/, "");
+    const name = dir.replace(/^.*\//, "");
+    return `${caDir.replace(/\/+$/, "")}/${name}.crt`;
+  };
+}
+
 async function sha256(text: string): Promise<Uint8Array> {
   return new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)));
 }

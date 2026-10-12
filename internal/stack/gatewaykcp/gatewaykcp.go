@@ -23,6 +23,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/appctl"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/bootstrap"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/bootstrap/table"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/clusterstack"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devcore"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devinstance"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/foldmain"
@@ -235,7 +236,8 @@ func Run(ctx context.Context, c Config, m hostsvc.Manager) error {
 	deno := denoruntime.Config{StateDir: c.StateDir, Deno: c.Executables[ExeDeno].Path, Kubeconfig: l.FrontKubeconfig(), Closure: c.Closure,
 		Unit: c.Unit, ApplyTimeout: ApplyTimeout, Log: c.Log}
 	return devcore.Run(ctx, devcore.Config{Layout: l, ReadyTimeout: c.ReadyTimeout, Log: c.Log, Application: &app, FrontAddress: c.FrontAddress,
-		DenoRuntime: &deno, WebApp: &appctl.WebApp{FrontKubeconfig: g.memberKubeconfig(), TSRoot: c.Closure.Root},
+		DenoRuntime: &deno, WebApp: &appctl.WebApp{FrontKubeconfig: g.memberKubeconfig(), TSRoot: c.Closure.Root,
+			ClusterCADir: filepath.Join(c.StateDir, "clusterprovider", clusterstack.PublicCADirName)},
 		OnComponents: reg.components, Before: g.before, Members: g.members, Listeners: reg.report}, m)
 }
 

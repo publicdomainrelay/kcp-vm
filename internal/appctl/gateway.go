@@ -40,6 +40,7 @@ const (
 type WebApp struct {
 	FrontKubeconfig string
 	TSRoot          string
+	ClusterCADir    string
 }
 
 func duration(d time.Duration) string {
@@ -350,6 +351,15 @@ func GatewayValues(o v1alpha1.Gateway, workspace, stateDir string, w WebApp, vau
 		return manifests.Gateway{}, err
 	}
 	extra = append(extra, opts...)
+	if w.ClusterCADir != "" {
+		if !filepath.IsAbs(w.ClusterCADir) {
+			return manifests.Gateway{}, fmt.Errorf("appctl: the cluster CA dir %q is not absolute", w.ClusterCADir)
+		}
+		extra = append(extra, "--cluster-ca-dir", w.ClusterCADir)
+		if v.ExtraRead, err = fragment([]string{w.ClusterCADir}); err != nil {
+			return manifests.Gateway{}, err
+		}
+	}
 	if v.Trust, err = listJSON(trust); err != nil {
 		return manifests.Gateway{}, err
 	}

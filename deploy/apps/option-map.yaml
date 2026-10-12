@@ -98,6 +98,7 @@ apps:
       - {name: openbao-client, to: profile}
       - {name: openbao-server-workspace, to: profile}
       - {name: market-identity-workspace, to: profile}
+      - {name: cluster-ca-dir, to: profile}
       - {name: label, to: options}
       - {name: public-origin, to: options}
       - {name: oauth-client-id, to: options}
