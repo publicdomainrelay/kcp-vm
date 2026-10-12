@@ -230,6 +230,7 @@ func TestAMarketNodeJoinsATenantClusterThroughItsOpenBaoWithNoSsh(t *testing.T) 
 	}
 	b.reading("after the restart: claim %s adopted (same uid), node Ready, guest running, no vm.delete, for %s", node, m3RestartWatch)
 
+	b.assertNoSsh(console)
 	b.tenant("delete", "deployment", m3Workload, "-n", "default").must()
 	b.reading("workload deleted")
 	b.waitLog("node_claim_released", node, 8*time.Minute)
@@ -252,7 +253,6 @@ func TestAMarketNodeJoinsATenantClusterThroughItsOpenBaoWithNoSsh(t *testing.T) 
 		return b.kcp(b.home, "get", "cluster", m3Cluster, "-o", "jsonpath={.status.phase}").out() == "Ready"
 	})
 	b.reading("back to zero nodes with the control plane Ready")
-	b.assertNoSsh(console)
 }
 
 type cmdRun struct {
