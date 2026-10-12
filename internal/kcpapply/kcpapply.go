@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
 	"net/url"
 	"reflect"
 	"sort"
@@ -17,13 +19,11 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
-	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
-	"k8s.io/client-go/restmapper"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/manifests"
 )
@@ -203,15 +203,10 @@ func (a *Applier) applyPhase(ctx context.Context, set manifests.Set, p manifests
 
 func (a *Applier) ApplyObjects(ctx context.Context, workspace string, objs []manifests.Object) ([]Change, error) {
 	cfg := a.ForWorkspace(workspace)
-	dc, err := discovery.NewDiscoveryClientForConfig(cfg)
+	served, err := discover(ctx, cfg, objs)
 	if err != nil {
 		return nil, fmt.Errorf("discovery for %s: %w", workspace, err)
 	}
-	groups, err := restmapper.GetAPIGroupResources(dc)
-	if err != nil {
-		return nil, fmt.Errorf("discovery for %s: %w", workspace, err)
-	}
-	mapper := restmapper.NewDiscoveryRESTMapper(groups)
 	dyn, err := dynamic.NewForConfig(cfg)
 	if err != nil {
 		return nil, err
@@ -220,24 +215,80 @@ func (a *Applier) ApplyObjects(ctx context.Context, workspace string, objs []man
 	for _, o := range objs {
 		u := o.Unstructured
 		gvk := u.GroupVersionKind()
-		m, err := mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
-		if err != nil {
-			return out, fmt.Errorf("%s: %s %s is not served in %s: %w", o.Path, gvk, u.GetName(), workspace, err)
+		m, ok := served[gvk]
+		if !ok {
+			return out, fmt.Errorf("%s: %s %s is not served in %s", o.Path, gvk, u.GetName(), workspace)
 		}
-		var ri dynamic.ResourceInterface = dyn.Resource(m.Resource)
+		var ri dynamic.ResourceInterface = dyn.Resource(m.resource)
 		ns := ""
-		if m.Scope.Name() == "namespace" {
+		if m.namespaced {
 			ns = u.GetNamespace()
 			if ns == "" {
 				ns = defaultNamespace
 			}
-			ri = dyn.Resource(m.Resource).Namespace(ns)
+			ri = dyn.Resource(m.resource).Namespace(ns)
 		}
 		c, err := a.applyOne(ctx, ri, u)
 		c.Namespace = ns
 		out = append(out, c)
 		if err != nil {
 			return out, fmt.Errorf("%s: %s %s in %s: %w", o.Path, gvk.Kind, u.GetName(), workspace, err)
+		}
+	}
+	return out, nil
+}
+
+type servedResource struct {
+	resource   schema.GroupVersionResource
+	namespaced bool
+}
+
+func discover(ctx context.Context, cfg *rest.Config, objs []manifests.Object) (map[schema.GroupVersionKind]servedResource, error) {
+	hc, err := rest.HTTPClientFor(cfg)
+	if err != nil {
+		return nil, err
+	}
+	out := map[schema.GroupVersionKind]servedResource{}
+	fetched := map[schema.GroupVersion]bool{}
+	for _, o := range objs {
+		gv := o.Unstructured.GroupVersionKind().GroupVersion()
+		if fetched[gv] {
+			continue
+		}
+		fetched[gv] = true
+		path := "/apis/" + gv.Group + "/" + gv.Version
+		if gv.Group == "" {
+			path = "/api/" + gv.Version
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, cfg.Host+path, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Accept", "application/json")
+		resp, err := hc.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+		resp.Body.Close()
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode == http.StatusNotFound {
+			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("GET %s: %s", path, resp.Status)
+		}
+		var list metav1.APIResourceList
+		if err := json.Unmarshal(body, &list); err != nil {
+			return nil, fmt.Errorf("GET %s: %w", path, err)
+		}
+		for _, r := range list.APIResources {
+			if strings.Contains(r.Name, "/") {
+				continue
+			}
+			out[gv.WithKind(r.Kind)] = servedResource{resource: gv.WithResource(r.Name), namespaced: r.Namespaced}
 		}
 	}
 	return out, nil
@@ -301,13 +352,18 @@ func (a *Applier) stampOwner(ctx context.Context, u *unstructured.Unstructured) 
 		return u, nil
 	}
 	if a.owner == "" {
-		cs, err := kubernetes.NewForConfig(a.ForWorkspace("root"))
+		dyn, err := dynamic.NewForConfig(a.ForWorkspace("root"))
 		if err != nil {
 			return nil, err
 		}
-		r, err := cs.AuthenticationV1().SelfSubjectReviews().Create(ctx, &authenticationv1.SelfSubjectReview{}, metav1.CreateOptions{})
+		review := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "authentication.k8s.io/v1", "kind": "SelfSubjectReview"}}
+		got, err := dyn.Resource(authenticationv1.SchemeGroupVersion.WithResource("selfsubjectreviews")).Create(ctx, review, metav1.CreateOptions{})
 		if err != nil {
 			return nil, fmt.Errorf("reading the applying identity for the workspace owner: %w", err)
+		}
+		var r authenticationv1.SelfSubjectReview
+		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(got.Object, &r); err != nil {
+			return nil, err
 		}
 		b, err := json.Marshal(workspaceOwner{Username: r.Status.UserInfo.Username, Groups: r.Status.UserInfo.Groups})
 		if err != nil {

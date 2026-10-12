@@ -231,3 +231,19 @@ func TestVendoredVerbatimFilesCarryNoTemplateFields(t *testing.T) {
 		}
 	}
 }
+
+func TestAManifestTakesFieldReferencesOnly(t *testing.T) {
+	data := map[string]any{"A": map[string]any{"B": "x"}, "N": 3}
+	got, err := execute("t", "a={{.A.B}} n={{ .N }}\n", data)
+	if err != nil || string(got) != "a=x n=3\n" {
+		t.Fatalf("%q, %v", got, err)
+	}
+	for _, text := range []string{"{{if .N}}y{{end}}", "{{range .A}}{{end}}", "{{.A.B | printf \"%s\"}}", "{{define \"x\"}}{{end}}", "{{.A}}", "{{$x := .N}}"} {
+		if _, err := execute("t", text, data); err == nil {
+			t.Errorf("%s rendered", text)
+		}
+	}
+	if _, err := execute("t", "{{.A.C}}", data); !errors.Is(err, ErrMissingValue) {
+		t.Errorf("a missing nested key: %v", err)
+	}
+}

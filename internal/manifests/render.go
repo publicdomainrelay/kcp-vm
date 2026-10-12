@@ -11,7 +11,7 @@ import (
 	"maps"
 	"slices"
 	"strings"
-	"text/template"
+	"text/template/parse"
 
 	apisv1alpha1 "github.com/kcp-dev/sdk/apis/apis/v1alpha1"
 	apisv1alpha2 "github.com/kcp-dev/sdk/apis/apis/v1alpha2"
@@ -73,19 +73,62 @@ func readFile(path string) ([]byte, error) {
 	return b, nil
 }
 
-func execute(name, text string, data any) ([]byte, error) {
-	tpl, err := template.New(name).Option("missingkey=error").Parse(text)
+func execute(name, text string, data map[string]any) ([]byte, error) {
+	trees, err := parse.Parse(name, text, "", "")
 	if err != nil {
 		return nil, fmt.Errorf("manifests: %s: %w", name, err)
 	}
+	if len(trees) != 1 {
+		return nil, fmt.Errorf("manifests: %s: a manifest defines no templates of its own", name)
+	}
 	var out bytes.Buffer
-	if err := tpl.Execute(&out, data); err != nil {
-		if strings.Contains(err.Error(), "map has no entry for key") || strings.Contains(err.Error(), "nil pointer evaluating") {
-			return nil, fmt.Errorf("%w: %s: %v", ErrMissingValue, name, err)
+	for _, n := range trees[name].Root.Nodes {
+		switch n := n.(type) {
+		case *parse.TextNode:
+			out.Write(n.Text)
+		case *parse.ActionNode:
+			v, err := field(name, n, data)
+			if err != nil {
+				return nil, err
+			}
+			fmt.Fprint(&out, v)
+		default:
+			return nil, fmt.Errorf("manifests: %s:%d: %s is not a field reference; manifests take {{.Field.Path}} only", name, line(text, n.Position()), n)
 		}
-		return nil, fmt.Errorf("manifests: %s: %w", name, err)
 	}
 	return out.Bytes(), nil
+}
+
+func line(text string, pos parse.Pos) int {
+	return 1 + strings.Count(text[:int(pos)], "\n")
+}
+
+func field(name string, n *parse.ActionNode, data map[string]any) (any, error) {
+	where := fmt.Sprintf("%s:%d", name, n.Line)
+	if n.Pipe == nil || len(n.Pipe.Decl) > 0 || len(n.Pipe.Cmds) != 1 || len(n.Pipe.Cmds[0].Args) != 1 {
+		return nil, fmt.Errorf("manifests: %s: %s is not a field reference; manifests take {{.Field.Path}} only", where, n)
+	}
+	f, ok := n.Pipe.Cmds[0].Args[0].(*parse.FieldNode)
+	if !ok {
+		return nil, fmt.Errorf("manifests: %s: %s is not a field reference; manifests take {{.Field.Path}} only", where, n)
+	}
+	var cur any = data
+	for i, key := range f.Ident {
+		m, ok := cur.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("manifests: %s: .%s is not a map", where, strings.Join(f.Ident[:i], "."))
+		}
+		v, ok := m[key]
+		if !ok || v == nil {
+			return nil, fmt.Errorf("%w: %s: .%s (no entry for key %q)", ErrMissingValue, where, strings.Join(f.Ident[:i+1], "."), key)
+		}
+		cur = v
+	}
+	switch cur.(type) {
+	case map[string]any, []any:
+		return nil, fmt.Errorf("manifests: %s: .%s is a structure, not a value", where, strings.Join(f.Ident, "."))
+	}
+	return cur, nil
 }
 
 func (s Set) Workspace(p Phase, w *Wait, values any) (string, error) {
