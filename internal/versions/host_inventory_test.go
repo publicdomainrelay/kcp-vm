@@ -39,8 +39,6 @@ var inventoryFates = []string{
 
 var inventoryKinds = []string{"executable", "package", "file"}
 
-var tsSiblings = []string{"atproto-market", "hono-compute-provider"}
-
 type inventoryEntry struct {
 	Name     string   `json:"name"`
 	Kind     string   `json:"kind"`
@@ -81,31 +79,6 @@ func loadHostInventory(t *testing.T) hostInventory {
 		t.Fatalf("parse %s: %v", hostInventoryPath, err)
 	}
 	return inv
-}
-
-func findOrgRootAbove(t *testing.T) (string, bool) {
-	t.Helper()
-	dir, err := filepath.Abs(repoRoot)
-	if err != nil {
-		t.Fatalf("abs %s: %v", repoRoot, err)
-	}
-	for {
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return "", false
-		}
-		dir = parent
-		all := true
-		for _, s := range tsSiblings {
-			if st, err := os.Stat(filepath.Join(dir, s)); err != nil || !st.IsDir() {
-				all = false
-				break
-			}
-		}
-		if all {
-			return dir, true
-		}
-	}
 }
 
 func goExecSites(t *testing.T) []execSite {
@@ -279,15 +252,6 @@ func TestEveryExecutableTheCodeExecsHasAFateInTheHostInventory(t *testing.T) {
 	sites := goExecSites(t)
 	scanned := map[string]bool{thisRepo: true}
 	sites = append(sites, tsExecSites(t, thisRepo, repoRoot)...)
-	org, found := findOrgRootAbove(t)
-	for _, sibling := range tsSiblings {
-		if !found {
-			t.Logf("no org root holding %v above %s: the TypeScript of %s is not scanned", tsSiblings, repoRoot, sibling)
-			continue
-		}
-		scanned[sibling] = true
-		sites = append(sites, tsExecSites(t, sibling, filepath.Join(org, sibling))...)
-	}
 	if len(sites) == 0 {
 		t.Fatal("the scan found no exec call site at all; the scanner is broken, not the code clean")
 	}
@@ -329,9 +293,9 @@ func TestEveryExecutableTheCodeExecsHasAFateInTheHostInventory(t *testing.T) {
 		}
 	}
 
-	images := []string{filepath.Join(repoRoot, "deploy", "control-plane-container", "Dockerfile")}
-	if found {
-		images = append(images, filepath.Join(org, "hono-compute-provider", "hono-firecracker-standalone", "Dockerfile"))
+	images := []string{
+		filepath.Join(repoRoot, "deploy", "control-plane-container", "Dockerfile"),
+		filepath.Join(repoRoot, "ts", "hono-compute-provider", "hono-firecracker-standalone", "Dockerfile"),
 	}
 	for _, image := range images {
 		packages, executables := imageContents(t, image)

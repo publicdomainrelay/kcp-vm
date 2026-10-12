@@ -1,10 +1,10 @@
 note: >
   Plan 0006 M1-HOST-INVENTORY. Everything the control-plane container (deploy/control-plane-container/
   Dockerfile, stages tools, controlplane and k8s), the bidder's firecracker runner image
-  (hono-compute-provider/hono-firecracker-standalone/Dockerfile) and the code's exec call sites supplied,
+  (ts/hono-compute-provider/hono-firecracker-standalone/Dockerfile) and the code's exec call sites supplied,
   each with exactly one fate on a bare Linux host. Call sites scanned: exec.Command, exec.CommandContext,
   exec.LookPath and syscall.Exec in non-test Go of this repo, and new Deno.Command in non-test TypeScript of
-  this repo (socialweb-computer-k8s included), atproto-market and hono-compute-provider. A computed first
+  this repo: socialweb-computer-k8s and every vendored repository under ts/. A computed first
   argument is listed under indirect with every executable it resolves to. internal/versions
   TestEveryExecutableTheCodeExecsHasAFateInTheHostInventory holds this file complete. Fates that name a
   decision not yet in a plan item say so in why ("decided by Claude, user may veto").
@@ -142,7 +142,7 @@ entries:
     from:
       - "image k8s curl download"
       - "internal/processrunner argv[0] via clusterlink.Argv"
-      - "atproto-market requester-xrpc ensureDumbpipe"
+      - "ts/atproto-market requester-xrpc ensureDumbpipe"
   - name: firecracker
     kind: executable
     fate: embedded-server
@@ -253,7 +253,7 @@ entries:
     why: assets are resolved by their extracted path, never searched on PATH; the requester's which dumbpipe goes
     from:
       - "image k8s dnf which"
-      - "atproto-market requester-xrpc ensureDumbpipe"
+      - "ts/atproto-market requester-xrpc ensureDumbpipe"
   - name: unzip
     kind: executable
     fate: replaced-by-go
@@ -275,15 +275,15 @@ entries:
     why: ed25519 keypairs are minted in-process with golang.org/x/crypto/ssh and kept in the application's own OpenBao (every key lives there, user decision 2026-10-12); decided by Claude, user may veto
     from:
       - "socialweb-computer-k8s door debugNodeSsh"
-      - "atproto-market requester-xrpc generateKeypair"
-      - "hono-compute-provider systemctl-shim"
+      - "ts/atproto-market requester-xrpc generateKeypair"
+      - "ts/hono-compute-provider systemctl-shim"
   - name: ssh
     kind: executable
     fate: host-prerequisite
     owner: 0008 M4-RUN-REQUEST, M4-RUN-GATEWAY-SSH
     why: the person's own OpenSSH client for the interactive session on a requester host (ProxyCommand over dumbpipe); not needed on gateway or bidder hosts
     from:
-      - "atproto-market requester-xrpc"
+      - "ts/atproto-market requester-xrpc"
       - "image k8s dnf openssh-clients"
   - name: newuidmap
     kind: executable
@@ -407,7 +407,7 @@ entries:
     why: run only by scripts/build-guest-image.sh on a Linux build host; the bidder's node-image-firecracker exec of it goes, bidders fetch the image
     from:
       - "image nodeimage COPY"
-      - "hono-compute-provider node-image-firecracker binary"
+      - "ts/hono-compute-provider node-image-firecracker binary"
   - name: go
     kind: executable
     fate: build-host
@@ -505,7 +505,7 @@ entries:
     from:
       - "cmd/socialweb-nodeimage/rootfs.go name"
       - "internal/nodevm/disk.go"
-      - "hono-compute-provider qemu-standalone"
+      - "ts/hono-compute-provider qemu-standalone (removed 2026-10-12)"
   - name: git
     kind: executable
     fate: build-host
@@ -542,7 +542,7 @@ entries:
     why: cmd/socialweb-nodeboot is deleted; the VM unit runs socialweb-vmexec, pasta and firecracker directly
     from:
       - "runner image COPY"
-      - "hono-compute-provider microvm-firecracker"
+      - "ts/hono-compute-provider microvm-firecracker"
   - name: entrypoint.sh
     kind: executable
     fate: removed-legacy
@@ -556,28 +556,28 @@ entries:
     owner: 0007 M2-VM-RUNTIME, 0006 M5-RETIRE
     why: no container at runtime (user decision 2026-10-07); the firecracker runner container and container-mode backends are not ported
     from:
-      - "hono-compute-provider container-backend-docker"
+      - "ts/hono-compute-provider container-backend-docker"
   - name: wsl
     kind: executable
     fate: removed-legacy
     owner: 0011 M0-REVISIT
-    why: the Windows path of the docker backend; Windows bidders use HCS (plan 0011), not WSL docker
+    why: the Windows path of the docker backend, removed with the 2026-10-12 vendoring; Windows bidders use HCS (plan 0011), not WSL docker
     from:
-      - "hono-compute-provider container-backend-docker"
+      - "ts/hono-compute-provider container-backend-docker"
   - name: container
     kind: executable
     fate: removed-legacy
     owner: 0012 M0-REVISIT
     why: Apple's container CLI is a container-mode backend, not the headless VM backend plan 0012 builds
     from:
-      - "hono-compute-provider container-backend-container"
+      - "ts/hono-compute-provider container-backend-container (removed 2026-10-12)"
   - name: sudo
     kind: executable
     fate: removed-legacy
     owner: 0006 M1-INSTALL
     why: nothing escalates at runtime; the one root step is `socialweb-computer install`, run as root by the operator (qemu-standalone's sudo sh/mksquashfs/tar/mount chain and the docker daemon start go with their backends)
     from:
-      - "hono-compute-provider qemu-standalone"
+      - "ts/hono-compute-provider qemu-standalone (removed 2026-10-12)"
       - "container-backend-docker"
   - name: qemu-system-x86_64
     kind: executable
@@ -586,49 +586,49 @@ entries:
     why: the QEMU substrate was retired (9d85916); check-host's QEMU capability code and hono-qemu-standalone go
     from:
       - "check-host platform.go"
-      - "hono-compute-provider qemu-standalone"
+      - "ts/hono-compute-provider qemu-standalone (removed 2026-10-12)"
   - name: skopeo
     kind: executable
     fate: removed-legacy
     owner: 0006 M0-XOS-GATE
     why: hono-qemu-standalone only
     from:
-      - "hono-compute-provider qemu-standalone"
+      - "ts/hono-compute-provider qemu-standalone (removed 2026-10-12)"
   - name: truncate
     kind: executable
     fate: removed-legacy
     owner: 0006 M0-XOS-GATE
     why: hono-qemu-standalone only
     from:
-      - "hono-compute-provider qemu-standalone"
+      - "ts/hono-compute-provider qemu-standalone (removed 2026-10-12)"
   - name: find
     kind: executable
     fate: removed-legacy
     owner: 0006 M0-XOS-GATE
     why: hono-qemu-standalone only
     from:
-      - "hono-compute-provider qemu-standalone"
+      - "ts/hono-compute-provider qemu-standalone (removed 2026-10-12)"
   - name: ssh-keyscan
     kind: executable
     fate: removed-legacy
     owner: 0007 M4-HOST-KEYS
     why: the host-side scan is deleted; guests report their own host keys as vm.hostKeys
     from:
-      - "hono-compute-provider oidc-issuer-hono getPublicKeyFromSshd"
+      - "ts/hono-compute-provider oidc-issuer-hono getPublicKeyFromSshd"
   - name: websocat
     kind: executable
     fate: removed-legacy
     owner: 0008 M1-STRIP-LEGACY-TRANSPORTS
     why: every non-iroh guest transport is stripped as legacy, websocat ProxyCommand paths included; removed from the TypeScript (atproto-market b78adc1 is the last commit with ensureWebsocat)
     from:
-      - "atproto-market requester-xrpc ensureWebsocat (removed)"
+      - "ts/atproto-market requester-xrpc ensureWebsocat (removed)"
   - name: xdg-open
     kind: executable
     fate: removed-legacy
     owner: 0008 M4-RUN-REQUEST
     why: sign-in becomes an identity CRD whose status carries the URL to visit (user decision 2026-10-12, Q2); nothing spawns a browser
     from:
-      - "atproto-market hono-bidder"
+      - "ts/atproto-market hono-bidder"
       - "request-vm-ssh"
   - name: open
     kind: executable
@@ -636,7 +636,7 @@ entries:
     owner: 0008 M4-RUN-REQUEST
     why: the darwin browser opener; as xdg-open
     from:
-      - "atproto-market hono-bidder"
+      - "ts/atproto-market hono-bidder"
       - "request-vm-ssh"
   - name: cmd
     kind: executable
@@ -644,35 +644,35 @@ entries:
     owner: 0008 M4-RUN-REQUEST
     why: the windows browser opener; as xdg-open
     from:
-      - "atproto-market hono-bidder"
+      - "ts/atproto-market hono-bidder"
   - name: systemctl
     kind: executable
     fate: removed-legacy
     owner: 0006 M2-HOST-UNITS
     why: units are driven over D-Bus (go-systemd), never the systemctl CLI; compute-provider-local's systemctl shim is a container-mode provider that is not ported
     from:
-      - "hono-compute-provider compute-provider-local systemctl-shim"
+      - "ts/hono-compute-provider compute-provider-local systemctl-shim"
   - name: bash
     kind: executable
     fate: removed-legacy
     owner: 0006 M2-HOST-UNITS
     why: compute-provider-local's systemctl shim runs unit ExecStart lines through bash; not ported
     from:
-      - "hono-compute-provider compute-provider-local systemctl-shim"
+      - "ts/hono-compute-provider compute-provider-local systemctl-shim"
   - name: cloud-init
     kind: executable
     fate: removed-legacy
     owner: 0007 M1-GUEST-IMAGE
     why: cloud-init runs only inside guests, from the guest image; compute-provider-local ran it on the host and is not ported
     from:
-      - "hono-compute-provider compute-provider-local systemctl-shim"
+      - "ts/hono-compute-provider compute-provider-local systemctl-shim"
   - name: tail
     kind: executable
     fate: removed-legacy
     owner: 0006 M2-HOST-UNITS
     why: compute-provider-local's log follower; not ported, unit output goes to capped files
     from:
-      - "hono-compute-provider compute-provider-local systemctl-shim"
+      - "ts/hono-compute-provider compute-provider-local systemctl-shim"
 
   - name: postgresql-server
     kind: package
@@ -892,7 +892,7 @@ entries:
     kind: file
     fate: embedded-child
     owner: 0008 M1-TS-CLOSURE
-    why: the door's TypeScript closure, embedded and run by the deno child
+    why: the socialweb-computer-k8s TypeScript closure (deno.json, deno.lock, ts/, socialweb-computer-k8s/ of this repo), embedded and run by the deno child
     from:
       - "image k8s COPY --from=k8stree"
   - name: /opt/deno-dir
@@ -987,18 +987,26 @@ indirect:
     resolves: [k3s, kine, bao, external-secrets, socialweb-cloud-controller-manager, dumbpipe, pasta]
   - site: "socialweb-computer-kcp/socialweb-computer-k8s/lib/socialweb-computer-requester-inproc/bridge.ts: argv[0]"
     resolves: [dumbpipe]
-  - site: "atproto-market/hono-bidder/mod.ts: cmd"
+  - site: "socialweb-computer-kcp/ts/atproto-market/hono-bidder/mod.ts: cmd"
     resolves: [open, cmd, xdg-open]
-  - site: "atproto-market/request-vm-ssh/mod.ts: cmd"
+  - site: "socialweb-computer-kcp/ts/atproto-market/request-vm-ssh/mod.ts: cmd"
     resolves: [open, xdg-open]
-  - site: "hono-compute-provider/lib/container-backend-docker/mod.ts: bin"
-    resolves: [docker, wsl, sudo]
-  - site: "hono-compute-provider/lib/container-backend-docker/mod.ts: dockerBin"
-    resolves: [docker, wsl]
-  - site: "hono-compute-provider/lib/node-image-firecracker/mod.ts: binary"
+  - site: "socialweb-computer-kcp/ts/hono-compute-provider/lib/container-backend-docker/mod.ts: bin"
+    resolves: [sudo]
+  - site: "socialweb-computer-kcp/ts/hono-compute-provider/lib/container-backend-docker/mod.ts: dockerBin"
+    resolves: [docker]
+  - site: "socialweb-computer-kcp/ts/hono-compute-provider/lib/node-image-firecracker/mod.ts: binary"
     resolves: [socialweb-nodeimage]
-  - site: "hono-compute-provider/lib/qemu-standalone/mod.ts: cmd"
-    resolves: [sudo, find, skopeo, mkfs.ext4, truncate, du, qemu-system-x86_64]
+  - site: "socialweb-computer-kcp/ts/deno-worker-sandbox/lib/sandbox-deno/bundler.ts: exe"
+    resolves: [deno]
+  - site: "socialweb-computer-kcp/ts/policy-engine/lib/policies/deno-typescript/bundle/build-bundle.ts: Deno.execPath("
+    resolves: [deno]
+  - site: "socialweb-computer-kcp/ts/policy-engine/lib/policies/gha-lite/scripts/build-actions.ts: Deno.execPath("
+    resolves: [deno]
+  - site: "socialweb-computer-kcp/ts/policy-engine/lib/policy-engine-server-gha-lite/src/workflow.ts: this.denoPath"
+    resolves: [deno]
+  - site: "socialweb-computer-kcp/ts/policy-engine/lib/policy-engine-server-gha-lite/src/workflow.ts: args[0]"
+    resolves: [bash, sh]
   - site: "socialweb-computer-kcp/cmd/socialweb-computer/dev.go: path"
     resolves: [kcp, kine]
   - site: "socialweb-computer-kcp/internal/hostsvc/hostsvctest/suite_linux.go: name"
