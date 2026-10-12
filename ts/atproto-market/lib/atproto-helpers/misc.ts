@@ -63,3 +63,11 @@ export async function resolveAs<T>(atUri: string, cid: string): Promise<T & { _u
   }
   return { ...(value as unknown as T), _uri: atUri, _cid: r.cid };
 }
+
+export function isPrivatePlc(plcDirectoryUrl: string): boolean {
+  try {
+    return new URL(plcDirectoryUrl).hostname !== "plc.directory";
+  } catch {
+    return false;
+  }
+}

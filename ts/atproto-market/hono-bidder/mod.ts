@@ -8,7 +8,7 @@ import type { MarketBidderProviderRef } from "@publicdomainrelay/market-bidder-a
 import { createComputeProviderHooks } from "@publicdomainrelay/market-bidder-compute";
 import { createFsContractStore } from "@publicdomainrelay/market-bidder-contract-store-fs";
 import { createComputeProviderDenoWorker, createWorkerProviderHooks } from "@publicdomainrelay/market-bidder-worker";
-import { createATProto, createLocalPDSAgent, createRemoteAgent, createOAuthAgent, createOAuthAgentFromSession, pollForOAuthSession, tryRestoreOAuthQRSession, saveOAuthQRSession, OAuthSessionExpiredError } from "@publicdomainrelay/atproto-helpers";
+import { createATProto, createLocalPDSAgent, createRemoteAgent, createOAuthAgent, createOAuthAgentFromSession, pollForOAuthSession, tryRestoreOAuthQRSession, saveOAuthQRSession, OAuthSessionExpiredError, isPrivatePlc } from "@publicdomainrelay/atproto-helpers";
 import type { LocalPDSAgent } from "@publicdomainrelay/atproto-helpers";
 import { startLoopbackCallbackServer, oauthClientMetadata } from "@publicdomainrelay/atproto-oauth-helpers";
 import { createBadgeBlueKeysRecord, loadOrGenerateKeypair } from "@publicdomainrelay/market-atproto";
@@ -70,11 +70,11 @@ const plcDirectoryUrl = (options.plcDirectoryUrl as string) || "https://plc.dire
 // Auto-detect local dev: *.localhost isn't in DNS.  If the dispatcher is
 // reachable at a local host, patch fetch so the bidder can resolve the
 // requester's PDS endpoints (also on *.localhost) through the relay.
-// Also patches plc.directory -> local PLC when plcDirectoryUrl is local.
+// Also patches plc.directory -> the PLC directory given, whenever that is not
+// plc.directory itself (a local one, or a test bed's by its cluster name).
 const isLocalDev = ingressProxyHost.includes("localhost") || ingressProxyHost.startsWith("127.");
 const patchPort = ingressProxyHost.includes(":") ? ingressProxyHost.split(":").pop()! : "80";
-const _plcHost = (() => { try { return new URL(plcDirectoryUrl).hostname; } catch { return plcDirectoryUrl; } })();
-const isLocalPlc = _plcHost === "localhost" || _plcHost.startsWith("127.") || _plcHost === "0.0.0.0";
+const isLocalPlc = isPrivatePlc(plcDirectoryUrl);
 if (isLocalDev || isLocalPlc) {
   const realFetch = globalThis.fetch;
   globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
