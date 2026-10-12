@@ -97,6 +97,20 @@ func encodeYAML(doc *yaml.Node) ([]byte, error) {
 }
 
 func (m *Model) APIResourceSchema(r Resource) ([]byte, error) {
+	version := []any{
+		"name", str(m.Version),
+		"served", boolean(true),
+		"storage", boolean(true),
+		"subresources", mapping("status", mapping()),
+		"schema", schemaNode(r.Schema),
+	}
+	if len(r.PrinterColumns) > 0 {
+		var columns []*yaml.Node
+		for _, c := range r.PrinterColumns {
+			columns = append(columns, mapping("name", str(c.Name), "type", str(c.Type), "jsonPath", str(c.JSONPath)))
+		}
+		version = append(version, "additionalPrinterColumns", sequence(columns...))
+	}
 	doc := mapping(
 		"apiVersion", str(kcpSchemaAPIVersion),
 		"kind", str("APIResourceSchema"),
@@ -110,13 +124,7 @@ func (m *Model) APIResourceSchema(r Resource) ([]byte, error) {
 				"singular", str(r.Singular),
 			),
 			"scope", str(scopeCluster),
-			"versions", sequence(mapping(
-				"name", str(m.Version),
-				"served", boolean(true),
-				"storage", boolean(true),
-				"subresources", mapping("status", mapping()),
-				"schema", schemaNode(r.Schema),
-			)),
+			"versions", sequence(mapping(version...)),
 		),
 	)
 	return encodeYAML(doc)

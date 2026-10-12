@@ -57,12 +57,56 @@ func Generate(root string) ([]Output, error) {
 		return nil, err
 	}
 	out = append(out, Output{Path: RevisionLockFile, Data: lockOut})
-	ts, err := m.TypeScript()
+	for _, target := range TSTargets {
+		generated, err := generateTSTarget(root, m, target)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, generated...)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+	return out, nil
+}
+
+func generateTSTarget(root string, m *Model, target TSTarget) ([]Output, error) {
+	if target.Sibling != "" {
+		info, err := os.Stat(filepath.Join(root, filepath.FromSlash(target.Sibling)))
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		if !info.IsDir() {
+			return nil, fmt.Errorf("%s is not a directory", target.Sibling)
+		}
+	}
+	sub, err := m.Subset(target.Exports)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", target.Dir, err)
+	}
+	ts, err := sub.TypeScript()
 	if err != nil {
 		return nil, err
 	}
-	out = append(out, Output{Path: TSPackageDir + "/mod.ts", Data: ts})
-	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+	out := []Output{{Path: target.Dir + "/mod.ts", Data: ts}}
+	if target.Fixtures == "" {
+		return out, nil
+	}
+	entries, err := os.ReadDir(filepath.Join(root, filepath.FromSlash(target.Fixtures)))
+	if err != nil {
+		return nil, err
+	}
+	for _, e := range entries {
+		if e.IsDir() || filepath.Ext(e.Name()) != ".json" {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(target.Fixtures), e.Name()))
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, Output{Path: target.FixturesDir + "/" + e.Name(), Data: data})
+	}
 	return out, nil
 }
 

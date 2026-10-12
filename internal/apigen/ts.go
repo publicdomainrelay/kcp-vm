@@ -10,6 +10,93 @@ import (
 
 const TSPackageDir = "socialweb-computer-k8s/lib/common/socialweb-computer-k8s-api"
 
+const ComputeProviderSibling = "../hono-compute-provider"
+
+const ComputeProviderTSPackageDir = ComputeProviderSibling + "/lib/common/compute-provider-kcp-common"
+
+type TSTarget struct {
+	Dir         string
+	Sibling     string
+	Exports     []string
+	Fixtures    string
+	FixturesDir string
+}
+
+var TSTargets = []TSTarget{
+	{Dir: TSPackageDir, Exports: []string{"clusters", "atprotoidentities", "marketidentities"}},
+	{
+		Dir:         ComputeProviderTSPackageDir,
+		Sibling:     ComputeProviderSibling,
+		Exports:     []string{"computevms"},
+		Fixtures:    "testdata/computevm",
+		FixturesDir: ComputeProviderSibling + "/test/fixtures/computevm",
+	},
+}
+
+func (m *Model) Subset(exports []string) (*Model, error) {
+	want := map[string]bool{}
+	for _, e := range exports {
+		want[e] = true
+	}
+	kindFiles := map[string]bool{}
+	selectedFiles := map[string]bool{}
+	reached := map[string]bool{RefObjectMeta: true, RefCondition: true}
+	var walk func(s *Schema)
+	walk = func(s *Schema) {
+		if s == nil {
+			return
+		}
+		if s.Ref != "" {
+			if reached[s.Ref] {
+				return
+			}
+			reached[s.Ref] = true
+		}
+		for _, p := range s.Properties {
+			walk(p.Schema)
+		}
+		walk(s.Items)
+	}
+	sub := &Model{Group: m.Group, Version: m.Version, Named: map[string]*Schema{}, TypeFiles: m.TypeFiles}
+	found := map[string]bool{}
+	for _, r := range m.Resources {
+		kindFiles[m.TypeFiles[r.Kind]] = true
+		if !want[r.Export] {
+			continue
+		}
+		found[r.Export] = true
+		selectedFiles[m.TypeFiles[r.Kind]] = true
+		sub.Resources = append(sub.Resources, r)
+		walk(r.Schema)
+	}
+	for _, e := range exports {
+		if !found[e] {
+			return nil, fmt.Errorf("no APIResource is exported as %s", e)
+		}
+	}
+	for name, s := range m.Named {
+		if reached[name] {
+			sub.Named[name] = s
+		}
+	}
+	for _, name := range m.Order {
+		if reached[name] {
+			sub.Order = append(sub.Order, name)
+		}
+	}
+	for _, e := range m.Enums {
+		if reached[e.Name] {
+			sub.Enums = append(sub.Enums, e)
+		}
+	}
+	for _, c := range m.Constants {
+		if selectedFiles[c.File] || !kindFiles[c.File] {
+			sub.Constants = append(sub.Constants, c)
+		}
+	}
+	return sub, nil
+}
+
 func UpperSnake(name string) string {
 	runes := []rune(name)
 	var b strings.Builder

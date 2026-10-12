@@ -1,0 +1,206 @@
+apiVersion: apis.kcp.io/v1alpha1
+kind: APIResourceSchema
+metadata:
+  name: v1alpha1-1.computevms.socialweb.computer
+spec:
+  group: socialweb.computer
+  names:
+    kind: ComputeVM
+    listKind: ComputeVMList
+    plural: computevms
+    singular: computevm
+  scope: Cluster
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      schema:
+        type: object
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            properties:
+              vm:
+                type: object
+                properties:
+                  cpus:
+                    type: integer
+                    format: int32
+                  mem:
+                    type: string
+                  disk:
+                    type: string
+                  role:
+                    type: string
+                required:
+                  - cpus
+                  - mem
+                  - disk
+                  - role
+              owner:
+                type: object
+                properties:
+                  handle:
+                    type: string
+                required:
+                  - handle
+              userDataSecret:
+                type: string
+              requester:
+                type: object
+                properties:
+                  did:
+                    type: string
+                  plc:
+                    type: string
+                required:
+                  - did
+              contract:
+                type: object
+                properties:
+                  receiptUri:
+                    type: string
+                  receiptCid:
+                    type: string
+                  acceptUri:
+                    type: string
+                  acceptCid:
+                    type: string
+                  submitEventUrl:
+                    type: string
+                  acceptedAt:
+                    type: string
+              image:
+                type: object
+                properties:
+                  reuseStale:
+                    type: boolean
+              stopGraceSeconds:
+                type: integer
+                format: int32
+            required:
+              - vm
+              - owner
+              - userDataSecret
+              - requester
+          status:
+            type: object
+            properties:
+              phase:
+                type: string
+                enum:
+                  - Pending
+                  - Preparing
+                  - Booting
+                  - Running
+                  - Releasing
+                  - Lost
+                  - Failed
+              lostReason:
+                type: string
+                enum:
+                  - HostRebooted
+                  - UnitGone
+                  - UnitFailed
+                  - OOMKilled
+                  - VMMExited
+                  - IdentityMismatch
+              observedGeneration:
+                type: integer
+                format: int64
+              network:
+                type: object
+                properties:
+                  guestIP:
+                    type: string
+                  hostAddress:
+                    type: string
+                  prefix:
+                    type: integer
+                    format: int32
+                  mac:
+                    type: string
+              image:
+                type: object
+                properties:
+                  ref:
+                    type: string
+                  sha256:
+                    type: string
+                  hypervisor:
+                    type: string
+              runtime:
+                type: object
+                properties:
+                  backend:
+                    type: string
+                  ref:
+                    type: string
+                  instance:
+                    type: string
+                  pid:
+                    type: integer
+                    format: int64
+                  startTime:
+                    type: string
+                  hostBootID:
+                    type: string
+                  vmmID:
+                    type: string
+              workDir:
+                type: string
+              bootedAt:
+                type: string
+              message:
+                type: string
+              conditions:
+                type: array
+                items:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+              market:
+                type: object
+                properties:
+                  onNetworkUri:
+                    type: string
+                  address:
+                    type: string
+                  hostKeys:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        type:
+                          type: string
+                        publicKey:
+                          type: string
+                        fingerprint:
+                          type: string
+                      required:
+                        - type
+                        - publicKey
+                  hostKeysUri:
+                    type: string
+                  reportedAt:
+                    type: string
+      additionalPrinterColumns:
+        - name: Phase
+          type: string
+          jsonPath: .status.phase
+        - name: GuestIP
+          type: string
+          jsonPath: .status.network.guestIP
+        - name: Requester
+          type: string
+          jsonPath: .spec.requester.did
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp

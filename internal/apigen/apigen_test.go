@@ -218,3 +218,22 @@ func TestTheGeneratedFilesCoverEveryResourceAndExport(t *testing.T) {
 		t.Fatalf("generated paths:\n got %v\nwant %v", paths, want)
 	}
 }
+
+func TestEveryExportLandsInExactlyOneTypeScriptTarget(t *testing.T) {
+	m := mustModel(t)
+	homes := map[string][]string{}
+	for _, target := range TSTargets {
+		for _, e := range target.Exports {
+			homes[e] = append(homes[e], target.Dir)
+		}
+	}
+	for _, e := range m.Exports() {
+		if len(homes[e.Name]) != 1 {
+			t.Errorf("export %s is generated into %v; every export has exactly one TypeScript package", e.Name, homes[e.Name])
+		}
+		delete(homes, e.Name)
+	}
+	for e := range homes {
+		t.Errorf("a TypeScript target names export %s, which no APIResource has", e)
+	}
+}

@@ -30,6 +30,8 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 		&ClusterLinkList{},
 		&MarketIdentity{},
 		&MarketIdentityList{},
+		&ComputeVM{},
+		&ComputeVMList{},
 	)
 	return nil
 }
