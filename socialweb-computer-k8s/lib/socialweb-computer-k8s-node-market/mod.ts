@@ -91,6 +91,7 @@ export interface MarketNodeFulfillerOptions {
   claimKeys?: ClaimKeyStore;
   awaitTermination?: typeof awaitComputeTermination;
   findContract?: typeof findVmContract;
+  owners?: () => Promise<string[]>;
   listVms?: typeof listVmRecords;
   ownershipScanIntervalMs?: number;
   unclaimedGraceMs?: number;
@@ -324,6 +325,7 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
   const scanEveryMs = opts.ownershipScanIntervalMs ?? DEFAULT_OWNERSHIP_SCAN_INTERVAL_MS;
   const unclaimedGraceMs = opts.unclaimedGraceMs ?? DEFAULT_UNCLAIMED_GRACE_MS;
   const settledVms = new Set<string>();
+  const knownOwners = new Set<string>();
   const unclaimedSince = new Map<string, number>();
   let lastScan = Number.NEGATIVE_INFINITY;
   let scanning: Promise<void> | null = null;
@@ -745,7 +747,8 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
 
   async function scanUnclaimed(claims: NodeClaim[]): Promise<void> {
     const claimedPayloads = new Set<string>();
-    const owners = new Set<string>();
+    for (const owner of await opts.owners?.().catch(() => []) ?? []) knownOwners.add(owner);
+    const owners = knownOwners;
     for (const c of claims) {
       owners.add(c.spec.ownerDid);
       const payload = contractStateOfClaim(c)?.payload?.uri;

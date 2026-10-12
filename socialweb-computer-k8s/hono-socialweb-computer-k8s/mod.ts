@@ -307,6 +307,7 @@ if (kcpCredentials && clustersExportUrl) {
     store: createKcpNodeClaimStore({ credentials: kcpCredentials, virtualWorkspace: clustersExportUrl }),
     links: createKcpClusterLinkReader({ credentials: kcpCredentials, virtualWorkspace: clustersExportUrl }),
     requesterFor: (did) => accounts.requesterFor(did),
+    owners: () => Promise.resolve(testOwnerSessions ? [...testOwnerSessions.keys()] : []),
     ...(options.clusterCaDir ? { openBaoCAFileOf: publishedOpenBaoCAFile(options.clusterCaDir as string) } : {}),
     plcUrl: options.plcDirectoryUrl as string,
     ingressProxyHost: options.ingressProxyHost as string,
