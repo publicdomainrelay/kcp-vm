@@ -178,8 +178,12 @@ items:
     risks:
       - "A later item adds an untagged OS-specific file; the gate fails that commit, which is the point."
       - "Plan 0008 M2-DENOKCP-FORK brings kcp-libs' execrunner (Setpgid, untagged) into the module; it must arrive build-tagged or this gate goes red."
-    status: todo
-    evidence: []
+    status: done
+    evidence:
+      - "branch xos-gate: 2c83e70 (check.sh cross-OS step + internal/xosgate, committed red), bb744f4 (hostos primitives only, darwin twins; caps_*.go and DetachProcess deleted), 16a4a93 (ARCHITECTURE section 9 seam table); merged to main 2026-10-12"
+      - "red 2026-10-12T00:40:41Z: build:darwin/arm64, darwin/amd64, windows/amd64, windows/arm64 failed with the E7 errors (24 darwin packages via hostos/portallocator, windows nodevm/disk.go); TestOSNeutralPackagesImportNoLinuxBackend red 00:42:06Z with the go-systemd fixture, then green with TestBoundaryFlagsAGoSystemdImportInAFixture"
+      - "green: check.sh --fast exit 0 at 00:47:02Z and 00:49:02Z; beyond E7 the gate also fixed portscan on darwin, nodeimage buildlock on windows and five untagged linux-only test files"
+      - "linux go test ./... offline: before 1439 pass / 63 skip / 0 fail (00:39:52Z), after 1442 / 63 / 0; on merged main 2026-10-12 58/58 packages ok uncached, GOOS=darwin/arm64 and windows/amd64 build+vet ok"
   - id: M0-KCP-SPIKE
     milestone: M0
     title: Measure both kcp routes - in-process on kcp's fork, or a patched release binary in its own unit - and record the route
@@ -480,8 +484,13 @@ items:
     risks:
       - "Transient units vanish at reboot and when the user manager stops (linger removed, `loginctl terminate-user`, user@<uid> restart); each is treated as a reboot - every child Lost - and documented as an operator action of that weight."
       - "Whether systemd-oomd acts under user@<uid>.service outside app.slice is not stress-tested; check-host records which cgroups oomd monitors."
-    status: todo
-    evidence: []
+    status: done
+    evidence:
+      - "started before M1-ASSETS with the user's approval (2026-10-12): the seam and backend need no embedded asset"
+      - "branch host-units: 07209da (internal/hostsvc Manager {Start, Inspect, Stop, ResetFailed, List, Identify, Check, Close}; go-systemd v22.7.0 + godbus v5.1.0 from the offline module cache), c6698f9 (live tests); merged to main 2026-10-12"
+      - "offline fake-bus tests red against a stub 2026-10-12T00:46:20Z, green 00:47:15Z: the four named tests, a 15-row verdict table, a 300ms deadline dial, the 252-vs-253 version refusal"
+      - "live on hat-8 00:49:35-00:49:51Z, stand-ins only (sleep), units socialweb-test-<rand>-*: child InvocationID+pid unchanged across systemctl --user restart, kill -9 and stop of its starter (adopted, list-units read each step); survived daemon-reload and daemon-reexec; kill -9 reads failed/signal/2/9 until reset; MemoryMax=64M with 256MiB alloc is an oom-kill with memory.swap.max=0; prefixes never cross-listed; a recorded pid systemd placed in another unit reads Lost and is stopped"
+      - "gaps: live tests were written after the implementation (only the mismatch test went red); this host has Linger=no so the runs used the login session's user manager, not a lingering account (proved again under M2-HOST-CONTRACT/M5); a SIGKILL stop leaves the unit failed/signal until ResetFailed, which 0007 M2-CONTROLLER must call after every stop it issues"
   - id: M2-HOST-CONTRACT
     milestone: M2
     title: The Linux host contract, probed by check-host, refused by name

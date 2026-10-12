@@ -177,7 +177,8 @@ open:
     title: OPEN - darwin/windows build gate, both kcp routes measured, the one binary's linux budget.
     body: >
       OPEN: the plan 0005 gate is satisfied (ACC-ZERO, ACC-MESH, ACC-NOSSH done); items start per their
-      depends_on. M0-XOS-GATE and M0-KCP-SPIKE started 2026-10-12 in their own worktrees. Plan 0006
+      depends_on. M0-XOS-GATE DONE 2026-10-12 (merged; check.sh gates darwin/windows build+vet). M0-KCP-SPIKE
+      started 2026-10-12 in its own worktree. Plan 0006
       (docs/plans/0006-socialweb-computer-unified-binary.yaml), revised 2026-10-11 and 2026-10-12 from
       docs/research/2026-10-11-vm-lifecycle/, items M0-XOS-GATE, M0-KCP-SPIKE, M0-SIZE-BUDGET. Linux only
       with cross-OS seams (user, 2026-10-11): the first commit makes GOOS=darwin and GOOS=windows build and
@@ -204,7 +205,8 @@ open:
   - id: P6-M2
     title: OPEN - user-manager units adopted never re-created, the host contract, the VM tree audit, kcp on port 0, postgres (with its upgrade paths) and OpenBao CRDs, apply from Go.
     body: >
-      OPEN as P6-M0. M2-HOST-UNITS started 2026-10-12 in its own worktree. Plan 0006 items M2-HOST-UNITS (was
+      OPEN as P6-M0. M2-HOST-UNITS DONE 2026-10-12 (internal/hostsvc merged; lingering-account proof left to
+      M2-HOST-CONTRACT). Plan 0006 items M2-HOST-UNITS (was
       M2-HOST-SCOPES), M2-HOST-CONTRACT, M2-VM-TREE-AUDIT, M2-KCP-UNIT (out-of-process route only),
       M2-KCP-PORT0 (was M1-KCP-PORT0), M2-POSTGRES (minor upgrade = unit restart, major = logical replication
       with a write freeze; no container-era data dir), M2-OPENBAO-SERVER, M2-MANIFESTS, M2-TEMPLATE, M2-APPLY.
