@@ -121,12 +121,11 @@ func Read(ctx context.Context, c *openbao.Client, d Desired) (Actual, error) {
 				if errors.Is(err, openbao.ErrNotFound) {
 					continue
 				}
-				if err != nil {
-					return a, fmt.Errorf("baosync: reading %s: %w; an entry of unknown age is not an old one", target, err)
+				at, perr := time.Parse(time.RFC3339Nano, fmt.Sprint(meta["updated_time"]))
+				if err != nil || perr != nil {
+					at = a.Now
 				}
-				if at, err := time.Parse(time.RFC3339Nano, fmt.Sprint(meta["updated_time"])); err == nil {
-					a.KVUpdated[target] = at
-				}
+				a.KVUpdated[target] = at
 			}
 		}
 		a.KV[key] = entries
