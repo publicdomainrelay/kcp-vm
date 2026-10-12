@@ -61,7 +61,7 @@ type Spec struct {
 
 	TokenFile string
 
-	CloudControllerManagerBinary string
+	CloudControllerManagerExec []string
 
 	ExternalSecrets ExternalSecrets
 
@@ -158,7 +158,7 @@ var (
 		"the cloud-controller-manager default to 10257, 10259 and 10258 on 127.0.0.1 -- one " +
 		"set for the whole host")
 	ErrMissingCloudControllerManagerBinary = errors.New("clusterstack: " +
-		"CloudControllerManagerBinary is required: the cloud controller manager is an out-of-cluster " +
+		"CloudControllerManagerExec is required: the cloud controller manager is an out-of-cluster " +
 		"controller dialling the apiserver with a minted tenant credential, and nothing on PATH or " +
 		"derived from the data dir names that binary. A cluster that came up without it would have " +
 		"Nodes carrying no providerID and nothing reconciling them")
@@ -223,10 +223,10 @@ func (s Spec) Argv(c procgroup.Component) ([]string, error) {
 }
 
 func (s Spec) CloudControllerManagerArgv() ([]string, error) {
-	if s.CloudControllerManagerBinary == "" {
+	if len(s.CloudControllerManagerExec) == 0 || s.CloudControllerManagerExec[0] == "" {
 		return nil, ErrMissingCloudControllerManagerBinary
 	}
-	return []string{s.CloudControllerManagerBinary}, nil
+	return append([]string(nil), s.CloudControllerManagerExec...), nil
 }
 
 func validPort(p int) bool { return p > 0 && p <= 65535 }

@@ -203,7 +203,7 @@ Same reconcile loop in both states.
 
 **Each cluster's store is `kine` over that cluster's own postgres.** k3s is started with
 `--datastore-endpoint http://127.0.0.1:<kine lease>` (`clusterprovider.DaemonURL`) and dials kine as an
-etcd endpoint; kine's `--endpoint` is the cluster's postgres DSN (`cmd/socialweb-clusterprovider/main.go`
+etcd endpoint; kine's `--endpoint` is the cluster's postgres DSN (`internal/providermain/main.go`
 `storeEndpoint`: the per-cluster postgres registry, unless `SOCIALWEB_CLUSTERPROVIDER_STORE_ENDPOINT`
 names an operator-supplied store for every cluster). The same postgres also holds the cluster vault's
 storage (`internal/clusterstack/openbao.go`). k3s is never pointed at a bucket: measured against
@@ -308,7 +308,7 @@ readiness gate is its own `phase=Ready` log line, taken once its Node informer h
 no port, so that line is the only signal it can offer, and it is a positive marker that can fail.
 
 A portless member is not swept, and it no longer needs to be: every process-group member dies with
-the provider. The startup sweep (`cmd/socialweb-clusterprovider/nodesweep.go`, and the leased-port
+the provider. The startup sweep (`internal/providermain/nodesweep.go`, and the leased-port
 scan in `startup.go`) finds a previous gateway's survivors by the record or the port they leave and
 the argv they were started with; a step that binds no port and leaves no record is invisible to it,
 and the cloud controller manager is exactly that, deliberately, because its work is to reconcile
@@ -1257,7 +1257,7 @@ because an unreadable list read as "nothing is declared" deletes every live node
 material. The method is declared as `nodemarket.NodeSecretsReconciler`, a sibling of `NodeSecrets`
 rather than a fourth method on it, so a substrate's secrets implementation still has one method per
 verb and the provider type-asserts it the way `confirmHeld` asserts `secretSyncer`
-(`cmd/socialweb-clusterprovider/vaultsync.go`); the provider calls it with `live` = the claims it
+(`internal/providermain/vaultsync.go`); the provider calls it with `live` = the claims it
 holds plus the `Adoptable` claims in the cluster's home workspace (`liveNodeGrants`), after
 `adoptClaims` at adoption and on every pass, rate-limited to at most once per cluster per
 `VaultSyncInterval` (30 s), and every deletion is logged at INFO with its reason.
@@ -1268,7 +1268,7 @@ holds plus the `Adoptable` claims in the cluster's home workspace (`liveNodeGran
 it against a real `bao server -dev` seeded with four stale mounts (one with a stale role, one holding
 a live node's role under a stale issuer, two empty), a stale policy and a stale KV entry, plus one
 live node's full set; the failure case puts a proxy in front of the dev vault that answers every
-`LIST` with 500. `cmd/socialweb-clusterprovider/vaultsync_test.go` proves adoption reconciles with
+`LIST` with 500. `internal/providermain/vaultsync_test.go` proves adoption reconciles with
 the live grants, that a claim the door released is not live, that a node the provider still holds with
 no claim left in the workspace stays live, and that a second pass inside the interval does not read
 the vault again. Not deployed at the time of writing: the live reading (`bao auth list`,
@@ -1990,7 +1990,7 @@ Now:
   node lifecycle controller starts the NotReady clock when the group restarts, not when it stopped).
 
 With the door half above, both the door and the provider can restart without reaping a live
-market node. The instruments are in `cmd/socialweb-clusterprovider/adopt_test.go` (a first process
+market node. The instruments are in `internal/providermain/adopt_test.go` (a first process
 provisions through the real path; a second `nodeHosts` over the same claim store and state dir is
 the restarted provider): `TestARestartedProviderAdoptsItsJoiningAndRunningNodesOnceEach` (held
 once each across repeated passes, counted 2, no claim write, no policy or secret write, snapshot
@@ -2258,7 +2258,7 @@ marked "decided by Claude, user may veto".
 4. *Node reader RBAC in every tenant.* `internal/tenantnet` embeds a byte-identical copy of
    `rust/socialweb-meshd/deploy/node-reader-rbac.yaml` (held equal by
    `TestTheNodeReaderRBACIsTheOneMeshdShips`) and the provider's tenant add-on pass
-   (`cmd/socialweb-clusterprovider/eso.go` `tenantAddOns`, run by the bootstrap on every provider
+   (`internal/providermain/eso.go` `tenantAddOns`, run by the bootstrap on every provider
    process's first Ready of each cluster) server-side applies it under the `socialweb-addons` field
    manager BEFORE it needs the cluster vault, then measures the baseline. Live: a
    `system:node:<n>` in `system:nodes` is denied `list nodes` before the apply and allowed after it
@@ -2769,7 +2769,7 @@ effect half:
   them, and holding every node for it would pin the cluster. The target is never undercut: the
   branch is only reached when `count > target`, and the target is at least one while there is
   intent. With NO intent the old path is unchanged: the whole-cluster hold, then `Teardown` to zero.
-- *The side effects (`cmd/socialweb-clusterprovider/scalein.go`).* `scaledriver` performs `Release`
+- *The side effects (`internal/providermain/scalein.go`).* `scaledriver` performs `Release`
   through `scale.Releaser` (an actuator that is not one is `ErrNoReleaser`, never a whole-cluster
   teardown). `tenantNodes.Release` cordons the Node (`spec.unschedulable`), re-observes the cluster,
   and if the node took work between the decision's read and the cordon (Busy or Incoming) it
@@ -2902,7 +2902,7 @@ made by Claude, user may veto:
 - *It blocks the cluster's pass* for as long as `teardownHeld` waits for the door
   (`ClaimReleaseTimeout`), exactly as the giving-up rule and the scale-down already do.
 
-The instruments are in `cmd/socialweb-clusterprovider/nodeloss_test.go`:
+The instruments are in `internal/providermain/nodeloss_test.go`:
 `TestAMarketNodeNotReadyFor89sIsKeptAndAt90sIsReleased` (False and Unknown; 89 s keeps claim and
 Node, 90 s deletes both, revokes the vault state and reports the node lost),
 `TestANodeTheClusterNeverReportedIsNotTouchedByTheLossRule` (an hour on, no Node, claim kept) and
@@ -3100,7 +3100,10 @@ internal/xosgate/      a test-only package: go list -deps -json per GOOS/GOARCH 
 internal/plcresolver/  resolves a did:plc or did:web to its key IDs for the revocation sweep; NXDOMAIN is an outage, not an absence
 internal/plcsweep/     the periodic pass that lists DIDs, resolves them and revokes those whose keys are gone
 internal/sweepkcp/     the kcp side of that sweep: build the account worklist from workspaces and AtprotoIdentity records, write the deny, plan the fan-out
-cmd/${binary}/         the CLI layer; nothing else builds a binary
+internal/foldmain/     the Invocation a folded binary runs with (args, env, stdio, the resolved bin/<sha>/ path, the verb words) and the re-exec argv it builds
+internal/${binary}main/ the body of a folded host binary (gatewaymain, providermain, vaultmain, checkhostmain, ccmmain, tenantcredentialmain) behind Main(ctx, Invocation) int; socialweb-computer dispatches its verb to it with the raw args, and the clusterprovider re-execs the CCM as `<bin/sha path> internal cloud-controller-manager` with the CCM's three-variable env rebuilt explicitly (0006 M3-FOLD)
+cmd/socialweb-computer/ the multi-call CLI; every host verb lives here
+cmd/${binary}/         a one-line shim `os.Exit(<pkg>.Main(context.Background(), foldmain.OS()))` kept only while the container build compiles it (0006 M5-RETIRE deletes both); socialweb-nodeboot (runner image, deleted by 0007 M2-VM-RUNTIME), socialweb-nodeimage (build host; copies the socialweb-nodeinit asset, never runs go), socialweb-nodeinit (guest), socialweb-credential (download asset) and socialweb-apigen (go generate) stay standalone
 deploy/                install scripts, manifests, the audit policy
 rust/                  a cargo workspace; rust/socialweb-meshd is the per-node pod mesh daemon that runs INSIDE a market guest (section 9), rust/build.sh its static musl build
 ```
@@ -3122,7 +3125,7 @@ the gateway reads are named by one function. The bare name is still what a `Clus
 CR's `spec.cluster` and a `NodeClaim`'s `spec.cluster` carry, because those live inside one home
 workspace and are unique there; what the key keeps apart is everything OUTSIDE it.
 
-`cmd/socialweb-clusterprovider/migrate.go` is why an existing single-cluster deployment keeps working.
+`internal/providermain/migrate.go` is why an existing single-cluster deployment keeps working.
 Before the first pass, and only when the CR tree names a given bare name exactly ONCE, it renames
 `<state dir>/pdr-<name>` to `pdr-<key>`, `<state dir>/<name>` to `<key>` (the node records, renamed
 with their directory), the mint credential `<mint dir>/<name>` to `<key>`, and re-keys that cluster's
@@ -3774,12 +3777,12 @@ refutation.
   no NodeClaim, and no node was rented. The material the credential needed was on disk the whole time:
   `server/tls/{client-ca.crt,client-ca.key,server-ca.crt}` exist for that cluster, and the provider
   wrote them. After, `CredentialSource` is an explicit argument to `MintTenantCredentialForCluster`
-  and `MintTenantCredentialForDataDir`, `cmd/socialweb-clusterprovider/main.go` derives it from the
+  and `MintTenantCredentialForDataDir`, `internal/providermain/main.go` derives it from the
   substrate, and an unnamed source is refused rather than defaulted. `market` signs from the ClientCA
   and never opens the vault; `firecracker` and `qemu` are unchanged and still reach for the vault when
   a seal exists. The refusal-not-fallback rule is unchanged on both paths. Instruments, all in
   `internal/clusterprovider/tenantcredential_test.go` unless named: `TestTheCredentialSourceFollowsTheSubstrate`
-  (`cmd/socialweb-clusterprovider/market_test.go`) reads the derivation for all three substrates;
+  (`internal/providermain/market_test.go`) reads the derivation for all three substrates;
   `TestTheMarketSourceSignsFromTheClusterCAAndNeverReachesForTheSeal` seeds a ClientCA beside a seal
   whose port nothing answers at, and it was watched to FAIL with the production error shape above
   (`the tenant credential could not be signed: issuing the tenant credential from the vault at
@@ -3914,7 +3917,7 @@ refutation.
   writable rootfs serving as both template and instance, which persisted a guest's writes into the
   next boot). Both are fixed, and both would have recurred in production because neither was in the
   harness. **The composition-root join is now established too**, and it is a test rather than a
-  scripted run: `cmd/socialweb-clusterprovider/live_fourstep_test.go` holds
+  scripted run: `internal/providermain/live_fourstep_test.go` holds
   `TestTheFourStepProofRunsThroughTheCompositionRoot`, which lives in the package that owns the
   composition root, takes the substrate as a VALUE rather than reading it from the environment, and
   derives all four transitions from scratch. It skips until seven documented variables name the store
@@ -5170,7 +5173,7 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   `$KCP_ROOT/client-ca.crt`, which is what this item would have been implemented as, would never have
   fired and the class would have kept reading as a gap. The real source is the root vault's own PKI CA
   at `pki/ca/pem`, the CA the `kcp-client` role issues the gateway's certificate from
-  (`cmd/socialweb-vault/sources.go:48`). The token store is written as the hex key `token-hash`.
+  (`internal/vaultmain/sources.go:48`). The token store is written as the hex key `token-hash`.
   `central-store-credentials` was required only when `SOCIALWEB_CLUSTERPROVIDER_STORE_ENDPOINT` named an
   external store and was otherwise reported NOT-APPLICABLE on a distinct line, never as the silent
   "not written"; a partial set of the four variables was a hard error, because a half-configured store
@@ -5208,7 +5211,7 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   in this tree stopped at the Kubernetes API. The GitLab Runner's own API calls were never made by
   a runner, so "GitLab CI works here" rested on a vendored document and on a Pod shape a test
   applied by hand. After: `TestAGitLabPipelineRunsOnATenantCluster`
-  (`cmd/socialweb-clusterprovider/live_gitlab_pipeline_test.go`) stands up a tenant cluster at zero
+  (`internal/providermain/live_gitlab_pipeline_test.go`) stands up a tenant cluster at zero
   nodes, mints a tenant credential from that cluster's own ClientCA, writes the runner's
   `config.toml` with `executor = "kubernetes"` and the credential as `cert_file`/`key_file`/
   `ca_file`, starts the real `gitlab-runner` binary against a real GitLab CE, commits a
@@ -5440,7 +5443,7 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   does not yet list it - because a market node is absent from its tenant cluster's node list for
   minutes while the pass runs every 2 s, and without that the decision reads zero nodes and asks
   again on every tick. `internal/scale.Decide` is unchanged; the counting happens in the observe
-  closure `cmd/socialweb-clusterprovider/main.go` hands `scaledriver`. This was first written as
+  closure `internal/providermain/main.go` hands `scaledriver`. This was first written as
   "held hosts whose claim is not yet `Running`", keyed on the claim's phase, and that predicate was
   itself the defect closed as MARKET-4: the door writes `Running` when the node's agent reaches the
   apiserver through the forward, which is a moment BEFORE the Node object appears in the cluster's
@@ -5521,7 +5524,7 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   callers ask a market cluster's vault for different hosts: bring-up asks for
   `SOCIALWEB_MARKET_ADVERTISE_ADDRESS` and loopback (`internal/clusterprovider/stack.go`), and the
   tenant add-on pass asks for the `10.100.0.0/16` gateway `internal/subnetallocator` leases and
-  loopback (`cmd/socialweb-clusterprovider/eso.go`). So the second call replaced `ca.crt` while the
+  loopback (`internal/providermain/eso.go`). So the second call replaced `ca.crt` while the
   vault the first call had configured was still listening and serving the leaf it loaded at start,
   which OpenBao does not re-read. Every later client built its pool from the new `ca.crt` and verified
   it against the old leaf. Reproduced against a real `bao`: the mint failed with `x509: certificate
@@ -5554,7 +5557,7 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   was `kubectl -n default rollout status deployment/external-secrets --timeout=180s`. That
   deployment's pods cannot be scheduled until a node exists, and the node is created by the
   node-scale pass, which runs AFTER the reconcile pass in the same loop
-  (`cmd/socialweb-clusterprovider/wiring.go`: `p.pass(ctx, ref, key)` then
+  (`internal/providermain/wiring.go`: `p.pass(ctx, ref, key)` then
   `p.scale(ctx, key, ref.Name, true)`), so the wait outlives the very pass that would satisfy it.
   It is a stall rather than a deadlock - the wait sits inside `if ! ...; then`, so the script exits
   0 with a warning - but a cluster at zero nodes cannot bring itself up promptly and every pass pays
@@ -5562,7 +5565,7 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   `bash /opt/socialweb/deploy/eso/install.sh` at 01:35 beside
   `kubectl -n default rollout status deployment/external-secrets --timeout=180s` at 01:32. After:
   `install.sh` honors `ESO_SKIP_ROLLOUT_WAIT` (default 0, so a human running the installer still
-  gets the rollout diagnostic) and `cmd/socialweb-clusterprovider/eso.go` sets it to 1, so the
+  gets the rollout diagnostic) and `internal/providermain/eso.go` sets it to 1, so the
   install returns as soon as the bundle is applied and CRD establishment - which needs no node - is
   the only thing that must happen before the store is applied. Nothing else in the pass moves: the
   gate is still the probe that already exists, `eso.Installed` reading one `ClusterSecretStore` with
@@ -5584,7 +5587,7 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
 - **A market cluster's scale pass re-asked the market for one node instead of naming the nodes its
   target needed, every 2 s, for as long as a claim was in flight. CLOSED, and the ordinal that names
   a node is what closed it.** `tenantNodes.nextOrdinal` named the next node from the TENANT cluster's
-  `Nodes()` list alone (`cmd/socialweb-clusterprovider/nodes.go`). That list holds only nodes whose
+  `Nodes()` list alone (`internal/providermain/nodes.go`). That list holds only nodes whose
   k3s agent has already joined, and a market `Provision` writes its `NodeClaim` and returns before the
   machine exists (invariant 31, section 11), so every provision inside one pass read the same stale
   list and resolved to the SAME ordinal: `scaledriver` asked for `target - observed` nodes and
@@ -5667,7 +5670,7 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   the previous behaviour on a failed read was the same. `tenantNodes.client`'s error text lost its
   teardown-specific wording, since the count now calls it too, and `Teardown` carries that wording
   itself.
-  The instrument is `go test ./cmd/socialweb-clusterprovider/ -count=1`. Two tests, both watched to
+  The instrument is `go test ./internal/providermain/ -count=1`. Two tests, both watched to
   fail against the old predicate by restoring it in place and running them:
   `TestAMarketNodeIsCountedUntilItsOwnClusterListsIt` records `a claim that reached Running while
   its cluster still did not list the node counted 0 nodes in flight, want 1`, and
@@ -5878,7 +5881,7 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   market cluster the two host sets differ by construction: bring-up asks for
   `SOCIALWEB_MARKET_ADVERTISE_ADDRESS` and loopback (`internal/clusterprovider/stack.go`), the tenant
   add-on pass asks for the `10.100.0.0/16` gateway `internal/subnetallocator` leases and loopback
-  (`cmd/socialweb-clusterprovider/eso.go`). The reading, against a real OpenBao v2.6.2 on 2026-10-07:
+  (`internal/providermain/eso.go`). The reading, against a real OpenBao v2.6.2 on 2026-10-07:
   the vault started covering `[198.18.255.254 127.0.0.1]`, the tenant add-on pass re-signed the leaf to
   cover `[198.18.255.254 127.0.0.1 10.100.0.1]` on disk, the vault went on serving
   `[198.18.255.254 127.0.0.1]`, and a client dialing it as `10.100.0.1` failed with `tls: failed to
@@ -5887,7 +5890,7 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   host a caller has asked for, so a restart - or a cluster teardown and bring-up - closes it, and
   nothing asks for a NEW host after that. The next-best behaviour is taken: the tenant add-on pass
   REFUSES to hand the ExternalSecret a URL the running listener cannot present
-  (`vaultcert.RequireServedVaultTLS`, called from `cmd/socialweb-clusterprovider/eso.go`), failing that
+  (`vaultcert.RequireServedVaultTLS`, called from `internal/providermain/eso.go`), failing that
   pass with the reason rather than writing a Secret whose client is guaranteed to fail with a name
   mismatch. A signal-based repair was refused with it - it would need a handle the re-sign site does
   not have, and a reload whose completion nothing observes would let a reload that did not happen and
@@ -5941,7 +5944,7 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
 
 - **The tenant store was written with a vault address nothing could reach, so the demo
   ExternalSecret had never synced on a market cluster. CLOSED.** The store's vault server is
-  `https://<the cluster's subnet gateway>:<vault port>` (`cmd/socialweb-clusterprovider/eso.go`). On
+  `https://<the cluster's subnet gateway>:<vault port>` (`internal/providermain/eso.go`). On
   a guest substrate that address is inside the cluster's own range -- the guests dial it and the host
   binds it -- and the demo was measured syncing there, which is where section 15's claim about
   `Secret/users/openbao-demo` comes from. On `market` it is neither bound nor routed.

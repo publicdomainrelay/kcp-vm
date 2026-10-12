@@ -439,7 +439,7 @@ func standInSpec(t *testing.T) clusterstack.Spec {
 		K3sSchedulerPort:              20014,
 		K3sCloudControllerManagerPort: 20015,
 		TokenFile:                     filepath.Join(dir, "token"),
-		CloudControllerManagerBinary:  "/usr/local/bin/socialweb-cloud-controller-manager",
+		CloudControllerManagerExec:    []string{"/usr/local/bin/socialweb-cloud-controller-manager"},
 		Audit: clusterstack.Audit{
 			PolicyPath: filepath.Join(dir, "audit-policy.yaml"),
 			LogPath:    filepath.Join(dir, "audit.log"),

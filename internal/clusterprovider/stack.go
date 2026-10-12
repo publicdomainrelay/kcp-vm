@@ -82,7 +82,7 @@ type StackConfig struct {
 	ServiceAccountIssuer string
 	APIAudiences         []string
 
-	CloudControllerManager string
+	CloudControllerManagerExec []string
 
 	ExternalSecrets *ExternalSecrets
 
@@ -165,7 +165,7 @@ func StepsFor(cfg StackConfig) materialiser.StepBuilder {
 			K3sSchedulerPort:              k3sScheduler,
 			K3sCloudControllerManagerPort: k3sCloudControllerManager,
 			TokenFile:                     TokenPath(dataDir),
-			CloudControllerManagerBinary:  cfg.CloudControllerManager,
+			CloudControllerManagerExec:    cfg.CloudControllerManagerExec,
 			ServiceAccountIssuer:          cfg.ServiceAccountIssuer,
 			APIAudiences:                  cfg.APIAudiences,
 			Audit: clusterstack.Audit{

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -75,9 +76,13 @@ func TestTheCloudControllerManagerStepCarriesItsConfigInEnvNotArgv(t *testing.T)
 	if ccm == nil {
 		t.Fatalf("the stack names the cloud controller manager and no step was built: %v", names(steps))
 	}
-	if len(ccm.Spec.Argv) != 1 || ccm.Spec.Argv[0] != s.CloudControllerManagerBinary {
-		t.Fatalf("argv = %v, want only the binary: the credential path is a secret and no secret "+
-			"rides argv (invariant 3)", ccm.Spec.Argv)
+	if !slices.Equal(ccm.Spec.Argv, []string{reexecExe, "internal", "cloud-controller-manager"}) {
+		t.Fatalf("argv = %v, want the re-exec of the resolved core binary and nothing else: the "+
+			"credential path is a secret and no secret rides argv (invariant 3)", ccm.Spec.Argv)
+	}
+	if ccm.Spec.Env == nil || len(ccm.Spec.Env) != 3 {
+		t.Fatalf("Env = %v: a nil Env inherits the provider's whole environment into the re-exec; "+
+			"the CCM's env is rebuilt explicitly from exactly its three settings", ccm.Spec.Env)
 	}
 	for _, want := range []string{
 		EnvCloudControllerManagerKubeconfig + "=" + clusterstack.CloudControllerManagerKubeconfig(s.DataDir),
@@ -108,9 +113,11 @@ func envHas(haystack []string, needle string) bool {
 	return false
 }
 
+const reexecExe = "/home/swc/.local/state/socialweb-computer/bin/0123abcd/socialweb-computer"
+
 func specWithCCM() clusterstack.Spec {
 	s := spec()
 	s.Cluster = "liveweb"
-	s.CloudControllerManagerBinary = "/usr/local/bin/socialweb-cloud-controller-manager"
+	s.CloudControllerManagerExec = []string{reexecExe, "internal", "cloud-controller-manager"}
 	return s
 }

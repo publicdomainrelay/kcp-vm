@@ -16,8 +16,8 @@ Commit as you go. Never push!
 | Rules a change must not break | `docs/ARCHITECTURE.md` section 13 |
 | Why a decision was made, and what it closed | `docs/ARCHITECTURE.md` section 15 |
 | The live backlog (what is open now) | `NEXT.yaml` |
-| Env the clusterprovider reads | `cmd/socialweb-clusterprovider/config.go`, `deploy/container.env.example` |
-| Env the gateway reads | `cmd/socialweb-gateway/config.go`, `deploy/socialweb-gateway.env.example` |
+| Env the clusterprovider reads | `internal/providermain/config.go`, `deploy/container.env.example` |
+| Env the gateway reads | `internal/gatewaymain/config.go`, `deploy/socialweb-gateway.env.example` |
 | How to run the one-container stack | `deploy/run-container.sh`, `deploy/container.env.example` |
 | What a host must hand the container | `socialweb-computer-kcp-check-host`, `docs/ARCHITECTURE.md` section 9 |
 | The operator handoff | `handoff.yaml` |

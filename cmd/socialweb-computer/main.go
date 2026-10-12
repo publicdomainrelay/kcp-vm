@@ -16,8 +16,15 @@ import (
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/assets"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/capabilities"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/ccmmain"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/checkhostmain"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clicfg"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/foldmain"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/gatewaymain"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/providermain"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/tenantcredentialmain"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/vaultmain"
 )
 
 const (
@@ -60,6 +67,24 @@ func builtVerbs() map[string]builtVerb {
 		"dev gc":            {[]string{"asset-cache", "state-dir", "asset-gc-window"}, runDevGC},
 		"internal devsup":   {[]string{"state", "socket", "die-with", "instance"}, runDevsup},
 		"internal dev-core": {[]string{"instance-dir", "ready-timeout"}, runDevCore},
+	}
+}
+
+type foldedVerb struct {
+	prefix []string
+	main   func(context.Context, foldmain.Invocation) int
+}
+
+func foldedVerbs() map[string]foldedVerb {
+	return map[string]foldedVerb{
+		"serve gateway xrpc":                {nil, gatewaymain.Main},
+		"serve provider":                    {nil, providermain.Main},
+		"migrate":                           {[]string{"migrate"}, providermain.Main},
+		"vault prepare-root":                {[]string{"prepare-root"}, vaultmain.Main},
+		"vault apply-root":                  {[]string{"apply-root"}, vaultmain.Main},
+		"check-host":                        {nil, checkhostmain.Main},
+		"internal cloud-controller-manager": {nil, ccmmain.Main},
+		"internal tenantcredential":         {nil, tenantcredentialmain.Main},
 	}
 }
 
@@ -109,6 +134,9 @@ func run(ctx context.Context, args []string, env clicfg.Env, stdout, stderr io.W
 		fmt.Fprintln(stderr, why)
 		return exitRefused
 	}
+	if f, ok := foldedVerbs()[verb.Path]; ok {
+		return a.runFolded(ctx, verb, f, rest)
+	}
 	built, isBuilt := builtVerbs()[verb.Path]
 	names := built.options
 	if !isBuilt {
@@ -145,6 +173,22 @@ func run(ctx context.Context, args []string, env clicfg.Env, stdout, stderr io.W
 		return exitRefused
 	}
 	return built.run(ctx, a, vals, rest)
+}
+
+func (a *app) runFolded(ctx context.Context, verb capabilities.Verb, f foldedVerb, rest []string) int {
+	exe, err := foldmain.ResolveExe()
+	if err != nil {
+		fmt.Fprintf(a.stderr, "%s: resolving this binary's own path: %v\n", verb.Path, err)
+		return exitFailed
+	}
+	return f.main(ctx, foldmain.Invocation{
+		Args: append(append([]string(nil), f.prefix...), rest...),
+		Getenv: func(k string) string {
+			v, _ := a.env.LookupEnv(k)
+			return v
+		},
+		Stdout: a.stdout, Stderr: a.stderr, Exe: exe, Verb: verb.Words(),
+	})
 }
 
 func flagsFirst(spec clicfg.Spec, args []string) []string {
