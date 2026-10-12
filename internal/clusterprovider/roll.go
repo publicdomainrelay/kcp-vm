@@ -24,6 +24,7 @@ import (
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/apiserverfront"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/clusterlink"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clusterstack"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/materialiser"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/portallocator"
@@ -703,8 +704,138 @@ func slotKinePort(l materialiser.Leases, slot string) int {
 	return l[sp.Kine].Port
 }
 
-func (r *Roller) RollLink(ctx context.Context, key string, req RollRequest) RollReport {
-	return RollReport{ID: req.ID, Kind: RollKindLink, Cluster: key, Error: "link replacement is not built yet"}
+func linkComponent(service v1alpha1.ClusterLinkService) (procgroup.Component, error) {
+	switch service {
+	case v1alpha1.ClusterLinkApiserver:
+		return procgroup.ComponentApiserverLink, nil
+	case v1alpha1.ClusterLinkOpenBao:
+		return procgroup.ComponentOpenBaoLink, nil
+	}
+	return "", fmt.Errorf("clusterprovider: %q is no cluster link; the links are %v", service, clusterlink.Services)
+}
+
+func printedTicket(log string) string {
+	t, _ := clusterlink.TicketIn(unitMember{path: log}.Output())
+	return t
+}
+
+func (r *Roller) RollLink(ctx context.Context, key string, req RollRequest) (rep RollReport) {
+	h := r.Units
+	rep = RollReport{ID: req.ID, Kind: RollKindLink, Cluster: key, StartedAt: time.Now().UTC()}
+	fail := func(err error) RollReport {
+		rep.Error = err.Error()
+		return rep
+	}
+	if r.Stack.Links == nil {
+		return fail(errors.New("clusterprovider: this provider runs no cluster links"))
+	}
+	service := v1alpha1.ClusterLinkService(req.Service)
+	comp, err := linkComponent(service)
+	if err != nil {
+		return fail(err)
+	}
+	unlock := h.lock(key)
+	defer unlock()
+	cp, err := h.readControlPlane(key)
+	if err != nil {
+		return fail(err)
+	}
+	cur := h.LinkState(key, service)
+	from := slotOr(cur.Slot)
+	to := otherSlot(from)
+	rep.From, rep.To = from, to
+	l, err := r.Leases(key)
+	if err != nil {
+		return fail(err)
+	}
+	if r.Relet != nil {
+		lease, changed, err := r.Relet(key, LinkPurpose(service, to))
+		if err != nil {
+			return fail(err)
+		}
+		if changed {
+			rep.Relet = append(rep.Relet, fmt.Sprintf("%s %d -> %d", LinkPurpose(service, to), l[LinkPurpose(service, to)].Port, lease.Port))
+		}
+		l[LinkPurpose(service, to)] = lease
+	}
+	dumbpipe := req.Dumbpipe
+	if dumbpipe == "" {
+		dumbpipe = cur.Dumbpipe
+	}
+	next := LinkRecord{Slot: to, Dumbpipe: dumbpipe, Port: l[LinkPurpose(service, to)].Port}
+	cfg := r.Stack
+	prev := cfg.LinkSlot
+	cfg.LinkSlot = func(cluster string, s v1alpha1.ClusterLinkService) LinkRecord {
+		if s == service {
+			return next
+		}
+		if prev != nil {
+			return prev(cluster, s)
+		}
+		return LinkRecord{Slot: ActiveSlot}
+	}
+	cfg.Slot = func(string) SlotState { return h.SlotState(key) }
+	steps, err := StepsFor(cfg)(materialiser.Observed{Cluster: v1alpha1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: key}}}, l)
+	if err != nil {
+		return fail(err)
+	}
+	var st procgroup.Step
+	var oldLog string
+	for _, s := range steps {
+		if s.Name == comp {
+			st = s
+		}
+	}
+	if st.Name == "" {
+		return fail(fmt.Errorf("clusterprovider: no %s step for %s", comp, key))
+	}
+	oldMember := SlotMember(comp, linkStepSlot(from))
+	newMember := StepMember(st)
+	if o, err := h.member(ctx, key, oldMember); err == nil && o != nil && o.Spec.Output != nil {
+		oldLog = o.Spec.Output.Stdout
+		rep.OldListener = o.Spec.Unit
+	}
+	rep.TicketBefore = printedTicket(oldLog)
+	rotateLog(st.Spec.Log)
+	spec, err := st.Prepare(ctx, st.Spec)
+	if err != nil {
+		return fail(err)
+	}
+	st.Spec = spec
+	o, err := h.placeGated(ctx, key, st, st.Ready)
+	if err != nil {
+		sctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		h.remove(sctx, ObjectName(key, newMember))
+		return fail(err)
+	}
+	rep.GreenReadyAt = time.Now().UTC()
+	rep.StartToReady = secsBetween(rep.StartedAt, rep.GreenReadyAt)
+	rep.NewListener = o.Spec.Unit
+	rep.Ticket = printedTicket(st.Spec.Log)
+	updated := cp
+	updated.Members = nil
+	for _, m := range cp.Members {
+		if m.Name == oldMember {
+			m = ControlPlaneMember{Name: newMember, Unit: o.Spec.Unit, Object: ObjectName(key, newMember), InvocationID: o.Status.Runtime.InvocationID}
+		}
+		updated.Members = append(updated.Members, m)
+	}
+	if updated.Links == nil {
+		updated.Links = map[string]LinkRecord{}
+	}
+	updated.Links[string(service)] = next
+	updated.LastRoll = req.ID
+	if err := h.writeControlPlane(key, updated); err != nil {
+		return fail(err)
+	}
+	rep.PersistedAt = time.Now().UTC()
+	if err := h.remove(ctx, ObjectName(key, oldMember)); err != nil {
+		return fail(err)
+	}
+	rep.OldStoppedAt = time.Now().UTC()
+	rep.OldStopSecs = secsBetween(rep.PersistedAt, rep.OldStoppedAt)
+	return rep
 }
 
 func (r *Roller) watch(ctx context.Context, core kubernetes.Interface, spec clusterstack.Spec, rep *RollReport, nodes, leases map[string]string) {

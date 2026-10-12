@@ -493,9 +493,31 @@ plan's `m3_contract` already fixed it (names, mount, path, env var, encoding).
 - **Teardown.** A deleted cluster's two ClusterLinks are deleted after its group is reaped (both the
   all-clusters path and a pass that removes the finalizer). An OFF cluster keeps them: it comes back as
   the same endpoints. The keys stay in the vault's data and go with it.
-- **Stated limits.** The allocator probes a link port for TCP, not UDP, so a foreign UDP holder of a
-  leased port makes dumbpipe exit at bind and the bring-up fail with dumbpipe's bind error in the gate
-  message. The IPv6 socket takes a random port. Handing a link over without a gap is M3-LINK-HANDOVER.
+- **Replacement without a gap (plan 0006 M3-LINK-HANDOVER).** Each link holds two UDP leases
+  (`apiserver-link` and `apiserver-link-b`, `openbao-link` and `openbao-link-b`); `controlplane.json`
+  `links.<service>` names the slot (`a` or `b`), the dumbpipe it runs and its port, and `StepsFor`
+  builds the link from it (member `link-<service>` for slot a, `link-<service>@b` for slot b). `units
+  roll link <key> --service apiserver|openbao [--dumbpipe-path]` is carried out by the provider's roller:
+  the other UDP lease is re-leased if another process holds it (UDP probe), the new listener starts with
+  the same `IROH_SECRET` env file, its gate waits for the ticket it prints naming the vault's key (and
+  records the ClusterLink, whose `status.ticket` is `StableTicket(key)` and so byte-identical), the
+  record is switched, then the old listener's object is deleted. A link is never re-pointed for a k3s
+  swap: its target is the front. Measured with the pinned dumbpipe v0.39.0 (iroh 1.0.0, sha256
+  81010d0a... of the binary in the pinned archive; n0's default relays; client and listeners on one
+  host, so the path was direct): a connect-tcp client dialling the endpoint-id-only ticket keeps its
+  dials on the OLDER listener while both run (the newer process is not promoted for an established
+  client), and its next dial after the older one is stopped reaches the newer one with no dial lost
+  (200 ms polls); a client that first dials while both run reaches the newer one only (the address
+  record is last writer wins; the newer listener's first answer came 5.2 s after it started). So the
+  replacement keeps start-then-stop; no fallback to stop-then-start was needed. On a dev instance a
+  replacement (old object deleted 0.17 s after the new one was gated, 8 s after the request) and a
+  SIGKILL of the link (Restart=always, a new process 0.19 s later, cluster Initializing for 4.2 s while
+  the restarted invocation was re-verified) each lost 0 of ~260 kubectl polls through a connect-tcp
+  client on the published ticket.
+- **Stated limits.** The materialiser's allocator probes a link port for TCP, not UDP (only the roller
+  re-leases with a UDP probe), so a foreign UDP holder of a leased port makes dumbpipe exit at bind and
+  the bring-up fail with dumbpipe's bind error in the gate message. The IPv6 socket takes a random
+  port.
 
 ### The vault's config is rendered, not shipped
 
@@ -1348,7 +1370,7 @@ reports its address into its kcp object (plans 0006 M2-KCP-PORT0, M1-NO-FIXED-PO
 | `k3s-slot-a`, `k3s-slot-b` | width 2 each: the `--https-listen-port` pair of k3s slot a and slot b behind the front; never advertised |
 | `kine`, `kine-b` | kine's listener of slot a and slot b |
 | `k3s-controller-manager`, `k3s-scheduler`, `k3s-cloud-controller-manager` (slot a), the same names with `-b` (slot b) | the k3s control-plane components' secure ports |
-| `apiserver-link`, `openbao-link` | UDP: the IPv4 socket of each cluster link's iroh endpoint (`--ipv4-addr 0.0.0.0:<port>`). The only datagram purposes (`Purpose.Datagram()`); the restart sweep reads the UDP tables for them |
+| `apiserver-link`, `openbao-link`, `apiserver-link-b`, `openbao-link-b` | UDP: the IPv4 socket of each cluster link's iroh endpoint, one lease per link slot (section 5) (`--ipv4-addr 0.0.0.0:<port>`). The only datagram purposes (`Purpose.Datagram()`); the restart sweep reads the UDP tables for them |
 | `external-secrets-health` | the External Secrets controller's `--live-addr`, on `127.0.0.1` |
 | `external-secrets-webhook` | the External Secrets webhook's TLS `--port`, the one its `ValidatingWebhookConfiguration` names as `https://127.0.0.1:<port>`; it binds every interface, because the upstream flag has no host |
 | `external-secrets-webhook-health` | the External Secrets webhook's `--healthz-addr`, on `127.0.0.1`. Both members' metrics are off (`--metrics-addr=0`), so no metrics port is leased |

@@ -22,7 +22,8 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/procgroup"
 )
 
-var LinkPurposes = []portallocator.Purpose{portallocator.PurposeApiserverLink, portallocator.PurposeOpenBaoLink}
+var LinkPurposes = []portallocator.Purpose{portallocator.PurposeApiserverLink, portallocator.PurposeOpenBaoLink,
+	portallocator.PurposeApiserverLinkB, portallocator.PurposeOpenBaoLinkB}
 
 const linkFailureTail = 600
 
@@ -104,13 +105,23 @@ func linksAfterK3s(steps []procgroup.Step, cfg StackConfig, cluster, dataDir str
 		{procgroup.ComponentOpenBaoLink, v1alpha1.ClusterLinkOpenBao, portallocator.PurposeOpenBaoLink, vaultPort},
 	}
 	for _, t := range targets {
-		linkPort, err := leasePort(l, t.purpose, cluster)
+		rec := cfg.linkSlotOf(cluster, t.service)
+		slot := slotOr(rec.Slot)
+		purpose := LinkPurpose(t.service, slot)
+		linkPort, err := leasePort(l, purpose, cluster)
 		if err != nil {
 			return nil, err
 		}
 		output, err := componentLog(dataDir, t.component)
 		if err != nil {
 			return nil, err
+		}
+		if slot != ActiveSlot {
+			output = strings.TrimSuffix(output, ".log") + "@" + slot + ".log"
+		}
+		dumbpipe := links.Dumbpipe
+		if rec.Dumbpipe != "" {
+			dumbpipe = rec.Dumbpipe
 		}
 		run := &linkRun{
 			links:   links,
@@ -122,7 +133,8 @@ func linksAfterK3s(steps []procgroup.Step, cfg StackConfig, cluster, dataDir str
 		}
 		steps = append(steps, procgroup.Step{
 			Name:    t.component,
-			Spec:    procgroup.Spec{Argv: clusterlink.Argv(links.Dumbpipe, t.port, linkPort), Log: output},
+			Slot:    linkStepSlot(slot),
+			Spec:    procgroup.Spec{Argv: clusterlink.Argv(dumbpipe, t.port, linkPort), Log: output},
 			Prepare: run.prepare,
 			Ready:   run.ready,
 		})
@@ -130,6 +142,31 @@ func linksAfterK3s(steps []procgroup.Step, cfg StackConfig, cluster, dataDir str
 	return steps, nil
 }
 
+func linkStepSlot(slot string) string {
+	if slot == ActiveSlot {
+		return ""
+	}
+	return slot
+}
+
+func LinkPurpose(service v1alpha1.ClusterLinkService, slot string) portallocator.Purpose {
+	switch {
+	case service == v1alpha1.ClusterLinkApiserver && slot == "b":
+		return portallocator.PurposeApiserverLinkB
+	case service == v1alpha1.ClusterLinkApiserver:
+		return portallocator.PurposeApiserverLink
+	case slot == "b":
+		return portallocator.PurposeOpenBaoLinkB
+	}
+	return portallocator.PurposeOpenBaoLink
+}
+
+func (cfg StackConfig) linkSlotOf(cluster string, service v1alpha1.ClusterLinkService) LinkRecord {
+	if cfg.LinkSlot != nil {
+		return cfg.LinkSlot(cluster, service)
+	}
+	return LinkRecord{Slot: ActiveSlot}
+}
 func linkEnvFile(dataDir string, service v1alpha1.ClusterLinkService) string {
 	return filepath.Join(dataDir, "links", string(service)+".env")
 }

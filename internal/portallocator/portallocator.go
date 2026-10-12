@@ -62,6 +62,10 @@ const (
 
 	PurposeOpenBaoLink Purpose = "openbao-link"
 
+	PurposeApiserverLinkB Purpose = "apiserver-link-b"
+
+	PurposeOpenBaoLinkB Purpose = "openbao-link-b"
+
 	PurposeExternalSecretsHealth Purpose = "external-secrets-health"
 
 	PurposeExternalSecretsWebhook Purpose = "external-secrets-webhook"
@@ -70,8 +74,10 @@ const (
 )
 
 var datagramPurposes = map[Purpose]bool{
-	PurposeApiserverLink: true,
-	PurposeOpenBaoLink:   true,
+	PurposeApiserverLink:  true,
+	PurposeOpenBaoLink:    true,
+	PurposeApiserverLinkB: true,
+	PurposeOpenBaoLinkB:   true,
 }
 
 func (p Purpose) Datagram() bool { return datagramPurposes[p] }
@@ -99,8 +105,10 @@ var purposeWidth = map[Purpose]int{
 	PurposeK3sSchedulerB:              1,
 	PurposeK3sCloudControllerManagerB: 1,
 
-	PurposeApiserverLink: 1,
-	PurposeOpenBaoLink:   1,
+	PurposeApiserverLink:  1,
+	PurposeOpenBaoLink:    1,
+	PurposeApiserverLinkB: 1,
+	PurposeOpenBaoLinkB:   1,
 
 	PurposeExternalSecretsHealth:        1,
 	PurposeExternalSecretsWebhook:       1,
@@ -402,7 +410,7 @@ func (a *Allocator) Relet(req Request) (Lease, bool, error) {
 	if ok {
 		busy := false
 		for p := held.Port; p < held.Port+held.Width; p++ {
-			if probeBound(p) {
+			if (req.Purpose.Datagram() && probeBoundUDP(p)) || (!req.Purpose.Datagram() && probeBound(p)) {
 				busy = true
 			}
 		}

@@ -10,6 +10,8 @@ import (
 
 	"k8s.io/client-go/kubernetes"
 
+	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
+
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clusterstack"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/materialiser"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/portallocator"
@@ -80,6 +82,8 @@ type StackConfig struct {
 	Slot func(cluster string) SlotState
 
 	HostnameExec []string
+
+	LinkSlot func(cluster string, service v1alpha1.ClusterLinkService) LinkRecord
 
 	ExternalSecrets *ExternalSecrets
 

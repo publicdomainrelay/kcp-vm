@@ -242,6 +242,10 @@ func SlotMember(c procgroup.Component, slot string) string {
 		return "kine@" + slotOr(slot)
 	case procgroup.ComponentK3s:
 		return "k3s@" + slotOr(slot)
+	case procgroup.ComponentApiserverLink, procgroup.ComponentOpenBaoLink:
+		if slot != "" && slot != ActiveSlot {
+			return MemberName(c) + "@" + slot
+		}
 	}
 	return MemberName(c)
 }
@@ -905,4 +909,15 @@ func (h *UnitsHost) Reap(ctx context.Context, key string) error {
 	}
 	h.c.Log.Info("cluster provider: every member of the cluster is stopped", "cluster", key, "slice", h.Slice(key))
 	return nil
+}
+
+func (h *UnitsHost) LinkState(key string, service v1alpha1.ClusterLinkService) LinkRecord {
+	cp, err := h.readControlPlane(key)
+	if err != nil {
+		return LinkRecord{Slot: ActiveSlot}
+	}
+	if r, ok := cp.Links[string(service)]; ok && r.Slot != "" {
+		return r
+	}
+	return LinkRecord{Slot: ActiveSlot}
 }

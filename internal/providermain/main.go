@@ -239,6 +239,7 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 		FrontExec:                  cfg.FrontExec,
 		HostnameExec:               cfg.HostnameExec,
 		Slot:                       units.SlotState,
+		LinkSlot:                   units.LinkState,
 		ExternalSecrets:            externalSecretsFor(cfg),
 		Harvest: func(ctx context.Context, cluster string) error {
 			if err := clusterprovider.HarvestBundle(cfg.StateDir, cluster); err != nil {

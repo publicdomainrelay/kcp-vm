@@ -255,3 +255,12 @@ func probeBound(port int) bool {
 	conn.Close()
 	return false
 }
+
+func probeBoundUDP(port int) bool {
+	conn, err := net.ListenPacket("udp", fmt.Sprintf("0.0.0.0:%d", port))
+	if err != nil {
+		return true
+	}
+	conn.Close()
+	return false
+}
