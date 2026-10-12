@@ -108,17 +108,19 @@ type Options struct {
 	Root         string
 	Staged       bool
 	UnitPrefix   string
-	Listen       map[string]string
+	Settings     map[string]string
 	Out          io.Writer
 }
 
 const (
 	OptKcpFront = "kcp-front-address"
 	OptTLSFront = "tls-front-address"
-	OptDoor     = "door-address"
+	OptSpecFile = "gateway-spec-file"
 )
 
-var GatewayListen = map[string]string{OptKcpFront: "127.0.0.1:6443", OptTLSFront: "127.0.0.1:8443", OptDoor: "127.0.0.1:8788"}
+var GatewayListen = map[string]string{OptKcpFront: "127.0.0.1:6443", OptTLSFront: "127.0.0.1:8443"}
+
+var Passed = []string{OptKcpFront, OptTLSFront, OptSpecFile}
 
 func Rooted(root string) bool { return root != "" && filepath.Clean(root) != "/" }
 
@@ -832,7 +834,7 @@ func (in *installer) config() error {
 			}
 		}
 	}
-	for k, v := range in.o.Listen {
+	for k, v := range in.o.Settings {
 		if v != "" {
 			cfg[k] = v
 		}

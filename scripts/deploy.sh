@@ -14,7 +14,7 @@ STATE_DIR="${STATE_DIR:-/var/lib/socialweb-computer/${ACCOUNT}}"
 GATEWAY_ENV_FILE="${GATEWAY_ENV_FILE:-}"
 BINARY="${BINARY:-}"
 SHA256="${SHA256:-}"
-DOOR_PORT=8788
+WEB_APP_PORT=8788
 KCP_PORT=6443
 GATEWAY_TLS_PORT=8443
 SSH_OPTS=(-p "$SSH_PORT" -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=20
@@ -53,7 +53,7 @@ if [ -n "$GATEWAY_ENV_FILE" ]; then
   ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "cat > $(q "$INCOMING.env")" < "$GATEWAY_ENV_FILE"
 fi
 
-REMOTE_ENV="ACCOUNT=$(q "$ACCOUNT") STATE_DIR=$(q "$STATE_DIR") INCOMING=$(q "$INCOMING") SHA256=$(q "$SHA256") ORIGIN=$(q "$ORIGIN") KCP_ORIGIN=$(q "$KCP_ORIGIN") DOOR_PORT=$(q "$DOOR_PORT") KCP_PORT=$(q "$KCP_PORT") GATEWAY_TLS_PORT=$(q "$GATEWAY_TLS_PORT")"
+REMOTE_ENV="ACCOUNT=$(q "$ACCOUNT") STATE_DIR=$(q "$STATE_DIR") INCOMING=$(q "$INCOMING") SHA256=$(q "$SHA256") ORIGIN=$(q "$ORIGIN") KCP_ORIGIN=$(q "$KCP_ORIGIN") WEB_APP_PORT=$(q "$WEB_APP_PORT") KCP_PORT=$(q "$KCP_PORT") GATEWAY_TLS_PORT=$(q "$GATEWAY_TLS_PORT")"
 
 ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "$REMOTE_ENV bash -s" <<'REMOTE_EOF'
 set -euo pipefail
@@ -83,21 +83,21 @@ else
 fi
 [ -f "$STATE_DIR/gateway.env" ] && chown "$ACCOUNT:$ACCOUNT" "$STATE_DIR/gateway.env"
 
-say "waiting for the door to answer"
+say "waiting for the web app to answer"
 ready=0
 for _ in $(seq 1 150); do
-  if curl -fsS "http://127.0.0.1:${DOOR_PORT}/api/config" >/dev/null 2>&1; then
+  if curl -fsS "http://127.0.0.1:${WEB_APP_PORT}/api/config" >/dev/null 2>&1; then
     ready=1
     break
   fi
   sleep 2
 done
 if [ "$ready" != "1" ]; then
-  say "the door never answered; last log lines:"
+  say "the web app never answered; last log lines:"
   journalctl --user -M "${ACCOUNT}@" -u socialweb-computer-gateway.service -n 60 --no-pager 2>&1 || true
   exit 1
 fi
-say "the door answers"
+say "the web app answers"
 
 CA_DIR="/etc/caddy/socialweb-computer"
 install -d -m 0755 "$CA_DIR"
@@ -120,7 +120,7 @@ ${ORIGIN} {
     }
   }
   handle {
-    reverse_proxy http://127.0.0.1:${DOOR_PORT}
+    reverse_proxy http://127.0.0.1:${WEB_APP_PORT}
   }
 }
 SITE
@@ -152,7 +152,7 @@ fi
 caddy validate --config /etc/caddy/Caddyfile >/dev/null
 systemctl reload caddy || systemctl restart caddy
 
-say "https://${ORIGIN} -> door, https://${KCP_ORIGIN} -> kcp front"
+say "https://${ORIGIN} -> web app, https://${KCP_ORIGIN} -> kcp front"
 REMOTE_EOF
 
 say "done: https://${ORIGIN} and https://${KCP_ORIGIN}"

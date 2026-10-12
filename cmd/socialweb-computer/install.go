@@ -16,7 +16,7 @@ import (
 )
 
 var installOptions = []string{backendOpt, "handle", "account", "state-dir", "vm-slots", "dry-run", "adopt-account", "json", "root", "unit-prefix",
-	install.OptKcpFront, install.OptTLSFront, install.OptDoor}
+	install.OptKcpFront, install.OptTLSFront, install.OptSpecFile}
 
 var uninstallOptions = []string{"account", "purge", "force", "json", "root"}
 
@@ -73,7 +73,7 @@ func runInstall(role hostcontract.Role) verbFunc {
 			return installExit(a, verb, install.Report{}, err, false)
 		}
 		listen := map[string]string{}
-		for _, k := range []string{install.OptKcpFront, install.OptTLSFront, install.OptDoor} {
+		for _, k := range install.Passed {
 			if s := vals.Source(k); s == clicfg.SourceFlag || s == clicfg.SourceEnv {
 				listen[k] = vals.String(k)
 			}
@@ -82,7 +82,7 @@ func runInstall(role hostcontract.Role) verbFunc {
 			Role: role, Handles: splitHandles(vals.String("handle")), Account: installAccount(vals, staged),
 			StateDir: vals.String("state-dir"), Binary: exe, VMSlots: vals.Int("vm-slots"), DryRun: dry,
 			AdoptAccount: vals.Bool("adopt-account"), HostBackend: vals.String(backendOpt), Out: a.stdout,
-			Root: root, Staged: staged, UnitPrefix: vals.String("unit-prefix"), Listen: listen,
+			Root: root, Staged: staged, UnitPrefix: vals.String("unit-prefix"), Settings: listen,
 		}, sys)
 		return installExit(a, verb, rep, err, vals.Bool("json"))
 	}

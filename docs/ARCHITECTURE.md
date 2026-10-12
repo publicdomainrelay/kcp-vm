@@ -712,8 +712,9 @@ lists.
 `socialweb-computer-gateway.service` (`ExecStart=<state>/bin/current/socialweb-computer serve gateway kcp`,
 `Restart=always`, default `KillMode=control-group`, optional `EnvironmentFile=-<state>/gateway.env`) and a
 `config.json` that `serve gateway kcp` reads with nothing added by hand: the state dir, `host-backend:
-systemd-user`, the asset cache, and the three addresses caddy proxies to (kcp front 127.0.0.1:6443, TLS
-front 127.0.0.1:8443, door 127.0.0.1:8788). A release gateway takes the clusterprovider's external-secrets
+systemd-user`, the asset cache, and the two front addresses caddy proxies to (kcp front 127.0.0.1:6443,
+TLS front 127.0.0.1:8443; the web app front's 127.0.0.1:8788 is the prod Gateway spec's default), plus
+`unit-prefix` and `gateway-spec-file` when install is given them. A release gateway takes the clusterprovider's external-secrets
 binary, its bundle (the embedded asset `external-secrets-bundle`, the release's `external-secrets.yaml`) and
 dumbpipe from its own assets. `upgrade --binary --sha256` checks the digest, copies the
 binary to `bin/<sha>/`, runs its self-check, retargets `bin/current` (the old target becomes
