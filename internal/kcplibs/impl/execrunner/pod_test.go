@@ -364,6 +364,53 @@ func TestARecoveredRunThatLeftItsMarkerHasFinished(t *testing.T) {
 	}
 }
 
+func TestARecoveredRunWhosePIDNowNamesAnotherProcessHasFinished(t *testing.T) {
+	dir := t.TempDir()
+	runsDir := filepath.Join(dir, "runs")
+	id := "pod-reused-pid"
+	runDir := filepath.Join(runsDir, id)
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	state := fmt.Sprintf(`{"pid":%d,"started":%q,"ticks":1}`, os.Getpid(), time.Now().UTC().Format(time.RFC3339Nano))
+	if err := os.WriteFile(filepath.Join(runDir, "state.json"), []byte(state), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pod, err := NewPod(PodOptions{DenoBin: "true", RunsDir: runsDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := pod.Observe(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.State == runner.StateRunning {
+		t.Fatalf("a recorded run whose pid now names a process started at other ticks died with the old core: %+v", status)
+	}
+}
+
+func TestANegativeTimeoutNeverReapsAPod(t *testing.T) {
+	dir := t.TempDir()
+	stub := writeStub(t, dir, `sleep 30`)
+	pod, err := NewPod(PodOptions{DenoBin: stub, RunsDir: filepath.Join(dir, "runs"), Timeout: -1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := pod.Start(context.Background(), runner.PodRequest{Name: "svc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pod.Stop(context.Background(), id) })
+	time.Sleep(50 * time.Millisecond)
+	status, err := pod.Observe(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.State != runner.StateRunning {
+		t.Fatalf("a long-running service under a disabled runner timeout = %+v", status)
+	}
+}
+
 func TestPodRecoversARunFromItsDirectory(t *testing.T) {
 	dir := t.TempDir()
 	runsDir := filepath.Join(dir, "runs")

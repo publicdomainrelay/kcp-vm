@@ -300,7 +300,14 @@ func (s *supervisor) finished(run *process) bool {
 			return true
 		}
 	}
-	return !processAlive(run.pid)
+	if !processAlive(run.pid) {
+		return true
+	}
+	if run.ticks == 0 {
+		return false
+	}
+	now := startTicks(run.pid)
+	return now != 0 && now != run.ticks
 }
 
 const stopGrace = 2 * time.Second
