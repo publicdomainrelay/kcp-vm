@@ -8,7 +8,10 @@ import type { MarketBidderProviderRef } from "@publicdomainrelay/market-bidder-a
 import { createComputeProviderHooks } from "@publicdomainrelay/market-bidder-compute";
 import { createFsContractStore } from "@publicdomainrelay/market-bidder-contract-store-fs";
 import { createComputeProviderDenoWorker, createWorkerProviderHooks } from "@publicdomainrelay/market-bidder-worker";
-import { createATProto, createLocalPDSAgent, createDelegatingAgent, registerKeypairPlcDid, createOAuthAgent, createOAuthAgentFromSession, pollForOAuthSession, tryRestoreOAuthQRSession, saveOAuthQRSession, OAuthSessionExpiredError, isPrivatePlc } from "@publicdomainrelay/atproto-helpers";
+import { createATProto, createLocalPDSAgent, createDelegatingAgent, registerKeypairPlcDid, createOAuthAgent, createOAuthAgentFromSession, pollForOAuthSession, tryRestoreOAuthQRSession, saveOAuthQRSession, OAuthSessionExpiredError } from "@publicdomainrelay/atproto-helpers";
+import { isLocalMarketNetwork, marketNetwork, splitHostPort } from "@publicdomainrelay/market-network-common";
+import type { MarketNetwork } from "@publicdomainrelay/market-network-common";
+import { installMarketNetworkFetch } from "@publicdomainrelay/market-network-fetch";
 import type { LocalPDSAgent } from "@publicdomainrelay/atproto-helpers";
 import { cliIdentityMode, cliMarketIdentity, vaultRefs } from "@publicdomainrelay/market-identity-abc";
 import type { IdentityVault, MarketIdentityMode, MarketIdentityObjects } from "@publicdomainrelay/market-identity-abc";
@@ -69,37 +72,21 @@ const privateKeyHex = resolvedPrivateKeyHex ??
 // Must be available before createGenesisOp (OAuth QR path) to publish in PLC DID.
 const attestationKp = await loadOrGenerateKeypair(privateKeyHex);
 
-const ingressProxyHost = (options.ingressProxyHost as string) || "xrpc.fedproxy.com";
+const networkFromOptions = marketNetwork({
+  plcDirectoryUrl: options.plcDirectoryUrl as string | undefined,
+  ingressProxyHost: options.ingressProxyHost as string | undefined,
+  relayUrls: options.relayUrl as string | undefined,
+  firehoseUrls: options.firehoseUrl as string | undefined,
+});
+const guestTlsPort = options.guestTlsPort as number | undefined;
+const network: MarketNetwork = guestTlsPort
+  ? { ...networkFromOptions, guestTlsUrl: `https://${splitHostPort(networkFromOptions.ingressProxyHost).hostname}:${guestTlsPort}` }
+  : networkFromOptions;
+const ingressProxyHost = network.ingressProxyHost;
+const plcDirectoryUrl = network.plcDirectoryUrl;
 let ownPlcDid: string | undefined;
 
-const plcDirectoryUrl = (options.plcDirectoryUrl as string) || "https://plc.directory";
-
-// Auto-detect local dev: *.localhost isn't in DNS.  If the dispatcher is
-// reachable at a local host, patch fetch so the bidder can resolve the
-// requester's PDS endpoints (also on *.localhost) through the relay.
-// Also patches plc.directory -> the PLC directory given, whenever that is not
-// plc.directory itself (a local one, or a test bed's by its cluster name).
-const isLocalDev = ingressProxyHost.includes("localhost") || ingressProxyHost.startsWith("127.");
-const patchPort = ingressProxyHost.includes(":") ? ingressProxyHost.split(":").pop()! : "80";
-const isLocalPlc = isPrivatePlc(plcDirectoryUrl);
-if (isLocalDev || isLocalPlc) {
-  const realFetch = globalThis.fetch;
-  globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
-    let url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-    const m = url.match(/^https:\/\/([^/]+)(\/.*)?$/);
-    if (m && m[1].endsWith(".localhost")) {
-      let host = m[1];
-      if (!host.includes(":")) host = `${host}:${patchPort}`;
-      url = `http://${host}${m[2] ?? ""}`;
-      return realFetch(url, init);
-    }
-    if (isLocalPlc && url.startsWith("https://plc.directory/")) {
-      url = plcDirectoryUrl + url.slice("https://plc.directory".length);
-      return realFetch(url, init);
-    }
-    return realFetch(input as string | URL | Request, init);
-  }) as typeof fetch;
-}
+installMarketNetworkFetch({ network });
 
 // --ca-cert-pem / --guest-tls-port are threaded to the compute provider so
 // guests trust and reach the TLS dispatcher listener for OIDC (HTTPS-only).
@@ -231,7 +218,7 @@ async function signInThroughIdentity(): Promise<void> {
     vault,
     logger,
     plcDirectoryUrl,
-    qrOrigin: "https://qr.fedfork.com",
+    qrOrigin: network.qrOrigin,
     vaultMount: identityVaultMount,
     autoRefreshThresholdMs: AUTO_REFRESH_THRESHOLD_MS,
     oauthClientId: options.oauthClientId as string | undefined,
@@ -350,7 +337,7 @@ if (kcpIdentityObjects || identityMode === "pdsAccount" || identityMode === "oau
       (b) => b.toString(16).padStart(2, "0")).join("");
 
     // Show QR
-    const qrUrl = `https://qr.fedfork.com/#oauth=${encodeURIComponent(plcDid)}&n=${oauthNonce}`;
+    const qrUrl = `${network.qrOrigin}/#oauth=${encodeURIComponent(plcDid)}&n=${oauthNonce}`;
     process.stdout.write("\n" + "=".repeat(60) + "\n");
     process.stdout.write("  Scan this QR code with your phone to authenticate:\n\n");
     qrcode(qrUrl, { output: "console", ecl: "HIGH" });
@@ -363,7 +350,7 @@ if (kcpIdentityObjects || identityMode === "pdsAccount" || identityMode === "oau
     const session = await pollForOAuthSession({
       cliDid: plcDid,
       signer: qrSigner,
-      qrFedforkOrigin: "https://qr.fedfork.com",
+      qrFedforkOrigin: network.qrOrigin,
       logger,
     });
 
@@ -413,7 +400,7 @@ if (kcpIdentityObjects || identityMode === "pdsAccount" || identityMode === "oau
     if (hasAssociation) {
       logger.info("existing_association_found", { did: atprotoAgent.did, hint: "skipping QR -- prior association exists" });
     } else {
-      const qrUrl = `https://qr.fedfork.com/#bdr=${atprotoAgent.did}`;
+      const qrUrl = `${network.qrOrigin}/#bdr=${atprotoAgent.did}`;
       logger.info("qr_url", { url: qrUrl });
       process.stdout.write("\n" + "=".repeat(60) + "\n");
       process.stdout.write("  Scan this QR code with your phone to authenticate:\n\n");
@@ -506,21 +493,15 @@ if (associateWith) {
   }
 }
 
-const cliRelayUrl = (options.relayUrl as string) || "";
-
 const firehoseMode = (options.firehoseMode as string) || "off";
-const firehoseUrl = (options.firehoseUrl as string) || "";
-const additionalRelays: string[] = [];
-if (cliRelayUrl) additionalRelays.push(cliRelayUrl);
-if (firehoseMode === "subscriberepos" && firehoseUrl) {
-  for (const u of firehoseUrl.split(",").map((s: string) => s.trim()).filter(Boolean)) {
-    additionalRelays.push(u);
-  }
-}
+const additionalRelays: string[] = [
+  ...network.relayUrls,
+  ...(firehoseMode === "subscriberepos" ? network.firehoseUrls : []),
+];
 
 const eventStreams = createDefaultATProtoEventStreamsClient({
   additionalRelays,
-  removeRelays: firehoseUrl ? DEFAULT_RELAY_URLS : undefined,
+  removeRelays: network.firehoseUrls.length > 0 ? DEFAULT_RELAY_URLS : undefined,
   log: logger,
 });
 
@@ -621,7 +602,7 @@ if (options.computeProviderLocal) {
     ingressProxyHost: options.ingressProxyHost as string,
     caCertPem: options.caCertPem as string | undefined,
     guestTlsPort: options.guestTlsPort as number | undefined,
-    debugLogContainerOutput: isLocalDev,
+    debugLogContainerOutput: isLocalMarketNetwork(network),
     createSignedRepoRecord: atproto.createSignedRepoRecord.bind(atproto),
     callService: atproto.callService.bind(atproto),
     acceptToContract,
@@ -818,7 +799,7 @@ if (!options.skipQr && !hasAssociation) {
       hint: "QR association only works with a local PDS (no --atproto-handle). Use --skip-qr to skip.",
     });
   } else {
-    const qrUrl = `https://qr.fedfork.com/#bdr=${atproto.did}`;
+    const qrUrl = `${network.qrOrigin}/#bdr=${atproto.did}`;
     logger.info("qr_url", { url: qrUrl });
     process.stdout.write("\n" + "=".repeat(60) + "\n");
     process.stdout.write("  Scan this QR code with your phone to authenticate:\n\n");
