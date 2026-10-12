@@ -224,6 +224,9 @@ func (i Install) Dump(ctx context.Context, socketDir, user, db, dir string, at t
 		os.Remove(out)
 		return "", fmt.Errorf("pgunit: pg_dump of %s: %w\n%s", db, err, msg)
 	}
+	if err := os.Chmod(out, 0o600); err != nil {
+		return "", err
+	}
 	st, err := os.Stat(out)
 	if err != nil {
 		return "", err
