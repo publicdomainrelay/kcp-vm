@@ -22,13 +22,15 @@ fields:
   behaviour: what the TypeScript does and why, including the live reading that taught it
   go_side: "meets: yes | partial | no | not-applicable (the behaviour stays TypeScript by design), and where"
   parity_test: the test ids that will prove the Go side (or prove the removal)
-  status: "port | removed-legacy (non-iroh guest transport or the guest JSR registry: removed, not ported) | superseded-by-<plan item>"
+  status: "port | removed-legacy (non-iroh guest transport or the guest JSR registry: not ported, still in the TypeScript) | removed (removed from the TypeScript by 0008 M1-STRIP-LEGACY-TRANSPORTS; a source written path@<commit>:lines cites the code as it was at that commit, the last one before the removal) | superseded-by-<plan item>"
   covers: exported functions, constants and logger events of compute-provider-firecracker/mod.ts and microvm-firecracker/mod.ts this entry accounts for (checked by hono-compute-provider test/requirements_inventory_test.ts)
 legacy_decision: >-
   docs/research/2026-10-11-vm-lifecycle/user-decisions.md (2026-10-12, multi-server-to-kcp section 7 cont.):
   STRIP ALL NON-IROH GUEST TRANSPORTS as legacy (cloud-init-common tunnel / fedproxy-ssh / fedproxy-web /
   wootty modules, websocat ProxyCommand paths, relay-fqdn guest addresses); this removes the guest JSR
-  registry. Entries with status removed-legacy are removed, not ported.
+  registry. Entries with status removed-legacy are not ported; entries with status removed are also gone from
+  the TypeScript (0008 M1-STRIP-LEGACY-TRANSPORTS; atproto-market b78adc1 and hono-compute-provider 54d1b8f
+  carry them).
 requirements:
   - id: FC-USERDATA-REQUIRED
     source:
@@ -248,7 +250,7 @@ requirements:
   - id: FC-OIDC-REPORTER-NO-HOSTNAME
     source:
       - hono-compute-provider/lib/oidc-issuer-hono/mod.ts:484-541
-      - atproto-market/lib/abc/compute-request/mod.ts:264-270
+      - atproto-market/lib/abc/compute-request/mod.ts:269-275
     behaviour: >-
       Live hat-8 2026-10-11T23:53Z (hono-compute-provider 033a8c0, atproto-market 6099aac): the reporter
       waited 60 s and then posted $(hostname), and the requester polled wss://fc-1379be663dd9-762b64d5/ until
@@ -270,7 +272,7 @@ requirements:
 
   - id: FC-IROH-LISTENER-ORDERING
     source:
-      - atproto-market/lib/common/cloud-init-common/mod.ts:1061-1225
+      - atproto-market/lib/common/cloud-init-common/mod.ts:562-726
     behaviour: >-
       Live hat-8 2026-10-11T23:53Z (atproto-market ad659c1): `systemctl enable --now ssh` in runcmd never
       returned and iroh.service was ordered After=ssh.service, so no ticket reached /run/guest-fqdn in time.
@@ -292,11 +294,11 @@ requirements:
 
   - id: FC-BID-CONFIG-TOKEN-PATH
     source:
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:30
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:38
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:617-632
-      - hono-compute-provider/lib/oidc-issuer-hono/mod.ts:460-466
-      - atproto-market/lib/common/cloud-init-common/mod.ts:861-989
+      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:27
+      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:35
+      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:659-675
+      - hono-compute-provider/lib/oidc-issuer-hono/mod.ts:460-465
+      - atproto-market/lib/common/cloud-init-common/mod.ts:362-490
     behaviour: >-
       The bid config record (com.publicdomainrelay.temp.compute.config.wif.simple) carries accept_path,
       issuer_uri, to_issue exchange-firecracker-oidc, actx (last segment of the bidder DID), and under
@@ -934,10 +936,12 @@ requirements:
 
   - id: FC-JSR-REGISTRY
     source:
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:574-589
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:659
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:668
-      - atproto-market/lib/common/cloud-init-common/mod.ts:1257-1263
+      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts@54d1b8f:614-629
+      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts@54d1b8f:710
+      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts@54d1b8f:719
+      - hono-compute-provider/lib/compute-provider-local/mod.ts@54d1b8f:614-632
+      - hono-compute-provider/lib/compute-provider-digitalocean/mod.ts@54d1b8f:151-162
+      - atproto-market/lib/common/cloud-init-common/mod.ts@b78adc1:1257-1263
     behaviour: >-
       The provider serves the workspace's unpublished packages from a host JSR registry on TCP port 0
       (0.0.0.0) and points the tunnel subscriber at it with JSR_URL, because jsr.io answers 404 for them.
@@ -947,14 +951,15 @@ requirements:
       detail: Removed, not ported (non-iroh guest transports stripped; the guest JSR registry goes with them).
     parity_test:
       - TestParityTheSeedNamesNoJsrUrlAndNoTunnelSubscriber
-    status: removed-legacy
+      - hono-compute-provider/test/no_guest_jsr_registry_test.ts::"no guest JSR registry is served and no user_data names JSR_URL"
+    status: removed
     covers: ["jsr registry mounted on TCP"]
 
   - id: FC-LEGACY-TUNNEL-MODULE
     source:
-      - atproto-market/lib/common/cloud-init-common/mod.ts:370-433
-      - atproto-market/lib/common/cloud-init-common/mod.ts:1249-1255
-      - atproto-market/lib/market-bidder-compute/mod.ts:85-121
+      - atproto-market/lib/common/cloud-init-common/mod.ts@b78adc1:370-433
+      - atproto-market/lib/common/cloud-init-common/mod.ts@b78adc1:1249-1255
+      - atproto-market/lib/market-bidder-compute/mod.ts@b78adc1:85-117
     behaviour: >-
       The tunnel module runs the deno tunnel subscriber that dials the relay dispatcher
       (--ingress-proxy-host) and writes the dispatcher FQDN to /run/guest-fqdn; guestOnNetworkUrl derives the
@@ -964,46 +969,49 @@ requirements:
       detail: Removed, not ported.
     parity_test:
       - TestParityTheSeedNamesNoJsrUrlAndNoTunnelSubscriber
-    status: removed-legacy
+      - atproto-market/test/no_legacy_guest_transport_test.ts::"the user_data registry holds no tunnel, fedproxy-ssh, fedproxy-web or wootty module"
+      - atproto-market/test/market_bidder_guest_onnetwork_url_test.ts::"a guest reports to the relay's own /v1/on-network"
+    status: removed
 
   - id: FC-LEGACY-FEDPROXY-SSH
     source:
-      - atproto-market/lib/common/cloud-init-common/mod.ts:441-590
-      - atproto-market/lib/common/cloud-init-common/mod.ts:1238-1247
+      - atproto-market/lib/common/cloud-init-common/mod.ts@b78adc1:441-590
+      - atproto-market/lib/common/cloud-init-common/mod.ts@b78adc1:1238-1247
     behaviour: The fedproxy-ssh module (fedproxy client SSH transport through the relay).
     go_side:
       meets: not-applicable
       detail: Removed, not ported.
     parity_test:
       - atproto-market/test/cloud_init_snapshot_test.ts::"the registry holds only iroh, secrets and k3s"
-    status: removed-legacy
+    status: removed
 
   - id: FC-LEGACY-FEDPROXY-WEB
     source:
-      - atproto-market/lib/common/cloud-init-common/mod.ts:593-647
+      - atproto-market/lib/common/cloud-init-common/mod.ts@b78adc1:593-647
     behaviour: The fedproxy-web module (fedproxy client web ingress for a guest port).
     go_side:
       meets: not-applicable
       detail: Removed, not ported.
     parity_test:
       - atproto-market/test/cloud_init_snapshot_test.ts::"the registry holds only iroh, secrets and k3s"
-    status: removed-legacy
+    status: removed
 
   - id: FC-LEGACY-WOOTTY
     source:
-      - atproto-market/lib/common/cloud-init-common/mod.ts:649-844
+      - atproto-market/lib/common/cloud-init-common/mod.ts@b78adc1:649-844
     behaviour: The wootty terminal module (web terminal reached through fedproxy).
     go_side:
       meets: not-applicable
       detail: Removed, not ported.
     parity_test:
       - atproto-market/test/cloud_init_snapshot_test.ts::"the registry holds only iroh, secrets and k3s"
-    status: removed-legacy
+    status: removed
 
   - id: FC-LEGACY-WEBSOCAT
     source:
-      - atproto-market/lib/requester-xrpc/mod.ts:602-627
-      - hono-compute-provider/lib/oidc-issuer-hono/mod.ts:327
+      - atproto-market/lib/requester-xrpc/mod.ts@b78adc1:602-631
+      - atproto-market/lib/requester-xrpc/mod.ts@b78adc1:868-912
+      - hono-compute-provider/lib/oidc-issuer-hono/mod.ts@54d1b8f:327
     behaviour: >-
       The requester reaches a relay-FQDN guest with ssh ProxyCommand `websocat --binary wss://<fqdn>/`, and
       the provisioning script kicks setup-websocat.service after its token exchange.
@@ -1013,26 +1021,29 @@ requirements:
     parity_test:
       - atproto-market/test/vm_hostkeys_requester_test.ts
       - TestParityTheSeedNamesNoJsrUrlAndNoTunnelSubscriber
-    status: removed-legacy
+      - atproto-market/test/no_legacy_guest_transport_test.ts::"the ssh ProxyCommand for a non-iroh address is refused instead of a websocket bridge"
+    status: removed
 
   - id: FC-LEGACY-RELAY-FQDN-ADDRESS
     source:
-      - atproto-market/lib/abc/compute-request/mod.ts:264-270
+      - atproto-market/lib/abc/compute-request/mod.ts@b78adc1:264-270
+      - atproto-market/lib/abc/compute-request/mod.ts:269-275
+      - atproto-market/lib/compute-request-xrpc/mod.ts:410-413
     behaviour: >-
       A guest address that is not an iroh ticket or an IP is taken as a relay FQDN the requester polls over
       wss; a single-label name is a hostname and skipped.
     go_side:
       meets: not-applicable
-      detail: Removed, not ported; the only reportable guest address is iroh://<ticket>.
+      detail: Removed, not ported; the only reportable guest address is iroh://<ticket>, and a dotted name is refused (guestAddressKind "refused").
     parity_test:
-      - atproto-market/test/compute_request_test.ts::"only an iroh ticket is a guest address"
-    status: removed-legacy
+      - atproto-market/test/no_legacy_guest_transport_test.ts::"a guest address that is a relay name is refused, only an iroh ticket is a guest address"
+    status: removed
 
   - id: FC-LEGACY-REPORTER-TUNNEL-ORDERING
     source:
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:255-259
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:275-279
-      - hono-compute-provider/lib/oidc-issuer-hono/mod.ts:389-390
+      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts@54d1b8f:296-297
+      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts@54d1b8f:316-318
+      - hono-compute-provider/lib/oidc-issuer-hono/mod.ts@54d1b8f:389-390
     behaviour: >-
       The reporters are ordered After= and Wants= tunnel-subscriber.service and dump its journal on giving
       up.
@@ -1041,12 +1052,13 @@ requirements:
       detail: Removed, not ported; the reporter orders on iroh.service only (FC-IROH-LISTENER-ORDERING).
     parity_test:
       - TestParityTheSeedNamesNoJsrUrlAndNoTunnelSubscriber
-    status: removed-legacy
+      - hono-compute-provider/test/no_guest_jsr_registry_test.ts::"the guest's on-network reporter waits on the iroh listener, never a tunnel subscriber"
+    status: removed
 
   - id: FC-LEGACY-PASTA-SSH-FORWARD
     source:
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:112-114
-      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:686
+      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:111-113
+      - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:737
     behaviour: >-
       pasta is told to forward 0.0.0.0/22 in the runner's namespace to the guest's sshd, for the host-side
       keyscan and direct TCP probes.
@@ -1054,7 +1066,10 @@ requirements:
       meets: not-applicable
       detail: >-
         Removed, not ported: a guest is reached only over its own iroh endpoint (outbound dials, no inbound
-        port) and host keys are guest-reported; pasta gets no -t forward.
+        port) and host keys are guest-reported; pasta gets no -t forward. Still in the TypeScript after
+        0008 M1-STRIP-LEGACY-TRANSPORTS: oidc-issuer-hono getPublicKeyFromSshd scans the guest's host key at
+        127.0.0.1:22 inside the runner container, which reaches the guest only through this forward, so the
+        TypeScript drops it with that scan (0007 M4-HOST-KEYS).
     parity_test:
       - internal/vmruntime TestTheVMUnitSpecPastaHasNoInboundForward
     status: removed-legacy

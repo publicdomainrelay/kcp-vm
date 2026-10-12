@@ -1,6 +1,12 @@
 import { createOAuthAgentFromSession } from "@publicdomainrelay/atproto-helpers";
 import { createDefaultATProtoEventStreamsClient } from "@publicdomainrelay/atproto-event-streams-client";
-import { applyOAuthAgentToRequesterPDS, createRequesterPDS, createSshSessionProvider, runComputeContract } from "@publicdomainrelay/requester-xrpc";
+import {
+  applyOAuthAgentToRequesterPDS,
+  createRequesterPDS,
+  createSshSessionProvider,
+  ensureDumbpipe,
+  runComputeContract,
+} from "@publicdomainrelay/requester-xrpc";
 import type { RequesterPDS, SshSessionProvider } from "@publicdomainrelay/requester-abc";
 import type { SessionStore } from "@publicdomainrelay/socialweb-computer-oauth-session-fs";
 import type { CommandIo, ComputeCommandRunner } from "@publicdomainrelay/socialweb-computer-abc";
@@ -9,7 +15,9 @@ import type { GuestCapability } from "@publicdomainrelay/guest-capability-abc";
 import { loadOrCreateKeyHex } from "@publicdomainrelay/key-file-fs";
 import type { AuthorizedAccount } from "@publicdomainrelay/socialweb-computer-common";
 import { policyFromEnv, renderExecCommand, vmNameFromEnv } from "@publicdomainrelay/socialweb-computer-common";
-import { pollGuestReady, runSessionOverTunnel } from "./bridge.ts";
+import { createIrohSessionProvider } from "./bridge.ts";
+
+export { createIrohSessionProvider, NonIrohGuestAddressError } from "./bridge.ts";
 
 export interface InProcessRequesterOptions {
   sessionStore: SessionStore;
@@ -272,15 +280,23 @@ export function createInProcessRequester(opts: InProcessRequesterOptions): InPro
   const accounts = createAccountRequesters(opts);
   const requesterFor = accounts.requesterFor;
 
-  function providerFor(io: CommandIo): SshSessionProvider {
-    // Only the keypair still comes from the shipped provider; the session and
-    // the readiness poll are in-process over the guest's tunnel.
-    const inner = createSshSessionProvider(undefined);
-    return {
-      generateKeypair: (vmName) => inner.generateKeypair(vmName),
-      pollReady: (privateKeyPath, fqdn, timeoutMs) => pollGuestReady(privateKeyPath, fqdn, timeoutMs, log),
-      runSession: (privateKeyPath, fqdn, program) => runSessionOverTunnel(privateKeyPath, fqdn, program, io, log),
-    };
+  let dumbpipe: Promise<string> | null = null;
+  function dumbpipePath(): Promise<string> {
+    if (!dumbpipe) {
+      dumbpipe = ensureDumbpipe(logger);
+      dumbpipe.catch(() => (dumbpipe = null));
+    }
+    return dumbpipe;
+  }
+
+  async function providerFor(io: CommandIo): Promise<SshSessionProvider> {
+    const keys = createSshSessionProvider(undefined);
+    return createIrohSessionProvider({
+      io,
+      log,
+      dumbpipePath: await dumbpipePath(),
+      generateKeypair: (vmName) => keys.generateKeypair(vmName),
+    });
   }
 
   return {
@@ -317,7 +333,7 @@ export function createInProcessRequester(opts: InProcessRequesterOptions): InPro
           execProgram: execCommand,
           vmName,
           vmReadyTimeoutSec: opts.vmReadyTimeoutSec,
-          sshProvider: providerFor(io),
+          sshProvider: await providerFor(io),
           policy: { name: policy, args: policyArgs },
           guestHostAliases: opts.guestHostAliases,
           rbac: opts.rbac ?? false,

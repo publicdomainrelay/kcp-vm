@@ -12,7 +12,7 @@
 // No policy is attached: the local gha-lite policy engine runs inside a Worker
 // and so needs --unstable-worker-options, which is not part of this file's
 // invocation. The contract's policy is optional and nothing this instrument
-// measures -- the guest, its tunnel, the reverse forward, the join -- is behind
+// measures -- the guest, its iroh endpoint, the reverse forward, the join -- is behind
 // it. The bid window it leaves is the contract's default, 30s.
 //
 //   SOCIALWEB_FIRECRACKER_NODEIMAGE=/path/to/socialweb-nodeimage \
@@ -203,11 +203,11 @@ class FailNow extends Error {}
 // and its fatal is EXPECTED here: a cloud-init guest carries on without it, and
 // the join module gives the guest the resolver the agent would otherwise have
 // written. So the agent's words are a verdict only when the guest in fact never
-// got going - no tunnel subscriber started and no tunnel address reported.
-const PROGRESS = /Started tunnel-subscriber\.service|guest-onnetwork\.service|Deno was installed successfully/;
+// got going - no iroh listener started and no iroh ticket reported.
+const PROGRESS = /Started iroh\.service|guest-onnetwork\.service|Deno was installed successfully/;
 
-// A guest needs minutes, not seconds: cloud-init installs deno, starts the tunnel
-// subscriber and reports its address before anything about the join can be said.
+// A guest needs minutes, not seconds: cloud-init installs dumbpipe, starts the iroh
+// listener and reports its ticket before anything about the join can be said.
 const GUEST_GRACE_MS = 150_000;
 
 async function guestVerdict(consolePath: string): Promise<string | null> {
@@ -785,7 +785,7 @@ Deno.test({
       requesterFor: () => Promise.resolve(requester),
       ingressProxyHost,
       relayUrls: [],
-      // The wait for the guest to register its tunnel. It also bounds teardown:
+      // The wait for the guest to report its iroh ticket. It also bounds teardown:
       // requestCompute's network wait is not abort-aware, so an abort during it
       // only lands when this elapses.
       vmReadyTimeoutSec: 300,

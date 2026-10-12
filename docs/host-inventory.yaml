@@ -248,10 +248,10 @@ entries:
     kind: executable
     fate: replaced-by-go
     owner: 0006 M1-ASSETS
-    why: assets are resolved by their extracted path, never searched on PATH; the requester's which dumbpipe/websocat goes
+    why: assets are resolved by their extracted path, never searched on PATH; the requester's which dumbpipe goes
     from:
       - "image k8s dnf which"
-      - "atproto-market requester-xrpc ensureDumbpipe and ensureWebsocat"
+      - "atproto-market requester-xrpc ensureDumbpipe"
   - name: unzip
     kind: executable
     fate: replaced-by-go
@@ -586,10 +586,10 @@ entries:
   - name: websocat
     kind: executable
     fate: removed-legacy
-    owner: user decision 2026-10-12 (multi-server-to-kcp.md section 7), no plan item yet
-    why: every non-iroh guest transport is stripped as legacy, websocat ProxyCommand paths included
+    owner: 0008 M1-STRIP-LEGACY-TRANSPORTS
+    why: every non-iroh guest transport is stripped as legacy, websocat ProxyCommand paths included; removed from the TypeScript (atproto-market b78adc1 is the last commit with ensureWebsocat)
     from:
-      - "atproto-market requester-xrpc ensureWebsocat"
+      - "atproto-market requester-xrpc ensureWebsocat (removed)"
   - name: xdg-open
     kind: executable
     fate: removed-legacy

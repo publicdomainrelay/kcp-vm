@@ -13,8 +13,6 @@ interface MarketPreinstall {
 const CTX = {
   vmName: "market-node-1",
   sshAuthorizedKey: "ssh-ed25519 AAAA the door",
-  ingressProxyHost: "door.localhost:2583",
-  audHost: "door.localhost",
   secretsUrl: "https://secrets.localhost",
   secretsRoute: "/xrpc/secrets",
   secretsAud: "api://ATProto?actx=did:plc:door",
