@@ -481,8 +481,8 @@ items:
       door DenoPod, unchanged); red while the door is a child process.
     done_when: "on hat-8 the door DenoPod serves /api/config on a fresh state dir and lists, after a core restart, the claims it wrote before it."
     risks: ["The door's per-process secrets server for guests in flight (plan 0005 M3-NODE-LOSS) is made durable by plan 0007 M6-CLAIM-RESUME (split from M6-GATEWAY-REPOPULATE 2026-10-12); until then a door restart still fails Bidding/Provisioning claims."]
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M3-DOOR-STATE-VAULT
     milestone: M3
     title: The door's OAuth sessions and requester key live in the gateway's root vault; each door account is a MarketIdentity
