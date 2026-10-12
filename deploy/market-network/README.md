@@ -27,7 +27,7 @@ copied onto it, and reads back only the child's root status (did, listeners,
 phase). That copy is the only way a child learns the network: no child reads the
 network's kcp, and the child's DNS shim resolves only its own application's
 names. The child's core renders its root object into components
-(`deploy/apps/market-bidder/<profile>.values.yaml` through the service template:
+(`deploy/apps/market-bidder/bidder.values.yaml` through the service template:
 the bidder DenoPod in the child's `root:app`).
 
 The network value names loopback addresses (`https://127.0.0.1:<port>`,
@@ -127,7 +127,7 @@ reissued: take the network down and up again.
 
 The bidder is the exception: it declares no `--tls-cert-file` / `--tls-key-file`
 option and its parser rejects unknown flags, so
-`deploy/apps/market-bidder/market-network.values.yaml` names `tls: trust` and
+`deploy/apps/market-bidder/bidder.values.yaml` names `tls: trust` and
 `trust: [<caBundleRef>]`: the template writes only `ca.pem` (its own kcp's CA
 plus the network's CA bundle) and never a leaf. The dispatcher is `tls: trust`
 too.
@@ -142,7 +142,7 @@ insecure-HTTP escape hatch, and now it has nothing to escape from.
 
 Every service DenoPod (plc, relay, dispatcher, both PDSes, every bidder) is
 rendered from `deploy/denopods/service.yaml`. The files 20, 30, 35, 40 and 60
-here and `deploy/apps/market-bidder/market-network.values.yaml` are its values,
+here and `deploy/apps/market-bidder/bidder.values.yaml` are its values,
 not DenoPods:
 
 ```
@@ -164,8 +164,9 @@ the user (its `HOME` is its own state dir, `TMPDIR` is under it), `PORT_FILE`,
 
 Permissions are explicit. `-A` is refused; read and write are the source root,
 the run directory, the state dir and the paths the values name; `--allow-run`
-and `--allow-ffi` render only with a reason (the firecracker bidder names
-its VM runtime command, ssh-keygen, bash and deno); every service is denied read and
+and `--allow-ffi` render only with a reason, and the bidder names neither: it runs
+no subprocess (its provider is compute-provider-kcp, it verifies ssh signatures in
+TypeScript and runs policies only in the deny-all Worker); every service is denied read and
 write of `/dev/kvm` and `$XDG_RUNTIME_DIR`. `internal/manifests` (`service.go`)
 checks all of this when it renders.
 
@@ -179,9 +180,26 @@ By hand:
 
 ```bash
 socialweb-computer dev up --instance mn1 --profile market-network --bidders 2 \
-  --host-backend proc --app-values app-values.yaml   # bidder.firecracker: workRoot, vmruntimeCommand
+  --host-backend proc --guest-image-source file:///path/to/image --vm-host-backend systemd-user
 socialweb-computer dev down --instance mn1           # deletes the MarketNetwork first
 ```
+
+Every bidder's provider is compute-provider-kcp: the ComputeVM controller in the bidder's own
+core boots its guests from the guest image source. `--app-values` (keys bidder and gateway) still
+overrides the NetworkApp fields; `bidder.firecracker` is refused, because the bidder DenoPod grants
+no `--allow-run`.
+
+A bidder is a child application of the network too:
+
+```bash
+socialweb-computer run bidder --host-backend proc --profile market-network --network mn1 \
+  --handle mybidder-1.bob.test --guest-image-source file:///path/to/image --vm-host-backend systemd-user
+```
+
+`run bidder --network` adds a `MarketBidder` entry to `spec.apps[]` (its name from the handle's
+first label), waits until the network reports it Ready with its did and returns; `--fg` stays and
+removes it from the network on Ctrl-C. `--handle` names the owner of its ComputeVMs; its atproto
+handle in the network is `<name>.bob.test`.
 
 `dev up` prints the MarketNetwork object with its status (the network value,
 each child's kcp, phase and did). `dev down` deletes the MarketNetwork, whose

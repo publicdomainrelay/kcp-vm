@@ -70,6 +70,7 @@ type Config struct {
 	Listeners    func(owner string) []v1alpha1.ApplicationListener
 	WebApp       *WebApp
 	OnComponents func(owner string, listeners []v1alpha1.ApplicationListener)
+	SignInGuard  SignInGuard
 	Log          *slog.Logger
 }
 

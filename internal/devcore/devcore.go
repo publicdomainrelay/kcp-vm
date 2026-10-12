@@ -37,6 +37,7 @@ type Config struct {
 	Listeners    func(owner string) []v1alpha1.ApplicationListener
 	WebApp       *appctl.WebApp
 	OnComponents func(owner string, listeners []v1alpha1.ApplicationListener)
+	SignInGuard  appctl.SignInGuard
 }
 
 func tryLockRecord(path string) (*os.File, bool) {
@@ -122,6 +123,7 @@ func Run(ctx context.Context, cfg Config, m hostsvc.Manager) error {
 		go postgresctl.Run(ctx, PostgresConfig(bcfg, rec, log))
 		ac := AppConfig(bcfg, rec, m, log)
 		ac.Listeners, ac.WebApp, ac.OnComponents = cfg.Listeners, cfg.WebApp, cfg.OnComponents
+		ac.SignInGuard = cfg.SignInGuard
 		go appctl.Supervise(ctx, ac)
 	}
 	members := make(chan error, 1)

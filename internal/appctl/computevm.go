@@ -2,7 +2,6 @@ package appctl
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -82,55 +81,32 @@ func BidderKcpOf(rec devinstance.Record) BidderKcp {
 	return BidderKcp{Server: host, Workspace: ws}
 }
 
+var ErrFirecrackerInPod = errors.New("appctl: spec.firecracker: the bidder DenoPod grants no --allow-run, so the firecracker provider cannot run in it; " +
+	"use spec.kcp (the ComputeVM controller of the bidder's own core boots its guests)")
+
 func providerValues(v *manifests.MarketBidder, spec v1alpha1.MarketBidderSpec, kcp BidderKcp) error {
-	if k := spec.Kcp; k != nil {
-		if kcp.Server == "" {
-			return errors.New("appctl: spec.kcp: this instance records no kcp URL for the bidder's compute-provider-kcp")
-		}
-		handle := k.Handle
-		if handle == "" {
-			handle = spec.Identity.Handle
-		}
-		args, err := fragment([]string{"--compute-provider-kcp", "--compute-provider-kcp-server", kcp.Server,
-			"--compute-provider-kcp-workspace", kcp.Workspace, "--compute-provider-kcp-token-file", kcp.TokenFile,
-			"--compute-provider-kcp-ca-file", kcp.CAFile, "--compute-provider-kcp-handle", handle})
-		if err != nil {
-			return err
-		}
-		read, err := fragment([]string{kcp.TokenFile, kcp.CAFile})
-		if err != nil {
-			return err
-		}
-		v.ProviderArgs, v.ProviderRead = args, read
-		return nil
+	if spec.Firecracker != nil {
+		return ErrFirecrackerInPod
 	}
-	fc := spec.Firecracker
-	if len(fc.VmruntimeCommand) == 0 || fc.WorkRoot == "" {
-		return errors.New("appctl: spec.firecracker names no workRoot or no vmruntimeCommand")
+	k := spec.Kcp
+	if k == nil {
+		return errors.New("appctl: the MarketBidder names no provider; spec.kcp is the bidder's provider")
 	}
-	cmd, err := json.Marshal(fc.VmruntimeCommand)
+	if kcp.Server == "" {
+		return errors.New("appctl: spec.kcp: this instance records no kcp URL for the bidder's compute-provider-kcp")
+	}
+	handle := k.Handle
+	if handle == "" {
+		handle = spec.Identity.Handle
+	}
+	args, err := fragment([]string{"--compute-provider-kcp", "--compute-provider-kcp-server", kcp.Server,
+		"--compute-provider-kcp-workspace", kcp.Workspace, "--compute-provider-kcp-token-file", kcp.TokenFile,
+		"--compute-provider-kcp-ca-file", kcp.CAFile, "--compute-provider-kcp-handle", handle})
 	if err != nil {
 		return err
 	}
-	args, err := fragment([]string{"--compute-provider-firecracker", "--compute-provider-firecracker-work-root", fc.WorkRoot,
-		"--compute-provider-firecracker-vmruntime-command", string(cmd)})
-	if err != nil {
-		return err
-	}
-	read, err := fragment([]string{fc.WorkRoot})
-	if err != nil {
-		return err
-	}
-	run, err := fragment([]string{fc.VmruntimeCommand[0]})
-	if err != nil {
-		return err
-	}
-	write, err := json.Marshal(fc.WorkRoot)
-	if err != nil {
-		return err
-	}
-	v.ProviderArgs, v.ProviderRead, v.ProviderRun, v.ProviderWrite = args, read, run, string(write)
-	v.Firecracker = manifests.Firecracker{WorkRoot: fc.WorkRoot}
+	v.ProviderArgs = args
+	v.Kcp = manifests.KcpRef{Server: kcp.Server, Workspace: kcp.Workspace, TokenFile: kcp.TokenFile, CAFile: kcp.CAFile}
 	return nil
 }
 

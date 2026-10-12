@@ -43,12 +43,11 @@ type MarketBidder struct {
 	CABundle         string `json:",omitempty"`
 	Policy           string `json:",omitempty"`
 	Vault            BidderVault
-	Firecracker      Firecracker
+	Kcp              KcpRef
+	Trust            string
+	Read             string
 	ExtraArgs        string
 	ProviderArgs     string
-	ProviderRead     string
-	ProviderWrite    string
-	ProviderRun      string
 }
 
 type BidderVault struct {
@@ -70,15 +69,10 @@ type MarketRequester struct {
 }
 
 type KcpRef struct {
+	Server    string `json:",omitempty"`
 	Workspace string `json:",omitempty"`
 	TokenFile string `json:",omitempty"`
 	CAFile    string `json:",omitempty"`
-}
-
-type Firecracker struct {
-	WorkRoot         string `json:",omitempty"`
-	VMRuntimeCommand string `json:",omitempty"`
-	VMRuntimeExec    string `json:",omitempty"`
 }
 
 var valueTypes = map[string]func() reflect.Type{

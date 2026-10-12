@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"sort"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostcontract"
@@ -128,4 +129,8 @@ func (r *Record) bytes() []byte {
 func sameBytes(path string, b []byte) bool {
 	cur, err := os.ReadFile(path)
 	return err == nil && bytes.Equal(cur, b)
+}
+
+func ReadRecord(root, account string) (*Record, error) {
+	return loadRecord(filepath.Join(root, RecordPath(account)))
 }

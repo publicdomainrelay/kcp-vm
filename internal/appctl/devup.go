@@ -43,37 +43,85 @@ func merge(dst, src map[string]any) {
 	}
 }
 
-func NetworkSpec(label string, bidders int, withGateway bool, overlay []byte) (v1alpha1.MarketNetworkSpec, error) {
-	if bidders < 1 {
-		return v1alpha1.MarketNetworkSpec{}, fmt.Errorf("appctl: bidders %d: a market network composes at least one bidder", bidders)
-	}
+func loadNetworkProfile(overlay []byte) (networkProfile, error) {
 	base, err := fs.ReadFile(deploy.FS, NetworkProfilePath)
 	if err != nil {
-		return v1alpha1.MarketNetworkSpec{}, err
+		return networkProfile{}, err
 	}
 	var m map[string]any
 	if err := yaml.Unmarshal(base, &m); err != nil {
-		return v1alpha1.MarketNetworkSpec{}, fmt.Errorf("appctl: %s: %w", NetworkProfilePath, err)
+		return networkProfile{}, fmt.Errorf("appctl: %s: %w", NetworkProfilePath, err)
 	}
 	if len(overlay) > 0 {
 		var o map[string]any
 		if err := yaml.Unmarshal(overlay, &o); err != nil {
-			return v1alpha1.MarketNetworkSpec{}, fmt.Errorf("appctl: app-values: %w", err)
+			return networkProfile{}, fmt.Errorf("appctl: app-values: %w", err)
 		}
 		merge(m, o)
 	}
 	b, err := json.Marshal(m)
 	if err != nil {
-		return v1alpha1.MarketNetworkSpec{}, err
+		return networkProfile{}, err
 	}
 	var p networkProfile
 	if err := yaml.UnmarshalStrict(b, &p); err != nil {
-		return v1alpha1.MarketNetworkSpec{}, fmt.Errorf("appctl: the network profile values: %w", err)
+		return networkProfile{}, fmt.Errorf("appctl: the network profile values: %w", err)
+	}
+	return p, nil
+}
+
+type BidderVMDefaults struct {
+	GuestImageSource string
+	VmHostBackend    string
+	Handle           string
+}
+
+func (d BidderVMDefaults) fill(a *v1alpha1.NetworkApp) {
+	if a.Kind != v1alpha1.ApplicationKindMarketBidder {
+		return
+	}
+	if a.Kcp == nil {
+		a.Kcp = &v1alpha1.KcpProvider{}
+	}
+	if a.Kcp.GuestImageSource == "" {
+		a.Kcp.GuestImageSource = d.GuestImageSource
+	}
+	if d.VmHostBackend != "" {
+		a.Kcp.VmHostBackend = d.VmHostBackend
+	}
+	if d.Handle != "" {
+		a.Kcp.Handle = d.Handle
+	}
+}
+
+func NetworkBidderApp(name string, overlay []byte, vm BidderVMDefaults) (v1alpha1.NetworkApp, error) {
+	p, err := loadNetworkProfile(overlay)
+	if err != nil {
+		return v1alpha1.NetworkApp{}, err
+	}
+	a := p.Bidder
+	a.Name = name
+	vm.fill(&a)
+	return a, nil
+}
+
+func NetworkSpec(label string, bidders int, withGateway bool, overlay []byte, vm BidderVMDefaults) (v1alpha1.MarketNetworkSpec, error) {
+	if bidders < 0 {
+		return v1alpha1.MarketNetworkSpec{}, fmt.Errorf("appctl: bidders %d is negative", bidders)
+	}
+	p, err := loadNetworkProfile(overlay)
+	if err != nil {
+		return v1alpha1.MarketNetworkSpec{}, err
 	}
 	spec := v1alpha1.MarketNetworkSpec{Profile: NetworkProfile, GuestLabel: label}
 	for i := 1; i <= bidders; i++ {
 		a := p.Bidder
+		if p.Bidder.Kcp != nil {
+			k := *p.Bidder.Kcp
+			a.Kcp = &k
+		}
 		a.Name = fmt.Sprintf("%s%d", BidderPrefix, i)
+		vm.fill(&a)
 		spec.Apps = append(spec.Apps, a)
 	}
 	if withGateway {
