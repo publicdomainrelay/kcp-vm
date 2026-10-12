@@ -55,6 +55,9 @@ func (p *Provider) reconcilePod(ctx context.Context, ref Ref, pod *v1alpha1.Deno
 	if !p.opts.WriteStatus {
 		return res.RequeueAfter, terminal, nil
 	}
+	if err := p.ensurePodFinalizer(ctx, ref, pod); err != nil {
+		return 0, false, err
+	}
 	runID := res.RunID
 	if runID != pod.Status.RunID || terminal {
 		if address != "" || pod.Status.Address != "" || len(reported) > 0 || len(pod.Status.Listeners) > 0 {
@@ -121,6 +124,25 @@ func (p *Provider) reconcilePod(ctx context.Context, ref Ref, pod *v1alpha1.Deno
 		}
 	}
 	return res.RequeueAfter, terminal, nil
+}
+
+type podFinalizerWriter interface {
+	WritePodFinalizer(ctx context.Context, ref Ref, finalizers []string) error
+}
+
+func (p *Provider) ensurePodFinalizer(ctx context.Context, ref Ref, pod *v1alpha1.DenoPod) error {
+	if pod.DeletionTimestamp != nil || hasFinalizer(pod.Finalizers, v1alpha1.FinalizerDenoPod) {
+		return nil
+	}
+	w, ok := p.opts.Runtime.(podFinalizerWriter)
+	if !ok {
+		return nil
+	}
+	if err := w.WritePodFinalizer(ctx, ref, append(slices.Clone(pod.Finalizers), v1alpha1.FinalizerDenoPod)); err != nil {
+		return fmt.Errorf("provider: the %s finalizer on pod %s: %w", v1alpha1.FinalizerDenoPod, ref.Name, err)
+	}
+	pod.Finalizers = append(pod.Finalizers, v1alpha1.FinalizerDenoPod)
+	return nil
 }
 
 func refusal(pod *v1alpha1.DenoPod) string {

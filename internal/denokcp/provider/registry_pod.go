@@ -31,6 +31,10 @@ func (r *Registry) RemovePodFinalizer(ctx context.Context, ref Ref) error {
 	return r.pods.RemoveFinalizer(ctx, ref, v1alpha1.FinalizerDenoPod)
 }
 
+func (r *Registry) WritePodFinalizer(ctx context.Context, ref Ref, finalizers []string) error {
+	return r.pods.AddFinalizer(ctx, ref, finalizers)
+}
+
 func podStatusPatch(st v1alpha1.DenoPodStatus) ([]byte, error) {
 	status := map[string]any{
 		"phase":    string(st.Phase),
