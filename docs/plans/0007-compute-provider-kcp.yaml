@@ -387,8 +387,12 @@ items:
       writes nothing and lists every remote path', '--static-only names no backend file or unit'; red first.
     done_when: "tests green; one real --static-only run and one full run to qr.fedfork.com with the backup path and a post-deploy check of the client metadata and the backend recorded (UTC); pushed to GitHub on main."
     risks: ["The QR backend serves every account's sign-in; a full deploy runs only after a green --dry-run and with the restore command printed."]
-    status: todo
-    evidence: []
+    status: done
+    evidence:
+      - "did-key-associator 10be131 (oauth-scope generator shared by build.ts and a drift test) + f9dcf22 (scripts/deploy.sh: compiled self-contained backend, --static-only, --dry-run printing every remote action, dated backup of static/Caddyfile/backend/unit excluding kv.db, health check on the xrpc route with automatic restore, no set -x / secret echo; caddy.service no longer rewritten), merged to main 2026-10-12"
+      - "tests red then green: deploy_test.ts 4/4 (old script ran ssh in dry-run, set -x, no compile task); compiled backend starts on port 0 from an empty dir offline and answers its xrpc route 401/400; oauth_scope_drift_test.ts 3/3 (fails at 3cde452^); merged main 7/7"
+      - "deployed 2026-10-12T03:26:31Z (host key ED25519 SHA256:GY2/Nh2R... verified first): `deployed mode=full backup=/root/qr-backup/20261012T032631Z`; public check: oauth-client-metadata.json carries vm.terminated, /xrpc/com.fedfork.atprotoOauthQR answers 401; the host no longer needs deno"
+      - "left: backend/mod.ts still reads KV_PATH via Deno.env.get (CLAUDE.md CLI rule) - follow-up when the backend joins the cli-args-env pattern"
   - id: M1-PROTOCOL-CHECKLIST
     milestone: M1
     title: "The new-NSID checklist - lexicon, role-set scope, regenerated QR client scope deployed, every account re-signed in - with a check test"
@@ -416,8 +420,11 @@ items:
       test/oauth_scope_drift_test.ts red with a stale generated file, then green.
     done_when: "both checks green and run by each repo's test task; the checklist committed and pushed on main; the four steps recorded for vm.terminated as the worked example."
     risks: ["Step 4 cannot be automated (a person scans the QR per account); the requester and bidder log ScopeMissingError with the missing NSID so the step is found, not guessed."]
-    status: todo
-    evidence: []
+    status: done
+    evidence:
+      - "atproto-market acd3f3e merged to main cd09af4 2026-10-12: test/role_scope_coverage_test.ts (scans 12 bidder writes in market-bidder, market-bidder-compute, hono-bidder and 8 requester writes in requester-xrpc, compute-request-xrpc against the typescript-helpers oauth-scope role sets; a fixture proves an unscoped write is reported), `deno task test:protocol`, docs/new-nsid-checklist.md with vm.terminated as the worked example"
+      - "red: fails with typescript-helpers at 5b071fe^ naming vm.terminated?action=create (lib/market-bidder-compute/mod.ts:192); green at 5b071fe; merged main 5/5"
+      - "note: market-bidder-worker's worker.instance writes are outside the bidder/requester sets and not scanned; step 4 (re-sign-in) was exercised live 2026-10-12T01:43:50Z for bobvmbuilder"
   - id: M1-GUEST-IMAGE
     milestone: M1
     title: Guest images (kernel + rootfs) built by a build-host script per hypervisor x arch, pinned by sha256, fetched and verified on bidders
