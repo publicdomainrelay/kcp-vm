@@ -40,7 +40,15 @@ const (
 	PathClusterInstanceToken = "secret/data/k3s/instance-token"
 	PathClusterPostgres      = "secret/data/k3s/postgres"
 	PathClusterSSH           = "secret/data/k3s/ssh"
+
+	PathDoorClaimsPrefix = "secret/data/socialweb-door/claims/"
 )
+
+const DoorClaimSecretsIngressKey = "secrets-ingress"
+
+func DoorClaimSecretsIngressPath(claim string) string {
+	return PathDoorClaimsPrefix + claim + "/" + DoorClaimSecretsIngressKey
+}
 
 const (
 	PolicyKCPRuntime         = "kcp-runtime"

@@ -112,3 +112,11 @@ func TestValidatorRejectsInconsistentLayouts(t *testing.T) {
 		})
 	}
 }
+
+func TestTheDoorKeepsEachClaimsSecretsIngressKeyAtOneKVPath(t *testing.T) {
+	got := DoorClaimSecretsIngressPath("abc-node3")
+	if got != "secret/data/socialweb-door/claims/abc-node3/secrets-ingress" {
+		t.Fatalf("the door's per-claim secrets-ingress key lives at %q; the door (TS) and the bao sync "+
+			"desired set name this path literally", got)
+	}
+}

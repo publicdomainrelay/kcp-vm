@@ -201,6 +201,7 @@ func (in *NodeClaimStatus) DeepCopyInto(out *NodeClaimStatus) {
 	*out = *in
 	in.Contract.DeepCopyInto(&out.Contract)
 	out.Grant = copyPtr(in.Grant)
+	out.Secrets = copyPtr(in.Secrets)
 }
 
 func (in *NodeClaimContract) DeepCopyInto(out *NodeClaimContract) {
@@ -211,6 +212,7 @@ func (in *NodeClaimContract) DeepCopyInto(out *NodeClaimContract) {
 	out.Policy = copyPtr(in.Policy)
 	out.Bid = copyPtr(in.Bid)
 	out.Winner = copyPtr(in.Winner)
+	out.AcceptPending = copyPtr(in.AcceptPending)
 	out.Accept = copyPtr(in.Accept)
 	out.Receipt = copyPtr(in.Receipt)
 	out.ReceiptOk = copyPtr(in.ReceiptOk)
@@ -219,7 +221,17 @@ func (in *NodeClaimContract) DeepCopyInto(out *NodeClaimContract) {
 		out.Release = new(ContractRelease)
 		in.Release.DeepCopyInto(out.Release)
 	}
+	if in.Termination != nil {
+		out.Termination = new(ContractTermination)
+		in.Termination.DeepCopyInto(out.Termination)
+	}
 	out.Timestamps = copyPtr(in.Timestamps)
+}
+
+func (in *ContractTermination) DeepCopyInto(out *ContractTermination) {
+	*out = *in
+	out.ExitCode = copyPtr(in.ExitCode)
+	out.Request = copyPtr(in.Request)
 }
 
 func (in *ContractRelease) DeepCopyInto(out *ContractRelease) {

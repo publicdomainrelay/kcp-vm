@@ -196,8 +196,10 @@ func TestNodeClaimPhasesAreTheDoorsLiterals(t *testing.T) {
 		NodeClaimRunning:      "Running",
 		NodeClaimFailed:       "Failed",
 		NodeClaimReleased:     "Released",
+		NodeClaimLost:         "Lost",
+		NodeClaimAdopting:     "Adopting",
 	}
-	if len(want) != 7 {
+	if len(want) != 9 {
 		t.Fatalf("two phases collided: %v", want)
 	}
 	for phase, literal := range want {
@@ -219,5 +221,55 @@ func TestDeepCopyDoesNotAliasTheDeniedBidderDids(t *testing.T) {
 	if orig.Spec.DenyBidderDids[0] != "did:plc:bad" {
 		t.Fatalf("DeepCopy aliased denyBidderDids: original changed to %q",
 			orig.Spec.DenyBidderDids[0])
+	}
+}
+
+func TestNodeClaimResumeFieldsAreTheDoorsWireContract(t *testing.T) {
+	exit := 0
+	raw, err := json.Marshal(&NodeClaimStatus{
+		Phase: NodeClaimLost,
+		Contract: NodeClaimContract{
+			AcceptPending: &ContractAcceptPending{BidUri: "at://b/bid/1"},
+			Termination: &ContractTermination{
+				Reason: "guest_poweroff", ExitCode: &exit, ObservedAt: "2026-10-12T00:00:00Z",
+				Event: RecordRef{URI: "at://b/event/1", CID: "e"}, Payload: RecordRef{URI: "at://b/terminated/1", CID: "p"},
+			},
+		},
+		Secrets: &NodeClaimSecrets{IngressDid: "did:key:z", KeyRef: "socialweb-door/claims/n/secrets-ingress", URL: "https://did-key-z.relay", ServedAt: "2026-10-12T00:00:00Z"},
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got["phase"] != "Lost" {
+		t.Errorf("phase = %v, want Lost", got["phase"])
+	}
+	secrets, _ := got["secrets"].(map[string]any)
+	for _, field := range []string{"ingressDid", "keyRef", "url", "servedAt"} {
+		if _, ok := secrets[field]; !ok {
+			t.Errorf("status.secrets.%s is missing from the wire form. got: %v", field, secrets)
+		}
+	}
+	contract, _ := got["contract"].(map[string]any)
+	pending, _ := contract["acceptPending"].(map[string]any)
+	if pending["bidUri"] != "at://b/bid/1" {
+		t.Errorf("status.contract.acceptPending.bidUri missing: %v", contract)
+	}
+	termination, _ := contract["termination"].(map[string]any)
+	for _, field := range []string{"reason", "exitCode", "observedAt", "event", "payload"} {
+		if _, ok := termination[field]; !ok {
+			t.Errorf("status.contract.termination.%s is missing from the wire form. got: %v", field, termination)
+		}
+	}
+	dup := (&NodeClaimStatus{Contract: NodeClaimContract{Termination: &ContractTermination{ExitCode: &exit}}, Secrets: &NodeClaimSecrets{URL: "a"}})
+	var copied NodeClaimStatus
+	dup.DeepCopyInto(&copied)
+	*copied.Contract.Termination.ExitCode = 9
+	copied.Secrets.URL = "b"
+	if *dup.Contract.Termination.ExitCode != 0 || dup.Secrets.URL != "a" {
+		t.Fatalf("DeepCopy aliased the termination or secrets")
 	}
 }

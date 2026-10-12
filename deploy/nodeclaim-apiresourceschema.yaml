@@ -1,7 +1,7 @@
 apiVersion: apis.kcp.io/v1alpha1
 kind: APIResourceSchema
 metadata:
-  name: v1alpha1-3.nodeclaims.socialweb.computer
+  name: v1alpha1-4.nodeclaims.socialweb.computer
 spec:
   group: socialweb.computer
   names:
@@ -70,6 +70,8 @@ spec:
                   - Running
                   - Failed
                   - Released
+                  - Lost
+                  - Adopting
               contract:
                 type: object
                 properties:
@@ -152,6 +154,13 @@ spec:
                         type: string
                     required:
                       - did
+                  acceptPending:
+                    type: object
+                    properties:
+                      bidUri:
+                        type: string
+                    required:
+                      - bidUri
                   accept:
                     type: object
                     properties:
@@ -209,6 +218,50 @@ spec:
                       - event
                       - payload
                       - ok
+                  termination:
+                    type: object
+                    properties:
+                      reason:
+                        type: string
+                      exitCode:
+                        type: integer
+                      observedAt:
+                        type: string
+                      event:
+                        type: object
+                        properties:
+                          uri:
+                            type: string
+                          cid:
+                            type: string
+                        required:
+                          - uri
+                          - cid
+                      payload:
+                        type: object
+                        properties:
+                          uri:
+                            type: string
+                          cid:
+                            type: string
+                        required:
+                          - uri
+                          - cid
+                      request:
+                        type: object
+                        properties:
+                          uri:
+                            type: string
+                          cid:
+                            type: string
+                        required:
+                          - uri
+                          - cid
+                    required:
+                      - reason
+                      - observedAt
+                      - event
+                      - payload
                   outcome:
                     type: string
                     enum:
@@ -257,3 +310,18 @@ spec:
                   - issuer
                   - subject
                   - audience
+              secrets:
+                type: object
+                properties:
+                  ingressDid:
+                    type: string
+                  keyRef:
+                    type: string
+                  url:
+                    type: string
+                  servedAt:
+                    type: string
+                required:
+                  - ingressDid
+                  - keyRef
+                  - url
