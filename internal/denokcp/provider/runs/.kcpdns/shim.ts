@@ -51,11 +51,49 @@ function labelsToCluster(labels: string): string {
   return ["root", ...parts].join(":");
 }
 
-function split(host: string): { name: string; namespace: string; cluster: string } | null {
+const LISTENER_PREFIX = "_";
+const UNIX_PREFIX = "unix:";
+
+type Parts = { listener: string; name: string; namespace: string; cluster: string };
+
+function split(host: string): Parts | null {
   if (!host.endsWith(SUFFIX)) return null;
-  const bits = host.slice(0, -SUFFIX.length).split(".");
+  let bits = host.slice(0, -SUFFIX.length).split(".");
+  let listener = "";
+  if (bits[0]?.startsWith(LISTENER_PREFIX)) {
+    listener = bits[0].slice(LISTENER_PREFIX.length);
+    bits = bits.slice(1);
+  }
   if (bits.length < 2) return null;
-  return { name: bits[0], namespace: bits[1], cluster: labelsToCluster(bits.slice(2).join(".")) };
+  return { listener, name: bits[0], namespace: bits[1], cluster: labelsToCluster(bits.slice(2).join(".")) };
+}
+
+type Target =
+  | { kind: "tcp"; host: string; port: string }
+  | { kind: "unix"; path: string }
+  | { kind: "relay"; url: URL };
+
+function parseTarget(value: string): Target | null {
+  if (value.startsWith(UNIX_PREFIX)) return { kind: "unix", path: value.slice(UNIX_PREFIX.length) };
+  if (value.includes("://")) {
+    try {
+      return { kind: "relay", url: new URL(value) };
+    } catch {
+      return null;
+    }
+  }
+  const colon = value.lastIndexOf(":");
+  if (colon < 0) return null;
+  let host = value.slice(0, colon);
+  if (host.startsWith("[") && host.endsWith("]")) host = host.slice(1, -1);
+  return { kind: "tcp", host, port: value.slice(colon + 1) };
+}
+
+type Reported = { name?: unknown; kind?: unknown; address?: unknown };
+
+function listenerValue(l: Reported): string {
+  if (typeof l.address !== "string" || !l.address) return "";
+  return l.kind === "unix" ? UNIX_PREFIX + l.address : l.address;
 }
 
 function addressOf(env: Record<string, string>): string | null {
@@ -81,6 +119,18 @@ function addressOf(env: Record<string, string>): string | null {
   return (bind === "0.0.0.0" || bind === "::" ? "127.0.0.1" : bind) + ":" + port;
 }
 
+function reportedValue(pod: { spec?: { env?: Record<string, string> }; status?: { address?: unknown; listeners?: unknown } }, listener: string): string | null {
+  const listeners: Reported[] = Array.isArray(pod?.status?.listeners) ? pod.status.listeners as Reported[] : [];
+  if (listener) {
+    const found = listeners.find((l) => l?.name === listener);
+    return found ? listenerValue(found) || null : null;
+  }
+  const reported = typeof pod?.status?.address === "string" ? pod.status.address : "";
+  if (reported) return reported;
+  const first = listeners.map(listenerValue).find((v) => v);
+  return first || addressOf(pod?.spec?.env ?? {});
+}
+
 // A miss falls back to the kcp API, using a token minted in the target
 // workspace: a token from another workspace is not authorised there, which is
 // why the provider injects one per workspace rather than a single token.
@@ -92,11 +142,9 @@ async function discover(host: string): Promise<string | null> {
   const current = SERVER.match(/\/clusters\/([^/]+)/)?.[1];
   const base = current ? SERVER.replace(`/clusters/${current}`, `/clusters/${parts.cluster}`) : SERVER;
   const url = `${base}/apis/deno.computer/v1alpha1/namespaces/${parts.namespace}/denopods/${parts.name}`;
-  const res = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
+  const res = await realFetch(url, { headers: { authorization: `Bearer ${token}` } });
   if (!res.ok) return null;
-  const pod = await res.json();
-  const reported = typeof pod?.status?.address === "string" ? pod.status.address : "";
-  const addr = reported || addressOf(pod?.spec?.env ?? {});
+  const addr = reportedValue(await res.json(), parts.listener);
   if (addr) TABLE[host] = addr;
   return addr;
 }
@@ -111,6 +159,18 @@ async function addressFor(host: string): Promise<string | null> {
   return found;
 }
 
+async function targetFor(host: string): Promise<Target | null> {
+  const value = await addressFor(host);
+  return value ? parseTarget(value) : null;
+}
+
+function syncTargetFor(host: string): Target | null {
+  if (!host.endsWith(SUFFIX)) return null;
+  refresh();
+  const value = TABLE[host];
+  return value ? parseTarget(value) : null;
+}
+
 // Rewrites only the authority, keeping the path, the query and the scheme
 // intact. The scheme matters: downgrading https to http here would silently
 // defeat the TLS the leaves serve, so it is preserved and the certificate is
@@ -122,17 +182,31 @@ async function addressFor(host: string): Promise<string | null> {
 // having no way to make the name resolve; the Host header is therefore set back
 // to the original name by the caller, so a service that derives its identity
 // from Host still sees the name it was configured with.
-function rewrite(raw: string, addr: string): string | null {
+function rewrite(raw: string, target: Target, websocket: boolean): string | null {
   let url: URL;
   try {
     url = new URL(raw);
   } catch {
     return null;
   }
-  const [host, port] = addr.split(":");
-  url.hostname = host;
-  url.port = port ?? "";
-  return url.toString();
+  switch (target.kind) {
+    case "tcp":
+      url.hostname = target.host.includes(":") ? `[${target.host}]` : target.host;
+      url.port = target.port ?? "";
+      return url.toString();
+    case "unix":
+      url.hostname = "localhost";
+      url.port = "";
+      return url.toString();
+    case "relay": {
+      const secure = target.url.protocol === "https:" || target.url.protocol === "wss:";
+      url.protocol = websocket ? (secure ? "wss:" : "ws:") : (secure ? "https:" : "http:");
+      url.host = target.url.host;
+      const prefix = target.url.pathname.replace(/\/$/, "");
+      if (prefix) url.pathname = prefix + url.pathname;
+      return url.toString();
+    }
+  }
 }
 
 function hostOf(raw: string): string {
@@ -143,6 +217,16 @@ function hostOf(raw: string): string {
   }
 }
 
+const unixClients = new Map<string, Deno.HttpClient>();
+function unixClient(path: string): Deno.HttpClient {
+  let client = unixClients.get(path);
+  if (!client) {
+    client = Deno.createHttpClient({ proxy: { transport: "unix", path } } as never);
+    unixClients.set(path, client);
+  }
+  return client;
+}
+
 const realFetch = globalThis.fetch;
 globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const raw = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
@@ -150,23 +234,25 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   // addressFor returns null for a name outside the suffix, and throws for one
   // inside it that cannot be resolved: swallowing that would turn a name we own
   // into an opaque DNS failure.
-  const target = host ? await addressFor(host) : null;
+  const target = host ? await targetFor(host) : null;
   if (!target) return realFetch(input as RequestInfo, init);
-  const next = rewrite(raw, target);
+  const next = rewrite(raw, target, false);
   if (!next) return realFetch(input as RequestInfo, init);
+  const keepName = target.kind !== "relay";
+  const extra = target.kind === "unix" ? { client: unixClient(target.path) } : {};
   // A Request carries its own method, headers and body; rebuilding it on the
   // rewritten URL keeps all three, where passing only the URL would send a
   // bodiless GET in its place.
   if (input instanceof Request) {
     const request = new Request(next, input);
-    if (!request.headers.has("host")) request.headers.set("host", host);
-    return realFetch(request, init);
+    if (keepName && !request.headers.has("host")) request.headers.set("host", host);
+    return realFetch(request, { ...(init ?? {}), ...extra } as RequestInit);
   }
   const headers = new Headers(
     init?.headers ?? (typeof input === "object" && "headers" in input ? input.headers : undefined),
   );
-  if (!headers.has("host")) headers.set("host", host);
-  return realFetch(next, { ...(init ?? {}), headers });
+  if (keepName && !headers.has("host")) headers.set("host", host);
+  return realFetch(next, { ...(init ?? {}), headers, ...extra } as RequestInit);
 }) as typeof fetch;
 
 for (const name of ["connect", "connectTls"] as const) {
@@ -175,10 +261,15 @@ for (const name of ["connect", "connectTls"] as const) {
   Deno[name] = async (options: { hostname?: string; port?: number } & Record<string, unknown>) => {
     const host = options?.hostname;
     if (typeof host === "string" && host.endsWith(SUFFIX)) {
-      const addr = await addressFor(host);
-      if (addr) {
-        const [h, p] = addr.split(":");
-        options = { ...options, hostname: h, port: Number(p) };
+      const target = await targetFor(host);
+      if (target?.kind === "tcp") {
+        options = { ...options, hostname: target.host, port: Number(target.port) };
+      } else if (target?.kind === "relay") {
+        const port = target.url.port || (target.url.protocol === "https:" || target.url.protocol === "wss:" ? "443" : "80");
+        options = { ...options, hostname: target.url.hostname, port: Number(port) };
+      } else if (target?.kind === "unix") {
+        if (name === "connectTls") throw new Error(`kcpdns: ${host} is a unix listener and cannot be reached over tls`);
+        return Deno.connect({ transport: "unix", path: target.path });
       }
     }
     return real(options as never);
@@ -188,9 +279,10 @@ for (const name of ["connect", "connectTls"] as const) {
 const realResolveDns = Deno.resolveDns;
 Deno.resolveDns = (async (name: string, recordType: string) => {
   if (typeof name === "string" && name.endsWith(SUFFIX)) {
-    const addr = await addressFor(name);
-    if (addr && (recordType === "A" || recordType === "AAAA")) return [addr.split(":")[0]];
-    if (addr) return [];
+    const target = await targetFor(name);
+    if (target?.kind === "relay") return realResolveDns(target.url.hostname, recordType as never);
+    if (target?.kind === "tcp" && (recordType === "A" || recordType === "AAAA")) return [target.host];
+    return [];
   }
   return realResolveDns(name, recordType as never);
 }) as typeof Deno.resolveDns;
@@ -204,16 +296,8 @@ const realWebSocket = globalThis.WebSocket;
 globalThis.WebSocket = class extends realWebSocket {
   constructor(url: string | URL, protocols?: string | string[]) {
     const raw = typeof url === "string" ? url : url.href;
-    const host = (() => {
-      try {
-        return new URL(raw).hostname;
-      } catch {
-        return "";
-      }
-    })();
-    if (host.endsWith(SUFFIX)) refresh();
-    const addr = host.endsWith(SUFFIX) ? TABLE[host] : null;
-    const next = addr ? rewrite(raw, addr) : null;
+    const target = syncTargetFor(hostOf(raw));
+    const next = target && target.kind !== "unix" ? rewrite(raw, target, true) : null;
     super(next ?? raw, protocols);
   }
 } as typeof WebSocket;
