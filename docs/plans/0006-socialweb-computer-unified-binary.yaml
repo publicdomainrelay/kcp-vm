@@ -1164,8 +1164,8 @@ items:
       - "A kine schema migration takes ACCESS EXCLUSIVE (control-plane-handover.md); a kine bump for the gateway's kcp is rolled like a kcp slot (M3-KCP-ROLL) with old and new kine on one database tested first; on a bidder it is part of the short restart."
       - "Per-handle stores on a bidder: kine + one kcp + front per handle, ~0.45 GB (kcp-spike.md: kcp 378-409 MB, kine 54-62 MB); recorded per handle in M2-KCP-PORT0's readings."
       - "A sqlite kine restart is a store outage for the bidder's kcp; accepted, because the bidder's kcp restart is already a short outage that VMs never notice (decided by the user 2026-10-12)."
-    status: todo
-    evidence: []
+    status: doing
+    evidence:
   - id: M2-KCP-FRONT
     milestone: M2
     title: Our own L4 front holds kcp's address (127.0.0.1:6443 on the gateway, port 0 elsewhere) and swaps its backend between slots; caddy is never touched
@@ -1213,8 +1213,8 @@ items:
     risks:
       - "User-manager fd-store support is unverified on the target systemd; without it a front restart has a refused-connection window of its restart time (M2-HOST-CONTRACT probes it)."
       - "kubectl exec/attach/port-forward through a mount are upgraded streams; they survive a flip (open connections stay) but end when the old slot stops - roll idle-first (M3-KCP-ROLL)."
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M2-KCP-SLOTS
     milestone: M2
     title: "kcp slot units of the release asset behind the front - the gateway: alternating blue/green slots on a shared kine store, leader-elected; a bidder: one slot on kine-sqlite"
@@ -1292,8 +1292,8 @@ items:
     risks:
       - "kine serves watches written through ANOTHER kine on its next poll (1 s ticker; 0.27-0.42 s measured); during an overlap a client may see a sub-second lag, recorded, not a failure."
       - "Both slots run the apiserver's compactor; the compare-and-swap on compact_rev_key makes one win per interval (kcp-blue-green.md 3); nothing to coordinate."
-    status: todo
-    evidence: []
+    status: doing
+    evidence:
   - id: M2-KCP-PORT0
     milestone: M2
     title: Every kcp, kine and front binds port 0 and the core reads the bound port from the unit's single listening socket - no kcp patch
@@ -1329,8 +1329,8 @@ items:
       (a stale copied admin.kubeconfig naming a dead port does not make a slot Ready). Red first.
     done_when: "green on hat-8 on both backends; no fixed kcp, kine or etcd port left in any socialweb-computer mode except the gateway front's prod 6443 (M1-NO-FIXED-PORTS' ratchet holds no kcp, kine or front entry); per-instance process count and RSS recorded (gateway and bidder shapes)."
     risks: ["A kcp release that opens a second TCP listener breaks the single-socket rule; ListenPort refuses by name and the asset pin's self-check (M1-INSTALL upgrade) runs a slot once to catch it."]
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M2-BOOTSTRAP-LAYER
     milestone: M2
     title: "The bootstrap layer - kcp's store, kine, slot(s), front and the core: installed systemd units in production, devsup units in dev, up before kcp exists"

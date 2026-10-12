@@ -4,7 +4,7 @@ Read this file first. It names the one small file that answers each question, so
 start by reading the whole of `docs/ARCHITECTURE.md`. That document is still the single source of
 truth; this file only points at it and states the working rules.
 
-Commit as you go. Never push!
+Commit as you go and push to origin main as work lands (user, 2026-10-12).
 
 ## Orientation: which file answers which question
 
