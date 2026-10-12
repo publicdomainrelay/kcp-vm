@@ -480,22 +480,27 @@
     },
     "handle": {
       "type": "string",
-      "description": "install bidder: the atproto handle(s) of the bidder instances, comma-separated; a re-run with another handle adds that instance. internal vm: the one bidder instance whose VMs these are. units roll kcp: the one bidder handle whose kcp restarts (unset: the gateway)",
+      "description": "install bidder: the atproto handle(s) of the bidder instances, comma-separated; a re-run with another handle adds that instance. internal vm: the one bidder instance whose VMs these are. units roll kcp: the one bidder handle whose kcp restarts (unset: the gateway). dev up: makes the instance a bidder application instance whose core runs the ComputeVM controller for this handle",
       "env": "SOCIALWEB_HANDLE"
+    },
+    "vm-host-backend": {
+      "type": "string",
+      "description": "dev up --handle: the placement backend of the VM units (systemd-user | proc); default the instance's own (proc). systemd-user places them in the account's user manager, which enforces their cgroup limits",
+      "env": "SOCIALWEB_VM_HOST_BACKEND"
     },
     "vm-runtime-dir": {
       "type": "string",
-      "description": "internal vm: the account's runtime dir; each VM's API socket lives under <dir>/swvm",
+      "description": "internal vm and dev up --handle: the account's runtime dir; each VM's API socket lives under <dir>/swvm",
       "env": "XDG_RUNTIME_DIR"
     },
     "guest-image-source": {
       "type": "string",
-      "description": "internal vm: file:// or https:// base the pinned guest image (vmlinux, rootfs.ext4, image.json) is fetched from once and verified by sha256",
+      "description": "internal vm and dev up --handle: file:// or https:// base the pinned guest image (vmlinux, rootfs.ext4, image.json) is fetched from once and verified by sha256",
       "env": "SOCIALWEB_GUEST_IMAGE_SOURCE"
     },
     "vm-stop-grace": {
       "type": "string",
-      "description": "internal vm: how long a stop waits after SendCtrlAltDel before SIGKILL (Go duration; x86_64 only, arm64 kills at once)",
+      "description": "internal vm and dev up --handle: how long a stop waits after SendCtrlAltDel before SIGKILL (Go duration; x86_64 only, arm64 kills at once)",
       "env": "SOCIALWEB_VM_STOP_GRACE",
       "default": "10s"
     },

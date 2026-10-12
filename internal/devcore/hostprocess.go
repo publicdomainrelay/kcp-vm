@@ -10,6 +10,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/appctl"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/bootstrap"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/bootstrap/table"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/computevm"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devinstance"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostprocess"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc"
@@ -62,7 +63,7 @@ func HostProcessConfig(bcfg bootstrap.Config, rec devinstance.Record, m hostsvc.
 			return "", fmt.Errorf("devcore: no executable %s in this dev instance", a.Name)
 		},
 		Mirrors:      func() []hostprocess.Mirror { return Mirrors(bcfg, l) },
-		ApplyTimeout: HostProcessApplyTimeout, Log: log}
+		ApplyTimeout: HostProcessApplyTimeout, Selector: "!" + computevm.LabelComputeVM, Log: log}
 }
 
 func PostgresConfig(bcfg bootstrap.Config, rec devinstance.Record, log *slog.Logger) postgresctl.Config {

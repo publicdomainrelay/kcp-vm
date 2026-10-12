@@ -104,8 +104,30 @@ func Exports(rec Record, leases []portallocator.Lease) []Export {
 	for _, le := range leases {
 		out = append(out, Export{"SOCIALWEB_DEV_LEASE_" + envWord(le.Cluster) + "_" + envWord(string(le.Purpose)), strconv.Itoa(le.Port)})
 	}
+	if rec.VM != nil {
+		ws := rec.BaseWorkspace
+		if ws == "" {
+			ws = "root"
+		}
+		host, _, _ := strings.Cut(strings.TrimSuffix(rec.KcpURL, "/"), "/clusters/")
+		dir := BidderDir(l)
+		out = append(out,
+			Export{"COMPUTE_PROVIDER_KCP", "true"},
+			Export{"KCP_SERVER", host},
+			Export{"KCP_WORKSPACE", ws},
+			Export{"COMPUTE_PROVIDER_KCP_TOKEN_FILE", filepath.Join(dir, BidderTokenFile)},
+			Export{"COMPUTE_PROVIDER_KCP_CA_FILE", filepath.Join(dir, BidderCAFile)},
+			Export{"COMPUTE_PROVIDER_KCP_HANDLE", rec.VM.Handle})
+	}
 	return out
 }
+
+const (
+	BidderTokenFile = "kcp-token"
+	BidderCAFile    = "kcp-ca.pem"
+)
+
+func BidderDir(l Layout) string { return filepath.Join(l.StateDir, "bidder") }
 
 func ShellExports(ex []Export) string {
 	var b strings.Builder

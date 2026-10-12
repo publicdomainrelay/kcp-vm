@@ -11,6 +11,7 @@ import (
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/assets"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clicfg"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/devinstance"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/vmruntime"
 )
@@ -79,6 +80,109 @@ func (a *app) vmRuntime(ctx context.Context, vals clicfg.Values) (vmruntime.Runt
 		return nil, nil, err
 	}
 	return rt, p.manager, nil
+}
+
+var vmExecutables = []struct{ name, option string }{
+	{"swc-userns-stage", "userns-stage-path"},
+	{"pasta", "pasta-path"},
+	{"socialweb-vmexec", "vmexec-path"},
+	{"firecracker", "firecracker-path"},
+}
+
+var devVMOptions = append([]string{"handle", "vm-host-backend", "vm-runtime-dir", "guest-image-source", "vm-stop-grace"},
+	devOnly("userns-stage-path", "pasta-path", "vmexec-path", "firecracker-path")...)
+
+func (a *app) devVM(vals clicfg.Values, l devinstance.Layout) (*devinstance.VMRuntime, error) {
+	handle := vals.String("handle")
+	if handle == "" {
+		return nil, nil
+	}
+	backend := hostsvc.BackendProc
+	if b := vals.String("vm-host-backend"); b != "" {
+		var err error
+		if backend, err = hostsvc.ParseBackend(b); err != nil {
+			return nil, err
+		}
+	}
+	rt := vals.String("vm-runtime-dir")
+	if rt == "" {
+		rt = l.RuntimeDir
+	}
+	if !filepath.IsAbs(rt) {
+		return nil, fmt.Errorf("vm-runtime-dir %q must be absolute: each VM's API socket lives under it", rt)
+	}
+	if _, err := time.ParseDuration(vals.String("vm-stop-grace")); err != nil {
+		return nil, fmt.Errorf("vm-stop-grace: %w", err)
+	}
+	vm := &devinstance.VMRuntime{Handle: handle, Backend: backend, ImageSource: vals.String("guest-image-source"),
+		StopGrace: vals.String("vm-stop-grace"), RuntimeDir: rt, Executables: map[string]string{}}
+	for _, x := range vmExecutables {
+		p, err := a.vmExe(vals, x.name, x.option)
+		if err != nil {
+			return nil, err
+		}
+		vm.Executables[x.name] = p
+	}
+	return vm, nil
+}
+
+func (a *app) instanceVMRuntime(ctx context.Context, rec devinstance.Record) (vmruntime.Runtime, hostsvc.Manager, error) {
+	v := rec.VM
+	cfg := hostsvc.Config{Backend: v.Backend}
+	if v.Backend == hostsvc.BackendProc {
+		cfg.ProcSocket = rec.Layout.Socket
+	}
+	m, err := hostsvc.Open(ctx, cfg)
+	if err != nil {
+		return nil, nil, fmt.Errorf("the VM placement backend %s: %w", v.Backend, err)
+	}
+	grace, err := time.ParseDuration(v.StopGrace)
+	if err != nil {
+		m.Close()
+		return nil, nil, err
+	}
+	rt, err := vmruntime.ForHost(vmruntime.Config{Manager: m, StateDir: rec.Layout.StateDir, RuntimeDir: v.RuntimeDir,
+		Exec: vmruntime.Executables{Stage: v.Executables["swc-userns-stage"], Pasta: v.Executables["pasta"],
+			VMExec: v.Executables["socialweb-vmexec"], Firecracker: v.Executables["firecracker"]},
+		ImageSource: v.ImageSource, StopGrace: grace})
+	if err != nil {
+		m.Close()
+		return nil, nil, err
+	}
+	return rt, m, nil
+}
+
+func (a *app) downVMs(ctx context.Context, rec devinstance.Record) []string {
+	if rec.VM == nil {
+		return nil
+	}
+	rt, m, err := a.instanceVMRuntime(ctx, rec)
+	if err != nil {
+		a.log.Warn("the VM runtime of the instance; its VMs are not stopped here", "err", err.Error())
+		return []string{err.Error()}
+	}
+	defer m.Close()
+	listed, err := rt.List(ctx, rec.VM.Handle)
+	if err != nil {
+		return []string{err.Error()}
+	}
+	var left []string
+	for _, l := range listed {
+		ref, err := rt.Load(rec.VM.Handle, l.Name)
+		if err != nil {
+			ref = vmruntime.RuntimeRef{Handle: rec.VM.Handle, Name: l.Name, Unit: l.Unit}
+		}
+		res, err := rt.Stop(ctx, ref)
+		if err != nil {
+			left = append(left, l.Unit+": "+err.Error())
+			continue
+		}
+		a.log.Info("VM stopped with its instance", "unit", l.Unit, "graceful", res.Graceful, "result", res.Result)
+	}
+	if err := m.StopSlice(ctx, vmruntime.SliceName(rec.VM.Handle)); err != nil {
+		left = append(left, err.Error())
+	}
+	return left
 }
 
 func runVM(verb string) verbFunc {

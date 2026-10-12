@@ -10,6 +10,7 @@ import (
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/appctl"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/bootstrap"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/computevm"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devinstance"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostos"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostprocess"
@@ -26,6 +27,7 @@ type Config struct {
 	ReadyTimeout time.Duration
 	Log          *slog.Logger
 	DenoRuntime  *denoruntime.Config
+	ComputeVM    *computevm.Config
 }
 
 func tryLockRecord(path string) (*os.File, bool) {
@@ -97,6 +99,14 @@ func Run(ctx context.Context, cfg Config, m hostsvc.Manager) error {
 	}
 	if len(rec.StandIns) == 0 && rec.AdminKubeconfig != "" {
 		go hostprocess.Supervise(ctx, HostProcessConfig(bcfg, rec, m, log))
+		if cfg.ComputeVM != nil {
+			c := *cfg.ComputeVM
+			c.Kubeconfig, c.Workspace = rec.AdminKubeconfig, HostProcessConfig(bcfg, rec, m, log).Workspace
+			if err := computevm.WriteCredentials(rec.AdminKubeconfig, devinstance.BidderDir(l), devinstance.BidderTokenFile, devinstance.BidderCAFile); err != nil {
+				log.Error("writing the bidder kcp credential", "err", err.Error())
+			}
+			go computevm.Run(ctx, c)
+		}
 		go openbaoctl.Supervise(ctx, OpenBaoServerConfig(bcfg, rec, log))
 		go postgresctl.Run(ctx, PostgresConfig(bcfg, rec, log))
 		go appctl.Supervise(ctx, AppConfig(bcfg, rec, m, log))

@@ -20,6 +20,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/assets"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/bootstrap"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clicfg"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/computevm"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/denorun"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devcore"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devinstance"
@@ -514,6 +515,13 @@ func devUp(ctx context.Context, a *app, vals clicfg.Values, host bool) int {
 		}
 		rec.OpenBao = &devinstance.OpenBao{Address: addr, TokenFile: tokenFile}
 	}
+	rec.VM = nil
+	if !host {
+		if rec.VM, err = a.devVM(vals, l); err != nil {
+			lock.Close()
+			return a.fail(exitRefused, "%s: %v", verb, err)
+		}
+	}
 	bcfg := bootstrap.Config{Layout: l, KcpPath: kcpExe.Path, KinePath: kineExe.Path, PostgresRoot: pgExe.Path, Exe: exe,
 		ReadyTimeout: readyTimeout, Log: a.log}
 	if err := bootstrap.Ensure(ctx, m, bcfg, &rec); err != nil {
@@ -679,6 +687,7 @@ type downReport struct {
 	Swept          []devsup.SweepReport `json:"swept,omitempty"`
 	LeftoverKilled []int                `json:"leftoverKilled"`
 	Remaining      []int                `json:"remaining"`
+	VMsLeft        []string             `json:"vmsLeft,omitempty"`
 	RemovedState   bool                 `json:"removedState"`
 	RemovedRuntime bool                 `json:"removedRuntime"`
 	Seconds        float64              `json:"seconds"`
@@ -716,6 +725,7 @@ func downInstance(ctx context.Context, a *app, l devinstance.Layout, keepState b
 			a.log.Info("the MarketNetwork is deleted: its children, their kcps and its services are gone")
 		}
 	}
+	r.VMsLeft = a.downVMs(ctx, rec)
 	if rec.Parent != nil {
 		r.Remaining = downChild(ctx, a, l, *rec.Parent)
 		r.DevsupPID = rec.Devsup.PID
@@ -844,7 +854,16 @@ func runDevCore(ctx context.Context, a *app, vals clicfg.Values, rest []string) 
 		return a.fail(exitFailed, "internal dev-core: %v", err)
 	}
 	defer m.Close()
-	if err := devcore.Run(ctx, devcore.Config{Layout: rec.Layout, ReadyTimeout: timeout, Log: a.log, DenoRuntime: &deno}, m); err != nil {
+	cfg := devcore.Config{Layout: rec.Layout, ReadyTimeout: timeout, Log: a.log, DenoRuntime: &deno}
+	if rec.VM != nil {
+		rt, vm, err := a.instanceVMRuntime(ctx, rec)
+		if err != nil {
+			return a.fail(exitFailed, "internal dev-core: the instance is a bidder application instance (handle %s) and its VM runtime does not open: %v", rec.VM.Handle, err)
+		}
+		defer vm.Close()
+		cfg.ComputeVM = &computevm.Config{Handle: rec.VM.Handle, Runtime: rt, Manager: vm, Log: a.log}
+	}
+	if err := devcore.Run(ctx, cfg, m); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return exitOK
 		}

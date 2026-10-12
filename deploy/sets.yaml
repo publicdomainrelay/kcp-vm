@@ -106,7 +106,7 @@ sets:
             for: Ready
 
   - name: bidder
-    summary: the ComputeVM schema and export beside the provider's, and the bidder WorkspaceType binding denoruntime, computevms and hostprocesses (plan 0007 M1-API); needs the provider workspace, denoruntime and the hostprocesses set
+    summary: the ComputeVM schema and export beside the provider's, the bidder WorkspaceType binding denoruntime, computevms and hostprocesses (plan 0007 M1-API), and the computevms binding in root that the ComputeVM controller of a bidder application instance applies with it (plan 0007 M2-CONTROLLER); needs the provider workspace and the hostprocesses set
     values: None
     phases:
       - name: schemas
@@ -125,6 +125,13 @@ sets:
         workspace: root
         files:
           - path: workspacetype-bidder.yaml
+      - name: bindings
+        workspace: root
+        files:
+          - path: computevms-binding.yaml
+        after:
+          - kind: APIBinding
+            for: Ready
 
   - name: hostprocesses
     summary: the HostProcess, Postgres and OpenBaoServer schemas and their export in the provider workspace and its binding in root, applied by every core so the application's own kcp holds its host processes, the bootstrap mirrors, its postgres servers and its OpenBao servers (plan 0006 M2-HOSTPROCESS-KIND, M2-POSTGRES, M2-OPENBAO-SERVER); needs the provider workspace

@@ -235,6 +235,16 @@ type Record struct {
 	Ready           bool                  `json:"ready"`
 	Host            bool                  `json:"host,omitempty"`
 	Parent          *Parent               `json:"parent,omitempty"`
+	VM              *VMRuntime            `json:"vm,omitempty"`
+}
+
+type VMRuntime struct {
+	Handle      string            `json:"handle"`
+	Backend     hostsvc.Backend   `json:"backend"`
+	ImageSource string            `json:"imageSource,omitempty"`
+	StopGrace   string            `json:"stopGrace,omitempty"`
+	RuntimeDir  string            `json:"runtimeDir"`
+	Executables map[string]string `json:"executables"`
 }
 
 type OpenBao struct {
