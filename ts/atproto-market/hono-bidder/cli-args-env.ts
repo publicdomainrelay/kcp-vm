@@ -61,6 +61,10 @@ export default {
       description: "QR relay origin the sign-in and association QR codes point at",
       env: "QR_ORIGIN",
     },
+    "network-hosts": {
+      type: "string" as const,
+      description: "Comma-separated name=address pairs of the market network's service names (its PDSes, PLC, relay) and the loopback address each answers on, copied from the network value; another application's names never resolve through this application's own kcp",
+    },
     "ingress-proxy-host": {
       type: "string" as const,
       description: "XRPC relay dispatcher host",

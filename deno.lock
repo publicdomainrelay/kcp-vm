@@ -1943,6 +1943,11 @@
           "npm:@atproto/lex@~0.1.3"
         ]
       },
+      "ts/atproto-market/lib/compute-contract-kcp": {
+        "dependencies": [
+          "jsr:@publicdomainrelay/socialweb-computer-k8s-api@0"
+        ]
+      },
       "ts/atproto-market/lib/compute-request-xrpc": {
         "dependencies": [
           "jsr:@publicdomainrelay/cloud-init-common@0",
@@ -2211,29 +2216,31 @@
       },
       "ts/atproto-market/request-vm-ssh": {
         "dependencies": [
+          "jsr:@publicdomainrelay/atproto-event-streams-client@0",
           "jsr:@publicdomainrelay/atproto-helpers@0",
           "jsr:@publicdomainrelay/cli-args-env@0",
-          "jsr:@publicdomainrelay/cloud-init-common@0",
-          "jsr:@publicdomainrelay/firehose-watcher-jetstream@0",
-          "jsr:@publicdomainrelay/firehose-watcher-subscriberepos@0",
+          "jsr:@publicdomainrelay/compute-contract-kcp@0",
+          "jsr:@publicdomainrelay/compute-request-abc@0",
+          "jsr:@publicdomainrelay/compute-request-xrpc@0",
           "jsr:@publicdomainrelay/guest-capability-abc@0",
           "jsr:@publicdomainrelay/guest-capability-secrets@0",
           "jsr:@publicdomainrelay/identity-prompt-kcp@0",
-          "jsr:@publicdomainrelay/identity-prompt-tty@0",
           "jsr:@publicdomainrelay/logger@0",
           "jsr:@publicdomainrelay/market-atproto@0",
           "jsr:@publicdomainrelay/market-common@0",
           "jsr:@publicdomainrelay/market-identity-abc@0",
           "jsr:@publicdomainrelay/market-identity-atproto@0",
-          "jsr:@publicdomainrelay/market-identity-memory@0",
-          "jsr:@publicdomainrelay/market-identity-vault-file@0",
           "jsr:@publicdomainrelay/market-identity-vault-openbao@0",
-          "jsr:@publicdomainrelay/policy-deno-typescript@0",
+          "jsr:@publicdomainrelay/market-network-common@0",
+          "jsr:@publicdomainrelay/market-network-fetch@0",
+          "jsr:@publicdomainrelay/oauth-scope@0",
+          "jsr:@publicdomainrelay/openbao-server-kcp@0",
           "jsr:@publicdomainrelay/policy-engine-cli-options@0",
-          "jsr:@publicdomainrelay/policy-engine-evaluator@0",
+          "jsr:@publicdomainrelay/requester-abc@0",
           "jsr:@publicdomainrelay/requester-xrpc@0",
           "jsr:@publicdomainrelay/secrets-common@0",
-          "jsr:@publicdomainrelay/serve@0"
+          "jsr:@publicdomainrelay/serve@0",
+          "jsr:@publicdomainrelay/socialweb-computer-k8s-api@0"
         ]
       },
       "ts/atproto-relay/hono-atproto-relay": {

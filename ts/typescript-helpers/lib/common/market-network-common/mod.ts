@@ -10,6 +10,7 @@ export interface MarketNetwork {
   readonly qrOrigin: string;
   readonly guestTlsUrl?: string;
   readonly caBundleRef?: string;
+  readonly hosts?: Readonly<Record<string, string>>;
 }
 
 export interface MarketNetworkInput {
@@ -20,6 +21,25 @@ export interface MarketNetworkInput {
   qrOrigin?: string;
   guestTlsUrl?: string;
   caBundleRef?: string;
+  hosts?: string | Readonly<Record<string, string>>;
+}
+
+function hostMap(v: string | Readonly<Record<string, string>> | undefined): Record<string, string> | undefined {
+  if (!v) return undefined;
+  const out: Record<string, string> = {};
+  if (typeof v === "string") {
+    for (const pair of urlList(v)) {
+      const i = pair.indexOf("=");
+      if (i > 0) out[pair.slice(0, i).trim()] = pair.slice(i + 1).trim();
+    }
+  } else {
+    Object.assign(out, v);
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+export function hostAddressOf(network: MarketNetwork, hostname: string): string | undefined {
+  return network.hosts?.[hostname];
 }
 
 export interface RewriteOptions {
@@ -45,6 +65,7 @@ export function marketNetwork(input: MarketNetworkInput = {}): MarketNetwork {
     qrOrigin: stripTrailingSlash(input.qrOrigin || PUBLIC_QR_ORIGIN),
     ...(input.guestTlsUrl ? { guestTlsUrl: input.guestTlsUrl } : {}),
     ...(input.caBundleRef ? { caBundleRef: input.caBundleRef } : {}),
+    ...(hostMap(input.hosts) ? { hosts: hostMap(input.hosts) } : {}),
   };
 }
 
@@ -88,6 +109,11 @@ export function rewriteMarketUrl(
   const publicPlcPrefix = `${PUBLIC_PLC_DIRECTORY_URL}/`;
   if (url.startsWith(publicPlcPrefix) && isPrivatePlcDirectory(network)) {
     return network.plcDirectoryUrl + url.slice(PUBLIC_PLC_DIRECTORY_URL.length);
+  }
+  const named = url.match(/^https:\/\/([^/?#]+)(.*)$/s);
+  if (named) {
+    const address = hostAddressOf(network, splitHostPort(named[1]).hostname);
+    if (address) return `https://${address}${named[2]}`;
   }
   if (!isLocalMarketNetwork(network)) return undefined;
   const m = url.match(/^https:\/\/([^/?#]+)(.*)$/s);

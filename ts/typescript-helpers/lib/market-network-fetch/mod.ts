@@ -1,4 +1,4 @@
-import { PUBLIC_PLC_DIRECTORY_URL, rewriteMarketUrl } from "@publicdomainrelay/market-network-common";
+import { hostAddressOf, PUBLIC_PLC_DIRECTORY_URL, rewriteMarketUrl, splitHostPort } from "@publicdomainrelay/market-network-common";
 import type { MarketNetwork } from "@publicdomainrelay/market-network-common";
 
 export interface MarketNetworkFetchFailure {
@@ -32,6 +32,13 @@ export function createMarketNetworkFetch(opts: MarketNetworkFetchOptions): Marke
     const url = inputUrl(input);
     const rewritten = rewriteMarketUrl(opts.network, url, rewriteOpts);
     if (rewritten === undefined) return realFetch(input, init);
+    const original = url.match(/^https:\/\/([^/?#]+)/)?.[1];
+    if (original && hostAddressOf(opts.network, splitHostPort(original).hostname)) {
+      const headers = new Headers(input instanceof Request ? input.headers : init?.headers);
+      headers.set("host", original);
+      const named = input instanceof Request ? new Request(rewritten, input) : rewritten;
+      return realFetch(named, { ...init, headers });
+    }
     const target = input instanceof Request ? new Request(rewritten, input) : rewritten;
     const isPlcDirectory = url.startsWith(`${PUBLIC_PLC_DIRECTORY_URL}/`);
     if (client && !isPlcDirectory) {

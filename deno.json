@@ -79,6 +79,7 @@
     "./ts/atproto-market/lib/market-bidder-worker",
     "./ts/atproto-market/lib/market-identity-atproto",
     "./ts/atproto-market/lib/identity-prompt-kcp",
+    "./ts/atproto-market/lib/compute-contract-kcp",
     "./ts/atproto-market/lib/identity-prompt-memory",
     "./ts/atproto-market/lib/identity-prompt-tty",
     "./ts/atproto-market/lib/market-identity-memory",

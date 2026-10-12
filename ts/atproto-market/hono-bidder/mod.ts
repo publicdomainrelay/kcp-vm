@@ -74,6 +74,7 @@ const spec: MarketBidderAppSpec = {
     relayUrls: o.relayUrl,
     firehoseUrls: o.firehoseUrl,
     qrOrigin: o.qrOrigin,
+    hosts: o.networkHosts,
   }), o.guestTlsPort),
   identity: {
     name: o.marketIdentityName,

@@ -2,19 +2,14 @@ import { Command } from "@publicdomainrelay/cli-args-env";
 import { parsePolicyArgs } from "@publicdomainrelay/policy-engine-cli-options";
 import { createLogger } from "@publicdomainrelay/logger";
 import { createServe } from "@publicdomainrelay/serve";
-import {
-  applyOAuthAgentToRequesterPDS,
-  createRequesterPDS,
-  createOAuthRequester,
-  runComputeContract,
-  createSshSessionProvider,
-  ensureDumbpipe,
-} from "@publicdomainrelay/requester-xrpc";
+import { applyOAuthAgentToRequesterPDS, createOAuthRequester, createRequesterPDS } from "@publicdomainrelay/requester-xrpc";
 import type { OAuthRequesterHandle } from "@publicdomainrelay/requester-xrpc";
-import { removedTransportFlagsIn } from "@publicdomainrelay/cloud-init-common";
+import { awaitComputeHostKeys, releaseCompute, requestCompute } from "@publicdomainrelay/compute-request-xrpc";
+import type { ComputeRequestHandle } from "@publicdomainrelay/compute-request-xrpc";
+import type { ComputeRequestHandlers, ContractState } from "@publicdomainrelay/compute-request-abc";
 import { createDelegatingAgent } from "@publicdomainrelay/atproto-helpers";
 import type { RequesterPDS } from "@publicdomainrelay/requester-abc";
-import { EVENT_NSID, OFFERING_NSID } from "@publicdomainrelay/market-common";
+import { OFFERING_NSID } from "@publicdomainrelay/market-common";
 import { REQUESTER_OAUTH_SCOPE } from "@publicdomainrelay/oauth-scope";
 import { createDefaultATProtoEventStreamsClient } from "@publicdomainrelay/atproto-event-streams-client";
 import { parseSecretsFile } from "@publicdomainrelay/secrets-common";
@@ -23,18 +18,17 @@ import type { GuestCapability } from "@publicdomainrelay/guest-capability-abc";
 import { Secp256k1Keypair } from "@atproto/crypto";
 import { explicitRelayUrls, marketNetwork } from "@publicdomainrelay/market-network-common";
 import { installMarketNetworkFetch } from "@publicdomainrelay/market-network-fetch";
-import { callbackRef, cliIdentityMode, cliMarketIdentity, vaultRefs } from "@publicdomainrelay/market-identity-abc";
-import type { BrowserOAuthClient, IdentityPrompt, IdentityVault, MarketIdentity, MarketIdentityMode } from "@publicdomainrelay/market-identity-abc";
+import { vaultRefs } from "@publicdomainrelay/market-identity-abc";
+import type { BrowserOAuthClient, IdentityVault, MarketIdentity, MarketIdentityMode, VaultRef } from "@publicdomainrelay/market-identity-abc";
 import { requesterAssociatingRepo, startMarketIdentityReconciler, vaultOAuthSessionStore } from "@publicdomainrelay/market-identity-atproto";
 import type { MarketIdentityHandle } from "@publicdomainrelay/market-identity-atproto";
-import { createMemoryIdentityVault } from "@publicdomainrelay/market-identity-memory";
 import { createKcpIdentityPrompt } from "@publicdomainrelay/identity-prompt-kcp";
-import { createTtyIdentityPrompt } from "@publicdomainrelay/identity-prompt-tty";
 import { createOpenBaoIdentityVault } from "@publicdomainrelay/market-identity-vault-openbao";
-import { createFileIdentityVault, createSessionFileIdentityVault } from "@publicdomainrelay/market-identity-vault-file";
+import { createOpenBaoServerResolver } from "@publicdomainrelay/openbao-server-kcp";
+import { createComputeContractKcpStore } from "@publicdomainrelay/compute-contract-kcp";
+import type { ComputeContract, ComputeContractPhase, NodeClaimContract } from "@publicdomainrelay/socialweb-computer-k8s-api";
 import cliArgsEnv from "./cli-args-env.ts";
 
-/** Structural policy spec; matches @publicdomainrelay/policy-engine PolicySpec. */
 interface PolicySpec {
   name: string;
   description?: string;
@@ -42,143 +36,105 @@ interface PolicySpec {
 }
 
 let runtimeConfig: Record<string, unknown> | null = null;
-try { runtimeConfig = (await import("./config.json", { with: { type: "json" } })).default; } catch { /* optional */ }
+try {
+  runtimeConfig = (await import("./config.json", { with: { type: "json" } })).default;
+} catch {
+  runtimeConfig = null;
+}
 const { options } = await new Command("CONFIG_PATH_REQUEST_VM_SSH", cliArgsEnv, runtimeConfig).resolve();
+const o: Record<string, any> = options;
 
-const removedFlags = removedTransportFlagsIn(options, ["user-data-transport", "fedproxy-host"]);
-if (removedFlags.length > 0) {
-  for (const err of removedFlags) console.error(err.message);
+if (!o.statusFile) {
+  console.error("request-vm-ssh runs only as the requester DenoPod of a MarketRequester application, in that application's own kcp: start a requester with `socialweb-computer run request`");
+  Deno.exit(2);
+}
+const kcpBase = typeof o.kcpServer === "string" ? o.kcpServer.split("/clusters/")[0] : undefined;
+o.marketIdentityKcpServer ||= kcpBase;
+o.computeContractKcpServer ||= kcpBase;
+o.identityVaultKcpServer ||= kcpBase;
+const missing = [
+  ["market-identity-kcp-server", o.marketIdentityKcpServer],
+  ["market-identity-kcp-workspace", o.marketIdentityKcpWorkspace],
+  ["compute-contract-kcp-server", o.computeContractKcpServer],
+  ["identity-vault-openbao-server", o.identityVaultOpenbaoServer],
+  ["identity-vault-kcp-server", o.identityVaultKcpServer],
+].filter(([, v]) => !v).map(([n]) => `--${n}`);
+if (missing.length > 0) {
+  console.error(`request-vm-ssh: ${missing.join(", ")} ${missing.length === 1 ? "is" : "are"} unset; the MarketRequester's profile renders them`);
   Deno.exit(2);
 }
 
-const label = (options.label as string) ?? "request-vm-ssh";
+const label = o.label as string;
 const logger = createLogger({ serviceName: label });
+const readCa = (path: string | undefined): string | undefined => path ? Deno.readTextFileSync(path) : undefined;
 
 const network = marketNetwork({
-  plcDirectoryUrl: options.plcDirectoryUrl as string | undefined,
-  ingressProxyHost: options.ingressProxyHost as string | undefined,
-  relayUrls: options.relayUrl as string | undefined,
-  firehoseUrls: options.firehoseUrl as string | undefined,
-  qrOrigin: options.qrOrigin as string | undefined,
+  plcDirectoryUrl: o.plcDirectoryUrl,
+  ingressProxyHost: o.ingressProxyHost,
+  relayUrls: o.relayUrl,
+  firehoseUrls: o.firehoseUrl,
+  qrOrigin: o.qrOrigin,
+  hosts: o.networkHosts,
 });
-const ingressProxyHost = network.ingressProxyHost;
 installMarketNetworkFetch({ network });
 
-const firehoseMode = (options.firehoseMode as string) || "off";
+const firehoseMode = (o.firehoseMode as string) || "off";
 const eventStreams = createDefaultATProtoEventStreamsClient({
   onlyRelays: explicitRelayUrls(network, firehoseMode),
   log: logger,
 });
 const relayUrls = eventStreams.relays.map((r) => r.url);
 
-const splitDids = (s: string | undefined): string[] =>
-  s ? s.split(",").map((d) => d.trim()).filter(Boolean) : [];
-const extraBidderDids = splitDids(options.bidderDids as string | undefined);
-const denyBidderDids = splitDids(options.denyBidderDids as string | undefined);
-
-const userDataPath = options.userData as string | undefined;
-let baseUserData: string | undefined;
-if (userDataPath) {
-  baseUserData = await Deno.readTextFile(userDataPath);
-  logger.info("user_data_loaded", { userDataPath, bytes: baseUserData.length });
-}
-const rbac = !(options.skipRbac as boolean);
-
-const capabilities: GuestCapability[] = [];
-const secretsPath = options.secrets as string | undefined;
-if (secretsPath) {
-  const secrets = parseSecretsFile(await Deno.readTextFile(secretsPath));
-  capabilities.push(createSecretsCapability({ secrets, logger }));
-  logger.info("secrets_capability_enabled", {
-    secretsPath,
-    count: secrets.length,
-    paths: secrets.map((s) => s.path),
-  });
-}
-
-const dumbpipePath = await ensureDumbpipe(logger);
-logger.info("requester_starting", {
-  label,
-  ingressProxyHost,
-  relayUrls,
-  transport: "iroh",
-});
-
 const serve = createServe({
   logger,
-  tcp: (options.port != null) ? { addr: (options.serveAddr as string) || "127.0.0.1", port: options.port as number, certFile: options.tlsCertFile as string | undefined, keyFile: options.tlsKeyFile as string | undefined } : undefined,
-  unix: (options.serveUnix as string | undefined) ? { socketPath: options.serveUnix as string } : undefined,
-  portFile: options.portFile as string | undefined,
+  tcp: { addr: o.serveAddr, port: o.port ?? 0, certFile: o.tlsCertFile, keyFile: o.tlsKeyFile },
+  portFile: o.portFile,
+  listenersFile: o.listenersFile,
 });
+let healthDid = "";
+serve.app.get("/xrpc/_health", (c) => c.json({ ok: healthDid !== "", did: healthDid }, healthDid ? 200 : 503));
 
-// Resolve privateKeyHex from --private-key-hex-path if --private-key-hex not set.
-const privateKeyHexPath = options.privateKeyHexPath as string | undefined;
-let resolvedPrivateKeyHex = options.privateKeyHex as string | undefined;
-if (privateKeyHexPath && !resolvedPrivateKeyHex) {
-  try {
-    const content = await Deno.readTextFile(privateKeyHexPath).then((s) => s.trim());
-    if (content) {
-      resolvedPrivateKeyHex = content;
-      logger.info("private_key_loaded_from_path", { path: privateKeyHexPath });
-    }
-  } catch { /* file missing -- will generate and save below */ }
-}
-
-const identityName = options.marketIdentityName as string;
-const identityVaultMount = options.identityVaultMount as string;
-const stateDir = options.stateDir as string | undefined;
-const AUTO_REFRESH_THRESHOLD_MS = 3_600_000;
-
-function cliKcpIdentityPrompt(): IdentityPrompt | undefined {
-  if (!options.marketIdentityKcpServer) return undefined;
-  const workspace = options.marketIdentityKcpWorkspace as string | undefined;
-  if (!workspace) throw new Error("--market-identity-kcp-server needs --market-identity-kcp-workspace");
-  const caFile = options.marketIdentityKcpCaCertFile as string | undefined;
-  return createKcpIdentityPrompt({
-    server: options.marketIdentityKcpServer as string,
-    workspace,
-    tokenFile: options.marketIdentityKcpTokenFile as string | undefined,
-    caCert: caFile ? Deno.readTextFileSync(caFile) : undefined,
-  });
-}
-
-function loopbackPort(redirectUri: string | undefined): number {
-  const m = (redirectUri ?? "").match(/^https?:\/\/[^/]+:(\d+)/);
-  return m ? parseInt(m[1]) : 0;
-}
-
-const kcpIdentityPrompt = cliKcpIdentityPrompt();
-const cliMode: MarketIdentityMode | undefined = kcpIdentityPrompt ? undefined : cliIdentityMode({
-  mode: options.atprotoIdentityMode as string | undefined,
-  oauth: options.atprotoOauth as boolean,
-  oauthQr: options.atprotoOauthQr as boolean,
-  handle: options.atprotoHandle as string | undefined,
+const identityName = o.marketIdentityName as string;
+const vaultMount = o.identityVaultMount as string;
+const identityPrompt = createKcpIdentityPrompt({
+  server: o.marketIdentityKcpServer,
+  workspace: o.marketIdentityKcpWorkspace,
+  tokenFile: o.marketIdentityKcpTokenFile,
+  caCert: readCa(o.marketIdentityKcpCaCertFile),
 });
-logger.info("requester_identity_mode", { mode: cliMode ?? "kcp", name: identityName });
-
-let identityVault: IdentityVault = createMemoryIdentityVault();
-let identityRefs = vaultRefs(identityName, { mode: cliMode ?? "localRepo" }, identityVaultMount);
-const ttyIdentityPrompt = kcpIdentityPrompt ? undefined : createTtyIdentityPrompt({
-  identity: cliMarketIdentity(identityName, {
-    mode: cliMode!,
-    handle: options.atprotoHandle as string | undefined,
-    association: options.skipQr ? "Skip" : "RequireApproval",
-  }),
-  logger,
-  callbackPort: loopbackPort(options.oauthRedirectUri as string | undefined),
-  deliverCallback: (params) => identityVault.write(callbackRef(identityRefs.session), params),
+const contracts = createComputeContractKcpStore({
+  server: o.computeContractKcpServer,
+  workspace: o.computeContractKcpWorkspace,
+  tokenFile: o.computeContractKcpTokenFile,
+  caCert: readCa(o.computeContractKcpCaCertFile),
+  name: o.computeContractName,
 });
-const identityPrompt: IdentityPrompt = kcpIdentityPrompt ?? ttyIdentityPrompt!;
+const resolveVault = createOpenBaoServerResolver({
+  server: o.identityVaultKcpServer,
+  workspace: o.identityVaultKcpWorkspace,
+  tokenFile: o.identityVaultKcpTokenFile,
+  caCert: readCa(o.identityVaultKcpCaCertFile),
+  name: o.identityVaultOpenbaoServer,
+  client: o.identityVaultOpenbaoClient,
+  onWaiting: (reason) => logger.info("requester_vault_waiting", { openbaoserver: o.identityVaultOpenbaoServer, reason }),
+});
+const vault: IdentityVault = createOpenBaoIdentityVault({
+  endpoint: async () => {
+    const r = await resolveVault();
+    if (r.kvMount !== vaultMount) throw new Error(`openbaoserver client ${r.name} has kv mount ${r.kvMount}, not --identity-vault-mount ${vaultMount}`);
+    return { address: r.address, caCert: r.caCert, clientCert: r.clientCert, clientKey: r.clientKey, certLogin: r.certLogin };
+  },
+});
 
 async function identityObject(): Promise<MarketIdentity & { spec: NonNullable<MarketIdentity["spec"]> }> {
   let waiting = false;
-  while (true) {
+  for (;;) {
     const obj = await identityPrompt.get(identityName).catch((err) => {
       logger.warn("requester_identity_read_failed", { name: identityName, error: String(err) });
       return null;
     });
     if (obj?.spec) return obj as MarketIdentity & { spec: NonNullable<MarketIdentity["spec"]> };
-    if (!waiting) logger.info("requester_identity_waiting", { name: identityName, hint: "no MarketIdentity object with a spec yet" });
+    if (!waiting) logger.info("requester_identity_waiting", { name: identityName });
     waiting = true;
     await new Promise((r) => setTimeout(r, 1_000));
   }
@@ -186,44 +142,20 @@ async function identityObject(): Promise<MarketIdentity & { spec: NonNullable<Ma
 
 const identitySpec = (await identityObject()).spec;
 const identityMode: MarketIdentityMode = identitySpec.mode;
-identityRefs = vaultRefs(identityName, identitySpec, identityVaultMount);
+const identityRefs = vaultRefs(identityName, identitySpec, vaultMount);
+logger.info("requester_identity_mode", { mode: identityMode, name: identityName });
 
-function baseIdentityVault(): IdentityVault {
-  if (options.identityVaultAddress) {
-    const caFile = options.identityVaultCaCertFile as string | undefined;
-    return createOpenBaoIdentityVault({
-      address: options.identityVaultAddress as string,
-      tokenFile: options.identityVaultTokenFile as string | undefined,
-      caCert: caFile ? Deno.readTextFileSync(caFile) : undefined,
-      namespace: options.identityVaultNamespace as string | undefined,
-    });
-  }
-  if (options.identityVaultFile) return createFileIdentityVault({ path: options.identityVaultFile as string });
-  if (stateDir) return createFileIdentityVault({ path: `${stateDir}/identity-vault.json` });
-  logger.warn("requester_identity_store_in_memory", { hint: "pass --state-dir to keep the sign-in across runs" });
-  return createMemoryIdentityVault();
-}
-
-const baseVault = baseIdentityVault();
-identityVault = options.oauthSessionFile
-  ? createSessionFileIdentityVault({ base: baseVault, ref: identityRefs.session, path: options.oauthSessionFile as string })
-  : baseVault;
-
-async function identityKeyHex(): Promise<string> {
-  const generated = async () => Array.from(await (await Secp256k1Keypair.create({ exportable: true })).export()).map((b) => b.toString(16).padStart(2, "0")).join("");
-  if (identityMode !== "localRepo" && identityMode !== "oauthQr") return resolvedPrivateKeyHex ?? await generated();
-  const existing = await identityVault.read(identityRefs.keys);
-  const held = typeof existing?.repoKeyHex === "string" ? existing.repoKeyHex : undefined;
-  if (held) {
-    if (resolvedPrivateKeyHex && resolvedPrivateKeyHex !== held) logger.warn("requester_identity_key_from_vault", { hint: "the identity vault's key wins over --private-key-hex" });
-    return held;
-  }
-  const hex = resolvedPrivateKeyHex ?? await generated();
-  await identityVault.write(identityRefs.keys, { ...(existing ?? {}), repoKeyHex: hex });
+async function heldKeyHex(ref: VaultRef, field: string): Promise<string> {
+  const existing = await vault.read(ref);
+  const held = typeof existing?.[field] === "string" ? existing[field] as string : undefined;
+  if (held) return held;
+  const kp = await Secp256k1Keypair.create({ exportable: true });
+  const hex = Array.from(await kp.export()).map((b) => b.toString(16).padStart(2, "0")).join("");
+  await vault.write(ref, { ...(existing ?? {}), [field]: hex });
   return hex;
 }
 
-const privateKeyHex = await identityKeyHex();
+const privateKeyHex = await heldKeyHex(identityRefs.keys, "repoKeyHex");
 
 function requesterPDS(keyHex: string) {
   return createRequesterPDS({
@@ -231,10 +163,10 @@ function requesterPDS(keyHex: string) {
     serve,
     privateKeyHex: keyHex,
     plcDirectoryUrl: network.plcDirectoryUrl,
-    ingressProxyHost,
+    ingressProxyHost: network.ingressProxyHost,
     label,
-    storagePath: options.pdsStatePath as string | undefined,
-    skipIngress: !!options.noIngressProxy,
+    storagePath: o.pdsStatePath,
+    skipIngress: !!o.noIngressProxy,
   });
 }
 
@@ -242,16 +174,14 @@ let localPds: Awaited<ReturnType<typeof createRequesterPDS>> | undefined;
 let browserRequester: OAuthRequesterHandle | undefined;
 
 async function openBrowserClient(): Promise<BrowserOAuthClient> {
-  const handle = identitySpec.handle ?? options.atprotoHandle as string | undefined;
-  if (!handle) throw new Error("mode oauthBrowser needs a handle: --atproto-handle or spec.handle");
-  const sessionPath = options.oauthSessionPath as string | undefined;
+  const handle = identitySpec.handle;
+  if (!handle) throw new Error("mode oauthBrowser needs spec.identity.handle on the MarketRequester");
   const { loadOrGenerateKeypair } = await import("@publicdomainrelay/market-atproto");
   const requester = await createOAuthRequester({
     handle,
-    sessionPath,
-    sessionStore: sessionPath ? undefined : vaultOAuthSessionStore(identityVault, identityRefs.session),
-    clientId: options.oauthClientId as string | undefined,
-    redirectUri: options.oauthRedirectUri as string | undefined,
+    sessionStore: vaultOAuthSessionStore(vault, identityRefs.session),
+    clientId: o.oauthClientId,
+    redirectUri: o.oauthRedirectUri,
     scope: REQUESTER_OAUTH_SCOPE.join(" "),
     plcDirectoryUrl: network.plcDirectoryUrl,
     logger,
@@ -270,13 +200,13 @@ async function openBrowserClient(): Promise<BrowserOAuthClient> {
 const identityHandle: MarketIdentityHandle = startMarketIdentityReconciler({
   name: identityName,
   prompt: identityPrompt,
-  vault: identityVault,
+  vault,
   logger,
   plcDirectoryUrl: network.plcDirectoryUrl,
   qrOrigin: network.qrOrigin,
-  vaultMount: identityVaultMount,
-  autoRefreshThresholdMs: AUTO_REFRESH_THRESHOLD_MS,
-  oauthClientId: options.oauthSessionClientId as string | undefined,
+  vaultMount,
+  autoRefreshThresholdMs: 3_600_000,
+  oauthClientId: o.oauthSessionClientId,
   localRepo: {
     qrParam: "plc",
     open: async (repoKeyHex: string) => {
@@ -288,179 +218,234 @@ const identityHandle: MarketIdentityHandle = startMarketIdentityReconciler({
   oauthBrowser: { open: openBrowserClient },
 });
 
-async function signedIn() {
-  if (kcpIdentityPrompt) return await identityHandle.ready();
-  return await Promise.race([
-    identityHandle.ready(),
-    new Promise<never>((_, reject) => {
-      const poll = setInterval(async () => {
-        const obj = await identityPrompt.get(identityName);
-        if (obj?.status?.phase === "Failed") {
-          clearInterval(poll);
-          reject(new Error(`sign-in failed: ${obj.status.message ?? "unknown"}`));
-        }
-      }, 200);
-      identityHandle.ready().finally(() => clearInterval(poll));
-    }),
-  ]);
+function shutdown(): void {
+  eventStreams.close();
+  serve.shutdown();
+  identityHandle.stop().finally(() => Deno.exit());
 }
+Deno.addSignalListener("SIGINT", shutdown);
+Deno.addSignalListener("SIGTERM", shutdown);
 
-let ready: Awaited<ReturnType<typeof signedIn>>;
-try {
-  ready = await signedIn();
-} catch (err) {
-  logger.error("requester_sign_in_failed", { mode: identityMode, error: err instanceof Error ? err.message : String(err) });
-  await identityHandle.stop().catch(() => {});
-  ttyIdentityPrompt?.stop();
-  Deno.exit(1);
-}
+const ready = await identityHandle.ready();
 
 let pds: RequesterPDS;
-const isOAuth = !localPds;
 if (localPds) {
   pds = localPds;
 } else if (browserRequester) {
   pds = browserRequester.pds;
 } else {
   pds = await requesterPDS(privateKeyHex);
-  const did = ready.did;
-  const userAgent = Object.assign(createDelegatingAgent(did, () => identityHandle.agent()), { sessionData: { userDid: did } });
+  const userAgent = Object.assign(createDelegatingAgent(ready.did, () => identityHandle.agent()), { sessionData: { userDid: ready.did } });
   applyOAuthAgentToRequesterPDS(pds, userAgent, { log: (event, data) => logger.info(event, data) });
 }
+const marketDid = (pds as unknown as { oauthSession?: { userDid?: string } }).oauthSession?.userDid ?? pds.did;
+healthDid = marketDid;
+await serve.beginServe();
 logger.info("requester_identity_ready", { did: ready.did, handle: ready.handle, mode: identityMode, localRepo: !!localPds });
-
-if (privateKeyHexPath && (identityMode === "localRepo" || identityMode === "oauthQr")) {
-  try {
-    await Deno.writeTextFile(privateKeyHexPath, privateKeyHex);
-    if (!resolvedPrivateKeyHex) logger.info("private_key_generated_and_saved", { path: privateKeyHexPath });
-  } catch (err) {
-    logger.warn("private_key_save_failed", { path: privateKeyHexPath, error: String(err) });
-  }
-}
+await Deno.writeTextFile(`${o.statusFile}.tmp`, JSON.stringify({ did: marketDid, repoDid: pds.did, port: serve.tcpPort }) + "\n");
+await Deno.rename(`${o.statusFile}.tmp`, o.statusFile);
 
 const offeringDids = new Set<string>();
-const offeringWatcher = eventStreams.watch({
+eventStreams.watch({
   wantedCollections: [OFFERING_NSID],
-  onEvent: (e) => { if (e.operation !== "delete") offeringDids.add(e.did); },
-  log: logger,
-});
-logger.info("offering_firehose_watch_started", { relayCount: eventStreams.relays.length, jetstreamCount: eventStreams.jetstreams.length });
-
-// Watch own PDS for compute events (vm.onNetwork, vm.registerIdentity)
-const ownEventWatcher = eventStreams.watch({
-  wantedCollections: [EVENT_NSID],
   onEvent: (e) => {
-    if (e.operation === "delete") return;
-    logger.info("event_watcher", { collection: e.collection, did: e.did, rkey: e.rkey });
+    if (e.operation !== "delete") offeringDids.add(e.did);
   },
   log: logger,
 });
 
-// OAuth mode: the requester's market identity is the OAuth session user (every
-// market record is written as that user), NOT the ephemeral PDS keypair DID.
-const marketDid = (pds as unknown as { oauthSession?: { userDid?: string } }).oauthSession?.userDid ??
-  pds.did;
-logger.info("requester_ready", { did: marketDid, ingressRef: isOAuth ? "(oauth)" : pds.ingressRef, ingressProxyHost });
+const contractObject: ComputeContract = await contracts.waitForSpec((reason) =>
+  logger.info("requester_contract_waiting", { name: contracts.name, reason })
+);
+const spec = contractObject.spec!;
+const generation = contractObject.metadata?.generation;
+let state: ContractState | undefined = contractObject.status?.contract?.phase
+  ? contractObject.status.contract as unknown as ContractState
+  : undefined;
+let secretsUrl = contractObject.status?.secretsUrl;
+let secretsFetchedAt = contractObject.status?.secretsFetchedAt;
+let phaseNow: ComputeContractPhase = contractObject.status?.phase ?? "Pending";
+let messageNow = contractObject.status?.message ?? "";
 
-const origLog = console.log.bind(console);
-const origErr = console.error.bind(console);
-const origStderrWrite = Deno.stderr.write.bind(Deno.stderr);
-const origStdoutWrite = Deno.stdout.write.bind(Deno.stdout);
-const buf: Array<Uint8Array> = [];
-
-function pauseConsole(): void {
-  const capture = (...args: unknown[]) =>
-    buf.push(new TextEncoder().encode(args.map((a) => typeof a === "string" ? a : JSON.stringify(a)).join(" ") + "\n"));
-  console.log = capture;
-  console.error = capture;
-  Deno.stderr.write = (data: Uint8Array) => { buf.push(data); return Promise.resolve(data.length); };
-  Deno.stdout.write = (data: Uint8Array) => { buf.push(data); return Promise.resolve(data.length); };
-}
-
-async function resumeConsole(): Promise<void> {
-  console.log = origLog;
-  console.error = origErr;
-  Deno.stderr.write = origStderrWrite;
-  Deno.stdout.write = origStdoutWrite;
-  for (const chunk of buf) await origStderrWrite(chunk);
-  buf.length = 0;
-}
-
-function shutdown(): void {
-  eventStreams.close();
-  serve.shutdown();
-  ttyIdentityPrompt?.stop();
-  identityHandle.stop().finally(() => Deno.exit());
-}
-
-// Provisioning-only hold mode: the first SIGTERM/SIGINT releases the held VM
-// (runComputeContract then submits vm.delete and returns); only a signal after
-// that tears down without teardown. Without --hold the signal kills directly.
-const holdMode = Boolean(options.hold);
-const holdAbort = new AbortController();
-function onSignal(): void {
-  if (holdMode) {
-    logger.info("vm_hold_signal", {});
-    holdAbort.abort();
-  } else {
-    shutdown();
+async function writeStatus(phase: ComputeContractPhase, message: string): Promise<void> {
+  phaseNow = phase;
+  messageNow = message;
+  const status = {
+    observedGeneration: generation,
+    phase,
+    message,
+    ...(secretsUrl ? { secretsUrl } : {}),
+    ...(secretsFetchedAt ? { secretsFetchedAt } : {}),
+    ...(state ? { contract: state as unknown as NodeClaimContract } : {}),
+  };
+  for (let attempt = 1;; attempt++) {
+    try {
+      await contracts.writeStatus(status);
+      logger.info("requester_contract_status", { phase, message, contractPhase: state?.phase });
+      return;
+    } catch (err) {
+      if (attempt >= 10) throw err;
+      logger.warn("requester_contract_status_retry", { attempt, error: String(err) });
+      await new Promise((r) => setTimeout(r, 1_000));
+    }
   }
 }
-Deno.addSignalListener("SIGINT", onSignal);
-Deno.addSignalListener("SIGTERM", onSignal);
 
-if (holdMode && options.skipSsh) {
-  console.error("--hold requires SSH readiness (conflicts with --skip-ssh)");
-  Deno.exit(2);
+const idle = (): Promise<never> => new Promise<never>(() => {});
+
+if (state?.phase === "released" || contractObject.status?.phase === "Released") {
+  await writeStatus("Released", "the contract was released before this start");
+  await idle();
+}
+if (contractObject.status?.phase === "Failed" && !state?.receipt) {
+  logger.warn("requester_contract_failed_before", { message: contractObject.status?.message });
+  await idle();
 }
 
-const policyName = options.policy as string | undefined;
+const capabilities: GuestCapability[] = [];
+if (spec.secretsRef) {
+  const bundle = await vault.read(spec.secretsRef);
+  const text = typeof bundle?.bundle === "string" ? bundle.bundle : undefined;
+  if (!text) {
+    await writeStatus("Failed", `the secrets bundle ${spec.secretsRef.mount}/${spec.secretsRef.path} is not in the vault`);
+    await idle();
+  }
+  const secrets = parseSecretsFile(text!);
+  const keyHex = await heldKeyHex({ mount: spec.secretsRef.mount, path: `contracts/${contracts.name}/secrets-key` }, "privateKeyHex");
+  const capability = createSecretsCapability({ secrets, logger, privateKeyHex: keyHex });
+  const prepare = capability.prepare!.bind(capability);
+  capability.prepare = async (ctx) => {
+    const prepared = await prepare(ctx);
+    secretsUrl = (prepared.ctx as { secretsUrl?: string } | undefined)?.secretsUrl;
+    return prepared;
+  };
+  capabilities.push(capability);
+  logger.info("secrets_capability_enabled", { count: secrets.length, paths: secrets.map((s) => s.path) });
+}
+
 let policy: PolicySpec | undefined;
-if (policyName) {
-  try {
-    policy = { name: policyName, args: parsePolicyArgs(options.policyArgs) };
-    const { createPolicyRegistry } = await import("@publicdomainrelay/policy-deno-typescript");
-    const { resolvePolicyName } = await import("@publicdomainrelay/policy-engine-evaluator");
-    resolvePolicyName(createPolicyRegistry(), policyName, "requester");
-  } catch (err) {
-    console.error(`invalid --policy: ${err}`);
-    Deno.exit(2);
-  }
+if (spec.policy) policy = { name: spec.policy, args: parsePolicyArgs(spec.policyArgs) };
+
+const guestBase: Record<string, unknown> = {};
+const guestCaPem = o.guestCaFile ? (await Deno.readTextFile(o.guestCaFile)).trim() : "";
+if (guestCaPem) guestBase.ca_certs = { trusted: [guestCaPem] };
+if (o.guestCurlHome) guestBase.bootcmd = [["systemctl", "set-environment", `CURL_HOME=${o.guestCurlHome}`]];
+const baseUserData = spec.userData ?? (Object.keys(guestBase).length > 0 ? "#cloud-config\n" + JSON.stringify(guestBase) : undefined);
+
+const splitList = (s: string | undefined): string[] => s ? s.split(",").map((x) => x.trim()).filter(Boolean) : [];
+const vmReadyTimeoutSec = (spec.vmReadyTimeoutSec ?? o.vmReadyTimeoutSec) as number;
+
+const track = (phase: ComputeContractPhase, what: string) => async (_event: unknown, s: ContractState) => {
+  state = s;
+  if (s.vmAddress && s.hostKeys) await writeStatus(phaseNow, messageNow);
+  else await writeStatus(phase, what);
+  return "continue" as const;
+};
+const handlers: ComputeRequestHandlers = {
+  onRfpSubmitted: track("Requesting", "the RFP is submitted"),
+  onAccepted: track("Requesting", "a bid is accepted"),
+  onReceipt: track("Requesting", "the winner's receipt is in"),
+  onNetwork: async (event, s) => {
+    state = s;
+    if (s.hostKeys) await writeStatus(phaseNow, messageNow);
+    else await writeStatus("Requesting", `the guest reported onNetwork at ${event.address}; waiting for its host keys`);
+    return "continue" as const;
+  },
+  onHostKeys: async (_event, s) => {
+    state = s;
+    await writeStatus(state.vmAddress ? "Held" : "Requesting", "the guest reported its ssh host keys");
+  },
+  onTerminated: async (event, s) => {
+    state = s;
+    await writeStatus("Released", `the bidder ended the contract: ${event.reason}`);
+  },
+  onSecretsFetched: async (event) => {
+    logger.info("requester_secrets_fetched", { ...event });
+    secretsFetchedAt = new Date().toISOString();
+    await writeStatus(phaseNow, messageNow);
+    return "continue" as const;
+  },
+};
+
+logger.info("requester_contract_start", { name: contracts.name, resume: state?.phase ?? null, vmName: spec.vmName });
+let handle: ComputeRequestHandle;
+try {
+  handle = await requestCompute(pds, {
+    logger,
+    ingressProxyHost: network.ingressProxyHost,
+    plcUrl: network.plcDirectoryUrl,
+    guestHostAliases: splitList(o.guestHostAliases),
+    vmName: spec.vmName,
+    sshAuthorizedKeys: spec.sshAuthorizedKeys ?? [],
+    vmReadyTimeoutSec,
+    extraBidderDids: [...splitList(o.bidderDids), ...(spec.bidderDids ?? [])],
+    denyBidderDids: spec.denyBidderDids ?? [],
+    relayUrls,
+    userData: baseUserData ? { base: baseUserData } : undefined,
+    rbac: !o.skipRbac,
+    capabilities,
+    policy,
+    policyEngine: o.policyEngine,
+    onlyRemotePolicyExec: o.onlyRemotePolicyExec,
+    allowUntrustedPolicyExec: o.allowUntrustedPolicyExec,
+    offeringWatcherDids: () => [...offeringDids],
+    eventStreams,
+    resume: state,
+  }, handlers);
+} catch (err) {
+  await writeStatus("Failed", `the contract flow threw: ${err instanceof Error ? err.message : String(err)}`);
+  await idle();
+  throw err;
+}
+state = handle.state;
+
+if (!state.receipt) {
+  await writeStatus("Failed", `no contract: ${state.outcome ?? state.error ?? state.phase}`);
+  await handle.dispose();
+  await idle();
 }
 
-const result = await runComputeContract(pds, {
-  logger,
-  ingressProxyHost,
-  plcUrl: network.plcDirectoryUrl,
-  guestHostAliases: ((options.guestHostAliases as string) || "")
-    .split(",").map((s: string) => s.trim()).filter(Boolean),
-  vmName: options.vmName as string | undefined,
-  skipSsh: options.skipSsh as boolean,
-  execProgram: options.exec as string,
-  keepVm: options.keepVm as boolean,
-  hold: holdMode,
-  holdAbort: holdAbort.signal,
-  sshAuthorizedKeys: ((options.sshAuthorizedKey ?? []) as (string | string[])[])
-    .flatMap((v: string | string[]) => Array.isArray(v) ? v : v.split(","))
-    .map((s: string) => s.trim()).filter(Boolean),
-  vmReadyTimeoutSec: options.vmReadyTimeoutSec as number,
-  extraBidderDids,
-  denyBidderDids,
-  relayUrls,
-  baseUserData,
-  rbac,
-  capabilities,
-  policy,
-  policyEngine: options.policyEngine as string | undefined,
-  onlyRemotePolicyExec: options.onlyRemotePolicyExec as boolean | undefined,
-  allowUntrustedPolicyExec: options.allowUntrustedPolicyExec as boolean | undefined,
-  offeringWatcherDids: () => [...offeringDids],
-  eventStreams,
-  sshProvider: createSshSessionProvider(logger, { dumbpipePath }),
-  onSshStart: () => pauseConsole(),
-  onSshEnd: () => resumeConsole(),
+if (state.vmAddress && !state.hostKeys && handle.hostKeys) {
+  const hostKeys = await Promise.race([
+    handle.hostKeys,
+    new Promise<null>((r) => setTimeout(() => r(null), vmReadyTimeoutSec * 1000)),
+  ]);
+  if (hostKeys) state = { ...state, hostKeys };
+}
+if (state.vmAddress && !state.hostKeys) {
+  state = await awaitComputeHostKeys(pds, state, { logger, eventStreams, plcUrl: network.plcDirectoryUrl, timeoutMs: 120_000 });
+}
+
+const ended = new AbortController();
+void handle.terminated?.then((s) => {
+  state = s;
+  ended.abort();
 });
 
-logger.info("result", result as unknown as Record<string, unknown>);
-await pds.dispose();
-shutdown();
+if (state.termination) {
+  await writeStatus("Released", `the bidder ended the contract: ${state.termination.reason}`);
+} else {
+  const held = state.vmAddress && state.hostKeys;
+  await writeStatus(
+    held ? "Held" : "Failed",
+    held
+      ? `held: the guest is on the network at ${state.vmAddress}; set spec.release to release it`
+      : `the guest did not report ${state.vmAddress ? "its ssh host keys" : "onNetwork"} (${state.outcome ?? state.error ?? state.phase}); set spec.release to release the contract`,
+  );
+  const releaseAsked = await contracts.waitFor((c) => c.spec?.release === true, ended.signal);
+  if (releaseAsked && !(state as ContractState).termination) {
+    await writeStatus("Releasing", "submitting vm.delete to the winner");
+    state = await releaseCompute(pds, state, { logger, capabilities: handle.capabilities });
+    await handle.dispose();
+    const ok = state.release?.ok === true;
+    await writeStatus(
+      ok ? "Released" : "Failed",
+      ok ? `vm.delete accepted (${state.release?.status})` : `vm.delete failed: ${state.error ?? state.release?.status}`,
+    );
+  } else {
+    await releaseCompute(pds, state, { logger, capabilities: handle.capabilities });
+    await handle.dispose();
+    await writeStatus("Released", `the bidder ended the contract: ${(state as ContractState).termination?.reason ?? "unknown"}`);
+  }
+}
+await idle();
