@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/assets"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/bootstrap"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clicfg"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/denorun"
@@ -23,6 +24,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devsup"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostos"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/pgunit"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/portallocator"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/stack/denoruntime"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/versions"
@@ -115,20 +117,39 @@ func coreSpec(rec *devinstance.Record, exe string, readyTimeout time.Duration) (
 	return bootstrap.Config{Layout: rec.Layout, Exe: exe, ReadyTimeout: readyTimeout}.CoreSpec(rec)
 }
 
-func postgresBin(vals clicfg.Values, profile string) (devinstance.Executable, error) {
-	if !bootstrap.NeedsPostgres(profile) {
-		return devinstance.Executable{}, nil
-	}
-	dir := vals.String("postgres-bin-dir")
-	if dir == "" || !filepath.IsAbs(dir) {
-		return devinstance.Executable{}, fmt.Errorf("--profile %s runs kine on postgres: postgres-bin-dir must name the absolute directory holding initdb, postgres and psql (never PATH)", profile)
-	}
-	for _, n := range []string{"initdb", "postgres", "psql"} {
-		if _, err := hashExe("postgres-bin-dir", filepath.Join(dir, n)); err != nil {
+func (a *app) postgresRoot(vals clicfg.Values, profile string) (devinstance.Executable, error) {
+	root := vals.String("postgres-root")
+	if assets.Release() {
+		if root != "" {
+			return devinstance.Executable{}, errors.New("postgres-root is a dev-build option; this release build runs its embedded postgres")
+		}
+		cache, err := a.assetCache(vals)
+		if err != nil {
+			return devinstance.Executable{}, err
+		}
+		e, err := assets.Resolve(assets.Options{Cache: cache, Log: a.log}, pgunit.Asset)
+		if err != nil {
+			return devinstance.Executable{}, err
+		}
+		if root, err = pgunit.RootOf(e.Path); err != nil {
 			return devinstance.Executable{}, err
 		}
 	}
-	return devinstance.Executable{Path: dir}, nil
+	if root == "" {
+		if bootstrap.NeedsPostgres(profile) {
+			return devinstance.Executable{}, fmt.Errorf("--profile %s runs kine on postgres: postgres-root must name the absolute root of the extracted postgres asset tree (versions.json postgres; never PATH)", profile)
+		}
+		return devinstance.Executable{}, nil
+	}
+	in, err := pgunit.FromRoot(root)
+	if err != nil {
+		return devinstance.Executable{}, err
+	}
+	e, err := hashExe("postgres-root", in.Path("postgres"))
+	if err != nil {
+		return devinstance.Executable{}, err
+	}
+	return devinstance.Executable{Path: root, SHA256: e.SHA256, Version: in.Version}, nil
 }
 
 func selfExe() (string, error) {
@@ -297,7 +318,7 @@ func runDevUp(ctx context.Context, a *app, vals clicfg.Values, rest []string) in
 		return a.fail(exitRefused, "dev up: ready-timeout: %v", err)
 	}
 	var kcpExe, kineExe devinstance.Executable
-	pgExe, err := postgresBin(vals, profile)
+	pgExe, err := a.postgresRoot(vals, profile)
 	if err != nil {
 		return a.fail(exitRefused, "dev up: %v", err)
 	}
@@ -362,7 +383,7 @@ func runDevUp(ctx context.Context, a *app, vals clicfg.Values, rest []string) in
 	rec.BaseWorkspace = vals.String("kcp-base-workspace")
 	rec.Executables = map[string]devinstance.Executable{"kcp": kcpExe, "kine": kineExe, "postgres": pgExe, denorun.Executable: denoExe, "socialweb-computer": {Path: exe}}
 	rec.SourceRoot = sourceRoot
-	bcfg := bootstrap.Config{Layout: l, KcpPath: kcpExe.Path, KinePath: kineExe.Path, PostgresBin: pgExe.Path, Exe: exe,
+	bcfg := bootstrap.Config{Layout: l, KcpPath: kcpExe.Path, KinePath: kineExe.Path, PostgresRoot: pgExe.Path, Exe: exe,
 		ReadyTimeout: readyTimeout, Log: a.log}
 	if err := bootstrap.Ensure(ctx, m, bcfg, &rec); err != nil {
 		devinstance.WriteJSON(l.Record, rec)

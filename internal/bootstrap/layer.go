@@ -12,6 +12,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpserver"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpstore"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/pgunit"
 )
 
 const (
@@ -34,7 +35,7 @@ type Params struct {
 	Exe          string
 	KcpPath      string
 	KinePath     string
-	PostgresBin  string
+	PostgresRoot string
 	FrontAddress string
 	Owner        string
 	InstanceDir  string
@@ -65,7 +66,7 @@ func DevApps(profile string, l devinstance.Layout) ([]table.App, error) {
 
 func (c Config) Params(a table.App) Params {
 	l := c.Layout
-	p := Params{App: a, Exe: c.Exe, KcpPath: c.KcpPath, KinePath: c.KinePath, PostgresBin: c.PostgresBin,
+	p := Params{App: a, Exe: c.Exe, KcpPath: c.KcpPath, KinePath: c.KinePath, PostgresRoot: c.PostgresRoot,
 		FrontAddress: c.frontAddress(), Owner: l.ID, InstanceDir: l.StateDir, ReadyTimeout: c.ReadyTimeout,
 		Dir: l.KcpDir(), Run: l.RuntimeDir, Logs: l.Logs}
 	if a.Key != l.Short {
@@ -89,7 +90,7 @@ func InstallParams(a table.App, state string) Params {
 	dir := AppDir(a, state)
 	bin := filepath.Join(dir, "bin")
 	return Params{App: a, Dir: dir, Run: filepath.Join(dir, "run"), Exe: filepath.Join(state, "bin", "current", CoreName),
-		KcpPath: filepath.Join(bin, "kcp"), KinePath: filepath.Join(bin, "kine"), PostgresBin: bin,
+		KcpPath: filepath.Join(bin, "kcp"), KinePath: filepath.Join(bin, "kine"), PostgresRoot: filepath.Join(bin, pgunit.Asset),
 		FrontAddress: InstallFrontAddr, Owner: a.Key, InstanceDir: state}
 }
 
@@ -110,6 +111,14 @@ func (p Params) FrontControl() string { return filepath.Join(p.Run, "front.sock"
 func (p Params) FrontState() string { return filepath.Join(p.Dir, "front.json") }
 
 func (p Params) EnvFile(unit string) string { return filepath.Join(p.Dir, unit+hostsvc.EnvFileSuffix) }
+
+func (p Params) BackupsDir() string { return filepath.Join(p.Dir, kcpstore.BackupsDir) }
+
+func (p Params) storeConfig(unit string, in pgunit.Install) kcpstore.PostgresConfig {
+	return kcpstore.PostgresConfig{Unit: unit, Slice: p.App.Names().Slice(), Install: in, Data: p.PgData(), SocketDir: p.PgSocketDir()}
+}
+
+func (p Params) Postgres() (pgunit.Install, error) { return pgunit.FromRoot(p.PostgresRoot) }
 
 func (p Params) shape() kcpserver.Shape {
 	if p.App.Role == table.RoleBidder && !p.App.DevCore {
@@ -132,8 +141,10 @@ func (p Params) Spec(e table.Entry, frontURL string) (hostsvc.UnitSpec, error) {
 	var err error
 	switch e.Kind {
 	case table.KindStore:
-		spec, err = kcpstore.PostgresSpec(kcpstore.PostgresConfig{Unit: e.Unit, Slice: n.Slice(), BinDir: p.PostgresBin,
-			Data: p.PgData(), SocketDir: p.PgSocketDir()})
+		var in pgunit.Install
+		if in, err = pgunit.At(p.PostgresRoot); err == nil {
+			spec, err = kcpstore.PostgresSpec(p.storeConfig(e.Unit, in))
+		}
 	case table.KindKine:
 		kc := kcpstore.KineConfig{Unit: e.Unit, Slice: n.Slice(), Exec: p.KinePath, Dir: p.KineDir(e.Slot),
 			Socket: p.KineSocket(e.Slot), PostgresSocketDir: p.PgSocketDir()}

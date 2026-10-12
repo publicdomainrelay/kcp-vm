@@ -50,10 +50,10 @@
       "description": "Dev profile: quick (kine on sqlite + one kcp slot) or prodlike (kine on a postgres unit + one kcp slot); market-network lands with M2-APP-CONTROLLER",
       "env": "SOCIALWEB_DEV_PROFILE"
     },
-    "postgres-bin-dir": {
+    "postgres-root": {
       "type": "string",
-      "description": "dev up --profile prodlike: absolute directory holding the initdb, postgres and psql of kcp's store (dev build: explicit, never PATH)",
-      "env": "SOCIALWEB_POSTGRES_BIN_DIR"
+      "description": "dev up: absolute root of the extracted postgres asset tree (versions.json postgres) that runs kcp's store in prodlike and every Postgres object (dev build: explicit, never PATH; a release build extracts its embedded postgres)",
+      "env": "SOCIALWEB_POSTGRES_ROOT"
     },
     "stand-ins": {
       "type": "string",

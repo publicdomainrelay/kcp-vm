@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -21,6 +20,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpserver"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpstore"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/pgunit"
 )
 
 const (
@@ -54,7 +54,7 @@ type Config struct {
 	Layout       devinstance.Layout
 	KcpPath      string
 	KinePath     string
-	PostgresBin  string
+	PostgresRoot string
 	Exe          string
 	FrontAddress string
 	ReadyTimeout time.Duration
@@ -114,33 +114,22 @@ func waitUnixSocket(ctx context.Context, path string) error {
 }
 
 func initdb(ctx context.Context, p Params) error {
-	if _, err := os.Stat(filepath.Join(p.PgData(), "PG_VERSION")); err == nil {
-		return nil
-	}
-	if err := os.MkdirAll(filepath.Dir(p.PgData()), 0o700); err != nil {
+	in, err := p.Postgres()
+	if err != nil {
 		return err
 	}
-	argv := kcpstore.InitdbArgv(p.PostgresBin, p.PgData())
-	out, err := exec.CommandContext(ctx, argv[0], argv[1:]...).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("bootstrap: initdb %s: %w\n%s", p.PgData(), err, out)
-	}
-	return nil
+	_, err = in.Initdb(ctx, p.storeConfig("", in).Server())
+	return err
 }
 
 func waitPostgres(ctx context.Context, p Params) error {
-	argv := kcpstore.ReadyArgv(p.PostgresBin, p.PgSocketDir())
-	for {
-		out, err := exec.CommandContext(ctx, argv[0], argv[1:]...).CombinedOutput()
-		if err == nil && strings.TrimSpace(string(out)) == "1" {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("bootstrap: postgres on %s never answered select 1: %w (last: %s)", p.PgSocketDir(), ctx.Err(), out)
-		case <-time.After(ReadyPoll):
-		}
+	if err := pgunit.WaitReady(ctx, p.PgSocketDir(), kcpstore.PostgresUser); err != nil {
+		return fmt.Errorf("bootstrap: %w", err)
 	}
+	if _, err := pgunit.CreateDatabase(ctx, p.PgSocketDir(), kcpstore.PostgresUser, kcpstore.KineDatabase); err != nil {
+		return fmt.Errorf("bootstrap: creating the kine database before any kine starts: %w", err)
+	}
+	return nil
 }
 
 func RSSKiB(pid int) int64 {

@@ -62,7 +62,7 @@ func runDevRoll(ctx context.Context, a *app, vals clicfg.Values, rest []string) 
 		return a.fail(exitFailed, "dev roll kcp: devsup of %s unreachable: %v", l.ID, err)
 	}
 	defer m.Close()
-	bcfg := bootstrap.Config{Layout: l, KcpPath: kcpExe.Path, KinePath: rec.Executables["kine"].Path, PostgresBin: rec.Executables["postgres"].Path,
+	bcfg := bootstrap.Config{Layout: l, KcpPath: kcpExe.Path, KinePath: rec.Executables["kine"].Path, PostgresRoot: rec.Executables["postgres"].Path,
 		Exe: rec.Executables["socialweb-computer"].Path, ReadyTimeout: readyTimeout, Log: a.log}
 	rep, rerr := bootstrap.Roll(ctx, m, bcfg, &rec)
 	werr := devinstance.WriteJSON(l.Record, rec)

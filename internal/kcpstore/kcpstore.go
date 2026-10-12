@@ -8,15 +8,14 @@ import (
 	"time"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/pgunit"
 )
 
 const (
-	KineStopTimeout     = 10 * time.Second
-	PostgresStopTimeout = 30 * time.Second
-	MaxSocketPath       = 107
-	PostgresSocketName  = ".s.PGSQL.5432"
-	PostgresUser        = "kcp"
-	KineDatabase        = "kine"
+	KineStopTimeout = 10 * time.Second
+	MaxSocketPath   = 107
+	PostgresUser    = "kcp"
+	KineDatabase    = "kine"
 )
 
 type KineConfig struct {
@@ -31,9 +30,13 @@ type KineConfig struct {
 type PostgresConfig struct {
 	Unit      string
 	Slice     string
-	BinDir    string
+	Install   pgunit.Install
 	Data      string
 	SocketDir string
+}
+
+func (c PostgresConfig) Server() pgunit.Server {
+	return pgunit.Server{Data: c.Data, SocketDir: c.SocketDir, User: PostgresUser}
 }
 
 func checkSocket(path string) error {
@@ -68,11 +71,11 @@ func KineSqliteArgv(c KineConfig) ([]string, error) {
 }
 
 func PostgresDSN(socketDir string) string {
-	return "postgres://" + PostgresUser + "@localhost/" + KineDatabase + "?host=" + socketDir + "&sslmode=disable"
+	return pgunit.DSN(socketDir, PostgresUser, KineDatabase)
 }
 
 func KinePostgresArgv(c KineConfig) ([]string, error) {
-	if err := checkSocket(filepath.Join(c.PostgresSocketDir, PostgresSocketName)); err != nil {
+	if err := pgunit.CheckSocketDir(c.PostgresSocketDir); err != nil {
 		return nil, err
 	}
 	return kineArgv(c, PostgresDSN(c.PostgresSocketDir))
@@ -110,29 +113,8 @@ func KinePostgresSpec(c KineConfig, store string) (hostsvc.UnitSpec, error) {
 }
 
 func PostgresSpec(c PostgresConfig) (hostsvc.UnitSpec, error) {
-	if !filepath.IsAbs(c.BinDir) || !filepath.IsAbs(c.Data) {
-		return hostsvc.UnitSpec{}, fmt.Errorf("kcpstore: the postgres bin dir and data dir must be absolute paths (got %q, %q)", c.BinDir, c.Data)
+	if c.Install.Bin == "" || !filepath.IsAbs(c.Install.Bin) {
+		return hostsvc.UnitSpec{}, fmt.Errorf("kcpstore: the postgres asset tree is unset or relative (%q)", c.Install.Root)
 	}
-	if err := checkSocket(filepath.Join(c.SocketDir, PostgresSocketName)); err != nil {
-		return hostsvc.UnitSpec{}, err
-	}
-	return hostsvc.UnitSpec{
-		Name:        c.Unit,
-		Description: "postgres holding one application instance's kcp store (unix socket only)",
-		Exec: []string{filepath.Join(c.BinDir, "postgres"), "-D", c.Data,
-			"-c", "listen_addresses=", "-c", "unix_socket_directories=" + c.SocketDir},
-		WorkDir:     c.Data,
-		Slice:       c.Slice,
-		Restart:     hostsvc.RestartOnFailure,
-		KillSignal:  syscall.SIGINT,
-		StopTimeout: PostgresStopTimeout,
-	}, nil
-}
-
-func InitdbArgv(binDir, data string) []string {
-	return []string{filepath.Join(binDir, "initdb"), "-D", data, "-U", PostgresUser, "--auth=trust", "-E", "UTF8"}
-}
-
-func ReadyArgv(binDir, socketDir string) []string {
-	return []string{filepath.Join(binDir, "psql"), "-h", socketDir, "-U", PostgresUser, "-d", "postgres", "-Atc", "select 1"}
+	return c.Install.UnitSpec(c.Unit, c.Slice, "postgres holding one application instance's kcp store (unix socket only)", c.Server())
 }

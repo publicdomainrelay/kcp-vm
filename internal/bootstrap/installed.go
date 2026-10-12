@@ -58,15 +58,13 @@ func retarget(link, target string) error {
 	return os.Rename(tmp, link)
 }
 
-func LinkAssets(p Params, kcp, kine, postgresBin string) error {
+func LinkAssets(p Params, kcp, kine, postgresRoot string) error {
 	links := map[string]string{p.KcpPath: kcp, p.KinePath: kine}
 	if p.App.Store == table.StorePostgres {
-		if postgresBin == "" {
-			return errors.New("bootstrap: a postgres store needs the postgres bin directory")
+		if postgresRoot == "" {
+			return errors.New("bootstrap: a postgres store needs the extracted postgres asset tree")
 		}
-		for _, n := range []string{"postgres", "initdb", "psql"} {
-			links[filepath.Join(p.PostgresBin, n)] = filepath.Join(postgresBin, n)
-		}
+		links[p.PostgresRoot] = postgresRoot
 	}
 	for link, target := range links {
 		if !filepath.IsAbs(target) {
