@@ -17,6 +17,7 @@
     "./lib/cloud-init-plugin-k3s-join",
     "./lib/socialweb-computer-k8s-downloads-fs",
     "./lib/socialweb-computer-k8s-nodeclaim-kcp",
+    "./lib/socialweb-computer-k8s-claim-keys-openbao",
     "./lib/socialweb-computer-k8s-node-market",
     "./lib/hono-factory-socialweb-computer-oauth",
     "./lib/hono-factory-socialweb-computer-k8s",
