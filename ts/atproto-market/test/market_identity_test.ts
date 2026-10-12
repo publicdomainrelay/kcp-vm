@@ -9,7 +9,7 @@ import { BADGE_BLUE_KEYS_NSID } from "@publicdomainrelay/market-lexicons";
 import type { IdentityVault, MarketIdentity, MarketIdentitySpec, VaultRef } from "@publicdomainrelay/market-identity-abc";
 import { findSecretMaterial } from "@publicdomainrelay/market-identity-abc";
 import { createMemoryIdentityVault } from "@publicdomainrelay/market-identity-memory";
-import { createKcpMarketIdentityObjects } from "@publicdomainrelay/market-identity-kcp";
+import { createKcpIdentityPrompt } from "@publicdomainrelay/identity-prompt-kcp";
 import {
   bidderAssociatingRepo,
   requesterAssociatingRepo,
@@ -40,8 +40,8 @@ function identity(spec: Omit<MarketIdentitySpec, "keysRef" | "sessionRef">): Mar
   };
 }
 
-function objectsOver(kcp: FakeKcp) {
-  return createKcpMarketIdentityObjects({ server: kcp.server, workspace: kcp.workspace, fetch: kcp.fetch });
+function promptOver(kcp: FakeKcp) {
+  return createKcpIdentityPrompt({ server: kcp.server, workspace: kcp.workspace, fetch: kcp.fetch });
 }
 
 function assertNoSecretInAnyWrite(kcp: FakeKcp, vault: IdentityVault & { dump(): string }, extra: string[] = []) {
@@ -69,7 +69,7 @@ function withNoExit<T>(fn: () => Promise<T>): Promise<T> {
 function baseOptions(kcp: FakeKcp, vault: IdentityVault, plcUrl: string, qrOrigin: string): MarketIdentityReconcilerOptions {
   return {
     name: "self",
-    objects: objectsOver(kcp),
+    prompt: promptOver(kcp),
     vault,
     logger,
     plcDirectoryUrl: plcUrl,
@@ -432,7 +432,7 @@ Deno.test("oauthBrowser: visitUrl surfaces in status and the callback the foregr
 Deno.test("no MarketIdentity write carries a key, token, DPoP key or code: the kcp port refuses one", async () => {
   const kcp = createFakeKcp();
   kcp.put(identity({ mode: "oauthQr" }));
-  const objects = objectsOver(kcp);
+  const prompt = promptOver(kcp);
   const jwt = "eyJhbGciOiJFUzI1NiJ9.eyJzdWIiOiJkaWQ6cGxjOmEifQ.c2lnbmF0dXJl";
   for (
     const status of [
@@ -442,7 +442,7 @@ Deno.test("no MarketIdentity write carries a key, token, DPoP key or code: the k
       { phase: "Ready", message: "a".repeat(64) },
     ]
   ) {
-    await assertRejects(() => objects.writeStatus("self", status as never), Error, "secret");
+    await assertRejects(() => prompt.writeStatus("self", status as never), Error, "secret");
   }
   assertEquals(kcp.writes.length, 0, "a refused status never reaches kcp");
   assertEquals(findSecretMaterial({ dpopPrivateJwk: { d: "x" } }).length > 0, true);

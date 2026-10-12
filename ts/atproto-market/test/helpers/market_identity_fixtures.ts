@@ -49,6 +49,8 @@ export interface FakeKcp {
   put(obj: MarketIdentity): void;
   read(name: string): MarketIdentity | undefined;
   patchSpec(name: string, edit: (spec: MarketIdentity["spec"] & object) => void): void;
+  bumpResourceVersion(name: string): void;
+  serve(): Promise<Served>;
 }
 
 export function createFakeKcp(workspace = "root:bidder"): FakeKcp {
@@ -77,6 +79,25 @@ export function createFakeKcp(workspace = "root:bidder"): FakeKcp {
       obj.metadata = { ...obj.metadata, resourceVersion: String(++version) };
       return Response.json(obj);
     }
+    if (req.method === "PATCH" && !m[2]) {
+      if (req.headers.get("content-type") !== "application/merge-patch+json") {
+        return Response.json({ kind: "Status", reason: "UnsupportedMediaType", code: 415 }, { status: 415 });
+      }
+      const patch = JSON.parse(body) as { metadata?: { resourceVersion?: string }; spec?: Record<string, unknown>; status?: unknown };
+      if (patch.status !== undefined) return Response.json({ kind: "Status", reason: "Invalid", code: 422 }, { status: 422 });
+      const want = patch.metadata?.resourceVersion;
+      if (want && want !== obj.metadata?.resourceVersion) {
+        return Response.json({ kind: "Status", reason: "Conflict", code: 409 }, { status: 409 });
+      }
+      const spec = { ...obj.spec } as Record<string, unknown>;
+      for (const [k, v] of Object.entries(patch.spec ?? {})) {
+        if (v === null) delete spec[k];
+        else spec[k] = v;
+      }
+      obj.spec = spec as MarketIdentity["spec"];
+      obj.metadata = { ...obj.metadata, generation: Number(obj.metadata?.generation ?? 1) + 1, resourceVersion: String(++version) };
+      return Response.json(obj);
+    }
     return Response.json({ kind: "Status", reason: "MethodNotAllowed", code: 405 }, { status: 405 });
   }
   const server = "https://kcp.test";
@@ -98,6 +119,13 @@ export function createFakeKcp(workspace = "root:bidder"): FakeKcp {
       edit(obj.spec);
       obj.metadata = { ...obj.metadata, generation: Number(obj.metadata?.generation ?? 1) + 1, resourceVersion: String(++version) };
       writes.push({ method: "PATCH", path: `${base}/${name}`, body: JSON.stringify({ spec: obj.spec }) });
+    },
+    bumpResourceVersion(name) {
+      const obj = objects.get(name);
+      if (obj) obj.metadata = { ...obj.metadata, resourceVersion: String(++version) };
+    },
+    serve() {
+      return serveOnPort0(handle);
     },
   };
 }
