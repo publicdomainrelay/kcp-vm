@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostos"
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/procgroup"
 )
 
 type Liveness int
@@ -148,9 +147,11 @@ func Reap(ctx context.Context, opts ReapOptions) error {
 	return Remove(opts.DataDir)
 }
 
+const DefaultKillGrace = 10 * time.Second
+
 func killPID(ctx context.Context, nodeName string, pid int, grace time.Duration) error {
 	if grace <= 0 {
-		grace = procgroup.DefaultGracePeriod
+		grace = DefaultKillGrace
 	}
 	if err := hostos.Signal(pid, false); err != nil {
 		return fmt.Errorf("SIGTERM to pid %d: %w", pid, err)

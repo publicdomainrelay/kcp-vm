@@ -176,18 +176,24 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 	}
 	restCfg, registry, alloc, networks := in.restCfg, in.registry, in.alloc, in.networks
 
-	postgres := newPostgresRegistry()
-
 	tokens := newTokenStore(cfg.StateDir, log)
 
-	deciderHost := materialiser.NewLocalHost(procgroup.Options{})
-	deciderHost.PostgresUp = postgres.up
+	units, err := clusterprovider.NewUnitsHost(clusterprovider.UnitsConfig{
+		RestConfig: restCfg,
+		Host:       cfg.KCPHost,
+		Workspace:  cfg.HostProcessWorkspace,
+		Prefix:     cfg.UnitPrefix,
+		StateDir:   cfg.StateDir,
+		Log:        log,
+	})
+	if err != nil {
+		return Deps{}, err
+	}
 
 	stack := append(clusterprovider.Stack{}, clusterprovider.DesignedStack...)
 	stack = append(stack, procgroup.ComponentCloudControllerManager)
 	stack = append(stack, clusterprovider.ExternalSecretsComponents...)
-	needsPostgres := stack.NeedsLocalPostgres(cfg.StoreEndpoint == "")
-	purposes, err := clusterprovider.PurposesFor(stack, needsPostgres)
+	purposes, err := clusterprovider.PurposesFor(stack, false)
 	if err != nil {
 		return Deps{}, err
 	}
@@ -205,7 +211,7 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 	if err != nil {
 		return Deps{}, err
 	}
-	links := clusterLinks(cfg, linkClient, registry, deciderHost, log)
+	links := clusterLinks(cfg, linkClient, registry, log)
 	if links != nil {
 		purposes = append(purposes, clusterprovider.LinkPurposes...)
 	}
@@ -218,8 +224,8 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 		Stack:                      stack,
 		Admin:                      adminForCluster(cfg.StateDir),
 		StateDir:                   cfg.StateDir,
-		StoreEndpoint:              storeEndpoint(cfg, postgres),
-		VaultStoreDSN:              postgres.vaultDSN,
+		StoreEndpoint:              storeEndpoint(cfg, units),
+		VaultStoreDSN:              vaultStoreDSN(units),
 		AdvertiseAddress:           cfg.AdvertiseAddress,
 		MarketDialled:              true,
 		BindAddress:                portallocator.LoopbackAdvertiseAddress,
@@ -236,8 +242,8 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 				port = lease.Port
 			}
 			dsn := ""
-			if pg, ok := postgres.get(cluster); ok {
-				dsn = pg.DSN()
+			if s, ok := units.Store(cluster); ok {
+				dsn = s.DSN()
 			}
 			return clusterprovider.CustodyClusterVault(ctx, clusterprovider.CustodyOptions{
 				StateDir:    cfg.StateDir,
@@ -250,11 +256,11 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 		Links:      links,
 	}
 	decider, err := materialiser.New(materialiser.Options{
-		Host:        deciderHost,
+		Host:        units,
 		Ports:       alloc,
 		Networks:    networks,
 		Steps:       clusterprovider.StepsFor(stackCfg),
-		Identity:    clusterprovider.GuardFor(guardDeps(cfg, tokens, postgres, log)),
+		Identity:    clusterprovider.GuardFor(guardDeps(cfg, tokens, units, log)),
 		NewInstance: minter,
 		Now:         time.Now,
 		Purposes:    purposes,
@@ -263,7 +269,6 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 		return Deps{}, err
 	}
 
-	var host materialiser.Host = deciderHost
 	if !cfg.ObserveOnly() {
 		if err := migrateLegacyKeys(ctx, registry, legacyKeys{
 			StateDir: cfg.StateDir,
@@ -274,20 +279,7 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 		}); err != nil {
 			return Deps{}, err
 		}
-		host, err = Startup(ctx, StartupOptions{
-			Allocator: alloc,
-			Registry:  registry,
-			StateDir:  cfg.StateDir,
-			Stack:     stackCfg,
-			Host:      deciderHost,
-			Decider:   decider,
-			EnsureStore: func(ctx context.Context, cluster string) error {
-				_, err := openStore(ctx, cfg, alloc, postgres, cluster, log, needsPostgres)
-				return err
-			},
-			Log: log,
-		})
-		if err != nil {
+		if err := Startup(ctx, registry, units, log); err != nil {
 			return Deps{}, err
 		}
 	}
@@ -356,13 +348,11 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 		Decider:     decider,
 		Allocator:   alloc,
 		Tenant:      tenantConfig,
-		Postgres:    postgres,
+		Units:       units,
 		NewInstance: minter,
 		NodeScale:   scaleDriver,
 
 		MountChild: mountChild,
-
-		PostgresNeeded: needsPostgres,
 
 		InstallTenant: tenantAddOns(cfg, log),
 	}
@@ -370,65 +360,33 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 		deps.Links = &linkRecorder{client: linkClient, registry: registry}
 	}
 	if !cfg.ObserveOnly() {
-		deps.Host = host
+		deps.Host = units
 		deps.NodeHosts = nodeHosts
 	}
 	return deps, nil
 }
 
-func storeEndpoint(cfg Config, postgres *postgresRegistry) func(cluster string) (string, error) {
+func storeEndpoint(cfg Config, units *clusterprovider.UnitsHost) func(cluster string) (string, error) {
 	if cfg.StoreEndpoint != "" {
 		return func(string) (string, error) { return cfg.StoreEndpoint, nil }
 	}
-	return postgres.dsn
+	return func(cluster string) (string, error) {
+		s, ok := units.Store(cluster)
+		if !ok {
+			return "", fmt.Errorf("clusterprovider: the Postgres object of %s is not Ready in this process, so there is no DSN to give kine", cluster)
+		}
+		return s.DSN(), nil
+	}
 }
 
-func openStore(ctx context.Context, cfg Config, alloc *portallocator.Allocator, postgres *postgresRegistry, cluster string, log *slog.Logger, needsPostgres bool) (string, error) {
-	if !needsPostgres {
-		log.Info("cluster provider: store supplied by the operator",
-			"cluster", cluster, "store", cfg.StoreEndpoint,
-			"durable", "wherever that endpoint lives, which is not this host's data dir")
-		return cfg.StoreEndpoint, nil
-	}
-	pg, ok := postgres.get(cluster)
-	if !ok {
-		name, err := clusterprovider.InstanceName(cluster)
-		if err != nil {
-			return "", err
+func vaultStoreDSN(units *clusterprovider.UnitsHost) func(cluster string) (string, error) {
+	return func(cluster string) (string, error) {
+		s, ok := units.Store(cluster)
+		if !ok {
+			return "", fmt.Errorf("clusterprovider: the Postgres object of %s is not Ready in this process, so there is no DSN to give the vault", cluster)
 		}
-		lease, err := alloc.Allocate(portallocator.Request{
-			Cluster: cluster,
-			Purpose: portallocator.PurposePostgres,
-		})
-		if err != nil {
-			return "", fmt.Errorf("clusterprovider: allocating the postgres port for %s: %w", cluster, err)
-		}
-		pg, err = clusterprovider.StartPostgres(ctx, clusterprovider.PostgresSpec{
-			Cluster:  cluster,
-			StateDir: filepath.Join(cfg.StateDir, name),
-			Port:     lease.Port,
-			BinDir:   cfg.PostgresBinDir,
-			Log:      log,
-		})
-		if err != nil {
-			return "", fmt.Errorf(
-				"clusterprovider: refusing to join %s without its per-cluster postgres. The store "+
-					"IS the cluster -- kine writes every object of this tenant cluster into it, and "+
-					"k3s dials kine rather than the store -- and it is ALSO the vault's store, so "+
-					"without it no vault starts and no identity bundle is custodied. The store the "+
-					"vault needs is this cluster's own embedded-postgres: %w", cluster, err)
-		}
-		log.Info("cluster provider: store", "cluster", cluster, "port", lease.Port,
-			"dataDir", pg.DataDir(), "durable", "on this host, so the cluster can be destroyed and re-provisioned")
-		postgres.set(cluster, pg)
+		return s.VaultDSN(), nil
 	}
-	if cfg.StoreEndpoint != "" {
-		log.Info("cluster provider: the kine store is supplied by the operator; the per-cluster "+
-			"postgres runs for the vault alone", "cluster", cluster, "store", cfg.StoreEndpoint,
-			"vaultStore", "this cluster's own embedded-postgres")
-		return cfg.StoreEndpoint, nil
-	}
-	return pg.DSN(), nil
 }
 
 func tenantClients(registry clusterprovider.Clusters, mint func(context.Context, clusterprovider.Ref, *v1alpha1.Cluster) (*rest.Config, error)) func(context.Context, string) (kubernetes.Interface, error) {
@@ -467,17 +425,17 @@ func tenantCluster(ctx context.Context, reg clusterprovider.Clusters, key string
 	return clusterprovider.Ref{}, nil, fmt.Errorf("clusterprovider: no Cluster CR with the key %s", key)
 }
 
-func guardDeps(cfg Config, tokens *tokenStore, postgres *postgresRegistry, log *slog.Logger) clusterprovider.GuardDeps {
+func guardDeps(cfg Config, tokens *tokenStore, units *clusterprovider.UnitsHost, log *slog.Logger) clusterprovider.GuardDeps {
 	return clusterprovider.GuardDeps{
 		StateDir: cfg.StateDir,
 		Token:    tokens.token,
-		HasRow:   bootstrapRowObserved(cfg, postgres, log),
+		HasRow:   bootstrapRowObserved(cfg, units, log),
 		DeleteRow: func(ctx context.Context, cluster string) error {
-			pg, err := postgresHandle(postgres, cluster)
-			if err != nil {
-				return err
+			s, ok := units.Store(cluster)
+			if !ok {
+				return fmt.Errorf("clusterprovider: the Postgres object of %s is not Ready in this process", cluster)
 			}
-			return pg.DeleteBootstrapRows(ctx)
+			return s.DeleteBootstrapRows(ctx)
 		},
 		SeedBundle: func(ctx context.Context, cluster string) error {
 			return clusterprovider.SeedBundleForWake(ctx, cfg.StateDir, cluster)
@@ -487,19 +445,7 @@ func guardDeps(cfg Config, tokens *tokenStore, postgres *postgresRegistry, log *
 	}
 }
 
-func postgresHandle(postgres *postgresRegistry, cluster string) (*clusterprovider.Postgres, error) {
-	pg, ok := postgres.get(cluster)
-	if !ok {
-		return nil, fmt.Errorf(
-			"clusterprovider: this cluster's store is a per-cluster postgres that THIS process "+
-				"started, and there is no handle for %s, so k3s's bootstrap row can be neither "+
-				"read nor deleted. A wrong answer here is fatal rather than degraded: k3s exits at "+
-				"boot with \"bootstrap data already found and encrypted with different token\"", cluster)
-	}
-	return pg, nil
-}
-
-func bootstrapRowObserved(cfg Config, postgres *postgresRegistry, log *slog.Logger) func(cluster string) bool {
+func bootstrapRowObserved(cfg Config, units *clusterprovider.UnitsHost, log *slog.Logger) func(cluster string) bool {
 	return func(cluster string) bool {
 		if cfg.StoreEndpoint != "" {
 			log.Warn("cluster provider: the store is external, so whether it holds k3s's bootstrap "+
@@ -507,15 +453,15 @@ func bootstrapRowObserved(cfg Config, postgres *postgresRegistry, log *slog.Logg
 				"cluster", cluster, "datastoreHasRow", cfg.DatastoreHasRow)
 			return cfg.DatastoreHasRow
 		}
-		pg, err := postgresHandle(postgres, cluster)
-		if err != nil {
-			log.Error("cluster provider: no store handle, so the bootstrap row cannot be observed",
-				"cluster", cluster, "error", err.Error())
+		s, ok := units.Store(cluster)
+		if !ok {
+			log.Error("cluster provider: the Postgres object is not Ready, so the bootstrap row cannot be observed",
+				"cluster", cluster)
 			return cfg.DatastoreHasRow
 		}
-		has, err := pg.HasBootstrapRow(context.Background())
+		has, err := s.HasBootstrapRow(context.Background())
 		if err != nil {
-			log.Error("cluster provider: reading the bootstrap row failed, so the operator's "+
+			log.Info("cluster provider: reading the bootstrap row failed, so the operator's "+
 				"declaration is used instead", "cluster", cluster, "error", err.Error(),
 				"datastoreHasRow", cfg.DatastoreHasRow)
 			return cfg.DatastoreHasRow

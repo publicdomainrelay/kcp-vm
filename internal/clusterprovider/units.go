@@ -1,0 +1,742 @@
+package clusterprovider
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"reflect"
+	"slices"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/rest"
+
+	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostprocess"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/pgunit"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/postgresctl"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/procgroup"
+)
+
+const (
+	LabelCluster       = "socialweb.computer/cluster"
+	LabelMember        = "socialweb.computer/member"
+	AnnotationVerified = "socialweb.computer/verified-invocation"
+	MemberFinalizer    = "socialweb.computer/cluster-member"
+	ControlPlaneFile   = "controlplane.json"
+	ActiveSlot         = "a"
+
+	DefaultPlaceTimeout = 3 * time.Minute
+	DefaultStoreTimeout = 3 * time.Minute
+	DefaultReapTimeout  = 2 * time.Minute
+	MemberOutputCap     = 64 << 20
+	memberStopGrace     = 30
+	memberOutputTail    = 1 << 20
+	unitPoll            = 500 * time.Millisecond
+)
+
+var ErrMemberLost = errors.New("clusterprovider: a member unit was lost while it was being placed")
+
+type UnitsConfig struct {
+	RestConfig *rest.Config
+
+	Host string
+
+	Workspace string
+
+	Prefix string
+
+	StateDir string
+
+	Resolve func(name string) (string, error)
+
+	PlaceTimeout time.Duration
+
+	StoreTimeout time.Duration
+
+	ReapTimeout time.Duration
+
+	Log *slog.Logger
+}
+
+type UnitsHost struct {
+	c   UnitsConfig
+	hps dynamic.ResourceInterface
+	pgs dynamic.ResourceInterface
+
+	mu     sync.Mutex
+	stores map[string]Store
+}
+
+type Store struct {
+	Object    string
+	Unit      string
+	SocketDir string
+	User      string
+}
+
+func (s Store) DSN() string { return pgunit.DSN(s.SocketDir, s.User, PostgresDatabase) }
+
+func (s Store) VaultDSN() string { return pgunit.DSN(s.SocketDir, s.User, PostgresVaultDatabase) }
+
+func (s Store) HasBootstrapRow(ctx context.Context) (bool, error) {
+	rows, err := pgunit.Query(ctx, s.SocketDir, s.User, PostgresDatabase,
+		"select count(*) from kine where name like '/bootstrap/%'")
+	if err != nil {
+		return false, fmt.Errorf("clusterprovider: reading k3s's bootstrap row out of %s: %w", s.Object, err)
+	}
+	if len(rows) == 0 || len(rows[0]) == 0 {
+		return false, fmt.Errorf("clusterprovider: %s answered no row count", s.Object)
+	}
+	n, err := strconv.Atoi(rows[0][0])
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+func (s Store) DeleteBootstrapRows(ctx context.Context) error {
+	_, err := pgunit.Query(ctx, s.SocketDir, s.User, PostgresDatabase, "delete from kine where name like '/bootstrap/%'")
+	return err
+}
+
+type ControlPlane struct {
+	ActiveSlot string               `json:"activeSlot"`
+	Slice      string               `json:"slice"`
+	Store      string               `json:"store"`
+	Members    []ControlPlaneMember `json:"members"`
+	WrittenAt  string               `json:"writtenAt"`
+}
+
+type ControlPlaneMember struct {
+	Name         string `json:"name"`
+	Unit         string `json:"unit"`
+	Object       string `json:"object"`
+	InvocationID string `json:"invocationID"`
+}
+
+func NewUnitsHost(c UnitsConfig) (*UnitsHost, error) {
+	if c.RestConfig == nil || c.Host == "" {
+		return nil, errors.New("clusterprovider: the units host needs the kcp the HostProcess supervisor watches")
+	}
+	if c.Prefix == "" {
+		return nil, errors.New("clusterprovider: the units host needs the unit prefix its supervisor places under")
+	}
+	if c.StateDir == "" {
+		return nil, errors.New("clusterprovider: the units host needs the state dir the cluster data dirs live in")
+	}
+	if c.Workspace == "" {
+		c.Workspace = hostprocess.DefaultWorkspace
+	}
+	if c.Resolve == nil {
+		c.Resolve = exec.LookPath
+	}
+	if c.PlaceTimeout == 0 {
+		c.PlaceTimeout = DefaultPlaceTimeout
+	}
+	if c.StoreTimeout == 0 {
+		c.StoreTimeout = DefaultStoreTimeout
+	}
+	if c.ReapTimeout == 0 {
+		c.ReapTimeout = DefaultReapTimeout
+	}
+	if c.Log == nil {
+		c.Log = slog.Default()
+	}
+	cfg := rest.CopyConfig(c.RestConfig)
+	cfg.Host = strings.TrimSuffix(c.Host, "/") + "/clusters/" + c.Workspace
+	dc, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return &UnitsHost{c: c, hps: dc.Resource(hostprocess.GVR), pgs: dc.Resource(postgresctl.GVR), stores: map[string]Store{}}, nil
+}
+
+func MemberName(c procgroup.Component) string {
+	switch c {
+	case procgroup.ComponentKine:
+		return "kine@" + ActiveSlot
+	case procgroup.ComponentK3s:
+		return "k3s@" + ActiveSlot
+	case procgroup.ComponentOpenBao:
+		return "bao"
+	case procgroup.ComponentApiserverLink:
+		return "link-apiserver"
+	case procgroup.ComponentOpenBaoLink:
+		return "link-openbao"
+	case procgroup.ComponentCloudControllerManager:
+		return "ccm"
+	case procgroup.ComponentExternalSecrets:
+		return "eso"
+	case procgroup.ComponentExternalSecretsWebhook:
+		return "esowh"
+	}
+	return string(c)
+}
+
+func (h *UnitsHost) Unit(key, member string) string {
+	return h.c.Prefix + "c-" + key + "-" + member + ".service"
+}
+
+func ObjectName(key, member string) string {
+	return "c-" + key + "-" + strings.ReplaceAll(member, "@", "-")
+}
+
+func (h *UnitsHost) Slice(key string) string {
+	return h.c.Prefix + "cluster-" + strings.ReplaceAll(key, "-", "_") + ".slice"
+}
+
+func StoreName(key string) string {
+	if len(key) <= 32 {
+		return key
+	}
+	sum := sha256.Sum256([]byte(key))
+	return strings.TrimRight(key[:23], "-") + "-" + hex.EncodeToString(sum[:])[:8]
+}
+
+func (h *UnitsHost) StoreUnit(key string) string {
+	return h.c.Prefix + postgresctl.ChildPrefix + StoreName(key) + ".service"
+}
+
+func decodeObj[T any](u *unstructured.Unstructured) (T, error) {
+	var o T
+	err := runtime.DefaultUnstructuredConverter.FromUnstructured(u.Object, &o)
+	return o, err
+}
+
+func encodeObj(o any, kind string) (*unstructured.Unstructured, error) {
+	m, err := runtime.DefaultUnstructuredConverter.ToUnstructured(o)
+	if err != nil {
+		return nil, err
+	}
+	u := &unstructured.Unstructured{Object: m}
+	u.SetAPIVersion(v1alpha1.GroupVersion.String())
+	u.SetKind(kind)
+	return u, nil
+}
+
+func (h *UnitsHost) EnsureStore(ctx context.Context, key string) (Store, error) {
+	name := StoreName(key)
+	cur, err := h.pgs.Get(ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		o := v1alpha1.Postgres{ObjectMeta: metav1.ObjectMeta{Name: name, Labels: map[string]string{LabelCluster: key}},
+			Spec: v1alpha1.PostgresSpec{Databases: []string{PostgresDatabase, PostgresVaultDatabase}}}
+		u, err := encodeObj(&o, "Postgres")
+		if err != nil {
+			return Store{}, err
+		}
+		if _, err := h.pgs.Create(ctx, u, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+			return Store{}, fmt.Errorf("clusterprovider: creating the Postgres object %s of %s: %w", name, key, err)
+		}
+		h.c.Log.Info("cluster provider: the cluster's store is a Postgres object", "cluster", key, "postgres", name,
+			"unit", h.StoreUnit(key))
+	} else if err != nil {
+		return Store{}, err
+	} else if cur.GetDeletionTimestamp() != nil {
+		return Store{}, fmt.Errorf("clusterprovider: the Postgres object %s of %s is being deleted", name, key)
+	}
+	deadline := time.Now().Add(h.c.StoreTimeout)
+	for {
+		u, err := h.pgs.Get(ctx, name, metav1.GetOptions{})
+		if err == nil {
+			o, derr := decodeObj[v1alpha1.Postgres](u)
+			if derr != nil {
+				return Store{}, derr
+			}
+			if o.Status.Phase == v1alpha1.PostgresPhaseReady && o.Status.SocketDir != "" {
+				s := Store{Object: name, Unit: h.StoreUnit(key), SocketDir: o.Status.SocketDir, User: o.Status.User}
+				h.mu.Lock()
+				h.stores[key] = s
+				h.mu.Unlock()
+				return s, nil
+			}
+			if time.Now().After(deadline) {
+				return Store{}, fmt.Errorf("%w: the Postgres object %s of %s is %s: %s", procgroup.ErrPostgresUnavailable,
+					name, key, o.Status.Phase, o.Status.Message)
+			}
+		} else if time.Now().After(deadline) {
+			return Store{}, err
+		}
+		select {
+		case <-ctx.Done():
+			return Store{}, ctx.Err()
+		case <-time.After(unitPoll):
+		}
+	}
+}
+
+func (h *UnitsHost) Store(key string) (Store, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	s, ok := h.stores[key]
+	return s, ok
+}
+
+func (h *UnitsHost) storeReady(ctx context.Context, key string) bool {
+	u, err := h.pgs.Get(ctx, StoreName(key), metav1.GetOptions{})
+	if err != nil {
+		return false
+	}
+	o, err := decodeObj[v1alpha1.Postgres](u)
+	return err == nil && o.Status.Phase == v1alpha1.PostgresPhaseReady
+}
+
+func (h *UnitsHost) DeleteStore(ctx context.Context, key string) error {
+	h.mu.Lock()
+	delete(h.stores, key)
+	h.mu.Unlock()
+	err := h.pgs.Delete(ctx, StoreName(key), metav1.DeleteOptions{})
+	if err != nil && !apierrors.IsNotFound(err) {
+		return err
+	}
+	return nil
+}
+
+func (h *UnitsHost) Members(ctx context.Context, key string) ([]v1alpha1.HostProcess, error) {
+	list, err := h.hps.List(ctx, metav1.ListOptions{LabelSelector: LabelCluster + "=" + key})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]v1alpha1.HostProcess, 0, len(list.Items))
+	for i := range list.Items {
+		o, err := decodeObj[v1alpha1.HostProcess](&list.Items[i])
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, o)
+	}
+	return out, nil
+}
+
+func (h *UnitsHost) member(ctx context.Context, key, member string) (*v1alpha1.HostProcess, error) {
+	u, err := h.hps.Get(ctx, ObjectName(key, member), metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	o, err := decodeObj[v1alpha1.HostProcess](u)
+	return &o, err
+}
+
+func Verified(o *v1alpha1.HostProcess) bool {
+	if o == nil || o.DeletionTimestamp != nil || o.Status.Phase != v1alpha1.HostProcessPhaseRunning || o.Status.Runtime == nil {
+		return false
+	}
+	inv := o.Status.Runtime.InvocationID
+	return inv != "" && o.Annotations[AnnotationVerified] == inv
+}
+
+func (h *UnitsHost) Live(key string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	m, err := h.Members(ctx, key)
+	return err == nil && len(m) > 0
+}
+
+func (h *UnitsHost) Unhealthy(ctx context.Context, key string) ([]string, error) {
+	members, err := h.Members(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	have := map[string]*v1alpha1.HostProcess{}
+	for i := range members {
+		have[members[i].Labels[LabelMember]] = &members[i]
+	}
+	var sick []string
+	if cp, err := h.readControlPlane(key); err == nil {
+		for _, m := range cp.Members {
+			if have[m.Name] == nil {
+				sick = append(sick, m.Name+": no HostProcess")
+			}
+		}
+	}
+	for _, o := range members {
+		name := o.Labels[LabelMember]
+		switch {
+		case o.DeletionTimestamp != nil:
+			sick = append(sick, name+": stopping")
+		case o.Status.Phase != v1alpha1.HostProcessPhaseRunning:
+			sick = append(sick, strings.TrimSpace(fmt.Sprintf("%s: %s %s %s", name, o.Status.Phase, o.Status.LostReason, o.Status.Message)))
+		case !Verified(&o):
+			sick = append(sick, fmt.Sprintf("%s: invocation %s is not verified since its restart", name, o.Status.Runtime.InvocationID))
+		}
+	}
+	slices.Sort(sick)
+	return sick, nil
+}
+
+func (h *UnitsHost) Adoption(ctx context.Context, key string) ([]string, error) {
+	members, err := h.Members(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(members))
+	for _, o := range members {
+		inv := ""
+		if o.Status.Runtime != nil {
+			inv = o.Status.Runtime.InvocationID
+		}
+		out = append(out, fmt.Sprintf("%s=%s invocation=%s verified=%t", o.Labels[LabelMember], o.Status.Phase, inv, Verified(&o)))
+	}
+	slices.Sort(out)
+	return out, nil
+}
+
+func memberDeps(h *UnitsHost, key string, c procgroup.Component) []string {
+	switch c {
+	case procgroup.ComponentKine, procgroup.ComponentOpenBao:
+		return []string{h.StoreUnit(key)}
+	case procgroup.ComponentK3s:
+		return []string{h.Unit(key, MemberName(procgroup.ComponentKine))}
+	case procgroup.ComponentOpenBaoLink:
+		return []string{h.Unit(key, MemberName(procgroup.ComponentOpenBao))}
+	}
+	return []string{h.Unit(key, MemberName(procgroup.ComponentK3s))}
+}
+
+func (h *UnitsHost) memberSpec(key string, c procgroup.Component, spec procgroup.Spec) (v1alpha1.HostProcessSpec, error) {
+	if len(spec.Argv) == 0 {
+		return v1alpha1.HostProcessSpec{}, fmt.Errorf("clusterprovider: %s of %s has no argv", c, key)
+	}
+	exe := spec.Argv[0]
+	if !filepath.IsAbs(exe) {
+		p, err := h.c.Resolve(exe)
+		if err != nil {
+			return v1alpha1.HostProcessSpec{}, fmt.Errorf("clusterprovider: %s of %s runs %s, which is not on this host: %w", c, key, exe, err)
+		}
+		if exe, err = filepath.Abs(p); err != nil {
+			return v1alpha1.HostProcessSpec{}, err
+		}
+	}
+	deps := memberDeps(h, key, c)
+	out := v1alpha1.HostProcessSpec{Unit: h.Unit(key, MemberName(c)), Exec: exe, Argv: append([]string(nil), spec.Argv[1:]...),
+		EnvFiles: append([]string(nil), spec.EnvFiles...), RestartPolicy: v1alpha1.HostProcessRestartOnFailure,
+		Stop:  &v1alpha1.HostProcessStop{Signal: "SIGTERM", GraceSeconds: memberStopGrace},
+		After: deps, Wants: deps, Slice: h.Slice(key), Placement: v1alpha1.HostProcessPlacementSupervisor}
+	if c == procgroup.ComponentApiserverLink || c == procgroup.ComponentOpenBaoLink {
+		out.RestartPolicy = v1alpha1.HostProcessRestartAlways
+	}
+	for _, kv := range spec.Env {
+		k, v, _ := strings.Cut(kv, "=")
+		out.Env = append(out.Env, v1alpha1.HostProcessEnv{Name: k, Value: v})
+	}
+	if spec.Log != "" {
+		out.Output = &v1alpha1.HostProcessOutput{Stdout: spec.Log, Stderr: spec.Log, CapBytes: MemberOutputCap}
+	}
+	return out, nil
+}
+
+func (h *UnitsHost) remove(ctx context.Context, name string) error {
+	for i := 0; i < 5; i++ {
+		u, err := h.hps.Get(ctx, name, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		fin := slices.DeleteFunc(u.GetFinalizers(), func(f string) bool { return f == MemberFinalizer })
+		if len(fin) != len(u.GetFinalizers()) {
+			u.SetFinalizers(fin)
+			if _, err := h.hps.Update(ctx, u, metav1.UpdateOptions{}); err != nil {
+				if apierrors.IsConflict(err) {
+					continue
+				}
+				return err
+			}
+		}
+		if u.GetDeletionTimestamp() == nil {
+			if err := h.hps.Delete(ctx, name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+				return err
+			}
+		}
+	}
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := h.hps.Get(ctx, name, metav1.GetOptions{}); apierrors.IsNotFound(err) {
+			return nil
+		}
+		time.Sleep(unitPoll)
+	}
+	return fmt.Errorf("clusterprovider: the HostProcess %s was not removed", name)
+}
+
+func rotateLog(path string) {
+	if path == "" {
+		return
+	}
+	if _, err := os.Stat(path); err == nil {
+		os.Rename(path, path+".prev")
+	}
+}
+
+func (h *UnitsHost) place(ctx context.Context, key, member string, cur *v1alpha1.HostProcess, want v1alpha1.HostProcessSpec) (*v1alpha1.HostProcess, error) {
+	name := ObjectName(key, member)
+	if cur != nil {
+		switch {
+		case cur.DeletionTimestamp != nil, cur.Status.Phase == v1alpha1.HostProcessPhaseLost, cur.Status.Phase == v1alpha1.HostProcessPhaseStopped:
+			h.c.Log.Warn("cluster provider: a member is not running; it is placed again", "cluster", key, "member", member,
+				"phase", cur.Status.Phase, "lostReason", cur.Status.LostReason, "message", cur.Status.Message)
+			if err := h.remove(ctx, name); err != nil {
+				return nil, err
+			}
+			cur = nil
+		case !reflect.DeepEqual(cur.Spec, want):
+			cur.Spec = want
+			u, err := encodeObj(cur, "HostProcess")
+			if err != nil {
+				return nil, err
+			}
+			if _, err := h.hps.Update(ctx, u, metav1.UpdateOptions{}); err != nil {
+				return nil, err
+			}
+			h.c.Log.Info("cluster provider: a member's spec changed; the running unit keeps the old one until it restarts",
+				"cluster", key, "member", member)
+		}
+	}
+	if cur == nil {
+		if want.Output != nil {
+			rotateLog(want.Output.Stdout)
+		}
+		o := v1alpha1.HostProcess{ObjectMeta: metav1.ObjectMeta{Name: name,
+			Labels:     map[string]string{LabelCluster: key, LabelMember: member},
+			Finalizers: []string{MemberFinalizer}}, Spec: want}
+		u, err := encodeObj(&o, "HostProcess")
+		if err != nil {
+			return nil, err
+		}
+		if _, err := h.hps.Create(ctx, u, metav1.CreateOptions{}); err != nil {
+			return nil, fmt.Errorf("clusterprovider: creating the HostProcess of %s of %s: %w", member, key, err)
+		}
+		h.c.Log.Info("cluster provider: member placed", "cluster", key, "member", member, "unit", want.Unit, "slice", want.Slice,
+			"after", want.After)
+	}
+	deadline := time.Now().Add(h.c.PlaceTimeout)
+	for {
+		o, err := h.member(ctx, key, member)
+		if err != nil {
+			return nil, err
+		}
+		if o != nil {
+			switch o.Status.Phase {
+			case v1alpha1.HostProcessPhaseRunning:
+				if o.Status.Runtime != nil && o.Status.Runtime.InvocationID != "" {
+					return o, nil
+				}
+			case v1alpha1.HostProcessPhaseLost:
+				return nil, fmt.Errorf("%w: %s of %s is Lost %s: %s", ErrMemberLost, member, key, o.Status.LostReason, o.Status.Message)
+			}
+			if time.Now().After(deadline) {
+				return nil, fmt.Errorf("clusterprovider: %s of %s is %s after %s: %s", member, key, o.Status.Phase, h.c.PlaceTimeout, o.Status.Message)
+			}
+		} else if time.Now().After(deadline) {
+			return nil, fmt.Errorf("clusterprovider: the HostProcess of %s of %s vanished while it was placed", member, key)
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(unitPoll):
+		}
+	}
+}
+
+func (h *UnitsHost) verify(ctx context.Context, key, member, inv string) error {
+	for i := 0; i < 5; i++ {
+		u, err := h.hps.Get(ctx, ObjectName(key, member), metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		ann := u.GetAnnotations()
+		if ann == nil {
+			ann = map[string]string{}
+		}
+		ann[AnnotationVerified] = inv
+		u.SetAnnotations(ann)
+		if _, err = h.hps.Update(ctx, u, metav1.UpdateOptions{}); err == nil || !apierrors.IsConflict(err) {
+			return err
+		}
+	}
+	return fmt.Errorf("clusterprovider: recording the verified invocation of %s of %s kept conflicting", member, key)
+}
+
+type unitMember struct{ path string }
+
+func (m unitMember) Output() string {
+	f, err := os.Open(m.path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	if st, err := f.Stat(); err == nil && st.Size() > memberOutputTail {
+		f.Seek(st.Size()-memberOutputTail, io.SeekStart)
+	}
+	b, _ := io.ReadAll(f)
+	return string(b)
+}
+
+func (h *UnitsHost) Spawn(ctx context.Context, key string, steps []procgroup.Step) error {
+	store, ok := h.Store(key)
+	if !ok {
+		var err error
+		if store, err = h.EnsureStore(ctx, key); err != nil {
+			return err
+		}
+	}
+	cp := ControlPlane{ActiveSlot: ActiveSlot, Slice: h.Slice(key), Store: store.Unit}
+	for _, st := range steps {
+		member := MemberName(st.Name)
+		if (st.Name == procgroup.ComponentKine || st.Name == procgroup.ComponentOpenBao) && !h.storeReady(ctx, key) {
+			return fmt.Errorf("%w (cluster %s, Postgres %s)", procgroup.ErrPostgresUnavailable, key, store.Object)
+		}
+		cur, err := h.member(ctx, key, member)
+		if err != nil {
+			return err
+		}
+		if Verified(cur) {
+			h.c.Log.Info("cluster provider: member adopted", "cluster", key, "member", member, "unit", cur.Spec.Unit,
+				"invocation", cur.Status.Runtime.InvocationID)
+			cp.Members = append(cp.Members, ControlPlaneMember{Name: member, Unit: cur.Spec.Unit, Object: cur.Name,
+				InvocationID: cur.Status.Runtime.InvocationID})
+			continue
+		}
+		spec := st.Spec
+		if st.Prepare != nil {
+			if spec, err = st.Prepare(ctx, spec); err != nil {
+				return fmt.Errorf("clusterprovider: preparing %s of %s: %w", member, key, err)
+			}
+		}
+		want, err := h.memberSpec(key, st.Name, spec)
+		if err != nil {
+			return err
+		}
+		o, err := h.place(ctx, key, member, cur, want)
+		if err != nil {
+			return err
+		}
+		if st.Ready == nil {
+			return fmt.Errorf("clusterprovider: %s of %s has no readiness gate", member, key)
+		}
+		if err := st.Ready(ctx, unitMember{path: spec.Log}); err != nil {
+			return fmt.Errorf("clusterprovider: %s of %s never became ready: %w", member, key, err)
+		}
+		inv := o.Status.Runtime.InvocationID
+		if err := h.verify(ctx, key, member, inv); err != nil {
+			return err
+		}
+		h.c.Log.Info("cluster provider: member ready", "cluster", key, "member", member, "unit", o.Spec.Unit, "invocation", inv)
+		cp.Members = append(cp.Members, ControlPlaneMember{Name: member, Unit: o.Spec.Unit, Object: o.Name, InvocationID: inv})
+	}
+	return h.writeControlPlane(key, cp)
+}
+
+func (h *UnitsHost) controlPlanePath(key string) (string, error) {
+	dir, err := ClusterDataDir(h.c.StateDir, key)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, ControlPlaneFile), nil
+}
+
+func (h *UnitsHost) readControlPlane(key string) (ControlPlane, error) {
+	var cp ControlPlane
+	p, err := h.controlPlanePath(key)
+	if err != nil {
+		return cp, err
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return cp, err
+	}
+	return cp, json.Unmarshal(b, &cp)
+}
+
+func (h *UnitsHost) writeControlPlane(key string, cp ControlPlane) error {
+	p, err := h.controlPlanePath(key)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		return err
+	}
+	cp.WrittenAt = time.Now().UTC().Format(time.RFC3339Nano)
+	b, err := json.MarshalIndent(cp, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := p + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, p)
+}
+
+func (h *UnitsHost) Reap(ctx context.Context, key string) error {
+	members, err := h.Members(ctx, key)
+	if err != nil {
+		return err
+	}
+	if len(members) == 0 {
+		return nil
+	}
+	for _, o := range members {
+		if o.DeletionTimestamp != nil {
+			continue
+		}
+		if err := h.hps.Delete(ctx, o.Name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+			return err
+		}
+	}
+	h.c.Log.Info("cluster provider: the cluster's slice is stopped; waiting for every member to be inactive",
+		"cluster", key, "slice", h.Slice(key), "members", len(members))
+	deadline := time.Now().Add(h.c.ReapTimeout)
+	for {
+		members, err = h.Members(ctx, key)
+		if err != nil {
+			return err
+		}
+		pending := 0
+		for _, o := range members {
+			switch o.Status.Phase {
+			case v1alpha1.HostProcessPhaseStopped, v1alpha1.HostProcessPhaseLost, v1alpha1.HostProcessPhaseFailed:
+				if err := h.remove(ctx, o.Name); err != nil {
+					return err
+				}
+			default:
+				pending++
+			}
+		}
+		if pending == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("clusterprovider: %d members of %s are still active after %s", pending, key, h.c.ReapTimeout)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(unitPoll):
+		}
+	}
+	if p, err := h.controlPlanePath(key); err == nil {
+		os.Remove(p)
+	}
+	h.c.Log.Info("cluster provider: every member of the cluster is stopped", "cluster", key, "slice", h.Slice(key))
+	return nil
+}

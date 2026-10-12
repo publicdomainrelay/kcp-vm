@@ -25,9 +25,7 @@ type Deps struct {
 
 	NewInstance func() string
 
-	Postgres *postgresRegistry
-
-	PostgresNeeded bool
+	Units *clusterprovider.UnitsHost
 
 	Allocator *portallocator.Allocator
 
@@ -66,9 +64,7 @@ type Provider struct {
 	alloc    *portallocator.Allocator
 	registry clusterprovider.Clusters
 
-	postgres *postgresRegistry
-
-	postgresNeeded bool
+	units *clusterprovider.UnitsHost
 
 	nodeScale *scaledriver.Driver
 
@@ -84,39 +80,27 @@ type Provider struct {
 
 const ShutdownTimeout = 60 * time.Second
 
-type clusterLister interface{ Clusters() []string }
-
 func (p *Provider) Shutdown() error {
 	if p.cfg.ObserveOnly() || p.host == nil {
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), ShutdownTimeout)
 	defer cancel()
-	p.log.Info("cluster provider: shutting down; the process group is reaped in reverse order "+
-		"rather than killed with this process", "join", p.cfg.Join, "timeout", ShutdownTimeout)
-	held := []string{p.cfg.Join}
-	if lister, ok := p.host.(clusterLister); ok {
-		if live := lister.Clusters(); len(live) > 0 {
-			held = live
-		}
+	p.log.Info("cluster provider: shutting down; every cluster's member units and Postgres object keep running and the next provider adopts them",
+		"join", p.cfg.Join)
+	return p.reapNodeHosts(ctx)
+}
+
+func (p *Provider) removeStore(ctx context.Context, key string) {
+	if p.units == nil {
+		return
 	}
-	for _, cluster := range held {
-		if cluster == "" {
-			continue
-		}
-		if err := p.host.Reap(ctx, cluster); err != nil {
-			return fmt.Errorf("clusterprovider: reaping %s on shutdown: %w", cluster, err)
-		}
+	if err := p.units.DeleteStore(ctx, key); err != nil {
+		p.log.Warn("cluster provider: deleting the Postgres object of a deleted cluster did not complete",
+			"key", key, "error", err.Error())
+		return
 	}
-	if err := p.reapNodeHosts(ctx); err != nil {
-		return err
-	}
-	if p.postgres == nil {
-		return nil
-	}
-	p.log.Info("cluster provider: stopping the store; it is a library child and not a Step, so "+
-		"nothing in the group's reap reaches it", "cluster", p.cfg.Join)
-	return p.postgres.stopAll(ctx)
+	p.log.Info("cluster provider: deleted the Postgres object of a deleted cluster; its data directory is kept", "key", key)
 }
 
 func (p *Provider) reapNodeHosts(ctx context.Context) error {
@@ -196,18 +180,17 @@ func Build(cfg Config, d Deps, log *slog.Logger) (*Provider, error) {
 	}
 
 	p := &Provider{
-		cfg:            cfg,
-		provider:       provider,
-		alloc:          d.Allocator,
-		registry:       d.Registry,
-		postgres:       d.Postgres,
-		postgresNeeded: d.PostgresNeeded,
-		nodeScale:      d.NodeScale,
-		nodes:          d.NodeHosts,
-		host:           d.Host,
-		links:          d.Links,
-		newInstance:    d.NewInstance,
-		log:            log,
+		cfg:         cfg,
+		provider:    provider,
+		alloc:       d.Allocator,
+		registry:    d.Registry,
+		units:       d.Units,
+		nodeScale:   d.NodeScale,
+		nodes:       d.NodeHosts,
+		host:        d.Host,
+		links:       d.Links,
+		newInstance: d.NewInstance,
+		log:         log,
 	}
 	p.report()
 	return p, nil
@@ -366,6 +349,7 @@ func (p *Provider) one(ctx context.Context, ref clusterprovider.Ref) error {
 		}
 		if cl.DeletionTimestamp != nil {
 			p.removeLinks(ctx, ref, key)
+			p.removeStore(ctx, key)
 		}
 		return nil
 	}
@@ -445,6 +429,7 @@ func (p *Provider) pass(ctx context.Context, ref clusterprovider.Ref, key string
 	}
 	if pass.Unfinalized {
 		p.removeLinks(ctx, ref, key)
+		p.removeStore(ctx, key)
 	}
 	if err != nil {
 		p.log.Error("cluster provider: the pass failed", "cluster", ref.Name, "key", key,
@@ -453,7 +438,17 @@ func (p *Provider) pass(ctx context.Context, ref clusterprovider.Ref, key string
 }
 
 func (p *Provider) store(ctx context.Context, cluster string) (string, error) {
-	return openStore(ctx, p.cfg, p.alloc, p.postgres, cluster, p.log, p.postgresNeeded)
+	if p.units == nil {
+		return p.cfg.StoreEndpoint, nil
+	}
+	s, err := p.units.EnsureStore(ctx, cluster)
+	if err != nil {
+		return "", err
+	}
+	if p.cfg.StoreEndpoint != "" {
+		return p.cfg.StoreEndpoint, nil
+	}
+	return s.DSN(), nil
 }
 
 func (p *Provider) lookup(ctx context.Context, name string) (clusterprovider.Ref, *v1alpha1.Cluster, error) {
@@ -544,5 +539,5 @@ func (p *Provider) storePlan() string {
 	if p.cfg.Datastore != "" {
 		return p.cfg.Datastore + " (supplied by the operator)"
 	}
-	return "per-cluster postgres on this host, launched by this join, data under " + p.cfg.StateDir
+	return "one Postgres object per cluster, placed by the HostProcess supervisor as " + p.cfg.UnitPrefix + "pg-<key>.service"
 }

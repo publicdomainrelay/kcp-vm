@@ -9,7 +9,6 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/identitybundle"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/instance"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/materialiser"
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/processrunner"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/procgroup"
 )
 
@@ -133,7 +132,7 @@ func HarvestAfterK3s(steps []procgroup.Step, harvest func(ctx context.Context, c
 		return nil, ErrNoHarvestSeam
 	}
 	inner := steps[idx].Ready
-	steps[idx].Ready = func(ctx context.Context, p *processrunner.Process) error {
+	steps[idx].Ready = func(ctx context.Context, p procgroup.Member) error {
 		if inner != nil {
 			if err := inner(ctx, p); err != nil {
 				return err

@@ -68,7 +68,7 @@ var ErrNoOpenBaoStore = errors.New(
 
 var ErrOpenBaoStoreNotPerCluster = errors.New(
 	"clusterstack: Spec.OpenBaoPostgresDSN must name this cluster's own postgres database " +
-		"(\"" + OpenBaoDatabase + "\"), with its own host, port and credential. A store shared with " +
+		"(\"" + OpenBaoDatabase + "\") over the unix socket of that cluster's Postgres object. A store shared with " +
 		"the objects kine writes is one database two owners write to, and a store that is another " +
 		"cluster's is a vault whose unseal material does not belong to it")
 
@@ -143,14 +143,11 @@ func openBaoStoreDSN(dsn string) (string, error) {
 	default:
 		return "", fmt.Errorf("%w (scheme %q, want postgres)", ErrOpenBaoStoreNotPerCluster, u.Scheme)
 	}
-	if u.Hostname() == "" || u.Port() == "" {
-		return "", fmt.Errorf("%w (%q names no host:port)", ErrOpenBaoStoreNotPerCluster, dsn)
+	if socket := u.Query().Get("host"); !strings.HasPrefix(socket, "/") {
+		return "", fmt.Errorf("%w (%q names no unix socket directory in its host parameter)", ErrOpenBaoStoreNotPerCluster, dsn)
 	}
-	if u.User == nil {
+	if u.User == nil || u.User.Username() == "" {
 		return "", fmt.Errorf("%w (%q carries no user)", ErrOpenBaoStoreNotPerCluster, dsn)
-	}
-	if _, ok := u.User.Password(); !ok {
-		return "", fmt.Errorf("%w (%q carries no password)", ErrOpenBaoStoreNotPerCluster, dsn)
 	}
 	if strings.TrimPrefix(u.Path, "/") != OpenBaoDatabase {
 		return "", fmt.Errorf("%w (%q names database %q)", ErrOpenBaoStoreNotPerCluster, dsn,

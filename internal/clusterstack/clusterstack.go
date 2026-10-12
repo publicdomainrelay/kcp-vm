@@ -13,8 +13,7 @@ import (
 )
 
 var ErrNotAProcess = errors.New(
-	"clusterstack: embedded-postgres is a Go library, not a binary; the component that " +
-		"links it starts it via the library's own Run/Stop and supplies PostgresPort")
+	"clusterstack: the cluster's postgres is its own Postgres object, not a member of the cluster's slice")
 
 var ErrMissingTokenFile = errors.New(
 	"clusterstack: TokenFile is required; k3s derives its bootstrap storage key from the " +
@@ -24,8 +23,6 @@ type Spec struct {
 	DataDir string
 
 	Cluster string
-
-	PostgresPort int
 
 	OpenBaoConfig string
 
@@ -136,7 +133,6 @@ func (a Audit) argv() []string {
 
 var (
 	ErrMissingDataDir    = errors.New("clusterstack: DataDir is required")
-	ErrMissingPort       = errors.New("clusterstack: PostgresPort is required")
 	ErrMissingEndpoint   = errors.New("clusterstack: StoreEndpoint is required")
 	ErrMissingKineListen = errors.New("clusterstack: KineListen is required: kine defaults to " +
 		"0.0.0.0:2379, so the first cluster takes it and every later one FATALs")
@@ -173,8 +169,6 @@ func (s Spec) Validate() error {
 	switch {
 	case s.DataDir == "":
 		return ErrMissingDataDir
-	case s.PostgresPort <= 0 || s.PostgresPort > 65535:
-		return fmt.Errorf("%w (got %d)", ErrMissingPort, s.PostgresPort)
 	case s.StoreEndpoint == "":
 		return ErrMissingEndpoint
 	case s.KineListen == "":
@@ -333,21 +327,6 @@ func (s Spec) OpenBaoArgv() ([]string, error) {
 		return nil, errors.New("clusterstack: OpenBaoConfig is required")
 	}
 	return []string{"bao", "server", "-config=" + s.OpenBaoConfig}, nil
-}
-
-type Postgres struct {
-	Port    int
-	DataDir string
-}
-
-func (s Spec) PostgresConfig() (Postgres, error) {
-	if err := s.Validate(); err != nil {
-		return Postgres{}, err
-	}
-	return Postgres{
-		Port:    s.PostgresPort,
-		DataDir: filepath.Join(s.DataDir, "postgres"),
-	}, nil
 }
 
 func TLSDir(dataDir string) string { return filepath.Join(dataDir, "server", "tls") }

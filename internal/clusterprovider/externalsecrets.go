@@ -20,7 +20,6 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/eso"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/materialiser"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/portallocator"
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/processrunner"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/procgroup"
 )
 
@@ -154,7 +153,7 @@ func prepareExternalSecrets(steps []procgroup.Step, cfg StackConfig, spec cluste
 	}
 	dataDir := spec.DataDir
 	webhookPort := spec.ExternalSecrets.WebhookPort
-	steps[idx].Prepare = func(ctx context.Context, ps processrunner.Spec) (processrunner.Spec, error) {
+	steps[idx].Prepare = func(ctx context.Context, ps procgroup.Spec) (procgroup.Spec, error) {
 		minted, err := MintTenantCredentialForClusterAs(ctx, cfg.StateDir, cluster, apiserver,
 			eso.ControllerUser, []string{eso.ControllerGroup}, DefaultCredentialValidity)
 		if err != nil {
@@ -230,7 +229,7 @@ func httpReady(ctx context.Context, url string) (bool, string) {
 	return true, ""
 }
 
-func waitExternalSecretsWebhook(ctx context.Context, spec clusterstack.Spec, p *processrunner.Process) error {
+func waitExternalSecretsWebhook(ctx context.Context, spec clusterstack.Spec, p procgroup.Member) error {
 	readyz := "http://" + net.JoinHostPort("127.0.0.1", strconv.Itoa(spec.ExternalSecrets.WebhookHealth)) + "/readyz"
 	serving := net.JoinHostPort("127.0.0.1", strconv.Itoa(spec.ExternalSecrets.WebhookPort))
 	last := "no answer"
@@ -272,7 +271,7 @@ func dialWebhookAsTheApiserverWould(spec clusterstack.Spec, addr string) error {
 	return conn.Close()
 }
 
-func waitExternalSecretsController(ctx context.Context, spec clusterstack.Spec, p *processrunner.Process) error {
+func waitExternalSecretsController(ctx context.Context, spec clusterstack.Spec, p procgroup.Member) error {
 	readyz := "http://" + net.JoinHostPort("127.0.0.1", strconv.Itoa(spec.ExternalSecrets.HealthPort)) + "/readyz"
 	last := "no answer"
 	return poll(ctx, func(ctx context.Context) (bool, error) {

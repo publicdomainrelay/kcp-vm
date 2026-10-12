@@ -17,7 +17,6 @@ import (
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clusterstack"
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/processrunner"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/procgroup"
 )
 
@@ -197,7 +196,7 @@ func prepareCloudControllerManager(steps []procgroup.Step, cfg StackConfig, clus
 	}
 	kubeconfig := clusterstack.CloudControllerManagerKubeconfig(dataDir)
 	inner := steps[idx].Ready
-	steps[idx].Ready = func(ctx context.Context, p *processrunner.Process) error {
+	steps[idx].Ready = func(ctx context.Context, p procgroup.Member) error {
 		if inner != nil {
 			if err := inner(ctx, p); err != nil {
 				return err

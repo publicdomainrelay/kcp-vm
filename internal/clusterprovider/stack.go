@@ -105,10 +105,6 @@ func StepsFor(cfg StackConfig) materialiser.StepBuilder {
 		if err != nil {
 			return nil, err
 		}
-		postgresPort, err := leasePort(l, portallocator.PurposePostgres, cluster)
-		if err != nil {
-			return nil, err
-		}
 		advPort, k3sSecure, err := K3sAPIPorts(l, cluster)
 		if err != nil {
 			return nil, err
@@ -150,7 +146,6 @@ func StepsFor(cfg StackConfig) materialiser.StepBuilder {
 		spec := clusterstack.Spec{
 			DataDir:                       dataDir,
 			Cluster:                       cluster,
-			PostgresPort:                  postgresPort,
 			OpenBaoConfig:                 clusterstack.OpenBaoConfigPath(dataDir),
 			StoreEndpoint:                 store,
 			KineListen:                    kineListen,

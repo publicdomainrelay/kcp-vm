@@ -13,7 +13,6 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/identitybundle"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/portallocator"
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/processrunner"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/procgroup"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/revocation"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/subnetallocator"
@@ -32,6 +31,7 @@ const (
 	ReasonSessionCap    = "SessionCapRefuses"
 	ReasonUp            = "ProcessGroupServing"
 	ReasonSettling      = "AwaitRevocationSettled"
+	ReasonUnhealthy     = "MembersUnhealthy"
 )
 
 const RequeueAfter = 2 * time.Second
@@ -43,7 +43,6 @@ const DefaultInitTimeout = 15 * time.Minute
 type Op string
 
 const (
-	OpReapOrphans    Op = "reap-orphans"
 	OpReap           Op = "reap"
 	OpAllocatePorts  Op = "allocate-ports"
 	OpSpawn          Op = "spawn"
@@ -98,13 +97,11 @@ type IdentityGuard func(ctx context.Context, o Observed) error
 type Host interface {
 	Live(cluster string) bool
 
-	Spawn(ctx context.Context, cluster string, steps []procgroup.Step) (*procgroup.Group, error)
+	Spawn(ctx context.Context, cluster string, steps []procgroup.Step) error
 
 	Reap(ctx context.Context, cluster string) error
 
-	Alive(cluster string) []string
-
-	Kill(ctx context.Context, handle string) error
+	Unhealthy(ctx context.Context, cluster string) ([]string, error)
 }
 
 type Options struct {
@@ -212,55 +209,6 @@ func (r *Reconciler) Reconcile(ctx context.Context, o Observed) (Result, error) 
 
 func StartupOwns(c v1alpha1.Cluster) bool {
 	return c.Spec.Running && c.DeletionTimestamp == nil && !halted(c.Status.Conditions)
-}
-
-func (r *Reconciler) Startup(ctx context.Context, observed []Observed) ([]Result, error) {
-	var out []Result
-	for _, o := range observed {
-		if !StartupOwns(o.Cluster) {
-			continue
-		}
-		if o.Now.IsZero() {
-			o.Now = r.opts.Now()
-		}
-		res, err := func() (Result, error) {
-			if err := r.opts.Host.Reap(ctx, o.Cluster.Name); err != nil {
-				return Result{}, err
-			}
-			return r.bringUp(ctx, o, true)
-		}()
-		out = append(out, res)
-		if err != nil {
-			return out, err
-		}
-	}
-	return out, nil
-}
-
-type forgetter interface {
-	Forget(cluster string)
-}
-
-func ReapSurvivors(ctx context.Context, h Host, cluster string) ([]string, error) {
-	handles := h.Alive(cluster)
-	if len(handles) == 0 {
-		return nil, nil
-	}
-	for _, handle := range handles {
-		if err := h.Kill(ctx, handle); err != nil {
-			return nil, err
-		}
-	}
-	f, ok := h.(forgetter)
-	if !ok {
-		return handles, fmt.Errorf(
-			"materialiser: %T reported %d live handles for %s and cannot forget them, so a "+
-				"handle that has already been killed stays in its answer; the next pass kills "+
-				"it again, and once the kernel hands that pid to another process the reap "+
-				"SIGTERMs a process that was never ours", h, len(handles), cluster)
-	}
-	f.Forget(cluster)
-	return handles, nil
 }
 
 func (r *Reconciler) off(ctx context.Context, o Observed) (Result, error) {
@@ -371,7 +319,20 @@ func (r *Reconciler) teardown(ctx context.Context, o Observed) (Result, error) {
 }
 
 func (r *Reconciler) on(ctx context.Context, o Observed) (Result, error) {
-	if r.opts.Host.Live(o.Cluster.Name) && o.Reachable {
+	live := r.opts.Host.Live(o.Cluster.Name)
+	if live {
+		sick, err := r.opts.Host.Unhealthy(ctx, o.Cluster.Name)
+		if err != nil {
+			return r.pending(o, "the members of this cluster could not be read: "+err.Error())
+		}
+		if len(sick) > 0 {
+			if readyTrue(o) {
+				return r.degraded(o, sick)
+			}
+			return r.bringUp(ctx, o, false)
+		}
+	}
+	if live && o.Reachable {
 		res := Result{
 			Phase:      o.Cluster.Status.Phase,
 			URL:        o.Cluster.Status.URL,
@@ -470,10 +431,6 @@ func (r *Reconciler) bringUp(ctx context.Context, o Observed, bump bool) (Result
 		ObservedGeneration: o.Cluster.Generation,
 	})
 
-	if err := r.killOrphans(ctx, o, &res); err != nil {
-		return res, err
-	}
-
 	if o.Cluster.Status.Phase == v1alpha1.ClusterInitializing {
 		if since := o.Now.Sub(readySince(o, o.Now)); since >= r.opts.InitTimeout {
 			return r.park(res, o, fmt.Sprintf("still Initializing after %s; parking in Unavailable", since))
@@ -513,7 +470,7 @@ func (r *Reconciler) bringUp(ctx context.Context, o Observed, bump bool) (Result
 	}
 	steps = guardBeforeK3s(steps, r.opts.Identity, o)
 
-	if _, err := r.opts.Host.Spawn(ctx, o.Cluster.Name, steps); err != nil {
+	if err := r.opts.Host.Spawn(ctx, o.Cluster.Name, steps); err != nil {
 		if isBundleFailure(err) {
 			res.Phase = v1alpha1.ClusterUnavailable
 			res.Halted = true
@@ -544,6 +501,30 @@ func (r *Reconciler) bringUp(ctx context.Context, o Observed, bump bool) (Result
 	}
 
 	return r.claimReady(res, o)
+}
+
+func readyTrue(o Observed) bool {
+	c := meta.FindStatusCondition(o.Cluster.Status.Conditions, ConditionReady)
+	return c != nil && c.Status == metav1.ConditionTrue
+}
+
+func (r *Reconciler) degraded(o Observed, sick []string) (Result, error) {
+	res := Result{
+		Phase:        v1alpha1.ClusterInitializing,
+		URL:          o.Cluster.Status.URL,
+		Instance:     o.Cluster.Status.Instance,
+		Conditions:   carry(o.Cluster.Status.Conditions),
+		RequeueAfter: RequeueAfter,
+	}
+	meta.SetStatusCondition(&res.Conditions, metav1.Condition{
+		Type:               ConditionReady,
+		Status:             metav1.ConditionFalse,
+		Reason:             ReasonUnhealthy,
+		Message:            fmt.Sprintf("not every member of the cluster's slice is running and verified; the next pass re-places them: %v", sick),
+		LastTransitionTime: metav1.NewTime(o.Now),
+		ObservedGeneration: o.Cluster.Generation,
+	})
+	return res, nil
 }
 
 func (r *Reconciler) pending(o Observed, msg string) (Result, error) {
@@ -583,18 +564,6 @@ func (r *Reconciler) park(res Result, o Observed, msg string) (Result, error) {
 		ObservedGeneration: o.Cluster.Generation,
 	})
 	return res, nil
-}
-
-func (r *Reconciler) killOrphans(ctx context.Context, o Observed, res *Result) error {
-	killed, err := ReapSurvivors(ctx, r.opts.Host, o.Cluster.Name)
-	if err != nil {
-		return err
-	}
-	if len(killed) == 0 || res == nil {
-		return nil
-	}
-	res.Ops = append(res.Ops, OpReapOrphans)
-	return nil
 }
 
 func (r *Reconciler) sessionCapRefuses(o Observed) (bool, string) {
@@ -675,7 +644,7 @@ func guardBeforeK3s(steps []procgroup.Step, guard IdentityGuard, o Observed) []p
 	}
 	prev := steps[idx-1]
 	inner := prev.Ready
-	prev.Ready = func(ctx context.Context, p *processrunner.Process) error {
+	prev.Ready = func(ctx context.Context, p procgroup.Member) error {
 		if err := inner(ctx, p); err != nil {
 			return err
 		}

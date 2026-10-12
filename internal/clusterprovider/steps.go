@@ -20,7 +20,6 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clusterstack"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/materialiser"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/portallocator"
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/processrunner"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/procgroup"
 )
 
@@ -64,17 +63,11 @@ func (s Stack) NeedsLocalPostgres(localStore bool) bool {
 	return localStore || s.Has(procgroup.ComponentOpenBao)
 }
 
-func componentLog(dataDir string, c procgroup.Component) (*os.File, error) {
+func componentLog(dataDir string, c procgroup.Component) (string, error) {
 	if err := os.MkdirAll(LogDir(dataDir), 0o700); err != nil {
-		return nil, fmt.Errorf("clusterprovider: the log directory for this cluster's components: %w", err)
+		return "", fmt.Errorf("clusterprovider: the log directory for this cluster's components: %w", err)
 	}
-	f, err := os.OpenFile(filepath.Join(LogDir(dataDir), string(c)+".log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-	if err != nil {
-		return nil, fmt.Errorf("clusterprovider: %s's log. A component whose output goes nowhere "+
-			"cannot be diagnosed: the readiness gate reports a dial that never answered, and the "+
-			"reason it never answered is in this file: %w", c, err)
-	}
-	return f, nil
+	return filepath.Join(LogDir(dataDir), string(c)+".log"), nil
 }
 
 func LogDir(dataDir string) string { return filepath.Join(dataDir, "logs") }
@@ -124,7 +117,7 @@ func StepsFrom(spec clusterstack.Spec, leases materialiser.Leases, stack Stack) 
 		}
 		steps = append(steps, procgroup.Step{
 			Name:  c,
-			Spec:  processrunner.Spec{Argv: argv, Env: stepEnv(spec, c), Output: log},
+			Spec:  procgroup.Spec{Argv: argv, Env: stepEnv(spec, c), Log: log},
 			Ready: gate(c, spec, bao, api),
 		})
 	}
@@ -145,8 +138,8 @@ func stepEnv(spec clusterstack.Spec, c procgroup.Component) []string {
 	}
 }
 
-func gate(c procgroup.Component, spec clusterstack.Spec, bao, api portallocator.Lease) func(context.Context, *processrunner.Process) error {
-	return func(ctx context.Context, p *processrunner.Process) error {
+func gate(c procgroup.Component, spec clusterstack.Spec, bao, api portallocator.Lease) func(context.Context, procgroup.Member) error {
+	return func(ctx context.Context, p procgroup.Member) error {
 		ctx, cancel := context.WithTimeout(ctx, GateTimeout)
 		defer cancel()
 		switch c {
@@ -307,7 +300,7 @@ func waitK3sControllers(ctx context.Context, dataDir string) error {
 	})
 }
 
-func waitCloudControllerManager(ctx context.Context, p *processrunner.Process) error {
+func waitCloudControllerManager(ctx context.Context, p procgroup.Member) error {
 	last := "no output yet"
 	return poll(ctx, func(context.Context) (bool, error) {
 		out := p.Output()

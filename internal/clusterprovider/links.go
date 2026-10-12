@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -18,7 +19,6 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/materialiser"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/openbao"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/portallocator"
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/processrunner"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/procgroup"
 )
 
@@ -50,8 +50,6 @@ type Links struct {
 	Dumbpipe string
 
 	Recorder LinkRecorder
-
-	Live func(cluster string) bool
 
 	Keys LinkKeys
 
@@ -118,12 +116,13 @@ func linksAfterK3s(steps []procgroup.Step, cfg StackConfig, cluster, dataDir str
 			links:   links,
 			cluster: cluster,
 			target:  t,
+			envFile: linkEnvFile(dataDir, t.service),
 			keys:    func(ctx context.Context) (clusterlink.KeyStore, error) { return keys(ctx, dataDir, vaultPort) },
 			random:  random,
 		}
 		steps = append(steps, procgroup.Step{
 			Name:    t.component,
-			Spec:    processrunner.Spec{Argv: clusterlink.Argv(links.Dumbpipe, t.port, linkPort), Output: output},
+			Spec:    procgroup.Spec{Argv: clusterlink.Argv(links.Dumbpipe, t.port, linkPort), Log: output},
 			Prepare: run.prepare,
 			Ready:   run.ready,
 		})
@@ -131,10 +130,15 @@ func linksAfterK3s(steps []procgroup.Step, cfg StackConfig, cluster, dataDir str
 	return steps, nil
 }
 
+func linkEnvFile(dataDir string, service v1alpha1.ClusterLinkService) string {
+	return filepath.Join(dataDir, "links", string(service)+".env")
+}
+
 type linkRun struct {
 	links   *Links
 	cluster string
 	target  linkTarget
+	envFile string
 	keys    func(ctx context.Context) (clusterlink.KeyStore, error)
 	random  io.Reader
 
@@ -151,7 +155,7 @@ func (r *linkRun) log() *slog.Logger {
 	return slog.Default()
 }
 
-func (r *linkRun) prepare(ctx context.Context, spec processrunner.Spec) (processrunner.Spec, error) {
+func (r *linkRun) prepare(ctx context.Context, spec procgroup.Spec) (procgroup.Spec, error) {
 	store, err := r.keys(ctx)
 	if err != nil {
 		return spec, fmt.Errorf("clusterprovider: the %s link of %s keeps its key in the cluster vault: %w",
@@ -164,11 +168,13 @@ func (r *linkRun) prepare(ctx context.Context, spec processrunner.Spec) (process
 	r.mu.Lock()
 	r.key = key
 	r.mu.Unlock()
-	env := spec.Env
-	if env == nil {
-		env = os.Environ()
+	if err := os.MkdirAll(filepath.Dir(r.envFile), 0o700); err != nil {
+		return spec, err
 	}
-	spec.Env = append(append([]string{}, env...), key.Env())
+	if err := os.WriteFile(r.envFile, []byte(key.Env()+"\n"), 0o600); err != nil {
+		return spec, fmt.Errorf("clusterprovider: the %s link of %s reads its key from %s: %w", r.target.service, r.cluster, r.envFile, err)
+	}
+	spec.EnvFiles = []string{r.envFile}
 	return spec, nil
 }
 
@@ -178,12 +184,10 @@ func (r *linkRun) currentKey() clusterlink.Key {
 	return r.key
 }
 
-func (r *linkRun) ready(ctx context.Context, p *processrunner.Process) error {
+func (r *linkRun) ready(ctx context.Context, p procgroup.Member) error {
 	ctx, cancel := context.WithTimeout(ctx, GateTimeout)
 	defer cancel()
 	key := r.currentKey()
-	exited := make(chan error, 1)
-	go func() { exited <- p.Wait() }()
 	tick := time.NewTicker(PollInterval)
 	defer tick.Stop()
 	for {
@@ -192,13 +196,15 @@ func (r *linkRun) ready(ctx context.Context, p *processrunner.Process) error {
 			if err != nil {
 				return err
 			}
-			go r.report(status, exited, p)
+			link := clusterlink.Object(r.cluster, r.target.service, r.target.port, status)
+			go func() {
+				wctx, done := context.WithTimeout(context.Background(), 5*time.Minute)
+				defer done()
+				r.retry(wctx, "Listening", func() error { return r.links.Recorder.WriteLink(wctx, link) })
+			}()
 			return nil
 		}
 		select {
-		case err := <-exited:
-			return fmt.Errorf("clusterprovider: the %s link of %s exited before it printed a ticket (%v): %s",
-				r.target.service, r.cluster, err, tail(p.Output()))
 		case <-ctx.Done():
 			return &errNotReady{
 				what: "the " + string(r.target.service) + " link of " + r.cluster + ". dumbpipe prints " +
@@ -208,35 +214,6 @@ func (r *linkRun) ready(ctx context.Context, p *processrunner.Process) error {
 		case <-tick.C:
 		}
 	}
-}
-
-func (r *linkRun) report(listening v1alpha1.ClusterLinkStatus, exited <-chan error, p *processrunner.Process) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	link := clusterlink.Object(r.cluster, r.target.service, r.target.port, listening)
-	written := make(chan struct{})
-	go func() {
-		defer close(written)
-		r.retry(ctx, "Listening", func() error { return r.links.Recorder.WriteLink(ctx, link) })
-	}()
-	err := <-exited
-	cancel()
-	<-written
-	key := r.currentKey()
-	status := clusterlink.Failed(key, fmt.Sprintf("dumbpipe exited (%v): %s", err, tail(p.Output())))
-	if r.links.Live != nil && !r.links.Live(r.cluster) {
-		status = v1alpha1.ClusterLinkStatus{
-			Phase:      v1alpha1.ClusterLinkPending,
-			EndpointID: key.EndpointID,
-			Did:        key.Did,
-			Message:    "the cluster's process group was stopped",
-		}
-	}
-	final, done := context.WithTimeout(context.Background(), GateTimeout)
-	defer done()
-	r.retry(final, string(status.Phase), func() error {
-		return r.links.Recorder.WriteLinkStatus(final, r.cluster, r.name(), status)
-	})
 }
 
 func (r *linkRun) retry(ctx context.Context, phase string, write func() error) {

@@ -93,6 +93,8 @@ func Exports(rec Record, leases []portallocator.Lease) []Export {
 		{"SOCIALWEB_KCP_ROOT", l.KcpRoot},
 		{"SOCIALWEB_KCP_BASE_WORKSPACE", rec.BaseWorkspace},
 		{"SOCIALWEB_KINE_URL", rec.KineURL},
+		{"SOCIALWEB_CLUSTERPROVIDER_UNIT_PREFIX", l.Names().HostProcessPrefix()},
+		{"SOCIALWEB_CLUSTERPROVIDER_HOSTPROCESS_WORKSPACE", rec.BaseWorkspace},
 	}
 	for _, u := range rec.Units {
 		if u.Port > 0 {

@@ -601,13 +601,14 @@ func writePostgresToVault(ctx context.Context, client *openbao.Client, dsn strin
 		password, _ = u.User.Password()
 	}
 	database := strings.TrimPrefix(u.Path, "/")
-	if username == "" || password == "" || database == "" {
-		return fmt.Errorf("clusterprovider: the postgres DSN %q carries no complete username, password and database", dsn)
+	if username == "" || database == "" {
+		return fmt.Errorf("clusterprovider: the postgres DSN %q carries no complete username and database", dsn)
 	}
 	if err := client.PutKV(ctx, vaultlayout.PathClusterPostgres, map[string]any{
 		"username": username,
 		"password": password,
 		"database": database,
+		"socket":   u.Query().Get("host"),
 	}); err != nil {
 		return fmt.Errorf("clusterprovider: writing the postgres credential into the cluster vault: %w", err)
 	}

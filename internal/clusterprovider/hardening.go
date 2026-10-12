@@ -14,7 +14,6 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpclient"
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/processrunner"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/procgroup"
 )
 
@@ -212,7 +211,7 @@ func hardenAfterK3s(steps []procgroup.Step, admin AdminClient, cluster, apiserve
 		return nil, ErrNoHardeningCredential
 	}
 	inner := steps[idx].Ready
-	steps[idx].Ready = func(ctx context.Context, p *processrunner.Process) error {
+	steps[idx].Ready = func(ctx context.Context, p procgroup.Member) error {
 		if inner != nil {
 			if err := inner(ctx, p); err != nil {
 				return err

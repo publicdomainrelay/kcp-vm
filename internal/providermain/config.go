@@ -11,6 +11,7 @@ import (
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/eso"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/foldmain"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostprocess"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpclient"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/portallocator"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/scale"
@@ -36,8 +37,9 @@ const (
 
 	envStateDir = "SOCIALWEB_CLUSTERPROVIDER_STATE_DIR"
 
-	envPostgresBinDir  = "SOCIALWEB_CLUSTERPROVIDER_POSTGRES_BIN_DIR"
-	envDatastoreHasRow = "SOCIALWEB_CLUSTERPROVIDER_DATASTORE_HAS_ROW"
+	envUnitPrefix           = "SOCIALWEB_CLUSTERPROVIDER_UNIT_PREFIX"
+	envHostProcessWorkspace = "SOCIALWEB_CLUSTERPROVIDER_HOSTPROCESS_WORKSPACE"
+	envDatastoreHasRow      = "SOCIALWEB_CLUSTERPROVIDER_DATASTORE_HAS_ROW"
 
 	envAdvertiseAddress = "SOCIALWEB_CLUSTERPROVIDER_ADVERTISE_ADDRESS"
 	envStoreEndpoint    = "SOCIALWEB_CLUSTERPROVIDER_STORE_ENDPOINT"
@@ -96,6 +98,8 @@ var retiredSubstrateInputs = []string{
 
 const DefaultGrantPath = "deploy/tenant-grant.yaml"
 
+const DefaultUnitPrefix = "socialweb-"
+
 const DefaultInterval = 2 * time.Second
 
 const DefaultReclaimGrace = 5 * time.Minute
@@ -121,7 +125,9 @@ type Config struct {
 
 	StateDir string
 
-	PostgresBinDir string
+	UnitPrefix string
+
+	HostProcessWorkspace string
 
 	AdvertiseAddress string
 
@@ -184,7 +190,8 @@ func loadFor(get func(string) string, inv foldmain.Invocation) (Config, error) {
 		Join:                   strings.TrimSpace(get(envJoin)),
 		Datastore:              strings.TrimSpace(get(envDatastore)),
 		StateDir:               strings.TrimSpace(get(envStateDir)),
-		PostgresBinDir:         strings.TrimSpace(get(envPostgresBinDir)),
+		UnitPrefix:             strings.TrimSpace(get(envUnitPrefix)),
+		HostProcessWorkspace:   strings.TrimSpace(get(envHostProcessWorkspace)),
 		AdvertiseAddress:       strings.TrimSpace(get(envAdvertiseAddress)),
 		MarketAdvertiseAddress: strings.TrimSpace(get(envMarketAdvertiseAddress)),
 		StoreEndpoint:          strings.TrimSpace(get(envStoreEndpoint)),
@@ -205,6 +212,12 @@ func loadFor(get func(string) string, inv foldmain.Invocation) (Config, error) {
 	}
 	if cfg.GrantPath == "" {
 		cfg.GrantPath = DefaultGrantPath
+	}
+	if cfg.UnitPrefix == "" {
+		cfg.UnitPrefix = DefaultUnitPrefix
+	}
+	if cfg.HostProcessWorkspace == "" {
+		cfg.HostProcessWorkspace = hostprocess.DefaultWorkspace
 	}
 	if cfg.MountContext == "" {
 		cfg.MountContext = kcpclient.ShardAdminContext
