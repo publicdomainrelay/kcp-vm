@@ -231,7 +231,7 @@ requirements:
   - id: FC-ONNETWORK-BASE-URL
     source:
       - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:306-336
-      - hono-compute-provider/lib/oidc-issuer-hono/mod.ts:331-344
+      - hono-compute-provider/lib/oidc-issuer-hono/mod.ts:469-482
     behaviour: >-
       With no issuer, the provider writes <SECRETS_PREFIX>/base_url (the report URL's origin, 0600) so the
       reporter does not fall back to the public dispatcher and 404. It is skipped whenever the user_data
@@ -247,7 +247,7 @@ requirements:
 
   - id: FC-OIDC-REPORTER-NO-HOSTNAME
     source:
-      - hono-compute-provider/lib/oidc-issuer-hono/mod.ts:346-403
+      - hono-compute-provider/lib/oidc-issuer-hono/mod.ts:484-541
       - atproto-market/lib/abc/compute-request/mod.ts:264-270
     behaviour: >-
       Live hat-8 2026-10-11T23:53Z (hono-compute-provider 033a8c0, atproto-market 6099aac): the reporter
@@ -255,8 +255,9 @@ requirements:
       timeout. Now it waits 600 s for /run/guest-fqdn, is ordered After=iroh.service with
       TimeoutStartSec=900, logs to journal+console, never falls back to the hostname, and on giving up dumps
       pending jobs and the transport units' status and fails the unit; the requester classifies a
-      single-label address as a hostname and keeps waiting. Still open: BASE_URL falls back to
-      https://xrpc.fedproxy.com when base_url is missing (mod.ts:358); the port fails closed instead.
+      single-label address as a hostname and keeps waiting. With no base_url the reporter now exits 1 instead
+      of falling back to a public dispatcher, and a provisioning whose issuer has no http(s) base URL is
+      refused at provision time (plan 0007 M3-OIDC-ISSUER-INSTANCE).
     go_side:
       meets: not-applicable
       detail: TypeScript enricher; carried in the seed bytes.
@@ -264,6 +265,7 @@ requirements:
       - hono-compute-provider/test/oidc_onnetwork_reporter_test.ts::"the oidc reporter never publishes the guest's hostname as its address"
       - hono-compute-provider/test/oidc_onnetwork_reporter_test.ts::"the oidc reporter waits for the transport long enough for a slow boot and says why when it gives up"
       - hono-compute-provider/test/compute_parity_test.ts::"the reporter has no fallback base URL"
+      - hono-compute-provider/test/oidc_issuer_instances_test.ts::"the on-network reporter has no hardcoded base URL and fails closed without one"
     status: port
 
   - id: FC-IROH-LISTENER-ORDERING
@@ -293,7 +295,7 @@ requirements:
       - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:30
       - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:38
       - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:617-632
-      - hono-compute-provider/lib/oidc-issuer-hono/mod.ts:322-328
+      - hono-compute-provider/lib/oidc-issuer-hono/mod.ts:460-466
       - atproto-market/lib/common/cloud-init-common/mod.ts:861-989
     behaviour: >-
       The bid config record (com.publicdomainrelay.temp.compute.config.wif.simple) carries accept_path,
@@ -558,7 +560,7 @@ requirements:
     source:
       - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:89-102
       - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:888-902
-      - hono-compute-provider/lib/oidc-issuer-hono/mod.ts:704-717
+      - hono-compute-provider/lib/oidc-issuer-hono/mod.ts:695-708
     behaviour: >-
       The issuer's droplet for a guest this process holds is {id, containerName, tags [oidc-sub:plc:<plc>,
       oidc-sub:role:<role>], networks.v4 [{ip_address, type public}]}; /v1/oidc/prove builds the subject
@@ -577,8 +579,8 @@ requirements:
 
   - id: FC-HOSTKEY-SCAN
     source:
-      - hono-compute-provider/lib/oidc-issuer-hono/mod.ts:446-483
-      - hono-compute-provider/lib/oidc-issuer-hono/mod.ts:520-544
+      - hono-compute-provider/lib/oidc-issuer-hono/mod.ts:106-152
+      - hono-compute-provider/lib/oidc-issuer-hono/mod.ts:577-600
     behaviour: >-
       provisioningValidate learns the guest's ed25519 host key by ssh-keyscan, through `container exec` into
       the runner container when the droplet names one, retrying 300 s, and checks the guest's prove-sshd
@@ -594,9 +596,9 @@ requirements:
 
   - id: FC-PROVISIONING-EXCHANGE
     source:
-      - hono-compute-provider/lib/oidc-issuer-hono/mod.ts:284-444
-      - hono-compute-provider/lib/oidc-issuer-hono/mod.ts:687-723
-      - hono-compute-provider/lib/oidc-issuer-hono/mod.ts:728-744
+      - hono-compute-provider/lib/oidc-issuer-hono/mod.ts:426-575
+      - hono-compute-provider/lib/oidc-issuer-hono/mod.ts:680-714
+      - hono-compute-provider/lib/oidc-issuer-hono/mod.ts:602-611
       - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:652-654
       - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:695
     behaviour: >-
@@ -618,7 +620,7 @@ requirements:
   - id: FC-IN-MEMORY-STATE
     source:
       - hono-compute-provider/lib/compute-provider-firecracker/mod.ts:566-570
-      - hono-compute-provider/lib/oidc-issuer-hono/mod.ts:251-264
+      - hono-compute-provider/lib/oidc-issuer-hono/mod.ts:65-78
     behaviour: >-
       The guests map, the rbac refs, the watches, the address index and the issuer's nonce store live in
       process memory: a bidder restart forgets every running guest (no watch, no droplet view, no prove), and
