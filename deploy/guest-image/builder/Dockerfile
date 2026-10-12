@@ -6,7 +6,7 @@ RUN rm -f /etc/apt/sources.list.d/debian.sources \
  && printf 'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/%s trixie main\ndeb [check-valid-until=no] http://snapshot.debian.org/archive/debian-security/%s trixie-security main\n' "$SNAPSHOT" "$SNAPSHOT" > /etc/apt/sources.list \
  && apt-get -o Acquire::Retries=5 update \
  && DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
-      bc bison flex make gcc libc6-dev libelf-dev libssl-dev cpio kmod perl python3 \
+      bc bison flex make gcc ccache libc6-dev libelf-dev libssl-dev cpio kmod perl python3 \
       gcc-aarch64-linux-gnu libc6-dev-arm64-cross \
       e2fsprogs libarchive13t64 xz-utils zstd ca-certificates \
  && apt-get clean \

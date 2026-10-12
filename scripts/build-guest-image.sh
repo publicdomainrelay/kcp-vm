@@ -6,7 +6,7 @@ versions="$root/internal/versions/versions.json"
 
 usage() {
   cat >&2 <<EOF
-usage: $0 --target <hypervisor>-<arch> [--out DIR] [--work DIR] [--jobs N] [--resolve-kernel-config]
+usage: $0 --target <hypervisor>-<arch> [--out DIR] [--work DIR] [--jobs N] [--clean] [--resolve-kernel-config]
 
 Builds one guest image (vmlinux, rootfs.ext4, image.json) from the pinned inputs in
 internal/versions/versions.json .guestImages, on any Linux host with docker or podman, curl,
@@ -19,6 +19,12 @@ no network, as the calling uid.
   --work     downloads, build trees and the composed tar (default \$GUEST_IMAGE_WORK or
              \$HOME/.tmp/guest-image-build; never /tmp, the build trees are several GB)
   --jobs     kernel make -j (default nproc)
+  --clean    delete WORK/<target>/kernel (the extracted source and its object files) first; the
+             kernel tree is kept between builds by default, so a rebuild is incremental, and every
+             compile goes through ccache in WORK/ccache
+  --no-ccache
+             compile without ccache (the reproducibility check builds twice with --clean --no-ccache,
+             so the second build cannot reuse the first build's objects)
   --resolve-kernel-config
              regenerate deploy/guest-kernel/<target>.config from firecracker's pinned configs and
              deploy/guest-kernel/socialweb.config, then stop
@@ -34,8 +40,12 @@ out=""
 work="${GUEST_IMAGE_WORK:-$HOME/.tmp/guest-image-build}"
 jobs="$(nproc)"
 resolve=0
+clean=0
+use_ccache=1
 while [ $# -gt 0 ]; do
   case "$1" in
+    --clean) clean=1; shift ;;
+    --no-ccache) use_ccache=0; shift ;;
     --target) target="$2"; shift 2 ;;
     --out) out="$2"; shift 2 ;;
     --work) work="$2"; shift 2 ;;
@@ -119,12 +129,24 @@ in_builder() {
     -e HOME=/build -e LANG=C.UTF-8 -e LC_ALL=C.UTF-8 -e SOURCE_DATE_EPOCH="$sde" "$@"
 }
 
-ksrc="$(fetch_pinned "$(pin '.guestImages.kernel.source.url')" "$(pin '.guestImages.kernel.source.sha256')")"
+ksha="$(pin '.guestImages.kernel.source.sha256')"
+ksrc="$(fetch_pinned "$(pin '.guestImages.kernel.source.url')" "$ksha")"
 
+ccache_dir="$work/ccache"
+mkdir -p "$ccache_dir"
+kcc="ccache ${cross}gcc"
+khostcc="ccache gcc"
+if [ "$use_ccache" -eq 0 ]; then
+  kcc="${cross}gcc"
+  khostcc="gcc"
+fi
 kbuild_env=(
   -e KBUILD_BUILD_TIMESTAMP="$(date -u -d "@$sde" '+%a %b %e %H:%M:%S UTC %Y')"
   -e KBUILD_BUILD_USER=socialweb -e KBUILD_BUILD_HOST=guest-image -e KBUILD_BUILD_VERSION=1
   -e ARCH="$karch" -e CROSS_COMPILE="$cross" -e KVER="$kver" -e JOBS="$jobs"
+  -e KCC="$kcc" -e KHOSTCC="$khostcc"
+  -e CCACHE_DIR=/ccache -e CCACHE_COMPILERCHECK=content -e CCACHE_MAXSIZE=20G
+  -v "$ccache_dir:/ccache"
 )
 
 if [ "$resolve" -eq 1 ]; then
@@ -138,7 +160,7 @@ if [ "$resolve" -eq 1 ]; then
     mkdir /build/src && tar -xJf /in/linux.tar.xz -C /build/src
     cd /build/src/linux-$KVER
     cp /build/merged.config .config
-    make -s olddefconfig
+    make -s CC="$KCC" HOSTCC="$KHOSTCC" olddefconfig
     cp .config /build/resolved.config'
   missing=""
   while IFS= read -r line; do
@@ -160,24 +182,38 @@ fi
 
 say "$target: kernel $kver"
 kdir="$tw/kernel"
-rm -rf "$kdir"
+[ "$clean" -eq 0 ] || rm -rf "$kdir"
+if [ -d "$kdir/src" ] && [ "$(cat "$kdir/source.sha256" 2>/dev/null)" != "$ksha" ]; then
+  say "$target: the kept kernel tree is from another source tarball; starting a fresh tree"
+  rm -rf "$kdir"
+fi
 mkdir -p "$kdir/out"
+rm -f "$kdir/out/vmlinux"
 cp "$kconfig" "$kdir/config"
+if [ ! -d "$kdir/src/linux-$kver" ]; then
+  say "$target: extracting kernel $kver into $kdir/src (kept for later builds)"
+  rm -rf "$kdir/src"
+  mkdir -p "$kdir/src.part"
+  tar -xJf "$ksrc" -C "$kdir/src.part"
+  mv "$kdir/src.part" "$kdir/src"
+  echo "$ksha" >"$kdir/source.sha256"
+else
+  say "$target: reusing the kernel tree and object files in $kdir/src (--clean for a fresh tree)"
+fi
 in_builder "${kbuild_env[@]}" -e KMAKE="$kmake" -e KIMAGE="$kimage" \
-  -v "$ksrc:/in/linux.tar.xz:ro" -v "$kdir:/build" "$builder" sh -euc '
-  mkdir /build/src && tar -xJf /in/linux.tar.xz -C /build/src
+  -v "$kdir:/build" "$builder" sh -euc '
   cd /build/src/linux-$KVER
-  cp /build/config .config
-  make -s olddefconfig
+  cmp -s /build/config .config || cp /build/config .config
+  make -s CC="$KCC" HOSTCC="$KHOSTCC" olddefconfig
   if ! cmp -s .config /build/config; then
     diff -u /build/config .config | head -40 >&2
     echo "the pinned kernel config is not a resolved config: run --resolve-kernel-config" >&2
     exit 1
   fi
-  make -s -j"$JOBS" "$KMAKE"
+  make -s -j"$JOBS" CC="$KCC" HOSTCC="$KHOSTCC" "$KMAKE"
+  ccache --show-stats --verbose 2>/dev/null | grep -Ei "^ *(hits|misses|cache size)" >&2 || true
   cp "$KIMAGE" /build/out/vmlinux'
 mv "$kdir/out/vmlinux" "$out/$target/vmlinux"
-rm -rf "$kdir"
 
 say "$target: rootfs"
 base_xz="$(fetch_pinned "$(pin "$t.base.url")" "$(pin "$t.base.sha256")")"

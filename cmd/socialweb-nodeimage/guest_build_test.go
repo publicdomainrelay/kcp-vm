@@ -23,6 +23,11 @@ func TestTwoBuildsOfAGuestImageAreByteIdenticalAndEqualTheirPins(t *testing.T) {
 		targets = strings.Split(only, ",")
 	}
 	script := filepath.Join(repoRootDir(t), "scripts", "build-guest-image.sh")
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	reproWork := filepath.Join(home, ".tmp", "guest-image-build-repro")
 	for _, target := range targets {
 		pin, err := guestimage.PinFor(target)
 		if err != nil {
@@ -31,7 +36,7 @@ func TestTwoBuildsOfAGuestImageAreByteIdenticalAndEqualTheirPins(t *testing.T) {
 		var sums [2]map[string]string
 		for i := range sums {
 			out := t.TempDir()
-			cmd := exec.Command(script, "--target", target, "--out", out)
+			cmd := exec.Command(script, "--target", target, "--out", out, "--work", reproWork, "--clean", "--no-ccache")
 			cmd.Stdout, cmd.Stderr = os.Stderr, os.Stderr
 			if err := cmd.Run(); err != nil {
 				t.Fatalf("build %d of %s: %v", i+1, target, err)
