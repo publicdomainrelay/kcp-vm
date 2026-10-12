@@ -517,6 +517,14 @@ func devUp(ctx context.Context, a *app, vals clicfg.Values, host bool) int {
 	}
 	rec.VM = nil
 	if !host {
+		vmExes, err := a.devVMExecutables(vals)
+		if err != nil {
+			lock.Close()
+			return a.fail(exitRefused, "%s: %v", verb, err)
+		}
+		for name, e := range vmExes {
+			rec.Executables[name] = e
+		}
 		if rec.VM, err = a.devVM(vals, l); err != nil {
 			lock.Close()
 			return a.fail(exitRefused, "%s: %v", verb, err)

@@ -174,6 +174,9 @@ func (n *networks) placeChild(ctx context.Context, c child) (devinstance.Record,
 	rec.Layout, rec.Profile, rec.Backend, rec.Devsup = c.layout, bootstrap.ProfileQuick, hostsvc.BackendProc, parent.Devsup
 	rec.Executables, rec.SourceRoot, rec.BaseWorkspace = parent.Executables, parent.SourceRoot, ""
 	rec.OpenBao, rec.Host, rec.Worktree = nil, false, ""
+	if rec.VM, err = ChildVM(c.app, c.layout, parent); err != nil {
+		return rec, err
+	}
 	rec.Parent = &devinstance.Parent{ID: parent.Layout.ID, Socket: parent.Layout.Socket, Kubeconfig: kubeconfig,
 		Workspace: devinstance.ChildWorkspace(c.id)}
 	remote, err := n.remote(c)

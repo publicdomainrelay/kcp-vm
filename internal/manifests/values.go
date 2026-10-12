@@ -45,6 +45,10 @@ type MarketBidder struct {
 	Vault            BidderVault
 	Firecracker      Firecracker
 	ExtraArgs        string
+	ProviderArgs     string
+	ProviderRead     string
+	ProviderWrite    string
+	ProviderRun      string
 }
 
 type BidderVault struct {

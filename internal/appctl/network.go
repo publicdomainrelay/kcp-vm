@@ -380,9 +380,16 @@ func (n *networks) ensureApp(ctx context.Context, app v1alpha1.NetworkApp, value
 			f := *app.Firecracker
 			fc = &f
 		}
+		var kcp *v1alpha1.KcpProvider
+		if app.Kcp != nil {
+			k := *app.Kcp
+			k.Handle = KcpHandle(app)
+			kcp = &k
+			fc = nil
+		}
 		root = &v1alpha1.MarketBidder{ObjectMeta: meta, Spec: v1alpha1.MarketBidderSpec{Profile: app.Profile, Network: &value,
 			Identity: v1alpha1.ApplicationIdentity{Mode: v1alpha1.MarketIdentityModePdsAccount, Handle: handle, PdsUrl: pdsURL},
-			Policy:   app.Policy, Firecracker: fc, Options: app.Options}}
+			Policy:   app.Policy, Firecracker: fc, Kcp: kcp, Options: app.Options}}
 	case v1alpha1.ApplicationKindMarketRequester:
 		root = &v1alpha1.MarketRequester{ObjectMeta: meta, Spec: v1alpha1.MarketRequesterSpec{Profile: app.Profile, Network: &value,
 			Identity: v1alpha1.ApplicationIdentity{Mode: v1alpha1.MarketIdentityModeLocalRepo}, Options: app.Options}}

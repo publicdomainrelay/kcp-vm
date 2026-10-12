@@ -92,6 +92,24 @@ var vmExecutables = []struct{ name, option string }{
 var devVMOptions = append([]string{"handle", "vm-host-backend", "vm-runtime-dir", "guest-image-source", "vm-stop-grace"},
 	devOnly("userns-stage-path", "pasta-path", "vmexec-path", "firecracker-path")...)
 
+func (a *app) devVMExecutables(vals clicfg.Values) (map[string]devinstance.Executable, error) {
+	out := map[string]devinstance.Executable{}
+	for _, x := range vmExecutables {
+		if !assets.Release() && vals.String(x.option) == "" {
+			continue
+		}
+		p, err := a.vmExe(vals, x.name, x.option)
+		if err != nil {
+			if assets.Release() {
+				continue
+			}
+			return nil, err
+		}
+		out[x.name] = devinstance.Executable{Path: p}
+	}
+	return out, nil
+}
+
 func (a *app) devVM(vals clicfg.Values, l devinstance.Layout) (*devinstance.VMRuntime, error) {
 	handle := vals.String("handle")
 	if handle == "" {
@@ -131,6 +149,9 @@ func (a *app) instanceVMRuntime(ctx context.Context, rec devinstance.Record) (vm
 	cfg := hostsvc.Config{Backend: v.Backend}
 	if v.Backend == hostsvc.BackendProc {
 		cfg.ProcSocket = rec.Layout.Socket
+		if rec.Parent != nil {
+			cfg.ProcSocket = rec.Parent.Socket
+		}
 	}
 	m, err := hostsvc.Open(ctx, cfg)
 	if err != nil {

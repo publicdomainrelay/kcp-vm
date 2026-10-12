@@ -54,13 +54,13 @@ func portOf(rawURL string) (int, error) {
 	return n, nil
 }
 
-func BidderValues(spec v1alpha1.MarketBidderSpec, stateDir string) (manifests.MarketBidder, error) {
+func BidderValues(spec v1alpha1.MarketBidderSpec, stateDir string, kcp BidderKcp) (manifests.MarketBidder, error) {
 	n := spec.Network
 	if n == nil {
 		return manifests.MarketBidder{}, errors.New("appctl: the MarketBidder names no network value; its composer or its profile sets spec.network")
 	}
-	if spec.Firecracker == nil {
-		return manifests.MarketBidder{}, errors.New("appctl: the MarketBidder names no provider (spec.firecracker)")
+	if spec.Firecracker == nil && spec.Kcp == nil {
+		return manifests.MarketBidder{}, errors.New("appctl: the MarketBidder names no provider (spec.firecracker or spec.kcp)")
 	}
 	if n.GuestTlsUrl == "" {
 		return manifests.MarketBidder{}, errors.New("appctl: the network value names no guestTlsUrl; a bidder hands guests the dispatcher's TLS front")
@@ -69,26 +69,12 @@ func BidderValues(spec v1alpha1.MarketBidderSpec, stateDir string) (manifests.Ma
 	if err != nil {
 		return manifests.MarketBidder{}, fmt.Errorf("appctl: network guestTlsUrl: %w", err)
 	}
-	fc := spec.Firecracker
-	if len(fc.VmruntimeCommand) == 0 || fc.WorkRoot == "" {
-		return manifests.MarketBidder{}, errors.New("appctl: spec.firecracker names no workRoot or no vmruntimeCommand")
-	}
-	cmd, err := json.Marshal(fc.VmruntimeCommand)
-	if err != nil {
-		return manifests.MarketBidder{}, err
-	}
-	cmdArg, err := json.Marshal(string(cmd))
-	if err != nil {
-		return manifests.MarketBidder{}, err
-	}
-	exec, err := json.Marshal(fc.VmruntimeCommand[0])
-	if err != nil {
-		return manifests.MarketBidder{}, err
-	}
 	v := manifests.MarketBidder{StateDir: stateDir, Handle: spec.Identity.Handle, PdsUrl: spec.Identity.PdsUrl,
 		PlcDirectoryUrl: n.PlcDirectoryUrl, IngressProxyHost: n.IngressProxyHost, RelayUrls: strings.Join(n.RelayUrls, ","),
-		GuestTLSPort: tlsPort, CABundle: n.CaBundleRef, Policy: spec.Policy,
-		Firecracker: manifests.Firecracker{WorkRoot: fc.WorkRoot, VMRuntimeCommand: string(cmdArg), VMRuntimeExec: string(exec)}}
+		GuestTLSPort: tlsPort, CABundle: n.CaBundleRef, Policy: spec.Policy}
+	if err := providerValues(&v, spec, kcp); err != nil {
+		return manifests.MarketBidder{}, err
+	}
 	if v.Policy == "" {
 		v.Policy = DefaultPolicy
 	}
@@ -124,6 +110,14 @@ func (ctl *Controller) reconcileBidder(ctx context.Context, u *unstructured.Unst
 	ws := ctl.c.workspace() + ":" + ComponentWorkspace
 	st := v1alpha1.ApplicationStatus{ObservedGeneration: o.Generation, Profile: o.Spec.Profile}
 	if u.GetDeletionTimestamp() != nil {
+		vms, err := ctl.deleteComputeVMs(ctx)
+		if err != nil {
+			return err
+		}
+		if vms > 0 {
+			st.Phase, st.Message = v1alpha1.ApplicationPhaseDeleting, fmt.Sprintf("%d ComputeVM(s) releasing", vms)
+			return ctl.writeStatus(ctx, MarketBidderGVR, o.Name, st)
+		}
 		left, err := ctl.deletePods(ctx, ws, owner, nil)
 		if err != nil {
 			return err
@@ -146,7 +140,11 @@ func (ctl *Controller) reconcileBidder(ctx context.Context, u *unstructured.Unst
 		}
 	}
 	if ctl.applied[string(o.UID)] != o.Generation {
-		values, err := BidderValues(o.Spec, ComponentStateDir(ctl.c.Layout.StateDir, BidderComponent))
+		var kcp BidderKcp
+		if rec, err := ctl.c.Record(); err == nil {
+			kcp = BidderKcpOf(rec)
+		}
+		values, err := BidderValues(o.Spec, ComponentStateDir(ctl.c.Layout.StateDir, BidderComponent), kcp)
 		if err != nil {
 			st.Phase, st.Message = v1alpha1.ApplicationPhaseFailed, err.Error()
 			return ctl.writeStatus(ctx, MarketBidderGVR, o.Name, st)

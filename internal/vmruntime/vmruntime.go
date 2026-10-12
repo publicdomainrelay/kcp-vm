@@ -207,3 +207,5 @@ func ImageTarget() string {
 }
 
 func GracefulStop() bool { return runtime.GOARCH == "amd64" }
+
+var ExecutableNames = []string{"swc-userns-stage", "pasta", "socialweb-vmexec", "firecracker"}
