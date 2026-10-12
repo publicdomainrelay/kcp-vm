@@ -235,16 +235,19 @@ func (s Service) TemplateData(entries map[string]tsbundle.EntrySpec) (map[string
 		return nil, fmt.Errorf("manifests: service %s binds a fixed port (%s); every service behind the edge binds port 0 and reports its listener",
 			s.Name, strings.Join(fixed, ", "))
 	}
-	var sa map[string]string
-	if s.ServiceAccount != "" {
-		sa = map[string]string{"name": s.ServiceAccount, "namespace": "default"}
-	}
 	tls := "false"
 	if s.TLS != TLSNone {
 		tls = "true"
 	}
-	data := map[string]any{"Name": s.Name}
-	for key, v := range map[string]any{"ServiceAccount": sa, "Probe": []string{"kcpdns", s.Probe.Host, s.Probe.Path}} {
+	data := map[string]any{"Name": s.Name, "ServiceAccount": ""}
+	if s.ServiceAccount != "" {
+		text, err := jsonText(map[string]string{"name": s.ServiceAccount, "namespace": "default"})
+		if err != nil {
+			return nil, err
+		}
+		data["ServiceAccount"] = "\n  serviceAccount: " + text
+	}
+	for key, v := range map[string]any{"Probe": []string{"kcpdns", s.Probe.Host, s.Probe.Path}} {
 		text, err := jsonText(v)
 		if err != nil {
 			return nil, err

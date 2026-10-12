@@ -6,8 +6,7 @@ metadata:
   finalizers:
     - denopod.deno.computer/run
 spec:
-  restartPolicy: Always
-  serviceAccount: {{.ServiceAccount}}
+  restartPolicy: Always{{.ServiceAccount}}
   env:
     SERVICE_ENTRY: {{.Entry}}
     SERVICE_STATE_DIR: {{.StateDir}}
