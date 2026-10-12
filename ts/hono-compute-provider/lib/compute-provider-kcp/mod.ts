@@ -1,4 +1,5 @@
 import {
+  addressTheRequesterNamed,
   injectAcceptBundle,
   pointGuestAtHost,
   SECRETS_PREFIX,
@@ -536,7 +537,8 @@ export function createComputeProviderKcp(ctx: ComputeProviderKcpCtx): ComputePro
     ctx.hostKeys?.bindNonce(enriched.nonce, name);
     const issuerUrl = ctx.getIssuerUrl();
     const reported = withOnNetworkBaseUrl(withOnNetworkReporter(enriched.userData, issuerUrl, acceptPathVm), issuerUrl);
-    const userData = withPoweroffEndsVm(pointGuestAtHost(reported, ctx.guestHostAddress, ctx.guestTlsPort));
+    const hostAddress = addressTheRequesterNamed(reported) ?? ctx.guestHostAddress;
+    const userData = withPoweroffEndsVm(pointGuestAtHost(reported, hostAddress, ctx.guestTlsPort));
     const desired = computeVMFor({
       name,
       handle,
@@ -553,7 +555,7 @@ export function createComputeProviderKcp(ctx: ComputeProviderKcpCtx): ComputePro
       cache.upsert(applied);
       await client.applySecret(userDataSecretFor(applied, userData));
       enriched.associateWithDroplet(name);
-      logger.info("computevm_applied", { name, handle, guestHostAddress: ctx.guestHostAddress, cpus: vm.cpus, mem: vm.mem });
+      logger.info("computevm_applied", { name, handle, guestHostAddress: hostAddress, cpus: vm.cpus, mem: vm.mem });
       const running = await untilRunning(name);
       provisioning.delete(name);
 
@@ -577,6 +579,9 @@ export function createComputeProviderKcp(ctx: ComputeProviderKcpCtx): ComputePro
           hostAddress: status.network?.hostAddress,
           mode: "kcp",
           sshReady: true,
+          vmmPid: status.runtime?.pid,
+          console: status.workDir ? `${status.workDir}/console.log` : undefined,
+          imageFingerprint: status.image?.sha256,
           imageRef: status.image?.ref,
           imageSha256: status.image?.sha256,
         },

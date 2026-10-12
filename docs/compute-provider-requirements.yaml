@@ -40,11 +40,11 @@ requirements:
       provider the user_data IS the guest: a guest started without one reaches Running with no sshd, no
       transport and no secrets, unreachable.
     go_side:
-      meets: partial
+      meets: yes
       detail: >-
-        cmd/socialweb-nodeboot/main.go:516-529 (writeSeed) refuses a missing or empty user-data file, but
-        only after the rootfs has been cloned. The ComputeVM controller (M2-CONTROLLER) must refuse before
-        Prepare.
+        M2-BACKPORT: compute-provider-kcp refuses an RFP with no user_data before a name exists; the ComputeVM
+        controller waits for the user_data Secret and fails a ComputeVM whose Secret holds no user-data before
+        Prepare clones anything (internal/computevm userData, boot).
     parity_test:
       - TestParityAnRfpWithoutUserDataIsRefusedBeforePrepare
     status: port
@@ -61,11 +61,11 @@ requirements:
       and local-hostname, and the droplet id the provisioning nonce is bound to (associateWithDroplet). It
       never reaches the requester as an address (FC-OIDC-REPORTER-NO-HOSTNAME).
     go_side:
-      meets: partial
+      meets: yes
       detail: >-
-        nodeboot writes instance-id and local-hostname from the spec's name (cmd/socialweb-nodeboot/main.go:527-529).
-        The ComputeVM name, the unit socialweb-vm-<hid>-<name> and the work dir <state>/handles/<hid>/vms/<name>
-        are planned in M2-VM-RUNTIME.
+        M2-BACKPORT: One name: the ComputeVM name is the providerId, the HostProcess child vm-<name>, the unit
+        socialweb-vm-<hid>-<name>, the work dir <state>/handles/<hid>/vms/<name>, the seed's instance-id and
+        local-hostname (internal/vmruntime Prepare) and the droplet id the nonce is bound to.
     parity_test:
       - TestParityTheGuestNameIsTheProviderIdInstanceIdAndNonceBinding
     status: port
@@ -181,11 +181,11 @@ requirements:
       one the provider uses for every .localhost name: cloud-init resolves before the provider's runcmd can
       append a second line, so a different address would be the line that never wins.
     go_side:
-      meets: no
+      meets: yes
       detail: >-
-        internal/marketnetwork passes relay.localhost aliases (live_m3_test.go) but no Go code reads them; the
-        kept rule lives in compute-provider-common and the constant pasta gateway must route to the address
-        the requester named.
+        M2-BACKPORT: compute-provider-kcp points every .localhost name at the address the requester named
+        (addressTheRequesterNamed), else the constant pasta host address 192.0.2.1; pasta forwards both to the
+        host.
     parity_test:
       - ts/hono-compute-provider/test/firecracker_network_test.ts::"a host address the requester already named is the one the guest is given"
       - TestParityARequesterNamedRelayAddressWins
@@ -308,11 +308,10 @@ requirements:
       setup-secrets.service, which reads bid_config.value (or the inline record) from accept.json, waited for
       a token that never appeared.
     go_side:
-      meets: no
+      meets: yes
       detail: >-
-        No Go writer of the bid config; it is one of the parity boundary's outputs (M2-BACKPORT). The market network
-        additionally links /root/secrets/firecracker to digitalocean.com in its base bootcmd
-        (internal/marketnetwork/live_m3_test.go), which the port must not need.
+        M2-BACKPORT: compute-provider-kcp createBidConfig writes the same wif.simple record (accept_path,
+        issuer_uri, exchange-firecracker-oidc, actx, SECRETS_PREFIX token, team_uuid and base_url paths).
     parity_test:
       - TestParityTheBidConfigRecordEqualsTheProviders
       - ts/hono-compute-provider/test/firecracker_secrets_path_test.ts::"the firecracker bid config points the guest at the token the provisioning script writes"
@@ -330,11 +329,10 @@ requirements:
       not YAML is refused. .curlrc reaches systemd units only when CURL_HOME is set, which the market network requester
       does with `systemctl set-environment CURL_HOME=/root` in bootcmd.
     go_side:
-      meets: partial
+      meets: yes
       detail: >-
-        internal/marketnetwork/live_m3_test.go:555 passes CURL_HOME=/root in the base bootcmd; there is no Go
-        composer (TypeScript enrichment), and under the port 0 rule the market network's edge port is still a known
-        address handed to the enricher.
+        M2-BACKPORT: compute-provider-kcp applies pointGuestAtHost with the bidder's guest TLS port before the
+        ComputeVM is written; the seed carries the bytes verbatim.
     parity_test:
       - TestParityTheGuestTlsPortRewriteHostsAndCurlrc
     status: port
@@ -399,11 +397,10 @@ requirements:
       wrote; it is written in write_files and re-asserted last in bootcmd and in runcmd. The default gateway
       172.30.0.1 is the first block of the TypeScript provider's range.
     go_side:
-      meets: no
+      meets: yes
       detail: >-
-        The Go default plan is 172.16.0.0/30-shaped (internal/nodevm/spec.go:39), so DEFAULT_DNS_GATEWAY
-        172.30.0.1 names no resolver for a Go-booted guest. compute-provider-kcp must pass dnsGateway = the
-        constant pasta gateway (FC-HOST-ADDRESS), or the constant plan takes 172.30.0.1.
+        M2-BACKPORT: The identical guest network's gateway is 172.30.0.1 (internal/guestnet Gateway, pasta
+        --dns-forward), the same address as DEFAULT_DNS_GATEWAY.
     parity_test:
       - TestParityTheResolverNamesTheConstantGatewayFirst
     status: port
@@ -509,10 +506,10 @@ requirements:
       ensure must report a positive rootfsMiB: a provider compares the contract's disk with it, and a
       template larger than the disk cannot be shrunk. The provider records it but does not yet use it.
     go_side:
-      meets: partial
+      meets: yes
       detail: >-
-        cmd/socialweb-nodeimage/ensure.go:50 (rootfsTemplateMiB) reports it. With truncate-to-disk
-        (M2-VM-RUNTIME) a disk below the image size must never shrink the clone.
+        M2-BACKPORT: The controller logs the image rootfs size beside the contract's disk at prepare;
+        guestdisk.GrowTo never shrinks the clone below it.
     parity_test:
       - TestParityAContractDiskBelowTheImageNeverShrinksTheRootfs
     status: port
@@ -527,11 +524,10 @@ requirements:
       The contract's disk is parsed like mem and passed as diskMib whatever the number; a spelling nothing
       parses leaves the guest at the image's own size.
     go_side:
-      meets: partial
+      meets: yes
       detail: >-
-        nodeboot grows the clone with e2fsck + resize2fs (cmd/socialweb-nodeboot/main.go:465-500). Decided
-        2026-10-12: the rootfs is copied as-is and truncated to the disk, the guest grows its own root, and
-        debugfs/e2fsck/resize2fs leave the hosts (M2-VM-RUNTIME, M1-GUEST-IMAGE).
+        M2-BACKPORT: spec.vm.disk is parsed like mem (internal/computevm ParseMiB) and the clone is truncated up
+        to it; a spelling nothing parses keeps the image's own size.
     parity_test:
       - TestParityTheVMSpecDiskEqualsTheContract
       - ts/hono-compute-provider/test/disk_semantics_test.ts::"a contract that asks for a bigger disk boots a guest grown to it"
@@ -547,11 +543,11 @@ requirements:
       T x 1024 x 1024; anything else leaves the image default. vcpu is passed only when it is a positive
       number.
     go_side:
-      meets: no
+      meets: yes
       detail: >-
-        nodeboot takes vcpu and mem_mib as numbers from the TypeScript side (cmd/socialweb-nodeboot/main.go:275-280);
-        no Go code parses the lexicon's mem string. The ComputeVM spec (M1-API) carries the parsed numbers or
-        Go parses identically.
+        M2-BACKPORT: internal/computevm ParseMiB parses spec.vm.mem by the same rule; cpus is used only when
+        positive; anything else leaves the image default (compute-provider-kcp writes 0 and an empty string when
+        the RFP names none).
     parity_test:
       - TestParityMemAndVcpuParseLikeTheProvider
       - ts/hono-compute-provider/test/firecracker_network_test.ts::"the memory an RFP asks for is read in the units the lexicon writes it in"
@@ -569,10 +565,10 @@ requirements:
       exchange is refused. containerName and networks went with the host-side key scan (FC-HOSTKEY-SCAN,
       0007 M4-HOST-KEYS).
     go_side:
-      meets: no
+      meets: yes
       detail: >-
-        Planned: the droplet view is read from the ComputeVM (requester PLC, role); host keys are
-        guest-reported (FC-GUEST-HOSTKEYS-REPORT), so the view carries no container name and no address.
+        M2-BACKPORT: compute-provider-kcp getDroplet reads {id, oidc-sub tags} from the ComputeVM (dropletOf);
+        host keys come from the guest's report into status.market.
     parity_test:
       - TestParityTheIssuersDropletViewEqualsTheProviders
       - ts/hono-compute-provider/test/oidc_hostkeys_test.ts::"a firecracker guest's proven host keys reach the bidder under its provider id; pasta forwards no inbound port"
@@ -721,8 +717,10 @@ requirements:
       configured; its ref is kept per guest and the record is deleted on destroy and on the guest's own
       exit, a failed delete swallowed.
     go_side:
-      meets: no
-      detail: TypeScript side of the Go-backed provider (compute-provider-kcp, M3-TS-PROVIDER); created on provision, deleted on every terminal outcome.
+      meets: yes
+      detail: >-
+        M2-BACKPORT: compute-provider-kcp creates the rbac record after Running and deletes it on destroy and
+        when the guest is gone.
     parity_test:
       - TestParityTheRbacRecordIsCreatedOnProvisionAndDeletedOnRelease
     status: port
@@ -736,8 +734,10 @@ requirements:
       vmmPid, console, imageFingerprint}, logging provisioning microvm and microvm provisioned. sshReady is
       asserted, not measured: readiness is the guest's on-network report.
     go_side:
-      meets: no
-      detail: The ComputeVM status (M1-API) carries the same fields; vmmPid from RuntimeRef, console from the work dir.
+      meets: yes
+      detail: >-
+        M2-BACKPORT: compute-provider-kcp returns {name, ip, mode kcp, sshReady true, vmmPid, console,
+        imageFingerprint} (plus hostAddress, imageRef, imageSha256) from ComputeVM status.
     parity_test:
       - TestParityTheProvisionResultMetadataEqualsTheProviders
     status: port
@@ -773,10 +773,11 @@ requirements:
       deadline each fail the boot with the runner's last output, and the provider then stops the guest and
       removes its work dir before rethrowing (microvm_stop_failed when that fails).
     go_side:
-      meets: partial
+      meets: yes
       detail: >-
-        nodeboot awaitInstance times out at DefaultInstanceTimeout 90 s (internal/nodevm/spec.go:44,
-        cmd/socialweb-nodeboot/main.go:340-352) and stops pasta, but leaves the work dir.
+        M2-BACKPORT: The boot is bounded (vmruntime Await, firecracker GET / Running) and the TypeScript side
+        bounds the whole ComputeVM at 300 s; a failed boot is Failed with the VMM log and console tail, its unit
+        stopped and its work dir removed before the status is written.
     parity_test:
       - internal/vmruntime TestCleanupRemovesTheWorkDirAndSocketForEveryTerminalOutcome
     status: port
@@ -883,12 +884,11 @@ requirements:
       exitCode} to every listener, a failing listener isolated (microvm_exited, microvm_exit_handling_failed,
       guest_gone_listener_failed). A destroy cancels the watch and never reports.
     go_side:
-      meets: no
+      meets: yes
       detail: >-
-        Must NOT be inherited: after firecracker exited the nodeboot parents and the runner stayed up and the
-        bidder never noticed. In M2-VM-RUNTIME the VMM is pasta's only child, so any VMM exit ends the unit,
-        and Watch (D-Bus PropertiesChanged on ActiveState) reports it within seconds; M2-CONTROLLER turns it
-        into Lost at once.
+        M2-BACKPORT: Not inherited: the VMM is pasta's only child, the controller consumes the unit watch and
+        every Lost verdict reaches compute-provider-kcp's onGuestGone (vm.terminated); a guest that powers off
+        resets through the system-shutdown hook compute-provider-kcp adds, so firecracker exits.
     parity_test:
       - internal/vmruntime TestAVMMThatExitsOnItsOwnEndsItsUnitAndLeavesNoProcess
       - internal/computevm TestAVMMExitObservedByWatchMakesTheComputeVMLostWithinOneEvent
@@ -908,12 +908,11 @@ requirements:
       guest this process never booted still stops it and removes its dir, any other unknown name is logged
       microvm_destroy_unknown.
     go_side:
-      meets: no
+      meets: yes
       detail: >-
-        Must NOT be inherited: nodeboot Stop kills pids and never removes the work dir
-        (cmd/socialweb-nodeboot/main.go:631-655). Stop and Cleanup remove the work dir and API socket for
-        every terminal outcome, the finalizer stays until it is gone, and orphan dirs with no ComputeVM are
-        collected (M2-VM-RUNTIME, M2-CONTROLLER).
+        M2-BACKPORT: Not inherited: the finalizer goes only after Cleanup removed the work dir and the API
+        socket (checked by stat) for released, Lost and Failed VMs; orphan work dirs of this instance go after
+        10 minutes.
     parity_test:
       - internal/vmruntime TestCleanupRemovesTheWorkDirAndSocketForEveryTerminalOutcome
       - internal/computevm TestTheFinalizerStaysUntilTheWorkDirIsGoneForReleasedLostAndFailed

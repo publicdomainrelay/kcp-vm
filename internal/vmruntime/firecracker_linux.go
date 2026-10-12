@@ -162,7 +162,7 @@ func (r *firecracker) Prepare(ctx context.Context, spec VMSpec) (Prepared, error
 	}
 	meta := spec.MetaData
 	if meta == "" {
-		meta = "instance-id: " + p.VMMID + "\nlocal-hostname: " + spec.Name + "\n"
+		meta = "instance-id: " + spec.Name + "\nlocal-hostname: " + spec.Name + "\n"
 	}
 	seed := filepath.Join(p.WorkDir, SeedFile)
 	if err := guestdisk.WriteSeed(seed, []byte(spec.UserData), []byte(meta), []byte(guestnet.NetworkConfig())); err != nil {
