@@ -145,7 +145,10 @@ state_rules:
     state, a cutover, a rollback to the container, or prod downtime handling until the finished solution
     exists. Continuity is planned only for upgrades of the finished system (M3-CP-CONTINUITY).
   - An item names its dependencies in depends_on; an item may not start while one of them is not done.
-    Cross-plan dependencies are written <plan>:<item id>.
+    Cross-plan dependencies are written <plan>:<item id>. Exception (user-approved 2026-10-12): an item with
+    a `variant_dependencies` field may start the variant that field names as unblocked before the
+    dependencies listed against other variants are done; the item is done only when every variant is.
+    Used by M2-KCP-STORE and M2-KCP-SLOTS for the `binary-base` vertical slice (execution_order).
   - >
     kcp route (decided by the user 2026-10-11: decide after the M0 spike, carry both paths). An item whose
     decision says "route: in-process" or "route: out-of-process" is built only on the route M0-KCP-SPIKE's
@@ -1038,7 +1041,14 @@ items:
     milestone: M2
     title: "kcp's own store - the gateway: one kine per slot over a dedicated postgres unit; a bidder: one kine on sqlite; both in the bootstrap layer, before kcp"
     depends_on: [M0-KCP-SPIKE, M1-ASSETS, M0-PG-SOURCE, M2-HOST-UNITS, M2-HOST-BACKEND-PROC]
+    variant_dependencies:
+      embedded_asset_and_postgres: "M1-ASSETS (embedded kine asset), M0-PG-SOURCE (the gateway's postgres unit), M2-HOST-UNITS (systemd-user placement)"
+      dev_and_bidder_kine_sqlite: "M0-KCP-SPIKE, M2-HOST-BACKEND-PROC only - kine on sqlite with kine resolved from an explicit path in a dev build; not gated on M1-ASSETS, M0-PG-SOURCE or M2-HOST-UNITS"
     decision: >
+      Dependencies relaxed (user-approved 2026-10-12, state_rules exception): M1-ASSETS and M0-PG-SOURCE gate
+      only the embedded-asset and postgres variants. The dev/bidder variant - one kine on sqlite, kine taken
+      from an explicit path in a dev build, placed on proc - starts without them as part of the `binary-base`
+      vertical slice (execution_order); the item is done when both variants are.
       Decided by the user 2026-10-12: the GATEWAY's kcp store is kine -> a dedicated postgres unit started
       before kcp, NOT a Postgres CRD object (the Postgres objects live in kcp, so kcp's own store cannot be
       reconciled from kcp; kcp-blue-green.md section 3), one kine per slot, and a pg_dump before each kcp
@@ -1150,7 +1160,16 @@ items:
     milestone: M2
     title: "kcp slot units of the release asset behind the front - the gateway: alternating blue/green slots on a shared kine store, leader-elected; a bidder: one slot on kine-sqlite"
     depends_on: [M0-KCP-SPIKE, M1-ASSETS, M2-HOST-UNITS, M2-HOST-BACKEND-PROC, M2-KCP-STORE, M2-KCP-FRONT]
+    variant_dependencies:
+      embedded_asset_and_postgres: "M1-ASSETS (embedded kcp asset), M2-HOST-UNITS, and M2-KCP-STORE's postgres variant"
+      multi_slot_blue_green: "M2-KCP-FRONT (the front a slot flip needs; the gateway's blue/green slots)"
+      dev_single_slot: "M0-KCP-SPIKE, M2-HOST-BACKEND-PROC and M2-KCP-STORE's dev_and_bidder_kine_sqlite variant only - one slot on kine-sqlite, kcp resolved from an explicit path in a dev build, port 0 with the /proc read-back; not gated on M1-ASSETS, M2-HOST-UNITS or M2-KCP-FRONT"
     decision: >
+      Dependencies relaxed (user-approved 2026-10-12, state_rules exception): M1-ASSETS (and, through
+      M2-KCP-STORE, M0-PG-SOURCE) gate only the embedded-asset and postgres variants; M2-KCP-FRONT gates only
+      multi-slot blue/green, not a single dev slot. The dev single-slot variant (kine-sqlite, one slot, kcp and
+      kine from explicit paths in a dev build) starts without them as part of the `binary-base` vertical
+      slice (execution_order); the item is done when every variant is.
       Third fold 2026-10-12, decided by the user: a BIDDER's kcp is a single slot (a) on kine-sqlite; its
       upgrade is a short kcp restart (stop the slot, start it on the new asset, the same root and store); VM
       units are separate units and never notice; the ComputeVM controller re-adopts them by the Verdict once
@@ -2049,6 +2068,13 @@ execution_order:
     M1-PORT-LEASE-INSTANCE -> M1-DEV-INSTANCE (wave 3) -> M2-BOOTSTRAP-LAYER; M1-CLI -> M2-MANIFESTS ->
     M2-TEMPLATE -> M2-APPLY; M1-ASSETS + M1-CLI -> M1-INSTALL -> M2-BOOTSTRAP-LAYER.
   startable_now_in_this_plan: [M0-SIZE-BUDGET, M0-PG-SOURCE, M1-CLI, M1-HOST-INVENTORY, M1-STORE-CLEANUP, M1-PORT-LEASE-INSTANCE, M1-NO-FIXED-PORTS, M2-HOST-CONFORMANCE]
+  vertical_slices:
+    - task: binary-base
+      started: 2026-10-12
+      approved: "user-approved 2026-10-12 (the dependency relaxation of M2-KCP-STORE and M2-KCP-SLOTS, variant_dependencies)"
+      covers: "M1-CLI, M2-HOST-CONFORMANCE, M2-HOST-BACKEND-PROC, and a minimal `dev up --profile minimal`: kine-sqlite + one kcp slot (the dev variants of M2-KCP-STORE and M2-KCP-SLOTS), port 0 with the /proc read-back (M2-KCP-PORT0's mechanism), kcp and kine from explicit paths in a dev build, two instances side by side on one host"
+      not_covered: "embedded assets (M1-ASSETS), postgres (M0-PG-SOURCE), the front and blue/green slots (M2-KCP-FRONT), systemd-user placement (M2-HOST-UNITS), the full M1-DEV-INSTANCE profiles"
+      status_note: "Item status and evidence are unchanged by this record; the lead updates them when the slice merges."
   early_because_live_tests_collide: >
     Two beds on one machine collide on fixed ports (bed 2583-2589, deno-kcp kcp 6443 and kine 23791) and on
     the one-bed check until 0008 M1-BED-PARALLEL and M1-DEV-INSTANCE land; until then every market-bed run on
