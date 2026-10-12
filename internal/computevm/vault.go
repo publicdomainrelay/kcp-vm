@@ -114,6 +114,7 @@ func (ct *Controller) userData(ctx context.Context, o v1alpha1.ComputeVM) (strin
 	}
 	client, err := ct.vaultFor(ctx, ref.Server)
 	if err != nil {
+		ct.c.log().Info("the user data waits for the bidder's vault", "computevm", o.Name, "err", err.Error())
 		return "", false, nil
 	}
 	data, err := client.GetKV(ctx, path)
