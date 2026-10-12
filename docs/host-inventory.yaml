@@ -983,3 +983,9 @@ indirect:
     resolves: [deno]
   - site: "socialweb-computer-kcp/internal/tsbundle/tsbuild/build.go: o.Deno"
     resolves: [deno]
+  - site: "socialweb-computer-kcp/internal/hostcontract/gather_linux.go: e.Path"
+    resolves: [pasta]
+  - site: "socialweb-computer-kcp/internal/hostcontract/gather_linux.go: self[0]"
+    resolves: [socialweb-computer-kcp-check-host]
+  - site: "socialweb-computer-kcp/internal/hostcontract/gather_linux.go: m.helper"
+    resolves: [newuidmap, newgidmap]

@@ -7,9 +7,12 @@ import (
 	"fmt"
 	"os"
 	"os/user"
+	"path/filepath"
 	"runtime"
+	"strings"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/foldmain"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostcontract"
 )
 
 const usage = `socialweb-computer-kcp-check-host - the host contract this project's proofs are made of
@@ -76,6 +79,17 @@ func Main(ctx context.Context, inv foldmain.Invocation) int {
 		"print one line and exit 0, so this binary can be executed as a probe from a copied location")
 	buildOnly := fs.Bool("build", false,
 		"run as a build step: only the checks a build reads decide the exit status")
+	role := fs.String("role", "",
+		"gateway | bidder: probe the production host contract as the account instead of the build report")
+	stateDir := fs.String("state-dir", inv.Env("SOCIALWEB_STATE_DIR"),
+		"with -role: the account's state dir (probe output, POSIX ACL check)")
+	pasta := fs.String("pasta", inv.Env("SOCIALWEB_PASTA_PATH"),
+		"with -role bidder in a dev build: the pasta executable (a release build extracts the embedded one)")
+	assetCache := fs.String("asset-cache", inv.Env("SOCIALWEB_ASSET_CACHE"),
+		"with -role: the asset extraction root (<state-dir>/runtime when unset)")
+	asJSON := fs.Bool("json", false, "with -role: print the results as JSON")
+	probeHold := fs.Bool("probe-hold", false, "the probe unit's main process: block until stopped")
+	probeUserns := fs.Bool("probe-userns", false, "the throwaway user namespace's child: print its maps once released")
 	fs.Usage = func() {
 		fmt.Fprintf(inv.Stderr, usage, defaultConfigPath, envConfigPath,
 			envFirecracker, envKernel, envKernelConfig, envModuleSource, envStageDir, envOutDir,
@@ -90,6 +104,16 @@ func Main(ctx context.Context, inv foldmain.Invocation) int {
 	if *probeExec {
 		fmt.Fprintln(inv.Stdout, "check-host exec probe: this binary ran from where it was placed")
 		return 0
+	}
+	if *probeHold {
+		<-ctx.Done()
+		return 0
+	}
+	if *probeUserns {
+		return hostcontract.UsernsChild(os.Stdin, inv.Stdout)
+	}
+	if *role != "" {
+		return runContract(ctx, inv, *role, *stateDir, *pasta, *assetCache, *asJSON)
 	}
 	f, err := readFacts(*config, inv.Env)
 	if err != nil {
@@ -140,4 +164,28 @@ func joinBounded(names []string) string {
 		out += name
 	}
 	return out
+}
+
+func runContract(ctx context.Context, inv foldmain.Invocation, roleName, stateDir, pasta, assetCache string, asJSON bool) int {
+	role, err := hostcontract.ParseRole(roleName)
+	if err != nil {
+		fmt.Fprintln(inv.Stderr, err)
+		return 2
+	}
+	if stateDir == "" {
+		fmt.Fprintln(inv.Stderr, "check-host -role: -state-dir (SOCIALWEB_STATE_DIR) names the account's state dir; install writes it into the account's config")
+		return 2
+	}
+	if assetCache == "" {
+		assetCache = filepath.Join(stateDir, "runtime")
+	}
+	results := hostcontract.Evaluate(hostcontract.Gather(ctx, hostcontract.Options{
+		Role: role, StateDir: stateDir, Self: inv.Self(), PastaPath: pasta, AssetCache: assetCache, Getenv: inv.Env,
+	}))
+	hostcontract.Write(inv.Stdout, results, asJSON)
+	if failed := hostcontract.Failed(results); len(failed) > 0 {
+		fmt.Fprintf(inv.Stderr, "check-host: the %s host contract is not met: %s\n", role, strings.Join(failed, ", "))
+		return 1
+	}
+	return 0
 }
