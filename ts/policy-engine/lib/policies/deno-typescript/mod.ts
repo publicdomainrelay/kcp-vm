@@ -23,3 +23,4 @@ export {
 export { createBidPayloadFilterPolicy, BID_PAYLOAD_FILTER_POLICY_NAME } from "./bid-payload.ts";
 export { createUnderFourCpusPolicy, UNDER_4_CPUS_POLICY_NAME } from "./under-4-cpus.ts";
 export { createPolicyRegistry, BUILTIN_POLICY_FACTORIES, policyNames } from "./registry.ts";
+export { BUILTIN_POLICY_BUNDLE } from "./bundle/builtin-bundle.ts";

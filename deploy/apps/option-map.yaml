@@ -79,6 +79,8 @@ apps:
       - {name: port-file, to: listener}
       - {name: listeners-file, to: listener}
       - {name: status-file, to: listener}
+      - {name: denopod-namespace, to: profile}
+      - {name: denopod-service-domain, to: profile}
   - app: gateway
     entry: hono-socialweb-computer-k8s
     options:

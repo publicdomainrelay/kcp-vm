@@ -224,6 +224,26 @@ export interface TypescriptExecutorOptions {
   /** First-party policy registry for the scope lane. Defaults to
    *  createPolicyRegistry() — the builtin perspective-split set. */
   registry?: PolicyRegistry;
+  builtinBundle?: string;
+  grantNoPermissions?: boolean;
+}
+
+interface NamedPolicy {
+  name: string;
+  args?: Record<string, unknown>;
+}
+
+function namedPolicies(value: unknown): NamedPolicy[] {
+  const named = (value as { policies?: unknown } | null)?.policies;
+  if (!Array.isArray(named)) return [];
+  const out: NamedPolicy[] = [];
+  for (const n of named) {
+    if (n && typeof n === "object" && typeof (n as { name?: unknown }).name === "string") {
+      const args = (n as { args?: unknown }).args;
+      out.push({ name: (n as { name: string }).name, args: args && typeof args === "object" ? args as Record<string, unknown> : undefined });
+    }
+  }
+  return out;
 }
 
 /**
@@ -239,11 +259,27 @@ export class TypescriptExecutor implements PolicyEngineExecutor {
     permissions?: SandboxPermissions,
   ) => PersistentWorker;
   readonly #registry: PolicyRegistry;
+  readonly #builtinBundle: string | undefined;
+  readonly #grantNoPermissions: boolean;
 
   constructor(opts: TypescriptExecutorOptions = {}) {
     this.#timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.#spawn = opts.createWorker ?? createPersistentDenoWorker;
     this.#registry = opts.registry ?? createPolicyRegistry();
+    this.#builtinBundle = opts.builtinBundle;
+    this.#grantNoPermissions = opts.grantNoPermissions ?? false;
+  }
+
+  async #executeNamed(named: NamedPolicy[], bundle: string, ctx: PolicyEvalCtx): Promise<PolicyResult> {
+    for (const n of named) {
+      const result = await this.#evaluate(bundle, {} as SandboxPermissions, {
+        ...ctx,
+        policyName: n.name,
+        args: (n.args ?? ctx.args) as PolicyEvalCtx["args"],
+      });
+      if (!result.allow) return result;
+    }
+    return { allow: true, violations: [] };
   }
 
   async execute(input: {
@@ -261,6 +297,10 @@ export class TypescriptExecutor implements PolicyEngineExecutor {
     const manifestRef = (value as { manifest?: unknown }).manifest as
       | StrongRef
       | undefined;
+    const named = namedPolicies(value);
+    if (!manifestRef && this.#builtinBundle && named.length > 0) {
+      return await this.#executeNamed(named, this.#builtinBundle, ctx);
+    }
     if (
       !manifestRef || typeof manifestRef !== "object" ||
       typeof manifestRef.uri !== "string" || typeof manifestRef.cid !== "string"
@@ -296,7 +336,7 @@ export class TypescriptExecutor implements PolicyEngineExecutor {
     }
 
     // 3. Deny-all by default; grant only declared + explicitly-passed permissions.
-    const sandboxPerms = mergePermissions(
+    const sandboxPerms = this.#grantNoPermissions ? {} as SandboxPermissions : mergePermissions(
       (value as { permissions?: unknown }).permissions,
       (manifest as { permissions?: unknown }).permissions,
       permissions,

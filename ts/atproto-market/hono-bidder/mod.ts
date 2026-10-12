@@ -1,7 +1,6 @@
 import { Command } from "@publicdomainrelay/cli-args-env";
 import { createLogger } from "@publicdomainrelay/logger";
 import { marketNetwork } from "@publicdomainrelay/market-network-common";
-import { cliIdentityMode } from "@publicdomainrelay/market-identity-abc";
 import { BidderPolicyError, createMarketBidderApp, marketBidderGuestTlsUrl, missingProviderFields } from "@publicdomainrelay/hono-factory-market-bidder-app";
 import type { MarketBidderAppSpec, MarketBidderProviderSpec } from "@publicdomainrelay/hono-factory-market-bidder-app";
 import cliArgsEnv from "./cli-args-env.ts";
@@ -10,6 +9,13 @@ let runtimeConfig: Record<string, unknown> | null = null;
 try { runtimeConfig = (await import("./config.json", { with: { type: "json" } })).default; } catch { /* optional */ }
 const { options } = await new Command("CONFIG_PATH_HONO_BIDDER", cliArgsEnv, runtimeConfig).resolve();
 const o: Record<string, any> = options;
+
+if (!o.denopodNamespace || !o.denopodServiceDomain || !o.marketIdentityKcpServer || !o.statusFile) {
+  console.error(
+    "hono-bidder runs only as the entry of the bidder DenoPod and this process has no DenoPod kcp environment; start a bidder with `socialweb-computer run bidder`",
+  );
+  Deno.exit(2);
+}
 
 const logger = createLogger({ serviceName: (o.serviceName as string) ?? "bidder" });
 
@@ -43,8 +49,8 @@ for (const p of providers) {
   if (missing.length > 0) throw new Error(`the ${p.kind} provider is enabled and ${missing.join(", ")} ${missing.length === 1 ? "is" : "are"} not set`);
 }
 
-const kcpIdentity = o.marketIdentityKcpServer as string | undefined;
-if (kcpIdentity && !o.marketIdentityKcpWorkspace) throw new Error("--market-identity-kcp-server needs --market-identity-kcp-workspace");
+const kcpIdentity = o.marketIdentityKcpServer as string;
+if (!o.marketIdentityKcpWorkspace) throw new Error("--market-identity-kcp-server needs --market-identity-kcp-workspace");
 if (o.identityVaultOpenbaoServer && !o.identityVaultKcpServer) throw new Error("--identity-vault-openbao-server needs --identity-vault-kcp-server");
 const vaultServer = o.identityVaultOpenbaoServer
   ? {
@@ -62,10 +68,6 @@ const vaultServer = o.identityVaultOpenbaoServer
 const vault = o.identityVaultAddress || vaultServer
   ? { kind: "openbao" as const, address: o.identityVaultAddress, tokenFile: o.identityVaultTokenFile, caCertFile: o.identityVaultCaCertFile, namespace: o.identityVaultNamespace, server: vaultServer }
   : o.identityVaultFile ? { kind: "file" as const, path: o.identityVaultFile } : undefined;
-const explicitMode = o.atprotoIdentityMode as string | undefined;
-const urlRepo = !kcpIdentity && cliIdentityMode({
-  mode: explicitMode, oauth: o.atprotoOauth, oauthQr: o.atprotoOauthQr, handle: o.atprotoHandle, password: !!o.atprotoPassword, vault: !!vault,
-}) !== "localRepo";
 
 const spec: MarketBidderAppSpec = {
   network: marketBidderGuestTlsUrl(marketNetwork({
@@ -79,9 +81,7 @@ const spec: MarketBidderAppSpec = {
   identity: {
     name: o.marketIdentityName,
     vaultMount: o.identityVaultMount,
-    prompt: kcpIdentity
-      ? { kind: "kcp", server: kcpIdentity, workspace: o.marketIdentityKcpWorkspace, tokenFile: o.marketIdentityKcpTokenFile, caCertFile: o.marketIdentityKcpCaCertFile }
-      : { kind: "tty", mode: explicitMode, oauth: o.atprotoOauth, oauthQr: o.atprotoOauthQr, skipAssociation: o.skipQr },
+    prompt: { kind: "kcp", server: kcpIdentity, workspace: o.marketIdentityKcpWorkspace, tokenFile: o.marketIdentityKcpTokenFile, caCertFile: o.marketIdentityKcpCaCertFile },
     vault,
     stateDir: o.stateDir,
     handle: o.atprotoHandle,
@@ -98,7 +98,7 @@ const spec: MarketBidderAppSpec = {
       sessionClientId: o.oauthSessionClientId,
     },
   },
-  repo: urlRepo ? { kind: "url" } : { kind: "inproc", statePath: o.pdsStatePath },
+  repo: { kind: "inproc", statePath: o.pdsStatePath },
   providers,
   guestEndpoints: "inproc",
   market: {

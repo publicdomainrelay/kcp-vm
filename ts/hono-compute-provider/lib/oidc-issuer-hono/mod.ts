@@ -127,44 +127,92 @@ async function signingKeyFromPem(storedPem: string): Promise<CryptoKeyPair> {
   return { privateKey: priv, publicKey: pub };
 }
 
+const SSHSIG_MAGIC = new TextEncoder().encode("SSHSIG");
+const SSHSIG_NAMESPACE = "prove-sshd";
+
+class SshReader {
+  #at = 0;
+  constructor(readonly bytes: Uint8Array) {}
+  raw(n: number): Uint8Array {
+    if (this.#at + n > this.bytes.length) throw new Error("ssh buffer too short");
+    const out = this.bytes.subarray(this.#at, this.#at + n);
+    this.#at += n;
+    return out;
+  }
+  u32(): number {
+    const b = this.raw(4);
+    return ((b[0] << 24) | (b[1] << 16) | (b[2] << 8) | b[3]) >>> 0;
+  }
+  string(): Uint8Array {
+    return this.raw(this.u32());
+  }
+  text(): string {
+    return new TextDecoder().decode(this.string());
+  }
+}
+
+function sshString(b: Uint8Array): Uint8Array {
+  const out = new Uint8Array(4 + b.length);
+  new DataView(out.buffer).setUint32(0, b.length);
+  out.set(b, 4);
+  return out;
+}
+
+function concatBytes(parts: Uint8Array[]): Uint8Array {
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let at = 0;
+  for (const p of parts) {
+    out.set(p, at);
+    at += p.length;
+  }
+  return out;
+}
+
+function fromBase64(b64: string): Uint8Array {
+  return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+}
+
+function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+  return a.length === b.length && a.every((v, i) => v === b[i]);
+}
+
 async function validateSshSignature(
   publicKeyOpensshString: string,
   sshSignatureBlob: string,
   dataThatWasSigned: string,
 ): Promise<boolean> {
-  const tmpDir = await Deno.makeTempDir();
   try {
-    await Deno.writeTextFile(`${tmpDir}/allowed_signers`, `guest ${publicKeyOpensshString}\n`);
-    await Deno.writeTextFile(`${tmpDir}/signature`, sshSignatureBlob);
-    const dataPath = `${tmpDir}/data`;
-    await Deno.writeTextFile(dataPath, dataThatWasSigned);
+    const [keyType, keyB64] = publicKeyOpensshString.trim().split(/\s+/);
+    if (keyType !== "ssh-ed25519" || !keyB64) return false;
+    const keyBlob = fromBase64(keyB64);
+    const keyReader = new SshReader(keyBlob);
+    if (keyReader.text() !== "ssh-ed25519") return false;
+    const rawKey = keyReader.string();
+    if (rawKey.length !== 32) return false;
 
-    const dataBytes = await Deno.readFile(dataPath);
-    const child = new Deno.Command("ssh-keygen", {
-      args: [
-        "-Y",
-        "verify",
-        "-f",
-        "allowed_signers",
-        "-I",
-        "guest",
-        "-n",
-        "prove-sshd",
-        "-s",
-        "signature",
-      ],
-      cwd: tmpDir,
-      stdin: "piped",
-      stdout: "piped",
-      stderr: "piped",
-    }).spawn();
-    const writer = child.stdin.getWriter();
-    await writer.write(dataBytes);
-    await writer.close();
-    const { code } = await child.output();
-    return code === 0;
-  } finally {
-    await Deno.remove(tmpDir, { recursive: true }).catch(() => {});
+    const armored = sshSignatureBlob.replace(/-----[^-]+-----/g, "").replace(/\s+/g, "");
+    const sig = new SshReader(fromBase64(armored));
+    if (!sameBytes(sig.raw(6), SSHSIG_MAGIC)) return false;
+    if (sig.u32() !== 1) return false;
+    const signedKey = sig.string();
+    const namespace = sig.string();
+    const reserved = sig.string();
+    const hashAlg = sig.string();
+    const signatureBlob = new SshReader(sig.string());
+    if (!sameBytes(signedKey, keyBlob)) return false;
+    if (new TextDecoder().decode(namespace) !== SSHSIG_NAMESPACE) return false;
+    if (signatureBlob.text() !== "ssh-ed25519") return false;
+    const signature = signatureBlob.string();
+
+    const hashName = new TextDecoder().decode(hashAlg);
+    const subtleHash = hashName === "sha512" ? "SHA-512" : hashName === "sha256" ? "SHA-256" : undefined;
+    if (!subtleHash) return false;
+    const digest = new Uint8Array(await crypto.subtle.digest(subtleHash, new TextEncoder().encode(dataThatWasSigned)));
+    const message = concatBytes([SSHSIG_MAGIC, sshString(namespace), sshString(reserved), sshString(hashAlg), sshString(digest)]);
+    const key = await crypto.subtle.importKey("raw", Uint8Array.from(rawKey), { name: "Ed25519" }, false, ["verify"]);
+    return await crypto.subtle.verify({ name: "Ed25519" }, key, Uint8Array.from(signature), Uint8Array.from(message));
+  } catch {
+    return false;
   }
 }
 

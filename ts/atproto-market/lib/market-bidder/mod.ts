@@ -34,13 +34,25 @@ import { createBadgeBlueKeysDelegatedTrustResolver } from "@publicdomainrelay/de
 import { createPolicyEvaluator } from "@publicdomainrelay/policy-engine-evaluator";
 import type { PolicyEvaluator } from "@publicdomainrelay/policy-engine-evaluator";
 import { createScopeCache } from "@publicdomainrelay/policy-engine-scope-cache";
-import { createPolicyRegistry } from "@publicdomainrelay/policy-deno-typescript";
+import { BUILTIN_POLICY_BUNDLE, createPolicyRegistry } from "@publicdomainrelay/policy-deno-typescript";
 import { resolvePolicyName } from "@publicdomainrelay/policy-deno-typescript-shared";
 import type { PolicyArgs } from "@publicdomainrelay/policy-deno-typescript-shared";
-import { WORKFLOWS } from "@publicdomainrelay/policies-gha-lite";
-import { GhaLiteExecutor } from "@publicdomainrelay/policy-engine-executor-gha-lite";
 import { TypescriptExecutor } from "@publicdomainrelay/policy-engine-executor-typescript";
 import { POLICY_GHA_LITE_NSID, POLICY_TYPESCRIPT_NSID } from "@publicdomainrelay/policy-engine-abc";
+import type { PolicyEngineExecutor } from "@publicdomainrelay/policy-engine-abc";
+
+export const GHA_LITE_REFUSED =
+  "this bidder runs no gha-lite policy (gha-lite runs bash and deno --allow-all outside the deno sandbox); attach a TypeScript policy";
+
+function ghaLiteRefusal(): PolicyEngineExecutor {
+  return {
+    kind: POLICY_GHA_LITE_NSID,
+    execute: async ({ policyRecord }) => ({
+      allow: false,
+      violations: [{ msg: GHA_LITE_REFUSED, policyId: policyRecord.uri }],
+    }),
+  };
+}
 import { parseAtUri, type ATProto } from "@publicdomainrelay/atproto-helpers";
 import type {
   ActiveContract,
@@ -160,17 +172,14 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
       });
     }
   }
-  // The bidder's own in-memory gha-lite policy record backing the scope gate.
-  // Stable synthetic uri/cid so the scope cache keys predictably per canonical
-  // name + counterparty + args.
-  const scopeRecord = canonical && WORKFLOWS[canonical]
+const scopeRecord = canonical
     ? {
-        uri: `at://${atproto.did}/policy-gha-lite/${canonical}`,
+        uri: `at://${atproto.did}/${POLICY_TYPESCRIPT_NSID}/${canonical}`,
         cid: canonical,
         value: {
-          $type: POLICY_GHA_LITE_NSID,
+          $type: POLICY_TYPESCRIPT_NSID,
           name: canonical,
-          workflow: WORKFLOWS[canonical],
+          policies: [{ name: canonical, args: policyArgs }],
           createdAt: new Date().toISOString(),
         },
       }
@@ -387,8 +396,8 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
     // bidder's own scope gate. The scope gate is the hot-path engagement check:
     // on a scope-cache miss the evaluator runs the scope-mode workflow against
     // the counterparty DID, otherwise it serves the cached verdict.
-    const ghaLiteExecutor = new GhaLiteExecutor();
-    const typescriptExecutor = new TypescriptExecutor();
+    const ghaLiteExecutor = ghaLiteRefusal();
+    const typescriptExecutor = new TypescriptExecutor({ builtinBundle: BUILTIN_POLICY_BUNDLE, grantNoPermissions: true });
     const engineRegistry = {
       get: ($type: string) =>
         $type === POLICY_GHA_LITE_NSID ? ghaLiteExecutor

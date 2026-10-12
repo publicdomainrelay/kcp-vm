@@ -343,13 +343,11 @@ export default {
       type: "string" as const,
       description: "Path to load/save the Secp256k1 private key hex. Creates file with generated key if missing. Overridden by --private-key-hex if both set.",
       env: "REPO_PRIVATE_KEY_HEX_PATH",
-      default: `${Deno.env.get("HOME") ?? Deno.env.get("USERPROFILE") ?? "/tmp"}/.cache/pdr-market/bidder-private-key`,
     },
     "pds-state-path": {
       type: "string" as const,
       description: "Path for PDS state persistence (Deno.Kv SQLite). Makes badgeBlueKeys associations survive restarts.",
       env: "PDS_STATE_PATH",
-      default: `${Deno.env.get("HOME") ?? Deno.env.get("USERPROFILE") ?? "/tmp"}/.cache/pdr-market/bidder-pds`,
     },
     "policy": POLICY_CLI_OPTION,
     "policy-args": POLICY_ARGS_CLI_OPTION,
@@ -386,6 +384,16 @@ export default {
       type: "string" as const,
       description: "File the bidder's DID, relay ingress and serve port are written to as JSON once it is ready",
       env: "STATUS_FILE",
+    },
+    "denopod-namespace": {
+      type: "string" as const,
+      description: "Namespace of the bidder DenoPod this process is the entry of, set by the deno runtime; unset means the bidder was not started by socialweb-computer run bidder",
+      env: "KCP_NAMESPACE",
+    },
+    "denopod-service-domain": {
+      type: "string" as const,
+      description: "Service domain of the kcp the bidder DenoPod runs in, set by the deno runtime",
+      env: "KCP_SERVICE_DOMAIN",
     },
   },
 };
