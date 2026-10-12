@@ -512,7 +512,7 @@ items:
       TestTheRendererShowsTheQrAndReturnsWhenReady (fake kcp). Red first.
     done_when: "green; on a market bed the bidder DenoPod runs without --skip-qr and its association is approved through the identity object (UTC reading); pushed on main in atproto-market."
     risks: ["Until 0008 M4-TESTBED-PORT gives each bed application its own kcp, the bed bidder's MarketIdentity lives in today's shared bed kcp (its DenoPod's KCP_WORKSPACE); the port writes wherever its DenoPod's kcp is, so nothing changes when it moves."]
-    status: doing
+    status: done
     evidence:
   - id: M2-VM-RUNTIME
     milestone: M2
