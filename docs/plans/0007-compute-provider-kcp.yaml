@@ -461,8 +461,8 @@ items:
     risks:
       - "A raw ext4 rootfs with no partition table must grow through cloud-init's resizefs on /dev/vda; unproven, measured in the first M6 run (df inside the guest reported through onNetwork or the guest's own log), with a partitioned image as the fallback."
       - "Moving off the host kernel changes the module set the guest relies on (iptables, bridge, overlay for k3s); the kernel config lists them and the M6 join proves them."
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M1-MARKET-IDENTITY
     milestone: M1
     title: "EARLY: MarketIdentity - an application's own atproto identity and sign-in as an object; what the user must do is status, never stdin"
@@ -747,8 +747,8 @@ items:
     test_first: "test/compute_provider_kcp_test.ts against a fake kcp: provision resolves on Running; destroy only after 404; createBidConfig equals firecracker's; setup() rebuilds getDroplet; the user_data Secret is written once. Red first."
     done_when: "unit suite green; deno check of hono-bidder green."
     risks: ["If watch is unavailable through the workspace path, bounded polling; which one was used is recorded."]
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M3-BIDDER-FLAG
     milestone: M3
     title: hono-bidder --compute-provider-kcp
