@@ -23,6 +23,10 @@ revised: >
   becomes `dev up --profile bed`; new M1-BED-PARALLEL makes today's bed run N per host EARLY, because live
   tests collide on fixed ports until it lands; every org repo works on main and is pushed (state rule,
   ownership). No item renamed.
+  2026-10-12 (fourth fold), the user's paradigm correction (0006 `principle`): new `principle` block, a
+  bed-per-workstream state rule; M1-BED-PARALLEL names the runner's port-file read-back (port-audit.md
+  blocker 1) and the fixed-port ratchet (0006 M1-NO-FIXED-PORTS); M3-DOOR-DENOPOD's 8788 marked an edge
+  exception; M4-RUN-REQUEST restated as an application instance. No item added or renamed.
 queued: >
   OPEN. The plan 0005 gate is satisfied: plan 0005 is complete with all 40 items done and its acceptance
   checks ACC-ZERO, ACC-MESH and ACC-NOSSH done with evidence (verified 2026-10-12). Only each item's own
@@ -33,6 +37,18 @@ source: >
   TypeScript service runs as a DenoPod reconciled by a deno-kcp provider that this repo now owns (the
   user decided to fork and vendor deno-kcp); kcp records which services run, and the core binary and its
   deno processes can be upgraded while VMs keep running.
+principle:
+  stated: >
+    Decided by the user 2026-10-12, the ORGANIZING PRINCIPLE of plans 0006-0008 (full text and rules: plan
+    0006 `principle`): kcp is a core part of APPLICATIONS; the virtual Kubernetes clusters project is the one
+    traditional use.
+  in_this_plan:
+    - "DenoPods are how an application's TypeScript components become objects of that application's own kcp. An application instance (the gateway with its door, a bidder handle, a requester `run request`, a market test bed) = its own kcp + a manifest set (DenoPod values over M2-SERVICE-TEMPLATE) + a profile."
+    - "Modes are profiles over one manifest set, rendered by 0006 M2-TEMPLATE: a bidder in OAuth QR mode against a real account has no PDS pod; a bidder in the market test bed has its own PDS pod."
+    - "Applications talk to each other ONLY over the atproto market protocol, never by sharing a kcp: a DenoPod never reads another application instance's objects, and the servicenames table a pod resolves through holds only its own instance's services."
+    - "Every DenoPod listener behind the edge binds port 0; the runner reads the pod's port file and records status.address; peers resolve by service name through kcp (0006 principle.port0_rule; port-audit.md ranked blocker 1). Only edge entry points keep known addresses (the door's 8788 behind caddy)."
+    - "The market test bed (deploy/examples/atproto/market) is the seed of this model and the vehicle for parallel workstreams: M1-BED-PARALLEL and M4-TESTBED-PORT are what every workstream tests in."
+    - "How today's multi-server deno processes split into DenoPods per application is research pending in multi-server-to-kcp.md (docs/research/; fold pending)."
 state_rules:
   - This file is the only state. Every step updates status and evidence.
   - status is one of todo, doing, done, blocked.
@@ -55,6 +71,13 @@ state_rules:
     Dev run mode is kcp-native now (decided by the user 2026-10-12; 0006 state rule): every test harness
     and every bed passes host-backend=proc and runs inside its own dev instance (0006 M1-DEV-INSTANCE); a
     production-shaped run passes systemd-user. DenoPods stay children of the core on both backends.
+  - >
+    Bed per workstream (decided by the user 2026-10-12; 0006 state rule). Each workstream's live tests run
+    in the task's own market test bed: a task tree from the org root's `./scripts/task-tree.ts`
+    (docs/task-tree.md in the org root) brings up its own isolated atproto network (fake PLC, relay, PDSes,
+    ingress proxy, bidders, requesters) through M1-BED-PARALLEL now and `dev up --profile bed` later. No
+    workstream test uses a real account or the shared real bidder; bobvmbuilder + alice are a final soak
+    only.
   - >
     Every org repo works on `main` and is pushed to GitHub as work lands (decided by the user 2026-10-12).
 ownership:
@@ -172,7 +195,13 @@ items:
       a per-run bed record whose ports are leased from the per-user lease file keyed by instance
       (0006:M1-PORT-LEASE-INSTANCE; instance = the dev instance id once 0006:M1-DEV-INSTANCE lands, the
       worktree-derived id before) or bound at 0 and read back where the service reports its port (onListen
-      logs); the bed's *.localhost names stay, resolved per bed. The livegate "port held by another process"
+      logs); the bed's *.localhost names stay, resolved per bed. Port 0 is the rule, leases the exception
+      (0006 principle.port0_rule, user 2026-10-12): the first change is port-audit.md ranked blocker 1 (B2) -
+      the deno-kcp runner reads each pod's <runDir>/port-bound-to (PORT_FILE set per run, B3), records it as
+      the DenoPod's status.address, and servicenames builds the table from status.address, so peers resolve
+      by service name through the bed's kcp and never by a configured port. Every literal this item removes
+      deletes its line from 0006 M1-NO-FIXED-PORTS' ratchet. This item is what makes 'bed per workstream'
+      (state rule) possible: each task tree's live tests run in its own bed. The livegate "port held by another process"
       refusal (live_test.go:115) is replaced by the lease. Bed units and processes carry the run id
       (socialweb-bed-<runid>-...), so two beds never touch each other's processes. Guests still come up only
       through the bed's requester (runComputeContract -> RFP -> bid -> accept -> cloud-init) against the
@@ -183,7 +212,7 @@ items:
       and 23791 outside the record; red on today's tree), TestTwoBedRecordsLeaseDisjointPorts; behind
       livegate on hat-8: TestTwoBedsOnOneHostEachRentAGuestThroughTheRFPFlow (two worktrees' beds at once,
       each guest born via runComputeContract; both pass; no ssh to a guest). Red first.
-    done_when: "the two-bed live run passes on hat-8 with its readings (ports, run ids, guest names, UTC); M1-TESTBED's accept checks still pass on one bed."
+    done_when: "the two-bed live run passes on hat-8 with its readings (ports, run ids, guest names, UTC); M1-TESTBED's accept checks still pass on one bed; 0006 M1-NO-FIXED-PORTS' ratchet holds no bed entry."
     risks: ["Two beds double the guests on hat-8 (memory, /dev/kvm); the run records host memory before and after and refuses a third bed when free memory is below the bed's guest budget."]
     status: todo
     evidence: []
@@ -292,7 +321,8 @@ items:
     decision: >
       `serve gateway kcp` applies a door DenoPod in root:socialweb-door (type denoruntime) with the env the
       entrypoint sets today (container-entrypoint.sh:305-312), STATE_DIR on the persistent state dir, a
-      fixed PORT 8788 behind caddy, and the door's explicit permission list (M2-SERVICE-TEMPLATE; any
+      fixed PORT 8788 behind caddy (the gateway application's front, an edge exception to 0006
+      principle.port0_rule listed in deploy/edge-ports.yaml; every other gateway DenoPod binds 0), and the door's explicit permission list (M2-SERVICE-TEMPLATE; any
       --allow-run it needs is named with its reason). A door restart (upgrade) must not cost a node; what the
       door must re-populate after one is plan 0007 M6-GATEWAY-REPOPULATE.
     files: ["internal/stack/gatewaykcp", "deploy/denopods/door.values.yaml", "deploy/sets.yaml"]
@@ -324,6 +354,8 @@ items:
     title: socialweb-computer run request, contracts held as ComputeContract objects in kcp
     depends_on: [M1-TS-CLOSURE, "0006:M2-KCP-PORT0", "0006:M2-APPLY"]
     decision: >
+      Principle (user 2026-10-12, 0006 `principle`): a `run request` is an application instance - its own
+      kcp, the requester manifest set, a profile - and meets bidders only over the atproto market protocol.
       Decided by the user 2026-10-07: run request keeps its state in kcp objects. Kind ComputeContract
       (socialweb.computer/v1alpha1, export computecontracts, apigen) with spec {vm request, bidder
       allow/deny lists, policy refs, keepUntil} and status.contract = the same ContractState fields
@@ -349,7 +381,11 @@ items:
     title: The market test bed driven by socialweb-computer instead of accept.sh and apply.sh
     depends_on: [M2-SERVICE-TEMPLATE, M1-BED-PARALLEL, "0006:M2-APPLY", "0006:M2-KCP-PORT0", "0006:M1-DEV-INSTANCE", "0006:M2-BOOTSTRAP-LAYER", "0006:M2-HOSTPROCESS-KIND"]
     decision: >
-      Third fold 2026-10-12 (decided by the user: dev run mode kcp-native now; drop the fixed ports 2583-2589
+      Principle (user 2026-10-12): the bed is the seed of the application-instance model - a composition of
+      application instances (its atproto network, bidders each with their own PDS pod under the bed profile,
+      requesters) brought up by applying manifest sets, each instance talking to the others only over the
+      market protocol; how its services split into instances is pending multi-server-to-kcp.md (fold
+      pending). Third fold 2026-10-12 (decided by the user: dev run mode kcp-native now; drop the fixed ports 2583-2589
       and the one-bed lock): `testbed up` = `dev up --profile bed` (0006 M1-DEV-INSTANCE, M2-BOOTSTRAP-LAYER:
       the instance's own kcp on kine -> postgres behind a port-0 front, host-backend=proc), then the bed's
       sets; every bed service port renders to 0 and is read back from the service's onListen report (the
@@ -365,7 +401,7 @@ items:
       apply.sh are deleted after two passes.
     files: ["internal/stack/testbed", "internal/marketbed/live_test.go", "deploy/examples/atproto/market/accept.sh, apply.sh (deleted at the end)"]
     test_first: "TestTheMarketTestBedRentsAFirecrackerGuestThroughTheRFPFlow switched to the subcommand; TestTwoBedsOnOneHostEachRentAGuestThroughTheRFPFlow through `testbed up` in two dev instances (two requesters, two bidders; guests only via runComputeContract); red until it exists."
-    done_when: "two PASS readings through the subcommand with accept.sh run 9's check list, and one two-bed reading on hat-8 (UTC)."
+    done_when: "two PASS readings through the subcommand with accept.sh run 9's check list, and one two-bed reading on hat-8 (UTC); 0006 M1-NO-FIXED-PORTS' ratchet holds no testbed entry."
     risks: []
     status: todo
     evidence: []

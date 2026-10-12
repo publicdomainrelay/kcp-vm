@@ -42,6 +42,10 @@ revised: >
   M4-CONTRACT-STORE-FILE lands the file-backed ContractStore, market-bidder load()/onContractChange and
   persisted tombstones NOW (a guest leaked 2026-10-12T01:31Z), the ComputeVM-backed store stays in
   M4-CONTRACT-RESTORE. M4-HOST-KEYS follows the checklist. No item renamed.
+  2026-10-12 (fourth fold), the user's paradigm correction (0006 `principle`): new `principle` block here (a
+  bidder handle is an application instance with its own kcp; modes are profiles; applications meet only over
+  the market protocol), a bed-per-workstream state rule, M5-RUN-BIDDER restated per application instance,
+  NodeClaim/tenant-node items tagged `kcp_use: traditional-exception`. No item added or renamed.
 queued: >
   OPEN. The plan 0005 gate is satisfied: plan 0005 is complete with all 40 items done and its acceptance
   checks ACC-ZERO, ACC-MESH and ACC-NOSSH done with evidence (verified 2026-10-12). Only each item's own
@@ -59,6 +63,17 @@ source: >
   it owns afterwards. On 2026-10-11 the user decided the lifecycle: headless Linux servers; VMs survive a
   core crash, upgrade and logout; reboot = Lost; the VMM is launched directly by the service manager and no
   socialweb-computer code stays in a running VM's process tree; everything else in the decisions below.
+principle:
+  stated: >
+    Decided by the user 2026-10-12, the ORGANIZING PRINCIPLE of plans 0006-0008 (full text and rules: plan
+    0006 `principle`): kcp is a core part of APPLICATIONS, not a per-machine cluster; the virtual Kubernetes
+    clusters project is the one traditional use.
+  in_this_plan:
+    - "A bidder handle is an application instance = its own kcp (one slot on kine-sqlite behind a port-0 front) + the bidder manifest set + a profile. Its state is ComputeVM, OpenBaoServer and HostProcess objects in that kcp; its components (the bidder deno, the vault, each VM unit) are DenoPods and HostProcesses reconciled from them. Two handles on one host never share a kcp; the host is only where they run (/dev/kvm, the shared account, the subuid range stay about the machine)."
+    - "Modes are profiles over the one bidder manifest set: OAuth QR mode against a real account has no PDS pod; the market test bed profile gives the bidder its own PDS pod. No mode is a separate code path."
+    - "The bidder and its requesters/gateways talk ONLY over the atproto market protocol (RFP, bid, accept, receipts, onNetwork, vm.hostKeys, vm.terminated). A requester never reads a bidder's ComputeVMs and the gateway never reads them either; what crosses applications is a market record."
+    - "Every bidder listener behind the edge binds port 0 and reports into its kcp object's status (0006 principle.port0_rule)."
+    - "kcp_use: traditional-exception marks the items that serve the virtual Kubernetes clusters project (NodeClaims, tenant nodes): M3-NODE-LOSS-CLOCK, M6-CLAIM-RESUME, M6-GATEWAY-REPOPULATE, M6-NOSSH-JOIN."
 state_rules:
   - This file is the only state. Every step updates status and evidence.
   - status is one of todo, doing, done, blocked.
@@ -85,6 +100,12 @@ state_rules:
     HostProcess child of its ComputeVM, placed on systemd-user in production and on proc (devsup) in dev
     and tests; a bidder's kcp is one slot on kine-sqlite. Dev adds no provisioning path: a dev instance's
     guests come up only through runComputeContract against that instance's bidder.
+  - >
+    Bed per workstream (decided by the user 2026-10-12; 0006 state rule). This plan's live tests run in the
+    task's own market test bed (a task tree from the org root's `./scripts/task-tree.ts`, docs/task-tree.md
+    in the org root; 0008 M1-BED-PARALLEL, later `dev up --profile bed`), with the bed's own bidders and
+    requesters. The shared real bidder (bobvmbuilder on hat-8) and alice are a final soak only, after the
+    bed tests pass.
   - >
     Every org repo works on `main` and is pushed to GitHub as work lands (decided by the user 2026-10-12):
     atproto-market, hono-compute-provider, typescript-helpers, did-key-associator and socialweb-computer-k8s
@@ -658,6 +679,7 @@ items:
     evidence: []
   - id: M3-NODE-LOSS-CLOCK
     milestone: M3
+    kcp_use: "traditional-exception (virtual Kubernetes clusters project: tenant nodes; 0006 principle)"
     title: Our own outage never counts against a tenant's node - the NODE-LOSS clock counts only from when our side of the path is back up
     depends_on: []
     decision: >
@@ -933,7 +955,11 @@ items:
     title: socialweb-computer run bidder as a user unit of the shared lingering bidder account, no docker, least-privilege deno
     depends_on: [M2-CONTROLLER, M3-BIDDER-FLAG, M4-BIDDER-VAULT, M4-BIDDER-BAO-SYNC, M4-CONTRACT-RESTORE, "0008:M2-SERVICE-TEMPLATE", "0006:M2-KCP-PORT0", "0006:M1-INSTALL", "0006:M2-HOST-CONTRACT", "0006:M2-BOOTSTRAP-LAYER", "0006:M2-HOSTPROCESS-KIND"]
     decision: >
-      Third fold 2026-10-12 (decided by the user): the handle's kcp is ONE slot on kine-sqlite behind a
+      Principle (user 2026-10-12, 0006 `principle`): each bidder handle is one application instance - its own
+      kcp, the bidder manifest set and a profile (production QR mode against the handle's real account: no
+      PDS pod; the market-bed profile: its own PDS pod). Handles on one host share the machine (the account,
+      /dev/kvm, the subuid range), never a kcp, and reach requesters and gateways only over the atproto
+      market protocol. Third fold 2026-10-12 (decided by the user): the handle's kcp is ONE slot on kine-sqlite behind a
       port-0 front, in the bootstrap layer (installed units socialweb-kcp-<hid>-kine@a, socialweb-kcp-<hid>@a,
       socialweb-kcp-<hid>-front written by `install bidder --handle`; devsup units in dev), and a kcp upgrade
       is a short restart of that slot that VMs never notice (0006 M2-KCP-SLOTS, M3-KCP-ROLL); the bidder
@@ -1008,6 +1034,7 @@ items:
     evidence: []
   - id: M6-CLAIM-RESUME
     milestone: M6
+    kcp_use: "traditional-exception (virtual Kubernetes clusters project: NodeClaims; 0006 principle)"
     title: A restarted door resumes Bidding and Provisioning claims - per-claim secrets-server key in OpenBao, served state on the NodeClaim
     depends_on: []
     decision: >
@@ -1047,6 +1074,7 @@ items:
     evidence: []
   - id: M6-GATEWAY-REPOPULATE
     milestone: M6
+    kcp_use: "traditional-exception (virtual Kubernetes clusters project: NodeClaims; 0006 principle)"
     title: After an upgrade the gateway re-populates every VM it owns, including ones rented from bidders elsewhere
     depends_on: ["0008:M3-DOOR-DENOPOD", "0006:M3-CLUSTER-UNITS", M4-BIDDER-VAULT, M6-CLAIM-RESUME, M4-HOST-KEYS, M3-NODE-LOSS-CLOCK]
     decision: >
@@ -1115,6 +1143,7 @@ items:
     evidence: []
   - id: M6-NOSSH-JOIN
     milestone: M6
+    kcp_use: "traditional-exception (virtual Kubernetes clusters project: tenant nodes; 0006 principle)"
     title: A market node rented through compute-provider-kcp joins a tenant cluster with no ssh, across a bidder upgrade
     depends_on: [M6-BIDDER-UPGRADE]
     decision: >

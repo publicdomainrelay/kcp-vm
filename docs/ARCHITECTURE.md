@@ -7,7 +7,55 @@ Module `github.com/johnandersen777/socialweb-computer-kcp`, Go. CRDs in API grou
 
 ---
 
+## 0. The organizing principle: kcp is part of each application
+
+User, 2026-10-12: "what we are doing is a paradigm shift, we are using kcp (the kubernetes control
+plane) as a core part of applications, it's probably not how it's traditionally used. With the
+exception of our virtual kubernetes clusters project that is a more traditional usage of it."
+
+Plans 0006, 0007 and 0008 are organized by it (each carries a `principle:` block; the full rules are
+in plan 0006):
+
+- **An application instance = its own kcp + a manifest set + a profile.** A bidder handle, a requester
+  `run request`, the gateway, a market test bed, a dev instance. kcp belongs to the application
+  instance, never to a machine; a host is only where instances run, and any number run on one host.
+- **Application state = kcp objects** in that instance's kcp: ComputeVM, ComputeContract, NodeClaim,
+  OpenBaoServer, Postgres, DenoPod, HostProcess.
+- **Application components** (the servers that live today inside one deno or Go process) = DenoPods and
+  HostProcesses reconciled from those objects.
+- **Modes = profiles over one manifest set.** A bidder in OAuth QR mode against a real account has no
+  PDS pod; a bidder in the market test bed has its own PDS pod.
+- **Composition = applying manifest sets, or nesting instances as workspaces** (a parent's workspace
+  holds a child instance's HostProcess objects; the child keeps its own kcp).
+- **Applications talk to each other only over the atproto market protocol**, never by sharing a kcp.
+- **The market test bed** (`deploy/examples/atproto/market`) is the seed of this model and the vehicle
+  for parallel workstreams: each workstream's live tests run in its own bed, brought up in its own task
+  tree (`./scripts/task-tree.ts`, `docs/task-tree.md` in the org root); the shared real bidder
+  (bobvmbuilder) and alice are a final soak only.
+- **The one traditional use** is the virtual Kubernetes clusters project this document mostly
+  describes (sections 1-4, 9-11): tenant k3s `--disable-agent` control planes fronted by kcp
+  (clusterprovider, socialweb-computer-k8s, NodeClaims). Plan items of that project carry
+  `kcp_use: traditional-exception`. Even there, the gateway's kcp is one application instance's kcp.
+
+**Port 0 rule.** Every listener behind the edge binds port 0 and reports its bound address into its
+own kcp object's status (a DenoPod's runner reads the pod's port file and records `status.address`; a
+HostProcess, kcp slot, kine or front is read back from its single listening socket). Peers resolve each
+other by service name through kcp: an address is application state in kcp, not config. Why: N instances
+per machine; no allocator and no bind-close-rebind race; nesting; blue/green slots; isolation (an
+application learns addresses only from its own kcp, so it can never reach another instance's components
+by accident). Exception: only stable public edge entry points keep known addresses - caddy on 443 and an
+application's front that caddy proxies to (the gateway's kcp front on 127.0.0.1:6443, the door's 8788).
+Leases remain only for ports a tenant cluster needs stable across restarts (section 8). A check test
+fails on any fixed port in a manifest or default behind the edge (plan 0006 M1-NO-FIXED-PORTS).
+
+What stays about the machine: `/dev/kvm`, the systemd user manager and its units (production placement
+only), `install`, the host contract, and the bootstrap layer that runs an instance's kcp itself. How
+today's multi-server processes decompose into application instances is research pending
+(`multi-server-to-kcp.md` under `docs/research/`; fold pending).
+
 ## 1. The objective, stated once
+
+This objective is the virtual Kubernetes clusters project, the one traditional use of kcp (section 0).
 
 ```
 kcp + openbao + kine + embedded-postgres + k3s, as gateway-side processes.
@@ -165,6 +213,11 @@ directory - a caller decision, not an automatic consequence of a process exiting
 ## 5. Components
 
 Everything is either a controller-runtime reconcile loop or a deploy config. No new language.
+
+The table below is the virtual-clusters project (section 0's traditional exception). The planned
+components of plans 0006-0008 ("Host processes and the VM lifecycle" below) are organized by section 0:
+each application instance has its own kcp, manifest set and profile, its components are DenoPods and
+HostProcesses, and listeners behind the edge bind port 0.
 
 | # | Component | Layer | Why it exists |
 |---|---|---|---|
@@ -563,8 +616,8 @@ Every other unit (the vaults, cluster slices and members, VM units) is a transie
 from a HostProcess object and adopted by name. Plan 0006 M1-INSTALL and M2-BOOTSTRAP-LAYER enumerate both
 lists.
 
-**kcp as the host's service manager; dev run mode (user, 2026-10-12).** Long-lived host processes are
-`HostProcess` objects in kcp (a kind that generalises DenoPod's reconciler shape) reconciled by a
+**Each application instance's kcp as its service manager; dev run mode (user, 2026-10-12).** Long-lived
+host processes are `HostProcess` objects in their application instance's own kcp (section 0) (a kind that generalises DenoPod's reconciler shape) reconciled by a
 supervisor inside the binary onto a placement backend: `systemd-user` (transient units in the account's
 user manager, production installs only) or `proc` (dev and tests: a plain supervised process tree under
 a per-instance `devsup` that is every unit's parent and child subreaper). Postgres, OpenBaoServer, each
@@ -576,7 +629,8 @@ instance per worktree with no root, no install and no systemd: state under
 `$XDG_STATE_HOME/socialweb-computer/dev/<instance>/`, its own kcp on port 0 (gateway store sqlite for
 quick runs, postgres for the bed and prod-like profiles), leases keyed by instance, the k3s node password
 bind-mounted in a per-instance user namespace, AppArmor reported not fixed, one uid for every role.
-Instances nest as kcp workspaces (one kcp per instance now; a parent kcp later). Guests in dev still come
+Instances nest as kcp workspaces (one kcp per application instance; a parent instance that holds its
+children's processes later; applications never share a kcp, section 0). Guests in dev still come
 up only through the RFP flow. Plan 0006 M1-DEV-INSTANCE, M2-HOST-BACKEND-PROC, M2-HOST-CONFORMANCE,
 M2-BOOTSTRAP-LAYER, M2-HOSTPROCESS-KIND; `docs/research/2026-10-11-vm-lifecycle/dev-run-mode.md`.
 
@@ -1102,7 +1156,10 @@ the vault again. Not deployed at the time of writing: the live reading (`bao aut
 
 ## 8. Ports
 
-Every per-cluster port is leased from `internal/portallocator`, ADR 0026. Persisted per host.
+Every per-cluster port is leased from `internal/portallocator`, ADR 0026. Persisted per host. These
+leases are the virtual-clusters exception to section 0's port 0 rule (a tenant cluster's apiserver and
+link ports must stay stable across restarts); every other listener behind the edge binds port 0 and
+reports its address into its kcp object (plans 0006 M2-KCP-PORT0, M1-NO-FIXED-PORTS; 0008 M1-BED-PARALLEL).
 
 | purpose | for |
 |---|---|
@@ -3386,7 +3443,13 @@ its items' decisions, dependencies and the questions left for the user. On 2026-
 was folded as kcp-native now (section 5, "Host processes and the VM lifecycle"), with new items for the
 proc backend, the contract suite, dev instances, the bootstrap layer and the HostProcess kind, and
 `NEXT.yaml` gained an `execution_order` block (critical path, startable waves, parallel worktrees, live
-hat-8 needs) and the early bed item P8-M1-BED.
+hat-8 needs) and the early bed item P8-M1-BED. Later on 2026-10-12 the user's paradigm correction became
+the plans' organizing principle (section 0): one kcp per application instance, never per machine;
+modes as profiles over one manifest set; applications meeting only over the atproto market protocol;
+port 0 behind the edge with addresses held in kcp (new check item 0006 M1-NO-FIXED-PORTS); every
+workstream testing in its own market bed; the virtual clusters project the one traditional use. The
+decomposition of today's multi-server processes into application instances stays open, pending
+`multi-server-to-kcp.md` (fold pending).
 **The live backlog is `NEXT.yaml`, which this section mirrors:
 an item is written here when it is opened and moves to section 15, with its readings, when it is
 closed.** The practice that produced the batch is the one worth keeping: the artefact was run and each

@@ -50,6 +50,13 @@ revised: >
     backend; evidence kept), M2-HOST-CONTRACT, M2-VM-TREE-AUDIT, M2-KCP-STORE, M2-KCP-FRONT, M2-KCP-SLOTS,
     M2-KCP-PORT0, M2-POSTGRES, M2-OPENBAO-SERVER, M3-CLUSTER-UNITS, M3-APISERVER-FRONT, M3-CP-SLOTS,
     M3-KCP-ROLL, M3-SERVE-GATEWAY-KCP. No item renamed.
+    2026-10-12 (fourth fold), the user's paradigm correction: kcp is a core part of APPLICATIONS (one kcp per
+    application instance, never per machine); the virtual Kubernetes clusters project is the one
+    traditional use. New top-level `principle` block (with the port-0 rule) and a bed-per-workstream state
+    rule; host-topology wording about kcp restated per application instance (M1-PORT-LEASE-INSTANCE,
+    M1-DEV-INSTANCE, M2-KCP-PORT0, M2-BOOTSTRAP-LAYER - `--kcp-shared-roles` dropped - M2-OPENBAO-SERVER,
+    M2-HOSTPROCESS-KIND, M3-SERVE-GATEWAY-KCP, M4-DEV-PARENT-KCP, execution_order); virtual-cluster items
+    tagged `kcp_use: traditional-exception`. New: M1-NO-FIXED-PORTS. No item renamed.
 queued: >
   OPEN. The plan 0005 gate is satisfied: plan 0005 is complete with all 40 items done and its acceptance
   checks ACC-ZERO, ACC-MESH and ACC-NOSSH done with evidence (verified 2026-10-12). Only each item's own
@@ -75,13 +82,55 @@ source: >
   process as blue/green slot units on kine -> a dedicated postgres behind our own front on 127.0.0.1:6443;
   production setup is one explicit root command, `socialweb-computer install bidder|gateway`, and systemd
   is for production installs only; the dev run mode is kcp-native now (HostProcess objects placed by an
-  in-binary supervisor on the systemd-user or proc backend, a bootstrap layer below kcp, one kcp per dev
-  instance; docs/research/2026-10-11-vm-lifecycle/dev-run-mode.md); a bidder's kcp is one slot on
+  in-binary supervisor on the systemd-user or proc backend, a bootstrap layer below kcp, one kcp per
+  application instance; docs/research/2026-10-11-vm-lifecycle/dev-run-mode.md); a bidder's kcp is one slot on
   kine-sqlite, blue/green kcp slots are the gateway's only. This plan
   holds the Go binary, kcp, assets, the install and upgrade layout, host processes as units and reconciled
   resources, programmatic apply, the gateway composition, control-plane continuity across upgrades, the
   build and the fresh prod deploy. The embedded deno,
   the TypeScript closure and DenoPods are plan 0008; the compute provider and VM lifecycle are plan 0007.
+principle:
+  stated: >
+    Decided by the user 2026-10-12 (user-decisions.md): "what we are doing is a paradigm shift, we are using
+    kcp (the kubernetes control plane) as a core part of applications, it's probably not how it's
+    traditionally used. With the exception of our virtual kubernetes clusters project that is a more
+    traditional usage of it." This is the ORGANIZING PRINCIPLE of plans 0006, 0007 and 0008; every item is
+    read through it, and an item whose wording contradicts it is wrong, not the principle.
+  rules:
+    - "An application instance (a bidder handle, a requester `run request`, the gateway, a market test bed, a dev instance) = its own kcp + a manifest set + a profile. kcp belongs to the application instance, never to a machine: a host is only where instances run, and any number of instances run on one host."
+    - "Application state = kcp objects in the instance's own kcp (ComputeVM, ComputeContract, NodeClaim, OpenBaoServer, Postgres, DenoPod, HostProcess, ...). A restarted core re-reads what its instance knows from there."
+    - "Application components (the servers that live today inside one deno or Go process) = DenoPods and HostProcesses reconciled from those objects."
+    - "Modes = profiles over ONE manifest set. Example: a bidder in OAuth QR mode against a real account has no PDS pod; a bidder in the market test bed has its own PDS pod. A mode is never a second code path or a second manifest set."
+    - "Composition = applying manifest sets into an instance, or nesting instances as workspaces (M4-DEV-PARENT-KCP: a parent's workspace holds a child instance's HostProcess objects; the child keeps its own kcp). A market test bed or a dev instance is a composition of application instances."
+    - "Applications talk to each other ONLY over the atproto market protocol (records, XRPC, the relay, the ingress proxy), never by sharing a kcp: no application reads or writes another instance's objects, and no two applications are placed on one kcp."
+    - "The market test bed (deploy/examples/atproto/market) is the seed of this model and the vehicle for parallel workstreams (state rule 'bed per workstream')."
+    - "The ONLY traditional use of kcp is the virtual Kubernetes clusters project: tenant k3s --disable-agent control planes fronted by kcp (clusterprovider, socialweb-computer-k8s, NodeClaims). Its items carry `kcp_use: traditional-exception` (here M2-POSTGRES, M3-CLUSTER-UNITS, M3-APISERVER-FRONT, M3-CP-SLOTS, M3-LINK-HANDOVER, M3-BAO-SYNC, M3-CP-CONTINUITY; plan 0007 M3-NODE-LOSS-CLOCK, M6-CLAIM-RESUME, M6-GATEWAY-REPOPULATE, M6-NOSSH-JOIN). Even there the gateway's own kcp is still one application instance's kcp."
+  about_the_machine: >
+    What stays about the machine, because it is where an instance runs and not what it is: /dev/kvm and the
+    kvm group, the systemd user manager and its units (production placement only), `install`, the host
+    contract (check-host), and the bootstrap layer that runs an instance's kcp itself (M2-BOOTSTRAP-LAYER).
+  port0_rule: >
+    Every listener behind the edge binds port 0 and reports its bound address into its own kcp object's
+    status: a DenoPod's runner reads the pod's port file (<runDir>/port-bound-to, written by createServe's
+    onListen) and records status.address (port-audit.md ranked blocker 1 = B2; 0008 M1-BED-PARALLEL); a
+    HostProcess's address is read back from its single listening socket (hostsvc.ListenPort, M2-KCP-STORE)
+    and written to its status; kcp slots, kines and fronts likewise (M2-KCP-PORT0). Peers resolve each other
+    by service name through kcp (the servicenames table built from status.address), so an address is
+    application state in kcp, never config. Reasons: N instances per machine; no allocator and no
+    bind-close-rebind race; nesting (a child instance needs no port plan from its parent); blue/green slots
+    (a new slot binds a fresh port beside the old); isolation (an application learns addresses only from
+    its own kcp, so it can never reach another instance's components by accident). Exception: only stable
+    public edge entry points keep known addresses - caddy on 443 and an application's front that caddy
+    proxies to (the gateway's kcp front 127.0.0.1:6443, M2-KCP-FRONT; the door's 8788, 0008
+    M3-DOOR-DENOPOD), each listed with its reason in deploy/edge-ports.yaml. Leases (M1-PORT-LEASE-INSTANCE)
+    remain only for ports that must stay stable inside one instance across restarts (a tenant cluster's
+    front port and link UDP ports, the virtual-clusters exception) and are recorded in that instance's kcp.
+    Enforced by M1-NO-FIXED-PORTS.
+  pending: >
+    How today's multi-server processes (the door, the bidder, the bed's services) decompose into application
+    instances and their DenoPods/HostProcesses is research pending in multi-server-to-kcp.md
+    (docs/research/; fold pending). This fold states the principle and does not pre-empt that research's item
+    deltas.
 state_rules:
   - This file is the only state. Every step updates status and evidence.
   - status is one of todo, doing, done, blocked.
@@ -128,6 +177,15 @@ state_rules:
     Order of work: execution_order below (and NEXT.yaml execution_order) names the critical path, the
     first waves of startable items, the parallel worktree split and which items need live hat-8; it is
     advisory and never overrides depends_on.
+  - >
+    Bed per workstream (decided by the user 2026-10-12; principle above). Every workstream's live tests run
+    in the task's OWN market test bed: a task tree made by the org root's `./scripts/task-tree.ts`
+    (docs/task-tree.md in the org root) brings up its own fully isolated atproto network - fake PLC, relay,
+    PDSes, ingress proxy, bidders, requesters - through 0008 M1-BED-PARALLEL now and `dev up --profile bed`
+    (M1-DEV-INSTANCE, 0008 M4-TESTBED-PORT) later. No workstream live test uses a real account or the
+    shared real bidder. The shared real bidder (socialweb-computer-bidder@bobvmbuilder.bsky.social on
+    hat-8) and alice are a FINAL SOAK only, run after the workstream's bed tests pass, never as the
+    workstream's test bed.
   - >
     Linux only (decided by the user 2026-10-11). Every OS-specific body lives in a GOOS-tagged file; darwin
     and windows get stubs returning ErrUnsupported until plans 0012 and 0011 replace them. check.sh proves on
@@ -554,10 +612,13 @@ items:
     evidence: []
   - id: M1-PORT-LEASE-INSTANCE
     milestone: M1
-    title: Port and subnet leases keyed by instance, in one per-user lease file in dev, so N instances on a host never lease the same port
+    title: Port and subnet leases keyed by application instance, in one per-user lease file in dev, for the few ports the port-0 rule allows to be stable
     depends_on: []
     decision: >
-      Decided by the user 2026-10-12: dev run mode now, N instances per host (dev-run-mode.md R2, 4.5).
+      Principle (user 2026-10-12): leases are the exception to principle.port0_rule, not the way ports are
+      found; every lease names the application instance that owns it and is recorded in that instance's kcp.
+      Decided by the user 2026-10-12: dev run mode now, any number of application instances on one machine
+      (dev-run-mode.md R2, 4.5).
       Decided by Claude, user may veto: portallocator's lease key becomes (instance, cluster, purpose) - the
       Lease.Instance field exists (portallocator.go:106) and the key ignores it (:145-148); prod keeps one
       lease file per account with instance "" (unchanged behaviour); dev and tests open ONE per-user lease file
@@ -565,7 +626,8 @@ items:
       see each other's leases and the probe-then-bind race between two lease files is gone; the dev carve
       does not overlap the live-test blocks of internal/liveports (liveports.go:33-56). subnetallocator gets
       the same key change. Only ports that must stay stable inside an instance across restarts are leased
-      (a cluster's front port, link UDP ports); everything else binds 0 and reports (M2-KCP-PORT0).
+      (a cluster's front port, link UDP ports); everything else binds 0 and reports into its kcp object's
+      status (principle.port0_rule, M2-KCP-PORT0, M1-NO-FIXED-PORTS).
     files: ["internal/portallocator/ (lease key, lease-file path option)", "internal/subnetallocator/", "internal/liveports (carve boundary test)"]
     test_first: >
       internal/portallocator TestALeaseIsKeyedByInstance (two instances, same cluster and purpose, distinct
@@ -576,12 +638,43 @@ items:
     risks: ["A lease file shared by every instance of a user is a single point of contention; flock hold times are recorded under 50 concurrent leases."]
     status: todo
     evidence: []
+  - id: M1-NO-FIXED-PORTS
+    milestone: M1
+    title: "Check: a test fails on any fixed port in a manifest or default behind the edge - a ratchet that only shrinks"
+    depends_on: []
+    decision: >
+      Decided by the user 2026-10-12: principle.port0_rule. Decided by Claude, user may veto: one check test
+      in check.sh --fast scans this repo for a TCP or UDP port that is a literal other than 0 behind the edge
+      - every YAML under deploy/ (the vendored bed and deno-kcp manifests included), deploy/**/*.sh, every
+      config.json under deploy/, and the option defaults (internal/clicfg/options.json once M1-CLI lands) -
+      in args (--port N, --*-port N), env (PORT, *_PORT), loopback URLs (127.0.0.1:N, localhost:N,
+      *.localhost:N) and defaults. A DenoPod or HostProcess manifest that names no port inherits its CLI's
+      default, so it must pass its port explicitly (0). Two files sit beside the test:
+      deploy/edge-ports.yaml, the exceptions (caddy 443, the gateway's kcp front 6443 in its prod config, the
+      door's 8788), each with its reason, extended only by a user decision; and deploy/fixed-ports-ratchet.yaml,
+      today's violations as file + port (the bed's 2583-2589, deno-kcp kcp 6443 and kine 23791 and the rest of
+      port-audit.md sections 1 and 5). The test fails on a fixed port in neither file AND on a ratchet entry
+      that no longer matches the tree, so the ratchet only shrinks and every fix deletes its line; it can land
+      in wave 1 and gate everything after. Once M2-TEMPLATE lands it also scans every set rendered with every
+      profile (quick, bed, prodlike, production), because a template value can render a literal.
+    files: ["test/no_fixed_ports_test.go", "deploy/edge-ports.yaml", "deploy/fixed-ports-ratchet.yaml", "deploy/check.sh (--fast step)"]
+    test_first: >
+      TestNoFixedPortBehindTheEdge (red first on a fixture tree with one literal beyond the ratchet, green on
+      today's tree with the ratchet), TestTheRatchetListsOnlyViolationsThatStillExist,
+      TestEveryEdgePortHasAReason, TestAServiceManifestWithoutAnExplicitPortIsAViolation.
+    done_when: "in check.sh --fast and green; the ratchet's starting entry count recorded; 0008 M1-BED-PARALLEL, M4-TESTBED-PORT and M2-KCP-PORT0 each name the ratchet lines they delete in their evidence; the ratchet is empty when they are done."
+    risks: ["A pattern scan misses a port built at runtime (string concatenation); the rendered-set scan after M2-TEMPLATE and each item's live two-instance test cover what the scan cannot."]
+    status: todo
+    evidence: []
   - id: M1-DEV-INSTANCE
     milestone: M1
     title: "`socialweb-computer dev up|down|status` per worktree - instance identity, XDG state keyed by instance, devsup per instance, port 0"
     depends_on: [M1-CLI, M2-HOST-BACKEND-PROC, M1-PORT-LEASE-INSTANCE]
     decision: >
-      Decided by the user 2026-10-12: the dev run mode is kcp-native now; no root, no install, no systemd,
+      Principle (user 2026-10-12): a dev instance is a composition of application instances (its profile
+      names which: the bed profile = the market test bed's atproto network, bidders and requesters), each with
+      its own kcp, manifest set and profile; the host is only where it runs. Decided by the user 2026-10-12:
+      the dev run mode is kcp-native now; no root, no install, no systemd,
       parallel instances per worktree; the dev defaults accepted (host-backend required, no default; dev
       passes proc; AppArmor in dev report-only; one uid for every role in dev). Decided by Claude, user may
       veto (dev-run-mode.md R1-R4, R8, 4.1, 4.7): instance id = <worktree basename, 16 chars>-<first 8 hex of
@@ -615,7 +708,7 @@ items:
     done_when: "tests green; two worktrees on hat-8 each ran dev up / status / down in parallel with readings (ports, socket paths, unit lists) recorded."
     risks:
       - "logind KillUserProcesses=yes on a host kills a detached devsup at logout; dev check reports it and --fg is the documented alternative."
-      - "Per-instance kcp costs ~0.4-0.5 GB and ~6-9 s cold start (kcp-spike.md); measured per profile once M2-BOOTSTRAP-LAYER lands."
+      - "Each application instance's kcp costs ~0.4-0.5 GB and ~6-9 s cold start (kcp-spike.md); measured per profile once M2-BOOTSTRAP-LAYER lands."
     status: todo
     evidence: []
   - id: M1-INSTALL
@@ -1140,8 +1233,9 @@ items:
       before readiness. Readiness is /readyz == 200 on THAT port with the shard-admin token - never through a
       copied admin.kubeconfig, which names the front (and named the OLD slot in the spike's one failing run).
       Only the gateway's front has a fixed address (127.0.0.1:6443 from its prod config, M2-KCP-FRONT); every
-      slot, kine and every other front, and every test, use 0, so any number of kcps run on one host (the
-      gateway, each bidder handle, run request, tests, every dev instance) with no port allocation. Fallback
+      slot, kine and every other front, and every test, use 0, so any number of application instances, each
+      with its own kcp (the gateway, each bidder handle, run request, tests, every dev instance), run on one
+      machine with no port allocation (principle.port0_rule; the gateway front is its edge exception). Fallback
       kept on record (not built): fixed alternating A/B slot ports, if the /proc read-back is ever rejected.
       Both backends (decided by the user 2026-10-12, dev run mode now): ListenPort takes the MainPID from the
       Manager, so the read-back works under devsup; the front binds before the first slot starts (its port is
@@ -1155,7 +1249,7 @@ items:
       admin.kubeconfig name its own front, never a slot port), run on systemd-user and on proc,
       TestOnListenFiresBeforeReadyWithTheSlotsOwnPort, TestReadinessIsNeverReadThroughACopiedAdminKubeconfig
       (a stale copied admin.kubeconfig naming a dead port does not make a slot Ready). Red first.
-    done_when: "green on hat-8 on both backends; no fixed kcp, kine or etcd port left in any socialweb-computer mode except the gateway front's prod 6443; per-owner process count and RSS recorded (gateway and bidder shapes)."
+    done_when: "green on hat-8 on both backends; no fixed kcp, kine or etcd port left in any socialweb-computer mode except the gateway front's prod 6443 (M1-NO-FIXED-PORTS' ratchet holds no kcp, kine or front entry); per-instance process count and RSS recorded (gateway and bidder shapes)."
     risks: ["A kcp release that opens a second TCP listener breaks the single-socket rule; ListenPort refuses by name and the asset pin's self-check (M1-INSTALL upgrade) runs a slot once to catch it."]
     status: todo
     evidence: []
@@ -1167,7 +1261,10 @@ items:
       Decided by the user 2026-10-12: kcp, its kine and its store cannot be supervised by kcp itself, so in
       production systemd runs them as installed units and in dev the core's devsup runs them before kcp
       exists; everything else goes through kcp (HostProcess, M2-HOSTPROCESS-KIND); instances nest as kcp
-      workspaces (one kcp per dev instance). Decided by Claude, user may veto: the bootstrap layer is exactly
+      workspaces (one kcp per application instance; principle). The bootstrap layer is per APPLICATION
+      INSTANCE, not per machine: each instance brings up its own kcp's store, kine, slot(s) and front, and
+      several instances' bootstrap layers sit side by side on one host sharing nothing but the machine.
+      Decided by Claude, user may veto: the bootstrap layer is exactly
       {kcp store (gateway: the pg unit; bidder: none), kine unit(s), kcp slot unit(s), the kcp front, the
       core unit itself} and is defined by ONE table, internal/bootstrap, per role: gateway = socialweb-kcp-gw-pg,
       socialweb-kcp-gw-kine@a|b, socialweb-kcp-gw@a|b, socialweb-kcp-gw-front, socialweb-computer-gateway;
@@ -1181,20 +1278,24 @@ items:
       StartTransientUnit); and (b) on proc to devsup unit specs that `dev up` places in the same order before
       the core (devsup is the bootstrap supervisor in dev; the core is itself a devsup unit, so `dev restart
       core` replaces it while kcp keeps running). Dev profiles: quick (gateway-role kcp on kine-sqlite), bed
-      and prodlike (kine -> postgres); an instance runs a gateway-role and a bidder-role kcp by default (prod
-      topology, ~1 GB) and `--kcp-shared-roles` puts both roles on one kcp under <base>:gateway and
-      <base>:bidder. Every role addresses its workspaces under the kcp-base-workspace option (root in
+      and prodlike (kine -> postgres); a dev instance whose profile composes a gateway and a bidder runs two
+      application instances, each with its own kcp (~1 GB together), talking to each other only over the
+      atproto market protocol. The earlier `--kcp-shared-roles` (both roles on one kcp under <base>:gateway
+      and <base>:bidder) is dropped: two applications never share a kcp (principle, user 2026-10-12); the
+      lighter shape is nesting under a parent (M4-DEV-PARENT-KCP), where each child keeps its own kcp. Every role addresses its workspaces under the kcp-base-workspace option (root in
       production), so no role assumes it owns root and instances can later nest (M4-DEV-PARENT-KCP). Once kcp
       answers, the core writes one read-only HostProcess MIRROR per bootstrap unit (spec.placement bootstrap;
       M2-HOSTPROCESS-KIND), the kubelet static-pod/mirror-pod pattern: deleting a mirror never stops its
       unit and the supervisor never places a bootstrap unit.
-    files: ["internal/bootstrap/ (role tables, unit-file renderer, devsup specs, env files)", "internal/hostsvc (StartInstalled on both backends)", "internal/install (bootstrap unit files in the install table)", "cmd/socialweb-computer dev up (bootstrap placement, profiles, --kcp-shared-roles)"]
+    files: ["internal/bootstrap/ (role tables, unit-file renderer, devsup specs, env files)", "internal/hostsvc (StartInstalled on both backends)", "internal/install (bootstrap unit files in the install table)", "cmd/socialweb-computer dev up (bootstrap placement per application instance, profiles)"]
     test_first: >
       Offline: TestTheBootstrapTableIsTheOnlySourceOfBootstrapUnitsOnBothBackends,
       TestEveryRenderedBootstrapUnitFileVerifies (`systemd-analyze --user verify`),
       TestInstallWritesEveryBootstrapUnitFileAndUninstallRemovesThem (fake root fs),
       TestTheBidderBootstrapHasNoPostgresAndOneSlot, TestTheBootstrapOrderIsStoreKineFrontSlotCore,
-      TestNoBootstrapUnitIsEverPlacedByTheHostProcessSupervisor. Behind livegate, proc (stand-ins plus real
+      TestNoBootstrapUnitIsEverPlacedByTheHostProcessSupervisor,
+      TestNoTwoApplicationInstancesAreGivenOneKcp (a profile composing a gateway and a bidder yields two
+      bootstrap tables with distinct kcp roots and fronts). Behind livegate, proc (stand-ins plus real
       kcp/kine assets, no guest): TestTwoDevInstancesEachServeTheirOwnKcpOnPortZero,
       TestADevCoreRestartLeavesKcpKineAndFrontRunning (InvocationIDs unchanged); on hat-8 under a throwaway
       installed account (systemd-user): TestInstalledBootstrapUnitsBringKcpUpBeforeTheCore and
@@ -1207,6 +1308,7 @@ items:
     evidence: []
   - id: M2-POSTGRES
     milestone: M2
+    kcp_use: "traditional-exception (virtual Kubernetes clusters project: tenant cluster stores; principle)"
     title: An embedded PostgreSQL driven by a Postgres CRD, one unit per server placed through a HostProcess
     depends_on: [M0-PG-SOURCE, M2-HOST-UNITS, M2-APPLY, M2-KCP-STORE, M2-HOSTPROCESS-KIND]
     decision: >
@@ -1276,9 +1378,9 @@ items:
       each unit's InvocationID and unseals on every new one, including one found at adoption after the core
       was down. The gateway's root vault (container-entrypoint.sh:215-224, :253-258) becomes one such object;
       plan 0007's bidder vault is another (decided by the user 2026-10-07: bidder identity keys live in an
-      OpenBao beside the bidder). Because the object lives in kcp, a fresh host brings up kcp before the vault
-      (M3-SERVE-GATEWAY-KCP); on a running host the vault unit is already up and outlives kcp and core
-      restarts. Unseal material stays where internal/rootvault keeps it today (state dir, 0600). Distinct
+      OpenBao beside the bidder). Because the object lives in the instance's own kcp, a fresh instance brings
+      up its kcp before its vault (M3-SERVE-GATEWAY-KCP); in a running instance the vault unit is already up
+      and outlives kcp and core restarts. Unseal material stays where internal/rootvault keeps it today (state dir, 0600). Distinct
       from deno-kcp's OpenBao kind, which provisions a namespace and PKI inside a running server.
     files: ["api/v1alpha1/openbaoserver_types.go", "internal/openbaoctl/", "internal/rootvault (callers)"]
     test_first: >
@@ -1341,10 +1443,12 @@ items:
     evidence: []
   - id: M2-HOSTPROCESS-KIND
     milestone: M2
-    title: "HostProcess objects reconciled by the in-binary supervisor onto a placement backend - kcp as the host's service manager"
+    title: "HostProcess objects reconciled by the in-binary supervisor onto a placement backend - each application instance's kcp as its own service manager"
     depends_on: [M2-HOST-BACKEND-PROC, M2-HOST-CONFORMANCE, M2-APPLY, M2-BOOTSTRAP-LAYER]
     decision: >
-      Decided by the user 2026-10-12 (dev run mode is KCP-NATIVE NOW, overriding dev-run-mode.md's "phase 2"):
+      Principle (user 2026-10-12): HostProcess is how an application's components become objects of that
+      application's own kcp; a supervisor places only its own instance's HostProcesses and never reads another
+      instance's. Decided by the user 2026-10-12 (dev run mode is KCP-NATIVE NOW, overriding dev-run-mode.md's "phase 2"):
       long-lived host processes are kcp objects - a HostProcess kind that generalises DenoPod - reconciled
       by an in-binary supervisor; ComputeVMs, kcp slots and tenant cluster members are placed through it;
       systemd-user is the production placement backend and proc the dev one. Decided by Claude, user may
@@ -1413,6 +1517,7 @@ items:
     evidence: []
   - id: M3-CLUSTER-UNITS
     milestone: M3
+    kcp_use: "traditional-exception (virtual Kubernetes clusters project; principle)"
     title: Each cluster is a systemd slice of member units in the gateway's user manager, ordered after its postgres unit; a core upgrade restarts none of them
     depends_on: [M2-HOST-UNITS, M2-POSTGRES, M1-INSTALL, M2-HOSTPROCESS-KIND]
     decision: >
@@ -1479,6 +1584,7 @@ items:
     evidence: []
   - id: M3-APISERVER-FRONT
     milestone: M3
+    kcp_use: "traditional-exception (virtual Kubernetes clusters project; principle)"
     title: A per-cluster L4 front owns the apiserver port; k3s moves behind it on slot ports
     depends_on: [M3-CLUSTER-UNITS, M2-KCP-FRONT]
     decision: >
@@ -1523,6 +1629,7 @@ items:
     evidence: []
   - id: M3-CP-SLOTS
     milestone: M3
+    kcp_use: "traditional-exception (virtual Kubernetes clusters project; principle)"
     title: Blue/green k3s+kine slots per cluster on the same postgres, swapped behind the front, idle first
     depends_on: [M3-APISERVER-FRONT, M2-POSTGRES]
     decision: >
@@ -1581,6 +1688,7 @@ items:
     evidence: []
   - id: M3-LINK-HANDOVER
     milestone: M3
+    kcp_use: "traditional-exception (virtual Kubernetes clusters project; principle)"
     title: A cluster link keeps its iroh key across restarts and replacements; a dead link is restarted
     depends_on: [M3-CLUSTER-UNITS]
     decision: >
@@ -1608,6 +1716,7 @@ items:
     evidence: []
   - id: M3-BAO-SYNC
     milestone: M3
+    kcp_use: "traditional-exception for the cluster OpenBaos (virtual Kubernetes clusters project); the root vault half is the gateway application's own state (principle)"
     title: Every OpenBao this binary runs holds exactly the backends, roles, policies and KV entries live objects ask for
     depends_on: [M2-OPENBAO-SERVER, M3-CLUSTER-UNITS, "0005:M3-BAO-SYNC"]
     decision: >
@@ -1725,8 +1834,8 @@ items:
       veto) -> the clusterprovider (in-process; adopts Postgres units, then each cluster's member units, M3-CLUSTER-UNITS)
       -> the door (a deno child with today's argv and env until 0008:M3-DOOR-DENOPOD moves it into a DenoPod,
       with explicit deno permissions, 0008:M2-SERVICE-TEMPLATE). kcp needs nothing from the vault and nothing
-      between bao and apply-root needs kcp (exploration F8), so only a fresh host's bring-up order changes; on
-      a running host every unit is already up. Any in-process member failing ends the process with exit 1;
+      between bao and apply-root needs kcp (exploration F8), so only a fresh gateway instance's bring-up order
+      changes; in a running instance every unit is already up. Any in-process member failing ends the process with exit 1;
       the core unit (Restart=always, StartLimit tuned, M3-HOST-INSTALL) restarts it; deno children die with
       the core unit; units (kcp pg, kines, slots and front, vaults, stores, cluster member units) are adopted
       on the next start rather than restarted. No container-era state dir is opened (fresh deploy, decided
@@ -1767,6 +1876,7 @@ items:
     evidence: []
   - id: M3-CP-CONTINUITY
     milestone: M3
+    kcp_use: "traditional-exception (virtual Kubernetes clusters project; principle)"
     title: Control-plane continuity across upgrades and restarts of the finished system, proved end to end on the market bed
     depends_on: [M3-CLUSTER-UNITS, M3-APISERVER-FRONT, M3-CP-SLOTS, M3-LINK-HANDOVER, M2-POSTGRES, M3-HOST-INSTALL, M3-KCP-ROLL, "0007:M3-NODE-LOSS-CLOCK", "0007:M6-CLAIM-RESUME"]
     decision: >
@@ -1803,12 +1913,16 @@ items:
     evidence: []
   - id: M4-DEV-PARENT-KCP
     milestone: M4
-    title: "Later: `dev host` - a per-user parent kcp whose root:dev:<instance> workspaces hold each dev instance's HostProcess objects (kcp inside kcp)"
+    title: "Later: `dev host` - a parent application instance whose root:dev:<instance> workspaces hold each child instance's HostProcess objects (kcp inside kcp; composition by nesting)"
     depends_on: [M2-HOSTPROCESS-KIND, M1-DEV-INSTANCE, M2-BOOTSTRAP-LAYER]
     decision: >
-      Decided by the user 2026-10-12: instances nest as kcp workspaces; one kcp per dev instance now, a parent
-      kcp for nesting is fine as a later item. Decided by Claude, user may veto (dev-run-mode.md 4.4 N3): `dev
-      host` runs one per-user parent instance (its own bootstrap layer under its own devsup); each child
+      Principle (user 2026-10-12): this is composition by nesting workspaces. The parent is itself an
+      application instance (its kcp, the dev-parent manifest set, a profile) whose application state is its
+      children's processes; each child keeps its OWN kcp (its slot is a HostProcess in the parent), and
+      children still talk to each other only over the atproto market protocol, never through the parent's
+      kcp. Decided by the user 2026-10-12: instances nest as kcp workspaces; one kcp per application instance
+      now, a parent kcp for nesting is fine as a later item. Decided by Claude, user may veto (dev-run-mode.md
+      4.4 N3): `dev host` runs one parent instance per user (its own bootstrap layer under its own devsup); each child
       instance's bootstrap units, including its kcp slot, become ordinary HostProcess objects in the parent's
       workspace root:dev:<instance> placed by the parent's supervisor on its devsup, so `kubectl get
       hostprocesses -A` on the parent lists every worktree's processes; a dev-instance WorkspaceType with
@@ -1922,7 +2036,10 @@ acceptance:
 execution_order:
   note: >
     Written 2026-10-12 (third fold, the user's request (i)); mirrored with plans 0007 and 0008 in NEXT.yaml
-    execution_order, which is the full cross-plan breakdown. Advisory: depends_on governs.
+    execution_order, which is the full cross-plan breakdown. Advisory: depends_on governs. Read through the
+    principle (fourth fold): the order builds one application instance's kcp (store, slot, front, port 0,
+    apply, bootstrap layer, HostProcess) before any application is moved onto it; the market test bed is
+    wave 0 and every workstream tests in its own bed (state rule 'bed per workstream').
   critical_path: >
     Longest chain (15 waves, computed from depends_on 2026-10-12): M0-SIZE-BUDGET (or M0-PG-SOURCE) ->
     M1-ASSETS -> M2-KCP-STORE -> M2-KCP-SLOTS -> M2-KCP-PORT0 -> M2-APPLY and M2-BOOTSTRAP-LAYER ->
@@ -1931,11 +2048,12 @@ execution_order:
     M5-RETIRE. Feeding it: M2-HOST-CONFORMANCE -> M2-HOST-BACKEND-PROC (wave 2) and M1-CLI +
     M1-PORT-LEASE-INSTANCE -> M1-DEV-INSTANCE (wave 3) -> M2-BOOTSTRAP-LAYER; M1-CLI -> M2-MANIFESTS ->
     M2-TEMPLATE -> M2-APPLY; M1-ASSETS + M1-CLI -> M1-INSTALL -> M2-BOOTSTRAP-LAYER.
-  startable_now_in_this_plan: [M0-SIZE-BUDGET, M0-PG-SOURCE, M1-CLI, M1-HOST-INVENTORY, M1-STORE-CLEANUP, M1-PORT-LEASE-INSTANCE, M2-HOST-CONFORMANCE]
+  startable_now_in_this_plan: [M0-SIZE-BUDGET, M0-PG-SOURCE, M1-CLI, M1-HOST-INVENTORY, M1-STORE-CLEANUP, M1-PORT-LEASE-INSTANCE, M1-NO-FIXED-PORTS, M2-HOST-CONFORMANCE]
   early_because_live_tests_collide: >
-    Live tests on hat-8 collide on fixed ports (bed 2583-2589, deno-kcp kcp 6443 and kine 23791) and on the
-    one-bed check until 0008 M1-BED-PARALLEL and M1-DEV-INSTANCE land; until then every market-bed run on
-    hat-8 is serialized. M1-PORT-LEASE-INSTANCE, M2-HOST-CONFORMANCE, M2-HOST-BACKEND-PROC and M1-DEV-INSTANCE
-    are therefore first in this plan.
+    Two beds on one machine collide on fixed ports (bed 2583-2589, deno-kcp kcp 6443 and kine 23791) and on
+    the one-bed check until 0008 M1-BED-PARALLEL and M1-DEV-INSTANCE land; until then every market-bed run on
+    hat-8 is serialized. M1-PORT-LEASE-INSTANCE, M1-NO-FIXED-PORTS (the ratchet that keeps new fixed ports
+    out while they land), M2-HOST-CONFORMANCE, M2-HOST-BACKEND-PROC and M1-DEV-INSTANCE are therefore first in
+    this plan.
 questions_for_user:
   - "systemd 253 as the floor (decided 2026-10-11) refuses Debian 12 and RHEL 9 (both ship 252, to be verified in M2-HOST-CONTRACT). Recommended: accept; support there would mean dropping GetUnitByPIDFD for our own pidfd + cgroup check."

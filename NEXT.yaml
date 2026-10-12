@@ -184,6 +184,16 @@ open:
       R0-REASSESS answered and recorded in the plan, including the leaderElect conflict with 0006 M3-CP-SLOTS.
   - id: P6-M0
     title: OPEN - the one binary's linux budget (cross-OS gate and kcp spike done).
+    principle_note: >
+      Organizing principle of P6-P8 (user 2026-10-12; plan 0006 `principle`, ARCHITECTURE section 0): kcp is
+      a core part of each APPLICATION - an application instance (bidder handle, run request, gateway, market
+      bed, dev instance) = its own kcp + a manifest set + a profile; state = kcp objects; components =
+      DenoPods/HostProcesses; modes = profiles; composition = applying sets / nesting workspaces;
+      applications meet only over the atproto market protocol, never by sharing a kcp; port 0 behind the
+      edge with addresses in kcp (check: 0006 M1-NO-FIXED-PORTS); every workstream tests in its own market
+      bed, bobvmbuilder + alice are a final soak only. The one traditional use is the virtual clusters
+      project (items tagged kcp_use: traditional-exception). Decomposing today's multi-server processes into
+      application instances: docs/research multi-server-to-kcp.md, fold pending.
     body: >
       OPEN: the plan 0005 gate is satisfied (ACC-ZERO, ACC-MESH, ACC-NOSSH done); items start per their
       depends_on. M0-XOS-GATE DONE 2026-10-12 (merged; check.sh gates darwin/windows build+vet). M0-KCP-SPIKE
@@ -204,7 +214,10 @@ open:
       OPEN as P6-M0. Plan 0006 items M1-CLI, M1-HOST-INVENTORY, M1-STORE-CLEANUP (the tenant store is kine
       over the cluster's own postgres; vaultlayout central-store, socialweb-vault central-store options,
       versions.json rustfs/t4 entries deleted), M1-ASSETS, M1-PORT-LEASE-INSTANCE (new 2026-10-12: leases
-      keyed by (instance, cluster, purpose), one per-user lease file in dev), M1-DEV-INSTANCE (new 2026-10-12:
+      keyed by (instance, cluster, purpose), one per-user lease file in dev), M1-NO-FIXED-PORTS (new
+      2026-10-12, fourth fold: a check.sh --fast test fails on any fixed port in a manifest or default behind
+      the edge; edge exceptions in deploy/edge-ports.yaml, today's literals in a ratchet that only shrinks),
+      M1-DEV-INSTANCE (new 2026-10-12:
       `socialweb-computer dev up|down|status|ls|logs|env|check|restart` per worktree, instance id from the
       worktree path, XDG state keyed by instance, one devsup per instance, port 0, no root), M1-INSTALL.
       M1-K8S-FORK and M1-KCP-INPROC closed 2026-10-12, route not chosen. Assets are embedded per GOOS_GOARCH
@@ -292,7 +305,7 @@ open:
     title: OPEN - a reproducible static build per linux platform within its size budget; later, a parent kcp for nesting dev instances.
     body: >
       OPEN as P6-M0. Plan 0006 items M4-BUILD and M4-DEV-PARENT-KCP (new 2026-10-12, a later item the user
-      accepted: `dev host`, a per-user parent kcp whose root:dev:<instance> workspaces hold each instance's
+      accepted: `dev host`, a parent application instance whose root:dev:<instance> workspaces hold each child instance's
       HostProcess objects).
     instrument: >
       Two clean builds byte-identical; the binary within the budget in versions.json.
@@ -444,6 +457,12 @@ open:
       the VM tree audit passing after every boot, restart and upgrade, and no work dir left after a release.
   - id: P8-M1
     title: OPEN - a pinned deno and the TypeScript closure inside the binary, run offline.
+    principle_note: >
+      P8 under the organizing principle (see P6-M0 principle_note; plan 0008 `principle`): DenoPods are an
+      application's TypeScript components as objects of its own kcp; every DenoPod binds port 0 and the
+      runner records status.address from the pod's port file (port-audit.md blocker 1, in M1-BED-PARALLEL);
+      the market bed is the seed of the model and each workstream's own test bed. How today's multi-server
+      deno processes split into DenoPods per application: multi-server-to-kcp.md, fold pending.
     body: >
       OPEN: the plan 0005 gate is satisfied (ACC-ZERO, ACC-MESH, ACC-NOSSH done); items start per their
       depends_on, incl. plan 0006 M1-ASSETS. Plan 0008 (docs/plans/0008-embedded-deno-and-typescript-denopods.yaml)
@@ -583,6 +602,7 @@ execution_order:
     - "0006 M1-CLI"
     - "0006 M1-HOST-INVENTORY"
     - "0006 M1-PORT-LEASE-INSTANCE (early: unblocks parallel beds)"
+    - "0006 M1-NO-FIXED-PORTS (early: the fixed-port ratchet; worktree WT-leases)"
     - "0006 M1-STORE-CLEANUP"
     - "0006 M2-HOST-CONFORMANCE (early: unblocks the proc backend)"
     - "0007 M0-VM-USERNS (spike, live hat-8: one RFP-flow guest)"
@@ -602,7 +622,7 @@ execution_order:
     - "WT-hostsvc (this repo: internal/hostsvc/, internal/devsup/, deploy/check.sh --fast step): M2-HOST-CONFORMANCE, then M2-HOST-BACKEND-PROC, then M2-VM-TREE-AUDIT (internal/hostsvc/treeaudit) once M1-ASSETS lands."
     - "WT-cli (this repo: cmd/socialweb-computer/main.go, internal/clicfg/): M1-CLI, then M2-MANIFESTS -> M2-TEMPLATE (deploy/embed.go, deploy/sets.yaml, internal/manifests/); M3-FOLD in its own worktree after M1-CLI merges (cmd/socialweb-* shims)."
     - "WT-pins (this repo: internal/versions/versions.json, docs/host-inventory.yaml, deploy/check.sh size gate; scratch branch for the pg spike): M0-PG-SOURCE, M0-SIZE-BUDGET, M1-HOST-INVENTORY, then M1-ASSETS (internal/assets/, scripts/stage-assets.sh)."
-    - "WT-leases (this repo: internal/portallocator/, internal/subnetallocator/): M1-PORT-LEASE-INSTANCE, then M1-STORE-CLEANUP (internal/vaultlayout, cmd/socialweb-vault, portallocator.go:200 message, versions.json rustfs/t4 entries)."
+    - "WT-leases (this repo: internal/portallocator/, internal/subnetallocator/, test/no_fixed_ports_test.go, deploy/edge-ports.yaml, deploy/fixed-ports-ratchet.yaml): M1-PORT-LEASE-INSTANCE and M1-NO-FIXED-PORTS, then M1-STORE-CLEANUP (internal/vaultlayout, cmd/socialweb-vault, portallocator.go:200 message, versions.json rustfs/t4 entries)."
     - "WT-contract-store (atproto-market lib/abc/market-bidder, lib/market-bidder, lib/market-bidder-compute, new lib/market-bidder-contract-store-fs, hono-bidder; hono-compute-provider lib/compute-provider-firecracker): M4-CONTRACT-STORE-FILE first (urgent), then M1-COMMON-EXTRACT (moves functions out of compute-provider-firecracker/mod.ts, the same file)."
     - "WT-qr (did-key-associator: scripts/deploy.sh, deno.json, test/): M1-QR-DEPLOY, then M1-PROTOCOL-CHECKLIST (atproto-market docs + test/role_scope_coverage_test.ts, did-key-associator test), then M4-HOST-KEYS after M4-CONTRACT-STORE-FILE has merged (both touch atproto-market lib/market-bidder-compute)."
     - "WT-userns (scratch branch + docs/research/2026-10-11-vm-lifecycle/vm-userns-spike.md; a scratch hono-compute-provider branch for the one RFP-flow guest): M0-VM-USERNS."
@@ -612,7 +632,7 @@ execution_order:
     - "WT-denokcp (this repo: internal/denokcp/, internal/kcplibs/, deploy/denokcp/vendor.json): M2-DENOKCP-FORK."
   shared_files_to_serialize:
     - "internal/versions/versions.json: M0-PG-SOURCE, M0-SIZE-BUDGET, M1-STORE-CLEANUP, M1-ASSETS (merge one at a time; entries are disjoint)."
-    - "deploy/check.sh: M2-HOST-CONFORMANCE (--fast proc half), M0-SIZE-BUDGET (size gate)."
+    - "deploy/check.sh: M2-HOST-CONFORMANCE (--fast proc half), M0-SIZE-BUDGET (size gate), M1-NO-FIXED-PORTS (--fast step)."
     - "api/v1alpha1: M6-CLAIM-RESUME (NodeClaim revision) before M1-API (ComputeVM) and M2-HOSTPROCESS-KIND (HostProcess)."
     - "atproto-market lib/market-bidder-compute: M4-CONTRACT-STORE-FILE before M4-HOST-KEYS."
     - "hono-compute-provider lib/compute-provider-firecracker/mod.ts: M4-CONTRACT-STORE-FILE before M1-COMMON-EXTRACT."
