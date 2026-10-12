@@ -110,6 +110,8 @@ type NodeClaimContract struct {
 
 	Termination *ContractTermination `json:"termination,omitempty"`
 
+	HostKeys *ContractHostKeys `json:"hostKeys,omitempty"`
+
 	Outcome ContractOutcome `json:"outcome,omitempty"`
 
 	Error string `json:"error,omitempty"`
@@ -181,6 +183,24 @@ type ContractTermination struct {
 	Payload RecordRef `json:"payload"`
 
 	Request *RecordRef `json:"request,omitempty"`
+}
+
+type ContractHostKey struct {
+	Type string `json:"type"`
+
+	PublicKey string `json:"publicKey"`
+
+	Fingerprint string `json:"fingerprint"`
+}
+
+type ContractHostKeys struct {
+	Keys []ContractHostKey `json:"keys"`
+
+	ObservedAt string `json:"observedAt"`
+
+	Event RecordRef `json:"event"`
+
+	Payload RecordRef `json:"payload"`
 }
 
 type ContractRelease struct {

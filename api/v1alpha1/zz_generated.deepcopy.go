@@ -225,7 +225,19 @@ func (in *NodeClaimContract) DeepCopyInto(out *NodeClaimContract) {
 		out.Termination = new(ContractTermination)
 		in.Termination.DeepCopyInto(out.Termination)
 	}
+	if in.HostKeys != nil {
+		out.HostKeys = new(ContractHostKeys)
+		in.HostKeys.DeepCopyInto(out.HostKeys)
+	}
 	out.Timestamps = copyPtr(in.Timestamps)
+}
+
+func (in *ContractHostKeys) DeepCopyInto(out *ContractHostKeys) {
+	*out = *in
+	if in.Keys != nil {
+		out.Keys = make([]ContractHostKey, len(in.Keys))
+		copy(out.Keys, in.Keys)
+	}
 }
 
 func (in *ContractTermination) DeepCopyInto(out *ContractTermination) {

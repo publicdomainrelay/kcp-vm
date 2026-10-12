@@ -1,7 +1,7 @@
 apiVersion: apis.kcp.io/v1alpha1
 kind: APIResourceSchema
 metadata:
-  name: v1alpha1-4.nodeclaims.socialweb.computer
+  name: v1alpha1-5.nodeclaims.socialweb.computer
 spec:
   group: socialweb.computer
   names:
@@ -259,6 +259,51 @@ spec:
                           - cid
                     required:
                       - reason
+                      - observedAt
+                      - event
+                      - payload
+                  hostKeys:
+                    type: object
+                    properties:
+                      keys:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            type:
+                              type: string
+                            publicKey:
+                              type: string
+                            fingerprint:
+                              type: string
+                          required:
+                            - type
+                            - publicKey
+                            - fingerprint
+                      observedAt:
+                        type: string
+                      event:
+                        type: object
+                        properties:
+                          uri:
+                            type: string
+                          cid:
+                            type: string
+                        required:
+                          - uri
+                          - cid
+                      payload:
+                        type: object
+                        properties:
+                          uri:
+                            type: string
+                          cid:
+                            type: string
+                        required:
+                          - uri
+                          - cid
+                    required:
+                      - keys
                       - observedAt
                       - event
                       - payload

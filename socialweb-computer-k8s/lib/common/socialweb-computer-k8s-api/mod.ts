@@ -163,6 +163,7 @@ export interface NodeClaimContract {
   bids?: number;
   release?: ContractRelease;
   termination?: ContractTermination;
+  hostKeys?: ContractHostKeys;
   outcome?: ContractOutcome;
   error?: string;
   timestamps?: ContractTimestamps;
@@ -196,6 +197,19 @@ export interface ContractTermination {
   event: RecordRef;
   payload: RecordRef;
   request?: RecordRef;
+}
+
+export interface ContractHostKeys {
+  keys: ContractHostKey[];
+  observedAt: string;
+  event: RecordRef;
+  payload: RecordRef;
+}
+
+export interface ContractHostKey {
+  type: string;
+  publicKey: string;
+  fingerprint: string;
 }
 
 export interface ContractTimestamps {
@@ -351,7 +365,7 @@ export const NODE_CLAIM_RESOURCE: ApiResource = {
   listKind: "NodeClaimList",
   plural: "nodeclaims",
   singular: "nodeclaim",
-  schema: "v1alpha1-4.nodeclaims.socialweb.computer",
+  schema: "v1alpha1-5.nodeclaims.socialweb.computer",
   export: "clusters",
 };
 
@@ -406,6 +420,8 @@ export type ApiTypeName =
   | "ClusterStatus"
   | "Condition"
   | "ContractAcceptPending"
+  | "ContractHostKey"
+  | "ContractHostKeys"
   | "ContractOutcome"
   | "ContractPhase"
   | "ContractRelease"
@@ -772,6 +788,51 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
     ],
     "type": "object"
   },
+  "ContractHostKey": {
+    "properties": {
+      "fingerprint": {
+        "type": "string"
+      },
+      "publicKey": {
+        "type": "string"
+      },
+      "type": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "type",
+      "publicKey",
+      "fingerprint"
+    ],
+    "type": "object"
+  },
+  "ContractHostKeys": {
+    "properties": {
+      "event": {
+        "ref": "RecordRef"
+      },
+      "keys": {
+        "items": {
+          "ref": "ContractHostKey"
+        },
+        "type": "array"
+      },
+      "observedAt": {
+        "type": "string"
+      },
+      "payload": {
+        "ref": "RecordRef"
+      }
+    },
+    "required": [
+      "keys",
+      "observedAt",
+      "event",
+      "payload"
+    ],
+    "type": "object"
+  },
   "ContractOutcome": {
     "enum": [
       "no_bids",
@@ -1117,6 +1178,9 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       },
       "error": {
         "type": "string"
+      },
+      "hostKeys": {
+        "ref": "ContractHostKeys"
       },
       "marketDid": {
         "type": "string"
@@ -1733,6 +1797,42 @@ export function assertContractTermination(value: unknown): asserts value is Cont
 
 export function parseContractTermination(value: unknown): ContractTermination {
   assertContractTermination(value);
+  return value;
+}
+
+export function validateContractHostKeys(value: unknown): ApiIssue[] {
+  return validate("ContractHostKeys", value);
+}
+
+export function isContractHostKeys(value: unknown): value is ContractHostKeys {
+  return validate("ContractHostKeys", value).length === 0;
+}
+
+export function assertContractHostKeys(value: unknown): asserts value is ContractHostKeys {
+  const issues = validate("ContractHostKeys", value);
+  if (issues.length > 0) throw new ApiValidationError("ContractHostKeys", issues);
+}
+
+export function parseContractHostKeys(value: unknown): ContractHostKeys {
+  assertContractHostKeys(value);
+  return value;
+}
+
+export function validateContractHostKey(value: unknown): ApiIssue[] {
+  return validate("ContractHostKey", value);
+}
+
+export function isContractHostKey(value: unknown): value is ContractHostKey {
+  return validate("ContractHostKey", value).length === 0;
+}
+
+export function assertContractHostKey(value: unknown): asserts value is ContractHostKey {
+  const issues = validate("ContractHostKey", value);
+  if (issues.length > 0) throw new ApiValidationError("ContractHostKey", issues);
+}
+
+export function parseContractHostKey(value: unknown): ContractHostKey {
+  assertContractHostKey(value);
   return value;
 }
 
