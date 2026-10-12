@@ -40,6 +40,8 @@ type Deps struct {
 	MountChild clusterprovider.MountChildWriter
 
 	Links *linkRecorder
+
+	Roller *clusterprovider.Roller
 }
 
 var ErrNoMountChild = errors.New(

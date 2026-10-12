@@ -80,6 +80,9 @@ func run(ctx context.Context, inv foldmain.Invocation) error {
 		return err
 	}
 
+	if d.Roller != nil {
+		go d.Roller.Run(ctx)
+	}
 	runErr := p.Run(ctx)
 	if err := p.Shutdown(); err != nil {
 		log.Error("cluster provider: the shutdown reap did not complete", "error", err.Error())
@@ -234,6 +237,8 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 		AuditPolicyPath:            cfg.AuditPolicyPath,
 		CloudControllerManagerExec: cfg.CloudControllerManagerExec,
 		FrontExec:                  cfg.FrontExec,
+		HostnameExec:               cfg.HostnameExec,
+		Slot:                       units.SlotState,
 		ExternalSecrets:            externalSecretsFor(cfg),
 		Harvest: func(ctx context.Context, cluster string) error {
 			if err := clusterprovider.HarvestBundle(cfg.StateDir, cluster); err != nil {
@@ -364,6 +369,7 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 	if !cfg.ObserveOnly() {
 		deps.Host = units
 		deps.NodeHosts = nodeHosts
+		deps.Roller = newRoller(units, stackCfg, registry, alloc, purposes, log)
 	}
 	return deps, nil
 }

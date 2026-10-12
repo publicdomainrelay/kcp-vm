@@ -44,6 +44,7 @@ func run(f facts) []Result {
 		diskResult(f),
 		postgresResult(f),
 		liveportsResult(f),
+		privateHostnameResult(f),
 		nodePasswordResult(f),
 	)
 	return results
@@ -245,6 +246,24 @@ func userNamespaceResult(f facts) Result {
 			"line: the probe is, because a runtime forbids the clone without touching either number",
 			orUnknown(max), orUnknown(clone)),
 	}
+}
+
+func privateHostnameResult(f facts) Result {
+	probe, err := exec.LookPath("unshare")
+	if err != nil {
+		return Result{Label: "host.private-hostname", Kind: f.absent(),
+			Detail: f.notHere("util-linux's unshare, which internal ns-exec runs to give each k3s slot its own hostname")}
+	}
+	out, err := exec.Command(probe, "--user", "--map-current-user", "--keep-caps", "--uts", "--mount",
+		"--propagation", "private", "--", "hostname", "swc-check-host").CombinedOutput()
+	if err != nil {
+		return Result{Label: "host.private-hostname", Kind: f.absent(),
+			Detail: fmt.Sprintf("unshare --user --map-current-user --keep-caps --uts --mount refused this user, or sethostname inside it failed: %v: %s. "+
+				"Each k3s control-plane slot of a tenant cluster runs under its own hostname so that wrangler's kube-system/k3s lease never has two holders under one name; "+
+				"without it a blue/green swap (units roll cluster) is refused", err, strings.TrimSpace(string(out)))}
+	}
+	return Result{Label: "host.private-hostname", Kind: Holds,
+		Detail: "this user can run a command in its own user+UTS+mount namespace under a hostname of its own (internal ns-exec, one per k3s slot)"}
 }
 
 func kvmResult(f facts) Result {

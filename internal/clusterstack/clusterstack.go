@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/nsexec"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/procgroup"
 )
 
@@ -65,6 +66,10 @@ type Spec struct {
 	Hostname string
 
 	HostnameExec []string
+
+	K3sExec string
+
+	KineExec string
 
 	FrontExec []string
 
@@ -271,6 +276,28 @@ func (s Spec) serverDir() string {
 
 func (s Spec) ServerAdminKubeconfig() string { return AdminKubeconfig(s.serverDir()) }
 
+const RancherEtc = "/etc/rancher"
+
+func (s Spec) RancherDir() string { return filepath.Join(s.serverDir(), "rancher") }
+
+func (s Spec) k3sExec() string {
+	if s.K3sExec != "" {
+		return s.K3sExec
+	}
+	return "k3s"
+}
+
+func (s Spec) kineExec() string {
+	if s.KineExec != "" {
+		return s.KineExec
+	}
+	return "kine"
+}
+
+func (s Spec) K3sExecutable() string { return s.k3sExec() }
+
+func (s Spec) KineExecutable() string { return s.kineExec() }
+
 func (s Spec) ServerTLSDir() string { return TLSDir(s.serverDir()) }
 
 func (s Spec) ExternalSecretsArgv() ([]string, error) {
@@ -325,7 +352,7 @@ func (s Spec) ServerArgv() ([]string, error) {
 		return nil, err
 	}
 	argv := []string{
-		"k3s", "server",
+		s.k3sExec(), "server",
 		"--disable-agent",
 		"--disable=traefik",
 		"--data-dir", s.serverDir(),
@@ -355,6 +382,9 @@ func (s Spec) ServerArgv() ([]string, error) {
 		"--kube-scheduler-arg=secure-port="+strconv.Itoa(s.K3sSchedulerPort),
 		"--kube-cloud-controller-manager-arg=secure-port="+strconv.Itoa(s.K3sCloudControllerManagerPort),
 	)
+	if s.Hostname != "" && len(s.HostnameExec) > 0 {
+		argv = nsexec.Wrap(s.HostnameExec, s.Hostname, []nsexec.Bind{{Source: s.RancherDir(), Target: RancherEtc}}, argv)
+	}
 	return argv, nil
 }
 
@@ -363,7 +393,7 @@ func (s Spec) KineArgv() ([]string, error) {
 		return nil, ErrMissingEndpoint
 	}
 	return []string{
-		"kine",
+		s.kineExec(),
 		"--endpoint", s.StoreEndpoint,
 		"--listen-address", s.KineListen,
 		"--metrics-bind-address=0",

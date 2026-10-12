@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"k8s.io/client-go/kubernetes"
 
@@ -75,7 +77,9 @@ type StackConfig struct {
 
 	FrontExec []string
 
-	Slot func(cluster string) string
+	Slot func(cluster string) SlotState
+
+	HostnameExec []string
 
 	ExternalSecrets *ExternalSecrets
 
@@ -88,6 +92,136 @@ type StackConfig struct {
 	Links *Links
 }
 
+type SlotState struct {
+	Slot string `json:"slot"`
+	K3s  string `json:"k3s,omitempty"`
+	Kine string `json:"kine,omitempty"`
+}
+
+func SlotHostname(cluster, slot string) string {
+	key := strings.ReplaceAll(cluster, ".", "-")
+	if len(key) > 12 {
+		key = strings.TrimRight(key[:12], "-")
+	}
+	return "swc-" + key + "-" + slot
+}
+
+func (cfg StackConfig) SlotSpec(o materialiser.Observed, l materialiser.Leases, st SlotState) (clusterstack.Spec, error) {
+	cluster := o.Cluster.Name
+	if cluster == "" {
+		return clusterstack.Spec{}, errors.New("clusterprovider: a slot spec was asked for an observation with no cluster name")
+	}
+	dataDir, err := ClusterDataDir(cfg.StateDir, cluster)
+	if err != nil {
+		return clusterstack.Spec{}, err
+	}
+	slot := slotOr(st.Slot)
+	sp, err := portallocator.PurposesOfSlot(slot)
+	if err != nil {
+		return clusterstack.Spec{}, err
+	}
+	advPort, k3sSecure, err := K3sAPIPorts(l, cluster, slot)
+	if err != nil {
+		return clusterstack.Spec{}, err
+	}
+	k3sControllerManager, err := leasePort(l, sp.ControllerManager, cluster)
+	if err != nil {
+		return clusterstack.Spec{}, err
+	}
+	k3sScheduler, err := leasePort(l, sp.Scheduler, cluster)
+	if err != nil {
+		return clusterstack.Spec{}, err
+	}
+	k3sCloudControllerManager, err := leasePort(l, sp.CloudControllerManager, cluster)
+	if err != nil {
+		return clusterstack.Spec{}, err
+	}
+	kineLease, ok := l[sp.Kine]
+	if !ok {
+		return clusterstack.Spec{}, fmt.Errorf("%w: %s (cluster %s)", ErrNoLease, sp.Kine, cluster)
+	}
+	kineListen := fmt.Sprintf("127.0.0.1:%d", kineLease.Port)
+
+	if cfg.BindAddress == "" {
+		return clusterstack.Spec{}, fmt.Errorf("%w (cluster %s)", clusterstack.ErrMissingBindAddress, cluster)
+	}
+	if cfg.StoreEndpoint == nil {
+		return clusterstack.Spec{}, fmt.Errorf("%w (cluster %s)", ErrNoStore, cluster)
+	}
+	store, err := cfg.StoreEndpoint(cluster)
+	if err != nil {
+		return clusterstack.Spec{}, err
+	}
+	if store == "" {
+		return clusterstack.Spec{}, fmt.Errorf("%w (cluster %s)", ErrNoStore, cluster)
+	}
+	k3sExe, err := resolveExe(st.K3s, "k3s")
+	if err != nil {
+		return clusterstack.Spec{}, err
+	}
+	kineExe, err := resolveExe(st.Kine, "kine")
+	if err != nil {
+		return clusterstack.Spec{}, err
+	}
+
+	advertise, sans := cfg.announced()
+	serverDir := SlotDataDir(dataDir, slot)
+	spec := clusterstack.Spec{
+		DataDir:                       dataDir,
+		Cluster:                       cluster,
+		OpenBaoConfig:                 clusterstack.OpenBaoConfigPath(dataDir),
+		StoreEndpoint:                 store,
+		KineListen:                    kineListen,
+		DatastoreEndpoint:             DaemonURL(kineListen),
+		AdvertiseAddress:              advertise,
+		BindAddress:                   cfg.BindAddress,
+		MarketDialled:                 cfg.MarketDialled,
+		TLSSANs:                       sans,
+		AdvertisePort:                 advPort,
+		K3sSecurePort:                 k3sSecure,
+		K3sControllerManagerPort:      k3sControllerManager,
+		K3sSchedulerPort:              k3sScheduler,
+		K3sCloudControllerManagerPort: k3sCloudControllerManager,
+		TokenFile:                     TokenPath(dataDir),
+		Slot:                          slot,
+		ServerDataDir:                 serverDir,
+		K3sExec:                       k3sExe,
+		KineExec:                      kineExe,
+		FrontExec:                     cfg.FrontExec,
+		FrontControl:                  FrontControlPath(cfg.StateDir, dataDir, cluster),
+		FrontState:                    FrontStatePath(dataDir),
+		CloudControllerManagerExec:    cfg.CloudControllerManagerExec,
+		ServiceAccountIssuer:          cfg.ServiceAccountIssuer,
+		APIAudiences:                  cfg.APIAudiences,
+		Audit: clusterstack.Audit{
+			PolicyPath: cfg.AuditPolicyPath,
+			LogPath:    filepath.Join(serverDir, "audit.log"),
+		},
+	}
+	if len(cfg.HostnameExec) > 0 {
+		spec.HostnameExec = cfg.HostnameExec
+		spec.Hostname = SlotHostname(cluster, slot)
+	}
+	if err := WriteKubeSchedulerConfig(spec); err != nil {
+		return clusterstack.Spec{}, err
+	}
+	return spec, nil
+}
+
+func resolveExe(path, name string) (string, error) {
+	if path == "" {
+		path = name
+	}
+	if filepath.IsAbs(path) {
+		return path, nil
+	}
+	p, err := exec.LookPath(path)
+	if err != nil {
+		return "", fmt.Errorf("clusterprovider: %s is not on this host: %w", path, err)
+	}
+	return filepath.Abs(p)
+}
+
 func StepsFor(cfg StackConfig) materialiser.StepBuilder {
 	return func(o materialiser.Observed, l materialiser.Leases) ([]procgroup.Step, error) {
 		cluster := o.Cluster.Name
@@ -98,79 +232,11 @@ func StepsFor(cfg StackConfig) materialiser.StepBuilder {
 		if err != nil {
 			return nil, err
 		}
-		slot := cfg.slotOf(cluster)
-		sp, err := portallocator.PurposesOfSlot(slot)
+		spec, err := cfg.SlotSpec(o, l, cfg.slotOf(cluster))
 		if err != nil {
 			return nil, err
 		}
-		advPort, k3sSecure, err := K3sAPIPorts(l, cluster, slot)
-		if err != nil {
-			return nil, err
-		}
-		k3sControllerManager, err := leasePort(l, sp.ControllerManager, cluster)
-		if err != nil {
-			return nil, err
-		}
-		k3sScheduler, err := leasePort(l, sp.Scheduler, cluster)
-		if err != nil {
-			return nil, err
-		}
-		k3sCloudControllerManager, err := leasePort(l, sp.CloudControllerManager, cluster)
-		if err != nil {
-			return nil, err
-		}
-		kineLease, ok := l[sp.Kine]
-		if !ok {
-			return nil, fmt.Errorf("%w: %s (cluster %s)", ErrNoLease, sp.Kine, cluster)
-		}
-		kineListen := fmt.Sprintf("127.0.0.1:%d", kineLease.Port)
-
-		if cfg.BindAddress == "" {
-			return nil, fmt.Errorf("%w (cluster %s)", clusterstack.ErrMissingBindAddress, cluster)
-		}
-		if cfg.StoreEndpoint == nil {
-			return nil, fmt.Errorf("%w (cluster %s)", ErrNoStore, cluster)
-		}
-		store, err := cfg.StoreEndpoint(cluster)
-		if err != nil {
-			return nil, err
-		}
-		if store == "" {
-			return nil, fmt.Errorf("%w (cluster %s)", ErrNoStore, cluster)
-		}
-
-		advertise, sans := cfg.announced()
-
-		spec := clusterstack.Spec{
-			DataDir:                       dataDir,
-			Cluster:                       cluster,
-			OpenBaoConfig:                 clusterstack.OpenBaoConfigPath(dataDir),
-			StoreEndpoint:                 store,
-			KineListen:                    kineListen,
-			DatastoreEndpoint:             DaemonURL(kineListen),
-			AdvertiseAddress:              advertise,
-			BindAddress:                   cfg.BindAddress,
-			MarketDialled:                 cfg.MarketDialled,
-			TLSSANs:                       sans,
-			AdvertisePort:                 advPort,
-			K3sSecurePort:                 k3sSecure,
-			K3sControllerManagerPort:      k3sControllerManager,
-			K3sSchedulerPort:              k3sScheduler,
-			K3sCloudControllerManagerPort: k3sCloudControllerManager,
-			TokenFile:                     TokenPath(dataDir),
-			Slot:                          slot,
-			ServerDataDir:                 SlotDataDir(dataDir, slot),
-			FrontExec:                     cfg.FrontExec,
-			FrontControl:                  FrontControlPath(cfg.StateDir, dataDir, cluster),
-			FrontState:                    FrontStatePath(dataDir),
-			CloudControllerManagerExec:    cfg.CloudControllerManagerExec,
-			ServiceAccountIssuer:          cfg.ServiceAccountIssuer,
-			APIAudiences:                  cfg.APIAudiences,
-			Audit: clusterstack.Audit{
-				PolicyPath: cfg.AuditPolicyPath,
-				LogPath:    filepath.Join(dataDir, "audit.log"),
-			},
-		}
+		advPort, advertise := spec.AdvertisePort, spec.AdvertiseAddress
 
 		if cfg.runsExternalSecrets() {
 			spec.ExternalSecrets, err = externalSecretsSpec(cfg, l, cluster)
@@ -205,10 +271,6 @@ func StepsFor(cfg StackConfig) materialiser.StepBuilder {
 				return nil, fmt.Errorf("%w (cluster %s)", ErrNoVaultStore, cluster)
 			}
 			spec.OpenBaoPostgresDSN = dsn
-		}
-
-		if err := WriteKubeSchedulerConfig(spec); err != nil {
-			return nil, err
 		}
 
 		steps, err := StepsFrom(spec, l, cfg.Stack)
@@ -286,13 +348,13 @@ func SlotDataDir(dataDir, slot string) string {
 	return filepath.Join(dataDir, SlotsDirName, slot)
 }
 
-func (cfg StackConfig) slotOf(cluster string) string {
+func (cfg StackConfig) slotOf(cluster string) SlotState {
 	if cfg.Slot != nil {
-		if s := cfg.Slot(cluster); s != "" {
+		if s := cfg.Slot(cluster); s.Slot != "" {
 			return s
 		}
 	}
-	return ActiveSlot
+	return SlotState{Slot: ActiveSlot}
 }
 
 func leasePort(l materialiser.Leases, p portallocator.Purpose, cluster string) (int, error) {

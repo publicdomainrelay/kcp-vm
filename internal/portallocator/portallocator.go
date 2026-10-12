@@ -397,6 +397,26 @@ func (a *Allocator) Allocate(req Request) (Lease, error) {
 	return granted, nil
 }
 
+func (a *Allocator) Relet(req Request) (Lease, bool, error) {
+	held, ok := a.PortFor(req.Cluster, req.Purpose)
+	if ok {
+		busy := false
+		for p := held.Port; p < held.Port+held.Width; p++ {
+			if probeBound(p) {
+				busy = true
+			}
+		}
+		if !busy {
+			return held, false, nil
+		}
+		if err := a.ReleasePurpose(req.Cluster, req.Purpose); err != nil {
+			return Lease{}, false, err
+		}
+	}
+	l, err := a.Allocate(req)
+	return l, ok, err
+}
+
 func (a *Allocator) findFree(width int) (int, error) {
 	for port := a.rng.First; port+width-1 <= a.rng.Last; port++ {
 		if a.taken(port, width) {

@@ -152,6 +152,8 @@ type Config struct {
 
 	FrontExec []string
 
+	HostnameExec []string
+
 	Dumbpipe string
 
 	ESOManifestDir string
@@ -227,6 +229,7 @@ func loadFor(get func(string) string, inv foldmain.Invocation) (Config, error) {
 	}
 	cfg.CloudControllerManagerExec = inv.Reexec("internal", "cloud-controller-manager")
 	cfg.FrontExec = inv.Reexec("internal", "apiserver-front")
+	cfg.HostnameExec = inv.Reexec("internal", "ns-exec")
 	if cfg.CloudControllerManager != "" {
 		cfg.CloudControllerManagerExec = []string{cfg.CloudControllerManager}
 	}

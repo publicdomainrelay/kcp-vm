@@ -325,6 +325,35 @@ restart or upgrade restarts no member.
   supervisor stops each unit, and the provider waits until every member is Stopped before it drops
   the finalizers. A deleted cluster then loses its Postgres object (its data directory is kept); an OFF
   cluster keeps it.
+- **Blue/green control-plane slots (plan 0006 M3-CP-SLOTS).** A cluster has slots a and b, each a
+  `kine@<slot>` + `k3s@<slot>` pair on the cluster's one Postgres object, with its own leases
+  (section 8) and its own k3s `--data-dir` (slot a: the cluster data dir; slot b: `<dataDir>/slots/b`);
+  only the active slot runs. `controlplane.json` records `activeSlot`, the slots (k3s and kine
+  executables, version, ports, data dir, hostname, units) and the front; `StepsFor` builds the active
+  slot from it. `units roll cluster <key> --cluster-state-dir <dir> [--k3s-path] [--kine-path]` writes
+  `<dataDir>/roll-request.json`; the provider's roller (`clusterprovider.Roller`) takes it when the
+  cluster is Ready, under the cluster's lock (Spawn and Reap take it too), and writes
+  `<dataDir>/rolls/<id>.json`, which the CLI prints. A roll: k3s minor in {active, active+1} and within
+  three minors above every joined guest; the kubernetes EndpointSlice is only the front pair; idle first
+  (waits while a non-kube-system pod is Running on a node, up to `--idle-bound`, default 30m; zero nodes
+  swap at once); a minor bump takes a `pg_dump` of k3s and openbao to `<dataDir>/backups/<ts>`; the green
+  slot's ports are re-leased if another process holds them (`Allocator.Relet`); kine@green is gated on
+  its listener and "tables and indexes are up to date", k3s@green on its own port and the first
+  kube-system Deployment and on the same server, client and request-header CAs as blue;
+  `controlplane.json` is written with the green slot active BEFORE the front switches; then blue's
+  k3s and kine objects are deleted, blue's front connections drained, and for 60 s the EndpointSlice,
+  the kube-system lease holders and every Node's Ready transition are recorded in the report. Blue's data
+  dir and its record stay for a same-minor rollback, which is the next `units roll cluster`. During a
+  roll the cluster stays Ready: `Unhealthy` judges only the members `controlplane.json` records. Each
+  k3s slot runs under its own hostname `swc-<key, 12>-<slot>` through `internal ns-exec` (util-linux
+  `unshare --user --map-current-user --keep-caps --uts --mount`, then sethostname, a bind of
+  `<slot data dir>/rancher` over `/etc/rancher`, ambient capabilities cleared, exec k3s; no resident
+  code), on both backends, so wrangler's `kube-system/k3s` lease never has two holders under one name.
+  The market kube-scheduler elects with a 4 s lease (renew 3 s, retry 1 s). Measured on a dev instance
+  (k3s v1.36.4+k3s1, zero nodes): green ready 16-18 s after the request, authenticated `/readyz`
+  through the front every 200 ms: 0 failures over both swaps; kube-controller-manager and
+  k3s-cloud-controller-manager leases moved to green 22-26 s after blue stopped, wrangler's `k3s`
+  lease 52 s (45 s lease, not released on stop).
 - **Secrets.** A link's key reaches dumbpipe through `spec.envFiles` of its HostProcess: a 0600 file
   under the cluster's data dir. The key is never written into a kcp object.
 - **The cluster's OpenBao.** The `bao` member is an OpenBaoServer object `c-<key>-bao` (M3-BAO-SYNC):

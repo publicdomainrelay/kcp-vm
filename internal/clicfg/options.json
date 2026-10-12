@@ -531,6 +531,40 @@
       "type": "string",
       "description": "units roll kcp: the unit name prefix of the installed application (a test placement; socialweb- when unset)",
       "env": "SOCIALWEB_UNIT_PREFIX"
+    },
+    "private-hostname": {
+      "type": "string",
+      "description": "internal ns-exec: the UTS hostname the command runs under, in its own user+UTS+mount namespace"
+    },
+    "bind": {
+      "type": "string",
+      "description": "internal ns-exec: comma-separated <source>:<target> directories bind-mounted in the command's mount namespace (a target that does not exist is skipped)"
+    },
+    "inside": {
+      "type": "boolean",
+      "description": "internal ns-exec: the second stage, already inside the namespaces unshare made"
+    },
+    "cluster-state-dir": {
+      "type": "string",
+      "description": "units roll cluster|link: the cluster provider's state dir, holding each cluster's controlplane.json",
+      "env": "SOCIALWEB_CLUSTERPROVIDER_STATE_DIR"
+    },
+    "k3s-path": {
+      "type": "string",
+      "description": "units roll cluster: the k3s executable the new slot runs (unset: the one the active slot runs)"
+    },
+    "dumbpipe-path": {
+      "type": "string",
+      "description": "units roll link: the dumbpipe executable the replacement listener runs (unset: the one the link runs)"
+    },
+    "service": {
+      "type": "string",
+      "description": "units roll link: the link to replace, apiserver or openbao"
+    },
+    "idle-bound": {
+      "type": "string",
+      "description": "units roll cluster: how long a swap waits for no non-kube-system pod Running on a market node before it proceeds anyway (Go duration)",
+      "default": "30m"
     }
   }
 }

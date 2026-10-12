@@ -85,6 +85,7 @@ type UnitsHost struct {
 
 	mu     sync.Mutex
 	stores map[string]Store
+	keys   map[string]*sync.Mutex
 }
 
 type Store struct {
@@ -120,13 +121,59 @@ func (s Store) DeleteBootstrapRows(ctx context.Context) error {
 }
 
 type ControlPlane struct {
-	ActiveSlot string               `json:"activeSlot"`
-	Slice      string               `json:"slice"`
-	Store      string               `json:"store"`
-	Members    []ControlPlaneMember `json:"members"`
-	Front      *ControlPlaneFront   `json:"front,omitempty"`
-	WrittenAt  string               `json:"writtenAt"`
+	ActiveSlot string                `json:"activeSlot"`
+	Slice      string                `json:"slice"`
+	Store      string                `json:"store"`
+	Members    []ControlPlaneMember  `json:"members"`
+	Front      *ControlPlaneFront    `json:"front,omitempty"`
+	Slots      map[string]SlotRecord `json:"slots,omitempty"`
+	Links      map[string]LinkRecord `json:"links,omitempty"`
+	LastRoll   string                `json:"lastRoll,omitempty"`
+	WrittenAt  string                `json:"writtenAt"`
 }
+
+type SlotRecord struct {
+	K3s        string `json:"k3s"`
+	Kine       string `json:"kine"`
+	K3sVersion string `json:"k3sVersion,omitempty"`
+	Port       int    `json:"port"`
+	KinePort   int    `json:"kinePort"`
+	DataDir    string `json:"dataDir"`
+	Hostname   string `json:"hostname,omitempty"`
+	K3sUnit    string `json:"k3sUnit"`
+	KineUnit   string `json:"kineUnit"`
+	Invocation string `json:"invocation,omitempty"`
+	StartedAt  string `json:"startedAt,omitempty"`
+}
+
+type LinkRecord struct {
+	Slot     string `json:"slot"`
+	Dumbpipe string `json:"dumbpipe,omitempty"`
+	Port     int    `json:"port,omitempty"`
+}
+
+func (h *UnitsHost) lock(key string) func() {
+	h.mu.Lock()
+	l, ok := h.keys[key]
+	if !ok {
+		l = &sync.Mutex{}
+		h.keys[key] = l
+	}
+	h.mu.Unlock()
+	l.Lock()
+	return l.Unlock
+}
+
+func (h *UnitsHost) SlotState(key string) SlotState {
+	cp, err := h.readControlPlane(key)
+	if err != nil || cp.ActiveSlot == "" {
+		return SlotState{Slot: ActiveSlot}
+	}
+	r := cp.Slots[cp.ActiveSlot]
+	return SlotState{Slot: cp.ActiveSlot, K3s: r.K3s, Kine: r.Kine}
+}
+
+func (h *UnitsHost) ControlPlane(key string) (ControlPlane, error) { return h.readControlPlane(key) }
 
 type ControlPlaneFront struct {
 	Address    string `json:"address"`
@@ -177,7 +224,7 @@ func NewUnitsHost(c UnitsConfig) (*UnitsHost, error) {
 		return nil, err
 	}
 	return &UnitsHost{c: c, hps: dc.Resource(hostprocess.GVR), pgs: dc.Resource(postgresctl.GVR), obs: dc.Resource(openbaoctl.GVR),
-		stores: map[string]Store{}}, nil
+		stores: map[string]Store{}, keys: map[string]*sync.Mutex{}}, nil
 }
 
 func slotOr(slot string) string {
@@ -403,7 +450,9 @@ func (h *UnitsHost) Unhealthy(ctx context.Context, key string) ([]string, error)
 		sick = append(sick, ControlPlaneFile+": "+err.Error())
 	}
 	vault := MemberName(procgroup.ComponentOpenBao)
+	recorded := map[string]bool{}
 	for _, m := range cp.Members {
+		recorded[m.Name] = true
 		if m.Name == vault {
 			if why := h.vaultSick(ctx, key); why != "" {
 				sick = append(sick, m.Name+": "+why)
@@ -416,6 +465,9 @@ func (h *UnitsHost) Unhealthy(ctx context.Context, key string) ([]string, error)
 	}
 	for _, o := range members {
 		name := labelMember(o.Labels[LabelMember])
+		if len(recorded) > 0 && !recorded[name] {
+			continue
+		}
 		switch {
 		case o.DeletionTimestamp != nil:
 			sick = append(sick, name+": stopping")
@@ -654,8 +706,11 @@ func (h *UnitsHost) Spawn(ctx context.Context, key string, steps []procgroup.Ste
 			return err
 		}
 	}
+	unlock := h.lock(key)
+	defer unlock()
 	prev, _ := h.readControlPlane(key)
-	cp := ControlPlane{ActiveSlot: ActiveSlot, Slice: h.Slice(key), Store: store.Unit, Front: prev.Front}
+	cp := ControlPlane{ActiveSlot: ActiveSlot, Slice: h.Slice(key), Store: store.Unit, Front: prev.Front, Slots: prev.Slots,
+		Links: prev.Links, LastRoll: prev.LastRoll}
 	for _, st := range steps {
 		member := StepMember(st)
 		if st.Name == procgroup.ComponentK3s {
@@ -794,6 +849,8 @@ func (h *UnitsHost) writeControlPlane(key string, cp ControlPlane) error {
 }
 
 func (h *UnitsHost) Reap(ctx context.Context, key string) error {
+	unlock := h.lock(key)
+	defer unlock()
 	members, err := h.Members(ctx, key)
 	if err != nil {
 		return err

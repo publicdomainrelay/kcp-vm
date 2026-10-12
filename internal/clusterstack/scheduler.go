@@ -49,7 +49,10 @@ kind: KubeSchedulerConfiguration
 clientConnection:
   kubeconfig: %s
 leaderElection:
-  leaderElect: false
+  leaderElect: true
+  leaseDuration: 4s
+  renewDeadline: 3s
+  retryPeriod: 1s
 podInitialBackoffSeconds: %d
 podMaxBackoffSeconds: %d
 `, SchedulerKubeconfig(s.serverDir()), MarketSchedulerPodInitialBackoffSeconds,
