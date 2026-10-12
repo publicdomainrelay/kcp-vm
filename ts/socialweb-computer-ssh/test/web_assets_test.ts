@@ -57,12 +57,12 @@ Deno.test("the deposited session names the client_id it was issued to", async ()
   assertEquals(payload.includes("clientId: pending.clientId"), true, "the page must send its client_id");
 
   const common = await Deno.readTextFile(
-    new URL("../lib/common/socialweb-computer-common/mod.ts", import.meta.url),
+    new URL("../../../socialweb-computer-k8s/lib/common/socialweb-computer-common/mod.ts", import.meta.url),
   );
   assertEquals(common.includes("clientId?: string"), true, "the session type must carry it");
 
   const inproc = await Deno.readTextFile(
-    new URL("../lib/socialweb-computer-requester-inproc/mod.ts", import.meta.url),
+    new URL("../../../socialweb-computer-k8s/lib/socialweb-computer-requester-inproc/mod.ts", import.meta.url),
   );
   assertEquals(
     inproc.includes("stored.clientId ?? opts.oauthClientId"),

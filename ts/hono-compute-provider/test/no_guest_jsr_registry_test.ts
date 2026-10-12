@@ -2,7 +2,7 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { withOnNetworkReporter } from "@publicdomainrelay/compute-provider-common";
 
 const ROOT = new URL("../", import.meta.url).pathname;
-const SCANNED = ["lib", "hono-compute-provider", "hono-firecracker-standalone", "deno.json"];
+const SCANNED = ["lib", "hono-firecracker-standalone"];
 const SCANNED_EXTENSIONS = [".ts", ".json", ".sh", ".yaml", ".yml", "Dockerfile"];
 const FORBIDDEN: RegExp[] = [
   /JSR_URL/,

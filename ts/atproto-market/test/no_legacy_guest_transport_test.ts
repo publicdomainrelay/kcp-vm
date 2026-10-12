@@ -5,7 +5,7 @@ import { guestAddressKind } from "@publicdomainrelay/compute-request-abc";
 
 const ROOT = new URL("../", import.meta.url).pathname;
 const LEGACY_MODULES = ["tunnel", "fedproxy-ssh", "fedproxy-web", "wootty"];
-const SCANNED = ["lib", "request-vm-ssh", "compute-contract-full-flow", "hono-bidder", "hono-compute-contract-gateway"];
+const SCANNED = ["lib", "request-vm-ssh", "hono-bidder", "hono-plc"];
 const NOT_OWNED = ["lib/common/market-lexicons/"];
 const SCANNED_EXTENSIONS = [".ts", ".json", ".sh", ".yaml", ".yml"];
 const REFUSAL_LIST = /^export const REMOVED_TRANSPORT_MODULES = /;
