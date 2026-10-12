@@ -1654,7 +1654,7 @@ items:
       TestNoNodebootOrNodeimageVerbInAReleaseBuild; red first.
     done_when: "the host install carries socialweb-computer alone; tests green."
     risks: ["A re-exec'd verb inherits the parent's env; the CCM's curated env is rebuilt explicitly."]
-    status: doing
+    status: done
     evidence:
   - id: M3-CLUSTER-UNITS
     milestone: M3
