@@ -20,7 +20,6 @@ import {
   parseClusterLink,
   parseNodeClaim,
 } from "@publicdomainrelay/socialweb-computer-k8s-api";
-import { accountHashOf } from "@publicdomainrelay/socialweb-computer-k8s-common";
 
 export interface KcpCredentials {
   server: string;
@@ -76,11 +75,15 @@ export interface KcpRequestOptions {
 }
 
 export interface KcpNodeClaimStoreOptions extends KcpRequestOptions {
-  identityWorkspace: string;
+  homesWorkspace: string;
+  homesNamespace?: string;
   homesTtlMs?: number;
 }
 
 const DEFAULT_HOMES_TTL_MS = 30_000;
+const DEFAULT_HOMES_NAMESPACE = "default";
+const NODE_CLAIM_HOME_SELECTOR = "socialweb.computer/nodeclaim-home=true";
+const NODE_CLAIM_HOME_KEY = "workspace";
 const UNREACHABLE_STATUSES = new Set([403, 404]);
 
 const DEFAULT_RETRY_AFTER_MS = 5_000;
@@ -207,31 +210,13 @@ export function createKcpNodeClaimStore(opts: KcpNodeClaimStoreOptions): NodeCla
     }
   }
 
-  async function accountDids(): Promise<string[]> {
-    const { group, version, plural } = MARKET_IDENTITY_RESOURCE;
-    const out = await request(`${base}/clusters/${opts.identityWorkspace}/apis/${group}/${version}/${plural}`) as {
-      items?: MarketIdentity[];
-    };
-    const dids = (out.items ?? []).map((i) => i.status?.did ?? i.metadata?.annotations?.[ACCOUNT_DID_ANNOTATION] ?? "");
-    return [...new Set(dids.filter(Boolean))];
-  }
-
-  async function accountPath(did: string): Promise<string> {
-    const sum = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(did)));
-    return `root:${accountHashOf(sum)}`;
-  }
-
   async function homes(): Promise<string[]> {
     if (homesCache && Date.now() - homesCache.at < homesTtlMs) return homesCache.homes;
-    const paths: string[] = [];
-    for (const did of await accountDids()) {
-      const account = await accountPath(did);
-      const out = await reachable(
-        () => request(`${base}/clusters/${account}/apis/tenancy.kcp.io/v1alpha1/workspaces`) as Promise<{ items?: { metadata: { name: string } }[] }>,
-        { items: [] },
-      );
-      for (const w of out.items ?? []) paths.push(`${account}:${w.metadata.name}`);
-    }
+    const namespace = opts.homesNamespace ?? DEFAULT_HOMES_NAMESPACE;
+    const out = await request(
+      `${base}/clusters/${opts.homesWorkspace}/api/v1/namespaces/${namespace}/configmaps?labelSelector=${encodeURIComponent(NODE_CLAIM_HOME_SELECTOR)}`,
+    ) as { items?: { data?: Record<string, string> }[] };
+    const paths = [...new Set((out.items ?? []).map((i) => i.data?.[NODE_CLAIM_HOME_KEY] ?? "").filter(Boolean))].sort();
     homesCache = { at: Date.now(), homes: paths };
     return paths;
   }
@@ -240,7 +225,7 @@ export function createKcpNodeClaimStore(opts: KcpNodeClaimStoreOptions): NodeCla
     return `${base}/clusters/${workspace}/apis/${NODE_CLAIM_RESOURCE.group}/${NODE_CLAIM_RESOURCE.version}/${NODE_CLAIM_RESOURCE.plural}${resource}`;
   }
 
-  async function itemUrl(claim: Pick<NodeClaim, "workspace" | "name">, sub = ""): Promise<string> {
+  function itemUrl(claim: Pick<NodeClaim, "workspace" | "name">, sub = ""): string {
     return clusterPath(claim.workspace, `/${encodeURIComponent(claim.name)}${sub}`);
   }
 

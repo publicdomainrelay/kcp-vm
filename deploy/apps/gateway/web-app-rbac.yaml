@@ -11,7 +11,7 @@ metadata:
 rules:
   - apiGroups: ["socialweb.computer"]
     resources: ["marketidentities"]
-    verbs: ["create", "list", "patch"]
+    verbs: ["create", "patch"]
   - apiGroups: ["socialweb.computer"]
     resources: ["marketidentities/status"]
     verbs: ["patch"]
@@ -24,6 +24,30 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: socialweb-computer-k8s-web-app
+subjects:
+  - kind: ServiceAccount
+    name: socialweb-computer-k8s
+    namespace: default
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: socialweb-computer-k8s-nodeclaim-homes
+  namespace: default
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: socialweb-computer-k8s-nodeclaim-homes
+  namespace: default
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: socialweb-computer-k8s-nodeclaim-homes
 subjects:
   - kind: ServiceAccount
     name: socialweb-computer-k8s

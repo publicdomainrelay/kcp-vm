@@ -120,6 +120,11 @@
       "description": "kubeconfig of this web app's own kcp identity (a ServiceAccount token, re-read from its tokenFile on every request); it reads the Gateway and the OpenBaoServer and writes MarketIdentities",
       "env": "KCP_KUBECONFIG"
     },
+    "kcp-workspace": {
+      "type": "string",
+      "description": "This web app's own kcp workspace; with kcp-kubeconfig set, it fulfils through the compute market the NodeClaims of every home that the cluster gateway names in a ConfigMap labelled socialweb.computer/nodeclaim-home in its default namespace",
+      "env": "KCP_WEB_APP_WORKSPACE"
+    },
     "kcp-context": {
       "type": "string",
       "description": "Context in the kcp kubeconfig to use; defaults to its current-context",
@@ -178,7 +183,7 @@
     },
     "market-identity-workspace": {
       "type": "string",
-      "description": "kcp workspace this web app writes one MarketIdentity (mode oauthDelegated) per signed-in account into; with kcp-kubeconfig set, it also fulfils the NodeClaims in the home workspaces of those accounts through the compute market; unset, it does neither",
+      "description": "kcp workspace this web app writes one MarketIdentity (mode oauthDelegated) per signed-in account into; unset, it writes none",
       "env": "MARKET_IDENTITY_WORKSPACE"
     },
     "openbao-addr": {

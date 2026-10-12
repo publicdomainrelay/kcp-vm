@@ -207,9 +207,6 @@ func (c *Client) ensure(ctx context.Context, permit revocation.Permit, name stri
 	if err := c.createGrant(ctx, AccountPath(did), IdentityRecordName(did), did); err != nil {
 		return fmt.Errorf("kcpclient: account identity record %s: %w", IdentityRecordName(did), err)
 	}
-	if err := c.grantAgent(ctx, AccountPath(did), AccountAgentRules()); err != nil {
-		return err
-	}
 	if err := c.createWorkspace(ctx, AccountPath(did), name, kcpv1alpha1.WorkspaceSpec{
 		Type: &kcpv1alpha1.WorkspaceTypeReference{Name: HomeWorkspaceType, Path: RootWorkspace},
 	}); err != nil {
@@ -221,7 +218,7 @@ func (c *Client) ensure(ctx context.Context, permit revocation.Permit, name stri
 	if _, err := c.createCluster(ctx, home, name, did); err != nil {
 		return fmt.Errorf("kcpclient: cluster %s: %w", home, err)
 	}
-	return c.grantAgent(ctx, home, HomeAgentRules())
+	return c.grantAgentHome(ctx, home)
 }
 
 var ErrNoMountURL = errors.New(

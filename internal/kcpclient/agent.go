@@ -7,13 +7,17 @@ import (
 	"strings"
 	"sync"
 
+	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/rest"
 )
 
 const (
 	NodeClaimAgentGrant  = "socialweb-nodeclaim-agent"
+	NodeClaimHomeLabel   = "socialweb.computer/nodeclaim-home"
+	NodeClaimHomeKey     = "workspace"
 	foreignAccountPrefix = "system:kcp:serviceaccount:"
 	agentFieldManager    = "kcpclient"
 )
@@ -33,13 +37,6 @@ func ParseServiceAccountRef(s string) (*ServiceAccountRef, error) {
 		return nil, fmt.Errorf("kcpclient: %q is not <workspace path>/<namespace>/<name>", s)
 	}
 	return &ServiceAccountRef{Workspace: parts[0], Namespace: parts[1], Name: parts[2]}, nil
-}
-
-func AccountAgentRules() []rbacv1.PolicyRule {
-	return []rbacv1.PolicyRule{
-		{NonResourceURLs: []string{"/"}, Verbs: []string{"access"}},
-		{APIGroups: []string{tenancyResource.Group}, Resources: []string{"workspaces"}, Verbs: []string{"list"}},
-	}
 }
 
 func HomeAgentRules() []rbacv1.PolicyRule {
@@ -78,7 +75,18 @@ func (a *agent) userName(ctx context.Context, c *Client) (string, error) {
 	return a.user, nil
 }
 
-func (c *Client) grantAgent(ctx context.Context, logicalCluster string, rules []rbacv1.PolicyRule) error {
+func apply(ctx context.Context, req *rest.Request, where string, obj any) error {
+	body, err := json.Marshal(obj)
+	if err != nil {
+		return err
+	}
+	if err := req.Param("fieldManager", agentFieldManager).Param("force", "true").Body(body).Do(ctx).Error(); err != nil {
+		return fmt.Errorf("kcpclient: the node claim agent's grant in %s: %w", where, err)
+	}
+	return nil
+}
+
+func (c *Client) grantAgentHome(ctx context.Context, home string) error {
 	if c.agent == nil {
 		return nil
 	}
@@ -86,30 +94,33 @@ func (c *Client) grantAgent(ctx context.Context, logicalCluster string, rules []
 	if err != nil {
 		return err
 	}
-	r, err := c.bind(logicalCluster, rbacv1.SchemeGroupVersion, "/apis")
+	r, err := c.bind(home, rbacv1.SchemeGroupVersion, "/apis")
 	if err != nil {
 		return err
 	}
-	objects := []struct {
-		resource string
-		body     any
-	}{
-		{"clusterroles", rbacv1.ClusterRole{TypeMeta: metav1.TypeMeta{APIVersion: rbacv1.SchemeGroupVersion.String(), Kind: "ClusterRole"},
-			ObjectMeta: metav1.ObjectMeta{Name: NodeClaimAgentGrant}, Rules: rules}},
-		{"clusterrolebindings", rbacv1.ClusterRoleBinding{TypeMeta: metav1.TypeMeta{APIVersion: rbacv1.SchemeGroupVersion.String(), Kind: "ClusterRoleBinding"},
-			ObjectMeta: metav1.ObjectMeta{Name: NodeClaimAgentGrant},
-			RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: NodeClaimAgentGrant},
-			Subjects:   []rbacv1.Subject{{Kind: rbacv1.UserKind, APIGroup: rbacv1.GroupName, Name: user}}}},
+	role := rbacv1.ClusterRole{TypeMeta: metav1.TypeMeta{APIVersion: rbacv1.SchemeGroupVersion.String(), Kind: "ClusterRole"},
+		ObjectMeta: metav1.ObjectMeta{Name: NodeClaimAgentGrant}, Rules: HomeAgentRules()}
+	if err := apply(ctx, r.Patch(types.ApplyPatchType).Resource("clusterroles").Name(NodeClaimAgentGrant), home, role); err != nil {
+		return err
 	}
-	for _, o := range objects {
-		body, err := json.Marshal(o.body)
-		if err != nil {
-			return err
-		}
-		if err := r.Patch(types.ApplyPatchType).Resource(o.resource).Name(NodeClaimAgentGrant).
-			Param("fieldManager", agentFieldManager).Param("force", "true").Body(body).Do(ctx).Error(); err != nil {
-			return fmt.Errorf("kcpclient: the node claim agent's %s in %s: %w", o.resource, logicalCluster, err)
-		}
+	binding := rbacv1.ClusterRoleBinding{TypeMeta: metav1.TypeMeta{APIVersion: rbacv1.SchemeGroupVersion.String(), Kind: "ClusterRoleBinding"},
+		ObjectMeta: metav1.ObjectMeta{Name: NodeClaimAgentGrant},
+		RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: NodeClaimAgentGrant},
+		Subjects:   []rbacv1.Subject{{Kind: rbacv1.UserKind, APIGroup: rbacv1.GroupName, Name: user}}}
+	if err := apply(ctx, r.Patch(types.ApplyPatchType).Resource("clusterrolebindings").Name(NodeClaimAgentGrant), home, binding); err != nil {
+		return err
 	}
-	return nil
+	key, err := ClusterKey(home)
+	if err != nil {
+		return err
+	}
+	core, err := c.coreResource(c.agent.ref.Workspace)
+	if err != nil {
+		return err
+	}
+	index := corev1.ConfigMap{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"},
+		ObjectMeta: metav1.ObjectMeta{Name: key, Namespace: c.agent.ref.Namespace, Labels: map[string]string{NodeClaimHomeLabel: "true"}},
+		Data:       map[string]string{NodeClaimHomeKey: home}}
+	return apply(ctx, core.Patch(types.ApplyPatchType).Namespace(c.agent.ref.Namespace).Resource("configmaps").Name(key),
+		c.agent.ref.Workspace, index)
 }
