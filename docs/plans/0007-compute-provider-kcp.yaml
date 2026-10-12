@@ -89,10 +89,9 @@ principle:
     - "kcp_use: traditional-exception marks the items that serve the virtual Kubernetes clusters project (NodeClaims, tenant nodes): M3-NODE-LOSS-CLOCK, M6-CLAIM-RESUME, M6-GATEWAY-REPOPULATE, M6-NOSSH-JOIN."
     - "Fifth fold (user 2026-10-12, 0006 principle.decomposition): the bidder is a MarketBidder root object in its own kcp (0006 M2-APP-CONTROLLER), also inside a market bed, where the bed's MarketNetwork applies it into the bidder's own kcp and copies the network values onto it. Its sign-in is a MarketIdentity (M1-MARKET-IDENTITY) whose pending actions the foreground CLI renders; every hono-bidder option maps to a root-object field or profile; hono-bidder runs only as a DenoPod entry (kcp only) from M5-RUN-BIDDER on; its keys, relay keypairs, OIDC JWK and OAuth session live only in its OpenBao (M4-BIDDER-VAULT); its guest-facing endpoints become their own DenoPod (M5-BIDDER-COMPONENTS); guests are reached over iroh only."
 state_rules:
-  - This file is the only state. Every step updates status and evidence.
+  - Item status (todo, doing, done, blocked) lives here; the git history is the evidence. No evidence lists are added (user, 2026-10-12).
   - status is one of todo, doing, done, blocked.
-  - An item is done only when its evidence is recorded (commit SHAs, test names watched to fail and
-    then pass, hat-8 readings with UTC timestamps).
+  - An item is done when its done_when holds on main; the commits say how.
   - Open items are mirrored in NEXT.yaml (P7-*).
   - A decision marked "decided by Claude, user may veto" was not confirmed by the user; one marked
     "decided by the user 2026-10-07", "decided by the user 2026-10-11" or "decided by the user 2026-10-12"

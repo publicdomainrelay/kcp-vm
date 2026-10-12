@@ -155,10 +155,9 @@ principle:
       - "Components (decided by the user 2026-10-12): the bidder's guest-facing endpoints (OIDC issuer, /v1/on-network, behind the provider relay) become their own DenoPods after 0007 M4-BIDDER-VAULT and M3-OIDC-ISSUER-INSTANCE (0007 M5-BIDDER-COMPONENTS). The door's node fulfiller stays in the door DenoPod for now and is revisited after 0007 M6-CLAIM-RESUME (decided by Claude, user may veto; 0008 M3-DOOR-STATE-VAULT)."
       - "Every listener reports into status (0008 M2-DENOPOD-LISTENERS: tcp, unix and relay ingress URLs in DenoPod.status.listeners), so no test or peer scrapes stdout for a DID, a port or a readiness line."
 state_rules:
-  - This file is the only state. Every step updates status and evidence.
+  - Item status (todo, doing, done, blocked) lives here; the git history is the evidence. No evidence lists are added (user, 2026-10-12).
   - status is one of todo, doing, done, blocked.
-  - An item is done only when its evidence is recorded (commit SHAs, test names watched to fail and
-    then pass, prod or hat-8 readings with UTC timestamps).
+  - An item is done when its done_when holds on main; the commits say how.
   - Open items are mirrored in NEXT.yaml (P6-*).
   - A decision marked "decided by Claude, user may veto" was not confirmed by the user; one marked
     "decided by the user 2026-10-07", "decided by the user 2026-10-11" or "decided by the user 2026-10-12"

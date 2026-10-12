@@ -63,10 +63,9 @@ principle:
     - "The market test bed (deploy/examples/atproto/market) is the seed of this model and the vehicle for parallel workstreams: M1-BED-PARALLEL and M4-TESTBED-PORT are what every workstream tests in."
     - "How today's multi-server deno processes split into DenoPods per application is folded (fifth fold 2026-10-12; 0006 principle.decomposition): one root object per application (0006 M2-APP-CONTROLLER); STRICT kcp per application, inside a bed too (the bed is a MarketNetwork application whose children each run their own kcp, M4-TESTBED-PORT); every listener reports into DenoPod.status.listeners (M2-DENOPOD-LISTENERS); network values only through the composer and one fetch adapter (M2-MARKET-NETWORK); the requester is a fresh kcp per invocation with a durable state dir (M4-RUN-REQUEST); secrets only in each application's OpenBao (M3-DOOR-STATE-VAULT for the door); iroh is the only guest transport (M1-SSH-GATEWAY-IROH, then M1-STRIP-LEGACY-TRANSPORTS)."
 state_rules:
-  - This file is the only state. Every step updates status and evidence.
+  - Item status (todo, doing, done, blocked) lives here; the git history is the evidence. No evidence lists are added (user, 2026-10-12).
   - status is one of todo, doing, done, blocked.
-  - An item is done only when its evidence is recorded (commit SHAs, test names watched to fail and
-    then pass, hat-8 or prod readings with UTC timestamps).
+  - An item is done when its done_when holds on main; the commits say how.
   - Open items are mirrored in NEXT.yaml (P8-*).
   - A decision marked "decided by Claude, user may veto" was not confirmed by the user; one marked
     "decided by the user 2026-10-07", "decided by the user 2026-10-11" or "decided by the user 2026-10-12"
