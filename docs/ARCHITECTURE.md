@@ -713,7 +713,9 @@ lists.
 `Restart=always`, default `KillMode=control-group`, optional `EnvironmentFile=-<state>/gateway.env`) and a
 `config.json` that `serve gateway kcp` reads with nothing added by hand: the state dir, `host-backend:
 systemd-user`, the asset cache, and the three addresses caddy proxies to (kcp front 127.0.0.1:6443, TLS
-front 127.0.0.1:8443, door 127.0.0.1:8788). `upgrade --binary --sha256` checks the digest, copies the
+front 127.0.0.1:8443, door 127.0.0.1:8788). A release gateway takes the clusterprovider's external-secrets
+binary, its bundle (the embedded asset `external-secrets-bundle`, the release's `external-secrets.yaml`) and
+dumbpipe from its own assets. `upgrade --binary --sha256` checks the digest, copies the
 binary to `bin/<sha>/`, runs its self-check, retargets `bin/current` (the old target becomes
 `bin/previous`) and restarts the core unit; every installed and transient unit is adopted, only the core
 gets a new InvocationID. `rollback` swaps `current` and `previous` and restarts. After either, `bin/<sha>/`
