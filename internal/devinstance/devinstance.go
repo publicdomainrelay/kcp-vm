@@ -1,0 +1,278 @@
+package devinstance
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"time"
+
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc"
+)
+
+const MaxSocketPath = 107
+
+const basenameChars = 16
+
+var namePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,39}$`)
+
+var ErrRoot = errors.New("devinstance: dev refuses to run as root (uid 0): dev mode needs no root; production uses install")
+
+type Env interface {
+	LookupEnv(key string) (string, bool)
+}
+
+func sanitize(s string) string {
+	s = strings.ToLower(s)
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('-')
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	if len(out) > basenameChars {
+		out = strings.Trim(out[:basenameChars], "-")
+	}
+	if out == "" {
+		out = "dev"
+	}
+	return out
+}
+
+func hash8(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])[:8]
+}
+
+func WorktreeRoot(dir string) string {
+	d := dir
+	for {
+		if _, err := os.Stat(filepath.Join(d, ".git")); err == nil {
+			return d
+		}
+		parent := filepath.Dir(d)
+		if parent == d {
+			return dir
+		}
+		d = parent
+	}
+}
+
+func ID(name, cwd string) (string, error) {
+	if name != "" {
+		if !namePattern.MatchString(name) {
+			return "", fmt.Errorf("devinstance: instance %q: want lower-case letters, digits and dashes, at most 40", name)
+		}
+		return name, nil
+	}
+	real, err := filepath.EvalSymlinks(cwd)
+	if err != nil {
+		return "", err
+	}
+	root := WorktreeRoot(real)
+	return sanitize(filepath.Base(root)) + "-" + hash8(root), nil
+}
+
+func Short(id string) string { return hash8("swc-instance:" + id) }
+
+func StateRoot(option string, env Env) (string, error) {
+	if option != "" {
+		return filepath.Abs(option)
+	}
+	if v, ok := env.LookupEnv("TASK_STATE_DIR"); ok && v != "" {
+		return filepath.Join(v, "socialweb-computer"), nil
+	}
+	if v, ok := env.LookupEnv("XDG_STATE_HOME"); ok && v != "" {
+		return filepath.Join(v, "socialweb-computer"), nil
+	}
+	home, ok := env.LookupEnv("HOME")
+	if !ok || home == "" {
+		return "", errors.New("devinstance: neither state-dir, TASK_STATE_DIR, XDG_STATE_HOME nor HOME is set")
+	}
+	return filepath.Join(home, ".local", "state", "socialweb-computer"), nil
+}
+
+func RuntimeRoot(env Env) (string, error) {
+	v, ok := env.LookupEnv("XDG_RUNTIME_DIR")
+	if !ok || v == "" {
+		return "", errors.New("devinstance: XDG_RUNTIME_DIR is unset; devsup sockets live there (a login session or linger provides it)")
+	}
+	return filepath.Join(v, "swc"), nil
+}
+
+type Layout struct {
+	ID         string `json:"id"`
+	Short      string `json:"short"`
+	StateDir   string `json:"stateDir"`
+	RuntimeDir string `json:"runtimeDir"`
+	Socket     string `json:"socket"`
+	SupState   string `json:"supState"`
+	Record     string `json:"record"`
+	CoreRecord string `json:"coreRecord"`
+	Lock       string `json:"lock"`
+	CoreLock   string `json:"coreLock"`
+	Logs       string `json:"logs"`
+	KineDir    string `json:"kineDir"`
+	KcpRoot    string `json:"kcpRoot"`
+}
+
+func NewLayout(id, stateRoot, runtimeRoot string) (Layout, error) {
+	short := Short(id)
+	state := filepath.Join(stateRoot, "instances", id)
+	rt := filepath.Join(runtimeRoot, short)
+	l := Layout{
+		ID: id, Short: short, StateDir: state, RuntimeDir: rt,
+		Socket:     filepath.Join(rt, "sup.sock"),
+		SupState:   filepath.Join(state, "sup"),
+		Record:     filepath.Join(state, "instance.json"),
+		CoreRecord: filepath.Join(state, "core.json"),
+		Lock:       filepath.Join(state, "instance.lock"),
+		CoreLock:   filepath.Join(state, "core.lock"),
+		Logs:       filepath.Join(state, "logs"),
+		KineDir:    filepath.Join(state, "kcp", "kine-a"),
+		KcpRoot:    filepath.Join(state, "kcp", "slot-a"),
+	}
+	if n := len(l.Socket); n > MaxSocketPath {
+		return Layout{}, fmt.Errorf("devinstance: socket path %s is %d bytes, over the %d-byte sun_path limit", l.Socket, n, MaxSocketPath)
+	}
+	return l, nil
+}
+
+func (l Layout) UnitPrefix() string { return hostsvc.NamePrefix }
+
+func (l Layout) KineUnit() string {
+	return "socialweb-kcp-" + l.Short + "-kine-a" + hostsvc.ServiceSuffix
+}
+
+func (l Layout) KcpUnit() string {
+	return "socialweb-kcp-" + l.Short + "-slot-a" + hostsvc.ServiceSuffix
+}
+
+func (l Layout) CoreUnit() string {
+	return "socialweb-core-" + l.Short + "-dev" + hostsvc.ServiceSuffix
+}
+
+func (l Layout) KcpSlice() string { return "socialweb-kcp-" + l.Short + ".slice" }
+
+func (l Layout) CoreSlice() string { return "socialweb-core-" + l.Short + ".slice" }
+
+func (l Layout) AdminKubeconfig() string { return filepath.Join(l.KcpRoot, "admin.kubeconfig") }
+
+type Executable struct {
+	Path    string `json:"path"`
+	SHA256  string `json:"sha256"`
+	Version string `json:"version"`
+}
+
+type Unit struct {
+	Role      string           `json:"role"`
+	Unit      string           `json:"unit"`
+	Identity  hostsvc.Identity `json:"identity"`
+	Port      int              `json:"port"`
+	Endpoint  string           `json:"endpoint"`
+	Adopted   bool             `json:"adopted"`
+	PlacedAt  time.Time        `json:"placedAt"`
+	PortAt    time.Time        `json:"portAt"`
+	ReadyAt   time.Time        `json:"readyAt,omitzero"`
+	RSSKiB    int64            `json:"rssKiB,omitempty"`
+	StartedTo string           `json:"startToReady,omitempty"`
+}
+
+type Devsup struct {
+	Instance   string `json:"instance"`
+	PID        int    `json:"pid"`
+	StartTicks uint64 `json:"startTicks"`
+	BootID     string `json:"bootID"`
+	Adopted    bool   `json:"adopted"`
+}
+
+type Record struct {
+	Layout          Layout                `json:"layout"`
+	Profile         string                `json:"profile"`
+	Backend         hostsvc.Backend       `json:"backend"`
+	BaseWorkspace   string                `json:"baseWorkspace"`
+	Created         time.Time             `json:"created"`
+	Updated         time.Time             `json:"updated"`
+	Devsup          Devsup                `json:"devsup"`
+	Units           []Unit                `json:"units"`
+	AdminKubeconfig string                `json:"adminKubeconfig"`
+	KcpURL          string                `json:"kcpURL"`
+	KineURL         string                `json:"kineURL"`
+	Executables     map[string]Executable `json:"executables"`
+	Ready           bool                  `json:"ready"`
+}
+
+func (r *Record) Unit(role string) *Unit {
+	for i := range r.Units {
+		if r.Units[i].Role == role {
+			return &r.Units[i]
+		}
+	}
+	return nil
+}
+
+func (r *Record) SetUnit(u Unit) {
+	if cur := r.Unit(u.Role); cur != nil {
+		*cur = u
+		return
+	}
+	r.Units = append(r.Units, u)
+}
+
+type Adoption struct {
+	Role         string `json:"role"`
+	Unit         string `json:"unit"`
+	InvocationID string `json:"invocationID"`
+	PID          int    `json:"pid"`
+	Adopted      bool   `json:"adopted"`
+}
+
+type Core struct {
+	Generation   int        `json:"generation"`
+	PID          int        `json:"pid"`
+	InvocationID string     `json:"invocationID"`
+	StartedAt    time.Time  `json:"startedAt"`
+	AdoptedAt    time.Time  `json:"adoptedAt"`
+	Adoptions    []Adoption `json:"adoptions"`
+	LastCheck    time.Time  `json:"lastCheck"`
+	Verdicts     []string   `json:"verdicts"`
+}
+
+func ReadJSON(path string, v any) error {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(b, v)
+}
+
+func WriteJSON(path string, v any) error {
+	b, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, append(b, '\n'), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+func RefuseRoot(euid int) error {
+	if euid == 0 {
+		return ErrRoot
+	}
+	return nil
+}
