@@ -1,0 +1,214 @@
+bed: vmuserns4  slot: 2  dir: /home/johnandersen777/.local/state/swc-tasks/vm-userns/beds/vmuserns4
+guest work root: /var/tmp/swc-vmuserns4  bidders: bidder-1
+memory: 37351 MiB available, bed budget 5632 MiB
+
+== runner image ==
+runner: localhost/socialweb-firecracker-runner:sha-958bfd24dd4d (sha256:958bfd24dd4d21c973f8d0ea0592dbcfd34b932413106eb38f0a80a6a3addcf6)
+
+== kcp ==
+kcp ready
+kcp port: 44427
+kine endpoint: http://127.0.0.1:46793
+kubeconfig: /home/johnandersen777/.local/state/swc-tasks/vm-userns/beds/vmuserns4/kcp/admin.kubeconfig
+
+== provider workspace and schemas ==
+workspace.tenancy.kcp.io/deno-provider created
+apiresourceschema.apis.kcp.io/v1alpha1-4.policyworkflowruns.deno.computer created
+apiexport.apis.kcp.io/policyworkflowruns created
+apiresourceschema.apis.kcp.io/v1alpha1-4.denopods.deno.computer created
+apiresourceschema.apis.kcp.io/v1alpha1-2.denoruns.deno.computer created
+apiresourceschema.apis.kcp.io/v1alpha1-4.denojobs.deno.computer created
+apiresourceschema.apis.kcp.io/v1alpha1-3.runtriggers.deno.computer created
+apiresourceschema.apis.kcp.io/v1alpha1-2.policyengines.deno.computer created
+apiresourceschema.apis.kcp.io/v1alpha1-5.policyworkflowpods.deno.computer created
+apiresourceschema.apis.kcp.io/v1alpha1-1.openbaos.deno.computer created
+apiexport.apis.kcp.io/denoruntime created
+workspacetype.tenancy.kcp.io/workflow created
+workspacetype.tenancy.kcp.io/denoruntime created
+provider workspace: root:deno-provider
+provider server:    https://127.0.0.1:44427/clusters/root:deno-provider
+NAME
+v1alpha1-1.openbaos.deno.computer
+v1alpha1-2.denoruns.deno.computer
+v1alpha1-2.policyengines.deno.computer
+v1alpha1-3.runtriggers.deno.computer
+v1alpha1-4.denojobs.deno.computer
+v1alpha1-4.denopods.deno.computer
+v1alpha1-4.policyworkflowruns.deno.computer
+v1alpha1-5.policyworkflowpods.deno.computer
+NAME                 IDENTITYHASH
+denoruntime          ebc0c3ca8b3aa52f8026cd5898318ebb493959f588f397a38a1c30973c37506f
+policyworkflowruns   aa2859c66100442fdc41005892ed3fd31ec7dffdd27d3a64b827cb9018d63a86
+
+== provider build ==
+provider: /home/johnandersen777/.local/state/swc-tasks/vm-userns/build/deno-kcp-provider-940cba2672c7-4351b774fc54-bf33d26fd9e4
+
+== openbao ==
+started /usr/local/bin/bao (pid 686537), log /home/johnandersen777/.local/state/swc-tasks/vm-userns/beds/vmuserns4/openbao/bao.log
+openbao is up at http://127.0.0.1:34933
+
+start the provider against it with:
+  --openbao-addr http://127.0.0.1:34933 --openbao-token root
+
+== export endpoints ==
+workspace.tenancy.kcp.io/global created
+workspace.tenancy.kcp.io/relay created
+workspace.tenancy.kcp.io/alice created
+workspace.tenancy.kcp.io/bob created
+endpoints: https://127.0.0.1:44427/services/apiexport/293lrqkjmdxmf5rr/denoruntime https://127.0.0.1:44427/services/apiexport/293lrqkjmdxmf5rr/policyworkflowruns
+
+== provider ==
+
+== apply ==
+apply attempt 1 of 3
+org root:    /home/johnandersen777/src/publicdomainrelay-kcp-tasks/vm-userns
+root server: https://127.0.0.1:44427/clusters/root
+bed:         vmuserns4 (/home/johnandersen777/.local/state/swc-tasks/vm-userns/beds/vmuserns4) bidders: bidder-1 
+generated the guest TLS CA and the relay.localhost leaf in /home/johnandersen777/.local/state/swc-tasks/vm-userns/beds/vmuserns4/guest-tls
+workspace.tenancy.kcp.io/global unchanged
+workspace.tenancy.kcp.io/relay unchanged
+workspace.tenancy.kcp.io/alice unchanged
+workspace.tenancy.kcp.io/bob unchanged
+workspace root:global Ready
+workspace root:relay Ready
+workspace root:alice Ready
+workspace root:bob Ready
+generated a PDS signing key at /home/johnandersen777/.local/state/swc-tasks/vm-userns/beds/vmuserns4/keys/alice-pds.hex
+generated a bob PDS signing key at /home/johnandersen777/.local/state/swc-tasks/vm-userns/beds/vmuserns4/keys/bob-pds.hex
+the OpenBao namespace for root:global never became ready within 60s
+apiVersion: deno.computer/v1alpha1
+kind: OpenBao
+metadata:
+  annotations:
+    kcp.io/cluster: 2aga3d04ifbopfnk
+    kubectl.kubernetes.io/last-applied-configuration: |
+      {"apiVersion":"deno.computer/v1alpha1","kind":"OpenBao","metadata":{"annotations":{},"finalizers":["openbao.deno.computer/namespace"],"name":"openbao","namespace":"default"},"spec":{"namespace":"global.default"}}
+  creationTimestamp: "2026-10-12T05:30:37Z"
+  finalizers:
+  - openbao.deno.computer/namespace
+  generation: 1
+  name: openbao
+  namespace: default
+  resourceVersion: "1010"
+  uid: 76299f15-d28a-456e-924a-4c0a156a3cf3
+spec:
+  namespace: global.default
+no workload exists and nothing reconciled within 30s; restarting the provider and applying again
+apply attempt 2 of 3
+org root:    /home/johnandersen777/src/publicdomainrelay-kcp-tasks/vm-userns
+root server: https://127.0.0.1:44427/clusters/root
+bed:         vmuserns4 (/home/johnandersen777/.local/state/swc-tasks/vm-userns/beds/vmuserns4) bidders: bidder-1 
+workspace.tenancy.kcp.io/global unchanged
+workspace.tenancy.kcp.io/relay unchanged
+workspace.tenancy.kcp.io/alice unchanged
+workspace.tenancy.kcp.io/bob unchanged
+workspace root:global Ready
+workspace root:relay Ready
+workspace root:alice Ready
+workspace root:bob Ready
+root:global OpenBao authority ready
+root:relay OpenBao authority ready
+root:alice OpenBao authority ready
+root:bob OpenBao authority ready
+denopod.deno.computer/plc created
+denopod.deno.computer/dispatcher created
+denopod.deno.computer/dispatcher-tls created
+dispatcher: relay.localhost:40647  guest TLS front: 127.0.0.1:36797
+denopod.deno.computer/pds created
+denopod.deno.computer/pds created
+denopod.deno.computer/relay created
+generated a bidder-1 signing key at /home/johnandersen777/.local/state/swc-tasks/vm-userns/beds/vmuserns4/keys/bidder-1.hex
+denopod.deno.computer/bidder-1 created
+denopod.deno.computer/verifier created
+root:global  plc             phase=Running ready=true address=127.0.0.1:43765
+root:relay   relay           phase=Running ready=true address=127.0.0.1:39477
+root:relay   dispatcher      phase=Running ready=true address=relay.localhost:40647
+root:relay   dispatcher-tls  phase=Running ready=true address=127.0.0.1:36797
+root:alice   pds             phase=Running ready=true address=127.0.0.1:36145
+root:bob     pds             phase=Running ready=true address=127.0.0.1:46769
+root:bob     bidder-1        phase=Running ready=true address=127.0.0.1:43561
+
+waiting for the verifier, which creates an account on the PDS, reads it back
+from the PLC directory and watches the relay for one of its commits:
+verifier phase=Succeeded
+{"accessJwt":"eyJ0eXAiOiJhdCtqd3QiLCJhbGciOiJFUzI1NksiLCJraWQiOiJkaWQ6a2V5OnpRM3NoZlRwTVR0MUgxcTZZZ3Ryc1pYZkFpWGR2cVE5a3BOQ1FWRWFQVGFmYXpxNVgjYXRwcm90byJ9.eyJpc3MiOiJkaWQ6a2V5OnpRM3NoZlRwTVR0MUgxcTZZZ3Ryc1pYZkFpWGR2cVE5a3BOQ1FWRWFQVGFmYXpxNVgiLCJzdWIiOiJkaWQ6cGxjOmE3cHp1ZjVzNnVtN3d5eml0bXA0d251aiIsImhhbmRsZSI6ImFsaWNlLW12NHRmNXF6IiwiYXVkIjoiZGlkOmtleTp6UTNzaGZUcE1UdDFIMXE2WWd0cnNaWGZBaVhkdnFROWtwTkNRVkVhUFRhZmF6cTVYIiwiaWF0IjoxNzkxNzgzMTQzLCJleHAiOjE3OTE3ODQwNDMsImp0aSI6IkhUVWFFNGN6R1VYa256VWstM0JsalEifQ.jvIDxonP5OMn2RhQOe4C8DKofrE28mEek9eQB_S5PNYEftieOAyD8aDjdIn4rmEXkW0yxBwp5tl3OdlBHDIxaw"
+"createAccountStatus":"200"
+"did":"did:plc:a7pzuf5s6um7wyzitmp4wnuj"
+"firstWriteStatus":"200"
+"gotAccessJwt":"yes"
+"handle":"alice-mv4tf5qz"
+"plcAlsoKnownAs":"[\"at://alice-mv4tf5qz\"]"
+"plcService":"[{\"id\":\"#atproto_pds\"
+\"type\":\"AtprotoPersonalDataServer\"
+\"serviceEndpoint\":\"https://pds.default.alice.svc.kcp.local\"}]"
+"plcStatus":"200"
+"relayFrames":"1"
+"relaySawCommit":"yes"
+"secondWriteStatus":"200"
+"verdict":"pass"}
+
+authorities:
+  root:global global.default serial=3E:36:36:58:21:19:ED:AE:68:C0:E3:D5:10:F1:42:66:2E:AF:87:58
+  root:relay relay.default serial=49:7A:11:67:91:3E:76:37:FA:24:EB:25:AE:AE:24:32:58:A5:26:9B
+  root:alice alice.default serial=6F:A7:B4:FE:31:91:30:7D:45:77:7A:F2:C2:FC:5E:B9:06:13:AC:B4
+  root:bob bob.default serial=09:41:A3:7B:F6:96:0C:A0:BA:05:23:09:CE:33:F5:CE:76:DC:28:74
+
+addresses (also in /home/johnandersen777/.local/state/swc-tasks/vm-userns/beds/vmuserns4/addresses.env):
+  PLC_ADDRESS=127.0.0.1:43765
+  RELAY_ADDRESS=127.0.0.1:39477
+  DISPATCHER_ADDRESS=relay.localhost:40647
+  DISPATCHER_TLS_ADDRESS=127.0.0.1:36797
+  ALICE_PDS_ADDRESS=127.0.0.1:36145
+  BOB_PDS_ADDRESS=127.0.0.1:46769
+  BIDDERS="bidder-1 "
+  BIDDER_ADDRESS_bidder_1=127.0.0.1:43561
+
+health: every service pod sets SERVICE_TLS true except the bidders, so their
+listeners are https except the bidders'. The service names do not resolve on
+the host, so a check resolves the name to the loopback address its listener
+holds and verifies the leaf against the market CA, read out of OpenBao first:
+
+  curl -sS -H 'X-Vault-Token: root' http://127.0.0.1:34933/v1/pki/ca/pem > ca.pem
+  curl --cacert ca.pem --resolve pds.default.alice.svc.kcp.local:36145:127.0.0.1 https://pds.default.alice.svc.kcp.local:36145/xrpc/_health
+
+== record ==
+plc=43765 dispatcher=40647 guest-tls=36797 bob-pds=46769 bidders=did:plc:wo5z7phlf6trp67a3i4w7gpq
+
+== checks ==
+waiting 10s, then reading the long-running pods again
+
+== market contract ==
+bidders: did:plc:wo5z7phlf6trp67a3i4w7gpq  guests reach the dispatcher at: 192.168.0.20
+requester exit=0 after 18s, log /home/johnandersen777/.local/state/swc-tasks/vm-userns/beds/vmuserns4/market-requester.log
+
+results:
+  check                                result evidence
+  apply.sh                             PASS exit=0 attempts=1 0
+  denopod root:global/plc              PASS phase=Running ready=true address=127.0.0.1:43765
+  denopod root:relay/relay             PASS phase=Running ready=true address=127.0.0.1:39477
+  denopod root:relay/dispatcher        PASS phase=Running ready=true address=relay.localhost:40647
+  denopod root:relay/dispatcher-tls    PASS phase=Running ready=true address=127.0.0.1:36797
+  denopod root:alice/pds               PASS phase=Running ready=true address=127.0.0.1:36145
+  denopod root:bob/pds                 PASS phase=Running ready=true address=127.0.0.1:46769
+  denopod root:bob/bidder-1            PASS phase=Running ready=true address=127.0.0.1:43561
+  denopod root:alice/verifier          PASS phase=Succeeded
+  bed record                           PASS every service reported its own port (7 services)
+  bob pds on its name                  PASS ready=true probe=kcpdns pds.default.bob.svc.kcp.local /xrpc/_health
+  bob pds on the host                  PASS GET https://pds.default.bob.svc.kcp.local:46769/xrpc/_health -> 200
+  bidder-1 on its name                 PASS ready=true probe=kcpdns bidder-1.default.bob.svc.kcp.local /oauth-client-metadata.json
+  bidder-1 on the host                 PASS GET http://127.0.0.1:43561/oauth-client-metadata.json -> 200
+  still up root:global/plc             PASS phase=Running ready=true after 10s
+  still up root:relay/relay            PASS phase=Running ready=true after 10s
+  still up root:relay/dispatcher       PASS phase=Running ready=true after 10s
+  still up root:relay/dispatcher-tls   PASS phase=Running ready=true after 10s
+  still up root:alice/pds              PASS phase=Running ready=true after 10s
+  still up root:bob/pds                PASS phase=Running ready=true after 10s
+  still up root:bob/bidder-1           PASS phase=Running ready=true after 10s
+  market guest onNetwork               PASS after 16345ms: iroh://endpointacxvlxdvtojvvbhugupbzleq3tdmyyx32fzowbbqzgqo5 winner=did:plc:wo5z7phlf6trp67a3i4w7gpq bids=1
+  market contract released             PASS vm.delete status=200 total=16457ms
+  market guest gone                    PASS fc-4bff2e6ff04b-08c79884: no running container labelled swc.bed=vmuserns4 and no work dir 2s after release
+
+bed record: /home/johnandersen777/.local/state/swc-tasks/vm-userns/beds/vmuserns4/bed.json
+accept: pass
+teardown: LEFT processes=[671945 766929 766968 766970 ] containers=[] ports=[] workroot=
+kept /home/johnandersen777/.local/state/swc-tasks/vm-userns/beds/vmuserns4

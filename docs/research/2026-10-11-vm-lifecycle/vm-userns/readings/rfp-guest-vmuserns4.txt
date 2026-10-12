@@ -1,0 +1,55 @@
+== 2026-10-12T05:32:57Z guest fc-4bff2e6ff04b-08c79884 unit socialweb-vm-fc-4bff2e6ff04b-08c79884.service (user manager of test-0001)
+ActiveState=active
+MainPID=755789
+ExecMainStartTimestamp=Sun 2026-10-11 22:32:55 PDT
+ControlGroup=/user.slice/user-1002.slice/user@1002.service/app.slice/socialweb-vm-fc-4bff2e6ff04b-08c79884.service
+-- processes in the unit's cgroup: pid ppid hostuid comm | uid_map as seen from the host
+ 755789 2614962  1002 socialweb-nodeb |  0 0 4294967295;
+ 755977  755789 656360 pasta.avx2 |  0 656360 1;
+ 756008  755977 656360 socialweb-nodeb |  0 656360 1;
+ 756327  756008 656360 firecracker |  0 656360 1;
+-- result.json
+{"name":"fc-4bff2e6ff04b-08c79884","fingerprint":"sha256-5b823ce055738796cf71de389d05d6c200f2586b630cef28eac855d06839bc05","vmm_pid":17,"pasta_pid":755977,"guest_ip":"172.30.0.2","socket":"/var/tmp/swc-vmuserns4/fc-4bff2e6ff04b-08c79884/fc.sock","console":"/var/tmp/swc-vmuserns4/fc-4bff2e6ff04b-08c79884/guest.console","work_dir":"/var/tmp/swc-vmuserns4/fc-4bff2e6ff04b-08c79884"}
+-- work dir ACL
+user::rwx
+user:test-0001:rwx
+user:656360:rwx
+group::---
+mask::rwx
+other::---
+
+-- work files
+total 1090048
+-rw-r--r--. 1   1000   1000         784 Oct 11 22:32 boot-spec.json
+srwxr-xr-x. 1 656360 656360           0 Oct 11 22:32 fc.sock
+-rw-------. 1 656360 656360       40053 Oct 11 22:32 guest.console
+-rw-r--r--. 1   1000   1000         552 Oct 11 22:32 guest.json
+-rw-r--r--. 1 656360 656360          43 Oct 11 22:32 instance.json
+-rw-rw----+ 1   1002   1002         880 Oct 11 22:32 namespace.json
+-rw-------. 1   1002   1002       40053 Oct 11 22:32 namespace.log
+-rw-rw-r--+ 1   1002   1002       40435 Oct 11 22:32 nodeboot.log
+-rw-------. 1 656360 656360         146 Oct 11 22:32 node.json
+-rw-r--r--. 1   1002   1002         382 Oct 11 22:32 result.json
+-rw-rw----+ 1   1002   1002 53687091200 Oct 11 22:32 rootfs.ext4
+-rw-r--r--. 1   1000   1000       23276 Oct 11 22:32 user-data.yaml
+-- VMM pid 756327: exe=/var/tmp/swc-vmuserns4-rt/bin/firecracker fds:
+      1 anon_inode:kvm-vcpu:0
+      1 anon_inode:kvm-vcpu:1
+      1 anon_inode:kvm-vm
+      1 /dev/kvm
+      1 /dev/net/tun
+      1 socket:[9053502]
+-- the guest's sshd from inside pasta's netns, as test-0001 (nsenter -U -n into the VMM's namespaces)
+lo               UNKNOWN        127.0.0.1/8 ::1/128 
+enp8s0           UNKNOWN        172.30.0.0/30 fd7a:115c:a1e0::8539:8b59/128 fe80::78d3:b3ff:fe88:bd6c/64 
+fctap0           UP             fe80::8c88:a4ff:fe3a:9084/64 
+br0              UP             fe80::8c67:5cff:fe37:b342/64 
+default via 172.30.0.1 dev enp8s0 
+172.30.0.0/30 dev enp8s0 proto kernel scope link src 172.30.0.0 
+attempt 2 05:33:08Z: 172.30.0.2 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFLdJmqmuXub6veZGk/6lfcEC6MzA5iy3
+-- VMM uid owns, outside the work dir:
+/var/tmp/swc-userns-spike/out/unit-A-0.out
+/var/tmp/swc-userns-spike/out/proc-A-0.out
+/var/tmp/swc-userns-spike/out/unit-B-0.out
+/var/tmp/swc-userns-spike/out/proc-B-0.out
+/var/tmp/swc-userns-spike/out/unit-B2-0.out
