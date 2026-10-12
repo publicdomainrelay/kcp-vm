@@ -254,11 +254,16 @@ func (ctl *Controller) reconcileGateway(ctx context.Context, u *unstructured.Uns
 			return err
 		}
 		webAppReady = len(pods) > 0
+		var components []v1alpha1.ApplicationListener
 		for i := range pods {
 			v := podViewOf(ws, &pods[i])
 			st.Components = append(st.Components, v.component())
-			st.Listeners = append(st.Listeners, v.Listeners...)
+			components = append(components, v.Listeners...)
 			webAppReady = webAppReady && v.Ready && len(v.Listeners) > 0
+		}
+		st.Listeners = append(st.Listeners, components...)
+		if ctl.c.OnComponents != nil {
+			ctl.c.OnComponents(owner, components)
 		}
 	}
 	switch {

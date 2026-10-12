@@ -9,9 +9,12 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/appctl"
 )
 
 const (
+	DefaultWebAppFront    = "127.0.0.1:8788"
+	PortZeroWebAppFront   = "127.0.0.1:0"
 	OptionGatewayAudience = "gateway-audience"
 	OptionKcpPublicHost   = "kcp-public-host"
 )
@@ -55,6 +58,12 @@ func Spec(s v1alpha1.GatewaySpec, profile string, environ []string) v1alpha1.Gat
 		n.FirehoseUrls = []string{}
 	}
 	s.Network = &n
+	if s.WebAppFront == "" {
+		s.WebAppFront = PortZeroWebAppFront
+		if profile == appctl.ProfileGatewayProd {
+			s.WebAppFront = DefaultWebAppFront
+		}
+	}
 	s.Options = slices.Clone(s.Options)
 	if !hasOption(s, OptionGatewayAudience) {
 		first, _, _ := strings.Cut(e.get("SOCIALWEB_GATEWAY_AUDIENCES"), ",")

@@ -197,6 +197,8 @@ type GatewaySpec struct {
 	Options []ApplicationOption `json:"options,omitempty"`
 
 	MarketNetwork *GatewayMarketNetwork `json:"marketNetwork,omitempty"`
+
+	WebAppFront string `json:"webAppFront,omitempty"`
 }
 
 type GatewayMarketNetwork struct {

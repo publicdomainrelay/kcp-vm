@@ -485,6 +485,7 @@ export interface GatewaySpec {
   bidderDids?: string[];
   options?: ApplicationOption[];
   marketNetwork?: GatewayMarketNetwork;
+  webAppFront?: string;
 }
 
 export interface GatewayMarketNetwork {
@@ -610,7 +611,7 @@ export const GATEWAY_RESOURCE: ApiResource = {
   listKind: "GatewayList",
   plural: "gateways",
   singular: "gateway",
-  schema: "v1alpha1-2.gateways.socialweb.computer",
+  schema: "v1alpha1-3.gateways.socialweb.computer",
   export: "applications",
 };
 
@@ -1398,6 +1399,9 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
         "type": "array"
       },
       "profile": {
+        "type": "string"
+      },
+      "webAppFront": {
         "type": "string"
       }
     },

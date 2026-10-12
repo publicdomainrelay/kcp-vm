@@ -1,7 +1,7 @@
 apiVersion: apis.kcp.io/v1alpha1
 kind: APIResourceSchema
 metadata:
-  name: v1alpha1-2.gateways.socialweb.computer
+  name: v1alpha1-3.gateways.socialweb.computer
 spec:
   group: socialweb.computer
   names:
@@ -83,6 +83,8 @@ spec:
                       type: string
                   nodeUserDataBaseFile:
                     type: string
+              webAppFront:
+                type: string
             required:
               - profile
           status:

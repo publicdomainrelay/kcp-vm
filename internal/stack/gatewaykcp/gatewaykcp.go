@@ -49,6 +49,7 @@ const (
 	Poll             = 500 * time.Millisecond
 	ListenerXRPC     = "xrpc"
 	ListenerTLS      = "tls"
+	ListenerWebApp   = "web-app-front"
 	ComponentCore    = "core"
 	DefaultAddress   = "127.0.0.1:0"
 	ExeCore          = "socialweb-computer"
@@ -147,9 +148,27 @@ func (c Config) record(l devinstance.Layout) (devinstance.Record, error) {
 }
 
 type listeners struct {
-	mu   sync.Mutex
-	addr map[string]string
-	kind map[string]string
+	mu     sync.Mutex
+	addr   map[string]string
+	kind   map[string]string
+	webApp string
+}
+
+func (r *listeners) components(_ string, ls []v1alpha1.ApplicationListener) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.webApp = ""
+	for _, l := range ls {
+		if l.Component == appctl.WebAppComponent && l.Address != "" {
+			r.webApp = l.Address
+		}
+	}
+}
+
+func (r *listeners) webAppAddress() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.webApp
 }
 
 func (r *listeners) set(name, kind string, a net.Addr) {
@@ -213,7 +232,7 @@ func Run(ctx context.Context, c Config, m hostsvc.Manager) error {
 		Unit: c.Unit, ApplyTimeout: ApplyTimeout, Log: c.Log}
 	return devcore.Run(ctx, devcore.Config{Layout: l, ReadyTimeout: c.ReadyTimeout, Log: c.Log, Application: &app, FrontAddress: c.FrontAddress,
 		DenoRuntime: &deno, WebApp: &appctl.WebApp{Kubeconfig: g.memberKubeconfig(), TSRoot: c.Closure.Root},
-		Before: g.before, Members: g.members, Listeners: reg.report}, m)
+		OnComponents: reg.components, Before: g.before, Members: g.members, Listeners: reg.report}, m)
 }
 
 type gateway struct {
@@ -381,7 +400,7 @@ func (g *gateway) members(ctx context.Context, rec devinstance.Record) error {
 	}
 	mctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	ended := make(chan error, 4)
+	ended := make(chan error, 8)
 	start := func(m member) {
 		go func() {
 			err := m.run(mctx)
@@ -407,6 +426,10 @@ func (g *gateway) members(ctx context.Context, rec devinstance.Record) error {
 		return tlsfront.Run(ctx, tlsfront.Config{Address: g.c.TLSAddress, CertFile: cert, KeyFile: key,
 			Backend: func() string { return g.reg.get(ListenerXRPC) }, OnListen: func(a net.Addr) { g.reg.set(ListenerTLS, "https", a) },
 			Log: g.c.Log})
+	}})
+	start(member{"web app front", func(ctx context.Context) error {
+		return tlsfront.Run(ctx, tlsfront.Config{Address: g.c.Spec.WebAppFront, Backend: g.reg.webAppAddress,
+			OnListen: func(a net.Addr) { g.reg.set(ListenerWebApp, "tcp", a) }, Log: g.c.Log})
 	}})
 	start(member{"clusterprovider", func(ctx context.Context) error {
 		return exitErr(providermain.Main(ctx, g.invocation(env, nil, "serve", "provider")))

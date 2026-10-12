@@ -115,25 +115,33 @@ func Run(ctx context.Context, c Config) error {
 	if c.Backend == nil {
 		return errors.New("tlsfront: no backend")
 	}
-	pair, err := tls.LoadX509KeyPair(c.CertFile, c.KeyFile)
-	if err != nil {
-		return fmt.Errorf("tlsfront: the certificate %s and key %s: %w", c.CertFile, c.KeyFile, err)
+	var tlsConfig *tls.Config
+	if c.CertFile != "" || c.KeyFile != "" {
+		pair, err := tls.LoadX509KeyPair(c.CertFile, c.KeyFile)
+		if err != nil {
+			return fmt.Errorf("tlsfront: the certificate %s and key %s: %w", c.CertFile, c.KeyFile, err)
+		}
+		tlsConfig = &tls.Config{Certificates: []tls.Certificate{pair}, MinVersion: tls.VersionTLS12}
 	}
 	ln, err := net.Listen("tcp", c.Address)
 	if err != nil {
 		return fmt.Errorf("tlsfront: listening on %s: %w", c.Address, err)
 	}
-	fp, _ := Fingerprint(c.CertFile)
-	c.log().Info("listening", "addr", ln.Addr().String(), "cert", c.CertFile, "sha256", fp)
+	if tlsConfig != nil {
+		fp, _ := Fingerprint(c.CertFile)
+		c.log().Info("listening", "addr", ln.Addr().String(), "cert", c.CertFile, "sha256", fp)
+		ln = tls.NewListener(ln, tlsConfig)
+	} else {
+		c.log().Info("listening without TLS", "addr", ln.Addr().String())
+	}
 	if c.OnListen != nil {
 		c.OnListen(ln.Addr())
 	}
-	tl := tls.NewListener(ln, &tls.Config{Certificates: []tls.Certificate{pair}, MinVersion: tls.VersionTLS12})
 	var wg sync.WaitGroup
-	stop := context.AfterFunc(ctx, func() { tl.Close() })
+	stop := context.AfterFunc(ctx, func() { ln.Close() })
 	defer stop()
 	for {
-		conn, err := tl.Accept()
+		conn, err := ln.Accept()
 		if err != nil {
 			if ctx.Err() != nil {
 				wg.Wait()
@@ -155,15 +163,20 @@ func Run(ctx context.Context, c Config) error {
 
 func proxy(ctx context.Context, c Config, conn net.Conn) {
 	defer conn.Close()
-	tc := conn.(*tls.Conn)
-	hctx, cancel := context.WithTimeout(ctx, HandshakeLimit)
-	err := tc.HandshakeContext(hctx)
-	cancel()
-	if err != nil {
-		c.log().Debug("handshake", "remote", conn.RemoteAddr().String(), "err", err.Error())
-		return
+	if tc, ok := conn.(*tls.Conn); ok {
+		hctx, cancel := context.WithTimeout(ctx, HandshakeLimit)
+		err := tc.HandshakeContext(hctx)
+		cancel()
+		if err != nil {
+			c.log().Debug("handshake", "remote", conn.RemoteAddr().String(), "err", err.Error())
+			return
+		}
 	}
 	backend := c.Backend()
+	if backend == "" {
+		c.log().Warn("no backend address yet; the connection is closed", "remote", conn.RemoteAddr().String())
+		return
+	}
 	d := net.Dialer{Timeout: DialTimeout}
 	up, err := d.DialContext(ctx, "tcp", backend)
 	if err != nil {
@@ -183,7 +196,9 @@ func proxy(ctx context.Context, c Config, conn net.Conn) {
 	}()
 	go func() {
 		io.Copy(conn, up)
-		tc.CloseWrite()
+		if cw, ok := conn.(interface{ CloseWrite() error }); ok {
+			cw.CloseWrite()
+		}
 		done <- struct{}{}
 	}()
 	<-done

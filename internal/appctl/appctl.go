@@ -69,6 +69,7 @@ type Config struct {
 	Interval     time.Duration
 	Listeners    func(owner string) []v1alpha1.ApplicationListener
 	WebApp       *WebApp
+	OnComponents func(owner string, listeners []v1alpha1.ApplicationListener)
 	Log          *slog.Logger
 }
 

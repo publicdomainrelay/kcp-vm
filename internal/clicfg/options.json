@@ -576,7 +576,7 @@
     },
     "gateway-spec-file": {
       "type": "string",
-      "description": "serve gateway kcp: a YAML GatewaySpec (network, bidderDids, options of the socialweb-computer-k8s web app, marketNetwork values) the Gateway root object is applied with; its profile is gateway-profile, and the PLC, the web app's gateway-audience and kcp-public-host default to SOCIALWEB_GATEWAY_PLC_URL, SOCIALWEB_GATEWAY_AUDIENCES and SOCIALWEB_GATEWAY_KCP_PUBLIC_HOST",
+      "description": "serve gateway kcp: a YAML GatewaySpec (network, bidderDids, options of the socialweb-computer-k8s web app, marketNetwork values, webAppFront) the Gateway root object is applied with; its profile is gateway-profile, and the PLC, the web app's gateway-audience and kcp-public-host default to SOCIALWEB_GATEWAY_PLC_URL, SOCIALWEB_GATEWAY_AUDIENCES and SOCIALWEB_GATEWAY_KCP_PUBLIC_HOST; webAppFront, the edge entry point caddy proxies to, defaults to 127.0.0.1:8788 in profile prod and 127.0.0.1:0 otherwise",
       "env": "SOCIALWEB_GATEWAY_SPEC_FILE"
     },
     "gateway-profile": {

@@ -78,7 +78,7 @@ var APIResources = []APIResource{
 		{Name: "DID", Type: "string", JSONPath: ".status.did"},
 		{Name: "Age", Type: "date", JSONPath: ".metadata.creationTimestamp"},
 	}},
-	{Kind: "Gateway", Plural: "gateways", Revision: 2, Export: "applications", Object: Gateway{}, PrinterColumns: []PrinterColumn{
+	{Kind: "Gateway", Plural: "gateways", Revision: 3, Export: "applications", Object: Gateway{}, PrinterColumns: []PrinterColumn{
 		{Name: "Profile", Type: "string", JSONPath: ".spec.profile"},
 		{Name: "Phase", Type: "string", JSONPath: ".status.phase"},
 		{Name: "Age", Type: "date", JSONPath: ".metadata.creationTimestamp"},
