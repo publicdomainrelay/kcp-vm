@@ -6598,6 +6598,28 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   door's TEST_* seams are still env variables, and the door moves into a DenoPod with 0008
   M3-DOOR-DENOPOD.
 
+- **The socialweb-computer-k8s web app is a DenoPod of the Gateway application (plan 0008
+  M3-DOOR-DENOPOD, 2026-10-12).** `serve gateway kcp` starts no deno child. Its core runs the deno
+  runtime (`internal/stack/denoruntime`), and the app controller renders the `Gateway` into the set
+  `gateway` (deploy/sets.yaml): the `root:app` workspace, its rbac, and the DenoPod
+  `socialweb-computer-k8s` from `deploy/denopods/service.yaml` with
+  `deploy/apps/gateway/<profile>.values.yaml`. The web app binds port 0; its listener is in the DenoPod
+  status and in the Gateway's `status.listeners` (component `socialweb-computer-k8s`). Its permissions are
+  explicit: net, env, sys, read of the member kubeconfig (and, in the market-network profile, of the
+  test seam files), write of its state dir only, and `--allow-run=ssh-keygen` with its reason. With no
+  `gateway-url` the web app reads the cluster gateway's XRPC listener from the Gateway object's status
+  through kcp, so a core restart (a new XRPC port) changes no DenoPod spec. The Gateway's configuration
+  is its spec: `--gateway-spec-file` names network, bidderDids, the web app's options (mapped in
+  `deploy/apps/option-map.yaml`, app `gateway`) and `marketNetwork` (ownerSessionsFile,
+  nodeGuestHostAliases, nodeUserDataBaseFile), the former TEST_* env seams; `marketNetwork` is refused
+  under profile prod. `door-address` is gone. Readings on hat-8, systemd-user, test prefix
+  `socialweb-wa-`, a local PLC and PDS, market-network profile, UTC: an empty state dir at 10:00:21.8Z
+  to the Gateway Ready with the web app's listener at 10:01:19Z (57 s); a session deposited and the
+  tenant cluster `wa1` created through `/api/clusters/create` at 10:01:28Z, Ready at 10:03:07Z; kill -9
+  of the core at 10:03:10.566Z, the next core Ready at 10:03:13.8Z, and exactly one web app deno process
+  afterwards (the old one went with the core unit's cgroup; the DenoPod started one new run), which
+  listed `wa1` Ready.
+
 ## 16. Vocabulary
 
 | | |
