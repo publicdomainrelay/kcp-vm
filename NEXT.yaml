@@ -171,8 +171,17 @@ open:
       gap and approach, ask the user the listed questions, revise the plan. Nothing else starts before it.
       Gaps: no repeatable acceptance, one bidder, restart leak, kernel/rootfs contract, dead substrate
       code, thin NetworkPolicy coverage, leaderElect guard, debug-ssh guard, hand-built GitLab, leftovers.
+      OPEN NOTE (2026-10-12, flagged by the 0006-0008 fold; 0010 not edited): 0010 G4-SCHED-SINGLE-SERVER
+      (GAP-7) proposes that clusterstack REFUSE to render kube-scheduler leaderElect false for a spec with
+      more than one k3s server, keeping false for one server; plan 0006 M3-CP-SLOTS (decided by the user
+      2026-10-12) turns market scheduler leader election ON for every cluster (leaseDuration 4s, renewDeadline
+      3s, retryPeriod 1s; reverts 1cbf945), because two k3s slots overlap during every blue/green swap. The two
+      edit the same render (internal/clusterstack/scheduler.go) with opposite intent; once M3-CP-SLOTS lands,
+      GAP-7's premise (one server, election off) no longer holds. R0-REASSESS must reconcile: drop
+      G4-SCHED-SINGLE-SERVER, or reduce it to "refuse leaderElect false always" and sequence it after
+      M3-CP-SLOTS. Unresolved until R0-REASSESS answers.
     instrument: >
-      R0-REASSESS answered and recorded in the plan.
+      R0-REASSESS answered and recorded in the plan, including the leaderElect conflict with 0006 M3-CP-SLOTS.
   - id: P6-M0
     title: OPEN - the one binary's linux budget (cross-OS gate and kcp spike done).
     body: >
@@ -180,30 +189,43 @@ open:
       depends_on. M0-XOS-GATE DONE 2026-10-12 (merged; check.sh gates darwin/windows build+vet). M0-KCP-SPIKE
       DONE 2026-10-12 (kcp-spike.md; branch kcp-spike 5f8ef8c, main d6e1881): the user chose OUT OF PROCESS -
       the unpatched release kcp v0.33.0 as an embedded asset (176.8 MB raw / 59.2 MB zstd-19), alternating
-      blue/green slot units on kine -> a dedicated postgres behind our own L4 front on 127.0.0.1:6443.
-      Remaining: M0-SIZE-BUDGET (plan 0006, docs/plans/0006-socialweb-computer-unified-binary.yaml).
+      blue/green slot units on kine -> a dedicated postgres behind our own L4 front on 127.0.0.1:6443 - for
+      the GATEWAY; a bidder's kcp is one slot on kine-sqlite, its upgrade a short restart VMs never notice
+      (decided by the user 2026-10-12, correcting d6f778e). Remaining: M0-SIZE-BUDGET and M0-PG-SOURCE (new
+      2026-10-12: spike with fallback - zonky embedded-postgres binaries, theseus-rs/postgresql-binaries, or a
+      build from source with the build-host script; choice and sha256 pins recorded) (plan 0006,
+      docs/plans/0006-socialweb-computer-unified-binary.yaml). Both can start now.
     instrument: >
-      The linux size budget, with the kcp asset line, enforced by check.sh.
+      The linux size budget, with the kcp and postgres asset lines, enforced by check.sh; the postgres source
+      and per-platform sha256 pins recorded.
   - id: P6-M1
-    title: OPEN - CLI, host inventory, rustfs/t4 leftovers removed, per-OS assets, the one `install`/`uninstall` root command.
+    title: OPEN - CLI (with the dev tree and a required host-backend), host inventory, rustfs/t4 leftovers removed, per-OS assets, instance-keyed leases, `dev up|down|status` per worktree, the one `install`/`uninstall` root command.
     body: >
       OPEN as P6-M0. Plan 0006 items M1-CLI, M1-HOST-INVENTORY, M1-STORE-CLEANUP (the tenant store is kine
       over the cluster's own postgres; vaultlayout central-store, socialweb-vault central-store options,
-      versions.json rustfs/t4 entries deleted), M1-ASSETS, M1-INSTALL. M1-K8S-FORK and M1-KCP-INPROC closed
-      2026-10-12, route not chosen. Assets are embedded per GOOS_GOARCH and collected only when no loaded
-      unit names them; the core installs to bin/<sha256>/ with current/previous symlinks. Decided by the user
-      2026-10-12: `socialweb-computer install bidder|gateway` is the one explicit, idempotent root step, with
-      `uninstall`: account (never created on demand elsewhere), bidder subuid/subgid range for per-VM user
-      namespaces, kvm before linger, delegation drop-in, AppArmor profile for the embedded pasta, node
-      password, socialweb.slice and the core unit files, linger; every other unit (kcp pg/kine/slots/front,
-      vaults, cluster slices and members, VM units) is a runtime transient unit the core creates. systemd is
-      for production installs only; the systemd-free dev mode is folded separately (dev-run-mode.md).
+      versions.json rustfs/t4 entries deleted), M1-ASSETS, M1-PORT-LEASE-INSTANCE (new 2026-10-12: leases
+      keyed by (instance, cluster, purpose), one per-user lease file in dev), M1-DEV-INSTANCE (new 2026-10-12:
+      `socialweb-computer dev up|down|status|ls|logs|env|check|restart` per worktree, instance id from the
+      worktree path, XDG state keyed by instance, one devsup per instance, port 0, no root), M1-INSTALL.
+      M1-K8S-FORK and M1-KCP-INPROC closed 2026-10-12, route not chosen. Assets are embedded per GOOS_GOARCH
+      and collected only when no loaded unit names them (dev: one per-user cache, `dev gc`); the core installs
+      to bin/<sha256>/ with current/previous symlinks. Decided by the user 2026-10-12: `socialweb-computer
+      install bidder|gateway` is the one explicit, idempotent root step, with `uninstall`: account (never
+      created on demand elsewhere), bidder subuid/subgid range for per-VM user namespaces, kvm before linger,
+      delegation drop-in, AppArmor profile for the embedded pasta, node password, socialweb.slice, the core
+      unit files and the BOOTSTRAP-LAYER unit files (kcp store, kine, slot(s), front; M2-BOOTSTRAP-LAYER),
+      linger, `host-backend: systemd-user` in the account's config.json; every other unit (vaults, cluster
+      members, VM units) is a HostProcess placed at runtime. The dev run mode is kcp-native now (decided by
+      the user 2026-10-12): host-backend required with no default (install writes systemd-user, dev passes
+      proc), gateway dev store sqlite (quick) or postgres (bed/prodlike), k3s node password by a per-instance
+      userns bind-mount, AppArmor report-only in dev, one uid for every role in dev.
     instrument: >
       Every executable the code runs has a fate in the host inventory; no rustfs or t4 name outside the
       store measurement in stack.go; an extracted asset that no longer matches its pin is replaced, not run;
       install run twice changes nothing the second time, uninstall --purge restores every host file it
       touched, every installed unit file verifies; upgrade refuses a bad manifest and rollback retargets
-      current.
+      current; serve without --host-backend exits 2; two instances leasing from one file never share a port;
+      two worktrees on hat-8 run `dev up` / `dev down` in parallel and share nothing.
   - id: P6-M2
     title: OPEN - user-manager units adopted never re-created, the host contract, the VM tree audit, kcp on port 0, postgres (with its upgrade paths) and OpenBao CRDs, apply from Go.
     body: >
@@ -216,6 +238,15 @@ open:
       base URL = the front, five shared root files, shard-admin consumers only), M2-KCP-PORT0 (no kcp patch:
       the port read from the unit's single LISTEN socket in /proc), M2-POSTGRES (minor upgrade = unit restart, major = logical replication
       with a write freeze; no container-era data dir), M2-OPENBAO-SERVER, M2-MANIFESTS, M2-TEMPLATE, M2-APPLY.
+      Third fold 2026-10-12 (decided by the user: dev run mode kcp-native now; bidder kcp one slot on
+      kine-sqlite): new M2-HOST-CONFORMANCE (one Manager contract suite, proc on every check.sh --fast,
+      systemd-user behind livegate), M2-HOST-BACKEND-PROC (devsup: per-instance parent, subreaper, process
+      groups, tree kill, fd store, ns-exec), M2-BOOTSTRAP-LAYER (kcp store, kine, slot(s), front and core:
+      installed units in production, devsup units in dev, before kcp; mirrored into kcp read-only),
+      M2-HOSTPROCESS-KIND (HostProcess objects reconciled by the in-binary supervisor onto systemd-user or
+      proc; Postgres, OpenBaoServer, cluster members and ComputeVMs own HostProcess children). M2-HOST-UNITS
+      is the systemd-user backend (done, evidence kept); M2-KCP-STORE/SLOTS: the bidder's kcp is one slot on
+      one sqlite kine with no postgres and no leader election; M2-VM-TREE-AUDIT is backend-aware.
       Transient SERVICES in the user
       manager of a lingering account over the private socket with deadlines, PropExecStart(argv, false),
       CollectMode=inactive, MemorySwapMax=0, no AllowedCPUs/IOWeight, own slice; systemd 253+ with probed
@@ -225,7 +256,10 @@ open:
       its starter and is adopted; a failed unit's Result is readable until reset; the tree audit fails a core
       binary in a VM unit; a Postgres object survives its controller's restart; a restarted bao is unsealed
       on the next pass; a second apply of every set changes no resourceVersion; two kcp slots on one kine ->
-      postgres store serve the same workspaces and a front flip fails no /readyz poll.
+      postgres store serve the same workspaces and a front flip fails no /readyz poll; the contract suite is
+      green on proc and systemd-user; two dev instances each serve their own kcp on port 0; a HostProcess
+      reconciles identically on both backends and a deleted bootstrap mirror stops nothing; a bidder kcp
+      restart leaves every stand-in VM unit's InvocationID unchanged.
   - id: P6-M3
     title: OPEN - serve gateway kcp on the host with kcp first, each cluster a slice of member units behind a per-cluster apiserver front, blue/green k3s+kine slots, the gateway as a user unit, continuity across upgrades proved.
     body: >
@@ -240,7 +274,12 @@ open:
       M3-CP-CONTINUITY (decided by the user 2026-10-12: continuity for upgrades of the finished system only,
       blue/green behind the front; the end-to-end bed proof), M3-KCP-ROLL (`units roll kcp`: pg_dump, new
       slot beside the old, /readyz on its own port, flip our front, old exits, lease
-      kube-system/kcp-controllers deleted; storage-incompatible release pairs take a planned outage).
+      kube-system/kcp-controllers deleted; storage-incompatible release pairs take a planned outage; on a
+      bidder it is a short restart of the one slot, VMs untouched, decided by the user 2026-10-12). Third fold
+      2026-10-12: cluster members are HostProcess children (either backend, StopSlice), fronts keep their fd
+      through UnitSpec.FDStore (devsup on proc), k3s slots get their hostname and, in dev, the node password
+      through `internal ns-exec`. Open note: M3-CP-SLOTS' scheduler leader election conflicts with plan 0010
+      G4-SCHED-SINGLE-SERVER (see P10).
     instrument: >
       A zero-node market cluster's /readyz never fails across `systemctl --user restart` of the gateway unit
       and an upgrade, with every member unit's InvocationID unchanged; a postgres restart stops no member;
@@ -250,9 +289,11 @@ open:
       a kcp roll fails no /readyz poll through the kcp front and leaves no controller gap over 5 s (61 s
       today without the lease delete).
   - id: P6-M4
-    title: OPEN - a reproducible static build per linux platform within its size budget.
+    title: OPEN - a reproducible static build per linux platform within its size budget; later, a parent kcp for nesting dev instances.
     body: >
-      OPEN as P6-M0. Plan 0006 item M4-BUILD.
+      OPEN as P6-M0. Plan 0006 items M4-BUILD and M4-DEV-PARENT-KCP (new 2026-10-12, a later item the user
+      accepted: `dev host`, a per-user parent kcp whose root:dev:<instance> workspaces hold each instance's
+      HostProcess objects).
     instrument: >
       Two clean builds byte-identical; the binary within the budget in versions.json.
   - id: P6-M5
@@ -263,23 +304,37 @@ open:
       solution exists; the gateway runs no containers; install + upgrade on an empty state dir, no volume
       copy, no rollback script), M5-RETIRE (delete deploy/control-plane-container, container-entrypoint.sh,
       run-container.sh and the docker pieces of scripts/deploy.sh; no waiting period) and the acceptance
-      checks ACC6-ONE-BINARY, ACC6-STATE, ACC6-UPGRADE, ACC6-CP-SWAP, ACC6-BAO-SYNC, ACC6-REPRO, ACC6-XOS.
+      checks ACC6-ONE-BINARY, ACC6-STATE, ACC6-UPGRADE, ACC6-CP-SWAP, ACC6-BAO-SYNC, ACC6-REPRO, ACC6-XOS,
+      ACC6-DEV (new 2026-10-12: two dev instances in parallel on hat-8, no root, no systemd).
     instrument: >
       After the fresh deploy: door /api/config 200, the bootstrap cluster Ready, None nodes 0, no container
       on the host; after M5-RETIRE nothing in the repo invokes docker, kubectl or socat outside test assets.
   - id: P7-M1
-    title: OPEN - compute-provider-kcp's shape, the lifecycle on record, the firecracker learnings inventoried, CI-built guest images.
+    title: OPEN - the per-VM userns spike, compute-provider-kcp's shape, the lifecycle on record, the firecracker learnings inventoried, guest images from a build-host script, the new-NSID checklist and a working QR deploy.
     body: >
       OPEN: the plan 0005 gate is satisfied (ACC-ZERO, ACC-MESH, ACC-NOSSH done); items start per their
       depends_on, incl. the plan 0006 and 0008 items they name. Plan 0007 (docs/plans/0007-compute-provider-kcp.yaml), revised 2026-10-11 and 2026-10-12 from
-      docs/research/2026-10-11-vm-lifecycle/, items M1-DECIDE, M1-FC-INVENTORY, M1-API (OS-neutral status,
-      no network index: every guest has the identical address plan), M1-COMMON-EXTRACT, M1-GUEST-IMAGE
-      (kernel + rootfs per hypervisor x arch built in CI, pinned by sha256, fetched and verified).
-      compute-provider-firecracker is the gold standard; both providers stay.
+      docs/research/2026-10-11-vm-lifecycle/, items M0-VM-USERNS (new 2026-10-12: spike with fallback -
+      firecracker opening /dev/kvm in a per-VM subuid userns with pasta; a single-threaded stage of ours vs
+      util-linux unshare >= 2.38; newuidmap/newgidmap host prerequisites; stand-ins plus one RFP-flow guest),
+      M1-DECIDE, M1-FC-INVENTORY, M1-API (OS-neutral status, no network index: every guest has the identical
+      address plan), M1-COMMON-EXTRACT, M1-GUEST-IMAGE (kernel + rootfs per hypervisor x arch built by
+      scripts/build-guest-image.sh on any Linux host - CI shells out to it later, no CI service now, decided
+      by the user 2026-10-12 - pinned by sha256, fetched and verified), M1-QR-DEPLOY (new 2026-10-12:
+      did-key-associator/scripts/deploy.sh ships hono-backend/mod.ts alone though it imports
+      ../typescript-helpers and ./cli-args-env.json, so running it would take the QR backend down; only
+      static files were deployed 2026-10-12, backup /root/qr-static-backup/20261012T014155Z; fix = a
+      self-contained compiled backend, a --static-only mode and a --dry-run), M1-PROTOCOL-CHECKLIST (new
+      2026-10-12: a new NSID needs, in order, the lexicon, the typescript-helpers role-set scope, the
+      regenerated did-key-associator client scope deployed to qr.fedfork.com, and every account re-signed in
+      through the QR - refresh keeps old scopes, 403 ScopeMissingError otherwise; a check test holds every
+      written lexicon in its role set). compute-provider-firecracker is the gold standard; both providers stay.
     instrument: >
       Every exported function and logger event of the firecracker provider maps to a requirement entry;
       ComputeVM fixtures round-trip through Go and TypeScript with no backend enum; enriched user_data
-      byte-identical across the extraction; an image whose sha256 differs is refused.
+      byte-identical across the extraction; an image whose sha256 differs is refused; the userns stage chosen
+      with readings; the compiled QR backend starts from an empty dir; every NSID the bidder or requester
+      writes is in its role set.
   - id: P7-M2
     title: OPEN - the VM runtime with no socialweb code in the VM's tree, parity with the firecracker provider, the Verdict controller, no leaked VM or work dir.
     body: >
@@ -295,7 +350,10 @@ open:
       and a separate pure-Go cidata seed drive with in-guest root growth, no debugfs/e2fsck/resize2fs on
       hosts), M2-BACKPORT (parity at the VMSpec, seed drive and fc.json; the host-side key scan is deleted,
       not ported), M2-CONTROLLER (tri-state Verdict: identity mismatch
-      = Lost + StopUnit now, unreachable bus or socket = Unknown, boot id changed = Lost).
+      = Lost + StopUnit now, unreachable bus or socket = Unknown, boot id changed = Lost). Third fold
+      2026-10-12 (decided by the user): every VM unit is a HostProcess child of its ComputeVM placed on
+      systemd-user (production) or proc (dev); the userns stage is M0-VM-USERNS's choice; a bidder kcp
+      restart stops no VM and the controller re-adopts every VM after it.
     instrument: >
       Parity tests green on both providers; a stand-in VMM unit's tree is pasta + the stand-in only and its
       stop ends within TimeoutStopSec; a stand-in VMM that exits on its own ends its unit and is Lost within
@@ -314,13 +372,17 @@ open:
       equals the firecracker record; a node NotReady during our link outage is kept for 90 s after the link
       returns, and one NotReady before a provider restart is still released on time.
   - id: P7-M4
-    title: OPEN - a restarted bidder keeps its issuer, its keys and its contracts; guest host keys are guest-reported and verified.
+    title: OPEN - a restarted bidder keeps its issuer, its keys and its contracts (the TypeScript store NOW); guest host keys are guest-reported and verified.
     body: >
-      OPEN as P7-M1. Plan 0007 items M4-BIDDER-VAULT, M4-BIDDER-BAO-SYNC,
-      M4-CONTRACT-RESTORE, M4-ONNETWORK, M4-HOST-KEYS (decided by the user 2026-10-12: a bidder-signed
+      OPEN as P7-M1. Plan 0007 items M4-CONTRACT-STORE-FILE (new 2026-10-12, split from M4-CONTRACT-RESTORE
+      by the user and startable NOW: market-bidder ContractStore load() before subscribe and awaited save,
+      a file-backed store for compute-provider-firecracker, terminated-receipt tombstones persisted; bidder
+      restarts kept losing receipts and a guest leaked 2026-10-12T01:31Z), M4-BIDDER-VAULT, M4-BIDDER-BAO-SYNC,
+      M4-CONTRACT-RESTORE (now only the ComputeVM-backed store), M4-ONNETWORK, M4-HOST-KEYS (follows
+      M1-PROTOCOL-CHECKLIST and needs M1-QR-DEPLOY; decided by the user 2026-10-12: a bidder-signed
       com.publicdomainrelay.temp.compute.events.vm.hostKeys record in the market.event envelope, reported by
       a cloud-init module with proof of possession; request-vm-ssh and the door use it with
-      StrictHostKeyChecking=yes; the host-side ssh-keyscan is deleted; no depends_on, can start now).
+      StrictHostKeyChecking=yes; the host-side ssh-keyscan is deleted).
       Live on hat-8 2026-10-07 a restarted bidder lost its receipts,
       vm.delete failed and the guest leaked; its issuer URL also moves, leaving one jwt mount per issuer
       in cluster vaults. The keys move into an OpenBao beside the bidder, reconciled against live
@@ -342,7 +404,9 @@ open:
       'already-terminated' on both paths at 01:33:07Z; needed typescript-helpers 5b071fe (bidder role
       scope), did-key-associator 3cde452 (QR client scope) and a bidder QR re-sign-in. Remaining:
       the Go controller and compute-provider-kcp emit it from Lost verdicts at re-population and from unit
-      failure; the door acts on it in M3-NODE-LOSS-CLOCK / M6-*.
+      failure (in practice after M2-CONTROLLER and M3-TS-PROVIDER, though its depends_on is empty); the door
+      acts on it in M3-NODE-LOSS-CLOCK / M6-*. Its in-memory tombstones are persisted by
+      M4-CONTRACT-STORE-FILE (startable now). The scope steps it needed are now M1-PROTOCOL-CHECKLIST.
     instrument: >
       test/vm_terminated_{lexicon,bidder,requester}_test.ts green; live on the market bed a guest powered
       off from inside ends request-vm-ssh within seconds (vm_session_ended_by_bidder) and no vm.delete is
@@ -354,6 +418,9 @@ open:
       handles, created only by `install bidder` with its subuid/subgid range, units namespaced by handle,
       kvm added before linger, default KillMode, the QR guard in Go,
       the bidder DenoPod with no -A, --allow-run or --allow-ffi and /dev/kvm and $XDG_RUNTIME_DIR denied.
+      Third fold 2026-10-12 (decided by the user): the handle's kcp is one slot on kine-sqlite behind a port-0
+      front in the bootstrap layer (corrects "kine -> postgres"); `run bidder --host-backend=proc` runs in a
+      dev instance with no account; --host-backend is required.
     instrument: >
       The bidder user unit verifies with no KillMode=mixed; deno in the bidder pod cannot open /dev/kvm or
       dial the user bus or the systemd private socket.
@@ -387,13 +454,27 @@ open:
     instrument: >
       An upgraded closure never runs the old code cache; an entry imported from jsr and npm runs with no
       network; two bundles of the same commits are byte-identical.
+  - id: P8-M1-BED
+    title: OPEN, EARLY - today's market bed runs N per host (no fixed ports, no one-bed check).
+    body: >
+      Plan 0008 item M1-BED-PARALLEL (new 2026-10-12): live tests in parallel worktrees collide on the bed's
+      fixed ports 2583-2589, the deno-kcp kcp 6443 and kine 23791 and on the one-bed check
+      (internal/marketbed/live_test.go:115) until this lands; ports come from the instance-keyed lease file
+      (0006 M1-PORT-LEASE-INSTANCE) or bind 0 and are read back. Guests still only through the bed's
+      requester (runComputeContract -> RFP -> bid -> accept -> cloud-init). Until it lands, market-bed runs on
+      hat-8 are serialized.
+    instrument: >
+      No bed port literal outside the bed record; two beds from two worktrees each rent a guest through the
+      RFP flow on hat-8 at the same time.
   - id: P8-M2
     title: OPEN - deno-kcp and kcp-libs forked into this repo (runner build-tagged) and run in-process; one service DenoPod template with explicit permissions.
     body: >
       OPEN as P8-M1. Plan 0008 items M2-DENOKCP-FORK (execrunner's Setpgid moves into GOOS-tagged files so
       the cross-OS gate stays green; builds on k8s.io v0.36.4 since the kcp route is out of process, so it
-      depends on 0006 M0-KCP-SPIKE and M0-XOS-GATE, both done, and can start now), M2-DENOKCP-INPROC (deno dies with the core user unit; tested with
-      `systemctl --user restart`, kill -9 and an upgrade), M2-SERVICE-TEMPLATE (required explicit
+      depends on 0006 M0-KCP-SPIKE and M0-XOS-GATE, both done, and can start now; its runner sets SWC_UNIT so
+      devsup attributes deno processes), M2-DENOKCP-INPROC (deno dies with the core user unit; tested with
+      `systemctl --user restart`, kill -9 and an upgrade, and on proc in a dev instance since 2026-10-12),
+      M2-SERVICE-TEMPLATE (required explicit
       permissions, no -A, /dev/kvm and $XDG_RUNTIME_DIR denied; user 2026-10-11).
     instrument: >
       A DenoPod applied to the kcp runs on the embedded deno; a restart, a kill and an upgrade each restart
@@ -409,7 +490,8 @@ open:
     title: OPEN - run gateway ssh, run request, and the market bed driven by socialweb-computer.
     body: >
       OPEN as P8-M1. Plan 0008 items M4-RUN-GATEWAY-SSH, M4-RUN-REQUEST, M4-TESTBED-PORT (bed units
-      named socialweb-bed-<runid>-..., never matched by production prefixes) and its acceptance checks
+      named socialweb-bed-<runid>-..., never matched by production prefixes; since 2026-10-12 `testbed up` =
+      `dev up --profile bed`, bed ports render to 0, no lock, N beds per host) and its acceptance checks
       ACC8-*. run request keeps its contracts as ComputeContract objects in its own kcp on port 0.
     instrument: >
       The market bed's live test passes twice through `socialweb-computer testbed`, and `run request`
@@ -483,6 +565,74 @@ open:
       surviving a bidder kill, an upgrade and a logout, released by vm.delete, and Lost after a reboot.
     instrument: >
       The live readings recorded with UTC timestamps and zero ssh sessions.
+
+execution_order:
+  written: "2026-10-12, third fold of plans 0006-0008 (user request (i)); waves computed from depends_on across plans 0005-0012 (no unresolved id, no cycle). Advisory: depends_on governs; re-derive after every merge."
+  critical_path: >
+    15 waves to 0006 M5-RETIRE: 0006 M0-SIZE-BUDGET or M0-PG-SOURCE (1) -> M1-ASSETS (2) -> M2-KCP-STORE (3)
+    -> M2-KCP-SLOTS (4) -> M2-KCP-PORT0 (5) -> M2-APPLY + M2-BOOTSTRAP-LAYER (6) -> M2-HOSTPROCESS-KIND (7)
+    -> M2-POSTGRES (8) -> M3-CLUSTER-UNITS (9) -> M3-BAO-SYNC / M3-APISERVER-FRONT (10) ->
+    M3-SERVE-GATEWAY-KCP / M3-CP-SLOTS (11) -> M3-HOST-INSTALL (12) -> M3-CP-CONTINUITY (13) ->
+    M5-FRESH-DEPLOY (14) -> M5-RETIRE (15). The VM chain rides it: 0007 M0-VM-USERNS (1) + M1-GUEST-IMAGE
+    (3) -> M2-VM-RUNTIME (4); M2-HOSTPROCESS-KIND (7) -> 0007 M2-CONTROLLER (8) -> M4-BIDDER-VAULT (9) ->
+    M4-BIDDER-BAO-SYNC (11) -> M5-RUN-BIDDER (12) -> M6-* (13) -> M6-NOSSH-JOIN (14). Shortening it means
+    landing wave 1-3 platform items first: M0-PG-SOURCE, M0-SIZE-BUDGET, M1-ASSETS, M2-KCP-STORE.
+  wave_1_startable_now:
+    - "0006 M0-PG-SOURCE (spike, fallback = build from source with the build-host script)"
+    - "0006 M0-SIZE-BUDGET"
+    - "0006 M1-CLI"
+    - "0006 M1-HOST-INVENTORY"
+    - "0006 M1-PORT-LEASE-INSTANCE (early: unblocks parallel beds)"
+    - "0006 M1-STORE-CLEANUP"
+    - "0006 M2-HOST-CONFORMANCE (early: unblocks the proc backend)"
+    - "0007 M0-VM-USERNS (spike, live hat-8: one RFP-flow guest)"
+    - "0007 M1-DECIDE"
+    - "0007 M1-FC-INVENTORY"
+    - "0007 M1-COMMON-EXTRACT (after M4-CONTRACT-STORE-FILE in the same repo, see worktrees)"
+    - "0007 M1-QR-DEPLOY"
+    - "0007 M3-NODE-LOSS-CLOCK"
+    - "0007 M4-CONTRACT-STORE-FILE (urgent: receipts lost on bidder restart, guest leaked 2026-10-12T01:31Z; live hat-8)"
+    - "0007 M6-CLAIM-RESUME (bed test live hat-8)"
+    - "0008 M2-DENOKCP-FORK"
+    - "0007 M4-TERMINATION-EVENT is doing: its TS half is done; its Go half needs M2-CONTROLLER and M3-TS-PROVIDER in practice (not in its depends_on)"
+  wave_2: ["0006 M1-ASSETS", "0006 M2-HOST-BACKEND-PROC", "0006 M2-MANIFESTS", "0006 M3-FOLD", "0007 M1-PROTOCOL-CHECKLIST", "0008 M1-BED-PARALLEL (early: ends the fixed-port collisions)"]
+  wave_3: ["0006 M1-DEV-INSTANCE", "0006 M1-INSTALL", "0006 M2-HOST-CONTRACT", "0006 M2-KCP-FRONT", "0006 M2-KCP-STORE", "0006 M2-TEMPLATE", "0006 M2-VM-TREE-AUDIT", "0007 M1-API", "0007 M1-GUEST-IMAGE", "0007 M4-HOST-KEYS", "0008 M1-DENO"]
+  wave_4_to_6: ["0006 M2-KCP-SLOTS, 0007 M2-VM-RUNTIME, 0007 M3-TS-PROVIDER, 0008 M1-TS-SOURCE (4)", "0006 M2-KCP-PORT0, 0007 M2-BACKPORT, M3-BIDDER-FLAG, M4-ONNETWORK, 0008 M1-TS-CLOSURE (5)", "0006 M2-APPLY, M2-BOOTSTRAP-LAYER, M3-KCP-ROLL, M4-BUILD, 0008 M2-DENOKCP-INPROC (6)"]
+  parallel_worktrees_wave_1:
+    - "WT-hostsvc (this repo: internal/hostsvc/, internal/devsup/, deploy/check.sh --fast step): M2-HOST-CONFORMANCE, then M2-HOST-BACKEND-PROC, then M2-VM-TREE-AUDIT (internal/hostsvc/treeaudit) once M1-ASSETS lands."
+    - "WT-cli (this repo: cmd/socialweb-computer/main.go, internal/clicfg/): M1-CLI, then M2-MANIFESTS -> M2-TEMPLATE (deploy/embed.go, deploy/sets.yaml, internal/manifests/); M3-FOLD in its own worktree after M1-CLI merges (cmd/socialweb-* shims)."
+    - "WT-pins (this repo: internal/versions/versions.json, docs/host-inventory.yaml, deploy/check.sh size gate; scratch branch for the pg spike): M0-PG-SOURCE, M0-SIZE-BUDGET, M1-HOST-INVENTORY, then M1-ASSETS (internal/assets/, scripts/stage-assets.sh)."
+    - "WT-leases (this repo: internal/portallocator/, internal/subnetallocator/): M1-PORT-LEASE-INSTANCE, then M1-STORE-CLEANUP (internal/vaultlayout, cmd/socialweb-vault, portallocator.go:200 message, versions.json rustfs/t4 entries)."
+    - "WT-contract-store (atproto-market lib/abc/market-bidder, lib/market-bidder, lib/market-bidder-compute, new lib/market-bidder-contract-store-fs, hono-bidder; hono-compute-provider lib/compute-provider-firecracker): M4-CONTRACT-STORE-FILE first (urgent), then M1-COMMON-EXTRACT (moves functions out of compute-provider-firecracker/mod.ts, the same file)."
+    - "WT-qr (did-key-associator: scripts/deploy.sh, deno.json, test/): M1-QR-DEPLOY, then M1-PROTOCOL-CHECKLIST (atproto-market docs + test/role_scope_coverage_test.ts, did-key-associator test), then M4-HOST-KEYS after M4-CONTRACT-STORE-FILE has merged (both touch atproto-market lib/market-bidder-compute)."
+    - "WT-userns (scratch branch + docs/research/2026-10-11-vm-lifecycle/vm-userns-spike.md; a scratch hono-compute-provider branch for the one RFP-flow guest): M0-VM-USERNS."
+    - "WT-docs (this repo: docs/ARCHITECTURE.md section 5, docs/compute-provider-requirements.yaml; hono-compute-provider test/requirements_inventory_test.ts): M1-DECIDE, M1-FC-INVENTORY."
+    - "WT-node-loss (this repo: cmd/socialweb-clusterprovider/nodes.go, internal/clusterprovider pathUpSince): M3-NODE-LOSS-CLOCK."
+    - "WT-claim-resume (socialweb-computer-k8s node-market + door; atproto-market lib/guest-capability-secrets; this repo api/v1alpha1 NodeClaim): M6-CLAIM-RESUME - it carries the ONE NodeClaim schema revision (status.secrets, acceptPending, phase Adopting, ContractState.hostKeys), so M4-HOST-KEYS' door half and M6-GATEWAY-REPOPULATE land on top of it, and 0007 M1-API (api/v1alpha1) rebases after it."
+    - "WT-denokcp (this repo: internal/denokcp/, internal/kcplibs/, deploy/denokcp/vendor.json): M2-DENOKCP-FORK."
+  shared_files_to_serialize:
+    - "internal/versions/versions.json: M0-PG-SOURCE, M0-SIZE-BUDGET, M1-STORE-CLEANUP, M1-ASSETS (merge one at a time; entries are disjoint)."
+    - "deploy/check.sh: M2-HOST-CONFORMANCE (--fast proc half), M0-SIZE-BUDGET (size gate)."
+    - "api/v1alpha1: M6-CLAIM-RESUME (NodeClaim revision) before M1-API (ComputeVM) and M2-HOSTPROCESS-KIND (HostProcess)."
+    - "atproto-market lib/market-bidder-compute: M4-CONTRACT-STORE-FILE before M4-HOST-KEYS."
+    - "hono-compute-provider lib/compute-provider-firecracker/mod.ts: M4-CONTRACT-STORE-FILE before M1-COMMON-EXTRACT."
+  needs_live_hat8_market_bed_rfp_flow:
+    - "0007 M4-CONTRACT-STORE-FILE (bidder restart with a rented guest; late vm.delete after restart)"
+    - "0007 M0-VM-USERNS (one guest through the chosen userns stage)"
+    - "0008 M1-BED-PARALLEL (two beds at once)"
+    - "0007 M6-CLAIM-RESUME (TestADoorRestartMidProvisioningStillJoinsTheNode)"
+    - "0007 M4-HOST-KEYS (StrictHostKeyChecking=yes against the reported key; needs the QR re-sign-in)"
+    - "later: 0007 M4-TERMINATION-EVENT Go half, M6-*; 0006 M3-CLUSTER-UNITS, M3-APISERVER-FRONT, M3-CP-SLOTS, M3-LINK-HANDOVER, M3-CP-CONTINUITY bed tests; 0008 M4-TESTBED-PORT"
+  needs_hat8_without_market: "0006 M2-HOST-CONFORMANCE (systemd half), M0-PG-SOURCE (stand-in runs), every M2-KCP-* and M2-BOOTSTRAP-LAYER livegate test (real kcp/kine/postgres, no guest); 0007 M1-QR-DEPLOY runs against the qr.fedfork.com host, not hat-8."
+  live_collision_rule: >
+    Until 0008 M1-BED-PARALLEL (wave 2) and 0006 M1-DEV-INSTANCE (wave 3) land, the bed's fixed ports
+    (2583-2589, kcp 6443, kine 23791) and its one-bed check make every market-bed run on hat-8 exclusive:
+    run them one at a time in this order - M4-CONTRACT-STORE-FILE (stops the receipt leak that pollutes
+    later runs), M0-VM-USERNS's guest, then M1-BED-PARALLEL's own two-bed run; after it, M6-CLAIM-RESUME and
+    M4-HOST-KEYS run in parallel beds. M1-PORT-LEASE-INSTANCE (wave 1) is therefore first in its worktree.
+  open_notes:
+    - "Plan 0010 G4-SCHED-SINGLE-SERVER (refuse leaderElect false for more than one k3s server; GAP-7) conflicts with 0006 M3-CP-SLOTS (scheduler leaderElect true for every market cluster, user 2026-10-12). Not edited in 0010; R0-REASSESS must resolve it (see P10)."
+    - "Plans 0011 and 0012 reference no renamed id (none renamed); their M0-REVISIT items must re-read the HostProcess kind and the proc backend (Windows Job Objects, darwin kqueue) when they start."
 
 limits:
   - title: A node cannot reach another node, so a cluster with more than one has no cluster DNS

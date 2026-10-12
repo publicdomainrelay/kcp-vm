@@ -16,6 +16,13 @@ revised: >
   route not chosen) and builds on k8s.io v0.36.4; every kcp client config is the front URL with the
   shard-admin context; M3-DOOR-DENOPOD's test no longer reads a state dir the container wrote (fresh
   deploy, decided by the user 2026-10-12). The dev/test run mode (dev-run-mode.md) is folded separately.
+  2026-10-12 (third fold), the user's decisions: the dev run mode is kcp-native now (0006 state rule;
+  HostProcess objects on systemd-user or proc, a bootstrap layer below kcp, one kcp per dev instance), so
+  M2-DENOKCP-INPROC proves "deno dies with the core" on both backends and M2-DENOKCP-FORK's runner sets the
+  devsup attribution env; M4-TESTBED-PORT drops the fixed bed ports 2583-2589 and the one-bed lock and
+  becomes `dev up --profile bed`; new M1-BED-PARALLEL makes today's bed run N per host EARLY, because live
+  tests collide on fixed ports until it lands; every org repo works on main and is pushed (state rule,
+  ownership). No item renamed.
 queued: >
   OPEN. The plan 0005 gate is satisfied: plan 0005 is complete with all 40 items done and its acceptance
   checks ACC-ZERO, ACC-MESH and ACC-NOSSH done with evidence (verified 2026-10-12). Only each item's own
@@ -44,12 +51,19 @@ state_rules:
     0006:M0-XOS-GATE keeps both building and vetting.
   - An item names its dependencies in depends_on; an item may not start while one of them is not done.
     Cross-plan dependencies are written <plan>:<item id>.
+  - >
+    Dev run mode is kcp-native now (decided by the user 2026-10-12; 0006 state rule): every test harness
+    and every bed passes host-backend=proc and runs inside its own dev instance (0006 M1-DEV-INSTANCE); a
+    production-shaped run passes systemd-user. DenoPods stay children of the core on both backends.
+  - >
+    Every org repo works on `main` and is pushed to GitHub as work lands (decided by the user 2026-10-12).
 ownership:
   owned: >
     All code in socialweb-computer-kcp, the prod deployment, the vendored deno-kcp test bed, the
     atproto-market requester libraries, and (decided by the user 2026-10-07) the forked copies of
     deno-kcp and kcp-libs this plan brings into the repo. hono-compute-provider and atproto-market may
-    be changed by commit; never pushed.
+    be changed by commit on main, pushed to GitHub as work lands (decided by the user 2026-10-12; replaces
+    "never pushed").
   not_owned: >
     The market protocol records and lexicons; the core architecture (nodes only ever born through
     requester -> RFP -> bid -> accept -> cloud-init user_data).
@@ -143,6 +157,36 @@ items:
     risks: ["The door today runs with node_modules (nodeModulesDir auto); its suite is run under --node-modules-dir=none before the switch."]
     status: todo
     evidence: []
+  - id: M1-BED-PARALLEL
+    milestone: M1
+    title: "EARLY: today's market bed runs N per host - no fixed ports, no one-bed check - so live tests in parallel worktrees stop colliding"
+    depends_on: ["0006:M1-PORT-LEASE-INSTANCE"]
+    decision: >
+      Decided by the user 2026-10-12: live tests collide on fixed ports until the dev-instance / testbed-port
+      items land, so those come early; M4-TESTBED-PORT drops the fixed ports 2583-2589 and the one-bed lock.
+      Decided by Claude, user may veto: this item does that for TODAY's bed (internal/marketbed driving the
+      vendored deno-kcp bed, accept.sh and apply.sh) without waiting for M4-TESTBED-PORT's long dependency
+      chain. Every fixed bed port - the services' 2583-2589 (internal/marketbed/live_test.go:18; the vendored
+      manifests; accept.sh), the deno-kcp kcp 6443 and kine 23791 (deploy/denokcp/start-kcp.sh:5-6, already
+      env-overridable), and every place that names them (live_m3_test.go:38-41, :96, :582-599) - is read from
+      a per-run bed record whose ports are leased from the per-user lease file keyed by instance
+      (0006:M1-PORT-LEASE-INSTANCE; instance = the dev instance id once 0006:M1-DEV-INSTANCE lands, the
+      worktree-derived id before) or bound at 0 and read back where the service reports its port (onListen
+      logs); the bed's *.localhost names stay, resolved per bed. The livegate "port held by another process"
+      refusal (live_test.go:115) is replaced by the lease. Bed units and processes carry the run id
+      (socialweb-bed-<runid>-...), so two beds never touch each other's processes. Guests still come up only
+      through the bed's requester (runComputeContract -> RFP -> bid -> accept -> cloud-init) against the
+      bed's own bidder; the bed adds no provisioning path.
+    files: ["internal/marketbed/ (bed record, leases, live tests read ports from it)", "deploy/denokcp/start-kcp.sh (ports from the record)", "deploy/examples/atproto/market/ (manifests templated on ports; accept.sh, apply.sh read the record)", "deploy/denokcp/vendor.json (adapted files recorded)"]
+    test_first: >
+      internal/marketbed TestNoBedPortIsALiteral (scans the bed's Go, shell and manifests for 2583-2589, 6443
+      and 23791 outside the record; red on today's tree), TestTwoBedRecordsLeaseDisjointPorts; behind
+      livegate on hat-8: TestTwoBedsOnOneHostEachRentAGuestThroughTheRFPFlow (two worktrees' beds at once,
+      each guest born via runComputeContract; both pass; no ssh to a guest). Red first.
+    done_when: "the two-bed live run passes on hat-8 with its readings (ports, run ids, guest names, UTC); M1-TESTBED's accept checks still pass on one bed."
+    risks: ["Two beds double the guests on hat-8 (memory, /dev/kvm); the run records host memory before and after and refuses a third bed when free memory is below the bed's guest budget."]
+    status: todo
+    evidence: []
   - id: M2-DENOKCP-FORK
     milestone: M2
     title: Fork deno-kcp and kcp-libs into this repo and own them
@@ -165,6 +209,10 @@ items:
       runner_unix.go / runner_windows.go behind a small interface; the windows file returns ErrUnsupported
       until 0011 M1-DENOPOD-RUNNER-WINDOWS, and darwin keeps the unix file until 0012
       M1-DENOPOD-RUNNER-DARWIN replaces what it needs, so 0006:M0-XOS-GATE stays green when the copy lands.
+      Dev run mode (decided by the user 2026-10-12; detail decided by Claude, user may veto, dev-run-mode.md
+      5): runner_unix.go also sets SWC_UNIT=<the core's unit name> in every DenoPod process's environment,
+      so devsup (0006 M2-HOST-BACKEND-PROC) attributes a deno process that left the core's process group to
+      the core unit and kills it with the core.
     files: ["internal/denokcp/", "internal/kcplibs/ (execrunner runner_unix.go, runner_windows.go)", "deploy/denokcp/vendor.json", "deploy/denokcp/build-provider.sh (deleted once the in-process provider passes M2-DENOKCP-INPROC)"]
     test_first: >
       The forked packages' own tests, moved with them and green; plus internal/denokcp
@@ -177,8 +225,15 @@ items:
   - id: M2-DENOKCP-INPROC
     milestone: M2
     title: The owned deno-kcp provider running inside socialweb-computer, upgradable without touching VMs
-    depends_on: [M2-DENOKCP-FORK, M1-DENO, "0006:M2-KCP-PORT0"]
+    depends_on: [M2-DENOKCP-FORK, M1-DENO, "0006:M2-KCP-PORT0", "0006:M2-HOST-BACKEND-PROC"]
     decision: >
+      Both backends (decided by the user 2026-10-12: dev run mode kcp-native now; details decided by Claude,
+      user may veto): "deno processes die with the core" is proved on systemd-user (control-group kill) and
+      on proc, where execrunner's children sit in their own process groups with no Pdeathsig
+      (supervisor.go:141) and devsup's subreaper attribution by SWC_UNIT (M2-DENOKCP-FORK) kills them with the
+      core unit. DenoPod stays its own kind (TypeScript services that die with the core); the HostProcess
+      kind (0006 M2-HOSTPROCESS-KIND) generalises its reconciler shape for host processes that outlive the
+      core, and a DenoPod is never placed as a HostProcess.
       internal/stack/denoruntime runs the provider in-process with: deno-bin the extracted deno, runs-dir
       <state>/denokcp/runs, the runner timeout NEGATIVE (disabled; services are long-running and a
       DenoPod that wants a limit sets activeDeadlineSeconds), and the kcp client config internal/kcpserver
@@ -197,9 +252,10 @@ items:
       TestAnUpgradeRestartsEveryRecordedDenoPodOnTheNewClosureExactlyOnce (run the stack as a user unit
       under a test prefix; three cases: `systemctl --user restart` of the unit, `kill -9` of its main
       process, and `upgrade` to a build with a different closure sha256: every DenoPod Running on the new
-      code, one deno process each, no deleted DenoPod returns, no deno process of the old unit left). Red
-      first.
-    done_when: "both green on hat-8."
+      code, one deno process each, no deleted DenoPod returns, no deno process of the old unit left); on proc
+      in a dev instance: TestAKilledCoreLeavesNoDenoProcessOnTheProcBackend (kill -9 of the core unit's main
+      process and `dev restart core`). Red first.
+    done_when: "both green on hat-8 on systemd-user and on proc."
     risks: []
     status: todo
     evidence: []
@@ -291,21 +347,25 @@ items:
   - id: M4-TESTBED-PORT
     milestone: M4
     title: The market test bed driven by socialweb-computer instead of accept.sh and apply.sh
-    depends_on: [M2-SERVICE-TEMPLATE, "0006:M2-APPLY", "0006:M2-KCP-PORT0"]
+    depends_on: [M2-SERVICE-TEMPLATE, M1-BED-PARALLEL, "0006:M2-APPLY", "0006:M2-KCP-PORT0", "0006:M1-DEV-INSTANCE", "0006:M2-BOOTSTRAP-LAYER", "0006:M2-HOSTPROCESS-KIND"]
     decision: >
-      `socialweb-computer testbed up|accept|down`: kcp on port 0 (0006:M2-KCP-PORT0; its store and process
-      placement follow the dev run mode once dev-run-mode.md is folded), an OpenBaoServer object for the bed's dev vault, the denoruntime and market-testbed sets, the
+      Third fold 2026-10-12 (decided by the user: dev run mode kcp-native now; drop the fixed ports 2583-2589
+      and the one-bed lock): `testbed up` = `dev up --profile bed` (0006 M1-DEV-INSTANCE, M2-BOOTSTRAP-LAYER:
+      the instance's own kcp on kine -> postgres behind a port-0 front, host-backend=proc), then the bed's
+      sets; every bed service port renders to 0 and is read back from the service's onListen report (the
+      leases of M1-BED-PARALLEL are kept only for ports that must be stable within a run); there is no lock
+      file and no one-bed rule; N beds run on one host, one per dev instance.
+      `socialweb-computer testbed up|accept|down`: kcp on port 0 (0006:M2-KCP-PORT0), an OpenBaoServer object for the bed's dev vault, the denoruntime and market-testbed sets, the
       same checks as accept.sh run 9. The bed's bidder is `run bidder` (0007 M5-RUN-BIDDER) and its guests
       come up only through the requester's RFP, bid, accept and cloud-init. Decided by Claude, user may veto
       (2026-10-11): every unit a bed starts is named socialweb-bed-<runid>-... so no production prefix
       (socialweb-vm-<hid>-, socialweb-bao-, socialweb-pg-, socialweb-cluster-) ever matches it, and a bed on
       hat-8 never adopts, audits or garbage-collects a real bidder's units on the same account (or the
-      reverse). The bed's service ports 2583-2589 are fixed by the vendored manifests, so a second bed on the
-      host is refused by a lock file rather than failing in bring-up. accept.sh and apply.sh are deleted
-      after two passes.
+      reverse); under proc the bed's units are its own devsup's, which already separates them. accept.sh and
+      apply.sh are deleted after two passes.
     files: ["internal/stack/testbed", "internal/marketbed/live_test.go", "deploy/examples/atproto/market/accept.sh, apply.sh (deleted at the end)"]
-    test_first: "TestTheMarketTestBedRentsAFirecrackerGuestThroughTheRFPFlow switched to the subcommand; red until it exists."
-    done_when: "two PASS readings through the subcommand with accept.sh run 9's check list."
+    test_first: "TestTheMarketTestBedRentsAFirecrackerGuestThroughTheRFPFlow switched to the subcommand; TestTwoBedsOnOneHostEachRentAGuestThroughTheRFPFlow through `testbed up` in two dev instances (two requesters, two bidders; guests only via runComputeContract); red until it exists."
+    done_when: "two PASS readings through the subcommand with accept.sh run 9's check list, and one two-bed reading on hat-8 (UTC)."
     risks: []
     status: todo
     evidence: []

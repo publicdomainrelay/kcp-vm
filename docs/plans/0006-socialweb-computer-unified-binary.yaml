@@ -32,6 +32,24 @@ revised: >
     `install bidder|gateway` with `uninstall`, enumerating everything it creates and every unit the core
     later starts; the bidder install reserves a subuid/subgid range for per-VM user namespaces (0007
     M2-VM-RUNTIME). Answered questions removed.
+    2026-10-12 (third fold), from user-decisions.md (the 2026-10-12 lines, esp. "dev run mode is KCP-NATIVE
+    NOW"), dev-run-mode.md (its options and requirements; its phasing overridden by the user) and the user's
+    decisions relayed with this fold: (a) a bidder's kcp is ONE slot on kine-sqlite and its upgrade is a
+    short kcp restart; blue/green kcp slots on kine -> postgres are the GATEWAY's only (corrects d6f778e,
+    which applied kine -> postgres to every bidder handle's kcp as "user may veto": the user vetoed it);
+    (b) guest images come from a build-host script that runs on any Linux host, CI shells out to it later,
+    there is no CI service now; (c) every org repo works on main and is pushed to GitHub as work lands;
+    (d) the dev run mode is kcp-native now: long-lived host processes are HostProcess objects reconciled by
+    an in-binary supervisor on a placement backend (systemd-user for production installs, proc for dev),
+    with an explicit bootstrap layer (kcp, its kine and its store, its front and the core: installed
+    systemd units in production, devsup in dev) below kcp; (e) M0 spikes with fallbacks (M0-PG-SOURCE here,
+    0007 M0-VM-USERNS); (i) an execution order with a critical path and parallel worktrees (execution_order
+    below and NEXT.yaml). New: M0-PG-SOURCE, M1-PORT-LEASE-INSTANCE, M1-DEV-INSTANCE, M2-HOST-BACKEND-PROC,
+    M2-HOST-CONFORMANCE, M2-BOOTSTRAP-LAYER, M2-HOSTPROCESS-KIND, M4-DEV-PARENT-KCP, ACC6-DEV. Changed:
+    M1-CLI, M1-ASSETS, M1-HOST-INVENTORY, M1-INSTALL, M2-HOST-UNITS (done, now named the systemd-user
+    backend; evidence kept), M2-HOST-CONTRACT, M2-VM-TREE-AUDIT, M2-KCP-STORE, M2-KCP-FRONT, M2-KCP-SLOTS,
+    M2-KCP-PORT0, M2-POSTGRES, M2-OPENBAO-SERVER, M3-CLUSTER-UNITS, M3-APISERVER-FRONT, M3-CP-SLOTS,
+    M3-KCP-ROLL, M3-SERVE-GATEWAY-KCP. No item renamed.
 queued: >
   OPEN. The plan 0005 gate is satisfied: plan 0005 is complete with all 40 items done and its acceptance
   checks ACC-ZERO, ACC-MESH and ACC-NOSSH done with evidence (verified 2026-10-12). Only each item's own
@@ -56,8 +74,10 @@ source: >
   blue/green behind a per-cluster front, each cluster a systemd slice of member units; kcp runs out of
   process as blue/green slot units on kine -> a dedicated postgres behind our own front on 127.0.0.1:6443;
   production setup is one explicit root command, `socialweb-computer install bidder|gateway`, and systemd
-  is for production installs only (a systemd-free dev/test run mode is being designed in
-  docs/research/2026-10-11-vm-lifecycle/dev-run-mode.md, pending its own fold). This plan
+  is for production installs only; the dev run mode is kcp-native now (HostProcess objects placed by an
+  in-binary supervisor on the systemd-user or proc backend, a bootstrap layer below kcp, one kcp per dev
+  instance; docs/research/2026-10-11-vm-lifecycle/dev-run-mode.md); a bidder's kcp is one slot on
+  kine-sqlite, blue/green kcp slots are the gateway's only. This plan
   holds the Go binary, kcp, assets, the install and upgrade layout, host processes as units and reconciled
   resources, programmatic apply, the gateway composition, control-plane continuity across upgrades, the
   build and the fresh prod deploy. The embedded deno,
@@ -85,11 +105,29 @@ state_rules:
     Resolved 2026-10-12: the user chose out-of-process (M0-KCP-SPIKE evidence); M1-K8S-FORK and
     M1-KCP-INPROC are closed under this rule, and no open item depends on them.
   - >
-    systemd is for production installs only (decided by the user 2026-10-12): the units, slices, linger and
-    the root `install` step in this plan describe a production host. A systemd-free dev/test run mode (no
-    root, no install, parallel instances per worktree, kcp as the supervisor, nestable) is being designed in
-    docs/research/2026-10-11-vm-lifecycle/dev-run-mode.md and is folded separately; until then no item here
-    claims to cover dev runs.
+    systemd is for production installs only and the dev run mode is kcp-native now (decided by the user
+    2026-10-12, overriding dev-run-mode.md's phasing). Long-lived host processes are HostProcess objects in
+    kcp reconciled by an in-binary supervisor (M2-HOSTPROCESS-KIND) onto a placement backend: systemd-user
+    (production installs, M2-HOST-UNITS) or proc (dev and tests: a plain supervised process tree under the
+    per-instance devsup, M2-HOST-BACKEND-PROC); ComputeVMs, kcp slots and tenant cluster members are placed
+    through it. The BOOTSTRAP LAYER (M2-BOOTSTRAP-LAYER) is the one exception, because kcp cannot supervise
+    itself: kcp's store, its kine, its slot(s), its front and the core run as installed systemd units in
+    production and under devsup in dev, before kcp exists; once kcp is up they are mirrored into it as
+    read-only HostProcess records. The `host-backend` option is required with no default (install writes
+    systemd-user, every dev verb and test harness passes proc). Accepted dev defaults: gateway kcp store
+    sqlite for quick runs, postgres for the bed and prod-like profiles; the k3s node password through a
+    per-instance user-namespace bind-mount (no root); AppArmor in dev is report-only; one uid for every role
+    in dev. Every item that starts a long-lived process states which backend(s) its tests run on; an item
+    whose live tests run only under systemd-user says so.
+  - >
+    Every org repo works on `main` and is pushed to GitHub as work lands (decided by the user 2026-10-12).
+    A worktree branch is merged to its repo's main and pushed when its item (or a red-first test step of it)
+    lands; nothing is left committed-but-unpushed, in this repo or in a sibling (atproto-market,
+    hono-compute-provider, typescript-helpers, did-key-associator, socialweb-computer-k8s).
+  - >
+    Order of work: execution_order below (and NEXT.yaml execution_order) names the critical path, the
+    first waves of startable items, the parallel worktree split and which items need live hat-8; it is
+    advisory and never overrides depends_on.
   - >
     Linux only (decided by the user 2026-10-11). Every OS-specific body lives in a GOOS-tagged file; darwin
     and windows get stubs returning ErrUnsupported until plans 0012 and 0011 replace them. check.sh proves on
@@ -106,7 +144,8 @@ ownership:
     test bed, the atproto-market requester libraries, and the pinned release kcp v0.33.0 binary carried as
     an embedded asset (the 2026-10-07 decision to vendor kcp's source, staging modules and embeddedetcd is
     superseded by the user's 2026-10-12 route: no vendored kcp source and no kcp patch). hono-compute-provider
-    and atproto-market may be changed by commit; never pushed.
+    and atproto-market may be changed by commit on main, pushed to GitHub as work lands (decided by the user
+    2026-10-12; replaces "never pushed").
   not_owned: >
     The market protocol records and lexicons, and the core architecture: kcp in front of
     k3s --disable-agent clusters at zero nodes, with nodes only ever born through
@@ -141,6 +180,10 @@ research:
       - "handover: old slot SIGTERM -> exit 3.1 s with --shutdown-delay-duration=2s; Lease kube-system/kcp-controllers deleted through the front with the shard-admin context; the new slot led 0.46 s later. Without the delete the controller gap is 61 s (kcp never releases its lease); without leader election both slots run every controller (~120-150 write conflicts/s per process)"
       - "kcp-blue-green.md section 6: 3,177 /readyz polls at 200 ms across six swaps, 0 failed; the one failing run read readiness through a copied admin.kubeconfig that still named the OLD slot (readiness must be read on the new slot's own port)"
       - "caddy incident (kcp-blue-green.md section 6): a tls.automation policy with caddy's internal issuer installed a local CA into the system trust store through non-interactive sudo; reverted. Any caddy config the binary or repo renders pins install_trust false and never uses caddy's internal issuer"
+  dev_run_mode_2026_10_12:
+    file: "docs/research/2026-10-11-vm-lifecycle/dev-run-mode.md (requirements R1-R8, options a-d, design 4.1-4.9, plan deltas 5, measurement 6; its phasing of the HostProcess kind is overridden: the user decided kcp-native now)"
+    measured: "hat-8, stand-ins only (a 130-line Go supervisor): an adopter that is not the parent gets ECHILD from waitid(P_PIDFD) for every unit (exit status lost), Pdeathsig alone leaks a same-pgid grandchild to PID 1, a pgid sweep by recorded leader ticks kills the orphan and refuses a reused pid; hence devsup as the stable parent with PR_SET_CHILD_SUBREAPER, per-unit process groups and tree kill"
+    code_today: "hostsvc.Manager has one implementation (systemd_linux.go); portallocator's lease key ignores Lease.Instance (portallocator.go:145-148) and every account opens its own lease file; the market bed fixes 2583-2589 (internal/marketbed/live_test.go:18) and the deno-kcp kcp 6443 and kine 23791 (deploy/denokcp/start-kcp.sh:5-6), so one bed per host"
   server_side_apply_precedent:
     - "internal/clusterprovider/tenant.go:101-102 and internal/eso/beside.go:350-351 apply unstructured objects with types.ApplyPatchType and PatchOptions{FieldManager, Force: true}; internal/clusterprovider/registry.go:293 addresses a workspace by APIPath /clusters/<logical cluster>/apis"
     - "deploy/install-provider.sh:55-64 applies 5 APIResourceSchemas, 2 APIExports and 2 WorkspaceTypes; deploy/apply-permission-inventory.sh (285 lines) renders the inventory through yq; deploy/examples/atproto/market/apply.sh:171 templates by sed"
@@ -278,7 +321,41 @@ items:
     done_when: "budget and matrix recorded and enforced."
     risks:
       - "k3s barely compresses (79 MB -> 73 MB); it is linux-only and stays in the linux builds regardless."
-      - "kcp is the largest asset after compression with bao (~59 MB and ~64 MB zstd); the gateway and every bidder carry it, since both run kcp slots."
+      - "kcp is the largest asset after compression with bao (~59 MB and ~64 MB zstd); the gateway (blue/green slots) and every bidder (one slot per handle on kine-sqlite, decided by the user 2026-10-12) carry it."
+      - "The relocatable PostgreSQL 18 set (M0-PG-SOURCE) is a budget line of its own; its size is recorded there per platform."
+    status: todo
+    evidence: []
+  - id: M0-PG-SOURCE
+    milestone: M0
+    title: "Spike: where a pinned relocatable PostgreSQL 18 per linux platform comes from, for the gateway's kcp store and the tenant stores; choice and sha256 pins recorded"
+    depends_on: []
+    decision: >
+      Decided by the user 2026-10-12: an M0 spike with a fallback. The gateway's kcp store (M2-KCP-STORE; a
+      bidder's kcp is kine-sqlite and needs no postgres) and every tenant cluster store (M2-POSTGRES) run one
+      pinned relocatable PostgreSQL 18 (postgres, initdb, pg_dump; no psql, M2-POSTGRES uses pgx) for
+      linux/amd64 and linux/arm64, never the host's package. Candidates measured in a scratch branch on hat-8
+      (stand-ins only: initdb + postgres on a unix socket, kine on top, no kcp, no guest): (1) zonky
+      embedded-postgres binaries (the io.zonky.test.postgres embedded-postgres-binaries jars for linux-amd64
+      and linux-arm64v8: relocatable txz inside a maven jar); (2) theseus-rs/postgresql-binaries (GitHub
+      release tarballs per target triple); (3) building from source with the build-host script
+      (scripts/build-postgres.sh, the same any-Linux-host script shape as 0007 M1-GUEST-IMAGE; CI calls it
+      later). Recorded per candidate: provenance and how upstream builds it, whether a sha256 or signature is
+      published, the 18.x minor available, size raw and zstd -19 (feeds M0-SIZE-BUDGET), the glibc floor
+      (oldest distro it runs on: Ubuntu 22.04/24.04, Debian 12, Fedora 44 checked by running initdb + postgres
+      + pg_dump), ICU and collation provider versions (M2-POSTGRES treats a collation change as major-class),
+      whether it runs from any extraction path (relocatable: no baked prefix, share/ and lib/ found relative
+      to bin/), --with-systemd absent (readiness by our pgx probe), and the time to initdb + first SELECT 1.
+      Decided by Claude, user may veto: prefer a published upstream binary set with a published checksum and
+      a glibc floor at or below Ubuntu 22.04; fallback = build from source with scripts/build-postgres.sh on
+      any Linux host (pinned source tarball sha256, reproducible flags, ICU vendored or disabled, recorded),
+      which is always available. The choice and the per-platform sha256 pins go into versions.json and this
+      item's evidence; M1-ASSETS embeds the chosen set.
+    files: ["scratch branch only (measurements)", "internal/versions/versions.json (postgres source, version, per-platform sha256)", "scripts/build-postgres.sh (written only if the fallback is chosen)"]
+    test_first: "None (measurement). Readings: per candidate the initdb + postgres + pg_dump run on each listed distro (or container image of it, stand-in only), sizes, glibc floor, ICU version, checksum provenance."
+    done_when: "the choice recorded with its sha256 pins for linux/amd64 and linux/arm64, the fallback's status recorded, and the user told the choice."
+    risks:
+      - "A prebuilt set whose glibc floor is newer than a target distro is refused there by check-host; the fallback build sets the floor."
+      - "zonky jars are a Java ecosystem artefact; their checksums are maven's, recorded as such."
     status: todo
     evidence: []
   - id: M1-CLI
@@ -300,13 +377,21 @@ items:
       build (plan 0012)"); an unbuilt subcommand exits 2 naming the item that builds it. Config resolution
       mirrors the TypeScript cli-args-env chain (flag, env, config file, default) with
       internal/clicfg/options.json; every SOCIALWEB_* variable today's entrypoint reads stays the env name
-      of its option. Stdlib flag only.
+      of its option. Stdlib flag only. Dev run mode (decided by the user 2026-10-12: kcp-native now; the
+      host-backend option is required with no default): the tree gains `dev up|down|status|ls|logs|env|check|
+      restart|roll|gc` (M1-DEV-INSTANCE; `dev roll` lands with M3-KCP-ROLL, `dev gc` with M1-ASSETS) and
+      `internal devsup` (M2-HOST-BACKEND-PROC); options.json gains `host-backend` (systemd-user | proc, env
+      SOCIALWEB_HOST_BACKEND, NO default: every verb that places a host process exits 2 naming the option when
+      it is unset, never probes), `instance`, `kcp-base-workspace` (default root), `state-dir` (resolved by
+      install or dev, no hardcoded default in the CLI) and `asset-cache`.
     files: ["cmd/socialweb-computer/main.go", "internal/clicfg/", "internal/clicfg/options.json", "internal/capabilities (verb -> required backends)"]
     test_first: >
       internal/clicfg TestTheFlagBeatsTheEnvBeatsTheConfigBeatsTheDefault and
       TestEveryEnvVariableTheEntrypointReadsIsAnOptionsEnvName (parses container-entrypoint.sh and
       container.env.example); cmd/socialweb-computer TestAVerbWithNoBackendOnThisOSExits2NamingItsPlan (run
-      as a GOOS=windows vet-compiled table test of the capability registry); red before options.json exists.
+      as a GOOS=windows vet-compiled table test of the capability registry),
+      TestServeWithoutAHostBackendExits2NamingTheOption and TestTheHostBackendOptionHasNoDefault; red before
+      options.json exists.
     done_when: "--help lists the tree and marks verbs with no backend on this OS; unbuilt subcommands exit 2 naming the item; check.sh --fast green."
     risks: ["A second config system beside cli-args-env.json; options.json mirrors its JSON shape exactly."]
     status: todo
@@ -362,8 +447,16 @@ items:
   - id: M1-ASSETS
     milestone: M1
     title: Per-GOOS_GOARCH embedded executables, content-addressed, verified on every start, collected only when unreferenced
-    depends_on: [M0-SIZE-BUDGET, M0-XOS-GATE]
+    depends_on: [M0-SIZE-BUDGET, M0-XOS-GATE, M0-PG-SOURCE]
     decision: >
+      Dev run mode (decided by the user 2026-10-12, folded here 2026-10-12 third fold; details decided by
+      Claude, user may veto, dev-run-mode.md R2 and 5): the extraction root is an option (asset-cache):
+      install points it at <state>/runtime/, dev at ONE per-user cache
+      $XDG_CACHE_HOME/socialweb-computer/runtime/<sha256>/ shared by every dev instance (content-addressed, so
+      sharing is safe; re-hashed before every use as below), so N worktrees do not extract ~400 MB each. The
+      dev cache is collected only by `dev gc`, and only while no devsup of this user runs. "No loaded unit
+      names it" is read through hostsvc.Manager on either backend (systemd-user: ExecStart/Environment over
+      D-Bus; proc: devsup's unit records). The postgres set is M0-PG-SOURCE's choice.
       Decided by the user 2026-10-11: per-OS embedded assets compiled in only for the target OS. Decided by
       Claude, user may veto (exploration B6): internal/assets/assets_<goos>_<goarch>.go with
       `//go:build release && <goos> && <goarch>` and `//go:embed blobs/<goos>_<goarch>/*.zst` plus its
@@ -387,7 +480,9 @@ items:
       internal/assets TestAnExtractedAssetThatNoLongerMatchesItsPinIsReplacedNotRun,
       TestAReleaseBuildWithAMissingAssetRefusesToStart,
       TestEveryReleaseEmbedFileNamesExactlyItsPlatformsAssetSet (reads versions.json) and
-      TestARuntimeDirNamedByALoadedUnitIsNeverCollected (fake unit lister); red against a naive extractor.
+      TestARuntimeDirNamedByALoadedUnitIsNeverCollected (fake unit lister, both backends' listers),
+      TestTwoDevInstancesShareOneExtractionOfAnAsset and TestDevGcRefusesWhileADevsupOfThisUserRuns; red
+      against a naive extractor.
     done_when: "every inventoried linux asset extracts and verifies; `version --json` lists each with version and sha256; cross-OS gate still green with no blobs present."
     risks: ["The state dir, never /tmp (a 24 GiB tmpfs on hat-8, nosuid), holds the runtime."]
     status: todo
@@ -411,20 +506,22 @@ items:
       yq and kubectl -> kcpapply, openssl -> crypto/x509, psql -> pgx, ip -> netlink in vmexec,
       which/unzip/curl -> gone), deleted by design (debugfs, e2fsck, resize2fs, mkfs.ext4, cpio, du, xz,
       zstd, chroot, mount, apt-get, go: the guest seed is a separate pure-Go NoCloud cidata drive, the rootfs
-      is copied as-is and the guest grows its own root, decided by the user 2026-10-12; images are built in
-      CI - plan 0007 M1-GUEST-IMAGE, M2-VM-RUNTIME), build-host only (cmd/socialweb-nodeimage
-      and its tools), download asset (socialweb-credential x4, socialweb-meshd x2), host file written by
+      is copied as-is and the guest grows its own root, decided by the user 2026-10-12; images are built by
+      the build-host script on any Linux host, CI shells out to the same script later, decided by the user
+      2026-10-12 - plan 0007 M1-GUEST-IMAGE, M2-VM-RUNTIME), build-host only (cmd/socialweb-nodeimage
+      and its tools, run by scripts/build-guest-image.sh), download asset (socialweb-credential x4, socialweb-meshd x2), host file written by
       `install` (/etc/rancher/node/password, the k3s invariant; the subuid/subgid lines, M1-INSTALL), or a
       stated host prerequisite (Linux kernel, systemd 253+, cgroup v2, linger, /dev/kvm and /dev/net/tun for
       bidders; for bidders also the distro's setuid newuidmap and newgidmap, the helpers rootless podman uses,
       for the per-VM user namespaces of 0007 M2-VM-RUNTIME - a setuid helper is never shipped as an embedded
-      asset; M2-HOST-CONTRACT). A test holds the inventory complete.
+      asset - and util-linux unshare >= 2.38 only if 0007 M0-VM-USERNS chooses it for the userns stage;
+      M2-HOST-CONTRACT). A test holds the inventory complete.
     files: ["docs/host-inventory.yaml", "internal/versions (inventory test)"]
     test_first: >
       internal/versions TestEveryExecutableTheCodeExecsHasAFateInTheHostInventory (scans exec.Command,
       exec.LookPath and Deno.Command call sites); red before the file exists.
     done_when: "inventory committed, test green; no fate is 'from the host's package manager' except the stated host prerequisites (systemd, newuidmap/newgidmap), each checked by check-host."
-    risks: ["The relocatable PostgreSQL 18 build (M2-POSTGRES) is chosen here with a measurement; no container-era data dir has to open with it (fresh deploy, decided by the user 2026-10-12)."]
+    risks: ["The relocatable PostgreSQL 18 build is chosen by M0-PG-SOURCE (moved there 2026-10-12, third fold) and recorded here as an embedded asset; no container-era data dir has to open with it (fresh deploy, decided by the user 2026-10-12)."]
     status: todo
     evidence: []
   - id: M1-STORE-CLEANUP
@@ -455,6 +552,72 @@ items:
     risks: ["A root vault that already holds secret/data/socialweb/store/rustfs keeps it until M3-BAO-SYNC's report lists it; no container-era vault is carried over (fresh deploy), so none is expected."]
     status: todo
     evidence: []
+  - id: M1-PORT-LEASE-INSTANCE
+    milestone: M1
+    title: Port and subnet leases keyed by instance, in one per-user lease file in dev, so N instances on a host never lease the same port
+    depends_on: []
+    decision: >
+      Decided by the user 2026-10-12: dev run mode now, N instances per host (dev-run-mode.md R2, 4.5).
+      Decided by Claude, user may veto: portallocator's lease key becomes (instance, cluster, purpose) - the
+      Lease.Instance field exists (portallocator.go:106) and the key ignores it (:145-148); prod keeps one
+      lease file per account with instance "" (unchanged behaviour); dev and tests open ONE per-user lease file
+      $XDG_STATE_HOME/socialweb-computer/ports/leases.json under its existing flock (:227-243), so instances
+      see each other's leases and the probe-then-bind race between two lease files is gone; the dev carve
+      does not overlap the live-test blocks of internal/liveports (liveports.go:33-56). subnetallocator gets
+      the same key change. Only ports that must stay stable inside an instance across restarts are leased
+      (a cluster's front port, link UDP ports); everything else binds 0 and reports (M2-KCP-PORT0).
+    files: ["internal/portallocator/ (lease key, lease-file path option)", "internal/subnetallocator/", "internal/liveports (carve boundary test)"]
+    test_first: >
+      internal/portallocator TestALeaseIsKeyedByInstance (two instances, same cluster and purpose, distinct
+      ports), TestTwoInstancesSharingOneLeaseFileNeverLeaseTheSamePort (two processes, one file, concurrent),
+      TestTheDevCarveDoesNotOverlapTheLiveTestBlocks, TestAProdLeaseFileWithoutInstancesReadsUnchanged; red
+      first.
+    done_when: "tests green; check.sh --fast green."
+    risks: ["A lease file shared by every instance of a user is a single point of contention; flock hold times are recorded under 50 concurrent leases."]
+    status: todo
+    evidence: []
+  - id: M1-DEV-INSTANCE
+    milestone: M1
+    title: "`socialweb-computer dev up|down|status` per worktree - instance identity, XDG state keyed by instance, devsup per instance, port 0"
+    depends_on: [M1-CLI, M2-HOST-BACKEND-PROC, M1-PORT-LEASE-INSTANCE]
+    decision: >
+      Decided by the user 2026-10-12: the dev run mode is kcp-native now; no root, no install, no systemd,
+      parallel instances per worktree; the dev defaults accepted (host-backend required, no default; dev
+      passes proc; AppArmor in dev report-only; one uid for every role in dev). Decided by Claude, user may
+      veto (dev-run-mode.md R1-R4, R8, 4.1, 4.7): instance id = <worktree basename, 16 chars>-<first 8 hex of
+      sha256(realpath(worktree))>, or --instance <name>; state $XDG_STATE_HOME/socialweb-computer/dev/<id>/
+      (default ~/.local/state), sockets $XDG_RUNTIME_DIR/swc/<id8>/ (0700, every socket path < 108 bytes,
+      checked), a gitignored symlink <worktree>/.swc-dev -> <state> for discovery, never state inside the
+      worktree (git clean, worktree remove and the 108-byte limit). `dev up [--profile quick|bed|prodlike]
+      [--instance x] [--fg]`: resolve instance -> flock <state>/instance.lock -> start or adopt the
+      instance's devsup (`internal devsup`, setsid so it survives the terminal; --fg keeps it in the
+      foreground and Ctrl-C is `dev down`) -> place the bootstrap layer (M2-BOOTSTRAP-LAYER; before it lands,
+      `dev up` places only what the caller names, stand-ins in tests) -> wait readiness -> print `dev env`.
+      `dev down [--keep-state]` stops everything in reverse order within the largest stop timeout. `dev
+      status` and `dev ls` read devsup or, with devsup down, the on-disk unit records. `dev logs <unit>`,
+      `dev env` (KUBECONFIG, base workspace, ports, for shells and TS tools), `dev restart core [--binary
+      path]` (rebuild loop: the core is replaced, every other unit adopted), `dev check` (R8 host
+      prerequisites - /dev/kvm rw, unprivileged userns for pasta, the AppArmor userns restriction on Ubuntu
+      24.04+, /dev/net/tun, newuidmap/newgidmap, logind KillUserProcesses - reported, never fixed). Every
+      port is 0 except leases from M1-PORT-LEASE-INSTANCE. `dev` refuses uid 0; `install` refuses
+      host-backend=proc (M1-INSTALL). Survival (user 2026-10-12, devsup runs the dev tree): units survive a
+      core restart, crash or rebuild and are adopted; every unit dies with devsup (`dev down`, crash, kill
+      -9, --die-with test pid); a host reboot is Lost(HostRebooted) as in prod. Dev adds no provisioning
+      path: guests come up only through runComputeContract against the instance's bidder (RFP spine).
+    files: ["cmd/socialweb-computer dev", "internal/devinstance/ (id, layout, lock, env)", "internal/devstack (Start(t, profile) test helper)", ".gitignore (.swc-dev)"]
+    test_first: >
+      internal/devinstance TestTwoWorktreesGetDistinctInstanceIDsAndShortSocketPaths,
+      TestTheSocketPathOfTheLongestWorktreeIsUnder108Bytes, TestDevRefusesRoot,
+      TestASecondDevUpOfOneInstanceAdoptsItsDevsup; behind livegate (proc backend, stand-ins only, no
+      systemd): TestTwoInstancesOnOneHostShareNothing (two devstacks in one test: distinct ports, dirs,
+      sockets; stopping one leaves the other's InvocationIDs unchanged), TestDevDownLeavesNoProcess,
+      TestACoreRestartUnderDevAdoptsEveryUnit. Red first.
+    done_when: "tests green; two worktrees on hat-8 each ran dev up / status / down in parallel with readings (ports, socket paths, unit lists) recorded."
+    risks:
+      - "logind KillUserProcesses=yes on a host kills a detached devsup at logout; dev check reports it and --fg is the documented alternative."
+      - "Per-instance kcp costs ~0.4-0.5 GB and ~6-9 s cold start (kcp-spike.md); measured per profile once M2-BOOTSTRAP-LAYER lands."
+    status: todo
+    evidence: []
   - id: M1-INSTALL
     milestone: M1
     title: "`socialweb-computer install bidder|gateway` - the one explicit, idempotent root step, with `uninstall`; content-addressed upgrade and rollback of the core binary"
@@ -465,9 +628,14 @@ items:
       Decided by the user 2026-10-12: production setup is ONE explicit command, `socialweb-computer install
       bidder|gateway` (the root step: account, subuid range, kvm group, linger, delegation drop-in, AppArmor
       profile, node password, every user unit); Unix accounts are never created on demand - the only
-      account is the one this step creates; systemd is for production installs only (a systemd-free dev/test
-      run mode is designed in docs/research/2026-10-11-vm-lifecycle/dev-run-mode.md, pending its own fold;
-      nothing here is needed for a dev run). Decided by Claude, user may veto (exploration A-x-upgrade,
+      account is the one this step creates; systemd is for production installs only (the dev run mode,
+      M1-DEV-INSTANCE, needs nothing from this item; `install` refuses host-backend=proc and writes
+      `host-backend: systemd-user` into the account's config.json, the only place a production default is
+      set, decided by the user 2026-10-12). Decided by Claude, user may veto (dev-run-mode.md 5.4): `install
+      --dry-run` prints the computed step list and changes nothing; an account that exists but has no
+      install record is refused unless --adopt-account, so a typo never takes over a human's account; if
+      user@<uid> already runs without kvm, install refuses and names the restart (it would stop every VM),
+      never restarting it itself. Decided by Claude, user may veto (exploration A-x-upgrade,
       linux-proofs E6): (1) Layout under the
       account's state dir: bin/<sha256>/socialweb-computer, bin/current and bin/previous symlinks,
       runtime/<sha256>/ (M1-ASSETS). A unit's ExecStart names bin/current only for the core unit; anything
@@ -510,22 +678,30 @@ items:
       (ExecStart=<state>/bin/current/socialweb-computer serve gateway kcp, Restart=always, default
       KillMode=control-group; finalised by M3-HOST-INSTALL); bidder: the template
       socialweb-computer-bidder@.service (0007 M5-RUN-BIDDER) with one enabled instance per --handle (a
-      re-run with another handle adds that instance and changes nothing else);
+      re-run with another handle adds that instance and changes nothing else); plus the BOOTSTRAP-LAYER unit
+      files (decided by the user 2026-10-12: kcp, its kine and its store run as installed systemd units in
+      production; the table and the files come from M2-BOOTSTRAP-LAYER, which extends this step) - gateway:
+      socialweb-kcp-gw-pg.service, socialweb-kcp-gw-kine@.service and socialweb-kcp-gw@.service (instances
+      a and b), socialweb-kcp-gw-front.service; bidder, per handle: socialweb-kcp-<hid>-kine@.service (one
+      instance a, kine on sqlite), socialweb-kcp-<hid>@.service (one instance a) and
+      socialweb-kcp-<hid>-front.service (decided by the user 2026-10-12: a bidder's kcp is one slot on
+      kine-sqlite);
       (i) `loginctl enable-linger <account>` (user@<uid> first starts here, after (b)-(d));
       (j) as the account (`systemctl --user -M <account>@`): daemon-reload, enable --now the core unit(s);
       (k) check-host as the account (M2-HOST-CONTRACT); a failure exits non-zero naming the check, and a
       re-run after the fix completes from there.
-      Every OTHER unit the gateway or a bidder runs is a RUNTIME transient unit, created by the core over
-      the user manager's private socket (M2-HOST-UNITS), adopted by name, never written as a file, gone at
-      reboot or a user-manager restart and re-created by the core on its next start; install creates none of
-      them, uninstall stops all of them by the socialweb- prefix. Gateway (owner gw): socialweb-kcp-gw.slice
-      holding socialweb-kcp-gw-pg.service (M2-KCP-STORE), socialweb-kcp-gw-kine-a|b.service (M2-KCP-STORE),
-      socialweb-kcp-gw-a|b.service (M2-KCP-SLOTS) and socialweb-kcp-gw-front.service (M2-KCP-FRONT);
-      socialweb-bao-root.service (M2-OPENBAO-SERVER); per cluster socialweb-pg-<key>.service (M2-POSTGRES) and
-      socialweb-cluster-<key>.slice with its socialweb-c-<key>-<member>.service members (M3-CLUSTER-UNITS).
-      Bidder, per handle (hid = first 10 hex of sha256(handle)): socialweb-kcp-<hid>.slice with the same four
-      kcp unit kinds; socialweb-bao-<hid>.service (0007 M4-BIDDER-VAULT); socialweb-b-<hid>.slice holding
-      socialweb-vm-<hid>-<name>.service per VM (0007 M2-VM-RUNTIME). Both: check-host's
+      Every OTHER unit the gateway or a bidder runs is a RUNTIME transient unit placed by the in-binary
+      supervisor from a HostProcess object (M2-HOSTPROCESS-KIND, decided by the user 2026-10-12) on the
+      systemd-user backend over the user manager's private socket (M2-HOST-UNITS), adopted by name, never
+      written as a file, gone at reboot or a user-manager restart and re-placed from its object on the core's
+      next start; install creates none of them, uninstall stops all of them by the socialweb- prefix.
+      Gateway: socialweb-bao-root.service (M2-OPENBAO-SERVER); per cluster socialweb-pg-<key>.service
+      (M2-POSTGRES) and socialweb-cluster-<key>.slice with its socialweb-c-<key>-<member>.service members
+      (M3-CLUSTER-UNITS). Bidder, per handle (hid = first 10 hex of sha256(handle)): socialweb-bao-<hid>.service
+      (0007 M4-BIDDER-VAULT); socialweb-b-<hid>.slice holding socialweb-vm-<hid>-<name>.service per VM (0007
+      M2-VM-RUNTIME, a HostProcess child of its ComputeVM). The bootstrap-layer units above are installed
+      files, in socialweb-kcp-<owner>.slice, started at user-manager start (so kcp is back after a reboot
+      before the core) and started or stopped by instance by the core during a roll. Both: check-host's
       socialweb-probe-<rand>.service, stopped when the check ends. Not units at all: deno processes and the
       TLS proxy, plain children of the core unit (0008 M2-DENOKCP-INPROC). (6) `uninstall gateway|bidder
       [--purge] [--force]` (root): refuses while a VM unit of the account is active unless --force (stopping
@@ -549,7 +725,9 @@ items:
       TestEveryUnitPrefixTheCodeStartsIsEnumeratedForUninstall (every unit-name prefix hostsvc.Start is called
       with is in install's runtime-unit table), TestUpgradeRefusesABinaryWhoseManifestDoesNotMatch,
       TestUpgradeRefusesABinaryWhoseSelfCheckFails, TestRollbackRetargetsCurrentToPrevious,
-      TestABinaryDirNamedByALoadedUnitIsNeverCollected; red first.
+      TestABinaryDirNamedByALoadedUnitIsNeverCollected, TestInstallRefusesTheProcBackend,
+      TestInstallWritesSystemdUserAsTheHostBackend, TestInstallRefusesAnExistingAccountItDidNotCreate,
+      TestInstallDryRunChangesNothing; red first.
     done_when: "tests green; on hat-8 a throwaway gateway account and a throwaway bidder account each installed twice (second run: no change, reading recorded), upgraded twice, rolled back, then `uninstall --purge` (diff of the recorded host files against the pre-install snapshot empty), with `ls bin/`, the unit's ExecStart and `systemctl --user list-units 'socialweb-*'` readings recorded."
     risks:
       - "The AppArmor profile must match the runtime path glob; check-host (M2-HOST-CONTRACT) verifies it is loaded and that the embedded pasta creates a user namespace."
@@ -559,9 +737,16 @@ items:
     evidence: []
   - id: M2-HOST-UNITS
     milestone: M2
-    title: Long-lived children as transient SERVICES in the account's user manager, adopted never re-created
+    title: "The systemd-user placement backend - long-lived children as transient SERVICES in the account's user manager, adopted never re-created"
     depends_on: [M1-ASSETS]
     decision: >
+      Reconciled 2026-10-12 (third fold, the user's kcp-native dev run mode): this done item IS the
+      systemd-user backend of hostsvc.Manager, the production placement; its evidence stands. The proc
+      backend for dev and tests is M2-HOST-BACKEND-PROC, which also adds Open(Config) with a required
+      Backend, Capabilities, Watch, StopSlice, UnitSpec.Restart/PrivateHostname/FDStore and Identity.Manager
+      to BOTH backends; one contract suite runs against both (M2-HOST-CONFORMANCE, which re-homes this
+      item's live tests); callers place units only through the HostProcess supervisor (M2-HOSTPROCESS-KIND)
+      or the bootstrap layer (M2-BOOTSTRAP-LAYER). The text below is the item as built.
       Decided by the user 2026-10-07: the core binary and its deno processes are upgradable while VMs keep
       running. Decided by the user 2026-10-11: the gateway and bidders use the USER manager of a lingering
       account (the gateway too; cluster groups are transient services there); only cpu, memory and pids
@@ -608,6 +793,80 @@ items:
       - "offline fake-bus tests red against a stub 2026-10-12T00:46:20Z, green 00:47:15Z: the four named tests, a 15-row verdict table, a 300ms deadline dial, the 252-vs-253 version refusal"
       - "live on hat-8 00:49:35-00:49:51Z, stand-ins only (sleep), units socialweb-test-<rand>-*: child InvocationID+pid unchanged across systemctl --user restart, kill -9 and stop of its starter (adopted, list-units read each step); survived daemon-reload and daemon-reexec; kill -9 reads failed/signal/2/9 until reset; MemoryMax=64M with 256MiB alloc is an oom-kill with memory.swap.max=0; prefixes never cross-listed; a recorded pid systemd placed in another unit reads Lost and is stopped"
       - "gaps: live tests were written after the implementation (only the mismatch test went red); this host has Linger=no so the runs used the login session's user manager, not a lingering account (proved again under M2-HOST-CONTRACT/M5); a SIGKILL stop leaves the unit failed/signal until ResetFailed, which 0007 M2-CONTROLLER must call after every stop it issues"
+  - id: M2-HOST-BACKEND-PROC
+    milestone: M2
+    title: "The proc placement backend - devsup, a per-instance parent of every unit, for dev and tests"
+    depends_on: [M2-HOST-UNITS, M2-HOST-CONFORMANCE]
+    decision: >
+      Decided by the user 2026-10-12: dev run mode now; placement backends systemd-user (production installs)
+      and proc (dev: a plain supervised process tree); in dev the core's devsup runs the bootstrap layer
+      before kcp exists; the host-backend option is required with no default. Decided by Claude, user may
+      veto (dev-run-mode.md 3(a2), 4.6; its measurement section 6): `socialweb-computer internal devsup
+      --state <state>/sup --socket <rt>/sup.sock [--die-with <pid>]` is the real parent of every unit (reads
+      each exit by wait4, so Result/ExecMainCode/ExecMainStatus, CollectMode=inactive, ResetFailed and
+      Restart=on-failure|always behave like systemd's), sets PR_SET_CHILD_SUBREAPER (a descendant that leaves
+      its unit's process group is reparented to devsup and attributed by the inherited SWC_UNIT=<name>; killed
+      if its unit is not active - the KillMode=control-group emulation), starts each unit in its own process
+      group with Pdeathsig SIGKILL from a locked OS thread, stdout/stderr to the Output files, Env, WorkDir
+      and a fresh 128-bit InvocationID. Stop = KillSignal to -pgid and every attributed descendant (snapshot
+      from /proc/<pid>/task/*/children first), wait StopTimeout, then SIGKILL the same set. Identity/Check use
+      the existing pin sequence; GetUnitByPIDFD is replaced by "pid in the unit's pgid or attributed to it",
+      answered by devsup. Slice is a label and StopSlice stops nested slices by dash prefix; After/Wants are
+      validated and advisory; Watch streams unit state changes; an fd store holds a listening fd a unit
+      hands it and passes it back with LISTEN_FDS (Capabilities().FDStore); PrivateHostname is the
+      `internal ns-exec` one-shot (user+UTS namespace, sethostname, optional bind of <state>/rancher over
+      /etc/rancher, execve; M3-CP-SLOTS). State <state>/sup/units/<name>.json {spec, InvocationID, pid, pgid,
+      leader ticks, bootID, devsup instance, last Result}; after a devsup crash the next devsup sweeps
+      leftovers by the safe pgid rule (signal -pgid only when the leader pid has the recorded ticks, or no
+      process has pid == pgid but the group still has members) before accepting calls. Client:
+      internal/hostsvc/proc_linux.go over the socket. Interface changes on hostsvc (both backends): Open(ctx,
+      Config{Backend, UnitPrefix, SystemdPrivateSocket, ProcSocket}) refuses an empty Backend (no default,
+      no probing); Capabilities {Backend, EnforcesLimits, OOMKillReported, FDStore, PrivateHostname, Journal};
+      Watch(prefix); StopSlice(slice); UnitSpec.Restart, PrivateHostname, FDStore; Identity.Manager (systemd:
+      the user manager's InvocationID; proc: devsup's instance id) so a manager restart is told apart from a
+      unit restart; every status records runtime.backend, and a unit placed by one backend is never adopted
+      by the other (Lost(IdentityMismatch) naming both). Not enforced on proc and declared by
+      Capabilities().EnforcesLimits=false: MemoryMax, MemorySwapMax, TasksMax, CPUQuota, CPUWeight, OOMPolicy
+      (a VM's memory stays capped by firecracker's machine-config). Cross-OS: proc_linux.go first; stubs
+      return ErrUnsupported (Windows Job Objects, darwin kqueue NOTE_EXIT are plans 0011/0012).
+    files: ["internal/devsup/ (server)", "internal/hostsvc/proc_linux.go (client)", "internal/hostsvc/hostsvc.go (Backend, Capabilities, Config, Open, Watch, StopSlice, Restart, PrivateHostname, FDStore, Identity.Manager)", "internal/hostsvc/systemd_linux.go (the same additions on systemd-user)", "cmd/socialweb-computer internal devsup, internal ns-exec"]
+    test_first: >
+      The proc half of M2-HOST-CONFORMANCE red against a stub, plus
+      TestADevsupCrashLeavesNoProcessAndTheNextDevsupSweepsByLeaderTicks,
+      TestAPgidWhoseLeaderPidWasReusedIsNeverSignalled, TestDieWithStopsEverythingWhenTheWatchedPidExits,
+      TestAnOrphanReparentedToDevsupIsKilledWhenItsUnitIsInactive, TestOpenRefusesAnEmptyBackend,
+      TestAUnitPlacedByOneBackendIsLostOnTheOther. Stand-ins only, no root, no systemd.
+    done_when: "the proc half of the contract suite green in check.sh --fast; readings of a devsup crash and sweep recorded."
+    risks:
+      - "devsup is a resident process of ours that is pasta's parent in dev; it is outside every unit's process group (as systemd is outside a unit's cgroup), so the VM tree audit stays meaningful (M2-VM-TREE-AUDIT is made backend-aware)."
+      - "Pdeathsig fires when the creating THREAD exits; devsup keeps the locked-thread trick of processrunner.go:138-147."
+    status: todo
+    evidence: []
+  - id: M2-HOST-CONFORMANCE
+    milestone: M2
+    title: One hostsvc.Manager contract suite, run against proc on every check.sh --fast and against systemd-user behind livegate
+    depends_on: [M2-HOST-UNITS]
+    decision: >
+      Decided by the user 2026-10-12 (fold item list): one contract suite run against both backends.
+      Decided by Claude, user may veto (dev-run-mode.md 4.8 tier 1): internal/hostsvc/hostsvctest.Run(t,
+      open func(t) Manager), stand-ins only. proc runs on every check.sh --fast with --die-with the test pid
+      (no root, no systemd, CI-able); systemd-user runs behind livegate on hat-8 with a socialweb-test-<rand>-
+      prefix (the login session's manager is acceptable here; the lingering-account proof stays with
+      M2-HOST-CONTRACT). Cases: start/inspect/stop; adopt-not-recreate on a second Start; a failed unit
+      readable until ResetFailed; the exit status of a killed unit (signal 9); survives the starter's restart
+      (proc: a second client process; systemd: E1); stop kills a descendant that called setsid (`sh -c 'setsid
+      sleep 1000 & exec sleep 1001'`); Restart=on-failure restarts with a new InvocationID; Watch reports an
+      exit within 2 s; StopSlice stops nested slices and nothing else; List never crosses prefixes; identity
+      mismatch on a reused pid; a manager restart makes every unit Lost(UnitGone); limits gated on
+      EnforcesLimits; fd store gated on FDStore; private hostname gated on PrivateHostname. Each
+      capability-gated case states which backend skips it. M2-HOST-UNITS' live tests (live_linux_test.go)
+      are re-homed into the suite's systemd half, keeping their names in the evidence.
+    files: ["internal/hostsvc/hostsvctest/", "internal/hostsvc/live_linux_test.go (re-homed)", "deploy/check.sh (--fast runs the proc half)"]
+    test_first: "TestEveryManagerMethodHasAContractCase (reflects over the Manager interface) red first; then each case red against a stub backend."
+    done_when: "the suite exists and is green on systemd-user on hat-8 (readings with UTC times); no Manager method without a case. The proc half is wired into check.sh --fast and turned green by M2-HOST-BACKEND-PROC, which depends on this item."
+    risks: ["A case that passes on proc and fails on systemd-user (or the reverse) is a backend difference to declare in Capabilities, never a skipped assertion."]
+    status: todo
+    evidence: []
   - id: M2-HOST-CONTRACT
     milestone: M2
     title: The Linux host contract, probed by check-host, refused by name
@@ -635,7 +894,10 @@ items:
       own work files by ACL, decided by the user 2026-10-12: per-VM subuid user namespaces); oomd's
       monitored cgroups reported; for the gateway, the user manager's fd
       store (M3-APISERVER-FRONT) and the k3s slot hostname mechanism (M3-CP-SLOTS). The written contract is
-      docs/host-contract.md.
+      docs/host-contract.md. check-host is the production check (host-backend=systemd-user); the dev run
+      mode's `dev check` (M1-DEV-INSTANCE) reports the dev subset (kvm, userns for pasta, AppArmor, tun,
+      newuidmap/newgidmap) and fixes nothing (decided by the user 2026-10-12: AppArmor in dev report-only).
+      The userns-stage prerequisite (util-linux unshare >= 2.38, or none) follows 0007 M0-VM-USERNS's choice.
     files: ["cmd/socialweb-computer check-host (host contract checks)", "docs/host-contract.md"]
     test_first: >
       Offline: TestASystemdOlderThan253IsRefused (fake bus reporting 252), TestEachRuntimePropertyIsReadBackFromAProbeUnit
@@ -651,9 +913,13 @@ items:
     evidence: []
   - id: M2-VM-TREE-AUDIT
     milestone: M2
-    title: No socialweb-computer code in a running VM's process tree, audited from the unit's cgroup
-    depends_on: [M1-ASSETS, M2-HOST-UNITS]
+    title: No socialweb-computer code in a running VM's process tree, audited from the unit's cgroup (systemd-user) or process group (proc)
+    depends_on: [M1-ASSETS, M2-HOST-UNITS, M2-HOST-BACKEND-PROC]
     decision: >
+      Backend-aware since 2026-10-12 (third fold; decided by Claude, user may veto, dev-run-mode.md 5): the
+      audit lists a unit's processes through the Manager - systemd-user: cgroup.procs; proc: the unit's
+      process-group members plus the descendants devsup attributes to it - and devsup itself, outside every
+      unit's group, is not a member (as systemd is not in a unit's cgroup).
       Decided by the user 2026-10-11: no socialweb-computer code in a running VM's process tree; the VMM is
       launched by the service manager and our code only does one-shot prep (the tiny exec helper execve's
       away). This item builds the instrument, decided by Claude, user may veto: internal/hostsvc/treeaudit
@@ -668,30 +934,40 @@ items:
     test_first: >
       Offline over a fake /proc and cgroup tree: TestAVMUnitRunningOnlyPinnedPastaAndFirecrackerPasses,
       TestACoreBinaryInAVMUnitFails, TestAVmexecLeftAfterActivatingFails. Behind livegate on hat-8 with
-      stand-in pinned assets in a transient unit (not a guest): TestTheAuditReadsTheRealCgroupOfAStandInUnit.
-      Red first.
+      stand-in pinned assets in a transient unit (not a guest): TestTheAuditReadsTheRealCgroupOfAStandInUnit;
+      on proc (check.sh --fast, stand-ins): TestTheAuditPassesOnTheProcBackendWithDevsupOutsideTheGroup and
+      TestAnAttributedDescendantRunningTheCoreBinaryFailsOnProc. Red first.
     done_when: "green; plan 0007's live tests call it (0007 ACC7-NO-RESIDENT-CODE)."
     risks: ["Hashing a large VMM exe on every pass is cost, not risk; the audit runs in tests and on demand, not every controller pass."]
     status: todo
     evidence: []
   - id: M2-KCP-STORE
     milestone: M2
-    title: kcp's own store - one kine per slot over a dedicated postgres unit the core starts from local state before kcp
-    depends_on: [M0-KCP-SPIKE, M1-ASSETS, M1-HOST-INVENTORY, M2-HOST-UNITS]
+    title: "kcp's own store - the gateway: one kine per slot over a dedicated postgres unit; a bidder: one kine on sqlite; both in the bootstrap layer, before kcp"
+    depends_on: [M0-KCP-SPIKE, M1-ASSETS, M0-PG-SOURCE, M2-HOST-UNITS, M2-HOST-BACKEND-PROC]
     decision: >
-      Decided by the user 2026-10-12: kcp's store is kine -> a dedicated postgres unit started before kcp,
-      NOT a Postgres CRD object (the Postgres objects live in kcp, so kcp's own store cannot be reconciled
-      from kcp; kcp-blue-green.md section 3), one kine per slot, and a pg_dump before each kcp upgrade.
-      Decided by Claude, user may veto: every kcp this binary runs in production has this store - the
-      gateway's (owner gw) and each bidder handle's (owner <hid>), so there is one store technology and one
-      code path (kine -> sqlite stays out of production; the dev/test shape is dev-run-mode.md's, pending).
-      Units (transient, in socialweb-kcp-<owner>.slice, adopted by name, M2-HOST-UNITS):
-      socialweb-kcp-<owner>-pg.service runs the pinned relocatable postgres (M1-HOST-INVENTORY's choice, the
+      Decided by the user 2026-10-12: the GATEWAY's kcp store is kine -> a dedicated postgres unit started
+      before kcp, NOT a Postgres CRD object (the Postgres objects live in kcp, so kcp's own store cannot be
+      reconciled from kcp; kcp-blue-green.md section 3), one kine per slot, and a pg_dump before each kcp
+      upgrade. Decided by the user 2026-10-12 (third fold), correcting d6f778e: a BIDDER's kcp is a single
+      slot on kine-sqlite (one kine process on <state>/handles/<hid>/kcp/kine.db; sqlite allows one kine), its
+      upgrade is a short kcp restart, VMs are unaffected and the controller re-adopts them; d6f778e's "every
+      production kcp on kine -> postgres, user may veto" was vetoed by the user. Before a bidder kcp restart
+      that changes the kcp or kine asset, the core stops the slot and the kine, copies kine.db (with -wal and
+      -shm) to <state>/handles/<hid>/kcp/backups/<ts>/ (size > 0 checked), and starts both again (decided by
+      Claude, user may veto). Dev (decided by the user 2026-10-12): a dev instance's gateway-role kcp store is
+      kine-sqlite in the quick profile and kine -> postgres in the bed and prodlike profiles; the bidder role
+      is always kine-sqlite, as in production. Placement (decided by the user 2026-10-12): every store unit is
+      in the BOOTSTRAP LAYER (M2-BOOTSTRAP-LAYER) - an installed user unit on systemd-user, a devsup unit on
+      proc - never a HostProcess placement; this item builds the store code and its unit specs, the bootstrap
+      layer installs and orders them.
+      Gateway units (in socialweb-kcp-gw.slice, adopted by name):
+      socialweb-kcp-gw-pg.service runs the pinned relocatable postgres (M0-PG-SOURCE's choice, the
       same asset M2-POSTGRES uses) on <state>/kcp/pg with listen_addresses='' and one unix socket directory
       <state>/kcp/pg/run (no TCP port at all, path < 108 bytes checked; the directory is 0700 to the
       account), KillSignal=SIGINT, Restart=on-failure, readiness by the core's own pgx `SELECT 1` over the
       socket (relocatable builds are not --with-systemd); initdb runs one-shot in the core, never
-      ExecStartPre. socialweb-kcp-<owner>-kine-<slot>.service (slot a|b) runs the kine asset with
+      ExecStartPre. socialweb-kcp-gw-kine@<slot>.service (slot a|b) runs the kine asset with
       --listen-address 127.0.0.1:0 and the socket DSN, After= and Wants= (not Requires=) the pg unit, so a
       postgres restart does not cascade-stop kcp; its port is read back from its MainPID's single LISTEN
       socket by hostsvc.ListenPort, written here because kine is the first port-0 unit (MainPID from
@@ -704,7 +980,11 @@ items:
       initdb, pg_hba for the socket only, the unit spec, readiness, pg_dump to <state>/kcp/backups/<ts>.sql
       with exit 0 and size > 0 checked) is reused by M2-POSTGRES' controller, so there is one way to run a
       host postgres. pg_dump joins the postgres asset set (M1-ASSETS; M3-CP-SLOTS needs it too).
-    files: ["internal/pgunit/ (initdb, hba, unit spec, readiness, dump)", "internal/kcpstore/ (pg + kine units per owner and slot, start order, adoption)", "internal/hostsvc (ListenPort)", "internal/versions/versions.json (pg_dump in the postgres asset set)"]
+      Bidder units, per handle (in socialweb-kcp-<hid>.slice): socialweb-kcp-<hid>-kine@a.service runs kine
+      with --endpoint sqlite://<state>/handles/<hid>/kcp/kine.db and --listen-address 127.0.0.1:0, port read
+      back by ListenPort; no postgres unit, no second kine. ListenPort reads the MainPID from the Manager, so
+      it works on both backends (devsup reports the pid on proc).
+    files: ["internal/pgunit/ (initdb, hba, unit spec, readiness, dump)", "internal/kcpstore/ (gateway: pg + kine per slot; bidder: one kine on sqlite; unit specs, start order, adoption, sqlite backup copy)", "internal/hostsvc (ListenPort)", "internal/versions/versions.json (pg_dump in the postgres asset set)"]
     test_first: >
       Offline (fake hostsvc): TestKcpStoreStartsBeforeKcpAndOutsideTheCRDReconciler (the start order pg ->
       kine -> slot, and no Postgres object is read or written), TestKineIsWantsNotRequiresOnItsPostgres,
@@ -713,25 +993,37 @@ items:
       TestListenPortIgnoresAnotherProcessesSockets. Behind
       livegate on hat-8 with stand-ins (real postgres and kine processes in transient units, no kcp, no guest):
       TestTwoKinesOnOneFreshDatabaseBothComeUp (red first: the measured FATA when both start at once),
-      TestAPostgresRestartDoesNotStopItsKines, TestAPgDumpOfTheKcpStoreIsNonEmptyAndRestores.
-    done_when: "green on hat-8; two kines on one fresh database come up 10 times in a row; readings recorded."
+      TestAPostgresRestartDoesNotStopItsKines, TestAPgDumpOfTheKcpStoreIsNonEmptyAndRestores. Bidder and dev
+      (offline): TestTheBidderKcpStoreIsOneKineOnSqliteAndNoPostgres, TestTheBidderStoreIsCopiedBeforeAnAssetChangingRestart,
+      TestTheDevQuickProfileUsesSqliteAndTheBedProfilePostgres; the live stand-in tests also run on proc
+      (devsup, check.sh --fast where no postgres asset is needed, behind livegate otherwise).
+    done_when: "green on hat-8 on both backends; two kines on one fresh database come up 10 times in a row; a bidder sqlite store survives a slot+kine restart with its workspaces listed; readings recorded."
     risks:
-      - "A kine schema migration takes ACCESS EXCLUSIVE (control-plane-handover.md); a kine bump for kcp is rolled like a kcp slot (M3-KCP-ROLL) with old and new kine on one database tested first."
-      - "Per-handle stores on a bidder multiply processes (pg + 2 kine + up to 2 kcp + front per handle, ~0.5 GB with one kcp); recorded per handle in M2-KCP-PORT0's readings."
+      - "A kine schema migration takes ACCESS EXCLUSIVE (control-plane-handover.md); a kine bump for the gateway's kcp is rolled like a kcp slot (M3-KCP-ROLL) with old and new kine on one database tested first; on a bidder it is part of the short restart."
+      - "Per-handle stores on a bidder: kine + one kcp + front per handle, ~0.45 GB (kcp-spike.md: kcp 378-409 MB, kine 54-62 MB); recorded per handle in M2-KCP-PORT0's readings."
+      - "A sqlite kine restart is a store outage for the bidder's kcp; accepted, because the bidder's kcp restart is already a short outage that VMs never notice (decided by the user 2026-10-12)."
     status: todo
     evidence: []
   - id: M2-KCP-FRONT
     milestone: M2
-    title: Our own L4 front holds kcp's address (127.0.0.1:6443 on the gateway) and swaps its backend between slots; caddy is never touched
-    depends_on: [M1-CLI, M1-INSTALL, M2-HOST-UNITS]
+    title: Our own L4 front holds kcp's address (127.0.0.1:6443 on the gateway, port 0 elsewhere) and swaps its backend between slots; caddy is never touched
+    depends_on: [M1-CLI, M2-HOST-UNITS, M2-HOST-BACKEND-PROC]
     decision: >
+      Third fold 2026-10-12 (decided by Claude, user may veto): the front is a bootstrap-layer unit
+      (M2-BOOTSTRAP-LAYER: an installed user unit on systemd-user, a devsup unit on proc), so this item no
+      longer waits for M1-INSTALL; the installed unit file is written by M2-BOOTSTRAP-LAYER. A bidder keeps a
+      port-0 front for its single slot too: the slot binds a new port on every start (port 0), and the front
+      is the stable --shard-base-url and consumer address across the bidder's short kcp restarts. Every
+      front outside the production gateway binds 127.0.0.1:0 and reports its port through OnListen
+      (M2-KCP-PORT0); the fd store is UnitSpec.FDStore on both backends (devsup holds it on proc).
       Decided by the user 2026-10-12: our own L4 front holds 127.0.0.1:6443 (the same code as the tenant k3s
       fronts) and does the swap after the new slot's own-port /readyz; caddy stays public TLS only, is never
       reconfigured by a swap, and any generated caddy config sets install_trust false. Decided by Claude, user
       may veto (kcp-blue-green.md 5 and 7.3; control-plane-handover.md 4): internal/apiserverfront, pure TCP
       passthrough (TLS stays end to end with kcp, whose serving cert is the shared apiserver.crt), run as
-      `internal apiserver-front --owner <owner>` in the transient unit socialweb-kcp-<owner>-front.service
-      naming the resolved bin/<sha256>/ path (M1-INSTALL), so a core upgrade never changes the running front.
+      `internal apiserver-front --owner <owner>` in the bootstrap-layer unit socialweb-kcp-<owner>-front.service
+      naming the resolved bin/<sha256>/ path (rewritten only by an explicit front roll), so a core upgrade
+      never changes the running front.
       The backend is chosen per NEW connection from a state the core sets over a control socket in
       <state>/kcp/ (path < 108 bytes); open connections stay on their backend until it closes them; the front
       never fails over by itself. Its listening socket is kept in the user manager's fd store (FDSTORE=1,
@@ -753,8 +1045,9 @@ items:
       Behind livegate on hat-8 with stand-ins (two real kcp slots on kine -> postgres from M2-KCP-STORE, no
       guest): TestTheKcpFrontFlipsWithZeroFailedReadyzPolls (authenticated /readyz with the shard-admin token
       every 200 ms through the front across a flip and SIGTERM of the old slot: 0 failures),
-      TestAFrontRestartRefusesNoConnection (fd store). Red first.
-    done_when: "green on hat-8; the flip's poll count and failures recorded with UTC times."
+      TestAFrontRestartRefusesNoConnection (fd store), each run on systemd-user and on proc (devsup holds the
+      fd), plus TestABidderFrontKeepsItsAddressAcrossAKcpRestart. Red first.
+    done_when: "green on hat-8 on both backends; the flip's poll count and failures recorded with UTC times."
     risks:
       - "User-manager fd-store support is unverified on the target systemd; without it a front restart has a refused-connection window of its restart time (M2-HOST-CONTRACT probes it)."
       - "kubectl exec/attach/port-forward through a mount are upgraded streams; they survive a flip (open connections stay) but end when the old slot stops - roll idle-first (M3-KCP-ROLL)."
@@ -762,9 +1055,21 @@ items:
     evidence: []
   - id: M2-KCP-SLOTS
     milestone: M2
-    title: kcp as alternating blue/green slot units of the release asset on a shared kine store, leader-elected, behind the front
-    depends_on: [M0-KCP-SPIKE, M1-ASSETS, M2-HOST-UNITS, M2-KCP-STORE, M2-KCP-FRONT]
+    title: "kcp slot units of the release asset behind the front - the gateway: alternating blue/green slots on a shared kine store, leader-elected; a bidder: one slot on kine-sqlite"
+    depends_on: [M0-KCP-SPIKE, M1-ASSETS, M2-HOST-UNITS, M2-HOST-BACKEND-PROC, M2-KCP-STORE, M2-KCP-FRONT]
     decision: >
+      Third fold 2026-10-12, decided by the user: a BIDDER's kcp is a single slot (a) on kine-sqlite; its
+      upgrade is a short kcp restart (stop the slot, start it on the new asset, the same root and store); VM
+      units are separate units and never notice; the ComputeVM controller re-adopts them by the Verdict once
+      kcp answers (0007 M2-CONTROLLER). Blue/green slots on kine -> postgres are the GATEWAY's only.
+      Decided by Claude, user may veto: a bidder slot runs WITHOUT --enable-leader-election (the core never
+      starts a second process for that root, so no lease can strand the controllers for 60 s after a
+      restart), and the argv builder requires leader election only for a blue/green owner; the shared
+      material copy is skipped (one slot root). Placement (decided by the user 2026-10-12): slot units are in
+      the bootstrap layer (M2-BOOTSTRAP-LAYER: installed template units socialweb-kcp-<owner>@<slot>.service
+      on systemd-user, devsup units on proc), started and stopped by instance; the core writes each
+      instance's EnvironmentFile (kine port, front URL, root dir) before starting it. Everything below holds
+      for the gateway; for a bidder read "the one slot" for "the active slot".
       Route: out-of-process (decided by the user 2026-10-12, M0-KCP-SPIKE evidence): kcp runs OUT OF PROCESS as
       alternating slot units; the release kcp v0.33.0 is an embedded asset (M1-ASSETS), unpatched, with no
       vendored source; slots run --enable-leader-election and --shard-base-url=<front>; five root files are
@@ -807,8 +1112,12 @@ items:
       on a fresh state dir, the slot stopped and started: listed equal - replaces the 2026-10-11 test that
       opened a root the container-era release binary wrote; fresh deploy, decided by the user 2026-10-12),
       TestASlotRestartedBySystemdHasNoControllerGapLongerThan5s (kill -9 of the slot's MainPID; a probe
-      workspace Ready within 5 s of the restarted slot's /readyz). Red first.
-    done_when: "green on hat-8; cold start, restart and RSS readings for slot, kine and pg recorded on a prod-shaped object count (UTC)."
+      workspace Ready within 5 s of the restarted slot's /readyz). Bidder single slot: offline
+      TestABidderSlotArgvHasNoLeaderElectionAndThereIsNoSecondSlot; behind livegate (stand-ins, both
+      backends): TestABidderKcpRestartOnANewAssetKeepsItsWorkspacesAndLeavesStandInVMUnitsUntouched (stand-in
+      socialweb-vm-<hid>- units keep their InvocationIDs across the slot restart; the restart's kcp-down
+      seconds recorded). The live stand-in tests run on systemd-user and on proc. Red first.
+    done_when: "green on hat-8 on both backends; cold start, restart and RSS readings for slot, kine and pg recorded on a prod-shaped object count (UTC); the bidder slot's restart-to-/readyz seconds recorded."
     risks:
       - "kine serves watches written through ANOTHER kine on its next poll (1 s ticker; 0.27-0.42 s measured); during an overlap a client may see a sub-second lag, recorded, not a failure."
       - "Both slots run the apiserver's compactor; the compare-and-swap on compact_rev_key makes one win per interval (kcp-blue-green.md 3); nothing to coordinate."
@@ -832,30 +1141,82 @@ items:
       copied admin.kubeconfig, which names the front (and named the OLD slot in the spike's one failing run).
       Only the gateway's front has a fixed address (127.0.0.1:6443 from its prod config, M2-KCP-FRONT); every
       slot, kine and every other front, and every test, use 0, so any number of kcps run on one host (the
-      gateway, each bidder handle, run request, tests) with no port allocation. Fallback kept on record (not
-      built): fixed alternating A/B slot ports, if the /proc read-back is ever rejected.
+      gateway, each bidder handle, run request, tests, every dev instance) with no port allocation. Fallback
+      kept on record (not built): fixed alternating A/B slot ports, if the /proc read-back is ever rejected.
+      Both backends (decided by the user 2026-10-12, dev run mode now): ListenPort takes the MainPID from the
+      Manager, so the read-back works under devsup; the front binds before the first slot starts (its port is
+      in the slot's --shard-base-url), in production and in dev.
     files: ["internal/kcpserver (OnListen, readiness on the read-back port)"]
     test_first: >
       Behind livegate on hat-8 with stand-ins (real kcp, kine, postgres, no guest):
-      TestTwoKcpStacksOnPortZeroGetDistinctPortsAndTheShardURLIsTheFront (two owners on one host, each with
-      pg, kine, slot and a port-0 front: OnListen reports distinct ports for every listener; each owner's
-      shard object and admin.kubeconfig name its own front, never a slot port),
+      TestTwoKcpStacksOnPortZeroGetDistinctPortsAndTheShardURLIsTheFront (a gateway-shaped owner with pg,
+      kine, slot and a port-0 front, and a bidder-shaped owner with sqlite kine, one slot and a port-0 front,
+      on one host: OnListen reports distinct ports for every listener; each owner's shard object and
+      admin.kubeconfig name its own front, never a slot port), run on systemd-user and on proc,
       TestOnListenFiresBeforeReadyWithTheSlotsOwnPort, TestReadinessIsNeverReadThroughACopiedAdminKubeconfig
       (a stale copied admin.kubeconfig naming a dead port does not make a slot Ready). Red first.
-    done_when: "green on hat-8; no fixed kcp, kine or etcd port left in any socialweb-computer mode except the gateway front's prod 6443; per-owner process count and RSS recorded."
+    done_when: "green on hat-8 on both backends; no fixed kcp, kine or etcd port left in any socialweb-computer mode except the gateway front's prod 6443; per-owner process count and RSS recorded (gateway and bidder shapes)."
     risks: ["A kcp release that opens a second TCP listener breaks the single-socket rule; ListenPort refuses by name and the asset pin's self-check (M1-INSTALL upgrade) runs a slot once to catch it."]
+    status: todo
+    evidence: []
+  - id: M2-BOOTSTRAP-LAYER
+    milestone: M2
+    title: "The bootstrap layer - kcp's store, kine, slot(s), front and the core: installed systemd units in production, devsup units in dev, up before kcp exists"
+    depends_on: [M2-KCP-PORT0, M1-DEV-INSTANCE, M1-INSTALL]
+    decision: >
+      Decided by the user 2026-10-12: kcp, its kine and its store cannot be supervised by kcp itself, so in
+      production systemd runs them as installed units and in dev the core's devsup runs them before kcp
+      exists; everything else goes through kcp (HostProcess, M2-HOSTPROCESS-KIND); instances nest as kcp
+      workspaces (one kcp per dev instance). Decided by Claude, user may veto: the bootstrap layer is exactly
+      {kcp store (gateway: the pg unit; bidder: none), kine unit(s), kcp slot unit(s), the kcp front, the
+      core unit itself} and is defined by ONE table, internal/bootstrap, per role: gateway = socialweb-kcp-gw-pg,
+      socialweb-kcp-gw-kine@a|b, socialweb-kcp-gw@a|b, socialweb-kcp-gw-front, socialweb-computer-gateway;
+      bidder handle = socialweb-kcp-<hid>-kine@a (sqlite), socialweb-kcp-<hid>@a, socialweb-kcp-<hid>-front,
+      socialweb-computer-bidder@<handle>. The table renders (a) on systemd-user to installed user unit files
+      (written and removed by install/uninstall, extending M1-INSTALL's unit table; WantedBy=default.target
+      so a lingering user manager brings kcp up at boot before the core; ordering store -> kine -> front ->
+      slot -> core by After=/Wants=; per-instance parameters - kine port, front URL, root dir, asset paths -
+      from an EnvironmentFile <state>/kcp/<unit>.env the core writes before it starts an instance, the first
+      one written by install), started and stopped by name (hostsvc StartInstalled/StopUnit, never
+      StartTransientUnit); and (b) on proc to devsup unit specs that `dev up` places in the same order before
+      the core (devsup is the bootstrap supervisor in dev; the core is itself a devsup unit, so `dev restart
+      core` replaces it while kcp keeps running). Dev profiles: quick (gateway-role kcp on kine-sqlite), bed
+      and prodlike (kine -> postgres); an instance runs a gateway-role and a bidder-role kcp by default (prod
+      topology, ~1 GB) and `--kcp-shared-roles` puts both roles on one kcp under <base>:gateway and
+      <base>:bidder. Every role addresses its workspaces under the kcp-base-workspace option (root in
+      production), so no role assumes it owns root and instances can later nest (M4-DEV-PARENT-KCP). Once kcp
+      answers, the core writes one read-only HostProcess MIRROR per bootstrap unit (spec.placement bootstrap;
+      M2-HOSTPROCESS-KIND), the kubelet static-pod/mirror-pod pattern: deleting a mirror never stops its
+      unit and the supervisor never places a bootstrap unit.
+    files: ["internal/bootstrap/ (role tables, unit-file renderer, devsup specs, env files)", "internal/hostsvc (StartInstalled on both backends)", "internal/install (bootstrap unit files in the install table)", "cmd/socialweb-computer dev up (bootstrap placement, profiles, --kcp-shared-roles)"]
+    test_first: >
+      Offline: TestTheBootstrapTableIsTheOnlySourceOfBootstrapUnitsOnBothBackends,
+      TestEveryRenderedBootstrapUnitFileVerifies (`systemd-analyze --user verify`),
+      TestInstallWritesEveryBootstrapUnitFileAndUninstallRemovesThem (fake root fs),
+      TestTheBidderBootstrapHasNoPostgresAndOneSlot, TestTheBootstrapOrderIsStoreKineFrontSlotCore,
+      TestNoBootstrapUnitIsEverPlacedByTheHostProcessSupervisor. Behind livegate, proc (stand-ins plus real
+      kcp/kine assets, no guest): TestTwoDevInstancesEachServeTheirOwnKcpOnPortZero,
+      TestADevCoreRestartLeavesKcpKineAndFrontRunning (InvocationIDs unchanged); on hat-8 under a throwaway
+      installed account (systemd-user): TestInstalledBootstrapUnitsBringKcpUpBeforeTheCore and
+      TestAUserManagerRestartBringsKcpBackWithoutTheCore. Red first.
+    done_when: "green on both backends; on hat-8 two dev instances from two worktrees each `dev up` to a Ready kcp in parallel (cold and warm seconds, RSS per instance recorded), and a throwaway installed account brings kcp up from its installed units."
+    risks:
+      - "systemd's EnvironmentFile cannot change ExecStart's executable path; the slot units name the content-addressed kcp asset path through a stable per-owner symlink retargeted only by a roll, measured and recorded."
+      - "Installed units started at boot make kcp come back after a reboot while every VM is Lost (reboot = Lost, user 2026-10-11); that is the intended order: kcp first, then the core re-populates and marks VMs Lost(HostRebooted)."
     status: todo
     evidence: []
   - id: M2-POSTGRES
     milestone: M2
-    title: An embedded PostgreSQL driven by a Postgres CRD, one user unit per server
-    depends_on: [M1-HOST-INVENTORY, M2-HOST-UNITS, M2-APPLY]
+    title: An embedded PostgreSQL driven by a Postgres CRD, one unit per server placed through a HostProcess
+    depends_on: [M0-PG-SOURCE, M2-HOST-UNITS, M2-APPLY, M2-KCP-STORE, M2-HOSTPROCESS-KIND]
     decision: >
-      Decided by the user 2026-10-07: postgres is embedded and is a reconciled resource, not a container
+      Placement (decided by the user 2026-10-12, kcp-native now): the Postgres controller owns one HostProcess
+      child per server and never calls hostsvc itself; the supervisor places it on systemd-user or proc and
+      status.runtime.backend names which. Decided by the user 2026-10-07: postgres is embedded and is a reconciled resource, not a container
       package. Decided by the user 2026-10-11: KEEP the Postgres CRD with its own unit. Decided by Claude,
-      user may veto: a pinned relocatable PostgreSQL 18 linux build (amd64, arm64; source chosen in
-      M1-HOST-INVENTORY between a prebuilt relocatable set and a CI build from source, its locale/ICU and
-      glibc collation versions recorded in versions.json), extracted by internal/assets.
+      user may veto: a pinned relocatable PostgreSQL 18 linux build (amd64, arm64; source chosen by
+      M0-PG-SOURCE between prebuilt relocatable sets and a build from source with the build-host script, its
+      locale/ICU and glibc collation versions recorded in versions.json), extracted by internal/assets.
       Kind Postgres (socialweb.computer/v1alpha1, export hostprocesses, apigen-generated) with spec {version,
       port (0 = leased), dataDir, listen 127.0.0.1, deleteData} and an OS-neutral status {phase, port,
       runtime {backend, ref, instance, pid, startTime, hostBootID}, message}. The controller (built on
@@ -900,9 +1261,12 @@ items:
     evidence: []
   - id: M2-OPENBAO-SERVER
     milestone: M2
-    title: An OpenBao server as a reconciled resource in its own user unit, for the gateway's root vault and the bidder's vault
-    depends_on: [M1-ASSETS, M2-HOST-UNITS, M2-APPLY]
+    title: An OpenBao server as a reconciled resource in its own unit (placed through a HostProcess), for the gateway's root vault and the bidder's vault
+    depends_on: [M1-ASSETS, M2-HOST-UNITS, M2-APPLY, M2-HOSTPROCESS-KIND]
     decision: >
+      Placement (decided by the user 2026-10-12, kcp-native now): the OpenBaoServer controller owns one
+      HostProcess child per server; the supervisor places it on either backend; "a new InvocationID" below is
+      read from the child's status.runtime.
       Decided by the user 2026-10-11: KEEP the OpenBaoServer CRD with its own unit. Kind OpenBaoServer
       (export hostprocesses) with spec {listen, tls, storageDir, init: {shares, threshold, keysSecret}} and
       status {phase, address, initialized, sealed, runtime {backend, ref, instance, pid, startTime,
@@ -975,6 +1339,52 @@ items:
     risks: ["apply-permission-inventory.sh's yq subject/grant split (:52-53) and DRY_RUN server mode must be kept."]
     status: todo
     evidence: []
+  - id: M2-HOSTPROCESS-KIND
+    milestone: M2
+    title: "HostProcess objects reconciled by the in-binary supervisor onto a placement backend - kcp as the host's service manager"
+    depends_on: [M2-HOST-BACKEND-PROC, M2-HOST-CONFORMANCE, M2-APPLY, M2-BOOTSTRAP-LAYER]
+    decision: >
+      Decided by the user 2026-10-12 (dev run mode is KCP-NATIVE NOW, overriding dev-run-mode.md's "phase 2"):
+      long-lived host processes are kcp objects - a HostProcess kind that generalises DenoPod - reconciled
+      by an in-binary supervisor; ComputeVMs, kcp slots and tenant cluster members are placed through it;
+      systemd-user is the production placement backend and proc the dev one. Decided by Claude, user may
+      veto (dev-run-mode.md 3(b)): Kind HostProcess (socialweb.computer/v1alpha1, export hostprocesses,
+      apigen-generated, OS-neutral) spec {asset (name + sha256 from versions.json) or exec path, argv, env,
+      workDir, output {stdout, stderr files, cap}, limits, restartPolicy (Never | OnFailure | Always),
+      stop {signal, graceSeconds}, after/wants (other HostProcess names), slice, privateHostname, fdStore,
+      readiness {exec | tcp | http | pgx}, placement (supervisor | bootstrap)} and status {phase (Pending,
+      Starting, Running, Stopping, Stopped, Failed, Lost), lostReason (HostRebooted, UnitGone, UnitFailed,
+      OOMKilled, IdentityMismatch, ManagerRestarted), runtime {backend, unit, invocationID, pid, startTicks,
+      hostBootID, manager}, lastResult {result, exitCode, signal, at}, conditions (Ready, LimitsEnforced)}.
+      The supervisor is a pure reconciler in the deno-kcp denopod.go:105-140 style (Observed -> Result{Phase,
+      Ops}) with hostsvc.Manager as its placement port, run inside the core (serve gateway kcp, run bidder,
+      the dev core); it is the ONLY caller of Manager.Start outside the bootstrap layer. Rules: adopt by unit
+      name + InvocationID, never re-create; identity mismatch on an active unit = Lost and stop the unit at
+      once (the user's 2026-10-11 VM rule, generalised); a dial/auth/timeout error is Unknown, never Lost; an
+      object whose status.runtime.backend differs from the running backend is Lost(IdentityMismatch) naming
+      both, never adopted; LimitsEnforced=False on proc. placement bootstrap = a read-only MIRROR of a
+      bootstrap-layer unit (M2-BOOTSTRAP-LAYER): status only, deleting it never stops the unit. Owners:
+      Postgres (M2-POSTGRES), OpenBaoServer (M2-OPENBAO-SERVER), each cluster member (M3-CLUSTER-UNITS) and
+      each ComputeVM (0007 M2-CONTROLLER) own HostProcess children (ownerReferences, created in the owner's
+      workspace); the kcp slots are bootstrap mirrors, and a nested instance's kcp slots are ordinary
+      HostProcess objects in its parent's kcp (M4-DEV-PARENT-KCP). DenoPod stays its own kind for TypeScript
+      services (children of the core that die with it, plan 0008) and HostProcess reuses its reconciler
+      shape; whether DenoPods become HostProcesses is not decided here.
+    files: ["api/v1alpha1/hostprocess_types.go", "internal/apigen (schema, export)", "deploy/sets.yaml (hostprocesses set)", "internal/hostprocess/ (pure reconciler, supervisor loop, mirrors)", "internal/stack/* (supervisor started in every core role)"]
+    test_first: >
+      Offline (fake kcp, fake Manager): one test per reconciler row, plus
+      TestAHostProcessIsPlacedOnTheBackendItsStatusNames, TestAnObjectPlacedByAnotherBackendIsLostNotAdopted,
+      TestIdentityMismatchOnAnActiveUnitStopsItAtOnce, TestAnUnreachableManagerIsUnknownNeverLost,
+      TestDeletingAMirrorRecordDoesNotStopTheBootstrapUnit, TestOnlyTheSupervisorAndTheBootstrapLayerCallManagerStart
+      (scans non-test Go), TestTheHostProcessSchemaHasNoBackendEnum. Through the conformance harness on both
+      backends (stand-ins): TestTheSameObjectsReconcileIdenticallyOnBothBackends,
+      TestACoreRestartAdoptsEveryHostProcessUnit (InvocationIDs unchanged). Red first.
+    done_when: "tests green on proc (check.sh --fast) and systemd-user (hat-8); `kubectl get hostprocesses` on a dev instance lists the bootstrap mirrors and a stand-in object's runtime."
+    risks:
+      - "kcp down = no reconcile; units keep running (they are not children of the supervisor) and are adopted when kcp returns. A crash-looping unit with restartPolicy Always is restarted by the backend (systemd Restart= / devsup), not by the reconciler."
+      - "APIResourceSchema.spec is immutable; the first HostProcess revision is reviewed field by field against the two working backends before it is applied."
+    status: todo
+    evidence: []
   - id: M3-FOLD
     milestone: M3
     title: Fold every host-side Go binary into verbs; delete the resident VM wrapper
@@ -985,8 +1395,10 @@ items:
       resolved bin/<sha>/ path (M1-INSTALL). Decided by the user 2026-10-11 (no socialweb code in a VM's
       process tree): socialweb-nodeboot and its namespace verb are DELETED, not folded; their one-shot prep
       moves into the ComputeVM controller and the tiny socialweb-vmexec asset (plan 0007 M2-VM-RUNTIME).
-      Decided by the user 2026-10-11 (guest images built in CI): socialweb-nodeimage leaves the host binary;
-      it becomes the CI image pipeline (plan 0007 M1-GUEST-IMAGE) with a `dev`-tag verb for local builds.
+      Decided by the user 2026-10-11 (guest images built off the bidder) and 2026-10-12 (by a build-host
+      script on any Linux host; CI shells out to it later, no CI service now): socialweb-nodeimage leaves the
+      host binary; it is run by scripts/build-guest-image.sh (plan 0007 M1-GUEST-IMAGE) with a `dev`-tag
+      verb for local builds.
       socialweb-nodeinit is a GUEST binary and belongs to the image pipeline, not the host asset set. Built
       separately but carried inside the binary as download assets: socialweb-credential (four platforms),
       socialweb-meshd (two arches). socialweb-apigen stays a go generate tool. Folded cmd/ keep a one-line
@@ -1002,8 +1414,14 @@ items:
   - id: M3-CLUSTER-UNITS
     milestone: M3
     title: Each cluster is a systemd slice of member units in the gateway's user manager, ordered after its postgres unit; a core upgrade restarts none of them
-    depends_on: [M2-HOST-UNITS, M2-POSTGRES, M1-INSTALL]
+    depends_on: [M2-HOST-UNITS, M2-POSTGRES, M1-INSTALL, M2-HOSTPROCESS-KIND]
     decision: >
+      Third fold 2026-10-12 (decided by the user: tenant cluster members are placed through HostProcess; dev
+      is kcp-native now): every member below is a HostProcess child of the cluster (placement supervisor)
+      reconciled onto systemd-user in production and proc in dev; the slice is a systemd slice on
+      systemd-user and a label on proc, and teardown uses Manager.StopSlice on both; port attribution reads
+      unit membership through the Manager (cgroup.procs or devsup's process groups), never cgroup files
+      directly. Decided by Claude, user may veto (dev-run-mode.md 5).
       Decided by the user 2026-10-11: cluster processes live in the gateway account's user manager; KEEP the
       Postgres CRD and add explicit ordering and readiness between a cluster's postgres unit and the rest of
       the cluster for start, adoption and restart. Decided by the user 2026-10-12 (replaces the 2026-10-11
@@ -1042,7 +1460,9 @@ items:
       Offline (fake hostsvc): TestEveryMemberIsAUnitOfItsClustersSliceWithWantsNotRequiresOnPostgres,
       TestAdoptionStartsOnlyTheMissingMembers (all active; pg missing; one member failed; everything missing),
       TestTeardownStopsTheSliceBeforeItsPostgres, TestALeaseHeldByALiveMemberUnitIsNeverReleased,
-      TestNoClusterMemberIsSpawnedWithPdeathsig, TestADashInTheClusterKeyAddsNoSliceLevel. Behind livegate
+      TestNoClusterMemberIsSpawnedWithPdeathsig, TestADashInTheClusterKeyAddsNoSliceLevel,
+      TestEveryMemberIsAHostProcessChildOfItsCluster; the stand-in live tests below run on both backends
+      (proc in a dev instance, systemd-user on hat-8). Behind livegate
       on hat-8 with stand-ins (real postgres, kine, k3s --disable-agent, bao; no guest):
       TestACoreRestartAndUpgradeLeaveEveryClusterMemberWithItsInvocationID (a zero-node market-shaped
       cluster's /readyz on status.URL polled every 200 ms across `systemctl --user restart` of the gateway
@@ -1075,9 +1495,10 @@ items:
       socket in the cluster's data dir (path < 108 bytes); open connections stay on their backend until it
       closes them (that is the drain). Pure TCP passthrough: TLS stays end to end with k3s (its serving SANs
       already cover 127.0.0.1 and the advertise address). The front never fails over by itself (auto-failover
-      would hide a dead green). Its listening socket is kept in systemd's fd store (FDSTORE=1,
-      FileDescriptorStoreMax=1) so a front restart refuses no connection and only resets open ones; check-host
-      probes fd-store support in the user manager (M2-HOST-CONTRACT). Every slot runs --advertise-address
+      would hide a dead green). Its listening socket is kept in the backend's fd store through
+      UnitSpec.FDStore (systemd: FDSTORE=1, FileDescriptorStoreMax=1; proc: devsup holds it, decided by
+      Claude 2026-10-12, user may veto) so a front restart refuses no connection and only resets open ones;
+      check-host probes fd-store support in the user manager (M2-HOST-CONTRACT). Every slot runs --advertise-address
       <identical> --advertise-port <front port>; slot listen ports are never advertised; the provider's admin
       client, the CCM, ESO and the kcp mount (status.URL) name the front port. AssertMarketAdvertiseInvariant
       (internal/clusterprovider/steps.go:164-174) is rewritten: advertise port == front port, advertise
@@ -1126,10 +1547,16 @@ items:
       internal/clusterstack/scheduler.go renders leaderElect true with leaseDuration 4s, renewDeadline 3s,
       retryPeriod 1s (reverts 1cbf945's false; first-pod delay after scale from zero up to ~4 s, measured).
       k3s hostname lease: wrangler's kube-system/k3s lease identity is os.Hostname(), so each k3s slot runs
-      with its own UTS hostname swc-<key12>-<slot>: systemd ProtectHostname=private:<name> on the slot unit
-      where the host's systemd supports it in a user manager, else a one-shot `internal uts-exec` that
-      enters a user+UTS namespace, sethostname()s and execve's k3s (no resident code); the mechanism is
-      measured in this item and probed by check-host. A kine bump is its own green slot; one whose release
+      with its own UTS hostname swc-<key12>-<slot>, through UnitSpec.PrivateHostname: systemd
+      ProtectHostname=private:<name> on the slot unit where the host's systemd supports it in a user manager,
+      else - and always on proc - the one-shot `internal ns-exec` (M2-HOST-BACKEND-PROC) that enters a
+      user+UTS(+mount) namespace, sethostname()s, optionally bind-mounts <state>/rancher over /etc/rancher
+      and execve's k3s (no resident code); the mechanism is measured in this item and probed by check-host.
+      k3s's /etc/rancher/node/password (the --disable-agent invariant): production gets the root-owned file
+      from `install gateway` (M1-INSTALL); dev gets a per-instance file bind-mounted by ns-exec in the slot's
+      user+mount namespace, no root (decided by the user 2026-10-12). Leader election here (scheduler and
+      k3s) conflicts with plan 0010 G4-SCHED-SINGLE-SERVER's proposed refusal of leaderElect false; flagged in
+      NEXT.yaml, 0010 R0-REASSESS resolves it. A kine bump is its own green slot; one whose release
       notes name a schema migration (ACCESS EXCLUSIVE) gets a stand-in test with old+new kine on one database
       before it ships. Triggered by `units roll cluster <key> --k3s <version> [--kine <version>]` and by the
       reconciler when versions.json pins change.
@@ -1226,12 +1653,18 @@ items:
     title: "`units roll kcp` - a new kcp slot beside the old on the same store, the front flips, the old stops, the controller lease handed over"
     depends_on: [M2-KCP-SLOTS, M2-KCP-PORT0, M2-KCP-FRONT, M2-KCP-STORE]
     decision: >
+      Scope (decided by the user 2026-10-12, third fold): the blue/green procedure below is the GATEWAY's. On
+      a bidder, `units roll kcp` is the short restart of its single slot: copy the sqlite store (M2-KCP-STORE),
+      stop the slot (and the kine when its asset changes), retarget the per-owner asset link, start them on
+      the same root, wait /readyz on the slot's own port, then the ComputeVM controller re-adopts every VM by
+      the Verdict; VM units are never touched and no version-pair rule applies (a restart cannot overlap two
+      versions). `dev roll kcp` runs the gateway procedure inside a dev instance (proc backend).
       Decided by the user 2026-10-12: kcp upgrades follow the tenant pattern - start the new kcp, switch our
       own front over, stop the old; pg_dump before each kcp upgrade; lease handover = delete
       kube-system/kcp-controllers after the old slot exits (no ReleaseOnCancel patch). Procedure, decided by
       Claude, user may veto (kcp-blue-green.md 7.4): (1) refuse unless the version rule below allows the pair;
       (2) pg_dump the kcp store (internal/pgunit; exit 0, size > 0); (3) copy the five shared files into the
-      idle slot's root; (4) start socialweb-kcp-<owner>-kine-<new> then socialweb-kcp-<owner>-<new> with the
+      idle slot's root; (4) start socialweb-kcp-gw-kine@<new> then socialweb-kcp-gw@<new> with the
       target asset, read both ports (ListenPort); (5) wait /readyz == 200 on the NEW slot's own port with the
       shard-admin token; (6) persist kcp-slots.json (active = new) BEFORE the front flip is acknowledged, then
       flip; (7) SIGTERM the old slot (--shutdown-delay-duration=2s keeps it serving non-watch requests while
@@ -1261,7 +1694,9 @@ items:
       TestRollKcpLeavesNoControllerGapLongerThan5s (red first with step 8 removed: the measured 61 s),
       TestRollKcpFailsNoReadyzPollThroughTheFront (shard-admin /readyz every 200 ms: 0 failures),
       TestAnInformerThroughTheFrontSeesEveryEventAcrossARoll (watch reconnects to the new slot, no event
-      missed). Red first.
+      missed); bidder: TestABidderKcpRollIsARestartThatTouchesNoVMUnit (offline, fake Manager) and, behind
+      livegate with stand-in VM units, the restart's kcp-down seconds recorded. The gateway live tests run on
+      systemd-user and on proc (dev roll kcp). Red first.
     done_when: "green on hat-8; a same-asset roll's readings on a prod-shaped object count recorded (poll failures 0, old-slot exit seconds, lease handover seconds, probe Ready seconds, UTC)."
     risks:
       - "No published kcp version-skew policy for replicas of one shard; the storage-compatibility record is our own check, and a pair it misjudges is caught only by the probe step - hence the pg_dump first."
@@ -1271,8 +1706,13 @@ items:
   - id: M3-SERVE-GATEWAY-KCP
     milestone: M3
     title: socialweb-computer serve gateway kcp replaces container-entrypoint.sh, on the host, kcp first
-    depends_on: [M2-KCP-PORT0, M2-KCP-SLOTS, M2-KCP-FRONT, M2-KCP-STORE, M2-APPLY, M2-OPENBAO-SERVER, M3-FOLD, M3-CLUSTER-UNITS, M3-BAO-SYNC]
+    depends_on: [M2-KCP-PORT0, M2-KCP-SLOTS, M2-KCP-FRONT, M2-KCP-STORE, M2-APPLY, M2-OPENBAO-SERVER, M3-FOLD, M3-CLUSTER-UNITS, M3-BAO-SYNC, M2-BOOTSTRAP-LAYER, M2-HOSTPROCESS-KIND]
     decision: >
+      Third fold 2026-10-12: the kcp store, kine, front and active slot are the bootstrap layer
+      (M2-BOOTSTRAP-LAYER), already started by systemd from installed units (or by devsup in dev) before the
+      core runs; the core adopts them by name and only starts one that is missing, then writes their
+      HostProcess mirrors and starts the supervisor (M2-HOSTPROCESS-KIND), through which the root vault,
+      postgres and cluster members are placed. Runs on either backend with --host-backend required.
       Order fixed 2026-10-11 and revised 2026-10-12 for the kcp slot route (decided by Claude, user may veto;
       the 2026-10-07 order put the root vault, an object in kcp, BEFORE kcp): lock <state>/kcp/ -> the kcp
       store (adopt or start socialweb-kcp-gw-pg, then the active slot's kine; M2-KCP-STORE) -> the kcp front on
@@ -1359,6 +1799,26 @@ items:
       the node is kept because its path returns within the rebased clock). Red first.
     done_when: "both bed tests green with readings recorded (UTC); ACC6-UPGRADE and ACC6-CP-SWAP recorded."
     risks: ["A user-manager restart or reboot of the gateway host is a cold start of every cluster; the rebased clock bounds its cost, it is not zero-downtime."]
+    status: todo
+    evidence: []
+  - id: M4-DEV-PARENT-KCP
+    milestone: M4
+    title: "Later: `dev host` - a per-user parent kcp whose root:dev:<instance> workspaces hold each dev instance's HostProcess objects (kcp inside kcp)"
+    depends_on: [M2-HOSTPROCESS-KIND, M1-DEV-INSTANCE, M2-BOOTSTRAP-LAYER]
+    decision: >
+      Decided by the user 2026-10-12: instances nest as kcp workspaces; one kcp per dev instance now, a parent
+      kcp for nesting is fine as a later item. Decided by Claude, user may veto (dev-run-mode.md 4.4 N3): `dev
+      host` runs one per-user parent instance (its own bootstrap layer under its own devsup); each child
+      instance's bootstrap units, including its kcp slot, become ordinary HostProcess objects in the parent's
+      workspace root:dev:<instance> placed by the parent's supervisor on its devsup, so `kubectl get
+      hostprocesses -A` on the parent lists every worktree's processes; a dev-instance WorkspaceType with
+      limitAllowedChildren keeps instance trees from being nested into each other by mistake. Production is
+      unchanged (no parent kcp); the same shape is open later for tenant clusters (members as objects in the
+      cluster's home workspace).
+    files: ["cmd/socialweb-computer dev host", "internal/devinstance (parent mode)", "deploy/workspacetype-dev-instance.yaml"]
+    test_first: "TestAChildInstancesKcpSlotIsAHostProcessInItsParent, TestDeletingAChildInstanceWorkspaceStopsItsProcesses, TestAnInstanceTreeCannotBeNestedUnderAnotherInstance; behind livegate on proc. Red first."
+    done_when: "two child instances under one parent on hat-8 listed and stopped through the parent's kcp; readings recorded."
+    risks: ["A parent outage stops reconcile for every child (their units keep running under the parent's devsup)."]
     status: todo
     evidence: []
   - id: M4-BUILD
@@ -1455,5 +1915,27 @@ acceptance:
       text: "Every check.sh --fast run since M0-XOS-GATE built and vetted the tree for darwin/arm64, darwin/amd64, windows/amd64, windows/arm64 and linux/arm64, and the import-boundary test passed (decided by the user 2026-10-11: cross-OS seams built now)."
       status: todo
       evidence: []
+    - id: ACC6-DEV
+      text: "Two dev instances from two worktrees on hat-8 run in parallel with no root and no systemd: each has its own devsup, bootstrap layer and kcp on port 0, its HostProcess objects placed on proc, and its market bed renting a guest through the RFP flow; stopping one leaves the other's InvocationIDs unchanged; the hostsvc contract suite is green on proc and systemd-user (decided by the user 2026-10-12: dev run mode is kcp-native now)."
+      status: todo
+      evidence: []
+execution_order:
+  note: >
+    Written 2026-10-12 (third fold, the user's request (i)); mirrored with plans 0007 and 0008 in NEXT.yaml
+    execution_order, which is the full cross-plan breakdown. Advisory: depends_on governs.
+  critical_path: >
+    Longest chain (15 waves, computed from depends_on 2026-10-12): M0-SIZE-BUDGET (or M0-PG-SOURCE) ->
+    M1-ASSETS -> M2-KCP-STORE -> M2-KCP-SLOTS -> M2-KCP-PORT0 -> M2-APPLY and M2-BOOTSTRAP-LAYER ->
+    M2-HOSTPROCESS-KIND -> M2-POSTGRES -> M3-CLUSTER-UNITS -> M3-BAO-SYNC (and M3-APISERVER-FRONT ->
+    M3-CP-SLOTS) -> M3-SERVE-GATEWAY-KCP -> M3-HOST-INSTALL -> M3-CP-CONTINUITY -> M5-FRESH-DEPLOY ->
+    M5-RETIRE. Feeding it: M2-HOST-CONFORMANCE -> M2-HOST-BACKEND-PROC (wave 2) and M1-CLI +
+    M1-PORT-LEASE-INSTANCE -> M1-DEV-INSTANCE (wave 3) -> M2-BOOTSTRAP-LAYER; M1-CLI -> M2-MANIFESTS ->
+    M2-TEMPLATE -> M2-APPLY; M1-ASSETS + M1-CLI -> M1-INSTALL -> M2-BOOTSTRAP-LAYER.
+  startable_now_in_this_plan: [M0-SIZE-BUDGET, M0-PG-SOURCE, M1-CLI, M1-HOST-INVENTORY, M1-STORE-CLEANUP, M1-PORT-LEASE-INSTANCE, M2-HOST-CONFORMANCE]
+  early_because_live_tests_collide: >
+    Live tests on hat-8 collide on fixed ports (bed 2583-2589, deno-kcp kcp 6443 and kine 23791) and on the
+    one-bed check until 0008 M1-BED-PARALLEL and M1-DEV-INSTANCE land; until then every market-bed run on
+    hat-8 is serialized. M1-PORT-LEASE-INSTANCE, M2-HOST-CONFORMANCE, M2-HOST-BACKEND-PROC and M1-DEV-INSTANCE
+    are therefore first in this plan.
 questions_for_user:
   - "systemd 253 as the floor (decided 2026-10-11) refuses Debian 12 and RHEL 9 (both ship 252, to be verified in M2-HOST-CONTRACT). Recommended: accept; support there would mean dropping GetUnitByPIDFD for our own pidfd + cgroup check."

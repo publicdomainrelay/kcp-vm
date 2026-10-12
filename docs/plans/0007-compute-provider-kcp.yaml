@@ -30,6 +30,18 @@ revised: >
   chosen). Orphan receipts (user 2026-10-12): adopted first with a usage check through a new claim phase
   Adopting (M6-GATEWAY-REPOPULATE). M4-TERMINATION-EVENT's live reading recorded (still doing for the Go
   side). Answered questions removed; none is left open.
+  2026-10-12 (third fold), the user's decisions relayed with the fold (recorded as decided by the user
+  2026-10-12): a bidder's kcp is ONE slot on kine-sqlite and its upgrade is a short kcp restart that VMs
+  never notice (0006 M2-KCP-SLOTS; M5-RUN-BIDDER, M6-BIDDER-UPGRADE, semantics corrected); guest images come
+  from a build-host script on any Linux host, CI shells out to it later (M1-GUEST-IMAGE); every org repo
+  works on main and is pushed (state_rules, ownership); the dev run mode is kcp-native now and ComputeVMs are
+  placed through HostProcess (M2-VM-RUNTIME, M2-CONTROLLER, M5-RUN-BIDDER); new M0-VM-USERNS (spike with
+  fallback: firecracker in a per-VM subuid userns with pasta, single-threaded stage vs util-linux unshare);
+  new M1-PROTOCOL-CHECKLIST (the ordered steps a new bidder- or requester-written NSID needs, learned live on
+  vm.terminated) and M1-QR-DEPLOY (did-key-associator's broken deploy.sh); M4-CONTRACT-RESTORE split: new
+  M4-CONTRACT-STORE-FILE lands the file-backed ContractStore, market-bidder load()/onContractChange and
+  persisted tombstones NOW (a guest leaked 2026-10-12T01:31Z), the ComputeVM-backed store stays in
+  M4-CONTRACT-RESTORE. M4-HOST-KEYS follows the checklist. No item renamed.
 queued: >
   OPEN. The plan 0005 gate is satisfied: plan 0005 is complete with all 40 items done and its acceptance
   checks ACC-ZERO, ACC-MESH and ACC-NOSSH done with evidence (verified 2026-10-12). Only each item's own
@@ -68,11 +80,27 @@ state_rules:
     Linux only (decided by the user 2026-10-11). OS-specific bodies live in GOOS-tagged files behind the
     vmruntime, hostsvc and guestnet interfaces; darwin and windows compile stubs returning ErrUnsupported,
     gated by 0006:M0-XOS-GATE. The Windows backend is plan 0011, the macOS backend plan 0012.
+  - >
+    Dev run mode is kcp-native now (decided by the user 2026-10-12; 0006 state rule): every VM unit is a
+    HostProcess child of its ComputeVM, placed on systemd-user in production and on proc (devsup) in dev
+    and tests; a bidder's kcp is one slot on kine-sqlite. Dev adds no provisioning path: a dev instance's
+    guests come up only through runComputeContract against that instance's bidder.
+  - >
+    Every org repo works on `main` and is pushed to GitHub as work lands (decided by the user 2026-10-12):
+    atproto-market, hono-compute-provider, typescript-helpers, did-key-associator and socialweb-computer-k8s
+    changes for this plan are committed on main (or merged to it from a worktree branch) and pushed when
+    the item or its red-first step lands.
+  - >
+    A new NSID the bidder or the requester writes follows M1-PROTOCOL-CHECKLIST, in its order, before any
+    live run publishes it.
 ownership:
   owned: >
     All code in socialweb-computer-kcp, the vendored deno-kcp test bed, and the atproto-market requester
     libraries. Decided by the user 2026-10-07: anything in hono-compute-provider and atproto-market may be
-    changed, committed only, never pushed.
+    changed; decided by the user 2026-10-12: committed on main and pushed to GitHub as work lands (replaces
+    "committed only, never pushed"). Also changed by this plan, same rule: typescript-helpers (oauth-scope
+    role sets) and did-key-associator (QR client scope, deploy script) for M1-PROTOCOL-CHECKLIST,
+    M1-QR-DEPLOY and M4-HOST-KEYS, and socialweb-computer-k8s (the door) for M6-*.
   not_owned: >
     The market protocol records and lexicons. This plan changes no existing record, NSID or wire shape: the
     bid config, receipt, onNetwork and vm.delete records stay what the firecracker provider writes. The only
@@ -121,6 +149,44 @@ research:
       - "docs/research/2026-10-11-vm-lifecycle/control-plane-handover.md 7: Joining/Running claims are durable (NodeClaim status.contract + status.grant + the cluster vault); Bidding/Provisioning die with the door only because the per-contract secrets-server keypair and grant are in memory (atproto-market lib/guest-capability-secrets/mod.ts:50-75); the accept written just before a crash is a VM no claim names (ARCHITECTURE section 9)"
       - "control-plane-handover.md 6: NODE-LOSS needs no rebase across a kcp/door/provider restart (the tenant's kcm keeps writing real transitions) but DOES when our side of the path was down (cluster cold start, link restart, front restart): count from max(lastTransitionTime, pathUpSince)"
 items:
+  - id: M0-VM-USERNS
+    milestone: M0
+    title: "Spike: firecracker opens /dev/kvm inside a per-VM subuid user namespace with pasta - a single-threaded vmexec stage vs util-linux unshare"
+    depends_on: []
+    decision: >
+      Decided by the user 2026-10-12: an M0 spike with a fallback for the per-VM subuid user namespaces
+      decided the same day (M2-VM-RUNTIME). unshare(CLONE_NEWUSER) refuses a multi-threaded caller (EINVAL),
+      and every Go process is multi-threaded, so the stage that creates the namespace must be single-threaded
+      or must create it with clone() for a fresh child. newuidmap/newgidmap (setuid, the distro's) are host
+      prerequisites, written by `install bidder`'s subuid/subgid range (0006 M1-INSTALL) and checked by
+      check-host. Candidates, measured on hat-8 (Fedora 44, SELinux enforcing) in a scratch branch: (A) a
+      single-threaded stage of ours - either a Go one-shot that starts the next stage with
+      SysProcAttr.Cloneflags=CLONE_NEWUSER and has the maps written by newuidmap/newgidmap on the child's pid
+      while the child (exec'd in the new namespace) waits on an inherited pipe before execve'ing pasta, or a
+      tiny static non-Go stage asset - with the stage gone from the tree after start; (B) util-linux unshare
+      >= 2.38 `--map-users=<inner>:<outer>:65536 --map-groups=...` (it forks a short-lived helper that runs
+      newuidmap and exits), a host prerequisite beside newuidmap. Each candidate, under the SELinux pasta_t
+      trampoline (linux-proofs E4): pasta creates its net namespace and the tap inside the subuid namespace,
+      firecracker opens /dev/kvm by the retained supplementary kvm group (no setgroups), the work files are
+      reachable by ACL only, the unit's tree after start is pasta + the VMM only, the stage adds no resident
+      process, and the start latency added. Measured with stand-ins first (a stand-in VMM that opens /dev/kvm
+      and ignores SIGTERM, in transient units of the systemd-user backend and under devsup), then ONE guest
+      through the RFP flow: alice-request.sh -> RFP -> bid -> accept -> cloud-init user_data against a
+      scratch-branch bidder whose firecracker launch goes through the chosen stage (the guest is born only
+      from user_data; nothing is booted by hand). Decided by Claude, user may veto: prefer (A) (no new host
+      prerequisite, and our stage is pinned like every asset); (B) is the fallback when (A) fails or costs
+      more than a small file. If NEITHER keeps /dev/kvm, the next fallback is an ACL entry on /dev/kvm for the
+      reserved range written by install (recorded as a deviation); if a target distro refuses unprivileged
+      user namespaces outright, check-host refuses that host by name and the user is asked - there is no
+      silent fallback to running VMMs as the shared account's uid.
+    files: ["scratch branch only (stage code, stand-in, measurements)", "docs/research/2026-10-11-vm-lifecycle/vm-userns-spike.md (readings)"]
+    test_first: "None (measurement). Readings: per candidate, uid_map/gid_map of the stand-in VMM, /dev/kvm open result, the unit's process list after start, added latency, SELinux denials (ausearch), and for the chosen stage the RFP-flow guest's boot to onNetwork with its VMM's uid_map recorded (UTC)."
+    done_when: "the stage chosen and recorded with readings; the fallback's status recorded; M2-VM-RUNTIME's decision updated to name the stage."
+    risks:
+      - "Fedora's pasta SELinux policy may deny pasta inside an unprivileged user namespace the trampoline does not cover; recorded with the denial, and the profile change (install-time) named."
+      - "The RFP-flow guest needs the live market bed on hat-8; until 0008 M1-BED-PARALLEL lands the run is serialized with every other bed run."
+    status: todo
+    evidence: []
   - id: M1-DECIDE
     milestone: M1
     title: Record the ComputeVM-plus-Go-controller design and the VM lifecycle in ARCHITECTURE
@@ -136,14 +202,17 @@ items:
       transient service in the user manager of ONE shared lingering account (swc-bidder), units namespaced by
       handle; reboot = Lost; the tri-state Verdict (Running | Lost | Unknown) with identity mismatch on an
       active unit = Lost + StopUnit immediately and an unreachable bus or socket = Unknown, never Lost;
-      graceful stop (SendCtrlAltDel, grace, then SIGKILL); identical guest network per guest; CI-built
-      images; console to a capped file in the work dir, never the host journal; explicit deno permissions
+      graceful stop (SendCtrlAltDel, grace, then SIGKILL); identical guest network per guest; images built
+      off the bidder (2026-10-12: by a build-host script on any Linux host, CI shells out to it later);
+      console to a capped file in the work dir, never the host journal; explicit deno permissions
       for the bidder. Decided by the user 2026-10-12, also recorded: per-VM subuid user namespaces (each VM
       unit's pasta and firecracker run in their own user namespace mapped to a distinct sub-range of the
       account's reserved subuid/subgid range, so a VMM escape lands in an unprivileged uid that owns no
       bidder file; Unix accounts are never created on demand); the seed is a separate cidata drive and the
       guest grows its own root; guest SSH host keys are guest-reported and verified, never scanned from the
-      host (M4-HOST-KEYS).
+      host (M4-HOST-KEYS). Decided by the user 2026-10-12 (third fold), also recorded: every VM unit is a
+      HostProcess child of its ComputeVM placed on systemd-user (production) or proc (dev); a bidder's kcp is
+      one slot on kine-sqlite and its upgrade is a short kcp restart VMs never notice.
     files: ["docs/ARCHITECTURE.md (section 5 subsection 'Host processes and the VM lifecycle')"]
     test_first: "None (decision record)."
     done_when: "ARCHITECTURE subsection committed with these citations."
@@ -169,7 +238,7 @@ items:
       boot timeout and result.json fields; the work dir's two writers. Added 2026-10-11 (decided by Claude,
       user may veto), each a requirement that changes with no container: the host address a guest dials
       (constant pasta gateway, not the runner container's gateway), console capture (capped file), graceful
-      stop, image provenance (CI-built, not host-built), seed transport (a drive, not debugfs), the guest
+      stop, image provenance (built by the build-host script, not on the bidder), seed transport (a drive, not debugfs), the guest
       host keys (guest-reported, not a host-side scan in the guest's namespace: today oidc-issuer-hono
       getPublicKeyFromSshd, mod.ts:446-483, runs ssh-keyscan through `container exec` for provisioningValidate,
       :520-544; M4-HOST-KEYS), and a boot timeout with no
@@ -236,11 +305,75 @@ items:
     risks: ["Helpers closing over module state (jsrPort, nextIndex) stay in the impl and are passed in."]
     status: todo
     evidence: []
+  - id: M1-QR-DEPLOY
+    milestone: M1
+    title: did-key-associator's deploy ships a self-contained backend, has a static-only mode and a dry-run
+    depends_on: []
+    decision: >
+      Decided by the user 2026-10-12: did-key-associator/scripts/deploy.sh is broken and an item owns fixing
+      it. Reading (2026-10-12): it scp's hono-backend/mod.ts alone to /opt/qr-fedfork/mod.ts and runs `deno
+      run -A --unstable-kv mod.ts` (deploy.sh:21, :48, :63), but the backend imports ../typescript-helpers/*
+      and ./cli-args-env.json (did-key-associator 4b3db9c moved its config to the CLI), so running the script
+      would take the QR backend at qr.fedfork.com down. On 2026-10-12 only the static files were deployed by
+      hand (01:41:55Z), with a backup at /root/qr-static-backup/20261012T014155Z on the host. Decided by Claude,
+      user may veto: (1) the backend ships as ONE self-contained artefact - `deno compile` of
+      hono-backend/mod.ts with `--include cli-args-env.json` (the org CLAUDE.md compile-bundling rule; the
+      sibling typescript-helpers imports resolved at build time), falling back to a vendored tree (`deno
+      vendor`-style local copy with an import map) if compile cannot carry --unstable-kv; the systemd unit
+      runs that artefact, never a loose mod.ts; (2) `deploy.sh --static-only` copies dist/, the client
+      metadata and the Caddyfile and reloads caddy, touching no backend file or unit (the 2026-10-12 manual
+      step, made a mode; M1-PROTOCOL-CHECKLIST step 3 uses it); (3) `deploy.sh --dry-run` builds everything
+      locally, prints every remote path it would write, the unit diff and the backup path, and connects to
+      nothing; (4) every real run first copies what it replaces to /root/qr-backup/<UTC ts>/ and prints a
+      restore command. The backend artefact is started once locally from an empty temp dir with no sibling
+      repos before any upload.
+    files: ["did-key-associator/scripts/deploy.sh", "did-key-associator/deno.json (compile task)", "did-key-associator/test/deploy_test.ts"]
+    test_first: >
+      did-key-associator test/deploy_test.ts: 'the compiled backend starts from an empty dir with no
+      ../typescript-helpers and answers its client-metadata route' (red on today's loose mod.ts), '--dry-run
+      writes nothing and lists every remote path', '--static-only names no backend file or unit'; red first.
+    done_when: "tests green; one real --static-only run and one full run to qr.fedfork.com with the backup path and a post-deploy check of the client metadata and the backend recorded (UTC); pushed to GitHub on main."
+    risks: ["The QR backend serves every account's sign-in; a full deploy runs only after a green --dry-run and with the restore command printed."]
+    status: todo
+    evidence: []
+  - id: M1-PROTOCOL-CHECKLIST
+    milestone: M1
+    title: "The new-NSID checklist - lexicon, role-set scope, regenerated QR client scope deployed, every account re-signed in - with a check test"
+    depends_on: [M1-QR-DEPLOY]
+    decision: >
+      Decided by the user 2026-10-12, learned live on vm.terminated (M4-TERMINATION-EVENT evidence): a new
+      collection the bidder or the requester writes needs, IN ORDER, (1) the lexicon (atproto-market
+      lexicons/ + generated market-lexicons types + the NSID constant); (2) the NSID in the writer's
+      oauth-scope role set in typescript-helpers (5b071fe did it for the bidder's vm.terminated); (3)
+      did-key-associator regenerating generated/oauth-scope.js (3cde452) and redeploying its static client
+      metadata to qr.fedfork.com (M1-QR-DEPLOY --static-only); (4) every account that writes it re-signing in
+      through the QR, because a token refresh keeps the old scopes. Skipping any step makes publishing fail
+      with 403 ScopeMissingError (seen 2026-10-12T01:32:39Z). Decided by Claude, user may veto: the checklist
+      is written as docs/new-nsid-checklist.md in atproto-market (the repo that owns the lexicons) and
+      referenced from this plan's state rule; a check test in atproto-market imports typescript-helpers' role
+      sets and asserts that every collection the bidder (market-bidder, market-bidder-compute) or the
+      requester (requester-xrpc, compute-request-xrpc) writes via createRecord/putRecord is in that role's set,
+      by scanning the NSID constants those packages pass; a second check in did-key-associator asserts
+      generated/oauth-scope.js equals what its generator produces from the current typescript-helpers (no
+      drift). M4-HOST-KEYS (vm.hostKeys) is the first NSID to follow it.
+    files: ["atproto-market/docs/new-nsid-checklist.md", "atproto-market/test/role_scope_coverage_test.ts", "did-key-associator/test/oauth_scope_drift_test.ts", "typescript-helpers (role sets, read only here)"]
+    test_first: >
+      atproto-market test/role_scope_coverage_test.ts red with a fixture collection written by the bidder and
+      missing from its role set, then green on the tree (vm.terminated included); did-key-associator
+      test/oauth_scope_drift_test.ts red with a stale generated file, then green.
+    done_when: "both checks green and run by each repo's test task; the checklist committed and pushed on main; the four steps recorded for vm.terminated as the worked example."
+    risks: ["Step 4 cannot be automated (a person scans the QR per account); the requester and bidder log ScopeMissingError with the missing NSID so the step is found, not guessed."]
+    status: todo
+    evidence: []
   - id: M1-GUEST-IMAGE
     milestone: M1
-    title: Guest images (kernel + rootfs) built in CI per hypervisor x arch, pinned by sha256, fetched and verified on bidders
+    title: Guest images (kernel + rootfs) built by a build-host script per hypervisor x arch, pinned by sha256, fetched and verified on bidders
     depends_on: [M1-FC-INVENTORY, "0006:M1-ASSETS"]
     decision: >
+      Decided by the user 2026-10-12 (third fold): images come from a build-host script that runs on any
+      Linux host (scripts/build-guest-image.sh); CI will shell out to the same script later; there is no CI
+      service now, so wherever this item says "CI" below it means that script run on a build host (hat-8
+      today), and reproducibility is proved by two runs of it.
       Decided by the user 2026-10-11: guest images are built in CI on a Linux build host per hypervisor x
       arch, pinned by sha256, shipped as assets; bidders need no root, chroot, apt or go toolchain. Decided by
       Claude, user may veto: targets firecracker-x86_64 and firecracker-aarch64 here (hyperv-x86_64 is plan
@@ -265,7 +398,7 @@ items:
       build-pipeline TestTheGuestKernelConfigHasTheGracefulStopAndVirtioMmioDrivers (reads the pinned
       config) and TestTheRootfsCarriesNoSshHostKeyAndEnablesGrowpart (reads the built image's file list and
       cloud.cfg); red first.
-    done_when: "both images built by CI twice with equal sha256; pins recorded; a bidder host fetches and verifies them with no root."
+    done_when: "both images built twice by scripts/build-guest-image.sh on a build host with equal sha256; pins recorded; a bidder host fetches and verifies them with no root."
     risks:
       - "A raw ext4 rootfs with no partition table must grow through cloud-init's resizefs on /dev/vda; unproven, measured in the first M6 run (df inside the guest reported through onNetwork or the guest's own log), with a partitioned image as the fallback."
       - "Moving off the host kernel changes the module set the guest relies on (iptables, bridge, overlay for k3s); the kernel config lists them and the M6 join proves them."
@@ -274,8 +407,18 @@ items:
   - id: M2-VM-RUNTIME
     milestone: M2
     title: The Linux VM runtime - one-shot prep, one transient service per VM whose tree is pasta -> firecracker, graceful stop
-    depends_on: [M1-DECIDE, M1-GUEST-IMAGE, "0006:M2-HOST-UNITS", "0006:M1-ASSETS", "0006:M2-VM-TREE-AUDIT"]
+    depends_on: [M0-VM-USERNS, M1-DECIDE, M1-GUEST-IMAGE, "0006:M2-HOST-UNITS", "0006:M2-HOST-BACKEND-PROC", "0006:M2-HOST-CONFORMANCE", "0006:M1-ASSETS", "0006:M2-VM-TREE-AUDIT"]
     decision: >
+      Third fold 2026-10-12 (decided by the user: dev run mode kcp-native now, ComputeVMs placed through
+      HostProcess; details decided by Claude, user may veto, dev-run-mode.md 4.2 and 5): Runtime composes a
+      hostsvc.Manager of EITHER backend and produces the VM's UnitSpec (the HostProcess child's spec, placed
+      by the supervisor, 0006 M2-HOSTPROCESS-KIND; M2-CONTROLLER owns that child); Watch is Manager.Watch;
+      on proc the tree is devsup -> the unit's process group (userns stage gone, pasta -> firecracker), the
+      cgroup limits are recorded unenforced through Capabilities().EnforcesLimits=false as a ComputeVM status
+      condition, and the VM's memory stays capped by firecracker's machine-config; the API socket lives
+      under the instance's runtime dir ($XDG_RUNTIME_DIR/swc/<id8>/swvm/ in dev). The userns stage is the one
+      M0-VM-USERNS chose. RuntimeRef.backend names the placement backend (systemd-user | proc); the
+      hypervisor is status.image.hypervisor.
       Replaces M2-UNPRIVILEGED-RUNNER (deleted 2026-10-11: it started each guest as a resident `internal
       nodeboot` wrapper, and its test booted a guest from a fixture boot-spec, an RFP-spine violation).
       Decided by the user 2026-10-07: no docker for VM runners; unprivileged through /dev/kvm via the kvm
@@ -315,8 +458,8 @@ items:
       by newuidmap/newgidmap and execve's pasta inside it, leaving no process behind (the util-linux
       `unshare --map-users` pattern: a short-lived helper child writes the maps and exits);
       unshare(CLONE_NEWUSER) refuses a multi-threaded caller, so which binary runs that stage - a
-      single-threaded entry of socialweb-vmexec built for it, or the host's util-linux unshare >= 2.38 as a
-      stated host prerequisite beside newuidmap - is measured in this item and recorded. Unit
+      single-threaded stage of ours, or the host's util-linux unshare >= 2.38 as a stated host prerequisite
+      beside newuidmap - is measured by M0-VM-USERNS (moved there 2026-10-12, with its fallbacks). Unit
       socialweb-vm-<hid>-<name>.service (hid = first 10 hex of sha256(handle)): ExecStart = <userns stage,
       slot k> --
       runtime/<pasta-sha>/pasta --config-net (the identical address plan; host address = pasta's mapped
@@ -372,7 +515,9 @@ items:
       TestAStopOfAVMMThatIgnoresSigtermEndsWithinTimeoutStopSec, TestTheVMUnitSurvivesSystemctlRestartOfTheBidderUnit,
       TestAVMMThatExitsOnItsOwnEndsItsUnitAndLeavesNoProcess (the stand-in exits 0 and, separately, is killed:
       the unit is inactive/failed, its cgroup is empty, pasta is gone, and Watch reported it within 2 s - E8
-      defect a). Red first.
+      defect a). The stand-in live tests run through the 0006 M2-HOST-CONFORMANCE harness on systemd-user and
+      on proc (TestTheVMUnitsTreeIsPastaAndTheStandInOnly and TestAVMMThatExitsOnItsOwnEndsItsUnitAndLeavesNoProcess
+      on both), plus TestOnProcTheComputeVMRecordsLimitsUnenforced. Red first.
     done_when: "offline and stand-in tests green; a real guest's boot, stop grace, tree audit and the no-leak readings are proved by M6-BIDDER-UPGRADE through the RFP flow."
     risks:
       - "E8 measured 0.21 s from SendCtrlAltDel to exit on an IDLE guest; the grace with a k3s workload is unmeasured, so a 10 s placeholder stays the default until M6-BIDDER-UPGRADE records the loaded value."
@@ -410,8 +555,18 @@ items:
   - id: M2-CONTROLLER
     milestone: M2
     title: The Go ComputeVM controller boots, adopts by the tri-state Verdict, and releases
-    depends_on: [M1-API, M2-VM-RUNTIME, "0006:M2-APPLY"]
+    depends_on: [M1-API, M2-VM-RUNTIME, "0006:M2-APPLY", "0006:M2-HOSTPROCESS-KIND"]
     decision: >
+      Placement (decided by the user 2026-10-12: ComputeVMs are placed through HostProcess; details decided by
+      Claude, user may veto): each ComputeVM owns exactly ONE HostProcess child (ownerReference, placement
+      supervisor, restartPolicy Never) whose spec is vmruntime's VM UnitSpec; the supervisor is the only
+      caller of Manager.Start, does the generic identity rows (unit, InvocationID, pid + start ticks, boot id,
+      backend mismatch) and stops an active unit on a mismatch at once; this controller adds the VM rows
+      (firecracker GET / id and state, the API socket) and maps the child's status into the Verdict below.
+      Releasing: SendCtrlAltDel and the grace here, then the child is deleted (the supervisor stops the unit
+      with SIGKILL). The bidder's kcp is one slot on kine-sqlite (decided by the user 2026-10-12), so a kcp
+      restart is a short gap in which units keep running and the controller re-adopts every VM when kcp
+      answers; nothing is stopped because kcp was down.
       internal/computevm, a client-go informer loop over the bidder's kcp (decided by Claude, user may veto,
       2026-10-11: no dependency on the forked deno-kcp controller factory). A ComputeVM without
       deletionTimestamp: Preparing (image ensure, prep), Booting (unit started), Running (GET / Running). With
@@ -451,7 +606,11 @@ items:
       TestAVMMExitObservedByWatchMakesTheComputeVMLostWithinOneEvent (E8 defect a),
       TestTheFinalizerStaysUntilTheWorkDirIsGoneForReleasedLostAndFailed and
       TestAWorkDirWithNoComputeVMAndNoUnitIsRemovedAfterTheGrace (E8 defect b; a fake vms/ tree seeded with
-      32 orphan dirs is empty after one pass past the grace, another handle's dirs untouched). Red first.
+      32 orphan dirs is empty after one pass past the grace, another handle's dirs untouched),
+      TestEveryComputeVMOwnsExactlyOneHostProcessAndNoOtherCodePathStartsAVMUnit,
+      TestAnObjectPlacedByAnotherBackendIsLostNotAdopted, TestAKcpRestartStopsNoVMAndEveryVMIsReadoptedAfter;
+      with stand-in VMMs on proc (dev instance) and systemd-user: TestACoreRestartUnderTheProcBackendAdoptsEveryVMUnit.
+      Red first.
     done_when: "offline tests green; live proofs are M6-*."
     risks: ["A false Lost costs a tenant a VM (LXD shipped this bug); every Lost row names a definite answer from the kernel or systemd, and the tests pin that transport errors never reach a Lost row."]
     status: todo
@@ -583,22 +742,63 @@ items:
     risks: ["oidc-issuer-hono publishes a single key today; overlapping keys change its JWKS shape, which OpenBao's JWT auth already accepts (it verifies by kid)."]
     status: todo
     evidence: []
+  - id: M4-CONTRACT-STORE-FILE
+    milestone: M4
+    title: "NOW: a restarted TypeScript bidder keeps its receipts and tombstones - market-bidder ContractStore load()/save and a file-backed store in compute-provider-firecracker"
+    depends_on: []
+    decision: >
+      Split from M4-CONTRACT-RESTORE by the user 2026-10-12: the file-backed ContractStore and market-bidder's
+      load()/onContractChange land now, independent of the Go path, and the terminated-receipt tombstones are
+      persisted too. Live reason: bidder restarts during testing kept losing receipts; a guest leaked on
+      2026-10-12T01:31Z (vm.delete after a restart hit an unknown receipt; first recorded 2026-10-07). Today
+      (atproto-market main bdd423b) activeContracts is in memory (market-bidder/mod.ts), onContractChange is
+      an event hook with no store behind it (abc/market-bidder/mod.ts:93), and TerminatedReceipts is a bounded
+      in-memory set (abc/market-bidder/mod.ts:37, 1024 entries). Decided by Claude, user may veto: the ABC
+      gains interface ContractStore {load(): Promise<StoredContracts>; save(event: ContractEvent):
+      Promise<void>; saveTombstone(t: Tombstone): Promise<void>} where StoredContracts carries the active
+      contracts (receipt uri+cid, accept uri+cid, acceptAuthor, acceptedAt, providerId, submitEventUrl) and
+      the tombstones (receipt, reason, at); createMarketBidder({contractStore?}) awaits load() BEFORE it
+      subscribes to any stream, seeds activeContracts (providerIdPromise = Promise.resolve(providerId)) and
+      TerminatedReceipts, and awaits save() inside the handler that changes a contract (the M2-CLAIM-RECEIPT
+      "every handler awaits its write" pattern), so a contract the bidder acknowledged is on disk first. The
+      file impl (a sibling impl package, e.g. lib/market-bidder-contract-store-fs, ABC-layered, used by the
+      firecracker provider's wiring) writes one JSON file per receipt under the provider's work root by
+      temp-file + rename + fsync of the dir, tombstones in the same tree with a TTL longer than the longest
+      requester retry, and drops a contract file only after its destroy completed and its tombstone exists.
+      On load, a stored contract whose guest is gone (the provider's own probe) is tombstoned with
+      vmm_exited and released once. No market record changes; both providers stay (decided by the user
+      2026-10-07); the ComputeVM-backed store for compute-provider-kcp stays M4-CONTRACT-RESTORE.
+    files: ["atproto-market/lib/abc/market-bidder/mod.ts (ContractStore, Tombstone)", "atproto-market/lib/market-bidder/mod.ts (load before subscribe, awaited save)", "atproto-market/lib/market-bidder-compute/mod.ts (tombstones through the store)", "atproto-market/lib/market-bidder-contract-store-fs/ (new impl package)", "atproto-market/hono-bidder/mod.ts and cli-args-env (store path option)", "hono-compute-provider/lib/compute-provider-firecracker (guest probe on load)"]
+    test_first: >
+      atproto-market test/market_bidder_contract_restore_test.ts: a bidder seeded from a ContractStore
+      answers vm.delete for that receipt with 200 and destroys once (today 400 unknown receipt); 'a tombstone
+      survives a restart: a late vm.delete after the restart answers 200 already-terminated';
+      'load() completes before the first stream subscription'; 'a crash between accept and save leaves no
+      contract the bidder acknowledged unsaved' (save awaited before the ack); the fs store's own tests (atomic
+      write, a torn temp file ignored on load, tombstone TTL). Live on hat-8 through the RFP flow
+      (alice-request.sh -> RFP -> bid -> accept -> cloud-init, firecracker provider): rent a guest, restart the
+      bidder unit, vm.delete answers 200, the guest and its work dir are gone; and a guest powered off, the
+      bidder restarted, then a late vm.delete answers 200 already-terminated. Red first.
+    done_when: "suites green; both live readings recorded (UTC) with no leaked guest or work dir; pushed on main in atproto-market and hono-compute-provider."
+    risks: ["A store written on a slow disk delays the accept ack by the fsync; measured and recorded."]
+    status: todo
+    evidence: []
   - id: M4-CONTRACT-RESTORE
     milestone: M4
     title: A restarted bidder rebuilds its contracts from the ComputeVMs and still honours vm.delete
-    depends_on: [M3-BIDDER-FLAG, M2-CONTROLLER]
+    depends_on: [M4-CONTRACT-STORE-FILE, M3-BIDDER-FLAG, M2-CONTROLLER]
     decision: >
-      Closes the live finding (restart loses receipts, vm.delete fails, guest leaks). market-bidder gains
-      an optional ContractStore in its ABC (load() seeds activeContracts before the bidder subscribes;
-      onContractChange is the save path); compute-provider-kcp implements it on ComputeVM spec.contract,
-      seeding providerIdPromise = Promise.resolve(name) and acceptToContract. The firecracker provider gets
-      a file-backed ContractStore under its work root so it stops leaking too (both providers stay,
-      decided by the user 2026-10-07). No market record changes.
-    files: ["atproto-market/lib/abc/market-bidder/mod.ts", "atproto-market/lib/market-bidder/mod.ts", "hono-compute-provider/lib/compute-provider-kcp", "hono-compute-provider/lib/compute-provider-firecracker (file store)"]
+      Closes the live finding (restart loses receipts, vm.delete fails, guest leaks) for compute-provider-kcp.
+      Since 2026-10-12 (third fold, split by the user) the ContractStore ABC, market-bidder's load()/save and
+      the firecracker provider's file store are M4-CONTRACT-STORE-FILE; this item implements the same
+      ContractStore on ComputeVM spec.contract in compute-provider-kcp, seeding providerIdPromise =
+      Promise.resolve(name) and acceptToContract, with tombstones from Lost/released ComputeVMs. No market
+      record changes.
+    files: ["hono-compute-provider/lib/compute-provider-kcp (ContractStore over ComputeVMs)"]
     test_first: >
-      atproto-market test/market_bidder_contract_restore_test.ts: a bidder seeded from a ContractStore
-      answers vm.delete for that receipt with 200 and destroys once (today 400 unknown receipt); red first.
-    done_when: "green for both stores; existing market-bidder suite green."
+      atproto-market test/market_bidder_contract_restore_test.ts run against the ComputeVM-backed store (fake
+      kcp): a bidder seeded from it answers vm.delete with 200 and destroys once; red first.
+    done_when: "green for the ComputeVM store; existing market-bidder suite green."
     risks: []
     status: todo
     evidence: []
@@ -651,7 +851,7 @@ items:
       its reason'; live on the market bed (guest born via runComputeContract): a guest powered off from inside
       ends the requester's ssh within seconds with vm_session_ended_by_bidder and no vm.delete is submitted.
     done_when: "TS side green (done); Go controller and compute-provider-kcp emit it from Lost verdicts at re-population and from unit failure, tests green; the live reading recorded with UTC timestamps."
-    risks: ["Tombstones are in memory: a bidder restarted between a guest's end and the requester's vm.delete answers 'unknown receipt' until M4-CONTRACT-RESTORE persists contracts (and with them the terminated set)."]
+    risks: ["Tombstones are in memory: a bidder restarted between a guest's end and the requester's vm.delete answers 'unknown receipt' until M4-CONTRACT-STORE-FILE persists contracts and the terminated set (split out 2026-10-12 to land now)."]
     status: doing
     evidence:
       - "2026-10-12 atproto-market (branch pre-iroh) eb2aa82: lexicon terminated.json, generated market-lexicons types, COMPUTE_EVENTS_VM_TERMINATED_NSID and VM_TERMINATED_REASONS; test/vm_terminated_lexicon_test.ts red (missing exports) then 4/4 green."
@@ -664,8 +864,13 @@ items:
   - id: M4-HOST-KEYS
     milestone: M4
     title: Guest SSH host keys are guest-reported in a bidder-signed vm.hostKeys record and every ssh to a guest verifies them - no host-side scan, no TOFU
-    depends_on: []
+    depends_on: [M1-PROTOCOL-CHECKLIST, M1-QR-DEPLOY]
     decision: >
+      Third fold 2026-10-12 (decided by the user): vm.hostKeys follows M1-PROTOCOL-CHECKLIST in order -
+      lexicon, the bidder role set in typescript-helpers, did-key-associator's regenerated client scope
+      deployed with M1-QR-DEPLOY's --static-only mode, the bidder re-signed in through the QR - before any
+      live run publishes it. The door's ContractState.hostKeys rides in M6-CLAIM-RESUME's one NodeClaim
+      schema revision, so the door half lands with or after that revision.
       Decided by the user 2026-10-12: guest SSH host keys are guest-reported, replicating how onNetwork works:
       new atproto record(s) plus plumbing so the requester receives the host key(s) with the ssh command;
       request-vm-ssh and the gateway/door validate against the sent key as the known host key (no TOFU, no
@@ -726,8 +931,18 @@ items:
   - id: M5-RUN-BIDDER
     milestone: M5
     title: socialweb-computer run bidder as a user unit of the shared lingering bidder account, no docker, least-privilege deno
-    depends_on: [M2-CONTROLLER, M3-BIDDER-FLAG, M4-BIDDER-VAULT, M4-BIDDER-BAO-SYNC, M4-CONTRACT-RESTORE, "0008:M2-SERVICE-TEMPLATE", "0006:M2-KCP-PORT0", "0006:M1-INSTALL", "0006:M2-HOST-CONTRACT"]
+    depends_on: [M2-CONTROLLER, M3-BIDDER-FLAG, M4-BIDDER-VAULT, M4-BIDDER-BAO-SYNC, M4-CONTRACT-RESTORE, "0008:M2-SERVICE-TEMPLATE", "0006:M2-KCP-PORT0", "0006:M1-INSTALL", "0006:M2-HOST-CONTRACT", "0006:M2-BOOTSTRAP-LAYER", "0006:M2-HOSTPROCESS-KIND"]
     decision: >
+      Third fold 2026-10-12 (decided by the user): the handle's kcp is ONE slot on kine-sqlite behind a
+      port-0 front, in the bootstrap layer (installed units socialweb-kcp-<hid>-kine@a, socialweb-kcp-<hid>@a,
+      socialweb-kcp-<hid>-front written by `install bidder --handle`; devsup units in dev), and a kcp upgrade
+      is a short restart of that slot that VMs never notice (0006 M2-KCP-SLOTS, M3-KCP-ROLL); the bidder
+      vault and every VM are HostProcess objects placed by the supervisor. Dev run mode (decided by the user
+      2026-10-12; details decided by Claude, user may veto, dev-run-mode.md 5): `run bidder
+      --host-backend=proc --instance x` runs with no shared account, no install and no linger (the account
+      check, the QR-guard's account binding and check-host run only under host-backend=systemd-user), and
+      `--host-backend` is required (no default). The deno denies cover devsup's socket because it lives under
+      $XDG_RUNTIME_DIR.
       Decided by the user 2026-10-11: ONE shared lingering account (swc-bidder) for all bidder handles, units
       namespaced by handle; the bidder lives in that account's USER manager; explicit deno permissions for the
       bidder (no -A, no --allow-run, no /dev/kvm, no D-Bus socket path), enforced in the DenoPod template and
@@ -738,8 +953,9 @@ items:
       socialweb-computer-bidder@.service and enables the handle's instance. `run bidder --handle <h>` (ExecStart=<state>/bin/current/socialweb-computer
       run bidder --handle %i; Restart=always; default KillMode=control-group - the 2026-10-07 KillMode=mixed is
       removed: VM and vault units are separate cgroups and survive any KillMode, and mixed would SIGKILL deno
-      with no graceful stop): the handle's kcp slots on kine -> postgres behind a port-0 front
-      (0006:M2-KCP-SLOTS, M2-KCP-PORT0), the owned deno-kcp provider, the bidder set
+      with no graceful stop): the handle's single kcp slot on kine-sqlite behind a port-0 front
+      (0006:M2-KCP-SLOTS, M2-KCP-PORT0; corrected 2026-10-12 from "kcp slots on kine -> postgres", which the
+      user vetoed), the owned deno-kcp provider, the bidder set
       (computevms, hostprocesses, workspace root:bidder, a ServiceAccount limited to computevms,
       computevms/status and Secrets there), the bidder vault, token rotation, the ComputeVM controller, and the
       bidder DenoPod with --compute-provider-kcp and every operator option. The DenoPod's deno argv grants no
@@ -756,7 +972,9 @@ items:
       TestTheBidderUnitHasNoKillModeMixed, TestRunBidderRefusesAnAccountOtherThanItsHandle,
       TestTheBidderDenoPodArgvGrantsNoRunFfiBusOrKvm; behind livegate on hat-8:
       TestDenoInTheBidderPodCannotOpenDevKvmOrDialTheUserBus (a probe entry in the pod: Deno.open('/dev/kvm')
-      and a unix connect to $XDG_RUNTIME_DIR/systemd/private and the bus are PermissionDenied). Red first.
+      and a unix connect to $XDG_RUNTIME_DIR/systemd/private and the bus are PermissionDenied); on proc in a
+      dev instance: TestDenoInTheBidderPodCannotDialTheDevsupSocket and TestRunBidderOnProcNeedsNoAccount;
+      TestRunBidderWithoutAHostBackendExits2. Red first.
     done_when: "tests green; on hat-8 the unit runs under the shared account and `kubectl get computevms` on its kcp answers."
     risks: ["Handles on one host still share a uid for their cores and deno processes (shared account, decided by the user 2026-10-11); a VMM escape no longer reaches them, because each VMM runs in its own subuid sub-range owning no bidder file (decided by the user 2026-10-12, M2-VM-RUNTIME). deno's permission sandbox remains the only boundary between a bidder's deno and its own user manager."]
     status: todo
@@ -777,11 +995,15 @@ items:
       measured value (with margin) becomes the default stopGraceSeconds in versions.json. E8 (2026-10-12)
       already read 0.21 s on an IDLE guest; the readings here are taken with the k3s agent joined and pods
       running, which is the window that sets the default. After each release: no unit, no cgroup and no
-      work dir of the released VM remain (E8 defects a and b; ACC7-NO-LEAK).
+      work dir of the released VM remain (E8 defects a and b; ACC7-NO-LEAK). Also (decided by the user
+      2026-10-12: a bidder kcp upgrade is a short restart of its one slot): `units roll kcp` on the bidder to a
+      different kcp asset while the guest runs - the VM unit's InvocationID, firecracker pid and start ticks
+      unchanged, the ComputeVM re-adopted Running, the kcp-down seconds recorded, the guest's next onNetwork
+      accepted.
     files: ["internal/marketbed/live_test.go (TestABidderUpgradeLeavesItsVMRunningAndStillReleasesIt)", "internal/versions/versions.json (stop grace)"]
     test_first: "The live test, red until upgrade and re-population exist (today the guest leaks on restart)."
     done_when: "PASS recorded with UTC timestamps; grace readings under a k3s workload recorded; vms/ work-dir count equals live ComputeVMs after every release; zero ssh sessions to the guest."
-    risks: ["Needs the bidder account in kvm and the bed's fixed ports free on hat-8."]
+    risks: ["Needs the bidder account in kvm; the bed's fixed ports are gone once 0008:M1-BED-PARALLEL lands (a dependency of 0008:M4-TESTBED-PORT)."]
     status: todo
     evidence: []
   - id: M6-CLAIM-RESUME
@@ -883,10 +1105,10 @@ items:
       `loginctl terminate-user`) as root stops every unit; the restarted bidder marks each ComputeVM
       Lost(UnitGone) and starts nothing, and the requester side replaces it through a new RFP (plan 0005
       M3-NODE-LOSS) and releases the old receipt, which deletes the Lost ComputeVM. Case (a) is written first
-      against the firecracker provider before M4-CONTRACT-RESTORE, where it fails (vm.delete refused, guest
-      leaks).
+      against the firecracker provider before M4-CONTRACT-STORE-FILE, where it fails (vm.delete refused, guest
+      leaks; seen live 2026-10-12T01:31Z).
     files: ["internal/marketbed/live_test.go (TestAKilledBidderStillReleasesTheVMItRentedBeforeTheKill, TestARestartedBidderAdoptsItsVM, TestALoggedOutLingeringBidderKeepsItsVM, TestAUserManagerRestartMakesEveryVMLostAndTheRequesterReplacesIt)"]
-    test_first: "Case (a): FAIL with the firecracker provider today (recorded), PASS with both providers after M4-CONTRACT-RESTORE; cases (b)-(d) red until M5-RUN-BIDDER."
+    test_first: "Case (a): FAIL with the firecracker provider today (recorded), PASS with it after M4-CONTRACT-STORE-FILE and with compute-provider-kcp after M4-CONTRACT-RESTORE; cases (b)-(d) red until M5-RUN-BIDDER."
     done_when: "readings recorded for all four cases; zero ssh sessions."
     risks: ["Case (d) stops every unit of the account on hat-8, including any other bed's; it runs on a dedicated test account."]
     status: todo
@@ -899,7 +1121,7 @@ items:
       Plan 0005's join (M3-UNITS, M3-JWT) needs a stable issuer from the winning bidder, which
       M4-BIDDER-VAULT provides. A door-driven NodeClaim rented from a run bidder host joins, runs a pod,
       stays Ready through a bidder upgrade, and is released through the claim's deletion. The guest boots
-      the CI-built image (M1-GUEST-IMAGE), so this is also the proof that its kernel carries what k3s needs.
+      the build-host-script image (M1-GUEST-IMAGE), so this is also the proof that its kernel carries what k3s needs.
     files: ["the live test that owns the door-driven join at the time"]
     test_first: "The join test upgrading the bidder mid-run; fails while the issuer moves, passes after."
     done_when: "node Ready, pod Running, bidder upgraded, node still Ready, release vm.delete 200, zero ssh sessions."
@@ -908,7 +1130,9 @@ items:
     evidence: []
 semantics:
   bidder_deno_restarts_or_upgrades: "DenoPods restart on the new closure; setup() rebuilds getDroplet from ComputeVMs; ContractStore seeds activeContracts; the vault keeps the did, issuer URL and keys; VMs never notice."
-  bidder_core_binary_upgraded_or_killed: "the controller and the deno processes stop with the bidder unit (control-group); VM units, the vault unit and the handle's kcp units (pg, kine, slot, front; 0006:M2-KCP-SLOTS, route decided 2026-10-12) are separate cgroups and keep running; on start the controller re-populates by the Verdict (unit, InvocationID, firecracker pid + start ticks, GET / id and state)."
+  bidder_core_binary_upgraded_or_killed: "the controller and the deno processes stop with the bidder unit (control-group); VM units, the vault unit and the handle's kcp units (kine on sqlite, the one slot, front; 0006:M2-KCP-SLOTS, corrected 2026-10-12) are separate units and keep running; on start the controller re-populates by the Verdict (unit, InvocationID, firecracker pid + start ticks, GET / id and state)."
+  bidder_kcp_upgraded: "the handle's one kcp slot is restarted on the new asset (sqlite store copied first); kcp is down for its restart (~6 s measured on kine); VM units and the vault keep running; once kcp answers the controller re-adopts every VM by the Verdict; no VM is stopped because kcp was down (decided by the user 2026-10-12)."
+  dev_instance: "under host-backend=proc every unit above is a child of the instance's devsup instead of the user manager: units survive a core restart and are adopted; every unit dies with devsup (dev down, crash), which is read as a user-manager stop (every ComputeVM Lost(UnitGone)); guests still come up only through runComputeContract (decided by the user 2026-10-12)."
   bidder_logout: "with linger, logging out of every session changes nothing."
   user_manager_stops: "user@<uid> restart, `loginctl terminate-user`, or linger removed: every unit stops; treated as a reboot - every ComputeVM Lost(UnitGone), none booted again."
   gateway_upgraded: "control planes in their own member units keep serving (0006:M3-CLUSTER-UNITS); k3s/kine upgrades are blue/green slots behind the per-cluster front (0006:M3-CP-SLOTS); the door resumes Bidding and Provisioning claims (M6-CLAIM-RESUME) and re-populates its ownership table from claims, receipts, market records and Nodes; joined nodes stay Ready; no RFP and no vm.delete is caused by the restart."
@@ -963,6 +1187,14 @@ acceptance:
       evidence: []
     - id: ACC7-CLAIM-RESUME
       text: "A door restarted while a claim is Bidding or Provisioning (node born via runComputeContract on the market bed) resumes it to Joining with the same secrets URL, one RFP, one receipt and no vm.delete (decided by the user 2026-10-12)."
+      status: todo
+      evidence: []
+    - id: ACC7-SCOPES
+      text: "Every collection the bidder or the requester writes is in its oauth-scope role set and in the client scope deployed at qr.fedfork.com (M1-PROTOCOL-CHECKLIST's check tests green), and no live run of this plan logged a 403 ScopeMissingError (decided by the user 2026-10-12)."
+      status: todo
+      evidence: []
+    - id: ACC7-RESTART-KEEPS-RECEIPTS
+      text: "A bidder restarted with a guest rented (firecracker provider via M4-CONTRACT-STORE-FILE, compute-provider-kcp via M4-CONTRACT-RESTORE) answers vm.delete 200 and destroys the guest once; a late vm.delete for a guest that ended before the restart answers 200 already-terminated; no guest or work dir leaks (decided by the user 2026-10-12)."
       status: todo
       evidence: []
 questions_for_user: []
