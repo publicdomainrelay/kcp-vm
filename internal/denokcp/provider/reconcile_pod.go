@@ -99,6 +99,9 @@ func (p *Provider) reconcilePod(ctx context.Context, ref Ref, pod *v1alpha1.Deno
 	status.Phase = res.Phase
 	if !reflect.DeepEqual(status, pod.Status) {
 		if err := p.opts.Runtime.WritePodStatus(ctx, ref, status); err != nil {
+			if runID != "" && runID != res.RunID {
+				_ = p.opts.PodRunner.Stop(ctx, runID)
+			}
 			return 0, false, err
 		}
 	}
