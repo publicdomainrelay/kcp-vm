@@ -175,6 +175,16 @@ func Reconcile(o Observed) Result {
 		case hostsvc.VerdictUnknown:
 			return Result{Phase: obj.Status.Phase, Unknown: true, Message: "Unknown: " + o.Check.Detail}
 		case hostsvc.VerdictRunning:
+			if obj.Spec.RestartKey != obj.Status.RestartKey {
+				spec, err := UnitSpec(obj, o.Exec)
+				if err != nil {
+					return Result{Phase: v1alpha1.HostProcessPhaseFailed, Message: err.Error()}
+				}
+				return Result{Phase: v1alpha1.HostProcessPhaseStarting, Identify: true,
+					Ops: []Op{{Kind: OpStop, Unit: obj.Spec.Unit}, {Kind: OpStart, Spec: spec, Unit: spec.Name}},
+					Message: fmt.Sprintf("restarted in place: spec.restartKey is %q and the running process started under %q",
+						obj.Spec.RestartKey, obj.Status.RestartKey)}
+			}
 			return Result{Phase: v1alpha1.HostProcessPhaseRunning, Identify: o.Check.Status.InvocationID != rt.InvocationID,
 				Message: "adopted by unit name and InvocationID"}
 		}

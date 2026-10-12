@@ -72,6 +72,8 @@ type HostProcessSpec struct {
 
 	Readiness *HostProcessReadiness `json:"readiness,omitempty"`
 
+	RestartKey string `json:"restartKey,omitempty"`
+
 	Placement HostProcessPlacement `json:"placement"`
 }
 
@@ -169,6 +171,8 @@ type HostProcessStatus struct {
 	Runtime *HostProcessRuntime `json:"runtime,omitempty"`
 
 	LastResult *HostProcessResult `json:"lastResult,omitempty"`
+
+	RestartKey string `json:"restartKey,omitempty"`
 
 	Listeners []HostProcessListener `json:"listeners,omitempty"`
 

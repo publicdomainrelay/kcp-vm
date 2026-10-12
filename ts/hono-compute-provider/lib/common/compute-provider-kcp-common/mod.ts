@@ -177,6 +177,7 @@ export interface HostProcessSpec {
   privateHostname?: string;
   fdStore?: number;
   readiness?: HostProcessReadiness;
+  restartKey?: string;
   placement: HostProcessPlacement;
 }
 
@@ -223,6 +224,7 @@ export interface HostProcessStatus {
   message?: string;
   runtime?: HostProcessRuntime;
   lastResult?: HostProcessResult;
+  restartKey?: string;
   listeners?: HostProcessListener[];
   conditions?: Condition[];
 }
@@ -384,7 +386,7 @@ export const HOST_PROCESS_RESOURCE: ApiResource = {
   listKind: "HostProcessList",
   plural: "hostprocesses",
   singular: "hostprocess",
-  schema: "v1alpha1-2.hostprocesses.socialweb.computer",
+  schema: "v1alpha1-3.hostprocesses.socialweb.computer",
   export: "hostprocesses",
 };
 
@@ -1140,6 +1142,9 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       "readiness": {
         "ref": "HostProcessReadiness"
       },
+      "restartKey": {
+        "type": "string"
+      },
       "restartPolicy": {
         "ref": "HostProcessRestartPolicy"
       },
@@ -1196,6 +1201,9 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       },
       "phase": {
         "ref": "HostProcessPhase"
+      },
+      "restartKey": {
+        "type": "string"
       },
       "runtime": {
         "ref": "HostProcessRuntime"

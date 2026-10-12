@@ -255,7 +255,11 @@ func setCondition(o *v1alpha1.HostProcess, t string, ok bool, reason, msg string
 func (s *Supervisor) apply(ctx context.Context, o v1alpha1.HostProcess, r Result) v1alpha1.HostProcess {
 	m := s.c.Manager
 	log := s.c.log().With("hostprocess", o.Name, "unit", o.Spec.Unit)
+	started, stopFailed := false, false
 	for _, op := range r.Ops {
+		if stopFailed {
+			break
+		}
 		switch op.Kind {
 		case OpStart:
 			st, err := m.Start(ctx, op.Spec)
@@ -272,10 +276,12 @@ func (s *Supervisor) apply(ctx context.Context, o v1alpha1.HostProcess, r Result
 				continue
 			}
 			s.placed[op.Unit] = true
-			log.Info("placed", "state", string(st.State), "adopted", st.Adopted)
+			started = true
+			log.Info("placed", "state", string(st.State), "adopted", st.Adopted, "restartKey", o.Spec.RestartKey)
 		case OpStop:
 			if err := m.Stop(ctx, op.Unit); err != nil {
 				log.Warn("stop", "err", err.Error())
+				stopFailed = true
 				continue
 			}
 			delete(s.placed, op.Unit)
@@ -289,6 +295,9 @@ func (s *Supervisor) apply(ctx context.Context, o v1alpha1.HostProcess, r Result
 	}
 	next.Status.Phase, next.Status.LostReason, next.Status.Message = r.Phase, r.LostReason, r.Message
 	next.Status.ObservedGeneration = o.Generation
+	if started {
+		next.Status.RestartKey = o.Spec.RestartKey
+	}
 	if r.Identify {
 		if id, err := m.Identify(ctx, o.Spec.Unit, 0); err == nil {
 			st, _ := m.Inspect(ctx, o.Spec.Unit)
