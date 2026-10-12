@@ -49,9 +49,40 @@ Leases remain only for ports a tenant cluster needs stable across restarts (sect
 fails on any fixed port in a manifest or default behind the edge (plan 0006 M1-NO-FIXED-PORTS).
 
 What stays about the machine: `/dev/kvm`, the systemd user manager and its units (production placement
-only), `install`, the host contract, and the bootstrap layer that runs an instance's kcp itself. How
-today's multi-server processes decompose into application instances is research pending
-(`multi-server-to-kcp.md` under `docs/research/`; fold pending).
+only), `install`, the host contract, and the bootstrap layer that runs an instance's kcp itself.
+
+**How today's multi-server processes decompose** (folded 2026-10-12 from `multi-server-to-kcp.md` under
+`docs/research/`, with the user's answers to its questions overriding it where they differ; plan 0006
+`principle.decomposition`):
+
+- **One root object per application** in its own kcp - MarketBidder, MarketRequester, Gateway,
+  MarketNetwork (plan 0006 M2-APP-CONTROLLER). Its spec carries the application's options and profile; the
+  core renders the profile into owned children, and a profile switch deletes what the new profile omits.
+- **Strict kcp per application, inside a market bed too.** The bed is itself an application,
+  MarketNetwork: its kcp runs the shared atproto services (PLC, relay, dispatchers, PDSes, the QR relay)
+  and holds each child application's bootstrap layer as HostProcess objects, so every bidder, gateway and
+  requester invocation in the bed runs its own kcp. Children learn the network only from values the
+  composer copies onto their root objects; the DNS shim resolves only its own application's names.
+- **Every CLI option stays, kcp-native.** Each hono-bidder and request-vm-ssh option becomes a root-object
+  field or a profile (only legacy guest transports are removed). Sign-in is an object, MarketIdentity
+  (plan 0007 M1-MARKET-IDENTITY): the URL to visit, the association to approve and an expired session are
+  status that the foreground CLI renders; tests complete it through hono-pds's session minting. The
+  ephemeral-PDS mode (in-process repo + association records) stays for bidder and requester.
+- **kcp only.** No standalone `deno run hono-bidder` or `request-vm-ssh`; every run goes through
+  `socialweb-computer` and kcp.
+- **The requester is a fresh kcp per invocation** whose state dir (kcp root + vault) persists;
+  `run request release|resume <name>` restarts that kcp to finish the contract (plan 0008 M4-RUN-REQUEST).
+- **Secrets only in the application's own OpenBao** - OAuth sessions, repo key, relay keypairs, OIDC JWK,
+  requester key, door keys; kcp objects hold references.
+- **Every listener reports into status** (DenoPod `status.listeners`: tcp, unix, relay ingress URL), so no
+  peer or test scrapes stdout for a DID, a port or readiness.
+- **iroh is the only guest transport.** The ssh gateway moves to iroh first (plan 0008
+  M1-SSH-GATEWAY-IROH), then the tunnel, fedproxy-ssh, fedproxy-web and wootty modules, websocat
+  ProxyCommand paths, relay-FQDN guest addresses and the guest JSR registry are deleted (plan 0008
+  M1-STRIP-LEGACY-TRANSPORTS).
+- **Components:** the bidder's guest-facing endpoints (OIDC issuer, `/v1/on-network`, `/v1/host-keys`)
+  become one DenoPod per provider once its keys are in the vault (plan 0007 M5-BIDDER-COMPONENTS); the
+  door's node fulfiller stays inside the door for now.
 
 ## 1. The objective, stated once
 
@@ -3447,9 +3478,16 @@ hat-8 needs) and the early bed item P8-M1-BED. Later on 2026-10-12 the user's pa
 the plans' organizing principle (section 0): one kcp per application instance, never per machine;
 modes as profiles over one manifest set; applications meeting only over the atproto market protocol;
 port 0 behind the edge with addresses held in kcp (new check item 0006 M1-NO-FIXED-PORTS); every
-workstream testing in its own market bed; the virtual clusters project the one traditional use. The
-decomposition of today's multi-server processes into application instances stays open, pending
-`multi-server-to-kcp.md` (fold pending).
+workstream testing in its own market bed; the virtual clusters project the one traditional use. Later
+the same day the decomposition of today's multi-server processes into application instances was folded
+(section 0; `multi-server-to-kcp.md` with the user's answers): one root object per application (0006
+M2-APP-CONTROLLER), strict kcp per application inside a bed too, sign-in as a MarketIdentity (0007
+M1-MARKET-IDENTITY, early), kcp only, a fresh kcp per requester invocation with a durable state dir (0008
+M4-RUN-REQUEST), secrets only in each application's OpenBao, listener reports in DenoPod status (0008
+M2-DENOPOD-LISTENERS), one network value and fetch adapter (0008 M2-MARKET-NETWORK), and iroh as the only
+guest transport - the ssh gateway ported first (0008 M1-SSH-GATEWAY-IROH, early), then every other
+transport stripped (0008 M1-STRIP-LEGACY-TRANSPORTS); also 0007 M3-BIDDER-ACCOUNT-PDS,
+M3-OIDC-ISSUER-INSTANCE, M3-BIDDER-COMPOSER, M5-BIDDER-COMPONENTS and 0008 M3-DOOR-STATE-VAULT.
 **The live backlog is `NEXT.yaml`, which this section mirrors:
 an item is written here when it is opened and moves to section 15, with its readings, when it is
 closed.** The practice that produced the batch is the one worth keeping: the artefact was run and each

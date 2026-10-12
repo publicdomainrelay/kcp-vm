@@ -193,7 +193,14 @@ open:
       edge with addresses in kcp (check: 0006 M1-NO-FIXED-PORTS); every workstream tests in its own market
       bed, bobvmbuilder + alice are a final soak only. The one traditional use is the virtual clusters
       project (items tagged kcp_use: traditional-exception). Decomposing today's multi-server processes into
-      application instances: docs/research multi-server-to-kcp.md, fold pending.
+      application instances: FOLDED 2026-10-12 (fifth fold; plan 0006 principle.decomposition) from
+      multi-server-to-kcp.md with the user's section-7 answers - one root object per application (0006
+      M2-APP-CONTROLLER); STRICT kcp per application inside a bed too (the bed is a MarketNetwork composing
+      children that each run their own kcp; the nested-workspace bed rejected); every hono-bidder and
+      request-vm-ssh option kept kcp-native, sign-in as a MarketIdentity (0007 M1-MARKET-IDENTITY); kcp only, no
+      standalone deno CLIs; a fresh kcp per requester invocation with a durable state dir; sessions and keys
+      only in each application's OpenBao; cross-app values only through the composer; iroh the only guest
+      transport (0008 M1-SSH-GATEWAY-IROH, then M1-STRIP-LEGACY-TRANSPORTS).
     body: >
       OPEN: the plan 0005 gate is satisfied (ACC-ZERO, ACC-MESH, ACC-NOSSH done); items start per their
       depends_on. M0-XOS-GATE DONE 2026-10-12 (merged; check.sh gates darwin/windows build+vet). M0-KCP-SPIKE
@@ -231,7 +238,12 @@ open:
       members, VM units) is a HostProcess placed at runtime. The dev run mode is kcp-native now (decided by
       the user 2026-10-12): host-backend required with no default (install writes systemd-user, dev passes
       proc), gateway dev store sqlite (quick) or postgres (bed/prodlike), k3s node password by a per-instance
-      userns bind-mount, AppArmor report-only in dev, one uid for every role in dev.
+      userns bind-mount, AppArmor report-only in dev, one uid for every role in dev. Fifth fold 2026-10-12:
+      M1-CLI states the application-verb contract (apply the root object with --profile, watch, render
+      pending actions; no verb opens a listener or spawns deno; options.json gains `profile`; its scan test
+      lands with M2-APP-CONTROLLER so the binary-base slice is not widened); M1-DEV-INSTANCE's `--profile bed`
+      is a MarketNetwork composing child applications with their own kcps (exits 2 naming M2-APP-CONTROLLER
+      until it lands).
     instrument: >
       Every executable the code runs has a fate in the host inventory; no rustfs or t4 name outside the
       store measurement in stack.go; an extracted asset that no longer matches its pin is replaced, not run;
@@ -263,7 +275,13 @@ open:
       Transient SERVICES in the user
       manager of a lingering account over the private socket with deadlines, PropExecStart(argv, false),
       CollectMode=inactive, MemorySwapMax=0, no AllowedCPUs/IOWeight, own slice; systemd 253+ with probed
-      features; the invariant that no socialweb code runs in a VM unit, audited from its cgroup.
+      features; the invariant that no socialweb code runs in a VM unit, audited from its cgroup. Fifth fold
+      2026-10-12: new M2-APP-CONTROLLER - each application ONE root object (MarketBidder, MarketRequester,
+      Gateway, MarketNetwork) in its own kcp, rendered by the core's appctl into owned children; a profile
+      switch deletes what it omits; option coverage (every hono-bidder and request-vm-ssh option maps to a
+      field or profile, removal only for a legacy transport); a MarketNetwork composes child applications,
+      each with its OWN kcp (bootstrap layer as HostProcess objects in the network's kcp), copying network
+      values onto their root objects as the only cross-app discovery.
     instrument: >
       A stand-in unit survives `systemctl --user restart`, kill -9, stop, daemon-reload and daemon-reexec of
       its starter and is adopted; a failed unit's Result is readable until reset; the tree audit fails a core
@@ -292,7 +310,9 @@ open:
       2026-10-12: cluster members are HostProcess children (either backend, StopSlice), fronts keep their fd
       through UnitSpec.FDStore (devsup on proc), k3s slots get their hostname and, in dev, the node password
       through `internal ns-exec`. Open note: M3-CP-SLOTS' scheduler leader election conflicts with plan 0010
-      G4-SCHED-SINGLE-SERVER (see P10).
+      G4-SCHED-SINGLE-SERVER (see P10). Fifth fold 2026-10-12: M3-SERVE-GATEWAY-KCP applies a Gateway root
+      object (profiles prod and bed; the door's TEST_* seams become bed-profile values; door accounts are
+      MarketIdentities) and depends on M2-APP-CONTROLLER.
     instrument: >
       A zero-node market cluster's /readyz never fails across `systemctl --user restart` of the gateway unit
       and an upgrade, with every member unit's InvocationID unchanged; a postgres restart stops no member;
@@ -300,7 +320,8 @@ open:
       kube-system/k3s; on the market bed (node via runComputeContract) every upgrade kind keeps the node Ready
       and owned with no vm.delete; a vault seeded with stale entries is reduced to the live set in one pass;
       a kcp roll fails no /readyz poll through the kcp front and leaves no controller gap over 5 s (61 s
-      today without the lease delete).
+      today without the lease delete); a profile switch of a root object deletes the children it omits; two
+      bidder children of one MarketNetwork run two distinct kcps.
   - id: P6-M4
     title: OPEN - a reproducible static build per linux platform within its size budget; later, a parent kcp for nesting dev instances.
     body: >
@@ -342,12 +363,20 @@ open:
       regenerated did-key-associator client scope deployed to qr.fedfork.com, and every account re-signed in
       through the QR - refresh keeps old scopes, 403 ScopeMissingError otherwise; a check test holds every
       written lexicon in its role set). compute-provider-firecracker is the gold standard; both providers stay.
+      Fifth fold 2026-10-12, EARLY by the user's order: M1-MARKET-IDENTITY (no dependency; the research's
+      M4-MARKET-IDENTITY) - kind MarketIdentity (modes oauthQr, oauthBrowser, pdsAccount, localRepo = the
+      ephemeral-PDS mode kept for bidder and requester, oauthDelegated for door accounts); every interactive
+      step (QR, association y/N, browser OAuth, session expiry) becomes status.pendingAction that the
+      foreground CLI renders, approvals are spec patches; no key, token or code in the object (vault refs
+      only); tests complete sign-in through hono-pds's session minting (createSessionInjector). M1-FC-INVENTORY
+      and M1-COMMON-EXTRACT record the guest JSR registry as not inherited (stripped, 0008).
     instrument: >
       Every exported function and logger event of the firecracker provider maps to a requirement entry;
       ComputeVM fixtures round-trip through Go and TypeScript with no backend enum; enriched user_data
       byte-identical across the extraction; an image whose sha256 differs is refused; the userns stage chosen
       with readings; the compiled QR backend starts from an empty dir; every NSID the bidder or requester
-      writes is in its role set.
+      writes is in its role set; a bed bidder runs without --skip-qr, its association approved through its
+      MarketIdentity.
   - id: P7-M2
     title: OPEN - the VM runtime with no socialweb code in the VM's tree, parity with the firecracker provider, the Verdict controller, no leaked VM or work dir.
     body: >
@@ -374,16 +403,24 @@ open:
       are gone after one pass past the grace; two stand-in VM units map disjoint subuid sub-ranges and the
       VMM uid owns no bidder file.
   - id: P7-M3
-    title: OPEN - the TypeScript provider, the bidder flag that selects it, and a NODE-LOSS clock our own outage never feeds.
+    title: OPEN - the TypeScript provider, the bidder flag that selects it, a NODE-LOSS clock our own outage never feeds; a bed bidder on its own PDS account, per-instance OIDC issuers, the bidder composer.
     body: >
-      OPEN as P7-M1. Plan 0007 items M3-TS-PROVIDER, M3-BIDDER-FLAG (adds the handle and the constant
-      guest host address), M3-NODE-LOSS-CLOCK (NotReady counts from max(lastTransitionTime, pathUpSince):
-      a cluster cold start, link or front restart never releases a node whose path returns; no
-      depends_on, can start now).
+      OPEN as P7-M1. Plan 0007 items M3-TS-PROVIDER (no guest JSR registry since the fifth fold),
+      M3-BIDDER-FLAG (adds the handle and the constant guest host address), M3-NODE-LOSS-CLOCK (NotReady
+      counts from max(lastTransitionTime, pathUpSince): a cluster cold start, link or front restart never
+      releases a node whose path returns; no depends_on, can start now). Fifth fold 2026-10-12 (startable
+      now unless noted): M3-BIDDER-ACCOUNT-PDS (today the bed bidder ignores bob's PDS pod, the
+      handle+password path builds a local repo and --atproto-pds-url is read nowhere; it becomes a
+      remote-PDS session), M3-OIDC-ISSUER-INSTANCE (oidc-issuer-hono's module-global issuer state moves into
+      the instance), M3-BIDDER-COMPOSER (after M1-MARKET-IDENTITY and 0008 M1-STRIP-LEGACY-TRANSPORTS:
+      hono-bidder's 825-line composition becomes lib/hono-factory-market-bidder-app driven by a component
+      spec; no standalone mode; the harnesses compose through it).
     instrument: >
       Against a fake kcp, provision resolves on Running and destroy only after 404; createBidConfig
       equals the firecracker record; a node NotReady during our link outage is kept for 90 s after the link
-      returns, and one NotReady before a provider restart is still released on time.
+      returns, and one NotReady before a provider restart is still released on time; a bidder's offering is
+      listed by its own PDS account with no repo served by the bidder; two issuers in one process name their
+      own issuer; hono-bidder/mod.ts under 150 lines with every bidder test green.
   - id: P7-M4
     title: OPEN - a restarted bidder keeps its issuer, its keys and its contracts (the TypeScript store NOW); guest host keys are guest-reported and verified.
     body: >
@@ -399,7 +436,12 @@ open:
       Live on hat-8 2026-10-07 a restarted bidder lost its receipts,
       vm.delete failed and the guest leaked; its issuer URL also moves, leaving one jwt mount per issuer
       in cluster vaults. The keys move into an OpenBao beside the bidder, reconciled against live
-      ComputeVMs, with one stable issuer per bidder.
+      ComputeVMs, with one stable issuer per bidder. Fifth fold 2026-10-12 (user: sessions and every key only
+      in the application's OpenBao, never kcp Secrets): M4-BIDDER-VAULT holds EVERY relay keypair by name
+      (1 + P relays, +1 for an in-process repo, all fresh per process today), the OAuth session and DPoP key
+      (MarketIdentity sessionRef) and a pdsAccount password; it depends on M3-OIDC-ISSUER-INSTANCE and
+      M1-MARKET-IDENTITY. M4-HOST-KEYS' known_hosts rule lands on the iroh ProxyCommand only (after the 0008
+      strip).
     instrument: >
       A bidder seeded from its ContractStore answers vm.delete 200 and destroys once; three starts keep
       the same did, issuer URL and JWKS; restarts and an upgrade leave one jwt mount per bidder in the
@@ -433,10 +475,17 @@ open:
       the bidder DenoPod with no -A, --allow-run or --allow-ffi and /dev/kvm and $XDG_RUNTIME_DIR denied.
       Third fold 2026-10-12 (decided by the user): the handle's kcp is one slot on kine-sqlite behind a port-0
       front in the bootstrap layer (corrects "kine -> postgres"); `run bidder --host-backend=proc` runs in a
-      dev instance with no account; --host-backend is required.
+      dev instance with no account; --host-backend is required. Fifth fold 2026-10-12: M5-RUN-BIDDER applies a
+      MarketBidder root object with --profile prod-qr (no PDS, oauthQr) | bed (own PDS DenoPod, pdsAccount) |
+      dev-local (localRepo) and renders MarketIdentity pending actions in the foreground; hono-bidder runs only
+      as the bidder DenoPod's entry from then on (exits 2 outside one; the standalone launcher and
+      bob-bidder.sh path deleted). New M5-BIDDER-COMPONENTS (user 2026-10-12): one `guest-<provider>` DenoPod
+      per provider owns the provider relay, the OIDC issuer, /v1/on-network and /v1/host-keys, so a core
+      restart never moves what guests dial; no guest-jsr pod (stripped).
     instrument: >
       The bidder user unit verifies with no KillMode=mixed; deno in the bidder pod cannot open /dev/kvm or
-      dial the user bus or the systemd private socket.
+      dial the user bus or the systemd private socket; `run bidder` shows the QR from status and returns when
+      Ready; a bidder-core restart leaves the guest's issuer and onNetwork serving.
   - id: P7-M6
     title: OPEN - bidder and gateway upgrades leave VMs running, in-flight claims resume across a door restart, recovery cases, reboot = Lost, all through the RFP flow.
     body: >
@@ -462,7 +511,8 @@ open:
       application's TypeScript components as objects of its own kcp; every DenoPod binds port 0 and the
       runner records status.address from the pod's port file (port-audit.md blocker 1, in M1-BED-PARALLEL);
       the market bed is the seed of the model and each workstream's own test bed. How today's multi-server
-      deno processes split into DenoPods per application: multi-server-to-kcp.md, fold pending.
+      deno processes split into DenoPods per application: folded 2026-10-12 (see P6-M0 principle_note; plan
+      0008 fifth fold).
     body: >
       OPEN: the plan 0005 gate is satisfied (ACC-ZERO, ACC-MESH, ACC-NOSSH done); items start per their
       depends_on, incl. plan 0006 M1-ASSETS. Plan 0008 (docs/plans/0008-embedded-deno-and-typescript-denopods.yaml)
@@ -481,10 +531,29 @@ open:
       (internal/marketbed/live_test.go:115) until this lands; ports come from the instance-keyed lease file
       (0006 M1-PORT-LEASE-INSTANCE) or bind 0 and are read back. Guests still only through the bed's
       requester (runComputeContract -> RFP -> bid -> accept -> cloud-init). Until it lands, market-bed runs on
-      hat-8 are serialized.
+      hat-8 are serialized. Fifth fold 2026-10-12 (decision text only; status untouched): ports are read back
+      from the port file, never log lines (precursor of M2-DENOPOD-LISTENERS); the bed bidder's key, repo KV
+      and session live in its per-run dir; accept.sh reads the bidder DID from the bed record, not stdout.
+      Today's bed keeps four applications in one kcp, which the user's strict rule forbids: recorded as
+      transitional, retired by M4-TESTBED-PORT; this item adds no new cross-application coupling.
     instrument: >
       No bed port literal outside the bed record; two beds from two worktrees each rent a guest through the
       RFP flow on hat-8 at the same time.
+  - id: P8-M1-IROH
+    title: OPEN, EARLY - the ssh gateway reaches guests over iroh, then every non-iroh guest transport is stripped.
+    body: >
+      Decided by the user 2026-10-12, in this order. Plan 0008 M1-SSH-GATEWAY-IROH (no dependency, startable
+      now): socialweb-computer-ssh lib/socialweb-computer-requester-inproc asks for the `tunnel` transport
+      (mod.ts:268) and runs sessions over the websocket tunnel; it moves to iroh like request-vm-ssh. Then
+      M1-STRIP-LEGACY-TRANSPORTS: the cloud-init-common tunnel, fedproxy-ssh, fedproxy-web and wootty modules,
+      websocat ProxyCommand paths, relay-fqdn guest addresses and the guest JSR registry are deleted across
+      atproto-market, hono-compute-provider and socialweb-computer-ssh (request-vm-ssh --user-data-transport
+      removed as a legacy transport). The ssh gateway's Live market CI (socialweb-computer-ssh live.yml) stays
+      green throughout. Its broader kcp-native move stays M4-RUN-GATEWAY-SSH.
+    instrument: >
+      The scan tests find no tunnel, fedproxy-ssh, fedproxy-web or wootty module, no websocat, fedproxy-client,
+      wootty or JSR_URL in source and no transport other than iroh requested; the Live market workflow green
+      after each of the two changes; a bed guest reached over iroh.
   - id: P8-M2
     title: OPEN - deno-kcp and kcp-libs forked into this repo (runner build-tagged) and run in-process; one service DenoPod template with explicit permissions.
     body: >
@@ -494,27 +563,49 @@ open:
       devsup attributes deno processes), M2-DENOKCP-INPROC (deno dies with the core user unit; tested with
       `systemctl --user restart`, kill -9 and an upgrade, and on proc in a dev instance since 2026-10-12),
       M2-SERVICE-TEMPLATE (required explicit
-      permissions, no -A, /dev/kvm and $XDG_RUNTIME_DIR denied; user 2026-10-11).
+      permissions, no -A, /dev/kvm and $XDG_RUNTIME_DIR denied; user 2026-10-11). Fifth fold 2026-10-12: new
+      M2-DENOPOD-LISTENERS (createServe writes a listener report - tcp, unix, relay ingress URLs - into the run
+      dir; the owned runner sets DenoPod.status.listeners; peers and probes resolve from status; no stdout
+      scraping), new M2-MARKET-NETWORK (startable now: one MarketNetwork value type and one fetch adapter in
+      typescript-helpers replace the four fetch patches; values reach an application only through its root
+      object); M2-SERVICE-TEMPLATE renders values from application profiles, the component spec, the
+      MarketNetwork value and the report path, never a port, HOME or stdin.
     instrument: >
       A DenoPod applied to the kcp runs on the embedded deno; a restart, a kill and an upgrade each restart
-      every recorded DenoPod on the new closure exactly once; the template refuses -A.
+      every recorded DenoPod on the new closure exactly once; the template refuses -A; a port-0 DenoPod is
+      resolved by its reported address; no fetch patch outside the adapter.
   - id: P8-M3
-    title: OPEN - the door runs as a DenoPod.
+    title: OPEN - the door runs as a DenoPod; its sessions and requester key live in the root vault.
     body: >
-      OPEN as P8-M1. Plan 0008 item M3-DOOR-DENOPOD.
+      OPEN as P8-M1. Plan 0008 items M3-DOOR-DENOPOD and M3-DOOR-STATE-VAULT (fifth fold 2026-10-12, user:
+      secrets only in the application's OpenBao): oauth-sessions.json and requester-key.hex move into the
+      gateway's root vault; each door account is a MarketIdentity (oauthDelegated). The node fulfiller stays in
+      the door DenoPod; a split is revisited after 0007 M6-CLAIM-RESUME (decided by Claude, user may veto).
     instrument: >
       On a fresh state dir the door DenoPod serves /api/config and, after a core restart, lists the claims
-      it wrote before it (no container-era state is opened; fresh deploy, user 2026-10-12).
+      it wrote before it (no container-era state is opened; fresh deploy, user 2026-10-12); a recreated door
+      with an empty state dir serves an existing session and the same requester DID.
   - id: P8-M4
     title: OPEN - run gateway ssh, run request, and the market bed driven by socialweb-computer.
     body: >
       OPEN as P8-M1. Plan 0008 items M4-RUN-GATEWAY-SSH, M4-RUN-REQUEST, M4-TESTBED-PORT (bed units
       named socialweb-bed-<runid>-..., never matched by production prefixes; since 2026-10-12 `testbed up` =
       `dev up --profile bed`, bed ports render to 0, no lock, N beds per host) and its acceptance checks
-      ACC8-*. run request keeps its contracts as ComputeContract objects in its own kcp on port 0.
+      ACC8-*. run request keeps its contracts as ComputeContract objects in its own kcp on port 0. Fifth fold
+      2026-10-12 (user's answers): M4-RUN-REQUEST reworked - a FRESH kcp per invocation whose state dir (kcp
+      root + vault under state/<invocation>) persists, `run request release|resume <name>` restart that same
+      kcp; a MarketRequester root object with a MarketIdentity (oauthQr with no repo, or localRepo = the
+      ephemeral-PDS mode); every request-vm-ssh option kept as a field or profile (--user-data-transport
+      removed as a legacy transport); request-vm-ssh reduced to the DenoPod entry (kcp only); ssh in the
+      foreground over iroh. M4-TESTBED-PORT is the STRICT bed: the dev instance is a MarketNetwork whose
+      bidder, gateway and requester-invocation children each run their own kcp; values only by copy; the
+      shim never resolves another application's name; system tests via internal/apptest.Start reading root
+      status. M4-RUN-GATEWAY-SSH after M1-SSH-GATEWAY-IROH, M1-STRIP-LEGACY-TRANSPORTS and 0006
+      M2-APP-CONTROLLER.
     instrument: >
       The market bed's live test passes twice through `socialweb-computer testbed`, and `run request`
-      reaches onNetwork, lists the contract, and releases it from a fresh process with vm.delete 200.
+      reaches onNetwork, lists the contract with no kcp running, and `release <name>` restarts the
+      invocation's kcp and gets vm.delete 200; no two applications in a bed share a kcp.
   - id: P11-M0
     title: QUEUED - Windows bidder spikes (plan 0011 M0).
     body: >
@@ -586,7 +677,21 @@ open:
       The live readings recorded with UTC timestamps and zero ssh sessions.
 
 execution_order:
-  written: "2026-10-12, third fold of plans 0006-0008 (user request (i)); waves computed from depends_on across plans 0005-0012 (no unresolved id, no cycle). Advisory: depends_on governs; re-derive after every merge."
+  written: "2026-10-12, third fold of plans 0006-0008 (user request (i)); waves computed from depends_on across plans 0005-0012 (no unresolved id, no cycle). Re-derived after the fifth fold (multi-server-to-kcp.md + the user's section-7 answers): still no unresolved id or cycle; critical path unchanged. Advisory: depends_on governs; re-derive after every merge."
+  early_fifth_fold: >
+    EARLY by the user's order (2026-10-12): 0008 M1-SSH-GATEWAY-IROH (wave 1) then 0008
+    M1-STRIP-LEGACY-TRANSPORTS (wave 2), with the ssh gateway's Live market CI green throughout; 0007
+    M1-MARKET-IDENTITY (wave 1, the identity CRD). Also startable now: 0007 M3-BIDDER-ACCOUNT-PDS,
+    M3-OIDC-ISSUER-INSTANCE, 0008 M2-MARKET-NETWORK; then 0008 M2-DENOPOD-LISTENERS (wave 2, after
+    M2-DENOKCP-FORK) and 0007 M3-BIDDER-COMPOSER (wave 3).
+  strict_bed_rule: >
+    Everything the bed needs for STRICT per-application kcp (user 2026-10-12) comes before any workstream
+    moves its live tests onto `dev up --profile bed`: the early items above, 0006 M2-APP-CONTROLLER (wave 8,
+    after M2-HOSTPROCESS-KIND and 0008 M2-SERVICE-TEMPLATE) -> 0008 M4-RUN-REQUEST (9) -> 0008
+    M4-TESTBED-PORT (10). The bed's bidder runs the firecracker provider until 0007 M5-RUN-BIDDER (12), so the
+    strict bed does not wait for the VM chain. Until it lands, workstreams test in today's bed made parallel
+    by 0008 M1-BED-PARALLEL - a recorded transitional shape (four applications in one kcp, a shim that reads
+    other workspaces) that no item extends.
   critical_path: >
     15 waves to 0006 M5-RETIRE: 0006 M0-SIZE-BUDGET or M0-PG-SOURCE (1) -> M1-ASSETS (2) -> M2-KCP-STORE (3)
     -> M2-KCP-SLOTS (4) -> M2-KCP-PORT0 (5) -> M2-APPLY + M2-BOOTSTRAP-LAYER (6) -> M2-HOSTPROCESS-KIND (7)
@@ -615,9 +720,15 @@ execution_order:
     - "0007 M6-CLAIM-RESUME (bed test live hat-8)"
     - "0008 M2-DENOKCP-FORK"
     - "0007 M4-TERMINATION-EVENT is doing: its TS half is done; its Go half needs M2-CONTROLLER and M3-TS-PROVIDER in practice (not in its depends_on)"
-  wave_2: ["0006 M1-ASSETS", "0006 M2-HOST-BACKEND-PROC", "0006 M2-MANIFESTS", "0006 M3-FOLD", "0007 M1-PROTOCOL-CHECKLIST", "0008 M1-BED-PARALLEL (early: ends the fixed-port collisions)"]
-  wave_3: ["0006 M1-DEV-INSTANCE", "0006 M1-INSTALL", "0006 M2-HOST-CONTRACT", "0006 M2-KCP-FRONT", "0006 M2-KCP-STORE", "0006 M2-TEMPLATE", "0006 M2-VM-TREE-AUDIT", "0007 M1-API", "0007 M1-GUEST-IMAGE", "0007 M4-HOST-KEYS", "0008 M1-DENO"]
+    - "0008 M1-SSH-GATEWAY-IROH (EARLY, fifth fold: the ssh gateway onto iroh; Live market CI green)"
+    - "0007 M1-MARKET-IDENTITY (EARLY, fifth fold: the identity CRD; hono-pds session minting completes sign-in in tests)"
+    - "0007 M3-BIDDER-ACCOUNT-PDS (fifth fold: a bed bidder on its own PDS account)"
+    - "0007 M3-OIDC-ISSUER-INSTANCE (fifth fold: no module-global issuer state)"
+    - "0008 M2-MARKET-NETWORK (fifth fold: one network value and fetch adapter)"
+  wave_2: ["0006 M1-ASSETS", "0006 M2-HOST-BACKEND-PROC", "0006 M2-MANIFESTS", "0006 M3-FOLD", "0007 M1-PROTOCOL-CHECKLIST", "0008 M1-BED-PARALLEL (early: ends the fixed-port collisions)", "0008 M1-STRIP-LEGACY-TRANSPORTS (early, after M1-SSH-GATEWAY-IROH)", "0008 M2-DENOPOD-LISTENERS"]
+  wave_3: ["0006 M1-DEV-INSTANCE", "0006 M1-INSTALL", "0006 M2-HOST-CONTRACT", "0006 M2-KCP-FRONT", "0006 M2-KCP-STORE", "0006 M2-TEMPLATE", "0006 M2-VM-TREE-AUDIT", "0007 M1-API", "0007 M1-GUEST-IMAGE", "0007 M3-BIDDER-COMPOSER", "0007 M4-HOST-KEYS", "0008 M1-DENO"]
   wave_4_to_6: ["0006 M2-KCP-SLOTS, 0007 M2-VM-RUNTIME, 0007 M3-TS-PROVIDER, 0008 M1-TS-SOURCE (4)", "0006 M2-KCP-PORT0, 0007 M2-BACKPORT, M3-BIDDER-FLAG, M4-ONNETWORK, 0008 M1-TS-CLOSURE (5)", "0006 M2-APPLY, M2-BOOTSTRAP-LAYER, M3-KCP-ROLL, M4-BUILD, 0008 M2-DENOKCP-INPROC (6)"]
+  wave_7_to_10_application_model: ["0006 M2-HOSTPROCESS-KIND, 0008 M2-SERVICE-TEMPLATE (7)", "0006 M2-APP-CONTROLLER, M2-OPENBAO-SERVER (8)", "0007 M4-BIDDER-VAULT, 0008 M4-RUN-REQUEST, M4-RUN-GATEWAY-SSH (9)", "0008 M4-TESTBED-PORT (10)", "later: 0006 M3-SERVE-GATEWAY-KCP (11), 0007 M5-RUN-BIDDER (12), 0008 M3-DOOR-DENOPOD (12), 0007 M5-BIDDER-COMPONENTS and 0008 M3-DOOR-STATE-VAULT (13)"]
   vertical_slices:
     - "binary-base (started 2026-10-12; user-approved dependency relaxation): 0006 M1-CLI, M2-HOST-CONFORMANCE, M2-HOST-BACKEND-PROC and a minimal `dev up --profile minimal` - kine-sqlite + one kcp slot, port 0, /proc read-back, kcp and kine from explicit paths in a dev build, two instances side by side. Possible because 0006 M2-KCP-STORE and M2-KCP-SLOTS now carry variant_dependencies: M1-ASSETS and M0-PG-SOURCE gate only their embedded-asset and postgres variants, and M2-KCP-FRONT gates only multi-slot blue/green, not a single dev slot. Item status/evidence untouched until the slice merges (the lead records them)."
   parallel_worktrees_wave_1:
@@ -631,19 +742,28 @@ execution_order:
     - "WT-docs (this repo: docs/ARCHITECTURE.md section 5, docs/compute-provider-requirements.yaml; hono-compute-provider test/requirements_inventory_test.ts): M1-DECIDE, M1-FC-INVENTORY."
     - "WT-node-loss (this repo: cmd/socialweb-clusterprovider/nodes.go, internal/clusterprovider pathUpSince): M3-NODE-LOSS-CLOCK."
     - "WT-claim-resume (socialweb-computer-k8s node-market + door; atproto-market lib/guest-capability-secrets; this repo api/v1alpha1 NodeClaim): M6-CLAIM-RESUME - it carries the ONE NodeClaim schema revision (status.secrets, acceptPending, phase Adopting, ContractState.hostKeys), so M4-HOST-KEYS' door half and M6-GATEWAY-REPOPULATE land on top of it, and 0007 M1-API (api/v1alpha1) rebases after it."
-    - "WT-denokcp (this repo: internal/denokcp/, internal/kcplibs/, deploy/denokcp/vendor.json): M2-DENOKCP-FORK."
+    - "WT-denokcp (this repo: internal/denokcp/, internal/kcplibs/, deploy/denokcp/vendor.json): M2-DENOKCP-FORK, then M2-DENOPOD-LISTENERS (runner status.listeners, servicenames; typescript-helpers lib/serve)."
+    - "WT-iroh (socialweb-computer-ssh lib/socialweb-computer-requester-inproc; then atproto-market cloud-init-common, requester-xrpc, compute-contract-gateway-xrpc, request-vm-ssh, compute-contract-full-flow, hono-compute-provider compute-provider-firecracker): 0008 M1-SSH-GATEWAY-IROH, then M1-STRIP-LEGACY-TRANSPORTS (fifth fold, early; Live market CI green after each)."
+    - "WT-identity (this repo api/v1alpha1 marketidentity + internal/appcli; atproto-market lib/abc/identity-prompt and its impls, hono-bidder and request-vm-ssh prompt steps): 0007 M1-MARKET-IDENTITY (fifth fold, early)."
+    - "WT-bidder-lib (hono-compute-provider lib/oidc-issuer-hono; atproto-market hono-bidder, lib/atproto-helpers, new lib/hono-factory-market-bidder-app): 0007 M3-OIDC-ISSUER-INSTANCE and M3-BIDDER-ACCOUNT-PDS, then M3-BIDDER-COMPOSER after M1-MARKET-IDENTITY, the strip and M2-MARKET-NETWORK have merged."
+    - "WT-market-network (typescript-helpers lib/common/market-network-common, lib/market-network-fetch; the four fetch-patch call sites): 0008 M2-MARKET-NETWORK."
   shared_files_to_serialize:
     - "internal/versions/versions.json: M0-PG-SOURCE, M0-SIZE-BUDGET, M1-STORE-CLEANUP, M1-ASSETS (merge one at a time; entries are disjoint)."
     - "deploy/check.sh: M2-HOST-CONFORMANCE (--fast proc half), M0-SIZE-BUDGET (size gate), M1-NO-FIXED-PORTS (--fast step)."
     - "api/v1alpha1: M6-CLAIM-RESUME (NodeClaim revision) before M1-API (ComputeVM) and M2-HOSTPROCESS-KIND (HostProcess)."
     - "atproto-market lib/market-bidder-compute: M4-CONTRACT-STORE-FILE before M4-HOST-KEYS."
-    - "hono-compute-provider lib/compute-provider-firecracker/mod.ts: M4-CONTRACT-STORE-FILE before M1-COMMON-EXTRACT."
+    - "hono-compute-provider lib/compute-provider-firecracker/mod.ts: M4-CONTRACT-STORE-FILE before M1-COMMON-EXTRACT; 0008 M1-STRIP-LEGACY-TRANSPORTS (guest JSR registry) merges with either, whichever is second keeps the stripped helpers out of compute-provider-common."
+    - "atproto-market lib/requester-xrpc and lib/common/cloud-init-common: 0008 M1-STRIP-LEGACY-TRANSPORTS before the requester half of 0007 M4-HOST-KEYS (known_hosts written once, on the iroh path)."
+    - "atproto-market hono-bidder/mod.ts: M4-CONTRACT-STORE-FILE, M1-MARKET-IDENTITY, M3-BIDDER-ACCOUNT-PDS, 0008 M2-MARKET-NETWORK, then M3-BIDDER-COMPOSER (which moves the whole composition out)."
+    - "api/v1alpha1 and apigen outputs: M6-CLAIM-RESUME (NodeClaim), M1-MARKET-IDENTITY, M1-API, M2-HOSTPROCESS-KIND, M2-APP-CONTROLLER - one at a time."
   needs_live_hat8_market_bed_rfp_flow:
     - "0007 M4-CONTRACT-STORE-FILE (bidder restart with a rented guest; late vm.delete after restart)"
     - "0007 M0-VM-USERNS (one guest through the chosen userns stage)"
     - "0008 M1-BED-PARALLEL (two beds at once)"
     - "0007 M6-CLAIM-RESUME (TestADoorRestartMidProvisioningStillJoinsTheNode)"
     - "0007 M4-HOST-KEYS (StrictHostKeyChecking=yes against the reported key; needs the QR re-sign-in)"
+    - "0007 M1-MARKET-IDENTITY (a bed bidder without --skip-qr, association approved through the object)"
+    - "0008 M1-STRIP-LEGACY-TRANSPORTS (one bed guest reached over iroh); its ssh-gateway proof is the Live market CI, not hat-8"
     - "later: 0007 M4-TERMINATION-EVENT Go half, M6-*; 0006 M3-CLUSTER-UNITS, M3-APISERVER-FRONT, M3-CP-SLOTS, M3-LINK-HANDOVER, M3-CP-CONTINUITY bed tests; 0008 M4-TESTBED-PORT"
   needs_hat8_without_market: "0006 M2-HOST-CONFORMANCE (systemd half), M0-PG-SOURCE (stand-in runs), every M2-KCP-* and M2-BOOTSTRAP-LAYER livegate test (real kcp/kine/postgres, no guest); 0007 M1-QR-DEPLOY runs against the qr.fedfork.com host, not hat-8."
   live_collision_rule: >
@@ -655,6 +775,8 @@ execution_order:
   open_notes:
     - "Plan 0010 G4-SCHED-SINGLE-SERVER (refuse leaderElect false for more than one k3s server; GAP-7) conflicts with 0006 M3-CP-SLOTS (scheduler leaderElect true for every market cluster, user 2026-10-12). Not edited in 0010; R0-REASSESS must resolve it (see P10)."
     - "Plans 0011 and 0012 reference no renamed id (none renamed); their M0-REVISIT items must re-read the HostProcess kind and the proc backend (Windows Job Objects, darwin kqueue) when they start."
+    - "Fifth fold (2026-10-12): no id renamed, so 0011 and 0012 were not edited. Their text predates the strip: 0012 lists the tunnel, fedproxy-ssh, fedproxy-web and wootty modules and forwards the guest JSR registry per VM, and 0011 names the requester's tunnel; after 0008 M1-STRIP-LEGACY-TRANSPORTS iroh is the only guest transport and there is no guest JSR registry, which their M0-REVISIT items must take in. They also must read the application model (root objects, MarketIdentity, per-application kcp)."
+    - "The ssh gateway's Live market CI (socialweb-computer-ssh .github/workflows/live.yml) must stay green through 0008 M1-SSH-GATEWAY-IROH and M1-STRIP-LEGACY-TRANSPORTS (user 2026-10-12)."
 
 limits:
   - title: A node cannot reach another node, so a cluster with more than one has no cluster DNS

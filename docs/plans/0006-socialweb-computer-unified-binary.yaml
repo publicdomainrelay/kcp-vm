@@ -57,6 +57,18 @@ revised: >
     M1-DEV-INSTANCE, M2-KCP-PORT0, M2-BOOTSTRAP-LAYER - `--kcp-shared-roles` dropped - M2-OPENBAO-SERVER,
     M2-HOSTPROCESS-KIND, M3-SERVE-GATEWAY-KCP, M4-DEV-PARENT-KCP, execution_order); virtual-cluster items
     tagged `kcp_use: traditional-exception`. New: M1-NO-FIXED-PORTS. No item renamed.
+    2026-10-12 (fifth fold), from docs/research/2026-10-11-vm-lifecycle/multi-server-to-kcp.md (sections 2-6)
+    and the user's answers to its section 7 (user-decisions.md, the 2026-10-12 lines from "(multi-server-to-kcp.md
+    section 7)" on), which override the research where they differ: STRICT kcp per application, inside a
+    market bed too (the research's nested-workspace bed is rejected; a bed is a MarketNetwork application
+    composing children that each run their own kcp); every hono-bidder and request-vm-ssh option keeps
+    working kcp-native, with sign-in as an identity object; kcp only (no standalone deno CLIs); a fresh kcp per
+    requester invocation with a durable state dir; OAuth sessions and keys only in the application's OpenBao;
+    cross-app discovery only through values the composer copies; iroh is the only guest transport. New
+    `principle.decomposition` (replaces `principle.pending`) and M2-APP-CONTROLLER. Changed: M1-CLI (app verb
+    contract, `profile` option), M1-DEV-INSTANCE (`--profile bed` = a MarketNetwork composing child
+    applications with their own kcps), M3-SERVE-GATEWAY-KCP (a Gateway root object), execution_order. No item
+    renamed or removed. Plans 0007 and 0008 carry the rest of the fold.
 queued: >
   OPEN. The plan 0005 gate is satisfied: plan 0005 is complete with all 40 items done and its acceptance
   checks ACC-ZERO, ACC-MESH and ACC-NOSSH done with evidence (verified 2026-10-12). Only each item's own
@@ -126,11 +138,22 @@ principle:
     remain only for ports that must stay stable inside one instance across restarts (a tenant cluster's
     front port and link UDP ports, the virtual-clusters exception) and are recorded in that instance's kcp.
     Enforced by M1-NO-FIXED-PORTS.
-  pending: >
-    How today's multi-server processes (the door, the bidder, the bed's services) decompose into application
-    instances and their DenoPods/HostProcesses is research pending in multi-server-to-kcp.md
-    (docs/research/; fold pending). This fold states the principle and does not pre-empt that research's item
-    deltas.
+  decomposition:
+    folded: >
+      2026-10-12 (fifth fold) from docs/research/2026-10-11-vm-lifecycle/multi-server-to-kcp.md and the user's
+      answers to its section 7 (user-decisions.md, 2026-10-12). Where the research and the user differ, the
+      user's answer is what is written here.
+    rules:
+      - "Root objects: each application is ONE root object in its own kcp - MarketBidder, MarketRequester, Gateway or MarketNetwork (M2-APP-CONTROLLER) - whose spec carries the application's options and profile and whose status aggregates its children's readiness, DID and reported listeners. The core renders the profile into owned children; a profile switch deletes what the new profile omits."
+      - "STRICT kcp per application (decided by the user 2026-10-12): every application instance has its own kcp everywhere, including inside a market test bed. A bed is itself an application, MarketNetwork: its kcp runs the shared atproto services (PLC, relay, dispatchers, PDSes, the QR relay) as its own DenoPods and holds each child application's bootstrap layer as HostProcess objects; it composes a child by applying the child's root object into the child's OWN kcp. No two applications share a kcp. The research's nested-workspace bed (apps as workspaces of one kcp) is rejected."
+      - "Cross-application discovery (decided by the user 2026-10-12): only through values the composer (MarketNetwork) copies onto a child's root object - the MarketNetwork value (PLC URL, ingress host, relay and firehose URLs, QR origin, guest TLS URL, CA reference) and any peer value a profile names. The DNS shim resolves only names of its own application."
+      - "Every CLI option stays (decided by the user 2026-10-12): every option hono-bidder and request-vm-ssh support today keeps working, transformed into a root-object field or a profile; an option may be removed only when it selects a legacy (non-iroh) guest transport, with that reason (option-coverage test in M2-APP-CONTROLLER). Interactive sign-in is an object, MarketIdentity (0007 M1-MARKET-IDENTITY): it sets the sign-in up and reports what the user must do (URL to visit, association to approve, session expired) in status, which the foreground CLI renders; tests complete it by driving hono-pds's OAuth session minting. The ephemeral-PDS mode (in-process repo + association records) stays for the bidder and the requester."
+      - "kcp only (decided by the user 2026-10-12): no standalone `deno run hono-bidder` or `request-vm-ssh` without kcp; every run goes through socialweb-computer and kcp. The TypeScript CLIs become DenoPod entries that refuse to start outside one, from the item that deletes the launcher they serve today (0007 M5-RUN-BIDDER, 0008 M4-RUN-REQUEST), so production keeps running until then. The TypeScript in-process harnesses stay as library tests of the same composer (decided by Claude, user may veto)."
+      - "Requester (decided by the user 2026-10-12): a fresh kcp per `run request` invocation; its state dir (kcp root + vault under state/<invocation>) persists, and `run request release|resume <name>` restarts that same kcp to finish the contract (0008 M4-RUN-REQUEST)."
+      - "Secrets (decided by the user 2026-10-12): OAuth sessions and every key (repo key, relay keypairs, OIDC JWK, requester key, door keys, per-claim keys) live in the application's own OpenBao, never in kcp Secrets; kcp objects hold references only."
+      - "Guest transports (decided by the user 2026-10-12): iroh only. The ssh gateway is ported to reach guests over iroh first (0008 M1-SSH-GATEWAY-IROH), then every non-iroh guest transport is stripped (0008 M1-STRIP-LEGACY-TRANSPORTS): the cloud-init-common tunnel, fedproxy-ssh, fedproxy-web and wootty modules, websocat ProxyCommand paths, relay-fqdn guest addresses and the guest JSR registry."
+      - "Components (decided by the user 2026-10-12): the bidder's guest-facing endpoints (OIDC issuer, /v1/on-network, behind the provider relay) become their own DenoPods after 0007 M4-BIDDER-VAULT and M3-OIDC-ISSUER-INSTANCE (0007 M5-BIDDER-COMPONENTS). The door's node fulfiller stays in the door DenoPod for now and is revisited after 0007 M6-CLAIM-RESUME (decided by Claude, user may veto; 0008 M3-DOOR-STATE-VAULT)."
+      - "Every listener reports into status (0008 M2-DENOPOD-LISTENERS: tcp, unix and relay ingress URLs in DenoPod.status.listeners), so no test or peer scrapes stdout for a DID, a port or a readiness line."
 state_rules:
   - This file is the only state. Every step updates status and evidence.
   - status is one of todo, doing, done, blocked.
@@ -446,6 +469,14 @@ items:
       SOCIALWEB_HOST_BACKEND, NO default: every verb that places a host process exits 2 naming the option when
       it is unset, never probes), `instance`, `kcp-base-workspace` (default root), `state-dir` (resolved by
       install or dev, no hardcoded default in the CLI) and `asset-cache`.
+      Fifth fold 2026-10-12 (multi-server-to-kcp.md 5.1; decided by the user: every hono-bidder and
+      request-vm-ssh option keeps working kcp-native, kcp only): every APPLICATION verb (`run bidder`, `run
+      request`, `serve gateway kcp`, `dev up`) follows one contract - resolve the application's own kcp,
+      server-side apply its root object (M2-APP-CONTROLLER) with --profile, watch the root status, render
+      pending actions (MarketIdentity, 0007 M1-MARKET-IDENTITY) and print outputs; no application verb opens
+      a listener or spawns deno itself. options.json gains `profile`. The contract's scan test
+      (TestNoAppVerbOpensAListenerOrSpawnsDeno) lands with M2-APP-CONTROLLER, so this item's scope (and the
+      binary-base slice) is not widened.
     files: ["cmd/socialweb-computer/main.go", "internal/clicfg/", "internal/clicfg/options.json", "internal/capabilities (verb -> required backends)"]
     test_first: >
       internal/clicfg TestTheFlagBeatsTheEnvBeatsTheConfigBeatsTheDefault and
@@ -701,6 +732,17 @@ items:
       core restart, crash or rebuild and are adopted; every unit dies with devsup (`dev down`, crash, kill
       -9, --die-with test pid); a host reboot is Lost(HostRebooted) as in prod. Dev adds no provisioning
       path: guests come up only through runComputeContract against the instance's bidder (RFP spine).
+      Fifth fold 2026-10-12 (decided by the user: STRICT - every application instance has its own kcp,
+      inside a bed too; the research's nested-workspace bed is rejected): the dev instance's own kcp is ONE
+      application's kcp. `dev up --profile bed` makes the instance a MarketNetwork application
+      (M2-APP-CONTROLLER) that composes child applications, each with its OWN kcp whose bootstrap layer is
+      HostProcess objects in the instance's kcp: `--bidders N` (default 1) MarketBidder children, an
+      optional Gateway child (`--with-gateway`), and requester invocations added by `run request --bed
+      <instance>` (0008 M4-RUN-REQUEST); the network copies its status URLs onto each child's root object
+      and no child reads another's kcp. Until M2-APP-CONTROLLER lands, `dev up --profile bed` exits 2 naming
+      it (today's bed is 0008 M1-BED-PARALLEL). The bed composition tests are M2-APP-CONTROLLER's
+      (TestEveryChildApplicationInAMarketNetworkHasItsOwnKcp, TestABedBidderLearnsThePlcOnlyFromItsNetworkValue),
+      because this item lands before that controller exists.
     files: ["cmd/socialweb-computer dev", "internal/devinstance/ (id, layout, lock, env)", "internal/devstack (Start(t, profile) test helper)", ".gitignore (.swc-dev)"]
     test_first: >
       internal/devinstance TestTwoWorktreesGetDistinctInstanceIDsAndShortSocketPaths,
@@ -1509,6 +1551,68 @@ items:
       - "APIResourceSchema.spec is immutable; the first HostProcess revision is reviewed field by field against the two working backends before it is applied."
     status: todo
     evidence: []
+  - id: M2-APP-CONTROLLER
+    milestone: M2
+    title: "Each application is ONE root object in its own kcp, rendered by the core into children; a MarketNetwork composes child applications, each with its OWN kcp"
+    depends_on: [M2-APPLY, M2-TEMPLATE, M2-HOSTPROCESS-KIND, M2-BOOTSTRAP-LAYER, "0008:M2-SERVICE-TEMPLATE", "0008:M2-DENOPOD-LISTENERS", "0008:M2-MARKET-NETWORK", "0007:M1-MARKET-IDENTITY"]
+    decision: >
+      Fifth fold 2026-10-12, from multi-server-to-kcp.md (sections 4-6, gap G1) with the user's answers to its
+      section 7 (user-decisions.md 2026-10-12; principle.decomposition). An application instance (a bidder
+      handle, a requester invocation, the gateway, a market network / bed) = its own kcp + manifest set +
+      profile; its state is objects and its components are children. Kinds MarketBidder, MarketRequester,
+      Gateway and MarketNetwork (socialweb.computer/v1alpha1, apigen-generated) with spec = every option
+      of the application's CLI today (hono-bidder's 54 cli-args-env options, request-vm-ssh's 40, the door's)
+      except the network options, which arrive as the MarketNetwork value (0008 M2-MARKET-NETWORK) + profile
+      + an identity reference (MarketIdentity, 0007 M1-MARKET-IDENTITY), and status = phase, conditions,
+      did, and the children's reported listeners aggregated (0008 M2-DENOPOD-LISTENERS). internal/appctl is a
+      pure reconciler (the deno-kcp denopod.go Observed -> Result style) that renders
+      deploy/apps/<app>/<profile>.values.yaml through M2-TEMPLATE and the service DenoPod template (0008
+      M2-SERVICE-TEMPLATE) into owned children (DenoPods, HostProcesses, an OpenBaoServer, MarketIdentity;
+      ownerReferences, field manager appctl); a child the active profile omits is deleted (bed -> prod-qr
+      deletes the bidder's PDS DenoPod). It runs in every core (run bidder, run request, serve gateway kcp,
+      dev). Option coverage (decided by the user 2026-10-12: every option stays): deploy/apps/option-map.yaml
+      maps every cli-args-env option of hono-bidder and request-vm-ssh to a root-object field or a profile;
+      the only accepted removal reason is legacy-transport (a non-iroh guest transport, 0008
+      M1-STRIP-LEGACY-TRANSPORTS, e.g. request-vm-ssh --user-data-transport); state-path options (key file,
+      repo KV, session file, port file) map to the instance's state dir or a one-time import into its vault
+      (keys and sessions are never kcp objects, decided by the user 2026-10-12); port options map to
+      status.listeners and accept only 0 or an entry of deploy/edge-ports.yaml (principle.port0_rule).
+      STRICT composition (decided by the user 2026-10-12, overriding the research's nested-workspace bed):
+      the MarketNetwork reconciler runs the shared atproto services as its own DenoPods - plc, relay,
+      dispatcher, dispatcher-tls, pds-<account> where a profile names one, qr (did-key-associator's
+      hono-backend, so QR sign-in runs inside a bed with nothing external) and the verifier DenoJob - and
+      composes child applications from spec.apps[] {name, kind, profile, values}: for each child it renders
+      the child's bootstrap layer (M2-BOOTSTRAP-LAYER's table for that role, rendered as HostProcess objects
+      in the network's kcp: kine-sqlite, one kcp slot on port 0, the child's core), so every child runs its
+      OWN kcp; it waits for that kcp's /readyz and server-side applies the child's root object into the
+      child's base workspace with the MarketNetwork value (the network's own status URLs) and any peer value
+      the network profile names (a bidder child's DID onto a requester's allow list) copied onto it; it reads
+      back only the child's root status. That copy is the ONLY cross-application discovery (decided by the
+      user 2026-10-12): no application reads another's objects, and the DNS shim resolves only its own
+      application's names. Guests still come up only through a requester child's ComputeContract ->
+      runComputeContract -> RFP -> bid -> accept -> cloud-init against a bidder child (RFP spine). Decided by
+      Claude, user may veto: the option-map shape, rendering a child's bootstrap layer as HostProcess
+      objects in its composer's kcp (the shape M4-DEV-PARENT-KCP later generalises for worktrees), the qr
+      DenoPod.
+    files: ["api/v1alpha1/app_types.go (MarketBidder, MarketRequester, Gateway, MarketNetwork)", "internal/apigen (schemas, exports, TS wire types)", "internal/appctl/ (reconciler, MarketNetwork composer)", "internal/bootstrap (a role's table rendered as HostProcess objects)", "deploy/apps/<app>/<profile>.values.yaml", "deploy/apps/option-map.yaml", "deploy/sets.yaml"]
+    test_first: >
+      Offline (fake kcp): TestSwitchingABidderFromBedToProdQrDeletesItsPdsDenoPod,
+      TestDeletingTheRootObjectRemovesEveryComponent, TestRootStatusCarriesEveryChildsReportedListener,
+      TestAnAppsCredentialIsRefusedByAnotherAppsKcp,
+      TestEveryHonoBidderAndRequestVmSshOptionMapsToAFieldAProfileOrALegacyTransportRemoval (reads both
+      cli-args-env.ts through deno when the org root is present, else a committed snapshot that check.sh
+      drift-checks), TestNoAppVerbOpensAListenerOrSpawnsDeno (scans the application verbs' Go: only the
+      core's reconcilers start listeners or deno; M1-CLI's contract). Behind livegate on proc (stand-in
+      children, real kcp/kine assets, no guest): TestEveryChildApplicationInAMarketNetworkHasItsOwnKcp (no
+      two children share a kcp root, slot or front - the "no two applications share a kcp" test),
+      TestABedBidderLearnsThePlcOnlyFromItsNetworkValue, TestTheShimNeverResolvesAnotherApplicationsName.
+      Red first.
+    done_when: "tests green; `kubectl get marketbidders` on a dev instance shows did and listeners; a MarketNetwork with two bidder children shows two distinct child kcps (roots, ports) with readings recorded."
+    risks:
+      - "Each child kcp costs ~0.4-0.5 GB and 6-9 s cold start (kcp-spike.md); the user chose strict over the cheaper nested shape. A bed's memory (network + N bidders + gateway + requester invocations) is measured here and bounds how many beds one host runs (0008 M1-BED-PARALLEL's free-memory refusal)."
+      - "APIResourceSchema.spec is immutable; the four kinds' first revision is reviewed against option-map.yaml before it is applied."
+    status: todo
+    evidence: []
   - id: M3-FOLD
     milestone: M3
     title: Fold every host-side Go binary into verbs; delete the resident VM wrapper
@@ -1835,7 +1939,7 @@ items:
   - id: M3-SERVE-GATEWAY-KCP
     milestone: M3
     title: socialweb-computer serve gateway kcp replaces container-entrypoint.sh, on the host, kcp first
-    depends_on: [M2-KCP-PORT0, M2-KCP-SLOTS, M2-KCP-FRONT, M2-KCP-STORE, M2-APPLY, M2-OPENBAO-SERVER, M3-FOLD, M3-CLUSTER-UNITS, M3-BAO-SYNC, M2-BOOTSTRAP-LAYER, M2-HOSTPROCESS-KIND]
+    depends_on: [M2-KCP-PORT0, M2-KCP-SLOTS, M2-KCP-FRONT, M2-KCP-STORE, M2-APPLY, M2-OPENBAO-SERVER, M3-FOLD, M3-CLUSTER-UNITS, M3-BAO-SYNC, M2-BOOTSTRAP-LAYER, M2-HOSTPROCESS-KIND, M2-APP-CONTROLLER]
     decision: >
       Third fold 2026-10-12: the kcp store, kine, front and active slot are the bootstrap layer
       (M2-BOOTSTRAP-LAYER), already started by systemd from installed units (or by devsup in dev) before the
@@ -1860,6 +1964,16 @@ items:
       the core unit; units (kcp pg, kines, slots and front, vaults, stores, cluster member units) are adopted
       on the next start rather than restarted. No container-era state dir is opened (fresh deploy, decided
       by the user 2026-10-12).
+      Fifth fold 2026-10-12 (multi-server-to-kcp.md 4.5; decided by Claude, user may veto, within the user's
+      decisions of 2026-10-12): the gateway is a Gateway root object (M2-APP-CONTROLLER) with profiles prod
+      and bed. serve gateway kcp applies it after the sets; its app controller renders the door DenoPod (0008
+      M3-DOOR-DENOPOD), the root OpenBaoServer and one MarketIdentity (mode oauthDelegated) per door account,
+      whose sessions and the door's requester key live in the root vault (0008 M3-DOOR-STATE-VAULT). The
+      door's TEST_* seams (TEST_OWNER_SESSIONS_FILE, TEST_NODE_GUEST_HOST_ALIASES,
+      TEST_NODE_USER_DATA_BASE_FILE; door hono-socialweb-computer-k8s/mod.ts:53-67) become values of the bed
+      profile instead of env variables. In a bed the gateway is a child application of the MarketNetwork with
+      its own kcp. The tenant cluster objects (Cluster, Node, ClusterLink and the tenant side of NodeClaims)
+      stay the traditional exception (principle), unchanged by the application model.
     files: ["internal/stack/gatewaykcp/", "cmd/socialweb-gateway and cmd/socialweb-clusterprovider bodies moved into run(ctx, cfg)"]
     test_first: >
       TestServeGatewayKcpStartsKcpBeforeTheRootVaultAndDiesWithAnyInProcessMember (fake members record the
@@ -2082,5 +2196,18 @@ execution_order:
     hat-8 is serialized. M1-PORT-LEASE-INSTANCE, M1-NO-FIXED-PORTS (the ratchet that keeps new fixed ports
     out while they land), M2-HOST-CONFORMANCE, M2-HOST-BACKEND-PROC and M1-DEV-INSTANCE are therefore first in
     this plan.
+  application_model_fifth_fold: >
+    Recomputed 2026-10-12 after the fifth fold (all depends_on across 0005-0012 resolve, no cycle); the
+    critical path above is unchanged (15 waves). EARLY by the user's order, startable now (wave 1): 0008
+    M1-SSH-GATEWAY-IROH (then 0008 M1-STRIP-LEGACY-TRANSPORTS, wave 2; the ssh gateway's Live market CI green
+    throughout) and 0007 M1-MARKET-IDENTITY (the identity CRD), with 0007 M3-BIDDER-ACCOUNT-PDS,
+    M3-OIDC-ISSUER-INSTANCE and 0008 M2-MARKET-NETWORK (no dependencies), then 0008 M2-DENOPOD-LISTENERS
+    (wave 2, after M2-DENOKCP-FORK) and 0007 M3-BIDDER-COMPOSER (wave 3). The STRICT bed chain - everything
+    a bed needs so that every application in it runs its own kcp - is M2-APP-CONTROLLER (wave 8, after
+    M2-HOSTPROCESS-KIND and 0008 M2-SERVICE-TEMPLATE) -> 0008 M4-RUN-REQUEST (9) -> 0008 M4-TESTBED-PORT
+    (10), fed by the early items above; it is ordered before any workstream moves its live tests onto `dev
+    up --profile bed`. Until it lands, workstreams test in today's bed made parallel by 0008
+    M1-BED-PARALLEL, a recorded transitional shape (four applications in one kcp) that adds no new
+    cross-application coupling.
 questions_for_user:
   - "systemd 253 as the floor (decided 2026-10-11) refuses Debian 12 and RHEL 9 (both ship 252, to be verified in M2-HOST-CONTRACT). Recommended: accept; support there would mean dropping GetUnitByPIDFD for our own pidfd + cgroup check."
