@@ -85,6 +85,9 @@ func BidderValues(spec v1alpha1.MarketBidderSpec, stateDir string, kcp BidderKcp
 	if n.QrOrigin != "" {
 		extra = append(extra, "--qr-origin", n.QrOrigin)
 	}
+	if hosts := NetworkHostsArg(n.Hosts); hosts != "" {
+		extra = append(extra, "--network-hosts", hosts)
+	}
 	opts, err := OptionArgs(BidderApp, spec.Options)
 	if err != nil {
 		return manifests.MarketBidder{}, err
@@ -198,20 +201,4 @@ func (ctl *Controller) reconcileBidder(ctx context.Context, u *unstructured.Unst
 		st.Phase, st.Message = v1alpha1.ApplicationPhaseProvisioning, "waiting for the components to report ready and the bidder its did"
 	}
 	return ctl.writeStatus(ctx, MarketBidderGVR, o.Name, st)
-}
-
-func (ctl *Controller) reconcilePassive(kind v1alpha1.ApplicationKind) func(context.Context, *unstructured.Unstructured) error {
-	gvr, _ := GVRFor(kind)
-	item := map[v1alpha1.ApplicationKind]string{
-		v1alpha1.ApplicationKindMarketRequester: "0008 M4-RUN-REQUEST (the requester DenoPod and its ComputeContracts)",
-	}[kind]
-	return func(ctx context.Context, u *unstructured.Unstructured) error {
-		if u.GetDeletionTimestamp() != nil {
-			return ctl.setFinalizer(ctx, gvr, u, false)
-		}
-		gen, _, _ := unstructured.NestedInt64(u.Object, "metadata", "generation")
-		profile, _, _ := unstructured.NestedString(u.Object, "spec", "profile")
-		st := v1alpha1.ApplicationStatus{ObservedGeneration: gen, Profile: profile, Components: []v1alpha1.ApplicationComponent{}}
-		return ctl.writeStatus(ctx, gvr, u.GetName(), ready(st, "this application's own kcp holds its root object; its components land with "+item))
-	}
 }

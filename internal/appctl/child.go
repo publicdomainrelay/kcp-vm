@@ -23,6 +23,7 @@ import (
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/bootstrap"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/bootstrap/table"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devinstance"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostos"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostprocess"
@@ -186,11 +187,18 @@ func (n *networks) placeChild(ctx context.Context, c child) (devinstance.Record,
 	exe := parent.Executables["socialweb-computer"].Path
 	bcfg := bootstrap.Config{Layout: c.layout, KcpPath: rec.Executables["kcp"].Path, KinePath: rec.Executables["kine"].Path,
 		Exe: exe, ReadyTimeout: n.ctl.c.ReadyTimeout, Log: n.ctl.c.log().With("child", c.id)}
+	if u := rec.Unit(table.RoleFront); u != nil && u.Port > 0 && !n.moved(c.id) {
+		bcfg.FrontAddress = fmt.Sprintf("127.0.0.1:%d", u.Port)
+	}
 	started := time.Now()
 	if err := bootstrap.Ensure(ctx, remote, bcfg, &rec); err != nil {
 		devinstance.WriteJSON(c.layout.Record, rec)
+		if bcfg.FrontAddress != "" {
+			n.frontMoved.Store(c.id, true)
+		}
 		return rec, fmt.Errorf("the bootstrap layer of %s: %w", c.id, err)
 	}
+	n.frontMoved.Delete(c.id)
 	if err := devinstance.WriteJSON(c.layout.Record, rec); err != nil {
 		return rec, err
 	}
@@ -292,6 +300,62 @@ func readRoot(ctx context.Context, rec devinstance.Record, kind v1alpha1.Applica
 	return st, true, nil
 }
 
+const StoppedMessage = "stopped: its kcp, kine and core are down; its state dir is kept and clearing spec.apps[].stopped starts them again from it"
+
+func (n *networks) liveUnits(ctx context.Context, c child) ([]hostsvc.UnitStatus, error) {
+	units, err := devinstance.ChildUnits(ctx, n.ctl.c.Manager, c.id)
+	if err != nil {
+		return nil, err
+	}
+	var live []hostsvc.UnitStatus
+	for _, u := range units {
+		if u.State == hostsvc.Active || u.State == hostsvc.Activating || u.State == hostsvc.Deactivating {
+			live = append(live, u)
+		}
+	}
+	return live, nil
+}
+
+func (n *networks) stopChild(ctx context.Context, c child) error {
+	live, err := n.liveUnits(ctx, c)
+	if err != nil {
+		return err
+	}
+	if len(live) == 0 {
+		KillUnder(c.layout.StateDir, ChildPoll*25)
+		return nil
+	}
+	log := n.ctl.c.log().With("child", c.id)
+	if err := devinstance.DeleteChildWorkspace(ctx, n.ctl.c.Kubeconfig, c.id); err != nil {
+		return err
+	}
+	deadline := time.Now().Add(ChildDeleteTimeout)
+	for len(live) > 0 {
+		if time.Now().After(deadline) {
+			for _, u := range live {
+				if err := n.ctl.c.Manager.Stop(ctx, u.Name); err != nil {
+					log.Warn("stopping a unit the supervisor left running", "unit", u.Name, "err", err.Error())
+				}
+			}
+			break
+		}
+		if !sleep(ctx, ChildPoll) {
+			return ctx.Err()
+		}
+		if live, err = n.liveUnits(ctx, c); err != nil {
+			return err
+		}
+	}
+	if pids := KillUnder(c.layout.StateDir, ChildPoll*25); len(pids) > 0 {
+		log.Warn("stopped processes of the child its units left behind", "pids", fmt.Sprint(pids))
+	}
+	if err := os.Remove(filepath.Join(c.layout.StateDir, CoreKubeconfig)); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	log.Info("a child application is stopped; its state dir is kept", "state", c.layout.StateDir)
+	return nil
+}
+
 func (n *networks) teardownChild(ctx context.Context, c child) error {
 	log := n.ctl.c.log().With("child", c.id)
 	var rec devinstance.Record
@@ -341,6 +405,9 @@ func (n *networks) teardownChild(ctx context.Context, c child) error {
 		if !sleep(ctx, ChildPoll) {
 			return ctx.Err()
 		}
+	}
+	if pids := KillUnder(c.layout.StateDir, ChildPoll*25); len(pids) > 0 {
+		log.Warn("stopped processes of the child its units left behind", "pids", fmt.Sprint(pids))
 	}
 	err := errors.Join(os.RemoveAll(c.layout.StateDir), os.RemoveAll(c.layout.RuntimeDir))
 	log.Info("a child application is gone: its root object, its kcp and its state", "err", fmt.Sprint(err))

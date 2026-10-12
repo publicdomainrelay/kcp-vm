@@ -47,9 +47,10 @@ var networkServices = []service{
 }
 
 type networks struct {
-	ctl     *Controller
-	mu      sync.Mutex
-	applied map[string]int64
+	ctl        *Controller
+	mu         sync.Mutex
+	applied    map[string]int64
+	frontMoved sync.Map
 }
 
 func newNetworks(ctl *Controller) *networks {
@@ -137,7 +138,14 @@ func NetworkValue(views map[string]podView, caBundle string) (v1alpha1.MarketNet
 		}
 		ports[k] = p
 	}
+	var hosts []v1alpha1.NetworkHost
+	for _, s := range networkServices {
+		if v := views[s.Workspace+"/"+s.Name]; s.Host != "" && v.Address != "" {
+			hosts = append(hosts, v1alpha1.NetworkHost{Name: s.Host, Address: v.Address})
+		}
+	}
 	return v1alpha1.MarketNetworkValue{
+		Hosts:            hosts,
 		PlcDirectoryUrl:  "https://127.0.0.1:" + ports["global/plc"],
 		IngressProxyHost: GuestTLSHost + ":" + ports["relay/dispatcher"],
 		RelayUrls:        []string{"https://127.0.0.1:" + ports["relay/relay"]},
@@ -322,19 +330,28 @@ func (n *networks) reconcile(ctx context.Context, u *unstructured.Unstructured) 
 	if err := n.teardownAll(ctx, keep); err != nil {
 		log.Warn("removing children the spec no longer names", "err", err.Error())
 	}
+	var bidderDids []string
+	for _, a := range o.Status.Apps {
+		if a.Kind == v1alpha1.ApplicationKindMarketBidder && a.Did != "" {
+			bidderDids = append(bidderDids, a.Did)
+		}
+	}
 	apps := make([]v1alpha1.NetworkAppStatus, len(o.Spec.Apps))
 	var wg sync.WaitGroup
 	for i, app := range o.Spec.Apps {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			apps[i] = n.ensureApp(ctx, app, value, pdsURL)
+			apps[i] = n.ensureApp(ctx, app, value, pdsURL, bidderDids)
 		}()
 	}
 	wg.Wait()
 	st.Apps = apps
 	allReady := true
-	for _, a := range apps {
+	for i, a := range apps {
+		if o.Spec.Apps[i].Kind == v1alpha1.ApplicationKindMarketRequester {
+			continue
+		}
 		allReady = allReady && a.Phase == v1alpha1.ApplicationPhaseReady
 	}
 	if !allReady {
@@ -343,7 +360,7 @@ func (n *networks) reconcile(ctx context.Context, u *unstructured.Unstructured) 
 	return write(v1alpha1.ApplicationPhaseReady, fmt.Sprintf("%d service(s) and %d child application(s), each with its own kcp, are ready", len(comps), len(apps)))
 }
 
-func (n *networks) ensureApp(ctx context.Context, app v1alpha1.NetworkApp, value v1alpha1.MarketNetworkValue, pdsURL string) v1alpha1.NetworkAppStatus {
+func (n *networks) ensureApp(ctx context.Context, app v1alpha1.NetworkApp, value v1alpha1.MarketNetworkValue, pdsURL string, bidderDids []string) v1alpha1.NetworkAppStatus {
 	out := v1alpha1.NetworkAppStatus{Name: app.Name, Kind: app.Kind, Phase: v1alpha1.ApplicationPhaseProvisioning}
 	fail := func(err error) v1alpha1.NetworkAppStatus {
 		out.Message = err.Error()
@@ -356,6 +373,13 @@ func (n *networks) ensureApp(ctx context.Context, app v1alpha1.NetworkApp, value
 		return fail(err)
 	}
 	out.Instance = c.id
+	if app.Stopped {
+		if err := n.stopChild(ctx, c); err != nil {
+			return fail(err)
+		}
+		out.Phase, out.Message = v1alpha1.ApplicationPhasePending, StoppedMessage
+		return out
+	}
 	if _, err := GVRFor(app.Kind); err != nil {
 		out.Phase = v1alpha1.ApplicationPhaseFailed
 		return fail(err)
@@ -392,7 +416,8 @@ func (n *networks) ensureApp(ctx context.Context, app v1alpha1.NetworkApp, value
 			Policy:   app.Policy, Firecracker: fc, Kcp: kcp, Options: app.Options}}
 	case v1alpha1.ApplicationKindMarketRequester:
 		root = &v1alpha1.MarketRequester{ObjectMeta: meta, Spec: v1alpha1.MarketRequesterSpec{Profile: app.Profile, Network: &value,
-			Identity: v1alpha1.ApplicationIdentity{Mode: v1alpha1.MarketIdentityModeLocalRepo}, Options: app.Options}}
+			Identity:   v1alpha1.ApplicationIdentity{Mode: v1alpha1.MarketIdentityModeLocalRepo, Association: v1alpha1.AssociationSkip},
+			BidderDids: bidderDids, Options: app.Options}}
 	case v1alpha1.ApplicationKindGateway:
 		root = &v1alpha1.Gateway{ObjectMeta: meta, Spec: v1alpha1.GatewaySpec{Profile: app.Profile, Network: &value, Options: app.Options}}
 	}

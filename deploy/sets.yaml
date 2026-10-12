@@ -295,6 +295,64 @@ sets:
           - path: apps/gateway/market-network.values.yaml
             template: denopods/service.yaml
 
+  - name: market-requester
+    summary: the components of a MarketRequester application (one `run request` invocation) in its own kcp - the ComputeContract and MarketIdentity schemas bound in root, its own OpenBaoServer and the account the requester reads its objects with, the root:app workspace and, per profile, the requester DenoPod rendered from deploy/apps/market-requester/<profile>.values.yaml; applied by internal/appctl (plan 0008 M4-RUN-REQUEST)
+    values: MarketRequester
+    phases:
+      - name: schemas
+        workspace: root:socialweb-provider
+        files:
+          - path: computecontract-apiresourceschema.yaml
+          - path: computecontract-apiexport.yaml
+          - path: marketidentity-apiresourceschema.yaml
+          - path: marketidentity-apiexport.yaml
+        after:
+          - kind: APIExport
+            name: computecontracts
+            for: IdentityValid
+          - kind: APIExport
+            name: marketidentities
+            for: IdentityValid
+      - name: bindings
+        workspace: root
+        files:
+          - path: apps/market-requester/bindings.yaml
+        after:
+          - kind: APIBinding
+            for: Ready
+      - name: vault
+        workspace: root
+        files:
+          - path: apps/market-requester/vault.yaml
+        after:
+          - kind: OpenBaoServer
+            name: requester
+            for: Ready
+      - name: workspace
+        workspace: root
+        files:
+          - path: apps/workspace-app.yaml
+        after:
+          - kind: Workspace
+            for: Ready
+      - name: rbac
+        workspace: root:app
+        before:
+          - kind: APIBinding
+            for: Ready
+        files:
+          - path: market-network/10-rbac.yaml
+      - name: requester@market-network
+        workspace: root:app
+        files:
+          - path: apps/market-requester/market-network.values.yaml
+            template: denopods/service.yaml
+      - name: requester@default
+        workspace: root:app
+        files:
+          - path: apps/market-requester/default.values.yaml
+            template: denopods/service.yaml
+
   - name: market-network
     summary: the shared services of a MarketNetwork application - PLC, relay, dispatcher and its TLS front, two PDSes and the verifier - applied by its reconciler (internal/appctl); the bidders are child applications with their own kcp; needs denoruntime and a running deno provider
     values: MarketNetwork
@@ -435,7 +493,7 @@ unapplied:
   - path: audit-policy.yaml
     why: an audit.k8s.io Policy file a k3s apiserver reads at start through --audit-policy-file, never an object
   - path: apps/option-map.yaml
-    why: maps every cli-args-env option of hono-bidder and request-vm-ssh to a root-object field, the network value, a profile, the state dir, a listener report, the options passthrough or a legacy-transport removal; internal/appctl reads it to accept spec.options (plan 0006 M2-APP-CONTROLLER)
+    why: maps every cli-args-env option of hono-bidder and request-vm-ssh to a root-object field, the network value, a ComputeContract field, a profile, the state dir, a listener report, the options passthrough, the foreground CLI or a legacy-transport removal; internal/appctl reads it to accept spec.options and `run request`'s passthrough (plans 0006 M2-APP-CONTROLLER, 0008 M4-RUN-REQUEST)
   - path: apps/market-network/market-network.values.yaml
     why: the market-network profile's NetworkApp defaults for each bidder and the gateway, merged with dev up's app-values into the MarketNetwork spec by internal/appctl, never an object
   - path: ts-entries.yaml

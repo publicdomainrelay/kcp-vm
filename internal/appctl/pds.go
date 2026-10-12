@@ -21,6 +21,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
@@ -44,12 +45,16 @@ var OpenBaoServerGVR = schema.GroupVersionResource{Group: v1alpha1.GroupName, Ve
 
 func fileRef(ref string) string { return strings.TrimPrefix(ref, "file:") }
 
-func (ctl *Controller) vaultClient(ctx context.Context) (*openbao.Client, v1alpha1.OpenBaoServerStatus, v1alpha1.OpenBaoServerClientRefs, error) {
+func (ctl *Controller) vaultClient(ctx context.Context, server, clientName string) (*openbao.Client, v1alpha1.OpenBaoServerStatus, v1alpha1.OpenBaoServerClientRefs, error) {
 	ri, err := ctl.client(ctl.c.workspace(), OpenBaoServerGVR)
 	if err != nil {
 		return nil, v1alpha1.OpenBaoServerStatus{}, v1alpha1.OpenBaoServerClientRefs{}, err
 	}
-	u, err := ri.Get(ctx, BidderVaultServer, metav1.GetOptions{})
+	return ServerClient(ctx, ri, server, clientName)
+}
+
+func ServerClient(ctx context.Context, ri dynamic.ResourceInterface, server, clientName string) (*openbao.Client, v1alpha1.OpenBaoServerStatus, v1alpha1.OpenBaoServerClientRefs, error) {
+	u, err := ri.Get(ctx, server, metav1.GetOptions{})
 	if err != nil {
 		return nil, v1alpha1.OpenBaoServerStatus{}, v1alpha1.OpenBaoServerClientRefs{}, err
 	}
@@ -59,16 +64,16 @@ func (ctl *Controller) vaultClient(ctx context.Context) (*openbao.Client, v1alph
 	}
 	st := o.Status
 	if st.Address == "" || st.Refs == nil {
-		return nil, st, v1alpha1.OpenBaoServerClientRefs{}, fmt.Errorf("the OpenBaoServer %s reports no address yet (phase %s)", BidderVaultServer, st.Phase)
+		return nil, st, v1alpha1.OpenBaoServerClientRefs{}, fmt.Errorf("the OpenBaoServer %s reports no address yet (phase %s)", server, st.Phase)
 	}
 	var c v1alpha1.OpenBaoServerClientRefs
 	for _, x := range st.Clients {
-		if x.Name == BidderVaultClient {
+		if x.Name == clientName {
 			c = x
 		}
 	}
 	if c.ClientCert == "" {
-		return nil, st, c, fmt.Errorf("the OpenBaoServer %s reports no client %s yet", BidderVaultServer, BidderVaultClient)
+		return nil, st, c, fmt.Errorf("the OpenBaoServer %s reports no client %s yet", server, clientName)
 	}
 	caPEM, err := os.ReadFile(fileRef(st.Refs.CA))
 	if err != nil {
@@ -91,7 +96,7 @@ func (ctl *Controller) vaultClient(ctx context.Context) (*openbao.Client, v1alph
 }
 
 func (ctl *Controller) bidderPassword(ctx context.Context) (string, manifests.BidderVault, error) {
-	client, st, c, err := ctl.vaultClient(ctx)
+	client, st, c, err := ctl.vaultClient(ctx, BidderVaultServer, BidderVaultClient)
 	if err != nil {
 		return "", manifests.BidderVault{}, err
 	}
@@ -170,7 +175,7 @@ func EnsurePdsAccount(ctx context.Context, pdsURL, caFile, handle, password stri
 	return "", fmt.Errorf("appctl: neither signing in to (%d %v) nor creating (%d %v) %s on %s worked", scode, sess, code, out, handle, pdsURL)
 }
 
-func (ctl *Controller) vaultReaderToken(ctx context.Context, dir string) (string, string, error) {
+func (ctl *Controller) vaultReaderToken(ctx context.Context, dir, account string) (string, string, error) {
 	tokenPath, caPath := filepath.Join(dir, vaultTokenFile), filepath.Join(dir, vaultKcpCAFile)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", "", err
@@ -186,10 +191,10 @@ func (ctl *Controller) vaultReaderToken(ctx context.Context, dir string) (string
 		return "", "", err
 	}
 	secs := int64(vaultTokenTTL / time.Second)
-	tr, err := cs.CoreV1().ServiceAccounts("default").CreateToken(ctx, BidderVaultAccount,
+	tr, err := cs.CoreV1().ServiceAccounts("default").CreateToken(ctx, account,
 		&authenticationv1.TokenRequest{Spec: authenticationv1.TokenRequestSpec{ExpirationSeconds: &secs}}, metav1.CreateOptions{})
 	if err != nil {
-		return "", "", fmt.Errorf("minting the %s token: %w", BidderVaultAccount, err)
+		return "", "", fmt.Errorf("minting the %s token: %w", account, err)
 	}
 	return tokenPath, caPath, writeSecret(tokenPath, []byte(tr.Status.Token))
 }
@@ -204,7 +209,7 @@ func (ctl *Controller) bidderVault(ctx context.Context, spec v1alpha1.MarketBidd
 		return vault, err
 	}
 	ctl.c.log().Info("the bidder's PDS account", "handle", spec.Identity.Handle, "pds", spec.Identity.PdsUrl, "did", did)
-	tokenPath, caPath, err := ctl.vaultReaderToken(ctx, stateDir)
+	tokenPath, caPath, err := ctl.vaultReaderToken(ctx, stateDir, BidderVaultAccount)
 	if err != nil {
 		return vault, err
 	}

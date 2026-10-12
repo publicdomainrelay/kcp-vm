@@ -1,0 +1,16 @@
+name: requester
+entry: request-vm-ssh
+stateDir: "{{.StateDir}}"
+serviceAccount: deno-runner
+tls: none
+args: ["--port", "0", "--pds-state-path", "{{.StateDir}}/pds", "--market-identity-kcp-workspace", "{{.Kcp.Workspace}}", "--market-identity-kcp-token-file", "{{.Kcp.TokenFile}}", "--market-identity-kcp-ca-cert-file", "{{.Kcp.CAFile}}", "--compute-contract-kcp-workspace", "{{.Kcp.Workspace}}", "--compute-contract-kcp-token-file", "{{.Kcp.TokenFile}}", "--compute-contract-kcp-ca-cert-file", "{{.Kcp.CAFile}}", "--identity-vault-openbao-server", "{{.Vault.Server}}", "--identity-vault-openbao-client", "{{.Vault.Client}}", "--identity-vault-kcp-workspace", "{{.Kcp.Workspace}}", "--identity-vault-kcp-token-file", "{{.Kcp.TokenFile}}", "--identity-vault-kcp-ca-cert-file", "{{.Kcp.CAFile}}"{{.ExtraArgs}}]
+env:
+  SERVE_PORT: "0"
+permissions:
+  net: true
+  env: true
+  sys: true
+  read: ["{{.Vault.CA}}", "{{.Vault.ClientDir}}"]
+probe:
+  host: requester.default.app.svc.kcp.local
+  path: /xrpc/_health

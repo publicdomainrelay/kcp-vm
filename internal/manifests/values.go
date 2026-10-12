@@ -61,6 +61,20 @@ type BidderVault struct {
 	ClientDir string `json:",omitempty"`
 }
 
+type MarketRequester struct {
+	StateDir  string `json:",omitempty"`
+	CABundle  string `json:",omitempty"`
+	Kcp       KcpRef
+	Vault     BidderVault
+	ExtraArgs string
+}
+
+type KcpRef struct {
+	Workspace string `json:",omitempty"`
+	TokenFile string `json:",omitempty"`
+	CAFile    string `json:",omitempty"`
+}
+
 type Firecracker struct {
 	WorkRoot         string `json:",omitempty"`
 	VMRuntimeCommand string `json:",omitempty"`
@@ -74,6 +88,7 @@ var valueTypes = map[string]func() reflect.Type{
 	"MarketNetwork":       func() reflect.Type { return reflect.TypeOf(&MarketNetwork{}) },
 	"MarketBidder":        func() reflect.Type { return reflect.TypeOf(&MarketBidder{}) },
 	"Gateway":             func() reflect.Type { return reflect.TypeOf(&Gateway{}) },
+	"MarketRequester":     func() reflect.Type { return reflect.TypeOf(&MarketRequester{}) },
 }
 
 type Gateway struct {

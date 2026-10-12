@@ -210,7 +210,7 @@ func (ctl *Controller) Pass(ctx context.Context) {
 	}{
 		{MarketNetworkGVR, ctl.network.reconcile},
 		{MarketBidderGVR, ctl.reconcileBidder},
-		{MarketRequesterGVR, ctl.reconcilePassive(v1alpha1.ApplicationKindMarketRequester)},
+		{MarketRequesterGVR, ctl.reconcileRequester},
 		{GatewayGVR, ctl.reconcileGateway},
 	} {
 		ri, err := ctl.client(ctl.c.workspace(), k.gvr)
