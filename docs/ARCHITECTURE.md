@@ -362,10 +362,11 @@ restart or upgrade restarts no member.
   cluster's whole vault state; the core syncs the vault to it. The cluster provider reaches the vault
   only as client `clusterprovider` (policy `clusterprovider`); `<dataDir>/openbao/access.json` names the
   address and the client certificate files, never a token.
-- **Not yet.** Member code that
-  is the core binary (ccm) names the running executable, not a `bin/<sha>/` path; that is
-  M3-HOST-INSTALL. Port attribution by cgroup (`internal/portscan`) is not needed while nothing reaps
-  by port.
+- **The core binary as member code.** The ccm and the cluster front run the core's resolved
+  executable, `<state>/bin/<sha>/socialweb-computer` on an installed host, so a core upgrade changes no
+  code inside a running member and the upgrade's collection keeps that directory while the member runs
+  (M3-HOST-INSTALL).
+- **Not yet.** Port attribution by cgroup (`internal/portscan`) is not needed while nothing reaps by port.
 
 ### The External Secrets controller runs beside the control plane
 
@@ -706,6 +707,24 @@ drop-in, so the user manager starts with them) and `host-backend: systemd-user` 
 Every other unit (the vaults, cluster slices and members, VM units) is a transient unit placed at runtime
 from a HostProcess object and adopted by name. Plan 0006 M1-INSTALL and M2-BOOTSTRAP-LAYER enumerate both
 lists.
+
+**The gateway's install and upgrade (plan 0006 M3-HOST-INSTALL).** `install gateway` writes the user unit
+`socialweb-computer-gateway.service` (`ExecStart=<state>/bin/current/socialweb-computer serve gateway kcp`,
+`Restart=always`, default `KillMode=control-group`, optional `EnvironmentFile=-<state>/gateway.env`) and a
+`config.json` that `serve gateway kcp` reads with nothing added by hand: the state dir, `host-backend:
+systemd-user`, the asset cache, and the three addresses caddy proxies to (kcp front 127.0.0.1:6443, TLS
+front 127.0.0.1:8443, door 127.0.0.1:8788). `upgrade --binary --sha256` checks the digest, copies the
+binary to `bin/<sha>/`, runs its self-check, retargets `bin/current` (the old target becomes
+`bin/previous`) and restarts the core unit; every installed and transient unit is adopted, only the core
+gets a new InvocationID. `rollback` swaps `current` and `previous` and restarts. After either, `bin/<sha>/`
+directories are collected except `current`, `previous`, any directory a running process executes from
+(`/proc/<pid>/exe`) and any a unit file names (the account's unit dir and the user manager's runtime and
+transient unit dirs). Member code that is the core binary (the ccm and the cluster front) runs the core's
+resolved executable, `bin/<sha>/socialweb-computer`, never `bin/current`, so a member keeps its code across
+an upgrade and its directory is kept while it runs. `--root <dir>` stages an install for a proof run: the
+host files (`/etc`, the linger file, the install record) go under `<dir>`, the state dir is used as given,
+the account is the invoking user and the units run in that user's own manager; `--unit-prefix` names every
+unit of the installed application, the core included (`<prefix>computer-gateway.service`).
 
 **Each application instance's kcp as its service manager; dev run mode (user, 2026-10-12).** Long-lived
 host processes are `HostProcess` objects in their application instance's own kcp (section 0) (a kind that generalises DenoPod's reconciler shape) reconciled by a
