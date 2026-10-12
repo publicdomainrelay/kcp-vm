@@ -290,7 +290,7 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
   const vmReadyTimeoutSec = opts.vmReadyTimeoutSec ?? 600;
   const joinModule = createK3sJoinModule(opts.meshd ? { meshd: opts.meshd } : {});
   const eventStreams = opts.eventStreams ?? (() =>
-    createDefaultATProtoEventStreamsClient({ additionalRelays: opts.relayUrls ?? [], log: quietLogger(log) }) as unknown as {
+    createDefaultATProtoEventStreamsClient({ onlyRelays: opts.relayUrls?.length ? opts.relayUrls : undefined, log: quietLogger(log) }) as unknown as {
       close(): void;
     });
 

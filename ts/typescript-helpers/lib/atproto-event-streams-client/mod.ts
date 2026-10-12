@@ -189,6 +189,7 @@ export interface DefaultClientOpts {
   removeRelays?: string[];
   /** Jetstream URLs to remove from the default set. */
   removeJetstreams?: string[];
+  onlyRelays?: readonly string[];
   /**
    * Time window in ms for deduplication. Events with the same AT-URI + CID
    * within this window are suppressed. Default 15 seconds.
@@ -203,12 +204,12 @@ export function createDefaultATProtoEventStreamsClient(
   const removeRelay = new Set(opts.removeRelays ?? []);
   const removeJetstream = new Set(opts.removeJetstreams ?? []);
 
-  const relayUrls = [
+  const relayUrls = opts.onlyRelays ? [...opts.onlyRelays] : [
     ...DEFAULT_RELAY_URLS.filter((u) => !removeRelay.has(u)),
     ...(opts.additionalRelays ?? []),
   ];
 
-  const jetstreamUrls = [
+  const jetstreamUrls = opts.onlyRelays ? [...(opts.additionalJetstreams ?? [])] : [
     ...DEFAULT_JETSTREAM_URLS.filter((u) => !removeJetstream.has(u)),
     ...(opts.additionalJetstreams ?? []),
   ];

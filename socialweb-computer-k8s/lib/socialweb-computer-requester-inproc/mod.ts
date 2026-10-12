@@ -344,7 +344,7 @@ export function createInProcessRequester(opts: InProcessRequesterOptions): InPro
           }) ?? [];
 
         eventStreams = createDefaultATProtoEventStreamsClient({
-          additionalRelays: opts.relayUrls ?? [],
+          onlyRelays: opts.relayUrls?.length ? opts.relayUrls : undefined,
           log: logger,
         }) as unknown as { close(): void };
 

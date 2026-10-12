@@ -17,7 +17,7 @@ import {
   registerKeypairPlcDid,
 } from "@publicdomainrelay/atproto-helpers";
 import type { LocalPDSAgent } from "@publicdomainrelay/atproto-helpers";
-import { isLocalMarketNetwork, splitHostPort } from "@publicdomainrelay/market-network-common";
+import { explicitRelayUrls, isLocalMarketNetwork, splitHostPort } from "@publicdomainrelay/market-network-common";
 import type { MarketNetwork } from "@publicdomainrelay/market-network-common";
 import { installMarketNetworkFetch } from "@publicdomainrelay/market-network-fetch";
 import { callbackRef, cliIdentityMode, cliMarketIdentity, vaultRefs } from "@publicdomainrelay/market-identity-abc";
@@ -48,7 +48,6 @@ import { OFFERING_NSID } from "@publicdomainrelay/market-common";
 import { BIDDER_OAUTH_SCOPE } from "@publicdomainrelay/oauth-scope";
 import { verifyRelayVisibility } from "@publicdomainrelay/requester-xrpc";
 import { createDefaultATProtoEventStreamsClient } from "@publicdomainrelay/atproto-event-streams-client";
-import { DEFAULT_RELAY_URLS } from "@publicdomainrelay/atproto-event-stream-common";
 import { createPlcDirectoryClient } from "@publicdomainrelay/did-plc";
 import type { ComputeAtproto } from "@publicdomainrelay/compute-provider-abc";
 import { createDigitalOceanComputeProvider } from "@publicdomainrelay/compute-provider-digitalocean";
@@ -757,8 +756,7 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
 
     const firehoseMode = spec.market.firehoseMode || "off";
     const eventStreams = createDefaultATProtoEventStreamsClient({
-      additionalRelays: [...network.relayUrls, ...(firehoseMode === "subscriberepos" ? network.firehoseUrls : [])],
-      removeRelays: network.firehoseUrls.length > 0 ? DEFAULT_RELAY_URLS : undefined,
+      onlyRelays: explicitRelayUrls(network, firehoseMode),
       log: logger,
     });
     crawlRelayUrls = eventStreams.relays.map((r) => r.url).filter(isCrawlRoot);

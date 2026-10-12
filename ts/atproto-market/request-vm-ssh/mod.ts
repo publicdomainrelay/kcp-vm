@@ -17,12 +17,11 @@ import type { RequesterPDS } from "@publicdomainrelay/requester-abc";
 import { EVENT_NSID, OFFERING_NSID } from "@publicdomainrelay/market-common";
 import { REQUESTER_OAUTH_SCOPE } from "@publicdomainrelay/oauth-scope";
 import { createDefaultATProtoEventStreamsClient } from "@publicdomainrelay/atproto-event-streams-client";
-import { DEFAULT_RELAY_URLS } from "@publicdomainrelay/atproto-event-stream-common";
 import { parseSecretsFile } from "@publicdomainrelay/secrets-common";
 import { createSecretsCapability } from "@publicdomainrelay/guest-capability-secrets";
 import type { GuestCapability } from "@publicdomainrelay/guest-capability-abc";
 import { Secp256k1Keypair } from "@atproto/crypto";
-import { marketNetwork } from "@publicdomainrelay/market-network-common";
+import { explicitRelayUrls, marketNetwork } from "@publicdomainrelay/market-network-common";
 import { installMarketNetworkFetch } from "@publicdomainrelay/market-network-fetch";
 import { callbackRef, cliIdentityMode, cliMarketIdentity, vaultRefs } from "@publicdomainrelay/market-identity-abc";
 import type { BrowserOAuthClient, IdentityPrompt, IdentityVault, MarketIdentity, MarketIdentityMode } from "@publicdomainrelay/market-identity-abc";
@@ -66,14 +65,8 @@ const ingressProxyHost = network.ingressProxyHost;
 installMarketNetworkFetch({ network });
 
 const firehoseMode = (options.firehoseMode as string) || "off";
-const additionalRelays: string[] = [
-  ...network.relayUrls,
-  ...(firehoseMode === "subscriberepos" ? network.firehoseUrls : []),
-];
-
 const eventStreams = createDefaultATProtoEventStreamsClient({
-  additionalRelays,
-  removeRelays: network.firehoseUrls.length > 0 ? DEFAULT_RELAY_URLS : undefined,
+  onlyRelays: explicitRelayUrls(network, firehoseMode),
   log: logger,
 });
 const relayUrls = eventStreams.relays.map((r) => r.url);

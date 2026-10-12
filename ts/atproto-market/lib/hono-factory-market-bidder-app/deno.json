@@ -5,7 +5,6 @@
   "exports": "./mod.ts",
   "imports": {
     "@atproto/crypto": "npm:@atproto/crypto@^0.5.0",
-    "@publicdomainrelay/atproto-event-stream-common": "jsr:@publicdomainrelay/atproto-event-stream-common@^0",
     "@publicdomainrelay/atproto-event-streams-client": "jsr:@publicdomainrelay/atproto-event-streams-client@^0",
     "@publicdomainrelay/atproto-helpers": "jsr:@publicdomainrelay/atproto-helpers@^0",
     "@publicdomainrelay/atproto-oauth-helpers": "jsr:@publicdomainrelay/atproto-oauth-helpers@^0",

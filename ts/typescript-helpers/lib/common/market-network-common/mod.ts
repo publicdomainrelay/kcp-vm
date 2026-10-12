@@ -48,6 +48,11 @@ export function marketNetwork(input: MarketNetworkInput = {}): MarketNetwork {
   };
 }
 
+export function explicitRelayUrls(network: MarketNetwork, firehoseMode = "off"): string[] | undefined {
+  if (network.relayUrls.length === 0 && network.firehoseUrls.length === 0) return undefined;
+  return [...new Set([...network.relayUrls, ...(firehoseMode === "subscriberepos" ? network.firehoseUrls : [])])];
+}
+
 export function splitHostPort(host: string): { hostname: string; port?: string } {
   const m = host.match(/^(\[[^\]]*\]|[^:]*)(?::(\d+))?$/);
   if (!m) return { hostname: host };
