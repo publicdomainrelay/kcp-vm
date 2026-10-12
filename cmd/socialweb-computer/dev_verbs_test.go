@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/testdirs"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -38,7 +39,7 @@ func TestFlagsMayFollowTheWordsTheyQualify(t *testing.T) {
 }
 
 func devEnv(t *testing.T) clicfg.MapEnv {
-	return clicfg.MapEnv{"XDG_RUNTIME_DIR": t.TempDir(), "TASK_STATE_DIR": t.TempDir(), "XDG_STATE_HOME": t.TempDir()}
+	return clicfg.MapEnv{"XDG_RUNTIME_DIR": testdirs.Short(t), "TASK_STATE_DIR": t.TempDir(), "XDG_STATE_HOME": t.TempDir()}
 }
 
 func TestTheDevVerbsOfAnInstanceThatIsNotUpSayDevUpFirst(t *testing.T) {

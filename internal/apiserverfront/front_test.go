@@ -3,6 +3,7 @@ package apiserverfront
 import (
 	"bufio"
 	"context"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/testdirs"
 	"io"
 	"net"
 	"path/filepath"
@@ -179,7 +180,7 @@ func TestTheBackendSurvivesAFrontRestartThroughItsStateFile(t *testing.T) {
 
 func TestTheControlSocketSetsReportsAndDrains(t *testing.T) {
 	a, b := startBackend(t, "a"), startBackend(t, "b")
-	dir := t.TempDir()
+	dir := testdirs.Short(t)
 	f, addr := startFront(t, dir)
 	sock := filepath.Join(dir, "front.sock")
 	ctx, cancel := context.WithCancel(context.Background())
