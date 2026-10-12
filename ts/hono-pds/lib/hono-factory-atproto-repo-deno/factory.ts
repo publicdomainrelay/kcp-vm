@@ -420,6 +420,14 @@ export function createRepoFactory(opts: RepoFactoryOptions): RepoFactory {
     });
   });
 
+  app.use("/xrpc/com.atproto.server.getSession", requireAuth);
+  app.get("/xrpc/com.atproto.server.getSession", (c) => {
+    const requester = (c as unknown as { get: (k: string) => unknown }).get("requesterDid") as Did;
+    const account = accountStore.getAccount(requester);
+    if (!account) return c.json({ error: "AccountNotFound", message: "no hosted account for this token" }, 404);
+    return c.json({ did: account.did, handle: account.handle, active: true });
+  });
+
   // ── Admin-protected endpoints ─────────────────────────────────────
 
   const inviteCodes = new Set<string>();
