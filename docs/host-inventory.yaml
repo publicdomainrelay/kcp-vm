@@ -529,7 +529,6 @@ entries:
     why: no container at runtime (user decision 2026-10-07); the firecracker runner container and container-mode backends are not ported
     from:
       - "hono-compute-provider container-backend-docker"
-      - "oidc-issuer-hono containerCli"
   - name: wsl
     kind: executable
     fate: removed-legacy
@@ -544,7 +543,6 @@ entries:
     why: Apple's container CLI is a container-mode backend, not the headless VM backend plan 0012 builds
     from:
       - "hono-compute-provider container-backend-container"
-      - "oidc-issuer-hono containerCli"
   - name: sudo
     kind: executable
     fate: removed-legacy
@@ -973,8 +971,6 @@ indirect:
     resolves: [docker, wsl]
   - site: "hono-compute-provider/lib/node-image-firecracker/mod.ts: binary"
     resolves: [socialweb-nodeimage]
-  - site: "hono-compute-provider/lib/oidc-issuer-hono/mod.ts: containerCli"
-    resolves: [container, docker]
   - site: "hono-compute-provider/lib/qemu-standalone/mod.ts: cmd"
     resolves: [sudo, find, skopeo, mkfs.ext4, truncate, du, qemu-system-x86_64]
   - site: "socialweb-computer-kcp/cmd/socialweb-computer/dev.go: path"

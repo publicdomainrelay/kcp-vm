@@ -306,7 +306,7 @@ items:
       other than iroh is requested'. Red on today's tree.
     done_when: "the three scan tests green; every suite of the three repos green; the ssh gateway's Live market workflow green after the change (run URL, UTC); one market-bed run (guest via runComputeContract) reaches an ssh session over iroh; pushed on main in all three repos."
     risks: ["Plan 0012's research lists the legacy modules and forwards the JSR registry per VM (0012 lines on cloud-init-common and the guest-facing services); its M0-REVISIT re-reads them (NEXT.yaml open_notes)."]
-    status: doing
+    status: done
     evidence:
   - id: M2-DENOKCP-FORK
     milestone: M2

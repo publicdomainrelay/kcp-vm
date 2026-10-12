@@ -1134,8 +1134,8 @@ items:
     risks:
       - "A guest that never reports keys cannot be ssh'd; that is the intended fail-closed behaviour, and the requester logs which receipt is missing its report."
       - "Keys are fixed for a guest's life (no rekey on a live guest); a rebuilt guest is a new receipt."
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M5-RUN-BIDDER
     milestone: M5
     title: socialweb-computer run bidder as a user unit of the shared lingering bidder account, no docker, least-privilege deno
