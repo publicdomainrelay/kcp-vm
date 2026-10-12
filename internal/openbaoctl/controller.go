@@ -266,8 +266,8 @@ type synced struct {
 	desired baosync.Desired
 }
 
-func syncWith(ctx context.Context, admin, anon *openbao.Client, in layoutInput) (synced, error) {
-	d, pending, err := desired(ctx, in, pkiCA(anon))
+func syncWith(ctx context.Context, admin *openbao.Client, in layoutInput) (synced, error) {
+	d, pending, err := desired(ctx, in, pkiCA(admin))
 	if err != nil {
 		return synced{}, err
 	}
@@ -278,7 +278,7 @@ func syncWith(ctx context.Context, admin, anon *openbao.Client, in layoutInput) 
 func (c *Controller) syncCore(ctx context.Context, client *openbao.Client, keysPath string, in layoutInput) (synced, error) {
 	core, err := loginCore(ctx, client)
 	if err == nil {
-		s, serr := syncWith(ctx, core, client, in)
+		s, serr := syncWith(ctx, core, in)
 		core.RevokeSelf(context.WithoutCancel(ctx))
 		if serr == nil || !permissionDenied(serr) {
 			s.how = "the core's cert-auth token"
@@ -298,7 +298,7 @@ func (c *Controller) syncCore(ctx context.Context, client *openbao.Client, keysP
 	}
 	root := client.WithToken(tok)
 	defer root.RevokeSelf(context.WithoutCancel(ctx))
-	s, serr := syncWith(ctx, root, client, in)
+	s, serr := syncWith(ctx, root, in)
 	s.how = fmt.Sprintf("a root token generated from the unseal keys and revoked after the pass, because the core's own token could not reconcile (%v)", err)
 	return s, serr
 }
@@ -491,7 +491,7 @@ func (c *Controller) reconcile(ctx context.Context, o v1alpha1.OpenBaoServer) v1
 		}
 		st.UnsealedInstance, st.UnsealedAt = instance, time.Now().UTC().Format(time.RFC3339Nano)
 		root := client.WithToken(res.RootToken)
-		s, serr := syncWith(ctx, root, client, layout)
+		s, serr := syncWith(ctx, root, layout)
 		s.how = "the initial root token"
 		if err := root.RevokeSelf(ctx); err != nil {
 			log.Warn("revoking the initial root token", "err", err.Error())

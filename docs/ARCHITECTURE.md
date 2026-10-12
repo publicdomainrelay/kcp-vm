@@ -326,8 +326,13 @@ restart or upgrade restarts no member.
   cluster keeps it.
 - **Secrets.** A link's key reaches dumbpipe through `spec.envFiles` of its HostProcess: a 0600 file
   under the cluster's data dir. The key is never written into a kcp object.
-- **Not yet.** The per-cluster OpenBao is still a member (`bao`) gated by the cluster provider; the
-  OpenBaoServer kind (M2-OPENBAO-SERVER) can take it over in `UnitsHost.memberSpec`. Member code that
+- **The cluster's OpenBao.** The `bao` member is an OpenBaoServer object `c-<key>-bao` (M3-BAO-SYNC):
+  unit `socialweb-c-<key>-bao.service` in the cluster's slice, After/Wants its postgres unit, postgres
+  storage, the cluster's own vault TLS with client certificates optional. Its `spec.declared` is the
+  cluster's whole vault state; the core syncs the vault to it. The cluster provider reaches the vault
+  only as client `clusterprovider` (policy `clusterprovider`); `<dataDir>/openbao/access.json` names the
+  address and the client certificate files, never a token.
+- **Not yet.** Member code that
   is the core binary (ccm) names the running executable, not a `bin/<sha>/` path; that is
   M3-HOST-INSTALL. Port attribution by cgroup (`internal/portscan`) is not needed while nothing reaps
   by port.
@@ -464,6 +469,9 @@ plan's `m3_contract` already fixed it (names, mount, path, env var, encoding).
 
 ### The vault's config is rendered, not shipped
 
+Since plan 0006 M3-BAO-SYNC `internal/openbaoctl` renders the config from the cluster's OpenBaoServer
+spec (`rootvault.ServerConfigWith`: the same listener and postgres storage, client certificates
+optional) into its own state dir; the history below is the clusterstack rendering it replaced.
 `clusterstack.OpenBaoServerConfig` renders it and `clusterprovider.WriteOpenBaoConfig` writes it —
 0600, idempotent, before the step that runs `bao server -config=…`. Each line is measured on v2.6.2:
 
@@ -1251,6 +1259,10 @@ subject or audience is refused; the node's token gets 403 on another node's path
 role, policy and secret are gone, the login is refused, the other node's policy and the mount remain.
 
 ### The cluster OpenBao is reconciled against the live claims (plan 0005 M3-BAO-SYNC)
+
+Superseded 2026-10-12 by plan 0006 M3-BAO-SYNC (section 15): the node entries below are part of the
+cluster's OpenBaoServer declaration, `NodeVault.Reconcile` sets that declaration to the live claims, and
+the core's sync removes whatever no declaration names. The rules below are kept as the history.
 
 Built 2026-10-07. The rows above are what is written; this is what is removed, and it exists because
 `Revoke` alone is eager and therefore skippable: a provider restart or crash between a claim going
@@ -6370,6 +6382,41 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   at 07:18:18.889Z, and a KV value written before the kill read back; a dropped cert role was restored
   through generate-root; `dev restart core` kept the bao invocation and did not unseal again; deleting
   the object stopped the unit and kept the storage.
+
+- **Every OpenBao holds exactly its declaration (plan 0006 M3-BAO-SYNC, 2026-10-12).** `internal/baosync`
+  reads a server (auth and secret mounts, the ACL policy list, the role collections of every declared
+  auth and pki mount, every declared role and config, the owned KV listings), diffs it against the
+  declaration and applies: missing added, drift corrected (rules and role fields are compared after
+  normalising durations, lists and booleans), undeclared removed. Only the built-ins (`token/`, `sys/`,
+  `identity/`, `cubbyhole/`, `root`, `default`) are never touched; a secret mount whose type differs is
+  reported as a conflict, never replaced. An unread listing aborts the pass. The declaration is
+  `spec.declared` of the OpenBaoServer plus the controller's own layout and `spec.clients`, so every
+  pass of `internal/openbaoctl` syncs every Ready server. The core's `socialweb-core` policy is no longer
+  `path "*"`: it covers only sys/auth, sys/mounts, sys/policies/acl, the role, cert and config paths of
+  auth mounts, pki roles and KV metadata list/delete; it cannot read a KV value or issue a
+  certificate. When the core's own login cannot read (its policy or role was removed) the pass falls
+  back to a root token generated from the unseal keys and revoked after the pass. A change of the
+  rendered config, the server certificate or a CA file changes the child's `spec.restartKey`; the
+  HostProcess supervisor then stops and starts the unit in place and the next pass unseals it. Each
+  tenant cluster's OpenBao is such a server (section 5): its declaration is the cluster layout of
+  `internal/vaultlayout`, the ESO cert role (pending until the cluster's client CA is in `pki`), the
+  pki roles, and per live node a policy `node-<n>`, a jwt mount `jwt-<sha12(issuer)>` with its role and
+  a key in the `socialweb-nodes` KV scope. `NodeVault` edits that declaration in kcp and waits for the
+  sync; the cluster provider's own token can only write the paths it writes (k3s KV, node and link KV,
+  pki/config/ca, two pki issue roles). The root token of the cluster vault is no longer kept anywhere.
+  Not yet: the gateway's root vault (`internal/vaultmain`, `vault prepare-root|apply-root`) still keeps
+  its root token in its unseal file; it becomes an OpenBaoServer with M3-SERVE-GATEWAY-KCP, whose
+  `spec.declared` is vaultlayout's root layout, and apply-root shrinks to the pki root generation and
+  KV writes done as a client. Readings on a quick dev instance (proc backend), UTC: a standalone
+  server, hand drift at 08:26:30.583Z (policy `intruder` added, approle role `batch` deleted, auth
+  `userpass` enabled) undone at 08:26:30.823Z; `socialweb-core` deleted by hand at 08:27:14.637Z,
+  restored through generate-root at 08:27:16.547Z; `spec.listen` changed at 08:26:48.618Z, restarted in
+  place and unsealed at 08:27:00.811Z. A tenant cluster (serve provider against the dev instance, all
+  members Ready, ESO synced its ExternalSecret from the vault): drift at 08:35:57.014Z (policy added,
+  approle role `cluster-node` deleted, auth `userpass` enabled) undone at 08:35:59.467Z; an undeclared
+  `socialweb-nodes/ghost` written at 08:36:31.729Z deleted at 08:36:34.445Z, and the clusterprovider
+  token got 403 reading it back and listing policies; kill -9 of the cluster bao at 08:36:10.230Z,
+  unsealed at 08:36:14.421Z, the cluster stayed Ready.
 
 - **`units roll kcp` rolls the installed kcp units (plan 0006 M3-KCP-ROLL, 2026-10-12).** One procedure,
   `kcpserver.Roll`, serves `dev roll kcp` (proc, specs started by devsup) and `units roll kcp`

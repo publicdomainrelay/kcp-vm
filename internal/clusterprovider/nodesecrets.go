@@ -2,6 +2,7 @@ package clusterprovider
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -99,7 +100,7 @@ func (v *NodeVault) Revoke(ctx context.Context, node string) error {
 }
 
 func (v *NodeVault) Reconcile(ctx context.Context, live map[string]*v1alpha1.NodeClaimGrant) error {
-	return v.declare(ctx, func(nodes map[string]*v1alpha1.NodeClaimGrant) {
+	err := v.declare(ctx, func(nodes map[string]*v1alpha1.NodeClaimGrant) {
 		for n := range nodes {
 			delete(nodes, n)
 		}
@@ -112,4 +113,8 @@ func (v *NodeVault) Reconcile(ctx context.Context, live map[string]*v1alpha1.Nod
 			}
 		}
 	})
+	if errors.Is(err, ErrNoClusterVault) && len(live) == 0 {
+		return nil
+	}
+	return err
 }
