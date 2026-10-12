@@ -247,7 +247,8 @@ directory - a caller decision, not an automatic consequence of a process exiting
 Everything is either a controller-runtime reconcile loop or a deploy config. No new language.
 
 The table below is the virtual-clusters project (section 0's traditional exception). The planned
-components of plans 0006-0008 ("Host processes and the VM lifecycle" below) are organized by section 0:
+components of plans 0006-0008 ("Host processes and the VM lifecycle" and "compute-provider-kcp" below)
+are organized by section 0:
 each application instance has its own kcp, manifest set and profile, its components are DenoPods and
 HostProcesses, and listeners behind the edge bind port 0.
 
@@ -719,6 +720,93 @@ slot leads at once (61 s gap without it, measured); a pg_dump precedes every rol
 whose storage versions or bootstrap schemas differ take a planned short outage instead (plan 0006
 M2-KCP-SLOTS, M3-KCP-ROLL; `kcp-blue-green.md`). caddy stays public TLS only, is never reconfigured by a
 swap, and any caddy config we render pins `install_trust false`.
+
+### compute-provider-kcp: a ComputeVM per guest, reconciled by a Go controller (plan 0007 M1-DECIDE)
+
+NOT BUILT (plan 0007 M1-API, M2-VM-RUNTIME, M2-CONTROLLER, M3-TS-PROVIDER are todo). This is the decision
+record of plan 0007 M1-DECIDE, read through section 0; the host mechanics it relies on are the subsection
+above. `ud:N` = line N of `docs/research/2026-10-11-vm-lifecycle/user-decisions.md`; `lp:N` = line N of
+`linux-proofs.md` in the same dir. Code citations are at socialweb-computer-kcp d439c1f, hono-compute-provider
+54d1b8f, atproto-market cd09af4, kcp-libs f6911d2.
+
+- **The bidder is an application instance with its own kcp (user 2026-10-12, ud:31, ud:34).** A bidder
+  handle = one kcp (one slot on kine-sqlite behind a port-0 front) + the bidder manifest set + a profile,
+  rooted at a MarketBidder object. Its guests are ComputeVM objects in that kcp; two handles on one host never
+  share a kcp. Requesters and the gateway never read a ComputeVM: what crosses applications is a market record
+  (RFP, bid, accept, receipt, onNetwork, vm.hostKeys, vm.terminated). A bidder kcp upgrade is a short restart
+  of its one slot that VMs never notice; the controller re-adopts every VM afterwards (plan 0007 M6-BIDDER-UPGRADE).
+- **ComputeVM plus a Go controller (user 2026-10-07).** The TypeScript compute-provider-kcp (a
+  `ComputeProvider`, hono-compute-provider `lib/abc/compute-provider/mod.ts`) writes a ComputeVM;
+  `internal/computevm`, a client-go informer loop over the bidder's kcp, prepares, places, adopts and
+  releases it. Spec: vm, owner.handle, userDataSecret, requester, contract {receipt and accept uri+cid,
+  submitEventUrl, acceptedAt}, image, stopGraceSeconds; no network index. Status is OS-neutral (phase,
+  lostReason, runtime {backend as a free string, ref, instance, pid, startTime, hostBootID, vmmID}, network,
+  image, conditions, market) so the Windows and macOS backends (plans 0011, 0012) need no schema revision
+  (`lifecycle-synthesis.md:43`).
+- **DenoPod-per-VM was rejected, on evidence.** Deleting a DenoPod SIGKILLs its process group with no
+  release step (kcp-libs `impl/execrunner/supervisor.go:322`, also `:156`); the runner's 5-minute
+  `DefaultPodTimeout` (`impl/execrunner/pod.go:17`, enforced in `Observe` `:101-104`) killed the bed's bidder
+  mid-contract (run 4), and a VM lives as long as its contract; DenoPod status is `State`, `ExitCode`,
+  `Message`, `Outputs` (`abc/runner/runner.go:40-48`), with no typed guest fields; booting needs `/dev/kvm`
+  (today a privileged runner container per guest, hono-compute-provider
+  `lib/microvm-firecracker/mod.ts:170-180`), which the bidder's deno sandbox must never hold (no `-A`, no
+  `/dev/kvm`, no user bus; ud:16).
+- **ContractStore over ComputeVM is the source of truth.** Today's provider holds guests and the network
+  index in memory (`lib/compute-provider-firecracker/mod.ts:606`, `:610`), so a restarted bidder lost its
+  receipts and leaked guests (2026-10-07; 2026-10-12T01:31Z). The `ContractStore` ABC
+  (atproto-market `lib/abc/market-bidder/mod.ts:109`) and its file store landed for the firecracker provider
+  (atproto-market c78cf31, hono-compute-provider ac3a1f5; plan 0007 M4-CONTRACT-STORE-FILE); compute-provider-kcp
+  implements the same ABC over ComputeVM `spec.contract`, with tombstones from Lost or released ComputeVMs
+  (M4-CONTRACT-RESTORE). A restarted bidder re-populates from ComputeVMs plus live VMM state (user
+  2026-10-07; acceptance ACC7-SOURCE-OF-TRUTH).
+- **No socialweb-computer code in a running VM's process tree (user, ud:6).** Today it is resident:
+  `runVMM` waits on firecracker (`internal/nodefirecracker/namespace.go:19-56`) and nodeboot re-execs
+  `os.Executable()` (`cmd/socialweb-nodeboot/main.go:306`; a rename-over upgrade changes code mid-boot, E6).
+  Planned: prep is one-shot in the controller; each ComputeVM owns exactly one HostProcess placed as a
+  transient unit `socialweb-vm-<hid>-<name>` whose tree after start is pasta -> firecracker only (lp:297,
+  lp:309): on `systemd-user` in production, in the user manager of the one shared lingering `swc-bidder`
+  account (ud:7, ud:10), surviving core crash, upgrade and logout (E1); on `proc` in dev and tests, as a unit of
+  the per-instance `devsup`, the parent and child subreaper of every unit (`internal/devsup/server_linux.go:105`;
+  merged a107b5a, plan 0006 M2-HOST-BACKEND-PROC; ud:29). devsup in a dev tree is the dev backend by design,
+  never production. Both backends satisfy `hostsvc.Manager` (`internal/hostsvc/hostsvc.go:203`). Reboot = Lost.
+- **Tri-state verdict: Running | Lost | Unknown (user, ud:9).** `hostsvc.Verdict` and `LostReason`
+  (`internal/hostsvc/hostsvc.go:156-181`). Bus dial, auth or timeout and an unreachable API socket are
+  Unknown: a condition, phase unchanged, retried, never Lost. A changed boot id is Lost(HostRebooted); a missing
+  unit Lost(UnitGone); a failed or inactive unit Lost(UnitFailed | OOMKilled | VMMExited); an identity mismatch
+  on an active unit (InvocationID, pidfd + start ticks, `GetUnitByPIDFD`, firecracker `GET /` id) is
+  Lost(IdentityMismatch) and the unit is stopped at once (lp:304); a unit placed by another backend is Lost,
+  never adopted (`hostsvc.go:294-303`). Why: a false Lost costs a tenant a VM (`lifecycle-synthesis.md:29-31`).
+  A Lost guest is never booted again; the requester replaces it through a new RFP (user 2026-10-07).
+- **Stop is CtrlAltDel, then SIGKILL (user, ud:17).** firecracker is PID 1 of pasta's PID namespace and
+  ignores SIGTERM, so a plain stop hangs 45 s (lp:29, lp:315). Releasing sends `PUT /actions SendCtrlAltDel`,
+  waits `stopGraceSeconds`, then the unit stops with `KillSignal=SIGKILL`; arm64 goes straight to SIGKILL.
+  Measured live through the RFP flow: 0.21 s for an idle guest (lp:376). The finalizer is dropped only after
+  the work dir and API socket are gone (today 32 dirs, 63 GB leaked on hat-8, lp:381).
+- **Per-VM subuid user namespace (user 2026-10-12, ud:24).** `install bidder` reserves one subuid/subgid
+  range for the shared account; each VM unit runs pasta and firecracker in its own user namespace mapped to a
+  distinct 65536-id sub-range through `newuidmap`, so a VMM escape lands in a uid that owns nothing. No Unix
+  account is created on demand. The stage that creates the namespace is chosen by plan 0007 M0-VM-USERNS.
+- **cidata seed (user 2026-10-12, ud:25).** The seed is a separate pure-Go NoCloud cidata drive; the rootfs is
+  reflink-cloned as-is and truncated to the contract's disk; the guest grows its own root. No host runs
+  debugfs, e2fsck or resize2fs.
+- **Identical guest network per pasta namespace (user, ud:14).** Every guest gets the same address plan
+  inside its own pasta user+net namespace and dials a constant host address (pasta's gateway), so the
+  network-index allocator (`lib/compute-provider-firecracker/mod.ts:610`, `:688`) is deleted and user_data is
+  final at create.
+- **Guest images from a build-host script (user, ud:15; revised 2026-10-12).** Kernel + rootfs per
+  hypervisor x arch, built by a script on any Linux host (CI shells out to it later), pinned by sha256 and
+  fetched; a bidder needs no root, chroot, apt or Go toolchain (plan 0007 M1-GUEST-IMAGE).
+- **iroh is the only guest transport (user 2026-10-12, ud:35).** compute-provider-kcp inherits no guest JSR
+  registry, websocat path, tunnel or fedproxy module (plan 0008 M1-STRIP-LEGACY-TRANSPORTS). Guest SSH host
+  keys are guest-reported in `vm.hostKeys` and verified with `StrictHostKeyChecking=yes` (ud:26; plan 0007
+  M4-HOST-KEYS).
+- **vm.terminated (user 2026-10-12, ud:23).** The bidder reports why and when a guest ended in a signed
+  `com.publicdomainrelay.temp.compute.events.vm.terminated` inside the existing market.event envelope
+  (lexicon atproto-market eb2aa82, bidder publish 7c4a8f4, requester handling bdd423b; live 2026-10-12: 5.6 s
+  from guest poweroff to the requester's session end). The Go side emits it from every Lost verdict through
+  compute-provider-kcp's `onGuestGone` (HostRebooted -> host_reboot, UnitGone | UnitFailed | VMMExited ->
+  vmm_exited, OOMKilled -> oom, IdentityMismatch -> identity_mismatch); tombstones answer a late `vm.delete`
+  200. vm.terminated and vm.hostKeys are the plan's only protocol additions.
 
 ## 6. CRDs and the API surface
 
