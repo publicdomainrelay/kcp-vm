@@ -137,16 +137,6 @@ func (t Tree) Builtins() int { return len(t.builtins) }
 
 func (t Tree) Aliases() int { return len(t.aliases) }
 
-func (t Tree) BuiltIn(name string) bool {
-	_, ok := t.builtins[name]
-	return ok
-}
-
-func (t Tree) Loadable(name string) bool {
-	_, ok := t.files[name]
-	return ok
-}
-
 func Verify(source string, modules []string) error {
 	tree, err := LoadTree(source)
 	if err != nil {
