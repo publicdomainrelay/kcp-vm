@@ -1,0 +1,47 @@
+== 2026-10-11T23:23:35Z E7 HEAD=f0460fd
+-- git status before:
+?? docs/2026-10-07-01-30.md
+?? docs/plans/0011-windows-bidder-hcs.yaml
+?? goal.txt
+9fb5971498d4f1c4ef20264cb04ac0735e77e7517dbf8a3f989fc3370c99dd29  go.mod
+21b2431a987909d631e26de0403e5fc66983dd32b14d1a86213c3b269a49df06  go.sum
+== GOOS/GOARCH=linux/amd64: go build -mod=readonly ./...
+rc=0
+== GOOS/GOARCH=darwin/arm64: go build -mod=readonly ./...
+# github.com/johnandersen777/socialweb-computer-kcp/internal/processrunner
+internal/processrunner/processrunner.go:121:28: undefined: hostos.DieWithParent
+# github.com/johnandersen777/socialweb-computer-kcp/internal/portallocator
+internal/portallocator/collision.go:222:29: undefined: hostos.LocalPortRange
+internal/portallocator/collision.go:230:15: undefined: probeListen
+internal/portallocator/portallocator.go:238:19: undefined: hostos.Lock
+internal/portallocator/portallocator.go:241:28: undefined: hostos.Unlock
+internal/portallocator/portallocator.go:299:27: undefined: hostos.LockExclusive
+internal/portallocator/portallocator.go:373:27: undefined: hostos.LockExclusive
+internal/portallocator/portallocator.go:389:27: undefined: hostos.LockExclusive
+internal/portallocator/portallocator.go:418:24: undefined: hostos.LockShared
+internal/portallocator/portallocator.go:428:27: undefined: hostos.LockExclusive
+internal/portallocator/portallocator.go:459:27: undefined: hostos.LockExclusive
+internal/portallocator/portallocator.go:459:27: too many errors
+# github.com/johnandersen777/socialweb-computer-kcp/internal/subnetallocator
+internal/subnetallocator/subnetallocator.go:256:19: undefined: hostos.Lock
+internal/subnetallocator/subnetallocator.go:259:28: undefined: hostos.Unlock
+internal/subnetallocator/subnetallocator.go:396:27: undefined: hostos.LockExclusive
+internal/subnetallocator/subnetallocator.go:431:27: undefined: hostos.LockExclusive
+internal/subnetallocator/subnetallocator.go:514:27: undefined: hostos.LockExclusive
+internal/subnetallocator/subnetallocator.go:542:24: undefined: hostos.LockShared
+rc=1
+== GOOS/GOARCH=windows/amd64: go build -mod=readonly ./...
+# github.com/johnandersen777/socialweb-computer-kcp/internal/nodevm
+internal/nodevm/disk.go:142:17: undefined: unix.IoctlFileClone
+internal/nodevm/disk.go:151:21: undefined: unix.Seek
+internal/nodevm/disk.go:151:53: undefined: unix.SEEK_DATA
+internal/nodevm/disk.go:152:26: undefined: unix.ENXIO
+internal/nodevm/disk.go:164:21: undefined: unix.Seek
+internal/nodevm/disk.go:164:51: undefined: unix.SEEK_HOLE
+rc=1
+-- git status after:
+?? docs/2026-10-07-01-30.md
+?? docs/plans/0011-windows-bidder-hcs.yaml
+?? goal.txt
+9fb5971498d4f1c4ef20264cb04ac0735e77e7517dbf8a3f989fc3370c99dd29  go.mod
+21b2431a987909d631e26de0403e5fc66983dd32b14d1a86213c3b269a49df06  go.sum

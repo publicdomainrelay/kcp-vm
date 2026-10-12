@@ -1,0 +1,6 @@
+start swproof-vm-flag-true.service result="done" err=<nil>
+ignore_errors=yes
+PropExecStart(argv,true) after kill -9: not-found inactive success 0 0 
+start swproof-vm-flag-false.service result="done" err=<nil>
+ignore_errors=no
+PropExecStart(argv,false) after kill -9: loaded failed signal 2 9 

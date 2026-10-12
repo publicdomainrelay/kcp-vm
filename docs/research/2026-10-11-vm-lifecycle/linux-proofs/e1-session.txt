@@ -1,0 +1,41 @@
+== 2026-10-11T23:14:29Z MODE=session
++ systemd-run --user --unit=swproof-bidder-session -p Type=exec /tmp/claude-1000/-home-johnandersen777-src-publicdomainrelay-kcp/90fa59d8-02f3-4261-b817-d037e7405f23/scratchpad/linux-proofs/bin/bidder -mode session -unit swproof-vm-1-session.service
+Running as unit: swproof-bidder-session.service; invocation ID: e87691dd5f2a455db1bebd64e01e388d
+Starting swproof-bidder-session.service - [systemd-run] /tmp/claude-1000/-home-johnandersen777-src-publicdomainrelay-kcp/90fa59d8-02f3-4261-b817-d037e7405f23/scratchpad/linux-proofs/bin/bidder -mode session -unit swproof-vm-1-session.service...
+Started swproof-bidder-session.service - [systemd-run] /tmp/claude-1000/-home-johnandersen777-src-publicdomainrelay-kcp/90fa59d8-02f3-4261-b817-d037e7405f23/scratchpad/linux-proofs/bin/bidder -mode session -unit swproof-vm-1-session.service.
+bidder pid=48264 mode=session
+StartTransientUnit swproof-vm-1-session.service result="done" err=<nil> took=6.214536ms
+plain child setsid+pdeathsig pid=48326
+plain child setsid-only pid=48327
+vm baseline: active running bff842fd272a4aaf822673f6aadd6b8e 48315 success 
+bidder: active running e87691dd5f2a455db1bebd64e01e388d 48264 success 
+vm cgroup: /user.slice/user-1000.slice/user@1000.service/app.slice/swproof-vm-1-session.service  bidder cgroup: /user.slice/user-1000.slice/user@1000.service/app.slice/swproof-bidder-session.service
+pid 48326 ALIVE (user.slice/user-1000.slice/user@1000.service/app.slice/swproof-bidder-session.service)
+pid 48327 ALIVE (user.slice/user-1000.slice/user@1000.service/app.slice/swproof-bidder-session.service)
+== 2026-10-11T23:14:31Z step1: systemctl --user restart swproof-bidder-session
+vm after restart: active running bff842fd272a4aaf822673f6aadd6b8e 48315 success 
+STEP1 PASS vm unchanged
+bidder: active running b3f257e7a8cb44b198a72a9b0bdc5dbd 48439 success 
+bidder pid=48439 mode=session
+StartTransientUnit swproof-vm-1-session.service result="" err=Unit swproof-vm-1-session.service was already loaded or has a fragment file. took=315.53µs
+plain children of FIRST bidder instance:
+pid 48326 DEAD
+pid 48327 DEAD
+== 2026-10-11T23:14:32Z step2: kill -9 bidder MainPID=48439
+vm after kill -9: active running bff842fd272a4aaf822673f6aadd6b8e 48315 success 
+STEP2 PASS vm unchanged
+bidder: failed failed b3f257e7a8cb44b198a72a9b0bdc5dbd 0 signal 
+plain children of second bidder (pdeathsig, setsid-only):
+pid 48448 DEAD
+pid 48449 DEAD
++ restart bidder for step3
+bidder: active running f41d6e2ed51a424b8bfa8cf0e909dc59 48478 success 
+pid 48486 ALIVE (user.slice/user-1000.slice/user@1000.service/app.slice/swproof-bidder-session.service)
+pid 48487 ALIVE (user.slice/user-1000.slice/user@1000.service/app.slice/swproof-bidder-session.service)
+== 2026-10-11T23:14:35Z step3: systemctl --user stop swproof-bidder-session
+vm after stop: active running bff842fd272a4aaf822673f6aadd6b8e 48315 success 
+STEP3 PASS vm unchanged
+bidder: inactive dead  0 success 
+plain children of third bidder after stop:
+pid 48486 DEAD
+pid 48487 DEAD

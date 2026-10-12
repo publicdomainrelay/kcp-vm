@@ -1,0 +1,44 @@
+== 2026-10-11T23:20:25Z E4a: pasta + tapexec + execve, interactive (no systemd unit)
++ pasta --config-net -q -f -a 192.168.100.2 -n 255.255.255.0 -g 192.168.100.1 --dns-forward 192.168.100.1 -- /bin/sh -c 'exec "$0" tap0 /bin/sh -c "$1"' /tmp/claude-1000/-home-johnandersen777-src-publicdomainrelay-kcp/90fa59d8-02f3-4261-b817-d037e7405f23/scratchpad/linux-proofs/bin/tapexec 'ip -br link show tap0; ip -br addr; exec /tmp/claude-1000/-home-johnandersen777-src-publicdomainrelay-kcp/90fa59d8-02f3-4261-b817-d037e7405f23/scratchpad/linux-proofs/bin/tapexec attach tap0'
+--- output:
+tapexec: pid=1 ppid=0 Uid: 0 0 0 0 | CapEff: 000001ffffffffff
+tapexec: uid_map="0       1000          1"
+tapexec: created persistent tap0, up; execve [/bin/sh -c ip -br link show tap0; ip -br addr; exec /tmp/claude-1000/-home-johnandersen777-src-publicdomainrelay-kcp/90fa59d8-02f3-4261-b817-d037e7405f23/scratchpad/linux-proofs/bin/tapexec attach tap0]
+tap0             DOWN           6a:04:14:c6:c6:63 <NO-CARRIER,BROADCAST,MULTICAST,UP> 
+lo               UNKNOWN        127.0.0.1/8 ::1/128 
+enp8s0           UNKNOWN        192.168.100.2/24 fd7a:115c:a1e0::8539:8b59/128 fe80::b424:94ff:fea5:2d35/64 
+tap0             DOWN           
+attach: pid=1 opened existing tap0 with IFF_TAP|IFF_NO_PI|IFF_VNET_HDR fd=4 (as firecracker does for host_dev_name)
+--- process tree (session of pasta 70962):
+    PID    PPID COMMAND         COMMAND
+  70962   70960 pasta.avx2      pasta --config-net -q -f -a 192.168.100.2 -n 255.255.255.0 -g 192.168.100.1 --dns-forward 192.168.100.1 -- /bin/sh -c exec "$0" 
+  70965   70962  \_ tapexec      \_ /tmp/claude-1000/-home-johnandersen777-src-publicdomainrelay-kcp/90fa59d8-02f3-4261-b817-d037e7405f23/scratchpad/linux-proof
+pasta pid=70962 children=[70965]
+pid 70962 exe= comm=pasta.avx2 netns= userns=
+pid 70965 exe=/tmp/claude-1000/-home-johnandersen777-src-publicdomainrelay-kcp/90fa59d8-02f3-4261-b817-d037e7405f23/scratchpad/linux-proofs/bin/tapexec comm=tapexec netns=net:[4026533309] userns=user:[4026533150]
+grandchildren of 70965: []
+host netns: net:[4026531833]
+--- tap seen from inside ns via nsenter --preserve-credentials -U -n -t 70965:
+tap0             UP             6a:04:14:c6:c6:63 <BROADCAST,MULTICAST,UP,LOWER_UP> 
+tun type tap pi off vnet_hdr on persist on addrgenmode eui64 numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 tso_max_size 65536 tso_max_segs 65535 gro_max_size 65536 gso_ipv4_max_size 65536 gro_ipv4_max_size 65536 
+--- fds of exec'd process (tun fd from tapexec must not leak; attach fd present):
+0 -> /dev/null
+1 -> /tmp/claude-1000/-home-johnandersen777-src-publicdomainrelay-kcp/90fa59d8-02f3-4261-b817-d037e7405f23/scratchpad/linux-proofs/e4a.out
+2 -> /tmp/claude-1000/-home-johnandersen777-src-publicdomainrelay-kcp/90fa59d8-02f3-4261-b817-d037e7405f23/scratchpad/linux-proofs/e4a.out
+3 -> /sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/tmux-spawn-c6247bd3-38f6-459b-8a6c-5795c06f30c7.scope/cpu.max
+4 -> /dev/net/tun
+5 -> anon_inode:[eventpoll]
+6 -> anon_inode:[eventfd]
+== 2026-10-11T23:20:26Z kill -TERM pasta 70962
+pid 70962 gone
+pid 70965 STILL ALIVE
+cleanup: had to kill leftover attach
+== 2026-10-11T23:20:27Z E4a': kill -9 of pasta
+pasta=71020 child=71023
+e4.sh: line 34: 71020 Killed                     setsid pasta --config-net -q -f -a 192.168.100.2 -n 255.255.255.0 -g 192.168.100.1 -- /bin/sh -c 'exec "$0" tap0 /bin/sh -c "$1"' $T "$INNER" > $P/e4a2.out 2>&1
+pid 71020 gone
+pid 71023 STILL ALIVE (PPid:	1)
+cleanup: had to kill leftover attach
+== 2026-10-11T23:20:30Z E4a'': kill -9 of the exec'd child (VMM stand-in) -> pasta exits?
+pasta=71059 child=71062
+pasta 71059 exited rc=137

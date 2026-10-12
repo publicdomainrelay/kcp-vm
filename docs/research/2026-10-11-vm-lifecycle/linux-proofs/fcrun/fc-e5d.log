@@ -1,0 +1,11 @@
+2026-10-11T16:22:53.293448946 [swproof-e5:main] Running Firecracker v1.13.1
+2026-10-11T16:22:53.293969245 [swproof-e5:main] Listening on API socket ("a.sock").
+2026-10-11T16:22:53.294138405 [swproof-e5:fc_api] API server started.
+2026-10-11T16:22:53.397772495 [swproof-e5:fc_api] The API server received a Get request on "/".
+2026-10-11T16:22:53.397830105 [swproof-e5:fc_api] The request was executed successfully. Status code: 200 OK.
+2026-10-11T16:22:53.400365493 [swproof-e5:fc_api] The API server received a Get request on "/machine-config".
+2026-10-11T16:22:53.400389143 [swproof-e5:fc_api] The request was executed successfully. Status code: 200 OK.
+2026-10-11T16:22:53.402716202 [swproof-e5:fc_api] The API server received a Get request on "/version".
+2026-10-11T16:22:53.402740572 [swproof-e5:fc_api] The request was executed successfully. Status code: 200 OK.
+2026-10-11T16:22:53.405112560 [swproof-e5:fc_api] The API server received a Put request on "/actions" with body "{\"action_type\":\"SendCtrlAltDel\"}".
+2026-10-11T16:22:53.405140840 [swproof-e5:fc_api] Received Error. Status code: 400 Bad Request. Message: The requested operation is not supported before starting the microVM.

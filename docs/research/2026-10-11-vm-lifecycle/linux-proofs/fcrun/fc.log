@@ -1,0 +1,3 @@
+2026-10-11T16:22:53.925505657 [swproof-e5f:fc_api] API server started.
+2026-10-11T16:22:53.925569497 [swproof-e5f:main] RunWithApiError error: Failed to build MicroVM from Json: Configuration for VMM from one single json failed: Boot source error: The kernel file cannot be opened: No such file or directory (os error 2)
+2026-10-11T16:22:53.925603127 [swproof-e5f:main] Firecracker exiting with error. exit_code=1

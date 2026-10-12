@@ -1,0 +1,63 @@
+== 2026-10-11T23:15:24Z E2a properties accepted + read back
++ startvm -unit swproof-vm-2.service -p Restart=no -p KillMode=control-group -p OOMPolicy=stop -p MemoryMax=268435456 -p CPUQuotaPerSecUSec=200000 -p TasksMax=64 -p ManagedOOMPreference=avoid -p CollectMode=inactive-or-failed -p IOWeight=50 -p AllowedCPUs=1 -- /usr/bin/sleep infinity
+start swproof-vm-2.service result="done" err=<nil>
+InvocationID=b7fc6ee8a1e04e13bd5586d5becd37b8
+CollectMode=inactive-or-failed
+Restart=no
+MainPID=66549
+OOMPolicy=stop
+Slice=app.slice
+ControlGroup=/user.slice/user-1000.slice/user@1000.service/app.slice/swproof-vm-2.service
+CPUQuotaPerSecUSec=200ms
+AllowedCPUs=1
+IOWeight=100
+MemoryMax=268435456
+TasksMax=64
+ManagedOOMPreference=avoid
+KillMode=control-group
+-- kernel cgroup files in /sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/swproof-vm-2.service
+memory.max: 268435456
+cpu.max: 20000 100000
+pids.max: 64
+io.weight: default 100
+io.bfq.weight: default 100
+cpuset.cpus: cat: /sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/swproof-vm-2.service/cpuset.cpus: No such file or directory
+cpuset.cpus.effective: cat: /sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/swproof-vm-2.service/cpuset.cpus.effective: No such file or directory
+cgroup.controllers: cpu io memory pids
+-- parent app.slice subtree_control: cpu io memory pids
+-- ManagedOOMPreference note: oomd honors avoid/omit only if cgroup owned by root or user.oomd xattr; xattrs on cgroup dir:
+getfattr: Removing leading '/' from absolute path names
+# file: sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/swproof-vm-2.service
+security.selinux="system_u:object_r:cgroup_t:s0"
+user.oomd_avoid="1"
+
+-- actual cpu affinity of main pid: pid 66549's current affinity list: 0-15
+== 2026-10-11T23:15:24Z E2b kill -9 main pid 66549 (Restart=no, CollectMode=inactive-or-failed)
+after kill: not-found inactive  0 success 0 0 
+list-units: 
+journal tail:
+2026-10-11T16:15:24.116977-07:00 hat-8 systemd[4267]: Starting swproof-vm-2.service - swproof stand-in VM /usr/bin/sleep infinity...
+2026-10-11T16:15:24.131749-07:00 hat-8 systemd[4267]: Started swproof-vm-2.service - swproof stand-in VM /usr/bin/sleep infinity.
+== 2026-10-11T23:15:25Z E2b' same with CollectMode=inactive (default)
+start swproof-vm-2b.service result="done" err=<nil>
+after kill: not-found inactive  success 0 0 
+Failed to reset failed state of unit swproof-vm-2b.service: Unit swproof-vm-2b.service not loaded.
+after reset-failed: not-found inactive 
+== 2026-10-11T23:15:26Z E2c memory enforcement: MemoryMax=64M, OOMPolicy=stop, program allocs 512M
+start swproof-vm-2m.service result="done" err=<nil>
+result: active success 0 0 
+Starting swproof-vm-2m.service - swproof stand-in VM /usr/bin/python3 -c import time; b=bytearray(512*1024*1024); time.sleep(30)...
+Started swproof-vm-2m.service - swproof stand-in VM /usr/bin/python3 -c import time; b=bytearray(512*1024*1024); time.sleep(30).
+== 2026-10-11T23:15:29Z E2d pids enforcement: TasksMax=4, sh forks 10 sleeps
+start swproof-vm-2p.service result="done" err=<nil>
+pids.current=4 pids.max=4
+      2 /bin/sh: fork: retry: Resource temporarily unavailable
+      1 Started swproof-vm-2p.service - swproof stand-in VM /bin/sh -c for i in 1 2 3 4 5 6 7 8 9 10; do sleep 30 & done; sleep 1; echo forked; jobs | wc -l; sleep 30.
+      1 Starting swproof-vm-2p.service - swproof stand-in VM /bin/sh -c for i in 1 2 3 4 5 6 7 8 9 10; do sleep 30 & done; sleep 1; echo forked; jobs | wc -l; sleep 30...
+== 2026-10-11T23:15:31Z E2e cpu enforcement: CPUQuota=20% busy loop 3s
+start swproof-vm-2c.service result="done" err=<nil>
+usage_usec 616757
+nr_throttled 30
+throttled_usec 2378345
+cpu.max=20000 100000
+== leftovers: 0

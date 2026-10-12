@@ -1,0 +1,13 @@
+== 2026-10-11T23:16:33Z E2c' memory enforcement: MemoryMax=64M MemorySwapMax=0 OOMPolicy=stop, touches 512M
+start swproof-vm-2m.service result="done" err=<nil>
+result: LoadState=loaded ActiveState=failed InvocationID=cd2a3c4a0f494a7cbe1a9559d53bd0ba Result=oom-kill ExecMainCode=2 ExecMainStatus=9 
+Started swproof-vm-2m.service - swproof stand-in VM /usr/bin/python3 -c import time; b=b'\x01'*(512<<20); time.sleep(30).
+swproof-vm-2m.service: The kernel OOM killer killed some processes in this unit.
+swproof-vm-2m.service: Main process exited, code=killed, status=9/KILL
+swproof-vm-2m.service: Failed with result 'oom-kill'.
+== E2c'' same, MemoryMax=64M but swap allowed (default MemorySwapMax=infinity)
+start swproof-vm-2s.service result="done" err=<nil>
+result: ActiveState=active Result=success  memory.current=66990080 memory.swap.current=210948096
+Starting swproof-vm-2s.service - swproof stand-in VM /usr/bin/python3 -c import time; b=b'\x01'*(256<<20); print('allocated',flush=True); time.sleep(30)...
+Started swproof-vm-2s.service - swproof stand-in VM /usr/bin/python3 -c import time; b=b'\x01'*(256<<20); print('allocated',flush=True); time.sleep(30).
+allocated

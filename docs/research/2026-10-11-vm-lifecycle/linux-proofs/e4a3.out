@@ -1,0 +1,8 @@
+tapexec: pid=1 ppid=0 Uid: 0 0 0 0 | CapEff: 000001ffffffffff
+tapexec: uid_map="0       1000          1"
+tapexec: created persistent tap0, up; execve [/bin/sh -c ip -br link show tap0; ip -br addr; exec /tmp/claude-1000/-home-johnandersen777-src-publicdomainrelay-kcp/90fa59d8-02f3-4261-b817-d037e7405f23/scratchpad/linux-proofs/bin/tapexec attach tap0]
+tap0             DOWN           36:4a:72:88:59:9d <NO-CARRIER,BROADCAST,MULTICAST,UP> 
+lo               UNKNOWN        127.0.0.1/8 ::1/128 
+enp8s0           UNKNOWN        192.168.100.2/24 fd7a:115c:a1e0::8539:8b59/128 fe80::e012:34ff:fe9a:cd9a/64 
+tap0             DOWN           
+attach: pid=1 opened existing tap0 with IFF_TAP|IFF_NO_PI|IFF_VNET_HDR fd=4 (as firecracker does for host_dev_name)

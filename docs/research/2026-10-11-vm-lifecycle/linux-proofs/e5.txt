@@ -1,0 +1,39 @@
+== 2026-10-11T23:22:53Z E5 firecracker non-boot checks (Firecracker v1.13.1)
+--- E5a --no-api without --config-file
+Error: ParseArguments(MissingArgument("config-file"))
+2026-10-11T16:22:53.148582050 [anonymous-instance:main] Firecracker exiting with error. exit_code=153
+rc=0
+--- E5b invalid --id
+Invalid instance ID: InvalidChar('_', 3)
+Invalid instance ID: InvalidLen(65, 1, 64)
+--- E5c api-sock path > 107 bytes
+len=177
+Error: RunWithApi(FailedToBindAndRunHttpServer(IOError(Error { kind: InvalidInput, message: "path must be shorter than SUN_LEN" })))
+2026-10-11T16:22:53.292247066 [swproof-long:main] Firecracker exiting with error. exit_code=1
+rc=1
+--- E5d pre-boot API only (no guest configured or started): GET / and GET /machine-config
+{"id":"swproof-e5","state":"Not started","vmm_version":"1.13.1","app_name":"Firecracker"}
+{"vcpu_count":1,"mem_size_mib":128,"smt":false,"track_dirty_pages":false,"huge_pages":"None"}
+{"firecracker_version":"1.13.1"}
+SendCtrlAltDel pre-boot:
+{"fault_message":"The requested operation is not supported before starting the microVM."}
+SIGTERM handling (SigCgt bitmask; bit 14 = SIGTERM): SigCgt:	0000000041801449
+after SIGTERM: exited rc=143 (default action; not pid-ns init here)
+log tail:
+2026-10-11T16:22:53.402740572 [swproof-e5:fc_api] The request was executed successfully. Status code: 200 OK.
+2026-10-11T16:22:53.405112560 [swproof-e5:fc_api] The API server received a Put request on "/actions" with body "{\"action_type\":\"SendCtrlAltDel\"}".
+2026-10-11T16:22:53.405140840 [swproof-e5:fc_api] Received Error. Status code: 400 Bad Request. Message: The requested operation is not supported before starting the microVM.
+--- E5e api-sock path already exists (stale socket file)
+Error: RunWithApi(FailedToBindSocket("b.sock"))
+2026-10-11T16:22:53.922671289 [swproof-e5e:main] Firecracker exiting with error. exit_code=1
+rc=1
+--- E5f --config-file referencing missing kernel: parse/validate fails before any VM is created
+2026-10-11T16:22:53.925004058 [swproof-e5f:main] Running Firecracker v1.13.1
+2026-10-11T16:22:53.925380018 [swproof-e5f:main] Listening on API socket ("c.sock").
+Error: RunWithApi(BuildFromJson(ParseFromJson(BootSource(InvalidKernelPath(Os { code: 2, kind: NotFound, message: "No such file or directory" })))))
+rc=1
+fc.log:
+2026-10-11T16:22:53.925505657 [swproof-e5f:fc_api] API server started.
+2026-10-11T16:22:53.925569497 [swproof-e5f:main] RunWithApiError error: Failed to build MicroVM from Json: Configuration for VMM from one single json failed: Boot source error: The kernel file cannot 
+2026-10-11T16:22:53.925603127 [swproof-e5f:main] Firecracker exiting with error. exit_code=1
+no firecracker left

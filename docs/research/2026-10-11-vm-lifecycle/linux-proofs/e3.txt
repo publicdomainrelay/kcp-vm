@@ -1,0 +1,66 @@
+== 2026-10-11T23:17:59Z E3 identity CLK_TCK=100
+start swproof-vm-3id.service result="done" err=<nil>
+systemctl: MainPID=69188 InvocationID=eb8cf25c040d4767854552012329cb20
++ busctl --user call org.freedesktop.systemd1 /org/freedesktop/systemd1 org.freedesktop.systemd1.Manager GetUnitByPID u 69188
+o "/org/freedesktop/systemd1/unit/swproof_2dvm_2d3id_2eservice"
++ busctl --user introspect ... | grep PIDFD
+.GetUnitByPIDFD                            method   h                osay                                                                                                 -
+---- ident via private
+ident pid=69188 expect unit=swproof-vm-3id.service inv=eb8cf25c040d4767854552012329cb20 ticks=0
+pidfd_open ok fd=4
+stat starttime(field22)=278636 err=<nil>
+[t0] bus connected (private) unixfd=true
+[t0] GetUnitByPIDFD: path=/org/freedesktop/systemd1/unit/swproof_2dvm_2d3id_2eservice unit=swproof-vm-3id.service invocation=eb8cf25c040d4767854552012329cb20
+[t0] GetUnitByPID(69188): path=/org/freedesktop/systemd1/unit/swproof_2dvm_2d3id_2eservice Id=swproof-vm-3id.service InvocationID=eb8cf25c040d4767854552012329cb20 err=<nil>
+[t0] GetUnit(swproof-vm-3id.service): Id=swproof-vm-3id.service InvocationID=eb8cf25c040d4767854552012329cb20 MainPID=69188
+[t0] verdict Alive(same unit+invocation, pidfd-pinned)
+---- ident via session
+ident pid=69188 expect unit=swproof-vm-3id.service inv=eb8cf25c040d4767854552012329cb20 ticks=0
+pidfd_open ok fd=4
+stat starttime(field22)=278636 err=<nil>
+[t0] bus connected (session) unixfd=true
+[t0] GetUnitByPIDFD: path=/org/freedesktop/systemd1/unit/swproof_2dvm_2d3id_2eservice unit=swproof-vm-3id.service invocation=eb8cf25c040d4767854552012329cb20
+[t0] GetUnitByPID(69188): path=/org/freedesktop/systemd1/unit/swproof_2dvm_2d3id_2eservice Id=swproof-vm-3id.service InvocationID=eb8cf25c040d4767854552012329cb20 err=<nil>
+[t0] GetUnit(swproof-vm-3id.service): Id=swproof-vm-3id.service InvocationID=eb8cf25c040d4767854552012329cb20 MainPID=69188
+[t0] verdict Alive(same unit+invocation, pidfd-pinned)
+learned ticks=278636
+---- wrong ticks (simulated pid reuse)
+ident pid=69188 expect unit=swproof-vm-3id.service inv=eb8cf25c040d4767854552012329cb20 ticks=278637
+pidfd_open ok fd=4
+stat starttime(field22)=278636 err=<nil>
+start ticks mismatch 278636 != 278637 -> verdict Lost(pid reused)
+---- bus unreachable: nonexistent socket
+ident pid=69188 expect unit=swproof-vm-3id.service inv=eb8cf25c040d4767854552012329cb20 ticks=278636
+pidfd_open ok fd=4
+stat starttime(field22)=278636 err=<nil>
+[t0] bus connect (private nope.sock): dial unix nope.sock: connect: no such file or directory after 32.64µs -> verdict Unknown(transport: dial unix nope.sock: connect: no such file or directory)
+---- bus unreachable: stale socket file (no listener)
+ident pid=69188 expect unit=swproof-vm-3id.service inv=eb8cf25c040d4767854552012329cb20 ticks=278636
+pidfd_open ok fd=4
+stat starttime(field22)=278636 err=<nil>
+[t0] bus connect (private stale.sock): dial unix stale.sock: connect: connection refused after 39.64µs -> verdict Unknown(transport: dial unix stale.sock: connect: connection refused)
+---- bus hung: listener that never answers (2s ctx timeout)
+ident pid=69188 expect unit=swproof-vm-3id.service inv=eb8cf25c040d4767854552012329cb20 ticks=278636
+pidfd_open ok fd=4
+stat starttime(field22)=278636 err=<nil>
+[t0] bus connect (private hang.sock): read unix @->hang.sock: use of closed network connection after 2.001160126s -> verdict Unknown(transport: read unix @->hang.sock: use of closed network connection)
+---- hold pidfd, stop the unit during hold, recheck (stale pidfd)
+ident pid=69188 expect unit=swproof-vm-3id.service inv=eb8cf25c040d4767854552012329cb20 ticks=278636
+pidfd_open ok fd=4
+stat starttime(field22)=278636 err=<nil>
+[t0] bus connected (private) unixfd=true
+[t0] GetUnitByPIDFD: path=/org/freedesktop/systemd1/unit/swproof_2dvm_2d3id_2eservice unit=swproof-vm-3id.service invocation=eb8cf25c040d4767854552012329cb20
+[t0] GetUnitByPID(69188): path=/org/freedesktop/systemd1/unit/swproof_2dvm_2d3id_2eservice Id=swproof-vm-3id.service InvocationID=eb8cf25c040d4767854552012329cb20 err=<nil>
+[t0] GetUnit(swproof-vm-3id.service): Id=swproof-vm-3id.service InvocationID=eb8cf25c040d4767854552012329cb20 MainPID=69188
+[t0] verdict Alive(same unit+invocation, pidfd-pinned)
+holding pidfd 2s ...
+poll(pidfd) readable=true (readable == process exited)
+pidfd_send_signal(0) on held fd: no such process
+/proc/69188/stat now: ticks=0 err=open /proc/69188/stat: no such file or directory
+[t1] bus connected (private) unixfd=true
+[t1] GetUnitByPIDFD: Failed to get PID from PIDFD: No such process -> Unknown(dbus org.freedesktop.DBus.Error.UnixProcessIdUnknown)
+[t1] GetUnitByPID(69188): PID 69188 does not belong to any loaded unit. -> Lost(org.freedesktop.systemd1.NoUnitForPID)
+[t1] GetUnit(swproof-vm-3id.service): Unit swproof-vm-3id.service not loaded. -> Lost(org.freedesktop.systemd1.NoSuchUnit)
+---- after stop, fresh check of old pid
+ident pid=69188 expect unit=swproof-vm-3id.service inv=eb8cf25c040d4767854552012329cb20 ticks=278636
+pidfd_open: no such process -> verdict Lost(process gone)

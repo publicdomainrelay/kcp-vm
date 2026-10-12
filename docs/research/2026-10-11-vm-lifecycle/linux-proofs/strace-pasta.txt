@@ -1,0 +1,59 @@
+70574 execve("/usr/bin/pasta", ["pasta", "--config-net", "-q", "-f", "--", "/tmp/claude-1000/-home-johnander"...], 0x7fff8136d010 /* 102 vars */) = 0
+70574 execve("/usr/bin/pasta.avx2", ["pasta", "--config-net", "-q", "-f", "--", "/tmp/claude-1000/-home-johnander"...], 0x7ffc652663c0 /* 102 vars */) = 0
+70574 clone(child_stack=0x7ffed43fb860, flags=CLONE_NEWUSER|SIGCHLD) = 70575
+70574 setns(7, CLONE_NEWUSER)           = 0
+70575 +++ killed by SIGKILL +++
+70574 --- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_KILLED, si_pid=70575, si_uid=0, si_status=SIGKILL, si_utime=0, si_stime=0} ---
+70574 clone(child_stack=0x7ffed42fb880, flags=CLONE_NEWNS|CLONE_NEWUTS|CLONE_NEWIPC|CLONE_NEWPID|CLONE_NEWNET|SIGCHLD) = 70576
+70574 clone(child_stack=0x7ffed43fb880, flags=CLONE_VM|CLONE_FILES|CLONE_VFORK|SIGCHLD <unfinished ...>
+70577 setns(7, CLONE_NEWNET)            = 0
+70574 <... clone resumed>)              = 70577
+70577 +++ exited with 0 +++
+70574 --- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_EXITED, si_pid=70577, si_uid=0, si_status=0, si_utime=0, si_stime=0} ---
+70574 clone(child_stack=0x7ffed43fb880, flags=CLONE_VM|CLONE_FILES|CLONE_VFORK|SIGCHLD <unfinished ...>
+70578 setns(7, CLONE_NEWNET)            = 0
+70574 <... clone resumed>)              = 70578
+70578 +++ exited with 0 +++
+70574 --- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_EXITED, si_pid=70578, si_uid=0, si_status=0, si_utime=0, si_stime=0} ---
+70574 clone(child_stack=0x7ffed44002e0, flags=CLONE_VM|CLONE_FILES|CLONE_VFORK|SIGCHLD <unfinished ...>
+70579 setns(7, CLONE_NEWNET)            = 0
+70574 <... clone resumed>)              = 70579
+70579 +++ exited with 0 +++
+70574 --- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_EXITED, si_pid=70579, si_uid=0, si_status=0, si_utime=0, si_stime=0} ---
+70574 clone(child_stack=0x7ffed4400310, flags=CLONE_VM|CLONE_FILES|CLONE_VFORK|SIGCHLD <unfinished ...>
+70580 setns(7, CLONE_NEWNET)            = 0
+70574 <... clone resumed>)              = 70580
+70580 +++ exited with 0 +++
+70574 --- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_EXITED, si_pid=70580, si_uid=0, si_status=0, si_utime=0, si_stime=0} ---
+70574 clone(child_stack=0x7ffed4400310, flags=CLONE_VM|CLONE_FILES|CLONE_VFORK|SIGCHLD <unfinished ...>
+70581 setns(7, CLONE_NEWNET)            = 0
+70574 <... clone resumed>)              = 70581
+70581 +++ exited with 0 +++
+70574 --- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_EXITED, si_pid=70581, si_uid=0, si_status=0, si_utime=0, si_stime=0} ---
+70574 clone(child_stack=0x7ffed4400310, flags=CLONE_VM|CLONE_FILES|CLONE_VFORK|SIGCHLD <unfinished ...>
+70582 setns(7, CLONE_NEWNET)            = 0
+70574 <... clone resumed>)              = 70582
+70582 +++ exited with 0 +++
+70574 --- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_EXITED, si_pid=70582, si_uid=0, si_status=0, si_utime=0, si_stime=0} ---
+70574 clone(child_stack=0x7ffed4400310, flags=CLONE_VM|CLONE_FILES|CLONE_VFORK|SIGCHLD <unfinished ...>
+70583 setns(7, CLONE_NEWNET)            = 0
+70574 <... clone resumed>)              = 70583
+70583 +++ exited with 0 +++
+70574 --- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_EXITED, si_pid=70583, si_uid=0, si_status=0, si_utime=0, si_stime=0} ---
+70574 clone(child_stack=0x7ffed44002e0, flags=CLONE_VM|CLONE_FILES|CLONE_VFORK|SIGCHLD <unfinished ...>
+70584 setns(7, CLONE_NEWNET)            = 0
+70574 <... clone resumed>)              = 70584
+70584 +++ exited with 0 +++
+70574 --- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_EXITED, si_pid=70584, si_uid=0, si_status=0, si_utime=0, si_stime=0} ---
+70574 clone(child_stack=0x7ffed4400300, flags=CLONE_VM|CLONE_FILES|CLONE_VFORK|SIGCHLD <unfinished ...>
+70585 setns(7, CLONE_NEWNET)            = 0
+70574 <... clone resumed>)              = 70585
+70585 +++ exited with 0 +++
+70574 --- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_EXITED, si_pid=70585, si_uid=0, si_status=0, si_utime=0, si_stime=0} ---
+70574 unshare(CLONE_NEWNS|CLONE_NEWUTS|CLONE_NEWIPC) = 0
+70574 chdir("/tmp")                     = 0
+70574 pivot_root(".", ".")              = 0
+70576 execve("/tmp/claude-1000/-home-johnandersen777-src-publicdomainrelay-kcp/90fa59d8-02f3-4261-b817-d037e7405f23/scratchpad/linux-proofs/bin/tapexec", ["/tmp/claude-1000/-home-johnander"...], 0x7ffed4480770 /* 102 vars */) = -1 EACCES (Permission denied)
+70576 +++ exited with 1 +++
+70574 --- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_EXITED, si_pid=70576, si_uid=0, si_status=1, si_utime=0, si_stime=0} ---
+70574 +++ exited with 1 +++

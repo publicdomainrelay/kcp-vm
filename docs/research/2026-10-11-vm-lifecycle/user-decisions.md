@@ -1,0 +1,23 @@
+# User decisions 2026-10-11 (plans 0006/0007/0008 fold)
+
+- All code/docs/arch/plan items changeable; best solution wins.
+- 0006/0007/0008 = Linux only, with cross-OS seams (interfaces + GOOS build-tagged files + per-OS embedded assets compiled in only for target OS). Windows -> plan 0011 (Windows host). macOS -> plan 0012 (macOS host). Both start with M0-REVISIT.
+- Headless servers; VMs survive core crash/upgrade + logout; reboot = Lost; native per-OS mechanism; VMs only in lifecycle scope.
+- Invariant: no socialweb-computer code in a running VM's process tree (VMM launched directly by service manager; our code = one-shot prep).
+- Gateway lifecycle manager: USER manager of a lingering account (same mechanism as bidder); cluster groups are transient services in that user manager. Accept: only cpu/memory/pids delegated.
+- Host-process CRDs: KEEP BOTH Postgres and OpenBaoServer CRDs (own units). Must add explicit ordering/readiness between a cluster's postgres unit and its cluster-group unit (start, adoption, restart).
+- Identity mismatch on a running VM (unit active, pid/start ticks/firecracker id mismatch): mark Lost and STOP THE UNIT IMMEDIATELY. (Unknown = unreachable bus/socket still retries, never Lost.)
+- Unix accounts: ONE SHARED lingering account for all bidder handles (units namespaced by handle in name).
+- Guest console: capped file in the VM work dir (StandardOutput=append:<workdir>/console.log), size cap + rotation by the controller, deleted with the work dir on release. Tenant data never enters the host journal.
+- Minimum systemd: 253+ (GetUnitByPIDFD); check-host refuses older. Features also probed directly.
+- Ubuntu 24.04+ AppArmor userns restriction: ship an install-time AppArmor profile granting userns to the pinned pasta asset path; check-host verifies.
+- Guest network: IDENTICAL address plan for every guest inside its private pasta user+net namespace; delete the network-index allocator; the host address a guest dials = pasta's mapped gateway, constant.
+- Guest images (kernel + rootfs) built in CI on a Linux build host per hypervisor x arch, pinned by sha256, shipped as assets; bidders need no root/chroot/apt/go toolchain.
+- Bidder deno: explicit deno permissions (no -A, no --allow-run, no /dev/kvm, no D-Bus socket path) enforced in the DenoPod template and tested.
+- VM stop: graceful first. Controller sends firecracker SendCtrlAltDel via the API socket, waits a grace window, then the unit stops with KillSignal=SIGKILL (fixes the 45 s pasta-PID1 SIGTERM hang). Grace window measured on the market bed (live, through the RFP flow) and recorded. SendCtrlAltDel is x86-only in firecracker; on arm64 the stop is SIGKILL directly until a guest-side shutdown path exists.
+- 2026-10-12: NO backwards compatibility, migration, cutover, rollback or prod-downtime planning until the finished solution exists. The gateway runs no containers. Plan 0006 M5-CUTOVER (container volume copy, rollback to container, 7-day retire) is void: the finished binary is deployed fresh and the container path is simply deleted. Control-plane continuity applies only to upgrades of the finished system.
+- 2026-10-12: tenant control-plane upgrades are blue/green behind a front: each cluster is a systemd slice of member units; a per-cluster TCP front owns the apiserver port; a new k3s+kine starts beside the old on the same postgres, the front swaps, the old stops (control-plane-handover.md design; scheduler and k3s leader election fixed; idle-first swaps).
+- 2026-10-12: in-flight claims (Bidding/Provisioning) resume across a door restart: per-claim secrets-server key in OpenBao + served-state on the NodeClaim.
+- 2026-10-12: kcp upgrades should follow the same pattern: caddy already reverse-proxies kcp, so start the new kcp, switch caddy over, stop the old. Research pending (kcp replicas on a shared etcd, controller leader election, caddy upstream swap).
+- Cutover / control-plane continuity (superseded for cutover by the line above): User wants: the gateway tracks durably which clusters own which market-rented VMs, so after any restart/upgrade nodes re-join their control planes; ideally ZERO downtime for clusters by bringing up a new k3s control-plane process and shutting down the old one (blue/green). Research pending; user to be asked again.
+- kcp in-process fork: decide after the M0 spike; plan carries both paths (in-process fork vs exec'd kcp asset with port-0 + port-report patch), gated on the spike's breakage count/effort.

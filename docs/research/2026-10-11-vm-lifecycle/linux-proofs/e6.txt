@@ -1,0 +1,32 @@
+== 2026-10-11T23:23:17Z E6 REEXEC=path action=rename
+old inode=21002 new inode=21010
+readlink /proc/73153/exe now: /tmp/claude-1000/-home-johnandersen777-src-publicdomainrelay-kcp/90fa59d8-02f3-4261-b817-d037e7405f23/scratchpad/linux-proofs/e6/nodeboot (deleted)
+[start] build=OLD pid=73153 os.Executable="./e6/nodeboot" err=<nil> /proc/self/exe->"./e6/nodeboot" inode=21002
+[start] waiting for rename-over signal file
+[after-rename] os.Executable="./e6/nodeboot" err=<nil> /proc/self/exe->"./e6/nodeboot (deleted)"
+[after-rename] execve("./e6/nodeboot")
+[reexec-via-path] build=NEW pid=73153 os.Executable="./e6/nodeboot" err=<nil> /proc/self/exe->"./e6/nodeboot" inode=21010
+== 2026-10-11T23:23:18Z E6 REEXEC=procself action=rename
+old inode=21018 new inode=21024
+readlink /proc/73289/exe now: /tmp/claude-1000/-home-johnandersen777-src-publicdomainrelay-kcp/90fa59d8-02f3-4261-b817-d037e7405f23/scratchpad/linux-proofs/e6/nodeboot (deleted)
+[start] build=OLD pid=73289 os.Executable="./e6/nodeboot" err=<nil> /proc/self/exe->"./e6/nodeboot" inode=21018
+[start] waiting for rename-over signal file
+[after-rename] os.Executable="./e6/nodeboot" err=<nil> /proc/self/exe->"./e6/nodeboot (deleted)"
+[after-rename] execve("/proc/self/exe")
+[reexec-via-procself] build=OLD pid=73289 os.Executable="./e6/nodeboot" err=<nil> /proc/self/exe->"./e6/nodeboot (deleted)" inode=21018
+== 2026-10-11T23:23:19Z E6 REEXEC=path action=delete
+old inode=21032 new inode=21038
+readlink /proc/73427/exe now: /tmp/claude-1000/-home-johnandersen777-src-publicdomainrelay-kcp/90fa59d8-02f3-4261-b817-d037e7405f23/scratchpad/linux-proofs/e6/nodeboot (deleted)
+[start] build=OLD pid=73427 os.Executable="./e6/nodeboot" err=<nil> /proc/self/exe->"./e6/nodeboot" inode=21032
+[start] waiting for rename-over signal file
+[after-rename] os.Executable="./e6/nodeboot" err=<nil> /proc/self/exe->"./e6/nodeboot (deleted)"
+[after-rename] execve("./e6/nodeboot")
+exec: no such file or directory
+== 2026-10-11T23:23:19Z E6 REEXEC=procself action=delete
+old inode=21046 new inode=21052
+readlink /proc/73561/exe now: /tmp/claude-1000/-home-johnandersen777-src-publicdomainrelay-kcp/90fa59d8-02f3-4261-b817-d037e7405f23/scratchpad/linux-proofs/e6/nodeboot (deleted)
+[start] build=OLD pid=73561 os.Executable="./e6/nodeboot" err=<nil> /proc/self/exe->"./e6/nodeboot" inode=21046
+[start] waiting for rename-over signal file
+[after-rename] os.Executable="./e6/nodeboot" err=<nil> /proc/self/exe->"./e6/nodeboot (deleted)"
+[after-rename] execve("/proc/self/exe")
+[reexec-via-procself] build=OLD pid=73561 os.Executable="./e6/nodeboot" err=<nil> /proc/self/exe->"./e6/nodeboot (deleted)" inode=21046

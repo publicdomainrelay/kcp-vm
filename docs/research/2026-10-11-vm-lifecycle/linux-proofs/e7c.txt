@@ -1,0 +1,4 @@
+== darwin/arm64 packages blocked (import a failing pkg transitively):
+cmd/socialweb-cloud-controller-manager cmd/socialweb-clusterprovider cmd/socialweb-computer-kcp-check-host cmd/socialweb-nodeboot cmd/socialweb-nodeimage cmd/socialweb-nodeinit cmd/socialweb-tenantcredential cmd/socialweb-vault internal/clusterprovider internal/clusterstack internal/esovault internal/liveports internal/materialiser internal/nodefirecracker internal/nodemarket internal/noderecord internal/nodevm internal/portallocator internal/portscan internal/processrunner internal/procgroup internal/subnetallocator internal/vaultcert 
+== windows/amd64 packages blocked (import a failing pkg transitively):
+cmd/socialweb-clusterprovider cmd/socialweb-computer-kcp-check-host cmd/socialweb-nodeboot cmd/socialweb-nodeimage cmd/socialweb-nodeinit cmd/socialweb-tenantcredential internal/clusterprovider internal/nodefirecracker internal/nodemarket internal/nodevm 

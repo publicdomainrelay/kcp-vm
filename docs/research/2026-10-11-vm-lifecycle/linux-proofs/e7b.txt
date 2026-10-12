@@ -1,0 +1,70 @@
+== darwin/arm64 full error list (-gcflags=all=-e)
+      5 internal/portallocator/portallocator.go: undefined: hostos.LockExclusive
+      3 internal/subnetallocator/subnetallocator.go: undefined: hostos.LockExclusive
+      1 internal/subnetallocator/subnetallocator.go: undefined: hostos.Unlock
+      1 internal/subnetallocator/subnetallocator.go: undefined: hostos.LockShared
+      1 internal/subnetallocator/subnetallocator.go: undefined: hostos.Lock
+      1 internal/processrunner/processrunner.go: undefined: hostos.DieWithParent
+      1 internal/portallocator/portallocator.go: undefined: hostos.Unlock
+      1 internal/portallocator/portallocator.go: undefined: hostos.LockShared
+      1 internal/portallocator/portallocator.go: undefined: hostos.Lock
+      1 internal/portallocator/collision.go: undefined: probeListen
+      1 internal/portallocator/collision.go: undefined: hostos.LocalPortRange
+== darwin/arm64 packages whose deps fail (not compiled):
+# [github.com/johnandersen777/socialweb-computer-kcp/internal/portallocator]
+# github.com/johnandersen777/socialweb-computer-kcp/internal/portallocator
+# github.com/johnandersen777/socialweb-computer-kcp/internal/processrunner
+# [github.com/johnandersen777/socialweb-computer-kcp/internal/subnetallocator]
+# github.com/johnandersen777/socialweb-computer-kcp/internal/subnetallocator
+== windows/amd64 full error list (-gcflags=all=-e)
+      2 internal/nodevm/disk.go: undefined: unix.Seek
+      1 internal/nodevm/disk.go: undefined: unix.SEEK_HOLE
+      1 internal/nodevm/disk.go: undefined: unix.SEEK_DATA
+      1 internal/nodevm/disk.go: undefined: unix.IoctlFileClone
+      1 internal/nodevm/disk.go: undefined: unix.ENXIO
+== windows/amd64 packages whose deps fail (not compiled):
+# [github.com/johnandersen777/socialweb-computer-kcp/internal/apigen]
+# github.com/johnandersen777/socialweb-computer-kcp/internal/apigen
+# [github.com/johnandersen777/socialweb-computer-kcp/internal/nodevm]
+# github.com/johnandersen777/socialweb-computer-kcp/internal/nodevm
+== hostos files
+caps_linux.go
+caps_windows.go
+hostos.go
+lock_linux.go
+lock_windows.go
+portrange_linux.go
+portrange_windows.go
+proc_linux.go
+proc_windows.go
+sysproc_linux.go
+sysproc_windows.go
+internal/hostos/caps_windows.go://go:build windows
+internal/hostos/lock_linux.go://go:build linux
+internal/hostos/caps_linux.go://go:build linux
+internal/hostos/lock_windows.go://go:build windows
+internal/hostos/portrange_linux.go://go:build linux
+internal/hostos/portrange_windows.go://go:build windows
+internal/hostos/proc_linux.go://go:build linux
+internal/hostos/proc_windows.go://go:build windows
+internal/hostos/sysproc_linux.go://go:build linux
+internal/hostos/sysproc_windows.go://go:build windows
+package nodevm
+
+import (
+	"encoding/json"
+	"errors"
+internal/portallocator:
+collision.go
+cross_process_test.go
+portallocator.go
+portallocator_test.go
+probe_linux.go
+probe_windows.go
+
+internal/processrunner:
+processrunner.go
+processrunner_test.go
+?? docs/2026-10-07-01-30.md
+?? docs/plans/0011-windows-bidder-hcs.yaml
+?? goal.txt

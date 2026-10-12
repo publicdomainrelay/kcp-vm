@@ -1,0 +1,775 @@
+== UTC 2026-10-11T23:12:53Z
+== hostname
+hat-8
+7.2.9-200.fc44.x86_64
+Fedora release 44 (Forty Four)
+== systemd
+systemd 259 (259.9-1.fc44)
++PAM +AUDIT +SELINUX -APPARMOR +IMA +IPE +SMACK +SECCOMP -GCRYPT +GNUTLS +OPENSSL +ACL +BLKID +CURL +ELFUTILS +FIDO2 +IDN2 -IDN +KMOD +LIBCRYPTSETUP +LIBCRYPTSETUP_PLUGINS +LIBFDISK +PCRE2 +PWQUALITY +P11KIT +QRENCODE +TPM2 +BZIP2 +LZ4 +XZ +ZLIB +ZSTD +BPF_FRAMEWORK +BTF +XKBCOMMON +UTMP +SYSVINIT +LIBARCHIVE
+== id
+uid=1000(johnandersen777) gid=1000(johnandersen777) groups=1000(johnandersen777),10(wheel),951(ollama),968(keyd),973(docker) context=unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023
+UID=1000
+== cgroup fs
+cgroup2fs
+cpuset cpu io memory hugetlb pids rdma misc dmem
+== user@ controllers
+cpu io memory pids
+subtree:
+cpu io memory pids
+== app.slice
+cpu io memory pids
+cpu io memory pids
+== linger
+State=active
+Sessions=4 3 2
+Linger=no
+== XDG_RUNTIME_DIR=/run/user/1000 DBUS=unix:path=/run/user/1000/bus
+srw-rw-rw-. 1 johnandersen777 johnandersen777 0 Oct 11 15:32 /run/user/1000/bus
+srwx------. 1 johnandersen777 johnandersen777 0 Oct 11 15:32 /run/user/1000/systemd/private
+== user manager
+degraded
+Version=259.9-1.fc44
+== /dev/kvm
+crw-rw-rw-. 1 root kvm 10, 232 Oct 11 15:31 /dev/kvm
+kvm:x:36:qemu
+crw-rw-rw-. 1 root root 10, 200 Oct 11 15:31 /dev/net/tun
+== oomd
+active
+ManagedOOMSwap=auto
+ManagedOOMMemoryPressure=auto
+ManagedOOMMemoryPressureLimit=0
+ManagedOOMSwap=auto
+ManagedOOMMemoryPressure=auto
+Id=-.slice
+Names=-.slice
+RequiredBy=machine.slice sys-fs-fuse-connections.mount sys-kernel-tracing.mount system.slice dev-hugepages.mount sys-kernel-debug.mount proc-sys-fs-binfmt_misc.mount sys-kernel-config.mount proc-fs-nfsd.mount dev-mqueue.mount -.mount user.slice init.scope
+WantedBy=slices.target
+Before=sys-kernel-debug.mount sys-kernel-tracing.mount sys-kernel-config.mount system.slice proc-sys-fs-binfmt_misc.mount user.slice slices.target -.mount machine.slice dev-mqueue.mount init.scope dev-hugepages.mount proc-fs-nfsd.mount sys-fs-fuse-connections.mount
+SliceOf=sys-kernel-tracing.mount dev-hugepages.mount proc-fs-nfsd.mount sys-kernel-config.mount sys-kernel-debug.mount machine.slice dev-mqueue.mount init.scope proc-sys-fs-binfmt_misc.mount -.mount user.slice sys-fs-fuse-connections.mount system.slice
+Documentation="man:systemd.special(7)"
+Description=Root Slice
+LoadState=loaded
+ActiveState=active
+FreezerState=running
+SubState=active
+StateChangeTimestamp=Sun 2026-10-11 08:31:37 PDT
+StateChangeTimestampMonotonic=3094096
+InactiveExitTimestamp=Sun 2026-10-11 08:31:37 PDT
+InactiveExitTimestampMonotonic=3094096
+ActiveEnterTimestamp=Sun 2026-10-11 08:31:37 PDT
+ActiveEnterTimestampMonotonic=3094096
+ActiveExitTimestampMonotonic=0
+InactiveEnterTimestampMonotonic=0
+CanStart=yes
+CanStop=no
+CanReload=no
+CanIsolate=no
+CanFreeze=no
+CanLiveMount=no
+StopWhenUnneeded=no
+RefuseManualStart=no
+RefuseManualStop=no
+AllowIsolate=no
+DefaultDependencies=no
+SurviveFinalKillSignal=no
+OnSuccessJobMode=fail
+OnFailureJobMode=replace
+IgnoreOnIsolate=yes
+NeedDaemonReload=no
+JobTimeoutUSec=infinity
+JobRunningTimeoutUSec=infinity
+JobTimeoutAction=none
+ConditionResult=no
+AssertResult=no
+ConditionTimestampMonotonic=0
+AssertTimestampMonotonic=0
+Transient=no
+Perpetual=yes
+StartLimitIntervalUSec=10s
+StartLimitBurst=5
+StartLimitAction=none
+FailureAction=none
+SuccessAction=none
+CollectMode=inactive
+DebugInvocation=no
+ConcurrencyHardMax=4294967295
+ConcurrencySoftMax=4294967295
+NCurrentlyActive=181
+ControlGroup=/
+ControlGroupId=1
+MemoryCurrent=4617990144
+MemoryPeak=[not set]
+MemorySwapCurrent=[not set]
+MemorySwapPeak=[not set]
+MemoryZSwapCurrent=[not set]
+MemoryAvailable=44930531328
+EffectiveMemoryMax=49548521472
+EffectiveMemoryHigh=49548521472
+CPUUsageNSec=288060000000
+EffectiveCPUs=0-15
+EffectiveMemoryNodes=0
+TasksCurrent=1079
+EffectiveTasksMax=377384
+IPIngressBytes=[no data]
+IPIngressPackets=[no data]
+IPEgressBytes=[no data]
+IPEgressPackets=[no data]
+IOReadBytes=[not set]
+IOReadOperations=[not set]
+IOWriteBytes=[not set]
+IOWriteOperations=[not set]
+OOMKills=0
+ManagedOOMKills=0
+Delegate=no
+CPUWeight=[not set]
+StartupCPUWeight=[not set]
+CPUQuotaPerSecUSec=infinity
+CPUQuotaPeriodUSec=infinity
+IOAccounting=no
+IOWeight=[not set]
+StartupIOWeight=[not set]
+MemoryAccounting=yes
+DefaultMemoryLow=0
+DefaultStartupMemoryLow=0
+DefaultMemoryMin=0
+MemoryMin=0
+MemoryLow=0
+StartupMemoryLow=0
+MemoryHigh=infinity
+StartupMemoryHigh=infinity
+MemoryMax=infinity
+StartupMemoryMax=infinity
+MemorySwapMax=infinity
+StartupMemorySwapMax=infinity
+MemoryZSwapMax=infinity
+StartupMemoryZSwapMax=infinity
+MemoryZSwapWriteback=yes
+DevicePolicy=auto
+TasksAccounting=yes
+TasksMax=infinity
+IPAccounting=no
+ManagedOOMSwap=auto
+ManagedOOMMemoryPressure=auto
+ManagedOOMMemoryPressureLimit=0
+ManagedOOMMemoryPressureDurationUSec=[not set]
+ManagedOOMPreference=none
+MemoryPressureWatch=auto
+MemoryPressureThresholdUSec=200ms
+CoredumpReceive=no
+
+Id=-p.service
+Names=-p.service
+Description=-p.service
+LoadState=not-found
+ActiveState=inactive
+FreezerState=running
+SubState=dead
+StateChangeTimestampMonotonic=0
+InactiveExitTimestampMonotonic=0
+ActiveEnterTimestampMonotonic=0
+ActiveExitTimestampMonotonic=0
+InactiveEnterTimestampMonotonic=0
+CanStart=no
+CanStop=yes
+CanReload=no
+CanIsolate=no
+CanFreeze=yes
+CanLiveMount=no
+StopWhenUnneeded=no
+RefuseManualStart=no
+RefuseManualStop=no
+AllowIsolate=no
+DefaultDependencies=yes
+SurviveFinalKillSignal=no
+OnSuccessJobMode=fail
+OnFailureJobMode=replace
+IgnoreOnIsolate=no
+NeedDaemonReload=no
+JobTimeoutUSec=infinity
+JobRunningTimeoutUSec=infinity
+JobTimeoutAction=none
+ConditionResult=no
+AssertResult=no
+ConditionTimestampMonotonic=0
+AssertTimestampMonotonic=0
+LoadError=org.freedesktop.systemd1.NoSuchUnit "Unit -p.service not found."
+Transient=no
+Perpetual=no
+StartLimitIntervalUSec=10s
+StartLimitBurst=5
+StartLimitAction=none
+FailureAction=none
+SuccessAction=none
+CollectMode=inactive
+DebugInvocation=no
+ExitType=main
+Restart=no
+RestartMode=normal
+NotifyAccess=none
+RestartUSec=100ms
+RestartSteps=0
+RestartMaxDelayUSec=infinity
+RestartUSecNext=100ms
+TimeoutStartUSec=45s
+TimeoutStopUSec=45s
+TimeoutAbortUSec=45s
+TimeoutStartFailureMode=terminate
+TimeoutStopFailureMode=terminate
+RuntimeMaxUSec=infinity
+RuntimeRandomizedExtraUSec=0
+WatchdogUSec=infinity
+WatchdogTimestampMonotonic=0
+RootDirectoryStartOnly=no
+RemainAfterExit=no
+GuessMainPID=yes
+MainPID=0
+ControlPID=0
+FileDescriptorStoreMax=0
+NFileDescriptorStore=0
+FileDescriptorStorePreserve=restart
+StatusErrno=0
+Result=success
+ReloadResult=success
+CleanResult=success
+LiveMountResult=success
+UID=[not set]
+GID=[not set]
+NRestarts=0
+ReloadSignal=1
+ExecMainStartTimestampMonotonic=0
+ExecMainExitTimestampMonotonic=0
+ExecMainHandoffTimestampMonotonic=0
+ExecMainPID=0
+ExecMainCode=0
+ExecMainStatus=0
+ControlGroupId=0
+MemoryCurrent=[not set]
+MemoryPeak=[not set]
+MemorySwapCurrent=[not set]
+MemorySwapPeak=[not set]
+MemoryZSwapCurrent=[not set]
+MemoryAvailable=[not set]
+EffectiveMemoryMax=infinity
+EffectiveMemoryHigh=infinity
+CPUUsageNSec=[not set]
+TasksCurrent=[not set]
+EffectiveTasksMax=56607
+IPIngressBytes=[no data]
+IPIngressPackets=[no data]
+IPEgressBytes=[no data]
+IPEgressPackets=[no data]
+IOReadBytes=[not set]
+IOReadOperations=[not set]
+IOWriteBytes=[not set]
+IOWriteOperations=[not set]
+OOMKills=18446744073709551615
+ManagedOOMKills=18446744073709551615
+Delegate=no
+CPUWeight=[not set]
+StartupCPUWeight=[not set]
+CPUQuotaPerSecUSec=infinity
+CPUQuotaPeriodUSec=infinity
+IOAccounting=no
+IOWeight=[not set]
+StartupIOWeight=[not set]
+MemoryAccounting=yes
+DefaultMemoryLow=0
+DefaultStartupMemoryLow=0
+DefaultMemoryMin=0
+MemoryMin=0
+MemoryLow=0
+StartupMemoryLow=0
+MemoryHigh=infinity
+StartupMemoryHigh=infinity
+MemoryMax=infinity
+StartupMemoryMax=infinity
+MemorySwapMax=infinity
+StartupMemorySwapMax=infinity
+MemoryZSwapMax=infinity
+StartupMemoryZSwapMax=infinity
+MemoryZSwapWriteback=yes
+DevicePolicy=auto
+TasksAccounting=yes
+TasksMax=56607
+IPAccounting=no
+ManagedOOMSwap=auto
+ManagedOOMMemoryPressure=auto
+ManagedOOMMemoryPressureLimit=0
+ManagedOOMMemoryPressureDurationUSec=[not set]
+ManagedOOMPreference=none
+MemoryPressureWatch=auto
+MemoryPressureThresholdUSec=200ms
+CoredumpReceive=no
+UMask=0022
+LimitCPU=infinity
+LimitCPUSoft=infinity
+LimitFSIZE=infinity
+LimitFSIZESoft=infinity
+LimitDATA=infinity
+LimitDATASoft=infinity
+LimitSTACK=infinity
+LimitSTACKSoft=8388608
+LimitCORE=infinity
+LimitCORESoft=infinity
+LimitRSS=infinity
+LimitRSSSoft=infinity
+LimitNOFILE=2147483584
+LimitNOFILESoft=2147483584
+LimitAS=infinity
+LimitASSoft=infinity
+LimitNPROC=188692
+LimitNPROCSoft=188692
+LimitMEMLOCK=6193561600
+LimitMEMLOCKSoft=6193561600
+LimitLOCKS=infinity
+LimitLOCKSSoft=infinity
+LimitSIGPENDING=188692
+LimitSIGPENDINGSoft=188692
+LimitMSGQUEUE=819200
+LimitMSGQUEUESoft=819200
+LimitNICE=0
+LimitNICESoft=0
+LimitRTPRIO=0
+LimitRTPRIOSoft=0
+LimitRTTIME=infinity
+LimitRTTIMESoft=infinity
+RootEphemeral=no
+OOMScoreAdjust=0
+CoredumpFilter=0x33
+Nice=0
+IOSchedulingClass=2
+IOSchedulingPriority=4
+CPUSchedulingPolicy=0
+CPUSchedulingPriority=0
+CPUAffinityFromNUMA=no
+NUMAPolicy=n/a
+TimerSlackNSec=50000
+CPUSchedulingResetOnFork=no
+NonBlocking=no
+StandardInput=null
+StandardOutput=inherit
+StandardError=inherit
+TTYReset=no
+TTYVHangup=no
+TTYVTDisallocate=no
+SyslogPriority=30
+SyslogLevelPrefix=yes
+SyslogLevel=6
+SyslogFacility=3
+LogLevelMax=-1
+LogRateLimitIntervalUSec=0
+LogRateLimitBurst=0
+SecureBits=0
+CapabilityBoundingSet=cap_chown cap_dac_override cap_dac_read_search cap_fowner cap_fsetid cap_kill cap_setgid cap_setuid cap_setpcap cap_linux_immutable cap_net_bind_service cap_net_broadcast cap_net_admin cap_net_raw cap_ipc_lock cap_ipc_owner cap_sys_module cap_sys_rawio cap_sys_chroot cap_sys_ptrace cap_sys_pacct cap_sys_admin cap_sys_boot cap_sys_nice cap_sys_resource cap_sys_time cap_sys_tty_config cap_mknod cap_lease cap_audit_write cap_audit_control cap_setfcap cap_mac_override cap_mac_admin cap_syslog cap_wake_alarm cap_block_suspend cap_audit_read cap_perfmon cap_bpf cap_checkpoint_restore
+DynamicUser=no
+SetLoginEnvironment=no
+RemoveIPC=no
+PrivateTmp=no
+PrivateTmpEx=no
+PrivateDevices=no
+ProtectClock=no
+ProtectKernelTunables=no
+ProtectKernelModules=no
+ProtectKernelLogs=no
+ProtectControlGroups=no
+ProtectControlGroupsEx=no
+PrivateNetwork=no
+PrivateUsers=no
+PrivateUsersEx=no
+PrivateMounts=no
+PrivateIPC=no
+PrivatePIDs=no
+ProtectHome=no
+ProtectSystem=no
+SameProcessGroup=no
+UtmpMode=init
+IgnoreSIGPIPE=yes
+NoNewPrivileges=no
+SystemCallErrorNumber=2147483646
+LockPersonality=no
+RuntimeDirectoryPreserve=no
+RuntimeDirectoryMode=0755
+StateDirectoryMode=0755
+StateDirectoryAccounting=no
+StateDirectoryQuota=[not set]
+CacheDirectoryMode=0755
+CacheDirectoryAccounting=no
+CacheDirectoryQuota=[not set]
+LogsDirectoryMode=0755
+LogsDirectoryAccounting=no
+LogsDirectoryQuota=[not set]
+ConfigurationDirectoryMode=0755
+TimeoutCleanUSec=infinity
+MemoryDenyWriteExecute=no
+RestrictRealtime=no
+RestrictSUIDSGID=no
+RestrictNamespaces=no
+DelegateNamespaces=18446744073709551615
+MountAPIVFS=no
+BindLogSockets=no
+KeyringMode=private
+ProtectProc=default
+ProcSubset=all
+ProtectHostname=no
+PrivateBPF=no
+MemoryKSM=no
+RootImagePolicy=root=verity+signed+encrypted+unprotected+absent:usr=verity+signed+encrypted+unprotected+absent:home=encrypted+unprotected+absent:srv=encrypted+unprotected+absent:tmp=encrypted+unprotected+absent:var=encrypted+unprotected+absent
+MountImagePolicy=root=verity+signed+encrypted+unprotected+absent:usr=verity+signed+encrypted+unprotected+absent:home=encrypted+unprotected+absent:srv=encrypted+unprotected+absent:tmp=encrypted+unprotected+absent:var=encrypted+unprotected+absent
+ExtensionImagePolicy=root=verity+signed+encrypted+unprotected+absent:usr=verity+signed+encrypted+unprotected+absent:home=encrypted+unprotected+absent:srv=encrypted+unprotected+absent:tmp=encrypted+unprotected+absent:var=encrypted+unprotected+absent
+KillMode=control-group
+KillSignal=15
+RestartKillSignal=15
+FinalKillSignal=9
+SendSIGKILL=yes
+SendSIGHUP=no
+WatchdogSignal=6
+
+Id=ManagedOOMSwap.service
+Names=ManagedOOMSwap.service
+Description=ManagedOOMSwap.service
+LoadState=not-found
+ActiveState=inactive
+FreezerState=running
+SubState=dead
+StateChangeTimestampMonotonic=0
+InactiveExitTimestampMonotonic=0
+ActiveEnterTimestampMonotonic=0
+ActiveExitTimestampMonotonic=0
+InactiveEnterTimestampMonotonic=0
+CanStart=no
+CanStop=yes
+CanReload=no
+CanIsolate=no
+CanFreeze=yes
+CanLiveMount=no
+StopWhenUnneeded=no
+RefuseManualStart=no
+RefuseManualStop=no
+AllowIsolate=no
+DefaultDependencies=yes
+SurviveFinalKillSignal=no
+OnSuccessJobMode=fail
+OnFailureJobMode=replace
+IgnoreOnIsolate=no
+NeedDaemonReload=no
+JobTimeoutUSec=infinity
+JobRunningTimeoutUSec=infinity
+JobTimeoutAction=none
+ConditionResult=no
+AssertResult=no
+ConditionTimestampMonotonic=0
+AssertTimestampMonotonic=0
+LoadError=org.freedesktop.systemd1.NoSuchUnit "Unit ManagedOOMSwap.service not found."
+Transient=no
+Perpetual=no
+StartLimitIntervalUSec=10s
+StartLimitBurst=5
+StartLimitAction=none
+FailureAction=none
+SuccessAction=none
+CollectMode=inactive
+DebugInvocation=no
+ExitType=main
+Restart=no
+RestartMode=normal
+NotifyAccess=none
+RestartUSec=100ms
+RestartSteps=0
+RestartMaxDelayUSec=infinity
+RestartUSecNext=100ms
+TimeoutStartUSec=45s
+TimeoutStopUSec=45s
+TimeoutAbortUSec=45s
+TimeoutStartFailureMode=terminate
+TimeoutStopFailureMode=terminate
+RuntimeMaxUSec=infinity
+RuntimeRandomizedExtraUSec=0
+WatchdogUSec=infinity
+WatchdogTimestampMonotonic=0
+RootDirectoryStartOnly=no
+RemainAfterExit=no
+GuessMainPID=yes
+MainPID=0
+ControlPID=0
+FileDescriptorStoreMax=0
+NFileDescriptorStore=0
+FileDescriptorStorePreserve=restart
+StatusErrno=0
+Result=success
+ReloadResult=success
+CleanResult=success
+LiveMountResult=success
+UID=[not set]
+GID=[not set]
+NRestarts=0
+ReloadSignal=1
+ExecMainStartTimestampMonotonic=0
+ExecMainExitTimestampMonotonic=0
+ExecMainHandoffTimestampMonotonic=0
+ExecMainPID=0
+ExecMainCode=0
+ExecMainStatus=0
+ControlGroupId=0
+MemoryCurrent=[not set]
+MemoryPeak=[not set]
+MemorySwapCurrent=[not set]
+MemorySwapPeak=[not set]
+MemoryZSwapCurrent=[not set]
+MemoryAvailable=[not set]
+EffectiveMemoryMax=infinity
+EffectiveMemoryHigh=infinity
+CPUUsageNSec=[not set]
+TasksCurrent=[not set]
+EffectiveTasksMax=56607
+IPIngressBytes=[no data]
+IPIngressPackets=[no data]
+IPEgressBytes=[no data]
+IPEgressPackets=[no data]
+IOReadBytes=[not set]
+IOReadOperations=[not set]
+IOWriteBytes=[not set]
+IOWriteOperations=[not set]
+OOMKills=18446744073709551615
+ManagedOOMKills=18446744073709551615
+Delegate=no
+CPUWeight=[not set]
+StartupCPUWeight=[not set]
+CPUQuotaPerSecUSec=infinity
+CPUQuotaPeriodUSec=infinity
+IOAccounting=no
+IOWeight=[not set]
+StartupIOWeight=[not set]
+MemoryAccounting=yes
+DefaultMemoryLow=0
+DefaultStartupMemoryLow=0
+DefaultMemoryMin=0
+MemoryMin=0
+MemoryLow=0
+StartupMemoryLow=0
+MemoryHigh=infinity
+StartupMemoryHigh=infinity
+MemoryMax=infinity
+StartupMemoryMax=infinity
+MemorySwapMax=infinity
+StartupMemorySwapMax=infinity
+MemoryZSwapMax=infinity
+StartupMemoryZSwapMax=infinity
+MemoryZSwapWriteback=yes
+DevicePolicy=auto
+TasksAccounting=yes
+TasksMax=56607
+IPAccounting=no
+ManagedOOMSwap=auto
+ManagedOOMMemoryPressure=auto
+ManagedOOMMemoryPressureLimit=0
+ManagedOOMMemoryPressureDurationUSec=[not set]
+ManagedOOMPreference=none
+MemoryPressureWatch=auto
+MemoryPressureThresholdUSec=200ms
+CoredumpReceive=no
+UMask=0022
+LimitCPU=infinity
+LimitCPUSoft=infinity
+LimitFSIZE=infinity
+LimitFSIZESoft=infinity
+LimitDATA=infinity
+LimitDATASoft=infinity
+LimitSTACK=infinity
+LimitSTACKSoft=8388608
+LimitCORE=infinity
+LimitCORESoft=infinity
+LimitRSS=infinity
+LimitRSSSoft=infinity
+LimitNOFILE=2147483584
+LimitNOFILESoft=2147483584
+LimitAS=infinity
+LimitASSoft=infinity
+LimitNPROC=188692
+LimitNPROCSoft=188692
+LimitMEMLOCK=6193561600
+LimitMEMLOCKSoft=6193561600
+LimitLOCKS=infinity
+LimitLOCKSSoft=infinity
+LimitSIGPENDING=188692
+LimitSIGPENDINGSoft=188692
+LimitMSGQUEUE=819200
+LimitMSGQUEUESoft=819200
+LimitNICE=0
+LimitNICESoft=0
+LimitRTPRIO=0
+LimitRTPRIOSoft=0
+LimitRTTIME=infinity
+LimitRTTIMESoft=infinity
+RootEphemeral=no
+OOMScoreAdjust=0
+CoredumpFilter=0x33
+Nice=0
+IOSchedulingClass=2
+IOSchedulingPriority=4
+CPUSchedulingPolicy=0
+CPUSchedulingPriority=0
+CPUAffinityFromNUMA=no
+NUMAPolicy=n/a
+TimerSlackNSec=50000
+CPUSchedulingResetOnFork=no
+NonBlocking=no
+StandardInput=null
+StandardOutput=inherit
+StandardError=inherit
+TTYReset=no
+TTYVHangup=no
+TTYVTDisallocate=no
+SyslogPriority=30
+SyslogLevelPrefix=yes
+SyslogLevel=6
+SyslogFacility=3
+LogLevelMax=-1
+LogRateLimitIntervalUSec=0
+LogRateLimitBurst=0
+SecureBits=0
+CapabilityBoundingSet=cap_chown cap_dac_override cap_dac_read_search cap_fowner cap_fsetid cap_kill cap_setgid cap_setuid cap_setpcap cap_linux_immutable cap_net_bind_service cap_net_broadcast cap_net_admin cap_net_raw cap_ipc_lock cap_ipc_owner cap_sys_module cap_sys_rawio cap_sys_chroot cap_sys_ptrace cap_sys_pacct cap_sys_admin cap_sys_boot cap_sys_nice cap_sys_resource cap_sys_time cap_sys_tty_config cap_mknod cap_lease cap_audit_write cap_audit_control cap_setfcap cap_mac_override cap_mac_admin cap_syslog cap_wake_alarm cap_block_suspend cap_audit_read cap_perfmon cap_bpf cap_checkpoint_restore
+DynamicUser=no
+SetLoginEnvironment=no
+RemoveIPC=no
+PrivateTmp=no
+PrivateTmpEx=no
+PrivateDevices=no
+ProtectClock=no
+ProtectKernelTunables=no
+ProtectKernelModules=no
+ProtectKernelLogs=no
+ProtectControlGroups=no
+ProtectControlGroupsEx=no
+PrivateNetwork=no
+PrivateUsers=no
+PrivateUsersEx=no
+PrivateMounts=no
+PrivateIPC=no
+PrivatePIDs=no
+ProtectHome=no
+ProtectSystem=no
+SameProcessGroup=no
+UtmpMode=init
+IgnoreSIGPIPE=yes
+NoNewPrivileges=no
+SystemCallErrorNumber=2147483646
+LockPersonality=no
+RuntimeDirectoryPreserve=no
+RuntimeDirectoryMode=0755
+StateDirectoryMode=0755
+StateDirectoryAccounting=no
+StateDirectoryQuota=[not set]
+CacheDirectoryMode=0755
+CacheDirectoryAccounting=no
+CacheDirectoryQuota=[not set]
+LogsDirectoryMode=0755
+LogsDirectoryAccounting=no
+LogsDirectoryQuota=[not set]
+ConfigurationDirectoryMode=0755
+TimeoutCleanUSec=infinity
+MemoryDenyWriteExecute=no
+RestrictRealtime=no
+RestrictSUIDSGID=no
+RestrictNamespaces=no
+DelegateNamespaces=18446744073709551615
+MountAPIVFS=no
+BindLogSockets=no
+KeyringMode=private
+ProtectProc=default
+ProcSubset=all
+ProtectHostname=no
+PrivateBPF=no
+MemoryKSM=no
+RootImagePolicy=root=verity+signed+encrypted+unprotected+absent:usr=verity+signed+encrypted+unprotected+absent:home=encrypted+unprotected+absent:srv=encrypted+unprotected+absent:tmp=encrypted+unprotected+absent:var=encrypted+unprotected+absent
+MountImagePolicy=root=verity+signed+encrypted+unprotected+absent:usr=verity+signed+encrypted+unprotected+absent:home=encrypted+unprotected+absent:srv=encrypted+unprotected+absent:tmp=encrypted+unprotected+absent:var=encrypted+unprotected+absent
+ExtensionImagePolicy=root=verity+signed+encrypted+unprotected+absent:usr=verity+signed+encrypted+unprotected+absent:home=encrypted+unprotected+absent:srv=encrypted+unprotected+absent:tmp=encrypted+unprotected+absent:var=encrypted+unprotected+absent
+KillMode=control-group
+KillSignal=15
+RestartKillSignal=15
+FinalKillSignal=9
+SendSIGKILL=yes
+SendSIGHUP=no
+WatchdogSignal=6
+ls: cannot access '/etc/systemd/system/user@.service.d/': No such file or directory
+/usr/lib/systemd/system/user@.service.d/:
+00-uresourced.conf
+10-login-barrier.conf
+[Unit]
+After=uresourced.service
+
+[Service]
+Delegate=cpu io memory
+#  SPDX-License-Identifier: LGPL-2.1-or-later
+#
+#  This file is part of systemd.
+#
+#  systemd is free software; you can redistribute it and/or modify it
+#  under the terms of the GNU Lesser General Public License as published by
+#  the Free Software Foundation; either version 2.1 of the License, or
+#  (at your option) any later version.
+
+[Unit]
+# Make sure user instances are started after logins are allowed. However this
+# is not desirable for user@0.service since root should be able to log in
+# earlier during the boot process especially if something goes wrong.
+After=systemd-user-sessions.service
+Dry Run: no
+Swap Used Limit: 90.00%
+Default Memory Pressure Limit: 60.00%
+Default Memory Pressure Duration: 20s
+System Context:
+	Memory: Used: 4.3G, Total: 46.1G
+	Swap: Used: 0B, Total: 7.9G
+Swap Monitored CGroups:
+Memory Pressure Monitored CGroups:
+	Path: /system.slice
+		Memory Pressure Limit: 80.00%
+		Memory Pressure Duration: 20s
+		Pressure: Avg10: 0.00, Avg60: 0.00, Avg300: 0.00, Total: 4us
+		Current Memory Usage: 13.7G
+		Memory Min: 0B
+		Memory Low: 0B
+		Pgscan: 0
+		Last Pgscan: 0
+	Path: /user.slice/user-1000.slice/user@1000.service/app.slice
+		Memory Pressure Limit: 80.00%
+		Memory Pressure Duration: 20s
+		Pressure: Avg10: 0.00, Avg60: 0.00, Avg300: 0.00, Total: 0
+		Current Memory Usage: 366.7M
+		Memory Min: 0B
+		Memory Low: 0B
+		Pgscan: 0
+		Last Pgscan: 0
+	Path: /user.slice/user-1000.slice/user@1000.service/app.slice/app-gnome\x2dsession\x2dmanager.slice
+		Memory Pressure Limit: 80.00%
+		Memory Pressure Duration: 20s
+== pasta
+/usr/bin/pasta
+/usr/bin/passt
+pasta 0^20261002.gcba3570-1.fc44.x86_64
+Copyright Red Hat
+passt-0^20261002.gcba3570-1.fc44.x86_64
+== firecracker
+/var/tmp/m3live-k8s-tree/hono-compute-provider/hono-firecracker-standalone/firecracker
+/var/tmp/socialweb-k8s-tree/hono-compute-provider/hono-firecracker-standalone/firecracker
+/opt/socialweb-computer-bidder/org-root/hono-compute-provider/hono-firecracker-standalone/firecracker
+== userns sysctls
+sysctl: cannot stat /proc/sys/kernel/unprivileged_userns_clone: No such file or directory
+user.max_user_namespaces = 100000
+sysctl: cannot stat /proc/sys/kernel/apparmor_restrict_unprivileged_userns: No such file or directory
+kernel.unprivileged_bpf_disabled = 2
+evm
+ima
+integrity
+ipe
+lockdown
+lsm
+tpm0
+Enforcing
+lockdown,capability,yama,selinux,bpf,landlock,ipe,ima,evm== go
+go version go1.26.2 linux/amd64
+/home/johnandersen777/Documents/go/pkg/mod
+
+https://proxy.golang.org,direct
+v22@v22.7.0
+ls: cannot access '/home/johnandersen777/Documents/go/pkg/mod/github.com/godbus/dbus': No such file or directory

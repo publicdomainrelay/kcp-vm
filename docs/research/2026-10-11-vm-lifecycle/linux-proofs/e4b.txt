@@ -1,0 +1,45 @@
+== 2026-10-11T23:21:14Z E4b-1 pasta+tap+exec inside user unit swproof-vm-3.service (final=tapexec attach tap0)
+start swproof-vm-3.service result="done" err=<nil>
+unit: active running ff255c363aac43db925b22013efec6d8 71295 success 
+Unit swproof-vm-3.service (/user.slice/user-1000.slice/user@1000.service/app.slice/swproof-vm-3.service):
+├─71295 /usr/bin/pasta --config-net -q -f -a 192.168.100.2 -n 255.255.255.0 -g …
+└─71299 /tmp/claude-1000/-home-johnandersen777-src-publicdomainrelay-kcp/90fa59…
+MainPID=71295 (pasta.avx2) child=71299 (tapexec) child-pidns=pid:[4026533308] host-pidns=pid:[4026531836] NSpid: NSpid: 71299 1
+Starting swproof-vm-3.service - swproof stand-in VM /usr/bin/pasta --config-net -q -f -a 192.168.100.2 -n 255.255.255.0 -g 192.168.100.1 --dns-forward 192.168.100.1 -- /bin/sh -c exec "$0" tap0 /bin/sh -c "$1" ./bin/tapexec ip -br link show tap0; exec ./bin/tapexec attach tap0...
+Started swproof-vm-3.service - swproof stand-in VM /usr/bin/pasta --config-net -q -f -a 192.168.100.2 -n 255.255.255.0 -g 192.168.100.1 --dns-forward 192.168.100.1 -- /bin/sh -c exec "$0" tap0 /bin/sh -c "$1" ./bin/tapexec ip -br link show tap0; exec ./bin/tapexec attach tap0.
+-- identity of the VMM stand-in (child, not MainPID) via GetUnitByPIDFD:
+[t0] GetUnitByPIDFD: path=/org/freedesktop/systemd1/unit/swproof_2dvm_2d3_2eservice unit=swproof-vm-3.service invocation=ff255c363aac43db925b22013efec6d8
+[t0] verdict Alive(same unit+invocation, pidfd-pinned)
+== 2026-10-11T23:21:16Z E4b-2 bidder unit restart/kill/stop survival with swproof-vm-3.service
+restart: PASS
+kill -9: PASS
+stop: PASS
+pid 71299 ALIVE
+== 2026-10-11T23:21:21Z E4b-3 kill -9 pasta (MainPID 71295) inside unit -> does systemd reap the VMM stand-in 71299?
+unit: loaded failed signal 2 9 
+pid 71295 gone
+pid 71299 gone
+== 2026-10-11T23:21:22Z E4b-4 kill -9 the VMM stand-in -> pasta exits -> unit?
+start swproof-vm-3.service result="done" err=<nil>
+unit: loaded failed exit-code 1 137 
+pid 71419 gone
+pid 71423 gone
+== 2026-10-11T23:21:25Z E4b-5 systemctl stop latency, final=[/tmp/claude-1000/-home-johnandersen777-src-publicdomainrelay-kcp/90fa59d8-02f3-4261-b817-d037e7405f23/scratchpad/linux-proofs/bin/tapexec attach tap0] (pid-ns init signal semantics)
+start swproof-vm-3.service result="done" err=<nil>
+child SigCgt:	fffffffd7fc1feff
+stop rc=0 took=.027557053s
+pid 71462 gone
+pid 71466 gone
+Started swproof-vm-3.service - swproof stand-in VM /usr/bin/pasta --config-net -q -f -a 192.168.100.2 -n 255.255.255.0 -g 192.168.100.1 --dns-forward 192.168.100.1 -- /bin/sh -c exec "$0" tap0 /bin/sh -c "$1" /tmp/claude-1000/-home-johnandersen777-src-publicdomainrelay-kcp/90fa59d8-02f3-4261-b817-d037e7405f23/scratchpad/linux-proofs/bin/tapexec ip -br link show tap0; exec /tmp/claude-1000/-home-johnandersen777-src-publicdomainrelay-kcp/90fa59d8-02f3-4261-b817-d037e7405f23/scratchpad/linux-proofs/bin/tapexec attach tap0.
+Stopping swproof-vm-3.service - swproof stand-in VM /usr/bin/pasta --config-net -q -f -a 192.168.100.2 -n 255.255.255.0 -g 192.168.100.1 --dns-forward 192.168.100.1 -- /bin/sh -c exec "$0" tap0 /bin/sh -c "$1" /tmp/claude-1000/-home-johnandersen777-src-publicdomainrelay-kcp/90fa59d8-02f3-4261-b817-d037e7405f23/scratchpad/linux-proofs/bin/tapexec ip -br link show tap0; exec /tmp/claude-1000/-home-johnandersen777-src-publicdomainrelay-kcp/90fa59d8-02f3-4261-b817-d037e7405f23/scratchpad/linux-proofs/bin/tapexec attach tap0...
+Stopped swproof-vm-3.service - swproof stand-in VM /usr/bin/pasta --config-net -q -f -a 192.168.100.2 -n 255.255.255.0 -g 192.168.100.1 --dns-forward 192.168.100.1 -- /bin/sh -c exec "$0" tap0 /bin/sh -c "$1" /tmp/claude-1000/-home-johnandersen777-src-publicdomainrelay-kcp/90fa59d8-02f3-4261-b817-d037e7405f23/scratchpad/linux-proofs/bin/tapexec ip -br link show tap0; exec /tmp/claude-1000/-home-johnandersen777-src-publicdomainrelay-kcp/90fa59d8-02f3-4261-b817-d037e7405f23/scratchpad/linux-proofs/bin/tapexec attach tap0.
+== 2026-10-11T23:21:26Z E4b-5 systemctl stop latency, final=[/usr/bin/sleep infinity] (pid-ns init signal semantics)
+start swproof-vm-3.service result="done" err=<nil>
+child SigCgt:	0000000000000000
+stop rc=124 took=15.002326177s
+pid 71512 gone
+pid 71516 ALIVE
+Starting swproof-vm-3.service - swproof stand-in VM /usr/bin/pasta --config-net -q -f -a 192.168.100.2 -n 255.255.255.0 -g 192.168.100.1 --dns-forward 192.168.100.1 -- /bin/sh -c exec "$0" tap0 /bin/sh -c "$1" /tmp/claude-1000/-home-johnandersen777-src-publicdomainrelay-kcp/90fa59d8-02f3-4261-b817-d037e7405f23/scratchpad/linux-proofs/bin/tapexec ip -br link show tap0; exec /usr/bin/sleep infinity...
+Started swproof-vm-3.service - swproof stand-in VM /usr/bin/pasta --config-net -q -f -a 192.168.100.2 -n 255.255.255.0 -g 192.168.100.1 --dns-forward 192.168.100.1 -- /bin/sh -c exec "$0" tap0 /bin/sh -c "$1" /tmp/claude-1000/-home-johnandersen777-src-publicdomainrelay-kcp/90fa59d8-02f3-4261-b817-d037e7405f23/scratchpad/linux-proofs/bin/tapexec ip -br link show tap0; exec /usr/bin/sleep infinity.
+Stopping swproof-vm-3.service - swproof stand-in VM /usr/bin/pasta --config-net -q -f -a 192.168.100.2 -n 255.255.255.0 -g 192.168.100.1 --dns-forward 192.168.100.1 -- /bin/sh -c exec "$0" tap0 /bin/sh -c "$1" /tmp/claude-1000/-home-johnandersen777-src-publicdomainrelay-kcp/90fa59d8-02f3-4261-b817-d037e7405f23/scratchpad/linux-proofs/bin/tapexec ip -br link show tap0; exec /usr/bin/sleep infinity...
+leftovers: 0 units; procs: 0

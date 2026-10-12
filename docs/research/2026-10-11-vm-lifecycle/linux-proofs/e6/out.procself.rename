@@ -1,0 +1,5 @@
+[start] build=OLD pid=73289 os.Executable="/tmp/claude-1000/-home-johnandersen777-src-publicdomainrelay-kcp/90fa59d8-02f3-4261-b817-d037e7405f23/scratchpad/linux-proofs/e6/nodeboot" err=<nil> /proc/self/exe->"/tmp/claude-1000/-home-johnandersen777-src-publicdomainrelay-kcp/90fa59d8-02f3-4261-b817-d037e7405f23/scratchpad/linux-proofs/e6/nodeboot" inode=21018
+[start] waiting for rename-over signal file
+[after-rename] os.Executable="/tmp/claude-1000/-home-johnandersen777-src-publicdomainrelay-kcp/90fa59d8-02f3-4261-b817-d037e7405f23/scratchpad/linux-proofs/e6/nodeboot" err=<nil> /proc/self/exe->"/tmp/claude-1000/-home-johnandersen777-src-publicdomainrelay-kcp/90fa59d8-02f3-4261-b817-d037e7405f23/scratchpad/linux-proofs/e6/nodeboot (deleted)"
+[after-rename] execve("/proc/self/exe")
+[reexec-via-procself] build=OLD pid=73289 os.Executable="/tmp/claude-1000/-home-johnandersen777-src-publicdomainrelay-kcp/90fa59d8-02f3-4261-b817-d037e7405f23/scratchpad/linux-proofs/e6/nodeboot" err=<nil> /proc/self/exe->"/tmp/claude-1000/-home-johnandersen777-src-publicdomainrelay-kcp/90fa59d8-02f3-4261-b817-d037e7405f23/scratchpad/linux-proofs/e6/nodeboot (deleted)" inode=21018

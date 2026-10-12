@@ -1,0 +1,6 @@
+== 2026-10-11T23:24:51Z E2f transient unit across user-manager daemon-reload
+start swproof-vm-reload.service result="done" err=<nil>
+before: active e7b59b8a7b784329942a5bdb7d3bc3b3 99092 
+after:  active e7b59b8a7b784329942a5bdb7d3bc3b3 99092 
+PASS
+transient file: /run/user/1000/systemd/transient/swproof-vm-reload.service yes 
