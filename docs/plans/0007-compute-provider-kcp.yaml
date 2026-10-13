@@ -1348,8 +1348,8 @@ items:
       door restart: the claim returns via Adopting, the node stays Ready, no vm.delete). Red first.
     done_when: "unit tests green; live: a two-node market cluster stays Ready across a gateway upgrade, both claims adopted, no RFP and no vm.delete sent by the restart; the unclaimed-joined-node market network reading recorded (UTC)."
     risks: ["Listing market records across winners' repos is network-bound; the table is built from claims first and the record scan only fills the acceptPending and unclaimed gaps, bounded per pass."]
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M6-LIVE-RECOVERY
     milestone: M6
     title: A killed, restarted or logged-out bidder still releases the VM it rented; a user-manager restart is a reboot
