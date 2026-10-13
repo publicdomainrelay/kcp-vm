@@ -131,6 +131,9 @@ func (g *gateway) defaults(e *env, rec devinstance.Record, cert, key string) err
 	e.dflt("SOCIALWEB_CLUSTERPROVIDER_PORT_RANGE", DefaultPortRange)
 	e.dflt("SOCIALWEB_CLUSTERPROVIDER_JOIN", DefaultJoin)
 	e.dflt("SOCIALWEB_CLUSTERPROVIDER_DATASTORE_HAS_ROW", "false")
+	for k, v := range ClusterProviderEnv(g.c.Spec.ClusterProvider) {
+		e.set(k, v)
+	}
 	for env, name := range map[string]string{"SOCIALWEB_CLUSTERPROVIDER_EXTERNAL_SECRETS": ExeExternalSecrets,
 		"SOCIALWEB_CLUSTERPROVIDER_ESO_BUNDLE": ExeESOBundle, "SOCIALWEB_CLUSTERPROVIDER_DUMBPIPE": ExeDumbpipe,
 		"SOCIALWEB_CLUSTERPROVIDER_K3S": ExeK3s, "SOCIALWEB_CLUSTERPROVIDER_KINE": ExeKine, "SOCIALWEB_CLUSTERPROVIDER_BAO": ExeBao} {

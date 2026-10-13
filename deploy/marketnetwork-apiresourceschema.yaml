@@ -1,7 +1,7 @@
 apiVersion: apis.kcp.io/v1alpha1
 kind: APIResourceSchema
 metadata:
-  name: v1alpha1-7.marketnetworks.socialweb.computer
+  name: v1alpha1-8.marketnetworks.socialweb.computer
 spec:
   group: socialweb.computer
   names:
@@ -89,6 +89,17 @@ spec:
                           - name
                     ownerSessionsFile:
                       type: string
+                    clusterProvider:
+                      type: object
+                      properties:
+                        scaleHold:
+                          type: string
+                        scaleMaxNodes:
+                          type: integer
+                          format: int32
+                        scalePodsPerNode:
+                          type: integer
+                          format: int32
                     stopped:
                       type: boolean
                   required:

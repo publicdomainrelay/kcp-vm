@@ -4,12 +4,15 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
+	"time"
 
 	"sigs.k8s.io/yaml"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/appctl"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/providermain"
 )
 
 const (
@@ -32,6 +35,58 @@ func ReadSpec(path string) (v1alpha1.GatewaySpec, error) {
 		return s, fmt.Errorf("gatewaykcp: the Gateway spec file %s: %w", path, err)
 	}
 	return s, nil
+}
+
+func ClusterProviderEnv(c *v1alpha1.GatewayClusterProvider) map[string]string {
+	out := map[string]string{}
+	if c == nil {
+		return out
+	}
+	if c.ScaleHold != "" {
+		out[providermain.EnvScaleHold] = c.ScaleHold
+	}
+	if c.ScaleMaxNodes != 0 {
+		out[providermain.EnvScaleMaxNodes] = strconv.Itoa(int(c.ScaleMaxNodes))
+	}
+	if c.ScalePodsPerNode != 0 {
+		out[providermain.EnvScalePodsPerNode] = strconv.Itoa(int(c.ScalePodsPerNode))
+	}
+	return out
+}
+
+func ClusterProviderFromEnv(lookup func(string) (string, bool), have *v1alpha1.GatewayClusterProvider) (*v1alpha1.GatewayClusterProvider, error) {
+	out := v1alpha1.GatewayClusterProvider{}
+	if have != nil {
+		out = *have
+	}
+	get := func(k string) string {
+		v, _ := lookup(k)
+		return strings.TrimSpace(v)
+	}
+	if v := get(providermain.EnvScaleHold); v != "" && out.ScaleHold == "" {
+		if _, err := time.ParseDuration(v); err != nil {
+			return nil, fmt.Errorf("%s is not a duration: %w", providermain.EnvScaleHold, err)
+		}
+		out.ScaleHold = v
+	}
+	for _, f := range []struct {
+		env string
+		dst *int32
+	}{{providermain.EnvScaleMaxNodes, &out.ScaleMaxNodes}, {providermain.EnvScalePodsPerNode, &out.ScalePodsPerNode}} {
+		v := get(f.env)
+		if v == "" || *f.dst != 0 {
+			continue
+		}
+		n, err := strconv.ParseInt(v, 10, 32)
+		if err != nil || n < 1 {
+			return nil, fmt.Errorf("%s is %q, not a whole number of at least 1", f.env, v)
+		}
+		*f.dst = int32(n)
+	}
+	if out == (v1alpha1.GatewayClusterProvider{}) {
+		return nil, nil
+	}
+	return &out, nil
 }
 
 func hasOption(s v1alpha1.GatewaySpec, name string) bool {

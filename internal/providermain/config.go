@@ -59,6 +59,10 @@ const (
 
 	envScalePodsPerNode = "SOCIALWEB_CLUSTERPROVIDER_SCALE_PODS_PER_NODE"
 
+	EnvScaleHold        = envScaleHold
+	EnvScaleMaxNodes    = envScaleMaxNodes
+	EnvScalePodsPerNode = envScalePodsPerNode
+
 	envHost = "SOCIALWEB_CLUSTERPROVIDER_HOST"
 
 	envCloudControllerManager = "SOCIALWEB_CLUSTERPROVIDER_CLOUD_CONTROLLER_MANAGER"

@@ -273,6 +273,16 @@ type GatewaySpec struct {
 	MarketNetwork *GatewayMarketNetwork `json:"marketNetwork,omitempty"`
 
 	WebAppFront string `json:"webAppFront,omitempty"`
+
+	ClusterProvider *GatewayClusterProvider `json:"clusterProvider,omitempty"`
+}
+
+type GatewayClusterProvider struct {
+	ScaleHold string `json:"scaleHold,omitempty"`
+
+	ScaleMaxNodes int32 `json:"scaleMaxNodes,omitempty"`
+
+	ScalePodsPerNode int32 `json:"scalePodsPerNode,omitempty"`
 }
 
 type GatewayMarketNetwork struct {
@@ -349,6 +359,8 @@ type NetworkApp struct {
 	Options []ApplicationOption `json:"options,omitempty"`
 
 	OwnerSessionsFile string `json:"ownerSessionsFile,omitempty"`
+
+	ClusterProvider *GatewayClusterProvider `json:"clusterProvider,omitempty"`
 
 	Stopped bool `json:"stopped,omitempty"`
 }

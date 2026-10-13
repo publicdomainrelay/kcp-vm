@@ -31,6 +31,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/portallocator"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/stack/bidder"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/stack/denoruntime"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/stack/gatewaykcp"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/versions"
 )
 
@@ -451,6 +452,14 @@ func bringUp(ctx context.Context, a *app, vals clicfg.Values, host bool) (upRepo
 		vm := appctl.BidderVMDefaults{GuestImageSource: vals.String("guest-image-source"), VmHostBackend: vals.String("vm-host-backend")}
 		if networkSpec, err = appctl.NetworkSpec(l.ID, vals.Int("bidders"), vals.Bool("with-gateway"), networkOverlay, vm); err != nil {
 			return upReport{}, a.fail(exitRefused, "dev up: %v", err)
+		}
+		for i := range networkSpec.Apps {
+			if networkSpec.Apps[i].Kind != v1alpha1.ApplicationKindGateway {
+				continue
+			}
+			if networkSpec.Apps[i].ClusterProvider, err = gatewaykcp.ClusterProviderFromEnv(a.env.LookupEnv, networkSpec.Apps[i].ClusterProvider); err != nil {
+				return upReport{}, a.fail(exitRefused, "dev up: the gateway's clusterprovider settings: %v", err)
+			}
 		}
 	}
 	var par *devinstance.Parent

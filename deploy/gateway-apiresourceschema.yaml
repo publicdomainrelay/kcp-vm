@@ -97,6 +97,17 @@ spec:
                     type: string
               webAppFront:
                 type: string
+              clusterProvider:
+                type: object
+                properties:
+                  scaleHold:
+                    type: string
+                  scaleMaxNodes:
+                    type: integer
+                    format: int32
+                  scalePodsPerNode:
+                    type: integer
+                    format: int32
             required:
               - profile
           status:

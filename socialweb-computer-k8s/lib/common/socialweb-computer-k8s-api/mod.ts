@@ -357,6 +357,7 @@ export interface NetworkApp {
   kcp?: KcpProvider;
   options?: ApplicationOption[];
   ownerSessionsFile?: string;
+  clusterProvider?: GatewayClusterProvider;
   stopped?: boolean;
 }
 
@@ -375,6 +376,12 @@ export interface KcpProvider {
 export interface ApplicationOption {
   name: string;
   value?: string;
+}
+
+export interface GatewayClusterProvider {
+  scaleHold?: string;
+  scaleMaxNodes?: number;
+  scalePodsPerNode?: number;
 }
 
 export interface MarketNetworkStatus {
@@ -574,6 +581,7 @@ export interface GatewaySpec {
   options?: ApplicationOption[];
   marketNetwork?: GatewayMarketNetwork;
   webAppFront?: string;
+  clusterProvider?: GatewayClusterProvider;
 }
 
 export interface GatewayMarketNetwork {
@@ -682,7 +690,7 @@ export const MARKET_NETWORK_RESOURCE: ApiResource = {
   listKind: "MarketNetworkList",
   plural: "marketnetworks",
   singular: "marketnetwork",
-  schema: "v1alpha1-7.marketnetworks.socialweb.computer",
+  schema: "v1alpha1-8.marketnetworks.socialweb.computer",
   export: "applications",
 };
 
@@ -781,6 +789,7 @@ export type ApiTypeName =
   | "ExecutionStatus"
   | "FirecrackerProvider"
   | "Gateway"
+  | "GatewayClusterProvider"
   | "GatewayMarketNetwork"
   | "GatewaySpec"
   | "IdentityScope"
@@ -1639,6 +1648,21 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
     "required": [],
     "type": "object"
   },
+  "GatewayClusterProvider": {
+    "properties": {
+      "scaleHold": {
+        "type": "string"
+      },
+      "scaleMaxNodes": {
+        "type": "integer"
+      },
+      "scalePodsPerNode": {
+        "type": "integer"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
   "GatewayMarketNetwork": {
     "properties": {
       "nodeGuestHostAliases": {
@@ -1664,6 +1688,9 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
           "type": "string"
         },
         "type": "array"
+      },
+      "clusterProvider": {
+        "ref": "GatewayClusterProvider"
       },
       "marketNetwork": {
         "ref": "GatewayMarketNetwork"
@@ -2192,6 +2219,9 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
   },
   "NetworkApp": {
     "properties": {
+      "clusterProvider": {
+        "ref": "GatewayClusterProvider"
+      },
       "firecracker": {
         "ref": "FirecrackerProvider"
       },
@@ -3619,6 +3649,24 @@ export function assertApplicationOption(value: unknown): asserts value is Applic
 
 export function parseApplicationOption(value: unknown): ApplicationOption {
   assertApplicationOption(value);
+  return value;
+}
+
+export function validateGatewayClusterProvider(value: unknown): ApiIssue[] {
+  return validate("GatewayClusterProvider", value);
+}
+
+export function isGatewayClusterProvider(value: unknown): value is GatewayClusterProvider {
+  return validate("GatewayClusterProvider", value).length === 0;
+}
+
+export function assertGatewayClusterProvider(value: unknown): asserts value is GatewayClusterProvider {
+  const issues = validate("GatewayClusterProvider", value);
+  if (issues.length > 0) throw new ApiValidationError("GatewayClusterProvider", issues);
+}
+
+export function parseGatewayClusterProvider(value: unknown): GatewayClusterProvider {
+  assertGatewayClusterProvider(value);
   return value;
 }
 
