@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -50,6 +51,8 @@ type Options struct {
 	DataDir string
 
 	DenyBidderDids []string
+
+	DenyMore func() []string
 
 	Resolve ClusterSource
 
@@ -229,9 +232,21 @@ func (h *Host) claimLocked(target Cluster, passwordFile string) v1alpha1.NodeCla
 			TokenFile:        h.opts.TokenFile,
 			NodePasswordFile: passwordFile,
 			ServerCAFile:     h.opts.ServerCAFile,
-			DenyBidderDids:   h.opts.DenyBidderDids,
+			DenyBidderDids:   h.denied(),
 		},
 	}
+}
+
+func (h *Host) denied() []string {
+	out := append([]string(nil), h.opts.DenyBidderDids...)
+	if h.opts.DenyMore != nil {
+		for _, did := range h.opts.DenyMore() {
+			if !slices.Contains(out, did) {
+				out = append(out, did)
+			}
+		}
+	}
+	return out
 }
 
 func (h *Host) WriteAdoptionClaim(ctx context.Context) error {
@@ -306,6 +321,8 @@ type End struct {
 	Declined bool
 
 	Lost bool
+
+	Bidder string
 }
 
 func MarketDeclined(claim *v1alpha1.NodeClaim) bool {
@@ -333,8 +350,12 @@ func (h *Host) End() End {
 	if !endedClaimPhase(claim.Status.Phase) {
 		return End{}
 	}
-	return End{Message: endedMessage(claim), Declined: MarketDeclined(claim),
+	end := End{Message: endedMessage(claim), Declined: MarketDeclined(claim),
 		Lost: claim.Status.Phase == v1alpha1.NodeClaimLost}
+	if wn := claim.Status.Contract.Winner; wn != nil {
+		end.Bidder = wn.DID
+	}
+	return end
 }
 
 func (h *Host) Terminal() string {

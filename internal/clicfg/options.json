@@ -616,7 +616,7 @@
     "contract-timeout": {
       "type": "string",
       "description": "run request: how long the CLI waits for the contract to reach the guest's onNetwork and host keys, and for a release (Go duration)",
-      "default": "6m"
+      "default": "3m"
     }
   }
 }

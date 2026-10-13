@@ -5,9 +5,9 @@ import (
 	"time"
 )
 
-const DefaultBackoffBase = 30 * time.Second
+const DefaultBackoffBase = 15 * time.Second
 
-const DefaultBackoffCap = 10 * time.Minute
+const DefaultBackoffCap = 2 * time.Minute
 
 type Backoff struct {
 	Ends int
@@ -65,8 +65,8 @@ func backingOff(st State, target int, now time.Time) Decision {
 		Action: None, Nodes: st.Nodes, Intent: true, BackoffUntil: st.Backoff.Until,
 		Reason: fmt.Sprintf("intent, and %d nodes are counted for a target of %d, and this cluster "+
 			"is backing off market provisions until %s (%s from now): %d market provision(s) in a "+
-			"row ended with an RFP no bidder took, and asking again at once posts a new public RFP "+
-			"every pass -- %s", st.Nodes, target, st.Backoff.Until.UTC().Format(time.RFC3339),
+			"row ended without a node (an RFP no bidder took, or a claim that failed or was lost), and "+
+			"asking again at once posts a new public RFP every pass -- %s", st.Nodes, target, st.Backoff.Until.UTC().Format(time.RFC3339),
 			st.Backoff.Until.Sub(now).Round(time.Second), st.Backoff.Ends, st.Backoff.Reason),
 	}
 }

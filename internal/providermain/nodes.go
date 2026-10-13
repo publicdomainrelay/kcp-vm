@@ -90,6 +90,8 @@ type marketNodeOptions struct {
 
 	DenyBidderDids []string
 
+	DenyMore func() []string
+
 	Claims nodemarket.Claims
 
 	ClusterSource nodemarket.ClusterSource
@@ -115,6 +117,7 @@ func newMarketNodeHost(opts marketNodeOptions) (nodeHost, error) {
 		ServerCAFile:     opts.ServerCAFile,
 		DataDir:          opts.DataDir,
 		DenyBidderDids:   opts.DenyBidderDids,
+		DenyMore:         opts.DenyMore,
 		Resolve:          opts.ClusterSource,
 		Claims:           opts.Claims,
 		Record:           opts.Record,
@@ -153,6 +156,8 @@ type nodeHostsOptions struct {
 	NodeLossGrace time.Duration
 
 	NodeJoinGrace time.Duration
+
+	Denies *bidderDenies
 
 	Observe observeCluster
 
@@ -229,14 +234,63 @@ type confirmOutcome struct {
 	declined []string
 
 	declinedWords string
+
+	failed []string
+
+	failedWords string
 }
 
 func (o confirmOutcome) declinedReason() string {
-	if len(o.declined) == 0 {
-		return ""
+	var out []string
+	if len(o.declined) > 0 {
+		out = append(out, fmt.Sprintf("%d market claim(s) of this cluster ended with an RFP no bidder took (%s): %s",
+			len(o.declined), strings.Join(o.declined, ", "), o.declinedWords))
 	}
-	return fmt.Sprintf("%d market claim(s) of this cluster ended with an RFP no bidder took (%s): %s",
-		len(o.declined), strings.Join(o.declined, ", "), o.declinedWords)
+	if len(o.failed) > 0 {
+		out = append(out, fmt.Sprintf("%d market claim(s) of this cluster failed or were lost after a bidder took them (%s): %s",
+			len(o.failed), strings.Join(o.failed, ", "), o.failedWords))
+	}
+	return strings.Join(out, "; ")
+}
+
+const BidderDenyWindow = 2 * time.Minute
+
+type bidderDenies struct {
+	mu    sync.Mutex
+	until map[string]map[string]time.Time
+}
+
+func (d *bidderDenies) deny(cluster, did string, until time.Time) {
+	if d == nil || did == "" {
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.until == nil {
+		d.until = map[string]map[string]time.Time{}
+	}
+	if d.until[cluster] == nil {
+		d.until[cluster] = map[string]time.Time{}
+	}
+	d.until[cluster][did] = until
+}
+
+func (d *bidderDenies) active(cluster string, now time.Time) []string {
+	if d == nil {
+		return nil
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	var out []string
+	for did, until := range d.until[cluster] {
+		if now.Before(until) {
+			out = append(out, did)
+		} else {
+			delete(d.until[cluster], did)
+		}
+	}
+	slices.Sort(out)
+	return out
 }
 
 type tenantNodes struct {
@@ -341,7 +395,22 @@ func (n *tenantNodes) confirmHeld(ctx context.Context) (confirmOutcome, error) {
 
 	var problems []error
 	for _, node := range held {
-		if end := guestEnd(node.host); end.Lost {
+		end := guestEnd(node.host)
+		if end.Message != "" && !end.Declined {
+			outcome.failed = append(outcome.failed, node.name)
+			if outcome.failedWords == "" {
+				outcome.failedWords = end.Message
+			}
+			if end.Bidder != "" {
+				until := n.opts.now().Add(BidderDenyWindow)
+				n.opts.Denies.deny(n.cluster, end.Bidder, until)
+				n.log.Warn("cluster provider: a market claim of this cluster failed or was lost after a bidder took it; "+
+					"that bidder is left out of this cluster's RFPs for a short window so another bidder can take the next one",
+					"cluster", n.cluster, "node", node.name, "bidder", end.Bidder, "until", until.UTC().Format(time.RFC3339),
+					"reason", end.Message)
+			}
+		}
+		if end.Lost {
 			n.log.Warn("cluster provider: the door marked a market node's claim Lost because its bidder "+
 				"reported the guest terminated, so it is released now rather than after the NotReady "+
 				"grace; its pods reschedule and the scale pass rents a replacement if the work still "+
@@ -843,6 +912,9 @@ func newNodeHosts(opts nodeHostsOptions) (*nodeHosts, error) {
 	if log == nil {
 		log = slog.Default()
 	}
+	if opts.Denies == nil {
+		opts.Denies = &bidderDenies{}
+	}
 	return &nodeHosts{opts: opts, log: log, hosts: map[string]*tenantNodes{},
 		synced: map[string]time.Time{}}, nil
 }
@@ -1121,6 +1193,7 @@ func newNodeHostOf(opts nodeHostsOptions, log *slog.Logger, cluster, name string
 		AdvertiseAddress: opts.AdvertiseAddress,
 		ApiserverPort:    apiserverPort,
 		DenyBidderDids:   opts.DenyBidderDids,
+		DenyMore:         func() []string { return opts.Denies.active(cluster, opts.now()) },
 		Claims:           opts.Claims,
 		ClusterSource:    claimClusterFor(opts.Registry, cluster),
 		ReleaseTimeout:   opts.ClaimReleaseTimeout,
