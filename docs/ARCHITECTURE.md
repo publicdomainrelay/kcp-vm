@@ -7082,6 +7082,36 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   expired, delivered the secret and was released 200 at 21:41:51 (the bidder wrote its ComputeVM with
   the current file), and the bidder's log holds no 401.
 
+- **OpenBao plugins on an OpenBaoServer; a guest logs in to its bidder's OpenBao by its ssh host key
+  (plan 0009 M3-SSHSIG-AUTH-PLUGIN, route B, 2026-10-12).** OpenBaoServer `spec.plugins` names a plugin
+  (name, type auth, asset, mountPath). The openbao controller resolves the asset, refuses it unless its
+  sha256 equals the fetch pin in `internal/versions/versions.json`, copies it into the server's
+  `plugin_directory` as `<asset>-<sha256 prefix>`, registers it in the catalog by that sha256, enables
+  the mount and keeps both in its declaration (baosync registers a missing or changed entry, reloads a
+  mount that runs another sha256, deregisters an external plugin no declaration names). A new sha256
+  is a new file, so a running plugin keeps its binary until the reload; files no catalog entry runs are
+  removed after a clean pass. The core's policy gains the catalog and reload paths only on a server
+  with plugins. `status.plugins` shows the declared and the running sha256. Only the bidder handle's
+  own OpenBaoServer (`deploy/apps/market-bidder/vault.yaml`) declares a plugin; the asset list
+  (`openbaoctl.PluginAssets`) and `openbao-plugin-dir` are general for plan 0014's next plugin. The
+  guest wiring: the bidder's kcp provider makes a one-time bind secret per guest, puts its sha256 on
+  ComputeVM `spec.guestLogin` and the secret in the guest's user_data (`guestLoginModule` of
+  cloud-init-common); the ComputeVM controller (Go, client `computevm`) writes
+  `auth/sshsig/role/<computevm>` (alias `guest-<computevm>`, 5 min tokens, 10 uses) before it boots
+  the guest, fails the ComputeVM when the role is refused, and deletes the role on release; guest-kcp
+  forwards `POST /v1/sshsig/{bind,challenge,login}` to the bidder's OpenBao with only each step's
+  fields. Readings (market network pc3, UTC; host load 120-200 from other agents' networks): the
+  bidder's catalog holds `sshsig` with sha256 62b84df5...a60ea8 = the linux/amd64 pin, command
+  `openbao-plugin-auth-sshsig-62b84df545733353`, mount `sshsig/` running the same sha256, Synced
+  InSync; the market network's vault lists `cert/`, `token/` only. A guest booted through the RFP flow
+  (ComputeVM fc-0a0ceea82866-49f294ef): role written pending, the guest's guest-login.service bound
+  SHA256:hWU3P4PF...LGho at 22:24:27 (the ssh-ed25519 key the guest reported for vm.hostKeys) and logged
+  in 3 s later (policies default, ttl 300 s). A second bind with another key: 403 "already bound"; a login
+  signed by another key: 403 "the signature is not by the bound host key"; any other path under
+  `/v1/sshsig/`: 404. The ComputeVM deleted at 22:33:47, gone at 22:33:55 with its role (404). Not read
+  in this run: the gateway child's kcp never became ready under that load (kcp-start-informers), so its
+  vaults were not listed live; no code path but the bidder's vault.yaml declares a plugin.
+
 ## 16. Vocabulary
 
 | | |
