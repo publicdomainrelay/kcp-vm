@@ -3,6 +3,7 @@ package hostprocess
 import (
 	"context"
 	"fmt"
+	"k8s.io/apimachinery/pkg/watch"
 	"log/slog"
 	"slices"
 	"strconv"
@@ -432,6 +433,8 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		"prefixes", s.c.prefixes())
 	t := time.NewTicker(interval)
 	defer t.Stop()
+	wake := make(chan struct{}, 1)
+	go s.watch(ctx, wake)
 	for {
 		if err := s.Pass(ctx); err != nil {
 			s.c.log().Warn("a reconcile pass failed; units keep running", "err", err.Error())
@@ -440,7 +443,64 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case <-t.C:
+		case <-wake:
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-time.After(WakeDebounce):
+			}
+			select {
+			case <-wake:
+			default:
+			}
 		}
+	}
+}
+
+const WakeDebounce = 100 * time.Millisecond
+
+func (s *Supervisor) watch(ctx context.Context, wake chan<- struct{}) {
+	generations := map[string]int64{}
+	failing := false
+	for ctx.Err() == nil {
+		w, err := s.client.Watch(ctx, metav1.ListOptions{LabelSelector: s.c.Selector})
+		if err != nil {
+			if !failing {
+				s.c.log().Warn("watching HostProcess objects failed; the supervisor keeps its interval and retries the watch", "err", err.Error())
+				failing = true
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(RetryAfter):
+			}
+			continue
+		}
+		if failing {
+			s.c.log().Info("watching HostProcess objects again")
+			failing = false
+		}
+		for ev := range w.ResultChan() {
+			u, ok := ev.Object.(*unstructured.Unstructured)
+			if !ok {
+				continue
+			}
+			name, gen := u.GetName(), u.GetGeneration()
+			changed := ev.Type != watch.Modified || generations[name] != gen
+			if ev.Type == watch.Deleted {
+				delete(generations, name)
+			} else {
+				generations[name] = gen
+			}
+			if !changed {
+				continue
+			}
+			select {
+			case wake <- struct{}{}:
+			default:
+			}
+		}
+		w.Stop()
 	}
 }
 

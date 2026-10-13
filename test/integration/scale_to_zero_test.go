@@ -27,8 +27,8 @@ const (
 	spreadLabel     = "it-spread"
 	tenantReady     = 3 * time.Minute
 	scaleOutTimeout = 4 * time.Minute
-	scaleInTimeout  = 3*time.Minute + 30*time.Second
-	scaleHold       = 2 * time.Minute
+	scaleHold       = 10 * time.Second
+	scaleInTimeout  = scaleHold + 90*time.Second
 	probeTimeout    = 90 * time.Second
 	policyTimeout   = 30 * time.Second
 )
@@ -149,7 +149,7 @@ func (m *matrix) apply(p *networkingv1.NetworkPolicy) func() {
 
 func TestTenantClusterScalesFromZeroOnMarketVMsAndBack(t *testing.T) {
 	t.Parallel()
-	n := StartNetwork(t, NetworkOptions{Bidders: 2, WithGateway: true, UpTimeout: 5 * time.Minute})
+	n := SharedNetwork(t, NetworkOptions{Bidders: 2, WithGateway: true, UpTimeout: 5 * time.Minute})
 	started := time.Now()
 	ctx := context.Background()
 	tn := n.Tenant(t, "tenant", tenantReady)
@@ -254,6 +254,10 @@ func TestTenantClusterScalesFromZeroOnMarketVMsAndBack(t *testing.T) {
 		}
 		time.Sleep(time.Second)
 	}
+	receipts := map[string]bool{}
+	for _, c := range claims {
+		receipts[c.Status.Contract.ReceiptUri] = true
+	}
 	t.Logf("scale out: first NodeClaim +%.1fs, two market RFP VMs joined and both pods Ready +%.1fs (nodes %s, %s)",
 		firstClaim.Seconds(), nodesReady.Seconds(), podA.Spec.NodeName, podB.Spec.NodeName)
 	if vms, err := n.BidderVMs(ctx); err != nil {
@@ -263,9 +267,15 @@ func TestTenantClusterScalesFromZeroOnMarketVMsAndBack(t *testing.T) {
 		for _, vm := range vms {
 			described = append(described, describeVM(vm))
 		}
-		t.Logf("the bidders hold %d ComputeVM(s): %s", len(vms), strings.Join(described, "; "))
-		if len(vms) != len(claims) {
-			t.Errorf("the bidders run %d ComputeVMs for %d NodeClaims", len(vms), len(claims))
+		t.Logf("the bidders hold %d ComputeVM(s) (all tests on this network): %s", len(vms), strings.Join(described, "; "))
+		ours := 0
+		for _, vm := range vms {
+			if vm.Spec.Contract != nil && receipts[vm.Spec.Contract.ReceiptUri] {
+				ours++
+			}
+		}
+		if ours != len(claims) {
+			t.Errorf("the bidders run %d ComputeVMs for this test's %d NodeClaims", ours, len(claims))
 		}
 	}
 
@@ -381,7 +391,7 @@ func TestTenantClusterScalesFromZeroOnMarketVMsAndBack(t *testing.T) {
 		}
 	}
 	scaleInTo(0)
-	if err := n.WaitNoGuests(time.Minute); err != nil {
+	if err := n.WaitNoGuestsOf(receipts, time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	lines, err := tn.ReleaseLines()

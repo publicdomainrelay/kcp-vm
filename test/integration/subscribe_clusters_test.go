@@ -287,7 +287,7 @@ func failedClaim(ev streamEvent) error {
 
 func TestClusterEventsStreamFromSubscribeClusters(t *testing.T) {
 	t.Parallel()
-	n := StartNetwork(t, NetworkOptions{Bidders: 1, WithGateway: true, UpTimeout: 5 * time.Minute})
+	n := SharedNetwork(t, NetworkOptions{Bidders: 2, WithGateway: true, UpTimeout: 5 * time.Minute})
 	addr := n.xrpcAddress(t)
 	acct := n.OwnerAccount(t)
 	gw := &http.Client{Timeout: 30 * time.Second}

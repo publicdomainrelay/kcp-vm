@@ -769,7 +769,8 @@ func (h *UnitsHost) Spawn(ctx context.Context, key string, steps []procgroup.Ste
 	if err := h.writeControlPlane(key, cp); err != nil {
 		return err
 	}
-	for i, st := range steps {
+	var cpMu sync.Mutex
+	run := func(ctx context.Context, i int, st procgroup.Step) error {
 		if (st.Name == procgroup.ComponentKine || st.Name == procgroup.ComponentOpenBao) && !h.storeReady(ctx, key) {
 			return fmt.Errorf("%w (cluster %s, Postgres %s)", procgroup.ErrPostgresUnavailable, key, store.Object)
 		}
@@ -783,24 +784,113 @@ func (h *UnitsHost) Spawn(ctx context.Context, key string, steps []procgroup.Ste
 					return fmt.Errorf("clusterprovider: the vault of %s never became ready: %w", key, err)
 				}
 			}
+			cpMu.Lock()
 			if o.Status.Runtime != nil {
 				cp.Members[i].InvocationID = o.Status.Runtime.Instance
 			}
 			cp.Members[i].Object = o.Name
+			cpMu.Unlock()
 			h.c.Log.Info("cluster provider: vault ready and synced to its declaration", "cluster", key, "openbaoserver", o.Name,
 				"unit", o.Spec.Unit, "address", o.Status.Address)
-			continue
+			return nil
 		}
 		inv, err := h.runStep(ctx, key, st)
 		if err != nil {
 			return err
 		}
+		cpMu.Lock()
 		cp.Members[i].InvocationID = inv
+		cpMu.Unlock()
+		return nil
+	}
+	if err := runGraph(ctx, steps, run); err != nil {
+		return err
 	}
 	if f, err := h.frontRecord(ctx, key); err == nil {
 		cp.Front = f
 	}
 	return h.writeControlPlane(key, cp)
+}
+
+func stepNeeds(steps []procgroup.Step, i int) []int {
+	index := map[procgroup.Component]int{}
+	for j, st := range steps {
+		if _, seen := index[st.Name]; !seen {
+			index[st.Name] = j
+		}
+	}
+	var names []procgroup.Component
+	switch steps[i].Name {
+	case procgroup.ComponentApiserverFront:
+	case procgroup.ComponentOpenBao, procgroup.ComponentKine:
+		names = []procgroup.Component{procgroup.ComponentApiserverFront}
+	case procgroup.ComponentK3s:
+		names = []procgroup.Component{procgroup.ComponentApiserverFront, procgroup.ComponentKine}
+	case procgroup.ComponentCloudControllerManager, procgroup.ComponentExternalSecretsWebhook:
+		names = []procgroup.Component{procgroup.ComponentK3s}
+	case procgroup.ComponentExternalSecrets:
+		names = []procgroup.Component{procgroup.ComponentK3s, procgroup.ComponentExternalSecretsWebhook, procgroup.ComponentOpenBao}
+	case procgroup.ComponentApiserverLink:
+		names = []procgroup.Component{procgroup.ComponentApiserverFront, procgroup.ComponentK3s}
+	case procgroup.ComponentOpenBaoLink:
+		names = []procgroup.Component{procgroup.ComponentOpenBao}
+	default:
+		out := make([]int, 0, i)
+		for j := 0; j < i; j++ {
+			out = append(out, j)
+		}
+		return out
+	}
+	out := make([]int, 0, len(names))
+	for _, n := range names {
+		if j, ok := index[n]; ok && j != i {
+			out = append(out, j)
+		}
+	}
+	return out
+}
+
+func runGraph(ctx context.Context, steps []procgroup.Step, run func(context.Context, int, procgroup.Step) error) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	done := make([]chan struct{}, len(steps))
+	for i := range done {
+		done[i] = make(chan struct{})
+	}
+	var (
+		wg       sync.WaitGroup
+		errOnce  sync.Once
+		firstErr error
+	)
+	fail := func(err error) {
+		errOnce.Do(func() {
+			firstErr = err
+			cancel()
+		})
+	}
+	for i, st := range steps {
+		wg.Add(1)
+		go func(i int, st procgroup.Step) {
+			defer wg.Done()
+			for _, j := range stepNeeds(steps, i) {
+				select {
+				case <-done[j]:
+				case <-ctx.Done():
+					return
+				}
+			}
+			if err := run(ctx, i, st); err != nil {
+				fail(err)
+				return
+			}
+			close(done[i])
+		}(i, st)
+	}
+	wg.Wait()
+	if firstErr != nil {
+		return firstErr
+	}
+	return ctx.Err()
 }
 
 func (h *UnitsHost) runStep(ctx context.Context, key string, st procgroup.Step) (string, error) {

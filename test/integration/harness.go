@@ -78,6 +78,9 @@ func Main(m *testing.M) int {
 		return 1
 	}
 	code := m.Run()
+	if !stopSharedNetworks() && code == 0 {
+		code = 1
+	}
 	if err := h.removeRoot(); err != nil {
 		fmt.Fprintf(os.Stderr, "integration: %v\n", err)
 		if code == 0 {
@@ -271,7 +274,7 @@ func (hs *Harness) removeRoot() error {
 func (hs *Harness) env() []string {
 	return []string{"HOME=" + hs.Home, fmt.Sprintf("XDG_RUNTIME_DIR=/run/user/%d", hs.UID),
 		fmt.Sprintf("DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/%d/bus", hs.UID), "PATH=/usr/local/bin:/usr/bin:/bin",
-		"TMPDIR=" + hs.Tmp, "LANG=C.UTF-8"}
+		"TMPDIR=" + hs.Tmp, "LANG=C.UTF-8", "SOCIALWEB_CLUSTERPROVIDER_SCALE_HOLD=" + scaleHold.String()}
 }
 
 func (hs *Harness) Command(ctx context.Context, args ...string) *exec.Cmd {
