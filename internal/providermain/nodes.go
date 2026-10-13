@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -948,6 +949,13 @@ func (h *nodeHosts) resetSnapshot(cluster string) error {
 func (h *nodeHosts) reconcile(ctx context.Context, cluster string) error {
 	if h.opts.Claims == nil || h.opts.Tenant == nil {
 		return nil
+	}
+	if dir, err := clusterprovider.ClusterDataDir(h.opts.StateDir, cluster); err == nil {
+		if pem, err := os.ReadFile(clusterstack.OpenBaoTLSCAPath(dir)); err == nil {
+			if err := publishCA(clusterstack.PublicOpenBaoCAPath(dir), pem); err != nil {
+				h.log.Warn("cluster provider: the cluster's public OpenBao CA could not be published", "cluster", cluster, "err", err.Error())
+			}
+		}
 	}
 	target, err := claimClusterFor(h.opts.Registry, cluster)(ctx)
 	if err != nil {
