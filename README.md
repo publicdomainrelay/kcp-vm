@@ -11,9 +11,10 @@ One binary, `socialweb-computer`, runs every part of the software. Each running 
 ## Prerequisites
 
 - A 64-bit Linux host with `/dev/kvm`.
+- To run VMs on the host: an account whose `/etc/subuid` and `/etc/subgid` each reserve one range of `N * 65536` ids, which `socialweb-computer install bidder --vm-slots N` writes (default 256). One running VM holds one slot of 65536 ids, so `N` is how many VMs the account runs at once. The account hands its slots out under one lock, `/run/user/<uid>/socialweb-vmslots.lock`.
+- To rent a VM: a bidder to rent from, and an atproto account to post the records. A single-host market network runs its bidders as children of the same instance, so run every live command as the VM account (`test-0001`): the VM units, their slots and their `/dev/kvm` access belong to that account.
 - To run a release binary: `curl` and `sha256sum` (coreutils). The binary embeds every asset it runs, so it needs neither this checkout nor Go and Deno.
 - To build from source or run the scripts: Go and Deno on `PATH`, and this repository checked out, since the scripts run from their own checkout.
-- To rent VMs, an account with VM slots; run the live commands as that account (`test-0001`).
 
 > Warning: never use `/tmp` for a build or for state. It is tmpfs and spills to swap. Use a directory under `~/.tmp` or under `/var/tmp`.
 
@@ -230,7 +231,7 @@ sudo runuser -u swc-bidder -- env XDG_RUNTIME_DIR=/run/user/$(id -u swc-bidder) 
 | `--account` | The system account the bidder runs as. | `swc-bidder` |
 | `--adopt-account` | Take over an existing account that no install record names. | |
 | `--guest-image-source` | The guest image source, written to `config.json`. | |
-| `--vm-slots N` | VM slots of 65536 subordinate ids reserved in `/etc/subuid` and `/etc/subgid`. | 256 |
+| `--vm-slots N` | One range of `N * 65536` subordinate ids reserved in `/etc/subuid` and `/etc/subgid`; each running VM holds one slot of 65536 ids. | 256 |
 | `--dry-run` | Print the computed step list and change nothing. | |
 | `--root DIR` | Install into a staged host under `DIR` as the invoking user, without root. | |
 
