@@ -12,6 +12,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -118,6 +119,14 @@ func TestBidderAnswersEachRFPOnceAcrossARestart(t *testing.T) {
 					corev1.ResourceCPU: resource.MustParse("10m"), corev1.ResourceMemory: resource.MustParse("16Mi")}},
 			}},
 		},
+	}
+	for deadline := time.Now().Add(30 * time.Second); ; {
+		if _, err := tn.Kube.CoreV1().ServiceAccounts("default").Get(ctx, "default", metav1.GetOptions{}); err == nil {
+			break
+		} else if !apierrors.IsNotFound(err) || time.Now().After(deadline) {
+			t.Fatalf("the default ServiceAccount of default: %v", err)
+		}
+		time.Sleep(500 * time.Millisecond)
 	}
 	if _, err := tn.Kube.CoreV1().Pods("default").Create(ctx, pod, metav1.CreateOptions{}); err != nil {
 		t.Fatal(err)

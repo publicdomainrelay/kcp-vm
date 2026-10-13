@@ -1827,7 +1827,7 @@ runcmd:
             if (body?.error === ACCEPT_IN_PROGRESS && inProgressSince === undefined) {
               inProgressSince = Date.now();
               deadline = Math.max(deadline, inProgressSince + ACCEPT_RESEND_MAX_MS);
-              log("submitAccept_in_progress", { attempt, message: body.message, waitUntil: new Date(deadline).toISOString() });
+              log("submitAccept_in_progress", { attempt, detail: body.message, waitUntil: new Date(deadline).toISOString() });
             }
             if (r.ok && body?.uri) {
               takeReceipt(body);
@@ -1835,7 +1835,7 @@ runcmd:
               break;
             }
             if (acceptRetryable(r.status, body)) {
-              log("submitAccept_retry", { attempt, status: r.status, error: body?.error, message: body?.message });
+              log("submitAccept_retry", { attempt, status: r.status, error: body?.error, detail: body?.message });
             } else {
               refused = `${r.status} ${body?.error ?? ""}: ${body?.message ?? ""}`;
             }
