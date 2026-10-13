@@ -2123,9 +2123,10 @@ items:
       and leave their state dirs on disk untouched (not read, not deleted; no rollback is planned); check the
       relay config (an explicit relay list no longer adds public Jetstreams); (3) the fresh deploy below;
       (4) hat-8: stop the old /opt/socialweb-computer-bidder bidder, then `install bidder --handle <the
-      bobvmbuilder handle>` and `run bidder --profile prod-qr`; the QR sign-in and association go to the
-      user only if the bidder account needs a scan, otherwise the existing session in the bidder's vault is
-      used; check that the guest DenoPod's did:key sign-in works on xrpc.fedproxy.com; (5) the finish line:
+      bobvmbuilder handle>` and `run bidder --profile prod-qr`; a lost session is signed in again from the
+      account credentials on the host (~/.bobvmbuilder_bsky_social_source for the bidder,
+      ~/.aliceoa_bsky_social_source for the requester alice; mode 0600, values never printed or stored
+      elsewhere; AGENTS.md "Prod deployments"), and the user is asked only if that fails; check that the guest DenoPod's did:key sign-in works on xrpc.fedproxy.com; (5) the finish line:
       a tenant k3s cluster on the new gateway scales to zero and gets a node as a market RFP VM from that
       bidder, then scales back to zero. Prepared here:
       scripts/deploy.sh (host mode, M3-HOST-INSTALL) on the prod host runs `install gateway` (M1-INSTALL's
