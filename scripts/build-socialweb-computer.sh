@@ -7,13 +7,14 @@ rev="HEAD"
 platforms=()
 dev=0
 verify=0
+nocache=0
 publish=""
 sync_only=0
 
 usage() {
   cat >&2 <<EOF
 usage: $0 [--platform linux/amd64|linux/arm64]... [--commit REV] [--build-root DIR]
-       $0 --verify-reproducible [--platform P]... [--commit REV] [--build-root DIR]
+       $0 --verify-reproducible [--no-cache] [--platform P]... [--commit REV] [--build-root DIR]
        $0 --dev [--platform P]... [--build-root DIR] [--publish DIR [--sync-only]]
 
 --dev builds ONE socialweb-computer of the working tree of this checkout (uncommitted changes
@@ -49,13 +50,18 @@ GOPROXY=off. Its caches are content-addressed, so a warm build gives the same by
                   assetpack and the zstd version (downloaded kinds), or of its tar stream (built kinds)
   cache/meshd     socialweb-meshd per arch, by the sha256 of rust/ and the rustc, cargo, cc, ar versions
   cache/cargo-target, cache/gocache   the cargo target dir and the go build cache
+  cache/closure   the TypeScript closure, by the git trees of ts/, socialweb-computer-k8s/, deno.json,
+                  deno.lock, deploy/ts-entries.yaml and the Go packages of socialweb-tsbundle, the last
+                  commit that touched the TypeScript (the closure's commit and SOURCE_DATE_EPOCH) and deno
   cache/tsbundle-work                 the closure's DENO_DIR fill (deno.lock-verified downloads)
+A step whose key did not change is not run again.
 
---verify-reproducible is the reproducibility proof (plan 0006 ACC6-REPRO; the release-reproducible CI
-job on main runs it). It builds the commit twice, in parallel, from two clean checkouts, each with an
-empty go build cache, cargo target dir and closure work dir and no blob or meshd cache, and refuses
-to publish a platform whose two builds differ by one byte. It also refuses when release/<commit>
-already holds a binary of a platform (from the cached build) that differs from the clean builds.
+--verify-reproducible (plan 0006 ACC6-REPRO; the release-reproducible CI job on main) builds the
+commit twice, from two clean checkouts, and refuses to publish a platform whose two builds differ by
+one byte. It uses the keyed caches, so it rebuilds only what changed. --no-cache builds both from
+scratch, in parallel: an empty go build cache, cargo target dir and closure work dir and no blob,
+meshd or closure cache; it proves the caches give the bytes a clean build gives. Every mode refuses
+to publish when release/<commit> already holds a binary of a platform that differs from this build.
 
   --platform    a release platform; repeat for more (default: every release platform)
   --commit      the commit to build (default HEAD of this checkout; uncommitted changes are not built)
@@ -84,6 +90,7 @@ while [ $# -gt 0 ]; do
     --build-root) build_root="$2"; shift 2 ;;
     --dev) dev=1; shift ;;
     --verify-reproducible) verify=1; shift ;;
+    --no-cache) nocache=1; shift ;;
     --publish) publish="$2"; shift 2 ;;
     --sync-only) sync_only=1; shift ;;
     -h|--help) usage ;;
@@ -116,7 +123,7 @@ esac
 versions="$root/internal/versions/versions.json"
 
 if [ "$dev" = 1 ]; then
-  [ "$verify" = 0 ] || die "--verify-reproducible does not go with --dev"
+  [ "$verify" = 0 ] && [ "$nocache" = 0 ] || die "--verify-reproducible and --no-cache do not go with --dev"
   exec "$root/scripts/build-socialweb-computer-dev.sh" "$root" "$build_root" "$publish" "$sync_only" "${platforms[@]}"
 fi
 if [ -n "$publish" ] || [ "$sync_only" = 1 ]; then
@@ -148,7 +155,7 @@ if [ -z "$want_go" ]; then
   want_go="go$(git -C "$root" show "$commit:go.mod" | awk '$1=="go"{print $2; exit}')"
 fi
 cache="$build_root/cache"
-mkdir -p "$cache/assets" "$cache/gomod" "$cache/gocache" "$cache/blobs" "$cache/meshd" "$cache/cargo-target"
+mkdir -p "$cache/assets" "$cache/gomod" "$cache/gocache" "$cache/blobs" "$cache/meshd" "$cache/cargo-target" "$cache/closure"
 export TMPDIR="$build_root/tmp"
 export GOTMPDIR="$build_root/tmp"
 export GOMODCACHE="$cache/gomod"
@@ -197,6 +204,7 @@ wait_all() {
 
 mode="cached"
 [ "$verify" = 0 ] || mode="verify-reproducible"
+[ "$nocache" = 0 ] || mode="$mode no-cache"
 say "commit $commit, platforms ${platforms[*]}, go $have_go, mode $mode, build root $build_root"
 
 t="$(now)"
@@ -213,10 +221,27 @@ export GOPROXY=off
 export GOSUMDB=off
 timing "module download" "$t"
 
+ts_paths=(ts socialweb-computer-k8s deno.json deno.lock deploy/ts-entries.yaml)
+
+closure_key() {
+  local tree="$1" deno="$2" d
+  {
+    echo "socialweb-tsbundle closure v1"
+    sha_of "$deno"
+    go env GOVERSION
+    for d in "${ts_paths[@]}" go.mod go.sum; do
+      echo "$d $(git -C "$tree" rev-parse "$commit:$d")"
+    done
+    git -C "$tree" log -1 --format=%H "$commit" -- "${ts_paths[@]}"
+    (cd "$tree" && go list -deps -f '{{if not .Standard}}{{.Dir}}{{end}}' ./cmd/socialweb-tsbundle) | sed "s|^$tree/||" | sort -u |
+      while read -r d; do echo "$d $(git -C "$tree" rev-parse "$commit:$d")"; done
+  } | sha256sum | cut -d' ' -f1
+}
+
 build_once() {
   local n="$1" tree="$build_root/src/$1" work="$build_root/work/$1" plat goos goarch key out started deno t
   local closure_work stage_cache=() deno_blobs jobs_n
-  if [ "$verify" = 1 ]; then
+  if [ "$nocache" = 1 ]; then
     export GOCACHE="$work/gocache"
     export CARGO_TARGET_DIR="$work/cargo-target"
     closure_work="$work/closure/tsbundle"
@@ -253,11 +278,36 @@ build_once() {
   jobs_n=0
   (
     t="$(now)"
-    say "build $n: TypeScript closure (pinned deno $hostplat)"
-    (cd "$tree" && go build -trimpath -o "$work/closure/socialweb-tsbundle" ./cmd/socialweb-tsbundle)
-    (cd "$tree" && "$work/closure/socialweb-tsbundle" -source-root "$tree" -release -deno "$deno" \
-      -work "$closure_work" -out "$work/closure/out" >"$work/closure/tsbundle.json" 2>"$work/closure/tsbundle.log") \
-      || { tail -20 "$work/closure/tsbundle.log" >&2; die "build $n: the closure build failed"; }
+    local ckey="" cdir=""
+    if [ "$nocache" = 0 ]; then
+      ckey="$(closure_key "$tree" "$deno")"
+      cdir="$cache/closure/$ckey"
+    fi
+    if [ -n "$cdir" ] && [ -f "$cdir/tsbundle.json" ]; then
+      mkdir -p "$work/closure/out"
+      cp "$cdir/closure.tar.zst" "$cdir/manifest.json.zst" "$work/closure/out/"
+      cp "$cdir/tsbundle.json" "$work/closure/tsbundle.json"
+      say "build $n: TypeScript closure tree $(jq -r .treeSha256 "$cdir/tsbundle.json") reused by its source key $ckey"
+    else
+      say "build $n: TypeScript closure (pinned deno $hostplat)"
+      (cd "$tree" && go build -trimpath -o "$work/closure/socialweb-tsbundle" ./cmd/socialweb-tsbundle)
+      (cd "$tree" && "$work/closure/socialweb-tsbundle" -source-root "$tree" -release -deno "$deno" \
+        -work "$closure_work" -out "$work/closure/out" >"$work/closure/tsbundle.json" 2>"$work/closure/tsbundle.log") \
+        || { tail -20 "$work/closure/tsbundle.log" >&2; die "build $n: the closure build failed"; }
+      if [ -n "$cdir" ]; then
+        local outside
+        outside="$(jq -r --argjson keep "$(printf '%s\n' "${ts_paths[@]}" | jq -R . | jq -s .)" \
+          '[.repos[].prefixes[] | select(. as $p | $keep | any(. as $k | $p == $k or ($p | startswith($k + "/"))) | not)] | join(" ")' \
+          "$work/closure/tsbundle.json")"
+        if [ -n "$outside" ]; then
+          say "warn: the closure stages $outside, outside the closure key's paths; not cached"
+        else
+          mkdir -p "$cache/closure/.tmp.$BASHPID"
+          cp "$work/closure/out/closure.tar.zst" "$work/closure/out/manifest.json.zst" "$work/closure/tsbundle.json" "$cache/closure/.tmp.$BASHPID/"
+          mv -T "$cache/closure/.tmp.$BASHPID" "$cdir" 2>/dev/null || rm -rf "$cache/closure/.tmp.$BASHPID"
+        fi
+      fi
+    fi
     timing "build $n: TypeScript closure" "$t"
   ) &
   jobs_n=$((jobs_n + 1))
@@ -305,10 +355,13 @@ build_once() {
 }
 
 t="$(now)"
-if [ "$verify" = 1 ]; then
+if [ "$verify" = 1 ] && [ "$nocache" = 1 ]; then
   (build_once 1 2>&1 | sed -u 's/^/[build 1] /' >&2) &
   (build_once 2 2>&1 | sed -u 's/^/[build 2] /' >&2) &
   wait_all "a clean build" 2
+elif [ "$verify" = 1 ]; then
+  build_once 1
+  build_once 2
 else
   build_once 1
 fi
