@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/guestimage"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc"
 )
 
@@ -58,6 +59,7 @@ type Config struct {
 	BootTimeout time.Duration
 	StopGrace   time.Duration
 	ConsoleCap  int64
+	Binaries    []string
 }
 
 type Capabilities struct {
@@ -150,6 +152,7 @@ type Runtime interface {
 	Cleanup(ctx context.Context, handle, name string) error
 	Watch(ctx context.Context, handle string) (<-chan hostsvc.UnitEvent, error)
 	Load(handle, name string) (RuntimeRef, error)
+	CollectImages(ctx context.Context, keep map[string]string) (guestimage.GCReport, error)
 }
 
 var namePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,47}$`)

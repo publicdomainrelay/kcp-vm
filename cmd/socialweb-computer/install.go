@@ -121,6 +121,10 @@ func runUninstall(role hostcontract.Role) verbFunc {
 
 var upgradeOptions = []string{"binary", "sha256", "state-dir"}
 
+func installedBinaries(state string) []string {
+	return []string{filepath.Join(state, "bin", "current", install.CoreName), filepath.Join(state, "bin", "previous", install.CoreName)}
+}
+
 func (a *app) upgradeOptions(verb string, vals clicfg.Values) (install.UpgradeOptions, error) {
 	if os.Geteuid() == 0 {
 		return install.UpgradeOptions{}, fmt.Errorf("%s runs as the installed account, never as root", verb)

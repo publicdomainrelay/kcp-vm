@@ -448,7 +448,7 @@ func (r *bidderRun) installedCore(ctx context.Context) int {
 	}
 	defer m.Close()
 	rt, err := vmruntime.ForHost(vmruntime.Config{Manager: m, StateDir: state, RuntimeDir: runtimeDir, Exec: vexe,
-		ImageSource: vm.ImageSource, StopGrace: grace})
+		ImageSource: vm.ImageSource, StopGrace: grace, Binaries: installedBinaries(state)})
 	if err != nil {
 		return r.a.fail(exitFailed, "%s: the VM runtime: %v", verb, err)
 	}

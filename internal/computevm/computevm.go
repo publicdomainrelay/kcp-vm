@@ -50,6 +50,7 @@ const (
 	ReleaseKillAfter  = 30 * time.Second
 	MessageCap        = 4000
 	ApplyTimeout      = 2 * time.Minute
+	ImageGCEvery      = 10 * time.Minute
 	conditionReasonOK = "Observed"
 )
 
@@ -81,13 +82,14 @@ type Controller struct {
 	servers dynamic.ResourceInterface
 	kick    chan string
 
-	mu      sync.Mutex
-	busy    map[string]bool
-	exits   map[string]hostsvc.UnitStatus
-	orphans map[string]time.Time
-	foreign map[string]bool
-	logins  map[string]vaultLogin
-	slice   bool
+	mu       sync.Mutex
+	busy     map[string]bool
+	exits    map[string]hostsvc.UnitStatus
+	orphans  map[string]time.Time
+	foreign  map[string]bool
+	logins   map[string]vaultLogin
+	slice    bool
+	imagesAt time.Time
 }
 
 func (c Config) log() *slog.Logger {
@@ -842,7 +844,36 @@ func (ct *Controller) Pass(ctx context.Context) error {
 		ct.c.log().Warn("declaring the live ComputeVMs' guest material in the bidder's vault", "err", err.Error())
 	}
 	ct.collect(ctx, have)
+	ct.collectImages(ctx, list.Items)
 	return nil
+}
+
+func (ct *Controller) collectImages(ctx context.Context, vms []unstructured.Unstructured) {
+	ct.mu.Lock()
+	due := time.Since(ct.imagesAt) >= ImageGCEvery
+	if due {
+		ct.imagesAt = time.Now()
+	}
+	ct.mu.Unlock()
+	if !due {
+		return
+	}
+	keep := map[string]string{}
+	for i := range vms {
+		if sha, _, _ := unstructured.NestedString(vms[i].Object, "status", "image", "sha256"); sha != "" {
+			keep[sha] = "the ComputeVM " + vms[i].GetName() + " names it"
+		}
+	}
+	rep, err := ct.c.Runtime.CollectImages(ctx, keep)
+	log := ct.c.log()
+	if err != nil {
+		log.Warn("collecting guest images no ComputeVM, versions.json or binary names", "err", err.Error())
+		return
+	}
+	if len(rep.Removed) > 0 {
+		log.Info("guest images no ComputeVM, versions.json entry or current or previous binary names are removed",
+			"removed", rep.Removed, "kept", len(rep.Kept))
+	}
 }
 
 func (ct *Controller) watch(ctx context.Context) {

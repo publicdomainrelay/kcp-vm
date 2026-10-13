@@ -10,6 +10,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/assets"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/buildstamp"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clicfg"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/guestimage"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/tsbundle"
 )
 
@@ -27,11 +28,15 @@ type versionInfo struct {
 	AssetsBy string           `json:"assetsBy"`
 	Closure  tsbundle.Info    `json:"typescriptClosure"`
 	Dev      *buildstamp.Info `json:"dev,omitempty"`
+	Images   []string         `json:"guestImages"`
 }
 
 func buildVersion(goos, goarch string) versionInfo {
 	v := versionInfo{Name: serviceName, Version: "(devel)", Go: runtime.Version(), GOOS: goos, GOARCH: goarch,
-		Release: assets.Release(), Assets: []assets.Listed{}, Closure: tsbundle.Describe(), Dev: buildstamp.Read()}
+		Release: assets.Release(), Assets: []assets.Listed{}, Closure: tsbundle.Describe(), Dev: buildstamp.Read(), Images: []string{}}
+	if names, err := guestimage.Names(); err == nil && names != nil {
+		v.Images = names
+	}
 	if listed, err := assets.ListingFor(goos + "/" + goarch); err == nil {
 		v.Assets = listed
 	}
