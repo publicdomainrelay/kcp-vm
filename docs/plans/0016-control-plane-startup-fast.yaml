@@ -1,0 +1,128 @@
+plan: "0016"
+title: A tenant cluster's control plane is Ready in about one minute, not three
+status: todo
+queued: >
+  Written by the lead 2026-10-13 for handoff (user: "write a comprehensive runbook for A+B and stage it
+  for handoff"). Not in a running goal. One agent executes it end to end: worktree cp-fast, branch
+  task/cp-fast, gate in CI, merge with the lead tool, release to prod, read the timing on prod.
+source: >
+  Prod reading 2026-10-13 (cluster goat-demo, gateway socialweb.computer, 4 cores, 7 GB): createCluster
+  00:28:05Z -> status Ready 00:30:48.9Z = 2 min 44 s. Gateway log, strictly one member after another:
+  postgres 19 s, openbao 14 s, front 13 s, kine 11 s, k3s 19 s, ccm 10 s, gap 12 s, eso webhook 13 s,
+  eso 19 s, link-apiserver 13 s, link-openbao 16 s. Each "member placed" -> unit start takes 4-8 s
+  because the HostProcess supervisor only acts on a 5 s ticker. The components themselves start in
+  about one third of the total. Option A (start members as a dependency graph) and option B (event
+  driven placement and readiness) change no design decision. Options C (pre-warmed pool) and D (shared
+  postgres / OpenBao) are OUT of scope: D reverses the user's per-cluster isolation decision.
+principle: >
+  kcp is part of the application: members are HostProcess objects in the gateway's kcp, placed by the
+  in-core HostProcess supervisor; keep that. Port 0 behind the edge: since bbb1e10c the cluster's front
+  holds every member port (fd store, held ports in the front HostProcess annotation
+  socialweb.computer/held-ports and status.listeners) - the front must stay FIRST, before any member that
+  binds a held port. Fail fast, short timeouts: a member that fails ends the whole Spawn at once with
+  its name and output; no new long waits. Proofs never on the hot path: timings are read from logs, not
+  asserted inside product code.
+state_rules:
+  - Read /home/johnandersen777/.tmp/swc-lead/agent-rules.md first and follow it (live slots, CI gate via ci-wait.ts, ~/.tmp not /tmp, real names, no unit-test ratchets; integration tests under test/integration only).
+  - Commit and push socialweb-computer-kcp only (GitLab origin). Never touch prod except in M3-PROD-READING, which the executing agent may do only with the lead's README "Release -> prod" flow.
+  - status is one of todo, doing, done, blocked. Flip with `deno run -A ~/.tmp/swc-lead/land.ts status 0016 <status> <ITEM>`.
+code_map:
+  - "internal/clusterprovider/units.go:749 Spawn(ctx, key, steps) - writes the ControlPlane record, then `for i, st := range steps` runs each step IN ORDER (openbao via placeVault + st.Ready, every other via runStep). This loop is the sequential chain to replace (A)."
+  - "internal/clusterprovider/units.go:806 runStep - member(...) adopt-if-verified, st.Prepare, memberSpec, place(...), gateAlive(st.Ready), verify(...), log 'member ready'."
+  - "internal/clusterprovider/units.go:643 place - writes the HostProcess, then loops until Status.Runtime.InvocationID is set, sleeping unitPoll (units.go:54, 500 ms) up to PlaceTimeout. The 4-8 s per member is NOT this loop: it waits for the supervisor below."
+  - "internal/clusterprovider/units.go:416 gateAlive - runs a member's readiness gate while checking the unit stays alive."
+  - "internal/hostprocess/supervisor.go:33 DefaultInterval = 5 s; supervisor.go:426 Run - `for { s.Pass(ctx); <-ticker }`. A new HostProcess object waits up to one tick (B)."
+  - "internal/hostprocess/supervisor.go:355 Pass - lists HostProcess objects and reconciles each (observe, apply, writeStatus)."
+  - "internal/procgroup (procgroup.go): Component constants and StackOrder = [postgres, openbao, apiserver-front, kine, k3s-server, ccm, external-secrets-webhook, external-secrets]; the link components apiserver-link and openbao-link come after."
+  - "internal/materialiser/materialiser.go:475 steps := r.opts.Steps(o, leases); :481 Host.Spawn(ctx, cluster, steps)."
+  - "internal/clusterstack/clusterstack.go - builds each Step (Spec, Prepare, Ready). Each Step's Prepare/Spec reads what earlier members produced (ports from the front's holds, the vault address/token, kine's endpoint, k3s's kubeconfig): THESE READS ARE THE REAL DEPENDENCY EDGES."
+  - "Prior art for B: commit 222001b4 'openbaoctl, web app: a node claim is written and taken up within a second' made the openbao controller wake on a kcp change with its interval kept as resync. Copy that pattern."
+items:
+  - id: M1-DEPENDENCY-GRAPH
+    title: "A - members start as a dependency graph, independent members in parallel"
+    depends_on: []
+    decision: >
+      Replace the in-order loop in Spawn with a small DAG runner: each step declares the members it needs
+      (procgroup.Step gets a `Needs []Component` field, set in clusterstack where the step is built); a
+      member starts as soon as every member it needs is ready; members with no unmet needs start at the
+      same time (goroutines, one errgroup with the Spawn ctx). The first error cancels the rest and Spawn
+      returns it with the member name (fail fast). The ControlPlane record and InvocationIDs are written
+      exactly as today (cp.Members[i] keeps its index; guard writes with the existing h.lock(key)).
+      Adoption (runStep's Verified path) and the openbao special case (placeVault) stay as they are,
+      just run inside the graph. Expected graph (VERIFY every edge in clusterstack before trusting it;
+      an edge exists when a Step's Prepare/Spec reads another member's output):
+        apiserver-front: needs nothing (it holds the ports every other member binds) - first.
+        embedded-postgres (store, EnsureStore): needs nothing.
+        openbao: needs postgres (storeReady check), apiserver-front (held port).
+        kine: needs postgres, apiserver-front.
+        k3s-server: needs kine, apiserver-front (and openbao only if its Spec reads the vault - check).
+        socialweb-cloud-controller-manager: needs k3s-server.
+        external-secrets-webhook: needs k3s-server.
+        external-secrets: needs k3s-server, external-secrets-webhook, openbao.
+        apiserver-link: needs k3s-server, apiserver-front. openbao-link: needs openbao.
+      Do not change any member's argv, ports, units or readiness gate in this item.
+    steps:
+      - "1. Read Spawn, runStep, place, gateAlive, verify (units.go) and every Step builder in internal/clusterstack/clusterstack.go. For each Step, list what its Prepare/Spec/Ready read from other members. Write the edge list into the plan item's notes in your report. STOP if a Step reads mutable shared state that is not another member's output (ask the lead)."
+      - "2. Add `Needs []Component` to procgroup.Step; fill it in clusterstack for every step from your edge list. A step with an unknown Needs name is a build-time error (validate once in Spawn: unknown or cyclic -> return an error naming it)."
+      - "3. In Spawn, replace the for loop with the DAG runner (errgroup.WithContext; a ready channel per member closed when that member is ready; each member goroutine waits on its Needs channels or ctx.Done()). Keep the storeReady check for kine/openbao. Keep log lines 'member placed' / 'member ready' unchanged (operators grep them)."
+      - "4. Make concurrent writes safe: h.writeControlPlane and the cp struct are written under one mutex local to Spawn; verify() already retries conflicts per object."
+      - "5. Build: `go build ./internal/... ./cmd/socialweb-computer && go vet ./internal/clusterprovider ./internal/procgroup ./internal/clusterstack`."
+      - "6. Live check (take a live slot): `socialweb-computer dev up --instance cpf1 --profile market-network --bidders 1 --with-gateway --guest-image-source file:///var/lib/socialweb-computer/guest-image --vm-host-backend systemd-user` as test-0001; then read the gateway child's log: member placed/ready lines must overlap in time (postgres and front placed within 1 s of each other; ccm, eso webhook and apiserver-link placed within 1 s after k3s ready). Record createCluster->Ready for the bootstrap tenant (log line 'cluster provider: status' phase Ready minus first 'member placed'). dev down, release slot."
+      - "7. Failure check: break one member on purpose (e.g. a bad kine path via the Step spec in a scratch commit you do not push) and confirm Spawn ends within a few seconds naming kine, and no other member is left placed (Reap / unit list empty for that cluster after dev down)."
+    done_when: "Members start as a graph; the bootstrap tenant on a quiet market network (load under 30) is Ready in about 1:30 or less; a broken member fails the Spawn fast with its name; TestTenantClusterScalesFromZeroOnMarketVMsAndBack passes on the branch."
+    status: todo
+  - id: M2-EVENT-DRIVEN-PLACEMENT
+    title: "B - the HostProcess supervisor wakes on a kcp change; placement and readiness stop waiting on tickers"
+    depends_on: [M1-DEPENDENCY-GRAPH]
+    decision: >
+      The supervisor (internal/hostprocess/supervisor.go Run) watches HostProcess objects in its
+      workspace (dynamic client Watch on GVR, label/prefix filter as Pass uses) and runs Pass on every
+      add/update (debounced: coalesce events within 100 ms), keeping DefaultInterval as a resync. On a
+      watch error it falls back to the ticker and re-establishes the watch with a short back-off (fail
+      fast: log once per failure, never block). place() in units.go waits for Status.Runtime with a watch
+      on that one object instead of the 500 ms unitPoll (keep unitPoll as the fallback when the watch
+      fails). Readiness gates in clusterstack (st.Ready) that poll a file or endpoint must poll at 200 ms
+      or less and return at once on a terminal sign (unit exited) - check each gate's interval and lower
+      it if larger. Do not change what a gate checks.
+    steps:
+      - "1. Read 222001b4 (git show 222001b4) and copy its watch + resync pattern."
+      - "2. supervisor.go Run: start a watch goroutine feeding a buffered wake channel; select on ctx.Done, ticker, wake. Pass must stay safe to run back to back (it is idempotent today; keep it so)."
+      - "3. units.go place: watch the HostProcess by name (fieldSelector metadata.name) until Status.Runtime.InvocationID is set or PlaceTimeout; fall back to the unitPoll loop on a watch error."
+      - "4. clusterstack readiness gates: list each gate's poll interval; lower any above 200 ms; make sure each gate returns on ctx cancel (Spawn's errgroup cancels siblings on the first failure)."
+      - "5. Build as M1 step 5 plus `go vet ./internal/hostprocess`."
+      - "6. Live check as M1 step 6. Expect 'member placed' -> 'placed' (supervisor) under 1 s per member. Record createCluster->Ready; target about 1 minute or less on a quiet host. Also record one VM placement (ComputeVM -> VM Running) and one DenoPod restart (dev restart <inst> <denopod>) before/after, since they use the same supervisor."
+    done_when: "Placement latency under 1 s per member; bootstrap tenant Ready in about 1 minute on a quiet market network; supervisor survives a kcp restart (dev roll kcp) and keeps placing (watch re-established, logged once); integration tests below pass."
+    status: todo
+  - id: M3-PROD-READING
+    title: Release, deploy, and read the new timing on prod
+    depends_on: [M1-DEPENDENCY-GRAPH, M2-EVENT-DRIVEN-PLACEMENT]
+    decision: >
+      After merge, release and deploy with README.md "Release -> prod" (gateway deploy.sh, bidder
+      upgrade), then time a fresh cluster with the README "Cluster XRPC with goat" flow (createCluster
+      name=cpf-<date>, wait for listClusters phase Ready, then controlPlaneDown and deleteCluster).
+      Update the README "Expected timing" table with the new numbers and the per-member breakdown from
+      the gateway log. Then run the prod finish line (README step 5) to confirm scale from zero still
+      works (~60 s) and back to zero.
+    steps:
+      - "1. `deno run -A ~/.tmp/swc-lead/ci-wait.ts <head>` green, then `deno run -A ~/.tmp/swc-lead/merge.ts merge task/cp-fast` (it reuses the CI result) and `merge.ts rm task/cp-fast`."
+      - "2. Release + deploy per README. If the web app or bidder is not Ready after the upgrade, run `socialweb-computer rollback` as the account and STOP (report to the user)."
+      - "3. Time createCluster -> Ready on prod; read the member lines (`journalctl _UID=$(id -u socialweb) -o cat | grep -E 'member (placed|ready)|status'`); put the numbers in README; commit and push."
+      - "4. Finish line up/down (README step 5); delete the timing cluster."
+    done_when: "Prod createCluster -> Ready reading recorded in README; finish line passes; plan items flipped done."
+    status: todo
+acceptance:
+  checks:
+    - id: ACC16-TIMING
+      text: "On prod, createCluster -> Ready is about 1 minute (was 2 min 44 s on 2026-10-13), with overlapping member placement visible in the gateway log."
+      status: todo
+    - id: ACC16-NO-REGRESSION
+      text: "TestRequestSecretsReachTheGuestThroughTheRFPFlow and TestTenantClusterScalesFromZeroOnMarketVMsAndBack pass on the merged commit; prod finish line passes; a broken member fails fast with its name."
+      status: todo
+integration_tests: >
+  go test -tags integration -count=1 -v -timeout 60m ./test/integration/ -run 'TestTenantClusterScalesFromZeroOnMarketVMsAndBack|TestRequestSecretsReachTheGuestThroughTheRFPFlow'
+  (take live slots; host load under 30; a timeout at high load proves nothing).
+stop_and_ask:
+  - "An edge you cannot prove from the code (a member that might need another but nothing reads it)."
+  - "Any change to member argv, ports, held-port logic, store or vault layout."
+  - "A test failure you cannot explain by your change after one rerun on a quiet host."
+  - "Prod not Ready after deploy (roll back first, then ask)."
