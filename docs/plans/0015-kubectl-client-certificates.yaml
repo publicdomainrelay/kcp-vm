@@ -232,7 +232,7 @@ items:
         false.
     done_when: "the role and the policy paths are live on a market network tenant cluster vault, and the PKI CA equals the k3s client CA."
     risks:
-      - "The gateway shares the clusterprovider vault identity. A bug in the gateway can do what the clusterprovider policy allows (including issue/tenant-superuser). A gateway-only client with only the kubeconfig paths is a later hardening (plan 0014 M3)."
+      - "Decided by the user 2026-10-13: the gateway does NOT share the clusterprovider vault identity. Each cluster OpenBao declares a gateway-only client (cert-auth role `gateway-kubeconfig`, its own client certificate) whose policy allows ONLY pki/issue/kubeconfig-user, pki/revoke and pki/certs listing for that role; M1-PKI-ROLE adds the client and policy, M1-CERT-ISSUER logs in with it. A gateway bug can then never issue tenant-superuser or node certificates."
       - "Plan 0013 M3-VAULT-TIDY must keep no_store false for kubeconfig-user; pki tidy removes its expired certificates."
     status: todo
     evidence:
@@ -983,4 +983,10 @@ acceptance:
       text: "The client key appears in no kcp object, file, log line, process argument or atproto record."
       status: todo
       evidence: []
+user_decisions:
+  - "2026-10-13: a deleted and recreated cluster never reuses CAs (M2-FRESH-CA-PER-CREATION, required)."
+  - "2026-10-13: certificates are issued by a gateway-only OpenBao client per cluster (least privilege), not the clusterprovider identity."
+  - "2026-10-13: getKubeconfig on a stopped cluster answers 409 ClusterNotRunning (fail fast)."
+  - "2026-10-13: ARCHITECTURE section 7 rule 'a client key never reaches a user' is amended for getKubeconfig/download only: key from pki/issue, returned once, no-store, never logged or stored, TTL 8 h default / 24 h max."
+  - "2026-10-13: plans 0015 and 0016 are handed off later (not run in the current goal)."
 questions_for_user: []
