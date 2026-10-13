@@ -12,6 +12,8 @@ import (
 
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpserver"
 )
 
 const MemberKubeconfig = "members.kubeconfig"
@@ -26,41 +28,10 @@ func memberRestConfig(path string) (*rest.Config, error) {
 }
 
 const (
-	MemberToken    = "members.token"
-	kcpAdminUser   = "kcp-admin"
+	MemberToken    = kcpserver.MemberTokenFile
+	kcpAdminUser   = kcpserver.KcpAdminUser
 	memberTokenGap = 5 * time.Second
 )
-
-func slotAdminToken(slotRoot string) (string, error) {
-	cfg, err := clientcmd.LoadFromFile(filepath.Join(slotRoot, "admin.kubeconfig"))
-	if err != nil {
-		return "", err
-	}
-	u, ok := cfg.AuthInfos[kcpAdminUser]
-	if !ok || u.Token == "" {
-		return "", fmt.Errorf("gatewaykcp: %s/admin.kubeconfig holds no %s token", slotRoot, kcpAdminUser)
-	}
-	return u.Token, nil
-}
-
-func writeFileAtomic(path string, data []byte) error {
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
-}
-
-func refreshMemberToken(slotRoot, tokenFile string) (bool, error) {
-	token, err := slotAdminToken(slotRoot)
-	if err != nil {
-		return false, err
-	}
-	if old, err := os.ReadFile(tokenFile); err == nil && strings.TrimSpace(string(old)) == token {
-		return false, nil
-	}
-	return true, writeFileAtomic(tokenFile, []byte(token+"\n"))
-}
 
 func followMemberToken(ctx context.Context, slotRoot func() string, tokenFile string, log *slog.Logger) {
 	for {
@@ -69,11 +40,11 @@ func followMemberToken(ctx context.Context, slotRoot func() string, tokenFile st
 			return
 		case <-time.After(memberTokenGap):
 		}
-		changed, err := refreshMemberToken(slotRoot(), tokenFile)
+		changed, err := kcpserver.RefreshMemberToken(slotRoot(), tokenFile)
 		if err != nil {
 			log.Warn("the members' kcp-admin token could not be read from the active slot", "err", err.Error())
 		} else if changed {
-			log.Info("the members' kcp-admin token follows the active kcp slot", "slotRoot", slotRoot(), "tokenFile", tokenFile)
+			log.Warn("the members' kcp-admin token lagged the active kcp slot; the fallback check rewrote it, not the roll at its flip", "slotRoot", slotRoot(), "tokenFile", tokenFile)
 		}
 	}
 }
@@ -84,7 +55,7 @@ func writeMemberKubeconfig(slotRoot, frontURL, out string) error {
 		return err
 	}
 	tokenFile := filepath.Join(filepath.Dir(out), MemberToken)
-	if _, err := refreshMemberToken(slotRoot, tokenFile); err != nil {
+	if _, err := kcpserver.RefreshMemberToken(slotRoot, tokenFile); err != nil {
 		return err
 	}
 	if u, ok := cfg.AuthInfos[kcpAdminUser]; ok {

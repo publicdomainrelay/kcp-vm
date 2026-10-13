@@ -40,6 +40,7 @@ type ShardAdmin interface {
 type RollConfig struct {
 	SlotsFile    string
 	Shared       string
+	MemberToken  string
 	SpecFor      func(slot string) (hostsvc.UnitSpec, string, error)
 	KineFor      func(slot string) string
 	Backup       func(ctx context.Context) (string, error)
@@ -78,6 +79,7 @@ type RollReport struct {
 	ReadyAt              time.Time `json:"readyAt"`
 	PersistedAt          time.Time `json:"persistedAt"`
 	FlippedAt            time.Time `json:"flippedAt"`
+	MemberTokenAt        time.Time `json:"memberTokenAt,omitzero"`
 	SigtermAt            time.Time `json:"sigtermAt"`
 	OldExitedAt          time.Time `json:"oldExitedAt"`
 	LeaseDeletedAt       time.Time `json:"leaseDeletedAt"`
@@ -222,7 +224,7 @@ func Roll(ctx context.Context, m hostsvc.Manager, front FrontSwitch, admin Shard
 	m.Stop(ctx, spec.Name)
 	m.ResetFailed(ctx, spec.Name)
 	restoreOld := func(ctx context.Context) error {
-		ospec, _, err := cfg.SpecFor(from)
+		ospec, oroot, err := cfg.SpecFor(from)
 		if err != nil {
 			return err
 		}
@@ -245,6 +247,9 @@ func Roll(ctx context.Context, m hostsvc.Manager, front FrontSwitch, admin Shard
 		}
 		if _, err := front.Set(ctx, backendOf(port)); err != nil {
 			return err
+		}
+		if cfg.MemberToken != "" {
+			RefreshMemberTokenIfPresent(oroot, cfg.MemberToken)
 		}
 		log.Warn("planned outage aborted; the old slot runs again behind the front", "slot", from, "port", port)
 		return nil
@@ -326,7 +331,14 @@ func Roll(ctx context.Context, m hostsvc.Manager, front FrontSwitch, admin Shard
 		return fail(fmt.Errorf("kcpserver: flipping the front: %w", err))
 	}
 	rep.FlippedAt = time.Now().UTC()
-	log.Info("front flipped", "from", backendOf(old.Port), "to", backendOf(port))
+	if cfg.MemberToken != "" {
+		if changed, err := RefreshMemberTokenIfPresent(root, cfg.MemberToken); err != nil {
+			log.Warn("the members' kcp-admin token was not rewritten at the flip; the instance's own check follows within seconds", "slot", to, "tokenFile", cfg.MemberToken, "err", err.Error())
+		} else if changed {
+			rep.MemberTokenAt = time.Now().UTC()
+		}
+	}
+	log.Info("front flipped", "from", backendOf(old.Port), "to", backendOf(port), "memberTokenAt", rep.MemberTokenAt)
 	if outage {
 		rep.OutageSeconds = secs(rep.SigtermAt, rep.FlippedAt)
 	} else {

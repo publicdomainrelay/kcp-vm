@@ -607,7 +607,7 @@ func Roll(ctx context.Context, m hostsvc.Manager, cfg Config, rec *devinstance.R
 		}
 	}
 	rep, after, err := kcpserver.Roll(ctx, m, apiserverfront.Client{Path: l.FrontControl()}, admin, kcpserver.RollConfig{
-		SlotsFile: l.SlotsFile(), Shared: l.SharedDir(),
+		SlotsFile: l.SlotsFile(), Shared: l.SharedDir(), MemberToken: kcpserver.MemberTokenPath(p.Dir),
 		SpecFor: func(slot string) (hostsvc.UnitSpec, string, error) {
 			return p.slotSpec(slot, frontURL)
 		},
