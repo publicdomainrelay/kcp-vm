@@ -162,7 +162,7 @@ func extractTar(r io.Reader, dir string) error {
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
-			return nil
+			return syncTree(dir)
 		}
 		if err != nil {
 			return err
@@ -200,8 +200,7 @@ func extractTar(r io.Reader, dir string) error {
 				return err
 			}
 			_, cerr := io.Copy(f, tr)
-			serr := f.Sync()
-			if err := errors.Join(cerr, serr, f.Close()); err != nil {
+			if err := errors.Join(cerr, f.Close()); err != nil {
 				return err
 			}
 			if err := os.Chmod(dst, mode); err != nil {
