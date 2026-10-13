@@ -734,7 +734,7 @@ export const GATEWAY_RESOURCE: ApiResource = {
   listKind: "GatewayList",
   plural: "gateways",
   singular: "gateway",
-  schema: "v1alpha1-6.gateways.socialweb.computer",
+  schema: "v1alpha1-7.gateways.socialweb.computer",
   export: "applications",
 };
 
