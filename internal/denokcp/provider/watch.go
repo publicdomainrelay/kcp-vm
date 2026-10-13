@@ -103,7 +103,12 @@ func (p *Provider) RunWatch(ctx context.Context) error {
 	}
 
 	round, err := waitForCaches(ctx,
-		func() (*informerRound, error) { return p.startInformers(ctx, endpoints, reader, queue) },
+		func() (*informerRound, error) {
+			if fresh, err := p.discoverWorkspaces(ctx); err == nil && endpointsReady(fresh) {
+				endpoints = fresh
+			}
+			return p.startInformers(ctx, endpoints, reader, queue)
+		},
 		defaultCacheSyncTimeout, cacheSyncRetryPace, p.opts.Log)
 	if err != nil {
 		queue.ShutDown()

@@ -549,6 +549,11 @@ func Ensure(ctx context.Context, m hostsvc.Manager, cfg Config, rec *devinstance
 		} else if moved {
 			log.Info("the root shard advertises the front it runs behind now", "front", frontURL)
 		}
+		if n, err := admin.SyncEndpointSlices(ctx); err != nil {
+			log.Warn("pointing the APIExport endpoint slices at the front", "front", frontURL, "err", err.Error())
+		} else if n > 0 {
+			log.Info("the APIExport endpoint slices name the front it runs behind now", "front", frontURL, "slices", n)
+		}
 	}
 	if kcpPlaced || prevInvocation != kcp.Identity.InvocationID {
 		admin, err := kcpserver.NewHTTPAdmin(a, frontURL)

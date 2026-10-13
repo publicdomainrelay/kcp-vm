@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -23,6 +24,7 @@ import (
 const (
 	ControllerLeaseNamespace = "kube-system"
 	ControllerLeaseName      = "kcp-controllers"
+	clusterAnnotation        = "kcp.io/cluster"
 	SystemAdminCluster       = "system:admin"
 	RootCluster              = "root"
 	ProbePoll                = 100 * time.Millisecond
@@ -156,6 +158,77 @@ func (h *HTTPAdmin) SyncRootShard(ctx context.Context) (bool, error) {
 		return false, fmt.Errorf("kcpserver: pointing the root shard at %s: %d %s", h.Front, resp.StatusCode, out)
 	}
 	return true, nil
+}
+
+const endpointSlicesPath = "/apis/apis.kcp.io/v1alpha1/apiexportendpointslices"
+
+func (h *HTTPAdmin) SyncEndpointSlices(ctx context.Context) (int, error) {
+	code, b, err := h.do(ctx, http.MethodGet, "/clusters/*"+endpointSlicesPath, nil)
+	if err != nil {
+		return 0, err
+	}
+	if code != http.StatusOK {
+		return 0, fmt.Errorf("kcpserver: listing the APIExportEndpointSlices: %d %s", code, b)
+	}
+	var list struct {
+		Items []struct {
+			Metadata struct {
+				Name        string            `json:"name"`
+				Annotations map[string]string `json:"annotations"`
+			} `json:"metadata"`
+			Status struct {
+				Endpoints []map[string]any `json:"endpoints"`
+			} `json:"status"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(b, &list); err != nil {
+		return 0, err
+	}
+	moved := 0
+	for _, it := range list.Items {
+		changed := false
+		for _, e := range it.Status.Endpoints {
+			raw, _ := e["url"].(string)
+			u, err := url.Parse(raw)
+			if err != nil || raw == "" {
+				continue
+			}
+			if next := h.Front + u.Path; next != raw {
+				e["url"], changed = next, true
+			}
+		}
+		cluster := it.Metadata.Annotations[clusterAnnotation]
+		if !changed || cluster == "" {
+			continue
+		}
+		path := "/clusters/" + cluster + endpointSlicesPath + "/" + it.Metadata.Name + "/status"
+		body := map[string]any{"status": map[string]any{"endpoints": it.Status.Endpoints}}
+		if code, out, err := h.patch(ctx, path, body); err != nil || code != http.StatusOK {
+			return moved, fmt.Errorf("kcpserver: pointing APIExportEndpointSlice %s|%s at %s: %d %s %v", cluster, it.Metadata.Name, h.Front, code, out, err)
+		}
+		moved++
+	}
+	return moved, nil
+}
+
+func (h *HTTPAdmin) patch(ctx context.Context, path string, body any) (int, []byte, error) {
+	b, err := json.Marshal(body)
+	if err != nil {
+		return 0, nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, h.Front+path, bytes.NewReader(b))
+	if err != nil {
+		return 0, nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+h.Admin.Token)
+	req.Header.Set("Content-Type", "application/merge-patch+json")
+	resp, err := h.http.Do(req)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer resp.Body.Close()
+	out, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	return resp.StatusCode, out, nil
 }
 
 func leasePath() string {
