@@ -63,6 +63,7 @@ const (
 	ExeESOBundle       = "external-secrets-bundle"
 	ExeDumbpipe        = "dumbpipe"
 	ExeK3s             = "k3s"
+	ExeWebDownloads    = "socialweb-computer-k8s-downloads"
 	recordProfile      = bootstrap.ProfileProdlike
 	componentsReport   = "members"
 )
@@ -277,7 +278,8 @@ func run(ctx context.Context, c Config, l devinstance.Layout, deno *denoruntime.
 	}
 	return devcore.Run(ctx, devcore.Config{Layout: l, ReadyTimeout: c.ReadyTimeout, Log: c.Log, Application: app, FrontAddress: c.FrontAddress,
 		DenoRuntime: deno, WebApp: &appctl.WebApp{FrontKubeconfig: g.memberKubeconfig(),
-			ClusterCADir: filepath.Join(c.StateDir, "clusterprovider", clusterstack.PublicCADirName)},
+			ClusterCADir: filepath.Join(c.StateDir, "clusterprovider", clusterstack.PublicCADirName),
+			DownloadsDir: c.Executables[ExeWebDownloads].Path},
 		OnComponents: reg.components, Before: g.before, Members: g.members, Listeners: reg.report}, m)
 }
 

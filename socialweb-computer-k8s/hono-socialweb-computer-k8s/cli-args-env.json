@@ -100,9 +100,19 @@
     },
     "downloads-subdir": {
       "type": "string",
-      "description": "Subdirectory of the web dir holding socialweb-credential builds named socialweb-credential-<os>-<arch>",
+      "description": "Subdirectory of the web dir that holds the pinned downloads when downloads-dir is not set",
       "env": "DOWNLOADS_SUBDIR",
       "default": "downloads"
+    },
+    "downloads-dir": {
+      "type": "string",
+      "description": "Directory of the pinned downloads served at /downloads/<sha256>/<name>: each <name> beside a sha256sum-format <name>.sha256 (socialweb-meshd-<arch>, socialweb-credential-<os>-<arch>); the socialweb-computer binary passes its socialweb-computer-k8s-downloads asset",
+      "env": "DOWNLOADS_DIR"
+    },
+    "required-downloads": {
+      "type": "string",
+      "description": "Comma-separated names of pinned downloads this web app must serve; it refuses to start when one is missing, or when a socialweb-meshd download is required and no origin for node downloads is set",
+      "env": "REQUIRED_DOWNLOADS"
     },
     "tls-cert-file": {
       "type": "string",
@@ -230,6 +240,11 @@
       "type": "string",
       "description": "TEST ONLY: JSON object keyed by owner DID of {service, identifier, password}; those owners rent nodes through a password session instead of their deposited OAuth session. Never set in production",
       "env": "TEST_OWNER_SESSIONS_FILE"
+    },
+    "test-node-download-host": {
+      "type": "string",
+      "description": "TEST ONLY: the address at which a node guest reaches this host's loopback; node guests download pinned downloads from http://<this>:<the bound http port> instead of public-origin, for a market network on one host",
+      "env": "TEST_NODE_DOWNLOAD_HOST"
     },
     "test-node-guest-host-aliases": {
       "type": "string",

@@ -2409,13 +2409,17 @@ marked "decided by Claude, user may veto".
    served only at its own hash and name with `cache-control: public, max-age=31536000, immutable`
    and `etag "<sha256>"`; a sidecar that names another file, or bytes that do not hash to it, stop
    the door at startup. The meshd pin is the sidecar hash of the shipped `socialweb-meshd-x86_64` and
-   `socialweb-meshd-aarch64` at `public-origin` (`meshdPinOf`); with either missing, or no
-   `public-origin`, the door offers no meshd and logs `meshd_not_offered` (nodes still get the
-   bridge, masquerade and DNS). Decided by Claude, user may veto: the binaries are built on the host
-   by `rust/build.sh` (static musl), checked against their sidecars and placed in the door's downloads
-   directory. The control-plane container image was the step that placed them there; it is deleted
-   (0006 M5-RETIRE), and no step of the socialweb-computer release places them yet, so until one does
-   the door logs `meshd_not_offered`. The node images do not embed meshd yet; the install path that
+   `socialweb-meshd-aarch64` at the node download origin (`meshdPinOf`): `public-origin`, or in a
+   market network `http://192.0.2.1:<the web app's bound port>` (`test-node-download-host`, the
+   address at which a guest reaches this host's loopback through pasta). The downloads come from the
+   socialweb-computer binary: its asset `socialweb-computer-k8s-downloads` (versions.json, built by
+   `scripts/build-web-app-downloads.sh` in the release build and pinned by its tree sha256) holds both
+   meshd builds and the four `socialweb-credential-<os>-<arch>` builds, each with its sidecar, and the
+   gateway passes the extracted tree as `--downloads-dir` (and as a read path of the DenoPod). Both
+   gateway profiles pass `--required-downloads` with those six names, so a web app that would offer
+   no meshd or no credential helper refuses to start with `required_downloads_missing` (or
+   `node_download_origin_missing`) instead of logging `meshd_not_offered`. The credential helpers are
+   served from the same pinned route. The node images do not embed meshd yet; the install path that
    keeps an embedded binary is ready for when they do.
 
 Not carried by the mesh: node addresses. Traffic to another node's InternalIP (NodePort on another

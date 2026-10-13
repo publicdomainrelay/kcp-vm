@@ -38,6 +38,7 @@ import {
   createMarketNodeFulfiller,
   publishedOpenBaoCAFile,
   type MarketNodeFulfiller,
+  MESHD_DOWNLOAD_PREFIX,
   meshdPinOf,
 } from "@publicdomainrelay/socialweb-computer-k8s-node-market";
 import { createOpenBaoClaimKeyStore } from "@publicdomainrelay/socialweb-computer-k8s-claim-keys-openbao";
@@ -172,25 +173,33 @@ const gateway = createXrpcClusterGateway({
   },
 });
 
-const downloadsDir = `${webDir}/${(options.downloadsSubdir as string).replace(/^\/+|\/+$/g, "")}`;
-
-async function credentialHelpers(): Promise<CredentialHelper[]> {
-  const subdir = (options.downloadsSubdir as string).replace(/^\/+|\/+$/g, "");
-  const out: CredentialHelper[] = [];
-  try {
-    for await (const entry of Deno.readDir(downloadsDir)) {
-      const match = /^socialweb-credential-([a-z0-9]+)-([a-z0-9_]+)$/.exec(entry.name);
-      if (entry.isFile && match) out.push({ os: match[1], arch: match[2], path: `/${subdir}/${entry.name}` });
-    }
-  } catch (err) {
-    if (!(err instanceof Deno.errors.NotFound)) throw err;
-  }
-  return out.sort((a, b) => a.path.localeCompare(b.path));
-}
-
-const helpers = await credentialHelpers();
+const downloadsDir = (options.downloadsDir as string | undefined) ??
+  `${webDir}/${(options.downloadsSubdir as string).replace(/^\/+|\/+$/g, "")}`;
 const pinned = await loadPinnedDownloads(downloadsDir);
-const meshd = meshdPinOf(pinned.list(), publicOrigin);
+const helpers: CredentialHelper[] = pinned.list().flatMap((d) => {
+  const match = /^socialweb-credential-([a-z0-9]+)-([a-z0-9_]+)$/.exec(d.name);
+  return match ? [{ os: match[1], arch: match[2], path: `/downloads/${d.sha256}/${d.name}` }] : [];
+}).sort((a, b) => `${a.os}-${a.arch}`.localeCompare(`${b.os}-${b.arch}`));
+
+const testNodeDownloadHost = options.testNodeDownloadHost as string | undefined;
+const requiredDownloads = ((options.requiredDownloads as string | undefined) ?? "").split(",").map((n) => n.trim())
+  .filter(Boolean);
+const missingDownloads = requiredDownloads.filter((name) => !pinned.list().some((d) => d.name === name));
+if (missingDownloads.length > 0) {
+  logger.error("required_downloads_missing", { downloadsDir, missing: missingDownloads, have: pinned.list().map((d) => d.name) });
+  throw new Error(
+    `required pinned downloads are missing from ${downloadsDir}: ${missingDownloads.join(", ")}. Each needs <name> and a ` +
+      `sha256sum-format <name>.sha256 there; the socialweb-computer binary passes its socialweb-computer-k8s-downloads ` +
+      `asset as --downloads-dir`,
+  );
+}
+if (requiredDownloads.some((n) => n.startsWith(MESHD_DOWNLOAD_PREFIX)) && !publicOrigin && !testNodeDownloadHost) {
+  logger.error("node_download_origin_missing", { requiredDownloads });
+  throw new Error(
+    "socialweb-meshd is a required download, but node guests have no origin to fetch it from: set public-origin " +
+      "(or test-node-download-host in a market network)",
+  );
+}
 
 const serve = createServe({
   logger,
@@ -266,6 +275,12 @@ if (!claimKeys.durable && kcpCredentials && kcpWorkspace) {
 
 const nodeGuestCaPem = options.nodeGuestCaFile ? (await Deno.readTextFile(options.nodeGuestCaFile as string)).trim() : "";
 
+await serve.beginServe();
+const nodeDownloadOrigin = testNodeDownloadHost
+  ? `${options.tlsCertFile ? "https" : "http"}://${testNodeDownloadHost}:${serve.tcpPort}`
+  : publicOrigin;
+const meshd = meshdPinOf(pinned.list(), nodeDownloadOrigin);
+
 let fulfiller: MarketNodeFulfiller | null = null;
 if (kcpCredentials && kcpWorkspace) {
   fulfiller = createMarketNodeFulfiller({
@@ -293,7 +308,6 @@ if (kcpCredentials && kcpWorkspace) {
   });
 }
 
-await serve.beginServe();
 fulfiller?.start();
 log("ready", {
   httpPort: options.httpPort,
@@ -302,14 +316,16 @@ log("ready", {
   credentialHelpers: helpers.length,
   pinnedDownloads: pinned.list(),
   meshd: meshd ?? null,
+  downloadsDir,
+  nodeDownloadOrigin: nodeDownloadOrigin ?? null,
   fulfilsNodes: fulfiller !== null,
 });
 if (fulfiller && !meshd) {
   logger.warn("meshd_not_offered", {
     downloadsDir,
-    publicOrigin: publicOrigin ?? null,
+    nodeDownloadOrigin: nodeDownloadOrigin ?? null,
     meaning: "market nodes join with the bridge CNI and per-node DNS but no pod mesh: pods on different nodes cannot reach each other",
-    needs: "socialweb-meshd-x86_64 and socialweb-meshd-aarch64 with their .sha256 sidecars in the downloads dir, and public-origin set",
+    needs: "socialweb-meshd-x86_64 and socialweb-meshd-aarch64 with their .sha256 sidecars in the downloads dir, and public-origin (or test-node-download-host) set",
   });
 }
 

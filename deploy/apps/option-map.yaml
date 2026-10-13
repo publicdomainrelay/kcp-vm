@@ -113,6 +113,9 @@ apps:
       - {name: kcp-public-host, to: options}
       - {name: kubeconfig-max-ttl-sec, to: options}
       - {name: downloads-subdir, to: options}
+      - {name: downloads-dir, to: profile}
+      - {name: required-downloads, to: profile}
+      - {name: test-node-download-host, to: profile}
       - {name: node-extra-bidder-dids, to: spec.bidderDids}
       - {name: node-policy, to: options}
       - {name: node-policy-args, to: options}

@@ -57,7 +57,7 @@ func (a *app) gatewayExecutables(ctx context.Context, vals clicfg.Values) (map[s
 		if err != nil {
 			return nil, err
 		}
-		for _, name := range []string{gatewaykcp.ExeExternalSecrets, gatewaykcp.ExeESOBundle, gatewaykcp.ExeDumbpipe} {
+		for _, name := range []string{gatewaykcp.ExeExternalSecrets, gatewaykcp.ExeESOBundle, gatewaykcp.ExeDumbpipe, gatewaykcp.ExeWebDownloads} {
 			e, err := assets.Resolve(assets.Options{Cache: cache, Log: a.log}, name)
 			if err != nil {
 				return nil, err
@@ -144,7 +144,7 @@ func runServeGatewayKcp(ctx context.Context, a *app, vals clicfg.Values, rest []
 	return exitOK
 }
 
-var gatewayChildAssets = []string{gatewaykcp.ExeK3s, gatewaykcp.ExeExternalSecrets, gatewaykcp.ExeESOBundle}
+var gatewayChildAssets = []string{gatewaykcp.ExeK3s, gatewaykcp.ExeExternalSecrets, gatewaykcp.ExeESOBundle, gatewaykcp.ExeWebDownloads}
 
 func (a *app) gatewayChildExecutables(vals clicfg.Values) (map[string]devinstance.Executable, error) {
 	if !assets.Release() {

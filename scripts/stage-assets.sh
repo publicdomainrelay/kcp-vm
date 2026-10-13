@@ -181,11 +181,13 @@ stage_oci() {
 stage_script() {
   local spec="$1" tree="$2" x="$3" script want out
   script="$root/$(echo "$spec" | jq -r .script)"
-  want="$(echo "$spec" | jq -r .sha256)"
+  want="$(echo "$spec" | jq -r '.sha256 // ""')"
   mkdir -p "$x/u"
   "$script" --out "$x/u" >&2
   out="$x/u/$(echo "$spec" | jq -r '.members | keys[0]')"
-  [ "$(sha_of "$out")" = "$want" ] || die "$script built $(sha_of "$out"), pinned $want"
+  if [ -n "$want" ]; then
+    [ "$(sha_of "$out")" = "$want" ] || die "$script built $(sha_of "$out"), pinned $want"
+  fi
   copy_members "$x/u" "$tree" "$(echo "$spec" | jq -c .members)"
 }
 

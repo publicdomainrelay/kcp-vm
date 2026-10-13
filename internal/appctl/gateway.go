@@ -14,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/guestnet"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/manifests"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/openbaoctl"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/vaultlayout"
@@ -40,6 +41,7 @@ const (
 type WebApp struct {
 	FrontKubeconfig string
 	ClusterCADir    string
+	DownloadsDir    string
 }
 
 func duration(d time.Duration) string {
@@ -357,6 +359,16 @@ func GatewayValues(o v1alpha1.Gateway, workspace, stateDir string, w WebApp, vau
 		return manifests.Gateway{}, err
 	}
 	extra = append(extra, opts...)
+	if w.DownloadsDir != "" {
+		if !filepath.IsAbs(w.DownloadsDir) {
+			return manifests.Gateway{}, fmt.Errorf("appctl: the %s downloads dir %q is not absolute", WebAppComponent, w.DownloadsDir)
+		}
+		extra = append(extra, "--downloads-dir", w.DownloadsDir)
+		read = append(read, w.DownloadsDir)
+	}
+	if o.Spec.Profile == ProfileGatewayNetwork {
+		extra = append(extra, "--test-node-download-host", guestnet.HostAddress)
+	}
 	if w.ClusterCADir != "" {
 		if !filepath.IsAbs(w.ClusterCADir) {
 			return manifests.Gateway{}, fmt.Errorf("appctl: the cluster CA dir %q is not absolute", w.ClusterCADir)
