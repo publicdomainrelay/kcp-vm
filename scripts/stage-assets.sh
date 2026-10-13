@@ -177,9 +177,10 @@ stage_oci() {
   jq -e --arg d "$layer" '.layers[] | select(.digest == $d)' "$x/manifest.json" >/dev/null || die "$manifest does not name layer $layer"
   f="$cache/${layer#sha256:}"
   if [ ! -f "$f" ] || [ "sha256:$(sha_of "$f")" != "$layer" ]; then
-    curl "${curl_args[@]}" -H "Authorization: Bearer $tok" -o "$f.part.$BASHPID" "https://$reg/v2/$repo/blobs/$layer"
-    [ "sha256:$(sha_of "$f.part.$BASHPID")" = "$layer" ] || { rm -f "$f.part.$BASHPID"; die "layer does not hash to $layer"; }
-    mv -f "$f.part.$BASHPID" "$f"
+    local part="$f.part.$BASHPID"
+    curl "${curl_args[@]}" -H "Authorization: Bearer $tok" -o "$part" "https://$reg/v2/$repo/blobs/$layer"
+    [ "sha256:$(sha_of "$part")" = "$layer" ] || { rm -f "$part"; die "layer does not hash to $layer"; }
+    mv -f "$part" "$f"
   fi
   mkdir -p "$x/u"
   tar -xzf "$f" -C "$x/u"
