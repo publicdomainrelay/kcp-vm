@@ -108,6 +108,7 @@ type Controller struct {
 	applied  map[string]int64
 	rotated  map[string]int64
 	written  map[string]string
+	placed   map[string]map[bool][]placedRef
 	network  *networks
 	stateDir atomic.Pointer[v1alpha1.StateDirUsage]
 }
@@ -153,7 +154,8 @@ func New(c Config) (*Controller, error) {
 	if err != nil {
 		return nil, err
 	}
-	ctl := &Controller{c: c, restCfg: restCfg, applied: map[string]int64{}, rotated: map[string]int64{}, written: map[string]string{}}
+	ctl := &Controller{c: c, restCfg: restCfg, applied: map[string]int64{}, rotated: map[string]int64{}, written: map[string]string{},
+		placed: map[string]map[bool][]placedRef{}}
 	ctl.network = newNetworks(ctl)
 	return ctl, nil
 }

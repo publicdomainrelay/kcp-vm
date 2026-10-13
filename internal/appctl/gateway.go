@@ -240,7 +240,7 @@ func (ctl *Controller) reconcileGateway(ctx context.Context, u *unstructured.Uns
 	}
 	if ctl.c.WebApp != nil && haveVault {
 		ws := ctl.c.workspace() + ":" + ComponentWorkspace
-		if ctl.applied[string(o.UID)] != o.Generation {
+		if ctl.applied[string(o.UID)] != o.Generation || ctl.lostComponent(ctx, owner) != "" {
 			values, err := GatewayValues(o, ctl.c.workspace(), ComponentStateDir(ctl.c.Layout.StateDir, WebAppComponent), *ctl.c.WebApp, webAppVault)
 			if err != nil {
 				st.Phase, st.Message = v1alpha1.ApplicationPhaseFailed, err.Error()

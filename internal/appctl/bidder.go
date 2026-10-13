@@ -217,6 +217,7 @@ func (ctl *Controller) reconcileBidder(ctx context.Context, u *unstructured.Unst
 			return ctl.writeStatus(ctx, MarketBidderGVR, o.Name, st)
 		}
 		delete(ctl.applied, string(o.UID))
+		ctl.forgetPlaced(owner)
 		return ctl.setFinalizer(ctx, MarketBidderGVR, u, false)
 	}
 	if !hasFinalizer(u) {
@@ -234,7 +235,7 @@ func (ctl *Controller) reconcileBidder(ctx context.Context, u *unstructured.Unst
 	if o.Spec.Identity.Mode == "" {
 		o.Spec.Identity.Mode = mode
 	}
-	if ctl.applied[string(o.UID)] != o.Generation {
+	if ctl.applied[string(o.UID)] != o.Generation || ctl.lostComponent(ctx, owner) != "" {
 		var kcp BidderKcp
 		if rec, err := ctl.c.Record(); err == nil {
 			kcp = BidderKcpOf(rec)
@@ -388,5 +389,6 @@ func (ctl *Controller) guardSignIn(ctx context.Context, o v1alpha1.MarketBidder,
 		}
 	}
 	delete(ctl.applied, string(o.UID))
+	ctl.forgetPlaced(owner)
 	return "the sign-in was refused and the bidder restarts with a fresh QR: " + refusal.Error(), nil
 }

@@ -194,6 +194,7 @@ func (ctl *Controller) reconcileSshGateway(ctx context.Context, u *unstructured.
 			return ctl.writeStatus(ctx, SshGatewayGVR, o.Name, st)
 		}
 		delete(ctl.applied, string(o.UID))
+		ctl.forgetPlaced(owner)
 		return ctl.setFinalizer(ctx, SshGatewayGVR, u, false)
 	}
 	if !hasFinalizer(u) {
@@ -202,7 +203,7 @@ func (ctl *Controller) reconcileSshGateway(ctx context.Context, u *unstructured.
 		}
 	}
 	stateDir := ComponentStateDir(ctl.c.Layout.StateDir, SshGatewayComponent)
-	if ctl.applied[string(o.UID)] != o.Generation {
+	if ctl.applied[string(o.UID)] != o.Generation || ctl.lostComponent(ctx, owner) != "" {
 		rec, err := ctl.c.Record()
 		if err != nil {
 			return err

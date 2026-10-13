@@ -95,8 +95,12 @@ func (n *networks) applyServices(ctx context.Context, owner string, values *mani
 	if err != nil {
 		return err
 	}
-	_, err = ap.Apply(ctx, set, values)
-	return err
+	rep, err := ap.Apply(ctx, set, values)
+	if err != nil {
+		return err
+	}
+	n.ctl.recordPlaced(owner, true, rep)
+	return nil
 }
 
 type serviceReport struct {
@@ -350,6 +354,7 @@ func (n *networks) reconcile(ctx context.Context, u *unstructured.Unstructured) 
 			return write(v1alpha1.ApplicationPhaseDeleting, "the OpenBaoServer "+NetworkVaultServer+" is stopping")
 		}
 		delete(n.applied, string(o.UID))
+		n.ctl.forgetPlaced(owner)
 		log.Info("the market network is gone: children, services and its OpenBaoServer")
 		return n.ctl.setFinalizer(ctx, MarketNetworkGVR, u, false)
 	}
@@ -361,7 +366,7 @@ func (n *networks) reconcile(ctx context.Context, u *unstructured.Unstructured) 
 	if o.Spec.Profile != NetworkProfile {
 		return write(v1alpha1.ApplicationPhaseFailed, fmt.Sprintf("profile %q: the built MarketNetwork profile is %s", o.Spec.Profile, NetworkProfile))
 	}
-	if n.applied[string(o.UID)] != o.Generation {
+	if n.applied[string(o.UID)] != o.Generation || n.ctl.lostComponent(ctx, owner) != "" {
 		values, err := n.values(o.Spec)
 		if err != nil {
 			return write(v1alpha1.ApplicationPhaseFailed, err.Error())

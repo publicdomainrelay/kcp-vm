@@ -249,6 +249,7 @@ func (ctl *Controller) reconcileRequester(ctx context.Context, u *unstructured.U
 			return ctl.writeStatus(ctx, MarketRequesterGVR, o.Name, st)
 		}
 		delete(ctl.applied, string(o.UID))
+		ctl.forgetPlaced(owner)
 		return ctl.setFinalizer(ctx, MarketRequesterGVR, u, false)
 	}
 	if !hasFinalizer(u) {
@@ -256,7 +257,7 @@ func (ctl *Controller) reconcileRequester(ctx context.Context, u *unstructured.U
 			return err
 		}
 	}
-	if ctl.applied[string(o.UID)] != o.Generation {
+	if ctl.applied[string(o.UID)] != o.Generation || ctl.lostComponent(ctx, owner) != "" {
 		values, err := RequesterValues(o.Spec, ComponentStateDir(ctl.c.Layout.StateDir, RequesterComponent))
 		if err != nil {
 			st.Phase, st.Message = v1alpha1.ApplicationPhaseFailed, err.Error()
