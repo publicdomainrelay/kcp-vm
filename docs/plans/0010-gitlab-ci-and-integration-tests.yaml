@@ -151,8 +151,8 @@ items:
       answered decision as "decided by the user <date>", empties questions_for_user and applies the
       folds to 0006 and 0007.
     done_when: questions_for_user is empty and the folds are in plans 0006 and 0007.
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: G1-CI-GATE
     milestone: G1
     title: GitLab CI runs the build gate for this repository
