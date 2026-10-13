@@ -49,7 +49,7 @@ if ! "$container" image inspect "$builder" >/dev/null 2>&1; then
   if [ "$rootless_podman" = 1 ]; then
     mkdir -p "$out"
     printf 'APT::Sandbox::User "root";\n' >"$out/apt-sandbox-root.conf"
-    build_mounts=(-v "$out/apt-sandbox-root.conf:/etc/apt/apt.conf.d/00-sandbox-root:ro")
+    build_mounts=(--security-opt label=disable -v "$out/apt-sandbox-root.conf:/etc/apt/apt.conf.d/00-sandbox-root:ro")
   fi
   "$container" build -q "${build_mounts[@]}" -t "$builder" -f "$dockerfile" "$(dirname "$dockerfile")" >&2
   rm -f "$out/apt-sandbox-root.conf"
