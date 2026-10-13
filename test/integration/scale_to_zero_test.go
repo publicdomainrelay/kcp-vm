@@ -76,7 +76,7 @@ func (m *matrix) probe(ns, script string) (bool, string, error) {
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, Labels: map[string]string{"it-probe": "yes"}},
 		Spec: corev1.PodSpec{
 			NodeName: m.node, RestartPolicy: corev1.RestartPolicyNever, TerminationGracePeriodSeconds: new(int64),
-			Containers: []corev1.Container{{Name: "probe", Image: probeImage, Command: []string{"sh", "-c", script}}},
+			Containers: []corev1.Container{{Name: "probe", Image: probeImage, Command: []string{"sh", "-c", "sleep 5; " + script}}},
 		},
 	}
 	pods := m.tn.Kube.CoreV1().Pods(ns)
