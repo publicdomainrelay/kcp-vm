@@ -360,8 +360,8 @@ items:
     files: []
     done_when: the listed objects are gone.
     risks: []
-    status: todo
-    evidence: []
+    status: done
+    evidence:
 dropped_items:
   - id: G1-RUNNER
     verdict: rewritten
