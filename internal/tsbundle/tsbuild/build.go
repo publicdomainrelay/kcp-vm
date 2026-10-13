@@ -365,15 +365,15 @@ func pathspecs(prefixes []string) []string {
 }
 
 func stageCheckout(ctx context.Context, o BuildOptions, root, src string, prefixes []string) ([]tsbundle.RepoRecord, int64, error) {
-	head, err := gitOut(ctx, root, "rev-parse", "HEAD")
+	last, err := gitOut(ctx, root, append([]string{"log", "-1", "--format=%H %ct", "HEAD"}, pathspecs(prefixes)...)...)
 	if err != nil {
 		return nil, 0, err
 	}
-	ct, err := gitOut(ctx, root, "log", "-1", "--format=%ct", "HEAD")
-	if err != nil {
-		return nil, 0, err
+	head, ct, ok := strings.Cut(strings.TrimSpace(string(last)), " ")
+	if !ok {
+		return nil, 0, fmt.Errorf("tsbundle: no commit of %s touches the staged paths", tsbundle.RepoName)
 	}
-	epoch, _ := strconv.ParseInt(strings.TrimSpace(string(ct)), 10, 64)
+	epoch, _ := strconv.ParseInt(ct, 10, 64)
 	status, err := gitOut(ctx, root, append([]string{"status", "--porcelain=v1", "--untracked-files=no"}, pathspecs(prefixes)...)...)
 	if err != nil {
 		return nil, 0, err
@@ -405,7 +405,7 @@ func stageCheckout(ctx context.Context, o BuildOptions, root, src string, prefix
 			return nil, 0, fmt.Errorf("tsbundle: staging %s: %w", p, err)
 		}
 	}
-	rec := tsbundle.RepoRecord{Name: tsbundle.RepoName, Commit: strings.TrimSpace(string(head)), Dirty: dirty, Prefixes: prefixes}
+	rec := tsbundle.RepoRecord{Name: tsbundle.RepoName, Commit: head, Dirty: dirty, Prefixes: prefixes}
 	return []tsbundle.RepoRecord{rec}, epoch, nil
 }
 

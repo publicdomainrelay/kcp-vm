@@ -38,7 +38,7 @@ func main() {
 	release := flag.Bool("release", false, "refuse a dirty staged path, a created or drifted lockfile, and an entry that does not start offline")
 	offline := flag.Bool("offline", true, "start every entry under unshare -rn")
 	probe := flag.Bool("probe", true, "start every entry from the extracted tree; false skips it (dev builds only, refused with -release)")
-	epoch := flag.String("source-date-epoch", os.Getenv("SOURCE_DATE_EPOCH"), "tar mtime and cache time; empty is the commit time of the checkout's HEAD")
+	epoch := flag.String("source-date-epoch", os.Getenv("SOURCE_DATE_EPOCH"), "tar mtime and cache time; empty is the commit time of the last commit that touched the staged paths")
 	allow := flag.String("allow-import", "", "comma-separated hosts deno may import from while filling, replacing its defaults")
 	flag.Parse()
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
