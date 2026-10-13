@@ -131,7 +131,7 @@ guest-image:
 # Every integration test, on its own market networks, as this runner's account with its own VM slots.
 integration:
   stage: test
-  extends: [.toolchain, .main-or-tag]
+  extends: [.containers, .main-or-tag]
   timeout: 75m
   needs: [gate, guest-image]
   variables:
