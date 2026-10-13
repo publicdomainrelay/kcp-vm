@@ -75,7 +75,7 @@ function slowNetworkPds(withOauthAgent: boolean) {
   const records: Array<{ uri: string; cid: string; record: Record<string, unknown> }> = [];
   const onNetwork = new Map<string, (address: string) => void>();
   const pendingBids = new Map<string, CollectedBid[]>();
-  const timing = { bidVisibleAt: 0 };
+  const timing = { bidVisibleAt: 0, readsInFlight: 0, maxReadsInFlight: 0 };
   let seq = 0;
 
   const write = (collection: string, record: Record<string, unknown>) => {
@@ -102,7 +102,10 @@ function slowNetworkPds(withOauthAgent: boolean) {
   };
 
   const listRecords = async (repo: string, collection: string) => {
+    timing.readsInFlight++;
+    timing.maxReadsInFlight = Math.max(timing.maxReadsInFlight, timing.readsInFlight);
     await delay(LIST_RECORDS_MS);
+    timing.readsInFlight--;
     if (repo === REQUESTER_DID && collection === VOUCH_NSID) {
       return {
         records: [{
@@ -242,10 +245,9 @@ Deno.test("a scope run reads the requester's own records from every source at on
     const run = await contract({ cache, refresher }, true);
     assertEquals(run.handle.state.outcome, "complete");
     assertEquals(counts.runs, 1);
-    const prewarmMs = Number(run.prewarmDone.extra.durationMs);
     assert(
-      prewarmMs < 3 * LIST_RECORDS_MS,
-      `a cold scope run took ${prewarmMs}ms over ${LIST_RECORDS_MS}ms reads; the oauth and own reads ran one after the other`,
+      run.fake.timing.maxReadsInFlight >= 2,
+      `a cold scope run had at most ${run.fake.timing.maxReadsInFlight} read in flight; the oauth and own reads ran one after the other`,
     );
   } finally {
     refresher.close();
