@@ -39,10 +39,11 @@ for await (const e of walk(args.dir, { includeDirs: false })) {
   files.push({ rel: relative(args.dir, e.path), path: e.path, size: st.size, sha256: await sha256(e.path) });
 }
 files.sort((a, b) => a.rel.localeCompare(b.rel));
+const env = (first: string, second: string): string => Deno.env.get(first) ?? Deno.env.get(second) ?? "";
 const manifest = {
-  commit: Deno.env.get("CI_COMMIT_SHA") ?? "",
-  ref: Deno.env.get("CI_COMMIT_REF_NAME") ?? "",
-  pipeline: Deno.env.get("CI_PIPELINE_ID") ?? "",
+  commit: env("GITHUB_SHA", "CI_COMMIT_SHA"),
+  ref: env("GITHUB_REF_NAME", "CI_COMMIT_REF_NAME"),
+  run: env("GITHUB_RUN_ID", "CI_PIPELINE_ID"),
   published: new Date().toISOString(),
   files: files.map(({ rel, size, sha256 }) => ({ path: rel, size, sha256 })),
 };
