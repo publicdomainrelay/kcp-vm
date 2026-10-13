@@ -49,8 +49,8 @@
       "required": ["cluster", "member", "phase", "time"],
       "properties": {
         "cluster": { "type": "string" },
-        "member": { "type": "string", "description": "The control-plane member (postgres, openbao, kine, k3s, ...). Members start one after another." },
-        "phase": { "type": "string", "knownValues": ["Pending", "Starting", "Running", "Stopping", "Stopped", "Failed", "Lost"] },
+        "member": { "type": "string", "description": "The control-plane member (postgres, openbao, kine, k3s, ...), read from its HostProcess, Postgres or OpenBaoServer object. Members start one after another." },
+        "phase": { "type": "string", "knownValues": ["Pending", "Starting", "Running", "Ready", "Sealed", "Stopping", "Stopped", "Deleting", "Failed", "Lost"] },
         "reason": { "type": "string", "description": "Why the member was lost, when it was." },
         "message": { "type": "string" },
         "deleted": { "type": "boolean" },

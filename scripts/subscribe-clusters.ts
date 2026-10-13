@@ -1,4 +1,4 @@
-import { decodeMultiple } from "npm:cbor-x@1.6.0";
+import { decodeCborSequence } from "jsr:@std/cbor@0.1";
 import { parseArgs } from "jsr:@std/cli@1/parse-args";
 
 const NSID = "com.publicdomainrelay.temp.cluster.subscribeClusters";
@@ -35,7 +35,7 @@ ws.binaryType = "arraybuffer";
 let exitCode = 3;
 ws.onmessage = (ev) => {
   if (!(ev.data instanceof ArrayBuffer)) return;
-  const parts = decodeMultiple(new Uint8Array(ev.data)) as unknown[];
+  const parts = decodeCborSequence(new Uint8Array(ev.data)) as unknown[];
   if (!Array.isArray(parts) || parts.length !== 2) {
     console.error("bad frame: not a header and a payload");
     exitCode = 4;

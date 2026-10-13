@@ -413,6 +413,47 @@ func (f *feed) clusterGone(cluster string) error {
 	return nil
 }
 
+type memberView struct {
+	member, phase, reason, message string
+}
+
+type stream[T any] struct {
+	src    source[T]
+	prefix string
+	key    func(T) string
+	on     func(bool, T) error
+}
+
+func (s stream[T]) prime(ctx context.Context, f *feed) (func(context.Context) error, error) {
+	items, rv, err := s.src.list(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := resyncSet(f, s.prefix, items, s.key, s.on); err != nil {
+		return nil, err
+	}
+	return func(hctx context.Context) error {
+		return follow(hctx, s.src, rv, s.on, func(items []T) error {
+			return resyncSet(f, s.prefix, items, s.key, s.on)
+		})
+	}, nil
+}
+
+func memberStream[T any](f *feed, cluster string, src source[T], name func(T) string, view func(T) memberView, snapshot *bool) stream[T] {
+	prefix := "member/" + cluster + "/" + src.resource + "/"
+	key := func(o T) string { return prefix + name(o) }
+	return stream[T]{src: src, prefix: prefix, key: key, on: func(deleted bool, o T) error {
+		return f.sendMember(key(o), cluster, view(o), deleted, *snapshot)
+	}}
+}
+
+func labelOr(labels map[string]string, fallback string) string {
+	if m := labels[memberNameLabel]; m != "" {
+		return m
+	}
+	return fallback
+}
+
 func (f *feed) open(ctx context.Context, cluster string, snapshot bool) (func(), error) {
 	home := HomePath(f.did, cluster)
 	key, err := ClusterKey(home)
@@ -427,41 +468,63 @@ func (f *feed) open(ctx context.Context, cluster string, snapshot bool) (func(),
 	if err != nil {
 		return nil, err
 	}
+	ws := f.c.hostProcessWorkspace
+	selector := memberClusterLabel + "=" + key
+
 	clusters := source[v1alpha1.Cluster]{r: rHome, resource: "clusters", field: "metadata.name=" + cluster, where: home}
-	claims := source[v1alpha1.NodeClaim]{r: rHome, resource: "nodeclaims", where: home}
-	members := source[v1alpha1.HostProcess]{r: rHosts, resource: "hostprocesses",
-		label: memberClusterLabel + "=" + key, where: f.c.hostProcessWorkspace}
-
-	cl, clRV, err := clusters.list(ctx)
-	if err != nil {
-		return nil, err
-	}
-	ms, mRV, err := members.list(ctx)
-	if err != nil {
-		return nil, err
-	}
-	ncs, ncRV, err := claims.list(ctx)
-	if err != nil {
-		return nil, err
-	}
-
 	onCluster := func(deleted bool, o v1alpha1.Cluster) error {
 		if deleted {
 			return f.clusterGone(cluster)
 		}
 		return f.sendCluster(o, snapshot)
 	}
-	onMember := func(deleted bool, o v1alpha1.HostProcess) error { return f.sendMember(cluster, o, deleted, snapshot) }
-	onClaim := func(deleted bool, o v1alpha1.NodeClaim) error { return f.sendClaim(cluster, o, deleted, snapshot) }
-
+	cl, clRV, err := clusters.list(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if err := f.resyncClusters(cluster, cl, onCluster); err != nil {
 		return nil, err
 	}
-	if err := resyncSet(f, "member/"+cluster+"/", ms, func(o v1alpha1.HostProcess) string { return memberKey(cluster, o) }, onMember); err != nil {
-		return nil, err
-	}
-	if err := resyncSet(f, "claim/"+cluster+"/", ncs, func(o v1alpha1.NodeClaim) string { return claimKey(cluster, o) }, onClaim); err != nil {
-		return nil, err
+
+	var runs []func(context.Context) error
+	for _, prime := range []func() (func(context.Context) error, error){
+		func() (func(context.Context) error, error) {
+			return memberStream(f, cluster, source[v1alpha1.Postgres]{r: rHosts, resource: "postgreses", label: selector, where: ws},
+				func(o v1alpha1.Postgres) string { return o.Name },
+				func(o v1alpha1.Postgres) memberView {
+					return memberView{labelOr(o.Labels, "postgres"), string(o.Status.Phase), "", o.Status.Message}
+				}, &snapshot).prime(ctx, f)
+		},
+		func() (func(context.Context) error, error) {
+			return memberStream(f, cluster, source[v1alpha1.OpenBaoServer]{r: rHosts, resource: "openbaoservers", label: selector, where: ws},
+				func(o v1alpha1.OpenBaoServer) string { return o.Name },
+				func(o v1alpha1.OpenBaoServer) memberView {
+					return memberView{labelOr(o.Labels, "openbao"), string(o.Status.Phase), "", o.Status.Message}
+				}, &snapshot).prime(ctx, f)
+		},
+		func() (func(context.Context) error, error) {
+			return memberStream(f, cluster, source[v1alpha1.HostProcess]{r: rHosts, resource: "hostprocesses", label: selector, where: ws},
+				func(o v1alpha1.HostProcess) string { return o.Name },
+				func(o v1alpha1.HostProcess) memberView {
+					return memberView{labelOr(o.Labels, o.Name), string(o.Status.Phase), string(o.Status.LostReason), o.Status.Message}
+				}, &snapshot).prime(ctx, f)
+		},
+		func() (func(context.Context) error, error) {
+			return stream[v1alpha1.NodeClaim]{
+				src:    source[v1alpha1.NodeClaim]{r: rHome, resource: "nodeclaims", where: home},
+				prefix: "claim/" + cluster + "/",
+				key:    func(o v1alpha1.NodeClaim) string { return "claim/" + cluster + "/" + o.Name },
+				on: func(deleted bool, o v1alpha1.NodeClaim) error {
+					return f.sendClaim(cluster, o, deleted, snapshot)
+				},
+			}.prime(ctx, f)
+		},
+	} {
+		run, err := prime()
+		if err != nil {
+			return nil, err
+		}
+		runs = append(runs, run)
 	}
 	snapshot = false
 
@@ -470,29 +533,19 @@ func (f *feed) open(ctx context.Context, cluster string, snapshot bool) (func(),
 	f.homes[cluster] = cancel
 	f.mu.Unlock()
 
-	run := func(fn func() error) {
-		go func() {
-			if err := fn(); err != nil && hctx.Err() == nil {
-				f.fail(err)
-			}
-		}()
-	}
+	runs = append(runs, func(hctx context.Context) error {
+		return follow(hctx, clusters, clRV, onCluster, func(items []v1alpha1.Cluster) error {
+			return f.resyncClusters(cluster, items, onCluster)
+		})
+	})
 	return func() {
-		run(func() error {
-			return follow(hctx, clusters, clRV, onCluster, func(items []v1alpha1.Cluster) error {
-				return f.resyncClusters(cluster, items, onCluster)
-			})
-		})
-		run(func() error {
-			return follow(hctx, members, mRV, onMember, func(items []v1alpha1.HostProcess) error {
-				return resyncSet(f, "member/"+cluster+"/", items, func(o v1alpha1.HostProcess) string { return memberKey(cluster, o) }, onMember)
-			})
-		})
-		run(func() error {
-			return follow(hctx, claims, ncRV, onClaim, func(items []v1alpha1.NodeClaim) error {
-				return resyncSet(f, "claim/"+cluster+"/", items, func(o v1alpha1.NodeClaim) string { return claimKey(cluster, o) }, onClaim)
-			})
-		})
+		for _, run := range runs {
+			go func() {
+				if err := run(hctx); err != nil && hctx.Err() == nil {
+					f.fail(err)
+				}
+			}()
+		}
 	}, nil
 }
 
@@ -576,14 +629,6 @@ func fingerprint(typ string, payload any) string {
 	return string(b)
 }
 
-func memberKey(cluster string, o v1alpha1.HostProcess) string {
-	return "member/" + cluster + "/" + o.Name
-}
-
-func claimKey(cluster string, o v1alpha1.NodeClaim) string {
-	return "claim/" + cluster + "/" + o.Name
-}
-
 func (f *feed) sendCluster(o v1alpha1.Cluster, snapshot bool) error {
 	reason, message := explain(o.Status.Conditions)
 	phase := string(o.Status.Phase)
@@ -618,23 +663,12 @@ func explain(conds []metav1.Condition) (string, string) {
 	return "", ""
 }
 
-func (f *feed) sendMember(cluster string, o v1alpha1.HostProcess, deleted, snapshot bool) error {
-	member := o.Labels[memberNameLabel]
-	if member == "" {
-		member = o.Name
-	}
-	phase := string(o.Status.Phase)
+func (f *feed) sendMember(key, cluster string, v memberView, deleted, snapshot bool) error {
+	phase := v.phase
 	if phase == "" {
-		phase = string(v1alpha1.HostProcessPhasePending)
+		phase = "Pending"
 	}
-	ev := gateway.MemberEvent{
-		Cluster: cluster,
-		Member:  member,
-		Phase:   phase,
-		Reason:  string(o.Status.LostReason),
-		Message: o.Status.Message,
-	}
-	key := memberKey(cluster, o)
+	ev := gateway.MemberEvent{Cluster: cluster, Member: v.member, Phase: phase, Reason: v.reason, Message: v.message}
 	if deleted {
 		ev.Deleted, ev.Time = true, stamp()
 		return f.gone(key, gateway.EventMember, ev)
@@ -665,7 +699,7 @@ func (f *feed) sendClaim(cluster string, o v1alpha1.NodeClaim, deleted, snapshot
 	if ev.Message == "" {
 		ev.Message = o.Status.Contract.Error
 	}
-	key := claimKey(cluster, o)
+	key := "claim/" + cluster + "/" + o.Name
 	if deleted {
 		ev.Deleted, ev.Time = true, stamp()
 		return f.gone(key, gateway.EventNodeClaim, ev)

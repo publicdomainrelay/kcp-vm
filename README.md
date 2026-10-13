@@ -117,6 +117,34 @@ Slower = check gateway log: `journalctl _UID=$(id -u socialweb) -o cat | grep -E
 
 Scale from zero: apply a pod to a tenant cluster at 0 nodes -> NodeClaim -> RFP -> VM -> node Ready -> pod Running (prod: ~60 s). Delete pod -> back to 0 nodes, vm.delete (~2-3 min incl. hold).
 
+### Cluster events with `subscribeClusters` (websocket, no polling)
+
+`com.publicdomainrelay.temp.cluster.subscribeClusters` = atproto event stream: `GET` + websocket upgrade, binary frames, each frame = DRISL-CBOR header (`{op:1,t:"#cluster"}`, error `{op:-1}`) + DRISL-CBOR payload. Auth = same service JWT on the upgrade (`Authorization: Bearer`, `lxm` = subscribeClusters). No query-param token. Account = token `iss`. Optional `?name=<cluster>`.
+
+On connect: snapshot (one `#cluster` per cluster, one `#member` per control-plane member, one `#nodeClaim` per claim, all `snapshot:true`), then `#info SnapshotComplete`, then live changes from kcp watches. No cursor: reconnect = fresh snapshot. Token checked once at connect (60 s token fine); stream lives until client closes, gateway restarts, or 1 h bound (`TokenExpired` error frame -> new token, reconnect). Error frame then close: `ClusterNotFound` (unknown name, cluster deleted, account has no clusters yet), `Unauthorized`, `TokenExpired`, `IdentityRevoked`, `ClusterUnavailable`, `ConsumerTooSlow`. Client frames ignored.
+
+| message | fields | values |
+|---|---|---|
+| `#cluster` | name, phase, running, reason, message, server, instance, deleted | Unavailable, Initializing, Ready, Draining |
+| `#member` | cluster, member, phase, reason, message | Pending, Starting, Running, Stopping, Stopped, Failed, Lost |
+| `#nodeClaim` | cluster, name, nodeName, phase, message, contractPhase, outcome, bidder, fqdn, deleted | Bidding, Provisioning, Joining, Running, Failed, Lost, Released |
+
+```bash
+# reuse GW AUD N from the goat section above
+T=$(goat account service-auth --aud $AUD --lxm $N.subscribeClusters)
+# decoding client: one JSON line per event; exit 0 on --until, 2 on --fail-on, 1 on error frame
+deno run -A --no-lock --node-modules-dir=none scripts/subscribe-clusters.ts --gateway $GW --token "$T" --name demo \
+  --until cluster=Ready --fail-on nodeClaim=Failed
+# all clusters of the account, run forever
+deno run -A --no-lock --node-modules-dir=none scripts/subscribe-clusters.ts --gateway $GW --token "$T"
+# raw connectivity check (prints CBOR bytes, not text)
+websocat -b -H "Authorization: Bearer $T" "wss://k8s.socialweb.computer/xrpc/$N.subscribeClusters?name=demo" | xxd | head
+# poll fallback
+call query listClusters | jq '.clusters[] | {name, phase, running}'
+```
+
+Timing (prod today): createCluster -> `Initializing` at once, members start one after another (postgres, openbao, kine, k3s, ...), -> `Ready` ~2 min 45 s. Pod at 0 nodes -> `#nodeClaim` Bidding -> Provisioning -> Joining -> Running ~60 s. Pod deleted -> scale to zero ~2-3 min (incl. 2 min hold), claim `deleted:true`. Provision failure -> `#nodeClaim` phase Failed with message.
+
 ## OAuth sign-in (scripted, never by hand, never hand the user a link)
 
 `scripts/oauth-signin.ts` = headless `/usr/bin/google-chrome` (puppeteer-core): page -> PDS authorize -> password -> "Authorize". Reads handle + password from creds file itself (never on cmdline/logs). Screenshots per step: `~/.tmp/oauth-signin/<ts>/` (0700).
