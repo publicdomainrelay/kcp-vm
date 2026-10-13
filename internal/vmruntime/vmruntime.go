@@ -19,7 +19,7 @@ const (
 	UnitKind          = "socialweb-vm-"
 	SliceKind         = "socialweb-b-"
 	DefaultInnerID    = 1000
-	DefaultBootTime   = 60 * time.Second
+	DefaultBootTime   = 30 * time.Second
 	DefaultStopGrace  = 10 * time.Second
 	DefaultConsoleCap = 8 << 20
 	VMMOverheadMiB    = 192

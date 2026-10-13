@@ -45,11 +45,11 @@ const (
 	DefaultInterval   = 5 * time.Second
 	SupervisorEvery   = time.Second
 	RetryAfter        = 3 * time.Second
-	OrphanGrace       = 10 * time.Minute
-	PlaceTimeout      = 60 * time.Second
+	OrphanGrace       = 2 * time.Minute
+	PlaceTimeout      = 20 * time.Second
 	ReleaseKillAfter  = 30 * time.Second
 	MessageCap        = 4000
-	ApplyTimeout      = 2 * time.Minute
+	ApplyTimeout      = time.Minute
 	ImageGCEvery      = 10 * time.Minute
 	conditionReasonOK = "Observed"
 )
@@ -340,6 +340,11 @@ func (ct *Controller) placer(o v1alpha1.ComputeVM) vmruntime.Placer {
 			st, err := ct.c.Manager.Inspect(ctx, spec.Name)
 			if err == nil && st.State != hostsvc.NotFound && st.State != "" {
 				return nil
+			}
+			if _, child, cerr := ct.child(ctx, o.Name); cerr == nil && child != nil &&
+				(child.Status.Phase == v1alpha1.HostProcessPhaseFailed || child.Status.Phase == v1alpha1.HostProcessPhaseLost) {
+				return fmt.Errorf("computevm: the supervisor could not place %s: HostProcess %s is %s %s: %s", spec.Name, child.Name,
+					child.Status.Phase, child.Status.LostReason, child.Status.Message)
 			}
 			if time.Now().After(deadline) {
 				return fmt.Errorf("computevm: the supervisor did not place %s within %s (last: %v %s)", spec.Name, PlaceTimeout, err, st.State)
