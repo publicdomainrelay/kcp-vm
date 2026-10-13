@@ -11,7 +11,7 @@ revised: >
   netfilter option built in (0007 M1-GUEST-IMAGE); market k3s schedulers run with leader election on
   (0006 M3-CP-SLOTS); a restarted kcp bidder rebuilds its contracts from its ComputeVMs (0007
   M4-CONTRACT-RESTORE); the GitLab server at gitlab.dorper-matrix.ts.net:8443 now hosts this
-  repository, and CI moves there. Result: the GitLab-in-docker fixture is dropped; plan 0010 becomes
+  repository, and CI moves there. Result (the user restored the GitLab-in-docker fixture, G1-GITLAB-FIXTURE, on 2026-10-12); plan 0010 becomes
   the plan for GitLab CI of this repository and for the integration tests that come after prod, plus
   the two small gaps no other plan owns (the debug node ssh path, the acceptance leftovers).
 status: >
@@ -100,7 +100,7 @@ gaps:
       The GitLab used for acceptance (hat-10, Tailscale funnel) was installed by hand and is not a
       fixture this repo can recreate; plan 0001's "spin a VM and run GitLab" recipe was never run by
       this repo.
-    reassessed: Void as a gap. The GitLab server at gitlab.dorper-matrix.ts.net:8443 is now this repository's home and its CI; it is a service the user runs, not a fixture. A throwaway GitLab container would contradict "the gateway runs no containers" and buy nothing the server does not give.
+    reassessed: Open again (user 2026-10-12). The GitLab server at gitlab.dorper-matrix.ts.net:8443 hosts this repository and its CI; the acceptance and integration runs still need a GitLab this repository can recreate as a fixture. Owned here as G1-GITLAB-FIXTURE.
   - id: GAP-10
     text: >
       Acceptance leftovers on prod and the lab: runner 6 on hat-10, clusters acc-gitlab-0001 and
@@ -137,6 +137,7 @@ decided:
   - "Q9 Debug node ssh: delete it (zero ssh to guests; no back-compat)."
   - "Q10 Leftovers: delete them right after 0006 M5-FRESH-DEPLOY (prod keeps nothing)."
   - "Q11 Folds confirmed: GAP-3 into 0007 M6-LIVE-RECOVERY and M6-BIDDER-UPGRADE, GAP-5 into 0006 M5-RETIRE (file list extended), GAP-4 and GAP-7 closed; the 0007 M6 items' internal/marketnetwork/live_test.go is read as a manual live run."
+  - "User 2026-10-12: G1-GITLAB-FIXTURE is restored (it should not have been dropped); GAP-9 stays open."
   - "Q12 Plan name: renamed to 0010-gitlab-ci-and-integration-tests.yaml with NEXT.yaml P10."
 questions_for_user: []
 items:
@@ -153,6 +154,24 @@ items:
     done_when: questions_for_user is empty and the folds are in plans 0006 and 0007.
     status: done
     evidence:
+  - id: G1-GITLAB-FIXTURE
+    milestone: G1
+    title: GitLab CE in a docker container as a reproducible test fixture
+    depends_on: ["0006:M5-FRESH-DEPLOY"]
+    decision: >
+      Restored by the user 2026-10-12 (R0 had dropped it). A reproducible GitLab, separate from the GitLab
+      server that hosts this repository, is the fixture the integration tests and acceptance runs use as the
+      workload on tenant clusters: a script under scripts/ starts gitlab/gitlab-ce pinned by digest with a
+      generated root password (0600 file, never printed), waits for readiness, creates the test project from
+      a template repository holding the acceptance .gitlab-ci.yml, and prints its URL and a runner
+      registration token. It runs on the test host, never on the gateway (the gateway runs no containers).
+      TLS from a local CA the guests trust through user_data, or plain http on the reachable address,
+      decided when the item starts. Covers GAP-9.
+    files: ["scripts/gitlab-fixture.sh", "deploy/gitlab-fixture/ (template project)"]
+    done_when: one command brings up a fresh GitLab fixture and a project whose pipeline a runner on a tenant cluster picks up; a second command tears it down with nothing left.
+    risks: ["GitLab CE needs several GiB of RAM; it runs on hat-8, not on the gateway host."]
+    status: todo
+    evidence: []
   - id: G1-CI-GATE
     milestone: G1
     title: GitLab CI runs the build gate for this repository
@@ -344,9 +363,6 @@ items:
     status: todo
     evidence: []
 dropped_items:
-  - id: G1-GITLAB-FIXTURE
-    verdict: dropped
-    why: The GitLab server at gitlab.dorper-matrix.ts.net:8443 hosts this repository and its CI; a throwaway GitLab container is a second GitLab to keep working and contradicts "the gateway runs no containers". GAP-9 is void.
   - id: G1-RUNNER
     verdict: rewritten
     why: Became the runner of G3-PROD-CANARY (and the CI runner of G1-CI-GATE).
