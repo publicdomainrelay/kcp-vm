@@ -5,7 +5,7 @@
 import { TID } from "@atproto/common";
 import { getPdsEndpoint } from "@atproto/common-web";
 import type { RepoApi } from "@publicdomainrelay/atproto-repo-abc";
-import { createRecordResolver, createRfpDispatcher, startOfferingRefresh, listRecordsPublic, getRecordAt, resolvePds, scanRecords } from "@publicdomainrelay/market-atproto";
+import { createRecordResolver, createRfpDispatcher, startOfferingRefresh, listRecordsPublic, getRecordAt, resolvePds } from "@publicdomainrelay/market-atproto";
 import type { MarketServerDeps, OfferingRefreshHandle, RfpObservation } from "@publicdomainrelay/market-atproto";
 import { createMarketFactory } from "@publicdomainrelay/hono-factory-market-atproto";
 import { BID_NSID, RECEIPT_NSID, RFP_NSID, VOUCH_NSID } from "@publicdomainrelay/market-common";
@@ -203,11 +203,22 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
     ownReceiptFor: async (acceptUri) => {
       const pdsUrl = await resolvePds(atproto.idResolver, atproto.did);
       let receiptUri: string | undefined;
-      await scanRecords(pdsUrl, atproto.did, RECEIPT_NSID, (r) => {
-        if ((r.value.accept as { uri?: string } | undefined)?.uri !== acceptUri) return false;
-        receiptUri = r.uri;
-        return true;
-      }, { timeoutMs: 5_000 });
+      let cursor: string | undefined;
+      do {
+        const url = new URL(`${pdsUrl}/xrpc/com.atproto.repo.listRecords`);
+        url.searchParams.set("repo", atproto.did);
+        url.searchParams.set("collection", RECEIPT_NSID);
+        url.searchParams.set("limit", "100");
+        if (cursor) url.searchParams.set("cursor", cursor);
+        const res = await fetch(url, { signal: AbortSignal.timeout(5_000) });
+        if (!res.ok) {
+          await res.body?.cancel();
+          throw new Error(`listRecords ${RECEIPT_NSID}: ${res.status}`);
+        }
+        const page = await res.json() as { records?: Array<{ uri: string; value?: { accept?: { uri?: string } } }>; cursor?: string };
+        receiptUri = page.records?.find((r) => r.value?.accept?.uri === acceptUri)?.uri;
+        cursor = page.records?.length ? page.cursor : undefined;
+      } while (!receiptUri && cursor);
       if (!receiptUri) return null;
       const ended = terminatedReceipts.get(receiptUri);
       return { uri: receiptUri, ...(ended ? { ended: `${ended.reason} at ${ended.at}` } : {}) };

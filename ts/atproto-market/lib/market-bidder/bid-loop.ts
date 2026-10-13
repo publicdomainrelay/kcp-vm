@@ -223,10 +223,11 @@ export function createBidLoop(opts: BidLoopOptions): BidLoop {
       return { status: 409, body: { error: "UnknownBid", message: "the accept names a bid this bidder did not publish" } };
     }
     if (entry.phase === "Won") {
-      logger.warn("accept_for_won_bid_without_contract", { acceptUri: accept.acceptUri, bid: entry.name, accepted: entry.accept?.uri });
+      if (entry.accept?.uri === accept.acceptUri) return await contractEnded(accept);
+      logger.warn("accept_for_won_bid", { acceptUri: accept.acceptUri, bid: entry.name, accepted: entry.accept?.uri });
       return {
         status: 409,
-        body: { error: "ContractEnded", message: "the Bid is Won and this bidder holds no contract for this accept: the contract ended" },
+        body: { error: "ContractEnded", message: `the Bid is Won by accept ${entry.accept?.uri}` },
       };
     }
     if (!bidOpen(entry, new Date())) {
