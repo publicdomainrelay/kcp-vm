@@ -412,9 +412,9 @@ vault at all (ESO-3). Both are closed by moving the operator into the process gr
   naming a Service is deleted before the URL apply, because the field another manager owns
   survives a server-side apply and a webhook carrying both is refused. MEASURED: the k3s apiserver
   (`--egress-selector-mode cluster`) dials the loopback URL directly at zero nodes. The
-  registrations stay `failurePolicy: Ignore`: the pair is not restarted when it dies (nor is the
-  cloud controller manager), and a dead webhook under `Fail` would refuse the provider's own store
-  writes and deletes.
+  registrations stay `failurePolicy: Ignore`: the pair and the cloud controller manager are member
+  units with `Restart=on-failure`, so a dead pair comes back, and a dead webhook under `Fail` would still
+  refuse the provider's own store writes and deletes until then.
 - **Ports and singletons.** The upstream defaults (`:8080` metrics, `:8082` controller health,
   `:8081` webhook health, `10250` webhook) are one set for the host, so each cluster leases three
   (section 8): the controller's `--live-addr` and the webhook's `--healthz-addr` bind `127.0.0.1`;
@@ -439,6 +439,32 @@ Embedded-postgres is a special case: it is a Go **library** that runs the server
 whoever links it, so there is no argv for a step and `processrunner.Start` refuses the empty argv
 such a step would have. `procgroup.Options.PostgresUp func() bool` exists for this: the component
 holding the library handle answers for it, and a **nil predicate is a refusal, not a skip**.
+
+### Control-plane continuity across upgrades and restarts (plan 0006 M3-CP-CONTINUITY)
+
+The gateway's own state is kcp objects plus host records; the processes that serve a tenant are units
+that outlive the core. Each kind of change is continuous by one mechanism, and none of them restarts a
+VM or rents one:
+
+- **Core binary** (`upgrade --binary --sha256`, `rollback`, a crash or `kill -9`): only the core unit
+  restarts. kcp's store, kine, slots and front are bootstrap units, every cluster member is a unit of
+  its slice, so they keep running; the new core adopts them by name and invocation. The cluster
+  provider adopts every live claim and claims again a joined Node whose claim was lost; the web app
+  resumes in-flight claims from the root vault and re-reads the joined ones. Nothing is written to a
+  joined claim, no RFP is posted and no vm.delete is sent.
+- **kcp** (`units roll kcp`): a new slot on the same store behind the kcp front, the controller lease
+  handed over (M3-KCP-ROLL).
+- **k3s and kine** (`units roll cluster`): a green slot behind the cluster's apiserver front, idle first
+  (M3-CP-SLOTS).
+- **The cluster links** (`units roll link`): a second listener with the same iroh key, then the old one
+  stops (M3-LINK-HANDOVER).
+- **Postgres, OpenBao, ESO, the CCM**: unit restarts; a restarted OpenBao is unsealed on its new
+  invocation and synced to its declaration.
+
+Stated limits: a user-manager restart, linger removal or a reboot removes every transient unit, so
+every cluster cold-starts; the NotReady clock counts from when the path is back (0007
+M3-NODE-LOSS-CLOCK), so a node whose path returns is kept, but it is not zero-downtime. The core's own
+listeners (the gateway XRPC, its TLS front, the web app) are down while the core restarts.
 
 ### The cluster links
 
