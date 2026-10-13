@@ -14,7 +14,6 @@ import (
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpclient"
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpserver"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/sweepkcp"
 )
 
@@ -80,7 +79,7 @@ func bootstrapCluster(ctx context.Context, kubeconfig, did, cluster string, log 
 	if did == "" {
 		did = DefaultBootstrapDID
 	}
-	restCfg, err := kcpserver.FrontRestConfig(kubeconfig)
+	restCfg, err := memberRestConfig(kubeconfig)
 	if err != nil {
 		return err
 	}
