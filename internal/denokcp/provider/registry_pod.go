@@ -70,5 +70,10 @@ func podStatusPatch(st v1alpha1.DenoPodStatus) ([]byte, error) {
 	} else {
 		status["conditions"] = nil
 	}
+	if st.Projected != nil {
+		status["projected"] = st.Projected
+	} else {
+		status["projected"] = nil
+	}
 	return json.Marshal(map[string]any{"status": status})
 }
