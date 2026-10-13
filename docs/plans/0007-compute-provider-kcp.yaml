@@ -1209,8 +1209,8 @@ items:
       outside a DenoPod exits 2 naming socialweb-computer run bidder'. Red first.
     done_when: "tests green; on hat-8 the unit runs under the shared account and `kubectl get computevms` on its kcp answers."
     risks: ["Handles on one host still share a uid for their cores and deno processes (shared account, decided by the user 2026-10-11); a VMM escape no longer reaches them, because each VMM runs in its own subuid sub-range owning no bidder file (decided by the user 2026-10-12, M2-VM-RUNTIME). deno's permission sandbox remains the only boundary between a bidder's deno and its own user manager."]
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M5-BIDDER-COMPONENTS
     milestone: M5
     title: The bidder's guest-facing endpoints (OIDC issuer, /v1/on-network, /v1/host-keys) as their own DenoPod per provider
