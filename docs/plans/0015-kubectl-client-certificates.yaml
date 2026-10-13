@@ -1,0 +1,937 @@
+plan: 0015-kubectl-client-certificates
+written: 2026-10-12
+revised: >
+  2026-10-12, first version. A runbook: a smaller model executes it item by item, in order, with no design
+  decision of its own. Every design decision is in the `decision` field of an item. When a STOP condition
+  is met, the executor stops, does not guess, and reports the output to the lead.
+  Carved out of plan 0014 M3-KUBECTL-CLIENT-CERT. That item stays in plan 0014. This plan does the same
+  user-visible result WITHOUT the plan 0014 OpenBao atproto auth plugin and WITHOUT the plan 0014 web app
+  sign-in: the existing XRPC com.publicdomainrelay.temp.cluster.getKubeconfig returns a kubeconfig whose user
+  is a short-lived x509 client key and certificate issued by the PKI of the cluster's own OpenBaoServer.
+queued: >
+  May start now. It needs no other open plan item. Items run in the order of the `items` list. M3-PROD-READING
+  is run by the lead only. M5-RETIRE-EXEC-PLUGIN starts only after M3-PROD-READING is done.
+relation_to_0014: >
+  Plan 0014 M3-KUBECTL-CLIENT-CERT later adds what this plan leaves out: the kind ClusterClientCertificate,
+  the web app download through a bao DPoP proof, and the front check against that kind. It builds on the
+  issuer, the PKI role and the client certificate front of this plan; it does not replace them. Plan 0014
+  M3-RETIRE-EXEC-PLUGIN is the same work as M5-RETIRE-EXEC-PLUGIN here; whichever runs first closes both.
+source: >
+  Read on main at c1d7026e (2026-10-12). How auth reaches the tenant k3s today:
+  (1) kubectl -> https://kcp.socialweb.computer. Caddy ends TLS there (scripts/deploy.sh:142-152, site
+  ${KCP_ORIGIN}) and opens a new TLS connection to kcp on 127.0.0.1:6443. A client certificate stops at Caddy.
+  (2) kcp serves /clusters/root:<acct>:<cluster>:clusters through its local proxy (kcp v0.33.0,
+  pkg/server/localproxy.go:103-189, in the Go module cache). The local proxy wraps the whole handler chain
+  (pkg/server/config.go:672), so it runs BEFORE kcp authentication. It forwards the request with all client
+  headers through httputil.ReverseProxy to the mount child's spec.URL, with InsecureSkipVerify and no client
+  certificate (we do not set --mount-proxy-client-cert-file; grep finds no use). docs/ARCHITECTURE.md
+  section 7 (line 1156) states the rule: "Bearer only through the mount".
+  (3) spec.URL is the cluster's apiserver front (internal/apiserverfront/front.go:270-305, a TCP pipe, no
+  TLS end) in front of k3s. The front also carries the kubelets of market nodes, so it must stay a TCP pipe.
+  (4) The bearer today is a ServiceAccount token: the kubeconfig exec plugin (cmd/socialweb-credential,
+  internal/execplugin) trades SOCIALWEB_DEVICE_KEY at POST /v1/credential (internal/xrpcserver/xrpcserver.go:31,
+  186, 452-490; internal/mint/mint.go:85-131) for a TokenRequest token of the ServiceAccount
+  users/did-<base32(did)> (internal/tenantclient/tenantclient.go:164-196; internal/kcpclient/names.go:62-66).
+  (5) RBAC: deploy/tenant-grant.yaml:42-56, ClusterRoleBinding socialweb-owner binds that ServiceAccount to
+  cluster-admin. FINDING: the exec-plugin path uses NO owners group. Its identity is the ServiceAccount
+  user name; its groups are only system:serviceaccounts and system:serviceaccounts:users. This plan adds
+  the group socialweb.computer:cluster-owners as a second subject of the same binding (M1-OWNERS-GROUP-RBAC).
+  (6) The per-cluster OpenBaoServer (internal/clusterprovider/openbaoserver.go:186-212, name from
+  VaultServerName, line 151) already has a pki mount "pki" (internal/clusterprovider/vault.go:26) whose CA IS
+  the k3s client CA: CustodyClusterVault (vault.go:176-200) calls ImportClientCA (vault.go:116-131), which
+  writes <dataDir>/server/tls/client-ca.{crt,key} to pki/config/ca. CustodyClusterVault runs for every cluster
+  from the Harvest hook (internal/providermain/main.go:263-280). So every certificate from pki/issue is
+  already signed by the CA that k3s trusts for client certificates. The existing roles are tenant-superuser
+  (O system:masters, ttl 8760h) and node-client (internal/clusterprovider/vaultdeclared.go:79-83).
+  (7) The gateway (internal/gatewaymain, internal/gateway, internal/kcpclient) and the clusterprovider run in
+  ONE process as the same account (internal/stack/gatewaykcp/gatewaykcp.go:450-524). The gateway can read
+  the cluster data dirs and use clusterprovider.ClusterVaultClient (openbaoserver.go:112).
+  (8) kubeconfig.AssertClean (internal/kubeconfig/kubeconfig.go:104-121) refuses client-certificate-data and
+  client-key-data today. docs/ARCHITECTURE.md:1235-1241 records that as a rule. This plan changes that rule
+  for the user path on purpose (decided by the user 2026-10-12, plan 0014 revision 2).
+  (9) k3s sets request-header authentication by default: --requestheader-client-ca-file
+  <dataDir>/server/tls/request-header-ca.crt, --requestheader-allowed-names system:auth-proxy, headers
+  X-Remote-User and X-Remote-Group, and it writes the proxy client pair <dataDir>/server/tls/client-auth-proxy.{crt,key}.
+  request-header-ca is part of the identity bundle (internal/identitybundle/identitybundle.go:18-19), so
+  every slot of a cluster trusts the same proxy client. M2-CLIENT-CERT-FRONT checks these facts live first.
+principle:
+  stated: >
+    A user reaches a tenant cluster with plain kubectl and a short-lived client certificate from that
+    cluster's own OpenBao PKI. The certificate is checked where its TLS ends, by our own code, against the
+    cluster's CA, the PKI CRL and the deny record. The private key is made by OpenBao, returned once in the
+    getKubeconfig response, and stored nowhere.
+  rules:
+    - "The tenant identity comes only from a verified source: the iss of a checked service JWT when the certificate is issued, and the CN of a checked certificate when a request is forwarded."
+    - "The client certificate front is the only component that turns a certificate into a tenant identity. kcp never forwards an identity header that a client wrote."
+    - "The apiserver front stays a TCP pipe; k3s stays unchanged."
+    - "No migration and no back-compat: the exec-plugin path keeps working until M5-RETIRE-EXEC-PLUGIN removes it."
+security_rules:
+  - "KEY: the client private key is made by OpenBao (pki/issue). It exists only in the getKubeconfig response body. Never write it to kcp, to a file, to an atproto record, to a DenoPod or HostProcess argument, or to a log line. Never put it, the certificate or the kubeconfig text in an error message. The response has Cache-Control: no-store (gateway XRPC and web app)."
+  - "KEY LOG CHECK: after every live check of M1-GETKUBECONFIG-HANDLER, M2 and M4, run `grep -rl 'PRIVATE KEY' <gateway dir>/logs <gateway dir>/denokcp/runs` and `grep -rl 'client-key-data' <same>`. Any match is a STOP."
+  - "TTL: default 8 h (28800 s). ttlSeconds below 60 or above 86400 is refused with InvalidRequest, never clamped. The PKI role has ttl 8h and max_ttl 24h as a second limit. The front refuses a certificate whose NotAfter minus NotBefore is more than 24 h plus 5 minutes."
+  - "CN: the issuer sets common_name to the verified caller DID (gateway.Caller, from atprotoauth.Verify of the service JWT iss). Never from a request field. The front takes the user name only from the CN of a certificate that chains to the cluster's client CA, and refuses it when kcpclient.AccountHash(CN) is not the account segment of the request path."
+  - "O: exactly one organization, socialweb.computer:cluster-owners, set by the PKI role, never by the request. The front refuses any other O (this refuses tenant-superuser and node-client certificates of the same CA). The front never forwards system:masters."
+  - "HEADERS: the front deletes Authorization, every X-Remote-* header and X-Socialweb-Client-Certificate from the incoming request before it adds its own X-Remote-User and X-Remote-Group."
+  - "EDGE: the front believes X-Socialweb-Client-Certificate only when the TLS peer certificate is byte-equal to the edge client certificate that the front made (<gateway state>/tls/edge-client.crt). Any other peer that sends the header is refused with 400."
+  - "REVOCATION: the front checks, on every request, the deny record (revocation.Admit; a Granted answer is cached at most 2 s, a refusal is never cached) and the cluster PKI CRL (cached at most 60 s; no CRL newer than 10 minutes means 503). A request ends at the certificate's NotAfter."
+state_rules:
+  - "No unit tests (user, 2026-10-12). Each item is proven by a build and a live reading on the executor's own market network. The only test written is the integration test of M4-INTEGRATION-TEST."
+  - "Delete any existing _test.go test that a change breaks, in the same commit (AGENTS.md: do not repair old tests)."
+  - "Real names only (AGENTS.md). Commit and push only socialweb-computer-kcp on task/<worktree>. The lead flips status."
+  - "No comments in code except the ponytail: form. ASCII only."
+  - "Task agents never touch prod. M3-PROD-READING is the lead's."
+ownership:
+  repository: socialweb-computer-kcp
+  go: "internal/xrpcserver (lexicons, no-store), internal/gateway (ttl, revocation hooks), internal/gatewaymain (wiring), internal/kcpclient (OwnersGroup), internal/kubeconfig (certificate kubeconfig), internal/openbao (CertRequest), internal/clientcert (new: issue and revoke), internal/clientcertfront (new: the client certificate front), internal/clusterprovider (PKI role, policy), internal/openbaoctl (cn_validations), api/v1alpha1 (OpenBaoPKIRole.CNValidations), internal/stack/gatewaykcp, internal/install, internal/clicfg, cmd/socialweb-computer"
+  typescript: "socialweb-computer-k8s (kubeconfig ttl choices, no-store)"
+  other: "deploy/tenant-grant.yaml, scripts/deploy.sh (caddy), README.md, docs/ARCHITECTURE.md, test/integration"
+how_to_run:
+  worktree: "git -C /home/johnandersen777/src/publicdomainrelay-kcp/socialweb-computer-kcp fetch origin; git -C <same> worktree add /home/johnandersen777/src/swc-worktrees/<name> -b task/<name> origin/main. Work only there."
+  build_while_iterating: "go build ./internal/<the packages you touched>/... ./cmd/socialweb-computer ; deno check <entry> for TypeScript (deploy/ts-entries.yaml). Never the full gate per change; CI runs it on push."
+  dev_binary: "scripts/build-socialweb-computer.sh --dev --publish /var/tmp/<name>. The binary is printed at the end (under ~/.tmp/socialweb-computer-build/dev/<worktree>/)."
+  live_slot: "deno run -A /home/johnandersen777/.tmp/swc-lead/live-slot.ts acquire <name> before dev up; beat every 30 min; release after dev down, also on failure."
+  market_network_up: "As test-0001: sudo -n -u test-0001 <binary> dev up --instance <name> --profile market-network --bidders 0 --with-gateway --guest-image-source file:///var/lib/socialweb-computer/guest-image --vm-host-backend systemd-user --state-dir /var/tmp/<name>-state. Run it with run_in_background. It prints a JSON report; Ready is .network.status.phase == Ready. The gateway brings up the tenant cluster `tenant` (owner: the account in owner-sessions.json). No item of this plan needs a VM, so --bidders 0."
+  market_network_down: "sudo -n -u test-0001 <binary> dev down --instance <name> --state-dir /var/tmp/<name>-state, then live-slot release."
+  paths:
+    gateway_dir: "/var/tmp/<name>-state/dev/<name>/apps/dev/<name>-gateway (test/integration/tenant.go:83-85)."
+    owner_sessions: "<gateway_dir>/owner-sessions.json: {\"<did>\": {\"service\", \"identifier\", \"password\"}} (internal/appctl/gatewaychild.go:25-29). Mode 0600. Never print it."
+    cluster_data_dir: "<gateway_dir>/clusterprovider/pdr-<accountHash>-tenant (internal/clusterprovider/name.go:39-45; test/integration/tenant.go:136-142)."
+    cluster_tls: "<cluster_data_dir>/server/tls: client-ca.crt, server-ca.crt, client-admin.{crt,key}, request-header-ca.crt, client-auth-proxy.{crt,key}."
+    front_state: "<cluster_data_dir>/front.json, field address (internal/clusterprovider/front.go:36; internal/apiserverfront/front.go:37-43)."
+    vault_access: "<cluster_data_dir>/openbao/access.json: address, caFile, clientCert, clientKey, certMount, certRole (internal/clusterprovider/openbaoserver.go:38-66)."
+    network_ca: "the CA bundle of the market network: `dev status --instance <name>` .network.status.network.caBundleRef."
+    listeners: "`dev status --instance <name>` .network.status.apps[] | select(.name == \"<name>-gateway\") | .listeners[]: xrpc (http, loopback), tls (https), and after M2 client-cert (https)."
+    gateway_log: "<gateway_dir>/logs/core.log (JSON lines; test/integration/tenant.go:122-134 reads it)."
+    audience: "did:web:socialweb.local in a market network (internal/stack/gatewaykcp/env.go:19, 101). Confirm it in the gateway log line \"serving\" field audiences."
+  helper_scripts: >
+    Write these three one-off scripts once under ~/.tmp/runbook-cert/ (Deno built-ins only, no imports, so test-0001
+    needs no network). Copy them and ~/.deno/bin/deno to /var/tmp/runbook-cert/ (deno mode 0755, scripts 0644).
+    Run them as `sudo -n -u test-0001 env DENO_DIR=/var/tmp/runbook-cert/deno-dir /var/tmp/runbook-cert/deno run -A
+    --cert <network_ca> /var/tmp/runbook-cert/<script>.ts <args>`. STOP if test-0001 cannot run that deno.
+    (1) xrpc.ts --gateway-dir D --xrpc http://<xrpc listener> --aud A --nsid <method name without prefix> --name N
+    [--ttl S] [--out FILE]: reads the first entry of D/owner-sessions.json; POST <service>/xrpc/com.atproto.server.createSession
+    {identifier, password}; GET <service>/xrpc/com.atproto.server.getServiceAuth?aud=A&lxm=com.publicdomainrelay.temp.cluster.<nsid>&exp=<now+60>
+    with Bearer accessJwt; POST <xrpc>/xrpc/com.publicdomainrelay.temp.cluster.<nsid> with JSON {name, ttlSeconds?} and
+    Bearer <service JWT>. It prints the HTTP status, the Cache-Control header and the JSON body EXCEPT the field kubeconfig.
+    With --out it writes the kubeconfig field to FILE with mode 0600 and prints only its byte count. It never prints a
+    password, a token or the kubeconfig. This is what goat does on prod (README.md:86-104).
+    (2) bao.ts --data-dir C --method GET|LIST --path P [--unauth]: reads C/openbao/access.json; builds Deno.createHttpClient
+    with caCerts = [caFile] and the client pair clientCert/clientKey; unless --unauth, POST <address>/v1/auth/<certMount>/login
+    {"name": <certRole>} and takes auth.client_token; then requests <address>/v1/<P> with X-Vault-Token and prints the JSON
+    data. It never prints the token. For a PEM path (pki/crl/pem, pki/ca/pem) it prints the body as text.
+    (3) certinfo.ts --kubeconfig FILE: parses the YAML by hand (look for client-certificate-data:, client-key-data:,
+    exec:, token:), prints which of those keys exist, base64-decodes client-certificate-data to a temp file under
+    $TMPDIR, runs `openssl x509 -noout -subject -issuer -serial -dates -ext extendedKeyUsage,subjectAltName` on it,
+    prints that output, and removes the temp file. It never prints client-key-data.
+items:
+  - id: M1-LEXICON-TTL
+    milestone: M1
+    title: getKubeconfig lexicon - ttlSeconds is the certificate lifetime; output shape unchanged
+    depends_on: []
+    decision: >
+      ttlSeconds already exists (an integer). Keep the name and the output shape {kubeconfig, instance}. Add
+      minimum 60 and maximum 86400 so the lexicon validation refuses an out-of-range value as InvalidRequest
+      before the handler runs (decodeBody, internal/xrpcserver/xrpcserver.go:246-272). Absent means 28800. Add
+      the error ClusterNotRunning (409) for a cluster whose spec.running is false: a stopped cluster has no
+      running vault to issue from. Rewrite the descriptions so they no longer name the exec plugin, the device
+      key or SOCIALWEB_MINT_URL.
+    files:
+      - "internal/xrpcserver/lexicons/getKubeconfig.json (the embedded copy that xrpcserver loads: lexicons.go:13-19)"
+      - "lexicons/com/publicdomainrelay/temp/cluster/getKubeconfig.json (the published copy; must stay byte-equal)"
+    change: |
+      1. In both files, defs.main.description: replace the last sentence ("The caller may ask for a shorter-lived
+         device credential ...") with: "The kubeconfig carries a client key and a short-lived x509 client
+         certificate issued by the cluster's own OpenBao PKI. The key is made by OpenBao and returned only in this
+         response; nothing stores it. ttlSeconds sets the certificate lifetime." Also replace "A COLD cluster is NOT
+         an error here: the kubeconfig is returned and its mount answers 503 until controlPlaneUp is called. This
+         call does not wake the control plane." with "A cluster whose spec.running is false answers
+         ClusterNotRunning; call createCluster or controlPlaneUp first. This call does not wake the control plane."
+      2. properties.ttlSeconds: add "minimum": 60, "maximum": 86400. description: "Lifetime of the client
+         certificate in seconds. Absent is 28800 (8 h). Below 60 or above 86400 is InvalidRequest: refused, never
+         clamped."
+      3. output.properties.kubeconfig.description: "The whole kubeconfig, as YAML text. users[0].user holds
+         client-certificate-data and client-key-data; there is no exec block and no token. The certificate's CN is
+         the caller DID and its O is socialweb.computer:cluster-owners. Keep the file mode 0600; never commit it."
+         Do not change output.required or the property names.
+      4. errors: add {"name": "ClusterNotRunning", "description": "The cluster exists but spec.running is false.
+         Call createCluster or controlPlaneUp, then call this again."} and {"name": "ClusterInitializing",
+         "description": "The control plane or its vault is coming up. Retry after the Retry-After header."}.
+    check: |
+      diff internal/xrpcserver/lexicons/getKubeconfig.json lexicons/com/publicdomainrelay/temp/cluster/getKubeconfig.json   (no output)
+      yq -o=json '.' internal/xrpcserver/lexicons/getKubeconfig.json > /dev/null   (exit 0)
+      go build ./internal/xrpcserver/... ./cmd/socialweb-computer   (exit 0)
+    stop: |
+      - diff prints anything after you copied the file.
+      - go build fails with "has no lexicon" or a lexicon parse error from loadCatalog (xrpcserver.go:104-107).
+    done_when: "both copies are equal, carry minimum/maximum and the two errors, and the binary builds."
+    risks: []
+    status: todo
+    evidence:
+  - id: M1-PKI-ROLE
+    milestone: M1
+    title: OpenBaoServer declaration - PKI role kubeconfig-user, cn_validations, and the policy paths
+    depends_on: [M1-LEXICON-TTL]
+    decision: >
+      New role kubeconfig-user on the pki mount of every cluster's OpenBaoServer, declared next to
+      tenant-superuser. A DID ("did:plc:...") is not a hostname or an e-mail, and OpenBao checks the CN with
+      cn_validations ["email", "hostname"] by default, so the role needs cn_validations ["disabled"].
+      OpenBaoPKIRole has no such field, so this item adds CNValidations to the API type and to the openbao
+      controller. The gateway logs in to the cluster vault with the existing clusterprovider client
+      (ClusterVaultClient); its policy gets the issue, list, read and revoke paths. A separate vault client for
+      the gateway is not added (smallest change; risk below). no_store stays false (the default) so that
+      pki/revoke by serial and LIST pki/certs work.
+    files:
+      - "api/v1alpha1/types_openbaoserver.go:202-236 (type OpenBaoPKIRole)"
+      - "internal/openbaoctl/layout.go:258-270 (the decl.PKIRoles loop)"
+      - "internal/clusterprovider/vault.go:25-29 (const block with VaultPKIPath, VaultPKIRoleTenant)"
+      - "internal/clusterprovider/vaultdeclared.go:26-37 (clusterProviderRules), :79-83 (d.PKIRoles append)"
+      - "internal/kcpclient/names.go:62 (TenantNamespace)"
+    change: |
+      1. api/v1alpha1/types_openbaoserver.go, in OpenBaoPKIRole after Organization, add:
+         CNValidations []string `json:"cnValidations,omitempty"`
+         Then run `go generate ./api/...` at the repository root. It rewrites the schemas under deploy/ and the
+         TypeScript wire types. Commit those generated files with this change. If the generator asks for a
+         Revision bump (deploy/apiresourceschema-revisions.txt), do what it says.
+      2. internal/openbaoctl/layout.go, in the decl.PKIRoles loop, after put(data, "organization", r.Organization) add:
+         put(data, "cn_validations", r.CNValidations)
+      3. internal/kcpclient/names.go, after TenantNamespace add:
+         const OwnersGroup = "socialweb.computer:cluster-owners"
+      4. internal/clusterprovider/vault.go, in the const block add:
+         VaultPKIRoleKubeconfig = "kubeconfig-user"
+      5. internal/clusterprovider/vaultdeclared.go, staticClusterDeclared, append to d.PKIRoles (after the
+         tenant-superuser entry):
+         v1alpha1.OpenBaoPKIRole{Mount: VaultPKIPath, Name: VaultPKIRoleKubeconfig, AllowAnyName: true,
+           EnforceHostnames: false, ClientFlag: true, ServerFlag: false, RequireCN: true, KeyType: "ec", KeyBits: 256,
+           KeyUsage: []string{"DigitalSignature"}, Organization: []string{kcpclient.OwnersGroup},
+           CNValidations: []string{"disabled"}, TTL: "8h", MaxTTL: "24h"}
+         (import internal/kcpclient if the file does not import it yet; clusterprovider already depends on it.)
+      6. vaultdeclared.go, clusterProviderRules, add these rules:
+         {Path: VaultPKIPath + "/issue/" + VaultPKIRoleKubeconfig, Capabilities: cu},
+         {Path: VaultPKIPath + "/revoke", Capabilities: cu},
+         {Path: VaultPKIPath + "/certs", Capabilities: []string{"list"}},
+         {Path: VaultPKIPath + "/certs/", Capabilities: []string{"list"}},
+         {Path: VaultPKIPath + "/cert/*", Capabilities: []string{"read"}},
+    check: |
+      go build ./api/... ./internal/openbaoctl/... ./internal/clusterprovider/... ./cmd/socialweb-computer
+      git status --short deploy/   (shows the regenerated OpenBaoServer schema)
+      Live (dev binary, market network up, tenant cluster answers /readyz, see how_to_run):
+        bao.ts --data-dir <cluster_data_dir> --method GET --path pki/roles/kubeconfig-user
+          expect: cn_validations ["disabled"], organization ["socialweb.computer:cluster-owners"], ttl 28800,
+          max_ttl 86400, client_flag true, server_flag false, allow_any_name true, no_store false.
+        bao.ts --data-dir <cluster_data_dir> --method GET --path pki/ca/pem --unauth
+          expect: the same PEM as <cluster_data_dir>/server/tls/client-ca.crt (compare with
+          `openssl x509 -noout -fingerprint -sha256` of both).
+        bao.ts --data-dir <cluster_data_dir> --method GET --path sys/policies/acl/clusterprovider
+          expect: the policy text holds pki/issue/kubeconfig-user, pki/revoke, pki/certs, pki/cert/*.
+    stop: |
+      - go generate fails, or wants a hand edit of a generated file.
+      - The role read answers 404 two minutes after the tenant cluster is Ready, or the OpenBaoServer status
+        (kcp, workspace of the clusterprovider; kubectl get openbaoservers -A -o yaml) reports a sync error.
+      - cn_validations is missing or not ["disabled"] in the role read (the OpenBao version does not know it).
+      - The pki/ca/pem fingerprint differs from client-ca.crt: the design assumption of this plan (source (6)) is
+        false.
+    done_when: "the role and the policy paths are live on a market network tenant cluster vault, and the PKI CA equals the k3s client CA."
+    risks:
+      - "The gateway shares the clusterprovider vault identity. A bug in the gateway can do what the clusterprovider policy allows (including issue/tenant-superuser). A gateway-only client with only the kubeconfig paths is a later hardening (plan 0014 M3)."
+      - "Plan 0013 M3-VAULT-TIDY must keep no_store false for kubeconfig-user; pki tidy removes its expired certificates."
+    status: todo
+    evidence:
+  - id: M1-OWNERS-GROUP-RBAC
+    milestone: M1
+    title: RBAC - the owners group gets the same binding as the owner ServiceAccount
+    depends_on: [M1-PKI-ROLE]
+    decision: >
+      The exec-plugin path has no owners group (source (5)). To give a certificate user the same permissions as
+      today, the ClusterRoleBinding socialweb-owner gets a second subject: the group
+      socialweb.computer:cluster-owners. Only the client certificate front sends that group to k3s (by
+      request-header authentication), and only for a certificate whose CN hashes to the cluster's account, so
+      the group grants nothing to another account. The ServiceAccount subject stays until M5. The grant is
+      applied when a cluster is created; existing clusters are not changed (no migration; prod is disposable).
+    files:
+      - "deploy/tenant-grant.yaml:42-56 (ClusterRoleBinding socialweb-owner)"
+    change: |
+      1. In deploy/tenant-grant.yaml, ClusterRoleBinding socialweb-owner, subjects: add after the ServiceAccount entry:
+           - kind: Group
+             apiGroup: rbac.authorization.k8s.io
+             name: socialweb.computer:cluster-owners
+         Do not change roleRef (cluster-admin), the ValidatingAdmissionPolicy or the gwmint objects.
+    check: |
+      go build ./internal/stack/gatewaykcp/... ./cmd/socialweb-computer   (the file is embedded: deploy/embed.go)
+      Live (new market network, so the tenant cluster gets the new grant): with the k3s admin kubeconfig of the
+      tenant cluster (<cluster_data_dir>/server/cred/admin.kubeconfig; if it is missing, build a kubeconfig from
+      front.json address + server/tls/server-ca.crt + client-admin.{crt,key} as test/integration/tenant.go:143-166 does):
+        kubectl --kubeconfig <admin> auth can-i '*' '*' --as did:plc:runbookcheck --as-group socialweb.computer:cluster-owners
+          expect: yes
+        kubectl --kubeconfig <admin> auth can-i create secrets -n users --as did:plc:runbookcheck --as-group socialweb.computer:cluster-owners
+          expect: yes from RBAC (the admission policy socialweb-mint-identity still refuses the create; same as the ServiceAccount today)
+        kubectl --kubeconfig <admin> get clusterrolebinding socialweb-owner -o yaml   (shows both subjects)
+    stop: |
+      - can-i answers no for the group.
+      - The binding has only one subject on a cluster created after this change.
+    done_when: "a new tenant cluster binds the group socialweb.computer:cluster-owners to cluster-admin."
+    risks: []
+    status: todo
+    evidence:
+  - id: M1-CERT-ISSUER
+    milestone: M1
+    title: internal/clientcert - issue a kubeconfig certificate from the cluster vault, build the kubeconfig, revoke
+    depends_on: [M1-OWNERS-GROUP-RBAC]
+    decision: >
+      New Go package internal/clientcert. Issuer implements kcpclient.DeviceKeyGranter
+      (internal/kcpclient/kcpclient.go:52-54) so the getKubeconfig path (kcpclient.Client.Kubeconfig,
+      kcpclient.go:491-508) does not change shape. The interface keeps its name until M5 renames it. The
+      issuer calls pki/issue/kubeconfig-user on the cluster's own vault with common_name = the verified caller
+      DID, ttl = the requested seconds, exclude_cn_from_sans = true (a DID must not become a DNS SAN). It checks
+      the returned certificate (CN, O, lifetime) before it uses it, builds the kubeconfig with a new function in
+      internal/kubeconfig, and returns it. The key is held only in local variables. The kubeconfig carries
+      certificate-authority-data only when the deployment names a CA file for the public server
+      (market network: the gateway's self-signed TLS certificate; prod: none, Caddy has a public certificate).
+    files:
+      - "internal/clientcert/clientcert.go (new)"
+      - "internal/openbao/openbao.go:334-338 (CertRequest), :353-366 (IssueCert)"
+      - "internal/kubeconfig/kubeconfig.go:12-28 (Input), :38-102 (Build), :104-121 (Forbidden, AssertClean)"
+      - "internal/clusterprovider/openbaoserver.go:112-114 (ClusterVaultClient), name.go:39-45 (ClusterDataDir)"
+      - "internal/kcpclient/names.go:30-36 (HomePath, MountPath), :44-60 (ClusterKey), :21-24 (AccountHash)"
+      - "internal/gateway/gateway.go:14 (MinDeviceKeyTTL)"
+    change: |
+      1. internal/openbao/openbao.go: add field ExcludeCNFromSANs bool to CertRequest. In IssueCert, after the ttl
+         block: if req.ExcludeCNFromSANs { body["exclude_cn_from_sans"] = true }.
+      2. internal/kubeconfig/kubeconfig.go: add
+           type ClientCertInput struct { ClusterName, Server string; CACertPEM, CertPEM, KeyPEM []byte }
+           func BuildClientCert(in ClientCertInput) (string, error)
+         It refuses an empty ClusterName, a server that is not https (ErrNotHTTPS), an empty CertPEM or KeyPEM.
+         It renders the same document as Build (clusters, users, contexts, current-context), with
+         cluster = {"server": in.Server} plus "certificate-authority-data": in.CACertPEM when len > 0, and
+         user = {"client-certificate-data": in.CertPEM, "client-key-data": in.KeyPEM}. Use []byte values:
+         sigs.k8s.io/yaml writes []byte as base64, which is the kubeconfig format. Do not call AssertClean on it.
+         Leave Build and AssertClean unchanged (the exec path uses them until M5).
+      3. internal/gateway/gateway.go, next to MinDeviceKeyTTL add:
+           const ( DefaultClientCertTTL = 8 * time.Hour; MaxClientCertTTL = 24 * time.Hour )
+           var ErrIssuerUnavailable = errors.New("gateway: the certificate issuer cannot issue now")
+         (internal/gateway must not import clientcert; clientcert imports gateway.)
+      4. New file internal/clientcert/clientcert.go, package clientcert:
+         - var ErrVaultUnavailable = gateway.ErrIssuerUnavailable
+         - type Issuer struct { StateDir string; CAFile string; Log *slog.Logger }
+           StateDir = the clusterprovider state dir. CAFile = optional PEM file for certificate-authority-data.
+         - func DataDir(stateDir, did, cluster string) (string, error):
+             key, err := kcpclient.ClusterKey(kcpclient.HomePath(did, cluster)); return clusterprovider.ClusterDataDir(stateDir, key)
+         - func (i *Issuer) Grant(ctx context.Context, in kcpclient.GrantInput) (string, error):
+             a. refuse an empty in.Caller, in.Cluster or in.Server.
+             b. ttl := in.TTL; if ttl == 0 { ttl = gateway.DefaultClientCertTTL }; refuse ttl < gateway.MinDeviceKeyTTL or
+                ttl > gateway.MaxClientCertTTL.
+             c. dir := DataDir(i.StateDir, string(in.Caller), in.Cluster); client, _, err := clusterprovider.ClusterVaultClient(ctx, dir);
+                on error return fmt.Errorf("%w: %v", ErrVaultUnavailable, err).
+             d. cctx, cancel := context.WithTimeout(ctx, 10*time.Second); cert, err := client.IssueCert(cctx, clusterprovider.VaultPKIPath,
+                clusterprovider.VaultPKIRoleKubeconfig, openbao.CertRequest{CommonName: string(in.Caller),
+                TTL: strconv.FormatInt(int64(ttl/time.Second), 10) + "s", ExcludeCNFromSANs: true}).
+                On error return fmt.Errorf("%w: issue: %v", ErrVaultUnavailable, err). Never wrap cert.PrivateKey.
+             e. parse cert.Certificate (pem.Decode, x509.ParseCertificate). Refuse unless Subject.CommonName == in.Caller,
+                Subject.Organization == [kcpclient.OwnersGroup], NotAfter.Sub(NotBefore) <= MaxClientCertTTL + 5*time.Minute,
+                ExtKeyUsage contains ClientAuth, and cert.PrivateKey != "". The refusal message names only the field.
+             f. caPEM: when i.CAFile != "", os.ReadFile(i.CAFile).
+             g. return kubeconfig.BuildClientCert(kubeconfig.ClientCertInput{ClusterName: in.Cluster, Server: in.Server,
+                CACertPEM: caPEM, CertPEM: []byte(cert.Certificate), KeyPEM: []byte(cert.PrivateKey)}).
+             h. log at info: "clientcert: issued a kubeconfig certificate", did, cluster, serial (cert.Serial), notAfter.
+                Nothing else from cert.
+         - func (i *Issuer) Revoke(ctx context.Context, did, cluster string) (int, error):
+             dir := DataDir(...); client := ClusterVaultClient(...); serials := client.List(ctx, "pki/certs");
+             for each serial: m := client.Read(ctx, "pki/cert/"+serial); parse m["certificate"] (string PEM);
+             skip unless CN == did and Organization == [kcpclient.OwnersGroup] and NotAfter after now;
+             client.Write(ctx, "pki/revoke", map[string]any{"serial_number": serial}); count it.
+             Log at info: "clientcert: revoked kubeconfig certificates", did, cluster, count. Return count.
+             Use a 30 s context for the whole loop.
+         - func FetchCRL(ctx context.Context, dataDir string) (*x509.RevocationList, error):
+             a := clusterprovider.ReadVaultAccess(dataDir); GET a.Address + "/v1/pki/crl" (DER, unauthenticated) with an
+             http.Client whose RootCAs come from a.CAFile, timeout 5 s; x509.ParseRevocationList(body).
+    check: |
+      go build ./internal/clientcert/... ./internal/kubeconfig/... ./internal/openbao/... ./cmd/socialweb-computer
+      go vet ./internal/clientcert/... ./internal/kubeconfig/... ./internal/openbao/...
+      go list -deps ./internal/clientcert | grep -c internal/gatewaymain   (prints 0: no import cycle)
+    stop: |
+      - An import cycle (go build says "import cycle not allowed").
+      - kcpclient.DeviceKeyGranter has a different signature than Grant(ctx, kcpclient.GrantInput) (string, error).
+    done_when: "the package builds and vets; nothing calls it yet."
+    risks: []
+    status: todo
+    evidence:
+  - id: M1-GETKUBECONFIG-HANDLER
+    milestone: M1
+    title: getKubeconfig returns the certificate kubeconfig
+    depends_on: [M1-CERT-ISSUER]
+    decision: >
+      Swap the granter in the gateway composition root from devicekey to clientcert. The verbs layer applies
+      the new TTL rule and the ClusterNotRunning rule; the XRPC layer adds Cache-Control no-store. Two new
+      gateway settings: SOCIALWEB_GATEWAY_CLUSTER_STATE_DIR (required: where the cluster data dirs are) and
+      SOCIALWEB_GATEWAY_KCP_PUBLIC_CA_FILE (optional: the CA PEM the kubeconfig carries for its server). The
+      server URL keeps its form: <SOCIALWEB_GATEWAY_KCP_PUBLIC_HOST or kcp host>/clusters/root:<acct>:<cluster>:clusters
+      (kcpclient.go:491-508, unchanged). The mint route /v1/credential keeps working for old kubeconfigs until M5.
+    files:
+      - "internal/gateway/gateway.go:26-50 (errors), :120-127 (Server), :144-166 (GetKubeconfig), :182-192 (deviceKeyTTL)"
+      - "internal/xrpcserver/xrpcserver.go:190-224 (xrpc handler; writeJSON at :222)"
+      - "internal/gatewaymain/config.go:15-40 (env names), :60-85 (Config), :87-160 (load)"
+      - "internal/gatewaymain/main.go:104-132 (audience check, devicekey.New, kcpclient.New)"
+      - "internal/stack/gatewaykcp/env.go:92-150 (defaults)"
+    change: |
+      1. gateway.go: add ErrClusterNotRunning = &XRPCError{"ClusterNotRunning", "the cluster is stopped; call createCluster or controlPlaneUp first", 409}.
+      2. gateway.go deviceKeyTTL: rename to clientCertTTL. nil -> return DefaultClientCertTTL, nil. Refuse (ErrInvalidRequest)
+         when *seconds < 60 or *seconds > int64(MaxClientCertTTL/time.Second). Do not read s.MaxDeviceKeyTTL any more
+         (leave the field; M5 removes it). Update the call at :145.
+      3. gateway.go GetKubeconfig: after the Store.Get block (:153-159) add: if !view.Running { return nil, ErrClusterNotRunning }.
+         In the Store.Kubeconfig error branch (:161-163), first: if errors.Is(err, ErrIssuerUnavailable) { return nil,
+         ErrClusterInitializing } (ErrIssuerUnavailable is from M1-CERT-ISSUER step 3; ErrClusterInitializing is
+         retryable, xrpcserver.go:50).
+      4. xrpcserver.go xrpc(): before writeJSON(w, http.StatusOK, ...) add: if r.nsid == nsidGetKubeconfig {
+         w.Header().Set("Cache-Control", "no-store") }. Also set it before writeError for that nsid (no harm).
+      5. gatewaymain/config.go: add envClusterStateDir = "SOCIALWEB_GATEWAY_CLUSTER_STATE_DIR" and
+         envKCPPublicCAFile = "SOCIALWEB_GATEWAY_KCP_PUBLIC_CA_FILE"; Config fields ClusterStateDir, KCPPublicCAFile;
+         in load(): ClusterStateDir is required (add it to the required list), KCPPublicCAFile optional (TrimSpace).
+         Add both to internal/clicfg/options.json next to gateway-kcp-public-host (:330-334) as options
+         gateway-cluster-state-dir and gateway-kcp-public-ca-file with these env names.
+      6. gatewaymain/main.go buildDeps: delete the devicekey.New block (:110-121) and its import. Build
+           certs := &clientcert.Issuer{StateDir: cfg.ClusterStateDir, CAFile: cfg.KCPPublicCAFile, Log: slog.Default()}
+         and pass DeviceKeys: certs to kcpclient.New (:122-132). Keep the audience equality check (:104-109) and the
+         mint store; the mint route still serves.
+      7. gatewaykcp/env.go defaults(): after the SOCIALWEB_CLUSTERPROVIDER_STATE_DIR default (:115) add
+           e.dflt("SOCIALWEB_GATEWAY_CLUSTER_STATE_DIR", e.get("SOCIALWEB_CLUSTERPROVIDER_STATE_DIR"))
+      8. Delete tests that no longer compile or fail because of 2-6 (gateway_test.go, xrpcserver_test.go,
+         gatewaymain/*_test.go, kcpclient_test.go cases that expect an exec kubeconfig). Delete, do not repair.
+    check: |
+      go build ./internal/gateway/... ./internal/xrpcserver/... ./internal/gatewaymain/... ./internal/stack/gatewaykcp/... ./cmd/socialweb-computer
+      go vet ./internal/gateway/... ./internal/xrpcserver/... ./internal/gatewaymain/...
+      Live (new dev binary, new market network):
+        xrpc.ts ... --nsid getKubeconfig --name tenant --out /var/tmp/runbook-cert/kc-tenant.yaml
+          expect: status 200, Cache-Control no-store, body has instance, kubeconfig written.
+        certinfo.ts --kubeconfig /var/tmp/runbook-cert/kc-tenant.yaml
+          expect: client-certificate-data and client-key-data present; exec and token absent; subject
+          CN = <owner did>, O = socialweb.computer:cluster-owners; notAfter - notBefore about 8 h; extendedKeyUsage
+          TLS Web Client Authentication; no subjectAltName with the DID.
+        xrpc.ts ... --nsid getKubeconfig --name tenant --ttl 3600 --out ...   (lifetime about 1 h)
+        xrpc.ts ... --nsid getKubeconfig --name tenant --ttl 59               (400 InvalidRequest)
+        xrpc.ts ... --nsid getKubeconfig --name tenant --ttl 86401            (400 InvalidRequest)
+        xrpc.ts ... --nsid controlPlaneDown --name tenant, then getKubeconfig  (409 ClusterNotRunning); then
+          controlPlaneUp and wait for Ready before the next item.
+        The KEY LOG CHECK of security_rules (no match).
+      The server of this kubeconfig is not reachable with a certificate yet (M2 makes it reachable).
+    stop: |
+      - The kubeconfig still has an exec block, or has no client-key-data.
+      - CN is not the owner DID of owner-sessions.json, or O is not exactly socialweb.computer:cluster-owners.
+      - getKubeconfig answers 503 ClusterUnavailable or 500: read the gateway log line of that request and stop.
+      - Any KEY LOG CHECK match.
+    done_when: "getKubeconfig on a market network returns a certificate kubeconfig with the right CN, O and lifetime, refuses bad ttlSeconds, and nothing logs the key."
+    risks: ["Old exec-plugin kubeconfigs keep working through /v1/credential until M5; no new ones are handed out."]
+    status: todo
+    evidence:
+  - id: M1-WEB-APP-TTL
+    milestone: M1
+    title: The web app offers certificate lifetimes up to 24 h and sends no-store
+    depends_on: [M1-GETKUBECONFIG-HANDLER]
+    decision: >
+      The web app download calls the same getKubeconfig (socialweb-computer-k8s/lib/socialweb-computer-k8s-gateway-xrpc/mod.ts:72-76).
+      Its lifetime choices are 1 d, 7 d and 30 d today, which the gateway now refuses. New choices: 1 h, 8 h,
+      24 h; the default maximum becomes 86400. The JSON response gets Cache-Control no-store. The credential
+      helper list stays until M5.
+    files:
+      - "socialweb-computer-k8s/lib/common/socialweb-computer-k8s-common/mod.ts:59-66 (DAY_SEC, DEFAULT_KUBECONFIG_TTL_CHOICES_SEC)"
+      - "socialweb-computer-k8s/hono-socialweb-computer-k8s/cli-args-env.json:95-100 (kubeconfig-max-ttl-sec)"
+      - "socialweb-computer-k8s/lib/hono-factory-socialweb-computer-k8s/mod.ts:127-145 (POST /api/clusters/kubeconfig)"
+      - "socialweb-computer-k8s/web/components/swc-cluster-list.js:39 (ttlChoicesSec fallback)"
+    change: |
+      1. common mod.ts: add export const HOUR_SEC = 3_600; set DEFAULT_KUBECONFIG_TTL_CHOICES_SEC = [HOUR_SEC, 8 * HOUR_SEC, DAY_SEC].
+      2. cli-args-env.json kubeconfig-max-ttl-sec: "default": 86400; description "Longest kubeconfig certificate lifetime a user may pick (at most 86400)".
+      3. hono-factory mod.ts, in the kubeconfig route, before `return c.json({ name: ...` add c.header("Cache-Control", "no-store").
+      4. swc-cluster-list.js:39: ttlChoicesSec: [28800].
+    check: |
+      deno check socialweb-computer-k8s/hono-socialweb-computer-k8s/mod.ts   (run from the repository root)
+      Live: scripts/build-socialweb-computer.sh --dev --publish /var/tmp/<name> --sync-only, then
+        sudo -n -u test-0001 <binary> dev restart <name> <name>-gateway/<web app denopod> (AGENTS.md "How to verify");
+        curl -s http://<web app listener>/api/config | jq .ttlChoicesSec   -> [3600, 28800, 86400]
+    stop: |
+      - deno check fails in a file you did not touch (report it; do not fix other code).
+    done_when: "the web app offers 1 h, 8 h and 24 h and its kubeconfig response is no-store."
+    risks: []
+    status: todo
+    evidence:
+  - id: M2-CLIENT-CERT-FRONT
+    milestone: M2
+    title: The client certificate front - checks the certificate where TLS ends and forwards to k3s by request-header authentication
+    depends_on: [M1-WEB-APP-TTL]
+    decision: >
+      Why not k3s --client-ca-file alone: k3s already trusts the PKI CA (source (6)), but the certificate never
+      reaches k3s. Caddy ends TLS for kcp.socialweb.computer and kcp's mount proxy opens a new TLS connection
+      without a client certificate (source (1), (2)). A TLS pass-through needs Caddy layer4 (not installed) or a
+      new public port per cluster. k3s also does not check a CRL.
+      Why not kcp --mount-proxy-client-cert-file plus request-header at k3s: kcp's local proxy runs before
+      authentication and forwards every client header, so any client that reaches kcp could write X-Remote-User.
+      Chosen (smallest safe change): a new HTTPS listener in the gateway process, the client certificate front
+      (Go package internal/clientcertfront, member "client certificate front" of the gateway). It serves the
+      same path form /clusters/root:<acct>:<cluster>:clusters/... as kcp, so the kubeconfig server keeps its form.
+      It requires a TLS client certificate (crypto/tls checks the CertificateVerify signature, so the client
+      holds the key). Two ways in:
+      (a) direct: the peer certificate is the user certificate (a market network; kubectl dials the front);
+      (b) edge (prod): Caddy ends TLS with `client_auth mode request`, puts the peer certificate in
+      X-Socialweb-Client-Certificate (base64 DER) and connects to the front with the edge client certificate
+      that the front made; the front believes the header only from that exact peer (M3-PROD-EDGE).
+      For each request the front: maps the path to the cluster data dir; verifies the user certificate against
+      <dataDir>/server/tls/client-ca.crt with ExtKeyUsageClientAuth; checks CN (a DID whose AccountHash is the
+      path account), O (exactly the owners group) and lifetime (at most 24 h + 5 min); checks the PKI CRL and the
+      deny record; then reverse-proxies to the cluster's apiserver front address (front.json) over TLS that
+      trusts server-ca.crt and presents client-auth-proxy.{crt,key}, with Authorization and X-Remote-* removed
+      and X-Remote-User = CN, X-Remote-Group = socialweb.computer:cluster-owners. k3s already accepts that
+      (source (9)). No change to k3s, the apiserver front or kcp.
+      Address: an application front with a known address in prod (127.0.0.1:8444, option cert-front-address,
+      like tls-front-address 127.0.0.1:8443), port 0 in a market network. Its bound address is reported in the
+      gateway listeners as client-cert (https). In a market network the gateway defaults
+      SOCIALWEB_GATEWAY_KCP_PUBLIC_HOST to https://<that address> and SOCIALWEB_GATEWAY_KCP_PUBLIC_CA_FILE to the
+      gateway TLS certificate, so getKubeconfig points kubectl at the front. In prod both come from gateway.env
+      (https://kcp.socialweb.computer, no CA file).
+    files:
+      - "internal/clientcertfront/clientcertfront.go (new)"
+      - "internal/stack/gatewaykcp/gatewaykcp.go:51-55 (listener names), :75-95 (Config), :450-524 (members: gateway member :497-500, tls front member :505-509)"
+      - "internal/stack/gatewaykcp/env.go:92-150 (defaults), :147-148 (TLS cert env)"
+      - "internal/install/install.go:117-125 (OptKcpFront, OptTLSFront, GatewayListen, Passed)"
+      - "cmd/socialweb-computer/gateway.go:21 (option names), :130 (Config), :186 (runGatewayChild Config)"
+      - "internal/clicfg/options.json:505-510 (tls-front-address)"
+      - "internal/gatewaymain/main.go:77-81 (how the gateway builds its kcp rest config: clientcmd + kcpserver.FollowTokenFile)"
+      - "internal/revocation/revocation.go:43-60 (Admit)"
+    change: |
+      0. FIRST check the k3s facts of source (9) on a running market network tenant cluster (STOP list below):
+         ls <cluster_tls>/request-header-ca.crt <cluster_tls>/client-auth-proxy.crt <cluster_tls>/client-auth-proxy.key
+         openssl x509 -noout -subject -in <cluster_tls>/client-auth-proxy.crt        (CN = system:auth-proxy)
+         kubectl --kubeconfig <admin> -n kube-system get cm extension-apiserver-authentication -o yaml
+           (requestheader-allowed-names ["system:auth-proxy"], requestheader-username-headers ["X-Remote-User"],
+            requestheader-group-headers ["X-Remote-Group"])
+      1. New package internal/clientcertfront, file clientcertfront.go:
+         - const HeaderClientCertificate = "X-Socialweb-Client-Certificate"; EdgeCertName = "edge-client.crt"; EdgeKeyName = "edge-client.key"
+         - type Config struct { Address, CertFile, KeyFile, EdgeDir, ClusterStateDir string; Deny revocation.Deny;
+             OnListen func(net.Addr); Log *slog.Logger }
+         - func EnsureEdgeClient(dir string) (certFile, keyFile string, err error): like tlsfront.EnsureSelfSigned
+           (internal/tlsfront/tlsfront.go:53-91) but CN "socialweb-edge-client", ExtKeyUsageClientAuth, no DNS/IP
+           names, 10 years, key mode 0600, cert mode 0644; keep existing files.
+         - func Run(ctx context.Context, c Config) error: EnsureEdgeClient(c.EdgeDir); edgePin := sha256 of the DER
+           of edge-client.crt; ln := net.Listen("tcp", c.Address); OnListen(ln.Addr()); serve
+           http.Server{Handler: h, ReadHeaderTimeout: 10 s, TLSConfig: &tls.Config{Certificates: [CertFile/KeyFile pair],
+           ClientAuth: tls.RequireAnyClientCert, MinVersion: tls.VersionTLS12, NextProtos: []string{"http/1.1"}}}
+           with ServeTLS(ln, "", ""); stop on ctx.Done with Shutdown (5 s). Log "listening" with addr.
+         - the handler, in this order (refuse = write the status, log one line with remote, did, cluster, serial
+           and reason; never the certificate):
+           a. peer := r.TLS.PeerCertificates[0]. If sha256(peer.Raw) == edgePin: v := r.Header.Get(HeaderClientCertificate);
+              empty -> 401; der := base64.StdEncoding.DecodeString(v) (error -> 400); user := x509.ParseCertificate(der) (error -> 400).
+              Else: if r.Header.Get(HeaderClientCertificate) != "" -> 400; user := peer.
+           b. path: regexp ^/clusters/root:([a-z0-9]+):([a-z0-9]([a-z0-9-]*[a-z0-9])?):clusters(/.*)?$ ; no match -> 404.
+              acct, name, rest (rest "" means "/").
+           c. cn := user.Subject.CommonName. Refuse 403 unless strings.HasPrefix(cn, "did:") and kcpclient.AccountHash(cn) == acct
+              and user.Subject.Organization is exactly [kcpclient.OwnersGroup] and
+              user.NotAfter.Sub(user.NotBefore) <= gateway.MaxClientCertTTL + 5*time.Minute.
+           d. dir := clientcert.DataDir(c.ClusterStateDir, cn, name); load (cache per dir for 30 s): client-ca.crt pool,
+              server-ca.crt pool, client-auth-proxy pair, front.json address. A missing file -> 503 "cluster not reachable".
+           e. user.Verify(x509.VerifyOptions{Roots: clientCA, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}) error -> 401.
+           f. CRL: clientcert.FetchCRL(ctx, dir), cached per dir for 60 s; on fetch error keep the cached one when it is younger
+              than 10 min, else 503. user.SerialNumber in the CRL -> 401.
+           g. deny: revocation.Admit(ctx, c.Deny, cn). ErrRevoked or ErrDenyRecordMissing -> 403; other error -> 503.
+              Cache a Granted answer per DID for 2 s; never cache a refusal.
+           h. ctx, cancel := context.WithDeadline(r.Context(), user.NotAfter); defer cancel().
+           i. httputil.ReverseProxy{Rewrite: func(pr) { pr.Out.URL.Scheme = "https"; pr.Out.URL.Host = <front address>;
+              pr.Out.URL.Path = rest; pr.Out.URL.RawPath = ""; pr.Out.Host = <front address>;
+              pr.Out.Header.Del("Authorization"); delete every header whose canonical name starts with "X-Remote-";
+              pr.Out.Header.Del(HeaderClientCertificate); pr.Out.Header.Set("X-Remote-User", cn);
+              pr.Out.Header.Set("X-Remote-Group", kcpclient.OwnersGroup) }, FlushInterval: -1,
+              Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: serverCA, Certificates: [proxy pair],
+              MinVersion: tls.VersionTLS12}, ForceAttemptHTTP2: false, DialContext: (&net.Dialer{Timeout: 5 s}).DialContext},
+              ErrorHandler: write 503 "cluster not reachable" and log}. Keep the query string. Go's ReverseProxy
+              passes Upgrade (exec, attach, port-forward) over HTTP/1.1.
+      2. gatewaykcp.go: add ListenerClientCert = "client-cert" to the listener const block; add Config field
+         CertFrontAddress string. In members(), BEFORE the gateway member (:497):
+           - build a kcp client for deny lookups: cfg := clientcmd.BuildConfigFromFlags("", g.memberKubeconfig());
+             kcpserver.FollowTokenFile(cfg); deny := kcpclient.New(kcpclient.Options{Host: rec.KcpURL, RestConfig: cfg})
+             (the same way gatewaymain/main.go:77-81 and :122 build theirs).
+           - addr := g.c.CertFrontAddress, default DefaultAddress when empty.
+           - start(member{"client certificate front", func(ctx) error { return clientcertfront.Run(ctx, clientcertfront.Config{
+               Address: addr, CertFile: cert, KeyFile: key, EdgeDir: filepath.Join(g.c.StateDir, "tls"),
+               ClusterStateDir: env.get("SOCIALWEB_CLUSTERPROVIDER_STATE_DIR"), Deny: deny,
+               OnListen: func(a net.Addr) { g.reg.set(ListenerClientCert, "https", a) }, Log: g.c.Log}) }})
+           - front, err := g.waitListener(mctx, ended, ListenerClientCert); on error return it.
+           - if env.get("SOCIALWEB_GATEWAY_KCP_PUBLIC_HOST") == "" { env.set("SOCIALWEB_GATEWAY_KCP_PUBLIC_HOST", "https://"+front);
+               env.dflt("SOCIALWEB_GATEWAY_KCP_PUBLIC_CA_FILE", cert) }
+           Then the gateway member starts as today and reads these from env.
+      3. internal/install/install.go: add OptCertFront = "cert-front-address"; GatewayListen gets OptCertFront: "127.0.0.1:8444";
+         add OptCertFront to Passed. cmd/socialweb-computer/install.go:20 list: add install.OptCertFront.
+      4. cmd/socialweb-computer/gateway.go: add "cert-front-address" to the option list (:21); set
+         CertFrontAddress: vals.String("cert-front-address") in the Config at :130. runGatewayChild (:186) sets
+         CertFrontAddress: gatewaykcp.DefaultAddress.
+      5. internal/clicfg/options.json: add "cert-front-address" next to "tls-front-address" (:505-510): type string,
+         description "serve gateway kcp: listen address of the client certificate front (an edge entry point; port 0 is read back into the Gateway status)",
+         env SOCIALWEB_CERT_FRONT_ADDRESS, default "127.0.0.1:0".
+    check: |
+      go build ./internal/clientcertfront/... ./internal/stack/gatewaykcp/... ./internal/install/... ./cmd/socialweb-computer
+      go vet ./internal/clientcertfront/... ./internal/stack/gatewaykcp/...
+      Live (new dev binary, new market network):
+        dev status: the gateway listeners include client-cert (https) with an address.
+        xrpc.ts ... --nsid getKubeconfig --name tenant --out /var/tmp/runbook-cert/kc-tenant.yaml
+        The server in that kubeconfig is https://<client-cert address>/clusters/root:<acct>:tenant:clusters.
+        As test-0001 with PATH=/usr/local/bin:/usr/bin:/bin (no socialweb-credential on it; `command -v socialweb-credential` prints nothing):
+          kubectl --kubeconfig /var/tmp/runbook-cert/kc-tenant.yaml get nodes        -> "No resources found" (exit 0)
+          kubectl --kubeconfig ... auth whoami      -> Username <owner did>, Groups socialweb.computer:cluster-owners, system:authenticated
+          kubectl --kubeconfig ... create namespace runbook-check ; kubectl ... delete namespace runbook-check   (both exit 0)
+          kubectl --kubeconfig ... run rb --image=busybox:1.36 --restart=Never --command -- sleep 5 ; then delete it
+            (a Pending pod is fine; the item needs only the create)
+        Negative, same session:
+          curl --cacert <gateway tls.crt> https://<client-cert address>/clusters/root:<acct>:tenant:clusters/api   -> TLS handshake failure (no client cert)
+          curl ... --cert <cluster_tls>/client-admin.crt --key <cluster_tls>/client-admin.key .../api   -> 403 (O system:masters, CN not a DID)
+          curl ... --cert <user cert> --key <user key> -H 'X-Socialweb-Client-Certificate: AAAA' .../api   -> 400
+          curl ... --cert <user cert> --key <user key> -H 'X-Remote-User: system:admin' -H 'X-Remote-Group: system:masters'
+            https://<front>/clusters/root:<acct>:tenant:clusters/apis/authentication.k8s.io/v1/selfsubjectreviews -X POST
+            -H 'Content-Type: application/json' -d '{"apiVersion":"authentication.k8s.io/v1","kind":"SelfSubjectReview"}'
+            -> the review names the owner DID, not system:admin
+          (write the user cert and key out of the kubeconfig with certinfo.ts-style decoding into $TMPDIR, mode 0600; delete them after)
+        The KEY LOG CHECK of security_rules.
+    stop: |
+      - Any fact of step 0 differs (missing file, other CN, other allowed names or header names).
+      - kubectl answers 401: the front log line says why; if it says the chain does not verify, compare
+        `openssl x509 -noout -issuer` of the user cert with the subject of client-ca.crt and stop.
+      - kubectl answers 403 from k3s (the message names the user): check M1-OWNERS-GROUP-RBAC on this cluster and stop.
+      - The SelfSubjectReview with injected X-Remote-* headers names anything but the owner DID: STOP at once, this is a security defect.
+      - kubectl get nodes needs socialweb-credential.
+    done_when: "on a market network, plain kubectl with the getKubeconfig kubeconfig lists nodes, creates objects as the owner DID in the owners group, and every negative case above is refused."
+    risks:
+      - "The front reads the cluster's TLS files from disk; a cluster on another host (not the case today) needs the clusterprovider to publish them."
+      - "A request already streaming (watch, exec) when the deny is written runs until it ends or until the certificate's NotAfter (at most 24 h)."
+    status: todo
+    evidence:
+  - id: M2-REVOCATION
+    milestone: M2
+    title: deleteCluster and revokeIdentity revoke the issued certificates in the cluster PKI
+    depends_on: [M2-CLIENT-CERT-FRONT]
+    decision: >
+      The front already refuses a revoked identity at once (deny record) and a deleted cluster (no data dir). This
+      item also revokes the serials in the cluster PKI, so the CRL lists them and a recreated cluster that kept its
+      CA would still refuse them. gateway.Server gets an optional CertRevoker; clientcert.Issuer is it. A failed
+      PKI revoke is logged and does not fail the verb: the deny or the delete already ends access. deleteCluster
+      revokes before it deletes (the vault is gone after).
+    files:
+      - "internal/gateway/gateway.go:114-127 (Revoker, Server), :241-246 (DeleteCluster), :265-298 (RevokeIdentity)"
+      - "internal/gatewaymain/wiring.go:19-32 (Deps), :57-60 (gateway.Server)"
+      - "internal/gatewaymain/main.go (buildDeps: the certs Issuer from M1-GETKUBECONFIG-HANDLER)"
+      - "internal/clientcert/clientcert.go (Revoke, from M1-CERT-ISSUER)"
+    change: |
+      1. gateway.go: add
+           type CertRevoker interface { Revoke(ctx context.Context, did, cluster string) (int, error) }
+         and field Certs CertRevoker in Server.
+      2. DeleteCluster: after the lookup and before Store.Delete: if s.Certs != nil { if n, err := s.Certs.Revoke(ctx,
+         string(caller), req.Name); err != nil { slog.Warn("deleteCluster: the PKI revoke failed; the delete removes the CA",
+         "caller", string(caller), "name", req.Name, "err", err) } else { slog.Info("deleteCluster: certificates revoked", "count", n) } }
+      3. RevokeIdentity: after FanOut and the name scope (after :295), for each c in observed: same call with c.Name,
+         same logging ("revokeIdentity: ..."). Do not change the response.
+      4. wiring.go: Deps gets Certs gateway.CertRevoker; Build passes Certs: d.Certs into gateway.Server. main.go buildDeps
+         sets Certs: certs (the same *clientcert.Issuer).
+    check: |
+      go build ./internal/gateway/... ./internal/gatewaymain/... ./cmd/socialweb-computer
+      Live (new dev binary, new market network; take TWO kubeconfigs A and B from getKubeconfig first):
+        kubectl --kubeconfig A get nodes   -> works
+        xrpc.ts ... --nsid revokeIdentity --name tenant   -> 200
+        within 2 s: kubectl --kubeconfig A get nodes   -> error (Forbidden from the front)
+        bao.ts --data-dir <cluster_data_dir> --method GET --path pki/crl/pem --unauth > $TMPDIR/crl.pem;
+          openssl crl -noout -text -in $TMPDIR/crl.pem lists the serials of A and B (certinfo.ts prints them).
+        gateway log: "revokeIdentity: certificates revoked" count >= 2.
+        Delete case: a NEW market network (the owner DID is revoked in the first one); getKubeconfig -> C;
+          note the sha256 fingerprint of <cluster_data_dir>/server/tls/client-ca.crt; xrpc.ts --nsid deleteCluster --name tenant;
+          kubectl --kubeconfig C get nodes -> refused; xrpc.ts --nsid createCluster --name tenant and wait for Ready;
+          compare the client-ca.crt fingerprint; kubectl --kubeconfig C get nodes -> refused.
+    stop: |
+      - kubectl with A still works 5 s after revokeIdentity.
+      - The CRL does not list the serials and the log shows a revoke error other than "permission denied"; if it is
+        "permission denied", M1-PKI-ROLE policy paths are wrong: stop.
+      - The client-ca.crt fingerprint is the SAME after delete and create, and C works again: STOP (a recreated cluster
+        reuses its CA; the lead must decide).
+    done_when: "after revokeIdentity the old kubeconfigs are refused within 2 s and their serials are in the CRL; after deleteCluster the old kubeconfig is refused, also after the cluster is created again."
+    risks: ["Revoke reads every stored certificate of the cluster PKI (LIST pki/certs). It is bounded by pki tidy (plan 0013 M3-VAULT-TIDY)."]
+    status: todo
+    evidence:
+  - id: M3-PROD-EDGE
+    milestone: M3
+    title: Caddy on kcp.socialweb.computer asks for a client certificate and forwards it to the client certificate front
+    depends_on: [M2-REVOCATION]
+    decision: >
+      In prod kubectl reaches kcp.socialweb.computer, where Caddy ends TLS (source (1)). The site asks for a
+      client certificate without checking it (`client_auth mode request`; Go TLS still checks the client's
+      CertificateVerify signature). A request that came with a certificate goes to the client certificate front
+      on 127.0.0.1:8444 with the certificate in X-Socialweb-Client-Certificate, over TLS that trusts the gateway
+      certificate and presents the edge client certificate. Every other request goes to kcp as today, so the
+      exec-plugin kubeconfigs keep working until M5. This item changes files only; the lead deploys it in
+      M3-PROD-READING. Task agents never run scripts/deploy.sh.
+    files:
+      - "scripts/deploy.sh:19-20 (ports), :62 (REMOTE_ENV), :116-123 (CA_DIR files), :142-152 (KCP_ORIGIN site)"
+      - "deploy/socialweb-gateway.env.example:26-30 (SOCIALWEB_GATEWAY_KCP_PUBLIC_HOST)"
+    change: |
+      1. deploy.sh: add CERT_FRONT_PORT=8444 after GATEWAY_TLS_PORT (:20) and add CERT_FRONT_PORT=$(q "$CERT_FRONT_PORT") to REMOTE_ENV (:62).
+      2. deploy.sh, after `install -m 0644 "$STATE_DIR/tls/tls.crt" "$CA_DIR/gateway.crt"` (:121):
+           [ -s "$STATE_DIR/tls/edge-client.crt" ] && [ -s "$STATE_DIR/tls/edge-client.key" ] || { say "the gateway made no edge client certificate"; exit 1; }
+           getent group caddy >/dev/null || { say "no caddy group: the edge client key cannot be given to caddy only"; exit 1; }
+           install -m 0644 "$STATE_DIR/tls/edge-client.crt" "$CA_DIR/edge-client.crt"
+           install -m 0640 -o root -g caddy "$STATE_DIR/tls/edge-client.key" "$CA_DIR/edge-client.key"
+         Keep `chmod 0644 "$CA_DIR"/*.crt` (it matches only .crt).
+      3. deploy.sh, replace the KCP_ORIGIN site heredoc (:142-152) with:
+           ${KCP_ORIGIN} {
+             tls {
+               client_auth {
+                 mode request
+               }
+             }
+             @clientcert expression {tls_client_certificate_der_base64} != ""
+             handle @clientcert {
+               reverse_proxy https://127.0.0.1:${CERT_FRONT_PORT} {
+                 header_up -X-Socialweb-Client-Certificate
+                 header_up X-Socialweb-Client-Certificate {tls_client_certificate_der_base64}
+                 flush_interval -1
+                 transport http {
+                   tls_trusted_ca_certs ${CA_DIR}/gateway.crt
+                   tls_client_auth ${CA_DIR}/edge-client.crt ${CA_DIR}/edge-client.key
+                   tls_server_name 127.0.0.1
+                   versions 1.1
+                 }
+               }
+             }
+             handle {
+               reverse_proxy https://127.0.0.1:${KCP_PORT} {
+                 header_up -X-Socialweb-Client-Certificate
+                 flush_interval -1
+                 transport http {
+                   tls_trusted_ca_certs ${CA_DIR}/kcp.crt
+                   tls_server_name 127.0.0.1
+                   versions 1.1
+                 }
+               }
+             }
+           }
+      4. deploy/socialweb-gateway.env.example: under SOCIALWEB_GATEWAY_KCP_PUBLIC_HOST add a comment line (this file
+         allows comments): "# kubeconfig server of getKubeconfig; Caddy sends requests with a client certificate to
+         the client certificate front (cert-front-address, 127.0.0.1:8444)". Do not add SOCIALWEB_GATEWAY_KCP_PUBLIC_CA_FILE
+         (Caddy has a public certificate).
+    check: |
+      bash -n scripts/deploy.sh   (exit 0)
+      If caddy is on this host: render the KCP site to $TMPDIR/kcp.caddy with test values (KCP_ORIGIN=kcp.example.test,
+        CERT_FRONT_PORT=8444, KCP_PORT=6443, CA_DIR=$TMPDIR/ca with empty files) and run `caddy adapt --config $TMPDIR/kcp.caddy`
+        (exit 0; the JSON has tls_connection_policies with client_authentication mode request).
+      If caddy is not on this host, the lead's `caddy validate` in scripts/deploy.sh (:167) is the check (M3-PROD-READING).
+    stop: |
+      - caddy adapt refuses the expression matcher or the placeholder. Try exactly one alternative:
+        `@clientcert expression {http.request.tls.client.certificate_der_base64} != ""` and the same long name in
+        header_up. If that also fails, stop.
+      - caddy adapt refuses `mode request`.
+    done_when: "deploy.sh installs the edge client pair for caddy and the KCP site routes certificate requests to 127.0.0.1:8444; bash -n and caddy adapt pass."
+    risks:
+      - "Caddy holds the edge client key: whoever runs as caddy or root can present any certificate it has seen as a header. Caddy already sees every bearer token of today's path; root can read every vault anyway."
+      - "`mode request` makes Caddy ask every client of kcp.socialweb.computer for a certificate; kubectl and curl without one continue without one."
+    status: todo
+    evidence:
+  - id: M3-DOCS
+    milestone: M3
+    title: README and ARCHITECTURE - kubectl with a certificate, no helper download
+    depends_on: [M3-PROD-EDGE]
+    decision: >
+      The README section "Cluster XRPC with goat" drops the socialweb-credential download and the PATH change.
+      ARCHITECTURE section 7 states the new path and the changed rule. The decision opens in section 14 and
+      moves to section 15 in M5 with the prod readings (AGENTS.md "Standing constraints").
+    files:
+      - "README.md:86-104 (### Cluster XRPC with `goat`)"
+      - "docs/ARCHITECTURE.md:1154-1160 (section 7, first bullet \"Bearer only through the mount\"), :1235-1241 (\"The credential never reaches a user\"), :3541 (section 14)"
+    change: |
+      1. README.md: delete the two lines that start "# kubeconfig exec plugin = socialweb-credential" and
+         "curl -sfo socialweb-credential". Replace "PATH=$PWD:$PATH KUBECONFIG=demo.kubeconfig kubectl get ns" with
+         "KUBECONFIG=demo.kubeconfig kubectl get ns". Change the getKubeconfig line to
+         "call procedure getKubeconfig name=demo ttlSeconds=28800 | jq -r .kubeconfig > demo.kubeconfig; chmod 600 demo.kubeconfig".
+         Replace the paragraph after the code block with: "The kubeconfig holds a client key and an x509 client
+         certificate from the cluster's own OpenBao PKI (CN your DID, O socialweb.computer:cluster-owners, default 8 h,
+         at most 24 h via ttlSeconds). Plain kubectl, no helper. Keep it 0600, never commit it. `getKubeconfig` on a
+         stopped cluster answers ClusterNotRunning: call createCluster or controlPlaneUp first. revokeIdentity and
+         deleteCluster end every certificate at once."
+      2. ARCHITECTURE section 7: change the first bullet to: "**Bearer through the mount, certificates through the
+         client certificate front.** A bearer crosses the kcp mount as a header and nothing else. A client certificate
+         never reaches kcp: Caddy (prod) or the client certificate front itself (market network) ends TLS, the front
+         (internal/clientcertfront) checks the certificate against the cluster's client CA, the PKI CRL and the deny
+         record, and forwards to k3s by request-header authentication (client-auth-proxy, X-Remote-User = the CN,
+         X-Remote-Group = socialweb.computer:cluster-owners). No JWKS, no --authentication-config." In the paragraph
+         "The credential never reaches a user", add: "The user path of plan 0015 is the exception it names: the
+         kubeconfig of getKubeconfig carries a client key made by the cluster's OpenBao PKI (role kubeconfig-user, at
+         most 24 h). The provider's own credentials still never reach a user."
+      3. ARCHITECTURE section 14: add one bullet "Plan 0015, kubectl client certificates: open until the prod reading
+         of M3-PROD-READING." with the two-sentence decision of M2-CLIENT-CERT-FRONT.
+    check: |
+      grep -n "socialweb-credential" README.md   (no line in the goat section)
+      LC_ALL=C grep -nP '[^\x00-\x7F]' README.md docs/ARCHITECTURE.md   (no new line)
+    stop: |
+      - The README section has other content that depends on the helper (stop and ask; do not remove it).
+    done_when: "the README goat section shows kubectl without a helper and ARCHITECTURE section 7 and 14 name the new path."
+    risks: []
+    status: todo
+    evidence:
+  - id: M3-PROD-READING
+    milestone: M3
+    title: The lead deploys to prod and reads the goat flow with plain kubectl
+    depends_on: [M3-DOCS]
+    decision: >
+      Lead only (AGENTS.md "Prod deployments"). Fresh deploy; prod keeps nothing. The readings decide whether M5
+      may start. The gateway.env keeps SOCIALWEB_GATEWAY_KCP_PUBLIC_HOST=https://kcp.socialweb.computer and gets no
+      SOCIALWEB_GATEWAY_KCP_PUBLIC_CA_FILE.
+    files: ["scripts/deploy.sh", "README.md:86-104"]
+    change: |
+      1. Release build and fresh deploy as in README.md "Release -> prod" (install gateway, so config.json gets
+         cert-front-address 127.0.0.1:8444).
+      2. On the gateway host: `ss -ltn | grep 127.0.0.1:8444` (the front listens) and `caddy validate --config /etc/caddy/Caddyfile`.
+      3. From a workstation with goat and kubectl and NO socialweb-credential on PATH, run the README goat block as
+         alice: createCluster, wait Ready, getKubeconfig, `kubectl get ns`, `kubectl auth whoami`, apply a pod (scale
+         from zero on the bobvmbuilder bidder), delete it.
+      4. getKubeconfig again -> D; revokeIdentity name=<cluster> for a throwaway cluster of a throwaway account, or
+         deleteCluster of the throwaway cluster; kubectl with D refused within 2 s.
+      5. An exec-plugin kubeconfig made before this deploy is not needed (prod keeps nothing).
+    check: |
+      kubectl get ns exits 0; auth whoami names alice's DID and the owners group; the pod reaches Running on a market node.
+      The gateway journal has no line with "PRIVATE KEY" or "client-key-data" (journalctl _UID=<account uid> | grep -c ...  -> 0).
+    stop: |
+      - kubectl through kcp.socialweb.computer fails while the same kubeconfig works against 127.0.0.1:8444 on the host: the Caddy edge is wrong.
+      - Any key text in the journal.
+    done_when: "plain kubectl works on prod through kcp.socialweb.computer with the getKubeconfig kubeconfig, and revoke ends it within 2 s."
+    risks: []
+    status: todo
+    evidence:
+  - id: M4-INTEGRATION-TEST
+    milestone: M4
+    title: Integration test - service JWT, getKubeconfig, kubectl without a helper, revoked certificate refused
+    depends_on: [M3-PROD-READING]
+    decision: >
+      One Go test in test/integration on the existing harness (plan 0010 G2): its own market network with a gateway
+      and no bidders. It does in Go what goat does on prod: createSession and getServiceAuth on the owner's PDS,
+      then the gateway XRPC with the service JWT. kubectl runs with a PATH that has no socialweb-credential.
+    files:
+      - "test/integration/kubeconfig_client_cert_test.go (new, //go:build integration, package integration)"
+      - "test/integration/harness.go:393-441 (StartNetwork), :697-708 (App), test/integration/tenant.go:83-85 (GatewayDir), :95-120 (Tenant)"
+    change: |
+      Test name: TestKubeconfigClientCertificateWithoutCredentialHelper. t.Parallel().
+      1. n := StartNetwork(t, NetworkOptions{Bidders: 0, WithGateway: true, UpTimeout: 5*time.Minute}); n.Tenant(t, "tenant", tenantReady).
+      2. Read <GatewayDir>/owner-sessions.json with n.read (never log it). Read the network CA from
+         n.Up.Network.Status.Network.CaBundleRef with n.read. Find the gateway app with n.App(n.Instance+"-gateway");
+         take its listeners xrpc (http) and client-cert (https). t.Fatal when one is missing.
+      3. HTTP client with the network CA as RootCAs and a 15 s timeout. createSession -> accessJwt.
+         serviceJWT(lxm) := GET getServiceAuth?aud=did:web:socialweb.local&lxm=<nsid>&exp=<now+60>.
+      4. getKubeconfig {name: "tenant", ttlSeconds: 3600} with the JWT -> 200, header Cache-Control "no-store".
+         Write the kubeconfig to t.TempDir()/kc.yaml with mode 0600 through n.h.WriteFile (owned by the VM account).
+         Parse it with clientcmd.Load: AuthInfo has ClientCertificateData and ClientKeyData, Exec == nil, Token == "".
+         Parse the certificate: CN == owner DID, Organization == ["socialweb.computer:cluster-owners"],
+         NotAfter-NotBefore within [3600 s, 3600 s + 5 min].
+      5. getKubeconfig with ttlSeconds 59 and 86401 -> 400 InvalidRequest. A JWT with lxm listClusters on
+         getKubeconfig -> 401 Unauthorized.
+      6. r := n.h.As(ctx, "env", "PATH=/usr/local/bin:/usr/bin:/bin", "sh", "-c", "command -v socialweb-credential") -> empty stdout.
+         r = n.h.As(ctx, "env", "PATH=/usr/local/bin:/usr/bin:/bin", "kubectl", "--kubeconfig", kc, "get", "nodes", "-o", "name") -> exit 0.
+         Also clientcmd.RESTConfigFromKubeConfig + kubernetes.NewForConfig + Nodes().List -> no error.
+         t.Skip with a clear message when `kubectl` is not on that PATH; the client-go call still runs.
+      7. revokeIdentity {name: "tenant"} with a JWT for that lxm -> 200. Within 2 s (poll every 200 ms, end at once
+         on n.health() error) kubectl get nodes fails and client-go List returns Forbidden.
+      8. Leak check: n.h.As(ctx, "grep", "-rl", "-e", "PRIVATE KEY", "-e", "client-key-data", <GatewayDir>/logs,
+         <GatewayDir>/denokcp/runs) prints nothing.
+    check: |
+      go vet -tags integration ./test/integration/
+      go test -tags integration -count=1 -v -timeout 40m ./test/integration/ -run TestKubeconfigClientCertificateWithoutCredentialHelper
+      Add the run line to README.md "## Integration tests" (:190-195).
+    stop: |
+      - The test fails in step 6 while the manual check of M2-CLIENT-CERT-FRONT passed on the same build: report the
+        artifacts dir (SOCIALWEB_IT_ARTIFACTS) and stop; do not raise a timeout.
+      - Any timeout fires: say which failure was not detected (agent rules) and stop.
+    done_when: "the test passes on hat-8 and in the CI integration job of plan 0010 G3."
+    risks: []
+    status: todo
+    evidence:
+  - id: M5-RETIRE-EXEC-PLUGIN
+    milestone: M5
+    title: Delete the exec-plugin kubeconfig path (only after the prod readings)
+    depends_on: [M3-PROD-READING, M4-INTEGRATION-TEST]
+    decision: >
+      GUARD: start only when M3-PROD-READING has status done in this file (the lead sets it). If it is not done,
+      stop at once. Same scope as plan 0014 M3-RETIRE-EXEC-PLUGIN, no back-compat: the helper binary, the device
+      key, the mint endpoint and its store, the downloads and the settings go. The owner ServiceAccount, its
+      ClusterRoleBinding subject and the revocation fan-out over ServiceAccounts (internal/revocation,
+      kcpclient.FanOut/DeleteServiceAccount, sweepkcp) stay: they are not part of the exec path and other plans
+      own them. kcpclient.DeviceKeyGranter becomes KubeconfigGranter.
+    files:
+      - "cmd/socialweb-credential/ (delete), internal/execplugin/ (delete), internal/devicekey/ (delete), internal/mint/ (delete), internal/tenantclient/ (delete)"
+      - "internal/xrpcserver/xrpcserver.go:24 (mint import), :31 (MintPath), :55 (Options.Mint), :79 (mint field), :91-93, :111, :186, :452-490"
+      - "internal/gatewaymain/wiring.go:13, :27, :34-40, :50-52, :61, :65; main.go:29 (tenantclient import), :82-103 (mint kubeconfigs, mintStore), :104-109 (audience check), :154 (MintStore); internal/gatewaymain/mintconfig.go (delete)"
+      - "internal/providermain/wiring.go:418 and the providermain config of MintKubeconfigs / MintDir (grep MintKubeconfigs, MintDir)"
+      - "internal/gatewaymain/config.go:19-20, :27-35, :38 (mint and device-key env names) and their load() lines"
+      - "internal/gateway/gateway.go:14 (MinDeviceKeyTTL -> MinClientCertTTL), :126 (MaxDeviceKeyTTL)"
+      - "internal/kcpclient/kcpclient.go:42-54 (GrantInput, DeviceKeyGranter), :61 (Options.DeviceKeys), :80-82 (ErrNoDeviceKey), :491-508"
+      - "internal/kubeconfig/kubeconfig.go:12-121 (exec Build, Forbidden, AssertClean: delete; keep BuildClientCert)"
+      - "internal/stack/gatewaykcp/env.go:21-24, :94-98, :103, :108-111 (devkey and mint defaults)"
+      - "internal/clicfg/options.json (gateway-devkey-registry, gateway-mint-kubeconfigs, the device-key and public-mint-url options)"
+      - "internal/clusterprovider/tenant.go:37-39 (mintSecretName, MintServiceAccount), :150-245 (roleNamesTheTokenSubresource, obtainMintCredential, mintTokenSecret, WriteMintKubeconfig), :300-332 (their call in Bootstrap) and deploy/tenant-grant.yaml:1-41 (gwmint ServiceAccount, Role, RoleBinding) and :58-98 (the policy: drop the serviceaccounts/token arm and rule, keep the secrets arm)"
+      - "deploy/apps/gateway/prod.values.yaml:6, deploy/apps/gateway/market-network.values.yaml:6 (--required-downloads: drop the four socialweb-credential names)"
+      - "scripts/build-web-app-downloads.sh:13, :40-43; internal/versions/versions.json:326-335 (socialweb-computer-k8s-downloads members and treeSha256)"
+      - "socialweb-computer-k8s/hono-socialweb-computer-k8s/mod.ts:187-191, :238, :325 (credential helpers); cli-args-env.json:109; socialweb-computer-k8s/web/components/swc-cluster-list.js:39, :119 (helper list)"
+      - "deploy/socialweb-gateway.env.example:17, :26-30 (device-key and mint lines)"
+    change: |
+      1. Check the guard. Then `grep -rn "gwmint" --include=*.go --include=*.yaml --include=*.ts .` and list every user.
+         If a user is outside tenant.go, tenant-grant.yaml, tenantclient and tests, STOP.
+      2. Delete the five directories. Delete every _test.go that no longer compiles (test/auth_chain_test.go too if it
+         needs mint). Do not repair them.
+      3. Remove the mint route and option from xrpcserver; New no longer needs Options.Mint.
+      4. gatewaymain: remove MintStore, ErrNoMintStore, the mint kubeconfig dir, tenantclient, the device-key and mint
+         env names and Config fields; keep ClusterStateDir and KCPPublicCAFile.
+      5. kcpclient: rename DeviceKeyGranter to KubeconfigGranter, Options.DeviceKeys to Options.Kubeconfigs, field
+         deviceKeys to kubeconfigs, ErrNoDeviceKey to ErrNoKubeconfigGranter; update main.go.
+      6. gateway.go: rename MinDeviceKeyTTL to MinClientCertTTL; delete MaxDeviceKeyTTL; update clientcert.
+      7. kubeconfig.go: delete Input, Build, ErrNoExec, ExecAPIVersion, MintURLEnvName, Forbidden, AssertClean.
+      8. gatewaykcp/env.go and options.json: delete the devkey, device-key and mint defaults and options.
+      9. clusterprovider/tenant.go: delete the gwmint secret and WriteMintKubeconfig and their callers;
+         tenant-grant.yaml: delete the gwmint objects and the serviceaccounts/token arm; keep the secrets arm and
+         the ServiceAccount subject of socialweb-owner.
+      10. Downloads: drop socialweb-credential from scripts/build-web-app-downloads.sh and from the members of
+          socialweb-computer-k8s-downloads in versions.json; run
+          scripts/stage-assets.sh --asset socialweb-computer-k8s-downloads --platform linux/amd64 --platform linux/arm64 --print-pins
+          and copy the printed treeSha256, rawBytes and zstdBytes into versions.json.
+      11. Web app: delete the helper parsing and credentialHelpers (mod.ts, factory config, web component list);
+          drop the four names from both values files.
+      12. docs/ARCHITECTURE.md: move the section 14 bullet of M3-DOCS to section 15 with the M3-PROD-READING
+          readings; delete the sentences of section 7 that describe the mint and the exec credential.
+    check: |
+      go build ./... ; go vet ./... ; deno check socialweb-computer-k8s/hono-socialweb-computer-k8s/mod.ts
+      grep -rn "socialweb-credential\|SOCIALWEB_DEVICE_KEY\|SOCIALWEB_MINT_URL\|/v1/credential" --include=*.go --include=*.ts --include=*.js --include=*.yaml --include=*.json --include=*.sh . | grep -v "^./docs/"   (no output)
+      Push; then `deno run -A /home/johnandersen777/.tmp/swc-lead/ci-wait.ts $(git rev-parse HEAD)` (the release closure has no socialweb-credential).
+      Rerun M4-INTEGRATION-TEST and the M2-CLIENT-CERT-FRONT live check.
+    stop: |
+      - The guard is not met.
+      - A gwmint user outside the listed files.
+      - stage-assets.sh fails for any reason other than the expected pin difference.
+    done_when: "no exec-plugin code, binary, setting or download remains; the integration test passes; the lead's prod deploy works with getKubeconfig kubeconfigs only."
+    risks: []
+    status: todo
+    evidence:
+not_doing:
+  - "The plan 0014 OpenBao atproto auth plugin, bao-held sessions and the web app cookie sign-in."
+  - "The kind ClusterClientCertificate and the kcp watch at the front (plan 0014 M3-KUBECTL-CLIENT-CERT)."
+  - "A CSR path: OpenBao makes the key (user, 2026-10-12)."
+  - "Changing k3s flags, the apiserver front or kcp (the mount stays bearer-only)."
+  - "Removing the owner ServiceAccount or its revocation fan-out."
+  - "A separate vault client for the gateway (risk of M1-PKI-ROLE)."
+  - "Renaming the cluster XRPC methods or their NSID prefix."
+acceptance:
+  where: hat-8 and prod
+  checks:
+    - id: ACC15-KUBECTL
+      text: "Plain kubectl, with no socialweb-credential on PATH, works with the kubeconfig that getKubeconfig returns for a service JWT, on a market network and on prod."
+      status: todo
+      evidence: []
+    - id: ACC15-TTL
+      text: "The certificate lives 8 h by default and at most 24 h; ttlSeconds outside 60..86400 is refused."
+      status: todo
+      evidence: []
+    - id: ACC15-IDENTITY
+      text: "k3s sees the caller DID as the user and socialweb.computer:cluster-owners as the group; injected X-Remote-* headers and other certificates of the same CA are refused or ignored."
+      status: todo
+      evidence: []
+    - id: ACC15-REVOCATION
+      text: "revokeIdentity and deleteCluster end every issued certificate within 2 s at the front and list it in the PKI CRL."
+      status: todo
+      evidence: []
+    - id: ACC15-NO-LEAK
+      text: "The client key appears in no kcp object, file, log line, process argument or atproto record."
+      status: todo
+      evidence: []
+questions_for_user: []
