@@ -4,6 +4,17 @@ description: Go and the pinned deno of internal/versions/versions.json, with the
 runs:
   using: composite
   steps:
+    - name: cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cache/socialweb-ci/go-build
+          ~/.cache/socialweb-ci/go-mod
+          ~/.cache/socialweb-ci/deno
+        key: ci-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.sum', 'deno.lock') }}
+        restore-keys: |
+          ci-${{ runner.os }}-${{ runner.arch }}-
+
     - name: Go
       uses: actions/setup-go@v7
       with:
@@ -18,7 +29,8 @@ runs:
         test "$(id -u)" != 0
         state="$RUNNER_TEMP/ci"
         export CI_STATE="$state"
-        export TMPDIR="$state/tmp" GOCACHE="$state/go-build" GOMODCACHE="$state/go-mod" DENO_DIR="$state/deno-dir"
+        export TMPDIR="$state/tmp"
+        export GOCACHE="$HOME/.cache/socialweb-ci/go-build" GOMODCACHE="$HOME/.cache/socialweb-ci/go-mod" DENO_DIR="$HOME/.cache/socialweb-ci/deno"
         mkdir -p "$TMPDIR" "$GOCACHE" "$GOMODCACHE" "$DENO_DIR"
         platform="$(go env GOOS)/$(go env GOARCH)"
         deno_url="$(jq -er --arg p "$platform" '.assets.deno.fetch[$p].url' internal/versions/versions.json)"
