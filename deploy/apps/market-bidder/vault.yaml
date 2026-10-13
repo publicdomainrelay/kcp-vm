@@ -10,7 +10,7 @@ spec:
     - name: bidder
       kvMount: bidder
     - name: computevm
-      policies: ["computevm-guest-user-data"]
+      policies: ["computevm-guest-user-data", "computevm-guest-login"]
     - name: guest-kcp
       policies: ["bidder-guest-kcp"]
   declared:
@@ -31,6 +31,17 @@ spec:
         rules:
           - path: bidder/data/guests/+/user-data
             capabilities: ["read"]
+      - name: computevm-guest-login
+        rules:
+          - path: auth/sshsig/role/*
+            capabilities: ["create", "read", "update", "delete"]
+  plugins:
+    - name: sshsig
+      type: auth
+      asset:
+        name: openbao-plugin-auth-sshsig
+        sha256: ""
+      mountPath: sshsig
 ---
 apiVersion: v1
 kind: ServiceAccount

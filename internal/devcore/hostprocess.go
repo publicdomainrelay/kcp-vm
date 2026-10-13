@@ -97,5 +97,5 @@ func AppConfig(bcfg bootstrap.Config, rec devinstance.Record, m hostsvc.Manager,
 func OpenBaoServerConfig(bcfg bootstrap.Config, rec devinstance.Record, log *slog.Logger) openbaoctl.Config {
 	hp := HostProcessConfig(bcfg, rec, nil, log)
 	return openbaoctl.Config{Kubeconfig: hp.Kubeconfig, Workspace: hp.Workspace, StateDir: bcfg.Layout.StateDir, Prefix: hp.Prefix,
-		Env: openbaoctl.OutboundEnv(os.Getenv), Log: log}
+		Env: openbaoctl.OutboundEnv(os.Getenv), Resolve: hp.Resolve, Log: log}
 }

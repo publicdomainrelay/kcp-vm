@@ -100,6 +100,11 @@
       "description": "Absolute path of the OpenBao bao executable an OpenBaoServer with asset bao runs (dev build: explicit, never PATH, optional; a release build extracts its embedded bao)",
       "env": "SOCIALWEB_BAO_PATH"
     },
+    "openbao-plugin-dir": {
+      "type": "string",
+      "description": "Directory holding the OpenBao plugin executables (openbao-plugin-auth-sshsig) an OpenBaoServer's spec.plugins names (dev build: explicit, never PATH, optional; a release build extracts its embedded plugins)",
+      "env": "SOCIALWEB_OPENBAO_PLUGIN_DIR"
+    },
     "deno-path": {
       "type": "string",
       "description": "Absolute path of the pinned deno the core runs every DenoPod on (dev build: explicit, never PATH; a release build extracts its embedded deno)",

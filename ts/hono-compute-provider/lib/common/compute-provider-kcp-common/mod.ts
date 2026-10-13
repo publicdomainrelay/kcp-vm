@@ -73,6 +73,7 @@ export interface ComputeVMSpec {
   contract?: ComputeVMContract;
   image?: ComputeVMImageRequest;
   stopGraceSeconds?: number;
+  guestLogin?: ComputeVMGuestLogin;
 }
 
 export interface ComputeVMShape {
@@ -112,6 +113,11 @@ export interface ComputeVMContract {
 
 export interface ComputeVMImageRequest {
   reuseStale?: boolean;
+}
+
+export interface ComputeVMGuestLogin {
+  mount: string;
+  bindSecretSha256: string;
 }
 
 export interface ComputeVMStatus {
@@ -320,6 +326,7 @@ export interface OpenBaoServerSpec {
   storage?: OpenBaoServerStorage;
   tls?: OpenBaoServerTLS;
   declared?: OpenBaoServerDeclared;
+  plugins?: OpenBaoPlugin[];
 }
 
 export interface OpenBaoServerInit {
@@ -449,6 +456,13 @@ export interface OpenBaoKVScope {
   grace?: string;
 }
 
+export interface OpenBaoPlugin {
+  name: string;
+  type: string;
+  asset: HostProcessAsset;
+  mountPath?: string;
+}
+
 export interface OpenBaoServerStatus {
   observedGeneration?: number;
   phase?: OpenBaoServerPhase;
@@ -463,6 +477,7 @@ export interface OpenBaoServerStatus {
   refs?: OpenBaoServerRefs;
   clients?: OpenBaoServerClientRefs[];
   sync?: OpenBaoServerSync;
+  plugins?: OpenBaoServerPluginStatus[];
   conditions?: Condition[];
 }
 
@@ -505,6 +520,16 @@ export interface OpenBaoServerSync {
   conflicts?: string[];
 }
 
+export interface OpenBaoServerPluginStatus {
+  name: string;
+  type: string;
+  sha256?: string;
+  command?: string;
+  mountPath?: string;
+  runningSha256?: string;
+  message?: string;
+}
+
 export interface ApiResource {
   group: string;
   version: string;
@@ -523,7 +548,7 @@ export const COMPUTE_VM_RESOURCE: ApiResource = {
   listKind: "ComputeVMList",
   plural: "computevms",
   singular: "computevm",
-  schema: "v1alpha1-2.computevms.socialweb.computer",
+  schema: "v1alpha1-3.computevms.socialweb.computer",
   export: "computevms",
 };
 
@@ -556,7 +581,7 @@ export const OPEN_BAO_SERVER_RESOURCE: ApiResource = {
   listKind: "OpenBaoServerList",
   plural: "openbaoservers",
   singular: "openbaoserver",
-  schema: "v1alpha1-4.openbaoservers.socialweb.computer",
+  schema: "v1alpha1-5.openbaoservers.socialweb.computer",
   export: "hostprocesses",
 };
 
@@ -565,6 +590,7 @@ export const API_RESOURCES: readonly ApiResource[] = [COMPUTE_VM_RESOURCE, HOST_
 export type ApiTypeName =
   | "ComputeVM"
   | "ComputeVMContract"
+  | "ComputeVMGuestLogin"
   | "ComputeVMHostKey"
   | "ComputeVMImage"
   | "ComputeVMImageRequest"
@@ -605,6 +631,7 @@ export type ApiTypeName =
   | "OpenBaoJWTRole"
   | "OpenBaoKVScope"
   | "OpenBaoPKIRole"
+  | "OpenBaoPlugin"
   | "OpenBaoPolicy"
   | "OpenBaoPolicyRule"
   | "OpenBaoSecretMount"
@@ -614,6 +641,7 @@ export type ApiTypeName =
   | "OpenBaoServerDeclared"
   | "OpenBaoServerInit"
   | "OpenBaoServerPhase"
+  | "OpenBaoServerPluginStatus"
   | "OpenBaoServerPostgres"
   | "OpenBaoServerRefs"
   | "OpenBaoServerRuntime"
@@ -783,6 +811,21 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       }
     },
     "required": [],
+    "type": "object"
+  },
+  "ComputeVMGuestLogin": {
+    "properties": {
+      "bindSecretSha256": {
+        "type": "string"
+      },
+      "mount": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "mount",
+      "bindSecretSha256"
+    ],
     "type": "object"
   },
   "ComputeVMHostKey": {
@@ -971,6 +1014,9 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
     "properties": {
       "contract": {
         "ref": "ComputeVMContract"
+      },
+      "guestLogin": {
+        "ref": "ComputeVMGuestLogin"
       },
       "image": {
         "ref": "ComputeVMImageRequest"
@@ -1662,6 +1708,28 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
     ],
     "type": "object"
   },
+  "OpenBaoPlugin": {
+    "properties": {
+      "asset": {
+        "ref": "HostProcessAsset"
+      },
+      "mountPath": {
+        "type": "string"
+      },
+      "name": {
+        "type": "string"
+      },
+      "type": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "name",
+      "type",
+      "asset"
+    ],
+    "type": "object"
+  },
   "OpenBaoPolicy": {
     "properties": {
       "hcl": {
@@ -1870,6 +1938,36 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
     ],
     "type": "string"
   },
+  "OpenBaoServerPluginStatus": {
+    "properties": {
+      "command": {
+        "type": "string"
+      },
+      "message": {
+        "type": "string"
+      },
+      "mountPath": {
+        "type": "string"
+      },
+      "name": {
+        "type": "string"
+      },
+      "runningSha256": {
+        "type": "string"
+      },
+      "sha256": {
+        "type": "string"
+      },
+      "type": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "name",
+      "type"
+    ],
+    "type": "object"
+  },
   "OpenBaoServerPostgres": {
     "properties": {
       "database": {
@@ -1972,6 +2070,12 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       "log": {
         "type": "string"
       },
+      "plugins": {
+        "items": {
+          "ref": "OpenBaoPlugin"
+        },
+        "type": "array"
+      },
       "restartPolicy": {
         "ref": "HostProcessRestartPolicy"
       },
@@ -2028,6 +2132,12 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       },
       "phase": {
         "ref": "OpenBaoServerPhase"
+      },
+      "plugins": {
+        "items": {
+          "ref": "OpenBaoServerPluginStatus"
+        },
+        "type": "array"
       },
       "refs": {
         "ref": "OpenBaoServerRefs"
@@ -2382,6 +2492,24 @@ export function assertComputeVMImageRequest(value: unknown): asserts value is Co
 
 export function parseComputeVMImageRequest(value: unknown): ComputeVMImageRequest {
   assertComputeVMImageRequest(value);
+  return value;
+}
+
+export function validateComputeVMGuestLogin(value: unknown): ApiIssue[] {
+  return validate("ComputeVMGuestLogin", value);
+}
+
+export function isComputeVMGuestLogin(value: unknown): value is ComputeVMGuestLogin {
+  return validate("ComputeVMGuestLogin", value).length === 0;
+}
+
+export function assertComputeVMGuestLogin(value: unknown): asserts value is ComputeVMGuestLogin {
+  const issues = validate("ComputeVMGuestLogin", value);
+  if (issues.length > 0) throw new ApiValidationError("ComputeVMGuestLogin", issues);
+}
+
+export function parseComputeVMGuestLogin(value: unknown): ComputeVMGuestLogin {
+  assertComputeVMGuestLogin(value);
   return value;
 }
 
@@ -3213,6 +3341,24 @@ export function parseOpenBaoKVScope(value: unknown): OpenBaoKVScope {
   return value;
 }
 
+export function validateOpenBaoPlugin(value: unknown): ApiIssue[] {
+  return validate("OpenBaoPlugin", value);
+}
+
+export function isOpenBaoPlugin(value: unknown): value is OpenBaoPlugin {
+  return validate("OpenBaoPlugin", value).length === 0;
+}
+
+export function assertOpenBaoPlugin(value: unknown): asserts value is OpenBaoPlugin {
+  const issues = validate("OpenBaoPlugin", value);
+  if (issues.length > 0) throw new ApiValidationError("OpenBaoPlugin", issues);
+}
+
+export function parseOpenBaoPlugin(value: unknown): OpenBaoPlugin {
+  assertOpenBaoPlugin(value);
+  return value;
+}
+
 export function validateOpenBaoServerStatus(value: unknown): ApiIssue[] {
   return validate("OpenBaoServerStatus", value);
 }
@@ -3318,5 +3464,23 @@ export function assertOpenBaoServerSync(value: unknown): asserts value is OpenBa
 
 export function parseOpenBaoServerSync(value: unknown): OpenBaoServerSync {
   assertOpenBaoServerSync(value);
+  return value;
+}
+
+export function validateOpenBaoServerPluginStatus(value: unknown): ApiIssue[] {
+  return validate("OpenBaoServerPluginStatus", value);
+}
+
+export function isOpenBaoServerPluginStatus(value: unknown): value is OpenBaoServerPluginStatus {
+  return validate("OpenBaoServerPluginStatus", value).length === 0;
+}
+
+export function assertOpenBaoServerPluginStatus(value: unknown): asserts value is OpenBaoServerPluginStatus {
+  const issues = validate("OpenBaoServerPluginStatus", value);
+  if (issues.length > 0) throw new ApiValidationError("OpenBaoServerPluginStatus", issues);
+}
+
+export function parseOpenBaoServerPluginStatus(value: unknown): OpenBaoServerPluginStatus {
+  assertOpenBaoServerPluginStatus(value);
   return value;
 }

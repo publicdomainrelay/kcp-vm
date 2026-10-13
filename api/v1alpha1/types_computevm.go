@@ -33,6 +33,14 @@ type ComputeVMSpec struct {
 	Image *ComputeVMImageRequest `json:"image,omitempty"`
 
 	StopGraceSeconds int32 `json:"stopGraceSeconds,omitempty"`
+
+	GuestLogin *ComputeVMGuestLogin `json:"guestLogin,omitempty"`
+}
+
+type ComputeVMGuestLogin struct {
+	Mount string `json:"mount"`
+
+	BindSecretSha256 string `json:"bindSecretSha256"`
 }
 
 type ComputeVMUserData struct {

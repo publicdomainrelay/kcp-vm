@@ -118,6 +118,7 @@ type layoutInput struct {
 	clientsCAPEM []byte
 	clients      []v1alpha1.OpenBaoServerClient
 	declared     *v1alpha1.OpenBaoServerDeclared
+	plugins      []placedPlugin
 }
 
 func or(v, dflt string) string {
@@ -153,7 +154,15 @@ func desired(ctx context.Context, in layoutInput, ca caSource) (baosync.Desired,
 	var pending []string
 	d.AuthMounts = append(d.AuthMounts, baosync.AuthMount{Path: CertAuthMount, Type: baosync.AuthCert})
 	d.SecretMounts = append(d.SecretMounts, baosync.SecretMount{Path: KVMount, Type: baosync.MountKV2})
-	d.Policies = append(d.Policies, baosync.Policy{Name: CorePolicy, HCL: PolicyHCL(CorePolicyRules)})
+	core := CorePolicyRules
+	for _, p := range in.plugins {
+		d.Plugins = append(d.Plugins, p.plugin)
+		d.AuthMounts = append(d.AuthMounts, baosync.AuthMount{Path: strings.Trim(p.spec.MountPath, "/"), Type: p.plugin.Name})
+	}
+	if len(in.plugins) > 0 {
+		core = append(append([]v1alpha1.OpenBaoPolicyRule(nil), CorePolicyRules...), PluginCorePolicyRules...)
+	}
+	d.Policies = append(d.Policies, baosync.Policy{Name: CorePolicy, HCL: PolicyHCL(core)})
 	d.Objects = append(d.Objects, baosync.Object{Path: "auth/" + CertAuthMount + "/certs/" + CertAuthRole, Data: map[string]any{
 		"certificate":          string(in.caPEM),
 		"allowed_common_names": []string{vaultcert.RootVaultClientCommonName},

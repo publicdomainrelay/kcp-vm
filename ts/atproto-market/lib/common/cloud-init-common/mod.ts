@@ -822,6 +822,107 @@ export function hostKeysReporterModule(opts: HostKeysReporterOptions): UserDataM
   });
 }
 
+export const GUEST_LOGIN_SCRIPT = "/usr/local/bin/guest-login.sh";
+export const GUEST_LOGIN_UNIT = "guest-login.service";
+export const GUEST_LOGIN_TOKEN_PATH = "/root/secrets/openbao/token";
+export const GUEST_LOGIN_NAMESPACE = "prove-sshd";
+
+export interface GuestLoginOptions {
+  url: string;
+  role: string;
+  bindSecret: string;
+  sshDir?: string;
+  tokenPath?: string;
+  attempts?: number;
+  retryDelaySec?: number;
+}
+
+export function guestLoginScript(opts: GuestLoginOptions): string {
+  const sshDir = opts.sshDir ?? "/etc/ssh";
+  const tokenPath = opts.tokenPath ?? GUEST_LOGIN_TOKEN_PATH;
+  const attempts = opts.attempts ?? 30;
+  const delay = opts.retryDelaySec ?? 4;
+  return [
+    "#!/usr/bin/env bash",
+    "set -uo pipefail",
+    `URL="${opts.url}"`,
+    `ROLE="${opts.role}"`,
+    `BIND_SECRET="${opts.bindSecret}"`,
+    `TOKEN_PATH="${tokenPath}"`,
+    `ED25519="${sshDir}/ssh_host_ed25519_key"`,
+    'OUT="${TMPDIR:-/tmp}/guest-login.out"',
+    "for _ in $(seq 1 150); do",
+    '  [ -f "${ED25519}" ] && [ -f "${ED25519}.pub" ] && break',
+    "  sleep 2",
+    "done",
+    'if [ ! -f "${ED25519}" ]; then echo "guest-login: no ${ED25519}"; exit 1; fi',
+    'HOST_KEY="$(awk \'{print $1" "$2}\' "${ED25519}.pub")"',
+    "post() {",
+    '  local step="$1" body="$2" code',
+    `  for _ in $(seq 1 ${attempts}); do`,
+    '    code="$(curl -sS -m 20 -o "${OUT}" -w \'%{http_code}\' -X POST "${URL}/${step}" -H \'Content-Type: application/json\' -d "${body}" 2>/dev/null || echo 000)"',
+    '    case "${code}" in',
+    "      200|204) return 0 ;;",
+    '      4??) echo "guest-login: ${step} refused (${code}): $(cat "${OUT}" 2>/dev/null)"; return 1 ;;',
+    "    esac",
+    '    echo "guest-login: ${step} http ${code}, retrying"',
+    `    sleep ${delay}`,
+    "  done",
+    '  echo "guest-login: ${step} gave up"',
+    "  return 1",
+    "}",
+    "sign() {",
+    `  printf '%s' "$1" | ssh-keygen -Y sign -n ${GUEST_LOGIN_NAMESPACE} -f "\${ED25519}"`,
+    "}",
+    'BIND_SIG="$(sign "${BIND_SECRET}")"',
+    'if [ -z "${BIND_SIG}" ]; then echo "guest-login: signing the bind secret failed"; exit 1; fi',
+    'post bind "$(jq -nc --arg r "${ROLE}" --arg s "${BIND_SECRET}" --arg k "${HOST_KEY}" --arg g "${BIND_SIG}" \'{role: $r, bind_secret: $s, host_key: $k, signature: $g}\')" || exit 1',
+    'echo "guest-login: bound $(jq -r \'.data.host_key_fingerprint // empty\' "${OUT}") to role ${ROLE}"',
+    'post challenge "$(jq -nc --arg r "${ROLE}" \'{role: $r}\')" || exit 1',
+    'CHALLENGE="$(jq -r \'.data.challenge // empty\' "${OUT}")"',
+    'if [ -z "${CHALLENGE}" ]; then echo "guest-login: no challenge in $(cat "${OUT}")"; exit 1; fi',
+    'post login "$(jq -nc --arg r "${ROLE}" --arg c "${CHALLENGE}" --arg g "$(sign "${CHALLENGE}")" \'{role: $r, challenge: $c, signature: $g}\')" || exit 1',
+    'TOKEN="$(jq -r \'.auth.client_token // empty\' "${OUT}")"',
+    'if [ -z "${TOKEN}" ]; then echo "guest-login: no token in the login reply"; exit 1; fi',
+    'install -d -m 0700 "$(dirname "${TOKEN_PATH}")"',
+    '( umask 077; printf \'%s\\n\' "${TOKEN}" > "${TOKEN_PATH}" )',
+    'echo "guest-login: logged in to the bidder\'s OpenBao as $(jq -r \'.auth.metadata.role // empty\' "${OUT}"), policies $(jq -c \'.auth.policies\' "${OUT}"), ttl $(jq -r \'.auth.lease_duration\' "${OUT}")s"',
+    "",
+  ].join("\n");
+}
+
+export function guestLoginModule(opts: GuestLoginOptions): UserDataModule {
+  const unit = [
+    "[Unit]",
+    "Description=Log this guest in to its bidder's OpenBao by its ssh host key",
+    "After=network-online.target ssh.service",
+    "Wants=network-online.target",
+    "",
+    "[Service]",
+    "Type=oneshot",
+    "RemainAfterExit=yes",
+    "TimeoutStartSec=600",
+    `ExecStart=${GUEST_LOGIN_SCRIPT}`,
+    "StandardOutput=journal+console",
+    "StandardError=journal+console",
+    "",
+    "[Install]",
+    "WantedBy=multi-user.target",
+    "",
+  ].join("\n");
+  return () => ({
+    write_files: [
+      { path: GUEST_LOGIN_SCRIPT, owner: "root:root", permissions: "0700", content: guestLoginScript(opts) },
+      { path: `/etc/systemd/system/${GUEST_LOGIN_UNIT}`, owner: "root:root", permissions: "0644", content: unit },
+    ],
+    runcmdPrepend: [
+      "systemctl daemon-reload",
+      `systemctl enable ${GUEST_LOGIN_UNIT}`,
+      `systemctl start --no-block ${GUEST_LOGIN_UNIT}`,
+    ],
+  });
+}
+
 export const POWEROFF_ENDS_VM_MODULE = "poweroff-ends-vm";
 export const POWEROFF_ENDS_VM_PATH = "/usr/lib/systemd/system-shutdown/socialweb-poweroff-ends-vm.shutdown";
 

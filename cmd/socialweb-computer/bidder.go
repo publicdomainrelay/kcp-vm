@@ -31,7 +31,7 @@ import (
 const bidderIdentityWait = 5 * time.Minute
 
 var bidderOptions = slices.Concat([]string{backendOpt, "profile", "network", "name", "instance", "state-dir", "fg", "ready-timeout",
-	"network-timeout", "market-network-file", "bidder-policy", "bidder-policy-args", "kcp-path", "kine-path", "deno-path", "bao-path", "asset-cache", "unit-prefix", "kcp-front-address"},
+	"network-timeout", "market-network-file", "bidder-policy", "bidder-policy-args", "kcp-path", "kine-path", "deno-path", "bao-path", "openbao-plugin-dir", "asset-cache", "unit-prefix", "kcp-front-address"},
 	devVMOptions, devOnly(tsbundle.SourceRootOption))
 
 type bidderRun struct {
@@ -409,6 +409,13 @@ func (r *bidderRun) installedCore(ctx context.Context) int {
 		return r.a.fail(exitRefused, "%s: %v", verb, err)
 	}
 	exes[bidder.ExeDeno] = deno
+	plugins, err := r.a.openBaoPluginExes(r.vals)
+	if err != nil {
+		return r.a.fail(exitRefused, "%s: %v", verb, err)
+	}
+	for name, e := range plugins {
+		exes[name] = e
+	}
 	exe, err := selfExe()
 	if err != nil {
 		return r.a.fail(exitFailed, "%s: %v", verb, err)

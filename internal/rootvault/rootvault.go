@@ -133,6 +133,8 @@ type ServerOptions struct {
 	ClientCertOptional bool
 
 	PostgresDSN string
+
+	PluginDirectory string
 }
 
 func ServerConfig(stateDir, addr string) (string, error) {
@@ -157,13 +159,17 @@ func ServerConfigWith(stateDir, addr string, o ServerOptions) (string, error) {
 	if o.ClientCAFile != "" {
 		clientCA = o.ClientCAFile
 	}
-	for _, v := range []string{addr, cert, key, clientCA, o.PostgresDSN} {
+	for _, v := range []string{addr, cert, key, clientCA, o.PostgresDSN, o.PluginDirectory} {
 		if strings.ContainsAny(v, "\"\\\n\r") {
 			return "", fmt.Errorf("%w (%q)", ErrConfigValue, v)
 		}
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "ui = false\ndisable_clustering = true\napi_addr = \"https://%s\"\nlistener \"tcp\" {\n", addr)
+	fmt.Fprintf(&b, "ui = false\ndisable_clustering = true\napi_addr = \"https://%s\"\n", addr)
+	if o.PluginDirectory != "" {
+		fmt.Fprintf(&b, "plugin_directory = \"%s\"\n", o.PluginDirectory)
+	}
+	b.WriteString("listener \"tcp\" {\n")
 	fmt.Fprintf(&b, "  address                            = \"%s\"\n", addr)
 	b.WriteString("  tls_disable                        = false\n")
 	fmt.Fprintf(&b, "  tls_cert_file                      = \"%s\"\n", cert)

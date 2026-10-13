@@ -43,6 +43,12 @@
       "env": "VAULT_OPENBAO_CLIENT",
       "default": "guest-kcp"
     },
+    "guest-login-mount": {
+      "type": "string",
+      "description": "Auth mount of the sshsig plugin on the bidder's OpenBao; guests bind their ssh host key and log in through this DenoPod at /v1/sshsig/{bind,challenge,login}",
+      "env": "GUEST_LOGIN_MOUNT",
+      "default": "sshsig"
+    },
     "vault-openbao-client-dir": {
       "type": "string",
       "description": "Directory holding that client's certificate (tls.crt), key (tls.key) and the vault CA (ca.crt), kept current by the DenoPod's projected credentials; unset, they are read from the files the OpenBaoServer status names",

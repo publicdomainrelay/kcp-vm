@@ -529,6 +529,10 @@ func (in *ComputeVMSpec) DeepCopyInto(out *ComputeVMSpec) {
 		image := *in.Image
 		out.Image = &image
 	}
+	if in.GuestLogin != nil {
+		login := *in.GuestLogin
+		out.GuestLogin = &login
+	}
 }
 
 func (in *ComputeVMStatus) DeepCopyInto(out *ComputeVMStatus) {
@@ -814,6 +818,9 @@ func (in *OpenBaoServerStatus) DeepCopyInto(out *OpenBaoServerStatus) {
 		v.Pending = append([]string(nil), in.Sync.Pending...)
 		v.Conflicts = append([]string(nil), in.Sync.Conflicts...)
 		out.Sync = &v
+	}
+	if in.Plugins != nil {
+		out.Plugins = append([]OpenBaoServerPluginStatus(nil), in.Plugins...)
 	}
 	if in.Conditions != nil {
 		out.Conditions = make([]metav1.Condition, len(in.Conditions))

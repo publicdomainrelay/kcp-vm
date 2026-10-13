@@ -423,6 +423,12 @@ func bringUp(ctx context.Context, a *app, vals clicfg.Values, host bool) (upRepo
 			return upReport{}, a.fail(exitRefused, "dev up: %v", err)
 		}
 	}
+	var pluginExes map[string]devinstance.Executable
+	if standIns == nil {
+		if pluginExes, err = a.openBaoPluginExes(vals); err != nil {
+			return upReport{}, a.fail(exitRefused, "dev up: %v", err)
+		}
+	}
 	var dumbpipeExe devinstance.Executable
 	if standIns == nil && (assets.Release() || vals.String("dumbpipe-path") != "") {
 		if dumbpipeExe, err = a.devExe(ctx, vals, appctl.DumbpipeExecutable, "dumbpipe-path"); err != nil {
@@ -534,6 +540,9 @@ func bringUp(ctx context.Context, a *app, vals clicfg.Values, host bool) (upRepo
 		rec.Executables[appctl.DumbpipeExecutable] = dumbpipeExe
 	}
 	for name, e := range gatewayExes {
+		rec.Executables[name] = e
+	}
+	for name, e := range pluginExes {
 		rec.Executables[name] = e
 	}
 	rec.SourceRoot = sourceRoot

@@ -90,6 +90,7 @@ export interface ComputeVMInput {
   vault: GuestVaultRef;
   reuseStale?: boolean;
   stopGraceSeconds?: number;
+  guestLogin?: { mount: string; bindSecretSha256: string };
 }
 
 export function computeVMFor(input: ComputeVMInput): ComputeVM {
@@ -109,6 +110,7 @@ export function computeVMFor(input: ComputeVMInput): ComputeVM {
       requester: { did: input.requesterDid },
       ...(input.reuseStale === undefined ? {} : { image: { reuseStale: input.reuseStale } }),
       ...(input.stopGraceSeconds === undefined ? {} : { stopGraceSeconds: input.stopGraceSeconds }),
+      ...(input.guestLogin ? { guestLogin: input.guestLogin } : {}),
     },
   };
 }

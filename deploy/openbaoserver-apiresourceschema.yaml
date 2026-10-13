@@ -1,7 +1,7 @@
 apiVersion: apis.kcp.io/v1alpha1
 kind: APIResourceSchema
 metadata:
-  name: v1alpha1-4.openbaoservers.socialweb.computer
+  name: v1alpha1-5.openbaoservers.socialweb.computer
 spec:
   group: socialweb.computer
   names:
@@ -335,6 +335,31 @@ spec:
                           type: string
                       required:
                         - mount
+              plugins:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                    type:
+                      type: string
+                    asset:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                        sha256:
+                          type: string
+                      required:
+                        - name
+                        - sha256
+                    mountPath:
+                      type: string
+                  required:
+                    - name
+                    - type
+                    - asset
           status:
             type: object
             properties:
@@ -439,6 +464,28 @@ spec:
                     type: array
                     items:
                       type: string
+              plugins:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                    type:
+                      type: string
+                    sha256:
+                      type: string
+                    command:
+                      type: string
+                    mountPath:
+                      type: string
+                    runningSha256:
+                      type: string
+                    message:
+                      type: string
+                  required:
+                    - name
+                    - type
               conditions:
                 type: array
                 items:

@@ -18,7 +18,7 @@ import (
 )
 
 var serveGatewayOptions = append([]string{backendOpt, "state-dir", "unit-prefix", "kcp-path", "kine-path", "k3s-path", "postgres-root", "bao-path",
-	"deno-path", "asset-cache", "ready-timeout", "kcp-front-address", "tls-front-address", "tls-cert-file", "tls-key-file",
+	"openbao-plugin-dir", "deno-path", "asset-cache", "ready-timeout", "kcp-front-address", "tls-front-address", "tls-cert-file", "tls-key-file",
 	"gateway-spec-file", "gateway-profile", "bootstrap-cluster", "bootstrap-account-did"}, devOnly(tsbundle.SourceRootOption)...)
 
 func (a *app) optionalExe(ctx context.Context, vals clicfg.Values, name, option string) (devinstance.Executable, error) {
@@ -43,6 +43,13 @@ func (a *app) gatewayExecutables(ctx context.Context, vals clicfg.Values) (map[s
 		return nil, err
 	}
 	out[gatewaykcp.ExeDeno] = deno
+	plugins, err := a.openBaoPluginExes(vals)
+	if err != nil {
+		return nil, err
+	}
+	for name, e := range plugins {
+		out[name] = e
+	}
 	if !assets.Release() && vals.String("postgres-root") == "" {
 		out[gatewaykcp.ExePostgres] = devinstance.Executable{}
 	} else {

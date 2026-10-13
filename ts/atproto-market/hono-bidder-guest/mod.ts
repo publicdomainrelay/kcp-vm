@@ -34,6 +34,7 @@ const app = createMarketBidderGuestApp({
     kcp: { server: o.vaultKcpServer, tokenFile: o.vaultKcpTokenFile, caCertFile: o.vaultKcpCaCertFile },
   },
   kcp: { server: o.kcpServer, workspace: o.kcpWorkspace, handle: o.handle, tokenFile: o.kcpTokenFile, caFile: o.kcpCaFile },
+  guestLoginMount: o.guestLoginMount || undefined,
   serve: { addr: o.serveAddr, port: o.servePort },
   reports: { portFile: o.portFile, listenersFile: o.listenersFile },
 }, { logger });

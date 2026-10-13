@@ -448,6 +448,14 @@ func (ct *Controller) boot(ctx context.Context, o v1alpha1.ComputeVM) error {
 			st.Phase, st.Message = v1alpha1.ComputeVMPhasePending, "waiting for the user data at "+o.Spec.UserData.Vault.Server+" "+o.Spec.UserData.Vault.Mount+"/"+o.Spec.UserData.Vault.Path
 			return ct.writeStatus(ctx, o, st)
 		}
+		if err := ct.ensureGuestLogin(ctx, o); err != nil {
+			if refusedLogin(err) {
+				return ct.fail(ctx, o, st, err)
+			}
+			st.Phase, st.Message = v1alpha1.ComputeVMPhasePending, "waiting for the guest login role: "+err.Error()
+			log.Info("the guest login role is not written yet", "err", err.Error())
+			return ct.writeStatus(ctx, o, st)
+		}
 		mem, err := ParseMiB(o.Spec.VM.Mem)
 		if err != nil {
 			log.Info("spec.vm.mem does not parse; the guest gets the image's own memory", "mem", o.Spec.VM.Mem)
@@ -663,6 +671,7 @@ func (ct *Controller) release(ctx context.Context, cur *unstructured.Unstructure
 	if err := ct.teardown(ctx, o.Name, ref.Unit); err != nil {
 		return err
 	}
+	ct.dropGuestLogin(ctx, o)
 	if fresh, err := ct.vms.Get(ctx, o.Name, metav1.GetOptions{}); err == nil {
 		cur = fresh
 	} else if apierrors.IsNotFound(err) {

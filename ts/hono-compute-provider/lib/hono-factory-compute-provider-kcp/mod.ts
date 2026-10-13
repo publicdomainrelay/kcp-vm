@@ -1,6 +1,6 @@
 import { Hono } from "@hono/hono";
 import { createFactory } from "@hono/hono/factory";
-import { EVENT_NSID, ON_NETWORK_NSID, SUBMIT_EVENT_NSID } from "@publicdomainrelay/compute-provider-common";
+import { EVENT_NSID, GUEST_LOGIN_ROUTE, ON_NETWORK_NSID, SUBMIT_EVENT_NSID } from "@publicdomainrelay/compute-provider-common";
 import {
   type ComputeAtproto,
   type ComputeProvider,
@@ -31,6 +31,7 @@ import {
   FIELD_MANAGER_COMPUTE_VM_GUEST,
   GUEST_HOST_ADDRESS,
 } from "@publicdomainrelay/compute-provider-kcp-common";
+import { type GuestLogin, guestLoginBody, isGuestLoginStep } from "@publicdomainrelay/guest-login-abc";
 import { createKvNonceStore, type GuestKv, type JwkStore, type NonceStore, type OidcIssuer } from "@publicdomainrelay/oidc-issuer-abc";
 import { createOidcIssuer, type HostKeysReportAck, type HostKeysReported } from "@publicdomainrelay/oidc-issuer-hono";
 
@@ -51,6 +52,7 @@ export interface ComputeProviderKcpFactoryOptions extends ComputeProviderCtx {
   guestTlsPort?: number;
   reuseStale?: boolean;
   stopGraceSeconds?: number;
+  guestLoginMount?: string;
   bootTimeoutMs?: number;
   releaseTimeoutMs?: number;
   oidcProvisioning?: boolean;
@@ -182,6 +184,7 @@ export function createComputeProviderKcpFactory(opts: ComputeProviderKcpFactoryO
     guestTlsPort: opts.guestTlsPort,
     reuseStale: opts.reuseStale,
     stopGraceSeconds: opts.stopGraceSeconds,
+    guestLoginMount: opts.guestLoginMount,
     bootTimeoutMs: opts.bootTimeoutMs,
     releaseTimeoutMs: opts.releaseTimeoutMs,
     provisioningEnricher: opts.oidcProvisioning
@@ -217,6 +220,7 @@ export interface ComputeProviderKcpGuestFactoryOptions {
   getIssuerUrl: () => string;
   oidcJwkStore?: JwkStore;
   plcDirectoryUrl?: string;
+  guestLogin?: GuestLogin;
 }
 
 export interface ComputeProviderKcpGuestFactory {
@@ -329,10 +333,25 @@ export function createComputeProviderKcpGuestFactory(opts: ComputeProviderKcpGue
     return events;
   }
 
+  function guestLoginRoutes(login: GuestLogin): Hono {
+    const routes = new Hono();
+    routes.post(`${GUEST_LOGIN_ROUTE}/:step`, async (c) => {
+      const step = c.req.param("step");
+      if (!isGuestLoginStep(step)) return c.json({ errors: ["no such step"] }, 404);
+      const body = guestLoginBody(step, await c.req.json().catch(() => null));
+      if (!body) return c.json({ errors: ["the body names the step's fields as strings and nothing else"] }, 400);
+      const reply = await login.step(step, body).catch((err) => ({ status: 502, body: { errors: [String(err)] } }));
+      logger.info("guest_login_step", { step, role: body.role, status: reply.status });
+      return c.json(reply.body ?? {}, reply.status as 200);
+    });
+    return routes;
+  }
+
   const factory = createFactory({
     initApp: (app) => {
       app.route("/", oidcIssuer.app as never);
       app.route("/", onNetworkRoutes());
+      if (opts.guestLogin) app.route("/", guestLoginRoutes(opts.guestLogin));
     },
   });
 

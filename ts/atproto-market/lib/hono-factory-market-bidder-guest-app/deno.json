@@ -12,6 +12,7 @@
     "@publicdomainrelay/market-network-common": "jsr:@publicdomainrelay/market-network-common@^0",
     "@publicdomainrelay/market-network-fetch": "jsr:@publicdomainrelay/market-network-fetch@^0",
     "@publicdomainrelay/openbao-server-kcp": "jsr:@publicdomainrelay/openbao-server-kcp@^0",
-    "@publicdomainrelay/serve": "jsr:@publicdomainrelay/serve@^0"
+    "@publicdomainrelay/serve": "jsr:@publicdomainrelay/serve@^0",
+    "@publicdomainrelay/guest-login-openbao": "jsr:@publicdomainrelay/guest-login-openbao@^0"
   }
 }

@@ -258,6 +258,12 @@ export default {
       description: "PEM CA bundle the kcp server's certificate chains to",
       env: "KCP_PROJECTED_KCP_CA",
     },
+    "compute-provider-kcp-guest-login-mount": {
+      type: "string" as const,
+      description: "Auth mount of the sshsig plugin on this bidder's OpenBao; each guest gets a role there (written by the ComputeVM controller from spec.guestLogin) and binds its ssh host key to it once through the RFP cloud-init; empty turns it off",
+      env: "COMPUTE_PROVIDER_KCP_GUEST_LOGIN_MOUNT",
+      default: "sshsig",
+    },
     "compute-provider-kcp-handle": {
       type: "string" as const,
       description: "Owner handle written to every ComputeVM's spec.owner.handle; the controller namespaces units and work dirs by it",

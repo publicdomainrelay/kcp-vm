@@ -1,5 +1,12 @@
 import { parse as yamlParse, stringify as yamlStringify } from "yaml";
-import { acceptBundleModule, buildUserData, getUserDataModules, POWEROFF_ENDS_VM_MODULE } from "@publicdomainrelay/cloud-init-common";
+import {
+  acceptBundleModule,
+  buildUserData,
+  getUserDataModules,
+  type GuestLoginOptions,
+  guestLoginModule,
+  POWEROFF_ENDS_VM_MODULE,
+} from "@publicdomainrelay/cloud-init-common";
 import type {
   CloudInitContext,
   UserDataModule,
@@ -202,6 +209,12 @@ export function withOnNetworkReporter(
     base: userData,
     modules: [onNetworkReporterModule(onNetworkTargets(userData, fallbackUrl), acceptPathVm)],
   });
+}
+
+export const GUEST_LOGIN_ROUTE = "/v1/sshsig";
+
+export function withGuestLogin(userData: string, opts: GuestLoginOptions): string {
+  return buildUserData({ base: userData, modules: [guestLoginModule(opts)] });
 }
 
 export function addressTheRequesterNamed(userData: string): string | undefined {

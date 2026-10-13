@@ -24,6 +24,7 @@ const (
 	collCerts    = "certs"
 	collRole     = "role"
 	collPKIRoles = "roles"
+	PluginAuth   = "auth"
 )
 
 type SecretMount struct {
@@ -54,7 +55,20 @@ type KVScope struct {
 	Grace  time.Duration
 }
 
+type Plugin struct {
+	Type    string
+	Name    string
+	Command string
+	SHA256  string
+}
+
+type PluginEntry struct {
+	Command string
+	SHA256  string
+}
+
 type Desired struct {
+	Plugins      []Plugin
 	SecretMounts []SecretMount
 	AuthMounts   []AuthMount
 	Policies     []Policy
@@ -63,8 +77,11 @@ type Desired struct {
 }
 
 type Actual struct {
-	SecretMounts map[string]string
+	Plugins      map[string]PluginEntry
+	External     []string
 	AuthMounts   map[string]string
+	AuthSHA256   map[string]string
+	SecretMounts map[string]string
 	Policies     map[string]string
 	Collections  map[string][]string
 	Objects      map[string]map[string]any
@@ -85,6 +102,9 @@ const (
 	OpDeletePolicy  OpKind = "delete-policy"
 	OpDisableSecret OpKind = "disable-secret-mount"
 	OpDeleteKV      OpKind = "delete-kv"
+	OpRegister      OpKind = "register-plugin"
+	OpReload        OpKind = "reload-plugin"
+	OpDeregister    OpKind = "deregister-plugin"
 )
 
 type Op struct {
@@ -114,6 +134,18 @@ func BuiltinSecretMount(p string) bool {
 func BuiltinAuthMount(p string) bool { return strings.Trim(p, "/") == AuthToken }
 
 func BuiltinPolicy(name string) bool { return name == policyRoot || name == policyDflt }
+
+func PluginKey(p Plugin) string { return p.Type + "/" + p.Name }
+
+func (d Desired) authPlugins() map[string]bool {
+	out := map[string]bool{}
+	for _, p := range d.Plugins {
+		if p.Type == PluginAuth {
+			out[p.Name] = true
+		}
+	}
+	return out
+}
 
 func RoleCollection(mountPath, mountType string) string {
 	m := strings.Trim(mountPath, "/")
@@ -152,6 +184,21 @@ func (d Desired) Collections() []string {
 
 func (d Desired) Validate() error {
 	secrets, auths, policies, objects := map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]bool{}
+	plugins := map[string]bool{}
+	for _, p := range d.Plugins {
+		if p.Type != PluginAuth || p.Name == "" || strings.ContainsAny(p.Name, "/ ") || plugins[PluginKey(p)] {
+			return fmt.Errorf("baosync: plugin %s/%s: type auth, a name without a slash or a space, declared once", p.Type, p.Name)
+		}
+		switch p.Name {
+		case AuthCert, AuthJWT, AuthAppRole, AuthToken:
+			return fmt.Errorf("baosync: plugin %s shadows a built-in auth method", p.Name)
+		}
+		if len(p.SHA256) != 64 || p.Command == "" || strings.ContainsAny(p.Command, "/ ") {
+			return fmt.Errorf("baosync: plugin %s needs a sha256 and a command name in the plugin directory", p.Name)
+		}
+		plugins[PluginKey(p)] = true
+	}
+	authPlugins := d.authPlugins()
 	for _, m := range d.SecretMounts {
 		p := strings.Trim(m.Path, "/")
 		if p == "" || BuiltinSecretMount(p) || secrets[p] {
@@ -169,10 +216,10 @@ func (d Desired) Validate() error {
 		if p == "" || BuiltinAuthMount(p) || auths[p] {
 			return fmt.Errorf("baosync: auth mount %q is empty, a built-in or declared twice", m.Path)
 		}
-		switch m.Type {
-		case AuthCert, AuthJWT, AuthAppRole:
+		switch {
+		case m.Type == AuthCert, m.Type == AuthJWT, m.Type == AuthAppRole, authPlugins[m.Type]:
 		default:
-			return fmt.Errorf("baosync: auth mount %s has type %q; cert, jwt and approle are declared", p, m.Type)
+			return fmt.Errorf("baosync: auth mount %s has type %q; cert, jwt, approle and the declared auth plugins are declared", p, m.Type)
 		}
 		auths[p] = true
 	}
@@ -200,6 +247,29 @@ func (d Desired) Validate() error {
 func Diff(d Desired, a Actual) Plan {
 	var plan Plan
 	add := func(o Op) { plan.Ops = append(plan.Ops, o) }
+
+	wantPlugin := map[string]bool{}
+	for _, p := range d.Plugins {
+		key := PluginKey(p)
+		wantPlugin[key] = true
+		got, ok := a.Plugins[key]
+		body := map[string]any{"sha256": p.SHA256, "command": p.Command}
+		switch {
+		case !ok:
+			add(Op{Kind: OpRegister, Target: key, Body: body, Why: "declared and not in the catalog"})
+		case got.SHA256 != p.SHA256 || got.Command != p.Command:
+			add(Op{Kind: OpRegister, Target: key, Body: body, Why: "the catalog holds sha256 " + got.SHA256 + ", " + p.SHA256 + " is declared"})
+		}
+		for _, m := range d.AuthMounts {
+			mp := strings.Trim(m.Path, "/")
+			running, mounted := a.AuthSHA256[mp]
+			if p.Type == PluginAuth && m.Type == p.Name && mounted && a.AuthMounts[mp] == p.Name && running != p.SHA256 {
+				add(Op{Kind: OpReload, Target: p.Name, Body: map[string]any{"plugin": p.Name},
+					Why: "mount " + mp + " runs sha256 " + running + ", " + p.SHA256 + " is declared"})
+				break
+			}
+		}
+	}
 
 	wantSecret := map[string]SecretMount{}
 	for _, m := range d.SecretMounts {
@@ -276,6 +346,11 @@ func Diff(d Desired, a Actual) Plan {
 	for _, p := range sortedKeys(a.SecretMounts) {
 		if _, ok := wantSecret[p]; !ok && !BuiltinSecretMount(p) {
 			add(Op{Kind: OpDisableSecret, Target: p, Why: "no declaration names it"})
+		}
+	}
+	for _, key := range a.External {
+		if !wantPlugin[key] {
+			add(Op{Kind: OpDeregister, Target: key, Why: "an external plugin no declaration names"})
 		}
 	}
 	for _, s := range d.KV {

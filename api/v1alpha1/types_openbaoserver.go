@@ -47,6 +47,18 @@ type OpenBaoServerSpec struct {
 	TLS *OpenBaoServerTLS `json:"tls,omitempty"`
 
 	Declared *OpenBaoServerDeclared `json:"declared,omitempty"`
+
+	Plugins []OpenBaoPlugin `json:"plugins,omitempty"`
+}
+
+type OpenBaoPlugin struct {
+	Name string `json:"name"`
+
+	Type string `json:"type"`
+
+	Asset HostProcessAsset `json:"asset"`
+
+	MountPath string `json:"mountPath,omitempty"`
 }
 
 type OpenBaoServerClient struct {
@@ -280,6 +292,8 @@ type OpenBaoServerStatus struct {
 
 	Sync *OpenBaoServerSync `json:"sync,omitempty"`
 
+	Plugins []OpenBaoServerPluginStatus `json:"plugins,omitempty"`
+
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
@@ -313,6 +327,22 @@ type OpenBaoServerClientRefs struct {
 	ClientCert string `json:"clientCert,omitempty"`
 
 	ClientKey string `json:"clientKey,omitempty"`
+}
+
+type OpenBaoServerPluginStatus struct {
+	Name string `json:"name"`
+
+	Type string `json:"type"`
+
+	Sha256 string `json:"sha256,omitempty"`
+
+	Command string `json:"command,omitempty"`
+
+	MountPath string `json:"mountPath,omitempty"`
+
+	RunningSha256 string `json:"runningSha256,omitempty"`
+
+	Message string `json:"message,omitempty"`
 }
 
 type OpenBaoServerRuntime struct {

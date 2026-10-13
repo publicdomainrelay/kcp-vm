@@ -87,6 +87,12 @@ func applyOp(ctx context.Context, c *openbao.Client, o Op) error {
 		return c.DeletePolicy(ctx, o.Target)
 	case OpDisableSecret:
 		return c.DisableMount(ctx, o.Target)
+	case OpRegister:
+		return c.Write(ctx, "sys/plugins/catalog/"+o.Target, o.Body)
+	case OpReload:
+		return c.Write(ctx, "sys/plugins/reload/backend", o.Body)
+	case OpDeregister:
+		return c.Delete(ctx, "sys/plugins/catalog/"+o.Target)
 	}
 	return fmt.Errorf("baosync: unknown op %s", o.Kind)
 }

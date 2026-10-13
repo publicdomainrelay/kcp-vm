@@ -59,6 +59,7 @@ type Config struct {
 	Prefix     string
 	Interval   time.Duration
 	Env        []v1alpha1.HostProcessEnv
+	Resolve    func(v1alpha1.HostProcessAsset) (string, error)
 	Log        *slog.Logger
 }
 
@@ -282,6 +283,7 @@ type synced struct {
 	pending []string
 	how     string
 	desired baosync.Desired
+	running map[string]string
 }
 
 func syncWith(ctx context.Context, admin *openbao.Client, in layoutInput) (synced, error) {
@@ -290,7 +292,16 @@ func syncWith(ctx context.Context, admin *openbao.Client, in layoutInput) (synce
 		return synced{}, err
 	}
 	rep, err := baosync.Sync(ctx, admin, d)
-	return synced{report: rep, pending: pending, desired: d}, err
+	s := synced{report: rep, pending: pending, desired: d}
+	if err == nil && len(in.plugins) > 0 {
+		s.running = map[string]string{}
+		if auths, aerr := admin.AuthMounts(ctx); aerr == nil {
+			for p, m := range auths {
+				s.running[p] = m.RunningSHA256
+			}
+		}
+	}
+	return s, err
 }
 
 func (c *Controller) syncCore(ctx context.Context, client *openbao.Client, keysPath string, in layoutInput) (synced, error) {
@@ -421,10 +432,18 @@ func (c *Controller) reconcile(ctx context.Context, o v1alpha1.OpenBaoServer) v1
 			CertAuthRole: cl.Name, Policy: strings.Join(clientTokenPolicies(cl), ","), KVMount: cl.KVMount, ClientCert: "file:" + m.CertFile,
 			ClientKey: "file:" + m.KeyFile})
 	}
-	layout := layoutInput{caPEM: tlsm.CAPEM, clientsCAPEM: clientsCA.CAPEM, clients: o.Spec.Clients, declared: o.Spec.Declared}
+	plugins, err := c.placePlugins(o, dir)
+	if err != nil {
+		st.Plugins = nil
+		return fail("spec.plugins: %v", err)
+	}
+	layout := layoutInput{caPEM: tlsm.CAPEM, clientsCAPEM: clientsCA.CAPEM, clients: o.Spec.Clients, declared: o.Spec.Declared, plugins: plugins}
 	opts, err := serverOptions(o.Spec, clientsCA.BundlePath)
 	if err != nil {
 		return fail("%v", err)
+	}
+	if len(plugins) > 0 {
+		opts.PluginDirectory = PluginDir(dir)
 	}
 	body, err := rootvault.ServerConfigWith(dir, listen, opts)
 	if err != nil {
@@ -538,6 +557,20 @@ func (c *Controller) reconcile(ctx context.Context, o v1alpha1.OpenBaoServer) v1
 	}
 	s, serr := c.syncCore(ctx, client, keysPath, layout)
 	recordSync(&st, gen, s, serr, log)
+	if len(plugins) > 0 {
+		perr := serr
+		if perr == nil {
+			perr = s.report.Err
+		}
+		st.Plugins = pluginStatus(plugins, s.running, perr)
+		if perr == nil {
+			if removed := prunePlugins(dir, plugins); len(removed) > 0 {
+				log.Info("removed plugin binaries no catalog entry runs", "files", removed)
+			}
+		}
+	} else {
+		st.Plugins = nil
+	}
 	h, err = client.Health(ctx)
 	if err != nil {
 		return starting("the server at %s stopped answering: %v", addr, err)

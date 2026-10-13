@@ -131,7 +131,28 @@ type Asset struct {
 	Pending     string                   `json:"pending,omitempty"`
 	Executables map[string]string        `json:"executables"`
 	LibraryPath string                   `json:"libraryPath,omitempty"`
+	Fetch       map[string]AssetFetch    `json:"fetch,omitempty"`
 	Platforms   map[string]AssetPlatform `json:"platforms"`
+}
+
+type AssetFetch struct {
+	SHA256 string `json:"sha256"`
+}
+
+func FetchSHA256(asset, platform string) (string, error) {
+	m, err := load()
+	if err != nil {
+		return "", err
+	}
+	a, ok := m.Assets[asset]
+	if !ok {
+		return "", fmt.Errorf("versions: no asset %s", asset)
+	}
+	f, ok := a.Fetch[platform]
+	if !ok || f.SHA256 == "" {
+		return "", fmt.Errorf("versions: asset %s pins no fetch sha256 for %s", asset, platform)
+	}
+	return f.SHA256, nil
 }
 
 type AssetPlatform struct {

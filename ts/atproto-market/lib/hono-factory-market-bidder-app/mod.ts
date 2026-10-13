@@ -118,6 +118,7 @@ export interface KcpProviderSpec {
   tokenFile?: string;
   caFile?: string;
   guestHostAddress?: string;
+  guestLoginMount?: string;
 }
 
 export type MarketBidderProviderSpec =
@@ -641,6 +642,7 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
           handle: p.handle,
           guestVault: guest,
           guestHostAddress: p.guestHostAddress,
+          guestLoginMount: p.guestLoginMount,
           oidcJwkStore: oidcJwkStore("kcp"),
           getIssuerUrl: () => issuerUrl,
           guestTlsPort,

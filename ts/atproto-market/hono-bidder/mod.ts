@@ -40,6 +40,7 @@ if (o.computeProviderKcp) {
     tokenFile: o.computeProviderKcpTokenFile,
     caFile: o.computeProviderKcpCaFile,
     guestHostAddress: o.computeProviderKcpGuestHostAddress,
+    guestLoginMount: o.computeProviderKcpGuestLoginMount || undefined,
   });
 }
 if (o.computeProviderDenoWorker) providers.push({ kind: "denoWorker", permissionMode: o.workerPermissionMode });

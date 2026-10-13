@@ -31,7 +31,7 @@ func objectMounted(p string, a Actual) bool {
 }
 
 func Read(ctx context.Context, c *openbao.Client, d Desired) (Actual, error) {
-	a := Actual{SecretMounts: map[string]string{}, AuthMounts: map[string]string{}, Policies: map[string]string{},
+	a := Actual{Plugins: map[string]PluginEntry{}, AuthSHA256: map[string]string{}, SecretMounts: map[string]string{}, AuthMounts: map[string]string{}, Policies: map[string]string{},
 		Collections: map[string][]string{}, Objects: map[string]map[string]any{}, KV: map[string][]string{},
 		KVUpdated: map[string]time.Time{}, Now: time.Now()}
 	secrets, err := c.SecretMounts(ctx)
@@ -47,6 +47,10 @@ func Read(ctx context.Context, c *openbao.Client, d Desired) (Actual, error) {
 	}
 	for p, m := range auths {
 		a.AuthMounts[p] = m.Type
+		a.AuthSHA256[p] = m.RunningSHA256
+	}
+	if err := readPlugins(ctx, c, d, &a); err != nil {
+		return a, err
 	}
 	names, err := c.List(ctx, "sys/policies/acl")
 	if err != nil {
@@ -167,4 +171,36 @@ func collectionTypeMatches(coll string, d Desired, a Actual) bool {
 		}
 	}
 	return false
+}
+
+func readPlugins(ctx context.Context, c *openbao.Client, d Desired, a *Actual) error {
+	if len(d.Plugins) == 0 {
+		return nil
+	}
+	cat, err := c.Read(ctx, "sys/plugins/catalog")
+	if err != nil {
+		return fmt.Errorf("baosync: reading the plugin catalog: %w; an unread catalog is not an empty one", err)
+	}
+	detailed, _ := cat["detailed"].([]any)
+	for _, x := range detailed {
+		e, ok := x.(map[string]any)
+		if !ok || e["builtin"] == true {
+			continue
+		}
+		a.External = append(a.External, fmt.Sprint(e["type"])+"/"+fmt.Sprint(e["name"]))
+	}
+	for _, p := range d.Plugins {
+		got, err := c.Read(ctx, "sys/plugins/catalog/"+PluginKey(p))
+		if errors.Is(err, openbao.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("baosync: reading plugin %s: %w", PluginKey(p), err)
+		}
+		if got["builtin"] == true {
+			continue
+		}
+		a.Plugins[PluginKey(p)] = PluginEntry{Command: fmt.Sprint(got["command"]), SHA256: fmt.Sprint(got["sha256"])}
+	}
+	return nil
 }

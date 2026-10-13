@@ -2094,6 +2094,7 @@
       "ts/atproto-market/lib/hono-factory-market-bidder-guest-app": {
         "dependencies": [
           "jsr:@publicdomainrelay/did-key-ingress-proxy@0",
+          "jsr:@publicdomainrelay/guest-login-openbao@0",
           "jsr:@publicdomainrelay/hono-factory-compute-provider-kcp@0",
           "jsr:@publicdomainrelay/logger@0",
           "jsr:@publicdomainrelay/market-bidder-vault-keys@0",
@@ -2474,6 +2475,11 @@
           "jsr:@publicdomainrelay/container-backend-common@0"
         ]
       },
+      "ts/hono-compute-provider/lib/guest-login-openbao": {
+        "dependencies": [
+          "jsr:@publicdomainrelay/guest-login-abc@0"
+        ]
+      },
       "ts/hono-compute-provider/lib/hono-factory-compute-provider-kcp": {
         "dependencies": [
           "jsr:@hono/hono@4",
@@ -2482,6 +2488,7 @@
           "jsr:@publicdomainrelay/compute-provider-kcp-abc@0",
           "jsr:@publicdomainrelay/compute-provider-kcp-common@0",
           "jsr:@publicdomainrelay/compute-provider-kcp@0",
+          "jsr:@publicdomainrelay/guest-login-abc@0",
           "jsr:@publicdomainrelay/oidc-issuer-abc@0",
           "jsr:@publicdomainrelay/oidc-issuer-hono@0"
         ]

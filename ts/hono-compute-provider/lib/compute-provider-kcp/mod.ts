@@ -1,10 +1,12 @@
 import {
   addressTheRequesterNamed,
   injectAcceptBundle,
+  GUEST_LOGIN_ROUTE,
   pointGuestAtHost,
   SECRETS_PREFIX,
   shortId,
   WIF_SIMPLE_NSID,
+  withGuestLogin,
   withOnNetworkBaseUrl,
   withOnNetworkReporter,
 } from "@publicdomainrelay/compute-provider-common";
@@ -180,6 +182,7 @@ export interface ComputeProviderKcpCtx extends ComputeProviderCtx {
   guestTlsPort?: number;
   reuseStale?: boolean;
   stopGraceSeconds?: number;
+  guestLoginMount?: string;
   bootTimeoutMs?: number;
   releaseTimeoutMs?: number;
   pollIntervalMs?: number;
@@ -438,6 +441,15 @@ export function createComputeProviderKcp(ctx: ComputeProviderKcpCtx): ComputePro
     });
   }
 
+  async function guestLoginFor(name: string): Promise<{ mount: string; bindSecret: string; bindSecretSha256: string }> {
+    const bytes = crypto.getRandomValues(new Uint8Array(32));
+    const bindSecret = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+    const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(bindSecret)));
+    const bindSecretSha256 = Array.from(digest, (b) => b.toString(16).padStart(2, "0")).join("");
+    logger.info("computevm_guest_login", { name, mount: ctx.guestLoginMount });
+    return { mount: ctx.guestLoginMount!, bindSecret, bindSecretSha256 };
+  }
+
   async function provision(vm: VM, requesterDid: string): Promise<ProvisionResult> {
     const acceptKey = acceptKeyOf(vm._accept);
     try {
@@ -464,7 +476,11 @@ export function createComputeProviderKcp(ctx: ComputeProviderKcpCtx): ComputePro
       : { userData: vm.user_data, nonce: "", associateWithDroplet: (_id: string) => Promise.resolve() };
     ctx.hostKeys?.bindNonce(enriched.nonce, name);
     const issuerUrl = ctx.getIssuerUrl();
-    const reported = withOnNetworkBaseUrl(withOnNetworkReporter(enriched.userData, issuerUrl, acceptPathVm), issuerUrl);
+    const login = ctx.guestLoginMount ? await guestLoginFor(name) : undefined;
+    const withLogin = login
+      ? withGuestLogin(enriched.userData, { url: `${issuerUrl}${GUEST_LOGIN_ROUTE}`, role: name, bindSecret: login.bindSecret })
+      : enriched.userData;
+    const reported = withOnNetworkBaseUrl(withOnNetworkReporter(withLogin, issuerUrl, acceptPathVm), issuerUrl);
     const hostAddress = addressTheRequesterNamed(reported) ?? ctx.guestHostAddress;
     const userData = pointGuestAtHost(reported, hostAddress, ctx.guestTlsPort);
     const desired = computeVMFor({
@@ -475,6 +491,7 @@ export function createComputeProviderKcp(ctx: ComputeProviderKcpCtx): ComputePro
       vault: { server: ctx.guestVault.server, mount: ctx.guestVault.mount },
       reuseStale: ctx.reuseStale,
       stopGraceSeconds: ctx.stopGraceSeconds,
+      guestLogin: login ? { mount: login.mount, bindSecretSha256: login.bindSecretSha256 } : undefined,
     });
 
     provisioning.add(name);
