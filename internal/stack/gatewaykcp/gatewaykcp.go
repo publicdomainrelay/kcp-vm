@@ -276,7 +276,7 @@ func run(ctx context.Context, c Config, l devinstance.Layout, deno *denoruntime.
 		}
 	}
 	return devcore.Run(ctx, devcore.Config{Layout: l, ReadyTimeout: c.ReadyTimeout, Log: c.Log, Application: app, FrontAddress: c.FrontAddress,
-		DenoRuntime: deno, WebApp: &appctl.WebApp{FrontKubeconfig: g.memberKubeconfig(), TSRoot: c.Closure.Root,
+		DenoRuntime: deno, WebApp: &appctl.WebApp{FrontKubeconfig: g.memberKubeconfig(),
 			ClusterCADir: filepath.Join(c.StateDir, "clusterprovider", clusterstack.PublicCADirName)},
 		OnComponents: reg.components, Before: g.before, Members: g.members, Listeners: reg.report}, m)
 }

@@ -21,6 +21,7 @@ const (
 	TLSServe            = "serve"
 	TLSTrust            = "trust"
 	TLSNone             = "none"
+	TSRootRef           = "${SOCIALWEB_TS_ROOT}"
 )
 
 var (
@@ -29,6 +30,8 @@ var (
 	serviceName      = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
 	templateOwnedEnv = []string{"HOME", "TMPDIR", "DENO_DIR", "DENO_CERT", "PATH", "PORT_FILE", "LISTENERS_FILE", "STATUS_FILE"}
 )
+
+func UnderTSRoot(rel string) string { return TSRootRef + "/" + strings.TrimPrefix(rel, "/") }
 
 type Service struct {
 	Name           string              `json:"name"`

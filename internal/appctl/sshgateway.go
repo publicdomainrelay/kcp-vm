@@ -47,10 +47,7 @@ func SshGatewayValues(spec v1alpha1.SshGatewaySpec, stateDir string, l devinstan
 	if !slices.Contains(SshGatewayProfiles, spec.Profile) {
 		return v, fmt.Errorf("appctl: SshGateway profile %q: want one of %s", spec.Profile, strings.Join(SshGatewayProfiles, ", "))
 	}
-	if rec.SourceRoot == "" {
-		return v, errors.New("appctl: the instance record names no TypeScript source root for the ssh gateway's web dir")
-	}
-	v.WebDir = filepath.Join(rec.SourceRoot, filepath.FromSlash(SshGatewayWebDir))
+	v.WebDir = manifests.UnderTSRoot(SshGatewayWebDir)
 	dumbpipe := rec.Executables[DumbpipeExecutable].Path
 	if dumbpipe == "" {
 		return v, errors.New("appctl: the instance has no dumbpipe executable for the iroh dialer (dev up --dumbpipe-path in a dev build)")

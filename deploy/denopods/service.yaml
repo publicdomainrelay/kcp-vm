@@ -37,7 +37,7 @@ spec:
     if (!entry || !stateDir) await fail("SERVICE_ENTRY and SERVICE_STATE_DIR are required");
     const at = (p: string): string => `${root}/${p}`;
 
-    const args = parsed<string[]>("SERVICE_ARGS", []);
+    const args = parsed<string[]>("SERVICE_ARGS", []).map((a) => a.replaceAll("${SOCIALWEB_TS_ROOT}", root));
     const serviceEnv = parsed<Record<string, string>>("SERVICE_ENV", {});
     const preloads = parsed<string[]>("SERVICE_PRELOADS", []);
     const denoFlags = parsed<string[]>("SERVICE_DENO_FLAGS", []);

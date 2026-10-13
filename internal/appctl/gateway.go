@@ -39,7 +39,6 @@ const (
 
 type WebApp struct {
 	FrontKubeconfig string
-	TSRoot          string
 	ClusterCADir    string
 }
 
@@ -321,10 +320,10 @@ func WebAppVaultOf(o *v1alpha1.OpenBaoServer) (manifests.GatewayVault, bool) {
 }
 
 func GatewayValues(o v1alpha1.Gateway, workspace, stateDir string, w WebApp, vault manifests.GatewayVault) (manifests.Gateway, error) {
-	if !filepath.IsAbs(w.FrontKubeconfig) || !filepath.IsAbs(w.TSRoot) {
-		return manifests.Gateway{}, fmt.Errorf("appctl: the %s web app needs an absolute kcp front kubeconfig and TypeScript root", WebAppComponent)
+	if !filepath.IsAbs(w.FrontKubeconfig) {
+		return manifests.Gateway{}, fmt.Errorf("appctl: the %s web app needs an absolute kcp front kubeconfig", WebAppComponent)
 	}
-	v := manifests.Gateway{StateDir: stateDir, WebDir: filepath.Join(w.TSRoot, filepath.FromSlash(WebAppWebDir)),
+	v := manifests.Gateway{StateDir: stateDir, WebDir: manifests.UnderTSRoot(WebAppWebDir),
 		GatewayWorkspace: workspace, GatewayName: o.Name, TLS: manifests.TLSNone, Vault: vault,
 		IdentityWorkspace: workspace + ":" + ComponentWorkspace}
 	var trust, read []string
