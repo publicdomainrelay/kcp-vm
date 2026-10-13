@@ -166,10 +166,19 @@ func (n *networks) deleteVault(ctx context.Context) (bool, error) {
 }
 
 func pkiCA(ctx context.Context, v networkVault) ([]byte, error) {
-	c, err := v.client("")
+	anon, err := v.client("")
 	if err != nil {
 		return nil, err
 	}
+	token, err := anon.LoginCert(ctx, v.certMount, v.certRole)
+	if err != nil {
+		return nil, err
+	}
+	c, err := v.client(token)
+	if err != nil {
+		return nil, err
+	}
+	defer c.RevokeSelf(context.WithoutCancel(ctx))
 	pem, err := c.CAPEM(ctx, NetworkPKIMount)
 	if err != nil {
 		return nil, fmt.Errorf("the network's PKI root CA: %w", err)

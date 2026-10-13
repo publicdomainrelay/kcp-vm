@@ -12,6 +12,9 @@ spec:
       tokenTTL: 768h
       tokenMaxTTL: 768h
   declared:
+    secretMounts:
+      - path: pki
+        type: pki
     policies:
       - name: network-pki
         rules:

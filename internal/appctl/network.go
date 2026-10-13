@@ -52,6 +52,7 @@ type networks struct {
 	mu         sync.Mutex
 	applied    map[string]int64
 	frontMoved sync.Map
+	pkiPEM     []byte
 }
 
 func newNetworks(ctl *Controller) *networks {
@@ -221,14 +222,16 @@ func NetworkValue(views map[string]podView, caBundle string) (v1alpha1.MarketNet
 
 func (n *networks) caBundle(ctx context.Context) (string, error) {
 	dir := NetworkStateDir(n.ctl.c.Layout.StateDir)
-	v, err := n.vault(ctx)
-	if err != nil {
-		return "", err
+	if len(n.pkiPEM) == 0 {
+		v, err := n.vault(ctx)
+		if err != nil {
+			return "", err
+		}
+		if n.pkiPEM, err = pkiCA(ctx, v); err != nil {
+			return "", err
+		}
 	}
-	pki, err := pkiCA(ctx, v)
-	if err != nil {
-		return "", err
-	}
+	pki := n.pkiPEM
 	guest, err := os.ReadFile(filepath.Join(dir, GuestTLSDir, guestCAFile))
 	if err != nil {
 		return "", err
