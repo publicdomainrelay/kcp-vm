@@ -92,6 +92,15 @@ func runServeGatewayKcp(ctx context.Context, a *app, vals clicfg.Values, rest []
 	if !filepath.IsAbs(state) {
 		return a.fail(exitRefused, "%s: state-dir %q is not absolute", verb, state)
 	}
+	if envFile := filepath.Join(state, "gateway.env"); func() bool { _, err := os.Lstat(envFile); return err == nil }() {
+		f, err := os.Open(envFile)
+		if err != nil {
+			return a.fail(exitRefused, "%s: %s exists but this account cannot read it (%v): systemd skipped it, so the gateway "+
+				"would run on built-in defaults (audience did:web:socialweb.local) and refuse every real token; "+
+				"chown it to the account and restart", verb, envFile, err)
+		}
+		f.Close()
+	}
 	backend, err := hostsvc.ParseBackend(vals.String(backendOpt))
 	if err != nil {
 		return a.fail(exitRefused, "%s: %v", verb, err)

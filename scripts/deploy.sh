@@ -79,13 +79,26 @@ if [ -f "$SPEC" ]; then
   spec_args=(--gateway-spec-file "$SPEC")
 fi
 
+# gateway.env is read by the account's user manager (EnvironmentFile): it must belong to the account
+# BEFORE the core starts, or systemd skips it and the gateway runs on built-in defaults (audience
+# did:web:socialweb.local, every real token refused). A first install creates the account, so there
+# the file is handed over and the core restarted once right after install gateway.
 if [ -f "$INCOMING.env" ]; then
   install -d -m 0700 "$STATE_DIR"
-  install -m 0600 "$INCOMING.env" "$STATE_DIR/gateway.env"
+  if id -u "$ACCOUNT" >/dev/null 2>&1; then
+    install -o "$ACCOUNT" -g "$ACCOUNT" -m 0600 "$INCOMING.env" "$STATE_DIR/gateway.env"
+  else
+    install -m 0600 "$INCOMING.env" "$STATE_DIR/gateway.env"
+  fi
 fi
 if [ ! -f "/var/lib/socialweb-computer/install-${ACCOUNT}.json" ]; then
   say "install gateway (the one root step)"
   "$INCOMING" install gateway --account "$ACCOUNT" --state-dir "$STATE_DIR" "${spec_args[@]}"
+  if [ -f "$STATE_DIR/gateway.env" ] && [ "$(stat -c %U "$STATE_DIR/gateway.env")" != "$ACCOUNT" ]; then
+    chown "$ACCOUNT:$ACCOUNT" "$STATE_DIR/gateway.env"
+    say "gateway.env handed to $ACCOUNT; restarting the core so it reads it"
+    systemctl --user -M "$ACCOUNT@" restart socialweb-computer-gateway.service
+  fi
 else
   uid="$(id -u "$ACCOUNT")"
   copy="$STATE_DIR/incoming-$SHA256"
@@ -95,7 +108,6 @@ else
     "$copy" upgrade --binary "$copy" --sha256 "$SHA256" || { rm -f "$copy"; exit 1; }
   rm -f "$copy"
 fi
-[ -f "$STATE_DIR/gateway.env" ] && chown "$ACCOUNT:$ACCOUNT" "$STATE_DIR/gateway.env"
 
 say "waiting for the web app to answer"
 ready=0
