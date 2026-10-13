@@ -461,6 +461,26 @@ VM or rents one:
 - **Postgres, OpenBao, ESO, the CCM**: unit restarts; a restarted OpenBao is unsealed on its new
   invocation and synced to its declaration.
 
+The members (the gateway XRPC and the cluster provider, in the core) reach kcp as kcp-admin through a
+token file the core rewrites from the active slot's `admin.kubeconfig` whenever the slot changes, because
+every kcp start issues a new kcp-admin token.
+
+Readings on hat-8, 2026-10-12 UTC: a staged release gateway (`install gateway --root`, systemd-user,
+the core's PATH `/usr/bin:/bin`) with tenant cluster `gc` and one market node rented through the RFP flow
+from a market network's `spec.kcp` bidder (guest a VM unit of test-0001), `/readyz` polled through the
+cluster's front every second. `upgrade` 15:44:18: core members up 15:44:33, the VM unit's InvocationID,
+the claim's uid and the node's Ready transition (15:25:17) unchanged. `units roll kcp` a to b
+15:45:09-15:45:22: front flipped 15:45:15.86, lease handed over 15:45:21.6, probe Ready 0.53 s after; it
+left the members Unauthorized (their kcp-admin token was the old slot's), fixed by the token file;
+after the fix, roll b to a 16:00:51-16:01:02 left the cluster provider Unauthorized for 10 s (6 passes)
+until the client re-read the file. `units roll cluster` a to b 16:02:24-16:04:56: the swap waited the
+60 s idle bound (the workload pod), green Ready 80 s after start, front flipped 16:03:48.905, blue
+stopped 0.79 s later with 303 open connections drained, the EndpointSlice never lost the front pair,
+1 failed `/readyz` poll (16:03:49.288), no Ready transition. `units roll link` apiserver a to b
+16:05:14-16:05:29: green Ready 10 s after start, the old listener stopped 0.2 s later, the node's lease
+renewed through the new listener. A `rollback` to a build without the token file restarted the core
+into a loop (bootstrap Unauthorized) while every member unit kept serving and the node stayed Ready.
+
 Stated limits: a user-manager restart, linger removal or a reboot removes every transient unit, so
 every cluster cold-starts; the NotReady clock counts from when the path is back (0007
 M3-NODE-LOSS-CLOCK), so a node whose path returns is kept, but it is not zero-downtime. The core's own
