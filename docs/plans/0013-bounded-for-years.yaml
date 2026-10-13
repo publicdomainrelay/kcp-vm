@@ -131,7 +131,7 @@ items:
     files: ["internal/bootstrap", "internal/kcpserver", "internal/pgunit", "internal/postgresctl"]
     done_when: "under M4-SOAK-READING load the sqlite file size and the kine row count plateau on a bidder, and the kine table size plateaus on the gateway."
     risks: ["An sqlite store created before auto_vacuum was set needs one full VACUUM; the core runs it once at the next start, during the slot roll."]
-    status: todo
+    status: doing
     evidence:
   - id: M3-DENOPOD-LIMITS
     milestone: M3
