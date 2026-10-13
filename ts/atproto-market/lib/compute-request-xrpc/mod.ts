@@ -130,8 +130,11 @@ export function acceptResendDeadline(bidCreatedAt: unknown, now: number): number
   return Number.isFinite(created) ? Math.min(cap, created + BID_WINDOW_MS) : cap;
 }
 
+export const ACCEPT_IN_PROGRESS = "AcceptInProgress";
+
 export function acceptRetryable(status: number, body: unknown): boolean {
   const error = (body as { error?: unknown } | null)?.error;
+  if (error === ACCEPT_IN_PROGRESS) return true;
   if (status >= 500 || status === 408 || status === 429) return true;
   if (status === 404 && error === "NotFound") return true;
   return status >= 200 && status < 300;
@@ -805,6 +808,7 @@ export type ComputeRequestOptions =
   & {
     relayUrl?: string;
     returnSignal?: AbortSignal;
+    acceptCopies?: number;
     offeringWatcherDids?: () => string[];
     logger?: StructuredLoggerInterface;
     payloadFactory?: () => Promise<{ uri: string; cid: string }>;
@@ -1789,8 +1793,24 @@ runcmd:
       const target = await pds.resolveBidderEndpoint(submitAcceptTarget);
       if (target) {
         acceptPushed = true;
-        const deadline = acceptResendDeadline(winner.record.createdAt, Date.now());
+        let deadline = acceptResendDeadline(winner.record.createdAt, Date.now());
+        let inProgressSince: number | undefined;
         let delay = ACCEPT_RESEND_FIRST_DELAY_MS;
+        const sendAccept = () =>
+          pds.callBidder(target.targetUrl, SUBMIT_ACCEPT_NSID, SUBMIT_ACCEPT_LXM, target.audDid, { acceptUri, acceptCid });
+        const sendCopies = async (copies: number) => {
+          const settled = await Promise.allSettled(Array.from({ length: copies }, sendAccept));
+          const answers = settled.map((x) =>
+            x.status === "fulfilled"
+              ? { status: x.value.status, receipt: (x.value.body as { uri?: string } | null)?.uri, error: (x.value.body as { error?: string } | null)?.error }
+              : { error: String(x.reason) }
+          );
+          log("submitAccept_copies", { copies, receipts: [...new Set(answers.map((a) => a.receipt).filter(Boolean))], answers });
+          const fulfilled = settled.flatMap((x) => x.status === "fulfilled" ? [x.value] : []);
+          const withReceipt = fulfilled.find((r) => r.ok && (r.body as { uri?: string } | null)?.uri);
+          if (withReceipt ?? fulfilled[0]) return withReceipt ?? fulfilled[0];
+          throw (settled[0] as PromiseRejectedResult).reason;
+        };
         log("submitting_accept", { target: submitAcceptTarget, resendUntil: new Date(deadline).toISOString() });
         for (let attempt = 1; !receiptUri && !latch.requested; attempt++) {
           const fromFirehose = watch.firehose ? watch.receiptFor(acceptUri) : undefined;
@@ -1801,17 +1821,14 @@ runcmd:
           }
           let refused: string | undefined;
           try {
-            const r = await pds.callBidder(
-              target.targetUrl,
-              SUBMIT_ACCEPT_NSID,
-              SUBMIT_ACCEPT_LXM,
-              target.audDid,
-              {
-                acceptUri,
-                acceptCid,
-              },
-            );
+            const copies = attempt === 1 ? Math.max(1, Math.floor(opts.acceptCopies ?? 1)) : 1;
+            const r = copies > 1 ? await sendCopies(copies) : await sendAccept();
             const body = r.body as { uri?: string; cid?: string; submitEvent?: string; error?: string; message?: string } | null;
+            if (body?.error === ACCEPT_IN_PROGRESS && inProgressSince === undefined) {
+              inProgressSince = Date.now();
+              deadline = Math.max(deadline, inProgressSince + ACCEPT_RESEND_MAX_MS);
+              log("submitAccept_in_progress", { attempt, message: body.message, waitUntil: new Date(deadline).toISOString() });
+            }
             if (r.ok && body?.uri) {
               takeReceipt(body);
               log("submitAccept_result", { status: r.status, receiptUri, receiptCid, submitEventRef, attempt });

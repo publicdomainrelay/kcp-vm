@@ -77,6 +77,11 @@ export default {
       description: "off | subscriberepos",
       default: "off",
     },
+    "accept-copies": {
+      type: "number" as const,
+      description: "How many copies of the first submitAccept the requester sends at once; more than one proves that the bidder makes one contract per accept",
+      default: 1,
+    },
     "qr-origin": {
       type: "string" as const,
       description: "Origin of the QR sign-in page",

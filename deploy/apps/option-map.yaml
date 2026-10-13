@@ -155,6 +155,7 @@ apps:
       - {name: firehose-url, to: network.firehoseUrls}
       - {name: qr-origin, to: network.qrOrigin}
       - {name: network-hosts, to: network.hosts}
+      - {name: accept-copies, to: options}
       - {name: firehose-mode, to: options}
       - {name: no-ingress-proxy, to: options}
       - {name: atproto-identity-mode, to: spec.identity.mode}

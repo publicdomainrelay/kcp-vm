@@ -505,6 +505,7 @@ try {
     eventStreams,
     resume: state,
     returnSignal: releaseEarly.signal,
+    acceptCopies: o.acceptCopies,
   }, handlers);
   flowDone.abort();
 } catch (err) {
