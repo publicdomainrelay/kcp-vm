@@ -150,8 +150,9 @@ func isLinkDir(name string) bool {
 	return strings.HasSuffix(name, ".wants") || strings.HasSuffix(name, ".requires") || strings.HasSuffix(name, ".upholds")
 }
 
-func (u *uninstaller) recordedUnits() (map[string]bool, []string) {
+func (u *uninstaller) recordedUnits() (map[string]bool, []string, []string) {
 	names := map[string]bool{}
+	var own []string
 	seen := map[string]bool{}
 	var dirs []string
 	add := func(d string) {
@@ -167,6 +168,7 @@ func (u *uninstaller) recordedUnits() (map[string]bool, []string) {
 		names[filepath.Base(f)] = true
 		add(u.path(filepath.Dir(f)))
 	}
+	own = append(own, dirs...)
 	if u.uo.Staged {
 		if c, err := os.UserConfigDir(); err == nil {
 			add(filepath.Join(c, "systemd", "user"))
@@ -175,21 +177,42 @@ func (u *uninstaller) recordedUnits() (map[string]bool, []string) {
 			add(filepath.Join(r, "systemd", "user"))
 		}
 	}
-	return names, dirs
+	return names, dirs, own
 }
 
-func (u *uninstaller) removeLink(p string) error {
+func ownedLink(p string, own []string) bool {
+	cur := p
+	for range 4 {
+		t, err := os.Readlink(cur)
+		if err != nil {
+			return false
+		}
+		if !filepath.IsAbs(t) {
+			t = filepath.Join(filepath.Dir(cur), t)
+		}
+		t = filepath.Clean(t)
+		for _, d := range own {
+			if within(t, d) {
+				return true
+			}
+		}
+		if _, err := os.Lstat(t); errors.Is(err, fs.ErrNotExist) {
+			return true
+		}
+		cur = t
+	}
+	return false
+}
+
+func (u *uninstaller) removeLink(p string, own []string) (bool, error) {
 	st, err := os.Lstat(p)
-	if err != nil {
-		return nil
+	if err != nil || st.Mode()&fs.ModeSymlink == 0 || !ownedLink(p, own) {
+		return false, nil
 	}
-	if st.Mode()&fs.ModeSymlink == 0 && !st.Mode().IsRegular() {
-		return nil
-	}
-	return u.change("remove "+p, func() error { return os.Remove(p) })
+	return true, u.change("remove "+p, func() error { return os.Remove(p) })
 }
 
-func (u *uninstaller) sweepUnitLinks(names map[string]bool, dirs []string) (bool, error) {
+func (u *uninstaller) sweepUnitLinks(names map[string]bool, dirs, own []string) (bool, error) {
 	swept := false
 	for _, dir := range dirs {
 		entries, err := os.ReadDir(dir)
@@ -208,21 +231,25 @@ func (u *uninstaller) sweepUnitLinks(names map[string]bool, dirs []string) (bool
 					if !names[s.Name()] {
 						continue
 					}
-					if err := u.removeLink(filepath.Join(p, s.Name())); err != nil {
+					removed, err := u.removeLink(filepath.Join(p, s.Name()), own)
+					if err != nil {
 						return swept, err
 					}
-					swept, left = true, left-1
+					if removed {
+						swept, left = true, left-1
+					}
 				}
 				if left == 0 && len(subs) > 0 {
 					os.Remove(p)
 				}
 				continue
 			}
-			if names[e.Name()] && e.Type()&fs.ModeSymlink != 0 {
-				if err := u.removeLink(p); err != nil {
+			if names[e.Name()] {
+				removed, err := u.removeLink(p, own)
+				if err != nil {
 					return swept, err
 				}
-				swept = true
+				swept = swept || removed
 			}
 		}
 	}
@@ -230,7 +257,7 @@ func (u *uninstaller) sweepUnitLinks(names map[string]bool, dirs []string) (bool
 }
 
 func (u *uninstaller) removeUnitFiles(units []hostsvc.UnitStatus, um UserManager) error {
-	names, dirs := u.recordedUnits()
+	names, dirs, own := u.recordedUnits()
 	for _, f := range u.rec.UnitFiles {
 		if filepath.Base(filepath.Dir(f)) != WantsDir && !strings.HasSuffix(filepath.Dir(f), ".d") {
 			link := filepath.Join(filepath.Dir(f), WantsDir, filepath.Base(f))
@@ -247,7 +274,7 @@ func (u *uninstaller) removeUnitFiles(units []hostsvc.UnitStatus, um UserManager
 			os.Remove(u.path(filepath.Dir(f)))
 		}
 	}
-	swept, err := u.sweepUnitLinks(names, dirs)
+	swept, err := u.sweepUnitLinks(names, dirs, own)
 	if err != nil {
 		return err
 	}
