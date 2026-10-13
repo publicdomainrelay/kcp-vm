@@ -111,7 +111,7 @@ uid="$(id -u "$account")"
 if ! grep -q "^$account:" /etc/subuid; then
   sudo usermod --add-subuids 19005440-20054015 --add-subgids 19005440-20054015 "$account"
 fi
-sudo install -d -o "$account" -g "$account" -m 1777 /var/tmp/swcit-ci
+sudo install -d -o "$account" -g "$account" -m 1777 "$home/it"
 sudo loginctl enable-linger "$account"
 for _ in $(seq 1 50); do
   sudo test -S "/run/user/$uid/systemd/private" && break
@@ -172,7 +172,7 @@ printf '%s\n' \
   'NoNewPrivileges=yes' \
   'ProtectSystem=strict' \
   'ProtectHome=yes' \
-  "ReadWritePaths=$home /var/tmp/swcit-ci /run/user/$uid" \
+  "ReadWritePaths=$home /run/user/$uid" \
   'PrivateTmp=yes' \
   'KillMode=mixed' \
   'TimeoutStopSec=40' \

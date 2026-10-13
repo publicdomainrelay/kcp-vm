@@ -137,14 +137,14 @@ integration:
   variables:
     SOCIALWEB_IT_ACCOUNT: socialweb-ci
     SOCIALWEB_IT_LIVE_SLOT: none
-    SOCIALWEB_IT_RUN_ROOT: /var/tmp/swcit-ci
+    SOCIALWEB_IT_RUN_ROOT: /var/lib/socialweb-ci/it
   script:
     - export SOCIALWEB_IT_GUEST_IMAGE="file://$OUT/guest-image/firecracker-x86_64"
-    - export SOCIALWEB_IT_PUBLISH="/var/tmp/swcit-ci/bin-$CI_JOB_ID" SOCIALWEB_IT_ARTIFACTS="$CI_PROJECT_DIR/it-artifacts"
+    - export SOCIALWEB_IT_PUBLISH="/var/lib/socialweb-ci/it/bin-$CI_JOB_ID" SOCIALWEB_IT_ARTIFACTS="$CI_PROJECT_DIR/it-artifacts"
     - timeout -k 30 4380 go test -tags integration -count=1 -v -timeout 72m ./test/integration/ 2>&1 | tee "$TMPDIR/it.log"
     - grep -E '^(--- |ok|FAIL)' "$TMPDIR/it.log"
   after_script:
-    - rm -rf "/var/tmp/swcit-ci/bin-$CI_JOB_ID" "$HOME/.tmp/ci/tmp/$CI_JOB_ID"
+    - rm -rf "/var/lib/socialweb-ci/it/bin-$CI_JOB_ID" "$HOME/.tmp/ci/tmp/$CI_JOB_ID"
   artifacts:
     when: on_failure
     expire_in: 7 days
