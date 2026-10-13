@@ -1,0 +1,141 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - "task/**"
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 20
+      - uses: ./.github/actions/toolchain
+      - name: gate
+        run: |
+          set -euo pipefail
+          timeout -k 10 120 go mod download
+          timeout -k 10 120 deno install --frozen --node-modules-dir=none --quiet
+          timeout -k 10 120 go build ./...
+          timeout -k 10 120 go vet ./...
+          timeout -k 10 120 deno task --quiet check
+          timeout -k 10 420 deploy/check.sh --fast
+          test -z "$(git status --porcelain)"
+          timeout -k 10 180 go run ./cmd/socialweb-tsbundle -release -deno "$DENO_BIN" -out "$TMPDIR/tsb-out"
+
+  release-reproducible:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - uses: ./.github/actions/toolchain
+      - uses: ./.github/actions/containers
+      - name: release-reproducible
+        run: |
+          set -euo pipefail
+          timeout -k 10 3480 scripts/build-socialweb-computer.sh --verify-reproducible --build-root "$CI_STATE/release-build"
+
+  binaries:
+    if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - uses: ./.github/actions/toolchain
+      - uses: ./.github/actions/containers
+      - name: binaries
+        run: |
+          set -euo pipefail
+          timeout -k 10 5280 scripts/build-socialweb-computer.sh --platform linux/amd64 --platform linux/arm64 --commit "$GITHUB_SHA" --build-root "$CI_STATE/release-build"
+          rel="$CI_STATE/release-build/release/$GITHUB_SHA"
+          ls -la "$rel"
+          rm -rf "$OUT/binaries" && mkdir -p "$OUT/binaries" && cp -a "$rel"/. "$OUT/binaries/"
+          (cd "$OUT/binaries" && sha256sum -c --quiet SHA256SUMS)
+      - uses: actions/upload-artifact@v7
+        with:
+          name: binaries
+          path: ${{ runner.temp }}/ci/out/${{ github.sha }}/binaries/
+          if-no-files-found: error
+          retention-days: 7
+
+  guest-image:
+    if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      TARGET: firecracker-x86_64
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/toolchain
+      - uses: ./.github/actions/containers
+      - name: guest-image
+        run: |
+          set -euo pipefail
+          work="$CI_STATE/guest-image-work" && img="$OUT/guest-image"
+          rm -rf "$img" && mkdir -p "$work" "$img"
+          timeout -k 10 7000 scripts/build-guest-image.sh --target "$TARGET" --work "$work" --out "$img"
+          for f in vmlinux rootfs.ext4 image.json; do
+            want="$(jq -er --arg t "$TARGET" --arg f "$f" '.guestImages.targets[$t].outputs[$f].sha256' internal/versions/versions.json)"
+            got="$(sha256sum "$img/$TARGET/$f" | cut -d' ' -f1)"
+            echo "$TARGET/$f sha256 $got (pinned $want)"
+            test "$got" = "$want"
+          done
+      - uses: actions/upload-artifact@v7
+        with:
+          name: guest-image
+          path: ${{ runner.temp }}/ci/out/${{ github.sha }}/guest-image/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [binaries, guest-image]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/toolchain
+      - uses: actions/download-artifact@v8
+        with:
+          name: binaries
+          path: ${{ runner.temp }}/ci/out/${{ github.sha }}/binaries
+      - uses: actions/download-artifact@v8
+        with:
+          name: guest-image
+          path: ${{ runner.temp }}/ci/out/${{ github.sha }}/guest-image
+      - name: publish
+        env:
+          SPACES_ACCESS_KEY_ID: ${{ secrets.SPACES_ACCESS_KEY_ID }}
+          SPACES_SECRET_ACCESS_KEY: ${{ secrets.SPACES_SECRET_ACCESS_KEY }}
+          SPACES_BUCKET: ${{ vars.SPACES_BUCKET }}
+          SPACES_REGION: ${{ vars.SPACES_REGION }}
+        run: |
+          set -euo pipefail
+          test -n "$SPACES_ACCESS_KEY_ID" && test -n "$SPACES_SECRET_ACCESS_KEY"
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            prefix="releases/$GITHUB_REF_NAME"; also=""
+          else
+            prefix="main/$GITHUB_SHA"; also="main/latest"
+          fi
+          timeout -k 10 1700 deno run -A --no-lock scripts/publish-spaces.ts --dir "$OUT" --prefix "$prefix" ${also:+--also "$also"}
