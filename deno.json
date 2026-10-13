@@ -54,6 +54,7 @@
     "./socialweb-computer-k8s/lib/key-file-fs",
     "./socialweb-computer-k8s/lib/key-vault",
     "./socialweb-computer-k8s/lib/socialweb-computer-k8s-claim-keys-openbao",
+    "./socialweb-computer-k8s/lib/socialweb-computer-k8s-claim-keys-vault",
     "./socialweb-computer-k8s/lib/socialweb-computer-k8s-downloads-fs",
     "./socialweb-computer-k8s/lib/socialweb-computer-k8s-gateway-xrpc",
     "./socialweb-computer-k8s/lib/socialweb-computer-k8s-node-market",

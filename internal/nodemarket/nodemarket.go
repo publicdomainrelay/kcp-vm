@@ -75,6 +75,10 @@ const DefaultPoll = 500 * time.Millisecond
 
 const fatalReadTimeout = 2 * time.Second
 
+const AnnotationAdoptJoinedNode = "socialweb.computer/adopt-joined-node"
+
+var ErrAwaitingAdoption = errors.New("nodemarket: the claim waits for the door to match the joined node to its receipt")
+
 const claimGoneMessage = "the claim this node was rented under no longer exists: it was written " +
 	"before this node was counted, and the door releases a claim's machine before the claim can go, " +
 	"so a counted node with no claim is a machine already released"
@@ -195,7 +199,23 @@ func (h *Host) Provision(ctx context.Context) error {
 		return fmt.Errorf("%w -- nothing was rented: the claim is written only once the node's "+
 			"policy is in the cluster OpenBao", err)
 	}
-	claim := v1alpha1.NodeClaim{
+	claim := h.claimLocked(target, passwordFile)
+	if err := h.opts.Claims.WriteNodeClaim(ctx, target.Workspace, claim); err != nil {
+		return fmt.Errorf("nodemarket: writing the claim for node %s of %s into %s: %w -- the claim "+
+			"is the whole request, so nothing was rented and the next pass may ask again",
+			h.opts.NodeName, h.opts.Cluster, target.Workspace, err)
+	}
+	h.provisioned = true
+	h.log().Info("nodemarket: node claimed from the market",
+		"cluster", h.opts.Cluster, "node", h.opts.NodeName, "workspace", target.Workspace,
+		"ownerDid", target.OwnerDid, "advertiseAddress", h.opts.AdvertiseAddress,
+		"apiserverPort", h.opts.ApiserverPort, "phase", v1alpha1.NodePending,
+		"next", "ConfirmJoined, once the door reports the claim Running")
+	return nil
+}
+
+func (h *Host) claimLocked(target Cluster, passwordFile string) v1alpha1.NodeClaim {
+	return v1alpha1.NodeClaim{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: v1alpha1.GroupVersion.String(),
 			Kind:       "NodeClaim",
@@ -213,17 +233,31 @@ func (h *Host) Provision(ctx context.Context) error {
 			DenyBidderDids:   h.opts.DenyBidderDids,
 		},
 	}
+}
+
+func (h *Host) WriteAdoptionClaim(ctx context.Context) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if err := h.opts.Validate(); err != nil {
+		return fmt.Errorf("nodemarket: node %s of %s: %w", h.opts.NodeName, h.opts.Cluster, err)
+	}
+	target, err := h.opts.Resolve(ctx)
+	if err != nil {
+		return fmt.Errorf("nodemarket: the workspace and owner DID node %s of %s is claimed under: %w",
+			h.opts.NodeName, h.opts.Cluster, err)
+	}
+	claim := h.claimLocked(target, nodevm.NodePasswordPath(h.opts.DataDir))
+	claim.Annotations = map[string]string{AnnotationAdoptJoinedNode: "true"}
 	if err := h.opts.Claims.WriteNodeClaim(ctx, target.Workspace, claim); err != nil {
-		return fmt.Errorf("nodemarket: writing the claim for node %s of %s into %s: %w -- the claim "+
-			"is the whole request, so nothing was rented and the next pass may ask again",
+		return fmt.Errorf("nodemarket: writing the adoption claim for node %s of %s into %s: %w",
 			h.opts.NodeName, h.opts.Cluster, target.Workspace, err)
 	}
 	h.provisioned = true
-	h.log().Info("nodemarket: node claimed from the market",
+	h.policyWritten = true
+	h.secretWritten = true
+	h.log().Info("nodemarket: a joined Node with no claim is claimed again for adoption",
 		"cluster", h.opts.Cluster, "node", h.opts.NodeName, "workspace", target.Workspace,
-		"ownerDid", target.OwnerDid, "advertiseAddress", h.opts.AdvertiseAddress,
-		"apiserverPort", h.opts.ApiserverPort, "phase", v1alpha1.NodePending,
-		"next", "ConfirmJoined, once the door reports the claim Running")
+		"next", "the door matches it to its receipt and moves the claim from Adopting to Running, or fails it")
 	return nil
 }
 
@@ -242,6 +276,14 @@ func (h *Host) ConfirmJoined(ctx context.Context) error {
 	}
 	switch claim.Status.Phase {
 	case v1alpha1.NodeClaimJoining, v1alpha1.NodeClaimRunning:
+	case v1alpha1.NodeClaimAdopting:
+		return ErrAwaitingAdoption
+	case "", v1alpha1.NodeClaimPending:
+		if claim.Annotations[AnnotationAdoptJoinedNode] == "true" {
+			return ErrAwaitingAdoption
+		}
+		return fmt.Errorf("nodemarket: node %s of %s is reported by its cluster while its claim is "+
+			"%q, not Joining", h.opts.NodeName, h.opts.Cluster, claim.Status.Phase)
 	case v1alpha1.NodeClaimFailed, v1alpha1.NodeClaimLost:
 		return fmt.Errorf("nodemarket: node %s of %s: %s",
 			h.opts.NodeName, h.opts.Cluster, endedMessage(claim))

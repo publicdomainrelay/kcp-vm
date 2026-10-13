@@ -968,7 +968,7 @@ func createNodeClaim(ctx context.Context, r rest.Interface, claim v1alpha1.NodeC
 			APIVersion: v1alpha1.GroupVersion.String(),
 			Kind:       "NodeClaim",
 		},
-		ObjectMeta: metav1.ObjectMeta{Name: claim.Name},
+		ObjectMeta: metav1.ObjectMeta{Name: claim.Name, Annotations: claim.Annotations},
 		Spec:       claim.Spec,
 	}
 	body, err := json.Marshal(created)

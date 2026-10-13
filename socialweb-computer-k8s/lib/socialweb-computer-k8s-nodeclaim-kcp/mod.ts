@@ -5,6 +5,7 @@ import type {
   NodeClaim,
   NodeClaimStore,
 } from "@publicdomainrelay/socialweb-computer-k8s-abc";
+import { NODE_CLAIM_ADOPT_ANNOTATION } from "@publicdomainrelay/socialweb-computer-k8s-common";
 import {
   assertNodeClaimStatus,
   CLUSTER_LINK_RESOURCE,
@@ -121,6 +122,7 @@ export function toNodeClaim(raw: unknown, fallbackWorkspace?: string): NodeClaim
     resourceVersion: claim.metadata?.resourceVersion,
     deletionTimestamp: claim.metadata?.deletionTimestamp,
     finalizers: claim.metadata?.finalizers ?? [],
+    ...(claim.metadata?.annotations?.[NODE_CLAIM_ADOPT_ANNOTATION] === "true" ? { adoptJoinedNode: true } : {}),
     spec: claim.spec,
     status: claim.status ?? {},
   };

@@ -449,7 +449,9 @@ func (n *tenantNodes) confirmHeld(ctx context.Context) (confirmOutcome, error) {
 			outcome.lost = append(outcome.lost, node.name)
 			continue
 		}
-		if err := node.host.ConfirmJoined(ctx); err != nil {
+		if err := node.host.ConfirmJoined(ctx); errors.Is(err, nodemarket.ErrAwaitingAdoption) {
+			continue
+		} else if err != nil {
 			problems = append(problems, fmt.Errorf("clusterprovider: confirming node %s of %s "+
 				"after the tenant cluster reported it: %w", node.name, n.cluster, err))
 			continue
@@ -958,7 +960,8 @@ func (h *nodeHosts) reconcile(ctx context.Context, cluster string) error {
 			"confirmed released: %w -- a read that failed is not a workspace with no claims, and it is "+
 			"the claims that say which Nodes have no machine behind them", target.Workspace, err)
 	}
-	adoptErr := errors.Join(h.adoptClaims(cluster, claims), h.releaseStranded(ctx, cluster, claims),
+	claims, orphanErr := h.claimJoinedOrphans(ctx, cluster, claims)
+	adoptErr := errors.Join(orphanErr, h.adoptClaims(cluster, claims), h.releaseStranded(ctx, cluster, claims),
 		h.reconcileVault(ctx, cluster, claims))
 	released := map[string]string{}
 	for i := range claims {

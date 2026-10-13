@@ -99,16 +99,39 @@ func (v *NodeVault) Revoke(ctx context.Context, node string) error {
 	return nil
 }
 
+func (v *NodeVault) DeclaredNodes(ctx context.Context) (map[string]bool, error) {
+	if v.units == nil {
+		return nil, fmt.Errorf("%w (cluster %s): no units host", ErrNoClusterVault, v.cluster)
+	}
+	cur, err := v.units.vaultServer(ctx, v.cluster)
+	if err != nil {
+		return nil, err
+	}
+	if cur == nil {
+		return nil, fmt.Errorf("%w (cluster %s)", ErrNoClusterVault, v.cluster)
+	}
+	out := map[string]bool{}
+	for n, g := range vaultNodes(cur.Spec.Declared) {
+		out[n] = grantUsable(g)
+	}
+	return out, nil
+}
+
 func (v *NodeVault) Reconcile(ctx context.Context, live map[string]*v1alpha1.NodeClaimGrant) error {
 	err := v.declare(ctx, func(nodes map[string]*v1alpha1.NodeClaimGrant) {
-		for n := range nodes {
+		prev := map[string]*v1alpha1.NodeClaimGrant{}
+		for n, g := range nodes {
+			prev[n] = g
 			delete(nodes, n)
 		}
 		for n, g := range live {
-			if grantUsable(g) {
+			switch {
+			case grantUsable(g):
 				c := *g
 				nodes[n] = &c
-			} else {
+			case grantUsable(prev[n]):
+				nodes[n] = prev[n]
+			default:
 				nodes[n] = nil
 			}
 		}
