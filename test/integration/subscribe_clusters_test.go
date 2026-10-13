@@ -269,6 +269,20 @@ func TestClusterEventsStreamFromSubscribeClusters(t *testing.T) {
 	acct := n.OwnerAccount(t)
 	gw := &http.Client{Timeout: 30 * time.Second}
 
+	s := subscribe(t, addr, acct.Token(t, "subscribeClusters"), "")
+	snap := s.until("the snapshot", 30*time.Second, func(ev streamEvent) bool {
+		return ev.Type == "info" && ev.str("name") == "SnapshotComplete"
+	}, nil)
+	if len(snap) < 2 || snap[0].Type != "cluster" || snap[0].str("name") != "tenant" || snap[0].Payload["snapshot"] != true {
+		t.Fatalf("the snapshot does not start with the bootstrap cluster tenant: %v", snap)
+	}
+	tenantUp := func(ev streamEvent) bool {
+		return ev.Type == "cluster" && ev.str("name") == "tenant" && ev.str("phase") == string(v1alpha1.ClusterReady)
+	}
+	if !tenantUp(snap[0]) {
+		s.until("the bootstrap cluster tenant Ready", tenantReady, tenantUp, nil)
+	}
+
 	if out, code, err := postJSON(gw, "http://"+addr+"/xrpc/"+clusterNSID+"createCluster", acct.Token(t, "createCluster"),
 		map[string]string{"name": streamCluster}); err != nil || code != http.StatusOK {
 		t.Fatalf("createCluster: %d %v %v", code, out, err)
@@ -280,33 +294,23 @@ func TestClusterEventsStreamFromSubscribeClusters(t *testing.T) {
 		return ev.Type == "error" && ev.str("error") == "ClusterNotFound"
 	}, nil)
 
-	s := subscribe(t, addr, acct.Token(t, "subscribeClusters"), "")
-	snap := s.until("the snapshot", 30*time.Second, func(ev streamEvent) bool {
-		return ev.Type == "info" && ev.str("name") == "SnapshotComplete"
-	}, nil)
-	inSnapshot := map[string]bool{}
-	for _, e := range snap {
-		if e.Type == "cluster" && e.Payload["snapshot"] == true {
-			inSnapshot[e.str("name")] = true
-		}
-	}
-	if !inSnapshot[streamCluster] || !inSnapshot["tenant"] {
-		t.Fatalf("the snapshot lacks cluster %s or the bootstrap cluster tenant: %v", streamCluster, snap)
-	}
-
 	up := s.until("cluster "+streamCluster+" Ready", tenantReady, func(ev streamEvent) bool {
 		return ev.Type == "cluster" && ev.str("name") == streamCluster && ev.str("phase") == string(v1alpha1.ClusterReady)
 	}, nil)
+	var demo []streamEvent
 	members := map[string]bool{}
 	for _, e := range up {
-		if e.Type == "member" {
+		if e.str("name") == streamCluster || e.str("cluster") == streamCluster {
+			demo = append(demo, e)
+		}
+		if e.Type == "member" && e.str("cluster") == streamCluster {
 			members[e.str("member")] = true
 		}
 	}
-	t.Logf("cluster %s Ready %.1fs after createCluster; cluster phases %v; %d members reported", streamCluster,
-		time.Since(created).Seconds(), phases(up, "cluster"), len(members))
+	t.Logf("cluster %s Ready %.1fs after createCluster; phases %v; members %v", streamCluster,
+		time.Since(created).Seconds(), phases(demo, "cluster"), members)
 	if len(members) == 0 {
-		t.Errorf("no #member events while the control plane came up")
+		t.Errorf("no #member events while the control plane of %s came up", streamCluster)
 	}
 
 	tn := n.Tenant(t, streamCluster, 30*time.Second)
