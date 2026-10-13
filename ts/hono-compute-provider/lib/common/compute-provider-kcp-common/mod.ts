@@ -213,6 +213,7 @@ export interface BidStatus {
   message?: string;
   bid?: BidRecordRef;
   accept?: BidRecordRef;
+  claimedBy?: string;
   computeVM?: string;
   timings?: BidTimings;
 }
@@ -613,7 +614,7 @@ export const BID_RESOURCE: ApiResource = {
   listKind: "BidList",
   plural: "bids",
   singular: "bid",
-  schema: "v1alpha1-1.bids.socialweb.computer",
+  schema: "v1alpha1-2.bids.socialweb.computer",
   export: "computevms",
 };
 
@@ -962,6 +963,9 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       },
       "bid": {
         "ref": "BidRecordRef"
+      },
+      "claimedBy": {
+        "type": "string"
       },
       "computeVM": {
         "type": "string"

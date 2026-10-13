@@ -1,6 +1,6 @@
 import type { DispatchRfpInput, RfpGate } from "@publicdomainrelay/market-atproto";
 import type { MarketLoopRecorder } from "@publicdomainrelay/market-abc";
-import type { BidEntry, BidLedger, BidRef } from "@publicdomainrelay/market-bidder-abc";
+import type { BidClaim, BidEntry, BidLedger, BidRef } from "@publicdomainrelay/market-bidder-abc";
 import { bidOpen } from "@publicdomainrelay/market-bidder-abc";
 import type { HandlerResult } from "@publicdomainrelay/market-abc";
 import type { StructuredLoggerInterface } from "@publicdomainrelay/logger";
@@ -11,8 +11,12 @@ export interface OwnBidRecord {
   rfpUri?: string;
 }
 
+export const ACCEPT_CLAIM_STALE_MS = 30_000;
+
 export interface BidLoopOptions {
   selfDid: string;
+  claimant: string;
+  claimStaleMs?: number;
   bids?: BidLedger;
   loop?: MarketLoopRecorder;
   logger: StructuredLoggerInterface;
@@ -95,6 +99,11 @@ export function createBidLoop(opts: BidLoopOptions): BidLoop {
       async won(rfpUri, accept, at) {
         forgetExpiry(rfpUri);
         await bids.won(rfpUri, accept, at);
+      },
+      async accepting(rfpUri, claim) {
+        const out = await bids.accepting(rfpUri, claim);
+        if (out.claimed) forgetExpiry(rfpUri);
+        return out;
       },
       async lost(rfpUri, reason, at) {
         forgetExpiry(rfpUri);
@@ -222,22 +231,61 @@ export function createBidLoop(opts: BidLoopOptions): BidLoop {
       logger.warn("accept_names_other_bid", { acceptUri: accept.acceptUri, bid: entry.name, named: accept.bid.uri, ours: entry.bid.uri });
       return { status: 409, body: { error: "UnknownBid", message: "the accept names a bid this bidder did not publish" } };
     }
-    if (entry.phase === "Won") {
-      if (entry.accept?.uri === accept.acceptUri) return await contractEnded(accept);
-      logger.warn("accept_for_won_bid", { acceptUri: accept.acceptUri, bid: entry.name, accepted: entry.accept?.uri });
+    if (entry.phase === "Won" && entry.accept?.uri !== accept.acceptUri) return wonByOther(accept, entry);
+    if (entry.phase !== "Won" && !bidOpen(entry, new Date())) return bidClosed(accept, entry);
+    const ended = await contractEnded(accept);
+    if (ended) return ended;
+    return await claimAccept(accept);
+  }
+
+  function wonByOther(accept: AcceptRefs, entry: BidEntry): HandlerResult {
+    logger.warn("accept_for_won_bid", { acceptUri: accept.acceptUri, bid: entry.name, accepted: entry.accept?.uri });
+    return {
+      status: 409,
+      body: { error: "ContractEnded", message: `the Bid is Won by accept ${entry.accept?.uri}` },
+    };
+  }
+
+  function bidClosed(accept: AcceptRefs, entry: BidEntry): HandlerResult {
+    logger.warn("accept_for_closed_bid", { acceptUri: accept.acceptUri, bid: entry.name, phase: entry.phase, expiresAt: entry.expiresAt });
+    return {
+      status: 409,
+      body: { error: "BidClosed", message: `the Bid is ${entry.phase}; its window ended at ${entry.expiresAt}` },
+    };
+  }
+
+  async function claimAccept(accept: AcceptRefs): Promise<HandlerResult | undefined> {
+    const rfpUri = accept.rfp!.uri;
+    const now = Date.now();
+    let out: BidClaim;
+    try {
+      out = await ledger!.accepting(rfpUri, {
+        accept: { uri: accept.acceptUri, cid: accept.acceptCid },
+        claimant: opts.claimant,
+        at: new Date(now).toISOString(),
+        staleBefore: new Date(now - (opts.claimStaleMs ?? ACCEPT_CLAIM_STALE_MS)).toISOString(),
+      });
+    } catch (err) {
+      logger.warn("accept_claim_failed", { acceptUri: accept.acceptUri, rfpUri, error: String(err) });
+      return { status: 503, body: { error: "BidUnavailable", message: "the bidder could not write its Bid" } };
+    }
+    const e = out.entry;
+    if (out.claimed) {
+      logger.info("accept_claimed", { acceptUri: accept.acceptUri, bid: e.name, claimant: opts.claimant });
+      return undefined;
+    }
+    if (e.phase === "Won" && e.accept?.uri === accept.acceptUri) {
+      logger.info("accept_in_progress", { acceptUri: accept.acceptUri, bid: e.name, claimedBy: e.claimedBy, since: e.acceptedAt });
       return {
-        status: 409,
-        body: { error: "ContractEnded", message: `the Bid is Won by accept ${entry.accept?.uri}` },
+        status: 503,
+        body: {
+          error: "AcceptInProgress",
+          message: `${e.claimedBy ?? "another bidder process"} is starting the contract for this accept since ${e.acceptedAt}`,
+        },
       };
     }
-    if (!bidOpen(entry, new Date())) {
-      logger.warn("accept_for_closed_bid", { acceptUri: accept.acceptUri, bid: entry.name, phase: entry.phase, expiresAt: entry.expiresAt });
-      return {
-        status: 409,
-        body: { error: "BidClosed", message: `the Bid is ${entry.phase}; its window ended at ${entry.expiresAt}` },
-      };
-    }
-    return await contractEnded(accept);
+    if (e.phase === "Won") return wonByOther(accept, e);
+    return bidClosed(accept, e);
   }
 
   async function acceptSeen(accept: AcceptRefs): Promise<"ours" | "lost" | "unknown"> {

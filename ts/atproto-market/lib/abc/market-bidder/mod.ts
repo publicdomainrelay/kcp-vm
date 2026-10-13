@@ -169,8 +169,17 @@ export interface BidEntry {
   phase: BidPhaseName;
   bid?: BidRef;
   accept?: BidRef;
+  claimedBy?: string;
+  acceptedAt?: string;
   computeVM?: string;
   publishedAt?: string;
+}
+
+export interface BidAcceptClaim {
+  accept: BidRef;
+  claimant: string;
+  at: string;
+  staleBefore: string;
 }
 
 export type BidClaim = { claimed: true; entry: BidEntry } | { claimed: false; entry: BidEntry };
@@ -181,6 +190,7 @@ export interface BidLedger {
   published(rfpUri: string, bid: BidRef, at: string): Promise<void>;
   failed(rfpUri: string, reason: string, at: string): Promise<void>;
   won(rfpUri: string, accept: BidRef, at: string): Promise<void>;
+  accepting(rfpUri: string, claim: BidAcceptClaim): Promise<BidClaim>;
   boundTo(rfpUri: string, computeVM: string): Promise<void>;
   lost(rfpUri: string, reason: string, at: string): Promise<void>;
   expired(rfpUri: string, at: string): Promise<void>;
@@ -196,6 +206,13 @@ export function bidExpiresAt(decidedAt: string, windowMs: number = DEFAULT_BID_W
 
 export function bidOpen(entry: BidEntry, now: Date): boolean {
   return (entry.phase === "Published" || entry.phase === "Deciding") && Date.parse(entry.expiresAt) > now.getTime();
+}
+
+export function acceptClaimable(entry: BidEntry, claim: BidAcceptClaim): boolean {
+  if (entry.phase === "Deciding" || entry.phase === "Published") return Date.parse(entry.expiresAt) > Date.parse(claim.at);
+  if (entry.phase !== "Won" || entry.accept?.uri !== claim.accept.uri) return false;
+  if (!entry.claimedBy || entry.claimedBy === claim.claimant) return true;
+  return (entry.acceptedAt ?? "") < claim.staleBefore;
 }
 
 export interface CallbackSet {

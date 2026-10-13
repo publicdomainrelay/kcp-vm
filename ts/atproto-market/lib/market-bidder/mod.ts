@@ -54,7 +54,7 @@ import type {
   PolicyExecOptions,
 } from "@publicdomainrelay/market-bidder-abc";
 import { activeContractOf, TerminatedReceipts } from "@publicdomainrelay/market-bidder-abc";
-import { declineReasonOf, type MarketLoopRecorder } from "@publicdomainrelay/market-abc";
+import { declineReasonOf, type HandlerResult, type MarketLoopRecorder } from "@publicdomainrelay/market-abc";
 export type {
   ActiveContract,
   CallbackFactoryDeps,
@@ -188,6 +188,7 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
   const loop = config.loop;
   const bidLoop = createBidLoop({
     selfDid: atproto.did,
+    claimant: `${Deno.hostname()}/${Deno.pid}/${crypto.randomUUID().slice(0, 8)}`,
     bids: config.bids,
     loop,
     logger,
@@ -508,7 +509,7 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
 
     const merged: CallbackSet = {};
     const restores: Array<() => Promise<void>> = [];
-    const acceptsInFlight = new Map<string, Promise<unknown>>();
+    const acceptsInFlight = new Map<string, Promise<HandlerResult>>();
     for (const p of providers ?? []) {
       const cb = p.buildCallbacks(deps);
       if (cb.restore) restores.push(() => cb.restore!());
@@ -539,27 +540,29 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
 
     if (merged.onAccept) {
       const raw = merged.onAccept;
-      merged.onAccept = async (opts) => {
+      merged.onAccept = (opts) => {
         const running = acceptsInFlight.get(opts.acceptUri);
         if (running) {
-          logger.info("accept_duplicate_delivery", { acceptUri: opts.acceptUri, via: "in flight" });
-          await running.catch(() => {});
+          logger.info("accept_duplicate_delivery", { acceptUri: opts.acceptUri, via: opts.req ? "push" : "firehose", answer: "the accept in flight" });
+          return running;
         }
-        const refused = await bidLoop.checkAccept({
-          acceptUri: opts.acceptUri,
-          acceptCid: opts.acceptCid,
-          issuerDid: opts.issuerDid,
-          rfp: opts.accept.rfp as { uri: string } | undefined,
-          bid: opts.accept.bid as { uri: string } | undefined,
-        });
-        if (refused) return refused;
-        const work = Promise.resolve(raw(opts));
-        if (!running) acceptsInFlight.set(opts.acceptUri, work);
-        try {
-          return await work;
-        } finally {
+        const work = (async (): Promise<HandlerResult> => {
+          const refused = await bidLoop.checkAccept({
+            acceptUri: opts.acceptUri,
+            acceptCid: opts.acceptCid,
+            issuerDid: opts.issuerDid,
+            rfp: opts.accept.rfp as { uri: string } | undefined,
+            bid: opts.accept.bid as { uri: string } | undefined,
+          });
+          if (refused) return refused;
+          return await raw(opts);
+        })();
+        acceptsInFlight.set(opts.acceptUri, work);
+        const settle = () => {
           if (acceptsInFlight.get(opts.acceptUri) === work) acceptsInFlight.delete(opts.acceptUri);
-        }
+        };
+        work.then(settle, settle);
+        return work;
       };
     }
 

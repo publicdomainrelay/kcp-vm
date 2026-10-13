@@ -619,9 +619,19 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
       acceptBare as RecordMap, receiptMetadata as RecordMap, issuerDid,
     );
     const receiptRecord = { ...receiptMetadata, cid: bindCid.toString() };
-    const { uri: receiptUri, cid: receiptCid } = await createSignedRepoRecord(
-      RECEIPT_NSID, receiptRecord, did,
-    );
+    let signedReceipt: { uri: string; cid: string };
+    try {
+      signedReceipt = await createSignedRepoRecord(RECEIPT_NSID, receiptRecord, did);
+    } catch (err) {
+      cbLog("error", "bidder_receipt_failed", { acceptUri, error: String(err) });
+      providerIdPromise.then((providerId) => {
+        if (providerId !== undefined) return computeProvider.destroy(providerId);
+      }).catch((destroyErr: unknown) =>
+        cbLog("error", "bidder_unreceipted_guest_destroy_failed", { acceptUri, error: String(destroyErr) })
+      );
+      throw err;
+    }
+    const { uri: receiptUri, cid: receiptCid } = signedReceipt;
 
     const rkey = receiptUri.split("/").pop()!;
     const rk = refKey({ uri: receiptUri, cid: receiptCid });

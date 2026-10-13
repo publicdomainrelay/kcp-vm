@@ -92,6 +92,8 @@ type BidStatus struct {
 
 	Accept *BidRecordRef `json:"accept,omitempty"`
 
+	ClaimedBy string `json:"claimedBy,omitempty"`
+
 	ComputeVM string `json:"computeVM,omitempty"`
 
 	Timings BidTimings `json:"timings,omitempty"`

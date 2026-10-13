@@ -1,4 +1,5 @@
 import {
+  acceptClaimable,
   bidExpiresAt,
   type BidClaim,
   type BidDecision,
@@ -35,6 +36,8 @@ export function bidEntryOf(bid: Bid): BidEntry {
     phase: (s.phase ?? "Deciding") as BidPhaseName,
     ...(s.bid ? { bid: refOf(s.bid) } : {}),
     ...(s.accept ? { accept: refOf(s.accept) } : {}),
+    ...(s.claimedBy ? { claimedBy: s.claimedBy } : {}),
+    ...(s.timings?.acceptedAt ? { acceptedAt: s.timings.acceptedAt } : {}),
     ...(s.computeVM ? { computeVM: s.computeVM } : {}),
     ...(s.timings?.publishedAt ? { publishedAt: s.timings.publishedAt } : {}),
   };
@@ -129,6 +132,26 @@ export function createKcpBidLedger(opts: KcpBidLedgerOptions): BidLedger {
         accept: refOf(accept),
         timings: { ...s.timings, acceptedAt: at },
       }));
+    },
+    async accepting(rfpUri, claim): Promise<BidClaim> {
+      const name = await bidNameOf(rfpUri);
+      let wrote = false;
+      const out = await bids.patchStatus(name, (cur) => {
+        wrote = false;
+        if (!acceptClaimable(bidEntryOf(cur), claim)) return null;
+        wrote = true;
+        const s = cur.status ?? {};
+        return {
+          ...s,
+          phase: "Won",
+          message: `the requester accepted this bid; ${claim.claimant} starts the contract`,
+          accept: refOf(claim.accept),
+          claimedBy: claim.claimant,
+          timings: { ...s.timings, acceptedAt: claim.at },
+        };
+      });
+      if (!out) throw new Error(`Bid ${name} is gone`);
+      return { claimed: wrote, entry: bidEntryOf(out) } as BidClaim;
     },
     async boundTo(rfpUri, computeVM) {
       await transition(rfpUri, ["Won"], (s) => s.computeVM === computeVM ? null : { ...s, computeVM });
