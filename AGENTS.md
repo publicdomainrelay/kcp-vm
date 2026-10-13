@@ -152,7 +152,7 @@ anything.
   handle and password from a credential file: the QR session-transfer page (qr.fedfork.com, a bidder's
   `prod-qr` MarketIdentity `pendingAction.url`) or the web app's sign-in page, the PDS's authorize
   page, then "Authorize". Example, for the hat-8 bidder:
-  `deno run -A scripts/oauth-signin.ts --creds ~/.bobvmbuilder_bsky_social_source --account BOB --url "<pendingAction.url>"`.
+  `deno run -A --no-lock scripts/oauth-signin.ts --creds ~/.bobvmbuilder_bsky_social_source --account BOB --url "<pendingAction.url>"`.
   It reads the file itself (values never on the command line or in logs) and writes step screenshots
   to `~/.tmp/oauth-signin/<ts>/` (mode 0700) for debugging. A QR link expires after 5 minutes; read the
   current one from the MarketIdentity status right before running it.

@@ -1,3 +1,4 @@
+/// <reference lib="dom" />
 import puppeteer from "npm:puppeteer-core@23";
 import { parseArgs } from "jsr:@std/cli@1/parse-args";
 
