@@ -21,7 +21,12 @@ runs:
           timeout -k 10 300 "$init" -y --quiet --no-modify-path --profile minimal --default-toolchain none
           rm -f "$init"
         fi
-        (cd rust && timeout -k 10 300 rustup toolchain install && rustc --version)
+        (cd rust && rustup toolchain install) || true
+        if ! (cd rust && rustc --version >/dev/null 2>&1); then
+          rm -rf "$RUSTUP_HOME/toolchains"
+          (cd rust && rustup toolchain install)
+        fi
+        (cd rust && rustc --version)
 
     - name: disk
       shell: bash
