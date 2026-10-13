@@ -12,9 +12,9 @@ runs:
         export PATH="$CARGO_HOME/bin:$PATH"
         echo "PATH=$CARGO_HOME/bin:$PATH" >>"$GITHUB_PATH"
         for v in RUSTUP_HOME CARGO_HOME; do echo "$v=${!v}" >>"$GITHUB_ENV"; done
-        mkdir -p "$CI_STATE/release-build"
+        mkdir -p "$CI_STATE"
         if [ ! -x "$CARGO_HOME/bin/rustup" ]; then
-          init="$CI_STATE/release-build/rustup-init"
+          init="$CI_STATE/rustup-init"
           curl -fsSL --max-time 120 -o "$init" https://static.rust-lang.org/rustup/dist/x86_64-unknown-linux-gnu/rustup-init
           echo "$(curl -fsSL --max-time 30 https://static.rust-lang.org/rustup/dist/x86_64-unknown-linux-gnu/rustup-init.sha256 | cut -d' ' -f1)  $init" | sha256sum -c --quiet -
           chmod 0755 "$init"
