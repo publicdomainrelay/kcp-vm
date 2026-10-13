@@ -125,7 +125,8 @@ chmod 0644 "$CA_DIR"/*.crt
 install -d -m 0755 /etc/caddy/sites
 cat > "/etc/caddy/sites/${ORIGIN}.caddy" <<SITE
 ${ORIGIN} {
-  handle /v1/credential {
+  @gateway path /v1/credential /xrpc/com.publicdomainrelay.temp.cluster.*
+  handle @gateway {
     reverse_proxy https://127.0.0.1:${GATEWAY_TLS_PORT} {
       transport http {
         tls_trusted_ca_certs ${CA_DIR}/gateway.crt
