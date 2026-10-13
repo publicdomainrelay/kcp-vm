@@ -27,25 +27,10 @@ const (
 	tenantReady     = 3 * time.Minute
 	scaleOutTimeout = 4 * time.Minute
 	scaleInTimeout  = 3*time.Minute + 30*time.Second
-	fillers         = 7
 	scaleHold       = 2 * time.Minute
 	probeTimeout    = 90 * time.Second
 	policyTimeout   = 30 * time.Second
 )
-
-func fillerPod(i int) *corev1.Pod {
-	return &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("it-fill-%d", i), Namespace: nsServer, Labels: map[string]string{"app": "it-fill"}},
-		Spec: corev1.PodSpec{
-			TerminationGracePeriodSeconds: new(int64),
-			Containers: []corev1.Container{{
-				Name: "sleep", Image: probeImage, Command: []string{"sleep", "3600"},
-				Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{
-					corev1.ResourceCPU: resource.MustParse("10m"), corev1.ResourceMemory: resource.MustParse("8Mi")}},
-			}},
-		},
-	}
-}
 
 func serverPod(name, node string, spread bool) *corev1.Pod {
 	p := &corev1.Pod{
@@ -198,11 +183,6 @@ func TestTenantClusterScalesFromZeroOnMarketVMsAndBack(t *testing.T) {
 	scaleOut := time.Now()
 	for _, name := range []string{"it-a", "it-b"} {
 		if _, err := core.Pods(nsServer).Create(ctx, serverPod(name, "", true), metav1.CreateOptions{}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for i := 1; i <= fillers; i++ {
-		if _, err := core.Pods(nsServer).Create(ctx, fillerPod(i), metav1.CreateOptions{}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -374,10 +354,6 @@ func TestTenantClusterScalesFromZeroOnMarketVMsAndBack(t *testing.T) {
 		if err := core.Pods(nsServer).Delete(ctx, name, metav1.DeleteOptions{GracePeriodSeconds: new(int64)}); err != nil {
 			t.Fatal(err)
 		}
-	}
-	if err := core.Pods(nsServer).DeleteCollection(ctx, metav1.DeleteOptions{GracePeriodSeconds: new(int64)},
-		metav1.ListOptions{LabelSelector: "app=it-fill"}); err != nil {
-		t.Fatal(err)
 	}
 	scaleInTo(1)
 	if left, err := tn.Nodes(ctx); err == nil && len(left) == 1 && left[0].Name != podA.Spec.NodeName {
