@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -76,6 +77,59 @@ type Supervisor struct {
 	placed  map[string]bool
 	listed  bool
 	backend hostsvc.Backend
+
+	mu    sync.Mutex
+	locks sync.Map
+}
+
+func (s *Supervisor) setPlaced(unit string, on bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if on {
+		s.placed[unit] = true
+	} else {
+		delete(s.placed, unit)
+	}
+}
+
+func (s *Supervisor) isPlaced(unit string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.placed[unit]
+}
+
+func (s *Supervisor) lockObject(name string) func() {
+	v, _ := s.locks.LoadOrStore(name, &sync.Mutex{})
+	m := v.(*sync.Mutex)
+	m.Lock()
+	return m.Unlock
+}
+
+func (s *Supervisor) reconcileObject(ctx context.Context, cur *unstructured.Unstructured) (v1alpha1.HostProcess, bool) {
+	unlock := s.lockObject(cur.GetName())
+	defer unlock()
+	o, err := toObject(cur)
+	if err != nil {
+		s.c.log().Warn("decoding", "name", cur.GetName(), "err", err.Error())
+		return o, false
+	}
+	s.capOutput(o)
+	next := s.apply(ctx, o, Reconcile(s.observe(ctx, o)))
+	if err := s.writeStatus(ctx, cur, next); err != nil && !apierrors.IsConflict(err) {
+		s.c.log().Warn("writing status", "name", o.Name, "err", err.Error())
+	}
+	return o, true
+}
+
+func (s *Supervisor) reconcileName(ctx context.Context, name string) {
+	cur, err := s.client.Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		if !apierrors.IsNotFound(err) {
+			s.c.log().Warn("reading a changed HostProcess", "name", name, "err", err.Error())
+		}
+		return
+	}
+	s.reconcileObject(ctx, cur)
 }
 
 func (c Config) log() *slog.Logger {
@@ -285,7 +339,7 @@ func (s *Supervisor) apply(ctx context.Context, o v1alpha1.HostProcess, r Result
 				log.Warn("start", "err", err.Error())
 				continue
 			}
-			s.placed[op.Unit] = true
+			s.setPlaced(op.Unit, true)
 			started = true
 			log.Info("placed", "state", string(st.State), "adopted", st.Adopted, "restartKey", o.Spec.RestartKey)
 		case OpStop:
@@ -294,7 +348,7 @@ func (s *Supervisor) apply(ctx context.Context, o v1alpha1.HostProcess, r Result
 				stopFailed = true
 				continue
 			}
-			delete(s.placed, op.Unit)
+			s.setPlaced(op.Unit, false)
 			log.Info("stopped")
 		}
 	}
@@ -317,7 +371,7 @@ func (s *Supervisor) apply(ctx context.Context, o v1alpha1.HostProcess, r Result
 				next.Status.Runtime.ActiveSince = st.ActiveSince.UTC().Format(time.RFC3339Nano)
 			}
 			if o.Spec.Placement == v1alpha1.HostProcessPlacementSupervisor {
-				s.placed[o.Spec.Unit] = true
+				s.setPlaced(o.Spec.Unit, true)
 			}
 		}
 	}
@@ -361,17 +415,8 @@ func (s *Supervisor) Pass(ctx context.Context) error {
 	}
 	seen := map[string]bool{}
 	for i := range list.Items {
-		cur := &list.Items[i]
-		o, err := toObject(cur)
-		if err != nil {
-			s.c.log().Warn("decoding", "name", cur.GetName(), "err", err.Error())
-			continue
-		}
-		seen[o.Spec.Unit] = true
-		s.capOutput(o)
-		next := s.apply(ctx, o, Reconcile(s.observe(ctx, o)))
-		if err := s.writeStatus(ctx, cur, next); err != nil && !apierrors.IsConflict(err) {
-			s.c.log().Warn("writing status", "name", o.Name, "err", err.Error())
+		if o, ok := s.reconcileObject(ctx, &list.Items[i]); ok {
+			seen[o.Spec.Unit] = true
 		}
 	}
 	for _, prefix := range s.c.prefixes() {
@@ -381,13 +426,13 @@ func (s *Supervisor) Pass(ctx context.Context) error {
 		units, err := s.c.Manager.List(ctx, prefix)
 		if err == nil {
 			for _, u := range units {
-				if !s.placed[u.Name] && s.listed {
+				if !s.isPlaced(u.Name) && s.listed {
 					continue
 				}
 				if !seen[u.Name] && (u.State == hostsvc.Active || u.State == hostsvc.Activating) {
 					s.c.log().Info("the HostProcess of a placed unit is gone; stopping the unit", "unit", u.Name)
 					if err := s.c.Manager.Stop(ctx, u.Name); err == nil {
-						delete(s.placed, u.Name)
+						s.setPlaced(u.Name, false)
 					}
 				}
 			}
@@ -434,7 +479,20 @@ func (s *Supervisor) Run(ctx context.Context) error {
 	t := time.NewTicker(interval)
 	defer t.Stop()
 	wake := make(chan struct{}, 1)
-	go s.watch(ctx, wake)
+	changed := make(chan string, 1024)
+	for i := 0; i < EventWorkers; i++ {
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case name := <-changed:
+					s.reconcileName(ctx, name)
+				}
+			}
+		}()
+	}
+	go s.watch(ctx, wake, changed)
 	for {
 		if err := s.Pass(ctx); err != nil {
 			s.c.log().Warn("a reconcile pass failed; units keep running", "err", err.Error())
@@ -459,7 +517,9 @@ func (s *Supervisor) Run(ctx context.Context) error {
 
 const WakeDebounce = 100 * time.Millisecond
 
-func (s *Supervisor) watch(ctx context.Context, wake chan<- struct{}) {
+const EventWorkers = 4
+
+func (s *Supervisor) watch(ctx context.Context, wake chan<- struct{}, changedCh chan<- string) {
 	generations := map[string]int64{}
 	failing := false
 	for ctx.Err() == nil {
@@ -487,6 +547,7 @@ func (s *Supervisor) watch(ctx context.Context, wake chan<- struct{}) {
 			}
 			name, gen := u.GetName(), u.GetGeneration()
 			changed := ev.Type != watch.Modified || generations[name] != gen
+			changedNames := changedCh
 			if ev.Type == watch.Deleted {
 				delete(generations, name)
 			} else {
@@ -494,6 +555,13 @@ func (s *Supervisor) watch(ctx context.Context, wake chan<- struct{}) {
 			}
 			if !changed {
 				continue
+			}
+			if ev.Type != watch.Deleted {
+				select {
+				case changedNames <- name:
+					continue
+				default:
+				}
 			}
 			select {
 			case wake <- struct{}{}:
