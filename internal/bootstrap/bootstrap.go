@@ -521,7 +521,7 @@ func Ensure(ctx context.Context, m hostsvc.Manager, cfg Config, rec *devinstance
 	if err := kcpserver.WriteFrontKubeconfig(l.FrontKubeconfig(), frontURL, a); err != nil {
 		return err
 	}
-	slots.Shape = kcpserver.ShapeBlueGreen
+	slots.Shape = p.shape()
 	slots.Active = active
 	slots.KineURL = kine.Endpoint
 	slots.Front = kcpserver.FrontRecord{Unit: front.Unit, Address: "127.0.0.1:" + strconv.Itoa(front.Port), Port: front.Port,
