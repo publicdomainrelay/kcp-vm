@@ -13,7 +13,7 @@ One binary, `socialweb-computer`, runs every part of the software. Each running 
 - A 64-bit Linux host with `/dev/kvm`.
 - To run a release binary: `curl` and `sha256sum` (coreutils). The binary embeds every asset it runs, so it needs neither this checkout nor Go and Deno.
 - To build from source or run the scripts: Go and Deno on `PATH`, and this repository checked out, since the scripts run from their own checkout.
-- To rent VMs, an account with VM slots; run the live commands as that account (on hat-8, `test-0001`).
+- To rent VMs, an account with VM slots; run the live commands as that account (`test-0001`).
 
 > Warning: never use `/tmp` for a build or for state. It is tmpfs and spills to swap. Use a directory under `~/.tmp` or under `/var/tmp`.
 
@@ -427,7 +427,7 @@ B=~/.tmp/socialweb-computer-build/release/$C/socialweb-computer-linux-amd64; SHA
 # 3. gateway (socialweb.computer): ship, install the first time or upgrade after, write the caddy sites
 BINARY=$B SHA256=$SHA SSH_KEY=~/.ssh/id_ed25519_no_password \
   GATEWAY_ENV_FILE=~/.tmp/deploy/gateway.env GATEWAY_SPEC_FILE=~/.tmp/deploy/gateway-spec.yaml scripts/deploy.sh
-# 4. bidder (hat-8): stage the binary, then upgrade it as the account
+# 4. bidder: stage the binary, then upgrade it as the account
 R=/var/tmp/swc-release/socialweb-computer-${C:0:8}; sudo install -m 0755 $B $R
 sudo runuser -u swc-bidder -- env XDG_RUNTIME_DIR=/run/user/$(id -u swc-bidder) \
   CONFIG_PATH_SOCIALWEB_COMPUTER=/var/lib/socialweb-computer/swc-bidder/config.json $R upgrade --binary $R --sha256 $SHA
@@ -506,7 +506,7 @@ Environment variables:
 | `SOCIALWEB_IT_ARTIFACTS` | The directory for logs. | `~/.tmp/swc-it/<run>` |
 | `SOCIALWEB_IT_LIVE_SLOT` | The host's live-slot script; `none` turns it off. | the lead's `~/.tmp/swc-lead/live-slot.ts` when it exists |
 
-The integration job on the hat-8 runner runs the whole suite on `main` and on `v*` tags, on its own market networks, as that runner's account with its own VM slots.
+Each integration test takes VM slots of that account and brings up its own market network.
 
 ## License
 
