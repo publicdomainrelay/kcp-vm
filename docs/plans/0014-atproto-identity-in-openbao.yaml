@@ -5,13 +5,18 @@ revised: >
   sessions for users who log into k8s.socialweb.computer somewhere like whatever the appropriate scope openbao
   is? In fact, would it make sense to develop an openbao plugin for atproto oauth so that we could get a
   seamless experience there as far as our architecture goes?" The open question of kubectl without the
-  socialweb-credential binary is in this plan too (M3-KUBECTL-CLIENT-CERT). All decisions below are by Claude;
-  the user may veto each one.
+  socialweb-credential binary is in this plan too (M3-KUBECTL-CLIENT-CERT).
+  2026-10-12, second revision, with the user's answers: bao signs DPoP proofs (M1-SESSION-CUSTODY stands);
+  kubectl gets a kubeconfig download plus an XRPC that a user or automation calls to get the same kubeconfig
+  (M3-KUBECTL-CLIENT-CERT rewritten: pki/issue, the key made by bao and returned once); bidders keep prod-qr
+  (M2-BIDDER-IDENTITY-BAO dropped); the plan starts right after plan 0009 M3-SSHSIG-AUTH-PLUGIN. The lead
+  decided the other questions (the user may veto): the cookie, the exec-plugin path deleted once the XRPC
+  works in prod (new item M3-RETIRE-EXEC-PLUGIN), certificate ttl 8 h default and 24 h max, upstream later.
 queued: >
-  After plan 0009 M3-SSHSIG-AUTH-PLUGIN: that item adds OpenBaoServer spec.plugins and the build, pin and
-  catalog registration of a plugin asset. This plan uses the same machinery for a second plugin. The gateway
-  requester policy of M2-GATEWAY-SCOPE changes again when plan 0009 M3-REQUESTER-CONTROLLER lands; each item's
-  depends_on governs.
+  In the current /goal, this plan starts right after plan 0009 M3-SSHSIG-AUTH-PLUGIN (decided by the user
+  2026-10-12). That item adds OpenBaoServer spec.plugins and the build, pin and catalog registration of a
+  plugin asset; this plan uses the same machinery for a second plugin. The gateway requester policy of
+  M2-GATEWAY-SCOPE changes again when plan 0009 M3-REQUESTER-CONTROLLER lands; each item's depends_on governs.
 source: >
   Checked on main 2026-10-12. The OAuth sessions of the users of k8s.socialweb.computer are ALREADY in OpenBao.
   The web app (socialweb-computer-k8s/hono-socialweb-computer-k8s/mod.ts, accountState) keeps them in the
@@ -28,23 +33,26 @@ source: >
   copy a session and use it from anywhere, for as long as the refresh token lives.
   The bidder has a second atproto OAuth session: the prod-qr MarketIdentity sign-in (session transfer through
   qr.fedfork.com, ts/atproto-market/lib/market-identity-atproto), kept in the bidder's own vault (OpenBaoServer
-  bidder). It has the same shape: the session leaves the vault and the bidder process refreshes it.
-  Today kubectl needs cmd/socialweb-credential: the kubeconfig (internal/devicekey, internal/kubeconfig) has an
-  exec plugin that trades a device credential at the mint URL (internal/mint) for a short-lived token. The
-  per-cluster OpenBao already has a pki mount with a client-cert role (internal/clusterprovider/vaultdeclared.go,
-  VaultPKIRoleTenant) and the cluster's ClientCA (ImportClientCA).
+  bidder). The user keeps it as it is.
+  Today kubectl needs cmd/socialweb-credential: the gateway's XRPC com.publicdomainrelay.temp.cluster.getKubeconfig
+  (internal/xrpcserver, Go; atproto service auth checked by internal/atprotoauth with lxm = the method and aud
+  in SOCIALWEB_GATEWAY_AUDIENCES) returns a kubeconfig (internal/devicekey, internal/kubeconfig) with an exec
+  plugin that trades a device credential at the mint URL (/v1/credential, internal/mint) for a short-lived
+  token. The web app calls that XRPC for the user with a service JWT. The per-cluster OpenBao already has a pki
+  mount with a client-cert role (internal/clusterprovider/vaultdeclared.go, VaultPKIRoleTenant) and the
+  cluster's ClientCA (ImportClientCA).
 principle:
   stated: >
     A credential that can act as a user (an atproto DPoP private key, a refresh token, the OAuth client key) is
     made in, lives in and ends in the OpenBao of the application that the user signed in to. No process outside
     that OpenBao ever holds it. OpenBao is the authority for atproto sign-in, the same way plan 0009 made it the
     authority for guest identity (route B). Processes get only short-lived, narrow things from it: a bao token,
-    an access token with one DPoP proof, a client certificate.
+    an access token with one DPoP proof, a short-lived client certificate.
   rules:
     - "No path of the plugin returns a DPoP private key, a refresh token or the client private key. There is no export path."
     - "Each application signs its users in to its own OpenBaoServer (user decision 2026-10-12: OAuth sessions and every key live in the app's own OpenBao, never kcp Secrets). Two applications never share a session store."
     - "TypeScript keeps the atproto market flow. Go owns bao state: the plugin, its config, roles and policies, applied by the openbao controller from kcp objects (the GuestIdentityGrant pattern of plan 0009 M3-RBAC-TO-OPENBAO)."
-    - "No token, key or session appears in a kcp object, a log line, a DenoPod argument or an atproto record. kcp holds only references and status."
+    - "No token, key or session appears in a kcp object, a log line, a DenoPod argument or an atproto record. kcp holds only references and status. A client certificate key made by bao is returned once and stored nowhere."
     - "Fail fast: every outbound call of the plugin has a short timeout (5 s per call, 15 s for a whole login callback); a failed refresh marks the session Expired at once and says why in MarketIdentity status."
 state_rules:
   - "No tests until prod works (user, 2026-10-12). Each item's done_when is a manual live reading in the item's own market network. The integration tests of M4-INTEGRATION-TESTS come after prod works, on the plan 0010 G2-IT-HARNESS."
@@ -53,15 +61,15 @@ state_rules:
   - "No migration and no back-compat (user, 2026-10-12): the next fresh deploy starts with the new store. Prod is disposable."
 ownership:
   repository: socialweb-computer-kcp
-  go: "cmd/openbao-plugin-auth-atproto (new), internal/openbao and internal/openbaoctl (plugin config, roles, policies), internal/versions/versions.json, api (OpenBaoServer spec, ClusterClientCertificate), internal/clusterprovider (per-cluster pki role), internal/tlsfront and internal/stack/gatewaykcp (client certificate check at the front)"
-  typescript: "ts/atproto-market/lib (session custody interface and its OpenBao implementation, market-identity-atproto), socialweb-computer-k8s (sign-in, cookie, kubeconfig download), ts/socialweb-computer-ssh (same sign-in)"
+  go: "cmd/openbao-plugin-auth-atproto (new), internal/openbao and internal/openbaoctl (plugin config, roles, policies), internal/versions/versions.json, api (OpenBaoServer spec, ClusterClientCertificate), internal/xrpcserver and internal/gateway (getKubeconfig), internal/clusterprovider (per-cluster pki role), internal/tlsfront and internal/stack/gatewaykcp (client certificate check at the front)"
+  typescript: "ts/atproto-market/lib (session custody interface and its OpenBao implementation), socialweb-computer-k8s (sign-in, cookie, kubeconfig download), ts/socialweb-computer-ssh (same sign-in)"
 research:
   - "atproto OAuth (atproto.com/specs/oauth): PAR is required, PKCE S256 is required, DPoP is required with server nonces, the client_id is an https URL of the client metadata document, a confidential client authenticates with private_key_jwt and publishes its public keys (jwks or jwks_uri). After the token response the client must check that the sub DID resolves to a PDS whose authorization server is the one that issued the token."
   - "The authorization server may give a confidential client a much longer session than a public client (a public client is held to about two weeks). A confidential client in OpenBao is the seamless experience the user asks for: fewer sign-ins."
   - "OpenBao plugins (go-plugin, the OpenBao plugin SDK): a backend is either an auth or a secrets backend. An auth backend can also have paths that need a token, gated by ACL policies (as auth/token/lookup-self is). The login response sets an entity alias; templated policies can use identity.entity.aliases.<mount accessor>.name."
   - "ts/hono-pds already serves PAR, DPoP and private_key_jwt (token_endpoint_auth_methods_supported none and private_key_jwt), so a market network can run the full confidential-client flow against its own PDS DenoPod (user decision 2026-10-12: drive hono-pds's OAuth to complete sign-ins in tests)."
   - "A DPoP-bound access token is useless without a fresh proof from the DPoP key: each proof is bound to one method and URL (htm, htu), the access token hash (ath), a time (iat) and a unique jti. An access token that leaks with one proof cannot be used for another request."
-  - "kube-apiserver does not check revocation of client certificates. A front that ends TLS can check it and forward the user with request-header authentication (--requestheader-client-ca-file, X-Remote-User, X-Remote-Group)."
+  - "OpenBao pki never stores the private key of pki/issue; with no_store=false it stores the certificate, which revocation by serial needs. kube-apiserver does not check revocation of client certificates. A front that ends TLS can check it and forward the user with request-header authentication (--requestheader-client-ca-file, X-Remote-User, X-Remote-Group)."
 items:
   - id: M1-ATPROTO-AUTH-PLUGIN
     milestone: M1
@@ -96,31 +104,32 @@ items:
     evidence:
   - id: M1-SESSION-CUSTODY
     milestone: M1
-    title: The session stays in bao; callers get an access token with one DPoP proof
+    title: The session stays in bao; bao signs the DPoP proofs
     depends_on: [M1-ATPROTO-AUTH-PLUGIN]
     decision: >
-      Session custody is part of the same auth plugin (not a second secrets plugin): the session is made at
-      login in the plugin's own storage, so nothing crosses mounts and there is one asset to pin. Paths that
-      need a token: `session/<did>` read (did, handle, pds, scope, expiresAt, status; no secret);
-      `session/<did>/proof` ({htm, htu, nonce?} -> {access_token, dpop_proof, expires_at}); `session/<did>`
-      delete (revokes the tokens at the authorization server's revocation endpoint, then removes the session).
-      The plugin refreshes the access token when it has less than 60 s left, under one lock per DID, and writes
-      the new refresh token before it returns. A failed refresh marks the session Expired and returns the
-      error at once. It keeps the last DPoP nonce per origin in memory and takes a newer one from the caller.
-      htu must be under the session's PDS origin; any other URL is refused.
-      Why a proof and not a signed (proxied) PDS request, decided by Claude, user may veto: the key never leaves
-      bao in both designs. With a proof, what leaves bao is a DPoP-bound access token plus one proof bound to
-      one method, URL and time, which cannot be used for a second request. With a proxy, bao would have to send
-      every PDS request itself: request and response bodies and blob uploads through the plugin process, one
-      more hop for every call, and a general http client to user-chosen hosts inside the vault. The proof keeps
-      the fetch in the caller and adds one local bao call per PDS request.
+      Decided by the user 2026-10-12: bao signs DPoP proofs. Session custody is part of the same auth plugin
+      (not a second secrets plugin): the session is made at login in the plugin's own storage, so nothing
+      crosses mounts and there is one asset to pin. Paths that need a token: `session/<did>` read (did, handle,
+      pds, scope, expiresAt, status; no secret); `session/<did>/proof` ({htm, htu, nonce?} -> {access_token,
+      dpop_proof, expires_at}); `session/<did>` delete (revokes the tokens at the authorization server's
+      revocation endpoint, then removes the session). The plugin refreshes the access token when it has less
+      than 60 s left, under one lock per DID, and writes the new refresh token before it returns. A failed
+      refresh marks the session Expired and returns the error at once. It keeps the last DPoP nonce per origin
+      in memory and takes a newer one from the caller. htu must be under the session's PDS origin; any other URL
+      is refused.
+      Why a proof and not a signed (proxied) PDS request: the key never leaves bao in both designs. With a
+      proof, what leaves bao is a DPoP-bound access token plus one proof bound to one method, URL and time,
+      which cannot be used for a second request. With a proxy, bao would send every PDS request itself: bodies
+      and blob uploads through the plugin process, one more hop for every call, and a general http client to
+      user-chosen hosts inside the vault.
       TypeScript: new concept atproto-session-custody in ts/atproto-market/lib: lib/abc/atproto-session-custody
       (SessionCustody: start, complete, session, proof, signOut), lib/atproto-session-custody-openbao (over the
       existing OpenBaoServer resolver and cert login), and a fetch handler for @atproto/api agents that asks for
       a proof per request and retries once on use_dpop_nonce with the nonce from the DPoP-Nonce header. Every
-      caller that acts for a signed-in DID uses it: the web app, the requester, the bidder's MarketIdentity.
+      gateway caller that acts for a signed-in DID uses it: the web app and the requester (in process today,
+      the gateway requester DenoPod after plan 0009 M3-REQUESTER-CONTROLLER).
     files: ["cmd/openbao-plugin-auth-atproto/", "ts/atproto-market/lib/abc/atproto-session-custody", "ts/atproto-market/lib/atproto-session-custody-openbao", "deno.json", "deno.lock"]
-    done_when: "a market network requester posts an RFP with an agent whose only credential is proofs from bao; the requester process memory and its vault reads show no refresh token or DPoP private key; two callers that refresh at the same time give one refresh at the authorization server."
+    done_when: "a market network gateway requester posts an RFP with an agent whose only credential is proofs from bao; the requester process memory and its vault reads show no refresh token or DPoP private key; two callers that refresh at the same time give one refresh at the authorization server."
     risks: ["One local bao call per PDS request: the done_when run also reads the p95 of a proof call (budget 20 ms; the client keeps one warm TLS connection to bao). Over budget is a bug report, not a reason to move the key out."]
     status: todo
     evidence:
@@ -138,13 +147,13 @@ items:
       (socialweb-computer-k8s) also gets proof on every session of the mount, because its in-process
       requester acts for claims when the user is away. After that item, only the gateway requester DenoPod has
       that policy and the web app acts only with the user's own bao token. (2) The ssh gateway's own vault
-      (OpenBaoServer ssh-gateway) for the users of hono-socialweb-computer-ssh, with the same roles. (3) The
-      bidder handle's own vault (OpenBaoServer bidder) for the bidder's own identity (M2-BIDDER-IDENTITY-BAO).
-      (4) The vault of a `run request` invocation (OpenBaoServer requester) when that requester signs in by
-      OAuth. A tenant cluster's vault is never a session store and never loads this plugin; it only issues
-      client certificates (M3-KUBECTL-CLIENT-CERT). The kv paths oauth-sessions/<did> go.
-    files: ["api (OpenBaoServer spec.plugins config, atproto roles)", "internal/openbao", "internal/openbaoctl", "internal/appctl/gateway.go", "internal/appctl/sshgateway.go", "internal/appctl/requester.go", "deploy/apps/gateway", "deploy/apps/market-bidder/vault.yaml"]
-    done_when: "on a market network with a gateway: root-vault, ssh-gateway, bidder and requester vaults list an auth/atproto mount; no tenant cluster vault does; `bao policy read` of the web app client shows no path outside auth/atproto session paths and its own kv; no kv path holds a session."
+      (OpenBaoServer ssh-gateway) for the users of hono-socialweb-computer-ssh, with the same roles.
+      Not in scope: the MarketIdentity sign-ins of the bidder (prod-qr, decided by the user 2026-10-12) and of
+      `run request` keep the qr.fedfork.com session transfer and their own vault stores. A tenant cluster's vault
+      is never a session store and never loads this plugin; it only issues client certificates
+      (M3-KUBECTL-CLIENT-CERT). The kv paths oauth-sessions/<did> of the web app go.
+    files: ["api (OpenBaoServer spec.plugins config, atproto roles)", "internal/openbao", "internal/openbaoctl", "internal/appctl/gateway.go", "internal/appctl/sshgateway.go", "deploy/apps/gateway"]
+    done_when: "on a market network with a gateway: root-vault and ssh-gateway list an auth/atproto mount; no bidder, requester or tenant cluster vault does; `bao policy read` of the web app client shows no path outside auth/atproto session paths and its own kv; no kv path of the web app holds a session."
     risks: []
     status: todo
     evidence:
@@ -156,102 +165,116 @@ items:
       The client_id is the web app's public origin plus /oauth-client-metadata.json, served by the web app (the
       application's front) from bao's `client-metadata` path (cached 60 s). The redirect URI is the web app's
       /oauth/callback. Sign-in: the browser posts a handle; the web app calls login/start and redirects the
-      browser to the authorization URL; the callback forwards {state, code, iss} to bao `login`. The bao token
-      for that DID goes to the browser as an HttpOnly, Secure, SameSite=Strict cookie (ttl 1 h, renewed on use
-      up to the role's token_max_ttl, default 30 d). The web app calls bao with that token for the user's own
-      paths and checks Origin on every state-changing request. It still writes a MarketIdentity per signed-in
-      DID, with sessionRef = {mount: auth/atproto, path: session/<did>}. Sign-out deletes the session in bao
-      (revocation at the authorization server), revokes the cookie's token, and sets the MarketIdentity
-      SignedIn=False. Deleted: socialweb-computer-oauth-session-fs, socialweb-computer-oauth-session-vault, the
-      browser-side OAuth client in web/, POST /session, the DPoP private JWK and refresh token in
-      OAuthSessionData, the request proofs of socialweb-computer-k8s-request-proof, and the file fallback of
-      accountState (--openbao-server becomes required). The same change goes into
-      ts/socialweb-computer-ssh/hono-socialweb-computer-ssh. Decided by Claude, user may veto (see
-      questions_for_user: the cookie).
+      browser to the authorization URL; the callback forwards {state, code, iss} to bao `login`. Decided by the
+      lead 2026-10-12 (user may veto): the bao token for that DID goes to the browser as an HttpOnly, Secure,
+      SameSite=Strict cookie (ttl 1 h, renewed on use up to the role's token_max_ttl, default 30 d). bao is not
+      reachable from the internet (port 0 behind the edge), so the token is useful only through the web app.
+      The web app calls bao with that token for the user's own paths and checks Origin on every state-changing
+      request. It still writes a MarketIdentity per signed-in DID, with sessionRef = {mount: auth/atproto,
+      path: session/<did>}. Sign-out deletes the session in bao (revocation at the authorization server),
+      revokes the cookie's token, and sets the MarketIdentity SignedIn=False. Deleted:
+      socialweb-computer-oauth-session-fs, socialweb-computer-oauth-session-vault, the browser-side OAuth client
+      in web/, POST /session, the DPoP private JWK and refresh token in OAuthSessionData, the request proofs of
+      socialweb-computer-k8s-request-proof, and the file fallback of accountState (--openbao-server becomes
+      required). The same change goes into ts/socialweb-computer-ssh/hono-socialweb-computer-ssh.
     files: ["socialweb-computer-k8s/hono-socialweb-computer-k8s/mod.ts", "socialweb-computer-k8s/lib/hono-factory-socialweb-computer-oauth", "socialweb-computer-k8s/lib/socialweb-computer-oauth-session-fs (deleted)", "socialweb-computer-k8s/lib/socialweb-computer-oauth-session-vault (deleted)", "socialweb-computer-k8s/lib/socialweb-computer-k8s-request-proof (deleted)", "socialweb-computer-k8s/lib/socialweb-computer-requester-inproc", "socialweb-computer-k8s/web", "ts/socialweb-computer-ssh/hono-socialweb-computer-ssh"]
     done_when: "a user signs in on a market network gateway with scripts/oauth-signin.ts, creates a cluster and gets nodes through the RFP flow; after `dev restart` of the web app DenoPod and after an upgrade of the gateway the same browser cookie still works and claims still post RFPs; the web app's memory, logs and DenoPod args hold no refresh token or DPoP private key."
-    risks: ["The bao token is a bearer credential in a cookie: bao is not reachable from the internet (port 0 behind the edge), the cookie is HttpOnly and SameSite=Strict, its ttl is short, and sign-out revokes it."]
-    status: todo
-    evidence:
-  - id: M2-BIDDER-IDENTITY-BAO
-    milestone: M2
-    title: The bidder's own atproto identity signs in to the bidder's vault
-    depends_on: [M2-GATEWAY-SCOPE]
-    decision: >
-      The prod-qr MarketIdentity sign-in becomes a bao atproto login on the bidder handle's own OpenBaoServer
-      bidder. Role `bidder` binds the one DID of --handle (today prod-qr refuses any other account; the role
-      keeps that). The MarketIdentity reconciler (TypeScript) calls login/start and puts the authorization URL
-      (shown as a QR) in status.pendingAction.url; the redirect URI and the client_id URL are on the bidder's
-      ingress host, served by the bidder DenoPod from bao's paths. On the callback the bidder calls bao `login`
-      and the MarketIdentity becomes SignedIn. market-identity-atproto acts through atproto-session-custody;
-      the session transfer through qr.fedfork.com, pollForOAuthSession and the session copy in the bidder's kv
-      go. scripts/oauth-signin.ts takes the new pendingAction.url unchanged (it drives the PDS authorize page).
-      Decided by Claude, user may veto (see questions_for_user: qr.fedfork.com).
-    files: ["ts/atproto-market/lib/market-identity-atproto", "ts/atproto-market/lib/abc/market-identity", "ts/atproto-market/lib/market-identity-vault-openbao", "ts/atproto-market/hono-bidder", "internal/appctl/bidder.go", "deploy/apps/market-bidder"]
-    done_when: "a market network bidder in profile prod-qr signs in by scripts/oauth-signin.ts with the pendingAction.url, bids and wins; the bidder vault holds the session only under auth/atproto; a sign-in with another account is refused by the role."
-    risks: ["The bidder's ingress host must answer the callback within the 10 minute state life; the QR shows the expiry."]
+    risks: ["The bao token is a bearer credential in a cookie: HttpOnly and SameSite=Strict, short ttl, revoked on sign-out, and useless outside the web app."]
     status: todo
     evidence:
   - id: M3-KUBECTL-CLIENT-CERT
     milestone: M3
-    title: Plain kubectl with a short-lived client certificate from the cluster's own OpenBao PKI
+    title: kubectl with a short-lived client certificate - a kubeconfig download and the getKubeconfig XRPC
     depends_on: [M2-WEB-APP-SIGNIN]
     decision: >
-      The folded open question: kubectl without cmd/socialweb-credential. After an atproto sign-in, the web app
-      offers a kubeconfig with a client certificate. New kind ClusterClientCertificate (api/, in the gateway's
-      cluster workspace, ownerRef its Cluster): spec {cluster, did, ttl, csr (PEM), revoked}; status {serial,
-      notAfter, certificate (public PEM), lastError}. The private key is always made on the user's side: the
-      user pastes a CSR, or the page makes a P-256 key in the browser (WebCrypto), builds the CSR and puts the
-      key only into the kubeconfig file it saves. The web app (TypeScript) checks that the signed-in DID owns
-      the Cluster and creates the object; it does no bao call for it. The cluster provider (Go) applies it to
-      that cluster's own OpenBaoServer: a pki role `user` (client_flag, CN = the DID, O = the cluster's tenant
-      group, max_ttl 24 h, default ttl 8 h, no_store false so revocation works) signs the CSR with
-      pki/sign/user; pki/issue is not used, so no private key passes through Go, bao or kcp. revoked=true (or a
-      sign-out with "revoke my certificates") revokes the serial in that pki.
+      Decided by the user 2026-10-12: a kubeconfig download plus an XRPC that a user or automation calls to get
+      the same kubeconfig. The XRPC is the existing com.publicdomainrelay.temp.cluster.getKubeconfig of the
+      gateway (internal/xrpcserver, Go; the cluster methods keep their NSID prefix; renaming them is not part of
+      this plan). Its caller presents an atproto inter-service JWT for the user's DID with lxm = that method and
+      aud = the gateway DID (SOCIALWEB_GATEWAY_AUDIENCES), checked by internal/atprotoauth as today, and the
+      method is reachable at the gateway's public XRPC endpoint through the edge, so automation calls it with
+      only a PDS session (com.atproto.server.getServiceAuth). The web app's download button calls the same
+      method for the signed-in user with a service JWT made through a bao proof. One path, two callers.
+      The response kubeconfig embeds a client key and a short-lived certificate (default ttl 8 h, max 24 h,
+      decided by the lead 2026-10-12, user may veto; the request's ttlSeconds is capped). The gateway (Go)
+      checks that the DID owns the Cluster and is not denied (internal/revocation), then calls pki/issue/user
+      on that cluster's own OpenBaoServer: role `user` (client_flag, CN = the DID, O = the cluster's tenant
+      group, no_store=false so revocation by serial works; bao never stores the private key). The key is made
+      by bao, returned once in the XRPC response and stored nowhere: not in kcp, logs or records. The response
+      is sent with Cache-Control no-store. A CSR path is not required.
+      New kind ClusterClientCertificate (api/, in the gateway's cluster workspace, ownerRef its Cluster): spec
+      {cluster, did, serial, notAfter, revoked}; status {revokedAt, lastError}; no key and no certificate body.
+      The getKubeconfig handler (Go) writes it after the issue, because the key must come back in the same call
+      and must never pass through kcp; a TypeScript writer would need that. Revocation: revokeIdentity, a
+      sign-out with "revoke my certificates" (the web app sets revoked through the gateway) or a Cluster delete
+      sets revoked, and the cluster provider revokes the serial in that cluster's pki.
       The front that kubectl reaches (internal/tlsfront in internal/stack/gatewaykcp) asks for a client
-      certificate, checks it against the cluster's pki CA and the pki CRL (refreshed on every revoke through
-      a watch on ClusterClientCertificate and every 60 s), and forwards the user to the tenant apiserver with
-      request-header authentication (the front's own client certificate from that cluster's pki;
-      X-Remote-User = the DID, X-Remote-Group = the tenant group). The exec-plugin path stays (see
-      questions_for_user). Decided by Claude, user may veto.
-    files: ["api/types_clusterclientcertificate.go", "internal/clusterprovider/vaultdeclared.go", "internal/clusterprovider/tenantcredential.go", "internal/tlsfront", "internal/stack/gatewaykcp", "internal/kubeconfig", "socialweb-computer-k8s/lib/hono-factory-socialweb-computer-k8s", "socialweb-computer-k8s/web"]
-    done_when: "on a market network gateway, `kubectl --kubeconfig <download> get nodes` works with no exec plugin; the private key is never sent to the web app (browser key or pasted CSR); after revoke the next kubectl call is refused at the front within 1 s; an expired certificate is refused; `kubectl get clusterclientcertificates` shows every certificate with its serial and state and no private key."
+      certificate, checks it against the cluster's pki CA, refuses a serial that is revoked or expired (from a
+      watch on ClusterClientCertificate, with the pki CRL as a second source refreshed every 60 s), and forwards
+      the user to the tenant apiserver with request-header authentication (the front's own client certificate
+      from that cluster's pki; X-Remote-User = the DID, X-Remote-Group = the tenant group). The pki `user` role
+      is outside the no_store rule of plan 0013 M3-VAULT-TIDY; pki tidy removes its expired certificates.
+    files: ["internal/xrpcserver", "internal/gateway", "api/types_clusterclientcertificate.go", "internal/clusterprovider/vaultdeclared.go", "internal/clusterprovider/tenantcredential.go", "internal/clusterstack", "internal/tlsfront", "internal/stack/gatewaykcp", "internal/kubeconfig", "socialweb-computer-k8s/lib/hono-factory-socialweb-computer-k8s", "socialweb-computer-k8s/web"]
+    done_when: "on a market network gateway, `kubectl --kubeconfig <download> get nodes` works with no exec plugin; a script with only a PDS session calls getKubeconfig with a service JWT and gets a kubeconfig that works the same; a JWT with another lxm, another aud or for a DID that does not own the cluster is refused; after revoke the next kubectl call is refused at the front within 1 s; an expired certificate is refused; `kubectl get clusterclientcertificates` shows every certificate with its serial and state and no key; no log line or kcp object holds the key."
     risks: ["A tenant apiserver that is not set up for request-header authentication: the cluster stack (internal/clusterstack) sets --requestheader-* from the cluster's pki at create; a cluster created before this item is recreated (no migration)."]
+    status: todo
+    evidence:
+  - id: M3-RETIRE-EXEC-PLUGIN
+    milestone: M3
+    title: Delete the exec-plugin kubeconfig path once getKubeconfig with a certificate works in prod
+    depends_on: [M3-KUBECTL-CLIENT-CERT]
+    decision: >
+      Decided by the lead 2026-10-12 (user may veto): the exec-plugin path stays until getKubeconfig returns a
+      certificate kubeconfig that works on the prod gateway (the lead's live run), then it is deleted in this
+      plan with no back-compat: cmd/socialweb-credential, internal/mint, internal/devicekey, internal/execplugin,
+      the /v1/credential mint path of internal/xrpcserver, the credential helper downloads and the
+      SOCIALWEB_DEVICE_KEY and SOCIALWEB_MINT_URL settings.
+    files: ["cmd/socialweb-credential (deleted)", "internal/mint (deleted)", "internal/devicekey (deleted)", "internal/execplugin (deleted)", "internal/xrpcserver", "internal/kubeconfig", "internal/stack/gatewaykcp/env.go", "socialweb-computer-k8s/hono-socialweb-computer-k8s/mod.ts", "scripts/build-socialweb-computer.sh"]
+    done_when: "the release closure has no socialweb-credential binary and no mint path; on the prod gateway a downloaded kubeconfig and an XRPC kubeconfig both work."
+    risks: []
     status: todo
     evidence:
   - id: M4-INTEGRATION-TESTS
     milestone: M4
     title: Integration tests on the plan 0010 harness
-    depends_on: [M2-WEB-APP-SIGNIN, M2-BIDDER-IDENTITY-BAO, M3-KUBECTL-CLIENT-CERT, "0010:G2-IT-HARNESS"]
+    depends_on: [M2-WEB-APP-SIGNIN, M3-KUBECTL-CLIENT-CERT, "0010:G2-IT-HARNESS"]
     decision: >
       Written only after scale-to-zero k3s on market RFP VMs works in prod (user, 2026-10-12), on the
-      G2-IT-HARNESS market network with a gateway. Tests: sign-in (web app and bidder) through hono-pds's OAuth;
-      a refresh after a core restart and after an upgrade (`socialweb-computer upgrade`) with the same cookie
-      and no new sign-in; sign-out revokes at the PDS and the cookie stops working; kubectl with a certificate,
-      with a CSR, and refused after revoke; and a leak check: no token, key or session in any kcp object
-      (`kubectl get -A -o yaml` of every workspace), any unit journal or DenoPod stdout/stderr, any DenoPod or
-      HostProcess argument, or any record on the network's PDS repositories. Decided by Claude, user may veto.
+      G2-IT-HARNESS market network with a gateway. Tests: web app sign-in through hono-pds's OAuth; a refresh
+      after a core restart and after an upgrade (`socialweb-computer upgrade`) with the same cookie and no new
+      sign-in; sign-out revokes at the PDS and the cookie stops working; kubectl with a downloaded kubeconfig,
+      with a kubeconfig from getKubeconfig called by a service JWT, and refused after revoke; and a leak check:
+      no token, key or session in any kcp object (`kubectl get -A -o yaml` of every workspace), any unit
+      journal or DenoPod stdout/stderr, any DenoPod or HostProcess argument, or any record on the network's PDS
+      repositories. Decided by Claude, user may veto.
     files: ["test/ (the 0010 harness)", "deploy/market-network"]
     done_when: "the tests pass on the harness and in the 0010 G3-CI-INTEGRATION pipeline."
     risks: []
     status: todo
     evidence:
+dropped_items:
+  - id: M2-BIDDER-IDENTITY-BAO
+    verdict: dropped
+    why: "Decided by the user 2026-10-12: keep prod-qr for bidders. The bidder keeps the qr.fedfork.com session transfer and its vault store (OpenBaoServer bidder)."
 not_doing:
   - "Migration of the sessions in kv oauth-sessions/<did>: no back-compat; the next fresh deploy starts with the plugin."
-  - "A signed (proxied) PDS request path in bao: see M1-SESSION-CUSTODY for why."
+  - "A signed (proxied) PDS request path in bao: bao signs DPoP proofs (user, 2026-10-12)."
   - "A second plugin of type secrets for custody: the auth plugin holds the session it made."
   - "Sessions in a tenant cluster's vault: per-cluster OpenBao issues client certificates only."
+  - "The bidder's or the `run request` requester's sign-in in bao: prod-qr stays (user, 2026-10-12)."
+  - "A CSR path for client certificates (user, 2026-10-12: not required)."
   - "Moving any atproto market flow into Go. The plugin does OAuth and DID resolution; it reads no market record."
   - "A token issuer in TypeScript: OpenBao issues every token (as in plan 0009)."
+  - "Publishing the plugin as its own repository now: later, after prod (decided by the lead 2026-10-12, user may veto)."
 acceptance:
   where: hat-8
   checks:
     - id: ACC14-KEY-CUSTODY
-      text: "No DPoP private key, refresh token or OAuth client private key exists outside the OpenBao of the application the user signed in to; every caller acts with proofs."
+      text: "No DPoP private key, refresh token or OAuth client private key of a gateway user exists outside the OpenBao of the application the user signed in to; every caller acts with proofs that bao signs."
       status: todo
       evidence: []
     - id: ACC14-SURVIVES
-      text: "A signed-in user and the bidder keep working with no new sign-in across a core restart and a gateway or bidder upgrade."
+      text: "A signed-in user keeps working with no new sign-in across a core restart and a gateway upgrade."
       status: todo
       evidence: []
     - id: ACC14-REVOCATION
@@ -259,31 +282,11 @@ acceptance:
       status: todo
       evidence: []
     - id: ACC14-KUBECTL
-      text: "Plain kubectl works with a downloaded kubeconfig that holds a short-lived client certificate from the cluster's own OpenBao PKI."
+      text: "Plain kubectl works with a kubeconfig that holds a short-lived client certificate from the cluster's own OpenBao PKI, from the web app download and from getKubeconfig called with a service JWT."
       status: todo
       evidence: []
     - id: ACC14-NO-LEAK
       text: "No token, key or session appears in a kcp object, a log, a DenoPod or HostProcess argument or an atproto record."
       status: todo
       evidence: []
-questions_for_user:
-  - id: Q1-BROWSER-CREDENTIAL
-    question: "After sign-in, what does the browser hold?"
-    options: ["An HttpOnly, Secure, SameSite=Strict cookie with the user's short-lived bao token (renewed on use)", "Keep signed request proofs with a non-extractable browser key that bao records at login"]
-    recommendation: "The cookie. It survives web app restarts and upgrades, gives the web app only the power of the user who sends the request, and removes the request-proof code. bao is not reachable from the internet, so the token is useful only through the web app."
-  - id: Q2-BIDDER-QR
-    question: "Does the bidder's sign-in still go through qr.fedfork.com?"
-    options: ["No: the QR holds the authorization URL that bao made; the callback is on the bidder's ingress host", "Yes: qr.fedfork.com stays the callback host and forwards the code to the bidder"]
-    recommendation: "No. A confidential client's code is useless without the bidder's client key, but a third host in the path is one more thing to run and trust; the bidder's ingress host already exists."
-  - id: Q3-KEEP-EXEC-PLUGIN
-    question: "Keep the cmd/socialweb-credential exec-plugin path after client certificates work?"
-    options: ["Keep both: the certificate is the default download for people, the exec plugin stays for automation that must renew by itself", "Delete the exec plugin, internal/mint and internal/devicekey"]
-    recommendation: "Keep both for now. A static certificate cannot renew; CI jobs and long-lived tools need the exec plugin. Revisit after plan 0010 G3-PROD-CANARY."
-  - id: Q4-CERT-TTL
-    question: "Client certificate lifetime?"
-    options: ["Default 8 h, max 24 h", "Shorter (1 h), with the exec plugin as the way to renew"]
-    recommendation: "Default 8 h, max 24 h. A working day per download; revocation at the front covers the window. The key is always made on the user's side (browser or pasted CSR)."
-  - id: Q5-UPSTREAM
-    question: "Publish openbao-plugin-auth-atproto as its own repository or as an OpenBao community plugin?"
-    options: ["Later, after it works in prod", "Now"]
-    recommendation: "Later. It stays a module in this monorepo, pinned with the release, until ACC14-* pass in prod."
+questions_for_user: []
