@@ -30,7 +30,7 @@ Every tagged release publishes Linux binaries and the guest image to a public bu
 | `releases/<version>/guest-image/firecracker-x86_64/` | `vmlinux`, `rootfs.ext4` and `image.json`: the guest image a bidder's VMs boot. |
 | `releases/<version>/manifest.json` | Every file under the version, with its size and sha256. |
 
-`<version>` is a git tag, for example `v0.0.0-rc0`. Everything in the bucket is readable without credentials: `releases/<version>/` holds one tag's build, `main/<commit>/` holds the build of each commit on `main`, and `main/latest/` is a copy of the newest one.
+`<version>` is a git tag, for example `v0.0.0-rc3`. Everything in the bucket is readable without credentials: `releases/<version>/` holds one tag's build, `main/<commit>/` holds the build of each commit on `main`, and `main/latest/` is a copy of the newest one.
 
 Take the newest release, verify it, and put it on your PATH:
 
@@ -51,7 +51,7 @@ If `~/.local/bin` is not on your PATH, add it, or install to `/usr/local/bin` in
 
 `socialweb-computer version` prints the build, the commit and the sha256 of every asset in the binary. The release tag is in `binaries/release.json` and `manifest.json`.
 
-To pin a version instead of taking the newest, set `V` yourself: `V=v0.0.0-rc0`.
+To pin a version instead of taking the newest, set `V` yourself: `V=v0.0.0-rc3`.
 
 `socialweb-computer install gateway`, `install bidder` and `upgrade --binary --sha256` take this same file and its sha256: `SHA=$(grep " socialweb-computer-$ARCH\$" SHA256SUMS | cut -d' ' -f1)`.
 
@@ -165,7 +165,7 @@ socialweb-computer dev down --instance mn1
 | `--profile` | `market-network`. | |
 | `--bidders N` | How many `MarketBidder` children to compose (`bidder-1` .. `bidder-N`). | 1 |
 | `--with-gateway` | Also compose a `Gateway` child. | |
-| `--guest-image-source` | The `file://` or `https://` base the pinned guest image is fetched from and verified against by sha256. | |
+| `--guest-image-source` | The `file://` or `https://` base the pinned guest image is fetched from and verified against by sha256. Unset, the image of this build is downloaded from the published artifacts. | |
 | `--vm-host-backend` | The placement backend of the VM units: `systemd-user` or `proc`. | the instance's own |
 | `--app-values` | A YAML file merged over the market-network values. | |
 | `--network-timeout` | How long `dev up` waits for the network and every child to report Ready. | `3m` |
@@ -201,7 +201,7 @@ SSH runs with `StrictHostKeyChecking=yes` against the host keys the guest report
 
 ## Run and install a bidder
 
-Run a bidder inside a market network as a child application. `run bidder` requires `--guest-image-source`.
+Run a bidder inside a market network as a child application. Without `--guest-image-source`, `run bidder` downloads the guest image of its own build from the published artifacts, so a binary from the bucket needs no image flag.
 
 ```bash
 socialweb-computer run bidder --host-backend proc --profile market-network --network mn1 --handle b2.mn1.bob.test \
@@ -235,7 +235,7 @@ sudo runuser -u swc-bidder -- env XDG_RUNTIME_DIR=/run/user/$(id -u swc-bidder) 
 | `--handle` | The atproto handle(s) of the bidder instances, comma-separated. A re-run with another handle adds that instance. | |
 | `--account` | The system account the bidder runs as. | `swc-bidder` |
 | `--adopt-account` | Take over an existing account that no install record names. | |
-| `--guest-image-source` | The guest image source, written to `config.json`. | |
+| `--guest-image-source` | The guest image source, written to `config.json`. Unset, the bidder downloads the image of this build from the published artifacts. | |
 | `--vm-slots N` | One range of `N * 65536` subordinate ids reserved in `/etc/subuid` and `/etc/subgid`; each running VM holds one slot of 65536 ids. | 256 |
 | `--dry-run` | Print the computed step list and change nothing. | |
 | `--root DIR` | Install into a staged host under `DIR` as the invoking user, without root. | |
