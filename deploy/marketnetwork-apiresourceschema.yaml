@@ -1,7 +1,7 @@
 apiVersion: apis.kcp.io/v1alpha1
 kind: APIResourceSchema
 metadata:
-  name: v1alpha1-5.marketnetworks.socialweb.computer
+  name: v1alpha1-6.marketnetworks.socialweb.computer
 spec:
   group: socialweb.computer
   names:
@@ -261,6 +261,24 @@ spec:
                   required:
                     - name
                     - kind
+              stateDir:
+                type: object
+                properties:
+                  path:
+                    type: string
+                  bytes:
+                    type: integer
+                    format: int64
+                  files:
+                    type: integer
+                    format: int64
+                  sampledAt:
+                    type: string
+                required:
+                  - path
+                  - bytes
+                  - files
+                  - sampledAt
               conditions:
                 type: array
                 items:

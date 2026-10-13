@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -100,12 +101,13 @@ func ComponentStateDir(instanceState, component string) string {
 }
 
 type Controller struct {
-	c       Config
-	restCfg *rest.Config
-	applied map[string]int64
-	rotated map[string]int64
-	written map[string]string
-	network *networks
+	c        Config
+	restCfg  *rest.Config
+	applied  map[string]int64
+	rotated  map[string]int64
+	written  map[string]string
+	network  *networks
+	stateDir atomic.Pointer[v1alpha1.StateDirUsage]
 }
 
 func clusterConfig(base *rest.Config, ws string) *rest.Config {
@@ -174,6 +176,7 @@ func Run(ctx context.Context, c Config) error {
 		}
 	}
 	log.Info("the application controller reconciles this instance's root objects", "workspace", c.workspace())
+	go ctl.sampleStateDir(ctx)
 	for {
 		ctl.Pass(ctx)
 		if !sleep(ctx, c.interval()) {
@@ -310,6 +313,16 @@ func (ctl *Controller) writeStatus(ctx context.Context, gvr schema.GroupVersionR
 	var m map[string]any
 	if err := json.Unmarshal(b, &m); err != nil {
 		return err
+	}
+	if u := ctl.stateDir.Load(); u != nil {
+		m["stateDir"] = u
+		if b, err = json.Marshal(m); err != nil {
+			return err
+		}
+		m = nil
+		if err := json.Unmarshal(b, &m); err != nil {
+			return err
+		}
 	}
 	key := gvr.Resource + "/" + name
 	if ctl.written[key] == string(b) {

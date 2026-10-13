@@ -121,7 +121,19 @@ type ApplicationStatus struct {
 
 	Listeners []ApplicationListener `json:"listeners,omitempty"`
 
+	StateDir *StateDirUsage `json:"stateDir,omitempty"`
+
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+}
+
+type StateDirUsage struct {
+	Path string `json:"path"`
+
+	Bytes int64 `json:"bytes"`
+
+	Files int64 `json:"files"`
+
+	SampledAt string `json:"sampledAt"`
 }
 
 type MarketBidder struct {
@@ -300,6 +312,8 @@ type MarketNetworkStatus struct {
 	Listeners []ApplicationListener `json:"listeners,omitempty"`
 
 	Apps []NetworkAppStatus `json:"apps,omitempty"`
+
+	StateDir *StateDirUsage `json:"stateDir,omitempty"`
 
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }

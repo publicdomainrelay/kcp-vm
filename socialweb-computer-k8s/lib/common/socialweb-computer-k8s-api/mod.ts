@@ -385,6 +385,7 @@ export interface MarketNetworkStatus {
   components?: ApplicationComponent[];
   listeners?: ApplicationListener[];
   apps?: NetworkAppStatus[];
+  stateDir?: StateDirUsage;
   conditions?: Condition[];
 }
 
@@ -432,6 +433,13 @@ export interface NetworkAppStatus {
   listeners?: ApplicationListener[];
 }
 
+export interface StateDirUsage {
+  path: string;
+  bytes: number;
+  files: number;
+  sampledAt: string;
+}
+
 export interface MarketBidder {
   apiVersion?: string;
   kind?: string;
@@ -466,6 +474,7 @@ export interface ApplicationStatus {
   did?: string;
   components?: ApplicationComponent[];
   listeners?: ApplicationListener[];
+  stateDir?: StateDirUsage;
   conditions?: Condition[];
 }
 
@@ -622,7 +631,7 @@ export const MARKET_NETWORK_RESOURCE: ApiResource = {
   listKind: "MarketNetworkList",
   plural: "marketnetworks",
   singular: "marketnetwork",
-  schema: "v1alpha1-5.marketnetworks.socialweb.computer",
+  schema: "v1alpha1-6.marketnetworks.socialweb.computer",
   export: "applications",
 };
 
@@ -633,7 +642,7 @@ export const MARKET_BIDDER_RESOURCE: ApiResource = {
   listKind: "MarketBidderList",
   plural: "marketbidders",
   singular: "marketbidder",
-  schema: "v1alpha1-4.marketbidders.socialweb.computer",
+  schema: "v1alpha1-5.marketbidders.socialweb.computer",
   export: "applications",
 };
 
@@ -644,7 +653,7 @@ export const MARKET_REQUESTER_RESOURCE: ApiResource = {
   listKind: "MarketRequesterList",
   plural: "marketrequesters",
   singular: "marketrequester",
-  schema: "v1alpha1-2.marketrequesters.socialweb.computer",
+  schema: "v1alpha1-3.marketrequesters.socialweb.computer",
   export: "applications",
 };
 
@@ -666,7 +675,7 @@ export const GATEWAY_RESOURCE: ApiResource = {
   listKind: "GatewayList",
   plural: "gateways",
   singular: "gateway",
-  schema: "v1alpha1-4.gateways.socialweb.computer",
+  schema: "v1alpha1-5.gateways.socialweb.computer",
   export: "applications",
 };
 
@@ -745,6 +754,7 @@ export type ApiTypeName =
   | "ObjectMeta"
   | "PendingActionKind"
   | "RecordRef"
+  | "StateDirUsage"
   | "VaultRef";
 
 type Shape =
@@ -995,6 +1005,9 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       },
       "profile": {
         "type": "string"
+      },
+      "stateDir": {
+        "ref": "StateDirUsage"
       }
     },
     "required": [],
@@ -1900,6 +1913,9 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
       },
       "phase": {
         "ref": "ApplicationPhase"
+      },
+      "stateDir": {
+        "ref": "StateDirUsage"
       }
     },
     "required": [],
@@ -2419,6 +2435,29 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
     "required": [
       "uri",
       "cid"
+    ],
+    "type": "object"
+  },
+  "StateDirUsage": {
+    "properties": {
+      "bytes": {
+        "type": "integer"
+      },
+      "files": {
+        "type": "integer"
+      },
+      "path": {
+        "type": "string"
+      },
+      "sampledAt": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "path",
+      "bytes",
+      "files",
+      "sampledAt"
     ],
     "type": "object"
   },
@@ -3480,6 +3519,24 @@ export function assertNetworkAppStatus(value: unknown): asserts value is Network
 
 export function parseNetworkAppStatus(value: unknown): NetworkAppStatus {
   assertNetworkAppStatus(value);
+  return value;
+}
+
+export function validateStateDirUsage(value: unknown): ApiIssue[] {
+  return validate("StateDirUsage", value);
+}
+
+export function isStateDirUsage(value: unknown): value is StateDirUsage {
+  return validate("StateDirUsage", value).length === 0;
+}
+
+export function assertStateDirUsage(value: unknown): asserts value is StateDirUsage {
+  const issues = validate("StateDirUsage", value);
+  if (issues.length > 0) throw new ApiValidationError("StateDirUsage", issues);
+}
+
+export function parseStateDirUsage(value: unknown): StateDirUsage {
+  assertStateDirUsage(value);
   return value;
 }
 
