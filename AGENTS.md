@@ -134,6 +134,21 @@ works in prod."
   and gets nodes as market RFP VMs from that bidder. Only integration tests get written then.
 - A manual live run is proof, not a test.
 
+## Prod deployments
+
+The user, 2026-10-12: we are actively iterating on prod. A prod deployment does not preserve
+anything.
+
+- Losing sessions, VMs, clusters, claims, receipts or any other prod state during a deploy is
+  acceptable. Do not plan migration, carry-over or rollback for them. Deploy fresh.
+- The atproto credentials of the two prod accounts are on the deploy host, owner-only (mode 0600):
+  `~/.aliceoa_bsky_social_source` (requester account alice; exports `ALICE_ATPROTO_HANDLE`,
+  `ALICE_ATPROTO_PASSWORD`) and `~/.bobvmbuilder_bsky_social_source` (bidder account bobvmbuilder;
+  exports `BOB_ATPROTO_HANDLE`, `BOB_ATPROTO_PASSWORD`). When a deploy loses a session, sign in again
+  from these files. Source them into the one command that needs them; never print, log, commit or
+  copy their values, and never put them in a kcp object, a DenoPod argument or a plan.
+- Only the lead runs a prod deployment (plan 0006 M5-FRESH-DEPLOY). Task agents never touch prod.
+
 ## How to verify
 
 - `deploy/check.sh --fast` on every change: gofmt, go build, apigen generate and its diff (generated

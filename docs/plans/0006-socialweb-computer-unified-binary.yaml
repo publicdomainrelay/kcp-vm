@@ -2140,7 +2140,7 @@ items:
       test/deploy_script_test.go TestTheDeployInstallsOnAnEmptyStateDirAndRunsNoDocker and
       TestTheDeployEnablesLingerBeforeTheFirstStart (fake ssh, fake loginctl, temp state dir); red first.
     done_when: "Claude ran it on both hosts; readings recorded (UTC): the web app /api/config 200, the bootstrap cluster Ready, an idle cluster reads None nodes 0, a tenant cluster scaled from zero to one market RFP node from the hat-8 bidder and back to zero, ACC6-ONE-BINARY and ACC6-STATE recorded."
-    risks: ["Container-era tenants, clusters and market VMs are not carried over and nothing is planned for them (decided by the user 2026-10-12); their state dirs stay on disk untouched and the deploy report lists what the old stack ran.", "A bidder account whose session in the vault is gone needs one QR scan by the user; the deploy stops at that step and asks."]
+    risks: ["Decided by the user 2026-10-12: we iterate on prod, so losing sessions, VMs, clusters, claims and receipts in a deploy is acceptable; nothing is carried over or rolled back. The old stack's state dirs stay on disk untouched and the deploy report lists what it ran.", "If the password sign-in from the credential files fails (for example the bidder's prod-qr profile needs an OAuth QR), the deploy stops at that step and asks the user for one scan."]
     status: todo
     evidence: []
   - id: M5-RETIRE
