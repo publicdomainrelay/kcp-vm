@@ -284,6 +284,26 @@ guest reported. Without `--hold` the CLI releases the contract (vm.delete) and r
 At the end of a held invocation the entry is marked `stopped`: its kcp, kine and core stop and its state
 dir is kept until `release` or `resume` starts them again.
 
+The ssh gateway is a child application of the network too:
+
+```bash
+socialweb-computer run gateway ssh --host-backend proc --network mn1 --name sshgw \
+  -- --test-owner-sessions-file /abs/owner-sessions.json
+ssh -p <port of .ssh> -o SendEnv=LC_POLICY <account DID>@127.0.0.1 'hostname'
+```
+
+`run gateway ssh --network` adds an `SshGateway` entry to `spec.apps[]`; the network places its kcp and
+copies the network value and the bidders' DIDs onto its root object. Its own kcp holds an OpenBaoServer
+(OAuth sessions, the requester key), the iroh dialer HostProcess (`socialweb-computer internal iroh-dial`
+on a unix socket in the gateway's state dir, the only process that runs `dumbpipe connect`) and the
+hono-socialweb-computer-ssh DenoPod (`--allow-env` with an allow-list, no `--allow-run`). Both listeners
+bind port 0; `run gateway ssh` prints them (`.ssh`, `.listeners`). The market network must be brought up
+with dumbpipe (`--dumbpipe-path` or `SOCIALWEB_DUMBPIPE_PATH` in a dev build). The owner sessions file is
+a market-network seam: a JSON object keyed by account DID of `{service, identifier, password}` used in
+place of a deposited OAuth session; the account must have a `badgeBlueKeys` `requester_associate` record
+for the ssh key. Every session rents its guest through the RFP flow and releases it (vm.delete) when the
+command exits.
+
 Every service runs from this repository: `ts/atproto-market`, `ts/atproto-relay`,
 `ts/hono-pds`, `ts/did-key-ingress-proxy` and the root `deno.json` and `deno.lock`.
 
