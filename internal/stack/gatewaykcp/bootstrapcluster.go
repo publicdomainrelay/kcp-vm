@@ -13,6 +13,7 @@ import (
 	"k8s.io/client-go/dynamic"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/appctl"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpclient"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/sweepkcp"
 )
@@ -123,6 +124,17 @@ func bootstrapCluster(ctx context.Context, kubeconfig, did, cluster string, log 
 	obj := map[string]any{"apiVersion": v1alpha1.GroupVersion.String(), "kind": "Cluster", "metadata": map[string]any{"name": cluster},
 		"spec": map[string]any{"account": did, "running": true}}
 	if err := retry(ctx, "cluster", func() error { return ssa(ctx, home.Resource(clusterGVR), obj) }); err != nil {
+		return err
+	}
+	agent, err := kcpclient.ParseServiceAccountRef(appctl.WebAppAccountRef())
+	if err != nil {
+		return err
+	}
+	kc, err := kcpclient.New(kcpclient.Options{Host: restCfg.Host, RestConfig: restCfg, NodeClaimAgent: agent})
+	if err != nil {
+		return err
+	}
+	if err := retry(ctx, "web app grant on the home", func() error { return kc.GrantAgentHome(ctx, kcpclient.HomePath(did, cluster)) }); err != nil {
 		return err
 	}
 	log.Info("the bootstrap cluster exists", "cluster", cluster, "account", did, "home", kcpclient.HomePath(did, cluster))

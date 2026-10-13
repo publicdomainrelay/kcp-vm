@@ -124,3 +124,7 @@ func (c *Client) grantAgentHome(ctx context.Context, home string) error {
 	return apply(ctx, core.Patch(types.ApplyPatchType).Namespace(c.agent.ref.Namespace).Resource("configmaps").Name(key),
 		c.agent.ref.Workspace, index)
 }
+
+func (c *Client) GrantAgentHome(ctx context.Context, home string) error {
+	return c.grantAgentHome(ctx, home)
+}
