@@ -144,8 +144,11 @@ works in prod."
   nothing is left, also on failure. Run them as an account that may `sudo -n -u test-0001`:
   `go test -tags integration -timeout 40m -v ./test/integration/`. `SOCIALWEB_IT_ACCOUNT` (the VM
   account), `SOCIALWEB_IT_GUEST_IMAGE` (default `file:///var/lib/socialweb-computer/guest-image`),
-  `SOCIALWEB_IT_PUBLISH`, `SOCIALWEB_IT_SKIP_BUILD` and `SOCIALWEB_IT_ARTIFACTS` (the logs, default
-  `~/.tmp/swc-it/<run>`) change the defaults.
+  `SOCIALWEB_IT_PUBLISH`, `SOCIALWEB_IT_SKIP_BUILD`, `SOCIALWEB_IT_RUN_ROOT` (default `/var/tmp/swcit`;
+  keep it short, a tenant cluster's front socket path must fit in 107 bytes) and
+  `SOCIALWEB_IT_ARTIFACTS` (the logs, default `~/.tmp/swc-it/<run>`) change the defaults. Each market
+  network takes a host live slot first through `SOCIALWEB_IT_LIVE_SLOT` (default the lead's
+  `~/.tmp/swc-lead/live-slot.ts` when it exists; `none` turns it off).
 
 ## Prod deployments
 

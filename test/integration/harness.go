@@ -36,6 +36,10 @@ const (
 	EnvGuestImage = "SOCIALWEB_IT_GUEST_IMAGE"
 	EnvArtifacts  = "SOCIALWEB_IT_ARTIFACTS"
 	EnvRunRoot    = "SOCIALWEB_IT_RUN_ROOT"
+	EnvLiveSlot   = "SOCIALWEB_IT_LIVE_SLOT"
+
+	liveSlotWait = 30 * time.Minute
+	liveSlotBeat = 10 * time.Minute
 
 	defaultRunRoot    = "/var/tmp/swcit"
 	defaultAccount    = "test-0001"
@@ -194,6 +198,62 @@ func (hs *Harness) build() error {
 	return nil
 }
 
+func (hs *Harness) liveSlotTool() string {
+	if v := os.Getenv(EnvLiveSlot); v != "" {
+		return v
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	p := filepath.Join(home, ".tmp", "swc-lead", "live-slot.ts")
+	if _, err := os.Stat(p); err != nil {
+		return ""
+	}
+	return p
+}
+
+func (hs *Harness) liveSlot(t testing.TB, name string) {
+	t.Helper()
+	tool := hs.liveSlotTool()
+	if tool == "" || tool == "none" {
+		return
+	}
+	slot := func(ctx context.Context, verb string) error {
+		out, err := exec.CommandContext(ctx, "deno", "run", "-A", tool, verb, name).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("live-slot %s %s: %v: %s", verb, name, err, strings.TrimSpace(string(out)))
+		}
+		return nil
+	}
+	started := time.Now()
+	ctx, cancel := context.WithTimeout(context.Background(), liveSlotWait)
+	defer cancel()
+	if err := slot(ctx, "acquire"); err != nil {
+		t.Fatalf("no live slot for a market network within %s (%s): %v", liveSlotWait, EnvLiveSlot, err)
+	}
+	t.Logf("live slot %s held after %.1fs of waiting", name, time.Since(started).Seconds())
+	stop := make(chan struct{})
+	go func() {
+		tick := time.NewTicker(liveSlotBeat)
+		defer tick.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-tick.C:
+				slot(context.Background(), "beat")
+			}
+		}
+	}()
+	t.Cleanup(func() {
+		close(stop)
+		if err := slot(context.Background(), "release"); err != nil {
+			t.Errorf("%v", err)
+		}
+	})
+}
+
 func (hs *Harness) removeRoot() error {
 	if hs.Root == "" {
 		return nil
@@ -349,6 +409,7 @@ func StartNetwork(t testing.TB, opts NetworkOptions) *Network {
 	if r := h.As(context.Background(), "mkdir", "-p", "-m", "0755", n.Dir); r.Err != nil {
 		t.Fatal(r.Err)
 	}
+	n.h.liveSlot(t, filepath.Base(n.h.Repo)+"-"+inst)
 	t.Cleanup(n.cleanup)
 	values := fmt.Sprintf(`{"bidder": {"kcp": {"handle": "{app}.%s.bob.test"}}}`, inst)
 	valuesFile := filepath.Join(n.Dir, "app-values.json")
