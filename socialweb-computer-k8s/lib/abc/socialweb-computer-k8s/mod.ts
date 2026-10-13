@@ -84,6 +84,7 @@ export interface NodeClaimStore {
   replaceStatus(claim: NodeClaim, status: NodeClaimStatus): Promise<void>;
   addFinalizer(claim: NodeClaim): Promise<void>;
   removeFinalizer(claim: NodeClaim): Promise<void>;
+  watch?(signal: AbortSignal, onChange: () => void): void;
 }
 
 export interface ClusterLinkView {

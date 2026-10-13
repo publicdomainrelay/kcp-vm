@@ -89,6 +89,21 @@ const UNREACHABLE_STATUSES = new Set([403, 404]);
 
 const DEFAULT_RETRY_AFTER_MS = 5_000;
 
+const WATCH_RETRY_MS = 2_000;
+
+function pause(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) return resolve();
+    const timer = setTimeout(done, ms);
+    function done() {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", done);
+      resolve();
+    }
+    signal.addEventListener("abort", done);
+  });
+}
+
 const MAX_RETRY_AFTER_MS = 60_000;
 
 function retryAfterMs(res: Response): number {
@@ -291,6 +306,50 @@ export function createKcpNodeClaimStore(opts: KcpNodeClaimStoreOptions): NodeCla
     },
     removeFinalizer(claim) {
       return editFinalizers(claim, (cur) => cur.includes(FINALIZER_NODE_CLAIM) ? cur.filter((f) => f !== FINALIZER_NODE_CLAIM) : null);
+    },
+    watch(signal, onChange) {
+      const stream = opts.fetch ?? createKcpFetch(opts.credentials);
+      const open = new Map<string, AbortController>();
+      const follow = async (home: string, stop: AbortSignal) => {
+        while (!stop.aborted) {
+          try {
+            const res = await stream(clusterPath(home, "?watch=true"), { signal: stop, headers: { accept: "application/json" } });
+            if (!res.ok || !res.body) {
+              await res.body?.cancel();
+            } else {
+              let buffered = "";
+              for await (const chunk of res.body.pipeThrough(new TextDecoderStream())) {
+                buffered += chunk;
+                const lines = buffered.split("\n");
+                buffered = lines.pop() ?? "";
+                if (lines.some((l) => l.trim() !== "")) onChange();
+              }
+            }
+          } catch {
+            if (stop.aborted) return;
+          }
+          await pause(WATCH_RETRY_MS, stop);
+        }
+      };
+      void (async () => {
+        while (!signal.aborted) {
+          const current = await homes().catch(() => null);
+          for (const home of current ?? []) {
+            if (open.has(home)) continue;
+            const stop = new AbortController();
+            signal.addEventListener("abort", () => stop.abort(), { once: true });
+            open.set(home, stop);
+            void follow(home, stop.signal);
+          }
+          for (const [home, stop] of open) {
+            if (current && !current.includes(home)) {
+              stop.abort();
+              open.delete(home);
+            }
+          }
+          await pause(homesTtlMs, signal);
+        }
+      })();
     },
   };
 }

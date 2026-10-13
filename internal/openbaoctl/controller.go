@@ -19,6 +19,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
 
@@ -621,6 +622,8 @@ func (c *Controller) Run(ctx context.Context) error {
 	c.c.log().Info("the OpenBaoServer controller runs in the core", "workspace", c.c.Workspace, "stateDir", c.c.StateDir)
 	t := time.NewTicker(interval)
 	defer t.Stop()
+	kick := make(chan struct{}, 1)
+	go c.watchSpecs(ctx, kick)
 	for {
 		if err := c.Pass(ctx); err != nil {
 			return err
@@ -629,6 +632,48 @@ func (c *Controller) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case <-t.C:
+		case <-kick:
+		}
+	}
+}
+
+func (c *Controller) watchSpecs(ctx context.Context, kick chan<- struct{}) {
+	seen := map[string]int64{}
+	for ctx.Err() == nil {
+		opened := time.Now()
+		w, err := c.servers.Watch(ctx, metav1.ListOptions{})
+		if err != nil {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(RetryAfter):
+			}
+			continue
+		}
+		for ev := range w.ResultChan() {
+			o, ok := ev.Object.(*unstructured.Unstructured)
+			if !ok {
+				continue
+			}
+			changed := ev.Type == watch.Deleted || seen[o.GetName()] != o.GetGeneration()
+			seen[o.GetName()] = o.GetGeneration()
+			if ev.Type == watch.Deleted {
+				delete(seen, o.GetName())
+			}
+			if changed {
+				select {
+				case kick <- struct{}{}:
+				default:
+				}
+			}
+		}
+		w.Stop()
+		if time.Since(opened) < RetryAfter {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(RetryAfter):
+			}
 		}
 	}
 }

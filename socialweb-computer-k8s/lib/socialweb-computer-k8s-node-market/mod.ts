@@ -853,6 +853,7 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
       };
       tick();
       timer = setInterval(tick, opts.pollIntervalMs ?? 5_000);
+      opts.store.watch?.(stopping.signal, tick);
     },
     async stop() {
       if (timer !== undefined) clearInterval(timer);
