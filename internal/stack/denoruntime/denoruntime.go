@@ -171,6 +171,7 @@ func Run(ctx context.Context, c Config) error {
 		Host:              restCfg.Host,
 		WriteStatus:       true,
 		RunsDir:           RunsDir(c.StateDir),
+		Deno:              c.Deno,
 		OpenBaoAddress:    c.OpenBao.Address,
 		OpenBaoToken:      c.OpenBao.Token,
 		OpenBaoCACert:     c.OpenBao.CACert,

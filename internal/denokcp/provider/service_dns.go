@@ -91,7 +91,7 @@ func (p *Provider) probeCommand(command []string) []string {
 	if p.dnsTable != "" {
 		reads = []string{p.dnsTable}
 	}
-	return denospec.ProbeCommandReading("", p.dnsShim, p.dnsProbe, command[1], probePath(command), assets.DNSProbeEnv, reads)
+	return denospec.ProbeCommandReading(p.opts.Deno, p.dnsShim, p.dnsProbe, command[1], probePath(command), assets.DNSProbeEnv, reads)
 }
 
 func probePath(command []string) string {
