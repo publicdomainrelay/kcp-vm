@@ -45,7 +45,10 @@ per machine; no allocator and no bind-close-rebind race; nesting; blue/green slo
 application learns addresses only from its own kcp, so it can never reach another instance's components
 by accident). Exception: only stable public edge entry points keep known addresses - caddy on 443 and an
 application's front that caddy proxies to (the gateway's kcp front on 127.0.0.1:6443, the door's 8788).
-Leases remain only for ports a tenant cluster needs stable across restarts (section 8). A check test
+A tenant cluster's members are third-party binaries that take a port number on their command line; for
+them the cluster's apiserver front binds port 0 and holds the socket for the life of the cluster, and the
+member binds that number beside the hold (section 8), so the number is stable across member restarts
+and no other process on the host can take it. A check test
 fails on any fixed port in a manifest or default behind the edge (plan 0006 M1-NO-FIXED-PORTS).
 
 What stays about the machine: `/dev/kvm`, the systemd user manager and its units (production placement
@@ -1384,10 +1387,18 @@ the vault again. Not deployed at the time of writing: the live reading (`bao aut
 
 ## 8. Ports
 
-Every per-cluster port is leased from `internal/portallocator`, ADR 0026. Persisted per host. These
-leases are the virtual-clusters exception to section 0's port 0 rule (a tenant cluster's apiserver and
-link ports must stay stable across restarts); every other listener behind the edge binds port 0 and
-reports its address into its kcp object (plans 0006 M2-KCP-PORT0, M1-NO-FIXED-PORTS; 0008 M1-MARKET-NETWORK-PARALLEL).
+Every per-cluster port is chosen by the kernel and held by the cluster's apiserver front (member
+`front`) for the life of the cluster. Nothing checks a port and binds it later. The front binds its own
+listener on `BindAddress:0`, keeps it in its fd store and records it in `front.json`; the HostProcess
+supervisor reports it in the front's `status.listeners`, and the provider reads the `k3s-secure` port
+from there. Every other purpose below is a HOLD: the provider asks the front (control op `hold`), the
+front binds `[::]:0` dual-stack with `SO_REUSEADDR` off, sets `SO_REUSEADDR` after the bind, never
+listens, and stores the socket in its fd store (`FDNAME=hold.<purpose>`, `FDPOLL=0`). The member
+(k3s, kine, openbao, external-secrets: third-party binaries that take a port flag and accept no
+socket) binds that number beside the hold. The holds are mirrored to the front HostProcess annotation
+`socialweb.computer/held-ports`; every member's own listeners are in its HostProcess
+`status.listeners`. `internal/portallocator` only records which port the front holds for which
+purpose (`leases.json`); there is no port range and no probe.
 
 | purpose | for |
 |---|---|
@@ -1395,10 +1406,10 @@ reports its address into its kcp object (plans 0006 M2-KCP-PORT0, M1-NO-FIXED-PO
 | `openbao` | the vault |
 | `kine` | kine's listener |
 | `k3s-secure` | the cluster's apiserver front (`internal apiserver-front`, member `front`): the port a node, the kcp mount, the provider, the CCM and ESO dial, and `--advertise-port` of every slot |
-| `k3s-slot-a`, `k3s-slot-b` | width 2 each: the `--https-listen-port` pair of k3s slot a and slot b behind the front; never advertised |
+| `k3s-slot-a`, `k3s-slot-b` | the `--https-listen-port` (supervisor) of k3s slot a and slot b behind the front; never advertised |
+| `k3s-apiserver-a`, `k3s-apiserver-b` | the `--apiserver-port` (a hidden k3s flag) of slot a and slot b: the apiserver listener on `127.0.0.1`, which k3s otherwise puts on `https-listen-port + 1` |
 | `kine`, `kine-b` | kine's listener of slot a and slot b |
 | `k3s-controller-manager`, `k3s-scheduler`, `k3s-cloud-controller-manager` (slot a), the same names with `-b` (slot b) | the k3s control-plane components' secure ports |
-| `apiserver-link`, `openbao-link`, `apiserver-link-b`, `openbao-link-b` | UDP: the IPv4 socket of each cluster link's iroh endpoint, one lease per link slot (section 5) (`--ipv4-addr 0.0.0.0:<port>`). The only datagram purposes (`Purpose.Datagram()`); the restart sweep reads the UDP tables for them |
 | `external-secrets-health` | the External Secrets controller's `--live-addr`, on `127.0.0.1` |
 | `external-secrets-webhook` | the External Secrets webhook's TLS `--port`, the one its `ValidatingWebhookConfiguration` names as `https://127.0.0.1:<port>`; it binds every interface, because the upstream flag has no host |
 | `external-secrets-webhook-health` | the External Secrets webhook's `--healthz-addr`, on `127.0.0.1`. Both members' metrics are off (`--metrics-addr=0`), so no metrics port is leased |
@@ -1424,9 +1435,11 @@ front lease, link target == front lease, no slot listen port inside the front le
 cluster listener and makes "one vault per cluster, no HA" a property of the file. Both the listener
 stanza and `api_addr` take the same `Lease.Port`, no code in the tree reads `Lease.Port + 1`, and with
 the cluster listener removed nothing binds the second port, so it was leased, held out of the carve, and
-never read. `PurposeK3sSecure` stays 2 and the difference between the two is the point: the k3s pair is
-MEASURED (the apiserver binds `*:<https-listen-port>` AND `127.0.0.1:<https-listen-port + 1>`), where
-the vault's second port was an assumption about a listener the vault's own config turns off.
+never read. The k3s pair was MEASURED (the apiserver binds `*:<https-listen-port>` AND
+`127.0.0.1:<https-listen-port + 1>`); it is now two holds, `k3s-slot-<s>` and `k3s-apiserver-<s>`,
+because a kernel-picked port has no free neighbour to count on and `--apiserver-port` moves the second
+listener (measured: `127.0.0.1:41000`, `[::1]:41000` and `127.0.0.1:41500` with `--https-listen-port
+41000 --apiserver-port 41500`).
 
 **Two purposes in this table's history are retired, and neither was ever a second fact.** `advertise`
 was a lease for the port a node dials, until measurement showed the advertised port IS the bound port:
@@ -1450,7 +1463,7 @@ published and the host cannot initiate a connection to a guest.
 
 **Only ONE port serves the API, and it is the one a node must dial.** Measured: `k3s server
 --disable-agent` binds `*:<https-listen-port>` AND `127.0.0.1:<https-listen-port + 1>` as a PAIR —
-which is why `purposeWidth[PurposeK3sSecure] = 2` — and in steady state it binds NOTHING on
+which is why each slot holds two ports — and in steady state it binds NOTHING on
 `--advertise-port`. `/cacerts` answers 200 on the listen port and 401 on the advertise port for every
 credential form, so an agent dialed at the advertise port loops on `failed to get CA certs:
 Unauthorized`. The node's `--server`, `status.URL`, the tenant credential, the readiness gate and the
@@ -1468,7 +1481,14 @@ cross-contamination, cluster A's containerd served `RunPodSandbox` for cluster B
 of `KUBE-*` chains and one `/var/lib/kubelet/pod-resources`. All four candidate fixes were refuted.
 That list is the measured case for a VM per node.
 
-**The bind probe, corrected by measurement.** The earlier claim here was that the probe coexists with
+**The hold, measured** (task port0-cp, 2026-10-12, Linux 7.2, in a private network namespace with a
+1000-port ephemeral range): a second exclusive hold of a held port is refused; a member binds
+`127.0.0.1:P`, `[::1]:P` or `:P` beside the hold and is dialled; a second listener is refused while
+the member listens; the member binds again after it restarts; 998 port-0 binds exhausted the range
+and none got a held port; 200 outgoing connects took none. A cluster link's dumbpipe binds UDP port 0
+(`--ipv4-addr 0.0.0.0:0`); a node dials it by its ticket, so its port is not held.
+
+**The bind probe (retired with the port range).** The earlier claim here was that the probe coexists with
 a wildcard binder because Go sets `SO_REUSEADDR`, and therefore reports a HELD PORT AS FREE. That
 does not reproduce on Linux: a LISTEN socket conflicts with a wildcard or a specific bind whatever
 the prober's `SO_REUSEADDR` is. The fault is the ADDRESS, not the flag, and it is wider than claimed:
@@ -2720,7 +2740,7 @@ macOS or Windows VM behaviour.
 | `hostos.BootID` (`bootid_*.go`) | `/proc/sys/kernel/random/boot_id` | refuses | refuses |
 | `hostos.LocalPortRange` (`portrange_*.go`) | `/proc/sys/net/ipv4/ip_local_port_range` | refuses | `netsh int ipv4 show dynamicport tcp`, falling back to 49152-65535 |
 | `hostos` process attributes (`sysproc_*.go`) | `DieWithParent` is `Pdeathsig: SIGKILL`; `NewProcessGroup` is `Setpgid` | `Setpgid`; `DieWithParent` is empty (ponytail: no Pdeathsig) | `CREATE_NEW_PROCESS_GROUP`; `DieWithParent` is empty (ponytail: a job object) |
-| `portallocator` probe (`probe_*.go`) | listen with `SO_REUSEADDR` 0 | every probe refuses | plain listen |
+| `apiserverfront` hold (`fdstore_*.go`) | `[::]:0` dual-stack, `SO_REUSEADDR` set after bind | refuses (no hold) | refuses (no hold) |
 | `portscan` (`scan_*.go`) | `/proc/net` and `/proc/<pid>/cmdline` | refuses | `netstat -ano` and the command line via CIM |
 | `nodevm` rootfs clone (`clone_linux.go`, `clone_other.go`) | `FICLONE` reflink, else a `SEEK_DATA`/`SEEK_HOLE` sparse copy | plain copy | plain copy |
 | `socialweb-nodeimage` stage lock (`buildlock_*.go`) | `flock` | refuses | refuses |
