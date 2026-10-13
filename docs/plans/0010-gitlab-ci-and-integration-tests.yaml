@@ -326,8 +326,8 @@ items:
     files: ["socialweb-computer-k8s/hono-socialweb-computer-k8s/mod.ts", "socialweb-computer-k8s/hono-socialweb-computer-k8s/cli-args-env.json", "socialweb-computer-k8s/lib/socialweb-computer-k8s-node-market/mod.ts", "deploy/apps/option-map.yaml", "deploy/apps/gateway/prod.values.yaml", "deploy/apps/gateway/market-network.values.yaml"]
     done_when: git grep finds no debug-node-ssh or sshAuthorizedKeys on the node market path; deno task check green.
     risks: ["0009 M3-REQUESTER-CONTROLLER rewrites the node market; this change is small and lands first."]
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: G4-CLEANUP
     milestone: G4
     title: Remove the plan 0005 acceptance leftovers
