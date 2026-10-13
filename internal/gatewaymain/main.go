@@ -26,6 +26,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/plcresolver"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/plcsweep"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/sweepkcp"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/tenantapply"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/tenantclient"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/xrpcserver"
 )
@@ -101,6 +102,11 @@ func buildDeps(cfg Config) (Deps, error) {
 		return Deps{}, fmt.Errorf("the mint store: %w", err)
 	}
 
+	tenantAPI, err := tenantapply.New(mintStore.OwnerConfig)
+	if err != nil {
+		return Deps{}, err
+	}
+
 	if cfg.DeviceKeyAudience != cfg.Audiences[0] {
 		return Deps{}, fmt.Errorf("%s is %q and %s is %q: the device credential is signed for "+
 			"the first and the mint verifies it against the second, so every kubeconfig this "+
@@ -155,6 +161,8 @@ func buildDeps(cfg Config) (Deps, error) {
 		Revoker: client,
 
 		MintStore: mintStore,
+
+		Tenant: tenantAPI,
 
 		Sweep: &plcsweep.Sweeper{
 			Worklist: worklist,

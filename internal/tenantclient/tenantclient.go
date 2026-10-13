@@ -287,3 +287,23 @@ func (c *Client) bind(cfg *rest.Config, logicalCluster string, gv schema.GroupVe
 	}
 	return rest.RESTClientForConfigAndClient(cfg, httpClient)
 }
+
+func (c *Client) OwnerConfig(ctx context.Context, did, cluster string) (*rest.Config, error) {
+	if did == "" || cluster == "" {
+		return nil, mint.ErrBindingUnknown
+	}
+	base, err := c.opts.MintConfig(did, cluster)
+	if err != nil {
+		return nil, fmt.Errorf("tenantclient: no mint credential for cluster %q: %w", cluster, err)
+	}
+	if base == nil {
+		return nil, fmt.Errorf("tenantclient: no mint credential for cluster %q", cluster)
+	}
+	token, _, err := c.Issue(ctx, mint.Binding{DID: did, Cluster: cluster, SA: SAName(did)}, MinTokenTTL)
+	if err != nil {
+		return nil, err
+	}
+	cfg := rest.AnonymousClientConfig(base)
+	cfg.BearerToken = token
+	return cfg, nil
+}

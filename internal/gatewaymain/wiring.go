@@ -28,6 +28,8 @@ type Deps struct {
 
 	MintStore mint.Store
 
+	Tenant gateway.TenantAPI
+
 	Sweep *plcsweep.Sweeper
 
 	SweepInterval time.Duration
@@ -60,6 +62,7 @@ func Build(cfg Config, d Deps, log *slog.Logger) (*Gateway, error) {
 	verbs := &gateway.Server{
 		Deny: d.Deny, Store: d.Store, Revoker: d.Revoker, Feed: d.Feed,
 		MaxDeviceKeyTTL: cfg.DeviceKeyMaxTTL,
+		Tenant:          d.Tenant,
 	}
 	credentials := mint.New(d.MintStore, mint.Options{TTL: cfg.MintTTL, FailureHold: cfg.MintFailureHold})
 

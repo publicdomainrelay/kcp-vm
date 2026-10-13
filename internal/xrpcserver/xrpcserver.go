@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -32,7 +33,11 @@ const (
 
 	NSIDPrefix = "com.publicdomainrelay.temp.cluster."
 
+	K8sNSIDPrefix = "computer.socialweb.k8s."
+
 	maxBody = 1 << 16
+
+	maxManifestBody = 1 << 20
 
 	DefaultRetryAfter = 5 * time.Second
 )
@@ -45,6 +50,9 @@ const (
 	nsidDeleteCluster    = NSIDPrefix + "deleteCluster"
 	nsidListClusters     = NSIDPrefix + "listClusters"
 	nsidRevokeIdentity   = NSIDPrefix + "revokeIdentity"
+
+	nsidKubectlApplyServerSide = K8sNSIDPrefix + "kubectlApplyServerSide"
+	nsidGetJob                 = K8sNSIDPrefix + "getJob"
 )
 
 var retryable = map[string]bool{gateway.ErrClusterInitializing.Name: true}
@@ -74,6 +82,8 @@ type route struct {
 	errors []lexicon.SchemaError
 
 	input any
+
+	maxBody int64
 
 	call verb
 }
@@ -154,6 +164,14 @@ func New(opts Options) (*Server, error) {
 			call: func(ctx context.Context, c gateway.Caller, in any) (any, error) {
 				return s.gateway.RevokeIdentity(ctx, c, *(in.(*gateway.RevokeRequest)))
 			}},
+		{nsid: nsidKubectlApplyServerSide, input: &gateway.ApplyRequest{}, maxBody: maxManifestBody,
+			call: func(ctx context.Context, c gateway.Caller, in any) (any, error) {
+				return s.gateway.KubectlApplyServerSide(ctx, c, *(in.(*gateway.ApplyRequest)))
+			}},
+		{nsid: nsidGetJob, input: &gateway.JobRequest{},
+			call: func(ctx context.Context, c gateway.Caller, in any) (any, error) {
+				return s.gateway.GetJob(ctx, c, *(in.(*gateway.JobRequest)))
+			}},
 	} {
 		if err := s.bind(&r); err != nil {
 			return nil, err
@@ -223,7 +241,7 @@ func (s *Server) xrpc(r route) http.HandlerFunc {
 			return
 		}
 
-		in := any(&gateway.NameRequest{})
+		in := newInput(r.input)
 		if r.query {
 			params, err := queryParams(req.URL.Query(), s.params[r.nsid])
 			if err != nil {
@@ -234,8 +252,16 @@ func (s *Server) xrpc(r route) http.HandlerFunc {
 				writeError(w, r.nsid, s.opts.RetryAfter, gateway.ErrInvalidRequest)
 				return
 			}
+			if err := paramsInto(params, in); err != nil {
+				writeError(w, r.nsid, s.opts.RetryAfter, gateway.ErrInvalidRequest)
+				return
+			}
 		} else {
-			body, err := decodeBody(req, r.nsid, s.catalog, s.inputs[r.nsid], r.input)
+			limit := r.maxBody
+			if limit == 0 {
+				limit = maxBody
+			}
+			body, err := decodeBody(req, limit, r.nsid, s.catalog, s.inputs[r.nsid], in)
 			if err != nil {
 				writeError(w, r.nsid, s.opts.RetryAfter, gateway.ErrInvalidRequest)
 				return
@@ -272,15 +298,34 @@ func (s *Server) authorize(w http.ResponseWriter, req *http.Request, nsid string
 	return gateway.Caller(did), true
 }
 
-func decodeBody(req *http.Request, nsid string, cat *lexicon.BaseCatalog, def lexicon.SchemaObject, target any) (any, error) {
-	out := target
-	if out == nil {
-		out = &gateway.NameRequest{}
+func newInput(proto any) any {
+	if proto == nil {
+		return &gateway.NameRequest{}
 	}
+	return reflect.New(reflect.TypeOf(proto).Elem()).Interface()
+}
 
-	raw, err := io.ReadAll(io.LimitReader(req.Body, maxBody))
+func paramsInto(params map[string]any, out any) error {
+	raw, err := json.Marshal(params)
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(raw, out); err != nil {
+		return err
+	}
+	if _, ok := out.(*gateway.NameRequest); ok {
+		return nil
+	}
+	return checkClusterName(out)
+}
+
+func decodeBody(req *http.Request, limit int64, nsid string, cat *lexicon.BaseCatalog, def lexicon.SchemaObject, out any) (any, error) {
+	raw, err := io.ReadAll(io.LimitReader(req.Body, limit+1))
 	if err != nil {
 		return nil, err
+	}
+	if int64(len(raw)) > limit {
+		return nil, fmt.Errorf("xrpcserver: %s body is over %d bytes", nsid, limit)
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
@@ -306,6 +351,10 @@ func checkClusterName(out any) error {
 		return labelOrInvalidRequest(t.Name)
 	case *gateway.KubeconfigRequest:
 		return labelOrInvalidRequest(t.Name)
+	case *gateway.ApplyRequest:
+		return labelOrInvalidRequest(t.Cluster)
+	case *gateway.JobRequest:
+		return labelOrInvalidRequest(t.Cluster)
 	case *gateway.RevokeRequest:
 		if t.Name == "" {
 			return nil

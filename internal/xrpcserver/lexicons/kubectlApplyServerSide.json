@@ -1,0 +1,81 @@
+{
+  "lexicon": 1,
+  "id": "computer.socialweb.k8s.kubectlApplyServerSide",
+  "defs": {
+    "main": {
+      "type": "procedure",
+      "description": "Server-side apply one Kubernetes object to the named cluster of the calling account, as `kubectl apply --server-side` would, without a kubeconfig. The gateway mints a short-lived token for the account's own ServiceAccount in that cluster (the same identity a kubeconfig from getKubeconfig carries) and sends the object as an apply patch (application/apply-patch+yaml) to the cluster's apiserver. Any kind the cluster serves works, CRDs included: the kind is resolved through the cluster's discovery. Requires a service-auth JWT from the caller's own PDS whose lxm is this method; the account is the verified token's iss. The cluster must be running and Ready.",
+      "input": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": ["cluster", "manifest"],
+          "properties": {
+            "cluster": {
+              "type": "string",
+              "description": "The cluster label of the calling account (as in createCluster). RFC-1123 label, <=63 characters."
+            },
+            "namespace": {
+              "type": "string",
+              "description": "The namespace of a namespaced object. Optional: metadata.namespace of the manifest, then this, then 'default'. When both are set they must be equal. A cluster-scoped kind takes no namespace."
+            },
+            "name": {
+              "type": "string",
+              "description": "Optional check: when set it must equal metadata.name of the manifest."
+            },
+            "fieldManager": {
+              "type": "string",
+              "description": "The server-side apply field manager. Default 'socialweb-computer'. Use one field manager per owner of a set of fields; the same value as a kubectl user ('kubectl') shares field ownership with kubectl apply --server-side."
+            },
+            "force": {
+              "type": "boolean",
+              "description": "Take ownership of fields another field manager owns (kubectl --force-conflicts). Without it such a field is an ApplyConflict."
+            },
+            "dryRun": {
+              "type": "boolean",
+              "description": "Run admission and validation and return the object the apply would write, without persisting it (dryRun=All)."
+            },
+            "manifest": {
+              "type": "unknown",
+              "description": "One Kubernetes object as JSON, with apiVersion, kind and metadata.name. A List kind or generateName is InvalidRequest."
+            }
+          }
+        }
+      },
+      "output": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": ["apiVersion", "kind", "name", "object"],
+          "properties": {
+            "apiVersion": { "type": "string" },
+            "kind": { "type": "string" },
+            "namespace": { "type": "string" },
+            "name": { "type": "string" },
+            "uid": { "type": "string" },
+            "resourceVersion": { "type": "string" },
+            "generation": { "type": "integer" },
+            "dryRun": { "type": "boolean" },
+            "object": {
+              "type": "unknown",
+              "description": "The object as the apiserver stored it (or would store it, on dryRun), managedFields included."
+            }
+          }
+        }
+      },
+      "errors": [
+        { "name": "InvalidRequest", "description": "The input is malformed, the manifest is not one object with apiVersion, kind and metadata.name, or the name or namespace checks fail." },
+        { "name": "Unauthorized", "description": "Missing or invalid service-auth token, or its aud or lxm does not match." },
+        { "name": "IdentityRevoked", "description": "The caller's identity carries a deny record." },
+        { "name": "ClusterNotFound", "description": "This account has no cluster of that name." },
+        { "name": "ClusterNotRunning", "description": "The control plane is stopped (409). Call controlPlaneUp first." },
+        { "name": "ClusterInitializing", "description": "The control plane is coming up (429, Retry-After). Retry." },
+        { "name": "ClusterDraining", "description": "The cluster is being deleted (409)." },
+        { "name": "ClusterUnavailable", "description": "The gateway could not get a credential for the cluster or the cluster did not answer (503)." },
+        { "name": "KindNotFound", "description": "The cluster serves no such apiVersion and kind (400)." },
+        { "name": "ApplyConflict", "description": "The apply touches fields another field manager owns (409). Set force, or change fieldManager." },
+        { "name": "KubernetesError", "description": "The apiserver refused the object (its HTTP status: 400, 403, 422, ...). message is the apiserver's message." }
+      ]
+    }
+  }
+}

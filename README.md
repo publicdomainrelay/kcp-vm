@@ -85,7 +85,7 @@ deno run -A --no-lock scripts/oauth-signin.ts --creds ~/.aliceoa_bsky_social_sou
 
 ### Cluster XRPC with `goat` (create cluster if missing, get kubeconfig, kubectl)
 
-Auth = atproto service JWT: `iss` your DID, `aud` gateway DID, `lxm` the method. Methods: `com.publicdomainrelay.temp.cluster.{createCluster,getKubeconfig,listClusters,controlPlaneUp,controlPlaneDown,deleteCluster,subscribeClusters}`.
+Auth = atproto service JWT: `iss` your DID, `aud` gateway DID, `lxm` the method. Methods: `com.publicdomainrelay.temp.cluster.{createCluster,getKubeconfig,listClusters,controlPlaneUp,controlPlaneDown,deleteCluster,subscribeClusters}`, and `computer.socialweb.k8s.{kubectlApplyServerSide,getJob}` (apply objects and run Jobs without a kubeconfig, below).
 
 ```bash
 go install github.com/bluesky-social/goat@latest
@@ -153,6 +153,62 @@ Behavior (release with the four fixes of 2026-10-13):
 - Pod deleted -> scale to zero ~2-3 min (incl. 2 min hold), claim `deleted:true`. Provision failure -> `#nodeClaim` `Failed` with message (e.g. `no oauth session stored` = sign the user in).
 
 Prod needs a release with these fixes (>= the four-fixes merge) for this behavior; `subscribeClusters` itself needs >= 77432804 (older gateway: 404).
+
+### Apply manifests and run Jobs over XRPC (no kubeconfig)
+
+`computer.socialweb.k8s.kubectlApplyServerSide` (procedure) = `kubectl apply --server-side` for one object, through the gateway. `computer.socialweb.k8s.getJob` (query) = Job status + its pods + tail of each container log. No kubeconfig, no `socialweb-credential`, no kubectl.
+
+- Auth = same service JWT (`aud` gateway DID, `lxm` = the method). Account = token `iss`. Cluster = `cluster` field, must be one of that account's clusters.
+- Gateway mints a 10 min token for the account's own ServiceAccount in that cluster (`users/did-...`, cluster-admin of its own cluster; the same identity a getKubeconfig kubeconfig carries) and sends an apply patch to the cluster's apiserver. Not a gateway admin identity.
+- Any kind the cluster serves (CRDs too; resolved by discovery). One object per call, `metadata.name` required (no `generateName`, no `List`), body <= 1 MiB.
+- Namespace: `metadata.namespace`, else `namespace`, else `default`; both set = must match. `name` set = must match `metadata.name`. Cluster-scoped kind takes no namespace.
+- `fieldManager` default `socialweb-computer` (`kubectl` shares ownership with `kubectl apply --server-side`). Field owned by another manager -> 409 `ApplyConflict`; `force: true` takes it. `dryRun: true` = validate + admission, nothing stored.
+- Cluster must be running and `Ready`: stopped -> 409 `ClusterNotRunning` (call `controlPlaneUp`), coming up -> 429 `ClusterInitializing` + `Retry-After`, deleting -> 409 `ClusterDraining`. Unknown kind -> 400 `KindNotFound`. Apiserver refusal -> its status + message as `KubernetesError` (403/422/...).
+- Output: `apiVersion kind namespace name uid resourceVersion generation object` (object = as stored, managedFields included).
+- `getJob?cluster=&namespace=&name=[&tailLines=100]`: `phase` Pending | Running | Succeeded | Failed, counts `active succeeded failed`, `conditions`, `pods[].containers[] {state, exitCode, reason, log}` (log = last `tailLines` lines, <= 64 KiB each, `tailLines=0` = no logs). Missing Job -> 404 `ObjectNotFound`.
+- Job on a cluster at 0 nodes: pod Pending -> NodeClaim -> market RFP VM -> node -> pod runs (~60 s prod), then scale back to 0 after the pod finishes. Poll `getJob` or watch `#nodeClaim` on `subscribeClusters`.
+
+curl (token from `goat account service-auth --aud $AUD --lxm computer.socialweb.k8s.kubectlApplyServerSide`):
+
+```bash
+K=computer.socialweb.k8s
+ATPROTO_JWT=$(goat account service-auth --aud $AUD --lxm $K.kubectlApplyServerSide)
+curl -sS -X POST "$GW/xrpc/$K.kubectlApplyServerSide" \
+  -H "Authorization: Bearer $ATPROTO_JWT" -H "Content-Type: application/json" -H "Accept: application/json" \
+  -d '{
+    "cluster": "demo",
+    "namespace": "default",
+    "name": "app-config",
+    "fieldManager": "kubectl",
+    "force": false,
+    "manifest": {
+      "apiVersion": "v1", "kind": "ConfigMap",
+      "metadata": {"name": "app-config", "namespace": "default"},
+      "data": {"environment": "production", "log_level": "info"}
+    }
+  }' | jq '{kind, namespace, name, uid, resourceVersion}'
+```
+
+Run a Job and read its result (reuse GW AUD from the goat section):
+
+```bash
+K=computer.socialweb.k8s
+jq -n '{cluster: "demo", manifest: {apiVersion: "batch/v1", kind: "Job",
+  metadata: {name: "hello", namespace: "default"},
+  spec: {backoffLimit: 0, template: {spec: {restartPolicy: "Never",
+    containers: [{name: "run", image: "docker.io/library/busybox:1.36.1", command: ["sh", "-c", "echo hello from $(uname -m)"]}]}}}}}' |
+  curl -sS -X POST "$GW/xrpc/$K.kubectlApplyServerSide" -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $(goat account service-auth --aud $AUD --lxm $K.kubectlApplyServerSide)" -d @- | jq -c '{kind, name, uid}'
+# poll until Succeeded or Failed (each call needs a fresh token: service-auth tokens are short-lived)
+until s=$(curl -sS "$GW/xrpc/$K.getJob?cluster=demo&namespace=default&name=hello&tailLines=50" \
+    -H "Authorization: Bearer $(goat account service-auth --aud $AUD --lxm $K.getJob)"); \
+  echo "$s" | jq -c '{phase, active, succeeded, failed}'; echo "$s" | jq -e '.phase == "Succeeded" or .phase == "Failed"' >/dev/null; do sleep 5; done
+echo "$s" | jq -r '.pods[].containers[] | "\(.state) exit=\(.exitCode) \(.log)"'
+```
+
+The integration test `TestTenantClusterScalesFromZeroOnMarketVMsAndBack` checks this flow on every main push: ConfigMap apply, `ApplyConflict` without `force`, `force` takes the field, `KindNotFound`, a Job applied through the XRPC runs on a market RFP VM node and `getJob` returns `Succeeded`, exit 0 and its log.
+
+Prod needs a release with this change; caddy routes `/xrpc/computer.socialweb.k8s.*` to the gateway (`scripts/deploy.sh`).
 
 ## OAuth sign-in (scripted, never by hand, never hand the user a link)
 

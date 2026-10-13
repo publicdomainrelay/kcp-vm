@@ -126,6 +126,8 @@ type Server struct {
 	Feed Feed
 
 	MaxDeviceKeyTTL time.Duration
+
+	Tenant TenantAPI
 }
 
 type NameRequest struct {

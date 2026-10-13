@@ -293,6 +293,8 @@ func TestTenantClusterScalesFromZeroOnMarketVMsAndBack(t *testing.T) {
 		}
 	}
 
+	runJobThroughXRPC(t, n, tn, "tenant", nsServer, podA.Spec.NodeName)
+
 	m := &matrix{t: t, tn: tn, node: podA.Spec.NodeName}
 	ipB, ipC := podB.Status.PodIP, podC.Status.PodIP
 	dns := "nslookup it-b.it-srv.svc.cluster.local"

@@ -1,0 +1,93 @@
+{
+  "lexicon": 1,
+  "id": "computer.socialweb.k8s.getJob",
+  "defs": {
+    "main": {
+      "type": "query",
+      "description": "Read the status of one batch/v1 Job in the named cluster of the calling account, with the pods it owns and the tail of each container's log, without a kubeconfig. Pairs with kubectlApplyServerSide: apply a Job, then poll this until phase is Succeeded or Failed. Read as the account's own ServiceAccount in that cluster. Requires a service-auth JWT from the caller's own PDS whose lxm is this method.",
+      "parameters": {
+        "type": "params",
+        "required": ["cluster", "namespace", "name"],
+        "properties": {
+          "cluster": { "type": "string", "description": "The cluster label of the calling account." },
+          "namespace": { "type": "string", "description": "The Job's namespace." },
+          "name": { "type": "string", "description": "The Job's name." },
+          "tailLines": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 5000,
+            "description": "How many log lines to return per container, from the end. Default 100; 0 returns no logs. Each log is also capped at 64 KiB."
+          }
+        }
+      },
+      "output": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": ["namespace", "name", "uid", "phase", "active", "succeeded", "failed", "conditions", "pods"],
+          "properties": {
+            "namespace": { "type": "string" },
+            "name": { "type": "string" },
+            "uid": { "type": "string" },
+            "phase": {
+              "type": "string",
+              "knownValues": ["Pending", "Running", "Succeeded", "Failed"],
+              "description": "Succeeded: the Complete (or SuccessCriteriaMet) condition is True. Failed: the Failed (or FailureTarget) condition is True. Running: at least one pod is active. Pending otherwise, which includes waiting for a node: a tenant cluster at zero nodes rents a market VM for the Job's pod first."
+            },
+            "active": { "type": "integer" },
+            "succeeded": { "type": "integer" },
+            "failed": { "type": "integer" },
+            "startTime": { "type": "string", "format": "datetime" },
+            "completionTime": { "type": "string", "format": "datetime" },
+            "conditions": { "type": "array", "items": { "type": "ref", "ref": "#condition" } },
+            "pods": { "type": "array", "items": { "type": "ref", "ref": "#pod" } }
+          }
+        }
+      },
+      "errors": [
+        { "name": "InvalidRequest", "description": "A parameter is missing or out of range." },
+        { "name": "Unauthorized", "description": "Missing or invalid service-auth token, or its aud or lxm does not match." },
+        { "name": "IdentityRevoked", "description": "The caller's identity carries a deny record." },
+        { "name": "ClusterNotFound", "description": "This account has no cluster of that name." },
+        { "name": "ClusterNotRunning", "description": "The control plane is stopped (409). Call controlPlaneUp first." },
+        { "name": "ClusterInitializing", "description": "The control plane is coming up (429, Retry-After). Retry." },
+        { "name": "ClusterDraining", "description": "The cluster is being deleted (409)." },
+        { "name": "ClusterUnavailable", "description": "The gateway could not get a credential for the cluster or the cluster did not answer (503)." },
+        { "name": "ObjectNotFound", "description": "No Job of that name in that namespace (404)." },
+        { "name": "KubernetesError", "description": "The apiserver refused the read; message is the apiserver's message." }
+      ]
+    },
+    "condition": {
+      "type": "object",
+      "required": ["type", "status"],
+      "properties": {
+        "type": { "type": "string" },
+        "status": { "type": "string" },
+        "reason": { "type": "string" },
+        "message": { "type": "string" }
+      }
+    },
+    "pod": {
+      "type": "object",
+      "required": ["name", "phase", "containers"],
+      "properties": {
+        "name": { "type": "string" },
+        "phase": { "type": "string" },
+        "node": { "type": "string" },
+        "containers": { "type": "array", "items": { "type": "ref", "ref": "#container" } }
+      }
+    },
+    "container": {
+      "type": "object",
+      "required": ["name", "state"],
+      "properties": {
+        "name": { "type": "string" },
+        "state": { "type": "string", "knownValues": ["Waiting", "Running", "Terminated"] },
+        "reason": { "type": "string" },
+        "exitCode": { "type": "integer" },
+        "log": { "type": "string", "description": "The last tailLines lines of the container's log (at most 64 KiB)." },
+        "logError": { "type": "string", "description": "Why the log could not be read, when it could not." }
+      }
+    }
+  }
+}
