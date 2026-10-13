@@ -6,8 +6,8 @@ trust: {{.Trust}}
 args: ["--http-port", "0", "--serve-addr", "127.0.0.1", "--state-dir", "{{.StateDir}}", "--web-dir", "{{.WebDir}}", "--kcp-kubeconfig", "{{.Kubeconfig}}", "--gateway-kcp-workspace", "{{.GatewayWorkspace}}", "--gateway-kcp-name", "{{.GatewayName}}", "--openbao-server", "{{.Vault.Server}}", "--openbao-client", "{{.Vault.Client}}", "--openbao-server-workspace", "{{.GatewayWorkspace}}", "--market-identity-workspace", "{{.IdentityWorkspace}}", "--kcp-workspace", "{{.IdentityWorkspace}}"{{.ExtraArgs}}{{.TestArgs}}]
 permissions:
   net: true
-  env: true
-  sys: true
+  env: [PORT_FILE, LISTENERS_FILE, STATUS_FILE, KCP_NAMESPACE, KCP_TOKEN, KCP_WORKSPACE, PATH, HOME, BUNDLED_ACTIONS_DIR]
+  sys: [hostname]
   read: ["{{.KcpDir}}", "{{.Vault.CA}}", "{{.Vault.ClientDir}}"{{.ExtraRead}}{{.TestRead}}]
   run:
     allow: ["ssh-keygen"]

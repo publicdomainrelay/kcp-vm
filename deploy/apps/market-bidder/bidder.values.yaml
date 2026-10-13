@@ -10,8 +10,8 @@ env:
   SERVE_PORT: "0"
 permissions:
   net: true
-  env: true
-  sys: true
+  env: [SERVE_PORT, PORT, PORT_FILE, LISTENERS_FILE, STATUS_FILE, KCP_NAMESPACE, KCP_TOKEN, KCP_WORKSPACE, PATH, HOME, BUNDLED_ACTIONS_DIR]
+  sys: [hostname]
   read: [{{.Read}}]
 probe:
   host: bidder.default.app.svc.kcp.local

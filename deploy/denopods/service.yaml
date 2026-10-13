@@ -43,8 +43,8 @@ spec:
     const denoFlags = parsed<string[]>("SERVICE_DENO_FLAGS", []);
     const permissions = parsed<{
       net?: boolean;
-      env?: boolean;
-      sys?: boolean;
+      env?: boolean | string[];
+      sys?: boolean | string[];
       read?: string[];
       write?: string[];
       run?: string[];
@@ -120,8 +120,16 @@ spec:
       `--deny-write=${denied.join(",")}`,
     ];
     if (permissions.net) permissionFlags.push("--allow-net");
-    if (permissions.env) permissionFlags.push("--allow-env");
-    if (permissions.sys) permissionFlags.push("--allow-sys");
+    const shimEnv = shim ? ["KCP_SERVICE_DOMAIN", "KCP_DNS_TABLE", "KCP_DNS_TABLE_FILE", "KCP_TOKENS", "KCP_SERVER"] : [];
+    if (permissions.env === true) {
+      permissionFlags.push("--allow-env");
+    } else {
+      const envNames = [...new Set([...(Array.isArray(permissions.env) ? permissions.env : []), ...shimEnv])];
+      if (envNames.length) permissionFlags.push(`--allow-env=${envNames.join(",")}`);
+      permissionFlags.push("--ignore-env");
+    }
+    if (permissions.sys === true) permissionFlags.push("--allow-sys");
+    else if (Array.isArray(permissions.sys) && permissions.sys.length) permissionFlags.push(`--allow-sys=${permissions.sys.join(",")}`);
     const programs = (permissions.run ?? []).map((p) => p === "deno" ? Deno.execPath() : p);
     if (programs.length) permissionFlags.push(`--allow-run=${programs.join(",")}`);
     if (permissions.ffi?.length) permissionFlags.push(`--allow-ffi=${permissions.ffi.join(",")}`);

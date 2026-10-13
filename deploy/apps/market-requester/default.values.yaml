@@ -8,8 +8,8 @@ env:
   SERVE_PORT: "0"
 permissions:
   net: true
-  env: true
-  sys: true
+  env: [SERVE_PORT, PORT, PORT_FILE, LISTENERS_FILE, STATUS_FILE, PATH, HOME, BUNDLED_ACTIONS_DIR]
+  sys: [hostname]
   read: ["{{.Vault.CA}}", "{{.Vault.ClientDir}}"]
 probe:
   host: requester.default.app.svc.kcp.local

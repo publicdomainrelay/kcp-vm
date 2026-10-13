@@ -46,8 +46,8 @@ type Service struct {
 type ServicePermissions struct {
 	All   bool           `json:"all,omitempty"`
 	Net   bool           `json:"net,omitempty"`
-	Env   bool           `json:"env,omitempty"`
-	Sys   bool           `json:"sys,omitempty"`
+	Env   NameGrant      `json:"env,omitzero"`
+	Sys   NameGrant      `json:"sys,omitzero"`
 	Read  []string       `json:"read,omitempty"`
 	Write []string       `json:"write,omitempty"`
 	Run   *ReasonedGrant `json:"run,omitempty"`
@@ -66,8 +66,8 @@ type ServiceProbe struct {
 
 type servicePermissionsWire struct {
 	Net   bool     `json:"net,omitempty"`
-	Env   bool     `json:"env,omitempty"`
-	Sys   bool     `json:"sys,omitempty"`
+	Env   any      `json:"env,omitempty"`
+	Sys   any      `json:"sys,omitempty"`
 	Read  []string `json:"read,omitempty"`
 	Write []string `json:"write,omitempty"`
 	Run   []string `json:"run,omitempty"`
@@ -161,6 +161,11 @@ func (p *ServicePermissions) check() error {
 			}
 		}
 	}
+	for name, g := range map[string]NameGrant{"env": p.Env, "sys": p.Sys} {
+		if err := g.check(); err != nil {
+			return fmt.Errorf("%s: %w", name, err)
+		}
+	}
 	for name, g := range map[string]*ReasonedGrant{"run": p.Run, "ffi": p.FFI} {
 		if g == nil {
 			continue
@@ -176,7 +181,7 @@ func (p *ServicePermissions) check() error {
 }
 
 func (p *ServicePermissions) wire() servicePermissionsWire {
-	w := servicePermissionsWire{Net: p.Net, Env: p.Env, Sys: p.Sys, Read: p.Read, Write: p.Write}
+	w := servicePermissionsWire{Net: p.Net, Env: p.Env.wire(), Sys: p.Sys.wire(), Read: p.Read, Write: p.Write}
 	if p.Run != nil {
 		w.Run = p.Run.Allow
 	}
