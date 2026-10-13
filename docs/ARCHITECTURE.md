@@ -6854,9 +6854,9 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   owners of every claim this web app has seen and of its market-network owner sessions; an account whose claims
   were all gone before the web app started is not scanned, a stated limit) waits a grace of 10 minutes from when the web app started and is then
   released once (reason `unclaimed_after_join_grace`); the web app cannot see the provider's
-  path-up time, so the grace is long rather than rebased. A market-network Gateway names the network's
-  published hosts in `spec.marketNetwork.names` (schema revision 4), merged into the web app's DNS table,
-  because the network's DID documents name its PDSes by service name on port 443; every vault unit the
+  path-up time, so the grace is long rather than rebased. A market-network Gateway's web app takes the
+  network value's hosts (`--network-hosts`) and the market-network fetch adapter, as the bidder and the
+  requester do, because the network's DID documents name its PDSes by service name on port 443; every vault unit the
   core places carries the core's `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY` and `SSL_CERT_FILE`, so a cluster
   vault fetches a bidder's issuer the way the host's own outbound traffic does.
 
