@@ -381,7 +381,7 @@ stage_one() {
     if cache_get "$out_key" "$x/blob"; then
       how="zstd reused by tar sha256"
     else
-      zstd "${zstd_args[@]}" -o "$x/blob" "$x/tar"
+      cat "$x/tar" | zstd "${zstd_args[@]}" -o "$x/blob"
       cache_put "$out_key" "$x/blob"
     fi
     [ -z "$in_key" ] || cache_put "$in_key" "$x/blob"
