@@ -233,7 +233,7 @@ closure_key() {
       echo "$d $(git -C "$tree" rev-parse "$commit:$d")"
     done
     git -C "$tree" log -1 --format=%H "$commit" -- "${ts_paths[@]}"
-    (cd "$tree" && go list -deps -f '{{if not .Standard}}{{.Dir}}{{end}}' ./cmd/socialweb-tsbundle) | sed "s|^$tree/||" | sort -u |
+    (cd "$tree" && go list -deps -f '{{if not .Standard}}{{.Dir}}{{end}}' ./cmd/socialweb-tsbundle) | sed -n "s|^$tree/||p" | sort -u |
       while read -r d; do echo "$d $(git -C "$tree" rev-parse "$commit:$d")"; done
   } | sha256sum | cut -d' ' -f1
 }
