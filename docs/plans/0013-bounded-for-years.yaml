@@ -54,7 +54,7 @@ items:
     files: ["internal/pgunit", "internal/kcpstore"]
     done_when: "after 8 rolls on a dev gateway instance, 5 backups remain, the newest is the last roll's."
     risks: []
-    status: todo
+    status: done
     evidence:
   - id: M1-PDS-POINT-READS
     milestone: M1
@@ -68,7 +68,7 @@ items:
     files: ["ts/atproto-market/lib/market-bidder", "ts/atproto-market/lib/compute-request-xrpc", "ts/atproto-market/lib/requester-xrpc", "the other libraries that call listRecordsAll"]
     done_when: "no listRecordsAll call remains on a per-accept or per-event path; a market network run with --secrets passes."
     risks: []
-    status: todo
+    status: done
     evidence:
   - id: M2-OWNERSHIP-TREE
     milestone: M2
