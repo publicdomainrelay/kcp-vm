@@ -1,4 +1,4 @@
-import { PutObjectCommand, S3Client } from "npm:@aws-sdk/client-s3@3.700.0";
+import { CopyObjectCommand, PutObjectCommand, S3Client } from "npm:@aws-sdk/client-s3@3.700.0";
 import { parseArgs } from "jsr:@std/cli@1/parse-args";
 import { walk } from "jsr:@std/fs@1/walk";
 import { relative } from "jsr:@std/path@1";
@@ -47,19 +47,30 @@ const manifest = {
   files: files.map(({ rel, size, sha256 }) => ({ path: rel, size, sha256 })),
 };
 
-const put = async (prefix: string) => {
+const put = async (prefix: string, copyFrom?: string) => {
   for (const f of files) {
     const started = Date.now();
-    const body = await Deno.readFile(f.path);
-    await s3.send(new PutObjectCommand({
-      Bucket: bucket,
-      Key: `${prefix}/${f.rel}`,
-      Body: body,
-      ContentType: typeOf(f.rel),
-      ACL: "private",
-      Metadata: { sha256: f.sha256 },
-    }));
-    console.log(`${prefix}/${f.rel} ${f.size} bytes sha256 ${f.sha256} (${((Date.now() - started) / 1000).toFixed(1)}s)`);
+    const key = `${prefix}/${f.rel}`;
+    if (copyFrom) {
+      await s3.send(new CopyObjectCommand({
+        Bucket: bucket,
+        Key: key,
+        CopySource: encodeURI(`${bucket}/${copyFrom}/${f.rel}`),
+        MetadataDirective: "COPY",
+        ACL: "private",
+      }));
+    } else {
+      await s3.send(new PutObjectCommand({
+        Bucket: bucket,
+        Key: key,
+        Body: await Deno.readFile(f.path),
+        ContentType: typeOf(f.rel),
+        ACL: "private",
+        Metadata: { sha256: f.sha256 },
+      }));
+    }
+    const how = copyFrom ? `copied from ${copyFrom}` : "uploaded";
+    console.log(`${key} ${f.size} bytes sha256 ${f.sha256} ${how} (${((Date.now() - started) / 1000).toFixed(1)}s)`);
   }
   await s3.send(new PutObjectCommand({
     Bucket: bucket,
@@ -72,4 +83,4 @@ const put = async (prefix: string) => {
 };
 
 await put(args.prefix);
-if (args.also) await put(args.also);
+if (args.also) await put(args.also, args.prefix);
