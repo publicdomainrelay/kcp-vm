@@ -18,6 +18,7 @@ import (
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/appctl"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostcontract"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/install"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpclient"
@@ -69,6 +70,7 @@ type SpecInput struct {
 	Handle  string
 	Policy  string
 	Network *v1alpha1.MarketNetworkValue
+	PdsUrl  string
 	Kcp     *v1alpha1.KcpProvider
 	Options []v1alpha1.ApplicationOption
 }
@@ -105,8 +107,11 @@ func Spec(in SpecInput) (v1alpha1.MarketBidderSpec, error) {
 	if n.FirehoseUrls == nil {
 		n.FirehoseUrls = []string{}
 	}
+	if in.Profile == appctl.BidderProfileNetwork && (in.PdsUrl == "" || n.CaBundleRef == "" || n.GuestTlsUrl == "") {
+		return v1alpha1.MarketBidderSpec{}, errors.New("bidder: profile market-network needs the market network's value and its bidders' PDS (--network, or --market-network-file)")
+	}
 	return v1alpha1.MarketBidderSpec{Profile: in.Profile, Network: n, Policy: in.Policy, Kcp: in.Kcp, Options: in.Options,
-		Identity: v1alpha1.ApplicationIdentity{Mode: mode, Handle: in.Handle}}, nil
+		Identity: v1alpha1.ApplicationIdentity{Mode: mode, Handle: in.Handle, PdsUrl: in.PdsUrl}}, nil
 }
 
 func CheckSignIn(spec v1alpha1.MarketBidderSpec, id *v1alpha1.MarketIdentity) error {
@@ -132,12 +137,12 @@ func CheckAccount(backend hostsvc.Backend, handle, root string) error {
 	if err != nil {
 		return err
 	}
-	rec, err := install.ReadRecord(root, install.AccountBidder)
+	rec, err := install.ReadRecord(root, u.Username)
 	if err != nil {
-		return fmt.Errorf("bidder: host-backend=systemd-user runs only as the account install bidder made: %w", err)
+		return fmt.Errorf("bidder: host-backend=systemd-user runs only as an account install bidder made, and %s has no install record: %w", u.Username, err)
 	}
-	if rec.Account != u.Username {
-		return fmt.Errorf("bidder: host-backend=systemd-user runs as the shared bidder account %s, not %s", rec.Account, u.Username)
+	if rec.Role != hostcontract.RoleBidder || rec.Account != u.Username {
+		return fmt.Errorf("bidder: host-backend=systemd-user: %s was installed as %s %s, not as a bidder account", u.Username, rec.Role, rec.Account)
 	}
 	for _, h := range rec.Handles {
 		if h == handle {

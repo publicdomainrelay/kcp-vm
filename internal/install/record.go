@@ -36,7 +36,7 @@ const (
 	StepLinger     = "linger"
 	StepUnits      = "core-units"
 	StepCheckHost  = "check-host"
-	recordMode     = 0o600
+	recordMode     = 0o644
 )
 
 type Record struct {

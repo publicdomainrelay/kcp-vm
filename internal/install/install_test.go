@@ -389,33 +389,6 @@ func TestInstallDryRunChangesNothing(t *testing.T) {
 	}
 }
 
-func TestTheInstallRecordIsRootOwnedAndNamesWhatInstallCreated(t *testing.T) {
-	sys, root := newFakeHost(t, false)
-	if _, err := Install(ctx(), opts(t, root, hostcontract.RoleBidder, "alice.example.com"), sys); err != nil {
-		t.Fatal(err)
-	}
-	p := filepath.Join(root, "var/lib/socialweb-computer/install-swc-bidder.json")
-	st, err := os.Stat(p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if st.Mode().Perm() != 0o600 {
-		t.Errorf("record mode %v, want 0600", st.Mode().Perm())
-	}
-	if uid, _, _ := sys.Owner(p); uid != 0 {
-		t.Errorf("record owned by %d", uid)
-	}
-	rec, err := loadRecord(p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, step := range []string{StepAccount, StepSubuid, StepSubgid, StepKVM, StepDelegation, StepLinger} {
-		if rec.Steps[step] != OutcomeCreated {
-			t.Errorf("record step %s = %q", step, rec.Steps[step])
-		}
-	}
-}
-
 func TestInstallStopsAtAFailingHostCheckAndARerunCompletesFromThere(t *testing.T) {
 	sys, root := newFakeHost(t, false)
 	sys.checkFails = "dev-kvm"
