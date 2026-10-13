@@ -93,7 +93,9 @@ go install github.com/bluesky-social/goat@latest
 GW=https://k8s.socialweb.computer AUD=did:web:k8s.socialweb.computer N=com.publicdomainrelay.temp.cluster
 call() { local m=$1 nsid=$N.$2; shift 2; goat xrpc $m $GW $nsid "$@" "Authorization:Bearer $(goat account service-auth --aud $AUD --lxm $nsid)"; }
 call procedure createCluster name=demo                      # creates if missing + starts control plane (idempotent)
-until call query listClusters | jq -e '.clusters[] | select(.name=="demo" and .phase=="Ready")' >/dev/null; do sleep 10; done
+# wait for Ready by event stream (no polling); exits 0 at Ready, 2 if a member fails, 1 on error frame
+deno run -A --no-lock --node-modules-dir=none scripts/subscribe-clusters.ts --gateway $GW --name demo \
+  --token "$(goat account service-auth --aud $AUD --lxm $N.subscribeClusters)" --until cluster=Ready --fail-on member=Failed
 call procedure getKubeconfig name=demo | jq -r .kubeconfig > demo.kubeconfig; chmod 600 demo.kubeconfig
 # kubeconfig exec plugin = socialweb-credential (pinned download; list: curl -s $GW/api/config | jq .credentialHelpers)
 curl -sfo socialweb-credential "$GW$(curl -s $GW/api/config | jq -r '.credentialHelpers[] | select(.os=="linux" and .arch=="amd64") | .path')" && chmod +x socialweb-credential
@@ -101,7 +103,7 @@ PATH=$PWD:$PATH KUBECONFIG=demo.kubeconfig kubectl get ns
 call procedure controlPlaneDown name=demo; call procedure deleteCluster name=demo
 ```
 
-Status: `call query listClusters | jq '.clusters[] | {name,phase,running}'`. Phases: `Unavailable` -> `Initializing` -> `Ready` (`Draining` on stop).
+Status: event stream `subscribeClusters` (below) or poll `call query listClusters | jq '.clusters[] | {name,phase,running}'`. Phases: `Unavailable` -> `Initializing` -> `Ready` (`Draining` on stop).
 
 Expected timing (prod, 2026-10-13, members start one after another):
 
@@ -143,7 +145,14 @@ websocat -b -n -H="Authorization: Bearer $T" "wss://k8s.socialweb.computer/xrpc/
 call query listClusters | jq '.clusters[] | {name, phase, running}'
 ```
 
-Timing (prod today): createCluster -> `Initializing` at once, members start one after another (postgres, openbao, kine, k3s, ...), -> `Ready` ~2 min 45 s. Pod at 0 nodes -> `#nodeClaim` Bidding -> Provisioning -> Joining -> Running ~60 s. Pod deleted -> scale to zero ~2-3 min (incl. 2 min hold), claim `deleted:true`. Provision failure -> `#nodeClaim` phase Failed with message.
+Actual behavior today (plan 0016 M2b fixes the first three):
+- Cluster phase stays `Unavailable` while members start (provider writes `Initializing` only after it placed every member); watch `#member` events for progress (postgres, front, openbao, kine, k3s, ccm, eso, links, one after another) -> `Ready` ~2 min 45 s.
+- Gateway brings up one cluster at a time: a new cluster waits behind any other cluster still starting.
+- `#nodeClaim` goes Bidding -> Provisioning -> Joining (~20-60 s) and stays `Joining` once the node is Ready and pods run (no `Running` yet): wait for your pod, not the claim.
+- Account with no clusters -> `ClusterNotFound` error frame: call createCluster before subscribing.
+- Pod deleted -> scale to zero ~2-3 min (incl. 2 min hold), claim `deleted:true`. Provision failure -> `#nodeClaim` `Failed` with message (e.g. `no oauth session stored` = sign the user in).
+
+Prod needs release >= 77432804 for `subscribeClusters` (older gateway: 404).
 
 ## OAuth sign-in (scripted, never by hand, never hand the user a link)
 

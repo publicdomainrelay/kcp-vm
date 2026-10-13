@@ -68,7 +68,7 @@ principle:
 security_rules:
   - "KEY: the client private key is made by OpenBao (pki/issue). It exists only in the getKubeconfig response body. Never write it to kcp, to a file, to an atproto record, to a DenoPod or HostProcess argument, or to a log line. Never put it, the certificate or the kubeconfig text in an error message. The response has Cache-Control: no-store (gateway XRPC and web app)."
   - "KEY LOG CHECK: after every live check of M1-GETKUBECONFIG-HANDLER, M2 and M4, run `grep -rl 'PRIVATE KEY' <gateway dir>/logs <gateway dir>/denokcp/runs` and `grep -rl 'client-key-data' <same>`. Any match is a STOP."
-  - "TTL: default 8 h (28800 s). ttlSeconds below 60 or above 86400 is refused with InvalidRequest, never clamped. The PKI role has ttl 8h and max_ttl 24h as a second limit. The front refuses a certificate whose NotAfter minus NotBefore is more than 24 h plus 5 minutes."
+  - "TTL: default 8 h (28800 s). ttlSeconds below 60 or above 86400 is refused with InvalidRequest, never clamped. The PKI role kubeconfig-user has ttl 8h and max_ttl 24h as a second limit. The front refuses a certificate from that role whose NotAfter minus NotBefore is more than 24 h plus 5 minutes. EXCEPTION (user decision 2026-10-13, M2-NO-EXPIRY-CERT): `noExpiry: true` issues from the separate role kubeconfig-user-noexpiry, NotAfter = 9999-12-31T23:59:59Z (RFC 5280 no-expiry value) truncated to the cluster CA NotAfter; such a certificate carries OU socialweb.computer:no-expiry (set by the role, never by the request) and the front accepts its long lifetime only with that OU. It ends only by revocation (CRL + deny, checked every request), cluster delete (fresh CA per creation, M2-FRESH-CA-PER-CREATION), or CA expiry."
   - "CN: the issuer sets common_name to the verified caller DID (gateway.Caller, from atprotoauth.Verify of the service JWT iss). Never from a request field. The front takes the user name only from the CN of a certificate that chains to the cluster's client CA, and refuses it when kcpclient.AccountHash(CN) is not the account segment of the request path."
   - "O: exactly one organization, socialweb.computer:cluster-owners, set by the PKI role, never by the request. The front refuses any other O (this refuses tenant-superuser and node-client certificates of the same CA). The front never forwards system:masters."
   - "HEADERS: the front deletes Authorization, every X-Remote-* header and X-Socialweb-Client-Certificate from the incoming request before it adds its own X-Remote-User and X-Remote-Group."
@@ -597,10 +597,60 @@ items:
       - "A request already streaming (watch, exec) when the deny is written runs until it ends or until the certificate's NotAfter (at most 24 h)."
     status: todo
     evidence:
+  - id: M2-NO-EXPIRY-CERT
+    milestone: M2
+    title: getKubeconfig can issue a client certificate that never expires (explicit opt-in, revocable)
+    depends_on: [M1-GETKUBECONFIG-HANDLER, M1-WEB-APP-TTL, M2-CLIENT-CERT-FRONT]
+    decision: >
+      Decided by the user 2026-10-13: "we want to enable creating a cert that never expires for the kubeconfig".
+      x509 has no "never": RFC 5280 says NotAfter 99991231235959Z means no well-defined expiration. A leaf can not
+      outlive its CA in a chain check, so OpenBao issues with not_after 9999-12-31T23:59:59Z and the issuer's
+      leaf_not_after_behavior "truncate": NotAfter becomes the cluster client CA's NotAfter (k3s CA, about 10 years).
+      Opt-in only: lexicon boolean `noExpiry` (default false); `noExpiry: true` together with ttlSeconds is
+      InvalidRequest. A separate PKI role kubeconfig-user-noexpiry (same CN rule, same O, plus OU
+      socialweb.computer:no-expiry, allowed_* as kubeconfig-user, max_ttl = the mount's max, not_after allowed)
+      so the 24 h role stays tight; the gateway-only OpenBao client policy allows issue on both roles. The front
+      keeps the 24 h + 5 min lifetime check for every certificate WITHOUT that OU and skips it only for certificates
+      WITH it (CRL, deny, CN and O checks still apply on every request). Every issued no-expiry serial is listed in a
+      kcp record without key material (serial, DID, cluster, issuedAt) so the owner can see and revoke it;
+      revokeIdentity and deleteCluster revoke them like the others (M2-REVOCATION). The web app offers "never
+      expires" only behind an explicit confirm, never as default. The README says the certificate lives until revoked,
+      the cluster is deleted, or the CA expires.
+    files:
+      - "internal/xrpcserver/lexicons/getKubeconfig.json (input: noExpiry boolean; description)"
+      - "the OpenBaoServer declaration of the cluster vault (M1-PKI-ROLE): role kubeconfig-user-noexpiry, issuer leaf_not_after_behavior truncate, mount max_lease_ttl large enough for not_after"
+      - "internal/clientcert (M1-CERT-ISSUER): Issue(..., noExpiry bool) -> pki/issue/kubeconfig-user-noexpiry with not_after"
+      - "the getKubeconfig handler (M1-GETKUBECONFIG-HANDLER): validate the pair noExpiry/ttlSeconds; record the serial"
+      - "internal/clientcertfront (M2-CLIENT-CERT-FRONT): OU-gated lifetime check"
+      - "the web app lifetime choices (M1-WEB-APP-TTL): add 'never expires' behind a confirm"
+      - "README.md 'Cluster XRPC with goat': example `call procedure getKubeconfig name=demo noExpiry:=true`"
+    change: |
+      1. Lexicon: add properties.noExpiry {type: boolean, default false, description: "Issue a certificate with no
+         expiry (NotAfter 9999-12-31T23:59:59Z truncated to the cluster CA). Revoke with revokeIdentity or deleteCluster."}.
+      2. PKI role + issuer settings as in decision; policy for the gateway-only client covers both issue paths.
+      3. Issuer: noExpiry -> issue from the no-expiry role with not_after; otherwise unchanged.
+      4. Handler: noExpiry && ttlSeconds present -> InvalidRequest; record {serial, did, cluster, issuedAt, noExpiry: true}
+         (no key, no cert body) in the gateway kcp; log "kubeconfig no-expiry certificate issued" with serial only.
+      5. Front: lifetime check only when the cert lacks OU socialweb.computer:no-expiry; everything else unchanged.
+      6. Web app + README as in files.
+    check: |
+      go build ./internal/... ./cmd/socialweb-computer
+      Live (market network with gateway, live slot): getKubeconfig noExpiry:=true -> openssl x509 -noout -enddate of
+      the client cert equals the cluster client CA NotAfter (or 99991231235959Z if the CA has it); OU present;
+      kubectl get ns works; getKubeconfig noExpiry:=true ttlSeconds:=3600 -> InvalidRequest; a 24 h-role cert with
+      a forged long lifetime is impossible (role refuses) and the front refuses any non-OU cert over 24 h + 5 min;
+      revokeIdentity -> the no-expiry kubeconfig is refused within 2 s and its serial is in the CRL; deleteCluster +
+      createCluster same name -> refused (fresh CA). Key log check (security_rules KEY LOG CHECK) passes.
+    stop: |
+      - OpenBao refuses not_after beyond the mount/role limits after the settings above (report the error text).
+      - The tenant k3s/front chain check refuses a cert whose NotAfter equals the CA NotAfter (report).
+    done_when: "an opt-in no-expiry kubeconfig works, is visible as a serial record, and is refused within 2 s after revoke or cluster delete; the 24 h path is unchanged."
+    status: todo
+    evidence:
   - id: M2-REVOCATION
     milestone: M2
     title: deleteCluster and revokeIdentity revoke the issued certificates in the cluster PKI
-    depends_on: [M2-CLIENT-CERT-FRONT]
+    depends_on: [M2-CLIENT-CERT-FRONT, M2-NO-EXPIRY-CERT]
     decision: >
       The front already refuses a revoked identity at once (deny record) and a deleted cluster (no data dir). This
       item also revokes the serials in the cluster PKI, so the CRL lists them and a recreated cluster that kept its
@@ -989,4 +1039,5 @@ user_decisions:
   - "2026-10-13: getKubeconfig on a stopped cluster answers 409 ClusterNotRunning (fail fast)."
   - "2026-10-13: ARCHITECTURE section 7 rule 'a client key never reaches a user' is amended for getKubeconfig/download only: key from pki/issue, returned once, no-store, never logged or stored, TTL 8 h default / 24 h max."
   - "2026-10-13: plans 0015 and 0016 are handed off later (not run in the current goal)."
+  - "2026-10-13: a kubeconfig certificate that never expires can be requested (M2-NO-EXPIRY-CERT): explicit opt-in, separate PKI role, marked by OU, revocable like any other; lifetime = until revoked, cluster deleted, or the cluster CA expires."
 questions_for_user: []
