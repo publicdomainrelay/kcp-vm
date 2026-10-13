@@ -119,6 +119,23 @@ export const DEFAULT_VM_READY_TIMEOUT_SEC = 120;
 export const RECEIPT_FIREHOSE_TIMEOUT_MS = 30_000;
 export const RECEIPT_REPO_ATTEMPTS = 5;
 export const RECEIPT_REPO_RETRY_MS = 1_000;
+export const BID_WINDOW_MS = 300_000;
+export const ACCEPT_RESEND_MAX_MS = 120_000;
+export const ACCEPT_RESEND_FIRST_DELAY_MS = 250;
+export const ACCEPT_RESEND_MAX_DELAY_MS = 2_000;
+
+export function acceptResendDeadline(bidCreatedAt: unknown, now: number): number {
+  const created = typeof bidCreatedAt === "string" ? Date.parse(bidCreatedAt) : Number.NaN;
+  const cap = now + ACCEPT_RESEND_MAX_MS;
+  return Number.isFinite(created) ? Math.min(cap, created + BID_WINDOW_MS) : cap;
+}
+
+export function acceptRetryable(status: number, body: unknown): boolean {
+  const error = (body as { error?: unknown } | null)?.error;
+  if (status >= 500 || status === 408 || status === 429) return true;
+  if (status === 404 && error === "NotFound") return true;
+  return status >= 200 && status < 300;
+}
 
 export function defaultVmName(): string {
   const b = new Uint8Array(4);
@@ -1767,32 +1784,74 @@ runcmd:
       log("receipt_resumed", { receiptUri, submitEventRef });
     }
 
+    let acceptPushed = false;
     if (submitAcceptTarget && !receiptUri) {
       const target = await pds.resolveBidderEndpoint(submitAcceptTarget);
       if (target) {
-        log("submitting_accept", { target: submitAcceptTarget });
-        try {
-          const r = await pds.callBidder(
-            target.targetUrl,
-            SUBMIT_ACCEPT_NSID,
-            SUBMIT_ACCEPT_LXM,
-            target.audDid,
-            {
-              acceptUri,
-              acceptCid,
-            },
-          );
-          takeReceipt(r.body as { uri?: string; cid?: string; submitEvent?: string });
-          log("submitAccept_result", { status: r.status, receiptUri, receiptCid, submitEventRef });
-        } catch (err) {
-          log("submitAccept_error", { target: submitAcceptTarget, error: String(err) });
+        acceptPushed = true;
+        const deadline = acceptResendDeadline(winner.record.createdAt, Date.now());
+        let delay = ACCEPT_RESEND_FIRST_DELAY_MS;
+        log("submitting_accept", { target: submitAcceptTarget, resendUntil: new Date(deadline).toISOString() });
+        for (let attempt = 1; !receiptUri && !latch.requested; attempt++) {
+          const fromFirehose = watch.firehose ? watch.receiptFor(acceptUri) : undefined;
+          if (fromFirehose) {
+            takeReceipt({ uri: fromFirehose.receiptUri, cid: fromFirehose.receiptCid, submitEvent: fromFirehose.submitEventRef });
+            log("receipt_from_firehose", { receiptUri, receiptCid, submitEventRef, attempt });
+            break;
+          }
+          let refused: string | undefined;
+          try {
+            const r = await pds.callBidder(
+              target.targetUrl,
+              SUBMIT_ACCEPT_NSID,
+              SUBMIT_ACCEPT_LXM,
+              target.audDid,
+              {
+                acceptUri,
+                acceptCid,
+              },
+            );
+            const body = r.body as { uri?: string; cid?: string; submitEvent?: string; error?: string; message?: string } | null;
+            if (r.ok && body?.uri) {
+              takeReceipt(body);
+              log("submitAccept_result", { status: r.status, receiptUri, receiptCid, submitEventRef, attempt });
+              break;
+            }
+            if (acceptRetryable(r.status, body)) {
+              log("submitAccept_retry", { attempt, status: r.status, error: body?.error, message: body?.message });
+            } else {
+              refused = `${r.status} ${body?.error ?? ""}: ${body?.message ?? ""}`;
+            }
+          } catch (err) {
+            log("submitAccept_retry", { attempt, error: String(err) });
+          }
+          if (refused) {
+            log("submitAccept_refused", { target: submitAcceptTarget, attempt, refused });
+            break;
+          }
+          try {
+            const found = await findReceipt(winner.did, acceptUri);
+            if (found) {
+              takeReceipt(found);
+              log("receipt_from_bidder_repo", { receiptUri, receiptCid, submitEventRef, attempt });
+              break;
+            }
+          } catch (err) {
+            log("receipt_repo_lookup_failed", { bidderDid: winner.did, attempt, error: String(err) });
+          }
+          if (Date.now() + delay > deadline) {
+            log("submitAccept_gave_up", { attempt, deadline: new Date(deadline).toISOString() });
+            break;
+          }
+          await new Promise((r) => setTimeout(r, delay));
+          delay = Math.min(delay * 2, ACCEPT_RESEND_MAX_DELAY_MS);
         }
       } else {
         log("accept_target_unresolvable", { submitAcceptTarget });
       }
     }
 
-    for (let attempt = 1; !receiptUri && attempt <= RECEIPT_REPO_ATTEMPTS && !latch.requested; attempt++) {
+    for (let attempt = 1; !acceptPushed && !receiptUri && attempt <= RECEIPT_REPO_ATTEMPTS && !latch.requested; attempt++) {
       try {
         const found = await findReceipt(winner.did, acceptUri);
         if (found) {
@@ -1822,7 +1881,7 @@ runcmd:
       return await finish("returned");
     }
 
-    if (!receiptUri && watch.firehose) {
+    if (!acceptPushed && !receiptUri && watch.firehose) {
       log("receipt_firehose_fallback", { acceptUri });
       const deadline = Date.now() + RECEIPT_FIREHOSE_TIMEOUT_MS;
       let fromFirehose: FirehoseReceipt | undefined;
