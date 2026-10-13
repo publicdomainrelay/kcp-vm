@@ -22,6 +22,7 @@ export interface KeyAuthorizerOptions {
   missRecheckMs?: number;
   maxCacheEntries?: number;
   maxResponseBytes?: number;
+  trustedHosts?: string[];
   log?: (event: string, data?: Record<string, unknown>) => void;
 }
 
@@ -97,7 +98,7 @@ export async function resolvesToPublicAddress(hostname: string): Promise<boolean
 
 // redirect: "manual" is the load-bearing part -- validating only the first URL
 // lets the target bounce the fetch anywhere with a 302.
-export async function fetchGuarded(url: string, maxBytes: number): Promise<string | null> {
+export async function fetchGuarded(url: string, maxBytes: number, trustedHosts?: ReadonlySet<string>): Promise<string | null> {
   let target: URL;
   try {
     target = new URL(url);
@@ -107,7 +108,7 @@ export async function fetchGuarded(url: string, maxBytes: number): Promise<strin
   const loopback =
     target.protocol === "http:" && ["127.0.0.1", "[::1]", "::1", "localhost"].includes(target.hostname);
   if (target.protocol !== "https:" && !loopback) return null;
-  if (!loopback && !(await resolvesToPublicAddress(target.hostname))) return null;
+  if (!loopback && !trustedHosts?.has(target.hostname) && !(await resolvesToPublicAddress(target.hostname))) return null;
 
   const res = await fetch(target, {
     redirect: "manual",
@@ -151,6 +152,7 @@ export function createAtprotoKeyAuthorizer(opts: KeyAuthorizerOptions = {}): Key
   const missRecheckMs = opts.missRecheckMs ?? 5_000;
   const maxCacheEntries = opts.maxCacheEntries ?? DEFAULT_MAX_CACHE_ENTRIES;
   const maxResponseBytes = opts.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES;
+  const trustedHosts = new Set(opts.trustedHosts ?? []);
   const cache = new Map<string, CacheEntry>();
 
   function remember(key: string, entry: CacheEntry): void {
@@ -214,7 +216,7 @@ export function createAtprotoKeyAuthorizer(opts: KeyAuthorizerOptions = {}): Key
       url.searchParams.set("collection", BADGE_BLUE_KEYS_NSID);
       url.searchParams.set("limit", "100");
       if (cursor) url.searchParams.set("cursor", cursor);
-      const text = await fetchGuarded(url.toString(), maxResponseBytes);
+      const text = await fetchGuarded(url.toString(), maxResponseBytes, trustedHosts);
       if (text === null) throw new Error(`refused to fetch ${url.origin}`);
       const body = JSON.parse(text) as { records?: Array<{ value?: unknown }>; cursor?: string };
       for (const rec of body.records ?? []) {

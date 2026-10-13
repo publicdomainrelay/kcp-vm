@@ -1,7 +1,8 @@
 // @ts-types="npm:@types/ssh2@^1"
 import { Buffer } from "node:buffer";
 import { Duplex } from "node:stream";
-import { Client } from "ssh2";
+import { createConnection } from "node:net";
+import { Client, utils as sshUtils } from "ssh2";
 import { dumbpipeConnectArgv } from "@publicdomainrelay/requester-xrpc";
 import type { GuestHostKeys, SshSessionProvider } from "@publicdomainrelay/requester-abc";
 import type { CommandIo } from "@publicdomainrelay/socialweb-computer-abc";
@@ -34,9 +35,42 @@ function reportedKeySet(hostKeys: GuestHostKeys): Set<string> {
   return new Set(hostKeys.keys.map((k) => k.publicKey));
 }
 
-interface IrohDial {
+export interface IrohDial {
   sock: Duplex;
   close(): void;
+}
+
+export type IrohDialer = (target: string, log: GatewayLog) => IrohDial;
+
+export function dumbpipeIrohDialer(dumbpipePath: string): IrohDialer {
+  return (target, log) => dialIroh(target, dumbpipePath, log);
+}
+
+export function unixSocketIrohDialer(socketPath: string): IrohDialer {
+  return (target, log) => {
+    const argv = dumbpipeConnectArgv(target);
+    if (!argv) throw new NonIrohGuestAddressError(target);
+    const sock = createConnection({ path: socketPath });
+    sock.on("error", (err: Error) => log("guest_iroh_dial_error", { socket: socketPath, error: err.message }));
+    sock.write(`${argv[argv.length - 1]}\n`);
+    return { sock, close: () => sock.destroy() };
+  };
+}
+
+function dialerOf(dial: IrohDialer | string): IrohDialer {
+  return typeof dial === "string" ? dumbpipeIrohDialer(dial) : dial;
+}
+
+export async function generateGuestKeypair(vmName: string): Promise<{ publicKey: string; privateKeyPath: string }> {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const pair = sshUtils.generateKeyPairSync("ed25519", { comment: `root@${vmName}` });
+    if (sshUtils.parseKey(pair.private) instanceof Error) continue;
+    const dir = await Deno.makeTempDir({ prefix: `ssh-${vmName}-` });
+    const privateKeyPath = `${dir}/id_ed25519`;
+    await Deno.writeTextFile(privateKeyPath, pair.private, { mode: 0o600 });
+    return { publicKey: pair.public.trim(), privateKeyPath };
+  }
+  throw new Error("could not generate a parseable ed25519 guest key");
 }
 
 function dialIroh(target: string, dumbpipePath: string, log: GatewayLog): IrohDial {
@@ -88,7 +122,7 @@ function dialIroh(target: string, dumbpipePath: string, log: GatewayLog): IrohDi
 
 async function connect(
   target: string,
-  dumbpipePath: string,
+  dial: IrohDialer,
   privateKey: string,
   timeoutMs: number,
   log: GatewayLog,
@@ -97,7 +131,7 @@ async function connect(
 ): Promise<{ client: Client; dial: IrohDial }> {
   const accepted = reportedKeySet(hostKeys);
   let mismatch = false;
-  const dial = dialIroh(target, dumbpipePath, log);
+  const conn = dial(target, log);
   const client = new Client();
   try {
     await new Promise<void>((resolve, reject) => {
@@ -119,7 +153,7 @@ async function connect(
           reject(mismatch ? new GuestHostKeyMismatchError(hostKeys.alias) : err);
         })
         .connect({
-          sock: dial.sock,
+          sock: conn.sock,
           username: "root",
           privateKey,
           hostVerifier: (key: Buffer) => {
@@ -134,12 +168,12 @@ async function connect(
     try {
       client.end();
     } catch {
-      dial.close();
+      conn.close();
     }
-    dial.close();
+    conn.close();
     throw err;
   }
-  return { client, dial };
+  return { client, dial: conn };
 }
 
 function endConnection(conn: { client: Client; dial: IrohDial } | null): void {
@@ -170,7 +204,7 @@ export async function runGuestSession(
   target: string,
   program: string,
   io: CommandIo,
-  dumbpipePath: string,
+  dial: IrohDialer | string,
   log: GatewayLog,
   signal?: AbortSignal,
   hostKeys?: GuestHostKeys,
@@ -194,7 +228,7 @@ export async function runGuestSession(
   const privateKey = await Deno.readTextFile(privateKeyPath);
   let conn: { client: Client; dial: IrohDial } | null = null;
   try {
-    conn = await connect(target, dumbpipePath, privateKey, 30_000, log, hostKeys, signal);
+    conn = await connect(target, dialerOf(dial), privateKey, 30_000, log, hostKeys, signal);
     const client = conn.client;
     return await new Promise<number>((resolve) => {
       let settled = false;
@@ -244,7 +278,7 @@ export async function pollGuestReady(
   privateKeyPath: string,
   target: string,
   timeoutMs: number,
-  dumbpipePath: string,
+  dial: IrohDialer | string,
   log: GatewayLog,
   signal?: AbortSignal,
   hostKeys?: GuestHostKeys,
@@ -265,7 +299,7 @@ export async function pollGuestReady(
     attempt += 1;
     let conn: { client: Client; dial: IrohDial } | null = null;
     try {
-      conn = await connect(target, dumbpipePath, privateKey, 10_000, log, hostKeys, signal);
+      conn = await connect(target, dialerOf(dial), privateKey, 10_000, log, hostKeys, signal);
       const client = conn.client;
       const ok = await new Promise<boolean>((resolve) => {
         const onAbort = () => resolve(false);
@@ -302,19 +336,18 @@ export async function pollGuestReady(
 export interface IrohSessionProviderOptions {
   io: CommandIo;
   log: GatewayLog;
-  dumbpipePath: string;
+  dial?: IrohDialer;
+  dumbpipePath?: string;
   generateKeypair?: SshSessionProvider["generateKeypair"];
 }
 
 export function createIrohSessionProvider(opts: IrohSessionProviderOptions): SshSessionProvider {
+  const dial = opts.dial ?? dumbpipeIrohDialer(opts.dumbpipePath ?? "dumbpipe");
   return {
-    generateKeypair: (vmName) => {
-      if (!opts.generateKeypair) throw new Error("no keypair generator configured");
-      return opts.generateKeypair(vmName);
-    },
+    generateKeypair: (vmName) => (opts.generateKeypair ?? generateGuestKeypair)(vmName),
     pollReady: (privateKeyPath, target, timeoutMs, signal, hostKeys) =>
-      pollGuestReady(privateKeyPath, target, timeoutMs, opts.dumbpipePath, opts.log, signal, hostKeys),
+      pollGuestReady(privateKeyPath, target, timeoutMs, dial, opts.log, signal, hostKeys),
     runSession: (privateKeyPath, target, program, signal, hostKeys) =>
-      runGuestSession(privateKeyPath, target, program, opts.io, opts.dumbpipePath, opts.log, signal, hostKeys),
+      runGuestSession(privateKeyPath, target, program, opts.io, dial, opts.log, signal, hostKeys),
   };
 }

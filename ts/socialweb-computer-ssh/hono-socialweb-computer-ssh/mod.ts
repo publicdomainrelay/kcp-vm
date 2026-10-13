@@ -1,13 +1,21 @@
 import { Command } from "@publicdomainrelay/cli-args-env";
 import { createLogger, createStructuredLogger, getMinLogLevelFromEnv } from "@publicdomainrelay/logger";
-import { createServe } from "@publicdomainrelay/serve";
+import { createServe, tcpListenerAddress } from "@publicdomainrelay/serve";
 import { EventBus } from "@publicdomainrelay/event-bus";
 import { createStaticFilesApp, type StaticFileEvent } from "@publicdomainrelay/hono-factory-static-files-fs";
 import { REQUESTER_OAUTH_SCOPE } from "@publicdomainrelay/oauth-scope";
 import { createAtprotoKeyAuthorizer } from "@publicdomainrelay/socialweb-computer-atproto";
 import { createAtprotoSessionVerifier } from "@publicdomainrelay/socialweb-computer-oauth-atproto";
 import { createFileSessionStore } from "@publicdomainrelay/socialweb-computer-oauth-session-fs";
-import { createInProcessRequester } from "@publicdomainrelay/socialweb-computer-requester-inproc";
+import { createVaultSessionStore } from "@publicdomainrelay/socialweb-computer-oauth-session-vault";
+import { loadOrCreateVaultKeyHex } from "@publicdomainrelay/key-vault";
+import { createOpenBaoServerResolver } from "@publicdomainrelay/openbao-server-kcp";
+import { createOpenBaoIdentityVault } from "@publicdomainrelay/market-identity-vault-openbao";
+import type { SessionStore } from "@publicdomainrelay/socialweb-computer-abc";
+import { createInProcessRequester, guestBaseUserData, unixSocketIrohDialer } from "@publicdomainrelay/socialweb-computer-requester-inproc";
+import { createPasswordSessionAgent, parsePasswordSessions } from "@publicdomainrelay/socialweb-computer-session-password";
+import { marketNetwork } from "@publicdomainrelay/market-network-common";
+import { installMarketNetworkFetch } from "@publicdomainrelay/market-network-fetch";
 import { createWebFactory } from "@publicdomainrelay/hono-factory-socialweb-computer-oauth";
 import { createSshServer } from "@publicdomainrelay/socialweb-computer-ssh-ssh2";
 import { Secp256k1Keypair } from "@atproto/crypto";
@@ -55,9 +63,42 @@ const appHandle = appOrigin ? ((options.appHandle as string) || new URL(appOrigi
 const appDid = appOrigin ? ((options.appDid as string) || `did:web:${new URL(appOrigin).hostname}`) : undefined;
 const cocoreReturnUrl = (options.cocoreReturnUrl as string) || `${webOrigin}/`;
 
-const sessionStore = createFileSessionStore(`${stateDir}/oauth-sessions.json`, {
-  onCorrupt: ({ path, quarantine }) => logger.error("session_store_corrupt", { path, quarantine }),
-});
+async function accountState(): Promise<{ sessionStore: SessionStore; keyHex: (name: string, file: string) => Promise<string> }> {
+  if (!options.openbaoServer) {
+    logger.warn("account_state_in_files", { stateDir, next: "set openbao-server to keep sessions and keys in the application's OpenBao" });
+    return {
+      sessionStore: createFileSessionStore(`${stateDir}/oauth-sessions.json`, {
+        onCorrupt: ({ path, quarantine }) => logger.error("session_store_corrupt", { path, quarantine }),
+      }),
+      keyHex: (_name, file) => loadOrCreateKeyHex(file),
+    };
+  }
+  const kcpServer = (options.openbaoKcpServer as string) || String(options.kcpServer ?? "").split("/clusters/")[0];
+  if (!kcpServer) throw new Error("openbao-server needs openbao-kcp-server or KCP_SERVER to read the OpenBaoServer object");
+  const resolve = createOpenBaoServerResolver({
+    server: kcpServer,
+    workspace: options.openbaoKcpWorkspace as string | undefined,
+    tokenFile: options.openbaoKcpTokenFile as string | undefined,
+    caCert: options.openbaoKcpCaCertFile ? await Deno.readTextFile(options.openbaoKcpCaCertFile as string) : undefined,
+    name: options.openbaoServer as string,
+    client: options.openbaoClient as string,
+    onWaiting: (reason) => log("vault_waiting", { openbaoserver: options.openbaoServer, reason }),
+  });
+  const resolved = await resolve();
+  log("vault_resolved", { openbaoserver: resolved.name, address: resolved.address, kvMount: resolved.kvMount, role: resolved.certLogin.role });
+  const vault = createOpenBaoIdentityVault({
+    endpoint: async () => {
+      const r = await resolve();
+      return { address: r.address, caCert: r.caCert, clientCert: r.clientCert, clientKey: r.clientKey, certLogin: r.certLogin };
+    },
+  });
+  return {
+    sessionStore: createVaultSessionStore({ vault, mount: resolved.kvMount }),
+    keyHex: (name) => loadOrCreateVaultKeyHex(vault, { mount: resolved.kvMount, path: `keys/${name}` }),
+  };
+}
+
+const { sessionStore, keyHex } = await accountState();
 
 // Filed here rather than on the deposited session: POST /session is
 // unauthenticated by construction and stores the blob it was handed, so any
@@ -79,12 +120,28 @@ const cocorePairing = createCocorePairing({
 
 const authorizer = createAtprotoKeyAuthorizer({
   plcDirectoryUrl: options.plcDirectoryUrl as string,
+  trustedHosts: String(options.networkHosts ?? "").split(",").map((h) => h.split("=")[0].trim()).filter(Boolean),
   cacheTtlMs: (options.associationsCacheTtlSec as number) * 1000,
   log,
 });
 
 const relayUrls = ((options.relayUrl as string) || "")
   .split(",").map((s) => s.trim()).filter(Boolean);
+const splitList = (raw: unknown): string[] => String(raw ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+
+installMarketNetworkFetch({
+  network: marketNetwork({
+    plcDirectoryUrl: options.plcDirectoryUrl as string,
+    ingressProxyHost: options.ingressProxyHost as string,
+    relayUrls,
+    hosts: options.networkHosts as string | undefined,
+  }),
+});
+
+const testOwnerSessions = options.testOwnerSessionsFile
+  ? parsePasswordSessions(JSON.parse(await Deno.readTextFile(options.testOwnerSessionsFile as string)))
+  : null;
+if (testOwnerSessions) logger.warn("test_seams_enabled", { ownerSessions: [...testOwnerSessions.keys()] });
 
 // The requester and the app PDS both want the four-method logger shape, not the
 // structured one this CLI logs with. Bridged once here rather than adapting at
@@ -112,12 +169,23 @@ const serve = createServe({
 // connections share a refresh lock instead of racing a single-use token.
 const runner = createInProcessRequester({
   sessionStore,
-  requesterKeyHex: () => loadOrCreateKeyHex(`${stateDir}/requester-private-key`),
+  requesterKeyHex: () => keyHex("requester", `${stateDir}/requester-private-key`),
   plcDirectoryUrl: options.plcDirectoryUrl as string,
   ingressProxyHost: options.ingressProxyHost as string,
   relayUrls,
   vmReadyTimeoutSec: options.vmReadyTimeoutSec as number,
   oauthClientId: options.oauthClientId as string | undefined,
+  guestHostAliases: splitList(options.guestHostAliases),
+  extraBidderDids: splitList(options.bidderDids),
+  irohDialer: options.irohDialSocket ? unixSocketIrohDialer(options.irohDialSocket as string) : undefined,
+  guestBaseUserData: guestBaseUserData({
+    caPem: options.guestCaFile ? await Deno.readTextFile(options.guestCaFile as string) : undefined,
+    curlHome: options.guestCurlHome as string | undefined,
+  }),
+  agentWithoutOAuthFor: (did) => {
+    const session = testOwnerSessions?.get(did);
+    return session ? createPasswordSessionAgent(session) : null;
+  },
   capabilityFor: async (did) => {
     const paired = await cocorePairing.token(did);
     if (!paired) return [];
@@ -230,7 +298,8 @@ const cocore = createCocorePairFactory({ pairing: cocorePairing, verifier, log }
 let appPds: ReturnType<typeof createRepoFactory> | null = null;
 if (appDid) {
   const appSigner = signerFromKeypair(
-    await Secp256k1Keypair.import(await loadOrCreateKeyHex(
+    await Secp256k1Keypair.import(await keyHex(
+      "app-pds",
       (options.appPdsKeyPath as string) || `${stateDir}/app-pds-private-key`,
     )),
   );
@@ -284,6 +353,11 @@ serve.app.route("/", staticApp as never);
 
 const sshPort = await ssh.listen();
 await serve.beginServe();
+if (options.listenersFile) {
+  const listeners = [...serve.listeners, { name: "ssh", kind: "tcp", address: tcpListenerAddress(options.sshHostname as string, sshPort) }];
+  await Deno.writeTextFile(options.listenersFile as string, JSON.stringify({ listeners }) + "\n");
+  log("listeners_file_written", { path: options.listenersFile, listeners });
+}
 log("ready", { sshPort, httpPort: options.httpPort, webDir: options.webDir });
 
 async function shutdown(): Promise<void> {

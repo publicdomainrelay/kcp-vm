@@ -40,7 +40,7 @@ export class Command {
     for (const [key, def] of Object.entries(this.#argsEnv.options)) {
       const camelKey = toCamelCase(key);
       const cliVal = cliVals[camelKey];
-      const envVal = def.env ? Deno.env.get(def.env) : undefined;
+      const envVal = def.env ? readEnv(def.env) : undefined;
       const configVal = runtimeConfig?.[key];
 
       if (cliVal !== undefined) {
@@ -58,7 +58,7 @@ export class Command {
   }
 
   async #loadRuntimeConfig(): Promise<Record<string, unknown> | null> {
-    const envPath = Deno.env.get(this.#configPathEnv);
+    const envPath = readEnv(this.#configPathEnv);
     if (envPath) {
       try {
         return JSON.parse(await Deno.readTextFile(envPath));
@@ -113,5 +113,14 @@ export function coerce(val: string, type: string): unknown {
       return val === "true" || val === "1";
     default:
       return val;
+  }
+}
+
+function readEnv(name: string): string | undefined {
+  try {
+    return Deno.env.get(name);
+  } catch (err) {
+    if (err instanceof Deno.errors.NotCapable || err instanceof Deno.errors.PermissionDenied) return undefined;
+    throw err;
   }
 }

@@ -1237,7 +1237,7 @@ runcmd:
     });
 
     const policyRegistry = createPolicyRegistry();
-    const ghaLiteExecutor = new GhaLiteExecutor();
+    const ghaLiteExecutor = new GhaLiteExecutor({ sandbox: { netOnly: true, fsApi: false } });
     const typescriptExecutor = new TypescriptExecutor();
     const evaluator = createPolicyEvaluator({
       registry: {

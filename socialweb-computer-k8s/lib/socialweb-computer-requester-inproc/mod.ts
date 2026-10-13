@@ -3,7 +3,6 @@ import { createDefaultATProtoEventStreamsClient } from "@publicdomainrelay/atpro
 import {
   applyOAuthAgentToRequesterPDS,
   createRequesterPDS,
-  createSshSessionProvider,
   DEFAULT_TRANSPORT_MODULE,
   ensureDumbpipe,
   runComputeContract,
@@ -15,17 +14,28 @@ import { createServe } from "@publicdomainrelay/serve";
 import type { GuestCapability } from "@publicdomainrelay/guest-capability-abc";
 import type { AuthorizedAccount } from "@publicdomainrelay/socialweb-computer-common";
 import { policyFromEnv, renderExecCommand, vmNameFromEnv } from "@publicdomainrelay/socialweb-computer-common";
-import { createIrohSessionProvider } from "./bridge.ts";
+import { createIrohSessionProvider, dumbpipeIrohDialer, generateGuestKeypair } from "./bridge.ts";
+import type { IrohDialer } from "./bridge.ts";
 
 export {
   createIrohSessionProvider,
+  dumbpipeIrohDialer,
+  generateGuestKeypair,
   NonIrohGuestAddressError,
   TERMINATED_SESSION_EXIT_CODE,
+  unixSocketIrohDialer,
 } from "./bridge.ts";
-export type { GatewayLog, IrohSessionProviderOptions } from "./bridge.ts";
+export type { GatewayLog, IrohDial, IrohDialer, IrohSessionProviderOptions } from "./bridge.ts";
 
-export function contractUserData(): { transport: typeof DEFAULT_TRANSPORT_MODULE } {
-  return { transport: DEFAULT_TRANSPORT_MODULE };
+export function contractUserData(base?: string): { transport: typeof DEFAULT_TRANSPORT_MODULE; base?: string } {
+  return base ? { transport: DEFAULT_TRANSPORT_MODULE, base } : { transport: DEFAULT_TRANSPORT_MODULE };
+}
+
+export function guestBaseUserData(opts: { caPem?: string; curlHome?: string }): string | undefined {
+  const base: Record<string, unknown> = {};
+  if (opts.caPem?.trim()) base.ca_certs = { trusted: [opts.caPem.trim()] };
+  if (opts.curlHome) base.bootcmd = [["systemctl", "set-environment", `CURL_HOME=${opts.curlHome}`]];
+  return Object.keys(base).length > 0 ? "#cloud-config\n" + JSON.stringify(base) : undefined;
 }
 
 export interface InProcessRequesterOptions {
@@ -46,6 +56,10 @@ export interface InProcessRequesterOptions {
   oauthClientId?: string;
   /** /etc/hosts entries the guest needs to reach this dispatcher. */
   guestHostAliases?: string[];
+  extraBidderDids?: string[];
+  irohDialer?: IrohDialer;
+  guestBaseUserData?: string;
+  agentWithoutOAuthFor?: (did: string) => Promise<unknown> | null;
   /**
    * Write the com.fedproxy.rbac record that authorizes the guest's ssh host
    * key. Off by default: this app's OAuth scope grants badgeBlueKeys only, so
@@ -304,12 +318,11 @@ export function createInProcessRequester(opts: InProcessRequesterOptions): InPro
   }
 
   async function providerFor(io: CommandIo): Promise<SshSessionProvider> {
-    const keys = createSshSessionProvider(undefined);
     return createIrohSessionProvider({
       io,
       log,
-      dumbpipePath: await dumbpipePath(),
-      generateKeypair: (vmName) => keys.generateKeypair(vmName),
+      dial: opts.irohDialer ?? dumbpipeIrohDialer(await dumbpipePath()),
+      generateKeypair: generateGuestKeypair,
     });
   }
 
@@ -350,7 +363,8 @@ export function createInProcessRequester(opts: InProcessRequesterOptions): InPro
           sshProvider: await providerFor(io),
           policy: { name: policy, args: policyArgs },
           guestHostAliases: opts.guestHostAliases,
-          userData: contractUserData(),
+          extraBidderDids: opts.extraBidderDids,
+          userData: contractUserData(opts.guestBaseUserData),
           rbac: opts.rbac ?? false,
           capabilities,
           logger,
