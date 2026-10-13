@@ -271,7 +271,7 @@ items:
       the Live market workflow green on the iroh path.
     done_when: "unit test green; a Live market workflow run green after the change (run URL and UTC recorded); no `tunnel` transport requested anywhere in socialweb-computer-ssh; pushed on main."
     risks: ["The ProxyCommand needs dumbpipe on the gateway host; request-vm-ssh fetches a pinned dumbpipe today (request-vm-ssh/mod.ts:107-117) and the same pinned fetch is reused."]
-    status: doing
+    status: done
     evidence:
       - "merged to main 2026-10-12: atproto-market b78adc1 (dumbpipeConnectArgv shared by sshProxyCommandFor), socialweb-computer-ssh fcbe82c (tests) + d561845 (requester-inproc asks iroh; bridge spawns `dumbpipe connect <ticket>` from the iroh:// onNetwork address, refuses any non-iroh address; vm.terminated ends the poll/session and kills dumbpipe)"
       - "tests red then green: atproto-market transport_address_test.ts 6/6; socialweb-computer-ssh requester_iroh_test.ts 7/7 (red: 3 type errors + transport tunnel), unit suite 84/84; re-run on merged main 7/7"
@@ -521,8 +521,8 @@ items:
     test_first: "TestRunGatewaySshServesTheSshDoorFromTheEmbeddedTree (live, hat-8); red first."
     done_when: "the ssh door answers; its deno unit suite passes against the extracted tree."
     risks: []
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M4-RUN-REQUEST
     milestone: M4
     title: "socialweb-computer run request - a fresh kcp per invocation whose state dir persists; contracts as ComputeContract objects; `release|resume <name>` restart that same kcp"
