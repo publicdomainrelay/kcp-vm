@@ -4,9 +4,10 @@ workflow:
   rules:
     - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"
     - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH =~ /^task\//
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_TAG =~ /^v/
     - if: $CI_PIPELINE_SOURCE == "web"
 
-stages: [gate, release]
+stages: [gate, build, test, publish]
 
 default:
   tags: [socialweb-computer-kcp]
@@ -17,14 +18,19 @@ variables:
   GIT_DEPTH: "20"
   GIT_CLEAN_FLAGS: -ffdx
 
-gate:
-  stage: gate
-  timeout: 15m
+# main and v* tags build, test and publish; task/* branches run the gate only.
+.main-or-tag:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v/
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"
+    - if: $CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == "main"
+
+.toolchain:
   before_script:
     - test -n "$HOME" && test "$(id -u)" != 0
     - export CI_STATE="$HOME/.tmp/ci"
     - export TMPDIR="$CI_STATE/tmp/$CI_JOB_ID" GOCACHE="$CI_STATE/go-build" GOMODCACHE="$CI_STATE/go-mod" DENO_DIR="$CI_STATE/deno-dir"
-    - rm -rf "$CI_STATE/tmp" && mkdir -p "$TMPDIR" "$GOCACHE" "$GOMODCACHE" "$DENO_DIR"
+    - mkdir -p "$TMPDIR" "$GOCACHE" "$GOMODCACHE" "$DENO_DIR"
     - platform="$(go env GOOS)/$(go env GOARCH)"
     - deno_url="$(jq -er --arg p "$platform" '.assets.deno.fetch[$p].url' internal/versions/versions.json)"
     - deno_sha="$(jq -er --arg p "$platform" '.assets.deno.fetch[$p].sha256' internal/versions/versions.json)"
@@ -37,31 +43,14 @@ gate:
         unzip -q -o "$TMPDIR/deno.zip" deno -d "$(dirname "$DENO_BIN")"
       fi
     - export PATH="$(dirname "$DENO_BIN"):$PATH"
+    - export OUT="$CI_STATE/out/$CI_COMMIT_SHA"
     - go version && deno --version | head -1
-  script:
-    - timeout -k 10 120 go mod download
-    - timeout -k 10 120 deno install --frozen --node-modules-dir=none --quiet
-    - timeout -k 10 120 go build ./...
-    - timeout -k 10 120 go vet ./...
-    - timeout -k 10 120 deno task --quiet check
-    - timeout -k 10 420 deploy/check.sh --fast
-    - test -z "$(git status --porcelain)"
-    - timeout -k 10 180 go run ./cmd/socialweb-tsbundle -release -deno "$DENO_BIN" -out "$TMPDIR/tsb-out"
   after_script:
     - rm -rf "$HOME/.tmp/ci/tmp/$CI_JOB_ID"
 
-release-reproducible:
-  stage: release
-  timeout: 30m
-  variables:
-    GIT_DEPTH: "0"
-    RELEASE_NO_CACHE: ""
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"
-    - if: $CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == "main"
+.containers:
   before_script:
-    - test -n "$HOME" && test "$(id -u)" != 0
-    - export CI_STATE="$HOME/.tmp/ci"
+    - !reference [.toolchain, before_script]
     - export RUSTUP_HOME="$CI_STATE/rustup" CARGO_HOME="$CI_STATE/cargo" PATH="$CI_STATE/cargo/bin:$PATH"
     - mkdir -p "$CI_STATE/release-build" "$CI_STATE/podman/run" && chmod 0700 "$CI_STATE/podman/run"
     - |
@@ -77,5 +66,104 @@ release-reproducible:
     - export CONTAINER=podman XDG_RUNTIME_DIR="$CI_STATE/podman/run" CONTAINERS_STORAGE_CONF="$CI_STATE/podman/storage.conf" CONTAINERS_CONF="$CI_STATE/podman/containers.conf"
     - printf '[storage]\ndriver = "overlay"\ngraphroot = "%s"\nrunroot = "%s"\n[storage.options.overlay]\nignore_chown_errors = "true"\n' "$CI_STATE/podman/storage" "$CI_STATE/podman/run/storage" >"$CONTAINERS_STORAGE_CONF"
     - printf '[engine]\ncgroup_manager = "cgroupfs"\nevents_logger = "file"\n[containers]\ncgroups = "disabled"\n' >"$CONTAINERS_CONF"
+
+gate:
+  stage: gate
+  extends: .toolchain
+  timeout: 15m
+  script:
+    - timeout -k 10 120 go mod download
+    - timeout -k 10 120 deno install --frozen --node-modules-dir=none --quiet
+    - timeout -k 10 120 go build ./...
+    - timeout -k 10 120 go vet ./...
+    - timeout -k 10 120 deno task --quiet check
+    - timeout -k 10 420 deploy/check.sh --fast
+    - test -z "$(git status --porcelain)"
+    - timeout -k 10 180 go run ./cmd/socialweb-tsbundle -release -deno "$DENO_BIN" -out "$TMPDIR/tsb-out"
+
+# The two clean builds must be byte-identical (0006 ACC6-REPRO); main only.
+release-reproducible:
+  stage: build
+  extends: .containers
+  timeout: 30m
+  variables:
+    GIT_DEPTH: "0"
+    RELEASE_NO_CACHE: ""
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"
+    - if: $CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == "main"
   script:
     - timeout -k 10 1680 scripts/build-socialweb-computer.sh --verify-reproducible ${RELEASE_NO_CACHE:+--no-cache} --build-root "$CI_STATE/release-build"
+
+# Release binaries for every linux platform, cached by input hash.
+binaries:
+  stage: build
+  extends: [.containers, .main-or-tag]
+  timeout: 30m
+  variables:
+    GIT_DEPTH: "0"
+  script:
+    - timeout -k 10 1680 scripts/build-socialweb-computer.sh --platform linux/amd64 --platform linux/arm64 --commit "$CI_COMMIT_SHA" --build-root "$CI_STATE/release-build"
+    - rel="$CI_STATE/release-build/release/$CI_COMMIT_SHA"
+    - ls -la "$rel"
+    - rm -rf "$OUT/binaries" && mkdir -p "$OUT/binaries" && cp -a "$rel"/. "$OUT/binaries/"
+    - (cd "$OUT/binaries" && sha256sum -c --quiet SHA256SUMS)
+
+# The guest VM image (kernel + rootfs + image.json), checked against the sha256 pins in versions.json.
+guest-image:
+  stage: build
+  extends: [.containers, .main-or-tag]
+  timeout: 60m
+  variables:
+    TARGET: firecracker-x86_64
+  script:
+    - work="$CI_STATE/guest-image-work" && img="$OUT/guest-image"
+    - rm -rf "$img" && mkdir -p "$work" "$img"
+    - timeout -k 10 3300 scripts/build-guest-image.sh --target "$TARGET" --work "$work" --out "$img"
+    - |
+      for f in vmlinux rootfs.ext4 image.json; do
+        want="$(jq -er --arg t "$TARGET" --arg f "$f" '.guestImages.targets[$t].outputs[$f].sha256' internal/versions/versions.json)"
+        got="$(sha256sum "$img/$TARGET/$f" | cut -d' ' -f1)"
+        echo "$TARGET/$f sha256 $got (pinned $want)"
+        test "$got" = "$want"
+      done
+
+# Every integration test, on its own market networks, as this runner's account with its own VM slots.
+integration:
+  stage: test
+  extends: [.toolchain, .main-or-tag]
+  timeout: 75m
+  needs: [gate, guest-image]
+  variables:
+    SOCIALWEB_IT_ACCOUNT: socialweb-ci
+    SOCIALWEB_IT_LIVE_SLOT: none
+    SOCIALWEB_IT_RUN_ROOT: /var/tmp/swcit-ci
+  script:
+    - export SOCIALWEB_IT_GUEST_IMAGE="file://$OUT/guest-image/firecracker-x86_64"
+    - export SOCIALWEB_IT_PUBLISH="/var/tmp/swcit-ci/bin-$CI_JOB_ID" SOCIALWEB_IT_ARTIFACTS="$CI_PROJECT_DIR/it-artifacts"
+    - timeout -k 30 4380 go test -tags integration -count=1 -v -timeout 72m ./test/integration/ 2>&1 | tee "$TMPDIR/it.log"
+    - grep -E '^(--- |ok|FAIL)' "$TMPDIR/it.log"
+  after_script:
+    - rm -rf "/var/tmp/swcit-ci/bin-$CI_JOB_ID" "$HOME/.tmp/ci/tmp/$CI_JOB_ID"
+  artifacts:
+    when: on_failure
+    expire_in: 7 days
+    paths: [it-artifacts/]
+
+# Binaries and the guest image to the DigitalOcean Spaces bucket: main/<sha> and main/latest on main,
+# releases/<tag> on a v* tag.
+publish:
+  stage: publish
+  extends: [.toolchain, .main-or-tag]
+  timeout: 30m
+  needs: [binaries, guest-image, integration]
+  interruptible: false
+  script:
+    - test -n "$SPACES_ACCESS_KEY_ID" && test -n "$SPACES_SECRET_ACCESS_KEY"
+    - |
+      if [ -n "$CI_COMMIT_TAG" ]; then
+        prefix="releases/$CI_COMMIT_TAG"; also=""
+      else
+        prefix="main/$CI_COMMIT_SHA"; also="main/latest"
+      fi
+      timeout -k 10 1700 deno run -A --no-lock scripts/publish-spaces.ts --dir "$OUT" --prefix "$prefix" ${also:+--also "$also"}

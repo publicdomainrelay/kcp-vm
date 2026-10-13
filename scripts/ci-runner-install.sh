@@ -106,6 +106,12 @@ for group in $(id -nG "$account"); do
 done
 sudo chmod 0700 "$home"
 uid="$(id -u "$account")"
+# Integration tests run market networks as this account: VM slots (a subuid/subgid range, as
+# install bidder reserves), a short run root, and the account's user bus and runtime dir.
+if ! grep -q "^$account:" /etc/subuid; then
+  sudo usermod --add-subuids 19005440-20054015 --add-subgids 19005440-20054015 "$account"
+fi
+sudo install -d -o "$account" -g "$account" -m 1777 /var/tmp/swcit-ci
 sudo loginctl enable-linger "$account"
 for _ in $(seq 1 50); do
   sudo test -S "/run/user/$uid/systemd/private" && break
@@ -166,7 +172,7 @@ printf '%s\n' \
   'NoNewPrivileges=yes' \
   'ProtectSystem=strict' \
   'ProtectHome=yes' \
-  "ReadWritePaths=$home" \
+  "ReadWritePaths=$home /var/tmp/swcit-ci /run/user/$uid" \
   'PrivateTmp=yes' \
   'KillMode=mixed' \
   'TimeoutStopSec=40' \
