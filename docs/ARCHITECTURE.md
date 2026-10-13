@@ -6851,7 +6851,8 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   Failed with the reason, and the provider's teardown releases it at most once. The cluster vault keeps
   an adopted node's JWT grant while the claim carries none. A receipt with no claim and no joined Node
   (the ownership scan: every 5 minutes, 30 s while one waits, at most 20 record lookups a pass, over the
-  owners of the current claims) waits a grace of 10 minutes from when the web app started and is then
+  owners of every claim this web app has seen and of its market-network owner sessions; an account whose claims
+  were all gone before the web app started is not scanned, a stated limit) waits a grace of 10 minutes from when the web app started and is then
   released once (reason `unclaimed_after_join_grace`); the web app cannot see the provider's
   path-up time, so the grace is long rather than rebased. A market-network Gateway names the network's
   published hosts in `spec.marketNetwork.names` (schema revision 4), merged into the web app's DNS table,
