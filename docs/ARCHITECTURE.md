@@ -6967,6 +6967,35 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   replacement (audit passed), and the late vm.delete of the old receipt and the replacement's both
   answered 200 with nothing left.
 
+- **A bidder upgrade and a bidder kcp roll leave its VMs running; the VM stop grace is measured (plan
+  0007 M6-BIDDER-UPGRADE, 2026-10-12).** The default VM stop grace is `vmStop.graceSeconds` in
+  `internal/versions/versions.json` (100 s); `run bidder`, `dev up` and `internal vm` take it when
+  `vm-stop-grace` is unset. The grace is a cap: a stop returns as soon as the unit is inactive. Readings
+  on hat-8: an installed bidder (`install bidder` for the stand-in account test-0003) joined its own
+  market network with `--market-network-file`; each guest was rented with `run request --network
+  --secrets --hold --skip-ssh` and a `--user-data` that installs k3s (node Ready, 8 pods Running) and
+  re-runs the guest's onNetwork report every minute. `upgrade --binary` between release builds with
+  different closures (b9cd539d to 267f4965 with two guests, 267f4965 to 06925efe with four): the bidder
+  DenoPod ran the new closure and was Ready 6 s after the upgrade; every VM unit kept its InvocationID,
+  firecracker pid and start ticks; every ComputeVM stayed Running; the issuer URL was the same; `units
+  audit` passed; each guest's next onNetwork was accepted within 60 s. `units roll kcp` from kcp v0.33.0
+  to v0.33.1 is a short restart of the bidder's one slot (planned outage a to a, kcp down 38.6 s) with the
+  same readings. Stop grace, SendCtrlAltDel to unit inactive, over six releases (each vm.delete 200):
+  5.46, 5.57 and 5.65 s when every pod's PID 1 exits on SIGTERM; 90.78, 90.85 and 90.88 s when a pod's
+  PID 1 ignores SIGTERM, which the guest's systemd ends at its DefaultTimeoutStopSec of 90 s. After each
+  release no unit, cgroup, work dir or API socket of the VM was left. Defects found by these runs and
+  closed: install left a handle's directories owned by root (the core could not create its logs); an
+  installed core exited when its fresh kcp did not serve the MarketBidder API yet (it now applies the root
+  object once the application controller serves it); unpacking the closure fsynced every file (61 s on
+  the first start, now one syncfs, 3 s); the tree audit failed on pasta.avx2, which pasta re-executes on
+  an AVX2 host; the kcp slots record of an installed bidder said blue-green, so `units roll kcp` tried a
+  slot-b unit install never writes; a requester's `--user-data` dropped the network's guest CA, so the
+  guest's host-keys and onNetwork posts failed; a release of a contract whose guest never reported waited
+  `vm-ready-timeout-sec` first. Decided by Claude, user may veto: the k3s in these guests is a one-node
+  server whose own agent is the joined node (an agent joined to a tenant cluster through the gateway is
+  0007 M6-NOSSH-JOIN); the repeated onNetwork report comes from the requester's user data, not the guest
+  image.
+
 ## 16. Vocabulary
 
 | | |
