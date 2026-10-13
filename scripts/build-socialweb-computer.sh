@@ -112,6 +112,10 @@ say "commit $commit, platforms ${platforms[*]}, go $have_go, build root $build_r
 checkout "$build_root/src/1"
 say "module download into $GOMODCACHE"
 (cd "$build_root/src/1" && GOPROXY="$(GOENV= go env GOPROXY)" go mod download)
+for module in $(jq -r '[.assets[].fetch // {} | .[] | select(.kind == "go") | .module // empty] | unique[]' "$build_root/src/1/internal/versions/versions.json"); do
+  say "module download for asset module $module"
+  (cd "$build_root/src/1/$module" && GOPROXY="$(GOENV= go env GOPROXY)" go mod download)
+done
 export GOPROXY=off
 export GOSUMDB=off
 

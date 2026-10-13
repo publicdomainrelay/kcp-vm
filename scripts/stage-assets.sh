@@ -187,11 +187,19 @@ stage_script() {
 }
 
 stage_go() {
-  local spec="$1" tree="$2" x="$3" plat="$4" pkg
+  local spec="$1" tree="$2" x="$3" plat="$4" pkg module want out
   pkg="$(echo "$spec" | jq -r .package)"
+  module="$(echo "$spec" | jq -r '.module // "."')"
+  want="$(echo "$spec" | jq -r '.sha256 // ""')"
+  out="$x/u/$(echo "$spec" | jq -r '.members | keys[0]')"
   mkdir -p "$x/u"
-  (cd "$root" && CGO_ENABLED=0 GOOS="${plat%/*}" GOARCH="${plat#*/}" go build -trimpath -buildvcs=false \
-    -ldflags='-s -w -buildid=' -o "$x/u/$(echo "$spec" | jq -r '.members | keys[0]')" "$pkg")
+  (cd "$root/$module" && CGO_ENABLED=0 GOOS="${plat%/*}" GOARCH="${plat#*/}" go build -trimpath -buildvcs=false \
+    -ldflags='-s -w -buildid=' -o "$out" "$pkg")
+  say "$module $pkg $plat binary sha256 $(sha_of "$out")"
+  if [ -n "$want" ] && [ "$(sha_of "$out")" != "$want" ]; then
+    echo "stage-assets: $module $pkg $plat built $(sha_of "$out"), pinned $want" >&2
+    [ "$print_pins" = 1 ] || die "$module $pkg $plat: sha256 differs from the pin"
+  fi
   copy_members "$x/u" "$tree" "$(echo "$spec" | jq -c .members)"
 }
 

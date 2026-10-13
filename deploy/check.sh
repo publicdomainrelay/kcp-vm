@@ -55,6 +55,11 @@ echo "check.sh: ok apigen ($compared generated files, no drift from api/v1alpha1
 go vet ./... || fail "go vet"
 echo "check.sh: ok go vet"
 
+for module in $(jq -r '[.assets[].fetch // {} | .[] | select(.kind == "go") | .module // empty] | unique[]' internal/versions/versions.json); do
+  (cd "$module" && go build ./... && go vet ./...) || fail "go build and go vet of the asset module $module"
+  echo "check.sh: ok go build and go vet of the asset module $module"
+done
+
 if command -v deno >/dev/null 2>&1; then
   deno task --quiet check || fail "deno check (deno task check: the entries of deploy/ts-entries.yaml)"
   deno install --frozen --node-modules-dir=none --quiet || fail "deno.lock is stale; run deno install at the repository root and commit deno.lock"

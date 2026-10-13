@@ -53,12 +53,12 @@
     "linux/amd64": {
       "status": "release",
       "owner": "plan 0006 M1-ASSETS",
-            "assets": ["bao", "deno", "dumbpipe", "external-secrets", "external-secrets-bundle", "firecracker", "k3s", "kcp", "kine", "pasta", "postgres", "socialweb-vmexec", "swc-userns-stage"]
+            "assets": ["bao", "deno", "dumbpipe", "external-secrets", "external-secrets-bundle", "firecracker", "k3s", "kcp", "kine", "openbao-plugin-auth-sshsig", "pasta", "postgres", "socialweb-vmexec", "swc-userns-stage"]
     },
     "linux/arm64": {
       "status": "release",
       "owner": "plan 0006 M1-ASSETS",
-            "assets": ["bao", "deno", "dumbpipe", "external-secrets", "external-secrets-bundle", "firecracker", "k3s", "kcp", "kine", "pasta", "postgres", "socialweb-vmexec"]
+            "assets": ["bao", "deno", "dumbpipe", "external-secrets", "external-secrets-bundle", "firecracker", "k3s", "kcp", "kine", "openbao-plugin-auth-sshsig", "pasta", "postgres", "socialweb-vmexec"]
     },
     "darwin/arm64": {"status": "seam", "owner": "plan 0012", "note": "seam: builds and vets, no assets, owned by plan 0012", "assets": []},
     "darwin/amd64": {"status": "seam", "owner": "plan 0012", "note": "seam: builds and vets, no assets, owned by plan 0012", "assets": []},
@@ -296,6 +296,20 @@
       "platforms": {
         "linux/amd64": {"treeSha256": "0f7b4bad18b29539bcdcee8fd76180441d0c66bea1bdb2f0d5c595d4f99dff25", "rawBytes": 2326654, "zstdBytes": 880276},
         "linux/arm64": {"treeSha256": "ca840d4843577978a2adae5ff964bbecef1f40b8f0d87d6b64c2d60a11bc5621", "rawBytes": 2293886, "zstdBytes": 788101}
+      }
+    },
+    "openbao-plugin-auth-sshsig": {
+      "version": "this repository, on github.com/openbao/openbao/sdk/v2 v2.6.2 (the SDK release of the pinned bao v2.6.2)",
+      "source": "cmd/openbao-plugin-auth-sshsig, its own Go module: CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags='-s -w -buildid=' per platform, with the go.mod toolchain",
+      "verify": "rebuilt from this commit; the binary must equal the fetch sha256 pin (the sha256 the OpenBao plugin catalog registers) and the unpacked tree the treeSha256 pin, so a change to cmd/openbao-plugin-auth-sshsig re-pins it; moves together with the bao asset",
+      "executables": {"openbao-plugin-auth-sshsig": "openbao-plugin-auth-sshsig"},
+      "fetch": {
+        "linux/amd64": {"kind": "go", "module": "cmd/openbao-plugin-auth-sshsig", "package": ".", "sha256": "62b84df545733353fb478d5b2e4aded9158f0a0a1bb258288e00679a44a60ea8", "members": {"openbao-plugin-auth-sshsig": "openbao-plugin-auth-sshsig"}},
+        "linux/arm64": {"kind": "go", "module": "cmd/openbao-plugin-auth-sshsig", "package": ".", "sha256": "f40a63039dcf6d7441806c961a3c9b863eaf3fcf65fe2ce221ce2a962cd45cd1", "members": {"openbao-plugin-auth-sshsig": "openbao-plugin-auth-sshsig"}}
+      },
+      "platforms": {
+        "linux/amd64": {"treeSha256": "330dbd48ca4fd731d104ba2d361ec754520b9b4668367d4bd2a36f213ceee75a", "rawBytes": 16228478, "zstdBytes": 5093784},
+        "linux/arm64": {"treeSha256": "a03e44b8460a5a54a4577e3c083e9184e6164eb10a3696feb1f10543c35836be", "rawBytes": 15204478, "zstdBytes": 4532474}
       }
     },
     "swc-userns-stage": {
