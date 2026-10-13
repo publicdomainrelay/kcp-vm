@@ -7,6 +7,8 @@ entries:
   - name: hono-bidder
     path: ts/atproto-market/hono-bidder/mod.ts
     unstable: [kv, worker-options]
+  - name: hono-bidder-guest
+    path: ts/atproto-market/hono-bidder-guest/mod.ts
   - name: request-vm-ssh
     path: ts/atproto-market/request-vm-ssh/mod.ts
   - name: hono-socialweb-computer-ssh

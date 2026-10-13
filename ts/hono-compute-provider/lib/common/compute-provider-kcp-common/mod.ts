@@ -8,6 +8,7 @@ export const FINALIZER_COMPUTE_VM = "computevm.socialweb.computer/release";
 export const FIELD_MANAGER_COMPUTE_VM_CONTROLLER = "computevm-controller";
 export const FIELD_MANAGER_COMPUTE_VM_PROVIDER = "compute-provider-kcp";
 export const FIELD_MANAGER_COMPUTE_VM_CONTRACT = "compute-provider-kcp-contract";
+export const FIELD_MANAGER_COMPUTE_VM_GUEST = "compute-provider-kcp-guest";
 export const GUEST_HOST_ADDRESS = "192.0.2.1";
 export const GUEST_VAULT_PREFIX = "guests";
 export const GUEST_USER_DATA_ENTRY = "user-data";

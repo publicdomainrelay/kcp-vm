@@ -1,0 +1,120 @@
+{
+  "name": "hono-bidder-guest",
+  "description": "The guest-facing endpoints of one provider of a bidder: its relay, its OIDC issuer, POST /v1/on-network and POST /v1/host-keys, recorded on the ComputeVM status",
+  "options": {
+    "service-name": {
+      "type": "string",
+      "description": "Service name for logging",
+      "env": "SERVICE_NAME",
+      "default": "guest-kcp"
+    },
+    "role": {
+      "type": "string",
+      "description": "Provider this DenoPod answers guests for; names its relay keypair and OIDC signing key in the bidder vault",
+      "env": "GUEST_ROLE",
+      "default": "kcp"
+    },
+    "plc-directory-url": {
+      "type": "string",
+      "description": "PLC directory URL the issuer resolves the bidder's RBAC records through",
+      "env": "PLC_DIRECTORY_URL",
+      "default": "https://plc.directory"
+    },
+    "ingress-proxy-host": {
+      "type": "string",
+      "description": "XRPC relay dispatcher host the provider relay registers with",
+      "env": "INGRESS_PROXY_HOST",
+      "default": "xrpc.fedproxy.com"
+    },
+    "network-hosts": {
+      "type": "string",
+      "description": "Comma-separated name=address pairs of the market network's service names and the loopback address each answers on, copied from the network value",
+      "env": "NETWORK_HOSTS"
+    },
+    "vault-openbao-server": {
+      "type": "string",
+      "description": "Name of the bidder's OpenBaoServer object; its status gives the vault's address, CA, client certificate and kv mount",
+      "env": "VAULT_OPENBAO_SERVER",
+      "default": "bidder"
+    },
+    "vault-openbao-client": {
+      "type": "string",
+      "description": "Client of that OpenBaoServer this DenoPod logs in as (its cert role and policy)",
+      "env": "VAULT_OPENBAO_CLIENT",
+      "default": "guest-kcp"
+    },
+    "vault-kcp-server": {
+      "type": "string",
+      "description": "kcp server holding the OpenBaoServer object, a /clusters/<workspace> URL",
+      "env": "VAULT_KCP_SERVER"
+    },
+    "vault-kcp-token-file": {
+      "type": "string",
+      "description": "File holding the bearer token for that kcp server, re-read on every call",
+      "env": "VAULT_KCP_TOKEN_FILE"
+    },
+    "vault-kcp-ca-cert-file": {
+      "type": "string",
+      "description": "PEM CA bundle that kcp server's certificate chains to",
+      "env": "VAULT_KCP_CA_CERT_FILE"
+    },
+    "kcp-server": {
+      "type": "string",
+      "description": "kcp server of the bidder's own kcp, where its ComputeVMs live",
+      "env": "COMPUTE_KCP_SERVER"
+    },
+    "kcp-workspace": {
+      "type": "string",
+      "description": "Workspace of the bidder's ComputeVMs",
+      "env": "COMPUTE_KCP_WORKSPACE",
+      "default": "root"
+    },
+    "kcp-token-file": {
+      "type": "string",
+      "description": "File holding this DenoPod's own ServiceAccount token for that kcp, re-read on every call",
+      "env": "COMPUTE_KCP_TOKEN_FILE"
+    },
+    "kcp-ca-file": {
+      "type": "string",
+      "description": "PEM CA bundle of that kcp",
+      "env": "COMPUTE_KCP_CA_FILE"
+    },
+    "handle": {
+      "type": "string",
+      "description": "Bidder handle that owns the ComputeVMs this DenoPod answers for",
+      "env": "COMPUTE_KCP_HANDLE"
+    },
+    "serve-addr": {
+      "type": "string",
+      "description": "Address the local listener binds",
+      "env": "SERVE_ADDR",
+      "default": "127.0.0.1"
+    },
+    "serve-port": {
+      "type": "number",
+      "description": "Port the local listener binds; 0 reports the bound port",
+      "env": "SERVE_PORT",
+      "default": 0
+    },
+    "port-file": {
+      "type": "string",
+      "description": "File the bound TCP port is written to once listening",
+      "env": "PORT_FILE"
+    },
+    "listeners-file": {
+      "type": "string",
+      "description": "File every bound listener (tcp, relay) is reported to as JSON once listening",
+      "env": "LISTENERS_FILE"
+    },
+    "status-file": {
+      "type": "string",
+      "description": "File the issuer URL, relay ingress and serve port are written to as JSON once ready",
+      "env": "STATUS_FILE"
+    },
+    "denopod-namespace": {
+      "type": "string",
+      "description": "Namespace of the DenoPod this process is the entry of, set by the deno runtime; unset means it was not started by socialweb-computer run bidder",
+      "env": "KCP_NAMESPACE"
+    }
+  }
+}

@@ -215,6 +215,8 @@ const (
 	FieldManagerComputeVMProvider = "compute-provider-kcp"
 
 	FieldManagerComputeVMContract = "compute-provider-kcp-contract"
+
+	FieldManagerComputeVMGuest = "compute-provider-kcp-guest"
 )
 
 const GuestHostAddress = "192.0.2.1"

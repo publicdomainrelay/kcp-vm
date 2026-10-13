@@ -78,6 +78,7 @@
     "./ts/atproto-market/lib/market-bidder-compute",
     "./ts/atproto-market/lib/market-bidder-contract-store-fs",
     "./ts/atproto-market/lib/market-bidder-contract-store-kcp",
+    "./ts/atproto-market/lib/market-bidder-vault-keys",
     "./ts/atproto-market/lib/market-bidder-worker",
     "./ts/atproto-market/lib/market-identity-atproto",
     "./ts/atproto-market/lib/identity-prompt-kcp",
@@ -146,6 +147,7 @@
     "./ts/atproto-market/lib/hono-factory-did-plc-directory",
     "./ts/atproto-market/lib/hono-factory-market-atproto",
     "./ts/atproto-market/lib/hono-factory-market-bidder-app",
+    "./ts/atproto-market/lib/hono-factory-market-bidder-guest-app",
     "./ts/atproto-market/lib/hono-factory-secrets-oidc",
     "./ts/atproto-relay/lib/hono-factory-atproto-relay-xrpc",
     "./ts/did-key-ingress-proxy/lib/hono-factory-did-key-ingress-proxy-subscriber-xrpc",
@@ -156,6 +158,7 @@
     "./ts/typescript-helpers/lib/hono-factory-static-files-fs",
     "./socialweb-computer-k8s/hono-socialweb-computer-k8s",
     "./ts/atproto-market/hono-bidder",
+    "./ts/atproto-market/hono-bidder-guest",
     "./ts/atproto-market/hono-plc",
     "./ts/atproto-market/request-vm-ssh",
     "./ts/atproto-relay/hono-atproto-relay",
@@ -196,7 +199,7 @@
     "yaml": "npm:yaml@^2.7.0"
   },
   "tasks": {
-    "check": "deno check --node-modules-dir=none socialweb-computer-k8s/hono-socialweb-computer-k8s/undici-preload.ts socialweb-computer-k8s/hono-socialweb-computer-k8s/mod.ts ts/atproto-market/hono-bidder/mod.ts ts/atproto-market/request-vm-ssh/mod.ts ts/socialweb-computer-ssh/hono-socialweb-computer-ssh/mod.ts ts/atproto-market/hono-plc/mod.ts ts/atproto-relay/hono-atproto-relay/mod.ts ts/did-key-ingress-proxy/hono-did-key-ingress-proxy/mod.ts ts/hono-pds/main.ts ts/did-key-associator/hono-backend/mod.ts",
+    "check": "deno check --node-modules-dir=none socialweb-computer-k8s/hono-socialweb-computer-k8s/undici-preload.ts socialweb-computer-k8s/hono-socialweb-computer-k8s/mod.ts ts/atproto-market/hono-bidder/mod.ts ts/atproto-market/hono-bidder-guest/mod.ts ts/atproto-market/request-vm-ssh/mod.ts ts/socialweb-computer-ssh/hono-socialweb-computer-ssh/mod.ts ts/atproto-market/hono-plc/mod.ts ts/atproto-relay/hono-atproto-relay/mod.ts ts/did-key-ingress-proxy/hono-did-key-ingress-proxy/mod.ts ts/hono-pds/main.ts ts/did-key-associator/hono-backend/mod.ts",
     "test": "deno test -A --node-modules-dir=none --ignore=ts/socialweb-computer-ssh/test/live_market_test.ts ts/atproto-market/test ts/atproto-market/request-vm-ssh ts/atproto-relay/test ts/deno-worker-sandbox/test ts/did-key-ingress-proxy/test ts/hono-compute-provider/test ts/hono-pds/test ts/policy-engine/test ts/policy-engine/lib/policy-engine-server-gha-lite ts/socialweb-computer-ssh/test ts/typescript-helpers/test socialweb-computer-k8s/test",
     "socialweb-computer-k8s:start": "deno run -A --preload socialweb-computer-k8s/hono-socialweb-computer-k8s/undici-preload.ts socialweb-computer-k8s/hono-socialweb-computer-k8s/mod.ts",
     "socialweb-computer-k8s:scope": "deno run -A socialweb-computer-k8s/scripts/generate-web-scope.ts"

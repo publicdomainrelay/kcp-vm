@@ -67,6 +67,7 @@ export interface KcpComputeVMClientOptions {
   fetch?: typeof fetch;
   timeoutMs?: number;
   watchTimeoutSeconds?: number;
+  fieldManager?: string;
 }
 
 export class KcpRequestError extends Error {
@@ -107,7 +108,7 @@ export function createKcpComputeVMClient(opts: KcpComputeVMClientOptions): KcpCo
   const server = creds.server.replace(/\/+$/, "");
   const { group, version, plural } = COMPUTE_VM_RESOURCE;
   const vmBase = `${server}/clusters/${creds.workspace}/apis/${group}/${version}/${plural}`;
-  const applyQuery = `?fieldManager=${encodeURIComponent(FIELD_MANAGER_COMPUTE_VM_PROVIDER)}&force=true`;
+  const applyQuery = `?fieldManager=${encodeURIComponent(opts.fieldManager ?? FIELD_MANAGER_COMPUTE_VM_PROVIDER)}&force=true`;
   const contractQuery = `?fieldManager=${encodeURIComponent(FIELD_MANAGER_COMPUTE_VM_CONTRACT)}&force=true`;
   let httpClient: Promise<Deno.HttpClient | undefined> | undefined;
 
@@ -231,33 +232,42 @@ export function createKcpComputeVMClient(opts: KcpComputeVMClientOptions): KcpCo
 }
 
 export interface ComputeVMMarketRecorder {
-  record(name: string, patch: ComputeVMMarket): Promise<void>;
+  record(name: string, patch: ComputeVMMarket): Promise<boolean>;
 }
 
 export function createComputeVMMarketRecorder(opts: {
   client: KcpComputeVMClient;
   logger: ComputeProviderCtx["logger"];
+  fields: ReadonlyArray<keyof ComputeVMMarket>;
 }): ComputeVMMarketRecorder {
-  const chains = new Map<string, Promise<void>>();
+  const chains = new Map<string, Promise<boolean>>();
 
-  async function write(name: string, patch: ComputeVMMarket): Promise<void> {
+  function owned(market: ComputeVMMarket | undefined): ComputeVMMarket {
+    const out: Record<string, unknown> = {};
+    for (const f of opts.fields) if (market?.[f] !== undefined) out[f] = market[f];
+    return out as ComputeVMMarket;
+  }
+
+  async function write(name: string, patch: ComputeVMMarket): Promise<boolean> {
     try {
       const current = await opts.client.get(name);
       if (!current) {
         opts.logger.warn("computevm_market_status_no_object", { name, fields: Object.keys(patch) });
-        return;
+        return false;
       }
-      const market = mergeMarketStatus(current.status?.market, patch);
+      const market = mergeMarketStatus(owned(current.status?.market), owned(patch));
       await opts.client.applyStatus(marketStatusFor(name, market));
       opts.logger.info("computevm_market_status_recorded", { name, fields: Object.keys(patch) });
+      return true;
     } catch (err) {
       opts.logger.warn("computevm_market_status_failed", { name, fields: Object.keys(patch), error: String(err) });
+      return false;
     }
   }
 
   return {
     record(name, patch) {
-      const next = (chains.get(name) ?? Promise.resolve()).then(() => write(name, patch));
+      const next = (chains.get(name) ?? Promise.resolve(true)).then(() => write(name, patch));
       chains.set(name, next);
       next.finally(() => {
         if (chains.get(name) === next) chains.delete(name);
@@ -290,6 +300,7 @@ export interface ComputeProviderKcpCtx extends ComputeProviderCtx {
   rbacProvisioner?: RbacProvisioner;
   accepts?: ComputeVMAccepts;
   contractStoreReleases?: boolean;
+  onChange?: (change: ComputeVMChange) => void;
 }
 
 const DEFAULT_BOOT_TIMEOUT_MS = 300_000;
@@ -370,7 +381,16 @@ export function createComputeProviderKcp(ctx: ComputeProviderKcpCtx): ComputePro
     void releaseGone(name, vm);
   }
 
+  function notify(change: ComputeVMChange): void {
+    try {
+      ctx.onChange?.(change);
+    } catch (err) {
+      logger.warn("computevm_change_listener_failed", { name: change.name, error: String(err) });
+    }
+  }
+
   function observe(change: ComputeVMChange): void {
+    notify(change);
     const { name, before, after } = change;
     if (!after) {
       const ours = provisioning.has(name) || releasing.has(name) || reportedGone.has(name);
@@ -441,7 +461,7 @@ export function createComputeProviderKcp(ctx: ComputeProviderKcpCtx): ComputePro
 
   async function startSync(): Promise<void> {
     const listed = await client.list();
-    cache.replace(listed.items);
+    for (const change of cache.replace(listed.items)) notify(change);
     syncAbort = new AbortController();
     syncLoop = runSync(syncAbort.signal, listed.resourceVersion);
     logger.info("computevm_cache_filled", { handle, guests: cache.names().length });

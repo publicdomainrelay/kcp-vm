@@ -100,7 +100,6 @@ const spec: MarketBidderAppSpec = {
   },
   repo: { kind: "inproc", statePath: o.pdsStatePath },
   providers,
-  guestEndpoints: "inproc",
   market: {
     serve: { addr: o.serveAddr, port: o.servePort, unix: o.serveUnix, tlsCertFile: o.tlsCertFile, tlsKeyFile: o.tlsKeyFile },
     ingressProxy: !o.noIngressProxy,

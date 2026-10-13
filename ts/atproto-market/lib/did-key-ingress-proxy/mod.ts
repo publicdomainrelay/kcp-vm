@@ -1,5 +1,5 @@
 import type { StructuredLoggerInterface } from "@publicdomainrelay/logger";
-import { hostnameOnly, hostnameToDid } from "@publicdomainrelay/hostname-helpers";
+import { didToSubdomain, hostnameOnly, hostnameToDid } from "@publicdomainrelay/hostname-helpers";
 import { signServiceAuth } from "@publicdomainrelay/atproto-repo-deno";
 import { createSubscriber } from "@publicdomainrelay/did-key-ingress-proxy-subscriber-xrpc";
 import { createSubscriberFactory } from "@publicdomainrelay/hono-factory-did-key-ingress-proxy-subscriber-xrpc";
@@ -33,6 +33,10 @@ export interface CreateIngressOpts {
     onEvent: (event: unknown) => void,
     onData: (data: Uint8Array) => void,
   ) => (() => void) | void;
+}
+
+export function ingressUrlOf(keyDid: string, ingressProxyHost: string): string {
+  return `https://${didToSubdomain(keyDid)}.${hostnameOnly(ingressProxyHost)}`;
 }
 
 export function createIngress(opts: CreateIngressOpts): IngressRef {

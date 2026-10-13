@@ -2,7 +2,8 @@ import { parsePolicyArgs } from "@publicdomainrelay/policy-engine-cli-options";
 import type { StructuredLoggerInterface } from "@publicdomainrelay/logger";
 import { createServe } from "@publicdomainrelay/serve";
 import type { IngressRef, ServeHandle } from "@publicdomainrelay/serve";
-import { createIngress } from "@publicdomainrelay/did-key-ingress-proxy";
+import { createIngress, ingressUrlOf } from "@publicdomainrelay/did-key-ingress-proxy";
+import { generatedKeyHex, vaultGuestKv, vaultOidcJwkStore, vaultRelayKeypair } from "@publicdomainrelay/market-bidder-vault-keys";
 import { createMarketBidder } from "@publicdomainrelay/market-bidder";
 import type { MarketBidder } from "@publicdomainrelay/market-bidder";
 import type { MarketBidderProviderRef } from "@publicdomainrelay/market-bidder-abc";
@@ -140,7 +141,6 @@ export interface MarketBidderAppSpec {
   identity: MarketBidderIdentitySpec;
   repo: MarketBidderRepoSpec;
   providers: MarketBidderProviderSpec[];
-  guestEndpoints: "inproc" | "external";
   market: MarketBidderMarketSpec;
   reports?: { portFile?: string; listenersFile?: string };
 }
@@ -171,6 +171,8 @@ export class BidderPolicyError extends Error {
     this.name = "BidderPolicyError";
   }
 }
+
+export const GUEST_DENOPOD_KCP = "guest-kcp";
 
 const BIDDER_ASSOC_SERVICE = "bidder_associate";
 const BADGE_BLUE_KEYS_NSID = "com.publicdomainrelay.temp.badgeBlueKeys";
@@ -205,11 +207,6 @@ export function missingProviderFields(p: MarketBidderProviderSpec): string[] {
     : [];
   const values = p as unknown as Record<string, unknown>;
   return required.filter((k) => !values[k]);
-}
-
-async function generatedKeyHex(): Promise<string> {
-  const kp = await Secp256k1Keypair.create({ exportable: true });
-  return Array.from(await kp.export()).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 export function marketBidderGuestTlsUrl(network: MarketNetwork, guestTlsPort: number | undefined): MarketNetwork {
@@ -353,17 +350,7 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
   }
 
   async function ingressKeypair(role: string): Promise<Secp256k1Keypair> {
-    if (keyVault) {
-      const ref = { mount: vaultMount, path: `relay-keypair/${role}` };
-      const read = await keyVault.read(ref);
-      const held = typeof read?.privateKeyHex === "string"
-        ? read
-        : await keyVault.create(ref, { privateKeyHex: await generatedKeyHex() });
-      if (typeof held.privateKeyHex !== "string") throw new Error(`the vault's ${ref.mount}/${ref.path} holds no privateKeyHex`);
-      const kp = await Secp256k1Keypair.import(held.privateKeyHex, { exportable: true });
-      logger.info("bidder_ingress_key", { role, vault: `${ref.mount}/${ref.path}`, did: kp.did() });
-      return kp;
-    }
+    if (keyVault) return await vaultRelayKeypair(keyVault, vaultMount, role, logger);
     if (!ingressKeyDir) return await Secp256k1Keypair.create({ exportable: true });
     await Deno.mkdir(ingressKeyDir, { recursive: true, mode: 0o700 });
     const path = `${ingressKeyDir}/${role}.jwk`;
@@ -373,34 +360,7 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
   }
 
   function oidcJwkStore(role: string): JwkStore | undefined {
-    const vault = keyVault;
-    if (!vault) return undefined;
-    const ref = { mount: vaultMount, path: `oidc-jwk/${role}` };
-    return {
-      async getJwkPem(issuer) {
-        const held = await vault.read(ref);
-        if (!held || typeof held.pem !== "string") return null;
-        if (held.issuer !== issuer) {
-          logger.warn("bidder_oidc_jwk_issuer_moved", { role, held: held.issuer, issuer, hint: "a new signing key is made for the new issuer" });
-          return null;
-        }
-        return held.pem;
-      },
-      async saveJwkPem(issuer, pem) {
-        const held = await vault.create(ref, { issuer, pem });
-        if (held.issuer !== issuer) await vault.write(ref, { issuer, pem, rotation: held.rotation ?? 0 });
-        logger.info("bidder_oidc_jwk_saved", { role, vault: `${ref.mount}/${ref.path}`, issuer });
-      },
-      async getPublishedJwkPems(issuer) {
-        const held = await vault.read(ref);
-        if (!held || held.issuer !== issuer || !Array.isArray(held.previous)) return [];
-        const now = Date.now();
-        return held.previous.flatMap((p: unknown) => {
-          const k = p as { pem?: unknown; publishUntil?: unknown };
-          return typeof k.pem === "string" && Date.parse(String(k.publishUntil)) > now ? [k.pem] : [];
-        });
-      },
-    };
+    return keyVault ? vaultOidcJwkStore(keyVault, vaultMount, role, logger) : undefined;
   }
 
   function guestVault(): { kv: GuestKv; server: string; mount: string } {
@@ -408,14 +368,7 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
     if (!vault || !vaultServerRef) {
       throw new Error("the kcp provider keeps each guest's user data and provisioning record in the bidder's OpenBao; start the bidder with --identity-vault-openbao-server");
     }
-    const ref = (path: string) => ({ mount: vaultMount, path });
-    const kv: GuestKv = {
-      read: (path) => vault.read(ref(path)),
-      write: (path, data) => vault.write(ref(path), data),
-      list: (path) => vault.list(ref(path)),
-      remove: (path) => vault.remove(ref(path)),
-    };
-    return { kv, server: vaultServerRef.name, mount: vaultMount };
+    return { kv: vaultGuestKv(vault, vaultMount), server: vaultServerRef.name, mount: vaultMount };
   }
 
   async function openIngress(role: string): Promise<IngressRef> {
@@ -655,27 +608,26 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
         return createComputeProviderHooks({ provider: fc.provider });
       }
       case "kcp": {
-        const { relay, serve } = await openProviderServe("kcp");
+        const guest = guestVault();
+        const issuerUrl = ingressUrlOf((await ingressKeypair("kcp")).did(), network.ingressProxyHost);
+        logger.info("bidder_guest_endpoints", { provider: "kcp", denopod: GUEST_DENOPOD_KCP, issuerUrl });
         const kcp = createComputeProviderKcpFactory({
           logger,
           atproto: computeAtproto,
-          serve,
           credentials: { server: p.server, workspace: p.workspace, tokenFile: p.tokenFile, caFile: p.caFile },
           handle: p.handle,
-          guestVault: guestVault(),
+          guestVault: guest,
           guestHostAddress: p.guestHostAddress,
           oidcJwkStore: oidcJwkStore("kcp"),
-          getIssuerUrl: () => relay.ingressUrl,
+          getIssuerUrl: () => issuerUrl,
           guestTlsPort,
           oidcProvisioning: true,
           rbacProvisioner: createRbacProvisioner(),
           createSignedRepoRecord: signed,
           callService,
-          acceptToContract,
           contractStoreReleases: true,
         });
         kcpContracts = { client: kcp.client, accepts: kcp.accepts, handle: p.handle };
-        await serve.beginServe();
         return createComputeProviderHooks({ provider: kcp.provider });
       }
       case "denoWorker": {
@@ -713,9 +665,6 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
   }
 
   async function start(): Promise<MarketBidderAppStatus> {
-    if (spec.guestEndpoints !== "inproc") {
-      throw new Error("guest endpoints external are not composed yet; they become their own DenoPod in 0007 M5-BIDDER-COMPONENTS");
-    }
     for (const p of spec.providers) {
       const missing = missingProviderFields(p);
       if (missing.length > 0) {

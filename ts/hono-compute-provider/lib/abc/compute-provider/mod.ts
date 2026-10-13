@@ -136,7 +136,11 @@ export class GuestHostKeysRelay {
   async forward(report: { nonce: string; keys: GuestHostKey[] }, observedAt: string): Promise<GuestHostKeysAck & { id?: string | number }> {
     const id = await this.guestOf(report.nonce);
     if (id === undefined) return { ok: false, status: 404, reason: "no guest holds this provisioning token" };
+    return await this.deliver(id, report.keys, observedAt);
+  }
+
+  async deliver(id: string | number, keys: GuestHostKey[], observedAt: string): Promise<GuestHostKeysAck & { id: string | number }> {
     if (!this.#handler) return { ok: false, status: 503, reason: "no bidder listens for host keys", id };
-    return { ...(await this.#handler({ id, keys: report.keys, observedAt })), id };
+    return { ...(await this.#handler({ id, keys, observedAt })), id };
   }
 }

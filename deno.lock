@@ -1873,6 +1873,14 @@
           "jsr:@publicdomainrelay/policy-engine-cli-options@0"
         ]
       },
+      "ts/atproto-market/hono-bidder-guest": {
+        "dependencies": [
+          "jsr:@publicdomainrelay/cli-args-env@0",
+          "jsr:@publicdomainrelay/hono-factory-market-bidder-guest-app@0",
+          "jsr:@publicdomainrelay/logger@0",
+          "jsr:@publicdomainrelay/market-network-common@0"
+        ]
+      },
       "ts/atproto-market/lib/abc/compute-request": {
         "dependencies": [
           "jsr:@publicdomainrelay/market-common@0"
@@ -2050,6 +2058,7 @@
           "jsr:@publicdomainrelay/market-bidder-compute@0",
           "jsr:@publicdomainrelay/market-bidder-contract-store-fs@0",
           "jsr:@publicdomainrelay/market-bidder-contract-store-kcp@0",
+          "jsr:@publicdomainrelay/market-bidder-vault-keys@0",
           "jsr:@publicdomainrelay/market-bidder-worker@0",
           "jsr:@publicdomainrelay/market-bidder@0",
           "jsr:@publicdomainrelay/market-common@0",
@@ -2070,6 +2079,19 @@
           "jsr:@publicdomainrelay/serve@0",
           "jsr:@publicdomainrelay/utils-attestation-key@0",
           "npm:@atproto/crypto@0.5"
+        ]
+      },
+      "ts/atproto-market/lib/hono-factory-market-bidder-guest-app": {
+        "dependencies": [
+          "jsr:@publicdomainrelay/did-key-ingress-proxy@0",
+          "jsr:@publicdomainrelay/hono-factory-compute-provider-kcp@0",
+          "jsr:@publicdomainrelay/logger@0",
+          "jsr:@publicdomainrelay/market-bidder-vault-keys@0",
+          "jsr:@publicdomainrelay/market-identity-vault-openbao@0",
+          "jsr:@publicdomainrelay/market-network-common@0",
+          "jsr:@publicdomainrelay/market-network-fetch@0",
+          "jsr:@publicdomainrelay/openbao-server-kcp@0",
+          "jsr:@publicdomainrelay/serve@0"
         ]
       },
       "ts/atproto-market/lib/hono-factory-secrets-oidc": {
@@ -2124,6 +2146,14 @@
           "jsr:@publicdomainrelay/compute-provider-kcp-common@0",
           "jsr:@publicdomainrelay/compute-provider-kcp@0",
           "jsr:@publicdomainrelay/market-bidder-abc@0"
+        ]
+      },
+      "ts/atproto-market/lib/market-bidder-vault-keys": {
+        "dependencies": [
+          "jsr:@publicdomainrelay/logger@0",
+          "jsr:@publicdomainrelay/market-identity-abc@0",
+          "jsr:@publicdomainrelay/oidc-issuer-abc@0",
+          "npm:@atproto/crypto@0.5"
         ]
       },
       "ts/atproto-market/lib/market-bidder-worker": {
