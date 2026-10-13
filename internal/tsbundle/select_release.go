@@ -2,10 +2,30 @@
 
 package tsbundle
 
-import "github.com/johnandersen777/socialweb-computer-kcp/internal/clicfg"
+import (
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/buildstamp"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/clicfg"
+)
 
-func Select(vals clicfg.Values, starts ...string) (Source, error) {
-	return Embedded{FS: closureFS, Dir: closureDir}, nil
+func embedded() Embedded { return Embedded{FS: closureFS, Dir: closureDir} }
+
+func workingTree() (WorkingTree, bool) {
+	if !buildstamp.Dev() || buildstamp.SourceRoot == "" || !isCheckout(buildstamp.SourceRoot) {
+		return WorkingTree{}, false
+	}
+	return WorkingTree{Dir: buildstamp.SourceRoot, Closure: embedded()}, true
 }
 
-func Describe() Info { return Embedded{FS: closureFS, Dir: closureDir}.Info() }
+func Select(vals clicfg.Values, starts ...string) (Source, error) {
+	if w, ok := workingTree(); ok {
+		return w, nil
+	}
+	return embedded(), nil
+}
+
+func Describe() Info {
+	if w, ok := workingTree(); ok {
+		return w.Info()
+	}
+	return embedded().Info()
+}

@@ -4,18 +4,19 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 versions="$root/internal/versions/versions.json"
 blobs="$root/internal/assets/blobs"
-cache="$blobs/.cache"
+cache=""
 print_pins=0
 platforms=()
 only=()
 
 usage() {
-  echo "usage: $0 [--platform linux/amd64|linux/arm64]... [--asset NAME]... [--cache DIR] [--print-pins]" >&2
+  echo "usage: $0 [--platform linux/amd64|linux/arm64]... [--asset NAME]... [--cache DIR] [--blobs DIR] [--print-pins]" >&2
   echo "  downloads every pinned asset of versions.json, verifies its sha256 (and the upstream signature" >&2
   echo "  where one is published), repacks it as internal/assets/blobs/<goos>_<goarch>/<asset>.tar.zst and" >&2
   echo "  checks the unpacked tree against its treeSha256 pin. --print-pins prints the measured pins and" >&2
   echo "  stages even when a tree pin is missing or differs, so versions.json can be updated. --cache keeps" >&2
-  echo "  the downloads (keyed by sha256) in DIR instead of internal/assets/blobs/.cache." >&2
+  echo "  the downloads (keyed by sha256) in DIR instead of internal/assets/blobs/.cache. --blobs writes" >&2
+  echo "  <goos>_<goarch>/<asset>.tar.zst under DIR instead of internal/assets/blobs (the --dev build's cache)." >&2
   exit 2
 }
 
@@ -24,6 +25,7 @@ while [ $# -gt 0 ]; do
     --platform) platforms+=("$2"); shift 2 ;;
     --asset) only+=("$2"); shift 2 ;;
     --cache) cache="$2"; shift 2 ;;
+    --blobs) blobs="$2"; shift 2 ;;
     --print-pins) print_pins=1; shift ;;
     -h|--help) usage ;;
     *) usage ;;
@@ -38,6 +40,7 @@ if [ ${#platforms[@]} -eq 0 ]; then
   mapfile -t platforms < <(jq -r '.platforms | to_entries[] | select(.value.status == "release") | .key' "$versions")
 fi
 
+cache="${cache:-$blobs/.cache}"
 mkdir -p "$cache" "$blobs/.work"
 work="$(mktemp -d "$blobs/.work/run.XXXXXX")"
 trap 'chmod -R u+w "$work" 2>/dev/null; rm -rf "$work"' EXIT

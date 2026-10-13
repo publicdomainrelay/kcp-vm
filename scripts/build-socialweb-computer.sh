@@ -5,10 +5,34 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 build_root="$HOME/.tmp/socialweb-computer-build"
 rev="HEAD"
 platforms=()
+dev=0
+publish=""
+sync_only=0
 
 usage() {
   cat >&2 <<EOF
 usage: $0 [--platform linux/amd64|linux/arm64]... [--commit REV] [--build-root DIR]
+       $0 --dev [--platform P]... [--build-root DIR] [--publish DIR [--sync-only]]
+
+--dev builds ONE socialweb-computer of the working tree of this checkout (uncommitted changes
+included) for the host platform (or each --platform), for live runs while iterating. It reuses the
+build root's go, asset and deno caches, skips the clean checkouts and the second build, and is not
+reproducible: 'socialweb-computer version' says "dev build, non-reproducible" with the commit and the
+tree's dirty state. It embeds every pinned asset (staged once per versions.json under
+dev/assets/<sha256>; socialweb-vmexec is built from the working tree on every build) and a closure
+cmd/socialweb-tsbundle builds from the working tree (its deno.lock included, unpinned to a commit;
+its entries are not started here, the live run starts them).
+At run time the binary runs the TypeScript from the source root it was built with, live, and seeds
+each DENO_DIR from that closure: 'socialweb-computer dev restart <instance> [<app>/]<denopod>' picks
+up a TypeScript change without a rebuild. Output: dev/<worktree>/<goos>_<goarch>/socialweb-computer
+(and dev/<worktree>/socialweb-computer for the host platform).
+
+  --publish DIR  also copy the host binary to DIR/bin/socialweb-computer and mirror the working tree
+                 (tracked and untracked files git does not ignore) to DIR/src, readable by every
+                 account (chmod a+rX), and build the binary to run the TypeScript from DIR/src: an
+                 account such as test-0001 that cannot read this checkout runs from there
+  --sync-only    with --publish: only mirror the working tree to DIR/src again (no build), before a
+                 dev restart of a DenoPod
 
 Builds the release socialweb-computer binary (plan 0006 M4-BUILD) for each release platform of
 internal/versions/versions.json, twice, from clean checkouts of one commit, and refuses to publish a
@@ -42,6 +66,9 @@ while [ $# -gt 0 ]; do
     --platform) platforms+=("$2"); shift 2 ;;
     --commit) rev="$2"; shift 2 ;;
     --build-root) build_root="$2"; shift 2 ;;
+    --dev) dev=1; shift ;;
+    --publish) publish="$2"; shift 2 ;;
+    --sync-only) sync_only=1; shift ;;
     -h|--help) usage ;;
     *) usage ;;
   esac
@@ -63,6 +90,14 @@ case "$build_root" in
 esac
 
 versions="$root/internal/versions/versions.json"
+
+if [ "$dev" = 1 ]; then
+  exec "$root/scripts/build-socialweb-computer-dev.sh" "$root" "$build_root" "$publish" "$sync_only" "${platforms[@]}"
+fi
+if [ -n "$publish" ] || [ "$sync_only" = 1 ]; then
+  die "--publish and --sync-only go with --dev"
+fi
+
 if [ ${#platforms[@]} -eq 0 ]; then
   mapfile -t platforms < <(jq -r '.platforms | to_entries[] | select(.value.status == "release") | .key' "$versions")
 fi

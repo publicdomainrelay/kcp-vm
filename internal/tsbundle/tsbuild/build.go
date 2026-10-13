@@ -93,6 +93,7 @@ type BuildOptions struct {
 	Deno         string
 	Release      bool
 	Offline      bool
+	SkipProbe    bool
 	Epoch        int64
 	Work         string
 	Out          string
@@ -190,6 +191,15 @@ func Build(ctx context.Context, o BuildOptions) (tsbundle.Manifest, error) {
 	m.Release, m.Offline = o.Release, o.Offline
 	m.Repos, m.Lockfiles = repos, lockRecs
 	o.logf("archive %d bytes, tree %s; starting every entry from the extracted tree", m.ArchiveBytes, m.TreeSHA256)
+	if o.SkipProbe {
+		if o.Release {
+			return m, errors.New("tsbundle: a release starts every entry; -probe=false is for dev builds")
+		}
+		for _, e := range o.Entries {
+			m.Entries = append(m.Entries, tsbundle.EntryRecord{EntrySpec: e, Reason: "not started (-probe=false)"})
+		}
+		return m, WriteBundle(o.Out, archive, m)
+	}
 	m.Entries, err = probe(ctx, o, work, archive, m)
 	if err != nil {
 		return m, err

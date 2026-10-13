@@ -37,11 +37,12 @@ func main() {
 	work := flag.String("work", "", "the staging directory; empty is a temporary one removed afterwards")
 	release := flag.Bool("release", false, "refuse a dirty staged path, a created or drifted lockfile, and an entry that does not start offline")
 	offline := flag.Bool("offline", true, "start every entry under unshare -rn")
+	probe := flag.Bool("probe", true, "start every entry from the extracted tree; false skips it (dev builds only, refused with -release)")
 	epoch := flag.String("source-date-epoch", os.Getenv("SOURCE_DATE_EPOCH"), "tar mtime and cache time; empty is the commit time of the checkout's HEAD")
 	allow := flag.String("allow-import", "", "comma-separated hosts deno may import from while filling, replacing its defaults")
 	flag.Parse()
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	err := run(ctx, *sourceRoot, *entries, *deno, *out, *work, *release, *offline, *epoch, *allow)
+	err := run(ctx, *sourceRoot, *entries, *deno, *out, *work, *release, *offline, *probe, *epoch, *allow)
 	stop()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "socialweb-tsbundle: %v\n", err)
@@ -49,7 +50,7 @@ func main() {
 	}
 }
 
-func run(ctx context.Context, sourceRoot, entries, deno, out, work string, release, offline bool, epoch, allow string) error {
+func run(ctx context.Context, sourceRoot, entries, deno, out, work string, release, offline, probe bool, epoch, allow string) error {
 	var root string
 	var err error
 	if sourceRoot != "" {
@@ -86,7 +87,7 @@ func run(ctx context.Context, sourceRoot, entries, deno, out, work string, relea
 			return fmt.Errorf("-source-date-epoch %q is not a positive unix time", epoch)
 		}
 	}
-	if offline {
+	if offline && probe {
 		if err := exec.Command("unshare", "-rn", "true").Run(); err != nil {
 			return fmt.Errorf("-offline needs unshare -rn (%v); pass -offline=false to start entries with the network up", err)
 		}
@@ -101,7 +102,7 @@ func run(ctx context.Context, sourceRoot, entries, deno, out, work string, relea
 	if allow != "" {
 		hosts = strings.Split(allow, ",")
 	}
-	m, err := tsbuild.Build(ctx, tsbuild.BuildOptions{Root: root, Entries: specs, Deno: deno, Release: release, Offline: offline,
+	m, err := tsbuild.Build(ctx, tsbuild.BuildOptions{Root: root, Entries: specs, Deno: deno, Release: release, Offline: offline, SkipProbe: !probe,
 		Epoch: sde, Work: work, Out: out, AllowImport: hosts, Log: os.Stderr})
 	if err != nil {
 		return err

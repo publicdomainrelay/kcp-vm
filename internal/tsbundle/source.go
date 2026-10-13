@@ -126,6 +126,7 @@ type Info struct {
 	TreeSHA256   string `json:"treeSha256,omitempty"`
 	ArchiveBytes int64  `json:"archiveBytes,omitempty"`
 	Deno         string `json:"deno,omitempty"`
+	SourceRoot   string `json:"sourceRoot,omitempty"`
 	Error        string `json:"error,omitempty"`
 }
 
