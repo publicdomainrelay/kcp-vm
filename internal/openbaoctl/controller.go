@@ -57,7 +57,20 @@ type Config struct {
 	StateDir   string
 	Prefix     string
 	Interval   time.Duration
+	Env        []v1alpha1.HostProcessEnv
 	Log        *slog.Logger
+}
+
+var OutboundEnvNames = []string{"HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "SSL_CERT_FILE"}
+
+func OutboundEnv(getenv func(string) string) []v1alpha1.HostProcessEnv {
+	var out []v1alpha1.HostProcessEnv
+	for _, n := range OutboundEnvNames {
+		if v := getenv(n); v != "" {
+			out = append(out, v1alpha1.HostProcessEnv{Name: n, Value: v})
+		}
+	}
+	return out
 }
 
 type Controller struct {
@@ -171,6 +184,7 @@ func (c *Controller) childSpec(o v1alpha1.OpenBaoServer, dir, key string) v1alph
 	if o.Spec.Log != "" {
 		spec.Output = &v1alpha1.HostProcessOutput{Stdout: o.Spec.Log, Stderr: o.Spec.Log, CapBytes: LogCapBytes}
 	}
+	spec.Env = append(spec.Env, c.c.Env...)
 	return spec
 }
 
