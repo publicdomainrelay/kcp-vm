@@ -31,7 +31,7 @@ Every tagged release publishes Linux binaries and the guest image to a public bu
 | `releases/<version>/guest-image/firecracker-x86_64/` | `vmlinux`, `rootfs.ext4` and `image.json`: the guest image a bidder's VMs boot. |
 | `releases/<version>/manifest.json` | Every file under the version, with its size and sha256. |
 
-`<version>` is a git tag, for example `v0.0.0-rc0`. `main/<commit>/` holds every build of `main`, and `main/latest/` is a copy of the newest one.
+`<version>` is a git tag, for example `v0.0.0-rc0`. Only `releases/` is readable without credentials. `main/<commit>/` holds every build of `main`, and `main/latest/` is a copy of the newest one, but both answer `403 AccessDenied` to an anonymous reader: use a release.
 
 Take the newest release, verify it, and put it on your PATH:
 
@@ -52,7 +52,7 @@ If `~/.local/bin` is not on your PATH, add it, or install to `/usr/local/bin` in
 
 `socialweb-computer version` prints the build, the commit and the sha256 of every asset in the binary. The release tag is in `binaries/release.json` and `manifest.json`.
 
-To pin a version instead of taking the newest, set `V` yourself: `V=v0.0.0-rc0`. For the newest build of `main` rather than a tagged release, use `main/latest` as the prefix and skip the lookup: `BASE=$BUCKET/main/latest`, then replace `releases/$V` with `main/latest` in the URLs below.
+To pin a version instead of taking the newest, set `V` yourself: `V=v0.0.0-rc0`.
 
 `socialweb-computer install gateway`, `install bidder` and `upgrade --binary --sha256` take this same file and its sha256: `SHA=$(grep " socialweb-computer-$ARCH\$" SHA256SUMS | cut -d' ' -f1)`.
 
