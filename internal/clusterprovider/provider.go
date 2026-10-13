@@ -322,7 +322,12 @@ func (p *Provider) reconcile(ctx context.Context, ref Ref, with func(*materialis
 	if !p.opts.WriteStatus {
 		return pass, nil
 	}
-	if err := p.opts.Registry.WriteStatus(ctx, ref, statusOf(cl, res)); err != nil {
+	bootstrapping := res.Phase == readyPhase && p.opts.OnReady != nil && !p.readyDone(o.Cluster.Name)
+	status := statusOf(cl, res)
+	if bootstrapping {
+		status.Phase = v1alpha1.ClusterInitializing
+	}
+	if err := p.opts.Registry.WriteStatus(ctx, ref, status); err != nil {
 		pass.Err = err
 		return pass, err
 	}
@@ -341,7 +346,7 @@ func (p *Provider) reconcile(ctx context.Context, ref Ref, with func(*materialis
 		pass.Unfinalized = true
 	}
 
-	if res.Phase == readyPhase && p.opts.OnReady != nil && !p.readyDone(o.Cluster.Name) {
+	if bootstrapping {
 		after := cl.DeepCopy()
 		after.Status = statusOf(cl, res)
 		if err := p.opts.OnReady(ctx, ref, after); err != nil {
@@ -349,6 +354,10 @@ func (p *Provider) reconcile(ctx context.Context, ref Ref, with func(*materialis
 			return pass, err
 		}
 		p.markReadyDone(o.Cluster.Name)
+		if err := p.opts.Registry.WriteStatus(ctx, ref, after.Status); err != nil {
+			pass.Err = err
+			return pass, err
+		}
 	}
 	return pass, nil
 }

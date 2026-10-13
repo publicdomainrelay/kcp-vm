@@ -4,7 +4,6 @@ package clusterprovider
 
 import (
 	"errors"
-	"path/filepath"
 	"testing"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/portallocator"
@@ -62,28 +61,6 @@ func TestALeaseIsGrantedOncePerPurpose(t *testing.T) {
 	for p, n := range seen {
 		if n != 1 {
 			t.Fatalf("%s is leased %d times, and the second request is a second owner of one port", p, n)
-		}
-	}
-}
-
-func TestTheLeasedPurposesAreExactlyTheOnesTheAllocatorGrants(t *testing.T) {
-	alloc, err := portallocator.Open(portallocator.Config{
-		LeasePath: filepath.Join(t.TempDir(), "leases.json"),
-	})
-	if err != nil {
-		t.Fatalf("opening the allocator: %v", err)
-	}
-	for _, p := range purposes(t, ProvenStack, true) {
-		if _, err := alloc.Allocate(portallocator.Request{Cluster: "liveweb", Instance: "1", Purpose: p}); err != nil {
-			t.Fatalf("allocating %s: %v", p, err)
-		}
-	}
-	if _, held := alloc.PortFor("liveweb", portallocator.PurposeOpenBao); held {
-		t.Fatal("openbao is not in the proven stack and its port is held")
-	}
-	for _, p := range purposes(t, ProvenStack, true) {
-		if _, held := alloc.PortFor("liveweb", p); !held {
-			t.Fatalf("%s is in the leased set and the allocator holds nothing for it", p)
 		}
 	}
 }

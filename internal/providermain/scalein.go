@@ -36,14 +36,16 @@ func (h *nodeHosts) observeHeld(observe observeCluster) observeCluster {
 		}
 		held := h.heldNames(cluster)
 		now := time.Now()
+		reported := make(map[string]bool, len(o.Placement.Nodes))
 		for i := range o.Placement.Nodes {
 			nd := &o.Placement.Nodes[i]
+			reported[nd.Name] = true
 			nd.Held = held[nd.Name]
 			if seen := h.observedReadySince(cluster, nd.Name, nd.Ready, now); nd.Ready && seen.After(nd.ReadySince) {
 				nd.ReadySince = seen
 			}
 		}
-		o.InFlight = h.inFlight(ctx, cluster)
+		o.InFlight = h.inFlight(cluster, reported)
 		return o, nodes + o.InFlight, nil
 	}
 }
