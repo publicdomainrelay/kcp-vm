@@ -151,17 +151,40 @@ anything.
 
 ## How to verify
 
-- `deploy/check.sh --fast` on every change: gofmt, go build, apigen generate and its diff (generated
-  code must match its source), go vet, `deno task check`, `deno install --frozen`, the cross-OS builds
-  and the release builds. `--local` and `--full` run the live proofs this host can run.
-- `deno task check` type-checks every entry of `deploy/ts-entries.yaml` from the root workspace.
-- The release closure: `go run ./cmd/socialweb-tsbundle -release -deno ~/.deno/bin/deno -out <dir>`.
-  It needs a committed, clean tree and a current `deno.lock`, and it starts every entry offline.
-- The release binary: `scripts/build-socialweb-computer.sh` builds one commit twice per linux release
-  platform from clean checkouts (every asset staged and pinned, the closure, `-tags release`) and
-  publishes a platform only when both builds are byte-identical. Checkouts, caches and outputs stay
-  under `~/.tmp/socialweb-computer-build`; `release/<commit>/` holds the binaries and `SHA256SUMS`
-  that `install` and `upgrade --binary --sha256` take.
+- While iterating, build only what you touched: `go build ./internal/<pkg>/... ./cmd/socialweb-computer`
+  and `deno check <the entry you changed>` (`deploy/ts-entries.yaml`). Do not run the full gate per
+  change.
+- The full gate runs ONCE, right before "ready": `go build ./...`, `go vet ./...`, `deno task check`,
+  `deploy/check.sh --fast` and the release closure. The lead runs it again on merge.
+  - `deploy/check.sh --fast`: gofmt, go build, apigen generate and its diff (generated code must
+    match its source), go vet, `deno task check`, `deno install --frozen`, the cross-OS builds and the
+    release builds. `--local` and `--full` run the live proofs this host can run.
+  - `deno task check` type-checks every entry of `deploy/ts-entries.yaml` from the root workspace.
+  - The release closure: `go run ./cmd/socialweb-tsbundle -release -deno ~/.deno/bin/deno -out <dir>`.
+    It needs a committed, clean tree and a current `deno.lock`, and it starts every entry offline.
+- The binary for live runs: `scripts/build-socialweb-computer.sh --dev --publish /var/tmp/<work>`.
+  One build of the working tree (uncommitted changes included), host platform, warm caches: about
+  8 s after a one-line Go change or a one-line TypeScript change. It embeds every asset, so a live run
+  needs no `SOCIALWEB_*_PATH` and no `--source-root`. `socialweb-computer version` says "dev build,
+  not reproducible" with the commit and the dirty state. The binary runs the TypeScript live from
+  `<publish>/src` (the mirror of the working tree that test-0001 can read; without `--publish`, the
+  checkout itself). Output: `~/.tmp/socialweb-computer-build/dev/<worktree>/`. The first `--dev`
+  build on a host stages every asset once (about 3.5 minutes); later builds stage only an asset whose
+  `versions.json` entry changed.
+- A TypeScript change in a running market network: `scripts/build-socialweb-computer.sh --dev
+  --publish /var/tmp/<work> --sync-only` (mirrors the tree, about 1 s), then
+  `socialweb-computer dev restart <instance> [<app>/][<workspace>:]<denopod>` (as the account that
+  runs the network). It restarts that one DenoPod through its kcp object, waits until it is Running
+  with its listeners reported, and prints the old and new pid and run directory (`stdout.txt` and
+  `stderr.txt` are the pod's log). Then rerun `run request`. Do not `dev down`/`dev up` for a
+  TypeScript change, and do not rebuild the binary for one. The PLC directory and the PDSes keep
+  their state in memory: do not `dev restart` plc or a PDS (it empties them); `dev down`/`dev up` instead.
+- The release binary (prod only; the lead builds it): `scripts/build-socialweb-computer.sh` without
+  `--dev` builds one commit twice per linux release platform from clean checkouts (every asset
+  staged and pinned, the closure, `-tags release`) and publishes a platform only when both builds are
+  byte-identical, about 6.5 minutes a build. Checkouts, caches and outputs stay under
+  `~/.tmp/socialweb-computer-build`; `release/<commit>/` holds the binaries and `SHA256SUMS` that
+  `install` and `upgrade --binary --sha256` take. Never build it in the inner loop.
 
 ## Where and how to work
 
@@ -176,6 +199,17 @@ anything.
 - Plans live in `docs/plans`. Flip an item's status only. Do not add evidence lists; the git history is
   the evidence.
 - The original repositories in the org root are frozen. Never edit them for a path under `ts/`.
+- Rebase on `origin/main` often (`git fetch && git rebase origin/main`). When a rebase stops on
+  conflicts, run `scripts/regen-after-rebase.sh`: it takes one side of every conflicted generated
+  file (the apigen outputs: schemas and exports under `deploy/`, the TypeScript wire types and
+  fixtures; and `deno.lock`), reruns `go generate ./api/...` (and `deno install`), stages them and
+  prints the hand-written conflicts left. Never hand-merge generated output. Resolve a conflict in
+  `api/v1alpha1` first; the script says so. `deploy/apiresourceschema-revisions.txt` merges itself
+  (`merge=union`); when two branches changed one schema under one revision, the script keeps the
+  upstream line and the generator asks for a Revision bump.
+- Live runs: your own market network only, run as the VM account (test-0001) from the binary and the
+  mirror that `--dev --publish /var/tmp/<work>` wrote, with an instance name and bidder handle unique to
+  your work. Keep the network up for the whole item; clean up only your own units and VMs.
 
 ## The loop
 
@@ -192,8 +226,14 @@ anything.
 
 - Never end a turn with a build, test or container run in flight. Background a long command and
   keep working, or wait for it, but do not hand back a turn that says "still running".
-- Parallelize reads, greps and edits. SERIALIZE builds, tests and container runs: 16 cores, shared
-  ports, one liveport lock. Cap how many heavy agents run at once.
+- Never block the foreground on a long run. Start a live run (`dev up`, `run bidder`, `run request`)
+  or a build with run_in_background and wait for its completion notification, or watch its log with
+  the Monitor tool (filter for the success line AND the failure lines). Foreground `until` loops
+  only for waits under about a minute; no `sleep N; tail` chains. Do other work (docs, the next
+  commit) while it runs.
+- Parallelize reads, greps and edits. Live runs go in parallel too: every listener binds port 0, and
+  the VM account test-0001 has 16 VM slots that vmruntime hands out under a per-account lock (no
+  whole-run lock; test-0001 linger stays on). Keep heavy builds few: 16 cores.
 - Launch subagents for parallel work, then verify the artefact (the file, the exit code, the log
   line) rather than the summary.
 - Nested subagents hit a depth limit. Do not spawn a subagent from inside a subagent; do that

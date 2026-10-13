@@ -123,13 +123,29 @@ blob_of() {
 } 9>"$shared_blobs/.lock"
 for plat in "${platforms[@]}"; do
   tree_assets=()
+  built=()
   for asset in $(jq -r --arg p "$plat" '.platforms[$p].assets[]' "$versions"); do
-    from_tree "$asset" "$plat" && tree_assets+=(--asset "$asset")
+    from_tree "$asset" "$plat" || continue
+    spec="$(jq -c --arg a "$asset" --arg p "$plat" '.assets[$a].fetch[$p]' "$versions")"
+    probe="$dev_root/tree-bin/${plat/\//_}/$asset"
+    mkdir -p "$(dirname "$probe")"
+    (cd "$root/$(echo "$spec" | jq -r '.module // "."')" && GOOS="${plat%/*}" GOARCH="${plat#*/}" go build -trimpath \
+      -buildvcs=false -ldflags='-s -w -buildid=' -o "$probe" "$(echo "$spec" | jq -r .package)")
+    sum="$(sha_of "$probe")"
+    if [ -f "$(blob_of "$plat" "$asset")" ] && [ "$(cat "$probe.staged" 2>/dev/null)" = "$sum" ]; then
+      continue
+    fi
+    tree_assets+=(--asset "$asset")
+    built+=("$probe:$sum")
   done
   [ ${#tree_assets[@]} -gt 0 ] || continue
+  say "stage ${tree_assets[*]} for $plat (built from the working tree, changed)"
   "$root/scripts/stage-assets.sh" --cache "$cache/assets" --blobs "$own_blobs" --platform "$plat" \
     "${tree_assets[@]}" --print-pins >"$dev_root/tree-assets-pins.json" 2>"$dev_root/tree-assets-stage.log" \
     || die "staging ${tree_assets[*]} failed: $(tail -3 "$dev_root/tree-assets-stage.log")"
+  for b in "${built[@]}"; do
+    echo "${b##*:}" >"${b%:*}.staged"
+  done
   if grep -q 'versions.json pins' "$dev_root/tree-assets-stage.log"; then
     say "warn: $(grep 'versions.json pins' "$dev_root/tree-assets-stage.log" | cut -d' ' -f2 | tr '\n' ' ')built from the working tree differ from their versions.json pins (a release build refuses them)"
   fi
