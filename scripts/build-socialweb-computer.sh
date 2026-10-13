@@ -17,9 +17,10 @@ usage: $0 [--platform linux/amd64|linux/arm64]... [--commit REV] [--build-root D
 --dev builds ONE socialweb-computer of the working tree of this checkout (uncommitted changes
 included) for the host platform (or each --platform), for live runs while iterating. It reuses the
 build root's go, asset and deno caches, skips the clean checkouts and the second build, and is not
-reproducible: 'socialweb-computer version' says "dev build, non-reproducible" with the commit and the
+reproducible: 'socialweb-computer version' says "dev build, not reproducible" with the commit and the
 tree's dirty state. It embeds every pinned asset (staged once per versions.json under
-dev/assets/<sha256>; socialweb-vmexec is built from the working tree on every build) and a closure
+dev/assets/<goos>_<goarch>/<asset>-<sha256 of its versions.json entry>; the assets built from
+this repository (fetch kind go, such as socialweb-vmexec) are built from the working tree each time) and a closure
 cmd/socialweb-tsbundle builds from the working tree (its deno.lock included, unpinned to a commit;
 its entries are not started here, the live run starts them).
 At run time the binary runs the TypeScript from the source root it was built with, live, and seeds

@@ -40,7 +40,8 @@ mirror() {
     | awk '{ n = split($0, p, "/"); d = ""; for (i = 1; i < n; i++) { d = d "/" p[i]; if (!(d in seen)) { seen[d] = 1; print d "/" } } print "/" $0 }' \
     >"$list"
   rsync -a --delete --delete-excluded --include-from="$list" --exclude='*' "$root/" "$dst/"
-  chmod -R a+rX "$1"
+  chmod a+rx "$1"
+  chmod -R a+rX "$dst"
   say "mirrored $(grep -vc '/$' "$list") files of $root to $dst ($(elapsed)s)"
 }
 
@@ -85,39 +86,58 @@ dirty=false
 [ "$changed" = 0 ] || dirty=true
 say "worktree $root at $commit (dirty $dirty, $changed changed paths), platforms ${platforms[*]}, go $have_go"
 
-assets_key="$(jq -cS '{assets, platforms}' "$versions" | sha256sum | cut -d' ' -f1)"
-shared_blobs="$build_root/dev/assets/$assets_key"
+shared_blobs="$build_root/dev/assets"
 own_blobs="$dev_root/blobs"
 mkdir -p "$shared_blobs" "$own_blobs"
+from_tree() {
+  [ "$(jq -r --arg a "$1" --arg p "$2" '.assets[$a].fetch[$p].kind // ""' "$versions")" = go ]
+}
+blob_of() {
+  local plat="$1" asset="$2"
+  if from_tree "$asset" "$plat"; then
+    echo "$own_blobs/${plat/\//_}/$asset.tar.zst"
+    return
+  fi
+  echo "$shared_blobs/${plat/\//_}/$asset-$(jq -cS --arg a "$asset" '.assets[$a]' "$versions" | sha256sum | cut -c1-16).tar.zst"
+}
 {
   flock 9
   for plat in "${stage_plats[@]}"; do
     key="${plat/\//_}"
     missing=()
     for asset in $(jq -r --arg p "$plat" '.platforms[$p].assets[]' "$versions"); do
-      [ "$asset" = socialweb-vmexec ] && continue
-      [ -f "$shared_blobs/$key/$asset.tar.zst" ] || missing+=(--asset "$asset")
+      from_tree "$asset" "$plat" && continue
+      [ -f "$(blob_of "$plat" "$asset")" ] || missing+=(--asset "$asset")
     done
     if [ ${#missing[@]} -gt 0 ]; then
-      say "stage ${missing[*]} for $plat into $shared_blobs (once per versions.json)"
-      "$root/scripts/stage-assets.sh" --cache "$cache/assets" --blobs "$shared_blobs" --platform "$plat" "${missing[@]}"
+      say "stage ${missing[*]} for $plat into $shared_blobs (once per versions.json entry of the asset)"
+      rm -rf "$shared_blobs/.stage"
+      "$root/scripts/stage-assets.sh" --cache "$cache/assets" --blobs "$shared_blobs/.stage" --platform "$plat" "${missing[@]}"
+      mkdir -p "$shared_blobs/$key"
+      for f in "$shared_blobs/.stage/$key"/*.tar.zst; do
+        mv -f "$f" "$(blob_of "$plat" "$(basename "$f" .tar.zst)")"
+      done
+      rm -rf "$shared_blobs/.stage"
     fi
   done
-} 9>"$shared_blobs.lock"
+} 9>"$shared_blobs/.lock"
 for plat in "${platforms[@]}"; do
-  if jq -e --arg p "$plat" '.platforms[$p].assets | index("socialweb-vmexec")' "$versions" >/dev/null; then
-    "$root/scripts/stage-assets.sh" --cache "$cache/assets" --blobs "$own_blobs" --platform "$plat" \
-      --asset socialweb-vmexec --print-pins >"$dev_root/vmexec-pins.json" 2>"$dev_root/vmexec-stage.log" \
-      || die "staging socialweb-vmexec failed: $(tail -3 "$dev_root/vmexec-stage.log")"
-    if grep -q 'versions.json pins' "$dev_root/vmexec-stage.log"; then
-      say "warn: socialweb-vmexec of the working tree differs from its versions.json pin (a release build refuses it)"
-    fi
+  tree_assets=()
+  for asset in $(jq -r --arg p "$plat" '.platforms[$p].assets[]' "$versions"); do
+    from_tree "$asset" "$plat" && tree_assets+=(--asset "$asset")
+  done
+  [ ${#tree_assets[@]} -gt 0 ] || continue
+  "$root/scripts/stage-assets.sh" --cache "$cache/assets" --blobs "$own_blobs" --platform "$plat" \
+    "${tree_assets[@]}" --print-pins >"$dev_root/tree-assets-pins.json" 2>"$dev_root/tree-assets-stage.log" \
+    || die "staging ${tree_assets[*]} failed: $(tail -3 "$dev_root/tree-assets-stage.log")"
+  if grep -q 'versions.json pins' "$dev_root/tree-assets-stage.log"; then
+    say "warn: $(grep 'versions.json pins' "$dev_root/tree-assets-stage.log" | cut -d' ' -f2 | tr '\n' ' ')built from the working tree differ from their versions.json pins (a release build refuses them)"
   fi
 done
 say "assets staged ($(elapsed)s)"
 
 hostkey="${hostplat/\//_}"
-deno_blob="$shared_blobs/$hostkey/deno.tar.zst"
+deno_blob="$(blob_of "$hostplat" deno)"
 deno_dir="$dev_root/deno/$(sha_of "$deno_blob")"
 if [ ! -x "$deno_dir/deno" ]; then
   rm -rf "$dev_root/deno"
@@ -168,9 +188,8 @@ for plat in "${platforms[@]}"; do
   mkdir -p "$out"
   overlay="$dev_root/overlay-$key.json"
   {
-    for f in "$shared_blobs/$key"/*.tar.zst "$own_blobs/$key"/*.tar.zst; do
-      [ -f "$f" ] || continue
-      jq -n --arg k "$root/internal/assets/blobs/$key/$(basename "$f")" --arg v "$f" '{($k): $v}'
+    for asset in $(jq -r --arg p "$plat" '.platforms[$p].assets[]' "$versions"); do
+      jq -n --arg k "$root/internal/assets/blobs/$key/$asset.tar.zst" --arg v "$(blob_of "$plat" "$asset")" '{($k): $v}'
     done
     for f in closure.tar.zst manifest.json.zst; do
       jq -n --arg k "$root/internal/tsbundle/closure/$key/$f" --arg v "$dev_root/closure/$f" '{($k): $v}'
@@ -190,6 +209,7 @@ if [ -n "$publish" ]; then
   mkdir -p "$publish/bin"
   cp -f "$dev_root/$hostkey/socialweb-computer" "$publish/bin/socialweb-computer.new"
   mv -f "$publish/bin/socialweb-computer.new" "$publish/bin/socialweb-computer"
+  chmod a+rx "$publish/bin" "$publish/bin/socialweb-computer"
   mirror "$publish"
   say "published $publish/bin/socialweb-computer, TypeScript from $publish/src"
 fi
