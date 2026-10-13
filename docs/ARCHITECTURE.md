@@ -3851,11 +3851,11 @@ refutation.
   `--allow-run=dumbpipe` 17:26:07Z-17:26:44Z ran `echo SWC_GUEST_OK; hostname` in guest
   `fc-4a6d2f4f1847-1b49ba68` over `dumbpipe connect <ticket>` (exit 0, vm.delete 200); the same CLI
   with the env allow-list and the dialer socket, no `--allow-run`, 17:50:41Z-17:51:26Z, guest
-  `fc-190fabcd2c04-89e62991`, exit 0, vm.delete 200; `run gateway ssh --network sgnet` Ready at
-  18:02:26Z in 48 s (listeners 127.0.0.1:36867 http and 127.0.0.1:45217 ssh, iroh-dial Running), the
-  DenoPod argv `--allow-net --allow-env=<17 names> --allow-sys`, no `-A`, `--allow-run` or `--allow-ffi`;
-  an ssh session through it 18:02:26Z-18:02:48Z ran in guest `fc-e877e38cea57-1a8d629d`, exit 0,
-  vm.delete 200.
+  `fc-190fabcd2c04-89e62991`, exit 0, vm.delete 200; `run gateway ssh --network sgnet` on head ec8d56d4
+  Ready at 18:14:20Z (listeners 127.0.0.1:44747 http and 127.0.0.1:33393 ssh, iroh-dial Running), the
+  DenoPod argv `--allow-net --allow-env=<17 names> --allow-sys=hostname`, no `-A`, `--allow-run` or
+  `--allow-ffi`; an ssh session through it 18:14:20Z-18:14:42Z ran in guest `fc-666488117425-373efffe`,
+  exit 0, vm.delete 200; `dev down` left no process and no VM unit.
 
 - **NetworkPolicies were not enforced on market nodes; fixed in the image builder on 2026-10-10.
   PROVEN ON THE LOCAL MARKET NETWORK, prod pending (plan 0005 M5-NETPOL).** Prod read over debug ssh at
