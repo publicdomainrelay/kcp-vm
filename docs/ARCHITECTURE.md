@@ -6939,6 +6939,33 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   that; vm.delete 200 at 15:03:08Z, no VM unit left; `dev down` left no process. With two bidders, the
   only-me bidder's net-only gha-lite scope gate rejected an unassociated requester's RFP at 15:12:05Z, the
   open bidder bid and won, and 643 samples at 100 ms of both bidders' deno processes saw no child process.
+- **A killed, restarted or logged-out installed bidder keeps its VM; a user-manager restart is a reboot
+  (plan 0007 M6-LIVE-RECOVERY, 2026-10-12).** The installed path (`install bidder`, host-backend
+  systemd-user) ran live for the first time and needed: the account reads its own install record
+  (world-readable, no secret) instead of swc-bidder's; the handle directories belong to the account; the
+  MarketBidder root object is applied once the application controller installed its API; an installed
+  account joins a market network only over the atproto market protocol, with `"profile":
+  "market-network"` and `"market-network-file"` (the MarketNetwork status, which now names
+  `bidderPdsUrl`) in its `config.json`. A user-manager restart re-binds every port-0 listener, so: a
+  port-0 front records the address it bound in its state file and binds it again when it starts with
+  no inherited socket (the fd store is gone), falling back to port 0 if it is taken; a core start
+  re-points every APIExportEndpointSlice at the front and the deno runtime re-reads the endpoints on
+  each informer retry; an OpenBaoServer whose process is gone (IdentityMismatch, ManagerRestarted) is
+  placed again on its storage. The VM tree audit pins every executable of a runtime set directory named
+  by a VM asset's pinned tree digest, so pasta's own pasta.avx2 passes. Reading on hat-8 (stand-in
+  account test-0002 with its own subuid range 1703936-1966079, release binary of 24a8a998, market
+  network lrnet, each case renting through `run request --network --secrets --hold` and reading the
+  secret in the guest): (a) `systemctl --user kill -s KILL` of the bidder's main process at
+  16:58:52.6Z, bidder back 9.0 s later; (b) `systemctl --user restart` at 17:01:10.5Z, back 7.5 s
+  later; (c) every login session of test-0002 ended with linger on at 17:03:46Z, the same core
+  process kept running. In (a)-(c) the ComputeVM stayed Running with the same unit InvocationID, VMM
+  pid and start ticks, the tree audit passed before and after, the issuer URLs and the did were the
+  same, onNetwork was accepted, vm.delete answered 200 and no VM unit or work dir was left. (d)
+  `systemctl restart user@946` at 17:06:24.8Z: the ComputeVM was Lost(UnitGone) 9.8 s later and no VM
+  unit started, the front kept 127.0.0.1:36761, the bidder was back 19 s later, ended the contract with
+  vm.terminated and released the Lost ComputeVM itself (M4-TERMINATION-EVENT), a new RFP rented a
+  replacement (audit passed), and the late vm.delete of the old receipt and the replacement's both
+  answered 200 with nothing left.
 
 ## 16. Vocabulary
 
