@@ -1,187 +1,126 @@
 # socialweb-computer-kcp
 
-Virtual Kubernetes clusters whose k3s **nodes** scale to zero while the control plane stays live.
+Virtual k3s clusters. Nodes = VMs rented on atproto compute market (RFP -> bid -> accept -> cloud-init). Nodes scale to zero; control plane stays up. One binary: `socialweb-computer`. Each app (bidder, requester, gateway, market network) = own kcp + manifest set + profile.
+
+Design: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Agents: [`AGENTS.md`](AGENTS.md). Plans: [`docs/plans/`](docs/plans/).
 
 ```
-per virtual cluster:
-  kine over an external store      <- the datastore
-  k3s server --disable-agent       <- the apiserver. NOT a node. Always up.
-  k3s agent(s)                     <- the ONLY nodes. 0 or 1. Provisioned on apply.
+requester --RFP--> relay/PDS <--bid-- bidder (own kcp: MarketBidder, Bid, ComputeVM)
+    |  accept                                  |  cloud-init user_data
+    v                                          v
+gateway (own kcp: Gateway, Cluster, NodeClaim)  firecracker VM = k3s node
+    tenant k3s apiserver (kine + front) <------ node joins over iroh link
 ```
-
-**Everything is in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).** The objective, the architecture, every ADR, the decision register, the security register, the measurements, the lessons, what is built, what is not, and what is blocked. One design document on purpose: it was twenty-six, they drifted out of agreement, and the drift was invisible from a green test suite. Two directories sit beside it and are deliberately NOT design documents: [`docs/plans/`](docs/plans/) is the numbered plan series for work in flight, and [`docs/gitlab/`](docs/gitlab/) is operator recipes for running GitLab against a tenant cluster. A plan is a work list and is expected to go stale; the architecture document is the thing that must not.
-
-Agents working in this repo should read [`AGENTS.md`](AGENTS.md) first; it points at the one small file that answers each question.
-
-## Prerequisites
-
-- Linux with systemd >= 253 and a lingering user manager (the host contract, `docs/host-contract.md`).
-  The gateway and bidder hosts need no container runtime: the gateway runs no containers.
-- A gateway host needs no `/dev/kvm` and no `/dev/net/tun`: a node is a VM rented from the compute
-  market and built by the winning bidder's cloud-init, so nothing about it runs on the gateway (see
-  "Nodes"). A bidder host needs both (`check-host -role bidder`).
-- A Go toolchain newer than `go.mod`, deno, and docker or podman (the `swc-userns-stage` asset and
-  the guest image builds), for building.
 
 ## Build
 
 ```bash
-scripts/build-socialweb-computer.sh --dev                     # one build of the working tree
-scripts/build-socialweb-computer.sh --platform linux/amd64 --commit "$(git rev-parse HEAD)"
+scripts/build-socialweb-computer.sh --dev --publish /var/tmp/swc        # dev build of working tree
+scripts/build-socialweb-computer.sh --platform linux/amd64 --commit "$(git rev-parse HEAD)"   # release, cached, ~5 min cold, ~7 s unchanged
+scripts/build-socialweb-computer.sh --verify-reproducible                # two clean builds must match (CI on main does this)
+B=~/.tmp/socialweb-computer-build/release/<commit>/socialweb-computer-linux-amd64
 ```
 
-The result is one `socialweb-computer` binary with its pinned assets and the TypeScript closure
-embedded (`internal/versions/versions.json`, `deploy/ts-entries.yaml`). Guest images are not built
-here: `scripts/build-guest-image.sh` builds them on a Linux build host and `versions.json` pins them.
+Gate = GitLab CI on every push (`.gitlab-ci.yml`). Wait for it: `deno run -A ~/.tmp/swc-lead/ci-wait.ts <sha>`.
 
-## Run it
-
-A gateway: `scripts/deploy.sh` builds or takes the release binary (`BINARY`, `SHA256`), ships it
-over ssh (`SSH_TARGET`, `SSH_KEY`), runs `socialweb-computer install gateway` (the one root step)
-the first time and `upgrade` after, and writes the caddy sites for `https://k8s.<domain>` (the web
-app) and `https://kcp.<domain>` (the kcp front). `GATEWAY_ENV_FILE` becomes the account's
-`gateway.env` and `GATEWAY_SPEC_FILE` the Gateway spec:
+## Market network (local dev: fake PLC, relay, PDS, bidders, requesters, gateway)
 
 ```bash
-SSH_KEY=~/.ssh/key GATEWAY_ENV_FILE=gateway.env GATEWAY_SPEC_FILE=gateway-spec.yaml scripts/deploy.sh
+swc=/var/tmp/swc/socialweb-computer
+$swc dev up --instance mn1 --profile market-network --bidders 1 --with-gateway \
+  --guest-image-source file:///var/lib/socialweb-computer/guest-image --vm-host-backend systemd-user
+$swc dev status --instance mn1 | jq '.network.status.apps'
+$swc status --instance mn1                     # market counters, contract steps
+eval "$($swc dev env --instance mn1)"          # KUBECONFIG + ports of the network's kcp
+$swc dev logs core --instance mn1 --tail 50
+$swc dev down --instance mn1
 ```
 
-A bidder: `socialweb-computer install bidder` as root, then `socialweb-computer run bidder` per handle
-as the account.
+VMs need a VM-slot account (hat-8: `test-0001`, run as it). Shared host: take a live slot first (`deno run -A ~/.tmp/swc-lead/live-slot.ts acquire <name>`).
 
-A market network for development (its own fake PLC, relay, PDS, bidders and requesters):
-`socialweb-computer dev up --profile market-network` (`deploy/market-network/README.md`).
-
-## Gate
-
-Three modes, one script. `--fast` is the loop and takes about 9 s:
+## Requester (rent a VM, pass secrets)
 
 ```bash
-deploy/check.sh            # same as --fast
-deploy/check.sh --fast
+echo '{"x":"hello"}' > secrets.json
+$swc run request --network mn1 --secrets secrets.json --exec 'cat /root/x'      # RFP -> bid -> accept -> VM -> ssh -> vm.delete
+$swc run request --network mn1 --secrets secrets.json --hold --exec 'uname -a'   # keep VM
+$swc run request list
+$swc run request resume <name>      # ssh again
+$swc run request release <name>     # vm.delete
 ```
 
-`--local` runs the proofs this host can carry -- kcp, kine, k3s, postgres, openbao -- takes about
-75 s, and names every artifact-gated test it skipped:
+Secrets go requester OpenBao -> guest only. Never in kcp, args, logs, records. Ssh only via iroh ticket, StrictHostKeyChecking=yes vs guest `vm.hostKeys`.
+
+## Bidder
 
 ```bash
-deploy/check.sh --local
+# in a market network
+$swc run bidder --host-backend proc --profile market-network --network mn1 --handle b2.mn1.bob.test \
+  --guest-image-source file:///var/lib/socialweb-computer/guest-image --vm-host-backend systemd-user
+# prod install (root once), then it runs as its account
+sudo $B install bidder --handle bobvmbuilder.bsky.social --adopt-account \
+  --guest-image-source file:///var/lib/socialweb-computer/guest-image
+# sign in (prod-qr): read the QR url, sign in headless with creds file (never print creds)
+K=/var/lib/socialweb-computer/swc-bidder/handles/<hash>/kcp/admin.kubeconfig
+U=$(sudo kubectl --kubeconfig $K --server "$(sudo kubectl --kubeconfig $K config view -o jsonpath='{.clusters[0].cluster.server}' | sed 's#/clusters/.*##')/clusters/root" \
+  get marketidentity bidder -o jsonpath='{.status.pendingAction.url}')
+deno run -A --no-lock scripts/oauth-signin.ts --creds ~/.bobvmbuilder_bsky_social_source --account BOB --url "$U"
+# upgrade (as the account)
+sudo runuser -u swc-bidder -- env XDG_RUNTIME_DIR=/run/user/$(id -u swc-bidder) \
+  CONFIG_PATH_SOCIALWEB_COMPUTER=/var/lib/socialweb-computer/swc-bidder/config.json $B upgrade --binary $B --sha256 <sha256>
 ```
 
-`--full` runs everything and treats a skip of a live input as a failure, so it only passes on a host
-that carries the artifacts; on one that does not it exits non-zero and names the input each failing
-test wants:
+Policy: `config.json` `bidder-policy` (prod: `tangled-vouch`). Guest image: pinned by sha256 in `internal/versions/versions.json`.
+
+## Gateway (web app k8s.<domain>, kcp front kcp.<domain>, tenant clusters)
 
 ```bash
-deploy/check.sh --full
+$swc dev up --instance mn1 --profile market-network --with-gateway ...    # dev: gateway child of the network
+# prod: build release, ship, install/upgrade, caddy sites
+BINARY=$B SHA256=<sha256> SSH_KEY=~/.ssh/id_ed25519_no_password \
+  GATEWAY_ENV_FILE=~/.tmp/deploy/gateway.env GATEWAY_SPEC_FILE=~/.tmp/deploy/gateway-spec.yaml scripts/deploy.sh
+# user sign-in (needed after fresh deploy, else claims fail "no oauth session stored")
+deno run -A --no-lock scripts/oauth-signin.ts --creds ~/.aliceoa_bsky_social_source --account ALICE --url https://k8s.socialweb.computer/
 ```
 
-The raw equivalents, without the script:
+Scale from zero: apply a pod to a tenant cluster at 0 nodes -> NodeClaim -> RFP -> VM -> node Ready -> pod Running (prod: ~60 s). Delete pod -> back to 0 nodes, vm.delete (~2-3 min incl. hold).
+
+## Probe every kcp layer
+
+Every app = own kcp. Kubeconfig = `<app state>/kcp/admin.kubeconfig`. Server URL ends `/clusters/<ws>`; swap ws to walk.
 
 ```bash
-go test ./...                                   # the fast loop
-SOCIALWEB_LOCAL=1 go test ./...                 # the proofs this host carries
-SOCIALWEB_REQUIRE_LIVE=1 go test ./...          # everything; a skip is a failure
+kc() { local k=$1 ws=$2; shift 2; local b; b=$(kubectl --kubeconfig $k config view -o jsonpath='{.clusters[0].cluster.server}' | sed 's#/clusters/.*##'); kubectl --kubeconfig $k --server "$b/clusters/$ws" "$@"; }
+tree() { local k=$1 ws=${2:-root}; echo "$ws"; for c in $(kc $k $ws get workspaces -o name 2>/dev/null | sed 's#.*/##'); do tree $k "$ws:$c"; done; }
 ```
 
-`SOCIALWEB_LIVE=1` is an alias of `SOCIALWEB_REQUIRE_LIVE=1`. `-short` still skips, and under the
-gate it FAILS rather than skips, so the fast loop can never be mistaken for the gate. A skip is not
-a pass in any mode: `--local` names every skip it takes, and `--full` fails on them.
-
-## The full live gate
-
-The strict gate needs a tenant cluster and a real guest. The market network is where that is driven
-now: the vendored `deploy/market-network` tree runs a local dispatcher, a bidder and a
-requester, and the guest is born from the RFP flow rather than from any rig this repo hosts. The
-privileged rig that used to do it here (`deploy/test-rig`, and `cmd/socialweb-rig-inputs` with it)
-existed only to boot the local substrates with `/dev/kvm` and `/dev/net/tun`, and was deleted with
-them on 2026-10-07 (plan 0005 M1-MARKET-ONLY).
-
-The gate it drove is unchanged and still runs against a live cluster:
+| Layer | Kubeconfig | Look at |
+|---|---|---|
+| market network kcp | `$STATE/dev/<inst>/kcp/admin.kubeconfig` (or `dev env` KUBECONFIG) | `kc $K root get marketnetworks -o yaml` |
+| child app kcp (bidder, gateway, requester) | `$STATE/dev/<inst>/apps/dev/<inst>-<app>/kcp/admin.kubeconfig` | bidder: `kc $K root get marketbidders,bids,computevms` |
+| prod bidder kcp | `/var/lib/socialweb-computer/swc-bidder/handles/<hash>/kcp/admin.kubeconfig` | `kc $K root get computevms,bids,marketidentities` |
+| prod gateway kcp | `/var/lib/socialweb-computer/socialweb/kcp/admin.kubeconfig` | `tree $K`; claims: `kc $K root:<acct>:<cluster> get nodeclaims` |
+| tenant k3s (gateway) | `<gateway state>/clusterprovider/pdr-<acct>-<cluster>/server/cred/admin.kubeconfig` | `kubectl --kubeconfig $T get nodes,pods -A` |
 
 ```bash
-SOCIALWEB_REQUIRE_LIVE=1 go test ./...     # everything; a skip is a failure
+STATE=/var/tmp/swcit/<run>                           # harness runs; default dev state: $XDG_STATE_HOME/socialweb-computer
+find $STATE /var/lib/socialweb-computer -name admin.kubeconfig -path '*kcp/admin.kubeconfig' 2>/dev/null   # every kcp
+find $STATE /var/lib/socialweb-computer -path '*server/cred/admin.kubeconfig' 2>/dev/null                 # every tenant k3s
+for K in $(find $STATE -path '*kcp/admin.kubeconfig' -not -path '*slot-*' -not -path '*shared*'); do echo "== $K"; tree $K; done
+kc $K root api-resources --api-group=socialweb.computer      # kinds this layer serves
 ```
 
-## Probe the host contract
+Prod gateway has no kubectl: `K3S=$(find /var/lib/socialweb-computer/socialweb/runtime -name k3s -type f | head -1); $K3S kubectl ...` (then `rm -rf /var/lib/rancher`). Ssh: `ssh -i ~/.ssh/id_ed25519_no_password -p 1997 root@socialweb.computer`.
 
-`install` runs it as the account; run it by hand the same way:
+DenoPod logs: `<state>/denokcp/runs/pod-*/{stdout,stderr}.txt` (gone on restart). Core logs: `journalctl _UID=<account uid>` / `dev logs core`.
+
+## Integration tests
 
 ```bash
-socialweb-computer check-host -role gateway -state-dir /var/lib/socialweb-computer/socialweb
+go test -tags integration -count=1 -v -timeout 60m ./test/integration/ -run TestRequestSecretsReachTheGuestThroughTheRFPFlow
+go test -tags integration -count=1 -v -timeout 60m ./test/integration/ -run TestTenantClusterScalesFromZeroOnMarketVMsAndBack
 ```
-
-It exits 1 naming every check that fails, each with its fix (`docs/host-contract.md`).
-
-## Standalone kcp
-
-For running just kcp against your own kine:
-
-```bash
-KCP_INSTANCE=dev KCP_SECURE_PORT=6444 KCP_KINE_ENDPOINT=http://127.0.0.1:20001 \
-  deploy/run-kcp-instance.sh
-```
-
-## Binaries
-
-| Binary | What it is |
-| --- | --- |
-| `socialweb-computer` | the one host binary; the gateway, the clusterprovider, the vault, the CCM and check-host are its verbs, and a dev build adds `nodeimage guest-rootfs` and `nodeimage guest-manifest`, the two Go steps of `scripts/build-guest-image.sh` |
-| `socialweb-credential` | the kubeconfig exec plugin the gateway hands a tenant |
-| `socialweb-vmexec` | the tiny VM-unit asset: creates the tap and bridge in pasta's namespace and execs firecracker |
-
-## Nodes
-
-**The compute market is the only node path.** A node is a VM rented from the compute market: the
-clusterprovider writes a `NodeClaim`, the market's door fulfils it under the cluster owner's own
-atproto OAuth session, and the winning bidder boots the guest from the requester's cloud-init
-`user_data`. Nothing about a node runs on the gateway -- no VMM, no guest network, no image, no
-`/dev/kvm`.
-
-The local `firecracker` and `qemu` substrates were retired on 2026-10-07 (plan
-[`0005-zero-ssh-market-nodes.yaml`](docs/plans/0005-zero-ssh-market-nodes.yaml), M1-MARKET-ONLY), and
-their last code (`internal/nodefirecracker`, `internal/nodevm`, `internal/noderecord`, the
-`SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE` setting) was deleted with the container path (plan 0006
-M5-RETIRE). A bidder boots the guest the market rents as a VM unit of the Linux VM runtime
-(`internal/vmruntime`, `socialweb-computer internal vm`), on the bidder's host.
-
-## Where things are
-
-| | |
-| --- | --- |
-| The objective, architecture, decisions, measurements | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
-| Rules for a change, and for an agent | [`AGENTS.md`](AGENTS.md) |
-| The live backlog | [`NEXT.yaml`](NEXT.yaml) |
-| The operator handoff | [`handoff.yaml`](handoff.yaml) |
-| The plan series for work in flight | `docs/plans/` |
-| Running GitLab CI against a tenant cluster | [`docs/gitlab/`](docs/gitlab/) |
-| Everything the deployment is | `deploy/`, `scripts/deploy.sh` |
-
-## Troubleshooting
-
-- **`/dev/kvm` or `/dev/net/tun` errors on a gateway**: nothing there asks for them. A node is a
-  market guest (see "Nodes"); only a bidder host needs them.
-- **`--full` fails**: it names the missing variable for each failing test. It is the only mode that
-  may be called "everything ran".
-- **Gateway not ready**: `scripts/deploy.sh` waits for `/api/config` and prints the last 60 lines of
-  `socialweb-computer-gateway.service` when it never answers.
-
-## Experiments tree
-
-The `experiments/` prototype tree is **gone**, deleted once `internal/` implemented everything it
-prototyped. `git log` and `git show` keep every line beside the commit messages that say what each
-experiment established, and every conclusion it reached is carried in `docs/ARCHITECTURE.md` — some
-of the supporting per-configuration tables are not, and live only in this history. Its firecracker
-prototype was a second Go module the build never saw, so `./...` neither built, vetted nor tested
-it; it is gone with the rest.
-
-The two artifacts that tree held and that are NOT regenerable from git — the firecracker binary and
-the Ubuntu 24.04 base rootfs — live outside the repo, under `/home/johnandersen777/kcp-image/artifacts/`,
-and the operator's `nodeimage.json` names them there. Everything else it held (kernels, rootfs
-images, snapshots, run dirs) was gigabytes of build output and is regenerable.
-
-Vendored reference material, read rather than authored, cited by line from `docs/ARCHITECTURE.md`: `gitlab-kubernetes-executor.md`, `kcp/`, `cluster-api/`.
 
 ## License
 
-Unlicense (public domain). See `LICENSE`.
+Unlicense (public domain).
