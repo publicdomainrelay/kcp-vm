@@ -995,7 +995,7 @@ The Go types in `api/v1alpha1` are the ONLY source of every CRD's shape. `go gen
 |---|---|
 | `deploy/<kind>-apiresourceschema.yaml` | one kcp `APIResourceSchema` per entry of `v1alpha1.APIResources` |
 | `deploy/cluster-apiexport.yaml`, `deploy/atprotoidentity-apiexport.yaml` | one `APIExport` per distinct `Export`, resources in registry order |
-| `deploy/apiresourceschema-revisions.json` | the revision lock: every schema name ever generated and the sha256 of its `spec` |
+| `deploy/apiresourceschema-revisions.txt` | the revision lock: every schema name ever generated and the sha256 of its `spec`, one `<name> sha256:<hex>` line each, sorted; `.gitattributes` merges it with `merge=union`, so two branches that each add a revision never conflict, and a name recorded twice with two hashes is a generator error |
 | `socialweb-computer-k8s/lib/common/socialweb-computer-k8s-api/mod.ts` | `@publicdomainrelay/socialweb-computer-k8s-api`: TS interfaces, enum tuples and their literal unions, finalizer and condition constants, `*_RESOURCE` descriptors, and a validator (`validateX`, `isX`, `assertX`, `parseX`, `ApiValidationError`) for every generated type |
 
 How the Go type maps, decided by Claude (user may veto):

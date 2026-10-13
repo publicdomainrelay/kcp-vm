@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -202,11 +203,21 @@ type RevisionLock map[string]string
 
 func ParseRevisionLock(data []byte) (RevisionLock, error) {
 	lock := RevisionLock{}
-	if len(bytes.TrimSpace(data)) == 0 {
-		return lock, nil
-	}
-	if err := json.Unmarshal(data, &lock); err != nil {
-		return nil, err
+	for i, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		name, hash, ok := strings.Cut(line, " ")
+		if !ok || name == "" || !strings.HasPrefix(hash, "sha256:") || strings.Contains(hash, " ") {
+			return nil, fmt.Errorf("line %d: %q is not \"<schema name> sha256:<hex>\"", i+1, line)
+		}
+		if prior, ok := lock[name]; ok && prior != hash {
+			return nil, fmt.Errorf("line %d: %s is recorded twice, as %s and %s: two branches changed its spec under "+
+				"the same revision (a union merge keeps both lines). Keep the line that is on origin/main, drop "+
+				"the other, and bump Revision in api/v1alpha1/resources.go", i+1, name, prior, hash)
+		}
+		lock[name] = hash
 	}
 	return lock, nil
 }
@@ -228,9 +239,14 @@ func (l RevisionLock) Admit(name, hash string) error {
 }
 
 func (l RevisionLock) Marshal() ([]byte, error) {
-	data, err := json.MarshalIndent(l, "", "  ")
-	if err != nil {
-		return nil, err
+	names := make([]string, 0, len(l))
+	for name := range l {
+		names = append(names, name)
 	}
-	return append(data, '\n'), nil
+	sort.Strings(names)
+	var b bytes.Buffer
+	for _, name := range names {
+		fmt.Fprintf(&b, "%s %s\n", name, l[name])
+	}
+	return b.Bytes(), nil
 }

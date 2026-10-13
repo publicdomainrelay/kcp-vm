@@ -9,7 +9,7 @@ import (
 	"sort"
 )
 
-const RevisionLockFile = "deploy/apiresourceschema-revisions.json"
+const RevisionLockFile = "deploy/apiresourceschema-revisions.txt"
 
 type Output struct {
 	Path string
