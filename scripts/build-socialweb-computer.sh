@@ -6,12 +6,13 @@ build_root="$HOME/.tmp/socialweb-computer-build"
 rev="HEAD"
 platforms=()
 dev=0
+verify=0
 publish=""
 sync_only=0
 
 usage() {
   cat >&2 <<EOF
-usage: $0 [--platform linux/amd64|linux/arm64]... [--commit REV] [--build-root DIR]
+usage: $0 [--platform linux/amd64|linux/arm64]... [--commit REV] [--build-root DIR] [--verify-reproducible]
        $0 --dev [--platform P]... [--build-root DIR] [--publish DIR [--sync-only]]
 
 --dev builds ONE socialweb-computer of the working tree of this checkout (uncommitted changes
@@ -36,12 +37,14 @@ up a TypeScript change without a rebuild. Output: dev/<worktree>/<goos>_<goarch>
                  dev restart of a DenoPod
 
 Builds the release socialweb-computer binary (plan 0006 M4-BUILD) for each release platform of
-internal/versions/versions.json, twice, from clean checkouts of one commit, and refuses to publish a
-platform whose two builds differ by one byte. Each build stages every pinned asset with
+internal/versions/versions.json, once, from a clean checkout of one commit, with the build root's
+go build cache and pinned downloads. --verify-reproducible (plan 0006 ACC6-REPRO) builds the commit
+twice, from two clean checkouts, and refuses to publish a platform whose two builds differ by one
+byte. Each build stages every pinned asset with
 scripts/stage-assets.sh, builds the TypeScript closure once with cmd/socialweb-tsbundle -release and
 the pinned deno of the build host (the closure is source plus the deno cache, the same bytes for every
 platform; its entries are started on the build host), embeds it for every platform, then runs
-go build -a -tags release with the go.mod toolchain, CGO_ENABLED=0, -trimpath, -buildvcs=true,
+go build -tags release with the go.mod toolchain, CGO_ENABLED=0, -trimpath, -buildvcs=true,
 GOPROXY=off.
 
   --platform    a release platform; repeat for more (default: every release platform)
@@ -49,7 +52,7 @@ GOPROXY=off.
   --build-root  checkouts, caches and outputs, all kept between builds (default \$HOME/.tmp/socialweb-computer-build)
 
 Layout under the build root:
-  src/<n>                       the clean checkout of build n (1, 2)
+  src/<n>                       the clean checkout of build n (1; 2 with --verify-reproducible)
   cache/{assets,gomod,gocache}  pinned downloads, the module cache, the go build cache
   work/<n>/closure              the pinned deno, socialweb-tsbundle and the closure staging of build n
   out/<commit>/<n>/<goos>_<goarch>  build n: socialweb-computer, its sha256, build.json, version.json
@@ -68,6 +71,7 @@ while [ $# -gt 0 ]; do
     --commit) rev="$2"; shift 2 ;;
     --build-root) build_root="$2"; shift 2 ;;
     --dev) dev=1; shift ;;
+    --verify-reproducible) verify=1; shift ;;
     --publish) publish="$2"; shift 2 ;;
     --sync-only) sync_only=1; shift ;;
     -h|--help) usage ;;
@@ -188,7 +192,7 @@ build_once() {
     mkdir -p "$out"
     cp "$closure_work/out/"* "$tree/internal/tsbundle/closure/$key/"
     say "build $n $plat: go build"
-    (cd "$tree" && GOOS="$goos" GOARCH="$goarch" go build -a -tags release -trimpath -buildvcs=true \
+    (cd "$tree" && GOOS="$goos" GOARCH="$goarch" go build -tags release -trimpath -buildvcs=true \
       -ldflags='-s -w -buildid=' -o "$out/socialweb-computer" ./cmd/socialweb-computer)
     [ -z "$(git -C "$tree" status --porcelain)" ] || die "build $n left $tree dirty"
     (cd "$out" && sha256sum socialweb-computer >socialweb-computer.sha256)
@@ -204,7 +208,9 @@ build_once() {
 }
 
 build_once 1
-build_once 2
+if [ "$verify" = 1 ]; then
+  build_once 2
+fi
 
 release="$build_root/release/$commit"
 rm -rf "$release"
@@ -215,8 +221,16 @@ for plat in "${platforms[@]}"; do
   key="${plat/\//_}"
   name="socialweb-computer-${plat/\//-}"
   a="$build_root/out/$commit/1/$key"
-  b="$build_root/out/$commit/2/$key"
   sa="$(sha_of "$a/socialweb-computer")"
+  if [ "$verify" = 0 ]; then
+    cp "$a/socialweb-computer" "$release/$name"
+    cp "$a/version.json" "$release/version-${plat/\//-}.json"
+    cp "$a/version.txt" "$release/version-${plat/\//-}.txt"
+    (cd "$release" && sha256sum "$name" >>SHA256SUMS)
+    say "published $plat sha256 $sa -> $release/$name (one build; --verify-reproducible checks reproducibility)"
+    continue
+  fi
+  b="$build_root/out/$commit/2/$key"
   sb="$(sha_of "$b/socialweb-computer")"
   records+=("$(jq -n --arg p "$plat" --arg sa "$sa" --arg sb "$sb" --slurpfile ja "$a/build.json" --slurpfile jb "$b/build.json" \
     '{platform: $p, identical: ($sa == $sb), sha256: (if $sa == $sb then $sa else null end), builds: [$ja[0], $jb[0]]}')")
@@ -231,6 +245,8 @@ for plat in "${platforms[@]}"; do
   (cd "$release" && sha256sum "$name" >>SHA256SUMS)
   say "reproducible $plat sha256 $sa -> $release/$name"
 done
-printf '%s\n' "${records[@]}" | jq -s --arg commit "$commit" '{commit: $commit, platforms: .}' >"$release/reproducible.json"
-cat "$release/reproducible.json"
+if [ "$verify" = 1 ]; then
+  printf '%s\n' "${records[@]}" | jq -s --arg commit "$commit" '{commit: $commit, platforms: .}' >"$release/reproducible.json"
+  cat "$release/reproducible.json"
+fi
 exit "$failed"

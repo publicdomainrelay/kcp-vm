@@ -213,9 +213,10 @@ anything.
   TypeScript change, and do not rebuild the binary for one. The PLC directory and the PDSes keep
   their state in memory: do not `dev restart` plc or a PDS (it empties them); `dev down`/`dev up` instead.
 - The release binary (prod only; the lead builds it): `scripts/build-socialweb-computer.sh` without
-  `--dev` builds one commit twice per linux release platform from clean checkouts (every asset
-  staged and pinned, the closure, `-tags release`) and publishes a platform only when both builds are
-  byte-identical, about 6.5 minutes a build. Checkouts, caches and outputs stay under
+  `--dev` builds one commit once per linux release platform from a clean checkout (every asset
+  staged and pinned, the closure, `-tags release`, no `-a`: the go build cache gives the same bytes).
+  `--verify-reproducible` builds it twice from two clean checkouts and publishes a platform only when
+  both builds are byte-identical (0006 ACC6-REPRO). Checkouts, caches and outputs stay under
   `~/.tmp/socialweb-computer-build`; `release/<commit>/` holds the binaries and `SHA256SUMS` that
   `install` and `upgrade --binary --sha256` take. Never build it in the inner loop.
 
