@@ -624,8 +624,8 @@ items:
     test_first: "TestTheMarketNetworkRentsAFirecrackerGuestThroughTheRFPFlow switched to the subcommand; TestTwoNetworksOnOneHostEachRentAGuestThroughTheRFPFlow through `market-network up` in two dev instances (two requesters, two bidders; guests only via runComputeContract); fifth fold: TestNoTwoApplicationsInANetworkShareAKcp (network, every bidder, the gateway and each requester invocation: distinct kcp roots and fronts), TestANetworkSystemTestReadsTheBidderDidFromRootStatusNotStdout, TestTheNetworkBidderSignsInThroughItsIdentityObjectWithoutSkipQr; red until it exists."
     done_when: "two PASS readings through the subcommand with accept.sh run 9's check list, and one reading of two market networks on hat-8 (UTC); 0006 M1-NO-FIXED-PORTS' ratchet holds no market network entry."
     risks: []
-    status: todo
-    evidence: []
+    status: done
+    evidence:
 acceptance:
   where: hat-8
   checks:
