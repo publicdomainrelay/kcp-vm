@@ -52,7 +52,7 @@ func Generate(root string) ([]Output, error) {
 		}
 		out = append(out, Output{Path: ExportFile(e), Data: data})
 	}
-	lockOut, err := lock.Marshal()
+	lockOut, err := lock.Marshal(RevisionOrder(lockData)...)
 	if err != nil {
 		return nil, err
 	}

@@ -86,7 +86,7 @@ if [ -f "$lockf" ] && [ -n "$(awk '{print $1}' "$lockf" | sort | uniq -d)" ]; th
   awk 'NR == FNR { head[$1] = $2; next }
     $1 != "" { n[$1]++; h[$1, n[$1]] = $2; if (!($1 in seen)) { seen[$1] = 1; names[++k] = $1 } }
     END { for (i = 1; i <= k; i++) { nm = names[i]; pick = h[nm, 1]; for (j = 1; j <= n[nm]; j++) if (h[nm, j] == head[nm]) pick = h[nm, j]; print nm, pick } }' \
-    "$tmp/head" "$lockf" | sort >"$tmp/lock"
+    "$tmp/head" "$lockf" >"$tmp/lock"
   mv "$tmp/lock" "$lockf"
   rm -rf "$tmp"
   say "$lockf named a revision twice (both sides changed one schema under one revision); kept the HEAD hash. If go generate now asks for a Revision bump, bump it in api/v1alpha1/resources.go and run this again"

@@ -238,14 +238,36 @@ func (l RevisionLock) Admit(name, hash string) error {
 	return nil
 }
 
-func (l RevisionLock) Marshal() ([]byte, error) {
-	names := make([]string, 0, len(l))
-	for name := range l {
-		names = append(names, name)
+func RevisionOrder(data []byte) []string {
+	var order []string
+	seen := map[string]bool{}
+	for _, line := range strings.Split(string(data), "\n") {
+		name, _, _ := strings.Cut(strings.TrimSpace(line), " ")
+		if name != "" && !seen[name] {
+			seen[name] = true
+			order = append(order, name)
+		}
 	}
-	sort.Strings(names)
+	return order
+}
+
+func (l RevisionLock) Marshal(order ...string) ([]byte, error) {
 	var b bytes.Buffer
-	for _, name := range names {
+	written := map[string]bool{}
+	for _, name := range order {
+		if hash, ok := l[name]; ok && !written[name] {
+			written[name] = true
+			fmt.Fprintf(&b, "%s %s\n", name, hash)
+		}
+	}
+	var rest []string
+	for name := range l {
+		if !written[name] {
+			rest = append(rest, name)
+		}
+	}
+	sort.Strings(rest)
+	for _, name := range rest {
 		fmt.Fprintf(&b, "%s %s\n", name, l[name])
 	}
 	return b.Bytes(), nil
