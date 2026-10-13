@@ -1370,8 +1370,8 @@ items:
     test_first: "Case (a): FAIL with the firecracker provider today (recorded), PASS with it after M4-CONTRACT-STORE-FILE and with compute-provider-kcp after M4-CONTRACT-RESTORE; cases (b)-(d) red until M5-RUN-BIDDER."
     done_when: "readings recorded for all four cases; zero ssh sessions."
     risks: ["Case (d) stops every unit of the account on hat-8, including any other market network's; it runs on a dedicated test account."]
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M6-NOSSH-JOIN
     milestone: M6
     kcp_use: "traditional-exception (virtual Kubernetes clusters project: tenant nodes; 0006 principle)"
