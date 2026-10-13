@@ -231,6 +231,22 @@ func Run(ctx context.Context, c Config, m hostsvc.Manager) error {
 	app := c.app()
 	reg := &listeners{addr: map[string]string{}, kind: map[string]string{}}
 	g := &gateway{c: c, l: l, reg: reg}
+	if c.Spec.Network != nil {
+		m, ok, err := guestTLSEgress(c.Spec.Network.GuestTlsUrl)
+		if err != nil {
+			return err
+		}
+		if ok {
+			addr, err := runEgress(ctx, m, c.log())
+			if err != nil {
+				return err
+			}
+			reg.set(ListenerEgress, "http", addr)
+			os.Setenv("HTTPS_PROXY", "http://"+addr.String())
+			c.log().Info("the market network's guest TLS front is this gateway's egress for its port-less names: every vault it places fetches a bidder's issuer through it",
+				"egress", addr.String(), "names", "*."+m.host+":443", "target", m.target)
+		}
+	}
 	c.log().Info("the gateway application instance starts: lock, kcp store, kine, front, active slot, sets, root vault, members",
 		"state", c.StateDir, "prefix", l.UnitPrefix(), "backend", string(c.Backend), "units", app.Names().UnitPrefix())
 	deno := denoruntime.Config{StateDir: c.StateDir, Deno: c.Executables[ExeDeno].Path, Kubeconfig: l.FrontKubeconfig(), Closure: c.Closure,
