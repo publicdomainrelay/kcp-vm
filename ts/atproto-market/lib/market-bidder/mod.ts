@@ -188,7 +188,7 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
   const loop = config.loop;
   const bidLoop = createBidLoop({
     selfDid: atproto.did,
-    claimant: `${Deno.hostname()}/${Deno.pid}/${crypto.randomUUID().slice(0, 8)}`,
+    claimant: `pid-${Deno.pid}-${crypto.randomUUID().slice(0, 8)}`,
     bids: config.bids,
     loop,
     logger,
