@@ -5,6 +5,13 @@ revised: >
   market loop and request-vm-ssh, with the user's corrections of the same day: the atproto market flow stays
   in TypeScript; kcp is the state and makes execution observable; Go and TypeScript may need more
   communication abstractions between them, but no market flow moves to Go.
+  2026-10-12, second revision, decided by the user: the guest workload identity moves into OpenBao (route B: an
+  OpenBao auth plugin verifies the guest's ssh host-key signature; OpenBao's identity secrets engine issues
+  the tokens) on the bidder handle's OWN OpenBaoServer (the one in the handle's kcp, at the bottom of the
+  stack; never the market network's, the gateway's or a tenant cluster's vault), and the requester's atproto
+  RBAC records become OpenBao identity roles and policies (option 2: TypeScript reads the records and writes
+  kcp objects, Go applies them to that OpenBaoServer). New items M3-SSHSIG-AUTH-PLUGIN,
+  M3-GUEST-IDENTITY-OPENBAO, M3-RBAC-TO-OPENBAO; acceptance ACC9-GUEST-IDENTITY.
 queued: >
   After plans 0006-0008 reach prod: 0006 M5-FRESH-DEPLOY (the new gateway and the hat-8 bobvmbuilder bidder
   run from the socialweb-computer binary, and a tenant k3s cluster scales to zero on market RFP VMs). The user
@@ -204,6 +211,78 @@ items:
     risks: []
     status: todo
     evidence:
+  - id: M3-SSHSIG-AUTH-PLUGIN
+    milestone: M3
+    title: An OpenBao auth plugin that logs a guest in by its ssh host-key signature
+    depends_on: [M1-PROJECTED-CREDENTIALS]
+    decision: >
+      Decided by the user 2026-10-12 (route B): OpenBao stays what it is designed to be, the authority that
+      decides who gets a token; the one thing it cannot do built in, verify an ssh host-key signature, is an
+      auth plugin. New Go module cmd/openbao-plugin-auth-sshsig on the OpenBao plugin SDK (the plugin
+      authors' guide), built reproducibly with the release binary and pinned by sha256 in
+      internal/versions/versions.json as an asset. It runs ONLY on the bidder handle's own OpenBaoServer
+      (`bidder` in the handle's kcp, the bottom of the stack); the market network's, the gateway's and every
+      tenant cluster's vaults never load it. OpenBaoServer spec gains `plugins` (name, type auth, asset,
+      mount path); the openbao controller places the plugin binary in the server's plugin directory,
+      registers it in the catalog by sha256, enables the mount, and keeps it in sync like its mounts; an
+      upgrade that changes the plugin sha256 re-registers it before the server restarts.
+      Plugin API (details decided by Claude, user may veto): `role/<computevm>` written by the bidder at
+      accept (one-time bind secret hash, token_policies, token_ttl, token_num_uses, entity alias
+      guest-<computevm>); `bind` (unauthenticated, once): {role, bind secret, ed25519 host key, sshsig over the
+      bind secret in namespace prove-sshd} -> verifies, stores the host key on the role (first bind wins, a
+      second bind is refused), burns the secret; `challenge` + `login`: {role, challenge, sshsig with the bound
+      key} -> a bao token for entity guest-<computevm> with the role's policies; `role` read returns the bound
+      host key. The provisioning JWT, the nonce store and the TypeScript sshsig verification go.
+    files: ["cmd/openbao-plugin-auth-sshsig/", "internal/openbao", "internal/openbaoctl", "internal/versions/versions.json", "api (OpenBaoServer spec.plugins)", "scripts/build-socialweb-computer.sh"]
+    done_when: "on a market network bidder, a guest binds its host key once through the RFP cloud-init and logs in by signature; a second bind and a login with another key are refused; the market network's and the gateway's vaults list no sshsig mount; the plugin's sha256 in the catalog matches versions.json."
+    risks: ["Plugin and bao versions must move together; the release build pins both and an upgrade re-registers the plugin before the server restarts.", "The plugin is a separate process of bao (go-plugin); bao's own mlock and plugin directory permissions apply."]
+    status: todo
+    evidence:
+  - id: M3-GUEST-IDENTITY-OPENBAO
+    milestone: M3
+    title: The guest workload identity is issued by the bidder's OpenBao; guest-kcp becomes a thin proxy
+    depends_on: [M3-SSHSIG-AUTH-PLUGIN]
+    decision: >
+      The bidder handle's OpenBaoServer issues every guest token with its identity secrets engine:
+      identity/oidc/key (signing keys with rotation_period and verification_ttl, replacing the vault-held keys
+      and signingKeyRotation of 0007 M4-BIDDER-BAO-SYNC), identity/oidc/config issuer = the guest-kcp public
+      URL (the bidder's ingress host, unchanged for verifiers), identity/oidc/role per token kind with a claim
+      template. The guest-kcp DenoPod keeps its relay and becomes a path allow-list proxy to that OpenBaoServer
+      with rate limits: auth/sshsig bind, challenge and login, identity/oidc/token/<role>, and the
+      .well-known discovery and keys; nothing else of the bao API is reachable from a guest. /v1/host-keys
+      becomes the bind call; guest-kcp then reads the bound key from the role and writes ComputeVM
+      status.market as today, and the bidder publishes vm.hostKeys from it. The cloud-init module of the
+      guest (cloud-init-common) switches to bind, login, token. Guest bao tokens are short-lived with
+      num_uses limits; one templated policy serves every guest (paths keyed by identity.entity.name). The
+      signing, JWKS, nonce and rotation code of oidc-issuer-hono is deleted; secrets-oidc keeps verifying
+      by iss and the proxied keys. Decided by the user 2026-10-12 (OpenBao as the issuer); details decided by
+      Claude, user may veto.
+    files: ["ts/hono-compute-provider/lib/oidc-issuer-hono", "ts/atproto-market/hono-bidder-guest", "ts/atproto-market/lib/common/cloud-init-common", "ts/atproto-market/lib/secrets-oidc", "deploy/apps/market-bidder/vault.yaml"]
+    done_when: "`run request --secrets` delivers the secret to a guest whose only token came from the bidder's OpenBao through guest-kcp; a guest request to any other bao path through guest-kcp is refused; the issuer URL and the requester's verification are unchanged; a bao key rotation during a contract leaves the guest's next exchange working."
+    risks: ["The issuer URL must stay the bidder's ingress host so existing verifiers keep working; bao's issuer config is set to it and the discovery document is served through the proxy."]
+    status: todo
+    evidence:
+  - id: M3-RBAC-TO-OPENBAO
+    milestone: M3
+    title: The requester's RBAC records become OpenBao identity roles and policies
+    depends_on: [M3-GUEST-IDENTITY-OPENBAO, M1-KCP-CLIENT-TS]
+    decision: >
+      Decided by the user 2026-10-12 (option 2). New kind GuestIdentityGrant (api/, in the bidder's
+      workspace, ownerRef its ComputeVM): spec {computevm, entity guest-<computevm>, api, actx (the requester
+      did), scopes, claims}. The bidder (TypeScript) reads the requester's RBAC records at accept and on every
+      change seen on the firehose, and writes GuestIdentityGrants with kcp-client-rest; it does no bao call
+      for them. The openbao controller (Go) applies each grant to the bidder handle's OpenBaoServer: an
+      identity/oidc/role with client_id api://<api>?actx=<did> (the audience today's /v1/oidc/issue sets) and
+      the grant's claim template, and the entity's policy entry allowing identity/oidc/token/<that role>;
+      status shows applied, the bao role name and the last error. A grant removed (record changed or the
+      ComputeVM gone, by cascade) removes its role and policy entry. /v1/oidc/issue and the per-call PDS
+      read of rbac-atproto go: OpenBao alone authorizes, from state kcp holds. Details decided by Claude,
+      user may veto.
+    files: ["api/types_guestidentitygrant.go", "internal/openbao (grant apply)", "ts/atproto-market/lib/market-bidder", "ts/hono-compute-provider/lib/rbac-atproto (deleted or reduced to the record reader)"]
+    done_when: "a requester RBAC record allowing api X gives the guest a token with aud api://X?actx=<did>; changing the record to remove X removes the bao role within one firehose event and the next request for X is refused; deleting the ComputeVM leaves no grant, role or policy entry; `kubectl get guestidentitygrants` shows every grant with its applied state."
+    risks: ["A burst of RBAC changes: the controller applies the latest spec per grant, coalesced."]
+    status: todo
+    evidence:
   - id: M4-LEGACY-BIDDER-CUT
     milestone: M4
     title: hono-bidder carries only the kcp provider and the kcp and vault stores
@@ -239,7 +318,8 @@ not_doing:
   - "A separate event stream DenoPod: one consumer per instance, so it is only an extra hop."
   - "A PolicyVerdict kind: the verdict cache is a cache."
   - "PolicyWorkflowRun on the hot path: create, watch, engine call, engine poll and status write are too many hops."
-  - "Moving any atproto market flow into Go."
+  - "Moving any atproto market flow into Go. The sshsig auth plugin verifies a signature; it reads no atproto record."
+  - "A custom token issuer in TypeScript: OpenBao's identity secrets engine issues guest tokens (user, 2026-10-12)."
 acceptance:
   where: hat-8
   checks:
@@ -261,6 +341,10 @@ acceptance:
       evidence: []
     - id: ACC9-LATENCY
       text: "kcp adds at most 20 ms p95 to rfp seen -> bid published."
+      status: todo
+      evidence: []
+    - id: ACC9-GUEST-IDENTITY
+      text: "Every guest token is issued by the bidder handle's own OpenBaoServer after an sshsig login with the guest's bound host key; its audience comes only from a GuestIdentityGrant derived from the requester's RBAC records; no other vault in the stack loads the sshsig plugin."
       status: todo
       evidence: []
 questions_for_user: []
