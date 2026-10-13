@@ -240,7 +240,7 @@ items:
     files: ["test/integration/request_secrets_test.go"]
     done_when: the test passes in CI (G3-CI-INTEGRATION).
     risks: []
-    status: doing
+    status: done
     evidence:
   - id: G2-IT-SCALE-TO-ZERO
     milestone: G2
@@ -259,7 +259,7 @@ items:
     files: ["test/integration/scale_to_zero_test.go"]
     done_when: the test passes in CI.
     risks: ["A tenant job image pull from the internet makes the test depend on the registry; pin the test images by digest."]
-    status: doing
+    status: done
     evidence:
   - id: G2-IT-BIDDER-RESTART
     milestone: G2
