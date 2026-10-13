@@ -30,7 +30,7 @@ Every tagged release publishes Linux binaries and the guest image to a public bu
 | `releases/<version>/guest-image/firecracker-x86_64/` | `vmlinux`, `rootfs.ext4` and `image.json`: the guest image a bidder's VMs boot. |
 | `releases/<version>/manifest.json` | Every file under the version, with its size and sha256. |
 
-`<version>` is a git tag, for example `v0.0.0-rc0`. Only `releases/` is readable without credentials. `main/<commit>/` holds every build of `main`, and `main/latest/` is a copy of the newest one, but both answer `403 AccessDenied` to an anonymous reader: use a release.
+`<version>` is a git tag, for example `v0.0.0-rc0`. Everything in the bucket is readable without credentials: `releases/<version>/` holds one tag's build, `main/<commit>/` holds the build of each commit on `main`, and `main/latest/` is a copy of the newest one.
 
 Take the newest release, verify it, and put it on your PATH:
 
@@ -55,7 +55,7 @@ To pin a version instead of taking the newest, set `V` yourself: `V=v0.0.0-rc0`.
 
 `socialweb-computer install gateway`, `install bidder` and `upgrade --binary --sha256` take this same file and its sha256: `SHA=$(grep " socialweb-computer-$ARCH\$" SHA256SUMS | cut -d' ' -f1)`.
 
-On a bidder host, `--guest-image-source` takes this release's guest image. It accepts a `file://` or `https://` base, fetches `image.json`, `vmlinux` and `rootfs.ext4` from `<base>/<name>`, and verifies each against the sha256 pinned in the bidder's build, so a guest image that does not match those pins is refused:
+On a bidder host, `--guest-image-source` takes the guest image you name. It accepts a `file://` or `https://` base, fetches `image.json`, `vmlinux` and `rootfs.ext4` from `<base>/<name>`, and verifies each against the sha256 pinned in the bidder's build, so a guest image that does not match those pins is refused:
 
 ```bash
 sudo ~/.local/bin/socialweb-computer install bidder --handle <handle> \
