@@ -2429,7 +2429,10 @@ marked "decided by Claude, user may veto".
 
 Not carried by the mesh: node addresses. Traffic to another node's InternalIP (NodePort on another
 node, hostNetwork pods, kubelet ports) has no route; apiserver-to-kubelet and apiserver-to-pod
-traffic already rides k3s's own agent tunnel (`--egress-selector-mode cluster`). IPv6 pod CIDRs are
+traffic already rides k3s's own agent tunnel (`--egress-selector-mode cluster`). Every market node
+reports the same InternalIP (172.30.0.2, its pasta address), so the apiserver dials a kubelet by its
+Hostname address (`kubelet-preferred-address-types=Hostname`), which the k3s join module makes equal to
+the node name; the tunnel routes a host name to the agent session of that node. IPv6 pod CIDRs are
 routed and checked by the code but untested.
 
 ### Every market node resolves names on its own CoreDNS (plan 0005 M5-DNS)
@@ -2527,6 +2530,9 @@ Image size: 1,711,865,393 bytes, +17.2 MB for the two binaries.
 --write-kubeconfig <DataDir>/server/cred/admin.kubeconfig
 --flannel-backend=none                 market clusters only: pods cross nodes through socialweb-meshd
 --cluster-cidr=10.42.0.0/16            market clusters only: named because the guest masquerades it
+--kube-apiserver-arg=kubelet-preferred-address-types=Hostname
+                                       market clusters only: every guest reports InternalIP
+                                       172.30.0.2, so the apiserver dials the kubelet by node name
 --kube-apiserver-arg=audit-policy-file / audit-log-path / -maxsize / -maxage / -maxbackup
 --kube-apiserver-arg=service-account-issuer, api-audiences
 --kube-controller-manager-arg=secure-port, --kube-scheduler-arg=secure-port,

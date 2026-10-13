@@ -11,7 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 )
 
-const UnschedulableSettle = 10 * time.Second
+const UnschedulableSettle = 5 * time.Second
 
 type Unschedulable struct {
 	Pod string
