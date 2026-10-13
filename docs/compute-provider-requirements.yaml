@@ -321,7 +321,7 @@ requirements:
   - id: FC-GUEST-TLS-PORT-AND-CURLRC
     source:
       - ts/hono-compute-provider/lib/compute-provider-firecracker/mod.ts:524-559
-      - deploy/market-network/market-requester/mod.ts:42-48
+      - ts/atproto-market/request-vm-ssh/mod.ts:329-333
     behaviour: >-
       With guestTlsPort set (a market network dispatcher off 443), every https://<name>.localhost URL without a port is
       rewritten to :<guestTlsPort>, /root/.curlrc gets `resolve = *:<port>:<hostAddress>`, and every
