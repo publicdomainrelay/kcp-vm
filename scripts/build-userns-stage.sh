@@ -15,7 +15,9 @@ build id and no source paths. Prints the output path and its sha256.
 
   --out   where swc-userns-stage lands (default \$HOME/.tmp/userns-stage-build)
 
-CONTAINER=podman selects podman (default docker); rootless podman runs as root of its user namespace, which is the calling uid.
+CONTAINER=podman selects podman (default docker). Rootless podman runs as root of its user namespace,
+which is the calling uid, and builds the builder image with apt's sandbox user set to root through a
+build-time mount (one uid in the namespace; the image does not keep the file).
 EOF
   exit 2
 }
@@ -37,16 +39,25 @@ src="$root/deploy/swc-userns-stage"
 container="${CONTAINER:-docker}"
 dockerfile="$root/$(jq -r '.guestImages.builder.dockerfile' "$versions")"
 builder="localhost/socialweb-guest-builder:sha-$(sha256sum "$dockerfile" | cut -c1-12)"
+rootless_podman=0
+case "$(basename "$container")" in
+  podman) [ "$(id -u)" = 0 ] || rootless_podman=1 ;;
+esac
 if ! "$container" image inspect "$builder" >/dev/null 2>&1; then
   echo "build-userns-stage: building the builder image $builder" >&2
-  "$container" build -q -t "$builder" -f "$dockerfile" "$(dirname "$dockerfile")" >&2
+  build_mounts=()
+  if [ "$rootless_podman" = 1 ]; then
+    mkdir -p "$out"
+    printf 'APT::Sandbox::User "root";\n' >"$out/apt-sandbox-root.conf"
+    build_mounts=(-v "$out/apt-sandbox-root.conf:/etc/apt/apt.conf.d/00-sandbox-root:ro")
+  fi
+  "$container" build -q "${build_mounts[@]}" -t "$builder" -f "$dockerfile" "$(dirname "$dockerfile")" >&2
+  rm -f "$out/apt-sandbox-root.conf"
 fi
 
 mkdir -p "$out"
 user="$(id -u):$(id -g)"
-case "$(basename "$container")" in
-  podman) [ "$(id -u)" = 0 ] || user="0:0" ;;
-esac
+[ "$rootless_podman" = 0 ] || user="0:0"
 "$container" run --rm --network none --user "$user" --security-opt label=disable \
   -e LANG=C -e LC_ALL=C -e SOURCE_DATE_EPOCH=0 \
   -v "$src:/src:ro" -v "$out:/out" -w /src "$builder" \
