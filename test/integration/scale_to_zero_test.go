@@ -5,6 +5,7 @@ package integration
 import (
 	"context"
 	"fmt"
+	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
 	"strings"
 	"testing"
 	"time"
@@ -229,14 +230,29 @@ func TestTenantClusterScalesFromZeroOnMarketVMsAndBack(t *testing.T) {
 	if podA.Spec.NodeName == podB.Spec.NodeName {
 		t.Fatalf("the anti-affinity pods share node %s", podA.Spec.NodeName)
 	}
-	claims, err := tn.Claims(ctx)
-	if err != nil || len(claims) != 2 {
-		t.Fatalf("want two NodeClaims for two nodes, got %d (%v)", len(claims), err)
-	}
-	for _, c := range claims {
-		if (c.Status.Phase != "Joining" && c.Status.Phase != "Running") || c.Status.Contract.ReceiptUri == "" {
-			t.Errorf("NodeClaim %s: phase %s receipt %q", c.Name, c.Status.Phase, c.Status.Contract.ReceiptUri)
+	var claims []v1alpha1.NodeClaim
+	for deadline := time.Now().Add(30 * time.Second); ; {
+		var err error
+		claims, err = tn.Claims(ctx)
+		if err != nil || len(claims) != 2 {
+			t.Fatalf("want two NodeClaims for two nodes, got %d (%v)", len(claims), err)
 		}
+		running := 0
+		for _, c := range claims {
+			if c.Status.Phase == "Running" && c.Status.Contract.ReceiptUri != "" {
+				running++
+			}
+		}
+		if running == len(claims) {
+			break
+		}
+		if time.Now().After(deadline) {
+			for _, c := range claims {
+				t.Errorf("NodeClaim %s: phase %s receipt %q (want Running once its node joined)", c.Name, c.Status.Phase, c.Status.Contract.ReceiptUri)
+			}
+			break
+		}
+		time.Sleep(time.Second)
 	}
 	t.Logf("scale out: first NodeClaim +%.1fs, two market RFP VMs joined and both pods Ready +%.1fs (nodes %s, %s)",
 		firstClaim.Seconds(), nodesReady.Seconds(), podA.Spec.NodeName, podB.Spec.NodeName)

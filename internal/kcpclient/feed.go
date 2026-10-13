@@ -219,6 +219,45 @@ func (f *feed) keysUnder(prefix string) []string {
 	return out
 }
 
+var errAccountReady = errors.New("kcpclient: the account workspace is ready")
+
+func (c *Client) waitForAccount(ctx context.Context, did string) error {
+	rRoot, err := c.resource(RootWorkspace, tenancyResource)
+	if err != nil {
+		return err
+	}
+	spaces := source[kcpv1alpha1.Workspace]{r: rRoot, resource: "workspaces",
+		field: "metadata.name=" + AccountHash(did), where: RootWorkspace}
+	ready := func(ws kcpv1alpha1.Workspace) bool {
+		return ws.DeletionTimestamp == nil && ws.Status.Phase == corev1alpha1.LogicalClusterPhaseReady
+	}
+	anyReady := func(items []kcpv1alpha1.Workspace) error {
+		for _, ws := range items {
+			if ready(ws) {
+				return errAccountReady
+			}
+		}
+		return nil
+	}
+	items, rv, err := spaces.list(ctx)
+	if err != nil {
+		return err
+	}
+	if anyReady(items) != nil {
+		return nil
+	}
+	err = follow(ctx, spaces, rv, func(deleted bool, ws kcpv1alpha1.Workspace) error {
+		if !deleted && ready(ws) {
+			return errAccountReady
+		}
+		return nil
+	}, anyReady)
+	if errors.Is(err, errAccountReady) {
+		return nil
+	}
+	return err
+}
+
 func (c *Client) Follow(ctx context.Context, caller gateway.Caller, name string, emit gateway.Emit) error {
 	did := string(caller)
 	if did == "" {
@@ -228,11 +267,28 @@ func (c *Client) Follow(ctx context.Context, caller gateway.Caller, name string,
 	if err != nil {
 		return err
 	}
+	snapshotSent := false
+	if state == revocation.DenyFirstLogin {
+		if name != "" {
+			return &gateway.XRPCError{Name: "ClusterNotFound", Status: 404,
+				Message: "this account has no clusters yet: call createCluster, then subscribe"}
+		}
+		if err := emit(gateway.Event{Type: gateway.EventInfo, Payload: gateway.InfoEvent{
+			Name:    gateway.InfoSnapshotComplete,
+			Message: "this account has no clusters yet; events start when createCluster makes the first one",
+		}}); err != nil {
+			return err
+		}
+		snapshotSent = true
+		if err := c.waitForAccount(ctx, did); err != nil {
+			return err
+		}
+		if state, err = c.Lookup(ctx, did); err != nil {
+			return err
+		}
+	}
 	switch state {
-	case revocation.DenyFirstLogin:
-		return &gateway.XRPCError{Name: "ClusterNotFound", Status: 404,
-			Message: "this account has no clusters yet: call createCluster, then subscribe"}
-	case revocation.DenyGranted:
+	case revocation.DenyGranted, revocation.DenyFirstLogin:
 	default:
 		return gateway.ErrIdentityRevoked
 	}
@@ -274,7 +330,7 @@ func (c *Client) Follow(ctx context.Context, caller gateway.Caller, name string,
 		if ws.Status.Phase != corev1alpha1.LogicalClusterPhaseReady || ws.DeletionTimestamp != nil {
 			continue
 		}
-		start, err := f.open(ctx, ws.Name, true)
+		start, err := f.open(ctx, ws.Name, !snapshotSent)
 		if err != nil {
 			return err
 		}
@@ -283,11 +339,13 @@ func (c *Client) Follow(ctx context.Context, caller gateway.Caller, name string,
 	if !found {
 		return gateway.ErrClusterNotFound
 	}
-	if err := emit(gateway.Event{Type: gateway.EventInfo, Payload: gateway.InfoEvent{
-		Name:    gateway.InfoSnapshotComplete,
-		Message: "the snapshot is complete; what follows are live changes",
-	}}); err != nil {
-		return err
+	if !snapshotSent {
+		if err := emit(gateway.Event{Type: gateway.EventInfo, Payload: gateway.InfoEvent{
+			Name:    gateway.InfoSnapshotComplete,
+			Message: "the snapshot is complete; what follows are live changes",
+		}}); err != nil {
+			return err
+		}
 	}
 
 	for _, start := range starts {

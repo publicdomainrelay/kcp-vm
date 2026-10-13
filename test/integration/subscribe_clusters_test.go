@@ -140,6 +140,29 @@ func (n *Network) OwnerAccount(t testing.TB) *pdsAccount {
 	return a
 }
 
+func (a *pdsAccount) Fresh(t testing.TB) *pdsAccount {
+	t.Helper()
+	host := strings.TrimPrefix(strings.TrimPrefix(a.pds, "https://"), "http://")
+	suffix := host
+	if i := strings.Index(host, "."); i >= 0 {
+		suffix = host[i+1:]
+	}
+	handle := fmt.Sprintf("fresh%d.%s", time.Now().UnixNano()%1000000, suffix)
+	pw := fmt.Sprintf("pw-%d", time.Now().UnixNano())
+	out, code, err := postJSON(a.client, a.pds+"/xrpc/com.atproto.server.createAccount", "",
+		map[string]string{"handle": handle, "email": handle + "@example.test", "password": pw})
+	if err != nil || code != http.StatusOK {
+		t.Fatalf("createAccount %s on %s: %d %v %v", handle, a.pds, code, out, err)
+	}
+	f := &pdsAccount{client: a.client, pds: a.pds}
+	f.DID, _ = out["did"].(string)
+	f.access, _ = out["accessJwt"].(string)
+	if f.DID == "" || f.access == "" {
+		t.Fatalf("createAccount %s returned no did or session: %v", handle, out)
+	}
+	return f
+}
+
 func (a *pdsAccount) Token(t testing.TB, method string) string {
 	t.Helper()
 	q := url.Values{"aud": {gatewayAudience}, "lxm": {clusterNSID + method}}
@@ -279,8 +302,17 @@ func TestClusterEventsStreamFromSubscribeClusters(t *testing.T) {
 	tenantUp := func(ev streamEvent) bool {
 		return ev.Type == "cluster" && ev.str("name") == "tenant" && ev.str("phase") == string(v1alpha1.ClusterReady)
 	}
-	if !tenantUp(snap[0]) {
-		s.until("the bootstrap cluster tenant Ready", tenantReady, tenantUp, nil)
+	tenantWasReady := tenantUp(snap[0])
+
+	fresh := acct.Fresh(t)
+	empty := subscribe(t, addr, fresh.Token(t, "subscribeClusters"), "")
+	emptySnap := empty.until("an empty snapshot for an account with no clusters", 30*time.Second, func(ev streamEvent) bool {
+		return ev.Type == "info" && ev.str("name") == "SnapshotComplete"
+	}, nil)
+	for _, ev := range emptySnap {
+		if ev.Type == "error" || ev.Type == "cluster" {
+			t.Fatalf("an account with no clusters got %s before SnapshotComplete: %v", ev.Type, ev.Payload)
+		}
 	}
 
 	if out, code, err := postJSON(gw, "http://"+addr+"/xrpc/"+clusterNSID+"createCluster", acct.Token(t, "createCluster"),
@@ -309,6 +341,26 @@ func TestClusterEventsStreamFromSubscribeClusters(t *testing.T) {
 	}
 	t.Logf("cluster %s Ready %.1fs after createCluster; phases %v; members %v", streamCluster,
 		time.Since(created).Seconds(), phases(demo, "cluster"), members)
+	if got := strings.Join(phases(demo, "cluster"), ","); !strings.Contains(got, string(v1alpha1.ClusterInitializing)) ||
+		strings.Index(got, string(v1alpha1.ClusterInitializing)) > strings.LastIndex(got, string(v1alpha1.ClusterReady)) {
+		t.Errorf("cluster %s did not report Initializing before Ready: %s", streamCluster, got)
+	}
+	if !tenantWasReady {
+		firstMember, tenantReadyAt := -1, -1
+		for i, e := range up {
+			if firstMember < 0 && e.Type == "member" && e.str("cluster") == streamCluster {
+				firstMember = i
+			}
+			if tenantReadyAt < 0 && tenantUp(e) {
+				tenantReadyAt = i
+			}
+		}
+		if firstMember < 0 || (tenantReadyAt >= 0 && tenantReadyAt < firstMember) {
+			t.Errorf("cluster %s started only after the bootstrap cluster was Ready (first member event %d, tenant Ready %d): clusters are brought up one at a time",
+				streamCluster, firstMember, tenantReadyAt)
+		}
+		t.Logf("parallel bring-up: %s first member event at index %d, tenant Ready at index %d", streamCluster, firstMember, tenantReadyAt)
+	}
 	if len(members) == 0 {
 		t.Errorf("no #member events while the control plane of %s came up", streamCluster)
 	}
@@ -331,8 +383,8 @@ func TestClusterEventsStreamFromSubscribeClusters(t *testing.T) {
 	if _, err := core.Pods(nsServer).Create(ctx, serverPod(streamPod, "", false), metav1.CreateOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	out := s.until("a NodeClaim Joining or Running", scaleOutTimeout, func(ev streamEvent) bool {
-		return ev.Type == "nodeClaim" && (ev.str("phase") == string(v1alpha1.NodeClaimJoining) || ev.str("phase") == string(v1alpha1.NodeClaimRunning))
+	out := s.until("a NodeClaim Running", scaleOutTimeout, func(ev streamEvent) bool {
+		return ev.Type == "nodeClaim" && ev.str("phase") == string(v1alpha1.NodeClaimRunning)
 	}, failedClaim)
 	claimPhases := phases(out, "nodeClaim")
 	t.Logf("NodeClaim %s %.1fs after the pod; phases %v", claimPhases[len(claimPhases)-1], time.Since(scaleOut).Seconds(), claimPhases)

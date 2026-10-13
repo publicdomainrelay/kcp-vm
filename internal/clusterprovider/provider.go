@@ -302,6 +302,18 @@ func (p *Provider) reconcile(ctx context.Context, ref Ref, with func(*materialis
 		return pass, nil
 	}
 
+	if p.opts.WriteStatus && cl.Spec.Running && cl.DeletionTimestamp == nil &&
+		(cl.Status.Phase == "" || cl.Status.Phase == v1alpha1.ClusterUnavailable) && !p.opts.Host.Live(o.Cluster.Name) {
+		early := cl.Status
+		early.Phase = v1alpha1.ClusterInitializing
+		if err := p.opts.Registry.WriteStatus(ctx, ref, early); err != nil {
+			p.opts.Log.Warn("cluster provider: writing Initializing before the members start failed; the pass goes on",
+				"cluster", ref.Name, "home", ref.Home, "error", err.Error())
+		} else {
+			cl.Status = early
+		}
+	}
+
 	res, err := p.opts.Decider.Reconcile(ctx, o)
 	if err != nil {
 		return pass, err

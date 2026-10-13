@@ -905,6 +905,38 @@ func (c *Client) ReadNodeClaim(ctx context.Context, logicalCluster, name string)
 	return &claim, nil
 }
 
+func (c *Client) MarkNodeClaimRunning(ctx context.Context, logicalCluster, name, message string) error {
+	r, err := c.resource(logicalCluster, socialwebResource)
+	if err != nil {
+		return err
+	}
+	if name == "" {
+		return errors.New("kcpclient: MarkNodeClaimRunning needs a claim name")
+	}
+	var claim v1alpha1.NodeClaim
+	if err := r.Get().Resource("nodeclaims").Name(name).Do(ctx).Into(&claim); err != nil {
+		return fmt.Errorf("kcpclient: read nodeclaim %s: %w", name, err)
+	}
+	if claim.Status.Phase != v1alpha1.NodeClaimJoining {
+		return nil
+	}
+	body, err := json.Marshal(map[string]any{
+		"metadata": map[string]any{"resourceVersion": claim.ResourceVersion},
+		"status":   map[string]any{"phase": v1alpha1.NodeClaimRunning, "message": message},
+	})
+	if err != nil {
+		return err
+	}
+	err = r.Patch(types.MergePatchType).SubResource("status").Resource("nodeclaims").Name(name).Body(body).Do(ctx).Error()
+	if apierrors.IsConflict(err) || apierrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("kcpclient: mark nodeclaim %s Running: %w", name, err)
+	}
+	return nil
+}
+
 func (c *Client) DeleteNodeClaim(ctx context.Context, logicalCluster, name string) error {
 	r, err := c.resource(logicalCluster, socialwebResource)
 	if err != nil {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"k8s.io/client-go/rest"
@@ -78,7 +79,14 @@ type Provider struct {
 
 	newInstance func() string
 	log         *slog.Logger
+
+	busyMu  sync.Mutex
+	busy    map[string]bool
+	workers sync.WaitGroup
+	bringUp chan struct{}
 }
+
+const MaxConcurrentBringUps = 4
 
 const ShutdownTimeout = 60 * time.Second
 
@@ -304,6 +312,7 @@ func (p *Provider) joinAll(ctx context.Context) error {
 		p.passAll(ctx)
 		select {
 		case <-ctx.Done():
+			p.workers.Wait()
 			return nil
 		case <-tick.C:
 		}
@@ -319,10 +328,62 @@ func (p *Provider) passAll(ctx context.Context) {
 	}
 	p.provider.Reclaim(refs)
 	for _, ref := range refs {
-		if err := p.one(ctx, ref); err != nil {
-			p.log.Error("cluster provider: this cluster's pass failed and the others continue",
+		key, err := ref.Key()
+		if err != nil {
+			p.log.Error("cluster provider: this cluster has no derivable key; its pass is skipped",
 				"cluster", ref.Name, "home", ref.Home, "error", err.Error())
+			continue
 		}
+		if !p.claim(key) {
+			continue
+		}
+		p.workers.Add(1)
+		go func(ref clusterprovider.Ref, key string) {
+			defer p.workers.Done()
+			defer p.release(key)
+			p.runOne(ctx, ref)
+		}(ref, key)
+	}
+}
+
+func (p *Provider) claim(key string) bool {
+	p.busyMu.Lock()
+	defer p.busyMu.Unlock()
+	if p.busy == nil {
+		p.busy = map[string]bool{}
+	}
+	if p.busy[key] {
+		return false
+	}
+	p.busy[key] = true
+	return true
+}
+
+func (p *Provider) release(key string) {
+	p.busyMu.Lock()
+	defer p.busyMu.Unlock()
+	delete(p.busy, key)
+}
+
+func (p *Provider) runOne(ctx context.Context, ref clusterprovider.Ref) {
+	if err := p.one(ctx, ref); err != nil {
+		p.log.Error("cluster provider: this cluster's pass failed and the others continue",
+			"cluster", ref.Name, "home", ref.Home, "error", err.Error())
+	}
+}
+
+func (p *Provider) bringUpSlot(ctx context.Context) (func(), bool) {
+	p.busyMu.Lock()
+	if p.bringUp == nil {
+		p.bringUp = make(chan struct{}, MaxConcurrentBringUps)
+	}
+	slots := p.bringUp
+	p.busyMu.Unlock()
+	select {
+	case slots <- struct{}{}:
+		return func() { <-slots }, true
+	case <-ctx.Done():
+		return func() {}, false
 	}
 }
 
@@ -352,7 +413,12 @@ func (p *Provider) one(ctx context.Context, ref clusterprovider.Ref) error {
 	if _, err := p.store(ctx, key); err != nil {
 		return err
 	}
+	done, ok := p.bringUpSlot(ctx)
+	if !ok {
+		return ctx.Err()
+	}
 	p.pass(ctx, ref, key)
+	done()
 	p.scale(ctx, key, ref.Name, true)
 	return nil
 }

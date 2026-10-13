@@ -123,7 +123,7 @@ Scale from zero: apply a pod to a tenant cluster at 0 nodes -> NodeClaim -> RFP 
 
 `com.publicdomainrelay.temp.cluster.subscribeClusters` = atproto event stream: `GET` + websocket upgrade, binary frames, each frame = DRISL-CBOR header (`{op:1,t:"#cluster"}`, error `{op:-1}`) + DRISL-CBOR payload. Auth = same service JWT on the upgrade (`Authorization: Bearer`, `lxm` = subscribeClusters). No query-param token. Account = token `iss`. Optional `?name=<cluster>`.
 
-On connect: snapshot (one `#cluster` per cluster, one `#member` per control-plane member, one `#nodeClaim` per claim, all `snapshot:true`), then `#info SnapshotComplete`, then live changes from kcp watches. No cursor: reconnect = fresh snapshot. Token checked once at connect (60 s token fine); stream lives until client closes, gateway restarts, or 1 h bound (`TokenExpired` error frame -> new token, reconnect). Error frame then close: `ClusterNotFound` (unknown name, cluster deleted, account has no clusters yet), `Unauthorized`, `TokenExpired`, `IdentityRevoked`, `ClusterUnavailable`, `ConsumerTooSlow`. Client frames ignored.
+On connect: snapshot (one `#cluster` per cluster, one `#member` per control-plane member, one `#nodeClaim` per claim, all `snapshot:true`), then `#info SnapshotComplete`, then live changes from kcp watches. No cursor: reconnect = fresh snapshot. Token checked once at connect (60 s token fine); stream lives until client closes, gateway restarts, or 1 h bound (`TokenExpired` error frame -> new token, reconnect). Error frame then close: `ClusterNotFound` (unknown `?name=`, cluster deleted), `Unauthorized`, `TokenExpired`, `IdentityRevoked`, `ClusterUnavailable`, `ConsumerTooSlow`. Client frames ignored.
 
 | message | fields | values |
 |---|---|---|
@@ -145,14 +145,14 @@ websocat -b -n -H="Authorization: Bearer $T" "wss://k8s.socialweb.computer/xrpc/
 call query listClusters | jq '.clusters[] | {name, phase, running}'
 ```
 
-Actual behavior today (plan 0016 M2b fixes the first three):
-- Cluster phase stays `Unavailable` while members start (provider writes `Initializing` only after it placed every member); watch `#member` events for progress (postgres, front, openbao, kine, k3s, ccm, eso, links, one after another) -> `Ready` ~2 min 45 s.
-- Gateway brings up one cluster at a time: a new cluster waits behind any other cluster still starting.
-- `#nodeClaim` goes Bidding -> Provisioning -> Joining (~20-60 s) and stays `Joining` once the node is Ready and pods run (no `Running` yet): wait for your pod, not the claim.
-- Account with no clusters -> `ClusterNotFound` error frame: call createCluster before subscribing.
+Behavior (release with the four fixes of 2026-10-13):
+- Cluster phase `Initializing` as soon as its members start (was `Unavailable` until all were placed); `#member` events show each member -> `Ready` ~2 min 45 s (plan 0016 makes it ~1 min).
+- Clusters come up in parallel (at most 4 bring-ups at once); one cluster starting never stalls another cluster's node scaling.
+- `#nodeClaim` Bidding -> Provisioning -> Joining -> `Running` once the node joined its cluster (~20-60 s).
+- Account with no clusters -> empty snapshot + `#info SnapshotComplete`, then events start when createCluster makes the first one. `?name=` of an unknown cluster -> `ClusterNotFound`.
 - Pod deleted -> scale to zero ~2-3 min (incl. 2 min hold), claim `deleted:true`. Provision failure -> `#nodeClaim` `Failed` with message (e.g. `no oauth session stored` = sign the user in).
 
-Prod needs release >= 77432804 for `subscribeClusters` (older gateway: 404).
+Prod needs a release with these fixes (>= the four-fixes merge) for this behavior; `subscribeClusters` itself needs >= 77432804 (older gateway: 404).
 
 ## OAuth sign-in (scripted, never by hand, never hand the user a link)
 
