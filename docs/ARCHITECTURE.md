@@ -6949,6 +6949,7 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   before the watches the same span pod to NodeClaim read 6.8 s and 4 s. Pod deleted 19:53:10.9, the 2 min
   hold, vm.delete 200 at 19:55:18.6, ComputeVM gone by 19:55:26; `dev down` 34 s, no child state, process
   or VM unit left.
+
 - **The web app offers socialweb-meshd and the credential helpers again, from the binary, and refuses
   to start without them (2026-10-12, found by 0006 M5-RETIRE).** Since prod moved from the container to
   the socialweb-computer binary nothing placed `socialweb-meshd-<arch>` or
@@ -6960,13 +6961,15 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   `--required-downloads` (section 9 item 6). Decided by Claude, user may veto: one asset for all six
   downloads; a market network's guests fetch from `http://192.0.2.1:<the web app's bound port>`
   (`test-node-download-host`, pasta's host loopback map), since it has no public origin. Readings
-  (`dev up --profile market-network --bidders 1 --with-gateway`, hat-8, UTC): dev up 20:55:05 to
-  20:57:14, the web app ready 20:57:08.9 with `meshd.downloadBase http://192.0.2.1:45595`, four credential
-  helpers and no `meshd_not_offered`; tenant Ready 20:59:08. Node 1 from the RFP flow: claim 20:59:12,
-  VM Running 20:59:22, node Ready 20:59:47. Node 2: claim 21:03:36, VM Running 21:03:47, node Ready
-  21:04:23, pod Running 21:04:30; both Nodes carry `socialweb.computer/mesh-endpoint` (pod CIDRs
-  10.42.0.0/24 and 10.42.2.0/24). Pod 10.42.2.2 on node 2 fetched pod 10.42.0.4 on node 1 at 21:04:32.4,
-  and a pod pinned to node 1 fetched 10.42.2.2 on node 2 at 21:05:18. Found on the way, not fixed here:
+  (`dev up --profile market-network --bidders 1 --with-gateway`, hat-8, UTC, after the rebase on
+  a9e8abb3): dev up 21:08:42 to 21:11:14, the web app ready 21:11:11.2 with `meshd.downloadBase
+  http://192.0.2.1:41753`, both meshd pins, four credential helpers and no `meshd_not_offered`; tenant
+  Ready 21:13:11. Deployments applied at zero nodes 21:13:11.1 (2 anti-affine httpd pods and 8 filler
+  pods); two NodeClaims 21:13:12 and 21:13:13 through the RFP flow, both VMs Running by 21:13:24, nodes
+  Ready 21:13:48 and 21:13:53, both pods Running by 21:13:58; both Nodes carry
+  `socialweb.computer/mesh-endpoint` (pod CIDRs 10.42.0.0/24 and 10.42.1.0/24). Pod 10.42.1.2 on node 2
+  fetched pod 10.42.0.4 on node 1 at 21:13:59.2, and a pod pinned to node 1 fetched 10.42.1.2 on node 2
+  at 21:14:01. `dev down` 123 s, no process or VM unit left. Found on the way, not fixed here:
   (1) both market nodes report InternalIP 172.30.0.2 (every guest's pasta address), so the apiserver's
   egress-selector tunnel sends `kubectl exec` and `logs` for node 1 to node 2 ("unable to upgrade
   connection: pod does not exist"); (2) the scale target is pods per node only, so a Pending pod held off
