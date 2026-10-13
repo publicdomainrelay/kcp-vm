@@ -1,0 +1,12 @@
+stages: [prove]
+
+clone-probe:
+  stage: prove
+  tags: [socialweb-computer-fixture]
+  timeout: 10m
+  image: rancher/mirrored-library-busybox:1.37.0@sha256:ad9fa4d07136a83e69a54ef00102f579d04eba431932de3b0f098cc5d5948f9f
+  script:
+    - echo "FIXTURE_JOB_HOST $(hostname)"
+    - test -f .gitlab-ci.yml
+    - test -f README.md
+    - echo "FIXTURE_CLONE_OK $CI_COMMIT_SHA"
