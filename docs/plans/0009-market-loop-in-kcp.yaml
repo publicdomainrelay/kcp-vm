@@ -73,7 +73,7 @@ items:
     files: ["ts/typescript-helpers/lib/common/kcp-client", "ts/typescript-helpers/lib/abc/kcp-client", "ts/typescript-helpers/lib/kcp-client-rest", "the six kcp packages"]
     done_when: "the six packages import kcp-client-abc and kcp-client-rest and no other package calls kcp with fetch; a market network run with --secrets passes; a token rotation during the run causes no failed kcp call."
     risks: ["A watch that misses a bookmark across a kcp slot roll replays from list; createIfAbsent and resourceVersion checks keep that harmless."]
-    status: todo
+    status: done
     evidence:
   - id: M1-PROJECTED-CREDENTIALS
     milestone: M1
@@ -106,7 +106,7 @@ items:
     files: ["api/types_application.go", "ts/typescript-helpers/lib/abc/kcp-client", "cmd/socialweb-computer (status verb)"]
     done_when: "during a market network run, `socialweb-computer status` shows the bidder's counters moving and each ComputeContract's current step; no step is visible only in a log."
     risks: ["Status write volume: coalescing keeps it to one write per object per second at most."]
-    status: todo
+    status: done
     evidence:
   - id: M2-STREAM-CURSOR
     milestone: M2
