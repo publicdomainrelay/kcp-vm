@@ -2120,7 +2120,14 @@ items:
       Order: (1) build the release binary from one commit (scripts/build-socialweb-computer.sh, both builds
       byte-identical) and record its sha256; (2) gateway host: record what the old stack runs (units,
       containers, listening ports, state dirs), stop the old gateway services so the edge ports are free,
-      and leave their state dirs on disk untouched (not read, not deleted; no rollback is planned); check the
+      and leave their state dirs on disk untouched (not read, not deleted; no rollback is planned); on
+      socialweb.computer also stop and disable the leftovers of another experiment (decided by the user
+      2026-10-12): socialweb-computer-pds (pds.socialweb.computer, 8789), pds2 (pds2 and test.pds2, 8794),
+      the town site (8791) and socialweb-computer-relay (the relay for that pds), and remove their caddy
+      sites; the gateway has ONE public name, k8s.socialweb.computer (decided by the user 2026-10-12: the
+      gateway.socialweb.computer site is removed, its 8788 web app route lives under k8s.socialweb.computer
+      next to the tenant apiserver front); socialweb-computer-ssh stays until 0008 M4-RUN-GATEWAY-SSH replaces
+      it; check the
       relay config (an explicit relay list no longer adds public Jetstreams); (3) the fresh deploy below;
       (4) hat-8: stop the old /opt/socialweb-computer-bidder bidder, then `install bidder --handle <the
       bobvmbuilder handle>` and `run bidder --profile prod-qr`; a lost session is signed in again from the
