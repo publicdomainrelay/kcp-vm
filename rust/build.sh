@@ -6,12 +6,19 @@ dist="${MESHD_DIST:-$here/dist}"
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$HOME/.cache/socialweb-meshd-target}"
 export TMPDIR="${TMPDIR:-$HOME/.cache/scratch-tmp}"
 cache="${MESHD_CACHE:-}"
-mkdir -p "$TMPDIR" "$dist"
+cargo_home="${CARGO_HOME:-$HOME/.cargo}"
+rustup_home="${RUSTUP_HOME:-$HOME/.rustup}"
+mkdir -p "$TMPDIR" "$dist" "$CARGO_TARGET_DIR"
+CARGO_TARGET_DIR="$(cd "$CARGO_TARGET_DIR" && pwd -P)"
+unset RUSTUP_TOOLCHAIN
 
 usage() {
   echo "usage: $0 [x86_64] [aarch64]" >&2
   echo "  builds static musl socialweb-meshd binaries into $dist" >&2
   echo "  writes socialweb-meshd-<arch> and socialweb-meshd-<arch>.sha256 (sha256sum format)" >&2
+  echo "  cargo runs in a private mount namespace (unshare) that shows this directory at /mnt/src, the" >&2
+  echo "  target dir at /mnt/target, CARGO_HOME at /mnt/cargo and RUSTUP_HOME at /mnt/rustup, so the bytes do" >&2
+  echo "  not depend on where the checkout, the target dir or the toolchain are; rustc is rust-toolchain.toml's" >&2
   echo "  env: MESHD_DIST (output dir), MESHD_CC (C compiler for ring, default clang)," >&2
   echo "       CARGO_TARGET_DIR (default ~/.cache/socialweb-meshd-target)," >&2
   echo "       MESHD_CACHE (keep each binary in DIR keyed by the sha256 of the files of rust/, the rustc," >&2
@@ -34,19 +41,21 @@ cd "$here"
 cc="${MESHD_CC:-clang}"
 command -v "$cc" >/dev/null || { echo "build.sh: $cc not found; ring's C and assembly need a compiler that takes --target" >&2; exit 1; }
 command -v ar >/dev/null || { echo "build.sh: ar not found" >&2; exit 1; }
+command -v unshare >/dev/null || { echo "build.sh: unshare not found" >&2; exit 1; }
 sysroot="$(rustc --print sysroot)"
 host="$(rustc -vV | sed -n 's/^host: //p')"
-lld="$sysroot/lib/rustlib/$host/bin/rust-lld"
-[ -x "$lld" ] || { echo "build.sh: $lld not found" >&2; exit 1; }
-
-registry="${CARGO_HOME:-$HOME/.cargo}/registry/src"
-export RUSTFLAGS="--remap-path-prefix=$here=/socialweb-meshd --remap-path-prefix=$registry=/cargo-registry --remap-path-prefix=$sysroot=/rust-sysroot"
+case "$sysroot" in
+  "$rustup_home"/toolchains/*) ;;
+  *) echo "build.sh: rustc sysroot $sysroot is not under RUSTUP_HOME $rustup_home; install rustc with rustup" >&2; exit 1 ;;
+esac
+[ -d "$cargo_home/registry" ] || mkdir -p "$cargo_home/registry"
+ns_sysroot="/mnt/rustup/${sysroot#"$rustup_home"/}"
 
 echo "build.sh: $(rustc --version) $(cargo --version)"
 
 key_of() {
   {
-    echo "socialweb-meshd v1 $1"
+    echo "socialweb-meshd v2 $1"
     find . -path ./dist -prune -o -path ./target -prune -o -type f -printf '%P\0' | sort -z | xargs -0 sha256sum
     rustc -vV
     cargo -V
@@ -85,7 +94,7 @@ for arch in "${arches[@]}"; do
   fi
   lower="${triple//-/_}"
   upper="$(echo "$lower" | tr '[:lower:]' '[:upper:]')"
-  cargo_env+=("CC_$lower=$cc" "CFLAGS_$lower=--target=$triple" "AR_$lower=ar" "CARGO_TARGET_${upper}_LINKER=$lld")
+  cargo_env+=("CC_$lower=$cc" "CFLAGS_$lower=--target=$triple" "AR_$lower=ar" "CARGO_TARGET_${upper}_LINKER=$ns_sysroot/lib/rustlib/$host/bin/rust-lld")
   build+=("$arch")
 done
 
@@ -94,7 +103,23 @@ if [ "${#build[@]}" -gt 0 ]; then
   for arch in "${build[@]}"; do
     targets+=(--target "$arch-unknown-linux-musl")
   done
-  env "${cargo_env[@]}" cargo build --release --locked "${targets[@]}" -p socialweb-meshd --manifest-path "$here/Cargo.toml"
+  unshare --user --map-root-user --mount bash -c '
+    set -euo pipefail
+    mount -t tmpfs -o mode=0755 socialweb-meshd /mnt
+    mkdir /mnt/src /mnt/target /mnt/cargo /mnt/rustup
+    mount --bind "$1" /mnt/src
+    mount --bind "$2" /mnt/target
+    mount --bind "$3" /mnt/cargo
+    mount --bind "$4" /mnt/rustup
+    shift 4
+    cd /mnt/src
+    exec "$@"
+  ' _ "$here" "$CARGO_TARGET_DIR" "$cargo_home" "$rustup_home" \
+    env -u CARGO_ENCODED_RUSTFLAGS -u RUSTC_WRAPPER \
+    CARGO_HOME=/mnt/cargo RUSTUP_HOME=/mnt/rustup CARGO_TARGET_DIR=/mnt/target PATH="/mnt/cargo/bin:$PATH" \
+    RUSTFLAGS="--remap-path-prefix=/mnt/src=/socialweb-meshd --remap-path-prefix=/mnt/cargo/registry/src=/cargo-registry --remap-path-prefix=$ns_sysroot=/rust-sysroot" \
+    "${cargo_env[@]}" \
+    cargo build --release --locked "${targets[@]}" -p socialweb-meshd --manifest-path /mnt/src/Cargo.toml
   for arch in "${build[@]}"; do
     built="$CARGO_TARGET_DIR/$arch-unknown-linux-musl/release/socialweb-meshd"
     publish "$arch" "$built"
