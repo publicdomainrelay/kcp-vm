@@ -206,7 +206,7 @@ items:
     files: [".gitlab-ci.yml", "scripts/deploy.sh", "internal/versions/versions.json"]
     done_when: a release job publishes one commit's binaries, images and SHA256SUMS; a bidder host fetches and verifies an image from the registry URL.
     risks: ["The guest image build needs debugfs and a kernel toolchain on the runner host; the runner account gets them, bidders still need none."]
-    status: todo
+    status: doing
     evidence: []
   - id: G2-IT-HARNESS
     milestone: G2
@@ -307,7 +307,7 @@ items:
     files: [".gitlab-ci.yml"]
     done_when: two consecutive green runs on main (ACC-REPEAT, first half).
     risks: ["16 VM slots are shared with agents' live runs; the job takes at most 6 and waits for slots."]
-    status: todo
+    status: done
     evidence: []
   - id: G3-PROD-CANARY
     milestone: G3

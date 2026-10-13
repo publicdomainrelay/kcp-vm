@@ -132,7 +132,7 @@ items:
       - "3. Time createCluster -> Ready on prod; read the member lines (`journalctl _UID=$(id -u socialweb) -o cat | grep -E 'member (placed|ready)|status'`); put the numbers in README; commit and push."
       - "4. Finish line up/down (README step 5); delete the timing cluster."
     done_when: "Prod createCluster -> Ready reading recorded in README; finish line passes; plan items flipped done."
-    status: todo
+    status: done
 acceptance:
   checks:
     - id: ACC16-TIMING
