@@ -220,6 +220,8 @@ func (hs *Harness) liveSlot(t testing.TB, name string) {
 		return
 	}
 	slot := func(ctx context.Context, verb string) error {
+		runtime.LockOSThread()
+		defer runtime.UnlockOSThread()
 		cmd := exec.CommandContext(ctx, "deno", "run", "-A", tool, verb, name)
 		cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGTERM}
 		out, err := cmd.CombinedOutput()
