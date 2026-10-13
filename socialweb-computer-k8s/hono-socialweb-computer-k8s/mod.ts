@@ -27,13 +27,13 @@ import {
 import { loadPinnedDownloads } from "@publicdomainrelay/socialweb-computer-k8s-downloads-fs";
 import {
   createKcpClusterLinkReader,
-  createKcpFetch,
   createKcpGatewayListenerUrl,
   createKcpMarketIdentities,
   createKcpNodeClaimStore,
-  type KcpCredentials,
-  parseKubeconfig,
 } from "@publicdomainrelay/socialweb-computer-k8s-nodeclaim-kcp";
+import type { KcpClient } from "@publicdomainrelay/kcp-client-abc";
+import { parseKubeconfig } from "@publicdomainrelay/kcp-client-common";
+import { createKcpRestClient } from "@publicdomainrelay/kcp-client-rest";
 import {
   createMarketNodeFulfiller,
   publishedOpenBaoCAFile,
@@ -81,8 +81,10 @@ if (testOwnerSessions || testNodeGuestHostAliases.length > 0 || testNodeUserData
   });
 }
 
-const kcpCredentials: KcpCredentials | null = options.kcpKubeconfig
-  ? parseKubeconfig(await Deno.readTextFile(options.kcpKubeconfig as string), options.kcpContext as string | undefined)
+const kcp: KcpClient | null = options.kcpKubeconfig
+  ? createKcpRestClient(
+    parseKubeconfig(await Deno.readTextFile(options.kcpKubeconfig as string), options.kcpContext as string | undefined),
+  )
   : null;
 
 async function accountState(): Promise<
@@ -97,13 +99,13 @@ async function accountState(): Promise<
       requesterKeyHex: () => loadOrCreateKeyHex(`${stateDir}/requester-key.hex`),
     };
   }
-  if (!kcpCredentials) throw new Error("openbao-server needs kcp-kubeconfig to read the OpenBaoServer object");
+  if (!kcp) throw new Error("openbao-server needs kcp-kubeconfig to read the OpenBaoServer object");
   const resolve = createOpenBaoServerResolver({
-    server: kcpCredentials.server,
+    kcp,
+    server: kcp.server,
     workspace: options.openbaoServerWorkspace as string,
     name: options.openbaoServer as string,
     client: options.openbaoClient as string,
-    fetch: createKcpFetch(kcpCredentials),
     onWaiting: (reason) => log("vault_waiting", { openbaoserver: options.openbaoServer, reason }),
   });
   const resolved = await resolve();
@@ -115,7 +117,7 @@ async function accountState(): Promise<
     },
   });
   const identities = options.marketIdentityWorkspace
-    ? createKcpMarketIdentities({ credentials: kcpCredentials, workspace: options.marketIdentityWorkspace as string })
+    ? createKcpMarketIdentities({ kcp, workspace: options.marketIdentityWorkspace as string })
     : null;
   return {
     sessionStore: createVaultSessionStore({
@@ -152,9 +154,9 @@ const accounts = createAccountRequesters({
 
 function gatewayUrl(): string | (() => Promise<string>) {
   if (options.gatewayUrl) return options.gatewayUrl as string;
-  if (!kcpCredentials) throw new Error("set gateway-url, or kcp-kubeconfig to read the cluster gateway's listener from its Gateway object");
+  if (!kcp) throw new Error("set gateway-url, or kcp-kubeconfig to read the cluster gateway's listener from its Gateway object");
   return createKcpGatewayListenerUrl({
-    credentials: kcpCredentials,
+    kcp,
     workspace: options.gatewayKcpWorkspace as string,
     name: options.gatewayKcpName as string,
     listener: options.gatewayKcpListener as string,
@@ -266,7 +268,7 @@ const claimKeys = options.openbaoAddr
   })
   : vaultClaimKeys ?? createMemoryClaimKeyStore();
 const kcpWorkspace = options.kcpWorkspace as string | undefined;
-if (!claimKeys.durable && kcpCredentials && kcpWorkspace) {
+if (!claimKeys.durable && kcp && kcpWorkspace) {
   logger.warn("claim_keys_in_memory", {
     next: "a restarted door cannot re-serve an in-flight claim's secrets URL, so its Bidding and " +
       "Provisioning claims are marked Failed and released on deletion; set openbao-addr to resume them",
@@ -282,10 +284,10 @@ const nodeDownloadOrigin = testNodeDownloadHost
 const meshd = meshdPinOf(pinned.list(), nodeDownloadOrigin);
 
 let fulfiller: MarketNodeFulfiller | null = null;
-if (kcpCredentials && kcpWorkspace) {
+if (kcp && kcpWorkspace) {
   fulfiller = createMarketNodeFulfiller({
-    store: createKcpNodeClaimStore({ credentials: kcpCredentials, homesWorkspace: kcpWorkspace }),
-    links: createKcpClusterLinkReader({ credentials: kcpCredentials }),
+    store: createKcpNodeClaimStore({ kcp, homesWorkspace: kcpWorkspace }),
+    links: createKcpClusterLinkReader({ kcp }),
     requesterFor: (did) => accounts.requesterFor(did),
     owners: () => Promise.resolve(testOwnerSessions ? [...testOwnerSessions.keys()] : []),
     ...(options.clusterCaDir ? { openBaoCAFileOf: publishedOpenBaoCAFile(options.clusterCaDir as string) } : {}),

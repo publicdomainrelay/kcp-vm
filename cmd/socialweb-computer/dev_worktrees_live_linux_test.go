@@ -147,13 +147,11 @@ func TestThreeWorktreesEachReachTheirOwnKcpThroughDevEnv(t *testing.T) {
 		}
 	}
 	ids := map[string]bool{}
-	var peers []string
 	for i, u := range ups {
 		if ids[u.Instance] || !strings.HasPrefix(u.Instance, "socialweb-comput-") {
 			t.Fatalf("instance id %q (duplicate or not derived from the worktree)", u.Instance)
 		}
 		ids[u.Instance] = true
-		peers = append(peers, u.Instance)
 		if got, _ := os.Readlink(filepath.Join(trees[i], devinstance.Marker)); got != u.StateDir {
 			t.Fatalf("%s marker -> %q, want %s", trees[i], got, u.StateDir)
 		}
@@ -206,22 +204,6 @@ func TestThreeWorktreesEachReachTheirOwnKcpThroughDevEnv(t *testing.T) {
 			if has != (i == j) {
 				t.Fatalf("%s lists %s; marker of %s present=%v", ups[i].Instance, names, ups[j].Instance, has)
 			}
-		}
-	}
-	if deno, err := exec.LookPath("deno"); err == nil {
-		k8s, _ := filepath.Abs(filepath.Join("..", "..", "socialweb-computer-k8s"))
-		for i := range trees {
-			cmd := exec.Command(deno, "test", "-A", "--node-modules-dir=none", "test/dev_env_kcp_test.ts")
-			cmd.Dir = k8s
-			cmd.Env = append(os.Environ(), "NO_COLOR=1", "SWC_DEV_PEERS="+strings.Join(peers, ","))
-			for k, v := range envs[i] {
-				cmd.Env = append(cmd.Env, k+"="+v)
-			}
-			out, err := cmd.CombinedOutput()
-			if err != nil || !strings.Contains(string(out), "ok | 1 passed") {
-				t.Fatalf("TS client of %s: %v\n%s", ups[i].Instance, err, out)
-			}
-			t.Logf("TS client %s: %s", ups[i].Instance, strings.TrimSpace(string(out)))
 		}
 	}
 

@@ -1,4 +1,3 @@
-import { parse as parseYaml } from "@std/yaml";
 import type {
   ClusterLinkReader,
   ClusterLinkView,
@@ -21,58 +20,11 @@ import {
   parseClusterLink,
   parseNodeClaim,
 } from "@publicdomainrelay/socialweb-computer-k8s-api";
-
-export interface KcpCredentials {
-  server: string;
-  token?: string;
-  tokenFile?: string;
-  cert?: string;
-  key?: string;
-  ca?: string;
-}
-
-interface KubeconfigDoc {
-  "current-context"?: string;
-  contexts?: { name: string; context: { cluster: string; user: string } }[];
-  clusters?: { name: string; cluster: { server: string; "certificate-authority-data"?: string } }[];
-  users?: {
-    name: string;
-    user: { token?: string; tokenFile?: string; "client-certificate-data"?: string; "client-key-data"?: string };
-  }[];
-}
-
-function fromBase64(data: string | undefined): string | undefined {
-  return data ? new TextDecoder().decode(Uint8Array.from(atob(data), (c) => c.charCodeAt(0))) : undefined;
-}
-
-export function parseKubeconfig(text: string, contextName?: string): KcpCredentials {
-  const doc = parseYaml(text) as KubeconfigDoc;
-  const name = contextName ?? doc["current-context"];
-  const context = doc.contexts?.find((c) => c.name === name)?.context;
-  if (!context) throw new Error(`kubeconfig has no context ${name ?? "(none)"}`);
-  const cluster = doc.clusters?.find((c) => c.name === context.cluster)?.cluster;
-  const user = doc.users?.find((u) => u.name === context.user)?.user;
-  if (!cluster?.server || !user) throw new Error(`kubeconfig context ${name} names a missing cluster or user`);
-  const server = new URL(cluster.server);
-  return {
-    server: server.origin,
-    token: user.token,
-    tokenFile: user.tokenFile,
-    cert: fromBase64(user["client-certificate-data"]),
-    key: fromBase64(user["client-key-data"]),
-    ca: fromBase64(cluster["certificate-authority-data"]),
-  };
-}
-
-export async function bearerOf(credentials: KcpCredentials): Promise<string | undefined> {
-  if (credentials.tokenFile) return (await Deno.readTextFile(credentials.tokenFile)).trim();
-  return credentials.token;
-}
+import { type KcpClient, kcpResourceClient } from "@publicdomainrelay/kcp-client-abc";
+import { isConflict, isKcpStatus, isNotFound, type KcpTarget } from "@publicdomainrelay/kcp-client-common";
 
 export interface KcpRequestOptions {
-  credentials: KcpCredentials;
-  fetch?: typeof fetch;
-  timeoutMs?: number;
+  kcp: KcpClient;
 }
 
 export interface KcpNodeClaimStoreOptions extends KcpRequestOptions {
@@ -85,9 +37,7 @@ const DEFAULT_HOMES_TTL_MS = 30_000;
 const DEFAULT_HOMES_NAMESPACE = "default";
 const NODE_CLAIM_HOME_SELECTOR = "socialweb.computer/nodeclaim-home=true";
 const NODE_CLAIM_HOME_KEY = "workspace";
-const UNREACHABLE_STATUSES = new Set([403, 404]);
-
-const DEFAULT_RETRY_AFTER_MS = 5_000;
+const UNREACHABLE_STATUSES = [403, 404];
 
 const WATCH_RETRY_MS = 2_000;
 
@@ -104,25 +54,7 @@ function pause(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-const MAX_RETRY_AFTER_MS = 60_000;
-
-function retryAfterMs(res: Response): number {
-  const raw = res.headers.get("retry-after");
-  const seconds = raw === null ? Number.NaN : Number(raw);
-  const ms = Number.isFinite(seconds) ? seconds * 1_000 : Date.parse(raw ?? "") - Date.now();
-  const wait = Number.isFinite(ms) && ms > 0 ? ms : DEFAULT_RETRY_AFTER_MS;
-  return Math.min(wait, MAX_RETRY_AFTER_MS);
-}
-
-export class KcpRequestError extends Error {
-  constructor(readonly status: number, message: string) {
-    super(message);
-    this.name = "KcpRequestError";
-  }
-}
-
 const LOGICAL_CLUSTER_ANNOTATION = "kcp.io/cluster";
-const CONFLICT_STATUSES = new Set([409, 422]);
 
 export function toNodeClaim(raw: unknown, fallbackWorkspace?: string): NodeClaim {
   const claim = parseNodeClaim(raw);
@@ -143,51 +75,6 @@ export function toNodeClaim(raw: unknown, fallbackWorkspace?: string): NodeClaim
   };
 }
 
-type KcpRequest = (url: string, init?: RequestInit) => Promise<unknown>;
-
-function createKcpRequest(opts: KcpRequestOptions): KcpRequest {
-  const creds = opts.credentials;
-  const timeoutMs = opts.timeoutMs ?? 15_000;
-  const baseFetch = opts.fetch ?? fetch;
-  const client = !opts.fetch && (creds.ca || creds.cert)
-    ? Deno.createHttpClient({
-      caCerts: creds.ca ? [creds.ca] : undefined,
-      ...(creds.cert && creds.key ? { cert: creds.cert, key: creds.key } : {}),
-    })
-    : undefined;
-
-  let readsPausedUntil = 0;
-
-  async function request(url: string, init: RequestInit = {}): Promise<unknown> {
-    const method = (init.method ?? "GET").toUpperCase();
-    const reading = method === "GET";
-    if (reading && Date.now() < readsPausedUntil) {
-      throw new KcpRequestError(
-        429,
-        `${method} ${new URL(url).pathname}: held back until ${new Date(readsPausedUntil).toISOString()} because kcp rate limited this client and the Retry-After it sent has not elapsed`,
-      );
-    }
-    const headers = new Headers(init.headers);
-    headers.set("accept", "application/json");
-    const bearer = await bearerOf(creds);
-    if (bearer) headers.set("authorization", `Bearer ${bearer}`);
-    const res = await baseFetch(url, {
-      ...init,
-      headers,
-      signal: AbortSignal.timeout(timeoutMs),
-      ...(client ? { client } : {}),
-    } as RequestInit);
-    const text = await res.text();
-    if (!res.ok) {
-      if (res.status === 429) readsPausedUntil = Date.now() + retryAfterMs(res);
-      throw new KcpRequestError(res.status, `${init.method ?? "GET"} ${new URL(url).pathname}: ${res.status} ${text.slice(0, 300)}`);
-    }
-    return text ? JSON.parse(text) : null;
-  }
-
-  return request;
-}
-
 export function toClusterLink(raw: unknown, workspace: string): ClusterLinkView {
   const link = parseClusterLink(raw);
   const name = link.metadata?.name;
@@ -195,26 +82,19 @@ export function toClusterLink(raw: unknown, workspace: string): ClusterLinkView 
   return { workspace, name, spec: link.spec, status: link.status ?? {} };
 }
 
+const CONFIGMAP_RESOURCE = { group: "", version: "v1", plural: "configmaps" };
+
 export function createKcpClusterLinkReader(opts: KcpRequestOptions): ClusterLinkReader {
-  const request = createKcpRequest(opts);
-  const base = opts.credentials.server;
-  const { group, version, plural } = CLUSTER_LINK_RESOURCE;
   return {
     async get(workspace, name) {
-      const url = `${base}/clusters/${workspace}/apis/${group}/${version}/${plural}/${encodeURIComponent(name)}`;
-      try {
-        return toClusterLink(await request(url), workspace);
-      } catch (err) {
-        if (err instanceof KcpRequestError && err.status === 404) return null;
-        throw err;
-      }
+      const raw = await opts.kcp.get({ resource: CLUSTER_LINK_RESOURCE, workspace }, name);
+      return raw === null ? null : toClusterLink(raw, workspace);
     },
   };
 }
 
 export function createKcpNodeClaimStore(opts: KcpNodeClaimStoreOptions): NodeClaimStore {
-  const request = createKcpRequest(opts);
-  const base = opts.credentials.server;
+  const { kcp } = opts;
   const homesTtlMs = opts.homesTtlMs ?? DEFAULT_HOMES_TTL_MS;
   let homesCache: { at: number; homes: string[] } | null = null;
 
@@ -222,59 +102,45 @@ export function createKcpNodeClaimStore(opts: KcpNodeClaimStoreOptions): NodeCla
     try {
       return await read();
     } catch (err) {
-      if (err instanceof KcpRequestError && UNREACHABLE_STATUSES.has(err.status)) return fallback;
+      if (isKcpStatus(err, ...UNREACHABLE_STATUSES)) return fallback;
       throw err;
     }
   }
 
   async function homes(): Promise<string[]> {
     if (homesCache && Date.now() - homesCache.at < homesTtlMs) return homesCache.homes;
-    const namespace = opts.homesNamespace ?? DEFAULT_HOMES_NAMESPACE;
-    const out = await request(
-      `${base}/clusters/${opts.homesWorkspace}/api/v1/namespaces/${namespace}/configmaps?labelSelector=${encodeURIComponent(NODE_CLAIM_HOME_SELECTOR)}`,
-    ) as { items?: { data?: Record<string, string> }[] };
-    const paths = [...new Set((out.items ?? []).map((i) => i.data?.[NODE_CLAIM_HOME_KEY] ?? "").filter(Boolean))].sort();
+    const out = await kcp.list(
+      { resource: CONFIGMAP_RESOURCE, workspace: opts.homesWorkspace, namespace: opts.homesNamespace ?? DEFAULT_HOMES_NAMESPACE },
+      { labelSelector: NODE_CLAIM_HOME_SELECTOR },
+    );
+    const items = out.items as { data?: Record<string, string> }[];
+    const paths = [...new Set(items.map((i) => i.data?.[NODE_CLAIM_HOME_KEY] ?? "").filter(Boolean))].sort();
     homesCache = { at: Date.now(), homes: paths };
     return paths;
   }
 
-  function clusterPath(workspace: string, resource: string): string {
-    return `${base}/clusters/${workspace}/apis/${NODE_CLAIM_RESOURCE.group}/${NODE_CLAIM_RESOURCE.version}/${NODE_CLAIM_RESOURCE.plural}${resource}`;
-  }
-
-  function itemUrl(claim: Pick<NodeClaim, "workspace" | "name">, sub = ""): string {
-    return clusterPath(claim.workspace, `/${encodeURIComponent(claim.name)}${sub}`);
-  }
-
-  async function jsonPatch(url: string, ops: unknown[]): Promise<unknown> {
-    return await request(url, {
-      method: "PATCH",
-      headers: { "content-type": "application/json-patch+json" },
-      body: JSON.stringify(ops),
-    });
-  }
+  const claimsIn = (workspace: string): KcpTarget => ({ resource: NODE_CLAIM_RESOURCE, workspace });
 
   async function editFinalizers(claim: NodeClaim, edit: (current: string[]) => string[] | null): Promise<void> {
-    const url = await itemUrl(claim);
+    const target = claimsIn(claim.workspace);
     for (let attempt = 0; attempt < 3; attempt++) {
-      let fresh: NodeClaim;
-      try {
-        fresh = toNodeClaim(await request(url), claim.workspace);
-      } catch (err) {
-        if (err instanceof KcpRequestError && err.status === 404) return;
-        throw err;
-      }
+      const raw = await kcp.get(target, claim.name);
+      if (raw === null) return;
+      const fresh = toNodeClaim(raw, claim.workspace);
       const next = edit(fresh.finalizers);
       if (!next) return;
       try {
-        await jsonPatch(url, [
-          { op: "test", path: "/metadata/resourceVersion", value: fresh.resourceVersion },
-          { op: "add", path: "/metadata/finalizers", value: next },
-        ]);
+        await kcp.patch(target, claim.name, {
+          type: "json",
+          ops: [
+            { op: "test", path: "/metadata/resourceVersion", value: fresh.resourceVersion },
+            { op: "add", path: "/metadata/finalizers", value: next },
+          ],
+        });
         return;
       } catch (err) {
-        if (err instanceof KcpRequestError && err.status === 404) return;
-        if (!(err instanceof KcpRequestError && CONFLICT_STATUSES.has(err.status))) throw err;
+        if (isNotFound(err)) return;
+        if (!isConflict(err)) throw err;
       }
     }
     throw new Error(`nodeclaim ${claim.workspace}/${claim.name}: finalizers kept changing under three attempts`);
@@ -284,22 +150,18 @@ export function createKcpNodeClaimStore(opts: KcpNodeClaimStoreOptions): NodeCla
     async list() {
       const claims: NodeClaim[] = [];
       for (const home of await homes()) {
-        const out = await reachable(() => request(clusterPath(home, "")) as Promise<{ items?: unknown[] }>, { items: [] });
-        for (const item of out.items ?? []) claims.push(toNodeClaim(item, home));
+        const out = await reachable(() => kcp.list(claimsIn(home)), { items: [], resourceVersion: "" });
+        for (const item of out.items) claims.push(toNodeClaim(item, home));
       }
       return claims;
     },
     async get(claim) {
-      try {
-        return toNodeClaim(await request(await itemUrl(claim)), claim.workspace);
-      } catch (err) {
-        if (err instanceof KcpRequestError && err.status === 404) return null;
-        throw err;
-      }
+      const raw = await kcp.get(claimsIn(claim.workspace), claim.name);
+      return raw === null ? null : toNodeClaim(raw, claim.workspace);
     },
     async replaceStatus(claim, status) {
       assertNodeClaimStatus(status);
-      await jsonPatch(await itemUrl(claim, "/status"), [{ op: "add", path: "/status", value: status }]);
+      await kcpResourceClient(kcp, claimsIn(claim.workspace)).replaceStatus(claim.name, status);
     },
     addFinalizer(claim) {
       return editFinalizers(claim, (cur) => cur.includes(FINALIZER_NODE_CLAIM) ? null : [...cur, FINALIZER_NODE_CLAIM]);
@@ -308,22 +170,14 @@ export function createKcpNodeClaimStore(opts: KcpNodeClaimStoreOptions): NodeCla
       return editFinalizers(claim, (cur) => cur.includes(FINALIZER_NODE_CLAIM) ? cur.filter((f) => f !== FINALIZER_NODE_CLAIM) : null);
     },
     watch(signal, onChange) {
-      const stream = opts.fetch ?? createKcpFetch(opts.credentials);
       const open = new Map<string, AbortController>();
       const follow = async (home: string, stop: AbortSignal) => {
         while (!stop.aborted) {
           try {
-            const res = await stream(clusterPath(home, "?watch=true"), { signal: stop, headers: { accept: "application/json" } });
-            if (!res.ok || !res.body) {
-              await res.body?.cancel();
-            } else {
-              let buffered = "";
-              for await (const chunk of res.body.pipeThrough(new TextDecoderStream())) {
-                buffered += chunk;
-                const lines = buffered.split("\n");
-                buffered = lines.pop() ?? "";
-                if (lines.some((l) => l.trim() !== "")) onChange();
-              }
+            for await (const event of kcp.watch(claimsIn(home), { signal: stop })) {
+              if (event.type === "BOOKMARK") continue;
+              onChange();
+              if (event.type === "ERROR") break;
             }
           } catch {
             if (stop.aborted) return;
@@ -364,33 +218,17 @@ export interface KcpListenerUrlOptions extends KcpRequestOptions {
 const DEFAULT_LISTENER_CACHE_MS = 5_000;
 
 export function createKcpGatewayListenerUrl(opts: KcpListenerUrlOptions): () => Promise<string> {
-  const request = createKcpRequest(opts);
-  const { group, version, plural } = GATEWAY_RESOURCE;
-  const url = `${opts.credentials.server}/clusters/${opts.workspace}/apis/${group}/${version}/${plural}/${encodeURIComponent(opts.name)}`;
+  const gateways = kcpResourceClient<Gateway>(opts.kcp, { resource: GATEWAY_RESOURCE, workspace: opts.workspace });
   const cacheMs = opts.cacheMs ?? DEFAULT_LISTENER_CACHE_MS;
   let cached: { at: number; url: string } | null = null;
   return async () => {
     if (cached && Date.now() - cached.at < cacheMs) return cached.url;
-    const gateway = await request(url) as Gateway;
+    const gateway = await gateways.get(opts.name);
+    if (!gateway) throw new Error(`gateway ${opts.workspace}:${opts.name} does not exist`);
     const found = gateway.status?.listeners?.find((l) => l.name === opts.listener && l.address);
     if (!found) throw new Error(`gateway ${opts.workspace}:${opts.name} reports no ${opts.listener} listener in its status`);
     cached = { at: Date.now(), url: `${found.kind === "https" ? "https" : "http"}://${found.address}` };
     return cached.url;
-  };
-}
-
-export function createKcpFetch(credentials: KcpCredentials): typeof fetch {
-  const client = credentials.ca || credentials.cert
-    ? Deno.createHttpClient({
-      caCerts: credentials.ca ? [credentials.ca] : undefined,
-      ...(credentials.cert && credentials.key ? { cert: credentials.cert, key: credentials.key } : {}),
-    })
-    : undefined;
-  return async (input, init) => {
-    const headers = new Headers(init?.headers);
-    const bearer = await bearerOf(credentials);
-    if (bearer) headers.set("authorization", `Bearer ${bearer}`);
-    return await fetch(input, { ...init, headers, ...(client ? { client } : {}) } as RequestInit);
   };
 }
 
@@ -414,21 +252,12 @@ export interface KcpMarketIdentities {
 const ACCOUNT_DID_ANNOTATION = "socialweb.computer/did";
 
 export function createKcpMarketIdentities(opts: KcpMarketIdentitiesOptions): KcpMarketIdentities {
-  const request = createKcpRequest(opts);
-  const { group, version, plural, kind } = MARKET_IDENTITY_RESOURCE;
-  const base = `${opts.credentials.server}/clusters/${opts.workspace}/apis/${group}/${version}/${plural}`;
+  const { group, version, kind } = MARKET_IDENTITY_RESOURCE;
+  const identities = kcpResourceClient<MarketIdentity>(opts.kcp, { resource: MARKET_IDENTITY_RESOURCE, workspace: opts.workspace });
 
   async function nameOf(did: string): Promise<string> {
     const sum = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(did)));
     return `account-${Array.from(sum.slice(0, 10), (b) => b.toString(16).padStart(2, "0")).join("")}`;
-  }
-
-  async function mergePatch(url: string, body: unknown): Promise<void> {
-    await request(url, {
-      method: "PATCH",
-      headers: { "content-type": "application/merge-patch+json" },
-      body: JSON.stringify(body),
-    });
   }
 
   async function upsert(name: string, did: string, spec: MarketIdentitySpec): Promise<void> {
@@ -438,12 +267,8 @@ export function createKcpMarketIdentities(opts: KcpMarketIdentitiesOptions): Kcp
       metadata: { name, annotations: { [ACCOUNT_DID_ANNOTATION]: did } },
       spec,
     };
-    try {
-      await request(base, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(object) });
-    } catch (err) {
-      if (!(err instanceof KcpRequestError) || err.status !== 409) throw err;
-      await mergePatch(`${base}/${name}`, { spec });
-    }
+    const { created } = await identities.createIfAbsent(object);
+    if (!created) await identities.patch(name, { type: "merge", body: { spec } });
   }
 
   return {
@@ -471,23 +296,26 @@ export function createKcpMarketIdentities(opts: KcpMarketIdentitiesOptions): Kcp
           lastTransitionTime: new Date().toISOString().replace(/\.\d+Z$/, "Z"),
         }],
       };
-      await mergePatch(`${base}/${name}/status`, { status });
+      await identities.patch(name, { type: "merge", body: { status } }, { subresource: "status" });
       return name;
     },
     async signedOut(did, sessionRef) {
       const name = await nameOf(did);
       try {
-        await mergePatch(`${base}/${name}/status`, {
-          status: {
-            phase: "SessionExpired",
-            did,
-            sessionRef,
-            message: "the web app holds no OAuth session for this account; sign in again",
-            pendingAction: { kind: "signInAgain" },
+        await identities.patch(name, {
+          type: "merge",
+          body: {
+            status: {
+              phase: "SessionExpired",
+              did,
+              sessionRef,
+              message: "the web app holds no OAuth session for this account; sign in again",
+              pendingAction: { kind: "signInAgain" },
+            },
           },
-        });
+        }, { subresource: "status" });
       } catch (err) {
-        if (!(err instanceof KcpRequestError) || err.status !== 404) throw err;
+        if (!isNotFound(err)) throw err;
       }
     },
   };

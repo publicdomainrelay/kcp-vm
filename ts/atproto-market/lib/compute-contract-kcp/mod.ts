@@ -1,7 +1,10 @@
 import type { ComputeContract, ComputeContractStatus } from "@publicdomainrelay/socialweb-computer-k8s-api";
 import { assertComputeContractStatus, COMPUTE_CONTRACT_RESOURCE, parseComputeContract } from "@publicdomainrelay/socialweb-computer-k8s-api";
+import { type KcpClient, kcpResourceClient } from "@publicdomainrelay/kcp-client-abc";
+import { createKcpRestClient } from "@publicdomainrelay/kcp-client-rest";
 
 export interface ComputeContractKcpOptions {
+  kcp?: KcpClient;
   server: string;
   workspace?: string;
   name: string;
@@ -21,55 +24,17 @@ export interface ComputeContractStore {
   writeStatus(status: ComputeContractStatus): Promise<void>;
 }
 
-export class ComputeContractKcpError extends Error {
-  constructor(readonly status: number, message: string) {
-    super(message);
-    this.name = "ComputeContractKcpError";
-  }
-}
-
-const DEFAULT_TIMEOUT_MS = 15_000;
 const DEFAULT_POLL_MS = 2_000;
 
 export function createComputeContractKcpStore(opts: ComputeContractKcpOptions): ComputeContractStore {
-  const baseFetch = opts.fetch ?? fetch;
-  const client = !opts.fetch && opts.caCert ? Deno.createHttpClient({ caCerts: [opts.caCert] }) : undefined;
-  const { group, version, plural } = COMPUTE_CONTRACT_RESOURCE;
-  const root = opts.server.replace(/\/+$/, "") + (opts.workspace ? `/clusters/${opts.workspace}` : "");
-  const url = `${root}/apis/${group}/${version}/${plural}/${encodeURIComponent(opts.name)}`;
+  const kcp = opts.kcp ??
+    createKcpRestClient(
+      { server: opts.server, token: opts.token, tokenFile: opts.tokenFile, caCert: opts.caCert },
+      { fetch: opts.fetch, timeoutMs: opts.timeoutMs },
+    );
+  const contracts = kcpResourceClient(kcp, { resource: COMPUTE_CONTRACT_RESOURCE, workspace: opts.workspace }, parseComputeContract);
   const pollMs = opts.pollMs ?? DEFAULT_POLL_MS;
-
-  async function bearer(): Promise<string | undefined> {
-    if (opts.tokenFile) return (await Deno.readTextFile(opts.tokenFile)).trim();
-    return opts.token;
-  }
-
-  async function request(target: string, init: RequestInit = {}): Promise<unknown> {
-    const headers = new Headers(init.headers);
-    headers.set("accept", "application/json");
-    const t = await bearer();
-    if (t) headers.set("authorization", `Bearer ${t}`);
-    const res = await baseFetch(target, {
-      ...init,
-      headers,
-      signal: AbortSignal.timeout(opts.timeoutMs ?? DEFAULT_TIMEOUT_MS),
-      ...(client ? { client } : {}),
-    } as RequestInit);
-    const text = await res.text();
-    if (!res.ok) {
-      throw new ComputeContractKcpError(res.status, `${init.method ?? "GET"} ${new URL(target).pathname}: ${res.status} ${text.slice(0, 300)}`);
-    }
-    return text ? JSON.parse(text) : null;
-  }
-
-  async function get(): Promise<ComputeContract | null> {
-    try {
-      return parseComputeContract(await request(url));
-    } catch (err) {
-      if (err instanceof ComputeContractKcpError && err.status === 404) return null;
-      throw err;
-    }
-  }
+  const get = () => contracts.get(opts.name);
 
   const sleep = (ms: number, signal?: AbortSignal) =>
     new Promise<void>((resolve) => {
@@ -107,11 +72,7 @@ export function createComputeContractKcpStore(opts: ComputeContractKcpOptions): 
     },
     async writeStatus(status) {
       assertComputeContractStatus(status);
-      await request(`${url}/status`, {
-        method: "PATCH",
-        headers: { "content-type": "application/json-patch+json" },
-        body: JSON.stringify([{ op: "add", path: "/status", value: status }]),
-      });
+      await contracts.replaceStatus(opts.name, status);
     },
   };
 }

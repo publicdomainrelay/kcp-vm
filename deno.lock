@@ -1863,6 +1863,12 @@
       "npm:yaml@^2.7.0"
     ],
     "members": {
+      "socialweb-computer-k8s/lib/socialweb-computer-k8s-nodeclaim-kcp": {
+        "dependencies": [
+          "jsr:@publicdomainrelay/kcp-client-abc@0",
+          "jsr:@publicdomainrelay/kcp-client-common@0"
+        ]
+      },
       "ts/atproto-market/hono-bidder": {
         "dependencies": [
           "jsr:@publicdomainrelay/cli-args-env@0",
@@ -1949,6 +1955,8 @@
       },
       "ts/atproto-market/lib/compute-contract-kcp": {
         "dependencies": [
+          "jsr:@publicdomainrelay/kcp-client-abc@0",
+          "jsr:@publicdomainrelay/kcp-client-rest@0",
           "jsr:@publicdomainrelay/socialweb-computer-k8s-api@0"
         ]
       },
@@ -2104,6 +2112,9 @@
       "ts/atproto-market/lib/identity-prompt-kcp": {
         "dependencies": [
           "jsr:@publicdomainrelay/identity-prompt-abc@0",
+          "jsr:@publicdomainrelay/kcp-client-abc@0",
+          "jsr:@publicdomainrelay/kcp-client-common@0",
+          "jsr:@publicdomainrelay/kcp-client-rest@0",
           "jsr:@publicdomainrelay/socialweb-computer-k8s-api@0"
         ]
       },
@@ -2189,7 +2200,9 @@
       },
       "ts/atproto-market/lib/openbao-server-kcp": {
         "dependencies": [
-          "jsr:@publicdomainrelay/compute-provider-kcp-common@0"
+          "jsr:@publicdomainrelay/compute-provider-kcp-common@0",
+          "jsr:@publicdomainrelay/kcp-client-abc@0",
+          "jsr:@publicdomainrelay/kcp-client-rest@0"
         ]
       },
       "ts/atproto-market/lib/operator-discovery-badge-blue-keys": {
@@ -2433,6 +2446,9 @@
           "jsr:@publicdomainrelay/compute-provider-common@0",
           "jsr:@publicdomainrelay/compute-provider-kcp-abc@0",
           "jsr:@publicdomainrelay/compute-provider-kcp-common@0",
+          "jsr:@publicdomainrelay/kcp-client-abc@0",
+          "jsr:@publicdomainrelay/kcp-client-common@0",
+          "jsr:@publicdomainrelay/kcp-client-rest@0",
           "jsr:@publicdomainrelay/oidc-issuer-abc@0",
           "jsr:@publicdomainrelay/secrets-common@0"
         ]
@@ -2558,6 +2574,11 @@
           "jsr:@publicdomainrelay/logger@0"
         ]
       },
+      "ts/typescript-helpers/lib/abc/kcp-client": {
+        "dependencies": [
+          "jsr:@publicdomainrelay/kcp-client-common@0"
+        ]
+      },
       "ts/typescript-helpers/lib/atproto-event-stream-jetstream": {
         "dependencies": [
           "jsr:@publicdomainrelay/atproto-event-stream-abc@0",
@@ -2592,6 +2613,11 @@
           "jsr:@cliffy/command@^1.0.0-rc.7"
         ]
       },
+      "ts/typescript-helpers/lib/common/kcp-client": {
+        "dependencies": [
+          "jsr:@std/yaml@1"
+        ]
+      },
       "ts/typescript-helpers/lib/firehose-watcher-abc": {
         "dependencies": [
           "jsr:@publicdomainrelay/logger@0"
@@ -2621,6 +2647,12 @@
           "jsr:@publicdomainrelay/hono-error-middleware@0",
           "jsr:@publicdomainrelay/http-error@0",
           "jsr:@publicdomainrelay/logger@0"
+        ]
+      },
+      "ts/typescript-helpers/lib/kcp-client-rest": {
+        "dependencies": [
+          "jsr:@publicdomainrelay/kcp-client-abc@0",
+          "jsr:@publicdomainrelay/kcp-client-common@0"
         ]
       },
       "ts/typescript-helpers/lib/market-network-fetch": {

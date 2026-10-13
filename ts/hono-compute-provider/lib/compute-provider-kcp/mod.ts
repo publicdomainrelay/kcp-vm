@@ -53,6 +53,9 @@ import {
 import type { GuestKv, OidcProvisioningEnricher } from "@publicdomainrelay/oidc-issuer-abc";
 import { parseAtUri } from "@publicdomainrelay/atproto-helpers";
 import { DEFAULT_ACCEPT_PATH_VM } from "@publicdomainrelay/secrets-common";
+import { type KcpClient, kcpResourceClient } from "@publicdomainrelay/kcp-client-abc";
+import { absentOnNotFound, type KcpList, type KcpWatchEvent } from "@publicdomainrelay/kcp-client-common";
+import { createKcpRestClient } from "@publicdomainrelay/kcp-client-rest";
 
 export interface KcpCredentials {
   server: string;
@@ -64,28 +67,16 @@ export interface KcpCredentials {
 
 export interface KcpComputeVMClientOptions {
   credentials: KcpCredentials;
+  kcp?: KcpClient;
   fetch?: typeof fetch;
   timeoutMs?: number;
   watchTimeoutSeconds?: number;
   fieldManager?: string;
 }
 
-export class KcpRequestError extends Error {
-  constructor(readonly status: number, message: string) {
-    super(message);
-    this.name = "KcpRequestError";
-  }
-}
+export type ComputeVMWatchEvent = KcpWatchEvent;
 
-export interface ComputeVMWatchEvent {
-  type: "ADDED" | "MODIFIED" | "DELETED" | "BOOKMARK" | "ERROR";
-  object: unknown;
-}
-
-export interface ComputeVMList {
-  items: ComputeVM[];
-  resourceVersion: string;
-}
+export type ComputeVMList = KcpList<ComputeVM>;
 
 export interface KcpComputeVMClient {
   apply(vm: ComputeVM): Promise<ComputeVM>;
@@ -97,137 +88,35 @@ export interface KcpComputeVMClient {
   applyContract(name: string, contract: ComputeVMContract): Promise<ComputeVM | null>;
 }
 
-const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
-const DEFAULT_WATCH_TIMEOUT_SECONDS = 300;
-
 export function createKcpComputeVMClient(opts: KcpComputeVMClientOptions): KcpComputeVMClient {
   const creds = opts.credentials;
-  const timeoutMs = opts.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
-  const watchTimeoutSeconds = opts.watchTimeoutSeconds ?? DEFAULT_WATCH_TIMEOUT_SECONDS;
-  const baseFetch = opts.fetch ?? fetch;
-  const server = creds.server.replace(/\/+$/, "");
-  const { group, version, plural } = COMPUTE_VM_RESOURCE;
-  const vmBase = `${server}/clusters/${creds.workspace}/apis/${group}/${version}/${plural}`;
-  const applyQuery = `?fieldManager=${encodeURIComponent(opts.fieldManager ?? FIELD_MANAGER_COMPUTE_VM_PROVIDER)}&force=true`;
-  const contractQuery = `?fieldManager=${encodeURIComponent(FIELD_MANAGER_COMPUTE_VM_CONTRACT)}&force=true`;
-  let httpClient: Promise<Deno.HttpClient | undefined> | undefined;
-
-  function clientForCa(): Promise<Deno.HttpClient | undefined> {
-    if (!creds.caFile || opts.fetch) return Promise.resolve(undefined);
-    httpClient ??= Deno.readTextFile(creds.caFile).then((ca) => Deno.createHttpClient({ caCerts: [ca] }));
-    return httpClient;
-  }
-
-  async function bearer(): Promise<string | undefined> {
-    if (creds.tokenFile) {
-      const token = (await Deno.readTextFile(creds.tokenFile)).trim();
-      if (token) return token;
-    }
-    return creds.token;
-  }
-
-  async function send(url: string, init: RequestInit): Promise<Response> {
-    const headers = new Headers(init.headers);
-    headers.set("accept", "application/json");
-    const token = await bearer();
-    if (token) headers.set("authorization", `Bearer ${token}`);
-    const client = await clientForCa();
-    return await baseFetch(url, { ...init, headers, ...(client ? { client } : {}) } as RequestInit);
-  }
-
-  async function request(url: string, init: RequestInit = {}): Promise<unknown> {
-    const res = await send(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
-    const text = await res.text();
-    if (!res.ok) {
-      throw new KcpRequestError(
-        res.status,
-        `${init.method ?? "GET"} ${new URL(url).pathname}: ${res.status} ${text.slice(0, 300)}`,
-      );
-    }
-    return text ? JSON.parse(text) : null;
-  }
-
-  async function absentOn404<T>(work: Promise<T>): Promise<T | null> {
-    try {
-      return await work;
-    } catch (err) {
-      if (err instanceof KcpRequestError && err.status === 404) return null;
-      throw err;
-    }
-  }
-
-  function applyInit(body: unknown): RequestInit {
-    return {
-      method: "PATCH",
-      headers: { "content-type": "application/apply-patch+yaml" },
-      body: JSON.stringify(body),
-    };
-  }
-
-  const item = (name: string) => `${vmBase}/${encodeURIComponent(name)}`;
-
-  async function* watch(resourceVersion: string, signal: AbortSignal): AsyncGenerator<ComputeVMWatchEvent> {
-    const query = new URLSearchParams({
-      watch: "true",
-      resourceVersion,
-      allowWatchBookmarks: "true",
-      timeoutSeconds: String(watchTimeoutSeconds),
-    });
-    const res = await send(`${vmBase}?${query}`, { signal });
-    if (!res.ok || !res.body) {
-      const text = await res.text().catch(() => "");
-      throw new KcpRequestError(res.status, `watch ${new URL(vmBase).pathname}: ${res.status} ${text.slice(0, 300)}`);
-    }
-    const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
-    let buffered = "";
-    try {
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buffered += value;
-        let newline = buffered.indexOf("\n");
-        while (newline >= 0) {
-          const line = buffered.slice(0, newline).trim();
-          buffered = buffered.slice(newline + 1);
-          if (line) yield JSON.parse(line) as ComputeVMWatchEvent;
-          newline = buffered.indexOf("\n");
-        }
-      }
-      if (buffered.trim()) yield JSON.parse(buffered) as ComputeVMWatchEvent;
-    } finally {
-      await reader.cancel().catch(() => {});
-    }
-  }
+  const kcp = opts.kcp ??
+    createKcpRestClient(
+      { server: creds.server, token: creds.token, tokenFile: creds.tokenFile, caFile: creds.caFile },
+      { fetch: opts.fetch, timeoutMs: opts.timeoutMs, watchTimeoutSeconds: opts.watchTimeoutSeconds },
+    );
+  const vms = kcpResourceClient(kcp, { resource: COMPUTE_VM_RESOURCE, workspace: creds.workspace }, parseComputeVM);
+  const fieldManager = opts.fieldManager ?? FIELD_MANAGER_COMPUTE_VM_PROVIDER;
 
   return {
     async apply(vm) {
       assertComputeVM(vm);
-      return parseComputeVM(await request(`${item(vm.metadata!.name!)}${applyQuery}`, applyInit(vm)));
+      return await vms.patch(vm.metadata!.name!, { type: "apply", body: vm, fieldManager, force: true });
     },
     async applyStatus(vm) {
-      return parseComputeVM(await request(`${item(vm.metadata!.name!)}/status${applyQuery}`, applyInit(vm)));
+      return await vms.patch(vm.metadata!.name!, { type: "apply", body: vm, fieldManager, force: true }, { subresource: "status" });
     },
     async applyContract(name, contract) {
-      if (!(await absentOn404(request(item(name))))) return null;
+      if (!(await vms.get(name))) return null;
       const body = { apiVersion: COMPUTE_VM_API_VERSION, kind: COMPUTE_VM_RESOURCE.kind, metadata: { name }, spec: { contract } };
-      const raw = await absentOn404(request(`${item(name)}${contractQuery}`, applyInit(body)));
-      return raw === null ? null : parseComputeVM(raw);
+      return await absentOnNotFound(
+        vms.patch(name, { type: "apply", body, fieldManager: FIELD_MANAGER_COMPUTE_VM_CONTRACT, force: true }),
+      );
     },
-    async get(name) {
-      const raw = await absentOn404(request(item(name)));
-      return raw === null ? null : parseComputeVM(raw);
-    },
-    async list() {
-      const out = await request(vmBase) as { metadata?: { resourceVersion?: string }; items?: unknown[] };
-      return {
-        items: (out.items ?? []).map((raw) => parseComputeVM(raw)),
-        resourceVersion: out.metadata?.resourceVersion ?? "",
-      };
-    },
-    watch,
-    async delete(name) {
-      return (await absentOn404(request(item(name), { method: "DELETE" }))) !== null;
-    },
+    get: (name) => vms.get(name),
+    list: () => vms.list(),
+    watch: (resourceVersion, signal) => vms.watch({ resourceVersion, signal, reconnect: false }),
+    delete: (name) => vms.delete(name),
   };
 }
 

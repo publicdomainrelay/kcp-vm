@@ -1,7 +1,10 @@
 import { OPEN_BAO_SERVER_RESOURCE } from "@publicdomainrelay/compute-provider-kcp-common";
 import type { OpenBaoServer } from "@publicdomainrelay/compute-provider-kcp-common";
+import { type KcpClient, kcpResourceClient } from "@publicdomainrelay/kcp-client-abc";
+import { createKcpRestClient } from "@publicdomainrelay/kcp-client-rest";
 
 export interface OpenBaoServerKcpOptions {
+  kcp?: KcpClient;
   server: string;
   workspace?: string;
   token?: string;
@@ -27,7 +30,6 @@ export interface ResolvedOpenBaoServer {
   kvMount: string;
 }
 
-const DEFAULT_TIMEOUT_MS = 15_000;
 const DEFAULT_READY_TIMEOUT_MS = 180_000;
 const DEFAULT_POLL_MS = 1_000;
 
@@ -38,31 +40,13 @@ async function readRef(ref: string | undefined, what: string): Promise<string> {
 }
 
 export function createOpenBaoServerResolver(opts: OpenBaoServerKcpOptions): () => Promise<ResolvedOpenBaoServer> {
-  const baseFetch = opts.fetch ?? fetch;
-  const httpClient = !opts.fetch && opts.caCert ? Deno.createHttpClient({ caCerts: [opts.caCert] }) : undefined;
-  const { group, version, plural } = OPEN_BAO_SERVER_RESOURCE;
-  const root = opts.server.replace(/\/+$/, "") + (opts.workspace ? `/clusters/${opts.workspace}` : "");
-  const url = `${root}/apis/${group}/${version}/${plural}/${encodeURIComponent(opts.name)}`;
-
-  async function bearer(): Promise<string | undefined> {
-    if (opts.tokenFile) return (await Deno.readTextFile(opts.tokenFile)).trim();
-    return opts.token;
-  }
-
-  async function get(): Promise<OpenBaoServer | null> {
-    const headers = new Headers({ accept: "application/json" });
-    const t = await bearer();
-    if (t) headers.set("authorization", `Bearer ${t}`);
-    const res = await baseFetch(url, {
-      headers,
-      signal: AbortSignal.timeout(opts.timeoutMs ?? DEFAULT_TIMEOUT_MS),
-      ...(httpClient ? { client: httpClient } : {}),
-    } as RequestInit);
-    const text = await res.text();
-    if (res.status === 404) return null;
-    if (!res.ok) throw new Error(`openbaoserver ${opts.name}: GET ${new URL(url).pathname}: ${res.status} ${text.slice(0, 300)}`);
-    return JSON.parse(text) as OpenBaoServer;
-  }
+  const kcp = opts.kcp ??
+    createKcpRestClient(
+      { server: opts.server, token: opts.token, tokenFile: opts.tokenFile, caCert: opts.caCert },
+      { fetch: opts.fetch, timeoutMs: opts.timeoutMs },
+    );
+  const servers = kcpResourceClient<OpenBaoServer>(kcp, { resource: OPEN_BAO_SERVER_RESOURCE, workspace: opts.workspace });
+  const get = () => servers.get(opts.name);
 
   function notReady(o: OpenBaoServer | null): string | null {
     if (!o) return "no such object";
