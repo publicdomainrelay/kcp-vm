@@ -63,7 +63,7 @@ func (in *installer) bootstrapFiles(dir string) ([]string, bool, error) {
 		if err != nil {
 			return nil, false, err
 		}
-		for _, d := range []string{p.Dir, p.Run, filepath.Join(p.Dir, "bin")} {
+		for _, d := range append(in.accountParents(p.Dir), p.Dir, p.Run, filepath.Join(p.Dir, "bin")) {
 			if err := in.ensureDir(d, 0o700, uid, gid, false); err != nil {
 				return nil, false, err
 			}
@@ -121,4 +121,12 @@ func (in *installer) enableBootstrap(um UserManager) error {
 	return in.change("enable "+strings.Join(units, " ")+" as "+in.o.Account+" (started at boot, before the core)", func() error {
 		return e.Enable(in.ctx, units)
 	})
+}
+
+func (in *installer) accountParents(dir string) []string {
+	var out []string
+	for d := filepath.Dir(dir); d != in.o.StateDir && within(d, in.o.StateDir); d = filepath.Dir(d) {
+		out = append([]string{d}, out...)
+	}
+	return out
 }
