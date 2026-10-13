@@ -37,6 +37,10 @@ func BidderTokenPaths(stateDir string) (string, string) {
 }
 
 func (ctl *Controller) bidderToken(ctx context.Context, stateDir string) error {
+	return ctl.accountToken(ctx, BidderAccount, stateDir)
+}
+
+func (ctl *Controller) accountToken(ctx context.Context, account, stateDir string) error {
 	tokenPath, caPath := BidderTokenPaths(stateDir)
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		return err
@@ -52,15 +56,15 @@ func (ctl *Controller) bidderToken(ctx context.Context, stateDir string) error {
 		return err
 	}
 	secs := int64(BidderTokenTTL / time.Second)
-	tr, err := cs.CoreV1().ServiceAccounts("default").CreateToken(ctx, BidderAccount,
+	tr, err := cs.CoreV1().ServiceAccounts("default").CreateToken(ctx, account,
 		&authenticationv1.TokenRequest{Spec: authenticationv1.TokenRequestSpec{ExpirationSeconds: &secs}}, metav1.CreateOptions{})
 	if err != nil {
-		return fmt.Errorf("minting the %s token: %w", BidderAccount, err)
+		return fmt.Errorf("minting the %s token: %w", account, err)
 	}
 	if err := writeSecret(tokenPath, []byte(tr.Status.Token)); err != nil {
 		return err
 	}
-	ctl.c.log().Info("the bidder's kcp token is minted", "serviceAccount", BidderAccount, "path", tokenPath,
+	ctl.c.log().Info("a bidder component's kcp token is minted", "serviceAccount", account, "path", tokenPath,
 		"expires", tr.Status.ExpirationTimestamp.UTC().Format(time.RFC3339))
 	return nil
 }

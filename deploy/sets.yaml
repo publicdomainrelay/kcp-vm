@@ -219,7 +219,7 @@ sets:
             for: Ready
 
   - name: market-bidder
-    summary: the components of a MarketBidder application in its own kcp - the MarketIdentity schema bound in root (the bidder signs in through its MarketIdentity bidder in every profile), its own OpenBaoServer and the account that reads it in root, the root:app workspace and, per profile (prod-qr, market-network, dev-local), the bidder DenoPod rendered from deploy/apps/market-bidder/bidder.values.yaml (a phase named <component>@<profile> belongs to that profile only); applied by internal/appctl (plan 0007 M5-RUN-BIDDER)
+    summary: the components of a MarketBidder application in its own kcp - the MarketIdentity schema bound in root (the bidder signs in through its MarketIdentity bidder in every profile), its own OpenBaoServer and the account that reads it in root, the root:app workspace and, per profile (prod-qr, market-network, dev-local), the bidder DenoPod rendered from deploy/apps/market-bidder/bidder.values.yaml and its guest DenoPod guest-kcp (the provider relay, OIDC issuer, /v1/on-network and /v1/host-keys; plan 0007 M5-BIDDER-COMPONENTS) from deploy/apps/market-bidder/guest-kcp.values.yaml (a phase named <component>@<profile> belongs to that profile only); applied by internal/appctl (plan 0007 M5-RUN-BIDDER)
     values: MarketBidder
     phases:
       - name: identity-schemas
@@ -265,15 +265,30 @@ sets:
         files:
           - path: apps/market-bidder/bidder.values.yaml
             template: denopods/service.yaml
+      - name: guest-kcp@market-network
+        workspace: root:app
+        files:
+          - path: apps/market-bidder/guest-kcp.values.yaml
+            template: denopods/service.yaml
       - name: bidder@prod-qr
         workspace: root:app
         files:
           - path: apps/market-bidder/bidder.values.yaml
             template: denopods/service.yaml
+      - name: guest-kcp@prod-qr
+        workspace: root:app
+        files:
+          - path: apps/market-bidder/guest-kcp.values.yaml
+            template: denopods/service.yaml
       - name: bidder@dev-local
         workspace: root:app
         files:
           - path: apps/market-bidder/bidder.values.yaml
+            template: denopods/service.yaml
+      - name: guest-kcp@dev-local
+        workspace: root:app
+        files:
+          - path: apps/market-bidder/guest-kcp.values.yaml
             template: denopods/service.yaml
 
   - name: gateway

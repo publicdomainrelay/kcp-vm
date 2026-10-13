@@ -11,8 +11,22 @@ spec:
       kvMount: bidder
     - name: computevm
       policies: ["computevm-guest-user-data"]
+    - name: guest-kcp
+      policies: ["bidder-guest-kcp"]
   declared:
     policies:
+      - name: bidder-guest-kcp
+        rules:
+          - path: bidder/data/relay-keypair/kcp
+            capabilities: ["create", "read", "update"]
+          - path: bidder/data/oidc-jwk/kcp
+            capabilities: ["create", "read", "update"]
+          - path: bidder/data/guests/+/provisioning
+            capabilities: ["create", "read", "update"]
+          - path: bidder/metadata/guests
+            capabilities: ["list"]
+          - path: bidder/metadata/guests/
+            capabilities: ["list"]
       - name: computevm-guest-user-data
         rules:
           - path: bidder/data/guests/+/user-data
@@ -56,4 +70,38 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: bidder
+    namespace: default
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: guest-kcp
+  namespace: default
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: guest-kcp
+rules:
+  - apiGroups: ["socialweb.computer"]
+    resources: ["openbaoservers"]
+    verbs: ["get", "list"]
+  - apiGroups: ["socialweb.computer"]
+    resources: ["computevms"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["socialweb.computer"]
+    resources: ["computevms/status"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: guest-kcp
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: guest-kcp
+subjects:
+  - kind: ServiceAccount
+    name: guest-kcp
     namespace: default

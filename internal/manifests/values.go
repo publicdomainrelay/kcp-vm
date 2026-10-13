@@ -44,10 +44,21 @@ type MarketBidder struct {
 	Policy           string `json:",omitempty"`
 	Vault            BidderVault
 	Kcp              KcpRef
+	Guest            BidderGuest
 	Trust            string
 	Read             string
 	ExtraArgs        string
 	ProviderArgs     string
+}
+
+type BidderGuest struct {
+	StateDir    string `json:",omitempty"`
+	Handle      string `json:",omitempty"`
+	VaultClient string `json:",omitempty"`
+	TokenFile   string `json:",omitempty"`
+	CAFile      string `json:",omitempty"`
+	Read        string
+	ExtraArgs   string
 }
 
 type BidderVault struct {

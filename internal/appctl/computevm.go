@@ -109,6 +109,7 @@ func providerValues(v *manifests.MarketBidder, spec v1alpha1.MarketBidderSpec, k
 	}
 	v.ProviderArgs = args
 	v.Kcp = manifests.KcpRef{Server: kcp.Server, Workspace: kcp.Workspace, TokenFile: kcp.TokenFile, CAFile: kcp.CAFile}
+	v.Guest.Handle = handle
 	return nil
 }
 

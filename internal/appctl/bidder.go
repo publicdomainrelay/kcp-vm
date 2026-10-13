@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"path/filepath"
 	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -26,6 +27,9 @@ const (
 	BidderProfileProdQr   = "prod-qr"
 	BidderProfileNetwork  = "market-network"
 	BidderProfileDevLocal = "dev-local"
+	GuestComponent        = "guest-kcp"
+	GuestVaultClient      = "guest-kcp"
+	GuestAccount          = "guest-kcp"
 )
 
 var BidderProfiles = []string{BidderProfileProdQr, BidderProfileNetwork, BidderProfileDevLocal}
@@ -100,7 +104,16 @@ func BidderReads(v *manifests.MarketBidder) error {
 	return nil
 }
 
-func BidderValues(spec v1alpha1.MarketBidderSpec, stateDir string, kcp BidderKcp) (manifests.MarketBidder, error) {
+func GuestReads(v *manifests.MarketBidder, vaultCA, clientDir string) error {
+	read, err := listFragment(v.CABundle, vaultCA, clientDir)
+	if err != nil {
+		return err
+	}
+	v.Guest.Read = read
+	return nil
+}
+
+func BidderValues(spec v1alpha1.MarketBidderSpec, stateDir, guestStateDir string, kcp BidderKcp) (manifests.MarketBidder, error) {
 	n := spec.Network
 	if n == nil {
 		return manifests.MarketBidder{}, errors.New("appctl: the MarketBidder names no network value; its composer or its profile sets spec.network")
@@ -141,6 +154,14 @@ func BidderValues(spec v1alpha1.MarketBidderSpec, stateDir string, kcp BidderKcp
 	}
 	if hosts := NetworkHostsArg(n.Hosts); hosts != "" {
 		extra = append(extra, "--network-hosts", hosts)
+		if v.Guest.ExtraArgs, err = fragment([]string{"--network-hosts", hosts}); err != nil {
+			return manifests.MarketBidder{}, err
+		}
+	}
+	v.Guest.StateDir, v.Guest.VaultClient = guestStateDir, GuestVaultClient
+	v.Guest.TokenFile, v.Guest.CAFile = BidderTokenPaths(guestStateDir)
+	if err := GuestReads(&v, "", ""); err != nil {
+		return manifests.MarketBidder{}, err
 	}
 	opts, err := OptionArgs(BidderApp, spec.Options)
 	if err != nil {
@@ -197,6 +218,7 @@ func (ctl *Controller) reconcileBidder(ctx context.Context, u *unstructured.Unst
 		}
 	}
 	stateDir := ComponentStateDir(ctl.c.Layout.StateDir, BidderComponent)
+	guestStateDir := ComponentStateDir(ctl.c.Layout.StateDir, GuestComponent)
 	mode, err := BidderIdentityMode(o.Spec.Profile)
 	if err != nil {
 		st.Phase, st.Message = v1alpha1.ApplicationPhaseFailed, err.Error()
@@ -211,7 +233,7 @@ func (ctl *Controller) reconcileBidder(ctx context.Context, u *unstructured.Unst
 			kcp = BidderKcpOf(rec)
 		}
 		kcp.TokenFile, kcp.CAFile = BidderTokenPaths(stateDir)
-		values, err := BidderValues(o.Spec, stateDir, kcp)
+		values, err := BidderValues(o.Spec, stateDir, guestStateDir, kcp)
 		if err != nil {
 			st.Phase, st.Message = v1alpha1.ApplicationPhaseFailed, err.Error()
 			return ctl.writeStatus(ctx, MarketBidderGVR, o.Name, st)
@@ -225,6 +247,16 @@ func (ctl *Controller) reconcileBidder(ctx context.Context, u *unstructured.Unst
 		if err := ctl.bidderToken(ctx, values.StateDir); err != nil {
 			st.Message = "its kcp token: " + err.Error()
 			return ctl.writeStatus(ctx, MarketBidderGVR, o.Name, st)
+		}
+		if err := ctl.accountToken(ctx, GuestAccount, guestStateDir); err != nil {
+			st.Message = "the kcp token of its guest DenoPod: " + err.Error()
+			return ctl.writeStatus(ctx, MarketBidderGVR, o.Name, st)
+		}
+		if _, gst, gc, err := ctl.vaultRefs(ctx, BidderVaultServer, GuestVaultClient); err != nil {
+			st.Message = "the vault client of its guest DenoPod: " + err.Error()
+			return ctl.writeStatus(ctx, MarketBidderGVR, o.Name, st)
+		} else if err := GuestReads(&values, fileRef(gst.Refs.CA), filepath.Dir(fileRef(gc.ClientCert))); err != nil {
+			return err
 		}
 		if err := ctl.ensureIdentity(ctx, BidderIdentity, o.Spec.Identity); err != nil {
 			st.Message = "its MarketIdentity: " + err.Error()
@@ -255,6 +287,9 @@ func (ctl *Controller) reconcileBidder(ctx context.Context, u *unstructured.Unst
 	}
 	if err := ctl.bidderToken(ctx, stateDir); err != nil {
 		ctl.c.log().Warn("renewing the bidder's kcp token", "name", o.Name, "err", err.Error())
+	}
+	if err := ctl.accountToken(ctx, GuestAccount, guestStateDir); err != nil {
+		ctl.c.log().Warn("renewing the kcp token of the bidder's guest DenoPod", "name", o.Name, "err", err.Error())
 	}
 	if err := ctl.rotateSigningKey(ctx, o); err != nil {
 		ctl.c.log().Warn("rotating the bidder's OIDC signing key", "name", o.Name, "err", err.Error())
