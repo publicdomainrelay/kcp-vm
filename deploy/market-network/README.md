@@ -171,9 +171,10 @@ the user (its `HOME` is its own state dir, `TMPDIR` is under it), `PORT_FILE`,
 
 Permissions are explicit. `-A` is refused; read and write are the source root,
 the run directory, the state dir and the paths the values name; `--allow-run`
-and `--allow-ffi` render only with a reason (the bidder names bash and deno, for
-the gha-lite policy engine; its provider is compute-provider-kcp and it verifies ssh
-signatures in TypeScript); every service is denied read and
+and `--allow-ffi` render only with a reason, and the bidder names neither: its
+provider is compute-provider-kcp, it verifies ssh signatures in TypeScript, and it runs
+gha-lite policies net-only (each `uses:` action in a Worker with network access
+only, a policy with a `run:` step or a composite action refused); every service is denied read and
 write of `/dev/kvm` and `$XDG_RUNTIME_DIR`. `internal/manifests` (`service.go`)
 checks all of this when it renders.
 

@@ -1332,7 +1332,7 @@ return (${transformed});
       detail: {
         id: "",
         exit_status: "success",
-        outputs: {},
+        outputs: Object.fromEntries(Object.entries(this.ctx.jobResults).map(([job, r]) => [job, r.outputs])),
         annotations: { ...this.ctx.annotations },
         cache: this.ctx.cache,
       },

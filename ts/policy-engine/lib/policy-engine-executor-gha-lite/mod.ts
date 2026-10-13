@@ -22,6 +22,7 @@ import type {
   PolicyRecord,
   PolicyResult,
 } from "@publicdomainrelay/policy-common";
+import { parse as parseYaml } from "@std/yaml";
 import {
   WorkflowExecutor,
   ExitStatusSuccess,
@@ -126,6 +127,10 @@ export class GhaLiteExecutor implements PolicyEngineExecutor {
 
   /** Run a workflow request through the gha-lite engine and map status → verdict. */
   async #run(request: PolicyEngineRequest): Promise<PolicyResult> {
+    if (this.sandbox?.netOnly) {
+      const refused = execStepsOf(request.workflow);
+      if (refused) return deny(refused);
+    }
     const executor = new WorkflowExecutor({
       ...(this.sandbox !== undefined ? { sandbox: this.sandbox } : {}),
       ...(this.denoPath !== undefined ? { denoPath: this.denoPath } : {}),
@@ -351,9 +356,63 @@ function statusToResult(status: PolicyEngineStatus): PolicyResult {
     typeof detail === "object" &&
     (detail as PolicyEngineComplete).exit_status === ExitStatusSuccess
   ) {
-    return { allow: true, violations: [] };
+    return verdictOf((detail as PolicyEngineComplete).outputs);
   }
   return deny(describeStatus(status));
+}
+
+export const NET_ONLY_REFUSED = "this evaluator runs gha-lite policies net-only and refuses";
+
+export function execStepsOf(workflow: unknown): string | undefined {
+  let parsed: unknown = workflow;
+  if (typeof workflow === "string") {
+    try {
+      parsed = parseYaml(workflow);
+    } catch (err) {
+      return `the policy workflow is not YAML: ${errorMessage(err)}`;
+    }
+  }
+  const jobs = (parsed as { jobs?: Record<string, { steps?: Array<Record<string, unknown>> }> } | null)?.jobs ?? {};
+  for (const [name, job] of Object.entries(jobs)) {
+    for (const step of job?.steps ?? []) {
+      if (step && typeof step === "object" && "run" in step) {
+        return `${NET_ONLY_REFUSED} a run: step (job ${name})`;
+      }
+    }
+  }
+  return undefined;
+}
+
+function verdictOf(outputs: Record<string, unknown> | undefined): PolicyResult {
+  const jobs = Object.values(outputs ?? {}).filter((o): o is Record<string, unknown> =>
+    o !== null && typeof o === "object" && "allow" in (o as Record<string, unknown>)
+  );
+  if (jobs.length === 0) return { allow: true, violations: [] };
+  const violations: PolicyResult["violations"] = [];
+  let allow = true;
+  for (const o of jobs) {
+    if (String(o["allow"]) !== "true") allow = false;
+    const raw = o["violations"];
+    let list: unknown = raw;
+    if (typeof raw === "string" && raw.trim().length > 0) {
+      try {
+        list = JSON.parse(raw);
+      } catch {
+        list = [raw];
+      }
+    }
+    if (Array.isArray(list)) {
+      for (const v of list) {
+        const msg = v && typeof v === "object" && typeof (v as { msg?: unknown }).msg === "string" ? (v as { msg: string }).msg : String(v);
+        const policyId = v && typeof v === "object" && typeof (v as { policyId?: unknown }).policyId === "string"
+          ? (v as { policyId: string }).policyId
+          : POLICY_ID;
+        violations.push({ msg, policyId });
+      }
+    }
+  }
+  if (!allow && violations.length === 0) violations.push({ msg: "the policy action answered allow=false", policyId: POLICY_ID });
+  return { allow, violations: allow ? [] : violations };
 }
 
 /** Human-readable denial message for a non-allowing status. */

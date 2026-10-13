@@ -6,6 +6,7 @@
   "imports": {
     "@publicdomainrelay/policy-engine-abc": "jsr:@publicdomainrelay/policy-engine-abc@^0",
     "@publicdomainrelay/policy-engine-server-gha-lite": "jsr:@publicdomainrelay/policy-engine-server-gha-lite@^0",
-    "@publicdomainrelay/policy-common": "jsr:@publicdomainrelay/policy-common@^0"
+    "@publicdomainrelay/policy-common": "jsr:@publicdomainrelay/policy-common@^0",
+    "@std/yaml": "jsr:@std/yaml@^1.0.0"
   }
 }

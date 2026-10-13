@@ -13,11 +13,6 @@ permissions:
   env: true
   sys: true
   read: [{{.Read}}]
-  run:
-    allow: ["bash", "deno"]
-    reason: >-
-      the in-process policy engine runs a gha-lite policy workflow's run steps in bash and its actions as
-      deno subprocesses (deno is the pinned deno the template runs on)
 probe:
   host: bidder.default.app.svc.kcp.local
   path: /oauth-client-metadata.json

@@ -2493,7 +2493,8 @@
         "dependencies": [
           "jsr:@publicdomainrelay/policy-common@0",
           "jsr:@publicdomainrelay/policy-engine-abc@0",
-          "jsr:@publicdomainrelay/policy-engine-server-gha-lite@0"
+          "jsr:@publicdomainrelay/policy-engine-server-gha-lite@0",
+          "jsr:@std/yaml@1"
         ]
       },
       "ts/policy-engine/lib/policy-engine-executor-typescript": {

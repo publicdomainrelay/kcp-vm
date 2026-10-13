@@ -387,7 +387,7 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
     // bidder's own scope gate. The scope gate is the hot-path engagement check:
     // on a scope-cache miss the evaluator runs the scope-mode workflow against
     // the counterparty DID, otherwise it serves the cached verdict.
-    const ghaLiteExecutor = new GhaLiteExecutor();
+    const ghaLiteExecutor = new GhaLiteExecutor({ sandbox: { netOnly: true, fsApi: false } });
     const typescriptExecutor = new TypescriptExecutor();
     const engineRegistry = {
       get: ($type: string) =>

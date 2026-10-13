@@ -36,6 +36,9 @@ on:
 jobs:
   evaluate:
     runs-on: self-hosted
+    outputs:
+      allow: ${{ steps.policy.outputs.allow }}
+      violations: ${{ steps.policy.outputs.violations }}
     steps:
     - uses: tangy/policy-under-4-cpus@v1
       id: policy
@@ -50,5 +53,3 @@ jobs:
         perspective: ${{ inputs.perspective || '' }}
         subject-did: ${{ inputs.subject-did || '' }}
         root-requester-did: ${{ inputs.root-requester-did || '' }}
-    - run: echo "allow=${{ steps.policy.outputs.allow }} violations=${{ steps.policy.outputs.violations }}"
-    - run: test "${{ steps.policy.outputs.allow }}" = "true"
