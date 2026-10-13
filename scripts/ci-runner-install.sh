@@ -159,6 +159,9 @@ else
 fi
 sudo chmod 0600 "$config"
 
+# No NoNewPrivileges: rootless podman (builder images, swc-userns-stage) and the VM slots need the
+# setuid newuidmap/newgidmap, which map only this account's own subuid/subgid range. The account has
+# no sudo and no docker group; ProtectSystem=strict, ProtectHome and PrivateTmp stay.
 printf '%s\n' \
   '[Unit]' \
   'Description=gitlab-runner for socialweb-computer-kcp (shell executor, one job)' \
@@ -169,7 +172,6 @@ printf '%s\n' \
   'Restart=on-failure' \
   'RestartSec=5' \
   'Nice=10' \
-  'NoNewPrivileges=yes' \
   'ProtectSystem=strict' \
   'ProtectHome=yes' \
   "ReadWritePaths=$home /run/user/$uid" \
