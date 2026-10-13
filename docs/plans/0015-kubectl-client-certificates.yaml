@@ -640,16 +640,65 @@ items:
       - kubectl with A still works 5 s after revokeIdentity.
       - The CRL does not list the serials and the log shows a revoke error other than "permission denied"; if it is
         "permission denied", M1-PKI-ROLE policy paths are wrong: stop.
-      - The client-ca.crt fingerprint is the SAME after delete and create, and C works again: STOP (a recreated cluster
-        reuses its CA; the lead must decide).
+      - The client-ca.crt fingerprint is the SAME after delete and create, and C works again: M2-FRESH-CA-PER-CREATION
+        is not done or is broken; fix it there, do not continue.
     done_when: "after revokeIdentity the old kubeconfigs are refused within 2 s and their serials are in the CRL; after deleteCluster the old kubeconfig is refused, also after the cluster is created again."
     risks: ["Revoke reads every stored certificate of the cluster PKI (LIST pki/certs). It is bounded by pki tidy (plan 0013 M3-VAULT-TIDY)."]
+    status: todo
+    evidence:
+  - id: M2-FRESH-CA-PER-CREATION
+    milestone: M2
+    title: A deleted and recreated cluster of the same name never reuses the old cluster's CAs
+    depends_on: [M2-REVOCATION]
+    decision: >
+      Decided by the user 2026-10-13: required, not a stop condition. Every k3s CA of a cluster (the 13 entries of
+      the persisted identity bundle, client CA included) belongs to ONE creation of that cluster. Today the cluster
+      key is deterministic (<accountHash>-<name>) and the identity bundle is persisted under the cluster data dir
+      (internal/clusterprovider/bundle.go BundleDir: <state>/clusterprovider/<key>/identity-bundle) and in the
+      cluster OpenBao (internal/vaultlayout class identity-bundle), and every start pre-seeds and verifies it
+      (internal/clusterprovider/guard.go). If anything of it survives a delete, a new cluster with the same name is
+      seeded with the old CAs and every certificate issued before the delete is valid again. Two guards, both required:
+      (1) PURGE: deleteCluster (internal/gateway/gateway.go DeleteCluster -> Store.Delete -> the clusterprovider's
+      teardown of that key: Reap in internal/clusterprovider/units.go plus the store and vault removal) removes the
+      identity-bundle dir, the whole cluster data dir, and the cluster OpenBao's identity-bundle KV entries (or the
+      whole cluster OpenBao and its storage). (2) BIND: the bundle records the Cluster object's metadata.uid
+      (a field in the persisted bundle manifest, internal/identitybundle); guard.go refuses to seed or verify a
+      bundle whose uid differs from the current Cluster object's uid and fails the start with "identity bundle
+      belongs to an earlier creation of this cluster" (fail fast, never seed it). A cluster created before this
+      change has no uid in its bundle: adopt it once by writing the current uid (prod is disposable; no other
+      migration).
+    files:
+      - "internal/clusterprovider/bundle.go (BundleDir, PersistedBundle, the harvest that writes the bundle)"
+      - "internal/clusterprovider/guard.go (seed + verify before k3s starts)"
+      - "internal/identitybundle (bundle manifest: add uid)"
+      - "internal/clusterprovider/units.go:918 Reap; the store/vault teardown it calls (DeleteStore units.go:389, the OpenBaoServer delete)"
+      - "internal/gateway/gateway.go:241 DeleteCluster; internal/materialiser (where the Cluster object and its uid are read)"
+    change: |
+      1. Read the delete path end to end (DeleteCluster -> Store.Delete -> materialiser/clusterprovider teardown) and
+         list every place the bundle or the cluster data dir lives. Write the list in your report.
+      2. Make the teardown remove the cluster data dir (identity-bundle included) and the cluster OpenBao storage
+         after the members and store are gone; log "cluster provider: identity bundle purged" with the key.
+      3. Add `clusterUID` to the bundle manifest; the harvest writes the current Cluster uid; guard.go compares it
+         with the Cluster object's uid before seeding/verifying and fails the start on a mismatch (alert text above);
+         an empty clusterUID is adopted once (write the current uid, log "identity bundle adopted for uid ...").
+    check: |
+      go build ./internal/... ./cmd/socialweb-computer
+      Live (market network with gateway, live slot): getKubeconfig -> C; note the client-ca.crt sha256 under
+      <cluster_data_dir>/server/tls; deleteCluster; confirm <cluster_data_dir> is gone and the gateway log has
+      "identity bundle purged"; createCluster same name, wait Ready; client-ca.crt sha256 DIFFERS; kubectl with C refused.
+      Bind check: copy a bundle from a deleted creation back into a new creation's data dir before start (scratch
+      only, do not push) -> the start fails fast with "identity bundle belongs to an earlier creation of this cluster".
+    stop: |
+      - The data dir or bundle cannot be removed because another live cluster shares a path (report the path).
+      - The Cluster uid is not reachable where guard.go runs (report what is reachable).
+    done_when: "after delete + create of the same name, every k3s CA differs and every old certificate is refused; a stale bundle can never be seeded; ACC15 check below passes."
+    risks: ["A purge that runs while members still run could fail the teardown; purge only after Reap and store removal report done."]
     status: todo
     evidence:
   - id: M3-PROD-EDGE
     milestone: M3
     title: Caddy on kcp.socialweb.computer asks for a client certificate and forwards it to the client certificate front
-    depends_on: [M2-REVOCATION]
+    depends_on: [M2-REVOCATION, M2-FRESH-CA-PER-CREATION]
     decision: >
       In prod kubectl reaches kcp.socialweb.computer, where Caddy ends TLS (source (1)). The site asks for a
       client certificate without checking it (`client_auth mode request`; Go TLS still checks the client's
