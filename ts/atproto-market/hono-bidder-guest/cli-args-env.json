@@ -43,6 +43,12 @@
       "env": "VAULT_OPENBAO_CLIENT",
       "default": "guest-kcp"
     },
+    "vault-kv-mount-client": {
+      "type": "string",
+      "description": "Client of that OpenBaoServer whose kv mount holds the bidder's keys (the bidder's own client)",
+      "env": "VAULT_KV_MOUNT_CLIENT",
+      "default": "bidder"
+    },
     "vault-kcp-server": {
       "type": "string",
       "description": "kcp server holding the OpenBaoServer object, a /clusters/<workspace> URL",

@@ -29,6 +29,7 @@ const app = createMarketBidderGuestApp({
   vault: {
     name: o.vaultOpenbaoServer,
     client: o.vaultOpenbaoClient,
+    kvMountClient: o.vaultKvMountClient,
     kcp: { server: o.vaultKcpServer, tokenFile: o.vaultKcpTokenFile, caCertFile: o.vaultKcpCaCertFile },
   },
   kcp: { server: o.kcpServer, workspace: o.kcpWorkspace, handle: o.handle, tokenFile: o.kcpTokenFile, caFile: o.kcpCaFile },

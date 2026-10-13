@@ -9,6 +9,7 @@ export interface OpenBaoServerKcpOptions {
   caCert?: string;
   name: string;
   client: string;
+  kvMountClient?: string;
   readyTimeoutMs?: number;
   pollMs?: number;
   fetch?: typeof fetch;
@@ -90,7 +91,8 @@ export function createOpenBaoServerResolver(opts: OpenBaoServerKcpOptions): () =
     }
     const st = o!.status!;
     const c = st.clients!.find((x) => x.name === opts.client)!;
-    if (!c.kvMount || !c.certAuthMount || !c.certAuthRole) {
+    const kvMount = opts.kvMountClient ? st.clients!.find((x) => x.name === opts.kvMountClient)?.kvMount : c.kvMount;
+    if (!kvMount || !c.certAuthMount || !c.certAuthRole) {
       throw new Error(`openbaoserver ${opts.name}: client ${opts.client} names no kvMount, certAuthMount or certAuthRole`);
     }
     return {
@@ -100,7 +102,7 @@ export function createOpenBaoServerResolver(opts: OpenBaoServerKcpOptions): () =
       clientCert: await readRef(c.clientCert, `client ${opts.client} certificate`),
       clientKey: await readRef(c.clientKey, `client ${opts.client} key`),
       certLogin: { mount: c.certAuthMount, role: c.certAuthRole },
-      kvMount: c.kvMount,
+      kvMount,
     };
   };
 }
