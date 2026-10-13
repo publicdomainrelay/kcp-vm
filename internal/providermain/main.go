@@ -395,7 +395,8 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 	if !cfg.ObserveOnly() {
 		deps.Host = units
 		deps.NodeHosts = nodeHosts
-		deps.Roller = newRoller(units, stackCfg, registry, alloc, purposes, log)
+		deps.Roller = newRoller(units, stackCfg, registry, alloc, purposes,
+			fmt.Sprintf("cluster provider pid %d (kcp kubeconfig %s, state %s)", os.Getpid(), cfg.KCPKubeconfig, stackCfg.StateDir), log)
 	}
 	return deps, nil
 }

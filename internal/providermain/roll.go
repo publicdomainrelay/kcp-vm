@@ -11,7 +11,7 @@ import (
 )
 
 func newRoller(units *clusterprovider.UnitsHost, stack clusterprovider.StackConfig, registry clusterprovider.Clusters,
-	alloc *portallocator.Allocator, purposes []portallocator.Purpose, log *slog.Logger) *clusterprovider.Roller {
+	alloc *portallocator.Allocator, purposes []portallocator.Purpose, name string, log *slog.Logger) *clusterprovider.Roller {
 	refs := func(ctx context.Context) (map[string]clusterprovider.Ref, error) {
 		list, err := registry.Refs(ctx)
 		if err != nil {
@@ -39,17 +39,20 @@ func newRoller(units *clusterprovider.UnitsHost, stack clusterprovider.StackConf
 			}
 			return keys, nil
 		},
-		Ready: func(ctx context.Context, cluster string) bool {
+		Ready: func(ctx context.Context, cluster string) (bool, error) {
 			m, err := refs(ctx)
 			if err != nil {
-				return false
+				return false, err
 			}
 			ref, ok := m[cluster]
 			if !ok {
-				return false
+				return false, nil
 			}
 			cl, err := registry.Read(ctx, ref)
-			return err == nil && cl != nil && cl.Status.Phase == v1alpha1.ClusterReady
+			if err != nil {
+				return false, err
+			}
+			return cl != nil && cl.Status.Phase == v1alpha1.ClusterReady, nil
 		},
 		Leases: func(cluster string) (materialiser.Leases, error) {
 			out := materialiser.Leases{}
@@ -63,6 +66,7 @@ func newRoller(units *clusterprovider.UnitsHost, stack clusterprovider.StackConf
 		Relet: func(cluster string, p portallocator.Purpose) (portallocator.Lease, bool, error) {
 			return alloc.Relet(portallocator.Request{Cluster: cluster, Purpose: p})
 		},
-		Log: log,
+		Name: name,
+		Log:  log,
 	}
 }

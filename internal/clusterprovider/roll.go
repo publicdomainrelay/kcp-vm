@@ -176,7 +176,7 @@ type Roller struct {
 
 	Clusters func(ctx context.Context) ([]string, error)
 
-	Ready func(ctx context.Context, cluster string) bool
+	Ready func(ctx context.Context, cluster string) (bool, error)
 
 	Leases func(cluster string) (materialiser.Leases, error)
 
@@ -184,7 +184,11 @@ type Roller struct {
 
 	Interval time.Duration
 
+	Name string
+
 	Log *slog.Logger
+
+	status RollerStatus
 }
 
 func (r *Roller) log() *slog.Logger {
@@ -205,9 +209,12 @@ func (r *Roller) Run(ctx context.Context) {
 		keys, err := r.Clusters(ctx)
 		if err == nil {
 			for _, key := range keys {
-				r.pass(ctx, key)
+				if perr := r.pass(ctx, key); perr != nil && err == nil {
+					err = perr
+				}
 			}
 		}
+		r.noteStatus(keys, err)
 		select {
 		case <-ctx.Done():
 			return
@@ -216,25 +223,32 @@ func (r *Roller) Run(ctx context.Context) {
 	}
 }
 
-func (r *Roller) pass(ctx context.Context, key string) {
+func (r *Roller) pass(ctx context.Context, key string) error {
 	p, err := RollRequestPath(r.Stack.StateDir, key)
 	if err != nil {
-		return
+		return nil
 	}
 	b, err := os.ReadFile(p)
 	if err != nil {
-		return
+		return nil
 	}
 	var req RollRequest
 	if err := json.Unmarshal(b, &req); err != nil || req.ID == "" {
 		r.log().Error("cluster provider: an unreadable roll request is dropped", "cluster", key, "path", p)
 		os.Remove(p)
-		return
+		return nil
 	}
-	if !r.Ready(ctx, key) {
+	ready, rerr := r.Ready(ctx, key)
+	if !ready {
+		r.noteObserved(key, req, RollStateWaiting, rerr)
+		if rerr != nil {
+			r.log().Warn("cluster provider: a roll waits; the cluster's readiness could not be read", "cluster", key, "roll", req.ID, "err", rerr.Error())
+			return rerr
+		}
 		r.log().Info("cluster provider: a roll waits for its cluster to be Ready", "cluster", key, "roll", req.ID)
-		return
+		return nil
 	}
+	r.noteObserved(key, req, RollStateStarted, nil)
 	r.log().Info("cluster provider: roll started", "cluster", key, "roll", req.ID, "kind", req.Kind)
 	var rep RollReport
 	switch req.Kind {
@@ -252,11 +266,15 @@ func (r *Roller) pass(ctx context.Context, key string) {
 		}
 	}
 	os.Remove(p)
+	if op, err := RollObservedPath(r.Stack.StateDir, key, req.ID); err == nil {
+		os.Remove(op)
+	}
 	if rep.Error != "" {
 		r.log().Error("cluster provider: roll failed", "cluster", key, "roll", req.ID, "err", rep.Error)
-		return
+		return nil
 	}
 	r.log().Info("cluster provider: roll done", "cluster", key, "roll", req.ID, "from", rep.From, "to", rep.To)
+	return nil
 }
 
 var k3sVersionLine = regexp.MustCompile(`v(\d+)\.(\d+)\.(\d+)\S*`)

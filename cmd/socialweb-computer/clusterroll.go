@@ -4,8 +4,11 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clicfg"
@@ -36,6 +39,48 @@ func rollID() string {
 	b := make([]byte, 4)
 	rand.Read(b)
 	return time.Now().UTC().Format("20060102T150405Z") + "-" + hex.EncodeToString(b)
+}
+
+func withdrawRollRequest(path, id string) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	var cur clusterprovider.RollRequest
+	if json.Unmarshal(b, &cur) == nil && cur.ID == id {
+		os.Remove(path)
+	}
+}
+
+func rollStalled(state, key string, req clusterprovider.RollRequest) string {
+	bound := clusterprovider.DefaultRollObserveBound
+	now := time.Now().UTC()
+	if o, ok, err := clusterprovider.ReadRollObserved(state, key, req.ID); err == nil && ok {
+		if o.State == clusterprovider.RollStateWaiting && o.Error != "" && now.Sub(o.FirstAt) > bound {
+			return fmt.Sprintf("%s took roll %s at %s but cannot read the cluster's readiness for %s: %s",
+				o.Provider, req.ID, o.FirstAt.Format(time.RFC3339), now.Sub(o.FirstAt).Round(time.Second), o.Error)
+		}
+		return ""
+	}
+	if now.Sub(req.RequestedAt) <= bound {
+		return ""
+	}
+	s, ok, err := clusterprovider.ReadRollerStatus(state)
+	switch {
+	case err != nil:
+		return fmt.Sprintf("no cluster provider took roll %s within %s, and its status %s does not read: %v", req.ID, bound, clusterprovider.RollerStatusPath(state), err)
+	case !ok:
+		return fmt.Sprintf("no cluster provider took roll %s within %s; none has written %s, so none runs a roller on %s", req.ID, bound, clusterprovider.RollerStatusPath(state), state)
+	case now.Sub(s.PassAt) > bound:
+		return fmt.Sprintf("%s did not take roll %s within %s; its last pass was at %s (last error %q at %s)", s.Provider, req.ID, bound,
+			s.PassAt.Format(time.RFC3339), s.LastError, s.LastErrorAt.Format(time.RFC3339))
+	case s.Error != "":
+		return fmt.Sprintf("%s did not take roll %s within %s; its last pass at %s failed: %s", s.Provider, req.ID, bound, s.PassAt.Format(time.RFC3339), s.Error)
+	case !slices.Contains(s.Clusters, key):
+		return fmt.Sprintf("%s did not take roll %s within %s; its last pass at %s lists %d clusters and not %s", s.Provider, req.ID, bound, s.PassAt.Format(time.RFC3339), len(s.Clusters), key)
+	}
+	return fmt.Sprintf("%s did not take roll %s within %s; its last pass at %s reported no error (last error %q at %s)", s.Provider, req.ID, bound,
+		s.PassAt.Format(time.RFC3339), s.LastError, s.LastErrorAt.Format(time.RFC3339))
 }
 
 func runUnitsRoll(kind string) verbFunc {
@@ -88,6 +133,10 @@ func runUnitsRoll(kind string) verbFunc {
 					return exitFailed
 				}
 				return exitOK
+			}
+			if why := rollStalled(state, key, req); why != "" {
+				withdrawRollRequest(path, req.ID)
+				return a.fail(exitFailed, "%s: %s; the request is withdrawn", verb, why)
 			}
 			select {
 			case <-ctx.Done():
