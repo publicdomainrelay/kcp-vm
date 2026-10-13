@@ -1,3 +1,5 @@
+import { installMarketNetworkFetch } from "@publicdomainrelay/market-network-fetch";
+import { marketNetwork } from "@publicdomainrelay/market-network-common";
 import { Command } from "@publicdomainrelay/cli-args-env";
 import { createLogger, createStructuredLogger, getMinLogLevelFromEnv } from "@publicdomainrelay/logger";
 import { createServe } from "@publicdomainrelay/serve";
@@ -232,6 +234,14 @@ serve.app.route("/", createPinnedDownloadsFactory({ downloads: pinned, log }).cr
 serve.app.route("/", staticApp as never);
 
 const relayUrls = ((options.relayUrl as string | undefined) ?? "").split(",").map((u) => u.trim()).filter(Boolean);
+installMarketNetworkFetch({
+  network: marketNetwork({
+    plcDirectoryUrl: options.plcDirectoryUrl as string,
+    ingressProxyHost: options.ingressProxyHost as string,
+    relayUrls,
+    hosts: options.networkHosts as string | undefined,
+  }),
+});
 
 async function debugNodeSsh(dir: string) {
   const privateKeyPath = `${dir}/id_ed25519`;

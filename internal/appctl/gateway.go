@@ -341,6 +341,9 @@ func GatewayValues(o v1alpha1.Gateway, workspace, stateDir string, w WebApp, vau
 		if len(n.RelayUrls) > 0 {
 			extra = append(extra, "--relay-url", strings.Join(n.RelayUrls, ","))
 		}
+		if hosts := NetworkHostsArg(n.Hosts); hosts != "" {
+			extra = append(extra, "--network-hosts", hosts)
+		}
 	}
 	if len(o.Spec.BidderDids) > 0 {
 		extra = append(extra, "--node-extra-bidder-dids", strings.Join(o.Spec.BidderDids, ","))

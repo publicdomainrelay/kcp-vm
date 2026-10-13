@@ -106,6 +106,7 @@ apps:
       - {name: public-origin, to: options}
       - {name: oauth-client-id, to: options}
       - {name: plc-directory-url, to: network.plcDirectoryUrl}
+      - {name: network-hosts, to: network.hosts}
       - {name: ingress-proxy-host, to: network.ingressProxyHost}
       - {name: relay-url, to: network.relayUrls}
       - {name: gateway-audience, to: options}

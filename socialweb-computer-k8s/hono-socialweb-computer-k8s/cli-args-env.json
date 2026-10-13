@@ -42,6 +42,10 @@
       "description": "Fallback OAuth client_id to refresh as when a deposited session carries none",
       "env": "OAUTH_CLIENT_ID"
     },
+    "network-hosts": {
+      "type": "string",
+      "description": "Comma-separated name=address pairs of the market network's service names (its PDSes, PLC, relay) and the loopback address each answers on, copied from the Gateway's network value"
+    },
     "plc-directory-url": {
       "type": "string",
       "description": "PLC directory used to resolve accounts",
