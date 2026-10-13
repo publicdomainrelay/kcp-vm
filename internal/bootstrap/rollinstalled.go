@@ -121,7 +121,7 @@ func RollInstalled(ctx context.Context, m hostsvc.Manager, p Params, o Installed
 	}
 	timeout := o.ReadyTimeout
 	if timeout == 0 {
-		timeout = 5 * time.Minute
+		timeout = time.Minute
 	}
 	start := func(ctx context.Context, slot string, spec hostsvc.UnitSpec) (hostsvc.UnitStatus, error) {
 		if (kcpChanged || kineChanged) && !retargeted && !aborted {

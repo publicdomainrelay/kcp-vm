@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	DefaultRollReadyTimeout = 5 * time.Minute
+	DefaultRollReadyTimeout = time.Minute
 	DefaultLeaseTimeout     = 30 * time.Second
 	DefaultProbeTimeout     = 10 * time.Second
 	DefaultDrainTimeout     = 5 * time.Second

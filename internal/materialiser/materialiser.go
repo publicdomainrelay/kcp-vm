@@ -38,7 +38,7 @@ const RequeueAfter = 2 * time.Second
 
 const GateTimeout = 10 * time.Second
 
-const DefaultInitTimeout = 15 * time.Minute
+const DefaultInitTimeout = 3 * time.Minute
 
 type Op string
 

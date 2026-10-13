@@ -159,9 +159,9 @@ type nodeHostsOptions struct {
 	PathUp func(ctx context.Context, cluster string) bool
 }
 
-const NodeLossGrace = 90 * time.Second
+const NodeLossGrace = time.Minute
 
-const NodeJoinGrace = 2 * time.Minute
+const NodeJoinGrace = time.Minute
 
 func (o nodeHostsOptions) now() time.Time {
 	if o.Now == nil {

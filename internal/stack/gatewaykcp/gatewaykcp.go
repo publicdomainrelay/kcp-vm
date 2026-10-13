@@ -44,9 +44,9 @@ import (
 const (
 	InstanceID         = "gateway"
 	FieldManager       = "socialweb-computer"
-	ApplyTimeout       = 3 * time.Minute
-	VaultTimeout       = 5 * time.Minute
-	ListenTimeout      = 2 * time.Minute
+	ApplyTimeout       = time.Minute
+	VaultTimeout       = time.Minute
+	ListenTimeout      = 30 * time.Second
 	Poll               = 500 * time.Millisecond
 	ListenerXRPC       = "xrpc"
 	ListenerTLS        = "tls"
@@ -389,6 +389,9 @@ func (g *gateway) rootVault(ctx context.Context, rec devinstance.Record) (vaultm
 				return vaultmain.RootAccessOf(o)
 			}
 			last = fmt.Sprintf("%s %s", o.Status.Phase, o.Status.Message)
+			if o.Status.Phase == v1alpha1.OpenBaoServerPhaseFailed && o.Status.ObservedGeneration == o.Generation {
+				return vaultmain.RootAccess{}, fmt.Errorf("gatewaykcp: the root vault %s failed: %s", vaultlayout.RootServerName, last)
+			}
 		} else {
 			last = err.Error()
 		}

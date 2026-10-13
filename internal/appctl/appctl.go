@@ -35,7 +35,7 @@ const (
 	DefaultWorkspace   = "root"
 	DefaultInterval    = 2 * time.Second
 	RetryAfter         = 2 * time.Second
-	ApplyTimeout       = 3 * time.Minute
+	ApplyTimeout       = time.Minute
 	ComponentsDir      = "components"
 )
 

@@ -35,7 +35,7 @@ import (
 const (
 	DefaultInterval  = 5 * time.Second
 	RetryAfter       = 2 * time.Second
-	PassTimeout      = 60 * time.Second
+	PassTimeout      = 30 * time.Second
 	DefaultListen    = rootvault.LoopbackHost + ":0"
 	DefaultShares    = 1
 	DefaultThreshold = 1

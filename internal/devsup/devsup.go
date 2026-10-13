@@ -16,7 +16,7 @@ const (
 )
 
 const (
-	DefaultStopTimeout = 90 * time.Second
+	DefaultStopTimeout = 30 * time.Second
 	RestartDelay       = 100 * time.Millisecond
 	StartLimitBurst    = 5
 	StartLimitInterval = 10 * time.Second

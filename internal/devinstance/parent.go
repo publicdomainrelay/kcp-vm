@@ -31,8 +31,8 @@ const (
 	ChildWorkspaceType  = "dev-instance"
 	HostInterval        = time.Second
 	ChildInterval       = time.Second
-	HostApplyTimeout    = 2 * time.Minute
-	ChildWorkspaceReady = 2 * time.Minute
+	HostApplyTimeout    = time.Minute
+	ChildWorkspaceReady = 30 * time.Second
 )
 
 var workspacesGVR = schema.GroupVersionResource{Group: "tenancy.kcp.io", Version: "v1alpha1", Resource: "workspaces"}

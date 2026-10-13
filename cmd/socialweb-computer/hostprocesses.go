@@ -14,7 +14,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/openbaoctl"
 )
 
-const hostProcessesApplyTimeout = 2 * time.Minute
+const hostProcessesApplyTimeout = time.Minute
 
 func runHostProcesses(ctx context.Context, a *app, vals clicfg.Values, rest []string) int {
 	for _, n := range []string{backendOpt, "instance", "state-dir", "kcp-kubeconfig"} {

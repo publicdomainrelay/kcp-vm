@@ -168,7 +168,7 @@ func (p Params) Spec(e table.Entry, frontURL string) (hostsvc.UnitSpec, error) {
 		}
 		timeout := p.ReadyTimeout
 		if timeout == 0 {
-			timeout = 5 * time.Minute
+			timeout = time.Minute
 		}
 		spec = hostsvc.UnitSpec{Name: e.Unit, Description: "dev core of " + p.Owner,
 			Exec:    []string{p.Exe, "internal", "dev-core", "--instance-dir", p.InstanceDir, "--ready-timeout", timeout.String()},

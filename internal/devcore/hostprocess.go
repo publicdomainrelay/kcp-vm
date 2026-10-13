@@ -20,7 +20,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/postgresctl"
 )
 
-const HostProcessApplyTimeout = 2 * time.Minute
+const HostProcessApplyTimeout = time.Minute
 
 func Mirrors(bcfg bootstrap.Config, l devinstance.Layout) []hostprocess.Mirror {
 	var rec devinstance.Record

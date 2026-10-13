@@ -115,7 +115,7 @@ func StartLayer(ctx context.Context, m hostsvc.Manager, p Params) ([]Placed, err
 	}
 	timeout := p.ReadyTimeout
 	if timeout == 0 {
-		timeout = 5 * time.Minute
+		timeout = time.Minute
 	}
 	rctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()

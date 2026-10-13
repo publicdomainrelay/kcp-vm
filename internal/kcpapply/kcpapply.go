@@ -30,7 +30,7 @@ import (
 
 const (
 	FieldManager       = "socialweb-computer"
-	DefaultWaitTimeout = 2 * time.Minute
+	DefaultWaitTimeout = time.Minute
 	DefaultPoll        = time.Second
 	defaultNamespace   = "default"
 	schemaKind         = "APIResourceSchema"
@@ -40,6 +40,7 @@ var (
 	ErrSchemaChanged  = errors.New("kcpapply: an APIResourceSchema is immutable and its live spec differs; publish a new revision name")
 	ErrKubectlManaged = errors.New("kcpapply: the object was applied by kubectl and is never adopted; apply into a fresh instance")
 	ErrWaitTimedOut   = errors.New("kcpapply: a wait did not hold before its deadline")
+	ErrWaitFailed     = errors.New("kcpapply: a waited-on object reports a failure, so the wait cannot hold")
 )
 
 type Action string
@@ -582,6 +583,10 @@ func (a *Applier) wait(ctx context.Context, set manifests.Set, p manifests.Phase
 	for {
 		met, captured, err := a.check(ctx, dyn, kind.Resource, kind.Namespaced, w, names)
 		last = err
+		if errors.Is(err, ErrWaitFailed) && !w.BestEffort {
+			wr.Seconds = time.Since(start).Seconds()
+			return wr, fmt.Errorf("%s %v in %s for %s: %w", w.Kind, names, ws, w.For, err)
+		}
 		if met {
 			wr.Met, wr.Seconds = true, time.Since(start).Seconds()
 			if w.Capture != nil {
@@ -638,9 +643,23 @@ func (a *Applier) check(ctx context.Context, dyn dynamic.Interface, gvr schema.G
 		}
 		met, value := w.Met(u)
 		if !met {
+			if why := failedObject(u); why != "" {
+				return false, "", fmt.Errorf("%w: %s %s %s", ErrWaitFailed, w.Kind, n, why)
+			}
 			return false, "", fmt.Errorf("%s %s not %s", w.Kind, n, w.For)
 		}
 		captured = value
 	}
 	return true, captured, nil
+}
+
+func failedObject(u *unstructured.Unstructured) string {
+	phase, _, _ := unstructured.NestedString(u.Object, "status", "phase")
+	msg, _, _ := unstructured.NestedString(u.Object, "status", "message")
+	observed, found, _ := unstructured.NestedInt64(u.Object, "status", "observedGeneration")
+	current := !found || observed == u.GetGeneration()
+	if phase == "Failed" && current {
+		return "is Failed: " + msg
+	}
+	return ""
 }

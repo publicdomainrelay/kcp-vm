@@ -26,7 +26,7 @@ const (
 	ExeKine      = "kine"
 	ExeDeno      = "deno"
 	ExeBao       = "bao"
-	ApplyTimeout = 3 * time.Minute
+	ApplyTimeout = time.Minute
 )
 
 type CoreConfig struct {
