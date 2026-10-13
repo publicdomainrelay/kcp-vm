@@ -19,7 +19,7 @@ func devEnv(t *testing.T) clicfg.MapEnv {
 
 func TestTheDevVerbsOfAnInstanceThatIsNotUpSayDevUpFirst(t *testing.T) {
 	env := devEnv(t)
-	for _, args := range [][]string{{"dev", "env", "--instance", "t1"}, {"dev", "restart", "core", "--instance", "t1"}} {
+	for _, args := range [][]string{{"dev", "env", "--instance", "t1"}, {"dev", "restart", "core", "--instance", "t1"}, {"dev", "restart", "kcp", "--instance", "t1"}} {
 		code, _, stderr := runT(t, env, "linux", args...)
 		if code != 1 || !strings.Contains(stderr, "dev up first") {
 			t.Errorf("%v: exit %d %q", args, code, stderr)
@@ -28,10 +28,6 @@ func TestTheDevVerbsOfAnInstanceThatIsNotUpSayDevUpFirst(t *testing.T) {
 	code, _, stderr := runT(t, env, "linux", "dev", "logs", "--instance", "t1")
 	if code != 2 || !strings.Contains(stderr, "kcp-a") {
 		t.Errorf("dev logs without a unit: exit %d %q", code, stderr)
-	}
-	code, _, stderr = runT(t, env, "linux", "dev", "restart", "kcp", "--instance", "t1")
-	if code != 2 || !strings.Contains(stderr, "M3-KCP-ROLL") {
-		t.Errorf("dev restart kcp: exit %d %q", code, stderr)
 	}
 	code, out, _ := runT(t, env, "linux", "dev", "ls")
 	if code != 0 || strings.TrimSpace(out) != "[]" {
