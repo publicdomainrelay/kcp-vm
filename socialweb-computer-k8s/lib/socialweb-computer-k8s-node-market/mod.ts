@@ -279,6 +279,8 @@ export function grantingCapability(
   };
 }
 
+export const DEFAULT_NODE_VM_READY_TIMEOUT_SEC = 120;
+
 export function joining(state: ContractState): boolean {
   return state.outcome === "complete" && state.receiptOk === true && state.vmAddress !== undefined && !isTerminated(state);
 }
@@ -307,7 +309,7 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
     ((secrets, logger, o) => createSecretsCapability({ secrets, logger, privateKeyHex: o.privateKeyHex }));
   const claimKeys = opts.claimKeys ?? createMemoryClaimKeyStore();
   const awaitTermination = opts.awaitTermination ?? awaitComputeTermination;
-  const vmReadyTimeoutSec = opts.vmReadyTimeoutSec ?? 600;
+  const vmReadyTimeoutSec = opts.vmReadyTimeoutSec ?? DEFAULT_NODE_VM_READY_TIMEOUT_SEC;
   const joinModule = createK3sJoinModule(opts.meshd ? { meshd: opts.meshd } : {});
   const guestNetwork = opts.guestCaPem || opts.guestCurlHome
     ? () => ({
@@ -480,6 +482,7 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
       let error: string | undefined;
       let grantFailed = false;
       let fetched = false;
+      let acceptedAt = Date.now();
       const secretsFetched = Promise.withResolvers<void>();
       try {
         if (resume) {
@@ -570,6 +573,7 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
             await record(s);
           },
           onAccepted: async (_event, s): Promise<FlowDecision> => {
+            acceptedAt = Date.now();
             await record(s, { phase: "Provisioning", message: "a bid was accepted; the VM is booting" });
             return "continue";
           },
@@ -626,7 +630,7 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
           await untilFetched(
             guestEnded ? Promise.race([secretsFetched.promise, guestEnded]) : secretsFetched.promise,
             [deleted.signal, stopping.signal],
-            vmReadyTimeoutSec * 1000,
+            Math.max(0, acceptedAt + vmReadyTimeoutSec * 1000 - Date.now()),
           );
         }
       } catch (err) {

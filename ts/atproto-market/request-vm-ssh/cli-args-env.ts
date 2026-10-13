@@ -194,7 +194,7 @@ export default {
     "vm-ready-timeout-sec": {
       type: "number" as const,
       description: "How long the requester waits for the guest's onNetwork when the ComputeContract names no timeout",
-      default: 900,
+      default: 120,
     },
     "skip-rbac": {
       type: "boolean" as const,

@@ -158,9 +158,9 @@
     },
     "vm-ready-timeout-sec": {
       "type": "number",
-      "description": "How long a node's VM may take to answer SSH",
+      "description": "How long a node's VM may take from the accept to fetching its join secrets",
       "env": "VM_READY_TIMEOUT_SEC",
-      "default": 600
+      "default": 120
     },
     "node-poll-interval-ms": {
       "type": "number",

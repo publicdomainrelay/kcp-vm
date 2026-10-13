@@ -115,7 +115,7 @@ export function assertGuestTransport(transport: unknown): void {
   throw new LegacyTransportError(String(transport));
 }
 export const DEFAULT_VM_DISK = "50G";
-export const DEFAULT_VM_READY_TIMEOUT_SEC = 300;
+export const DEFAULT_VM_READY_TIMEOUT_SEC = 120;
 export const RECEIPT_FIREHOSE_TIMEOUT_MS = 30_000;
 export const RECEIPT_REPO_ATTEMPTS = 5;
 export const RECEIPT_REPO_RETRY_MS = 1_000;

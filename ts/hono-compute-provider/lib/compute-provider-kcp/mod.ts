@@ -303,7 +303,7 @@ export interface ComputeProviderKcpCtx extends ComputeProviderCtx {
   onChange?: (change: ComputeVMChange) => void;
 }
 
-const DEFAULT_BOOT_TIMEOUT_MS = 300_000;
+const DEFAULT_BOOT_TIMEOUT_MS = 100_000;
 const DEFAULT_RELEASE_TIMEOUT_MS = 300_000;
 const DEFAULT_POLL_INTERVAL_MS = 2_000;
 const DEFAULT_RESYNC_BACKOFF_MS = 2_000;

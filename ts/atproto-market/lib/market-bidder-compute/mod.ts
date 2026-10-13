@@ -60,6 +60,8 @@ import {
   type VmTerminatedReason,
 } from "@publicdomainrelay/market-common";
 
+export const PROVISION_TIMEOUT_MS = 120_000;
+
 export interface VmTermination {
   reason: VmTerminatedReason | string;
   exitCode?: number;
@@ -539,7 +541,7 @@ export function createVmBidderCallbacks(deps: VmBidderDeps): {
           return result.providerId;
         })(),
         new Promise<undefined>((_, reject) =>
-          setTimeout(() => reject(new Error("provisioning timed out after 10 minutes")), 600_000)
+          setTimeout(() => reject(new Error(`provisioning timed out after ${PROVISION_TIMEOUT_MS / 1000} s`)), PROVISION_TIMEOUT_MS)
         ),
       ]).catch((err) => {
         provisionFailure = err instanceof Error ? err.message : String(err);
