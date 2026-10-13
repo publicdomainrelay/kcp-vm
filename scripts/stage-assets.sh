@@ -6,17 +6,24 @@ versions="$root/internal/versions/versions.json"
 blobs="$root/internal/assets/blobs"
 cache=""
 print_pins=0
+blob_cache=""
+jobs=6
 platforms=()
 only=()
 
 usage() {
-  echo "usage: $0 [--platform linux/amd64|linux/arm64]... [--asset NAME]... [--cache DIR] [--blobs DIR] [--print-pins]" >&2
+  echo "usage: $0 [--platform linux/amd64|linux/arm64]... [--asset NAME]... [--cache DIR] [--blobs DIR] [--blob-cache DIR] [--jobs N] [--print-pins]" >&2
   echo "  downloads every pinned asset of versions.json, verifies its sha256 (and the upstream signature" >&2
   echo "  where one is published), repacks it as internal/assets/blobs/<goos>_<goarch>/<asset>.tar.zst and" >&2
   echo "  checks the unpacked tree against its treeSha256 pin. --print-pins prints the measured pins and" >&2
   echo "  stages even when a tree pin is missing or differs, so versions.json can be updated. --cache keeps" >&2
   echo "  the downloads (keyed by sha256) in DIR instead of internal/assets/blobs/.cache. --blobs writes" >&2
   echo "  <goos>_<goarch>/<asset>.tar.zst under DIR instead of internal/assets/blobs (the --dev build's cache)." >&2
+  echo "  --blob-cache keeps every zstd blob in DIR: a downloaded asset (kind file, oci, debs) by the sha256 of" >&2
+  echo "  its versions.json entry, this script, assetpack and the zstd version and flags (a hit skips its" >&2
+  echo "  download, verification and repack); an asset built from this checkout (kind go, script) is rebuilt" >&2
+  echo "  and checked against its pin every time, and only its zstd step is reused, keyed by the sha256 of" >&2
+  echo "  its tar stream. --jobs stages up to N assets at once (default 6)." >&2
   exit 2
 }
 
@@ -26,6 +33,8 @@ while [ $# -gt 0 ]; do
     --asset) only+=("$2"); shift 2 ;;
     --cache) cache="$2"; shift 2 ;;
     --blobs) blobs="$2"; shift 2 ;;
+    --blob-cache) blob_cache="$2"; shift 2 ;;
+    --jobs) jobs="$2"; shift 2 ;;
     --print-pins) print_pins=1; shift ;;
     -h|--help) usage ;;
     *) usage ;;
@@ -44,13 +53,12 @@ cache="${cache:-$blobs/.cache}"
 mkdir -p "$cache" "$blobs/.work"
 work="$(mktemp -d "$blobs/.work/run.XXXXXX")"
 trap 'chmod -R u+w "$work" 2>/dev/null; rm -rf "$work"' EXIT
-export GNUPGHOME="$work/gnupg"
-mkdir -m 0700 "$GNUPGHOME"
 
 die() { echo "stage-assets: $*" >&2; exit 1; }
 say() { echo "stage-assets: $*" >&2; }
 
 sha_of() { sha256sum "$1" | cut -d' ' -f1; }
+curl_args=(-fsSL --retry 3 --connect-timeout 10 --speed-limit 10000 --speed-time 20)
 
 fetch_pinned() {
   local url="$1" want="$2" out="$cache/$2"
@@ -58,28 +66,28 @@ fetch_pinned() {
     echo "$out"
     return
   fi
-  curl -fsSL --retry 3 -o "$out.part" "$url" || die "download failed: $url"
-  local got
-  got="$(sha_of "$out.part")"
+  local part="$out.part.$BASHPID" got
+  curl "${curl_args[@]}" -o "$part" "$url" || { rm -f "$part"; die "download failed: $url"; }
+  got="$(sha_of "$part")"
   if [ "$got" != "$want" ]; then
-    rm -f "$out.part"
+    rm -f "$part"
     die "sha256 mismatch for $url: got $got, pinned $want"
   fi
-  mv "$out.part" "$out"
+  mv -f "$part" "$out"
   echo "$out"
 }
 
 fetch_fresh() {
   local url="$1" out="$2"
-  curl -fsSL --retry 3 -o "$out" "$url" || die "download failed: $url"
+  curl "${curl_args[@]}" -o "$out" "$url" || die "download failed: $url"
 }
 
 key_ring() {
-  local url="$1" fpr="$2" ring="$work/keys/$2.gpg"
+  local url="$1" fpr="$2" ring="$GNUPGHOME/keys/$2.gpg"
   if [ ! -f "$ring" ]; then
-    mkdir -p "$work/keys"
-    fetch_fresh "$url" "$work/keys/$fpr.asc"
-    gpg --batch --quiet --no-default-keyring --keyring "$ring" --import "$work/keys/$fpr.asc" 2>/dev/null
+    mkdir -p "$GNUPGHOME/keys"
+    fetch_fresh "$url" "$GNUPGHOME/keys/$fpr.asc"
+    gpg --batch --quiet --no-default-keyring --keyring "$ring" --import "$GNUPGHOME/keys/$fpr.asc" 2>/dev/null
     gpg --batch --no-default-keyring --keyring "$ring" --with-colons --list-keys \
       | awk -F: '$1=="pub"{p=1;next} p&&$1=="fpr"{print $10; p=0}' | grep -qx "$fpr" \
       || die "key from $url does not carry primary fingerprint $fpr"
@@ -157,21 +165,21 @@ stage_oci() {
   index="$(echo "$spec" | jq -r .index)"
   manifest="$(echo "$spec" | jq -r .manifest)"
   layer="$(echo "$spec" | jq -r .layer)"
-  tok="$(curl -fsSL "https://$reg/token?scope=repository:$repo:pull" | jq -r .token)"
+  tok="$(curl "${curl_args[@]}" "https://$reg/token?scope=repository:$repo:pull" | jq -r .token)"
   local accept="application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json"
-  curl -fsSL -H "Authorization: Bearer $tok" -H "Accept: $accept" -o "$x/index.json" "https://$reg/v2/$repo/manifests/$index"
+  curl "${curl_args[@]}" -H "Authorization: Bearer $tok" -H "Accept: $accept" -o "$x/index.json" "https://$reg/v2/$repo/manifests/$index"
   [ "sha256:$(sha_of "$x/index.json")" = "$index" ] || die "$repo index does not hash to $index"
   jq -e --arg d "$manifest" --arg os "${plat%/*}" --arg a "${plat#*/}" \
     '.manifests[] | select(.digest == $d and .platform.os == $os and .platform.architecture == $a)' "$x/index.json" >/dev/null \
     || die "$repo index $index does not name $manifest for $plat"
-  curl -fsSL -H "Authorization: Bearer $tok" -H "Accept: $accept" -o "$x/manifest.json" "https://$reg/v2/$repo/manifests/$manifest"
+  curl "${curl_args[@]}" -H "Authorization: Bearer $tok" -H "Accept: $accept" -o "$x/manifest.json" "https://$reg/v2/$repo/manifests/$manifest"
   [ "sha256:$(sha_of "$x/manifest.json")" = "$manifest" ] || die "$repo manifest does not hash to $manifest"
   jq -e --arg d "$layer" '.layers[] | select(.digest == $d)' "$x/manifest.json" >/dev/null || die "$manifest does not name layer $layer"
   f="$cache/${layer#sha256:}"
   if [ ! -f "$f" ] || [ "sha256:$(sha_of "$f")" != "$layer" ]; then
-    curl -fsSL -H "Authorization: Bearer $tok" -o "$f.part" "https://$reg/v2/$repo/blobs/$layer"
-    [ "sha256:$(sha_of "$f.part")" = "$layer" ] || { rm -f "$f.part"; die "layer does not hash to $layer"; }
-    mv "$f.part" "$f"
+    curl "${curl_args[@]}" -H "Authorization: Bearer $tok" -o "$f.part.$BASHPID" "https://$reg/v2/$repo/blobs/$layer"
+    [ "sha256:$(sha_of "$f.part.$BASHPID")" = "$layer" ] || { rm -f "$f.part.$BASHPID"; die "layer does not hash to $layer"; }
+    mv -f "$f.part.$BASHPID" "$f"
   fi
   mkdir -p "$x/u"
   tar -xzf "$f" -C "$x/u"
@@ -292,49 +300,141 @@ stage_debs() {
   esac
 }
 
-(cd "$root" && go build -o "$work/assetpack" ./internal/assets/assetpack)
+(cd "$root" && go build -trimpath -buildvcs=false -o "$work/assetpack" ./internal/assets/assetpack)
+
+zstd_args=(-q -19 --long=27 -T0)
+pack_id=""
+script_sha=""
+if [ -n "$blob_cache" ]; then
+  mkdir -p "$blob_cache"
+  blob_cache="$(cd "$blob_cache" && pwd -P)"
+  pack_id="$(printf '%s\n' "$(sha_of "$work/assetpack")" "$(zstd -V)" "${zstd_args[*]}" | sha256sum | cut -d' ' -f1)"
+  script_sha="$(sha_of "${BASH_SOURCE[0]}")"
+fi
+
+place() {
+  ln -f "$1" "$2" 2>/dev/null || cp -f "$1" "$2"
+}
+
+cache_get() {
+  local f="$blob_cache/$1.tar.zst" rec="$blob_cache/$1.sha256"
+  [ -f "$f" ] && [ -f "$rec" ] || return 1
+  if [ "$(sha_of "$f")" != "$(cat "$rec")" ]; then
+    say "warn: cached blob $f does not hash to its record; staging again"
+    rm -f "$f" "$rec"
+    return 1
+  fi
+  place "$f" "$2"
+}
+
+cache_put() {
+  local tmp="$blob_cache/.$1.$BASHPID"
+  place "$2" "$tmp.tar.zst"
+  sha_of "$tmp.tar.zst" >"$tmp.sha256"
+  mv -f "$tmp.tar.zst" "$blob_cache/$1.tar.zst"
+  mv -f "$tmp.sha256" "$blob_cache/$1.sha256"
+}
+
+stage_one() {
+  local plat="$1" asset="$2" started="$SECONDS" pdir spec kind x tree digest raw zbytes pin in_key="" out_key how
+  pdir="$blobs/${plat/\//_}"
+  spec="$(jq -c --arg a "$asset" --arg p "$plat" '.assets[$a].fetch[$p]' "$versions")"
+  [ "$spec" != "null" ] || die "$asset has no fetch spec for $plat"
+  kind="$(echo "$spec" | jq -r .kind)"
+  pin="$(jq -r --arg a "$asset" --arg p "$plat" '.assets[$a].platforms[$p].treeSha256 // ""' "$versions")"
+  x="$work/$asset-${plat/\//_}"
+  tree="$x/tree"
+  mkdir -p "$tree"
+  export GNUPGHOME="$x/gnupg"
+  mkdir -m 0700 "$GNUPGHOME"
+  if [ -n "$blob_cache" ] && [ -n "$pin" ] && [ "$print_pins" != 1 ]; then
+    case "$kind" in
+      file|oci|debs)
+        in_key="in-$(printf '%s\n' "$plat" "$asset" "$(jq -cS --arg a "$asset" '.assets[$a]' "$versions")" "$script_sha" "$pack_id" | sha256sum | cut -d' ' -f1)"
+        if cache_get "$in_key" "$pdir/$asset.tar.zst"; then
+          chmod -R u+w "$x" && rm -rf "$x"
+          say "ok $plat $asset tree $pin cached by its pinned inputs ($((SECONDS - started))s)"
+          return 0
+        fi
+        ;;
+    esac
+  fi
+  say "$plat $asset"
+  case "$kind" in
+    file) stage_file "$spec" "$tree" "$x" ;;
+    oci) stage_oci "$spec" "$tree" "$x" "$plat" ;;
+    debs) stage_debs "$asset" "$spec" "$tree" "$x" "$plat" ;;
+    script) stage_script "$spec" "$tree" "$x" ;;
+    go) stage_go "$spec" "$tree" "$x" "$plat" ;;
+    *) die "$asset: unknown fetch kind" ;;
+  esac
+  digest="$("$work/assetpack" digest "$tree")"
+  raw="$(find "$tree" -type f -printf '%s\n' | awk '{s+=$1} END{print s+0}')"
+  if [ "$pin" != "$digest" ]; then
+    echo "stage-assets: $asset $plat unpacks to tree $digest, versions.json pins '${pin}'" >&2
+    [ "$print_pins" = 1 ] || return 1
+  fi
+  how="packed"
+  if [ -n "$blob_cache" ]; then
+    "$work/assetpack" tar "$tree" >"$x/tar"
+    out_key="out-$(printf '%s\n' "$(sha_of "$x/tar")" "$pack_id" | sha256sum | cut -d' ' -f1)"
+    if cache_get "$out_key" "$x/blob"; then
+      how="zstd reused by tar sha256"
+    else
+      zstd "${zstd_args[@]}" -o "$x/blob" "$x/tar"
+      cache_put "$out_key" "$x/blob"
+    fi
+    [ -z "$in_key" ] || cache_put "$in_key" "$x/blob"
+  else
+    "$work/assetpack" tar "$tree" | zstd "${zstd_args[@]}" -o "$x/blob"
+  fi
+  zbytes="$(stat -c %s "$x/blob")"
+  if [ "$print_pins" = 1 ]; then
+    jq -cn --arg a "$asset" --arg p "$plat" --arg d "$digest" --argjson r "$raw" --argjson z "$zbytes" \
+      '{asset:$a, platform:$p, treeSha256:$d, rawBytes:$r, zstdBytes:$z}'
+  fi
+  mv -f "$x/blob" "$pdir/$asset.tar.zst"
+  chmod -R u+w "$x" && rm -rf "$x"
+  say "ok $plat $asset tree $digest raw $raw zstd $zbytes, $how ($((SECONDS - started))s)"
+}
 
 failed=0
+running=0
+stop_all() {
+  local p
+  for p in $(jobs -p); do
+    pkill -TERM -P "$p" 2>/dev/null || true
+    kill -TERM "$p" 2>/dev/null || true
+  done
+}
+reap() {
+  local pid=""
+  if ! wait -n -p pid; then
+    failed=1
+  fi
+  running=$((running - 1))
+  if [ "$failed" = 1 ] && [ "$print_pins" != 1 ]; then
+    stop_all
+    while [ "$running" -gt 0 ]; do
+      wait -n || true
+      running=$((running - 1))
+    done
+    die "an asset failed to stage; stopped the others"
+  fi
+}
+
 for plat in "${platforms[@]}"; do
-  pdir="$blobs/${plat/\//_}"
-  mkdir -p "$pdir"
+  mkdir -p "$blobs/${plat/\//_}"
   for asset in $(jq -r --arg p "$plat" '.platforms[$p].assets[]' "$versions"); do
     if [ ${#only[@]} -gt 0 ] && [[ ! " ${only[*]} " == *" $asset "* ]]; then
       continue
     fi
-    spec="$(jq -c --arg a "$asset" --arg p "$plat" '.assets[$a].fetch[$p]' "$versions")"
-    [ "$spec" != "null" ] || die "$asset has no fetch spec for $plat"
-    x="$work/$asset-${plat/\//_}"
-    tree="$x/tree"
-    mkdir -p "$tree"
-    say "$plat $asset"
-    case "$(echo "$spec" | jq -r .kind)" in
-      file) stage_file "$spec" "$tree" "$x" ;;
-      oci) stage_oci "$spec" "$tree" "$x" "$plat" ;;
-      debs) stage_debs "$asset" "$spec" "$tree" "$x" "$plat" ;;
-      script) stage_script "$spec" "$tree" "$x" ;;
-      go) stage_go "$spec" "$tree" "$x" "$plat" ;;
-      *) die "$asset: unknown fetch kind" ;;
-    esac
-    digest="$("$work/assetpack" digest "$tree")"
-    raw="$(find "$tree" -type f -printf '%s\n' | awk '{s+=$1} END{print s+0}')"
-    "$work/assetpack" tar "$tree" | zstd -q -19 --long=27 -T0 -o "$x/blob"
-    zbytes="$(stat -c %s "$x/blob")"
-    pin="$(jq -r --arg a "$asset" --arg p "$plat" '.assets[$a].platforms[$p].treeSha256 // ""' "$versions")"
-    if [ "$print_pins" = 1 ]; then
-      jq -cn --arg a "$asset" --arg p "$plat" --arg d "$digest" --argjson r "$raw" --argjson z "$zbytes" \
-        '{asset:$a, platform:$p, treeSha256:$d, rawBytes:$r, zstdBytes:$z}'
-    fi
-    if [ "$pin" != "$digest" ]; then
-      echo "stage-assets: $asset $plat unpacks to tree $digest, versions.json pins '${pin}'" >&2
-      if [ "$print_pins" != 1 ]; then
-        failed=1
-        continue
-      fi
-    fi
-    mv "$x/blob" "$pdir/$asset.tar.zst"
-    chmod -R u+w "$x" && rm -rf "$x"
-    say "ok $plat $asset tree $digest raw $raw zstd $zbytes"
+    [ "$running" -lt "$jobs" ] || reap
+    stage_one "$plat" "$asset" &
+    running=$((running + 1))
   done
+done
+while [ "$running" -gt 0 ]; do
+  reap
 done
 exit "$failed"
