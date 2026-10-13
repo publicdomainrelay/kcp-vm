@@ -49,3 +49,11 @@ runs:
         done
         echo "$(dirname "$DENO_BIN")" >>"$GITHUB_PATH"
         go version && deno --version | head -1
+
+    - name: user namespaces
+      shell: bash
+      run: |
+        set -euo pipefail
+        sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 2>/dev/null || true
+        unshare --user --map-root-user true
+        unshare -rn true

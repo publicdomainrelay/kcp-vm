@@ -26,16 +26,8 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost /opt/hostedtoolcache/CodeQL
-        df -h / | tail -1
-
-    - name: user namespaces
-      shell: bash
-      run: |
-        set -euo pipefail
-        sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
-        unshare --user --map-root-user true
-        df -h / | tail -1
+        sudo -n rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost /opt/hostedtoolcache/CodeQL 2>/dev/null || true
+        df -h "$CI_STATE" | tail -1
 
     - name: container runtime
       shell: bash
@@ -49,5 +41,16 @@ runs:
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends $missing
         fi
-        docker version --format '{{.Server.Version}}'
-        echo "CONTAINER=docker" >>"$GITHUB_ENV"
+        if docker version --format '{{.Server.Version}}' >/dev/null 2>&1; then
+          docker version --format 'docker {{.Server.Version}}'
+          echo "CONTAINER=docker" >>"$GITHUB_ENV"
+          exit 0
+        fi
+        mkdir -p "$CI_STATE/podman/run" && chmod 0700 "$CI_STATE/podman/run"
+        export XDG_RUNTIME_DIR="$CI_STATE/podman/run"
+        export CONTAINERS_STORAGE_CONF="$CI_STATE/podman/storage.conf" CONTAINERS_CONF="$CI_STATE/podman/containers.conf"
+        printf '[storage]\ndriver = "overlay"\ngraphroot = "%s"\nrunroot = "%s"\n[storage.options.overlay]\nignore_chown_errors = "true"\n' "$CI_STATE/podman/storage" "$CI_STATE/podman/run/storage" >"$CONTAINERS_STORAGE_CONF"
+        printf '[engine]\ncgroup_manager = "cgroupfs"\nevents_logger = "file"\n[containers]\ncgroups = "disabled"\n' >"$CONTAINERS_CONF"
+        for v in XDG_RUNTIME_DIR CONTAINERS_STORAGE_CONF CONTAINERS_CONF; do echo "$v=${!v}" >>"$GITHUB_ENV"; done
+        echo "CONTAINER=podman" >>"$GITHUB_ENV"
+        podman version --format 'podman {{.Server.Version}}'

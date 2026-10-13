@@ -30,7 +30,7 @@ needs the argument behind it. Do not read it end to end.
 | What a host must provide | `socialweb-computer check-host -role gateway` or `-role bidder`, `docs/host-contract.md` |
 | The market network | `deploy/market-network/README.md` |
 | The operator handoff | `handoff.yaml` |
-| What CI runs on a push, and its runner | `.github/workflows/ci.yml` on GitHub-hosted runners: the gate on `main` and `task/*`, the release builds, the guest image and the Spaces publish on `main` and `v*` tags |
+| What CI runs on a push, and its runners | `.github/workflows/ci.yml`: the gate, the guest image and the Spaces publish on GitHub-hosted runners; the release builds (`binaries`, `release-reproducible`) on the self-hosted runner of `scripts/gh-runner-install.sh` (account socialweb-ci), because the assets they stage are pinned by the bytes that host's toolchain produces |
 | Where the integration suite runs | the hat-8 runner only (`.gitlab-ci.yml`, `scripts/ci-runner-install.sh`, account socialweb-ci): it needs kvm, `systemd --user` and an `/etc/subuid` range, which a hosted runner has not |
 | A throwaway GitLab for integration runs | `scripts/gitlab-fixture.sh up` / `down`, `deploy/gitlab-fixture/template/` |
 
