@@ -56,7 +56,7 @@ go vet ./... || fail "go vet"
 echo "check.sh: ok go vet"
 
 for module in $(jq -r '[.assets[].fetch // {} | .[] | select(.kind == "go") | .module // empty] | unique[]' internal/versions/versions.json); do
-  (cd "$module" && go build ./... && go vet ./...) || fail "go build and go vet of the asset module $module"
+  (cd "$module" && go build -o /dev/null ./... && go vet ./...) || fail "go build and go vet of the asset module $module"
   echo "check.sh: ok go build and go vet of the asset module $module"
 done
 
