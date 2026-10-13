@@ -7051,6 +7051,38 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   0007 M6-NOSSH-JOIN); the repeated onNetwork report comes from the requester's user data, not the guest
   image.
 
+- **A market node rented through compute-provider-kcp joins a tenant cluster with no ssh and stays Ready
+  through a bidder upgrade (plan 0007 M6-NOSSH-JOIN, 2026-10-12).** Setup: a market network
+  (`dev up --profile market-network --bidders 0`), an installed bidder (`install bidder`, stand-in account
+  test-0004, `"market-network-file"`, so `upgrade --binary` applies), and `serve gateway kcp --host-backend
+  proc --gateway-profile market-network` with the network value in its Gateway spec and a bootstrap
+  cluster owned by an account on the network's alice PDS (`marketNetwork.ownerSessionsFile`). The
+  network's `--with-gateway` child is not used: its core is a plain dev core, so its Gateway gets a root
+  vault and nothing else (no web app, no clusterprovider, no tenant cluster). Defects found and closed:
+  the tenant cluster's vault fetched the winning bidder's issuer at `https://<did-key>.relay.localhost`,
+  which on the host is port 443 (another listener), so the node's JWT login failed forever; a
+  market-network gateway now runs a loopback egress proxy (port recorded and bound again on restart) that
+  sends a port-less `*.<guest TLS host>:443` to the network's guest TLS front, and every vault it places
+  takes it as `HTTPS_PROXY`. A gateway cold start read the root vault's stale Synced status, failed
+  apply-root against the dead address and exited before the core could place the vault again; apply-root
+  now retries within the vault timeout. A market-network Gateway hands every node guest the network's CA
+  bundle and `CURL_HOME=/root` (`node-guest-ca-file`, `node-guest-curl-home`), as the requester does, so
+  no hand-written user_data base is needed. Readings on hat-8 (UTC), second, clean cycle (gateway on the
+  fixed build, no user_data base file): a pod applied to the cluster at 0 nodes 18:35:18; claim and RFP
+  18:35:53, accept 18:35:54, ComputeVM Running 18:35:57.9, Joining 18:36:09, node Ready 18:36:24, pod
+  Running 18:36:32; `upgrade --binary` of the bidder at 18:36:45.8 to a dev build with another closure
+  (4ffac85d from c314174f): bidder Ready 4.6 s later, the VM unit kept InvocationID f16c57e2, firecracker
+  pid 1005182 and start ticks 7226369, both bidder DenoPods ran again from the new tree, the issuer URL was
+  the same, 82 node Ready samples at 1 s all True with the Ready transition time unchanged, `units audit`
+  passed; the pod deleted, the scale-in after the 2 min hold sent vm.delete 200 at 18:40:21.6, ComputeVM
+  gone 18:40:26.6, no VM unit, work dir, cgroup or firecracker process left. The first cycle (the one that
+  found the defects) gave the same upgrade readings (18:30:51, bidder Ready 6.8 s later, 84 samples all
+  True) and vm.delete 200 at 18:34:28.2. No ssh from any side: a privileged pod on the node read the
+  guest's PID 1 namespaces every 20 s through both cycles: sshd active (the image runs it), 0 accepted
+  logins, 0 sessions, 0 established connections on port 22, 0 logins, 0 authorized keys; the web app,
+  clusterprovider and bidder logs hold no ssh command or session; the web app has no debug ssh path.
+  Not closed here: a gateway's scale pass took 35 s to claim a node for a pending pod.
+
 ## 16. Vocabulary
 
 | | |

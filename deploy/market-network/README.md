@@ -233,6 +233,15 @@ readable by the bidder account (copy it out of the network's state dir). Its VM
 units are units of that account's own user manager, so a restart of the whole
 manager (`systemctl restart user@<uid>`) touches only that account.
 
+A gateway that runs tenant clusters joins a market network the same way, as its own application:
+`serve gateway kcp --gateway-profile market-network --gateway-spec-file <spec>`, where the spec's
+`network` is the network value (`dev status --instance mn1 | jq .network.status.network`, its CA bundle
+copied out where the gateway account can read it) and `marketNetwork.ownerSessionsFile` names the
+cluster owners' accounts on the network's PDSes. Its web app hands every node guest the network's CA
+bundle, and its core runs a loopback egress proxy that every vault it places takes as `HTTPS_PROXY`, so a
+tenant cluster's vault reaches a bidder's port-less issuer URL through the guest TLS front. The
+`--with-gateway` child of `dev up` is a core with a root vault only; it runs no tenant cluster.
+
 N market networks on one host are N dev instances: every listener binds port 0,
 so two `dev up --instance` with different names never collide.
 
