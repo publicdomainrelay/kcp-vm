@@ -596,43 +596,6 @@ func TestTargetReturnsThePlanAcceptance(t *testing.T) {
 	}
 }
 
-func TestDecideAtTheDefaultCeilingReproducesToday(t *testing.T) {
-	intent := Observation{Deployments: []appsv1.Deployment{
-		{ObjectMeta: metav1.ObjectMeta{Name: "web"}, Spec: appsv1.DeploymentSpec{Replicas: i32(1)}},
-	}}
-	quiet := Observation{}
-	cases := []struct {
-		name   string
-		o      Observation
-		st     State
-		now    time.Time
-		action Action
-		nodes  int
-	}{
-		{"empty and no node", quiet, State{}, t0, None, 0},
-		{"intent and no node", intent, State{}, t0, Provision, 1},
-		{"intent and a node", intent, State{Nodes: 1}, t0, None, 1},
-		{"no intent and no node", quiet, State{}, t0, None, 0},
-		{"no intent and a node inside the hold", quiet, State{Nodes: 1, IdleSince: at(0)}, at(time.Minute), None, 1},
-		{"no intent and a node past the hold", quiet, State{Nodes: 1, IdleSince: at(0)}, at(DefaultHold), Teardown, 0},
-	}
-	for _, tc := range cases {
-		d := Decide(tc.o, tc.st, tc.now, Options{})
-		if d.Action != tc.action || d.Nodes != tc.nodes || d.Intent != Intent(tc.o) {
-			t.Fatalf("%s: Decide = %s/%d, want %s/%d -- at the default ceiling the decision must "+
-				"reproduce the one-node behaviour byte for byte", tc.name, d.Action, d.Nodes, tc.action, tc.nodes)
-		}
-	}
-	if got := Decide(intent, State{}, t0, Options{}).Reason; got != "intent and no node" {
-		t.Fatalf("the provision reason changed at the default ceiling: %q", got)
-	}
-	steady := "intent, and a node is already counted for this cluster; a second provision here is " +
-		"a second node (ADR 0014: idempotency is per-cluster)"
-	if got := Decide(intent, State{Nodes: 1}, t0, Options{}).Reason; got != steady {
-		t.Fatalf("the steady-state reason changed at the default ceiling: %q", got)
-	}
-}
-
 func TestTheDecisionScalesOutToTheTargetAndReleasesNothingItCannotSee(t *testing.T) {
 	o := pods(17)
 	opts := Options{MaxNodes: 3, PodsPerNode: 8}

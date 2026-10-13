@@ -3,6 +3,7 @@ package scale
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -45,6 +46,8 @@ type Observation struct {
 	DaemonSets   []appsv1.DaemonSet
 
 	Placement Placement
+
+	InFlight int
 
 	UnreconciledCustomResources []CustomResource
 }
@@ -214,6 +217,8 @@ type Decision struct {
 	NodeIdleSince map[string]time.Time
 
 	Reason string
+
+	Capped string
 }
 
 type Options struct {
@@ -253,22 +258,7 @@ func (o Options) podsPerNode() int {
 }
 
 func Target(o Observation, opts Options) int {
-	if !Intent(o) {
-		return 0
-	}
-	per := opts.podsPerNode()
-	ceiling := opts.maxNodes()
-	target := (Demand(o) + per - 1) / per
-	if target < 1 {
-		target = 1
-	}
-	if target > ceiling {
-		target = ceiling
-	}
-	if target < 1 {
-		target = 1
-	}
-	return target
+	return Wanted(o, opts, time.Time{}).Target
 }
 
 func Decide(o Observation, st State, now time.Time, opts Options) Decision {
@@ -283,32 +273,49 @@ func decide(o Observation, st State, now time.Time, opts Options) Decision {
 	intent := Intent(o)
 
 	if intent {
-		target := Target(o, opts)
-		switch {
-		case st.Nodes < target && st.Backoff.Holds(now):
-			return backingOff(st, target, now)
-		case st.Nodes < target:
-			if st.Nodes == 0 {
-				return Decision{
-					Action: Provision, Nodes: target, Intent: true,
-					Reason: "intent and no node",
-				}
+		w := Wanted(o, opts, now)
+		d := decideIntent(o, st, now, opts, w)
+		if w.Wanted > w.Target {
+			d.Capped = fmt.Sprintf("the cluster wants %d nodes (%s) and the max-nodes cap is %d", w.Wanted, w.Why, w.Target)
+			if len(w.Waiting) > 0 {
+				d.Capped += "; pod(s) " + strings.Join(w.Waiting, ", ") + " stay Pending"
 			}
+			d.Reason += "; " + d.Capped
+		} else if w.Why != "" {
+			d.Reason += "; target from " + w.Why
+		}
+		return d
+	}
+	return decideIdle(st, now, opts)
+}
+
+func decideIntent(o Observation, st State, now time.Time, opts Options, w Want) Decision {
+	target := w.Target
+	switch {
+	case st.Nodes < target && st.Backoff.Holds(now):
+		return backingOff(st, target, now)
+	case st.Nodes < target:
+		if st.Nodes == 0 {
 			return Decision{
 				Action: Provision, Nodes: target, Intent: true,
-				Reason: fmt.Sprintf("intent, and %d nodes are counted for a target of %d", st.Nodes, target),
-			}
-		case st.Nodes > target:
-			return scaleIn(o, st, now, opts, target, nodeClocks(o.Placement, st.NodeIdleSince, now))
-		default:
-			return Decision{
-				Action: None, Nodes: st.Nodes, Intent: true,
-				Reason: "intent, and a node is already counted for this cluster; a second " +
-					"provision here is a second node (ADR 0014: idempotency is per-cluster)",
+				Reason: "intent and no node",
 			}
 		}
+		return Decision{
+			Action: Provision, Nodes: target, Intent: true,
+			Reason: fmt.Sprintf("intent, and %d nodes are counted for a target of %d", st.Nodes, target),
+		}
+	case st.Nodes > target:
+		return scaleIn(o, st, now, opts, target, nodeClocks(o.Placement, st.NodeIdleSince, now))
+	default:
+		return Decision{
+			Action: None, Nodes: st.Nodes, Intent: true,
+			Reason: fmt.Sprintf("intent, and %d nodes are counted for a target of %d", st.Nodes, target),
+		}
 	}
+}
 
+func decideIdle(st State, now time.Time, opts Options) Decision {
 	if st.Nodes == 0 {
 		return Decision{
 			Action: None, Nodes: 0,

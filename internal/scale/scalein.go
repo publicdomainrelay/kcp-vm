@@ -24,12 +24,20 @@ type NodeLoad struct {
 	Evictable int
 
 	Incoming bool
+
+	Ready bool
+
+	ReadySince time.Time
 }
 
 type Placement struct {
 	Nodes []NodeLoad
 
 	Unplaced []time.Time
+
+	Unschedulable []Unschedulable
+
+	Spread Spread
 }
 
 func (p Placement) Load(name string) (NodeLoad, bool) {
@@ -81,8 +89,11 @@ func Loads(nodes []corev1.Node, o Observation, replicaSets []appsv1.ReplicaSet, 
 	byName := map[string]*NodeLoad{}
 	out := Placement{Nodes: make([]NodeLoad, 0, len(nodes))}
 	for i := range nodes {
-		out.Nodes = append(out.Nodes, NodeLoad{Name: nodes[i].Name, Created: nodes[i].CreationTimestamp.Time})
+		ready, since := NodeReady(&nodes[i])
+		out.Nodes = append(out.Nodes, NodeLoad{Name: nodes[i].Name, Created: nodes[i].CreationTimestamp.Time,
+			Ready: ready, ReadySince: since})
 	}
+	var workload []*corev1.Pod
 	for i := range out.Nodes {
 		byName[out.Nodes[i].Name] = &out.Nodes[i]
 	}
@@ -94,6 +105,9 @@ func Loads(nodes []corev1.Node, o Observation, replicaSets []appsv1.ReplicaSet, 
 		baseline := AppliedByTheControlPlane(p.ObjectMeta)
 		if k, ok := workloadOf(p, deploymentOf); ok && ours[k] {
 			baseline = true
+		}
+		if !baseline && p.DeletionTimestamp == nil {
+			workload = append(workload, p)
 		}
 		if p.Spec.NodeName != "" {
 			n, ok := byName[p.Spec.NodeName]
@@ -117,7 +131,11 @@ func Loads(nodes []corev1.Node, o Observation, replicaSets []appsv1.ReplicaSet, 
 			}
 		}
 		out.Unplaced = append(out.Unplaced, p.CreationTimestamp.Time)
+		if u, ok := unschedulable(p); ok {
+			out.Unschedulable = append(out.Unschedulable, u)
+		}
 	}
+	out.Spread = spreadOf(workload)
 	return out
 }
 

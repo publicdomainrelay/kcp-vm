@@ -33,6 +33,7 @@ type Driver struct {
 
 	mu     sync.Mutex
 	states map[string]scale.State
+	capped map[string]string
 }
 
 func New(f Factory, opts Options) (*Driver, error) {
@@ -42,7 +43,7 @@ func New(f Factory, opts Options) (*Driver, error) {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
-	return &Driver{factory: f, opts: opts, states: map[string]scale.State{}}, nil
+	return &Driver{factory: f, opts: opts, states: map[string]scale.State{}, capped: map[string]string{}}, nil
 }
 
 func (d *Driver) Pass(ctx context.Context, cluster string, o scale.Observation, observedNodes int) (scale.Decision, error) {
@@ -61,6 +62,7 @@ func (d *Driver) Pass(ctx context.Context, cluster string, o scale.Observation, 
 	d.mu.Unlock()
 
 	dec := scale.Decide(o, st, now, d.opts.Scale)
+	d.reportCap(log, cluster, dec.Capped)
 
 	if dec.Action == scale.None {
 		d.advance(cluster, st.Next(dec, now))
@@ -129,6 +131,23 @@ func (d *Driver) RunPass(ctx context.Context, cluster string) (scale.Decision, e
 	return d.Pass(ctx, cluster, o, nodes)
 }
 
+func (d *Driver) reportCap(log *slog.Logger, cluster, capped string) {
+	d.mu.Lock()
+	last := d.capped[cluster]
+	if capped == "" {
+		delete(d.capped, cluster)
+	} else {
+		d.capped[cluster] = capped
+	}
+	d.mu.Unlock()
+	switch {
+	case capped != "" && capped != last:
+		log.Warn("scaledriver: the max-nodes cap blocks a scale-up", "cluster", cluster, "detail", capped)
+	case capped == "" && last != "":
+		log.Info("scaledriver: the max-nodes cap no longer blocks a scale-up", "cluster", cluster)
+	}
+}
+
 func (d *Driver) State(cluster string) scale.State {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -139,6 +158,7 @@ func (d *Driver) Forget(cluster string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	delete(d.states, cluster)
+	delete(d.capped, cluster)
 }
 
 func (d *Driver) log() *slog.Logger {

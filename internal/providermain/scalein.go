@@ -37,7 +37,8 @@ func (h *nodeHosts) observeHeld(observe observeCluster) observeCluster {
 		for i := range o.Placement.Nodes {
 			o.Placement.Nodes[i].Held = held[o.Placement.Nodes[i].Name]
 		}
-		return o, nodes + h.inFlight(ctx, cluster), nil
+		o.InFlight = h.inFlight(ctx, cluster)
+		return o, nodes + o.InFlight, nil
 	}
 }
 
