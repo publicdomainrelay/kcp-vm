@@ -157,3 +157,28 @@ jobs:
             echo "$code $latest (the newest main binary, readable without credentials)"
             test "$code" = 206
           fi
+      - name: the published binary fetches its own guest image
+        env:
+          SPACES_BUCKET: ${{ vars.SPACES_BUCKET }}
+          SPACES_REGION: ${{ vars.SPACES_REGION }}
+        run: |
+          set -euo pipefail
+          base="https://${SPACES_BUCKET}.${SPACES_REGION}.digitaloceanspaces.com"
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            bin="$base/releases/$GITHUB_REF_NAME/binaries/socialweb-computer-linux-amd64"
+          else
+            bin="$base/main/latest/binaries/socialweb-computer-linux-amd64"
+          fi
+          probe="$RUNNER_TEMP/probe"
+          mkdir -p "$probe/run"
+          curl -sSfL --max-time 900 -o "$probe/socialweb-computer" "$bin"
+          chmod 0755 "$probe/socialweb-computer"
+          XDG_RUNTIME_DIR="$probe/run" "$probe/socialweb-computer" run bidder \
+            --handle 'NOT A HANDLE' --host-backend proc --profile dev-local --state-dir "$probe/state" \
+            >"$probe/out.txt" 2>&1 || true
+          cat "$probe/out.txt"
+          if grep -qE 'guestimagerelease|guest-image-source is required' "$probe/out.txt"; then
+            echo "the published binary cannot fetch the guest image of its own build"
+            exit 1
+          fi
+          echo "the published binary resolved its own guest image"
