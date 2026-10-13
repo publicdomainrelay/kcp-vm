@@ -117,11 +117,12 @@ const (
 	OptKcpFront = "kcp-front-address"
 	OptTLSFront = "tls-front-address"
 	OptSpecFile = "gateway-spec-file"
+	OptGuestImg = "guest-image-source"
 )
 
 var GatewayListen = map[string]string{OptKcpFront: "127.0.0.1:6443", OptTLSFront: "127.0.0.1:8443"}
 
-var Passed = []string{OptKcpFront, OptTLSFront, OptSpecFile}
+var Passed = []string{OptKcpFront, OptTLSFront, OptSpecFile, OptGuestImg}
 
 func Rooted(root string) bool { return root != "" && filepath.Clean(root) != "/" }
 

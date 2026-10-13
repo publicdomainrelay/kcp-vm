@@ -170,6 +170,8 @@ func runBidder(ctx context.Context, a *app, vals clicfg.Values, rest []string) i
 		return r.inNetwork(ctx)
 	case r.handle == "":
 		return a.fail(exitRefused, "run bidder: --handle is required: it names the bidder's account and owns its ComputeVMs")
+	case r.vals.String("guest-image-source") == "":
+		return a.fail(exitRefused, "run bidder: --guest-image-source is required: every VM boots the pinned guest image fetched from it, and a bidder without one would win bids it cannot fill (install bidder --guest-image-source file:///<dir> writes it to config.json)")
 	}
 	if err := bidder.CheckHandle(r.handle); err != nil {
 		return a.fail(exitRefused, "run bidder: %v", err)

@@ -495,7 +495,7 @@
     },
     "guest-image-source": {
       "type": "string",
-      "description": "internal vm, dev up --handle, dev up --profile market-network and run bidder: file:// or https:// base the pinned guest image (vmlinux, rootfs.ext4, image.json) is fetched from once and verified by sha256",
+      "description": "internal vm, dev up --handle, dev up --profile market-network, run bidder (required) and install bidder (written to config.json): file:// or https:// base the pinned guest image (vmlinux, rootfs.ext4, image.json) is fetched from once and verified by sha256",
       "env": "SOCIALWEB_GUEST_IMAGE_SOURCE"
     },
     "vm-stop-grace": {

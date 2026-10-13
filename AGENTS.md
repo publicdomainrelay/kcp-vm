@@ -156,6 +156,13 @@ anything.
   It reads the file itself (values never on the command line or in logs) and writes step screenshots
   to `~/.tmp/oauth-signin/<ts>/` (mode 0700) for debugging. A QR link expires after 5 minutes; read the
   current one from the MarketIdentity status right before running it.
+- After a fresh gateway deploy, the requester alice has no web app session: the cluster provider logs
+  "no oauth session stored for did:plc:..." on every claim. Sign alice in with the same script and
+  `--url https://k8s.socialweb.computer/`.
+- An installed bidder needs a guest image source (`install bidder --guest-image-source file:///<dir>`,
+  written to config.json; `run bidder` refuses without one). On hat-8 the pinned image is in
+  `/var/lib/socialweb-computer/guest-image` (root-owned; the bidder verifies every file by the sha256
+  pinned in internal/versions/versions.json).
 - Only the lead runs a prod deployment (plan 0006 M5-FRESH-DEPLOY). Task agents never touch prod.
 
 ## How to verify
