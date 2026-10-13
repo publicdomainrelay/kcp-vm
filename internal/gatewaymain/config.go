@@ -38,6 +38,8 @@ const (
 	envPublicMintURL = "SOCIALWEB_GATEWAY_PUBLIC_MINT_URL"
 
 	envNodeClaimAgent = "SOCIALWEB_GATEWAY_NODECLAIM_AGENT"
+
+	envHostProcessWorkspace = "SOCIALWEB_CLUSTERPROVIDER_HOSTPROCESS_WORKSPACE"
 )
 
 const DevkeyRegistryNamespace = "default"
@@ -81,6 +83,8 @@ type Config struct {
 	PublicMintURL string
 
 	NodeClaimAgent *kcpclient.ServiceAccountRef
+
+	HostProcessWorkspace string
 
 	LogLevel slog.Level
 }
@@ -150,6 +154,7 @@ func load(get func(string) string) (Config, error) {
 	if cfg.NodeClaimAgent, err = kcpclient.ParseServiceAccountRef(get(envNodeClaimAgent)); err != nil {
 		return Config{}, fmt.Errorf("%s: %w", envNodeClaimAgent, err)
 	}
+	cfg.HostProcessWorkspace = strings.TrimSpace(get(envHostProcessWorkspace))
 	if cfg.MintTTL, err = optionalDuration(get, envMintTTL); err != nil {
 		return Config{}, err
 	}

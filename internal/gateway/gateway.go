@@ -123,6 +123,8 @@ type Server struct {
 
 	Revoker Revoker
 
+	Feed Feed
+
 	MaxDeviceKeyTTL time.Duration
 }
 

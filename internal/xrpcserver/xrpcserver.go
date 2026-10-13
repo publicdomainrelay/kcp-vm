@@ -59,6 +59,10 @@ type Options struct {
 	Directory identity.Directory
 
 	RetryAfter time.Duration
+
+	StreamLifetime time.Duration
+
+	StreamsPerCaller int
 }
 
 type verb func(ctx context.Context, caller gateway.Caller, in any) (any, error)
@@ -82,6 +86,7 @@ type Server struct {
 	catalog *lexicon.BaseCatalog
 	inputs  map[string]lexicon.SchemaObject
 	params  map[string]lexicon.SchemaObject
+	streams *streams
 }
 
 func New(opts Options) (*Server, error) {
@@ -100,6 +105,12 @@ func New(opts Options) (*Server, error) {
 	if opts.RetryAfter == 0 {
 		opts.RetryAfter = DefaultRetryAfter
 	}
+	if opts.StreamLifetime == 0 {
+		opts.StreamLifetime = DefaultStreamLifetime
+	}
+	if opts.StreamsPerCaller == 0 {
+		opts.StreamsPerCaller = DefaultStreamsPerCaller
+	}
 
 	cat, err := loadCatalog()
 	if err != nil {
@@ -113,6 +124,10 @@ func New(opts Options) (*Server, error) {
 		catalog: cat,
 		inputs:  map[string]lexicon.SchemaObject{},
 		params:  map[string]lexicon.SchemaObject{},
+		streams: newStreams(opts.StreamsPerCaller),
+	}
+	if err := s.bindSubscription(nsidSubscribeClusters); err != nil {
+		return nil, err
 	}
 
 	for _, r := range []route{
@@ -174,6 +189,19 @@ func (s *Server) bind(r *route) error {
 	return nil
 }
 
+func (s *Server) bindSubscription(nsid string) error {
+	sch, err := s.catalog.Resolve(nsid)
+	if err != nil {
+		return fmt.Errorf("xrpcserver: %s has no lexicon: %w", nsid, err)
+	}
+	def, ok := sch.Def.(lexicon.SchemaSubscription)
+	if !ok {
+		return fmt.Errorf("xrpcserver: %s is a %T, not a subscription", nsid, sch.Def)
+	}
+	s.params[nsid] = paramsAsObject(def.Parameters)
+	return nil
+}
+
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	for _, r := range s.routes {
@@ -183,6 +211,7 @@ func (s *Server) Handler() http.Handler {
 		}
 		mux.Handle(method+" "+XRPCPrefix+r.nsid, s.xrpc(r))
 	}
+	mux.HandleFunc(XRPCPrefix+nsidSubscribeClusters, s.subscribeClusters)
 	mux.Handle(http.MethodPost+" "+MintPath, s.mint)
 	return mux
 }

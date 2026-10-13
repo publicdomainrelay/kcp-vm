@@ -20,6 +20,8 @@ type Deps struct {
 	Store gateway.Store
 	Deny  revocation.Deny
 
+	Feed gateway.Feed
+
 	Directory identity.Directory
 
 	Revoker gateway.Revoker
@@ -41,6 +43,7 @@ var ErrNoMintStore = errors.New(
 
 type Gateway struct {
 	handler       http.Handler
+	surface       *xrpcserver.Server
 	sweep         *plcsweep.Sweeper
 	sweepInterval time.Duration
 	log           *slog.Logger
@@ -55,7 +58,7 @@ func Build(cfg Config, d Deps, log *slog.Logger) (*Gateway, error) {
 	}
 
 	verbs := &gateway.Server{
-		Deny: d.Deny, Store: d.Store, Revoker: d.Revoker,
+		Deny: d.Deny, Store: d.Store, Revoker: d.Revoker, Feed: d.Feed,
 		MaxDeviceKeyTTL: cfg.DeviceKeyMaxTTL,
 	}
 	credentials := mint.New(d.MintStore, mint.Options{TTL: cfg.MintTTL, FailureHold: cfg.MintFailureHold})
@@ -76,6 +79,7 @@ func Build(cfg Config, d Deps, log *slog.Logger) (*Gateway, error) {
 	}
 	g := &Gateway{
 		handler:       surface.Handler(),
+		surface:       surface,
 		sweep:         d.Sweep,
 		sweepInterval: interval,
 		log:           log,
@@ -85,6 +89,8 @@ func Build(cfg Config, d Deps, log *slog.Logger) (*Gateway, error) {
 }
 
 func (g *Gateway) Handler() http.Handler { return g.handler }
+
+func (g *Gateway) Close() { g.surface.Close() }
 
 func (g *Gateway) Run(ctx context.Context) error {
 	if g.sweep == nil {

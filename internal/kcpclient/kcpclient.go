@@ -62,6 +62,8 @@ type Options struct {
 
 	NodeClaimAgent *ServiceAccountRef
 
+	HostProcessWorkspace string
+
 	RestConfig *rest.Config
 
 	Transport http.RoundTripper
@@ -75,6 +77,8 @@ type Client struct {
 	publicHost string
 	deviceKeys DeviceKeyGranter
 	agent      *agent
+
+	hostProcessWorkspace string
 }
 
 var ErrNoDeviceKey = errors.New(
@@ -127,6 +131,11 @@ func New(opts Options) (*Client, error) {
 		cfg: cfg, http: httpClient, codecs: codecs, host: cfg.Host,
 		publicHost: strings.TrimSuffix(opts.PublicHost, "/"),
 		deviceKeys: opts.DeviceKeys,
+
+		hostProcessWorkspace: opts.HostProcessWorkspace,
+	}
+	if c.hostProcessWorkspace == "" {
+		c.hostProcessWorkspace = RootWorkspace
 	}
 	if opts.NodeClaimAgent != nil {
 		c.agent = &agent{ref: opts.NodeClaimAgent}

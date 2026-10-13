@@ -1,0 +1,676 @@
+package kcpclient
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"sync"
+	"time"
+
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/rest"
+
+	corev1alpha1 "github.com/kcp-dev/sdk/apis/core/v1alpha1"
+	kcpv1alpha1 "github.com/kcp-dev/sdk/apis/tenancy/v1alpha1"
+
+	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/gateway"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/revocation"
+)
+
+var _ gateway.Feed = (*Client)(nil)
+
+const (
+	memberClusterLabel = "socialweb.computer/cluster"
+	memberNameLabel    = "socialweb.computer/member"
+
+	watchTimeoutSeconds = "300"
+	shortWatch          = time.Second
+	maxShortWatches     = 3
+)
+
+var errWatchGone = errors.New("kcpclient: the watch's resource version is gone")
+
+type listOf[T any] struct {
+	Metadata struct {
+		ResourceVersion string `json:"resourceVersion"`
+	} `json:"metadata"`
+	Items []T `json:"items"`
+}
+
+type watchFrame struct {
+	Type   string          `json:"type"`
+	Object json.RawMessage `json:"object"`
+}
+
+type source[T any] struct {
+	r        rest.Interface
+	resource string
+	label    string
+	field    string
+	where    string
+}
+
+func (s source[T]) request() *rest.Request {
+	req := s.r.Get().Resource(s.resource)
+	if s.label != "" {
+		req = req.Param("labelSelector", s.label)
+	}
+	if s.field != "" {
+		req = req.Param("fieldSelector", s.field)
+	}
+	return req
+}
+
+func (s source[T]) list(ctx context.Context) ([]T, string, error) {
+	raw, err := s.request().DoRaw(ctx)
+	if err != nil {
+		return nil, "", fmt.Errorf("kcpclient: list %s in %s: %w", s.resource, s.where, err)
+	}
+	var out listOf[T]
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, "", fmt.Errorf("kcpclient: list %s in %s: %w", s.resource, s.where, err)
+	}
+	return out.Items, out.Metadata.ResourceVersion, nil
+}
+
+func (s source[T]) watch(ctx context.Context, rv string, on func(deleted bool, obj T) error) (string, error) {
+	stream, err := s.request().
+		Param("watch", "true").
+		Param("resourceVersion", rv).
+		Param("allowWatchBookmarks", "true").
+		Param("timeoutSeconds", watchTimeoutSeconds).
+		Stream(ctx)
+	if err != nil {
+		return rv, fmt.Errorf("kcpclient: watch %s in %s: %w", s.resource, s.where, err)
+	}
+	defer stream.Close()
+	dec := json.NewDecoder(stream)
+	for {
+		var f watchFrame
+		if err := dec.Decode(&f); err != nil {
+			if errors.Is(err, io.EOF) || ctx.Err() != nil {
+				return rv, nil
+			}
+			return rv, fmt.Errorf("kcpclient: watch %s in %s: %w", s.resource, s.where, err)
+		}
+		if f.Type == "ERROR" {
+			var st metav1.Status
+			_ = json.Unmarshal(f.Object, &st)
+			if st.Code == http.StatusGone {
+				return rv, errWatchGone
+			}
+			return rv, fmt.Errorf("kcpclient: watch %s in %s: %s", s.resource, s.where, st.Message)
+		}
+		var head struct {
+			Metadata struct {
+				ResourceVersion string `json:"resourceVersion"`
+			} `json:"metadata"`
+		}
+		if err := json.Unmarshal(f.Object, &head); err != nil {
+			return rv, fmt.Errorf("kcpclient: watch %s in %s: %w", s.resource, s.where, err)
+		}
+		if head.Metadata.ResourceVersion != "" {
+			rv = head.Metadata.ResourceVersion
+		}
+		if f.Type == "BOOKMARK" {
+			continue
+		}
+		var obj T
+		if err := json.Unmarshal(f.Object, &obj); err != nil {
+			return rv, fmt.Errorf("kcpclient: watch %s in %s: %w", s.resource, s.where, err)
+		}
+		if err := on(f.Type == "DELETED", obj); err != nil {
+			return rv, err
+		}
+	}
+}
+
+func follow[T any](ctx context.Context, s source[T], rv string, on func(deleted bool, obj T) error, resync func([]T) error) error {
+	short := 0
+	for {
+		began := time.Now()
+		next, err := s.watch(ctx, rv, on)
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		switch {
+		case err == nil:
+			if time.Since(began) < shortWatch {
+				short++
+				if short >= maxShortWatches {
+					return fmt.Errorf("kcpclient: the watch of %s in %s closed %d times in a row within %s",
+						s.resource, s.where, short, shortWatch)
+				}
+			} else {
+				short = 0
+			}
+			rv = next
+		case errors.Is(err, errWatchGone):
+			items, lrv, lerr := s.list(ctx)
+			if lerr != nil {
+				return lerr
+			}
+			if err := resync(items); err != nil {
+				return err
+			}
+			rv = lrv
+		default:
+			return err
+		}
+	}
+}
+
+type feed struct {
+	c    *Client
+	did  string
+	name string
+	emit gateway.Emit
+
+	mu    sync.Mutex
+	sent  map[string]string
+	homes map[string]context.CancelFunc
+	errc  chan error
+}
+
+func stamp() string { return time.Now().UTC().Format("2006-01-02T15:04:05.000Z") }
+
+func (f *feed) fail(err error) {
+	select {
+	case f.errc <- err:
+	default:
+	}
+}
+
+func (f *feed) send(key, typ string, fingerprint string, payload any) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.sent[key] == fingerprint {
+		return nil
+	}
+	f.sent[key] = fingerprint
+	return f.emit(gateway.Event{Type: typ, Payload: payload})
+}
+
+func (f *feed) gone(key, typ string, payload any) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.sent[key]; !ok {
+		return nil
+	}
+	delete(f.sent, key)
+	return f.emit(gateway.Event{Type: typ, Payload: payload})
+}
+
+func (f *feed) keysUnder(prefix string) []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []string
+	for k := range f.sent {
+		if strings.HasPrefix(k, prefix) {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+func (c *Client) Follow(ctx context.Context, caller gateway.Caller, name string, emit gateway.Emit) error {
+	did := string(caller)
+	if did == "" {
+		return gateway.ErrUnauthorized
+	}
+	state, err := c.Lookup(ctx, did)
+	if err != nil {
+		return err
+	}
+	switch state {
+	case revocation.DenyFirstLogin:
+		return &gateway.XRPCError{Name: "ClusterNotFound", Status: 404,
+			Message: "this account has no clusters yet: call createCluster, then subscribe"}
+	case revocation.DenyGranted:
+	default:
+		return gateway.ErrIdentityRevoked
+	}
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	f := &feed{c: c, did: did, name: name, emit: emit,
+		sent: map[string]string{}, homes: map[string]context.CancelFunc{}, errc: make(chan error, 1)}
+
+	account := AccountPath(did)
+	rTenancy, err := c.resource(account, tenancyResource)
+	if err != nil {
+		return err
+	}
+	rAccount, err := c.resource(account, socialwebResource)
+	if err != nil {
+		return err
+	}
+	identities := source[v1alpha1.AtprotoIdentity]{r: rAccount, resource: "atprotoidentities",
+		field: "metadata.name=" + IdentityRecordName(did), where: account}
+	workspaces := source[kcpv1alpha1.Workspace]{r: rTenancy, resource: "workspaces", where: account}
+
+	_, idRV, err := identities.list(ctx)
+	if err != nil {
+		return err
+	}
+	spaces, wsRV, err := workspaces.list(ctx)
+	if err != nil {
+		return err
+	}
+
+	found := name == ""
+	var starts []func()
+	for _, ws := range spaces {
+		if !f.wanted(ws) {
+			continue
+		}
+		found = true
+		if ws.Status.Phase != corev1alpha1.LogicalClusterPhaseReady || ws.DeletionTimestamp != nil {
+			continue
+		}
+		start, err := f.open(ctx, ws.Name, true)
+		if err != nil {
+			return err
+		}
+		starts = append(starts, start)
+	}
+	if !found {
+		return gateway.ErrClusterNotFound
+	}
+	if err := emit(gateway.Event{Type: gateway.EventInfo, Payload: gateway.InfoEvent{
+		Name:    gateway.InfoSnapshotComplete,
+		Message: "the snapshot is complete; what follows are live changes",
+	}}); err != nil {
+		return err
+	}
+
+	for _, start := range starts {
+		start()
+	}
+	go func() {
+		f.fail(follow(ctx, identities, idRV, f.onIdentity, f.resyncIdentity))
+	}()
+	go func() {
+		f.fail(follow(ctx, workspaces, wsRV, func(deleted bool, ws kcpv1alpha1.Workspace) error {
+			return f.onWorkspace(ctx, deleted, ws)
+		}, func(items []kcpv1alpha1.Workspace) error {
+			return f.resyncWorkspaces(ctx, items)
+		}))
+	}()
+
+	select {
+	case err := <-f.errc:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (f *feed) wanted(ws kcpv1alpha1.Workspace) bool {
+	return ws.Spec.Mount == nil && (f.name == "" || ws.Name == f.name)
+}
+
+func (f *feed) onIdentity(deleted bool, id v1alpha1.AtprotoIdentity) error {
+	if deleted || id.Spec.Revoked || id.Spec.DID != f.did {
+		return gateway.ErrIdentityRevoked
+	}
+	return nil
+}
+
+func (f *feed) resyncIdentity(items []v1alpha1.AtprotoIdentity) error {
+	if len(items) == 0 {
+		return gateway.ErrIdentityRevoked
+	}
+	return f.onIdentity(false, items[0])
+}
+
+func (f *feed) onWorkspace(ctx context.Context, deleted bool, ws kcpv1alpha1.Workspace) error {
+	if !f.wanted(ws) {
+		return nil
+	}
+	if deleted {
+		return f.closeHome(ws.Name)
+	}
+	if ws.Status.Phase != corev1alpha1.LogicalClusterPhaseReady || ws.DeletionTimestamp != nil {
+		return nil
+	}
+	f.mu.Lock()
+	_, open := f.homes[ws.Name]
+	f.mu.Unlock()
+	if open {
+		return nil
+	}
+	start, err := f.open(ctx, ws.Name, false)
+	if err != nil {
+		return err
+	}
+	start()
+	return nil
+}
+
+func (f *feed) resyncWorkspaces(ctx context.Context, items []kcpv1alpha1.Workspace) error {
+	present := map[string]bool{}
+	for _, ws := range items {
+		if f.wanted(ws) {
+			present[ws.Name] = true
+		}
+		if err := f.onWorkspace(ctx, false, ws); err != nil {
+			return err
+		}
+	}
+	f.mu.Lock()
+	var missing []string
+	for name := range f.homes {
+		if !present[name] {
+			missing = append(missing, name)
+		}
+	}
+	f.mu.Unlock()
+	for _, name := range missing {
+		if err := f.closeHome(name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (f *feed) closeHome(cluster string) error {
+	f.mu.Lock()
+	cancel, ok := f.homes[cluster]
+	delete(f.homes, cluster)
+	f.mu.Unlock()
+	if ok {
+		cancel()
+	}
+	for _, k := range f.keysUnder("member/" + cluster + "/") {
+		f.mu.Lock()
+		delete(f.sent, k)
+		f.mu.Unlock()
+	}
+	for _, k := range f.keysUnder("claim/" + cluster + "/") {
+		f.mu.Lock()
+		delete(f.sent, k)
+		f.mu.Unlock()
+	}
+	return f.clusterGone(cluster)
+}
+
+func (f *feed) clusterGone(cluster string) error {
+	if err := f.gone("cluster/"+cluster, gateway.EventCluster, gateway.ClusterEvent{
+		Name: cluster, Phase: string(v1alpha1.ClusterUnavailable), Deleted: true, Time: stamp(),
+	}); err != nil {
+		return err
+	}
+	if f.name != "" {
+		return &gateway.XRPCError{Name: "ClusterNotFound", Status: 404, Message: "the cluster was deleted"}
+	}
+	return nil
+}
+
+func (f *feed) open(ctx context.Context, cluster string, snapshot bool) (func(), error) {
+	home := HomePath(f.did, cluster)
+	key, err := ClusterKey(home)
+	if err != nil {
+		return nil, err
+	}
+	rHome, err := f.c.resource(home, socialwebResource)
+	if err != nil {
+		return nil, err
+	}
+	rHosts, err := f.c.resource(f.c.hostProcessWorkspace, socialwebResource)
+	if err != nil {
+		return nil, err
+	}
+	clusters := source[v1alpha1.Cluster]{r: rHome, resource: "clusters", field: "metadata.name=" + cluster, where: home}
+	claims := source[v1alpha1.NodeClaim]{r: rHome, resource: "nodeclaims", where: home}
+	members := source[v1alpha1.HostProcess]{r: rHosts, resource: "hostprocesses",
+		label: memberClusterLabel + "=" + key, where: f.c.hostProcessWorkspace}
+
+	cl, clRV, err := clusters.list(ctx)
+	if err != nil {
+		return nil, err
+	}
+	ms, mRV, err := members.list(ctx)
+	if err != nil {
+		return nil, err
+	}
+	ncs, ncRV, err := claims.list(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	onCluster := func(deleted bool, o v1alpha1.Cluster) error {
+		if deleted {
+			return f.clusterGone(cluster)
+		}
+		return f.sendCluster(o, snapshot)
+	}
+	onMember := func(deleted bool, o v1alpha1.HostProcess) error { return f.sendMember(cluster, o, deleted, snapshot) }
+	onClaim := func(deleted bool, o v1alpha1.NodeClaim) error { return f.sendClaim(cluster, o, deleted, snapshot) }
+
+	if err := f.resyncClusters(cluster, cl, onCluster); err != nil {
+		return nil, err
+	}
+	if err := resyncSet(f, "member/"+cluster+"/", ms, func(o v1alpha1.HostProcess) string { return memberKey(cluster, o) }, onMember); err != nil {
+		return nil, err
+	}
+	if err := resyncSet(f, "claim/"+cluster+"/", ncs, func(o v1alpha1.NodeClaim) string { return claimKey(cluster, o) }, onClaim); err != nil {
+		return nil, err
+	}
+	snapshot = false
+
+	hctx, cancel := context.WithCancel(ctx)
+	f.mu.Lock()
+	f.homes[cluster] = cancel
+	f.mu.Unlock()
+
+	run := func(fn func() error) {
+		go func() {
+			if err := fn(); err != nil && hctx.Err() == nil {
+				f.fail(err)
+			}
+		}()
+	}
+	return func() {
+		run(func() error {
+			return follow(hctx, clusters, clRV, onCluster, func(items []v1alpha1.Cluster) error {
+				return f.resyncClusters(cluster, items, onCluster)
+			})
+		})
+		run(func() error {
+			return follow(hctx, members, mRV, onMember, func(items []v1alpha1.HostProcess) error {
+				return resyncSet(f, "member/"+cluster+"/", items, func(o v1alpha1.HostProcess) string { return memberKey(cluster, o) }, onMember)
+			})
+		})
+		run(func() error {
+			return follow(hctx, claims, ncRV, onClaim, func(items []v1alpha1.NodeClaim) error {
+				return resyncSet(f, "claim/"+cluster+"/", items, func(o v1alpha1.NodeClaim) string { return claimKey(cluster, o) }, onClaim)
+			})
+		})
+	}, nil
+}
+
+func (f *feed) resyncClusters(cluster string, items []v1alpha1.Cluster, on func(bool, v1alpha1.Cluster) error) error {
+	for _, o := range items {
+		if o.Name == cluster {
+			return on(false, o)
+		}
+	}
+	f.mu.Lock()
+	_, had := f.sent["cluster/"+cluster]
+	f.mu.Unlock()
+	if had {
+		return f.clusterGone(cluster)
+	}
+	return nil
+}
+
+func resyncSet[T any](f *feed, prefix string, items []T, key func(T) string, on func(bool, T) error) error {
+	present := map[string]T{}
+	for _, o := range items {
+		present[key(o)] = o
+		if err := on(false, o); err != nil {
+			return err
+		}
+	}
+	for _, k := range f.keysUnder(prefix) {
+		if _, ok := present[k]; ok {
+			continue
+		}
+		if err := f.forget(k); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (f *feed) forget(key string) error {
+	f.mu.Lock()
+	fp, ok := f.sent[key]
+	delete(f.sent, key)
+	f.mu.Unlock()
+	if !ok {
+		return nil
+	}
+	var stale struct {
+		Type    string
+		Payload json.RawMessage
+	}
+	if err := json.Unmarshal([]byte(fp), &stale); err != nil {
+		return nil
+	}
+	switch stale.Type {
+	case gateway.EventMember:
+		var ev gateway.MemberEvent
+		if json.Unmarshal(stale.Payload, &ev) == nil {
+			ev.Deleted, ev.Snapshot, ev.Time = true, false, stamp()
+			return f.emitLocked(gateway.Event{Type: gateway.EventMember, Payload: ev})
+		}
+	case gateway.EventNodeClaim:
+		var ev gateway.NodeClaimEvent
+		if json.Unmarshal(stale.Payload, &ev) == nil {
+			ev.Deleted, ev.Snapshot, ev.Time = true, false, stamp()
+			return f.emitLocked(gateway.Event{Type: gateway.EventNodeClaim, Payload: ev})
+		}
+	}
+	return nil
+}
+
+func (f *feed) emitLocked(ev gateway.Event) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.emit(ev)
+}
+
+func fingerprint(typ string, payload any) string {
+	b, _ := json.Marshal(struct {
+		Type    string
+		Payload any
+	}{typ, payload})
+	return string(b)
+}
+
+func memberKey(cluster string, o v1alpha1.HostProcess) string {
+	return "member/" + cluster + "/" + o.Name
+}
+
+func claimKey(cluster string, o v1alpha1.NodeClaim) string {
+	return "claim/" + cluster + "/" + o.Name
+}
+
+func (f *feed) sendCluster(o v1alpha1.Cluster, snapshot bool) error {
+	reason, message := explain(o.Status.Conditions)
+	phase := string(o.Status.Phase)
+	if phase == "" {
+		phase = string(v1alpha1.ClusterUnavailable)
+	}
+	ev := gateway.ClusterEvent{
+		Name:            o.Name,
+		Phase:           phase,
+		Running:         o.Spec.Running,
+		Instance:        o.Status.Instance,
+		Server:          o.Status.URL,
+		Reason:          reason,
+		Message:         message,
+		TeardownBlocked: conditionTrue(o.Status.Conditions, v1alpha1.ConditionTeardownBlocked),
+	}
+	fp := fingerprint(gateway.EventCluster, ev)
+	ev.Snapshot, ev.Time = snapshot, stamp()
+	return f.send("cluster/"+o.Name, gateway.EventCluster, fp, ev)
+}
+
+func explain(conds []metav1.Condition) (string, string) {
+	for _, t := range []string{v1alpha1.ConditionIdentityVerificationFailed, v1alpha1.ConditionTeardownBlocked} {
+		if conditionTrue(conds, t) {
+			c := meta.FindStatusCondition(conds, t)
+			return c.Reason, c.Message
+		}
+	}
+	if c := meta.FindStatusCondition(conds, "Ready"); c != nil {
+		return c.Reason, c.Message
+	}
+	return "", ""
+}
+
+func (f *feed) sendMember(cluster string, o v1alpha1.HostProcess, deleted, snapshot bool) error {
+	member := o.Labels[memberNameLabel]
+	if member == "" {
+		member = o.Name
+	}
+	phase := string(o.Status.Phase)
+	if phase == "" {
+		phase = string(v1alpha1.HostProcessPhasePending)
+	}
+	ev := gateway.MemberEvent{
+		Cluster: cluster,
+		Member:  member,
+		Phase:   phase,
+		Reason:  string(o.Status.LostReason),
+		Message: o.Status.Message,
+	}
+	key := memberKey(cluster, o)
+	if deleted {
+		ev.Deleted, ev.Time = true, stamp()
+		return f.gone(key, gateway.EventMember, ev)
+	}
+	fp := fingerprint(gateway.EventMember, ev)
+	ev.Snapshot, ev.Time = snapshot, stamp()
+	return f.send(key, gateway.EventMember, fp, ev)
+}
+
+func (f *feed) sendClaim(cluster string, o v1alpha1.NodeClaim, deleted, snapshot bool) error {
+	phase := string(o.Status.Phase)
+	if phase == "" {
+		phase = string(v1alpha1.NodeClaimPending)
+	}
+	ev := gateway.NodeClaimEvent{
+		Cluster:       cluster,
+		Name:          o.Name,
+		NodeName:      o.Spec.NodeName,
+		Phase:         phase,
+		Message:       o.Status.Message,
+		ContractPhase: string(o.Status.Contract.Phase),
+		Outcome:       string(o.Status.Contract.Outcome),
+		FQDN:          o.Status.Fqdn,
+	}
+	if w := o.Status.Contract.Winner; w != nil {
+		ev.Bidder = w.DID
+	}
+	if ev.Message == "" {
+		ev.Message = o.Status.Contract.Error
+	}
+	key := claimKey(cluster, o)
+	if deleted {
+		ev.Deleted, ev.Time = true, stamp()
+		return f.gone(key, gateway.EventNodeClaim, ev)
+	}
+	fp := fingerprint(gateway.EventNodeClaim, ev)
+	ev.Snapshot, ev.Time = snapshot, stamp()
+	return f.send(key, gateway.EventNodeClaim, fp, ev)
+}

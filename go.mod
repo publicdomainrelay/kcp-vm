@@ -5,9 +5,11 @@ go 1.26.6
 require (
 	github.com/bluesky-social/indigo v0.0.0-20260903211445-41278964ec8e
 	github.com/coreos/go-systemd/v22 v22.7.0
+	github.com/fxamacker/cbor/v2 v2.9.1
 	github.com/godbus/dbus/v5 v5.1.0
 	github.com/golang-jwt/jwt/v5 v5.3.0
 	github.com/google/go-containerregistry v0.22.1
+	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 	github.com/kcp-dev/sdk v0.33.1
 	github.com/klauspost/compress v1.19.2
 	github.com/openbao/openbao/api/v2 v2.3.0
@@ -31,7 +33,6 @@ require (
 	github.com/docker/docker-credential-helpers v0.9.3 // indirect
 	github.com/earthboundkid/versioninfo/v2 v2.24.1 // indirect
 	github.com/emicklei/go-restful/v3 v3.13.0 // indirect
-	github.com/fxamacker/cbor/v2 v2.9.1 // indirect
 	github.com/go-jose/go-jose/v3 v3.0.4 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-openapi/jsonpointer v1.0.0 // indirect

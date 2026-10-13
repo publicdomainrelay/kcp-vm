@@ -125,6 +125,8 @@ func buildDeps(cfg Config) (Deps, error) {
 		RestConfig:     kcpRestConfig,
 		DeviceKeys:     deviceKeys,
 		NodeClaimAgent: cfg.NodeClaimAgent,
+
+		HostProcessWorkspace: cfg.HostProcessWorkspace,
 	})
 	if err != nil {
 		return Deps{}, err
@@ -147,6 +149,7 @@ func buildDeps(cfg Config) (Deps, error) {
 	return Deps{
 		Store:     client,
 		Deny:      client,
+		Feed:      client,
 		Directory: dir,
 
 		Revoker: client,
@@ -212,6 +215,7 @@ func serve(ctx context.Context, cfg Config, g *Gateway, log *slog.Logger, inv fo
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 	}
+	server.RegisterOnShutdown(g.Close)
 	ln, err := net.Listen("tcp", cfg.Addr)
 	if err != nil {
 		return err
