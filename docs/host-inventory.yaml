@@ -292,7 +292,6 @@ entries:
     owner: 0007 M4-HOST-KEYS, 0008 M4-RUN-REQUEST
     why: ed25519 keypairs are minted in-process with golang.org/x/crypto/ssh and kept in the application's own OpenBao (every key lives there, user decision 2026-10-12); decided by Claude, user may veto
     from:
-      - "socialweb-computer-k8s door debugNodeSsh"
       - "ts/atproto-market requester-xrpc generateKeypair"
       - "ts/hono-compute-provider systemctl-shim"
   - name: ssh

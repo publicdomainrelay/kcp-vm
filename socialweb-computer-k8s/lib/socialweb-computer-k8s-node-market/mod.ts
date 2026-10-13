@@ -13,7 +13,6 @@ import {
   CONTRACT_STATE_VERSION,
   type ContractState,
   type FlowDecision,
-  hostKeyAliasOf,
   isTerminated,
   parseContractState,
   releaseTargetOf,
@@ -85,7 +84,6 @@ export interface MarketNodeFulfillerOptions {
   eventStreams?: () => { close(): void };
   readText?: (path: string) => Promise<string>;
   meshd?: MeshdPin;
-  debugSsh?: DebugNodeSsh;
   scopeCache?: ComputeRequestOptions["scopeCache"];
   scopeRefresher?: ComputeRequestOptions["scopeRefresher"];
   claimKeys?: ClaimKeyStore;
@@ -97,17 +95,6 @@ export interface MarketNodeFulfillerOptions {
   unclaimedGraceMs?: number;
   now?: () => number;
   log?: Log;
-}
-
-export interface DebugNodeHostKeys {
-  alias: string;
-  keys: Array<{ type: string; publicKey: string; fingerprint?: string }>;
-}
-
-export interface DebugNodeSsh {
-  authorizedKey: string;
-  onNetwork(claim: string, address: string): void;
-  onHostKeys?(claim: string, hostKeys: DebugNodeHostKeys): void;
 }
 
 export interface MarketNodeFulfiller {
@@ -576,12 +563,10 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
             return grantFailed ? "return" : stopWhenEnded();
           },
           onNetwork: async (event, s) => {
-            opts.debugSsh?.onNetwork(spec.nodeName, event.address);
             await record(s, { fqdn: event.address });
             return stopWhenEnded();
           },
           onHostKeys: async (event, s) => {
-            if (s.receipt) opts.debugSsh?.onHostKeys?.(spec.nodeName, { alias: hostKeyAliasOf(s.receipt), keys: event.keys });
             log("node_claim_host_keys", { claim: key, fingerprints: event.keys.map((k) => k.fingerprint) });
             await record(s);
           },
@@ -602,7 +587,6 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
           },
           ...(opts.guestHostAliases?.length ? { guestHostAliases: opts.guestHostAliases } : {}),
           capabilities: [capability],
-          ...(opts.debugSsh ? { sshAuthorizedKeys: [opts.debugSsh.authorizedKey] } : {}),
           ...(opts.scopeCache ? { scopeCache: opts.scopeCache } : {}),
           ...(opts.scopeRefresher ? { scopeRefresher: opts.scopeRefresher } : {}),
           denyBidderDids: spec.denyBidderDids ?? [],

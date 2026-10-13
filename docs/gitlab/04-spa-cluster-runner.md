@@ -608,7 +608,7 @@ from the accept bundle.
 ## What was measured on 2026-10-08
 
 The acceptance run for plan 0005 (ACC-ZERO, ACC-MESH, ACC-NOSSH), on prod, in the final configuration
-(`DEBUG_SOCIALWEB_NODE_SSH_DIR` unset, `SCALE_HOLD=0s`).
+(no ssh key in node user_data, `SCALE_HOLD=0s`).
 
 **The cluster** was created through the SPA at https://k8s.socialweb.computer by an ordinary atproto
 account (OAuth at bsky.social), and its kubeconfig downloaded with a 7-day device key. From the

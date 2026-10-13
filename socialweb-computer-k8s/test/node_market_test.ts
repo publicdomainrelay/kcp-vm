@@ -34,7 +34,6 @@ import {
   patchContract,
   type RecordRef,
 } from "@publicdomainrelay/compute-request-abc";
-import { hostKeyAliasOf } from "@publicdomainrelay/compute-request-abc";
 import type { GrantVars, GuestCapability } from "@publicdomainrelay/guest-capability-abc";
 import type { SecretEntry } from "@publicdomainrelay/secrets-common";
 import { buildUserData, type UserDataModule } from "@publicdomainrelay/cloud-init-common";
@@ -396,11 +395,6 @@ interface HarnessOptions {
   links?: FakeLinks;
   vmReadyTimeoutSec?: number;
   meshd?: MeshdPin;
-  debugSsh?: {
-    authorizedKey: string;
-    onNetwork(claim: string, address: string): void;
-    onHostKeys?(claim: string, hostKeys: { alias: string; keys: Array<{ type: string; publicKey: string }> }): void;
-  };
   scopeCache?: unknown;
   scopeRefresher?: unknown;
 }
@@ -429,7 +423,6 @@ function harness(o: HarnessOptions = {}) {
     secretsCapability: secrets.factory,
     vmReadyTimeoutSec: o.vmReadyTimeoutSec ?? 0.05,
     ...(o.meshd ? { meshd: o.meshd } : {}),
-    ...(o.debugSsh ? { debugSsh: o.debugSsh } : {}),
     ...(o.scopeCache ? { scopeCache: o.scopeCache as never } : {}),
     ...(o.scopeRefresher ? { scopeRefresher: o.scopeRefresher as never } : {}),
     requestCompute: scriptedRequest(o.script ?? "complete", contracts, decisions, store) as never,
@@ -596,39 +589,6 @@ Deno.test("the door asks for no ssh key and builds no ssh session", async () => 
   assertEquals(c.sshPublicKey, undefined);
   assertEquals(c.sshAuthorizedKeys, undefined);
   assertEquals((c.capabilities as GuestCapability[]).map((cap) => cap.id), ["secrets"]);
-});
-
-Deno.test("only a door given a debug key puts it in the guest's authorized_keys, and it is told the guest's address", async () => {
-  const seen: [string, string][] = [];
-  const key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDebugDebugDebugDebugDebugDebugDebugDebug debug-node-ssh";
-  const h = harness({ debugSsh: { authorizedKey: key, onNetwork: (claim, address) => seen.push([claim, address]) } });
-  h.store.put(claim("ci-node1"));
-  await h.fulfiller.pass();
-  await settle();
-  const c = h.contracts[0];
-  assertEquals(c.sshAuthorizedKeys, [key]);
-  assertEquals(c.sshPublicKey, undefined);
-  assertEquals(seen.length > 0, true, "the debug hook never heard the guest's network address");
-  assertEquals(seen[0][0], "ci-node1");
-});
-
-Deno.test("the guest's reported host keys are kept on the claim and handed to the debug ssh as its known host", async () => {
-  const known: Array<[string, string, string[]]> = [];
-  const h = harness({
-    debugSsh: {
-      authorizedKey: "ssh-ed25519 AAAAdebug debug",
-      onNetwork: () => {},
-      onHostKeys: (claim, hostKeys) => known.push([claim, hostKeys.alias, hostKeys.keys.map((k) => k.publicKey)]),
-    },
-  });
-  h.store.put(claim("ci-node1"));
-  await h.fulfiller.pass();
-  await settle();
-  assertEquals(h.store.contract("ci-node1")?.hostKeys, HOST_KEYS);
-  assertEquals(known, [["ci-node1", hostKeyAliasOf(RECEIPT), [HOST_KEYS.keys[0].publicKey]]]);
-  const restored = contractStateOfClaim(h.store.claims.get("ci-node1")!);
-  assertEquals(restored?.hostKeys, HOST_KEYS);
-  await h.fulfiller.stop();
 });
 
 Deno.test("the user_data the door asks for renders without any secret value", async () => {

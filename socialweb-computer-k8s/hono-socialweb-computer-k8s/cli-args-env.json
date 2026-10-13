@@ -216,11 +216,6 @@
       "env": "SOCIALWEB_DOOR_OPENBAO_KV_MOUNT",
       "default": "secret"
     },
-    "debug-node-ssh-dir": {
-      "type": "string",
-      "description": "DEBUG ONLY: directory holding an ed25519 key the door generates once and adds to every market node's authorized_keys through its user_data; unset means nodes carry no key",
-      "env": "DEBUG_SOCIALWEB_NODE_SSH_DIR"
-    },
     "test-owner-sessions-file": {
       "type": "string",
       "description": "TEST ONLY: JSON object keyed by owner DID of {service, identifier, password}; those owners rent nodes through a password session instead of their deposited OAuth session. Never set in production",

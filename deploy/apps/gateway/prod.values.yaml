@@ -12,7 +12,7 @@ permissions:
   run:
     allow: ["ssh-keygen"]
     reason: >-
-      the requester's ssh session provider and the debug node key (debug-node-ssh-dir) generate ed25519
+      the requester's ssh session provider generates ed25519
       keys with ssh-keygen
 probe:
   host: socialweb-computer-k8s.default.app.svc.kcp.local

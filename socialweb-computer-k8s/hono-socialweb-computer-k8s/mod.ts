@@ -39,7 +39,6 @@ import {
   publishedOpenBaoCAFile,
   type MarketNodeFulfiller,
   meshdPinOf,
-  type DebugNodeHostKeys,
 } from "@publicdomainrelay/socialweb-computer-k8s-node-market";
 import { createOpenBaoClaimKeyStore } from "@publicdomainrelay/socialweb-computer-k8s-claim-keys-openbao";
 import { type ClaimKeyStore, createMemoryClaimKeyStore } from "@publicdomainrelay/socialweb-computer-k8s-abc";
@@ -243,52 +242,6 @@ installMarketNetworkFetch({
   }),
 });
 
-async function debugNodeSsh(dir: string) {
-  const privateKeyPath = `${dir}/id_ed25519`;
-  await Deno.mkdir(dir, { recursive: true, mode: 0o700 });
-  const exists = await Deno.stat(privateKeyPath).then(() => true, () => false);
-  if (!exists) {
-    const out = await new Deno.Command("ssh-keygen", {
-      args: ["-q", "-t", "ed25519", "-N", "", "-C", "socialweb-debug-node-ssh", "-f", privateKeyPath],
-    }).output();
-    if (!out.success) throw new Error(`ssh-keygen failed: ${new TextDecoder().decode(out.stderr)}`);
-  }
-  const authorizedKey = (await Deno.readTextFile(`${privateKeyPath}.pub`)).trim();
-  logger.warn("debug_node_ssh_enabled", { privateKeyPath, authorizedKey });
-  const tickets = new Map<string, string>();
-  const knownHosts = new Map<string, { alias: string; file: string }>();
-  const announce = (claim: string) => {
-    const ticket = tickets.get(claim);
-    const known = knownHosts.get(claim);
-    if (!ticket || !known) return;
-    logger.warn("debug_node_ssh", {
-      claim,
-      privateKeyPath,
-      knownHostsFile: known.file,
-      ssh: `ssh -i ${privateKeyPath} -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=${known.file} -o GlobalKnownHostsFile=/dev/null -o HostKeyAlias=${known.alias} -o ProxyCommand='dumbpipe connect ${ticket}' root@${known.alias}`,
-    });
-  };
-  return {
-    authorizedKey,
-    onNetwork(claim: string, address: string) {
-      const ticket = address.replace(/^iroh:\/\//, "");
-      if (ticket === address) return;
-      tickets.set(claim, ticket);
-      announce(claim);
-    },
-    onHostKeys(claim: string, hostKeys: DebugNodeHostKeys) {
-      const file = `${dir}/known_hosts.${hostKeys.alias}`;
-      const lines = hostKeys.keys.map((k) => `${hostKeys.alias} ${k.type} ${k.publicKey}\n`).join("");
-      Deno.writeTextFile(file, lines, { mode: 0o600 }).then(() => {
-        knownHosts.set(claim, { alias: hostKeys.alias, file });
-        announce(claim);
-      }).catch((err) => logger.warn("debug_node_ssh_known_hosts_failed", { claim, file, error: String(err) }));
-    },
-  };
-}
-
-const debugSsh = options.debugNodeSshDir ? await debugNodeSsh(options.debugNodeSshDir as string) : null;
-
 const scopeCache = createScopeCache();
 const scopeRefresher = createScopeRefresher({ scopeCache });
 
@@ -329,7 +282,6 @@ if (kcpCredentials && kcpWorkspace) {
     ...(options.nodePolicy ? { policy: { name: options.nodePolicy as string, args: JSON.parse(options.nodePolicyArgs as string) } } : {}),
     pollIntervalMs: options.nodePollIntervalMs as number,
     ...(meshd ? { meshd } : {}),
-    ...(debugSsh ? { debugSsh } : {}),
     scopeCache,
     scopeRefresher,
     claimKeys,

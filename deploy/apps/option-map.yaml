@@ -122,7 +122,6 @@ apps:
       - {name: openbao-token-file, to: state}
       - {name: openbao-ca-file, to: options}
       - {name: openbao-kv-mount, to: options}
-      - {name: debug-node-ssh-dir, to: state}
       - {name: test-owner-sessions-file, to: spec.marketNetwork.ownerSessionsFile}
       - {name: test-node-guest-host-aliases, to: spec.marketNetwork.nodeGuestHostAliases}
       - {name: test-node-user-data-base-file, to: spec.marketNetwork.nodeUserDataBaseFile}
