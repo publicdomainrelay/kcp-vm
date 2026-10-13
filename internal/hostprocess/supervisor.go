@@ -78,8 +78,9 @@ type Supervisor struct {
 	listed  bool
 	backend hostsvc.Backend
 
-	mu    sync.Mutex
-	locks sync.Map
+	mu       sync.Mutex
+	locks    sync.Map
+	placedAt map[string]time.Time
 }
 
 func (s *Supervisor) setPlaced(unit string, on bool) {
@@ -87,9 +88,21 @@ func (s *Supervisor) setPlaced(unit string, on bool) {
 	defer s.mu.Unlock()
 	if on {
 		s.placed[unit] = true
+		if s.placedAt == nil {
+			s.placedAt = map[string]time.Time{}
+		}
+		s.placedAt[unit] = time.Now()
 	} else {
 		delete(s.placed, unit)
+		delete(s.placedAt, unit)
 	}
+}
+
+func (s *Supervisor) placedAfter(unit string, t time.Time) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	at, ok := s.placedAt[unit]
+	return ok && at.After(t)
 }
 
 func (s *Supervisor) isPlaced(unit string) bool {
@@ -409,6 +422,7 @@ func equalStatus(a, b any) bool { return fmt.Sprint(a) == fmt.Sprint(b) }
 
 func (s *Supervisor) Pass(ctx context.Context) error {
 	s.syncMirrors(ctx)
+	listedAt := time.Now()
 	list, err := s.client.List(ctx, metav1.ListOptions{LabelSelector: s.c.Selector})
 	if err != nil {
 		return err
@@ -427,6 +441,9 @@ func (s *Supervisor) Pass(ctx context.Context) error {
 		if err == nil {
 			for _, u := range units {
 				if !s.isPlaced(u.Name) && s.listed {
+					continue
+				}
+				if !seen[u.Name] && s.placedAfter(u.Name, listedAt) {
 					continue
 				}
 				if !seen[u.Name] && (u.State == hostsvc.Active || u.State == hostsvc.Activating) {
