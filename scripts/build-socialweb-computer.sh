@@ -150,6 +150,8 @@ if [ "$rev" = "HEAD" ] && [ -n "$(git -C "$root" status --porcelain --untracked-
   say "warn: $root has uncommitted changes; only commit $commit is built"
 fi
 
+version="$(git -C "$root" describe --tags --exact-match "$commit" 2>/dev/null || true)"
+
 want_go="$(git -C "$root" show "$commit:go.mod" | awk '$1=="toolchain"{print $2; exit}')"
 if [ -z "$want_go" ]; then
   want_go="go$(git -C "$root" show "$commit:go.mod" | awk '$1=="go"{print $2; exit}')"
@@ -334,7 +336,8 @@ build_once() {
       cp "$work/closure/out/"* "$tree/internal/tsbundle/closure/$key/"
       say "build $n $plat: go build"
       (cd "$tree" && GOOS="$goos" GOARCH="$goarch" go build -tags release -trimpath -buildvcs=true \
-        -ldflags='-s -w -buildid=' -o "$out/socialweb-computer" ./cmd/socialweb-computer)
+        -ldflags="-s -w -buildid= ${version:+-X github.com/johnandersen777/socialweb-computer-kcp/internal/buildstamp.Version=$version}" \
+        -o "$out/socialweb-computer" ./cmd/socialweb-computer)
       (cd "$out" && sha256sum socialweb-computer >socialweb-computer.sha256)
       "$out/socialweb-computer" version --json >"$out/version.json"
       "$out/socialweb-computer" version >"$out/version.txt"

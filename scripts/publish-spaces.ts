@@ -57,7 +57,7 @@ const put = async (prefix: string, copyFrom?: string) => {
         Key: key,
         CopySource: encodeURI(`${bucket}/${copyFrom}/${f.rel}`),
         MetadataDirective: "COPY",
-        ACL: "private",
+        ACL: "public-read",
       }));
     } else {
       await s3.send(new PutObjectCommand({
@@ -65,7 +65,7 @@ const put = async (prefix: string, copyFrom?: string) => {
         Key: key,
         Body: await Deno.readFile(f.path),
         ContentType: typeOf(f.rel),
-        ACL: "private",
+        ACL: "public-read",
         Metadata: { sha256: f.sha256 },
       }));
     }
@@ -77,7 +77,7 @@ const put = async (prefix: string, copyFrom?: string) => {
     Key: `${prefix}/manifest.json`,
     Body: new TextEncoder().encode(JSON.stringify(manifest, null, 2) + "\n"),
     ContentType: "application/json",
-    ACL: "private",
+    ACL: "public-read",
   }));
   console.log(`${prefix}/manifest.json (${files.length} files)`);
 };

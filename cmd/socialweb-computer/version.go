@@ -31,6 +31,21 @@ type versionInfo struct {
 	Images   []string         `json:"guestImages"`
 }
 
+func buildIdentity() (string, string) {
+	version, commit := buildstamp.Version, buildstamp.Commit
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		if version == "" && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
+			version = bi.Main.Version
+		}
+		for _, s := range bi.Settings {
+			if s.Key == "vcs.revision" && commit == "" {
+				commit = s.Value
+			}
+		}
+	}
+	return version, commit
+}
+
 func buildVersion(goos, goarch string) versionInfo {
 	v := versionInfo{Name: serviceName, Version: "(devel)", Go: runtime.Version(), GOOS: goos, GOARCH: goarch,
 		Release: assets.Release(), Assets: []assets.Listed{}, Closure: tsbundle.Describe(), Dev: buildstamp.Read(), Images: []string{}}
@@ -46,14 +61,17 @@ func buildVersion(goos, goarch string) versionInfo {
 	default:
 		v.AssetsBy = "the pins of versions.json; this dev build embeds none and resolves each executable from its explicit path option, never PATH"
 	}
-	if bi, ok := debug.ReadBuildInfo(); ok {
-		if bi.Main.Version != "" {
-			v.Version = bi.Main.Version
+	if version, revision := buildIdentity(); version != "" || revision != "" {
+		if version != "" {
+			v.Version = version
 		}
+		if revision != "" {
+			v.Revision = revision
+		}
+	}
+	if bi, ok := debug.ReadBuildInfo(); ok {
 		for _, s := range bi.Settings {
 			switch s.Key {
-			case "vcs.revision":
-				v.Revision = s.Value
 			case "vcs.time":
 				v.Time = s.Value
 			case "vcs.modified":

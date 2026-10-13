@@ -423,6 +423,12 @@
       "description": "internal vm, dev up --handle, dev up --profile market-network, run bidder (required) and install bidder (written to config.json): file:// or https:// base the pinned guest image (vmlinux, rootfs.ext4, image.json) is fetched from once and verified by sha256",
       "env": "SOCIALWEB_GUEST_IMAGE_SOURCE"
     },
+    "guest-image-release-base": {
+      "type": "string",
+      "description": "run bidder without guest-image-source: the base the guest image of this build's own version is downloaded from when the local cache does not hold it yet (releases/<version> then main/<commit> of the published artifacts)",
+      "env": "SOCIALWEB_GUEST_IMAGE_RELEASE_BASE",
+      "default": "https://socialweb-computer-kcp.sfo3.digitaloceanspaces.com"
+    },
     "vm-stop-grace": {
       "type": "string",
       "description": "internal vm, dev up --handle and run bidder: how long a stop waits after SendCtrlAltDel before SIGKILL (Go duration; x86_64 only, arm64 kills at once); unset, the vmStop.graceSeconds measured into internal/versions/versions.json",

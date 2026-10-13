@@ -20,6 +20,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/computevm"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devinstance"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devsup"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/guestimagerelease"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/stack/bidder"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/stack/denoruntime"
@@ -31,7 +32,7 @@ import (
 const bidderIdentityWait = 5 * time.Minute
 
 var bidderOptions = slices.Concat([]string{backendOpt, "profile", "network", "name", "instance", "state-dir", "fg", "ready-timeout",
-	"network-timeout", "market-network-file", "bidder-policy", "bidder-policy-args", "kcp-path", "kine-path", "deno-path", "bao-path", "openbao-plugin-dir", "asset-cache", "unit-prefix", "kcp-front-address"},
+	"network-timeout", "market-network-file", "bidder-policy", "bidder-policy-args", "kcp-path", "kine-path", "deno-path", "bao-path", "openbao-plugin-dir", "asset-cache", "unit-prefix", "kcp-front-address", "guest-image-release-base"},
 	devVMOptions, devOnly(tsbundle.SourceRootOption))
 
 type bidderRun struct {
@@ -166,22 +167,30 @@ func runBidder(ctx context.Context, a *app, vals clicfg.Values, rest []string) i
 		return a.fail(exitRefused, "run bidder: --network places the bidder in the market network, which hands it the network value; --market-network-file is for a bidder outside it")
 	case r.network != "" && backend != hostsvc.BackendProc:
 		return a.fail(exitRefused, "run bidder: --network: the market network places its children under its own devsup; pass --host-backend=proc")
-	case r.network != "":
-		return r.inNetwork(ctx)
-	case r.handle == "":
+	case r.network == "" && r.handle == "":
 		return a.fail(exitRefused, "run bidder: --handle is required: it names the bidder's account and owns its ComputeVMs")
-	case r.vals.String("guest-image-source") == "":
-		return a.fail(exitRefused, "run bidder: --guest-image-source is required: every VM boots the pinned guest image fetched from it, and a bidder without one would win bids it cannot fill (install bidder --guest-image-source file:///<dir> writes it to config.json)")
 	}
-	if err := bidder.CheckHandle(r.handle); err != nil {
-		return a.fail(exitRefused, "run bidder: %v", err)
+	if r.vals.String("guest-image-source") == "" {
+		src, err := r.guestImageSource(ctx)
+		if err != nil {
+			return a.fail(exitRefused, "run bidder: %v", err)
+		}
+		r.vals = r.vals.With("guest-image-source", src)
+	}
+	if r.handle != "" {
+		if err := bidder.CheckHandle(r.handle); err != nil {
+			return a.fail(exitRefused, "run bidder: %v", err)
+		}
 	}
 	if p := r.vals.String("market-network-file"); p != "" {
 		if err := r.readMarketNetwork(p); err != nil {
 			return a.fail(exitRefused, "run bidder: --market-network-file: %v", err)
 		}
 	}
-	if backend == hostsvc.BackendSystemdUser {
+	switch {
+	case r.network != "":
+		return r.inNetwork(ctx)
+	case backend == hostsvc.BackendSystemdUser:
 		return r.installedCore(ctx)
 	}
 	return r.standalone(ctx)
@@ -210,6 +219,20 @@ func (r *bidderRun) readMarketNetwork(path string) error {
 	}
 	r.value, r.pdsURL = st.Network, st.BidderPdsUrl
 	return nil
+}
+
+func (r *bidderRun) guestImageSource(ctx context.Context) (string, error) {
+	version, commit := buildIdentity()
+	src, err := guestimagerelease.Source(ctx, guestimagerelease.Options{
+		Base:    r.vals.String("guest-image-release-base"),
+		Target:  vmruntime.ImageTarget(),
+		Version: version,
+		Commit:  commit,
+	})
+	if err != nil {
+		return "", fmt.Errorf("%w (pass --guest-image-source file:///<dir>, or point --guest-image-release-base at the published artifacts)", err)
+	}
+	return src, nil
 }
 
 func (r *bidderRun) kcpProvider() *v1alpha1.KcpProvider {

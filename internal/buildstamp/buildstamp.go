@@ -4,6 +4,7 @@ import "strconv"
 
 var (
 	Kind         string
+	Version      string
 	SourceRoot   string
 	Commit       string
 	Dirty        string

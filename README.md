@@ -11,11 +11,69 @@ One binary, `socialweb-computer`, runs every part of the software. Each running 
 ## Prerequisites
 
 - A 64-bit Linux host with `/dev/kvm`.
-- Go and Deno on `PATH`.
-- This repository checked out, since the scripts run from their own checkout.
+- To run a release binary: `curl` and `sha256sum` (coreutils). The binary embeds every asset it runs, so it needs neither this checkout nor Go and Deno.
+- To build from source or run the scripts: Go and Deno on `PATH`, and this repository checked out, since the scripts run from their own checkout.
 - To rent VMs, an account with VM slots; run the live commands as that account (on hat-8, `test-0001`).
 
 > Warning: never use `/tmp` for a build or for state. It is tmpfs and spills to swap. Use a directory under `~/.tmp` or under `/var/tmp`.
+
+## Install a release binary
+
+Every tagged release publishes Linux binaries and the guest image to a public bucket. The bucket needs no credentials.
+
+| Path | Holds |
+| --- | --- |
+| `releases/<version>/binaries/socialweb-computer-linux-amd64` | The host binary for Linux amd64. |
+| `releases/<version>/binaries/socialweb-computer-linux-arm64` | The host binary for Linux arm64. |
+| `releases/<version>/binaries/SHA256SUMS` | The sha256 of both binaries. |
+| `releases/<version>/binaries/release.json` | The commit, the build mode and one entry per platform. |
+| `releases/<version>/binaries/version-linux-<arch>.txt` | The pinned version and sha256 of every asset in that binary. |
+| `releases/<version>/guest-image/firecracker-x86_64/` | `vmlinux`, `rootfs.ext4` and `image.json`: the guest image a bidder's VMs boot. |
+| `releases/<version>/manifest.json` | Every file under the version, with its size and sha256. |
+
+`<version>` is a git tag, for example `v0.0.0-rc0`. `main/<commit>/` holds every build of `main`, and `main/latest/` is a copy of the newest one.
+
+Take the newest release, verify it, and put it on your PATH:
+
+```bash
+BUCKET=https://socialweb-computer-kcp.sfo3.digitaloceanspaces.com
+V=$(curl -s "$BUCKET/?list-type=2&prefix=releases/&delimiter=/" \
+  | grep -o 'releases/v[^<]*' | sed 's|releases/||; s|/$||' | sort -V | tail -1)
+ARCH=linux-$(uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/')
+mkdir -p ~/.tmp/swc-release && cd ~/.tmp/swc-release
+curl -sSfO "$BUCKET/releases/$V/binaries/socialweb-computer-$ARCH"
+curl -sSfO "$BUCKET/releases/$V/binaries/SHA256SUMS"
+grep " socialweb-computer-$ARCH\$" SHA256SUMS | sha256sum -c -
+mkdir -p ~/.local/bin && install -m 0755 "socialweb-computer-$ARCH" ~/.local/bin/socialweb-computer
+socialweb-computer version
+```
+
+If `~/.local/bin` is not on your PATH, add it, or install to `/usr/local/bin` instead.
+
+`socialweb-computer version` prints the build, the commit and the sha256 of every asset in the binary. The release tag is in `binaries/release.json` and `manifest.json`.
+
+To pin a version instead of taking the newest, set `V` yourself: `V=v0.0.0-rc0`. For the newest build of `main` rather than a tagged release, use `main/latest` as the prefix and skip the lookup: `BASE=$BUCKET/main/latest`, then replace `releases/$V` with `main/latest` in the URLs below.
+
+`socialweb-computer install gateway`, `install bidder` and `upgrade --binary --sha256` take this same file and its sha256: `SHA=$(grep " socialweb-computer-$ARCH\$" SHA256SUMS | cut -d' ' -f1)`.
+
+On a bidder host, `--guest-image-source` takes this release's guest image. It accepts a `file://` or `https://` base, fetches `image.json`, `vmlinux` and `rootfs.ext4` from `<base>/<name>`, and verifies each against the sha256 pinned in the bidder's build, so a guest image that does not match those pins is refused:
+
+```bash
+sudo ~/.local/bin/socialweb-computer install bidder --handle <handle> \
+  --guest-image-source "$BUCKET/releases/$V/guest-image/firecracker-x86_64"
+```
+
+To place the files yourself instead, download them and pass a `file://` base:
+
+```bash
+for f in vmlinux rootfs.ext4 image.json; do
+  curl -sSfO "$BUCKET/releases/$V/guest-image/firecracker-x86_64/$f"
+done
+sudo install -d -m 0755 /var/lib/socialweb-computer/guest-image
+sudo install -m 0644 vmlinux rootfs.ext4 image.json /var/lib/socialweb-computer/guest-image/
+```
+
+Only `firecracker-x86_64` is published. An arm64 host builds its own with `scripts/build-guest-image.sh`. See [Run and install a bidder](#run-and-install-a-bidder) for the rest of the install.
 
 ## The RFP flow
 
@@ -32,6 +90,8 @@ gateway (own kcp: Gateway, Cluster, NodeClaim)   firecracker VM = k3s node
 Every listener behind the edge binds port 0 and reports its bound address into the status of its kcp object, and peers find each other by service name through kcp. Only the stable public entry points (caddy on 443, an application's front) keep a fixed address.
 
 ## Build the socialweb-computer binary
+
+Build from source when you change the code. To run a published release instead, see [Install a release binary](#install-a-release-binary).
 
 Build a development binary from your working tree, uncommitted changes included. This is the binary for live runs.
 
@@ -50,6 +110,8 @@ B=~/.tmp/socialweb-computer-build/release/$C/socialweb-computer-linux-amd64
 ```
 
 `$B` and its sha256 are what `socialweb-computer install` and `socialweb-computer upgrade --binary --sha256` take.
+
+CI publishes the same outputs to the public bucket: `releases/<tag>/` on a `v*` tag, and `main/<commit>/` with a copy at `main/latest/` on `main`. See [Install a release binary](#install-a-release-binary).
 
 Build script options:
 
