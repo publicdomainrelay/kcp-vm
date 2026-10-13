@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
@@ -17,6 +18,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostos"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostprocess"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/logcap"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/openbaoctl"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/postgresctl"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/stack/denoruntime"
@@ -38,6 +40,15 @@ type Config struct {
 	WebApp       *appctl.WebApp
 	OnComponents func(owner string, listeners []v1alpha1.ApplicationListener)
 	SignInGuard  appctl.SignInGuard
+}
+
+func LogCapConfig(l devinstance.Layout, log *slog.Logger) logcap.Config {
+	c := logcap.Config{Dirs: []string{l.Logs}, Log: log}
+	if l.SupState != "" {
+		c.Dirs = append(c.Dirs, filepath.Join(l.SupState, "logs"))
+		c.Files = append(c.Files, filepath.Join(l.SupState, "devsup.log"))
+	}
+	return c
 }
 
 func tryLockRecord(path string) (*os.File, bool) {
@@ -109,6 +120,7 @@ func Run(ctx context.Context, cfg Config, m hostsvc.Manager) error {
 			return err
 		}
 	}
+	go logcap.Keep(ctx, LogCapConfig(l, log))
 	if cfg.DenoRuntime != nil {
 		go denoruntime.Supervise(ctx, *cfg.DenoRuntime)
 	}

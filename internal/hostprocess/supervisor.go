@@ -22,6 +22,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpapply"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpserver"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/logcap"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/manifests"
 )
 
@@ -370,6 +371,7 @@ func (s *Supervisor) Pass(ctx context.Context) error {
 			continue
 		}
 		seen[o.Spec.Unit] = true
+		s.capOutput(o)
 		next := s.apply(ctx, o, Reconcile(s.observe(ctx, o)))
 		if err := s.writeStatus(ctx, cur, next); err != nil && !apierrors.IsConflict(err) {
 			s.c.log().Warn("writing status", "name", o.Name, "err", err.Error())
@@ -396,6 +398,33 @@ func (s *Supervisor) Pass(ctx context.Context) error {
 	}
 	s.listed = true
 	return nil
+}
+
+func (s *Supervisor) capOutput(o v1alpha1.HostProcess) {
+	out := o.Spec.Output
+	if out == nil {
+		return
+	}
+	capBytes := out.CapBytes
+	if capBytes == 0 {
+		capBytes = logcap.DefaultCap
+	}
+	files := []string{out.Stdout}
+	if out.Stderr != out.Stdout {
+		files = append(files, out.Stderr)
+	}
+	for _, f := range files {
+		if f == "" {
+			continue
+		}
+		ok, err := logcap.Rotate(f, capBytes)
+		if err != nil {
+			s.c.log().Warn("an output file over its cap was not rotated", "name", o.Name, "file", f, "err", err.Error())
+		}
+		if ok {
+			s.c.log().Info("an output file over its cap was rotated; it keeps its newest bytes in a .1 copy", "name", o.Name, "file", f, "cap", capBytes)
+		}
+	}
 }
 
 func (s *Supervisor) Run(ctx context.Context) error {
