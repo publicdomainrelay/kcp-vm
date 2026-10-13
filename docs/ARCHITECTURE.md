@@ -6984,12 +6984,10 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   5.46, 5.57 and 5.65 s when every pod's PID 1 exits on SIGTERM; 90.78, 90.85 and 90.88 s when a pod's
   PID 1 ignores SIGTERM, which the guest's systemd ends at its DefaultTimeoutStopSec of 90 s. After each
   release no unit, cgroup, work dir or API socket of the VM was left. Defects found by these runs and
-  closed: install left a handle's directories owned by root (the core could not create its logs); an
-  installed core exited when its fresh kcp did not serve the MarketBidder API yet (it now applies the root
-  object once the application controller serves it); unpacking the closure fsynced every file (61 s on
-  the first start, now one syncfs, 3 s); the tree audit failed on pasta.avx2, which pasta re-executes on
-  an AVX2 host; the kcp slots record of an installed bidder said blue-green, so `units roll kcp` tried a
-  slot-b unit install never writes; a requester's `--user-data` dropped the network's guest CA, so the
+  closed here (the install, root object and pasta.avx2 defects these runs also hit were closed by
+  M6-LIVE-RECOVERY): unpacking the closure fsynced every file (61 s on the first start, now one syncfs,
+  3 s); the kcp slots record of an installed bidder said blue-green, so `units roll kcp` tried a slot-b
+  unit install never writes; a requester's `--user-data` dropped the network's guest CA, so the
   guest's host-keys and onNetwork posts failed; a release of a contract whose guest never reported waited
   `vm-ready-timeout-sec` first. Decided by Claude, user may veto: the k3s in these guests is a one-node
   server whose own agent is the joined node (an agent joined to a tenant cluster through the gateway is
