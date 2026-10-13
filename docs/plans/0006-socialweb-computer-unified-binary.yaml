@@ -2060,8 +2060,8 @@ items:
       the node is kept because its path returns within the rebased clock). Red first.
     done_when: "both market network tests green with readings recorded (UTC); ACC6-UPGRADE and ACC6-CP-SWAP recorded."
     risks: ["A user-manager restart or reboot of the gateway host is a cold start of every cluster; the rebased clock bounds its cost, it is not zero-downtime."]
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M4-DEV-PARENT-KCP
     milestone: M4
     title: "Later: `dev host` - a parent application instance whose root:dev:<instance> workspaces hold each child instance's HostProcess objects (kcp inside kcp; composition by nesting)"
