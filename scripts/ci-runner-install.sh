@@ -159,9 +159,11 @@ else
 fi
 sudo chmod 0600 "$config"
 
-# No NoNewPrivileges: rootless podman (builder images, swc-userns-stage) and the VM slots need the
-# setuid newuidmap/newgidmap, which map only this account's own subuid/subgid range. The account has
-# no sudo and no docker group; ProtectSystem=strict, ProtectHome and PrivateTmp stay.
+# No sandboxing settings in this user unit: in a user manager ProtectSystem/ProtectHome/PrivateTmp put
+# the service in its own user namespace with only this uid mapped, so rootless podman (builder images,
+# swc-userns-stage) cannot use the account's subuid/subgid range through newuidmap. The integration
+# tests start market networks through this account's user manager, which runs outside any unit sandbox
+# anyway. Isolation is the account: its own uid, home mode 0700, no sudo, no docker group.
 printf '%s\n' \
   '[Unit]' \
   'Description=gitlab-runner for socialweb-computer-kcp (shell executor, one job)' \
@@ -172,10 +174,6 @@ printf '%s\n' \
   'Restart=on-failure' \
   'RestartSec=5' \
   'Nice=10' \
-  'ProtectSystem=strict' \
-  'ProtectHome=yes' \
-  "ReadWritePaths=$home /run/user/$uid" \
-  'PrivateTmp=yes' \
   'KillMode=mixed' \
   'TimeoutStopSec=40' \
   '' \
