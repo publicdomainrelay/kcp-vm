@@ -1258,8 +1258,8 @@ items:
     test_first: "The live test, red until upgrade and re-population exist (today the guest leaks on restart)."
     done_when: "PASS recorded with UTC timestamps; grace readings under a k3s workload recorded; vms/ work-dir count equals live ComputeVMs after every release; zero ssh sessions to the guest."
     risks: ["Needs the bidder account in kvm; the market network's fixed ports are gone once 0008:M1-MARKET-NETWORK-PARALLEL lands (a dependency of 0008:M4-MARKET-NETWORK-PORT)."]
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: M6-CLAIM-RESUME
     milestone: M6
     kcp_use: "traditional-exception (virtual Kubernetes clusters project: NodeClaims; 0006 principle)"
