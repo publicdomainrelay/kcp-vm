@@ -4,6 +4,7 @@ package integration
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strconv"
@@ -351,6 +352,111 @@ func TestAcceptSurvivesABidderRestart(t *testing.T) {
 	if len(won) != 1 {
 		t.Fatalf("%d Won Bids; want one", len(won))
 	}
+	if err := n.WaitNoGuests(time.Minute); err != nil {
+		t.Fatal(err)
+	}
+}
+
+const acceptCopies = 10
+
+type acceptCopiesLine struct {
+	Copies   int      `json:"copies"`
+	Receipts []string `json:"receipts"`
+}
+
+func TestOneAcceptMakesOneComputeVM(t *testing.T) {
+	n := StartNetwork(t, NetworkOptions{Bidders: 1})
+	ctx := context.Background()
+	dyn, err := n.bidderClient(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, bidderRun, err := n.bidderProcess(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := "ao" + randHex(3)
+	p := n.Start("run-request", acceptRequestTimeout, "run", "request", "--network", n.Instance, "--name", name, "--exec", "true",
+		"--contract-timeout", "4m", "--network-timeout", "2m", "--state-dir", n.StateRoot, "--", "--accept-copies", strconv.Itoa(acceptCopies))
+	seen := map[string]string{}
+	receipts := map[string]bool{}
+	observe := func() {
+		vms, err := n.BidderVMs(ctx)
+		if err != nil {
+			return
+		}
+		for _, vm := range vms {
+			accept := ""
+			if c := vm.Spec.Contract; c != nil {
+				accept = c.AcceptUri
+				if c.ReceiptUri != "" {
+					receipts[c.ReceiptUri] = true
+				}
+			}
+			if accept != "" || seen[vm.Name] == "" {
+				seen[vm.Name] = accept
+			}
+		}
+		if len(seen) > 1 {
+			var all []string
+			for _, vm := range vms {
+				all = append(all, describeVM(vm))
+			}
+			p.Kill(fmt.Errorf("one accept made %d ComputeVMs", len(seen)))
+			t.Fatalf("one accept made %d ComputeVMs: %v (live: %s)", len(seen), seen, strings.Join(all, "; "))
+		}
+	}
+	for running := true; running; {
+		select {
+		case <-p.done:
+			running = false
+		default:
+			observe()
+			time.Sleep(200 * time.Millisecond)
+		}
+	}
+	r := p.Wait()
+	if r.Err != nil {
+		t.Fatalf("run request: %v\n%s", r.Err, r.Tail(15))
+	}
+	var s requestSummary
+	if err := lastJSON(r.Stdout, &s); err != nil {
+		t.Fatalf("run request summary: %v", err)
+	}
+	if s.Phase != "Released" || s.Contract == nil || s.Contract.ReceiptUri == "" || s.Contract.VMAddress == "" {
+		t.Fatalf("the contract did not complete: phase %s: %s", s.Phase, s.Message)
+	}
+	if len(seen) != 1 {
+		t.Fatalf("want one ComputeVM for the accept, saw %d: %v", len(seen), seen)
+	}
+	if len(receipts) > 1 || (len(receipts) == 1 && !receipts[s.Contract.ReceiptUri]) {
+		t.Fatalf("ComputeVMs carry receipts %v; the requester holds %s", receipts, s.Contract.ReceiptUri)
+	}
+	kept := filepath.Join(n.StateRoot, "requests", name, "logs", "*")
+	out := n.h.As(ctx, "sh", "-c", `cat $1 2>/dev/null | grep -a -F -e "$0"; true`, "submitAccept_copies", kept)
+	var copies acceptCopiesLine
+	for _, line := range strings.Split(strings.TrimSpace(out.Stdout), "\n") {
+		if i := strings.Index(line, "{"); i >= 0 && json.Unmarshal([]byte(line[i:]), &copies) == nil && copies.Copies > 0 {
+			break
+		}
+	}
+	if copies.Copies != acceptCopies {
+		t.Fatalf("the requester logged no submitAccept_copies line for %d copies (got %+v)", acceptCopies, copies)
+	}
+	if len(copies.Receipts) != 1 || copies.Receipts[0] != s.Contract.ReceiptUri {
+		t.Fatalf("%d concurrent copies of one accept were answered with receipts %v; want only %s", acceptCopies, copies.Receipts, s.Contract.ReceiptUri)
+	}
+	_, won, err := wonBids(ctx, dyn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(won) != 1 || won[0].Status.ClaimedBy == "" {
+		t.Fatalf("want one Won Bid with a claim:%s", describeBids(won))
+	}
+	dups := n.grepCount("accept_duplicate_delivery", runLogs(bidderRun)...)
+	resends := n.grepGlob("submitAccept_retry", kept)
+	t.Logf("one ComputeVM %v and one receipt %s for %d concurrent copies of the accept; %d answered from the accept in flight, %d re-send(s), Bid claimed by %s",
+		seen, s.Contract.ReceiptUri, acceptCopies, dups, resends, won[0].Status.ClaimedBy)
 	if err := n.WaitNoGuests(time.Minute); err != nil {
 		t.Fatal(err)
 	}
