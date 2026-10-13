@@ -279,7 +279,7 @@ func (tn *Tenant) ReleaseLines() ([]ReleaseLine, error) {
 
 func (tn *Tenant) SshSessions(since time.Time) ([]string, error) {
 	r := tn.n.h.As(context.Background(), "sh", "-c",
-		`grep -r -h -s -E 'runSession|ssh_session|pollReady|sshReady|ssh_connect' "$1" --include=stdout.txt --include=stderr.txt --include=core.log | head -5
+		`grep -r -h -s -E 'runSession|ssh_session|pollReady|sshReady[^"]|ssh_connect' "$1" --include=stdout.txt --include=stderr.txt --include=core.log | head -5
 journalctl --user --no-pager -o cat --since "@$2" | grep -E 'sshd.*(Accepted|session opened|Failed password|Invalid user)' | head -5; true`,
 		"sh", tn.n.StateDir, fmt.Sprint(since.Unix()))
 	if r.Err != nil {
