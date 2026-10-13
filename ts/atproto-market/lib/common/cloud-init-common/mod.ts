@@ -62,6 +62,7 @@ export interface UserDataPatch {
   /** Inserted BEFORE the base runcmd (preserves injectAcceptBundle / provisioning unshift order). */
   runcmdPrepend?: unknown[];
   bootcmd?: unknown[];
+  ca_certs?: { trusted: string[] };
   disable_root?: boolean;
   ssh_pwauth?: boolean;
 }
@@ -179,6 +180,10 @@ function applyPatch(base: Record<string, unknown>, p: UserDataPatch): Record<str
     );
   }
   if (p.bootcmd) out.bootcmd = [...new Set([...asArray(out.bootcmd), ...p.bootcmd])];
+  if (p.ca_certs) {
+    const have = asArray(asObj(out.ca_certs).trusted);
+    out.ca_certs = { ...asObj(out.ca_certs), trusted: [...new Set([...have, ...p.ca_certs.trusted])] };
+  }
   if (p.runcmd !== undefined || p.runcmdPrepend !== undefined) {
     out.runcmd = [...(p.runcmdPrepend ?? []), ...asArray(out.runcmd), ...(p.runcmd ?? [])];
   }

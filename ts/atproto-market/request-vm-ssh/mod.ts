@@ -15,6 +15,7 @@ import { createDefaultATProtoEventStreamsClient } from "@publicdomainrelay/atpro
 import { parseSecretsFile } from "@publicdomainrelay/secrets-common";
 import { createSecretsCapability } from "@publicdomainrelay/guest-capability-secrets";
 import type { GuestCapability } from "@publicdomainrelay/guest-capability-abc";
+import type { UserDataPatch } from "@publicdomainrelay/cloud-init-common";
 import { Secp256k1Keypair } from "@atproto/crypto";
 import { explicitRelayUrls, marketNetwork } from "@publicdomainrelay/market-network-common";
 import { installMarketNetworkFetch } from "@publicdomainrelay/market-network-fetch";
@@ -326,11 +327,11 @@ if (spec.secretsRef) {
 let policy: PolicySpec | undefined;
 if (spec.policy) policy = { name: spec.policy, args: parsePolicyArgs(spec.policyArgs) };
 
-const guestBase: Record<string, unknown> = {};
 const guestCaPem = o.guestCaFile ? (await Deno.readTextFile(o.guestCaFile)).trim() : "";
-if (guestCaPem) guestBase.ca_certs = { trusted: [guestCaPem] };
-if (o.guestCurlHome) guestBase.bootcmd = [["systemctl", "set-environment", `CURL_HOME=${o.guestCurlHome}`]];
-const baseUserData = spec.userData ?? (Object.keys(guestBase).length > 0 ? "#cloud-config\n" + JSON.stringify(guestBase) : undefined);
+const guestNetwork: UserDataPatch = {
+  ...(guestCaPem ? { ca_certs: { trusted: [guestCaPem] } } : {}),
+  ...(o.guestCurlHome ? { bootcmd: [["systemctl", "set-environment", `CURL_HOME=${o.guestCurlHome}`]] } : {}),
+};
 
 const splitList = (s: string | undefined): string[] => s ? s.split(",").map((x) => x.trim()).filter(Boolean) : [];
 const vmReadyTimeoutSec = (spec.vmReadyTimeoutSec ?? o.vmReadyTimeoutSec) as number;
@@ -381,7 +382,7 @@ try {
     extraBidderDids: [...splitList(o.bidderDids), ...(spec.bidderDids ?? [])],
     denyBidderDids: spec.denyBidderDids ?? [],
     relayUrls,
-    userData: baseUserData ? { base: baseUserData } : undefined,
+    userData: { base: spec.userData, modules: [() => guestNetwork] },
     rbac: !o.skipRbac,
     capabilities,
     policy,

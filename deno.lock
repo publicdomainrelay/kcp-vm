@@ -2253,6 +2253,7 @@
           "jsr:@publicdomainrelay/atproto-event-streams-client@0",
           "jsr:@publicdomainrelay/atproto-helpers@0",
           "jsr:@publicdomainrelay/cli-args-env@0",
+          "jsr:@publicdomainrelay/cloud-init-common@0",
           "jsr:@publicdomainrelay/compute-contract-kcp@0",
           "jsr:@publicdomainrelay/compute-request-abc@0",
           "jsr:@publicdomainrelay/compute-request-xrpc@0",

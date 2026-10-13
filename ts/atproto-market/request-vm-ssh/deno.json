@@ -14,6 +14,7 @@
     "@publicdomainrelay/secrets-common": "jsr:@publicdomainrelay/secrets-common@^0",
     "@publicdomainrelay/guest-capability-abc": "jsr:@publicdomainrelay/guest-capability-abc@^0",
     "@publicdomainrelay/guest-capability-secrets": "jsr:@publicdomainrelay/guest-capability-secrets@^0",
+    "@publicdomainrelay/cloud-init-common": "jsr:@publicdomainrelay/cloud-init-common@^0",
     "@publicdomainrelay/market-common": "jsr:@publicdomainrelay/market-common@^0",
     "@publicdomainrelay/market-network-common": "jsr:@publicdomainrelay/market-network-common@^0",
     "@publicdomainrelay/market-network-fetch": "jsr:@publicdomainrelay/market-network-fetch@^0",
