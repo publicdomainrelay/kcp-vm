@@ -2239,8 +2239,13 @@ overlay has nothing to run over (the limit "A node cannot reach another node" in
 user's decision: QUIC datagrams over iroh, a tun device, each peer Node's podCIDR routed to that
 Node's iroh endpoint id, k3s with `--flannel-backend=none` and a bridge CNI for the node-local half.
 `rust/socialweb-meshd` (a cargo workspace at `rust/`, the first Rust in this repo) is that daemon.
-It is built and proved on hat-8, and the door's guest module installs it (the integration, below);
-none of it is deployed, and no live multi-node market cluster has carried pod traffic through it yet.
+It is built and proved on hat-8, and the door's guest module installs it (the integration, below).
+It ran on the container prod: on 2026-10-07T23:20-23:23Z (plan 0005 M5-MESHD, M5-DNS) a mesh probe
+scaled test-cluster-alice-0001 from 0 to 2 market nodes, pods reached pods across the nodes both ways,
+and the node without CoreDNS resolved through 169.254.20.10; M5-NETPOL denied cross-node traffic with
+a NetworkPolicy on prod on 2026-10-10. It was lost when prod moved to the socialweb-computer binary,
+because only the container build placed the meshd downloads; the binary now ships them (item 6
+below), and the first two-node proof on the binary path is in section 15.
 
 **Identity.** One ed25519 secret per node, read from `--secret-file` as 64 hex characters (the
 `IROH_SECRET` encoding dumbpipe and the cluster links use), generated 0600 through a rename if absent.
@@ -6944,6 +6949,30 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   before the watches the same span pod to NodeClaim read 6.8 s and 4 s. Pod deleted 19:53:10.9, the 2 min
   hold, vm.delete 200 at 19:55:18.6, ComputeVM gone by 19:55:26; `dev down` 34 s, no child state, process
   or VM unit left.
+- **The web app offers socialweb-meshd and the credential helpers again, from the binary, and refuses
+  to start without them (2026-10-12, found by 0006 M5-RETIRE).** Since prod moved from the container to
+  the socialweb-computer binary nothing placed `socialweb-meshd-<arch>` or
+  `socialweb-credential-<os>-<arch>` in the web app's downloads dir (the deleted control-plane
+  Dockerfile was the only step), so the web app logged `meshd_not_offered` and market nodes had no
+  cross-node pod mesh. Now the release builds the asset `socialweb-computer-k8s-downloads`
+  (`scripts/build-web-app-downloads.sh`, pinned by tree sha256 in versions.json, the same tree on
+  both release platforms), the gateway passes it as `--downloads-dir`, and both gateway profiles pass
+  `--required-downloads` (section 9 item 6). Decided by Claude, user may veto: one asset for all six
+  downloads; a market network's guests fetch from `http://192.0.2.1:<the web app's bound port>`
+  (`test-node-download-host`, pasta's host loopback map), since it has no public origin. Readings
+  (`dev up --profile market-network --bidders 1 --with-gateway`, hat-8, UTC): dev up 20:55:05 to
+  20:57:14, the web app ready 20:57:08.9 with `meshd.downloadBase http://192.0.2.1:45595`, four credential
+  helpers and no `meshd_not_offered`; tenant Ready 20:59:08. Node 1 from the RFP flow: claim 20:59:12,
+  VM Running 20:59:22, node Ready 20:59:47. Node 2: claim 21:03:36, VM Running 21:03:47, node Ready
+  21:04:23, pod Running 21:04:30; both Nodes carry `socialweb.computer/mesh-endpoint` (pod CIDRs
+  10.42.0.0/24 and 10.42.2.0/24). Pod 10.42.2.2 on node 2 fetched pod 10.42.0.4 on node 1 at 21:04:32.4,
+  and a pod pinned to node 1 fetched 10.42.2.2 on node 2 at 21:05:18. Found on the way, not fixed here:
+  (1) both market nodes report InternalIP 172.30.0.2 (every guest's pasta address), so the apiserver's
+  egress-selector tunnel sends `kubectl exec` and `logs` for node 1 to node 2 ("unable to upgrade
+  connection: pod does not exist"); (2) the scale target is pods per node only, so a Pending pod held off
+  the one node by pod anti-affinity adds no node (the proof added 8 filler pods to reach a target of 2);
+  (3) `SOCIALWEB_CLUSTERPROVIDER_SCALE_PODS_PER_NODE` in `dev up`'s environment does not reach the
+  `--with-gateway` child's clusterprovider.
 
 - **Defects of the 0006 M5-FRESH-DEPLOY run: a failed or released VM ends its contract at once, a claim
   never waits twice, short VM timeouts, one closure per DenoPod (2026-10-12).** On prod a ComputeVM went
