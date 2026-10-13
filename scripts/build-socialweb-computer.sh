@@ -178,6 +178,7 @@ checkout() {
     rm -rf "$tree"
     git clone --quiet --shared --no-checkout "$root" "$tree"
   fi
+  git -C "$tree" fetch --quiet --no-tags "$root" "$commit"
   git -C "$tree" checkout --quiet --force --detach "$commit"
   git -C "$tree" clean -ffdxq
   [ "$(git -C "$tree" rev-parse HEAD)" = "$commit" ] || die "$tree is not at $commit"
