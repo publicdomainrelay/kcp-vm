@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -133,4 +134,32 @@ func runEgress(ctx context.Context, m egressMap, record string, log *slog.Logger
 		}
 	}()
 	return ln.Addr(), nil
+}
+
+const outboundCAFile = "outbound-ca-bundle.pem"
+
+var systemCertFiles = []string{"/etc/ssl/certs/ca-certificates.crt", "/etc/pki/tls/certs/ca-bundle.crt", "/etc/ssl/ca-bundle.pem",
+	"/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem", "/etc/ssl/cert.pem"}
+
+func outboundCABundle(dir, networkCA string) (string, error) {
+	ca, err := os.ReadFile(networkCA)
+	if err != nil {
+		return "", fmt.Errorf("gatewaykcp: the market network's CA bundle: %w", err)
+	}
+	var system []byte
+	for _, f := range systemCertFiles {
+		if b, err := os.ReadFile(f); err == nil {
+			system = b
+			break
+		}
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	out := filepath.Join(dir, outboundCAFile)
+	body := append(append(append([]byte{}, system...), '\n'), ca...)
+	if err := os.WriteFile(out+".tmp", body, 0o600); err != nil {
+		return "", err
+	}
+	return out, os.Rename(out+".tmp", out)
 }

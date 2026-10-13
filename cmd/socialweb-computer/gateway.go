@@ -143,3 +143,41 @@ func runServeGatewayKcp(ctx context.Context, a *app, vals clicfg.Values, rest []
 	}
 	return exitOK
 }
+
+var gatewayChildAssets = []string{gatewaykcp.ExeK3s, gatewaykcp.ExeExternalSecrets, gatewaykcp.ExeESOBundle}
+
+func (a *app) gatewayChildExecutables(vals clicfg.Values) (map[string]devinstance.Executable, error) {
+	if !assets.Release() {
+		return nil, errors.New("--with-gateway runs the gateway's embedded k3s and external-secrets: build with scripts/build-socialweb-computer.sh (--dev for a dev build)")
+	}
+	cache, err := a.assetCache(vals)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]devinstance.Executable{}
+	for _, name := range gatewayChildAssets {
+		e, err := assets.Resolve(assets.Options{Cache: cache, Log: a.log}, name)
+		if err != nil {
+			return nil, err
+		}
+		out[name] = devinstance.Executable{Path: e.Path, Version: e.Version}
+	}
+	return out, nil
+}
+
+func (a *app) runGatewayChild(ctx context.Context, rec devinstance.Record, deno denoruntime.Config, m hostsvc.Manager, timeout time.Duration) error {
+	base, err := gatewaykcp.ReadSpec(rec.Gateway.SpecFile)
+	if err != nil {
+		return err
+	}
+	environ := os.Environ()
+	exes := map[string]devinstance.Executable{}
+	for k, v := range rec.Executables {
+		exes[k] = v
+	}
+	cfg := gatewaykcp.Config{Backend: hostsvc.BackendProc, Executables: exes, Closure: deno.Closure,
+		Spec: gatewaykcp.Spec(base, base.Profile, environ), Unit: deno.Unit, TLSAddress: gatewaykcp.DefaultAddress,
+		BootstrapCluster: rec.Gateway.BootstrapCluster, BootstrapAccountDID: rec.Gateway.BootstrapAccountDID,
+		ReadyTimeout: timeout, Environ: environ, Exe: exes[gatewaykcp.ExeCore].Path, Stderr: a.stderr, Log: a.log}
+	return gatewaykcp.RunChild(ctx, cfg, rec.Layout, deno, m)
+}

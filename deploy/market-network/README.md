@@ -239,8 +239,20 @@ A gateway that runs tenant clusters joins a market network the same way, as its 
 copied out where the gateway account can read it) and `marketNetwork.ownerSessionsFile` names the
 cluster owners' accounts on the network's PDSes. Its web app hands every node guest the network's CA
 bundle, and its core runs a loopback egress proxy that every vault it places takes as `HTTPS_PROXY`, so a
-tenant cluster's vault reaches a bidder's port-less issuer URL through the guest TLS front. The
-`--with-gateway` child of `dev up` is a core with a root vault only; it runs no tenant cluster.
+tenant cluster's vault reaches a bidder's port-less issuer URL through the guest TLS front. Unless
+`SSL_CERT_FILE` is set, the core writes the system roots plus the network's CA bundle to
+`<state>/tls/outbound-ca-bundle.pem` and sets `SSL_CERT_FILE` to it, so it and every vault it places
+verify the bidder's issuer.
+
+The `--with-gateway` child of `dev up` is the same gateway, placed by the network: its core runs what
+`serve gateway kcp --gateway-profile market-network` runs (the sets, the Gateway root object, the root
+vault, the web app, the clusterprovider, the egress proxy) on its own kcp from the network's bootstrap
+layer. The network writes its spec (`apps/dev/<instance>-gateway/gateway-spec.json`: the network value
+and `marketNetwork.ownerSessionsFile`), creates the owner account `<instance>-gateway-owner.alice.test`
+on alice's PDS (`owner-sessions.json` next to it, mode 0600; `apps[].ownerSessionsFile` names another
+one) and the gateway brings up the tenant cluster `tenant` of that owner at zero nodes. A pod applied to
+it gets a node through the RFP flow from the network's bidders. `dev up` resolves the gateway's
+embedded k3s and external-secrets assets, so it needs a build from `scripts/build-socialweb-computer.sh`.
 
 N market networks on one host are N dev instances: every listener binds port 0,
 so two `dev up --instance` with different names never collide.

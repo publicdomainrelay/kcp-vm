@@ -427,6 +427,12 @@ func bringUp(ctx context.Context, a *app, vals clicfg.Values, host bool) (upRepo
 			return upReport{}, a.fail(exitRefused, "dev up: %v", err)
 		}
 	}
+	var gatewayExes map[string]devinstance.Executable
+	if composes && vals.Bool("with-gateway") {
+		if gatewayExes, err = a.gatewayChildExecutables(vals); err != nil {
+			return upReport{}, a.fail(exitRefused, "dev up: %v", err)
+		}
+	}
 	exe, err := selfExe()
 	if err != nil {
 		return upReport{}, a.fail(exitFailed, "dev up: %v", err)
@@ -516,6 +522,9 @@ func bringUp(ctx context.Context, a *app, vals clicfg.Values, host bool) (upRepo
 	}
 	if dumbpipeExe.Path != "" {
 		rec.Executables[appctl.DumbpipeExecutable] = dumbpipeExe
+	}
+	for name, e := range gatewayExes {
+		rec.Executables[name] = e
 	}
 	rec.SourceRoot = sourceRoot
 	rec.OpenBao = nil
@@ -922,6 +931,12 @@ func runDevCore(ctx context.Context, a *app, vals clicfg.Values, rest []string) 
 		return a.fail(exitFailed, "internal dev-core: %v", err)
 	}
 	defer m.Close()
+	if rec.Gateway != nil {
+		if err := a.runGatewayChild(ctx, rec, deno, m, timeout); err != nil && !errors.Is(err, context.Canceled) {
+			return a.fail(exitFailed, "internal dev-core: the gateway child %s: %v", rec.Layout.ID, err)
+		}
+		return exitOK
+	}
 	cfg := devcore.Config{Layout: rec.Layout, ReadyTimeout: timeout, Log: a.log, DenoRuntime: &deno, SignInGuard: bidder.CheckSignIn}
 	if rec.VM != nil {
 		rt, vm, err := a.instanceVMRuntime(ctx, rec)

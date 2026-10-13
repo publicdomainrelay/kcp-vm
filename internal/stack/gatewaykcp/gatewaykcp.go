@@ -82,6 +82,7 @@ type Config struct {
 	TLSKey              string
 	BootstrapCluster    string
 	BootstrapAccountDID string
+	RootName            string
 	ReadyTimeout        time.Duration
 	Environ             []string
 	Unit                string
@@ -229,8 +230,35 @@ func Run(ctx context.Context, c Config, m hostsvc.Manager) error {
 		return err
 	}
 	app := c.app()
+	c.log().Info("the gateway application instance starts: lock, kcp store, kine, front, active slot, sets, root vault, members",
+		"state", c.StateDir, "prefix", l.UnitPrefix(), "backend", string(c.Backend), "units", app.Names().UnitPrefix())
+	deno := denoruntime.Config{StateDir: c.StateDir, Deno: c.Executables[ExeDeno].Path, Kubeconfig: l.FrontKubeconfig(), Closure: c.Closure,
+		Unit: c.Unit, ApplyTimeout: ApplyTimeout, Log: c.Log}
+	return run(ctx, c, l, &deno, &app, m)
+}
+
+func RunChild(ctx context.Context, c Config, l devinstance.Layout, deno denoruntime.Config, m hostsvc.Manager) error {
+	c.StateDir = l.StateDir
+	if c.RootName == "" {
+		c.RootName = appctl.ChildRootName
+	}
+	c.log().Info("a gateway child application of a market network starts: its own kcp from the network's bootstrap layer, sets, root vault, members",
+		"state", c.StateDir, "instance", l.ID, "root", c.RootName)
+	return run(ctx, c, l, &deno, nil, m)
+}
+
+func run(ctx context.Context, c Config, l devinstance.Layout, deno *denoruntime.Config, app *table.App, m hostsvc.Manager) error {
 	reg := &listeners{addr: map[string]string{}, kind: map[string]string{}}
 	g := &gateway{c: c, l: l, reg: reg}
+	if n := c.Spec.Network; n != nil && n.CaBundleRef != "" && os.Getenv("SSL_CERT_FILE") == "" {
+		bundle, err := outboundCABundle(filepath.Join(c.StateDir, "tls"), n.CaBundleRef)
+		if err != nil {
+			return err
+		}
+		os.Setenv("SSL_CERT_FILE", bundle)
+		c.log().Info("the system roots and the market network's CA are this gateway's outbound trust: every vault it places verifies a bidder's issuer with them",
+			"bundle", bundle, "networkCA", n.CaBundleRef)
+	}
 	if c.Spec.Network != nil {
 		m, ok, err := guestTLSEgress(c.Spec.Network.GuestTlsUrl)
 		if err != nil {
@@ -247,12 +275,8 @@ func Run(ctx context.Context, c Config, m hostsvc.Manager) error {
 				"egress", addr.String(), "names", "*."+m.host+":443", "target", m.target)
 		}
 	}
-	c.log().Info("the gateway application instance starts: lock, kcp store, kine, front, active slot, sets, root vault, members",
-		"state", c.StateDir, "prefix", l.UnitPrefix(), "backend", string(c.Backend), "units", app.Names().UnitPrefix())
-	deno := denoruntime.Config{StateDir: c.StateDir, Deno: c.Executables[ExeDeno].Path, Kubeconfig: l.FrontKubeconfig(), Closure: c.Closure,
-		Unit: c.Unit, ApplyTimeout: ApplyTimeout, Log: c.Log}
-	return devcore.Run(ctx, devcore.Config{Layout: l, ReadyTimeout: c.ReadyTimeout, Log: c.Log, Application: &app, FrontAddress: c.FrontAddress,
-		DenoRuntime: &deno, WebApp: &appctl.WebApp{FrontKubeconfig: g.memberKubeconfig(), TSRoot: c.Closure.Root,
+	return devcore.Run(ctx, devcore.Config{Layout: l, ReadyTimeout: c.ReadyTimeout, Log: c.Log, Application: app, FrontAddress: c.FrontAddress,
+		DenoRuntime: deno, WebApp: &appctl.WebApp{FrontKubeconfig: g.memberKubeconfig(), TSRoot: c.Closure.Root,
 			ClusterCADir: filepath.Join(c.StateDir, "clusterprovider", clusterstack.PublicCADirName)},
 		OnComponents: reg.components, Before: g.before, Members: g.members, Listeners: reg.report}, m)
 }
@@ -299,7 +323,7 @@ func (g *gateway) before(ctx context.Context, rec devinstance.Record) error {
 	if err := writeMemberKubeconfig(g.activeSlotRoot(), rec.KcpURL, g.memberKubeconfig()); err != nil {
 		return err
 	}
-	if err := applyRoot(ctx, restCfg, g.c.Spec); err != nil {
+	if err := applyRoot(ctx, restCfg, g.rootName(), g.c.Spec); err != nil {
 		return err
 	}
 	g.c.log().Info("the sets and the Gateway root object are applied", "sets", Sets, "profile", g.c.Spec.Profile,
@@ -309,13 +333,20 @@ func (g *gateway) before(ctx context.Context, rec devinstance.Record) error {
 
 func (g *gateway) memberKubeconfig() string { return filepath.Join(g.l.KcpDir(), MemberKubeconfig) }
 
-func applyRoot(ctx context.Context, restCfg *rest.Config, spec v1alpha1.GatewaySpec) error {
+func (g *gateway) rootName() string {
+	if g.c.RootName != "" {
+		return g.c.RootName
+	}
+	return appctl.GatewayRootName
+}
+
+func applyRoot(ctx context.Context, restCfg *rest.Config, name string, spec v1alpha1.GatewaySpec) error {
 	dc, err := dynamic.NewForConfig(clusterConfig(restCfg, appctl.DefaultWorkspace))
 	if err != nil {
 		return err
 	}
 	o := v1alpha1.Gateway{TypeMeta: metav1.TypeMeta{APIVersion: v1alpha1.GroupVersion.String(), Kind: string(v1alpha1.ApplicationKindGateway)},
-		ObjectMeta: metav1.ObjectMeta{Name: appctl.GatewayRootName}, Spec: spec}
+		ObjectMeta: metav1.ObjectMeta{Name: name}, Spec: spec}
 	m, err := runtime.DefaultUnstructuredConverter.ToUnstructured(&o)
 	if err != nil {
 		return err
@@ -329,7 +360,7 @@ func applyRoot(ctx context.Context, restCfg *rest.Config, spec v1alpha1.GatewayS
 		return err
 	}
 	force := true
-	_, err = dc.Resource(appctl.GatewayGVR).Patch(ctx, appctl.GatewayRootName, types.ApplyPatchType, body,
+	_, err = dc.Resource(appctl.GatewayGVR).Patch(ctx, name, types.ApplyPatchType, body,
 		metav1.PatchOptions{FieldManager: FieldManager, Force: &force})
 	return err
 }

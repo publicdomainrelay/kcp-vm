@@ -404,6 +404,11 @@ func (n *networks) reconcile(ctx context.Context, u *unstructured.Unstructured) 
 	}
 	pdsURL := "https://127.0.0.1:" + pdsPort
 	st.BidderPdsUrl = pdsURL
+	alicePort, err := portFrom(views["alice/pds"].Address)
+	if err != nil {
+		return write(v1alpha1.ApplicationPhaseProvisioning, "alice/pds: "+err.Error())
+	}
+	aliceURL := "https://127.0.0.1:" + alicePort
 	var keep []string
 	for _, app := range o.Spec.Apps {
 		if c, err := n.child(app); err == nil {
@@ -425,7 +430,7 @@ func (n *networks) reconcile(ctx context.Context, u *unstructured.Unstructured) 
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			apps[i] = n.ensureApp(ctx, app, value, pdsURL, bidderDids)
+			apps[i] = n.ensureApp(ctx, app, value, pdsURL, aliceURL, bidderDids)
 		}()
 	}
 	wg.Wait()
@@ -465,7 +470,7 @@ func (n *networks) reconcile(ctx context.Context, u *unstructured.Unstructured) 
 	return write(v1alpha1.ApplicationPhaseReady, fmt.Sprintf("%d service(s) and %d child application(s), each with its own kcp, are ready", len(rep.components), len(apps)))
 }
 
-func (n *networks) ensureApp(ctx context.Context, app v1alpha1.NetworkApp, value v1alpha1.MarketNetworkValue, pdsURL string, bidderDids []string) v1alpha1.NetworkAppStatus {
+func (n *networks) ensureApp(ctx context.Context, app v1alpha1.NetworkApp, value v1alpha1.MarketNetworkValue, pdsURL, aliceURL string, bidderDids []string) v1alpha1.NetworkAppStatus {
 	out := v1alpha1.NetworkAppStatus{Name: app.Name, Kind: app.Kind, Phase: v1alpha1.ApplicationPhaseProvisioning}
 	fail := func(err error) v1alpha1.NetworkAppStatus {
 		out.Message = err.Error()
@@ -489,7 +494,13 @@ func (n *networks) ensureApp(ctx context.Context, app v1alpha1.NetworkApp, value
 		out.Phase = v1alpha1.ApplicationPhaseFailed
 		return fail(err)
 	}
-	rec, err := n.placeChild(ctx, c)
+	var gw *devinstance.GatewayChild
+	if app.Kind == v1alpha1.ApplicationKindGateway {
+		if gw, err = GatewayChildOf(ctx, c.id, c.layout.StateDir, app, value, aliceURL); err != nil {
+			return fail(err)
+		}
+	}
+	rec, err := n.placeChild(ctx, c, gw)
 	if err != nil {
 		return fail(err)
 	}
@@ -523,14 +534,14 @@ func (n *networks) ensureApp(ctx context.Context, app v1alpha1.NetworkApp, value
 		root = &v1alpha1.MarketRequester{ObjectMeta: meta, Spec: v1alpha1.MarketRequesterSpec{Profile: app.Profile, Network: &value,
 			Identity:   v1alpha1.ApplicationIdentity{Mode: v1alpha1.MarketIdentityModeLocalRepo, Association: v1alpha1.AssociationSkip},
 			BidderDids: bidderDids, Options: app.Options}}
-	case v1alpha1.ApplicationKindGateway:
-		root = &v1alpha1.Gateway{ObjectMeta: meta, Spec: v1alpha1.GatewaySpec{Profile: app.Profile, Network: &value, Options: app.Options}}
 	case v1alpha1.ApplicationKindSshGateway:
 		root = &v1alpha1.SshGateway{ObjectMeta: meta, Spec: v1alpha1.SshGatewaySpec{Profile: app.Profile, Network: &value,
 			BidderDids: bidderDids, Options: app.Options, OwnerSessionsFile: app.OwnerSessionsFile}}
 	}
-	if err := applyRoot(ctx, rec, app.Kind, root); err != nil {
-		return fail(fmt.Errorf("applying the root object into %s's own kcp: %w", c.id, err))
+	if root != nil {
+		if err := applyRoot(ctx, rec, app.Kind, root); err != nil {
+			return fail(fmt.Errorf("applying the root object into %s's own kcp: %w", c.id, err))
+		}
 	}
 	rs, found, err := readRoot(ctx, rec, app.Kind)
 	if err != nil {

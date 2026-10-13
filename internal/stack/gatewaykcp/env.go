@@ -103,6 +103,9 @@ func (g *gateway) defaults(e *env, rec devinstance.Record, cert, key string) err
 	e.dflt("SOCIALWEB_GATEWAY_AUDIENCES", DefaultAudience)
 	first, _, _ := strings.Cut(e.get("SOCIALWEB_GATEWAY_AUDIENCES"), ",")
 	e.dflt("SOCIALWEB_GATEWAY_DEVICE_KEY_AUDIENCE", strings.TrimSpace(first))
+	if n := g.c.Spec.Network; n != nil && n.PlcDirectoryUrl != "" {
+		e.dflt("SOCIALWEB_GATEWAY_PLC_URL", n.PlcDirectoryUrl)
+	}
 	e.dflt("SOCIALWEB_GATEWAY_PLC_URL", DefaultPLC)
 	e.dflt("SOCIALWEB_GATEWAY_DEVKEY_REGISTRY", DefaultDevkeyRegistry)
 	e.dflt("SOCIALWEB_GATEWAY_DEVICE_KEY_TTL", DefaultDeviceKeyTTL)

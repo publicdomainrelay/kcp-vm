@@ -242,6 +242,13 @@ type Record struct {
 	Host            bool                  `json:"host,omitempty"`
 	Parent          *Parent               `json:"parent,omitempty"`
 	VM              *VMRuntime            `json:"vm,omitempty"`
+	Gateway         *GatewayChild         `json:"gateway,omitempty"`
+}
+
+type GatewayChild struct {
+	SpecFile            string `json:"specFile"`
+	BootstrapCluster    string `json:"bootstrapCluster,omitempty"`
+	BootstrapAccountDID string `json:"bootstrapAccountDid,omitempty"`
 }
 
 type VMRuntime struct {

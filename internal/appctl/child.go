@@ -143,9 +143,9 @@ func (n *networks) coreLive(ctx context.Context, c child) bool {
 	return err == nil && st.State == hostsvc.Active && st.InvocationID == core.InvocationID
 }
 
-func (n *networks) placeChild(ctx context.Context, c child) (devinstance.Record, error) {
+func (n *networks) placeChild(ctx context.Context, c child, gw *devinstance.GatewayChild) (devinstance.Record, error) {
 	var rec devinstance.Record
-	if devinstance.ReadJSON(c.layout.Record, &rec) == nil && rec.Ready && n.coreLive(ctx, c) {
+	if devinstance.ReadJSON(c.layout.Record, &rec) == nil && rec.Ready && n.coreLive(ctx, c) && sameSpec(rec.Gateway, gw) {
 		return rec, nil
 	}
 	parent, err := n.ctl.c.Record()
@@ -178,6 +178,7 @@ func (n *networks) placeChild(ctx context.Context, c child) (devinstance.Record,
 	if rec.VM, err = ChildVM(c.app, c.layout, parent); err != nil {
 		return rec, err
 	}
+	rec.Gateway = gw
 	rec.Parent = &devinstance.Parent{ID: parent.Layout.ID, Socket: parent.Layout.Socket, Kubeconfig: kubeconfig,
 		Workspace: devinstance.ChildWorkspace(c.id)}
 	remote, err := n.remote(c)
