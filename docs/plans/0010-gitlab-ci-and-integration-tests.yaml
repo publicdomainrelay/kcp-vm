@@ -225,8 +225,8 @@ items:
     files: ["test/integration/harness.go"]
     done_when: an empty test brings a market network up and down twice in parallel and leaves nothing behind.
     risks: []
-    status: todo
-    evidence: []
+    status: done
+    evidence:
   - id: G2-IT-REQUEST-SECRETS
     milestone: G2
     title: Integration test - run request with --secrets gets a VM through the RFP flow
