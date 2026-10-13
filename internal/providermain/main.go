@@ -372,6 +372,8 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 	if err != nil {
 		return Deps{}, err
 	}
+	log.Info("cluster provider: node scale settings", "hold", cfg.ScaleHold.String(),
+		"maxNodes", cfg.ScaleMaxNodes, "podsPerNode", cfg.ScalePodsPerNode)
 
 	deps := Deps{
 		Registry:    registry,
