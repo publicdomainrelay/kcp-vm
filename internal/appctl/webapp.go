@@ -1,15 +1,11 @@
 package appctl
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"net/url"
 	"os"
-	"path/filepath"
-	"time"
 
-	authenticationv1 "k8s.io/api/authentication/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -18,7 +14,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
-	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/vaultlayout"
@@ -28,27 +23,13 @@ const (
 	WebAppAccount        = "socialweb-computer-k8s"
 	WebAppAccountNS      = "default"
 	WebAppGrant          = "socialweb-computer-k8s-web-app"
-	WebAppKcpDirSuffix   = ".kcp"
-	WebAppKubeconfigFile = "kubeconfig"
-	WebAppTokenFile      = "token"
-	WebAppTokenTTL       = 30 * time.Minute
-	WebAppTokenRenew     = 10 * time.Minute
 	foreignAccountPrefix = "system:kcp:serviceaccount:"
 )
 
 var WorkspaceGVR = schema.GroupVersionResource{Group: "tenancy.kcp.io", Version: "v1alpha1", Resource: "workspaces"}
 
-type WebAppIdentity struct {
-	Kubeconfig string
-	Dir        string
-}
-
 func WebAppAccountRef() string {
 	return DefaultWorkspace + ":" + ComponentWorkspace + "/" + WebAppAccountNS + "/" + WebAppAccount
-}
-
-func WebAppKcpDir(instanceState string) string {
-	return ComponentStateDir(instanceState, WebAppComponent) + WebAppKcpDirSuffix
 }
 
 func ForeignAccount(cluster, namespace, name string) string {
@@ -166,61 +147,19 @@ func (ctl *Controller) revokeWebApp(ctx context.Context) error {
 	return nil
 }
 
-func (ctl *Controller) webAppIdentity(ctx context.Context, o v1alpha1.Gateway, owner string, w WebApp) (WebAppIdentity, error) {
+func (ctl *Controller) webAppIdentity(ctx context.Context, o v1alpha1.Gateway, owner string, w WebApp) (string, error) {
 	f, err := readFront(w.FrontKubeconfig)
 	if err != nil {
-		return WebAppIdentity{}, err
+		return "", err
 	}
 	app, err := ctl.logicalCluster(ctx, ctl.c.workspace(), ComponentWorkspace)
 	if err != nil {
-		return WebAppIdentity{}, err
+		return "", err
 	}
 	user := ForeignAccount(app, WebAppAccountNS, WebAppAccount)
 	if err := ctl.grant(ctx, ctl.c.workspace(), owner, user, WebAppRootRules(o.Name)); err != nil {
-		return WebAppIdentity{}, err
+		return "", err
 	}
-	dir := WebAppKcpDir(ctl.c.Layout.StateDir)
-	id := WebAppIdentity{Kubeconfig: filepath.Join(dir, WebAppKubeconfigFile), Dir: dir}
-	if err := ctl.webAppToken(ctx, dir); err != nil {
-		return WebAppIdentity{}, err
-	}
-	kc := clientcmdapi.NewConfig()
-	kc.Clusters["kcp"] = &clientcmdapi.Cluster{Server: f.server, CertificateAuthorityData: f.ca, TLSServerName: f.serverName}
-	kc.AuthInfos[WebAppAccount] = &clientcmdapi.AuthInfo{TokenFile: filepath.Join(dir, WebAppTokenFile)}
-	kc.Contexts["kcp"] = &clientcmdapi.Context{Cluster: "kcp", AuthInfo: WebAppAccount}
-	kc.CurrentContext = "kcp"
-	body, err := clientcmd.Write(*kc)
-	if err != nil {
-		return WebAppIdentity{}, err
-	}
-	if have, err := os.ReadFile(id.Kubeconfig); err != nil || !bytes.Equal(have, body) {
-		if err := writeSecret(id.Kubeconfig, body); err != nil {
-			return WebAppIdentity{}, err
-		}
-	}
-	ctl.c.log().Info("the web app's own kcp identity", "user", user, "workspace", ctl.c.workspace()+":"+ComponentWorkspace,
-		"kubeconfig", id.Kubeconfig)
-	return id, nil
-}
-
-func (ctl *Controller) webAppToken(ctx context.Context, dir string) error {
-	path := filepath.Join(dir, WebAppTokenFile)
-	if st, err := os.Stat(path); err == nil && time.Since(st.ModTime()) < WebAppTokenRenew {
-		return nil
-	}
-	cs, err := kubernetes.NewForConfig(clusterConfig(ctl.restCfg, ctl.c.workspace()+":"+ComponentWorkspace))
-	if err != nil {
-		return err
-	}
-	secs := int64(WebAppTokenTTL / time.Second)
-	tr, err := cs.CoreV1().ServiceAccounts(WebAppAccountNS).CreateToken(ctx, WebAppAccount,
-		&authenticationv1.TokenRequest{Spec: authenticationv1.TokenRequestSpec{ExpirationSeconds: &secs}}, metav1.CreateOptions{})
-	if err != nil {
-		return fmt.Errorf("appctl: minting the %s token: %w", WebAppAccount, err)
-	}
-	if err := writeSecret(path, []byte(tr.Status.Token)); err != nil {
-		return err
-	}
-	ctl.c.log().Info("issued the web app's kcp token", "file", path, "expires", tr.Status.ExpirationTimestamp.UTC().Format(time.RFC3339))
-	return nil
+	ctl.c.log().Info("the web app's own kcp identity", "user", user, "workspace", ctl.c.workspace()+":"+ComponentWorkspace, "server", f.server)
+	return f.server, nil
 }

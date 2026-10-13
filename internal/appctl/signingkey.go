@@ -9,13 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
-	"path/filepath"
 	"time"
-
-	authenticationv1 "k8s.io/api/authentication/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/openbao"
@@ -23,58 +17,10 @@ import (
 
 const (
 	BidderAccount        = "bidder"
-	bidderTokenFile      = "kcp.token"
-	bidderKcpCAFile      = "kcp-ca.pem"
-	BidderTokenTTL       = time.Hour
-	BidderTokenRenew     = 20 * time.Minute
 	oidcJwkPath          = "oidc-jwk/"
 	SigningKeyBits       = 4096
 	SigningKeyPublishFor = 25 * time.Hour
 )
-
-func BidderTokenPaths(stateDir string) (string, string) {
-	return filepath.Join(stateDir, bidderTokenFile), filepath.Join(stateDir, bidderKcpCAFile)
-}
-
-func (ctl *Controller) bidderToken(ctx context.Context, stateDir string) error {
-	return ctl.accountToken(ctx, BidderAccount, stateDir)
-}
-
-func (ctl *Controller) accountToken(ctx context.Context, account, stateDir string) error {
-	tokenPath, caPath := BidderTokenPaths(stateDir)
-	if err := os.MkdirAll(stateDir, 0o700); err != nil {
-		return err
-	}
-	if err := writeIfDifferent(caPath, ctl.restCfg.CAData); err != nil {
-		return err
-	}
-	if st, err := os.Stat(tokenPath); err == nil && time.Since(st.ModTime()) < BidderTokenRenew {
-		return nil
-	}
-	cs, err := kubernetes.NewForConfig(clusterConfig(ctl.restCfg, ctl.c.workspace()))
-	if err != nil {
-		return err
-	}
-	secs := int64(BidderTokenTTL / time.Second)
-	tr, err := cs.CoreV1().ServiceAccounts("default").CreateToken(ctx, account,
-		&authenticationv1.TokenRequest{Spec: authenticationv1.TokenRequestSpec{ExpirationSeconds: &secs}}, metav1.CreateOptions{})
-	if err != nil {
-		return fmt.Errorf("minting the %s token: %w", account, err)
-	}
-	if err := writeSecret(tokenPath, []byte(tr.Status.Token)); err != nil {
-		return err
-	}
-	ctl.c.log().Info("a bidder component's kcp token is minted", "serviceAccount", account, "path", tokenPath,
-		"expires", tr.Status.ExpirationTimestamp.UTC().Format(time.RFC3339))
-	return nil
-}
-
-func writeIfDifferent(path string, data []byte) error {
-	if cur, err := os.ReadFile(path); err == nil && string(cur) == string(data) {
-		return nil
-	}
-	return writeSecret(path, data)
-}
 
 func signingKeyRole(spec v1alpha1.MarketBidderSpec) string {
 	if spec.Kcp != nil {

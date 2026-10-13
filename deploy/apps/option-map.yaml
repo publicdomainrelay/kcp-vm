@@ -32,6 +32,7 @@ apps:
       - {name: identity-vault-namespace, to: options}
       - {name: identity-vault-openbao-server, to: profile}
       - {name: identity-vault-openbao-client, to: profile}
+      - {name: identity-vault-openbao-client-dir, to: profile}
       - {name: identity-vault-kcp-server, to: profile}
       - {name: identity-vault-kcp-token, to: state}
       - {name: identity-vault-kcp-workspace, to: profile}
@@ -91,7 +92,11 @@ apps:
       - {name: tls-key-file, to: profile}
       - {name: state-dir, to: state}
       - {name: web-dir, to: profile}
-      - {name: kcp-kubeconfig, to: profile}
+      - {name: kcp-kubeconfig, to: options}
+      - {name: kcp-server, to: profile}
+      - {name: kcp-token-file, to: profile}
+      - {name: kcp-ca-file, to: profile}
+      - {name: openbao-client-dir, to: profile}
       - {name: kcp-context, to: options}
       - {name: gateway-url, to: options}
       - {name: gateway-kcp-workspace, to: profile}
@@ -169,6 +174,7 @@ apps:
       - {name: identity-vault-mount, to: profile}
       - {name: identity-vault-openbao-server, to: profile}
       - {name: identity-vault-openbao-client, to: profile}
+      - {name: identity-vault-openbao-client-dir, to: profile}
       - {name: identity-vault-kcp-server, to: profile}
       - {name: identity-vault-kcp-workspace, to: profile}
       - {name: identity-vault-kcp-token-file, to: state}
@@ -244,6 +250,7 @@ apps:
       - {name: kcp-server, to: profile}
       - {name: openbao-server, to: profile}
       - {name: openbao-client, to: profile}
+      - {name: openbao-client-dir, to: profile}
       - {name: openbao-kcp-server, to: profile}
       - {name: openbao-kcp-workspace, to: profile}
       - {name: openbao-kcp-token-file, to: state}

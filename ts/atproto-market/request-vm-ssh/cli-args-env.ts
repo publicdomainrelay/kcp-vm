@@ -100,11 +100,13 @@ export default {
     },
     "market-identity-kcp-token-file": {
       type: "string" as const,
-      description: "Bearer token file for the MarketIdentity object",
+      description: "Bearer token file for the MarketIdentity object, re-read on every call",
+      env: "KCP_PROJECTED_KCP_TOKEN",
     },
     "market-identity-kcp-ca-cert-file": {
       type: "string" as const,
       description: "CA certificate of that kcp",
+      env: "KCP_PROJECTED_KCP_CA",
     },
     "compute-contract-name": {
       type: "string" as const,
@@ -126,11 +128,13 @@ export default {
     },
     "compute-contract-kcp-token-file": {
       type: "string" as const,
-      description: "Bearer token file for the ComputeContract object",
+      description: "Bearer token file for the ComputeContract object, re-read on every call",
+      env: "KCP_PROJECTED_KCP_TOKEN",
     },
     "compute-contract-kcp-ca-cert-file": {
       type: "string" as const,
       description: "CA certificate of that kcp",
+      env: "KCP_PROJECTED_KCP_CA",
     },
     "identity-vault-mount": {
       type: "string" as const,
@@ -146,6 +150,11 @@ export default {
       description: "Client of that OpenBaoServer the requester logs in as",
       default: "requester",
     },
+    "identity-vault-openbao-client-dir": {
+      type: "string" as const,
+      description: "Directory holding that client's certificate (tls.crt), key (tls.key) and the vault CA (ca.crt), kept current by the DenoPod's projected credentials; unset, they are read from the files the OpenBaoServer status names",
+      env: "KCP_PROJECTED_VAULT",
+    },
     "identity-vault-kcp-server": {
       type: "string" as const,
       description: "kcp server holding the OpenBaoServer object",
@@ -156,11 +165,13 @@ export default {
     },
     "identity-vault-kcp-token-file": {
       type: "string" as const,
-      description: "Bearer token file for the OpenBaoServer object",
+      description: "Bearer token file for the OpenBaoServer object, re-read on every call",
+      env: "KCP_PROJECTED_KCP_TOKEN",
     },
     "identity-vault-kcp-ca-cert-file": {
       type: "string" as const,
       description: "CA certificate of that kcp",
+      env: "KCP_PROJECTED_KCP_CA",
     },
     "oauth-client-id": {
       type: "string" as const,
@@ -191,6 +202,7 @@ export default {
     "guest-ca-file": {
       type: "string" as const,
       description: "PEM CA the guest trusts (cloud-init ca_certs), for a market network whose TLS front has its own CA",
+      env: "KCP_PROJECTED_NETWORK_CA",
     },
     "guest-curl-home": {
       type: "string" as const,

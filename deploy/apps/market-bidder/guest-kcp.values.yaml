@@ -4,7 +4,11 @@ stateDir: "{{.Guest.StateDir}}"
 serviceAccount: deno-runner
 tls: trust
 trust: [{{.Trust}}]
-args: ["--role", "kcp", "--vault-openbao-server", "{{.Vault.Server}}", "--vault-openbao-client", "{{.Guest.VaultClient}}", "--vault-kcp-server", "{{.Vault.KcpServer}}", "--vault-kcp-token-file", "{{.Guest.TokenFile}}", "--vault-kcp-ca-cert-file", "{{.Guest.CAFile}}", "--kcp-server", "{{.Kcp.Server}}", "--kcp-workspace", "{{.Kcp.Workspace}}", "--kcp-token-file", "{{.Guest.TokenFile}}", "--kcp-ca-file", "{{.Guest.CAFile}}", "--handle", "{{.Guest.Handle}}", "--plc-directory-url", "{{.PlcDirectoryUrl}}", "--ingress-proxy-host", "{{.IngressProxyHost}}", "--serve-port", "0"{{.Guest.ExtraArgs}}]
+args: ["--role", "kcp", "--vault-openbao-server", "{{.Vault.Server}}", "--vault-openbao-client", "{{.Guest.VaultClient}}", "--vault-kcp-server", "{{.Vault.KcpServer}}", "--kcp-server", "{{.Kcp.Server}}", "--kcp-workspace", "{{.Kcp.Workspace}}", "--handle", "{{.Guest.Handle}}", "--plc-directory-url", "{{.PlcDirectoryUrl}}", "--ingress-proxy-host", "{{.IngressProxyHost}}", "--serve-port", "0"{{.Guest.ExtraArgs}}]
+projected:
+  - {name: kcp-token, serviceAccountToken: {name: guest-kcp, workspace: "{{.Kcp.Workspace}}"}}
+  - {name: kcp-ca, kcpCA: {}}
+  - {name: vault, openBaoClient: {server: "{{.Vault.Server}}", client: "{{.Guest.VaultClient}}", workspace: "{{.Kcp.Workspace}}"}}
 env:
   PORT: "0"
   SERVE_PORT: "0"

@@ -145,6 +145,7 @@ const resolveVault = createOpenBaoServerResolver({
   caCert: readCa(o.identityVaultKcpCaCertFile),
   name: o.identityVaultOpenbaoServer,
   client: o.identityVaultOpenbaoClient,
+  clientDir: o.identityVaultOpenbaoClientDir,
   onWaiting: (reason) => logger.info("requester_vault_waiting", { openbaoserver: o.identityVaultOpenbaoServer, reason }),
 });
 const vault: IdentityVault = createOpenBaoIdentityVault({

@@ -24,8 +24,6 @@ import (
 type BidderKcp struct {
 	Server    string
 	Workspace string
-	TokenFile string
-	CAFile    string
 }
 
 func KcpHandle(app v1alpha1.NetworkApp) string {
@@ -105,13 +103,12 @@ func providerValues(v *manifests.MarketBidder, spec v1alpha1.MarketBidderSpec, k
 		handle = spec.Identity.Handle
 	}
 	args, err := fragment([]string{"--compute-provider-kcp", "--compute-provider-kcp-server", kcp.Server,
-		"--compute-provider-kcp-workspace", kcp.Workspace, "--compute-provider-kcp-token-file", kcp.TokenFile,
-		"--compute-provider-kcp-ca-file", kcp.CAFile, "--compute-provider-kcp-handle", handle})
+		"--compute-provider-kcp-workspace", kcp.Workspace, "--compute-provider-kcp-handle", handle})
 	if err != nil {
 		return err
 	}
 	v.ProviderArgs = args
-	v.Kcp = manifests.KcpRef{Server: kcp.Server, Workspace: kcp.Workspace, TokenFile: kcp.TokenFile, CAFile: kcp.CAFile}
+	v.Kcp = manifests.KcpRef{Server: kcp.Server, Workspace: kcp.Workspace}
 	v.Guest.Handle = handle
 	return nil
 }

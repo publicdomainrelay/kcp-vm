@@ -12,6 +12,7 @@ import { createComputeProviderKcpGuestFactory } from "@publicdomainrelay/hono-fa
 export interface MarketBidderGuestVaultSpec {
   name: string;
   client: string;
+  clientDir?: string;
   kvMountClient: string;
   kcp: { server: string; workspace?: string; token?: string; tokenFile?: string; caCertFile?: string };
 }
@@ -63,6 +64,7 @@ export function createMarketBidderGuestApp(
       caCert: ref.kcp.caCertFile ? await Deno.readTextFile(ref.kcp.caCertFile) : undefined,
       name: ref.name,
       client: ref.client,
+      clientDir: ref.clientDir,
       kvMountClient: ref.kvMountClient,
       onWaiting: (reason) => logger.info("guest_vault_waiting", { openbaoserver: ref.name, reason }),
     });

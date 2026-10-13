@@ -251,12 +251,12 @@ func (ctl *Controller) reconcileGateway(ctx context.Context, u *unstructured.Uns
 				st.Phase, st.Message = v1alpha1.ApplicationPhaseProvisioning, "its workspace: "+err.Error()
 				return ctl.writeStatus(ctx, GatewayGVR, o.Name, st)
 			}
-			id, err := ctl.webAppIdentity(ctx, o, owner, *ctl.c.WebApp)
+			server, err := ctl.webAppIdentity(ctx, o, owner, *ctl.c.WebApp)
 			if err != nil {
 				st.Phase, st.Message = v1alpha1.ApplicationPhaseProvisioning, "the web app's kcp identity: "+err.Error()
 				return ctl.writeStatus(ctx, GatewayGVR, o.Name, st)
 			}
-			values.Kubeconfig, values.KcpDir = id.Kubeconfig, id.Dir
+			values.KcpServer = server
 			pods, err := ctl.applyProfile(ctx, GatewaySet, o.Spec.Profile, owner, true, &values)
 			if err != nil {
 				st.Phase, st.Message = v1alpha1.ApplicationPhaseProvisioning, "its components: "+err.Error()
@@ -267,8 +267,6 @@ func (ctl *Controller) reconcileGateway(ctx context.Context, u *unstructured.Uns
 			}
 			ctl.applied[string(o.UID)] = o.Generation
 			ctl.c.log().Info("applied the Gateway's components", "name", o.Name, "profile", o.Spec.Profile, "denopods", pods)
-		} else if err := ctl.webAppToken(ctx, WebAppKcpDir(ctl.c.Layout.StateDir)); err != nil {
-			return err
 		}
 		pods, err := ctl.ownedPods(ctx, ws, owner)
 		if err != nil {
@@ -314,8 +312,7 @@ func WebAppVaultOf(o *v1alpha1.OpenBaoServer) (manifests.GatewayVault, bool) {
 	}
 	for _, c := range o.Status.Clients {
 		if c.Name == WebAppVaultClient && c.ClientCert != "" {
-			return manifests.GatewayVault{Server: o.Name, Client: c.Name, CA: fileRef(o.Status.Refs.CA),
-				ClientDir: filepath.Dir(fileRef(c.ClientCert))}, true
+			return manifests.GatewayVault{Server: o.Name, Client: c.Name}, true
 		}
 	}
 	return manifests.GatewayVault{}, false
@@ -334,8 +331,12 @@ func GatewayValues(o v1alpha1.Gateway, workspace, stateDir string, w WebApp, vau
 		if n.CaBundleRef != "" {
 			v.TLS, trust = manifests.TLSTrust, []string{n.CaBundleRef}
 			if o.Spec.Profile == ProfileGatewayNetwork {
-				extra = append(extra, "--node-guest-ca-file", n.CaBundleRef, "--node-guest-curl-home", NodeGuestCurlHome)
-				read = append(read, n.CaBundleRef)
+				q, err := json.Marshal(n.CaBundleRef)
+				if err != nil {
+					return manifests.Gateway{}, err
+				}
+				v.ExtraProjected = "  - {name: network-ca, file: {path: " + string(q) + "}}\n"
+				extra = append(extra, "--node-guest-curl-home", NodeGuestCurlHome)
 			}
 		}
 		if n.PlcDirectoryUrl != "" {

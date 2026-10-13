@@ -43,6 +43,11 @@
       "env": "VAULT_OPENBAO_CLIENT",
       "default": "guest-kcp"
     },
+    "vault-openbao-client-dir": {
+      "type": "string",
+      "description": "Directory holding that client's certificate (tls.crt), key (tls.key) and the vault CA (ca.crt), kept current by the DenoPod's projected credentials; unset, they are read from the files the OpenBaoServer status names",
+      "env": "KCP_PROJECTED_VAULT"
+    },
     "vault-kv-mount-client": {
       "type": "string",
       "description": "Client of that OpenBaoServer whose kv mount holds the bidder's keys (the bidder's own client)",
@@ -57,12 +62,12 @@
     "vault-kcp-token-file": {
       "type": "string",
       "description": "File holding the bearer token for that kcp server, re-read on every call",
-      "env": "VAULT_KCP_TOKEN_FILE"
+      "env": "KCP_PROJECTED_KCP_TOKEN"
     },
     "vault-kcp-ca-cert-file": {
       "type": "string",
       "description": "PEM CA bundle that kcp server's certificate chains to",
-      "env": "VAULT_KCP_CA_CERT_FILE"
+      "env": "KCP_PROJECTED_KCP_CA"
     },
     "kcp-server": {
       "type": "string",
@@ -78,12 +83,12 @@
     "kcp-token-file": {
       "type": "string",
       "description": "File holding this DenoPod's own ServiceAccount token for that kcp, re-read on every call",
-      "env": "COMPUTE_KCP_TOKEN_FILE"
+      "env": "KCP_PROJECTED_KCP_TOKEN"
     },
     "kcp-ca-file": {
       "type": "string",
       "description": "PEM CA bundle of that kcp",
-      "env": "COMPUTE_KCP_CA_FILE"
+      "env": "KCP_PROJECTED_KCP_CA"
     },
     "handle": {
       "type": "string",

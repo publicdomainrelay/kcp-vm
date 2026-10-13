@@ -6,7 +6,7 @@ metadata:
   finalizers:
     - denopod.deno.computer/run
 spec:
-  restartPolicy: Always{{.ServiceAccount}}
+  restartPolicy: Always{{.ServiceAccount}}{{.Projected}}
   env:
     SERVICE_ENTRY: {{.Entry}}
     SERVICE_STATE_DIR: {{.StateDir}}
@@ -64,7 +64,6 @@ spec:
       "KCP_DNS_TABLE",
       "KCP_DNS_TABLE_FILE",
       "KCP_TOKENS",
-      "KCP_TOKEN",
       "KCP_SERVER",
       "KCP_WORKSPACE",
       "KCP_NAMESPACE",
@@ -86,6 +85,9 @@ spec:
       STATUS_FILE: `${runDir}/status.json`,
     });
 
+    const projected = parsed<Record<string, string>>("KCP_PROJECTED", {});
+    Object.assign(childEnv, projected);
+
     const tlsMode = read("SERVICE_TLS_MODE");
     const trustFiles = parsed<string[]>("SERVICE_TRUST_FILES", []);
     const trusted: string[] = [];
@@ -105,7 +107,7 @@ spec:
       args.push("--tls-cert-file", `${runDir}/tls.crt`, "--tls-key-file", `${runDir}/tls.key`);
     }
 
-    const readable = [root, runDir, stateDir, dirOf(Deno.execPath()), ...(permissions.read ?? [])];
+    const readable = [root, runDir, stateDir, dirOf(Deno.execPath()), ...(permissions.read ?? []), ...Object.values(projected)];
     if (denoDir) readable.push(denoDir);
     if (shim) readable.push(dirOf(shim));
     if (table) readable.push(dirOf(table));
@@ -124,7 +126,7 @@ spec:
     if (permissions.env === true) {
       permissionFlags.push("--allow-env");
     } else {
-      const envNames = [...new Set([...(Array.isArray(permissions.env) ? permissions.env : []), ...shimEnv])];
+      const envNames = [...new Set([...(Array.isArray(permissions.env) ? permissions.env : []), ...shimEnv, ...Object.keys(projected)])];
       if (envNames.length) permissionFlags.push(`--allow-env=${envNames.join(",")}`);
       permissionFlags.push("--ignore-env");
     }
@@ -203,10 +205,10 @@ spec:
         - KCP_DNS_TABLE
         - KCP_DNS_TABLE_FILE
         - KCP_TOKENS
-        - KCP_TOKEN
         - KCP_SERVER
         - KCP_WORKSPACE
         - KCP_NAMESPACE
+        - KCP_PROJECTED
         - SWC_UNIT
         - SWC_DEVSUP
         - INVOCATION_ID

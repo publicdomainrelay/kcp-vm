@@ -13,16 +13,13 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
-	authenticationv1 "k8s.io/api/authentication/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
-	"k8s.io/client-go/kubernetes"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/manifests"
@@ -34,10 +31,6 @@ const (
 	BidderVaultClient = "bidder"
 	identityKeysPath  = "identity/bidder/keys"
 	passwordBytes     = 24
-	vaultTokenFile    = "vault-kcp.token"
-	vaultKcpCAFile    = "vault-kcp-ca.pem"
-	vaultTokenTTL     = 30 * 24 * time.Hour
-	vaultTokenRenew   = 7 * 24 * time.Hour
 )
 
 var OpenBaoServerGVR = schema.GroupVersionResource{Group: v1alpha1.GroupName, Version: v1alpha1.Version, Resource: "openbaoservers"}
@@ -95,7 +88,7 @@ func ServerClient(ctx context.Context, ri dynamic.ResourceInterface, server, cli
 }
 
 func (ctl *Controller) bidderPassword(ctx context.Context) (string, manifests.BidderVault, error) {
-	client, st, c, err := ctl.vaultClient(ctx, BidderVaultServer, BidderVaultClient)
+	client, _, c, err := ctl.vaultClient(ctx, BidderVaultServer, BidderVaultClient)
 	if err != nil {
 		return "", manifests.BidderVault{}, err
 	}
@@ -118,8 +111,7 @@ func (ctl *Controller) bidderPassword(ctx context.Context) (string, manifests.Bi
 		}
 		ctl.c.log().Info("the bidder's account password is in its own OpenBao", "server", BidderVaultServer, "path", path)
 	}
-	return password, manifests.BidderVault{Server: BidderVaultServer, Client: BidderVaultClient, CA: fileRef(st.Refs.CA),
-		ClientDir: filepath.Dir(fileRef(c.ClientCert))}, nil
+	return password, manifests.BidderVault{Server: BidderVaultServer, Client: BidderVaultClient}, nil
 }
 
 func pdsPost(ctx context.Context, pdsURL string, caFile string, nsid string, body any) (map[string]any, int, error) {
@@ -174,30 +166,6 @@ func EnsurePdsAccount(ctx context.Context, pdsURL, caFile, handle, password stri
 	return "", fmt.Errorf("appctl: neither signing in to (%d %v) nor creating (%d %v) %s on %s worked", scode, sess, code, out, handle, pdsURL)
 }
 
-func (ctl *Controller) vaultReaderToken(ctx context.Context, dir, account string) (string, string, error) {
-	tokenPath, caPath := filepath.Join(dir, vaultTokenFile), filepath.Join(dir, vaultKcpCAFile)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", "", err
-	}
-	if err := writeSecret(caPath, ctl.restCfg.CAData); err != nil {
-		return "", "", err
-	}
-	if st, err := os.Stat(tokenPath); err == nil && time.Since(st.ModTime()) < vaultTokenRenew {
-		return tokenPath, caPath, nil
-	}
-	cs, err := kubernetes.NewForConfig(clusterConfig(ctl.restCfg, ctl.c.workspace()))
-	if err != nil {
-		return "", "", err
-	}
-	secs := int64(vaultTokenTTL / time.Second)
-	tr, err := cs.CoreV1().ServiceAccounts("default").CreateToken(ctx, account,
-		&authenticationv1.TokenRequest{Spec: authenticationv1.TokenRequestSpec{ExpirationSeconds: &secs}}, metav1.CreateOptions{})
-	if err != nil {
-		return "", "", fmt.Errorf("minting the %s token: %w", account, err)
-	}
-	return tokenPath, caPath, writeSecret(tokenPath, []byte(tr.Status.Token))
-}
-
 func (ctl *Controller) bidderVault(ctx context.Context, spec v1alpha1.MarketBidderSpec, stateDir string) (manifests.BidderVault, error) {
 	var vault manifests.BidderVault
 	if spec.Identity.Mode == v1alpha1.MarketIdentityModePdsAccount {
@@ -212,16 +180,12 @@ func (ctl *Controller) bidderVault(ctx context.Context, spec v1alpha1.MarketBidd
 		ctl.c.log().Info("the bidder's PDS account", "handle", spec.Identity.Handle, "pds", spec.Identity.PdsUrl, "did", did)
 		vault = v
 	} else {
-		_, st, c, err := ctl.vaultRefs(ctx, BidderVaultServer, BidderVaultClient)
-		if err != nil {
+		if _, _, _, err := ctl.vaultRefs(ctx, BidderVaultServer, BidderVaultClient); err != nil {
 			return vault, err
 		}
-		vault = manifests.BidderVault{Server: BidderVaultServer, Client: BidderVaultClient, CA: fileRef(st.Refs.CA),
-			ClientDir: filepath.Dir(fileRef(c.ClientCert))}
+		vault = manifests.BidderVault{Server: BidderVaultServer, Client: BidderVaultClient}
 	}
-	tokenPath, caPath := BidderTokenPaths(stateDir)
 	vault.KcpServer = strings.TrimSuffix(ctl.restCfg.Host, "/") + "/clusters/" + ctl.c.workspace()
-	vault.TokenFile, vault.KcpCAFile = tokenPath, caPath
 	return vault, nil
 }
 

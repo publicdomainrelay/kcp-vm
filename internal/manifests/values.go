@@ -55,8 +55,6 @@ type BidderGuest struct {
 	StateDir    string `json:",omitempty"`
 	Handle      string `json:",omitempty"`
 	VaultClient string `json:",omitempty"`
-	TokenFile   string `json:",omitempty"`
-	CAFile      string `json:",omitempty"`
 	Read        string
 	ExtraArgs   string
 }
@@ -65,10 +63,6 @@ type BidderVault struct {
 	Server    string `json:",omitempty"`
 	Client    string `json:",omitempty"`
 	KcpServer string `json:",omitempty"`
-	TokenFile string `json:",omitempty"`
-	KcpCAFile string `json:",omitempty"`
-	CA        string `json:",omitempty"`
-	ClientDir string `json:",omitempty"`
 }
 
 type MarketRequester struct {
@@ -100,8 +94,6 @@ type IrohDial struct {
 type KcpRef struct {
 	Server    string `json:",omitempty"`
 	Workspace string `json:",omitempty"`
-	TokenFile string `json:",omitempty"`
-	CAFile    string `json:",omitempty"`
 }
 
 var valueTypes = map[string]func() reflect.Type{
@@ -118,8 +110,8 @@ var valueTypes = map[string]func() reflect.Type{
 type Gateway struct {
 	StateDir          string `json:",omitempty"`
 	WebDir            string `json:",omitempty"`
-	Kubeconfig        string `json:",omitempty"`
-	KcpDir            string `json:",omitempty"`
+	KcpServer         string `json:",omitempty"`
+	ExtraProjected    string
 	GatewayWorkspace  string `json:",omitempty"`
 	GatewayName       string `json:",omitempty"`
 	TLS               string `json:",omitempty"`
@@ -133,10 +125,8 @@ type Gateway struct {
 }
 
 type GatewayVault struct {
-	Server    string `json:",omitempty"`
-	Client    string `json:",omitempty"`
-	CA        string `json:",omitempty"`
-	ClientDir string `json:",omitempty"`
+	Server string `json:",omitempty"`
+	Client string `json:",omitempty"`
 }
 
 const (

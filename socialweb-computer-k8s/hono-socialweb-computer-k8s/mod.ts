@@ -85,6 +85,12 @@ const kcp: KcpClient | null = options.kcpKubeconfig
   ? createKcpRestClient(
     parseKubeconfig(await Deno.readTextFile(options.kcpKubeconfig as string), options.kcpContext as string | undefined),
   )
+  : options.kcpServer && options.kcpTokenFile
+  ? createKcpRestClient({
+    server: new URL(options.kcpServer as string).origin,
+    tokenFile: options.kcpTokenFile as string,
+    caFile: options.kcpCaFile as string | undefined,
+  })
   : null;
 
 async function accountState(): Promise<
@@ -106,6 +112,7 @@ async function accountState(): Promise<
     workspace: options.openbaoServerWorkspace as string,
     name: options.openbaoServer as string,
     client: options.openbaoClient as string,
+    clientDir: options.openbaoClientDir as string | undefined,
     onWaiting: (reason) => log("vault_waiting", { openbaoserver: options.openbaoServer, reason }),
   });
   const resolved = await resolve();

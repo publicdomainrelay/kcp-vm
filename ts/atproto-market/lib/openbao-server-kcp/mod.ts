@@ -12,6 +12,7 @@ export interface OpenBaoServerKcpOptions {
   caCert?: string;
   name: string;
   client: string;
+  clientDir?: string;
   kvMountClient?: string;
   readyTimeoutMs?: number;
   pollMs?: number;
@@ -32,6 +33,9 @@ export interface ResolvedOpenBaoServer {
 
 const DEFAULT_READY_TIMEOUT_MS = 60_000;
 const DEFAULT_POLL_MS = 1_000;
+const PROJECTED_CA_FILE = "ca.crt";
+const PROJECTED_CERT_FILE = "tls.crt";
+const PROJECTED_KEY_FILE = "tls.key";
 
 async function readRef(ref: string | undefined, what: string): Promise<string> {
   if (!ref) throw new Error(`openbaoserver: status names no ${what}`);
@@ -84,12 +88,17 @@ export function createOpenBaoServerResolver(opts: OpenBaoServerKcpOptions): () =
     if (!kvMount || !c.certAuthMount || !c.certAuthRole) {
       throw new Error(`openbaoserver ${opts.name}: client ${opts.client} names no kvMount, certAuthMount or certAuthRole`);
     }
+    const dir = opts.clientDir?.replace(/\/+$/, "");
     return {
       name: opts.name,
       address: st.address!,
-      caCert: await readRef(st.refs?.ca, "ca"),
-      clientCert: await readRef(c.clientCert, `client ${opts.client} certificate`),
-      clientKey: await readRef(c.clientKey, `client ${opts.client} key`),
+      caCert: dir ? await Deno.readTextFile(`${dir}/${PROJECTED_CA_FILE}`) : await readRef(st.refs?.ca, "ca"),
+      clientCert: dir
+        ? await Deno.readTextFile(`${dir}/${PROJECTED_CERT_FILE}`)
+        : await readRef(c.clientCert, `client ${opts.client} certificate`),
+      clientKey: dir
+        ? await Deno.readTextFile(`${dir}/${PROJECTED_KEY_FILE}`)
+        : await readRef(c.clientKey, `client ${opts.client} key`),
       certLogin: { mount: c.certAuthMount, role: c.certAuthRole },
       kvMount,
     };

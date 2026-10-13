@@ -11,6 +11,7 @@ import (
 
 	"sigs.k8s.io/yaml"
 
+	denov1alpha1 "github.com/johnandersen777/socialweb-computer-kcp/internal/denokcp/api/v1alpha1"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcplibs/factory/servicenames"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/tsbundle"
 )
@@ -34,16 +35,17 @@ var (
 func UnderTSRoot(rel string) string { return TSRootRef + "/" + strings.TrimPrefix(rel, "/") }
 
 type Service struct {
-	Name           string              `json:"name"`
-	Entry          string              `json:"entry"`
-	StateDir       string              `json:"stateDir"`
-	ServiceAccount string              `json:"serviceAccount"`
-	TLS            string              `json:"tls"`
-	Trust          []string            `json:"trust,omitempty"`
-	Args           []string            `json:"args"`
-	Env            map[string]string   `json:"env,omitempty"`
-	Permissions    *ServicePermissions `json:"permissions"`
-	Probe          ServiceProbe        `json:"probe"`
+	Name           string                             `json:"name"`
+	Entry          string                             `json:"entry"`
+	StateDir       string                             `json:"stateDir"`
+	ServiceAccount string                             `json:"serviceAccount"`
+	TLS            string                             `json:"tls"`
+	Trust          []string                           `json:"trust,omitempty"`
+	Args           []string                           `json:"args"`
+	Env            map[string]string                  `json:"env,omitempty"`
+	Permissions    *ServicePermissions                `json:"permissions"`
+	Probe          ServiceProbe                       `json:"probe"`
+	Projected      []denov1alpha1.ProjectedCredential `json:"projected,omitempty"`
 }
 
 type ServicePermissions struct {
@@ -143,6 +145,9 @@ func (s Service) Check(entries map[string]tsbundle.EntrySpec) error {
 	}
 	if err := s.Permissions.check(); err != nil {
 		add("permissions: %v", err)
+	}
+	if err := denov1alpha1.CheckProjected(s.Projected); err != nil {
+		add("%v", err)
 	}
 	if len(problems) > 0 {
 		return fmt.Errorf("manifests: service %s: %s", s.Name, strings.Join(problems, "; "))
@@ -254,6 +259,14 @@ func (s Service) TemplateData(entries map[string]tsbundle.EntrySpec) (map[string
 			return nil, err
 		}
 		data["ServiceAccount"] = "\n  serviceAccount: " + text
+	}
+	data["Projected"] = ""
+	if len(s.Projected) > 0 {
+		text, err := jsonText(s.Projected)
+		if err != nil {
+			return nil, err
+		}
+		data["Projected"] = "\n  projected: " + text
 	}
 	for key, v := range map[string]any{"Probe": []string{"kcpdns", s.Probe.Host, s.Probe.Path}} {
 		text, err := jsonText(v)

@@ -73,6 +73,7 @@ export const BIDDER_SIGN_IN_ONLY_THROUGH_KCP =
 export interface MarketBidderOpenBaoServerRef {
   name: string;
   client: string;
+  clientDir?: string;
   kcp: { server: string; workspace?: string; token?: string; tokenFile?: string; caCertFile?: string };
 }
 
@@ -270,6 +271,7 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
         caCert: vaultServerRef.kcp.caCertFile ? Deno.readTextFileSync(vaultServerRef.kcp.caCertFile) : undefined,
         name: vaultServerRef.name,
         client: vaultServerRef.client,
+        clientDir: vaultServerRef.clientDir,
         onWaiting: (reason) => logger.info("bidder_vault_waiting", { openbaoserver: vaultServerRef.name, reason }),
       });
       return async () => {

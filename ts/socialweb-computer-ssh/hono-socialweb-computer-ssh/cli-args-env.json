@@ -147,7 +147,7 @@
     "guest-ca-file": {
       "type": "string",
       "description": "PEM CA the guest trusts (cloud-init ca_certs), for a market network whose TLS front has its own CA",
-      "env": "GUEST_CA_FILE"
+      "env": "KCP_PROJECTED_NETWORK_CA"
     },
     "guest-curl-home": {
       "type": "string",
@@ -170,6 +170,11 @@
       "env": "OPENBAO_CLIENT",
       "default": "ssh-gateway"
     },
+    "openbao-client-dir": {
+      "type": "string",
+      "description": "Directory holding that client's certificate (tls.crt), key (tls.key) and the vault CA (ca.crt), kept current by the DenoPod's projected credentials; unset, they are read from the files the OpenBaoServer status names",
+      "env": "KCP_PROJECTED_VAULT"
+    },
     "openbao-kcp-server": {
       "type": "string",
       "description": "kcp base address the OpenBaoServer object is read from (default: the base of kcp-server)",
@@ -183,12 +188,12 @@
     "openbao-kcp-token-file": {
       "type": "string",
       "description": "File holding the kcp token that reads the OpenBaoServer object",
-      "env": "OPENBAO_KCP_TOKEN_FILE"
+      "env": "KCP_PROJECTED_KCP_TOKEN"
     },
     "openbao-kcp-ca-cert-file": {
       "type": "string",
       "description": "PEM CA of the kcp that holds the OpenBaoServer object",
-      "env": "OPENBAO_KCP_CA_CERT_FILE"
+      "env": "KCP_PROJECTED_KCP_CA"
     },
     "listeners-file": {
       "type": "string",

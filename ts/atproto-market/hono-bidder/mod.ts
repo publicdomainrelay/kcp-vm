@@ -56,6 +56,7 @@ const vaultServer = o.identityVaultOpenbaoServer
   ? {
     name: o.identityVaultOpenbaoServer as string,
     client: o.identityVaultOpenbaoClient as string,
+    clientDir: o.identityVaultOpenbaoClientDir as string | undefined,
     kcp: {
       server: o.identityVaultKcpServer as string,
       workspace: o.identityVaultKcpWorkspace as string | undefined,

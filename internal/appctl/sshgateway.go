@@ -38,7 +38,7 @@ const (
 var (
 	SshGatewayGVR      = schema.GroupVersionResource{Group: v1alpha1.GroupName, Version: v1alpha1.Version, Resource: "sshgateways"}
 	SshGatewayProfiles = []string{SshGatewayProfileNetwork, SshGatewayProfileDefault}
-	SshGatewayEnvAllow = []string{"KCP_SERVICE_DOMAIN", "KCP_DNS_TABLE", "KCP_DNS_TABLE_FILE", "KCP_TOKENS", "KCP_TOKEN", "KCP_SERVER",
+	SshGatewayEnvAllow = []string{"KCP_SERVICE_DOMAIN", "KCP_DNS_TABLE", "KCP_DNS_TABLE_FILE", "KCP_TOKENS", "KCP_SERVER",
 		"KCP_WORKSPACE", "KCP_NAMESPACE", "KCP_SERVICE_NAME", "PORT_FILE", "LISTENERS_FILE", "STATUS_FILE", "MIN_LOG_LEVEL", "ATPROTO_DID", "BUNDLED_ACTIONS_DIR", "POLICY_ENGINE_LOG_LEVEL", "PATH"}
 )
 
@@ -115,17 +115,11 @@ func SshGatewayValues(spec v1alpha1.SshGatewaySpec, stateDir string, l devinstan
 }
 
 func (ctl *Controller) sshGatewayKcp(ctx context.Context, stateDir string) (manifests.KcpRef, manifests.BidderVault, error) {
-	_, st, c, err := ctl.vaultRefs(ctx, SshGatewayVaultServer, SshGatewayVaultClient)
-	if err != nil {
+	if _, _, _, err := ctl.vaultRefs(ctx, SshGatewayVaultServer, SshGatewayVaultClient); err != nil {
 		return manifests.KcpRef{}, manifests.BidderVault{}, err
 	}
-	vault := manifests.BidderVault{Server: SshGatewayVaultServer, Client: SshGatewayVaultClient, CA: fileRef(st.Refs.CA),
-		ClientDir: dirOf(fileRef(c.ClientCert))}
-	tokenPath, caPath, err := ctl.vaultReaderToken(ctx, stateDir, SshGatewayAccount)
-	if err != nil {
-		return manifests.KcpRef{}, vault, err
-	}
-	return manifests.KcpRef{Workspace: ctl.c.workspace(), TokenFile: tokenPath, CAFile: caPath}, vault, nil
+	vault := manifests.BidderVault{Server: SshGatewayVaultServer, Client: SshGatewayVaultClient}
+	return manifests.KcpRef{Workspace: ctl.c.workspace()}, vault, nil
 }
 
 func (ctl *Controller) ownedHostProcesses(ctx context.Context, owner string) ([]unstructured.Unstructured, error) {
@@ -232,8 +226,6 @@ func (ctl *Controller) reconcileSshGateway(ctx context.Context, u *unstructured.
 		}
 		ctl.applied[string(o.UID)] = o.Generation
 		ctl.c.log().Info("applied an SshGateway's components", "name", o.Name, "profile", o.Spec.Profile, "denopods", pods)
-	} else if _, _, err := ctl.vaultReaderToken(ctx, stateDir, SshGatewayAccount); err != nil {
-		ctl.c.log().Warn("renewing the ssh gateway's kcp token", "err", err.Error())
 	}
 	pods, err := ctl.ownedPods(ctx, ws, owner)
 	if err != nil {

@@ -82,6 +82,7 @@ async function accountState(): Promise<{ sessionStore: SessionStore; keyHex: (na
     caCert: options.openbaoKcpCaCertFile ? await Deno.readTextFile(options.openbaoKcpCaCertFile as string) : undefined,
     name: options.openbaoServer as string,
     client: options.openbaoClient as string,
+    clientDir: options.openbaoClientDir as string | undefined,
     onWaiting: (reason) => log("vault_waiting", { openbaoserver: options.openbaoServer, reason }),
   });
   const resolved = await resolve();

@@ -121,12 +121,12 @@ export default {
     "market-identity-kcp-token-file": {
       type: "string" as const,
       description: "File holding the bearer token for the kcp server, re-read on every call",
-      env: "MARKET_IDENTITY_KCP_TOKEN_FILE",
+      env: "KCP_PROJECTED_KCP_TOKEN",
     },
     "market-identity-kcp-ca-cert-file": {
       type: "string" as const,
       description: "PEM CA bundle the kcp server's certificate chains to",
-      env: "MARKET_IDENTITY_KCP_CA_CERT_FILE",
+      env: "KCP_PROJECTED_KCP_CA",
     },
     "identity-vault-mount": {
       type: "string" as const,
@@ -165,6 +165,11 @@ export default {
       env: "IDENTITY_VAULT_OPENBAO_CLIENT",
       default: "bidder",
     },
+    "identity-vault-openbao-client-dir": {
+      type: "string" as const,
+      description: "Directory holding that client's certificate (tls.crt), key (tls.key) and the vault CA (ca.crt), kept current by the DenoPod's projected credentials; unset, they are read from the files the OpenBaoServer status names",
+      env: "KCP_PROJECTED_VAULT",
+    },
     "identity-vault-kcp-server": {
       type: "string" as const,
       description: "kcp server holding the OpenBaoServer object (a /clusters/<workspace> URL, or a base URL with identity-vault-kcp-workspace); a DenoPod's own KCP_SERVER",
@@ -183,12 +188,12 @@ export default {
     "identity-vault-kcp-token-file": {
       type: "string" as const,
       description: "File holding the bearer token for that kcp server, re-read on every call",
-      env: "IDENTITY_VAULT_KCP_TOKEN_FILE",
+      env: "KCP_PROJECTED_KCP_TOKEN",
     },
     "identity-vault-kcp-ca-cert-file": {
       type: "string" as const,
       description: "PEM CA bundle that kcp server's certificate chains to",
-      env: "IDENTITY_VAULT_KCP_CA_CERT_FILE",
+      env: "KCP_PROJECTED_KCP_CA",
     },
     "identity-vault-namespace": {
       type: "string" as const,
@@ -246,12 +251,12 @@ export default {
     "compute-provider-kcp-token-file": {
       type: "string" as const,
       description: "File holding the bearer token for the kcp server, re-read on every call",
-      env: "COMPUTE_PROVIDER_KCP_TOKEN_FILE",
+      env: "KCP_PROJECTED_KCP_TOKEN",
     },
     "compute-provider-kcp-ca-file": {
       type: "string" as const,
       description: "PEM CA bundle the kcp server's certificate chains to",
-      env: "COMPUTE_PROVIDER_KCP_CA_FILE",
+      env: "KCP_PROJECTED_KCP_CA",
     },
     "compute-provider-kcp-handle": {
       type: "string" as const,

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net"
 	"net/url"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -108,7 +107,7 @@ func listFragment(items ...string) (string, error) {
 }
 
 func BidderReads(v *manifests.MarketBidder) error {
-	read, err := listFragment(v.CABundle, v.Vault.CA, v.Vault.ClientDir)
+	read, err := listFragment(v.CABundle)
 	if err != nil {
 		return err
 	}
@@ -116,8 +115,8 @@ func BidderReads(v *manifests.MarketBidder) error {
 	return nil
 }
 
-func GuestReads(v *manifests.MarketBidder, vaultCA, clientDir string) error {
-	read, err := listFragment(v.CABundle, vaultCA, clientDir)
+func GuestReads(v *manifests.MarketBidder) error {
+	read, err := listFragment(v.CABundle)
 	if err != nil {
 		return err
 	}
@@ -177,8 +176,7 @@ func BidderValues(spec v1alpha1.MarketBidderSpec, stateDir, guestStateDir string
 		}
 	}
 	v.Guest.StateDir, v.Guest.VaultClient = guestStateDir, GuestVaultClient
-	v.Guest.TokenFile, v.Guest.CAFile = BidderTokenPaths(guestStateDir)
-	if err := GuestReads(&v, "", ""); err != nil {
+	if err := GuestReads(&v); err != nil {
 		return manifests.MarketBidder{}, err
 	}
 	opts, err := OptionArgs(BidderApp, spec.Options)
@@ -251,7 +249,6 @@ func (ctl *Controller) reconcileBidder(ctx context.Context, u *unstructured.Unst
 		if rec, err := ctl.c.Record(); err == nil {
 			kcp = BidderKcpOf(rec)
 		}
-		kcp.TokenFile, kcp.CAFile = BidderTokenPaths(stateDir)
 		values, err := BidderValues(o.Spec, stateDir, guestStateDir, kcp)
 		if err == nil {
 			err = withRootName(&values.ExtraArgs, o.Name)
@@ -265,20 +262,6 @@ func (ctl *Controller) reconcileBidder(ctx context.Context, u *unstructured.Unst
 		if _, err := ctl.applyProfile(ctx, BidderSet, o.Spec.Profile, owner, false, &values); err != nil {
 			st.Message = err.Error()
 			return ctl.writeStatus(ctx, MarketBidderGVR, o.Name, st)
-		}
-		if err := ctl.bidderToken(ctx, values.StateDir); err != nil {
-			st.Message = "its kcp token: " + err.Error()
-			return ctl.writeStatus(ctx, MarketBidderGVR, o.Name, st)
-		}
-		if err := ctl.accountToken(ctx, GuestAccount, guestStateDir); err != nil {
-			st.Message = "the kcp token of its guest DenoPod: " + err.Error()
-			return ctl.writeStatus(ctx, MarketBidderGVR, o.Name, st)
-		}
-		if _, gst, gc, err := ctl.vaultRefs(ctx, BidderVaultServer, GuestVaultClient); err != nil {
-			st.Message = "the vault client of its guest DenoPod: " + err.Error()
-			return ctl.writeStatus(ctx, MarketBidderGVR, o.Name, st)
-		} else if err := GuestReads(&values, fileRef(gst.Refs.CA), filepath.Dir(fileRef(gc.ClientCert))); err != nil {
-			return err
 		}
 		if err := ctl.ensureIdentity(ctx, BidderIdentity, o.Spec.Identity); err != nil {
 			st.Message = "its MarketIdentity: " + err.Error()
@@ -306,12 +289,6 @@ func (ctl *Controller) reconcileBidder(ctx context.Context, u *unstructured.Unst
 		ctl.applied[string(o.UID)] = o.Generation
 		ctl.c.log().Info("applied a MarketBidder's components", "name", o.Name, "profile", o.Spec.Profile, "denopods", pods,
 			"plc", o.Spec.Network.PlcDirectoryUrl)
-	}
-	if err := ctl.bidderToken(ctx, stateDir); err != nil {
-		ctl.c.log().Warn("renewing the bidder's kcp token", "name", o.Name, "err", err.Error())
-	}
-	if err := ctl.accountToken(ctx, GuestAccount, guestStateDir); err != nil {
-		ctl.c.log().Warn("renewing the kcp token of the bidder's guest DenoPod", "name", o.Name, "err", err.Error())
 	}
 	if err := ctl.rotateSigningKey(ctx, o); err != nil {
 		ctl.c.log().Warn("rotating the bidder's OIDC signing key", "name", o.Name, "err", err.Error())

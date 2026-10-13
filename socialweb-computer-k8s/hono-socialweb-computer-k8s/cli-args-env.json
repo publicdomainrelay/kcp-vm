@@ -134,6 +134,21 @@
       "description": "kubeconfig of this web app's own kcp identity (a ServiceAccount token, re-read from its tokenFile on every request); it reads the Gateway and the OpenBaoServer and writes MarketIdentities",
       "env": "KCP_KUBECONFIG"
     },
+    "kcp-server": {
+      "type": "string",
+      "description": "kcp server (base URL) this web app reaches its own kcp identity's objects on, with kcp-token-file and kcp-ca-file; used when kcp-kubeconfig is unset",
+      "env": "KCP_WEB_APP_SERVER"
+    },
+    "kcp-token-file": {
+      "type": "string",
+      "description": "File holding this web app's own ServiceAccount token for kcp-server, re-read on every request",
+      "env": "KCP_PROJECTED_KCP_TOKEN"
+    },
+    "kcp-ca-file": {
+      "type": "string",
+      "description": "PEM CA bundle kcp-server's certificate chains to",
+      "env": "KCP_PROJECTED_KCP_CA"
+    },
     "kcp-workspace": {
       "type": "string",
       "description": "This web app's own kcp workspace; with kcp-kubeconfig set, it fulfils through the compute market the NodeClaims of every home that the cluster gateway names in a ConfigMap labelled socialweb.computer/nodeclaim-home in its default namespace",
@@ -189,6 +204,11 @@
       "env": "OPENBAO_CLIENT",
       "default": "socialweb-computer-k8s"
     },
+    "openbao-client-dir": {
+      "type": "string",
+      "description": "Directory holding that client's certificate (tls.crt), key (tls.key) and the vault CA (ca.crt), kept current by the DenoPod's projected credentials; unset, they are read from the files the OpenBaoServer status names",
+      "env": "KCP_PROJECTED_VAULT"
+    },
     "openbao-server-workspace": {
       "type": "string",
       "description": "kcp workspace of the OpenBaoServer object",
@@ -229,7 +249,7 @@
     "node-guest-ca-file": {
       "type": "string",
       "description": "PEM CA every node guest trusts (cloud-init ca_certs), for a market network whose TLS front has its own CA",
-      "env": "SOCIALWEB_DOOR_NODE_GUEST_CA_FILE"
+      "env": "KCP_PROJECTED_NETWORK_CA"
     },
     "node-guest-curl-home": {
       "type": "string",

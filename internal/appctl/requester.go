@@ -181,17 +181,11 @@ func (ctl *Controller) identityDid(ctx context.Context) string {
 }
 
 func (ctl *Controller) requesterKcp(ctx context.Context, stateDir string) (manifests.KcpRef, manifests.BidderVault, error) {
-	_, st, c, err := ctl.vaultRefs(ctx, RequesterVaultServer, RequesterVaultClient)
-	if err != nil {
+	if _, _, _, err := ctl.vaultRefs(ctx, RequesterVaultServer, RequesterVaultClient); err != nil {
 		return manifests.KcpRef{}, manifests.BidderVault{}, err
 	}
-	vault := manifests.BidderVault{Server: RequesterVaultServer, Client: RequesterVaultClient, CA: fileRef(st.Refs.CA),
-		ClientDir: dirOf(fileRef(c.ClientCert))}
-	tokenPath, caPath, err := ctl.vaultReaderToken(ctx, stateDir, RequesterAccount)
-	if err != nil {
-		return manifests.KcpRef{}, vault, err
-	}
-	return manifests.KcpRef{Workspace: ctl.c.workspace(), TokenFile: tokenPath, CAFile: caPath}, vault, nil
+	vault := manifests.BidderVault{Server: RequesterVaultServer, Client: RequesterVaultClient}
+	return manifests.KcpRef{Workspace: ctl.c.workspace()}, vault, nil
 }
 
 func dirOf(p string) string {
