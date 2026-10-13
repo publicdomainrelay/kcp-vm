@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -298,12 +299,16 @@ func Pinned(runtimeRoot string, pins []versions.Pin, digest TreeDigest) (map[str
 	out := map[string]string{}
 	var notes []string
 	execNames := map[string]string{}
+	trees := map[string]string{}
 	for _, p := range pins {
 		if !isVMAsset(p.Name) {
 			continue
 		}
 		for _, rel := range p.Executables {
 			execNames[rel] = p.Name
+		}
+		if p.TreeSHA256 != "" {
+			trees[p.TreeSHA256] = p.Name
 		}
 	}
 	entries, err := os.ReadDir(runtimeRoot)
@@ -328,13 +333,35 @@ func Pinned(runtimeRoot string, pins []versions.Pin, digest TreeDigest) (map[str
 			notes = append(notes, fmt.Sprintf("%s does not verify against its name (%v); its executables are not pinned", dir, err))
 			continue
 		}
-		for _, rel := range found {
-			sum, err := fileSHA256(filepath.Join(dir, rel))
-			if err != nil {
-				notes = append(notes, err.Error())
-				continue
+		asset, whole := trees[e.Name()]
+		if !whole {
+			for _, rel := range found {
+				sum, err := fileSHA256(filepath.Join(dir, rel))
+				if err != nil {
+					notes = append(notes, err.Error())
+					continue
+				}
+				out[sum] = execNames[rel] + " " + filepath.Join(dir, rel)
 			}
-			out[sum] = execNames[rel] + " " + filepath.Join(dir, rel)
+			continue
+		}
+		werr := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+			if err != nil || !d.Type().IsRegular() {
+				return err
+			}
+			info, err := d.Info()
+			if err != nil || info.Mode().Perm()&0o111 == 0 {
+				return err
+			}
+			sum, err := fileSHA256(p)
+			if err != nil {
+				return err
+			}
+			out[sum] = asset + " " + p
+			return nil
+		})
+		if werr != nil {
+			notes = append(notes, werr.Error())
 		}
 	}
 	return out, notes
