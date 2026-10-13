@@ -28,7 +28,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/vmruntime"
 )
 
-const bidderIdentityWait = 30 * time.Minute
+const bidderIdentityWait = 5 * time.Minute
 
 var bidderOptions = slices.Concat([]string{backendOpt, "profile", "network", "name", "instance", "state-dir", "fg", "ready-timeout",
 	"network-timeout", "market-network-file", "bidder-policy", "bidder-policy-args", "kcp-path", "kine-path", "deno-path", "bao-path", "asset-cache", "unit-prefix", "kcp-front-address"},

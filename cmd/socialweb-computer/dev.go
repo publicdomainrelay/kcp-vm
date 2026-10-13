@@ -36,7 +36,8 @@ import (
 
 const (
 	devsupReadyTimeout = 15 * time.Second
-	devsupExitTimeout  = 3 * time.Minute
+	devsupExitTimeout  = 90 * time.Second
+	networkDownTimeout = 2 * time.Minute
 	coreStopTimeout    = 10 * time.Second
 )
 
@@ -571,7 +572,7 @@ func bringUp(ctx context.Context, a *app, vals clicfg.Values, host bool) (upRepo
 	if err != nil {
 		return upReport{}, a.fail(exitFailed, "dev up: placing the core: %v", err)
 	}
-	core, err := waitCore(ctx, l, cst.InvocationID, readyTimeout)
+	core, err := waitCore(ctx, l, m, cspec.Name, cst.InvocationID, readyTimeout)
 	if err != nil {
 		return upReport{}, a.fail(exitFailed, "dev up: %v", err)
 	}
@@ -640,12 +641,18 @@ func devUp(ctx context.Context, a *app, vals clicfg.Values, host bool) int {
 	return exitOK
 }
 
-func waitCore(ctx context.Context, l devinstance.Layout, invocation string, timeout time.Duration) (devinstance.Core, error) {
+func waitCore(ctx context.Context, l devinstance.Layout, m hostsvc.Manager, unit, invocation string, timeout time.Duration) (devinstance.Core, error) {
 	deadline := time.Now().Add(timeout)
 	for {
 		var c devinstance.Core
 		if err := devinstance.ReadJSON(l.CoreRecord, &c); err == nil && c.InvocationID == invocation && !c.AdoptedAt.IsZero() {
 			return c, nil
+		}
+		if st, err := m.Inspect(ctx, unit); err == nil && ((st.InvocationID != "" && st.InvocationID != invocation) ||
+			st.State == hostsvc.Failed || st.State == hostsvc.Inactive || st.State == hostsvc.NotFound) {
+			b, _ := os.ReadFile(filepath.Join(l.Logs, "core.log"))
+			return devinstance.Core{}, fmt.Errorf("the core (invocation %s) ended before it recorded its adoption: unit %s is %s %s (invocation %s, exit status %d)\n%s",
+				invocation, unit, st.State, st.Result, st.InvocationID, st.ExecMainStatus, lastLines(b, 40))
 		}
 		if time.Now().After(deadline) {
 			b, _ := os.ReadFile(filepath.Join(l.Logs, "core.log"))
@@ -772,7 +779,7 @@ func downInstance(ctx context.Context, a *app, l devinstance.Layout, keepState b
 		vmOwners = append(vmOwners, networkChildren(l)...)
 	}
 	if rec.Profile == bootstrap.ProfileMarketNetwork && rec.AdminKubeconfig != "" {
-		if err := appctl.DeleteNetwork(ctx, rec.AdminKubeconfig, devsupExitTimeout); err != nil {
+		if err := appctl.DeleteNetwork(ctx, rec.AdminKubeconfig, networkDownTimeout); err != nil {
 			a.log.Warn("deleting the MarketNetwork before devsup stops; devsup stops what is left", "err", err.Error())
 		} else {
 			a.log.Info("the MarketNetwork is deleted: its children, their kcps and its services are gone")

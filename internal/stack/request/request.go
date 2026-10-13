@@ -22,6 +22,7 @@ import (
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/appctl"
+	denov1alpha1 "github.com/johnandersen777/socialweb-computer-kcp/internal/denokcp/api/v1alpha1"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpclient"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpserver"
 )
@@ -333,6 +334,11 @@ func (k *Kcp) WaitContract(ctx context.Context, timeout time.Duration, done func
 			return false, err
 		}
 		cur = c
+		if st, err := k.Root(ctx); err == nil {
+			if why := requesterFailure(st); why != "" && !done(c) {
+				return true, fmt.Errorf("request: the requester application cannot carry the contract: %s", why)
+			}
+		}
 		key := string(c.Status.Phase) + "|" + c.Status.Message
 		if c.Status.Contract != nil {
 			key += "|" + string(c.Status.Contract.Phase)
@@ -344,6 +350,18 @@ func (k *Kcp) WaitContract(ctx context.Context, timeout time.Duration, done func
 		return done(c), nil
 	})
 	return cur, err
+}
+
+func requesterFailure(st v1alpha1.ApplicationStatus) string {
+	if st.Phase == v1alpha1.ApplicationPhaseFailed {
+		return "phase Failed: " + st.Message
+	}
+	for _, c := range st.Components {
+		if c.Phase == string(denov1alpha1.DenoPodFailed) {
+			return fmt.Sprintf("%s %s/%s is Failed", c.Kind, c.Workspace, c.Name)
+		}
+	}
+	return ""
 }
 
 func (k *Kcp) PutSecrets(ctx context.Context, bundle []byte, timeout time.Duration) (v1alpha1.VaultRef, error) {

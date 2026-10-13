@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"strings"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
 	"github.com/johnandersen777/socialweb-computer-kcp/deploy"
+	denov1alpha1 "github.com/johnandersen777/socialweb-computer-kcp/internal/denokcp/api/v1alpha1"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpserver"
 )
 
@@ -208,6 +210,9 @@ func WaitNetwork(ctx context.Context, kubeconfig string, timeout time.Duration, 
 			if o.Status.Phase == v1alpha1.ApplicationPhaseFailed {
 				return o, fmt.Errorf("appctl: the MarketNetwork failed: %s", o.Status.Message)
 			}
+			if why := networkFailure(o.Status); why != "" {
+				return o, fmt.Errorf("appctl: the MarketNetwork cannot become Ready: %s", why)
+			}
 		}
 		if time.Now().After(deadline) {
 			return o, fmt.Errorf("appctl: the MarketNetwork was not Ready within %s (phase %s: %s)", timeout, o.Status.Phase, o.Status.Message)
@@ -242,4 +247,26 @@ func DeleteNetwork(ctx context.Context, kubeconfig string, timeout time.Duration
 			return ctx.Err()
 		}
 	}
+}
+
+func networkFailure(st v1alpha1.MarketNetworkStatus) string {
+	var out []string
+	failed := func(where string, cs []v1alpha1.ApplicationComponent) {
+		for _, c := range cs {
+			if c.Phase == string(denov1alpha1.DenoPodFailed) {
+				out = append(out, fmt.Sprintf("%s %s %s/%s is Failed", where, c.Kind, c.Workspace, c.Name))
+			}
+		}
+	}
+	failed("the network's", st.Components)
+	for _, a := range st.Apps {
+		if a.Kind == v1alpha1.ApplicationKindMarketRequester || a.Kind == v1alpha1.ApplicationKindSshGateway {
+			continue
+		}
+		if a.Phase == v1alpha1.ApplicationPhaseFailed {
+			out = append(out, fmt.Sprintf("child application %s is Failed: %s", a.Name, a.Message))
+		}
+		failed("child application "+a.Name+"'s", a.Components)
+	}
+	return strings.Join(out, "; ")
 }

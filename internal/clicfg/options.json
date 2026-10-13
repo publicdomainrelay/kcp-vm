@@ -69,7 +69,7 @@
       "type": "string",
       "description": "dev up --profile market-network: how long dev up waits for the MarketNetwork and every child application to report Ready (Go duration)",
       "env": "SOCIALWEB_DEV_NETWORK_TIMEOUT",
-      "default": "15m"
+      "default": "3m"
     },
     "parent": {
       "type": "string",
@@ -119,7 +119,7 @@
       "type": "string",
       "description": "How long dev up waits for kcp /readyz (Go duration)",
       "env": "SOCIALWEB_READY_TIMEOUT",
-      "default": "5m"
+      "default": "1m"
     },
     "owner": {
       "type": "string",
@@ -401,7 +401,7 @@
     "wait-timeout": {
       "type": "string",
       "description": "apply: how long each typed wait may take (Go duration)",
-      "default": "2m"
+      "default": "1m"
     },
     "handle": {
       "type": "string",
@@ -616,7 +616,7 @@
     "contract-timeout": {
       "type": "string",
       "description": "run request: how long the CLI waits for the contract to reach the guest's onNetwork and host keys, and for a release (Go duration)",
-      "default": "30m"
+      "default": "6m"
     }
   }
 }

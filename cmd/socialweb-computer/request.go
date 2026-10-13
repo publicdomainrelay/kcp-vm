@@ -22,8 +22,8 @@ import (
 )
 
 const (
-	requestSSHReady     = 5 * time.Minute
-	requestIdentityWait = 30 * time.Minute
+	requestSSHReady     = time.Minute
+	requestIdentityWait = 5 * time.Minute
 )
 
 var requestOptions = append([]string{"network", "name", "secrets", "hold", "exec", "skip-ssh", "contract-timeout", "state-dir",
@@ -429,9 +429,15 @@ func (r *requestRun) ssh(ctx context.Context, c *v1alpha1.ComputeContract) (int,
 	}
 	r.log("ssh to the guest over its iroh ticket, StrictHostKeyChecking=yes against its reported host keys", "alias", t.Alias,
 		"hostKeys", strings.Join(request.SummaryOf(c).HostKeys, ", "))
-	if err := s.WaitReady(ctx, t, requestSSHReady, func(attempt int, msg string) {
+	held, stop := r.whileHeld(ctx)
+	err = s.WaitReady(held, t, requestSSHReady, func(attempt int, msg string) {
 		r.log("ssh not ready yet", "attempt", attempt, "err", msg)
-	}); err != nil {
+	})
+	stop()
+	if cause := context.Cause(held); err != nil && cause != nil && ctx.Err() == nil {
+		return -1, cause
+	}
+	if err != nil {
 		return -1, err
 	}
 	interactive := false
@@ -446,6 +452,25 @@ func (r *requestRun) ssh(ctx context.Context, c *v1alpha1.ComputeContract) (int,
 	code, err := s.Run(ctx, t, r.exec, interactive, os.Stdin, r.a.stdout, r.a.stderr)
 	r.log("ssh session ended", "exit", code)
 	return code, err
+}
+
+func (r *requestRun) whileHeld(ctx context.Context) (context.Context, func()) {
+	held, cancel := context.WithCancelCause(ctx)
+	go func() {
+		for {
+			select {
+			case <-held.Done():
+				return
+			case <-time.After(request.Poll):
+			}
+			c, err := r.kcp.Contract(held)
+			if err == nil && c.Status.Phase != v1alpha1.ComputeContractHeld {
+				cancel(fmt.Errorf("the contract left Held while ssh waited for the guest: phase %s: %s", c.Status.Phase, c.Status.Message))
+				return
+			}
+		}
+	}()
+	return held, func() { cancel(nil) }
 }
 
 func (r *requestRun) release(ctx context.Context) (*v1alpha1.ComputeContract, error) {

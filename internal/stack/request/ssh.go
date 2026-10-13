@@ -26,6 +26,8 @@ var ErrHostKeyMismatch = errors.New("request: the guest's ssh host key does not 
 
 var hostKeyMismatch = regexp.MustCompile(`Host key verification failed|REMOTE HOST IDENTIFICATION HAS CHANGED|No .* host key is known`)
 
+var sshRefused = regexp.MustCompile(`Permission denied \(`)
+
 func EnsureKey(ctx context.Context, dir string) (string, string, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", "", err
@@ -110,6 +112,9 @@ func (s SSH) WaitReady(ctx context.Context, t Target, timeout time.Duration, pro
 		msg := strings.TrimSpace(stderr.String())
 		if hostKeyMismatch.MatchString(msg) {
 			return fmt.Errorf("%w: %s", ErrHostKeyMismatch, msg)
+		}
+		if sshRefused.MatchString(msg) {
+			return fmt.Errorf("request: ssh to %s was refused: %s", t.Alias, msg)
 		}
 		if progress != nil {
 			progress(attempt, msg)

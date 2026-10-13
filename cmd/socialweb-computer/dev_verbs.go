@@ -211,7 +211,7 @@ func runDevRestart(ctx context.Context, a *app, vals clicfg.Values, rest []strin
 	if err != nil {
 		return a.fail(exitFailed, "dev restart: placing the core: %v", err)
 	}
-	if r.After, err = waitCore(ctx, l, st.InvocationID, readyTimeout); err != nil {
+	if r.After, err = waitCore(ctx, l, m, cspec.Name, st.InvocationID, readyTimeout); err != nil {
 		return a.fail(exitFailed, "dev restart: %v", err)
 	}
 	r.UnitsUnchanged = len(r.After.Adoptions) == len(rec.Units)
