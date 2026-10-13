@@ -462,8 +462,10 @@ VM or rents one:
   invocation and synced to its declaration.
 
 The members (the gateway XRPC and the cluster provider, in the core) reach kcp as kcp-admin through a
-token file the core rewrites from the active slot's `admin.kubeconfig` whenever the slot changes, because
-every kcp start issues a new kcp-admin token.
+token file (`<kcp dir>/members.token`), because every kcp start issues a new kcp-admin token. The roll
+rewrites the file from the new slot's `admin.kubeconfig` right after the front flips and before the old
+slot stops; a member's client re-reads it on its first 401. The core checks the file against the active
+slot every 5 s as a fallback and warns when it had to rewrite it.
 
 Readings on hat-8, 2026-10-12 UTC: a staged release gateway (`install gateway --root`, systemd-user,
 the core's PATH `/usr/bin:/bin`) with tenant cluster `gc` and one market node rented through the RFP flow
