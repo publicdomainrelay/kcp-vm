@@ -16,8 +16,6 @@ One binary, `socialweb-computer`, runs every part of the software. Each running 
 - To run a release binary: `curl` and `sha256sum` (coreutils). The binary embeds every asset it runs, so it needs neither this checkout nor Go and Deno.
 - To build from source or run the scripts: Go and Deno on `PATH`, and this repository checked out, since the scripts run from their own checkout.
 
-> Warning: never use `/tmp` for a build or for state. It is tmpfs and spills to swap. Use a directory under `~/.tmp` or under `/var/tmp`.
-
 ## Install a release binary
 
 Every tagged release publishes Linux binaries and the guest image to a public bucket. The bucket needs no credentials.
@@ -102,7 +100,13 @@ Build a development binary from your working tree, uncommitted changes included.
 scripts/build-socialweb-computer.sh --dev --publish /var/tmp/swc
 ```
 
-The build writes the host binary to `/var/tmp/swc/bin/socialweb-computer`, mirrors the working tree to `/var/tmp/swc/src`, and runs the TypeScript from that mirror. A development binary prints `dev build, not reproducible` with its commit in `socialweb-computer version`.
+The build writes the host binary to `/var/tmp/swc/bin/socialweb-computer`, mirrors the working tree to `/var/tmp/swc/src`, and runs the TypeScript from that mirror. Put it on your PATH and it is the `socialweb-computer` in every command below:
+
+```bash
+export PATH=/var/tmp/swc/bin:$PATH
+```
+
+A development binary prints `dev build, not reproducible` with its commit in `socialweb-computer version`.
 
 Build a release binary of one commit, offline and cached by input hash:
 
@@ -120,7 +124,7 @@ Build script options:
 
 | Option | Effect |
 |---|---|
-| `--dev` | Build the working tree for the host platform, for live runs while iterating. |
+| `--dev` | Build the working tree for the host platform; this is the binary for live runs. |
 | `--publish DIR` | With `--dev`, copy the host binary to `DIR/bin/socialweb-computer` and mirror the working tree to `DIR/src`. |
 | `--sync-only` | With `--publish`, mirror the working tree again without rebuilding. |
 | `--platform P` | A release platform (`linux/amd64`, `linux/arm64`); repeat for more. Default: every release platform. |
@@ -134,25 +138,24 @@ Build script options:
 A market network is one instance, profile `market-network`, in its own kcp. It runs the shared atproto services (fake PLC, relay, PDSes) and composes child applications, each with its own kcp: one bidder per `--bidders`, and, with `--with-gateway`, one gateway.
 
 ```bash
-swc=/var/tmp/swc/bin/socialweb-computer
-$swc dev up --instance mn1 --profile market-network --bidders 1 --with-gateway \
+socialweb-computer dev up --instance mn1 --profile market-network --bidders 1 --with-gateway \
   --guest-image-source file:///var/lib/socialweb-computer/guest-image --vm-host-backend systemd-user
 ```
 
 Inspect the network, use it, and stop it:
 
 ```bash
-$swc dev status --instance mn1 | jq '.network.status.apps'
-$swc status --instance mn1
-eval "$($swc dev env --instance mn1)"
-$swc dev logs core --instance mn1 --tail 50
-$swc dev down --instance mn1
+socialweb-computer dev status --instance mn1 | jq '.network.status.apps'
+socialweb-computer status --instance mn1
+eval "$(socialweb-computer dev env --instance mn1)"
+socialweb-computer dev logs core --instance mn1 --tail 50
+socialweb-computer dev down --instance mn1
 ```
 
 - `dev status` prints the `MarketNetwork` object and each child application's roots and contracts; `status` prints the market counters and contract steps.
 - `dev env` exports `KUBECONFIG` and the ports of the network's kcp.
 - `dev logs` takes one log name; `core` is the log of the `socialweb-computer` process that runs kcp and supervises the DenoPods and HostProcesses.
-- Run the network as the VM-slot account. On a shared host, take a live slot first.
+- Run the network as the VM-slot account, since its bidders run the VMs.
 
 `dev up` options for a market network:
 
@@ -175,11 +178,11 @@ A secrets bundle is a JSON array of `{ "path": "/abs/path", "value": ... }`. The
 
 ```bash
 echo '[{"path":"/root/x","value":"hello"}]' > secrets.json
-$swc run request --network mn1 --secrets secrets.json --exec 'cat /root/x'
-$swc run request --network mn1 --secrets secrets.json --hold --exec 'uname -a'
-$swc run request list
-$swc run request resume <name>
-$swc run request release <name>
+socialweb-computer run request --network mn1 --secrets secrets.json --exec 'cat /root/x'
+socialweb-computer run request --network mn1 --secrets secrets.json --hold --exec 'uname -a'
+socialweb-computer run request list
+socialweb-computer run request resume <name>
+socialweb-computer run request release <name>
 ```
 
 `run request` options:
@@ -201,22 +204,24 @@ SSH runs with `StrictHostKeyChecking=yes` against the host keys the guest report
 Run a bidder inside a market network as a child application. `run bidder` requires `--guest-image-source`.
 
 ```bash
-$swc run bidder --host-backend proc --profile market-network --network mn1 --handle b2.mn1.bob.test \
+socialweb-computer run bidder --host-backend proc --profile market-network --network mn1 --handle b2.mn1.bob.test \
   --guest-image-source file:///var/lib/socialweb-computer/guest-image --vm-host-backend systemd-user
 ```
 
-Install a bidder on a host (one explicit root step), then it runs as its own account, `swc-bidder`:
+Install a bidder on a host (one explicit root step), then it runs as its own account, `swc-bidder`. The binary you invoke is the one installed, at `<state-dir>/bin/current/socialweb-computer`:
 
 ```bash
-sudo $B install bidder --handle bobvmbuilder.bsky.social --adopt-account \
+sudo /var/tmp/swc/bin/socialweb-computer install bidder --handle bobvmbuilder.bsky.social --adopt-account \
   --guest-image-source file:///var/lib/socialweb-computer/guest-image
 ```
 
-Upgrade an installed bidder as its account:
+Upgrade an installed bidder as its account, staging the new binary from a release or a local build:
 
 ```bash
 sudo runuser -u swc-bidder -- env XDG_RUNTIME_DIR=/run/user/$(id -u swc-bidder) \
-  CONFIG_PATH_SOCIALWEB_COMPUTER=/var/lib/socialweb-computer/swc-bidder/config.json $B upgrade --binary $B --sha256 <sha256>
+  CONFIG_PATH_SOCIALWEB_COMPUTER=/var/lib/socialweb-computer/swc-bidder/config.json \
+  /var/lib/socialweb-computer/swc-bidder/bin/current/socialweb-computer \
+  upgrade --binary <new binary> --sha256 <its sha256>
 ```
 
 - A production bidder gates which RFPs it answers with the policy named in `config.json` `bidder-policy`; the production bidder uses `tangled-vouch`.
@@ -242,9 +247,11 @@ A development gateway is a child of a market network: start the network with `--
 A production gateway is built as a release, shipped, and installed or upgraded with `scripts/deploy.sh`, which also writes the caddy sites.
 
 ```bash
-BINARY=$B SHA256=$SHA SSH_KEY=~/.ssh/id_ed25519_no_password \
+BINARY=<release binary> SHA256=<its sha256> SSH_KEY=~/.ssh/id_ed25519_no_password \
   GATEWAY_ENV_FILE=~/.tmp/deploy/gateway.env GATEWAY_SPEC_FILE=~/.tmp/deploy/gateway-spec.yaml scripts/deploy.sh
 ```
+
+[Deploy a release to production](#deploy-a-release-to-production) builds that binary and computes its sha256.
 
 `scripts/deploy.sh` reads these environment variables:
 
@@ -398,7 +405,8 @@ The credential file (mode 0600) exports `<ACCOUNT>_ATPROTO_HANDLE` and `<ACCOUNT
 ```bash
 # the web app user (alice) signs in to the gateway; do this after every fresh gateway deploy
 deno run -A --no-lock scripts/oauth-signin.ts --creds ~/.aliceoa_bsky_social_source --account ALICE --url https://k8s.socialweb.computer/
-# the bidder signs in through the QR url (U) from its MarketIdentity
+# the bidder signs in through the QR url its MarketIdentity reports; K is the bidder's kcp kubeconfig
+U=$(kubectl --kubeconfig $K get marketidentity bidder -o jsonpath='{.status.pendingAction.url}')
 deno run -A --no-lock scripts/oauth-signin.ts --creds ~/.bobvmbuilder_bsky_social_source --account BOB --url "$U"
 ```
 
@@ -420,12 +428,13 @@ Symptoms: a gateway log line `no oauth session stored for did:...` means the web
 
 ## Deploy a release to production
 
-> Warning: a production deployment preserves nothing. Losing sessions, VMs, clusters, claims, or receipts during a deploy is acceptable, so deploy fresh. Only the lead runs a production deployment.
+> Warning: a production deployment preserves nothing. Losing sessions, VMs, clusters, claims, or receipts during a deploy is acceptable, so deploy fresh.
 
 ```bash
 # 1. confirm the commit's run is green on GitHub (.github/workflows/ci.yml)
 # 2. build the release
-C=$(git rev-parse HEAD); TMPDIR=~/.tmp/swc-lead-tmp scripts/build-socialweb-computer.sh --platform linux/amd64 --commit $C
+C=$(git rev-parse HEAD)
+scripts/build-socialweb-computer.sh --platform linux/amd64 --commit $C
 B=~/.tmp/socialweb-computer-build/release/$C/socialweb-computer-linux-amd64; SHA=$(sha256sum $B | cut -d' ' -f1)
 # 3. gateway (socialweb.computer): ship, install the first time or upgrade after, write the caddy sites
 BINARY=$B SHA256=$SHA SSH_KEY=~/.ssh/id_ed25519_no_password \
@@ -434,11 +443,21 @@ BINARY=$B SHA256=$SHA SSH_KEY=~/.ssh/id_ed25519_no_password \
 R=/var/tmp/swc-release/socialweb-computer-${C:0:8}; sudo install -m 0755 $B $R
 sudo runuser -u swc-bidder -- env XDG_RUNTIME_DIR=/run/user/$(id -u swc-bidder) \
   CONFIG_PATH_SOCIALWEB_COMPUTER=/var/lib/socialweb-computer/swc-bidder/config.json $R upgrade --binary $R --sha256 $SHA
-# 5. verify: scale a tenant cluster from zero and back (~60 s up, ~3 min down)
-#    apply the pod finish-line to the canary cluster, then:
-cd ~/.tmp/deploy && deno run -A finish.ts up     # exits when the pod is Running on a market node
-#    delete the pod finish-line, then:
-deno run -A finish.ts down                       # exits at 0 nodes and 0 ComputeVMs
+```
+
+Verify the deployment by scaling a tenant cluster from zero and back:
+
+```bash
+GW=https://k8s.socialweb.computer AUD=did:web:k8s.socialweb.computer K=computer.socialweb.k8s
+# apply the Job below to the canary cluster, then poll it (see Manage a tenant cluster over XRPC)
+jq -n '{cluster: "canary", manifest: {apiVersion: "batch/v1", kind: "Job",
+  metadata: {name: "scale-check", namespace: "default"},
+  spec: {backoffLimit: 0, template: {spec: {restartPolicy: "Never",
+    containers: [{name: "run", image: "docker.io/library/busybox:1.36.1", command: ["sh", "-c", "echo up"]}]}}}}}' |
+  curl -sS -X POST "$GW/xrpc/$K.kubectlApplyServerSide" -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $(goat account service-auth --aud $AUD --lxm $K.kubectlApplyServerSide)" -d @- | jq -c '{kind, name}'
+curl -sS "$GW/xrpc/$K.getJob?cluster=canary&namespace=default&name=scale-check&tailLines=50" \
+  -H "Authorization: Bearer $(goat account service-auth --aud $AUD --lxm $K.getJob)" | jq -c '{phase, succeeded}'
 ```
 
 A tenant cluster scales from zero when you apply a pod to it: the pod raises a `NodeClaim`, the cluster runs the RFP flow for a market VM, the node joins, and the pod runs. Deleting the pod returns the cluster to zero nodes and deletes the VM. Applying a Job on a cluster at zero nodes works the same way; poll `getJob` or watch `#nodeClaim` on `subscribeClusters`.
@@ -469,7 +488,7 @@ tree() { local k=$1 ws=${2:-root}; echo "$ws"; for c in $(kc $k $ws get workspac
 Find every kcp and every tenant cluster kubeconfig under a state root:
 
 ```bash
-STATE=/var/tmp/swcit/<run>                                 # harness runs; the default dev state is $XDG_STATE_HOME/socialweb-computer
+STATE=/var/tmp/swcit/<run>                                 # integration runs; a dev instance defaults to $HOME/.local/state/socialweb-computer
 find $STATE /var/lib/socialweb-computer -name admin.kubeconfig -path '*kcp/admin.kubeconfig'   # every kcp front kubeconfig
 find $STATE /var/lib/socialweb-computer -path '*server/cred/admin.kubeconfig'                   # every tenant k3s kubeconfig
 for K in $(find $STATE -path '*kcp/admin.kubeconfig' -not -path '*slot-*' -not -path '*shared*'); do echo "== $K"; tree $K; done
@@ -507,7 +526,7 @@ Environment variables:
 | `SOCIALWEB_IT_SKIP_BUILD` | Reuse the published binary instead of rebuilding. | |
 | `SOCIALWEB_IT_RUN_ROOT` | The run root. Keep it short, since a tenant cluster's front socket path must fit in 107 bytes. | `/var/tmp/swcit` |
 | `SOCIALWEB_IT_ARTIFACTS` | The directory for logs. | `~/.tmp/swc-it/<run>` |
-| `SOCIALWEB_IT_LIVE_SLOT` | The host's live-slot script; `none` turns it off. | the lead's `~/.tmp/swc-lead/live-slot.ts` when it exists |
+| `SOCIALWEB_IT_LIVE_SLOT` | A host live-slot script the run takes before it starts; `none` turns it off. | the host's script, when one is configured |
 
 Each integration test takes VM slots of that account and brings up its own market network.
 
