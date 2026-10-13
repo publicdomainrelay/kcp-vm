@@ -5,10 +5,10 @@
 import { TID } from "@atproto/common";
 import { getPdsEndpoint } from "@atproto/common-web";
 import type { RepoApi } from "@publicdomainrelay/atproto-repo-abc";
-import { createRecordResolver, createRfpDispatcher, startOfferingRefresh, listRecordsPublic, getRecordAt } from "@publicdomainrelay/market-atproto";
+import { createRecordResolver, createRfpDispatcher, startOfferingRefresh, listRecordsPublic, getRecordAt, resolvePds, scanRecords } from "@publicdomainrelay/market-atproto";
 import type { MarketServerDeps, OfferingRefreshHandle, RfpObservation } from "@publicdomainrelay/market-atproto";
 import { createMarketFactory } from "@publicdomainrelay/hono-factory-market-atproto";
-import { BID_NSID, RFP_NSID, VOUCH_NSID } from "@publicdomainrelay/market-common";
+import { BID_NSID, RECEIPT_NSID, RFP_NSID, VOUCH_NSID } from "@publicdomainrelay/market-common";
 import { createBidLoop } from "./bid-loop.ts";
 import type {
   ATProtoEventStreamsClient,
@@ -198,6 +198,19 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
         cid: r.cid ?? "",
         rfpUri: ((r.value as Record<string, unknown>).rfp as { uri?: string } | undefined)?.uri,
       }));
+    },
+    knownAccept: (acceptUri, acceptCid) => acceptToContract.has(`${acceptUri}#${acceptCid}`),
+    ownReceiptFor: async (acceptUri) => {
+      const pdsUrl = await resolvePds(atproto.idResolver, atproto.did);
+      let receiptUri: string | undefined;
+      await scanRecords(pdsUrl, atproto.did, RECEIPT_NSID, (r) => {
+        if ((r.value.accept as { uri?: string } | undefined)?.uri !== acceptUri) return false;
+        receiptUri = r.uri;
+        return true;
+      }, { timeoutMs: 5_000 });
+      if (!receiptUri) return null;
+      const ended = terminatedReceipts.get(receiptUri);
+      return { uri: receiptUri, ...(ended ? { ended: `${ended.reason} at ${ended.at}` } : {}) };
     },
   });
   const rfpGate = bidLoop.rfpGate;

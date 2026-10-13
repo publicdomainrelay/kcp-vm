@@ -122,7 +122,7 @@ export function createKcpBidLedger(opts: KcpBidLedgerOptions): BidLedger {
       }));
     },
     async won(rfpUri, accept, at) {
-      await transition(rfpUri, ["Deciding", "Published", "Expired"], (s) => ({
+      await transition(rfpUri, ["Deciding", "Published"], (s) => ({
         ...s,
         phase: "Won",
         message: "the requester accepted this bid",

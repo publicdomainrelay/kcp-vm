@@ -17,6 +17,13 @@ export interface BidLoopOptions {
   loop?: MarketLoopRecorder;
   logger: StructuredLoggerInterface;
   listOwnBids(): Promise<OwnBidRecord[]>;
+  knownAccept(acceptUri: string, acceptCid: string): boolean;
+  ownReceiptFor(acceptUri: string): Promise<OwnReceipt | null>;
+}
+
+export interface OwnReceipt {
+  uri: string;
+  ended?: string;
 }
 
 export interface AcceptRefs {
@@ -176,8 +183,28 @@ export function createBidLoop(opts: BidLoopOptions): BidLoop {
     logger.info("bids_restored", { bids: entries.length, ...counts });
   }
 
+  async function contractEnded(accept: AcceptRefs): Promise<HandlerResult | undefined> {
+    let prior: OwnReceipt | null;
+    try {
+      prior = await opts.ownReceiptFor(accept.acceptUri);
+    } catch (err) {
+      logger.warn("accept_receipt_lookup_failed", { acceptUri: accept.acceptUri, error: String(err) });
+      return { status: 503, body: { error: "RepoUnavailable", message: "the bidder could not read its own receipts" } };
+    }
+    if (!prior) return undefined;
+    logger.warn("accept_contract_ended", { acceptUri: accept.acceptUri, receiptUri: prior.uri, ended: prior.ended });
+    return {
+      status: 409,
+      body: {
+        error: "ContractEnded",
+        message: `receipt ${prior.uri} already answers this accept${prior.ended ? `; the contract ended: ${prior.ended}` : ""}`,
+      },
+    };
+  }
+
   async function checkAccept(accept: AcceptRefs): Promise<HandlerResult | undefined> {
-    if (!bids || !accept.rfp?.uri) return undefined;
+    if (opts.knownAccept(accept.acceptUri, accept.acceptCid)) return undefined;
+    if (!bids || !accept.rfp?.uri) return await contractEnded(accept);
     if (accept.bid?.uri && !accept.bid.uri.startsWith(`at://${opts.selfDid}/`)) {
       logger.warn("accept_names_other_bidder", { acceptUri: accept.acceptUri, named: accept.bid.uri });
       return { status: 409, body: { error: "UnknownBid", message: "the accept names a bid of another bidder" } };
@@ -195,10 +222,21 @@ export function createBidLoop(opts: BidLoopOptions): BidLoop {
       logger.warn("accept_names_other_bid", { acceptUri: accept.acceptUri, bid: entry.name, named: accept.bid.uri, ours: entry.bid.uri });
       return { status: 409, body: { error: "UnknownBid", message: "the accept names a bid this bidder did not publish" } };
     }
-    if (entry.phase === "Failed" || entry.phase === "Lost") {
-      return { status: 409, body: { error: "BidClosed", message: `the Bid is ${entry.phase}` } };
+    if (entry.phase === "Won") {
+      logger.warn("accept_for_won_bid_without_contract", { acceptUri: accept.acceptUri, bid: entry.name, accepted: entry.accept?.uri });
+      return {
+        status: 409,
+        body: { error: "ContractEnded", message: "the Bid is Won and this bidder holds no contract for this accept: the contract ended" },
+      };
     }
-    return undefined;
+    if (!bidOpen(entry, new Date())) {
+      logger.warn("accept_for_closed_bid", { acceptUri: accept.acceptUri, bid: entry.name, phase: entry.phase, expiresAt: entry.expiresAt });
+      return {
+        status: 409,
+        body: { error: "BidClosed", message: `the Bid is ${entry.phase}; its window ended at ${entry.expiresAt}` },
+      };
+    }
+    return await contractEnded(accept);
   }
 
   async function acceptSeen(accept: AcceptRefs): Promise<"ours" | "lost" | "unknown"> {
