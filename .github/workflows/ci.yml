@@ -111,7 +111,7 @@ jobs:
   publish:
     if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 90
     needs: [binaries, guest-image]
     steps:
       - uses: actions/checkout@v7
@@ -138,7 +138,7 @@ jobs:
           else
             prefix="main/$GITHUB_SHA"; also="main/latest"
           fi
-          timeout -k 10 1700 deno run -A --no-lock scripts/publish-spaces.ts --dir "$OUT" --prefix "$prefix" ${also:+--also "$also"}
+          timeout -k 10 4800 deno run -A --no-lock scripts/publish-spaces.ts --dir "$OUT" --prefix "$prefix" ${also:+--also "$also"}
       - name: the published guest image is where the binary looks for it
         env:
           SPACES_BUCKET: ${{ vars.SPACES_BUCKET }}

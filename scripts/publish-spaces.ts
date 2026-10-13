@@ -49,30 +49,34 @@ const manifest = {
 };
 
 const put = async (prefix: string, copyFrom?: string) => {
-  for (const f of files) {
-    const started = Date.now();
-    const key = `${prefix}/${f.rel}`;
-    if (copyFrom) {
-      await s3.send(new CopyObjectCommand({
-        Bucket: bucket,
-        Key: key,
-        CopySource: encodeURI(`${bucket}/${copyFrom}/${f.rel}`),
-        MetadataDirective: "COPY",
-        ACL: "public-read",
-      }));
-    } else {
-      await s3.send(new PutObjectCommand({
-        Bucket: bucket,
-        Key: key,
-        Body: await Deno.readFile(f.path),
-        ContentType: typeOf(f.rel),
-        ACL: "public-read",
-        Metadata: { sha256: f.sha256 },
-      }));
+  const queue = [...files];
+  const workers = Array.from({ length: Math.min(4, queue.length) }, async () => {
+    for (let f = queue.shift(); f; f = queue.shift()) {
+      const started = Date.now();
+      const key = `${prefix}/${f.rel}`;
+      if (copyFrom) {
+        await s3.send(new CopyObjectCommand({
+          Bucket: bucket,
+          Key: key,
+          CopySource: encodeURI(`${bucket}/${copyFrom}/${f.rel}`),
+          MetadataDirective: "COPY",
+          ACL: "public-read",
+        }));
+      } else {
+        await s3.send(new PutObjectCommand({
+          Bucket: bucket,
+          Key: key,
+          Body: await Deno.readFile(f.path),
+          ContentType: typeOf(f.rel),
+          ACL: "public-read",
+          Metadata: { sha256: f.sha256 },
+        }));
+      }
+      const how = copyFrom ? `copied from ${copyFrom}` : "uploaded";
+      console.log(`${key} ${f.size} bytes sha256 ${f.sha256} ${how} (${((Date.now() - started) / 1000).toFixed(1)}s)`);
     }
-    const how = copyFrom ? `copied from ${copyFrom}` : "uploaded";
-    console.log(`${key} ${f.size} bytes sha256 ${f.sha256} ${how} (${((Date.now() - started) / 1000).toFixed(1)}s)`);
-  }
+  });
+  await Promise.all(workers);
   await s3.send(new PutObjectCommand({
     Bucket: bucket,
     Key: `${prefix}/manifest.json`,
