@@ -552,3 +552,10 @@ func jobSucceededOf(job *v1alpha1.DenoJob) int32 {
 	}
 	return job.Status.Succeeded
 }
+
+func jobPhaseOf(job *v1alpha1.DenoJob) string {
+	if job == nil {
+		return "<none>"
+	}
+	return string(job.Status.Phase)
+}

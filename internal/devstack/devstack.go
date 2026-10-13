@@ -276,7 +276,15 @@ func (s *Stack) WaitCore(t *testing.T, after int, within time.Duration) devinsta
 }
 
 func (s *Stack) Env() []string {
-	return append(append(os.Environ(), "XDG_RUNTIME_DIR="+s.host.runtime, "XDG_STATE_HOME="+s.host.xdg), s.Profile.Env...)
+	env := append(os.Environ(), "XDG_RUNTIME_DIR="+s.host.runtime, "XDG_STATE_HOME="+s.host.xdg)
+	if os.Getenv("SOCIALWEB_DENO_PATH") == "" {
+		if p, err := exec.LookPath("deno"); err == nil {
+			if abs, err := filepath.Abs(p); err == nil {
+				env = append(env, "SOCIALWEB_DENO_PATH="+abs)
+			}
+		}
+	}
+	return append(env, s.Profile.Env...)
 }
 
 func (s *Stack) Run(out any, args ...string) ([]byte, error) { return s.run(out, args...) }
