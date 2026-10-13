@@ -557,6 +557,18 @@
       "type": "boolean",
       "description": "units roll kcp: stop the old slot before the new one starts (the only path for a kcp pair without a storage-compatible kcpCompat record)"
     },
+    "store-backup-keep": {
+      "type": "number",
+      "description": "units roll kcp, dev roll kcp: keep at most this many kcp store backups; older ones are removed after a new backup is written and checked",
+      "env": "SOCIALWEB_STORE_BACKUP_KEEP",
+      "default": 5
+    },
+    "store-backup-keep-days": {
+      "type": "number",
+      "description": "units roll kcp, dev roll kcp: remove kcp store backups older than this many days after a new backup is written and checked (the newest is always kept)",
+      "env": "SOCIALWEB_STORE_BACKUP_KEEP_DAYS",
+      "default": 14
+    },
     "unit-prefix": {
       "type": "string",
       "description": "install, units roll kcp, serve gateway kcp: the unit name prefix of the installed application (a test placement; socialweb- when unset)",

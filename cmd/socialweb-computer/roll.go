@@ -11,6 +11,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/clicfg"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devinstance"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpserver"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpstore"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/versions"
 )
 
@@ -34,6 +35,10 @@ func runDevRoll(ctx context.Context, a *app, vals clicfg.Values, rest []string) 
 	readyTimeout, err := time.ParseDuration(vals.String("ready-timeout"))
 	if err != nil {
 		return a.fail(exitRefused, "dev roll kcp: ready-timeout: %v", err)
+	}
+	retention, err := kcpstore.RetentionOf(vals.Int("store-backup-keep"), vals.Int("store-backup-keep-days"))
+	if err != nil {
+		return a.fail(exitRefused, "dev roll kcp: %v", err)
 	}
 	l, err := a.layout(vals)
 	if err != nil {
@@ -65,7 +70,7 @@ func runDevRoll(ctx context.Context, a *app, vals clicfg.Values, rest []string) 
 	}
 	defer m.Close()
 	bcfg := bootstrap.Config{Layout: l, KcpPath: kcpExe.Path, KinePath: rec.Executables["kine"].Path, PostgresRoot: rec.Executables["postgres"].Path,
-		Exe: rec.Executables["socialweb-computer"].Path, ReadyTimeout: readyTimeout, Log: a.log}
+		Exe: rec.Executables["socialweb-computer"].Path, ReadyTimeout: readyTimeout, Retention: retention, Log: a.log}
 	rep, rerr := bootstrap.Roll(ctx, m, bcfg, &rec)
 	werr := devinstance.WriteJSON(l.Record, rec)
 	out := rollReport{Instance: l.ID, Roll: rep, Units: rec.Units}

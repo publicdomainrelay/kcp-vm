@@ -51,6 +51,7 @@ type Config struct {
 	ReadyTimeout time.Duration
 	OnListen     func(name string, addr net.Addr)
 	Application  *table.App
+	Retention    kcpstore.BackupRetention
 	Log          *slog.Logger
 	silent       map[string]bool
 }
@@ -131,10 +132,25 @@ func initdb(ctx context.Context, p Params) error {
 	return err
 }
 
-func (p Params) storeBackup() func(ctx context.Context) (string, error) {
+func (p Params) storeBackup(r kcpstore.BackupRetention, log *slog.Logger) func(ctx context.Context) (string, error) {
+	prune := func(dir, prefix, suffix, newest string) {
+		removed, err := kcpstore.PruneBackups(dir, prefix, suffix, newest, r, time.Now())
+		if err != nil {
+			log.Warn("store backup prune incomplete", "dir", dir, "err", err)
+		}
+		if len(removed) > 0 {
+			log.Info("store backups pruned", "dir", dir, "removed", removed, "keep", r.Keep, "maxAge", r.MaxAge.String())
+		}
+	}
 	if p.App.Store != table.StorePostgres {
 		return func(context.Context) (string, error) {
-			return kcpstore.BackupSqlite(p.KineDir(p.App.KineOf(p.App.Slots[0])), time.Now())
+			kineDir := p.KineDir(p.App.KineOf(p.App.Slots[0]))
+			out, err := kcpstore.BackupSqlite(kineDir, time.Now())
+			if err != nil {
+				return "", err
+			}
+			prune(filepath.Join(kineDir, kcpstore.BackupsDir), "", "", out)
+			return out, nil
 		}
 	}
 	return func(ctx context.Context) (string, error) {
@@ -142,7 +158,12 @@ func (p Params) storeBackup() func(ctx context.Context) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		return in.Dump(ctx, p.PgSocketDir(), kcpstore.PostgresUser, kcpstore.KineDatabase, p.BackupsDir(), time.Now())
+		out, err := in.Dump(ctx, p.PgSocketDir(), kcpstore.PostgresUser, kcpstore.KineDatabase, p.BackupsDir(), time.Now())
+		if err != nil {
+			return "", err
+		}
+		prune(p.BackupsDir(), kcpstore.KineDatabase+"-", ".sql", out)
+		return out, nil
 	}
 }
 
@@ -586,7 +607,7 @@ func Roll(ctx context.Context, m hostsvc.Manager, cfg Config, rec *devinstance.R
 			return p.slotSpec(slot, frontURL)
 		},
 		KineFor:      func(slot string) string { return p.KineURL(app.KineOf(slot)) },
-		Backup:       p.storeBackup(),
+		Backup:       p.storeBackup(cfg.Retention, cfg.log()),
 		ReadyTimeout: cfg.ReadyTimeout, OnListen: cfg.OnListen, Log: cfg.log(),
 	})
 	if after.Active == rep.To && rep.NewUnit != "" {

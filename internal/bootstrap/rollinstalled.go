@@ -13,6 +13,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/apiserverfront"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpserver"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/kcpstore"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/versions"
 )
 
@@ -20,6 +21,7 @@ type InstalledRoll struct {
 	Kcp           string
 	Kine          string
 	PlannedOutage bool
+	Retention     kcpstore.BackupRetention
 	Compat        []versions.KcpCompat
 	ReadyTimeout  time.Duration
 	OnListen      func(name string, addr net.Addr)
@@ -183,7 +185,7 @@ func RollInstalled(ctx context.Context, m hostsvc.Manager, p Params, o Installed
 			return p.slotSpec(slot, frontURL)
 		},
 		KineFor:  func(slot string) string { return p.KineURL(app.KineOf(slot)) },
-		Backup:   p.storeBackup(),
+		Backup:   p.storeBackup(o.Retention, log),
 		Start:    start,
 		Retire:   retire,
 		Abort:    abort,
