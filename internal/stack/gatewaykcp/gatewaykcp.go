@@ -371,6 +371,30 @@ func (g *gateway) rootVault(ctx context.Context, rec devinstance.Record) (vaultm
 	}
 }
 
+func (g *gateway) applyRoot(ctx context.Context, rec devinstance.Record, vcfg vaultmain.Config) (vaultmain.RootAccess, error) {
+	deadline := time.Now().Add(VaultTimeout)
+	for {
+		access, err := g.rootVault(ctx, rec)
+		if err != nil {
+			return access, err
+		}
+		err = vaultmain.ApplyRoot(ctx, access, vcfg, g.c.Log.With("component", "apply-root"))
+		if err == nil {
+			return access, nil
+		}
+		if time.Now().After(deadline) {
+			return access, fmt.Errorf("gatewaykcp: apply-root as client %s: %w", vaultlayout.RootClient, err)
+		}
+		g.c.log().Warn("apply-root did not reach the root vault; its status may name a process that is gone while the core places it again",
+			"address", access.Address, "err", err.Error())
+		select {
+		case <-ctx.Done():
+			return access, ctx.Err()
+		case <-time.After(4 * Poll):
+		}
+	}
+}
+
 func (g *gateway) activeSlotRoot() string {
 	s, err := kcpserver.ReadSlots(g.l.SlotsFile())
 	if err != nil || s.Active == "" {
@@ -400,16 +424,13 @@ func (g *gateway) members(ctx context.Context, rec devinstance.Record) error {
 	if err := g.defaults(env, rec, cert, key); err != nil {
 		return err
 	}
-	access, err := g.rootVault(ctx, rec)
-	if err != nil {
-		return err
-	}
 	vcfg := vaultmain.Config{KCPKubeconfig: rec.AdminKubeconfig, KCPRootDir: g.activeSlotRoot(), Workspace: appctl.DefaultWorkspace,
 		Server: vaultlayout.RootServerName, DeviceKeyAudience: env.get("SOCIALWEB_GATEWAY_DEVICE_KEY_AUDIENCE"),
 		DevkeyRegistry: env.get("SOCIALWEB_GATEWAY_DEVKEY_REGISTRY"), DeviceKeyExecEnvName: env.get("SOCIALWEB_GATEWAY_DEVICE_KEY_EXEC_ENV_NAME"),
 		TLSCert: cert, TLSKey: key}
-	if err := vaultmain.ApplyRoot(ctx, access, vcfg, g.c.Log.With("component", "apply-root")); err != nil {
-		return fmt.Errorf("gatewaykcp: apply-root as client %s: %w", vaultlayout.RootClient, err)
+	access, err := g.applyRoot(ctx, rec, vcfg)
+	if err != nil {
+		return err
 	}
 	log.Info("the root vault holds the root layout", "address", access.Address)
 	if g.c.BootstrapCluster != "" {
