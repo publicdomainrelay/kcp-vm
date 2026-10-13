@@ -11,7 +11,6 @@
     "jsr:@hono/hono@*": "4.12.28",
     "jsr:@hono/hono@4": "4.12.28",
     "jsr:@hono/hono@^4.6.0": "4.12.28",
-    "jsr:@libs/qrcode@2": "2.0.1",
     "jsr:@std/assert@1": "1.0.19",
     "jsr:@std/assert@^1.0.19": "1.0.19",
     "jsr:@std/bytes@^1.0.6": "1.0.6",
@@ -131,9 +130,6 @@
     },
     "@hono/hono@4.13.13": {
       "integrity": "dec817b8600fc2835c259d875a69e849a706f6d25e8d0643d75c97f7d0afcdf8"
-    },
-    "@libs/qrcode@2.0.1": {
-      "integrity": "04a90d388400892ada9cdc95b3257466f319050e8f1d747d3d629e51e39d6eaf"
     },
     "@std/assert@1.0.19": {
       "integrity": "eaada96ee120cb980bc47e040f82814d786fe8162ecc53c91d8df60b8755991e",
@@ -2048,7 +2044,6 @@
           "jsr:@publicdomainrelay/did-plc@0",
           "jsr:@publicdomainrelay/hono-factory-compute-provider-kcp@0",
           "jsr:@publicdomainrelay/identity-prompt-kcp@0",
-          "jsr:@publicdomainrelay/identity-prompt-tty@0",
           "jsr:@publicdomainrelay/logger@0",
           "jsr:@publicdomainrelay/market-atproto@0",
           "jsr:@publicdomainrelay/market-bidder-abc@0",
@@ -2071,7 +2066,7 @@
           "jsr:@publicdomainrelay/openbao-server-kcp@0",
           "jsr:@publicdomainrelay/policy-engine-cli-options@0",
           "jsr:@publicdomainrelay/rbac-atproto@0",
-          "jsr:@publicdomainrelay/requester-xrpc@0",
+          "jsr:@publicdomainrelay/relay-visibility-xrpc@0",
           "jsr:@publicdomainrelay/serve@0",
           "jsr:@publicdomainrelay/utils-attestation-key@0",
           "npm:@atproto/crypto@0.5"
@@ -2092,14 +2087,6 @@
       },
       "ts/atproto-market/lib/identity-prompt-memory": {
         "dependencies": [
-          "jsr:@publicdomainrelay/identity-prompt-abc@0",
-          "jsr:@publicdomainrelay/socialweb-computer-k8s-api@0"
-        ]
-      },
-      "ts/atproto-market/lib/identity-prompt-tty": {
-        "dependencies": [
-          "jsr:@libs/qrcode@2",
-          "jsr:@publicdomainrelay/atproto-oauth-helpers@0",
           "jsr:@publicdomainrelay/identity-prompt-abc@0",
           "jsr:@publicdomainrelay/socialweb-computer-k8s-api@0"
         ]
@@ -2181,6 +2168,11 @@
           "jsr:@publicdomainrelay/trust-graph-abc@0"
         ]
       },
+      "ts/atproto-market/lib/relay-visibility-xrpc": {
+        "dependencies": [
+          "jsr:@publicdomainrelay/logger@0"
+        ]
+      },
       "ts/atproto-market/lib/requester-xrpc": {
         "dependencies": [
           "jsr:@publicdomainrelay/atproto-repo-abc@0",
@@ -2196,6 +2188,7 @@
           "jsr:@publicdomainrelay/market-common@0",
           "jsr:@publicdomainrelay/market-lexicons@0",
           "jsr:@publicdomainrelay/policy-engine-evaluator@0",
+          "jsr:@publicdomainrelay/relay-visibility-xrpc@0",
           "jsr:@publicdomainrelay/requester-abc@0",
           "jsr:@publicdomainrelay/serve@0",
           "npm:@atproto/common@0.5",

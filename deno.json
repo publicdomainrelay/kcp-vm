@@ -82,7 +82,7 @@
     "./ts/atproto-market/lib/identity-prompt-kcp",
     "./ts/atproto-market/lib/compute-contract-kcp",
     "./ts/atproto-market/lib/identity-prompt-memory",
-    "./ts/atproto-market/lib/identity-prompt-tty",
+    "./ts/atproto-market/lib/relay-visibility-xrpc",
     "./ts/atproto-market/lib/market-identity-memory",
     "./ts/atproto-market/lib/market-identity-vault-file",
     "./ts/atproto-market/lib/market-identity-vault-openbao",

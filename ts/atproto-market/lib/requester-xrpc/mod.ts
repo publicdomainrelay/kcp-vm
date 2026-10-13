@@ -37,7 +37,7 @@ import type {
   SshSessionProvider,
   SubmittedComputeEvent,
 } from "@publicdomainrelay/requester-abc";
-import type { LoggerInterface, StructuredLoggerInterface } from "@publicdomainrelay/logger";
+import type { StructuredLoggerInterface } from "@publicdomainrelay/logger";
 import type { ServeHandle, IngressRef } from "@publicdomainrelay/serve";
 import { ASSOCIATE_CONFIRM_NSID, BADGE_BLUE_KEYS_NSID } from "@publicdomainrelay/market-lexicons";
 import { verifyServiceAuth } from "@publicdomainrelay/market-atproto";
@@ -76,97 +76,8 @@ export interface RequesterPDSImpl extends RequesterPDS {
   api: RepoApi;
 }
 
-/**
- * Relay visibility result -- whether at least one relay that supports
- * listReposByCollection has indexed the bidder's offering.
- */
-export interface RelayVisibilityResult {
-  ok: boolean;
-  /** Relays that support listReposByCollection (returned 200, not 404). */
-  capableRelays: string[];
-  /** Relays that returned the bidder's DID in the collection index. */
-  indexedBy: string[];
-  /** Relays that failed probing or don't support the endpoint. */
-  failures: Array<{ url: string; reason: string }>;
-}
-
-/**
- * Verify the bidder's offering is discoverable through at least one relay
- * that supports listReposByCollection. Probes each relay to detect capability
- * (200 = supported, 404 = skip), then polls capable relays until the bidder's
- * DID appears in the collection index or the poll budget expires.
- *
- * Does NOT call requestCrawl -- registration is handled by the caller
- * (hono-bidder's registerPdsWithRelay). This function runs after beginServe()
- * when the offering record exists in the PDS repo.
- */
-export async function verifyRelayVisibility(opts: {
-  relayUrls: string[];
-  bidderDid: string;
-  collection: string;
-  log?: LoggerInterface;
-  pollTimeoutMs?: number;
-  pollIntervalMs?: number;
-}): Promise<RelayVisibilityResult> {
-  const { relayUrls, bidderDid, collection, log, pollTimeoutMs = 15_000, pollIntervalMs = 2_000 } = opts;
-  const failures: RelayVisibilityResult["failures"] = [];
-
-  // Phase 1: Probe which relays support listReposByCollection.
-  // limit=1000 so a repo whose DID sorts past the default page size (50) is
-  // still returned — a lexicographically-late bidder DID otherwise falls on a
-  // later page and the check never sees it.
-  const collectionPath = `/xrpc/com.atproto.sync.listReposByCollection?collection=${encodeURIComponent(collection)}&limit=1000`;
-  const capableRelays: string[] = [];
-  for (const url of relayUrls) {
-    try {
-      const res = await fetch(`${url.replace(/\/+$/, "")}${collectionPath}`);
-      if (res.ok) {
-        capableRelays.push(url);
-        log?.info("relay_capable", { url });
-      } else if (res.status === 404) {
-        log?.info("relay_no_collection_support", { url });
-        failures.push({ url, reason: "listReposByCollection not supported (404)" });
-      } else {
-        failures.push({ url, reason: `HTTP ${res.status}` });
-      }
-    } catch (err) {
-      failures.push({ url, reason: String(err) });
-    }
-  }
-
-  if (capableRelays.length === 0) {
-    log?.warn("relay_no_capable_relays", { total: relayUrls.length, failures });
-    return { ok: false, capableRelays: [], indexedBy: [], failures };
-  }
-  log?.info("relay_capable_relays", { count: capableRelays.length, relays: capableRelays });
-
-  // Phase 2: Poll capable relays until bidder's DID appears
-  const deadline = Date.now() + pollTimeoutMs;
-  const indexedBy: string[] = [];
-  while (Date.now() < deadline && indexedBy.length === 0) {
-    for (const url of capableRelays) {
-      try {
-        const res = await fetch(`${url.replace(/\/+$/, "")}${collectionPath}`);
-        if (!res.ok) continue;
-        const body = await res.json() as { repos?: Array<{ did: string }> };
-        if (body.repos?.some((r) => r.did === bidderDid)) {
-          indexedBy.push(url);
-        }
-      } catch { /* probe failed, try next relay */ }
-    }
-    if (indexedBy.length === 0) {
-      await new Promise((r) => setTimeout(r, pollIntervalMs));
-    }
-  }
-
-  const ok = indexedBy.length > 0;
-  if (!ok) {
-    log?.warn("relay_visibility_timeout", { capableRelays, pollTimeoutMs, failures });
-  } else {
-    log?.info("relay_visibility_confirmed", { indexedBy, capableRelays });
-  }
-  return { ok, capableRelays, indexedBy, failures };
-}
+export { verifyRelayVisibility } from "@publicdomainrelay/relay-visibility-xrpc";
+export type { RelayVisibilityResult } from "@publicdomainrelay/relay-visibility-xrpc";
 
 // ---------------------------------------------------------------------------
 // createRequesterPDS -- adapted from hono-bidder pattern + reference server.ts

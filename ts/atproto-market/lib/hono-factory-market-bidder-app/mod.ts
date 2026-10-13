@@ -23,7 +23,7 @@ import type { LocalPDSAgent } from "@publicdomainrelay/atproto-helpers";
 import { explicitRelayUrls, isLocalMarketNetwork, splitHostPort } from "@publicdomainrelay/market-network-common";
 import type { MarketNetwork } from "@publicdomainrelay/market-network-common";
 import { installMarketNetworkFetch } from "@publicdomainrelay/market-network-fetch";
-import { callbackRef, cliIdentityMode, cliMarketIdentity, vaultRefs } from "@publicdomainrelay/market-identity-abc";
+import { vaultRefs } from "@publicdomainrelay/market-identity-abc";
 import type {
   BrowserOAuthClient,
   IdentityPrompt,
@@ -39,7 +39,6 @@ import {
 import type { MarketIdentityHandle } from "@publicdomainrelay/market-identity-atproto";
 import { createMemoryIdentityVault } from "@publicdomainrelay/market-identity-memory";
 import { createKcpIdentityPrompt } from "@publicdomainrelay/identity-prompt-kcp";
-import { createTtyIdentityPrompt } from "@publicdomainrelay/identity-prompt-tty";
 import { createOpenBaoIdentityVault } from "@publicdomainrelay/market-identity-vault-openbao";
 import { createOpenBaoServerResolver } from "@publicdomainrelay/openbao-server-kcp";
 import type { ResolvedOpenBaoServer } from "@publicdomainrelay/openbao-server-kcp";
@@ -49,7 +48,7 @@ import { oauthClientMetadata } from "@publicdomainrelay/atproto-oauth-helpers";
 import { createBadgeBlueKeysRecord, loadOrGenerateKeypair } from "@publicdomainrelay/market-atproto";
 import { OFFERING_NSID } from "@publicdomainrelay/market-common";
 import { BIDDER_OAUTH_SCOPE } from "@publicdomainrelay/oauth-scope";
-import { verifyRelayVisibility } from "@publicdomainrelay/requester-xrpc";
+import { verifyRelayVisibility } from "@publicdomainrelay/relay-visibility-xrpc";
 import { createDefaultATProtoEventStreamsClient } from "@publicdomainrelay/atproto-event-streams-client";
 import { createPlcDirectoryClient } from "@publicdomainrelay/did-plc";
 import type { ComputeAtproto } from "@publicdomainrelay/compute-provider-abc";
@@ -62,9 +61,10 @@ import { createRbacProvisioner } from "@publicdomainrelay/rbac-atproto";
 import { Secp256k1Keypair } from "@atproto/crypto";
 import { loadOrCreateAttestationKeyHex } from "@publicdomainrelay/utils-attestation-key";
 
-export type MarketBidderIdentityPromptSpec =
-  | { kind: "kcp"; server: string; workspace: string; tokenFile?: string; caCertFile?: string }
-  | { kind: "tty"; mode?: string; oauth?: boolean; oauthQr?: boolean; skipAssociation?: boolean };
+export type MarketBidderIdentityPromptSpec = { kind: "kcp"; server: string; workspace: string; tokenFile?: string; caCertFile?: string };
+
+export const BIDDER_SIGN_IN_ONLY_THROUGH_KCP =
+  "the bidder signs in only through its MarketIdentity object in its own kcp; start it with socialweb-computer run bidder";
 
 export interface MarketBidderOpenBaoServerRef {
   name: string;
@@ -179,11 +179,6 @@ const AUTO_REFRESH_THRESHOLD_MS = 3_600_000;
 type GuestContractEntry = { receiptKey: string; receiptUri: string; receiptCid: string; submitEventUrl?: string };
 type Atproto = Awaited<ReturnType<typeof createATProto>>;
 
-function loopbackPort(redirectUri: string | undefined): number {
-  const m = (redirectUri ?? "").match(/^https?:\/\/[^/]+:(\d+)/);
-  return m ? parseInt(m[1]) : 0;
-}
-
 function guestTlsPortOf(network: MarketNetwork): number | undefined {
   if (!network.guestTlsUrl) return undefined;
   const port = new URL(network.guestTlsUrl).port;
@@ -250,7 +245,6 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
   const ingressKeyDir = spec.market.ingressKeyDir || (contractStoreDir ? `${contractStoreDir}/ingress` : undefined);
 
   let identityHandle: MarketIdentityHandle | undefined;
-  let ttyPrompt: ReturnType<typeof createTtyIdentityPrompt> | undefined;
   let bidder: MarketBidder | undefined;
   let atproto: Atproto | undefined;
   let keypair: Secp256k1Keypair | undefined;
@@ -285,8 +279,8 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
     })()
     : undefined;
 
-  function kcpPrompt(): IdentityPrompt | undefined {
-    if (id.prompt.kind !== "kcp") return undefined;
+  function kcpPrompt(): IdentityPrompt {
+    if (id.prompt?.kind !== "kcp" || !id.prompt.server) throw new Error(BIDDER_SIGN_IN_ONLY_THROUGH_KCP);
     return createKcpIdentityPrompt({
       server: id.prompt.server,
       workspace: id.prompt.workspace,
@@ -441,42 +435,17 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
   }
 
   async function signIn(): Promise<{ agent: unknown; attestationKp: Awaited<ReturnType<typeof loadOrGenerateKeypair>> }> {
-    const fromKcp = ports.identityPrompt ? undefined : kcpPrompt();
-    const cliMode: MarketIdentityMode | undefined = ports.identityPrompt || fromKcp || id.prompt.kind !== "tty" ? undefined : cliIdentityMode({
-      mode: id.prompt.mode,
-      oauth: id.prompt.oauth,
-      oauthQr: id.prompt.oauthQr,
-      handle: id.handle,
-      password: !!id.password,
-      vault: !!id.vault,
-    });
-    logger.info("bidder_identity_mode", { mode: cliMode ?? "kcp", name: id.name });
+    const prompt: IdentityPrompt = ports.identityPrompt ?? kcpPrompt();
+    logger.info("bidder_identity_mode", { mode: "kcp", name: id.name });
     if (resolveVaultServer) {
       const r = await resolveVaultServer();
       if (r.kvMount !== vaultMount) logger.info("bidder_vault_mount", { option: vaultMount, openbaoserver: r.kvMount });
       vaultMount = r.kvMount;
     }
 
-    let identityVault: IdentityVault = createMemoryIdentityVault();
-    let refs = vaultRefs(id.name, { mode: cliMode ?? "localRepo" }, vaultMount);
-    if (cliMode && id.prompt.kind === "tty") {
-      ttyPrompt = createTtyIdentityPrompt({
-        identity: cliMarketIdentity(id.name, {
-          mode: cliMode,
-          handle: id.handle,
-          pdsUrl: cliMode === "pdsAccount" ? id.pdsUrl : undefined,
-          association: id.prompt.skipAssociation ? "Skip" : "RequireApproval",
-        }),
-        logger,
-        callbackPort: loopbackPort(id.oauth?.redirectUri),
-        deliverCallback: (params) => identityVault.write(callbackRef(refs.session), params),
-      });
-    }
-    const prompt: IdentityPrompt = ports.identityPrompt ?? fromKcp ?? ttyPrompt!;
-
     const identitySpec = (await identityObject(prompt)).spec;
     const mode: MarketIdentityMode = identitySpec.mode;
-    refs = vaultRefs(id.name, identitySpec, vaultMount);
+    const refs = vaultRefs(id.name, identitySpec, vaultMount);
 
     const baseVault = baseIdentityVault(mode);
     if (mode === "pdsAccount" && id.password && !id.vault && !ports.identityVault) {
@@ -486,7 +455,7 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
     if (keysOutOfFiles && (id.oauth?.sessionFile || id.oauth?.sessionPath || id.privateKeyHexPath)) {
       logger.warn("bidder_key_files_ignored", { hint: "with an OpenBao vault the repo key and the OAuth session live only in the vault" });
     }
-    identityVault = id.oauth?.sessionFile && !keysOutOfFiles
+    const identityVault: IdentityVault = id.oauth?.sessionFile && !keysOutOfFiles
       ? createSessionFileIdentityVault({ base: baseVault, ref: refs.session, path: id.oauth.sessionFile })
       : baseVault;
     if (id.vault || ports.identityVault) keyVault = baseVault;
@@ -563,21 +532,7 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
     });
 
     const handle = identityHandle;
-    const ready = fromKcp || ports.identityPrompt
-      ? await handle.ready()
-      : await Promise.race([
-        handle.ready(),
-        new Promise<never>((_, reject) => {
-          const poll = setInterval(async () => {
-            const obj = await prompt.get(id.name);
-            if (obj?.status?.phase === "Failed") {
-              clearInterval(poll);
-              reject(new Error(`sign-in failed: ${obj.status.message ?? "unknown"}`));
-            }
-          }, 200);
-          handle.ready().finally(() => clearInterval(poll));
-        }),
-      ]);
+    const ready = await handle.ready();
 
     let agent: unknown;
     if (ready.repo && localRepoAgent) {
@@ -875,7 +830,6 @@ export function createMarketBidderApp(spec: MarketBidderAppSpec, ports: MarketBi
   async function shutdown(): Promise<void> {
     bidder?.shutdown();
     for (const s of serves) s.shutdown();
-    ttyPrompt?.stop();
     await identityHandle?.stop().catch(() => {});
   }
 
