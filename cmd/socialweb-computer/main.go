@@ -70,6 +70,7 @@ func builtVerbs() map[string]builtVerb {
 		"dev restart":            {append([]string{"instance", "state-dir", "binary", "ready-timeout"}, devOnly(tsbundle.SourceRootOption)...), runDevRestart},
 		"dev gc":                 {[]string{"asset-cache", "state-dir", "asset-gc-window"}, runDevGC},
 		"apply":                  {applyOptions, runApply},
+		"run bidder":             {bidderOptions, runBidder},
 		"run request":            {requestOptions, runRequest},
 		"run request list":       {[]string{"state-dir", "json"}, runRequestList},
 		"run request release":    {requestOptions, runRequestRelease},

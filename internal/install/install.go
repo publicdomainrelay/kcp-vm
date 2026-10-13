@@ -29,6 +29,7 @@ var templates embed.FS
 const (
 	AccountGateway  = "socialweb"
 	AccountBidder   = "swc-bidder"
+	BidderProfile   = "prod-qr"
 	StateRoot       = "/var/lib/socialweb-computer"
 	DefaultVMSlots  = 256
 	SubidFloor      = 100000
@@ -826,6 +827,11 @@ func (in *installer) config() error {
 		cfg["unit-prefix"] = in.o.UnitPrefix
 	} else {
 		delete(cfg, "unit-prefix")
+	}
+	if in.o.Role == hostcontract.RoleBidder {
+		if s, _ := cfg["profile"].(string); s == "" {
+			cfg["profile"] = BidderProfile
+		}
 	}
 	if in.o.Role == hostcontract.RoleGateway {
 		for k, v := range GatewayListen {

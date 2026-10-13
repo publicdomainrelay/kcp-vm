@@ -2,6 +2,8 @@ bidder:
   kind: MarketBidder
   profile: market-network
   policy: open
+  kcp:
+    guestImageSource: ""
 gateway:
   kind: Gateway
   profile: market-network

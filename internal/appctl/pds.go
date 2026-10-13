@@ -199,15 +199,26 @@ func (ctl *Controller) vaultReaderToken(ctx context.Context, dir, account string
 }
 
 func (ctl *Controller) bidderVault(ctx context.Context, spec v1alpha1.MarketBidderSpec, stateDir string) (manifests.BidderVault, error) {
-	password, vault, err := ctl.bidderPassword(ctx)
-	if err != nil {
-		return vault, err
+	var vault manifests.BidderVault
+	if spec.Identity.Mode == v1alpha1.MarketIdentityModePdsAccount {
+		password, v, err := ctl.bidderPassword(ctx)
+		if err != nil {
+			return v, err
+		}
+		did, err := EnsurePdsAccount(ctx, spec.Identity.PdsUrl, spec.Network.CaBundleRef, spec.Identity.Handle, password)
+		if err != nil {
+			return v, err
+		}
+		ctl.c.log().Info("the bidder's PDS account", "handle", spec.Identity.Handle, "pds", spec.Identity.PdsUrl, "did", did)
+		vault = v
+	} else {
+		_, st, c, err := ctl.vaultRefs(ctx, BidderVaultServer, BidderVaultClient)
+		if err != nil {
+			return vault, err
+		}
+		vault = manifests.BidderVault{Server: BidderVaultServer, Client: BidderVaultClient, CA: fileRef(st.Refs.CA),
+			ClientDir: filepath.Dir(fileRef(c.ClientCert))}
 	}
-	did, err := EnsurePdsAccount(ctx, spec.Identity.PdsUrl, spec.Network.CaBundleRef, spec.Identity.Handle, password)
-	if err != nil {
-		return vault, err
-	}
-	ctl.c.log().Info("the bidder's PDS account", "handle", spec.Identity.Handle, "pds", spec.Identity.PdsUrl, "did", did)
 	tokenPath, caPath := BidderTokenPaths(stateDir)
 	vault.KcpServer = strings.TrimSuffix(ctl.restCfg.Host, "/") + "/clusters/" + ctl.c.workspace()
 	vault.TokenFile, vault.KcpCAFile = tokenPath, caPath

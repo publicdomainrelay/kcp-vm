@@ -29,6 +29,7 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/pgunit"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/portallocator"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/stack/bidder"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/stack/denoruntime"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/versions"
 )
@@ -434,7 +435,8 @@ func bringUp(ctx context.Context, a *app, vals clicfg.Values, host bool) (upRepo
 	}
 	var networkSpec v1alpha1.MarketNetworkSpec
 	if composes {
-		if networkSpec, err = appctl.NetworkSpec(l.ID, vals.Int("bidders"), vals.Bool("with-gateway"), networkOverlay); err != nil {
+		vm := appctl.BidderVMDefaults{GuestImageSource: vals.String("guest-image-source"), VmHostBackend: vals.String("vm-host-backend")}
+		if networkSpec, err = appctl.NetworkSpec(l.ID, vals.Int("bidders"), vals.Bool("with-gateway"), networkOverlay, vm); err != nil {
 			return upReport{}, a.fail(exitRefused, "dev up: %v", err)
 		}
 	}
@@ -911,7 +913,7 @@ func runDevCore(ctx context.Context, a *app, vals clicfg.Values, rest []string) 
 		return a.fail(exitFailed, "internal dev-core: %v", err)
 	}
 	defer m.Close()
-	cfg := devcore.Config{Layout: rec.Layout, ReadyTimeout: timeout, Log: a.log, DenoRuntime: &deno}
+	cfg := devcore.Config{Layout: rec.Layout, ReadyTimeout: timeout, Log: a.log, DenoRuntime: &deno, SignInGuard: bidder.CheckSignIn}
 	if rec.VM != nil {
 		rt, vm, err := a.instanceVMRuntime(ctx, rec)
 		if err != nil {

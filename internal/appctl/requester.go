@@ -147,12 +147,12 @@ func IdentitySpecOf(id v1alpha1.ApplicationIdentity) v1alpha1.MarketIdentitySpec
 	return s
 }
 
-func (ctl *Controller) ensureIdentity(ctx context.Context, id v1alpha1.ApplicationIdentity) error {
+func (ctl *Controller) ensureIdentity(ctx context.Context, name string, id v1alpha1.ApplicationIdentity) error {
 	ri, err := ctl.client(ctl.c.workspace(), MarketIdentityGVR)
 	if err != nil {
 		return err
 	}
-	u, err := toUnstructured(&v1alpha1.MarketIdentity{ObjectMeta: metav1.ObjectMeta{Name: RequesterIdentity}, Spec: IdentitySpecOf(id)}, "MarketIdentity")
+	u, err := toUnstructured(&v1alpha1.MarketIdentity{ObjectMeta: metav1.ObjectMeta{Name: name}, Spec: IdentitySpecOf(id)}, "MarketIdentity")
 	if err != nil {
 		return err
 	}
@@ -163,7 +163,7 @@ func (ctl *Controller) ensureIdentity(ctx context.Context, id v1alpha1.Applicati
 		return err
 	}
 	force := true
-	_, err = ri.Patch(ctx, RequesterIdentity, types.ApplyPatchType, body, metav1.PatchOptions{FieldManager: FieldManager, Force: &force})
+	_, err = ri.Patch(ctx, name, types.ApplyPatchType, body, metav1.PatchOptions{FieldManager: FieldManager, Force: &force})
 	return err
 }
 
@@ -268,7 +268,7 @@ func (ctl *Controller) reconcileRequester(ctx context.Context, u *unstructured.U
 			st.Message = err.Error()
 			return ctl.writeStatus(ctx, MarketRequesterGVR, o.Name, st)
 		}
-		if err := ctl.ensureIdentity(ctx, o.Spec.Identity); err != nil {
+		if err := ctl.ensureIdentity(ctx, RequesterIdentity, o.Spec.Identity); err != nil {
 			st.Message = "its MarketIdentity: " + err.Error()
 			return ctl.writeStatus(ctx, MarketRequesterGVR, o.Name, st)
 		}

@@ -28,7 +28,7 @@ copied onto it, and reads back only the child's root status (did, listeners,
 phase). That copy is the only way a child learns the network: no child reads the
 network's kcp, and the child's DNS shim resolves only its own application's
 names. The child's core renders its root object into components
-(`deploy/apps/market-bidder/<profile>.values.yaml` through the service template:
+(`deploy/apps/market-bidder/bidder.values.yaml` through the service template:
 the bidder DenoPod in the child's `root:app`).
 
 The network value names loopback addresses (`https://127.0.0.1:<port>`,
@@ -134,7 +134,7 @@ rather than restarting it.
 
 The bidder is the exception: it declares no `--tls-cert-file` / `--tls-key-file`
 option and its parser rejects unknown flags, so
-`deploy/apps/market-bidder/market-network.values.yaml` names `tls: trust` and
+`deploy/apps/market-bidder/bidder.values.yaml` names `tls: trust` and
 `trust: [<caBundleRef>]`: the template writes only `ca.pem` (its own kcp's CA
 plus the network's CA bundle) and never a leaf. The dispatcher is `tls: trust`
 too.
@@ -149,7 +149,7 @@ insecure-HTTP escape hatch, and now it has nothing to escape from.
 
 Every service DenoPod (plc, relay, dispatcher, both PDSes, every bidder) is
 rendered from `deploy/denopods/service.yaml`. The files 20, 30, 35, 40 and 60
-here and `deploy/apps/market-bidder/market-network.values.yaml` are its values,
+here and `deploy/apps/market-bidder/bidder.values.yaml` are its values,
 not DenoPods:
 
 ```
@@ -171,8 +171,9 @@ the user (its `HOME` is its own state dir, `TMPDIR` is under it), `PORT_FILE`,
 
 Permissions are explicit. `-A` is refused; read and write are the source root,
 the run directory, the state dir and the paths the values name; `--allow-run`
-and `--allow-ffi` render only with a reason (the firecracker bidder names
-its VM runtime command, ssh-keygen, bash and deno); every service is denied read and
+and `--allow-ffi` render only with a reason (the bidder names bash and deno, for
+the gha-lite policy engine; its provider is compute-provider-kcp and it verifies ssh
+signatures in TypeScript); every service is denied read and
 write of `/dev/kvm` and `$XDG_RUNTIME_DIR`. `internal/manifests` (`service.go`)
 checks all of this when it renders.
 
@@ -186,27 +187,40 @@ A market network is driven by `socialweb-computer` alone:
 
 ```bash
 socialweb-computer dev up --instance mn1 --profile market-network --bidders 2 [--with-gateway] \
-  --app-values app-values.yaml
+  --guest-image-source file:///var/tmp/guest-image --vm-host-backend systemd-user
 socialweb-computer dev status --instance mn1
 socialweb-computer run request --network mn1 --secrets secrets.json --exec 'cat /root/x'
 socialweb-computer dev down --instance mn1
 ```
 
-`--app-values` names the bidders' provider. A bidder on its own kcp (`spec.kcp`:
-the ComputeVM controller in the bidder's own core boots each guest as a VM unit,
-and the bidder runs `--compute-provider-kcp`):
+Every bidder's provider is compute-provider-kcp (`spec.kcp`: the ComputeVM
+controller in the bidder's own core boots each guest as a VM unit, and the bidder
+runs `--compute-provider-kcp`); `--guest-image-source` and `--vm-host-backend` fill
+it. `--app-values` still overrides the NetworkApp fields, for example the owner
+handle of the bidders' ComputeVMs:
 
 ```json
-{"bidder": {"kcp": {"guestImageSource": "file:///var/tmp/guest-image", "vmHostBackend": "systemd-user",
-  "handle": "{app}.mn1.bob.test"}}}
+{"bidder": {"kcp": {"handle": "{app}.mn1.bob.test"}}}
 ```
 
 `{app}` becomes the bidder's name; make the handle unique per worktree on a shared
 account. `dev up` then also needs the VM runtime's executables
 (`--userns-stage-path`, `--pasta-path`, `--vmexec-path`, `--firecracker-path`, or
 their `SOCIALWEB_*_PATH` variables) and runs as the account with the subordinate id
-range. The firecracker provider takes `{"bidder": {"firecracker": {"workRoot": ...,
-"vmruntimeCommand": [...]}}}` instead.
+range. `bidder.firecracker` is refused: the bidder DenoPod runs no VM runtime command.
+
+A bidder is a child application of the network too (`--bidders 0` starts a
+network with none):
+
+```bash
+socialweb-computer run bidder --host-backend proc --profile market-network --network mn1 \
+  --handle mybidder-1.bob.test --guest-image-source file:///var/tmp/guest-image --vm-host-backend systemd-user
+```
+
+`run bidder --network` adds a `MarketBidder` entry to `spec.apps[]` (its name is the
+handle's first label), waits until the network reports it Ready with its did and
+returns; `--fg` stays and removes it from the network on Ctrl-C. `--handle` names
+the owner of its ComputeVMs; its atproto handle in the network is `<name>.bob.test`.
 
 N market networks on one host are N dev instances: every listener binds port 0,
 so two `dev up --instance` with different names never collide.

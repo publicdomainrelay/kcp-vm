@@ -1,0 +1,23 @@
+name: bidder
+entry: hono-bidder
+stateDir: "{{.StateDir}}"
+serviceAccount: deno-runner
+tls: trust
+trust: [{{.Trust}}]
+args: ["--market-identity-name", "bidder", "--market-identity-kcp-server", "{{.Kcp.Server}}", "--market-identity-kcp-workspace", "{{.Kcp.Workspace}}", "--market-identity-kcp-token-file", "{{.Kcp.TokenFile}}", "--market-identity-kcp-ca-cert-file", "{{.Kcp.CAFile}}", "--identity-vault-openbao-server", "{{.Vault.Server}}", "--identity-vault-openbao-client", "{{.Vault.Client}}", "--identity-vault-kcp-server", "{{.Vault.KcpServer}}", "--identity-vault-kcp-token-file", "{{.Vault.TokenFile}}", "--identity-vault-kcp-ca-cert-file", "{{.Vault.KcpCAFile}}", "--state-dir", "{{.StateDir}}", "--pds-state-path", "{{.StateDir}}/pds", "--serve-port", "0", "--relay-url", "{{.RelayUrls}}", "--plc-directory-url", "{{.PlcDirectoryUrl}}", "--ingress-proxy-host", "{{.IngressProxyHost}}", "--policy", "{{.Policy}}"{{.ProviderArgs}}, "--contract-store-dir", "{{.StateDir}}/contracts", "--guest-tls-port", "{{.GuestTLSPort}}"{{.ExtraArgs}}]
+env:
+  PORT: "0"
+  SERVE_PORT: "0"
+permissions:
+  net: true
+  env: true
+  sys: true
+  read: [{{.Read}}]
+  run:
+    allow: ["bash", "deno"]
+    reason: >-
+      the in-process policy engine runs a gha-lite policy workflow's run steps in bash and its actions as
+      deno subprocesses (deno is the pinned deno the template runs on)
+probe:
+  host: bidder.default.app.svc.kcp.local
+  path: /oauth-client-metadata.json

@@ -219,9 +219,25 @@ sets:
             for: Ready
 
   - name: market-bidder
-    summary: the components of a MarketBidder application in its own kcp - its own OpenBaoServer and the account that reads it in root, the root:app workspace and, per profile, the bidder DenoPod rendered from deploy/apps/market-bidder/<profile>.values.yaml (a phase named <component>@<profile> belongs to that profile only); applied by internal/appctl
+    summary: the components of a MarketBidder application in its own kcp - the MarketIdentity schema bound in root (the bidder signs in through its MarketIdentity bidder in every profile), its own OpenBaoServer and the account that reads it in root, the root:app workspace and, per profile (prod-qr, market-network, dev-local), the bidder DenoPod rendered from deploy/apps/market-bidder/bidder.values.yaml (a phase named <component>@<profile> belongs to that profile only); applied by internal/appctl (plan 0007 M5-RUN-BIDDER)
     values: MarketBidder
     phases:
+      - name: identity-schemas
+        workspace: root:socialweb-provider
+        files:
+          - path: marketidentity-apiresourceschema.yaml
+          - path: marketidentity-apiexport.yaml
+        after:
+          - kind: APIExport
+            name: marketidentities
+            for: IdentityValid
+      - name: identity-binding
+        workspace: root
+        files:
+          - path: apps/gateway/marketidentities-binding.yaml
+        after:
+          - kind: APIBinding
+            for: Ready
       - name: vault
         workspace: root
         files:
@@ -247,7 +263,17 @@ sets:
       - name: bidder@market-network
         workspace: root:app
         files:
-          - path: apps/market-bidder/market-network.values.yaml
+          - path: apps/market-bidder/bidder.values.yaml
+            template: denopods/service.yaml
+      - name: bidder@prod-qr
+        workspace: root:app
+        files:
+          - path: apps/market-bidder/bidder.values.yaml
+            template: denopods/service.yaml
+      - name: bidder@dev-local
+        workspace: root:app
+        files:
+          - path: apps/market-bidder/bidder.values.yaml
             template: denopods/service.yaml
 
   - name: gateway

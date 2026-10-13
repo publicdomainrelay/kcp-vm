@@ -47,7 +47,7 @@
     },
     "profile": {
       "type": "string",
-      "description": "Dev profile: quick (kine on sqlite + one kcp slot), prodlike (the gateway shape: a postgres unit, one kine per kcp slot on it, blue/green slots a and b behind the front) or market-network (a quick-shaped instance whose MarketNetwork root object runs the shared atproto services and composes child applications, each with its own kcp)",
+      "description": "Dev profile: quick (kine on sqlite + one kcp slot), prodlike (the gateway shape: a postgres unit, one kine per kcp slot on it, blue/green slots a and b behind the front) or market-network (a quick-shaped instance whose MarketNetwork root object runs the shared atproto services and composes child applications, each with its own kcp). run bidder: the MarketBidder profile, prod-qr (QR sign-in into the handle's real account, no PDS), market-network (the bidder's own account on the market network's PDS; needs --network) or dev-local (a local repo, the ephemeral-PDS mode)",
       "env": "SOCIALWEB_DEV_PROFILE"
     },
     "bidders": {
@@ -480,12 +480,12 @@
     },
     "handle": {
       "type": "string",
-      "description": "install bidder: the atproto handle(s) of the bidder instances, comma-separated; a re-run with another handle adds that instance. internal vm: the one bidder instance whose VMs these are. units roll kcp: the one bidder handle whose kcp restarts (unset: the gateway). dev up: makes the instance a bidder application instance whose core runs the ComputeVM controller for this handle",
+      "description": "install bidder: the atproto handle(s) of the bidder instances, comma-separated; a re-run with another handle adds that instance. internal vm: the one bidder instance whose VMs these are. units roll kcp: the one bidder handle whose kcp restarts (unset: the gateway). dev up: makes the instance a bidder application instance whose core runs the ComputeVM controller for this handle. run bidder: the bidder's atproto handle, which also owns its ComputeVMs (in a market network: default <name>.bob.test)",
       "env": "SOCIALWEB_HANDLE"
     },
     "vm-host-backend": {
       "type": "string",
-      "description": "dev up --handle: the placement backend of the VM units (systemd-user | proc); default the instance's own (proc). systemd-user places them in the account's user manager, which enforces their cgroup limits",
+      "description": "dev up --handle, dev up --profile market-network and run bidder: the placement backend of the VM units (systemd-user | proc); default the instance's own (proc). systemd-user places them in the account's user manager, which enforces their cgroup limits",
       "env": "SOCIALWEB_VM_HOST_BACKEND"
     },
     "vm-runtime-dir": {
@@ -495,7 +495,7 @@
     },
     "guest-image-source": {
       "type": "string",
-      "description": "internal vm and dev up --handle: file:// or https:// base the pinned guest image (vmlinux, rootfs.ext4, image.json) is fetched from once and verified by sha256",
+      "description": "internal vm, dev up --handle, dev up --profile market-network and run bidder: file:// or https:// base the pinned guest image (vmlinux, rootfs.ext4, image.json) is fetched from once and verified by sha256",
       "env": "SOCIALWEB_GUEST_IMAGE_SOURCE"
     },
     "vm-stop-grace": {
@@ -635,11 +635,11 @@
     },
     "network": {
       "type": "string",
-      "description": "run request: the market network instance (dev up --profile market-network) whose MarketNetwork hosts this invocation as a child application; unset, the invocation is a standalone requester instance under <state-dir>/requests"
+      "description": "run request and run bidder: the market network instance (dev up --profile market-network) whose MarketNetwork hosts this invocation or bidder as a child application; unset, a requester invocation is a standalone instance under <state-dir>/requests"
     },
     "name": {
       "type": "string",
-      "description": "run request: the invocation's name, a DNS label (default req-<UTC time>); release and resume take it as their argument"
+      "description": "run request: the invocation's name, a DNS label (default req-<UTC time>); release and resume take it as their argument. run bidder --network: the bidder's application name in the market network, a DNS label (default from the handle)"
     },
     "secrets": {
       "type": "string",
