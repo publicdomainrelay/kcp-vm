@@ -7083,6 +7083,40 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   clusterprovider and bidder logs hold no ssh command or session; the web app has no debug ssh path.
   Not closed here: a gateway's scale pass took 35 s to claim a node for a pending pod.
 
+- **Follow-ups to M6-BIDDER-UPGRADE and M6-NOSSH-JOIN: upgrade restarts an adopted account's bidder, a
+  dev build is refused, appctl re-applies a missing component, `dev up --with-gateway` runs a tenant
+  cluster, a node claim in about a second (2026-10-12).** `upgrade` looked for the enabled core units
+  under `<state-dir>/.config`, which is the home only for an account `install` created; for an adopted
+  account (swc-bidder's home is `/var/lib/socialweb-computer-bidder/host`) it switched `bin/current` and
+  restarted nothing. It now reads the invoking account's home from passwd and fails when it finds no
+  enabled core unit. Reading (stand-in account test-0005 adopted with home `/home/test-0005`, a guest
+  held through the RFP flow): the old binary switched `bin/current` and kept the bidder's InvocationID and
+  pid; the fixed one restarted it (new InvocationID, the new binary in `/proc/<pid>/exe`, the bidder
+  DenoPod started again 1.6 s later), the VM unit kept InvocationID 534d243d, firecracker pid 1099669 and start
+  ticks 7346380, and the guest's vm.delete was 200 afterwards. `install` and `upgrade` refuse a dev build
+  (exit 2) unless `--allow-dev-binary`. appctl records the DenoPods and HostProcesses each apply placed
+  and applies the components again on its normal pass when one is gone: the network's deleted plc DenoPod
+  was back 0.6 s later and Ready at 2.6 s, with the same core pid. `dev up --with-gateway` places the
+  gateway child as `serve gateway kcp --gateway-profile market-network` runs it (decided by the lead,
+  for plan 0010's G2-IT-SCALE-TO-ZERO and G2-IT-FAILOVER): the network writes its Gateway spec and an
+  owner account on alice's PDS, and the child brings up the tenant cluster `tenant` at zero nodes.
+  Defects found and closed on the way: a HostProcess placed through a parent dropped the unit's env files,
+  so the tenant cluster's dumbpipe links ran with a random key; a vault placed by a market-network
+  gateway did not trust the network CA (the core now writes the system roots plus the network CA and sets
+  `SSL_CERT_FILE` unless it is set); removing a child's state failed on the read-only TypeScript closure,
+  so `dev down` waited out its 3 min timeout and left the child's state (now 34 s, nothing left). The
+  35 s of M6-NOSSH-JOIN was mostly its proof script: the `kubectl apply` of the pod returned 32 s after
+  the reading's start. What the gateway itself waited on were two fixed polls: Provision declared the
+  node's policy in the cluster vault and waited for openbaoctl's 5 s ticker, and the web app listed
+  NodeClaims every 5 s. openbaoctl now also passes on a watch event that changes an OpenBaoServer's
+  generation, and the web app watches NodeClaims in each home workspace. Readings (`dev up --profile
+  market-network --bidders 1 --with-gateway`, UTC): dev up 107 s, tenant cluster Ready 112 s later; pod
+  applied at zero nodes 19:52:28.9, node policy in the vault 29.39, NodeClaim 29.41 (0.5 s), web app took
+  it 30.41, RFP submitted 30.91, bid 31.2, VM Running by 36.7, node Ready 19:53:03, pod Running 19:53:09;
+  before the watches the same span pod to NodeClaim read 6.8 s and 4 s. Pod deleted 19:53:10.9, the 2 min
+  hold, vm.delete 200 at 19:55:18.6, ComputeVM gone by 19:55:26; `dev down` 34 s, no child state, process
+  or VM unit left.
+
 ## 16. Vocabulary
 
 | | |
