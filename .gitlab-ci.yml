@@ -16,7 +16,7 @@ variables:
   GIT_CLEAN_FLAGS: -ffdx
 
 gate:
-  timeout: 30m
+  timeout: 15m
   before_script:
     - test -n "$HOME" && test "$(id -u)" != 0
     - export CI_STATE="$HOME/.tmp/ci"
@@ -36,13 +36,13 @@ gate:
     - export PATH="$(dirname "$DENO_BIN"):$PATH"
     - go version && deno --version | head -1
   script:
-    - timeout -k 10 300 go mod download
-    - timeout -k 10 300 deno install --frozen --node-modules-dir=none --quiet
-    - timeout -k 10 300 go build ./...
-    - timeout -k 10 300 go vet ./...
-    - timeout -k 10 300 deno task --quiet check
-    - timeout -k 10 600 deploy/check.sh --fast
+    - timeout -k 10 120 go mod download
+    - timeout -k 10 120 deno install --frozen --node-modules-dir=none --quiet
+    - timeout -k 10 120 go build ./...
+    - timeout -k 10 120 go vet ./...
+    - timeout -k 10 120 deno task --quiet check
+    - timeout -k 10 420 deploy/check.sh --fast
     - test -z "$(git status --porcelain)"
-    - timeout -k 10 600 go run ./cmd/socialweb-tsbundle -release -deno "$DENO_BIN" -out "$TMPDIR/tsb-out"
+    - timeout -k 10 180 go run ./cmd/socialweb-tsbundle -release -deno "$DENO_BIN" -out "$TMPDIR/tsb-out"
   after_script:
     - rm -rf "$HOME/.tmp/ci/tmp/$CI_JOB_ID"
