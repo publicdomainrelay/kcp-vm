@@ -5,7 +5,7 @@
 import { TID } from "@atproto/common";
 import { getPdsEndpoint } from "@atproto/common-web";
 import type { RepoApi } from "@publicdomainrelay/atproto-repo-abc";
-import { createRecordResolver, createRfpDispatcher, startOfferingRefresh, listRecordsPublic, listRecordsAll } from "@publicdomainrelay/market-atproto";
+import { createRecordResolver, createRfpDispatcher, startOfferingRefresh, listRecordsPublic, getRecordAt } from "@publicdomainrelay/market-atproto";
 import type { MarketServerDeps, OfferingRefreshHandle } from "@publicdomainrelay/market-atproto";
 import { createMarketFactory } from "@publicdomainrelay/hono-factory-market-atproto";
 import { RFP_NSID, VOUCH_NSID } from "@publicdomainrelay/market-common";
@@ -600,8 +600,7 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
             if (!doc) return;
             const pdsUrl = getPdsEndpoint(doc);
             if (!pdsUrl) return;
-            const records = await listRecordsAll(pdsUrl, e.did, ACCEPT_NSID);
-            const acceptRec = records.find((r) => r.uri === e.uri);
+            const acceptRec = await getRecordAt(pdsUrl, e.uri);
             if (!acceptRec) return;
             const value = acceptRec.value as Record<string, unknown>;
             const bidRef = value.bid as { uri?: string } | undefined;
@@ -642,8 +641,7 @@ export async function createMarketBidder(config: MarketBidderConfig): Promise<Ma
             if (!doc) return;
             const pdsUrl = getPdsEndpoint(doc);
             if (!pdsUrl) return;
-            const records = await listRecordsAll(pdsUrl, e.did, EVENT_NSID);
-            const eventRec = records.find((r) => r.uri === e.uri);
+            const eventRec = await getRecordAt(pdsUrl, e.uri);
             if (!eventRec) return;
             const value = eventRec.value as Record<string, unknown>;
             const payload = value.payload as { $type?: string; uri?: string; cid?: string } | undefined;

@@ -3,8 +3,11 @@ import { IdResolver } from "@atproto/identity";
 import { getPdsEndpoint } from "@atproto/common-web";
 import {
   createRecordResolver,
+  findRecord,
+  getRecordAt,
   listRecordsAll,
   listRecordsPublic,
+  scanRecords,
   verifyRecordSignatures,
   verifyRemoteProof,
 } from "@publicdomainrelay/market-atproto";
@@ -611,20 +614,16 @@ function openContractWatch(opts: {
           bestEffort(async () => {
             const pdsUrl = await pdsUrlOf(idResolver, e.did);
             if (!pdsUrl) return;
-            const records = await listRecordsAll(pdsUrl, e.did, RECEIPT_NSID, {
-              timeoutMs: 10_000,
+            const rec = await getRecordAt(pdsUrl, e.uri, { timeoutMs: 10_000 });
+            if (!rec) return;
+            const val = rec.value as Record<string, unknown>;
+            const acceptRef = val.accept as { uri?: string } | undefined;
+            if (!acceptRef?.uri) return;
+            discoveredReceipts.set(acceptRef.uri, {
+              receiptUri: rec.uri,
+              receiptCid: rec.cid || e.cid,
+              submitEventRef: val.submitEvent as string | undefined,
             });
-            for (const rec of records) {
-              if (rec.uri !== e.uri) continue;
-              const val = rec.value as Record<string, unknown>;
-              const acceptRef = val.accept as { uri?: string } | undefined;
-              if (!acceptRef?.uri) continue;
-              discoveredReceipts.set(acceptRef.uri, {
-                receiptUri: rec.uri,
-                receiptCid: rec.cid,
-                submitEventRef: val.submitEvent as string | undefined,
-              });
-            }
           });
         }
       },
@@ -696,11 +695,12 @@ function openContractWatch(opts: {
       try {
         const pdsUrl = await pdsUrlOf(idResolver, winnerDid);
         if (!pdsUrl) return;
-        const events = await listRecordsAll(pdsUrl, winnerDid, EVENT_NSID, { timeoutMs: 10_000 });
-        for (const event of events) {
-          if (terminatedSettled || (vmAddress && hostKeysSettled && until === "network")) return;
+        const settled = () => terminatedSettled || (vmAddress && hostKeysSettled && until === "network");
+        await scanRecords(pdsUrl, winnerDid, EVENT_NSID, async (event) => {
+          if (settled()) return true;
           await onWrappedEvent(pdsUrl, event as FetchedRecord);
-        }
+          return !!settled();
+        }, { timeoutMs: 10_000 });
       } catch (err) {
         log("onnetwork_backfill_failed", { winnerDid, error: String(err) });
       }
@@ -819,12 +819,14 @@ export function createRepoBidFinder(idResolver: IdResolver): BidFinder {
     if (!pdsUrl) return [];
     const found: CollectedBid[] = [];
     for (const collection of [BID_NSID, BIDS_FREE_NSID]) {
-      const records = await listRecordsAll(pdsUrl, bidderDid, collection, { timeoutMs: 10_000 });
-      for (const rec of records) {
-        const val = rec.value as Record<string, unknown>;
-        if ((val.rfp as { uri?: string } | undefined)?.uri !== rfpUri || !rec.uri || !rec.cid) continue;
-        found.push({ did: bidderDid, uri: rec.uri, cid: rec.cid, record: val });
-      }
+      const rec = await findRecord(
+        pdsUrl,
+        bidderDid,
+        collection,
+        (r) => (r.value.rfp as { uri?: string } | undefined)?.uri === rfpUri && !!r.uri && !!r.cid,
+        { timeoutMs: 10_000 },
+      );
+      if (rec) found.push({ did: bidderDid, uri: rec.uri, cid: rec.cid, record: rec.value });
     }
     return found;
   };
@@ -842,18 +844,19 @@ export function createRepoReceiptFinder(idResolver: IdResolver): ReceiptFinder {
   return async (bidderDid, acceptUri) => {
     const pdsUrl = await pdsUrlOf(idResolver, bidderDid);
     if (!pdsUrl) return null;
-    const records = await listRecordsAll(pdsUrl, bidderDid, RECEIPT_NSID, { timeoutMs: 10_000 });
-    for (const rec of records) {
-      const val = rec.value as Record<string, unknown>;
-      const acceptRef = val.accept as { uri?: string } | undefined;
-      if (acceptRef?.uri !== acceptUri || !rec.uri || !rec.cid) continue;
-      return {
-        uri: rec.uri,
-        cid: rec.cid,
-        ...(typeof val.submitEvent === "string" ? { submitEvent: val.submitEvent } : {}),
-      };
-    }
-    return null;
+    const rec = await findRecord(
+      pdsUrl,
+      bidderDid,
+      RECEIPT_NSID,
+      (r) => (r.value.accept as { uri?: string } | undefined)?.uri === acceptUri && !!r.uri && !!r.cid,
+      { timeoutMs: 10_000 },
+    );
+    if (!rec) return null;
+    return {
+      uri: rec.uri,
+      cid: rec.cid,
+      ...(typeof rec.value.submitEvent === "string" ? { submitEvent: rec.value.submitEvent } : {}),
+    };
   };
 }
 

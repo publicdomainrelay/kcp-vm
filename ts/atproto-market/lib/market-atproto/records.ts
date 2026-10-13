@@ -115,6 +115,72 @@ export async function listRecordsAll(
   return out;
 }
 
+export async function getRecordAt(
+  pdsUrl: string,
+  uri: string,
+  opts: { timeoutMs?: number } = {},
+): Promise<ListedRecord | null> {
+  const { repo, collection, rkey } = parseAtUri(uri);
+  const url = new URL(`${pdsUrl}/xrpc/com.atproto.repo.getRecord`);
+  url.searchParams.set("repo", repo);
+  url.searchParams.set("collection", collection);
+  url.searchParams.set("rkey", rkey);
+  const res = await fetch(url.toString(), { signal: AbortSignal.timeout(opts.timeoutMs ?? 10000) });
+  if (!res.ok) {
+    await res.body?.cancel();
+    return null;
+  }
+  const data = await res.json() as { uri?: string; cid?: string; value?: unknown };
+  if (!data.value || typeof data.value !== "object") return null;
+  return { uri: data.uri ?? uri, cid: data.cid ?? "", value: data.value as Record<string, unknown> };
+}
+
+export async function scanRecords(
+  pdsUrl: string,
+  repo: string,
+  collection: string,
+  visit: (record: ListedRecord) => boolean | void | Promise<boolean | void>,
+  opts: { pageLimit?: number; timeoutMs?: number } = {},
+): Promise<boolean> {
+  const pageLimit = Math.min(opts.pageLimit ?? 100, 100);
+  const timeoutMs = opts.timeoutMs ?? 10000;
+  let cursor: string | undefined;
+  do {
+    const url = new URL(`${pdsUrl}/xrpc/com.atproto.repo.listRecords`);
+    url.searchParams.set("repo", repo);
+    url.searchParams.set("collection", collection);
+    url.searchParams.set("limit", String(pageLimit));
+    if (cursor) url.searchParams.set("cursor", cursor);
+    const res = await fetch(url.toString(), { signal: AbortSignal.timeout(timeoutMs) });
+    if (!res.ok) {
+      await res.body?.cancel();
+      return false;
+    }
+    const data = await res.json() as { records: Array<{ uri: string; cid: string; value: unknown }>; cursor?: string };
+    for (const r of data.records ?? []) {
+      if (await visit({ uri: r.uri, cid: r.cid, value: r.value as Record<string, unknown> })) return true;
+    }
+    cursor = data.records?.length ? data.cursor : undefined;
+  } while (cursor);
+  return false;
+}
+
+export async function findRecord(
+  pdsUrl: string,
+  repo: string,
+  collection: string,
+  match: (record: ListedRecord) => boolean,
+  opts: { pageLimit?: number; timeoutMs?: number } = {},
+): Promise<ListedRecord | null> {
+  let found: ListedRecord | null = null;
+  await scanRecords(pdsUrl, repo, collection, (r) => {
+    if (!match(r)) return false;
+    found = r;
+    return true;
+  }, opts);
+  return found;
+}
+
 /** Resolve a DID to its PDS service endpoint via the supplied IdResolver. */
 export async function resolvePds(idResolver: IdResolver, did: string): Promise<string> {
   const doc = await idResolver.did.resolve(did);
