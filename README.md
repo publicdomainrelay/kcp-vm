@@ -75,6 +75,8 @@ sudo install -m 0644 vmlinux rootfs.ext4 image.json /var/lib/socialweb-computer/
 
 Only `firecracker-x86_64` is published. An arm64 host builds its own with `scripts/build-guest-image.sh`. See [Run and install a bidder](#run-and-install-a-bidder) for the rest of the install.
 
+A binary installed from this bucket needs no image flag at all: it looks for the image pinned into its own build under `releases/<its version>` first and under `main/<its commit>` second, so a binary taken from `main/latest` finds the guest image published with its own commit. `--guest-image-source` takes precedence when given, and `--guest-image-release-base` searches another base.
+
 ## The RFP flow
 
 A requester rents a VM by running the RFP flow. The requester posts a `compute.vm` record and a signed `market.rfp`; bidders bid; the requester accepts the winning bid; the winning bidder boots the guest from cloud-init `user_data` that installs the guest agent (sshd, the tunnel subscriber, and the client that reaches the guest). The requester reaches the guest only through the relay, over an SSH `ProxyCommand` on the websocket tunnel. The relay is the registry.

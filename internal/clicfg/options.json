@@ -420,7 +420,7 @@
     },
     "guest-image-source": {
       "type": "string",
-      "description": "internal vm, dev up --handle, dev up --profile market-network, run bidder (required) and install bidder (written to config.json): file:// or https:// base the pinned guest image (vmlinux, rootfs.ext4, image.json) is fetched from once and verified by sha256",
+      "description": "internal vm, dev up --handle, dev up --profile market-network, run bidder and install bidder (written to config.json): file:// or https:// base the pinned guest image (vmlinux, rootfs.ext4, image.json) is fetched from once and verified by sha256; run bidder without one downloads the image of its own build from guest-image-release-base instead",
       "env": "SOCIALWEB_GUEST_IMAGE_SOURCE"
     },
     "guest-image-release-base": {

@@ -139,3 +139,21 @@ jobs:
             prefix="main/$GITHUB_SHA"; also="main/latest"
           fi
           timeout -k 10 1700 deno run -A --no-lock scripts/publish-spaces.ts --dir "$OUT" --prefix "$prefix" ${also:+--also "$also"}
+      - name: the published guest image is where the binary looks for it
+        env:
+          SPACES_BUCKET: ${{ vars.SPACES_BUCKET }}
+          SPACES_REGION: ${{ vars.SPACES_REGION }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF_TYPE" = tag ]; then ref="releases/$GITHUB_REF_NAME"; else ref="main/$GITHUB_SHA"; fi
+          base="https://${SPACES_BUCKET}.${SPACES_REGION}.digitaloceanspaces.com"
+          url="$base/${ref}/guest-image/firecracker-x86_64/image.json"
+          code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 60 "$url")"
+          echo "$code $url (readable without credentials: a bidder fetches its own image from here)"
+          test "$code" = 200
+          if [ "$GITHUB_REF_TYPE" != tag ]; then
+            latest="$base/main/latest/binaries/socialweb-computer-linux-amd64"
+            code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 60 -r 0-0 "$latest")"
+            echo "$code $latest (the newest main binary, readable without credentials)"
+            test "$code" = 206
+          fi
