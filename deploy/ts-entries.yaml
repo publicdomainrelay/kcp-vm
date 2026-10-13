@@ -13,6 +13,8 @@ entries:
     path: ts/atproto-market/request-vm-ssh/mod.ts
   - name: hono-socialweb-computer-ssh
     path: ts/socialweb-computer-ssh/hono-socialweb-computer-ssh/mod.ts
+    preload:
+      - ts/socialweb-computer-ssh/hono-socialweb-computer-ssh/env-preload.ts
     unstable: [kv]
   - name: hono-plc
     path: ts/atproto-market/hono-plc/mod.ts

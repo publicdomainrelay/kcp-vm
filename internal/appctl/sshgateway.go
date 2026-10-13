@@ -39,7 +39,7 @@ var (
 	SshGatewayGVR      = schema.GroupVersionResource{Group: v1alpha1.GroupName, Version: v1alpha1.Version, Resource: "sshgateways"}
 	SshGatewayProfiles = []string{SshGatewayProfileNetwork, SshGatewayProfileDefault}
 	SshGatewayEnvAllow = []string{"KCP_SERVICE_DOMAIN", "KCP_DNS_TABLE", "KCP_DNS_TABLE_FILE", "KCP_TOKENS", "KCP_TOKEN", "KCP_SERVER",
-		"KCP_WORKSPACE", "KCP_NAMESPACE", "KCP_SERVICE_NAME", "PORT_FILE", "LISTENERS_FILE", "STATUS_FILE", "MIN_LOG_LEVEL"}
+		"KCP_WORKSPACE", "KCP_NAMESPACE", "KCP_SERVICE_NAME", "PORT_FILE", "LISTENERS_FILE", "STATUS_FILE", "MIN_LOG_LEVEL", "ATPROTO_DID", "BUNDLED_ACTIONS_DIR", "POLICY_ENGINE_LOG_LEVEL", "PATH"}
 )
 
 func SshGatewayValues(spec v1alpha1.SshGatewaySpec, stateDir string, l devinstance.Layout, rec devinstance.Record) (manifests.SshGateway, error) {
