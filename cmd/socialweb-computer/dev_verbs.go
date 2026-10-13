@@ -31,11 +31,11 @@ func (a *app) record(verb string, vals clicfg.Values) (devinstance.Layout, devin
 }
 
 func runDevEnv(ctx context.Context, a *app, vals clicfg.Values, rest []string) int {
-	l, rec, code := a.record("dev env", vals)
+	_, rec, code := a.record("dev env", vals)
 	if code != exitOK {
 		return code
 	}
-	ex := devinstance.Exports(rec, a.instanceLeases(l.ID))
+	ex := devinstance.Exports(rec)
 	if vals.Bool("json") {
 		a.printJSON(exportMap(ex))
 		return exitOK

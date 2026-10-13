@@ -167,8 +167,6 @@ var ErrNoHolder = errors.New("portallocator: no holder: a port is chosen by the 
 type Config struct {
 	LeasePath string
 
-	AppInstance string
-
 	Holder Holder
 
 	ReclaimGrace time.Duration
@@ -198,7 +196,6 @@ func Open(cfg Config) (*Allocator, error) {
 		return nil, errors.New("portallocator: LeasePath is required; the lease file records which port the front holds for which purpose")
 	}
 	a := &Allocator{
-		app:    cfg.AppInstance,
 		path:   cfg.LeasePath,
 		holder: cfg.Holder,
 		grace:  cfg.ReclaimGrace,
@@ -371,41 +368,11 @@ func (a *Allocator) ReleasePurpose(cluster string, purpose Purpose) error {
 	})
 }
 
-func (a *Allocator) AppInstance() string { return a.app }
-
 func (a *Allocator) Leases() []Lease {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.refresh()
 	return a.own()
-}
-
-func (a *Allocator) AllLeases() []Lease {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.refresh()
-	return a.snapshot()
-}
-
-func (a *Allocator) ReleaseAll() error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.withLock(hostos.LockExclusive, func() error {
-		if err := a.load(); err != nil {
-			return err
-		}
-		n := 0
-		for key := range a.leases {
-			if key.app == a.app {
-				delete(a.leases, key)
-				n++
-			}
-		}
-		if n == 0 {
-			return nil
-		}
-		return a.save()
-	})
 }
 
 func (a *Allocator) PortFor(cluster string, purpose Purpose) (Lease, bool) {

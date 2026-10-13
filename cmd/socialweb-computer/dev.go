@@ -28,7 +28,6 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostos"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/hostsvc"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/pgunit"
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/portallocator"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/stack/bidder"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/stack/denoruntime"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/stack/gatewaykcp"
@@ -89,23 +88,6 @@ func (a *app) worktree(vals clicfg.Values) string {
 		return ""
 	}
 	return devinstance.WorktreeRoot(real)
-}
-
-func (a *app) leases(id string) (*portallocator.Allocator, error) {
-	path, err := devinstance.LeasePath(a.env)
-	if err != nil {
-		return nil, err
-	}
-	return devinstance.OpenLeases(path, id)
-}
-
-func (a *app) instanceLeases(id string) []portallocator.Lease {
-	al, err := a.leases(id)
-	if err != nil {
-		a.log.Warn("the per-user lease file", "err", err.Error())
-		return nil
-	}
-	return al.Leases()
 }
 
 func writeEnvFiles(l devinstance.Layout, ex []devinstance.Export) error {
@@ -620,7 +602,7 @@ func bringUp(ctx context.Context, a *app, vals clicfg.Values, host bool) (upRepo
 			return upReport{}, a.fail(exitFailed, "dev up: %v", err)
 		}
 	}
-	ex := devinstance.Exports(rec, a.instanceLeases(l.ID))
+	ex := devinstance.Exports(rec)
 	if err := writeEnvFiles(l, ex); err != nil {
 		return upReport{}, a.fail(exitFailed, "dev up: %v", err)
 	}
@@ -696,7 +678,6 @@ type statusReport struct {
 		Error     string               `json:"error,omitempty"`
 	} `json:"devsup"`
 	Ports        map[string]int          `json:"ports,omitempty"`
-	Leases       []portallocator.Lease   `json:"leases"`
 	Network      *v1alpha1.MarketNetwork `json:"network,omitempty"`
 	NetworkError string                  `json:"networkError,omitempty"`
 	Apps         []appStatusView         `json:"apps,omitempty"`
@@ -707,7 +688,7 @@ func runDevStatus(ctx context.Context, a *app, vals clicfg.Values, rest []string
 	if err != nil {
 		return a.fail(exitRefused, "dev status: %v", err)
 	}
-	r := statusReport{Instance: l.ID, Leases: a.instanceLeases(l.ID)}
+	r := statusReport{Instance: l.ID}
 	var rec devinstance.Record
 	if err := devinstance.ReadJSON(l.Record, &rec); err == nil {
 		r.Found, r.Record = true, &rec
@@ -753,7 +734,6 @@ func runDevStatus(ctx context.Context, a *app, vals clicfg.Values, rest []string
 
 type downReport struct {
 	Instance       string               `json:"instance"`
-	LeasesReleased int                  `json:"leasesReleased"`
 	MarkerRemoved  bool                 `json:"markerRemoved"`
 	DevsupStopped  bool                 `json:"devsupStopped"`
 	DevsupPID      int                  `json:"devsupPID,omitempty"`
@@ -844,35 +824,12 @@ func downInstance(ctx context.Context, a *app, l devinstance.Layout, keepState b
 		if rec.Worktree != "" {
 			r.MarkerRemoved = devinstance.UnlinkMarker(rec.Worktree, l.StateDir)
 		}
-		for _, id := range append([]string{l.ID}, networkChildIDs(l)...) {
-			if al, err := a.leases(id); err == nil {
-				r.LeasesReleased += len(al.Leases())
-				if err := al.ReleaseAll(); err != nil {
-					a.log.Warn("releasing the instance's leases", "instance", id, "err", err.Error())
-				}
-			}
-		}
 		if err := assets.RemoveTree(l.StateDir); err == nil {
 			r.RemovedState = true
 		}
 	}
 	r.Seconds = time.Since(started).Seconds()
 	return r
-}
-
-func networkChildIDs(l devinstance.Layout) []string {
-	state, rt := filepath.Join(l.StateDir, appctl.AppsDir), filepath.Join(l.RuntimeDir, appctl.AppsDir)
-	entries, err := os.ReadDir(devinstance.DevRoot(state))
-	if err != nil {
-		return nil
-	}
-	var out []string
-	for _, e := range entries {
-		if cl, err := devinstance.NewLayout(e.Name(), state, rt); err == nil {
-			out = append(out, cl.ID)
-		}
-	}
-	return out
 }
 
 func networkChildren(l devinstance.Layout) []devinstance.Record {

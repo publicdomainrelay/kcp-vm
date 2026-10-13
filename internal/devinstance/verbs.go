@@ -8,8 +8,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/portallocator"
 )
 
 const Marker = ".swc-dev"
@@ -20,21 +18,6 @@ const (
 )
 
 func DevRoot(stateRoot string) string { return filepath.Join(stateRoot, "dev") }
-
-func LeasePath(env Env) (string, error) {
-	if v, ok := env.LookupEnv("XDG_STATE_HOME"); ok && v != "" {
-		return filepath.Join(v, "socialweb-computer", "ports", "leases.json"), nil
-	}
-	home, ok := env.LookupEnv("HOME")
-	if !ok || home == "" {
-		return "", errors.New("devinstance: neither XDG_STATE_HOME nor HOME is set; the per-user lease file lives there")
-	}
-	return filepath.Join(home, ".local", "state", "socialweb-computer", "ports", "leases.json"), nil
-}
-
-func OpenLeases(path, id string) (*portallocator.Allocator, error) {
-	return portallocator.Open(portallocator.Config{LeasePath: path, AppInstance: id})
-}
 
 func LinkMarker(worktree, state string) error {
 	p := filepath.Join(worktree, Marker)
@@ -76,7 +59,7 @@ func envWord(s string) string {
 	return b.String()
 }
 
-func Exports(rec Record, leases []portallocator.Lease) []Export {
+func Exports(rec Record) []Export {
 	l := rec.Layout
 	socket := l.Socket
 	if rec.Parent != nil {
@@ -99,9 +82,6 @@ func Exports(rec Record, leases []portallocator.Lease) []Export {
 		if u.Port > 0 {
 			out = append(out, Export{"SOCIALWEB_DEV_PORT_" + envWord(u.Role), strconv.Itoa(u.Port)})
 		}
-	}
-	for _, le := range leases {
-		out = append(out, Export{"SOCIALWEB_DEV_LEASE_" + envWord(le.Cluster) + "_" + envWord(string(le.Purpose)), strconv.Itoa(le.Port)})
 	}
 	if rec.VM != nil {
 		ws := rec.BaseWorkspace
