@@ -9,20 +9,17 @@ Module `github.com/johnandersen777/socialweb-computer-kcp`, Go. CRDs in API grou
 
 ## 0. The organizing principle: kcp is part of each application
 
-User, 2026-10-12: "what we are doing is a paradigm shift, we are using kcp (the kubernetes control
-plane) as a core part of applications, it's probably not how it's traditionally used. With the
-exception of our virtual kubernetes clusters project that is a more traditional usage of it."
-
-Plans 0006, 0007 and 0008 are organized by it (each carries a `principle:` block; the full rules are
-in plan 0006):
+kcp (the Kubernetes control plane) is a core part of each application, not infrastructure shared
+between applications. The one exception is the virtual Kubernetes clusters project, which uses kcp in
+the traditional way. This section states the principle and the rules that follow from it.
 
 - **An application instance = its own kcp + a manifest set + a profile.** A bidder handle, a requester
   `run request`, the gateway, a market network, a dev instance. kcp belongs to the application
   instance, never to a machine; a host is only where instances run, and any number run on one host.
 - **Application state = kcp objects** in that instance's kcp: ComputeVM, ComputeContract, NodeClaim,
   OpenBaoServer, Postgres, DenoPod, HostProcess.
-- **Application components** (the servers that live today inside one deno or Go process) = DenoPods and
-  HostProcesses reconciled from those objects.
+- **Application components** (the servers that would otherwise sit inside one deno or Go process) =
+  DenoPods and HostProcesses reconciled from those objects.
 - **Modes = profiles over one manifest set.** A bidder in OAuth QR mode against a real account has no
   PDS pod; a bidder in the market network has its own PDS pod.
 - **Composition = applying manifest sets, or nesting instances as workspaces** (a parent's workspace
@@ -34,8 +31,8 @@ in plan 0006):
   (bobvmbuilder) and alice are a final soak only.
 - **The one traditional use** is the virtual Kubernetes clusters project this document mostly
   describes (sections 1-4, 9-11): tenant k3s `--disable-agent` control planes fronted by kcp
-  (clusterprovider, socialweb-computer-k8s, NodeClaims). Plan items of that project carry
-  `kcp_use: traditional-exception`. Even there, the gateway's kcp is one application instance's kcp.
+  (clusterprovider, socialweb-computer-k8s, NodeClaims). Even there, the gateway's kcp is one
+  application instance's kcp.
 
 **Port 0 rule.** Every listener behind the edge binds port 0 and reports its bound address into its
 own kcp object's status (a DenoPod's runner reads the pod's port file and records `status.address`; a
@@ -48,18 +45,16 @@ application's front that caddy proxies to (the gateway's kcp front on 127.0.0.1:
 A tenant cluster's members are third-party binaries that take a port number on their command line; for
 them the cluster's apiserver front binds port 0 and holds the socket for the life of the cluster, and the
 member binds that number beside the hold (section 8), so the number is stable across member restarts
-and no other process on the host can take it. A check test
-fails on any fixed port in a manifest or default behind the edge (plan 0006 M1-NO-FIXED-PORTS).
+and no other process on the host can take it. A check test fails on any fixed port in a manifest or
+default behind the edge.
 
 What stays about the machine: `/dev/kvm`, the systemd user manager and its units (production placement
 only), `install`, the host contract, and the bootstrap layer that runs an instance's kcp itself.
 
-**How today's multi-server processes decompose** (folded 2026-10-12 from `multi-server-to-kcp.md` under
-`docs/research/`, with the user's answers to its questions overriding it where they differ; plan 0006
-`principle.decomposition`):
+**How a multi-server process decomposes into kcp:**
 
 - **One root object per application** in its own kcp - MarketBidder, MarketRequester, Gateway,
-  MarketNetwork (plan 0006 M2-APP-CONTROLLER). Its spec carries the application's options and profile; the
+  MarketNetwork. Its spec carries the application's options and profile; the
   core renders the profile into owned children, and a profile switch deletes what the new profile omits.
 - **Strict kcp per application, inside a market network too.** The market network is itself an application,
   MarketNetwork: its kcp runs the shared atproto services (PLC, relay, dispatchers, PDSes, the QR relay)
@@ -67,25 +62,24 @@ only), `install`, the host contract, and the bootstrap layer that runs an instan
   requester invocation in the market network runs its own kcp. Children learn the network only from values the
   composer copies onto their root objects; the DNS shim resolves only its own application's names.
 - **Every CLI option stays, kcp-native.** Each hono-bidder and request-vm-ssh option becomes a root-object
-  field or a profile (only legacy guest transports are removed). Sign-in is an object, MarketIdentity
-  (plan 0007 M1-MARKET-IDENTITY): the URL to visit, the association to approve and an expired session are
+  field or a profile (only legacy guest transports are removed). Sign-in is an object, MarketIdentity:
+  the URL to visit, the association to approve and an expired session are
   status that the foreground CLI renders; tests complete it through hono-pds's session minting. The
   ephemeral-PDS mode (in-process repo + association records) stays for bidder and requester.
 - **kcp only.** No standalone `deno run hono-bidder` or `request-vm-ssh`; every run goes through
   `socialweb-computer` and kcp.
 - **The requester is a fresh kcp per invocation** whose state dir (kcp root + vault) persists;
-  `run request release|resume <name>` restarts that kcp to finish the contract (plan 0008 M4-RUN-REQUEST).
+  `run request release|resume <name>` restarts that kcp to finish the contract.
 - **Secrets only in the application's own OpenBao** - OAuth sessions, repo key, relay keypairs, OIDC JWK,
   requester key, door keys; kcp objects hold references.
 - **Every listener reports into status** (DenoPod `status.listeners`: tcp, unix, relay ingress URL), so no
   peer or test scrapes stdout for a DID, a port or readiness.
-- **iroh is the only guest transport.** The ssh gateway moves to iroh first (plan 0008
-  M1-SSH-GATEWAY-IROH), then the tunnel, fedproxy-ssh, fedproxy-web and wootty modules, websocat
-  ProxyCommand paths, relay-FQDN guest addresses and the guest JSR registry are deleted (plan 0008
-  M1-STRIP-LEGACY-TRANSPORTS).
+- **iroh is the only guest transport.** The ssh gateway moves to iroh; the tunnel, fedproxy-ssh,
+  fedproxy-web and wootty modules, websocat ProxyCommand paths, the relay-FQDN guest addresses and the
+  guest JSR registry are removed.
 - **Components:** the bidder's guest-facing endpoints (OIDC issuer, `/v1/on-network`, `/v1/host-keys`)
-  become one DenoPod per provider once its keys are in the vault (plan 0007 M5-BIDDER-COMPONENTS); the
-  door's node fulfiller stays inside the door for now.
+  become one DenoPod per provider once its keys are in the vault; the
+  door's node fulfiller stays inside the door.
 
 ## 1. The objective, stated once
 
@@ -129,33 +123,25 @@ SEAM ComputeProvider - provision(vm{user_data}, requesterDid, spec?) / destroy(i
 The seam is "given this cloud-init, make me a guest and give me back an id". A provider supplies a
 CLOUD; it never supplies the CONNECTION SEMANTICS.
 
-Two things this does not change:
+`kcp + k3s` in this document are **gateway-side processes**, not market VMs. Where text elsewhere
+says "market VM", read it as the substrate a provider made, wherever it came from.
+
+The market is reached through a NodeClaim. A tenant cluster's nodes are rented from the market as the
+CLUSTER'S OWNER, through that owner's single atproto OAuth session, which is held in a separate Deno
+process (the k8s door) and not in this repository. The Go side therefore reaches past the
+`ComputeProvider` seam: it writes a `NodeClaim` into the cluster's home workspace, and the door reads
+it, runs the RFP flow with the owner's session, boots the winning bidder's guest from cloud-init,
+reverse-forwards the advertised address to this host's loopback apiserver and writes the claim's
+status back. `internal/nodemarket` is the node host that does the writing; the `internal/scale`
+decision that says WHEN a node is needed is separate.
+
+This does not change:
 
 - The cloud-init is the real composer's (`buildUserData` plus the module registry, sibling repo).
-  The substitution is *who won the bid*, never *what the guest is told to install*.
+  The substitution is who won the bid, never what the guest is told to install.
 - A guest is born from cloud-init `user_data`, never hand-assembled. Provisioning goes through the
-  declared path, never a shell.
-
-`kcp + k3s` here are **gateway-side processes**, not market VMs. Where text elsewhere says "market
-VM", read it as the substrate a provider made, wherever it came from.
-
-**The market is now reached through a NodeClaim, and that is a scope change.** This document used to
-end at the `ComputeProvider` seam: "given this cloud-init, make me a guest and give me back an id",
-with the requester, the RFP, the bid and the accept declared out of scope. A tenant cluster's nodes
-are rented from the market AS THE CLUSTER'S OWNER, through that owner's single atproto OAuth session,
-which is held in a SEPARATE Deno process (the k8s door) and not in this repo. So the Go side no
-longer stops at a seam it cannot cross: it writes a `NodeClaim` into the cluster's home workspace,
-and the door reads it, runs the RFP flow with the owner's session, boots the winning bidder's guest
-from cloud-init, reverse-forwards the advertised address to this host's loopback apiserver and
-writes the claim's status back. `internal/nodemarket` is the node host that does the writing; the
-`internal/scale` decision that says WHEN a node is needed is unchanged.
-
-Three things this does not change:
-
-- The cloud-init is still the real composer's (`buildUserData` plus the module registry, sibling
-  repo). The substitution is still *who won the bid*, never *what the guest is told to install*.
-- A guest is still born from cloud-init `user_data`, never hand-assembled. The market substrate adds
-  no provisioning path of its own: it writes a record and waits.
+  declared path, never a shell. The market substrate adds no provisioning path of its own: it writes
+  a record and waits.
 - The claim carries PATHS, never secrets. The join token, the per-node password and the server CA are
   read out of the cluster's data dir by the door and handed to the guest on the SSH session's own
   standard input (invariant 29).
@@ -181,10 +167,8 @@ the same store: no `bootstrap data ... different token`, identical CA fingerprin
 and a kubeconfig issued before the rebuild still valid. The token is the only local-disk secret that
 matters.
 
-**Why this deletes the syncer.** An earlier design needed bidirectional propagation, drift handling,
-conflict resolution and per-cluster GC, because it assumed TWO apiservers: ours for the user, k3s's
-for the nodes. With one apiserver there is nothing to propagate. Intent goes in, kubelet sees it.
-What remains is the binder:
+**There is no syncer.** There is one apiserver, not two, so there is nothing to propagate between
+them: intent goes in, kubelet sees it. What remains is the binder:
 
 ```
 podStrategy.PrepareForCreate  ->  Phase: Pending, free
@@ -214,20 +198,16 @@ k3s v1.36.4+k3s1, the S3 form is refused at startup with `unknown driver`, and a
 start its OWN kine against the bucket instead of dialing ours - two writers on one store
 (`internal/clusterprovider/stack.go:39-43`, `ErrNoStore`).
 
-**Historical, not built: `kine` plus `t4` over a central `rustfs`, bucket per tenant, prefix per
-cluster.** That was the original design of this section. The code never ran it, and plan 0006
-M1-STORE-CLEANUP deleted its leftovers: the root vault's central-store path
-(`secret/data/socialweb/store/rustfs`), policy (`store-rustfs`) and secret class in
-`internal/vaultlayout`; `cmd/socialweb-vault`'s four central-store options and their apply branch; the
-rustfs wording of the `internal/portallocator` shared-port message; the `rustfs` and `t4` entries of
-`internal/versions/versions.json`. `internal/versions` `TestNoRustfsOrT4NameOutsideTheStoreMeasurement`
-keeps those names out of non-test Go and the pins, allowing only `stack.go`'s `ErrNoStore` measurement.
+**A central store is not used.** `kine` plus `t4` over a central `rustfs` (bucket per tenant, prefix
+per cluster) is not built. The store is the per-cluster postgres above, and k3s is never pointed at a
+bucket. `internal/versions` `TestNoRustfsOrT4NameOutsideTheStoreMeasurement` keeps the `rustfs` and
+`t4` names out of non-test Go and the pins, allowing only `stack.go`'s `ErrNoStore` measurement.
 
-**Several kine over one database are the k3s HA shape, and plan 0006 relies on it.** Measured on
+**Several kine over one database are the k3s HA shape.** Measured on
 stand-ins (`docs/research/2026-10-11-vm-lifecycle/control-plane-handover.md` 2-3): two k3s servers, each
 with its own kine on one postgres and the same token, share CAs and service-account key and both serve;
 kine's unique `(name, prev_revision)` is the compare, so a racing second write fails like an etcd compare.
-Planned, not built (plan 0006 M3-CP-SLOTS, decided by the user 2026-10-12): a k3s/kine upgrade starts a
+Planned, not built: a k3s/kine upgrade starts a
 second slot beside the first on the same postgres for the seconds of a swap behind a per-cluster front.
 Section 1's "one apiserver per store" is the rule outside that overlap.
 
@@ -236,8 +216,8 @@ durable watch (the sequencer resets `seq` to 0 on restart), no compaction, and e
 signed commit. What it carries is **intent and identity** - the `Cluster` CR mirror and account
 records. Not data, and not portability: the export is deferred.
 
-Empty `--datastore-endpoint` was a defect: k3s then keeps its objects in its own sqlite, so a cluster
-that scales to zero and comes back comes back EMPTY. The join cannot reach that state:
+An empty `--datastore-endpoint` is refused. k3s would otherwise keep its objects in its own sqlite, so
+a cluster that scales to zero and comes back comes back EMPTY. The join cannot reach that state:
 `clusterstack.Spec.DatastoreEndpoint` is REQUIRED and `StepsFor` refuses an empty value, because
 empty is the one value k3s resolves SILENTLY into a brand-new cluster.
 
@@ -249,10 +229,9 @@ directory - a caller decision, not an automatic consequence of a process exiting
 
 Everything is either a controller-runtime reconcile loop or a deploy config. No new language.
 
-The table below is the virtual-clusters project (section 0's traditional exception). The planned
-components of plans 0006-0008 ("Host processes and the VM lifecycle" and "compute-provider-kcp" below)
-are organized by section 0:
-each application instance has its own kcp, manifest set and profile, its components are DenoPods and
+This section lists the components. The table below is the virtual-clusters project, section 0's
+traditional exception. It and the component subsections that follow are organized by section 0: each
+application instance has its own kcp, manifest set and profile, its components are DenoPods and
 HostProcesses, and listeners behind the edge bind port 0.
 
 | # | Component | Layer | Why it exists |
@@ -263,23 +242,21 @@ HostProcesses, and listeners behind the edge bind port 0.
 | 4 | Node provider | Go | Watches the home workspace for intent, actuates one node, writes `Node` state |
 | 5 | kcp provider workspace | YAML | `APIResourceSchema` plus `APIExport` for our CRDs; tenants `APIBinding` |
 | 6 | k3s cloud-init module | sibling repo, `UserDataModule` | Installs k3s in a market guest. The only sanctioned way a guest-side component arrives |
-| 7 | OpenBao plus ESO | deploy config | The vault, at two levels: a root vault one per deployment and a cluster vault one per ON cluster, both in the production stack. OpenBao holds the per-cluster 13-entry identity bundle and is its AUTHORITATIVE store — the wake reads it out of the vault and materialises the file tree at `<DataDir>/server/tls`+`cred/`, because k3s has no vault plugin and must read files at runtime (sections 9, 14 and 15). ESO materialises vault-backed Secrets into the tenant cluster (row 9); the bundle is custody and wake-time restore, not the runtime location |
-| 8 | Cluster links | Go, `internal/clusterlink` + `internal/clusterprovider/links.go` | Two `dumbpipe listen-tcp` members of every cluster's process group, one in front of the k3s apiserver and one in front of the cluster vault, each an iroh endpoint whose key lives in that cluster's vault. A node dials the cluster through them; the door holds no per-node connection. Recorded as `ClusterLink` objects (plan 0005 M3) |
-| 9 | External Secrets pair | pinned upstream binary, `internal/eso` + `internal/clusterprovider/externalsecrets.go` | The External Secrets Operator v2.11.0 run as TWO members of every cluster's process group, beside the control plane: the controller (`external-secrets`) and its admission webhook (`external-secrets webhook`), one digest-pinned binary the release embeds as its `external-secrets` asset. They dial the tenant apiserver with a minted credential and reach the cluster vault on loopback, so an ExternalSecret syncs at ZERO nodes. The tenant keeps only the bundle's CRDs, ClusterRoles and a URL webhook registration; no ESO pod runs in it (`NEXT.yaml` ESO-4, plan 0005 M4-ESO-BESIDE) |
+| 7 | OpenBao plus ESO | deploy config | The vault, at two levels: a root vault one per deployment and a cluster vault one per ON cluster, both in the production stack. OpenBao holds the per-cluster 13-entry identity bundle and is its AUTHORITATIVE store - the wake reads it out of the vault and materialises the file tree at `<DataDir>/server/tls`+`cred/`, because k3s has no vault plugin and must read files at runtime (sections 9, 14 and 15). ESO materialises vault-backed Secrets into the tenant cluster (row 9); the bundle is custody and wake-time restore, not the runtime location |
+| 8 | Cluster links | Go, `internal/clusterlink` + `internal/clusterprovider/links.go` | Two `dumbpipe listen-tcp` members of every cluster's process group, one in front of the k3s apiserver and one in front of the cluster vault, each an iroh endpoint whose key lives in that cluster's vault. A node dials the cluster through them; the door holds no per-node connection. Recorded as `ClusterLink` objects |
+| 9 | External Secrets pair | pinned upstream binary, `internal/eso` + `internal/clusterprovider/externalsecrets.go` | The External Secrets Operator v2.11.0 run as TWO members of every cluster's process group, beside the control plane: the controller (`external-secrets`) and its admission webhook (`external-secrets webhook`), one digest-pinned binary the release embeds as its `external-secrets` asset. They dial the tenant apiserver with a minted credential and reach the cluster vault on loopback, so an ExternalSecret syncs at ZERO nodes. The tenant keeps only the bundle's CRDs, ClusterRoles and a URL webhook registration; no ESO pod runs in it |
 
-| 10 | Node network | Rust `rust/socialweb-meshd`, Go `internal/tenantnet`, TS `lib/cloud-init-plugin-k3s-join` + `lib/socialweb-computer-k8s-downloads-fs` | Market clusters run `--flannel-backend=none`; each market node gets, from its `user_data`, a bridge CNI conflist on its Node's pod CIDR, cluster-CIDR-external SNAT, the sha256-pinned `socialweb-meshd` (downloaded from the door by hash) carrying pod traffic to other nodes over iroh, and `169.254.20.10` for its own CoreDNS; every tenant gets the meshd node reader RBAC and the per-node DNS DaemonSet as baseline (plan 0005 M5-MESHD, M5-DNS; section 9) |
+| 10 | Node network | Rust `rust/socialweb-meshd`, Go `internal/tenantnet`, TS `lib/cloud-init-plugin-k3s-join` + `lib/socialweb-computer-k8s-downloads-fs` | Market clusters run `--flannel-backend=none`; each market node gets, from its `user_data`, a bridge CNI conflist on its Node's pod CIDR, cluster-CIDR-external SNAT, the sha256-pinned `socialweb-meshd` (downloaded from the door by hash) carrying pod traffic to other nodes over iroh, and `169.254.20.10` for its own CoreDNS; every tenant gets the meshd node reader RBAC and the per-node DNS DaemonSet as baseline (section 9) |
 
 **Not building**, each rejected on evidence: a CNI plugin (the market path writes a conflist for
 k3s's bundled `bridge`/`host-local`/`portmap`; the cross-node half is component 10), a CAPI provider, an OIDC issuer, an ATProto
 bridge, a syncer, a virtual workspace, a second reverse proxy, a reachability substrate, an underlay,
 a warm node pool, an admission plugin (RBAC already enforces the identity classes exactly). A
-registry plus volume-commit machinery was struck from this list by plan 0006 M1-STORE-CLEANUP: its
-only reason was S3-backed PVs on the central rustfs that was never built (section 4), so it is
-neither built nor rejected on evidence.
+registry plus volume-commit machinery is not built either and is not rejected on evidence: its
+only reason was S3-backed PVs on the central rustfs that is not used (section 4).
 
 ### The per-cluster slice of member units
 
-Plan 0006 M3-CLUSTER-UNITS (decided by the user 2026-10-12; the rest decided by Claude, user may veto).
 Each cluster is a slice of member units. The cluster provider never forks a member: it writes one
 HostProcess object per member into the gateway's own kcp (workspace `root` unless
 `SOCIALWEB_CLUSTERPROVIDER_HOSTPROCESS_WORKSPACE` says otherwise), and the HostProcess supervisor in
@@ -288,7 +265,7 @@ still the only supervisor; there is no cluster-group verb and no Pdeathsig. A co
 restart or upgrade restarts no member.
 
 ```
-<prefix>pg-<store>.service                 the cluster's Postgres object (M2-POSTGRES), unix socket only
+<prefix>pg-<store>.service                 the cluster's Postgres object, unix socket only
 <prefix>cluster-<key with - as _>.slice    one slice per cluster
   <prefix>c-<key>-bao.service              After/Wants the pg unit
   <prefix>c-<key>-front.service            no ordering, Restart=always, fd store (section 8)
@@ -328,7 +305,7 @@ restart or upgrade restarts no member.
   supervisor stops each unit, and the provider waits until every member is Stopped before it drops
   the finalizers. A deleted cluster then loses its Postgres object (its data directory is kept); an OFF
   cluster keeps it.
-- **Blue/green control-plane slots (plan 0006 M3-CP-SLOTS).** A cluster has slots a and b, each a
+- **Blue/green control-plane slots.** A cluster has slots a and b, each a
   `kine@<slot>` + `k3s@<slot>` pair on the cluster's one Postgres object, with its own leases
   (section 8) and its own k3s `--data-dir` (slot a: the cluster data dir; slot b: `<dataDir>/slots/b`);
   only the active slot runs. `controlplane.json` records `activeSlot`, the slots (k3s and kine
@@ -359,7 +336,7 @@ restart or upgrade restarts no member.
   lease 52 s (45 s lease, not released on stop).
 - **Secrets.** A link's key reaches dumbpipe through `spec.envFiles` of its HostProcess: a 0600 file
   under the cluster's data dir. The key is never written into a kcp object.
-- **The cluster's OpenBao.** The `bao` member is an OpenBaoServer object `c-<key>-bao` (M3-BAO-SYNC):
+- **The cluster's OpenBao.** The `bao` member is an OpenBaoServer object `c-<key>-bao`:
   unit `socialweb-c-<key>-bao.service` in the cluster's slice, After/Wants its postgres unit, postgres
   storage, the cluster's own vault TLS with client certificates optional. Its `spec.declared` is the
   cluster's whole vault state; the core syncs the vault to it. The cluster provider reaches the vault
@@ -367,17 +344,16 @@ restart or upgrade restarts no member.
   address and the client certificate files, never a token.
 - **The core binary as member code.** The ccm and the cluster front run the core's resolved
   executable, `<state>/bin/<sha>/socialweb-computer` on an installed host, so a core upgrade changes no
-  code inside a running member and the upgrade's collection keeps that directory while the member runs
-  (M3-HOST-INSTALL).
+  code inside a running member and the upgrade's collection keeps that directory while the member runs.
 - **Not yet.** Port attribution by cgroup (`internal/portscan`) is not needed while nothing reaps by port.
 
 ### The External Secrets controller runs beside the control plane
 
-Until 2026-10-07 the External Secrets Operator was installed INTO each tenant cluster as three
-Deployments (controller, cert-controller, webhook). At zero nodes - the resting state - their pods
-were Pending, so nothing synced; on the market substrate the store could not reach the cluster
-vault at all (ESO-3). Both are closed by moving the operator into the process group
-(`NEXT.yaml` ESO-4, plan 0005 M4-ESO-BESIDE). The decisions, each held by a test:
+The External Secrets Operator runs beside the control plane, not inside the tenant cluster. Installed
+into the tenant cluster as three Deployments (controller, cert-controller, webhook), it does not work:
+at zero nodes, the resting state, their pods are Pending so nothing syncs, and on the market
+substrate the store cannot reach the cluster vault at all. Running the operator in the process group
+avoids both. The decisions, each held by a test:
 
 - **Two members, one binary.** `procgroup.ComponentExternalSecretsWebhook` then
   `procgroup.ComponentExternalSecrets`, after the cloud controller manager in `StackOrder`. The
@@ -432,8 +408,8 @@ vault at all (ESO-3). Both are closed by moving the operator into the process gr
   apiserver does. The controller's `/readyz` is a ping that answers before any cache syncs, so its
   gate also waits for the `"Starting workers"` line of the `externalsecret` controller.
 - **The store dials the vault on loopback, on every substrate.** `esovault.ApplyVaultStore`
-  writes `server: https://127.0.0.1:<vault port>` and the vault CA; the substrate branch that kept
-  the store off the market substrate is gone with the reason for it.
+  writes `server: https://127.0.0.1:<vault port>` and the vault CA; no substrate branch keeps
+  the store off the market substrate.
 - **Clusters leased before the pair.** `StackConfig.WithoutUnleased` drops the pair from the
   restart reap's argv derivation when a cluster's lease-file entry holds none of its ports; the
   bring-up that follows leases them, because the materialiser allocates every purpose at spawn.
@@ -443,7 +419,7 @@ whoever links it, so there is no argv for a step and `processrunner.Start` refus
 such a step would have. `procgroup.Options.PostgresUp func() bool` exists for this: the component
 holding the library handle answers for it, and a **nil predicate is a refusal, not a skip**.
 
-### Control-plane continuity across upgrades and restarts (plan 0006 M3-CP-CONTINUITY)
+### Control-plane continuity across upgrades and restarts
 
 The gateway's own state is kcp objects plus host records; the processes that serve a tenant are units
 that outlive the core. Each kind of change is continuous by one mechanism, and none of them restarts a
@@ -456,11 +432,10 @@ VM or rents one:
   resumes in-flight claims from the root vault and re-reads the joined ones. Nothing is written to a
   joined claim, no RFP is posted and no vm.delete is sent.
 - **kcp** (`units roll kcp`): a new slot on the same store behind the kcp front, the controller lease
-  handed over (M3-KCP-ROLL).
-- **k3s and kine** (`units roll cluster`): a green slot behind the cluster's apiserver front, idle first
-  (M3-CP-SLOTS).
+  handed over.
+- **k3s and kine** (`units roll cluster`): a green slot behind the cluster's apiserver front, idle first.
 - **The cluster links** (`units roll link`): a second listener with the same iroh key, then the old one
-  stops (M3-LINK-HANDOVER).
+  stops.
 - **Postgres, OpenBao, ESO, the CCM**: unit restarts; a restarted OpenBao is unsealed on its new
   invocation and synced to its declaration.
 
@@ -492,14 +467,13 @@ Between two builds that both carry it: `upgrade` 16:22:45 (members up 16:24:10),
 guest's VM unit kept its InvocationID and pid, no RFP and no vm.delete after the first rental.
 
 Stated limits: a user-manager restart, linger removal or a reboot removes every transient unit, so
-every cluster cold-starts; the NotReady clock counts from when the path is back (0007
-M3-NODE-LOSS-CLOCK), so a node whose path returns is kept, but it is not zero-downtime. The core's own
+every cluster cold-starts; the NotReady clock counts from when the path is back, so a node whose path
+returns is kept, but it is not zero-downtime. The core's own
 listeners (the gateway XRPC, its TLS front, the web app) are down while the core restarts.
 
 ### The cluster links
 
-Plan 0005 M3 (M3-CLUSTERLINK, M3-IROH-KEYS). Decided by Claude, user may veto, except where the
-plan's `m3_contract` already fixed it (names, mount, path, env var, encoding).
+Each cluster has two links, one to the k3s apiserver and one to the cluster vault.
 
 - **What runs.** Per cluster, `dumbpipe listen-tcp --host 127.0.0.1:<target> --ipv4-addr
   0.0.0.0:<link port>` twice: target = the k3s secure port (k3s binds loopback) for
@@ -531,7 +505,7 @@ plan's `m3_contract` already fixed it (names, mount, path, env var, encoding).
   `status.ticket` is `clusterlink.StableTicket(key)`, the id-only ticket (variant 0x00, the id, zero
   addresses) -- byte for byte what `IROH_SECRET=<seed> dumbpipe generate-ticket` prints, fixture-tested
   -- so it is a function of the key alone and never changes while the key lives in the vault. A node
-  secret may hold it written once (the M3-JWT KV path does). dumbpipe resolves the id's current relay
+  secret may hold it written once. dumbpipe resolves the id's current relay
   and addresses by discovery; measured live in
   `TestARealDumbpipeLinkCarriesTCPThroughItsPublishedTicketWhichARestartLeavesByteIdentical`
   (connect-tcp with the published ticket echoes before and after a restart, and the ticket is
@@ -550,7 +524,7 @@ plan's `m3_contract` already fixed it (names, mount, path, env var, encoding).
 - **Teardown.** A deleted cluster's two ClusterLinks are deleted after its group is reaped (both the
   all-clusters path and a pass that removes the finalizer). An OFF cluster keeps them: it comes back as
   the same endpoints. The keys stay in the vault's data and go with it.
-- **Replacement without a gap (plan 0006 M3-LINK-HANDOVER).** Each link holds two UDP leases
+- **Replacement without a gap.** Each link holds two UDP leases
   (`apiserver-link` and `apiserver-link-b`, `openbao-link` and `openbao-link-b`); `controlplane.json`
   `links.<service>` names the slot (`a` or `b`), the dumbpipe it runs and its port, and `StepsFor`
   builds the link from it (member `link-<service>` for slot a, `link-<service>@b` for slot b). `units
@@ -578,11 +552,10 @@ plan's `m3_contract` already fixed it (names, mount, path, env var, encoding).
 
 ### The vault's config is rendered, not shipped
 
-Since plan 0006 M3-BAO-SYNC `internal/openbaoctl` renders the config from the cluster's OpenBaoServer
-spec (`rootvault.ServerConfigWith`: the same listener and postgres storage, client certificates
-optional) into its own state dir; the history below is the clusterstack rendering it replaced.
-`clusterstack.OpenBaoServerConfig` renders it and `clusterprovider.WriteOpenBaoConfig` writes it —
-0600, idempotent, before the step that runs `bao server -config=…`. Each line is measured on v2.6.2:
+`internal/openbaoctl` renders the config from the cluster's OpenBaoServer spec (`rootvault.ServerConfigWith`:
+the same listener and postgres storage, client certificates optional) into its own state dir.
+`clusterstack.OpenBaoServerConfig` renders it and `clusterprovider.WriteOpenBaoConfig` writes it -
+0600, idempotent, before the step that runs `bao server -config=...`. Each line is measured on v2.6.2:
 
 ```hcl
 ui = false
@@ -599,7 +572,7 @@ storage "postgresql" {
 The listener is loopback on the cluster's leased port, and the port is NEVER defaulted: bao's own 8200
 is one port for the whole host, which is the store's byte-identical-DSN defect class. The listener is
 TLS against the cluster's own certificate and key, and a spec with either absent is refused: a
-listener with no certificate is what an earlier revision measured as an ACME/plaintext listener whose
+listener with no certificate is an ACME/plaintext listener whose
 `GET /v1/sys/health` never answers the readiness gate. `disable_clustering = true` removes the cluster
 listener (default host-global 8201) and makes "one vault per cluster, no HA" a property of the file.
 The file carries **no `disable_mlock`**: 2.6.2 logs `unknown or unsupported field disable_mlock` and
@@ -618,9 +591,9 @@ vault's tables and the objects kine writes never share one database. `OpenBaoSer
 DSN that is empty, names no host:port, carries no user or password, is not a postgres URL, or names
 any database but `openbao`. The database itself is created empty by `StartPostgres` before the vault
 step (bao creates its own tables); measured on 2.6.2, the first vault write creates
-`openbao_kv_store` in `openbao` and nothing in `k3s`. This replaced `storage "file"`, whose expiry
-2.6.2 had already logged (`storage.file: the file physical backend is deprecated; use bao operator
-migrate ... by v2.7.0`) and which section 6 had already decided against.
+`openbao_kv_store` in `openbao` and nothing in `k3s`. The file backend is not used: 2.6.2 logs it
+as deprecated (`storage.file: the file physical backend is deprecated; use bao operator
+migrate ... by v2.7.0`) and section 6 decides against it.
 
 ### A child's output is drained, never left in a pipe
 
@@ -631,13 +604,13 @@ exited AND its output has been copied, so a child may write without bound and st
 `cmd.StdoutPipe()` is forbidden here. A pipe makes the READING the caller's job, and nothing in this
 tree ever read one, so the child blocked inside `write(2)` the moment the kernel's 64 KiB buffer
 filled. `k3s server` and `k3s agent` both emit far more than that during startup, so the block lands
-mid-boot and the readiness gate reports `k3s server at https://…: no answer` — a readiness fault over
+mid-boot and the readiness gate reports `k3s server at https://...: no answer` - a readiness fault over
 a child that was alive, healthy, and had nowhere to put its log. The failure is also load-dependent
 and therefore intermittent, which is the worst property a startup fault can have. Measured: a child
-writing 500 KB never finished before the fix and finishes immediately after.
+writing 500 KB never finished under a pipe; with a writer it finishes immediately.
 
 What outlives the child is bounded and named: `OutputTailBytes`, 256 KiB, a ring over the LAST bytes
-written, read through `Process.Output()`. **The bound is the point** — a cluster's k3s logs for the
+written, read through `Process.Output()`. **The bound is the point** - a cluster's k3s logs for the
 life of the cluster, and a tail that grows with it is a leak in the gateway, so the ring EVICTS rather
 than accumulating. Four children per cluster, so a whole process group costs at most 1 MiB. The tail
 is also what a positive assertion about a node reads: `AssertAgentDialledOurPort` needs the agent's
@@ -645,42 +618,41 @@ own dial line, and a tail that has already evicted it fails loudly rather than p
 
 `Spec.Output` is optional and independent: when set, the output goes there as well, and that sink is
 BEST-EFFORT with its errors dropped, because returning them would make `exec` stop copying and close
-the child's stdout — a full log disk must not SIGPIPE the apiserver.
+the child's stdout - a full log disk must not SIGPIPE the apiserver.
 
 ### A market bidder is an application instance of one installed account
 
-The container-era bidder (a systemd SYSTEM template unit per handle, `scripts/deploy-firecracker-bidder.sh`,
-an account in the docker group, guests as runner containers) is gone. A bidder host is set up by the one
-root step `socialweb-computer install bidder`, which creates the lingering `swc-bidder` account, its
-subuid/subgid range for per-VM user namespaces and the kvm group membership, and ends by running
-`check-host -role bidder` as the account (`docs/host-contract.md`). Each bidder is then
-`socialweb-computer run bidder`: it applies its MarketBidder root object with
+A bidder host is set up by the one root step `socialweb-computer install bidder`, which creates the
+lingering `swc-bidder` account, its subuid/subgid range for per-VM user namespaces and the kvm group
+membership, and ends by running `check-host -role bidder` as the account (`docs/host-contract.md`).
+Each bidder is then `socialweb-computer run bidder`: it applies its MarketBidder root object with
 `--profile prod-qr|market-network|dev-local` into the handle's own kcp, so every handle is its own
 application instance (section 0). Its guests are VM units of `internal/vmruntime` under the account's
-user manager, born only from the cloud-init `user_data` of the RFP flow (plan 0007 M2-VM-RUNTIME,
-M5-RUN-BIDDER; "Host processes and the VM lifecycle" below).
+user manager, born only from the cloud-init `user_data` of the RFP flow. There is no systemd system
+template unit per handle, no docker group account and no runner containers.
 
-### Host processes and the VM lifecycle (planned: plans 0006, 0007, 0008)
+### Host processes and the VM lifecycle
 
-NOT BUILT. This subsection records the design plans 0006, 0007 and 0008 were revised to on 2026-10-11
-from `docs/research/2026-10-11-vm-lifecycle/` (the user's decisions, a Linux exploration of the plans,
-live proofs on hat-8 with systemd 259.9 and firecracker v1.13.1, and a three-OS lifecycle synthesis).
-Today's code is what the subsections above describe. Lines marked "user" are the user's decisions of
-2026-10-11; the rest are Claude's, open to the user's veto in the plan files.
+NOT BUILT. This subsection describes the planned design for host processes and the VM lifecycle. The
+subsections above describe the code as it stands. Lines marked "user" are the user's decisions; the
+rest are Claude's, open to the user's veto in the plan files.
 
 **Invariant: no socialweb-computer code in a running VM's process tree (user).** The service manager
 launches the VMM; our code only does one-shot prep before the unit starts, and the tiny `socialweb-vmexec`
 helper creates the tap and `execve`s firecracker, so after start a VM unit's cgroup holds exactly `pasta`
-and `firecracker`. This holds since 0006 M3-FOLD: `socialweb-nodeboot` and its resident namespace verb
-are deleted, and the firecracker provider's only path is the VM unit of `internal/vmruntime`. Plan 0006 M2-VM-TREE-AUDIT builds the
-instrument (every process in a VM unit's cgroup must hash to a pinned asset), and plan 0007's live tests
-run it after every boot, restart and upgrade.
+and `firecracker`. There is no `socialweb-nodeboot` and no resident namespace verb; the firecracker
+provider's only path is the VM unit of `internal/vmruntime`. The instrument that proves it (every
+process in a VM unit's cgroup must hash to a pinned asset) exists as
+`socialweb-computer units audit` (`internal/hostsvc/treeaudit`), which exits 1 naming the unit and the
+executable that is not pinned. Running it after every boot, restart and upgrade is not built: only the
+verb runs it today.
 
 **Scope and platforms (user).** Headless servers; VMs survive a crash or upgrade of the core binary and a
-logout; a reboot is Lost (transient units live on tmpfs). Plans 0006-0008 execute on Linux only and build
-the cross-OS seams now: Go interfaces (`hostsvc`, `vmruntime`, `guestnet`), GOOS-tagged files, per-OS
+logout; a reboot is Lost (transient units live on tmpfs). This runs on Linux only; the cross-OS seams are
+built now: Go interfaces (`hostsvc`, `vmruntime`, `guestnet`), GOOS-tagged files, per-OS
 embedded assets compiled in only for the target OS, and a check.sh gate that builds and vets darwin and
-windows on every run. Windows is plan 0011 (Hyper-V HCS, SCM), macOS plan 0012 (vfkit, launchd).
+windows on every run. Windows (Hyper-V HCS, SCM) and macOS (vfkit, launchd) backends follow. The live proof of this design ran
+on hat-8 with systemd 259.9 and firecracker v1.13.1.
 
 **Where processes live (user).** The gateway and the bidders each run in the USER manager of a dedicated
 lingering account (`socialweb`; one shared `swc-bidder` account for every bidder handle, units namespaced
@@ -688,14 +660,13 @@ by handle). Long-lived children are transient SERVICES (never scopes) started ov
 `$XDG_RUNTIME_DIR/systemd/private`: a VM per `socialweb-vm-<hid>-<name>.service`, the vaults
 (`socialweb-bao-root`, `socialweb-bao-<hid>`), each cluster's postgres (`socialweb-pg-<key>`) and its
 member units in `socialweb-cluster-<key>.slice` (kine and bao `After=` and `Wants=` the postgres unit, not
-`Requires=`; user 2026-10-12), and
+`Requires=`), and
 kcp: on the gateway as alternating blue/green slot units (`socialweb-kcp-gw@a|b`) of the unpatched
 release kcp v0.33.0 asset, each on its own kine over a dedicated postgres unit on a unix socket
 (`socialweb-kcp-gw-pg`, not a CRD object), behind our own L4 front (`socialweb-kcp-gw-front`,
-127.0.0.1:6443; user 2026-10-12, after plan 0006's M0-KCP-SPIKE,
-`docs/research/2026-10-11-vm-lifecycle/kcp-spike.md`); on a bidder as ONE slot per handle
+127.0.0.1:6443); on a bidder as ONE slot per handle
 (`socialweb-kcp-<hid>@a`) on one kine over sqlite behind a port-0 front, upgraded by a short restart that
-VMs never notice, after which the controller re-adopts them (user 2026-10-12). Postgres and OpenBaoServer
+VMs never notice, after which the controller re-adopts them. Postgres and OpenBaoServer
 stay CRDs (user). Deno processes stay plain children of the core unit and die with it. The core unit
 uses the default `KillMode=control-group`; transient units are separate cgroups, so no KillMode reaches
 them (proved: a unit survives restart, kill -9 and stop of its starter). Only cpu, memory and pids
@@ -704,7 +675,7 @@ not used; VM units set `MemorySwapMax=0` with `MemoryMax` (otherwise the guest s
 own slice, outside the `app.slice` Fedora's systemd-oomd watches. Minimum systemd 253 with each property
 probed by `check-host` (user).
 
-**One explicit root step (user, 2026-10-12).** Production setup is `socialweb-computer install
+**One explicit root step (user).** Production setup is `socialweb-computer install
 bidder|gateway`, idempotent, with `uninstall`: it creates the account (never created on demand anywhere
 else), for bidders one subuid/subgid range and kvm membership, the `user@` cpu delegation drop-in, the
 AppArmor profile for the embedded pasta where AppArmor restricts user namespaces, the gateway's
@@ -712,10 +683,9 @@ AppArmor profile for the embedded pasta where AppArmor restricts user namespaces
 bootstrap-layer unit files (kcp's store, kine, slot(s) and front), then linger (after the group and the
 drop-in, so the user manager starts with them) and `host-backend: systemd-user` in the account's config.
 Every other unit (the vaults, cluster slices and members, VM units) is a transient unit placed at runtime
-from a HostProcess object and adopted by name. Plan 0006 M1-INSTALL and M2-BOOTSTRAP-LAYER enumerate both
-lists.
+from a HostProcess object and adopted by name.
 
-**The gateway's install and upgrade (plan 0006 M3-HOST-INSTALL).** `install gateway` writes the user unit
+**The gateway's install and upgrade.** `install gateway` writes the user unit
 `socialweb-computer-gateway.service` (`ExecStart=<state>/bin/current/socialweb-computer serve gateway kcp`,
 `Restart=always`, default `KillMode=control-group`, optional `EnvironmentFile=-<state>/gateway.env`) and a
 `config.json` that `serve gateway kcp` reads with nothing added by hand: the state dir, `host-backend:
@@ -738,7 +708,7 @@ host files (`/etc`, the linger file, the install record) go under `<dir>`, the s
 the account is the invoking user and the units run in that user's own manager; `--unit-prefix` names every
 unit of the installed application, the core included (`<prefix>computer-gateway.service`).
 
-**Each application instance's kcp as its service manager; dev run mode (user, 2026-10-12).** Long-lived
+**Each application instance's kcp as its service manager; dev run mode (user).** Long-lived
 host processes are `HostProcess` objects in their application instance's own kcp (section 0) (a kind that generalises DenoPod's reconciler shape) reconciled by a
 supervisor inside the binary onto a placement backend: `systemd-user` (transient units in the account's
 user manager, production installs only) or `proc` (dev and tests: a plain supervised process tree under
@@ -753,8 +723,7 @@ quick runs, postgres for the market network and prod-like profiles), leases keye
 bind-mounted in a per-instance user namespace, AppArmor reported not fixed, one uid for every role.
 Instances nest as kcp workspaces (one kcp per application instance; a parent instance that holds its
 children's processes later; applications never share a kcp, section 0). Guests in dev still come
-up only through the RFP flow. Plan 0006 M1-DEV-INSTANCE, M2-HOST-BACKEND-PROC, M2-HOST-CONFORMANCE,
-M2-BOOTSTRAP-LAYER, M2-HOSTPROCESS-KIND; `docs/research/2026-10-11-vm-lifecycle/dev-run-mode.md`.
+up only through the RFP flow.
 
 **Adoption is a tri-state verdict (user).** A restarted core adopts units by name, never re-creates them.
 Identity is read from systemd and the kernel (unit, InvocationID, VMM pid and start ticks through a pidfd,
@@ -765,76 +734,72 @@ boot id is Lost. A definite mismatch on an active unit is Lost and the unit is s
 **Guest side (user).** Every guest gets the identical address plan inside its own pasta namespace and
 dials a constant host address, so there is no network-index allocator and user_data is final at
 create. Guest images (kernel + rootfs) are built per hypervisor and arch by a build-host script that runs
-on any Linux host (CI will shell out to the same script later; user 2026-10-12), pinned by sha256 and
+on any Linux host (CI shells out to the same script), pinned by sha256 and
 fetched; bidders need no root, chroot, apt or Go toolchain. The seed is a separate pure-Go NoCloud cidata
 drive, the rootfs is copied as-is and the guest grows its own root, so no host runs debugfs, e2fsck or
-resize2fs (user 2026-10-12). Guest SSH host keys are generated in the guest and reported by it, with proof
+resize2fs. Guest SSH host keys are generated in the guest and reported by it, with proof
 of possession, in a bidder-signed `vm.hostKeys` record replicating `vm.onNetwork`; every ssh to a guest
-verifies them with `StrictHostKeyChecking=yes`, and no host scans a guest (user 2026-10-12; plan 0007
-M4-HOST-KEYS). The guest console goes to a capped file in
+verifies them with `StrictHostKeyChecking=yes`, and no host scans a guest. The guest console goes to a capped file in
 the VM's work dir and is deleted with it; tenant data never enters the host journal. Stop is graceful
 first: `SendCtrlAltDel` over the API socket, a grace window measured live through the RFP flow, then
 `KillSignal=SIGKILL` (firecracker, PID 1 of pasta's PID namespace, ignores SIGTERM); arm64 goes straight
 to SIGKILL. The bidder's deno runs with an explicit permission list, no `-A`, `/dev/kvm` and the user bus
 denied, which is the only boundary between it and the user manager it shares a uid with.
 
-**VM isolation without on-demand accounts (user, 2026-10-12).** The bidder account is shared by every
+**VM isolation without on-demand accounts (user).** The bidder account is shared by every
 handle, but each VM unit runs pasta and firecracker in its own user namespace mapped to a distinct 65536-id
 sub-range of the account's reserved subuid/subgid range (the rootless-podman pattern through `newuidmap`),
 with access to exactly its own work files by ACL, so a VMM escape lands in an unprivileged uid that owns no
-bidder file (plan 0007 M2-VM-RUNTIME).
+bidder file.
 
 **Stated limits.** Handles on one bidder host still share a uid for their cores and deno processes;
 deno's permission sandbox is the boundary between a bidder's deno and its user manager. Restarting
 `user@<uid>`, removing linger or `loginctl terminate-user` stops every unit and is treated as a reboot.
 
-**Control-plane continuity across upgrades (user, 2026-10-12).** There is no cutover: the finished binary
-was deployed fresh and the container path was deleted (plan 0006 M5-FRESH-DEPLOY, M5-RETIRE); no
-backwards compatibility, migration, rollback or prod-downtime handling is planned before the finished
-solution exists, and the gateway runs no containers. Continuity is for upgrades of the finished system:
+**Control-plane continuity across upgrades (user).** There is no cutover and no container path: the
+binary is deployed fresh. No backwards compatibility, migration, rollback or prod-downtime handling is
+planned before the finished solution exists, and the gateway runs no containers. Continuity is for
+upgrades of the finished system:
 a per-cluster TCP front owns the existing apiserver port (guest tickets, node secrets, kubeconfigs and
 `status.URL` never change); a k3s/kine upgrade starts a new slot beside the old on the same postgres,
-the front swaps, the old stops, idle clusters first (plan 0006 M3-APISERVER-FRONT, M3-CP-SLOTS); the market
+the front swaps, the old stops, idle clusters first; the market
 kube-scheduler elects a leader with a short lease and each slot has its own hostname so k3s's own leader
-lease never has two holders; a cluster link keeps its iroh key across restarts (M3-LINK-HANDOVER); a
+lease never has two holders; a cluster link keeps its iroh key across restarts; a
 restarted door resumes Bidding and Provisioning claims from a per-claim secrets-server key in the cluster
-OpenBao (plan 0007 M6-CLAIM-RESUME); and NODE-LOSS counts only time when our own path was up (plan 0007
-M3-NODE-LOSS-CLOCK). Design and measurements: `docs/research/2026-10-11-vm-lifecycle/control-plane-handover.md`.
-The gateway's kcp upgrades follow the same pattern behind our own front, not caddy (user 2026-10-12; a
-bidder's single kcp slot is simply restarted): slots run
+OpenBao; and NODE-LOSS counts only time when our own path was up. Design and measurements:
+`docs/research/2026-10-11-vm-lifecycle/control-plane-handover.md`.
+The gateway's kcp upgrades follow the same pattern behind our own front, not caddy (a
+bidder's single kcp slot is restarted instead): slots run
 `--enable-leader-election` and `--shard-base-url` = the front, a new slot gets the five shared root files
 and starts beside the old on the same kine -> postgres store, the front flips after `/readyz` on the new
 slot's own port, the old slot exits, and the Lease `kube-system/kcp-controllers` is deleted so the new
 slot leads at once (61 s gap without it, measured); a pg_dump precedes every roll, and kcp release pairs
-whose storage versions or bootstrap schemas differ take a planned short outage instead (plan 0006
-M2-KCP-SLOTS, M3-KCP-ROLL; `kcp-blue-green.md`). caddy stays public TLS only, is never reconfigured by a
+whose storage versions or bootstrap schemas differ take a planned short outage instead
+(`kcp-blue-green.md`). caddy stays public TLS only, is never reconfigured by a
 swap, and any caddy config we render pins `install_trust false`.
 
-### compute-provider-kcp: a ComputeVM per guest, reconciled by a Go controller (plan 0007 M1-DECIDE)
+### compute-provider-kcp: a ComputeVM per guest, reconciled by a Go controller
 
-PARTLY BUILT: the ComputeVM API (M1-API) and the TypeScript provider (M3-TS-PROVIDER, hono-compute-provider
-`lib/compute-provider-kcp`) exist; M2-VM-RUNTIME and M2-CONTROLLER are todo. This is the decision
-record of plan 0007 M1-DECIDE, read through section 0; the host mechanics it relies on are the subsection
-above. `ud:N` = line N of `docs/research/2026-10-11-vm-lifecycle/user-decisions.md`; `lp:N` = line N of
-`linux-proofs.md` in the same dir. Code citations are at socialweb-computer-kcp d439c1f, hono-compute-provider
-54d1b8f, atproto-market cd09af4, kcp-libs f6911d2.
+This subsection describes the compute-provider-kcp design. The ComputeVM API and the TypeScript provider
+(hono-compute-provider `lib/compute-provider-kcp`) exist; the VM runtime and the Go controller are not
+built. The host mechanics it relies on are the subsection above. The `file:line` citations below were
+taken at socialweb-computer-kcp d439c1f, hono-compute-provider 54d1b8f, atproto-market cd09af4 and
+kcp-libs f6911d2; a citation that no longer resolves points at code removed since.
 
-- **The bidder is an application instance with its own kcp (user 2026-10-12, ud:31, ud:34).** A bidder
+- **The bidder is an application instance with its own kcp (user).** A bidder
   handle = one kcp (one slot on kine-sqlite behind a port-0 front) + the bidder manifest set + a profile,
   rooted at a MarketBidder object. Its guests are ComputeVM objects in that kcp; two handles on one host never
   share a kcp. Requesters and the gateway never read a ComputeVM: what crosses applications is a market record
   (RFP, bid, accept, receipt, onNetwork, vm.hostKeys, vm.terminated). A bidder kcp upgrade is a short restart
-  of its one slot that VMs never notice; the controller re-adopts every VM afterwards (plan 0007 M6-BIDDER-UPGRADE).
-- **ComputeVM plus a Go controller (user 2026-10-07).** The TypeScript compute-provider-kcp (a
+  of its one slot that VMs never notice; the controller re-adopts every VM afterwards.
+- **ComputeVM plus a Go controller (user).** The TypeScript compute-provider-kcp (a
   `ComputeProvider`, hono-compute-provider `lib/abc/compute-provider/mod.ts`) writes a ComputeVM;
   `internal/computevm`, a client-go informer loop over the bidder's kcp, prepares, places, adopts and
   releases it. Spec: vm, owner.handle, userDataSecret, requester, contract {receipt and accept uri+cid,
   submitEventUrl, acceptedAt}, image, stopGraceSeconds; no network index. Status is OS-neutral (phase,
   lostReason, runtime {backend as a free string, ref, instance, pid, startTime, hostBootID, vmmID}, network,
-  image, conditions, market) so the Windows and macOS backends (plans 0011, 0012) need no schema revision
-  (`lifecycle-synthesis.md:43`).
-- **What the TypeScript provider writes and reads (plan 0007 M3-TS-PROVIDER; decided by Claude, user may
-  veto).** Packages `compute-provider-kcp-abc` (pure: the objects, the reason map, the cache),
+  image, conditions, market) so the Windows and macOS backends need no schema revision.
+- **What the TypeScript provider writes and reads.** Packages `compute-provider-kcp-abc` (pure: the objects, the reason map, the cache),
   `compute-provider-kcp` (kcp REST, no Hono) and `hono-factory-compute-provider-kcp` (OIDC issuer and
   `POST /v1/on-network` mounted in `serve.onConnected`). provision enriches user_data once with the constant
   guest host address, server-side applies the ComputeVM (field manager `compute-provider-kcp`), then applies
@@ -846,10 +811,10 @@ above. `ud:N` = line N of `docs/research/2026-10-11-vm-lifecycle/user-decisions.
   ComputeVMs filtered by `spec.owner.handle`, filled by `setup()`; when kcp refuses or drops the watch it
   re-lists every `resyncBackoffMs` (logged as `computevm_sync_mode`). A ComputeVM moving to Lost or Failed
   (or vanishing) that the provider did not delete fires `onGuestGone` once, reason HostRebooted ->
-  host_reboot, OOMKilled -> oom, IdentityMismatch -> identity_mismatch, every other -> vmm_exited
-  (M4-TERMINATION-EVENT), and the provider then deletes it so the finalizer releases the work dir. adopt
+  host_reboot, OOMKilled -> oom, IdentityMismatch -> identity_mismatch, every other -> vmm_exited,
+  and the provider then deletes it so the finalizer releases the work dir. adopt
   answers from the same cache. The kcp token is read from `tokenFile` on every request so the Go side can
-  rotate it; the rotation itself lands with the bidder DenoPod stack (M5-RUN-BIDDER).
+  rotate it; the rotation itself lands with the bidder DenoPod stack.
 - **DenoPod-per-VM was rejected, on evidence.** Deleting a DenoPod SIGKILLs its process group with no
   release step (kcp-libs `impl/execrunner/supervisor.go:322`, also `:156`); the runner's 5-minute
   `DefaultPodTimeout` (`impl/execrunner/pod.go:17`, enforced in `Observe` `:101-104`) killed the market network's bidder
@@ -857,63 +822,61 @@ above. `ud:N` = line N of `docs/research/2026-10-11-vm-lifecycle/user-decisions.
   `Message`, `Outputs` (`abc/runner/runner.go:40-48`), with no typed guest fields; booting needs `/dev/kvm`
   (today a privileged runner container per guest, hono-compute-provider
   `lib/microvm-firecracker/mod.ts:170-180`), which the bidder's deno sandbox must never hold (no `-A`, no
-  `/dev/kvm`, no user bus; ud:16).
-- **ContractStore over ComputeVM is the source of truth.** Today's provider holds guests and the network
-  index in memory (`lib/compute-provider-firecracker/mod.ts:606`, `:610`), so a restarted bidder lost its
-  receipts and leaked guests (2026-10-07; 2026-10-12T01:31Z). The `ContractStore` ABC
-  (atproto-market `lib/abc/market-bidder/mod.ts:109`) and its file store landed for the firecracker provider
-  (atproto-market c78cf31, hono-compute-provider ac3a1f5; plan 0007 M4-CONTRACT-STORE-FILE); compute-provider-kcp
-  implements the same ABC over ComputeVM `spec.contract`, with tombstones from Lost or released ComputeVMs
-  (M4-CONTRACT-RESTORE). A restarted bidder re-populates from ComputeVMs plus live VMM state (user
-  2026-10-07; acceptance ACC7-SOURCE-OF-TRUTH).
-- **No socialweb-computer code in a running VM's process tree (user, ud:6).** Today it is resident:
+  `/dev/kvm`, no user bus).
+- **ContractStore over ComputeVM is the source of truth.** The firecracker provider holds guests and the network
+  index in memory (`lib/compute-provider-firecracker/mod.ts:606`, `:610`), so a restarted bidder loses its
+  receipts and leaks guests. The `ContractStore` ABC
+  (atproto-market `lib/abc/market-bidder/mod.ts:109`) and its file store exist for the firecracker provider;
+  compute-provider-kcp
+  implements the same ABC over ComputeVM `spec.contract`, with tombstones from Lost or released ComputeVMs.
+  A restarted bidder re-populates from ComputeVMs plus live VMM state.
+- **No socialweb-computer code in a running VM's process tree (user).** Currently it is resident:
   `runVMM` waits on firecracker (`internal/nodefirecracker/namespace.go:19-56`) and nodeboot re-execs
-  `os.Executable()` (`cmd/socialweb-nodeboot/main.go:306`; a rename-over upgrade changes code mid-boot, E6).
+  `os.Executable()` (`cmd/socialweb-nodeboot/main.go:306`; a rename-over upgrade changes code mid-boot).
   Planned: prep is one-shot in the controller; each ComputeVM owns exactly one HostProcess placed as a
-  transient unit `socialweb-vm-<hid>-<name>` whose tree after start is pasta -> firecracker only (lp:297,
-  lp:309): on `systemd-user` in production, in the user manager of the one shared lingering `swc-bidder`
-  account (ud:7, ud:10), surviving core crash, upgrade and logout (E1); on `proc` in dev and tests, as a unit of
-  the per-instance `devsup`, the parent and child subreaper of every unit (`internal/devsup/server_linux.go:105`;
-  merged a107b5a, plan 0006 M2-HOST-BACKEND-PROC; ud:29). devsup in a dev tree is the dev backend by design,
+  transient unit `socialweb-vm-<hid>-<name>` whose tree after start is pasta -> firecracker only:
+  on `systemd-user` in production, in the user manager of the one shared lingering `swc-bidder`
+  account, surviving core crash, upgrade and logout; on `proc` in dev and tests, as a unit of
+  the per-instance `devsup`, the parent and child subreaper of every unit (`internal/devsup/server_linux.go:105`).
+  devsup in a dev tree is the dev backend by design,
   never production. Both backends satisfy `hostsvc.Manager` (`internal/hostsvc/hostsvc.go:203`). Reboot = Lost.
-- **Tri-state verdict: Running | Lost | Unknown (user, ud:9).** `hostsvc.Verdict` and `LostReason`
+- **Tri-state verdict: Running | Lost | Unknown (user).** `hostsvc.Verdict` and `LostReason`
   (`internal/hostsvc/hostsvc.go:156-181`). Bus dial, auth or timeout and an unreachable API socket are
   Unknown: a condition, phase unchanged, retried, never Lost. A changed boot id is Lost(HostRebooted); a missing
   unit Lost(UnitGone); a failed or inactive unit Lost(UnitFailed | OOMKilled | VMMExited); an identity mismatch
   on an active unit (InvocationID, pidfd + start ticks, `GetUnitByPIDFD`, firecracker `GET /` id) is
   Lost(IdentityMismatch) and the unit is stopped at once (lp:304); a unit placed by another backend is Lost,
-  never adopted (`hostsvc.go:294-303`). Why: a false Lost costs a tenant a VM (`lifecycle-synthesis.md:29-31`).
-  A Lost guest is never booted again; the requester replaces it through a new RFP (user 2026-10-07).
-- **Stop is CtrlAltDel, then SIGKILL (user, ud:17).** firecracker is PID 1 of pasta's PID namespace and
-  ignores SIGTERM, so a plain stop hangs 45 s (lp:29, lp:315). Releasing sends `PUT /actions SendCtrlAltDel`,
+  never adopted (`hostsvc.go:294-303`). Why: a false Lost costs a tenant a VM.
+  A Lost guest is never booted again; the requester replaces it through a new RFP (user).
+- **Stop is CtrlAltDel, then SIGKILL (user).** firecracker is PID 1 of pasta's PID namespace and
+  ignores SIGTERM, so a plain stop hangs 45 s. Releasing sends `PUT /actions SendCtrlAltDel`,
   waits `stopGraceSeconds`, then the unit stops with `KillSignal=SIGKILL`; arm64 goes straight to SIGKILL.
-  Measured live through the RFP flow: 0.21 s for an idle guest (lp:376). The finalizer is dropped only after
-  the work dir and API socket are gone (today 32 dirs, 63 GB leaked on hat-8, lp:381).
-- **Per-VM subuid user namespace (user 2026-10-12, ud:24).** `install bidder` reserves one subuid/subgid
+  Measured live through the RFP flow: 0.21 s for an idle guest. The finalizer is dropped only after
+  the work dir and API socket are gone (32 dirs and 63 GB leaked on hat-8 without it).
+- **Per-VM subuid user namespace (user).** `install bidder` reserves one subuid/subgid
   range for the shared account; each VM unit runs pasta and firecracker in its own user namespace mapped to a
   distinct 65536-id sub-range through `newuidmap`, so a VMM escape lands in a uid that owns nothing. No Unix
-  account is created on demand. The stage that creates the namespace is chosen by plan 0007 M0-VM-USERNS.
-- **cidata seed (user 2026-10-12, ud:25).** The seed is a separate pure-Go NoCloud cidata drive; the rootfs is
+  account is created on demand.
+- **cidata seed (user).** The seed is a separate pure-Go NoCloud cidata drive; the rootfs is
   reflink-cloned as-is and truncated to the contract's disk; the guest grows its own root. No host runs
   debugfs, e2fsck or resize2fs.
-- **Identical guest network per pasta namespace (user, ud:14).** Every guest gets the same address plan
+- **Identical guest network per pasta namespace (user).** Every guest gets the same address plan
   inside its own pasta user+net namespace and dials a constant host address (pasta's gateway), so the
   network-index allocator (`lib/compute-provider-firecracker/mod.ts:610`, `:688`) is deleted and user_data is
   final at create.
-- **Guest images from a build-host script (user, ud:15; revised 2026-10-12).** Kernel + rootfs per
-  hypervisor x arch, built by a script on any Linux host (CI shells out to it later), pinned by sha256 and
-  fetched; a bidder needs no root, chroot, apt or Go toolchain (plan 0007 M1-GUEST-IMAGE).
-- **iroh is the only guest transport (user 2026-10-12, ud:35).** compute-provider-kcp inherits no guest JSR
-  registry, websocat path, tunnel or fedproxy module (plan 0008 M1-STRIP-LEGACY-TRANSPORTS). Guest SSH host
-  keys are guest-reported in `vm.hostKeys` and verified with `StrictHostKeyChecking=yes` (ud:26; plan 0007
-  M4-HOST-KEYS).
-- **vm.terminated (user 2026-10-12, ud:23).** The bidder reports why and when a guest ended in a signed
+- **Guest images from a build-host script (user).** Kernel + rootfs per
+  hypervisor x arch, built by a script on any Linux host (CI shells out to it), pinned by sha256 and
+  fetched; a bidder needs no root, chroot, apt or Go toolchain.
+- **iroh is the only guest transport (user).** compute-provider-kcp inherits no guest JSR
+  registry, websocat path, tunnel or fedproxy module. Guest SSH host
+  keys are guest-reported in `vm.hostKeys` and verified with `StrictHostKeyChecking=yes`.
+- **vm.terminated (user).** The bidder reports why and when a guest ended in a signed
   `com.publicdomainrelay.temp.compute.events.vm.terminated` inside the existing market.event envelope
-  (lexicon atproto-market eb2aa82, bidder publish 7c4a8f4, requester handling bdd423b; live 2026-10-12: 5.6 s
-  from guest poweroff to the requester's session end). The Go side emits it from every Lost verdict through
+  (5.6 s
+  from guest poweroff to the requester's session end, measured live). The Go side emits it from every Lost verdict through
   compute-provider-kcp's `onGuestGone` (HostRebooted -> host_reboot, UnitGone | UnitFailed | VMMExited ->
   vmm_exited, OOMKilled -> oom, IdentityMismatch -> identity_mismatch); tombstones answer a late `vm.delete`
-  200. vm.terminated and vm.hostKeys are the plan's only protocol additions.
+  200. vm.terminated and vm.hostKeys are the only protocol additions.
 
 ## 6. CRDs and the API surface
 
@@ -1014,7 +977,7 @@ no_bids back-off keys on `Failed` + `rfpUri` without `acceptUri`), every field o
 All optional, so every existing claim stays valid. None of it is secret: records are public repo
 records, `submitAccept`/`submitEventRef` are bidder endpoints.
 
-**The claim is the durable record a door releases from (M2-CLAIM-RECEIPT).** The door's fulfiller
+**The claim is the durable record a door releases from.** The door's fulfiller
 (`lib/socialweb-computer-k8s-node-market`) calls atproto-market's `requestCompute` (not
 `runComputeContract`) with handlers that write the evolving `ContractState` into `status.contract`
 at `onRfpSubmitted`, `onAccepted` (phase `Provisioning`), `onReceipt` and `onNetwork`; each handler
@@ -1022,12 +985,11 @@ awaits its status write before the flow moves on, so the receipt is on the claim
 boots. Writes stay the door's alone and go through the existing store (its 429 Retry-After hold
 applies to reads; a status PATCH is not held). The legacy `vmUri|rfpUri|acceptUri|receiptUri|
 receiptCid` are mirrored from the strongRefs on every write, so the provider's no_bids back-off is
-unchanged. Since plan 0005 M3 there is no session after the flow: the flow returns when the guest
+unchanged. There is no session after the flow: the flow returns when the guest
 fetched its join secrets and the door releases only when the claim is DELETED, reading the claim back
 with `NodeClaimStore.get` and calling `releaseCompute` with the state parsed FROM THE CLAIM, never from
 its memory (section 9, "A market node joins through its cluster's OpenBao, never through ssh").
-Decisions, made by Claude, user may veto; the two marked SUPERSEDED were replaced by M3 and are kept
-for the record:
+Decisions, made by Claude, user may veto. The two marked SUPERSEDED are kept for the record:
 
 - A claim needs releasing iff its contract has receipt refs (`receipt` + `submitEventRef`) and its
   phase is not `released`. A released claim keeps its receipt and gains `release {event, payload,
@@ -1077,18 +1039,18 @@ verifier on this path MUST be passed a real NSID: it compares against the token'
 there skips the check.
 
 **A door that wants a usable cluster gets it in ONE call.** `createCluster` exists because the only
-other way to a live cluster was two round trips through two different verbs — `getKubeconfig`, whose
-kubeconfig a caller that is provisioning has no use for, and then `controlPlaneUp` — and because a
+other way to a live cluster was two round trips through two different verbs - `getKubeconfig`, whose
+kubeconfig a caller that is provisioning has no use for, and then `controlPlaneUp` - and because a
 caller had to know that order. It is not a new path: it calls the same `revocation.CreateOnRead`
 around `Store.Ensure` that `getKubeconfig` does, and then records `spec.running = true` itself, so the
 deny is consulted before anything is created. THE ORDERING IS THE CONTRACT: the running write comes
 first and reads nothing back, and it is made on a context the caller's cancellation cannot reach
-(`context.WithoutCancel`), because the door abandons a call at 30 s and the abort used to land before
-that write — leaving a cluster whose tree existed and whose `spec.running` was false, which no pass
-ever brings up. The phase is the ANSWER, not a refusal: a cluster whose control plane is still coming
+(`context.WithoutCancel`), because the door abandons a call at 30 s and an abort on that call must not
+land before this write, which would leave a cluster whose tree exists and whose `spec.running` is
+false, which no pass ever brings up. The phase is the ANSWER, not a refusal: a cluster whose control plane is still coming
 up is a 200 carrying `Initializing` (a market join is minutes away by construction), and only a
 Draining cluster is refused, from the view the write returns. `controlPlaneUp` keeps the stricter
-reading — 429 + Retry-After while Initializing — because a caller that asks the control plane up by
+reading - 429 + Retry-After while Initializing - because a caller that asks the control plane up by
 name is asking about the control plane. `getKubeconfig` keeps its create-on-read, which is what makes
 a first login work at all.
 
@@ -1097,17 +1059,16 @@ credential whose helper is named by configuration, so a gateway that is not conf
 to START rather than routing a verb that can never answer. A caller may also ask for a chosen
 credential lifetime; the settings and the reasoning behind each are in section 15.
 
-**A routed verb is not a working verb, and the difference was invisible here for as long as it took to
-notice.** `getKubeconfig` was on this surface, routed, documented and unit-tested, while the
-composition root handed the client no granter — so it answered `ErrNoDeviceKey` to every caller that
-reached it. It failed CLOSED, which is why it read as a gap rather than a hole, and it is the reason
-the answerability check in `cmd/socialweb-gateway` now drives every verb the lexicons declare past
+**A routed verb is not a working verb.** A verb can be on this surface, routed, documented and
+unit-tested while the composition root hands its client no granter, so it answers `ErrNoDeviceKey` to
+every caller that reaches it. It fails CLOSED, which reads as a gap rather than a hole. The
+answerability check in `cmd/socialweb-gateway` therefore drives every verb the lexicons declare past
 authentication and requires its ANSWER rather than its presence.
 
 **The mount requires `status.phase == "Ready"`, and that is a second, undocumented gate.** kcp's
 mount controller reads the referenced object's PHASE, not its conditions, before it will serve:
 measured, with `status.URL` written and `phase: Initializing`, the mount reports
-`WorkspaceMountReady=False(MountObjectNotReady)` and the front proxy answers **503** to the tenant —
+`WorkspaceMountReady=False(MountObjectNotReady)` and the front proxy answers **503** to the tenant -
 not an auth error. Setting `phase` to `Ready` alone, leaving the conditions still saying
 `Ready=False/Initializing`, flipped the mount to serving on the first poll. So a written `status.URL`
 is NOT sufficient for a user's `kubectl` to reach the apiserver, and a cluster whose phase is stuck is
@@ -1116,10 +1077,10 @@ a cluster nobody can reach even while its apiserver answers.
 **The minted bearer crosses the mount, and it is deliberately powerless.** Measured end to end: the
 provider mints a `gwmint` ServiceAccount token in the tenant cluster (through the TokenRequest
 subresource, under the `socialweb-mint-identity` ValidatingAdmissionPolicy), writes it as a
-kubeconfig, and that token authenticates BOTH directly at the apiserver and through the mount —
+kubeconfig, and that token authenticates BOTH directly at the apiserver and through the mount -
 `auth whoami` answers `system:serviceaccount:users:gwmint` in both cases. Through the mount it is
 **Forbidden** for `nodes` and `namespaces`, and `get` on the one ServiceAccount it is scoped to
-returns NotFound rather than Forbidden — i.e. authorized for exactly its own name and nothing else.
+returns NotFound rather than Forbidden - i.e. authorized for exactly its own name and nothing else.
 That is section 7's "the DID to ServiceAccount mapping is the tenancy boundary" observed rather than
 asserted: a mint identity has zero cluster read, so the mount is a path a user reaches their cluster
 through and not one that hands out the cluster.
@@ -1127,7 +1088,7 @@ through and not one that hands out the cluster.
 **The mint kubeconfig's own `server:` is loopback, not the mount.** It names the apiserver the
 provider minted the token against, which is correct for the provider and wrong for a user, who must
 reach the cluster through the mount. The gateway re-points it when it renders the user's kubeconfig,
-but the file under the mint directory LOOKS user-ready and is not — it works only from the host that
+but the file under the mint directory LOOKS user-ready and is not - it works only from the host that
 wrote it. Nothing user-facing may read that file directly.
 
 **A client certificate does not traverse the mount.** kcp terminates TLS, so only header credentials
@@ -1135,7 +1096,7 @@ survive: a bearer works through the mount (verified with `auth whoami` returning
 `system:serviceaccount:default:default`), and a client-certificate kubeconfig aimed at a mount URL
 fails with "the server has asked for the client to provide credentials". The provider's own minted
 certificate credential is therefore LOOPBACK-ONLY by construction, and the only credential that can
-cross the mount is a bearer — which is exactly what §7's "bearer only through the mount" requires,
+cross the mount is a bearer - which is exactly what section 7's "bearer only through the mount" requires,
 now with the measurement behind it.
 
 **The mount's URL comes from the Cluster's status, and that dependency is load-bearing.** A tenant
@@ -1143,7 +1104,7 @@ reaches its cluster through a `Workspace` whose `spec.mount.ref` names the `Clus
 that workspace's `spec.URL` FROM the `Cluster`'s `status.URL`. Measured against a live kcp: pointing
 the mount at a Cluster whose `status.URL` named a dead port made every request through the mount fail
 with `an error on the server ("") has prevented the request from succeeding`, and repointing
-`status.URL` at a live endpoint made it serve. So `status.URL` is not decorative — it is the only
+`status.URL` at a live endpoint made it serve. So `status.URL` is not decorative - it is the only
 thing that decides where the mount goes, and a cluster whose status is not written is a cluster the
 user cannot reach even while its apiserver is answering.
 
@@ -1169,13 +1130,13 @@ a request-header identity is forgeable.
 - **The grant is rendered for the cluster's OWNER, and the owner can act in it.** The name in those
   `resourceNames` is not a literal in the deployed file: `deploy/tenant-grant.yaml` carries
   `__SOCIALWEB_OWNER_SERVICE_ACCOUNT__` and the bootstrap substitutes `ServiceAccountName` of the
-  `Cluster`'s `spec.account` — the same DID the mount path is derived from — before it parses the
+  `Cluster`'s `spec.account` - the same DID the mount path is derived from - before it parses the
   document. `RenderTenantGrant` REFUSES a document with no placeholder rather than applying it, so a
   grant scoped to a name nobody owns cannot be applied by accident. The file also carries a
   `ClusterRoleBinding` `socialweb-owner` binding that ServiceAccount to `cluster-admin`: it is the
   owner's own cluster, and until this existed a real user's minted token authenticated and was
   authorized for NOTHING, because no `did-*` ServiceAccount had any RBAC. The `gwmint` Role stays
-  scoped by `resourceNames` and is NOT widened by this — it still reaches exactly one name, and the
+  scoped by `resourceNames` and is NOT widened by this - it still reaches exactly one name, and the
   owner's power comes from its own binding rather than from the mint's.
 - **A revocation that only deletes objects does not revoke.** Deleting a ServiceAccount is a ~10 s
   interruption, not a revocation: a stale, name-keyed RoleBinding resumes grants the moment the
@@ -1186,15 +1147,15 @@ a request-header identity is forgeable.
 **The tenant credential is minted from the ClientCA.** `cred/admin.kubeconfig` is derived, not stored,
 so the provider derives it: it reads `<DataDir>/server/tls/client-ca.{crt,key}` and signs a fresh
 ECDSA P-256 client certificate with CN `system:admin`, O `system:masters`. That is the identity k3s's
-own admin kubeconfig carries, and it is the arm of the grant's carve-out that writes Secrets —
+own admin kubeconfig carries, and it is the arm of the grant's carve-out that writes Secrets -
 `deploy/tenant-grant.yaml`'s `socialweb-mint-identity` policy is a TERNARY on
 `request.resource.resource`, not a single condition: the `serviceaccounts/token` arm admits only
 `system:serviceaccount:users:gwmint`, and the Secrets arm admits only
 `request.userInfo.username == 'system:admin' && 'system:masters' in request.userInfo.groups`, or the
 External Secrets controller `system:socialweb:external-secrets` (the identity of the pair beside the
-control plane, section 5; until 2026-10-07 it was the in-tenant ServiceAccount
+control plane, section 5; the pair is not the in-tenant ServiceAccount
 `system:serviceaccount:default:external-secrets`, which a tenant who creates that ServiceAccount would
-have inherited). The distinction is
+inherit). The distinction is
 load-bearing rather than pedantic, because the two arms admit DIFFERENT subjects for different verbs
 on purpose: a ServiceAccount token is requested by the tenant's own mint, while writing a Secret in
 the tenant namespace is the provider's act -- through its own admin credential for the grant, and
@@ -1233,7 +1194,7 @@ certificate must carry. The rule holds ACROSS the two sources as well as within 
 ClientCA cannot sign is refused with the reason, and the vault is not tried instead.
 
 **The credential never reaches a user.** It is a certificate credential, and the mint kubeconfig the
-gateway reads back carries a token only — `WriteMintKubeconfig` refuses a credential with no bearer
+gateway reads back carries a token only - `WriteMintKubeconfig` refuses a credential with no bearer
 token. The user's path renders an exec credential, and `kubeconfig.AssertClean` refuses any document
 carrying `client-certificate-data` or `client-key-data`. That is a test, not a convention: the minted
 credential is run through a faithful kubeconfig writer and `AssertClean` must refuse it, while the
@@ -1241,7 +1202,7 @@ document `kubeconfig.Build` hands a device must pass.
 
 **A workspace ServiceAccount does not leave its workspace.** Its token carries
 `authentication.kcp.io/scopes: [cluster:<origin>]` and kcp refuses it in every other logical cluster
-before RBAC is consulted — measured both directions, with a real TokenRequest token: a provider
+before RBAC is consulted - measured both directions, with a real TokenRequest token: a provider
 token is denied in a tenant workspace even with a matching ClusterRoleBinding there, and a tenant
 token is denied in the provider workspace. `--as=` impersonation does NOT reproduce it (it sets the
 username and not the scope extra), so an impersonation probe cannot answer the question and an RBAC
@@ -1250,15 +1211,14 @@ door of a workspace it was not minted in, which no subject string can spell.
 
 The consequence is load-bearing: `internal/kcpclient` addresses root, the account workspace, the home
 workspace and the mount from ONE `rest.Config`, so **the runtime cannot be any of the four provider
-ServiceAccounts**. The cluster provider holds a credential kcp does not confine to a workspace — the
-admin kubeconfig the operator already installs — and the four ServiceAccounts exist for a future
+ServiceAccounts**. The cluster provider holds a credential kcp does not confine to a workspace - the
+admin kubeconfig the operator already installs - and the four ServiceAccounts exist for a future
 split into four identities per workspace, not for today's single client. That is a deliberate
 privileged gateway-side credential: it is never handed to a tenant, and the tenant's own path is the
 mount plus a minted, per-device token.
 
-This corrects an earlier claim here that "RBAC already enforces the identity classes exactly". RBAC
-cannot enforce them for a runtime that spans workspaces; the SCOPE does, and it enforces them by
-refusing the client rather than by shaping it.
+RBAC cannot enforce the identity classes for a runtime that spans workspaces; the SCOPE does, and it
+enforces them by refusing the client rather than by shaping it.
 
 **The identity bundle is exactly 13 entries:**
 
@@ -1274,13 +1234,13 @@ tls/service.key        cred/passwd        cred/ipsec.psk
 `cred/admin.kubeconfig` is NOT one of them: it is DERIVED from the ClientCA, deterministic. Nor is
 the instance token, which is per-instance state.
 
-**An earlier list omitted request-header-ca and all four etcd CAs. Pre-seeding that list makes k3s
-REGENERATE those and INVALIDATE every kubeconfig and SA token.** The count is load-bearing; the
+**Pre-seeding a list without request-header-ca and all four etcd CAs makes k3s REGENERATE those and
+INVALIDATE every kubeconfig and SA token.** The count is load-bearing; the
 bundle's own test asserts it against the data.
 
-### A market node's secrets live in its cluster's OpenBao, behind a JWT role (plan 0005 M3-JWT)
+### A market node's secrets live in its cluster's OpenBao, behind a JWT role
 
-The provider half of the plan's `m3_contract` (node_secrets, jwt), built 2026-10-07. Names are in
+This subsection describes how a market node's secrets are stored and read. Names are in
 `internal/vaultlayout/nodejwt.go`, the vault writes in `clusterprovider.NodeVault`
 (`internal/clusterprovider/nodesecrets.go`, root token and CA from the cluster data dir, the same
 `ReadVaultSeal` + `vaultClient` every other cluster-vault write uses), the order in
@@ -1321,8 +1281,7 @@ Decisions, made by Claude, user may veto:
   `jwt-*` mount eagerly races a concurrent grant of the same issuer in the same cluster (list empty,
   role written, mount deleted), and mounts are bounded by the number of distinct bidder issuers, which
   is small. The reconcile below disables one, never inside that race: it is rate-limited, and a mount
-  a live claim's grant names is never disabled. Superseded the "kept forever" decision of
-  2026-10-07T22:53Z (M3-BAO-SYNC).
+  a live claim's grant names is never disabled.
 - **Revocation is best-effort and bounded** (`nodemarket.RevokeTimeout`, 10 s), runs right after the
   claim delete is accepted and before the wait for the door, and only logs a failure: the machine is
   what costs, and a leftover role binds one workload subject the released machine no longer runs.
@@ -1341,17 +1300,16 @@ and an in-test ES256 OIDC issuer: the node's own token logs in and reads its pat
 subject or audience is refused; the node's token gets 403 on another node's path; after `Revoke` the
 role, policy and secret are gone, the login is refused, the other node's policy and the mount remain.
 
-### The cluster OpenBao is reconciled against the live claims (plan 0005 M3-BAO-SYNC)
+### The cluster OpenBao is reconciled against the live claims
 
-Superseded 2026-10-12 by plan 0006 M3-BAO-SYNC (section 15): the node entries below are part of the
-cluster's OpenBaoServer declaration, `NodeVault.Reconcile` sets that declaration to the live claims, and
-the core's sync removes whatever no declaration names. The rules below are kept as the history.
+The node entries below are part of the cluster's OpenBaoServer declaration: `NodeVault.Reconcile` sets
+that declaration to the live claims, and the core's sync removes whatever no declaration names.
 
-Built 2026-10-07. The rows above are what is written; this is what is removed, and it exists because
-`Revoke` alone is eager and therefore skippable: a provider restart or crash between a claim going
+The table above is what is written; this is what is removed. `Revoke` alone is eager and therefore
+skippable: a provider restart or crash between a claim going
 away and its `Revoke` leaves a role, a policy and a secret behind, a bidder's issuer is a fresh
-`did:key` per restart, so every issuer a cluster has ever seen used to leave its `jwt-*` mount forever
-(read live 2026-10-07T22:53Z on the tenant cluster: 5 `jwt-*` mounts, 1 live node).
+`did:key` per restart, so every issuer a cluster has ever seen would otherwise leave its `jwt-*` mount
+forever (read live: 5 `jwt-*` mounts, 1 live node).
 `(*clusterprovider.NodeVault).Reconcile` (`internal/clusterprovider/nodesecrets.go`) takes
 `live map[string]*v1alpha1.NodeClaimGrant` for ONE cluster's OpenBao and makes actual equal desired:
 for every live node it keeps the policy `node-<node>`, the KV entry `socialweb-nodes/<node>` and, when
@@ -1362,8 +1320,8 @@ mount is not that node's grant mount, every policy named `node-<node>` that name
 with no role and named by no live grant. It never creates and never writes outside those deletions,
 never touches a mount, policy or path outside those naming patterns (a `jwt-` mount whose suffix is
 not 12 hex, an `approle` mount and `postgres`/`default`/`root` all survive it), and it deletes nothing
-on a failed read: the three listings that decide a deletion — the roles under each node mount,
-`sys/policies/acl`, and `socialweb-nodes/metadata` — each report their own failure out of `Reconcile`,
+on a failed read: the three listings that decide a deletion - the roles under each node mount,
+`sys/policies/acl`, and `socialweb-nodes/metadata` - each report their own failure out of `Reconcile`,
 because an unreadable list read as "nothing is declared" deletes every live node's login and join
 material. The method is declared as `nodemarket.NodeSecretsReconciler`, a sibling of `NodeSecrets`
 rather than a fourth method on it, so a substrate's secrets implementation still has one method per
@@ -1382,8 +1340,8 @@ live node's full set; the failure case puts a proxy in front of the dev vault th
 `LIST` with 500. `internal/providermain/vaultsync_test.go` proves adoption reconciles with
 the live grants, that a claim the door released is not live, that a node the provider still holds with
 no claim left in the workspace stays live, and that a second pass inside the interval does not read
-the vault again. Not deployed at the time of writing: the live reading (`bao auth list`,
-`bao list auth/<m>/role` after a release and after a provider restart) is the lead's.
+the vault again. The live reading (`bao auth list`, `bao list auth/<m>/role` after a release and after
+a provider restart) is not taken yet; it is the lead's.
 
 ## 8. Ports
 
@@ -1414,7 +1372,7 @@ purpose (`leases.json`); there is no port range and no probe.
 | `external-secrets-webhook` | the External Secrets webhook's TLS `--port`, the one its `ValidatingWebhookConfiguration` names as `https://127.0.0.1:<port>`; it binds every interface, because the upstream flag has no host |
 | `external-secrets-webhook-health` | the External Secrets webhook's `--healthz-addr`, on `127.0.0.1`. Both members' metrics are off (`--metrics-addr=0`), so no metrics port is leased |
 
-**The apiserver front owns the `k3s-secure` port (plan 0006 M3-APISERVER-FRONT).** Each cluster runs
+**The apiserver front owns the `k3s-secure` port.** Each cluster runs
 member `front`: `internal apiserver-front`, the same L4 front kcp uses (`internal/apiserverfront`), bound
 on `BindAddress:<k3s-secure>`, its control socket `<dataDir>/front.sock` (or
 `<stateDir>/fronts/<hash>.sock` when that path is over 107 bytes) and its state `<dataDir>/front.json`.
@@ -1429,24 +1387,23 @@ store (systemd `FDSTORE=1`; devsup on proc), so a front restart refuses no conne
 open ones. `AssertMarketAdvertiseInvariant` takes a `portallocator.Advertisement`: advertise port ==
 front lease, link target == front lease, no slot listen port inside the front lease.
 
-**The vault's lease is ONE port, and it was two for as long as nothing read the second.**
-`purposeWidth[PurposeOpenBao]` was 2, spelled "api + cluster", while the config the vault is given —
-`clusterstack.OpenBaoServerConfig`, section 5 — sets `disable_clustering = true`, which removes the
+**The vault's lease is ONE port.**
+`purposeWidth[PurposeOpenBao]` is 1. The config the vault is given
+(`clusterstack.OpenBaoServerConfig`, section 5) sets `disable_clustering = true`, which removes the
 cluster listener and makes "one vault per cluster, no HA" a property of the file. Both the listener
-stanza and `api_addr` take the same `Lease.Port`, no code in the tree reads `Lease.Port + 1`, and with
-the cluster listener removed nothing binds the second port, so it was leased, held out of the carve, and
-never read. The k3s pair was MEASURED (the apiserver binds `*:<https-listen-port>` AND
-`127.0.0.1:<https-listen-port + 1>`); it is now two holds, `k3s-slot-<s>` and `k3s-apiserver-<s>`,
-because a kernel-picked port has no free neighbour to count on and `--apiserver-port` moves the second
+stanza and `api_addr` take the same `Lease.Port`, and no code in the tree reads `Lease.Port + 1`. The
+k3s pair is two holds, `k3s-slot-<s>` and `k3s-apiserver-<s>`, because the apiserver binds
+`*:<https-listen-port>` AND
+`127.0.0.1:<https-listen-port + 1>`, a kernel-picked port has no free neighbour to count on, and
+`--apiserver-port` moves the second
 listener (measured: `127.0.0.1:41000`, `[::1]:41000` and `127.0.0.1:41500` with `--https-listen-port
 41000 --apiserver-port 41500`).
 
-**Two purposes in this table's history are retired, and neither was ever a second fact.** `advertise`
-was a lease for the port a node dials, until measurement showed the advertised port IS the bound port:
-`K3sAPIPorts` answers both questions from the `k3s-secure` lease, and the invariant refuses an
-`--advertise-port` that is not the port the apiserver holds. `kubelet` was a lease for the node's
-kubelet, until a node stopped being a process in THIS host's kernel and network namespace and the port
-became the guest's own. Both are in `retiredPurposes`: leases for them are dropped from an existing
+**`advertise` and `kubelet` are retired purposes, and neither is a second fact.** The advertised port
+IS the bound port: `K3sAPIPorts` answers both questions from the `k3s-secure` lease, and the invariant
+refuses an `--advertise-port` that is not the port the apiserver holds. `kubelet` is not leased: a node
+is not a process in THIS host's kernel and network namespace, so the port is the guest's own. Both are
+in `retiredPurposes`: leases for them are dropped from an existing
 lease file on open, `Allocate` refuses them, and their ports return to the carve. Section 15 holds both
 arguments in full, including what the kubelet lease was for.
 
@@ -1462,8 +1419,8 @@ and so has no kubelet at all, and pasta is started without `-t`/`--tcp-ports`, s
 published and the host cannot initiate a connection to a guest.
 
 **Only ONE port serves the API, and it is the one a node must dial.** Measured: `k3s server
---disable-agent` binds `*:<https-listen-port>` AND `127.0.0.1:<https-listen-port + 1>` as a PAIR —
-which is why each slot holds two ports — and in steady state it binds NOTHING on
+--disable-agent` binds `*:<https-listen-port>` AND `127.0.0.1:<https-listen-port + 1>` as a PAIR -
+which is why each slot holds two ports - and in steady state it binds NOTHING on
 `--advertise-port`. `/cacerts` answers 200 on the listen port and 401 on the advertise port for every
 credential form, so an agent dialed at the advertise port loops on `failed to get CA certs:
 Unauthorized`. The node's `--server`, `status.URL`, the tenant credential, the readiness gate and the
@@ -1471,27 +1428,26 @@ hardening seam all name the listen port; hardening through the advertise port is
 process group from ever becoming ready.
 
 **N control planes per host: proven. N nodes per host: refuted.** Two `--disable-agent` servers ran
-concurrently, each with its own kine and store, both serving — `kubectl get ns` against each — with the
+concurrently, each with its own kine and store, both serving - `kubectl get ns` against each - with the
 port pair above and disjoint control-plane secure ports. A node is the opposite: `127.0.0.1:6444`
 collides FATALLY and the loser is served the other cluster's CA; there is one
-`/run/k3s/containerd/containerd.sock` (hardcoded — `--data-dir` moves only `root`; measured
+`/run/k3s/containerd/containerd.sock` (hardcoded - `--data-dir` moves only `root`; measured
 cross-contamination, cluster A's containerd served `RunPodSandbox` for cluster B's pods), one
 `flannel.1` whose NAME is not redirectable and whose reconfiguration panicked the other agent
 (`vxlan_network.go:217`), one `8472/udp` socket, one `/run/flannel/subnet.env`, one IPAM pool, one set
 of `KUBE-*` chains and one `/var/lib/kubelet/pod-resources`. All four candidate fixes were refuted.
 That list is the measured case for a VM per node.
 
-**The hold, measured** (task port0-cp, 2026-10-12, Linux 7.2, in a private network namespace with a
+**The hold, measured** (Linux 7.2, in a private network namespace with a
 1000-port ephemeral range): a second exclusive hold of a held port is refused; a member binds
 `127.0.0.1:P`, `[::1]:P` or `:P` beside the hold and is dialled; a second listener is refused while
 the member listens; the member binds again after it restarts; 998 port-0 binds exhausted the range
 and none got a held port; 200 outgoing connects took none. A cluster link's dumbpipe binds UDP port 0
 (`--ipv4-addr 0.0.0.0:0`); a node dials it by its ticket, so its port is not held.
 
-**The bind probe (retired with the port range).** The earlier claim here was that the probe coexists with
-a wildcard binder because Go sets `SO_REUSEADDR`, and therefore reports a HELD PORT AS FREE. That
-does not reproduce on Linux: a LISTEN socket conflicts with a wildcard or a specific bind whatever
-the prober's `SO_REUSEADDR` is. The fault is the ADDRESS, not the flag, and it is wider than claimed:
+**The bind probe.** The probe binds the WILDCARD with `SO_REUSEADDR` cleared. A probe that relies on
+Go's `SO_REUSEADDR` does not coexist with a wildcard binder: a LISTEN socket conflicts with a wildcard
+or a specific bind whatever the prober's `SO_REUSEADDR` is. The fault is the ADDRESS, not the flag:
 
 ```
 holder bound 127.0.0.2:P, LISTENing            -> old probe said FREE   (a wildcard bind is blocked)
@@ -1503,7 +1459,7 @@ holder bound [::]:P, ipv6-only, LISTENing      -> old probe said FREE   (a wildc
 The probe now binds the WILDCARD with `SO_REUSEADDR` cleared; both halves are load-bearing, and the
 old probe leased `35167` while it was already bound. The measured cost: a port whose only occupant is
 a TCP TIME_WAIT socket reads held where a reuse-enabled listener could in fact bind. That over-report
-is accepted — it skips a port for the life of the TIME_WAIT, while the under-report hands a cluster a
+is accepted - it skips a port for the life of the TIME_WAIT, while the under-report hands a cluster a
 port it cannot bind. `/proc`'s LISTEN table is deliberately not consulted: `internal/portscan` imports
 this package, and it has no row at all for the bound-not-listening holder.
 
@@ -1528,47 +1484,42 @@ keeps them removed:
 | | |
 |---|---|
 | **a market guest** | **THE node path.** The node is a VM rented from the COMPUTE MARKET through a `NodeClaim` the clusterprovider writes and the market door fulfils under the cluster owner's own atproto OAuth session. **`internal/nodemarket`**, `SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE=market`. NOT a guest of this host: no subnet lease, no pasta, no VMM, no node image and no `/dev/kvm` is involved. The clusterprovider's whole part in the node is the claim; the door bids, wins, boots the guest from the winning bidder's cloud-init and writes the phase back; the guest itself dials the cluster's OpenBao and apiserver through the cluster's ClusterLinks and binds the advertised address (`SOCIALWEB_CLUSTERPROVIDER_MARKET_ADVERTISE_ADDRESS`, default `198.18.255.254`) on its own loopback (section 9, "A market node joins through its cluster's OpenBao, never through ssh"). Confirming is the tenant Node appearing for a claim the door left `Joining`, not a local process being alive |
-| **a guest of this host** | RETIRED 2026-10-07. A VM this host started itself -- `firecracker` or `qemu` behind the same `scale.Nodes` seam, each a VMM in its own network namespace, booting a node image built here and joining through an agent the image carried. Both values were refused and deleted (plan 0005 M1-MARKET-ONLY): the market path with a local bidder covers the same market network, so a second way to place a node was a second way to be wrong about where a node is. What the guest half still needs survives where the bidder uses it -- `internal/nodevm`, `internal/nodefirecracker`'s image, manifest and namespace halves, `socialweb-nodeboot`, `socialweb-nodeimage` -- because that is what boots the guest the MARKET rents, on the bidder's host |
+| **a guest of this host** | RETIRED. A VM this host started itself -- `firecracker` or `qemu` behind the same `scale.Nodes` seam, each a VMM in its own network namespace, booting a node image built here and joining through an agent the image carried. Both values were refused and deleted: the market path with a local bidder covers the same market network, so a second way to place a node was a second way to be wrong about where a node is. What the guest half still needs survives where the bidder uses it -- `internal/nodevm`, `internal/nodefirecracker`'s image, manifest and namespace halves, `socialweb-nodeboot`, `socialweb-nodeimage` -- because that is what boots the guest the MARKET rents, on the bidder's host |
 | **local process** | a `k3s agent` child process, `internal/nodelocal`, behind the same `scale.Nodes` seam. REFUTED as the substrate, three ways, all measured: `k3s agent` is fatal as a non-root user (`agent requires additional privilege if not run with --rootless`); it needs root for `/run/k3s/containerd`, `/var/lib/kubelet/device-plugins`, `127.0.0.1:6444` and the host `KUBE-*` chains, none of which `--data-dir` moves; and postgres is fatal AS root (`initdb: cannot be run as root`), so a host that runs the store cannot run a node |
 
 **`SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE` accepts exactly one value, `market`, and every other name is
-refused at startup.** `checkPlacement` names `market` as the only placement implemented today; the two
-retired names get a refusal that says which day they were retired and what replaced them, because a
+refused at startup.** `checkPlacement` names `market` as the only placement implemented; the two
+retired names get a refusal that names what replaced them, because a
 name from before the retirement would otherwise read as a typo. `market` is the one value that was
 never a guest: it takes no subnet range, mounts no guest gateway, and its `checkPlacement` demands no
 VMM, no agent, no image and no pasta. The variables only the retired substrates read --
 `FIRECRACKER`, `QEMU`, `NODE_AGENT`, `IMAGE_OUT_DIR`, `IMAGE_CONFIG`, `NETWORK`, `NODE_DISK_MIB` --
-are no longer parsed into the Config, and setting one is refused rather than ignored, since an
+are not parsed into the Config, and setting one is refused rather than ignored, since an
 operator who set one and saw no complaint would believe it was carrying it.
 
 The local-process mechanism is **DELETED, not merely refuted**: `internal/nodelocal` and the
 `process` value of `SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE` are gone, so a host can no longer be
-configured into it. It was kept as a sibling only long enough for the firecracker substrate to run
-the proof, which it now has — deleting it earlier would have left the node path with nothing green,
-and this repo's worst failure mode is a control that exists with nothing reaching it. The
-measurements that refuted it survive in this repository's history — `git log` on the deleted
-`experiments/process-substrate/` carries them, along with the commit messages that explain what each
-one established — because deleting code deletes the error messages that recorded why. The tree itself
-is gone: a prototype that is not built, vetted or tested by anything, and that had already begun to
-lie about its own failures. The `scale.Nodes` seam stays, with one implementation behind it, because
-the seam is what made the second one cheap and the third one possible.
+configured into it. The `scale.Nodes` seam stays, with one implementation behind it, because
+the seam is what made a second substrate cheap and a third possible. The measurements that refuted the
+local-process mechanism are in the git history: `git log` on the deleted `experiments/process-substrate/`
+carries them, with the commit messages that say what each one established.
 
 **A guest kernel is obtainable with no privileges at all, and this was measured.** Firecracker boots
 a kernel YOU supply, and the CI kernels cannot run a k3s node: all three fail `k3s check-config` with
-`STATUS: 4 (fail)` — `NETFILTER_XT_MATCH_IPVS`, `XT_MATCH_COMMENT`, `XT_MATCH_MULTIPORT`,
+`STATUS: 4 (fail)` - `NETFILTER_XT_MATCH_IPVS`, `XT_MATCH_COMMENT`, `XT_MATCH_MULTIPORT`,
 `XT_MATCH_STATISTIC`, `IP_VS`, `IP_SET`, `NF_TABLES_INET` and `NFT_MASQ` are all absent, so BOTH
 kube-proxy modes are unusable. Building a kernel needs `flex`, `bison` and `libelf`, which are not
 installed and need root. The way through is that **the host's own kernel already has every one of
 those symbols as modules**: extract the ELF from `/boot/vmlinuz-$(uname -r)` (zstd; the payload
 starts at byte offset 21196) and carry the host's own `.ko.xz` files in an initramfs, with `boot_args`
 that omit firecracker's default `nomodule`. Inside such a guest, `k3s check-config` returns
-**`STATUS: pass`**. No build, no root, no packages — and this is the single biggest de-risking of the
+**`STATUS: pass`**. No build, no root, no packages - and this is the single biggest de-risking of the
 whole substrate.
 
 **A guest kernel's module set is a MEASURED set, and `k3s check-config` cannot make that
 measurement.** The image's module list is what the guest agent loads before k3s starts, and it is a
 measurement rather than a preference. Measured on this host: with `xt_conntrack` absent from the
-list, kubelet inside the guest failed to create the KUBE-FIREWALL chain — the one that drops packets
+list, kubelet inside the guest failed to create the KUBE-FIREWALL chain - the one that drops packets
 to 127.0.0.0/8 arriving from a non-loopback interface:
 
 ```
@@ -1581,7 +1532,7 @@ missing kernel module? iptables: No chain/target/match by that name."
 and the same for IPv6 with `ip6table_mangle` absent. **`k3s check-config` returned RC=0 both before
 and after.** It reads the kernel CONFIG file staged beside the kernel and reports
 `CONFIG_NETFILTER_XT_MATCH_CONNTRACK: enabled (as module)` without ever asking whether that module is
-LOADED. It audits the config the kernel was built with, not the kernel the guest is running — so a
+LOADED. It audits the config the kernel was built with, not the kernel the guest is running - so a
 node can be Ready, and a green check, with a firewall rule missing. iptables 1.8.11 (legacy) no
 longer autoloads xtables extensions, which is why a module has to be NAMED rather than left to the
 first rule that needs one. The instrument that names this class of defect is the guest console, and
@@ -1595,19 +1546,19 @@ further check-config complaints (`CONFIG_RT_GROUP_SCHED`, `CONFIG_CRYPTO_GHASH`,
 
 **The same instrument found three more, and they were not cosmetic.** With `ipt_REJECT`, `ip6t_REJECT`
 and `xt_nat` absent, kube-proxy's `iptables-restore` failed on the rules that target them, so the
-in-cluster `10.43.0.1:443` had no ClusterIP, and every system pod that talks to the apiserver — the
-provisioner and the metrics server — crash-looped on `dial tcp 10.43.0.1:443: connect: connection
+in-cluster `10.43.0.1:443` had no ClusterIP, and every system pod that talks to the apiserver - the
+provisioner and the metrics server - crash-looped on `dial tcp 10.43.0.1:443: connect: connection
 refused`. The pods were scheduled and started, so the symptom is two services down rather than a
 cluster that will not come up. iptables 1.8.11 (legacy) does not autoload these either.
 
-**The list is complete because it is DERIVED, not because it grew — and the weaker instrument was
+**The list is complete because it is DERIVED, not because it grew - and the weaker instrument was
 hiding the rest.** `iptables` inside this guest does not load an extension on demand, and
 `iptables-restore` stops at the FIRST extension it cannot find, so discovering names by running and
 reading the console is a treadmill: one name per boot, dozens of boots, and a guest whose firewall
 is incomplete for as long as nobody looks. Both sides are enumerable at build time. The supply side
 is the kernel's own tree: `modules.dep`, `modules.builtin` and `modules.alias`, which is the
 kernel's `<ipt_|ip6t_|xt_><EXTENSION> -> module` table. The demand side is the guest's own console,
-because a failed restore dumps its ENTIRE payload — 401 rule lines in one run — and the extensions
+because a failed restore dumps its ENTIRE payload - 401 rule lines in one run - and the extensions
 in it are the demand.
 
 That derivation found two more, and the way it found them is the important part: `xt_NFLOG` and
@@ -1615,11 +1566,11 @@ That derivation found two more, and the way it found them is the important part:
 `-m physdev --physdev-is-bridged` sat in kube-router's network policy payload.
 
 **And with them missing, the three system pods reached `1/1` Running, with zero restarts, and stayed
-there for 1m43s** — while kube-router's network policy controller aborted its whole sync. So pod
+there for 1m43s** - while kube-router's network policy controller aborted its whole sync. So pod
 readiness is the WEAKER instrument for this class of defect, and a longer module list is not
 evidence either. The acceptance is: pods Ready AND held for a stability window AND the guest's own
-console free of a failed `iptables-restore` or an aborted policy sync. The failure is racy, too —
-one of two boots hit it with the old list — which is what explains two agents measuring the same
+console free of a failed `iptables-restore` or an aborted policy sync. The failure is racy, too -
+one of two boots hit it with the old list - which is what explains two agents measuring the same
 three pods as `1/1` and as `0/1` with restarts and both being right.
 
 The names that cannot be left to a same-name module are the ones to watch, and they are few: the
@@ -1627,11 +1578,11 @@ target `REJECT` is `ipt_REJECT` and `ip6t_REJECT` (there is no `xt_REJECT`); `DN
 `xt_nat` (there is no `xt_DNAT`); `NFLOG` and `physdev` are `xt_NFLOG` and `xt_physdev`. The builder
 now refuses a config that names no provider for an extension the cluster's rules use, and refuses a
 name the kernel does not carry, so this is caught at build time rather than one boot at a time. What
-that cannot do is prove a name NECESSARY: five names have been proven by a measured failure —
-`ipt_REJECT`, `ip6t_REJECT`, `xt_nat`, `xt_NFLOG`, `xt_physdev` — and the remaining ~43 are carried
+that cannot do is prove a name NECESSARY: five names have been proven by a measured failure -
+`ipt_REJECT`, `ip6t_REJECT`, `xt_nat`, `xt_NFLOG`, `xt_physdev` - and the remaining ~43 are carried
 for modes and matches these boots did not exercise.
 
-**Why nothing loaded on demand, found 2026-10-10 (plan 0005 M5-NETPOL): the kernel execs a modprobe
+**Why nothing loaded on demand: the kernel execs a modprobe
 the rootfs did not have.** The guest boots the build host's Fedora kernel, built with
 `CONFIG_MODPROBE_PATH="/usr/bin/modprobe"` (Fedora merged sbin into bin), over an Ubuntu 24.04 rootfs
 whose modprobe is `/usr/sbin/modprobe` only. Every `request_module()` the kernel makes -- the
@@ -1660,7 +1611,7 @@ the counter expression is built into `nf_tables.ko` on this kernel (no `CONFIG_N
 
 **And the same missing module is why a node's own cluster services die, which is the failure that
 looked like a network problem.** `iptables-restore` is ALL-OR-NOTHING: when kube-proxy's ruleset names
-the first extension the guest has no module for, the entire `KUBE-SERVICES` chain is dropped —
+the first extension the guest has no module for, the entire `KUBE-SERVICES` chain is dropped -
 including the DNAT rule for `default/kubernetes`. A packet to `10.43.0.1:443` then leaves by the
 default route and is refused, and every kube-system component that talks to the apiserver dies on it:
 
@@ -1675,18 +1626,18 @@ coredns                   0/1, never Ready, same address
 
 So a missing module presents as three unrelated services failing on one address, and the cause is
 visible only in the guest's console 7.6 s in, before any pod needs it. The node itself is unaffected:
-it registers, reaches `Ready`, and runs a pod — which is why this hid behind a green four-step proof.
+it registers, reaches `Ready`, and runs a pod - which is why this hid behind a green four-step proof.
 
 **Two hypotheses were wrong here and are recorded so they are not re-run.** The first: that the
-kubelet's LEASED port breaks these pods, because the ecosystem assumes 10250. Refuted three ways —
+kubelet's LEASED port breaks these pods, because the ecosystem assumes 10250. Refuted three ways -
 every failing and passing boot used the lease (`10251`); two boots identical but for the port both
 reach `1/1` and hold; and structurally the apiserver takes the kubelet's address AND port from the
 Node's own status (`status.daemonEndpoints.kubeletEndpoint`), with k3s starting its metrics-server
 `--kubelet-use-node-status-port`, so 10250 is not assumed. The endpoint that looked like evidence,
 `https://10.42.0.2:10250/readyz`, is the kubelet's readiness probe OF THE METRICS-SERVER POD, because
-k3s gives that pod `--secure-port=10250` — it points at the victim, not the cause. The second: that
+k3s gives that pod `--secure-port=10250` - it points at the victim, not the cause. The second: that
 the failure was intermittent, because two agents measured the same three pods as `1/1` and as `0/1`.
-The reconciliation is that the console reads differ by how much was read — the captured consoles are
+The reconciliation is that the console reads differ by how much was read - the captured consoles are
 bounded copies (~90-123 KB) and a failing run prints only the last 60-80 lines, so a tail read is
 indistinguishable from a clean console. Neither agent's measurement was wrong; one of them was
 looking at a truncated file.
@@ -1694,7 +1645,7 @@ looking at a truncated file.
 **The kubelet port lease is retired.** Its recorded justification is that two k3s AGENTS as local
 processes on one host contend for host-global ports (`listen tcp 0.0.0.0:10250: bind: address already
 in use`), and the fourteen host-global resources measured alongside it are all properties of a node
-that is a process in the host's network namespace — which is the substrate this design deleted. A node
+that is a process in the host's network namespace - which is the substrate this design deleted. A node
 is now a guest with its own kernel and its own netns: measured, nothing on the host binds 10250, 10248,
 10249, 10251 or 10256 while a guest runs, the host's k3s runs `--disable-agent` and has no kubelet at
 all, and pasta is started without `-t`/`--tcp-ports` so no guest port is published and the host cannot
@@ -1707,7 +1658,7 @@ namespace. Nothing is lost by that, because no part of the ecosystem assumes a p
 takes the kubelet's address AND port from the Node's own status
 (`status.daemonEndpoints.kubeletEndpoint`), and k3s starts its metrics-server with
 `--kubelet-use-node-status-port`. MEASURED: two boots identical but for the port (10250 vs 10251) both
-reached `1/1` system pods and held. MEASURED ONCE MORE, with the flag removed entirely — one
+reached `1/1` system pods and held. MEASURED ONCE MORE, with the flag removed entirely - one
 uninterrupted run against a real `k3s server --disable-agent`: k3s passes NO `--port` argument to the
 kubelet at all, the guest registered as a Ready node **12.9 s** after `InstanceStart`, its cluster's
 three system pods (`coredns`, `local-path-provisioner`, `metrics-server`) reached **`1/1` with zero
@@ -1716,18 +1667,18 @@ endpoint as `{"Port":10250}`, `kubectl top nodes` reads it through that port (`2
 and the guest console is clean on every firewall signature. What that run also needed, and what
 nothing enforces: the image had to be REBUILT first. The guest's kubelet argv is decided by the agent
 inside the image, and the image's recorded inputs do not include that agent (section 14), so a boot on
-the previous image passed `--kubelet-arg port=0` — the removed field read back as Go's zero value —
+the previous image passed `--kubelet-arg port=0` - the removed field read back as Go's zero value -
 and the kubelet refused to start with `port (--port) 0 must be between 1 and 65535`. The rule
 underneath the lease survives it, restated as invariant 8.
 
 **The guest never reaches a registry, which is stronger than giving it a resolver.** The image builder
-pulls the images the cluster's own system components use — with `go-containerregistry`, as Go, no
-daemon, no credential — and stages them as docker-save tarballs under `<k3s_data_dir>/agent/images/`,
+pulls the images the cluster's own system components use - with `go-containerregistry`, as Go, no
+daemon, no credential - and stages them as docker-save tarballs under `<k3s_data_dir>/agent/images/`,
 where k3s's agent imports every tarball BEFORE it starts the kubelet. Measured: the import lines are
 in the guest's own log at 27-150 ms each, and the whole console contains zero occurrences of
 `ErrImagePull`, `ImagePullBackOff`, `no such host`, `dial tcp` or `failed to resolve reference`. The
 system pods reach `Running` in a guest whose `/etc/resolv.conf` is still one byte, which is what makes
-the property provable rather than merely likely — they cannot have fetched anything.
+the property provable rather than merely likely - they cannot have fetched anything.
 
 The list is explicit in the operator's config rather than derived at build time, and it WAS derived
 from the shipped binary before being written down: read out of the manifests `k3s server` extracts,
@@ -1736,7 +1687,7 @@ staged and 62.0 MiB of rootfs, against a 1500 MiB headroom. Three of the resolve
 verbatim as blob names inside upstream's own air-gap tarball for this version, which is independent
 confirmation that the same images were resolved. One trap the verification caught: containerd
 normalizes seeded names through docker's `ParseDockerRef`, so emitting `index.docker.io/rancher/...`
-imports under a name no pod asks for — a silent `ImagePullBackOff`, and a test now pins that for every
+imports under a name no pod asks for - a silent `ImagePullBackOff`, and a test now pins that for every
 docker-hub spelling.
 
 Two things this does not cover, both named rather than implied: the `svclb` image for a LoadBalancer
@@ -1746,7 +1697,7 @@ and the digests.
 
 **pasta is the rootless network path, and it does hand out privileges.** Measured: under
 `pasta --config-net` the child runs as uid 0 in a fresh user and network namespace with a full
-capability set, and `ip tuntap add … mode tap` SUCCEEDS there — while the same command in the host's
+capability set, and `ip tuntap add ... mode tap` SUCCEEDS there - while the same command in the host's
 own namespace is denied. So a guest gets a tap, a bridge and an address without root, and it reaches
 a HOST-LOOPBACK-ONLY listener through the gateway address. That is what lets the apiserver stay off
 the network: bind loopback, advertise a host address the apiserver will accept for the in-cluster
@@ -1765,14 +1716,14 @@ moment `kubectl` first reports `Ready`, because a guest's own account of its own
 evidence: an earlier round of this work spent real effort chasing a reported 332-second boot that was
 a literal `echo` in an init script, printed 0.29 s after the VM started. The spread is k3s's startup,
 not the VM. Inside the guest, kubelet logs `Starting flannel with backend vxlan`, registers the node,
-sets the pod CIDR, and the kubelet it started binds the port it is given — a leased `10251` in this
+sets the pod CIDR, and the kubelet it started binds the port it is given - a leased `10251` in this
 measurement, and its own default since the lease was retired (the kubelet lease paragraph above).
 
 Supporting numbers on the way there: a `k3s server --disable-agent` on the host is ready in
 **1.1-1.9 s**; the guest's namespace reaches the apiserver. And **a kernel is validated by restoring
 it, never by comparing versions**: 6.18.48 cannot be restored at all on this AMD host (`Bad FPU state
-… restore_fpregs_from_fpstate` → panic). That is how 6.1.186 became the pin for the CI-kernel route
-discussed below, a route this design then abandoned in favour of the host's own kernel — which is
+... restore_fpregs_from_fpstate` -> panic). That is how 6.1.186 became the pin for the CI-kernel route
+discussed below, a route this design then abandoned in favour of the host's own kernel - which is
 what actually ships, which is why the guest that joined runs the host's kernel, and which turns out
 to matter for snapshot restore, below.
 
@@ -1824,8 +1775,8 @@ nothing beats waiting for the monitor and then restoring.
 **And it cannot make a NEW node at all, which is the part that kills it.** Restore does not re-run
 boot-time units, so the guest's own identity adoption never happens: `kcp-agent.service` does not
 re-run, `mountNodeDisk` and `adoptIdentity` never run, and no agent start marker appears in a restored
-console. A snapshot frozen as `liveweb-node1` — with its recorded node-disk path deliberately
-re-pointed at another node's disk before the load — comes back as **`liveweb-node1`**. So restore can
+console. A snapshot frozen as `liveweb-node1` - with its recorded node-disk path deliberately
+re-pointed at another node's disk before the load - comes back as **`liveweb-node1`**. So restore can
 thaw a node the cluster still knows and nothing else. Two consequences follow directly: a control
 plane can only ever scale a restored node back up, never out, and **a deleted Node object is never
 re-created**, because the kubelet only retries `updateNodeStatus` against a node that is not there and
@@ -1841,7 +1792,7 @@ snapshot not allowed after configuring boot-specific resources`), which is a nas
 one rejected device poisons every later attempt. And **restorable FPU state is a property of the
 kernel, not of the guest**: restoring the host's 7.2.7 kernel panics on the guest's first syscall
 return (`exc_general_protection` in `restore_fpregs_from_fpstate`, reached from `switch_fpu_return`),
-and `noxsave` removes the panic on this kernel — an earlier note that `noxsave` merely converts the
+and `noxsave` removes the panic on this kernel - an earlier note that `noxsave` merely converts the
 panic into a hang was measured on 6.18.48 and does not hold on 7.2.7. That leaves two requirements in
 direct conflict: k3s needs the host kernel's netfilter symbols, and a restorable guest wants a kernel
 whose FPU state this host can actually restore. `noxsave` is an escape hatch, not a resolution, and
@@ -1851,12 +1802,12 @@ bug: a restored guest's monotonic clock jumps forward by the pause duration.
 **Two failures that presented as plumbing, and were one cause: the `pasta` child inherits pasta's own
 SELinux domain.** `/usr/bin/pasta` is `pasta_exec_t`, so a child of it runs in `pasta_t` unless the
 program it execs is a type whose own policy transitions it away. In `pasta_t`, `ip tuntap add` is
-denied `CAP_NET_ADMIN` and `open` on a console file in `/tmp` is denied — and, the detail that made
+denied `CAP_NET_ADMIN` and `open` on a console file in `/tmp` is denied - and, the detail that made
 this expensive, `ifconfig_t` cannot write to the pipe `pasta_t` owns, so the error TEXT of both
 failures was silently discarded and arrived as an empty string. `pasta link in namespace: ""` and a
 permission error with no message were the same bug. The child is now `/bin/sh -c 'exec ...'`, and
 **the reason that works is not the one this document first gave.** Measured: on this host `/bin/sh`
-is `system_u:object_r:bin_t:s0`, NOT `shell_exec_t` — `/usr/bin/bash` is the `shell_exec_t` one. What
+is `system_u:object_r:bin_t:s0`, NOT `shell_exec_t` - `/usr/bin/bash` is the `shell_exec_t` one. What
 actually holds is that the gateway itself runs in `unconfined_t`, so exec'ing a `bin_t` file does not
 transition at all. The fix is incidental rather than principled: a gateway deployed under a systemd
 service domain would get the original failures back, including the silent one.
@@ -1866,7 +1817,7 @@ as configured only once the child has been observed to find pasta's own upstream
 mutated before that, so a child without the privileges the work needs fails at the observation
 instead of half-configuring a VMM. Its power is bounded and worth stating: it refuses a child that
 was unshared WITHOUT pasta's configuration, but a child that was never unshared at all sees the
-host's own interfaces and would pass — so it establishes "unshared, with pasta's config" rather than
+host's own interfaces and would pass - so it establishes "unshared, with pasta's config" rather than
 "provably pasta's namespace". A failure that writes nothing on either stream is also now a failure
 that names its own emptiness, because the original bug was exactly that: a denial whose account was
 denied too.
@@ -1877,7 +1828,7 @@ from its own identity, so the record, the startup sweep and the liveness lookup 
 rather than by three callers happening to do the same thing.
 
 **One writable ext4 serving as both template and instance was a correctness bug, not hygiene.** The
-guest's writes — k3s's extracted data dir, `/etc/rancher/node/password`, generated keys — persisted
+guest's writes - k3s's extracted data dir, `/etc/rancher/node/password`, generated keys - persisted
 into the file the next boot read, and the next boot failed `k3s check-config` with
 `sha256sum: does not match`. Two VMs on one ext4 would also have corrupted each other. The image is
 now a TEMPLATE and every node gets its own clone at `<dataDir>/rootfs.ext4` (`cp --reflink=auto`,
@@ -1904,11 +1855,11 @@ still served, and a year-old kernel from it BOOTS PERFECTLY, which is exactly wh
 invisible. Pin by the newest date prefix.
 
 The current kernels carry `VXLAN=y`, `NF_TABLES=y`, `VETH`/`BRIDGE`/`TUN=y` and `OVERLAY_FS=y`, so
-k3s's networking is reachable — with ONE hard exception: `CONFIG_NETFILTER_XT_MATCH_COMMENT` is
+k3s's networking is reachable - with ONE hard exception: `CONFIG_NETFILTER_XT_MATCH_COMMENT` is
 UNSET, and kube-proxy's iptables mode appends `-m comment --comment` to essentially every rule it
-writes. It is on kubeadm's required-kernel-config list for that reason. That left two routes — build
+writes. It is on kubeadm's required-kernel-config list for that reason. That left two routes - build
 a kernel, or build `xt_comment.ko` against the 6.18 CI kernel (the only one with `CONFIG_MODULES=y`)
-and ship it in the rootfs — and BOTH were abandoned for the cheaper route stated above: boot the
+and ship it in the rootfs - and BOTH were abandoned for the cheaper route stated above: boot the
 host's own kernel with the host's own modules. What survives from this finding is the rule rather
 than the route: **a guest kernel's module set is a MEASURED set**, and the measurement is
 `k3s check-config` run inside the guest, plus reading the guest's own console for the iptables
@@ -1916,7 +1867,7 @@ failures that check-config does not catch. `CONFIG_IP_VS` being unset is irrelev
 deprecated and being removed.
 
 Firecracker's DEFAULT cmdline passes `nomodule`, so a distro kernel whose virtio drivers are modules
-needs both a `boot_args` override and an initramfs — which makes building a kernel the better route,
+needs both a `boot_args` override and an initramfs - which makes building a kernel the better route,
 not the worse one. `VIRTIO_FS` is unset in both kernels, so a virtiofs root is not available.
 
 The guest needs a REAL init: k3s runs the kubelet with `--cgroup-driver=systemd`, so systemd must be
@@ -1930,7 +1881,7 @@ gateway address the guest dials. That is why bind and advertise are now separate
 
 The point of the VM is not isolation for its own sake: it is that every one of those host-global
 resources is PER GUEST inside it, so N nodes fit on one host where a local process allowed one. The
-node contract above is unchanged by the substrate — one long-lived command (the VMM), closing it is
+node contract above is unchanged by the substrate - one long-lived command (the VMM), closing it is
 the teardown, nothing is read back out, `--node-name` is set from the `(cluster, node)` pair and the
 token still travels as a `0600` file.
 
@@ -1969,15 +1920,15 @@ credential the kubelet authenticates with. The v1 ceiling is stated rather than 
 of a cluster shares one node password, which is harmless at 0-or-1 nodes and is inherited by the
 first multi-node change, where a per-node password must be minted instead.
 
-**The image is a directory, not a file.** `vmlinux`, `initramfs.cpio`, `rootfs.ext4` and `image.json`
-— and the boot line travels WITH the kernel inside `image.json`, so a kernel and the command line
+**The image is a directory, not a file.** It holds `vmlinux`, `initramfs.cpio`, `rootfs.ext4` and
+`image.json`, and the boot line travels WITH the kernel inside `image.json`, so a kernel and the command line
 that suits it cannot be separated by an operator choosing two paths. The builder refuses to write a
 2 GB image that is missing k3s, the agent, the guest document, the units or the kernel config, which
 fails in seconds instead of after a boot.
 
 **The record's identity is supplied by the substrate, and it is not a local-process idea.**
 `internal/noderecord` matches a token SUBSET against `/proc/<pid>/cmdline` after confirming the pid's
-start time, and a record whose identity does not match is NOT OURS and is never signalled — a pid
+start time, and a record whose identity does not match is NOT OURS and is never signalled - a pid
 reuse must stay a refusal, not a kill. A local agent is `{"agent", nodeName}`; a VMM is
 `{"firecracker", "--api-sock", <sock>}`, and the socket path is per node, so one node's record can
 never match another's VMM. An empty identity matches nothing rather than everything, which is the
@@ -1987,7 +1938,7 @@ only safe reading of "every token present".
 root filesystem where the base image carries a config. A node's guest boots the host's OWN kernel,
 which is built with SELinux, while its minimal root filesystem has no policy to enforce, so leaving
 it on is at best noise and at worst an unlabelled denial that surfaces as a permission error
-somewhere unrelated to its cause — which is exactly the shape of the two `pasta_t` failures above.
+somewhere unrelated to its cause - which is exactly the shape of the two `pasta_t` failures above.
 The security boundary for a node is the microVM, not SELinux inside a guest that has no policy. This
 is guest-only; the host's policy is untouched.
 
@@ -2252,7 +2203,7 @@ containerd reads the stock directories rather than k3s's agent directory (3919df
    so they go NotReady, and the new door does not reap them. They are released only when the provider
    deletes their claims (M3-NODE-LOSS's provider half), and until then they hold their VMs.
 
-### Pods reach pods on other market nodes through socialweb-meshd (plan 0005 M5-MESHD)
+### Pods reach pods on other market nodes through socialweb-meshd
 
 Market guests cannot reach each other: each sits behind its own NAT or pasta, so k3s's flannel
 overlay has nothing to run over (the limit "A node cannot reach another node" in NEXT.yaml). The
@@ -2260,11 +2211,10 @@ user's decision: QUIC datagrams over iroh, a tun device, each peer Node's podCID
 Node's iroh endpoint id, k3s with `--flannel-backend=none` and a bridge CNI for the node-local half.
 `rust/socialweb-meshd` (a cargo workspace at `rust/`, the first Rust in this repo) is that daemon.
 It is built and proved on hat-8, and the door's guest module installs it (the integration, below).
-It ran on the container prod: on 2026-10-07T23:20-23:23Z (plan 0005 M5-MESHD, M5-DNS) a mesh probe
-scaled test-cluster-alice-0001 from 0 to 2 market nodes, pods reached pods across the nodes both ways,
-and the node without CoreDNS resolved through 169.254.20.10; M5-NETPOL denied cross-node traffic with
-a NetworkPolicy on prod on 2026-10-10. It was lost when prod moved to the socialweb-computer binary,
-because only the container build placed the meshd downloads; the binary now ships them (item 6
+A mesh probe
+scaled `test-cluster-alice-0001` from 0 to 2 market nodes, pods reached pods across the nodes both ways,
+and the node without CoreDNS resolved through 169.254.20.10; a NetworkPolicy denied cross-node traffic.
+The binary ships the meshd downloads (item 6
 below), and the first two-node proof on the binary path is in section 15.
 
 **Identity.** One ed25519 secret per node, read from `--secret-file` as 64 hex characters (the
@@ -2370,7 +2320,7 @@ pure-Rust backend because its NEON C includes libc headers and there is no aarch
 and `--full` (skipped with a reason without cargo; `--full` fails instead), and adds the network-namespace and
 k3s proofs in `--local`/`--full` when `sudo -n` works.
 
-**The integration** (plan 0005 M5-MESHD integration half, with M5-DNS below). Every guest piece is
+**The integration.** Every guest piece is
 written by the door's guest module (`lib/cloud-init-plugin-k3s-join`) into the `user_data` the RFP
 flow carries; nothing reaches a guest any other way. Decisions not in the meshd author's list are
 marked "decided by Claude, user may veto".
@@ -2455,7 +2405,7 @@ Hostname address (`kubelet-preferred-address-types=Hostname`), which the k3s joi
 the node name; the tunnel routes a host name to the agent session of that node. IPv6 pod CIDRs are
 routed and checked by the code but untested.
 
-### Every market node resolves names on its own CoreDNS (plan 0005 M5-DNS)
+### Every market node resolves names on its own CoreDNS
 
 A Pod's resolver was the cluster's one CoreDNS on one node, so on a multi-node cluster every Pod off
 that node failed to resolve (NEXT.yaml limit, measured on five nodes). Now the resolver is on the
@@ -2571,7 +2521,7 @@ An unarmed kcp is the failure mode nobody sees from a green suite.
 **The address a node DIALS belongs to the substrate, and it is not the same address for both.** A
 node that is a local process reaches an address this host carries. A node that is a guest reaches
 NONE of them: it sits behind a tap in its own network namespace, and its only path to the host is the
-gateway its default route names — which is why a guest reaches the host's loopback through that
+gateway its default route names - which is why a guest reaches the host's loopback through that
 gateway and cannot reach the host's LAN address at all. So the guest's dial target is built from the
 substrate's gateway rather than from an operator-chosen host address; k3s advertises that same
 gateway for this substrate; and the gateway is in `--tls-san`, because the guest dials it and a
@@ -2585,7 +2535,7 @@ joining is not evidence that it joined THIS cluster. That control had been writt
 since before the substrate existed.
 
 **Every guest gets its own address, taken from the range its cluster leases.** The shared constant was
-this host's own LAN address, handed to every node — one node works and two collide into two Node
+this host's own LAN address, handed to every node - one node works and two collide into two Node
 objects with one InternalIP, with flannel on each treating the other's pod CIDR as its own. A range is
 compared against the host's own networks before it is leased, so no guest is ever handed this host's
 address; the gateway is the range's address 1 and the node is `1+ordinal`, and `Lease.Host` refuses a
@@ -2599,9 +2549,9 @@ nodes come only from the market. What follows is kept as the record of the 2026-
 describes code that no longer exists.
 
 `internal/nodeqemu` was a second substrate behind the same `nodeHost` seam, selected by
-`SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE=qemu`. It boots the SAME image as firecracker — the kernel,
+`SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE=qemu`. It boots the SAME image as firecracker - the kernel,
 the initramfs and the rootfs `internal/nodefirecracker.LoadImage` resolves from the builder's
-configuration — because a node image is a set of portable files, not a firecracker artifact. The
+configuration - because a node image is a set of portable files, not a firecracker artifact. The
 guest is started with a `qemu-system-x86_64` command line:
 
 ```
@@ -2624,7 +2574,7 @@ firecracker, so the guest still finds its token on the disk by label rather than
 **The network is the SAME mechanism, not a QEMU mode.** pasta gives the namespace child a link
 carrying one of the host's addresses; `nodevm.WireNamespace` creates the tap and bridges it onto
 pasta's own link, and refuses to configure the VMM until the namespace has been observed to carry
-that link. Both substrates start pasta the same way — `nodevm.PastaArgv` — and both exec the same
+that link. Both substrates start pasta the same way - `nodevm.PastaArgv` - and both exec the same
 `kcpagent namespace <params.json>` inside it; the params file's `kind` field decides which VMM the
 agent runs. There is no `-netdev user`, no host-forwarding rule and no QEMU-only address: the guest
 dial address, the gateway, the tap, the bridge and the per-node address all come from the same range
@@ -2633,7 +2583,7 @@ firecracker guest and reaches the host's apiserver only through the leased gatew
 
 **The record's identity is the node name on the command line.** `internal/noderecord` matches a
 token SUBSET against `/proc/<pid>/cmdline` after confirming the pid's start time. Firecracker's
-identity is its API socket; QEMU has no API socket, so its identity is `{"-name", <node name>}` —
+identity is its API socket; QEMU has no API socket, so its identity is `{"-name", <node name>}` -
 the node name is already per cluster and per node, qemu is started with it, and a record whose
 identity does not match is NOT OURS and is never signalled. A gateway that restarts reaps a QEMU
 guest the previous one booted by reading the same record and matching the same `-name`, which is the
@@ -2661,12 +2611,12 @@ configuration carries `vmm` (`firecracker` or `qemu`, absent meaning firecracker
 recorded input: it is in `BuildInputs` and in `BuildConfig`, so two images of the same inputs for
 different VMMs have different fingerprints and never collide in the store. The image's manifest also
 carries `vmm`, so the image is self-describing, and a substrate refuses an image built for the other
-one — in `checkPlacement`, where the builder's own configuration is held to the selected substrate,
+one - in `checkPlacement`, where the builder's own configuration is held to the selected substrate,
 and again in `nodeSubstrateFor`, where the loaded manifest is held to it. That refusal is the point:
 both VMMs boot the same kernel and hand the guest the same files, so a cross-substrate boot is not
 caught by the kernel, comes up, joins and reaches Running, and the only place the mismatch is written
 down is this field. What genuinely differs by VMM is the virtio TRANSPORT the guest's block device
-arrives on — firecracker hands it over virtio-mmio, qemu over virtio-pci — and the builder derives
+arrives on - firecracker hands it over virtio-mmio, qemu over virtio-pci - and the builder derives
 which transports the image must be able to load from the real module tree rather than asserting a
 rule: on kernel 7.2.7-200.fc44.x86_64 `virtio_pci` and `virtio_blk` are BUILT IN (present in
 `modules.builtin`, absent from `kernel/drivers/`), while `virtio_mmio` is a loadable module the
@@ -2699,12 +2649,12 @@ image.
 |---|---|---|
 | `INSTANCE_START_TO_READY_S`, host-timed from the VMM's instance record to the Node's Ready condition, resolution 250 ms | **5.460** | **7.256** |
 | wall time of the whole proof | 98.79 s | 114.39 s |
-| historical baseline (2026-09-23, older image, firecracker's `InstanceStart` timestamp) | 9.749 / 9.609 | — |
+| historical baseline (2026-09-23, older image, firecracker's `InstanceStart` timestamp) | 9.749 / 9.609 | - |
 
 The qemu guest is ~1.8 s slower to Ready than firecracker's on this host. The two start clocks are
 the same kind of host timestamp but not the same instant: firecracker's `StartNanos` is written when
 its API's `InstanceStart` succeeds, qemu's when the VMM process is started, so qemu's interval
-includes the process spawn and device setup that firecracker's does not — the real gap in guest boot
+includes the process spawn and device setup that firecracker's does not - the real gap in guest boot
 is therefore somewhat smaller than the table's difference.
 
 One operational condition the first firecracker run exposed, and which is pre-existing rather than
@@ -2715,7 +2665,7 @@ The proof's default `TMPDIR` satisfies it; a very long temporary or state path d
 One prerequisite the qemu live boot exposed earlier: the host-side agent binary must be built from
 the same tree as the gateway, because the namespace parameters carry `kind` and `vmm` rather than
 firecracker's fields, and an older prebuilt agent refuses them. The guest-level measurements recorded
-above — the module set, the iptables failures, the Ready timing — were taken under firecracker and
+above - the module set, the iptables failures, the Ready timing - were taken under firecracker and
 are not re-derived here; the qemu run above is the full-flow proof, not a re-measurement of those.
 
 ### The host platform
@@ -2746,17 +2696,14 @@ macOS or Windows VM behaviour.
 | `socialweb-nodeimage` stage lock (`buildlock_*.go`) | `flock` | refuses | refuses |
 | `check-host` VM runtime (`vmruntime_*.go`) | firecracker | "no VM runtime compiled", the Linux-only checks NOT APPLICABLE | the same |
 
-The capability predicates (`Firecracker`, `QEMU`, `NetworkMode`, `Accel`, `AccelWHPX`) were deleted with
-this gate: 9d85916 had retired nodeqemu and the local substrates, and only `check-host` still read them.
-`check-host` names the VM runtime compiled into the build until plan 0007's `vmruntime` registry
-replaces that file. `hostos.DetachProcess` was deleted: it was `Pdeathsig: SIGKILL` under a name that
-said the opposite; its one caller, the resident namespace verb, uses `DieWithParent` until plan 0007
-M2-VM-RUNTIME deletes the verb. The service-manager, VM-runtime and guest-network seams (`hostsvc`,
-`vmruntime`, `guestnet`) are Linux-only bodies behind interfaces; Windows (HCS, HNS, SCM) is plan 0011
-and macOS (vfkit, launchd) is plan 0012. See section 5, "Host processes and the VM lifecycle".
+The capability predicates `Firecracker`, `QEMU`, `NetworkMode`, `Accel` and `AccelWHPX` are gone from
+the tree: nothing declares or reads them.
+`check-host` names the VM runtime compiled into the build. The service-manager, VM-runtime and
+guest-network seams (`hostsvc`,
+`vmruntime`, `guestnet`) are Linux-only bodies behind interfaces; the Windows (HCS, HNS, SCM) backends are
+plan 0011 and macOS (vfkit, launchd) is plan 0012. See section 5, "Host processes and the VM lifecycle".
 
-What follows is the 2026-09-24 measurement, kept as a record: the qemu substrate it measured was
-deleted in 9d85916.
+What follows is the measurement of the four-step proof.
 
 **What was observed, and what was not.** On 2026-09-24 the four-step proof was run on this Linux host
 as the capability matrix: `TestTheFourStepProofRunsThroughTheCompositionRoot` ran both substrates in
@@ -2818,7 +2765,7 @@ under its own work.
   written before the command exists and `Draining` on every teardown path, and `Running` is written
   only by `ConfirmJoined`, which the composition root calls after the tenant cluster's own node list
   reports the node. So `Running` means k3s registered it, not merely that a command is up. The scale
-  decision does not read the phase at all — it counts the tenant cluster's Nodes — so a node stuck in
+  decision does not read the phase at all - it counts the tenant cluster's Nodes - so a node stuck in
   `Pending` past the join timeout is a warning and not a wedge: the next pass re-observes and
   confirms it.
 
@@ -2829,13 +2776,13 @@ a node that died without its CR being updated would be counted alive by the CR r
 direction that stops a cluster ever reaching zero.
 
 **The tenant's Node object outlives the agent, so the teardown must delete it.** A k3s agent does not
-remove its own Node object when it stops — kubelet does that only when a cloud provider is configured,
+remove its own Node object when it stops - kubelet does that only when a cloud provider is configured,
 and none is. So a teardown that stops the process and skips the delete leaves the count above zero
 with no intent, and `Decide` calls teardown again on every pass for ever: the cluster is never
 observed at zero nodes, which is the objective. The delete belongs to the teardown, after the guest
 is stopped, tolerating NotFound as success; a provision deletes nothing. It cannot live in
 `nodelocal`, which has no tenant client, so it lives in the
-composition-level `scale.Nodes` that wraps the host — and a nil tenant client is an explicit refusal,
+composition-level `scale.Nodes` that wraps the host - and a nil tenant client is an explicit refusal,
 never a skipped cleanup, because a skipped cleanup and a completed one look identical from a green
 suite.
 
@@ -2852,9 +2799,9 @@ rather than a delta, and the driver reconciles the cluster's actual count - re-r
 CRs, never remembered - to it.
 
 **Our own add-ons are a MEASURED baseline, and a cluster holding only them has nothing deployed.**
-The add-ons this provider installs into a tenant cluster (until 2026-10-07 the External Secrets
-Operator's three Deployments; since then NONE, see below) are workloads like any other, and at zero nodes their pods are Pending, so before
-2026-10-07 they were intent for ever: a cluster that had run one pipeline never returned to zero. The
+Add-ons this provider installs into a tenant cluster are workloads like any other, and at zero nodes
+their pods are Pending, so they would otherwise be intent for ever: a cluster that had run one
+pipeline would never return to zero. The
 rule is a delta, measured rather than listed. The installer applies with its own server-side field
 manager, `socialweb-addons` (`clusterprovider.AddOnFieldManager`), and right after the apply the
 provider lists the Deployments, StatefulSets, DaemonSets and Jobs whose `managedFields` carry an
@@ -2865,11 +2812,10 @@ directory. That file is provider state; a tenant cannot edit it. `scale.Narrow` 
 entry, and every pod whose controller resolves to one. A baseline workload whose spec has changed
 (the tenant scaled our operator to two) is NOT dropped: that is a tenant's request. A workload of
 the same name in another namespace is not ours. The baseline is re-measured on every add-on pass
-(each `Bootstrap`), so a file written while the operator still ran in the tenant empties once the
-process group's migration has deleted those Deployments. There is no list of add-on names here for the same reason the k3s add-on rule has
+(each `Bootstrap`). There is no list of add-on names here for the same reason the k3s add-on rule has
 none. Non-workload objects (CRDs, RBAC, webhooks) are not recorded, because nothing the scale
-decision reads is one of them. Since 2026-10-07 the operator runs beside the control plane (`NEXT.yaml`
-ESO-4, section 5), the tenant holds its CRDs, ClusterRoles and webhook registration and no
+decision reads is one of them. The External Secrets operator now runs beside the control plane
+(section 5), the tenant holds its CRDs, ClusterRoles and webhook registration and no
 workload, and the measured baseline is EMPTY: the rule stays because it is what keeps any future
 add-on from pinning a node.
 
@@ -2888,15 +2834,12 @@ defaults are `DefaultMaxNodes = 10` and `DefaultPodsPerNode = 8`, resolved in `O
 `SOCIALWEB_CLUSTERPROVIDER_SCALE_MAX_NODES` and `SOCIALWEB_CLUSTERPROVIDER_SCALE_PODS_PER_NODE`. The
 refusal is on `n < 1`, not on `n < DefaultMaxNodes`: a ceiling under one is not a smaller cluster, it
 is a configuration whose only consistent reading is "never place the work", while a ceiling of three
-is a smaller cluster and is taken. The default was 1 until 2026-10-07, when a five-job GitLab run
-measured what one node means for a runner with `concurrent = 5` (section 15); `scripts/deploy.sh`
+is a smaller cluster and is taken. A five-job GitLab run measured what one node means for a runner
+with `concurrent = 5` (section 15); `scripts/deploy.sh`
 passes 10 and one pod per node, so a cluster serving this runner asks for the nodes the jobs need.
 
 **Scale-in is per node: a node holding nothing beyond the baseline for the hold is cordoned,
-drained and released, one per hold (plan 0005 M4-SCALE-IN, 2026-10-07; supersedes the
-all-or-nothing rule of plan 0002 section 4.4).** Before this, while there was work the target only
-grew and the down direction was the whole-cluster teardown, so a cluster that scaled to seven nodes
-for one pipeline held seven until every last pod was gone. The rule now has a pure half and a side
+drained and released, one per hold.** The rule has a pure half and a side
 effect half:
 
 - *What a node holds.* `scale.Loads(nodes, observation, replicaSets, baseline)` reads, per tenant
@@ -2940,16 +2883,16 @@ effect half:
   9, "A restarted provider never reaps; it adopts"), so it is released like any other; a failed
   drain uncordons rather than leaving a cordoned node counted.
 
-**A DaemonSet is never intent, and never demand (plan 0005 M4-SCALE-IN).** A DaemonSet's desired
+**A DaemonSet is never intent, and never demand.** A DaemonSet's desired
 count follows the nodes, so with one tenant DaemonSet any cluster that had a node kept intent for
-ever and never reached zero (reported by the M0 work). `Intent` and `Demand` no longer read
+ever and never reached zero. `Intent` and `Demand` do not read
 `Observation.DaemonSets` at all, and skip every pod whose controller is a DaemonSet or that is a
 mirror pod, whether or not its DaemonSet was in the same read. A DaemonSet-only cluster is a cluster
 with no intent: it holds its nodes for the hold and goes to zero. The `DaemonSets` field stays in the
 observation because the baseline narrowing ranges over it.
 
 **A custom resource is intent only while an operator of ours that runs IN the tenant cluster has not
-reconciled it (plan 0005 M4-PENDING-CRS; the rule "workloads beyond the baseline plus our operators'
+reconciled it (the rule "workloads beyond the baseline plus our operators'
 CRs not yet reconciled" is the user's, the mechanism decided by Claude, user may veto).**
 `scale.Operators` is a registry of `{Group, Kind, ReadyCondition, InCluster}`. A CR counts only if
 its group/kind is registered with `InCluster: true` and it is not reconciled: its `ReadyCondition`
@@ -2957,8 +2900,8 @@ is not `True`, or that condition or `status.observedGeneration` is older than
 `metadata.generation`, or it is being deleted behind a finalizer. Each such CR adds one to `Demand`
 and makes `Intent` true, so it asks for one node, on which its operator runs and reconciles it.
 An operator that runs beside the control plane reconciles at zero nodes, so its CRs need no node
-and are never registered as in-cluster. `scale.OurOperators` ships EMPTY: ESO moves beside the
-control plane (M4-ESO-BESIDE), and no other operator of ours runs in a tenant cluster. Leftover
+and are never registered as in-cluster. `scale.OurOperators` ships EMPTY: ESO runs beside the
+control plane, and no other operator of ours runs in a tenant cluster. Leftover
 namespaces, RBAC and ConfigMaps never hold nodes. `NodeObserver` lists each in-cluster kind through
 its `CustomResources` lister and refuses to observe at all when the registry names an in-cluster kind
 and no lister was supplied, so a future entry cannot silently never count.
@@ -2982,8 +2925,8 @@ before now decides `Provision, Nodes: <target>` with `MaxNodes` raised, and ever
 than one node at once - `NEXT.yaml` AUTO-1 stays open for that, and `docs/plans/0002` names the
 instrument: three concurrent pods, three joined nodes, and a return to zero.
 
-**A market that takes no bid backs the cluster off, exponentially, capped at ten minutes (plan 0005
-M2-BACKOFF, decided by Claude, user may veto).** MEASURED on prod 2026-10-07 15:43-16:48 UTC: with
+**A market that takes no bid backs the cluster off, exponentially, capped at ten minutes (decided by
+Claude, user may veto).** MEASURED on prod: with
 no bidder answering, the provider wrote a NodeClaim, the door's fulfiller got `no_bids` after its
 30 s bid window, the claim ended Failed, `confirmHeld` gave the node up, and the next scale pass
 claimed again -- a new public `market.rfp` about every 50 s per missing node, 49 RFPs and 86
@@ -3026,14 +2969,14 @@ claimed again -- a new public `market.rfp` about every 50 s per missing node, 49
   cluster from no back-off, so the first pass after a restart may post one RFP at once; that costs
   one RFP per restart, not one per pass.
 
-Writing these tests surfaced a defect in the same loop: `tenantNodes.retain` dropped ordinal 1
-unconditionally, assuming the primary host held it, so a first node claimed again after the first
-was given up was not held. Its claim was then never confirmed, never released, never counted in
-flight and never seen ending -- it could not back anything off. `retain` now restores the primary
-slot when it is empty (`TestAFirstNodeClaimedAgainAfterItWasGivenUpIsHeld`).
+`tenantNodes.retain` restores the primary slot when it is empty
+(`TestAFirstNodeClaimedAgainAfterItWasGivenUpIsHeld`): dropping ordinal 1 unconditionally would leave a
+first node claimed again after the first was given up unheld, so its claim would then never be
+confirmed, never released, never counted in flight and never seen ending, and it could not back
+anything off.
 
-**A market node NotReady for 90 s is released, and its Node deleted (plan 0005 M3-NODE-LOSS,
-provider half; 90 s is the user's number).** In `tenantNodes.confirmHeld`, after the given-up rule
+**A market node NotReady for 90 s is released, and its Node deleted (provider half; 90 s is the
+user's number).** In `tenantNodes.confirmHeld`, after the given-up rule
 and the per-pass `SyncSecrets`, each held market node's tenant Node is read (`readTenantNode`). If
 its `Ready` condition is `False` or `Unknown` and `now - lastTransitionTime >= NodeLossGrace` (90 s),
 the node goes through `teardownHeld`, the same path a scale-down takes: the claim is deleted, its
@@ -3062,7 +3005,7 @@ Node, 90 s deletes both, revokes the vault state and reports the node lost),
 `TestAReadyNodeIsNotLostHoweverOldItsTransition`.
 
 **A market cluster's kube-scheduler runs with a 1 s pod backoff, written into the cluster's data dir
-before the server starts (plan 0005 M3-JOIN-FOLLOWUPS part 2).** The scale-from-zero path has one
+before the server starts.** The scale-from-zero path has one
 wait this project does not own: kube-scheduler holds every pod it could not place -- and a cluster
 with zero nodes cannot place any -- for a backoff that starts at 1 s and doubles, capped at 10 s.
 The node that finally makes such a pod placeable does not cancel that wait, so the pod that waited
@@ -3075,7 +3018,7 @@ is; the file sets `podInitialBackoffSeconds` and `podMaxBackoffSeconds` to 1 and
 `--kubeconfig` flag k3s still passes. A stack that dials no market has no zero-node window and its
 argv names no config file.
 
-**The backoff was not the 16 s; leader election was (measured on prod 2026-10-10).** With the 1 s
+**The backoff was not the 16 s; leader election was.** With the 1 s
 backoff deployed the first pod still waited 15 s after its Node was Ready. k3s `--disable-agent` starts
 kube-scheduler only once a node registers ("Starting controller" 02:53:17.22Z), and the new scheduler
 then waited out the leader lease its previous incarnation still held ("Attempting to acquire leader
@@ -3123,7 +3066,7 @@ containment is the teardown path, plus the node record below.
 **A producer reports; it never guesses.** The producer surface cannot express an estimate: it returns
 a value *and whether it has one*, so "nothing to report" is a bit rather than a sentinel, and a
 source that forgets to report errs toward refusing rather than toward proceeding. `0` is the report of
-a substrate with NO DOOR and therefore no session cap at all — the local-process mechanism — and it is
+a substrate with NO DOOR and therefore no session cap at all - the local-process mechanism - and it is
 a fact about that substrate, not a guess about a door it does not have. That is why absent and `0` are
 both reachable and mean opposite things. A guessed deadline that is late reproduces exactly the silent
 loss the gate exists to prevent, and a guess is indistinguishable from a report in the schema, so it
@@ -3160,7 +3103,7 @@ A pid-reuse mismatch is reported as NOT OURS and is never signalled. The 0600 mo
 record names a pid this gateway will signal, and a record another user can write is a record that aims
 our reap at a pid of their choosing.
 
-The expected argv is read off the steps `StepsFor` returns — the SAME derivation the spawn path uses,
+The expected argv is read off the steps `StepsFor` returns - the SAME derivation the spawn path uses,
 never a second one, so a stack the running path would not spawn is not one the reap may kill. The
 survivors are recorded on the `LocalHost` itself, so the reap and the lifecycle that follows share one
 object, and a host that reports live handles it cannot forget is refused: a handle that outlives its
@@ -3172,14 +3115,14 @@ a pass that names the new token before it has taken the group holding the old on
 group that is still running. The bring-up's init timeout parks AFTER the reap, so a parked cluster
 cannot leave the owner of its own ports running.
 
-Two cases are handled by name, not by a fallthrough: a cluster whose CR is gone — deleting, OFF or
-halted — with a group still running is reaped by the startup pass and logged with the reason it is not
+Two cases are handled by name, not by a fallthrough: a cluster whose CR is gone - deleting, OFF or
+halted - with a group still running is reaped by the startup pass and logged with the reason it is not
 being brought up; a cluster with a running CR and no survivor is brought up from nothing. There is no
 third case, because the only alternative to refusing is to spawn over a process that may still be
 writing to the store.
 
 **Reap does not reach the store.** `embedded-postgres` is a library child of the gateway, so a restart
-leaves a postmaster holding its leased port and `StartPostgres` ADOPTS a serving one — `Drop` reports
+leaves a postmaster holding its leased port and `StartPostgres` ADOPTS a serving one - `Drop` reports
 it and nothing kills it, by design. The purposes the process group binds are `PurposesFor`'s, and no
 purpose in that list is a node's, because a node binds no port of this host's.
 
@@ -3192,30 +3135,30 @@ Memoisation also holds the cluster's `k3s-secure` lease for the process lifetime
 cluster's next ON.
 
 **A shutdown reaps; it does not kill.** A process group is spawned with `context.WithoutCancel`, so a
-gateway's SIGTERM does not `exec`-kill k3s, kine and postgres — which would leave the store needing
+gateway's SIGTERM does not `exec`-kill k3s, kine and postgres - which would leave the store needing
 crash recovery and bypass the reverse-order teardown and the tenant-side Node delete entirely. The CLI
 reaps explicitly on the way out, with a fresh context; what it does not finish is reaped by the next
 start, which is the same rule as above. The shutdown's node-host reap skips the market substrate
 entirely: deleting a market claim is what makes the door destroy the machine, so a shutdown that
-reaped market hosts released every rented node on every deploy (watched in
-`TestAProviderShutdownLeavesItsMarketNodesForTheNextOne`: 2 claims deleted and both nodes' vault
-state revoked before the change, none after). A cluster switched OFF or deleted still releases its
+reaped market hosts would release every rented node on every deploy (watched in
+`TestAProviderShutdownLeavesItsMarketNodesForTheNextOne`: 2 claims deleted and both nodes' vault state
+revoked before the change, none after). A cluster switched OFF or deleted still releases its
 market nodes through `reapCluster`.
 
 **Every cluster, not the one this process was told to join.** `SOCIALWEB_CLUSTERPROVIDER_JOIN` names
 a single cluster by its bare name and keeps working exactly as it did. `SOCIALWEB_CLUSTERPROVIDER_JOIN=*`
 is the mode the k8s door needs, because that door lets any atproto user create a cluster and NOTHING
-materialises one unless a process joins it: the provider lists `registry.Refs` — which already walks
-root, the accounts, the homes and the clusters — and reconciles EVERY cluster each pass, in SERIES and
+materialises one unless a process joins it: the provider lists `registry.Refs` - which already walks
+root, the accounts, the homes and the clusters - and reconciles EVERY cluster each pass, in SERIES and
 one at a time. Serial rather than parallel is the v1 answer and it is stated rather than implied: the
 pass is bounded by the interval, the interval is 2 s, and the passes this process runs per cluster are
 the same ones the single-cluster loop runs, so what a wider tree costs is latency and not correctness.
 A failure in one cluster is caught, logged with the cluster's name, home and error, and the pass moves
 on to the next: one cluster that cannot come up must not hold back the others, and an all-clusters pass
 that returns on the first error is a tree where every cluster behind the broken one is frozen. The
-startup reap and the shutdown reap cover the same set. Startup already walked every `Cluster` CR and
-every lease to decide which group to adopt, reap or bring up — that walk was always tree-wide, and only
-the JOIN-scoped state dir and the single `Host.Reap` on the way out were not. Shutdown now asks the
+startup reap and the shutdown reap cover the same set. Startup walks every `Cluster` CR and
+every lease to decide which group to adopt, reap or bring up, tree-wide; the JOIN-scoped state dir and
+the single `Host.Reap` on the way out are the only per-join parts. Shutdown asks the
 `LocalHost` which groups it holds (`Clusters()`) and reaps each, so `*` gets the same reverse-order
 teardown, the same node-host reap and the same store stop that a single join gets, and the node hosts
 are reaped per cluster rather than only for the joined one.
@@ -3233,7 +3176,7 @@ claim would otherwise block every other cluster in the tree for the whole timeou
 serially. Joining is confirmed on a LATER pass, by `nodeHosts.confirm`, which runs before that
 cluster's scale pass: a node whose tenant Node object has appeared is confirmed through the same
 `ConfirmJoined` the guest substrates call inline, and a node whose claim reads `Failed` is torn down
-there — the claim released and the tenant Node deleted — so the failure is reported and the cluster may
+there - the claim released and the tenant Node deleted - so the failure is reported and the cluster may
 ask the market again rather than counting a machine it will never get. The guest substrates still
 confirm inline, unchanged.
 
@@ -3245,20 +3188,20 @@ internal/${concept}/   one package per concern; the interface declared where con
 internal/atprotoauth/  verifies an atproto service-auth token for one XRPC method: signature, audience, method, admitted DID methods and a 5-minute lifetime cap
 internal/execplugin/   the client-go exec credential plugin: mint, on-disk cache, refuse an empty or already-expired token
 internal/nodeprovider/ derives a node's DNS-1123 name from the (cluster label, node id) pair
-internal/vmruntime/    the Linux VM runtime: one-shot prep and one transient VM unit per guest (swc-userns-stage -> pasta -> socialweb-vmexec -> firecracker); `socialweb-computer internal vm start|inspect|stop|list` is its CLI, and the bidder's firecracker provider drives it (0007 M2-VM-RUNTIME)
-internal/nodeimagemain/ the two Go steps of scripts/build-guest-image.sh, `socialweb-computer nodeimage guest-rootfs|guest-manifest`, compiled only into a dev build (0006 M3-FOLD)
+internal/vmruntime/    the Linux VM runtime: one-shot prep and one transient VM unit per guest (swc-userns-stage -> pasta -> socialweb-vmexec -> firecracker); `socialweb-computer internal vm start|inspect|stop|list` is its CLI, and the bidder's firecracker provider drives it
+internal/nodeimagemain/ the two Go steps of scripts/build-guest-image.sh, `socialweb-computer nodeimage guest-rootfs|guest-manifest`, compiled only into a dev build
 internal/nodemarket/   places a node as a claim on the COMPUTE MARKET: it writes a NodeClaim into the cluster's home workspace and returns, reads the claim's status for the join wait and its fatal message, and closes the node by deleting the claim and waiting for the door to destroy the machine; it also keeps each node's own k3s node-password file
-internal/hostos/       the one platform seam, primitives only (locking, process identity, liveness, termination, command line, boot id, port range, SysProcAttr) with Linux, darwin and Windows files; darwin refuses with ErrUnsupported (plan 0012)
-internal/denorun/      builds every deno argv: --no-code-cache and --node-modules-dir=none always, DENO_DIR = <state>/deno/<closure sha256>, production adds --cached-only --frozen and DENO_NO_UPDATE_CHECK=1 (plan 0008 M1-DENO)
-internal/tsbundle/     where the TypeScript comes from: the embedded closure (tar.zst + manifest, extracted read-only to <state>/ts/<sha256>/) in a release build, this checkout (SOCIALWEB_COMPUTER_SOURCE_ROOT, or the walk up to the directory that holds deno.json and deploy/ts-entries.yaml) in a dev build; internal/tsbundle/tsbuild (behind cmd/socialweb-tsbundle, never linked into the core) builds the closure from deploy/ts-entries.yaml (M1-TS-SOURCE, M1-TS-CLOSURE)
-internal/stack/denoruntime/ the owned deno-kcp provider (internal/denokcp) in-process in the core: the pinned deno, <state>/denokcp/runs, runner timeout disabled, the front kubeconfig with the shard-admin token, the denoruntime set applied first, SOCIALWEB_TS_ROOT/SOCIALWEB_TS_KEY and the closure-keyed DENO_DIR on every DenoPod; deno processes are plain children of the core unit (plan 0008 M2-DENOKCP-INPROC)
+internal/hostos/       the one platform seam, primitives only (locking, process identity, liveness, termination, command line, boot id, port range, SysProcAttr) with Linux, darwin and Windows files; darwin refuses with ErrUnsupported
+internal/denorun/      builds every deno argv: --no-code-cache and --node-modules-dir=none always, DENO_DIR = <state>/deno/<closure sha256>, production adds --cached-only --frozen and DENO_NO_UPDATE_CHECK=1
+internal/tsbundle/     where the TypeScript comes from: the embedded closure (tar.zst + manifest, extracted read-only to <state>/ts/<sha256>/) in a release build, this checkout (SOCIALWEB_COMPUTER_SOURCE_ROOT, or the walk up to the directory that holds deno.json and deploy/ts-entries.yaml) in a dev build; internal/tsbundle/tsbuild (behind cmd/socialweb-tsbundle, never linked into the core) builds the closure from deploy/ts-entries.yaml
+internal/stack/denoruntime/ the owned deno-kcp provider (internal/denokcp) in-process in the core: the pinned deno, <state>/denokcp/runs, runner timeout disabled, the front kubeconfig with the shard-admin token, the denoruntime set applied first, SOCIALWEB_TS_ROOT/SOCIALWEB_TS_KEY and the closure-keyed DENO_DIR on every DenoPod; deno processes are plain children of the core unit
 internal/plcresolver/  resolves a did:plc or did:web to its key IDs for the revocation sweep; NXDOMAIN is an outage, not an absence
 internal/plcsweep/     the periodic pass that lists DIDs, resolves them and revokes those whose keys are gone
 internal/sweepkcp/     the kcp side of that sweep: build the account worklist from workspaces and AtprotoIdentity records, write the deny, plan the fan-out
 internal/foldmain/     the Invocation a verb body runs with (args, env, stdio, the resolved bin/<sha>/ path, the verb words) and the re-exec argv it builds
-internal/${binary}main/ the body of a host verb (gatewaymain, providermain, vaultmain, checkhostmain, ccmmain, tenantcredentialmain) behind Main(ctx, Invocation) int; socialweb-computer dispatches its verb to it with the raw args, and the clusterprovider re-execs the CCM as `<bin/sha path> internal cloud-controller-manager` with the CCM's three-variable env rebuilt explicitly (0006 M3-FOLD)
+internal/${binary}main/ the body of a host verb (gatewaymain, providermain, vaultmain, checkhostmain, ccmmain, tenantcredentialmain) behind Main(ctx, Invocation) int; socialweb-computer dispatches its verb to it with the raw args, and the clusterprovider re-execs the CCM as `<bin/sha path> internal cloud-controller-manager` with the CCM's three-variable env rebuilt explicitly
 cmd/socialweb-computer/ the multi-call CLI; every host verb lives here
-cmd/${binary}/         standalone binaries only: socialweb-vmexec (VM-unit asset), socialweb-credential (download asset), socialweb-tsbundle and socialweb-apigen (build tools), openbao-plugin-auth-sshsig (its own module); the one-line shims of the folded verbs are deleted (0006 M5-RETIRE), as are socialweb-nodeboot, socialweb-nodeimage and socialweb-nodeinit (0006 M3-FOLD)
+cmd/${binary}/         standalone binaries only: socialweb-vmexec (VM-unit asset), socialweb-credential (download asset), socialweb-tsbundle and socialweb-apigen (build tools), openbao-plugin-auth-sshsig (its own module); socialweb-nodeboot, socialweb-nodeimage and socialweb-nodeinit no longer exist
 deploy/                manifests and manifest sets, the audit policy, check.sh, ts-entries.yaml
 rust/                  a cargo workspace; rust/socialweb-meshd is the per-node pod mesh daemon that runs INSIDE a market guest (section 9), rust/build.sh its static musl build
 ```
@@ -3267,8 +3210,8 @@ Dependencies flow one way: `api` <- `internal` <- `cmd`. A new transport is a NE
 branch inside an existing one.
 
 **A cluster's key is derived once, from its home workspace.** `kcpclient.ClusterKey` is the only
-spelling: it takes a home workspace path `root:<accountHash>:<name>` — `HomePath` builds the one the
-door's `Ensure` creates — and returns `<accountHash>-<name>`, which is a DNS-1123 subdomain. Every
+spelling: it takes a home workspace path `root:<accountHash>:<name>` - `HomePath` builds the one the
+door's `Ensure` creates - and returns `<accountHash>-<name>`, which is a DNS-1123 subdomain. Every
 place a cluster is identified INSIDE a provider uses it and nothing else: the state dir
 (`pdr-<key>`), the node data dir (`<key>/nodes/<node>`), the `Cluster` field of every port and subnet
 lease, the node name `nodeprovider.NodeName` derives, the `nodes.json` instance snapshot, the
@@ -3286,8 +3229,8 @@ Before the first pass, and only when the CR tree names a given bare name exactly
 dirs under it), the mint credential `<mint dir>/<name>` to `<key>`, and re-keys that cluster's
 port and subnet leases in place, preserving their ports and ranges. A name two accounts share is left
 alone and reported: which home it belongs to is not knowable from the name, and renaming it onto one
-of them would hand that cluster the other's data. It is a one-way move — a downgrade finds the keyed
-names and starts from an empty state dir — and the cost of the node names changing with the key is
+of them would hand that cluster the other's data. It is a one-way move - a downgrade finds the keyed
+names and starts from an empty state dir - and the cost of the node names changing with the key is
 recorded in section 15.
 
 Binaries: `socialweb-computer` (the gateway, the clusterprovider, the vault and check-host are its
@@ -3297,10 +3240,9 @@ verbs), `socialweb-credential` and `socialweb-vmexec`; outside `cmd/`, `rust/bui
 (`internal/vmruntime`) is what the BIDDER runs.
 
 `check-host` is the host contract and nothing else (`internal/hostcontract`, `docs/host-contract.md`):
-`install` runs it as the account, and it probes the gateway or bidder host the binary runs on. Its old
-build report (the node image store, kernel, module tree, kvm, VMM and in-container postgres checks of
-the retired local substrates) was deleted with `internal/nodefirecracker`, `internal/nodevm`,
-`internal/noderecord` and `internal/kernelmodules` (0006 M5-RETIRE).
+`install` runs it as the account, and it probes the gateway or bidder host the binary runs on. It does
+not carry the retired local substrates' build report (the node image store, kernel, module tree, kvm,
+VMM and in-container postgres checks).
 
 `internal/versions/versions.json` pins component versions, the release assets and the guest image
 inputs; `scripts/stage-assets.sh` and `socialweb-computer` read it.
@@ -3311,21 +3253,19 @@ A guest image is a kernel, a rootfs and `image.json` per hypervisor and arch. `s
 builds it on any Linux host with docker or podman from the pinned inputs in `versions.json`
 `.guestImages`; its Go steps are the dev-build verbs `socialweb-computer nodeimage guest-rootfs|guest-manifest`.
 Each output is pinned by its sha256, never embedded in the binary, and fetched and verified by
-`internal/guestimage` (plan 0007 M1-GUEST-IMAGE). It is a TOOL, never a controller, and the image boots
+`internal/guestimage`. It is a TOOL, never a controller, and the image boots
 `root=/dev/vda` with no initramfs init. The bidder's VM runtime boots it; the gateway places no image,
 because its node is a claim.
 
-The control-plane container build that once produced a host-built node image (its `nodeimage` stage,
-the fingerprinted image store and `check-host`'s report on it) is deleted (0006 M3-FOLD, M5-RETIRE), and
-so is the privileged test rig that booted that image locally (plan 0005 M1-MARKET-ONLY). The live gate
-still takes a live cluster: `SOCIALWEB_REQUIRE_LIVE=1 go test ./...`, where a skip is a failure, and a
+The live gate takes a live cluster: `SOCIALWEB_REQUIRE_LIVE=1 go test ./...`, where a skip is a
+failure, and a
 guest comes up only through the RFP flow on a market network (`deploy/market-network`,
 `internal/marketnetwork`).
 
 ### The market network (vendored deno-kcp)
 
 **The live market network is deno-kcp's AT Protocol market example, vendored into this repository
-and run on kcp, with a firecracker bidder on our nodeimage.** Plan 0005 item M1-MARKET-NETWORK; the user
+and run on kcp, with a firecracker bidder on our nodeimage.** The user
 chose vendoring over building in deno-kcp. `deploy/denokcp/` holds deno-kcp's APIResourceSchemas,
 APIExports and WorkspaceTypes (DenoPod, OpenBao and the rest of the `denoruntime` and
 `policyworkflowruns` exports the `denoruntime` workspace type binds) and its kcp, OpenBao and
@@ -3429,7 +3369,7 @@ A change must not break any of these. Each exists because something failed.
 8. **A node's ports are its own, and no lease of the process group covers one.** The kubelet's is
    bound inside the guest's own network namespace, under its own kernel, and no port it binds is
    published on this host. So a node holds no lease to give back: a node's teardown releases nothing,
-   and the cluster's own leases — its `k3s-secure` port and the range its guests are addressed in —
+   and the cluster's own leases - its `k3s-secure` port and the range its guests are addressed in -
    outlive it, because `status.URL` stays live after OFF. This replaces "the kubelet lease is released
    on the NODE's stop, and is not in `DefaultPurposes`", whose purpose is retired: there is nothing
    left to release and nothing left to keep out of a list.
@@ -3440,7 +3380,7 @@ A change must not break any of these. Each exists because something failed.
 13. **Secrets never ride argv or `user_data`, and a market node's credentials cross only OpenBao JWT over
     the cluster link.** `user_data` is readable from inside the guest. The door hands a market guest
     through the `--secrets` capability the material a guest may hold before it has authenticated to
-    anything: the cluster OpenBao's CA, `claim.json`, and the two capability tickets — the OpenBao
+    anything: the cluster OpenBao's CA, `claim.json`, and the two capability tickets - the OpenBao
     link's ticket, and the apiserver link's ticket with the node's advertise address and port. A
     capability ticket is one that is useless on its own: the cluster's apiserver still refuses a
     connection without the k3s token, and OpenBao still refuses one without the JWT login. Delivering
@@ -3476,17 +3416,17 @@ A change must not break any of these. Each exists because something failed.
 22. **A workspace ServiceAccount does not leave its workspace.** Its token's scope confines it to the
     logical cluster it was minted in and kcp refuses it everywhere else before RBAC is consulted, so a
     ClusterRoleBinding naming it elsewhere grants nothing and no subject string changes that. Any
-    grant whose effect is expected in another workspace is mis-designed, not mis-spelled — which is
+    grant whose effect is expected in another workspace is mis-designed, not mis-spelled - which is
     why the runtime holds a credential kcp does not confine.
 23. **A spawn failure says why.** The reconciler carried the op and dropped the error, so a process
     group that never came up read as "the cluster is Initializing" and the readiness gate's own
-    reason — and the component log under the cluster's data dir — were the only account of it.
+    reason - and the component log under the cluster's data dir - were the only account of it.
 24. **A snapshot is a template, never an instance.** Every node boots its own clone of the rootfs.
     One writable image serving as both carries a guest's writes into the next boot, and it presents
     as a corrupted image rather than as shared state; two live VMs on one file corrupt each other.
 25. **A boot command line is a console.** Anything on it is written to the guest's console at least
-    twice — firecracker logs the body of its own boot-source request, and the kernel prints
-    `Kernel command line:` — so no secret may ride it. The per-node secret travels on a per-node
+    twice - firecracker logs the body of its own boot-source request, and the kernel prints
+    `Kernel command line:` - so no secret may ride it. The per-node secret travels on a per-node
     read-only disk that exists for one node and is destroyed with it.
 26. **The record's identity is supplied by the substrate, and an empty identity matches nothing.**
     Matching every token present, read literally, would match every process on the host. A pid whose
@@ -3512,7 +3452,7 @@ A change must not break any of these. Each exists because something failed.
 30. **A cluster is its home workspace, not the name inside it.** Two accounts may each name a cluster
     `ci`; they are two clusters, with two state dirs, two sets of port and subnet leases, two sets of
     node names, two mint credentials and two process groups. Anything that identifies a cluster
-    OUTSIDE its home — a state dir, a lease, a node name, a snapshot, a mint file, a process group —
+    OUTSIDE its home - a state dir, a lease, a node name, a snapshot, a mint file, a process group -
     carries the key `kcpclient.ClusterKey(home)` = `<accountHash>-<name>` and never the bare name. A
     pass over one cluster must never key anything by a name two workspaces can share, because the
     failure mode is not a collision error: it is one cluster reading another's leases and state dir
@@ -3661,11 +3601,11 @@ because it bounds a mechanism the rest of this document leans on.
 - **Whether the node half may ever run inside the control-plane container was answered by reading where
   the refusal lives, and the answer is a STATED LIMIT rather than an open question.** The allocator's
   refusal to lease a range overlapping the host's networks is a property of the NETWORK NAMESPACE the
-  process runs in — the host enumerates 15 networks, the container 3 (`127.0.0.0/8`, `172.17.0.0/16`,
-  `::1`) — so a containerized allocator would lease a colliding range without refusing. What bounds it
+  process runs in - the host enumerates 15 networks, the container 3 (`127.0.0.0/8`, `172.17.0.0/16`,
+  `::1`) - so a containerized allocator would lease a colliding range without refusing. What bounds it
   is that the allocator is a property of the PROCESS it runs in. Since the local substrates were
-  retired (plan 0005 M1-MARKET-ONLY) the allocator has one reach site left — the materialiser's
-  teardown release, `OpReleaseSubnet`, which drops a cluster's leased range beside its ports — because
+  retired (plan 0005 M1-MARKET-ONLY) the allocator has one reach site left - the materialiser's
+  teardown release, `OpReleaseSubnet`, which drops a cluster's leased range beside its ports - because
   a market node is not addressed inside this host's ranges at all: the guest gateway, the per-node
   address and the code that installed them are deleted, and a control plane that places no nodes never
   ALLOCATES a range, only releases one. Two things are recorded with it rather than
@@ -3678,14 +3618,14 @@ because it bounds a mechanism the rest of this document leans on.
   depends on that.** `liveports.LockDir()` is `/var/tmp/socialweb-liveports` inside each container's own
   filesystem, so a slot one run claims is invisible to a run in another container and both would take
   the same ports. The bound is the same shape as the one above: `internal/liveports` has NO production
-  user — it is imported only by `*_test.go` files and by the host-contract binary's probe — so the
+  user - it is imported only by `*_test.go` files and by the host-contract binary's probe - so the
   container is a place two proofs collide only when the suite runs there, which is what
   `deploy/control-plane-container/validate.sh` does. Two runs inside ONE container see each other,
   because they share one `/var/tmp`. Two containers must share that path or be serialized, and nothing
   outside the test suite turns on which.
 ## 15. Settled decisions, and the defects they closed
 
-Not gaps. Each entry was open once, and each says what settled it and what the settlement was — and,
+Not gaps. Each entry was open once, and each says what settled it and what the settlement was - and,
 where it matters, that it was settled AFTER the entry was written. That timing is kept because it is the
 case nobody re-reads: a gap still listed as open reads as honest incompleteness, which is why a bullet
 can outlive the work that closed it, and why one whose subject has been deleted can sit in a list of open
@@ -3735,8 +3675,8 @@ refutation.
   0005 M1-MARKET-ONLY and M1-AGENT-SPLIT).** Two things were true at once and each was the reason for
   the other. First, the clusterprovider carried three substrates and only one was used: `firecracker`
   and `qemu` were guests THIS host started, with their own VMM, network namespace, subnet lease,
-  guest gateway, node image and identity disk, and `market` — a VM rented from the compute market and
-  built by the winning bidder's cloud-init — had already replaced both as the production path. A
+  guest gateway, node image and identity disk, and `market` - a VM rented from the compute market and
+  built by the winning bidder's cloud-init - had already replaced both as the production path. A
   second way to place a node is a second way to be wrong about where a node is, so `internal/nodeqemu`
   and the provider half of `internal/nodefirecracker` are deleted, `GuestDialled`, `GuestGateway`,
   `nodeVaultStage`, the per-node network allocation, `AssertGuestAdvertiseInvariant`,
@@ -3747,8 +3687,8 @@ refutation.
   reads as a typo. What the guest half still needs is KEPT, in the packages the bidder builds and runs:
   `internal/nodevm`, `internal/nodefirecracker`'s image/manifest/namespace halves, `socialweb-nodeboot`
   and `socialweb-nodeimage`. Second, `socialweb-nodeagent` was one binary carrying both halves of a
-  node's network — a host half (the `namespace` verb, run inside pasta) and a guest half (the `init`
-  verb for the initramfs, and an `agent` verb that mounted the node's identity disk and exec'd k3s) —
+  node's network - a host half (the `namespace` verb, run inside pasta) and a guest half (the `init`
+  verb for the initramfs, and an `agent` verb that mounted the node's identity disk and exec'd k3s) -
   and on a market guest only the `init` verb can run: there is no identity disk, so the unit that ran
   `agent` exited `KCP_AGENT fatal` on every boot of every market guest, for ever. The binary is now
   `socialweb-nodeinit` with the `init` verb alone; `agent.go`, `audit.go`, `/kcp/kcpagent` and
@@ -3939,7 +3879,7 @@ refutation.
   value for: `firecracker` is the only name `nodeSubstrateFor` builds and every other name is refused,
   and `--advertise-address` is REFUSED outright for a guest rather than accepted and ignored, because it
   cannot be in force. The value is the first usable address of the range the cluster holds, allocated
-  from `internal/subnetallocator` — no flag, environment variable or config file can pick a cluster's
+  from `internal/subnetallocator` - no flag, environment variable or config file can pick a cluster's
   range, because a range two operators can set differently is the same collision in a tidier place. Its
   second claim is refuted by the code too: `--bind-address` does NOT equal the advertise address. It is
   pinned to loopback, and the readiness gate dials the address the component was told to LISTEN on, so
@@ -3949,26 +3889,26 @@ refutation.
   refuses an address this host carries. What survives from the entry is its measurement: the deleted VM
   substrate owned a constant, `192.168.5.2`, which this host does not carry and which nothing answers,
   and the store DSN built from it never connected. The one measurement still live is the apiserver
-  rejecting a loopback in-cluster `kubernetes` Service endpoint — `subsets[0].addresses[0].ip: Invalid
-  value: "127.0.0.1": may not be in the loopback range` — and the leased gateway is the address that
+  rejecting a loopback in-cluster `kubernetes` Service endpoint - `subsets[0].addresses[0].ip: Invalid
+  value: "127.0.0.1": may not be in the loopback range` - and the leased gateway is the address that
   satisfies it.
-- **`nodeExpiry` has a producer at BOTH ends now. CLOSED — and it was closed after this entry was
+- **`nodeExpiry` has a producer at BOTH ends now. CLOSED - and it was closed after this entry was
   written, which is why it is here rather than in section 14.** All three pieces the entry called
   unwritten were written later the same evening it was written: `Registry.WriteNode` now carries a whole
   `v1alpha1.NodeStatus` rather than a phase, so the per-node report has a channel; the node recorder
   writes `Node.status.nodeExpiry` from the substrate's own report, and a substrate with no door reports
-  an explicit `0`, so a local cluster is deletable; and the `Cluster` value IS the roll-up — the minimum
+  an explicit `0`, so a local cluster is deletable; and the `Cluster` value IS the roll-up - the minimum
   over live nodes with `0` counting as infinity, `Draining` nodes skipped, the empty set as `0`, one
-  live node absent as absent — performed by `NodeExpiryRollup`, wired as `Options.NodeExpirySource` and
+  live node absent as absent - performed by `NodeExpiryRollup`, wired as `Options.NodeExpirySource` and
   re-derived every pass rather than only when a node changes. The entry's last sentence is the part that
   is still true: the door's own report was already parsed (`internal/sessionreport`), so what remained
-  was the two writes — and `sessionreport`, that parser, was reached by nothing, which is why it is
+  was the two writes - and `sessionreport`, that parser, was reached by nothing, which is why it is
   DELETED rather than wired (this section, the unwired controls). The door stays out of scope (section
   16), so its report surface has no parser and needs none.
 - **The identity bundle is seeded and harvested at `<DataDir>/server`, and the fingerprint survives a
-  rebuild — measured.** `identitybundle.Harvest`/`Seed` are called from
-  `clusterprovider.HarvestBundle`/`SeedBundle`, both rooted at `<DataDir>/server` — the same root
-  `clusterstack.TLSDir` puts `tls/` under — so a seed lands where k3s looks. `Seed` runs from the
+  rebuild - measured.** `identitybundle.Harvest`/`Seed` are called from
+  `clusterprovider.HarvestBundle`/`SeedBundle`, both rooted at `<DataDir>/server` - the same root
+  `clusterstack.TLSDir` puts `tls/` under - so a seed lands where k3s looks. `Seed` runs from the
   Identity guard, which rides the step BEFORE k3s and only when the datastore already holds a
   bootstrap row; `Harvest` runs after k3s's Ready gate. `bundle_test.go` pins the root itself: seed,
   then assert every entry sits at `clusterstack.TLSDir(dataDir)`.
@@ -3976,14 +3916,14 @@ refutation.
   This bullet replaces one claiming the bundle "has no persistence", which was not merely stale but
   **self-contradicting**: the same file already listed `Harvest`/`Seed` as wired, and the claim was
   added in the very commit that added `bundle.go` and both callers. A gap list can be wrong in the
-  CLOSING direction, and that one was — which is why this section is now re-read against the code
+  CLOSING direction, and that one was - which is why this section is now re-read against the code
   rather than trusted.
 
   Measured on the process substrate, one uninterrupted test, three runs: cold (fresh store and fresh
   dir) **4.97-6.98 s**, pre-seeded (warm store, `server/` wiped, bundle seeded) **1.134-1.139 s**, and
   a CONTROL rebuild with the bundle removed, which must author its own CAs, **1.128-1.378 s**. The CA
   fingerprint was byte-identical across a teardown and rebuild in every run; the control's was not.
-  The bundle's value is the identity it preserves, not a time saving — see the timing block in
+  The bundle's value is the identity it preserves, not a time saving - see the timing block in
   section 9 for the attribution this refutes.
 - **`status.URL` is written while `Initializing`, and that is LOAD-BEARING, not sloppy.** The URL is
   deterministic from the lease, so the first pass publishes it with the intent; the provider's next
@@ -3991,7 +3931,7 @@ refutation.
   mean nothing to probe and a cluster that never leaves `Initializing`. So the two fields must be read
   together and neither is redundant: **`status.URL` says where it will be, `status.phase` says whether
   it is there.** The hazard is real but belongs to the mount, not to this writer: kcp's mount gate
-  reads the phase (above), so a loosened gate would expose an unprobed port — which is the argument
+  reads the phase (above), so a loosened gate would expose an unprobed port - which is the argument
   for keeping the gate rather than for withholding the URL.
 - **`Joined` remains test-only.** Deliberately: with the group live the second pass's `on()` path
   reaches `claimReady` through the decider, so this substrate needs no external join to answer. The
@@ -4011,7 +3951,7 @@ refutation.
   derives all four transitions from scratch. It skips until seven documented variables name the store
   the builder published into, the builder's own configuration that names the image in that store, a
   firecracker binary, the guest agent, k3s, kubectl and an image the guest already carries
-  — the last one because the guest reaches no registry, so the tenant image cannot be derived from
+  - the last one because the guest reaches no registry, so the tenant image cannot be derived from
   anything the test can see, and requiring it is honest where guessing would produce a test that
   fails for a reason it does not state. **It has now run, and it passes**: `PASS` in 99.48 s, with
   `INSTANCE_START_TO_READY_S=9.749` host-timed from firecracker's `InstanceStart` to the Node's
@@ -4021,7 +3961,7 @@ refutation.
 
   **It found two bugs in itself on first execution, and both are the same lesson.** `kubectl get
   nodes --no-headers` reports an empty list on STDERR, so a harness that combines the streams counts
-  `No resources found` as one node — which meant the "empty cluster" step could never pass, and the
+  `No resources found` as one node - which meant the "empty cluster" step could never pass, and the
   first run died on it after 362 s. And step 4 had been logging "the control plane still answers" on
   the strength of a reconcile returning no error, which establishes nothing about the phase or the
   cluster's own objects; it now requires the same `Ready` phase step 1 reached AND reads the
@@ -4030,13 +3970,13 @@ refutation.
 
   One thing the guard deliberately does NOT depend on: the k3s add-on pods sit at `0/1` with
   restarts while the guest console is CLEAN on every firewall signature, so that is not the module
-  list. `Intent` stamps those pods from their add-on ReplicaSet, so they never hold the node — which
+  list. `Intent` stamps those pods from their add-on ReplicaSet, so they never hold the node - which
   is exactly the objective, and step 4 proves it. **Pod readiness and the objective are different
   questions, and a green guard is not a working cluster DNS.** The same join IS now measured through
   the composition root, by the four-step proof below, with a tenant `Cluster` CR, real leases and a
   minted tenant client; the sentence that used to stand here said the two had never been measured
   together, and it had already been overtaken by the run this entry records.
-- **The 332 s boot was fabricated, and the real number is 0.300 s — and this entry's evidence is in
+- **The 332 s boot was fabricated, and the real number is 0.300 s - and this entry's evidence is in
   HISTORY, not in the tree.** The claim is right and its citation does not open: `run/initrd/init` was
   never committed to this repository at any point, and the artifact that measured it was deleted by the
   commit that retired `experiments/`, once `internal/` had come to implement it. What that artifact
@@ -4044,11 +3984,11 @@ refutation.
   `echo Boot took 332.33 seconds` with no clock read and no computation, printed 0.29 s after
   `InstanceStart`, so it could not have been a measurement. An Ubuntu guest with systemd reaches a login
   prompt in **1.401 s**, host-timed from firecracker's own `InstanceStart` rather than from the guest's
-  own clock — the same rule invariant 27 states — and that number survives only in the same deleted
+  own clock - the same rule invariant 27 states - and that number survives only in the same deleted
   file. Boot was never the problem, which is worth stating because a fabricated measurement sent this
   work after a 30x non-issue.
 - **The resolver gap is CLOSED and verified, and the entry that recorded it argues with itself.**
-  Measured in the image template: `/etc/resolv.conf` is EMPTY — one byte, a newline — so the guest has
+  Measured in the image template: `/etc/resolv.conf` is EMPTY - one byte, a newline - so the guest has
   no nameservers, which is exactly what `lookup registry-1.docker.io: Try again` is, and every pod
   sandbox fails because the `pause` image cannot be pulled. The reason it hid so well is that
   registering with the apiserver needs no DNS, so the node reaches `Ready` and the four-step proof's
@@ -4062,7 +4002,7 @@ refutation.
   on that node, which is impossible without a working resolver.
 
   This entry used to say, in one sentence, that nothing in `cmd/socialweb-nodeagent`,
-  `cmd/socialweb-nodeimage` or `internal/nodefirecracker` configures a resolver at all — and then, three
+  `cmd/socialweb-nodeimage` or `internal/nodefirecracker` configures a resolver at all - and then, three
   sentences later, that the write was implemented and unverified. The premise was never updated when the
   conclusion was, so the same entry claimed the gap was absent and present at once, and the "unverified"
   half outlived the run that verified it. Both halves are recorded here because that shape is worth
@@ -4073,7 +4013,7 @@ refutation.
 - **The reconciler's readiness gate dialled an address nothing was listening on, and this is the
   failure shape that hides best.** Measured: the gate dialled the ADVERTISED address while the
   apiserver binds loopback, and from this host the advertised address is refused. So the gate could
-  never pass: every pass blocked in `Spawn → gate → waitK3s` for the gate timeout (~91 s) and then
+  never pass: every pass blocked in `Spawn -> gate -> waitK3s` for the gate timeout (~91 s) and then
   reaped and respawned the process group it had just started, on a loop. That presents as "the
   cluster is Initializing" for ever, which reads as a slow component rather than as a wrong address.
   Fixed by dialling the BIND address. The general lesson: a readiness probe must dial the address the
@@ -4087,7 +4027,7 @@ refutation.
      `TestTheControlPlaneReachesReadyAtZeroNodes` drives that against real leased ports, real kine, a
      real per-cluster postgres and a real `k3s server --disable-agent`, in under three seconds;
   2. `get nodes` is empty;
-  3. a node joins ON DEMAND — the scale decision made it from the tenant cluster's own intent
+  3. a node joins ON DEMAND - the scale decision made it from the tenant cluster's own intent
      (`action=Provision, nodes=1, "intent and no node"`), never from an operator; the guest
      registered as `liveweb-node1 Ready` with `INTERNAL-IP 192.168.0.10`, kernel
      `7.2.7-200.fc44.x86_64`, `containerd://2.3.4-k3s1.36`; and a pod ran on it
@@ -4095,7 +4035,7 @@ refutation.
      host-timed from firecracker's own `InstanceStart` in `instance.json` to kubelet's node-Ready
      transition;
   4. it returns to zero: the decision goes `Teardown` past the hold and then `None`, `get nodes` is
-     empty, the guest and its data dir are gone, and the control plane STILL ANSWERS — `/readyz` ok,
+     empty, the guest and its data dir are gone, and the control plane STILL ANSWERS - `/readyz` ok,
      namespaces still listed.
 
   The resolver gap is closed and verified rather than assumed: the guest console carries
@@ -4106,12 +4046,12 @@ refutation.
   into a pass: it skips until seven documented variables name the store the builder published into, the
   builder's own configuration that names the image in that store, a firecracker binary, the guest
   agent, k3s, kubectl and an image the guest already carries. This entry used to attribute that to a
-  test named `TestANodeJoinsAndTheClusterReturnsToZero`, which does not exist — it was deleted, with the
+  test named `TestANodeJoinsAndTheClusterReturnsToZero`, which does not exist - it was deleted, with the
   file that held it, six hours and 109 commits BEFORE this entry was written, and its name survived only
   in this document. The description was of the right test; only the name was stale, which is the harder
   kind to notice, because a reader who greps for it finds nothing and concludes they are looking at the
   wrong branch.
-- **Intent is the tenant's workload, not anything running — and getting this wrong made the objective
+- **Intent is the tenant's workload, not anything running - and getting this wrong made the objective
   unreachable.** `scale.Intent` counted every pod `Pending`, `Running` or `Unknown`, and a k3s cluster
   always holds its own coredns, metrics-server and local-path-provisioner: `Pending` at zero nodes,
   `Running` at one, so intent was true in BOTH directions. An empty cluster therefore provisioned a
@@ -4124,7 +4064,7 @@ refutation.
   The discriminator is measured too, and the measurement is what makes it correct: k3s marks what its
   own manifest controller applies with `objectset.rio.cattle.io/owner-gvk =
   "k3s.cattle.io/v1, Kind=Addon"`, and **that marker holds on the Deployments and the ReplicaSets but
-  NOT on the pods**, which carry only their pod-template labels — so a marker-only rule would have
+  NOT on the pods**, which carry only their pod-template labels - so a marker-only rule would have
   missed exactly the objects `Intent` reads. The rule resolves it through the owner chain instead: a
   pod whose `ownerReferences` name a marker-carrying ReplicaSet is the control plane's own. There is
   deliberately no list of add-on names and no list of namespaces: a list of names goes stale silently
@@ -4158,7 +4098,7 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
 ```
 
   A host that runs the store therefore CANNOT run a node, and the node cannot share a host with
-  another node either — so no ordering of privileges fixes it. The control plane needs no privilege
+  another node either - so no ordering of privileges fixes it. The control plane needs no privilege
   beyond being able to read and write ONE file, which is a one-time ownership decision by the
   operator rather than a per-run requirement, and with the node inside a VM nothing on this host
   runs as root at all. `--rootless` is the cheaper alternative and is unmeasured: it moves the
@@ -4167,7 +4107,7 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
 - **The vault is not in the default component set, and that is now a DECISION rather than a gap.** The
   config is still rendered and `bao server` still runs for a stack that names `ComponentOpenBao`, but
   `PurposeOpenBao` is no longer in `materialiser.DefaultPurposes`, and the startup check asks
-  `PurposesFor(stack)` rather than the global list — it had been answering "is this purpose bound"
+  `PurposesFor(stack)` rather than the global list - it had been answering "is this purpose bound"
   from a list that says nothing about the stack in use. The reason is not that the vault is
   unfinished but that **nothing consumes it**: measured, a fresh vault from a rendered config answers
   `GET /v1/sys/health` **501** `{"initialized":false,"sealed":true}`, so the readiness gate
@@ -4180,7 +4120,7 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   **every available answer defeats the purpose**: auto-unsealing with a key the gateway holds makes
   the vault only as strong as the gateway, and Shamir shares written beside the data they protect
   achieve the same thing. A component that starts, fails its own readiness gate and provides nothing
-  is worse than absent — it occupies a lease and it parks a cluster in `Unavailable` for a reason
+  is worse than absent - it occupies a lease and it parks a cluster in `Unavailable` for a reason
   unrelated to the cluster. It comes back when something needs a secret, and the unseal policy is
   decided then, against a real consumer.
 
@@ -4190,13 +4130,13 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   contradicted the decision, which is a trap for whoever configures a stack next.
 - **`deploy/install-provider.sh` fails at its last gate, and the gate it fails at is not the one this
   entry named. PARTLY WRONG.** The script does not hold that gate: its last line runs
-  `apply-permission-inventory.sh`, `set -e` propagates the status, and that script ends `exit $fail` —
+  `apply-permission-inventory.sh`, `set -e` propagates the status, and that script ends `exit $fail` -
   so the install exits 0 when every expectation it measures holds, and "exits 1" is a statement about
   one run rather than about the script. `IdentityValid=True` is a PRECONDITION the script waits for,
   not something it asserts or prints: two `until` loops poll for it and the only mention of the string
   is the timeout message that exits 1 if it never arrives. And the failing gate's own closing text
   contradicts the reason this entry gives for the failure. What it says a failure means is one of the
-  credentials the DESIGN CHOSE — the runtime's kcp credential or its per-tenant minted certificate —
+  credentials the DESIGN CHOSE - the runtime's kcp credential or its per-tenant minted certificate -
   "and never that a workspace ServiceAccount needs a wider binding". So the entry describes the finding
   the gate exists to prevent rather than the reason the gate fails. That finding is real and is in
   section 7: a workspace ServiceAccount token is confined to its origin logical cluster and refused
@@ -4206,13 +4146,13 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
 - **Multi-node is out of scope for v1.** The underlay verdict makes single-node the shape, and
   `scale.Decide` assumes it harder than this entry said: `Provision` returns a literal `Nodes: 1`, a
   cluster with intent and any node already counted gets `None`, teardown is all-or-nothing to zero, and
-  the `scale.Nodes` seam itself has no count — an actuator can only be asked to BE the node.
+  the `scale.Nodes` seam itself has no count - an actuator can only be asked to BE the node.
   `nodeID` is the package constant `"node1"`, so every cluster gets exactly one node, named
   `<cluster>-node1`, and the per-node machinery that would generalise (the ordinal, the per-node address
   off the cluster's range) is only ever called with ordinal 1.
 - **An image did not record the guest agent it carried, and closing that closed the family it belonged
   to. CLOSED, and measured twice: once by the failure, once by the fix.** The record weighed the
-  kernel, its config, the base image, the k3s binary, the module NAMES and the seeded digests — and not
+  kernel, its config, the base image, the k3s binary, the module NAMES and the seeded digests - and not
   the agent, which is the binary that decides the guest's kubelet command line, its resolver, its
   identity and its interface. So an agent change could not move an image's name, and the consequence
   was not theoretical: the builder answered `up to date, nothing built, nothing pulled` and was RIGHT
@@ -4222,22 +4162,22 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   joined. Nothing in that sequence named the agent, and the first instinct is to debug the kubelet: a
   refusal that cannot name the thing that is actually stale is the failure mode, not a missing check.
 
-  The record now carries the agent's path and **the digest of the binary the build just produced** —
+  The record now carries the agent's path and **the digest of the binary the build just produced** -
   the binary and not its source, because the flags and the toolchain are inputs to that binary and no
   digest of a source tree covers either. It carries the module tree's path and a digest over every file
   in it, path and contents and symlink targets, because the build copies that tree into the image whole
   (section 12). And it carries the configuration values that were free to change under a name that did
   not move: the boot arguments, the guest's k3s data directory, the rootfs label and its headroom, the
   agent's package and its build flags. Those are recorded as VALUES and not as a digest of the
-  configuration file, because the file is canonical in places the bytes are not — a module list
+  configuration file, because the file is canonical in places the bytes are not - a module list
   reordered is the same module list, and a digest of the bytes would rebuild 2.3 GB for a change
   nothing made.
 
   What closes the CLASS rather than these instances is what matters more: a test holds the builder's
   read set and the record's field set equal in both directions, so a configuration field the build
   reads and the record does not mention fails the suite, and a record field nothing reads fails it too.
-  It was checked the way a gate has to be — by removing the agent's declaration and watching the test
-  fail — and it is the shape section 12's fingerprint test already had, applied to the enumeration as
+  It was checked the way a gate has to be - by removing the agent's declaration and watching the test
+  fail - and it is the shape section 12's fingerprint test already had, applied to the enumeration as
   well as to the mutation. VERIFIED through the ordinary path rather than a hand-repointed one: the
   same command over the same configuration that answered `up to date` answered `building` and produced
   a different name, the normally-built image records the digest of the agent beside it, and a guest
@@ -4248,11 +4188,11 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   Two were deleted, on this repo's own rule that a control nothing reaches is indistinguishable from
   absent, and the explanation of why each existed is kept here rather than in the commit: a deletion that
   takes its reasoning with it leaves the next reader unable to tell residue from a missing feature.**
-  `processrunner.Reach` and `processrunner.Identity` are DELETED, and they were not a missing wire —
+  `processrunner.Reach` and `processrunner.Identity` are DELETED, and they were not a missing wire -
   every production call site passed `Identity` (`clusterprovider/steps.go`, the pasta line in
   `nodefirecracker/node.go`, and the materialiser's own test helper), so the mapper mapped nothing
   anywhere. It was VM residue: the substrate this design abandoned reassigned a guest's ports on every
-  boot, so a caller that could not ask "what port is this guest's 6443 on this time" could not connect —
+  boot, so a caller that could not ask "what port is this guest's 6443 on this time" could not connect -
   and a guest's ports are its own network namespace now, so there is nothing to map. Deleted with it: the
   type, the identity function, the `Spec` field, the `Process` field, the accessor, and
   `TestReachDefaultsToIdentityAndIsOverridable`, whose own failure text ("an off-host substrate reassigns
@@ -4260,10 +4200,10 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   `internal/nodetransport` is DELETED: it is an unwired REFUSAL (`ErrSecondSession`, "a node is one
   connection; a second session is a second VM"; `ErrSubstrateDestroy`, "a node is not destroyed by the
   substrate, or the VM's disappearance would prove the harness instead of the provider") whose only
-  importer was itself, and the arm it was written for is the property the substrate does not have — with
-  the node in a VM, teardown is the guest's own. The RULE that refusal encoded — the seam must not give
+  importer was itself, and the arm it was written for is the property the substrate does not have - with
+  the node in a VM, teardown is the guest's own. The RULE that refusal encoded - the seam must not give
   the dial lifecycle ownership, so `Wait` and `Close` stay distinguishable, and one node is one
-  connection — is prose in section 9 and stays there; what is deleted is the code that asserted it, which
+  connection - is prose in section 9 and stays there; what is deleted is the code that asserted it, which
   nothing called. `internal/sessionreport` goes with it, and not because
   it was unused: it parses the market's SSH front-door report, the deadline line, which is the only
   honest source of `nodeExpiry`, and its only non-test importer was `nodetransport`. Section 16 puts the
@@ -4271,36 +4211,36 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   cannot get one without bringing the door back in scope. What is NOT lost with it is the invariant its
   test guarded: "a node whose deadline is UNKNOWN must not clear the teardown gate" is enforced live by
   the materialiser ("status.nodeExpiry is unknown and the apiserver has answered; refusing to tear down
-  against a gate that cannot compare") and measured by `TestTeardownRefusesWhenTheGateCannotCompare` —
+  against a gate that cannot compare") and measured by `TestTeardownRefusesWhenTheGateCannotCompare` -
   the deleted test was over the parser, not over the gate. Two were KEPT, each with a caller worth naming
   rather than an assumption that one exists. `internal/versions/versions.json`'s reader is
   `internal/versions/versions_test.go`, which is not a self-test: it is where the DEPLOY config's guards
-  live — both audit policies are metadata-only, the deployed `kcp-audit-policy.yaml` matches its copy,
+  live - both audit policies are metadata-only, the deployed `kcp-audit-policy.yaml` matches its copy,
   the `kcp` entry pins `--feature-gates=WorkspaceMounts=true` (ALPHA and default-off, so with it off
   every mount silently stops being served), the `APIResourceSchema` covers every field of the Go type,
-  and the workspace type binds an export that exists — NINE test functions in one file, and deleting the
+  and the workspace type binds an export that exists - NINE test functions in one file, and deleting the
   manifest deletes all nine. `internal/devicekey` is the only implementation of a declared production
   seam, `kcpclient.DeviceKeyGranter`, and its caller is the LIVE proof
   `TestTheRenewalPathAgainstRealInfrastructure` in `internal/tenantclient/live_renewal_test.go`, gated on
-  six `SOCIALWEB_LIVE_*` variables — the only place ADR 0020's Grant → Resolve → Issue has ever run
+  six `SOCIALWEB_LIVE_*` variables - the only place ADR 0020's Grant -> Resolve -> Issue has ever run
   against real infrastructure. Deleting it would delete the seam's only implementation and the proof of
   that path together. **That ruling stands, and the rest of the fact about the seam is now settled: the seam is WIRED, and
   the endpoint became what the surface already said it was.** The gateway was constructed without a
-  granter — `cmd/socialweb-gateway/main.go` passed `Options{Host: ..., RestConfig: ...}` and no
-  `DeviceKeys` — so in production `kcpclient.Client.deviceKeys` was nil and `Client.Kubeconfig` took its
+  granter - `cmd/socialweb-gateway/main.go` passed `Options{Host: ..., RestConfig: ...}` and no
+  `DeviceKeys` - so in production `kcpclient.Client.deviceKeys` was nil and `Client.Kubeconfig` took its
   guard branch and returned `ErrNoDeviceKey`. That method is not internal plumbing: section 6's XRPC
   surface serves it as `getKubeconfig`, "the credential the user runs kubectl with", from `xrpcserver`
   through `gateway.GetKubeconfig`. So a real gateway had an endpoint that was routed, documented and
   unit-tested, and refused every call it would ever receive. The shape of the failure is why it read as
   a note rather than an alarm: it fails CLOSED, with a message that says what is missing, so it was
-  never a hole in the boundary — it was an absence that reads as a presence, which is this document's
+  never a hole in the boundary - it was an absence that reads as a presence, which is this document's
   recurring defect.
   Wiring beat removing the endpoint because the seam was already complete and already proven.
   `internal/devicekey` generates the did:key, writes the binding row, signs the credential and renders
-  the kubeconfig, and the store `buildDeps` already constructs — `internal/tenantclient.Client` — IS
+  the kubeconfig, and the store `buildDeps` already constructs - `internal/tenantclient.Client` - IS
   the `Binder`, because its `Record(ctx, tenantclient.Row) error` is the interface's one method, word
   for word. What was missing was one argument and four policy values. Removing the endpoint would have
-  deleted a working seam to make the document agree with the wiring, and ADR 0020's Grant → Resolve →
+  deleted a working seam to make the document agree with the wiring, and ADR 0020's Grant -> Resolve ->
   Issue would have lost its only non-test counterpart.
   The four policy values are configuration with NO defaults, which is what `devicekey.New` exists to
   enforce: `SOCIALWEB_GATEWAY_DEVICE_KEY_AUDIENCE`, `SOCIALWEB_GATEWAY_DEVICE_KEY_TTL`,
@@ -4314,19 +4254,19 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   refuses to start.
   **A routed verb is not a working verb, and the suite now says so twice.** `TestEveryVerbIsBound` asks
   only that each declared verb is not 404, which a verb that is routed and permanently non-functional
-  passes — the same shape as `k3s check-config` returning 0 over a missing module, which is why it
+  passes - the same shape as `k3s check-config` returning 0 over a missing module, which is why it
   passed over this endpoint for as long as this entry sat open.
   `TestBuildDepsWiresTheDeviceKeyGranterFromTheRealImplementation` calls the REAL `buildDeps` and fails
   on `ErrNoDeviceKey`, naming the guard; `TestEveryVerbTheLexiconsDeclareIsAnswerableWithTheRealDeps`
   drives every verb the lexicons declare past AUTHENTICATION with a real service-auth token and requires
   its ANSWER, not its presence, and derives its table from the lexicon files so a verb added to the
   surface cannot escape it. Against the un-wired tree the first reports the guard by name and the second
-  reports `getKubeconfig answered 500`, while `TestEveryVerbIsBound` still PASSES — and that last
+  reports `getKubeconfig answered 500`, while `TestEveryVerbIsBound` still PASSES - and that last
   measurement is the one that makes the pair worth having, because it is the difference between a test
   that could fail and a test that never did.
 - **The identity bundle's home is the FILE TREE at `<DataDir>/server`, and section 5's component 7 said
   otherwise because a document outlived the code it described.** The bundle is the 13-entry
-  `tls/`+`cred/` tree under `<DataDir>/server` — the same root `clusterstack.TLSDir` puts `tls/` under —
+  `tls/`+`cred/` tree under `<DataDir>/server` - the same root `clusterstack.TLSDir` puts `tls/` under -
   seeded and harvested there by `clusterprovider.HarvestBundle`/`SeedBundle`, with a CA fingerprint
   measured byte-identical across a teardown and a rebuild (section 7, and the timing block in section 9).
   OpenBao was never its home: `PurposeOpenBao` is not in `materialiser.DefaultPurposes`, a fresh vault
@@ -4360,13 +4300,13 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   is a port carved out of the per-host range no later cluster can use, and a reader of the lease file has
   to work out which of the two ports is real. Section 8 records the measurement that separates this from
   `PurposeK3sSecure`, which stays 2 because the apiserver's pair is MEASURED as two bound listeners. The
-  fixtures that had pinned 2 — portallocator's `TestJ`, portscan's fold fixture, and the clusterprovider
-  step leases — pin 1 now.
+  fixtures that had pinned 2 - portallocator's `TestJ`, portscan's fold fixture, and the clusterprovider
+  step leases - pin 1 now.
 - **A reconcile pass is accepted as unbounded at v1, with a named trigger: a decision with a condition,
   not an open question.** Measured: ONE PASS TOOK 6.7 s AGAINST A 2 s TICK, because the tenant bootstrap
   runs synchronously inside the pass, so the tick is a floor rather than a period. At 0-or-1 node that is
   accepted: one cluster, one node, and the pass is not on a tenant's critical path. It is still a
-  scheduling decision nobody has made at N, and the trigger that reopens it is precise — a pass whose
+  scheduling decision nobody has made at N, and the trigger that reopens it is precise - a pass whose
   duration can exceed the tick BY DESIGN, which is what happens once a cluster can hold more than one
   node. `scale.Decide` returns a literal `Nodes: 1`, `nodeID` is the package constant `"node1"`, and
   multi-node is out of scope for v1 (section 10), so the condition cannot be met today and the decision
@@ -4376,15 +4316,15 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   Snapshot restore is refuted as a provisioning primitive, by measurement rather than by taste:
   restore-to-Ready **9.974 s** against cold **9.079 / 9.158 / 10.768 s**, so a restore buys nothing in
   time; and a restored guest cannot make a NEW node, because restore does not re-run boot-time units, so
-  the identity adoption the guest's own agent performs — reading the per-node read-only virtio-blk disk
-  this design settled on, in place of firecracker's MMDS, which appears in no `.go` file — never runs, and
+  the identity adoption the guest's own agent performs - reading the per-node read-only virtio-blk disk
+  this design settled on, in place of firecracker's MMDS, which appears in no `.go` file - never runs, and
   a snapshot frozen as one node comes back as that node even when its recorded disk path is re-pointed at
   another node's disk. What stayed open was whether ANY resume-triggered re-identification is worth
   having, and the answer is no: the mechanism cannot scale out, so re-identification would serve a node
   the cluster ALREADY knows, and a cold boot (9.079-10.768 s) is faster than the cluster notices the node
   died. One part of the old entry stays UNVERIFIED rather than resolved: on 6.1.186, the pinned-kernel
   route this design abandoned in favour of the host's own kernel, the guest does NOT log `crng reseeded
-  due to virtual machine fork`, so clones may share RNG state — unmeasured on the kernel that actually
+  due to virtual machine fork`, so clones may share RNG state - unmeasured on the kernel that actually
   ships, and a reason to keep validating it.
 - **The GATEWAY's verdict on a normally-built image is measured now, not pinned only by unit tests.**
   The image record carries the agent's digest, and the normally-built image at
@@ -4393,29 +4333,29 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   the module tree's digest. The run that booted that image before exercised the SUBSTRATE directly, which
   does not call `CheckInputs`, so the composition root's own verdict on a normally-built image was a
   unit-test fact. It is a measurement now: the four-step proof ran against THAT image, env-gated, with the
-  substrate named by configuration, and **PASSed in 97.65 s** — the step that derives a node from the
-  image is what reaches `nodeSubstrateFor → manifest.CheckInputs()`, and a guest booted from it, or no
+  substrate named by configuration, and **PASSed in 97.65 s** - the step that derives a node from the
+  image is what reaches `nodeSubstrateFor -> manifest.CheckInputs()`, and a guest booted from it, or no
   node would have joined. All four transitions held in one uninterrupted run: (1) the control plane
   reached `Ready` at its leased apiserver port **https://127.0.0.1:62702** with zero nodes; (2) `get
-  nodes` was empty, and stayed empty across passes; (3) a node joined ON DEMAND — `Provision, nodes=1`,
-  "intent and no node" — as `liveweb-node1 Ready <none> ... v1.36.4+k3s1`, with the tenant workload
+  nodes` was empty, and stayed empty across passes; (3) a node joined ON DEMAND - `Provision, nodes=1`,
+  "intent and no node" - as `liveweb-node1 Ready <none> ... v1.36.4+k3s1`, with the tenant workload
   running on it; and (4) the cluster returned to zero with the control plane STILL `Ready` at the same
   URL and still listing `default`, `kube-node-lease`, `kube-public`, `kube-system` and `users`. The run
   prints the four transitions and no host-timed instance-start-to-ready, and its ports come from
   `liveports.FourStepProof` in `internal/liveports` (flock-held slot) rather than from a remembered
-  number — the package exists because a port block picked from memory collided, and the fingerprint in
+  number - the package exists because a port block picked from memory collided, and the fingerprint in
   that image's path is 71 characters, so the image is named by its digest and never by a glob.
 - **`shut` means the tenant's apiserver was NOT REACHED, not "not 2xx", and the gate now holds against a
   serving cluster where it used to reap.** The defect and the fix are one substitution: `shut` was
   `o.PathStatus != 0 && (o.PathStatus < 200 || o.PathStatus >= 300)`, which a 401 satisfies, and the
   provider's probe through the mount can never get a 2xx because the tenant apiserver refuses `/version`
-  to callers it cannot authenticate — so the gate read a SERVING cluster as shut. It is now
+  to callers it cannot authenticate - so the gate read a SERVING cluster as shut. It is now
   `o.PathStatus != 0 && !reached(o.PathStatus)`, where `reached` is 2xx, 401 or 403. The code table is
   stated with its basis rather than asserted: **0 HOLD** (transport failure to kcp, so there is no answer
-  about the mount at all); **2xx HOLD** (the mount served); **401 HOLD, MEASURED** — and it is a reach
+  about the mount at all); **2xx HOLD** (the mount served); **401 HOLD, MEASURED** - and it is a reach
   rather than a guess because the BODIES prove it: the direct apiserver GET and the through-the-mount GET
   return the identical k8s Status JSON, while kcp's own refusal (503) and the proxy's (502) carry
-  different or empty bodies; **403 HOLD by judgement, not by measurement** — kcp's localproxy returns
+  different or empty bodies; **403 HOLD by judgement, not by measurement** - kcp's localproxy returns
   only 404/429/5xx before forwarding and no path was found where kcp answers 403 on a mount itself, so
   this is the code treated generously ON PURPOSE, because if it ever occurs the gate holds longer and
   that is the safe direction; **404 SHUT, MEASURED** (kcp answers 404 for a workspace path it cannot
@@ -4438,24 +4378,24 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   `DeletionTimestamp` was unreachable and `Draining` was written by no production path. What the fix had
   to confront is that `RemoveFinalizer` had NO CONSUMER either: setting the field on a Result that
   nothing reads would have left every deleted Cluster terminating for ever, with `Refs` still listing it
-  and every later pass reaping a dead cluster — a leak traded for a leak. So the fix is three parts, not
+  and every later pass reaping a dead cluster - a leak traded for a leak. So the fix is three parts, not
   one: `Clusters.RemoveFinalizer` on the interface, `Registry.RemoveFinalizer` on the implementation, and
   the call in `Provider.reconcile`. Six fake implementers gained the method, enumerated by the compiler
   rather than by search. `Registry.RemoveFinalizer` removes only THIS repository's finalizer and guards
   the write with a JSON Patch `test` operation on the list it read, so a concurrent writer produces a
   refused patch rather than a clobbered list. One bounded gap is noted rather than papered over:
   `kcpclient.Ensure` returns early on `AlreadyExists`, so a CR created before this change keeps no
-  finalizer — there is no deployment to migrate, which is why it is a note and not a convergence write.
+  finalizer - there is no deployment to migrate, which is why it is a note and not a convergence write.
   And the measurement now supplies nothing production does not: the mount proof asserts the CR ARRIVES
   from `kcpclient.Ensure` already carrying the finalizer and fails if it does not, with a message saying
-  a self-supplied finalizer would keep passing over the broken path — then measures the CR being deleted
+  a self-supplied finalizer would keep passing over the broken path - then measures the CR being deleted
   at 261 ms once the reaping pass releases it.
 - **A `Draining` Cluster CR shuts the mount BEFORE its process group dies, and the reading came from a
   real kcp started inside a test.** This is the question the whole of section 11's gate was built around,
   and it is settled by measurement rather than by inspection:
   `TestTheMountShutsBeforeTheTenantProcessGroupDies` starts kcp as the CURRENT uid in its own temp root
-  directory — `--feature-gates=WorkspaceMounts=true`, with a temp `kine` on a sqlite file behind
-  `--etcd-servers` — deliberately not the root-owned `/var/.kcp`, and deliberately not an embedded etcd,
+  directory - `--feature-gates=WorkspaceMounts=true`, with a temp `kine` on a sqlite file behind
+  `--etcd-servers` - deliberately not the root-owned `/var/.kcp`, and deliberately not an embedded etcd,
   because etcd is host-fixed on 2379/2380 and no flag moves it. It applies `deploy/`'s APIResourceSchemas,
   APIExports and WorkspaceTypes into `root:socialweb-provider`, builds the tenant tree with
   `kcpclient.Ensure`, and behind it runs the real reconciler, the real `Registry`, real leased ports,
@@ -4466,26 +4406,26 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   direction reproduced from the real mount; and a `Draining` CR answers **503 `Not available.`**, kcp's
   own refusal, with the backend never contacted. Writing `Draining` into the CR while the group was up and
   its apiserver answering moved the mount off 401 in **206 ms**, and writing `Ready` back brought it to 401
-  again — so the PHASE is what shut it. The phase is read as a string by a `switch` whose only case is
+  again - so the PHASE is what shut it. The phase is read as a string by a `switch` whose only case is
   `Ready`, so the mechanism is phase-agnostic above it: `Unavailable` and `Initializing` measure 503 too,
   and `Connecting`/`Unknown` cannot be stored at all because this repository's own APIResourceSchema
   enumerates four phases. The reconciler is therefore correct here, and the reason this took so long to
   get is stated plainly in section 14: a fake registry was answering the only question anyone asked it.
   Two things about the instrument are worth keeping: the whole test is **27 s**, needs no root and no
-  `/dev/kvm`, and carries **no env gate** — it skips only when `kcp`, `kine`, `k3s` or `postgres` is
+  `/dev/kvm`, and carries **no env gate** - it skips only when `kcp`, `kine`, `k3s` or `postgres` is
   absent, with a skip message that says a skip here is this question staying open, because an env-gated
   test that has never run is worth nothing and this repository has been bitten by exactly that.
 - **The control plane runs as a non-root container, and the zero-node proof passes INSIDE it.** This is
-  the measurement the container exists for. `TestTheControlPlaneReachesReadyAtZeroNodes` — the real
+  the measurement the container exists for. `TestTheControlPlaneReachesReadyAtZeroNodes` - the real
   reconciler against real leased ports, real kine, a real per-cluster postgres and a real
-  `k3s server --disable-agent` — ran in the image and PASSED, in 9.50 s (and 7.67 s on an earlier
+  `k3s server --disable-agent` - ran in the image and PASSED, in 9.50 s (and 7.67 s on an earlier
   image) against a ~6 s host baseline, with STEP 1 reaching `Ready` at `https://127.0.0.1:31202` and
   STEP 2 reading a live control plane with zero nodes. Two runs, both PASS. The image takes no
   permissive flag: not `--privileged`, not `--security-opt`, not `--cap-add`, not `--device`, not
   `--network host`, no userns remap. It runs `USER 1000:1000`, deliberately the host user's uid so the
   mounts are readable and the lock directory lines up, and it is built from the host's own family so
   host-built binaries run. Run against itself, `check-host` answers 9 HOLDS, 1 MISSING and 10 MUST BE
-  PASSED IN and exits non-zero — which is the honest reading of a control-plane-only image and exactly
+  PASSED IN and exits non-zero - which is the honest reading of a control-plane-only image and exactly
   what the third category was designed to say: the kernel, the module tree, `CLONE_NEWUSER`,
   `/dev/kvm`, the firecracker binary and the image store are the container's EDGE, and `pasta` is the
   one thing MISSING, because egress for the node half is not this image's business.
@@ -4495,13 +4435,13 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   opens read-write, so every check that opens it says yes, and the server needs it non-empty. So the
   requirement is that the file be NON-EMPTY and not merely writable, the image now writes 32 random
   bytes into it, and `check-host` reports an empty file as `MISSING` with that k3s line as its
-  evidence. It is the same shape as everything else here — a thing that opens clean and is wrong — and
+  evidence. It is the same shape as everything else here - a thing that opens clean and is wrong - and
   it was found by running the proof in the new environment rather than by reasoning about it.
   **Its validation script runs twice in a row, and the host-contract step it runs is falsifiable.**
   `deploy/control-plane-container/validate.sh` names its two containers, and `--rm` removes a container
   only on a NORMAL exit: a run ended by a timeout, a Ctrl-C or a supervisor being stopped leaves
   `kcp-zeronode` behind holding the name, and the next run dies with `Conflict. The container name
-  "/kcp-zeronode" is already in use` — a validation that fails for a reason it does not state. That was
+  "/kcp-zeronode" is already in use` - a validation that fails for a reason it does not state. That was
   observed rather than anticipated: one run held the name and blocked the next. The fix is a
   `docker rm -f <name>` before each `docker run`, guarded so a name that is not there cannot abort under
   `set -e`. That is chosen over unique per-run names and over dropping `--name` because it is the only
@@ -4511,14 +4451,14 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   gives up the one label a human uses to find a run that is still alive; and `rm -f`, unlike either,
   also reaps a still-RUNNING orphan whose owner is gone, freeing the ports it holds rather than leaving
   them for the next run to trip over. The second step is gated now on a POSITIVE assertion rather than
-  an exit-code allowlist, because `check-host` is DESIGNED to exit non-zero here — the image is the
-  control-plane half, so it reports something like `9 HOLDS, 1 MISSING and 10 MUST BE PASSED IN` — and
+  an exit-code allowlist, because `check-host` is DESIGNED to exit non-zero here - the image is the
+  control-plane half, so it reports something like `9 HOLDS, 1 MISSING and 10 MUST BE PASSED IN` - and
   the `|| true` that allowed for that swallowed every OTHER ending too: a crash, a missing binary, an
   OOM kill, all printing identically while the step gated nothing. The script captures the output,
   requires the summary line `N checks: A HOLDS, B MISSING, C MUST BE PASSED IN`, fails with that
   expectation named when it is absent, and fails when the total is not the sum of the three categories.
   **`check-host`'s third exit code is what makes this load-bearing**: it exits 2 when it cannot read the
-  host well enough to check anything, printing `MISSING host.facts` and NO summary line — so a `{0,1}`
+  host well enough to check anything, printing `MISSING host.facts` and NO summary line - so a `{0,1}`
   allowlist would have caught that by luck and a `{0,1,2}` allowlist would have passed it silently. The
   line is the instrument, and its absence is the failure.
 - **Only what is inside the build context is ordered by the build graph, and the artifact leaves the
@@ -4526,28 +4466,28 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   configuration into itself at the path the configuration names rather than mounting it: a copy is
   content-addressed, so its bytes enter the cache key and a change to it re-runs the stage instead of
   answering a cache hit over the previous image. Everything the configuration reads that cannot move
-  into the context — this host's `/boot`, its `/lib/modules/<release>`, the base image and the artifact
-  directory — is mounted read-only at the exact paths it spells, which is what makes the container's
+  into the context - this host's `/boot`, its `/lib/modules/<release>`, the base image and the artifact
+  directory - is mounted read-only at the exact paths it spells, which is what makes the container's
   build compute the same inputs as the host's. Two measurements forced this shape rather than being
   chosen: a named build context is mounted READ-ONLY (`Read-only file system` on a write into one), so
   no stage can write the store through a mount; and `/boot` cannot even BE a context (`error from
   sender: open /boot/efi: permission denied`, mode 0700), so its two files are staged. The artifact
   therefore leaves through an `extract` stage and `--output type=local,dest=<out_dir>`, landing
-  `<out_dir>/<fingerprint>/{vmlinux,initramfs.cpio,rootfs.ext4,image.json}` — exactly the paths
+  `<out_dir>/<fingerprint>/{vmlinux,initramfs.cpio,rootfs.ext4,image.json}` - exactly the paths
   `LoadImage` derives from the configuration, so the runtime's lookup is the same check it always was.
   The cost is stated rather than hidden: the artifact is written twice more than one build needs, and
   the builder must hold both at once.
   **The record covers the configuration's path and every value it transcribes**, which is
   `modules`, `initramfs_modules`, `images`, every file digest, the whole module-tree digest,
   `boot_args`, `k3s_data_dir`, `rootfs_label`, `rootfs_headroom_mib`, `agent_package` and
-  `agent_go_flags` — and not `firecracker`, `stage_dir`, `out_dir` or `image_cache_dir`, none of which
+  `agent_go_flags` - and not `firecracker`, `stage_dir`, `out_dir` or `image_cache_dir`, none of which
   is image content. Two consequences follow, and both are stated rather than discovered. The same bytes
   at another path is another name, because the path is an input. And **the agent binary carries Go's
   VCS stamp, so a commit that changes no agent source still moves every image's name**: one agent
   source at three repository states gave `cabe50a0` (40781b3+dirty), `790f97a2` (e88b2f3+dirty) and
   `c9300ed9` with `-buildvcs=false` (reproducible twice, and byte-for-byte what the container's own
-  stage produced). Both of the first two were `+dirty`, meaning editing any file in the repository — a
-  document, a test — renamed every node image and cost a 2.2 GiB rebuild for no change in image
+  stage produced). Both of the first two were `+dirty`, meaning editing any file in the repository - a
+  document, a test - renamed every node image and cost a 2.2 GiB rebuild for no change in image
   content. The name must be a function of what determines image content, and a repository dirty flag is
   not one, so `-buildvcs=false` is set in `agent_go_flags`. Traceability is not lost by it:
   `agentBinaryDigest` identifies the source by the content that produced it, which is a stronger
@@ -4555,35 +4495,35 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
 - **The node image was the one input to a boot that nothing built, and the runtime derives it now.**
   `SOCIALWEB_CLUSTERPROVIDER_IMAGE` named a LITERAL directory and the substrate then ran
   `CheckInputs` over it, so an operator had to compute a fingerprint by hand and paste it into
-  configuration — and every way that goes wrong is silent, because a stale fingerprint is a directory
+  configuration - and every way that goes wrong is silent, because a stale fingerprint is a directory
   that exists and validates, so a node boots from an old image and nothing says so. The old guard was
   narrower than the defect: `checkPlacement` did stat the three image files at config load, so a wholly
   wrong path was caught, and what passed silently was a STALE name. `CheckInputs` could not close it,
   because it holds the image to the CONFIGURATION and never to the name the configuration's own inputs
   give. The name is derived now from the same inputs the build fingerprints, and `Fingerprint` stays
   load-bearing as the runtime's answer to "does this name exist" while `CheckInputs` stays the answer
-  to "is what is at it the build of the configuration in front of me" — one fact with two readers, which
+  to "is what is at it the build of the configuration in front of me" - one fact with two readers, which
   is why neither was deleted. A configuration whose inputs moved no longer names a stale image at all:
   it names a directory no build has written, the substrate refuses and says which command writes it, and
   the image built before the change keeps its own name in the store as the rollback it is. The three
-  checks the runtime now performs are the manifest's own record hashing to the name — which the runtime
-  did not have before and which is the piece that closes the class — then `CheckInputs`, then the
+  checks the runtime now performs are the manifest's own record hashing to the name - which the runtime
+  did not have before and which is the piece that closes the class - then `CheckInputs`, then the
   kernel, initramfs and rootfs being present. The digesting that costs is paid once, at startup, in
   `nodeSubstrateFor` rather than in `load()`, which still refuses an unset value with no default. One
   honest cost is recorded rather than hidden: the runtime digests 2.3 GB twice, once in `Fingerprint`
-  and once through `CheckInputs` → `CompareImageToConfig`, and with the name check in place the second
+  and once through `CheckInputs` -> `CompareImageToConfig`, and with the name check in place the second
   pass is provably redundant for the file, tree and list dimensions and load-bearing only for the
   manifest's operative fields. One requirement moved with it and operators must know: the four-step
   proof now needs the builder's CONFIGURATION, not merely a built image directory, because an image is
   only valid relative to the configuration whose inputs name it.
 - **The node image is built by the control plane's own container build, and the host contract is one
   binary that runs in both places.** Two decisions, taken together because each is what makes the other
-  checkable. The first answers a question this document had left implicit — what builds the node image
-  and when — and the answer is that it is a stage of the same multi-stage build that produces the
+  checkable. The first answers a question this document had left implicit - what builds the node image
+  and when - and the answer is that it is a stage of the same multi-stage build that produces the
   control-plane image, so the build graph orders it instead of an operator's memory doing so (section
   12). The second is the instrument: `socialweb-computer-kcp-check-host` is a single binary that runs
   the whole host contract, and it is the reason the first decision can be validated rather than
-  asserted. Each check reports one of three things — HOLDS, MISSING, or MUST BE PASSED IN — and that
+  asserted. Each check reports one of three things - HOLDS, MISSING, or MUST BE PASSED IN - and that
   third category is why one binary serves both environments: on a host the last two collapse into "this
   host cannot run this", and inside a container MISSING means the image is wrong while MUST BE PASSED IN
   means the container is correctly declaring its edge. The checks are drawn only from failures this
@@ -4593,16 +4533,16 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   presents as an unrelated permission error. What the binary does NOT do is define any of those facts a
   second time, and it does not do it in more places than first written here: the module check is
   `internal/kernelmodules` (the builder's own check, moved out of `cmd/socialweb-nodeimage` so the
-  builder and this binary share one definition rather than restating it — the builder's `modules.go` is
+  builder and this binary share one definition rather than restating it - the builder's `modules.go` is
   now a wrapper), the pool and the host-network enumeration are `internal/subnetallocator`'s
   `DefaultPool`/`BlockAt`/`HostNetworks` using the same `Overlaps` the allocator's own admission makes,
-  the image store is read through `internal/nodefirecracker.LoadImage` — the provisioner's own
-  config→fingerprint path, so the check and the boot cannot disagree about which image a configuration
-  names — the postgres probe is `internal/clusterprovider`'s own `StartPostgres`, and the lock directory
+  the image store is read through `internal/nodefirecracker.LoadImage` - the provisioner's own
+  config->fingerprint path, so the check and the boot cannot disagree about which image a configuration
+  names - the postgres probe is `internal/clusterprovider`'s own `StartPostgres`, and the lock directory
   is `internal/liveports`'s `LockDir`. This is the reason the count here is worth stating at all: a
   second definition of one fact is how the two drift, and the fingerprint's missing agent was exactly
-  that drift. The container that follows is the control-plane half only —
-  kcp with its own root directory, kine, a per-cluster postgres and `k3s server --disable-agent` — run
+  that drift. The container that follows is the control-plane half only -
+  kcp with its own root directory, kine, a per-cluster postgres and `k3s server --disable-agent` - run
   non-root, because `postgres` refuses root and because "nothing here needs root" is a claim the
   container should prove by construction rather than restate. It takes no permissive flags: not
   `--privileged`, not a wholesale seccomp disable, not the host root mounted in. If a capability turns
@@ -4610,7 +4550,7 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   the strongest reading available without a node: `TestTheControlPlaneReachesReadyAtZeroNodes` drives
   the real reconciler against real leased ports, a real kine, a real per-cluster postgres and a real
   `k3s server --disable-agent` and passes in about 6 s on the host, so running it INSIDE the container
-  makes portability a measurement — a pass there is the result, and a failure there is the finding.
+  makes portability a measurement - a pass there is the result, and a failure there is the finding.
   This is also what section 14's last gap was waiting for: the one thing the fakes cannot answer, a live
   kcp serving the mount under `--feature-gates=WorkspaceMounts=true` with an `APIExport` and a tenant
   `APIBinding`, is a thing the repo can now stand up rather than a thing it stands up nowhere.
@@ -5452,7 +5392,7 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   any RBAC at all, so a real user's minted token authenticated and could do nothing.
   `deploy/tenant-grant.yaml` is now a TEMPLATE: it carries `__SOCIALWEB_OWNER_SERVICE_ACCOUNT__`
   where the derived name goes, and `Bootstrap` renders it with `ServiceAccountName` of the `Cluster`'s
-  `spec.account` — the owner, and the same DID the mount path is derived from —
+  `spec.account` - the owner, and the same DID the mount path is derived from -
   via `kcpclient.RenderTenantGrant`, which refuses a document with no placeholder. The grant grew a
   `ClusterRoleBinding` `socialweb-owner` binding that ServiceAccount to `cluster-admin`, because it is
   the owner's own cluster and the credential has to be able to create namespaces, exec into pods and
@@ -5564,7 +5504,7 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   atproto user creates, and NOTHING materialised one unless a process was started with
   `SOCIALWEB_CLUSTERPROVIDER_JOIN` naming it. Worse, a cluster was looked up by its bare name, so two
   accounts that each named a cluster `ci` shared ONE state dir, ONE set of port leases, ONE set of
-  node names, ONE `nodes.json` and ONE `scaledriver` state map — a collision that reports as one
+  node names, ONE `nodes.json` and ONE `scaledriver` state map - a collision that reports as one
   cluster reading another's state rather than as an error. The key is now
   `kcpclient.ClusterKey(home)` = `<accountHash>-<name>` (invariant 30), used for the state dir, the
   port and subnet leases, the node names, the snapshot, the scale driver key, the mint credential, the
@@ -7166,4 +7106,5 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
 | **zero state** | control plane up, zero nodes, workloads Pending |
 | **key** | the name a cluster has INSIDE a provider: `kcpclient.ClusterKey(home)` = `<accountHash>-<name>`, derived from its home workspace path. Unique across accounts; the bare name is not |
 | **seam** | the interface where a substrate plugs in: `ComputeProvider`, `scale.Nodes`, `processrunner` |
-| **the door** | the market's front door, in the sibling Deno process: it holds each owner's atproto OAuth session, fulfils the `NodeClaim`s this repo writes, and is the only writer of a claim's status. Its own build is out of scope here |
+| **the door** | the socialweb-computer-k8s web app, `socialweb-computer-k8s/hono-socialweb-computer-k8s`: it holds each owner's atproto OAuth session, fulfils the `NodeClaim`s this repo writes, and is the only writer of a claim's status. The short name comes from the plans (AGENTS.md maps it) |
+| **the core** | the `socialweb-computer` binary process that runs kcp and supervises the DenoPods and HostProcesses. The short name comes from the plans (AGENTS.md maps it) |
