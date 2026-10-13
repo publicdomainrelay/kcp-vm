@@ -83,6 +83,26 @@ BINARY=$B SHA256=<sha256> SSH_KEY=~/.ssh/id_ed25519_no_password \
 deno run -A --no-lock scripts/oauth-signin.ts --creds ~/.aliceoa_bsky_social_source --account ALICE --url https://k8s.socialweb.computer/
 ```
 
+### Cluster XRPC with `goat` (create cluster if missing, get kubeconfig, kubectl)
+
+Auth = atproto service JWT: `iss` your DID, `aud` gateway DID, `lxm` the method. Methods: `com.publicdomainrelay.temp.cluster.{createCluster,getKubeconfig,listClusters,controlPlaneUp,controlPlaneDown,deleteCluster}`.
+
+```bash
+go install github.com/bluesky-social/goat@latest
+( . ~/.aliceoa_bsky_social_source; GOAT_USERNAME="$ALICE_ATPROTO_HANDLE" GOAT_PASSWORD="$ALICE_ATPROTO_PASSWORD" goat account login )
+GW=https://k8s.socialweb.computer AUD=did:web:k8s.socialweb.computer N=com.publicdomainrelay.temp.cluster
+call() { local m=$1 nsid=$N.$2; shift 2; goat xrpc $m $GW $nsid "$@" "Authorization:Bearer $(goat account service-auth --aud $AUD --lxm $nsid)"; }
+call procedure createCluster name=demo                      # creates if missing + starts control plane (idempotent)
+until call query listClusters | jq -e '.clusters[] | select(.name=="demo" and .phase=="Ready")' >/dev/null; do sleep 10; done
+call procedure getKubeconfig name=demo | jq -r .kubeconfig > demo.kubeconfig; chmod 600 demo.kubeconfig
+# kubeconfig exec plugin = socialweb-credential (pinned download; list: curl -s $GW/api/config | jq .credentialHelpers)
+curl -sfo socialweb-credential "$GW$(curl -s $GW/api/config | jq -r '.credentialHelpers[] | select(.os=="linux" and .arch=="amd64") | .path')" && chmod +x socialweb-credential
+PATH=$PWD:$PATH KUBECONFIG=demo.kubeconfig kubectl get ns
+call procedure controlPlaneDown name=demo; call procedure deleteCluster name=demo
+```
+
+`getKubeconfig` alone also creates the cluster but leaves it stopped (`running=false`; credential mint answers 429 until `controlPlaneUp`). Kubeconfig carries a device key: keep 0600, never commit.
+
 Scale from zero: apply a pod to a tenant cluster at 0 nodes -> NodeClaim -> RFP -> VM -> node Ready -> pod Running (prod: ~60 s). Delete pod -> back to 0 nodes, vm.delete (~2-3 min incl. hold).
 
 ## OAuth sign-in (scripted, never by hand, never hand the user a link)
