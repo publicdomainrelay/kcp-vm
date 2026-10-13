@@ -32,14 +32,30 @@ command -v cargo >/dev/null 2>&1 || { echo "build-web-app-downloads: cargo is re
 mkdir -p "$out"
 out="$(cd "$out" && pwd -P)"
 
-MESHD_DIST="$out" "$root/rust/build.sh" x86_64 aarch64 >&2
-
+pids=()
+MESHD_DIST="$out" "$root/rust/build.sh" x86_64 aarch64 >&2 &
+pids+=("$!")
 for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
-  name="socialweb-credential-${target%/*}-${target#*/}"
-  (cd "$root" && CGO_ENABLED=0 GOOS="${target%/*}" GOARCH="${target#*/}" go build -trimpath -buildvcs=false \
-    -ldflags='-s -w -buildid=' -o "$out/$name" ./cmd/socialweb-credential)
-  chmod 0755 "$out/$name"
-  (cd "$out" && sha256sum "$name" >"$name.sha256")
+  (
+    name="socialweb-credential-${target%/*}-${target#*/}"
+    cd "$root"
+    CGO_ENABLED=0 GOOS="${target%/*}" GOARCH="${target#*/}" go build -trimpath -buildvcs=false \
+      -ldflags='-s -w -buildid=' -o "$out/$name" ./cmd/socialweb-credential
+    chmod 0755 "$out/$name"
+    cd "$out" && sha256sum "$name" >"$name.sha256"
+  ) &
+  pids+=("$!")
+done
+for _ in "${pids[@]}"; do
+  if ! wait -n; then
+    for p in "${pids[@]}"; do
+      pkill -TERM -P "$p" 2>/dev/null || true
+      kill -TERM "$p" 2>/dev/null || true
+    done
+    wait || true
+    echo "build-web-app-downloads: a build failed" >&2
+    exit 1
+  fi
 done
 
 (cd "$out" && sha256sum -c --quiet ./*.sha256) || { echo "build-web-app-downloads: a download does not match its sidecar" >&2; exit 1; }
