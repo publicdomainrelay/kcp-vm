@@ -650,8 +650,10 @@ type statusReport struct {
 		Units     []hostsvc.UnitStatus `json:"units,omitempty"`
 		Error     string               `json:"error,omitempty"`
 	} `json:"devsup"`
-	Ports  map[string]int        `json:"ports,omitempty"`
-	Leases []portallocator.Lease `json:"leases"`
+	Ports        map[string]int          `json:"ports,omitempty"`
+	Leases       []portallocator.Lease   `json:"leases"`
+	Network      *v1alpha1.MarketNetwork `json:"network,omitempty"`
+	NetworkError string                  `json:"networkError,omitempty"`
 }
 
 func runDevStatus(ctx context.Context, a *app, vals clicfg.Values, rest []string) int {
@@ -688,6 +690,13 @@ func runDevStatus(ctx context.Context, a *app, vals clicfg.Values, rest []string
 	} else {
 		r.Devsup.Error = err.Error()
 	}
+	if rec.Profile == bootstrap.ProfileMarketNetwork && rec.AdminKubeconfig != "" {
+		if o, err := appctl.ReadNetwork(ctx, rec.AdminKubeconfig); err == nil {
+			r.Network = &o
+		} else {
+			r.NetworkError = err.Error()
+		}
+	}
 	a.printJSON(r)
 	if !r.Found {
 		return exitFailed
@@ -704,6 +713,7 @@ type downReport struct {
 	Swept          []devsup.SweepReport `json:"swept,omitempty"`
 	LeftoverKilled []int                `json:"leftoverKilled"`
 	Remaining      []int                `json:"remaining"`
+	VMsStopped     []string             `json:"vmsStopped,omitempty"`
 	VMsLeft        []string             `json:"vmsLeft,omitempty"`
 	RemovedState   bool                 `json:"removedState"`
 	RemovedRuntime bool                 `json:"removedRuntime"`
@@ -735,6 +745,10 @@ func downInstance(ctx context.Context, a *app, l devinstance.Layout, keepState b
 	r := downReport{Instance: l.ID, LeftoverKilled: []int{}, Remaining: []int{}}
 	var rec devinstance.Record
 	devinstance.ReadJSON(l.Record, &rec)
+	vmOwners := []devinstance.Record{rec}
+	if rec.Profile == bootstrap.ProfileMarketNetwork {
+		vmOwners = append(vmOwners, networkChildren(l)...)
+	}
 	if rec.Profile == bootstrap.ProfileMarketNetwork && rec.AdminKubeconfig != "" {
 		if err := appctl.DeleteNetwork(ctx, rec.AdminKubeconfig, devsupExitTimeout); err != nil {
 			a.log.Warn("deleting the MarketNetwork before devsup stops; devsup stops what is left", "err", err.Error())
@@ -742,7 +756,10 @@ func downInstance(ctx context.Context, a *app, l devinstance.Layout, keepState b
 			a.log.Info("the MarketNetwork is deleted: its children, their kcps and its services are gone")
 		}
 	}
-	r.VMsLeft = a.downVMs(ctx, rec)
+	for _, o := range vmOwners {
+		stopped, left := a.downVMs(ctx, o)
+		r.VMsStopped, r.VMsLeft = append(r.VMsStopped, stopped...), append(r.VMsLeft, left...)
+	}
 	if rec.Parent != nil {
 		r.Remaining = downChild(ctx, a, l, *rec.Parent)
 		r.DevsupPID = rec.Devsup.PID
@@ -792,6 +809,26 @@ func downInstance(ctx context.Context, a *app, l devinstance.Layout, keepState b
 	}
 	r.Seconds = time.Since(started).Seconds()
 	return r
+}
+
+func networkChildren(l devinstance.Layout) []devinstance.Record {
+	state, rt := filepath.Join(l.StateDir, appctl.AppsDir), filepath.Join(l.RuntimeDir, appctl.AppsDir)
+	entries, err := os.ReadDir(devinstance.DevRoot(state))
+	if err != nil {
+		return nil
+	}
+	var out []devinstance.Record
+	for _, e := range entries {
+		cl, err := devinstance.NewLayout(e.Name(), state, rt)
+		if err != nil {
+			continue
+		}
+		var rec devinstance.Record
+		if devinstance.ReadJSON(cl.Record, &rec) == nil && rec.VM != nil {
+			out = append(out, rec)
+		}
+	}
+	return out
 }
 
 func downChild(ctx context.Context, a *app, l devinstance.Layout, p devinstance.Parent) []int {
