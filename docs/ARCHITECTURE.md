@@ -6812,6 +6812,28 @@ postgres                     "initdb: error: cannot be run as root" -- fatal
   the new core starts another, and the old one's close drops the new one's dispatcher registration (a
   vm.delete then gets 404); the reading kills both.
 
+- **The market network is driven by `socialweb-computer` alone; accept.sh is gone (plan 0008
+  M4-MARKET-NETWORK-PORT, 2026-10-12).** `deploy/market-network/accept.sh`, the host-side
+  `market-requester` and `internal/marketnetwork` (the network record and the slot lock) are deleted.
+  The requester flow is `run request --network`. What accept.sh checked is what the applications
+  report: a MarketNetwork carries conditions `ServicesReady` (every service DenoPod Running, ready,
+  listening and carrying the `denopod.deno.computer/run` finalizer), `VerifierPassed` and `OwnKcp` (the
+  network and every child on their own kcp front and kcp root) and is Ready only when all three hold;
+  `status.apps[]` carries each child's components, and a MarketBidder on `spec.kcp` lists its ComputeVMs
+  and their HostProcesses; a guest that ends on its own shows in the ComputeContract's
+  `status.contract.termination`. `dev status` prints the MarketNetwork; `dev down` stops and reports any
+  VM unit a bidder child left. The network's OpenBao is the OpenBaoServer `network` (first phase of the
+  `market-network` set: mutual TLS, file storage, the `pki` mount declared, the initial root token
+  revoked); no root token is kept. The deno runtime logs in as client `denoruntime`, whose token holds
+  only the `network-pki` policy (namespaces, the `pki` mounts, the root CA, intermediates, roles and
+  leaves, in the root namespace and one namespace level below); `deploy/denokcp/start-openbao.sh` is
+  deleted. Reading on hat-8 (`dev up --profile market-network --bidders 2 --with-gateway`, both bidders
+  on `spec.kcp`, guests as VM units of test-0001): `dev up` 14:47:27Z to Ready 14:49:09Z with all three
+  conditions true; `run request --network mnp --secrets --hold` read the secret inside the guest of
+  bidder-2 (2 bids, its ComputeVM and HostProcess listed under bidder-2 while held) 14:50:20Z;
+  `release` vm.delete 200 at 14:51:02Z, no ComputeVM, HostProcess or VM unit of either bidder left 10 s
+  later; `dev down` 14:51:12Z to 14:51:35Z with no process, VM unit or state left.
+
 ## 16. Vocabulary
 
 | | |
