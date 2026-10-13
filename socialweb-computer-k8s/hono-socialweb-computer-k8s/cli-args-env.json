@@ -216,6 +216,16 @@
       "env": "SOCIALWEB_DOOR_OPENBAO_KV_MOUNT",
       "default": "secret"
     },
+    "node-guest-ca-file": {
+      "type": "string",
+      "description": "PEM CA every node guest trusts (cloud-init ca_certs), for a market network whose TLS front has its own CA",
+      "env": "SOCIALWEB_DOOR_NODE_GUEST_CA_FILE"
+    },
+    "node-guest-curl-home": {
+      "type": "string",
+      "description": "CURL_HOME every node guest's systemd manager exports at boot, so its curl reads the bidder's curlrc",
+      "env": "SOCIALWEB_DOOR_NODE_GUEST_CURL_HOME"
+    },
     "test-owner-sessions-file": {
       "type": "string",
       "description": "TEST ONLY: JSON object keyed by owner DID of {service, identifier, password}; those owners rent nodes through a password session instead of their deposited OAuth session. Never set in production",

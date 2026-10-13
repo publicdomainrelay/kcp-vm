@@ -76,6 +76,8 @@ export interface MarketNodeFulfillerOptions {
   extraBidderDids?: string[];
   guestHostAliases?: string[];
   userDataBase?: string;
+  guestCaPem?: string;
+  guestCurlHome?: string;
   pollIntervalMs?: number;
   requestCompute?: ComputeRequester;
   releaseCompute?: ComputeReleaser;
@@ -300,6 +302,12 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
   const awaitTermination = opts.awaitTermination ?? awaitComputeTermination;
   const vmReadyTimeoutSec = opts.vmReadyTimeoutSec ?? 600;
   const joinModule = createK3sJoinModule(opts.meshd ? { meshd: opts.meshd } : {});
+  const guestNetwork = opts.guestCaPem || opts.guestCurlHome
+    ? () => ({
+      ...(opts.guestCaPem ? { ca_certs: { trusted: [opts.guestCaPem] } } : {}),
+      ...(opts.guestCurlHome ? { bootcmd: [["systemctl", "set-environment", `CURL_HOME=${opts.guestCurlHome}`]] } : {}),
+    })
+    : null;
   const eventStreams = opts.eventStreams ?? (() =>
     createDefaultATProtoEventStreamsClient({ onlyRelays: opts.relayUrls?.length ? opts.relayUrls : undefined, log: quietLogger(log) }) as unknown as {
       close(): void;
@@ -583,7 +591,7 @@ export function createMarketNodeFulfiller(opts: MarketNodeFulfillerOptions): Mar
           vmName: spec.nodeName,
           userData: {
             ...(opts.userDataBase ? { base: opts.userDataBase } : {}),
-            modules: ["k3s", joinModule],
+            modules: ["k3s", joinModule, ...(guestNetwork ? [guestNetwork] : [])],
           },
           ...(opts.guestHostAliases?.length ? { guestHostAliases: opts.guestHostAliases } : {}),
           capabilities: [capability],

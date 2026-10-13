@@ -34,6 +34,7 @@ const (
 	WebAppWebDir          = "socialweb-computer-k8s/web"
 	WebAppVaultClient     = "socialweb-computer-k8s"
 	WebAppVaultMount      = "socialweb-computer-k8s"
+	NodeGuestCurlHome     = "/root"
 )
 
 type WebApp struct {
@@ -326,11 +327,15 @@ func GatewayValues(o v1alpha1.Gateway, workspace, stateDir string, w WebApp, vau
 	v := manifests.Gateway{StateDir: stateDir, WebDir: filepath.Join(w.TSRoot, filepath.FromSlash(WebAppWebDir)),
 		GatewayWorkspace: workspace, GatewayName: o.Name, TLS: manifests.TLSNone, Vault: vault,
 		IdentityWorkspace: workspace + ":" + ComponentWorkspace}
-	var trust []string
+	var trust, read []string
 	var extra []string
 	if n := o.Spec.Network; n != nil {
 		if n.CaBundleRef != "" {
 			v.TLS, trust = manifests.TLSTrust, []string{n.CaBundleRef}
+			if o.Spec.Profile == ProfileGatewayNetwork {
+				extra = append(extra, "--node-guest-ca-file", n.CaBundleRef, "--node-guest-curl-home", NodeGuestCurlHome)
+				read = append(read, n.CaBundleRef)
+			}
 		}
 		if n.PlcDirectoryUrl != "" {
 			extra = append(extra, "--plc-directory-url", n.PlcDirectoryUrl)
@@ -358,7 +363,10 @@ func GatewayValues(o v1alpha1.Gateway, workspace, stateDir string, w WebApp, vau
 			return manifests.Gateway{}, fmt.Errorf("appctl: the cluster CA dir %q is not absolute", w.ClusterCADir)
 		}
 		extra = append(extra, "--cluster-ca-dir", w.ClusterCADir)
-		if v.ExtraRead, err = fragment([]string{w.ClusterCADir}); err != nil {
+		read = append(read, w.ClusterCADir)
+	}
+	if len(read) > 0 {
+		if v.ExtraRead, err = fragment(read); err != nil {
 			return manifests.Gateway{}, err
 		}
 	}
