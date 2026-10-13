@@ -16,6 +16,8 @@ func (osProcessHost) prepare(*exec.Cmd, string) error {
 
 func (osProcessHost) killGroup(int) {}
 
+func (osProcessHost) termGroup(int) {}
+
 func (osProcessHost) alive(int) bool { return false }
 
 func (osProcessHost) startTicks(int) uint64 { return 0 }

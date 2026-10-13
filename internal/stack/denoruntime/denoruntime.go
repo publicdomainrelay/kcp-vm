@@ -26,6 +26,7 @@ const (
 	PolicyEngineEntry = "ts/policy-engine/lib/policy-engine-server-gha-lite"
 	RetryAfter        = 2 * time.Second
 	WatchListEnv      = "KUBE_FEATURE_WatchListClient"
+	ReapGrace         = 15 * time.Second
 )
 
 type Config struct {
@@ -188,6 +189,10 @@ func Run(ctx context.Context, c Config) error {
 
 func Supervise(ctx context.Context, c Config) {
 	log := c.log()
+	if reaped := execrunner.ReapRuns(RunsDir(c.StateDir), ReapGrace); len(reaped) > 0 {
+		log.Warn("stopped the DenoPod processes a previous core of this instance left running, before the deno runtime starts its own",
+			"runs", fmt.Sprint(reaped))
+	}
 	for {
 		err := Run(ctx, c)
 		if ctx.Err() != nil {

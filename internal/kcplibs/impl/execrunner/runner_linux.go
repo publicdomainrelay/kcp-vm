@@ -26,6 +26,12 @@ func (osProcessHost) killGroup(pid int) {
 	}
 }
 
+func (osProcessHost) termGroup(pid int) {
+	if pid > 0 {
+		_ = syscall.Kill(-pid, syscall.SIGTERM)
+	}
+}
+
 func (osProcessHost) alive(pid int) bool {
 	err := syscall.Kill(pid, 0)
 	return err == nil || errors.Is(err, syscall.EPERM)
