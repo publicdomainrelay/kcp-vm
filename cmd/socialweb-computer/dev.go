@@ -826,10 +826,12 @@ func downInstance(ctx context.Context, a *app, l devinstance.Layout, keepState b
 		if rec.Worktree != "" {
 			r.MarkerRemoved = devinstance.UnlinkMarker(rec.Worktree, l.StateDir)
 		}
-		if al, err := a.leases(l.ID); err == nil {
-			r.LeasesReleased = len(al.Leases())
-			if err := al.ReleaseAll(); err != nil {
-				a.log.Warn("releasing the instance's leases", "err", err.Error())
+		for _, id := range append([]string{l.ID}, networkChildIDs(l)...) {
+			if al, err := a.leases(id); err == nil {
+				r.LeasesReleased += len(al.Leases())
+				if err := al.ReleaseAll(); err != nil {
+					a.log.Warn("releasing the instance's leases", "instance", id, "err", err.Error())
+				}
 			}
 		}
 		if err := assets.RemoveTree(l.StateDir); err == nil {
@@ -838,6 +840,21 @@ func downInstance(ctx context.Context, a *app, l devinstance.Layout, keepState b
 	}
 	r.Seconds = time.Since(started).Seconds()
 	return r
+}
+
+func networkChildIDs(l devinstance.Layout) []string {
+	state, rt := filepath.Join(l.StateDir, appctl.AppsDir), filepath.Join(l.RuntimeDir, appctl.AppsDir)
+	entries, err := os.ReadDir(devinstance.DevRoot(state))
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range entries {
+		if cl, err := devinstance.NewLayout(e.Name(), state, rt); err == nil {
+			out = append(out, cl.ID)
+		}
+	}
+	return out
 }
 
 func networkChildren(l devinstance.Layout) []devinstance.Record {

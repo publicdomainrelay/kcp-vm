@@ -143,6 +143,7 @@ func buildInputs(cfg Config) (inputs, error) {
 
 	alloc, err := portallocator.Open(portallocator.Config{
 		LeasePath:    cfg.LeasePath,
+		AppInstance:  cfg.LeaseApp,
 		Range:        cfg.PortRange,
 		ReclaimGrace: DefaultReclaimGrace,
 	})

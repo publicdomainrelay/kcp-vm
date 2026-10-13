@@ -29,6 +29,7 @@ const (
 	envGrant = "SOCIALWEB_CLUSTERPROVIDER_GRANT"
 
 	envLeasePath = "SOCIALWEB_CLUSTERPROVIDER_LEASE_PATH"
+	envLeaseApp  = "SOCIALWEB_CLUSTERPROVIDER_LEASE_APP"
 
 	envPortRange = "SOCIALWEB_CLUSTERPROVIDER_PORT_RANGE"
 
@@ -106,6 +107,8 @@ type Config struct {
 	GrantPath string
 
 	LeasePath string
+
+	LeaseApp string
 
 	PortRange portallocator.Range
 
@@ -187,6 +190,7 @@ func loadFor(get func(string) string, inv foldmain.Invocation) (Config, error) {
 		MountContext:           strings.TrimSpace(get(envMountContext)),
 		MintKubeconfigs:        strings.TrimSpace(get(envMintKubeconfigs)),
 		LeasePath:              strings.TrimSpace(get(envLeasePath)),
+		LeaseApp:               strings.TrimSpace(get(envLeaseApp)),
 		Join:                   strings.TrimSpace(get(envJoin)),
 		Datastore:              strings.TrimSpace(get(envDatastore)),
 		StateDir:               strings.TrimSpace(get(envStateDir)),
