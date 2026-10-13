@@ -1,0 +1,266 @@
+plan: 0009-market-loop-in-kcp
+written: 2026-10-12
+revised: >
+  2026-10-12, first version. Written from the lead's exploration of deno-kcp's policy kinds, the bidder's
+  market loop and request-vm-ssh, with the user's corrections of the same day: the atproto market flow stays
+  in TypeScript; kcp is the state and makes execution observable; Go and TypeScript may need more
+  communication abstractions between them, but no market flow moves to Go.
+queued: >
+  After plans 0006-0008 reach prod: 0006 M5-FRESH-DEPLOY (the new gateway and the hat-8 bobvmbuilder bidder
+  run from the socialweb-computer binary, and a tenant k3s cluster scales to zero on market RFP VMs). The user
+  may move M3-REQUESTER-CONTROLLER earlier; until then each item's depends_on governs.
+source: >
+  Plans 0006-0008 made kcp part of every application and run the TypeScript as DenoPods. The market loop
+  inside those DenoPods is still one process per loop with in-memory state: the event stream cursor and dedup
+  set, the scope verdict cache, the in-flight RFPs and bids. A restart loses them; only accepted contracts
+  survive (0007 M4-CONTRACT-RESTORE puts them on ComputeVMs). The requester exists twice:
+  request-vm-ssh reconciles exactly one ComputeContract, and the web app's node market runs the same flow
+  in the internet-facing process for NodeClaims. Six TypeScript packages each carry their own kcp client.
+  This plan is the split of the codebase into its proper TypeScript and kcp halves, the bidder's half
+  included.
+principle:
+  stated: >
+    Decided by the user 2026-10-12. The atproto market flow (records, PDS, relay and Jetstream, DIDs,
+    OAuth, policy evaluation, bids, accepts, guest-facing HTTP) is TypeScript and runs in DenoPods. Go owns
+    the host and the runtime: kcp itself, DenoPods and HostProcesses, VMs, vaults, tenant k3s, upgrades,
+    garbage collection. kcp is the state of every application and makes its execution observable: what
+    is running, what it decided, why, and where it stands. Go and TypeScript talk through kcp objects
+    (spec, status, watch); where that is not enough, through explicit, typed seams that kcp records, never
+    shared files or ad-hoc arguments.
+  rules:
+    - "kcp holds state and decisions, not messages. A kcp object exists for a decision to act (a commitment) or for state that must survive a restart; never one object per record seen."
+    - "A commitment object has a deterministic name derived from the market record it answers. Create-if-absent is the dedup: a replay, a second relay or a second replica gets AlreadyExists and does nothing."
+    - "The hot path (RFP seen to bid published) has at most one kcp write. Everything else (cursor, audit, timings) is written behind, batched."
+    - "Every component that executes a step writes it into the status of the object it executes: phase, conditions, observedGeneration, the current step and its start time, the last error. The application root object carries the loop counters (seen, scoped, declined by reason, bids, wins, stream lag)."
+    - "A cache is not state. The scope verdict cache stays in memory; losing it costs one evaluation."
+    - "Untrusted code (a policy attached to an RFP) runs in its own process with no secrets and no host access, never in a process that holds a PDS session or a vault token."
+    - "Applications still talk only over the atproto market protocol and never share a kcp."
+state_rules:
+  - "No tests until prod works (user, 2026-10-12). Each item's done_when is a manual live reading in the item's own market network. Integration tests come after prod, per plans 0006-0008."
+  - "Real names only (AGENTS.md). Commit and push only socialweb-computer-kcp; the lead flips status."
+  - "Every new TypeScript package follows the ABC layering (lib/common, lib/abc, implementation, hono-factory, CLI)."
+ownership:
+  repository: socialweb-computer-kcp
+  go: "api/ (new kinds), internal/denokcp (PolicyEngine, DenoPod projected credentials), internal/appctl (rendering), TTL and garbage collection controllers"
+  typescript: "ts/typescript-helpers/lib (kcp client), ts/atproto-market (bidder and requester loops), socialweb-computer-k8s (web app node market), ts/policy-engine (net-only engine API)"
+research:
+  - "deno-kcp (org root): PolicyEngine, PolicyWorkflowPod, PolicyWorkflowRun, RunTrigger, DenoJob, DenoRun; pure Reconcile(Observed) -> Result + Ops; ADR 0003 (watches, not a 2 s poll; deno is about 13 ms per run, the poll driver was the cost). Vendored in internal/denokcp and reconciled by the core, unused by the market loop."
+  - "deno-kcp PolicyEngine starts `deno run --allow-all --unstable-worker-options main.ts api`: the same sandbox escape 0007 M5-RUN-BIDDER closed in the bidder."
+  - "policy-engine-cli-options: firstFree defaults to true, so the requester takes the first allowed free bid and bidder latency decides who wins; bidWindowSec defaults to 30."
+  - "request-vm-ssh: one ComputeContract per DenoPod (waitForSpec, then idle); ContractState in status.contract is a working resume checkpoint. web app node market: the same flow in process for many NodeClaims, with the same NodeClaimContract type in status."
+  - "Kcp clients in TypeScript: compute-provider-kcp, compute-contract-kcp, identity-prompt-kcp, openbao-server-kcp, market-bidder-contract-store-kcp, socialweb-computer-k8s-nodeclaim-kcp; each reads its token file, builds its CA client and writes status its own way."
+items:
+  - id: M1-KCP-CLIENT-TS
+    milestone: M1
+    title: One TypeScript kcp client; every kcp package uses it
+    depends_on: ["0006:M5-FRESH-DEPLOY"]
+    decision: >
+      New concept kcp-client in ts/typescript-helpers/lib: kcp-client-common (wire helpers, resource paths),
+      kcp-client-abc (KcpClient interface: get, list, watch from a resourceVersion with bookmarks, create,
+      createIfAbsent returning the existing object on AlreadyExists, patchStatus with conflict retry, delete
+      with preconditions), kcp-client-rest (fetch: re-reads the projected token file on every 401 and on a
+      timer, one CA http client, watch reconnect from the last resourceVersion). Object types come only from
+      the generated wire types (socialweb-computer-k8s-api, written by apigen from api/). The six packages
+      named in `research` move onto it and lose their own request, token and CA code. Decided by Claude, user
+      may veto.
+    files: ["ts/typescript-helpers/lib/common/kcp-client", "ts/typescript-helpers/lib/abc/kcp-client", "ts/typescript-helpers/lib/kcp-client-rest", "the six kcp packages"]
+    done_when: "the six packages import kcp-client-abc and kcp-client-rest and no other package calls kcp with fetch; a market network run with --secrets passes; a token rotation during the run causes no failed kcp call."
+    risks: ["A watch that misses a bookmark across a kcp slot roll replays from list; createIfAbsent and resourceVersion checks keep that harmless."]
+    status: todo
+    evidence:
+  - id: M1-PROJECTED-CREDENTIALS
+    milestone: M1
+    title: A DenoPod declares the credentials and files it receives; no more ad-hoc arguments
+    depends_on: ["0006:M5-FRESH-DEPLOY"]
+    decision: >
+      The Go-to-TypeScript seam for credentials becomes a field of DenoPod spec: `projected` lists the kcp
+      ServiceAccount token (path, audience, rotation), the kcp CA, the vault client certificate and CA, and
+      the public files a pod reads (for example a tenant cluster's public CA). The deno-kcp provider writes
+      them into the pod's state dir, keeps them current, and adds exactly those paths to the pod's
+      --allow-read. Services read them through kcp-client-rest and openbao-server-kcp by the declared names,
+      not by --*-token-file and --*-ca-cert-file arguments; the service templates in deploy/apps drop those
+      arguments. Decided by Claude, user may veto.
+    files: ["internal/denokcp/api/v1alpha1/types_denopod.go", "internal/denokcp/provider", "deploy/apps/*/ (service templates)"]
+    done_when: "the bidder, requester and web app DenoPods start with no token or CA file arguments; `kubectl get denopod -o yaml` shows each pod's projected set; a token rotation is picked up with no restart."
+    risks: []
+    status: todo
+    evidence:
+  - id: M1-EXECUTION-STATUS
+    milestone: M1
+    title: Execution is observable in kcp - one status convention for every TypeScript loop
+    depends_on: [M1-KCP-CLIENT-TS]
+    decision: >
+      kcp-client-abc gains an execution status helper: phase, conditions, observedGeneration and
+      `status.execution` (step, stepStartedAt, lastEventAt, lastError, attempts), written behind and
+      coalesced (at most one status write per object per second, plus every phase change). The market roots
+      (MarketBidder, MarketRequester) get `status.market`: counters (rfpsSeen, rfpsScoped, declinedByReason,
+      bids, wins, contractsActive) and per-relay stream state (cursor, lagSeconds). `socialweb-computer dev
+      status` and a new `socialweb-computer status <app>` print them. Decided by Claude, user may veto.
+    files: ["api/types_application.go", "ts/typescript-helpers/lib/abc/kcp-client", "cmd/socialweb-computer (status verb)"]
+    done_when: "during a market network run, `socialweb-computer status` shows the bidder's counters moving and each ComputeContract's current step; no step is visible only in a log."
+    risks: ["Status write volume: coalescing keeps it to one write per object per second at most."]
+    status: todo
+    evidence:
+  - id: M2-STREAM-CURSOR
+    milestone: M2
+    title: The event stream resumes from a durable cursor per relay
+    depends_on: [M1-EXECUTION-STATUS]
+    decision: >
+      atproto-event-streams-client takes a cursor store; the bidder and the requester give it one that keeps
+      each relay's cursor (subscribeRepos seq, Jetstream time_us) in the root object's status.market.streams,
+      written behind every second. On start the stream resumes at the cursor minus an overlap (default 30 s
+      of Jetstream time, 1000 subscribeRepos events); the replay is absorbed by the deterministic names of
+      M2-BID-KIND and M3-REQUESTER-CONTROLLER. The event stream stays a library inside the one consuming
+      DenoPod: each application instance has one consumer, so a separate stream DenoPod would only add a hop.
+      Decided by Claude, user may veto.
+    files: ["ts/typescript-helpers/lib/atproto-event-streams-client", "ts/atproto-market/lib/market-bidder", "ts/atproto-market/request-vm-ssh"]
+    done_when: "a bidder restarted while RFPs are posted bids on every RFP posted during the gap, and on none twice."
+    risks: ["A relay that cannot resume from a cursor older than its window: the bidder logs the gap and its counter, and starts from now."]
+    status: todo
+    evidence:
+  - id: M2-BID-KIND
+    milestone: M2
+    title: Bid kind - the bidder's commitment, named from the RFP it answers
+    depends_on: [M1-KCP-CLIENT-TS]
+    decision: >
+      New kind Bid (api/, exported to bidder workspaces). Name bid-<first 20 hex of sha256(rfp uri)>. Spec:
+      rfp uri and cid, offer, provider, policy identity and verdict. Status: phase (Deciding, Published,
+      Won, Lost, Expired, Failed), the market.bid record uri and cid, timings (rfpSeenAt, decidedAt,
+      publishedAt), the accept uri when won. The bidder creates it with createIfAbsent BEFORE it publishes the
+      market.bid record: AlreadyExists means a replay, a second relay or a second replica, and nothing is
+      published. A won Bid points at its ComputeVM; ComputeVM.spec.contract stays the contract checkpoint. A
+      core controller deletes Lost and Expired Bids after a TTL (default 24 h). Decided by Claude, user may veto.
+    files: ["api/types_bid.go", "internal/appctl (bidder set: export, ServiceAccount rules)", "ts/atproto-market/lib/market-bidder"]
+    done_when: "with relay and Jetstream both on, one RFP gives one Bid object and one market.bid record; `kubectl get bids` shows every RFP the bidder answered, with its verdict and timings."
+    risks: ["One kcp create on the hot path: M4-LATENCY-READINGS holds it to the budget."]
+    status: todo
+    evidence:
+  - id: M2-BIDDER-LOOP-KCP
+    milestone: M2
+    title: The bidder's market loop is a controller over its own objects
+    depends_on: [M2-BID-KIND, M2-STREAM-CURSOR, "0007:M5-BIDDER-COMPONENTS"]
+    decision: >
+      market-bidder keeps the market flow in TypeScript and runs it as a controller: RFP event -> scope
+      verdict (cache, else M3-POLICY-ENGINE-POD) -> Bid -> market.bid record; accept -> the won Bid -> ComputeVM
+      (as today); vm.delete and other market events -> the ComputeVM (as today). On start it reads its Bids:
+      a Published Bid inside its window waits for an accept again instead of being forgotten. Declines are
+      counters and the last 50 reasons in status.market, not objects. The in-memory dedup set goes. The
+      providers array, setup/teardown hooks and the guest DenoPods of 0007 M5-BIDDER-COMPONENTS are unchanged.
+      Decided by Claude, user may veto.
+    files: ["ts/atproto-market/lib/market-bidder", "ts/atproto-market/lib/market-bidder-compute", "ts/atproto-market/lib/hono-factory-market-bidder-app"]
+    done_when: "kill -9 of the bidder DenoPod after it published a bid and before the accept: the restarted bidder takes the accept and the guest boots through cloud-init; no RFP is bid twice."
+    risks: []
+    status: todo
+    evidence:
+  - id: M3-POLICY-ENGINE-POD
+    milestone: M3
+    title: Policy runs in a warm, net-only PolicyEngine DenoPod; RFP-attached policies leave the bidder
+    depends_on: [M1-PROJECTED-CREDENTIALS]
+    decision: >
+      Use the vendored PolicyEngine kind, with its process fixed: no --allow-all; policy-engine-server-gha-lite
+      in api mode forced net-only (actions in its restricted Worker, `run:` and composite steps refused, as
+      0007 M5-RUN-BIDDER did in process); explicit DenoPermissions (net only to the hosts a policy needs,
+      no read or write outside its bundled actions, no env, no run, no ffi); no vault, no PDS session, no kcp
+      token. MarketBidder and MarketRequester profiles render one each; the bidder and the requester call it
+      by service name over the port-0 kcpdns name with the pod's TLS certificate. Built-in policies may still
+      run in process for the hot path; any policy attached to an RFP or chosen by name from outside the
+      built-ins runs only in the engine. PolicyWorkflowRun is used off the hot path only: re-evaluation after a
+      trust event and audit replays. Decided by Claude, user may veto.
+    files: ["internal/denokcp/policyengine", "internal/denokcp/provider/reconcile_engine.go", "ts/policy-engine/lib/policy-engine-server-gha-lite", "deploy/apps/market-bidder", "deploy/apps/market-requester"]
+    done_when: "the PolicyEngine process argv has none of -A, --allow-all, --allow-run, --allow-ffi; an RFP with an attached policy is evaluated in the engine with the bidder process starting no Worker for it; a policy that tries to read a file or the environment is denied and the bid is declined with that reason."
+    risks: ["A local hop per verdict miss; M4-LATENCY-READINGS compares it with the in-process Worker."]
+    status: todo
+    evidence:
+  - id: M3-REQUESTER-CONTROLLER
+    milestone: M3
+    title: One requester controller for the CLI and the gateway; the web app holds no PDS session
+    depends_on: [M1-KCP-CLIENT-TS, M1-PROJECTED-CREDENTIALS]
+    decision: >
+      request-vm-ssh becomes a controller over N ComputeContracts (watch, admission with maxConcurrent and a
+      per-account cap, requestCompute with resume from status.contract per contract, release on spec.release)
+      instead of one contract per DenoPod. The Gateway application renders a requester DenoPod that is not
+      internet-facing and holds the homes' requester sessions (vault) and the secrets capability. The web
+      app's node market stops running the market flow: for each NodeClaim it creates a ComputeContract named
+      from the claim's uid (createIfAbsent, ownerRef the NodeClaim) and maps its status back; it holds no PDS
+      session, no claim key and no secrets key. socialweb-computer-requester-inproc is deleted. The requester
+      DenoPod loses `env: true` and `sys: true` (an env allow-list, read only its projected set). `run
+      request` keeps one kcp per invocation and writes its ComputeContract the same way. Decided by Claude,
+      user may veto (the user may move this item before the cut-over).
+    files: ["ts/atproto-market/request-vm-ssh", "socialweb-computer-k8s/lib/socialweb-computer-k8s-node-market", "socialweb-computer-k8s/lib/socialweb-computer-requester-inproc (deleted)", "deploy/apps/gateway", "deploy/apps/market-requester"]
+    done_when: "a tenant cluster scales from zero through NodeClaim -> ComputeContract -> RFP with the web app holding no requester session (checked in its vault policy and its process environment); `run request --secrets` still delivers the secret to the guest; a restart of the requester DenoPod mid-contract resumes every contract with no second RFP."
+    risks: ["The web app keeps OAuth sign-in for the user; only the market session and keys move out."]
+    status: todo
+    evidence:
+  - id: M3-REQUESTER-BIDS
+    milestone: M3
+    title: The requester records the bids it saw and why it chose one
+    depends_on: [M3-REQUESTER-CONTROLLER]
+    decision: >
+      ComputeContract status gains `bids` (bidder did, offer, verdict, arrival time; at most 20) and `chosen`
+      (bid uri and the reason: firstFree, best within window, policy). No object per bid. Decided by Claude,
+      user may veto.
+    files: ["api/types_computecontract.go", "ts/atproto-market/lib/compute-request-xrpc"]
+    done_when: "`kubectl get computecontract -o yaml` shows every bid of a run and the reason the winner won."
+    risks: []
+    status: todo
+    evidence:
+  - id: M4-LEGACY-BIDDER-CUT
+    milestone: M4
+    title: hono-bidder carries only the kcp provider and the kcp and vault stores
+    depends_on: [M2-BIDDER-LOOP-KCP, "0006:M5-RETIRE"]
+    decision: >
+      hono-factory-market-bidder-app drops compute-provider-digitalocean, compute-provider-firecracker,
+      compute-provider-local, market-bidder-contract-store-fs (tombstones move to Bid and ComputeVM status)
+      and market-identity-vault-file. The digitalocean-bidder repository outside the monorepo is not
+      touched. Decided by Claude, user may veto.
+    files: ["ts/atproto-market/lib/hono-factory-market-bidder-app", "ts/atproto-market/hono-bidder", "deno.json", "deno.lock"]
+    done_when: "the hono-bidder closure contains none of those packages; a market network run with --secrets passes."
+    risks: []
+    status: todo
+    evidence:
+  - id: M4-LATENCY-READINGS
+    milestone: M4
+    title: Readings - what kcp costs the hot path
+    depends_on: [M2-BIDDER-LOOP-KCP, M3-POLICY-ENGINE-POD]
+    decision: >
+      Measured live, recorded in docs/ARCHITECTURE.md section 15: kcp create p50/p95 on kine-sqlite (bidder)
+      and postgres (gateway); rfp seen -> bid published p50/p95 before (main at the start of this plan) and
+      after, same market network, at least 200 RFPs; a verdict miss in process versus through the engine.
+      Budget: kcp adds at most 20 ms p95 to rfp -> bid. Over budget, the Bid create moves after the publish
+      and dedup falls back to the record key (a market.bid rkey derived from the RFP uri). Decided by Claude,
+      user may veto.
+    files: ["docs/ARCHITECTURE.md"]
+    done_when: "the readings are recorded and within budget, or the fallback is in and re-measured."
+    risks: []
+    status: todo
+    evidence:
+not_doing:
+  - "Observed* mirror objects for every market record: a write per record, and the PDS already holds the record."
+  - "A separate event stream DenoPod: one consumer per instance, so it is only an extra hop."
+  - "A PolicyVerdict kind: the verdict cache is a cache."
+  - "PolicyWorkflowRun on the hot path: create, watch, engine call, engine poll and status write are too many hops."
+  - "Moving any atproto market flow into Go."
+acceptance:
+  where: hat-8
+  checks:
+    - id: ACC9-OBSERVABLE
+      text: "During a market network run, every in-flight RFP decision, bid and contract is visible in kcp with its phase, current step and reason; no step is visible only in a log."
+      status: todo
+      evidence: []
+    - id: ACC9-EXACTLY-ONCE
+      text: "A bidder restart inside a bid window, a second relay, and a second bidder replica each give one bid per RFP and miss none."
+      status: todo
+      evidence: []
+    - id: ACC9-NO-SESSION-IN-WEB-APP
+      text: "The internet-facing web app holds no requester PDS session, claim key or secrets key."
+      status: todo
+      evidence: []
+    - id: ACC9-UNTRUSTED-POLICY
+      text: "A policy attached to an RFP runs only in the PolicyEngine process, which has no secrets, no host access and no -A."
+      status: todo
+      evidence: []
+    - id: ACC9-LATENCY
+      text: "kcp adds at most 20 ms p95 to rfp seen -> bid published."
+      status: todo
+      evidence: []
+questions_for_user: []
