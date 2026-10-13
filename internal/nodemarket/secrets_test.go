@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodevm"
 )
 
 type secretEvents struct {
@@ -174,7 +173,7 @@ func TestProvisionWritesTheNodePolicyAndSecretBeforeTheClaim(t *testing.T) {
 	if !ok {
 		t.Fatal("no secret was written for the node")
 	}
-	password, err := os.ReadFile(nodevm.NodePasswordPath(opts.DataDir))
+	password, err := os.ReadFile(NodePasswordPath(opts.DataDir))
 	if err != nil {
 		t.Fatalf("reading the minted node password: %v", err)
 	}

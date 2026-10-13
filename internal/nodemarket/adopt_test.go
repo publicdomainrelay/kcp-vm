@@ -9,7 +9,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodevm"
 )
 
 func seedClaim(claims *fakeClaims, phase v1alpha1.NodeClaimPhase, grant *v1alpha1.NodeClaimGrant) v1alpha1.NodeClaim {
@@ -74,7 +73,7 @@ func adoptedClaimGetsItsSecretWritten(t *testing.T, phase v1alpha1.NodeClaimPhas
 	if err := os.MkdirAll(opts.DataDir, 0o700); err != nil {
 		t.Fatalf("creating the data dir: %v", err)
 	}
-	if _, err := nodevm.MintOrReadNodePassword(nodevm.NodePasswordPath(opts.DataDir)); err != nil {
+	if _, err := MintOrReadNodePassword(NodePasswordPath(opts.DataDir)); err != nil {
 		t.Fatalf("minting the node password: %v", err)
 	}
 	claim := seedClaim(claims, phase, nil)

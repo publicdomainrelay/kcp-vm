@@ -74,10 +74,10 @@ func tenantAddOns(cfg Config, log *slog.Logger) func(context.Context, string, *r
 		}
 		log.Info("cluster provider: applied the tenant add-ons",
 			"cluster", cluster, "manifests", cfg.ESOManifestDir,
-			"namespace", kcpclient.TenantNamespace, "vault", vaultURL, "substrate", cfg.Substrate,
+			"namespace", kcpclient.TenantNamespace, "vault", vaultURL,
 			"decision", "the External Secrets controller runs beside the control plane in this "+
-				"cluster's process group, so the store dials the cluster vault on loopback on every "+
-				"substrate and syncs at zero nodes; the tenant holds only its CRDs and RBAC",
+				"cluster's process group, so the store dials the cluster vault on loopback and "+
+				"syncs at zero nodes; the tenant holds only its CRDs and RBAC",
 			"item", "NEXT.yaml ESO-4")
 		return nil
 	}

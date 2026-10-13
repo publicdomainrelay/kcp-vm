@@ -71,39 +71,7 @@ var errNoNodeCluster = errors.New(
 	"clusterprovider: a node is per cluster, and the empty name has no Cluster CR, no lease and no " +
 		"data dir to hang one on")
 
-type nodeSubstrate struct {
-	Name string
-}
-
-func nodeSubstrateFor(cfg Config) (nodeSubstrate, error) {
-	switch cfg.Substrate {
-	case SubstrateMarket:
-		return nodeSubstrate{Name: SubstrateMarket}, nil
-	case "":
-		return nodeSubstrate{}, errNoSubstrateChoice
-	}
-	return nodeSubstrate{}, fmt.Errorf(
-		"clusterprovider: no substrate named %q places nodes here, and %s is the only one "+
-			"implemented today: the local firecracker and qemu substrates were retired on %s (plan "+
-			"0005 M1-MARKET-ONLY). The name is refused rather than approximated: it decides what a "+
-			"node's record names, what its teardown stops and what its leases mean, so a gateway "+
-			"that ran anyway would report a placement it is not honouring",
-		cfg.Substrate, SubstrateMarket, RetiredSubstratesRetiredOn)
-}
-
-func (s nodeSubstrate) Validate() error {
-	switch s.Name {
-	case SubstrateMarket:
-		return nil
-	case "":
-		return errNoSubstrateChoice
-	}
-	return fmt.Errorf(
-		"clusterprovider: no substrate named %q places nodes here, and %s is the only one "+
-			"implemented today", s.Name, SubstrateMarket)
-}
-
-type nodeSubstrateOptions struct {
+type marketNodeOptions struct {
 	Cluster string
 
 	Server string
@@ -137,32 +105,24 @@ type nodeSubstrateOptions struct {
 	Links nodemarket.Links
 }
 
-func (s nodeSubstrate) NewNodeHost(opts nodeSubstrateOptions) (nodeHost, error) {
-	switch s.Name {
-	case SubstrateMarket:
-		return nodemarket.New(nodemarket.Options{
-			Cluster:          opts.Cluster,
-			NodeName:         opts.NodeName,
-			AdvertiseAddress: opts.AdvertiseAddress,
-			ApiserverPort:    opts.ApiserverPort,
-			TokenFile:        opts.TokenFile,
-			ServerCAFile:     opts.ServerCAFile,
-			DataDir:          opts.DataDir,
-			DenyBidderDids:   opts.DenyBidderDids,
-			Resolve:          opts.ClusterSource,
-			Claims:           opts.Claims,
-			Record:           opts.Record,
-			Log:              opts.Log,
-			ReleaseTimeout:   opts.ReleaseTimeout,
-			Secrets:          opts.Secrets,
-			Links:            opts.Links,
-		})
-	case "":
-		return nil, errNoSubstrateChoice
-	}
-	return nil, fmt.Errorf(
-		"clusterprovider: no substrate named %q places nodes here, and %s is the only one "+
-			"implemented today", s.Name, SubstrateMarket)
+func newMarketNodeHost(opts marketNodeOptions) (nodeHost, error) {
+	return nodemarket.New(nodemarket.Options{
+		Cluster:          opts.Cluster,
+		NodeName:         opts.NodeName,
+		AdvertiseAddress: opts.AdvertiseAddress,
+		ApiserverPort:    opts.ApiserverPort,
+		TokenFile:        opts.TokenFile,
+		ServerCAFile:     opts.ServerCAFile,
+		DataDir:          opts.DataDir,
+		DenyBidderDids:   opts.DenyBidderDids,
+		Resolve:          opts.ClusterSource,
+		Claims:           opts.Claims,
+		Record:           opts.Record,
+		Log:              opts.Log,
+		ReleaseTimeout:   opts.ReleaseTimeout,
+		Secrets:          opts.Secrets,
+		Links:            opts.Links,
+	})
 }
 
 type nodeHostsOptions struct {
@@ -183,8 +143,6 @@ type nodeHostsOptions struct {
 	Tenant tenantClient
 
 	Log *slog.Logger
-
-	Substrate nodeSubstrate
 
 	Links nodemarket.Links
 
@@ -231,14 +189,6 @@ var errNoNodeClaims = errors.New(
 		"none of the store that writes one was supplied -- a gateway that started anyway would " +
 		"count a node it never asked anybody to rent, and the scale decision would ask again on " +
 		"every pass for ever")
-
-var errNoSubstrateChoice = errors.New(
-	"clusterprovider: a node is placed by a substrate and none was chosen here. The name decides " +
-		"what a node's record names, what its teardown stops and what its leases mean, so the " +
-		"composition root refuses rather than picking one: every substrate that has been tried on " +
-		"this host's own kernel has been refuted by measurement, and a gateway that fell back to one " +
-		"would place a node whose lifetime this process owns while everything downstream still " +
-		"reported a guest")
 
 type nodeHost interface {
 	scale.Nodes
@@ -358,7 +308,7 @@ func (n *tenantNodes) Provision(ctx context.Context) error {
 		return fmt.Errorf("clusterprovider: provisioning node %s of %s: %w -- there is no lease to "+
 			"give back here, because a node holds none of its own: every port its guest binds, its "+
 			"kubelet's included, is bound inside the guest's own network namespace, and the "+
-			"substrate stops whatever it started before it returns", name, n.cluster, err)
+			"node host stops whatever it started before it returns", name, n.cluster, err)
 	}
 	if !held {
 		n.retain(ordinal, heldNode{name: name, host: host})
@@ -884,13 +834,10 @@ func newNodeHosts(opts nodeHostsOptions) (*nodeHosts, error) {
 		return nil, errNoNodeRegistry
 	case opts.StateDir == "":
 		return nil, errNoNodeStateDir
-	case opts.Substrate.Name == SubstrateMarket && opts.Claims == nil:
+	case opts.Claims == nil:
 		return nil, errNoNodeClaims
 	case opts.AdvertiseAddress == "":
 		return nil, errNoAdvertiseAddress
-	}
-	if err := opts.Substrate.Validate(); err != nil {
-		return nil, err
 	}
 	log := opts.Log
 	if log == nil {
@@ -1103,7 +1050,7 @@ func newNodeHost(opts nodeHostsOptions, log *slog.Logger, cluster, nodeID string
 	if err != nil {
 		return nil, err
 	}
-	host, err := newNodeHostOf(opts.Substrate, opts, log, cluster, name, apiserver.Port, clusterDir)
+	host, err := newNodeHostOf(opts, log, cluster, name, apiserver.Port, clusterDir)
 	if err != nil {
 		return nil, err
 	}
@@ -1158,13 +1105,13 @@ func nodeOrdinalInName(prefix, name string) (int, bool) {
 	return ordinal, true
 }
 
-func newNodeHostOf(substrate nodeSubstrate, opts nodeHostsOptions, log *slog.Logger, cluster, name string, apiserverPort int, clusterDir string) (nodeHost, error) {
+func newNodeHostOf(opts nodeHostsOptions, log *slog.Logger, cluster, name string, apiserverPort int, clusterDir string) (nodeHost, error) {
 	server := fmt.Sprintf("https://%s:%d", opts.AdvertiseAddress, apiserverPort)
 	var secrets nodemarket.NodeSecrets
 	if opts.NodeSecrets != nil {
 		secrets = opts.NodeSecrets(cluster, clusterDir)
 	}
-	return substrate.NewNodeHost(nodeSubstrateOptions{
+	return newMarketNodeHost(marketNodeOptions{
 		Cluster:          cluster,
 		Server:           server,
 		NodeName:         name,
@@ -1177,7 +1124,7 @@ func newNodeHostOf(substrate nodeSubstrate, opts nodeHostsOptions, log *slog.Log
 		Claims:           opts.Claims,
 		ClusterSource:    claimClusterFor(opts.Registry, cluster),
 		ReleaseTimeout:   opts.ClaimReleaseTimeout,
-		Record:           nodeRecorder(opts.Registry, cluster, name, substrate.NodeExpiry()),
+		Record:           nodeRecorder(opts.Registry, cluster, name, unlimitedNodeExpiry()),
 		Log:              log,
 		Secrets:          secrets,
 		Links:            opts.Links,
@@ -1215,7 +1162,7 @@ func claimClusterFor(registry clusterprovider.Clusters, cluster string) nodemark
 	}
 }
 
-func (s nodeSubstrate) NodeExpiry() *int64 {
+func unlimitedNodeExpiry() *int64 {
 	expiry := int64(clusterprovider.NodeExpiryUnlimited)
 	return &expiry
 }

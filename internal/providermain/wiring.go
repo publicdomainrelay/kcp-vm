@@ -229,9 +229,6 @@ func (p *Provider) join(ctx context.Context) error {
 		return err
 	}
 	p.adoptNodes(ctx, []string{key})
-	if err := p.sweepNodeRecords(ctx); err != nil {
-		return err
-	}
 
 	if p.nodeScale == nil {
 		p.log.Warn("cluster provider: no node-scale driver; the cluster will not scale its nodes")
@@ -298,9 +295,6 @@ func (p *Provider) joinAll(ctx context.Context) error {
 		return err
 	}
 	p.adoptNodes(ctx, keys)
-	if err := p.sweepNodeRecords(ctx); err != nil {
-		return err
-	}
 	if p.nodeScale == nil {
 		p.log.Warn("cluster provider: no node-scale driver; no cluster will scale its nodes")
 	}

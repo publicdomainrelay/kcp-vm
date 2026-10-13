@@ -18,7 +18,6 @@ import (
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/foldmain"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/guestimage"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/guestrootfs"
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodevm"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/versions"
 )
 
@@ -28,6 +27,8 @@ const (
 
 	guestVcpu   = 2
 	guestMemMiB = 2048
+
+	guestInterface = "eth0"
 )
 
 const usage = `nodeimage - the build pipeline steps of scripts/build-guest-image.sh
@@ -245,7 +246,7 @@ func guestManifest(stdout io.Writer, target, dir, reportPath string) error {
 		BootArgs:        tg.BootArgs,
 		Vcpu:            guestVcpu,
 		MemMiB:          guestMemMiB,
-		GuestInterface:  nodevm.DefaultInterface,
+		GuestInterface:  guestInterface,
 		Target:          target,
 		Hypervisor:      tg.Hypervisor,
 		Arch:            tg.Arch,

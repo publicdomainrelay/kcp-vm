@@ -16,7 +16,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodevm"
 )
 
 type fakeClaims struct {
@@ -240,7 +239,7 @@ func TestProvisionWritesTheClaimAndReturnsWithoutWaitingForTheMarket(t *testing.
 		t.Fatalf("the claim does not carry the paths the door reads the join material from: %+v",
 			claim.Spec)
 	}
-	wantPassword := nodevm.NodePasswordPath(opts.DataDir)
+	wantPassword := NodePasswordPath(opts.DataDir)
 	if claim.Spec.NodePasswordFile != wantPassword {
 		t.Fatalf("the claim names %q as the node password file, want %q",
 			claim.Spec.NodePasswordFile, wantPassword)

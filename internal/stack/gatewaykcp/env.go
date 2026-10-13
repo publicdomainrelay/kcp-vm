@@ -22,7 +22,6 @@ const (
 	DefaultDeviceKeyTTL     = "24h"
 	DefaultDeviceKeyExec    = "socialweb-credential"
 	DefaultDeviceKeyExecEnv = "SOCIALWEB_DEVICE_KEY"
-	DefaultSubstrate        = "market"
 	DefaultPortRange        = "20000-29999"
 	DefaultJoin             = "*"
 	DeployDir               = "deploy"
@@ -116,7 +115,6 @@ func (g *gateway) defaults(e *env, rec devinstance.Record, cert, key string) err
 	e.set("SOCIALWEB_CLUSTERPROVIDER_MOUNT_CONTEXT", kcpclient.ShardAdminContext)
 	e.dflt("SOCIALWEB_CLUSTERPROVIDER_STATE_DIR", filepath.Join(state, "clusterprovider"))
 	e.dflt("SOCIALWEB_CLUSTERPROVIDER_LEASE_PATH", filepath.Join(state, "leases.json"))
-	e.dflt("SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE", DefaultSubstrate)
 	e.dflt("SOCIALWEB_CLUSTERPROVIDER_PORT_RANGE", DefaultPortRange)
 	e.dflt("SOCIALWEB_CLUSTERPROVIDER_JOIN", DefaultJoin)
 	e.dflt("SOCIALWEB_CLUSTERPROVIDER_DATASTORE_HAS_ROW", "false")

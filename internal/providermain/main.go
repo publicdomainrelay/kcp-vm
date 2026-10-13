@@ -225,11 +225,6 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 		return Deps{}, err
 	}
 
-	substrate, err := nodeSubstrateFor(cfg)
-	if err != nil {
-		return Deps{}, err
-	}
-
 	linkClient, err := kcpclient.New(kcpclient.Options{Host: cfg.KCPHost, RestConfig: restCfg})
 	if err != nil {
 		return Deps{}, err
@@ -348,7 +343,6 @@ func buildDeps(ctx context.Context, cfg Config, log *slog.Logger) (Deps, error) 
 		NodeJoinGrace:       cfg.NodeJoinGrace,
 		Tenant:              tenant,
 		Log:                 log,
-		Substrate:           substrate,
 		Links:               claims,
 		NodeSecrets: func(cluster, clusterDir string) nodemarket.NodeSecrets {
 			return clusterprovider.NewNodeVault(units, cluster, clusterDir).WithLogger(log)

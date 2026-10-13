@@ -58,10 +58,7 @@ const (
 
 	envScalePodsPerNode = "SOCIALWEB_CLUSTERPROVIDER_SCALE_PODS_PER_NODE"
 
-	envSubstrate = "SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE"
-	envHost      = "SOCIALWEB_CLUSTERPROVIDER_HOST"
-
-	envRetiredSubstrateInput = "SOCIALWEB_CLUSTERPROVIDER_"
+	envHost = "SOCIALWEB_CLUSTERPROVIDER_HOST"
 
 	envCloudControllerManager = "SOCIALWEB_CLUSTERPROVIDER_CLOUD_CONTROLLER_MANAGER"
 
@@ -88,22 +85,6 @@ const (
 )
 
 const DefaultESOManifestDir = "/opt/socialweb/deploy/eso"
-
-const SubstrateMarket = "market"
-
-const RetiredSubstratesRetiredOn = "2026-10-07"
-
-var retiredSubstrateNames = []string{"firecracker", "qemu"}
-
-var retiredSubstrateInputs = []string{
-	envRetiredSubstrateInput + "FIRECRACKER",
-	envRetiredSubstrateInput + "QEMU",
-	envRetiredSubstrateInput + "NODE_AGENT",
-	envRetiredSubstrateInput + "IMAGE_OUT_DIR",
-	envRetiredSubstrateInput + "IMAGE_CONFIG",
-	envRetiredSubstrateInput + "NETWORK",
-	envRetiredSubstrateInput + "NODE_DISK_MIB",
-}
 
 const DefaultGrantPath = "deploy/tenant-grant.yaml"
 
@@ -149,8 +130,6 @@ type Config struct {
 	StoreEndpoint string
 
 	AuditPolicyPath string
-
-	Substrate string
 
 	Host string
 
@@ -217,7 +196,6 @@ func loadFor(get func(string) string, inv foldmain.Invocation) (Config, error) {
 		MarketAdvertiseAddress: strings.TrimSpace(get(envMarketAdvertiseAddress)),
 		StoreEndpoint:          strings.TrimSpace(get(envStoreEndpoint)),
 		AuditPolicyPath:        strings.TrimSpace(get(envAuditPolicy)),
-		Substrate:              strings.TrimSpace(get(envSubstrate)),
 		Host:                   strings.TrimSpace(get(envHost)),
 		CloudControllerManager: strings.TrimSpace(get(envCloudControllerManager)),
 		Dumbpipe:               strings.TrimSpace(get(envDumbpipe)),
@@ -258,9 +236,6 @@ func loadFor(get func(string) string, inv foldmain.Invocation) (Config, error) {
 	}
 	if cfg.ESONamespace == "" {
 		cfg.ESONamespace = eso.DefaultControllerNamespace
-	}
-	if cfg.AdvertiseAddress == "" && cfg.Substrate != SubstrateMarket {
-		cfg.AdvertiseAddress = portallocator.LoopbackAdvertiseAddress
 	}
 	if cfg.MarketAdvertiseAddress == "" {
 		cfg.MarketAdvertiseAddress = portallocator.MarketAdvertiseAddress
@@ -386,7 +361,7 @@ func loadFor(get func(string) string, inv foldmain.Invocation) (Config, error) {
 					"VMMs running behind one node name", envStateDir, cfg.StateDir)
 		}
 
-		if err := cfg.checkPlacement(get); err != nil {
+		if err := cfg.checkMarketPlacement(); err != nil {
 			return Config{}, err
 		}
 
@@ -442,45 +417,16 @@ func (c Config) ObserveOnly() bool { return c.Join == "" }
 
 func (c Config) AllClusters() bool { return c.Join == JoinAllClusters }
 
-func (c *Config) checkPlacement(get func(string) string) error {
-	switch c.Substrate {
-	case "":
-		return fmt.Errorf(
-			"%s is not set. Where a node runs is a decision this host cannot make for itself: "+
-				"there is no way to observe it and no default to fall back on, because the answer "+
-				"decides what a node's record names, what its teardown stops and what its lease "+
-				"means -- a gateway that guessed would report a placement it is not honouring",
-			envSubstrate)
-	case SubstrateMarket:
-		return c.checkMarketPlacement(get)
-	default:
-		return fmt.Errorf(
-			"%s is %q, and %s is the only substrate implemented today: the local firecracker and "+
-				"qemu substrates were retired on %s (plan 0005 M1-MARKET-ONLY) and the market network "+
-				"replaces them -- a node is a VM rented from the compute market, born from the "+
-				"cloud-init its winning bidder applies, so nothing about it runs on this host. A name "+
-				"from before the retirement is refused rather than approximated: it would decide what "+
-				"a node's record names, what its teardown stops and what its leases mean, and a "+
-				"gateway running a placement nobody wrote would report a node it never booted, or one "+
-				"it cannot stop. The names retired: %s",
-			envSubstrate, c.Substrate, SubstrateMarket, RetiredSubstratesRetiredOn,
-			strings.Join(retiredSubstrateNames, ", "))
-	}
-}
-
-func (c *Config) checkMarketPlacement(get func(string) string) error {
+func (c *Config) checkMarketPlacement() error {
 	if c.AdvertiseAddress != "" {
 		return fmt.Errorf(
-			"%s is %q and %s is %s. A node on this substrate is a VM rented from the compute "+
-				"market, and the address it dials its cluster's apiserver on is put on the guest's "+
-				"OWN loopback and reverse-forwarded to this host by the market's door. That address "+
-				"comes from %s, not from here, so a value in this variable cannot be in force: it is "+
-				"refused rather than accepted and ignored, because an operator who set one and saw "+
-				"no complaint would believe it was carrying it",
-			envAdvertiseAddress, c.AdvertiseAddress, envSubstrate, c.Substrate, envMarketAdvertiseAddress)
-	}
-	if err := c.refuseRetiredSubstrateInputs(get); err != nil {
-		return err
+			"%s is %q. A node is a VM rented from the compute market, and the address it dials its "+
+				"cluster's apiserver on is put on the guest's OWN loopback and reverse-forwarded to "+
+				"this host by the market's door. That address comes from %s, not from here, so a "+
+				"value in this variable cannot be in force: it is refused rather than accepted and "+
+				"ignored, because an operator who set one and saw no complaint would believe it was "+
+				"carrying it",
+			envAdvertiseAddress, c.AdvertiseAddress, envMarketAdvertiseAddress)
 	}
 	if err := c.checkHost(); err != nil {
 		return err
@@ -489,25 +435,6 @@ func (c *Config) checkMarketPlacement(get func(string) string) error {
 		return fmt.Errorf("%s: %w", envMarketAdvertiseAddress, err)
 	}
 	c.AdvertiseAddress = c.MarketAdvertiseAddress
-	return nil
-}
-
-func (c *Config) refuseRetiredSubstrateInputs(get func(string) string) error {
-	for _, name := range retiredSubstrateInputs {
-		value := strings.TrimSpace(get(name))
-		if value == "" {
-			continue
-		}
-		return fmt.Errorf(
-			"%s is %q, and %s is %s. That variable belonged to a local substrate -- a guest this "+
-				"host started, wired and booted itself -- and those substrates were retired on %s "+
-				"(plan 0005 M1-MARKET-ONLY): a market node is neither started nor wired on this host, "+
-				"the market builds it from the cloud-init its winning bidder applies, and this "+
-				"provider's whole part in it is the claim it writes. So the setting cannot be in "+
-				"force, and it is refused rather than accepted and ignored -- an operator who set one "+
-				"and saw no complaint would believe it was carrying it",
-			name, value, envSubstrate, c.Substrate, RetiredSubstratesRetiredOn)
-	}
 	return nil
 }
 

@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodevm"
 )
 
 type NodeSecret struct {
@@ -178,7 +177,7 @@ func (h *Host) readJoinMaterial() (NodeSecret, error) {
 	if err != nil {
 		return NodeSecret{}, err
 	}
-	password, err := read("node password", nodevm.NodePasswordPath(h.opts.DataDir))
+	password, err := read("node password", NodePasswordPath(h.opts.DataDir))
 	if err != nil {
 		return NodeSecret{}, err
 	}

@@ -13,7 +13,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
-	"github.com/johnandersen777/socialweb-computer-kcp/internal/nodevm"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/scale"
 )
 
@@ -172,8 +171,8 @@ func (h *Host) Provision(ctx context.Context) error {
 	if err := os.MkdirAll(h.opts.DataDir, 0o700); err != nil {
 		return fmt.Errorf("nodemarket: creating %s: %w", h.opts.DataDir, err)
 	}
-	passwordFile := nodevm.NodePasswordPath(h.opts.DataDir)
-	if _, err := nodevm.MintOrReadNodePassword(passwordFile); err != nil {
+	passwordFile := NodePasswordPath(h.opts.DataDir)
+	if _, err := MintOrReadNodePassword(passwordFile); err != nil {
 		return fmt.Errorf("nodemarket: node %s of %s: %w -- the claim names this file as the path "+
 			"the door reads the per-node password from, so a password that is not on disk is a "+
 			"claim the door can only fail on", h.opts.NodeName, h.opts.Cluster, err)
@@ -246,7 +245,7 @@ func (h *Host) WriteAdoptionClaim(ctx context.Context) error {
 		return fmt.Errorf("nodemarket: the workspace and owner DID node %s of %s is claimed under: %w",
 			h.opts.NodeName, h.opts.Cluster, err)
 	}
-	claim := h.claimLocked(target, nodevm.NodePasswordPath(h.opts.DataDir))
+	claim := h.claimLocked(target, NodePasswordPath(h.opts.DataDir))
 	claim.Annotations = map[string]string{AnnotationAdoptJoinedNode: "true"}
 	if err := h.opts.Claims.WriteNodeClaim(ctx, target.Workspace, claim); err != nil {
 		return fmt.Errorf("nodemarket: writing the adoption claim for node %s of %s into %s: %w",

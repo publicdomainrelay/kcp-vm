@@ -37,8 +37,7 @@ func thisHost(t *testing.T) string {
 func marketPlacementEnv(t *testing.T) map[string]string {
 	t.Helper()
 	return map[string]string{
-		"SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE": SubstrateMarket,
-		"SOCIALWEB_CLUSTERPROVIDER_HOST":      thisHost(t),
+		"SOCIALWEB_CLUSTERPROVIDER_HOST": thisHost(t),
 	}
 }
 
@@ -75,25 +74,6 @@ func loadJoin(t *testing.T, extra map[string]string) (Config, error) {
 	return load(func(k string) string { return env[k] })
 }
 
-func TestTheRetiredSubstratesAreRefusedAtStartup(t *testing.T) {
-	for _, name := range []string{"firecracker", "qemu"} {
-		_, err := loadJoin(t, map[string]string{
-			"SOCIALWEB_CLUSTERPROVIDER_SUBSTRATE": name,
-		})
-		if err == nil {
-			t.Fatalf("%s was accepted as a placement, and the local substrates were retired on %s "+
-				"(plan 0005 M1-MARKET-ONLY)", name, RetiredSubstratesRetiredOn)
-			continue
-		}
-		for _, want := range []string{name, SubstrateMarket, RetiredSubstratesRetiredOn} {
-			if !strings.Contains(err.Error(), want) {
-				t.Errorf("%s: the refusal does not name %q, so it reads as a typo rather than as a "+
-					"placement that was withdrawn: %v", name, want, err)
-			}
-		}
-	}
-}
-
 func TestAJoinWithoutTheCloudControllerManagerBinaryIsRefused(t *testing.T) {
 	_, err := loadJoin(t, map[string]string{"SOCIALWEB_CLUSTERPROVIDER_CLOUD_CONTROLLER_MANAGER": ""})
 	if err == nil {
@@ -115,7 +95,7 @@ func TestObserveOnlyNeedsNoPlacement(t *testing.T) {
 	if !cfg.ObserveOnly() {
 		t.Fatal("an unset Join must be observe-only")
 	}
-	if cfg.Substrate != "" || cfg.Host != "" {
+	if cfg.Host != "" {
 		t.Fatalf("observe-only invented a placement: %+v", cfg)
 	}
 }

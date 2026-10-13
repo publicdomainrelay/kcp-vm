@@ -105,8 +105,7 @@ func (h *nodeHosts) adoptClaims(cluster string, claims []v1alpha1.NodeClaim) err
 		}
 		adopter, ok := built.host.(claimAdopter)
 		if !ok {
-			problems = append(problems, fmt.Errorf("clusterprovider: the %s substrate's node host for "+
-				"%s cannot adopt a claim", h.opts.Substrate.Name, claim.Name))
+			problems = append(problems, fmt.Errorf("clusterprovider: the node host for %s cannot adopt a claim", claim.Name))
 			continue
 		}
 		if err := adopter.Adopt(claim); err != nil {
