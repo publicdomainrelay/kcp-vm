@@ -53,6 +53,9 @@ gate:
 release-reproducible:
   stage: release
   timeout: 30m
+  variables:
+    GIT_DEPTH: "0"
+    RELEASE_NO_CACHE: ""
   rules:
     - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"
     - if: $CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == "main"
@@ -74,4 +77,4 @@ release-reproducible:
     - export CONTAINER=podman XDG_RUNTIME_DIR="$CI_STATE/podman/run" CONTAINERS_STORAGE_CONF="$CI_STATE/podman/storage.conf"
     - printf '[storage]\ndriver = "overlay"\ngraphroot = "%s"\nrunroot = "%s"\n[storage.options.overlay]\nignore_chown_errors = "true"\n' "$CI_STATE/podman/storage" "$CI_STATE/podman/run/storage" >"$CONTAINERS_STORAGE_CONF"
   script:
-    - timeout -k 10 1680 scripts/build-socialweb-computer.sh --verify-reproducible --build-root "$CI_STATE/release-build"
+    - timeout -k 10 1680 scripts/build-socialweb-computer.sh --verify-reproducible ${RELEASE_NO_CACHE:+--no-cache} --build-root "$CI_STATE/release-build"
