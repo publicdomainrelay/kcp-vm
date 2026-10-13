@@ -81,7 +81,7 @@ source: >
   Go and TypeScript are both first class, with the TypeScript codebase shipped inside the binary in the
   style of sshai's policy_engine. The user then decided (2026-10-07): ONE binary; kcp binds port 0 and
   reports the bound port; no container at runtime, with postgres and everything else the container
-  supplied embedded and driven by CRDs; the user runs the prod cutover with no rehearsal; the core binary
+  supplied embedded and driven by CRDs; the prod deploy is fresh with no rehearsal (run by Claude, user 2026-10-12); the core binary
   and its deno processes must be upgradable while VMs keep running. On 2026-10-11 the user decided: this
   plan executes on Linux only and builds the cross-OS seams (Windows is plan 0011, macOS plan 0012); VMs
   survive a core crash, upgrade and logout, a reboot is Lost; no socialweb-computer code is in a running
@@ -2108,13 +2108,26 @@ items:
     evidence:
   - id: M5-FRESH-DEPLOY
     milestone: M5
-    title: Prod gets the finished binary as a plain fresh deploy; the user runs it
-    depends_on: [M3-HOST-INSTALL, M4-BUILD, M3-CP-CONTINUITY]
+    title: Prod gets the finished binary as a plain fresh deploy; Claude runs it
+    depends_on: [M3-HOST-INSTALL, M4-BUILD, M3-CP-CONTINUITY, "0007:M6-BIDDER-UPGRADE", "0007:M6-LIVE-RECOVERY"]
     decision: >
       Was M5-CUTOVER (container volume copy, rollback to the container, 7-day retire), void since 2026-10-12.
       Decided by the user 2026-10-12: no backwards compatibility, migration, cutover, rollback or
       prod-downtime planning until the finished solution exists; the gateway runs no containers; the finished
-      binary is deployed fresh. Decided by the user 2026-10-07 and kept: the user runs it. Prepared here:
+      binary is deployed fresh. Decided by the user 2026-10-12 (replaces "the user runs it" of 2026-10-07):
+      Claude runs the deploy, start to finish, on both prod hosts, once the cut-over fixes found by
+      M3-CP-CONTINUITY, M6-BIDDER-UPGRADE and M6-LIVE-RECOVERY are on main, and reports the readings.
+      Order: (1) build the release binary from one commit (scripts/build-socialweb-computer.sh, both builds
+      byte-identical) and record its sha256; (2) gateway host: record what the old stack runs (units,
+      containers, listening ports, state dirs), stop the old gateway services so the edge ports are free,
+      and leave their state dirs on disk untouched (not read, not deleted; no rollback is planned); check the
+      relay config (an explicit relay list no longer adds public Jetstreams); (3) the fresh deploy below;
+      (4) hat-8: stop the old /opt/socialweb-computer-bidder bidder, then `install bidder --handle <the
+      bobvmbuilder handle>` and `run bidder --profile prod-qr`; the QR sign-in and association go to the
+      user only if the bidder account needs a scan, otherwise the existing session in the bidder's vault is
+      used; check that the guest DenoPod's did:key sign-in works on xrpc.fedproxy.com; (5) the finish line:
+      a tenant k3s cluster on the new gateway scales to zero and gets a node as a market RFP VM from that
+      bidder, then scales back to zero. Prepared here:
       scripts/deploy.sh (host mode, M3-HOST-INSTALL) on the prod host runs `install gateway` (M1-INSTALL's
       list: account, delegation drop-in, node password, unit files, linger enabled BEFORE the first start),
       places the binary through `upgrade
@@ -2126,8 +2139,8 @@ items:
     test_first: >
       test/deploy_script_test.go TestTheDeployInstallsOnAnEmptyStateDirAndRunsNoDocker and
       TestTheDeployEnablesLingerBeforeTheFirstStart (fake ssh, fake loginctl, temp state dir); red first.
-    done_when: "the user ran it; readings recorded: door /api/config 200, the bootstrap cluster Ready, an idle cluster reads None nodes 0, ACC6-ONE-BINARY and ACC6-STATE recorded."
-    risks: ["Container-era tenants, clusters and market VMs are not carried over and nothing is planned for them (decided by the user 2026-10-12); what happens to them is the user's call when running it."]
+    done_when: "Claude ran it on both hosts; readings recorded (UTC): the web app /api/config 200, the bootstrap cluster Ready, an idle cluster reads None nodes 0, a tenant cluster scaled from zero to one market RFP node from the hat-8 bidder and back to zero, ACC6-ONE-BINARY and ACC6-STATE recorded."
+    risks: ["Container-era tenants, clusters and market VMs are not carried over and nothing is planned for them (decided by the user 2026-10-12); their state dirs stay on disk untouched and the deploy report lists what the old stack ran.", "A bidder account whose session in the vault is gone needs one QR scan by the user; the deploy stops at that step and asks."]
     status: todo
     evidence: []
   - id: M5-RETIRE
