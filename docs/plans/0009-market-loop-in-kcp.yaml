@@ -123,7 +123,7 @@ items:
     files: ["ts/typescript-helpers/lib/atproto-event-streams-client", "ts/atproto-market/lib/market-bidder", "ts/atproto-market/request-vm-ssh"]
     done_when: "a bidder restarted while RFPs are posted bids on every RFP posted during the gap, and on none twice."
     risks: ["A relay that cannot resume from a cursor older than its window: the bidder logs the gap and its counter, and starts from now."]
-    status: todo
+    status: done
     evidence:
   - id: M2-BID-KIND
     milestone: M2
@@ -140,7 +140,7 @@ items:
     files: ["api/types_bid.go", "internal/appctl (bidder set: export, ServiceAccount rules)", "ts/atproto-market/lib/market-bidder"]
     done_when: "with relay and Jetstream both on, one RFP gives one Bid object and one market.bid record; `kubectl get bids` shows every RFP the bidder answered, with its verdict and timings."
     risks: ["One kcp create on the hot path: M4-LATENCY-READINGS holds it to the budget."]
-    status: doing
+    status: done
     evidence:
   - id: M2-BIDDER-LOOP-KCP
     milestone: M2
@@ -157,7 +157,7 @@ items:
     files: ["ts/atproto-market/lib/market-bidder", "ts/atproto-market/lib/market-bidder-compute", "ts/atproto-market/lib/hono-factory-market-bidder-app"]
     done_when: "kill -9 of the bidder DenoPod after it published a bid and before the accept: the restarted bidder takes the accept and the guest boots through cloud-init; no RFP is bid twice."
     risks: []
-    status: todo
+    status: done
     evidence:
   - id: M3-POLICY-ENGINE-POD
     milestone: M3
