@@ -280,7 +280,7 @@ func (g *gateway) before(ctx context.Context, rec devinstance.Record) error {
 			return fmt.Errorf("gatewaykcp: applying the %s set: %w", name, err)
 		}
 	}
-	if err := writeMemberKubeconfig(g.l.SharedDir(), rec.KcpURL, g.memberKubeconfig()); err != nil {
+	if err := writeMemberKubeconfig(g.activeSlotRoot(), rec.KcpURL, g.memberKubeconfig()); err != nil {
 		return err
 	}
 	if err := applyRoot(ctx, restCfg, g.c.Spec); err != nil {
@@ -406,6 +406,7 @@ func (g *gateway) members(ctx context.Context, rec devinstance.Record) error {
 	}
 	mctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	go followMemberToken(mctx, g.activeSlotRoot, filepath.Join(g.l.KcpDir(), MemberToken), log)
 	ended := make(chan error, 8)
 	start := func(m member) {
 		go func() {
