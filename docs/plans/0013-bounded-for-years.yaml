@@ -177,7 +177,7 @@ items:
     files: ["internal/denokcp/provider", "internal/guestimage", "internal/install"]
     done_when: "under M4-SOAK-READING load the state dir size plateaus."
     risks: []
-    status: todo
+    status: done
     evidence:
   - id: M3-PDS-RECORD-RETENTION
     milestone: M3
