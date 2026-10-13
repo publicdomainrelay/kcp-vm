@@ -22,6 +22,7 @@ import (
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 
 	"github.com/johnandersen777/socialweb-computer-kcp/api/v1alpha1"
+	"github.com/johnandersen777/socialweb-computer-kcp/internal/assets"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/bootstrap"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/bootstrap/table"
 	"github.com/johnandersen777/socialweb-computer-kcp/internal/devinstance"
@@ -411,7 +412,7 @@ func (n *networks) teardownChild(ctx context.Context, c child) error {
 	if pids := KillUnder(c.layout.StateDir, ChildPoll*25); len(pids) > 0 {
 		log.Warn("stopped processes of the child its units left behind", "pids", fmt.Sprint(pids))
 	}
-	err := errors.Join(os.RemoveAll(c.layout.StateDir), os.RemoveAll(c.layout.RuntimeDir))
+	err := errors.Join(assets.RemoveTree(c.layout.StateDir), assets.RemoveTree(c.layout.RuntimeDir))
 	log.Info("a child application is gone: its root object, its kcp and its state", "err", fmt.Sprint(err))
 	return err
 }

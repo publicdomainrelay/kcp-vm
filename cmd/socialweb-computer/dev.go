@@ -823,7 +823,7 @@ func downInstance(ctx context.Context, a *app, l devinstance.Layout, keepState b
 				a.log.Warn("releasing the instance's leases", "err", err.Error())
 			}
 		}
-		if err := os.RemoveAll(l.StateDir); err == nil {
+		if err := assets.RemoveTree(l.StateDir); err == nil {
 			r.RemovedState = true
 		}
 	}
