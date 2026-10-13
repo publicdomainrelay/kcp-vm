@@ -15,7 +15,7 @@ build id and no source paths. Prints the output path and its sha256.
 
   --out   where swc-userns-stage lands (default \$HOME/.tmp/userns-stage-build)
 
-CONTAINER=podman selects podman (default docker).
+CONTAINER=podman selects podman (default docker); rootless podman runs as root of its user namespace, which is the calling uid.
 EOF
   exit 2
 }
@@ -43,7 +43,11 @@ if ! "$container" image inspect "$builder" >/dev/null 2>&1; then
 fi
 
 mkdir -p "$out"
-"$container" run --rm --network none --user "$(id -u):$(id -g)" --security-opt label=disable \
+user="$(id -u):$(id -g)"
+case "$(basename "$container")" in
+  podman) [ "$(id -u)" = 0 ] || user="0:0" ;;
+esac
+"$container" run --rm --network none --user "$user" --security-opt label=disable \
   -e LANG=C -e LC_ALL=C -e SOURCE_DATE_EPOCH=0 \
   -v "$src:/src:ro" -v "$out:/out" -w /src "$builder" \
   gcc -Os -static -nostdlib -ffreestanding -fno-stack-protector -fno-builtin -fno-pie -no-pie \

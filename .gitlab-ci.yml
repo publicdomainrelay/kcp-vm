@@ -6,6 +6,8 @@ workflow:
     - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH =~ /^task\//
     - if: $CI_PIPELINE_SOURCE == "web"
 
+stages: [gate, release]
+
 default:
   tags: [socialweb-computer-kcp]
   interruptible: true
@@ -16,6 +18,7 @@ variables:
   GIT_CLEAN_FLAGS: -ffdx
 
 gate:
+  stage: gate
   timeout: 15m
   before_script:
     - test -n "$HOME" && test "$(id -u)" != 0
@@ -46,3 +49,29 @@ gate:
     - timeout -k 10 180 go run ./cmd/socialweb-tsbundle -release -deno "$DENO_BIN" -out "$TMPDIR/tsb-out"
   after_script:
     - rm -rf "$HOME/.tmp/ci/tmp/$CI_JOB_ID"
+
+release-reproducible:
+  stage: release
+  timeout: 30m
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"
+    - if: $CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == "main"
+  before_script:
+    - test -n "$HOME" && test "$(id -u)" != 0
+    - export CI_STATE="$HOME/.tmp/ci"
+    - export RUSTUP_HOME="$CI_STATE/rustup" CARGO_HOME="$CI_STATE/cargo" PATH="$CI_STATE/cargo/bin:$PATH"
+    - mkdir -p "$CI_STATE/release-build" "$CI_STATE/podman/run" && chmod 0700 "$CI_STATE/podman/run"
+    - |
+      if [ ! -x "$CARGO_HOME/bin/rustup" ]; then
+        init="$CI_STATE/release-build/rustup-init"
+        curl -fsSL --max-time 120 -o "$init" https://static.rust-lang.org/rustup/dist/x86_64-unknown-linux-gnu/rustup-init
+        echo "$(curl -fsSL --max-time 30 https://static.rust-lang.org/rustup/dist/x86_64-unknown-linux-gnu/rustup-init.sha256 | cut -d' ' -f1)  $init" | sha256sum -c --quiet -
+        chmod 0755 "$init"
+        timeout -k 10 300 "$init" -y --quiet --no-modify-path --profile minimal --default-toolchain none
+        rm -f "$init"
+      fi
+    - (cd rust && timeout -k 10 300 rustup toolchain install && rustc --version)
+    - export CONTAINER=podman XDG_RUNTIME_DIR="$CI_STATE/podman/run" CONTAINERS_STORAGE_CONF="$CI_STATE/podman/storage.conf"
+    - printf '[storage]\ndriver = "overlay"\ngraphroot = "%s"\nrunroot = "%s"\n[storage.options.overlay]\nignore_chown_errors = "true"\n' "$CI_STATE/podman/storage" "$CI_STATE/podman/run/storage" >"$CONTAINERS_STORAGE_CONF"
+  script:
+    - timeout -k 10 1680 scripts/build-socialweb-computer.sh --verify-reproducible --build-root "$CI_STATE/release-build"
