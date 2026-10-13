@@ -1386,8 +1386,8 @@ items:
     test_first: "The join test upgrading the bidder mid-run; fails while the issuer moves, passes after."
     done_when: "node Ready, pod Running, bidder upgraded, node still Ready, release vm.delete 200, zero ssh sessions."
     risks: []
-    status: todo
-    evidence: []
+    status: done
+    evidence:
 semantics:
   bidder_deno_restarts_or_upgrades: "DenoPods restart on the new closure; setup() rebuilds getDroplet from ComputeVMs; ContractStore seeds activeContracts; the vault keeps the did, issuer URL and keys; VMs never notice."
   bidder_core_binary_upgraded_or_killed: "the controller and the deno processes stop with the bidder unit (control-group); VM units, the vault unit and the handle's kcp units (kine on sqlite, the one slot, front; 0006:M2-KCP-SLOTS, corrected 2026-10-12) are separate units and keep running; on start the controller re-populates by the Verdict (unit, InvocationID, firecracker pid + start ticks, GET / id and state)."
