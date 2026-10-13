@@ -1,4 +1,4 @@
-plan: 0010-close-the-gaps-with-a-gitlab-fixture
+plan: 0010-gitlab-ci-and-integration-tests
 written: 2026-10-11
 revised: >
   2026-10-12, R0-REASSESS first pass (proposed by Claude; the user answers questions_for_user, then the
@@ -124,19 +124,21 @@ acceptance:
         is released when it comes back.
       status: todo
       evidence: []
-questions_for_user:
-  - "Q1 CI runner: where do this repository's CI jobs run? Recommendation: one gitlab-runner (shell executor) as a user unit of a dedicated unprivileged account on hat-8, tagged socialweb-computer-kcp, registered to this project only; it has kvm and the test-0001 VM slots that G3-CI-INTEGRATION needs. Alternative: jobs on a prod tenant cluster (kubernetes executor), after prod only."
-  - "Q2 CI before prod: may CI run the build gate (go build, go vet, deno task check, deploy/check.sh --fast, the release closure) on every push to task/* and main now? Recommendation: yes; it is the gate agent-rules already require, run once by CI instead of by hand, and it adds no test."
-  - "Q3 Release artifacts: does the double clean-checkout release build and scripts/build-guest-image.sh move into CI, publishing the binaries, guest images and SHA256SUMS to the GitLab package registry that deploy.sh and `upgrade --binary --sha256` then fetch from? Recommendation: yes, after G1-CI-GATE; versions.json pins the guest image URLs there."
-  - "Q4 GitHub: once G1-CI-GATE is green, delete .github/workflows/typescript.yml and stop pushing to GitHub? Recommendation: delete the workflow; keep GitHub only as a push mirror if you want a public copy."
-  - "Q5 Integration test form: Go tests under test/integration (build tag integration) that drive the socialweb-computer verbs (dev up --profile market-network --bidders N --with-gateway, run request, dev down) and read kcp status. Recommendation: yes; run request runs runComputeContract inside its requester DenoPod, so the RFP flow stays the only path. Alternative: deno tests extending ts/atproto-market/test/bidder_container_integration_test.ts."
-  - "Q6 Prod canary identity: the canary cluster and its GitLab runner need a web app account. Recommendation: alice, signed in headlessly from ~/.aliceoa_bsky_social_source on the deploy host, one long-lived canary cluster, runner registered with a run-unique tag. Alternative: a new dedicated test account."
-  - "Q7 Canary schedule: nightly plus once after every prod deploy (recommendation), or only after deploys?"
-  - "Q8 Second prod bidder: prove failover only in the market network now (recommendation) and add a second real bidder when a second host exists? If you want it on prod now, which host and which account?"
-  - "Q9 Debug node ssh: delete it outright from the web app (recommendation; nodes are never reached by ssh and there is no back-compat), or keep it behind a build tag left out of release builds?"
-  - "Q10 Leftovers: may runner 6, branches acc-0005 and acc-clone (and the kcp-ci-probe project if nothing else uses it), and the 14 exited fc-* containers on hat-8 be deleted right after 0006 M5-FRESH-DEPLOY? Recommendation: yes."
-  - "Q11 Folds: confirm GAP-3 to 0007 M6-LIVE-RECOVERY/M6-BIDDER-UPGRADE, GAP-5 to 0006 M5-RETIRE (add internal/nodefirecracker, internal/nodevm, internal/noderecord, the substrate env and refusals in internal/providermain and their check-host users to its file list), GAP-4 and GAP-7 closed. The lead then edits 0006 and 0007."
-  - "Q12 Plan name: the file keeps its id; rename it to 0010-gitlab-ci-and-integration-tests.yaml when the answers are recorded? Recommendation: yes, with NEXT.yaml P10 updated in the same commit."
+decided:
+  - "Decided by Claude 2026-10-12 from the R0 recommendations, under the user's standing rule to decide in line with earlier answers; the user may veto any line."
+  - "Q1 CI runner: one gitlab-runner, shell executor, as a user unit of a dedicated unprivileged account on hat-8, tagged socialweb-computer-kcp, registered to this project only."
+  - "Q2 CI before prod: NO. The user said not to worry about CI until the work is moved over and prod works; G1-CI-GATE starts after 0006 M5-FRESH-DEPLOY, then the lead babysits CI."
+  - "Q3 Release artifacts: yes, after G1-CI-GATE; releases and guest images publish to the project's GitLab package registry."
+  - "Q4 GitHub: delete .github/workflows/typescript.yml; no GitHub push mirror (the user moved pushes to GitLab, 2026-10-12)."
+  - "Q5 Integration tests: Go tests in test/integration (build tag integration) driving the socialweb-computer verbs; run request keeps runComputeContract, so the RFP flow stays the only path."
+  - "Q6 Prod canary identity: alice, signed in from ~/.aliceoa_bsky_social_source on the deploy host (AGENTS.md Prod deployments)."
+  - "Q7 Canary schedule: nightly and once after every prod deploy."
+  - "Q8 Second prod bidder: failover proved in the market network only; a second real bidder when a second host exists."
+  - "Q9 Debug node ssh: delete it (zero ssh to guests; no back-compat)."
+  - "Q10 Leftovers: delete them right after 0006 M5-FRESH-DEPLOY (prod keeps nothing)."
+  - "Q11 Folds confirmed: GAP-3 into 0007 M6-LIVE-RECOVERY and M6-BIDDER-UPGRADE, GAP-5 into 0006 M5-RETIRE (file list extended), GAP-4 and GAP-7 closed; the 0007 M6 items' internal/marketnetwork/live_test.go is read as a manual live run."
+  - "Q12 Plan name: renamed to 0010-gitlab-ci-and-integration-tests.yaml with NEXT.yaml P10."
+questions_for_user: []
 items:
   - id: R0-REASSESS
     milestone: R0
@@ -154,7 +156,7 @@ items:
   - id: G1-CI-GATE
     milestone: G1
     title: GitLab CI runs the build gate for this repository
-    depends_on: ["R0-REASSESS"]
+    depends_on: ["R0-REASSESS", "0006:M5-FRESH-DEPLOY"]
     decision: >
       Proposed by Claude (Q1, Q2, Q4): .gitlab-ci.yml at the repository root on
       gitlab.dorper-matrix.ts.net:8443. One job on every push to task/* and main runs the gate of

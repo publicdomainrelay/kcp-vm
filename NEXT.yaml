@@ -165,9 +165,9 @@ open:
     instrument: >
       None open.
   - id: P10
-    title: DRAFT - plan 0010, close the gaps found after plan 0005 with a GitLab-in-docker fixture.
+    title: plan 0010, GitLab CI and the post-prod integration tests (R0-REASSESS done 2026-10-12).
     body: >
-      docs/plans/0010-close-the-gaps-with-a-gitlab-fixture.yaml. First item R0-REASSESS: re-assess every
+      docs/plans/0010-gitlab-ci-and-integration-tests.yaml. First item R0-REASSESS: re-assess every
       gap and approach, ask the user the listed questions, revise the plan. Nothing else starts before it.
       Gaps: no repeatable acceptance, one bidder, restart leak, kernel/rootfs contract, dead substrate
       code, thin NetworkPolicy coverage, leaderElect guard, debug-ssh guard, hand-built GitLab, leftovers.

@@ -2155,7 +2155,7 @@ items:
       scripts/deploy.sh (docker save/load, docker rm/run, the docker install), deploy/install-provider.sh,
       deploy/apply-permission-inventory.sh, deploy/denokcp/install-provider.sh and the folded cmd/ shims, in
       one change right after M5-FRESH-DEPLOY's readings; the old image on prod is removed with the user.
-    files: ["the files listed", "scripts/deploy.sh", "docs/ARCHITECTURE.md sections 5 and 12"]
+    files: ["the files listed", "scripts/deploy.sh", "docs/ARCHITECTURE.md sections 5 and 12", "internal/nodefirecracker, internal/nodevm, internal/noderecord, the substrate env and refusals in internal/providermain and their check-host users (folded from 0010 GAP-5 G4-DEAD-SUBSTRATE, 2026-10-12)"]
     test_first: "TestNothingInTheRepoInvokesKubectlDockerOrSocatOutsideTestAssets; red while they exist."
     done_when: "files gone; check.sh --full green; ARCHITECTURE updated."
     risks:
