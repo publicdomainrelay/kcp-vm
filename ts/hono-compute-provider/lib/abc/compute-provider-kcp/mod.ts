@@ -91,13 +91,20 @@ export interface ComputeVMInput {
   reuseStale?: boolean;
   stopGraceSeconds?: number;
   guestLogin?: { mount: string; bindSecretSha256: string };
+  acceptKey?: string;
+}
+
+export const ACCEPT_ANNOTATION = "socialweb.computer/accept";
+
+export function acceptKeyOfComputeVM(vm: ComputeVM | undefined): string | undefined {
+  return vm?.metadata?.annotations?.[ACCEPT_ANNOTATION] || undefined;
 }
 
 export function computeVMFor(input: ComputeVMInput): ComputeVM {
   return {
     apiVersion: COMPUTE_VM_API_VERSION,
     kind: COMPUTE_VM_RESOURCE.kind,
-    metadata: { name: input.name },
+    metadata: { name: input.name, ...(input.acceptKey ? { annotations: { [ACCEPT_ANNOTATION]: input.acceptKey } } : {}) },
     spec: {
       vm: {
         cpus: typeof input.vm.cpus === "number" && input.vm.cpus > 0 ? input.vm.cpus : 0,

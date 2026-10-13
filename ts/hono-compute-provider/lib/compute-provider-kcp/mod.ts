@@ -28,6 +28,7 @@ import {
   ComputeVMAccepts,
   ComputeVMCache,
   type ComputeVMChange,
+  acceptKeyOfComputeVM,
   contractReceiptOf,
   computeVMFor,
   dropletOf,
@@ -450,6 +451,21 @@ export function createComputeProviderKcp(ctx: ComputeProviderKcpCtx): ComputePro
     return { mount: ctx.guestLoginMount!, bindSecret, bindSecretSha256 };
   }
 
+  async function releaseOrphansOfAccept(acceptKey: string): Promise<void> {
+    for (const name of cache.names()) {
+      if (provisioning.has(name)) continue;
+      const vm = cache.get(name);
+      if (!cache.owns(vm) || hasEnded(vm) || isReleasing(vm) || contractReceiptOf(vm)) continue;
+      if (acceptKeyOfComputeVM(vm) !== acceptKey) continue;
+      logger.warn("computevm_orphan_of_accept_released", {
+        name,
+        acceptKey,
+        why: "this process now holds the Bid claim for the accept; a ComputeVM for it with no receipt was started by a bidder process that stopped",
+      });
+      await abandon(name);
+    }
+  }
+
   async function provision(vm: VM, requesterDid: string): Promise<ProvisionResult> {
     const acceptKey = acceptKeyOf(vm._accept);
     try {
@@ -469,6 +485,7 @@ export function createComputeProviderKcp(ctx: ComputeProviderKcpCtx): ComputePro
       );
     }
     await ensureSync();
+    if (acceptKey) await releaseOrphansOfAccept(acceptKey);
     const name = `fc-${shortId(requesterDid)}-${crypto.randomUUID().slice(0, 8)}`;
     const teamUuid = atproto.getAgentDid().split(":").slice(-1)[0];
     const enriched = ctx.provisioningEnricher
@@ -492,6 +509,7 @@ export function createComputeProviderKcp(ctx: ComputeProviderKcpCtx): ComputePro
       reuseStale: ctx.reuseStale,
       stopGraceSeconds: ctx.stopGraceSeconds,
       guestLogin: login ? { mount: login.mount, bindSecretSha256: login.bindSecretSha256 } : undefined,
+      acceptKey,
     });
 
     provisioning.add(name);
