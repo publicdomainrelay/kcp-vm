@@ -3834,6 +3834,30 @@ questions for hours without anyone stopping on it. The measurements stay with th
 being tidied away, because a number without its condition is how the 332-second boot outlived its own
 refutation.
 
+- **The ssh gateway is an application of its own, and reaches guests over iroh with no --allow-run, on
+  2026-10-12 (plan 0008 M1-SSH-GATEWAY-IROH proof, M4-RUN-GATEWAY-SSH).** `socialweb-computer run
+  gateway ssh` applies a root object `SshGateway app` into the gateway's own kcp (with `--network`, the
+  market network places that kcp and copies the network value and the bidders' DIDs onto the root
+  object). Its set `ssh-gateway` renders an OpenBaoServer (OAuth sessions, the requester key and the
+  app PDS key, never the state dir), the HostProcess `iroh-dial` and the hono-socialweb-computer-ssh
+  DenoPod. Decided here, user may veto: the DenoPod spawns nothing. A guest keypair is generated in
+  TypeScript (ssh2), and the iroh dial goes to a unix socket in the gateway's state dir where
+  `socialweb-computer internal iroh-dial` runs `dumbpipe connect <ticket>` per connection, so the
+  DenoPod has no `--allow-run` (the dumbpipe ProxyCommand still carries every session; it runs in
+  the HostProcess). The DenoPod has `--allow-env=<list>` (service template `permissions.envAllow`);
+  node-compat `process.env` throws on a variable outside the list and on enumeration, so the entry
+  preloads `env-preload.ts`, which reads an unlisted variable as unset. The requester evaluates
+  gha-lite policies net-only, as the bidder does, because the full sandbox spawns deno. Readings,
+  market network `sgnet` on hat-8, bidder handle `ssh-gateway-1.bob.test`: the gateway CLI under
+  `--allow-run=dumbpipe` 17:26:07Z-17:26:44Z ran `echo SWC_GUEST_OK; hostname` in guest
+  `fc-4a6d2f4f1847-1b49ba68` over `dumbpipe connect <ticket>` (exit 0, vm.delete 200); the same CLI
+  with the env allow-list and the dialer socket, no `--allow-run`, 17:50:41Z-17:51:26Z, guest
+  `fc-190fabcd2c04-89e62991`, exit 0, vm.delete 200; `run gateway ssh --network sgnet` Ready at
+  18:02:26Z in 48 s (listeners 127.0.0.1:36867 http and 127.0.0.1:45217 ssh, iroh-dial Running), the
+  DenoPod argv `--allow-net --allow-env=<17 names> --allow-sys`, no `-A`, `--allow-run` or `--allow-ffi`;
+  an ssh session through it 18:02:26Z-18:02:48Z ran in guest `fc-e877e38cea57-1a8d629d`, exit 0,
+  vm.delete 200.
+
 - **NetworkPolicies were not enforced on market nodes; fixed in the image builder on 2026-10-10.
   PROVEN ON THE LOCAL MARKET NETWORK, prod pending (plan 0005 M5-NETPOL).** Prod read over debug ssh at
   02:02Z: kube-router's `Aborting sync ... RULE_APPEND failed (No such file or directory)`. Root cause:
