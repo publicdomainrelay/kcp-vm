@@ -223,6 +223,16 @@ handle's first label), waits until the network reports it Ready with its did and
 returns; `--fg` stays and removes it from the network on Ctrl-C. `--handle` names
 the owner of its ComputeVMs; its atproto handle in the network is `<name>.bob.test`.
 
+An installed bidder account (`install bidder`, host-backend systemd-user) is not a
+child of the network: it is its own application and reaches the network only over
+the atproto market protocol. Its `config.json` names `"profile": "market-network"`
+and `"market-network-file"`, a file holding the network's status (`dev status
+--instance mn1 | jq .network.status`): the network value and `bidderPdsUrl`, where
+the bidder's account `<name>.bob.test` is made. The CA bundle that file names must be
+readable by the bidder account (copy it out of the network's state dir). Its VM
+units are units of that account's own user manager, so a restart of the whole
+manager (`systemctl restart user@<uid>`) touches only that account.
+
 N market networks on one host are N dev instances: every listener binds port 0,
 so two `dev up --instance` with different names never collide.
 
