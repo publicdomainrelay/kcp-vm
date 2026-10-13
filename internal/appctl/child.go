@@ -360,7 +360,8 @@ func (n *networks) teardownChild(ctx context.Context, c child) error {
 	log := n.ctl.c.log().With("child", c.id)
 	var rec devinstance.Record
 	if devinstance.ReadJSON(c.layout.Record, &rec) == nil && rec.AdminKubeconfig != "" && n.coreLive(ctx, c) {
-		for _, kind := range []v1alpha1.ApplicationKind{v1alpha1.ApplicationKindMarketBidder, v1alpha1.ApplicationKindMarketRequester, v1alpha1.ApplicationKindGateway} {
+		for _, kind := range []v1alpha1.ApplicationKind{v1alpha1.ApplicationKindMarketBidder, v1alpha1.ApplicationKindMarketRequester, v1alpha1.ApplicationKindGateway,
+			v1alpha1.ApplicationKindSshGateway} {
 			ri, err := childClient(rec, kind)
 			if err != nil {
 				continue

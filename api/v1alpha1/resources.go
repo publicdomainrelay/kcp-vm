@@ -60,7 +60,7 @@ var APIResources = []APIResource{
 		{Name: "Instance", Type: "string", JSONPath: ".status.runtime.instance"},
 		{Name: "Age", Type: "date", JSONPath: ".metadata.creationTimestamp"},
 	}},
-	{Kind: "MarketNetwork", Plural: "marketnetworks", Revision: 6, Export: "applications", Object: MarketNetwork{}, PrinterColumns: []PrinterColumn{
+	{Kind: "MarketNetwork", Plural: "marketnetworks", Revision: 7, Export: "applications", Object: MarketNetwork{}, PrinterColumns: []PrinterColumn{
 		{Name: "Profile", Type: "string", JSONPath: ".spec.profile"},
 		{Name: "Phase", Type: "string", JSONPath: ".status.phase"},
 		{Name: "PLC", Type: "string", JSONPath: ".status.network.plcDirectoryUrl"},
@@ -85,6 +85,11 @@ var APIResources = []APIResource{
 		{Name: "Age", Type: "date", JSONPath: ".metadata.creationTimestamp"},
 	}},
 	{Kind: "Gateway", Plural: "gateways", Revision: 5, Export: "applications", Object: Gateway{}, PrinterColumns: []PrinterColumn{
+		{Name: "Profile", Type: "string", JSONPath: ".spec.profile"},
+		{Name: "Phase", Type: "string", JSONPath: ".status.phase"},
+		{Name: "Age", Type: "date", JSONPath: ".metadata.creationTimestamp"},
+	}},
+	{Kind: "SshGateway", Plural: "sshgateways", Revision: 1, Export: "applications", Object: SshGateway{}, PrinterColumns: []PrinterColumn{
 		{Name: "Profile", Type: "string", JSONPath: ".spec.profile"},
 		{Name: "Phase", Type: "string", JSONPath: ".status.phase"},
 		{Name: "Age", Type: "date", JSONPath: ".metadata.creationTimestamp"},

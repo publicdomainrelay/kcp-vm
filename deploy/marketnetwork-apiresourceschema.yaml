@@ -1,7 +1,7 @@
 apiVersion: apis.kcp.io/v1alpha1
 kind: APIResourceSchema
 metadata:
-  name: v1alpha1-6.marketnetworks.socialweb.computer
+  name: v1alpha1-7.marketnetworks.socialweb.computer
 spec:
   group: socialweb.computer
   names:
@@ -45,6 +45,7 @@ spec:
                         - MarketBidder
                         - MarketRequester
                         - Gateway
+                        - SshGateway
                     profile:
                       type: string
                     policy:
@@ -86,6 +87,8 @@ spec:
                             type: string
                         required:
                           - name
+                    ownerSessionsFile:
+                      type: string
                     stopped:
                       type: boolean
                   required:
@@ -202,6 +205,7 @@ spec:
                         - MarketBidder
                         - MarketRequester
                         - Gateway
+                        - SshGateway
                     instance:
                       type: string
                     kcpUrl:

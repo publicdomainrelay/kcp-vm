@@ -52,7 +52,7 @@ export type MarketIdentityPhase = typeof MARKET_IDENTITY_PHASES[number];
 export const PENDING_ACTION_KINDS = ["scanQr", "visitUrl", "approveAssociation", "signInAgain"] as const;
 export type PendingActionKind = typeof PENDING_ACTION_KINDS[number];
 
-export const APPLICATION_KINDS = ["MarketBidder", "MarketRequester", "Gateway"] as const;
+export const APPLICATION_KINDS = ["MarketBidder", "MarketRequester", "Gateway", "SshGateway"] as const;
 export type ApplicationKind = typeof APPLICATION_KINDS[number];
 
 export const APPLICATION_PHASES = ["Pending", "Provisioning", "Ready", "Deleting", "Failed"] as const;
@@ -356,6 +356,7 @@ export interface NetworkApp {
   firecracker?: FirecrackerProvider;
   kcp?: KcpProvider;
   options?: ApplicationOption[];
+  ownerSessionsFile?: string;
   stopped?: boolean;
 }
 
@@ -547,6 +548,22 @@ export interface GatewayMarketNetwork {
   nodeUserDataBaseFile?: string;
 }
 
+export interface SshGateway {
+  apiVersion?: string;
+  kind?: string;
+  metadata?: ObjectMeta;
+  spec?: SshGatewaySpec;
+  status?: ApplicationStatus;
+}
+
+export interface SshGatewaySpec {
+  profile: string;
+  network?: MarketNetworkValue;
+  bidderDids?: string[];
+  options?: ApplicationOption[];
+  ownerSessionsFile?: string;
+}
+
 export interface ApiResource {
   group: string;
   version: string;
@@ -631,7 +648,7 @@ export const MARKET_NETWORK_RESOURCE: ApiResource = {
   listKind: "MarketNetworkList",
   plural: "marketnetworks",
   singular: "marketnetwork",
-  schema: "v1alpha1-6.marketnetworks.socialweb.computer",
+  schema: "v1alpha1-7.marketnetworks.socialweb.computer",
   export: "applications",
 };
 
@@ -679,7 +696,18 @@ export const GATEWAY_RESOURCE: ApiResource = {
   export: "applications",
 };
 
-export const API_RESOURCES: readonly ApiResource[] = [CLUSTER_RESOURCE, NODE_RESOURCE, NODE_CLAIM_RESOURCE, CLUSTER_LINK_RESOURCE, ATPROTO_IDENTITY_RESOURCE, MARKET_IDENTITY_RESOURCE, MARKET_NETWORK_RESOURCE, MARKET_BIDDER_RESOURCE, MARKET_REQUESTER_RESOURCE, COMPUTE_CONTRACT_RESOURCE, GATEWAY_RESOURCE];
+export const SSH_GATEWAY_RESOURCE: ApiResource = {
+  group: "socialweb.computer",
+  version: "v1alpha1",
+  kind: "SshGateway",
+  listKind: "SshGatewayList",
+  plural: "sshgateways",
+  singular: "sshgateway",
+  schema: "v1alpha1-1.sshgateways.socialweb.computer",
+  export: "applications",
+};
+
+export const API_RESOURCES: readonly ApiResource[] = [CLUSTER_RESOURCE, NODE_RESOURCE, NODE_CLAIM_RESOURCE, CLUSTER_LINK_RESOURCE, ATPROTO_IDENTITY_RESOURCE, MARKET_IDENTITY_RESOURCE, MARKET_NETWORK_RESOURCE, MARKET_BIDDER_RESOURCE, MARKET_REQUESTER_RESOURCE, COMPUTE_CONTRACT_RESOURCE, GATEWAY_RESOURCE, SSH_GATEWAY_RESOURCE];
 
 export type ApiTypeName =
   | "ApplicationComponent"
@@ -754,6 +782,8 @@ export type ApiTypeName =
   | "ObjectMeta"
   | "PendingActionKind"
   | "RecordRef"
+  | "SshGateway"
+  | "SshGatewaySpec"
   | "StateDirUsage"
   | "VaultRef";
 
@@ -920,7 +950,8 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
     "enum": [
       "MarketBidder",
       "MarketRequester",
-      "Gateway"
+      "Gateway",
+      "SshGateway"
     ],
     "type": "string"
   },
@@ -2037,6 +2068,9 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
         },
         "type": "array"
       },
+      "ownerSessionsFile": {
+        "type": "string"
+      },
       "policy": {
         "type": "string"
       },
@@ -2435,6 +2469,56 @@ const SHAPES: Readonly<Record<ApiTypeName, Shape>> = {
     "required": [
       "uri",
       "cid"
+    ],
+    "type": "object"
+  },
+  "SshGateway": {
+    "properties": {
+      "apiVersion": {
+        "type": "string"
+      },
+      "kind": {
+        "type": "string"
+      },
+      "metadata": {
+        "ref": "ObjectMeta"
+      },
+      "spec": {
+        "ref": "SshGatewaySpec"
+      },
+      "status": {
+        "ref": "ApplicationStatus"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "SshGatewaySpec": {
+    "properties": {
+      "bidderDids": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "network": {
+        "ref": "MarketNetworkValue"
+      },
+      "options": {
+        "items": {
+          "ref": "ApplicationOption"
+        },
+        "type": "array"
+      },
+      "ownerSessionsFile": {
+        "type": "string"
+      },
+      "profile": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "profile"
     ],
     "type": "object"
   },
@@ -3771,5 +3855,41 @@ export function assertGatewayMarketNetwork(value: unknown): asserts value is Gat
 
 export function parseGatewayMarketNetwork(value: unknown): GatewayMarketNetwork {
   assertGatewayMarketNetwork(value);
+  return value;
+}
+
+export function validateSshGateway(value: unknown): ApiIssue[] {
+  return validate("SshGateway", value);
+}
+
+export function isSshGateway(value: unknown): value is SshGateway {
+  return validate("SshGateway", value).length === 0;
+}
+
+export function assertSshGateway(value: unknown): asserts value is SshGateway {
+  const issues = validate("SshGateway", value);
+  if (issues.length > 0) throw new ApiValidationError("SshGateway", issues);
+}
+
+export function parseSshGateway(value: unknown): SshGateway {
+  assertSshGateway(value);
+  return value;
+}
+
+export function validateSshGatewaySpec(value: unknown): ApiIssue[] {
+  return validate("SshGatewaySpec", value);
+}
+
+export function isSshGatewaySpec(value: unknown): value is SshGatewaySpec {
+  return validate("SshGatewaySpec", value).length === 0;
+}
+
+export function assertSshGatewaySpec(value: unknown): asserts value is SshGatewaySpec {
+  const issues = validate("SshGatewaySpec", value);
+  if (issues.length > 0) throw new ApiValidationError("SshGatewaySpec", issues);
+}
+
+export function parseSshGatewaySpec(value: unknown): SshGatewaySpec {
+  assertSshGatewaySpec(value);
   return value;
 }

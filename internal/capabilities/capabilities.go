@@ -105,6 +105,7 @@ func Tree() []Verb {
 		{Path: "units roll kcp", Summary: "roll the installed kcp: a new slot beside the old on the same store, the front flips, the old slot stops, the controller lease handed over (--kcp-path for a kcp version change, --planned-outage for an incompatible pair)", Needs: []Need{NeedSystemdUser}},
 		{Path: "internal devsup", Summary: "the per-instance proc backend supervisor", Needs: []Need{NeedProc}, Hidden: true},
 		{Path: "internal dev-core", Summary: "the dev instance's core: adopts the bootstrap units and records them", Needs: []Need{NeedProc}, Hidden: true},
+		{Path: "internal iroh-dial", Summary: "listen on a unix socket and, per connection, run dumbpipe connect to the iroh ticket the connection names (the ssh gateway application's HostProcess)", Hidden: true},
 		{Path: "internal ns-exec", Summary: "run a command under a private hostname in its own user+UTS+mount namespace (one-shot exec, no resident code)", Hidden: true},
 		{Path: "internal vm start", Summary: "prepare and start one VM unit (spec JSON on stdin; prints its runtime record)", Needs: []Need{NeedHostBackend, NeedVMRuntime}, Hidden: true},
 		{Path: "internal vm inspect", Summary: "the verdict of one VM: Running, Lost (a mismatch is stopped now) or Unknown", Needs: []Need{NeedHostBackend, NeedVMRuntime}, Hidden: true},

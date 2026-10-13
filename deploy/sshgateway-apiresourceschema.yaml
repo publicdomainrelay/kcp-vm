@@ -1,0 +1,181 @@
+apiVersion: apis.kcp.io/v1alpha1
+kind: APIResourceSchema
+metadata:
+  name: v1alpha1-1.sshgateways.socialweb.computer
+spec:
+  group: socialweb.computer
+  names:
+    kind: SshGateway
+    listKind: SshGatewayList
+    plural: sshgateways
+    singular: sshgateway
+  scope: Cluster
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      schema:
+        type: object
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            properties:
+              profile:
+                type: string
+              network:
+                type: object
+                properties:
+                  plcDirectoryUrl:
+                    type: string
+                  ingressProxyHost:
+                    type: string
+                  relayUrls:
+                    type: array
+                    items:
+                      type: string
+                  firehoseUrls:
+                    type: array
+                    items:
+                      type: string
+                  qrOrigin:
+                    type: string
+                  guestTlsUrl:
+                    type: string
+                  caBundleRef:
+                    type: string
+                  hosts:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                        address:
+                          type: string
+                      required:
+                        - name
+                        - address
+                required:
+                  - plcDirectoryUrl
+                  - ingressProxyHost
+                  - relayUrls
+                  - firehoseUrls
+                  - qrOrigin
+              bidderDids:
+                type: array
+                items:
+                  type: string
+              options:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                    value:
+                      type: string
+                  required:
+                    - name
+              ownerSessionsFile:
+                type: string
+            required:
+              - profile
+          status:
+            type: object
+            properties:
+              observedGeneration:
+                type: integer
+                format: int64
+              phase:
+                type: string
+                enum:
+                  - Pending
+                  - Provisioning
+                  - Ready
+                  - Deleting
+                  - Failed
+              message:
+                type: string
+              profile:
+                type: string
+              did:
+                type: string
+              components:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    kind:
+                      type: string
+                    name:
+                      type: string
+                    workspace:
+                      type: string
+                    phase:
+                      type: string
+                    ready:
+                      type: boolean
+                  required:
+                    - kind
+                    - name
+                    - workspace
+                    - ready
+              listeners:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    component:
+                      type: string
+                    name:
+                      type: string
+                    kind:
+                      type: string
+                    address:
+                      type: string
+                  required:
+                    - component
+                    - name
+                    - kind
+                    - address
+              stateDir:
+                type: object
+                properties:
+                  path:
+                    type: string
+                  bytes:
+                    type: integer
+                    format: int64
+                  files:
+                    type: integer
+                    format: int64
+                  sampledAt:
+                    type: string
+                required:
+                  - path
+                  - bytes
+                  - files
+                  - sampledAt
+              conditions:
+                type: array
+                items:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+      additionalPrinterColumns:
+        - name: Profile
+          type: string
+          jsonPath: .spec.profile
+        - name: Phase
+          type: string
+          jsonPath: .status.phase
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp

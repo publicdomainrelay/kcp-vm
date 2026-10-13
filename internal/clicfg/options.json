@@ -170,7 +170,7 @@
     },
     "socket": {
       "type": "string",
-      "description": "internal devsup: the unix socket path (under 108 bytes)"
+      "description": "internal devsup: the unix socket path (under 108 bytes); internal iroh-dial: the unix socket the iroh dialer listens on (under 108 bytes)"
     },
     "die-with": {
       "type": "number",
@@ -643,7 +643,8 @@
     },
     "dumbpipe-path": {
       "type": "string",
-      "description": "units roll link: the dumbpipe executable the replacement listener runs (unset: the one the link runs)"
+      "env": "SOCIALWEB_DUMBPIPE_PATH",
+      "description": "units roll link: the dumbpipe executable the replacement listener runs (unset: the one the link runs); run request, dev up and run gateway ssh in a dev build: the dumbpipe executable that reaches guests over their iroh ticket (a release build runs its embedded dumbpipe); internal iroh-dial: the dumbpipe it runs per connection"
     },
     "service": {
       "type": "string",

@@ -195,7 +195,7 @@ sets:
             for: IdentityValid
 
   - name: applications
-    summary: the MarketNetwork, MarketBidder, MarketRequester and Gateway schemas and their export in the provider workspace and its binding in root, applied by every core so each application's root object lives in its own kcp (plan 0006 M2-APP-CONTROLLER); needs the provider workspace
+    summary: the MarketNetwork, MarketBidder, MarketRequester, Gateway and SshGateway schemas and their export in the provider workspace and its binding in root, applied by every core so each application's root object lives in its own kcp (plan 0006 M2-APP-CONTROLLER); needs the provider workspace
     values: None
     phases:
       - name: schemas
@@ -205,6 +205,7 @@ sets:
           - path: marketbidder-apiresourceschema.yaml
           - path: marketrequester-apiresourceschema.yaml
           - path: gateway-apiresourceschema.yaml
+          - path: sshgateway-apiresourceschema.yaml
           - path: marketnetwork-apiexport.yaml
         after:
           - kind: APIExport
@@ -392,6 +393,47 @@ sets:
         workspace: root:app
         files:
           - path: apps/market-requester/default.values.yaml
+            template: denopods/service.yaml
+
+  - name: ssh-gateway
+    summary: the components of an SshGateway application (socialweb-computer run gateway ssh) in its own kcp - its own OpenBaoServer holding the OAuth sessions and keys and the account that reads it, the iroh dialer HostProcess (internal iroh-dial, the only process that runs dumbpipe), the root:app workspace and, per profile, the hono-socialweb-computer-ssh DenoPod rendered from deploy/apps/ssh-gateway/<profile>.values.yaml; applied by internal/appctl (plan 0008 M4-RUN-GATEWAY-SSH)
+    values: SshGateway
+    phases:
+      - name: vault
+        workspace: root
+        files:
+          - path: apps/ssh-gateway/vault.yaml
+        after:
+          - kind: OpenBaoServer
+            name: ssh-gateway
+            for: Ready
+      - name: iroh-dial
+        workspace: root
+        files:
+          - path: apps/ssh-gateway/iroh-dial.yaml
+      - name: workspace
+        workspace: root
+        files:
+          - path: apps/workspace-app.yaml
+        after:
+          - kind: Workspace
+            for: Ready
+      - name: rbac
+        workspace: root:app
+        before:
+          - kind: APIBinding
+            for: Ready
+        files:
+          - path: market-network/10-rbac.yaml
+      - name: ssh-gateway@market-network
+        workspace: root:app
+        files:
+          - path: apps/ssh-gateway/market-network.values.yaml
+            template: denopods/service.yaml
+      - name: ssh-gateway@default
+        workspace: root:app
+        files:
+          - path: apps/ssh-gateway/default.values.yaml
             template: denopods/service.yaml
 
   - name: market-network

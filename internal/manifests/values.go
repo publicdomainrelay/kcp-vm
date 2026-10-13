@@ -79,6 +79,24 @@ type MarketRequester struct {
 	ExtraArgs string
 }
 
+type SshGateway struct {
+	StateDir  string `json:",omitempty"`
+	WebDir    string `json:",omitempty"`
+	CABundle  string `json:",omitempty"`
+	EnvAllow  string `json:",omitempty"`
+	Kcp       KcpRef
+	Vault     BidderVault
+	IrohDial  IrohDial
+	ExtraArgs string
+	ExtraRead string
+}
+
+type IrohDial struct {
+	Unit     string `json:",omitempty"`
+	Socket   string `json:",omitempty"`
+	Dumbpipe string `json:",omitempty"`
+}
+
 type KcpRef struct {
 	Server    string `json:",omitempty"`
 	Workspace string `json:",omitempty"`
@@ -94,6 +112,7 @@ var valueTypes = map[string]func() reflect.Type{
 	"MarketBidder":        func() reflect.Type { return reflect.TypeOf(&MarketBidder{}) },
 	"Gateway":             func() reflect.Type { return reflect.TypeOf(&Gateway{}) },
 	"MarketRequester":     func() reflect.Type { return reflect.TypeOf(&MarketRequester{}) },
+	"SshGateway":          func() reflect.Type { return reflect.TypeOf(&SshGateway{}) },
 }
 
 type Gateway struct {

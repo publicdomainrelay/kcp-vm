@@ -1,0 +1,39 @@
+apiVersion: socialweb.computer/v1alpha1
+kind: OpenBaoServer
+metadata:
+  name: ssh-gateway
+spec:
+  asset:
+    name: bao
+    sha256: ""
+  clients:
+    - name: ssh-gateway
+      kvMount: ssh-gateway
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ssh-gateway
+  namespace: default
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ssh-gateway
+rules:
+  - apiGroups: ["socialweb.computer"]
+    resources: ["openbaoservers"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ssh-gateway
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: ssh-gateway
+subjects:
+  - kind: ServiceAccount
+    name: ssh-gateway
+    namespace: default

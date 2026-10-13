@@ -427,7 +427,7 @@ func (n *networks) reconcile(ctx context.Context, u *unstructured.Unstructured) 
 	st.Apps = apps
 	allReady := true
 	for i, a := range apps {
-		if o.Spec.Apps[i].Kind == v1alpha1.ApplicationKindMarketRequester {
+		if k := o.Spec.Apps[i].Kind; k == v1alpha1.ApplicationKindMarketRequester || k == v1alpha1.ApplicationKindSshGateway {
 			continue
 		}
 		allReady = allReady && a.Phase == v1alpha1.ApplicationPhaseReady
@@ -520,6 +520,9 @@ func (n *networks) ensureApp(ctx context.Context, app v1alpha1.NetworkApp, value
 			BidderDids: bidderDids, Options: app.Options}}
 	case v1alpha1.ApplicationKindGateway:
 		root = &v1alpha1.Gateway{ObjectMeta: meta, Spec: v1alpha1.GatewaySpec{Profile: app.Profile, Network: &value, Options: app.Options}}
+	case v1alpha1.ApplicationKindSshGateway:
+		root = &v1alpha1.SshGateway{ObjectMeta: meta, Spec: v1alpha1.SshGatewaySpec{Profile: app.Profile, Network: &value,
+			BidderDids: bidderDids, Options: app.Options, OwnerSessionsFile: app.OwnerSessionsFile}}
 	}
 	if err := applyRoot(ctx, rec, app.Kind, root); err != nil {
 		return fail(fmt.Errorf("applying the root object into %s's own kcp: %w", c.id, err))

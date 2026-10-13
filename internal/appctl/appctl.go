@@ -56,8 +56,10 @@ func GVRFor(k v1alpha1.ApplicationKind) (schema.GroupVersionResource, error) {
 		return MarketRequesterGVR, nil
 	case v1alpha1.ApplicationKindGateway:
 		return GatewayGVR, nil
+	case v1alpha1.ApplicationKindSshGateway:
+		return SshGatewayGVR, nil
 	}
-	return schema.GroupVersionResource{}, fmt.Errorf("appctl: %q is no application kind (MarketBidder, MarketRequester, Gateway)", k)
+	return schema.GroupVersionResource{}, fmt.Errorf("appctl: %q is no application kind (MarketBidder, MarketRequester, Gateway, SshGateway)", k)
 }
 
 type Config struct {
@@ -217,6 +219,7 @@ func (ctl *Controller) Pass(ctx context.Context) {
 		{MarketBidderGVR, ctl.reconcileBidder},
 		{MarketRequesterGVR, ctl.reconcileRequester},
 		{GatewayGVR, ctl.reconcileGateway},
+		{SshGatewayGVR, ctl.reconcileSshGateway},
 	} {
 		ri, err := ctl.client(ctl.c.workspace(), k.gvr)
 		if err != nil {

@@ -6,7 +6,7 @@ spec:
   resources:
     - group: socialweb.computer
       name: marketnetworks
-      schema: v1alpha1-6.marketnetworks.socialweb.computer
+      schema: v1alpha1-7.marketnetworks.socialweb.computer
       storage:
         crd: {}
     - group: socialweb.computer
@@ -22,5 +22,10 @@ spec:
     - group: socialweb.computer
       name: gateways
       schema: v1alpha1-5.gateways.socialweb.computer
+      storage:
+        crd: {}
+    - group: socialweb.computer
+      name: sshgateways
+      schema: v1alpha1-1.sshgateways.socialweb.computer
       storage:
         crd: {}

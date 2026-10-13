@@ -204,3 +204,54 @@ apps:
       - {name: skip-ssh, to: cli}
       - {name: fedproxy-host, to: removed, reason: legacy-transport}
       - {name: user-data-transport, to: removed, reason: legacy-transport}
+  - app: ssh-gateway
+    entry: hono-socialweb-computer-ssh
+    options:
+      - {name: ssh-port, to: listener}
+      - {name: ssh-hostname, to: listener}
+      - {name: ssh-public-host, to: options}
+      - {name: http-port, to: listener}
+      - {name: serve-addr, to: listener}
+      - {name: port-file, to: listener}
+      - {name: listeners-file, to: listener}
+      - {name: state-dir, to: state}
+      - {name: host-key-path, to: state}
+      - {name: default-command, to: options}
+      - {name: vm-ready-timeout-sec, to: options}
+      - {name: plc-directory-url, to: network.plcDirectoryUrl}
+      - {name: associations-cache-ttl-sec, to: options}
+      - {name: label, to: options}
+      - {name: web-dir, to: profile}
+      - {name: max-sessions, to: options}
+      - {name: sessions-per-account, to: options}
+      - {name: max-connections, to: options}
+      - {name: auth-timeout-sec, to: options}
+      - {name: session-max-sec, to: options}
+      - {name: oauth-client-id, to: options}
+      - {name: public-origin, to: options}
+      - {name: ingress-proxy-host, to: network.ingressProxyHost}
+      - {name: relay-url, to: network.relayUrls}
+      - {name: network-hosts, to: network.hosts}
+      - {name: bidder-dids, to: spec.bidderDids}
+      - {name: guest-host-aliases, to: profile}
+      - {name: guest-ca-file, to: profile}
+      - {name: guest-curl-home, to: profile}
+      - {name: kcp-server, to: profile}
+      - {name: openbao-server, to: profile}
+      - {name: openbao-client, to: profile}
+      - {name: openbao-kcp-server, to: profile}
+      - {name: openbao-kcp-workspace, to: profile}
+      - {name: openbao-kcp-token-file, to: state}
+      - {name: openbao-kcp-ca-cert-file, to: profile}
+      - {name: iroh-dial-socket, to: profile}
+      - {name: test-owner-sessions-file, to: spec.ownerSessionsFile}
+      - {name: app-did, to: options}
+      - {name: app-handle, to: options}
+      - {name: app-pds-key-path, to: state}
+      - {name: app-pds-kv-path, to: state}
+      - {name: app-pds-crawlers, to: options}
+      - {name: cocore-api-base-url, to: options}
+      - {name: cocore-app-name, to: options}
+      - {name: cocore-return-url, to: options}
+      - {name: tls-cert-file, to: profile}
+      - {name: tls-key-file, to: profile}

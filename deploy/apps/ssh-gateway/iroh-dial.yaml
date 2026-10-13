@@ -1,0 +1,17 @@
+apiVersion: socialweb.computer/v1alpha1
+kind: HostProcess
+metadata:
+  name: iroh-dial
+spec:
+  unit: "{{.IrohDial.Unit}}"
+  asset:
+    name: socialweb-computer
+    sha256: ""
+  argv: ["internal", "iroh-dial", "--socket", "{{.IrohDial.Socket}}", "--dumbpipe-path", "{{.IrohDial.Dumbpipe}}"]
+  restartPolicy: Always
+  stop:
+    signal: SIGTERM
+    graceSeconds: 5
+  readiness:
+    unixSocket: "{{.IrohDial.Socket}}"
+  placement: supervisor

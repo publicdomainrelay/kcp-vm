@@ -59,7 +59,7 @@ type builtVerb struct {
 func builtVerbs() map[string]builtVerb {
 	return map[string]builtVerb{
 		"version":                {[]string{"json"}, runVersion},
-		"dev up":                 {slices.Concat([]string{backendOpt, "instance", "state-dir", "profile", "bidders", "with-gateway", "app-values", "network-timeout", "stand-ins", "parent", "die-with", "kcp-path", "kine-path", "postgres-root", "deno-path", "bao-path", "openbao-addr", "openbao-token-file", "asset-cache", "ready-timeout", "kcp-base-workspace", "fg", "keep-state"}, devVMOptions, devOnly(tsbundle.SourceRootOption)), runDevUp},
+		"dev up":                 {slices.Concat([]string{backendOpt, "instance", "state-dir", "profile", "bidders", "with-gateway", "app-values", "network-timeout", "stand-ins", "parent", "die-with", "kcp-path", "kine-path", "postgres-root", "deno-path", "bao-path", "dumbpipe-path", "openbao-addr", "openbao-token-file", "asset-cache", "ready-timeout", "kcp-base-workspace", "fg", "keep-state"}, devVMOptions, devOnly(tsbundle.SourceRootOption)), runDevUp},
 		"dev host":               {append([]string{backendOpt, "instance", "state-dir", "profile", "die-with", "kcp-path", "kine-path", "postgres-root", "deno-path", "bao-path", "asset-cache", "ready-timeout", "kcp-base-workspace", "fg", "keep-state"}, devOnly(tsbundle.SourceRootOption)...), runDevHost},
 		"dev status":             {[]string{"instance", "state-dir"}, runDevStatus},
 		"dev down":               {[]string{"instance", "state-dir", "keep-state"}, runDevDown},
@@ -72,6 +72,7 @@ func builtVerbs() map[string]builtVerb {
 		"apply":                  {applyOptions, runApply},
 		"run bidder":             {bidderOptions, runBidder},
 		"run request":            {requestOptions, runRequest},
+		"run gateway ssh":        {gatewaySshOptions, runGatewaySsh},
 		"run request list":       {[]string{"state-dir", "json"}, runRequestList},
 		"run request release":    {requestOptions, runRequestRelease},
 		"run request resume":     {requestOptions, runRequestResume},
@@ -89,6 +90,7 @@ func builtVerbs() map[string]builtVerb {
 		"units roll cluster":     {[]string{"cluster-state-dir", "k3s-path", "kine-path", "idle-bound", "ready-timeout"}, runUnitsRoll("cluster")},
 		"units roll link":        {[]string{"cluster-state-dir", "service", "dumbpipe-path", "ready-timeout"}, runUnitsRoll("link")},
 		"internal ns-exec":       {[]string{"private-hostname", "bind", "inside"}, runNsExec},
+		"internal iroh-dial":     {[]string{"socket", "dumbpipe-path"}, runIrohDial},
 		"internal devsup":        {[]string{"state", "socket", "die-with", "instance"}, runDevsup},
 		"internal dev-core":      {append([]string{"instance-dir", "ready-timeout"}, devOnly(tsbundle.SourceRootOption)...), runDevCore},
 		"internal hostprocesses": {[]string{backendOpt, "instance", "state-dir", "kcp-kubeconfig", "kcp-base-workspace", "bao-path"}, runHostProcesses},

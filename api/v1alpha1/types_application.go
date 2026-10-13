@@ -36,6 +36,8 @@ const (
 	ApplicationKindMarketRequester ApplicationKind = "MarketRequester"
 
 	ApplicationKindGateway ApplicationKind = "Gateway"
+
+	ApplicationKindSshGateway ApplicationKind = "SshGateway"
 )
 
 type ApplicationPhase string
@@ -233,6 +235,33 @@ type GatewayMarketNetwork struct {
 	NodeUserDataBaseFile string `json:"nodeUserDataBaseFile,omitempty"`
 }
 
+type SshGateway struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+
+	Spec   SshGatewaySpec    `json:"spec,omitempty"`
+	Status ApplicationStatus `json:"status,omitempty"`
+}
+
+type SshGatewayList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+
+	Items []SshGateway `json:"items"`
+}
+
+type SshGatewaySpec struct {
+	Profile string `json:"profile"`
+
+	Network *MarketNetworkValue `json:"network,omitempty"`
+
+	BidderDids []string `json:"bidderDids,omitempty"`
+
+	Options []ApplicationOption `json:"options,omitempty"`
+
+	OwnerSessionsFile string `json:"ownerSessionsFile,omitempty"`
+}
+
 type MarketNetwork struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -270,6 +299,8 @@ type NetworkApp struct {
 	Kcp *KcpProvider `json:"kcp,omitempty"`
 
 	Options []ApplicationOption `json:"options,omitempty"`
+
+	OwnerSessionsFile string `json:"ownerSessionsFile,omitempty"`
 
 	Stopped bool `json:"stopped,omitempty"`
 }
